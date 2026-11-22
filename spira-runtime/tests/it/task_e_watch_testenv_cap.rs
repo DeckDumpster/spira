@@ -46,6 +46,7 @@ fn asked(r: &TaskRig, name: &str) -> Vec<String> {
     r.requested().iter().filter(|q| q.name == name).map(|q| q.input.clone()).collect()
 }
 
+#[test_id(trj6iyp)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_fifteen_second_tick() {
     let t = acc::row(NAME);
@@ -60,6 +61,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_fifteen_second_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(t8jdb0z)]
 #[test]
 fn t2_no_run_and_runs_under_cap_journal_nothing() {
     let mut r = rig(1, world(vec![]), killed);
@@ -71,6 +73,7 @@ fn t2_no_run_and_runs_under_cap_journal_nothing() {
 }
 
 /// Per breach: judged → killed → said, or judged → refused with nothing said.
+#[test_id(tubvjev)]
 #[test]
 fn t3_a_breach_is_said_only_after_its_kill_and_a_refused_kill_says_nothing() {
     let r = rig(1, world(vec![run(4242, 800, SUITE)]), killed);
@@ -82,6 +85,7 @@ fn t3_a_breach_is_said_only_after_its_kill_and_a_refused_kill_says_nothing() {
     assert!(asked(&r, INBOX_APPEND).is_empty() && asked(&r, METRIC).is_empty(), "said without killed is refused");
 }
 
+#[test_id(t9zsm6u)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_testenv_cap.rs")), None);
@@ -94,6 +98,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 
 /// `cap::breaches` on the `cap.rs` cases and `report`'s line (`cap_main.rs:23-37`), no tag. A gate run
 /// carries its cap plus `SETTLE` (`cap.rs:16`): 300 + 30 + slot wait 30 + grace 60 = 420.
+#[test_id(trk9lvt)]
 #[test]
 fn t5_the_breaches_and_the_line_are_the_ones_testenv_cap_made() {
     let procs = vec![run(1, 751, SUITE), run(2, 750, SUITE), run(3, 421, GATE), run(4, 420, GATE)];
@@ -113,6 +118,7 @@ fn over_cap() -> TaskRig {
     rig(1, world(vec![run(7, 900, SUITE)]), killed)
 }
 
+#[test_id(t2aku3q)]
 #[test]
 fn a_cap_that_carries_nothing_keeps_no_row_after_killing() {
     let mut r = over_cap();
@@ -122,6 +128,7 @@ fn a_cap_that_carries_nothing_keeps_no_row_after_killing() {
     assert!(kept.is_empty(), "{kept:?}");
 }
 
+#[test_id(tv3bilk)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(over_cap, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
@@ -146,6 +153,7 @@ fn ledger(run: &std::path::Path, pid: u32, body: &str) {
     std::fs::write(d.join(pid.to_string()), body).unwrap();
 }
 
+#[test_id(tn54qux)]
 #[test]
 fn a_run_that_spent_its_age_waiting_for_a_slot_is_not_killed() {
     let dir = testkit::TempDir::new("cap-waiter");
@@ -154,6 +162,7 @@ fn a_run_that_spent_its_age_waiting_for_a_slot_is_not_killed() {
     assert!(judged(dir.path(), vec![live(7, 77, 1271, SUITE)]).is_empty());
 }
 
+#[test_id(tzh8x4q)]
 #[test]
 fn a_ledgered_run_that_never_waited_is_killed_at_its_cap_plus_grace() {
     let dir = testkit::TempDir::new("cap-holder");
@@ -162,12 +171,14 @@ fn a_ledgered_run_that_never_waited_is_killed_at_its_cap_plus_grace() {
     assert_eq!(judged(dir.path(), vec![live(7, 77, 661, SUITE)]), [7]);
 }
 
+#[test_id(thkwecl)]
 #[test]
 fn the_tick_asks_observe_to_read_the_ledgers_under_the_configured_run_dir() {
     let r = rig(1, world(vec![]), killed);
     assert_eq!(asked(&r, OBSERVE), ["q/run"]);
 }
 
+#[test_id(ttube3b)]
 #[test]
 fn observe_reads_the_ledger_under_the_run_dir_it_is_given() {
     let dir = testkit::TempDir::new("cap-observe-runner");

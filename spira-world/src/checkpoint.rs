@@ -64,6 +64,7 @@ mod tests {
         (Arc::clone(&t), LcClient::over(t, true))
     }
 
+    #[test_id(tiisfry)]
     #[test]
     fn the_holds_are_read_over_the_client_and_each_checkpoint_is_lifted() {
         let rows = r#"[{"bead_id":"sp-a","reason":"checkpoint-until: 2026-11-04"},{"bead_id":"sp-b","reason":"waiting on ci"},{"bead_id":"sp-c","reason":"checkpoint-until: x"}]"#;
@@ -73,6 +74,7 @@ mod tests {
         assert_eq!((lifted, failed), (vec!["sp-a".to_string()], vec!["sp-c".to_string()]));
     }
 
+    #[test_id(t3u8ekj)]
     #[test]
     fn a_refused_or_unanswered_list_lifts_nothing_and_says_which() {
         let (_, refused) = client(Ok(Reply { code: 3, out: "no".into(), err: String::new(), read_ended: false }));
@@ -81,6 +83,7 @@ mod tests {
         assert_eq!(lift_all_over(&down, &|_| true), (vec![], vec!["(spira-lc list could not run)".to_string()]));
     }
 
+    #[test_id(tl5zanp)]
     #[test]
     fn the_unhold_goes_over_the_client_and_only_an_applied_one_counts() {
         let (t, ok) = client(Ok(Reply { code: 0, out: String::new(), err: String::new(), read_ended: false }));

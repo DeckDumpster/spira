@@ -168,6 +168,7 @@ mod tests {
         addr
     }
 
+    #[test_id(t740iv9)]
     #[test]
     fn an_unset_endpoint_is_refused_by_name() {
         for e in [None, Some(""), Some("  ")] {
@@ -175,6 +176,7 @@ mod tests {
         }
     }
 
+    #[test_id(tm7jif8)]
     #[test]
     fn a_stopped_store_is_unreachable_not_empty() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -184,6 +186,7 @@ mod tests {
         assert_eq!(err.name(), "metrics-store-unreachable", "{err}");
     }
 
+    #[test_id(trlnqfl)]
     #[test]
     fn a_non_200_and_a_garbled_body_are_named() {
         let addr = serve(b"HTTP/1.0 503 Service Unavailable\r\n\r\nbusy".to_vec());
@@ -192,6 +195,7 @@ mod tests {
         assert_eq!(Store::new(Some(&addr)).unwrap().export("x", 0).unwrap_err().name(), "metrics-store-malformed");
     }
 
+    #[test_id(t3n4bjj)]
     #[test]
     fn an_export_body_parses_into_series() {
         let body = b"{\"metric\":{\"__name__\":\"m\",\"k\":\"v\"},\"values\":[1,2.5],\"timestamps\":[1000,2000]}\n";
@@ -202,6 +206,7 @@ mod tests {
         assert_eq!(got[0].samples, vec![(1000, 1.0), (2000, 2.5)]);
     }
 
+    #[test_id(tx353wy)]
     #[test]
     fn a_selector_is_percent_encoded() {
         assert_eq!(encode("{a=\"b\"}"), "%7Ba%3D%22b%22%7D");

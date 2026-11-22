@@ -134,6 +134,7 @@ mod tests {
     use super::*;
     use spira_otel::metrics::fixture;
 
+    #[test_id(tycti78)]
     #[test]
     fn a_flush_pushes_each_callers_count_by_outcome_and_the_lowest_budget_seen() {
         let mut l = Ledger::default();
@@ -151,6 +152,7 @@ mod tests {
         assert!(l.calls.is_empty(), "a flush leaves nothing to count twice");
     }
 
+    #[test_id(tw2kxlw)]
     #[test]
     fn the_core_budget_is_read_from_a_rate_limit_answer_and_nothing_else_is_taken_for_it() {
         let body = r#"{"resources":{"core":{"limit":5000,"remaining":0,"reset":1793003600},"graphql":{"limit":5000,"remaining":4999,"reset":1}}}"#;
@@ -159,6 +161,7 @@ mod tests {
         assert_eq!(core_rate("not json"), None);
     }
 
+    #[test_id(t9ho7gs)]
     #[test]
     fn the_top_spender_is_the_caller_with_most_charged_calls() {
         let with = |caller: &str, outcome: &str, vals: &[f64]| spira_otel::query::Exported {

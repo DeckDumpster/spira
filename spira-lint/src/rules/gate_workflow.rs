@@ -614,6 +614,7 @@ mod tests {
 
     /// Over-broad-scopes #15 (sp-ipwlic): one global group queued every PR's image check behind
     /// every other's, and every run cold-built testenv to name a tag.
+    #[test_id(t2cpzpu)]
     #[test]
     fn the_image_publish_is_grouped_by_tag_and_names_it_without_a_cold_build() {
         let got = planted(image, "group: testenv-image-${{ needs.tag.outputs.tag }}", "group: testenv-image");
@@ -622,6 +623,7 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("only on a cache miss")), "{got:?}");
     }
 
+    #[test_id(tob90yz)]
     #[test]
     fn the_testenv_closure_is_derived_not_listed() {
         assert_eq!(judge(&shipped()).into_iter().filter(|(p, _)| *p == IMAGE).count(), 0);
@@ -630,12 +632,14 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("the driver key hashes the computed closure")), "{got:?}");
     }
 
+    #[test_id(tyal65w)]
     #[test]
     fn the_shipped_workflows_pass() {
         assert_eq!(judge(&shipped()), Vec::<(&str, String)>::new());
     }
 
     /// sp-3e2wt: the cut accepted only queue heads and refused every publish-PR head.
+    #[test_id(tkhiwgo)]
     #[test]
     fn a_cut_that_refuses_publish_heads_is_caught() {
         let got = planted(gate, "spira/queue/*|spira/publish/*)", "spira/queue/*)");
@@ -643,6 +647,7 @@ mod tests {
     }
 
     /// sp-y5wki: release.sh dies with no spira-config on PATH.
+    #[test_id(tftp28c)]
     #[test]
     fn a_cut_without_the_spira_config_build_is_caught() {
         let build = "      - name: Build spira-config for release.sh";
@@ -660,6 +665,7 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("cut builds spira-config before release.sh runs")), "{got:?}");
     }
 
+    #[test_id(t9df517)]
     #[test]
     fn a_cut_the_forge_does_not_vouch_for_is_caught() {
         let got = planted(gate, ".conclusion == \"success\")] | length", "true)] | length");
@@ -670,18 +676,21 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("a run short of the corpus refuses")), "{got:?}");
     }
 
+    #[test_id(trmtpal)]
     #[test]
     fn a_push_that_can_reach_cut_is_caught() {
         let got = planted(gate, "inputs.cut == true", "inputs.cut == true || github.event_name == 'push'");
         assert!(got.iter().any(|m| m.contains("a push event cannot reach cut")), "{got:?}");
     }
 
+    #[test_id(tvemal9)]
     #[test]
     fn a_fixed_runner_label_is_caught() {
         let got = planted(gate, "name:", "runs-on: [self-hosted, linux, x64]\nname:");
         assert!(got.iter().any(|m| m.contains("no fixed runner label")), "{got:?}");
     }
 
+    #[test_id(t8pbqwo)]
     #[test]
     fn an_unbounded_suites_job_is_caught() {
         let t = Regex::new(r"(?m)^([ \t]*)timeout-minutes:[ \t]*[0-9]+").unwrap();
@@ -694,6 +703,7 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("timeout-minutes is 400")), "{got:?}");
     }
 
+    #[test_id(tq8a8tm)]
     #[test]
     fn a_dropped_required_action_input_is_caught() {
         let mut w = shipped();
@@ -706,6 +716,7 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("teardown passes required action input pve-ca-cert")), "{got:?}");
     }
 
+    #[test_id(tt2t00h)]
     #[test]
     fn a_job_that_bypasses_a_failed_provision_is_caught() {
         assert!(!provision_if_ok("always() && needs.guard.outputs.already-published != 'true'"));
@@ -715,12 +726,14 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("runs on the provisioned runner")), "{got:?}");
     }
 
+    #[test_id(tmmyuro)]
     #[test]
     fn a_retract_that_ignores_cancellation_is_caught() {
         let got = planted(acc, "needs.acceptance.result != 'success' }}", "needs.acceptance.result == 'failure' }}");
         assert!(got.iter().any(|m| m.contains("retract does not fire on a success")), "{got:?}");
     }
 
+    #[test_id(tyig7bv)]
     #[test]
     fn an_unwired_vm_token_is_caught() {
         let mut w = shipped();
@@ -730,6 +743,7 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("teardown must receive needs.provision.outputs.vm-token")), "{got:?}");
     }
 
+    #[test_id(tc3m9l6)]
     #[test]
     fn a_suites_job_that_never_stages_a_release_is_caught() {
         let got = planted(gate, "      - name: Stage the build as a release", "      - name: Build the release somewhere else");
@@ -740,6 +754,7 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("names the checkout as the repository under test")), "{got:?}");
     }
 
+    #[test_id(tvosm1i)]
     #[test]
     fn build_output_inside_the_checkout_is_caught() {
         let got = planted(gate, "path: ${{ runner.temp }}/build", "path: bin/");
@@ -748,6 +763,7 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("do not run a spira-lint inside the checkout")), "{got:?}");
     }
 
+    #[test_id(ti4769v)]
     #[test]
     fn acceptance_firing_on_a_branch_push_is_caught() {
         let got = planted(acc, "    tags:\n      - 'spira-release-*'", "    branches: [main]");
@@ -757,6 +773,7 @@ mod tests {
         assert!(!on_block("on:\n  push:\n    tags: [x]\njobs:\n  a:\n").contains("jobs"));
     }
 
+    #[test_id(t4gvqh1)]
     #[test]
     fn a_missing_gate_workflow_is_a_finding() {
         let mut w = shipped();
@@ -764,6 +781,7 @@ mod tests {
         assert_eq!(judge(&w), vec![(GATE, "missing".to_string())]);
     }
 
+    #[test_id(tiyn7yi)]
     #[test]
     fn block_extraction_matches_the_suites_awk() {
         let t = "on:\n  push:\n    branches: [main]\n  pull_request:\n    types: [closed]\njobs:\n  cut:\n    if: x\n    outputs:\n      prev-tag: y\n    steps:\n      - name: A\n        run: a\n      - name: B\n  publish:\n    if: z\n";

@@ -33,6 +33,7 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t4b0y2c)]
     #[test]
     fn the_longest_suite_is_first() {
         let m = parse_medians(r#"[{"suite":"test-a.sh","median":3.0,"n":4},{"suite":"test-b.sh","median":300.0,"n":4},{"suite":"test-c.sh","median":3.0,"n":4}]"#).unwrap();
@@ -41,6 +42,7 @@ mod tests {
         assert!(unknown.is_empty());
     }
 
+    #[test_id(t1p1c90)]
     #[test]
     fn unrecorded_suites_go_first_and_are_named() {
         let m = parse_medians(r#"[{"suite":"test-b.sh","median":300.0,"n":4}]"#).unwrap();
@@ -49,6 +51,7 @@ mod tests {
         assert_eq!(unknown, names(&["test-n.sh", "test-z.sh"]));
     }
 
+    #[test_id(t6f552w)]
     #[test]
     fn the_list_covers_exactly_the_corpus() {
         let m = parse_medians(r#"[{"suite":"gone.sh","median":999.0,"n":1}]"#).unwrap();
@@ -58,6 +61,7 @@ mod tests {
         assert_eq!(list, all);
     }
 
+    #[test_id(tgiiqfx)]
     #[test]
     fn a_non_report_is_refused() {
         assert!(parse_medians("garbage").is_err());

@@ -110,6 +110,7 @@ mod tests {
         (name.into(), SuiteHeaders::parse(text))
     }
 
+    #[test_id(t1dklef)]
     #[test]
     fn a_planted_gap_is_named_with_its_suites_and_a_present_one_is_not() {
         let suites = [

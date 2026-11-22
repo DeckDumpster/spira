@@ -52,6 +52,7 @@ pub fn epoch_of_iso(iso: &str) -> Option<u64> {
 mod tests {
     use super::{epoch_of_iso, iso_of, now_iso, now_secs};
 
+    #[test_id(tnymlf5)]
     #[test]
     fn a_stamp_reads_back_to_the_epoch_it_was_rendered_from() {
         for secs in [0, 1_793_166_343, 951_782_400, 4_102_444_799] {
@@ -62,12 +63,14 @@ mod tests {
         assert_eq!(epoch_of_iso("not a stamp at all!!"), None);
     }
 
+    #[test_id(tf8ugyq)]
     #[test]
     fn epoch_seconds_render_as_utc() {
         assert_eq!(iso_of(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso_of(1_793_166_343), "2026-10-28T05:45:43Z");
     }
 
+    #[test_id(t6iedls)]
     #[test]
     fn the_clock_is_read_without_a_date_program() {
         let (before, iso, after) = (now_secs(), now_iso(), now_secs());

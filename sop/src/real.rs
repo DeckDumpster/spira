@@ -264,12 +264,14 @@ pub fn commit_page(out_path: &str, subject: &str) -> Result<Option<String>, Stri
 mod tests {
     use super::*;
 
+    #[test_id(taovhd7)]
     #[test]
     fn iso_formatting_matches_a_known_instant() {
         // 2026-09-30T00:00:00Z
         assert_eq!(fmt_iso(1790726400), "2026-09-30T00:00:00Z");
     }
 
+    #[test_id(tmcybss)]
     #[test]
     fn iso_formatting_handles_a_mid_day_time() {
         // 2026-09-30T13:45:07Z = 1790726400 + 13*3600 + 45*60 + 7
@@ -283,6 +285,7 @@ mod vtime_tests {
     use super::*;
     use crate::ports::Clock;
 
+    #[test_id(t0ovp00)]
     #[test]
     fn real_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock { tz: "UTC".into() }.now().0);
@@ -307,6 +310,7 @@ mod door_tests {
         }
     }
 
+    #[test_id(tw1mlfg)]
     #[test]
     fn forget_recall_remember_note_and_memories_are_content_requests() {
         let t = Arc::new(Recorded(Mutex::default()));
@@ -330,6 +334,7 @@ mod door_tests {
         );
     }
 
+    #[test_id(tn1vpbv)]
     #[test]
     fn a_refused_remember_carries_the_stores_text_and_the_exit() {
         struct Refuses;

@@ -118,6 +118,7 @@ impl World for Beads {
 }
 
 // covers: UC-test-infrastructure-37
+#[test_id(tjzip5d)]
 #[test]
 fn a_flaky_annotation_files_one_bead_and_a_red_twice_one_p1_deduplicated_raised_and_emitted_by_gate_retry() {
     let root = testkit::TempDir::new("gate-check-filing");

@@ -153,6 +153,7 @@ pub fn summarize(rows: &[Row], warn_pct: i64) -> (bool, String) {
 mod tests {
     use super::*;
 
+    #[test_id(tlte8ji)]
     #[test]
     fn the_unit_list_is_the_configured_words_and_nothing_else() {
         assert_eq!(units_of("dolt-beads.service  spira-runtime.service"), vec!["dolt-beads.service", "spira-runtime.service"]);
@@ -165,16 +166,19 @@ mod tests {
         Some(Sample { periods: p, throttled: t })
     }
 
+    #[test_id(tnnipii)]
     #[test]
     fn parses_a_real_shaped_cpu_stat() {
         assert_eq!(parse_cpu_stat(STAT), s(1088059, 657510));
     }
 
+    #[test_id(tvcj8h1)]
     #[test]
     fn a_cpu_stat_missing_the_throttle_counters_is_unreadable() {
         assert_eq!(parse_cpu_stat("usage_usec 1\n"), None);
     }
 
+    #[test_id(txjlhs6)]
     #[test]
     fn the_production_incident_numbers_breach() {
         let r = read(s(0, 0), s(1088059, 657510), 100);
@@ -182,12 +186,14 @@ mod tests {
         assert!(disp(&r, 5).starts_with("FAULT (60%"));
     }
 
+    #[test_id(t0vg9jv)]
     #[test]
     fn five_percent_exactly_is_not_a_breach_and_just_over_is() {
         assert!(!breached(&read(s(0, 0), s(1000, 50), 100), 5));
         assert!(breached(&read(s(0, 0), s(1000, 51), 100), 5));
     }
 
+    #[test_id(t179da5)]
     #[test]
     fn the_ratio_is_the_interval_not_the_lifetime() {
         // Heavily throttled history, clean interval since.
@@ -196,17 +202,20 @@ mod tests {
         assert!(breached(&read(s(1000, 0), s(2000, 500), 100), 5));
     }
 
+    #[test_id(ti1jxa4)]
     #[test]
     fn an_unfenced_unit_never_advances_periods_and_reads_idle() {
         assert_eq!(read(s(0, 0), s(0, 0), 100), Reading::Idle);
         assert!(!breached(&Reading::Idle, 5));
     }
 
+    #[test_id(tpt6n6t)]
     #[test]
     fn a_throttle_with_too_few_periods_is_not_load() {
         assert_eq!(read(s(0, 0), s(10, 10), 100), Reading::Idle);
     }
 
+    #[test_id(tzrodfc)]
     #[test]
     fn unreadable_is_unknown_and_never_a_breach_or_a_clear() {
         let r = read(s(0, 0), None, 100);
@@ -215,12 +224,14 @@ mod tests {
         assert!(!breached(&r, 5));
     }
 
+    #[test_id(t0ymzkn)]
     #[test]
     fn first_sight_and_counter_reset_are_a_baseline() {
         assert_eq!(read(None, s(5000, 5000), 100), Reading::Baseline);
         assert_eq!(read(s(5000, 10), s(100, 0), 100), Reading::Baseline);
     }
 
+    #[test_id(tzatiuq)]
     #[test]
     fn state_round_trips_and_skips_junk() {
         let mut m = BTreeMap::new();

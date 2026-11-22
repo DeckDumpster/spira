@@ -2,6 +2,7 @@ use super::*;
 
 /// The store's socket is absent when the client calls, and comes up 300 ms later: the write
 /// waits for it and is applied once.
+#[test_id(tpiz6wy)]
 #[test]
 fn a_hold_issued_before_the_socket_exists_is_applied_once_when_it_is_bound() {
     let (w, c) = (World::new(), Content::default());
@@ -26,6 +27,7 @@ fn a_hold_issued_before_the_socket_exists_is_applied_once_when_it_is_bound() {
     assert_eq!(history.matches("\"event\": \"Hold\"").count(), 1, "{history}");
 }
 
+#[test_id(thl9vdz)]
 #[test]
 fn hold_held_and_unhold_are_answered_by_the_socket_with_the_clis_exit_codes() {
     let (w, c) = (World::new(), Content::default());

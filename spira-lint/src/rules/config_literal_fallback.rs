@@ -306,6 +306,7 @@ mod tests {
         ConfigLiteralFallback.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tmgjzd5)]
     #[test]
     fn catches_the_tmp_spira_literal_and_the_spira_run_fallback() {
         let t = TempDir::new("clf-fail");
@@ -325,6 +326,7 @@ mod tests {
         );
     }
 
+    #[test_id(tlmnmty)]
     #[test]
     fn catches_a_non_path_identity_default_and_a_path_shaped_default_on_any_key() {
         let t = TempDir::new("clf-fail2");
@@ -341,6 +343,7 @@ mod tests {
         assert!(got[1].contains(":3:") && got[1].contains("SPIRA_MEMORIES_CACHE"));
     }
 
+    #[test_id(t5de0yu)]
     #[test]
     fn a_bare_command_name_default_on_a_non_identity_key_is_not_flagged() {
         let t = TempDir::new("clf-pass-cmd");
@@ -352,6 +355,7 @@ mod tests {
         assert!(run(&t, &["c/src/main.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(txl5gmb)]
     #[test]
     fn a_registered_key_is_refused_a_literal_or_empty_default_but_an_unregistered_one_is_not() {
         let t = TempDir::new("clf-registered");
@@ -369,6 +373,7 @@ mod tests {
         assert!(got[0].contains(":2:") && got[1].contains(":3:"));
     }
 
+    #[test_id(tzwcvni)]
     #[test]
     fn unwrap_or_default_is_never_a_finding() {
         let t = TempDir::new("clf-pass-default");
@@ -377,6 +382,7 @@ mod tests {
         assert!(run(&t, &["d/src/main.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(ttc8vyv)]
     #[test]
     fn a_longer_path_that_merely_starts_with_tmp_spira_is_not_a_prefix_match() {
         let t = TempDir::new("clf-pass-prefix");
@@ -385,6 +391,7 @@ mod tests {
         assert!(run(&t, &["e/src/main.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(tmkzzj0)]
     #[test]
     fn test_code_is_exempt_wherever_it_lives() {
         let t = TempDir::new("clf-pass-test");
@@ -401,6 +408,7 @@ mod tests {
         assert!(run(&t, &["f/src/lib.rs", "f/tests/it.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(tj1olju)]
     #[test]
     fn comments_and_strings_naming_the_pattern_are_not_findings() {
         let t = TempDir::new("clf-pass-comment");
@@ -412,6 +420,7 @@ mod tests {
         assert!(run(&t, &["g/src/main.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(t7erdqg)]
     #[test]
     fn allow_listed_file_is_skipped_and_a_stale_entry_is_refused() {
         let t = TempDir::new("clf-allow");
@@ -428,6 +437,7 @@ mod tests {
         );
     }
 
+    #[test_id(tqz7p91)]
     #[test]
     fn no_rust_files_is_a_refusal() {
         let t = TempDir::new("clf-empty");

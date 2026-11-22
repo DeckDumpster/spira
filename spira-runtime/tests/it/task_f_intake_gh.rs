@@ -58,6 +58,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     r
 }
 
+#[test_id(tp3effl)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
@@ -69,6 +70,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(tgbgyde)]
 #[test]
 fn t2_an_idle_tick_journals_nothing_and_asks_only_for_its_probe() {
     let mut r = rig(1, |_| snap(vec![issue(1, "ryan")], vec![]));
@@ -77,6 +79,7 @@ fn t2_an_idle_tick_journals_nothing_and_asks_only_for_its_probe() {
     running(&r);
 }
 
+#[test_id(ta11gl7)]
 #[test]
 fn t3_every_legal_transition_is_taken_and_an_illegal_one_is_refused_naming_the_state() {
     for t in TRANSITIONS {
@@ -86,6 +89,7 @@ fn t3_every_legal_transition_is_taken_and_an_illegal_one_is_refused_naming_the_s
     assert!(refused.contains("WorkFiled"), "{refused}");
 }
 
+#[test_id(t4yvpiw)]
 #[test]
 fn t3_the_carry_read_is_the_carry_recorded() {
     let (next, _) = decide(&Carry::default(), &snap(vec![issue(1, "ryan"), issue(2, "x")], vec![]));
@@ -94,6 +98,7 @@ fn t3_the_carry_read_is_the_carry_recorded() {
     assert_eq!(back, next);
 }
 
+#[test_id(txuetfz)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -105,6 +110,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(ta9w2jo)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -113,6 +119,7 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(tucvf48)]
 #[test]
 fn t5_parity_the_first_read_files_nothing_and_a_trusted_issue_becomes_work() {
     let (seeded, acts) = decide(&Carry::default(), &snap(vec![issue(1, "ryan")], vec![]));
@@ -139,6 +146,7 @@ fn boot_matches(make: impl Fn() -> TaskRig) {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
+#[test_id(t1r6yqe)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&baselined(a_new_issue), NAME);
@@ -147,11 +155,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(torij50)]
 #[test]
 fn a_boot_files_a_new_issue_rather_than_baselining_it_away() {
     boot_matches(|| baselined(a_new_issue));
 }
 
+#[test_id(ttbhrvk)]
 #[test]
 fn a_boot_keeps_the_last_good_fetch_so_a_long_rate_limit_still_alarms() {
     boot_matches(|| baselined(rate_limited_for_hours));

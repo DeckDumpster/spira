@@ -80,6 +80,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttff40u)]
     #[test]
     fn a_member_at_the_tip_a_red_was_attributed_to_is_left_out_and_filed_once() {
         let run = testkit::TempDir::new("batcher-cut-redtip");
@@ -100,6 +101,7 @@ mod tests {
         );
     }
 
+    #[test_id(tydtosv)]
     #[test]
     fn a_new_tip_or_another_repo_is_cut() {
         let run = testkit::TempDir::new("batcher-cut-redtip-moved");
@@ -132,6 +134,7 @@ mod tests {
         );
     }
 
+    #[test_id(tbk7fsy)]
     #[test]
     fn an_absolved_tip_is_no_longer_withheld() {
         let run = testkit::TempDir::new("batcher-cut-redtip-absolved");
@@ -198,6 +201,7 @@ pub fn clear_unnamed(run: &Path, repo: &str) {
 mod unnamed_tests {
     use super::*;
 
+    #[test_id(tedo64f)]
     #[test]
     fn a_kept_unnamed_red_reads_back_and_clears() {
         let tmp = testkit::TempDir::new("redtip-unnamed");

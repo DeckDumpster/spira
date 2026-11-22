@@ -1,8 +1,10 @@
 //! `GitTree` against a real throwaway repository, and `cr pick` over it.
 
+#[macro_use]
+extern crate spira_test_id;
+
 #[path = "../src/tests/gh.rs"]
 mod gh;
-
 use cr::cli::run;
 use cr::ports::{Config, GitTree, Ports, SourceTree, VirtualClock};
 use std::path::Path;
@@ -38,6 +40,7 @@ fn repo() -> testkit::TempDir {
     dir
 }
 
+#[test_id(tj1lnr3)]
 #[test]
 fn git_tree_reads_the_resolved_commit_not_the_working_tree() {
     let dir = repo();
@@ -51,6 +54,7 @@ fn git_tree_reads_the_resolved_commit_not_the_working_tree() {
     assert!(GitTree::new(dir.path().to_str().unwrap(), "no-such-ref").is_err());
 }
 
+#[test_id(tdd7mwv)]
 #[test]
 fn cr_pick_runs_over_a_real_git_tree() {
     let dir = repo();
@@ -64,6 +68,7 @@ fn cr_pick_runs_over_a_real_git_tree() {
     assert_eq!(v["weight"]["commits"], 2);
 }
 
+#[test_id(t967db9)]
 #[test]
 fn git_tree_reads_the_full_log_line_times_and_deleted_tests_of_a_real_history() {
     let dir = testkit::TempDir::new("cr-git-history");
@@ -83,6 +88,7 @@ fn git_tree_reads_the_full_log_line_times_and_deleted_tests_of_a_real_history() 
     assert_eq!(removed.iter().map(|r| (r.name.as_str(), r.sha.as_str())).collect::<Vec<_>>(), [("gone", log[0].sha.as_str())]);
 }
 
+#[test_id(tqtoxhv)]
 #[test]
 fn renames_and_changed_lines_come_from_git() {
     let dir = repo();

@@ -5,8 +5,7 @@ edition = "2021"
 description = "mender — what a mender dwarf is given and how it answers: the evidence pack for one failing suite, the whole-bead context, the read verbs, and the triage outcomes recorded on the MENDING row."
 
 [features]
-integration = ["lifecycle/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "suite-select/integration"]
-
+integration = ["lifecycle/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "suite-select/integration", "spira-test-id/integration"]
 [dependencies]
 lifecycle = { path = "../lifecycle" }
 serde = { version = "1", features = ["derive"] }
@@ -24,3 +23,5 @@ path = "src/lib.rs"
 name = "mender"
 path = "src/main.rs"
 
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }

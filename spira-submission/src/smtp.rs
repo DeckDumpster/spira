@@ -462,6 +462,7 @@ mod tests {
         fn log(&self, _: &str) {}
     }
 
+    #[test_id(taiwme9)]
     #[test]
     fn a_refused_outcome_reaches_the_sink_with_its_reason_and_an_accepted_one_does_not() {
         let s = Recording::default();
@@ -470,6 +471,7 @@ mod tests {
         assert_eq!(*s.refused.borrow(), ["10.0.0.3:6666|ryan|x@y|relay denied to \"a@b\""]);
     }
 
+    #[test_id(tqnt2h4)]
     #[test]
     fn the_default_accept_delivers_the_message_alone() {
         let s = Recording::default();

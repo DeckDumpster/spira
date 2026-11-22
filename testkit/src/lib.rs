@@ -1,5 +1,8 @@
 //! Test scaffolding shared across the workspace. Contract: DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::ops::Deref;
@@ -301,6 +304,7 @@ fn built_beside(test_exe: &Path, name: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[test_id(tc000z5)]
     #[test]
     #[should_panic(expected = "CARGO_MANIFEST_DIR is not set")]
     fn manifest_dir_refuses_when_unset() {
@@ -308,12 +312,14 @@ mod tests {
         manifest_dir();
     }
 
+    #[test_id(tt037tu)]
     #[test]
     fn manifest_dir_reads_the_variable_at_run_time() {
         let _g = env(&[("CARGO_MANIFEST_DIR", Some("x"))]);
         assert_eq!(manifest_dir(), PathBuf::from("x"));
     }
 
+    #[test_id(trgk0ku)]
     #[test]
     fn bin_beside_is_the_profile_directory_above_deps() {
         assert_eq!(
@@ -322,12 +328,14 @@ mod tests {
         );
     }
 
+    #[test_id(tzm4xdm)]
     #[test]
     #[should_panic(expected = "is not under <target>/<profile>/deps")]
     fn bin_beside_refuses_an_exe_with_no_profile_directory() {
         bin_beside(Path::new("x"), "a");
     }
 
+    #[test_id(t0rq2lc)]
     #[test]
     fn a_binary_beside_the_test_exe_is_found() {
         let t = TempDir::new("testkit-bin");
@@ -336,12 +344,14 @@ mod tests {
         assert_eq!(built_beside(&t.join("debug/deps/x-1"), "a"), t.join("debug/a"));
     }
 
+    #[test_id(t3uc07s)]
     #[test]
     #[should_panic(expected = "binary no-such-bin-xyz is not built")]
     fn bin_exe_refuses_a_binary_that_is_not_built() {
         bin_exe("no-such-bin-xyz");
     }
 
+    #[test_id(twudxv2)]
     #[test]
     fn a_temp_dir_is_fresh_distinct_and_gone_after_drop() {
         let a = TempDir::new("testkit-td");
@@ -356,6 +366,7 @@ mod tests {
         assert!(b.is_dir());
     }
 
+    #[test_id(ts5207n)]
     #[test]
     fn a_panicking_test_still_removes_its_dir() {
         let (tx, rx) = std::sync::mpsc::channel();

@@ -243,6 +243,7 @@ pub static PENDING: &[Task] = &[];
 mod tests {
     use super::*;
 
+    #[test_id(trul97k)]
     #[test]
     fn every_pending_row_declares_each_effect_once_and_has_a_runner_for_each_unshared_one() {
         // `inbox.append` and the Units port's `unit.*` effects are in `SHARED`, not on a row.
@@ -259,6 +260,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcbu2f8)]
     #[test]
     fn no_pending_row_shares_a_name_or_a_stream_with_the_service() {
         let mut families: Vec<&[Task]> = crate::tasks::FAMILIES.to_vec();

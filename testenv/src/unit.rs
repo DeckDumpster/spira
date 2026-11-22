@@ -413,6 +413,7 @@ mod tests {
 
     const RED: &str = "running 2 tests\ntest a::ok ... ok\ntest a::bad ... FAILED\n\nfailures:\n\n---- a::bad stdout ----\nthread 'a::bad' panicked at src/a.rs:9:5:\nassertion `left == right` failed\n  left: 1\n right: 2\n\nfailures:\n    a::bad\n\nVERDICT RED ran=1 red=unit-tests.sh\n";
 
+    #[test_id(to4ooud)]
     #[test]
     fn a_red_output_names_the_failing_test_and_its_first_three_lines() {
         let f = failing(RED);
@@ -424,6 +425,7 @@ mod tests {
         assert_eq!(failing("test a ... FAILED\ntest b ... FAILED\ntest a ... FAILED\n").len(), 2);
     }
 
+    #[test_id(tqtcqrc)]
     #[test]
     fn direct_selects_the_touched_crate_and_its_direct_dependents_only() {
         let pkg = |n: &str, dep: Option<&str>| {
@@ -444,6 +446,7 @@ mod tests {
         assert_eq!(names(true), vec!["leaf", "mid", "top"]);
     }
 
+    #[test_id(t7va1xb)]
     #[test]
     fn named_crates_are_written_whatever_the_diff_touches_and_a_stranger_is_refused() {
         let t = testkit::TempDir::new("testenv-unit-named");
@@ -464,6 +467,7 @@ mod tests {
         assert!(e.contains("nosuch"), "{e}");
     }
 
+    #[test_id(tzngm9p)]
     #[test]
     fn write_holding_writes_the_members_whose_sources_name_the_test() {
         let t = testkit::TempDir::new("testenv-unit-holding");
@@ -482,6 +486,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(crates_path(tree)).unwrap(), "");
     }
 
+    #[test_id(tbne6ze)]
     #[test]
     fn the_build_line_the_tier_writes_is_the_one_the_gate_runs() {
         let git = |dir: &Path, args: &[&str]| {
@@ -508,12 +513,14 @@ mod tests {
         assert_eq!(gate_build.1.strip_prefix("CARGO_BUILD_JOBS=7 ").unwrap(), written.join(" "));
     }
 
+    #[test_id(txeiznx)]
     #[test]
     fn a_green_output_names_no_failing_test() {
         assert!(failing("test a::ok ... ok\ntest result: ok.\n").is_empty());
         assert!(failing_report("test a::ok ... ok\n").is_empty());
     }
 
+    #[test_id(tsxmy5x)]
     #[test]
     fn write_skip_writes_the_names_and_removes_the_file_when_none_remain() {
         let dir = testkit::TempDir::new("skip");
@@ -525,6 +532,7 @@ mod tests {
         write_skip(dir.path(), &[]).unwrap();
     }
 
+    #[test_id(tapvgok)]
     #[test]
     fn write_deny_turns_unit_and_integration_rows_into_test_paths_and_removes_the_file_when_none() {
         let dir = testkit::TempDir::new("deny");
@@ -536,6 +544,7 @@ mod tests {
         assert!(!path.exists());
     }
 
+    #[test_id(tc4f3k9)]
     #[test]
     fn an_empty_crate_list_is_doubted_for_an_empty_diff_or_a_rust_path_and_believed_for_docs() {
         let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -547,6 +556,7 @@ mod tests {
         assert_eq!(doubt(&p(&["notes.md", "spira/x.sh", "Cargo.toml.md"])), None);
     }
 
+    #[test_id(tavddip)]
     #[test]
     fn the_caller_name_resolves_to_the_script_and_other_names_pass_through() {
         assert_eq!(resolve("unit-tests"), "unit-tests.sh");
@@ -562,6 +572,7 @@ mod tests {
         {"name":"plain","metadata":null},
         {"name":"bad","metadata":{"spira":{"test-bins":["ghost"]}}}]}"#;
 
+    #[test_id(tuefyll)]
     #[test]
     fn a_selected_crate_declaring_test_bins_names_them_and_one_declaring_nothing_adds_none() {
         assert_eq!(test_bins(META, &["rt".into(), "plain".into()]).unwrap(), ["lc"]);
@@ -569,6 +580,7 @@ mod tests {
         assert!(test_bins(META, &["lc".into()]).unwrap().is_empty());
     }
 
+    #[test_id(ttlfbx8)]
     #[test]
     fn the_tests_libtest_ran_are_its_ok_and_failed_lines_and_never_an_ignored_one() {
         let out = "running 3 tests\n\
@@ -583,6 +595,7 @@ mod tests {
         assert!(tests_ran("running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out\n").is_empty());
     }
 
+    #[test_id(tb2k8a5)]
     #[test]
     fn a_crate_holds_a_name_its_own_sources_or_source_paths_contain_and_never_one_only_a_nested_member_or_target_contains() {
         let t = testkit::TempDir::new("testenv-unit-holding");
@@ -611,11 +624,13 @@ mod tests {
         assert_eq!(held(&["::"]), ["outer", "inner", "plain"]);
     }
 
+    #[test_id(tqflkvz)]
     #[test]
     fn a_test_bin_that_is_not_a_workspace_crate_is_refused() {
         assert!(test_bins(META, &["bad".into()]).unwrap_err().contains("ghost"));
     }
 
+    #[test_id(tiestaa)]
     #[test]
     fn the_finished_line_gives_the_build_seconds_and_no_finished_line_gives_none() {
         let fin = |t: &str| format!("   Compiling a v0.1.0\n    Finished `dwarf` profile [unoptimized] target(s) in {t}\n");
@@ -625,6 +640,7 @@ mod tests {
         assert_eq!(build_seconds("   Compiling a v0.1.0\nerror: could not compile\n"), None);
     }
 
+    #[test_id(t0l3asb)]
     #[test]
     fn read_back_counts_compiled_units_and_names_the_failing_tests() {
         let out = "   Compiling a v1\n   Compiling b v1\n    Finished x in 2.0s\nunit-tests: skipped (needs a running system): t1 t2\ntest m::bad ... FAILED\n";

@@ -287,16 +287,19 @@ pub fn delete(ids: &[String]) -> Option<Result<(), String>> {
 mod tests {
     use super::*;
 
+    #[test_id(tg86u3k)]
     #[test]
     fn a_duration_is_written_as_go_writes_it() {
         assert_eq!([duration_text(0), duration_text(7), duration_text(300), duration_text(7197), duration_text(7200)], ["0s", "7s", "5m0s", "1h59m57s", "2h0m0s"]);
     }
 
+    #[test_id(tfm8vkd)]
     #[test]
     fn a_duration_rounds_halves_away_from_zero() {
         assert_eq!([round_seconds(499_999_999), round_seconds(500_000_000), round_seconds(1_500_000_000), round_seconds(-500_000_000)], [0, 1, 2, -1]);
     }
 
+    #[test_id(tokf2zl)]
     #[test]
     fn a_memory_line_is_cut_where_bd_cuts_it() {
         assert_eq!(memory_line("a\nb"), "a b");
@@ -305,12 +308,14 @@ mod tests {
         assert!(cut.len() <= 80 && cut.ends_with("...") && cut.is_char_boundary(cut.len() - 3), "{cut}");
     }
 
+    #[test_id(tl2h4iz)]
     #[test]
     fn a_key_bd_would_refuse_is_not_taken() {
         assert!([" ", "kv.x", "memory.x", "sync.x", "import.x"].iter().all(|k| !kv_key_allowed(k)));
         assert!(kv_key_allowed("spira.watch.sp-a"));
     }
 
+    #[test_id(to19f9s)]
     #[test]
     fn a_delete_takes_each_row_that_hangs_on_a_bead_before_the_bead_and_settles_its_dependents() {
         let s = delete_script("`d`", &Env::default(), &["sp-a", "sp-b"], &["sp-c"]);

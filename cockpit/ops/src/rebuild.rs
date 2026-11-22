@@ -524,6 +524,7 @@ pub fn now() -> i64 {
 mod tests {
     use super::*;
 
+    #[test_id(txcw7n2)]
     #[test]
     fn state_name_matches_every_variant() {
         assert_eq!(state_name(ServerState::Up), "up");
@@ -532,6 +533,7 @@ mod tests {
         assert_eq!(state_name(ServerState::Wedged), "wedged");
     }
 
+    #[test_id(t8vymsz)]
     #[test]
     fn pane_has_brief_detects_append_system_prompt() {
         // Exercised through classify-only inputs would need /proc; this checks the pure

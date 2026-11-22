@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tit30vd)]
 #[test]
 fn a_landing_moves_the_round_and_every_member_in_one_txn() {
     let r = Rig::new();
@@ -28,6 +29,7 @@ fn a_landing_moves_the_round_and_every_member_in_one_txn() {
     }
 }
 
+#[test_id(thw2jk7)]
 #[test]
 fn a_landing_whose_member_moved_after_the_plan_writes_nothing() {
     let r = Rig::new();
@@ -52,6 +54,7 @@ fn a_landing_whose_member_moved_after_the_plan_writes_nothing() {
     }
 }
 
+#[test_id(twklda8)]
 #[test]
 fn a_batch_event_its_machine_refuses_writes_no_round_and_is_audited() {
     let r = Rig::new();
@@ -84,6 +87,7 @@ fn a_batch_event_its_machine_refuses_writes_no_round_and_is_audited() {
     assert_eq!(r.s.history("b-1", Some("batch")).unwrap().len(), 5);
 }
 
+#[test_id(tzl1i5p)]
 #[test]
 fn a_round_landing_enqueues_one_closeout_for_each_github_member_and_none_for_the_rest() {
     let r = Rig::new().with_refs(&[("sp-a", "github:o/r#7")]);
@@ -100,6 +104,7 @@ fn a_round_landing_enqueues_one_closeout_for_each_github_member_and_none_for_the
     assert!(r.s.gh_closeouts().unwrap().is_empty(), "a repeated landing event enqueues nothing");
 }
 
+#[test_id(thqpevx)]
 #[test]
 fn a_content_on_base_landing_enqueues_one_closeout() {
     let r = Rig::new().with_refs(&[("sp-a", "github:o/r#7")]);

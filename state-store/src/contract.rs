@@ -1672,6 +1672,7 @@ mod phase_tests {
     use crate::mem::MemBackend;
     use crate::phases::{self, Recorder};
 
+    #[test_id(tzb88e4)]
     #[test]
     fn a_tracked_contract_commit_records_the_deadlines_wait_and_one_commit() {
         let clock = VirtualClock::new(1_000_000);
@@ -1685,6 +1686,7 @@ mod phase_tests {
         assert_eq!(s.commits_us.len(), 1);
     }
 
+    #[test_id(tg1uy3w)]
     #[test]
     fn a_write_past_the_thread_deadline_is_refused_unstarted_and_one_before_it_commits() {
         use std::time::{Duration, Instant};
@@ -1774,6 +1776,7 @@ mod phase_tests {
     }
 
     // A probe that waits on the parked write deadlocks this test; the unit tier's nextest slow-timeout reports it.
+    #[test_id(tjg4r85)]
     #[test]
     fn a_write_inside_the_backend_commit_blocks_no_other_deadline_bookkeeping() {
         let clock = VirtualClock::new(1_000_000);
@@ -1799,6 +1802,7 @@ mod phase_tests {
         assert!(acquire, "a lock acquire failed while a write was inside the backend");
     }
 
+    #[test_id(tmrxgt7)]
     #[test]
     fn a_plan_at_a_head_holding_a_renew_reads_the_lock_live_before_the_renew_returns() {
         let clock = VirtualClock::new(1_000_000);
@@ -1821,6 +1825,7 @@ mod phase_tests {
         assert!(got.unwrap().succeeded, "the renewed lock read as absent");
     }
 
+    #[test_id(tixy94e)]
     #[test]
     fn a_removal_applied_after_the_commit_leaves_a_lock_a_later_writer_retook() {
         let clock = VirtualClock::new(1_000_000);
@@ -1841,6 +1846,7 @@ mod phase_tests {
         assert!(c.live(&fence.key()), "the release erased the deadline of the lock taken after it");
     }
 
+    #[test_id(t6gpgnu)]
     #[test]
     fn a_stale_commit_restores_nothing_a_later_writer_set() {
         let clock = VirtualClock::new(1_000_000);
@@ -1860,6 +1866,7 @@ mod phase_tests {
         assert!(c.live(&format!("{LOCKS_PREFIX}r")), "the stale commit's restore removed the winner's deadline");
     }
 
+    #[test_id(tjcgd3a)]
     #[test]
     fn a_commit_that_fails_for_any_reason_leaves_no_deadline_for_a_lock_never_written() {
         let clock = VirtualClock::new(1_000_000);
@@ -1869,6 +1876,7 @@ mod phase_tests {
         assert!(!c.live(&format!("{LOCKS_PREFIX}r")), "a failed commit left a deadline for a lock that was never written");
     }
 
+    #[test_id(tavmqeq)]
     #[test]
     fn a_failed_renew_restores_the_lock_deadline_it_replaced() {
         let clock = VirtualClock::new(1_000_000);

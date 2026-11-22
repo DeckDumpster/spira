@@ -38,6 +38,7 @@ fn over_then_under() -> TaskRig {
     r
 }
 
+#[test_id(tazbns7)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&blind_then_measurable(), NAME);
@@ -46,11 +47,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(tqt2et5)]
 #[test]
 fn a_boot_says_sighted_after_the_blind_spell_it_began_before() {
     kit::assert_boot_matches_an_unstopped_run(blind_then_measurable, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(ts0bkun)]
 #[test]
 fn a_boot_says_clear_for_a_backlog_that_was_over_before_it() {
     kit::assert_boot_matches_an_unstopped_run(over_then_under, registration, STREAM, EventKind::new(TICK, ""));

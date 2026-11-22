@@ -2,6 +2,8 @@
 //! endpoint through a recording fake curl (no process is started), the outbox, a
 //! restore from the uploaded objects and the drill's fold-and-compare.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -89,6 +91,7 @@ impl Proc for Curl {
     }
 }
 
+#[test_id(t5txm05)]
 #[test]
 fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_under_the_same_name(
 ) {
@@ -272,6 +275,7 @@ fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, 
     (c, s)
 }
 
+#[test_id(tze8fc6)]
 #[test]
 fn the_drill_passes_on_the_uploaded_objects_and_names_its_exclusions() {
     let dir = TempDir::new("drill-pass");
@@ -354,6 +358,7 @@ fn flipped(b: &SqliteBackend, key: &str) -> Vec<u8> {
     v
 }
 
+#[test_id(t2nj9ko)]
 #[test]
 fn a_flipped_byte_in_a_restored_value_fails_the_drill_naming_the_key() {
     let dir = TempDir::new("drill-flip");
@@ -395,6 +400,7 @@ fn capped(path: &Path) -> SqliteBackend {
     SqliteBackend::open(path, opts).unwrap()
 }
 
+#[test_id(thsfqvi)]
 #[test]
 fn the_drill_gives_its_verdict_when_one_read_of_the_keyspace_would_pass_max_read_ms() {
     let dir = TempDir::new("drill-capped");
@@ -421,6 +427,7 @@ fn the_drill_gives_its_verdict_when_one_read_of_the_keyspace_would_pass_max_read
     assert_eq!(rep.mismatches, [Mismatch::Value { key: key.into() }], "{}", drill::render(&rep));
 }
 
+#[test_id(tptyh1v)]
 #[test]
 fn a_live_key_no_audited_write_produced_fails_the_drill_under_any_other_prefix() {
     let dir = TempDir::new("drill-unfolded");
@@ -448,6 +455,7 @@ fn a_live_key_no_audited_write_produced_fails_the_drill_under_any_other_prefix()
     );
 }
 
+#[test_id(tta4daa)]
 #[test]
 fn a_restore_with_one_run_missing_refuses_naming_the_gap() {
     let dir = TempDir::new("restore-gap");
@@ -478,6 +486,7 @@ fn a_restore_with_one_run_missing_refuses_naming_the_gap() {
     assert!(c.backend().head().unwrap() > to);
 }
 
+#[test_id(trixa1h)]
 #[test]
 fn a_snapshot_of_a_store_larger_than_a_tick_copies_finishes_in_one_tick_and_holds_its_revision() {
     let dir = TempDir::new("ship-onepass");
@@ -518,6 +527,7 @@ fn a_snapshot_of_a_store_larger_than_a_tick_copies_finishes_in_one_tick_and_hold
     assert_eq!(keys_at(&copy, rev), keys_at(c.backend(), rev));
 }
 
+#[test_id(tbv8sav)]
 #[test]
 fn an_audit_record_that_does_not_describe_its_txn_fails_the_drill_naming_it() {
     let dir = TempDir::new("drill-event");
@@ -548,6 +558,7 @@ fn an_audit_record_that_does_not_describe_its_txn_fails_the_drill_naming_it() {
     }
 }
 
+#[test_id(tp89iom)]
 #[test]
 fn local_copies_keep_two_snapshots_and_the_runs_after_the_older_and_still_drill() {
     let dir = TempDir::new("ship-prune");
@@ -597,6 +608,7 @@ fn local_copies_keep_two_snapshots_and_the_runs_after_the_older_and_still_drill(
     assert!(rep.passed(), "{}", drill::render(&rep));
 }
 
+#[test_id(tmj22xu)]
 #[test]
 fn a_snapshot_that_changed_after_it_was_staged_is_refused_by_the_drill() {
     let dir = TempDir::new("drill-snapshot-sum");
@@ -617,6 +629,7 @@ fn a_snapshot_that_changed_after_it_was_staged_is_refused_by_the_drill() {
     );
 }
 
+#[test_id(t8ge0ea)]
 #[test]
 fn an_idle_store_takes_no_second_snapshot_at_the_same_revision_and_another_history_is_refused() {
     let dir = TempDir::new("ship-idle");
@@ -658,6 +671,7 @@ fn an_idle_store_takes_no_second_snapshot_at_the_same_revision_and_another_histo
     );
 }
 
+#[test_id(t89remx)]
 #[test]
 fn a_ttl_d_key_deleted_by_an_audited_write_but_still_restored_missing_is_a_mismatch_not_ttl_swept()
 {
@@ -699,6 +713,7 @@ fn live(b: &SqliteBackend) -> Vec<(String, Vec<u8>)> {
     keys_at(b, b.head().unwrap())
 }
 
+#[test_id(t87ydes)]
 #[test]
 fn commits_made_then_the_store_dropped_without_a_stop_hook_ship_every_revision_with_no_snapshot_out_of_cadence(
 ) {
@@ -735,6 +750,7 @@ fn commits_made_then_the_store_dropped_without_a_stop_hook_ship_every_revision_w
     assert_eq!(live(&restored), live(c.backend()));
 }
 
+#[test_id(tadgnh6)]
 #[test]
 fn shipped_entries_leave_the_outbox_and_unshipped_ones_stay() {
     let dir = TempDir::new("ship-outbox-release");
@@ -774,6 +790,7 @@ fn shipped_entries_leave_the_outbox_and_unshipped_ones_stay() {
     assert!(b.outbox_mains().unwrap().is_empty());
 }
 
+#[test_id(trg9a01)]
 #[test]
 fn an_outbox_entry_above_the_main_head_at_open_is_removed() {
     use state_store::{LogEntry, Rev};
@@ -794,6 +811,7 @@ fn an_outbox_entry_above_the_main_head_at_open_is_removed() {
     assert_eq!(b.outbox_mains().unwrap().last(), Some(&head), "the commit that never happened is gone");
 }
 
+#[test_id(tts44ah)]
 #[test]
 fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resumes_after_it() {
     let dir = TempDir::new("ship-outbox-gap");
@@ -828,6 +846,7 @@ fn reopened(path: &Path) -> SqliteBackend {
     open(path)
 }
 
+#[test_id(ty5dhio)]
 #[test]
 fn reopening_a_store_jumps_its_head_records_the_jump_and_commits_in_normal_mode() {
     let dir = TempDir::new("jump-reopen");
@@ -849,6 +868,7 @@ fn reopening_a_store_jumps_its_head_records_the_jump_and_commits_in_normal_mode(
     assert_eq!(quiet.head().unwrap(), jumped + 1, "a verifying open leaves the revisions as they are");
 }
 
+#[test_id(tp80nvj)]
 #[test]
 fn a_jump_at_the_head_with_nothing_after_it_is_shipped() {
     let dir = TempDir::new("jump-ship-head");
@@ -866,6 +886,7 @@ fn a_jump_at_the_head_with_nothing_after_it_is_shipped() {
     assert_eq!(s.shipped_through().unwrap(), head, "the jump ships, so the lag clears and compaction can follow");
 }
 
+#[test_id(tqfhvfn)]
 #[test]
 fn a_restore_across_a_jump_reproduces_the_head_the_contents_and_the_jump() {
     let dir = TempDir::new("jump-restore");

@@ -323,6 +323,7 @@ pub fn run(w: &World, plan: &Plan, head: &str) -> Outcome {
 mod release_bin_tests {
     use super::*;
 
+    #[test_id(t3iakd5)]
     #[test]
     fn a_bin_dir_without_a_release_binary_refuses_naming_it() {
         let root = testkit::TempDir::new("deploy-release-bin");
@@ -337,6 +338,7 @@ mod release_bin_tests {
         );
     }
 
+    #[test_id(trf0efo)]
     #[test]
     fn no_bin_dir_runs_the_declared_releases_own_binary() {
         assert_eq!(

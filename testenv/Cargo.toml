@@ -46,8 +46,7 @@ path = "tests/test_sandbox.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["gate/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration"]
-
+integration = ["gate/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "suite-select/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
@@ -64,6 +63,7 @@ system-paths = { path = "../system-paths" }
 
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 toml = "0.8"
 

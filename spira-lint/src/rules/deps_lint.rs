@@ -147,6 +147,7 @@ mod tests {
         DepsLint.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tqb9x3z)]
     #[test]
     fn a_planted_shell_probe_is_caught_then_clears() {
         let t = TempDir::new("deps-sh");
@@ -159,6 +160,7 @@ mod tests {
         assert!(run(&t, &[MANIFEST, "spira/planted.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tiawsuf)]
     #[test]
     fn a_planted_rust_spawn_is_caught_then_clears() {
         let t = TempDir::new("deps-rs");
@@ -171,12 +173,14 @@ mod tests {
         assert!(run(&t, &[MANIFEST, "src/main.rs"]).unwrap().is_empty());
     }
 
+    #[test_id(tvnw1lq)]
     #[test]
     fn a_spira_script_probe_is_not_an_external_program() {
         assert!(shell_probes("if command -v land-build-ensure.sh >/dev/null; then :; fi\ncommand -v x.py\n").is_empty());
         assert_eq!(shell_probes("command -v spira-config >/dev/null\n"), vec![(1, "spira-config".to_string())]);
     }
 
+    #[test_id(tqt1cqr)]
     #[test]
     fn comments_and_quoted_probes_are_not_probes() {
         let text = format!("# command -v {PLANT}\necho \"try command -v {PLANT}\"\n");
@@ -184,6 +188,7 @@ mod tests {
         assert_eq!(shell_probes(&format!("x && command -v {PLANT}\n")), vec![(1, PLANT.to_string())]);
     }
 
+    #[test_id(twvnly7)]
     #[test]
     fn nested_shell_is_out_of_scope() {
         let t = TempDir::new("deps-nest");
@@ -193,6 +198,7 @@ mod tests {
         assert!(run(&t, &[MANIFEST, "spira/hooks/x.sh", "spira/y.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tj1ig7l)]
     #[test]
     fn a_missing_or_empty_manifest_refuses_to_report_clean() {
         let t = TempDir::new("deps-none");

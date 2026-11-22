@@ -504,6 +504,7 @@ impl Files {
 mod tests {
     use super::*;
 
+    #[test_id(tjlro9s)]
     #[test]
     fn a_day_is_the_utc_day_of_the_epoch_millisecond() {
         assert_eq!(day_of(0), 0);
@@ -512,6 +513,7 @@ mod tests {
         assert_eq!(date_of(day_of(1_728_000_000_000)), "2024-10-04");
     }
 
+    #[test_id(tqa3smr)]
     #[test]
     fn dates_round_trip_through_days_across_leap_years_and_the_epoch() {
         for day in (-700_000..2_000_000).step_by(37) {
@@ -522,6 +524,7 @@ mod tests {
         assert_eq!(date_of(19_783), "2024-03-01");
     }
 
+    #[test_id(t2qe2el)]
     #[test]
     fn only_a_real_calendar_date_names_a_day() {
         for bad in ["", "2024-1-04", "2024-13-01", "2023-02-29", "2024-10-4x", "x2024-10-04", "2024/10/04", "2024-10-044"] {
@@ -529,6 +532,7 @@ mod tests {
         }
     }
 
+    #[test_id(t29ssmi)]
     #[test]
     fn a_file_is_named_for_its_stem_family_and_day_and_only_that_name_parses_back() {
         let day = parse_date("2024-10-04").unwrap();
@@ -543,6 +547,7 @@ mod tests {
         assert_eq!(stem_of(Path::new("srv/control")), "control");
     }
 
+    #[test_id(tq2xz0e)]
     #[test]
     fn the_mark_keeps_today_and_yesterday_for_receipts_and_retires_the_day_before() {
         let today = 20_000;
@@ -551,6 +556,7 @@ mod tests {
         assert_eq!(kept, [today - 1, today]);
     }
 
+    #[test_id(t5f7uvk)]
     #[test]
     fn a_range_reaches_the_family_only_when_it_overlaps_the_prefix() {
         let o = |lo: &[u8], hi: Option<&[u8]>| RECEIPTS.overlaps(lo, hi);

@@ -92,6 +92,7 @@ pub mod tests {
         (Arc::clone(&t), LcClient::over(t, true))
     }
 
+    #[test_id(tytju8y)]
     #[test]
     fn a_read_returns_the_answer_and_a_socket_refusal_is_the_error() {
         let (_, ok) = scripted(0, "{\"conditions\":[]}");
@@ -100,6 +101,7 @@ pub mod tests {
         assert_eq!(read(&refused, &["condition", "list"]).unwrap_err(), "spira-lc: cannot tell: the store is down");
     }
 
+    #[test_id(twun6mr)]
     #[test]
     fn a_write_fails_with_the_first_line_of_why() {
         let (_, no) = scripted(3, "refused: not firing\nmore");
@@ -108,6 +110,7 @@ pub mod tests {
         assert!(write(&yes, &["condition", "ack", "x"]).is_ok());
     }
 
+    #[test_id(thrr0gm)]
     #[test]
     fn deliver_lands_the_message_in_the_concierge_mailbox_and_removes_the_spool() {
         let dir = testkit::TempDir::new("panel-deliver");

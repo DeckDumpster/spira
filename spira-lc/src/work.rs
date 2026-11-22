@@ -2357,14 +2357,15 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
 mod store_tests {
     const BODY: &str = "## Build\nthe thing, in spira-lc\n";
 
+    #[test_id(tglei5n)]
     #[test]
     fn a_pilgrims_file_followup_files_an_unparented_defect_the_pilgrimage_waits_on() {
         if std::env::var_os("SPIRA_DB").is_none() {
             return;
         }
         let pilgrimage = crate::bd::file_child("walk", "builder", "spira", None, Some(BODY), None).unwrap();
-        let filing = super::Filing { verb: "file-followup", actor: "pilgrim", title: "a defect", persona: "builder", repo: "spira", bound: &pilgrimage, after_landing: false, body: Some(BODY) };
-        let (code, defect) = super::file_and_bind(&filing, |_| (0, String::new()));
+        let filing = super::super::Filing { verb: "file-followup", actor: "pilgrim", title: "a defect", persona: "builder", repo: "spira", bound: &pilgrimage, after_landing: false, body: Some(BODY) };
+        let (code, defect) = super::super::file_and_bind(&filing, |_| (0, String::new()));
         assert_eq!(code, 0, "{defect}");
         let shown = std::process::Command::new("bd").args(["-C", &std::env::var("SPIRA_DB").unwrap(), "show", &pilgrimage, "--json"]).output().unwrap();
         let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
@@ -2380,6 +2381,7 @@ mod tests {
         serde_json::to_string(&vec![r]).unwrap()
     }
 
+    #[test_id(tpnzgqu)]
     #[test]
     fn the_runner_keeps_polling_after_a_failed_list_and_takes_the_request_listed_next() {
         let lists = std::cell::Cell::new(0);
@@ -2403,6 +2405,7 @@ mod tests {
         assert_eq!(*started.borrow(), vec!["wr-1".to_string()]);
     }
 
+    #[test_id(t0bcp04)]
     #[test]
     fn a_failure_is_logged_once_until_it_changes_and_recovery_is_logged_once() {
         let mut last = None;
@@ -2414,6 +2417,7 @@ mod tests {
         assert_eq!(super::poll_report(&mut last, &Ok(1)), None);
     }
 
+    #[test_id(t1bq62h)]
     #[test]
     fn an_unparseable_list_is_a_failed_poll_not_an_empty_queue() {
         let call = |_: &[&str]| (0, "not json".to_string());
@@ -2421,11 +2425,13 @@ mod tests {
         assert!(err.contains("not the request list") && err.contains("not json"), "{err}");
     }
 
+    #[test_id(toxrvud)]
     #[test]
     fn a_failed_take_is_skipped() {
         let call = |args: &[&str]| if args[1] == "list" { (0, queued_json("wr-2")) } else { (1, "not queued".into()) };
         assert_eq!(super::poll_once(&call, |_| panic!("not ours")), Ok(0));
     }
+    #[test_id(tz7tibq)]
     #[test]
     fn every_verb_that_starts_a_program_is_recorded_and_the_reads_stay_in_the_service() {
         for verb in ["submit", "ack", "file-followup", "split", "blocked", "superseded-by", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand", "hel", "mender", "forge", "file", "ask"] {
@@ -2443,6 +2449,7 @@ mod tests {
         super::cmd_cite_check("sp-me1", &["-".into(), "--stdin".into(), msg.into(), "--actor".into(), "builder".into()], &mut known)
     }
 
+    #[test_id(t5mljbr)]
     #[test]
     fn cite_check_refuses_a_phantom_naming_the_id_and_the_fix() {
         let (code, out) = cite_check_of("sp-me1: x\n\nsee sp-zzzzzz", &["sp-me1"], false);
@@ -2450,17 +2457,20 @@ mod tests {
         assert!(out.contains("this message cites sp-zzzzzz") && out.contains("reword"), "{out}");
     }
 
+    #[test_id(to3z58j)]
     #[test]
     fn cite_check_passes_fixture_tokens_and_real_beads() {
         assert_eq!(cite_check_of("see sp-a and sp-b", &[], false).0, 0);
         assert_eq!(cite_check_of("sp-me1: x", &["sp-me1"], false).0, 0);
     }
 
+    #[test_id(tybotom)]
     #[test]
     fn every_persona_may_run_cite_check() {
         assert!(permitted("cite-check", Some("builder"), false).is_ok());
     }
 
+    #[test_id(tlfc4oz)]
     #[test]
     fn cite_check_cannot_tell_when_the_store_errs() {
         assert_eq!(cite_check_of("sp-me1: x", &[], true).0, CANNOT_TELL);
@@ -2485,6 +2495,7 @@ mod tests {
         testkit::write_exe(remote.join("hooks/pre-receive"), &format!("#!/bin/sh\n{body}\n"));
     }
 
+    #[test_id(tnq38xy)]
     #[test]
     fn a_forge_refusal_prints_the_verb_the_persona_and_the_forges_message() {
         let (_dir, repo, remote) = forge_fixture("forge-refuse");
@@ -2496,6 +2507,7 @@ mod tests {
         }
     }
 
+    #[test_id(t7zelhy)]
     #[test]
     fn a_forge_call_cut_off_at_its_deadline_says_so_instead_of_printing_nothing() {
         let (_dir, repo, remote) = forge_fixture("forge-slow");
@@ -2505,6 +2517,7 @@ mod tests {
         assert!(out.contains("did not finish within 0.3s"), "{out:?}");
     }
 
+    #[test_id(td2p8wm)]
     #[test]
     fn a_forge_call_gets_more_than_a_store_call_and_the_request_deadline_covers_it() {
         let secs: f64 = super::FORGE_PUSH_SECS.parse().unwrap();
@@ -2513,6 +2526,7 @@ mod tests {
         assert!(super::brokers_tool("forge"));
     }
 
+    #[test_id(tagyfh8)]
     #[test]
     fn a_forge_refusal_is_appended_to_the_broker_log_under_the_run_dir() {
         let dir = testkit::TempDir::new("forge-log");
@@ -2522,6 +2536,7 @@ mod tests {
         assert_eq!(log, "work forge ami-push: refused for persona builder: x\nsecond\n");
     }
 
+    #[test_id(t9o3h3s)]
     #[test]
     fn a_builder_may_ask_the_forge_about_its_own_round_image_candidate_and_no_other_branch() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -2543,6 +2558,7 @@ mod tests {
         assert!(super::permitted(&op, Some("groomer"), false).is_err());
     }
 
+    #[test_id(trazvhp)]
     #[test]
     fn a_pilgrims_follow_up_is_filed_into_the_builder_partition_but_a_split_stays_put() {
         let runes = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
@@ -2553,6 +2569,7 @@ mod tests {
         assert_eq!(super::filed_as("split", "pilgrim").unwrap(), "pilgrim");
     }
 
+    #[test_id(t6kzjhm)]
     #[test]
     fn a_pilgrims_follow_up_blocks_the_bound_bead_on_the_new_one_and_a_builders_does_not() {
         assert_eq!(super::blocking_edge("file-followup", "pilgrim", "sp-walk", "sp-new"), Some(("sp-walk", "sp-new")));
@@ -2560,6 +2577,7 @@ mod tests {
         assert_eq!(super::blocking_edge("split", "pilgrim", "sp-walk", "sp-new"), None);
     }
 
+    #[test_id(tiifcmo)]
     #[test]
     fn every_work_verb_a_persona_prompt_names_is_in_that_personas_allow_row() {
         let runes = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
@@ -2595,6 +2613,7 @@ mod tests {
         assert!(bad.is_empty(), "prompt names verbs its persona may not run: {bad:?}");
     }
 
+    #[test_id(trq4c92)]
     #[test]
     fn the_pilgrims_contract_files_defects_with_the_verb_the_broker_admits() {
         let md = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("runes/pilgrim.md")).unwrap();
@@ -2602,6 +2621,7 @@ mod tests {
         assert!(!md.lines().any(|l| l.trim_start().starts_with("work file \"")));
     }
 
+    #[test_id(ttsc70u)]
     #[test]
     fn a_unit_red_on_base_must_name_a_bead_that_exists_and_leaves_a_note_line() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -2616,6 +2636,7 @@ mod tests {
         assert_eq!(super::unit_red_line(&v(&["--met", "x"]), "sp-me", &has("sp-base1")), Ok(None));
     }
 
+    #[test_id(t53i73c)]
     #[test]
     fn a_calls_body_names_its_failure() {
         let body = "  spec: /x/y.json\n  Batch: r-1\n  Pass: 2\n  Suite: test-a.sh\n";
@@ -2623,6 +2644,7 @@ mod tests {
         assert_eq!(super::calls_failure("an integrate calls"), None);
     }
 
+    #[test_id(t2oncv2)]
     #[test]
     fn a_release_after_an_ask_is_seen_and_a_plain_release_is_not() {
         let h = |xs: &[(&str, &str)]| xs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
@@ -2633,6 +2655,7 @@ mod tests {
         assert!(!released_on_ask(&h(&[("Release", "\"Release\""), ("Hold", ask)])));
     }
 
+    #[test_id(t5nfw7o)]
     #[test]
     fn a_child_names_its_repo_and_never_inherits_the_parents() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -2642,6 +2665,7 @@ mod tests {
         assert_eq!(child_repo(&v(&["t", "--repo", "dumpstar"])).unwrap(), "dumpstar");
     }
 
+    #[test_id(tag3p83)]
     #[test]
     fn a_line_of_prose_or_a_truncated_prefix_is_not_a_bead_id() {
         for bad in ["SPIRA_BEAD_LANE_OVERRIDE=1", "bead:", "override:", "sp-", "sp", "", "sp-a b", "sp-x/y", "x-abc"] {
@@ -2661,6 +2685,7 @@ mod tests {
             .collect()
     }
 
+    #[test_id(t3a3vvw)]
     #[test]
     fn a_supersede_ask_describes_each_bead_it_names_and_argues_its_class() {
         let body = supersede_ask_body("sp-old1", "fix the gate", "sp-new2", "the gate rewrite", Some("abc1234 (spira: land sp-new2)"));
@@ -2674,6 +2699,7 @@ mod tests {
         assert!(!bare_id_lines("## Question\nsp-old1 sp-new2?\n").is_empty(), "POSITIVE CONTROL: the lint shape catches a bare-id line");
     }
 
+    #[test_id(tj4gi7f)]
     #[test]
     fn a_flag_is_never_taken_as_a_successor() {
         for bad in ["--help", "-h", "--", ""] {
@@ -2687,6 +2713,7 @@ mod tests {
         (sha.into(), message.lines().next().unwrap_or("").into(), message.into())
     }
 
+    #[test_id(t3bv515)]
     #[test]
     fn a_branch_rebased_onto_a_submitted_siblings_commits_submits() {
         let commits = [commit("aaa1", "sp-sib: the sibling's change\n"), commit("bbb2", "sp-own: my change\n")];
@@ -2694,6 +2721,7 @@ mod tests {
         assert!(unnamed_commits(&commits, "sp-own", &in_flight).is_empty());
     }
 
+    #[test_id(t6xza0e)]
     #[test]
     fn a_commit_naming_a_bead_not_in_flight_still_refuses() {
         let commits = [commit("aaa1", "sp-gone: a dropped bead's change\n"), commit("bbb2", "sp-own: my change\n")];
@@ -2703,6 +2731,7 @@ mod tests {
         assert!(refused[0].contains("aaa1") && refused[0].contains("sp-gone"), "{refused:?}");
     }
 
+    #[test_id(ti44hol)]
     #[test]
     fn a_commit_naming_no_bead_still_refuses() {
         let commits = [commit("ccc3", "fix the thing\n"), commit("bbb2", "sp-own: my change\n")];
@@ -2720,12 +2749,14 @@ mod tests {
         move |ids| Ok(ids.iter().filter(|i| held.contains(&i.as_str())).cloned().collect())
     }
 
+    #[test_id(tq7r8iz)]
     #[test]
     fn fixture_ids_in_a_commit_body_do_not_refuse_submit() {
         let commits = [pair("aaa1bbb2ccc3", "sp-own: x\n\nanswers sp-a and sp-b\n")];
         assert_eq!(phantom_refusal(&commits, "sp", &mut fake_store(&["sp-own"])), None);
     }
 
+    #[test_id(tn225xn)]
     #[test]
     fn a_well_formed_id_the_store_lacks_refuses_submit_naming_the_commit() {
         let commits = [pair("aaa1bbb2ccc3", "sp-own: x\n\nsee sp-zzzzzz\n")];
@@ -2734,6 +2765,7 @@ mod tests {
         assert!(text.contains("aaa1bbb2c") && text.contains("sp-zzzzzz") && text.contains("Reword"), "{text}");
     }
 
+    #[test_id(tff0i7a)]
     #[test]
     fn a_store_that_cannot_answer_the_citation_check_is_cannot_tell() {
         let commits = [pair("aaa1", "sp-own: see sp-zzzzzz\n")];
@@ -2742,6 +2774,7 @@ mod tests {
         assert!(text.contains("did not answer the citation check"), "{text}");
     }
 
+    #[test_id(tnlz0ou)]
     #[test]
     fn a_sibling_named_with_trailing_punctuation_or_as_a_child_submits() {
         let commits = [commit("aaa1", "fix for sp-sib.\n"), commit("ddd4", "sp-sib.1: the child\n")];
@@ -2749,6 +2782,7 @@ mod tests {
         assert!(unnamed_commits(&commits, "sp-own", &in_flight).is_empty());
     }
 
+    #[test_id(t4k3bum)]
     #[test]
     fn a_sibling_id_is_named_whole_not_as_a_prefix() {
         let commits = [commit("aaa1", "sp-sib2: a longer id\n")];
@@ -2756,6 +2790,7 @@ mod tests {
         assert_eq!(unnamed_commits(&commits, "sp-own", &in_flight).len(), 1);
     }
 
+    #[test_id(tw2hnjg)]
     #[test]
     fn a_tip_behind_the_landing_ref_submits() {
         let commits = [commit("bbb2", "sp-own: my change\n")];
@@ -2763,6 +2798,7 @@ mod tests {
         assert_eq!(finishing_refusal("local/main", "tip1", "sp-own", Some("fork1"), Some(&commits), &in_flight), None);
     }
 
+    #[test_id(tkkzh64)]
     #[test]
     fn a_tip_that_conflicts_with_the_landing_ref_is_refused_naming_the_paths() {
         let out = "t\nCONFLICT (content): Merge conflict in a/one.rs\nCONFLICT (content): Merge conflict in b/two.rs\n";
@@ -2771,11 +2807,13 @@ mod tests {
         assert!(msg.contains("a/one.rs, b/two.rs") && msg.contains("local/main") && msg.contains("work submit"), "{msg}");
     }
 
+    #[test_id(tgf1hkb)]
     #[test]
     fn a_tip_behind_the_landing_ref_that_merges_cleanly_submits() {
         assert_eq!(merge_refusal(&|_| (0, "tree\n".to_string()), "local/main", "local/main", "tip1"), None);
     }
 
+    #[test_id(t9yosdd)]
     #[test]
     fn a_merge_check_that_cannot_run_cannot_tell() {
         let (code, msg) = merge_refusal(&|_| (128, "fatal: x\n\n".to_string()), "local/main", "base", "tip1").expect("refused");
@@ -2783,6 +2821,7 @@ mod tests {
         assert!(msg.contains("onto base failed: fatal: x"), "{msg}");
     }
 
+    #[test_id(tc66zy2)]
     #[test]
     fn a_tip_sharing_no_history_with_the_landing_ref_refuses() {
         let in_flight = |_: &str| false;
@@ -2790,6 +2829,7 @@ mod tests {
         assert!(refused.contains("shares no history"), "{refused}");
     }
 
+    #[test_id(tdcpzx4)]
     #[test]
     fn done_on_a_dropped_or_done_bead_is_a_no_op_for_every_actor() {
         for st in [bead::BeadState::Dropped, bead::BeadState::Done] {
@@ -2801,6 +2841,7 @@ mod tests {
         assert!(already_finished_noop("sp-x", bead::BeadState::Landed).is_none());
     }
 
+    #[test_id(tyhfs6l)]
     #[test]
     fn a_skuld_draft_with_prose_on_its_depends_line_is_refused_at_done() {
         let prose = "### Draft: Fix it\n\nDepends: none. Related: sp-7gyqqy (rollback) and sp-0khlo0 (hotfix). Both touch `activate.rs`; sequence them, do not merge them.\n";
@@ -2810,6 +2851,7 @@ mod tests {
         assert!(skuld_draft_notes_refusal("sp-r", "### Draft: Fix it\n\nDepends: sp-a, draft 1\n").is_none());
     }
 
+    #[test_id(t8lhrc6)]
     #[test]
     fn a_skuld_draft_with_a_paragraph_after_its_open_line_is_refused_at_done() {
         let notes = "### Draft: First\n\nbody\nOpen: q; default: d\nCorrection to \"First\": twelve, not eleven.\n### Draft: Second\n\nbody2\n";
@@ -2819,6 +2861,7 @@ mod tests {
         assert!(!msg.contains("Second"), "{msg}");
     }
 
+    #[test_id(td6fwh4)]
     #[test]
     fn a_working_exit_the_rune_does_not_declare_is_refused_by_name() {
         let exits = v(&["DONE", "ask", "park", "hold"]);
@@ -2829,6 +2872,7 @@ mod tests {
         assert!(working_exit_check("submit", "SUBMITTED", "builder", &v(&["SUBMITTED", "ask"])).is_none());
     }
 
+    #[test_id(t8nwxnz)]
     #[test]
     fn submit_from_ready_is_refused_naming_the_state_and_the_way_out() {
         let tip = "a".repeat(40);
@@ -2856,6 +2900,7 @@ mod tests {
         row
     }
 
+    #[test_id(t99l63s)]
     #[test]
     fn the_shipped_runes_send_a_spike_to_done_and_a_builder_to_submitted() {
         let runes = spira_config::resolve::locate_home_for_process().unwrap().join("runes");
@@ -2875,6 +2920,7 @@ mod tests {
         xs.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(tipjnrx)]
     #[test]
     fn a_uid_bound_to_a_persona_cannot_present_as_another() {
         let map = parse_persona_uids("# dwarves\n1001 builder\n1002 czar  # the czar\nbad line here\n");
@@ -2909,6 +2955,7 @@ mod tests {
 
     const TIP: &str = "3333333333333333333333333333333333333333";
 
+    #[test_id(tuoi53k)]
     #[test]
     fn a_gate_red_tip_is_refused_saying_gate_with_the_step_and_message_and_a_round_eject_still_says_round() {
         let gate = super::GateRedAt { step: Some("fixture-config".into()), message: Some("SPIRA_X is not declared".into()) };
@@ -2919,6 +2966,7 @@ mod tests {
         assert!(super::red_tip_refusal("sp-a", "abc", None, None).contains("a round ejected"));
     }
 
+    #[test_id(t7xsykf)]
     #[test]
     fn a_stored_gate_red_reads_back_its_step_and_message_and_a_stepless_one_still_reads_as_a_gate_red() {
         let row = serde_json::json!({"step": "fixture-config", "message": "SPIRA_X is not declared"});
@@ -2927,6 +2975,7 @@ mod tests {
         assert!(super::gate_red_from(&serde_json::json!({"step": "", "message": null})).is_some_and(|g| g.step.is_none() && g.message.is_none()));
     }
 
+    #[test_id(twxem95)]
     #[test]
     fn a_resubmit_without_a_passing_run_of_the_ejected_suite_is_refused_naming_it() {
         let dir = proof_dir("refuse");
@@ -2940,6 +2989,7 @@ mod tests {
         assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &broken).is_some(), "a check that could not run is unproven");
     }
 
+    #[test_id(to1yrlj)]
     #[test]
     fn a_resubmit_with_a_passing_run_at_the_new_tip_is_accepted_and_the_run_is_recorded() {
         let dir = proof_dir("accept");
@@ -2955,6 +3005,7 @@ mod tests {
         assert!(proof_refusal(&run, "sp-a", other, &[], 60, &green).is_none(), "a new tip is proven afresh");
     }
 
+    #[test_id(t77h9i1)]
     #[test]
     fn a_diff_that_owes_a_tier_is_refused_until_it_passes_and_names_the_tier() {
         let dir = proof_dir("owed");
@@ -2969,6 +3020,7 @@ mod tests {
         assert!(run.join("proof/sp-a/pass").join(TIP).join("frontend").is_file());
     }
 
+    #[test_id(th1cib1)]
     #[test]
     fn a_round_proven_check_is_never_run_in_band_and_does_not_refuse() {
         let dir = proof_dir("round-proven");
@@ -2982,6 +3034,7 @@ mod tests {
         assert!(msg.contains("test-x.sh"), "{msg}");
     }
 
+    #[test_id(t5jmu7q)]
     #[test]
     fn each_forced_check_is_run_by_the_runner_that_owns_it() {
         let ck = Some(("repo", "local/main"));
@@ -2993,6 +3046,7 @@ mod tests {
         assert!(check_invocation("fence-lifecycle-guard", TIP, "spira", None).is_none(), "a fence with no checkout cannot be run, and is not handed to testenv");
     }
 
+    #[test_id(te4x4hs)]
     #[test]
     fn a_resubmit_after_an_eject_naming_a_fence_runs_the_fence_and_passes_when_it_passes() {
         let dir = proof_dir("fence");
@@ -3011,6 +3065,7 @@ mod tests {
         assert!(spira_config::proof::proven(&run, "sp-a", TIP, "fence-lifecycle-guard"));
     }
 
+    #[test_id(tnt855t)]
     #[test]
     fn a_resubmit_after_an_eject_forcing_a_declared_tier_runs_that_tier_through_testenv_and_passes() {
         let dir = proof_dir("declared-tier");
@@ -3024,6 +3079,7 @@ mod tests {
         assert!(spira_config::proof::proven(&run, "sp-a", TIP, "gate"));
     }
 
+    #[test_id(t369sas)]
     #[test]
     fn a_diff_that_owes_nothing_runs_nothing() {
         let dir = proof_dir("owes-nothing");
@@ -3032,6 +3088,7 @@ mod tests {
         assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &never).is_none());
     }
 
+    #[test_id(tczlsfb)]
     #[test]
     fn a_bead_with_no_named_checks_owes_no_proof() {
         let dir = proof_dir("none");
@@ -3040,6 +3097,7 @@ mod tests {
         assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &never).is_none());
     }
 
+    #[test_id(tr1ciu7)]
     #[test]
     fn every_allow_row_names_a_known_verb() {
         for (op, who) in ALLOW {
@@ -3049,6 +3107,7 @@ mod tests {
         }
     }
 
+    #[test_id(t57qmqd)]
     #[test]
     fn a_persona_may_not_run_a_verb_it_is_not_allowed() {
         let (code, msg) = permitted("groom close", Some("builder"), false).unwrap_err();
@@ -3058,6 +3117,7 @@ mod tests {
         assert_eq!(gate("queue", &v(&["eject", "sp-x1", "--actor", "groomer"])).unwrap_err().0, REFUSED);
     }
 
+    #[test_id(t2m4mga)]
     #[test]
     fn only_the_mender_runs_the_mender_tool_and_it_forwards_verbatim() {
         for sub in ["start", "pack", "diff", "bead", "members", "failures", "passes", "verdicts", "landing", "triaged", "diagnose", "outcome"] {
@@ -3071,6 +3131,7 @@ mod tests {
         );
     }
 
+    #[test_id(tdy26qo)]
     #[test]
     fn only_a_socket_with_the_marker_beside_it_is_a_pilgrim_world() {
         let t = testkit::TempDir::new("pw");
@@ -3088,6 +3149,7 @@ mod tests {
         assert!(gate_in("file", &file, || super::socket_is_a_pilgrim_world(&socket)).is_ok());
     }
 
+    #[test_id(thcbh0r)]
     #[test]
     fn the_pilgrims_file_plans_a_bead_and_its_lifecycle_row_in_the_named_repo() {
         let mut c = call(&["a defect", "--for", "builder", "--repo", "spira", "--body-file", "-"], "pilgrim");
@@ -3102,12 +3164,14 @@ mod tests {
         assert!(plan("file", "-", &call(&["a defect", "--for", "builder"], "pilgrim")).is_err(), "--for needs --repo");
     }
 
+    #[test_id(tgugcxd)]
     #[test]
     fn the_pilgrims_dep_add_links_a_blocks_edge_through_bead_sh() {
         assert_eq!(plan("dep-add", "-", &call(&["sp-a1", "sp-b2"], "pilgrim")).unwrap(), vec![tool("bead.sh", &["dep", "add", "sp-a1", "sp-b2"])]);
         assert!(plan("dep-add", "-", &call(&["sp-a1"], "pilgrim")).is_err(), "a second bead is required");
     }
 
+    #[test_id(t0b5x6c)]
     #[test]
     fn the_pilgrims_close_other_closes_through_the_groomer_with_its_evidence() {
         assert_eq!(
@@ -3117,6 +3181,7 @@ mod tests {
         assert!(plan("close-other", "-", &call(&["sp-b2"], "pilgrim")).is_err(), "evidence is required");
     }
 
+    #[test_id(t06fgcc)]
     #[test]
     fn the_pilgrim_files_links_and_closes_only_in_a_pilgrim_world() {
         let calls: [(&str, Vec<String>); 3] = [
@@ -3130,6 +3195,7 @@ mod tests {
         }
     }
 
+    #[test_id(tz0g2n9)]
     #[test]
     fn a_pilgrim_world_widens_nothing_but_the_pilgrims_three_verbs() {
         assert_eq!(gate_in("dep-add", &v(&["sp-a1", "sp-b2", "--actor", "builder"]), || true).unwrap_err().0, REFUSED);
@@ -3137,6 +3203,7 @@ mod tests {
         assert_eq!(gate_in("reopen", &v(&["sp-a1", "--evidence", "e", "--actor", "pilgrim"]), || true).unwrap_err().0, REFUSED);
     }
 
+    #[test_id(tkt551o)]
     #[test]
     fn the_allowed_persona_passes() {
         assert!(gate("groom", &v(&["close", "sp-x1", "--evidence", "e", "--actor", "groomer"])).is_ok());
@@ -3144,12 +3211,14 @@ mod tests {
         assert!(gate("census", &v(&["--with-suppressed", "--actor", "mimir"])).is_ok());
     }
 
+    #[test_id(t502y9y)]
     #[test]
     fn a_tool_subcommand_absent_from_the_table_is_refused_for_everyone() {
         assert_eq!(gate("queue", &v(&["flush", "--actor", "czar"])).unwrap_err().0, REFUSED);
         assert_eq!(gate("groom", &v(&["--actor", "groomer"])).unwrap_err().0, REFUSED);
     }
 
+    #[test_id(t5zv3nl)]
     #[test]
     fn hel_is_a_read_only_dry_run_for_ops_alone() {
         let ok = |xs: &[&str], who: &str| plan("hel", "-", &call(xs, who));
@@ -3162,17 +3231,20 @@ mod tests {
         assert!(gate("hel", &v(&["--dry-run", "--actor", "ops"])).is_ok());
     }
 
+    #[test_id(t1zww9t)]
     #[test]
     fn bound_verbs_need_no_persona() {
         assert!(gate("show", &[]).is_ok());
         assert!(gate("note", &v(&["hi"])).is_ok());
     }
 
+    #[test_id(te6euu6)]
     #[test]
     fn a_second_actor_is_refused() {
         assert_eq!(gate("note-on", &v(&["sp-x1", "--actor", "czar", "--actor", "builder"])).unwrap_err().0, REFUSED);
     }
 
+    #[test_id(tvktxfp)]
     #[test]
     fn split_reserved_takes_the_trailer_only() {
         let c = split_reserved(&v(&["a", "-", "--stdin", "body", "--actor", "ops"]));
@@ -3183,6 +3255,7 @@ mod tests {
 
     // ---- reads ----
 
+    #[test_id(t8s63l8)]
     #[test]
     fn read_shows_another_bead() {
         assert_eq!(plan("read", "sp-me", &call(&["sp-x1", "--json"], "spike")).unwrap(), vec![Step::Read { id: s("sp-x1"), json: true }]);
@@ -3191,6 +3264,7 @@ mod tests {
         assert!(plan("read", "sp-me", &call(&["sp-x1", "-C", "elsewhere"], "spike")).is_err());
     }
 
+    #[test_id(tbaq31l)]
     #[test]
     fn a_work_list_asks_the_store_for_bare_lifecycle_rows() {
         assert_eq!(lifecycle_list_args(&[], false), ["list", "--live", "--bare"]);
@@ -3198,6 +3272,7 @@ mod tests {
         assert_eq!(lifecycle_list_args(&[], true), ["list", "--cached", "--bare"]);
     }
 
+    #[test_id(tm79n13)]
     #[test]
     fn list_filters_by_lifecycle_state_and_content() {
         assert_eq!(
@@ -3209,6 +3284,7 @@ mod tests {
         assert!(plan("list", "-", &call(&["--limit", "many"], "warden")).is_err());
     }
 
+    #[test_id(tq54smt)]
     #[test]
     fn list_json_projects_unless_full() {
         let Ok(Step::LcList { full, .. }) = plan("list", "-", &call(&["--json", "--full"], "groomer")).map(|mut p| p.remove(0)) else { panic!("not a list") };
@@ -3223,12 +3299,14 @@ mod tests {
         assert!(serde_json::to_string(&row).unwrap().len() * 400 > 64 * 1024, "the fixture's full list must exceed the bound");
     }
 
+    #[test_id(t9brk7a)]
     #[test]
     fn list_refuses_bds_status_and_names_the_lifecycle_flag() {
         let e = plan("list", "-", &call(&["--status", "open"], "warden")).unwrap_err();
         assert!(e.1.contains("--state"), "{}", e.1);
     }
 
+    #[test_id(tvpsjtp)]
     #[test]
     fn show_replaces_bds_status_word_with_the_lifecycle_state() {
         let bd = "○ sp-1 · title   [P2 · OPEN]\nOwner: x\n";
@@ -3246,6 +3324,7 @@ mod tests {
         serde_json::json!({"issue_id": "sp-1", "event_type": "eject-failure", "new_value": digest, "actor": "batcher", "created_at": at})
     }
 
+    #[test_id(ttfpb0e)]
     #[test]
     fn last_red_prints_only_the_newest_digest_verbatim_after_the_lifecycle_block() {
         let shown = "t\n\nLIFECYCLE: SUBMITTED\n  tip: bbb\n";
@@ -3256,11 +3335,13 @@ mod tests {
         assert!(!out.contains("old"), "{out}");
     }
 
+    #[test_id(t9pn63d)]
     #[test]
     fn last_red_leaves_the_text_alone_when_no_red_was_recorded() {
         assert_eq!(with_last_red("t\n", &[], Some("x")), "t\n");
     }
 
+    #[test_id(ti0bsxx)]
     #[test]
     fn last_red_says_when_the_judged_tip_is_not_the_beads_tip() {
         let rows = [red_row("2026-01-02 00:00:00", "tip aaa\nFAIL t")];
@@ -3268,6 +3349,7 @@ mod tests {
         assert!(!with_last_red("t\n", &rows, Some("aaa")).contains("judged tip"));
     }
 
+    #[test_id(tz3zsrt)]
     #[test]
     fn show_composes_the_last_red_after_the_lifecycle_with_the_rows_tip() {
         let row = r#"{"bead":{"state":"SUBMITTED","tip":"bbb"},"delivery":null}"#;
@@ -3278,6 +3360,7 @@ mod tests {
         assert_eq!(show_text("t\n", row, Ok(vec![])), with_lifecycle("t\n", row));
     }
 
+    #[test_id(t3dj6n2)]
     #[test]
     fn show_survives_a_failed_fact_read_with_one_line() {
         let row = r#"{"bead":{"state":"SUBMITTED"},"delivery":null}"#;
@@ -3292,6 +3375,7 @@ mod tests {
         (run, rows)
     }
 
+    #[test_id(tsdsnin)]
     #[test]
     fn logs_lists_the_entry_and_its_files_and_prints_one_of_them() {
         let (run, rows) = logs_fixture();
@@ -3301,6 +3385,7 @@ mod tests {
         assert_eq!(logs_out(&rows, run.path(), &[s("gate-1000-0"), s("trial.out")]), (0, s("FAIL test-b")));
     }
 
+    #[test_id(tcy4iaf)]
     #[test]
     fn logs_refuses_an_entry_the_bead_has_no_fact_for() {
         let (run, rows) = logs_fixture();
@@ -3309,6 +3394,7 @@ mod tests {
         assert_eq!(code, REFUSED, "{out}");
     }
 
+    #[test_id(tehn52v)]
     #[test]
     fn logs_lists_the_newest_entry_first() {
         let rows: Vec<serde_json::Value> = [("a-1-0", "1"), ("b-2-0", "2")]
@@ -3319,6 +3405,7 @@ mod tests {
         assert_eq!(ids, ["b-2-0", "a-1-0"]);
     }
 
+    #[test_id(ti7yjjr)]
     #[test]
     fn show_names_work_logs_when_the_bead_has_kept_entries() {
         assert!(with_logs(s("T\n"), 1).ends_with("LOGS: 1 kept — work logs\n"));
@@ -3333,6 +3420,7 @@ mod tests {
         }
     }
 
+    #[test_id(ta7q2re)]
     #[test]
     fn search_asks_the_reader_once_and_prints_id_priority_title_without_a_status_word() {
         let seen = std::cell::RefCell::new(Vec::new());
@@ -3343,6 +3431,7 @@ mod tests {
         assert_eq!(*seen.borrow(), vec![v(&["search", "merge queue", "--limit", "7"])]);
     }
 
+    #[test_id(t24aagw)]
     #[test]
     fn search_json_passes_the_readers_rows_through_and_a_read_json_is_the_readers_show() {
         let seen = std::cell::RefCell::new(Vec::new());
@@ -3354,6 +3443,7 @@ mod tests {
         assert_eq!(*seen.borrow(), vec![v(&["search", "q"]), v(&["show", "sp-a1"])]);
     }
 
+    #[test_id(ts6ojdw)]
     #[test]
     fn a_reader_failure_is_cannot_tell_with_its_text_and_nothing_else_is_tried() {
         let reader = |_: &[String]| -> Result<String, content_sql::Failure> { Err(content_sql::Failure::Store("the held connection is gone".into())) };
@@ -3364,6 +3454,7 @@ mod tests {
         }
     }
 
+    #[test_id(tz1bdlu)]
     #[test]
     fn a_search_reply_that_is_not_json_is_cannot_tell_and_a_missing_priority_is_a_question_mark() {
         let seen = std::cell::RefCell::new(Vec::new());
@@ -3374,6 +3465,7 @@ mod tests {
         assert_eq!((code, out.as_str()), (0, "sp-a1 P? t"));
     }
 
+    #[test_id(t50m1us)]
     #[test]
     fn a_filtered_list_asks_the_reader_once_per_id_chunk_and_never_forks_bd() {
         let ids: Vec<String> = (0..LIST_ID_CHUNK + 1).map(|i| format!("sp-{i:04}")).collect();
@@ -3390,6 +3482,7 @@ mod tests {
         assert_eq!(seen[1][5], ids[LIST_ID_CHUNK]);
     }
 
+    #[test_id(trnoit6)]
     #[test]
     fn a_full_list_asks_for_the_whole_row() {
         let seen = std::cell::RefCell::new(Vec::new());
@@ -3398,6 +3491,7 @@ mod tests {
         assert!(!seen.borrow()[0].contains(&s("--brief")));
     }
 
+    #[test_id(tvxk8ky)]
     #[test]
     fn search_needs_a_query() {
         assert_eq!(plan("search", "-", &call(&["merge queue"], "groomer")).unwrap(), vec![Step::Search { query: s("merge queue"), limit: None, json: false }]);
@@ -3410,6 +3504,7 @@ mod tests {
 
     // ---- writes ----
 
+    #[test_id(tysrdp8)]
     #[test]
     fn note_on_takes_text_or_stdin() {
         assert_eq!(plan("note-on", "-", &call(&["sp-x1", "hi"], "czar")).unwrap(), vec![Step::Bd { args: v(&["note", "sp-x1", "hi"]), stdin: None }]);
@@ -3419,6 +3514,7 @@ mod tests {
         assert!(plan("note-on", "-", &call(&["sp-x1"], "czar")).is_err());
     }
 
+    #[test_id(tq950mj)]
     #[test]
     fn labels_are_one_label_and_never_poison() {
         assert_eq!(plan("label-add", "-", &call(&["sp-x1", "overseer"], "groomer")).unwrap(), vec![Step::Bd { args: v(&["label", "add", "sp-x1", "overseer"]), stdin: None }]);
@@ -3430,6 +3526,7 @@ mod tests {
         assert_eq!(plan("label-remove", "-", &call(&["sp-x1", POISON_LABEL], "groomer")).unwrap_err().0, REFUSED);
     }
 
+    #[test_id(tbp8xhr)]
     #[test]
     fn dep_add_goes_through_bead_sh_and_checks_the_type() {
         assert_eq!(plan("dep-add", "-", &call(&["sp-a1", "sp-b2"], "ops")).unwrap(), vec![tool("bead.sh", &["dep", "add", "sp-a1", "sp-b2"])]);
@@ -3437,11 +3534,13 @@ mod tests {
         assert!(plan("dep-add", "-", &call(&["sp-a1"], "ops")).is_err());
     }
 
+    #[test_id(tz7vej0)]
     #[test]
     fn relate_is_a_relates_edge() {
         assert_eq!(plan("relate", "-", &call(&["sp-a1", "sp-b2"], "archivist")).unwrap(), vec![Step::Bd { args: v(&["dep", "relate", "sp-a1", "sp-b2"]), stdin: None }]);
     }
 
+    #[test_id(tyxocpp)]
     #[test]
     fn reopen_and_close_other_need_evidence() {
         assert!(plan("reopen", "-", &call(&["sp-a1"], "czar")).is_err());
@@ -3459,6 +3558,7 @@ mod tests {
         );
     }
 
+    #[test_id(trua6zr)]
     #[test]
     fn close_ask_is_the_archivists_and_closes_only_on_a_quote() {
         let ok = call(&["sp-ask1", "--exit", "answered", "--source", "t41", "--body-file", "-"], "archivist");
@@ -3483,6 +3583,7 @@ mod tests {
         );
     }
 
+    #[test_id(thqvfs1)]
     #[test]
     fn file_for_a_persona_also_creates_the_lifecycle_row() {
         let c = split_reserved(&v(&["a title", "--for", "builder", "--repo", "spira", "--body-file", "-", "--stdin", "body", "--actor", "warden"]));
@@ -3497,6 +3598,7 @@ mod tests {
         assert_eq!(rec.len(), 1, "a record is no work: no lifecycle row");
     }
 
+    #[test_id(tugqqky)]
     #[test]
     fn the_archivist_files_no_work_bead_while_a_swept_session_is_live() {
         let dir = testkit::TempDir::new("lc-live");
@@ -3513,6 +3615,7 @@ mod tests {
         assert!(live_session_refusal("note-on", &work, &dir).is_none());
     }
 
+    #[test_id(t9ya7lu)]
     #[test]
     fn file_refuses_a_bad_shape() {
         assert!(plan("file", "-", &call(&["t"], "ops")).is_err(), "neither --for nor --kind");
@@ -3522,6 +3625,7 @@ mod tests {
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "-l", "x"], "ops")).is_err());
     }
 
+    #[test_id(tkq5m9f)]
     #[test]
     fn a_dry_run_ask_forwards_the_flag_and_places_no_hold() {
         let p = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--dry-run"], "builder")).unwrap();
@@ -3530,6 +3634,7 @@ mod tests {
         assert!(args.contains(&s("--dry-run")), "{args:?}");
     }
 
+    #[test_id(tbrg284)]
     #[test]
     fn an_ask_whose_question_is_a_flag_name_is_refused_with_the_usage() {
         for subject in ["--default", "", "  "] {
@@ -3539,6 +3644,7 @@ mod tests {
         assert!(plan("ask", "sp-me1", &call(&["--subject", "May I?", "--kind", "question", "--default", "x"], "mender")).is_ok());
     }
 
+    #[test_id(tmrko1u)]
     #[test]
     fn a_question_that_is_empty_or_a_flag_name_is_not_a_question() {
         for q in ["--default", "--default x", "", "  "] {
@@ -3547,6 +3653,7 @@ mod tests {
         assert!(not_a_question("May I?").is_none());
     }
 
+    #[test_id(tucck2n)]
     #[test]
     fn ask_builds_the_mail_with_the_persona_as_sender() {
         let p = plan("ask", "sp-me1", &call(&["--subject", "Close sp-a1?", "--kind", "question", "--default", "yes"], "groomer")).unwrap();
@@ -3564,6 +3671,7 @@ mod tests {
     /// sp-v62vn follow-up: a restricted model asks through `work ask`; a question from a
     /// bound session also places the `ask` hold on the bound bead's row — the record dwarf's
     /// teardown reads to release the session operator-wait (the marker mail wrote is gone).
+    #[test_id(t9gxrmw)]
     #[test]
     fn a_bound_question_holds_the_bound_bead_after_the_mail() {
         let p = plan("ask", "sp-me1", &call(&["--subject", "May I?", "--kind", "question", "--default", "no"], "builder")).unwrap();
@@ -3586,6 +3694,7 @@ mod tests {
     /// a dwarf", so its escalation-class check never ran and an unclassed question went
     /// straight to the operator. Every ask step now carries the id mail classifies by —
     /// bound, citing another bead, or bound to nothing at all.
+    #[test_id(tm5wk41)]
     #[test]
     fn every_ask_is_sent_for_classification() {
         let classify = |bound: &str, extra: &[&str]| {
@@ -3604,6 +3713,7 @@ mod tests {
         assert!(args.windows(2).any(|w| w == v(&["--class", "policy"])), "{args:?}");
     }
 
+    #[test_id(tqcggaa)]
     #[test]
     fn ask_kinds_are_the_kinds_mail_can_deliver() {
         let dir = spira_config::resolve::locate_home_for_process().unwrap().join("mail/kinds");
@@ -3619,6 +3729,7 @@ mod tests {
 
     // ---- tools ----
 
+    #[test_id(tbdhlys)]
     #[test]
     fn tools_forward_their_subcommand_and_stdin() {
         let c = split_reserved(&v(&["file", "a finding", "-", "--stdin", "payload", "--actor", "ops"]));
@@ -3629,6 +3740,7 @@ mod tests {
         assert_eq!(plan("sop", "-", &call(&["show", "x"], "ops")).unwrap(), vec![tool("sop", &["show", "x"])]);
     }
 
+    #[test_id(tob6541)]
     #[test]
     fn ops_may_collapse_a_duplicate_incident_and_a_builder_may_not() {
         assert!(permitted(&op_key("incident", &v(&["collapse", "sp-a1", "--of", "sp-b2"])), Some("ops"), false).is_ok());
@@ -3639,6 +3751,7 @@ mod tests {
         );
     }
 
+    #[test_id(t8sjacd)]
     #[test]
     fn fence_answers_like_czar_fence_sh() {
         assert_eq!(fence_answer("ci-red", Some("act")).0, 0);
@@ -3651,12 +3764,14 @@ mod tests {
         assert!(gate("fence", &v(&["ci-red", "--actor", "czar"])).is_ok());
     }
 
+    #[test_id(tyn5jnu)]
     #[test]
     fn census_takes_only_its_one_flag() {
         assert_eq!(plan("census", "-", &call(&["--with-suppressed"], "mimir")).unwrap(), vec![tool("census", &["--with-suppressed"])]);
         assert!(plan("census", "-", &call(&["run-events"], "mimir")).is_err());
     }
 
+    #[test_id(t0d0nx4)]
     #[test]
     fn split_piece_never_reaches_bd_with_a_foreign_flag() {
         assert!(plan("groom", "-", &call(&["split-piece", "sp-a1", "piece one", "-p", "2", "-t", "task"], "groomer")).is_ok());

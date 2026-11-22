@@ -1136,6 +1136,7 @@ mod beads_on_tests {
         serde_json::json!({"id": id, "status": status, "issue_type": kind, "labels": ["spira"], "parent": parent})
     }
 
+    #[test_id(txhuuye)]
     #[test]
     fn reflect_argv_names_the_shipped_entry_point_then_the_ids() {
         let bin = std::path::Path::new("rel/bin").join(REFLECT_BIN);
@@ -1144,6 +1145,7 @@ mod beads_on_tests {
         assert_eq!(&argv[1..], ["reflect", "sp-a", "sp-b"]);
     }
 
+    #[test_id(tszc3mi)]
     #[test]
     fn reflect_ids_split_every_argument_on_whitespace() {
         let args = ["sp-a", "sp-b sp-c"].map(String::from);
@@ -1156,6 +1158,7 @@ mod beads_on_tests {
         Arc::new(fake::Content::new(rows))
     }
 
+    #[test_id(t51htmt)]
     #[test]
     fn an_open_epic_keeps_its_closed_children_and_the_history_is_not_read() {
         let store = store();
@@ -1169,6 +1172,7 @@ mod beads_on_tests {
         assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
     }
 
+    #[test_id(t9j7g88)]
     #[test]
     fn the_open_list_asks_for_no_free_text() {
         let store = store();
@@ -1178,6 +1182,7 @@ mod beads_on_tests {
         assert!(store.requests().iter().all(|r| r.iter().any(|a| a == "--brief")), "{:?}", store.requests());
     }
 
+    #[test_id(tdyqj3f)]
     #[test]
     fn a_live_row_whose_bead_is_closed_is_read_by_id() {
         let store = store();

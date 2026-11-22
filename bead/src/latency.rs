@@ -87,6 +87,7 @@ mod tests {
         format!("{ts}.123456789Z rc={rc} tries=1 ms={ms} verb=show\n")
     }
 
+    #[test_id(tciemnz)]
     #[test]
     fn caller_name_skips_wrappers_to_the_first_real_program() {
         let tree = |pid: i32| match pid {
@@ -100,6 +101,7 @@ mod tests {
         assert_eq!(name(99), "-", "an unreadable pid");
     }
 
+    #[test_id(t5bj9yh)]
     #[test]
     fn a_caller_field_does_not_change_the_rollup() {
         let plain = "2026-11-11T10:00:01.1Z rc=0 tries=1 ms=7 verb=show\n";
@@ -108,6 +110,7 @@ mod tests {
         assert_eq!(rollup(named).len(), 1);
     }
 
+    #[test_id(t68tok5)]
     #[test]
     fn groups_by_minute_with_nearest_rank_percentiles() {
         let mut log = String::new();
@@ -125,12 +128,14 @@ mod tests {
         );
     }
 
+    #[test_id(ttruo2y)]
     #[test]
     fn torn_and_foreign_lines_are_skipped() {
         let log = format!("garbage\n2026-10-02T14:05:0\n{}", line("2026-10-02T14:05", 0, 7));
         assert_eq!(rollup(&log).len(), 1);
     }
 
+    #[test_id(tgmxz0a)]
     #[test]
     fn empty_log_renders_nothing() {
         assert_eq!(render(&rollup("")), "");

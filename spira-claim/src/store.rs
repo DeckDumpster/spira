@@ -411,6 +411,7 @@ mod tests {
         (st, t)
     }
 
+    #[test_id(tzof51h)]
     #[test]
     fn lifecycle_reads_and_writes_go_through_the_service_not_a_program() {
         let (st, t) = store_over(|argv| match argv[0].as_str() {
@@ -429,6 +430,7 @@ mod tests {
         assert_eq!(seen.last().unwrap(), &["release", "sp-a", "dwarf-x"]);
     }
 
+    #[test_id(th74uyk)]
     #[test]
     fn a_store_with_a_loaded_view_answers_state_and_express_reads_without_the_socket() {
         let held = Arc::new(Scripted {
@@ -452,6 +454,7 @@ mod tests {
         assert_eq!(held.seen.lock().unwrap().last().map(|a| a.join(" ")).as_deref(), Some("list --ids sp-z"), "only the id the view does not hold is asked");
     }
 
+    #[test_id(tzywfhu)]
     #[test]
     fn a_store_with_no_view_asks_the_socket_for_state_and_express_reads() {
         let (st, t) = store_over(|_| Reply { code: 0, out: "[]".into(), err: String::new(), read_ended: false });
@@ -460,6 +463,7 @@ mod tests {
         assert_eq!(*t.seen.lock().unwrap(), [vec!["list", "--state", "READY,REWORK"], vec!["list", "--express", "--live"]]);
     }
 
+    #[test_id(tqvd8zf)]
     #[test]
     fn a_socket_refusal_names_its_reason_from_stdout() {
         let (st, _) = store_over(|_| Reply { code: 3, out: "refused: no such bead\n".into(), err: String::new(), read_ended: false });
@@ -467,6 +471,7 @@ mod tests {
         assert_eq!(e, "exit 3: refused: no such bead");
     }
 
+    #[test_id(t6c6ewd)]
     #[test]
     fn bead_metadata_reads_content_through_the_service() {
         let (st, t) = store_over(|_| Reply { code: 0, out: r#"[{"id":"sp-a","metadata":{"thrash_tip":"abc"}}]"#.into(), err: String::new(), read_ended: false });
@@ -474,6 +479,7 @@ mod tests {
         assert_eq!(t.seen.lock().unwrap()[0], ["content", "show", "sp-a", "--long", "--json"]);
     }
 
+    #[test_id(trfwsvk)]
     #[test]
     fn events_read_content_events_then_facts_per_chunk_without_spawning_bdq() {
         let (st, t) = store_over(|argv| match (argv[0].as_str(), argv.get(1).map(String::as_str)) {
@@ -495,6 +501,7 @@ mod tests {
         assert_eq!(shape, vec![("content", 200), ("fact", 200), ("content", 1), ("fact", 1)]);
     }
 
+    #[test_id(tn4k978)]
     #[test]
     fn events_surface_a_failed_content_events_read_as_err() {
         let (st, _t) = store_over(|_| Reply { code: 1, out: String::new(), err: "boom".into(), read_ended: false });

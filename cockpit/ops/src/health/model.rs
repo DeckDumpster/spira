@@ -94,6 +94,7 @@ fn unquote_single(raw: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(t2p4mx4)]
     #[test]
     fn plain_values_round_trip() {
         let s = Snapshot::parse("SP_OPEN='42'\nSP_READY='?'\n");
@@ -103,6 +104,7 @@ mod tests {
         assert_eq!(s.q("SP_MISSING"), "?");
     }
 
+    #[test_id(tafq25w)]
     #[test]
     fn embedded_single_quotes_and_spaces_survive() {
         // The exact escaping write_snapshot's python pass produces for a value containing a
@@ -111,12 +113,14 @@ mod tests {
         assert_eq!(s.get("SP_QUEUE_BATCH0"), Some("P1 sp-abc Don't stop title"));
     }
 
+    #[test_id(tuib2mq)]
     #[test]
     fn first_occurrence_wins_on_duplicate_key() {
         let s = Snapshot::parse("SP_OPEN='1'\nSP_OPEN='2'\n");
         assert_eq!(s.get("SP_OPEN"), Some("1"));
     }
 
+    #[test_id(tya8ag5)]
     #[test]
     fn lines_with_no_equals_or_bad_leading_char_are_skipped() {
         let s = Snapshot::parse("not a kv line\n123BAD='x'\n_OK='y'\n=noval\n");
@@ -124,12 +128,14 @@ mod tests {
         assert_eq!(s.get("_OK"), Some("y"));
     }
 
+    #[test_id(t333vyg)]
     #[test]
     fn stalled_probes_lists_timeout_and_error_only() {
         let content = "_PROBE_STATUS_foo='timeout'\n_PROBE_STATUS_bar='ok'\n_PROBE_STATUS_baz='error'\nOTHER='timeout'\n";
         assert_eq!(Snapshot::stalled_probes(content), vec!["foo".to_string(), "baz".to_string()]);
     }
 
+    #[test_id(trnx0uv)]
     #[test]
     fn empty_value_is_empty_string_not_missing() {
         let s = Snapshot::parse("SP_X=''\n");

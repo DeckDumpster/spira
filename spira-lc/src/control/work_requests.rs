@@ -273,12 +273,14 @@ mod tests {
         s.put_work_request(&NewRequest { bead: "sp-a", actor: "builder", argv: &["work".into(), "sp-a".into(), "submit".into()], stdin: Some("body"), bound_ms: 300_000 }, 10, tag).unwrap()
     }
 
+    #[test_id(tjn7o0u)]
     #[test]
     fn the_store_allocates_each_request_the_next_id() {
         let s = store();
         assert_eq!((put(&s, "r1"), put(&s, "r2")), ("wr-1".to_string(), "wr-2".to_string()));
     }
 
+    #[test_id(tuh77dm)]
     #[test]
     fn a_request_is_queued_then_taken_once_then_finished_with_its_output() {
         let s = store();
@@ -294,6 +296,7 @@ mod tests {
         assert_eq!(s.work_request(&id).unwrap().unwrap().output, "refused: x");
     }
 
+    #[test_id(t8rg8pj)]
     #[test]
     fn a_request_that_never_started_can_still_be_finished() {
         let s = store();
@@ -302,6 +305,7 @@ mod tests {
         assert!(s.work_requests_in(QUEUED).unwrap().is_empty(), "finishing removes it from the queue");
     }
 
+    #[test_id(t99zc8n)]
     #[test]
     fn output_over_the_cap_keeps_its_tail_and_is_marked_truncated() {
         let long = format!("{}TAIL", "é".repeat(OUTPUT_MAX));
@@ -315,6 +319,7 @@ mod tests {
         assert!(s.work_request(&id).unwrap().unwrap().truncated);
     }
 
+    #[test_id(tva01gb)]
     #[test]
     fn the_verb_answers_each_sub_verb_and_refuses_what_the_state_forbids() {
         let s = store();

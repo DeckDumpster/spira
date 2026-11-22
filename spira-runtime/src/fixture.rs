@@ -134,6 +134,7 @@ pub fn reconciler_fixture(k: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod door_tests {
+    #[test_id(thoeu42)]
     #[test]
     fn the_config_door_is_open_for_a_test_that_never_asks_the_fixture() {
         spira_config::process::config().expect("the door resolved before this test ran");

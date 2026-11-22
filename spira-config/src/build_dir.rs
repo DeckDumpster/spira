@@ -562,6 +562,7 @@ mod tests {
 
     const H: u64 = 3600;
 
+    #[test_id(taihmvp)]
     #[test]
     fn trim_drops_incremental_session_folders_the_lease_did_not_touch_and_a_day_old() {
         let d = testkit::TempDir::new("bdir-trim-inc");
@@ -583,6 +584,7 @@ mod tests {
         assert!(t.incremental > 0 && t.stale == 0 && t.idle_profiles == 0 && t.after < t.before, "{t:?}");
     }
 
+    #[test_id(tmdikj5)]
     #[test]
     fn trim_drops_deps_fingerprint_and_build_entries_untouched_in_the_lease_and_a_day_old() {
         let d = testkit::TempDir::new("bdir-trim-deps");
@@ -606,6 +608,7 @@ mod tests {
         assert!(t.stale > 0 && t.incremental == 0, "{t:?}");
     }
 
+    #[test_id(ty9ixba)]
     #[test]
     fn trim_drops_a_profile_nothing_wrote_in_six_hours_and_keeps_a_fresh_one() {
         let d = testkit::TempDir::new("bdir-trim-profile");
@@ -622,6 +625,7 @@ mod tests {
         assert!(t.idle_profiles > 0, "{t:?}");
     }
 
+    #[test_id(t9k0vio)]
     #[test]
     fn trimmed_display_names_bytes_before_after_and_each_step() {
         let t = Trimmed { before: 900, after: 100, idle_profiles: 5, incremental: 7, stale: 11 };
@@ -632,6 +636,7 @@ mod tests {
         assert!(!line.contains('\n'));
     }
 
+    #[test_id(twym2l8)]
     #[test]
     fn trim_drops_an_idle_profile_even_if_the_lease_only_read_it() {
         let d = testkit::TempDir::new("bdir-trim-read-profile");
@@ -640,6 +645,7 @@ mod tests {
         assert!(!d.path().join("unittest").exists(), "the idle test is on writes: a read does not keep a profile");
     }
 
+    #[test_id(t50qbqp)]
     #[test]
     fn trim_keeps_what_a_lease_older_than_a_day_touched() {
         let d = testkit::TempDir::new("bdir-trim-cut");
@@ -653,6 +659,7 @@ mod tests {
         assert!(!p.join("deps/before_lease.rlib").exists());
     }
 
+    #[test_id(t9qxmkm)]
     #[test]
     fn releasing_a_lease_trims_its_directory() {
         let d = testkit::TempDir::new("bdir-release-trim");
@@ -665,6 +672,7 @@ mod tests {
         assert!(t.stale > 0, "{t:?}");
     }
 
+    #[test_id(twlh7hs)]
     #[test]
     fn a_second_lease_while_one_is_live_never_touches_the_live_directory() {
         let held = |p: &Path| u64::from(holds_anything(p)) * 100;
@@ -680,6 +688,7 @@ mod tests {
         assert!(a.dir().join("debug/deps/liba.rlib").exists(), "the live directory is untouched under budget pressure");
     }
 
+    #[test_id(t53fx6v)]
     #[test]
     fn lease_dir_takes_an_idle_named_slot_and_a_released_one_is_lockable_again() {
         let d = testkit::TempDir::new("bdir-lease-dir");
@@ -694,6 +703,7 @@ mod tests {
         assert!(lease_dir(&bases, &dir, "gate", std::time::Duration::ZERO).unwrap().is_some());
     }
 
+    #[test_id(t0ujgqv)]
     #[test]
     fn lease_dir_gives_up_on_a_held_slot_and_takes_it_once_its_holder_releases() {
         let d = testkit::TempDir::new("bdir-lease-dir-held");
@@ -710,6 +720,7 @@ mod tests {
         assert!(waiter.join().unwrap(), "the waiter took the slot once its holder released");
     }
 
+    #[test_id(tha2k55)]
     #[test]
     fn lease_dir_refuses_a_path_outside_the_bases_a_missing_slot_and_a_non_slot_name() {
         let d = testkit::TempDir::new("bdir-lease-dir-refused");
@@ -730,6 +741,7 @@ mod tests {
         assert!(none(&dir), "a slot whose directory is gone");
     }
 
+    #[test_id(t3qpn9j)]
     #[test]
     fn only_an_absolute_directory_under_the_base_is_an_owned_build_directory() {
         let d = testkit::TempDir::new("bdir-owned");
@@ -743,6 +755,7 @@ mod tests {
         assert_eq!(owned(Some("rel/dir.1".into()), &[PathBuf::from("rel")]), None);
     }
 
+    #[test_id(tp83kj5)]
     #[test]
     fn four_new_slots_over_two_bases_are_two_on_each() {
         let d = testkit::TempDir::new("bdir-two-bases");
@@ -754,6 +767,7 @@ mod tests {
         assert_eq!(held.len(), 4);
     }
 
+    #[test_id(td88s3z)]
     #[test]
     fn a_new_slot_goes_to_the_base_with_fewer_slots_not_the_first_listed() {
         let d = testkit::TempDir::new("bdir-uneven");
@@ -762,6 +776,7 @@ mod tests {
         assert_eq!(lease(&bases, "sp-new").unwrap().dir().parent(), Some(bases[1].as_path()));
     }
 
+    #[test_id(tieniqv)]
     #[test]
     fn a_base_that_cannot_hold_a_slot_is_skipped_for_the_next() {
         let d = testkit::TempDir::new("bdir-unusable");
@@ -776,6 +791,7 @@ mod tests {
         s.iter().find(|x| x.name == name && x.dir.as_deref() == dir).map(|x| x.value)
     }
 
+    #[test_id(tgzkyg9)]
     #[test]
     fn a_lease_reports_its_directory_the_pool_the_budget_counts_and_everything_under_the_base() {
         let d = testkit::TempDir::new("bdir-meter");
@@ -799,6 +815,7 @@ mod tests {
         assert_eq!(value(&s, "build_dir_budget_bytes", None), Some(777.0));
     }
 
+    #[test_id(tba5obp)]
     #[test]
     fn pushed_samples_reach_the_endpoint_with_their_names_and_the_dir_label() {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
@@ -823,6 +840,7 @@ mod tests {
         proc
     }
 
+    #[test_id(t4fy3pn)]
     #[test]
     fn eviction_reclaims_a_non_slot_directory_by_age_and_spares_a_live_slot_and_a_named_one() {
         let d = testkit::TempDir::new("bdir-nonslot");
@@ -844,6 +862,7 @@ mod tests {
         assert!(live.dir().join("debug/x").exists(), "a live slot is left alone");
     }
 
+    #[test_id(txstu49)]
     #[test]
     fn the_public_eviction_counts_a_non_slot_directory_against_the_budget() {
         let d = testkit::TempDir::new("bdir-nonslot-public");
@@ -854,6 +873,7 @@ mod tests {
         assert_eq!(evict_idle_in(std::slice::from_ref(&base), 0, &held, &empty_proc(d.path())), vec![stray]);
     }
 
+    #[test_id(t9owcz6)]
     #[test]
     fn the_real_eviction_measures_bytes_on_disk_and_reclaims_a_stray_beside_a_live_slot() {
         let d = testkit::TempDir::new("bdir-nonslot-real");
@@ -887,18 +907,21 @@ mod tests {
         order.iter().map(|s| s.3).collect()
     }
 
+    #[test_id(t2q7yd4)]
     #[test]
     fn the_most_recently_idled_warm_slot_is_tried_first_then_the_rest_then_the_empty_ones() {
         let scanned = vec![(false, at(100), 0, 1), (true, at(10), 0, 2), (true, at(50), 1, 3), (false, at(200), 0, 4)];
         assert_eq!(numbers(&lease_order(scanned)), [3, 2, 4, 1]);
     }
 
+    #[test_id(twxgvig)]
     #[test]
     fn a_single_idle_warm_slot_is_first_in_the_lease_order_on_its_own_base() {
         let order = lease_order(vec![(true, at(5), 1, 7)]);
         assert_eq!(order.first().map(|s| (s.2, s.3)), Some((1, 7)));
     }
 
+    #[test_id(t5z21a3)]
     #[test]
     fn a_budget_of_zero_with_one_idle_directory_removes_it_and_reports_one_event_naming_it() {
         let gone = evict_walk(vec![slot(0, 1, 100, 3)], 0, &mut |_| true);
@@ -906,6 +929,7 @@ mod tests {
         assert_eq!(eviction_samples(&gone), [Sample { name: "build_dir_evicted", value: 1.0, dir: Some("b0/dir.1".into()) }]);
     }
 
+    #[test_id(txutbsf)]
     #[test]
     fn strays_are_ranked_with_idle_slots_oldest_first() {
         let cs = vec![slot(0, 2, 10, 1), stray("hand.1", 10, 3), slot(0, 1, 10, 5)];
@@ -913,6 +937,7 @@ mod tests {
         assert_eq!(gone, [PathBuf::from("b0/dir.1"), PathBuf::from("b0/hand.1"), PathBuf::from("b0/dir.2")]);
     }
 
+    #[test_id(t20fuzg)]
     #[test]
     fn a_stray_with_a_process_standing_in_it_is_spared_and_the_others_go() {
         let held = [PathBuf::from("b0/hand.1/debug")];
@@ -921,6 +946,7 @@ mod tests {
         assert_eq!(gone, [PathBuf::from("b0/dir.1"), PathBuf::from("b0/dir.2")]);
     }
 
+    #[test_id(tgzg11a)]
     #[test]
     fn a_directory_is_stood_in_by_its_own_path_and_anything_beneath_it_not_a_sibling_prefix() {
         let held = [PathBuf::from("b0/hand.1/debug"), PathBuf::from("b0/hand.20")];
@@ -930,6 +956,7 @@ mod tests {
         assert!(!stood_in(Path::new("b0/hand.1"), &[]));
     }
 
+    #[test_id(t7k5pd5)]
     #[test]
     fn a_process_cwd_read_from_a_proc_directory_marks_the_stray_it_stands_in() {
         let d = testkit::TempDir::new("bdir-proc-cwd");
@@ -943,6 +970,7 @@ mod tests {
         assert!(!stood_in(Path::new("b0/hand.2"), &held));
     }
 
+    #[test_id(tmg4e8j)]
     #[test]
     fn eviction_removes_least_recently_used_first_never_a_refused_live_one_and_stops_once_under_budget() {
         let cs = vec![slot(0, 4, 100, 1), slot(0, 1, 100, 9), slot(0, 2, 100, 5), slot(0, 3, 100, 3)];
@@ -952,6 +980,7 @@ mod tests {
         assert_eq!(evict_walk(cs, 150, &mut |_| true), [PathBuf::from("b0/dir.1"), PathBuf::from("b0/dir.2")], "dir.3 stays: the total is under budget");
     }
 
+    #[test_id(tguthyx)]
     #[test]
     fn an_eviction_within_budget_removes_nothing_and_empty_directories_are_never_candidates() {
         assert!(evict_walk(vec![slot(0, 1, 100, 9)], 100, &mut |_| panic!("under budget")).is_empty());
@@ -959,12 +988,14 @@ mod tests {
         assert_eq!(evict_walk(cs, 0, &mut |_| true), [PathBuf::from("b0/dir.2")]);
     }
 
+    #[test_id(t88ueyg)]
     #[test]
     fn eviction_counts_every_base_against_one_budget() {
         let cs = vec![slot(0, 1, 100, 2), slot(1, 1, 100, 1)];
         assert_eq!(evict_walk(cs, 100, &mut |_| true), [PathBuf::from("b0/dir.1")]);
     }
 
+    #[test_id(tkdsla4)]
     #[test]
     fn evicting_an_idle_slot_empties_it_and_keeps_the_directory_and_its_lock() {
         let d = testkit::TempDir::new("bdir-evict-slot");
@@ -977,6 +1008,7 @@ mod tests {
         assert!(base.join("dir.1.lock").exists());
     }
 
+    #[test_id(tm0bptj)]
     #[test]
     fn a_base_value_lists_directories_separated_by_whitespace() {
         assert_eq!(parse_bases(" x/b\ny/c "), [PathBuf::from("x/b"), PathBuf::from("y/c")]);

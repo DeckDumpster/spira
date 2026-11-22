@@ -359,12 +359,14 @@ mod tests {
 
     // ---- pause_state: fail closed, never open --------------------------------------------
 
+    #[test_id(t6y77lx)]
     #[test]
     fn no_file_is_open() {
         let d = dir();
         assert_eq!(pause_state(&d.join("capacity-pause"), 1_000), PauseState::Open);
     }
 
+    #[test_id(tkz7lag)]
     #[test]
     fn a_parseable_file_is_paused_with_its_reason() {
         let d = dir();
@@ -374,6 +376,7 @@ mod tests {
         assert_eq!(pause_why(&p), Some("archivist/sess-1 with spaces".into()));
     }
 
+    #[test_id(tqqbfyl)]
     #[test]
     fn unreadable_or_corrupt_is_unknown_never_open() {
         let d = dir();
@@ -388,6 +391,7 @@ mod tests {
         assert_eq!(pause_state(&as_dir, 1_000), PauseState::Unknown);
     }
 
+    #[test_id(tx48znq)]
     #[test]
     fn empty_file_is_unknown() {
         let d = dir();
@@ -396,6 +400,7 @@ mod tests {
         assert_eq!(pause_state(&p, 1_000), PauseState::Unknown);
     }
 
+    #[test_id(ta8zrxu)]
     #[test]
     fn a_pause_whose_time_has_passed_reads_open_from_pause_state() {
         let d = dir();
@@ -416,6 +421,7 @@ mod tests {
 
     // ---- pause_set: extend-only, backoff on an unparseable/missing reset ------------------
 
+    #[test_id(tmejqc7)]
     #[test]
     fn pause_set_extends_but_never_shortens() {
         let d = dir();
@@ -440,6 +446,7 @@ mod tests {
         assert!(ledger_text.contains("CAPACITY paused until"));
     }
 
+    #[test_id(tnobidc)]
     #[test]
     fn pause_set_fails_closed_on_an_unparseable_or_missing_reset_time() {
         // reset_at's `Some(0)` ("hit, but no known resetsAt") must still pause — the
@@ -457,6 +464,7 @@ mod tests {
 
     const MARK: &str = "=== spira attempt";
 
+    #[test_id(t20zxqd)]
     #[test]
     fn missing_or_empty_log_is_none() {
         let d = dir();
@@ -466,6 +474,7 @@ mod tests {
         assert_eq!(reset_at(&empty, MARK), None);
     }
 
+    #[test_id(t7hqran)]
     #[test]
     fn a_genuine_failure_is_none_not_a_refusal() {
         let d = dir();
@@ -474,6 +483,7 @@ mod tests {
         assert_eq!(reset_at(&p, MARK), None);
     }
 
+    #[test_id(ty9e4y9)]
     #[test]
     fn a_rejected_rate_limit_event_with_resets_at_is_some_of_the_epoch() {
         let d = dir();
@@ -482,6 +492,7 @@ mod tests {
         assert_eq!(reset_at(&p, MARK), Some(1_750_003_600));
     }
 
+    #[test_id(tm0nx2u)]
     #[test]
     fn a_refusal_with_no_resets_at_is_some_zero_never_none() {
         let d = dir();
@@ -490,6 +501,7 @@ mod tests {
         assert_eq!(reset_at(&p, MARK), Some(0), "a refusal with an unparseable/missing resetsAt is still a refusal");
     }
 
+    #[test_id(twvae5b)]
     #[test]
     fn the_terminal_result_text_is_the_fallback_for_a_refusal_without_a_rate_limit_event() {
         let d = dir();
@@ -498,6 +510,7 @@ mod tests {
         assert_eq!(reset_at(&p, MARK), Some(0));
     }
 
+    #[test_id(tfldfx0)]
     #[test]
     fn only_the_last_attempt_segment_is_read() {
         let d = dir();
@@ -512,6 +525,7 @@ mod tests {
         assert_eq!(reset_at(&p, MARK), None, "attempt 1's refusal must not leak into attempt 2's verdict");
     }
 
+    #[test_id(tol9cdd)]
     #[test]
     fn a_429_in_a_token_count_is_not_a_bare_http_status() {
         // Regression for the substring trap lib.sh's own header warns about: a bare grep
@@ -536,6 +550,7 @@ mod tests {
         ProbeCfg { exec, agent_bin: "claude", model: "m", timeout_secs: 30, interval_secs: 0, probe_last_file: probe_last }
     }
 
+    #[test_id(tl87rmj)]
     #[test]
     fn case0_positive_control_no_pause_probe_not_called() {
         let d = dir();
@@ -546,6 +561,7 @@ mod tests {
         assert!(exec.0.lock().unwrap().is_empty(), "probe must not run when nothing is paused");
     }
 
+    #[test_id(tdhklvk)]
     #[test]
     fn case1_probe_served_lifts_the_pause_early() {
         let d = dir();
@@ -560,6 +576,7 @@ mod tests {
         assert!(!exec.0.lock().unwrap().is_empty(), "probe WAS called");
     }
 
+    #[test_id(ta3wrbi)]
     #[test]
     fn case2_probe_refused_keeps_the_pause() {
         let d = dir();
@@ -574,6 +591,7 @@ mod tests {
         assert!(!exec.0.lock().unwrap().is_empty(), "probe WAS called");
     }
 
+    #[test_id(t9b0ave)]
     #[test]
     fn case3_close_horizon_never_probes() {
         let d = dir();
@@ -587,6 +605,7 @@ mod tests {
         assert!(exec.0.lock().unwrap().is_empty(), "probe NOT called — horizon is within the window");
     }
 
+    #[test_id(tr6vgdo)]
     #[test]
     fn a_reopened_window_clears_the_file_and_logs_resumption() {
         let d = dir();
@@ -598,6 +617,7 @@ mod tests {
         assert!(v.log.iter().any(|l| l.contains("window has reopened")));
     }
 
+    #[test_id(t0owpb0)]
     #[test]
     fn unreadable_pause_file_gates_as_paused_not_open_even_without_a_probe() {
         let d = dir();
@@ -607,6 +627,7 @@ mod tests {
         assert_eq!(v.state, Paused::Unknown, "fail closed: never Open on an unreadable file");
     }
 
+    #[test_id(tta83gm)]
     #[test]
     fn the_probe_interval_gates_repeated_probing() {
         let d = dir();
@@ -624,6 +645,7 @@ mod tests {
 
     // ---- fingerprint / withdrawal ledger --------------------------------------------------
 
+    #[test_id(tu2lw28)]
     #[test]
     fn fingerprint_is_stable_and_empty_file_has_none() {
         let d = dir();
@@ -636,6 +658,7 @@ mod tests {
         assert_eq!(log_fingerprint(&p), None);
     }
 
+    #[test_id(tqicwbl)]
     #[test]
     fn withdrawn_mark_and_fp_round_trip() {
         let d = dir();

@@ -178,6 +178,7 @@ pub fn now() -> u64 {
 mod tests {
     use super::*;
 
+    #[test_id(tmiz5r6)]
     #[test]
     fn manifest_serialises_with_the_field_names_callers_read() {
         let m = Manifest {
@@ -204,6 +205,7 @@ mod tests {
         assert!(v["tree_sha_found"].is_null());
     }
 
+    #[test_id(tjf4d6l)]
     #[test]
     fn empty_pool_file_parses_as_empty_pool() {
         let s: PoolState = serde_json::from_str("{}").unwrap();

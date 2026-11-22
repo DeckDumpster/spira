@@ -9,8 +9,7 @@ name = "gate-diag"
 path = "src/main.rs"
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testenv/integration", "testkit/integration", "tsd/integration"]
-
+integration = ["spira-config/integration", "spira-otel/integration", "testenv/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }
@@ -19,6 +18,7 @@ testenv = { path = "../testenv" }
 tsd = { path = "../tsd" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

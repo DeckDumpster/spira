@@ -6,6 +6,9 @@
 //! were three separate re-derivations (the exact drift lib.sh's own comments warn about);
 //! in Rust they are one function each, called from three binaries.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod checkpoint;
 pub mod clock;
 pub mod cutover;

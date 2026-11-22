@@ -103,6 +103,7 @@ mod tests {
         std::fs::write(p, contents).unwrap();
     }
 
+    #[test_id(t3stuki)]
     #[test]
     fn excludes_empty_transcripts() {
         let root = testkit::TempDir::new("archivist-live");
@@ -114,6 +115,7 @@ mod tests {
         assert!(live.is_empty());
     }
 
+    #[test_id(tytzmtg)]
     #[test]
     fn is_live_needs_content_and_a_recent_write() {
         let root = testkit::TempDir::new("archivist-live");
@@ -128,6 +130,7 @@ mod tests {
         assert!(!is_live(&root.join("absent.jsonl"), 10, mt));
     }
 
+    #[test_id(t06kajf)]
     #[test]
     fn excludes_transcripts_older_than_idle() {
         let root = testkit::TempDir::new("archivist-live");
@@ -141,6 +144,7 @@ mod tests {
         assert!(live.is_empty(), "a transcript 1000s stale with a 10s idle window must be excluded");
     }
 
+    #[test_id(topx8ee)]
     #[test]
     fn includes_a_fresh_nonempty_transcript() {
         let root = testkit::TempDir::new("archivist-live");
@@ -155,6 +159,7 @@ mod tests {
         assert_eq!(live[0].0, "sess1");
     }
 
+    #[test_id(t9jx3gm)]
     #[test]
     fn excludes_the_harness_own_project_directory() {
         let root = testkit::TempDir::new("archivist-live");
@@ -171,6 +176,7 @@ mod tests {
         assert_eq!(sids, vec!["sess-theirs"]);
     }
 
+    #[test_id(tamghw1)]
     #[test]
     fn newest_transcript_picks_the_most_recently_modified() {
         let root = testkit::TempDir::new("archivist-newest");
@@ -183,6 +189,7 @@ mod tests {
         assert_eq!(sid, "new");
     }
 
+    #[test_id(tttpsr9)]
     #[test]
     fn newest_transcript_skips_empty_files() {
         let root = testkit::TempDir::new("archivist-newest");

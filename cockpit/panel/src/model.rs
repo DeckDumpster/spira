@@ -821,6 +821,7 @@ pub fn comment(view: View, item: &Item, text: &str, cfg: &Cfg) -> Result<(), Str
 mod tests {
     use super::*;
 
+    #[test_id(t12nvkd)]
     #[test]
     fn an_alert_condition_goes_to_the_store_in_process_naming_the_watchdog() {
         let (t, client) = crate::lcio::tests::scripted(0, "");
@@ -828,12 +829,14 @@ mod tests {
         assert_eq!(*t.calls.lock().unwrap(), vec![vec!["condition", "ack", "db-down", "--owner", crate::store::ALERT_OWNER]]);
     }
 
+    #[test_id(tijfowu)]
     #[test]
     fn rule_sh_without_spira_release_refuses_naming_the_key() {
         let e = rule_sh_in(None).unwrap_err();
         assert!(e.contains("SPIRA_RELEASE is not set"), "{e}");
     }
 
+    #[test_id(tqrhedc)]
     #[test]
     fn rule_sh_is_the_release_s_own_and_never_searched_for() {
         let root = testkit::TempDir::new("panel-rule-sh-missing");
@@ -861,6 +864,7 @@ mod tests {
     /// an alert changes nothing about the condition — so a `true` here is a FIRING alert
     /// vanishing from the pane because someone looked at it, which is the reassuring lie the
     /// whole surface exists to prevent. Every other act does remove its row.
+    #[test_id(tlvmh6e)]
     #[test]
     fn acknowledging_an_alert_does_not_remove_it_from_the_pane() {
         assert!(!act_hides(View::Alerts, Act::Primary));
@@ -872,6 +876,7 @@ mod tests {
 
     /// The vocabulary, read the way the pane reads it. A missing `flaps:` label means the
     /// condition has fired once — not zero times, which would render "×0" on a live alert.
+    #[test_id(t25p70y)]
     #[test]
     fn the_alert_labels_read_back_as_written() {
         let plain = an_alert(&["alert", "overseer"]);
@@ -904,6 +909,7 @@ mod tests {
     /// A deadline that will not parse is NO silence, never an eternal one. The failure
     /// direction has to be "you still see it": an alert silenced forever by a typo is a
     /// condition removed from the pane with nothing anywhere saying it is still true.
+    #[test_id(tcho6u5)]
     #[test]
     fn an_unparseable_deadline_silences_nothing() {
         let junk = an_alert(&["alert", "overseer", "silent-until:whenever"]);
@@ -913,6 +919,7 @@ mod tests {
         assert!(silence_label(&junk).is_some());
     }
 
+    #[test_id(te3tdfi)]
     #[test]
     fn a_compose_line_splits_on_the_first_colon() {
         let (slug, text) = parse_enact("closed-is-not-landed: Close a bead when it LANDED: verify with merge-base.").unwrap();
@@ -922,6 +929,7 @@ mod tests {
 
     /// The `law-` prefix is `rule.sh`'s to add, and it strips one that is already there —
     /// so typing it must not produce `law-law-`.
+    #[test_id(tewkrgx)]
     #[test]
     fn a_typed_law_prefix_is_not_doubled() {
         let (slug, _) = parse_enact("law-foo: some statute").unwrap();
@@ -930,6 +938,7 @@ mod tests {
 
     /// Every refusal names what to type. An input rejected with no instruction is the same
     /// dead end as a key that does nothing.
+    #[test_id(t0lkxaa)]
     #[test]
     fn a_malformed_line_is_refused_rather_than_guessed() {
         for bad in ["no colon here", " : text", "Not Kebab: text", "slug:   "] {
@@ -941,6 +950,7 @@ mod tests {
 
     /// A statute is ~70 words and the pane must not hold a second opinion about the limit:
     /// a long body parses fine here and is refused by `rule.sh`, which owns the number.
+    #[test_id(tp0dg6s)]
     #[test]
     fn the_word_limit_is_not_enforced_here() {
         let long = format!("slug: {}", "word ".repeat(300));
@@ -972,6 +982,7 @@ mod tests {
     /// Every ask-* label makes a bead an ask. THE POSITIVE CONTROL
     /// (law-absence-needs-a-positive-control): a predicate that returned false for everything
     /// would satisfy "work beads are not asks" while being completely broken.
+    #[test_id(tsf23qi)]
     #[test]
     fn beads_with_ask_labels_are_asks() {
         for label in ["ask-question", "ask-decision", "ask-task"] {
@@ -983,6 +994,7 @@ mod tests {
 
     /// A work bead in DECISIONS carries `overseer` (or the escalation label) but no ask-*.
     /// Replying to it must comment, never close.
+    #[test_id(tr6nsqw)]
     #[test]
     fn a_work_bead_with_no_ask_label_is_not_an_ask() {
         let it = work_item(&["spira", "plan", "overseer", "repo:spira"]);
@@ -992,6 +1004,7 @@ mod tests {
     /// Every ask-* label makes a bead an ask, including ask-suit. THE POSITIVE CONTROL
     /// for the extended set: is_ask was written only for question/decision/task, and a
     /// suit that is_ask=false would be offered only comment (not decide) on ⏎ press.
+    #[test_id(thi9mlk)]
     #[test]
     fn ask_suit_is_an_ask() {
         // literal-ok: test fixture constructing a label array
@@ -1000,6 +1013,7 @@ mod tests {
     }
 
     /// Empty labels — a bead with nothing on it — is not an ask.
+    #[test_id(t6p0qht)]
     #[test]
     fn a_bead_with_no_labels_is_not_an_ask() {
         assert!(!is_ask(&work_item(&[])));
@@ -1027,6 +1041,7 @@ mod tests {
     }
 
     /// THE POSITIVE CONTROL: is_ask_law fires on ask-law.
+    #[test_id(tbgpjdz)]
     #[test]
     fn a_law_bead_is_recognized_as_ask_law() {
         // literal-ok: test fixture constructing a label array
@@ -1035,6 +1050,7 @@ mod tests {
     }
 
     /// A law proposal is NOT an ordinary ask — ⏎ must comment, not decide.
+    #[test_id(t7ldev2)]
     #[test]
     fn a_law_bead_is_not_an_ordinary_ask() {
         // literal-ok: test fixture constructing a label array
@@ -1043,6 +1059,7 @@ mod tests {
     }
 
     /// Without ask-law, is_ask_law returns false.
+    #[test_id(tmlkack)]
     #[test]
     fn a_non_law_bead_is_not_ask_law() {
         // literal-ok: test fixture constructing a label array
@@ -1069,6 +1086,7 @@ mod tests {
 
     /// is_suit is true iff `ask-suit` is present. THE POSITIVE CONTROL: a false-for-all
     /// predicate would satisfy "non-suits are not suits" while being entirely broken.
+    #[test_id(tvhzqy8)]
     #[test]
     fn is_suit_detects_ask_suit_label() {
         // literal-ok: test fixture constructing a label array
@@ -1076,6 +1094,7 @@ mod tests {
         assert!(is_suit(&it), "ask-suit label must be detected");
     }
 
+    #[test_id(tzeq813)]
     #[test]
     fn a_plain_ask_is_not_a_suit() {
         // literal-ok: test fixture constructing a label array
@@ -1086,12 +1105,14 @@ mod tests {
     /// suit_slug reads the statute slug from the `statute:law-<slug>` label. The slug is
     /// what rule.sh retire/enact receives; a missing label is named as an error rather than
     /// guessed from the title or body.
+    #[test_id(txum42o)]
     #[test]
     fn suit_slug_reads_the_label() {
         let it = suit_item(&["ask-suit", "statute:law-closed-is-not-landed"]);
         assert_eq!(suit_slug(&it).as_deref(), Some("closed-is-not-landed"));
     }
 
+    #[test_id(too9e6n)]
     #[test]
     fn suit_slug_returns_none_when_label_absent() {
         let it = suit_item(&["ask-suit"]);
@@ -1099,6 +1120,7 @@ mod tests {
     }
 
     /// suit_slug strips the `statute:law-` prefix exactly once and no further.
+    #[test_id(tyl36fc)]
     #[test]
     fn suit_slug_does_not_double_strip() {
         let it = suit_item(&["ask-suit", "statute:law-law-something"]);
@@ -1117,6 +1139,7 @@ mod tests {
     ///
     /// This test fails to compile against the unfixed tree, satisfying
     /// law-a-regression-test-must-be-seen-to-fail.
+    #[test_id(t9gylbu)]
     #[test]
     fn premise_rejected_constant_is_the_filter_key() {
         assert_eq!(PREMISE_REJECTED, "premise-rejected");

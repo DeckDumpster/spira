@@ -148,6 +148,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2znif2)]
     #[test]
     fn parses_tab_separated_entries_and_drops_comments_and_blanks() {
         let text = "# comment\n\ntest-a.sh\tskip:no docker\treason a\ntest-b.sh\trequires:claude\t\n";
@@ -169,6 +170,7 @@ mod tests {
         );
     }
 
+    #[test_id(t2dzclc)]
     #[test]
     fn a_malformed_line_is_dropped_not_fatal() {
         let e = parse("just-one-field\ntest-a.sh\tskip:x\tok\n");
@@ -176,6 +178,7 @@ mod tests {
         assert_eq!(e[0].suite, "test-a.sh");
     }
 
+    #[test_id(t48kyfo)]
     #[test]
     fn reserved_words_cover_the_four_testenv_owned_categories() {
         assert_eq!(reserved_word("server testdb not available"), Some("testdb"));
@@ -188,6 +191,7 @@ mod tests {
         assert_eq!(reserved_word("no systemd --user session"), None);
     }
 
+    #[test_id(tppjly5)]
     #[test]
     fn load_refuses_a_reserved_declaration() {
         let text = "test-poison.sh\tskip:server testdb not available\tsneaking it past the gate\n";
@@ -196,6 +200,7 @@ mod tests {
         assert!(err.contains("testdb"));
     }
 
+    #[test_id(ta2u97e)]
     #[test]
     fn load_accepts_a_clean_file_and_declared_lookup_is_exact() {
         let gate = SkipGate::load("test-a.sh\tskip:no docker on this host\thost-only\n").unwrap();
@@ -204,6 +209,7 @@ mod tests {
         assert!(!gate.declared("test-b.sh", "skip:no docker on this host"));
     }
 
+    #[test_id(tybkbi3)]
     #[test]
     fn apply_leaves_a_declared_skip_alone() {
         let gate = SkipGate::load("test-a.sh\tskip:no docker\thost-only\n").unwrap();
@@ -212,6 +218,7 @@ mod tests {
         assert_eq!(out, rec);
     }
 
+    #[test_id(tnxboa9)]
     #[test]
     fn apply_reclassifies_an_undeclared_skip_to_red_keeping_the_fingerprint() {
         let gate = SkipGate::load("").unwrap();
@@ -222,6 +229,7 @@ mod tests {
         assert!(out.status.blocking());
     }
 
+    #[test_id(txw8ef5)]
     #[test]
     fn apply_reclassifies_an_undeclared_skip_req_to_red() {
         let gate = SkipGate::load("").unwrap();
@@ -231,6 +239,7 @@ mod tests {
         assert_eq!(out.fingerprint, "requires:claude");
     }
 
+    #[test_id(ttzremj)]
     #[test]
     fn apply_downgrades_an_undeclared_skip_to_quarantined_red_when_quarantined() {
         let gate = SkipGate::load("").unwrap();
@@ -240,6 +249,7 @@ mod tests {
         assert!(!out.status.blocking());
     }
 
+    #[test_id(tsl74fx)]
     #[test]
     fn apply_ignores_every_other_status() {
         let gate = SkipGate::load("").unwrap();

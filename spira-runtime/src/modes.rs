@@ -71,6 +71,7 @@ mod tests {
         names.iter().map(|n| Registration::new(n, Idle)).collect()
     }
 
+    #[test_id(tm8y9lg)]
     #[test]
     fn each_task_takes_its_configured_mode() {
         let table = parse("heartbeat=act, round-duty=observe\nview=observe").unwrap();
@@ -79,6 +80,7 @@ mod tests {
         assert_eq!(got, vec![("heartbeat", Mode::Act), ("round-duty", Mode::Observe), ("view", Mode::Observe)]);
     }
 
+    #[test_id(tbyy2j0)]
     #[test]
     fn a_task_missing_from_the_table_is_a_config_error_not_a_default() {
         let table = parse("heartbeat=observe").unwrap();
@@ -86,6 +88,7 @@ mod tests {
         assert!(err.contains("view") && err.contains(KEY), "{err}");
     }
 
+    #[test_id(tv6egp1)]
     #[test]
     fn a_name_no_task_registers_is_an_error() {
         let table = parse("heartbeat=act,hearbeat=observe").unwrap();
@@ -93,6 +96,7 @@ mod tests {
         assert!(err.contains("hearbeat"), "{err}");
     }
 
+    #[test_id(tp346r3)]
     #[test]
     fn a_pending_row_may_be_named_before_it_is_ported_and_is_not_booted() {
         // Every family's rows are ported, so the pending set is planted rather than read.
@@ -115,6 +119,7 @@ mod tests {
         vec![("spira/conf.d", default), ("spira/testlib/complete.toml", fixture)]
     }
 
+    #[test_id(tlkqojd)]
     #[test]
     fn the_shipped_default_and_the_complete_fixture_name_every_core_and_pending_task_in_act() {
         let mut want: Vec<&str> = crate::tasks::all().chain(crate::tasks::pending()).map(|t| t.name).collect();
@@ -127,6 +132,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2jeonc)]
     #[test]
     fn malformed_entries_are_refused() {
         for bad in ["heartbeat", "heartbeat=", "heartbeat=Act", "heartbeat=shadow", "=act", "a=act,a=observe"] {

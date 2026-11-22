@@ -126,6 +126,7 @@ mod tests {
         format!("fn t() {{\n    std::env::{SET}(\"A\", \"1\");\n    env::{REMOVE}(\"A\");\n}}\n")
     }
 
+    #[test_id(ta9oelj)]
     #[test]
     fn a_planted_env_edit_in_test_code_is_caught_wherever_test_code_lives() {
         let t = TempDir::new("envleak-fail");
@@ -151,6 +152,7 @@ mod tests {
         assert!(lines.iter().all(|(_, m)| m.starts_with("set_var/remove_var in test code")), "{lines:?}");
     }
 
+    #[test_id(tzkclzr)]
     #[test]
     fn production_code_testkit_comments_and_strings_pass() {
         let t = TempDir::new("envleak-pass");
@@ -165,6 +167,7 @@ mod tests {
         assert_eq!(run(&t, &["a/src/lib.rs", "testkit/src/lib.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t7shr24)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("envleak-allow");
@@ -177,6 +180,7 @@ mod tests {
         );
     }
 
+    #[test_id(t8cum72)]
     #[test]
     fn no_rust_files_is_a_refusal() {
         let t = TempDir::new("envleak-empty");

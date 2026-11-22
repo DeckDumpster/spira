@@ -412,6 +412,7 @@ impl Put for Uploader {
 mod tests {
     use super::*;
 
+    #[test_id(t1tg0er)]
     #[test]
     fn a_destination_parses_to_a_bucket_and_a_slash_terminated_prefix() {
         assert_eq!(
@@ -454,6 +455,7 @@ mod tests {
         (up, curl)
     }
 
+    #[test_id(tem4z0x)]
     #[test]
     fn a_put_new_to_s3_is_conditional_on_no_object_and_a_412_reads_as_exists() {
         let dir = testkit::TempDir::new("put-new-s3");
@@ -470,6 +472,7 @@ mod tests {
         assert!(matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k")));
     }
 
+    #[test_id(t2hezsj)]
     #[test]
     fn a_put_new_to_a_directory_never_replaces_what_is_there() {
         let dir = testkit::TempDir::new("put-new-file");
@@ -535,6 +538,7 @@ mod tests {
         Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: store.clone(), deadline: Duration::from_secs(5) }
     }
 
+    #[test_id(t6z6600)]
     #[test]
     fn a_file_over_the_single_put_limit_goes_up_as_ordered_parts_that_rejoin_to_the_file() {
         let dir = testkit::TempDir::new("put-multipart");
@@ -556,6 +560,7 @@ mod tests {
         assert!(!dir.path().join("snap.part").exists() && !dir.path().join("snap.complete").exists());
     }
 
+    #[test_id(tzxg6wx)]
     #[test]
     fn a_part_the_store_refuses_fails_the_upload_without_an_abort_the_key_could_not_send_and_leaves_no_temporary() {
         let dir = testkit::TempDir::new("put-multipart-abort");
@@ -569,6 +574,7 @@ mod tests {
         assert!(!dir.path().join("snap.part").exists());
     }
 
+    #[test_id(t8jjcl2)]
     #[test]
     fn a_snapshot_past_the_single_put_limit_is_sent_by_multipart_not_refused() {
         let dir = testkit::TempDir::new("put-over-limit");
@@ -581,6 +587,7 @@ mod tests {
         assert!(store.calls.lock().unwrap()[0].ends_with("?uploads"), "{:?}", store.calls);
     }
 
+    #[test_id(treensq)]
     #[test]
     fn the_part_size_defaults_to_256_mib_and_refuses_what_s3_would() {
         let base = S3Creds::from_vars(|k| Some(if k == "AWS_REGION" { "r".into() } else { "x".into() })).unwrap();
@@ -591,6 +598,7 @@ mod tests {
         }
     }
 
+    #[test_id(t11x3cr)]
     #[test]
     fn a_quoted_config_value_escapes_quotes_and_backslashes() {
         assert_eq!(quoted(r#"a"b\c"#), r#""a\"b\\c""#);

@@ -173,6 +173,7 @@ fn below_floor(status: &Value) -> Value {
     status["conditions"].as_array().unwrap().iter().find(|c| c["type"] == "BelowFloor").unwrap().clone()
 }
 
+#[test_id(ta441pu)]
 #[test]
 fn the_section_is_a_term_published_through_admission_with_goodput_from_landed_records() {
     let r = rig();
@@ -206,6 +207,7 @@ fn the_section_is_a_term_published_through_admission_with_goodput_from_landed_re
     assert!(s.get("distance").is_none(), "no spec names a floor, so there is no distance: {s}");
 }
 
+#[test_id(tmtidqs)]
 #[test]
 fn a_stay_in_certified_is_measured_from_its_entry_and_one_with_no_recorded_entry_is_not() {
     use crate::control::feed::Change;
@@ -221,9 +223,10 @@ fn a_stay_in_certified_is_measured_from_its_entry_and_one_with_no_recorded_entry
         audit("CERTIFIED", "IN_DELIVERY", 170, false),
         audit("CERTIFIED", "IN_DELIVERY", 400, true),
     ];
-    assert_eq!(super::certified_stays(&h), vec![(400, 300)]);
+    assert_eq!(super::super::certified_stays(&h), vec![(400, 300)]);
 }
 
+#[test_id(t0vt8f3)]
 #[test]
 fn it_publishes_on_change_at_most_once_a_minute_with_a_five_minute_keepalive() {
     let r = rig();
@@ -248,6 +251,7 @@ fn it_publishes_on_change_at_most_once_a_minute_with_a_five_minute_keepalive() {
     assert_eq!(value(&r.status()["landed_24h"]), 2.0);
 }
 
+#[test_id(tasrr4y)]
 #[test]
 fn when_the_publisher_stops_the_section_reads_stale_with_its_reason() {
     let r = rig();
@@ -260,6 +264,7 @@ fn when_the_publisher_stops_the_section_reads_stale_with_its_reason() {
     assert!(f["reason"].as_str().unwrap().contains("max_age"), "{f}");
 }
 
+#[test_id(t4azpuc)]
 #[test]
 fn an_unknown_section_or_an_unreadable_input_cannot_tell_and_writes_nothing() {
     let r = rig();
@@ -278,15 +283,16 @@ fn an_unknown_section_or_an_unreadable_input_cannot_tell_and_writes_nothing() {
     assert_eq!(r.store.contract().head().unwrap(), head);
 }
 
+#[test_id(tal5suj)]
 #[test]
 fn the_distance_reads_only_terms_with_a_value_and_a_positive_target() {
     use crate::goodput::Measure;
     let v = Measure::Value(1.0);
-    assert_eq!(super::distance(&v, Some(0.0), &Measure::WarmingUp, Some(1800.0)), None);
-    let d = super::distance(&Measure::WarmingUp, Some(150.0), &v, Some(1800.0)).unwrap();
+    assert_eq!(super::super::distance(&v, Some(0.0), &Measure::WarmingUp, Some(1800.0)), None);
+    let d = super::super::distance(&Measure::WarmingUp, Some(150.0), &v, Some(1800.0)).unwrap();
     assert_eq!(d.expr, "max(0, certified_dwell_p95_secs / 1800 - 1)");
     assert!(d.close < d.open);
-    assert_eq!(super::distance(&v, None, &v, None), None);
+    assert_eq!(super::super::distance(&v, None, &v, None), None);
 }
 
 fn pass(batch: &str, members: &[&str], cause: &str, ts: &str) -> Value {
@@ -300,6 +306,7 @@ fn attribution(round: &str, owner: &str, ts: &str) -> Value {
             "suite": "test-a.sh", "outcome": "owner", "owner": owner })
 }
 
+#[test_id(t43lm1i)]
 #[test]
 fn rounds_are_read_from_typed_pass_and_attribution_rows() {
     let passes = vec![
@@ -329,6 +336,7 @@ fn rounds_are_read_from_typed_pass_and_attribution_rows() {
     assert!(!late.iter().any(|e| matches!(e, LoopEvent::Eject { repeat_n: 1, .. })));
 }
 
+#[test_id(tvmzh2g)]
 #[test]
 fn the_run_directory_reads_the_halt_stamp_and_missing_families_as_empty() {
     let tmp = testkit::TempDir::new("lifecycle-section-rundir");
@@ -361,6 +369,7 @@ fn land_row(at: u64, bead: &str, commit: &str, reverts: Option<&str>) -> Value {
     json!({ "ts": tsd::iso_utc(at), "host": "h", "family": "land", "repo": "harness", "bead": bead, "commit": commit, "reverts": reverts })
 }
 
+#[test_id(tou62hy)]
 #[test]
 fn a_halt_that_was_released_is_excluded_from_the_trailing_day_by_the_typed_stop_records_alone() {
     let r = rig();
@@ -384,6 +393,7 @@ fn a_halt_that_was_released_is_excluded_from_the_trailing_day_by_the_typed_stop_
     assert_eq!(value(&st["landed_24h"]), 5.0);
 }
 
+#[test_id(tytjky2)]
 #[test]
 fn a_revert_whose_landing_names_the_reverted_commit_charges_the_reverted_bead() {
     let r = rig();
@@ -399,6 +409,7 @@ fn a_revert_whose_landing_names_the_reverted_commit_charges_the_reverted_bead() 
     assert_eq!(harmful[0]["evidence"][0]["signal"], "revert");
 }
 
+#[test_id(tm463ol)]
 #[test]
 fn a_revert_subject_without_the_typed_field_charges_nothing() {
     let r = rig();
@@ -413,6 +424,7 @@ fn a_revert_subject_without_the_typed_field_charges_nothing() {
     assert!(r.status().get("harmful").is_none(), "{}", r.status());
 }
 
+#[test_id(tyo03nm)]
 #[test]
 fn the_typed_stop_rows_replace_the_halt_stamp_and_a_pause_names_its_repo_and_bead() {
     let tmp = testkit::TempDir::new("lifecycle-stop-rows");
@@ -424,6 +436,7 @@ fn the_typed_stop_rows_replace_the_halt_stamp_and_a_pause_names_its_repo_and_bea
     assert!(matches!(&stops[2], LoopEvent::Stop { repo: Some(r), bead: Some(b), .. } if r == "harness" && b == "b-9"));
 }
 
+#[test_id(td1mt8g)]
 #[test]
 fn publish_reads_no_record_outside_its_window() {
     let r = rig_on(Counting::<MemBackend>::default());
@@ -444,6 +457,7 @@ fn publish_reads_no_record_outside_its_window() {
     assert!(states.len() == 1 && states[0].1.to_lowercase().contains("certified"), "{states:?}");
 }
 
+#[test_id(tflzha2)]
 #[test]
 fn a_landing_by_reclassify_counts() {
     let r = rig();
@@ -457,6 +471,7 @@ fn a_landing_by_reclassify_counts() {
     assert_eq!(value(&r.status()["landed_24h"]), 1.0);
 }
 
+#[test_id(t0aj4z2)]
 #[test]
 fn an_index_short_of_the_window_is_unobservable_not_zero() {
     let r = rig();
@@ -475,6 +490,7 @@ fn an_index_short_of_the_window_is_unobservable_not_zero() {
     assert_eq!(value(&r.status()["landed_24h"]), 2.0);
 }
 
+#[test_id(t9d9c8i)]
 #[test]
 fn a_bead_named_only_by_a_red_takes_its_repo_from_a_read_by_id() {
     let r = rig_on(Counting::<MemBackend>::default());
@@ -510,6 +526,7 @@ fn counting_sink() -> (MetricsSink, std::sync::Arc<std::sync::atomic::AtomicUsiz
     (MetricsSink::new(Some(&addr), "test", std::time::Duration::from_secs(2)), accepted)
 }
 
+#[test_id(tjn2kzc)]
 #[test]
 fn a_publish_posts_no_metric_and_holds_its_gauges_for_one_push() {
     use std::sync::atomic::Ordering;
@@ -552,6 +569,7 @@ fn append_row(dir: &std::path::Path, family: &str, row: &Value) {
     writeln!(f, "\n{row}").unwrap();
 }
 
+#[test_id(tal5b24)]
 #[test]
 fn a_second_publish_parses_only_the_rows_appended_since_the_first() {
     let r = rig();
@@ -564,18 +582,19 @@ fn a_second_publish_parses_only_the_rows_appended_since_the_first() {
     assert_eq!(dir.parsed(), 1_055);
 
     append_row(tmp.path(), "cert-pass", &pass("r-new", &["a"], "red-attributed", &tsd::iso_utc(now - H)));
-    r.advance(super::MIN_GAP_SECS + 10);
+    r.advance(super::super::MIN_GAP_SECS + 10);
     r.publish_from(&dir);
     assert_eq!(dir.parsed(), 1_056, "one appended row, parsed once");
     let cached = r.status();
 
-    r.advance(super::MIN_GAP_SECS + 10);
+    r.advance(super::super::MIN_GAP_SECS + 10);
     let fresh = RunDir::new(tmp.path().to_path_buf());
     r.publish_from(&fresh);
     assert_eq!(fresh.parsed(), 1_056);
     assert_eq!(r.status(), cached, "the cached read and a cold read of the same files agree");
 }
 
+#[test_id(tr5lsj5)]
 #[test]
 fn a_family_file_replaced_by_a_shorter_one_is_read_again_from_the_start() {
     let r = rig();
@@ -591,12 +610,12 @@ fn a_family_file_replaced_by_a_shorter_one_is_read_again_from_the_start() {
     let ts = tsd::iso_utc(now - 2 * H);
     std::fs::write(&short, pass("r-only", &["a"], "over-cap", &ts).to_string()).unwrap();
     std::fs::rename(&short, tmp.join("tsd").join("cert-pass.jsonl")).unwrap();
-    r.advance(super::MIN_GAP_SECS + 10);
+    r.advance(super::super::MIN_GAP_SECS + 10);
     r.publish_from(&dir);
     assert_eq!(dir.parsed(), before + 1, "the replacement is parsed whole");
     let cached = r.status();
 
-    r.advance(super::MIN_GAP_SECS + 10);
+    r.advance(super::super::MIN_GAP_SECS + 10);
     r.publish_from(&RunDir::new(tmp.path().to_path_buf()));
     assert_eq!(r.status(), cached);
 }

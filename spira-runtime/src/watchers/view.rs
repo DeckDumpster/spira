@@ -179,6 +179,7 @@ mod tests {
         Carry { want: Some(want.into()), absent: BTreeMap::new() }
     }
 
+    #[test_id(ttssu61)]
     #[test]
     fn a_live_session_nobody_dismissed_wants_hunk_and_any_other_state_wants_brain() {
         let want = |live: &[&str], d: &[&str]| cfg().decide(&Carry::default(), Some(&ids(live)), &dismissed(d), T0).carry.want.unwrap();
@@ -188,6 +189,7 @@ mod tests {
         assert_eq!(want(&[], &["a"]), BRAIN);
     }
 
+    #[test_id(thdt250)]
     #[test]
     fn the_first_reading_seeds_and_a_change_after_it_flips_once() {
         let first = cfg().decide(&Carry::default(), Some(&ids(&["a"])), &dismissed(&[]), T0);
@@ -198,6 +200,7 @@ mod tests {
         assert_eq!(ended.flip.as_deref(), Some(BRAIN));
     }
 
+    #[test_id(trsvygu)]
     #[test]
     fn a_hunk_that_did_not_answer_changes_nothing_and_forgets_nothing() {
         let carry = Carry { want: Some(BRAIN.into()), absent: BTreeMap::from([("a".to_string(), T0 - DAY - 1)]) };
@@ -205,6 +208,7 @@ mod tests {
         assert_eq!((d.carry, d.flip, d.forget), (carry, None, None));
     }
 
+    #[test_id(t4hqo2r)]
     #[test]
     fn a_dismissal_is_forgotten_only_after_its_session_stays_absent_for_the_whole_window() {
         let d0 = Dismissed { ids: ids(&["a"]), absent: BTreeMap::new() };
@@ -217,6 +221,7 @@ mod tests {
         assert_eq!(past.forget, Some(Forget { rewrite: true, dismissed: Dismissed::default() }));
     }
 
+    #[test_id(twov817)]
     #[test]
     fn a_session_that_comes_back_loses_its_absence_clock() {
         let marked = Dismissed { ids: ids(&["a"]), absent: BTreeMap::from([("a".to_string(), T0)]) };
@@ -225,6 +230,7 @@ mod tests {
         assert!(back.carry.absent.is_empty());
     }
 
+    #[test_id(t4hf34m)]
     #[test]
     fn with_nothing_dismissed_only_a_stale_absence_file_is_cleared() {
         let stale = Dismissed { ids: vec![], absent: BTreeMap::from([("a".to_string(), T0)]) };

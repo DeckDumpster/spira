@@ -810,6 +810,7 @@ mod tests {
         inbox(d)
     }
 
+    #[test_id(td278tn)]
     #[test]
     fn a_pause_older_than_a_round_with_work_waiting_pages_once_naming_repo_reason_and_age() {
         let t = dir("stale-page");
@@ -855,6 +856,7 @@ mod tests {
         );
     }
 
+    #[test_id(tswyuad)]
     #[test]
     fn a_cut_hold_holds_and_a_stop_outranks_it() {
         assert_eq!(hold(false, false, true), Some(Hold::CutHeld));
@@ -863,6 +865,7 @@ mod tests {
         assert_eq!(hold(false, false, false), None);
     }
 
+    #[test_id(tma6rzh)]
     #[test]
     fn an_operator_hold_is_never_paged_as_unattended() {
         let t = dir("stale-hold");
@@ -872,6 +875,7 @@ mod tests {
         assert_eq!(stale_page(d, "a", u64::MAX / 2, true), "");
     }
 
+    #[test_id(t4xjgph)]
     #[test]
     fn a_round_with_no_vm_never_pauses_and_the_third_in_a_row_stops_and_pages() {
         let mut st = State::default();
@@ -886,6 +890,7 @@ mod tests {
         }
     }
 
+    #[test_id(tq5joa6)]
     #[test]
     fn a_refusal_repeated_inside_the_window_stops_the_repo_once_and_a_new_reason_does_not() {
         let t = dir("refusal");
@@ -910,6 +915,7 @@ mod tests {
         );
     }
 
+    #[test_id(t56f3dj)]
     #[test]
     fn a_not_landed_round_pauses_and_pages_and_the_pause_holds_the_next_cut() {
         let t = dir("red");
@@ -925,6 +931,7 @@ mod tests {
         assert!(ran, "rm of the pause file lifts it");
     }
 
+    #[test_id(tx4xsd0)]
     #[test]
     fn a_pause_held_past_its_bound_is_lifted_and_the_repo_cut_without_a_person() {
         let t = dir("lift");
@@ -947,6 +954,7 @@ mod tests {
         run_at(d, "a", now, None, Some((&word, now)), Ok(()), head)
     }
 
+    #[test_id(t3hvh16)]
     #[test]
     fn a_base_red_pauses_at_the_sha_pages_once_and_leaves_the_lift_count() {
         let st = State { pause_lifts: 1, ..State::default() };
@@ -958,6 +966,7 @@ mod tests {
         assert!(fx.pages[0].starts_with("BASE RED a at abc — why;"), "{:?}", fx.pages);
     }
 
+    #[test_id(tw46pu4)]
     #[test]
     fn a_base_red_verdict_is_classified_by_its_word_with_the_sha() {
         let w = base_red_verdict("abc", "x\ny");
@@ -965,6 +974,7 @@ mod tests {
         assert_eq!(classify(&Ok(()), Some((&w, 4)), 5), Outcome::Quiet);
     }
 
+    #[test_id(t99653y)]
     #[test]
     fn a_base_pause_holds_while_the_landing_ref_stays_and_lifts_when_it_moves() {
         let t = dir("base-pause");
@@ -982,6 +992,7 @@ mod tests {
         assert_eq!(event(d, "kind").last(), Some(&Some("pause-lift".to_string())));
     }
 
+    #[test_id(t9zfma5)]
     #[test]
     fn a_stale_base_pause_pages_with_its_text_as_the_reason() {
         let t = dir("base-stale");
@@ -992,6 +1003,7 @@ mod tests {
         assert!(stale_page(d, "a", since + 4000, true).contains("PAUSE UNATTENDED a: base:abc, held"));
     }
 
+    #[test_id(tiss80d)]
     #[test]
     fn a_base_pause_is_never_lifted_by_the_clock() {
         let t = dir("base-pause-clock");
@@ -1015,6 +1027,7 @@ mod tests {
         fs::read_to_string(d.join("landing.log")).unwrap_or_default()
     }
 
+    #[test_id(thwp8xj)]
     #[test]
     fn a_person_lifting_a_red_pause_records_who_and_how_long_it_stood() {
         let t = dir("lift-by-hand");
@@ -1033,6 +1046,7 @@ mod tests {
         assert_eq!(event(d, "held_s"), [Some("90".to_string())]);
     }
 
+    #[test_id(tl6lura)]
     #[test]
     fn the_batchers_pause_keeps_its_text_and_records_the_batcher() {
         let t = dir("set-by-batcher");
@@ -1044,6 +1058,7 @@ mod tests {
         assert_eq!(event(d, "pause_kind"), [Some("red".to_string())]);
     }
 
+    #[test_id(ttqjw2w)]
     #[test]
     fn lifting_no_pause_returns_none_and_writes_nothing() {
         let t = dir("lift-none");
@@ -1053,6 +1068,7 @@ mod tests {
         assert!(event(d, "kind").is_empty());
     }
 
+    #[test_id(t0s576q)]
     #[test]
     fn the_clock_lift_records_the_batcher_as_the_one_who_lifted() {
         let t = dir("lift-by-clock");
@@ -1062,6 +1078,7 @@ mod tests {
         assert!(landing_log(d).contains(&format!("QUEUE ROUND-PAUSE-LIFT {} repo=a by=batcher held_s={LIFT}", 1000 + LIFT)));
     }
 
+    #[test_id(tpwtttw)]
     #[test]
     fn a_held_pause_is_read_by_no_age_and_lifted_only_by_a_person() {
         let t = dir("hold-by-hand");
@@ -1074,6 +1091,7 @@ mod tests {
         assert!(!f.pause_file().exists());
     }
 
+    #[test_id(ty9v3hn)]
     #[test]
     fn a_round_red_again_after_the_auto_lift_stays_paused_for_a_person() {
         let t = dir("lift-twice");
@@ -1096,6 +1114,7 @@ mod tests {
         assert!(Files::new(d, "a").pause_file().exists());
     }
 
+    #[test_id(t1tkgae)]
     #[test]
     fn a_quiet_cut_after_the_auto_lift_restores_the_next_lift() {
         let t = dir("lift-reset");
@@ -1109,6 +1128,7 @@ mod tests {
         );
     }
 
+    #[test_id(t1gzma5)]
     #[test]
     fn an_operator_hold_is_never_lifted_by_the_clock() {
         let t = dir("lift-hold");
@@ -1119,6 +1139,7 @@ mod tests {
         assert!(Files::new(d, "a").pause_file().exists());
     }
 
+    #[test_id(tbsn2x5)]
     #[test]
     fn a_hand_made_pause_file_with_no_stamp_ages_from_its_mtime() {
         let t = dir("lift-hand");
@@ -1131,6 +1152,7 @@ mod tests {
         );
     }
 
+    #[test_id(txrznw6)]
     #[test]
     fn a_red_local_verdict_written_in_the_pass_is_a_red_round_but_a_stale_one_is_not() {
         let t = dir("verdict");
@@ -1144,6 +1166,7 @@ mod tests {
         assert!(Files::new(d, "a").pause_file().exists());
     }
 
+    #[test_id(t31dhku)]
     #[test]
     fn a_round_that_ejected_every_member_is_recut_at_once_not_paused() {
         let t = dir("recut");
@@ -1164,6 +1187,7 @@ mod tests {
         );
     }
 
+    #[test_id(trufxnm)]
     #[test]
     fn a_cut_that_admitted_nothing_never_pauses_whatever_its_wording() {
         let t = dir("empty");
@@ -1187,6 +1211,7 @@ mod tests {
         assert_eq!(inbox(d), "");
     }
 
+    #[test_id(tk9guom)]
     #[test]
     fn a_round_with_no_verdicts_is_cut_again_at_once_and_the_second_in_a_row_stops_and_pages() {
         let t = dir("infra");
@@ -1205,6 +1230,7 @@ mod tests {
         );
     }
 
+    #[test_id(tzu0y5e)]
     #[test]
     fn a_clean_round_resets_the_infra_streak() {
         let t = dir("reset");
@@ -1230,6 +1256,7 @@ mod tests {
         assert!(!Files::new(d, "a").stopped());
     }
 
+    #[test_id(tq34x6i)]
     #[test]
     fn open_failed_pages_once_on_the_third_consecutive_failure_with_the_last_detail() {
         let mut st = State::default();
@@ -1245,6 +1272,7 @@ mod tests {
         assert!(pages[2][0].starts_with("OPEN FAILED a") && pages[2][0].contains("last: three"));
     }
 
+    #[test_id(t0p8z13)]
     #[test]
     fn a_successful_open_resets_the_failed_open_count() {
         let mut st = State::default();
@@ -1257,6 +1285,7 @@ mod tests {
         assert!(fx.pages.is_empty());
     }
 
+    #[test_id(to31hur)]
     #[test]
     fn open_failed_count_round_trips_through_the_files() {
         let t = dir("open-failed");
@@ -1335,6 +1364,7 @@ mod tests {
         cut.get()
     }
 
+    #[test_id(tefukt3)]
     #[test]
     fn an_open_round_with_no_driver_is_redriven_once_after_the_wait_and_never_re_cut() {
         let t = dir("orphan");
@@ -1357,6 +1387,7 @@ mod tests {
         assert_eq!(*calls.borrow(), vec!["redrive b-1".to_string()]);
     }
 
+    #[test_id(t6zdb9y)]
     #[test]
     fn a_round_still_in_phase_opened_with_no_driver_gets_its_certify_on_the_first_tick_and_only_once(
     ) {
@@ -1377,6 +1408,7 @@ mod tests {
         );
     }
 
+    #[test_id(t2n931f)]
     #[test]
     fn a_redriven_round_that_is_undriven_again_files_one_incident_and_no_second_redrive() {
         let t = dir("orphan-twice");
@@ -1406,6 +1438,7 @@ mod tests {
         );
     }
 
+    #[test_id(tn7ip7a)]
     #[test]
     fn a_round_whose_worktree_moved_on_is_not_redriven_and_files_an_incident_naming_why() {
         let t = dir("orphan-moved");
@@ -1434,6 +1467,7 @@ mod tests {
         );
     }
 
+    #[test_id(t8y9jja)]
     #[test]
     fn a_stranded_round_is_filed_and_paged_once_however_many_passes_follow() {
         let t = dir("orphan-once");
@@ -1451,6 +1485,7 @@ mod tests {
         assert_eq!(inbox(d).matches("ROUND OPEN a b-1").count(), 1);
     }
 
+    #[test_id(tjrcrto)]
     #[test]
     fn a_driver_seen_resets_the_orphan_wait() {
         let t = dir("orphan-driven");
@@ -1461,6 +1496,7 @@ mod tests {
         assert!(calls.borrow().is_empty(), "{:?}", calls.borrow());
     }
 
+    #[test_id(tw6nql8)]
     #[test]
     fn an_open_round_a_certify_is_driving_is_never_acted_on() {
         let t = dir("driven");
@@ -1478,6 +1514,7 @@ mod tests {
         assert!(calls.borrow().is_empty());
     }
 
+    #[test_id(tzp3cas)]
     #[test]
     fn one_repos_red_does_not_hold_another() {
         let t = dir("repos");
@@ -1488,6 +1525,7 @@ mod tests {
         assert!(!Files::new(d, "b").pause_file().exists());
     }
 
+    #[test_id(tgcvblc)]
     #[test]
     fn a_stale_round_image_never_counts_toward_the_stop() {
         let t = dir("stale-ami");
@@ -1502,6 +1540,7 @@ mod tests {
         assert_eq!(Files::new(d, "a").load().infra, 0);
     }
 
+    #[test_id(tfsm8k6)]
     #[test]
     fn a_stale_image_refusal_is_recognised_and_a_plain_one_is_not() {
         assert!(is_stale_image(
@@ -1512,6 +1551,7 @@ mod tests {
         ));
     }
 
+    #[test_id(t7v5bb3)]
     #[test]
     fn a_certify_that_always_exits_4_gets_two_attempts_and_one_alert() {
         let t = dir("exit4");
@@ -1532,6 +1572,7 @@ mod tests {
         assert_eq!(inbox(d).matches("ROUNDS STOPPED a").count(), 1);
     }
 
+    #[test_id(tq4pcic)]
     #[test]
     fn classify_reads_the_kind_and_never_the_words() {
         let words = "NOT LANDED OPEN FAILED OVER-CAP certify rc=75 round AMI is stale";
@@ -1546,6 +1587,7 @@ mod tests {
         );
     }
 
+    #[test_id(tp5rtwj)]
     #[test]
     fn classify_an_ok_cut_is_red_only_on_a_red_verdict_written_this_pass() {
         assert_eq!(classify(&Ok(()), Some(("red", 5)), 5), Outcome::Red);
@@ -1554,6 +1596,7 @@ mod tests {
         assert_eq!(classify(&Ok(()), None, 5), Outcome::Quiet);
     }
 
+    #[test_id(twbvw5a)]
     #[test]
     fn a_faulted_attribution_pages_at_once_and_neither_pauses_nor_counts_toward_a_stop() {
         let st = State::default();
@@ -1564,6 +1607,7 @@ mod tests {
         assert!(fx.pages[0].starts_with("ATTRIBUTION FAULTED spira") && fx.pages[0].contains("test-x.sh"), "{:?}", fx.pages);
     }
 
+    #[test_id(tp64mbu)]
     #[test]
     fn a_refused_landing_pages_at_once_and_neither_pauses_nor_counts_toward_a_stop() {
         let st = State { infra: 1, ..State::default() };

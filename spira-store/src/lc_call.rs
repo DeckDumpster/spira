@@ -661,6 +661,7 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tsmi0of)]
     #[test]
     fn a_record_answers_only_once_it_is_done() {
         assert_eq!(record_answer("{\"state\":\"queued\"}"), Ok(None));
@@ -669,6 +670,7 @@ mod tests {
         assert!(record_answer("not json").is_err());
     }
 
+    #[test_id(tegw1u1)]
     #[test]
     fn a_client_call_answers_with_the_finished_request_not_the_queue_receipt() {
         struct Recorded(std::sync::Mutex<u32>);
@@ -688,6 +690,7 @@ mod tests {
         assert_eq!((r.code, r.out.as_str()), (3, "sp-new"));
     }
 
+    #[test_id(tnue6lm)]
     #[test]
     fn only_the_services_queued_line_names_a_request() {
         assert_eq!(queued_id("queued wr-12\n"), Some("wr-12"));
@@ -698,6 +701,7 @@ mod tests {
 
     use super::*;
 
+    #[test_id(tnme0ro)]
     #[test]
     fn a_relative_socket_is_never_inside_a_sim_world_whatever_the_cwd() {
         let dir = testkit::TempDir::new("lc-call-relative");
@@ -733,6 +737,7 @@ mod tests {
         LcClient::socket(path).call(argv)
     }
 
+    #[test_id(tzprugn)]
     #[test]
     fn a_read_whose_connection_the_service_dropped_is_asked_again_and_answered() {
         let (_dir, path, seen) = flaky(2);
@@ -741,6 +746,7 @@ mod tests {
         assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
+    #[test_id(t1i5wnl)]
     #[test]
     fn a_write_whose_reply_was_lost_is_never_sent_twice() {
         let (_dir, path, seen) = flaky(1);
@@ -749,6 +755,7 @@ mod tests {
         assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
+    #[test_id(tloz7he)]
     #[test]
     fn a_read_the_service_never_answers_gives_up_inside_its_budget() {
         let argv = vec!["list".to_string()];
@@ -761,6 +768,7 @@ mod tests {
         assert!(tries > 1, "{tries}");
     }
 
+    #[test_id(t9y9cgb)]
     #[test]
     fn only_reads_are_retried() {
         let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -792,6 +800,7 @@ mod tests {
         accepted
     }
 
+    #[test_id(t9qp4jw)]
     #[test]
     fn a_write_cut_at_the_deadline_is_resent_through_the_socket_client_under_one_id() {
         let dir = testkit::TempDir::new("lc-call-resend");
@@ -814,6 +823,7 @@ mod tests {
         assert!(ids.len() == 2 && ids[0] == ids[1], "{ids:?}");
     }
 
+    #[test_id(trk6qt9)]
     #[test]
     fn a_write_made_while_the_store_is_absent_is_applied_once_when_it_returns() {
         let dir = testkit::TempDir::new("lc-call-absent");
@@ -824,6 +834,7 @@ mod tests {
         assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
+    #[test_id(t7yb0zu)]
     #[test]
     fn a_write_made_while_the_socket_refuses_is_applied_once_when_it_returns() {
         let dir = testkit::TempDir::new("lc-call-stale");
@@ -836,6 +847,7 @@ mod tests {
         assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
+    #[test_id(t0qdzzr)]
     #[test]
     fn an_absent_store_past_the_wait_is_not_running_with_nothing_sent() {
         let dir = testkit::TempDir::new("lc-call-wait");
@@ -843,6 +855,7 @@ mod tests {
         assert!(matches!(&e, LcError::NotRunning(m) if m.contains("store not running") && m.contains("nothing was sent")), "{e:?}");
     }
 
+    #[test_id(tcakhbj)]
     #[test]
     fn a_store_that_accepts_and_never_replies_is_cut_at_the_bound() {
         let dir = testkit::TempDir::new("lc-call-silent");
@@ -860,6 +873,7 @@ mod tests {
         assert!(r.is_err(), "{r:?}");
     }
 
+    #[test_id(te8wt3y)]
     #[test]
     fn a_not_running_wait_set_apart_from_within_bounds_only_the_wait() {
         let dir = testkit::TempDir::new("lc-call-apart");
@@ -871,6 +885,7 @@ mod tests {
         reads_whole_history(&[&["content", "list"][..], a].concat())
     }
 
+    #[test_id(tpfwsbd)]
     #[test]
     fn the_whole_history_is_all_and_unlimited_and_unbounded_in_every_spelling() {
         assert!(whole(&["--all", "--limit", "0", "--json"]));
@@ -882,6 +897,7 @@ mod tests {
         assert!(!reads_whole_history(&["list", "--all", "--limit", "0"]) && !reads_whole_history(&["content", "show", "--all", "--limit", "0"]));
     }
 
+    #[test_id(t3z91va)]
     #[test]
     fn a_deadline_refusal_is_never_stdout() {
         assert!(is_refusal(2, "cannot tell: deadline"));
@@ -891,6 +907,7 @@ mod tests {
 
     /// sp-cxfgj5: exit 2 is "cannot tell" whatever it printed, and text never makes an
     /// answer a refusal.
+    #[test_id(tt4i438)]
     #[test]
     fn cannot_tell_is_the_exit_code_not_the_text() {
         assert!(is_refusal(2, "deadline exceeded"), "exit 2 never reaches stdout as data");
@@ -946,6 +963,7 @@ mod tests {
         }
     }
 
+    #[test_id(t1ibc4t)]
     #[test]
     fn the_helpers_answer_over_the_socket_and_launch_nothing() {
         let dir = testkit::TempDir::new("lc-client-socket");
@@ -970,6 +988,7 @@ mod tests {
         assert_eq!(cob[1..], ["bead", "sp-a", "--expect", "READY", "--version", "4", "--actor", "x", "--kind", "{\"ContentOnBase\":{\"proof\":\"p\"}}"].map(String::from));
     }
 
+    #[test_id(tosw076)]
     #[test]
     fn a_refusal_and_a_fault_stay_apart_and_a_dead_socket_is_a_fault() {
         let dir = testkit::TempDir::new("lc-client-codes");
@@ -984,6 +1003,7 @@ mod tests {
 
     /// sp-iqsanu: an answer the service marks `read_ended` is a typed variant, never text to match;
     /// the same exit without the mark stays a fault.
+    #[test_id(ta2lpwr)]
     #[test]
     fn a_cannot_tell_marked_read_ended_is_its_own_error_and_unmarked_stays_a_fault() {
         let dir = testkit::TempDir::new("lc-client-read-ended");
@@ -1003,6 +1023,7 @@ mod tests {
 
     /// sp-cxfgj5: a close's refusal and its fault are variants a caller matches, never
     /// "exited 3" in a string.
+    #[test_id(tt52b8e)]
     #[test]
     fn a_close_answers_a_typed_refusal_or_fault_never_text_to_match() {
         let dir = testkit::TempDir::new("lc-client-close");
@@ -1016,6 +1037,7 @@ mod tests {
 
     /// The verbs the CLI once answered itself go to the service like any other, and a body
     /// rides the socket to exactly its length.
+    #[test_id(t4b1tyx)]
     #[test]
     fn close_and_a_stdin_body_go_over_the_socket_and_launch_nothing() {
         let dir = testkit::TempDir::new("lc-client-stdin");
@@ -1029,6 +1051,7 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
+    #[test_id(t0ljmq3)]
     #[test]
     fn exchange_once_sends_the_scoped_request_id_and_none_outside_it() {
         let head_sent = |scoped: bool| {
@@ -1066,6 +1089,7 @@ mod tests {
         (got, sent)
     }
 
+    #[test_id(t6jlg4a)]
     #[test]
     fn a_write_cut_at_the_deadline_is_sent_again_under_the_same_minted_id() {
         let (got, sent) = scripted(&[(2, DEADLINE_ANSWER), (0, "")], &["hold", "sp-a", "x"], None);
@@ -1075,6 +1099,7 @@ mod tests {
         assert_eq!(current_request_id(), None);
     }
 
+    #[test_id(tiiqz6l)]
     #[test]
     fn a_write_inside_a_request_scope_is_resent_under_that_id() {
         let (got, sent) = scripted(&[(2, DEADLINE_ANSWER), (0, "")], &["hold", "sp-a", "x"], Some("r-1"));
@@ -1082,6 +1107,7 @@ mod tests {
         assert_eq!(sent, [Some("r-1".to_string()), Some("r-1".to_string())]);
     }
 
+    #[test_id(ty4wicx)]
     #[test]
     fn a_refused_write_is_sent_once() {
         let (got, sent) = scripted(&[(REFUSED, "no")], &["hold", "sp-a", "x"], None);
@@ -1089,6 +1115,7 @@ mod tests {
         assert_eq!(sent.len(), 1);
     }
 
+    #[test_id(tqxj51i)]
     #[test]
     fn a_write_cut_every_time_gives_the_last_cut_answer_when_the_budget_runs_out() {
         let argv = vec!["hold".to_string(), "sp-a".to_string()];
@@ -1101,6 +1128,7 @@ mod tests {
         assert_eq!(got.unwrap().out, DEADLINE_ANSWER);
     }
 
+    #[test_id(tu6flc1)]
     #[test]
     fn a_write_whose_connection_dropped_gets_one_attempt_from_the_resending_step() {
         let argv = vec!["hold".to_string(), "sp-a".to_string()];
@@ -1112,6 +1140,7 @@ mod tests {
         assert_eq!((sends, got), (1, Err(Fail::Dropped("gone".into()))));
     }
 
+    #[test_id(tmkobyd)]
     #[test]
     fn a_read_is_never_sent_under_a_minted_id() {
         let (got, sent) = scripted(&[(0, "[]")], &["show", "sp-a"], None);
@@ -1119,11 +1148,13 @@ mod tests {
         assert_eq!(sent, [None]);
     }
 
+    #[test_id(to264vq)]
     #[test]
     fn the_deadline_answer_is_built_on_the_deadline_message() {
         assert!(DEADLINE_ANSWER.ends_with(DEADLINE_MESSAGE));
     }
 
+    #[test_id(togk1zq)]
     #[test]
     fn a_request_id_rides_the_object_head_and_a_plain_request_stays_an_array() {
         let argv = vec!["content".to_string(), "note".to_string(), "sp-a".to_string()];
@@ -1134,6 +1165,7 @@ mod tests {
 
     /// A content write carries the caller's guard variables — the rune, the czar context and
     /// every stage — and nothing else of its environment; any other request is unchanged.
+    #[test_id(tauaokh)]
     #[test]
     fn a_content_request_carries_the_guard_variables_and_nothing_else() {
         let env = [("SPIRA_RUNE", "czar"), ("SPIRA_CZAR_CLASS", "deadlock"), ("SPIRA_CZAR_TRIGGER_BEAD", "sp-t"), ("SPIRA_CZAR_STAGE_DEADLOCK", "act"), ("SPIRA_DB", "db"), ("HOME", "h")];
@@ -1150,6 +1182,7 @@ mod tests {
         assert!(caller_of(&["list".to_string()]).is_empty(), "only a content call carries them");
     }
 
+    #[test_id(t35fxxc)]
     #[test]
     fn a_call_inside_a_task_carries_its_name_on_the_wire() {
         let head_of = |task: Option<&str>| {
@@ -1172,6 +1205,7 @@ mod tests {
         assert_eq!(head_of(None).trim(), r#"["list"]"#, "outside a task the wire is unchanged");
     }
 
+    #[test_id(tmc9bta)]
     #[test]
     fn a_thread_spawned_inside_a_task_sends_the_name_it_is_handed_and_none_otherwise() {
         as_task("outer", || {
@@ -1183,6 +1217,7 @@ mod tests {
         assert_eq!(as_task_of(None, current_task), None);
     }
 
+    #[test_id(t113s7p)]
     #[test]
     fn as_task_restores_the_outer_name() {
         assert_eq!(current_task(), None);
@@ -1197,6 +1232,7 @@ mod tests {
         assert_eq!(current_task(), None);
     }
 
+    #[test_id(tswivb6)]
     #[test]
     fn only_a_declared_stand_in_or_direct_mode_runs_a_program_and_an_unresolved_socket_is_refused() {
         let sock = || Ok::<_, String>("run/x/sock".to_string());
@@ -1220,6 +1256,7 @@ mod tests {
 
     /// law-a-loops-hot-read-is-in-process: every lifecycle helper speaks to the store through
     /// `LcClient`; the one place a stand-in program may be run is this module's transport.
+    #[test_id(tpevfic)]
     #[test]
     fn no_lifecycle_helper_launches_a_process_of_its_own() {
         let planted = concat!("fn f() { std::process::", "Command", "::new(\"spira-lc\"); }\n#[cfg(test)]\nmod t {}");

@@ -15,7 +15,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["spira-store/integration", "test-registry/integration", "forge/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration"]
+integration = ["spira-store/integration", "test-registry/integration", "forge/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 
 [dependencies]
 base64 = "0.22"
@@ -32,6 +32,7 @@ test-registry = { path = "../test-registry" }
 toml = "0.8"
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [[test]]

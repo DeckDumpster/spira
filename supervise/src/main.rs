@@ -23,6 +23,9 @@
 // Optional environment (not config — set by systemd itself, never by the config file):
 //   WATCHDOG_USEC         0     set by systemd when WatchdogSec= is configured
 //   NOTIFY_SOCKET               set by systemd for sd_notify delivery
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -220,12 +223,14 @@ mod tests {
         (d, p)
     }
 
+    #[test_id(ttaq2wu)]
     #[test]
     fn missing_snapshot_has_no_age() {
         let (_d, p) = scratch_path("missing");
         assert_eq!(snapshot_age_secs(&p), None);
     }
 
+    #[test_id(tapd1jb)]
     #[test]
     fn freshly_written_snapshot_is_a_few_seconds_old_at_most() {
         let (_d, p) = scratch_path("fresh");

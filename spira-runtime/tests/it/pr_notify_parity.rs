@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 
 use spira_runtime::forge::Forge;
+#[test_id(tfwe5qw)]
 #[test]
 fn the_forge_token_rides_the_request_and_is_not_in_the_debug_output() {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();

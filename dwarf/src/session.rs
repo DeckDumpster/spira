@@ -370,6 +370,7 @@ mod tests {
     }
 
     // A silent trace lapses the lease, records a lapsed disposition, trips the stop.
+    #[test_id(tmumlte)]
     #[test]
     fn silent_trace_lapses_and_trips() {
         let d = tmp("lapse");
@@ -390,6 +391,7 @@ mod tests {
 
     // Waiting on a harness-owned slot renews however long the trace is still; the quiet clock
     // restarts when the wait ends.
+    #[test_id(tamyybd)]
     #[test]
     fn a_harness_wait_longer_than_the_lease_never_lapses_and_the_clock_restarts_after() {
         let d = tmp("hwait");
@@ -410,6 +412,7 @@ mod tests {
     }
 
     // turns advance, the deliverable does not → thrash.
+    #[test_id(th45cj0)]
     #[test]
     fn growing_trace_with_a_stale_fuse_thrashes() {
         let d = tmp("thrash");
@@ -430,6 +433,7 @@ mod tests {
     /// sp-2jf0a: a session many leases long renews on every beat, each renewal a fresh
     /// `now + lease` — so the claim's lease advances for as long as the session runs, and
     /// stops advancing the moment the heartbeat does (a dead holder's lease just expires).
+    #[test_id(txjm6iq)]
     #[test]
     fn a_session_longer_than_its_lease_renews_on_every_beat_with_an_advancing_deadline() {
         let d = tmp("renew");
@@ -446,6 +450,7 @@ mod tests {
         assert!(r.iter().all(|&u| u % 60 == 0 && u >= 120 + 60), "each deadline is that beat's now + lease: {r:?}");
     }
 
+    #[test_id(tq0039v)]
     #[test]
     fn a_stop_request_trips_the_session_and_is_consumed() {
         let d = tmp("stopreq");
@@ -461,6 +466,7 @@ mod tests {
         assert_eq!(b.dispositions.lock().unwrap().clone(), vec![("slain".to_string(), "why".to_string())]);
     }
 
+    #[test_id(tbkwnxq)]
     #[test]
     fn a_stop_request_during_a_harness_wait_still_ends_the_session() {
         let d = tmp("stopwait");
@@ -475,6 +481,7 @@ mod tests {
         assert_eq!(b.dispositions.lock().unwrap().clone(), vec![("slain".to_string(), "why".to_string())]);
     }
 
+    #[test_id(t1182r0)]
     #[test]
     fn every_beat_renews_the_identity_lease_to_a_short_window() {
         let d = tmp("idlease");
@@ -487,6 +494,7 @@ mod tests {
         assert!(deadline <= 60 * 4 + IDENTITY_TTL_FLOOR, "the identity lease is the short liveness window, not the session lease: {deadline}");
     }
 
+    #[test_id(tft4rja)]
     #[test]
     fn shutdown_ends_quietly() {
         let d = tmp("down");
@@ -497,6 +505,7 @@ mod tests {
         assert_eq!(stop.signalled(), None);
     }
 
+    #[test_id(tohgwm0)]
     #[test]
     fn a_send_back_stops_the_session_and_marks_it() {
         let d = tmp("sentback");
@@ -511,6 +520,7 @@ mod tests {
         assert!(b.dispositions.lock().unwrap().is_empty(), "the row is not touched");
     }
 
+    #[test_id(t9ylooq)]
     #[test]
     fn a_bead_never_sent_back_keeps_renewing() {
         let d = tmp("notsentback");

@@ -337,6 +337,7 @@ pub fn render_detail(now: i64, b: &Batch, ci: &CiView, forge_base: &str) -> Stri
 mod tests {
     use super::*;
 
+    #[test_id(tp5s4mv)]
     #[test]
     fn the_open_batch_and_its_ci_are_the_store_record_the_queue_shows() {
         let t = testkit::TempDir::new("loom-forge-rounds");
@@ -352,6 +353,7 @@ mod tests {
         assert!(read_all(t.path(), &BTreeMap::from([("deck".to_string(), Ok(String::new()))]), &BTreeMap::new()).is_empty());
     }
 
+    #[test_id(t5qhuxo)]
     #[test]
     fn the_closed_batches_are_the_ended_records_the_queue_shows() {
         let t = testkit::TempDir::new("loom-forge-ended");
@@ -364,6 +366,7 @@ mod tests {
         assert_eq!(lost.iter().map(|b| b.state.as_str()).collect::<Vec<_>>(), [UNREADABLE], "cannot tell is not no closed batch");
     }
 
+    #[test_id(tnc2ql9)]
     #[test]
     fn a_repo_the_queue_cannot_answer_for_is_cannot_tell_not_quiet() {
         let t = testkit::TempDir::new("loom-forge-unreadable");

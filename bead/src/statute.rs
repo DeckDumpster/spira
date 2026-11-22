@@ -145,12 +145,14 @@ mod tests {
 
     const REG: &str = "# c\nlaw-alloc | refuse | pick \\w+ from a configured range\nlaw-touch | show | allocator\n";
 
+    #[test_id(t1cxipv)]
     #[test]
     fn a_contradicting_text_is_a_refusing_hit_listed_first() {
         let h = check(REG, "Pick VMIDs from a configured range via the allocator").unwrap();
         assert_eq!(h.iter().map(|h| (h.slug.as_str(), h.refuses)).collect::<Vec<_>>(), vec![("law-alloc", true), ("law-touch", false)]);
     }
 
+    #[test_id(ts4s9ao)]
     #[test]
     fn plan_rows_are_read_only_by_the_plan_check() {
         let reg = format!("{REG}law-lang | plan | new \\w+ program\n");
@@ -161,11 +163,13 @@ mod tests {
         assert!(plan_check("law-x | plan | (", "x").is_err());
     }
 
+    #[test_id(tf8v25x)]
     #[test]
     fn silence_is_believed_only_after_a_hit() {
         assert!(check(REG, "tidy the README").unwrap().is_empty());
     }
 
+    #[test_id(t5s3izh)]
     #[test]
     fn a_malformed_registry_is_an_error_never_an_empty_pass() {
         assert!(check("law-x | maybe | y", "y").is_err());
@@ -173,6 +177,7 @@ mod tests {
         assert!(check("law-x only", "y").is_err());
     }
 
+    #[test_id(tt738js)]
     #[test]
     fn the_recorded_line_names_every_slug_and_the_override() {
         let h = check(REG, "pick vmids from a configured range").unwrap();
@@ -180,6 +185,7 @@ mod tests {
         assert!(recorded_line(&h, Some("why")).contains("override: why"));
     }
 
+    #[test_id(tzflu47)]
     #[test]
     fn gate_refuses_admits_with_a_reason_and_records_a_touch() {
         let bad = "pick vmids from a configured range";

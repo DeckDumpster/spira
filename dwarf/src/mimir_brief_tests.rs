@@ -26,6 +26,7 @@ fn unresolved(text: &str) -> Vec<&str> {
 }
 
 // covers: UC-ops-detection-remediation-17
+#[test_id(tyn9ngs)]
 #[test]
 fn the_brief_encodes_the_five_step_pass_and_its_threshold() {
     let b = brief();
@@ -37,6 +38,7 @@ fn the_brief_encodes_the_five_step_pass_and_its_threshold() {
 }
 
 // covers: UC-ops-detection-remediation-17
+#[test_id(tvyxvyz)]
 #[test]
 fn the_brief_encodes_the_output_bar_and_the_per_pass_bound() {
     let b = brief();
@@ -56,6 +58,7 @@ fn the_brief_encodes_the_output_bar_and_the_per_pass_bound() {
 }
 
 // covers: UC-ops-detection-remediation-17
+#[test_id(tkso33s)]
 #[test]
 fn the_brief_advances_the_watermark_only_by_compare_and_swap_on_a_successful_census() {
     let b = brief();
@@ -73,6 +76,7 @@ fn the_brief_advances_the_watermark_only_by_compare_and_swap_on_a_successful_cen
 }
 
 // covers: UC-ops-detection-remediation-17
+#[test_id(teiohqc)]
 #[test]
 fn every_spira_home_path_in_the_brief_names_a_file_and_the_check_can_fail() {
     let planted = home_paths("run {{SPIRA_HOME}}/spira/census.sh now");
@@ -84,6 +88,7 @@ fn every_spira_home_path_in_the_brief_names_a_file_and_the_check_can_fail() {
 }
 
 // covers: UC-ops-detection-remediation-17
+#[test_id(tlhm3ux)]
 #[test]
 fn the_brief_names_no_shell_variable_the_renderer_would_leave_unexpanded() {
     assert_eq!(unresolved("a\n$SPIRA_FAKE_VAR x\nb"), ["$SPIRA_FAKE_VAR x"]);

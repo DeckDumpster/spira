@@ -74,12 +74,14 @@ mod tests {
         move |t| Ok(format!("{t} via 192.168.1.1 dev ens18 src {src} uid 1000 \\    cache\n"))
     }
 
+    #[test_id(t4g3e4j)]
     #[test]
     fn src_is_parsed_from_route_output() {
         assert_eq!(parse_route_src("10.0.0.5 dev ens18 src 10.0.0.2 uid 0").as_deref(), Some("10.0.0.2"));
         assert_eq!(parse_route_src("RTNETLINK answers: Network is unreachable"), None);
     }
 
+    #[test_id(tlu0ea4)]
     #[test]
     fn a_lease_move_between_two_resolutions_needs_no_config() {
         let spec = "auto:9431";
@@ -90,6 +92,7 @@ mod tests {
         assert_eq!(resolve_with("", "10.1.1.1", &route("192.168.15.174")).unwrap(), "192.168.15.174");
     }
 
+    #[test_id(tcmrqn9)]
     #[test]
     fn a_pinned_literal_is_not_resolved_and_so_goes_stale() {
         let asked = Cell::new(false);
@@ -101,11 +104,13 @@ mod tests {
         assert_ne!(now, "192.168.1.56", "the pinned key no longer names this host");
     }
 
+    #[test_id(t84y27u)]
     #[test]
     fn the_kernel_route_toward_loopback_is_loopback() {
         assert_eq!(source_toward("127.0.0.1").unwrap(), "127.0.0.1");
     }
 
+    #[test_id(tbn0hqc)]
     #[test]
     fn an_unroutable_host_is_an_error_not_an_empty_address() {
         let ip = |_: &str| Err("unreachable".to_string());

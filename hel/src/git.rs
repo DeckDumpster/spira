@@ -370,6 +370,7 @@ fn holder_of(proc_root: &Path, lock: &Path) -> Option<u32> {
 mod tests {
     use super::*;
 
+    #[test_id(tvdc6yw)]
     #[test]
     fn holder_of_names_the_pid_with_the_lock_open_and_judges_unreadable_ones_by_being_a_live_git() {
         let t = testkit::TempDir::new("hel-proc");

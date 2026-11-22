@@ -1,6 +1,8 @@
 //! A build directory donated by one gate tree and adopted by another at a different path
 //! rebuilds only the crate whose source changed, with real cargo.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::Path;
 use std::process::Command;
 
@@ -59,18 +61,21 @@ fn seeded(t: &testkit::TempDir, change: &str, contents: &str) -> Vec<String> {
     build(&b)
 }
 
+#[test_id(tiv14kr)]
 #[test]
 fn an_adopted_build_directory_rebuilds_only_the_crate_that_changed() {
     let t = testkit::TempDir::new("gate-warm-leaf");
     assert_eq!(seeded(&t, "leaf/src/lib.rs", "pub fn g() -> u8 { base::f() + 1 }\n"), ["leaf"]);
 }
 
+#[test_id(ts471dk)]
 #[test]
 fn an_adopted_build_directory_rebuilds_the_dependents_of_a_changed_crate() {
     let t = testkit::TempDir::new("gate-warm-dep");
     assert_eq!(seeded(&t, "base/src/lib.rs", "pub fn f() -> u8 { 2 }\n"), ["base", "leaf"]);
 }
 
+#[test_id(tpyjntf)]
 #[test]
 fn an_adopted_build_directory_never_serves_a_binary_with_the_donors_path_baked_in() {
     let t = testkit::TempDir::new("gate-warm-path");
@@ -102,6 +107,7 @@ fn an_adopted_build_directory_never_serves_a_binary_with_the_donors_path_baked_i
     assert_eq!(run(&b, b.join("target/debug/pin").to_str().unwrap(), &[]), b.join("pin").to_str().unwrap());
 }
 
+#[test_id(t95hy6w)]
 #[test]
 fn a_unit_cached_by_sccache_in_one_tree_is_recompiled_in_another() {
     let Some(sccache) = spira_config::build::find_on(&std::env::var("PATH").unwrap_or_default(), "sccache") else {

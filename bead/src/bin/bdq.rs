@@ -9,6 +9,9 @@
 //! called directly by name in test suites and other scripts, not only from inside `bdq` —
 //! have something to exec into. The `__` prefix cannot collide with a real `bd` verb.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -518,6 +521,7 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
 mod ghq_tests {
     use super::ghq_caller;
 
+    #[test_id(ttusanz)]
     #[test]
     fn a_ghq_call_is_labelled_by_noun_and_verb_and_an_api_path_never_widens_the_label() {
         assert_eq!(ghq_caller(&["pr", "view", "spira/sp-x", "--json", "state"]), "bdq:pr-view");

@@ -1,6 +1,9 @@
 //! `inbox-triage` — the concierge's in-session Monitor over `SPIRA_CONCIERGE_INBOX`. See
 //! `DESIGN.md`. Replaces `spira/inbox-triage.sh` (sp-48f6g).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod append;
 
 use std::fs::File;
@@ -126,6 +129,7 @@ fn read_new_lines(file: &mut File, offset: u64) -> std::io::Result<(u64, Vec<Str
 mod tests {
     use super::*;
 
+    #[test_id(txrrnvx)]
     #[test]
     fn read_new_lines_only_returns_what_is_past_the_offset_and_complete() {
         let d = testkit::TempDir::new("inbox-triage");

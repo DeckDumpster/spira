@@ -140,6 +140,7 @@ mod argv_tests {
     use spira_store::lc_call::{fake::Content, LcClient};
     use std::sync::Arc;
 
+    #[test_id(tp2d30u)]
     #[test]
     fn set_state_and_dep_add_are_content_requests() {
         let door = Arc::new(Content::new(vec![]));
@@ -151,6 +152,7 @@ mod argv_tests {
         assert_eq!(seen, ["content set-state sp-a branch=x", "content dep add sp-b sp-a", "content label list sp-a"]);
     }
 
+    #[test_id(t7rgxn8)]
     #[test]
     fn a_split_pieces_title_comes_first_whatever_its_place_among_the_flags() {
         let extra: Vec<String> = ["-p", "2", "Piece two", "-l", "a,b", "--description", "-- not a flag"].iter().map(|s| s.to_string()).collect();

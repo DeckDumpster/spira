@@ -6,6 +6,7 @@ fn line(kind: &str, weight: &str) -> String {
     format!("[[weight]]\nkind = \"{kind}\"\nweight = {weight}\nunit = \"u\"\nsource = \"s\"\n")
 }
 
+#[test_id(tzv64qc)]
 #[test]
 fn the_shipped_seed_weighs_every_published_kind_and_lifecycle_weighs_nothing() {
     let m = CausalMap::seed().unwrap();
@@ -15,6 +16,7 @@ fn the_shipped_seed_weighs_every_published_kind_and_lifecycle_weighs_nothing() {
     assert_eq!(m.weight("Probe"), None);
 }
 
+#[test_id(tz4m757)]
 #[test]
 fn a_kind_with_no_weight_line_is_refused_at_load_naming_it() {
     let text = [line("DwarfFleet", "10"), line("Lifecycle", "0")].concat();
@@ -23,6 +25,7 @@ fn a_kind_with_no_weight_line_is_refused_at_load_naming_it() {
     assert!(CausalMap::load(&[text.as_str(), &line("Alarms", "1")].concat(), &KINDS).is_ok());
 }
 
+#[test_id(tl0vbua)]
 #[test]
 fn a_line_that_cannot_be_a_weight_is_refused_by_what_is_wrong_with_it() {
     let all = |extra: &str| [line("DwarfFleet", "10"), line("Alarms", "1"), line("Lifecycle", "0"), extra.to_string()].concat();

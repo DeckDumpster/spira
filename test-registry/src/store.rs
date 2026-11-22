@@ -350,6 +350,7 @@ mod tests {
         }
     }
 
+    #[test_id(tk3ry4v)]
     #[test]
     fn ever_disabled_gives_each_test_once_at_its_first_disable_and_ignores_activate() {
         let c = db();
@@ -361,6 +362,7 @@ mod tests {
         assert_eq!(ever_disabled(&c).unwrap(), vec![("unit:a x::one".to_string(), 100), ("unit:a x::two".to_string(), 200)]);
     }
 
+    #[test_id(tvqh1ej)]
     #[test]
     fn deny_list_includes_a_live_row_and_excludes_an_expired_one() {
         let c = db();
@@ -379,6 +381,7 @@ mod tests {
         );
     }
 
+    #[test_id(toounrv)]
     #[test]
     fn a_row_with_no_until_expires_exactly_hold_secs_after_since() {
         let c = db();
@@ -388,6 +391,7 @@ mod tests {
         assert!(!deny_list(&c, 1600).contains("suite:test-a.sh"));
     }
 
+    #[test_id(t35qqc3)]
     #[test]
     fn an_empty_registry_prints_the_header_alone() {
         assert_eq!(
@@ -396,6 +400,7 @@ mod tests {
         );
     }
 
+    #[test_id(tl5krtj)]
     #[test]
     fn three_rows_print_sorted_with_tabs() {
         let c = db();
@@ -409,11 +414,13 @@ mod tests {
         assert_eq!(deny_list(&c, 50), want);
     }
 
+    #[test_id(tcwkruk)]
     #[test]
     fn digest_is_twelve_hex_of_the_sha256() {
         assert_eq!(digest("abc"), "ba7816bf8f01");
     }
 
+    #[test_id(tgiu45g)]
     #[test]
     fn disable_on_an_existing_row_updates_it_and_keeps_two_history_rows() {
         let c = db();
@@ -428,6 +435,7 @@ mod tests {
         assert_eq!(history(&c, "suite:test-a.sh").unwrap().len(), 2);
     }
 
+    #[test_id(t4ibtnr)]
     #[test]
     fn activate_deletes_the_row_and_appends_an_active_history_row() {
         let c = db();
@@ -441,6 +449,7 @@ mod tests {
         );
     }
 
+    #[test_id(t54jvwm)]
     #[test]
     fn activate_with_no_row_is_refused() {
         let c = db();
@@ -448,6 +457,7 @@ mod tests {
         assert!(history(&c, "suite:test-a.sh").unwrap().is_empty());
     }
 
+    #[test_id(tyv5mau)]
     #[test]
     fn refused_writes_leave_the_tables_unchanged() {
         let c = db();
@@ -470,12 +480,14 @@ mod tests {
         assert_eq!(n, 0);
     }
 
+    #[test_id(tt3p2ue)]
     #[test]
     fn an_unreadable_registry_is_an_error_never_an_empty_list() {
         let c = Connection::open_in_memory().unwrap();
         assert!(try_deny_list(&c, 1).is_err());
     }
 
+    #[test_id(tp74g1h)]
     #[test]
     fn init_is_idempotent_and_refuses_a_newer_schema() {
         let c = db();
@@ -486,12 +498,14 @@ mod tests {
         assert!(init(&c).unwrap_err().contains("newer"));
     }
 
+    #[test_id(tb4b2cp)]
     #[test]
     fn the_schema_is_version_one() {
         let v = scalar(&db(), "PRAGMA user_version").unwrap();
         assert_eq!(v, 1);
     }
 
+    #[test_id(t87dto4)]
     #[test]
     fn clear_landed_deletes_the_rows_naming_the_bead_and_keeps_the_rest() {
         let c = db();
@@ -518,6 +532,7 @@ mod tests {
         assert_eq!(history(&c, "suite:c.sh").unwrap().len(), 1);
     }
 
+    #[test_id(tui6h8d)]
     #[test]
     fn clear_landed_for_a_bead_with_no_rows_changes_nothing() {
         let c = db();
@@ -529,6 +544,7 @@ mod tests {
         assert_eq!(history(&c, "suite:a.sh").unwrap().len(), 1);
     }
 
+    #[test_id(tt1l4eb)]
     #[test]
     fn repoint_moves_the_rows_naming_from_so_the_fixs_landing_clears_them() {
         let c = db();
@@ -564,6 +580,7 @@ mod tests {
         );
     }
 
+    #[test_id(tz4ar31)]
     #[test]
     fn repoint_from_a_bead_with_no_rows_changes_nothing_and_a_bad_id_is_refused() {
         let c = db();

@@ -19,12 +19,14 @@ pub fn touches<S: AsRef<str>>(changed: &[S]) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(t4q6ucl)]
     #[test]
     fn a_recipe_input_is_detected_among_others() {
         assert!(touches(&["README.md", "flake.lock"]));
         assert!(touches(&["round-vm/ami-setup.sh".to_string()]));
     }
 
+    #[test_id(t5ebw64)]
     #[test]
     fn unrelated_and_empty_diffs_are_not_recipe_changes() {
         assert!(!touches(&["spira/queue.sh", "round-vm/src/pool.rs", "flake.nix.bak"]));

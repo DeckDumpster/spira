@@ -102,6 +102,7 @@ mod tests {
         s.pop_due(&VirtualClock::new(100)).into_iter().map(|r| r.id).collect()
     }
 
+    #[test_id(tdoh5xo)]
     #[test]
     fn earlier_first_and_ties_follow_the_seed() {
         let a = order(1);
@@ -110,6 +111,7 @@ mod tests {
         assert!((2..40).any(|s| order(s) != a), "ties must depend on the seed");
     }
 
+    #[test_id(ts2mxq8)]
     #[test]
     fn pop_next_ignores_the_clock_and_an_explicit_tie_orders_equal_times() {
         let mut s = Scheduler::new(1);
@@ -120,6 +122,7 @@ mod tests {
         assert_eq!(ids, ["a", "b", "late"]);
     }
 
+    #[test_id(tiplo9r)]
     #[test]
     fn nothing_is_due_before_its_time_and_a_duplicate_id_is_ignored() {
         let mut s = Scheduler::new(1);

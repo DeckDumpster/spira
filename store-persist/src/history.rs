@@ -124,6 +124,7 @@ fn graft_inner(sql: &dyn Sql, tip: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(tjz2fyx)]
     #[test]
     fn csv_rows_reads_the_named_result_set_and_nothing_else() {
         let out = "status\n0\n\ntip\nabc\n\nn\n5\n";
@@ -132,6 +133,7 @@ mod tests {
         assert!(csv_rows(out, "absent").is_empty());
     }
 
+    #[test_id(tuz3rmg)]
     #[test]
     fn a_log_at_or_under_the_bound_is_left_alone() {
         assert!(!needs_squash(101, 100));
@@ -139,6 +141,7 @@ mod tests {
         assert!(!needs_squash(1_000_000, 0), "0 disables the bound");
     }
 
+    #[test_id(tlpup70)]
     #[test]
     fn a_hash_with_sql_in_it_is_refused() {
         assert!(hash_ok("abc123").is_ok());

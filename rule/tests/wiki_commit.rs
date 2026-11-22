@@ -1,6 +1,8 @@
 // Exception to law-a-unit-test-calls-no-binary: the contract under test is a bash script driving
 // real git, so these tests spawn `bash` and `git`. A `git` shim fixes the order of lock events.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -92,6 +94,7 @@ exit $rc
     (path, counter)
 }
 
+#[test_id(t5sbnpb)]
 #[test]
 fn a_lock_cleared_between_the_failed_add_and_the_existence_check_is_retried() {
     let (t, w) = wiki("wc-window");
@@ -104,6 +107,7 @@ fn a_lock_cleared_between_the_failed_add_and_the_existence_check_is_retried() {
     assert_eq!(fs::read_to_string(counter).unwrap().trim(), "2");
 }
 
+#[test_id(tofz1hs)]
 #[test]
 fn a_lock_held_across_retries_is_waited_out_and_the_file_committed() {
     let (t, w) = wiki("wc-held");
@@ -116,6 +120,7 @@ fn a_lock_held_across_retries_is_waited_out_and_the_file_committed() {
     assert_eq!(fs::read_to_string(counter).unwrap().trim(), "3");
 }
 
+#[test_id(t1u5d84)]
 #[test]
 fn a_stale_lock_is_refused_with_its_age_and_never_removed() {
     let (_t, w) = wiki("wc-stale");
@@ -130,6 +135,7 @@ fn a_stale_lock_is_refused_with_its_age_and_never_removed() {
     assert!(w.join(".git/index.lock").exists());
 }
 
+#[test_id(tgdcz8d)]
 #[test]
 fn no_lock_commits_the_file() {
     let (_t, w) = wiki("wc-plain");
@@ -139,6 +145,7 @@ fn no_lock_commits_the_file() {
     assert_eq!(head(&w), "msg");
 }
 
+#[test_id(t1k8k2a)]
 #[test]
 fn an_already_committed_path_exits_zero() {
     let (_t, w) = wiki("wc-done");
@@ -147,6 +154,7 @@ fn an_already_committed_path_exits_zero() {
     assert_eq!(head(&w), "seed");
 }
 
+#[test_id(thvi2nq)]
 #[test]
 fn an_unknown_path_is_refused() {
     let (_t, w) = wiki("wc-unknown");
@@ -154,6 +162,7 @@ fn an_unknown_path_is_refused() {
     assert_ne!(o.status.code(), Some(0));
 }
 
+#[test_id(tdcda7x)]
 #[test]
 fn a_gitignored_path_is_refused() {
     let (_t, w) = wiki("wc-ignored");
@@ -163,6 +172,7 @@ fn a_gitignored_path_is_refused() {
     assert_ne!(o.status.code(), Some(0));
 }
 
+#[test_id(tmfptdt)]
 #[test]
 fn a_failing_pre_commit_hook_fails_the_script_and_its_text_reaches_stderr() {
     let (_t, w) = wiki("wc-hook");

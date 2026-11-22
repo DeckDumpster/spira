@@ -148,6 +148,7 @@ mod tests {
         settle(s, id, &landing, "concierge", &Call { now: 100, request: &format!("t/settle/{id}"), inputs: &crate::control::claimable::FIXED })
     }
 
+    #[test_id(tkjugrk)]
     #[test]
     fn sp_lrnzs9_a_certified_bead_whose_tip_is_on_the_landing_ref_settles_to_landed() {
         let s = store();
@@ -157,6 +158,7 @@ mod tests {
         assert_eq!(state_of(&s, "sp-a"), "LANDED");
     }
 
+    #[test_id(t7g7czb)]
     #[test]
     fn sp_lrnzs9_a_tip_not_on_the_landing_ref_is_refused_naming_both_shas() {
         let s = store();
@@ -167,6 +169,7 @@ mod tests {
         assert_eq!(state_of(&s, "sp-a"), "CERTIFIED");
     }
 
+    #[test_id(tfaru8e)]
     #[test]
     fn sp_lrnzs9_a_submitted_row_whose_recorded_tip_is_another_beads_landing_commit_settles() {
         let s = store();
@@ -176,6 +179,7 @@ mod tests {
         assert_eq!(state_of(&s, "sp-b"), "LANDED");
     }
 
+    #[test_id(t4cq1pb)]
     #[test]
     fn sp_lrnzs9_a_commit_that_neither_names_the_bead_nor_is_its_tip_is_refused() {
         let s = store();
@@ -185,6 +189,7 @@ mod tests {
         assert_eq!(state_of(&s, "sp-b"), "SUBMITTED");
     }
 
+    #[test_id(tashh6c)]
     #[test]
     fn sp_lrnzs9_a_row_the_store_does_not_hold_is_refused_not_invented() {
         let (code, out) = settle_with(&store(), "sp-none", TIP, true, true);
@@ -204,6 +209,7 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
+    #[test_id(texkudd)]
     #[test]
     fn sp_lrnzs9_the_verb_asks_git_itself_so_a_tip_on_the_ref_settles_and_one_off_it_does_not() {
         let dir = testkit::TempDir::new("lc-reconcile-landed");
@@ -234,6 +240,7 @@ mod tests {
         assert_eq!(state_of(&s, "sp-on"), "LANDED");
     }
 
+    #[test_id(tm9fjuk)]
     #[test]
     fn the_service_refuses_a_request_the_caller_did_not_prove() {
         let s = store();
@@ -247,6 +254,7 @@ mod tests {
         with_proof(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>())
     }
 
+    #[test_id(tyg3ndt)]
     #[test]
     fn a_product_repository_known_only_to_the_repo_map_is_reconciled_by_name() {
         let dir = testkit::TempDir::new("lc-reconcile-landed-registry");

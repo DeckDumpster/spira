@@ -23,6 +23,7 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tn9p6ew)]
 #[test]
 fn t1_registered_for_operator_boots_and_arms_a_15min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
@@ -30,11 +31,13 @@ fn t1_registered_for_operator_boots_and_arms_a_15min_tick() {
     assert!(rig.requested().iter().all(|q| q.input == "operator"), "the probe names its mailbox");
 }
 
+#[test_id(tf9jc3j)]
 #[test]
 fn t2_a_fresh_unread_and_an_open_ask_message_are_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&idle()));
 }
 
+#[test_id(tjl2npd)]
 #[test]
 fn t3_a_pass_decides_and_archives_and_a_refused_snapshot_cannot_archive() {
     let h = t::handler::<H>(SET);
@@ -49,12 +52,14 @@ fn t3_a_pass_decides_and_archives_and_a_refused_snapshot_cannot_archive() {
     assert!(err.contains("refused"), "{err}");
 }
 
+#[test_id(tbiafll)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_no_bdq() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/mail_tidy.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tvceswt)]
 #[test]
 fn t5_the_keep_rule_archives_duplicates_and_stale_mail_and_a_failed_control_archives_nothing() {
     let h = t::handler::<H>(SET);
@@ -71,6 +76,7 @@ fn t5_the_keep_rule_archives_duplicates_and_stale_mail_and_a_failed_control_arch
     assert!(acts.is_empty(), "empty asks and a failing positive control archive nothing: {acts:?}");
 }
 
+#[test_id(tbxy5f7)]
 #[test]
 fn t5b_a_read_digest_note_and_a_read_alarm_whose_condition_ended_are_archived_a_raised_one_stays() {
     let h = t::handler::<H>(SET);
@@ -100,12 +106,14 @@ fn decided_and_unarchived() -> TaskRig {
     r
 }
 
+#[test_id(t5vp8m9)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&decided_and_unarchived(), task::NAME);
     assert!(rows.iter().any(|k| k == "phase"), "{rows:?}");
 }
 
+#[test_id(t8l61vj)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(decided_and_unarchived, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

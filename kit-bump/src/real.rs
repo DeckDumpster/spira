@@ -188,6 +188,7 @@ mod store_client_tests {
         (LcClient::over(t.clone(), true), t)
     }
 
+    #[test_id(t0d3vgj)]
     #[test]
     fn an_open_bump_is_read_through_the_store_client() {
         let dir = testkit::TempDir::new("kit-bump-open");
@@ -207,6 +208,7 @@ mod store_client_tests {
 
 #[cfg(test)]
 mod no_bead_fork {
+    #[test_id(tesmdjf)]
     #[test]
     fn this_crate_files_through_the_content_door_and_forks_no_bead_tool() {
         let found = bead::door::forks_a_bead_tool_under(&testkit::manifest_dir().join("src"));

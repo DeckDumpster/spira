@@ -1,5 +1,6 @@
 use spira_sim::roundvm::{parse_verdict, write_verdict, Verdict, VERDICT_FILE};
 
+#[test_id(trjta5c)]
 #[test]
 fn verdicts_round_trip() {
     for v in [Verdict::Green, Verdict::Red(vec!["test-a.sh".into(), "test-b.sh".into()]), Verdict::RedEarly(vec!["spira-lint".into()]), Verdict::Fault("vm lost".into())] {

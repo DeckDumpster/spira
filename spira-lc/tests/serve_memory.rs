@@ -2,6 +2,8 @@
 //! than it did when it came up. This spawns the binary because the thing measured is the server
 //! process's own resident memory, which no in-process call can see (law-a-unit-test-calls-no-binary).
 
+#[macro_use]
+extern crate spira_test_id;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -99,6 +101,7 @@ fn start_server() -> Server {
     Server { child, socket, pid, _dir: dir }
 }
 
+#[test_id(tu38fgg)]
 #[test]
 fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_where_it_was() {
     let Server { mut child, socket, pid, _dir } = start_server();
@@ -131,6 +134,7 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
     assert!(after < at_ready + SLACK, "RssAnon was {at_ready} B at ready and {after} B after {} requests over {} connections", REQUESTS, CONNECTIONS);
 }
 
+#[test_id(tovs682)]
 #[test]
 fn the_ready_line_is_written_once_the_accept_thread_runs() {
     let Server { mut child, pid, .. } = start_server();

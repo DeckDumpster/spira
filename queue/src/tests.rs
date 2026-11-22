@@ -2130,6 +2130,7 @@ impl T {
 // ------------------------------------------------------------------------------ submit
 
 // covers: UC-landing-merge-queue-27
+#[test_id(t18lvra)]
 #[test]
 fn submit_queue_mode_refuses_a_branch_outside_spira() {
     let t = T::new(LandMode::QueueLocal);
@@ -2143,6 +2144,7 @@ fn submit_queue_mode_refuses_a_branch_outside_spira() {
 /// A queued change is a bead on spira/<id>; a bead-less branch, certified only in a queue
 /// record, is refused.
 // covers: UC-landing-merge-queue-27
+#[test_id(tjgd231)]
 #[test]
 fn submit_refuses_a_bead_less_branch() {
     for mode in [LandMode::Queue, LandMode::QueueLocal] {
@@ -2169,6 +2171,7 @@ fn submit_refuses_a_bead_less_branch() {
 }
 
 // covers: UC-landing-merge-queue-27
+#[test_id(t6z4ivk)]
 #[test]
 fn submit_red_gate_logs_caught_and_propagates_the_gate_code() {
     let t = T::new(LandMode::Queue);
@@ -2183,6 +2186,7 @@ fn submit_red_gate_logs_caught_and_propagates_the_gate_code() {
     assert!(!t.lc.has("certify") && !t.lc.has("event"));
 }
 
+#[test_id(tc19qs5)]
 #[test]
 fn submit_of_a_tip_that_fails_its_lint_is_refused_naming_file_and_line_before_the_gate() {
     let t = T::new(LandMode::Queue);
@@ -2208,6 +2212,7 @@ fn submit_of_a_tip_that_fails_its_lint_is_refused_naming_file_and_line_before_th
     assert!(t.lc.has("certify sp-a t1"));
 }
 
+#[test_id(thbmh59)]
 #[test]
 fn submit_push_mode_rebases_pushes_and_closes() {
     let t = T::new(LandMode::Push);
@@ -2221,6 +2226,7 @@ fn submit_push_mode_rebases_pushes_and_closes() {
     assert!(t.out().contains("landed spira/sp-a (push)"));
 }
 
+#[test_id(tcvm0p6)]
 #[test]
 fn submit_pr_mode_certifies_and_names_the_mode() {
     let t = T::new(LandMode::Pr);
@@ -2229,6 +2235,7 @@ fn submit_pr_mode_certifies_and_names_the_mode() {
     assert!(t.out().contains("queue.sh submit: certified topic (pr)"));
 }
 
+#[test_id(t6i7qtt)]
 #[test]
 fn submit_missing_branch_is_refused() {
     let t = T::new(LandMode::Queue);
@@ -2238,6 +2245,7 @@ fn submit_missing_branch_is_refused() {
 
 // --------------------------------------------------------------- protect/flush/step
 
+#[test_id(tontkra)]
 #[test]
 fn protect_writes_the_receipt_only_for_queue_forge() {
     let t = T::new(LandMode::QueueLocal);
@@ -2254,6 +2262,7 @@ fn protect_writes_the_receipt_only_for_queue_forge() {
     assert_eq!(t.out().lines().count(), 5);
 }
 
+#[test_id(tp1gv7v)]
 #[test]
 fn flush_with_the_batcher_switched_off_cuts_nothing_and_succeeds() {
     let mut t = T::new(LandMode::Queue);
@@ -2264,6 +2273,7 @@ fn flush_with_the_batcher_switched_off_cuts_nothing_and_succeeds() {
     assert!(!calls.iter().any(|c| c.starts_with("cut ")), "{calls:?}");
 }
 
+#[test_id(t22by65)]
 #[test]
 fn step_queue_local_publishes_with_stderr_folded_into_stdout() {
     let t = T::new(LandMode::QueueLocal);
@@ -2279,6 +2289,7 @@ fn step_queue_local_publishes_with_stderr_folded_into_stdout() {
     assert!(t.out().contains("nothing to publish for spira"));
 }
 
+#[test_id(t32uufo)]
 #[test]
 fn step_never_cuts_a_round_even_with_a_batcher_program() {
     for mode in [LandMode::QueueLocal, LandMode::Queue] {
@@ -2291,6 +2302,7 @@ fn step_never_cuts_a_round_even_with_a_batcher_program() {
     }
 }
 
+#[test_id(tdwtl4n)]
 #[test]
 fn step_on_queue_forge_is_status_zero_whatever_the_cut_did() {
     let t = T::new(LandMode::Queue);
@@ -2349,6 +2361,7 @@ impl T {
     }
 }
 
+#[test_id(tbemhup)]
 #[test]
 fn step_all_parses_and_refuses_a_repository_beside_it() {
     let p = |a: &[&str]| cli::parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
@@ -2376,6 +2389,7 @@ fn step_all_parses_and_refuses_a_repository_beside_it() {
     assert!(cli::USAGE.contains("queue.sh step --all"));
 }
 
+#[test_id(th9xu4w)]
 #[test]
 fn step_all_steps_every_queue_mode_repo_in_order_and_skips_the_rest() {
     let t = T::new(LandMode::Queue);
@@ -2417,6 +2431,7 @@ fn step_all_steps_every_queue_mode_repo_in_order_and_skips_the_rest() {
     assert!(out.ends_with("queue.sh step --all: stepped=2 busy=0 unresolved=1 stepped:spira,svc unresolved:broken\n"), "{out}");
 }
 
+#[test_id(tnr2bbu)]
 #[test]
 fn step_all_does_not_propagate_one_repos_failed_step() {
     let t = T::new(LandMode::Queue);
@@ -2432,6 +2447,7 @@ fn step_all_does_not_propagate_one_repos_failed_step() {
     assert_eq!(t.verdicts(), vec!["verdict svc"]);
 }
 
+#[test_id(tadz1n4)]
 #[test]
 fn step_all_without_a_repository_list_is_a_failure_not_an_empty_pass() {
     let t = T::new(LandMode::Queue);
@@ -2443,6 +2459,7 @@ fn step_all_without_a_repository_list_is_a_failure_not_an_empty_pass() {
     assert!(t.verdicts().is_empty());
 }
 
+#[test_id(tq615o5)]
 #[test]
 fn step_all_skips_a_repo_another_stepper_holds_and_steps_the_others() {
     let t = T::new(LandMode::Queue);
@@ -2470,6 +2487,7 @@ fn step_all_skips_a_repo_another_stepper_holds_and_steps_the_others() {
     );
 }
 
+#[test_id(tndl0al)]
 #[test]
 fn step_all_probes_spira_lc_and_refuses_loudly_when_unreachable() {
     let t = T::new(LandMode::Queue);
@@ -2497,6 +2515,7 @@ fn step_all_probes_spira_lc_and_refuses_loudly_when_unreachable() {
     }
 }
 
+#[test_id(teul82l)]
 #[test]
 fn a_step_never_holds_the_queue_lock_verdict_and_batch_take() {
     let t = T::new(LandMode::Queue);
@@ -2524,6 +2543,7 @@ fn open_batch_record(t: &T) {
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb\nopened=5\nbranch=spira/queue/x\nowner=batcher\n");
 }
 
+#[test_id(tscy395)]
 #[test]
 fn eject_with_a_locked_lifecycle_store_exits_nonzero_naming_the_lock() {
     let t = T::new(LandMode::Queue);
@@ -2543,6 +2563,7 @@ fn eject_with_a_locked_lifecycle_store_exits_nonzero_naming_the_lock() {
 }
 
 // covers: UC-landing-merge-queue-29
+#[test_id(t1ovqwy)]
 #[test]
 fn eject_member_records_the_harness_cause_and_returns_it_to_rework_on_spira_lc() {
     let t = T::new(LandMode::Queue);
@@ -2571,6 +2592,7 @@ fn eject_member_records_the_harness_cause_and_returns_it_to_rework_on_spira_lc()
         .contains("queue.sh eject: ejected sp-a from spira batch"));
 }
 
+#[test_id(tkaj389)]
 #[test]
 fn eject_red_records_eject_red() {
     let t = T::new(LandMode::Queue);
@@ -2594,6 +2616,7 @@ fn eject_red_records_eject_red() {
     );
 }
 
+#[test_id(tivwf8h)]
 #[test]
 fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
     let t = T::new(LandMode::Queue);
@@ -2616,6 +2639,7 @@ fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
         .contains("ejected sp-c (certified, not yet batched) for spira (withdrawn)"));
 }
 
+#[test_id(tk63quq)]
 #[test]
 fn eject_of_a_certified_unbatched_bead_exits_0_when_the_reopen_could_not_tell_but_the_row_reads_rework() {
     let t = T::new(LandMode::Queue);
@@ -2634,6 +2658,7 @@ fn eject_of_a_certified_unbatched_bead_exits_0_when_the_reopen_could_not_tell_bu
     assert!(calls.iter().any(|c| c.contains("batch-ejected-red")), "{calls:?}");
 }
 
+#[test_id(t2lv7zz)]
 #[test]
 fn eject_exits_1_naming_the_state_read_when_the_reopen_failed_and_deliver_is_refused() {
     let t = T::new(LandMode::Queue);
@@ -2644,6 +2669,7 @@ fn eject_exits_1_naming_the_state_read_when_the_reopen_failed_and_deliver_is_ref
     assert!(t.err().contains("not returned to REWORK on spira-lc"), "{}", t.err());
 }
 
+#[test_id(tvklyvs)]
 #[test]
 fn eject_of_a_submitted_unbatched_bead_withdraws_it_to_rework_at_its_red_tip() {
     let t = T::new(LandMode::Queue);
@@ -2678,6 +2704,7 @@ fn eject_of_a_submitted_unbatched_bead_withdraws_it_to_rework_at_its_red_tip() {
     );
 }
 
+#[test_id(t23pnk7)]
 #[test]
 fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch() {
     let t = T::new(LandMode::Queue);
@@ -2703,6 +2730,7 @@ fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch
     assert!(!t.lc.has("abandon-batch"));
 }
 
+#[test_id(tqha8am)]
 #[test]
 fn ejecting_a_non_member_returns_it_to_rework_and_leaves_the_open_batch_and_its_pr_alone() {
     let t = T::new(LandMode::Queue);
@@ -2744,6 +2772,7 @@ fn ejecting_a_non_member_returns_it_to_rework_and_leaves_the_open_batch_and_its_
     );
 }
 
+#[test_id(t7kvq4s)]
 #[test]
 fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it() {
     let t = T::new(LandMode::Queue);
@@ -2770,6 +2799,7 @@ fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it(
 }
 
 // covers: UC-landing-merge-queue-29
+#[test_id(twkqyrt)]
 #[test]
 fn eject_of_a_stranger_names_the_members_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
@@ -2783,6 +2813,7 @@ fn eject_of_a_stranger_names_the_members_and_changes_nothing() {
     assert!(t.lib.calls.borrow().is_empty());
 }
 
+#[test_id(t6l9jen)]
 #[test]
 fn eject_refuses_a_concierge_owned_batch_unless_overridden() {
     let t = T::new(LandMode::Queue);
@@ -2793,6 +2824,7 @@ fn eject_refuses_a_concierge_owned_batch_unless_overridden() {
     assert_eq!(t.run(&["eject", "sp-a"]), 0);
 }
 
+#[test_id(thnjqkc)]
 #[test]
 fn eject_with_a_batch_id_ejects_on_spira_lc_too() {
     let t = T::new(LandMode::Queue);
@@ -2805,6 +2837,7 @@ fn eject_with_a_batch_id_ejects_on_spira_lc_too() {
         .contains(&"eject-member spira-1 sp-a CI_RUNNING 4 multi line".to_string()));
 }
 
+#[test_id(tqkdf5m)]
 #[test]
 fn eject_cancels_the_closed_prs_runs_and_only_its_own_branch() {
     let t = T::new(LandMode::Queue);
@@ -2821,6 +2854,7 @@ fn eject_cancels_the_closed_prs_runs_and_only_its_own_branch() {
     );
 }
 
+#[test_id(tosgk6b)]
 #[test]
 fn eject_of_a_record_with_no_branch_cancels_nothing() {
     let t = T::new(LandMode::Queue);
@@ -2829,6 +2863,7 @@ fn eject_of_a_record_with_no_branch_cancels_nothing() {
     assert!(!t.lib.has("cancel_runs"));
 }
 
+#[test_id(tgnztfm)]
 #[test]
 fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_it() {
     let t = T::new(LandMode::Queue);
@@ -2862,6 +2897,7 @@ fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_i
     assert!(e < r, "{calls:?}");
 }
 
+#[test_id(t7lrnwn)]
 #[test]
 fn a_forge_eject_whose_return_write_is_refused_exits_nonzero_naming_the_write() {
     let t = T::new(LandMode::Queue);
@@ -2885,6 +2921,7 @@ fn a_forge_eject_whose_return_write_is_refused_exits_nonzero_naming_the_write() 
     assert!(t.err().contains("Returned refused"), "{}", t.err());
 }
 
+#[test_id(tybqoqy)]
 #[test]
 fn a_forge_harness_fault_eject_leaves_the_member_certified() {
     let t = T::new(LandMode::Queue);
@@ -2906,6 +2943,7 @@ fn a_forge_harness_fault_eject_leaves_the_member_certified() {
     assert!(!calls.contains("event bead sp-a"), "{calls}");
 }
 
+#[test_id(tc71epr)]
 #[test]
 fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded() {
     let t = T::new(LandMode::Queue);
@@ -2930,6 +2968,7 @@ fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(tcq9nx7)]
 #[test]
 fn eject_of_a_batch_with_no_lifecycle_row_sweeps_the_orphans_it_left() {
     let t = T::new(LandMode::Queue);
@@ -2949,6 +2988,7 @@ fn eject_of_a_batch_with_no_lifecycle_row_sweeps_the_orphans_it_left() {
     assert!(t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tc6ra23)]
 #[test]
 fn an_eject_that_settles_runs_no_sweep() {
     let t = T::new(LandMode::Queue);
@@ -2963,6 +3003,7 @@ fn an_eject_that_settles_runs_no_sweep() {
 }
 
 // covers: UC-landing-merge-queue-29
+#[test_id(tgwx30u)]
 #[test]
 fn eject_of_the_last_member_abandons_the_emptied_batch_row() {
     let t = T::new(LandMode::Queue);
@@ -2972,6 +3013,7 @@ fn eject_of_the_last_member_abandons_the_emptied_batch_row() {
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(t314z0p)]
 #[test]
 fn eject_of_the_last_member_retires_the_mender_beads_filed_for_the_batch() {
     let t = T::new(LandMode::Queue);
@@ -2986,6 +3028,7 @@ fn eject_of_the_last_member_retires_the_mender_beads_filed_for_the_batch() {
     assert!(rounds.join("spira-1.mender-1-gate-lint.retired").exists());
 }
 
+#[test_id(t8zi0eh)]
 #[test]
 fn spira_lc_unreachable_refuses_loudly_and_changes_nothing() {
     for args in [
@@ -3017,6 +3060,7 @@ fn spira_lc_unreachable_refuses_loudly_and_changes_nothing() {
     assert!(t.err().contains("no spira-lc program"));
 }
 
+#[test_id(te1cthx)]
 #[test]
 fn eject_of_a_member_already_in_delivery_returns_without_a_second_deliver() {
     let t = T::new(LandMode::Queue);
@@ -3035,6 +3079,7 @@ fn eject_of_a_member_already_in_delivery_returns_without_a_second_deliver() {
     );
 }
 
+#[test_id(t0q34ih)]
 #[test]
 fn eject_of_a_certified_unbatched_bead_delivers_then_returns_on_spira_lc() {
     let t = T::new(LandMode::Queue);
@@ -3054,6 +3099,7 @@ fn eject_of_a_certified_unbatched_bead_delivers_then_returns_on_spira_lc() {
     );
 }
 
+#[test_id(tiohn96)]
 #[test]
 fn a_lock_held_past_the_deadline_refuses_naming_its_recorded_holder() {
     let t = T::new(LandMode::Queue);
@@ -3077,6 +3123,7 @@ fn a_lock_held_past_the_deadline_refuses_naming_its_recorded_holder() {
     );
 }
 
+#[test_id(tya038z)]
 #[test]
 fn eject_refuses_while_another_queue_operation_holds_the_lock() {
     let t = T::new(LandMode::Queue);
@@ -3088,6 +3135,7 @@ fn eject_refuses_while_another_queue_operation_holds_the_lock() {
         .contains("another queue operation holds the lock for spira"));
 }
 
+#[test_id(t5pheks)]
 #[test]
 fn eject_refuses_an_id_that_is_not_an_identifier() {
     let t = T::new(LandMode::Queue);
@@ -3095,6 +3143,7 @@ fn eject_refuses_an_id_that_is_not_an_identifier() {
     assert!(t.err().contains("refused"));
 }
 
+#[test_id(t9ciz6x)]
 #[test]
 fn czar_fence_refusal_stops_eject_before_anything() {
     let t = T::new(LandMode::Queue);
@@ -3110,6 +3159,7 @@ fn czar_fence_refusal_stops_eject_before_anything() {
 // ----------------------------------------------------------------------------- abandon
 
 // covers: UC-landing-merge-queue-29
+#[test_id(tg6faku)]
 #[test]
 fn abandon_requires_a_reason() {
     let t = T::new(LandMode::Queue);
@@ -3117,6 +3167,7 @@ fn abandon_requires_a_reason() {
     assert!(t.err().contains("--reason is required"));
 }
 
+#[test_id(tkvtgmf)]
 #[test]
 fn abandon_with_lifecycle_on_abandons_the_batch_on_spira_lc() {
     let t = T::new(LandMode::Queue);
@@ -3130,6 +3181,7 @@ fn abandon_with_lifecycle_on_abandons_the_batch_on_spira_lc() {
     assert!(t.out().contains("spira-1 abandoned on spira-lc"));
 }
 
+#[test_id(tpq4ng5)]
 #[test]
 fn abandon_refuses_a_batch_whose_pr_is_merged() {
     let t = T::new(LandMode::Queue);
@@ -3141,6 +3193,7 @@ fn abandon_refuses_a_batch_whose_pr_is_merged() {
     assert!(t.qfile("open").exists());
 }
 
+#[test_id(t5hh7jv)]
 #[test]
 fn abandon_dry_run_prints_the_audit_line_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
@@ -3155,6 +3208,7 @@ fn abandon_dry_run_prints_the_audit_line_and_changes_nothing() {
 
 // ------------------------------------------------------------------------ claim/release
 
+#[test_id(te46pcp)]
 #[test]
 fn claim_and_release_hand_the_batch_back() {
     let t = T::new(LandMode::Queue);
@@ -3178,6 +3232,7 @@ fn claim_and_release_hand_the_batch_back() {
     assert!(t.err().contains("is not claimed by concierge"));
 }
 
+#[test_id(tfrvw0q)]
 #[test]
 fn claim_without_reason_is_usage() {
     let t = T::new(LandMode::Queue);
@@ -3186,6 +3241,7 @@ fn claim_without_reason_is_usage() {
 
 // -------------------------------------------------------------------------- open-batch
 
+#[test_id(trar1ya)]
 #[test]
 fn open_batch_leaves_a_submitted_bead_out_whose_gate_has_not_passed() {
     let t = T::new(LandMode::Queue);
@@ -3213,6 +3269,7 @@ fn open_batch_leaves_a_submitted_bead_out_whose_gate_has_not_passed() {
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(towy1ca)]
 #[test]
 fn open_batch_admits_a_named_certified_bead() {
     let t = T::new(LandMode::Queue);
@@ -3236,6 +3293,7 @@ fn open_batch_admits_a_named_certified_bead() {
 }
 
 // covers: UC-landing-merge-queue-41
+#[test_id(t2ebi3y)]
 #[test]
 fn open_batch_pr_body_lists_id_and_title_per_member() {
     let t = T::new(LandMode::Queue);
@@ -3252,6 +3310,7 @@ fn open_batch_pr_body_lists_id_and_title_per_member() {
     assert!(pr.contains("- sp-a — first fix\n") && pr.contains("- sp-b — second fix"), "{pr}");
 }
 
+#[test_id(tb14pm9)]
 #[test]
 fn open_batch_names_the_paths_a_member_conflicts_with_base_on() {
     let t = T::new(LandMode::Queue);
@@ -3279,6 +3338,7 @@ fn open_batch_names_the_paths_a_member_conflicts_with_base_on() {
     assert!(t.out().contains("sp-x: conflicts with base — paths: unknown"), "{}", t.out());
 }
 
+#[test_id(tsykdse)]
 #[test]
 fn open_batch_refuses_while_a_batch_is_open() {
     let t = T::new(LandMode::Queue);
@@ -3289,6 +3349,7 @@ fn open_batch_refuses_while_a_batch_is_open() {
         .contains("a batch is already open for spira (owner=batcher)"));
 }
 
+#[test_id(tg451tb)]
 #[test]
 fn open_batch_replace_requires_a_reason_and_leaves_the_open_batch_alone() {
     let t = T::new(LandMode::Queue);
@@ -3302,6 +3363,7 @@ fn open_batch_replace_requires_a_reason_and_leaves_the_open_batch_alone() {
     assert!(t.qfile("open").exists());
 }
 
+#[test_id(t6c7oxs)]
 #[test]
 fn open_batch_does_not_admit_when_the_lifecycle_row_cannot_be_read() {
     let t = T::new(LandMode::Queue);
@@ -3363,6 +3425,7 @@ impl T {
     }
 }
 
+#[test_id(t6alp1r)]
 #[test]
 fn land_local_refuses_a_tree_no_gate_or_round_certified() {
     let t = T::new(LandMode::QueueLocal);
@@ -3386,6 +3449,7 @@ fn land_local_refuses_a_tree_no_gate_or_round_certified() {
     assert!(t.git.get("refs/archive/rounds/1").is_none());
 }
 
+#[test_id(trclmg0)]
 #[test]
 fn land_local_refuses_a_budgeted_gate_pass_for_the_head_tree() {
     let t = T::new(LandMode::QueueLocal);
@@ -3404,6 +3468,7 @@ fn land_local_refuses_a_budgeted_gate_pass_for_the_head_tree() {
     assert!(!t.lib.has("land_mark"));
 }
 
+#[test_id(tg0g2y5)]
 #[test]
 fn land_local_accepts_a_round_green_for_the_head_tree() {
     let t = T::new(LandMode::QueueLocal);
@@ -3432,6 +3497,7 @@ fn land_local_accepts_a_round_green_for_the_head_tree() {
     );
 }
 
+#[test_id(tietvda)]
 #[test]
 fn land_local_refuses_while_another_operation_holds_the_lock() {
     let t = T::new(LandMode::QueueLocal);
@@ -3459,6 +3525,7 @@ fn land_local_refuses_while_another_operation_holds_the_lock() {
     );
 }
 
+#[test_id(tj6vjes)]
 #[test]
 fn land_local_syncs_the_boundary_wiki_page_only_for_the_home_repo() {
     let t = T::new(LandMode::QueueLocal);
@@ -3498,6 +3565,7 @@ fn land_local_syncs_the_boundary_wiki_page_only_for_the_home_repo() {
     );
 }
 
+#[test_id(trv8qys)]
 #[test]
 fn land_local_ignores_a_pass_for_another_tree_or_repo() {
     // The incident: the branch passed alone (its own tree); the merge that landed is h1.
@@ -3535,6 +3603,7 @@ fn land_local_ignores_a_pass_for_another_tree_or_repo() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
+#[test_id(talicwu)]
 #[test]
 fn land_local_honours_spira_verdicts_as_the_gate_does() {
     let t = T::new(LandMode::QueueLocal);
@@ -3562,6 +3631,7 @@ fn land_local_honours_spira_verdicts_as_the_gate_does() {
     );
 }
 
+#[test_id(tmfkly8)]
 #[test]
 fn land_local_ungated_override_lands_and_logs_the_reason() {
     let t = T::new(LandMode::QueueLocal);
@@ -3607,6 +3677,7 @@ fn land_local_ungated_override_lands_and_logs_the_reason() {
     assert!(landing[0].1.contains("UNGATED"), "{}", landing[0].1);
 }
 
+#[test_id(tejbqzd)]
 #[test]
 fn land_local_ungated_override_refuses_without_by_or_evidence_on_the_tip() {
     let t = T::new(LandMode::QueueLocal);
@@ -3643,6 +3714,7 @@ fn land_local_ungated_override_refuses_without_by_or_evidence_on_the_tip() {
     }
 }
 
+#[test_id(tdc1dol)]
 #[test]
 fn land_local_delivers_each_member_at_its_version() {
     let t = T::new(LandMode::QueueLocal);
@@ -3669,6 +3741,7 @@ fn land_local_delivers_each_member_at_its_version() {
     ev("event bead sp-b IN_DELIVERY 4 {\"Delivered\":{\"merge_sha\":\"h1\",\"proof\":\"ancestry\"}}");
 }
 
+#[test_id(tmmblny)]
 #[test]
 fn land_local_with_lifecycle_on_resumes_a_member_already_in_delivery() {
     let t = T::new(LandMode::QueueLocal);
@@ -3691,6 +3764,7 @@ fn land_local_with_lifecycle_on_resumes_a_member_already_in_delivery() {
     );
 }
 
+#[test_id(tm1j2ev)]
 #[test]
 fn land_local_with_lifecycle_on_does_not_deliver_a_tip_that_is_not_in_the_head() {
     let t = T::new(LandMode::QueueLocal);
@@ -3712,6 +3786,7 @@ fn land_local_with_lifecycle_on_does_not_deliver_a_tip_that_is_not_in_the_head()
         .any(|c| c.starts_with("event bead")));
 }
 
+#[test_id(tugtx1b)]
 #[test]
 fn land_local_with_spira_lc_unreachable_lands_nothing() {
     let t = T::new(LandMode::QueueLocal);
@@ -3731,6 +3806,7 @@ fn land_local_with_spira_lc_unreachable_lands_nothing() {
     assert!(!t.lib.has("bead_close"));
 }
 
+#[test_id(t3o5zsj)]
 #[test]
 fn land_local_refuses_a_head_that_does_not_fast_forward() {
     let t = T::new(LandMode::QueueLocal);
@@ -3746,6 +3822,7 @@ fn land_local_refuses_a_head_that_does_not_fast_forward() {
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("b0"));
 }
 
+#[test_id(totsorm)]
 #[test]
 fn land_local_refuses_a_remote_tracking_base_and_other_modes() {
     let t = T::new(LandMode::QueueLocal);
@@ -3776,6 +3853,7 @@ fn release_in_force(t: &T) {
 /// Over-broad-scopes #3 (sp-ipwlic): land-local releases the queue lock before it activates the
 /// release, so a claim or a round verb does not wait behind the activation; and an activation
 /// whose head a later landing has moved past is not run.
+#[test_id(txbfzpy)]
 #[test]
 fn land_local_activates_its_release_with_the_queue_lock_released() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -3817,6 +3895,7 @@ fn land_local_activates_its_release_with_the_queue_lock_released() {
 
 /// sp-ia61tg: a round build that ships other binaries but not `release` is refused before the
 /// ref moves, never after the landing is recorded.
+#[test_id(tun642y)]
 #[test]
 fn land_local_refuses_before_landing_when_the_round_build_lacks_release() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -3856,6 +3935,7 @@ fn land_local_refuses_before_landing_when_the_round_build_lacks_release() {
 /// sp-6ugk85: a landing whose activation runs after the round's build directory is gone (a
 /// deferred activation, the round VM's build) activates the release from that release's own
 /// `bin/release`, which `release build` copied from the same tested build.
+#[test_id(teiqfhv)]
 #[test]
 fn activation_runs_the_built_releases_own_binary_when_the_round_build_has_none() {
     let t = T::new(LandMode::QueueLocal);
@@ -3908,6 +3988,7 @@ fn activating_from_unit(restarted_caller: Option<&str>) -> (Vec<String>, usize) 
     (keys, n)
 }
 
+#[test_id(t7upvye)]
 #[test]
 fn an_activation_called_from_a_unit_it_restarts_runs_in_a_unit_of_its_own() {
     let (keys, calls) = activating_from_unit(Some("spira-runtime-prod.service"));
@@ -3915,6 +3996,7 @@ fn an_activation_called_from_a_unit_it_restarts_runs_in_a_unit_of_its_own() {
     assert_eq!(calls, 1);
 }
 
+#[test_id(t0vwak4)]
 #[test]
 fn an_activation_called_from_a_unit_it_leaves_alone_runs_as_a_child() {
     let (keys, calls) = activating_from_unit(None);
@@ -3922,6 +4004,7 @@ fn an_activation_called_from_a_unit_it_leaves_alone_runs_as_a_child() {
     assert_eq!(calls, 1);
 }
 
+#[test_id(td5bfr2)]
 #[test]
 fn land_local_of_another_repository_publishes_no_release() {
     // The fixture's harness is "harness"; landing "spira" is some other queue.local repo.
@@ -3940,6 +4023,7 @@ fn land_local_of_another_repository_publishes_no_release() {
         "no release step for a repository that is not the harness"
     );
 }
+#[test_id(t3c0or0)]
 #[test]
 fn land_local_skips_its_lock_only_when_the_caller_holds_it() {
     let t = T::new(LandMode::QueueLocal);
@@ -3957,6 +4041,7 @@ fn land_local_skips_its_lock_only_when_the_caller_holds_it() {
     );
 }
 
+#[test_id(tk90td3)]
 #[test]
 fn land_local_reads_members_from_stdin() {
     let t = T::new(LandMode::QueueLocal);
@@ -4026,6 +4111,7 @@ fn publishable(t: &T) {
     ];
 }
 
+#[test_id(tjkuvh6)]
 #[test]
 fn publish_prefers_the_lifecycle_row_tip_when_it_is_in_range() {
     let t = T::new(LandMode::QueueLocal);
@@ -4038,6 +4124,7 @@ fn publish_prefers_the_lifecycle_row_tip_when_it_is_in_range() {
         .contains("members=sp-a:tx sp-b:t2"));
 }
 
+#[test_id(t6ou33t)]
 #[test]
 fn publish_with_nothing_new_is_success() {
     let t = T::new(LandMode::QueueLocal);
@@ -4050,6 +4137,7 @@ fn publish_with_nothing_new_is_success() {
     assert!(!t.qfile("publish").exists());
 }
 
+#[test_id(tq6hzli)]
 #[test]
 fn a_stopped_publish_lane_opens_no_pr_and_another_lane_does_not_stop_it() {
     let t = T::new(LandMode::QueueLocal);
@@ -4091,6 +4179,7 @@ fn a_stopped_publish_lane_opens_no_pr_and_another_lane_does_not_stop_it() {
     assert!(!t.qfile("publish").exists(), "no publish PR record");
 }
 
+#[test_id(tbr9znd)]
 #[test]
 fn publish_does_not_wait_on_a_closed_fix_forward_that_never_moved_the_head() {
     let t = T::new(LandMode::QueueLocal);
@@ -4104,6 +4193,7 @@ fn publish_does_not_wait_on_a_closed_fix_forward_that_never_moved_the_head() {
     assert!(!t.landing_log().contains("QUEUE PUBLISH_WAIT"));
 }
 
+#[test_id(ttmb0vd)]
 #[test]
 fn publish_waits_on_an_unmoved_red_head_then_republishes_once_local_main_moves() {
     let t = T::new(LandMode::QueueLocal);
@@ -4149,6 +4239,7 @@ fn forgeable(t: &mut T) {
     t.lib.s.repo_map = Some(map);
 }
 
+#[test_id(t8wgrrw)]
 #[test]
 fn to_forge_waits_for_the_final_publish_then_refuses_if_the_forge_did_not_catch_up() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -4190,6 +4281,7 @@ fn to_forge_waits_for_the_final_publish_then_refuses_if_the_forge_did_not_catch_
     assert_eq!(t.config.rows.borrow()["spira"].0, "queue.local");
 }
 
+#[test_id(t18jxwr)]
 #[test]
 fn to_forge_happy_path_flips_archives_and_deletes_the_local_branch() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -4211,6 +4303,7 @@ fn to_forge_happy_path_flips_archives_and_deletes_the_local_branch() {
     assert!(t.out().contains("queue.sh to-forge: spira is now queue.forge (base=origin/main); local/main archived at refs/archive/local/main"));
 }
 
+#[test_id(tet9kz2)]
 #[test]
 fn to_forge_refuses_on_a_red_final_publish() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -4228,6 +4321,7 @@ fn to_forge_refuses_on_a_red_final_publish() {
     assert_eq!(t.config.rows.borrow()["spira"].0, "queue.local");
 }
 
+#[test_id(trmxvfb)]
 #[test]
 fn to_forge_times_out_on_a_pending_publish() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -4238,6 +4332,7 @@ fn to_forge_times_out_on_a_pending_publish() {
         .contains("timed out waiting for publish PR 77 to settle — refused, nothing changed"));
 }
 
+#[test_id(t4n5dp9)]
 #[test]
 fn transitions_refuse_when_the_two_stores_already_disagree() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -4252,6 +4347,7 @@ fn transitions_refuse_when_the_two_stores_already_disagree() {
     assert!(t.err().contains("queue|origin/main"));
 }
 
+#[test_id(tgl079c)]
 #[test]
 fn to_local_derives_the_local_branch_and_restores_the_config_if_the_legacy_map_fails() {
     let mut t = T::new(LandMode::Queue);
@@ -4290,6 +4386,7 @@ fn to_local_derives_the_local_branch_and_restores_the_config_if_the_legacy_map_f
         .contains("spira is now queue.local (base=local/main, synced to origin/main)"));
 }
 
+#[test_id(tb1acto)]
 #[test]
 fn to_local_refuses_an_archive_the_forge_does_not_descend_from() {
     let t = T::new(LandMode::Queue);
@@ -4303,6 +4400,7 @@ fn to_local_refuses_an_archive_the_forge_does_not_descend_from() {
 
 // ---------------------------------------------------------------------- rollback-local
 
+#[test_id(ttm8it2)]
 #[test]
 fn rollback_local_reactivates_the_previous_rounds_release_without_rebuilding() {
     let t = T::new(LandMode::QueueLocal);
@@ -4351,6 +4449,7 @@ fn rollback_local_reactivates_the_previous_rounds_release_without_rebuilding() {
 
 // ------------------------------------------------------------------------------- misc
 
+#[test_id(tquxhah)]
 #[test]
 fn stats_reads_the_landing_log() {
     let t = T::new(LandMode::Queue);
@@ -4359,6 +4458,7 @@ fn stats_reads_the_landing_log() {
     assert!(t.out().starts_with("caught:          1\n"));
 }
 
+#[test_id(tho8ghw)]
 #[test]
 fn usage_errors_exit_two() {
     let t = T::new(LandMode::Queue);
@@ -4371,6 +4471,7 @@ fn usage_errors_exit_two() {
 
 use crate::ops::publish::{ci_of, decide, Ci, Pr, Settle};
 
+#[test_id(tvrsugq)]
 #[test]
 fn settle_decision_table() {
     let open = |ci, behind| {
@@ -4434,6 +4535,7 @@ fn stale_publish(t: &T, status: &str) {
     *t.forge.pr.borrow_mut() = Some("78".into());
 }
 
+#[test_id(tibfk6m)]
 #[test]
 fn settle_supersedes_a_red_or_untested_publish_that_local_has_moved_past() {
     for status in ["red\n", "provision_fault\n"] {
@@ -4454,6 +4556,7 @@ fn settle_supersedes_a_red_or_untested_publish_that_local_has_moved_past() {
     }
 }
 
+#[test_id(tz9yawu)]
 #[test]
 fn settle_skips_a_repository_declared_unpublished_and_still_fails_a_fetch_that_cannot_run() {
     let t = T::new(LandMode::QueueLocal);
@@ -4483,6 +4586,7 @@ fn settle_skips_a_repository_declared_unpublished_and_still_fails_a_fetch_that_c
     );
 }
 
+#[test_id(tuo650x)]
 #[test]
 fn settle_waits_on_a_green_or_pending_publish_and_on_an_unmoved_red_one() {
     for (status, moved) in [("green\n", true), ("pending\n", true), ("red\n", false)] {
@@ -4516,6 +4620,7 @@ fn count_calls(t: &T, call: &str) -> usize {
         .count()
 }
 
+#[test_id(t7nnzyv)]
 #[test]
 fn settle_supersedes_a_publish_with_no_run_past_the_bound_when_local_is_ahead() {
     let t = T::new(LandMode::QueueLocal);
@@ -4529,6 +4634,7 @@ fn settle_supersedes_a_publish_with_no_run_past_the_bound_when_local_is_ahead() 
     assert!(t.lib.has("notify spira publish PR 77 for spira has no CI run"));
 }
 
+#[test_id(tu6si6q)]
 #[test]
 fn settle_records_the_no_run_page_before_the_supersede_closes_the_pr() {
     let t = T::new(LandMode::QueueLocal);
@@ -4540,6 +4646,7 @@ fn settle_records_the_no_run_page_before_the_supersede_closes_the_pr() {
     assert!(seen.contains("no_run_paged="), "a failed close must not page again: {seen:?}");
 }
 
+#[test_id(tka7y9p)]
 #[test]
 fn settle_starts_ci_once_for_a_publish_with_no_run_past_the_bound() {
     let t = T::new(LandMode::QueueLocal);
@@ -4569,6 +4676,7 @@ fn settle_starts_ci_once_for_a_publish_with_no_run_past_the_bound() {
     assert_eq!(pages, 1);
 }
 
+#[test_id(tkky3le)]
 #[test]
 fn settle_refused_dispatch_fails_and_writes_nothing() {
     let t = T::new(LandMode::QueueLocal);
@@ -4582,6 +4690,7 @@ fn settle_refused_dispatch_fails_and_writes_nothing() {
     assert!(!t.lib.has("notify spira publish PR 77 for spira has no CI run"));
 }
 
+#[test_id(tl0s1ko)]
 #[test]
 fn settle_waits_on_a_publish_with_no_run_inside_the_bound() {
     let t = T::new(LandMode::QueueLocal);
@@ -4599,6 +4708,7 @@ fn settle_waits_on_a_publish_with_no_run_inside_the_bound() {
     assert!(!t.lib.has("notify spira publish PR 77 for spira has no CI run"));
 }
 
+#[test_id(tiv3t67)]
 #[test]
 fn settle_waits_on_a_publish_whose_run_is_in_progress() {
     let t = T::new(LandMode::QueueLocal);
@@ -4614,6 +4724,7 @@ fn settle_waits_on_a_publish_whose_run_is_in_progress() {
     );
 }
 
+#[test_id(tns050k)]
 #[test]
 fn settle_refuses_no_run_when_the_bound_does_not_resolve() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -4625,6 +4736,7 @@ fn settle_refuses_no_run_when_the_bound_does_not_resolve() {
     assert_eq!(count_calls(&t, "dispatch spira/publish/OLD"), 0);
 }
 
+#[test_id(tgxggxl)]
 #[test]
 fn settle_reruns_an_untested_publish_once_then_alarms_once() {
     let t = T::new(LandMode::QueueLocal);
@@ -4682,6 +4794,7 @@ fn settle_reruns_an_untested_publish_once_then_alarms_once() {
     );
 }
 
+#[test_id(t5amzfd)]
 #[test]
 fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
     let t = T::new(LandMode::QueueLocal);
@@ -4696,6 +4809,7 @@ fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
     assert!(t.forge.calls.borrow().is_empty());
 }
 
+#[test_id(tzttahy)]
 #[test]
 fn settle_defers_the_cut_while_a_round_pass_runs_and_cuts_after_it() {
     let t = T::new(LandMode::QueueLocal);
@@ -4735,6 +4849,7 @@ fn settle_defers_the_cut_while_a_round_pass_runs_and_cuts_after_it() {
     );
 }
 
+#[test_id(tx9t9vd)]
 #[test]
 fn settle_asks_only_the_open_round_whether_a_pass_holds_the_hypervisor() {
     let t = T::new(LandMode::QueueLocal);
@@ -4773,6 +4888,7 @@ fn settle_asks_only_the_open_round_whether_a_pass_holds_the_hypervisor() {
     );
 }
 
+#[test_id(tc17wv3)]
 #[test]
 fn settle_defers_the_cut_while_round_progress_is_live_and_fresh() {
     let t = T::new(LandMode::QueueLocal);
@@ -4837,6 +4953,7 @@ fn red_publish_awaiting_rerun(t: &T) {
         .push(Some("harness_fault\n".into()));
 }
 
+#[test_id(tr54mzb)]
 #[test]
 fn settle_reruns_in_the_same_tick_while_the_live_round_pass_runs_on_ec2() {
     let t = T::new(LandMode::QueueLocal);
@@ -4851,6 +4968,7 @@ fn settle_reruns_in_the_same_tick_while_the_live_round_pass_runs_on_ec2() {
     assert_eq!(reruns(&t), 1, "{:?}", t.forge.calls.borrow());
 }
 
+#[test_id(tkwn4v5)]
 #[test]
 fn settle_supersedes_in_the_same_tick_while_the_live_round_pass_runs_on_ec2() {
     let t = T::new(LandMode::QueueLocal);
@@ -4869,6 +4987,7 @@ fn settle_supersedes_in_the_same_tick_while_the_live_round_pass_runs_on_ec2() {
     );
 }
 
+#[test_id(t71jxy3)]
 #[test]
 fn settle_runs_after_the_deferral_bound_while_local_passes_run_back_to_back() {
     let t = T::new(LandMode::QueueLocal);
@@ -4890,6 +5009,7 @@ fn settle_runs_after_the_deferral_bound_while_local_passes_run_back_to_back() {
     assert!(t.out().contains("deferred 3 ticks"), "{}", t.out());
 }
 
+#[test_id(tkssh0q)]
 #[test]
 fn settle_refuses_naming_the_key_when_the_deferral_bound_does_not_resolve() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -4909,6 +5029,7 @@ fn settle_refuses_naming_the_key_when_the_deferral_bound_does_not_resolve() {
     assert_eq!(reruns(&t), 0);
 }
 
+#[test_id(ta8xgzt)]
 #[test]
 fn a_tick_that_does_not_defer_restarts_the_deferral_count() {
     let t = T::new(LandMode::QueueLocal);
@@ -4927,6 +5048,7 @@ fn a_tick_that_does_not_defer_restarts_the_deferral_count() {
     assert!(!t.qfile("publish-deferred").exists());
 }
 
+#[test_id(t5tfrtp)]
 #[test]
 fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
     let t = T::new(LandMode::QueueLocal);
@@ -4943,6 +5065,7 @@ fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
 }
 
 // covers: UC-landing-merge-queue-27
+#[test_id(tnanakq)]
 #[test]
 fn submit_hands_the_gate_twice_the_gate_timeout_which_an_explicit_wait_may_only_raise() {
     for (explicit, want) in [("0", "5400"), ("9000", "9000")] {
@@ -4959,6 +5082,7 @@ fn submit_hands_the_gate_twice_the_gate_timeout_which_an_explicit_wait_may_only_
     }
 }
 
+#[test_id(tkcl729)]
 #[test]
 fn submit_refuses_naming_the_key_when_the_gate_timeout_does_not_resolve() {
     let mut t = T::new(LandMode::Queue);
@@ -4970,6 +5094,7 @@ fn submit_refuses_naming_the_key_when_the_gate_timeout_does_not_resolve() {
 }
 
 // covers: UC-landing-merge-queue-27
+#[test_id(t104fmu)]
 #[test]
 fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its_own() {
     let mut t = T::new(LandMode::Queue);
@@ -4993,6 +5118,7 @@ fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its
 }
 
 // covers: UC-landing-merge-queue-27
+#[test_id(tomc4fl)]
 #[test]
 fn submit_does_not_certify_when_spira_lc_refuses() {
     let t = T::new(LandMode::Queue);
@@ -5003,6 +5129,7 @@ fn submit_does_not_certify_when_spira_lc_refuses() {
     assert!(!t.s().queue_dir.join("sp-a").exists());
 }
 
+#[test_id(tl8r99n)]
 #[test]
 fn eject_dry_run_writes_nothing() {
     let t = T::new(LandMode::Queue);
@@ -5022,6 +5149,7 @@ fn eject_dry_run_writes_nothing() {
 }
 
 // covers: UC-landing-merge-queue-29
+#[test_id(tg7dkmt)]
 #[test]
 fn abandon_keeps_reworked_members_archives_and_audits() {
     let t = T::new(LandMode::Queue);
@@ -5050,6 +5178,7 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
         .has("event queue.abandoned abandoned PR 12 for spira (actor=op)"));
 }
 
+#[test_id(tnac5da)]
 #[test]
 fn land_local_lands_and_archives_and_delivers_on_spira_lc() {
     let t = T::new(LandMode::QueueLocal);
@@ -5074,6 +5203,7 @@ fn land_local_lands_and_archives_and_delivers_on_spira_lc() {
     assert!(t.out().contains("queue.sh land-local: local/main fast-forwarded to h1 (round 1, archived at refs/archive/rounds/1)"));
 }
 
+#[test_id(t9y2usn)]
 #[test]
 fn land_local_lands_through_a_forge_divergence_and_an_open_publish() {
     let t = T::new(LandMode::QueueLocal);
@@ -5091,6 +5221,7 @@ fn land_local_lands_through_a_forge_divergence_and_an_open_publish() {
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
 }
 
+#[test_id(tjmdqzp)]
 #[test]
 fn publish_members_come_from_land_commits_even_when_lifecycle_rows_are_missing() {
     let t = T::new(LandMode::QueueLocal);
@@ -5122,6 +5253,7 @@ fn publish_members_come_from_land_commits_even_when_lifecycle_rows_are_missing()
         .contains("queue.sh publish: PR 77 opened — 2 bead(s) since last publish"));
 }
 
+#[test_id(t8begho)]
 #[test]
 fn transitions_refuse_while_work_is_in_delivery() {
     // an open batch record
@@ -5161,6 +5293,7 @@ fn transitions_refuse_while_work_is_in_delivery() {
 // The queue closes a landed member itself, in-process: no landing-pass oracle and no second
 // ledger — LANDED lives on spira-lc, written by the queue's own delivery.
 
+#[test_id(tthkdl2)]
 #[test]
 fn a_landed_submitted_member_is_closed_citing_the_sha_and_its_branch_reaped() {
     let t = T::new(LandMode::Push);
@@ -5177,6 +5310,7 @@ fn a_landed_submitted_member_is_closed_citing_the_sha_and_its_branch_reaped() {
         .contains("land-close sp-a: reaped branch spira/sp-a"));
 }
 
+#[test_id(t84njeb)]
 #[test]
 fn close_on_land_leaves_a_never_submitted_bead_alone_whatever_bd_status_says() {
     for row in [
@@ -5202,6 +5336,7 @@ fn close_on_land_leaves_a_never_submitted_bead_alone_whatever_bd_status_says() {
     }
 }
 
+#[test_id(tomcu79)]
 #[test]
 fn the_land_close_reason_cites_the_sha_or_unknown() {
     assert!(crate::ops::helpers::land_close_reason("abc")
@@ -5209,6 +5344,7 @@ fn the_land_close_reason_cites_the_sha_or_unknown() {
     assert!(crate::ops::helpers::land_close_reason("").contains("work landed at unknown"));
 }
 
+#[test_id(tz7dg96)]
 #[test]
 fn publish_goes_ahead_on_a_named_override_and_logs_it() {
     let t = T::new(LandMode::QueueLocal);
@@ -5228,6 +5364,7 @@ fn publish_goes_ahead_on_a_named_override_and_logs_it() {
     );
 }
 
+#[test_id(tjr2qf6)]
 #[test]
 fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_next() {
     let t = T::new(LandMode::QueueLocal);
@@ -5257,6 +5394,7 @@ fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_n
     );
 }
 
+#[test_id(tej1iq2)]
 #[test]
 fn publish_adopts_an_open_pr_at_the_same_head_instead_of_opening_a_second() {
     let t = T::new(LandMode::QueueLocal);
@@ -5279,6 +5417,7 @@ fn publish_adopts_an_open_pr_at_the_same_head_instead_of_opening_a_second() {
     );
 }
 
+#[test_id(t2j4l4g)]
 #[test]
 fn publish_does_not_adopt_an_open_pr_at_another_head() {
     let t = T::new(LandMode::QueueLocal);
@@ -5322,6 +5461,7 @@ fn restacks(t: &T) -> Vec<String> {
         .collect()
 }
 
+#[test_id(t8t03b4)]
 #[test]
 fn three_beads_that_each_add_a_dependency_are_stacked_into_one_chain() {
     let t = T::new(LandMode::QueueLocal);
@@ -5362,6 +5502,7 @@ fn three_beads_that_each_add_a_dependency_are_stacked_into_one_chain() {
     );
 }
 
+#[test_id(t0jox8b)]
 #[test]
 fn beads_that_share_no_shared_file_are_left_alone() {
     let t = T::new(LandMode::QueueLocal);
@@ -5377,6 +5518,7 @@ fn beads_that_share_no_shared_file_are_left_alone() {
     assert!(restacks(&t).is_empty(), "{:?}", restacks(&t));
 }
 
+#[test_id(t4tknez)]
 #[test]
 fn an_empty_shared_file_list_turns_auto_stack_off() {
     let t = T::new(LandMode::QueueLocal);
@@ -5392,6 +5534,7 @@ fn an_empty_shared_file_list_turns_auto_stack_off() {
     assert!(restacks(&t).is_empty());
 }
 
+#[test_id(tlkrd1y)]
 #[test]
 fn the_depth_cap_stops_a_chain() {
     let t = T::new(LandMode::QueueLocal);
@@ -5414,6 +5557,7 @@ fn the_depth_cap_stops_a_chain() {
     );
 }
 
+#[test_id(tm1dqta)]
 #[test]
 fn a_stacked_bead_is_recut_when_its_prerequisite_tip_moved() {
     let t = T::new(LandMode::QueueLocal);
@@ -5445,6 +5589,7 @@ fn a_stacked_bead_is_recut_when_its_prerequisite_tip_moved() {
     assert!(t.out().contains("sp-b: recut onto sp-a"), "{}", t.out());
 }
 
+#[test_id(tjjgaa2)]
 #[test]
 fn landing_an_integration_lands_its_members_and_closes_the_record() {
     let t = T::new(LandMode::QueueLocal);
@@ -5476,6 +5621,7 @@ fn landing_an_integration_lands_its_members_and_closes_the_record() {
     );
 }
 
+#[test_id(t0uqmgn)]
 #[test]
 fn landing_an_integration_clears_the_carrier_of_each_member_record() {
     let t = T::new(LandMode::QueueLocal);
@@ -5492,6 +5638,7 @@ fn landing_an_integration_clears_the_carrier_of_each_member_record() {
     assert!(calls.iter().any(|c| c == "set-carrier sp-a sp-b --clear"), "{calls:?}");
 }
 
+#[test_id(tgvy17f)]
 #[test]
 fn queue_starts_no_spira_child_that_is_not_a_named_fork_edge() {
     let got = forge::fork_scan::scan(&testkit::manifest_dir().join("src"));
@@ -5506,6 +5653,7 @@ fn land_rows(t: &T) -> Vec<serde_json::Value> {
         .collect()
 }
 
+#[test_id(tzd0r6r)]
 #[test]
 fn land_local_records_each_member_with_the_commit_its_reverts_label_names() {
     let t = T::new(LandMode::QueueLocal);
@@ -5538,6 +5686,7 @@ fn land_local_records_each_member_with_the_commit_its_reverts_label_names() {
     );
 }
 
+#[test_id(t8evb4g)]
 #[test]
 fn land_local_takes_no_reverts_from_a_title_that_says_revert() {
     let t = T::new(LandMode::QueueLocal);
@@ -5575,6 +5724,7 @@ fn text_branch(t: &T, files: &[(&str, u32, u32)]) {
     t.git.stat("local/main", "t1", files);
 }
 
+#[test_id(tg4hanr)]
 #[test]
 fn submit_of_a_text_only_bead_lands_on_the_ref_by_lint_without_a_gate_or_round() {
     let t = T::new(LandMode::QueueLocal);
@@ -5608,6 +5758,7 @@ fn release_in_force_at(t: &T, name: &str) {
     std::os::unix::fs::symlink(rel.join(name), rel.join("current")).unwrap();
 }
 
+#[test_id(tytrgiu)]
 #[test]
 fn submit_of_a_text_only_harness_bead_lands_with_the_release_in_forces_binaries() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -5626,6 +5777,7 @@ fn submit_of_a_text_only_harness_bead_lands_with_the_release_in_forces_binaries(
     assert!(!calls.contains("gate "), "{calls}");
 }
 
+#[test_id(t302ji5)]
 #[test]
 fn a_text_only_harness_tip_whose_release_in_force_is_not_its_text_ancestor_rides_the_next_round() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -5640,6 +5792,7 @@ fn a_text_only_harness_tip_whose_release_in_force_is_not_its_text_ancestor_rides
     assert!(all.contains("cannot land by lint") && all.contains("lands in the next round"), "{all}");
 }
 
+#[test_id(tduth5n)]
 #[test]
 fn submit_of_a_text_only_bead_whose_lint_is_red_lands_nothing() {
     let t = T::new(LandMode::QueueLocal);
@@ -5652,6 +5805,7 @@ fn submit_of_a_text_only_bead_whose_lint_is_red_lands_nothing() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
+#[test_id(tukba55)]
 #[test]
 fn submit_of_a_bead_touching_one_source_file_is_refused_by_the_classifier_and_gated() {
     let t = T::new(LandMode::QueueLocal);
@@ -5673,6 +5827,7 @@ fn submit_of_a_bead_touching_one_source_file_is_refused_by_the_classifier_and_ga
     assert!(t.lc.has("certify sp-a t1"));
 }
 
+#[test_id(twwherz)]
 #[test]
 fn a_text_only_tip_that_does_not_fast_forward_is_not_landed_by_lint() {
     let t = T::new(LandMode::QueueLocal);
@@ -5698,6 +5853,7 @@ fn set_carrier_calls(t: &T) -> Vec<String> {
     t.lc.calls.borrow().iter().filter(|c| c.starts_with("set-carrier")).cloned().collect()
 }
 
+#[test_id(tufavbh)]
 #[test]
 fn backfill_carriers_apply_sets_only_the_open_integrations_members_and_only_if_unset() {
     let t = T::new(LandMode::QueueLocal);
@@ -5714,6 +5870,7 @@ fn backfill_carriers_apply_sets_only_the_open_integrations_members_and_only_if_u
     assert!(out.contains("spira: set=1 kept=1 failed=0"), "{out}");
 }
 
+#[test_id(twg8pjw)]
 #[test]
 fn backfill_carriers_without_apply_names_each_member_and_integration_and_writes_nothing() {
     let t = T::new(LandMode::QueueLocal);
@@ -5727,6 +5884,7 @@ fn backfill_carriers_without_apply_names_each_member_and_integration_and_writes_
     assert!(out.contains("spira: would set 2"), "{out}");
 }
 
+#[test_id(t3svaqj)]
 #[test]
 fn backfill_carriers_failure_exits_non_zero_and_the_next_repo_is_still_processed() {
     let t = T::new(LandMode::QueueLocal);
@@ -5745,6 +5903,7 @@ fn backfill_carriers_failure_exits_non_zero_and_the_next_repo_is_still_processed
     assert!(out.contains("failed sp-a") && out.contains("set sp-b -> sp-good"), "{out}");
 }
 
+#[test_id(tfobkri)]
 #[test]
 fn backfill_carriers_refuses_an_unknown_option() {
     let p = |a: &[&str]| cli::parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
@@ -5756,6 +5915,7 @@ fn backfill_carriers_refuses_an_unknown_option() {
     assert!(cli::USAGE.contains("queue.sh backfill-carriers"));
 }
 
+#[test_id(t796ln3)]
 #[test]
 fn backfill_carriers_partial_failure_fails_only_the_member_the_verb_names() {
     let t = T::new(LandMode::QueueLocal);
@@ -5769,6 +5929,7 @@ fn backfill_carriers_partial_failure_fails_only_the_member_the_verb_names() {
     assert!(out.contains("spira: set=1 kept=0 failed=1"), "{out}");
 }
 
+#[test_id(t1d0nzb)]
 #[test]
 fn open_batch_whose_cut_answers_cannot_tell_keeps_the_branch() {
     let t = T::new(LandMode::Queue);

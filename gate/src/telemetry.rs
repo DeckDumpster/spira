@@ -262,6 +262,7 @@ mod keep_tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(twl7jzb)]
     #[test]
     fn the_oldest_by_timestamp_goes_and_other_files_stay() {
         let all = names(&["gate-out-2026-02-01T00:00:00Z.log", "cargo-timing-2020-01-01T00:00:00Z.html", "gate-out-2026-01-01T00:00:00Z.log", "gate-out-2026-03-01T00:00:00Z.log"]);
@@ -319,6 +320,7 @@ pub fn metrics_sink() -> spira_otel::metrics::MetricsSink {
 mod tests {
     use super::*;
 
+    #[test_id(tj4lh5l)]
     #[test]
     fn a_trial_pushes_its_run_queue_and_wait_seconds_and_one_run() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -350,6 +352,7 @@ mod tests {
         }
     }
 
+    #[test_id(t3hl28v)]
     #[test]
     fn a_unit_trial_pushes_each_test_part_and_a_recompile() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -396,6 +399,7 @@ mod tests {
         assert!(body.contains("spira_gate_unit_test_recompiled_total"), "{body}");
     }
 
+    #[test_id(tx32x6r)]
     #[test]
     fn branch_types_follow_the_unit_composition() {
         let unit = Composition::Unit {
@@ -421,6 +425,7 @@ mod tests {
         }
     }
 
+    #[test_id(tie7yk3)]
     #[test]
     fn the_row_carries_typed_fields_and_the_wall() {
         let r = GateRun {
@@ -456,6 +461,7 @@ mod tests {
         assert_eq!(v["build_dir"], "warm from abc");
     }
 
+    #[test_id(t9isqt4)]
     #[test]
     fn a_branch_red_renders_its_unit_and_line_and_a_pass_renders_both_empty() {
         let red = GateRun { status: "FAIL".into(), reason: "branch-red".into(), red_unit: "unit-tests".into(), red_line: "bwrap: execvp cargo".into(), ..Default::default() };
@@ -466,6 +472,7 @@ mod tests {
         assert_eq!((v["red_unit"].as_str(), v["red_line"].as_str()), (Some(""), Some("")));
     }
 
+    #[test_id(tf24on0)]
     #[test]
     fn the_build_directory_field_says_how_it_was_filled_or_why_cold() {
         let b = "gate: build on /t/x";
@@ -478,6 +485,7 @@ mod tests {
         assert_eq!(["builder", "warm from c1", "cold: no tmpfs"].map(build_dir_kind), ["builder", "warm", "cold"]);
     }
 
+    #[test_id(t0bh4o2)]
     #[test]
     fn an_unclassified_trial_says_unknown_not_empty() {
         let line = render("t", "h", &GateRun::default()).unwrap();
@@ -485,6 +493,7 @@ mod tests {
         assert_eq!(v["branch_type"], "unknown");
     }
 
+    #[test_id(tt12f9a)]
     #[test]
     fn a_covered_phase_pushes_its_seconds_and_deferrals_under_the_existing_labels() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

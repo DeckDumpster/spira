@@ -187,6 +187,7 @@ mod tests {
         parse("f.rune", text, &env).map(|m| m.get("X").cloned().unwrap_or_default())
     }
 
+    #[test_id(t55upnm)]
     #[test]
     fn the_subset_expands() {
         assert_eq!(one("X=a-b.c").unwrap(), "a-b.c");
@@ -198,6 +199,7 @@ mod tests {
         assert_eq!(one("X=").unwrap(), "");
     }
 
+    #[test_id(tl7fepa)]
     #[test]
     fn anything_outside_the_subset_is_refused_with_file_and_line() {
         for bad in ["X=$(date)", "X=`date`", "export X=1", "X=a;b", "X=\"a", "X=${A#b}", "X=a\\b", "X=*", "X=a b", "if true; then"] {

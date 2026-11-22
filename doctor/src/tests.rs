@@ -300,6 +300,7 @@ fn levels(lines: &[Line]) -> Vec<Level> {
 
 // ============================================================================ release tools
 
+#[test_id(tewiv0e)]
 #[test]
 fn release_tools_all_resolve() {
     let f = Fake::default();
@@ -320,6 +321,7 @@ fn release_tools_all_resolve() {
 /// world.sh and mail.sh are NOT hand-added suffixes any more (sp-6onps, sp-ooh1k) -- a box
 /// whose deps.toml release tier forgets to name `world` or `mail` must FAIL on it missing,
 /// never silently pass because an old hand-written "*.sh" entry papered over it.
+#[test_id(tip6clg)]
 #[test]
 fn release_tools_world_and_mail_binaries_come_through_deps_list_not_a_hand_added_suffix() {
     let f = Fake::default();
@@ -332,6 +334,7 @@ fn release_tools_world_and_mail_binaries_come_through_deps_list_not_a_hand_added
     assert!(!out.iter().any(|l| l.msg.contains("mail")), "{:?}", out);
 }
 
+#[test_id(tjcxhjl)]
 #[test]
 fn release_tools_missing_fails() {
     let f = Fake::default();
@@ -343,12 +346,14 @@ fn release_tools_missing_fails() {
 
 // ============================================================================ hotfix
 
+#[test_id(t2bo9e4)]
 #[test]
 fn hotfix_none_standing() {
     let f = Fake::default();
     assert_eq!(levels(&check_hotfix(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tmtplhc)]
 #[test]
 fn hotfix_below_threshold_warns() {
     let f = Fake::default();
@@ -357,6 +362,7 @@ fn hotfix_below_threshold_warns() {
     assert_eq!(out[0].level, Level::Warn);
 }
 
+#[test_id(to24w1j)]
 #[test]
 fn hotfix_past_alert_threshold_fails() {
     let f = Fake::default();
@@ -372,6 +378,7 @@ fn hotfix_past_alert_threshold_fails() {
 // these are real-environment tests, not `Fake`-driven ones. `Fake::default()` is passed
 // only to satisfy the function's `&dyn World` parameter, which the function itself ignores.
 
+#[test_id(tt36xkz)]
 #[test]
 fn config_files_fails_when_spira_toml_is_unset() {
     let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CONF", None)]);
@@ -382,6 +389,7 @@ fn config_files_fails_when_spira_toml_is_unset() {
     assert!(out[0].msg.contains("SPIRA_TOML is not set"), "{:?}", out[0].msg);
 }
 
+#[test_id(teq5xpd)]
 #[test]
 fn config_files_fails_when_a_named_layer_is_missing() {
     let d = testkit::TempDir::new("doctor-config-files-missing-layer");
@@ -395,6 +403,7 @@ fn config_files_fails_when_a_named_layer_is_missing() {
     assert!(out[0].msg.contains("no-such-file.toml"), "{:?}", out[0].msg);
 }
 
+#[test_id(tjuj1sn)]
 #[test]
 fn config_files_fails_when_the_document_does_not_validate() {
     let d = testkit::TempDir::new("doctor-config-files-malformed");
@@ -411,6 +420,7 @@ fn config_files_fails_when_the_document_does_not_validate() {
 
 // ============================================================================ runes overlays
 
+#[test_id(tgq19jc)]
 #[test]
 fn runes_overlays_none_active() {
     let f = Fake::default();
@@ -418,6 +428,7 @@ fn runes_overlays_none_active() {
     assert_eq!(levels(&check_runes_overlays(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tfpsrz0)]
 #[test]
 fn runes_overlays_active_named() {
     let f = Fake::default();
@@ -430,6 +441,7 @@ fn runes_overlays_active_named() {
 
 // ============================================================================ overrides
 
+#[test_id(tpenmo7)]
 #[test]
 fn overrides_no_problems() {
     let f = Fake::default();
@@ -437,6 +449,7 @@ fn overrides_no_problems() {
     assert_eq!(levels(&check_overrides(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tgej74s)]
 #[test]
 fn overrides_problems_are_failures() {
     let f = Fake::default();
@@ -448,6 +461,7 @@ fn overrides_problems_are_failures() {
 
 // ============================================================================ gate compile check
 
+#[test_id(tsbeaq6)]
 #[test]
 fn gate_compile_check_no_rust_repos() {
     let f = Fake::default();
@@ -457,6 +471,7 @@ fn gate_compile_check_no_rust_repos() {
     assert!(out[0].msg.contains("no repository"));
 }
 
+#[test_id(tux4ul2)]
 #[test]
 fn gate_compile_check_reaches_build_fence() {
     let f = Fake::default();
@@ -469,6 +484,7 @@ fn gate_compile_check_reaches_build_fence() {
     assert_eq!(out[0].level, Level::Ok);
 }
 
+#[test_id(tsfc6w1)]
 #[test]
 fn gate_compile_check_missing_build_fence_fails() {
     let f = Fake::default();
@@ -480,6 +496,7 @@ fn gate_compile_check_missing_build_fence_fails() {
     assert_eq!(out[0].level, Level::Fail);
 }
 
+#[test_id(ts4vys3)]
 #[test]
 fn gate_compile_check_unresolved_gate_fails() {
     let f = Fake::default();
@@ -494,6 +511,7 @@ fn gate_compile_check_unresolved_gate_fails() {
 
 // ============================================================================ store
 
+#[test_id(tk2pl6f)]
 #[test]
 fn store_missing_beads_fails_outside_install() {
     let f = Fake::default();
@@ -502,6 +520,7 @@ fn store_missing_beads_fails_outside_install() {
     assert_eq!(out[0].level, Level::Fail);
 }
 
+#[test_id(ttxoyfl)]
 #[test]
 fn store_missing_beads_warns_during_install() {
     let f = Fake::default();
@@ -511,6 +530,7 @@ fn store_missing_beads_warns_during_install() {
     assert_eq!(out[0].level, Level::Warn);
 }
 
+#[test_id(t66y835)]
 #[test]
 fn store_bd_read_ok_and_server_mode() {
     let f = Fake::default();
@@ -526,6 +546,7 @@ fn store_bd_read_ok_and_server_mode() {
     assert!(out.iter().all(|l| l.level != Level::Fail));
 }
 
+#[test_id(t3jbxsd)]
 #[test]
 fn store_embedded_mode_fails() {
     let f = Fake::default();
@@ -538,6 +559,7 @@ fn store_embedded_mode_fails() {
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("embedded mode")));
 }
 
+#[test_id(tf8zcaf)]
 #[test]
 fn store_bd_cannot_read_softens_during_install_when_server_not_active() {
     let f = Fake::default();
@@ -550,6 +572,7 @@ fn store_bd_cannot_read_softens_during_install_when_server_not_active() {
     assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("bd cannot read")));
 }
 
+#[test_id(tydqmdj)]
 #[test]
 fn store_bd_cannot_read_fails_outside_install() {
     let f = Fake::default();
@@ -560,6 +583,7 @@ fn store_bd_cannot_read_fails_outside_install() {
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("bd cannot read")));
 }
 
+#[test_id(tfauuse)]
 #[test]
 fn store_dolt_server_answering() {
     let f = Fake::default();
@@ -571,6 +595,7 @@ fn store_dolt_server_answering() {
     assert!(out.iter().any(|l| l.level == Level::Ok && l.msg.contains("answering on 127.0.0.1:3306")));
 }
 
+#[test_id(tejmje1)]
 #[test]
 fn store_dolt_server_unreachable_fails() {
     let f = Fake::default();
@@ -584,6 +609,7 @@ fn store_dolt_server_unreachable_fails() {
 
 // ============================================================================ duckdb
 
+#[test_id(t9m35gn)]
 #[test]
 fn duckdb_present() {
     let f = Fake::default();
@@ -591,6 +617,7 @@ fn duckdb_present() {
     assert_eq!(levels(&check_duckdb(&f)), vec![Level::Ok]);
 }
 
+#[test_id(t5437vh)]
 #[test]
 fn duckdb_missing_fails() {
     let f = Fake::default();
@@ -599,6 +626,7 @@ fn duckdb_missing_fails() {
 
 // ============================================================================ compilation cache
 
+#[test_id(t4n3x5r)]
 #[test]
 fn sccache_missing_fails_and_names_the_install_command() {
     let f = Fake::default();
@@ -607,6 +635,7 @@ fn sccache_missing_fails_and_names_the_install_command() {
     assert!(lines[0].detail.as_deref().unwrap_or("").contains("cargo install sccache --locked --no-default-features --features webdav"));
 }
 
+#[test_id(tfkudgn)]
 #[test]
 fn sccache_missing_only_warns_off_an_operated_box() {
     // deps.toml's own waiver: a testenv fixture container sets SPIRA_BUILD_CACHE=off and
@@ -617,6 +646,7 @@ fn sccache_missing_only_warns_off_an_operated_box() {
     assert_eq!(levels(&check_sccache(&f)), vec![Level::Warn]);
 }
 
+#[test_id(t8mbd3g)]
 #[test]
 fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presence_alone() {
     let f = Fake::default();
@@ -630,6 +660,7 @@ fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presenc
     assert!(lines[0].detail.as_deref().unwrap_or("").contains("--features webdav"));
 }
 
+#[test_id(t5njk0z)]
 #[test]
 fn sccache_with_webdav_enabled_passes() {
     let f = Fake::default();
@@ -640,6 +671,7 @@ fn sccache_with_webdav_enabled_passes() {
     assert_eq!(levels(&check_sccache(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tonlrng)]
 #[test]
 fn sccache_present_but_unresponsive_to_help_fails() {
     let f = Fake::default();
@@ -653,6 +685,7 @@ fn sccache_present_but_unresponsive_to_help_fails() {
 
 // -------------------------------------------------------- dwarf build directories (sp-ke0uk8)
 
+#[test_id(t71crz0)]
 #[test]
 fn build_base_check_names_an_unset_key_a_base_in_ram_and_a_good_one() {
     let f = Fake::default();
@@ -677,6 +710,7 @@ fn build_base_check_names_an_unset_key_a_base_in_ram_and_a_good_one() {
 
 // -------------------------------------------------------- disk placement (sp-hpaak4)
 
+#[test_id(t9mcnfd)]
 #[test]
 fn disk_placement_fails_a_root_on_the_root_fs_and_reports_every_root() {
     use crate::ports::Placement::*;
@@ -696,6 +730,7 @@ fn disk_placement_fails_a_root_on_the_root_fs_and_reports_every_root() {
     assert!(lines[2].msg.contains("cannot tell"), "{:?}", lines[2].msg);
 }
 
+#[test_id(tc2swle)]
 #[test]
 fn placement_roots_name_every_key_and_the_store_directory_and_keep_unset_ones() {
     let cfg = |k: &str| match k {
@@ -714,6 +749,7 @@ fn placement_roots_name_every_key_and_the_store_directory_and_keep_unset_ones() 
     assert_eq!(roots.iter().filter(|(n, _)| n.starts_with("SPIRA_DWARF_BUILD_BASE")).count(), 2);
 }
 
+#[test_id(ts3up4x)]
 #[test]
 fn judge_placement_follows_a_symlink_to_where_it_lands() {
     use crate::ports::Placement::*;
@@ -742,6 +778,7 @@ fn writer(pid: u32, comm: &str, path: &str, build: bool) -> crate::ports::RootWr
     crate::ports::RootWriter { pid, comm: comm.into(), unit: "app.slice".into(), path: path.into(), build }
 }
 
+#[test_id(tu5nzl1)]
 #[test]
 fn root_writers_fails_a_build_writer_and_warns_for_any_other() {
     use crate::ports::RootScan::Seen;
@@ -753,6 +790,7 @@ fn root_writers_fails_a_build_writer_and_warns_for_any_other() {
     assert!(lines[0].detail.as_deref().unwrap_or("").contains("disk-model"));
 }
 
+#[test_id(tq840eq)]
 #[test]
 fn a_target_a_live_writer_holds_is_not_reported_as_unheld() {
     let f = Fake::default();
@@ -761,6 +799,7 @@ fn a_target_a_live_writer_holds_is_not_reported_as_unheld() {
     assert_eq!(levels(&check_root_writers(&f)), vec![Level::Fail]);
 }
 
+#[test_id(t0tquft)]
 #[test]
 fn scan_finds_a_writer_on_the_root_device_blind_without_proc_and_skips_itself() {
     use crate::ports::RootScan;
@@ -796,6 +835,7 @@ fn scan_finds_a_writer_on_the_root_device_blind_without_proc_and_skips_itself() 
     assert!(matches!(crate::real::scan_root_writers(&proc.join("13"), d.path(), 0), RootScan::Blind(_)), "no readable fd dir is blind, not empty");
 }
 
+#[test_id(tgqblrt)]
 #[test]
 fn target_roots_are_the_tagged_children_only() {
     let d = testkit::TempDir::new("doctor-targets");
@@ -806,6 +846,7 @@ fn target_roots_are_the_tagged_children_only() {
     assert!(crate::real::target_roots_in(d.path(), Path::new(system_paths::PROC)).is_empty());
 }
 
+#[test_id(tgeguuu)]
 #[test]
 fn root_writers_warns_per_root_target_blind_and_says_ok_when_empty() {
     use crate::ports::RootScan::Blind;
@@ -821,6 +862,7 @@ fn root_writers_warns_per_root_target_blind_and_says_ok_when_empty() {
     assert!(lines[0].msg.contains("cannot tell who writes") && lines[0].msg.contains("no /proc"));
 }
 
+#[test_id(ts9re04)]
 #[test]
 fn root_writers_folds_twenty_writers_of_one_unit_comm_and_directory_to_one_line() {
     let f = Fake::default();
@@ -830,6 +872,7 @@ fn root_writers_folds_twenty_writers_of_one_unit_comm_and_directory_to_one_line(
     assert!(lines[0].msg.contains("20 pids"), "{:?}", lines[0].msg);
 }
 
+#[test_id(to136lj)]
 #[test]
 fn fdinfo_flags_are_writable_only_for_wronly_or_rdwr() {
     use crate::real::fdinfo_writable;
@@ -839,6 +882,7 @@ fn fdinfo_flags_are_writable_only_for_wronly_or_rdwr() {
     assert!(!fdinfo_writable("no flags here"));
 }
 
+#[test_id(tsej3qg)]
 #[test]
 fn build_is_a_harness_env_key_or_a_container_scope() {
     use crate::real::{cgroup_unit, is_build};
@@ -850,6 +894,7 @@ fn build_is_a_harness_env_key_or_a_container_scope() {
     assert_eq!(cgroup_unit("0::/user.slice/libpod-abc.scope/container\n"), "container");
 }
 
+#[test_id(t6vq650)]
 #[test]
 fn same_device_follows_a_symlink_and_reports_unstatable_as_none() {
     use crate::real::same_device;
@@ -866,6 +911,7 @@ fn same_device_follows_a_symlink_and_reports_unstatable_as_none() {
 
 // -------------------------------------------------------- compilation cache backend (sp-xtdqi)
 
+#[test_id(teva3i6)]
 #[test]
 fn backend_check_is_a_no_op_when_no_store_is_configured() {
     let f = Fake::default();
@@ -878,6 +924,7 @@ fn backend_check_is_a_no_op_when_no_store_is_configured() {
 /// `Cache location` (the local-disk shape) must FAIL on an operated box — this is the exact
 /// defect sp-xtdqi exists to catch (a gate restarted the daemon before anyone re-exported
 /// `SCCACHE_WEBDAV_ENDPOINT`, and it silently kept answering from disk).
+#[test_id(t7rlnzo)]
 #[test]
 fn backend_check_fails_when_the_live_server_is_on_a_different_backend() {
     let f = Fake::default();
@@ -889,6 +936,7 @@ fn backend_check_fails_when_the_live_server_is_on_a_different_backend() {
     assert!(lines[0].msg.contains("Local disk"), "{:?}", lines[0].msg);
 }
 
+#[test_id(t5mp6cq)]
 #[test]
 fn backend_check_only_warns_off_an_operated_box() {
     let f = Fake::default();
@@ -898,6 +946,7 @@ fn backend_check_only_warns_off_an_operated_box() {
     assert_eq!(levels(&check_sccache_backend(&f)), vec![Level::Warn]);
 }
 
+#[test_id(tz9nipg)]
 #[test]
 fn backend_check_passes_when_the_live_server_is_on_the_store() {
     let f = Fake::default();
@@ -906,6 +955,7 @@ fn backend_check_passes_when_the_live_server_is_on_the_store() {
     assert_eq!(levels(&check_sccache_backend(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tq2mcs9)]
 #[test]
 fn backend_check_fails_when_show_stats_does_not_answer() {
     let f = Fake::default();
@@ -916,6 +966,7 @@ fn backend_check_fails_when_show_stats_does_not_answer() {
     assert!(lines[0].msg.contains("did not answer"), "{:?}", lines[0].msg);
 }
 
+#[test_id(t0mh1do)]
 #[test]
 fn backend_check_fails_when_show_stats_answers_with_no_cache_location_line() {
     let f = Fake::default();
@@ -935,6 +986,7 @@ fn backend_check_fails_when_show_stats_answers_with_no_cache_location_line() {
 /// it. `World::sccache_dav_addr` resolves this through `spira_config::process::cfg` alone
 /// now (per Ryan 2026-10-05: one source of config) — the address below stands in for that
 /// already-proven resolution; this test is about `check_sccache_backend`'s own judgement.
+#[test_id(tfys02k)]
 #[test]
 fn backend_check_fails_on_an_address_resolved_from_a_fixture_config_with_nothing_exported() {
     let f = Fake::default();
@@ -947,6 +999,7 @@ fn backend_check_fails_on_an_address_resolved_from_a_fixture_config_with_nothing
 
 // ============================================================================ events probe
 
+#[test_id(t8fnlt4)]
 #[test]
 fn events_probe_no_database_warns() {
     let f = Fake::default();
@@ -954,6 +1007,7 @@ fn events_probe_no_database_warns() {
     assert_eq!(levels(&check_events_probe(&f)), vec![Level::Warn]);
 }
 
+#[test_id(tb050ck)]
 #[test]
 fn events_probe_no_anchor_bead_warns() {
     let f = Fake::default();
@@ -963,6 +1017,7 @@ fn events_probe_no_anchor_bead_warns() {
     assert_eq!(out[0].level, Level::Warn);
 }
 
+#[test_id(taib3lc)]
 #[test]
 fn events_probe_round_trip_ok() {
     let f = Fake::default();
@@ -974,6 +1029,7 @@ fn events_probe_round_trip_ok() {
     assert_eq!(levels(&check_events_probe(&f)), vec![Level::Ok]);
 }
 
+#[test_id(t28don7)]
 #[test]
 fn events_probe_write_refused_fails() {
     let f = Fake::default();
@@ -987,6 +1043,7 @@ fn events_probe_write_refused_fails() {
     assert!(out[0].msg.contains("was refused"));
 }
 
+#[test_id(txs5394)]
 #[test]
 fn events_probe_write_discarded_fails() {
     let f = Fake::default();
@@ -1002,6 +1059,7 @@ fn events_probe_write_discarded_fails() {
 
 // ============================================================================ failed units
 
+#[test_id(tir9coj)]
 #[test]
 fn failed_units_none() {
     let f = Fake::default();
@@ -1009,6 +1067,7 @@ fn failed_units_none() {
     assert_eq!(levels(&check_failed_units(&f)), vec![Level::Ok]);
 }
 
+#[test_id(t5wfc7o)]
 #[test]
 fn failed_units_outside_install_fails() {
     let f = Fake::default();
@@ -1017,6 +1076,7 @@ fn failed_units_outside_install_fails() {
     assert_eq!(out[0].level, Level::Fail);
 }
 
+#[test_id(t600id1)]
 #[test]
 fn failed_units_during_install_warns() {
     let f = Fake::default();
@@ -1027,6 +1087,7 @@ fn failed_units_during_install_warns() {
     assert!(out[0].msg.contains("predates this install"));
 }
 
+#[test_id(t5h2e0n)]
 #[test]
 fn failed_unit_hint_names_no_journal_read() {
     for installing in [false, true] {
@@ -1041,6 +1102,7 @@ fn failed_unit_hint_names_no_journal_read() {
     }
 }
 
+#[test_id(tx89rf5)]
 #[test]
 fn failed_units_query_fault_fails() {
     let f = Fake::default();
@@ -1051,6 +1113,7 @@ fn failed_units_query_fault_fails() {
 
 // ============================================================================ orphan units
 
+#[test_id(trs87uu)]
 #[test]
 fn orphan_units_none() {
     let f = Fake::default();
@@ -1059,6 +1122,7 @@ fn orphan_units_none() {
     assert_eq!(levels(&check_orphan_units(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tyw2o4j)]
 #[test]
 fn orphan_units_known_watcher_is_fine() {
     let f = Fake::default();
@@ -1068,6 +1132,7 @@ fn orphan_units_known_watcher_is_fine() {
     assert_eq!(levels(&check_orphan_units(&f)), vec![Level::Ok]);
 }
 
+#[test_id(t7o7te7)]
 #[test]
 fn orphan_units_unknown_watcher_fails() {
     let f = Fake::default();
@@ -1082,6 +1147,7 @@ fn orphan_units_unknown_watcher_fails() {
 /// A watcher retired to a non-daemon kind (e.g. `log`) still orphans the old unit — a row
 /// that changed kind is not the same as a row still owning that unit. (test-doctor-orphan-
 /// units.sh property 3, retired to this crate's own tests, sp-yyk47.)
+#[test_id(tqhfce8)]
 #[test]
 fn orphan_units_watcher_retired_to_non_daemon_kind_still_orphans() {
     let f = Fake::default();
@@ -1096,6 +1162,7 @@ fn orphan_units_watcher_retired_to_non_daemon_kind_still_orphans() {
 /// systemctl itself failing (unreachable manager) is a FAIL, never a silent "no orphan
 /// units" — an unanswerable probe must not read as a clean bill of health. (test-doctor-
 /// orphan-units.sh property 4.)
+#[test_id(txhd1qe)]
 #[test]
 fn orphan_units_probe_failure_is_fail_not_silent_ok() {
     let f = Fake::default();
@@ -1108,6 +1175,7 @@ fn orphan_units_probe_failure_is_fail_not_silent_ok() {
 
 // ============================================================================ snapshot fresh
 
+#[test_id(te3vkgc)]
 #[test]
 fn snapshot_missing_warns() {
     let f = Fake::default();
@@ -1115,6 +1183,7 @@ fn snapshot_missing_warns() {
     assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Warn]);
 }
 
+#[test_id(tctc60p)]
 #[test]
 fn snapshot_fresh_ok() {
     let f = Fake::default();
@@ -1123,6 +1192,7 @@ fn snapshot_fresh_ok() {
     assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Ok]);
 }
 
+#[test_id(taeuarf)]
 #[test]
 fn snapshot_stale_fails() {
     let f = Fake::default();
@@ -1133,6 +1203,7 @@ fn snapshot_stale_fails() {
     assert_eq!(out[0].level, Level::Fail);
 }
 
+#[test_id(twh0e3s)]
 #[test]
 fn a_stale_snapshot_hint_names_the_scheduler_unit() {
     let f = Fake::default();
@@ -1142,6 +1213,7 @@ fn a_stale_snapshot_hint_names_the_scheduler_unit() {
     assert_eq!(*f.spira_unit_asked.borrow(), vec![("runtime".to_string(), "service".to_string())]);
 }
 
+#[test_id(t291yzr)]
 #[test]
 fn snapshot_threshold_key_decides_between_fresh_and_stale() {
     let f = Fake::default();
@@ -1155,6 +1227,7 @@ fn snapshot_threshold_key_decides_between_fresh_and_stale() {
 
 // ============================================================================ operator channel
 
+#[test_id(t2g3erj)]
 #[test]
 fn operator_channel_everything_present() {
     let f = Fake::default();
@@ -1165,6 +1238,7 @@ fn operator_channel_everything_present() {
     assert!(out.iter().all(|l| l.level == Level::Ok));
 }
 
+#[test_id(t787kkk)]
 #[test]
 fn operator_channel_reports_mail_mute_only_when_on() {
     let f = Fake::default();
@@ -1182,6 +1256,7 @@ fn operator_channel_reports_mail_mute_only_when_on() {
     assert!(check_operator_channel(&f).iter().all(|l| l.level == Level::Ok));
 }
 
+#[test_id(tj1fldf)]
 #[test]
 fn operator_channel_missing_inotify_fails_when_operated() {
     let f = Fake::default();
@@ -1191,6 +1266,7 @@ fn operator_channel_missing_inotify_fails_when_operated() {
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("inotifywait")));
 }
 
+#[test_id(t6vmao1)]
 #[test]
 fn operator_channel_missing_inotify_warns_when_not_operated() {
     let f = Fake::default();
@@ -1201,6 +1277,7 @@ fn operator_channel_missing_inotify_warns_when_not_operated() {
     assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("inotifywait")));
 }
 
+#[test_id(t4dnizj)]
 #[test]
 fn operator_channel_no_go_but_bd_current_and_prebuilt_is_ok() {
     let f = Fake::default();
@@ -1212,6 +1289,7 @@ fn operator_channel_no_go_but_bd_current_and_prebuilt_is_ok() {
     assert!(out.iter().all(|l| l.level == Level::Ok));
 }
 
+#[test_id(thoomga)]
 #[test]
 fn operator_channel_no_go_mismatched_bd_no_prebuilt_fails() {
     let f = Fake::default();
@@ -1223,6 +1301,7 @@ fn operator_channel_no_go_mismatched_bd_no_prebuilt_fails() {
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("go is not on PATH")));
 }
 
+#[test_id(tp7f6jl)]
 #[test]
 fn operator_channel_hunk_checked_only_when_configured() {
     let f = Fake::default();
@@ -1236,6 +1315,7 @@ fn operator_channel_hunk_checked_only_when_configured() {
 
 // ============================================================================ concierge singleton
 
+#[test_id(tx9actj)]
 #[test]
 fn concierge_singleton_none_found() {
     let f = Fake::default();
@@ -1244,6 +1324,7 @@ fn concierge_singleton_none_found() {
     assert_eq!(levels(&check_concierge_singleton(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tqqq53c)]
 #[test]
 fn concierge_singleton_stray_found_fails() {
     let f = Fake::default();
@@ -1255,6 +1336,7 @@ fn concierge_singleton_stray_found_fails() {
     assert!(out[0].detail.as_deref().unwrap_or("").contains("12345"));
 }
 
+#[test_id(te924sx)]
 #[test]
 fn concierge_singleton_resolves_from_release_when_repo_unset() {
     let f = Fake::default();
@@ -1263,6 +1345,7 @@ fn concierge_singleton_resolves_from_release_when_repo_unset() {
     assert_eq!(levels(&check_concierge_singleton(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tustlkp)]
 #[test]
 fn concierge_singleton_no_concierge_sh_warns() {
     let f = Fake::default();
@@ -1279,6 +1362,7 @@ fn exec_row(unit: &str, state: &str, path: &str) -> (String, String, String) {
     (unit.into(), state.into(), path.into())
 }
 
+#[test_id(tey3b8c)]
 #[test]
 fn prod_checkout_unit_outside_releases_fails() {
     let f = Fake::default();
@@ -1290,6 +1374,7 @@ fn prod_checkout_unit_outside_releases_fails() {
     assert!(out[0].detail.as_deref().unwrap().contains("fixture/checkout/spira/sentinel.sh"));
 }
 
+#[test_id(td9ms3r)]
 #[test]
 fn prod_checkout_all_under_releases_is_ok() {
     let f = Fake::default();
@@ -1298,6 +1383,7 @@ fn prod_checkout_all_under_releases_is_ok() {
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);
 }
 
+#[test_id(t9c1p7r)]
 #[test]
 fn prod_checkout_sibling_prefix_is_outside() {
     let f = Fake::default();
@@ -1306,6 +1392,7 @@ fn prod_checkout_sibling_prefix_is_outside() {
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
 }
 
+#[test_id(tsabdta)]
 #[test]
 fn prod_checkout_each_offender_gets_a_line() {
     let f = Fake::default();
@@ -1318,6 +1405,7 @@ fn prod_checkout_each_offender_gets_a_line() {
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail, Level::Fail]);
 }
 
+#[test_id(tp5zzdj)]
 #[test]
 fn prod_checkout_transient_and_dwarf_units_are_not_flagged() {
     let f = Fake::default();
@@ -1330,6 +1418,7 @@ fn prod_checkout_transient_and_dwarf_units_are_not_flagged() {
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);
 }
 
+#[test_id(t94ol5h)]
 #[test]
 fn prod_checkout_probe_failure_fails() {
     let f = Fake::default();
@@ -1338,6 +1427,7 @@ fn prod_checkout_probe_failure_fails() {
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
 }
 
+#[test_id(tzd96f1)]
 #[test]
 fn mirror_check_warns_on_a_daemon_serving_another_state_dir() {
     let f = Fake::default();
@@ -1348,6 +1438,7 @@ fn mirror_check_warns_on_a_daemon_serving_another_state_dir() {
     assert!(lines[0].msg.contains("old/place") && lines[0].msg.contains("srv/round-vm"), "{:?}", lines[0].msg);
 }
 
+#[test_id(tljhnqz)]
 #[test]
 fn mirror_check_passes_on_the_configured_dir_and_when_no_daemon_runs() {
     let f = Fake::default();
@@ -1357,6 +1448,7 @@ fn mirror_check_passes_on_the_configured_dir_and_when_no_daemon_runs() {
     assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tz3vp7v)]
 #[test]
 fn mirror_check_defaults_the_state_dir_to_run_round_vm() {
     let f = Fake::default();
@@ -1367,6 +1459,7 @@ fn mirror_check_defaults_the_state_dir_to_run_round_vm() {
     assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Warn]);
 }
 
+#[test_id(t87x8s6)]
 #[test]
 fn daemon_base_path_reads_only_a_git_daemon_on_the_port() {
     let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -1377,6 +1470,7 @@ fn daemon_base_path_reads_only_a_git_daemon_on_the_port() {
 }
 
 
+#[test_id(tybookw)]
 #[test]
 fn dolt_telemetry_check_passes_when_disabled_and_the_backlog_is_small() {
     let f = Fake::default();
@@ -1385,6 +1479,7 @@ fn dolt_telemetry_check_passes_when_disabled_and_the_backlog_is_small() {
     assert!(out.iter().all(|l| l.level == Level::Ok), "{out:?}");
 }
 
+#[test_id(tj9px7h)]
 #[test]
 fn dolt_telemetry_check_fails_when_metrics_are_not_disabled() {
     let f = Fake::default();
@@ -1394,6 +1489,7 @@ fn dolt_telemetry_check_fails_when_metrics_are_not_disabled() {
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("metrics.disabled")), "{out:?}");
 }
 
+#[test_id(t97gv7d)]
 #[test]
 fn dolt_telemetry_check_fails_on_an_events_backlog_over_the_bound() {
     let f = Fake::default();
@@ -1404,6 +1500,7 @@ fn dolt_telemetry_check_fails_on_an_events_backlog_over_the_bound() {
     assert!(check_dolt_telemetry(&f).iter().all(|l| l.level == Level::Ok));
 }
 
+#[test_id(tarift7)]
 #[test]
 fn dolt_telemetry_check_is_silent_on_a_host_that_runs_no_dolt_server() {
     let f = Fake::default();
@@ -1421,12 +1518,14 @@ fn root_fixture(state: Option<bool>) -> Fake {
     f
 }
 
+#[test_id(t1kymmo)]
 #[test]
 fn doctor_flags_a_passwordless_dolt_root() {
     let out = check_root_closed(&root_fixture(Some(true)));
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("passwordless")), "{out:?}");
 }
 
+#[test_id(t3rwr98)]
 #[test]
 fn doctor_accepts_a_closed_dolt_root_and_is_silent_when_it_cannot_probe() {
     assert!(check_root_closed(&root_fixture(Some(false))).iter().all(|l| l.level == Level::Ok));
@@ -1447,6 +1546,7 @@ fn hooks_fixture_at(repo: &str, path: Option<&str>) -> Fake {
     f
 }
 
+#[test_id(t437xd8)]
 #[test]
 fn hooks_path_fails_naming_a_displaced_value() {
     let out = check_hooks_path(&hooks_fixture(Some("somewhere/else")));
@@ -1454,11 +1554,13 @@ fn hooks_path_fails_naming_a_displaced_value() {
     assert!(out[0].msg.contains("somewhere/else") && out[0].msg.contains("repo/spira/hooks"), "{:?}", out[0].msg);
 }
 
+#[test_id(tinww7y)]
 #[test]
 fn hooks_path_fails_when_unset() {
     assert_eq!(levels(&check_hooks_path(&hooks_fixture(None))), vec![Level::Fail]);
 }
 
+#[test_id(ts3pui7)]
 #[test]
 fn hooks_path_passes_relative_and_absolute_forms() {
     assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("spira/hooks")))), vec![Level::Ok]);
@@ -1481,12 +1583,14 @@ fn env_fixture(installed: &str, locked: &str, bd: &str) -> Fake {
     f
 }
 
+#[test_id(tqxutg3)]
 #[test]
 fn spira_env_clean_when_installed_matches_locked_and_tool_resolves_inside() {
     let f = env_fixture(STORE_A, STORE_A, "h/.local/lib/spira-env/bin/bd");
     assert_eq!(levels(&check_spira_env(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tu3eqo3)]
 #[test]
 fn spira_env_names_both_paths_when_stale() {
     let f = env_fixture(STORE_A, STORE_B, "h/.local/lib/spira-env/bin/bd");
@@ -1496,6 +1600,7 @@ fn spira_env_names_both_paths_when_stale() {
     assert!(d.contains(STORE_A) && d.contains(STORE_B), "{d}");
 }
 
+#[test_id(tearsvw)]
 #[test]
 fn spira_env_flags_a_stray_binary_ahead_of_the_env() {
     let f = env_fixture(STORE_A, STORE_A, "h/.local/bin/bd");
@@ -1504,6 +1609,7 @@ fn spira_env_flags_a_stray_binary_ahead_of_the_env() {
     assert!(out[1].msg.contains("h/.local/bin/bd"), "{:?}", out[1].msg);
 }
 
+#[test_id(tgqqznb)]
 #[test]
 fn spira_env_flags_a_commit_stamped_dev_build() {
     let f = env_fixture(STORE_A, STORE_A, "h/.local/bin/bd");
@@ -1512,6 +1618,7 @@ fn spira_env_flags_a_commit_stamped_dev_build() {
     assert!(out.iter().any(|l| l.msg.contains("dev build")), "{out:?}");
 }
 
+#[test_id(tfrya0t)]
 #[test]
 fn spira_env_warns_when_not_installed() {
     let f = env_fixture(STORE_A, STORE_A, "h/.local/lib/spira-env/bin/bd");
@@ -1529,6 +1636,7 @@ fn submission(status: &str) -> Vec<Line> {
 
 const HEALTHY: &str = "configured=1\ntailnet=1\nlistening=1\naddr=100.64.0.1:2587\niface=tailscale0\nfirewall=open\ncert_days=80\npassword=ok\n";
 
+#[test_id(tpm4b9c)]
 #[test]
 fn submission_without_the_operator_grant_names_the_command() {
     let out = submission("configured=0\ntailnet=1\noperator=missing\n");
@@ -1537,16 +1645,19 @@ fn submission_without_the_operator_grant_names_the_command() {
     assert!(out[0].detail.as_deref().unwrap_or("").contains("tailscale set --operator"), "{:?}", out[0].detail);
 }
 
+#[test_id(t96o67v)]
 #[test]
 fn submission_absent_binary_is_silent() {
     assert!(check_submission(&Fake::default()).is_empty());
 }
 
+#[test_id(t36743d)]
 #[test]
 fn submission_healthy_is_all_ok() {
     assert!(submission(HEALTHY).iter().all(|l| l.level == Level::Ok));
 }
 
+#[test_id(twi0e20)]
 #[test]
 fn submission_not_listening_hint_points_at_the_producers_log() {
     let out = submission(&HEALTHY.replace("listening=1", "listening=0"));
@@ -1555,12 +1666,14 @@ fn submission_not_listening_hint_points_at_the_producers_log() {
     assert!(!hint.contains("journal"), "{hint}");
 }
 
+#[test_id(t68igba)]
 #[test]
 fn submission_configured_but_not_listening_fails() {
     let out = submission(&HEALTHY.replace("listening=1", "listening=0"));
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("not listening")), "{out:?}");
 }
 
+#[test_id(t4kvm1m)]
 #[test]
 fn submission_listening_behind_a_closed_firewall_is_its_own_row() {
     let out = submission(&HEALTHY.replace("firewall=open", "firewall=closed"));
@@ -1570,6 +1683,7 @@ fn submission_listening_behind_a_closed_firewall_is_its_own_row() {
     assert!(l.detail.as_deref().unwrap().contains("ufw allow in on tailscale0 to any port 2587"));
 }
 
+#[test_id(tjocib0)]
 #[test]
 fn submission_certificate_under_21_days_warns_and_expired_fails() {
     let out = submission(&HEALTHY.replace("cert_days=80", "cert_days=20"));
@@ -1578,23 +1692,27 @@ fn submission_certificate_under_21_days_warns_and_expired_fails() {
     assert!(submission(&HEALTHY.replace("cert_days=80", "cert_days=0")).iter().any(|l| l.level == Level::Fail));
 }
 
+#[test_id(tktmo96)]
 #[test]
 fn submission_password_drift_fails() {
     let out = submission(&HEALTHY.replace("password=ok", "password=drifted"));
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("drifted")), "{out:?}");
 }
 
+#[test_id(ta8epvn)]
 #[test]
 fn submission_unconfigured_warns_only_when_tailscale_is_up() {
     assert_eq!(submission("configured=0\ntailnet=1\n")[0].level, Level::Warn);
     assert_eq!(submission("configured=0\ntailnet=0\n")[0].level, Level::Ok);
 }
 
+#[test_id(tj2dcxs)]
 #[test]
 fn dovecot_dropin_absent_where_dovecot_is_not_installed_says_nothing() {
     assert!(check_dovecot_dropin(&Fake::default()).is_empty());
 }
 
+#[test_id(tdxbx4a)]
 #[test]
 fn dovecot_dropin_missing_warns_and_present_is_ok() {
     let f = Fake::default();
@@ -1607,6 +1725,7 @@ fn dovecot_dropin_missing_warns_and_present_is_ok() {
     assert_eq!(levels(&check_dovecot_dropin(&f)), vec![Level::Ok]);
 }
 
+#[test_id(tdqrrqb)]
 #[test]
 fn doctor_without_spira_toml_refuses_naming_it() {
     let e = require_spec(None).unwrap_err();

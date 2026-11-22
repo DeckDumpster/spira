@@ -79,12 +79,14 @@ pub fn share(rows: i64, fixed: i64, specs: &[Spec]) -> Vec<i64> {
 mod tests {
     use super::*;
 
+    #[test_id(tj8v20n)]
     #[test]
     fn unlimited_rows_returns_max_directly() {
         let specs = [Spec::new(5, 12, true), Spec::new(6, 6, false)];
         assert_eq!(share(0, 0, &specs), vec![12, 6]);
     }
 
+    #[test_id(tsd5ccz)]
     #[test]
     fn zero_or_negative_budget_gives_every_nonempty_section_its_first_row_only() {
         let specs = [Spec::new(5, 12, true), Spec::new(0, 0, false), Spec::new(5, 5, false)];
@@ -92,6 +94,7 @@ mod tests {
         assert_eq!(share(3, 10, &specs), vec![1, 0, 1]);
     }
 
+    #[test_id(ttw0p8m)]
     #[test]
     fn first_served_sections_fill_to_max_before_others_reach_base() {
         // NOW (first, max 12) vs NEXT/RECENT (base 6 each, not first). Budget after fixed and
@@ -106,6 +109,7 @@ mod tests {
         assert_eq!(give[1], give[2]);
     }
 
+    #[test_id(t3woky2)]
     #[test]
     fn tier_two_only_grows_sections_with_room_above_base() {
         // INFLOW is the only bidder in tier two: base 6, max 41. Everything else's base ==
@@ -117,6 +121,7 @@ mod tests {
         assert_eq!(give[2], 12); // 30 - 12 - 6 = 12 left over, all absorbed by INFLOW.
     }
 
+    #[test_id(t7wxazy)]
     #[test]
     fn a_section_with_nothing_rendered_gets_nothing() {
         let specs = [Spec::new(0, 0, true), Spec::new(5, 5, false)];
@@ -124,6 +129,7 @@ mod tests {
         assert_eq!(give[0], 0);
     }
 
+    #[test_id(tby852m)]
     #[test]
     fn max_below_base_is_raised_to_base() {
         let specs = [Spec::new(5, 2, false)];

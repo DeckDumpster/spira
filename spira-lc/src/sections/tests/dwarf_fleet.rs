@@ -172,6 +172,7 @@ fn config(live: u64, max: u64) -> Ceiling {
     Ceiling { live: Cell::new(live), max, sets: RefCell::new(vec![]) }
 }
 
+#[test_id(tb40vx0)]
 #[test]
 fn the_ledger_and_landings_read_as_utilisation_minutes_per_bead_and_the_never_submitted_share() {
     let (r, c) = world(config(4, 6));
@@ -197,6 +198,7 @@ fn the_ledger_and_landings_read_as_utilisation_minutes_per_bead_and_the_never_su
     assert_eq!(parsed.status.conditions.iter().find(|c| c.type_ == fleet::SATURATED).unwrap().status, spira_desired_state::section::ConditionStatus::True);
 }
 
+#[test_id(t2x77io)]
 #[test]
 fn no_work_waiting_reads_zero_utilisation_and_no_landing_leaves_minutes_per_bead_unobservable() {
     let (r, c) = world(config(4, 6));
@@ -214,6 +216,7 @@ fn no_work_waiting_reads_zero_utilisation_and_no_landing_leaves_minutes_per_bead
     assert_eq!(zero.utilisation_1h, 0.0, "a zero ceiling has no capacity to be busy in");
 }
 
+#[test_id(t5h16hw)]
 #[test]
 fn an_unchanged_section_is_published_again_only_at_its_keepalive() {
     let (r, c) = world(config(4, 6));
@@ -227,6 +230,7 @@ fn an_unchanged_section_is_published_again_only_at_its_keepalive() {
     assert!(p.run(&[], &[], 5, 0).unwrap().published, "a changed status at once");
 }
 
+#[test_id(tu440gt)]
 #[test]
 fn a_raise_steps_the_ceiling_by_one_and_a_rerun_after_a_crash_between_set_and_ack_is_already_applied() {
     let (r, c) = world(config(4, 6));
@@ -253,6 +257,7 @@ fn a_raise_steps_the_ceiling_by_one_and_a_rerun_after_a_crash_between_set_and_ac
     }
 }
 
+#[test_id(tg3gjrj)]
 #[test]
 fn a_raise_is_applied_once_and_acked_applied() {
     let (r, c) = world(config(4, 6));
@@ -268,6 +273,7 @@ fn a_raise_is_applied_once_and_acked_applied() {
     assert_eq!(ack["measurement"], json!({ "utilisation_1h": 0.0, "minutes_per_landed_24h": null, "never_submitted_share_24h": null, "claimable_ready": 7 }));
 }
 
+#[test_id(tt36f3k)]
 #[test]
 fn a_raise_at_the_ceiling_the_config_allows_is_refused_and_moves_nothing() {
     let (r, c) = world(config(6, 6));
@@ -282,6 +288,7 @@ fn a_raise_at_the_ceiling_the_config_allows_is_refused_and_moves_nothing() {
     assert!(ack["result"]["refused"]["reason"].as_str().unwrap().contains("SPIRA_MAX_DWARVES"), "{ack}");
 }
 
+#[test_id(tgjn8m0)]
 #[test]
 fn a_step_below_one_a_stale_from_and_a_step_that_is_not_one_are_refused() {
     let (r, c) = world(config(1, 6));
@@ -300,6 +307,7 @@ fn a_step_below_one_a_stale_from_and_a_step_that_is_not_one_are_refused() {
     assert!(c.sets.borrow().is_empty());
 }
 
+#[test_id(tojmk29)]
 #[test]
 fn an_intent_for_an_action_the_kind_does_not_declare_or_with_no_whole_ceiling_is_refused() {
     let i = |action: &str, from: Value, to: Value| {
@@ -313,6 +321,7 @@ fn an_intent_for_an_action_the_kind_does_not_declare_or_with_no_whole_ceiling_is
     assert_eq!(fs::decide(&i(fleet::LOWER, json!(3), json!(2)), 3, 6), fs::Step::Set(2));
 }
 
+#[test_id(tv2uh1p)]
 #[test]
 fn a_ceiling_the_config_cannot_state_stops_the_pass_before_it_acks_anything() {
     struct Unreadable;
@@ -331,6 +340,7 @@ fn a_ceiling_the_config_cannot_state_stops_the_pass_before_it_acks_anything() {
     assert!(e.contains("unreadable"), "{e}");
 }
 
+#[test_id(tiut8dp)]
 #[test]
 fn a_section_no_pass_republishes_reads_stale() {
     let (r, c) = world(config(4, 6));
@@ -356,6 +366,7 @@ fn probe_source(r: &Rig<MemBackend>, name: &str, produces: &str, depth: f64) {
     r.publish(&body);
 }
 
+#[test_id(t9np8k1)]
 #[test]
 fn the_selector_refuses_the_raise_while_host_is_absent_or_gapped_and_takes_it_once_host_is_whole() {
     use reconciler_engine::goodput_pass::{run as pass, Outcome, PassConfig};

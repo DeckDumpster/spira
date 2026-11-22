@@ -1064,11 +1064,13 @@ pub fn write_law(law: &Path, toc: &[Part], pointers: &Pointers, book: &BTreeMap<
 mod filed_id_tests {
     use super::filed_id;
 
+    #[test_id(tjxkpwa)]
     #[test]
     fn filed_id_accepts_the_object_bead_prints_for_an_already_filed_item() {
         assert_eq!(filed_id("{\"id\":\"sp-x\"}\n").as_deref(), Ok("sp-x"));
     }
 
+    #[test_id(tlubq7p)]
     #[test]
     fn filed_id_on_a_bare_id_names_bead_sh_s_output() {
         let e = filed_id("sp-x\n").unwrap_err();

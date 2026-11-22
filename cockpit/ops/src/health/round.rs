@@ -216,6 +216,7 @@ mod tests {
         format!("SP_ROUND_STATE='open'\nSP_ROUND_CAP='900'\nSP_ROUNDS_N='2'\n{}{}", round(0, "r-11", "staged"), round(1, "r-10", "certifying"))
     }
 
+    #[test_id(t3i25fa)]
     #[test]
     fn a_stop_of_the_rounds_is_shown_with_owner_reason_and_release_condition() {
         let rows = render("SP_ROUND_STATE='idle'\nSP_ROUND_POOL='2'\nSP_ROUND_STOP='spira'\nSP_ROUND_STOP_OWNER='concierge'\nSP_ROUND_STOP_REASON='fixes unlanded'\nSP_ROUND_STOP_UNTIL='bead:sp-x=LANDED'\n", 120, 1000);
@@ -223,6 +224,7 @@ mod tests {
         assert!(stop.contains("STOPPED spira by concierge") && stop.contains("fixes unlanded") && stop.contains("until bead:sp-x=LANDED"), "{stop}");
     }
 
+    #[test_id(te5ys1s)]
     #[test]
     fn the_round_on_the_vm_expands_to_members_and_ejections() {
         let text = strip(&render(&open("certifying"), 100, 1100).join("\n"));
@@ -231,6 +233,7 @@ mod tests {
         assert!(text.contains("ejected sp-c  red: test-x.sh"), "{text}");
     }
 
+    #[test_id(t0y7fb9)]
     #[test]
     fn a_certifying_round_shows_suites_done_of_total_and_reds_and_never_blank() {
         let snap = format!("{}SP_ROUNDS0_SUITES_DONE='270'\nSP_ROUNDS0_SUITES_TOTAL='468'\nSP_ROUNDS0_REDS_N='2'\nSP_ROUNDS0_RED0='test-x.sh'\nSP_ROUNDS0_RED1='test-y.sh'\n", open("certifying"));
@@ -243,6 +246,7 @@ mod tests {
         assert!(!strip(&render(&snap.replace("certifying", "merging"), 120, 1100)[0]).contains("270/468"));
     }
 
+    #[test_id(t6ajkcc)]
     #[test]
     fn the_vm_phase_renders_its_own_label_and_clock_not_the_last_fence() {
         let snap = format!("{}SP_ROUNDS0_STEP='vm'\nSP_ROUNDS0_STEP_AT='1000'\nSP_ROUNDS0_STEP_DETAIL='provisioning VM 109'\n", open("certifying"));
@@ -254,6 +258,7 @@ mod tests {
         assert!(strip(&render(&bare, 120, 1060)[0]).contains("compiling unit tests 60s"));
     }
 
+    #[test_id(txazp6d)]
     #[test]
     fn every_other_phase_is_one_collapsed_row() {
         for phase in ["staged", "merging", "landing", "deploying"] {
@@ -263,6 +268,7 @@ mod tests {
         }
     }
 
+    #[test_id(t9k2jbw)]
     #[test]
     fn two_rounds_are_two_named_rows_and_only_the_vm_one_expands() {
         let out = render(&two(), 100, 1100);
@@ -272,6 +278,7 @@ mod tests {
         assert_eq!(text.matches("sp-a  in").count(), 1, "{text}");
     }
 
+    #[test_id(tvtebhu)]
     #[test]
     fn a_staged_round_is_drawn_indented_under_its_parent_and_expands_to_its_members() {
         let snap = format!(
@@ -287,6 +294,7 @@ mod tests {
         assert!(out[child].contains("2 member(s)"), "{out:#?}");
     }
 
+    #[test_id(t35dybf)]
     #[test]
     fn a_short_pane_keeps_every_round_collapsed() {
         let snap = Snapshot::parse(&two());
@@ -294,6 +302,7 @@ mod tests {
         assert!(round_section(&snap, 100, 1100, 40).len() > 2);
     }
 
+    #[test_id(t3gyxly)]
     #[test]
     fn rounds_beyond_the_cap_are_counted_not_listed() {
         let mut snap = String::from("SP_ROUND_STATE='open'\nSP_ROUND_CAP='900'\nSP_ROUNDS_N='6'\n");
@@ -302,6 +311,7 @@ mod tests {
         assert!(text.contains("+2 more") && !text.contains("r-4"), "{text}");
     }
 
+    #[test_id(t3yh99q)]
     #[test]
     fn wall_is_green_then_amber_past_720_then_red_past_the_cap() {
         let quiet = open("certifying").replace("EJECT0=", "GONE0=");
@@ -312,12 +322,14 @@ mod tests {
         assert!(at(1000 + 901).contains(BAD), "{}", at(1000 + 901));
     }
 
+    #[test_id(tadkxpy)]
     #[test]
     fn a_planted_over_cap_round_renders_red() {
         let out = render(&open("certifying"), 100, 1000 + 2000);
         assert!(out[0].contains(&format!("{BAD}2000s/900s")), "{}", out[0]);
     }
 
+    #[test_id(ta843sy)]
     #[test]
     fn no_open_round_shows_the_last_verdict_and_the_pool() {
         let green = strip(&render("SP_ROUND_STATE='idle'\nSP_ROUND_LAST_NAME='r-8'\nSP_ROUND_LAST_VERDICT='GREEN'\nSP_ROUND_LAST_AT='700'\nSP_ROUND_POOL='4'\n", 100, 1000)[0]);
@@ -330,6 +342,7 @@ mod tests {
         format!("SP_ROUND_STATE='open'\nSP_ROUND_CAP='900'\nSP_ROUNDS_N='1'\nSP_ROUNDS0_NAME='dd-1'\nSP_ROUNDS0_PHASE='certifying'\nSP_ROUNDS0_OPENED='1000'\nSP_ROUNDS0_N='2'\nSP_ROUNDS0_PR='422'\nSP_ROUNDS0_WALL='3600'\n{extra}")
     }
 
+    #[test_id(tq5xf6u)]
     #[test]
     fn a_running_forge_round_shows_pr_ci_step_and_progress_without_a_flag() {
         let snap = forge_round("SP_ROUNDS0_PRSTATE='open'\nSP_ROUNDS0_CI='pending'\nSP_ROUNDS0_CI_START='1000'\nSP_ROUNDS0_CI_STEP='unit / pytest'\nSP_ROUNDS0_PROGRESS='1330'\n");
@@ -338,6 +351,7 @@ mod tests {
         assert!(!text.contains("STALLED"), "{text}");
     }
 
+    #[test_id(thebevv)]
     #[test]
     fn green_awaiting_merge_reads_green_and_is_not_stalled() {
         let snap = forge_round("SP_ROUNDS0_PRSTATE='open'\nSP_ROUNDS0_CI='green'\nSP_ROUNDS0_PROGRESS='1300'\n");
@@ -345,6 +359,7 @@ mod tests {
         assert!(text.contains("PR 422 open  CI green") && !text.contains("STALLED"), "{text}");
     }
 
+    #[test_id(t16bgh4)]
     #[test]
     fn a_merged_pr_or_an_empty_batch_is_stalled_by_name() {
         let merged = forge_round("SP_ROUNDS0_PRSTATE='merged'\nSP_ROUNDS0_CI='green'\nSP_ROUNDS0_STALL='PR merged but batch not landed'\nSP_ROUNDS0_PROGRESS='1300'\n");
@@ -355,6 +370,7 @@ mod tests {
         assert!(empty.contains("STALLED: no members"), "{empty}");
     }
 
+    #[test_id(t8zozvk)]
     #[test]
     fn no_progress_past_the_repos_ci_wall_is_stalled_and_the_wall_defaults_to_the_cap() {
         let snap = forge_round("SP_ROUNDS0_PRSTATE='open'\nSP_ROUNDS0_CI='pending'\nSP_ROUNDS0_PROGRESS='1000'\n");
@@ -364,6 +380,7 @@ mod tests {
         assert!(strip(&render(&local, 140, 1000 + 901)[0]).contains("STALLED: no progress in"), "{}", strip(&render(&local, 140, 1901)[0]));
     }
 
+    #[test_id(tidg4h1)]
     #[test]
     fn phone_width_is_one_line() {
         assert_eq!(render(&open("merging"), 40, 1100).len(), 1);
@@ -371,6 +388,7 @@ mod tests {
         assert!(strip(&render(&open("merging"), 40, 1100)[0]).contains("r-9 merging 2m -1"));
     }
 
+    #[test_id(tkwqdsv)]
     #[test]
     fn an_unreadable_round_is_a_question_mark_never_idle() {
         for snap in ["", "SP_ROUND_STATE='?'\n"] {

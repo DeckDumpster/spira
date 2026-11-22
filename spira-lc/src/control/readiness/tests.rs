@@ -164,6 +164,7 @@ fn certified_gate(tip: &str) -> Value {
     serde_json::to_value(gate(BeadState::Certified, Some(tip))).unwrap()
 }
 
+#[test_id(tf0pxh8)]
 #[test]
 fn a_blockers_hold_express_or_phase_since_judgement_does_not_conflict_the_claim() {
     let r = Rig::new();
@@ -187,6 +188,7 @@ fn a_blockers_hold_express_or_phase_since_judgement_does_not_conflict_the_claim(
     assert_eq!(r.state("sp-a"), "WORKING");
 }
 
+#[test_id(t7j32s9)]
 #[test]
 fn a_claim_records_the_edge_set_and_planning_watermark_it_was_judged_against() {
     let r = Rig::new();
@@ -205,6 +207,7 @@ fn a_claim_records_the_edge_set_and_planning_watermark_it_was_judged_against() {
     assert_eq!(judged["edges"]["sp-gone"], Value::Null);
 }
 
+#[test_id(tnmik04)]
 #[test]
 fn a_stacked_claim_conflicts_when_its_prerequisite_moved_off_the_stacked_tip() {
     let r = Rig::new();
@@ -217,6 +220,7 @@ fn a_stacked_claim_conflicts_when_its_prerequisite_moved_off_the_stacked_tip() {
     assert_eq!(code, 0, "{out}");
 }
 
+#[test_id(tn88kf3)]
 #[test]
 fn the_gate_is_written_with_a_transition_that_moves_it_and_never_by_one_that_does_not() {
     let r = Rig::new();
@@ -240,6 +244,7 @@ fn the_gate_is_written_with_a_transition_that_moves_it_and_never_by_one_that_doe
     );
 }
 
+#[test_id(trb5kiv)]
 #[test]
 fn publishing_readiness_covers_submitted_and_certified_records_and_moves_no_lifecycle_record() {
     let r = Rig::new();
@@ -276,6 +281,7 @@ fn publishing_readiness_covers_submitted_and_certified_records_and_moves_no_life
     assert!(r.store.readiness("sp-ghost").unwrap().is_none());
 }
 
+#[test_id(tp6aekd)]
 #[test]
 fn a_record_from_filing_is_unclaimable_until_promoted_and_ready_born_records_are_claimable() {
     let r = Rig::new();
@@ -300,6 +306,7 @@ fn sweep(r: &Rig, extra: &[&str]) -> Value {
     serde_json::from_str(&r.ok(&argv)).unwrap()
 }
 
+#[test_id(trjzmh3)]
 #[test]
 fn an_open_record_past_the_grace_is_promoted_when_its_bead_is_open_and_left_inside_it() {
     let r = Rig::new();
@@ -312,6 +319,7 @@ fn an_open_record_past_the_grace_is_promoted_when_its_bead_is_open_and_left_insi
     assert_eq!(r.state("sp-o"), "READY");
 }
 
+#[test_id(tb76edm)]
 #[test]
 fn an_open_record_whose_bead_is_gone_is_named_for_escalation_exactly_once() {
     let r = Rig::new();
@@ -337,6 +345,7 @@ fn an_open_record_whose_bead_is_gone_is_named_for_escalation_exactly_once() {
     );
 }
 
+#[test_id(tc5dtob)]
 #[test]
 fn an_expired_claim_returns_to_the_state_it_was_claimed_from_once_its_holder_is_stopped() {
     let r = Rig::new();
@@ -366,6 +375,7 @@ fn an_expired_claim_returns_to_the_state_it_was_claimed_from_once_its_holder_is_
     assert_eq!(r.state("sp-live"), "WORKING");
 }
 
+#[test_id(tsyk02c)]
 #[test]
 fn a_coordination_parent_claimed_after_judgement_conflicts_its_childs_claim() {
     let r = Rig::new();
@@ -379,6 +389,7 @@ fn a_coordination_parent_claimed_after_judgement_conflicts_its_childs_claim() {
     assert!(out.contains("blocker sp-p moved"), "{out}");
 }
 
+#[test_id(tx4j3ml)]
 #[test]
 fn a_record_judged_not_claimable_is_refused_its_claim_and_nothing_is_written() {
     let r = Rig::new();
@@ -394,6 +405,7 @@ fn a_record_judged_not_claimable_is_refused_its_claim_and_nothing_is_written() {
     assert_eq!(r.mod_rev(&keys::lifecycle("sp-a")), before);
 }
 
+#[test_id(t6jw9jk)]
 #[test]
 fn a_refusal_with_no_blockers_names_the_verdict_the_record_was_judged_with() {
     let r = Rig::new();
@@ -404,6 +416,7 @@ fn a_refusal_with_no_blockers_names_the_verdict_the_record_was_judged_with() {
     assert!(out.contains("occupied") && !out.contains("blocked by )"), "{out}");
 }
 
+#[test_id(t17vew4)]
 #[test]
 fn a_rejudge_mark_without_blockers_names_rejudge_in_the_refusal() {
     let r = Rig::new();
@@ -415,6 +428,7 @@ fn a_rejudge_mark_without_blockers_names_rejudge_in_the_refusal() {
     assert!(out.contains("rejudge") && !out.contains("blocked by )"), "{out}");
 }
 
+#[test_id(t2vwmz0)]
 #[test]
 fn a_record_judged_before_verdicts_were_kept_is_refused_with_no_reason_recorded() {
     let r = Rig::new();
@@ -425,6 +439,7 @@ fn a_record_judged_before_verdicts_were_kept_is_refused_with_no_reason_recorded(
     assert!(out.contains("(no reason recorded)"), "{out}");
 }
 
+#[test_id(tdd16uv)]
 #[test]
 fn a_record_with_no_gate_gets_one_on_its_next_transition() {
     let r = Rig::new();
@@ -447,6 +462,7 @@ fn a_record_with_no_gate_gets_one_on_its_next_transition() {
         .is_some());
 }
 
+#[test_id(t8xalrn)]
 #[test]
 fn an_unrelated_planning_write_after_judgement_does_not_refuse_the_claim() {
     let r = Rig::new();
@@ -459,6 +475,7 @@ fn an_unrelated_planning_write_after_judgement_does_not_refuse_the_claim() {
     assert_eq!(r.state("sp-a"), "WORKING");
 }
 
+#[test_id(tpnzqzo)]
 #[test]
 fn an_edge_added_through_the_door_refuses_the_claim_naming_the_blocker_before_any_publish() {
     let r = Rig::new();
@@ -474,6 +491,7 @@ fn an_edge_added_through_the_door_refuses_the_claim_naming_the_blocker_before_an
     assert_eq!(r.claim("sp-a").0, 0);
 }
 
+#[test_id(tg5f5ug)]
 #[test]
 fn a_mark_moves_the_readiness_revision_and_leaves_the_record_judged_but_not_claimable() {
     let r = Rig::new();
@@ -486,6 +504,7 @@ fn a_mark_moves_the_readiness_revision_and_leaves_the_record_judged_but_not_clai
     assert!(marked.judged_for_claim && !marked.claimable);
 }
 
+#[test_id(tklf12u)]
 #[test]
 fn a_mark_on_a_record_no_pass_has_judged_leaves_it_claimable() {
     let r = Rig::new();
@@ -495,6 +514,7 @@ fn a_mark_on_a_record_no_pass_has_judged_leaves_it_claimable() {
     assert_eq!(r.claim("sp-a").0, 0);
 }
 
+#[test_id(tu5cz8c)]
 #[test]
 fn a_claim_judged_at_the_planning_watermark_it_finds_goes_through() {
     let r = Rig::new();
@@ -506,6 +526,7 @@ fn a_claim_judged_at_the_planning_watermark_it_finds_goes_through() {
     assert_eq!(r.state("sp-a"), "WORKING");
 }
 
+#[test_id(tejecpz)]
 #[test]
 fn a_payload_sent_on_stdin_is_published_with_exit_zero() {
     let r = Rig::new();
@@ -515,6 +536,7 @@ fn a_payload_sent_on_stdin_is_published_with_exit_zero() {
     r.ok(&argv);
 }
 
+#[test_id(tf5n425)]
 #[test]
 fn the_judged_claimable_set_is_the_ready_records_a_pass_judged_claimable_and_nothing_else() {
     let r = Rig::new();
@@ -627,6 +649,7 @@ fn three_ready(r: &Rig) {
     r.inputs("sp-b", &["sp-w"]);
 }
 
+#[test_id(trgb0f0)]
 #[test]
 fn claimable_carries_each_candidates_content_fields_the_ranking_reads() {
     let r = Rig::new();
@@ -646,6 +669,7 @@ fn claimable_carries_each_candidates_content_fields_the_ranking_reads() {
     }
 }
 
+#[test_id(t6p7o3r)]
 #[test]
 fn an_unreadable_content_store_leaves_the_judgement_standing_and_says_why_in_the_reply() {
     let r = Rig::new();
@@ -657,6 +681,7 @@ fn an_unreadable_content_store_leaves_the_judgement_standing_and_says_why_in_the
     assert_eq!(verdicts(&answer)[0], ("sp-a".to_string(), "claimable".to_string()));
 }
 
+#[test_id(tcnqfzy)]
 #[test]
 fn claimable_answers_every_ready_record_with_its_verdict_and_counts_the_ones_it_cannot_tell() {
     let r = Rig::new();
@@ -673,6 +698,7 @@ fn claimable_answers_every_ready_record_with_its_verdict_and_counts_the_ones_it_
     assert_eq!(answer["beads"][1]["blocker"], "sp-w");
 }
 
+#[test_id(tzy1qf3)]
 #[test]
 fn claimable_names_the_gate_of_each_blocker_it_read() {
     let r = Rig::new();
@@ -683,6 +709,7 @@ fn claimable_names_the_gate_of_each_blocker_it_read() {
     assert_eq!(answer["beads"][1]["gates"], expected);
 }
 
+#[test_id(tv8hx00)]
 #[test]
 fn claimable_writes_nothing() {
     let r = Rig::new();
@@ -693,6 +720,7 @@ fn claimable_writes_nothing() {
     assert_eq!(r.store.contract().head().unwrap(), before);
 }
 
+#[test_id(t8w5p9o)]
 #[test]
 fn a_record_moved_to_working_between_two_calls_leaves_the_second_answer_with_no_pass_between() {
     let r = Rig::new();
@@ -703,6 +731,7 @@ fn a_record_moved_to_working_between_two_calls_leaves_the_second_answer_with_no_
     assert!(!verdicts(&r.claimable(run.path(), &[])).iter().any(|(id, _)| id == "sp-a"));
 }
 
+#[test_id(tmewqqz)]
 #[test]
 fn claimable_narrowed_to_a_repo_lists_only_that_repos_records() {
     let r = Rig::new();
@@ -713,6 +742,7 @@ fn claimable_narrowed_to_a_repo_lists_only_that_repos_records() {
     assert_eq!(ids, ["sp-o"]);
 }
 
+#[test_id(tn91dob)]
 #[test]
 fn claimable_reads_the_run_dir_reserved_ids_and_repo_stops() {
     let r = Rig::new();
@@ -733,6 +763,7 @@ fn claimable_reads_the_run_dir_reserved_ids_and_repo_stops() {
     assert!(verdicts(&answer).contains(&("sp-s".to_string(), "stopped".to_string())), "{answer}");
 }
 
+#[test_id(tyepm59)]
 #[test]
 fn claimable_judges_a_rowless_gate_by_the_content_stores_status() {
     let r = Rig::new();
@@ -750,6 +781,7 @@ fn claimable_judges_a_rowless_gate_by_the_content_stores_status() {
     assert_eq!(verdict_of(&r.claimable_with(with("closed"), &[])), "claimable");
 }
 
+#[test_id(tzzwwo0)]
 #[test]
 fn claimable_reads_a_carrier_by_key_and_a_landed_one_releases_its_member() {
     let r = Rig::new();
@@ -764,6 +796,7 @@ fn claimable_reads_a_carrier_by_key_and_a_landed_one_releases_its_member() {
     assert_eq!(answer["beads"][0]["blocker"], "sp-int");
 }
 
+#[test_id(tfy6lqh)]
 #[test]
 fn claimable_that_cannot_read_its_config_answers_cannot_tell_with_no_list() {
     let r = Rig::new();

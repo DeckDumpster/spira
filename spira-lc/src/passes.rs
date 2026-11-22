@@ -94,6 +94,7 @@ mod tests {
         json!({"event": name, "evidence": json!({ name: body }).to_string(), "at": at})
     }
 
+    #[test_id(txh9qng)]
     #[test]
     fn a_red_pass_an_eject_and_a_green_pass_fold_into_two_passes() {
         let events = vec![
@@ -114,6 +115,7 @@ mod tests {
         assert_eq!(since, Some(250));
     }
 
+    #[test_id(tw2boaz)]
     #[test]
     fn a_second_pass_in_its_suites_is_the_last_pass_with_no_verdict_and_the_phase_clock_at_its_start() {
         let events = vec![
@@ -132,6 +134,7 @@ mod tests {
         assert_eq!(passes.iter().map(|p| p["ejects"].as_u64().unwrap()).collect::<Vec<_>>(), [1, 0]);
     }
 
+    #[test_id(tzbruei)]
     #[test]
     fn a_pass_verdict_keeps_the_runner_it_names() {
         let runner = json!({"place": "ec2", "why": "host io pressure full avg300 55.0 above 50.0"});
@@ -146,6 +149,7 @@ mod tests {
         assert!(passes[1].get("runner").is_none());
     }
 
+    #[test_id(te81qr0)]
     #[test]
     fn an_incomplete_pass_is_neither_red_nor_green() {
         let events = vec![
@@ -158,6 +162,7 @@ mod tests {
         assert_eq!(passes[0]["reason"], "over the cap");
     }
 
+    #[test_id(tr3skk9)]
     #[test]
     fn a_preempted_pass_keeps_how_far_it_got() {
         let events = vec![
@@ -171,6 +176,7 @@ mod tests {
         assert_eq!(since, Some(30));
     }
 
+    #[test_id(ta5l1yo)]
     #[test]
     fn an_object_valued_evidence_column_reads_the_same_as_a_string() {
         let e = json!({"event": "PassStarted", "evidence": {"PassStarted": {"n": 1, "head": "h"}}, "at": 5});

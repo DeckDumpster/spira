@@ -62,6 +62,7 @@ mod tests {
     use runtime::ports::VirtualClock;
     use runtime::units::ScriptedUnits;
 
+    #[test_id(tfqz0sr)]
     #[test]
     fn the_real_set_names_all_three_and_refuses_virtual_time() {
         let clock = Arc::new(VirtualClock::new(0));
@@ -78,6 +79,7 @@ mod tests {
         assert!(err.0.contains("mail.arrived") && err.0.contains("unit.ran") && err.0.contains("submission"), "{err}");
     }
 
+    #[test_id(t9p33pf)]
     #[test]
     fn an_unresolvable_key_refuses_the_set_naming_it() {
         let cfg = |k: &str| -> Result<String, String> { Err(format!("{k} is not set")) };

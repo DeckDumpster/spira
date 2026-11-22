@@ -30,6 +30,9 @@
 //! double-red's own failing assertions and applies it, by judgement rather than blind
 //! reproduction.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use batcher::drive;
 use batcher_cut::{endpass, io, order, pace, redtip, screen, vm};
 mod telemetry;
@@ -2852,6 +2855,7 @@ fn dispatch() -> ExitCode {
 mod tests {
     use super::*;
 
+    #[test_id(ts0qpfv)]
     #[test]
     fn a_failed_attribution_of_an_ended_round_is_abandoned_not_blocked() {
         use batcher_cut::attribute::Attribution;
@@ -2859,6 +2863,7 @@ mod tests {
         assert_eq!(failed_attribution(false, "x".into()), Attribution::Blocked("x".into()));
     }
 
+    #[test_id(t2jxdat)]
     #[test]
     fn a_returned_row_of_the_attributed_pass_is_read_by_its_pass_number_not_the_current_one() {
         let row = |state: &str| endpass::Row {
@@ -2909,6 +2914,7 @@ mod tests {
         f
     }
 
+    #[test_id(tfkx6c6)]
     #[test]
     fn sp_plukb4_pause_show_held_since_fails_only_while_that_pause_holds() {
         let d = testkit::TempDir::new("batcher-pause-held-since");
@@ -2920,6 +2926,7 @@ mod tests {
         assert!(pause_show(&since(1), &mut Vec::new()).is_ok(), "no pause holds");
     }
 
+    #[test_id(t1me1ff)]
     #[test]
     fn pause_lift_by_the_concierge_lifts_and_records_the_concierge() {
         let d = testkit::TempDir::new("batcher-pause-lift");
@@ -2931,6 +2938,7 @@ mod tests {
         assert!(log.contains("QUEUE ROUND-PAUSE-LIFT") && log.contains("by=concierge"), "{log}");
     }
 
+    #[test_id(tms6no3)]
     #[test]
     fn pause_lift_without_a_valid_actor_is_refused_naming_the_flag_and_the_pause_stands() {
         let d = testkit::TempDir::new("batcher-pause-refuse");
@@ -2946,6 +2954,7 @@ mod tests {
         assert!(f.pause_file().exists());
     }
 
+    #[test_id(txv0gyg)]
     #[test]
     fn pause_set_by_a_person_writes_a_hold_the_batcher_neither_pages_nor_lifts() {
         let d = testkit::TempDir::new("batcher-pause-set");
@@ -2960,6 +2969,7 @@ mod tests {
         assert!(has("kind", "pause") && has("by", "operator"));
     }
 
+    #[test_id(tr5qonk)]
     #[test]
     fn a_person_lifts_their_own_hold_and_show_reads_it_first() {
         let d = testkit::TempDir::new("batcher-pause-hold-lift");
@@ -2975,6 +2985,7 @@ mod tests {
         assert!(!f.pause_file().exists());
     }
 
+    #[test_id(t950gna)]
     #[test]
     fn pause_lift_with_no_pause_says_so_and_succeeds_and_show_reads_the_pause() {
         let d = testkit::TempDir::new("batcher-pause-none");
@@ -2992,6 +3003,7 @@ mod tests {
         assert!(String::from_utf8(out).unwrap().contains("a: paused kind=red since=1"));
     }
 
+    #[test_id(ton3tex)]
     #[test]
     fn an_empty_suite_list_does_not_block_attribution_of_a_red_test_tier() {
         let dir = testkit::TempDir::new("batcher-cut-red-tier");
@@ -3008,6 +3020,7 @@ mod tests {
         assert_eq!(blocks_attribution(&["test-a.sh".into()], &none, None), None);
     }
 
+    #[test_id(tt91g2o)]
     #[test]
     fn named_suites_narrow_the_corpus_and_drop_names_the_tree_lacks() {
         let all = vec!["test-a.sh".to_string(), "test-b.sh".to_string()];
@@ -3016,6 +3029,7 @@ mod tests {
         assert!(named_suites(all, Some("test-z.sh")).is_empty());
     }
 
+    #[test_id(t4id56l)]
     #[test]
     fn a_cut_round_lands_the_config_delta_folded_and_its_fragments_gone() {
         let root = testkit::TempDir::new("batcher-cut-fold");
@@ -3064,6 +3078,7 @@ mod tests {
         forge: true,
     };
 
+    #[test_id(tcf0cl4)]
     #[test]
     fn a_rounds_stop_on_one_repo_leaves_another_cutting() {
         let d = testkit::TempDir::new("batcher-rounds-stop");
@@ -3093,6 +3108,7 @@ mod tests {
         );
     }
 
+    #[test_id(trf9puc)]
     #[test]
     fn a_hand_landings_cut_hold_stops_the_cut_of_its_repo_only() {
         let d = testkit::TempDir::new("batcher-cut-hold");
@@ -3113,6 +3129,7 @@ mod tests {
         assert!(cut_hold_note(d.path(), "spira").is_none());
     }
 
+    #[test_id(tiugops)]
     #[test]
     fn a_pass_drives_each_repo_by_its_own_land_mode_and_never_mixes() {
         let repos: Vec<(String, String)> = [
@@ -3157,6 +3174,7 @@ mod tests {
         );
     }
 
+    #[test_id(t471ytd)]
     #[test]
     fn the_local_hold_never_holds_a_forge_batch_and_the_forge_switch_holds_only_forge() {
         let repos = vec![
@@ -3192,6 +3210,7 @@ mod tests {
         .is_empty());
     }
 
+    #[test_id(tg4g0sn)]
     #[test]
     fn the_local_hold_holds_only_the_home_repo_and_a_sibling_queue_local_repo_is_still_cut() {
         let repos = vec![
@@ -3238,6 +3257,7 @@ mod tests {
         );
     }
 
+    #[test_id(tvvanlw)]
     #[test]
     fn one_repos_failure_does_not_stop_the_others_and_a_failed_verdict_still_cuts() {
         let repos = vec![
@@ -3277,6 +3297,7 @@ mod base_conflict_handling {
 
     use std::fs;
 
+    #[test_id(ttx2ww0)]
     #[test]
     fn a_lock_waiter_can_name_the_batcher_holding_the_queue_lock() {
         let d = testkit::TempDir::new("batcher-cut-lock-holder");
@@ -3296,6 +3317,7 @@ mod base_conflict_handling {
 mod vtime_tests {
     use super::*;
 
+    #[test_id(txl9nkv)]
     #[test]
     fn utc_stamp_formats_epoch_seconds() {
         assert_eq!(utc_stamp(0), "1970-01-01T00:00:00Z");
@@ -3303,6 +3325,7 @@ mod vtime_tests {
         assert_eq!(utc_stamp(951_782_400), "2000-02-29T00:00:00Z");
     }
 
+    #[test_id(tqgljb9)]
     #[test]
     fn now_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, now);
@@ -3312,6 +3335,7 @@ mod vtime_tests {
 
 #[cfg(test)]
 mod fork_fence {
+    #[test_id(tklpe63)]
     #[test]
     fn batcher_cut_starts_no_spira_child_that_is_not_a_named_fork_edge() {
         let got =
@@ -3324,6 +3348,7 @@ mod fork_fence {
 mod cut_tests {
     use super::*;
 
+    #[test_id(ta0ngxn)]
     #[test]
     fn a_failing_registry_cuts_no_round_and_says_what_it_printed() {
         let d = testkit::TempDir::new("batcher-cut-deny-fail");
@@ -3335,6 +3360,7 @@ mod cut_tests {
         assert!(snapshot_from(io::deny_list_from(d.join("nonexistent/test-registry").to_str().unwrap(), &env, 77), 77).is_err());
     }
 
+    #[test_id(twdadym)]
     #[test]
     fn a_cut_resolves_the_list_at_its_start_and_every_round_row_names_it() {
         let d = testkit::TempDir::new("batcher-cut-deny-row");
@@ -3365,6 +3391,7 @@ mod cut_tests {
         (env, results, bin, calls)
     }
 
+    #[test_id(t5qcncs)]
     #[test]
     fn a_flip_files_one_bead_per_test_then_writes_one_row_naming_it_as_the_batcher_and_extends_the_deny_list() {
         let d = testkit::TempDir::new("batcher-cut-flip-rows");
@@ -3404,6 +3431,7 @@ mod cut_tests {
         assert_eq!(io::head_of(&wt).unwrap(), head, "no commit is made in the round tree");
     }
 
+    #[test_id(tco3ojg)]
     #[test]
     fn a_flip_whose_bead_cannot_be_filed_writes_no_row_and_one_whose_row_is_refused_leaves_the_list_alone() {
         let d = testkit::TempDir::new("batcher-cut-flip-fail");
@@ -3432,6 +3460,7 @@ mod cut_tests {
         }
     }
 
+    #[test_id(ttvcifq)]
     #[test]
     fn a_kept_row_files_one_fix_bead_repoints_the_row_at_it_and_puts_the_row_back_in_the_deny_list() {
         let d = testkit::TempDir::new("batcher-cut-keep-row");
@@ -3459,6 +3488,7 @@ mod cut_tests {
         );
     }
 
+    #[test_id(tr35es3)]
     #[test]
     fn a_kept_row_whose_bead_cannot_be_filed_touches_neither_the_registry_nor_the_deny_list() {
         let d = testkit::TempDir::new("batcher-cut-keep-row-fail");
@@ -3470,6 +3500,7 @@ mod cut_tests {
         assert_eq!(std::fs::read_to_string(results.join("deny-list")).unwrap(), before);
     }
 
+    #[test_id(tt2hpr6)]
     #[test]
     fn an_ejected_owners_row_goes_back_into_the_deny_list_with_no_expiry_written_as_a_dash() {
         let d = testkit::TempDir::new("batcher-cut-restore-row");
@@ -3487,6 +3518,7 @@ mod cut_tests {
         io::LiftedRows::new(vec![row("suite:test-x.sh", "sp-own"), row("unit:tiny t::y", "sp-own"), row("suite:test-z.sh", "sp-other")])
     }
 
+    #[test_id(tc0uo4u)]
     #[test]
     fn a_row_is_kept_once_per_round_and_the_second_call_files_nothing() {
         let mut rows = lifted_pair();
@@ -3508,6 +3540,7 @@ mod cut_tests {
         assert_eq!(failing.standing().len(), 3, "a failed keep leaves the row standing and retryable");
     }
 
+    #[test_id(tzrxx82)]
     #[test]
     fn an_ejected_owners_rows_go_back_into_the_deny_list_once_and_a_kept_row_is_left_alone() {
         let d = testkit::TempDir::new("batcher-cut-restore-owner");
@@ -3523,6 +3556,7 @@ mod cut_tests {
         assert_eq!(rows.standing().iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["suite:test-z.sh"]);
     }
 
+    #[test_id(t8irari)]
     #[test]
     fn the_round_record_names_the_rows_the_round_lifted() {
         let d = testkit::TempDir::new("batcher-cut-lifted-record");
@@ -3600,6 +3634,7 @@ mod cut_tests {
         (attribute_in(&o, env, repo, wt, start, given), calls)
     }
 
+    #[test_id(tzxvqnn)]
     #[test]
     fn a_lint_red_certify_pass_with_its_deny_list_ejects_the_member_it_names_without_running_the_corpus() {
         let d = testkit::TempDir::new("batcher-cut-attr-lint");
@@ -3609,6 +3644,7 @@ mod cut_tests {
         assert!(!calls.exists(), "the corpus was requested: {:?}", std::fs::read_to_string(&calls));
     }
 
+    #[test_id(t68mpx7)]
     #[test]
     fn a_pass_without_its_deny_list_still_refuses_to_attribute() {
         let d = testkit::TempDir::new("batcher-cut-attr-nolist");
@@ -3616,6 +3652,7 @@ mod cut_tests {
         assert!(line.unwrap_err().contains("holds no deny list"));
     }
 
+    #[test_id(tsbbqc5)]
     #[test]
     fn a_cut_on_an_ec2_only_repo_never_calls_round_vm_refresh() {
         let d = testkit::TempDir::new("batcher-cut-no-refresh");

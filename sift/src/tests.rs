@@ -141,6 +141,7 @@ fn reds(r: &Rec) -> Vec<&String> {
     r.log.iter().filter(|l| l.starts_with("red ")).collect()
 }
 
+#[test_id(t2glybr)]
 #[test]
 fn a_conflict_is_sent_back_as_no_rebase_and_a_clean_candidate_passes() {
     let mut f = fake();
@@ -157,6 +158,7 @@ fn conflicted() -> Fake {
     f
 }
 
+#[test_id(tfo3jki)]
 #[test]
 fn a_conflict_rebased_mechanically_is_held_with_no_note_and_no_gate_red() {
     let mut r = Rec { rebase_code: Some(0), ..Default::default() };
@@ -166,6 +168,7 @@ fn a_conflict_rebased_mechanically_is_held_with_no_note_and_no_gate_red() {
     assert!(r.log.contains(&"tell SIFT rebased a mechanically onto b1".to_string()));
 }
 
+#[test_id(t0mnohw)]
 #[test]
 fn a_conflict_rebase_stale_sent_back_gets_no_second_note() {
     for code in [1, 2] {
@@ -176,6 +179,7 @@ fn a_conflict_rebase_stale_sent_back_gets_no_second_note() {
     }
 }
 
+#[test_id(t3uubtb)]
 #[test]
 fn a_conflict_rebase_stale_did_not_attempt_goes_to_rework_as_before() {
     let mut r = Rec { rebase_code: Some(3), ..Default::default() };
@@ -184,6 +188,7 @@ fn a_conflict_rebase_stale_did_not_attempt_goes_to_rework_as_before() {
     assert_eq!(reds(&r), ["red a t-a no-rebase"]);
 }
 
+#[test_id(td0gquk)]
 #[test]
 fn rebase_is_attempted_once_per_id_tip_and_base() {
     let m = Mem::default();
@@ -193,6 +198,7 @@ fn rebase_is_attempted_once_per_id_tip_and_base() {
     assert_eq!(r.log.iter().filter(|l| l.starts_with("rebase ")).count(), 1);
 }
 
+#[test_id(tzvvpqa)]
 #[test]
 fn the_evidence_note_is_written_before_the_gate_red() {
     let mut f = fake();
@@ -204,6 +210,7 @@ fn the_evidence_note_is_written_before_the_gate_red() {
     assert!(note < red);
 }
 
+#[test_id(tlj4xry)]
 #[test]
 fn the_send_back_fact_carries_the_note_and_follows_the_gate_red() {
     let mut f = fake();
@@ -215,6 +222,7 @@ fn the_send_back_fact_carries_the_note_and_follows_the_gate_red() {
     assert!(red < fact, "{:?}", r.log);
 }
 
+#[test_id(t89dne4)]
 #[test]
 fn no_note_means_no_send_back_and_the_candidate_stays_out_of_the_cut() {
     let mut f = fake();
@@ -227,6 +235,7 @@ fn no_note_means_no_send_back_and_the_candidate_stays_out_of_the_cut() {
     assert_eq!(s.send_backs("a"), 0);
 }
 
+#[test_id(tgblu5x)]
 #[test]
 fn a_duplicate_is_superseded_by_the_smallest_id_and_an_open_round_member_keeps() {
     let mut f = fake();
@@ -246,6 +255,7 @@ fn a_duplicate_is_superseded_by_the_smallest_id_and_an_open_round_member_keeps()
     assert!(r.log.contains(&"supersede a by z".to_string()));
 }
 
+#[test_id(t2p94by)]
 #[test]
 fn stacked_on_a_bead_in_rework_is_sent_back_naming_it_but_a_live_prerequisite_is_not() {
     let mut f = fake();
@@ -259,6 +269,7 @@ fn stacked_on_a_bead_in_rework_is_sent_back_naming_it_but_a_live_prerequisite_is
     assert!(r.log.iter().any(|l| l.starts_with("note a:") && l.contains("sp-x")));
 }
 
+#[test_id(t8129we)]
 #[test]
 fn a_verdict_is_cached_by_tip_until_the_base_moves() {
     let f = fake();
@@ -272,6 +283,7 @@ fn a_verdict_is_cached_by_tip_until_the_base_moves() {
     assert_eq!(moved.merges.get(), 1);
 }
 
+#[test_id(t31aoax)]
 #[test]
 fn a_cached_stacked_verdict_is_judged_against_the_prerequisites_current_state() {
     let mut f = fake();
@@ -285,6 +297,7 @@ fn a_cached_stacked_verdict_is_judged_against_the_prerequisites_current_state() 
     assert_eq!(f.merges.get(), 1);
 }
 
+#[test_id(twl0w1e)]
 #[test]
 fn a_vehicle_is_not_stacked_once_its_prerequisite_is_retipped_out_of_rework() {
     let mut f = fake();
@@ -297,6 +310,7 @@ fn a_vehicle_is_not_stacked_once_its_prerequisite_is_retipped_out_of_rework() {
     assert_eq!(screen(&f, &s, &mut r, &[c("a")], &[]).pass, ["a"]);
 }
 
+#[test_id(t9j70ar)]
 #[test]
 fn after_three_send_backs_the_bead_is_excluded_and_the_concierge_told_once() {
     let mut f = fake();
@@ -311,6 +325,7 @@ fn after_three_send_backs_the_bead_is_excluded_and_the_concierge_told_once() {
     assert_eq!(r.log.iter().filter(|l| l.starts_with("tell SIFT REPEAT a")).count(), 1);
 }
 
+#[test_id(t20a5u2)]
 #[test]
 fn a_conflict_past_the_cap_still_goes_to_rework_naming_the_files_and_is_not_counted() {
     let mut f = fake();
@@ -325,6 +340,7 @@ fn a_conflict_past_the_cap_still_goes_to_rework_naming_the_files_and_is_not_coun
     assert_eq!(s.send_backs("a"), SEND_BACK_CAP);
 }
 
+#[test_id(tsroews)]
 #[test]
 fn each_send_back_counts_toward_the_cap() {
     let mut f = fake();
@@ -335,6 +351,7 @@ fn each_send_back_counts_toward_the_cap() {
     assert_eq!(s.send_backs("a"), 1);
 }
 
+#[test_id(tr7cvaj)]
 #[test]
 fn a_screen_that_cannot_run_cuts_the_whole_pool_unfiltered_and_reports_it() {
     let f = Fake::default();
@@ -344,6 +361,7 @@ fn a_screen_that_cannot_run_cuts_the_whole_pool_unfiltered_and_reports_it() {
     assert!(o.errors[0].contains("unfiltered"));
 }
 
+#[test_id(t9szr2w)]
 #[test]
 fn a_candidate_the_screen_errors_on_passes_unscreened_and_the_error_is_reported() {
     let mut f = fake();
@@ -355,6 +373,7 @@ fn a_candidate_the_screen_errors_on_passes_unscreened_and_the_error_is_reported(
     assert!(o.errors[0].contains("a screening failed"));
 }
 
+#[test_id(tp9bxan)]
 #[test]
 fn the_fixture_round_excludes_the_conflict_supersedes_the_duplicate_and_cuts_the_clean_one() {
     let mut f = fake();
@@ -369,6 +388,7 @@ fn the_fixture_round_excludes_the_conflict_supersedes_the_duplicate_and_cuts_the
     assert_eq!((o.sent_back, o.superseded), (vec!["conflict".to_string()], vec!["dup".to_string()]));
 }
 
+#[test_id(tdsaj3v)]
 #[test]
 fn stacked_ids_come_from_land_subjects_and_bare_ids_but_never_the_beads_own() {
     assert_eq!(parse_stacked_id("spira: land sp-abc12 — thing", "sp-me"), Some("sp-abc12".into()));
@@ -382,6 +402,7 @@ fn passes(r: &Rec) -> Vec<&String> {
     r.log.iter().filter(|l| l.starts_with("pass ")).collect()
 }
 
+#[test_id(tucpaaa)]
 #[test]
 fn a_clean_candidate_has_its_pass_recorded_at_its_tip_and_a_red_one_has_none() {
     let mut f = fake();
@@ -392,6 +413,7 @@ fn a_clean_candidate_has_its_pass_recorded_at_its_tip_and_a_red_one_has_none() {
     assert_eq!(o.sifted, ["b"]);
 }
 
+#[test_id(tuteq4a)]
 #[test]
 fn a_candidate_the_screen_could_not_judge_records_no_pass() {
     let mut f = fake();
@@ -406,6 +428,7 @@ fn a_candidate_the_screen_could_not_judge_records_no_pass() {
     assert!(passes(&r).is_empty() && o.sifted.is_empty());
 }
 
+#[test_id(tcdw02q)]
 #[test]
 fn a_moved_tip_is_screened_again_and_judged_on_its_own() {
     let f = fake();
@@ -420,6 +443,7 @@ fn a_moved_tip_is_screened_again_and_judged_on_its_own() {
     assert_eq!(passes(&r), ["pass a t1", "pass a t1", "pass a t2"]);
 }
 
+#[test_id(tlohae1)]
 #[test]
 fn a_pass_the_store_refuses_is_not_a_sifted_candidate() {
     struct Refusing(Rec);
@@ -471,6 +495,7 @@ mod machine_tests {
         s
     }
 
+    #[test_id(tyc50rc)]
     #[test]
     fn every_legal_move_applies_and_is_recorded() {
         let mut s = Sifted::new("sp-a");
@@ -489,6 +514,7 @@ mod machine_tests {
         assert_eq!(s.events.len(), 1 + SEND_BACK_CAP as usize + 2);
     }
 
+    #[test_id(t6ofaiq)]
     #[test]
     fn an_illegal_move_is_refused_naming_the_state_and_writes_nothing() {
         let cases: Vec<(Vec<SiftEvent>, SiftEvent, &str)> = vec![
@@ -510,6 +536,7 @@ mod machine_tests {
         }
     }
 
+    #[test_id(tht5wi1)]
     #[test]
     fn the_same_event_twice_is_not_a_move() {
         let mut s = at(&[screened()]);
@@ -517,6 +544,7 @@ mod machine_tests {
         assert_eq!(s.events.len(), 1);
     }
 
+    #[test_id(tmr5xj3)]
     #[test]
     fn the_read_returns_exactly_the_recorded_state() {
         let s = at(&[screened(), back(1), back(2)]);
@@ -528,6 +556,7 @@ mod machine_tests {
         assert_eq!(Sifted::new("sp-b").status_json()["state"], "unrecorded");
     }
 
+    #[test_id(ti8f6r0)]
     #[test]
     fn the_file_store_backs_the_screen_with_events_and_counts_from_them() {
         let t = TempDir::new("sift-events");
@@ -546,6 +575,7 @@ mod machine_tests {
         assert_eq!(store.all().len(), 1);
     }
 
+    #[test_id(t7wkwad)]
     #[test]
     fn a_bead_counted_before_events_existed_keeps_its_count() {
         let t = TempDir::new("sift-legacy");
@@ -558,6 +588,7 @@ mod machine_tests {
     }
 }
 
+#[test_id(t660jjh)]
 #[test]
 fn a_target_bead_without_a_follow_on_is_sent_back_and_one_without_a_gap_passes() {
     let mut f = fake();
@@ -569,6 +600,7 @@ fn a_target_bead_without_a_follow_on_is_sent_back_and_one_without_a_gap_passes()
     assert!(r.log.iter().any(|l| l.starts_with("note a: ") && l.contains("SHORT")));
 }
 
+#[test_id(tpgz6z5)]
 #[test]
 fn a_member_carrying_another_repos_terms_or_an_unconfigured_brain_is_sent_back_naming_why() {
     let mut f = fake();
@@ -582,6 +614,7 @@ fn a_member_carrying_another_repos_terms_or_an_unconfigured_brain_is_sent_back_n
     assert!(r.log.iter().any(|l| l.starts_with("note b:") && l.contains("identity check refused") && l.contains("SPIRA_WIKI")));
 }
 
+#[test_id(tyo2z93)]
 #[test]
 fn an_identity_check_whose_git_diff_timed_out_holds_the_bead_and_never_sends_it_back() {
     let mut f = fake();
@@ -596,6 +629,7 @@ fn an_identity_check_whose_git_diff_timed_out_holds_the_bead_and_never_sends_it_
     assert_eq!(reds(&r), ["red b t-b policy-violation"]);
 }
 
+#[test_id(t6fzjqz)]
 #[test]
 fn a_conflict_goes_straight_to_rework_and_files_no_bead() {
     let mut f = fake();
@@ -607,6 +641,7 @@ fn a_conflict_goes_straight_to_rework_and_files_no_bead() {
     assert!(r.log.iter().all(|l| l.starts_with("rebase ") || l.starts_with("note ") || l.starts_with("red ") || l.starts_with("send-back ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
 }
 
+#[test_id(trbzez2)]
 #[test]
 fn the_file_store_grants_a_rebase_attempt_once_per_id_tip_and_base() {
     let dir = testkit::TempDir::new("sift-rebase-attempt");

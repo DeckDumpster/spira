@@ -2,6 +2,9 @@
 //! Budget, interval and reminder come from config. Alarm lines go to stdout; a quiet pass
 //! prints nothing. `--health` is rewritten each pass that probes.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use perf_watch::{parse_probes, SCOPED, run_pass, Clock, Health, Runner, Settings};
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -171,6 +174,7 @@ fn run() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test_id(tgv46ef)]
     #[test]
     fn a_probe_that_exits_non_zero_is_an_error_not_an_answer() {
         let mut spawn = Spawn { scoped: false, measured: None, phases: None };

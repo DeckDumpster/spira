@@ -103,6 +103,7 @@ const UNIT_DATA = [
 const x = 1;
 </script>"#;
 
+    #[test_id(t2cwjdh)]
     #[test]
     fn the_five_slowest_units_come_from_the_report_slowest_first() {
         let b = parse(REPORT_HTML).unwrap();
@@ -112,17 +113,20 @@ const x = 1;
         );
     }
 
+    #[test_id(ttvjovq)]
     #[test]
     fn compiled_and_fresh_counts_are_the_reports_dirty_and_fresh_units() {
         let b = parse(REPORT_HTML).unwrap();
         assert_eq!((b.compiled, b.fresh), (7, 3));
     }
 
+    #[test_id(tpeostq)]
     #[test]
     fn a_file_that_is_not_a_timing_report_yields_nothing() {
         assert_eq!(parse("<html>hi</html>"), None);
     }
 
+    #[test_id(t9zkqou)]
     #[test]
     fn the_gate_log_suffix_has_every_field() {
         let b = parse(REPORT_HTML).unwrap();

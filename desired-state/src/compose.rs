@@ -185,6 +185,7 @@ mod tests {
         }
     }
 
+    #[test_id(t227272)]
     #[test]
     fn merges_disjoint_fragments() {
         let a = fragment("operator", vec![fleet("fleet", 8)]);
@@ -193,6 +194,7 @@ mod tests {
         assert_eq!(composite.resources.len(), 1);
     }
 
+    #[test_id(tw3cj77)]
     #[test]
     fn two_producers_claiming_the_same_resource_is_refused() {
         let a = fragment("operator", vec![fleet("fleet", 8)]);
@@ -201,6 +203,7 @@ mod tests {
         assert!(matches!(errors[0], ComposeError::Conflict { .. }), "{errors:?}");
     }
 
+    #[test_id(to7ykq9)]
     #[test]
     fn unknown_kind_is_refused_whole() {
         let mut bogus = fleet("x", 8);

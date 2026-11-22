@@ -1,5 +1,8 @@
 //! `gate-diag [--home <spira-dir>] <results-root>` — see DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 mod engine;
 mod ports;
 mod real;
@@ -249,6 +252,7 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path, tally:
 mod record_tests_tests {
     use super::record_tests;
 
+    #[test_id(tbjd8k8)]
     #[test]
     fn a_round_appends_one_test_run_row_per_case_and_none_without_a_run_dir() {
         let tmp = testkit::TempDir::new("gate-diag-rec");
@@ -266,6 +270,7 @@ mod record_tests_tests {
         assert!(text.contains("\"test\":\"a.sh::x\""), "{text}");
     }
 
+    #[test_id(t5853ch)]
     #[test]
     fn a_round_with_a_per_case_export_writes_the_covered_lines_onto_that_cases_row() {
         let tmp = testkit::TempDir::new("gate-diag-cov");
@@ -362,6 +367,7 @@ mod diagnostics_tests {
     }
 
     // covers: UC-test-infrastructure-36
+    #[test_id(thbrq9u)]
     #[test]
     fn each_red_suite_is_diagnosed_and_summarised_and_an_all_green_batch_diagnoses_nothing() {
         let w = Fake::default()
@@ -391,6 +397,7 @@ mod diagnostics_tests {
     }
 
     // covers: UC-test-infrastructure-36
+    #[test_id(tm1vzhq)]
     #[test]
     fn the_workflow_runs_the_diagnostics_and_uploads_the_batch_results_whatever_the_batch_did() {
         let yml = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join(".github/workflows/gate.yml")).unwrap();

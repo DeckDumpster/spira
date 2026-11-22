@@ -31,6 +31,7 @@ fn assert_no_process(r: &Run) {
 /// service's tasks the moved tip is also the one sift screens and the round cuts, certifies and
 /// lands; the first tip never reaches a round. The `rounds` lane is stopped until both submits
 /// are in, as the world's cut waited for its sift pass.
+#[test_id(t140ags)]
 #[test]
 fn resubmit_moved_tip_the_moved_tip_is_recorded_screened_cut_and_landed() {
     let bead = Bead { submits: vec![4 * MIN, 9 * MIN], ..Bead::new("sp-rm01", 30_000) };
@@ -55,6 +56,7 @@ fn resubmit_moved_tip_the_moved_tip_is_recorded_screened_cut_and_landed() {
 /// without moving the row — a CERTIFIED bead stays CERTIFIED at its tip. When the cut resumes
 /// it takes the gate-certified bead as it stands (its own certify is one more repeat verdict at
 /// the same tip) and lands it: the row never falls back to SUBMITTED.
+#[test_id(tn77u3f)]
 #[test]
 fn certify_twice_a_repeat_verdict_keeps_the_row_certified_and_the_round_lands_it() {
     let at = |m: u64| 12 * MIN + m * 30_000;
@@ -75,6 +77,7 @@ fn certify_twice_a_repeat_verdict_keeps_the_row_certified_and_the_round_lands_it
 /// Replaces `long-gate-interleaving` (sp-2adk7): a slow gate whose verdict arrives after the
 /// round landed the bead must not move it. LANDED is final (`landed_is_final`), and nothing
 /// readmits the landed bead to a cut (`no_stale_admission`): one round, opened once.
+#[test_id(tzhfw32)]
 #[test]
 fn long_gate_interleaving_a_verdict_after_the_landing_leaves_the_bead_landed() {
     let verdicts = vec![verdict(30 * MIN, "sp-lg01", Verdict::Pass), verdict(31 * MIN, "sp-lg01", Verdict::Red)];
@@ -102,6 +105,7 @@ fn long_gate_interleaving_a_verdict_after_the_landing_leaves_the_bead_landed() {
 /// loser, now stale on the moved base, is returned to its dwarf (REWORK, `loser_was_returned`),
 /// is claimed again, resubmits a tip built on the new base and lands after the winner
 /// (`priority_won_the_conflict`).
+#[test_id(tqottpq)]
 #[test]
 fn conflicting_siblings_priority_wins_the_conflict_and_the_loser_is_returned_and_lands_after() {
     let winner = Bead { priority: 0, file: "shared".into(), ..Bead::new("sp-cs02", 30_000) };
@@ -123,6 +127,7 @@ fn conflicting_siblings_priority_wins_the_conflict_and_the_loser_is_returned_and
 
 /// The shipped `happy-path` scenario, a loop world, files one bead and ends with it LANDED and
 /// its landed head published by PR, as `sim run happy-path` checks it.
+#[test_id(t931n8e)]
 #[test]
 fn happy_path_the_shipped_loop_scenario_lands_and_publishes_and_logs_its_effects() {
     let text = std::fs::read_to_string(testkit::manifest_dir().join("scenarios/happy-path.toml")).expect("the shipped scenario");
@@ -141,6 +146,7 @@ fn happy_path_the_shipped_loop_scenario_lands_and_publishes_and_logs_its_effects
 
 /// A script's `settings` reach the service `run_with` boots, over the loop's own defaults
 /// (its batcher wall included).
+#[test_id(t0y8h73)]
 #[test]
 fn a_scripts_settings_reach_the_service_the_run_boots() {
     let set = |k: &str, v: &str| Script { settings: [(k.to_string(), v.to_string())].into(), ..Script::default() };

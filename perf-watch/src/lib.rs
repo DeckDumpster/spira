@@ -2,6 +2,9 @@
 //! line for every probe past the limit. The clock and the runner are traits so a test drives
 //! both and never waits on a real one.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use spira_otel::metrics::{MetricsSink, Point};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -366,6 +369,7 @@ pub const SCOPED: &str = "t0=$EPOCHREALTIME; PERFWATCH_T0_US=${t0//[.,]/} \"$@\"
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tijqb0j)]
     #[test]
     fn the_scope_hands_the_probe_its_start_in_digits_and_keeps_the_exit_code() {
         // FORK-EDGE: runs the scope script itself; the script is the unit under test.
@@ -426,12 +430,14 @@ mod tests {
         (lines, r.asked_stats)
     }
 
+    #[test_id(tm9rj3r)]
     #[test]
     fn inbox_line_stamps_utc_and_tags_the_watcher() {
         assert_eq!(inbox_line(1_791_748_794, "PERF SLOW x 9ms"), "2026-10-11T19:59:54Z [watch:perf-watch] PERF SLOW x 9ms\n");
         assert_eq!(inbox_line(0, "a"), "1970-01-01T00:00:00Z [watch:perf-watch] a\n");
     }
 
+    #[test_id(taabh1i)]
     #[test]
     fn a_standing_alarm_is_one_inbox_row_and_returns_after_the_remind_interval() {
         let clock = Stub { now: Cell::new(0), epoch: Cell::new(1_000_000) };
@@ -457,6 +463,7 @@ mod tests {
         assert_eq!(rows(), 2, "still over the limit 30 minutes on, it is raised again");
     }
 
+    #[test_id(tw6opme)]
     #[test]
     fn a_probe_past_the_limit_alarms_with_its_time_and_the_top_callers() {
         let (lines, asked) = run(&[("list", 730), ("show", 120), ("gone", 0)], 500);
@@ -479,6 +486,7 @@ mod tests {
         }
     }
 
+    #[test_id(ty3axju)]
     #[test]
     fn a_probe_that_timed_itself_is_charged_its_own_time_not_the_throttled_wall_clock() {
         let probes = parse_probes("list\tlist --live\n").unwrap();
@@ -492,6 +500,7 @@ mod tests {
         assert_eq!(alarms(&t, 500, &[]).len(), 1);
     }
 
+    #[test_id(tbvktlc)]
     #[test]
     fn the_page_carries_the_probes_breakdown_slow_or_unrunnable() {
         let t = |millis, error: Option<&str>| Timing { name: "claim-check".into(), millis, micros: millis * 1000, error: error.map(String::from), phases: Some("store=30,push=2000".into()), timed_out_ms: None };
@@ -511,6 +520,7 @@ mod tests {
         }
     }
 
+    #[test_id(teh16z7)]
     #[test]
     fn the_shipped_content_read_probe_is_unrunnable_against_a_store_that_refuses_content_reads() {
         let probes = parse_probes(include_str!("../../spira/perf-probes")).unwrap();
@@ -532,6 +542,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqt43eo)]
     #[test]
     fn an_over_budget_sample_names_where_its_time_went_and_a_quick_one_is_not_logged() {
         let clock = Stub { now: Cell::new(0), epoch: Cell::new(77) };
@@ -542,6 +553,7 @@ mod tests {
         assert!(slow_samples(77, &t, 2100, &[]).is_empty(), "at the limit is not slow");
     }
 
+    #[test_id(tjc7jx6)]
     #[test]
     fn each_probe_that_answered_is_pushed_as_its_own_time_in_seconds() {
         let probes = parse_probes("lc-show\tshow sp-1\nmissing\tgone\n").unwrap();
@@ -561,6 +573,7 @@ mod tests {
         assert_eq!((seen[0].name.as_str(), seen[0].value, seen[0].label("probe")), (PROBE_SECONDS, 0.00175, Some("lc-show")));
     }
 
+    #[test_id(ti0k3k9)]
     #[test]
     fn exactly_the_limit_is_not_slow() {
         let (lines, _) = run(&[("list", 500), ("show", 1), ("gone", 0)], 500);
@@ -571,6 +584,7 @@ mod tests {
         rows.iter().map(|(k, v)| (k.to_string(), *v)).collect()
     }
 
+    #[test_id(ttcq28f)]
     #[test]
     fn a_steady_caller_outranks_a_historical_burst_whose_live_rate_is_zero() {
         let prev = counts(&[("gh-intake/show", 12_430), ("batcher/rounds", 100), ("idle/x", 5)]);
@@ -578,6 +592,7 @@ mod tests {
         assert_eq!(top_callers(&prev, 1000, &cur, 1060, 3), vec!["batcher/rounds=26.0/min".to_string()]);
     }
 
+    #[test_id(tuigqrm)]
     #[test]
     fn a_slow_page_names_its_slowest_phase_in_words() {
         let slow = timing(1400, Some("spawn=20,load=1290,config=55,reply=28"), None);
@@ -586,6 +601,7 @@ mod tests {
         assert!(page.contains("slowest: load 1290ms (exec, dynamic link, runtime init)"), "{page}");
     }
 
+    #[test_id(t5ahxsx)]
     #[test]
     fn a_restarted_counter_counts_from_zero_and_a_window_scales_to_minutes() {
         let prev = counts(&[("a/x", 900)]);
@@ -593,6 +609,7 @@ mod tests {
         assert_eq!(top_callers(&prev, 0, &cur, 300, 3), vec!["b/y=12.0/min".to_string(), "a/x=6.0/min".to_string()]);
     }
 
+    #[test_id(tn2vlbh)]
     #[test]
     fn with_no_baseline_the_callers_are_unknown_and_the_pass_stores_a_baseline() {
         let first = stepped(1000, &Health::default(), 900).unwrap();
@@ -601,12 +618,14 @@ mod tests {
         assert_eq!(first.health.sample.get("watcher/list"), Some(&28));
     }
 
+    #[test_id(t4qrfvw)]
     #[test]
     fn a_probe_that_cannot_run_is_its_own_alarm_never_a_fast_pass() {
         let (lines, _) = run(&[("list", 1), ("show", 1)], 500);
         assert_eq!(lines, vec!["PERF UNRUNNABLE missing: not found (after 0ms; phases unreported)".to_string()]);
     }
 
+    #[test_id(toio69j)]
     #[test]
     fn a_malformed_probe_file_is_refused() {
         assert!(parse_probes("no tab here").is_err());
@@ -620,6 +639,7 @@ mod tests {
         run_pass(&cfg, &parse_probes(PROBES).unwrap(), &["stats".to_string()], prior, &clock, &mut r)
     }
 
+    #[test_id(t5tiyf7)]
     #[test]
     fn a_pass_younger_than_the_interval_does_not_probe() {
         let h = Health { last_pass: Some(1000), ..Health::default() };
@@ -627,6 +647,7 @@ mod tests {
         assert_eq!(stepped(1060, &h, 900).unwrap().health.last_pass, Some(1060));
     }
 
+    #[test_id(tpwb632)]
     #[test]
     fn a_standing_alarm_repeats_only_after_the_remind_interval_and_a_new_one_is_immediate() {
         let first = stepped(1000, &Health::default(), 900).unwrap();
@@ -638,6 +659,7 @@ mod tests {
         assert_eq!(again.lines.len(), 1);
     }
 
+    #[test_id(teolz8v)]
     #[test]
     fn a_cleared_alarm_is_forgotten_so_its_return_prints_at_once() {
         let first = stepped(1000, &Health::default(), 900).unwrap();
@@ -649,6 +671,7 @@ mod tests {
         assert!(back.lines.iter().any(|l| l.contains("PERF SLOW list")), "{:?}", back.lines);
     }
 
+    #[test_id(txm39ac)]
     #[test]
     fn health_round_trips_through_its_file() {
         let first = stepped(1000, &Health::default(), 900).unwrap();
@@ -666,6 +689,7 @@ mod tests {
         settle(&cfg, prior, now, vec![t], None)
     }
 
+    #[test_id(ti3fn72)]
     #[test]
     fn one_timeout_between_fast_passes_pages_nothing() {
         let a = settled(1000, &Health::default(), timing(20, None, None));
@@ -677,6 +701,7 @@ mod tests {
         assert!(c.lines.is_empty() && c.health.timed_out.is_empty(), "{:?}", c.lines);
     }
 
+    #[test_id(ts9m2o1)]
     #[test]
     fn two_timeouts_in_a_row_page_once_and_a_third_inside_the_remind_interval_is_quiet() {
         let a = settled(1000, &Health::default(), timing(5000, None, Some(5000)));
@@ -686,6 +711,7 @@ mod tests {
         assert!(c.lines.is_empty(), "{:?}", c.lines);
     }
 
+    #[test_id(tlbkuk1)]
     #[test]
     fn a_slow_answer_after_a_timeout_pages_slow_with_its_phases() {
         let a = settled(1000, &Health::default(), timing(5000, None, Some(5000)));
@@ -694,6 +720,7 @@ mod tests {
         assert!(b.health.timed_out.is_empty());
     }
 
+    #[test_id(tyhi8br)]
     #[test]
     fn a_timed_out_probe_is_not_pushed_as_a_duration_or_logged_slow() {
         let t = [timing(5000, None, Some(5000))];
@@ -702,6 +729,7 @@ mod tests {
         assert!(slow_samples(1, &t, 500, &[]).is_empty());
     }
 
+    #[test_id(tquhkqk)]
     #[test]
     fn health_round_trips_the_probes_that_timed_out() {
         let h = Health { last_pass: Some(5), timed_out: ["a".to_string(), "b".to_string()].into(), ..Health::default() };

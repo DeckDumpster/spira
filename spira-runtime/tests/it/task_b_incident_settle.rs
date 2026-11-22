@@ -32,11 +32,13 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tfi57k4)]
 #[test]
 fn t1_registered_boots_and_arms_a_5min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(t1tmpij)]
 #[test]
 fn t2_standing_waits_and_skips_are_the_probe_alone() {
     let h = t::handler::<H>(SET);
@@ -46,6 +48,7 @@ fn t2_standing_waits_and_skips_are_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&snap));
 }
 
+#[test_id(t3ka68k)]
 #[test]
 fn t3_open_waits_persists_closes_and_a_second_persist_for_one_fix_set_is_refused() {
     let h = t::handler::<H>(SET);
@@ -67,12 +70,14 @@ fn t3_open_waits_persists_closes_and_a_second_persist_for_one_fix_set_is_refused
     assert_eq!(c.incidents.get("sp-i4"), Some(&Phase::Skipped));
 }
 
+#[test_id(t1gyf4y)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/b/incident_settle.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tl77d08)]
 #[test]
 fn t5_landed_and_quiet_closes_with_the_old_evidence_and_dropped_fixes_do_not_block() {
     let h = t::handler::<H>(SET);
@@ -85,6 +90,7 @@ fn t5_landed_and_quiet_closes_with_the_old_evidence_and_dropped_fixes_do_not_blo
     assert!(acts.iter().all(|a| a.name == task::LOG), "an unlanded fix waits: {acts:?}");
 }
 
+#[test_id(tuenq8z)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rig = t::rig::<H>(1, SET, &json(&idle().0));
@@ -92,6 +98,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "incidents/sp-i1") && rows.iter().any(|k| k == "waiting/sp-i1"), "{rows:?}");
 }
 
+#[test_id(tt4zcyo)]
 #[test]
 fn a_boot_repeats_no_waiting_line_and_misses_none() {
     let (snap, _) = idle();
@@ -110,6 +117,7 @@ fn close_input(i: Inc) -> String {
     acts[0].input.clone()
 }
 
+#[test_id(t11o7lg)]
 #[test]
 fn an_incident_with_no_probe_closes_when_its_fix_lands() {
     let input = close_input(no_probe(vec![fix("sp-f1", "LANDED", Landing::InForce("abc123".into()))]));
@@ -118,12 +126,14 @@ fn an_incident_with_no_probe_closes_when_its_fix_lands() {
     }
 }
 
+#[test_id(tjln28b)]
 #[test]
 fn a_no_probe_incident_closes_on_a_landing_the_release_lacks() {
     let input = close_input(no_probe(vec![fix("sp-f1", "LANDED", Landing::OnBase("abc123".into()))]));
     assert!(input.contains("abc123"), "{input}");
 }
 
+#[test_id(t1bfmvr)]
 #[test]
 fn an_incident_on_a_superseded_fix_closes_when_the_successor_landed() {
     let f = Fix { by: Some("sp-l9i5io".into()), ..fix("sp-qj6zsu", "LANDED", Landing::InForce("abc123".into())) };
@@ -131,6 +141,7 @@ fn an_incident_on_a_superseded_fix_closes_when_the_successor_landed() {
     assert!(input.contains("sp-qj6zsu") && input.contains("sp-l9i5io"), "{input}");
 }
 
+#[test_id(t81db03)]
 #[test]
 fn a_no_probe_incident_whose_fix_was_ejected_stays_open() {
     let h = t::handler::<H>(SET);

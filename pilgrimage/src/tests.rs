@@ -11,6 +11,7 @@ fn walk(p: &mut Pilgrimage, events: Vec<Event>) {
     }
 }
 
+#[test_id(t2416cx)]
 #[test]
 fn the_full_path_visits_every_state_in_order() {
     let mut p = Pilgrimage::new("sp-x");
@@ -34,6 +35,7 @@ fn the_full_path_visits_every_state_in_order() {
     assert_eq!((p.walks(), p.defects()), (2, 2));
 }
 
+#[test_id(toposaw)]
 #[test]
 fn an_illegal_move_is_refused_naming_the_state_and_writes_nothing() {
     let mut p = Pilgrimage::new("sp-x");
@@ -49,6 +51,7 @@ fn an_illegal_move_is_refused_naming_the_state_and_writes_nothing() {
     assert_eq!(p.state(), Some(State::Walking));
 }
 
+#[test_id(tn8wo94)]
 #[test]
 fn a_bead_id_cannot_name_a_path() {
     let tmp = TempDir::new("pilgrimage-id");

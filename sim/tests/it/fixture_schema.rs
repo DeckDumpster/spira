@@ -387,12 +387,14 @@ fn parse<T: for<'de> Deserialize<'de>>(text: &str) -> Result<usize, String> {
     Ok(text.lines().count())
 }
 
+#[test_id(tqknpv3)]
 #[test]
 fn a_reason_outside_the_closed_set_is_refused() {
     let line = r#"{"at":"2026-10-31T00:00:00Z","kind":"bead","id":"b-1","from":"READY","to":"READY","event":"Hold","code":"some-host-name"}"#;
     assert!(parse::<Transition>(line).is_err(), "an unknown code must be refused");
 }
 
+#[test_id(tris6ju)]
 #[test]
 fn a_real_id_in_place_of_an_anonymised_one_is_refused() {
     let line = r#"{"at":"2026-10-31T00:00:00Z","repo":"repo-a","bead":"sp-abc123"}"#;
@@ -404,6 +406,7 @@ fn a_real_id_in_place_of_an_anonymised_one_is_refused() {
 const GIT_LAND: [i64; 20] = [77, 104, 158, 119, 180, 103, 108, 33, 100, 93, 65, 101, 77, 107, 34, 52, 72, 65, 65, 19];
 const CAUSES: [&str; 5] = ["hand-landing", "day-boundary", "relanded", "batch-multi-member", "unexplained"];
 
+#[test_id(tg78702)]
 #[test]
 fn landed_20d_carries_the_git_column_and_a_cause_for_every_nonzero_delta() {
     let text = std::fs::read_to_string(root().join("landed-20d.tsv")).unwrap();

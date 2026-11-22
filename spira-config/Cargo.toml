@@ -67,8 +67,7 @@ path = "tests/validate.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "tsd/integration"]
-
+integration = ["lifecycle/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }
@@ -110,3 +109,6 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }

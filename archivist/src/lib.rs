@@ -6,6 +6,9 @@
 //! holds. [`run`] composes all of it into `sweep`, `list`, `now`, `mark`, `state`,
 //! `record` and `digest-send`.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod brain;
 pub mod candidates;
 pub mod config;

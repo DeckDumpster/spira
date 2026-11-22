@@ -25,12 +25,14 @@ fn one_path_said_and_another_dirtied() -> TaskRig {
     r
 }
 
+#[test_id(tisc2xe)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&one_path_said_and_another_dirtied(), NAME);
     assert!(rows.iter().any(|k| k == "said"), "{rows:?}");
 }
 
+#[test_id(tfv2267)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(one_path_said_and_another_dirtied, registration, STREAM, EventKind::new(TICK, ""));

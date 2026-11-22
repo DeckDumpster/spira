@@ -54,22 +54,26 @@ pub fn watch_unit_name(name: &str, instance: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tss214x)]
     #[test]
     fn log_row_points_at_its_own_target() {
         assert_eq!(logfile("run", "mail-deliver", Kind::Log, "var/log/x"), Some(PathBuf::from("var/log/x")));
     }
 
+    #[test_id(tg7lode)]
     #[test]
     fn daemon_and_extern_rows_point_at_our_own_log() {
         assert_eq!(logfile("run", "pool", Kind::Daemon, "pool.sh"), Some(PathBuf::from("run/watchd/pool.log")));
         assert_eq!(logfile("run", "mail-deliver", Kind::Extern, "mail-deliver"), Some(PathBuf::from("run/watchd/mail-deliver.log")));
     }
 
+    #[test_id(teyzga9)]
     #[test]
     fn off_rows_have_no_log() {
         assert_eq!(logfile("run", "view", Kind::Off, "@SPIRA_VIEW@"), None);
     }
 
+    #[test_id(trnqaqa)]
     #[test]
     fn unit_name_is_instance_qualified() {
         assert_eq!(watch_unit_name("pool", "prod"), "spira-watch-pool-prod.service");

@@ -596,6 +596,7 @@ mod tests {
         r
     }
 
+    #[test_id(tif5xmc)]
     #[test]
     fn a_pass_green_stored_without_a_runner_still_parses_and_applies() {
         let kind: BatchEventKind = serde_json::from_str(r#"{"PassGreen":{"n":1,"suites_s":5,"build_s":6}}"#).unwrap();
@@ -604,6 +605,7 @@ mod tests {
         assert!(matches!(red, BatchEventKind::PassRed { runner: None, .. }));
     }
 
+    #[test_id(tgnq2wd)]
     #[test]
     fn a_pass_verdict_carrying_a_runner_round_trips() {
         let runner = Some(PassRunner { place: "ec2".into(), why: "host io pressure full avg300 55.0 above 50.0".into() });
@@ -616,6 +618,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0jmmoq)]
     #[test]
     fn legal_edges_are_the_machines_own_moves() {
         let edges = legal_edges();
@@ -628,6 +631,7 @@ mod tests {
         assert!(edges.iter().all(|e| !e.from.is_terminal() && e.from != e.to));
     }
 
+    #[test_id(tvq6u7e)]
     #[test]
     fn every_event_name_is_its_serde_tag_and_listed() {
         let names = event_names();
@@ -639,6 +643,7 @@ mod tests {
         }
     }
 
+    #[test_id(tdqu5yl)]
     #[test]
     fn every_state_event_pair_has_an_explicit_outcome() {
         for &state in &ALL_STATES {
@@ -654,6 +659,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpwsohd)]
     #[test]
     fn terminal_states_absorb_everything_but_abandon_is_also_refused() {
         for &state in &[BatchState::Landed, BatchState::Settled, BatchState::Abandoned, BatchState::Discarded] {
@@ -666,6 +672,7 @@ mod tests {
         }
     }
 
+    #[test_id(t60ttcy)]
     #[test]
     fn full_green_path_to_landed() {
         let r = row(BatchState::Open);
@@ -686,6 +693,7 @@ mod tests {
         r
     }
 
+    #[test_id(t36nh6u)]
     #[test]
     fn landing_and_deploying_apply_every_legal_move_and_refuse_the_rest_naming_the_state() {
         use BatchEventKind::*;
@@ -720,6 +728,7 @@ mod tests {
         }
     }
 
+    #[test_id(t65bag7)]
     #[test]
     fn a_deploy_fault_lands_the_batch_and_keeps_the_sha_and_the_fault() {
         let r = row(BatchState::Green);
@@ -731,6 +740,7 @@ mod tests {
         assert!(BatchState::from_str("LANDING") == Some(BatchState::Landing) && BatchState::from_str("DEPLOYING") == Some(BatchState::Deploying));
     }
 
+    #[test_id(tu18qd8)]
     #[test]
     fn red_path_to_settled_via_attributing() {
         let r = row(BatchState::CiRunning);
@@ -747,6 +757,7 @@ mod tests {
         assert_eq!(out.row.state, BatchState::Settled);
     }
 
+    #[test_id(t8u8tnk)]
     #[test]
     fn base_moved_rebuilds_then_returns_to_ci_running() {
         let r = row(BatchState::Green);
@@ -759,6 +770,7 @@ mod tests {
         assert_eq!(out.row.state, BatchState::CiRunning);
     }
 
+    #[test_id(tycnwuw)]
     #[test]
     fn abandon_available_from_every_non_terminal_state() {
         for &state in &[BatchState::Open, BatchState::CiRunning, BatchState::Green, BatchState::Rebuilding, BatchState::Attributing] {
@@ -769,6 +781,7 @@ mod tests {
         }
     }
 
+    #[test_id(tanatvj)]
     #[test]
     fn eject_legal_from_open_and_attributing_and_from_a_forge_ci_run() {
         for &state in &[BatchState::Open, BatchState::Attributing] {
@@ -784,6 +797,7 @@ mod tests {
         assert!(out.applied, "a forge batch's CI run accepts eject");
     }
 
+    #[test_id(tq96cvg)]
     #[test]
     fn a_running_queue_round_pass_refuses_eject_in_both_phases_and_changes_nothing() {
         for phase in [BatchPhase::Build, BatchPhase::Suites] {
@@ -803,6 +817,7 @@ mod tests {
         }
     }
 
+    #[test_id(tj4qiu6)]
     #[test]
     fn eject_from_green_voids_the_certification_and_reopens_the_batch() {
         let r = row(BatchState::Green);
@@ -817,6 +832,7 @@ mod tests {
         assert_eq!(out.row.state, BatchState::Landed);
     }
 
+    #[test_id(tnm3e51)]
     #[test]
     fn eject_refused_outside_open_ci_running_green_and_attributing() {
         for &state in &[BatchState::Rebuilding, BatchState::Landed, BatchState::Settled, BatchState::Abandoned] {
@@ -827,6 +843,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqk2u1j)]
     #[test]
     fn expect_mismatch_never_mutates() {
         let r = row(BatchState::Open);
@@ -836,6 +853,7 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::ExpectMismatch { .. })));
     }
 
+    #[test_id(tryq73w)]
     #[test]
     fn stale_version_never_mutates() {
         let mut r = row(BatchState::Open);
@@ -862,6 +880,7 @@ mod tests {
         }
     }
 
+    #[test_id(tazf0aw)]
     #[test]
     fn a_round_through_a_red_pass_an_eject_and_a_green_second_pass() {
         let r = row(BatchState::Open);
@@ -881,6 +900,7 @@ mod tests {
         assert_eq!((r.state, r.pass, r.phase), (BatchState::Green, 2, None));
     }
 
+    #[test_id(tlqs1we)]
     #[test]
     fn a_pass_killed_at_the_cap_is_incomplete_not_green() {
         let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
@@ -891,6 +911,7 @@ mod tests {
         assert!(!green.applied);
     }
 
+    #[test_id(tk2yisg)]
     #[test]
     fn a_pass_preempted_in_any_phase_goes_to_attributing_and_only_for_the_current_pass() {
         let preempt = |n| BatchEventKind::PassPreempted { n, done: 3, total: 9, red_suites: vec!["test-x.sh".into()] };
@@ -902,6 +923,7 @@ mod tests {
         refused(&row(BatchState::Open), preempt(1));
     }
 
+    #[test_id(tw34lwe)]
     #[test]
     fn pass_events_must_name_the_current_pass_and_phase() {
         let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
@@ -914,6 +936,7 @@ mod tests {
         refused(&s, BatchEventKind::PassGreen { n: 3, suites_s: 1, build_s: 1, runner: None });
     }
 
+    #[test_id(tf98o5p)]
     #[test]
     fn a_failed_suite_is_recorded_mid_pass_without_moving_the_batch() {
         let failed = |suite: &str, n| BatchEventKind::Failed { suite: suite.into(), n };
@@ -931,6 +954,7 @@ mod tests {
         assert_eq!(red.state, BatchState::Attributing, "the verdict still ends the pass");
     }
 
+    #[test_id(twb50g3)]
     #[test]
     fn a_build_failure_is_red_from_the_build_phase() {
         let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h".into() });
@@ -938,6 +962,7 @@ mod tests {
         assert_eq!(r.state, BatchState::Attributing);
     }
 
+    #[test_id(t9mnza2)]
     #[test]
     fn a_rebuilt_base_moved_round_starts_its_next_pass_from_rebuilding() {
         let mut r = row(BatchState::Rebuilding);
@@ -956,6 +981,7 @@ mod tests {
         [BatchEventKind::SuitesStarted { n }, BatchEventKind::Failed { suite: "spira-lint".into(), n }]
     }
 
+    #[test_id(tbm3a7k)]
     #[test]
     fn a_boundary_for_a_pass_that_has_its_verdict_is_late_in_every_state_and_changes_nothing() {
         let judged = [BatchState::Green, BatchState::Landing, BatchState::Deploying, BatchState::Rebuilding, BatchState::Attributing];
@@ -981,6 +1007,7 @@ mod tests {
         }
     }
 
+    #[test_id(teo4gw9)]
     #[test]
     fn a_boundary_for_the_pass_running_now_still_applies_and_a_future_pass_is_still_illegal() {
         let building = at_pass(BatchState::CiRunning, 2);
@@ -995,6 +1022,7 @@ mod tests {
         }
     }
 
+    #[test_id(taxg2ja)]
     #[test]
     fn attributing_starts_its_next_pass_at_the_head_it_names_and_no_other_pass() {
         let r = at_pass(BatchState::Attributing, 1);
@@ -1005,6 +1033,7 @@ mod tests {
         }
     }
 
+    #[test_id(tk0s3u2)]
     #[test]
     fn a_red_lint_pass_then_its_late_boundaries_then_a_green_second_pass() {
         let r = step(&row(BatchState::Open), BatchEventKind::PassStarted { n: 1, head: "h1".into() });
@@ -1023,6 +1052,7 @@ mod tests {
         BatchRow::staged("r2", "spira", "staged-head", "n-head", "r1")
     }
 
+    #[test_id(t4c8umc)]
     #[test]
     fn a_staged_round_promotes_to_open_at_the_head_it_was_rebuilt_to() {
         let r = staged();
@@ -1032,6 +1062,7 @@ mod tests {
         step(&r, BatchEventKind::PassStarted { n: 1, head: "new-head".into() });
     }
 
+    #[test_id(tzxh84q)]
     #[test]
     fn a_staged_round_is_discarded_with_its_reason_and_then_absorbs_everything() {
         let r = step(&staged(), BatchEventKind::Discard { reason: "r1 red".into() });
@@ -1041,6 +1072,7 @@ mod tests {
         }
     }
 
+    #[test_id(tgsnoz7)]
     #[test]
     fn a_staged_round_has_no_pass_and_is_not_abandoned() {
         let r = staged();
@@ -1055,6 +1087,7 @@ mod tests {
         }
     }
 
+    #[test_id(tp4w0at)]
     #[test]
     fn only_a_staged_round_promotes_or_is_discarded() {
         for &state in &[BatchState::Open, BatchState::CiRunning, BatchState::Green, BatchState::Attributing, BatchState::Rebuilding] {

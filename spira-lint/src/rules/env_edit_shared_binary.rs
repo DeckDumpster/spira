@@ -168,6 +168,7 @@ mod tests {
 
     const EDIT: &str = "#[test]\nfn edits() {\n    let _e = testkit::env(&[(\"A\", Some(\"1\"))]);\n}\n";
 
+    #[test_id(tovc1d1)]
     #[test]
     fn an_edit_in_a_module_of_a_multi_file_binary_is_one_finding() {
         let t = TempDir::new("envshared-multi");
@@ -177,6 +178,7 @@ mod tests {
         assert!(got[0].contains("a/tests/it/x.rs:3"), "{got:?}");
     }
 
+    #[test_id(t12ol2l)]
     #[test]
     fn an_unlocked_test_beside_an_editing_one_is_named() {
         let t = TempDir::new("envshared-single");
@@ -186,6 +188,7 @@ mod tests {
         assert!(got[0].contains("a/tests/t.rs:7") && got[0].contains("`reads`"), "{got:?}");
     }
 
+    #[test_id(tbmz2ah)]
     #[test]
     fn a_sibling_holding_env_read_or_reaching_an_editing_helper_passes() {
         let t = TempDir::new("envshared-covered");
@@ -198,6 +201,7 @@ mod tests {
         assert_eq!(run(&t, &["a/tests/t.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t4cbd75)]
     #[test]
     fn an_edit_named_only_in_a_comment_or_a_string_passes() {
         let t = TempDir::new("envshared-prose");
@@ -208,6 +212,7 @@ mod tests {
         assert_eq!(run(&t, &["a/tests/y.rs"]).unwrap().len(), 2);
     }
 
+    #[test_id(tkxyc4n)]
     #[test]
     fn a_nested_crate_path_is_still_a_multi_file_target() {
         let t = TempDir::new("envshared-nested");

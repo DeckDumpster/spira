@@ -1935,6 +1935,7 @@ pub fn dwarf_settings(home: &Path, run: &Path, prod: Option<&Path>, habits: bool
 mod tests {
     use super::*;
 
+    #[test_id(tvybufz)]
     #[test]
     fn the_session_hooks_name_no_bd_hook() {
         let rel = testkit::TempDir::new("dwarf-settings-nobd");
@@ -1948,6 +1949,7 @@ mod tests {
         assert!(!json.contains("bd-unacked-comment-deliver.sh"), "{json}");
     }
 
+    #[test_id(tnm6ol4)]
     #[test]
     fn habits_group_only_when_the_rune_sets_it() {
         let rel = testkit::TempDir::new("dwarf-settings-habits");
@@ -1972,6 +1974,7 @@ mod tests {
         assert!(gone["hooks"]["Stop"].is_null(), "no habits binary, no habits hooks");
     }
 
+    #[test_id(tlcqeap)]
     #[test]
     fn the_statute_hook_is_a_pre_tool_use_hook_once_the_release_ships_it() {
         let d = testkit::TempDir::new("dwarf-settings-statute");
@@ -1986,6 +1989,7 @@ mod tests {
         assert_eq!(pre(&d), [hook.display().to_string()]);
     }
 
+    #[test_id(tqm7qpq)]
     #[test]
     fn the_fence_hook_carries_the_run_and_prod_roots_on_its_command_line() {
         let d = testkit::TempDir::new("dwarf-settings-fence");
@@ -2001,6 +2005,7 @@ mod tests {
         assert_eq!(fence_command(&fence, Path::new("a b/it's"), None), format!("SPIRA_RUN='a b/it'\\''s' '{}'", fence.display()));
     }
 
+    #[test_id(touslkd)]
     #[test]
 
     fn the_fence_hook_needs_the_dwarf_binary_and_carries_the_search_scope_only_with_a_worktree() {

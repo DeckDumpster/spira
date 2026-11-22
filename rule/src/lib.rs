@@ -2,6 +2,9 @@
 //! (which does the `bd`/hook subprocess work) so it is unit-testable with no database, no
 //! filesystem and no subprocess.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod audit;
 pub mod code;
 pub mod memories;
@@ -312,6 +315,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test_id(t5v3svk)]
     #[test]
     fn duplicate_text_under_another_key_is_named() {
         let m: std::collections::BTreeMap<_, _> = [
@@ -324,6 +328,7 @@ mod tests {
         assert_eq!(find_duplicate(&m, "law-new", "novel"), None);
     }
 
+    #[test_id(te7oqb0)]
     #[test]
     fn in_force_requires_the_text_under_the_key() {
         let m: std::collections::BTreeMap<_, _> = [("law-a".to_string(), json!("t x"))].into();
@@ -332,6 +337,7 @@ mod tests {
         assert!(!is_in_force(&m, "law-b", "t x"));
     }
 
+    #[test_id(tvulhgg)]
     #[test]
     fn slugify_adds_prefix_once() {
         assert_eq!(slugify("foo"), "law-foo");
@@ -339,6 +345,7 @@ mod tests {
         assert_eq!(slugify("law-law-foo"), "law-law-foo");
     }
 
+    #[test_id(trppujx)]
     #[test]
     fn word_count_counts_whitespace_tokens() {
         assert_eq!(word_count("one two  three\tfour"), 4);
@@ -356,23 +363,27 @@ mod tests {
         }
     }
 
+    #[test_id(tvn6y2q)]
     #[test]
     fn text_with_a_per_name_date_provenance_is_refused_naming_the_fence() {
         let m = inventory_refusal(&format!("Never skip the gate. (per {}, {}-09-01)", "Alice", 2025)).expect("the fence refuses this text");
         assert!(m.contains("inventory fence"), "{m}");
     }
 
+    #[test_id(t7dviq7)]
     #[test]
     fn text_that_states_only_the_mechanism_passes_the_fence_pre_check() {
         assert_eq!(inventory_refusal("Never skip the gate; it fails closed."), None);
     }
 
+    #[test_id(txfg6n1)]
     #[test]
     fn enact_without_tool_or_mechanism_refuses_naming_both() {
         let m = refusal(&["text"]);
         assert!(m.contains("--tool") && m.contains("--mechanism"), "{m}");
     }
 
+    #[test_id(t1pj5lm)]
     #[test]
     fn tool_none_needs_a_reason() {
         assert!(refusal(&["text", "--tool", "none"]).contains("--reason"));
@@ -380,6 +391,7 @@ mod tests {
         assert_eq!(ok.tool, ToolDecl::None("judgement only".to_string()));
     }
 
+    #[test_id(t0bfrhl)]
     #[test]
     fn mechanism_must_be_a_bead_id_and_excludes_tool() {
         assert!(refusal(&["text", "--mechanism", "Not A Bead"]).contains("not a bead id"));
@@ -387,6 +399,7 @@ mod tests {
         assert!(refusal(&["text", "--tool", "x", "--reason", "y"]).contains("--reason"));
     }
 
+    #[test_id(txt44xb)]
     #[test]
     fn parse_enact_args_happy_path() {
         let got = parse_enact_args(&a(&["some text", "--tool", "queue open-batch"])).unwrap();
@@ -401,6 +414,7 @@ mod tests {
         );
     }
 
+    #[test_id(tzeuvan)]
     #[test]
     fn parse_enact_args_dry_run_flag() {
         let got = parse_enact_args(&a(&["--dry-run", "some text", "--mechanism", "sp-abc12"])).unwrap();
@@ -408,6 +422,7 @@ mod tests {
         assert_eq!(got.text, "some text");
     }
 
+    #[test_id(t6ccfti)]
     #[test]
     fn parse_enact_args_rejects_unknown_flag() {
         let err = parse_enact_args(&a(&["--nope", "text"])).unwrap_err();
@@ -417,6 +432,7 @@ mod tests {
         }
     }
 
+    #[test_id(tzznrwx)]
     #[test]
     fn parse_enact_args_rejects_second_positional() {
         let err = parse_enact_args(&a(&["first", "second"])).unwrap_err();
@@ -426,17 +442,20 @@ mod tests {
         }
     }
 
+    #[test_id(t2m03gl)]
     #[test]
     fn parse_enact_args_requires_text() {
         let err = parse_enact_args(&a(&["--dry-run", "--tool", "x"])).unwrap_err();
         assert_eq!(err, EnactError::Usage);
     }
 
+    #[test_id(t97bdmx)]
     #[test]
     fn word_limit_refusal_names_the_count() {
         assert!(word_limit_refusal(131).contains("131 words"));
     }
 
+    #[test_id(tuf0llt)]
     #[test]
     fn list_line_truncates_to_first_sentence_64_chars() {
         let long = "a".repeat(100);
@@ -448,6 +467,7 @@ mod tests {
         assert_eq!(tail.chars().count(), 64);
     }
 
+    #[test_id(twygg63)]
     #[test]
     fn list_body_filters_non_law_and_non_string() {
         let mut m = BTreeMap::new();
@@ -463,6 +483,7 @@ mod tests {
         assert!(body.contains("2 statutes in force"));
     }
 
+    #[test_id(tpcfmiw)]
     #[test]
     fn list_body_sorted_by_key() {
         let mut m = BTreeMap::new();
@@ -474,6 +495,7 @@ mod tests {
         assert!(pos_a < pos_z);
     }
 
+    #[test_id(tepyt1z)]
     #[test]
     fn commit_outcome_messages_match_bash_text() {
         assert_eq!(
@@ -500,6 +522,7 @@ mod mirror_tests {
         pairs.iter().map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string()))).collect()
     }
 
+    #[test_id(to95t4b)]
     #[test]
     fn a_synced_book_reads_back_and_an_unmirrored_dir_reads_as_none() {
         let t = testkit::TempDir::new("mirror-rt");
@@ -509,6 +532,7 @@ mod mirror_tests {
         assert_eq!(mirror::read(&d).unwrap(), book(&[("law-a", "Alpha."), ("law-b", "Beta.")]));
     }
 
+    #[test_id(ti8ca52)]
     #[test]
     fn sync_replaces_text_and_drops_a_retired_statute() {
         let t = testkit::TempDir::new("mirror-drop");

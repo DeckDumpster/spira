@@ -2,6 +2,9 @@
 //! tools only: `spira-lc list --live` (state, title, priority), the landing ref's
 //! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
 use cockpit_ops::lcview::{first_frame, published_snapshot, num, text, apply_claim_views, carry_forward, live_row, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use spira_store::lc_call::LcError;
@@ -749,6 +752,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpnit22)]
     #[test]
     fn a_second_refresh_with_no_store_change_sends_no_live_or_round_list() {
         let store = Arc::new(Counting(Mutex::new(Vec::new())));
@@ -774,12 +778,13 @@ mod tests {
         assert_eq!(sent.iter().filter(|a| a.starts_with("list --batches")).count(), 1, "the rounds are asked once and held: {sent:?}");
     }
 
+    #[test_id(ta6v4al)]
     #[test]
     fn a_store_read_that_found_no_store_running_marks_the_snapshot_and_a_fault_does_not() {
-        let mut s = super::Snapshot::default();
-        super::store_failed(&mut s, super::LcError::Fault("spira-lc list --live: exit 2 x".into()));
+        let mut s = super::super::Snapshot::default();
+        super::super::store_failed(&mut s, super::super::LcError::Fault("spira-lc list --live: exit 2 x".into()));
         assert!(!s.not_running && s.store_errors.len() == 1);
-        super::store_failed(&mut s, super::LcError::NotRunning("store not running: nothing was sent".into()));
+        super::super::store_failed(&mut s, super::super::LcError::NotRunning("store not running: nothing was sent".into()));
         assert!(s.not_running && s.store_errors.len() == 2 && s.errors.is_empty());
     }
 
@@ -808,13 +813,15 @@ mod tests {
         units.iter().filter(|(n, _)| hit(n)).map(|(n, st)| format!("{n} loaded {st} running dwarf\n")).collect()
     }
 
+    #[test_id(tqg0x7l)]
     #[test]
     fn sp_li4zys_the_live_dwarves_the_scheduler_started_are_listed() {
         let own = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
         let units = [(own, "active"), ("spira-run-sentinel_2dcall-builder_2d1794000000000_2d0.service", "failed"), ("spira-run-sentinel_2dpass-landing.service", "active")];
-        assert_eq!(super::dwarf_units_in(&listed(&super::dwarf_list_args(), &units)), vec![own.to_string()], "the live scheduler-named dwarf only");
+        assert_eq!(super::super::dwarf_units_in(&listed(&super::super::dwarf_list_args(), &units)), vec![own.to_string()], "the live scheduler-named dwarf only");
     }
 
+    #[test_id(tq16fci)]
     #[test]
     fn the_render_issues_none_of_the_removed_calls() {
         assert!(removed_calls(include_str!("lcview_main.rs")).is_empty());

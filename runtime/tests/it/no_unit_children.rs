@@ -14,6 +14,7 @@ fn children(src: &str) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tl97eyc)]
 #[test]
 fn no_file_of_the_port_starts_a_manager_client() {
     let root = testkit::manifest_dir();
@@ -27,6 +28,7 @@ fn no_file_of_the_port_starts_a_manager_client() {
     assert!(found.is_empty(), "manager clients started as children:\n{}", found.join("\n"));
 }
 
+#[test_id(tmhnx6x)]
 #[test]
 fn a_planted_client_is_caught_and_prose_is_not() {
     let ctl = CLIENTS[0];

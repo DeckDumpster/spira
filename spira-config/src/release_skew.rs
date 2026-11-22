@@ -45,6 +45,7 @@ mod tests {
         (t, d)
     }
 
+    #[test_id(tp8uy32)]
     #[test]
     fn old_release_beside_a_newer_current_is_skewed() {
         let (_t, d) = releases();
@@ -54,6 +55,7 @@ mod tests {
         assert!(p.contains("bbb/bin") && !p.contains("aaa/"));
     }
 
+    #[test_id(td3hsqf)]
     #[test]
     fn the_current_release_and_a_non_release_are_not_skewed() {
         let (_t, d) = releases();

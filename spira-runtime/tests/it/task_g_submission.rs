@@ -57,6 +57,7 @@ fn refused() -> Refused {
     Refused { peer: "10.0.0.3:6666".into(), user: String::new(), from: "x@y".into(), reason: "relay".into() }
 }
 
+#[test_id(tobaf8z)]
 #[test]
 fn both_declared_events_reach_a_consumer_at_their_virtual_times() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -70,6 +71,7 @@ fn both_declared_events_reach_a_consumer_at_their_virtual_times() {
     assert_eq!(submit_id(None, "p", 7), "submission/p+7");
 }
 
+#[test_id(tvlvtmh)]
 #[test]
 fn the_reply_channel_answers_the_submitter_once_the_event_is_journaled() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -83,6 +85,7 @@ fn the_reply_channel_answers_the_submitter_once_the_event_is_journaled() {
     assert_eq!(trace(&*j).iter().filter(|t| t.2 == ACCEPTED).count(), 1);
 }
 
+#[test_id(tu7dxvy)]
 #[test]
 fn the_real_source_is_refused_under_virtual_time_naming_it() {
     let clock = VirtualClock::new(0);
@@ -93,6 +96,7 @@ fn the_real_source_is_refused_under_virtual_time_naming_it() {
     assert_eq!(BACKEND, "smtp-submission");
 }
 
+#[test_id(tszzwrl)]
 #[test]
 fn the_real_source_unconfigured_is_dormant_and_returns_once_its_channel_is_closed() {
     let (tx, rx) = mpsc::channel(1);

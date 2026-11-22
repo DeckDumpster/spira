@@ -1,6 +1,9 @@
 //! A repo pinning a language release upstream no longer supports gets exactly one open bump
 //! bead per runtime. An upstream source that cannot be read is "cannot check", never support.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 
 pub mod real;

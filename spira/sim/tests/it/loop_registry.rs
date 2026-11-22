@@ -27,6 +27,7 @@ fn shipped_script() -> Script {
 const CLEARED: &str = "unit:loom factory::tests::cleared_by_landing";
 const EXPIRING: &str = "unit:loom factory::tests::left_to_expire";
 
+#[test_id(tj7af0t)]
 #[test]
 fn test_registry_flip_scenario_meets_every_expectation() {
     let script = shipped_script();
@@ -35,6 +36,7 @@ fn test_registry_flip_scenario_meets_every_expectation() {
     assert_eq!(r.rows["sp-tr02"].state, BeadState::Landed, "{}", r.dump());
 }
 
+#[test_id(t30hb0d)]
 #[test]
 fn a_round_that_finds_a_flip_disables_it_for_its_hold_and_files_its_follow_on() {
     let r = shipped_run();
@@ -45,6 +47,7 @@ fn a_round_that_finds_a_flip_disables_it_for_its_hold_and_files_its_follow_on() 
     assert_eq!(r.lifecycle_of("sp-tr01").last().map(String::as_str), Some("LANDED"), "{}", r.dump());
 }
 
+#[test_id(tb952de)]
 #[test]
 fn the_ops_pane_lists_each_disabled_test_with_its_bead_and_expiry() {
     let r = shipped_run();
@@ -54,6 +57,7 @@ fn the_ops_pane_lists_each_disabled_test_with_its_bead_and_expiry() {
     }
 }
 
+#[test_id(t3vtapr)]
 #[test]
 fn the_follow_ons_landing_clears_its_row_and_only_that_row() {
     let r = shipped_run();
@@ -64,6 +68,7 @@ fn the_follow_ons_landing_clears_its_row_and_only_that_row() {
     assert_eq!(second.held.iter().map(|(t, ..)| t.as_str()).collect::<Vec<_>>(), [EXPIRING]);
 }
 
+#[test_id(t25mst9)]
 #[test]
 fn an_unattended_row_expires_and_its_test_blocks_the_next_round() {
     let r = shipped_run();
@@ -75,6 +80,7 @@ fn an_unattended_row_expires_and_its_test_blocks_the_next_round() {
 
 /// The control: with no flip the corpus stays green, no row is written, and the scenario's own
 /// expectations miss.
+#[test_id(tjkpzyi)]
 #[test]
 fn the_scenario_fails_when_the_corpus_stays_green() {
     let mut script = shipped_script();
@@ -89,6 +95,7 @@ fn the_scenario_fails_when_the_corpus_stays_green() {
 
 /// A row held for less time than the follow-on takes to land has expired by the first look, so
 /// the pane is empty where the scenario expects both rows.
+#[test_id(tihyhl2)]
 #[test]
 fn the_scenario_fails_when_the_hold_is_shorter_than_the_landing() {
     let mut script = shipped_script();
@@ -116,6 +123,7 @@ fn sim_run(scenario: &std::path::Path) -> std::process::Output {
         .expect("sim runs")
 }
 
+#[test_id(t6l8kqe)]
 #[test]
 fn sim_run_walks_test_registry_flip_and_fails_when_no_flip_is_scripted() {
     let ok = sim_run(&testkit::manifest_dir().join("scenarios/test-registry-flip.toml"));
@@ -134,6 +142,7 @@ fn sim_run_walks_test_registry_flip_and_fails_when_no_flip_is_scripted() {
 
 /// The scenario's expectations bite each branch: the shared run, judged against a script that
 /// expects what the world did not do, misses.
+#[test_id(tsiyrgy)]
 #[test]
 fn the_scenario_fails_when_a_landing_does_not_clear_its_row_or_a_test_does_not_block_again() {
     let r = shipped_run();
@@ -145,6 +154,7 @@ fn the_scenario_fails_when_a_landing_does_not_clear_its_row_or_a_test_does_not_b
     assert!(r.missed(&never_red).is_some_and(|why| why.contains("block a round again")), "{:?}", r.missed(&never_red));
 }
 
+#[test_id(t3ex2m6)]
 #[test]
 fn the_registrys_default_hold_is_seven_days() {
     let shipped = std::fs::read_to_string(testkit::manifest_dir().join("../conf.d/SPIRA_TEST_REGISTRY_HOLD_SECS")).expect("the key's shipped default");
@@ -196,6 +206,7 @@ rows = []
     .expect("it parses")
 }
 
+#[test_id(t02k8i2)]
 #[test]
 fn a_lifted_test_green_on_the_merged_tree_is_cleared_by_the_owners_landing() {
     let script = lift_script(false);
@@ -206,6 +217,7 @@ fn a_lifted_test_green_on_the_merged_tree_is_cleared_by_the_owners_landing() {
     assert_eq!(r.rows["sp-lf01"].state, BeadState::Landed, "{}", r.dump());
 }
 
+#[test_id(tcd1fc8)]
 #[test]
 fn a_lifted_test_red_on_the_merged_tree_and_the_base_keeps_its_row_at_one_new_bead_and_lands_the_round() {
     let script = lift_script(true);
@@ -221,6 +233,7 @@ fn a_lifted_test_red_on_the_merged_tree_and_the_base_keeps_its_row_at_one_new_be
     assert!(r.cleared.iter().all(|(_, rows)| !rows.iter().any(|t| t == LIFTED)), "the landing leaves the kept row: {:?}", r.cleared);
 }
 
+#[test_id(tjj8j8b)]
 #[test]
 fn a_kept_row_expires_on_its_new_hold_and_its_test_blocks_the_next_round_again() {
     let script = lift_script(true);

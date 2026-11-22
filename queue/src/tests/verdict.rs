@@ -17,6 +17,7 @@ fn count(v: &RefCell<Vec<String>>, prefix: &str) -> usize {
 
 // ------------------------------------------------------------------------ pure parts
 
+#[test_id(tk0jqms)]
 #[test]
 fn classifiers_match_the_table() {
     assert_eq!(
@@ -57,6 +58,7 @@ fn classifiers_match_the_table() {
     assert_eq!(parse_declared_timeout(""), None);
 }
 
+#[test_id(td0exhz)]
 #[test]
 fn cli_takes_exactly_one_repository() {
     let p = |a: &[&str]| cli::parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
@@ -85,6 +87,7 @@ fn publish_record(t: &T) {
     .unwrap();
 }
 
+#[test_id(tuavkld)]
 #[test]
 fn publish_with_no_record_does_nothing() {
     let t = T::new(LandMode::QueueLocal);
@@ -93,6 +96,7 @@ fn publish_with_no_record_does_nothing() {
     assert!(t.out().is_empty() && t.err().is_empty());
 }
 
+#[test_id(tov74lu)]
 #[test]
 fn publish_record_missing_a_field_is_left_for_a_hand_look() {
     let t = T::new(LandMode::QueueLocal);
@@ -113,6 +117,7 @@ fn publish_record_missing_a_field_is_left_for_a_hand_look() {
     assert!(t.forge.calls.borrow().is_empty());
 }
 
+#[test_id(thsaqrm)]
 #[test]
 fn publish_on_a_pr_that_is_not_open_never_moves_the_forge_target() {
     for state in ["closed", "merged"] {
@@ -131,6 +136,7 @@ fn publish_on_a_pr_that_is_not_open_never_moves_the_forge_target() {
     }
 }
 
+#[test_id(tlf45z5)]
 #[test]
 fn publish_with_unreadable_pr_state_waits_and_keeps_the_record() {
     let t = T::new(LandMode::QueueLocal);
@@ -147,6 +153,7 @@ fn publish_with_unreadable_pr_state_waits_and_keeps_the_record() {
     assert!(!has_call(&t.forge.calls, "check-status"));
 }
 
+#[test_id(tt11go9)]
 #[test]
 fn publish_green_that_would_not_fast_forward_keeps_the_record_and_says_so() {
     let t = T::new(LandMode::QueueLocal);
@@ -164,6 +171,7 @@ fn publish_green_that_would_not_fast_forward_keeps_the_record_and_says_so() {
     assert!(!has_call(&t.forge.calls, "pr-close"));
 }
 
+#[test_id(tlnu1su)]
 #[test]
 fn publish_pending_or_faulted_waits_and_changes_nothing() {
     for (answer, word) in [(Some("pending\n"), "pending"), (None, "")] {
@@ -189,6 +197,7 @@ fn cancelled_checks(t: &T) {
     ]);
 }
 
+#[test_id(twl4b0d)]
 #[test]
 fn completed_checks_with_a_cancelled_one_are_redriven_once_then_red() {
     let t = T::new(LandMode::QueueLocal);
@@ -205,6 +214,7 @@ fn completed_checks_with_a_cancelled_one_are_redriven_once_then_red() {
     assert!(!t.qfile("publish").exists());
 }
 
+#[test_id(tyhym2d)]
 #[test]
 fn checks_still_running_or_unreadable_are_not_redriven() {
     for checks in [
@@ -224,6 +234,7 @@ fn checks_still_running_or_unreadable_are_not_redriven() {
     }
 }
 
+#[test_id(txjveqv)]
 #[test]
 fn a_publish_harness_fault_reruns_within_the_budget_and_never_files_a_bead() {
     let t = T::new(LandMode::QueueLocal);
@@ -259,6 +270,7 @@ fn a_publish_harness_fault_reruns_within_the_budget_and_never_files_a_bead() {
     assert!(!has_call(&t.forge.calls, "pr-close"));
 }
 
+#[test_id(tsrzslv)]
 #[test]
 fn a_refused_publish_rerun_is_not_counted_and_mails_once_per_head() {
     let t = T::new(LandMode::QueueLocal);
@@ -285,6 +297,7 @@ fn a_refused_publish_rerun_is_not_counted_and_mails_once_per_head() {
     assert_eq!(mails, 1);
 }
 
+#[test_id(tgswby8)]
 #[test]
 fn a_publish_run_decided_red_on_an_unchanged_tree_is_settled_not_rerun_forever() {
     let t = T::new(LandMode::QueueLocal);
@@ -318,6 +331,7 @@ fn a_publish_run_decided_red_on_an_unchanged_tree_is_settled_not_rerun_forever()
     assert!(lib.iter().any(|c| c.starts_with("create_bug")));
 }
 
+#[test_id(t2w09n8)]
 #[test]
 fn a_publish_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() {
     let t = T::new(LandMode::QueueLocal);
@@ -350,6 +364,7 @@ fn a_publish_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() 
     assert_eq!(mails(&t), 2);
 }
 
+#[test_id(t157koz)]
 #[test]
 fn publish_with_a_missing_workflow_mapping_mails_once_per_head() {
     let t = T::new(LandMode::QueueLocal);
@@ -377,6 +392,7 @@ fn publish_with_a_missing_workflow_mapping_mails_once_per_head() {
     assert_eq!(mails, 1);
 }
 
+#[test_id(tel4p2i)]
 #[test]
 fn publish_red_files_one_fix_forward_and_marks_the_head() {
     // Local attribution (attribute.sh) is retired, sp-uwhx0 — the fix-forward bead now
@@ -423,6 +439,7 @@ fn publish_red_files_one_fix_forward_and_marks_the_head() {
     assert!(!has_call(&t.scripts.calls, "judgement-ci"));
 }
 
+#[test_id(tljic4l)]
 #[test]
 fn publish_red_naming_no_suite_still_files_one_bead_and_frees_the_lock() {
     let t = T::new(LandMode::QueueLocal);
@@ -453,6 +470,7 @@ fn publish_red_naming_no_suite_still_files_one_bead_and_frees_the_lock() {
     ));
 }
 
+#[test_id(tz3nhk3)]
 #[test]
 fn a_publish_red_naming_no_suite_is_an_infra_fault_rerun_not_a_fix_forward() {
     let t = T::new(LandMode::QueueLocal);
@@ -475,6 +493,7 @@ fn a_publish_red_naming_no_suite_is_an_infra_fault_rerun_not_a_fix_forward() {
         .any(|c| c.starts_with("create_bug")));
 }
 
+#[test_id(tfcxmzr)]
 #[test]
 fn a_publish_red_naming_no_suite_that_is_still_nameless_past_the_budget_mails_and_files_nothing() {
     let t = T::new(LandMode::QueueLocal);
@@ -502,6 +521,7 @@ fn a_publish_red_naming_no_suite_that_is_still_nameless_past_the_budget_mails_an
         .any(|c| c.starts_with("notify spira publish PR 77: CI harness fault")));
 }
 
+#[test_id(t1wd3bu)]
 #[test]
 fn a_publish_red_that_names_a_suite_or_a_test_is_never_rerun() {
     for red in [
@@ -523,6 +543,7 @@ fn a_publish_red_that_names_a_suite_or_a_test_is_never_rerun() {
     }
 }
 
+#[test_id(togndzo)]
 #[test]
 fn a_nameless_publish_red_whose_rerun_is_refused_is_mailed_not_filed() {
     let t = T::new(LandMode::QueueLocal);
@@ -543,6 +564,7 @@ fn a_nameless_publish_red_whose_rerun_is_refused_is_mailed_not_filed() {
         .any(|c| c.starts_with("create_bug")));
 }
 
+#[test_id(t06s0k8)]
 #[test]
 fn publish_red_with_no_bead_filed_is_a_fault_but_still_marks_the_head() {
     let t = T::new(LandMode::QueueLocal);
@@ -560,6 +582,7 @@ fn publish_red_with_no_bead_filed_is_a_fault_but_still_marks_the_head() {
     assert!(t.out().contains("filed fix-forward <create-failed>"));
 }
 
+#[test_id(t73dqf8)]
 #[test]
 fn publish_settle_skips_its_turn_when_the_queue_lock_is_held() {
     let t = T::new(LandMode::QueueLocal);
@@ -572,6 +595,7 @@ fn publish_settle_skips_its_turn_when_the_queue_lock_is_held() {
     assert!(t.forge.calls.borrow().is_empty());
 }
 
+#[test_id(tpid5b3)]
 #[test]
 fn step_on_queue_local_settles_a_green_publish_before_publishing_again() {
     let t = T::new(LandMode::QueueLocal);
@@ -606,6 +630,7 @@ fn record(t: &T) -> String {
     fs::read_to_string(t.qfile("open")).unwrap_or_default()
 }
 
+#[test_id(t7etc8f)]
 #[test]
 fn a_malformed_batch_record_is_refused() {
     let t = T::new(LandMode::Queue);
@@ -615,6 +640,7 @@ fn a_malformed_batch_record_is_refused() {
     assert!(t.forge.calls.borrow().is_empty());
 }
 
+#[test_id(t0so7or)]
 #[test]
 fn a_concierge_claim_refuses_the_whole_pass() {
     let t = T::new(LandMode::Queue);
@@ -633,6 +659,7 @@ fn a_concierge_claim_refuses_the_whole_pass() {
     assert!(has_call(&t.forge.calls, "check-status 12"));
 }
 
+#[test_id(trumibs)]
 #[test]
 fn pending_waits_while_the_run_is_young_or_progressing_and_cancels_a_stuck_one() {
     // no run yet: age from the record's opened stamp
@@ -709,6 +736,7 @@ fn pending_waits_while_the_run_is_young_or_progressing_and_cancels_a_stuck_one()
     assert_eq!(record(&t), before);
 }
 
+#[test_id(tvmxa00)]
 #[test]
 fn a_failed_status_call_is_pending_not_a_verdict() {
     let t = T::new(LandMode::Queue);
@@ -719,6 +747,7 @@ fn a_failed_status_call_is_pending_not_a_verdict() {
     assert!(!t.lc.has("abandon-batch"));
 }
 
+#[test_id(t89ldd3)]
 #[test]
 fn a_refused_batch_rerun_is_not_counted_and_mails_once_per_head() {
     let t = T::new(LandMode::Queue);
@@ -744,6 +773,7 @@ fn a_refused_batch_rerun_is_not_counted_and_mails_once_per_head() {
     assert_eq!(mails, 1);
 }
 
+#[test_id(tyf4ou2)]
 #[test]
 fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
     let t = T::new(LandMode::Queue);
@@ -795,6 +825,7 @@ fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
     assert!(mail.starts_with("mail-operator Merge queue: spira CI fault after 3 attempts\n## Note\nMerge queue batch for spira closed after 3 failed CI run attempts.\n\nPR 12 (head h1) has been closed."), "{mail}");
 }
 
+#[test_id(tptcgm6)]
 #[test]
 fn a_runner_loss_reruns_once_then_escalates_as_environment_and_ejects_nobody() {
     let t = T::new(LandMode::Queue);
@@ -824,6 +855,7 @@ fn a_runner_loss_reruns_once_then_escalates_as_environment_and_ejects_nobody() {
         .any(|c| c.contains("runner lost twice on one tip (environment fault)")));
 }
 
+#[test_id(tm8qepx)]
 #[test]
 fn green_on_another_head_or_no_head_is_refused_as_a_fault() {
     for (answer, line, subject) in [
@@ -842,6 +874,7 @@ fn green_on_another_head_or_no_head_is_refused_as_a_fault() {
     }
 }
 
+#[test_id(tx8ylkc)]
 #[test]
 fn a_refused_fast_forward_keeps_the_batch() {
     let t = T::new(LandMode::Queue);
@@ -860,6 +893,7 @@ fn a_refused_fast_forward_keeps_the_batch() {
 }
 
 // covers: UC-landing-merge-queue-45
+#[test_id(ta5y6y0)]
 #[test]
 fn green_on_an_unmoved_master_based_repo_fast_forwards_master_and_never_main() {
     let t = T::new(LandMode::Queue);
@@ -877,6 +911,7 @@ fn green_on_an_unmoved_master_based_repo_fast_forwards_master_and_never_main() {
 }
 
 // covers: UC-landing-merge-queue-45
+#[test_id(t2jl9ik)]
 #[test]
 fn green_with_lifecycle_on_walks_the_batch_to_landed_on_spira_lc() {
     let t = T::new(LandMode::Queue);
@@ -903,6 +938,7 @@ fn green_with_lifecycle_on_walks_the_batch_to_landed_on_spira_lc() {
     assert!(t.out().contains("verdict: B1 landed on spira-lc (sha=h1)"));
 }
 
+#[test_id(tnvfqt7)]
 #[test]
 fn green_on_a_batch_a_red_already_started_records_green_with_no_gap_and_no_second_ci_started() {
     let t = T::new(LandMode::Queue);
@@ -925,6 +961,7 @@ fn green_on_a_batch_a_red_already_started_records_green_with_no_gap_and_no_secon
     assert!(lc.contains(&"land B1 5 h1".to_string()), "{lc:?}");
 }
 
+#[test_id(ti62ugo)]
 #[test]
 fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
     let t = T::new(LandMode::Queue);
@@ -954,6 +991,7 @@ fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(to9a2i1)]
 #[test]
 fn red_calls_judgement_once_with_the_suites_and_the_run() {
     let mut t = T::new(LandMode::Queue);
@@ -1002,6 +1040,7 @@ fn red_calls_judgement_once_with_the_suites_and_the_run() {
         .contains("verdict spira: PR 12 red — batcher-owned, judgement already called (sp-j1)"));
 }
 
+#[test_id(tbhqbta)]
 #[test]
 fn a_red_batch_bars_every_member_tip_until_an_abandon_or_an_eject_attributes_it() {
     let mut t = T::new(LandMode::Queue);
@@ -1025,6 +1064,7 @@ fn a_red_batch_bars_every_member_tip_until_an_abandon_or_an_eject_attributes_it(
     assert_eq!(fs::read_to_string(t.qfile("red-tips")).unwrap(), "");
 }
 
+#[test_id(todno2f)]
 #[test]
 fn a_red_forge_batch_calls_a_mender_per_red_suite_once() {
     let mut t = T::new(LandMode::Queue);
@@ -1089,6 +1129,7 @@ fn red_forge_run(t: &mut T) {
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
 }
 
+#[test_id(tdqvo0c)]
 #[test]
 fn a_one_member_red_forge_batch_files_no_mend() {
     let mut t = T::new(LandMode::Queue);
@@ -1102,6 +1143,7 @@ fn a_one_member_red_forge_batch_files_no_mend() {
     );
 }
 
+#[test_id(t6364cr)]
 #[test]
 fn a_red_forge_batch_with_a_member_in_rework_files_no_mend() {
     let mut t = T::new(LandMode::Queue);
@@ -1117,6 +1159,7 @@ fn a_red_forge_batch_with_a_member_in_rework_files_no_mend() {
     );
 }
 
+#[test_id(ti4d603)]
 #[test]
 fn a_multi_member_red_forge_batch_files_one_mend_carrying_the_repo_label() {
     let mut t = T::new(LandMode::Queue);
@@ -1127,6 +1170,7 @@ fn a_multi_member_red_forge_batch_files_one_mend_carrying_the_repo_label() {
     assert!(made[0].contains(",repo:spira "), "{made:?}");
 }
 
+#[test_id(t4mjwo2)]
 #[test]
 fn a_red_forge_batch_starts_its_pass_before_the_failed_event_because_its_row_is_open() {
     let mut t = T::new(LandMode::Queue);
@@ -1163,6 +1207,7 @@ fn a_red_forge_batch_starts_its_pass_before_the_failed_event_because_its_row_is_
     assert!(!t.err().contains("no mender for"), "{}", t.err());
 }
 
+#[test_id(t0omay3)]
 #[test]
 fn a_hand_cut_batch_red_goes_to_judgement_too() {
     // D1: verdict's own split/eject attribution is retired; owner is not consulted.
@@ -1191,6 +1236,7 @@ fn a_hand_cut_batch_red_goes_to_judgement_too() {
     );
 }
 
+#[test_id(tehba0t)]
 #[test]
 fn a_setup_red_is_rerun_once_then_abandoned_with_evidence_never_an_endless_defer() {
     let t = T::new(LandMode::Queue);
@@ -1258,6 +1304,7 @@ fn a_setup_red_is_rerun_once_then_abandoned_with_evidence_never_an_endless_defer
     assert_eq!(count(&t, "workflow-rerun 77"), 1);
 }
 
+#[test_id(tu4vbth)]
 #[test]
 fn a_single_member_batch_red_at_the_same_step_after_the_rerun_bars_the_members_tip() {
     let t = T::new(LandMode::Queue);
@@ -1286,6 +1333,7 @@ fn a_single_member_batch_red_at_the_same_step_after_the_rerun_bars_the_members_t
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(tg2fyvg)]
 #[test]
 fn an_image_build_red_with_an_infra_signature_never_bars_the_single_members_tip() {
     let t = T::new(LandMode::Queue);
@@ -1339,6 +1387,7 @@ fn an_image_build_red_with_an_infra_signature_never_bars_the_single_members_tip(
     );
 }
 
+#[test_id(tf167ol)]
 #[test]
 fn infra_red_reads_signatures_and_runner_provisioning_and_nothing_else() {
     assert!(infra_red("red\nfailed-step: build / Build image\nstep-log: sccache: error: Timed out waiting for server startup\n"));
@@ -1354,6 +1403,7 @@ fn infra_red_reads_signatures_and_runner_provisioning_and_nothing_else() {
     ));
 }
 
+#[test_id(ts0we7a)]
 #[test]
 fn a_rerun_that_never_started_is_not_called_in_flight() {
     let t = T::new(LandMode::Queue);
@@ -1373,6 +1423,7 @@ fn a_rerun_that_never_started_is_not_called_in_flight() {
     );
 }
 
+#[test_id(trfwqpc)]
 #[test]
 fn a_lint_red_naming_a_members_file_ejects_that_member_and_bars_its_tip() {
     let t = T::new(LandMode::Queue);
@@ -1438,6 +1489,7 @@ fn a_lint_red_naming_a_members_file_ejects_that_member_and_bars_its_tip() {
     );
 }
 
+#[test_id(tuytti3)]
 #[test]
 fn ejecting_the_member_a_red_names_retires_the_mender_bead_it_filed() {
     let t = T::new(LandMode::Queue);
@@ -1456,6 +1508,7 @@ fn ejecting_the_member_a_red_names_retires_the_mender_bead_it_filed() {
     assert!(t.out().contains("mender bead sp-m1 retired"), "{}", t.out());
 }
 
+#[test_id(tr5k3u2)]
 #[test]
 fn a_lint_red_naming_no_members_file_is_still_a_setup_red() {
     let t = T::new(LandMode::Queue);
@@ -1471,6 +1524,7 @@ fn a_lint_red_naming_no_members_file_is_still_a_setup_red() {
     assert!(t.out().contains("no suite annotations"), "{}", t.out());
 }
 
+#[test_id(tojnq8l)]
 #[test]
 fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
     let mut t = T::new(LandMode::Queue);
@@ -1501,6 +1555,7 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
     assert!(t.out().contains("called judgement (sp-j3)"), "{}", t.out());
 }
 
+#[test_id(tp27xdf)]
 #[test]
 fn a_provision_failure_log_stays_setup_red_and_an_unparseable_one_still_raises_an_incident() {
     for log in ["step-log: no space left on device\n", ""] {
@@ -1538,6 +1593,7 @@ fn refused_setup_red(t: &T) {
     *t.forge.rerun_decided.borrow_mut() = Some("no input changed".into());
 }
 
+#[test_id(tfee2cs)]
 #[test]
 fn a_single_member_setup_red_whose_rerun_the_forge_refuses_is_ejected_in_that_pass() {
     let t = T::new(LandMode::Queue);
@@ -1571,6 +1627,7 @@ fn a_single_member_setup_red_whose_rerun_the_forge_refuses_is_ejected_in_that_pa
     assert_eq!(reruns, 1);
 }
 
+#[test_id(tb7o3wj)]
 #[test]
 fn a_multi_member_setup_red_whose_rerun_the_forge_refuses_is_abandoned_in_that_pass() {
     let t = T::new(LandMode::Queue);
@@ -1587,6 +1644,7 @@ fn a_multi_member_setup_red_whose_rerun_the_forge_refuses_is_abandoned_in_that_p
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(t7d7wdq)]
 #[test]
 fn a_setup_red_whose_rerun_the_forge_fails_to_start_settles_nothing_and_records_no_rerun() {
     let t = T::new(LandMode::Queue);
@@ -1601,6 +1659,7 @@ fn a_setup_red_whose_rerun_the_forge_fails_to_start_settles_nothing_and_records_
     assert!(!t.lc.calls.borrow().iter().any(|c| c.starts_with("abandon-batch")));
 }
 
+#[test_id(tn3yjad)]
 #[test]
 fn red_without_suites_or_without_a_batcher_is_not_judged() {
     let t = T::new(LandMode::Queue);
@@ -1643,6 +1702,7 @@ fn red_without_suites_or_without_a_batcher_is_not_judged() {
     );
 }
 
+#[test_id(ttyhh66)]
 #[test]
 fn an_unknown_status_is_a_fault() {
     let t = T::new(LandMode::Queue);
@@ -1655,6 +1715,7 @@ fn an_unknown_status_is_a_fault() {
     assert!(t.qfile("open").exists());
 }
 
+#[test_id(tkdqen4)]
 #[test]
 fn a_held_lock_is_waited_for_then_counted_toward_starvation() {
     let mut t = T::new(LandMode::Queue);
@@ -1694,6 +1755,7 @@ fn a_held_lock_is_waited_for_then_counted_toward_starvation() {
     assert!(has_call(&t.forge.calls, "check-status 12"));
 }
 
+#[test_id(tdqwzwb)]
 #[test]
 fn an_express_takeover_stash_is_named_not_silently_skipped() {
     let t = T::new(LandMode::Queue);
@@ -1708,6 +1770,7 @@ fn an_express_takeover_stash_is_named_not_silently_skipped() {
     assert!(!err.contains("attributing-41.lock"));
 }
 
+#[test_id(tv4vp1t)]
 #[test]
 fn other_modes_have_nothing_to_settle() {
     for m in [LandMode::Push, LandMode::Pr, LandMode::Hold] {
@@ -1718,6 +1781,7 @@ fn other_modes_have_nothing_to_settle() {
     }
 }
 
+#[test_id(tgla18n)]
 #[test]
 fn verdict_with_lifecycle_on_and_spira_lc_unreachable_refuses_before_reading_anything() {
     let t = T::new(LandMode::Queue);
@@ -1730,6 +1794,7 @@ fn verdict_with_lifecycle_on_and_spira_lc_unreachable_refuses_before_reading_any
     assert!(t.forge.calls.borrow().is_empty());
 }
 
+#[test_id(tfwuzco)]
 #[test]
 fn a_repo_the_map_does_not_carry_is_refused() {
     let t = T::new(LandMode::Queue);
@@ -1740,6 +1805,7 @@ fn a_repo_the_map_does_not_carry_is_refused() {
         .contains("verdict spira: not a registered repository (no checkout path)"));
 }
 
+#[test_id(t73kc1j)]
 #[test]
 fn no_open_batch_never_calls_the_forge() {
     let t = T::new(LandMode::Queue);
@@ -1748,6 +1814,7 @@ fn no_open_batch_never_calls_the_forge() {
     assert!(t.out().is_empty() && t.err().is_empty());
 }
 
+#[test_id(tx7bsq1)]
 #[test]
 fn a_publish_red_bead_carries_the_failing_suite_lines() {
     let t = T::new(LandMode::QueueLocal);
@@ -1773,6 +1840,7 @@ fn a_publish_red_bead_carries_the_failing_suite_lines() {
     assert!(bug.contains("Failing lines:\nfail-line: test-a.sh: gate: test-a.sh FAILED\nfail-line: test-a.sh: not ok 3 - widget"), "{bug}");
 }
 
+#[test_id(thhcs0y)]
 #[test]
 fn a_publish_red_from_a_non_suite_step_carries_the_step_and_log_tail_and_files_once_per_run() {
     let t = T::new(LandMode::QueueLocal);
@@ -1815,6 +1883,7 @@ fn a_publish_red_from_a_non_suite_step_carries_the_step_and_log_tail_and_files_o
     );
 }
 
+#[test_id(twlp32x)]
 #[test]
 fn a_publish_red_bead_names_the_failing_test_under_build() {
     let t = T::new(LandMode::QueueLocal);
@@ -1839,6 +1908,7 @@ fn a_publish_red_bead_names_the_failing_test_under_build() {
     assert!(build.contains("http://r/77"), "{bug}");
 }
 
+#[test_id(tbyns4n)]
 #[test]
 fn a_publish_red_bead_carries_the_red_tracker_label_only_when_one_is_configured() {
     for (label, want) in [("tracker-x", true), ("", false)] {
@@ -1862,6 +1932,7 @@ fn a_publish_red_bead_carries_the_red_tracker_label_only_when_one_is_configured(
     }
 }
 
+#[test_id(tnbkjtq)]
 #[test]
 fn a_second_publish_red_with_the_same_failing_set_amends_the_first_with_its_lines() {
     let t = T::new(LandMode::QueueLocal);
@@ -1891,6 +1962,7 @@ fn a_second_publish_red_with_the_same_failing_set_amends_the_first_with_its_line
     assert!(!t.lib.has("create_bug"));
 }
 
+#[test_id(tz9o3m4)]
 #[test]
 fn a_repeat_publish_red_for_the_same_suites_amends_the_open_bead_rather_than_filing() {
     let t = T::new(LandMode::QueueLocal);
@@ -1912,6 +1984,7 @@ fn a_repeat_publish_red_for_the_same_suites_amends_the_open_bead_rather_than_fil
     assert!(t.out().contains("amended open fix-forward sp-old"));
 }
 
+#[test_id(thtdj2s)]
 #[test]
 fn a_repeat_publish_red_files_anew_when_the_prior_bead_is_closed_or_the_suites_differ() {
     for (prior, ok) in [
@@ -1934,6 +2007,7 @@ fn a_repeat_publish_red_files_anew_when_the_prior_bead_is_closed_or_the_suites_d
     }
 }
 
+#[test_id(tjeshq8)]
 #[test]
 fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
     let t = T::new(LandMode::QueueLocal);
@@ -1957,6 +2031,7 @@ fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
 }
 
 // covers: UC-landing-merge-queue-45
+#[test_id(teobfzj)]
 #[test]
 fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
     let t = T::new(LandMode::Queue);
@@ -2005,6 +2080,7 @@ fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
         .any(|c| c.ends_with("spira/queue/new")));
 }
 
+#[test_id(tg2zv7x)]
 #[test]
 fn each_pass_leaves_the_forge_state_the_pane_reads() {
     let t = T::new(LandMode::Queue);
@@ -2040,6 +2116,7 @@ fn archived(t: &T) -> bool {
         .unwrap_or(false)
 }
 
+#[test_id(tsarjk4)]
 #[test]
 fn a_merged_pr_lands_the_batch_with_the_merge_commit_and_a_second_pass_is_a_no_op() {
     let t = T::new(LandMode::Queue);
@@ -2079,6 +2156,7 @@ fn a_merged_pr_lands_the_batch_with_the_merge_commit_and_a_second_pass_is_a_no_o
     assert_eq!(writes(&t), before);
 }
 
+#[test_id(tvnvtq0)]
 #[test]
 fn a_merged_pr_on_a_batch_still_open_on_the_lifecycle_walks_it_to_landed() {
     let t = T::new(LandMode::Queue);
@@ -2101,6 +2179,7 @@ fn a_merged_pr_on_a_batch_still_open_on_the_lifecycle_walks_it_to_landed() {
     assert!(lc.contains(&"land spira-1 5 m1".to_string()), "{lc:?}");
 }
 
+#[test_id(ty7ioze)]
 #[test]
 fn a_merged_pr_whose_batch_the_lifecycle_already_landed_only_retires_the_record() {
     let t = T::new(LandMode::Queue);
@@ -2115,6 +2194,7 @@ fn a_merged_pr_whose_batch_the_lifecycle_already_landed_only_retires_the_record(
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(tlu8d93)]
 #[test]
 fn a_merged_pr_whose_batch_was_abandoned_lands_its_members_from_the_merge() {
     let t = T::new(LandMode::Queue);
@@ -2139,6 +2219,7 @@ fn a_merged_pr_whose_batch_was_abandoned_lands_its_members_from_the_merge() {
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(tqoh2sk)]
 #[test]
 fn a_merged_pr_on_an_abandoned_batch_with_a_member_not_on_the_base_keeps_the_record() {
     let t = T::new(LandMode::Queue);
@@ -2159,6 +2240,7 @@ fn a_merged_pr_on_an_abandoned_batch_with_a_member_not_on_the_base_keeps_the_rec
     assert!(t.qfile("open").exists());
 }
 
+#[test_id(tpug93t)]
 #[test]
 fn a_merged_pr_falls_back_to_the_sealed_head_when_it_is_on_the_base() {
     let t = T::new(LandMode::Queue);
@@ -2172,6 +2254,7 @@ fn a_merged_pr_falls_back_to_the_sealed_head_when_it_is_on_the_base() {
     assert!(t.lc.has("land spira-1 5 h1"));
 }
 
+#[test_id(tg80sgu)]
 #[test]
 fn a_land_the_lifecycle_refuses_keeps_the_record_and_alerts_once() {
     let t = T::new(LandMode::Queue);
@@ -2199,6 +2282,7 @@ fn a_land_the_lifecycle_refuses_keeps_the_record_and_alerts_once() {
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(timzoly)]
 #[test]
 fn a_closed_unmerged_pr_retires_the_mender_beads_filed_for_its_red() {
     let t = T::new(LandMode::Queue);
@@ -2214,6 +2298,7 @@ fn a_closed_unmerged_pr_retires_the_mender_beads_filed_for_its_red() {
     assert!(rounds.join("spira-1.mender-1-gate-lint.retired").exists());
 }
 
+#[test_id(tvhku1f)]
 #[test]
 fn a_mender_bead_of_a_slash_named_batch_is_retired_when_its_pr_closes() {
     let t = T::new(LandMode::Queue);
@@ -2235,6 +2320,7 @@ fn a_mender_bead_of_a_slash_named_batch_is_retired_when_its_pr_closes() {
         .exists());
 }
 
+#[test_id(tkpjye6)]
 #[test]
 fn a_batch_with_no_members_is_abandoned_and_its_open_pr_closed() {
     let t = T::new(LandMode::Queue);
@@ -2247,6 +2333,7 @@ fn a_batch_with_no_members_is_abandoned_and_its_open_pr_closed() {
     assert!(archived(&t));
 }
 
+#[test_id(tstsgs5)]
 #[test]
 fn a_batch_with_no_pr_is_left_young_and_abandoned_past_the_grace() {
     let t = T::new(LandMode::Queue);
@@ -2260,6 +2347,7 @@ fn a_batch_with_no_pr_is_left_young_and_abandoned_past_the_grace() {
     assert!(!t.qfile("open").exists());
 }
 
+#[test_id(tmywen6)]
 #[test]
 fn a_refused_land_in_the_verdict_keeps_the_record_for_the_reconciler() {
     let t = T::new(LandMode::Queue);
@@ -2273,6 +2361,7 @@ fn a_refused_land_in_the_verdict_keeps_the_record_for_the_reconciler() {
     assert!(t.qfile("open").exists());
 }
 
+#[test_id(tgctinm)]
 #[test]
 fn a_queue_pr_that_is_not_the_recorded_batch_is_closed_and_its_runs_cancelled() {
     let t = T::new(LandMode::Queue);
@@ -2292,6 +2381,7 @@ fn a_queue_pr_that_is_not_the_recorded_batch_is_closed_and_its_runs_cancelled() 
     assert!(!t.lib.has("cancel_runs spira/queue/B"));
 }
 
+#[test_id(tekdpbp)]
 #[test]
 fn with_no_recorded_batch_every_open_queue_pr_is_stray() {
     let t = T::new(LandMode::Queue);
@@ -2300,6 +2390,7 @@ fn with_no_recorded_batch_every_open_queue_pr_is_stray() {
     assert!(has_call(&t.forge.calls, "pr-close 500"));
 }
 
+#[test_id(tkgq07y)]
 #[test]
 fn a_record_naming_no_branch_closes_nothing() {
     let t = T::new(LandMode::Queue);
@@ -2319,6 +2410,7 @@ fn pass_rows(t: &T) -> Vec<serde_json::Value> {
         .collect()
 }
 
+#[test_id(tl8lxxt)]
 #[test]
 fn a_judged_forge_run_leaves_one_cert_pass_row_and_a_reread_leaves_no_second() {
     let t = T::new(LandMode::Queue);
@@ -2345,6 +2437,7 @@ fn a_judged_forge_run_leaves_one_cert_pass_row_and_a_reread_leaves_no_second() {
     assert_eq!(rows[0]["members"], serde_json::json!(["sp-a", "sp-b"]));
 }
 
+#[test_id(ta2k8xz)]
 #[test]
 fn a_pending_run_leaves_no_row_and_a_harness_fault_or_mismatched_green_leaves_an_infra_row() {
     let t = T::new(LandMode::Queue);
@@ -2371,6 +2464,7 @@ fn a_pending_run_leaves_no_row_and_a_harness_fault_or_mismatched_green_leaves_an
     );
 }
 
+#[test_id(t9urqa9)]
 #[test]
 fn a_red_batch_writes_the_failing_lines_into_every_members_bead_once_per_run() {
     let t = T::new(LandMode::Queue);
@@ -2409,6 +2503,7 @@ fn a_red_batch_writes_the_failing_lines_into_every_members_bead_once_per_run() {
     );
 }
 
+#[test_id(ter3pep)]
 #[test]
 fn a_red_batch_with_no_extracted_lines_still_notes_the_log_tail_and_bounds_a_long_excerpt() {
     let t = T::new(LandMode::Queue);
@@ -2472,6 +2567,7 @@ fn operator_mails(t: &T) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tlkqj5c)]
 #[test]
 fn a_red_publish_tracker_is_filed_at_the_publish_red_priority_not_the_incident_one() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -2485,6 +2581,7 @@ fn a_red_publish_tracker_is_filed_at_the_publish_red_priority_not_the_incident_o
     );
 }
 
+#[test_id(tnwzne6)]
 #[test]
 fn three_consecutive_red_publishes_escalate_once_and_a_fourth_does_not() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -2522,6 +2619,7 @@ fn three_consecutive_red_publishes_escalate_once_and_a_fourth_does_not() {
     assert_eq!(operator_mails(&t).len(), 1);
 }
 
+#[test_id(tz67yyj)]
 #[test]
 fn a_green_publish_resets_the_red_run() {
     let mut t = T::new(LandMode::QueueLocal);
@@ -2540,6 +2638,7 @@ fn a_green_publish_resets_the_red_run() {
     assert!(operator_mails(&t).is_empty());
 }
 
+#[test_id(ts78dre)]
 #[test]
 fn a_merged_forge_batch_left_in_queue_local_lands_and_clears_its_records() {
     let t = T::new(LandMode::QueueLocal);
@@ -2558,6 +2657,7 @@ fn a_merged_forge_batch_left_in_queue_local_lands_and_clears_its_records() {
     }
 }
 
+#[test_id(t8pv1mn)]
 #[test]
 fn a_live_forge_batch_left_in_queue_local_is_not_driven_and_keeps_its_records() {
     let t = T::new(LandMode::QueueLocal);
@@ -2569,6 +2669,7 @@ fn a_live_forge_batch_left_in_queue_local_is_not_driven_and_keeps_its_records() 
     assert!(t.qfile("open").exists());
 }
 
+#[test_id(t9u9fvb)]
 #[test]
 fn mode_switch_refuses_on_an_unsettled_batch() {
     let t = T::new(LandMode::QueueLocal);
@@ -2581,6 +2682,7 @@ fn mode_switch_refuses_on_an_unsettled_batch() {
     assert!(t.err().contains("already queue.local"));
 }
 
+#[test_id(t0ur415)]
 #[test]
 fn an_ungated_landing_walks_a_submitted_member_to_landed_with_the_override_on_the_transition() {
     use crate::model::Member;
@@ -2615,6 +2717,7 @@ fn an_ungated_landing_walks_a_submitted_member_to_landed_with_the_override_on_th
     );
 }
 
+#[test_id(tji6lp1)]
 #[test]
 fn lc_deliver_takes_a_submitted_member_at_its_tip_to_landed() {
     use crate::model::Member;
@@ -2632,6 +2735,7 @@ fn lc_deliver_takes_a_submitted_member_at_its_tip_to_landed() {
     assert!(deliver < delivered);
 }
 
+#[test_id(tdx10cf)]
 #[test]
 fn an_ungated_landing_of_an_already_landed_member_is_not_a_fault() {
     use crate::ops::land::{lc_deliver, BreakGlass};

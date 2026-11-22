@@ -301,6 +301,7 @@ mod tests {
         Event { id: EventId(id.into()), stream: StreamKey("s".into()), kind: EventKind::new("t", ""), at: 0, cause: None, correlation: crate::event::CorrelationId(id.into()) }
     }
 
+    #[test_id(tcwvht2)]
     #[test]
     fn an_append_fault_keeps_nothing_from_that_event_on_and_fails_every_later_call() {
         let inner = MemJournal::new();

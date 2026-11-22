@@ -10,6 +10,7 @@ fn diff(id: &str, paths: &[&str], added: &str) -> MemberDiff {
 
 const E0063: &str = "   Compiling spira-lc v0.1.0\nerror[E0063]: missing field `directed` in initializer of `BeadEventKind`\n   --> spira-lc/src/callers.rs:726:13\n    |\n726 |             BeadEventKind::Claim {\n";
 
+#[test_id(tzumehi)]
 #[test]
 fn compiler_errors_carry_their_file_line_and_message() {
     let e = compile_errors(E0063);
@@ -25,6 +26,7 @@ fn compiler_errors_carry_their_file_line_and_message() {
     );
 }
 
+#[test_id(ttb2tyi)]
 #[test]
 fn an_error_at_a_file_only_one_member_touches_ejects_that_member() {
     let members = vec![
@@ -43,6 +45,7 @@ fn an_error_at_a_file_only_one_member_touches_ejects_that_member() {
     );
 }
 
+#[test_id(thcs4yj)]
 #[test]
 fn an_error_naming_what_another_member_adds_sequences_the_caller_behind_it() {
     let members = vec![
@@ -74,6 +77,7 @@ fn acts_line(a: &[Action]) -> String {
     }
 }
 
+#[test_id(tq99s2i)]
 #[test]
 fn a_shared_file_with_one_member_defining_the_missing_method_sequences_the_other() {
     let err = "error[E0599]: no method named `reclaim` found for struct `Pool` in the current scope\n --> q/src/pool.rs:40:10\n";
@@ -88,6 +92,7 @@ fn a_shared_file_with_one_member_defining_the_missing_method_sequences_the_other
     );
 }
 
+#[test_id(t8kliic)]
 #[test]
 fn an_error_no_member_touches_or_two_touch_with_no_provider_is_unmapped() {
     let members = vec![
@@ -112,6 +117,7 @@ fn an_error_no_member_touches_or_two_touch_with_no_provider_is_unmapped() {
     );
 }
 
+#[test_id(tdenv6h)]
 #[test]
 fn one_unmapped_error_makes_the_whole_verdict_unmapped() {
     let members = vec![diff("a", &["x/src/a.rs"], "+1\n")];
@@ -119,6 +125,7 @@ fn one_unmapped_error_makes_the_whole_verdict_unmapped() {
     assert!(attribute(&compile_errors(text), &members).is_empty());
 }
 
+#[test_id(tf8dwys)]
 #[test]
 fn an_initializer_is_not_a_definition_of_the_field_it_sets() {
     assert!(defines("+    directed: bool,", "directed"));
@@ -135,6 +142,7 @@ fn an_initializer_is_not_a_definition_of_the_field_it_sets() {
     assert!(!defines("+    x.directed();", "directed"));
 }
 
+#[test_id(ta60xym)]
 #[test]
 fn a_member_defining_a_same_named_field_in_another_crate_is_no_provider() {
     let members = vec![
@@ -148,6 +156,7 @@ fn a_member_defining_a_same_named_field_in_another_crate_is_no_provider() {
     );
 }
 
+#[test_id(t90pynv)]
 #[test]
 fn several_errors_in_real_compiler_output_each_map_and_a_bare_summary_line_is_skipped() {
     let text = "error[E0599]: no method named `x` found\n  --> a/src/one.rs:3:9\n   |\nerror[E0308]: mismatched types\n  --> b/src/two.rs:8:5\n\nerror: could not compile `a` (lib) due to 2 previous errors\n";
@@ -165,6 +174,7 @@ fn several_errors_in_real_compiler_output_each_map_and_a_bare_summary_line_is_sk
     assert_eq!(attribute(&e, &members).len(), 2);
 }
 
+#[test_id(tkuaa2l)]
 #[test]
 fn the_recipe_paths_are_the_ones_the_image_workflow_builds_on() {
     let yml = std::fs::read_to_string(
@@ -183,6 +193,7 @@ fn the_recipe_paths_are_the_ones_the_image_workflow_builds_on() {
     assert_eq!(ours, triggers);
 }
 
+#[test_id(t8gvcn6)]
 #[test]
 fn only_a_signal_exit_of_the_runner_is_a_signal_death() {
     assert!(is_signal_death(
@@ -201,6 +212,7 @@ fn only_a_signal_exit_of_the_runner_is_a_signal_death() {
     ));
 }
 
+#[test_id(tw0fmoo)]
 #[test]
 fn runner_touchers_match_the_directories_and_not_their_lookalikes() {
     let ds = [
@@ -215,6 +227,7 @@ fn runner_touchers_match_the_directories_and_not_their_lookalikes() {
 
 const DUP_KEY: &str = "error: duplicate key\n  --> spira-lc/Cargo.toml:44:1\n   |\n44 | libc = \"0.2\"\n   | ^^^^\nerror: failed to load manifest for workspace member `/work/loom`\n";
 
+#[test_id(txshkp9)]
 #[test]
 fn a_manifest_error_at_a_file_two_members_touch_ejects_the_later_one() {
     let members = vec![
@@ -234,6 +247,7 @@ fn a_manifest_error_at_a_file_two_members_touch_ejects_the_later_one() {
     assert!(line.contains("also changed by a, which stays"), "{line}");
 }
 
+#[test_id(t6ein3a)]
 #[test]
 fn with_three_manifest_touchers_only_the_last_is_ejected() {
     let members = ["a", "b", "c"]
@@ -244,6 +258,7 @@ fn with_three_manifest_touchers_only_the_last_is_ejected() {
     assert!(matches!(&acts[0], Action::Eject { id, .. } if id == "c"), "{acts:?}");
 }
 
+#[test_id(talucoi)]
 #[test]
 fn two_touchers_of_a_source_file_with_no_provider_stay_unattributed() {
     let err = "error[E0599]: no method named `reclaim` found for struct `Pool` in the current scope\n --> q/src/pool.rs:40:10\n";

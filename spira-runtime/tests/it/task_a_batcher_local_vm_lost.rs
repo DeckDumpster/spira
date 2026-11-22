@@ -26,6 +26,7 @@ fn names(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(thy7mx2)]
 #[test]
 fn a_round_whose_vm_is_lost_is_certified_again_on_the_same_head_never_abandoned() {
     let first = certifying("spira.r9.certify.1");
@@ -48,6 +49,7 @@ fn a_round_whose_vm_is_lost_is_certified_again_on_the_same_head_never_abandoned(
     assert_eq!((rc.state, rc.batch, rc.pace.infra), (State::Idle, None, 1), "an Infra fault, not a red");
 }
 
+#[test_id(tkrl4rd)]
 #[test]
 fn a_red_certify_is_still_judged_red() {
     let mut carry = certifying("spira.r9.certify.1");
@@ -64,6 +66,7 @@ fn no_output(carry: &Carry) -> (Carry, Vec<Act>) {
     on_ran_with(carry, &ran, &RanOutput::captured(b"fault=vm-no-output\n", b"queue.sh round certify: certify rc=77: INCOMPLETE reason=vm-no-output: VM produced no output\n"), NOW).expect("the carried leg's end moves the machine")
 }
 
+#[test_id(tmh9lq0)]
 #[test]
 fn a_round_whose_vm_produced_no_output_is_certified_once_more_and_a_second_parks_it_open() {
     let (again, acts) = no_output(&certifying("spira.r9.certify.1"));

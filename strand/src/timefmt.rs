@@ -95,6 +95,7 @@ pub fn now() -> i64 {
 mod tests {
     use super::*;
 
+    #[test_id(tz2dht2)]
     #[test]
     fn round_trips() {
         let t = parse_rfc3339("2026-09-29T01:02:03Z").unwrap();

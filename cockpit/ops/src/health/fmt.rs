@@ -151,6 +151,7 @@ pub fn mail_dur(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(t9q84q8)]
     #[test]
     fn fit_passes_short_text_and_marks_cut_text() {
         assert_eq!(fit("hi", 10), "hi");
@@ -159,6 +160,7 @@ mod tests {
         assert_eq!(fit("hello world", 0), "hello world");
     }
 
+    #[test_id(tju619y)]
     #[test]
     fn fit_counts_characters_not_bytes() {
         // multibyte marker chars are used on this pane; a 3-char string must not cut at 3
@@ -167,6 +169,7 @@ mod tests {
         assert_eq!(fit("abcd", 3), "ab\u{2026}");
     }
 
+    #[test_id(t1fwwk1)]
     #[test]
     fn tok_scales() {
         assert_eq!(tok("999"), "999");
@@ -176,6 +179,7 @@ mod tests {
         assert_eq!(tok("-"), "-");
     }
 
+    #[test_id(thptx88)]
     #[test]
     fn pct_and_unreadable() {
         assert_eq!(pct("74", "100"), "74%");
@@ -183,6 +187,7 @@ mod tests {
         assert_eq!(pct("?", "100"), "?");
     }
 
+    #[test_id(tfyg47o)]
     #[test]
     fn model_short_examples() {
         assert_eq!(model_short("claude-opus-4-6"), "opus 4.6");
@@ -193,6 +198,7 @@ mod tests {
         assert_eq!(model_short("gpt-4"), "gpt-4");
     }
 
+    #[test_id(tw3y30p)]
     #[test]
     fn dur_m_bands() {
         assert_eq!(dur_m("0"), "0m");
@@ -202,6 +208,7 @@ mod tests {
         assert_eq!(dur_m("?"), "?");
     }
 
+    #[test_id(tihmcdu)]
     #[test]
     fn mail_dur_bands() {
         assert_eq!(mail_dur("90"), "90s");

@@ -44,11 +44,13 @@ fn effects(acts: &[spira_runtime::tasks::a::kit::Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
+#[test_id(ty86m45)]
 #[test]
 fn a_step_result_for_another_head_than_the_rounds_current_one_changes_no_state() {
     assert!(on_ran_with(&carried("B", "A"), &ran(), &fault(), NOW).is_none());
 }
 
+#[test_id(tm29e9m)]
 #[test]
 fn a_step_result_for_the_rounds_current_head_is_applied() {
     let (next, acts) = on_ran_with(&carried("A", "A"), &ran(), &fault(), NOW).expect("its own step");
@@ -56,6 +58,7 @@ fn a_step_result_for_the_rounds_current_head_is_applied() {
     assert!(effects(&acts).contains(&ABANDON), "{acts:?}");
 }
 
+#[test_id(txcx1cn)]
 #[test]
 fn the_first_head_seen_is_the_one_the_running_step_was_started_for() {
     let (next, _) = decide(&carried("", ""), &snapshot("A", "certifying"));
@@ -63,6 +66,7 @@ fn the_first_head_seen_is_the_one_the_running_step_was_started_for() {
     assert_eq!((rc.head.as_str(), rc.leg_head.as_str()), ("A", "A"));
 }
 
+#[test_id(teftz6d)]
 #[test]
 fn a_head_that_moved_while_its_pass_runs_orphans_the_step_without_ending_the_round() {
     let (next, acts) = decide(&carried("A", "A"), &snapshot("B", "certifying"));
@@ -72,6 +76,7 @@ fn a_head_that_moved_while_its_pass_runs_orphans_the_step_without_ending_the_rou
     assert!(on_ran_with(&next, &ran(), &fault(), NOW).is_none(), "the old step's end finds no leg of the round");
 }
 
+#[test_id(tp8bdwj)]
 #[test]
 fn a_green_pass_on_the_current_head_lands_the_round_whatever_the_older_step_then_returns() {
     let (landing, acts) = decide(&carried("A", "A"), &snapshot("B", "green"));
@@ -80,6 +85,7 @@ fn a_green_pass_on_the_current_head_lands_the_round_whatever_the_older_step_then
     assert!(on_ran_with(&landing, &ran(), &fault(), NOW).is_none());
 }
 
+#[test_id(tofuut8)]
 #[test]
 fn a_green_round_on_the_attributions_own_head_lands_and_stops_the_leg() {
     let (landing, acts) = decide(&carried("A", "A"), &snapshot("A", "green"));
@@ -91,6 +97,7 @@ fn a_green_round_on_the_attributions_own_head_lands_and_stops_the_leg() {
     assert!(on_ran_with(&landing, &ran(), &fault(), NOW).is_none());
 }
 
+#[test_id(t74a80r)]
 #[test]
 fn a_stacked_green_round_on_its_own_head_is_held_certified_and_its_leg_stopped() {
     let mut carry = carried("A", "A");
@@ -110,6 +117,7 @@ fn a_stacked_green_round_on_its_own_head_is_held_certified_and_its_leg_stopped()
     assert!(acts.iter().filter(|a| a.effect == runtime::units::UNIT_STOP).any(|a| serde_json::from_str::<UnitHandle>(&a.input).unwrap() == step), "the leg is stopped: {acts:?}");
 }
 
+#[test_id(twgs2us)]
 #[test]
 fn an_attribution_whose_round_is_still_certifying_or_red_is_not_landed() {
     for phase in ["certifying", "red"] {
@@ -121,6 +129,7 @@ fn an_attribution_whose_round_is_still_certifying_or_red_is_not_landed() {
 
 /// The incident's order: the step runs for head A, the round moves to head B, the next
 /// pass goes green, and only then the step returns its fault.
+#[test_id(tq4dnpq)]
 #[test]
 fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults() {
     let (carry, _) = decide(&carried("", ""), &snapshot("A", "certifying"));
@@ -132,6 +141,7 @@ fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults(
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }
 
+#[test_id(tps07id)]
 #[test]
 fn a_step_result_whose_head_differs_from_the_head_read_at_apply_time_changes_no_state() {
     let carry = carried("A", "A");
@@ -139,6 +149,7 @@ fn a_step_result_whose_head_differs_from_the_head_read_at_apply_time_changes_no_
     assert!(on_ran_seeing(&carry, &ran(), &fault(), NOW, &moved).is_none(), "the carry still says A: only the read at apply time knows");
 }
 
+#[test_id(tzc0epy)]
 #[test]
 fn a_step_result_whose_head_equals_the_head_read_at_apply_time_is_applied() {
     let same = |_: &str, _: &str| Some("A".to_string());
@@ -148,6 +159,7 @@ fn a_step_result_whose_head_equals_the_head_read_at_apply_time_is_applied() {
 
 /// The incident's actual order: the round moves to head B, the stopped step's fault
 /// arrives before the batcher has observed the round again, and the next pass then decides it.
+#[test_id(tjt4yy1)]
 #[test]
 fn a_superseded_steps_fault_delivered_before_the_next_observation_does_not_abandon_the_round() {
     let (carry, _) = decide(&carried("", ""), &snapshot("A", "certifying"));

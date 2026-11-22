@@ -246,6 +246,7 @@ fn opt_string_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Strin
 mod tests {
     use super::*;
 
+    #[test_id(te1cazb)]
     #[test]
     fn land_mode_normalises_forge_and_defaults_push() {
         assert_eq!(LandMode::parse("queue.forge"), Some(LandMode::Queue));
@@ -255,6 +256,7 @@ mod tests {
         assert_eq!(LandMode::Queue.config_word(), "queue.forge");
     }
 
+    #[test_id(t44gmm2)]
     #[test]
     fn members_parse_both_separators() {
         let m = parse_members("a:1, b:2 c");
@@ -269,6 +271,7 @@ mod tests {
         assert_eq!(render_members(&m[..2]), "a:1 b:2");
     }
 
+    #[test_id(tydxrre)]
     #[test]
     fn eject_cause_red_when_flagged_or_suites_named() {
         assert_eq!(EjectCause::decide(false, false, ""), EjectCause::Eject);

@@ -26,6 +26,7 @@ pub fn forget(run: &Path, repo: &str, id: &str, tip: &str) -> std::io::Result<()
 mod tests {
     use super::*;
 
+    #[test_id(tqok0s8)]
     #[test]
     fn forget_removes_only_a_record_naming_that_tip() {
         let run = testkit::TempDir::new("red-tip-record");

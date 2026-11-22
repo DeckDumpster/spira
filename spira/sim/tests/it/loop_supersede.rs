@@ -158,6 +158,7 @@ fn note_of(s: &Side, id: &str) -> Vec<String> {
 /// goes SUPERSEDED by sp-su01, the bd side closes it with sp-su01 as the successor, the evidence
 /// note says so, and the Concierge's inbox is told. A later tick does not adjudicate it again,
 /// and no other bead is ever superseded.
+#[test_id(twoq2gj)]
 #[test]
 fn supersede_only_a_landed_successor_supersedes_with_its_note_close_and_inbox_line() {
     fn none(_: &World, _: &Shared) {}
@@ -200,6 +201,7 @@ fn supersede_only_a_landed_successor_supersedes_with_its_note_close_and_inbox_li
 /// stays READY; an operator's own manual hold (sp-su07) is not a request and is left alone, with
 /// nothing said of it. Nothing is superseded, each request is adjudicated once however many
 /// ticks follow, and the duty polls on its cadence (the scenario's liveness check).
+#[test_id(tg27da9)]
 #[test]
 fn supersede_holds_an_unlanded_self_or_absent_successor_lifts_the_hold_and_an_operator_hold_stays() {
     fn holds(w: &World, s: &Shared) {
@@ -245,6 +247,7 @@ fn supersede_holds_an_unlanded_self_or_absent_successor_lifts_the_hold_and_an_op
 /// The loop's own dwarf offers no held bead (spira-claim's ranking): a READY bead under an
 /// operator's manual hold is never claimed, however many sentinel ticks and free slots follow,
 /// and the duty leaves the operator's hold alone.
+#[test_id(twg80k7)]
 #[test]
 fn a_held_ready_bead_is_never_claimed_by_the_loops_dwarf() {
     fn parked(w: &World, s: &Shared) {

@@ -7,6 +7,9 @@
 // record, the lifecycle machine (spira-lc), and at most 2 gh API calls (forge.sh batch-ci-status) for the
 // open batch's run.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use czar_pass::{iso_of, parse_field, parse_iso_to_epoch};
 use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
@@ -1359,6 +1362,7 @@ mod tests {
         testkit::TempDir::new(&format!("czar-pass-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
     }
 
+    #[test_id(t7mm423)]
     #[test]
     fn parse_field_reads_the_named_key() {
         let out = "run-id: 42\nrun-conclusion: failure\nhead-sha: abc123\n";
@@ -1366,6 +1370,7 @@ mod tests {
         assert_eq!(parse_field(out, "run-conclusion"), Some("failure".to_string()));
     }
 
+    #[test_id(t7et3fu)]
     #[test]
     fn parse_field_is_anchored_to_the_prefix_not_a_substring() {
         // "run-id" must not match inside "run-id-extra: x" — the prefix carries ": ".
@@ -1373,11 +1378,13 @@ mod tests {
         assert_eq!(parse_field(out, "run-id"), None);
     }
 
+    #[test_id(trxb9ml)]
     #[test]
     fn parse_field_missing_key_is_none() {
         assert_eq!(parse_field("run-id: 42\n", "queued-since"), None);
     }
 
+    #[test_id(t4pea2p)]
     #[test]
     fn repo_base_reduces_a_full_ref_to_a_bare_branch_name() {
         let dir = scratch_dir("repo-base");
@@ -1386,6 +1393,7 @@ mod tests {
         assert_eq!(repo_base("spira", &Some(map)), Some("main".to_string()));
     }
 
+    #[test_id(tlwg1o8)]
     #[test]
     fn repo_base_empty_column_means_let_the_caller_resolve_it() {
         let dir = scratch_dir("repo-base-empty");
@@ -1394,6 +1402,7 @@ mod tests {
         assert_eq!(repo_base("spira", &Some(map)), None);
     }
 
+    #[test_id(thyypqx)]
     #[test]
     fn a_forge_batch_on_the_store_is_the_record_the_queue_shows() {
         let dir = scratch_dir("open-batches-shown");
@@ -1423,12 +1432,14 @@ mod tests {
         assert!(matches!(v.status, RawStatus::Unobservable { .. }), "cannot tell is not no batch: {:?}", v.status);
     }
 
+    #[test_id(tc6l7rk)]
     #[test]
     fn file_mtime_is_none_for_a_missing_file() {
         let dir = scratch_dir("file-mtime-missing");
         assert_eq!(file_mtime(&dir.join("does-not-exist")), None);
     }
 
+    #[test_id(tdev3ab)]
     #[test]
     fn file_mtime_is_recent_for_a_freshly_written_file() {
         let dir = scratch_dir("file-mtime-fresh");
@@ -1440,6 +1451,7 @@ mod tests {
         assert!(mtime <= now && now - mtime < 30, "mtime {} vs now {}", mtime, now);
     }
 
+    #[test_id(tngsrp5)]
     #[test]
     fn read_new_lines_with_no_marker_returns_the_tail() {
         let dir = scratch_dir("read-new-lines-no-marker");
@@ -1448,6 +1460,7 @@ mod tests {
         assert!(read_new_lines(&log, "").contains("verdict"));
     }
 
+    #[test_id(td5q2j3)]
     #[test]
     fn read_new_lines_excludes_lines_at_or_before_the_marker() {
         // The two-pass sequence run_pass() actually performs: pass 1 sees the line with
@@ -1469,6 +1482,7 @@ mod tests {
         );
     }
 
+    #[test_id(tjxheaq)]
     #[test]
     fn read_new_lines_includes_lines_strictly_after_the_marker() {
         let dir = scratch_dir("read-new-lines-after-marker");
@@ -1535,6 +1549,7 @@ mod tests {
         }
     }
 
+    #[test_id(temnv0u)]
     #[test]
     fn detect_deadlock_silent_without_the_trigger_line() {
         let dir = scratch_dir("deadlock-silent");
@@ -1546,6 +1561,7 @@ mod tests {
         assert_eq!(tier, "det");
     }
 
+    #[test_id(tbpumx9)]
     #[test]
     fn detect_deadlock_fires_on_the_trigger_line() {
         let dir = scratch_dir("deadlock-fire");
@@ -1558,6 +1574,7 @@ mod tests {
         assert_eq!(tier, "inf");
     }
 
+    #[test_id(toi617x)]
     #[test]
     fn detect_attribution_failed_silent_with_no_matching_line() {
         let dir = scratch_dir("attribution-silent-absent");
@@ -1568,6 +1585,7 @@ mod tests {
         assert!(!v.is_gap);
     }
 
+    #[test_id(tj971y1)]
     #[test]
     fn detect_attribution_failed_silent_when_requeued_is_zero() {
         let dir = scratch_dir("attribution-silent-zero");
@@ -1578,6 +1596,7 @@ mod tests {
         assert!(!v.is_gap, "requeued 0 is a no-op, not an attribution failure");
     }
 
+    #[test_id(to2bzju)]
     #[test]
     fn detect_attribution_failed_fires_when_requeued_is_nonzero() {
         let dir = scratch_dir("attribution-fire");
@@ -1590,6 +1609,7 @@ mod tests {
         assert_eq!(tier, "inf");
     }
 
+    #[test_id(t5z3mxb)]
     #[test]
     fn detect_sort_failed_silent_without_the_trigger() {
         let dir = scratch_dir("sort-silent");
@@ -1599,6 +1619,7 @@ mod tests {
         assert!(!v.is_gap);
     }
 
+    #[test_id(t4184zw)]
     #[test]
     fn detect_sort_failed_fires_on_the_ranking_failure_line() {
         let dir = scratch_dir("sort-fire");
@@ -1611,6 +1632,7 @@ mod tests {
         assert_eq!(tier, "inf");
     }
 
+    #[test_id(ty9g21b)]
     #[test]
     fn detect_loop_stalled_silent_with_no_landing_log() {
         let dir = scratch_dir("loop-silent-no-log");
@@ -1622,6 +1644,7 @@ mod tests {
         assert_eq!(tier, "det");
     }
 
+    #[test_id(tpcury5)]
     #[test]
     fn detect_ci_silent_with_no_queue_dir() {
         let dir = scratch_dir("ci-no-queue");
@@ -1638,6 +1661,7 @@ mod tests {
     // pool-idle: the certified-pool trigger (sp-ji62y/sp-forah), harness-owned.
     // ────────────────────────────────────────────────────────────────────────────────
 
+    #[test_id(t3g2e0d)]
     #[test]
     fn a_default_that_disables_or_relaxes_a_check_is_refused_and_a_restoring_one_is_not() {
         for bad in [
@@ -1650,6 +1674,7 @@ mod tests {
         assert!(!default_relaxes_a_check("enable spira-reconciler-prod.timer"));
     }
 
+    #[test_id(ts5qhyp)]
     #[test]
     fn a_disabled_scoped_timer_is_reported_disabled_with_its_scoped_name_never_not_installed() {
         let a = timer_advice("spira-reconciler-prod.timer", "loaded", "disabled", "inactive");
@@ -1660,6 +1685,7 @@ mod tests {
         assert!(timer_advice("t.timer", "loaded", "enabled", "active").ends_with("enabled and active"));
     }
 
+    #[test_id(tunjv7b)]
     #[test]
     fn detect_reconciler_stale_missing_stamp_is_a_gap() {
         let dir = scratch_dir("reconciler-stale-missing");
@@ -1668,6 +1694,7 @@ mod tests {
         assert!(matches!(v.status, RawStatus::Gap { .. }));
     }
 
+    #[test_id(t4nw9o3)]
     #[test]
     fn the_clock_and_the_landing_log_stamp_read_without_date() {
         assert_eq!(iso_of(KNOWN_EPOCH), "2021-01-01T00:00:00Z");
@@ -1681,6 +1708,7 @@ mod tests {
         assert_eq!(parse_iso_to_epoch("garbage-not-a-stamp!"), None);
     }
 
+    #[test_id(t593gbc)]
     #[test]
     fn a_batch_view_the_store_cannot_vouch_for_could_not_say() {
         use spira_store::lc_call::LcError;
@@ -1692,6 +1720,7 @@ mod tests {
         assert_eq!(shown_of(Ok(BatchView { repo: "r".into(), open: Some(open) })), Ok("batch_id=b1\nbranch=spira/queue/b1\n".into()));
     }
 
+    #[test_id(txnfz1e)]
     #[test]
     fn a_stalled_loop_restarts_only_a_unit_the_unit_manager_reports_failed() {
         use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
@@ -1714,6 +1743,7 @@ mod cells;
 
 #[cfg(test)]
 mod fork_fence {
+    #[test_id(tzkw88o)]
     #[test]
     fn czar_pass_starts_no_spira_child_that_is_not_a_named_fork_edge() {
         let got = forge::fork_scan::scan(&testkit::manifest_dir().join("src"));
@@ -1725,6 +1755,7 @@ mod fork_fence {
 mod lane_tests {
     use super::*;
 
+    #[test_id(tnfejmr)]
     #[test]
     fn a_pass_with_the_czar_lane_stopped_on_every_registered_repo_takes_no_lock() {
         let world = crate::cells::pass_world();

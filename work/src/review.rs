@@ -176,11 +176,13 @@ pub fn run(agent: &str, argv: &[String], stdin: &str, cwd: &Path, timeout: Durat
 mod tests {
     use super::*;
 
+    #[test_id(t3webtq)]
     #[test]
     fn the_reviewer_prompt_renders_unchanged() {
         assert_eq!(REVIEWER_PROMPT, include_str!("../tests/golden/reviewer.md"));
     }
 
+    #[test_id(tceb3ek)]
     #[test]
     fn the_prompt_is_the_whole_system_prompt_and_the_tools_are_read_only() {
         let a = agent_argv("m");
@@ -190,6 +192,7 @@ mod tests {
         assert!(!a.iter().any(|x| x.contains("Edit") || x.contains("Write") || x == "--dangerously-skip-permissions"));
     }
 
+    #[test_id(t026h9i)]
     #[test]
     fn arguments_parse_and_refuse() {
         let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -200,6 +203,7 @@ mod tests {
         assert!(parse_args(&v(&["x"])).is_err());
     }
 
+    #[test_id(tt5x9h1)]
     #[test]
     fn a_transcript_summarises_tool_calls_law_calls_and_findings() {
         let t = concat!(
@@ -213,12 +217,14 @@ mod tests {
         assert_eq!((s.tool_calls["Read"], s.tool_calls["Bash"], s.law_calls, s.findings), (1, 2, vec!["3.2".to_string()], 2));
     }
 
+    #[test_id(trxfmfa)]
     #[test]
     fn a_command_that_merely_starts_like_work_law_is_not_a_law_call() {
         assert_eq!(law_arg("work lawful"), None);
         assert_eq!(law_arg("work law"), Some(String::new()));
     }
 
+    #[test_id(t1vv5v6)]
     #[test]
     fn an_empty_diff_says_so() {
         assert!(input("item", "").contains("no diff"));

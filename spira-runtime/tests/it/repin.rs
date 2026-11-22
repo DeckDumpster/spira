@@ -143,6 +143,7 @@ impl World {
     }
 }
 
+#[test_id(te47489)]
 #[test]
 fn a_pool_size_set_from_0_to_4_with_no_landing_calls_four_builders_within_one_tick() {
     let mut w = world("0");
@@ -166,6 +167,7 @@ fn a_pool_size_set_from_0_to_4_with_no_landing_calls_four_builders_within_one_ti
     assert_eq!(full.calls(6), 0, "four are live: the pool is full");
 }
 
+#[test_id(t8q49j5)]
 #[test]
 fn a_builder_limit_changed_while_a_round_is_driven_is_taken_one_turn_later() {
     let mut w = world("0");
@@ -179,6 +181,7 @@ fn a_builder_limit_changed_while_a_round_is_driven_is_taken_one_turn_later() {
     assert_eq!(facts, vec![format!("re-pinned {KEY} 0 -> 4")]);
 }
 
+#[test_id(tfehdmb)]
 #[test]
 fn a_key_the_batcher_pins_changed_while_a_round_is_driven_waits_for_the_round_and_status_shows_it_pending() {
     const BATCHER_KEY: &str = "SPIRA_BATCH_MAXPAR";
@@ -210,6 +213,7 @@ fn a_key_the_batcher_pins_changed_while_a_round_is_driven_waits_for_the_round_an
     assert!(status["repin"]["pending"].as_object().unwrap().is_empty());
 }
 
+#[test_id(t9nik5u)]
 #[test]
 fn a_task_that_started_before_a_re_pin_reads_the_value_it_started_with() {
     let mut w = world("0");
@@ -231,6 +235,7 @@ fn a_task_that_started_before_a_re_pin_reads_the_value_it_started_with() {
     assert_eq!(w.ask(&["scheduler", "running", KEY]).unwrap(), "4", "taken once the tick is over");
 }
 
+#[test_id(tc6ookx)]
 #[test]
 fn a_key_the_scheduler_pins_only_at_start_is_told_to_restart_and_an_unchanged_one_is_unchanged() {
     let w = world("0");
@@ -253,6 +258,7 @@ impl runtime::host::EffectRunner for Probes {
     }
 }
 
+#[test_id(tt52v8b)]
 #[tokio::test]
 async fn the_served_scheduler_takes_a_change_at_the_start_of_its_next_turn_with_no_restart() {
     use std::time::Duration;

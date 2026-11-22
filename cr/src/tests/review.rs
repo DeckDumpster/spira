@@ -63,6 +63,7 @@ fn sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+#[test_id(tsduo7o)]
 #[test]
 fn open_count_two_stages_two_distinct_reviews_and_no_ledger_row_and_no_forge_write() {
     let w = world();
@@ -79,6 +80,7 @@ fn open_count_two_stages_two_distinct_reviews_and_no_ledger_row_and_no_forge_wri
     }
 }
 
+#[test_id(tejxosy)]
 #[test]
 fn open_scheduled_marks_the_review_scheduled() {
     let w = world();
@@ -86,6 +88,7 @@ fn open_scheduled_marks_the_review_scheduled() {
     assert_eq!(record::load(w.run.path(), 1).unwrap().kind, record::Kind::Scheduled);
 }
 
+#[test_id(t0inynx)]
 #[test]
 fn open_with_a_bare_number_exits_two_naming_count() {
     let w = world();
@@ -95,6 +98,7 @@ fn open_with_a_bare_number_exits_two_naming_count() {
     assert!(record::all(w.run.path()).unwrap().is_empty());
 }
 
+#[test_id(t885p8b)]
 #[test]
 fn open_never_hands_two_reviews_one_number() {
     let w = world();
@@ -103,6 +107,7 @@ fn open_never_hands_two_reviews_one_number() {
     assert_eq!((a, b), (1, 2));
 }
 
+#[test_id(thrwfqk)]
 #[test]
 fn seal_stores_the_unit_bytes_in_blobs_tree_and_pull_request() {
     let mut w = world();
@@ -125,6 +130,7 @@ fn seal_stores_the_unit_bytes_in_blobs_tree_and_pull_request() {
     assert!(o.stdout.contains("pull/7"), "{}", o.stdout);
 }
 
+#[test_id(tq95bnr)]
 #[test]
 fn seal_puts_the_cover_note_in_the_pull_request_description_and_only_unit_files_on_the_branch() {
     let mut w = world();
@@ -147,6 +153,7 @@ fn seal_puts_the_cover_note_in_the_pull_request_description_and_only_unit_files_
     }
 }
 
+#[test_id(txut26b)]
 #[test]
 fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
     let mut w = world();
@@ -166,6 +173,7 @@ fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
     assert!(!w.sealed_path(1).exists());
 }
 
+#[test_id(t12y7jd)]
 #[test]
 fn the_cover_lists_tests_by_call_path_not_by_name() {
     let mut w = world();
@@ -181,6 +189,7 @@ fn the_cover_lists_tests_by_call_path_not_by_name() {
     assert!(!tests_section.contains("names_only.rs"), "{body}");
 }
 
+#[test_id(tg2okig)]
 #[test]
 fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
     let mut w = world();
@@ -193,6 +202,7 @@ fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
     assert!(body.contains("`other/src/util.rs::doubles` calls `twice`"), "{body}");
 }
 
+#[test_id(ta11sgp)]
 #[test]
 fn a_unit_with_no_calling_test_says_none_found_by_call_path() {
     let mut w = world();
@@ -203,6 +213,7 @@ fn a_unit_with_no_calling_test_says_none_found_by_call_path() {
     assert!(body.contains("None found by call path."), "{body}");
 }
 
+#[test_id(tbkrts0)]
 #[test]
 fn seal_cover_note_carries_facts_and_no_critique() {
     let mut w = world();
@@ -216,6 +227,7 @@ fn seal_cover_note_carries_facts_and_no_critique() {
     assert!(!note.contains("first look"), "the sealed review must not reach the cover note");
 }
 
+#[test_id(te27c55)]
 #[test]
 fn seal_sends_a_large_module_whole_and_byte_identical() {
     let mut w = world();
@@ -236,6 +248,7 @@ fn seal_sends_a_large_module_whole_and_byte_identical() {
     assert!(note.contains(&want), "missing {want:?} in:\n{note}");
 }
 
+#[test_id(tmseqna)]
 #[test]
 fn seal_refuses_an_empty_array_a_foreign_path_and_a_line_past_the_end_before_any_forge_call() {
     let mut w = world();
@@ -257,6 +270,7 @@ fn seal_refuses_an_empty_array_a_foreign_path_and_a_line_past_the_end_before_any
     assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
 }
 
+#[test_id(tkpqfx1)]
 #[test]
 fn seal_that_fails_at_the_pull_request_stays_staged_and_a_rerun_makes_only_the_pull_request() {
     let mut w = world();
@@ -279,6 +293,7 @@ fn seal_that_fails_at_the_pull_request_stays_staged_and_a_rerun_makes_only_the_p
     assert_eq!((r.state, r.pr), (State::Open, Some(7)));
 }
 
+#[test_id(tnktnk5)]
 #[test]
 fn seal_with_an_empty_owner_exits_two_naming_the_key() {
     let mut w = world();
@@ -294,6 +309,7 @@ fn seal_with_an_empty_owner_exits_two_naming_the_key() {
     assert!(w.seal_with("001", &c).stderr.contains("SPIRA_CR_REPO_NAME"));
 }
 
+#[test_id(to8uspa)]
 #[test]
 fn unseal_on_an_open_review_exits_two_and_posts_nothing() {
     let mut w = world();
@@ -304,6 +320,7 @@ fn unseal_on_an_open_review_exits_two_and_posts_nothing() {
     assert_eq!(w.gh.count(), before);
 }
 
+#[test_id(tqgs9qi)]
 #[test]
 fn unseal_on_a_published_review_posts_the_sealed_comments_as_one_review_once() {
     let mut w = world();
@@ -321,6 +338,7 @@ fn unseal_on_a_published_review_posts_the_sealed_comments_as_one_review_once() {
     assert_eq!(w.gh.posted("pulls/7/reviews").len(), 1);
 }
 
+#[test_id(tyngqsy)]
 #[test]
 fn unseal_refuses_a_sealed_file_altered_after_sealing() {
     let mut w = world();
@@ -334,6 +352,7 @@ fn unseal_refuses_a_sealed_file_altered_after_sealing() {
     assert!(w.gh.posted("reviews").is_empty());
 }
 
+#[test_id(tgebm5a)]
 #[test]
 fn unseal_said_publishes_only_for_a_person_commenting_on_this_pull_request() {
     let mut w = world();
@@ -353,6 +372,7 @@ fn unseal_said_publishes_only_for_a_person_commenting_on_this_pull_request() {
     assert_eq!(w.gh.posted("reviews").len(), 1);
 }
 
+#[test_id(tny0eju)]
 #[test]
 fn status_lists_every_review_with_state_age_url_and_title() {
     let mut w = world();
@@ -399,6 +419,7 @@ fn coverage_ports(tree: crate::ports::FixtureTree, rows: Vec<Row>, limit: usize)
     (run, p)
 }
 
+#[test_id(tagwoqt)]
 #[test]
 fn status_reports_coverage_by_area_and_kind() {
     let files = store_unit_files();
@@ -417,6 +438,7 @@ fn status_reports_coverage_by_area_and_kind() {
     assert!(text.contains("coverage at c0ffee: "), "{text}");
 }
 
+#[test_id(t59e7o4)]
 #[test]
 fn status_lists_the_oldest_never_reviewed_files_first_and_counts_the_rest() {
     let tree = fixture().with_commits("demo/src/net.rs", &[NOW - 50 * DAY, NOW - DAY]).with_commits("other/src/util.rs", &[NOW - 80 * DAY]);
@@ -431,6 +453,7 @@ fn status_lists_the_oldest_never_reviewed_files_first_and_counts_the_rest() {
     assert!(go(&p, &["status"]).stdout.contains(&format!("… {} more", total - 2)));
 }
 
+#[test_id(tuxy59c)]
 #[test]
 fn status_lists_files_changed_since_review_with_lines_changed() {
     let files = store_unit_files();
@@ -444,6 +467,7 @@ fn status_lists_files_changed_since_review_with_lines_changed() {
     assert_eq!(c["files"]["current"], files.len() - 1);
 }
 
+#[test_id(tuuha1h)]
 #[test]
 fn status_counts_a_file_reviewed_under_its_old_name() {
     let files = store_unit_files();
@@ -455,6 +479,7 @@ fn status_counts_a_file_reviewed_under_its_old_name() {
     assert_eq!(c["files"]["current"], files.len());
 }
 
+#[test_id(t155l3y)]
 #[test]
 fn a_review_closed_unpublished_adds_no_coverage() {
     let files = store_unit_files();
@@ -465,6 +490,7 @@ fn a_review_closed_unpublished_adds_no_coverage() {
     assert_eq!(c["kinds"].as_array().unwrap().iter().find(|k| k["kind"] == "module").unwrap()["reviewed"], 0);
 }
 
+#[test_id(tpm45gj)]
 #[test]
 fn a_set_state_stamps_the_matching_time_and_keeps_the_rest() {
     let w = world();
@@ -474,6 +500,7 @@ fn a_set_state_stamps_the_matching_time_and_keeps_the_rest() {
     assert_eq!(record::load(w.run.path(), 1).unwrap(), r);
 }
 
+#[test_id(tw0z9i4)]
 #[test]
 fn seal_rerun_with_different_comments_is_refused_not_silently_dropped() {
     let mut w = world();
@@ -488,6 +515,7 @@ fn seal_rerun_with_different_comments_is_refused_not_silently_dropped() {
     assert!(o.stderr.contains("different comments"), "{}", o.stderr);
 }
 
+#[test_id(twk2jco)]
 #[test]
 fn seal_rerun_with_a_different_fresh_read_is_refused() {
     let mut w = world();
@@ -501,6 +529,7 @@ fn seal_rerun_with_a_different_fresh_read_is_refused() {
     assert!(o.stderr.contains("different comments"), "{}", o.stderr);
 }
 
+#[test_id(tpn9kae)]
 #[test]
 fn seal_rerun_with_a_different_cover_is_refused() {
     let mut w = world();
@@ -514,6 +543,7 @@ fn seal_rerun_with_a_different_cover_is_refused() {
     assert!(o.stderr.contains("different cover"), "{}", o.stderr);
 }
 
+#[test_id(txv2u9e)]
 #[test]
 fn seal_rerun_after_a_lost_progress_file_adopts_the_ref_already_on_the_forge() {
     let mut w = world();
@@ -531,6 +561,7 @@ fn seal_rerun_after_a_lost_progress_file_adopts_the_ref_already_on_the_forge() {
     assert_eq!(w.gh.posted("pulls").len(), 2);
 }
 
+#[test_id(t1ie2xo)]
 #[test]
 fn unseal_with_a_failing_review_post_leaves_it_retryable() {
     let mut w = world();
@@ -542,6 +573,7 @@ fn unseal_with_a_failing_review_post_leaves_it_retryable() {
     assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
 }
 
+#[test_id(tsuv27m)]
 #[test]
 fn the_section_guard_names_a_missing_heading_and_a_blank_section() {
     use crate::review::missing_section;
@@ -551,6 +583,7 @@ fn the_section_guard_names_a_missing_heading_and_a_blank_section() {
     assert_eq!(missing_section(&full.replace("## Who calls it\n\ntext", "## Who calls it\n\n")), Some("## Who calls it"));
 }
 
+#[test_id(tkq7fmz)]
 #[test]
 fn seal_refuses_a_prose_field_carrying_a_heading_line_and_a_bare_array_on_a_rerun() {
     let mut w = world();
@@ -578,6 +611,7 @@ fn sealed_body(w: &mut World) -> String {
     w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string()
 }
 
+#[test_id(te469fb)]
 #[test]
 fn the_cover_counts_every_commit_and_its_reverts_and_fixes() {
     let mut w = world();
@@ -594,6 +628,7 @@ fn the_cover_counts_every_commit_and_its_reverts_and_fixes() {
     assert!(body.contains("- Commits: 5 ever, 1 reverts, 1 fixes"), "{body}");
 }
 
+#[test_id(twwucb4)]
 #[test]
 fn the_cover_gives_the_rewritten_share_and_median_line_age() {
     let mut w = world();
@@ -606,6 +641,7 @@ fn the_cover_gives_the_rewritten_share_and_median_line_age() {
     assert!(body.contains("median line age 105 days"), "{body}");
 }
 
+#[test_id(td5c8eq)]
 #[test]
 fn the_cover_names_tests_deleted_later_and_disabled_as_flaky() {
     let mut w = world();
@@ -618,6 +654,7 @@ fn the_cover_names_tests_deleted_later_and_disabled_as_flaky() {
     assert!(body.contains("`unit:demo store::tests::opens` 1970-01-01"), "{body}");
 }
 
+#[test_id(te48p23)]
 #[test]
 fn an_unreadable_bead_store_or_registry_says_unknown_not_zero() {
     let mut w = world();
@@ -634,6 +671,7 @@ fn put_rows(body: &serde_json::Value) -> Vec<Row> {
     crate::ledger::Ledger::parse(&String::from_utf8(unbase64(body["content"].as_str().unwrap())).unwrap()).unwrap().rows
 }
 
+#[test_id(tzyzbjx)]
 #[test]
 fn seal_appends_one_open_row_to_the_review_repositorys_ledger() {
     let mut w = world();
@@ -667,6 +705,7 @@ fn seal_appends_one_open_row_to_the_review_repositorys_ledger() {
     assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 2);
 }
 
+#[test_id(tdux8bk)]
 #[test]
 fn a_staged_review_holds_its_unit_back_from_the_next_open() {
     let w = world();
@@ -675,6 +714,7 @@ fn a_staged_review_holds_its_unit_back_from_the_next_open() {
     assert_eq!(o.code, 1, "{}", o.stderr);
 }
 
+#[test_id(totrgvj)]
 #[test]
 fn ledger_close_writes_once_with_how_it_closed() {
     let mut w = world();
@@ -693,6 +733,7 @@ fn ledger_close_writes_once_with_how_it_closed() {
     assert_eq!(w.gh.put("contents/ledger.jsonl").len(), puts + 1, "a second close makes no PUT");
 }
 
+#[test_id(tfv5b6z)]
 #[test]
 fn ledger_close_of_an_unpublished_review_says_unpublished() {
     let mut w = world();
@@ -701,6 +742,7 @@ fn ledger_close_of_an_unpublished_review_says_unpublished() {
     assert_eq!(ledger_rows(&w.gh).last().unwrap().closed_as, Some(ClosedAs::Unpublished));
 }
 
+#[test_id(trakb3h)]
 #[test]
 fn a_missing_ledger_file_is_refused_naming_the_step() {
     let mut w = world();
@@ -714,6 +756,7 @@ fn a_missing_ledger_file_is_refused_naming_the_step() {
     assert!(w.gh.put("contents/ledger.jsonl").is_empty());
 }
 
+#[test_id(tcsl3jp)]
 #[test]
 fn a_ledger_put_conflict_rereads_and_retries() {
     let mut w = world();
@@ -730,6 +773,7 @@ fn a_ledger_put_conflict_rereads_and_retries() {
     assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "901", "001"]);
 }
 
+#[test_id(t1ntz02)]
 #[test]
 fn a_ledger_that_moves_under_every_write_gives_up_after_three_puts() {
     let mut w = world();
@@ -742,6 +786,7 @@ fn a_ledger_that_moves_under_every_write_gives_up_after_three_puts() {
     assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 3);
 }
 
+#[test_id(twbl49v)]
 #[test]
 fn closing_a_review_that_was_never_sealed_writes_nothing_and_succeeds() {
     let w = world();
@@ -751,6 +796,7 @@ fn closing_a_review_that_was_never_sealed_writes_nothing_and_succeeds() {
     assert!(w.gh.put("contents/ledger.jsonl").is_empty());
 }
 
+#[test_id(tgwcdxf)]
 #[test]
 fn seal_refuses_a_sealed_review_missing_either_half_before_any_forge_call() {
     let mut w = world();
@@ -771,6 +817,7 @@ fn seal_refuses_a_sealed_review_missing_either_half_before_any_forge_call() {
     assert!(!w.sealed_path(1).exists());
 }
 
+#[test_id(tgg5vlf)]
 #[test]
 fn unseal_labels_each_comment_with_its_half() {
     let mut w = world();
@@ -782,6 +829,7 @@ fn unseal_labels_each_comment_with_its_half() {
     assert_eq!(bodies, ["**His lens:** first look", "**Fresh read:** fresh look"]);
 }
 
+#[test_id(t8d0y6f)]
 #[test]
 fn status_shows_each_published_reviews_two_scores_in_order() {
     let mut w = world();
@@ -806,6 +854,7 @@ fn status_shows_each_published_reviews_two_scores_in_order() {
     assert_eq!(lines, ["  001 lens 1/2 fresh 1/1", "  003 lens 0/0 fresh 0/1"]);
 }
 
+#[test_id(ts2dkhu)]
 #[test]
 fn a_review_sealed_as_one_undivided_array_scores_all_lens_and_no_fresh() {
     let mut w = world();
@@ -841,6 +890,7 @@ fn comment(id: u64, bot: bool, path: Option<&str>) -> String {
     )
 }
 
+#[test_id(tgcdjig)]
 #[test]
 fn ledger_close_records_his_comments_by_path_and_findings_by_kind() {
     let mut w = world();
@@ -864,6 +914,7 @@ fn ledger_close_records_his_comments_by_path_and_findings_by_kind() {
     );
 }
 
+#[test_id(t2htgym)]
 #[test]
 fn a_review_closed_unpublished_records_no_attention() {
     let mut w = world();
@@ -875,6 +926,7 @@ fn a_review_closed_unpublished_records_no_attention() {
     );
 }
 
+#[test_id(ti87ur8)]
 #[test]
 fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
     let mut w = world();
@@ -886,6 +938,7 @@ fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
     assert!(v["weight"]["attention_share"].as_f64().unwrap() > 0.0, "{v}");
 }
 
+#[test_id(t7sobt0)]
 #[test]
 fn the_cover_lists_the_incidents_whose_commits_touched_the_unit() {
     let mut w = world();
@@ -898,6 +951,7 @@ fn the_cover_lists_the_incidents_whose_commits_touched_the_unit() {
     assert!(!section.contains("sp-feat02"), "{body}");
 }
 
+#[test_id(tmxn8u4)]
 #[test]
 fn a_unit_no_incident_touched_says_none_found() {
     let mut w = world();
@@ -907,6 +961,7 @@ fn a_unit_no_incident_touched_says_none_found() {
     assert!(section.contains("None found."), "{body}");
 }
 
+#[test_id(toomx3g)]
 #[test]
 fn an_unreadable_incident_lookup_says_unknown_not_none() {
     let mut w = world();
@@ -916,6 +971,7 @@ fn an_unreadable_incident_lookup_says_unknown_not_none() {
     assert!(body.contains("Incidents: unknown (store down)") && !body.contains("None found.\n\n## Tests"), "{body}");
 }
 
+#[test_id(tjg38lz)]
 #[test]
 fn a_unit_whose_commits_name_no_bead_says_none_found_without_asking_the_store() {
     let mut w = world();
@@ -975,6 +1031,7 @@ fn staged_sink_world() -> (World, String, String) {
     (w, stdin, sha)
 }
 
+#[test_id(t9vyos3)]
 #[test]
 fn adopt_records_a_staged_review_as_open_on_the_pull_request_with_its_forge_files() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -993,6 +1050,7 @@ fn adopt_records_a_staged_review_as_open_on_the_pull_request_with_its_forge_file
     assert!(w.gh.posted("").is_empty());
 }
 
+#[test_id(tyjqd3o)]
 #[test]
 fn an_adopted_review_unseals_and_takes_findings_only_on_the_pull_requests_files() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1012,6 +1070,7 @@ fn an_adopted_review_unseals_and_takes_findings_only_on_the_pull_requests_files(
     assert_eq!(w.cr(&["finding", "--review", "001"]).code, 2);
 }
 
+#[test_id(t877atq)]
 #[test]
 fn adopt_with_a_unit_and_commit_allocates_an_on_demand_review() {
     let mut w = world();
@@ -1029,6 +1088,7 @@ fn adopt_with_a_unit_and_commit_allocates_an_on_demand_review() {
     assert_eq!(record::all(w.run.path()).unwrap().len(), 1);
 }
 
+#[test_id(twlsjog)]
 #[test]
 fn adopt_refusals_exit_two_and_write_nothing() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1063,6 +1123,7 @@ fn adopt_refusals_exit_two_and_write_nothing() {
     assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
 }
 
+#[test_id(txgnqlh)]
 #[test]
 fn adopt_again_is_a_no_op_and_another_pull_request_is_refused() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1077,6 +1138,7 @@ fn adopt_again_is_a_no_op_and_another_pull_request_is_refused() {
     assert_eq!((w.review_json(1), w.gh.ledger_text()), (record_after, ledger_after));
 }
 
+#[test_id(tuobndy)]
 #[test]
 fn adopt_rejects_review_with_unit_and_an_incomplete_form_before_anything_runs() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1088,6 +1150,7 @@ fn adopt_rejects_review_with_unit_and_an_incomplete_form_before_anything_runs() 
     assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
 }
 
+#[test_id(tffjfyq)]
 #[test]
 fn adopt_replaces_the_reviews_ledger_rows_with_one_and_keeps_the_others() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1100,6 +1163,7 @@ fn adopt_replaces_the_reviews_ledger_rows_with_one_and_keeps_the_others() {
     assert_eq!(rows[1].files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), [SINK, FILE_SINK]);
 }
 
+#[test_id(t7bx34k)]
 #[test]
 fn adopt_reads_every_page_of_the_pull_requests_files() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1112,6 +1176,7 @@ fn adopt_reads_every_page_of_the_pull_requests_files() {
     assert_eq!(files, [SINK, FILE_SINK]);
 }
 
+#[test_id(tf6vwkw)]
 #[test]
 fn adopt_names_a_pull_request_file_that_is_not_at_the_source_commit() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1122,6 +1187,7 @@ fn adopt_names_a_pull_request_file_that_is_not_at_the_source_commit() {
     assert!(!w.sealed_path(1).exists());
 }
 
+#[test_id(trwz2rx)]
 #[test]
 fn adopt_refuses_an_empty_sealed_review() {
     let (mut w, stdin, sha) = staged_sink_world();
@@ -1131,6 +1197,7 @@ fn adopt_refuses_an_empty_sealed_review() {
     assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
 }
 
+#[test_id(t27jczs)]
 #[test]
 fn adopt_again_by_unit_changes_no_file() {
     let mut w = world();

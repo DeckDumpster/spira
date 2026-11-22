@@ -56,6 +56,7 @@ fn legs_of(acts: &[Act], effect: &str) -> Vec<Leg> {
     acts.iter().filter(|a| a.effect == effect).map(|a| serde_json::from_str(&a.input).expect("a leg")).collect()
 }
 
+#[test_id(tl8ucsd)]
 #[test]
 fn a_gate_red_recorded_while_a_pass_runs_stops_nothing_and_leaves_the_pass_alone() {
     for state in [State::Corpus, State::Attributing, State::Certifying] {
@@ -67,6 +68,7 @@ fn a_gate_red_recorded_while_a_pass_runs_stops_nothing_and_leaves_the_pass_alone
     }
 }
 
+#[test_id(tz8vcin)]
 #[test]
 fn a_pass_that_ends_green_lands_the_round_with_the_red_provisional_member_in_it() {
     let (next, acts) = ended(&recorded(State::Certifying, "t1", RED), 0, "verdict=green\n");
@@ -76,6 +78,7 @@ fn a_pass_that_ends_green_lands_the_round_with_the_red_provisional_member_in_it(
     assert_eq!(next.repos["spira"].state, State::Landing);
 }
 
+#[test_id(tnra7gv)]
 #[test]
 fn a_pass_that_ends_red_ejects_the_recorded_member_first_with_the_gates_lines_before_any_attribution() {
     for (state, leg) in [(State::Certifying, LEG), (State::Corpus, "spira.r9.corpus1")] {
@@ -89,6 +92,7 @@ fn a_pass_that_ends_red_ejects_the_recorded_member_first_with_the_gates_lines_be
     }
 }
 
+#[test_id(tyzu9ui)]
 #[test]
 fn a_round_between_passes_ejects_the_recorded_member_before_the_next_pass_starts() {
     let mut carry = recorded(State::Corpus, "t1", RED);
@@ -97,6 +101,7 @@ fn a_round_between_passes_ejects_the_recorded_member_before_the_next_pass_starts
     assert_eq!(names(&acts), [EJECT_GATE_RED], "the certify pass is not started over a member already red: {acts:?}");
 }
 
+#[test_id(tfheh84)]
 #[test]
 fn a_member_ejected_for_its_gate_red_leaves_the_carried_round_and_the_survivors_are_certified_on_the_new_head() {
     let mut carry = recorded(State::Certifying, "t1", RED);
@@ -110,6 +115,7 @@ fn a_member_ejected_for_its_gate_red_leaves_the_carried_round_and_the_survivors_
     assert!(next.repos["spira"].members.iter().all(|(id, _)| id != "sp-a"));
 }
 
+#[test_id(tme7wii)]
 #[test]
 fn a_leg_that_ended_without_a_verdict_does_not_eject_from_the_leg_end_but_from_the_certify_that_reruns_the_pass() {
     let carry = recorded(State::Certifying, "t1", RED);
@@ -121,6 +127,7 @@ fn a_leg_that_ended_without_a_verdict_does_not_eject_from_the_leg_end_but_from_t
     assert!(!names(&acts).contains(&EJECT_GATE_RED), "{acts:?}");
 }
 
+#[test_id(tul43dm)]
 #[test]
 fn a_gate_red_that_says_nothing_about_the_tree_or_sits_at_another_tip_ejects_nothing() {
     for (tip, mark) in [("t1", "timeout"), ("t1", "no-rebase; failing step: x"), ("older", RED)] {
@@ -130,6 +137,7 @@ fn a_gate_red_that_says_nothing_about_the_tree_or_sits_at_another_tip_ejects_not
     }
 }
 
+#[test_id(tf7gznm)]
 #[test]
 fn an_idle_repo_whose_pool_holds_only_submitted_beads_cuts_a_round_naming_them() {
     let member = |id: &str, tip: &str| Member { id: id.into(), state: "SUBMITTED".into(), version: 5, tip: tip.into(), sifted_tip: Some(tip.into()), title: id.into(), priority: 2, ..Member::default() };
@@ -150,6 +158,7 @@ fn held_body(id: &str) -> String {
     format!("{}{}", batcher_cut::io::EJECT_HELD, serde_json::to_string(&held).unwrap())
 }
 
+#[test_id(tlzq080)]
 #[test]
 fn a_gate_red_eject_held_for_a_running_pass_is_sent_again_when_the_pass_ends() {
     let (carry, acts) = ended(&recorded(State::Certifying, "t1", RED), 1, "verdict=red\n");
@@ -174,6 +183,7 @@ fn a_gate_red_eject_held_for_a_running_pass_is_sent_again_when_the_pass_ends() {
     assert!(rc.eject_held.is_none() && rc.certify_held, "{rc:?}");
 }
 
+#[test_id(tyho24q)]
 #[test]
 fn a_gate_red_eject_held_after_an_earlier_member_left_drops_only_that_member() {
     let (carry, acts) = ended(&recorded(State::Certifying, "t1", RED), 1, "verdict=red\n");

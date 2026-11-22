@@ -464,6 +464,7 @@ mod tests {
         json!({"id": id, "at": at, "stream": "s", "kind": {"tag": "tick", "body": "b"}, "cause": null, "correlation": "c"})
     }
 
+    #[test_id(tlfebv3)]
     #[test]
     fn a_turn_with_a_bad_write_refuses_all_of_it() {
         let wide = |k: &str, n: usize| {
@@ -493,12 +494,14 @@ mod tests {
         assert_eq!(turn_of(&json!({})).unwrap(), Turn::default(), "an empty turn writes nothing");
     }
 
+    #[test_id(thpzk1e)]
     #[test]
     fn a_nul_in_a_payload_is_refused_before_any_write() {
         assert!(parse(Some(&"{\"a\":\"\0\"}".to_string()), "event").unwrap_err().contains("NUL"));
         assert!(text_arg(Some(&String::new()), "handler").is_err());
     }
 
+    #[test_id(tztcvj9)]
     #[test]
     fn an_over_length_schedule_id_is_refused_naming_the_row_its_fields_and_their_lengths() {
         let r = schedule_row(&sched(&"r".repeat(260), 1)).unwrap_err();
@@ -506,6 +509,7 @@ mod tests {
         assert!(schedule_row(&json!({"id": "r"})).is_err());
     }
 
+    #[test_id(tehy5f9)]
     #[test]
     fn what_a_turn_wrote_reads_back_and_what_it_closed_is_no_longer_open() {
         let s = store();
@@ -525,6 +529,7 @@ mod tests {
         assert_eq!(due[0]["id"], "r2");
     }
 
+    #[test_id(twrdddy)]
     #[test]
     fn an_effect_upserted_again_after_it_resolved_is_open_again_and_a_schedule_row_inserted_again_is_kept_as_it_was() {
         let s = store();
@@ -537,6 +542,7 @@ mod tests {
         assert_eq!(call(&s, &["due"]).1, "[]", "the fired row is not re-armed by a second insert");
     }
 
+    #[test_id(tqz9sq4)]
     #[test]
     fn a_fired_mark_for_a_row_not_yet_inserted_does_not_swallow_its_later_insert() {
         let s = store();
@@ -586,6 +592,7 @@ mod tests {
         crate::control::journal::JOURNAL_RETAIN_SECS * 1_000
     }
 
+    #[test_id(tsptnsb)]
     #[test]
     fn a_resolved_effect_and_its_marker_expire_after_the_retention_and_an_open_one_never_does() {
         use state_store::gc::Controller;
@@ -606,6 +613,7 @@ mod tests {
         assert_eq!(parsed(&s, &["open-effects"]).as_array().unwrap().len(), 1);
     }
 
+    #[test_id(txf0n7a)]
     #[test]
     fn resolving_a_superseded_request_leaves_the_re_requested_effect_open_for_good() {
         use state_store::gc::Controller;
@@ -621,6 +629,7 @@ mod tests {
         assert_eq!(parsed(&s, &["open-effects"]).as_array().unwrap().len(), 1);
     }
 
+    #[test_id(tx2plk6)]
     #[test]
     fn a_carried_resolved_effect_and_its_marker_expire_and_a_carried_open_one_does_not() {
         use crate::control::journal::{Carried, EffectRow};
@@ -634,6 +643,7 @@ mod tests {
         assert_eq!((present(&raw, "a"), present(&raw, "b")), ((false, false), (true, false)));
     }
 
+    #[test_id(tss0pp1)]
     #[test]
     fn a_sweep_gives_each_resolved_effect_without_a_lifetime_one_and_a_second_sweep_gives_none() {
         use state_store::gc::Controller;
@@ -651,6 +661,7 @@ mod tests {
         assert_eq!((present(&raw, "a"), present(&raw, "b"), present(&raw, "c")), ((false, false), (false, false), (true, false)));
     }
 
+    #[test_id(tnyc250)]
     #[test]
     fn a_schedule_row_stored_without_an_id_is_not_due() {
         let (s, raw) = shared_store();
@@ -662,6 +673,7 @@ mod tests {
         assert_eq!(parsed(&s, &["due"]).as_array().unwrap().len(), 1, "still so once the store is indexed");
     }
 
+    #[test_id(tlg90tf)]
     #[test]
     fn a_schedule_row_with_an_empty_id_is_refused_by_a_turn_and_by_a_carry_naming_the_row() {
         let (code, msg) = call(&store(), &["turn", &json!({"schedules": [sched("", 4)]}).to_string()]);
@@ -672,6 +684,7 @@ mod tests {
         assert!(err.contains("empty id") && err.contains("stream=s") && err.contains("kind=tick"), "{err}");
     }
 
+    #[test_id(tw5a4to)]
     #[test]
     fn the_boot_reads_ask_the_backend_for_the_rows_they_return_not_for_every_row_ever_written() {
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -703,6 +716,7 @@ mod tests {
         }
     }
 
+    #[test_id(tr9dgwu)]
     #[test]
     fn a_turn_looks_up_its_schedules_in_one_read_and_writes_only_the_new_ones() {
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -720,6 +734,7 @@ mod tests {
         assert_eq!((at("old0"), at("n4")), (Some(json!(4)), Some(json!(9))));
     }
 
+    #[test_id(tlmb4bp)]
     #[test]
     fn an_index_key_left_for_a_row_that_closed_meanwhile_does_not_reopen_it() {
         let (s, raw) = shared_store();
@@ -731,6 +746,7 @@ mod tests {
         assert_eq!((call(&s, &["due"]).1, call(&s, &["open-effects"]).1), ("[]".to_string(), "[]".to_string()));
     }
 
+    #[test_id(t4ngcq0)]
     #[test]
     fn the_sweep_dry_run_counts_what_it_would_remove_and_the_sweep_removes_exactly_that() {
         let (s, raw) = shared_store();
@@ -777,6 +793,7 @@ mod tests {
         move |argv| answer(run(&argv[1..], s))
     }
 
+    #[test_id(tufqpnf)]
     #[test]
     fn the_sweep_loop_sums_the_counts_of_every_step_until_the_cursor_runs_out() {
         let (s, _raw) = seeded(2_500);
@@ -787,6 +804,7 @@ mod tests {
         assert_eq!(swept(&s, false)["steps"], json!(5), "a swept store ends in the schedule step, one step per legacy table and the effect step");
     }
 
+    #[test_id(t1lvoy9)]
     #[test]
     fn a_sweep_step_that_fails_stops_the_loop_naming_its_code_and_cursor_and_a_rerun_reaches_the_same_store() {
         let (s, raw) = seeded(1_500);
@@ -827,6 +845,7 @@ mod tests {
         raw.list(&["runtime/"], &state_store::Selector::Everything).unwrap().0.into_iter().map(|i| i.key).collect()
     }
 
+    #[test_id(t70qkv6)]
     #[test]
     fn the_sweep_removes_the_legacy_import_rows_and_nothing_a_reader_uses() {
         let (s, raw) = legacy_seeded();
@@ -847,6 +866,7 @@ mod tests {
         assert!(after.contains(&"runtime/journal-meta/indexed".to_string()));
     }
 
+    #[test_id(ttfsyga)]
     #[test]
     fn a_sweep_resumed_inside_the_legacy_phase_finishes_the_rest_and_deletes_nothing_twice() {
         let (s, raw) = legacy_seeded();
@@ -865,6 +885,7 @@ mod tests {
         assert!(!after.iter().any(|k| k.starts_with("runtime/applied/") || k.starts_with("runtime/cursor/")));
     }
 
+    #[test_id(tidn7vu)]
     #[test]
     fn a_legacy_step_reads_at_most_one_page() {
         let (s, raw) = seeded(0);
@@ -898,6 +919,7 @@ mod tests {
         (serde_json::from_str(&out).unwrap(), slowest)
     }
 
+    #[test_id(tk7s3hh)]
     #[test]
     fn every_sweep_step_answers_inside_the_store_target_whatever_the_size_of_the_rows_it_reads() {
         let (s, raw, clock, _) = costed_store();
@@ -921,6 +943,7 @@ mod tests {
         assert!(raw.get(&crate::control::keys::runtime("journal-meta", &["indexed"])).unwrap().is_some());
     }
 
+    #[test_id(ts8n1bx)]
     #[test]
     fn a_step_whose_later_write_is_refused_for_the_deadline_answers_the_pages_that_committed() {
         use crate::control::journal::SWEEP_PAGE;
@@ -941,6 +964,7 @@ mod tests {
         assert_eq!(rest["legacy_deleted"], json!(2 * SWEEP_PAGE), "{rest}");
     }
 
+    #[test_id(tdp2kc2)]
     #[test]
     fn a_first_page_whose_write_is_refused_for_the_deadline_still_answers_the_error() {
         use crate::control::journal::SWEEP_PAGE;
@@ -957,6 +981,7 @@ mod tests {
         assert!(out.contains("Deadline"), "{out}");
     }
 
+    #[test_id(teva8fl)]
     #[test]
     fn a_sweep_refuses_an_argument_it_does_not_know() {
         let s = store();
@@ -967,6 +992,7 @@ mod tests {
         assert_eq!(call(&s, &["sweep", "--from", "effect:", "--dry-run"]).0, 0);
     }
 
+    #[test_id(t2ynpvl)]
     #[test]
     fn a_stream_keeps_its_first_poison() {
         let s = store();
@@ -977,6 +1003,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&call(&s, &["poisoned", "st"]).1).unwrap()["message"], "first");
     }
 
+    #[test_id(tluflho)]
     #[test]
     fn a_turn_over_the_ops_a_txn_carries_still_commits_whole() {
         let s = store();
@@ -985,6 +1012,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&call(&s, &["state"]).1).unwrap()["rows"].as_array().unwrap().len(), 300);
     }
 
+    #[test_id(tbnip8m)]
     #[test]
     fn a_state_answer_is_one_page_and_the_pages_hold_every_row_once() {
         use crate::control::journal::STATE_PAGE;
@@ -1028,6 +1056,7 @@ mod tests {
         assert_eq!(distinct, whole);
     }
 
+    #[test_id(t1yng6z)]
     #[test]
     fn a_state_call_takes_only_after_with_a_cursor() {
         let s = store();
@@ -1037,6 +1066,7 @@ mod tests {
     }
 
     /// The runtime checks a write against these widths before it sends it (runtime/src/socket.rs).
+    #[test_id(thn0vc1)]
     #[test]
     fn the_runtime_checks_only_inside_these_widths() {
         let src = include_str!("../../runtime/src/socket.rs");
@@ -1045,12 +1075,14 @@ mod tests {
         }
     }
 
+    #[test_id(tbwlv0u)]
     #[test]
     fn a_long_text_is_clipped_to_the_limit_and_an_ellipsis() {
         assert_eq!(clip(&"x".repeat(10_000)).chars().count(), CLIP + 1);
         assert_eq!(clip("short"), "short");
     }
 
+    #[test_id(t9cvb0s)]
     #[test]
     fn the_sweep_command_line_takes_from_in_either_order_and_refuses_a_bad_cursor() {
         let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -1063,6 +1095,7 @@ mod tests {
         assert!(msg.contains("is not schedule:<key>, legacy:<key> or effect:<key>"), "{msg}");
     }
 
+    #[test_id(tk5d2hm)]
     #[test]
     fn a_sweep_malformed_flag_is_refused_and_a_stop_names_the_command_that_resumes_it() {
         let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();

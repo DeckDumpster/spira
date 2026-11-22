@@ -37,18 +37,21 @@ pub fn system_prompt_split(statutes: &str, prompt: &str) -> (String, String) {
 mod tests {
     use super::*;
 
+    #[test_id(tt954nc)]
     #[test]
     fn substitute_replaces_every_occurrence_of_each_placeholder() {
         let out = substitute("hi {{NAME}}, {{NAME}} again, {{OTHER}}", &[("NAME", "sid-1"), ("OTHER", "x")]);
         assert_eq!(out, "hi sid-1, sid-1 again, x");
     }
 
+    #[test_id(ttbtfxi)]
     #[test]
     fn substitute_leaves_an_unmatched_placeholder_untouched() {
         let out = substitute("{{KNOWN}} {{UNKNOWN}}", &[("KNOWN", "v")]);
         assert_eq!(out, "v {{UNKNOWN}}");
     }
 
+    #[test_id(tamfnk7)]
     #[test]
     fn system_prompt_split_separates_on_the_task_marker() {
         let (sys, task) = system_prompt_split("STATUTES", "system part\n<!-- task -->\ntask part");
@@ -56,6 +59,7 @@ mod tests {
         assert_eq!(task, "task part");
     }
 
+    #[test_id(tg6obba)]
     #[test]
     fn a_prompt_with_no_marker_is_entirely_the_task() {
         let (sys, task) = system_prompt_split("", "just a task, no split");

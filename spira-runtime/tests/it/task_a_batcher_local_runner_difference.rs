@@ -29,6 +29,7 @@ fn argv_of(act: &Act) -> Vec<String> {
     certify_argv("queue", &leg)
 }
 
+#[test_id(tu91srr)]
 #[test]
 fn a_runner_difference_moves_attributing_to_certifying_and_pins_that_certify_to_the_host() {
     let (next, acts) = attribution_ended(&attributing("spira.r9.attribute1"), &difference_line());
@@ -42,6 +43,7 @@ fn a_runner_difference_moves_attributing_to_certifying_and_pins_that_certify_to_
     assert!(!acts.iter().any(|a| a.effect == ABANDON || a.effect == EJECT), "{acts:?}");
 }
 
+#[test_id(tn65w0y)]
 #[test]
 fn the_host_pin_is_for_one_certify_and_the_pass_after_it_uses_the_ordinary_rule() {
     let (next, _) = attribution_ended(&attributing("spira.r9.attribute1"), &difference_line());
@@ -53,6 +55,7 @@ fn the_host_pin_is_for_one_certify_and_the_pass_after_it_uses_the_ordinary_rule(
     assert!(!argv_of(certify[0]).contains(&"--place".to_string()), "{:?}", argv_of(certify[0]));
 }
 
+#[test_id(tbqn29e)]
 #[test]
 fn a_certify_not_after_a_runner_difference_carries_no_place() {
     let leg = Leg { batch: "r9".into(), repo: "spira".into(), ..Leg::default() };

@@ -154,6 +154,7 @@ mod tests {
         }
     }
 
+    #[test_id(t50ltgi)]
     #[test]
     fn a_cut_takes_only_beads_with_a_pass_at_their_current_tip() {
         let sifted: BTreeMap<String, String> = [("sp-a", "t1"), ("sp-b", "old")]

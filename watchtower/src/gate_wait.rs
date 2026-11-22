@@ -170,6 +170,7 @@ mod tests {
 
     const NOW: i64 = 1_700_100_000;
 
+    #[test_id(t9a6t6e)]
     #[test]
     fn slow_reads_the_p90_test_clock_against_the_deadline_and_not_the_wall() {
         let t = fmt_iso(NOW - 10);
@@ -185,6 +186,7 @@ mod tests {
         assert!(slow(&old_rows, NOW, 86400, 300, 1).is_none(), "rows without test_clock measure nothing");
     }
 
+    #[test_id(ttk8vdg)]
     #[test]
     fn build_p90_is_the_wall_outside_the_wait_and_the_test_clock() {
         let t = fmt_iso(NOW - 10);
@@ -195,6 +197,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(trq8idc)]
     #[test]
     fn picks_the_longest_wait_inside_the_window() {
         let t1 = fmt_iso(NOW - 100);
@@ -208,6 +211,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(ti9vuba)]
     #[test]
     fn rows_outside_the_window_are_excluded() {
         let old = fmt_iso(NOW - 100_000);
@@ -217,6 +221,7 @@ mod tests {
     }
 
     // covers: UC-ops-detection-remediation-26
+    #[test_id(tbel1kl)]
     #[test]
     fn no_rows_in_window_renders_unknown_not_zero() {
         let gw = compute("", NOW, 21600);
@@ -224,12 +229,14 @@ mod tests {
         assert_eq!(disp(gw.oldest_wait), "?");
     }
 
+    #[test_id(terr06o)]
     #[test]
     fn window_label_switches_from_minutes_to_hours() {
         assert_eq!(window_label(1800), "last 30m");
         assert_eq!(window_label(21600), "last 6h");
     }
 
+    #[test_id(tah5b12)]
     #[test]
     fn a_line_with_no_waited_field_is_ignored() {
         let t1 = fmt_iso(NOW - 10);
@@ -242,6 +249,7 @@ mod tests {
         crate::lc::BeadRow { id: id.into(), since: Some(at), ..Default::default() }
     }
 
+    #[test_id(t4936wn)]
     #[test]
     fn submission_with_a_stale_gate_log_is_silence_and_names_the_last_gate() {
         let old = fmt_iso(NOW - 50_000);
@@ -251,12 +259,14 @@ mod tests {
         assert_eq!(s.last_gate.as_deref(), Some(old.as_str()));
     }
 
+    #[test_id(tjwric9)]
     #[test]
     fn a_fresh_gate_line_is_not_silence() {
         let log = format!("{} gate sp-a waited=1s ok\n", fmt_iso(NOW - 60));
         assert!(silence(&log, &[rec("sp-b", NOW - 600)], NOW, 3600).is_none());
     }
 
+    #[test_id(tva3p5v)]
     #[test]
     fn no_submission_in_the_window_is_not_silence() {
         let log = format!("{} gate sp-a waited=1s ok\n", fmt_iso(NOW - 50_000));
@@ -264,6 +274,7 @@ mod tests {
         assert!(silence(&log, &recs, NOW, 3600).is_none());
     }
 
+    #[test_id(tzty3m6)]
     #[test]
     fn an_absent_gate_log_with_a_submission_is_silence_with_no_last_gate() {
         let s = silence("", &[rec("sp-b", NOW - 60)], NOW, 3600).expect("silence");

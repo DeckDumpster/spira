@@ -63,6 +63,7 @@ fn live_fixture<B: Backend>(r: &Rig<B>) -> Vec<String> {
 
 /// law-list-reads-paginate-in-the-database: the records named by `--ids`, the claim locks of
 /// WORKING rows and the states of off-page blockers are each read in chunks, never a `get` per key.
+#[test_id(tk8holw)]
 #[test]
 fn a_non_bare_list_reads_records_locks_and_blockers_in_chunks_not_per_key() {
     let r = Rig::on(Counting::default(), &clock());
@@ -114,6 +115,7 @@ fn a_non_bare_list_reads_records_locks_and_blockers_in_chunks_not_per_key() {
 }
 
 /// On the real store a `list --ids` costs the same read transactions for 140 ids as for 10.
+#[test_id(twl0mg6)]
 #[test]
 fn list_ids_read_transactions_do_not_grow_with_the_ids_on_the_real_store() {
     let dir = testkit::TempDir::new("lc-ids-reads");
@@ -141,6 +143,7 @@ fn list_ids_read_transactions_do_not_grow_with_the_ids_on_the_real_store() {
 
 /// law-hot-reads-answer-in-500ms: no read call `list --live` makes asks for more than
 /// 200 keys or rows, whatever the live set holds, and the answer is the same rows.
+#[test_id(tpo3qtz)]
 #[test]
 fn list_live_never_asks_one_read_for_more_than_a_record_chunk() {
     const BEADS: usize = 1_500;

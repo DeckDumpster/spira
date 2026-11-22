@@ -1,6 +1,9 @@
 //! The service around the `runtime` crate: its pinned settings, the effect runner, the
 //! systemd notifier the dispatch loop kicks, and the OTLP log sink for wide events.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 #[cfg(any(test, feature = "integration"))]
 pub mod fixture;
 pub mod api_budget;
@@ -380,6 +383,7 @@ fn stamp_answered_probe(run_dir: &std::path::Path, effect: &str, answered: &Resu
 mod probe_stamp_tests {
     use super::stamp_answered_probe;
 
+    #[test_id(t1oc6ke)]
     #[test]
     fn an_observe_that_answers_stamps_its_task_and_one_that_errs_or_is_no_probe_does_not() {
         let run = testkit::TempDir::new("probe-stamp");
@@ -435,10 +439,11 @@ mod own_unit_tests {
     use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
     use std::sync::Arc;
 
+    #[test_id(tm78dmb)]
     #[test]
     fn the_boot_retry_caps_its_backoff_below_the_bound_so_a_late_store_is_found_soon() {
-        let r = super::boot_retry(&crate::settings::fixture(), Duration::from_secs(10));
-        assert_eq!((r.first_ms, r.ceiling_ms), (super::BOOT_RETRY_FIRST_MS, super::BOOT_RETRY_CEILING_MS));
+        let r = super::super::boot_retry(&crate::settings::fixture(), Duration::from_secs(10));
+        assert_eq!((r.first_ms, r.ceiling_ms), (super::super::BOOT_RETRY_FIRST_MS, super::super::BOOT_RETRY_CEILING_MS));
         assert!(r.ceiling_ms < r.bound_ms);
     }
 
@@ -459,11 +464,12 @@ mod own_unit_tests {
         }
     }
 
+    #[test_id(ts0avk9)]
     #[test]
     fn a_startup_over_a_journal_that_cannot_tell_fails_inside_the_deadline_with_a_stamped_line_naming_the_step() {
         let deadline = Duration::from_millis(800);
-        let startup = Arc::new(super::Startup::new(deadline));
-        let err = super::start_engine(&crate::settings::fixture(), Arc::new(Silent), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), Arc::new(runtime::engine::StatusBoard::default()), &startup).err().expect("must fail");
+        let startup = Arc::new(super::super::Startup::new(deadline));
+        let err = super::super::start_engine(&crate::settings::fixture(), Arc::new(Silent), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), Arc::new(runtime::engine::StatusBoard::default()), &startup).err().expect("must fail");
         let stamp = err.split(' ').next().unwrap();
         assert!(stamp.len() == 20 && stamp.ends_with('Z') && stamp.as_bytes()[10] == b'T', "{err}");
         assert!(err.contains("journal boot") && err.contains("reply was lost"), "{err}");
@@ -495,6 +501,7 @@ mod own_unit_tests {
         (tags, e.status())
     }
 
+    #[test_id(tb6w1vw)]
     #[test]
     fn a_scheduler_booted_under_the_halt_stamp_leaves_world_status_halted_not_degraded() {
         let status = boot_under(true).1;
@@ -503,20 +510,23 @@ mod own_unit_tests {
         assert_eq!(spira_world::scheduler::mismatch(true, &parsed), None, "{doc}");
     }
 
+    #[test_id(t4tgqmz)]
     #[test]
     fn a_boot_under_the_halt_stamp_holds_its_first_work_effect() {
         let tags = boot_under(true).0;
         assert!(tags.iter().any(|t| t == runtime::EFFECT_HELD) && !tags.iter().any(|t| t == runtime::EFFECT_REQUESTED), "{tags:?}");
     }
 
+    #[test_id(tygv5ry)]
     #[test]
     fn a_boot_without_the_halt_stamp_requests_its_first_work_effect() {
         let tags = boot_under(false).0;
         assert!(tags.iter().any(|t| t == runtime::EFFECT_REQUESTED) && !tags.iter().any(|t| t == runtime::EFFECT_HELD), "{tags:?}");
     }
 
+    #[test_id(tixxf4a)]
     #[test]
     fn skip_list_holds_the_installed_runtime_service_name() {
-        assert_eq!(super::own_skip_units("prod"), vec!["spira-runtime-prod.service".to_string()]);
+        assert_eq!(super::super::own_skip_units("prod"), vec!["spira-runtime-prod.service".to_string()]);
     }
 }

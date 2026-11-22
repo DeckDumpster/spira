@@ -23,12 +23,14 @@ fn baseline_then_a_new_ask() -> TaskRig {
     r
 }
 
+#[test_id(t7qcugc)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&baseline_then_a_new_ask(), NAME);
     assert!(rows.iter().any(|k| k == "seen") && rows.iter().any(|k| k == "seeded"), "{rows:?}");
 }
 
+#[test_id(tjl25nn)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(baseline_then_a_new_ask, registration, STREAM, EventKind::new(TICK, ""));

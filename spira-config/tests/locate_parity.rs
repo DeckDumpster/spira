@@ -10,6 +10,8 @@
 //! touches this box's real `~/.config/spira/spira.toml`; every scenario runs against a
 //! scratch `$HOME`/`$XDG_CONFIG_HOME` the test creates itself with `env_clear()`.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::fs;
 use std::path::PathBuf;
 
@@ -36,6 +38,7 @@ fn extract_function(text: &str, name: &str) -> String {
 }
 
 /// The extraction pulls the real function out of this tree's conf.sh.
+#[test_id(tb3zml7)]
 #[test]
 fn extraction_pulls_the_real_current_conf_sh_text() {
     let conf_sh = fs::read_to_string(repo_root().join("spira/conf.sh")).unwrap();

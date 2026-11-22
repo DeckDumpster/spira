@@ -2742,6 +2742,7 @@ mod tests {
         testkit::env(&edits)
     }
 
+    #[test_id(t03vgla)]
     #[test]
     fn the_release_build_cleans_what_differs_from_the_directorys_record_before_building_and_still_reports_a_failed_build() {
         let (d, env, base, log, home) = release_world("kcuvbg-clean", "d=\"$(dirname \"$0\")\"; [ ! -e \"$d/fail\" ] || case \"$1\" in build) echo boom; exit 3;; esac; [ ! -e \"$d/failclean\" ] || case \"$1\" in clean) echo no; exit 4;; esac\n");
@@ -2777,6 +2778,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&log).unwrap().matches("build -q").count(), builds, "nothing is built after a failed clean");
     }
 
+    #[test_id(tq0vdkg)]
     #[test]
     fn gate_command_hands_gate_sh_the_lock_wait() {
         let c = super::gate_command("spira/sp-a", "r", "sp-a", "off", "5400");
@@ -2789,6 +2791,7 @@ mod tests {
         assert_eq!(env("SPIRA_GATE_BEAD").as_deref(), Some("sp-a"));
     }
 
+    #[test_id(tmdbq51)]
     #[test]
     fn update_ref_is_the_sanctioned_writer() {
         let c = super::update_ref_cmd(std::path::Path::new("r"), "refs/heads/x", "new", Some("old"));
@@ -2816,6 +2819,7 @@ mod tests {
         sent
     }
 
+    #[test_id(t0zrdje)]
     #[test]
     fn the_queue_reads_the_live_set_or_named_ids_never_every_row() {
         let sent = sent_by(|lc| {
@@ -2825,6 +2829,7 @@ mod tests {
         assert_eq!(sent, [vec!["list", "--live"], vec!["list", "--ids", "sp-a,sp-b"]]);
     }
 
+    #[test_id(ttvn2i1)]
     #[test]
     fn a_cut_and_a_stage_record_each_members_range_with_git_before_they_send() {
         let git = |dir: &std::path::Path, args: &[&str]| {
@@ -2862,6 +2867,7 @@ mod tests {
         assert!(sent[..verb_at("stage")].iter().filter(|a| a[0] == "git-fact").count() == 4, "and before the stage: {sent:?}");
     }
 
+    #[test_id(tu0q60g)]
     #[test]
     fn probe_asks_for_the_head_revision_not_a_listing() {
         let mut result = Ok(());
@@ -2870,6 +2876,7 @@ mod tests {
         assert_eq!(result, Ok(()));
     }
 
+    #[test_id(tkevcvp)]
     #[test]
     fn an_unregistered_key_reads_as_none_and_any_other_refusal_propagates() {
         let unregistered = "K is not a registered config key (spira/conf.d) — refusing".to_string();
@@ -2878,6 +2885,7 @@ mod tests {
         assert!(unregistered_is_none::<u64>(Err("K = \"x\" does not parse as a u64".into())).is_err());
     }
 
+    #[test_id(thvqyx9)]
     #[test]
     fn every_config_key_is_registered_in_conf_d() {
         let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
@@ -2886,6 +2894,7 @@ mod tests {
         assert!(missing(super::CONFIG_KEYS).is_empty(), "CONFIG_KEYS names keys spira/conf.d does not register: {:?}", missing(super::CONFIG_KEYS));
     }
 
+    #[test_id(tno1423)]
     #[test]
     fn check_config_names_every_key_context_reads() {
         let src = include_str!("real.rs");
@@ -2907,6 +2916,7 @@ mod tests {
         }
     }
 
+    #[test_id(t1wn3w3)]
     #[test]
     fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {
         let args = |first| -> Vec<String> {
@@ -2921,6 +2931,7 @@ mod tests {
         assert!(!args(false).iter().any(|a| a == "--repeat-reason"));
     }
 
+    #[test_id(tng8wsc)]
     #[test]
     fn a_resubmit_suite_check_hands_testenv_the_deny_list_snapshot() {
         let c = suite_run_command("testenv", "unit-tests", "t", "r", true, &[], Path::new("snap/deny"));
@@ -2928,6 +2939,7 @@ mod tests {
         assert_eq!(env, Some(std::ffi::OsStr::new("snap/deny")));
     }
 
+    #[test_id(tvzrqr4)]
     #[test]
     fn the_on_red_hook_survives_a_replaced_binary_and_refuses_a_spaced_path() {
         assert_eq!(
@@ -2942,6 +2954,7 @@ mod tests {
     }
     use super::*;
 
+    #[test_id(tj82vcm)]
     #[test]
     fn utc_stamp_matches_date() {
         assert_eq!(utc_stamp(0), "19700101T000000Z");
@@ -2949,6 +2962,7 @@ mod tests {
         assert_eq!(utc_stamp(951_782_400), "20000229T000000Z");
     }
 
+    #[test_id(tfierok)]
     #[test]
     fn bd_json_skips_a_preamble_and_accepts_one_object() {
         let rows = parse_bd_json(
@@ -2966,6 +2980,7 @@ mod tests {
     // prove RealLib's own implementation against real git, a fake `mail` and a fake forge
     // binary — not the TestLib fakes ops.rs tests use elsewhere.
 
+    #[test_id(tm10b3t)]
     #[test]
     fn push_adds_app_credentials_only_when_configured() {
         let args = ["-q".to_string(), "origin".to_string(), "main".to_string()];
@@ -2998,6 +3013,7 @@ mod tests {
 mod unit_of_cgroup_tests {
     use super::unit_of_cgroup;
 
+    #[test_id(tqnwuxd)]
     #[test]
     fn the_unit_is_the_last_component_of_the_unified_line() {
         let text = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-runtime-prod.service\n";
@@ -3012,6 +3028,7 @@ mod vtime_tests {
     use super::*;
     use crate::ports::Clock;
 
+    #[test_id(t58v9fb)]
     #[test]
     fn sys_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || SysClock.now());

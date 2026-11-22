@@ -106,6 +106,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttct17b)]
     #[test]
     fn the_writer_gets_its_user_and_write_grants_on_the_tables_content_writes_change() {
         let s = Server { tables: vec!["issues", "labels", "comments", "events", "dependencies", "child_counters", "leases", "config", "wisps"], seen: RefCell::new(vec![]) };
@@ -123,6 +124,7 @@ mod tests {
         assert!(!seen.iter().any(|q| q.contains(" ALL")), "no blanket grant");
     }
 
+    #[test_id(ttkkifw)]
     #[test]
     fn a_database_without_an_events_table_is_not_provisioned() {
         let s = Server { tables: vec!["issues", "labels", "comments"], seen: RefCell::new(vec![]) };

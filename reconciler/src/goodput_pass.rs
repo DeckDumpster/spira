@@ -129,6 +129,7 @@ mod tests {
         (SpiraLc::over(LcClient::over(Arc::clone(&s) as Arc<dyn Transport>, true)), s)
     }
 
+    #[test_id(tykmyh9)]
     #[test]
     fn a_pass_verb_is_answered_by_the_store_in_process() {
         let (lc, store) = lc(0, r#"{"held":true}"#);
@@ -137,6 +138,7 @@ mod tests {
         assert_eq!(store.0.lock().unwrap().as_slice(), &[argv]);
     }
 
+    #[test_id(tiw48g5)]
     #[test]
     fn a_non_json_answer_is_cannot_tell_with_its_exit_code() {
         let (lc, _) = lc(2, "cannot tell: down");
@@ -145,6 +147,7 @@ mod tests {
         assert!(v["cannot_tell"].as_str().unwrap().contains("cannot tell: down"), "{v}");
     }
 
+    #[test_id(tz0jt6u)]
     #[test]
     fn the_pass_config_is_halted_by_the_stamp_or_by_a_remedies_stop_on_every_repo() {
         let d = testkit::TempDir::new("goodput-pass-config");

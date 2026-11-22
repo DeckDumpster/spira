@@ -42,6 +42,7 @@ fn run_dir() -> testkit::TempDir {
 
 /// sp-p58bfi: a waiter sized from its environment kept the size its session started with, so
 /// `test_par` raised 3 to 8 in the document admitted nobody already waiting.
+#[test_id(tcv9s5c)]
 #[test]
 fn the_documents_size_wins_over_the_environment_a_waiter_inherited() {
     let b = Host { cores: 32, mem_avail_mib: 36_000 };
@@ -51,6 +52,7 @@ fn the_documents_size_wins_over_the_environment_a_waiter_inherited() {
     assert_eq!(size_in(Pool::Test, Some(0), Some("5"), b), 5, "a zero in the document is not a size");
 }
 
+#[test_id(tjd2e78)]
 #[test]
 fn derived_sizes_follow_the_measured_costs() {
     // This box on 2026-09-30: 32 cores, ~36 GiB available.
@@ -66,6 +68,7 @@ fn derived_sizes_follow_the_measured_costs() {
     }
 }
 
+#[test_id(tzsogx9)]
 #[test]
 fn a_positive_key_wins_anything_else_derives() {
     let b = Host { cores: 32, mem_avail_mib: 36_000 };
@@ -76,6 +79,7 @@ fn a_positive_key_wins_anything_else_derives() {
     }
 }
 
+#[test_id(txwwzck)]
 #[test]
 fn pools_have_their_own_directories_and_keys() {
     let r = Path::new("run/spira");
@@ -87,6 +91,7 @@ fn pools_have_their_own_directories_and_keys() {
     assert_eq!(Pool::parse("tests"), None);
 }
 
+#[test_id(t0r4u4o)]
 #[test]
 fn a_lease_round_trips_and_a_blank_who_is_a_dash() {
     let l = Lease { slot: 2, pid: 10, start: 99, who: "sp-abc".into(), since: 5, waited: 3, last: 7, weight: 4, until: None };
@@ -99,6 +104,7 @@ fn a_lease_round_trips_and_a_blank_who_is_a_dash() {
     assert_eq!(Lease::parse(1, ""), None);
 }
 
+#[test_id(tpwed1j)]
 #[test]
 fn slots_fill_in_order_and_the_third_holder_waits_naming_the_two() {
     let d = run_dir();
@@ -118,6 +124,7 @@ fn slots_fill_in_order_and_the_third_holder_waits_naming_the_two() {
     assert_eq!(occupancy(&d, Pool::Test, 2, &p).waiting, 1);
 }
 
+#[test_id(tlwnq4k)]
 #[test]
 fn the_same_holder_keeps_its_slot_and_refreshes_last() {
     // One cargo's many rustc invocations share one lease.
@@ -130,6 +137,7 @@ fn the_same_holder_keeps_its_slot_and_refreshes_last() {
     assert_eq!((l.since, l.last), (100, 160));
 }
 
+#[test_id(tege0lr)]
 #[test]
 fn a_descendant_of_a_holder_inherits_its_slot() {
     // testenv (pid 10) holds a test lease; the cargo under it (pid 12, grandchild) runs on it.
@@ -144,6 +152,7 @@ fn a_descendant_of_a_holder_inherits_its_slot() {
     assert!(matches!(t, Take::Busy { .. }), "{t:?}");
 }
 
+#[test_id(tmnt41c)]
 #[test]
 fn release_removes_only_its_own_lease() {
     let d = run_dir();
@@ -156,6 +165,7 @@ fn release_removes_only_its_own_lease() {
     assert!(!d.join("test-admission/slot.1").exists());
 }
 
+#[test_id(tr5p55n)]
 #[test]
 fn lowering_the_size_never_evicts_a_holder() {
     let d = run_dir();
@@ -176,6 +186,7 @@ fn lowering_the_size_never_evicts_a_holder() {
     assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
 }
 
+#[test_id(tikxmid)]
 #[test]
 fn acquire_waits_visibly_then_admits_and_the_guard_releases() {
     let d = run_dir();
@@ -202,6 +213,7 @@ fn acquire_waits_visibly_then_admits_and_the_guard_releases() {
     assert!(rows.contains("\"end\":\"reclaimed\"") && rows.contains("\"end\":\"released\""), "{rows}");
 }
 
+#[test_id(trj1dhb)]
 #[test]
 fn acquire_under_an_admitted_job_takes_nothing_and_never_waits() {
     let d = run_dir();
@@ -218,6 +230,7 @@ fn acquire_under_an_admitted_job_takes_nothing_and_never_waits() {
     assert!(g.held());
 }
 
+#[test_id(tf7zbh1)]
 #[test]
 fn an_unreadable_holder_runs_unadmitted_rather_than_failing() {
     let d = run_dir();
@@ -229,6 +242,7 @@ fn an_unreadable_holder_runs_unadmitted_rather_than_failing() {
     assert!(said[0].contains("running without a test slot"), "{said:?}");
 }
 
+#[test_id(tdu03z8)]
 #[test]
 fn real_procs_reads_this_process() {
     let me = std::process::id();
@@ -240,6 +254,7 @@ fn real_procs_reads_this_process() {
 
 /// sp-c9mabt: a testenv run started under `test_par` 3 waited for an empty pool with its
 /// weight-4 build while the document said 64 and four builds held slots.
+#[test_id(tnqbh07)]
 #[test]
 fn a_heavy_build_is_admitted_beside_holders_once_the_document_raises_the_pool() {
     let d = run_dir();
@@ -256,6 +271,7 @@ fn a_heavy_build_is_admitted_beside_holders_once_the_document_raises_the_pool() 
     assert!(g.held());
 }
 
+#[test_id(t0jy5n3)]
 #[test]
 fn a_weighty_job_waits_for_an_empty_pool_and_runs_alone() {
     let d = run_dir();
@@ -277,6 +293,7 @@ fn a_weighty_job_waits_for_an_empty_pool_and_runs_alone() {
     assert_eq!(wait_line(Pool::Test, 3, &holders, 130), "waiting for a test slot: 4 of 3 held by rel ×4 (pid 20, 10s)");
 }
 
+#[test_id(trk2yfv)]
 #[test]
 fn the_queue_position_is_the_first_wait_not_the_latest_scan() {
     let d = run_dir();
@@ -296,6 +313,7 @@ fn the_queue_position_is_the_first_wait_not_the_latest_scan() {
     assert_eq!(t, Take::Admitted { slot: 2, fresh: true });
 }
 
+#[test_id(tz8pjnk)]
 #[test]
 fn a_dead_waiter_loses_its_place() {
     let d = run_dir();
@@ -310,6 +328,7 @@ fn a_dead_waiter_loses_its_place() {
     assert!(!d.join("test-admission/wait.20").exists());
 }
 
+#[test_id(tut38fn)]
 #[test]
 fn status_lists_each_waiter_and_says_when_the_head_cannot_fit() {
     let d = run_dir();
@@ -328,6 +347,7 @@ fn status_lists_each_waiter_and_says_when_the_head_cannot_fit() {
     assert_eq!(o.head_blocked().as_deref(), Some("head needs 4 of 3: waits for an empty pool"));
 }
 
+#[test_id(tpfb5je)]
 #[test]
 fn a_full_pool_or_a_fitting_head_is_not_reported_as_blocked() {
     let d = run_dir();
@@ -337,6 +357,7 @@ fn a_full_pool_or_a_fitting_head_is_not_reported_as_blocked() {
     assert_eq!(occupancy(&d, Pool::Test, 1, &p).head_blocked(), None);
 }
 
+#[test_id(tc74ses)]
 #[test]
 fn a_fresh_lease_waits_out_the_stagger_while_others_are_held() {
     let d = run_dir();
@@ -349,6 +370,7 @@ fn a_fresh_lease_waits_out_the_stagger_while_others_are_held() {
     assert_eq!(take(10, 1, "a", 140), Take::Admitted { slot: 1, fresh: false });
 }
 
+#[test_id(teekr75)]
 #[test]
 fn the_stagger_never_holds_an_empty_pool_or_a_disabled_one() {
     let d = run_dir();
@@ -359,6 +381,7 @@ fn the_stagger_never_holds_an_empty_pool_or_a_disabled_one() {
     assert_eq!(t, Take::Admitted { slot: 2, fresh: true });
 }
 
+#[test_id(txdcv71)]
 #[test]
 fn a_second_cold_build_waits_on_the_cold_slot_until_the_first_releases() {
     let d = run_dir();
@@ -380,6 +403,7 @@ fn a_second_cold_build_waits_on_the_cold_slot_until_the_first_releases() {
     assert!(said[0].starts_with("waiting for a cold slot: 1 of 1 held by sp-a"), "{said:?}");
 }
 
+#[test_id(t55rgxq)]
 #[test]
 fn only_a_toolchain_change_or_an_empty_target_is_cold() {
     let files = |f: &[&str]| f.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -394,6 +418,7 @@ fn only_a_toolchain_change_or_an_empty_target_is_cold() {
     assert!(!target_is_cold(t.path()));
 }
 
+#[test_id(tyzf0yb)]
 #[test]
 fn a_second_unit_tests_batch_waits_for_the_first_and_names_it_while_other_pools_are_free() {
     let d = run_dir();
@@ -419,6 +444,7 @@ fn a_second_unit_tests_batch_waits_for_the_first_and_names_it_while_other_pools_
     assert!(said[0].contains("may run "), "{said:?}");
 }
 
+#[test_id(tg4oes3)]
 #[test]
 fn a_waiters_line_says_how_long_each_holder_may_still_run_or_how_far_past_its_cap_it_is() {
     let lease = |until| Lease { slot: 1, pid: 10, start: 1, who: "sp-a".into(), since: 1000, waited: 0, last: 1000, weight: 1, until };
@@ -427,6 +453,7 @@ fn a_waiters_line_says_how_long_each_holder_may_still_run_or_how_far_past_its_ca
     assert_eq!(wait_line(Pool::Unit, 1, &[lease(None)], 1259), "waiting for a unit slot: 1 of 1 held by sp-a (pid 10, 259s)");
 }
 
+#[test_id(tp9wtup)]
 #[test]
 fn a_lease_with_a_cap_end_round_trips_and_one_written_without_it_reads_as_none() {
     let l = Lease { slot: 1, pid: 10, start: 99, who: "sp-abc".into(), since: 5, waited: 3, last: 7, weight: 1, until: Some(605) };
@@ -438,6 +465,7 @@ fn a_lease_with_a_cap_end_round_trips_and_one_written_without_it_reads_as_none()
     assert_eq!(Lease::parse(1, "pid=10 start=99 who=x since=5 waited=0 last=5 weight=1").unwrap().until, None);
 }
 
+#[test_id(tuue9fk)]
 #[test]
 fn the_run_ceiling_is_the_cores_over_one_runs_cargo_jobs_and_never_below_one() {
     let big = Host { cores: 32, mem_avail_mib: 1 };
@@ -447,12 +475,14 @@ fn the_run_ceiling_is_the_cores_over_one_runs_cargo_jobs_and_never_below_one() {
     assert_eq!(Pool::Run.size_env(), "SPIRA_TESTENV_MAX_RUNS");
 }
 
+#[test_id(ttqozvw)]
 #[test]
 fn a_run_slot_waiter_says_what_it_waits_for() {
     let holders = [Lease { slot: 1, pid: 7, start: 1, who: "sp-a".into(), since: 100, waited: 0, last: 100, weight: 1, until: None }];
     assert_eq!(wait_line(Pool::Run, 1, &holders, 130), "testenv: waiting for a CPU slot (1 running)");
 }
 
+#[test_id(tngp5xa)]
 #[test]
 fn the_retired_wrapper_names_the_inner_compiler_with_every_argument() {
     let os = |a: &[&str]| a.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();

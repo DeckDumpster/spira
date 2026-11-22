@@ -5,6 +5,9 @@
 //! library; see `src/main.rs` for the CLI. Status — comparing this desired state against
 //! observed reality — is a separate bead's concern; nothing here writes status.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod compose;
 pub mod distance;
 pub mod intent;

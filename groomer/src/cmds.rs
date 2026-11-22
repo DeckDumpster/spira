@@ -294,6 +294,7 @@ mod cmds_tests {
         seam
     }
 
+    #[test_id(t2wo06f)]
     #[test]
     fn split_piece_of_a_groom_parent_ends_plan_and_not_groom() {
         let bd = FakeBd::new();
@@ -307,6 +308,7 @@ mod cmds_tests {
         assert!(bd.log().iter().any(|c| c == "label add sp-1.1 plan"));
     }
 
+    #[test_id(t99uucj)]
     #[test]
     fn split_piece_refuses_a_piece_the_groomer_would_claim() {
         let bd = FakeBd::new();
@@ -317,6 +319,7 @@ mod cmds_tests {
         assert!(!bd.log().iter().any(|c| c.starts_with("create")));
     }
 
+    #[test_id(t36vad3)]
     #[test]
     fn split_piece_honours_a_named_persona() {
         let bd = FakeBd::new();
@@ -329,6 +332,7 @@ mod cmds_tests {
         assert!(!bd.log().iter().any(|c| c == "label add sp-1.1 plan"));
     }
 
+    #[test_id(tttxx3c)]
     #[test]
     fn split_piece_records_its_own_branch_and_strips_inherited_delivers() {
         let bd = FakeBd::new();
@@ -341,6 +345,7 @@ mod cmds_tests {
         assert!(bd.log().iter().any(|c| c.starts_with("label remove sp-1.1 delivers:beads")));
     }
 
+    #[test_id(ty5mp7d)]
     #[test]
     fn split_piece_requires_an_id() {
         let bd = FakeBd::new();
@@ -349,6 +354,7 @@ mod cmds_tests {
         assert_eq!(err.0, 1);
     }
 
+    #[test_id(tv3qmpe)]
     #[test]
     fn split_piece_propagates_a_create_failure() {
         let bd = FakeBd::new();
@@ -358,6 +364,7 @@ mod cmds_tests {
         assert_eq!(err.0, 1);
     }
 
+    #[test_id(tvtv82q)]
     #[test]
     fn supersede_requires_both_arguments() {
         let bd = FakeBd::new();
@@ -367,6 +374,7 @@ mod cmds_tests {
         assert!(bd.log().contains(&"supersede sp-1 --with sp-2".to_string()));
     }
 
+    #[test_id(tuyvr57)]
     #[test]
     fn close_refuses_without_evidence() {
         let bd = FakeBd::new();
@@ -376,6 +384,7 @@ mod cmds_tests {
         assert!(bd.log().is_empty());
     }
 
+    #[test_id(t21of5z)]
     #[test]
     fn a_terminal_bead_takes_no_close_supersede_or_drop_write() {
         let seam = FakeSeam::new();
@@ -389,6 +398,7 @@ mod cmds_tests {
         }
     }
 
+    #[test_id(tbs8wz5)]
     #[test]
     fn close_with_evidence_calls_bd_close() {
         let bd = FakeBd::new();
@@ -396,6 +406,7 @@ mod cmds_tests {
         assert!(bd.log().contains(&"close sp-1 premise gone".to_string()));
     }
 
+    #[test_id(tjlyjo3)]
     #[test]
     fn correct_lane_requires_lane() {
         let bd = FakeBd::new();
@@ -404,6 +415,7 @@ mod cmds_tests {
         assert_eq!(bd.log(), vec!["set-state sp-1 lane=backend"]);
     }
 
+    #[test_id(tyqa643)]
     #[test]
     fn depends_on_fix_refuses_a_fix_in_any_terminal_state() {
         for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
@@ -416,6 +428,7 @@ mod cmds_tests {
         }
     }
 
+    #[test_id(tmhxe43)]
     #[test]
     fn depends_on_fix_links_and_notes_an_open_fix() {
         let bd = FakeBd::new();
@@ -425,6 +438,7 @@ mod cmds_tests {
         assert!(bd.log().contains(&"note sp-bug Parked behind fix sp-fix: the fix is in flight".to_string()));
     }
 
+    #[test_id(tobgf29)]
     #[test]
     fn depends_on_fix_refuses_a_nonexistent_fix() {
         let bd = FakeBd::new();
@@ -433,6 +447,7 @@ mod cmds_tests {
         assert!(err.1.contains("does not exist"));
     }
 
+    #[test_id(tjrgahr)]
     #[test]
     fn triage_poison_requires_a_known_verdict() {
         let bd = FakeBd::new();
@@ -442,6 +457,7 @@ mod cmds_tests {
         assert!(err.1.contains("work-fault or drop"));
     }
 
+    #[test_id(tgep4f8)]
     #[test]
     fn triage_poison_drop_closes_with_no_state_label() {
         let bd = FakeBd::new();
@@ -452,6 +468,7 @@ mod cmds_tests {
         assert!(!bd.log().iter().any(|c| c.starts_with("label add") || c.starts_with("label remove")), "{:?}", bd.log());
     }
 
+    #[test_id(t29c5q7)]
     #[test]
     fn triage_poison_work_fault_refuses_a_bead_with_no_poison_hold() {
         let bd = FakeBd::new();
@@ -463,6 +480,7 @@ mod cmds_tests {
         assert!(err.1.contains("holds no poison"));
     }
 
+    #[test_id(tl9aryr)]
     #[test]
     fn triage_poison_work_fault_lifts_poison_without_crediting() {
         let bd = FakeBd::new();
@@ -476,6 +494,7 @@ mod cmds_tests {
         assert!(bd.log().iter().any(|c| c.contains("WORK'S FAULT")));
     }
 
+    #[test_id(t1cqhrw)]
     #[test]
     fn unwanted_is_always_refused() {
         let err = unwanted().unwrap_err();
@@ -489,6 +508,7 @@ mod cmds_tests {
         seam
     }
 
+    #[test_id(tin5i5z)]
     #[test]
     fn close_and_supersede_refuse_a_gate_labelled_bead_but_close_the_unlabelled_control() {
         let bd = FakeBd::new();
@@ -502,6 +522,7 @@ mod cmds_tests {
         assert!(bd.log().iter().any(|c| c.starts_with("close sp-plain")));
     }
 
+    #[test_id(th6zeuv)]
     #[test]
     fn close_fails_closed_when_the_gate_label_is_unset() {
         let bd = FakeBd::new();

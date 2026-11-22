@@ -492,6 +492,7 @@ mod tests {
         m
     }
 
+    #[test_id(tgxboom)]
     #[test]
     fn a_properties_changed_signal_decodes_to_its_interface_and_changed_dict() {
         let mut b = Vec::new();
@@ -522,6 +523,7 @@ mod tests {
         assert_eq!(d[1].1.as_bytes(), Some(vec![0xab, 0xcd]));
     }
 
+    #[test_id(th4rhzb)]
     #[test]
     fn a_truncated_message_is_an_error_not_a_panic() {
         let mut b = Vec::new();
@@ -532,6 +534,7 @@ mod tests {
         assert!(decode(&raw[..10]).is_err());
     }
 
+    #[test_id(t7qneo1)]
     #[test]
     fn a_call_encodes_a_header_of_the_declared_length() {
         let raw = encode_call(3, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "AddMatch", Some("type='signal'"));
@@ -541,6 +544,7 @@ mod tests {
         assert_eq!(m.body[0].as_str(), Some("type='signal'"));
     }
 
+    #[test_id(tkkqs4n)]
     #[test]
     fn a_one_string_call_is_the_general_encoder_with_signature_s() {
         let mut body = Vec::new();
@@ -549,6 +553,7 @@ mod tests {
         assert_eq!(encode_call(4, "d", "/p", "i", "M", None), encode_call_with(4, "d", "/p", "i", "M", "", &[])); // not a path: a D-Bus object path
     }
 
+    #[test_id(t44p8bk)]
     #[test]
     fn a_marshalled_body_of_several_arguments_decodes_under_its_signature() {
         let mut body = Vec::new();
@@ -561,6 +566,7 @@ mod tests {
         assert_eq!(m.body, vec![Val::S("a.service".into()), Val::S("fail".into()), Val::U(7)]);
     }
 
+    #[test_id(tbi9th8)]
     #[test]
     fn a_unit_name_escapes_to_its_object_path_and_back() {
         for name in ["x.service", "spira-run-czar_2dpass-r7.service", "a@b:c.timer", "unit\u{e9}.scope"] {
@@ -573,6 +579,7 @@ mod tests {
         assert_eq!(unit_object_path("job-x.service"), "/org/freedesktop/systemd1/unit/job_2dx_2eservice");
     }
 
+    #[test_id(t9trfpt)]
     #[test]
     fn booleans_and_struct_fields_read_through_a_variant() {
         assert_eq!(Val::Var(Box::new(Val::B(true))).as_bool(), Some(true));
@@ -585,6 +592,7 @@ mod tests {
     }
 
     /// A connected pair already past auth: `call_body` writes one call and reads its reply.
+    #[test_id(tq983m6)]
     #[test]
     fn call_body_sends_the_body_and_returns_the_matching_reply() {
         let (a, mut b) = UnixStream::pair().unwrap();

@@ -109,6 +109,7 @@ mod tests {
         }
     }
 
+    #[test_id(tekm38s)]
     #[test]
     fn a_note_is_delivered_into_the_mailbox_without_a_mail_program() {
         let t = testkit::TempDir::new("engine-mail-note");
@@ -122,6 +123,7 @@ mod tests {
         assert!(text.contains("Subject: RECONCILER: gap") && text.contains("the evidence") && text.contains(FROM), "{text}");
     }
 
+    #[test_id(t2vtsqk)]
     #[test]
     fn a_refused_message_names_the_mailbox() {
         let t = testkit::TempDir::new("engine-mail-refused");

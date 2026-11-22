@@ -135,6 +135,7 @@ mod tests {
         inflight_section(&Snapshot::parse(snap), 100, 700).iter().map(|l| strip(l)).collect()
     }
 
+    #[test_id(tlmqxgi)]
     #[test]
     fn running_work_lists_every_kind_with_a_bar_for_rounds() {
         let out = render(
@@ -149,6 +150,7 @@ mod tests {
         assert!(out[3].contains("pre-merge") && out[3].contains("?"));
     }
 
+    #[test_id(t42yszz)]
     #[test]
     fn idle_is_one_line_and_an_absent_key_is_not_idle() {
         assert_eq!(render("SP_INFLIGHT_SEG='\u{2699} idle'\n"), vec!["\u{2699} idle"]);
@@ -156,6 +158,7 @@ mod tests {
         assert!(missing[0].contains('?') && !missing[0].contains("idle"));
     }
 
+    #[test_id(tvklrxn)]
     #[test]
     fn the_page_view_lists_each_kind_and_never_shows_unreadable_as_idle() {
         let snap = Snapshot::parse(
@@ -173,6 +176,7 @@ mod tests {
         assert!(Flight::from_snapshot(&dark, 700, 60).unread());
     }
 
+    #[test_id(t508z6q)]
     #[test]
     fn an_unreadable_kind_shows_its_question_mark() {
         let out = render("SP_INFLIGHT_SEG='\u{2699} ?rounds'\n");

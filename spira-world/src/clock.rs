@@ -43,6 +43,7 @@ pub fn now() -> i64 {
 mod tests {
     use super::*;
 
+    #[test_id(toe9my0)]
     #[test]
     fn utc_forms_match_date() {
         // 2026-11-03T21:04:05Z
@@ -52,6 +53,7 @@ mod tests {
         assert_eq!(utc_iso(0), "1970-01-01T00:00:00Z");
     }
 
+    #[test_id(tmwrzcb)]
     #[test]
     fn the_local_stamp_has_dates_shape_and_a_zone() {
         let s = local_stamp(1_793_739_845);

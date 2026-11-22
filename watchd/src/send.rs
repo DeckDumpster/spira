@@ -118,6 +118,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4hn88b)]
     #[test]
     fn an_alert_about_a_silent_reader_reaches_the_operator_not_the_concierge() {
         let tmp = testkit::TempDir::new("watchd-alert");
@@ -128,6 +129,7 @@ mod tests {
         assert!(!root.join("mail/concierge/new").exists());
     }
 
+    #[test_id(tu3zhjf)]
     #[test]
     fn the_backlog_alarm_carries_its_condition_and_another_alert_carries_none() {
         let tmp = testkit::TempDir::new("watchd-alert-condition");
@@ -143,6 +145,7 @@ mod tests {
         assert!(!sent("some other alert").contains("X-Spira-Condition"));
     }
 
+    #[test_id(t5ua47v)]
     #[test]
     fn a_concierge_letter_lands_in_the_concierge_maildir_from_watchd() {
         let tmp = testkit::TempDir::new("watchd-send");

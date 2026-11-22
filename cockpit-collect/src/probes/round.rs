@@ -264,6 +264,7 @@ mod tests {
         None
     }
 
+    #[test_id(thqyyeu)]
     #[test]
     fn a_rounds_stop_is_carried_with_owner_reason_and_release_condition() {
         let stop = |lanes: &[&str]| spira_config::scoped_stop::RepoStop { repo: "spira".into(), lanes: lanes.iter().map(|l| l.to_string()).collect(), owner: "concierge".into(), reason: "fixes unlanded".into(), until: "bead:sp-x=LANDED".into(), since: 1 };
@@ -274,6 +275,7 @@ mod tests {
         assert_eq!((get(&kv, "SP_ROUND_STOP"), get(&kv, "SP_ROUND_STOP_OWNER"), get(&kv, "SP_ROUND_STOP_UNTIL")), (Some("spira"), Some("concierge"), Some("bead:sp-x LANDED")));
     }
 
+    #[test_id(tcs161z)]
     #[test]
     fn a_forge_batch_on_the_store_carries_the_ci_its_record_shows() {
         let raw = r#"[{"batch_id":"dd-1","repo":"deckdumpster","state":"CI_RUNNING","opened_at":1000,"last_at":1010,"members":[{"bead_id":"dd-a","outcome":null}],"ejected":[]}]"#;
@@ -286,6 +288,7 @@ mod tests {
 
     const M: &str = r#"{"bead_id":"dd-a","outcome":null}"#;
 
+    #[test_id(tsqol5n)]
     #[test]
     fn a_running_forge_batch_carries_its_pr_run_step_and_progress() {
         let kv = forge_keys("run", M, "batch_id=dd-1\npr=422\npr_state=open\nci=pending\nrun=7\nrun_started=1100\nlast_activity=1300\nstep=unit / pytest\nwall=3600\n");
@@ -295,6 +298,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_ROUNDS0_STALL"), None);
     }
 
+    #[test_id(tc84crv)]
     #[test]
     fn green_awaiting_merge_is_not_stalled() {
         let kv = forge_keys("green", M, "batch_id=dd-1\npr=422\npr_state=open\nci=green\n");
@@ -302,6 +306,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_ROUNDS0_STALL"), None);
     }
 
+    #[test_id(tixd3xz)]
     #[test]
     fn a_merged_or_closed_pr_under_a_live_batch_is_stalled() {
         let merged = forge_keys("merged", M, "batch_id=dd-1\npr=207\npr_state=merged\nci=green\n");
@@ -310,6 +315,7 @@ mod tests {
         assert_eq!(get(&closed, "SP_ROUNDS0_STALL"), Some("PR closed but batch live"));
     }
 
+    #[test_id(tw1c60j)]
     #[test]
     fn an_empty_open_batch_is_stalled_and_a_stale_forge_record_is_ignored() {
         let kv = forge_keys("empty", "", "batch_id=dd-1\npr=422\npr_state=open\nci=pending\n");
@@ -329,6 +335,7 @@ mod tests {
        "ejected":[{"batch_id":"r-9","bead_id":"sp-c","reason":"red: test-x.sh"}]},
       {"batch_id":"r-8","repo":"spira","state":"LANDED","reason":null,"opened_at":500,"last_at":700,"members":[],"ejected":[]}]"#;
 
+    #[test_id(t4xbw0o)]
     #[test]
     fn an_open_batch_reports_phase_opened_members_and_ejections() {
         let b = parse_batches(RAW).unwrap();
@@ -346,6 +353,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_ROUND_POOL"), Some("4"));
     }
 
+    #[test_id(t1r6pb7)]
     #[test]
     fn two_live_rounds_are_both_reported_and_a_landed_one_is_not() {
         let raw = r#"[
@@ -360,6 +368,7 @@ mod tests {
         assert!(!kv.iter().any(|(_, v)| v == "r-9"));
     }
 
+    #[test_id(tg3k5xa)]
     #[test]
     fn a_staged_round_follows_the_round_it_waits_behind_and_a_discarded_one_is_dropped() {
         let raw = r#"[
@@ -375,6 +384,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_ROUNDS1_PARENT"), None);
     }
 
+    #[test_id(tlt9886)]
     #[test]
     fn each_open_state_has_a_phase() {
         for (s, p) in [("OPEN", "merging"), ("CI_RUNNING", "certifying"), ("GREEN", "landing"), ("ATTRIBUTING", "attributing"), ("REBUILDING", "rebuilding")] {
@@ -382,6 +392,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjv07xr)]
     #[test]
     fn no_open_batch_reports_the_last_verdict() {
         let b = parse_batches(RAW).unwrap();
@@ -396,6 +407,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_ROUND_POOL"), Some("?"));
     }
 
+    #[test_id(t58x04x)]
     #[test]
     fn an_unreadable_store_is_cannot_tell_not_idle() {
         let kv = round_keys_from(None, None, 900, &none);
@@ -403,6 +415,7 @@ mod tests {
         assert!(parse_batches("cannot tell: x").is_none());
     }
 
+    #[test_id(t10b3ke)]
     #[test]
     fn the_pool_counts_submitted_and_certified_without_a_hold() {
         use spira_store::lc_state::Row;
@@ -411,6 +424,7 @@ mod tests {
         assert_eq!(pool_waiting(&rows), 2);
     }
 
+    #[test_id(t2hsue7)]
     #[test]
     fn a_certifying_round_reports_suites_done_total_and_reds_and_no_progress_is_zero() {
         let with = RAW.replace(r#""reason":null,"opened_at":"1000""#, r#""reason":null,"progress":"{}","opened_at":"1000""#);

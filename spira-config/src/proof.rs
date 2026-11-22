@@ -239,6 +239,7 @@ mod tests {
         testkit::TempDir::new("proof")
     }
 
+    #[test_id(thselih)]
     #[test]
     fn a_pass_proves_only_its_own_check_at_its_own_tip() {
         let d = run();
@@ -256,6 +257,7 @@ mod tests {
         assert!(unproven(&r, "sp-a", T1).is_empty());
     }
 
+    #[test_id(tg3dpa4)]
     #[test]
     fn failing_tests_round_trip_per_check_and_an_empty_record_keeps_nothing() {
         let d = run();
@@ -269,6 +271,7 @@ mod tests {
         assert!(failing_tests(&r, "sp-a", "unit-tests").is_empty());
     }
 
+    #[test_id(tqksz7i)]
     #[test]
     fn dropping_a_disabled_check_leaves_the_other_checks_in_place() {
         let d = run();
@@ -303,6 +306,7 @@ mod tests {
         root.to_str().unwrap().to_string()
     }
 
+    #[test_id(tniumpn)]
     #[test]
     fn a_forced_suite_the_landing_ref_lacks_is_dropped_with_its_reason_and_steps_stay() {
         let d = run();
@@ -325,6 +329,7 @@ mod tests {
         assert!(drop_deleted_suites(&r, "sp-a", &root, "main", &record).unwrap().is_empty(), "a second submit has nothing to drop");
     }
 
+    #[test_id(tj1ajck)]
     #[test]
     fn a_requirement_only_a_deleted_suite_held_is_cleared_with_its_sidecar() {
         let d = run();
@@ -337,6 +342,7 @@ mod tests {
         assert!(failing(&r, "sp-b").is_empty() && !r.join("ejected/sp-b").exists());
     }
 
+    #[test_id(t046d4j)]
     #[test]
     fn a_recorder_that_fails_leaves_the_requirement_in_place() {
         let d = run();
@@ -347,6 +353,7 @@ mod tests {
         assert_eq!(failing(&r, "sp-c"), ["test-gone.sh"]);
     }
 
+    #[test_id(tqdz3sc)]
     #[test]
     fn landed_suites_reads_the_ref_not_the_checkout() {
         let d = run();
@@ -366,6 +373,7 @@ mod tests {
         assert_eq!(commit.len(), 40);
     }
 
+    #[test_id(te9sxvc)]
     #[test]
     fn names_that_climb_out_of_the_store_are_refused() {
         let d = run();

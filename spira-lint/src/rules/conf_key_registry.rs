@@ -160,6 +160,7 @@ mod tests {
         ks.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t9mfqq3)]
     #[test]
     fn the_block_is_parsed_once_per_key() {
         let t = "x=1\nSPIRA_CONF_KEYS=\"\n  SPIRA_A SPIRA_B\n  SPIRA_A\n\"\nSPIRA_C=1\n";
@@ -167,6 +168,7 @@ mod tests {
         assert!(conf_keys("SPIRA_CONF_KEYS=\"a b\"\n").is_none());
     }
 
+    #[test_id(tzgeijc)]
     #[test]
     fn a_short_block_is_a_refusal_not_a_pass() {
         let t = crate::testutil::TempDir::new("ckr");

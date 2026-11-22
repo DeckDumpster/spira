@@ -244,6 +244,7 @@ pub fn decode<T: for<'de> Deserialize<'de>>(key: &str, o: &Object) -> Result<T> 
 mod tests {
     use super::*;
 
+    #[test_id(t90uji3)]
     #[test]
     fn a_record_round_trips_and_carries_no_planning_field() {
         let r = LifecycleRecord::born("sp-a", Some("harness"), None, 100);
@@ -259,6 +260,7 @@ mod tests {
         );
     }
 
+    #[test_id(t44myax)]
     #[test]
     fn a_birth_is_the_same_whenever_it_was_stamped_and_differs_by_repo_or_tip() {
         let a = LifecycleRecord::born("sp-a", Some("harness"), None, 100);

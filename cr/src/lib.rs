@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod cli;
 pub mod count;
 pub mod coverage;

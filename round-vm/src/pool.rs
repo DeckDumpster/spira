@@ -1234,6 +1234,7 @@ mod tests {
         }
     }
 
+    #[test_id(tn02qim)]
     #[test]
     fn a_failed_attempt_wakes_on_a_freed_slot_not_the_retry_interval() {
         let d = TempDir::new();
@@ -1251,6 +1252,7 @@ mod tests {
         assert_eq!(pl.wait_for_freed_slot(before).unwrap(), Woke::Changed);
     }
 
+    #[test_id(t1vhwc3)]
     #[test]
     fn an_unchanged_pool_waits_out_the_retry_interval_cap() {
         let d = TempDir::new();
@@ -1263,6 +1265,7 @@ mod tests {
         assert!(started.elapsed() >= Duration::from_millis(60));
     }
 
+    #[test_id(t8ke65o)]
     #[test]
     fn cold_acquire_provisions_and_leases_with_no_spare_beside_it() {
         let d = TempDir::new();
@@ -1299,6 +1302,7 @@ mod tests {
         assert!(alarm.sent().is_empty());
     }
 
+    #[test_id(t4f0m7d)]
     #[test]
     fn warm_acquire_returns_the_ready_vm_and_starts_exactly_one_more_provision() {
         let d = TempDir::new();
@@ -1343,6 +1347,7 @@ mod tests {
         assert!(read_state(&pl.state_file()).unwrap().ready.is_none());
     }
 
+    #[test_id(tsoaf7d)]
     #[test]
     fn a_ready_vm_that_died_is_destroyed_and_replaced_cold() {
         let d = TempDir::new();
@@ -1376,6 +1381,7 @@ mod tests {
         );
     }
 
+    #[test_id(tjyeveo)]
     #[test]
     fn background_provision_never_makes_a_second_ready_vm() {
         let d = TempDir::new();
@@ -1405,6 +1411,7 @@ mod tests {
         );
     }
 
+    #[test_id(tgnzysk)]
     #[test]
     fn background_provision_runs_only_as_the_recorded_provisioner() {
         let d = TempDir::new();
@@ -1415,6 +1422,7 @@ mod tests {
         assert_eq!(fp.count("clone"), 0);
     }
 
+    #[test_id(ta5gopd)]
     #[test]
     fn acquire_waits_on_the_provision_in_flight_instead_of_starting_a_second() {
         let d = TempDir::new();
@@ -1476,6 +1484,7 @@ mod tests {
         assert_eq!(fp.count("clone"), 0, "no second provision was started");
     }
 
+    #[test_id(tta7kf1)]
     #[test]
     fn a_dead_provisioner_s_vm_is_destroyed_by_the_next_acquire() {
         let d = TempDir::new();
@@ -1507,6 +1516,7 @@ mod tests {
         assert!(fp.name("444").is_none());
     }
 
+    #[test_id(tv3fcjx)]
     #[test]
     fn an_acquire_with_a_holder_writes_the_holder_with_the_lease() {
         let d = TempDir::new();
@@ -1534,6 +1544,7 @@ mod tests {
         assert_eq!(l.holder, Some(me));
     }
 
+    #[test_id(tquhv5p)]
     #[test]
     fn outage_alarms_once_and_never_fabricates_a_vm() {
         let d = TempDir::new();
@@ -1610,6 +1621,7 @@ mod tests {
         );
     }
 
+    #[test_id(tk00dqn)]
     #[test]
     fn a_failure_is_never_cached_the_next_retry_rereads_and_succeeds() {
         let d = TempDir::new();
@@ -1643,6 +1655,7 @@ mod tests {
         assert_eq!(alarm.sent().len(), 1);
     }
 
+    #[test_id(tr7d3qm)]
     #[test]
     fn failed_provisions_leak_nothing_across_retries() {
         let d = TempDir::new();
@@ -1669,6 +1682,7 @@ mod tests {
         assert!(s.provisioning.is_none() && s.doomed.is_empty() && s.leases.is_empty());
     }
 
+    #[test_id(tjhjrcd)]
     #[test]
     fn an_undestroyable_vm_stays_doomed_and_is_retried() {
         let d = TempDir::new();
@@ -1708,6 +1722,7 @@ mod tests {
         assert!(read_state(&pl.state_file()).unwrap().doomed.is_empty());
     }
 
+    #[test_id(tjr5p4y)]
     #[test]
     fn release_destroys_verifies_and_forgets_the_lease() {
         let d = TempDir::new();
@@ -1734,6 +1749,7 @@ mod tests {
         assert!(s.leases.is_empty() && s.doomed.is_empty());
     }
 
+    #[test_id(tnc94fn)]
     #[test]
     fn release_refuses_a_vm_leased_to_another_live_run_and_names_it() {
         let d = TempDir::new();
@@ -1772,6 +1788,7 @@ mod tests {
         assert!(fp.name(&vm.handle).is_none());
     }
 
+    #[test_id(txdg5gi)]
     #[test]
     fn a_lease_whose_acquiring_process_died_is_reaped_and_refresh_proceeds() {
         let d = TempDir::new();
@@ -1802,6 +1819,7 @@ mod tests {
         assert!(read_state(&pl.state_file()).unwrap().leases.is_empty());
     }
 
+    #[test_id(t5wrs61)]
     #[test]
     fn a_lease_held_by_a_live_acquirer_blocks_refresh() {
         let d = TempDir::new();
@@ -1826,6 +1844,7 @@ mod tests {
         assert!(pl.begin_refresh(ProcId::current()).unwrap().is_err());
     }
 
+    #[test_id(tcv38sq)]
     #[test]
     fn a_stale_lease_is_released_by_anyone() {
         let d = TempDir::new();
@@ -1854,6 +1873,7 @@ mod tests {
         assert!(fp.name("311").is_none());
     }
 
+    #[test_id(tpre85w)]
     #[test]
     fn release_refuses_a_vm_that_is_not_ours() {
         let d = TempDir::new();
@@ -1867,6 +1887,7 @@ mod tests {
         assert!(read_state(&pl.state_file()).unwrap().doomed.is_empty());
     }
 
+    #[test_id(tjailuy)]
     #[test]
     fn release_owned_by_frees_only_that_owner_s_vms() {
         let d = TempDir::new();
@@ -1923,6 +1944,7 @@ mod tests {
         assert!(read_state(&pl.state_file()).unwrap().provisioning.is_none());
     }
 
+    #[test_id(tqconcd)]
     #[test]
     fn recycle_destroys_the_warm_vm_and_the_provision_but_not_a_lease() {
         let d = TempDir::new();
@@ -1963,6 +1985,7 @@ mod tests {
         assert!(s.ready.is_none() && s.provisioning.is_none() && s.doomed.is_empty());
     }
 
+    #[test_id(tc9wglj)]
     #[test]
     fn a_refresh_is_refused_while_a_round_holds_a_vm_and_blocks_acquire_while_it_runs() {
         let d = TempDir::new();
@@ -2008,6 +2031,7 @@ mod tests {
         .unwrap();
     }
 
+    #[test_id(t6oq130)]
     #[test]
     fn under_ec2_always_the_next_pass_releases_a_warm_vm_however_young() {
         let d = TempDir::new();
@@ -2027,6 +2051,7 @@ mod tests {
         );
     }
 
+    #[test_id(to7lowe)]
     #[test]
     fn in_local_mode_a_warm_vm_is_released_only_past_the_idle_bound() {
         let d = TempDir::new();
@@ -2046,6 +2071,7 @@ mod tests {
         assert!(fp.name("201").is_none());
     }
 
+    #[test_id(t5pbpm1)]
     #[test]
     fn draining_never_touches_a_vm_a_live_round_holds() {
         let d = TempDir::new();
@@ -2072,6 +2098,7 @@ mod tests {
             .any(|l| l.vm.handle == leased.handle));
     }
 
+    #[test_id(ttun8ed)]
     #[test]
     fn a_recycle_never_destroys_a_vm_another_caller_leases() {
         let d = TempDir::new();
@@ -2103,6 +2130,7 @@ mod tests {
         assert!(pl.with_state(|s| s.leases.len()).unwrap() == 1);
     }
 
+    #[test_id(t290sml)]
     #[test]
     fn status_reports_ready_provisioning_and_outage() {
         let d = TempDir::new();
@@ -2145,6 +2173,7 @@ mod tests {
         assert!(pl.status().unwrap().contains("provisioning: none"));
     }
 
+    #[test_id(tjmgdll)]
     #[test]
     fn status_json_returns_exactly_the_recorded_state() {
         let d = TempDir::new();
@@ -2189,6 +2218,7 @@ mod tests {
         );
     }
 
+    #[test_id(tab4bva)]
     #[test]
     fn status_json_shows_a_doomed_vm_and_the_template() {
         let d = TempDir::new();
@@ -2221,6 +2251,7 @@ mod tests {
         assert_eq!(j["vms"][0]["state"], "doomed");
     }
 
+    #[test_id(t9a8gri)]
     #[test]
     fn a_warm_spare_is_started_only_when_nothing_is_ready_or_in_flight() {
         let d = TempDir::new();
@@ -2243,6 +2274,7 @@ mod tests {
         assert_eq!(sp.count(), 1);
     }
 
+    #[test_id(thatqcw)]
     #[test]
     fn no_warm_spare_is_started_while_a_local_round_vm_is_leased() {
         let d = TempDir::new();
@@ -2333,6 +2365,7 @@ mod tests {
             .unwrap_or_default()
     }
 
+    #[test_id(tqoqjpi)]
     #[test]
     fn io_pressure_above_the_threshold_runs_the_pass_on_ec2_and_records_why() {
         let d = TempDir::new();
@@ -2377,6 +2410,7 @@ mod tests {
         );
     }
 
+    #[test_id(tk0l4yf)]
     #[test]
     fn a_pass_whose_image_the_template_lacks_leases_on_ec2_without_pressure() {
         let d = TempDir::new();
@@ -2428,6 +2462,7 @@ mod tests {
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
     }
 
+    #[test_id(t1d74c6)]
     #[test]
     fn an_ec2_placement_whose_candidate_image_is_baking_launches_nothing_in_every_spill_mode() {
         for (always, only) in [(false, false), (true, false), (true, true)] {
@@ -2451,6 +2486,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0sx4ue)]
     #[test]
     fn an_ec2_placement_launches_the_image_that_carries_the_candidate_recipe() {
         let d = TempDir::new();
@@ -2466,6 +2502,7 @@ mod tests {
         assert_eq!(fake.launched_amis(), ["ami-cand"]);
     }
 
+    #[test_id(to39xho)]
     #[test]
     fn a_pass_the_host_refused_spills_to_ec2_with_a_free_local_vm_and_no_pressure() {
         let d = TempDir::new();
@@ -2480,6 +2517,7 @@ mod tests {
         assert!(lease_reason(&pl, &vm.handle).contains("host round slot is taken"));
     }
 
+    #[test_id(t1i7nf1)]
     #[test]
     fn without_pressure_the_pass_runs_local_and_says_so() {
         let d = TempDir::new();
@@ -2507,6 +2545,7 @@ mod tests {
         assert!(lease_reason(&pl, &vm.handle).contains("provider: proxmox"));
     }
 
+    #[test_id(tv7zorc)]
     #[test]
     fn a_pool_that_cannot_lease_within_the_wait_spills() {
         let d = TempDir::new();
@@ -2541,6 +2580,7 @@ mod tests {
         assert!(lease_reason(&pl, &vm.handle).contains("no local VM within"));
     }
 
+    #[test_id(th9chsc)]
     #[test]
     fn ec2_always_leases_on_ec2_with_a_free_local_vm_and_falls_back_with_the_reason() {
         let d = TempDir::new();
@@ -2626,6 +2666,7 @@ mod tests {
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
     }
 
+    #[test_id(t298kr6)]
     #[test]
     fn a_refused_first_instance_type_launches_the_second_not_a_local_vm() {
         let d = TempDir::new();
@@ -2655,6 +2696,7 @@ mod tests {
         assert_eq!(ec2.instance_type(&vm.handle).as_deref(), Some("small"));
     }
 
+    #[test_id(tk7v2ax)]
     #[test]
     fn every_instance_type_refused_falls_back_to_a_local_vm() {
         let d = TempDir::new();
@@ -2683,6 +2725,7 @@ mod tests {
         assert!(fake.launched_types().is_empty());
     }
 
+    #[test_id(tqgz0uq)]
     #[test]
     fn ec2_only_places_on_ec2_and_a_failed_acquire_is_an_error_never_local() {
         let d = TempDir::new();
@@ -2741,6 +2784,7 @@ mod tests {
         );
     }
 
+    #[test_id(twlg2va)]
     #[test]
     fn a_failed_spill_falls_back_to_local_and_leaks_nothing() {
         let d = TempDir::new();
@@ -2769,6 +2813,7 @@ mod tests {
         assert!(s.spilled.is_empty() && s.doomed.is_empty());
     }
 
+    #[test_id(tjox9u4)]
     #[test]
     fn acquire_reaps_a_stale_tagged_instance_and_leaves_an_untagged_one() {
         let d = TempDir::new();
@@ -2795,6 +2840,7 @@ mod tests {
         assert_eq!(fake.ids(), ["i-untagged"]);
     }
 
+    #[test_id(tnyq7hy)]
     #[test]
     fn a_dead_spilled_provisioner_is_destroyed_by_the_next_acquire() {
         let d = TempDir::new();
@@ -2834,6 +2880,7 @@ mod tests {
         assert!(fake.ids().is_empty(), "{:?}", fake.ids());
     }
 
+    #[test_id(teiuouf)]
     #[test]
     fn the_reconciler_reaps_an_unheld_tagged_instance_past_grace_and_leaves_held_ones() {
         let d = TempDir::new();
@@ -2884,6 +2931,7 @@ mod tests {
         assert_eq!(left, ["i-kept", "i-live", "i-untagged", "i-young"]);
     }
 
+    #[test_id(tsb3hzd)]
     #[test]
     fn a_kept_lease_older_than_the_grace_is_reaped() {
         let d = TempDir::new();
@@ -2913,6 +2961,7 @@ mod tests {
         assert!(fake.ids().is_empty());
     }
 
+    #[test_id(t80bemt)]
     #[test]
     fn a_kept_lease_is_counted_from_the_hold_not_the_lease() {
         let d = TempDir::new();
@@ -2946,6 +2995,7 @@ mod tests {
         assert_eq!(fake.ids(), ["i-kept"]);
     }
 
+    #[test_id(ty51p00)]
     #[test]
     fn a_vm_whose_results_are_being_pulled_survives_the_reconciler_until_the_pin_drops() {
         let d = TempDir::new();
@@ -2988,6 +3038,7 @@ mod tests {
         );
     }
 
+    #[test_id(ttuxsff)]
     #[test]
     fn a_sweep_drops_leases_on_vanished_or_reused_handles_and_keeps_ours() {
         let d = TempDir::new();
@@ -3032,6 +3083,7 @@ mod tests {
         assert_eq!(fp.count("destroy"), 0);
     }
 
+    #[test_id(tj3x0tm)]
     #[test]
     fn a_held_lease_whose_pull_completed_is_gone_at_the_next_pool_operation() {
         let d = TempDir::new();
@@ -3065,6 +3117,7 @@ mod tests {
         assert!(read_state(&pl.state_file()).unwrap().leases.is_empty());
     }
 
+    #[test_id(t3m90k3)]
     #[test]
     fn a_held_lease_never_pulled_ends_at_the_bound_with_an_event() {
         let d = TempDir::new();
@@ -3100,6 +3153,7 @@ mod tests {
         );
     }
 
+    #[test_id(tkiexid)]
     #[test]
     fn the_status_names_the_run_a_lease_is_held_for() {
         let d = TempDir::new();

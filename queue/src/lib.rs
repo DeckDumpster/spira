@@ -1,5 +1,8 @@
 //! queue — the merge queue's operator and landing tool. See DESIGN.md.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod batches;
 pub mod cli;
 pub mod conf;

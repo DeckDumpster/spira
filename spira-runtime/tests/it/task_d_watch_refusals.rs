@@ -42,6 +42,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(tjz5kob)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     let row = acc::row(NAME);
@@ -55,6 +56,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(tvimy42)]
 #[test]
 fn t2_classes_at_or_under_baseline_journal_nothing() {
     let mut r = rig(1, world(vec![class("claim", BASELINE), class("submit", 1)]), filed_ok);
@@ -62,6 +64,7 @@ fn t2_classes_at_or_under_baseline_journal_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(tzqpl37)]
 #[test]
 fn t3_a_class_is_filed_on_success_due_again_after_the_window_and_pruned_after_seven() {
     let w = world(vec![class("claim", 9)]);
@@ -82,6 +85,7 @@ fn t3_a_class_is_filed_on_success_due_again_after_the_window_and_pruned_after_se
     assert_eq!(asked(&failing).len(), 2, "and it is retried next pass");
 }
 
+#[test_id(tom0yg0)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("d/watch_refusals.rs")), None);
@@ -93,6 +97,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// `title` and `body` (`refusal-watch/src/lib.rs:158-163,270-280`) and the worst-first bound.
+#[test_id(trdv68w)]
 #[test]
 fn t5_the_filing_is_the_one_refusal_watch_made() {
     let r = rig(1, world(vec![class("claim", 9)]), filed_ok);
@@ -106,6 +111,7 @@ fn t5_the_filing_is_the_one_refusal_watch_made() {
     assert!(f[0].contains("refused e11 "), "worst first: {:?}", f[0]);
 }
 
+#[test_id(tnct1vc)]
 #[test]
 fn t6_seven_days_of_a_repeating_class_replay_identically_inside_the_budget() {
     let r = assert_deterministic(|seed| rig(seed, world(vec![class("claim", 9)]), filed_ok), 7, 7);
@@ -120,12 +126,14 @@ fn filed_class() -> TaskRig {
     rig(1, world(vec![class("claim", 9)]), filed_ok)
 }
 
+#[test_id(tsodp3f)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_class(), NAME);
     assert!(rows.iter().any(|k| k.starts_with("filed/")), "{rows:?}");
 }
 
+#[test_id(tj4uhbu)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed_class, || WatchRefusals::new(config()).registration(), STREAM, WatchRefusals::boot().2);

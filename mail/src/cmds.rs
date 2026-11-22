@@ -720,6 +720,7 @@ mod class_tests {
 
     const BASIS: &str = "## Question\nq\n\n## Class basis\nneeds a credential I lack\n";
 
+    #[test_id(tp1xauu)]
     #[test]
     fn a_declared_supported_class_qualifies() {
         for c in ["permissions", "policy", "destructive", "design", "destructive-on-production-data", "Destructive"] {
@@ -727,15 +728,17 @@ mod class_tests {
         }
     }
 
+    #[test_id(t6ajye3)]
     #[test]
     fn an_unknown_class_is_refused_naming_the_valid_ones() {
-        let why = super::unknown_class_refusal("architecture").unwrap();
+        let why = super::super::unknown_class_refusal("architecture").unwrap();
         for n in ["permissions", "policy", "destructive", "design"] {
             assert!(why.contains(n), "{why}");
         }
-        assert_eq!(super::unknown_class_refusal(""), None);
+        assert_eq!(super::super::unknown_class_refusal(""), None);
     }
 
+    #[test_id(tte8xb2)]
     #[test]
     fn no_class_an_architecture_class_or_no_basis_is_refused() {
         assert!(class_refusal("", "d", BASIS).is_some());
@@ -744,21 +747,24 @@ mod class_tests {
         assert!(class_refusal("policy", "d", "## Class basis\n\n").is_some());
     }
 
+    #[test_id(tr76fwt)]
     #[test]
     fn the_documented_example_body_is_accepted_for_every_class() {
-        for (class, _) in super::ESCALATION_CLASSES {
-            assert_eq!(class_refusal(class, "take the safe path", super::ASK_EXAMPLE_BODY), None, "{class}");
+        for (class, _) in super::super::ESCALATION_CLASSES {
+            assert_eq!(class_refusal(class, "take the safe path", super::super::ASK_EXAMPLE_BODY), None, "{class}");
         }
     }
 
+    #[test_id(t3g4z99)]
     #[test]
     fn one_refusal_names_every_missing_part_and_carries_the_example() {
         let why = class_refusal("", "", "text only\n").unwrap();
-        for part in ["--default", "--class", "'## Question'", "'## Default'", "'## Class basis'", "design", super::ASK_EXAMPLE_BODY] {
+        for part in ["--default", "--class", "'## Question'", "'## Default'", "'## Class basis'", "design", super::super::ASK_EXAMPLE_BODY] {
             assert!(why.contains(part), "{part}: {why}");
         }
     }
 
+    #[test_id(tv8509r)]
     #[test]
     fn a_missing_default_is_refused_whatever_the_class() {
         assert!(class_refusal("policy", "  ", BASIS).is_some());
@@ -774,6 +780,7 @@ mod sweep_tests {
 
     /// An ask already closed in bd is skipped outright: no reply probe, no close (sp-mve9i:
     /// the ask is a non-work bead, so its bd status is the state read here).
+    #[test_id(twx8iyv)]
     #[test]
     fn a_closed_ask_is_neither_kept_nor_dismissed() {
         let t = testkit::TempDir::new("mail-sweep-closed");
@@ -787,6 +794,7 @@ mod sweep_tests {
 
     /// A dismissed question about a work bead takes its default AND lifts the work bead's
     /// ask hold; a five-field line from before the work-bead column lifts nothing.
+    #[test_id(tz2ubiq)]
     #[test]
     fn a_dismissed_question_lifts_its_work_beads_ask_hold() {
         let t = testkit::TempDir::new("mail-sweep-lift");
@@ -837,6 +845,7 @@ mod sweep_decision_tests {
         BdOut::ok(r#"[{"status":"open"}]"#)
     }
 
+    #[test_id(t1pyfva)]
     #[test]
     fn a_deleted_ask_is_closed_with_its_default_in_the_reason() {
         let (t, idx) = fixture("mail-sweep-deleted", false);
@@ -848,6 +857,7 @@ mod sweep_decision_tests {
         assert!(reason.contains("dismissed by operator (mail deleted)") && reason.contains("take the default"), "{reason}");
     }
 
+    #[test_id(til1r8c)]
     #[test]
     fn an_ask_whose_mail_is_still_somewhere_is_kept_not_dismissed() {
         let (t, idx) = fixture("mail-sweep-moved", true);
@@ -857,6 +867,7 @@ mod sweep_decision_tests {
         assert!(!bd.calls().iter().any(|c| c.0[0] == "close"), "{:?}", bd.calls());
     }
 
+    #[test_id(trizohu)]
     #[test]
     fn an_ask_the_operator_already_answered_is_kept_even_though_its_mail_is_gone() {
         let (t, idx) = fixture("mail-sweep-replied", false);
@@ -913,6 +924,7 @@ mod probe_tests {
 
     /// sp-ipwlic: an in-process sender records the send's alarm attempt exactly as the
     /// `mail send` CLI it replaces did.
+    #[test_id(tql72t4)]
     #[test]
     fn a_recorded_send_writes_its_alarm_attempt_to_the_run_directory() {
         let t = testkit::TempDir::new("mail-send-recorded");
@@ -927,6 +939,7 @@ mod probe_tests {
         assert_eq!(tsd::alarm::read(&e.run_dir).len(), 1, "a dry run attempts nothing");
     }
 
+    #[test_id(twy6gzk)]
     #[test]
     fn a_probe_to_the_operator_is_refused_naming_the_dry_run_exit() {
         let t = testkit::TempDir::new("mail-probe-refused");
@@ -938,6 +951,7 @@ mod probe_tests {
         assert_eq!(mailbox_entries(t.path()), 0);
     }
 
+    #[test_id(tmkz779)]
     #[test]
     fn a_report_reaches_the_operator_only_with_his_request_cited_and_carries_no_ask_label() {
         let t = testkit::TempDir::new("mail-report");
@@ -955,6 +969,7 @@ mod probe_tests {
         assert!(!text.contains("X-Spira-Urgent"), "{text}");
     }
 
+    #[test_id(tlykz1v)]
     #[test]
     fn a_question_about_a_work_bead_never_threads_on_the_work_bead() {
         let t = testkit::TempDir::new("mail-thread-bead");
@@ -968,6 +983,7 @@ mod probe_tests {
         assert!(text.contains("X-Spira-Work-Bead: sp-work1"), "{text}");
     }
 
+    #[test_id(t5zo7vu)]
     #[test]
     fn a_note_is_still_refused_and_the_refusal_names_the_report_exit() {
         let why = operator_refusal("note", "", "", "", "").unwrap();
@@ -975,6 +991,7 @@ mod probe_tests {
         assert!(operator_refusal("report", "", "", "", "").unwrap().contains("--requested-by"));
     }
 
+    #[test_id(t9y1uxr)]
     #[test]
     fn a_probe_marker_in_the_opening_line_is_refused_too() {
         let t = testkit::TempDir::new("mail-probe-body");
@@ -982,6 +999,7 @@ mod probe_tests {
         assert!(r.is_err());
     }
 
+    #[test_id(txs4ge0)]
     #[test]
     fn a_dry_run_reports_each_step_and_delivers_nothing() {
         let t = testkit::TempDir::new("mail-probe-dry");
@@ -997,6 +1015,7 @@ mod probe_tests {
         assert!(out.x_bead.is_none());
     }
 
+    #[test_id(tygb495)]
     #[test]
     fn a_lint_refused_send_leaves_every_mailbox_unchanged() {
         let t = testkit::TempDir::new("mail-lint-refused");
@@ -1033,6 +1052,7 @@ mod probe_tests {
         std::fs::read_dir(root.join("mail").join(mb).join("new")).map(|d| d.count()).unwrap_or(0)
     }
 
+    #[test_id(t1s6c3i)]
     #[test]
     fn question_asks_that_fail_the_shape_are_refused_with_nothing_delivered() {
         let basis = "## Class basis\nit is policy\n";
@@ -1047,6 +1067,7 @@ mod probe_tests {
         }
     }
 
+    #[test_id(tykk7dp)]
     #[test]
     fn non_ask_operator_mail_is_rerouted_to_the_concierge() {
         let basis = "## Class basis\nit is policy\n";
@@ -1060,6 +1081,7 @@ mod probe_tests {
         }
     }
 
+    #[test_id(tdrvvp4)]
     #[test]
     fn a_question_with_no_sections_of_its_own_is_refused_not_rerouted() {
         let t = testkit::TempDir::new("mail-own-sections");
@@ -1088,6 +1110,7 @@ mod probe_tests {
         std::fs::read_to_string(f).unwrap()
     }
 
+    #[test_id(t6mt00t)]
     #[test]
     fn multi_line_headers_are_written_folded_and_read_back_whole() {
         let t = testkit::TempDir::new("mail-fold");
@@ -1102,6 +1125,7 @@ mod probe_tests {
         assert_eq!(message::header_ci_before_blank(&text, "subject"), "line one line two");
     }
 
+    #[test_id(ttw7m0s)]
     #[test]
     fn a_header_value_that_cannot_be_made_legal_is_refused_before_anything_is_filed() {
         let t = testkit::TempDir::new("mail-fold-refused");
@@ -1112,6 +1136,7 @@ mod probe_tests {
         assert!(bd.calls().is_empty() && mailbox_entries(t.path()) == 0);
     }
 
+    #[test_id(t3pagev)]
     #[test]
     fn a_classed_question_with_a_default_still_reaches_the_operator() {
         let t = testkit::TempDir::new("mail-classed");
@@ -1120,6 +1145,7 @@ mod probe_tests {
         assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0);
     }
 
+    #[test_id(tdfscbi)]
     #[test]
     fn a_duplicate_ask_is_refused_naming_the_open_one() {
         let t = testkit::TempDir::new("mail-dup");
@@ -1136,6 +1162,7 @@ mod probe_tests {
         assert!(send(&other, &e, &args("Wholly unrelated?", false), body.into()).is_ok());
     }
 
+    #[test_id(to7a8z4)]
     #[test]
     fn ten_identical_asks_on_one_bead_deliver_one_mail() {
         let t = testkit::TempDir::new("mail-ask-ten");
@@ -1154,6 +1181,7 @@ mod probe_tests {
         assert_eq!(root_mailbox_entries(t.path(), "operator"), 1);
     }
 
+    #[test_id(tkxif37)]
     #[test]
     fn a_real_ask_still_goes_through() {
         let t = testkit::TempDir::new("mail-probe-real");
@@ -1172,6 +1200,7 @@ mod probe_tests {
         send(bd, &e, &args, body.to_string()).unwrap()
     }
 
+    #[test_id(tfpc1ad)]
     #[test]
     fn every_send_is_one_attempt_a_failure_keeps_its_message_and_a_dry_run_is_none() {
         use tsd::alarm::Outcome;
@@ -1190,6 +1219,7 @@ mod probe_tests {
         assert!(attempt_of_send(&SendArgs { dry_run: true, ..args }, "body", &Err("x".into()), 7).is_none());
     }
 
+    #[test_id(tpipwp1)]
     #[test]
     fn a_machine_alarm_with_no_class_carries_no_ask_label_and_reaches_the_concierge() {
         let t = testkit::TempDir::new("mail-ask-alarm");
@@ -1199,6 +1229,7 @@ mod probe_tests {
         assert!(out.delivered_path.to_string_lossy().contains("/concierge/"), "{:?}", out.delivered_path);
     }
 
+    #[test_id(tnihhk5)]
     #[test]
     fn a_proper_decision_ask_still_carries_the_ask_label() {
         let t = testkit::TempDir::new("mail-ask-proper");
@@ -1228,6 +1259,7 @@ mod probe_tests {
         bd.calls().iter().any(|c| c.0[0] == "close" && c.0[1] == "sp-new1")
     }
 
+    #[test_id(t5a5jjs)]
     #[test]
     fn the_documented_example_body_sends_to_the_operator_for_every_class() {
         for (class, _) in ESCALATION_CLASSES {
@@ -1239,6 +1271,7 @@ mod probe_tests {
         }
     }
 
+    #[test_id(t2natz3)]
     #[test]
     fn a_created_ask_opens_its_ask_row_naming_the_work_bead_it_holds() {
         let t = testkit::TempDir::new("mail-ask-row-at-creation");
@@ -1249,6 +1282,7 @@ mod probe_tests {
         assert!(!closed(&bd));
     }
 
+    #[test_id(twm9w02)]
     #[test]
     fn a_delivered_ask_names_its_bead_in_subject_and_first_body_line() {
         let t = testkit::TempDir::new("mail-ask-names-bead");
@@ -1260,6 +1294,7 @@ mod probe_tests {
         assert_eq!(body.lines().next(), Some("sp-new1"), "{m}");
     }
 
+    #[test_id(teovvnm)]
     #[test]
     fn an_ask_whose_bead_create_fails_sends_no_mail() {
         let t = testkit::TempDir::new("mail-ask-create-fails");
@@ -1271,6 +1306,7 @@ mod probe_tests {
 
     const ASK_LIST: &str = r#"[{"id":"sp-new1","title":"Grant it?","labels":["needs-x"]}]"#;
 
+    #[test_id(tqbaihl)]
     #[test]
     fn an_ask_whose_create_reply_was_lost_but_whose_row_exists_is_sent() {
         let t = testkit::TempDir::new("mail-ask-lost-reply");
@@ -1281,6 +1317,7 @@ mod probe_tests {
         assert_eq!(*bd.ask_rows.borrow(), vec![("sp-new1".to_string(), String::new())]);
     }
 
+    #[test_id(t8uhdzk)]
     #[test]
     fn an_ask_whose_create_reply_was_lost_and_whose_row_is_absent_refuses_and_says_nothing_was_recorded() {
         let t = testkit::TempDir::new("mail-ask-lost-reply-absent");
@@ -1291,6 +1328,7 @@ mod probe_tests {
         assert!(bd.ask_rows.borrow().is_empty());
     }
 
+    #[test_id(t3xavph)]
     #[test]
     fn a_failed_duplicate_check_does_not_stop_a_create_whose_reply_was_then_lost_from_being_reported_as_sent() {
         let t = testkit::TempDir::new("mail-ask-dupcheck-fails-lost-reply");
@@ -1300,6 +1338,7 @@ mod probe_tests {
         assert_eq!(mailbox_entries(t.path()), 1);
     }
 
+    #[test_id(tsvngvs)]
     #[test]
     fn a_lost_create_whose_readback_also_fails_is_unknown_and_names_both_failures() {
         let t = testkit::TempDir::new("mail-ask-lost-and-unreadable");
@@ -1310,6 +1349,7 @@ mod probe_tests {
         assert_eq!(mailbox_entries(t.path()), 0);
     }
 
+    #[test_id(tm4zeg5)]
     #[test]
     fn a_created_ask_whose_mail_fails_names_the_bead_and_says_the_mail_was_not_delivered() {
         let t = testkit::TempDir::new("mail-ask-mail-fails");
@@ -1319,6 +1359,7 @@ mod probe_tests {
         assert!(err.contains("sp-new1") && err.contains("mail was not delivered"), "{err}");
     }
 
+    #[test_id(t96xjm8)]
     #[test]
     fn a_muted_work_ask_still_lands_unseen_in_new() {
         let t = testkit::TempDir::new("mail-ask-muted-work");
@@ -1347,6 +1388,7 @@ mod probe_tests {
         std::fs::read_to_string(f).unwrap()
     }
 
+    #[test_id(tky36fa)]
     #[test]
     fn an_ask_contradicting_a_statute_is_refused_and_nothing_is_delivered() {
         let t = testkit::TempDir::new("mail-statute-refuse");
@@ -1358,6 +1400,7 @@ mod probe_tests {
         assert!(err.contains("law-alloc"), "a dry run refuses too: {err}");
     }
 
+    #[test_id(trjqxaa)]
     #[test]
     fn an_override_reason_admits_the_ask_and_is_recorded_in_it() {
         let t = testkit::TempDir::new("mail-statute-override");
@@ -1367,6 +1410,7 @@ mod probe_tests {
         assert!(m.contains("Statute check: law-alloc (override: fixture only)"), "{m}");
     }
 
+    #[test_id(temjuft)]
     #[test]
     fn a_touching_ask_is_recorded_and_a_clean_one_is_not() {
         let t = testkit::TempDir::new("mail-statute-touch");
@@ -1378,6 +1422,7 @@ mod probe_tests {
         assert!(!body_of(t.path()).contains("Statute check"));
     }
 
+    #[test_id(t47fwdl)]
     #[test]
     fn an_unreadable_registry_refuses_and_an_empty_key_is_inert() {
         let t = testkit::TempDir::new("mail-statute-unreadable");

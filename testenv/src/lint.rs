@@ -145,6 +145,7 @@ mod tests {
         testkit::TempDir::new(&format!("lint-{n}"))
     }
 
+    #[test_id(tpr0o1m)]
     #[test]
     fn a_red_tip_is_refused_naming_the_first_error_and_records_nothing() {
         let tmp = dir("red");
@@ -157,6 +158,7 @@ mod tests {
         assert_eq!(ensure(&run, TIP, true, Some(DECL), &red).0, 1);
     }
 
+    #[test_id(ta8028r)]
     #[test]
     fn a_clean_tip_records_its_pass_and_is_not_rerun() {
         let tmp = dir("green");
@@ -174,6 +176,7 @@ mod tests {
         assert_eq!(ensure(&run, &other, true, Some(DECL), &green).0, 1);
     }
 
+    #[test_id(tuql9u7)]
     #[test]
     fn a_fault_records_nothing_and_a_declaration_less_tip_records_none() {
         let tmp = dir("fault");
@@ -185,6 +188,7 @@ mod tests {
         assert_eq!(recorded(&run, TIP).as_deref(), Some("none"));
     }
 
+    #[test_id(t918m7u)]
     #[test]
     fn a_tip_that_is_not_a_full_sha_is_a_fault() {
         let tmp = dir("sha");

@@ -315,6 +315,7 @@ mod tests {
         parse_lanes(s).unwrap()
     }
 
+    #[test_id(t06tc84)]
     #[test]
     fn every_pause_leaves_a_typed_row_whoever_made_it() {
         let d = testkit::TempDir::new("scoped-stop-typed");
@@ -326,6 +327,7 @@ mod tests {
         assert_eq!(got, vec![(tsd::stop::Reason::Landing, Some("spira"), None), (tsd::stop::Reason::Incident, Some("cubby"), Some("sp-x"))]);
     }
 
+    #[test_id(td6rxlv)]
     #[test]
     fn a_stop_is_per_repo_and_per_lane() {
         let d = testkit::TempDir::new("scoped-stop-lanes");
@@ -335,6 +337,7 @@ mod tests {
         assert!(stop_for(d.path(), "cubby", "rounds").is_none(), "another repo is untouched");
     }
 
+    #[test_id(tvgxs0k)]
     #[test]
     fn unpause_lifts_named_lanes_then_the_record() {
         let d = testkit::TempDir::new("scoped-stop-lift");
@@ -345,6 +348,7 @@ mod tests {
         assert_eq!(unpause_repo(d.path(), "spira", &[]).unwrap(), None);
     }
 
+    #[test_id(tsppyrz)]
     #[test]
     fn a_second_pause_merges_lanes_and_keeps_the_age() {
         let d = testkit::TempDir::new("scoped-stop-merge");
@@ -354,6 +358,7 @@ mod tests {
         assert_eq!(s.since, 10);
     }
 
+    #[test_id(tere9le)]
     #[test]
     fn reservations_round_trip_and_lift() {
         let d = testkit::TempDir::new("scoped-stop-reserve");
@@ -363,6 +368,7 @@ mod tests {
         assert!(!unreserve(d.path(), "sp-abc").unwrap());
     }
 
+    #[test_id(tvvcqua)]
     #[test]
     fn a_stop_without_its_release_condition_is_refused() {
         let d = testkit::TempDir::new("scoped-stop-refuse");
@@ -371,6 +377,7 @@ mod tests {
         assert!(parse_lanes("rounds,bogus").is_err());
     }
 
+    #[test_id(t91zxkt)]
     #[test]
     fn a_bead_condition_is_typed_and_free_text_is_not() {
         assert_eq!(bead_condition("bead:sp-x=REWORK"), Some(Ok(("sp-x".into(), "REWORK".into()))));
@@ -381,6 +388,7 @@ mod tests {
         assert!(pause_repo(d.path(), "spira", &lanes("rounds"), "o", "r", "bead:sp-x", 1).is_err());
     }
 
+    #[test_id(tl0d7f9)]
     #[test]
     fn a_bead_that_passed_through_the_state_since_the_pause_counts() {
         let h = |to: &str, at: u64| serde_json::json!({"to_state": to, "applied": 1, "at": at.to_string()});
@@ -390,6 +398,7 @@ mod tests {
         assert!(!entered_state(&[serde_json::json!({"to_state": "REWORK", "applied": 0, "at": 150})], "REWORK", 100), "a refused event did not happen");
     }
 
+    #[test_id(thomhnn)]
     #[test]
     fn a_host_wide_lane_is_stopped_only_when_every_repo_stops_it() {
         let d = testkit::TempDir::new("scoped-stop-everywhere");
@@ -402,6 +411,7 @@ mod tests {
         assert!(stop_everywhere::<&str>(d.path(), &[], "czar").is_none(), "no repos is no stop");
     }
 
+    #[test_id(tuckfhk)]
     #[test]
     fn every_actor_lane_parses_and_a_skip_names_who_lifts_it() {
         assert_eq!(lanes("land,dwarves,czar,heimdall,remedies").len(), 5);
@@ -411,6 +421,7 @@ mod tests {
     }
 
 
+    #[test_id(t4hbt9z)]
     #[test]
     fn a_process_reads_a_stop_over_its_own_registered_repos() {
         let d = testkit::TempDir::new("scoped-stop-registered");
@@ -427,6 +438,7 @@ mod tests {
         assert!(line.starts_with("czar pass: skipped") && line.contains("czar lane of spira"), "{line}");
         assert!(skip_if_stopped_registered(&run, "reconciler", "remedies").unwrap().is_none(), "another lane is no stop");
     }
+    #[test_id(t5unh11)]
     #[test]
     fn an_unresolvable_home_refuses_rather_than_reading_not_stopped() {
         let d = testkit::TempDir::new("scoped-stop-no-home");
@@ -435,6 +447,7 @@ mod tests {
         assert!(e.contains("cannot tell") && e.contains("SPIRA_HOME"), "{e}");
         assert!(skip_if_stopped_registered(d.path(), "czar pass", "czar").is_err());
     }
+    #[test_id(t1bbpno)]
     #[test]
     fn put_repo_replaces_the_record_whole() {
         let d = testkit::TempDir::new("scoped-stop-put");
@@ -445,6 +458,7 @@ mod tests {
         assert!(stop_for(d.path(), "spira", "claims").is_none());
     }
 
+    #[test_id(tccjgx4)]
     #[test]
     fn overdue_is_age_past_review() {
         assert!(!overdue(100, 150, 60));

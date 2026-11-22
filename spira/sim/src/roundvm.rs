@@ -310,6 +310,7 @@ fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>
 mod tests {
     use super::*;
 
+    #[test_id(tbzripd)]
     #[test]
     fn a_certify_that_hands_the_vm_a_deny_list_is_answered_not_refused() {
         let args: Vec<String> = ["run", "t", "--results-dir", "r", "--deny-list", "r/deny-list"].map(String::from).to_vec();

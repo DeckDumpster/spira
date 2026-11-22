@@ -7,6 +7,7 @@ fn spec(script: &str) -> ProcSpec {
     ProcSpec { prog: "sh".into(), args: vec!["-c".into(), script.into()], stdin: vec![], deadline: Duration::from_secs(10) }
 }
 
+#[test_id(t6ttohn)]
 #[test]
 fn a_program_writing_past_the_pipe_buffer_on_stdout_is_not_reported_as_a_missed_deadline() {
     let out = SysProc.run(&spec("head -c 300000 /dev/zero")).unwrap();
@@ -14,6 +15,7 @@ fn a_program_writing_past_the_pipe_buffer_on_stdout_is_not_reported_as_a_missed_
     assert_eq!(out.code, Some(0));
 }
 
+#[test_id(tq1mk3m)]
 #[test]
 fn a_program_writing_past_the_pipe_buffer_on_stderr_is_not_reported_as_a_missed_deadline() {
     let out = SysProc.run(&spec("head -c 300000 /dev/zero >&2; echo done")).unwrap();
@@ -21,6 +23,7 @@ fn a_program_writing_past_the_pipe_buffer_on_stderr_is_not_reported_as_a_missed_
     assert_eq!(out.stdout, b"done\n");
 }
 
+#[test_id(tzrb5xa)]
 #[test]
 fn a_program_that_outlives_its_deadline_is_killed_and_named() {
     let mut s = spec("sleep 30");
@@ -29,6 +32,7 @@ fn a_program_that_outlives_its_deadline_is_killed_and_named() {
     assert!(e.contains("exceeded"), "{e}");
 }
 
+#[test_id(tf0p68s)]
 #[test]
 fn a_grandchild_holding_the_pipe_open_does_not_outlive_the_deadline() {
     let mut s = spec("sleep 30 & echo started");

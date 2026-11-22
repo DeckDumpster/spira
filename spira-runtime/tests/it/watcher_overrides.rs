@@ -16,12 +16,14 @@ fn a_failed_pass_already_said() -> TaskRig {
     r
 }
 
+#[test_id(t5xx9ks)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&a_failed_pass_already_said(), NAME);
     assert!(rows.iter().any(|k| k == "said"), "{rows:?}");
 }
 
+#[test_id(ts76zkb)]
 #[test]
 fn a_boot_does_not_say_the_same_failed_pass_again() {
     kit::assert_boot_matches_an_unstopped_run(a_failed_pass_already_said, registration, STREAM, EventKind::new(TICK, ""));

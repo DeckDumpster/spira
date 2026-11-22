@@ -1313,6 +1313,7 @@ mod holder_alive_tests {
     use super::*;
 
     // The liveness predicates live in hel::reap; this confirms RealProcs reaches them.
+    #[test_id(t18mx1r)]
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
         let run = testkit::TempDir::new("landing-pass-holder-alive");
@@ -1322,6 +1323,7 @@ mod holder_alive_tests {
         assert!(!procs.holder_alive("sp-h2"));
     }
 
+    #[test_id(thp55i3)]
     #[test]
     fn holder_alive_requires_a_running_lease_for_an_dwarf_pidfile() {
         let run = testkit::TempDir::new("landing-pass-holder-alive-dwarf");
@@ -1339,6 +1341,7 @@ mod vtime_tests {
     use super::*;
     use crate::ports::Clock;
 
+    #[test_id(tc2v38y)]
     #[test]
     fn real_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now());
@@ -1350,6 +1353,7 @@ mod vtime_tests {
 mod mail_refusal_tests {
     use super::*;
 
+    #[test_id(t2kwmie)]
     #[test]
     fn the_class_window_runs_from_the_anchor_file() {
         let d = crate::testutil::tmpdir("mail");
@@ -1393,6 +1397,7 @@ mod store_tests {
         RealBeads { home: PathBuf::from(system_paths::NONEXISTENT), timeout: 5, home_repo: "spira".into(), fixture: None, lc_bin: None, client: Some(c.clone()) }
     }
 
+    #[test_id(tbj730v)]
     #[test]
     fn a_bead_whose_delivery_is_batched_is_in_a_round_and_any_other_is_not() {
         let (_, c) = store(|a| match a.join(" ").as_str() {
@@ -1408,6 +1413,7 @@ mod store_tests {
         assert!(!b.in_round("sp-gone"));
     }
 
+    #[test_id(tjwyu07)]
     #[test]
     fn the_bead_read_and_its_state_are_the_stores_verbs_in_process() {
         let (s, c) = store(|a| match a.join(" ").as_str() {
@@ -1421,6 +1427,7 @@ mod store_tests {
         assert_eq!(*s.seen.lock().unwrap(), vec!["content show sp-a --json", "show sp-a"]);
     }
 
+    #[test_id(tys9soo)]
     #[test]
     fn a_read_of_many_beads_the_service_cuts_short_is_read_in_smaller_parts() {
         let ids: Vec<String> = (0..240).map(|i| format!("sp-{i}")).collect();
@@ -1441,6 +1448,7 @@ mod store_tests {
         assert!(s.seen.lock().unwrap().iter().any(|l| l.starts_with("content show") && l.split(' ').count() <= 11));
     }
 
+    #[test_id(tgwkd65)]
     #[test]
     fn a_store_that_answers_no_bead_read_fails_in_a_few_calls() {
         let ids: Vec<String> = (0..240).map(|i| format!("sp-{i}")).collect();
@@ -1449,6 +1457,7 @@ mod store_tests {
         assert!(s.seen.lock().unwrap().len() <= 8);
     }
 
+    #[test_id(t4648w3)]
     #[test]
     fn a_bead_read_that_answers_no_json_is_an_error_not_no_beads() {
         let (_s, c) = store(|a| if a[0] == "content" { (0, "warning: slow store\n".into()) } else { (1, String::new()) });
@@ -1456,6 +1465,7 @@ mod store_tests {
         assert!(e.contains("not JSON"), "{e}");
     }
 
+    #[test_id(tvwjyx6)]
     #[test]
     fn a_delivery_goes_to_the_store_and_a_refusal_is_reported_not_swallowed() {
         let (s, c) = store(|a| if a[1] == "push-delivered" { (0, String::new()) } else { (3, "refused: not in delivery".into()) });
@@ -1470,6 +1480,7 @@ mod store_tests {
         assert!(out.lines().iter().any(|l| l.contains("sp-b: LIFECYCLE: spira-lc deliver pr-merged did not happen (exit 3)")), "{:?}", out.lines());
     }
 
+    #[test_id(tr6lr9s)]
     #[test]
     fn a_bead_whose_tip_is_on_base_is_recorded_as_a_content_on_base_event() {
         let proof = "settle-landed:abc ancestor-of:refs/heads/local/main@def";
@@ -1489,6 +1500,7 @@ mod store_tests {
         assert!(!seen.iter().any(|l| l.starts_with("content-on-base")), "{seen:?}");
     }
 
+    #[test_id(tpeotxf)]
     #[test]
     fn a_content_on_base_with_no_row_is_reported_and_false() {
         let (_s, c) = store(|_| (1, String::new()));
@@ -1500,6 +1512,7 @@ mod store_tests {
         assert_eq!(lines.iter().filter(|l| l.contains("content-on-base did not happen")).count(), 1, "{lines:?}");
     }
 
+    #[test_id(tg8hex5)]
     #[test]
     fn a_content_on_base_the_store_refuses_carries_the_stores_text_to_the_log() {
         let (_s, c) = store(|a| match a[0].as_str() {
@@ -1513,6 +1526,7 @@ mod store_tests {
         assert!(out.lines().iter().any(|l| l.contains("did not happen") && l.contains("version conflict")), "{:?}", out.lines());
     }
 
+    #[test_id(tsnsw98)]
     #[test]
     fn the_lifecycle_waiting_read_and_certify_are_store_calls() {
         let (s, c) = store(|a| match a[0].as_str() {
@@ -1561,6 +1575,7 @@ mod incident_tests {
         bucket_match(&have, &split_csv(&p.labels), &split_csv(&p.exclude_labels), &[], "ops")
     }
 
+    #[test_id(th3amfx)]
     #[test]
     fn the_base_red_incident_carries_the_labels_the_ops_predicate_matches() {
         let home = spira_config::resolve::locate_home_for_process().unwrap();
@@ -1593,6 +1608,7 @@ mod incident_tests {
         assert_eq!(n, 0, "{labels}: {defects:?}");
     }
 
+    #[test_id(tf4g7u6)]
     #[test]
     fn the_unjudged_incident_carries_the_labels_the_ops_predicate_matches() {
         let home = spira_config::resolve::locate_home_for_process().unwrap();
@@ -1627,6 +1643,7 @@ mod ensure_tests {
         [system_paths::BIN_ECHO.to_string(), format!("{}/echo", system_paths::USR_BIN)].iter().map(PathBuf::from).find(|p| p.exists()).unwrap()
     }
 
+    #[test_id(tfqqqvq)]
     #[test]
     fn an_ensure_program_that_is_not_a_shell_script_is_run_as_itself() {
         let t = testkit::TempDir::new("landing-pass-ensure-direct");
@@ -1635,6 +1652,7 @@ mod ensure_tests {
         assert_eq!(tools().ensure(&p), vec![String::new()]);
     }
 
+    #[test_id(thjh6qe)]
     #[test]
     fn an_ensure_program_that_is_missing_says_so() {
         let t = testkit::TempDir::new("landing-pass-ensure-missing");
@@ -1643,6 +1661,7 @@ mod ensure_tests {
         assert!(out[0].contains("not an executable file"), "{out:?}");
     }
 
+    #[test_id(tcgbqzc)]
     #[test]
     fn an_ensure_shell_script_without_a_shebang_is_still_run_by_bash() {
         let t = testkit::TempDir::new("landing-pass-ensure-sh");

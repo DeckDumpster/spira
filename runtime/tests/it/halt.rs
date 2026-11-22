@@ -31,6 +31,7 @@ fn count(j: &dyn Journal, tag: &str) -> usize {
     trace(j).iter().filter(|e| e.2 == tag).count()
 }
 
+#[test_id(tegkibq)]
 #[test]
 fn an_observe_task_shadows_rather_than_holds_while_halted() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -42,6 +43,7 @@ fn an_observe_task_shadows_rather_than_holds_while_halted() {
     assert_eq!((count(&*j, EFFECT_SHADOWED), count(&*j, EFFECT_HELD), count(&*j, EFFECT_REQUESTED)), (1, 0, 0));
 }
 
+#[test_id(ty86nzp)]
 #[test]
 fn halting_at_boot_holds_the_first_write_once_and_survives_a_reopen() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));

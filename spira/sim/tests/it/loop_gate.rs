@@ -240,6 +240,7 @@ fn dump(r: &Run, g: &Gate) -> String {
 /// (`red_gate_returned_it`). The dwarf reworks it, the moved tip is gated again and passes (no
 /// output kept), the bead is CERTIFIED by that gate and the round, resumed after it, lands it
 /// (`red_then_pass_landed`).
+#[test_id(t78kss2)]
 #[test]
 fn gate_verdict_red_a_failed_gate_returns_the_bead_and_its_reworked_tip_passes_and_lands() {
     let script = Script { beads: vec![Bead::new("sp-gv01", 30_000)], max_concurrent: 1, stopped_until: 40 * MIN, until: 55 * MIN, ..Script::default() };
@@ -263,6 +264,7 @@ fn gate_verdict_red_a_failed_gate_returns_the_bead_and_its_reworked_tip_passes_a
 /// and leaves each SUBMITTED, never returned to its dwarf. Queued again at the same tip, each
 /// gate passes, each bead is CERTIFIED and the round lands both (`no_verdict_then_pass_landed`,
 /// `infra_then_pass_landed`).
+#[test_id(tlgxnjg)]
 #[test]
 fn gate_verdict_silent_a_gate_without_a_verdict_leaves_the_bead_submitted_and_the_next_pass_lands_it() {
     let script = Script { beads: vec![Bead::new("sp-gv02", 30_000), Bead::new("sp-gv03", 30_000)], max_concurrent: 2, stopped_until: 25 * MIN, until: 40 * MIN, ..Script::default() };

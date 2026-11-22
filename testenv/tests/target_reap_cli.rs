@@ -1,6 +1,8 @@
 //! `target-reap`'s entry, `testenv::target_reap::run`, over worktrees planted on disk with their
 //! modification times set: the bounded reap takes the oldest tenth by count and nothing else.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
@@ -34,6 +36,7 @@ fn call(args: &[&str]) -> (u8, String) {
     (code, String::from_utf8(out).unwrap() + &String::from_utf8(err).unwrap())
 }
 
+#[test_id(t3e8scq)]
 #[test]
 fn a_tenth_of_twenty_idle_targets_removes_exactly_the_two_oldest() {
     let _env = testkit::env(&[("SPIRA_REAP_IDLE_SECS", Some("3600"))]);
@@ -45,6 +48,7 @@ fn a_tenth_of_twenty_idle_targets_removes_exactly_the_two_oldest() {
     assert!(dir.path().join("sp-w19/src.rs").is_file(), "source stays");
 }
 
+#[test_id(tj717u7)]
 #[test]
 fn a_dry_run_names_the_bound_and_removes_nothing() {
     let _env = testkit::env(&[("SPIRA_REAP_IDLE_SECS", Some("3600"))]);
@@ -57,6 +61,7 @@ fn a_dry_run_names_the_bound_and_removes_nothing() {
     assert!(said.contains("would remove 2 target dir(s)"), "the count the host section parses is worded as it expects: {said}");
 }
 
+#[test_id(t2u2tr6)]
 #[test]
 fn a_bound_over_a_few_still_takes_the_oldest_one() {
     let _env = testkit::env(&[("SPIRA_REAP_IDLE_SECS", Some("3600"))]);
@@ -66,6 +71,7 @@ fn a_bound_over_a_few_still_takes_the_oldest_one() {
     assert_eq!(reaped(dir.path(), 3), vec![2]);
 }
 
+#[test_id(t445258)]
 #[test]
 fn the_fraction_argument_is_refused_outside_zero_to_one_and_scratch_needs_it() {
     let _env = testkit::env_read();
@@ -75,6 +81,7 @@ fn the_fraction_argument_is_refused_outside_zero_to_one_and_scratch_needs_it() {
     assert_eq!(call(&["--fraction", "0"]).0, 2);
 }
 
+#[test_id(tzbpq3v)]
 #[test]
 fn bounded_scratch_reap_takes_the_oldest_tenth_of_stale_gate_trees() {
     let dir = testkit::TempDir::new("reap-fraction-scratch");
@@ -93,6 +100,7 @@ fn bounded_scratch_reap_takes_the_oldest_tenth_of_stale_gate_trees() {
     assert_eq!(gone, vec![18, 19], "{said}");
 }
 
+#[test_id(t7kf9tw)]
 #[test]
 fn a_box_with_no_gate_scratch_reaps_none_and_says_so() {
     let dir = testkit::TempDir::new("reap-fraction-none");
@@ -106,6 +114,7 @@ fn a_box_with_no_gate_scratch_reaps_none_and_says_so() {
     assert!(said.contains("no gate scratch to find"), "{said}");
 }
 
+#[test_id(t3ng3mj)]
 #[test]
 fn every_flag_parses_and_an_unknown_one_is_usage() {
     let _env = testkit::env_read();
@@ -118,6 +127,7 @@ fn every_flag_parses_and_an_unknown_one_is_usage() {
     assert_eq!(args(&[]).unwrap(), testenv::target_reap::Args::default());
 }
 
+#[test_id(tfzy1fo)]
 #[test]
 fn the_default_worktrees_directory_is_the_configured_subdir_of_the_run_directory() {
     let _env = testkit::env_read();

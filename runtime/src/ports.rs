@@ -179,6 +179,7 @@ impl Proc for CountingProc {
 mod tests {
     use super::*;
 
+    #[test_id(t97oo5u)]
     #[test]
     fn counting_proc_counts_what_it_refuses_and_what_it_passes_on() {
         struct Echo;
@@ -196,6 +197,7 @@ mod tests {
         assert_eq!(over.spawned(), 1);
     }
 
+    #[test_id(t3roh3w)]
     #[test]
     fn virtual_clock_only_moves_forward() {
         let c = VirtualClock::new(10);
@@ -205,6 +207,7 @@ mod tests {
         assert_eq!(c.now_ms(), 17);
     }
 
+    #[test_id(tm0w4vq)]
     #[test]
     fn same_seed_same_stream_and_seeds_differ() {
         let (mut a, mut b, mut c) = (SeededRng::new(7), SeededRng::new(7), SeededRng::new(8));

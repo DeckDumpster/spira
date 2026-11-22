@@ -182,6 +182,7 @@ mod lc_tests {
         Repo { name: "deck".into(), path: "r".into(), git_ref: "main".into() }
     }
 
+    #[test_id(t7b6uy1)]
     #[test]
     fn an_open_ledger_bump_is_read_from_the_store_in_process() {
         let d = testkit::TempDir::new("rw-ledger");
@@ -190,6 +191,7 @@ mod lc_tests {
         assert_eq!(store.asked.lock().unwrap().as_slice(), &[vec!["show".to_string(), "sp-bump1".into()]]);
     }
 
+    #[test_id(tjsq5no)]
     #[test]
     fn a_landed_ledger_bump_falls_through_to_the_live_list() {
         let d = testkit::TempDir::new("rw-list");
@@ -200,6 +202,7 @@ mod lc_tests {
         assert_eq!(found, names_bump("bump node to 24", Runtime::Node).then(|| "sp-other".to_string()));
     }
 
+    #[test_id(t2b5ip9)]
     #[test]
     fn a_store_that_cannot_tell_is_an_error_not_no_bump() {
         let d = testkit::TempDir::new("rw-cannot");
@@ -210,6 +213,7 @@ mod lc_tests {
 
 #[cfg(test)]
 mod no_bead_fork {
+    #[test_id(tysi0aa)]
     #[test]
     fn this_crate_files_through_the_content_door_and_forks_no_bead_tool() {
         let found = bead::door::forks_a_bead_tool_under(&testkit::manifest_dir().join("src"));

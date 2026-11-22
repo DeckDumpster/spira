@@ -17,17 +17,20 @@ fn through_revision_41() -> TaskRig {
     r
 }
 
+#[test_id(tszbefh)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&through_revision_41(), NAME);
     assert!(rows.iter().any(|k| k == "through"), "{rows:?}");
 }
 
+#[test_id(te6q5lm)]
 #[test]
 fn a_boot_asks_for_the_changes_after_the_revision_it_had_reached() {
     kit::assert_boot_matches_an_unstopped_run(through_revision_41, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(tsi1t9m)]
 #[test]
 fn an_idle_look_journals_nothing() {
     let mut r = TaskRig::new(1, registration()).unwrap().double(LOOK, |_| Ok(r#"{"through":41,"keys":[]}"#.into()));
@@ -35,6 +38,7 @@ fn an_idle_look_journals_nothing() {
     runtime::taskrig::assert_silent_tick(&mut r, STREAM);
 }
 
+#[test_id(twwwfdv)]
 #[test]
 fn changed_keys_ask_for_one_run_and_its_success_moves_the_revision() {
     let mut r = TaskRig::new(1, registration())

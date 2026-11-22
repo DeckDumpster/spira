@@ -15,6 +15,9 @@
 //! it into one derived, deterministic document; [`render_markdown`] is the only thing allowed
 //! to turn that into prose.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod coverage;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -569,6 +572,7 @@ mod tests {
         }
     }
 
+    #[test_id(t3xwdb1)]
     #[test]
     fn valid_minimal_catalogue() {
         let c = parse_catalogue(
@@ -579,6 +583,7 @@ mod tests {
         assert_eq!(c.use_case[0].tier, Tier::T1);
     }
 
+    #[test_id(t9m8c4b)]
     #[test]
     fn unknown_field_names_its_path() {
         let err =
@@ -587,6 +592,7 @@ mod tests {
         assert!(err.starts_with("bogus"), "{err}");
     }
 
+    #[test_id(tlbn2qy)]
     #[test]
     fn bad_tier_names_its_path() {
         let err = parse_catalogue(
@@ -596,6 +602,7 @@ mod tests {
         assert!(err.starts_with("use_case"), "{err}");
     }
 
+    #[test_id(th5bb1i)]
     #[test]
     fn duplicate_id_across_catalogues_is_refused() {
         let a = lc(
@@ -624,6 +631,7 @@ mod tests {
         assert_eq!(dups, vec!["UC-dispatch-01".to_string()]);
     }
 
+    #[test_id(tkekvtw)]
     #[test]
     fn unknown_uc_on_suite_is_a_violation() {
         let cats = vec![lc(
@@ -640,6 +648,7 @@ mod tests {
         assert!(v[0].contains("UC-dispatch-99"), "{}", v[0]);
     }
 
+    #[test_id(t9w8ock)]
     #[test]
     fn known_uc_on_suite_is_clean() {
         let cats = vec![lc(
@@ -654,6 +663,7 @@ mod tests {
         assert!(unknown_uc_violations(&cats, &suites).is_empty());
     }
 
+    #[test_id(t44a6pj)]
     #[test]
     fn deleting_the_last_cover_orphans_the_uc() {
         let cats = vec![lc(
@@ -671,6 +681,7 @@ mod tests {
         assert!(v[0].contains("UC-dispatch-01"), "{}", v[0]);
     }
 
+    #[test_id(tosjq1l)]
     #[test]
     fn marking_uncovered_clears_the_orphan() {
         let cats = vec![lc(
@@ -686,6 +697,7 @@ mod tests {
         assert!(orphan_violations(&cats, &prev, &cur).is_empty());
     }
 
+    #[test_id(tubzwxv)]
     #[test]
     fn tier_budget_flags_only_over_budget_suites() {
         let suites = vec![
@@ -708,6 +720,7 @@ mod tests {
         assert!(flags[0].contains("test-slow.sh"), "{}", flags[0]);
     }
 
+    #[test_id(tozefez)]
     #[test]
     fn matrix_is_deterministic_across_reorderings() {
         let cats = vec![lc(
@@ -740,6 +753,7 @@ mod tests {
         assert_eq!(m_a.areas[0].use_cases[1].id, "UC-dispatch-02");
     }
 
+    #[test_id(tnb40ny)]
     #[test]
     fn render_markdown_flags_gaps_and_over_budget() {
         let cats = vec![lc(

@@ -86,6 +86,7 @@ fn ran(carry: &Carry, leg: &str, code: i32, out: &str) -> (Carry, Vec<Act>) {
     on_ran_with(carry, &ran, &RanOutput::captured(out.as_bytes(), b""), NOW + 120_000).expect("a carried leg's end moves the machine")
 }
 
+#[test_id(t3m8g2p)]
 #[test]
 fn two_rounds_are_in_flight_at_once_the_second_cut_on_the_head_of_the_first() {
     let carry = two_opened_rounds();
@@ -96,6 +97,7 @@ fn two_rounds_are_in_flight_at_once_the_second_cut_on_the_head_of_the_first() {
     assert_ne!(rc.wt, rc.above[0].wt, "each round keeps its own tree");
 }
 
+#[test_id(tz44th8)]
 #[test]
 fn the_second_round_is_assembled_on_the_open_rounds_head_in_a_tree_of_its_own() {
     let p = small(2);
@@ -106,6 +108,7 @@ fn the_second_round_is_assembled_on_the_open_rounds_head_in_a_tree_of_its_own() 
     assert_eq!((cut.onto.as_str(), ids(&cut.members)), ("h1", ["sp-c", "sp-d"].to_vec()), "the pool minus the open round's members, on its head");
 }
 
+#[test_id(t1fa79k)]
 #[test]
 fn with_one_round_open_allowed_a_running_round_cuts_nothing_more() {
     let p = small(1);
@@ -121,6 +124,7 @@ fn with_one_round_open_allowed_a_running_round_cuts_nothing_more() {
     assert!(acts.is_empty(), "the default is one round: {acts:?}");
 }
 
+#[test_id(tm4yqnb)]
 #[test]
 fn a_third_round_is_not_cut_past_the_limit() {
     let carry = two_opened_rounds();
@@ -129,6 +133,7 @@ fn a_third_round_is_not_cut_past_the_limit() {
     assert!(acts.is_empty(), "{acts:?}");
 }
 
+#[test_id(tj22eep)]
 #[test]
 fn the_upper_round_lands_only_after_the_lower() {
     let carry = certifying_two();
@@ -153,12 +158,14 @@ fn the_upper_round_lands_only_after_the_lower() {
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }
 
+#[test_id(tmcv9h9)]
 #[test]
 fn a_green_lower_with_the_upper_still_certifying_lands_at_once() {
     let (_, acts) = ran(&certifying_two(), "spira.lower.certify1", 0, "");
     assert_eq!(names(&acts), [LC_CERTIFY, LAND], "{acts:?}");
 }
 
+#[test_id(tvx8w8u)]
 #[test]
 fn a_red_lower_round_leaves_the_upper_cut_again_on_the_new_base() {
     let mut carry = certifying_two();
@@ -180,6 +187,7 @@ fn a_red_lower_round_leaves_the_upper_cut_again_on_the_new_base() {
     assert!(!carry.repos["spira"].stacked && carry.repos["spira"].above.is_empty());
 }
 
+#[test_id(trhm7h8)]
 #[test]
 fn a_stacked_round_just_opened_is_not_voided_by_a_snapshot_that_predates_it() {
     let carry = two_opened_rounds();
@@ -189,12 +197,14 @@ fn a_stacked_round_just_opened_is_not_voided_by_a_snapshot_that_predates_it() {
     assert_eq!(next.repos["spira"].above.len(), 1);
 }
 
+#[test_id(t4qn154)]
 #[test]
 fn a_round_the_queue_holds_that_this_task_does_not_drive_blocks_a_second_cut() {
     let (_, acts) = decide_with(&small(2), &Carry::default(), &snap(vec![round("rx", &["sp-a"], "hx", 10)], NOW));
     assert!(!names(&acts).contains(&ASSEMBLE), "{acts:?}");
 }
 
+#[test_id(t40gizn)]
 #[test]
 fn a_red_open_round_is_not_stacked_on() {
     let p = small(2);
@@ -204,6 +214,7 @@ fn a_red_open_round_is_not_stacked_on() {
     assert!(acts.is_empty(), "{acts:?}");
 }
 
+#[test_id(t0gx51z)]
 #[test]
 fn a_promotion_moves_the_round_that_landed_not_the_one_above_it() {
     let mut carry = certifying_two();
@@ -220,6 +231,7 @@ fn a_promotion_moves_the_round_that_landed_not_the_one_above_it() {
     assert_eq!((rc.above[0].state, rc.above[0].batch.as_deref()), (State::Certifying, Some("r2")), "the upper is as it was");
 }
 
+#[test_id(tiit3dw)]
 #[test]
 fn the_end_of_a_leg_of_a_round_the_queue_voided_moves_nothing() {
     let mut carry = certifying_two();
@@ -235,6 +247,7 @@ fn the_end_of_a_leg_of_a_round_the_queue_voided_moves_nothing() {
     assert!(on_ran_with(&carry, &late, &RanOutput::default(), NOW + 310_000).is_none());
 }
 
+#[test_id(twcevxi)]
 #[test]
 fn an_unattended_open_round_is_driven_to_the_same_acts_whatever_the_limit() {
     let acts_at = |max_open: usize| {
@@ -252,6 +265,7 @@ fn an_unattended_open_round_is_driven_to_the_same_acts_whatever_the_limit() {
     assert_eq!(acts_at(1), [REDRIVE], "{:?}", acts_at(1));
 }
 
+#[test_id(tjd3wdk)]
 #[test]
 fn the_real_task_cuts_the_second_round_on_the_first_ones_head() {
     use runtime::event::EventKind;

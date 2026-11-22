@@ -62,6 +62,7 @@ mod tests {
         format!("time=\"2026-10-04T{m}:04-07:00\" level=warning msg=\"x\" error=\"connection was closed\"\n")
     }
 
+    #[test_id(tksc5xh)]
     #[test]
     fn buckets_and_peak() {
         let mut t = String::new();

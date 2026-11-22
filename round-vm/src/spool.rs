@@ -473,6 +473,7 @@ mod tests {
     /// sp-anhnd6: the corpus writes `round-launcher.env` and every rerun sources it; a launcher
     /// without SPIRA_TOML refused all 640 reruns of a round with "batch: SPIRA_TOML is not set".
     /// The corpus's own line writes the file, and the rerun's own line reads it in a bare env.
+    #[test_id(tf6zqur)]
     #[test]
     fn a_rerun_sourcing_the_launcher_env_finds_the_rounds_spira_toml() {
         let line_of = |script: &str, needle: &str| script.lines().find(|l| l.contains(needle)).unwrap_or_else(|| panic!("no line with {needle:?}")).to_string();
@@ -505,6 +506,7 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{toml}|vm/cache home|vm/cache home/bin/sccache"), "the rerun sees the corpus's values, intact");
     }
 
+    #[test_id(tr02x5o)]
     #[test]
     fn attribution_legs_add_their_wall_time_and_round_to_whole_seconds() {
         let t = AttrTime::default();
@@ -514,6 +516,7 @@ mod tests {
         assert_eq!(t.secs(), 3, "two concurrent legs of 1.4s are 2.8s of leg time");
     }
 
+    #[test_id(t1shnth)]
     #[test]
     fn a_request_names_its_branch_suites_and_build() {
         let r = parse_request("j7", "branch=spira/batcher-attr/x-j7\nsuites=test-a.sh\nbuild=dev\n").unwrap();
@@ -523,6 +526,7 @@ mod tests {
         assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=dev\n").is_err());
     }
 
+    #[test_id(tbp4hyh)]
     #[test]
     fn a_workspace_build_request_is_parsed_and_its_script_exits_4_on_a_failed_build_and_0_with_a_result() {
         let r = parse_request("b1", "branch=spira/batcher-attr/x-b1\nsuites=workspace\nbuild=workspace\n").unwrap();
@@ -576,6 +580,7 @@ mod tests {
         (status.code().unwrap(), home.join("attr-results/j1").join(result).exists(), ran, env)
     }
 
+    #[test_id(twf96dt)]
     #[test]
     fn the_unit_and_integration_probes_run_cargo_in_the_environment_the_round_launcher_recorded() {
         let launcher = "export CARGO_HOME={d}\nexport RUSTC_WRAPPER={d}/bin/sccache\n";
@@ -590,6 +595,7 @@ mod tests {
         }
     }
 
+    #[test_id(t50qwpl)]
     #[test]
     fn the_round_and_the_attribution_probe_splice_the_same_unit_env_fragment() {
         assert!(crate::run::REMOTE_SCRIPT.contains(crate::run::UNIT_ENV_FN));
@@ -599,6 +605,7 @@ mod tests {
         }
     }
 
+    #[test_id(txlw94u)]
     #[test]
     fn a_red_unit_or_integration_probe_leaves_its_cargo_output_and_a_red_result() {
         for (build, rc) in [("unit", 100), ("integration", 101)] {
@@ -617,6 +624,7 @@ mod tests {
         attr_job_rc("workspace", cargo_rc, "workspace-build.result")
     }
 
+    #[test_id(t8ubdoj)]
     #[test]
     fn the_unit_probe_runs_the_command_the_round_runs_its_unit_phase_with() {
         let cfg = "\"$HOME/round-nextest.toml\"";
@@ -627,6 +635,7 @@ mod tests {
         assert!(round_cmd.contains(&spira_config::unit_tier::unit_words(cfg, Some("unittest"), "--workspace", lib_bins)), "{round_cmd}");
     }
 
+    #[test_id(t1fou1o)]
     #[test]
     fn a_unit_job_naming_packages_tests_only_those_and_a_bare_one_the_whole_workspace() {
         let (_, _, args) = attr_job("unit", "loom,gate", 0, "unit-tests.result");
@@ -635,6 +644,7 @@ mod tests {
         assert!(args.contains("--workspace") && !args.contains("-p "), "{args}");
     }
 
+    #[test_id(tskxrlp)]
     #[test]
     fn a_unit_job_exits_5_when_the_tests_fail_and_0_with_a_result_when_they_pass() {
         let r = parse_request("u1", "branch=spira/batcher-attr/x-u1\nsuites=unit\nbuild=unit\n").unwrap();
@@ -645,6 +655,7 @@ mod tests {
         assert_eq!(attr_job_rc("unit", 0, "unit-tests.result"), (0, true));
     }
 
+    #[test_id(t2zhxk2)]
     #[test]
     fn an_integration_job_runs_the_integration_targets_of_its_packages_and_exits_5_when_they_fail() {
         let r = parse_request("i1", "branch=spira/batcher-attr/x-i1\nsuites=spira-runtime\nbuild=integration\n").unwrap();
@@ -655,6 +666,7 @@ mod tests {
         assert_eq!(attr_job_rc("integration", 0, "integration-tests.result"), (0, true));
     }
 
+    #[test_id(t9m95tn)]
     #[test]
     fn an_integration_job_naming_a_failing_test_runs_that_test_alone_and_a_bare_package_keeps_them_all() {
         let (_, _, args) = attr_job("integration", "testenv=lint_x,testenv=lint_y", 0, "integration-tests.result");
@@ -666,6 +678,7 @@ mod tests {
         assert!(args.contains("-p loom") && args.contains("--lib --bins") && args.contains("-- --exact a::b"), "{args}");
     }
 
+    #[test_id(tdzasy6)]
     #[test]
     fn the_integration_probe_runs_the_command_the_round_runs_its_integration_phase_with() {
         let arm = REMOTE_ATTR_SCRIPT.split("\nintegration)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("an integration arm");
@@ -674,6 +687,7 @@ mod tests {
         assert!(round_cmd.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")), "{round_cmd}");
     }
 
+    #[test_id(tv48huu)]
     #[test]
     fn a_lint_job_builds_spira_lint_from_its_own_tree_and_exits_5_when_it_finds_something() {
         let r = parse_request("l1", "branch=spira/batcher-attr/x-l1\nsuites=spira-lint\nbuild=lint\n").unwrap();
@@ -684,12 +698,14 @@ mod tests {
         assert_eq!(attr_job_rc("lint", 101, "spira-lint.result"), (4, false), "a tree that does not build is a fault, not a lint verdict");
     }
 
+    #[test_id(ta0ejib)]
     #[test]
     fn a_workspace_job_exits_4_when_cargo_fails_and_0_with_a_result_when_it_builds() {
         assert_eq!(workspace_job_rc(101), (4, false));
         assert_eq!(workspace_job_rc(0), (0, true));
     }
 
+    #[test_id(tai20tg)]
     #[test]
     fn the_attr_command_keeps_empty_arguments_in_place() {
         let j = AttrJob {
@@ -704,6 +720,7 @@ mod tests {
         assert_eq!(attr_command(&j), "bash -s -- 'h' '9430' 'j1' 'attr-j1' 'test-a.sh' 'artifacts' ''");
     }
 
+    #[test_id(tnkccry)]
     #[test]
     fn streaming_copies_outputs_before_results_and_each_result_once() {
         let d = TempDir::new();

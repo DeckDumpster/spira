@@ -435,6 +435,7 @@ pub fn required_checks(paths: &[String], crate_of: impl Fn(&str) -> Option<Strin
 mod tests {
     use super::*;
 
+    #[test_id(t1rxtzl)]
     #[test]
     fn legal_edges_are_the_machines_own_moves() {
         let edges = legal_edges();
@@ -465,6 +466,7 @@ mod tests {
         out.refusal.unwrap()
     }
 
+    #[test_id(tcqet93)]
     #[test]
     fn a_mend_awaiting_its_ask_outlives_the_deadline_and_resumes_with_a_fresh_one() {
         let r = step(&picked(1000), MendingEventKind::Await { ask: "a-1".into() });
@@ -476,12 +478,14 @@ mod tests {
         assert_eq!(step(&r, MendingEventKind::Expire { at: 5300 }).state, MendingState::Returned);
     }
 
+    #[test_id(tny76dj)]
     #[test]
     fn a_mend_settles_past_the_deadline_while_its_ask_is_open() {
         let r = step(&picked(1000), MendingEventKind::Await { ask: "a-1".into() });
         assert_eq!(step(&r, MendingEventKind::Mended { at: 9999 }).state, MendingState::Mended);
     }
 
+    #[test_id(tmx7tb2)]
     #[test]
     fn pickup_stamps_a_deadline_from_the_pickup_not_from_the_failure() {
         let r = picked(1000);
@@ -489,6 +493,7 @@ mod tests {
         assert_eq!(MendingRow::failed("b1", 1, "s").deadline, None, "a waiting failure has no clock");
     }
 
+    #[test_id(tibwmbw)]
     #[test]
     fn nothing_the_mender_sends_moves_the_deadline() {
         let r = picked(1000);
@@ -499,6 +504,7 @@ mod tests {
         assert!(matches!(refusal(&r, MendingEventKind::Pickup { at: 1200, deadline_s: 300 }), Refusal::IllegalTransition { .. }));
     }
 
+    #[test_id(tncnveq)]
     #[test]
     fn every_outcome_settles_a_row_before_its_deadline() {
         let outcomes = [
@@ -515,6 +521,7 @@ mod tests {
         assert_eq!(r.diagnosis.as_deref(), Some("d"));
     }
 
+    #[test_id(tzzmbv2)]
     #[test]
     fn an_outcome_at_or_past_the_deadline_is_refused() {
         for kind in [
@@ -529,6 +536,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvv4m41)]
     #[test]
     fn expire_returns_with_the_diagnosis_written_so_far_and_only_when_overdue() {
         let r = step(&picked(1000), MendingEventKind::Diagnosis { text: "half a diagnosis".into() });
@@ -539,6 +547,7 @@ mod tests {
         assert!(matches!(refusal(&r, MendingEventKind::Expire { at: 9999 }), Refusal::Terminal { .. }));
     }
 
+    #[test_id(t06fshn)]
     #[test]
     fn a_waiting_row_never_expires_and_has_no_outcome() {
         let r = MendingRow::failed("b1", 1, "s");
@@ -548,6 +557,7 @@ mod tests {
         }
     }
 
+    #[test_id(tt23ug7)]
     #[test]
     fn the_concierge_and_operator_settle_an_unpicked_failure_and_no_one_else_does() {
         let r = MendingRow::failed("b1", 1, "s");
@@ -570,6 +580,7 @@ mod tests {
         }
     }
 
+    #[test_id(tf5iv1f)]
     #[test]
     fn stale_version_and_expect_mismatch_never_mutate() {
         let r = picked(1000);
@@ -591,6 +602,7 @@ mod tests {
         vec!["gate/".into(), "spira/gate-suites".into(), "spira/inventory*".into()]
     }
 
+    #[test_id(tmu4hpn)]
     #[test]
     fn a_fence_edit_without_an_ask_is_refused_and_with_one_taken() {
         let mut f = facts(vec![ch("gate/src/lib.rs", 3, 1)]);
@@ -600,17 +612,20 @@ mod tests {
         assert_eq!(assess(&f, &fences()), Ok(()));
     }
 
+    #[test_id(t1jxsga)]
     #[test]
     fn a_trailing_star_fences_a_prefix_and_a_bare_entry_only_itself() {
         assert!(is_fence("spira/inventory-deny", &fences()) && is_fence("spira/gate-suites", &fences()));
         assert!(!is_fence("spira/gate-suites-extra", &fences()) && !is_fence("gates/x", &fences()));
     }
 
+    #[test_id(txngubs)]
     #[test]
     fn a_plain_in_diff_source_edit_needs_no_ask() {
         assert_eq!(assess(&facts(vec![ch("queue/src/ops/round.rs", 5, 5)]), &fences()), Ok(()));
     }
 
+    #[test_id(tkqqcu0)]
     #[test]
     fn a_changed_expectation_and_an_outside_edit_each_need_an_ask() {
         assert_eq!(escalations(&facts(vec![ch("queue/src/tests/round.rs", 2, 2)]), &fences()).len(), 1);
@@ -620,6 +635,7 @@ mod tests {
         assert_eq!(escalations(&f, &fences()), vec!["lib/other.rs is outside every member's diff".to_string()]);
     }
 
+    #[test_id(thkx4rh)]
     #[test]
     fn a_tip_without_its_green_checks_is_refused_even_with_an_ask() {
         let mut f = facts(vec![ch("queue/src/lib.rs", 1, 0)]);
@@ -632,6 +648,7 @@ mod tests {
         assert_eq!(assess(&f, &fences()), Ok(()));
     }
 
+    #[test_id(tc14s8r)]
     #[test]
     fn required_checks_name_crates_and_the_suites_that_reference_non_rust_files() {
         let paths = vec!["queue/src/a.rs".to_string(), "spira/lib.sh".to_string(), "spira/test-b.sh".to_string()];
@@ -643,6 +660,7 @@ mod tests {
         assert_eq!(got, vec!["crate:queue", "suite:spira/test-a.sh", "suite:spira/test-b.sh"]);
     }
 
+    #[test_id(t2lqvit)]
     #[test]
     fn a_return_stores_the_members_it_sends_back_on_the_row() {
         let ret = |r: &MendingRow| step(r, MendingEventKind::Return { at: 1100, diagnosis: "d".into(), members: vec!["sp-b".into()] });
@@ -653,12 +671,14 @@ mod tests {
         assert_eq!(w.returned, vec!["sp-b".to_string()]);
     }
 
+    #[test_id(t8c09nb)]
     #[test]
     fn an_expiry_returns_no_members() {
         let r = step(&picked(1000), MendingEventKind::Expire { at: 1300 });
         assert!(r.returned.is_empty());
     }
 
+    #[test_id(tgg2zdt)]
     #[test]
     fn a_return_event_without_members_still_parses() {
         let k: MendingEventKind = serde_json::from_str(r#"{"Return":{"at":3,"diagnosis":"d"}}"#).unwrap();

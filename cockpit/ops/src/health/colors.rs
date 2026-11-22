@@ -92,23 +92,27 @@ pub fn age_str(seconds: &str, warn: i64) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(tj1ofut)]
     #[test]
     fn dot_colours() {
         assert_eq!(dot(true), format!("{OK}\u{25cf}{RST}"));
         assert_eq!(dot(false), format!("{BAD}\u{25cb}{RST}"));
     }
 
+    #[test_id(tcficy7)]
     #[test]
     fn num_unreadable_is_loud_never_green() {
         assert_eq!(num("?", 5, "x"), format!("{BAD}{B}?{RST}x"));
     }
 
+    #[test_id(t1zds4o)]
     #[test]
     fn num_below_threshold_is_green_above_is_warn() {
         assert_eq!(num("4", 5, ""), format!("{OK}4{RST}"));
         assert_eq!(num("5", 5, ""), format!("{WARN}5{RST}"));
     }
 
+    #[test_id(to410ne)]
     #[test]
     fn bad_unless_zero_zero_is_ok_anything_else_is_bad() {
         assert_eq!(bad_unless_zero("0", ""), format!("{OK}0{RST}"));
@@ -116,6 +120,7 @@ mod tests {
         assert_eq!(bad_unless_zero("?", ""), format!("{BAD}{B}?{RST}"));
     }
 
+    #[test_id(te7jsuv)]
     #[test]
     fn age_str_seconds_vs_minutes_boundary_and_colour() {
         assert_eq!(age_str("119", 1000), format!("{DIM}119s{RST}"));

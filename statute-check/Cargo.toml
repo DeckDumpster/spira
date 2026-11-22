@@ -20,8 +20,7 @@ path = "tests/cli.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration"]
-
+integration = ["spira-config/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
@@ -30,4 +29,5 @@ serde_json = "1"
 toml = "0.8"
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

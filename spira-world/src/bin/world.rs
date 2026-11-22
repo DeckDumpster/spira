@@ -59,6 +59,9 @@
 //! is invoked as an external process, exactly as bash `world.sh` always called it — the
 //! two tools share no Rust code at that boundary, only the binary's name on PATH.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeSet;
 use std::env;
 use std::path::PathBuf;
@@ -1159,6 +1162,7 @@ fn main() {
 mod tests {
     use super::*;
 
+    #[test_id(tgg0ls5)]
     #[test]
     fn store_verbs_refuse_help_and_unknown_arguments_without_acting() {
         for name in ["freeze-store", "thaw-store"] {

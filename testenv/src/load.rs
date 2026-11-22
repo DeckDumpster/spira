@@ -64,11 +64,13 @@ mod tests {
         (a, said)
     }
 
+    #[test_id(t4b0o39)]
     #[test]
     fn an_idle_host_starts_at_once() {
         assert_eq!(run(&[3.9], 60).0, Admit::Immediate);
     }
 
+    #[test_id(tir2386)]
     #[test]
     fn a_busy_host_is_waited_on_until_it_drops() {
         let (a, said) = run(&[4.6, 4.6, 2.0], 60);
@@ -76,6 +78,7 @@ mod tests {
         assert!(said[0].contains("load1=4.60 > 4.00"), "{said:?}");
     }
 
+    #[test_id(tctk42i)]
     #[test]
     fn a_host_that_stays_busy_is_given_up_on_not_failed() {
         let (a, _) = run(&[9.0], 0);
@@ -85,12 +88,14 @@ mod tests {
         assert!(matches!(a, Admit::GaveUp(_, l) if l == 9.0), "{a:?}");
     }
 
+    #[test_id(tkux42d)]
     #[test]
     fn an_unreadable_load_never_blocks() {
         let a = admit(100, 60, 4, &|| None, &|_| {}, &|| false, &mut |_| {});
         assert_eq!(a, Admit::Immediate);
     }
 
+    #[test_id(tsvy0nl)]
     #[test]
     fn a_zero_ceiling_disables_the_wait() {
         let a = admit(0, 60, 4, &|| Some(99.0), &|_| {}, &|| false, &mut |_| {});

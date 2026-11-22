@@ -64,6 +64,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     r
 }
 
+#[test_id(teyz12h)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
@@ -76,6 +77,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(tgialav)]
 #[test]
 fn t2_a_nominal_prompt_journals_nothing_and_asks_only_for_its_probe() {
     let mut r = rig(1, |_| nominal());
@@ -84,6 +86,7 @@ fn t2_a_nominal_prompt_journals_nothing_and_asks_only_for_its_probe() {
     running(&r);
 }
 
+#[test_id(tveb22j)]
 #[test]
 fn t3_every_row_of_the_decide_table_is_a_legal_step() {
     for t in TRANSITIONS {
@@ -91,6 +94,7 @@ fn t3_every_row_of_the_decide_table_is_a_legal_step() {
     }
 }
 
+#[test_id(tey14ml)]
 #[test]
 fn t3_unit_ran_in_idle_and_a_tick_in_running_are_refused_naming_the_state() {
     let refused = step(State::Idle, "unit.ran").expect_err("no unit runs in Idle");
@@ -101,6 +105,7 @@ fn t3_unit_ran_in_idle_and_a_tick_in_running_are_refused_naming_the_state() {
     assert!(refused.contains("Running"), "{refused}");
 }
 
+#[test_id(tffrx0i)]
 #[test]
 fn t3_a_tick_in_idle_observes_and_the_carry_read_is_the_carry_recorded() {
     let (next, acts) = decide(&Carry::default(), &Input::Tick).unwrap();
@@ -109,6 +114,7 @@ fn t3_a_tick_in_idle_observes_and_the_carry_read_is_the_carry_recorded() {
     assert_eq!(back, next);
 }
 
+#[test_id(t62fq3d)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -120,6 +126,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tnntdpx)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -128,6 +135,7 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(t2s67as)]
 #[test]
 fn t5_parity_capacity_draining_and_paused_write_their_awake_line_and_go_idle() {
     let observing = in_state(State::Observing);
@@ -138,6 +146,7 @@ fn t5_parity_capacity_draining_and_paused_write_their_awake_line_and_go_idle() {
     }
 }
 
+#[test_id(ti60xkd)]
 #[test]
 fn t5_parity_an_unlanded_segment_counts_as_rc_0() {
     let (next, acts) = decide(&in_state(State::Running), &Input::UnitRan { ran: ran(Exit::Code(1)), outcome: Some("unlanded".into()) }).unwrap();
@@ -146,6 +155,7 @@ fn t5_parity_an_unlanded_segment_counts_as_rc_0() {
     assert_eq!(line["rc"], 0, "{line}");
 }
 
+#[test_id(tnz7c1d)]
 #[test]
 fn t9_the_prepare_acts_are_keyed_by_the_run_the_handler_assigned() {
     let r = rig(1, |_| snap("SWEEP: go", 0, false, Pause::Open));
@@ -169,6 +179,7 @@ fn mid_run() -> TaskRig {
     r
 }
 
+#[test_id(tz2clb4)]
 #[test]
 fn the_run_in_flight_is_kept_as_rows_and_not_as_one_whole_row() {
     let r = mid_run();
@@ -176,6 +187,7 @@ fn the_run_in_flight_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(rows.iter().any(|k| k == "run_id"), "{rows:?}");
 }
 
+#[test_id(tgylb1t)]
 #[test]
 fn a_boot_records_the_run_that_ends_after_it_as_an_unstopped_process_does() {
     let run_id = spira_runtime::watchers::carried::<Carry>(mid_run().engine().projection(), &StreamKey(STREAM.into()), STATE).run_id.expect("a run in flight");
@@ -192,6 +204,7 @@ fn why_of(acts: &[runtime::EffectSpec]) -> Option<String> {
     line["why"].as_str().map(String::from)
 }
 
+#[test_id(tgmpgnu)]
 #[test]
 fn a_unit_start_that_fails_records_why_and_removes_the_brief_files() {
     let (next, acts) = decide(&in_state(State::Starting), &failed(UNIT_START, "boom\nmore")).unwrap();
@@ -201,6 +214,7 @@ fn a_unit_start_that_fails_records_why_and_removes_the_brief_files() {
     assert_eq!(line["error"], "boom\nmore");
 }
 
+#[test_id(ttuxjgg)]
 #[test]
 fn a_brief_that_fails_records_why_and_removes_the_brief_files() {
     let (next, acts) = decide(&in_state(State::Briefing), &failed(BRIEF, "\nSPIRA_TOML is not set — it names the one source of config\nmore")).unwrap();
@@ -208,6 +222,7 @@ fn a_brief_that_fails_records_why_and_removes_the_brief_files() {
     assert_eq!(why_of(&acts).as_deref(), Some("SPIRA_TOML is not set — it names the one source of config"));
 }
 
+#[test_id(tdkl2zt)]
 #[test]
 fn a_brief_with_no_argv_records_why_and_removes_the_brief_files() {
     let body = r#"{"name":"ops-1","sys_file":"s.md","task_file":"t.md","argv":[]}"#;
@@ -216,12 +231,14 @@ fn a_brief_with_no_argv_records_why_and_removes_the_brief_files() {
     assert_eq!(why_of(&acts).as_deref(), Some("the brief returned no argv"));
 }
 
+#[test_id(t0de0xs)]
 #[test]
 fn a_missing_statute_still_goes_idle_without_cleanup() {
     let (next, acts) = decide(&in_state(State::Briefing), &failed(BRIEF, &format!("x {}", dwarf::ops_sweep::STATUTE_MISSING))).unwrap();
     assert_eq!((next.state, names(&acts)), (State::Idle, vec![LEDGER]));
 }
 
+#[test_id(tz4e5b3)]
 #[test]
 fn the_ledger_line_ends_in_why_and_ops_log_holds_the_whole_error() {
     let dir = testkit::TempDir::new("ops-ledger");
@@ -253,6 +270,7 @@ fn the_ledger_line_ends_in_why_and_ops_log_holds_the_whole_error() {
     assert_eq!(left, ["sweep-ops-r9.log"]);
 }
 
+#[test_id(t09j8ct)]
 #[test]
 fn cleanup_with_no_run_id_still_prunes_over_age_sweep_files() {
     let dir = testkit::TempDir::new("ops-cleanup-noid");
@@ -265,6 +283,7 @@ fn cleanup_with_no_run_id_still_prunes_over_age_sweep_files() {
     assert!(!old.exists());
 }
 
+#[test_id(tjb6xeg)]
 #[test]
 fn cleanup_without_the_keep_days_key_errs_naming_it_after_removing_the_brief_files() {
     let dir = testkit::TempDir::new("ops-cleanup-nokey");
@@ -279,6 +298,7 @@ fn cleanup_without_the_keep_days_key_errs_naming_it_after_removing_the_brief_fil
     assert!(left.is_empty(), "{left:?}");
 }
 
+#[test_id(tqsna7j)]
 #[test]
 fn the_same_failing_line_three_times_asks_the_concierge_once() {
     let mut carry = in_state(State::Starting);
@@ -299,6 +319,7 @@ fn the_same_failing_line_three_times_asks_the_concierge_once() {
     assert_eq!((c.red, c.red_why), (0, None));
 }
 
+#[test_id(tqly41t)]
 #[test]
 fn the_concierge_line_is_keyed_on_the_failing_line_and_names_it() {
     let carry = Carry { red: 2, red_why: Some("boom".into()), ..in_state(State::Starting) };
@@ -308,6 +329,7 @@ fn the_concierge_line_is_keyed_on_the_failing_line_and_names_it() {
     assert!(ask.input.contains("[persona.ops] the ops sweep has failed to start 3 times running: boom"), "{}", ask.input);
 }
 
+#[test_id(tltgunn)]
 #[test]
 fn three_failed_starts_through_the_handler_ask_once_with_a_stamped_raw_line_and_keep_the_count_as_rows() {
     let mut r = TaskRig::new(1, handler().registration()).unwrap().double(OBSERVE, |_| Ok(serde_json::to_string(&snap("SWEEP: go", 0, false, Pause::Open)).unwrap()));
@@ -331,6 +353,7 @@ fn three_failed_starts_through_the_handler_ask_once_with_a_stamped_raw_line_and_
     assert!(rows.iter().any(|k| k == "red") && rows.iter().any(|k| k == "red_why"), "{rows:?}");
 }
 
+#[test_id(tw8aqsj)]
 #[test]
 fn a_snapshot_already_swept_is_skipped_and_a_new_one_sweeps() {
     let carry = Carry { state: State::Observing, swept_head: Some("## Spira pipeline, T1".into()), ..Default::default() };
@@ -341,6 +364,7 @@ fn a_snapshot_already_swept_is_skipped_and_a_new_one_sweeps() {
     assert_eq!((next.state, names(&acts)), (State::Preparing, vec![INTAKE_INSTALL, INCIDENT_DRAIN]));
 }
 
+#[test_id(tcdaz68)]
 #[test]
 fn the_swept_head_is_recorded_only_when_the_unit_starts() {
     let observing = Carry { swept_head: Some("older".into()), ..in_state(State::Observing) };
@@ -353,6 +377,7 @@ fn the_swept_head_is_recorded_only_when_the_unit_starts() {
     assert_eq!(bad.swept_head.as_deref(), Some("older"));
 }
 
+#[test_id(tz7gozp)]
 #[test]
 fn the_swept_head_survives_the_stored_rows_once_the_unit_has_started() {
     let r = mid_run();

@@ -23,6 +23,7 @@ fn record_of(w: &World, id: &str) -> Option<(BeadState, bool)> {
     Some((state, row["bead"]["tip"].as_str().is_some()))
 }
 
+#[test_id(txcfa82)]
 #[test]
 fn create_bead_refuses_an_epic_and_a_decision_naming_the_type() {
     let w = World::new();
@@ -39,6 +40,7 @@ fn create_bead_refuses_an_epic_and_a_decision_naming_the_type() {
     assert_eq!(record_of(&w, "sp-t"), Some((BeadState::Ready, false)));
 }
 
+#[test_id(twxcf6y)]
 #[test]
 fn an_ask_closed_in_the_control_plane_is_not_open_and_reconcile_content_closes_its_decision_bead() {
     let w = World::new();

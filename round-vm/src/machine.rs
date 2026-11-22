@@ -136,6 +136,7 @@ impl PoolState {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(t8tzbqh)]
     #[test]
     fn a_destroyed_vm_id_provisions_again_as_a_new_vm() {
         let mut p = PoolState::default();
@@ -173,6 +174,7 @@ mod tests {
         s
     }
 
+    #[test_id(tw04onj)]
     #[test]
     fn every_legal_transition_applies_and_is_recorded() {
         let mut legal: Vec<(VmState, VmState)> = LEGAL.to_vec();
@@ -186,6 +188,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8dvzan)]
     #[test]
     fn every_illegal_transition_is_refused_naming_the_state() {
         let legal = |f, t| LEGAL.contains(&(f, t)) || (f, t) == (Released, Doomed) || (f, t) == (Doomed, Destroyed) || (f, t) == (Destroyed, Provisioning);
@@ -202,6 +205,7 @@ mod tests {
         }
     }
 
+    #[test_id(tu7rf7l)]
     #[test]
     fn an_unknown_vm_can_only_begin_provisioning() {
         let mut s = PoolState::default();
@@ -209,6 +213,7 @@ mod tests {
         s.record("9", Provisioning, "x").unwrap();
     }
 
+    #[test_id(tej1djh)]
     #[test]
     fn vms_reads_exactly_the_recorded_state() {
         let mut s = PoolState::default();
@@ -221,6 +226,7 @@ mod tests {
         assert_eq!((got[0].0.as_str(), got[0].1, got[0].3.as_str()), ("1", Ready, "r"));
     }
 
+    #[test_id(tmjsbmi)]
     #[test]
     fn the_log_is_bounded_by_dropping_destroyed_history_first() {
         let mut s = PoolState::default();
@@ -234,6 +240,7 @@ mod tests {
         assert_eq!(s.state_of("keep"), Some(Provisioning));
     }
 
+    #[test_id(ttcn3iu)]
     #[test]
     fn untracked_holdings_are_adopted_once() {
         let mut s = PoolState { ready: Some(crate::schema::Vm { handle: "5".into(), addr: "a".into() }), ..PoolState::default() };

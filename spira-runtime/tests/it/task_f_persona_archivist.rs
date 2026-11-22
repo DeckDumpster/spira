@@ -74,6 +74,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     r
 }
 
+#[test_id(tx0pprj)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
@@ -86,6 +87,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(tp2rv28)]
 #[test]
 fn t2_one_live_session_below_every_and_nothing_stale_is_silent() {
     let mut r = rig(1, |_| snap(10, &[]));
@@ -94,6 +96,7 @@ fn t2_one_live_session_below_every_and_nothing_stale_is_silent() {
     running(&r);
 }
 
+#[test_id(tc1chtl)]
 #[test]
 fn t3_every_row_of_the_decide_table_is_a_legal_step() {
     for t in TRANSITIONS {
@@ -101,6 +104,7 @@ fn t3_every_row_of_the_decide_table_is_a_legal_step() {
     }
 }
 
+#[test_id(t24nisf)]
 #[test]
 fn t3_unit_ran_in_idle_and_a_commit_with_no_wiki_are_refused_naming_the_state() {
     let refused = step(State::Idle, "ran-ok").expect_err("no unit runs in Idle");
@@ -111,6 +115,7 @@ fn t3_unit_ran_in_idle_and_a_commit_with_no_wiki_are_refused_naming_the_state() 
     assert!(refused.contains("Running"), "{refused}");
 }
 
+#[test_id(tca0l3g)]
 #[test]
 fn t3_a_tick_in_idle_observes_and_the_carry_read_is_the_carry_recorded() {
     let (next, acts) = decide(&Carry::default(), &Input::Tick, &config("brain")).unwrap();
@@ -119,6 +124,7 @@ fn t3_a_tick_in_idle_observes_and_the_carry_read_is_the_carry_recorded() {
     assert_eq!(back, next);
 }
 
+#[test_id(t5xsgu9)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -130,6 +136,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(t5h7o14)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -138,6 +145,7 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(tgsjgds)]
 #[test]
 fn t5_parity_paused_marks_and_a_drift_above_every_is_briefed() {
     let observing = in_state(State::Observing);
@@ -149,6 +157,7 @@ fn t5_parity_paused_marks_and_a_drift_above_every_is_briefed() {
     assert!(acts[0].input.contains("s1"), "{}", acts[0].input);
 }
 
+#[test_id(thzmiu7)]
 #[test]
 fn t5_parity_rc_0_with_a_wiki_commits_and_rc_124_settles_as_timeout() {
     let r = in_state(State::Running);
@@ -176,6 +185,7 @@ fn carry_after(r: &TaskRig) -> Carry {
     spira_runtime::watchers::carried(r.engine().projection(), &StreamKey(STREAM.into()), STATE)
 }
 
+#[test_id(tvulax0)]
 #[test]
 fn the_run_in_flight_is_kept_as_rows_without_the_queue() {
     let r = mid_run();
@@ -183,6 +193,7 @@ fn the_run_in_flight_is_kept_as_rows_without_the_queue() {
     assert!(rows.iter().any(|k| k == "current") && !rows.iter().any(|k| k == "queue"), "{rows:?}");
 }
 
+#[test_id(t5lkzmz)]
 #[test]
 fn a_boot_keeps_the_run_and_leaves_the_queue_to_the_next_observe() {
     let mut r = mid_run();

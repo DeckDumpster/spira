@@ -33,6 +33,7 @@ fn observe_gone(mut carry: Carry, from: u64, n: u64) -> (Carry, Vec<Act>) {
     (carry, acts)
 }
 
+#[test_id(tca5wav)]
 #[test]
 fn a_corpus_leg_that_never_started_is_started_once_more_within_a_minute_of_the_open() {
     let first = "spira.r9.corpus.1";
@@ -44,6 +45,7 @@ fn a_corpus_leg_that_never_started_is_started_once_more_within_a_minute_of_the_o
     assert_eq!(carry.repos["spira"].leg.as_deref(), Some(leg.unit.as_str()));
 }
 
+#[test_id(tmgoafv)]
 #[test]
 fn a_leg_the_unit_manager_lists_is_left_alone() {
     let mut carry = corpus("spira.r9.corpus.1", NOW);
@@ -54,6 +56,7 @@ fn a_leg_the_unit_manager_lists_is_left_alone() {
     }
 }
 
+#[test_id(tcq9fv8)]
 #[test]
 fn a_snapshot_that_could_not_list_units_judges_nothing() {
     
@@ -65,6 +68,7 @@ fn a_snapshot_that_could_not_list_units_judges_nothing() {
     }
 }
 
+#[test_id(t30ort6)]
 #[test]
 fn a_corpus_leg_that_is_gone_twice_abandons_the_round_naming_why() {
     let (carry, _) = observe_gone(corpus("spira.r9.corpus.1", NOW), NOW, 2);
@@ -78,6 +82,7 @@ fn a_corpus_leg_that_is_gone_twice_abandons_the_round_naming_why() {
     assert_eq!((rc.state, rc.batch.clone(), rc.pace.infra), (State::Idle, None, 1), "an infrastructure fault, round forgotten");
 }
 
+#[test_id(t5zin9w)]
 #[test]
 fn a_corpus_leg_that_could_not_be_started_is_started_once_more_then_abandoned() {
     let first = corpus("spira.r9.corpus.1", NOW);
@@ -94,6 +99,7 @@ fn a_corpus_leg_that_could_not_be_started_is_started_once_more_then_abandoned() 
     assert_eq!(done.repos["spira"].state, State::Idle);
 }
 
+#[test_id(trolsnz)]
 #[test]
 fn a_round_open_with_no_driver_after_its_one_redrive_is_abandoned_not_paged() {
     let mut carry = Carry::default();
@@ -117,6 +123,7 @@ fn a_round_open_with_no_driver_after_its_one_redrive_is_abandoned_not_paged() {
     assert!(!all.contains(&INBOX_APPEND.to_string()) && !all.contains(&FILE.to_string()), "an abandoned round pages nobody as open: {all:?}");
 }
 
+#[test_id(tee5d5k)]
 #[test]
 fn each_leg_gets_its_own_restart_a_corpus_restart_does_not_spend_the_certify_leg_s() {
     let (carry, _) = observe_gone(corpus("spira.r9.corpus.1", NOW), NOW, 2);
@@ -130,6 +137,7 @@ fn each_leg_gets_its_own_restart_a_corpus_restart_does_not_spend_the_certify_leg
     assert_eq!(names(&acts), [CERTIFY], "the certify leg is started again before the round is abandoned: {acts:?}");
 }
 
+#[test_id(tofny1s)]
 #[test]
 fn a_round_certify_would_refuse_is_abandoned_after_the_wait_not_left_open() {
     let mut repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
@@ -167,6 +175,7 @@ fn abandon_undriven(mut carry: Carry, id: &str, from: u64) -> (Carry, Vec<Act>, 
     (carry, acts, t)
 }
 
+#[test_id(ttpq7n2)]
 #[test]
 fn a_second_undriven_round_abandoned_in_a_row_writes_the_stop_before_it_pages() {
     let (carry, first, t) = abandon_undriven(Carry::default(), "r8", NOW);
@@ -178,6 +187,7 @@ fn a_second_undriven_round_abandoned_in_a_row_writes_the_stop_before_it_pages() 
     assert!(stop < page, "the stop is written before the page: {n:?}");
 }
 
+#[test_id(tf5r0a4)]
 #[test]
 fn one_round_that_faulted_then_was_abandoned_undriven_counts_once() {
     let mut rc = RepoCarry { state: State::Certifying, round_key: Some("k".into()), batch: Some("r9".into()), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), leg: Some("spira.c3".into()), run: 1, attributed: true, ..RepoCarry::default() };
@@ -202,6 +212,7 @@ fn certify_faults(mut carry: Carry, id: &str, at: u64) -> (Carry, Vec<Act>) {
     on_ran_with(&carry, &ran, &runtime::units::RanOutput::captured(b"queue.sh round certify: refused, nothing ran\n", b""), at + TICK).unwrap()
 }
 
+#[test_id(tvqxvx3)]
 #[test]
 fn two_different_rounds_that_each_fault_still_write_the_stop_and_page() {
     let (carry, first) = certify_faults(Carry::default(), "r8", NOW);
@@ -212,6 +223,7 @@ fn two_different_rounds_that_each_fault_still_write_the_stop_and_page() {
     assert!(second.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("ROUNDS STOPPED spira:")), "{n:?}");
 }
 
+#[test_id(t2sa4ug)]
 #[test]
 fn the_same_round_faulting_twice_counts_once_and_stops_nothing() {
     let (carry, _) = certify_faults(Carry::default(), "r9", NOW);
@@ -220,6 +232,7 @@ fn the_same_round_faulting_twice_counts_once_and_stops_nothing() {
     assert_eq!(carry.repos["spira"].pace.infra, 1);
 }
 
+#[test_id(trs7cwb)]
 #[test]
 fn running_legs_are_this_task_s_active_units_by_key() {
     use runtime::units::{UnitDetail, UnitHandle, UnitState};
@@ -234,6 +247,7 @@ fn attributing(at: u64) -> Carry {
     carry
 }
 
+#[test_id(tykclr2)]
 #[test]
 fn an_attribution_leg_still_listed_past_one_walls_grace_is_not_judged_lost() {
     let past_one_wall = Policy::default().wall_ms + LEG_GRACE_MS + TICK;
@@ -248,6 +262,7 @@ fn certifying(at: u64) -> Carry {
     carry
 }
 
+#[test_id(tuz02fi)]
 #[test]
 fn a_live_certify_leg_past_one_walls_grace_starts_no_attribution() {
     let past_one_wall = Policy::default().wall_ms + LEG_GRACE_MS + TICK;
@@ -259,12 +274,14 @@ fn a_live_certify_leg_past_one_walls_grace_starts_no_attribution() {
     assert!(!rc.attributed);
 }
 
+#[test_id(tqqxf1v)]
 #[test]
 fn a_certify_leg_the_manager_does_not_list_is_started_once_more() {
     let (_, acts) = observe_gone(certifying(NOW), NOW + LEG_START_GRACE_MS, LEG_MISSING_OBSERVES as u64);
     assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
 }
 
+#[test_id(tgopl7v)]
 #[test]
 fn an_attribution_leg_is_judged_lost_past_its_iterations_deadline() {
     let p = Policy::default();
@@ -274,6 +291,7 @@ fn an_attribution_leg_is_judged_lost_past_its_iterations_deadline() {
     assert!(!names(&acts).contains(&ABANDON), "{acts:?}");
 }
 
+#[test_id(ti8krv1)]
 #[test]
 fn a_corpus_leg_is_judged_lost_one_wall_and_grace_after_it_started() {
     let past_one_wall = Policy::default().wall_ms + LEG_GRACE_MS + TICK;
@@ -281,6 +299,7 @@ fn a_corpus_leg_is_judged_lost_one_wall_and_grace_after_it_started() {
     assert_eq!(names(&acts), [CORPUS], "lost, so the round goes to attribution: {acts:?}");
 }
 
+#[test_id(twakt60)]
 #[test]
 fn an_attribution_leg_deadline_follows_the_member_count() {
     let wall = Policy::default().wall_ms;
@@ -296,6 +315,7 @@ fn an_attribution_leg_deadline_follows_the_member_count() {
 
 /// A leg that ended while the runtime was down left no `unit.ran`: the tick reads each leg in
 /// flight, in every state that has one, through `unit.facts`.
+#[test_id(tc8d9zo)]
 #[test]
 fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
     use runtime::units::{Exit, UnitFacts, UnitState, UNIT_FACTS};
@@ -369,6 +389,7 @@ fn green_with_leg_gone(below: Option<Round>) -> (Carry, Vec<Act>, Vec<Act>) {
     (carry, all, acts)
 }
 
+#[test_id(tznbo04)]
 #[test]
 fn a_green_round_whose_certify_unit_ran_has_not_arrived_lands_not_abandoned_and_a_late_unit_ran_changes_nothing() {
     let (carry, acts, started) = green_with_leg_gone(None);
@@ -381,6 +402,7 @@ fn a_green_round_whose_certify_unit_ran_has_not_arrived_lands_not_abandoned_and_
     assert!(on_ran(&carry, &ran, NOW + 9 * TICK).is_none());
 }
 
+#[test_id(tw9fgjw)]
 #[test]
 fn a_green_stacked_round_whose_certify_unit_ran_has_not_arrived_is_certified_and_held_not_abandoned() {
     let below = Round { id: "r8".into(), members: vec!["sp-z".into()], head: "g1".into(), worktree: "w8".into(), driven: true, phase: "certifying".into(), ..Round::default() };
@@ -390,6 +412,7 @@ fn a_green_stacked_round_whose_certify_unit_ran_has_not_arrived_is_certified_and
     assert_eq!(carry.repos["spira"].above[0].state, State::Certified);
 }
 
+#[test_id(tct390h)]
 #[test]
 fn a_pass_started_after_a_gate_red_eject_begins_with_its_restart_allowance_unspent() {
     let mut carry = certifying(NOW);

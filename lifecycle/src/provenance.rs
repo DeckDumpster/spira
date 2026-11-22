@@ -138,6 +138,7 @@ mod tests {
         TrailRow { state: state.into(), reason: reason.map(Into::into), close_reason: close.map(Into::into) }
     }
 
+    #[test_id(twtamk8)]
     #[test]
     fn a_bare_drop_of_an_external_bead_is_refused_and_a_named_outcome_is_not() {
         let drop = BeadEventKind::Drop { reason: DropReason::Unwanted };
@@ -148,6 +149,7 @@ mod tests {
         assert!(refuse_external(&BeadEventKind::Supersede { by: "sp-2".into() }, "").is_none());
     }
 
+    #[test_id(t8skqt9)]
     #[test]
     fn the_residue_drop_by_classification_is_refused() {
         let k = BeadEventKind::Reclassify { state: BeadState::Dropped, rule: crate::bead::RESIDUE_RULE.into() };
@@ -156,6 +158,7 @@ mod tests {
         assert!(refuse_external(&k, "").is_none());
     }
 
+    #[test_id(t1yzy8i)]
     #[test]
     fn each_named_close_parses_with_its_evidence() {
         assert_eq!(parse_close_reason("duplicate-of sp-9"), Some(ExternalOutcome::DuplicateOf("sp-9".into())));
@@ -166,6 +169,7 @@ mod tests {
         assert_eq!(parse_close_reason("duplicate-of"), None);
     }
 
+    #[test_id(tbg9k2s)]
     #[test]
     fn only_landed_fixed_and_moot_close_the_issue() {
         assert!(ExternalOutcome::Landed.closes_issue());
@@ -180,12 +184,14 @@ mod tests {
         move |id| m.get(id).cloned()
     }
 
+    #[test_id(tp2hi54)]
     #[test]
     fn a_supersede_chain_resolves_to_the_landing_that_settles_it() {
         let w = world(&[("a", row("SUPERSEDED", Some("b"), None)), ("b", row("SUPERSEDED", Some("c"), None)), ("c", row("LANDED", None, None))]);
         assert_eq!(trace("a", &w), Trail::Settled { outcome: ExternalOutcome::Landed, via: vec!["a".into(), "b".into(), "c".into()] });
     }
 
+    #[test_id(te7jwag)]
     #[test]
     fn a_chain_ending_in_a_bead_that_never_landed_is_broken_or_pending() {
         let w = world(&[("a", row("SUPERSEDED", Some("b"), None)), ("b", row("DROPPED", Some("unwanted"), None))]);
@@ -198,6 +204,7 @@ mod tests {
         assert!(matches!(trace("a", &w), Trail::Broken(_)), "a loop is broken, not endless");
     }
 
+    #[test_id(t2cgf1z)]
     #[test]
     fn a_drop_settles_only_when_its_close_reason_names_an_outcome() {
         let w = world(&[("a", row("DROPPED", Some("unwanted"), Some("duplicate-of sp-3")))]);

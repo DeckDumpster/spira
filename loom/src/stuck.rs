@@ -361,12 +361,14 @@ mod tests {
         rows
     }
 
+    #[test_id(ty667sl)]
     #[test]
     fn a_clean_history_flags_no_bead() {
         assert!(flagged(&fresh_beads()).is_empty());
         assert!(build(NOW, &[], &fresh_beads(), &replay_p95()).is_empty(), "a live bead inside its p95 with no event in the window is not listed");
     }
 
+    #[test_id(tznl30z)]
     #[test]
     fn each_stuck_case_is_flagged_and_nothing_else() {
         let mut dwell = fresh_beads();
@@ -377,6 +379,7 @@ mod tests {
         assert_eq!(flagged(&dwell), ["sp-2cah6:CERTIFIED", "sp-h4umcj:WORKING", "sp-penudq:CERTIFIED", "ws-strand:IN_DELIVERY"]);
     }
 
+    #[test_id(t81rbzf)]
     #[test]
     fn a_bar_is_outlined_only_past_its_own_states_p95() {
         let rows = intent();
@@ -385,6 +388,7 @@ mod tests {
         assert_eq!(by, [("WORKING", false), ("SUBMITTED", true), ("CERTIFIED", true)], "WORKING 2h < 3h p95; SUBMITTED 2h > 1h");
     }
 
+    #[test_id(tuipe3q)]
     #[test]
     fn the_page_outlines_the_stuck_bars_and_links_every_row() {
         let html = render_page(NOW, &intent());
@@ -395,6 +399,7 @@ mod tests {
         assert!(!quiet.contains(" over\""), "positive control: no stuck row, no outline");
     }
 
+    #[test_id(tiug5qs)]
     #[test]
     fn blockers_are_the_same_family_ids_the_bead_names() {
         let t = vec!["blocked by sp-abcd12 and sp-zzzz1; see sp-self9 (not in-progress)".to_string()];
@@ -402,6 +407,7 @@ mod tests {
         assert!(blockers("sp-self9", &["nothing here".into()]).is_empty());
     }
 
+    #[test_id(tm4jeag)]
     #[test]
     fn the_timeline_shows_refusals_in_red_and_an_expired_lease() {
         let d = json!({"bead": {"state": "WORKING", "holder": "dwarf-1", "lease_until": NOW - 600, "holds": "[]", "title": "x", "gate_key": "waits on sp-abcd12"},
@@ -413,6 +419,7 @@ mod tests {
         assert!(html.contains("href=\"/beads/sp-abcd12\""));
     }
 
+    #[test_id(tm1t6t2)]
     #[test]
     fn same_state_moves_fold_under_their_entry_and_the_newest_comes_first() {
         let e = |seq: i64, event: &str, from: &str, to: &str, applied: i64| {

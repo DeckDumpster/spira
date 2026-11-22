@@ -69,6 +69,7 @@ pub fn set_row_in_file(path: &std::path::Path, name: &str, land: &str, base: &st
 mod tests {
     use super::*;
 
+    #[test_id(tn8suh8)]
     #[test]
     fn only_land_and_base_change() {
         let t = "# name | path | land | base | format | gate\nspira | /h | queue.local | local/main | | bash a | b && c\nother | /o | push | origin/main | | x\n";
@@ -79,6 +80,7 @@ mod tests {
         );
     }
 
+    #[test_id(tmk6kh7)]
     #[test]
     fn short_row_and_missing_row_refuse() {
         assert_eq!(rewrite_row("spira | /h | queue | x | y\n", "spira", "queue.local", "local/main"), Err(MapError::ShortRow));

@@ -389,6 +389,7 @@ mod tests {
 
     const STATUS: &str = "rounds=2\nopen_batches=r-1 r-2\nround=open\nphase=certifying\nbatch_id=r-1\nhead=aaa\nround2=open\nround2_phase=green\nround2_batch_id=r-2\nround2_head=bbb\n";
 
+    #[test_id(t9zoucp)]
     #[test]
     fn every_open_round_in_a_status_is_read_with_its_phase_and_head() {
         let r = open_rounds(STATUS);
@@ -397,6 +398,7 @@ mod tests {
         assert!(open_rounds("round=none\nrepo=spira\n").is_empty());
     }
 
+    #[test_id(t9koa9z)]
     #[test]
     fn a_listed_round_is_open_unless_its_phase_has_ended() {
         assert_eq!(require_open(STATUS, "spira", "r-2").unwrap().phase, "green");
@@ -421,6 +423,7 @@ mod tests {
         }
     }
 
+    #[test_id(tsu9e9d)]
     #[test]
     fn a_held_queue_lock_is_waited_out_and_any_other_failure_is_final() {
         let out = |code, text: &str| Out { code, text: text.to_string() };
@@ -432,6 +435,7 @@ mod tests {
         assert!(red.slept.borrow().is_empty());
     }
 
+    #[test_id(tinx9ua)]
     #[test]
     fn a_red_certify_names_its_red_step_and_only_a_verdictless_one_is_incomplete() {
         let printed = "round r is RED at e198ebb: unit-tests lint\nred=unit-tests lint\nmender filed\n";
@@ -451,6 +455,7 @@ mod tests {
         assert!(line.contains("RED: unit-tests") && !line.contains("incomplete"), "{line}");
     }
 
+    #[test_id(tl047q9)]
     #[test]
     fn drive_leaves_a_round_with_a_named_red_open_and_fails() {
         let out = |code, text: &str| Out { code, text: text.to_string() };
@@ -469,6 +474,7 @@ mod tests {
         Fake { answers: RefCell::new(answers), slept: RefCell::new(vec![]) }
     }
 
+    #[test_id(t8se8cm)]
     #[test]
     fn a_vm_that_produced_no_output_is_certified_once_more_and_a_second_parks_the_round() {
         let once = drive_answers(&[(VM_NO_OUTPUT, "fault=vm-no-output\n"), (1, "red=unit-tests\n")]);
@@ -479,6 +485,7 @@ mod tests {
         assert!(twice.answers.borrow().is_empty(), "never a third certify");
     }
 
+    #[test_id(txcr39d)]
     #[test]
     fn a_landed_round_whose_status_read_then_fails_is_still_landed_and_a_land_that_failed_is_not() {
         let landed = drive_answers(&[(0, ""), (0, "landed\n"), (2, "cannot tell: the lifecycle service took the request but its reply was lost (no reply)\n")]);
@@ -489,6 +496,7 @@ mod tests {
         assert_eq!(drive(&open, "r-1", "spira"), 1, "a listing that still names the round is a land that did not take");
     }
 
+    #[test_id(t2jogib)]
     #[test]
     fn a_second_certify_after_a_no_output_vm_that_is_green_goes_on_to_land() {
         let fake = drive_answers(&[(VM_NO_OUTPUT, ""), (0, ""), (0, "landed\n"), (0, "round=none\n")]);
@@ -517,6 +525,7 @@ mod tests {
         }
     }
 
+    #[test_id(t7y5l4p)]
     #[test]
     fn a_driver_unit_is_asked_of_the_manager_by_its_service_name_and_an_absent_one_is_not_running() {
         assert_eq!(state_in(&FullNamesOnly, "round-recert-b"), Ok(UnitState::Absent));
@@ -549,6 +558,7 @@ mod tests {
         }
     }
 
+    #[test_id(tn506cy)]
     #[test]
     fn every_verb_the_pass_drives_names_the_operator_as_its_actor() {
         let rec = Recorder(RefCell::new(vec![]));
@@ -560,6 +570,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkaity9)]
     #[test]
     fn the_unit_runs_the_round_recert_subcommand_of_the_release_binary() {
         let rec = Recorder(RefCell::new(vec![]));
@@ -577,6 +588,7 @@ mod tests {
         calls.iter().find(|(p, _)| p == "systemd-run").expect("systemd-run was called").1.clone()
     }
 
+    #[test_id(tx5tg9z)]
     #[test]
     fn the_unit_carries_the_virtual_clock_before_the_command() {
         let _env = testkit::env(&[
@@ -592,6 +604,7 @@ mod tests {
         }
     }
 
+    #[test_id(t9htx1v)]
     #[test]
     fn the_unit_carries_no_virtual_clock_when_none_is_set() {
         let _env = testkit::env(&[("SPIRA_NOW", None), ("GIT_AUTHOR_DATE", None), ("GIT_COMMITTER_DATE", None)]);
@@ -615,6 +628,7 @@ mod tests {
         }
     }
 
+    #[test_id(td4ogdl)]
     #[test]
     fn a_driver_unit_systemd_cannot_answer_for_is_never_started_again() {
         let sys = Manager(RefCell::new(vec![]), Err("Failed to connect to bus: No medium found".into()));
@@ -627,6 +641,7 @@ mod tests {
         assert!(!up.0.borrow().iter().any(|p| p == "systemd-run"), "a running driver is not started twice");
     }
 
+    #[test_id(tmfv0ob)]
     #[test]
     fn a_unit_name_carries_the_batch_so_one_batch_has_one_driver() {
         assert_eq!(unit_for("r-auto-622"), "round-recert-r-auto-622");

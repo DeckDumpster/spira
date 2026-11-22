@@ -1065,6 +1065,7 @@ mod tests {
         out
     }
 
+    #[test_id(tr28bzw)]
     #[test]
     fn the_banner_shows_a_carried_read_with_its_age_and_no_source_failed() {
         let snap = crate::lcview::Snapshot { now: 1000, good_at: 960, ..Default::default() };
@@ -1074,6 +1075,7 @@ mod tests {
         assert!(!text.contains("source failed"), "{text}");
     }
 
+    #[test_id(t2d68gd)]
     #[test]
     fn the_banner_names_the_sources_failing_now_and_never_a_published_total() {
         let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[],"store_errors":[],"failures":2849});
@@ -1184,6 +1186,7 @@ mod tests {
         v
     }
 
+    #[test_id(tm5asba)]
     #[test]
     fn epics_sit_under_round_with_each_repo_expanding_to_its_epics_and_why_they_are_held() {
         let t = text(&layout(&epics_view(), &Ui::default(), 120, 81));
@@ -1199,6 +1202,7 @@ mod tests {
         assert!(!t.iter().any(|l| l.contains("Nix phase") && l.contains("held")), "an epic with no hold has no hold line");
     }
 
+    #[test_id(tndtvqz)]
     #[test]
     fn a_70x50_pane_with_epics_still_shows_round_and_every_dwarf_and_never_wraps() {
         let t = text(&layout(&epics_view(), &Ui::default(), 70, 50));
@@ -1209,11 +1213,13 @@ mod tests {
         }
     }
 
+    #[test_id(txqx777)]
     #[test]
     fn no_open_epics_draws_no_epics_section() {
         assert!(!has(&text(&layout(&busy_view(), &Ui::default(), 120, 81)), "EPICS"));
     }
 
+    #[test_id(tjp2rcm)]
     #[test]
     fn the_web_page_draws_the_same_epics_tree() {
         let page = render_page(&epics_view(), None, 10);
@@ -1241,6 +1247,7 @@ mod tests {
         line.find(&want).is_some_and(|i| line[i + want.len()..].contains(title))
     }
 
+    #[test_id(tb6f0mu)]
     #[test]
     fn every_bead_row_in_the_tree_carries_its_repo_tag_between_priority_and_title() {
         fn walk(n: &[Node], out: &mut Vec<(String, String)>) {
@@ -1265,6 +1272,7 @@ mod tests {
         assert!(page.contains("<span class=teal>deckdumpster</span>"), "the page paints the tag");
     }
 
+    #[test_id(tnq78cm)]
     #[test]
     fn an_ask_about_no_work_bead_has_no_repo_tag_in_the_tree() {
         let mut v = repo_view();
@@ -1281,6 +1289,7 @@ mod tests {
         assert!(!line.contains('?') && !line.contains(TEAL), "{line:?}");
     }
 
+    #[test_id(twmphl0)]
     #[test]
     fn a_later_session_total_reaches_the_pane_head_line_and_the_page() {
         let mut r = crate::lcview::Row { id: "sp-w".into(), state: "WORKING".into(), since: 100_000 - 12420, holder: Some("dwarf-dvalin@111.5".into()), sessions: 2, worked_s: 17580, ..Default::default() };
@@ -1302,6 +1311,7 @@ mod tests {
         assert!(render_page(&v, None, 5).contains("3h27 · total 8h20 ×2"));
     }
 
+    #[test_id(ttq0amz)]
     #[test]
     fn the_lc_view_text_render_tags_next_blocked_and_recent_rows() {
         let out = crate::lcview::render(&repo_view(), 120).join("\n");
@@ -1311,6 +1321,7 @@ mod tests {
         }
     }
 
+    #[test_id(typjelp)]
     #[test]
     fn a_70x50_pane_shows_round_and_every_dwarf_and_never_wraps() {
         let t = text(&layout(&busy_view(), &Ui::default(), 70, 50));
@@ -1323,6 +1334,7 @@ mod tests {
         assert!(has(&t, "STATES"));
     }
 
+    #[test_id(tvw537z)]
     #[test]
     fn a_120x81_pane_fits_and_keeps_more_than_a_70x50_one() {
         let v = busy_view();
@@ -1333,6 +1345,7 @@ mod tests {
         assert!(state_line(&big, "SUBMITTED"), "room for empty states at 81 rows: {big:#?}");
     }
 
+    #[test_id(tndc7qn)]
     #[test]
     fn a_pane_shorter_than_the_essentials_still_fits_exactly() {
         let t = text(&layout(&busy_view(), &Ui::default(), 70, 12));
@@ -1340,6 +1353,7 @@ mod tests {
         assert!(t[0].contains("SPIRA"));
     }
 
+    #[test_id(t93n2lb)]
     #[test]
     fn idle_transitions_go_before_empty_states() {
         let v = busy_view();
@@ -1354,6 +1368,7 @@ mod tests {
         assert!(saw_idle_gone_states_kept, "some height shows empty states without idle transitions");
     }
 
+    #[test_id(t5omof8)]
     #[test]
     fn an_elided_state_comes_back_once_it_is_not_empty() {
         let mut v = busy_view();
@@ -1363,6 +1378,7 @@ mod tests {
         assert!(state_line(&t, "SUBMITTED"), "{t:#?}");
     }
 
+    #[test_id(tmdpokl)]
     #[test]
     fn one_state_collapses_while_its_siblings_stay_auto() {
         let v = busy_view();
@@ -1374,6 +1390,7 @@ mod tests {
         assert!(has(&t, "ev1 ▶ TO1"), "the other states' moves still show: {t:#?}");
     }
 
+    #[test_id(tuhmmoz)]
     #[test]
     fn a_transition_opens_inside_an_auto_state() {
         let v = busy_view();
@@ -1385,6 +1402,7 @@ mod tests {
         assert_eq!(t.iter().filter(|l| l.contains("event ev0-a")).count(), 1, "only READY's transition opened");
     }
 
+    #[test_id(t48y24s)]
     #[test]
     fn a_states_beads_fold_under_it_and_show_when_it_is_opened() {
         let mut v = busy_view();
@@ -1409,6 +1427,7 @@ mod tests {
         assert!(!t.iter().any(|l| l.contains("PIPE")), "PIPE is gone");
     }
 
+    #[test_id(tkd9ird)]
     #[test]
     fn a_rework_bead_shows_its_rejection_type_and_folds_its_evidence() {
         let mut v = busy_view();
@@ -1423,6 +1442,7 @@ mod tests {
         assert!(has(&text(&layout(&v, &ui, 100, 200)), "wanted 1 got 0"), "opening the bead shows why");
     }
 
+    #[test_id(tmd2b02)]
     #[test]
     fn empty_blocked_does_not_appear_and_the_names_are_spira_and_states() {
         let v = busy_view();
@@ -1437,6 +1457,7 @@ mod tests {
         Item { id: id.into(), age: age.into(), title: title.into(), ..Default::default() }
     }
 
+    #[test_id(t18cdry)]
     #[test]
     fn waiting_on_you_lists_the_oldest_five_with_the_overflow_above_rounds_and_never_wraps() {
         let mut v = busy_view();
@@ -1457,6 +1478,7 @@ mod tests {
         }
     }
 
+    #[test_id(tpvzz06)]
     #[test]
     fn waiting_on_you_says_question_mark_with_the_error_when_the_asks_cannot_be_read() {
         let mut v = busy_view();
@@ -1465,6 +1487,7 @@ mod tests {
         assert!(t.iter().any(|l| l.contains("WAITING ON YOU ?") && l.contains("store down")) && !has(&t, "WAITING ON YOU 0"), "{t:#?}");
     }
 
+    #[test_id(tr9hv2j)]
     #[test]
     fn drift_is_an_alarm_line_only_when_there_is_drift() {
         let mut v = busy_view();
@@ -1476,6 +1499,7 @@ mod tests {
         assert!(has(&t, "sp-landed1"));
     }
 
+    #[test_id(t2vcg7e)]
     #[test]
     fn the_lifecycle_page_draws_rounds_per_repo_with_staged_indented() {
         let mut v = busy_view();
@@ -1491,6 +1515,7 @@ mod tests {
         assert!(render_fragment(&v, None).contains("r-stage-8"));
     }
 
+    #[test_id(tno4oqu)]
     #[test]
     fn a_staged_round_is_a_child_row_under_the_open_round_and_expands_to_its_members() {
         let mut v = busy_view();
@@ -1507,6 +1532,7 @@ mod tests {
         assert!(indent(member) > indent(child), "members sit under the child: {t:#?}");
     }
 
+    #[test_id(tvojn20)]
     #[test]
     fn a_landed_round_is_not_current_and_takes_no_foreign_pass() {
         let mut v = busy_view();
@@ -1519,6 +1545,7 @@ mod tests {
         assert!(!t.iter().any(|l| l.contains("475/475") || l.contains("pass 1")), "no foreign pass: {t:#?}");
     }
 
+    #[test_id(t3c70wf)]
     #[test]
     fn a_live_round_shows_its_own_pass() {
         let mut v = busy_view();
@@ -1527,6 +1554,7 @@ mod tests {
         assert!(t.iter().any(|l| l.contains("452/452")), "{t:#?}");
     }
 
+    #[test_id(t8w9fje)]
     #[test]
     fn a_running_pass_shows_its_progress_open_under_round_and_folds_when_done() {
         use crate::lcview::PassProgress;
@@ -1552,6 +1580,7 @@ mod tests {
         assert!(!t[1].contains("⟳"), "no pinned line once the pass is over");
     }
 
+    #[test_id(t2iyuo7)]
     #[test]
     fn auto_shrinks_around_what_the_operator_opened() {
         let v = busy_view();
@@ -1562,6 +1591,7 @@ mod tests {
         assert!(has(&t, "sp-w0"), "NOW still shows");
     }
 
+    #[test_id(t7q8956)]
     #[test]
     fn reset_returns_a_subtree_to_auto() {
         let mut ui = Ui::default();
@@ -1575,6 +1605,7 @@ mod tests {
         assert_eq!(parent_key("state/READY/TO0"), Some("state/READY"));
     }
 
+    #[test_id(toursy1)]
     #[test]
     fn the_page_draws_every_node_of_the_panes_tree_in_order() {
         let v = busy_view();
@@ -1598,6 +1629,7 @@ mod tests {
         assert!(frag.contains("\"tree\"") && frag.contains("\"banner\""));
     }
 
+    #[test_id(tde3enc)]
     #[test]
     fn a_page_line_keeps_the_panes_styles_and_links_bead_ids() {
         let h = ansi_html(&format!("{RED}sp-ab1c red{R} and <x> sp-q2.3. not-sp-zz"));
@@ -1607,6 +1639,7 @@ mod tests {
         assert!(!h.contains("/beads/sp-zz"), "only a bead id at a word boundary is linked: {h}"); // not a path: a URL route
     }
 
+    #[test_id(tpbyq2c)]
     #[test]
     fn an_osc8_hyperlink_becomes_an_escaped_anchor_and_a_foreign_scheme_does_not() {
         let h = ansi_html(&crate::lcview::osc8("https://x.test/p?a=1&b=\"2\""));
@@ -1616,6 +1649,7 @@ mod tests {
         assert!(!bad.contains("<a "), "{bad}");
     }
 
+    #[test_id(tzuqjhz)]
     #[test]
     fn an_open_section_shows_its_open_line_and_a_folded_one_its_summary() {
         let n = Node::new("now/sp-w0", "head title").open_line("head").kids(vec![Node::new("now/sp-w0/title", "title")]);
@@ -1625,6 +1659,7 @@ mod tests {
         assert!(h.starts_with("<details data-key=\"now/sp-w0\" open>"), "AUTO-open nodes start open: {h}");
     }
 
+    #[test_id(tp6j39c)]
     #[test]
     fn every_drawn_row_names_its_node() {
         let f = layout(&busy_view(), &Ui::default(), 70, 50);
@@ -1635,6 +1670,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8kgu0f)]
     #[test]
     fn an_expanded_dwarf_puts_its_bead_title_first_and_whole() {
         let mut ui = Ui::default();
@@ -1652,6 +1688,7 @@ mod tests {
         assert!(strip(&f.lines[*r]).contains("title of sp-w0"), "a folded dwarf keeps the title on its line");
     }
 
+    #[test_id(t0wzjod)]
     #[test]
     fn a_certified_beads_detail_shows_its_gate_runs_phase_times() {
         use crate::lcview::{view, GateRun, Row, Snapshot};
@@ -1668,6 +1705,7 @@ mod tests {
         assert!(text.contains("build dir cold: mtimes not aged"), "{text}");
     }
 
+    #[test_id(tdg7lmv)]
     #[test]
     fn a_round_counts_one_pass_per_attribution_not_per_eject() {
         use crate::lcview::passes;
@@ -1676,6 +1714,7 @@ mod tests {
         assert_eq!(passes(&[1000, 1012, 2000]), 3);
     }
 
+    #[test_id(tnm7ue1)]
     #[test]
     fn clip_never_breaks_an_escape_or_exceeds_the_width() {
         let s = format!("{B}abcdefghij{R}{RED}klmnop{R}");

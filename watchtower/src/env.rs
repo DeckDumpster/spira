@@ -73,6 +73,7 @@ impl Env {
 mod tests {
     use super::*;
 
+    #[test_id(tpujos7)]
     #[test]
     fn g_renders_unknown_for_absent_and_empty_never_zero() {
         let mut e = Env::new();
@@ -83,6 +84,7 @@ mod tests {
         assert_eq!(e.g("SP_FOO"), "3");
     }
 
+    #[test_id(tgodcbx)]
     #[test]
     fn merge_lines_only_takes_matching_prefixed_assignments() {
         let mut e = Env::new();
@@ -95,6 +97,7 @@ mod tests {
         assert_eq!(e.g("SP_lowercase"), "?");
     }
 
+    #[test_id(txwxg2b)]
     #[test]
     fn merge_lines_strips_one_matching_pair_of_quotes_matching_evals_quote_removal() {
         let mut e = Env::new();
@@ -104,6 +107,7 @@ mod tests {
         assert_eq!(e.g("SP_BARE"), "sp-bare");
     }
 
+    #[test_id(tlx6wd1)]
     #[test]
     fn merge_lines_handles_the_yield_prefix_with_quoted_values() {
         // yield.sh's own output is re-quoted by the bash (`\1="\2"`) before eval; here the

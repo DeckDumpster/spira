@@ -908,7 +908,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
         self.s.deny_label = format!("{at}/{}", &key::sha256_hex(deny_text.as_bytes())[..12]);
         w.eprint(&format!("gate: deny list {} ({} rows)", self.s.deny_label, deny.render().lines().count()));
-        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), deny };
+        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), deny, deny_text };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
@@ -2268,6 +2268,8 @@ pub struct Limits {
     /// One unit test's deadline: the period in seconds and the periods before it is terminated.
     pub unit_deadline: (u64, u64),
     pub deny: spira_config::unit_tier::DenyList,
+    /// The registry's own text of that list, beads kept: what the lint's row rules read.
+    pub deny_text: String,
 }
 
 /// The most a charged phase may take, seconds (`base-` prefix ignored); the gate cap is no
@@ -2607,13 +2609,11 @@ pub fn run_composed<W: World>(
         }
     }
     let deny_env;
-    let env = if limits.deny.is_empty() {
-        env
-    } else {
+    let env = {
         let file = tree.join(compose::DENY_LIST);
         if let (Some(dir), Some(name)) = (file.parent(), file.file_name().and_then(|n| n.to_str())) {
             w.mkdir_p(dir);
-            w.write_atomic(dir, name, &limits.deny.render());
+            w.write_atomic(dir, name, &limits.deny_text);
         }
         let mut e = env.to_vec();
         e.retain(|(k, _)| k != spira_config::unit_tier::DENY_LIST_ENV);

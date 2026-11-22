@@ -12,6 +12,7 @@ spira_runtime::family_a_acceptance! {
     registration: BatcherForge::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
+    test_ids: [ #[test_id(tbv77vy)] #[test_id(tpi9jdd)] #[test_id(t4tirwv)] #[test_id(tkuivja)] #[test_id(tyha3rb)] ],
 }
 
 const NOW: u64 = 1_793_000_000_000;
@@ -35,6 +36,7 @@ fn busy() -> Snapshot {
     Snapshot { repos: [("deckdumpster".to_string(), repo(vec![certified("dd-a", "t1"), certified("dd-b", "t2")]))].into(), ..idle() }
 }
 
+#[test_id(t65wlk6)]
 #[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
@@ -42,12 +44,14 @@ fn t3_every_row_of_the_state_table_is_taken() {
     }
 }
 
+#[test_id(t474m94)]
 #[test]
 fn t3_batch_open_in_open_is_refused_naming_open() {
     let refused = step(State::Open, Trigger::BatchOpen).expect_err("a second batch_open is illegal");
     assert!(refused.contains("Open"), "{refused}");
 }
 
+#[test_id(t2ag42t)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -57,6 +61,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// T2's second shape: disabled, with a waiting set already paged, is silent.
+#[test_id(t2iahyc)]
 #[test]
 fn t2_disabled_with_an_unchanged_waiting_set_is_silent() {
     let mut r = rig(1, Snapshot { enabled: false, ..busy() });
@@ -66,6 +71,7 @@ fn t2_disabled_with_an_unchanged_waiting_set_is_silent() {
 }
 
 /// `main.rs:1235-1254` (restored, see the contract): disabled pages BATCHES HELD once per change of the waiting set.
+#[test_id(tp89hj8)]
 #[test]
 fn t5_disabled_pages_the_held_set_once() {
     let (carry, acts) = decide(&Carry::default(), &Snapshot { enabled: false, ..busy() });
@@ -75,6 +81,7 @@ fn t5_disabled_pages_the_held_set_once() {
 }
 
 /// `main.rs:285-288`: an open batch means no cut; its settlement is handed to queue.step.
+#[test_id(t4acu7r)]
 #[test]
 fn t5_an_open_batch_is_handed_to_queue_step_not_cut() {
     let mut s = busy();
@@ -85,6 +92,7 @@ fn t5_an_open_batch_is_handed_to_queue_step_not_cut() {
 }
 
 /// The cut: certified members are fetched then assembled.
+#[test_id(t9nr9sy)]
 #[test]
 fn t5_a_certified_pool_is_fetched_then_assembled() {
     let (carry, acts) = decide(&Carry::default(), &busy());
@@ -94,6 +102,7 @@ fn t5_a_certified_pool_is_fetched_then_assembled() {
 }
 
 /// A member refused for an unlanded prerequisite is carried with it, whether or not the pass cuts.
+#[test_id(tpcg6xx)]
 #[test]
 fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep() {
     let blocked = Member { deps: vec!["dd-base".into()], ..certified("dd-a", "t1") };
@@ -107,6 +116,7 @@ fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep() {
 
 /// A corpus leg's `unit.ran`, on this task's own stream, moves the repo at once; another
 /// task's run or a leg not carried changes nothing.
+#[test_id(tbubtni)]
 #[test]
 fn t3_a_corpus_unit_ran_moves_the_machine_at_once() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
@@ -121,6 +131,7 @@ fn t3_a_corpus_unit_ran_moves_the_machine_at_once() {
 
 /// Contract: Corpus × `unit.ran` red → Attributing, the owners withdrawn by the attribution leg
 /// (`batcher attribute` with no open round) and the rest re-run on the survivors.
+#[test_id(tnokg37)]
 #[test]
 fn t3_a_red_corpus_enters_attribution() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
@@ -133,6 +144,7 @@ fn t3_a_red_corpus_enters_attribution() {
 }
 
 /// Attributing × `unit.ran`: survivors open the batch PR; a blocked round is Idle, verdict red.
+#[test_id(two2jt9)]
 #[test]
 fn t3_the_attribution_line_opens_or_blocks() {
     use batcher_cut::attribute::Attribution;
@@ -163,6 +175,7 @@ fn lost_after(n: usize, after_ms: u64) -> bool {
     next.repos.get("spira").is_none_or(|r| r.state != State::Attributing)
 }
 
+#[test_id(t8kozdb)]
 #[test]
 fn an_attribution_leg_is_given_one_wall_for_each_corpus_run_it_may_make() {
     let wall = spira_runtime::tasks::a::batcher_local::Policy::default().wall_ms;
@@ -177,11 +190,13 @@ fn at_work() -> TaskRig {
     r
 }
 
+#[test_id(twqkpmk)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     kit::assert_kept_as_rows(&at_work(), NAME);
 }
 
+#[test_id(teq1iip)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
@@ -189,6 +204,7 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 
 /// A leg that ended while the runtime was down left no `unit.ran`: the tick reads it through
 /// `unit.facts`.
+#[test_id(tuwcxpf)]
 #[test]
 fn a_tick_reads_every_leg_in_flight_through_unit_facts() {
     use runtime::units::{Exit, UnitFacts, UnitState, UNIT_FACTS};

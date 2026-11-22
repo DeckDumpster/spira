@@ -68,18 +68,22 @@ mod tests {
     fn vm(n: &str, s: &str, l: Option<&str>, r: bool) -> VmInfo {
         VmInfo { name: n.into(), status: s.into(), lock: l.map(String::from), registered: r, template: false }
     }
+    #[test_id(t2qxwc5)]
     #[test]
     fn sweep_only_proceeds() {
         assert_eq!(decide(&[vm("round-102", "running", None, false)], 0), Yield::Proceed);
     }
+    #[test_id(t6vwdk3)]
     #[test]
     fn cloning_holds() {
         assert_eq!(decide(&[vm("ci-1", "stopped", Some("clone"), false)], 0), Yield::Hold);
     }
+    #[test_id(tb668kw)]
     #[test]
     fn unregistered_holds() {
         assert_eq!(decide(&[vm("gh-runner-7", "running", None, false)], 5), Yield::Hold);
     }
+    #[test_id(tfpxvy6)]
     #[test]
     fn wait_is_bounded_and_returns_when_clear() {
         let hold = || Ok(vec![vm("ci-1", "stopped", Some("clone"), false)]);

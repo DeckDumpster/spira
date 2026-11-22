@@ -11,8 +11,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["system-paths/integration", "inbox-rules/integration", "mail/integration", "runtime/integration", "sop/integration", "spira-config/integration", "spira-store/integration", "spira-world/integration", "testkit/integration", "tsd/integration"]
-
+integration = ["system-paths/integration", "inbox-rules/integration", "mail/integration", "runtime/integration", "sop/integration", "spira-config/integration", "spira-store/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 inbox-rules = { path = "../inbox-rules" }
@@ -33,4 +32,5 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

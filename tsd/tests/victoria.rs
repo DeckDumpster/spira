@@ -1,6 +1,8 @@
 //! A family row pushed to a real VictoriaMetrics container reads back as the same row, and the stand-in store (spira_otel::fixture::FakeStore) gives the identical answers.
 //! Skips when no container runtime can start the image (set `SPIRA_VM_IMAGE` to override it).
 
+#[macro_use]
+extern crate spira_test_id;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::Command;
@@ -56,6 +58,7 @@ fn row(ts: &str, fields: &[(&str, Value)]) -> String {
     tsd::build_row(ts, "h1", "bead-stage", &fields).unwrap()
 }
 
+#[test_id(t9zo9bo)]
 #[test]
 fn rows_pushed_to_a_real_store_read_back_as_the_same_rows() {
     let Some((_vm, addr)) = start() else {

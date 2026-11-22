@@ -425,6 +425,7 @@ pub(crate) mod tests {
         d
     }
 
+    #[test_id(tpfwmnm)]
     #[test]
     fn every_remote_spelling_names_owner_and_repo() {
         for url in ["https://github.com/acme/widgets.git", "git@github.com:acme/widgets.git", "ssh://git@host:22/acme/widgets", "file:///x/acme/widgets/"] {
@@ -434,6 +435,7 @@ pub(crate) mod tests {
         assert_eq!(slug(&root.join("nonexistent")), None);
     }
 
+    #[test_id(tk6lyw5)]
     #[test]
     fn a_remote_is_github_by_its_host_however_it_is_spelled() {
         for (url, github) in [
@@ -455,6 +457,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[test_id(tb9t82f)]
     #[test]
     fn without_an_origin_the_first_remote_is_used() {
         let d = testkit::TempDir::new("forge-slug-first");
@@ -463,6 +466,7 @@ pub(crate) mod tests {
         assert_eq!(slug(d.path()).as_deref(), Some("o/r"));
     }
 
+    #[test_id(tr6eijy)]
     #[test]
     fn a_runner_is_known_by_the_first_run_of_two_digits_in_its_name_else_its_name() {
         assert_eq!((vmid_of("ci-vm-9001-a7").as_str(), vmid_of("r1").as_str(), vmid_of("").as_str()), ("9001", "r1", "?"));
@@ -472,6 +476,7 @@ pub(crate) mod tests {
     /// provision. The commit's check runs carry both PRs' runs, so pr-notify said FAIL RED for a
     /// PR whose own latest runs were green. A PR is judged by the latest run of each workflow on
     /// its own branch; a check that no workflow run owns (an app's check) still counts.
+    #[test_id(t2mfgl7)]
     #[test]
     fn a_pr_is_judged_by_the_latest_run_of_each_workflow_on_its_own_branch() {
         let check = |name: &str, conclusion: &str, suite: u64| serde_json::json!({"name": name, "status": "completed", "conclusion": conclusion, "check_suite": {"id": suite}});
@@ -509,6 +514,7 @@ pub(crate) mod tests {
 
     /// sp-8z8d3t: a cancelled run is not a failure while a newer run of its workflow on the same
     /// head is still going or has passed, whichever branch name the newer run carries.
+    #[test_id(teb6jdv)]
     #[test]
     fn a_cancelled_run_is_pending_while_a_newer_run_of_its_workflow_is_pending() {
         assert_eq!(cancelled_then(Some(("spira/publish/a", "queued", ""))).0, "pending");
@@ -517,6 +523,7 @@ pub(crate) mod tests {
         assert_eq!(cancelled_then(Some(("spira/publish/b", "completed", "success"))).0, "green");
     }
 
+    #[test_id(tzqnds2)]
     #[test]
     fn a_cancelled_run_with_no_newer_run_is_red_and_a_real_failure_stays_red() {
         assert_eq!(cancelled_then(None), ("red", "gate,suites".into()));
@@ -550,6 +557,7 @@ pub(crate) mod tests {
         Forge { api, token: "t".into(), ..Forge::default() }
     }
 
+    #[test_id(ttff9s6)]
     #[test]
     fn open_pr_reports_a_cancelled_run_a_queued_run_replaced_as_pending() {
         let pulls = r#"{"number":5,"state":"open","title":"publish","head":{"sha":"abc","ref":"spira/publish/a"}}"#;
@@ -561,6 +569,7 @@ pub(crate) mod tests {
         assert_eq!((pr.status.as_str(), pr.fail.as_str()), ("pending", ""));
     }
 
+    #[test_id(tsiqpkw)]
     #[test]
     fn open_pr_asks_for_the_one_pr_and_reads_no_checks_once_it_is_closed() {
         let (api, seen) = stub(vec![answer("200 OK", "", r#"{"number":12,"state":"closed","head":{"sha":"abc","ref":"b"}}"#)]);
@@ -570,6 +579,7 @@ pub(crate) mod tests {
         assert!(seen[0].starts_with("get /repos/o/r/pulls/12 "), "{}", seen[0]);
     }
 
+    #[test_id(tt13d8x)]
     #[test]
     fn open_pr_is_unanswered_when_the_forge_does() {
         let (api, seen) = stub(vec![answer("500 Internal Server Error", "", "{}")]);
@@ -581,6 +591,7 @@ pub(crate) mod tests {
         Ok(Reply { status, etag: etag.map(str::to_string), rate, body: body.into() })
     }
 
+    #[test_id(tf0sr1w)]
     #[test]
     fn an_unchanged_poll_is_revalidated_by_etag_and_answered_from_the_kept_body() {
         let sent = std::cell::RefCell::new(vec![]);
@@ -599,6 +610,7 @@ pub(crate) mod tests {
         assert_eq!(*sent.borrow(), [None, Some("\"v1\"".to_string())]);
     }
 
+    #[test_id(tvm350f)]
     #[test]
     fn a_spent_budget_the_forge_reports_stops_requests_until_its_reset() {
         let (api, reset) = ("spend-api", 1_600);
@@ -618,6 +630,7 @@ pub(crate) mod tests {
         assert_eq!(calls.get(), 1, "no second request while the budget is spent");
     }
 
+    #[test_id(tzf4mf3)]
     #[test]
     fn a_spent_budget_is_reported_once_per_reset() {
         assert!(api_budget::first_report_of("once-api", 100));
@@ -625,6 +638,7 @@ pub(crate) mod tests {
         assert!(api_budget::first_report_of("once-api", 200));
     }
 
+    #[test_id(tc9612g)]
     #[test]
     fn a_second_review_comments_call_revalidates_by_etag_and_a_304_answers_from_the_kept_body() {
         let body = r#"[{"id":5,"in_reply_to_id":null,"user":{"login":"reviewer","type":"User"},"path":"a.rs","line":3,"body":"why","created_at":"2026-11-19T10:00:00Z"}]"#;
@@ -642,6 +656,7 @@ pub(crate) mod tests {
         assert_eq!((api_budget::calls("cr_review_comments", api_budget::FRESH) - fresh, api_budget::calls("cr_review_comments", api_budget::CACHED) - cached), (1, 1));
     }
 
+    #[test_id(tddb8lq)]
     #[test]
     fn a_spent_budget_stops_the_review_reads_before_any_request() {
         let (api, seen) = stub(vec![]);
@@ -654,6 +669,7 @@ pub(crate) mod tests {
         assert!(seen.join().unwrap().is_empty());
     }
 
+    #[test_id(twt3dse)]
     #[test]
     fn a_review_read_the_forge_did_not_answer_is_none_not_an_empty_list() {
         let (api, seen) = stub(vec![answer("500 Internal Server Error", "", "{}")]);
@@ -661,6 +677,7 @@ pub(crate) mod tests {
         seen.join().unwrap();
     }
 
+    #[test_id(tsw8720)]
     #[test]
     fn a_pull_reports_its_state_and_when_it_closed() {
         let (api, seen) = stub(vec![answer("200 OK", "", r#"{"state":"closed","closed_at":"2026-10-28T05:45:43Z"}"#)]);
@@ -668,6 +685,7 @@ pub(crate) mod tests {
         seen.join().unwrap();
     }
 
+    #[test_id(t0cdbzq)]
     #[test]
     fn stamps_convert_to_epoch_seconds() {
         assert_eq!(epoch("2026-10-28T05:45:43Z"), Some(1_793_166_343));

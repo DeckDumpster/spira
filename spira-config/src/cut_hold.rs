@@ -87,6 +87,7 @@ mod tests {
         testkit::TempDir::new("cut-hold")
     }
 
+    #[test_id(ti5744s)]
     #[test]
     fn a_placed_hold_is_in_force_until_it_expires_or_its_holder_dies() {
         let t = dir();
@@ -98,6 +99,7 @@ mod tests {
         assert!(held_if(&d, "other", 200, |_| true).is_none(), "another repo is not held");
     }
 
+    #[test_id(tcasf6b)]
     #[test]
     fn a_second_hold_is_refused_naming_the_first_and_a_dead_one_is_replaced() {
         let t = dir();

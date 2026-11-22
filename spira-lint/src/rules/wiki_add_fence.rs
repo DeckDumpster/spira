@@ -83,6 +83,7 @@ mod tests {
     use super::*;
 
 
+    #[test_id(taxwxj5)]
     #[test]
     fn add_dot_is_caught_and_comment_lines_are_not() {
         let hits = scan(b"#!/usr/bin/env bash\ngit -C \"$SPIRA_WIKI\" add .\n");

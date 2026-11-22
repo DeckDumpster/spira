@@ -100,6 +100,7 @@ pub fn coordination_key(parent: &str, tier: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test_id(t90ply1)]
     #[test]
     fn a_hash_id_is_the_one_bd_gives_the_same_inputs() {
         let nanos = 1_704_164_645_006_000_000i128;
@@ -108,6 +109,7 @@ mod tests {
         }
     }
 
+    #[test_id(ti0yn5n)]
     #[test]
     fn a_dependency_id_is_the_one_bd_gives_the_same_edge() {
         for (issue, target, want) in [
@@ -120,6 +122,7 @@ mod tests {
         }
     }
 
+    #[test_id(tnnnl8s)]
     #[test]
     fn the_id_grows_with_the_store_the_way_bd_grows_it() {
         assert_eq!(adaptive_length(0, 0.25, 3, 8), 3);
@@ -129,6 +132,7 @@ mod tests {
         assert_eq!(adaptive_length(u32::MAX as u64, 0.25, 3, 8), 8);
     }
 
+    #[test_id(tt2hgpc)]
     #[test]
     fn a_short_encoding_is_zero_padded_and_a_long_one_keeps_its_low_digits() {
         assert_eq!(encode_base36(&[0, 1], 3), "001");
@@ -136,6 +140,7 @@ mod tests {
         assert_eq!(encode_base36(&[], 3), "000");
     }
 
+    #[test_id(tqgcasx)]
     #[test]
     fn the_coordination_cell_is_one_of_4096_per_tier() {
         let key = coordination_key("sp-parent", "dependencies");

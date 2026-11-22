@@ -206,16 +206,19 @@ mod tests {
 
     // ── land_subject / collapse_title ──────────────────────────────────────
 
+    #[test_id(t8ixnva)]
     #[test]
     fn land_subject_appends_the_title() {
         assert_eq!(land_subject("sp-titled", "a fix with a title"), "spira: land sp-titled — a fix with a title");
     }
 
+    #[test_id(ty326zd)]
     #[test]
     fn land_subject_is_bare_with_no_title() {
         assert_eq!(land_subject("sp-x", ""), "spira: land sp-x");
     }
 
+    #[test_id(t23le8k)]
     #[test]
     fn collapse_title_joins_whitespace_and_cuts_at_120_chars() {
         assert_eq!(collapse_title("a   fix\nwith\ttitle"), "a fix with title");
@@ -225,6 +228,7 @@ mod tests {
 
     // ── bead_is_work_type ──────────────────────────────────────────────────
 
+    #[test_id(tglezd1)]
     #[test]
     fn is_work_type_matches_a_word_in_the_list() {
         assert!(is_work_type("bug", "task bug feature"));
@@ -240,6 +244,7 @@ mod tests {
 
     // ── other_beads_on_conflicts / conflict_reopen_note ─────────────────────
 
+    #[test_id(t106ibb)]
     #[test]
     fn format_conflict_note_names_other_beads_when_present() {
         let note = format_conflict_note("spira/sp-a", "origin/main", "spira", "f.txt", "sentinel", "2", "3", "sp-b");
@@ -248,6 +253,7 @@ mod tests {
         assert!(note.contains("Those files were changed on origin/main by sp-b"));
     }
 
+    #[test_id(t2uqsvz)]
     #[test]
     fn format_conflict_note_names_no_escalation_when_no_other_beads() {
         let note = format_conflict_note("spira/sp-a", "origin/main", "spira", "", "sentinel", "1", "0", "");
@@ -278,6 +284,7 @@ mod tests {
     /// machine's SUBMITTED through LANDED) is closed whatever bd shows; one still with a
     /// builder, one dropped or superseded, or one with no row is left alone — the submitted
     /// label (still on this row) decides nothing.
+    #[test_id(t7nv8be)]
     #[test]
     fn close_on_land_reads_the_lifecycle_state_not_bd_status_or_the_label() {
         for st in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"] {
@@ -289,6 +296,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-18
+    #[test_id(twxhbvs)]
     #[test]
     fn other_bead_ids_follow_the_branchs_configured_prefix_not_the_default() {
         let subjects = "tt-abc123: fix the thing\ntt-own: branch work\nsp-def456: someone elses\n";

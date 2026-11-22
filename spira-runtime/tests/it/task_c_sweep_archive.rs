@@ -24,16 +24,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tcnontw)]
 #[test]
 fn t1_registered_boots_and_arms_a_20min_tick() {
     t::t1_registered_and_boots::<H>(SET, TICK);
 }
 
+#[test_id(tgew8qy)]
 #[test]
 fn t2_an_index_that_matches_every_transcript_journals_nothing() {
     t::t2_silent::<H>(SET, &json(&matching()));
 }
 
+#[test_id(tr640j4)]
 #[test]
 fn t3_a_changed_rel_is_stored_the_index_goes_current_and_an_index_while_storing_is_refused() {
     let h = t::handler::<H>(SET);
@@ -49,12 +52,14 @@ fn t3_a_changed_rel_is_stored_the_index_goes_current_and_an_index_while_storing_
     assert_eq!(c.index, Index::Current);
 }
 
+#[test_id(tq0xbg3)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_neither_python3_nor_zstd() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/sweep_archive.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(tcp9mzy)]
 #[test]
 fn t5_the_fast_path_stores_new_changed_and_bodiless_rels_and_keeps_vanished_rows() {
     let h = t::handler::<H>(SET);
@@ -71,6 +76,7 @@ fn t5_the_fast_path_stores_new_changed_and_bodiless_rels_and_keeps_vanished_rows
     assert!(task::decide(&h.cfg, &Carry::default(), &Input::Observed(Snapshot { projects_dir_exists: false, projects_dir_configured: true, ..Snapshot::default() }), TICK).is_err(), "a configured one that is missing refuses");
 }
 
+#[test_id(tc1d0fe)]
 #[test]
 fn t7_one_pass_stores_at_most_a_bounded_batch_so_the_carry_fits_one_journal_record() {
     let h = t::handler::<H>(SET);
@@ -83,6 +89,7 @@ fn t7_one_pass_stores_at_most_a_bounded_batch_so_the_carry_fits_one_journal_reco
     assert!(record.len() < 64 * 1024, "the carry is one journal record and must stay under the store's string limit: {} bytes", record.len());
 }
 
+#[test_id(txsvuwq)]
 #[test]
 fn t8_a_pass_of_long_transcript_paths_is_bounded_by_the_carry_bytes_not_by_the_count() {
     let h = t::handler::<H>(SET);
@@ -95,6 +102,7 @@ fn t8_a_pass_of_long_transcript_paths_is_bounded_by_the_carry_bytes_not_by_the_c
     assert!(record.len() < 64 * 1024, "the carry is one journal record and must stay under the store's string limit: {} bytes", record.len());
 }
 
+#[test_id(t1lzses)]
 #[test]
 fn t9_a_pass_of_200_changed_rels_never_has_more_than_one_store_in_flight() {
     let h = t::handler::<H>(SET);
@@ -114,6 +122,7 @@ fn t9_a_pass_of_200_changed_rels_never_has_more_than_one_store_in_flight() {
     assert!(carry.queue.is_empty());
 }
 
+#[test_id(t5gfgin)]
 #[test]
 fn t10_the_index_waits_for_the_queued_stores_not_just_the_one_in_flight() {
     let h = t::handler::<H>(SET);
@@ -154,6 +163,7 @@ fn index_stale_after_a_failed_rewrite() -> TaskRig {
     r
 }
 
+#[test_id(t0h6i1c)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&index_stale_after_a_failed_rewrite(), task::NAME);
@@ -162,6 +172,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(twlwsac)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(index_stale_after_a_failed_rewrite, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

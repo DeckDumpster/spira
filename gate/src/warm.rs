@@ -277,6 +277,7 @@ mod tests {
         fs::write(dir.join("deps/libx.rlib"), "x").unwrap();
     }
 
+    #[test_id(tco6vnu)]
     #[test]
     fn a_donated_build_directory_is_adopted_by_the_next_empty_one_and_only_once() {
         let t = testkit::TempDir::new("gate-warm-adopt");
@@ -292,6 +293,7 @@ mod tests {
         assert_eq!(adopt(root, "r", &c), None, "the entry was taken");
     }
 
+    #[test_id(t2xgggo)]
     #[test]
     fn a_directory_donated_under_one_repository_is_adopted_only_under_that_one() {
         let t = testkit::TempDir::new("gate-warm-repos");
@@ -305,6 +307,7 @@ mod tests {
         assert_eq!(adopt(root, "a", &a), Some(("c1".to_string(), PathBuf::from("t"))));
     }
 
+    #[test_id(teom45d)]
     #[test]
     fn the_cap_covers_every_repositorys_entries_and_the_previous_layout_is_removed() {
         let t = testkit::TempDir::new("gate-warm-cap-repos");
@@ -324,6 +327,7 @@ mod tests {
         assert!(entries(root, "a").is_empty());
     }
 
+    #[test_id(tj6n0fo)]
     #[test]
     fn repository_names_that_could_alias_or_escape_get_pools_of_their_own() {
         let root = Path::new("r");
@@ -332,6 +336,7 @@ mod tests {
         assert!(pools.iter().all(|p| p.parent() == Some(&root.join(POOL))));
     }
 
+    #[test_id(tlgh2qq)]
     #[test]
     fn bounding_never_removes_an_entry_another_gate_has_claimed() {
         let t = testkit::TempDir::new("gate-warm-claimed");
@@ -349,6 +354,7 @@ mod tests {
         assert!(entries(root, "a").is_empty(), "the unclaimed entry made way");
     }
 
+    #[test_id(t3rdtrd)]
     #[test]
     fn a_pooled_entry_without_its_build_path_is_not_adopted() {
         let t = testkit::TempDir::new("gate-warm-no-built-at");
@@ -363,6 +369,7 @@ mod tests {
         assert!(!b.join("deps/libx.rlib").exists());
     }
 
+    #[test_id(t81i9r0)]
     #[test]
     fn a_directory_that_already_holds_output_is_never_overwritten_by_adoption() {
         let t = testkit::TempDir::new("gate-warm-busy");
@@ -375,6 +382,7 @@ mod tests {
         assert_eq!(entries(root, "r").len(), 1);
     }
 
+    #[test_id(tkbcjt3)]
     #[test]
     fn nothing_built_or_no_commit_is_not_donated() {
         let t = testkit::TempDir::new("gate-warm-empty");
@@ -387,6 +395,7 @@ mod tests {
         assert!(a.join("deps").is_dir());
     }
 
+    #[test_id(tmvn42r)]
     #[test]
     fn the_pool_keeps_only_the_newest_entries() {
         let t = testkit::TempDir::new("gate-warm-keep");
@@ -401,6 +410,7 @@ mod tests {
         assert_eq!(entries(root, "r").len(), KEEP);
     }
 
+    #[test_id(tiidygn)]
     #[test]
     fn only_the_files_that_differ_from_the_built_commit_stay_new() {
         let t = testkit::TempDir::new("gate-warm-mtime");
@@ -422,6 +432,7 @@ mod tests {
         assert!(mtime(&tree.join("crate/src/lib.rs")) > SystemTime::now() - Duration::from_secs(3600));
     }
 
+    #[test_id(thog2k3)]
     #[test]
     fn a_directory_holding_only_unchanged_files_is_aged_with_them() {
         let t = testkit::TempDir::new("gate-warm-dirs");
@@ -445,6 +456,7 @@ mod tests {
         assert!(mtime(&tree.join("crate/src")) > old, "a directory that gained a file changed");
     }
 
+    #[test_id(t0detp5)]
     #[test]
     fn an_unknown_built_commit_discards_the_adopted_directory() {
         let t = testkit::TempDir::new("gate-warm-unknown");
@@ -464,6 +476,7 @@ mod tests {
         assert!(b.is_dir() && fs::read_dir(&b).unwrap().next().is_none());
     }
 
+    #[test_id(tcr032r)]
     #[test]
     fn only_units_whose_compile_read_the_donors_path_are_purged() {
         let t = testkit::TempDir::new("gate-warm-purge");
@@ -485,6 +498,7 @@ mod tests {
         fs::write(dir.join("deps/libbig.rlib"), vec![7u8; mib << 20]).unwrap();
     }
 
+    #[test_id(tf06slv)]
     #[test]
     fn a_pool_over_the_cap_loses_its_older_entries_first_and_is_emptied_when_the_newest_alone_is_over() {
         let t = testkit::TempDir::new("gate-warm-bound");
@@ -505,6 +519,7 @@ mod tests {
         assert!(line.contains("emptied"), "{line}");
     }
 
+    #[test_id(tfdtv21)]
     #[test]
     fn trimming_a_pooled_entry_drops_the_dependency_files_nothing_touched_for_a_day() {
         let t = testkit::TempDir::new("gate-warm-trim");
@@ -524,6 +539,7 @@ mod tests {
         assert!(!kept.join("libstale.rlib").exists());
     }
 
+    #[test_id(tiffd0i)]
     #[test]
     fn a_finished_tree_donates_the_directory_its_link_points_at() {
         let t = testkit::TempDir::new("gate-warm-tree");
@@ -546,6 +562,7 @@ mod tests {
     /// a different `-p` selection leaves it, and everything above it, to rebuild. A dependent that
     /// asks a workspace crate for features makes the crate's own feature set depend on which
     /// dependents a gate selected.
+    #[test_id(t52wqvc)]
     #[test]
     fn a_workspace_crates_features_do_not_depend_on_which_dependents_a_gate_selects() {
         let manifest = spira_config::resolve::checkout_root_for_process().unwrap().join("Cargo.toml");

@@ -19,6 +19,9 @@
 //! and every open applies the ones it lacks in place. A store that counts more migrations than
 //! this binary knows is refused (law-pin-by-migration-count).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod bench;
 pub mod compact;
 pub mod dated;
@@ -2544,6 +2547,7 @@ pub(crate) fn take_opener(from: &Path) -> Result<File> {
 mod tests {
     use super::*;
 
+    #[test_id(t9yk1vi)]
     #[test]
     fn a_failure_is_reported_first_when_its_text_changes_and_an_hour_on() {
         let t0 = std::time::Instant::now();
@@ -2555,6 +2559,7 @@ mod tests {
         assert!(report_due(&mut last, "database is locked", t0 + Duration::from_secs(3602)));
     }
 
+    #[test_id(trau3w1)]
     #[test]
     fn a_passive_checkpoint_a_reader_holds_back_is_not_complete() {
         let dir = testkit::TempDir::new("sqlite-passive-partial");
@@ -2572,6 +2577,7 @@ mod tests {
         assert!(passive_complete(&ck).unwrap());
     }
 
+    #[test_id(totub0j)]
     #[test]
     fn a_path_reopens_after_its_handle_drops_though_a_forked_child_holds_the_lock_descriptor() {
         let dir = testkit::TempDir::new("sqlite-reopen");
@@ -2584,6 +2590,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0owcp4)]
     #[test]
     fn only_a_commit_a_checkpoint_ran_during_reports_a_checkpoint() {
         let dir = testkit::TempDir::new("sqlite-checkpointed");
@@ -2613,6 +2620,7 @@ mod tests {
         assert!(!b.last_commit().checkpointed);
     }
 
+    #[test_id(tpg0exh)]
     #[test]
     fn a_checkpoint_completion_is_signalled_once_checkpoint_every_commits_have_landed() {
         let dir = testkit::TempDir::new("sqlite-signal");
@@ -2627,6 +2635,7 @@ mod tests {
         assert_eq!(std::fs::metadata(format!("{}-wal", path.display())).unwrap().len(), 0);
     }
 
+    #[test_id(t1hcua2)]
     #[test]
     fn no_checkpoint_is_signalled_below_checkpoint_every() {
         let dir = testkit::TempDir::new("sqlite-no-signal");
@@ -2636,6 +2645,7 @@ mod tests {
         assert_eq!(bench::await_checkpoint(&b, 0, Duration::from_millis(200)), None);
     }
 
+    #[test_id(tgz9epi)]
     #[test]
     fn a_tracked_commit_and_read_record_their_waits_and_the_read_is_counted() {
         let dir = testkit::TempDir::new("sqlite-phases");
@@ -2656,6 +2666,7 @@ mod tests {
         assert_eq!(s.reads, 1);
     }
 
+    #[test_id(t897f9t)]
     #[test]
     fn a_read_counts_its_wait_at_the_read_gate_against_its_own_limit_and_reports_the_wait() {
         let dir = testkit::TempDir::new("sqlite-gate-wait");
@@ -2688,6 +2699,7 @@ mod tests {
         assert_eq!(waited, Some(60_000));
     }
 
+    #[test_id(titumle)]
     #[test]
     fn a_commit_that_fails_inside_its_transaction_is_not_recorded_as_a_commit() {
         let dir = testkit::TempDir::new("sqlite-phases-failed");
@@ -2702,6 +2714,7 @@ mod tests {
         assert_eq!(s.open, None);
     }
 
+    #[test_id(to9n7y3)]
     #[test]
     fn a_read_begun_past_the_request_deadline_is_refused() {
         let dir = testkit::TempDir::new("sqlite-read-deadline");
@@ -2711,6 +2724,7 @@ mod tests {
         assert!(matches!(b.get("k", 0), Err(Error::Deadline)));
     }
 
+    #[test_id(tf89d1s)]
     #[test]
     fn every_connection_reads_through_a_page_cache_sized_for_a_large_file() {
         let dir = testkit::TempDir::new("sqlite-cache");
@@ -2720,6 +2734,7 @@ mod tests {
         assert_eq!(size(&lock(&b.0.writer).conn), -CACHE_KIB);
     }
 
+    #[test_id(trl1khk)]
     #[test]
     fn lowering_the_read_budget_lowers_the_readers_busy_timeout() {
         let dir = testkit::TempDir::new("sqlite-busy");
@@ -2781,6 +2796,7 @@ mod tests {
         reader
     }
 
+    #[test_id(t10m26u)]
     #[test]
     fn a_push_carries_the_gauges_and_the_counts_and_starts_the_counts_over() {
         let mut counts = PassCounts::default();
@@ -2795,6 +2811,7 @@ mod tests {
         assert_eq!(counts, PassCounts::default());
     }
 
+    #[test_id(tc7w43t)]
     #[test]
     fn restarts_are_counted_as_completed_given_up_and_forced_and_pushed_under_their_names() {
         use std::sync::mpsc::channel;
@@ -2857,6 +2874,7 @@ mod tests {
         }
     }
 
+    #[test_id(t52lxqq)]
     #[test]
     fn a_single_long_statement_is_ended_past_max_read_ms_by_the_progress_handler() {
         let dir = testkit::TempDir::new("sqlite-progress");
@@ -2896,6 +2914,7 @@ mod tests {
         (dir, b)
     }
 
+    #[test_id(tyah3z1)]
     #[test]
     fn a_day_file_read_past_max_read_ms_is_ended_while_it_runs_and_reads_no_further_row() {
         let clock = runtime::ports::VirtualClock::new(0);
@@ -2914,6 +2933,7 @@ mod tests {
         assert_eq!(rows.load(Ordering::SeqCst), 1, "the loop read a second row");
     }
 
+    #[test_id(th6b65x)]
     #[test]
     fn a_day_file_get_past_max_read_ms_is_ended_and_not_overrun() {
         let clock = runtime::ports::VirtualClock::new(0);
@@ -2926,6 +2946,7 @@ mod tests {
         assert_eq!((snap.reads_ended, snap.reads_overran), (1, 0));
     }
 
+    #[test_id(tv2lk0s)]
     #[test]
     fn two_readers_of_one_day_file_do_not_queue_on_a_single_connection() {
         let clock = runtime::ports::VirtualClock::new(0);
@@ -2988,6 +3009,7 @@ mod tests {
         }
     }
 
+    #[test_id(tiio4ph)]
     #[test]
     fn a_read_that_runs_past_max_read_ms_after_its_last_statement_is_ended_and_counted_as_overrun() {
         let dir = testkit::TempDir::new("sqlite-overran");
@@ -3005,6 +3027,7 @@ mod tests {
         assert_eq!(snap.read_max_us, 500_000);
     }
 
+    #[test_id(t6hfecq)]
     #[test]
     fn a_read_stopped_by_the_progress_handler_is_counted_ended_not_overrun() {
         let dir = testkit::TempDir::new("sqlite-ended");
@@ -3037,6 +3060,7 @@ mod tests {
             .unwrap()
     }
 
+    #[test_id(tzxe2wt)]
     #[test]
     fn a_commit_writes_the_live_row_and_nothing_to_versions() {
         let dir = testkit::TempDir::new("sqlite-one-copy");
@@ -3050,6 +3074,7 @@ mod tests {
         assert_eq!(count(&b, "latest"), 10);
     }
 
+    #[test_id(t4zitcq)]
     #[test]
     fn a_commit_that_fails_leaves_no_ring_entry_and_no_log_line() {
         let dir = testkit::TempDir::new("sqlite-failed-commit");
@@ -3079,6 +3104,7 @@ mod tests {
         assert_eq!(b.get("a", 1).unwrap().unwrap().value, b"1");
     }
 
+    #[test_id(tlxks4k)]
     #[test]
     fn dropping_the_outbox_removes_it_and_later_commits_still_land() {
         let dir = testkit::TempDir::new("sqlite-drop-outbox");
@@ -3094,6 +3120,7 @@ mod tests {
         assert!(matches!(b.outbox_log(0, 10), Err(Error::Backend(_))));
     }
 
+    #[test_id(tokobwm)]
     #[test]
     fn a_read_below_the_head_is_the_live_row_corrected_by_the_ring_across_pages() {
         let dir = testkit::TempDir::new("sqlite-below-head");
@@ -3123,6 +3150,7 @@ mod tests {
         assert_eq!(head.len(), 26);
     }
 
+    #[test_id(touo4kd)]
     #[test]
     fn the_successor_bounds_exactly_the_keys_under_a_prefix() {
         assert_eq!(successor(b"events/").as_deref(), Some(&b"events0"[..]));
@@ -3131,6 +3159,7 @@ mod tests {
         assert_eq!(successor(b""), None);
     }
 
+    #[test_id(trl8239)]
     #[test]
     fn the_lower_bound_is_the_prefix_until_after_passes_it() {
         assert_eq!(lower_bound(b"p/", None), b"p/");
@@ -3188,6 +3217,7 @@ mod tests {
     /// law: every list runs against an indexed table. A page of 100 at the head over 50k keys
     /// and 1M versions reads its page from `latest`, never grouping the versions: the VM steps
     /// it takes stay a small multiple of the page, and its plan neither scans nor sorts.
+    #[test_id(t9ehaa6)]
     #[test]
     fn a_page_at_the_head_reads_o_page_rows_over_a_million_versions() {
         let dir = testkit::TempDir::new("sqlite-page");
@@ -3249,6 +3279,7 @@ mod tests {
         state_store::VersionUsage { versions, version_bytes }
     }
 
+    #[test_id(tqcsyrc)]
     #[test]
     fn usage_page_counts_each_prefixs_keys_and_bytes_and_version_usage_page_its_inherited_rows() {
         let dir = testkit::TempDir::new("sqlite-usage");
@@ -3300,6 +3331,7 @@ mod tests {
         SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() }).unwrap()
     }
 
+    #[test_id(ttgnivr)]
     #[test]
     fn a_key_page_beside_a_key_of_200000_versions_reads_its_page() {
         let dir = testkit::TempDir::new("sqlite-usage-hot");
@@ -3312,6 +3344,7 @@ mod tests {
         assert_eq!(page.next.as_deref(), Some("a/hot"));
     }
 
+    #[test_id(t1n7qc9)]
     #[test]
     fn a_versions_page_over_a_key_of_200000_versions_stops_at_its_cap_with_a_cursor() {
         let dir = testkit::TempDir::new("sqlite-versions-cap");
@@ -3329,6 +3362,7 @@ mod tests {
         assert!(steps.iter().all(|s| !s.starts_with("SCAN") && !s.contains("TEMP B-TREE")), "{steps:?}");
     }
 
+    #[test_id(tu78ahi)]
     #[test]
     fn walking_versions_pages_sums_to_the_table() {
         let dir = testkit::TempDir::new("sqlite-versions-walk");
@@ -3350,6 +3384,7 @@ mod tests {
         assert_eq!(sum["b/"], vusage(2, 4));
     }
 
+    #[test_id(t33lwoa)]
     #[test]
     fn walking_usage_pages_sums_to_the_whole_with_each_page_bounded() {
         let dir = testkit::TempDir::new("sqlite-usage-walk");
@@ -3373,6 +3408,7 @@ mod tests {
         assert_eq!(whole, sum);
     }
 
+    #[test_id(tppp7uu)]
     #[test]
     fn hot_keys_names_the_key_rewritten_most_in_the_last_revisions() {
         let dir = testkit::TempDir::new("sqlite-hot");
@@ -3380,6 +3416,7 @@ mod tests {
         assert_eq!(b.hot_keys(100, 1).unwrap(), vec![("a/hot".to_string(), 5)]);
     }
 
+    #[test_id(tf71n4x)]
     #[test]
     fn file_bytes_reports_a_positive_size_with_free_bytes_within_it() {
         let dir = testkit::TempDir::new("sqlite-file");
@@ -3390,6 +3427,7 @@ mod tests {
 
     /// A read that skips a prefix steps over it in the index: ten modeled keys beside twenty
     /// thousand `history/` rows cost steps in the ten, not the twenty thousand.
+    #[test_id(tui07y8)]
     #[test]
     fn range_outside_never_visits_the_skipped_prefixes() {
         let dir = testkit::TempDir::new("sqlite-outside");
@@ -3424,6 +3462,7 @@ mod tests {
 
     /// law: a state filter is an indexed range. A page of one state's keys reads that page,
     /// not the prefix, and agrees with the filter it replaces.
+    #[test_id(t4f6hla)]
     #[test]
     fn a_state_filtered_page_reads_o_page_rows_and_matches_the_filter() {
         let dir = testkit::TempDir::new("sqlite-state");
@@ -3444,6 +3483,7 @@ mod tests {
     /// thirty live ones, a read at a revision a commit behind the head reads the page and the
     /// ring's touched keys, and answers as the scan does: a key that left the state since is
     /// still in it at `at`, one that entered it since is not.
+    #[test_id(txzoie7)]
     #[test]
     fn a_state_filtered_page_below_the_head_reads_o_page_rows_and_judges_touched_keys_at_the_revision() {
         let dir = testkit::TempDir::new("sqlite-state-below");
@@ -3488,6 +3528,7 @@ mod tests {
     /// Migration 2 fills each delivery's `entered` from its history once, in place: the newest
     /// applied delivery audit into each state, from imported entries and from the `events/`
     /// branch a txn's entry names, in `latest` and in the version row it mirrors.
+    #[test_id(t6jbqnk)]
     #[test]
     fn migration_2_fills_each_deliverys_entered_from_its_history() {
         let dir = testkit::TempDir::new("sqlite-m2");
@@ -3563,6 +3604,7 @@ mod tests {
     /// applied pass and eject audits in revision order (imported entries first, at their seq,
     /// then each `events/` branch a txn's entry names) and the newest `at` of any applied
     /// batch audit, in `latest` and in the version row it mirrors.
+    #[test_id(tzvpioh)]
     #[test]
     fn migration_6_fills_each_rounds_batch_events_from_its_history() {
         let dir = testkit::TempDir::new("sqlite-m6");
@@ -3670,6 +3712,7 @@ mod tests {
 
     /// Migration 7 gives each record under a manual hold the newest applied manual `Hold`'s
     /// raise, from imported and from txn history, in `latest` and in the version row it mirrors.
+    #[test_id(t24hhmr)]
     #[test]
     fn migration_7_fills_a_manual_held_records_manual_hold_from_its_history() {
         let dir = testkit::TempDir::new("sqlite-m7");
@@ -3735,6 +3778,7 @@ mod tests {
 
     /// Migration 10 gives each record under an Ask hold the newest applied Ask `Hold`'s time,
     /// from imported and from txn history, in `latest` and in the version row it mirrors.
+    #[test_id(tey3y4b)]
     #[test]
     fn migration_10_fills_an_ask_held_records_ask_since_from_its_history() {
         let dir = testkit::TempDir::new("sqlite-m10");
@@ -3814,6 +3858,7 @@ mod tests {
 
     /// The raise of an ask lives in an events day file the main file never holds; opening a
     /// store that missed migration 10's fill still finds it through the merged read path.
+    #[test_id(tsec92v)]
     #[test]
     fn ask_since_fills_from_an_ask_hold_whose_event_is_in_a_day_file() {
         let dir = testkit::TempDir::new("sqlite-ask-since-day");
@@ -3849,6 +3894,7 @@ mod tests {
 
     /// An ask-held record with no Ask hold anywhere in its history opens, stays without
     /// `ask_since`, and is named by the fill so the store's start can say so.
+    #[test_id(t2xv61b)]
     #[test]
     fn open_names_an_ask_held_record_with_no_ask_hold_in_its_history() {
         let dir = testkit::TempDir::new("sqlite-ask-since-none");
@@ -3871,6 +3917,7 @@ mod tests {
 
     /// A store written before `owner_refs` existed answers `owned_by` once opened: the
     /// migration fills the index from `latest`, skipping what is not JSON and what is not owned.
+    #[test_id(tz4v4cy)]
     #[test]
     fn owned_by_answers_from_rows_a_migration_filled_for_a_store_that_predates_the_index() {
         let dir = testkit::TempDir::new("sqlite-owner-migration");
@@ -3918,6 +3965,7 @@ mod tests {
         assert_eq!(b.owned_by("owners/o", None, 10, 5), Err(Error::Stale { expected: 5, head: 6 }));
     }
 
+    #[test_id(t3lljhi)]
     #[test]
     fn the_owned_by_query_neither_scans_nor_sorts() {
         let dir = testkit::TempDir::new("sqlite-owned-plan");
@@ -3927,6 +3975,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6u49b5)]
     #[test]
     fn the_due_query_neither_scans_nor_sorts() {
         let dir = testkit::TempDir::new("sqlite-due-plan");
@@ -3938,6 +3987,7 @@ mod tests {
 
     /// The lifetime migration dates each existing key from its `events/` record when it has one,
     /// and from open time when it has none: a key is never given a shorter life than a restart did.
+    #[test_id(tu5qbby)]
     #[test]
     fn the_lifetime_migration_dates_each_existing_key_from_its_audit_record() {
         let dir = testkit::TempDir::new("sqlite-lifetime");
@@ -4012,6 +4062,7 @@ mod tests {
     /// Migration 5 indexes `data.opened_at` for the keys a store already holds: the newest rows
     /// under a prefix are a backward range of that index, read without the rest, and match the
     /// scan the default makes.
+    #[test_id(tfz0cfe)]
     #[test]
     fn migration_5_indexes_opened_at_for_the_keys_a_store_already_holds() {
         let dir = testkit::TempDir::new("sqlite-m5");
@@ -4059,6 +4110,7 @@ mod tests {
 
     /// A store at the previous migration count gains the `history_seq` index, and the imported
     /// rows in seq order are a range of it, equal to the scan the default makes.
+    #[test_id(t9di9lw)]
     #[test]
     fn migration_9_indexes_the_seq_of_the_history_a_store_already_holds() {
         let dir = testkit::TempDir::new("sqlite-m9");
@@ -4142,6 +4194,7 @@ mod tests {
 
     /// Below the head the newest rows are still the index's, with the ring's keys judged by
     /// their version at `at`: a key reopened since is not newest then, one that ended since is.
+    #[test_id(tsh05e6)]
     #[test]
     fn the_newest_opened_below_the_head_reads_the_index_and_judges_touched_keys_at_the_revision() {
         let dir = testkit::TempDir::new("sqlite-newest-below");
@@ -4178,6 +4231,7 @@ mod tests {
     /// Migration 8 indexes a fact's `(kind, at)` for the keys a store already holds: the facts of a
     /// kind after a time are a range of that index, and match the scan the default makes, at the
     /// head and below it.
+    #[test_id(tj5cmly)]
     #[test]
     fn migration_8_indexes_fact_kind_and_time_for_the_keys_a_store_already_holds() {
         let dir = testkit::TempDir::new("sqlite-m8");
@@ -4319,6 +4373,7 @@ mod tests {
 
     /// The migration counts in `user_version`, and a store from a binary that knows more
     /// migrations than this one is refused rather than read.
+    #[test_id(tgzy6j8)]
     #[test]
     fn a_store_with_more_migrations_than_this_binary_knows_is_refused() {
         let dir = testkit::TempDir::new("sqlite-migrations");

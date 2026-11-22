@@ -897,6 +897,7 @@ pub fn reentry_command(suites: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tn3jr0d)]
     #[test]
     fn run_all_leaves_a_string_it_cannot_split_alone() {
         for c in ["true", "bash a/b.sh || bash a/c.sh", "bash a/b.sh; bash a/c.sh", "echo x && echo y"] {
@@ -904,6 +905,7 @@ mod tests {
         }
     }
 
+    #[test_id(trr1cci)]
     #[test]
     fn a_changed_suite_is_named_and_a_helper_is_not() {
         let c = |p: &str| Changed { path: p.into(), exec: false };
@@ -959,12 +961,14 @@ mod tests {
         }
     }
 
+    #[test_id(t6dr4e9)]
     #[test]
     fn a_dependent_of_a_dependent_is_in_the_test_selection() {
         assert_eq!(crates(&unit(GateMode::Unit, &["spira-config/src/lib.rs"])), v(&["dwarf", "landing-pass", "queue", "spira-config"]));
         assert_eq!(crates(&unit(GateMode::Fences, &["queue/src/lib.rs"])), v(&["landing-pass", "queue"]));
     }
 
+    #[test_id(tfo5rl3)]
     #[test]
     fn a_selection_over_the_cap_narrows_to_direct_dependents_then_to_the_touched_crates() {
         let w = ws();
@@ -977,6 +981,7 @@ mod tests {
         }
     }
 
+    #[test_id(t252a29)]
     #[test]
     fn a_selection_the_cap_narrows_names_the_dependents_it_dropped() {
         let w = ws();
@@ -988,6 +993,7 @@ mod tests {
         assert!(dropped.is_empty());
     }
 
+    #[test_id(td2t29g)]
     #[test]
     fn a_reader_of_a_touched_file_survives_the_cap() {
         let w = ws();
@@ -996,6 +1002,7 @@ mod tests {
         assert_eq!(crates(&got), v(&["release", "spira-config"]));
     }
 
+    #[test_id(tp2d7ss)]
     #[test]
     fn the_composition_table() {
         use Composition::*;
@@ -1111,6 +1118,7 @@ mod tests {
         }
     }
 
+    #[test_id(tyridk6)]
     #[test]
     fn a_registry_edit_adds_the_readers_after_the_dependents_expansion_in_both_modes() {
         for mode in [GateMode::Unit, GateMode::Fences] {
@@ -1127,6 +1135,7 @@ mod tests {
         );
     }
 
+    #[test_id(tps94xp)]
     #[test]
     fn a_registry_file_with_an_exec_bit_is_still_registry() {
         let w = ws();
@@ -1135,6 +1144,7 @@ mod tests {
         assert_eq!(classify(&Changed { path: "spira/deps.toml".into(), exec: false }, &w), Class::Config);
     }
 
+    #[test_id(tcdm07o)]
     #[test]
     fn a_registry_edit_selects_the_readers_and_not_spira_configs_dependents() {
         let json = r#"{"workspace_root":"/t","workspace_members":["a","b","c"],"packages":[
@@ -1147,6 +1157,7 @@ mod tests {
         }
     }
 
+    #[test_id(t87z1ns)]
     #[test]
     fn a_workspace_input_touches_every_member() {
         for p in [
@@ -1173,6 +1184,7 @@ mod tests {
         }
     }
 
+    #[test_id(t915bw1)]
     #[test]
     fn an_executable_without_an_extension_is_a_script() {
         let w = ws();
@@ -1203,6 +1215,7 @@ mod tests {
         assert_eq!(c, Composition::Fences);
     }
 
+    #[test_id(tc6sgyw)]
     #[test]
     fn suites_mode_is_todays_gate_whatever_is_touched() {
         for paths in [
@@ -1230,6 +1243,7 @@ mod tests {
         let _ = w;
     }
 
+    #[test_id(t75jlpy)]
     #[test]
     fn fences_mode_composes_unit_tests_for_touched_crates_and_fences_for_the_rest() {
         let w = ws();
@@ -1261,6 +1275,7 @@ mod tests {
         assert!(!fences_only(GateMode::Unit, &Forces::default()) && !fences_only(GateMode::Suites, &Forces::default()));
     }
 
+    #[test_id(t66955k)]
     #[test]
     fn fences_mode_diff_with_lockfile_script_and_crate_files_runs_the_crate_and_its_dependents() {
         let w = ws();
@@ -1275,6 +1290,7 @@ mod tests {
         assert_eq!(crates(&got), vec!["landing-pass".to_string(), "queue".to_string()]);
     }
 
+    #[test_id(tnrvxm3)]
     #[test]
     fn without_suites_drops_the_suites_step_and_keeps_every_fence() {
         let d = crate::def::parse(&std::fs::read_to_string(
@@ -1289,6 +1305,7 @@ mod tests {
         assert_eq!(without_suites("{ \"$SPIRA_SELECT_BIN\" gate; } && { \"$SPIRA_TESTENV_BIN\" x; }"), "true");
     }
 
+    #[test_id(ti6n86k)]
     #[test]
     fn gate_all_and_a_missing_graph_fall_back_to_suites() {
         let w = ws();
@@ -1304,6 +1321,7 @@ mod tests {
         );
     }
 
+    #[test_id(tr2ljau)]
     #[test]
     fn labels_and_suites_off() {
         assert_eq!(Composition::Fences.label(), "fences");
@@ -1319,6 +1337,7 @@ mod tests {
         assert!(!Composition::Suites { why: "mode".into() }.suites_off());
     }
 
+    #[test_id(t6utd3p)]
     #[test]
     fn test_phase_env_drops_the_release_from_path_and_the_locator() {
         let e = |k: &str, v: &str| (k.to_string(), v.to_string());
@@ -1340,6 +1359,7 @@ mod tests {
         assert_eq!(test_phase_env(&[e("PATH", "a:b")]), vec![e("PATH", "a:b")]);
     }
 
+    #[test_id(tqqjtxd)]
     #[test]
     fn gate_test_run_sees_no_lifecycle_locators() {
         // Canary: only meaningful inside a gate trial (it sets SPIRA_GATE_BRANCH).
@@ -1351,6 +1371,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4k31pg)]
     #[test]
     fn diff_raw_is_parsed_with_the_exec_bit_from_either_side() {
         let z = b":100644 100644 aaa bbb M\0gate/src/x.rs\0:000000 100755 000 ccc A\0spira/hooks/new\0:100755 000000 ddd 000 D\0old.sh\0";
@@ -1374,6 +1395,7 @@ mod tests {
         assert!(parse_diff_raw(b"").is_empty());
     }
 
+    #[test_id(t2kkaye)]
     #[test]
     fn a_gate_runs_at_the_hosts_full_width_whatever_the_pool() {
         assert_eq!(jobs(32), 32);
@@ -1383,6 +1405,7 @@ mod tests {
 
     const ALL: Targets = Targets { lib: true, bin: true, test: true };
 
+    #[test_id(tb8oi83)]
     #[test]
     fn the_unit_build_and_test_name_only_the_changed_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4, &Default::default());
@@ -1393,6 +1416,7 @@ mod tests {
         assert!(b.1.ends_with(" --features integration -p spira-sim"), "{}", b.1);
     }
 
+    #[test_id(tr9tlh8)]
     #[test]
     fn the_build_compiles_the_test_harnesses_once_and_the_test_phase_reuses_them() {
         let [b, _] = unit_commands(&["gate".into(), "queue".into()], ALL, 4, &Default::default());
@@ -1413,6 +1437,7 @@ mod tests {
         v.to_vec().try_into().unwrap_or_else(|v: Vec<String>| panic!("{v:?}"))
     }
 
+    #[test_id(tfospwf)]
     #[test]
     fn the_gate_runs_the_rounds_tier_commands_differing_only_in_the_package_selection() {
         use spira_config::unit_tier as t;
@@ -1423,6 +1448,7 @@ mod tests {
         assert_eq!(w(&integ), format!("cargo {}", t::integration_words(None, "--workspace")));
     }
 
+    #[test_id(ttxugzt)]
     #[test]
     fn no_unit_command_names_a_thread_count_or_a_job_width_on_the_tests() {
         for (_, c) in unit_commands(&["gate".into(), "queue".into()], ALL, 4, &Default::default()) {
@@ -1432,6 +1458,7 @@ mod tests {
         assert!(!t.1.contains(" -j ") && !t.1.contains("-j4"), "{}", t.1);
     }
 
+    #[test_id(t82z1cw)]
     #[test]
     fn only_the_unit_nextest_run_goes_through_one_sandbox() {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
@@ -1441,6 +1468,7 @@ mod tests {
         assert!(!run("--test '*'").contains("test-sandbox/runner"), "{}", t.1);
     }
 
+    #[test_id(t9yar3b)]
     #[test]
     fn a_tier_no_selected_crate_has_a_target_for_is_not_run() {
         let sel = ["spira-claim".to_string()];
@@ -1457,6 +1485,7 @@ mod tests {
         assert!(cmds[0].ends_with(" --lib --bins") && cmds[1].ends_with(" --test '*'") && cmds.len() == 2, "{cmds:?}");
     }
 
+    #[test_id(tljh2z4)]
     #[test]
     fn the_target_kinds_of_a_selection_come_from_cargo_metadata() {
         let meta = |name: &str, kinds: &[&str]| {
@@ -1475,6 +1504,7 @@ mod tests {
         assert_eq!(targets_of(&["a".into()], &members), a);
     }
 
+    #[test_id(tri8yj3)]
     #[test]
     fn the_test_phase_exits_with_the_first_red_whichever_tier_it_is() {
         let tmp = testkit::TempDir::new("gate-test-phase");
@@ -1498,6 +1528,7 @@ mod tests {
         assert_eq!(run("--test", "101"), Some(101), "a red integration tier");
     }
 
+    #[test_id(t0sawtx)]
     #[test]
     fn a_missing_nextest_is_could_not_judge_not_a_red_branch() {
         let [_, t] = unit_commands(&["gate".into()], ALL, 4, &Default::default());
@@ -1515,6 +1546,7 @@ mod tests {
         assert!(String::from_utf8_lossy(&out.stdout).contains("the test sandbox could not start cargo nextest"));
     }
 
+    #[test_id(thtbz45)]
     #[test]
     fn selecting_batcher_cut_builds_the_gate_its_fence_probe_test_runs() {
         let [b, t] = unit_commands(&["batcher-cut".into()], ALL, 4, &Default::default());
@@ -1524,6 +1556,7 @@ mod tests {
         assert_eq!(b.1.matches("-p gate").count(), 1, "{}", b.1);
     }
 
+    #[test_id(t1sdshj)]
     #[test]
     fn selecting_spira_lc_builds_the_testenv_its_content_writes_tests_run() {
         assert!(unit_build_words(&["spira-lc".into()]).join(" ").contains("-p testenv"));
@@ -1531,6 +1564,7 @@ mod tests {
         assert_eq!(both.matches("-p testenv").count(), 1, "{both}");
     }
 
+    #[test_id(tgvu7e3)]
     #[test]
     fn selecting_spira_runtime_builds_the_work_client_and_service_its_broker_exec_test_runs() {
         let words = unit_build_words(&["spira-runtime".into()]).join(" ");
@@ -1539,6 +1573,7 @@ mod tests {
         assert_eq!((words.matches("-p work").count(), words.matches("-p spira-lc").count()), (1, 1), "{words}");
     }
 
+    #[test_id(t6c2b5e)]
     #[test]
     fn unit_commands_build_then_test_each_crate() {
         let [b, t] = unit_commands(&["gate".into(), "queue".into()], ALL, 4, &Default::default());
@@ -1549,6 +1584,7 @@ mod tests {
         assert!(t.1.contains("; _g_t=$SECONDS; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; _g_r=$?; echo \"gate-substep integration secs=$((SECONDS-_g_t))\"; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
     }
 
+    #[test_id(tsffy7m)]
     #[test]
     fn reproduce_line_quotes_values_and_shares_the_test_commands_flags() {
         let env = vec![("A".to_string(), "x y'z".to_string()), ("PATH".to_string(), "bin".to_string())];
@@ -1559,12 +1595,14 @@ mod tests {
         );
     }
 
+    #[test_id(tw6sm2e)]
     #[test]
     fn the_dev_profile_keeps_debuginfo_out_of_the_link() {
         let dev = include_str!("../../Cargo.toml").split("[profile.dev]").nth(1).unwrap().split("\n[").next().unwrap();
         assert!(dev.contains("split-debuginfo = \"unpacked\""), "{dev}");
     }
 
+    #[test_id(thwh4yr)]
     #[test]
     fn unit_commands_name_neither_a_profile_nor_an_incremental_override() {
         for (_, c) in unit_commands(&["gate".into()], ALL, 4, &Default::default()) {
@@ -1578,6 +1616,7 @@ mod tests {
         xs.iter().map(|x| x.to_string()).collect()
     }
 
+    #[test_id(tfvge6r)]
     #[test]
     fn suite_names_are_one_test_component_and_nothing_else() {
         assert!(is_suite_name("test-gate-touched.sh"));
@@ -1595,6 +1634,7 @@ mod tests {
         }
     }
 
+    #[test_id(t61b91a)]
     #[test]
     fn reentry_splits_the_named_suites_by_what_the_tree_has() {
         let on_tree = |s: &str| s != "test-gone.sh";
@@ -1613,6 +1653,7 @@ mod tests {
         assert_eq!(reentry(" \n", on_tree), Reentry::default());
     }
 
+    #[test_id(taaqvuj)]
     #[test]
     fn only_ok_disabled_or_quarantined_satisfies_a_named_suite() {
         let req = v(&[
@@ -1648,6 +1689,7 @@ cargo: test tests::x ... ok";
         assert!(unproven("anything", &[]).is_empty());
     }
 
+    #[test_id(txhxtk2)]
     #[test]
     fn the_last_report_of_a_suite_counts() {
         let req = v(&["test-a.sh"]);
@@ -1658,6 +1700,7 @@ cargo: test tests::x ... ok";
         );
     }
 
+    #[test_id(t961082)]
     #[test]
     fn a_named_suite_recorded_over_the_remaining_budget_is_deferred_with_its_time() {
         let secs: HashMap<String, f64> =
@@ -1671,6 +1714,7 @@ cargo: test tests::x ... ok";
         assert_eq!(deferred, vec![("test-b.sh".to_string(), 120)]);
     }
 
+    #[test_id(tfvs4oy)]
     #[test]
     fn the_reentry_command_names_exactly_the_suites_with_no_deadline() {
         let c = reentry_command(&v(&["test-a.sh", "test-b.sh"]));
@@ -1687,6 +1731,7 @@ cargo: test tests::x ... ok";
         assert!(crate::engine::base_rerun_cmd(&v(&["test-a.sh"])).contains(bin), "the re-entry and the base re-run invoke one binary");
     }
 
+    #[test_id(tti2uiq)]
     #[test]
     fn ejected_suites_no_longer_force_the_suites_composition() {
         // sp-p3srm narrows sp-2ghui: a returned Rust-only bead keeps its unit composition and
@@ -1715,6 +1760,7 @@ cargo: test tests::x ... ok";
         }
     }
 
+    #[test_id(t0d1c8l)]
     #[test]
     fn a_unit_composition_builds_once_the_build_fence_is_dropped() {
         let (g, dropped) = gate_string(&unit_c(), PROD);
@@ -1733,6 +1779,7 @@ cargo: test tests::x ... ok";
         );
     }
 
+    #[test_id(tx4m85l)]
     #[test]
     fn suites_and_fences_compositions_keep_the_build_fence() {
         for c in [
@@ -1743,6 +1790,7 @@ cargo: test tests::x ... ok";
         }
     }
 
+    #[test_id(thun5qm)]
     #[test]
     fn the_build_fence_is_dropped_only_as_a_whole_chain_element() {
         let u = unit_c();

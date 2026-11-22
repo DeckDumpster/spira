@@ -26,16 +26,19 @@ fn json(s: &Snapshot) -> String {
     serde_json::to_string(s).unwrap()
 }
 
+#[test_id(tv3xqd6)]
 #[test]
 fn t1_registered_boots_and_arms_the_next_20() {
     t::t1_registered_and_boots::<H>(SET, AT_20);
 }
 
+#[test_id(t51akjp)]
 #[test]
 fn t2_live_kept_and_young_entries_are_the_probe_alone() {
     t::t2_silent::<H>(SET, &json(&idle()));
 }
 
+#[test_id(ta8lntv)]
 #[test]
 fn t3_a_pass_observes_reaps_and_ends_an_empty_list_refuses_and_a_tick_while_reaping_is_refused() {
     let h = t::handler::<H>(SET);
@@ -51,12 +54,14 @@ fn t3_a_pass_observes_reaps_and_ends_an_empty_list_refuses_and_a_tick_while_reap
     assert_eq!((c.phase, acts.len()), (Phase::Refused, 0));
 }
 
+#[test_id(tk063rk)]
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
     t::t4_runnable::<H>(include_str!("../../src/tasks/c/hel_reap_terminal.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+#[test_id(t4tvmuf)]
 #[test]
 fn t5_terminal_checkouts_and_old_scratch_go_and_unsaved_work_stays() {
     let h = t::handler::<H>(SET);
@@ -87,6 +92,7 @@ fn after_a_refused_removal() -> TaskRig {
     r
 }
 
+#[test_id(tlbvmc0)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&after_a_refused_removal(), task::NAME);
@@ -95,6 +101,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(ta0tan0)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(after_a_refused_removal, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));

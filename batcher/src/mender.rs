@@ -250,6 +250,7 @@ mod tests {
             .collect()
     }
 
+    #[test_id(triz59i)]
     #[test]
     fn mended_tips_go_in_and_nobody_leaves() {
         let d = decide(
@@ -264,6 +265,7 @@ mod tests {
         assert!(matches!(d.next, Next::Pass { retry: false, .. }));
     }
 
+    #[test_id(t821tci)]
     #[test]
     fn a_returned_member_leaves_with_its_diagnosis_and_a_mended_tip_of_another_stays_in() {
         let d = decide(
@@ -289,6 +291,7 @@ mod tests {
         );
     }
 
+    #[test_id(t3bs6g0)]
     #[test]
     fn a_returned_member_that_was_also_mended_leaves_with_no_tip_carried() {
         let d = decide(
@@ -305,6 +308,7 @@ mod tests {
         assert_eq!(left(&d.next), ["b"]);
     }
 
+    #[test_id(tpzjgls)]
     #[test]
     fn two_returns_of_one_member_carry_both_diagnoses() {
         let d = decide(
@@ -323,6 +327,7 @@ mod tests {
         assert_eq!(left[0].why, "t1 diagnosis\n---\nt2 diagnosis");
     }
 
+    #[test_id(t97jmzy)]
     #[test]
     fn an_interaction_return_removes_every_member_it_names() {
         let d = decide(
@@ -335,6 +340,7 @@ mod tests {
         assert_eq!(tips(&d.next), all(&[("b", "b0")]));
     }
 
+    #[test_id(txk0jil)]
     #[test]
     fn a_member_stacked_on_a_returned_one_leaves_with_it() {
         let mut r = round();
@@ -350,6 +356,7 @@ mod tests {
         assert_eq!(tips(&d.next), all(&[("c", "c0")]));
     }
 
+    #[test_id(tqiinxa)]
     #[test]
     fn all_environment_or_flaky_reruns_the_same_head_unchanged() {
         for outcomes in [
@@ -369,6 +376,7 @@ mod tests {
         }
     }
 
+    #[test_id(tgk56og)]
     #[test]
     fn a_second_all_environment_pass_on_the_same_head_stops_and_pages() {
         let first = decide(
@@ -391,6 +399,7 @@ mod tests {
         assert!(page.contains("t2") && page.contains("h"));
     }
 
+    #[test_id(td1gui0)]
     #[test]
     fn an_all_environment_pass_on_another_head_is_a_first() {
         let first = decide(
@@ -410,6 +419,7 @@ mod tests {
         assert!(matches!(d.next, Next::Pass { retry: true, .. }));
     }
 
+    #[test_id(txd67ec)]
     #[test]
     fn a_pass_with_one_real_failure_among_environment_ones_is_not_all_environment() {
         let first = decide(
@@ -436,6 +446,7 @@ mod tests {
         assert_eq!(d.prior.environment_head, None);
     }
 
+    #[test_id(tcxrcog)]
     #[test]
     fn an_unsure_suite_rides_along_once() {
         let d = decide(
@@ -452,6 +463,7 @@ mod tests {
         );
     }
 
+    #[test_id(tjpfp7p)]
     #[test]
     fn a_suite_unsure_on_two_consecutive_passes_returns_its_member_with_both_diagnoses() {
         let first = decide(
@@ -477,6 +489,7 @@ mod tests {
         assert!(d.prior.unsure.is_empty());
     }
 
+    #[test_id(tjlq0c4)]
     #[test]
     fn unsure_on_a_suite_the_next_pass_does_not_fail_is_forgotten() {
         let first = decide(
@@ -504,6 +517,7 @@ mod tests {
         assert!(left(&third.next).is_empty(), "not consecutive");
     }
 
+    #[test_id(tt0pt23)]
     #[test]
     fn a_return_naming_no_member_ejects_nobody_and_is_reported() {
         let d = decide(
@@ -517,6 +531,7 @@ mod tests {
         assert_eq!(d.unattributed, ["t1"]);
     }
 
+    #[test_id(tumfy1e)]
     #[test]
     fn unsettled_names_the_suites_without_an_outcome() {
         let expected: BTreeSet<String> = ["t1", "t2"].iter().map(|s| s.to_string()).collect();
@@ -526,6 +541,7 @@ mod tests {
         );
     }
 
+    #[test_id(tonfmqx)]
     #[test]
     fn a_member_left_only_for_its_stack_is_a_stacked_dependent_and_a_named_one_is_not() {
         let mut b = member("b", "b0");

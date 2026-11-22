@@ -179,6 +179,7 @@ mod tests {
 
 
 
+    #[test_id(tfz6txa)]
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in ALL {

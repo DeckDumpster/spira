@@ -2037,6 +2037,7 @@ mod tests {
     use super::*;
     use spira_claim::verdicts::Kind;
 
+    #[test_id(tae9pwk)]
     #[test]
     fn a_gate_run_row_reaches_the_beads_detail_with_its_build_directory() {
         let rows = vec![serde_json::json!({"bead": "sp-b", "ts": "t", "phases": "build:5", "build_dir": "cold: mtimes: denied"})];
@@ -2044,6 +2045,7 @@ mod tests {
         assert!(gate_why(g).ends_with("build dir cold: mtimes: denied"), "{}", gate_why(g));
     }
 
+    #[test_id(t659ml0)]
     #[test]
     fn the_world_line_reads_the_halt_stamp_as_world_status_printed_it() {
         assert_eq!(world_line(None), "plane work: RUNNING");
@@ -2121,6 +2123,7 @@ mod tests {
         apply_claim_views(s);
     }
 
+    #[test_id(tdaqfbo)]
     #[test]
     fn a_child_of_an_in_delivery_parent_is_blocked_not_claimable() {
         let mut s = child_of_a_parent_in_delivery();
@@ -2145,6 +2148,7 @@ mod tests {
         s
     }
 
+    #[test_id(tzxp1ve)]
     #[test]
     fn the_pane_counts_claimable_blocked_and_cannot_tell_from_the_claim_view_rows() {
         let s = snapshot_of_live(LIVE_CLAIM_VIEW);
@@ -2157,6 +2161,7 @@ mod tests {
         assert!(!f.contains(" as of "), "{f}");
     }
 
+    #[test_id(th7tm9c)]
     #[test]
     fn a_ready_row_without_a_claim_view_names_the_bead() {
         let err = live_row(&serde_json::json!({"bead_id":"sp-a","state":"READY","holds":"[]","repo":"spira"})).unwrap_err();
@@ -2175,6 +2180,7 @@ mod tests {
         s
     }
 
+    #[test_id(t47iqp0)]
     #[test]
     fn a_rework_bead_the_dispatcher_would_claim_counts_as_claimable() {
         let mut s = snap(vec![row("sp-rw", "REWORK", 10)]);
@@ -2185,6 +2191,7 @@ mod tests {
         assert!(frame_of(&s).contains("1 claimable"), "{}", frame_of(&s));
     }
 
+    #[test_id(tv04941)]
     #[test]
     fn a_claimable_verdict_no_rune_takes_is_no_persona_lane_not_next() {
         let mut s = snap(vec![row("sp-orphan", "READY", 10)]);
@@ -2194,6 +2201,7 @@ mod tests {
         assert_eq!(v.machine.iter().find(|m| m.name == "READY").unwrap().beads[0].claim, "no persona lane");
     }
 
+    #[test_id(tspu6my)]
     #[test]
     fn beads_blocked_by_declared_edges_count_as_blocked_with_the_blocker_named() {
         let mut s = snap(vec![row("sp-a", "READY", 10), row("sp-b", "READY", 11), row("sp-free", "READY", 12)]);
@@ -2223,6 +2231,7 @@ mod tests {
         f.lines.iter().map(|l| crate::lctui::strip_for_test(l)).collect()
     }
 
+    #[test_id(tpmtttj)]
     #[test]
     fn ready_rows_carry_claim_position_or_reason_and_the_header_counts() {
         let v = view(&ready_fixture());
@@ -2238,6 +2247,7 @@ mod tests {
         assert!(!t.iter().any(|l| l.trim_start().starts_with("NEXT")), "NEXT is folded into READY: {t:#?}");
     }
 
+    #[test_id(ts8n36n)]
     #[test]
     fn a_claim_tool_failure_renders_unknown_claimable_never_zero() {
         let mut s = ready_fixture();
@@ -2248,6 +2258,7 @@ mod tests {
         assert!(!t.iter().any(|l| l.contains("0 claimable")), "{t:#?}");
     }
 
+    #[test_id(tini5xy)]
     #[test]
     fn the_progress_file_reads_in_round_vms_shape_and_the_interim_one() {
         let rvm = serde_json::json!({"round":"dfd19c066c083a9d27e5c96a5eb2d287ab3ec5fc","pass":"a8fed047ab22f7b53f78603e3a54657c6c921c8e","phase":"suites","verdict":null,"done":299,"total":451,"red":["test-x.sh"],"build_started":1,"suites_started":2,"cap":900,"updated_at":3});
@@ -2257,6 +2268,7 @@ mod tests {
         assert_eq!(PassProgress::from_json(&old).unwrap().pass, 4);
     }
 
+    #[test_id(ta5qwnl)]
     #[test]
     fn a_failed_source_keeps_its_last_good_read_and_says_so() {
         let mut last = Snapshot { now: 100, ..Default::default() };
@@ -2278,6 +2290,7 @@ mod tests {
         new
     }
 
+    #[test_id(tp4d9y7)]
     #[test]
     fn a_failed_source_with_a_fresh_previous_read_shows_the_read_and_its_age_not_source_failed() {
         let mut last = snap(vec![]);
@@ -2290,6 +2303,7 @@ mod tests {
         }
     }
 
+    #[test_id(tnsp79y)]
     #[test]
     fn the_age_of_a_read_counts_from_the_good_read_across_consecutive_failures() {
         let mut last = snap(vec![]);
@@ -2306,6 +2320,7 @@ mod tests {
         plain(&crate::lctui::layout(&view(s), &crate::lctui::Ui::default(), 120, 80).lines)
     }
 
+    #[test_id(trxzfjv)]
     #[test]
     fn a_pane_with_no_store_running_keeps_its_rows_and_asks_and_says_how_old_they_are() {
         let mut last = snap(vec![row("sp-keep", "WORKING", 99_000)]);
@@ -2324,6 +2339,7 @@ mod tests {
         assert!(!frame.lines().any(|l| l.trim_start().starts_with("spira-lc")) && !frame.contains("source failed"), "{frame}");
     }
 
+    #[test_id(tbbswk8)]
     #[test]
     fn data_older_than_the_stale_bound_is_still_drawn_with_its_age_while_no_store_runs() {
         let last = snap(vec![row("sp-keep", "WORKING", 99_000)]);
@@ -2334,6 +2350,7 @@ mod tests {
         assert!(!frame.contains("spira-lc"), "{frame}");
     }
 
+    #[test_id(thstguy)]
     #[test]
     fn no_store_running_and_nothing_to_carry_says_so_without_raw_errors() {
         let new = Snapshot { now: 100_000, not_running: true, store_errors: vec!["spira-lc list --live: x".into()], ..snap(vec![]) };
@@ -2341,6 +2358,7 @@ mod tests {
         assert!(frame.contains("store not running; no earlier data to show") && !frame.contains("spira-lc"), "{frame}");
     }
 
+    #[test_id(t6smn3k)]
     #[test]
     fn asks_a_failed_read_could_not_answer_are_carried_and_a_read_empty_answer_is_not() {
         let mut last = snap(vec![]);
@@ -2354,6 +2372,7 @@ mod tests {
         assert!(answered.asks.is_empty(), "an answered empty list is the truth");
     }
 
+    #[test_id(tnnvh6l)]
     #[test]
     fn a_pane_started_with_only_a_published_snapshot_draws_its_rows_on_the_first_frame() {
         let run = testkit::TempDir::new("lcview-seed");
@@ -2369,6 +2388,7 @@ mod tests {
         assert!(published_snapshot(&run).is_none());
     }
 
+    #[test_id(tiyidtd)]
     #[test]
     fn a_first_frame_from_an_old_publication_names_its_age() {
         let mut published = snap(vec![row("sp-pub", "WORKING", 1)]);
@@ -2377,6 +2397,7 @@ mod tests {
         assert!(framed(&first).contains("showing the last good read from 10m ago"), "{}", framed(&first));
     }
 
+    #[test_id(tf5l3uu)]
     #[test]
     fn a_fresh_read_covers_only_the_store_failure_and_a_failure_with_nothing_to_carry_stays_named() {
         let mut last = snap(vec![]);
@@ -2389,6 +2410,7 @@ mod tests {
         assert!(page.contains("read from 5m ago"), "{page}");
     }
 
+    #[test_id(tvb8sb3)]
     #[test]
     fn ready_buckets_sum_to_its_count_and_claimable_is_the_claim_tools_set() {
         let mut held = row("sp-held", "READY", 3);
@@ -2409,6 +2431,7 @@ mod tests {
         assert!(st.detail.contains("claimable unknown"), "{}", st.detail);
     }
 
+    #[test_id(tz6qflo)]
     #[test]
     fn now_is_the_live_dwarves_with_their_phase_even_after_their_bead_left_working() {
         let mut w = row("sp-w", "WORKING", 99_000);
@@ -2429,6 +2452,7 @@ mod tests {
         assert_eq!(holder_pid("concierge"), None);
     }
 
+    #[test_id(tezftnx)]
     #[test]
     fn the_header_counts_directed_dwarves_in_the_total_and_shows_a_pending_ceiling() {
         let mut s = snap(vec![]);
@@ -2448,6 +2472,7 @@ mod tests {
         assert!(head.contains("dwarves 0/7") && !head.contains("directed") && !head.contains("config"), "{head}");
     }
 
+    #[test_id(tk6nryt)]
     #[test]
     fn sp_8mbnup_a_directed_dwarf_shows_as_directed_with_its_bead() {
         let mut w = row("sp-w", "WORKING", 99_000);
@@ -2474,12 +2499,14 @@ mod tests {
         w
     }
 
+    #[test_id(t8jfbzb)]
     #[test]
     fn a_first_session_shows_only_its_own_time() {
         let v = view(&live_session(12420, builder_row(1, 0, 100_000 - 12420)));
         assert_eq!(v.now_items[0].age, "3h27");
     }
 
+    #[test_id(ts9kzma)]
     #[test]
     fn a_later_session_shows_the_total_builders_have_held_the_bead_and_the_session_count() {
         let v = view(&live_session(12420, builder_row(2, 17580, 100_000 - 12420)));
@@ -2489,6 +2516,7 @@ mod tests {
         assert_eq!(view(&s).now_items[0].age, "3h27 · total 8h20 ×2", "without live units the row's own since is the session");
     }
 
+    #[test_id(tjecjsb)]
     #[test]
     fn a_dwarf_in_closeout_has_its_last_session_already_in_the_total() {
         let mut r = builder_row(2, 30000, 100_000 - 100);
@@ -2503,6 +2531,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-08
+    #[test_id(t67okf4)]
     #[test]
     fn a_cached_claimable_key_in_cockpit_env_is_replaced_by_the_claim_view() {
         let stale = "SP_OPEN='5'\nSP_READY='9'\nSP_NEXT_N='9'\nSP_SLOTS_READY='9'\nSP_NEXT0='P0 old sp-o x'\nSP_NEXT0_REPO='r'\nSP_NEXTRA='keep'\n";
@@ -2514,6 +2543,7 @@ mod tests {
         assert!(!blind.contains("SP_READY") && !blind.contains("SP_NEXT_N") && blind.contains("SP_OPEN='5'"), "no claim view is absent, not cached: {blind}");
     }
 
+    #[test_id(t3q219o)]
     #[test]
     fn a_claim_view_older_than_the_staleness_bound_reads_as_unknown() {
         let d = testkit::TempDir::new("claim-fresh");
@@ -2524,11 +2554,13 @@ mod tests {
         assert!(read_fresh_claim(&d.path().join("absent"), 1_000).is_none());
     }
 
+    #[test_id(tg0vjx9)]
     #[test]
     fn hm_is_minutes_under_an_hour_and_hours_with_padded_minutes_after() {
         assert_eq!([hm(0), hm(2820), hm(3600), hm(12420), hm(30000)], ["0m", "47m", "1h00", "3h27", "8h20"]);
     }
 
+    #[test_id(t5yxuo6)]
     #[test]
     fn sp_li4zys_a_scheduler_started_dwarf_with_no_bead_yet_shows_its_rune() {
         let mut s = snap(vec![]);
@@ -2537,6 +2569,7 @@ mod tests {
         assert_eq!(v.now_items.iter().map(|i| i.who.as_str()).collect::<Vec<_>>(), ["builder"]);
     }
 
+    #[test_id(tov8nfj)]
     #[test]
     fn next_is_exactly_what_the_claim_tool_would_claim_when_it_answered() {
         let mut s = snap(vec![row("sp-free", "READY", 1), row("sp-blocked", "READY", 2)]);
@@ -2548,6 +2581,7 @@ mod tests {
         assert!(v.next_unknown && v.next.is_empty(), "without the claim tool's answer NEXT says it does not know, never guesses");
     }
 
+    #[test_id(tgoa8a3)]
     #[test]
     fn the_latest_gate_run_per_bead_wins_whatever_the_file_order() {
         let row = |ts: &str, bead: &str, phases: &str, compiled: u64| serde_json::json!({"ts": ts, "bead": bead, "phases": phases, "compiled": compiled, "fresh": 1});
@@ -2562,6 +2596,7 @@ mod tests {
         assert_eq!((m["sp-a"].phases.as_str(), m["sp-a"].compiled), ("build:9", 7), "the newest run with phases, not the last line");
     }
 
+    #[test_id(tlb24z1)]
     #[test]
     fn rework_why_prefers_the_eject_reason_then_the_note_that_says_why() {
         let mut s = snap(vec![row("sp-a", "REWORK", 1), row("sp-b", "REWORK", 1)]);
@@ -2572,6 +2607,7 @@ mod tests {
         assert_eq!(rework_why(&s, "sp-b"), "r-auto-9: test-x #3 red", "a round's eject reason wins");
     }
 
+    #[test_id(tga435i)]
     #[test]
     fn a_question_for_the_operator_is_in_decide_and_never_counted_as_claimable_work() {
         let mut s = snap(vec![row("sp-ask1", "READY", 90_000), row("sp-work1", "READY", 91_000), row("sp-done-ask", "DROPPED", 80_000)]);
@@ -2593,6 +2629,7 @@ mod tests {
         assert_eq!(v.next[0].id, "sp-work1");
     }
 
+    #[test_id(tem1ezk)]
     #[test]
     fn an_ask_shows_its_work_beads_repo_and_an_ask_about_no_bead_shows_no_tag() {
         let mut s = snap(vec![Row { repo: "cubby".into(), ..row("sp-work", "READY", 90_000) }]);
@@ -2607,6 +2644,7 @@ mod tests {
         assert_eq!(ask_tag(&v.decide[1]), "");
     }
 
+    #[test_id(tylb6w0)]
     #[test]
     fn an_ask_with_no_bead_row_takes_its_title_from_the_content_store() {
         let mut s = snap(vec![]);
@@ -2622,6 +2660,7 @@ mod tests {
         lines.iter().map(|l| re.replace_all(l, "").into_owned()).collect::<Vec<_>>().join("\n")
     }
 
+    #[test_id(t0hp2xe)]
     #[test]
     fn own_ids_reads_a_bead_commit_and_a_round_merge() {
         assert_eq!(own_ids("sp-ab12: fix the thing"), vec!["sp-ab12"]);
@@ -2631,6 +2670,7 @@ mod tests {
         assert!(own_ids("gate: cache fences").is_empty());
     }
 
+    #[test_id(txlc37p)]
     #[test]
     fn next_is_lifecycle_ready_unheld_and_by_priority() {
         let mut held = row("sp-held", "READY", 10);
@@ -2646,6 +2686,7 @@ mod tests {
         assert!(f.contains("2 claimable") && f.contains("claimable 2"), "{f}");
     }
 
+    #[test_id(thjixps)]
     #[test]
     fn the_ready_list_is_in_claim_order_with_every_ranked_row_before_the_rest() {
         let mut rows = vec![];
@@ -2678,6 +2719,7 @@ mod tests {
     }
 
     // covers: UC-cockpit-observability-17 UC-dispatch-17
+    #[test_id(tmgk6sx)]
     #[test]
     fn ready_rows_after_the_ranked_ones_run_held_then_blocked_then_unclaimable() {
         let mut held = row("sp-held", "READY", 1);
@@ -2695,6 +2737,7 @@ mod tests {
         assert_eq!(ready.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-ranked", "sp-held-old", "sp-held", "sp-blocked", "sp-asked", "sp-unlaned"]);
     }
 
+    #[test_id(t2q9ynx)]
     #[test]
     fn rework_rows_are_listed_in_claim_order_too() {
         let mut a = row("sp-new", "REWORK", 50);
@@ -2709,6 +2752,7 @@ mod tests {
         assert_eq!(rw.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-new", "sp-old"]);
     }
 
+    #[test_id(tr5ahl9)]
     #[test]
     fn a_ready_bead_whose_commit_is_on_the_base_is_drift_not_next() {
         let mut s = snap(vec![row("sp-done", "READY", 1)]);
@@ -2719,6 +2763,7 @@ mod tests {
         assert!(plain(&render(&v, 120)).contains("DRIFT 1 bead(s)"));
     }
 
+    #[test_id(tghu688)]
     #[test]
     fn a_starved_queue_shows_its_held_share_and_reasons() {
         let mut rows = vec![row("sp-a", "READY", 1)];
@@ -2733,6 +2778,7 @@ mod tests {
         assert!(f.contains("3× repo:spira is not in the map"), "{f}");
     }
 
+    #[test_id(tnlcr6l)]
     #[test]
     fn a_failed_source_is_named_never_an_empty_frame() {
         let mut s = snap(vec![]);
@@ -2743,6 +2789,7 @@ mod tests {
         assert!(render_html(&v, None, 10).contains("<a href=/stuck>"), "the lifecycle page links to where work is stuck");
     }
 
+    #[test_id(tjfj1u8)]
     #[test]
     fn the_pane_and_the_page_show_the_same_numbers_from_one_snapshot() {
         let mut held = row("sp-h", "READY", 2);
@@ -2766,6 +2813,7 @@ mod tests {
         r
     }
 
+    #[test_id(t0jtg7z)]
     #[test]
     fn now_rows_carry_a_rework_tag_and_the_persona_under_the_name() {
         let s = snap(vec![now_row("sp-rw", Some("ops"), true), now_row("sp-fresh", Some("warden"), false), now_row("sp-nul", None, false)]);
@@ -2780,6 +2828,7 @@ mod tests {
         assert!(render(&v, 120).iter().any(|x| x.contains(&format!("{YEL}{B}REWORK{R}"))), "colour on the tag");
     }
 
+    #[test_id(tu6u3jq)]
     #[test]
     fn next_lists_only_claimable_rework_first_and_blocked_apart() {
         let mut fresh = row("sp-fresh", "READY", 1);
@@ -2821,6 +2870,7 @@ mod tests {
         s
     }
 
+    #[test_id(twdnb37)]
     #[test]
     fn tail_lines_takes_the_last_two_meaningful_lines_and_skips_noise() {
         let log = [
@@ -2835,12 +2885,14 @@ mod tests {
         assert_eq!(tail_lines(log.as_bytes(), false, 2), vec!["reading the file", "▸ Bash cargo test"]);
     }
 
+    #[test_id(tvctnvf)]
     #[test]
     fn tail_lines_drops_the_cut_first_line_of_a_partial_read() {
         let log = format!("{}\n{}", &log_line("text", "cut")[10..], log_line("text", "whole"));
         assert_eq!(tail_lines(log.as_bytes(), true, 2), vec!["whole"]);
     }
 
+    #[test_id(tnmmagv)]
     #[test]
     fn a_fresh_tail_shows_its_lines_and_age_in_pane_and_page() {
         let s = working(Some(Tail { lines: vec!["one".into(), "two".into()], mtime: 100_000 - 120 }));
@@ -2852,6 +2904,7 @@ mod tests {
         assert!(page_text(&v).contains("two 2m ago"), "the tail and its age reach the page");
     }
 
+    #[test_id(tjrfte9)]
     #[test]
     fn a_silent_dwarf_goes_amber_at_five_minutes_and_red_at_fifteen() {
         for (age_s, level, color) in [(299, "ok", D), (300, "warn", YEL), (899, "warn", YEL), (900, "bad", RED), (20 * 60, "bad", RED)] {
@@ -2862,6 +2915,7 @@ mod tests {
         }
     }
 
+    #[test_id(tx0875e)]
     #[test]
     fn a_missing_log_says_no_output_yet_not_an_error() {
         let v = view(&working(None));
@@ -2870,6 +2924,7 @@ mod tests {
         assert!(render_html(&v, None, 10).contains("no output yet"));
     }
 
+    #[test_id(t67619c)]
     #[test]
     fn a_working_row_without_a_holder_shows_no_output_line() {
         let mut s = snap(vec![row("sp-w", "WORKING", 1)]);
@@ -2877,6 +2932,7 @@ mod tests {
         assert!(view(&s).now_items[0].out.is_empty());
     }
 
+    #[test_id(t4v2sun)]
     #[test]
     fn a_stale_snapshot_says_so_on_the_page() {
         assert!(render_html(&view(&snap(vec![])), Some(600), 10).contains("Snapshot is 10m old"));
@@ -2895,6 +2951,7 @@ mod tests {
         s
     }
 
+    #[test_id(tag0w91)]
     #[test]
     fn rounds_are_one_per_repo_with_staged_children_and_a_stale_open_row_marked() {
         let v = view(&rounds_snap());
@@ -2917,6 +2974,7 @@ mod tests {
         assert!(at("r-auto-143") < at("r-stage-8") && at("r-stage-8") < at("r-auto-62"), "{once}");
     }
 
+    #[test_id(t15oisc)]
     #[test]
     fn rounds_show_every_vm_run_and_the_idle_vm_and_an_open_pr_is_not_stale() {
         let mut s = rounds_snap();
@@ -2943,6 +3001,7 @@ mod tests {
         assert!(view(&quiet).rounds[0].stale);
     }
 
+    #[test_id(ta3jlsj)]
     #[test]
     fn the_snapshot_survives_a_round_trip_through_the_file_loom_reads() {
         let mut s = snap(vec![row("sp-a", "READY", 1)]);
@@ -3007,6 +3066,7 @@ mod tests {
         f.lines().skip_while(|l| !l.starts_with("STATE MACHINE")).take_while(|l| !l.starts_with("HOLDS") && !l.starts_with("NOW")).map(String::from).collect()
     }
 
+    #[test_id(t7kccp7)]
     #[test]
     fn a_clean_fixture_renders_no_red_dot_and_no_missing_exit() {
         let f = machine_lines(&healthy()).join("\n");
@@ -3014,6 +3074,7 @@ mod tests {
         assert!(f.contains("REFUSED (1h)\n  none"), "{f}");
     }
 
+    #[test_id(tfur14o)]
     #[test]
     fn the_state_machine_is_vertical_with_fixed_columns_and_every_edge_on_its_own_line() {
         let f = machine_lines(&healthy()).join("\n");
@@ -3056,6 +3117,7 @@ BATCH
         assert_eq!(f, want);
     }
 
+    #[test_id(tvf8mgo)]
     #[test]
     fn certified_for_a_day_with_no_exit_to_rework_shows_both_dots_and_the_missing_exit() {
         let mut s = healthy();
@@ -3068,6 +3130,7 @@ BATCH
         assert!(f.contains("│ deliver"), "{f}");
     }
 
+    #[test_id(t37e67u)]
     #[test]
     fn an_orphaned_working_bead_names_its_dead_holder() {
         let mut s = healthy();
@@ -3081,6 +3144,7 @@ BATCH
         assert!(f.contains("WORKING 2 dead holder 2 ●"), "{f}");
     }
 
+    #[test_id(tbnfshj)]
     #[test]
     fn every_placed_state_says_where_its_beads_are_and_the_parts_sum_to_the_count() {
         let mut s = healthy();
@@ -3139,6 +3203,7 @@ BATCH
         assert!(d_notes.iter().any(|n| n == "pokedumpster PR 209 · merging"), "{d_notes:?}");
     }
 
+    #[test_id(td2r512)]
     #[test]
     fn rounds_rows_link_to_the_pr_the_failing_run_and_the_vm_round_log() {
         let mut s = healthy();
@@ -3160,6 +3225,7 @@ BATCH
         assert!(text.contains("certifying pass 2 · members sp-a0 sp-a1"), "{text}");
     }
 
+    #[test_id(tsfx905)]
     #[test]
     fn ready_splits_into_claimable_blocked_with_its_blocker_held_and_poison() {
         let mut s = healthy();
@@ -3175,6 +3241,7 @@ BATCH
         assert!(f.contains("READY 4 claimable 1 · blocked 1 ← sp-blk1 · held 1 · poison 1"), "{f}");
     }
 
+    #[test_id(trtsc9g)]
     #[test]
     fn a_batch_stuck_green_past_its_delivery_p95_is_a_stuck_dot() {
         let mut s = healthy();
@@ -3198,6 +3265,7 @@ BATCH
         logs
     }
 
+    #[test_id(tht511r)]
     #[test]
     fn closed_in_24h_equals_the_logsql_count_and_lists_the_landed_rows_newest_first_with_their_round() {
         let logs = closed_fixture(7, 2, 3, 4);
@@ -3222,6 +3290,7 @@ BATCH
         assert!(plain(&render(&v, 120)).contains("terminal 24h    SUPERSEDED 3 · DROPPED 2"));
     }
 
+    #[test_id(tteogxl)]
     #[test]
     fn the_edge_rates_and_the_landed_count_read_transitions_as_the_insert_path_stores_them() {
         use spira_otel::vlogs::fake::Script;
@@ -3241,6 +3310,7 @@ BATCH
         assert!(working.edges.iter().any(|e| e.to == "WORKING" && e.rate_1h == 4), "{:?}", working.edges);
     }
 
+    #[test_id(tu8w24g)]
     #[test]
     fn an_unreadable_store_leaves_the_closed_counts_unknown_not_zero() {
         let down = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3262,6 +3332,7 @@ BATCH
         assert!(pane.contains("LANDED") && pane.contains("source failed") && pane.contains("victorialogs-unreachable"), "{pane}");
     }
 
+    #[test_id(tvblyjp)]
     #[test]
     fn repeated_refusals_are_listed_by_state_and_event_and_the_edges_use_the_graph() {
         let mut s = healthy();
@@ -3275,6 +3346,7 @@ BATCH
         assert!(!f.contains("wrong state ●"), "{f}");
     }
 
+    #[test_id(taa16tl)]
     #[test]
     fn skipped_for_conflict_is_counted_under_submitted() {
         let mut s = healthy();
@@ -3284,6 +3356,7 @@ BATCH
         assert!(squash(&machine_lines(&s).join("\n")).contains("SUBMITTED 1 skipped: conflict 1"));
     }
 
+    #[test_id(t30itoe)]
     #[test]
     fn the_listings_are_shortened_to_make_room() {
         let mut s = healthy();
@@ -3301,6 +3374,7 @@ BATCH
         MenderRow { batch_id: batch.into(), pass: 1, suite: suite.into(), state: state.into(), deadline }
     }
 
+    #[test_id(tk8b03z)]
     #[test]
     fn each_running_mender_is_listed_under_the_pass_with_its_deadline() {
         let mut s = snap(vec![]);
@@ -3318,6 +3392,7 @@ BATCH
         assert!(f.contains("1 failure(s) waiting for a mender") && !f.contains("test-done.sh") && !f.contains("●"), "{f}");
     }
 
+    #[test_id(tqbd7pv)]
     #[test]
     fn a_mender_past_its_deadline_is_a_red_dot_and_no_menders_is_no_section() {
         let mut s = snap(vec![]);
@@ -3326,6 +3401,7 @@ BATCH
         assert!(!plain(&render(&view(&snap(vec![])), 120)).contains("MENDERS"));
     }
 
+    #[test_id(tv54gsd)]
     #[test]
     fn an_old_snapshot_file_without_the_machine_fields_still_loads() {
         let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[]});
@@ -3333,6 +3409,7 @@ BATCH
         assert!(s.graph.is_empty() && s.dwell.is_empty());
     }
 
+    #[test_id(t8dv95b)]
     #[test]
     fn a_published_failure_total_draws_no_failure_on_the_first_frame() {
         let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[],"store_errors":[],"failures":2849});
@@ -3342,6 +3419,7 @@ BATCH
         assert!(!banner.contains("2849") && !banner.contains("failing"), "{banner}");
     }
 
+    #[test_id(tvvtwea)]
     #[test]
     fn a_clean_gather_after_a_failed_one_draws_no_failure() {
         let last = Snapshot { failed: vec!["victorialogs: refused".into()], ..snap(vec![]) };
@@ -3353,6 +3431,7 @@ BATCH
         assert!(text.contains("2 sources failing: spira-lc list: exit 124 (+1 more)"), "{text}");
     }
 
+    #[test_id(twcb85o)]
     #[test]
     fn a_server_row_without_the_repo_column_fails_and_null_is_no_repo() {
         let rows: Vec<serde_json::Value> = serde_json::from_str(
@@ -3367,6 +3446,7 @@ BATCH
         assert!(repo_tag("cubby").contains("cubby") && repo_tag(&got[2].clone().unwrap()).contains('?'));
     }
 
+    #[test_id(t2ytwv0)]
     #[test]
     fn a_stored_row_without_repo_does_not_parse() {
         let row = serde_json::json!({"id":"sp-a","state":"READY","holder":null,"holds":[],"reason":null,"updated_at":1,"since":1,"lease_until":null});

@@ -96,6 +96,7 @@ fn certified_tree_exists(t: &T) -> bool {
     gate::cert::path(&t.s().run.join("verdicts"), "spira", T_ROUND).is_some_and(|p| p.exists())
 }
 
+#[test_id(t1m7ggd)]
 #[test]
 fn open_certify_land_is_one_round_the_whole_way() {
     let t = round_world();
@@ -203,6 +204,7 @@ fn open_certify_land_is_one_round_the_whole_way() {
     );
 }
 
+#[test_id(tz5woec)]
 #[test]
 fn a_land_that_waited_on_the_lock_while_another_lander_landed_the_round_answers_already_landed() {
     let t = round_world();
@@ -233,6 +235,7 @@ fn a_land_that_waited_on_the_lock_while_another_lander_landed_the_round_answers_
     assert!(!t.lc.has(&format!("land {batch}")), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(t2u2ai5)]
 #[test]
 fn land_with_the_batch_record_refused_prints_the_reason_and_exits_nonzero() {
     let t = round_world();
@@ -278,6 +281,7 @@ fn seed_suite(t: &T, name: &str) {
     fs::write(dir.join(name), "").unwrap();
 }
 
+#[test_id(t6n0dl5)]
 #[test]
 fn a_red_round_eject_naming_no_suite_is_refused_and_one_naming_a_suite_records_it() {
     let t = round_world();
@@ -315,6 +319,7 @@ fn a_red_round_eject_naming_no_suite_is_refused_and_one_naming_a_suite_records_i
     );
 }
 
+#[test_id(tni4suf)]
 #[test]
 fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_forces_gate_for_the_whole_testenv_run() {
     let t = round_world();
@@ -351,6 +356,7 @@ fn a_repo_whose_testenv_knows_only_gate_refuses_ci_and_forces_gate_for_the_whole
     assert!(t.lib.has("bead_reopen sp-b eject-red gate"), "{:?}", t.err());
 }
 
+#[test_id(twbsqdr)]
 #[test]
 fn a_ci_entry_red_forces_the_declared_default_tier_not_the_result_name() {
     let t = round_world();
@@ -377,6 +383,7 @@ fn a_ci_entry_red_forces_the_declared_default_tier_not_the_result_name() {
     assert!(!comment.contains("testenv"), "{comment}");
 }
 
+#[test_id(to5se42)]
 #[test]
 fn a_ci_entry_red_on_a_tree_with_no_own_testenv_is_refused_by_name() {
     let t = round_world();
@@ -392,6 +399,7 @@ fn a_ci_entry_red_on_a_tree_with_no_own_testenv_is_refused_by_name() {
     assert!(!t.lib.has("bead_reopen") && !t.lc.has("eject-member"));
 }
 
+#[test_id(tsv4ymf)]
 #[test]
 fn an_eject_red_on_lint_is_accepted_and_forces_the_lint_step_on_recertification() {
     let t = round_world();
@@ -410,6 +418,7 @@ fn an_eject_red_on_lint_is_accepted_and_forces_the_lint_step_on_recertification(
     );
 }
 
+#[test_id(t7u8pkj)]
 #[test]
 fn an_eject_for_the_config_delta_check_is_taken_as_a_round_step() {
     // The attribution ejects a member whose merge breaks the config delta with
@@ -435,6 +444,7 @@ fn an_eject_for_the_config_delta_check_is_taken_as_a_round_step() {
     assert!(crate::ops::round::ROUND_ONLY_STEPS.contains(&"config-delta"));
 }
 
+#[test_id(tmajot0)]
 #[test]
 fn an_eject_red_on_the_release_verify_step_is_accepted_as_a_round_step() {
     let t = round_world();
@@ -450,6 +460,7 @@ fn an_eject_red_on_the_release_verify_step_is_accepted_as_a_round_step() {
     assert!(crate::ops::round::ROUND_ONLY_STEPS.contains(&"release-verify"));
 }
 
+#[test_id(tsggjaw)]
 #[test]
 fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_ones_and_changes_nothing(
 ) {
@@ -502,6 +513,7 @@ fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_on
     );
 }
 
+#[test_id(tauqy2q)]
 #[test]
 fn clearing_forced_suites_removes_the_proof_and_the_sidecar_and_is_gated_on_who_asks() {
     let t = round_world();
@@ -567,6 +579,7 @@ fn certified_round() -> (T, String) {
     (t, batch)
 }
 
+#[test_id(tpu0yoh)]
 #[test]
 fn land_records_and_closes_mending_before_activating_a_release_that_retires_keys() {
     let (t, batch) = certified_round();
@@ -581,6 +594,7 @@ fn land_records_and_closes_mending_before_activating_a_release_that_retires_keys
     assert!(!e.contains("ALARM") && !e.contains("not declared"), "{e}");
 }
 
+#[test_id(tlaha9b)]
 #[test]
 fn land_with_the_record_refused_exits_nonzero_naming_the_batch() {
     let (t, batch) = certified_round();
@@ -595,6 +609,7 @@ fn land_with_the_record_refused_exits_nonzero_naming_the_batch() {
     );
 }
 
+#[test_id(t1qux3j)]
 #[test]
 fn land_whose_record_another_landing_wrote_exits_zero() {
     let (t, batch) = certified_round();
@@ -613,6 +628,7 @@ fn land_whose_record_another_landing_wrote_exits_zero() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
 }
 
+#[test_id(tm8fmwn)]
 #[test]
 fn land_whose_landed_row_has_its_head_off_the_landing_ref_still_alarms() {
     let (t, batch) = certified_round();
@@ -622,6 +638,7 @@ fn land_whose_landed_row_has_its_head_off_the_landing_ref_still_alarms() {
     assert!(marker(&t, &batch, "unrecorded").exists());
 }
 
+#[test_id(tjt300y)]
 #[test]
 fn land_retries_a_record_that_got_no_reply() {
     let (t, batch) = certified_round();
@@ -631,6 +648,7 @@ fn land_retries_a_record_that_got_no_reply() {
     assert!(!marker(&t, &batch, "unrecorded").exists());
 }
 
+#[test_id(tojpkwb)]
 #[test]
 fn eject_then_land_rebuilds_the_head_without_the_member() {
     let t = round_world();
@@ -720,6 +738,7 @@ fn eject_then_land_rebuilds_the_head_without_the_member() {
     assert!(t.lc.has(&format!("land {batch} 9 merged-tc")));
 }
 
+#[test_id(tsnuznb)]
 #[test]
 fn a_refused_lifecycle_eject_changes_nothing() {
     let t = round_world();
@@ -748,6 +767,7 @@ fn a_refused_lifecycle_eject_changes_nothing() {
     );
 }
 
+#[test_id(tuaqro1)]
 #[test]
 fn an_eject_whose_lifecycle_write_is_locked_exits_nonzero_naming_the_lock() {
     let t = round_world();
@@ -772,6 +792,7 @@ fn an_eject_whose_lifecycle_write_is_locked_exits_nonzero_naming_the_lock() {
     );
 }
 
+#[test_id(tz7ojpo)]
 #[test]
 fn a_successful_eject_reports_the_round_and_the_remaining_count() {
     let t = round_world();
@@ -797,6 +818,7 @@ fn a_successful_eject_reports_the_round_and_the_remaining_count() {
     );
 }
 
+#[test_id(tr9sz9r)]
 #[test]
 fn ejecting_the_last_member_closes_the_round() {
     let t = round_world();
@@ -820,6 +842,7 @@ fn ejecting_the_last_member_closes_the_round() {
     assert!(!t.qfile("round").exists() && !marker(&t, &batch, "running").exists());
 }
 
+#[test_id(tkzwgii)]
 #[test]
 fn a_harness_fault_eject_naming_suites_is_not_charged() {
     let t = round_world();
@@ -852,6 +875,7 @@ fn a_harness_fault_eject_naming_suites_is_not_charged() {
     );
 }
 
+#[test_id(t4hhrmy)]
 #[test]
 fn abandon_returns_the_members_and_closes_the_round() {
     let t = round_world();
@@ -897,6 +921,7 @@ fn abandon_returns_the_members_and_closes_the_round() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
+#[test_id(tdzc779)]
 #[test]
 fn abandoning_a_round_stops_its_running_legs_and_records_them_in_the_reason() {
     let t = round_world();
@@ -947,6 +972,7 @@ fn abandoning_a_round_stops_its_running_legs_and_records_them_in_the_reason() {
     assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved — stopped spira-run-batcher.local-leg-attribute2.service"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(t5uu9rj)]
 #[test]
 fn an_abandon_ends_the_build_still_in_the_worktree_before_it_removes_the_tree() {
     let t = round_world();
@@ -965,6 +991,7 @@ fn an_abandon_ends_the_build_still_in_the_worktree_before_it_removes_the_tree() 
     assert!(!wt.exists(), "nothing is left at the worktree path");
 }
 
+#[test_id(t5myg7k)]
 #[test]
 fn an_abandon_that_cannot_end_the_build_keeps_the_tree() {
     let t = round_world();
@@ -986,6 +1013,7 @@ fn open_hand_round(t: &T) {
     );
 }
 
+#[test_id(t16jhbh)]
 #[test]
 fn an_abandoned_round_is_recorded_ended_for_the_process_driving_it() {
     let t = round_world();
@@ -997,6 +1025,7 @@ fn an_abandoned_round_is_recorded_ended_for_the_process_driving_it() {
     assert!(!spira_config::round_ended::is_ended(&run, "hand-2"));
 }
 
+#[test_id(tnqsvad)]
 #[test]
 fn a_refused_abandon_leaves_the_round_driven() {
     let t = round_world();
@@ -1006,6 +1035,7 @@ fn a_refused_abandon_leaves_the_round_driven() {
     assert!(!spira_config::round_ended::is_ended(&t.s().run, "hand-1"));
 }
 
+#[test_id(t1wewl7)]
 #[test]
 fn an_abandon_names_the_driver_still_holding_the_rounds_lock() {
     let t = round_world();
@@ -1016,6 +1046,7 @@ fn an_abandon_names_the_driver_still_holding_the_rounds_lock() {
     assert!(t.err().contains(&format!("pid={}", std::process::id())), "{}", t.err());
 }
 
+#[test_id(taa76qu)]
 #[test]
 fn a_leg_that_outlives_its_stop_keeps_the_round_open() {
     let t = round_world();
@@ -1062,6 +1093,7 @@ fn red_round(t: &T, members: &str) -> String {
     batch
 }
 
+#[test_id(t9nqgsp)]
 #[test]
 fn abandoning_a_red_round_of_two_members_with_no_eject_is_refused_naming_eject() {
     let t = round_world();
@@ -1081,6 +1113,7 @@ fn abandoning_a_red_round_of_two_members_with_no_eject_is_refused_naming_eject()
     assert_eq!(kv_of(&t, "round"), before);
 }
 
+#[test_id(taq0bad)]
 #[test]
 fn a_red_round_abandons_once_its_culprit_is_ejected() {
     let t = round_world();
@@ -1115,6 +1148,7 @@ fn a_red_round_abandons_once_its_culprit_is_ejected() {
     );
 }
 
+#[test_id(tsltev1)]
 #[test]
 fn a_red_round_of_one_member_abandons_as_before() {
     let t = round_world();
@@ -1128,6 +1162,7 @@ fn a_red_round_of_one_member_abandons_as_before() {
     assert_eq!(result_lines(&t, &batch)[0].1, "abandoned:hand");
 }
 
+#[test_id(tdtp4cc)]
 #[test]
 fn an_abandon_of_a_red_round_under_the_override_records_why_on_the_rounds_events() {
     let t = round_world();
@@ -1154,6 +1189,7 @@ fn an_abandon_of_a_red_round_under_the_override_records_why_on_the_rounds_events
     assert_eq!(result_lines(&t, &batch)[0].2, recorded);
 }
 
+#[test_id(t2thj0z)]
 #[test]
 fn ending_a_round_retires_the_mender_beads_filed_for_it() {
     let t = round_world();
@@ -1189,6 +1225,7 @@ fn ending_a_round_retires_the_mender_beads_filed_for_it() {
     assert!(t.lib.has("bead_close sp-m10"), "{:?}", t.lib.calls.borrow());
 }
 
+#[test_id(t7ud1mh)]
 #[test]
 fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
     let t = round_world();
@@ -1244,6 +1281,7 @@ fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
     assert!(marker(&t, "hand-4", "mender-1-gate-x.retired").exists());
 }
 
+#[test_id(t0c4oym)]
 #[test]
 fn a_working_mender_that_also_holds_an_ask_is_kept_when_the_round_is_abandoned() {
     let t = round_world();
@@ -1285,6 +1323,7 @@ fn a_working_mender_that_also_holds_an_ask_is_kept_when_the_round_is_abandoned()
     assert!(!marker(&t, "hand-6", "mender-1-gate-x.retired").exists());
 }
 
+#[test_id(tkwy2la)]
 #[test]
 fn a_working_mender_with_no_commit_is_closed_when_the_round_is_abandoned() {
     let t = round_world();
@@ -1314,6 +1353,7 @@ fn a_working_mender_with_no_commit_is_closed_when_the_round_is_abandoned() {
     assert!(marker(&t, "hand-7", "mender-1-gate-x.retired").exists());
 }
 
+#[test_id(t9f4ese)]
 #[test]
 fn a_working_mender_holding_a_tip_is_kept_when_the_round_is_abandoned() {
     let t = round_world();
@@ -1344,6 +1384,7 @@ fn a_working_mender_holding_a_tip_is_kept_when_the_round_is_abandoned() {
     assert!(!marker(&t, "hand-8", "mender-1-gate-x.retired").exists());
 }
 
+#[test_id(tsvxbew)]
 #[test]
 fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut() {
     let t = round_world();
@@ -1419,6 +1460,7 @@ fn abandoning_a_round_keeps_a_mender_that_holds_a_submitted_fix_for_the_next_cut
     assert!(marker(&t, "hand-5", "mender-1-gate-y.retired").exists());
 }
 
+#[test_id(t4y0wio)]
 #[test]
 fn a_later_round_event_keeps_a_submitted_mender_of_a_batch_already_closed() {
     let t = round_world();
@@ -1463,6 +1505,7 @@ fn a_later_round_event_keeps_a_submitted_mender_of_a_batch_already_closed() {
     assert!(!marker(&t, "old-2", "mender-1-gate-x.retired").exists());
 }
 
+#[test_id(trcp07o)]
 #[test]
 fn a_later_round_event_retires_the_mender_beads_of_batches_already_closed() {
     let t = round_world();
@@ -1508,6 +1551,7 @@ fn a_later_round_event_retires_the_mender_beads_of_batches_already_closed() {
     assert!(!marker(&t, "live-1", "mender-1-gate-y.retired").exists());
 }
 
+#[test_id(tocm85g)]
 #[test]
 fn abandon_of_a_batch_the_lifecycle_already_abandoned_drops_the_record() {
     let t = round_world();
@@ -1532,6 +1576,7 @@ fn abandon_of_a_batch_the_lifecycle_already_abandoned_drops_the_record() {
     assert_eq!(result_lines(&t, "hand-1")[0].1, "abandoned:hand");
 }
 
+#[test_id(t914gjk)]
 #[test]
 fn abandon_carries_the_callers_cause_word_into_the_result_line() {
     let t = round_world();
@@ -1567,6 +1612,7 @@ fn abandon_carries_the_callers_cause_word_into_the_result_line() {
     );
 }
 
+#[test_id(taxcg4c)]
 #[test]
 fn sweep_locks_removes_only_the_locks_of_batches_spira_lc_reports_terminal() {
     let t = round_world();
@@ -1621,6 +1667,7 @@ fn sweep_locks_removes_only_the_locks_of_batches_spira_lc_reports_terminal() {
     );
 }
 
+#[test_id(tqcrf6p)]
 #[test]
 fn abandon_requeues_a_member_the_batch_abandon_left_in_delivery() {
     let t = round_world();
@@ -1667,6 +1714,7 @@ fn abandon_requeues_a_member_the_batch_abandon_left_in_delivery() {
     );
 }
 
+#[test_id(tjty8b1)]
 #[test]
 fn abandon_rereads_and_retries_a_requeue_refused_for_a_stale_version() {
     let t = round_world();
@@ -1714,6 +1762,7 @@ fn abandon_rereads_and_retries_a_requeue_refused_for_a_stale_version() {
     );
 }
 
+#[test_id(tid6edn)]
 #[test]
 fn abandon_accepts_a_member_another_writer_moved_out_of_delivery() {
     let t = round_world();
@@ -1754,6 +1803,7 @@ fn abandon_accepts_a_member_another_writer_moved_out_of_delivery() {
     assert!(t.out().contains("sp-a: REWORK"), "{}", t.out());
 }
 
+#[test_id(tcaunro)]
 #[test]
 fn open_skips_what_is_not_certified_or_does_not_merge() {
     let t = round_world();
@@ -1802,6 +1852,7 @@ fn open_skips_what_is_not_certified_or_does_not_merge() {
     );
 }
 
+#[test_id(tis9lja)]
 #[test]
 fn open_rebases_a_member_that_conflicts_with_the_round_onto_its_head() {
     let t = round_world();
@@ -1854,6 +1905,7 @@ fn block(t: &T, id: &str, by: &[&str]) {
     }
 }
 
+#[test_id(tkma5fh)]
 #[test]
 fn open_refuses_a_member_given_at_a_tip_other_than_its_recorded_tip_and_creates_no_round() {
     let t = round_world();
@@ -1871,6 +1923,7 @@ fn open_refuses_a_member_given_at_a_tip_other_than_its_recorded_tip_and_creates_
     assert!(!t.lc.has("cut") && !t.qfile("round").exists());
 }
 
+#[test_id(tu7bg4p)]
 #[test]
 fn open_refuses_every_member_it_cannot_admit_in_one_message() {
     let t = round_world();
@@ -1887,6 +1940,7 @@ fn open_refuses_every_member_it_cannot_admit_in_one_message() {
     );
 }
 
+#[test_id(t0kikyz)]
 #[test]
 fn open_refuses_a_space_separated_members_value() {
     let t = round_world();
@@ -1900,6 +1954,7 @@ fn open_refuses_a_space_separated_members_value() {
     assert!(!t.lc.has("cut") && !t.qfile("round").exists());
 }
 
+#[test_id(t59vkun)]
 #[test]
 fn open_refuses_a_member_token_that_runs_two_pairs_together() {
     let t = round_world();
@@ -1913,6 +1968,7 @@ fn open_refuses_a_member_token_that_runs_two_pairs_together() {
     assert!(!t.qfile("round").exists());
 }
 
+#[test_id(txd5qi9)]
 #[test]
 fn open_skips_a_member_whose_blocker_has_not_landed_and_names_it() {
     let t = round_world();
@@ -1930,6 +1986,7 @@ fn open_skips_a_member_whose_blocker_has_not_landed_and_names_it() {
     );
 }
 
+#[test_id(t3us08o)]
 #[test]
 fn open_admits_a_member_with_its_blocker_in_the_same_round_blocker_first() {
     let t = round_world();
@@ -1940,6 +1997,7 @@ fn open_admits_a_member_with_its_blocker_in_the_same_round_blocker_first() {
     assert!(members.find("sp-a:").unwrap() < members.find("sp-b:").unwrap(), "blocker merges first: {members}");
 }
 
+#[test_id(txvhuj9)]
 #[test]
 fn open_admits_a_member_whose_blocker_has_landed() {
     let t = round_world();
@@ -1953,6 +2011,7 @@ fn open_admits_a_member_whose_blocker_has_landed() {
     assert!(t.out().contains("members=sp-a:ta sp-b:tb"), "{}", t.out());
 }
 
+#[test_id(t7aihe8)]
 #[test]
 fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     let t = round_world();
@@ -1988,6 +2047,7 @@ fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     );
 }
 
+#[test_id(tk84dhi)]
 #[test]
 fn open_admits_a_stale_member_the_merge_takes_without_a_skip() {
     let t = round_world();
@@ -2001,6 +2061,7 @@ fn open_admits_a_stale_member_the_merge_takes_without_a_skip() {
     assert!(t.out().contains("members=sp-a:ta sp-b:tb"), "{}", t.out());
 }
 
+#[test_id(thxf9tg)]
 #[test]
 fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
     for ignored in [false, true] {
@@ -2032,6 +2093,7 @@ fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
     }
 }
 
+#[test_id(t35s4u8)]
 #[test]
 fn open_whose_record_cannot_be_written_abandons_the_batch_it_cut() {
     let t = round_world();
@@ -2056,6 +2118,7 @@ fn open_whose_record_cannot_be_written_abandons_the_batch_it_cut() {
     );
 }
 
+#[test_id(twx6v9q)]
 #[test]
 fn open_whose_cut_answers_a_deadline_after_committing_is_a_round_not_a_failure() {
     let t = round_world();
@@ -2070,6 +2133,7 @@ fn open_whose_cut_answers_a_deadline_after_committing_is_a_round_not_a_failure()
     assert!(!t.lc.has("requeue-orphans"));
 }
 
+#[test_id(t1tfoyl)]
 #[test]
 fn open_whose_cut_is_refused_sweeps_orphans() {
     let t = round_world();
@@ -2083,6 +2147,7 @@ fn open_whose_cut_is_refused_sweeps_orphans() {
     assert!(t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(t3us8yo)]
 #[test]
 fn the_orphan_sweep_is_told_which_rounds_have_a_live_leg() {
     let t = round_world();
@@ -2100,6 +2165,7 @@ fn the_orphan_sweep_is_told_which_rounds_have_a_live_leg() {
     );
 }
 
+#[test_id(tqgkzvm)]
 #[test]
 fn open_admits_a_submitted_member_its_full_suite_certifies() {
     // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
@@ -2119,6 +2185,7 @@ fn open_admits_a_submitted_member_its_full_suite_certifies() {
     assert!(t.lc.has("cut"), "the round is recorded as a batch");
 }
 
+#[test_id(t6mb365)]
 #[test]
 fn open_admits_a_certified_and_an_unheld_submitted_member_recording_the_second_provisional() {
     let t = round_world();
@@ -2131,6 +2198,7 @@ fn open_admits_a_certified_and_an_unheld_submitted_member_recording_the_second_p
     assert!(t.out().lines().any(|l| l == "provisional=sp-s"), "{}", t.out());
 }
 
+#[test_id(trp10i4)]
 #[test]
 fn open_cuts_a_round_for_a_lone_submitted_member() {
     let t = round_world();
@@ -2140,6 +2208,7 @@ fn open_cuts_a_round_for_a_lone_submitted_member() {
     assert_eq!(kv_of(&t, "round")["provisional"], "sp-s");
 }
 
+#[test_id(tw0jsx3)]
 #[test]
 fn stage_admits_a_submitted_member_recording_it_provisional() {
     let t = round_world();
@@ -2152,6 +2221,7 @@ fn stage_admits_a_submitted_member_recording_it_provisional() {
     assert_eq!(kv_of(&t, "round-staged")["provisional"], "sp-s");
 }
 
+#[test_id(tvnwam0)]
 #[test]
 fn open_and_stage_refuse_a_held_submitted_member_naming_the_hold_but_let_a_person_past_a_manual_one() {
     for kind in ["manual", "wait", "ask", "poison"] {
@@ -2175,6 +2245,7 @@ fn open_and_stage_refuse_a_held_submitted_member_naming_the_hold_but_let_a_perso
     assert_eq!(t.run(&["round", "open", "--members", "sp-s:ts", "--by", "concierge"]), 1, "a wait hold binds a person too");
 }
 
+#[test_id(t8ro6l5)]
 #[test]
 fn stage_refuses_a_submitted_member_at_a_stale_tip() {
     let t = round_world();
@@ -2184,6 +2255,7 @@ fn stage_refuses_a_submitted_member_at_a_stale_tip() {
     assert!(t.out().contains("sp-s: other is not its row's tip ts"), "{}", t.out());
 }
 
+#[test_id(txptlyt)]
 #[test]
 fn open_still_refuses_a_submitted_member_at_its_ejected_red_tip() {
     let t = round_world();
@@ -2194,6 +2266,7 @@ fn open_still_refuses_a_submitted_member_at_its_ejected_red_tip() {
     assert!(!t.lc.has("cut"));
 }
 
+#[test_id(tza5uk5)]
 #[test]
 fn stage_merges_a_blocker_named_after_its_dependant_ahead_of_it() {
     let t = round_world();
@@ -2204,6 +2277,7 @@ fn stage_merges_a_blocker_named_after_its_dependant_ahead_of_it() {
     assert!(members.find("sp-a:").unwrap() < members.find("sp-b:").unwrap(), "blocker first: {members}");
 }
 
+#[test_id(tjgpjlp)]
 #[test]
 fn round_eject_says_the_row_decides_when_the_reopen_did_not_complete() {
     let t = round_world();
@@ -2214,6 +2288,7 @@ fn round_eject_says_the_row_decides_when_the_reopen_did_not_complete() {
     assert!(t.err().contains("bead_reopen did not complete for sp-a"), "{}", t.err());
 }
 
+#[test_id(t0cw7v8)]
 #[test]
 fn eject_of_a_blocker_takes_its_same_round_dependant_with_it_naming_the_blocker() {
     let t = round_world();
@@ -2251,6 +2326,7 @@ pub(super) fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
         .unwrap();
 }
 
+#[test_id(typ2e9g)]
 #[test]
 fn open_skips_a_member_at_a_tip_that_already_went_red_in_a_batch() {
     let t = round_world();
@@ -2268,6 +2344,7 @@ fn open_skips_a_member_at_a_tip_that_already_went_red_in_a_batch() {
     assert!(!t.qfile("round").exists());
 }
 
+#[test_id(tag4cqb)]
 #[test]
 fn a_second_round_is_refused_until_the_first_is_closed() {
     let t = round_world();
@@ -2292,6 +2369,7 @@ fn a_second_round_is_refused_until_the_first_is_closed() {
     );
 }
 
+#[test_id(t6km45i)]
 #[test]
 fn certify_never_reads_a_harness_fault_as_green_or_red() {
     let t = round_world();
@@ -2335,6 +2413,7 @@ fn certify_never_reads_a_harness_fault_as_green_or_red() {
     );
 }
 
+#[test_id(tjih5of)]
 #[test]
 fn a_round_vm_exit_names_the_failure_the_vm_logged() {
     let t = round_world();
@@ -2361,6 +2440,7 @@ fn a_round_vm_exit_names_the_failure_the_vm_logged() {
     );
 }
 
+#[test_id(tfsx9dq)]
 #[test]
 fn a_fixture_fault_is_the_round_cause_and_suite_fail_lines_are_not() {
     let t = round_world();
@@ -2389,6 +2469,7 @@ fn a_fixture_fault_is_the_round_cause_and_suite_fail_lines_are_not() {
     assert!(!err.contains("round-vm exited 3: FAIL"), "{err}");
 }
 
+#[test_id(tmkro4x)]
 #[test]
 fn a_pass_whose_tests_overran_the_cap_is_a_fault_even_with_every_verdict_in() {
     let t = round_world();
@@ -2473,6 +2554,7 @@ fn no_attribution(t: &T) {
     );
 }
 
+#[test_id(tzrypu9)]
 #[test]
 fn an_over_cap_pass_with_a_killed_unit_test_ejects_nobody_and_recertifies_once() {
     for first_rc in [2, 1] {
@@ -2517,6 +2599,7 @@ fn an_over_cap_pass_with_a_killed_unit_test_ejects_nobody_and_recertifies_once()
     }
 }
 
+#[test_id(ta6mbil)]
 #[test]
 fn a_second_over_cap_on_the_same_head_is_a_capacity_fault_and_ejects_nobody() {
     let t = round_world();
@@ -2580,6 +2663,7 @@ fn a_second_over_cap_on_the_same_head_is_a_capacity_fault_and_ejects_nobody() {
     no_attribution(&t);
 }
 
+#[test_id(tnnwjs7)]
 #[test]
 fn a_pass_the_unit_tier_ended_before_any_suite_is_judged_red_on_unit_tests_not_faulted() {
     let t = round_world();
@@ -2635,6 +2719,7 @@ fn a_pass_the_unit_tier_ended_before_any_suite_is_judged_red_on_unit_tests_not_f
     );
 }
 
+#[test_id(t58rqv9)]
 #[test]
 fn certify_faults_on_an_unreadable_or_missing_suite_verdict() {
     let t = round_world();
@@ -2683,6 +2768,7 @@ fn certify_faults_on_an_unreadable_or_missing_suite_verdict() {
     assert!(certified_tree_exists(&t));
 }
 
+#[test_id(t7x5wb8)]
 #[test]
 fn certify_records_a_lint_or_fence_red_that_ended_the_pass_before_any_suite_ran() {
     for red in ["spira-lint", "fence-boundary"] {
@@ -2690,6 +2776,7 @@ fn certify_records_a_lint_or_fence_red_that_ended_the_pass_before_any_suite_ran(
     }
 }
 
+#[test_id(tll1qwv)]
 #[test]
 fn certify_names_the_phase_and_first_failing_line_of_a_lint_red() {
     let t = round_world();
@@ -2759,6 +2846,7 @@ fn lint_red_world() -> (T, String, std::path::PathBuf) {
     (t, batch, results)
 }
 
+#[test_id(thxhhmn)]
 #[test]
 fn certify_writes_the_deny_list_before_round_vm_takes_a_vm_and_hands_it_over() {
     let (t, batch, results) = lint_red_world();
@@ -2778,6 +2866,7 @@ fn certify_writes_the_deny_list_before_round_vm_takes_a_vm_and_hands_it_over() {
     );
 }
 
+#[test_id(t6pnikq)]
 #[test]
 fn certify_with_place_host_pins_its_round_vm_to_the_host_and_without_it_does_not() {
     let (t, batch, _) = lint_red_world();
@@ -2788,6 +2877,7 @@ fn certify_with_place_host_pins_its_round_vm_to_the_host_and_without_it_does_not
     assert!(vm[0].contains(" place=host") && !vm[1].contains(" place=host"), "{vm:?}");
 }
 
+#[test_id(t1k4db3)]
 #[test]
 fn certify_refuses_a_place_other_than_host() {
     let (t, batch, _) = lint_red_world();
@@ -2795,6 +2885,7 @@ fn certify_refuses_a_place_other_than_host() {
     assert!(t.err().contains("--place takes `host`"), "{}", t.err());
 }
 
+#[test_id(t39tz14)]
 #[test]
 fn a_second_certify_pass_keeps_the_round_deny_list_with_its_flip_rows() {
     let (t, batch, results) = lint_red_world();
@@ -2811,6 +2902,7 @@ fn a_second_certify_pass_keeps_the_round_deny_list_with_its_flip_rows() {
     );
 }
 
+#[test_id(tv2mcsd)]
 #[test]
 fn certify_takes_no_vm_when_the_deny_list_cannot_be_resolved() {
     let (t, batch, results) = lint_red_world();
@@ -2852,6 +2944,7 @@ fn judged_red_world() -> (T, String) {
     (t, batch)
 }
 
+#[test_id(tuf9o1g)]
 #[test]
 fn a_suites_boundary_after_the_pass_is_judged_is_ignored_and_exits_ok() {
     let (t, batch) = judged_red_world();
@@ -2875,6 +2968,7 @@ fn a_suites_boundary_after_the_pass_is_judged_is_ignored_and_exits_ok() {
     assert_eq!(round_phase(&t), "ATTRIBUTING");
 }
 
+#[test_id(t99dlt2)]
 #[test]
 fn a_failed_suite_after_the_pass_is_judged_is_ignored_files_no_mender_and_exits_ok() {
     let (t, batch) = judged_red_world();
@@ -2901,6 +2995,7 @@ fn a_failed_suite_after_the_pass_is_judged_is_ignored_files_no_mender_and_exits_
     );
 }
 
+#[test_id(t33z7a7)]
 #[test]
 fn a_boundary_the_machine_refuses_for_another_reason_still_fails() {
     let (t, batch) = judged_red_world();
@@ -2909,6 +3004,7 @@ fn a_boundary_the_machine_refuses_for_another_reason_still_fails() {
     assert!(t.err().contains("IllegalTransition"), "{}", t.err());
 }
 
+#[test_id(tp683fx)]
 #[test]
 fn pass_start_from_attributing_starts_the_next_pass_without_a_rebuild() {
     let (t, batch) = judged_red_world();
@@ -2925,6 +3021,7 @@ fn pass_start_from_attributing_starts_the_next_pass_without_a_rebuild() {
     );
 }
 
+#[test_id(t57ff2n)]
 #[test]
 fn certify_ends_red_on_a_lint_red_the_round_vm_recorded_and_re_drives_pass_two() {
     let t = round_world();
@@ -2998,6 +3095,7 @@ fn certify_ends_red_on_a_lint_red_the_round_vm_recorded_and_re_drives_pass_two()
     );
 }
 
+#[test_id(tnl6ii1)]
 #[test]
 fn the_blocking_only_reader_passed_what_unjudgeable_now_refuses() {
     let found = vec![
@@ -3006,15 +3104,16 @@ fn the_blocking_only_reader_passed_what_unjudgeable_now_refuses() {
     ];
     let old_reds: Vec<_> = found
         .iter()
-        .filter(|(_, s)| super::super::ops::round::BLOCKING.contains(&s.as_str()))
+        .filter(|(_, s)| super::super::super::ops::round::BLOCKING.contains(&s.as_str()))
         .collect();
     assert!(
         old_reds.is_empty(),
         "control: the old reader found nothing wrong"
     );
-    assert!(super::super::ops::round::unjudgeable(&testkit::TempDir::new("round-unjudgeable").join("nonexistent"), &found).is_some());
+    assert!(super::super::super::ops::round::unjudgeable(&testkit::TempDir::new("round-unjudgeable").join("nonexistent"), &found).is_some());
 }
 
+#[test_id(trwjhwt)]
 #[test]
 fn an_attestation_of_a_corpus_that_ran_nothing_is_refused() {
     let t = round_world();
@@ -3038,6 +3137,7 @@ fn an_attestation_of_a_corpus_that_ran_nothing_is_refused() {
     assert!(!certified_tree_exists(&t));
 }
 
+#[test_id(tec8fl4)]
 #[test]
 fn a_green_round_names_how_many_suites_it_ran() {
     let t = round_world();
@@ -3065,6 +3165,7 @@ fn a_green_round_names_how_many_suites_it_ran() {
     assert!(t.out().contains("ran=7 wall="), "{}", t.out());
 }
 
+#[test_id(telx2bv)]
 #[test]
 fn attest_names_the_worktrees_own_head_and_nothing_else() {
     let t = round_world();
@@ -3125,6 +3226,7 @@ fn attest_names_the_worktrees_own_head_and_nothing_else() {
         .all(|c| !c.starts_with("round-vm")));
 }
 
+#[test_id(tyxwwfn)]
 #[test]
 fn round_verbs_belong_to_queue_local() {
     let t = T::new(LandMode::Queue);
@@ -3135,6 +3237,7 @@ fn round_verbs_belong_to_queue_local() {
     assert!(t.out().contains("round=none"), "{}", t.out());
 }
 
+#[test_id(tt0m14m)]
 #[test]
 fn a_caller_holding_the_lock_runs_the_verbs_under_it() {
     let t = round_world();
@@ -3275,6 +3378,7 @@ fn hand_abandon_never_waits(tries: &[bool]) -> Result<(), String> {
     }
 }
 
+#[test_id(tbsykky)]
 #[test]
 fn each_round_verb_holds_the_queue_lock_only_for_its_own_transition_so_a_hand_abandon_gets_in_at_once(
 ) {
@@ -3311,6 +3415,7 @@ fn each_round_verb_holds_the_queue_lock_only_for_its_own_transition_so_a_hand_ab
     );
 }
 
+#[test_id(t5xcsi7)]
 #[test]
 fn a_caller_that_holds_the_lock_across_the_verbs_as_the_batcher_does_shuts_the_hand_abandon_out() {
     let t = round_world();
@@ -3327,6 +3432,7 @@ fn a_caller_that_holds_the_lock_across_the_verbs_as_the_batcher_does_shuts_the_h
         .contains("took no lock of its own"));
 }
 
+#[test_id(tn9th3o)]
 #[test]
 fn eject_also_ejects_the_members_stacked_on_the_ejected_one() {
     let t = round_world();
@@ -3388,6 +3494,7 @@ fn events_of(t: &T, batch: &str) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tu4spmz)]
 #[test]
 fn a_red_pass_the_batch_row_refuses_is_a_fault_not_a_local_red() {
     let t = round_world();
@@ -3414,6 +3521,7 @@ fn a_red_pass_the_batch_row_refuses_is_a_fault_not_a_local_red() {
     );
 }
 
+#[test_id(t9e5068)]
 #[test]
 fn certify_hands_the_batch_and_repo_to_round_vm_to_record_its_boundaries() {
     let t = round_world();
@@ -3438,6 +3546,7 @@ fn certify_hands_the_batch_and_repo_to_round_vm_to_record_its_boundaries() {
     );
 }
 
+#[test_id(ts2vaio)]
 #[test]
 fn a_second_certify_of_a_batch_already_being_certified_is_refused_naming_the_holder() {
     let t = round_world();
@@ -3470,6 +3579,7 @@ fn a_second_certify_of_a_batch_already_being_certified_is_refused_naming_the_hol
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
 }
 
+#[test_id(tkl60cv)]
 #[test]
 fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
     let t = round_world();
@@ -3548,6 +3658,7 @@ fn place_file(place: &str, why: &str) -> Vec<(String, String)> {
     vec![("runner.place".into(), format!("place={place}\nwhy={why}\nio_full_avg300=\ncpu_some_avg300=\n"))]
 }
 
+#[test_id(tv4fiug)]
 #[test]
 fn every_pass_names_its_runner_and_a_move_between_runners_in_verdict_log_event_and_status() {
     let t = round_world();
@@ -3601,6 +3712,7 @@ fn every_pass_names_its_runner_and_a_move_between_runners_in_verdict_log_event_a
     assert!(green.contains("runner=ec2") && !green.contains("runner_changed"), "{green}");
 }
 
+#[test_id(tuxja87)]
 #[test]
 fn a_green_pass_on_the_host_names_the_host_in_its_verdict_and_landing_log_line() {
     let t = round_world();
@@ -3619,6 +3731,7 @@ fn a_green_pass_on_the_host_names_the_host_in_its_verdict_and_landing_log_line()
 const TREE_WITH_B: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TREE_WITHOUT_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
+#[test_id(t3ox9g5)]
 #[test]
 fn the_round_record_names_the_tree_each_pass_built_from() {
     let t = round_world();
@@ -3658,6 +3771,7 @@ fn the_round_record_names_the_tree_each_pass_built_from() {
     );
 }
 
+#[test_id(twmshra)]
 #[test]
 fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
     let t = round_world();
@@ -3686,6 +3800,7 @@ fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
     );
 }
 
+#[test_id(t3c1dck)]
 #[test]
 fn suites_started_re_reads_and_survives_repeated_stale_versions() {
     let t = round_world();
@@ -3717,6 +3832,7 @@ fn suites_started_re_reads_and_survives_repeated_stale_versions() {
     assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
 }
 
+#[test_id(tab81s7)]
 #[test]
 fn a_repeated_suites_started_for_one_pass_is_a_no_op_success() {
     let t = round_world();
@@ -3746,6 +3862,7 @@ fn a_repeated_suites_started_for_one_pass_is_a_no_op_success() {
     );
 }
 
+#[test_id(tvns6pa)]
 #[test]
 fn suites_started_outside_the_build_phase_of_a_pass_still_refuses() {
     let t = round_world();
@@ -3769,6 +3886,7 @@ fn suites_started_outside_the_build_phase_of_a_pass_still_refuses() {
     assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
 }
 
+#[test_id(tonqfgq)]
 #[test]
 fn the_pass_verbs_record_a_hand_driven_pass_like_the_batchers() {
     let t = round_world();
@@ -3815,6 +3933,7 @@ fn the_pass_verbs_record_a_hand_driven_pass_like_the_batchers() {
     );
 }
 
+#[test_id(tayf2ab)]
 #[test]
 fn a_pass_verb_out_of_phase_is_sent_so_the_machine_can_refuse_it_by_name() {
     let t = round_world();
@@ -3847,6 +3966,7 @@ fn a_pass_verb_out_of_phase_is_sent_so_the_machine_can_refuse_it_by_name() {
     );
 }
 
+#[test_id(t6ppm7k)]
 #[test]
 fn a_pass_left_open_is_closed_incomplete_so_the_next_certify_starts_cleanly() {
     let t = round_world();
@@ -3904,6 +4024,7 @@ fn pass_world() -> (T, String) {
     (t, batch)
 }
 
+#[test_id(t9q1qr1)]
 #[test]
 fn an_eject_with_no_suite_and_no_red_reopens_with_cause_eject() {
     let t = round_world();
@@ -3915,6 +4036,7 @@ fn an_eject_with_no_suite_and_no_red_reopens_with_cause_eject() {
     assert!(t.lib.has("bead_reopen sp-b eject"), "{:?}", t.lib.calls.borrow());
 }
 
+#[test_id(tuyhz9u)]
 #[test]
 fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed() {
     let (t, batch) = pass_world();
@@ -3929,6 +4051,7 @@ fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed
     assert!(!t.lc.has("eject-member"));
 }
 
+#[test_id(tio19bj)]
 #[test]
 fn an_eject_refused_because_a_pass_started_after_the_check_exits_pass_running() {
     let (t, batch) = pass_world();
@@ -3974,11 +4097,13 @@ fn assert_eject_refused_while_the_pass_builds(extra: &[&str]) {
     assert!(events_of(&t, &batch).iter().any(|e| e.starts_with("{\"PassRed\"")), "PassRed is sent");
 }
 
+#[test_id(towvram)]
 #[test]
 fn eject_refuses_while_the_lifecycle_row_says_a_pass_is_running_though_no_scope_exists() {
     assert_eject_refused_while_the_pass_builds(&[]);
 }
 
+#[test_id(tw3lhvr)]
 #[test]
 fn the_batchers_lease_token_does_not_get_an_eject_past_a_running_pass() {
     let (t, batch) = build_phase_world();
@@ -3992,6 +4117,7 @@ fn the_batchers_lease_token_does_not_get_an_eject_past_a_running_pass() {
     assert!(!t.lc.has("eject-member"));
 }
 
+#[test_id(tcv6yan)]
 #[test]
 fn eject_refuses_when_the_lifecycle_row_cannot_be_read() {
     let (t, batch) = build_phase_world();
@@ -4001,6 +4127,7 @@ fn eject_refuses_when_the_lifecycle_row_cannot_be_read() {
     assert!(!t.lc.has("eject-member"));
 }
 
+#[test_id(tsqpiri)]
 #[test]
 fn an_attributing_red_round_admits_an_eject_of_a_member() {
     let t = round_world();
@@ -4012,6 +4139,7 @@ fn an_attributing_red_round_admits_an_eject_of_a_member() {
     assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tzojc90)]
 #[test]
 fn a_running_pass_refuses_eject_naming_the_env_exit_and_that_exit_abandons() {
     let (t, batch) = pass_world();
@@ -4025,6 +4153,7 @@ fn a_running_pass_refuses_eject_naming_the_env_exit_and_that_exit_abandons() {
     assert!(t.lc.has(&format!("abandon-batch {batch}")), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tsaobmx)]
 #[test]
 fn abandoning_a_red_round_whose_pass_runs_does_not_offer_eject() {
     let t = round_world();
@@ -4087,6 +4216,7 @@ fn staged_behind_green() -> (T, String, String) {
     (t, n, "spira-staged".into())
 }
 
+#[test_id(tvk6pky)]
 #[test]
 fn a_stage_refuses_naming_the_gate_timeout_key_when_it_does_not_resolve_and_runs_no_gate() {
     let mut t = round_world();
@@ -4107,6 +4237,7 @@ fn a_stage_refuses_naming_the_gate_timeout_key_when_it_does_not_resolve_and_runs
     assert_eq!(gates(&t), before);
 }
 
+#[test_id(tnx7pdh)]
 #[test]
 fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     let (t, n, s) = staged_behind_green();
@@ -4172,6 +4303,7 @@ fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     );
 }
 
+#[test_id(t33i0ef)]
 #[test]
 fn stage_refuses_without_an_open_round_and_skips_the_open_rounds_own_members() {
     let t = round_world();
@@ -4188,6 +4320,7 @@ fn stage_refuses_without_an_open_round_and_skips_the_open_rounds_own_members() {
     assert!(!t.qfile("round-staged").exists());
 }
 
+#[test_id(tst8bs2)]
 #[test]
 fn fences_red_on_the_staged_head_stage_nothing() {
     let t = round_world();
@@ -4206,6 +4339,7 @@ fn fences_red_on_the_staged_head_stage_nothing() {
     );
 }
 
+#[test_id(t3xk4c3)]
 #[test]
 fn staging_runs_its_fences_with_the_queue_lock_free() {
     let t = round_world();
@@ -4229,6 +4363,7 @@ fn staging_runs_its_fences_with_the_queue_lock_free() {
     );
 }
 
+#[test_id(txz06w0)]
 #[test]
 fn a_stage_refuses_to_start_while_another_stage_is_running_its_fences() {
     let t = round_world();
@@ -4250,6 +4385,7 @@ fn a_stage_refuses_to_start_while_another_stage_is_running_its_fences() {
         .any(|c| c.starts_with("gate ")));
 }
 
+#[test_id(ts7hzir)]
 #[test]
 fn a_stage_whose_slot_was_taken_during_its_fences_is_not_staged_and_cleans_up() {
     let t = round_world();
@@ -4276,6 +4412,7 @@ fn a_stage_whose_slot_was_taken_during_its_fences_is_not_staged_and_cleans_up() 
     );
 }
 
+#[test_id(th1j28a)]
 #[test]
 fn a_no_verdict_fence_is_infra_and_leaves_the_stage_retryable() {
     let t = round_world();
@@ -4295,6 +4432,7 @@ fn a_no_verdict_fence_is_infra_and_leaves_the_stage_retryable() {
     assert!(!t.qfile("round-staged").exists() && !t.lc.has("stage "));
 }
 
+#[test_id(t1uiikb)]
 #[test]
 fn the_staged_round_is_tested_only_once_the_round_ahead_is_green() {
     let t = round_world();
@@ -4316,6 +4454,7 @@ fn the_staged_round_is_tested_only_once_the_round_ahead_is_green() {
     assert_eq!(vm_runs(&t), 0);
 }
 
+#[test_id(tyy8ejg)]
 #[test]
 fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
     let (t, n, s) = staged_behind_green();
@@ -4390,6 +4529,7 @@ fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
 }
 
+#[test_id(t0nz35l)]
 #[test]
 fn promotion_onto_a_moved_base_gets_a_fresh_pass() {
     let (t, n, s) = staged_behind_green();
@@ -4443,6 +4583,7 @@ fn promotion_onto_a_moved_base_gets_a_fresh_pass() {
     );
 }
 
+#[test_id(tarob0m)]
 #[test]
 fn a_staged_pass_the_unit_tier_ended_before_any_suite_is_red_on_unit_tests() {
     let (t, _n, _s) = staged_behind_green();
@@ -4466,6 +4607,7 @@ fn a_staged_pass_the_unit_tier_ended_before_any_suite_is_red_on_unit_tests() {
     assert!(!t.err().contains("left no verdicts"), "{}", t.err());
 }
 
+#[test_id(tzj058f)]
 #[test]
 fn a_staged_round_whose_pass_was_red_is_not_attested() {
     let (t, n, s) = staged_behind_green();
@@ -4485,6 +4627,7 @@ fn a_staged_round_whose_pass_was_red_is_not_attested() {
     );
 }
 
+#[test_id(tg7jszi)]
 #[test]
 fn a_red_round_discards_the_stage_behind_it() {
     let t = round_world();
@@ -4530,6 +4673,7 @@ fn a_red_round_discards_the_stage_behind_it() {
     );
 }
 
+#[test_id(tufciks)]
 #[test]
 fn an_abandoned_round_discards_the_stage_behind_it() {
     let t = round_world();
@@ -4575,6 +4719,7 @@ fn an_abandoned_round_discards_the_stage_behind_it() {
     assert!(!t.qfile("round-staged").exists());
 }
 
+#[test_id(ts2kfn2)]
 #[test]
 fn promote_discards_when_the_round_it_followed_did_not_land() {
     let (t, n, s) = staged_behind_green();
@@ -4594,6 +4739,7 @@ fn promote_discards_when_the_round_it_followed_did_not_land() {
     assert!(!t.lc.has("promote ") && !t.qfile("round-staged").exists());
 }
 
+#[test_id(t10vjs8)]
 #[test]
 fn promote_waits_while_the_round_ahead_is_still_open() {
     let (t, _, _) = staged_behind_green();
@@ -4605,6 +4751,7 @@ fn promote_waits_while_the_round_ahead_is_still_open() {
     );
 }
 
+#[test_id(t0tzed6)]
 #[test]
 fn promote_discards_when_a_staged_member_moved() {
     let (t, n, s) = staged_behind_green();
@@ -4630,6 +4777,7 @@ fn promote_discards_when_a_staged_member_moved() {
     assert!(!t.qfile("round-staged").exists() && !t.lc.has("promote "));
 }
 
+#[test_id(tl3uc50)]
 #[test]
 fn round_open_discards_a_stage_whose_round_is_gone() {
     let (t, n, s) = staged_behind_green();
@@ -4654,6 +4802,7 @@ fn round_open_discards_a_stage_whose_round_is_gone() {
     );
 }
 
+#[test_id(tdzou8f)]
 #[test]
 fn a_mender_bead_carries_the_resolved_scope_label_though_the_process_env_lacks_it() {
     let mut t = round_world();
@@ -4682,6 +4831,7 @@ fn a_mender_bead_carries_the_resolved_scope_label_though_the_process_env_lacks_i
     assert!(bug.contains(" scope-fixture,mend-fixture,repo:"), "{bug}");
 }
 
+#[test_id(t0qw7jo)]
 #[test]
 fn a_mender_bead_gets_its_lifecycle_repo_at_creation() {
     let mut t = round_world();
@@ -4716,6 +4866,7 @@ fn a_mender_bead_gets_its_lifecycle_repo_at_creation() {
     );
 }
 
+#[test_id(ttn3ebg)]
 #[test]
 fn each_red_suite_files_one_mender_lane_bead_carrying_its_output_pass_and_batch() {
     let mut t = round_world();
@@ -4782,6 +4933,7 @@ fn each_red_suite_files_one_mender_lane_bead_carrying_its_output_pass_and_batch(
     );
 }
 
+#[test_id(ty48v7i)]
 #[test]
 fn a_red_that_is_a_repo_config_refusal_files_no_mender_bead_in_any_round() {
     let mut t = round_world();
@@ -4820,6 +4972,7 @@ fn a_red_that_is_a_repo_config_refusal_files_no_mender_bead_in_any_round() {
     assert_eq!(bugs, 0, "a refusal no mend can fix files nothing");
 }
 
+#[test_id(tov0f2g)]
 #[test]
 fn a_suite_going_red_mid_pass_is_a_failed_event_in_the_order_it_failed_and_the_pass_is_not_judged()
 {
@@ -4863,6 +5016,7 @@ fn a_suite_going_red_mid_pass_is_a_failed_event_in_the_order_it_failed_and_the_p
     );
 }
 
+#[test_id(tugjjl5)]
 #[test]
 fn a_red_certify_with_no_batcher_files_one_mender_per_red_suite_with_the_attribution() {
     let mut t = round_world();
@@ -4897,6 +5051,7 @@ fn a_red_certify_with_no_batcher_files_one_mender_per_red_suite_with_the_attribu
     );
 }
 
+#[test_id(t00i788)]
 #[test]
 fn certify_reds_a_pass_whose_unit_tests_failed_though_every_suite_is_ok() {
     let t = round_world();
@@ -4921,6 +5076,7 @@ fn certify_reds_a_pass_whose_unit_tests_failed_though_every_suite_is_ok() {
     );
 }
 
+#[test_id(t26ufi2)]
 #[test]
 fn certify_reds_a_failed_workspace_build_naming_the_first_compiler_error() {
     let t = round_world();
@@ -4948,6 +5104,7 @@ fn certify_reds_a_failed_workspace_build_naming_the_first_compiler_error() {
     );
 }
 
+#[test_id(txgptq4)]
 #[test]
 fn certify_saves_the_compiler_errors_of_a_failed_workspace_build_and_quotes_the_first() {
     let t = round_world();
@@ -4983,6 +5140,7 @@ fn certify_saves_the_compiler_errors_of_a_failed_workspace_build_and_quotes_the_
     );
 }
 
+#[test_id(tfd2z7o)]
 #[test]
 fn a_workspace_build_that_died_of_the_environment_is_not_the_members_red() {
     use crate::ops::round::build_environment_cause;
@@ -5013,6 +5171,7 @@ fn find_file_named(dir: &std::path::Path, name: &str) -> Option<String> {
     None
 }
 
+#[test_id(tl0fzgg)]
 #[test]
 fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() {
     let t = round_world();
@@ -5033,6 +5192,7 @@ fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() 
     assert!(t.out().contains("GREEN"), "{}", t.out());
 }
 
+#[test_id(tlee974)]
 #[test]
 fn a_wall_killed_run_whose_integration_tests_never_reported_is_not_judged() {
     let t = round_world();
@@ -5057,6 +5217,7 @@ fn a_wall_killed_run_whose_integration_tests_never_reported_is_not_judged() {
     );
 }
 
+#[test_id(thur1b7)]
 #[test]
 fn an_integration_red_beside_green_suites_is_judged_red_on_unit_tests() {
     let t = round_world();
@@ -5100,6 +5261,7 @@ fn an_integration_red_beside_green_suites_is_judged_red_on_unit_tests() {
     assert!(events.iter().any(|e| e.starts_with("{\"PassRed\"") && e.contains("\"red_suites\":[\"unit-tests\"]")), "{events:?}");
 }
 
+#[test_id(tekos3h)]
 #[test]
 fn a_green_write_that_times_out_after_applying_still_certifies_and_certify_is_idempotent() {
     let t = round_world();
@@ -5142,6 +5304,7 @@ fn a_green_write_that_times_out_after_applying_still_certifies_and_certify_is_id
     );
 }
 
+#[test_id(tvwte0v)]
 #[test]
 fn a_retry_after_a_timed_out_green_completes_the_missing_certificate() {
     let t = round_world();
@@ -5179,6 +5342,7 @@ fn a_retry_after_a_timed_out_green_completes_the_missing_certificate() {
     );
 }
 
+#[test_id(tmxyq40)]
 #[test]
 fn a_green_the_lifecycle_refuses_keeps_the_certificate_the_pass_earned() {
     let t = round_world();
@@ -5204,6 +5368,7 @@ fn a_green_the_lifecycle_refuses_keeps_the_certificate_the_pass_earned() {
     );
 }
 
+#[test_id(tnb1xm9)]
 #[test]
 fn a_green_batch_at_another_head_is_still_refused_as_changed() {
     let t = round_world();
@@ -5242,6 +5407,7 @@ fn guards_file(t: &T) -> String {
     p.to_string_lossy().into_owned()
 }
 
+#[test_id(t3c4clx)]
 #[test]
 fn a_round_eject_reason_contradicting_a_statute_is_refused_and_ejects_nothing() {
     let t = round_world();
@@ -5278,6 +5444,7 @@ fn a_round_eject_reason_contradicting_a_statute_is_refused_and_ejects_nothing() 
     assert!(!t.lib.has("bead_reopen"));
 }
 
+#[test_id(tdtu35l)]
 #[test]
 fn a_round_eject_with_an_override_reason_proceeds_and_a_touch_is_shown() {
     let t = round_world();
@@ -5326,6 +5493,7 @@ fn a_round_eject_with_an_override_reason_proceeds_and_a_touch_is_shown() {
     assert!(t.err().contains("law-touch"), "{}", t.err());
 }
 
+#[test_id(tjggzmj)]
 #[test]
 fn an_unreadable_statute_registry_refuses_a_round_eject() {
     let t = round_world();
@@ -5380,6 +5548,7 @@ fn ev_tip() -> String {
     format!("--evidence-tip={T_FIX}")
 }
 
+#[test_id(tc7ljq1)]
 #[test]
 fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
     let t = rework_world(&["manual"]);
@@ -5426,6 +5595,7 @@ fn set_row(t: &T, id: &str, f: impl Fn(&mut crate::model::LcBeadRow)) {
     t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == id).for_each(f);
 }
 
+#[test_id(t5c4s7k)]
 #[test]
 fn resubmit_at_the_ejected_red_tip_withdraws_the_red_in_one_step() {
     let t = rework_world(&["manual"]);
@@ -5456,6 +5626,7 @@ fn resubmit_at_the_ejected_red_tip_withdraws_the_red_in_one_step() {
     assert!(!format!("{}{}", t.out(), t.err()).contains("ejected-red"), "{}{}", t.out(), t.err());
 }
 
+#[test_id(tmfvak3)]
 #[test]
 fn resubmit_says_a_held_bead_is_not_cut_by_the_batcher() {
     let args = |tip_arg: &str| {
@@ -5484,6 +5655,7 @@ fn resubmit_says_a_held_bead_is_not_cut_by_the_batcher() {
     assert!(ready.out().contains("the batcher cuts it as a provisional member"), "{}", ready.out());
 }
 
+#[test_id(tkmtfre)]
 #[test]
 fn resubmit_moves_the_local_branch_to_the_new_tip() {
     let t = rework_world(&["manual"]);
@@ -5509,6 +5681,7 @@ fn resubmit_moves_the_local_branch_to_the_new_tip() {
     assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some(T_FIX));
 }
 
+#[test_id(t94vxn5)]
 #[test]
 fn resubmit_leaves_a_branch_it_already_moved_alone_when_branch_f_would_refuse() {
     let t = rework_world(&["manual"]);
@@ -5531,6 +5704,7 @@ fn resubmit_leaves_a_branch_it_already_moved_alone_when_branch_f_would_refuse() 
     assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some(T_FIX));
 }
 
+#[test_id(tqnsyta)]
 #[test]
 fn resubmit_fetches_an_absent_tip_and_refuses_when_the_fetch_brings_nothing() {
     let t = rework_world(&["manual"]);
@@ -5564,6 +5738,7 @@ fn resubmit_fetches_an_absent_tip_and_refuses_when_the_fetch_brings_nothing() {
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tlsumec)]
 #[test]
 fn an_unclaimed_ready_bead_is_resubmitted_and_its_branch_set_to_the_tip() {
     let t = rework_world(&[]);
@@ -5618,6 +5793,7 @@ fn an_unclaimed_ready_bead_is_resubmitted_and_its_branch_set_to_the_tip() {
     );
 }
 
+#[test_id(tp7hiyb)]
 #[test]
 fn a_bead_a_live_dwarf_holds_is_not_resubmitted_and_the_refusal_names_the_holder() {
     let t = rework_world(&[]);
@@ -5649,6 +5825,7 @@ fn a_bead_a_live_dwarf_holds_is_not_resubmitted_and_the_refusal_names_the_holder
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tqm78tl)]
 #[test]
 fn a_hand_mended_tip_that_fails_its_lint_is_not_retipped() {
     let t = rework_world(&["manual"]);
@@ -5673,6 +5850,7 @@ fn a_hand_mended_tip_that_fails_its_lint_is_not_retipped() {
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tn41ch4)]
 #[test]
 fn a_bead_held_by_no_one_is_not_retipped() {
     let t = rework_world(&[]);
@@ -5693,6 +5871,7 @@ fn a_bead_held_by_no_one_is_not_retipped() {
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tmbmp3i)]
 #[test]
 fn resubmit_refuses_a_stranger_a_short_tip_an_unknown_commit_and_a_non_rework_row() {
     let t = rework_world(&["manual"]);
@@ -5753,6 +5932,7 @@ fn resubmit_refuses_a_stranger_a_short_tip_an_unknown_commit_and_a_non_rework_ro
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tlbwcrv)]
 #[test]
 fn a_resubmit_without_evidence_or_with_an_evidence_tip_that_is_not_the_tip_is_refused() {
     let t = rework_world(&["manual"]);
@@ -5792,6 +5972,7 @@ fn concurrent_world() -> T {
     t
 }
 
+#[test_id(t08zk06)]
 #[test]
 fn a_second_round_with_disjoint_members_opens_beside_the_first() {
     let t = concurrent_world();
@@ -5828,6 +6009,7 @@ fn a_second_round_with_disjoint_members_opens_beside_the_first() {
     );
 }
 
+#[test_id(tf70kf2)]
 #[test]
 fn open_names_how_long_each_step_took_on_the_log_line_and_stdout() {
     let t = round_world();
@@ -5856,6 +6038,7 @@ fn open_names_how_long_each_step_took_on_the_log_line_and_stdout() {
     );
 }
 
+#[test_id(twfxouw)]
 #[test]
 fn a_refused_open_prints_the_steps_it_reached_on_stderr() {
     let t = concurrent_world();
@@ -5864,6 +6047,7 @@ fn a_refused_open_prints_the_steps_it_reached_on_stderr() {
     assert!(t.err().lines().any(|l| l == "steps=reconcile:0,lock:0"), "{}", t.err());
 }
 
+#[test_id(tzivcr2)]
 #[test]
 fn a_second_round_naming_a_member_of_an_open_round_is_refused_naming_it() {
     let t = concurrent_world();
@@ -5886,6 +6070,7 @@ fn a_second_round_naming_a_member_of_an_open_round_is_refused_naming_it() {
     assert!(!t.qfile("round.r-2").exists());
 }
 
+#[test_id(tpp3ufr)]
 #[test]
 fn a_duplicate_identical_member_pair_opens_one_member() {
     let t = concurrent_world();
@@ -5905,6 +6090,7 @@ fn a_duplicate_identical_member_pair_opens_one_member() {
     assert_eq!(kv_of(&t, "round")["members"], "sp-a:ta sp-b:tb");
 }
 
+#[test_id(t7wafq3)]
 #[test]
 fn an_abbreviated_and_a_full_tip_of_one_id_are_one_member_at_the_longer() {
     let t = concurrent_world();
@@ -5924,6 +6110,7 @@ fn an_abbreviated_and_a_full_tip_of_one_id_are_one_member_at_the_longer() {
     assert_eq!(kv_of(&t, "round")["members"], "sp-a:ta sp-b:tb");
 }
 
+#[test_id(tbu4ssk)]
 #[test]
 fn one_id_at_two_tips_is_refused_naming_both() {
     let t = concurrent_world();
@@ -5948,6 +6135,7 @@ fn one_id_at_two_tips_is_refused_naming_both() {
     assert!(!t.qfile("round.r-1").exists());
 }
 
+#[test_id(to9mhjc)]
 #[test]
 fn the_open_past_the_limit_is_refused() {
     let t = concurrent_world();
@@ -5975,6 +6163,7 @@ fn the_open_past_the_limit_is_refused() {
     );
 }
 
+#[test_id(tvb0v6c)]
 #[test]
 fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed() {
     let t = concurrent_world();
@@ -6039,6 +6228,7 @@ fn two_green_stacked_rounds(t: &T) {
     t.git.ancestor("tb", "merged-tb@merged-ta");
 }
 
+#[test_id(th5ngh5)]
 #[test]
 fn a_later_round_is_cut_on_the_earlier_rounds_head_and_lands_after_it_with_one_certify() {
     let t = concurrent_world();
@@ -6073,6 +6263,7 @@ fn a_later_round_is_cut_on_the_earlier_rounds_head_and_lands_after_it_with_one_c
     assert!(!t.landing_log().contains("QUEUE ROUND-REMERGE"));
 }
 
+#[test_id(t5wxyd5)]
 #[test]
 fn status_keeps_reporting_the_other_open_round_after_one_lands() {
     let t = concurrent_world();
@@ -6096,6 +6287,7 @@ fn status_keeps_reporting_the_other_open_round_after_one_lands() {
     );
 }
 
+#[test_id(t0yj8py)]
 #[test]
 fn open_does_not_count_a_round_the_lifecycle_abandoned_while_status_hides_it() {
     let t = concurrent_world();
@@ -6142,6 +6334,7 @@ fn voided(t: &T, child: &str) {
     );
 }
 
+#[test_id(tc5yyqj)]
 #[test]
 fn open_refuses_to_stack_on_an_open_round_that_went_red() {
     let t = concurrent_world();
@@ -6162,6 +6355,7 @@ fn open_refuses_to_stack_on_an_open_round_that_went_red() {
     assert!(!t.lc.has("cut r-2"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(t2zo1qo)]
 #[test]
 fn open_refuses_to_stack_on_a_live_round_whose_own_parent_went_red() {
     let mut t = concurrent_world();
@@ -6186,6 +6380,7 @@ fn open_refuses_to_stack_on_a_live_round_whose_own_parent_went_red() {
     assert!(!t.lc.has("cut r-3"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(t2ih21u)]
 #[test]
 fn open_prints_the_base_it_stacked_on_and_its_chain() {
     let t = concurrent_world();
@@ -6200,6 +6395,7 @@ fn open_prints_the_base_it_stacked_on_and_its_chain() {
     );
 }
 
+#[test_id(t3pdtld)]
 #[test]
 fn abandoning_a_round_voids_the_round_stacked_on_it() {
     let t = concurrent_world();
@@ -6213,6 +6409,7 @@ fn abandoning_a_round_voids_the_round_stacked_on_it() {
     voided(&t, "r-2");
 }
 
+#[test_id(tacd43o)]
 #[test]
 fn ejecting_a_rounds_last_member_voids_the_round_stacked_on_it() {
     let t = concurrent_world();
@@ -6226,6 +6423,7 @@ fn ejecting_a_rounds_last_member_voids_the_round_stacked_on_it() {
     voided(&t, "r-2");
 }
 
+#[test_id(tmkjtiq)]
 #[test]
 fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certified_again() {
     let t = concurrent_world();
@@ -6274,6 +6472,7 @@ fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certifie
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
 }
 
+#[test_id(tjkipwg)]
 #[test]
 fn a_stacked_round_is_recut_on_the_head_its_parent_was_rebuilt_to() {
     let t = concurrent_world();
@@ -6302,6 +6501,7 @@ fn a_stacked_round_is_recut_on_the_head_its_parent_was_rebuilt_to() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
+#[test_id(t5us46z)]
 #[test]
 fn a_member_that_conflicts_in_meaning_with_an_earlier_round_is_certified_on_that_rounds_tree() {
     let t = concurrent_world();
@@ -6335,6 +6535,7 @@ fn a_member_that_conflicts_in_meaning_with_an_earlier_round_is_certified_on_that
     );
 }
 
+#[test_id(t2qk9mb)]
 #[test]
 fn a_member_whose_tip_is_a_recorded_ejected_red_tip_is_not_offered_to_the_cut() {
     let t = round_world();
@@ -6360,6 +6561,7 @@ fn a_member_whose_tip_is_a_recorded_ejected_red_tip_is_not_offered_to_the_cut() 
     assert!(!t.qfile("round").exists());
 }
 
+#[test_id(t9de2nw)]
 #[test]
 fn a_member_spira_lc_refuses_at_the_cut_refuses_the_whole_open_naming_it() {
     let t = round_world();
@@ -6379,6 +6581,7 @@ fn a_member_spira_lc_refuses_at_the_cut_refuses_the_whole_open_naming_it() {
     assert!(!t.qfile("round").exists());
 }
 
+#[test_id(tjdac90)]
 #[test]
 fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     let t = round_world();
@@ -6440,6 +6643,7 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     assert_eq!(t.lc.bead_state("sp-c").unwrap().0, "REWORK");
 }
 
+#[test_id(tst11cp)]
 #[test]
 fn a_successful_rework_records_a_send_back_fact_and_a_refused_one_none() {
     let t = round_world();
@@ -6460,6 +6664,7 @@ fn proof_run(t: &T) -> std::path::PathBuf {
     t.s().run.clone()
 }
 
+#[test_id(tigo8yv)]
 #[test]
 fn a_resubmit_is_refused_naming_an_ejected_suite_that_does_not_pass_at_the_new_tip_and_accepted_when_it_does(
 ) {
@@ -6498,6 +6703,7 @@ fn a_resubmit_is_refused_naming_an_ejected_suite_that_does_not_pass_at_the_new_t
     ));
 }
 
+#[test_id(tcldcj2)]
 #[test]
 fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_failing() {
     let t = rework_world(&["manual"]);
@@ -6551,6 +6757,7 @@ fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_fai
     );
 }
 
+#[test_id(taqeode)]
 #[test]
 fn a_resubmit_runs_each_ejected_suite_as_a_first_check_of_the_new_tip_and_admits_it_when_it_passes()
 {
@@ -6576,6 +6783,7 @@ fn a_resubmit_runs_each_ejected_suite_as_a_first_check_of_the_new_tip_and_admits
         .any(|c| c.starts_with(&format!("suite_run test-x.sh {T_FIX} spira first=true deny="))));
 }
 
+#[test_id(tbxtpl7)]
 #[test]
 fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
     let t = round_world();
@@ -6611,6 +6819,7 @@ fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
     );
 }
 
+#[test_id(t8e83k1)]
 #[test]
 fn a_bead_ejected_on_a_round_only_step_resubmits_with_a_note_not_a_refusal() {
     for step in ["spira-lint", "workspace-build", "fence-forge-batch-readers"] {
@@ -6645,6 +6854,7 @@ fn a_bead_ejected_on_a_round_only_step_resubmits_with_a_note_not_a_refusal() {
     }
 }
 
+#[test_id(t1rvabg)]
 #[test]
 fn a_round_only_step_does_not_excuse_a_host_runnable_check_that_is_red() {
     let t = rework_world(&["manual"]);
@@ -6684,6 +6894,7 @@ fn resubmit_args_for(tip_arg: &str) -> Vec<String> {
     .collect()
 }
 
+#[test_id(t4xxziy)]
 #[test]
 fn a_bead_ejected_on_spira_lint_is_still_refused_when_the_host_lint_is_red_at_the_tip() {
     let t = rework_world(&["manual"]);
@@ -6699,6 +6910,7 @@ fn a_bead_ejected_on_spira_lint_is_still_refused_when_the_host_lint_is_red_at_th
     assert!(t.err().contains("src/x.rs:1:1"), "{}", t.err());
 }
 
+#[test_id(t6iha66)]
 #[test]
 fn a_round_only_note_is_not_printed_for_a_resubmit_that_is_refused_later() {
     let t = rework_world(&["manual"]);
@@ -6717,6 +6929,7 @@ fn a_round_only_note_is_not_printed_for_a_resubmit_that_is_refused_later() {
     assert!(!t.out().contains("passes only in the round"), "{}", t.out());
 }
 
+#[test_id(tr01yfo)]
 #[test]
 fn a_bead_ejected_on_unit_tests_resubmits_after_a_green_runner_run_and_not_after_a_red_one() {
     let t = rework_world(&["manual"]);
@@ -6748,6 +6961,7 @@ fn a_bead_ejected_on_unit_tests_resubmits_after_a_green_runner_run_and_not_after
     assert!(!t.err().contains("--clear"), "{}", t.err());
 }
 
+#[test_id(tu1tkw0)]
 #[test]
 fn a_hand_eject_for_red_must_name_the_failing_suite() {
     let t = rework_world(&[]);
@@ -6755,6 +6969,7 @@ fn a_hand_eject_for_red_must_name_the_failing_suite() {
     assert!(t.err().contains("--suites"), "{}", t.err());
 }
 
+#[test_id(t1umztf)]
 #[test]
 fn settle_landed_moves_a_certified_bead_whose_tip_is_on_the_landing_ref_to_landed() {
     let t = round_world();
@@ -6770,6 +6985,7 @@ fn settle_landed_moves_a_certified_bead_whose_tip_is_on_the_landing_ref_to_lande
     assert!(calls.contains("ContentOnBase"), "{calls}");
 }
 
+#[test_id(tue70he)]
 #[test]
 fn settle_landed_refuses_a_tip_off_the_landing_ref_naming_both_shas() {
     let t = round_world();
@@ -6781,6 +6997,7 @@ fn settle_landed_refuses_a_tip_off_the_landing_ref_naming_both_shas() {
     assert!(!t.lc.has("event bead sp-b"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tju26oz)]
 #[test]
 fn settle_landed_refuses_an_evidence_tip_that_is_not_the_recorded_tip() {
     let t = round_world();
@@ -6792,6 +7009,7 @@ fn settle_landed_refuses_an_evidence_tip_that_is_not_the_recorded_tip() {
     assert!(!t.lc.has("event bead sp-a"), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(td3e7og)]
 #[test]
 fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
     let t = round_world();
@@ -6888,6 +7106,7 @@ fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
     assert!(t.out().contains("members=sp-b:tb"), "{}", t.out());
 }
 
+#[test_id(tmzvnpc)]
 #[test]
 fn absolve_clears_a_red_only_the_gate_recorded() {
     let t = round_world();
@@ -6914,6 +7133,7 @@ fn declare_own_testenv(t: &T) {
     .unwrap();
 }
 
+#[test_id(tsqf6ah)]
 #[test]
 fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
     let t = round_world();
@@ -6974,6 +7194,7 @@ fn prune_world(own_testenv: bool) -> (T, PathBuf) {
     (t, rounds)
 }
 
+#[test_id(tv8263f)]
 #[test]
 fn a_round_pass_prunes_the_repos_old_closed_round_results_and_keeps_open_ones() {
     let (t, rounds) = prune_world(false);
@@ -6982,6 +7203,7 @@ fn a_round_pass_prunes_the_repos_old_closed_round_results_and_keeps_open_ones() 
     assert!(rounds.join("cubby-old.results").exists());
 }
 
+#[test_id(t11zjk0)]
 #[test]
 fn an_own_testenv_round_pass_prunes_the_repos_old_closed_round_results_and_keeps_open_ones() {
     let (t, rounds) = prune_world(true);
@@ -6991,6 +7213,7 @@ fn an_own_testenv_round_pass_prunes_the_repos_old_closed_round_results_and_keeps
     assert!(rounds.join("cubby-old.results").exists());
 }
 
+#[test_id(tnjdq6r)]
 #[test]
 fn a_worktree_moved_by_stabilization_certifies_only_when_the_batcher_names_its_head() {
     let t = round_world();
@@ -7037,6 +7260,7 @@ fn a_worktree_moved_by_stabilization_certifies_only_when_the_batcher_names_its_h
     assert_eq!(round_phase(&t), "GREEN");
 }
 
+#[test_id(t7l9nn5)]
 #[test]
 fn a_repo_that_declares_its_own_testenv_goes_red_and_does_not_land_on_a_failing_suite() {
     let t = round_world();
@@ -7073,6 +7297,7 @@ fn a_repo_that_declares_its_own_testenv_goes_red_and_does_not_land_on_a_failing_
     assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing landed");
 }
 
+#[test_id(tyu9vlu)]
 #[test]
 fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
     let t = round_world();
@@ -7099,6 +7324,7 @@ fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
     );
 }
 
+#[test_id(tsztdwb)]
 #[test]
 fn a_single_ci_entry_pass_whose_ci_result_is_ok_is_green_whatever_the_run_exit_after_it() {
     let t = round_world();
@@ -7120,6 +7346,7 @@ fn a_single_ci_entry_pass_whose_ci_result_is_ok_is_green_whatever_the_run_exit_a
     assert_eq!(round_phase(&t), "GREEN");
 }
 
+#[test_id(td4xhxo)]
 #[test]
 fn a_red_ci_result_does_not_turn_a_faulted_run_into_a_judged_round() {
     let t = round_world();
@@ -7140,6 +7367,7 @@ fn a_red_ci_result_does_not_turn_a_faulted_run_into_a_judged_round() {
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
 }
 
+#[test_id(tkv36sp)]
 #[test]
 fn an_ok_ci_result_does_not_turn_a_failing_run_exit_into_a_green_round() {
     let t = round_world();
@@ -7160,6 +7388,7 @@ fn an_ok_ci_result_does_not_turn_a_failing_run_exit_into_a_green_round() {
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
 }
 
+#[test_id(t6trl4z)]
 #[test]
 fn an_own_testenv_repo_with_no_ci_entry_is_not_judged_and_runs_nothing() {
     let t = round_world();
@@ -7202,6 +7431,7 @@ fn stale_world() -> (T, String) {
     (t, batch)
 }
 
+#[test_id(t9x3kir)]
 #[test]
 fn a_stale_round_image_waits_for_the_build_in_progress_then_proceeds() {
     let (t, batch) = stale_world();
@@ -7222,6 +7452,7 @@ fn a_stale_round_image_waits_for_the_build_in_progress_then_proceeds() {
     assert_eq!(calls.matches("ami-runs").count(), 2, "{calls}");
 }
 
+#[test_id(txzrl3m)]
 #[test]
 fn a_stale_round_image_with_no_build_running_triggers_exactly_one() {
     let (t, batch) = stale_world();
@@ -7233,6 +7464,7 @@ fn a_stale_round_image_with_no_build_running_triggers_exactly_one() {
     assert_eq!(calls.matches("ami-dispatch").count(), 1, "{calls}");
 }
 
+#[test_id(tbhj8ts)]
 #[test]
 fn a_round_image_that_stays_stale_reports_the_acquire_error_itself() {
     let (t, batch) = stale_world();
@@ -7273,6 +7505,7 @@ fn recipe_changing_world() -> (T, String) {
     (t, batch)
 }
 
+#[test_id(tv839r1)]
 #[test]
 fn a_recipe_changing_round_builds_its_own_image_and_certifies_on_it() {
     let (t, batch) = recipe_changing_world();
@@ -7304,6 +7537,7 @@ fn a_recipe_changing_round_builds_its_own_image_and_certifies_on_it() {
     assert!(vm.contains("ami=ami-cand"), "{vm}");
 }
 
+#[test_id(tbsyu49)]
 #[test]
 fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_failed_one() {
     let mut t = round_world();
@@ -7373,6 +7607,7 @@ fn a_round_reheaded_after_an_eject_builds_a_new_image_instead_of_reusing_the_fai
     assert!(t.scripts.calls.borrow().join("\n").contains("ami=ami-new"));
 }
 
+#[test_id(t04kg1n)]
 #[test]
 fn a_recipe_changing_round_placed_on_the_host_starts_its_pass_without_the_image() {
     let (t, batch) = recipe_changing_world();
@@ -7402,6 +7637,7 @@ fn a_recipe_changing_round_placed_on_the_host_starts_its_pass_without_the_image(
     );
 }
 
+#[test_id(tuki3yw)]
 #[test]
 fn a_recipe_changing_round_placed_on_ec2_waits_for_its_image_then_runs_on_it() {
     let (t, batch) = recipe_changing_world();
@@ -7433,6 +7669,7 @@ fn a_recipe_changing_round_placed_on_ec2_waits_for_its_image_then_runs_on_it() {
     );
 }
 
+#[test_id(t3s65fn)]
 #[test]
 fn two_rounds_of_one_recipe_share_one_image_build() {
     let (t, first) = recipe_changing_world();
@@ -7469,6 +7706,7 @@ fn two_rounds_of_one_recipe_share_one_image_build() {
     );
 }
 
+#[test_id(t1xc2tq)]
 #[test]
 fn a_failed_bake_for_another_head_of_the_same_recipe_is_rebuilt_not_read() {
     let (t, batch) = recipe_changing_world();
@@ -7490,6 +7728,7 @@ fn a_failed_bake_for_another_head_of_the_same_recipe_is_rebuilt_not_read() {
     assert!(!t.out().contains("red=workspace-build"), "{}", t.out());
 }
 
+#[test_id(tdyvtof)]
 #[test]
 fn an_ec2_pass_does_not_red_on_the_stale_failure_a_rebuild_has_not_yet_replaced() {
     let (t, batch) = recipe_changing_world();
@@ -7507,6 +7746,7 @@ fn an_ec2_pass_does_not_red_on_the_stale_failure_a_rebuild_has_not_yet_replaced(
     assert!(!t.out().contains("red=workspace-build"), "{}", t.out());
 }
 
+#[test_id(t7f7a9x)]
 #[test]
 fn a_recipe_already_imaged_dispatches_no_build() {
     let (t, batch) = recipe_changing_world();
@@ -7523,6 +7763,7 @@ fn a_recipe_already_imaged_dispatches_no_build() {
     );
 }
 
+#[test_id(tybk44b)]
 #[test]
 fn a_recipe_change_whose_image_fails_to_build_reds_the_round_naming_the_step() {
     let (t, batch) = recipe_changing_world();
@@ -7548,6 +7789,7 @@ fn a_recipe_change_whose_image_fails_to_build_reds_the_round_naming_the_step() {
     assert!(!vm.contains("ami="), "{vm}");
 }
 
+#[test_id(tks7r16)]
 #[test]
 fn a_round_whose_recipe_is_the_releases_never_touches_the_image_build() {
     let (t, batch) = recipe_changing_world();
@@ -7559,6 +7801,7 @@ fn a_round_whose_recipe_is_the_releases_never_touches_the_image_build() {
     assert!(!t.scripts.calls.borrow().join("\n").contains("ami="));
 }
 
+#[test_id(txpcjc1)]
 #[test]
 fn a_candidate_image_build_that_outlasts_its_wait_leaves_the_round_unjudged() {
     let (t, batch) = recipe_changing_world();
@@ -7578,6 +7821,7 @@ fn a_candidate_image_build_that_outlasts_its_wait_leaves_the_round_unjudged() {
     );
 }
 
+#[test_id(tg9o94t)]
 #[test]
 fn open_admits_a_recipe_changing_member_with_the_ordinary_ones() {
     let t = round_world();
@@ -7631,6 +7875,7 @@ fn preflight_red_round(recipe: &[&str]) -> (T, String) {
     (t, batch)
 }
 
+#[test_id(tgetr36)]
 #[test]
 fn a_preflight_red_ejects_exactly_the_recipe_changing_member_with_the_fence_evidence() {
     let (t, _) = preflight_red_round(&["tb"]);
@@ -7663,6 +7908,7 @@ fn a_preflight_red_ejects_exactly_the_recipe_changing_member_with_the_fence_evid
     );
 }
 
+#[test_id(tk09n3z)]
 #[test]
 fn a_preflight_red_with_no_recipe_changing_member_ejects_nobody() {
     let (t, _) = preflight_red_round(&[]);
@@ -7694,6 +7940,7 @@ fn integration_bugs(t: &T) -> Vec<String> {
         .collect()
 }
 
+#[test_id(tgenmqw)]
 #[test]
 fn open_files_one_integration_with_both_members_context_instead_of_skipping_one() {
     let t = round_world();
@@ -7761,6 +8008,7 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
     );
 }
 
+#[test_id(ttf695y)]
 #[test]
 fn filing_an_integration_marks_each_member_record_carried_by_it() {
     let t = round_world();
@@ -7781,6 +8029,7 @@ fn filing_an_integration_marks_each_member_record_carried_by_it() {
     );
 }
 
+#[test_id(t9dym7z)]
 #[test]
 fn a_carried_member_is_not_admitted_and_a_second_integration_is_not_filed_while_one_is_open() {
     let t = round_world();
@@ -7833,6 +8082,7 @@ fn a_carried_member_is_not_admitted_and_a_second_integration_is_not_filed_while_
     );
 }
 
+#[test_id(tdedjs9)]
 #[test]
 fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject() {
     let t = round_world();
@@ -7902,6 +8152,7 @@ fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject
     );
 }
 
+#[test_id(tho5d9o)]
 #[test]
 fn a_mender_calls_carries_a_failure_spec_its_verbs_can_read() {
     let t = round_world();
@@ -7958,6 +8209,7 @@ fn a_mender_calls_carries_a_failure_spec_its_verbs_can_read() {
     assert_eq!(members, [("sp-a", "ta"), ("sp-b", "tb")]);
 }
 
+#[test_id(tcpfo4g)]
 #[test]
 fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
     use spira_config::sendback::failure_excerpt;
@@ -7979,6 +8231,7 @@ fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
     assert!(!x.contains("crate7"), "{x}");
 }
 
+#[test_id(t15xvwj)]
 #[test]
 fn a_failure_excerpt_of_a_shell_suite_keeps_its_fail_lines() {
     use spira_config::sendback::failure_excerpt;
@@ -7989,6 +8242,7 @@ fn a_failure_excerpt_of_a_shell_suite_keeps_its_fail_lines() {
     );
 }
 
+#[test_id(tw2pinq)]
 #[test]
 fn a_failure_excerpt_of_nextest_output_keeps_each_failing_tests_panic_block_once() {
     use spira_config::sendback::failure_excerpt;
@@ -8002,6 +8256,7 @@ fn a_failure_excerpt_of_nextest_output_keeps_each_failing_tests_panic_block_once
     assert!(!x.contains("PASS"), "{x}");
 }
 
+#[test_id(t23370q)]
 #[test]
 fn a_failure_excerpt_keeps_the_same_test_name_failing_in_two_crates() {
     use spira_config::sendback::failure_excerpt;
@@ -8011,6 +8266,7 @@ fn a_failure_excerpt_keeps_the_same_test_name_failing_in_two_crates() {
     assert!(x.contains("panicked at a.rs:1:1") && x.contains("panicked at b.rs:2:2"), "{x}");
 }
 
+#[test_id(tc420l6)]
 #[test]
 fn a_failure_excerpt_keeps_not_ok_lines_beside_fail_blocks() {
     use spira_config::sendback::failure_excerpt;
@@ -8018,6 +8274,7 @@ fn a_failure_excerpt_keeps_not_ok_lines_beside_fail_blocks() {
     assert!(x.contains("why x") && x.contains("not ok 3 - y"), "{x}");
 }
 
+#[test_id(thx2ava)]
 #[test]
 fn a_recorded_mend_moves_the_next_pass_head_to_the_mended_tip() {
     let t = round_world();
@@ -8072,6 +8329,7 @@ fn fault_next_pass(t: &T) {
         vec![("fixture-fault.out".into(), INSTALL_FAULT.into())];
 }
 
+#[test_id(t5mkdg8)]
 #[test]
 fn a_member_in_two_consecutive_faulted_passes_is_ejected_with_the_fault_text() {
     let t = round_world();
@@ -8141,6 +8399,7 @@ fn vm_names_the_fault(t: &T, file: &str) {
     *t.scripts.round_vm_files.borrow_mut() = vec![("round-fault.out".into(), file.into())];
 }
 
+#[test_id(tu8s4ia)]
 #[test]
 fn a_pass_the_vm_ended_with_no_verdict_is_its_named_fault_with_the_logs_tail() {
     let t = round_world();
@@ -8169,6 +8428,7 @@ fn a_pass_the_vm_ended_with_no_verdict_is_its_named_fault_with_the_logs_tail() {
     assert!(!err.contains("round-vm exited 2"), "{err}");
 }
 
+#[test_id(ty1lg8p)]
 #[test]
 fn a_settings_refusal_ejects_the_member_whose_diff_adds_the_key_and_no_other() {
     let t = round_world();
@@ -8204,6 +8464,7 @@ fn a_settings_refusal_ejects_the_member_whose_diff_adds_the_key_and_no_other() {
     );
 }
 
+#[test_id(tljpxqr)]
 #[test]
 fn a_member_stacked_on_the_one_that_adds_the_key_is_not_ejected_for_it() {
     let t = round_world();
@@ -8227,6 +8488,7 @@ fn a_member_stacked_on_the_one_that_adds_the_key_is_not_ejected_for_it() {
     assert!(!t.lib.has("bead_reopen sp-b"), "{:?}", t.lib.calls.borrow());
 }
 
+#[test_id(tgs95r5)]
 #[test]
 fn a_settings_refusal_no_member_adds_names_the_harness_and_counts_against_none() {
     let t = round_world();
@@ -8259,6 +8521,7 @@ fn launch_refused_next_pass(t: &T) {
     *t.scripts.round_vm_files.borrow_mut() = vec![];
 }
 
+#[test_id(tc7pyow)]
 #[test]
 fn a_pass_whose_vm_never_launched_ejects_nobody_however_often_it_repeats() {
     let t = round_world();
@@ -8283,6 +8546,7 @@ fn a_pass_whose_vm_never_launched_ejects_nobody_however_often_it_repeats() {
         .is_some_and(|m| m.contains("sp-a")));
 }
 
+#[test_id(tjyxhv8)]
 #[test]
 fn repeated_launch_faults_page_the_infrastructure_cause_not_the_bead() {
     let t = round_world();
@@ -8313,6 +8577,7 @@ fn repeated_launch_faults_page_the_infrastructure_cause_not_the_bead() {
     );
 }
 
+#[test_id(tahn4tq)]
 #[test]
 fn a_launch_fault_between_two_member_faults_does_not_reset_or_extend_their_count() {
     let t = round_world();
@@ -8333,6 +8598,7 @@ fn a_launch_fault_between_two_member_faults_does_not_reset_or_extend_their_count
     assert!(t.lib.has("bead_reopen sp-a eject-red"));
 }
 
+#[test_id(tajsswj)]
 #[test]
 fn a_green_pass_between_two_faults_makes_the_second_a_first_again() {
     let t = round_world();
@@ -8380,6 +8646,7 @@ fn green_by_round_vm_next_pass(t: &T, results: &[(&str, &str)]) {
         vec![("run.events".into(), "1 verdict GREEN -\n".into())];
 }
 
+#[test_id(t9jsv4a)]
 #[test]
 fn a_green_pass_whose_deny_listed_suites_report_a_non_blocking_word_lands_green() {
     for word in ["disabled", "skip-req", "quarantined-red"] {
@@ -8411,6 +8678,7 @@ fn a_green_pass_whose_deny_listed_suites_report_a_non_blocking_word_lands_green(
     }
 }
 
+#[test_id(t7s67ws)]
 #[test]
 fn a_pass_round_vm_judged_but_the_queue_cannot_read_ejects_nobody_and_tells_the_operator() {
     let t = round_world();
@@ -8442,6 +8710,7 @@ fn a_pass_round_vm_judged_but_the_queue_cannot_read_ejects_nobody_and_tells_the_
     );
 }
 
+#[test_id(txwmyvx)]
 #[test]
 fn faulted_passes_with_the_same_members_aboard_blame_none_of_them() {
     let t = round_world();
@@ -8459,6 +8728,7 @@ fn faulted_passes_with_the_same_members_aboard_blame_none_of_them() {
     assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
 }
 
+#[test_id(t4rraz8)]
 #[test]
 fn a_round_vm_lost_mid_pass_exits_75_incomplete_and_never_counts_against_a_member() {
     let t = round_world();
@@ -8490,6 +8760,7 @@ fn no_output_next_pass(t: &T) {
     *t.scripts.round_vm.borrow_mut() = RunOut { rc: 77, out: String::new(), err: "round-vm run: INCOMPLETE reason=FAULT vm-no-output: VM produced no output within 180s of ssh being up\n".into() };
 }
 
+#[test_id(tqum029)]
 #[test]
 fn a_round_vm_that_produced_no_output_exits_77_named_counts_on_the_round_and_pages_on_the_second() {
     let t = round_world();
@@ -8537,6 +8808,7 @@ fn a_round_vm_that_produced_no_output_exits_77_named_counts_on_the_round_and_pag
     assert!(!t.out().contains("red-output="), "never named a red");
 }
 
+#[test_id(ty21vzi)]
 #[test]
 fn a_red_round_whose_latest_pass_was_a_no_output_vm_abandons_without_the_override() {
     let t = round_world();
@@ -8556,6 +8828,7 @@ fn a_red_round_whose_latest_pass_was_a_no_output_vm_abandons_without_the_overrid
     );
 }
 
+#[test_id(tle88s2)]
 #[test]
 fn a_red_pass_after_a_no_output_vm_clears_it_so_the_abandon_guard_holds_again() {
     let t = round_world();
@@ -8637,6 +8910,7 @@ fn no_ended_record_left(t: &T) {
     }
 }
 
+#[test_id(t7s6zxf)]
 #[test]
 fn status_lists_only_the_open_round_beside_landed_settled_and_abandoned_records() {
     let t = round_world();
@@ -8656,6 +8930,7 @@ fn status_lists_only_the_open_round_beside_landed_settled_and_abandoned_records(
     );
 }
 
+#[test_id(t9d37ob)]
 #[test]
 fn certify_acts_on_the_open_round_and_a_wrong_batch_is_told_only_the_open_one() {
     let t = round_world();
@@ -8684,6 +8959,7 @@ fn ended_records_beside_the_open_round_again(t: &T) {
     ended_records_beside_the_open_round(t);
 }
 
+#[test_id(tdqrzll)]
 #[test]
 fn eject_acts_on_the_open_round_beside_ended_records() {
     let t = round_world();
@@ -8698,6 +8974,7 @@ fn eject_acts_on_the_open_round_beside_ended_records() {
     assert_eq!(kv_of(&t, "round")["members"], "sp-a:ta");
 }
 
+#[test_id(tfgyzqa)]
 #[test]
 fn land_acts_on_the_open_round_and_promotes_no_ended_record() {
     let t = round_world();
@@ -8713,6 +8990,7 @@ fn land_acts_on_the_open_round_and_promotes_no_ended_record() {
     assert!(!t.qfile("round").exists() && !t.qfile("round.r-open").exists());
 }
 
+#[test_id(t2s9yra)]
 #[test]
 fn abandon_acts_on_the_open_round_and_promotes_no_ended_record() {
     let t = round_world();
@@ -8727,6 +9005,7 @@ fn abandon_acts_on_the_open_round_and_promotes_no_ended_record() {
     assert!(!t.qfile("round").exists() && !t.qfile("round.r-open").exists());
 }
 
+#[test_id(tnulst6)]
 #[test]
 fn abandon_of_a_landed_round_refuses_and_removes_its_record() {
     let t = round_world();
@@ -8750,6 +9029,7 @@ fn abandon_of_a_landed_round_refuses_and_removes_its_record() {
     assert_eq!(kv_of(&t, "round")["batch_id"], "r-open");
 }
 
+#[test_id(tk6c1mt)]
 #[test]
 fn open_counts_only_the_open_round_toward_the_limit_and_stacks_on_it() {
     let mut t = round_world();
@@ -8776,6 +9056,7 @@ fn open_counts_only_the_open_round_toward_the_limit_and_stacks_on_it() {
     );
 }
 
+#[test_id(txve6fs)]
 #[test]
 fn stage_stages_behind_the_open_round_not_an_ended_record() {
     let t = round_world();
@@ -8807,6 +9088,7 @@ fn stage_stages_behind_the_open_round_not_an_ended_record() {
     no_ended_record_left(&t);
 }
 
+#[test_id(tb13fm1)]
 #[test]
 fn a_round_the_lifecycle_abandoned_is_closed_out_by_the_next_locked_verb() {
     let t = round_world();
@@ -8866,6 +9148,7 @@ fn err_of(t: &T, f: impl FnOnce() -> i32) -> (i32, String) {
     (rc, t.io.err.borrow()[mark..].to_string())
 }
 
+#[test_id(t0sk93s)]
 #[test]
 fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_holder_token_and_ttl()
 {
@@ -8909,6 +9192,7 @@ fn a_round_leased_by_another_holder_refuses_every_verb_that_touches_it_naming_ho
     assert!(t.lc.has(&format!("lock-show round/spira/{batch}")));
 }
 
+#[test_id(twp15iz)]
 #[test]
 fn the_holders_lease_token_lets_each_verb_through() {
     let (t, batch) = certified_round();
@@ -8974,6 +9258,7 @@ fn the_holders_lease_token_lets_each_verb_through() {
     assert!(t.lc.has("abandon-batch r-1"));
 }
 
+#[test_id(tv2og24)]
 #[test]
 fn an_unleased_round_is_touched_as_before_and_a_lapsed_token_or_an_unread_lease_refuses() {
     let t = round_world();
@@ -9033,6 +9318,7 @@ fn land_as_the_lander(t: &T, batch: &str, token: Option<&str>) -> (i32, String) 
     (rc, word.trim_end_matches(':').to_string())
 }
 
+#[test_id(tbjb469)]
 #[test]
 fn each_land_refusal_exits_with_the_code_the_lander_acts_on() {
     let t = concurrent_world();
@@ -9085,6 +9371,7 @@ fn each_land_refusal_exits_with_the_code_the_lander_acts_on() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
 }
 
+#[test_id(tbxdm0c)]
 #[test]
 fn a_round_cut_before_its_base_moved_refuses_land_as_base_moved() {
     let (t, batch) = certified_round();
@@ -9100,6 +9387,7 @@ fn a_round_cut_before_its_base_moved_refuses_land_as_base_moved() {
     assert_eq!(t.landed_ref().as_deref(), Some("b1"));
 }
 
+#[test_id(tp18tq2)]
 #[test]
 fn land_driven_again_on_a_landed_round_answers_landed_instead_of_no_open_round() {
     let (t, batch) = certified_round();
@@ -9129,6 +9417,7 @@ fn land_driven_again_on_a_landed_round_answers_landed_instead_of_no_open_round()
     assert_eq!(after, landed_calls, "a repeat land records nothing");
 }
 
+#[test_id(tfh9w4m)]
 #[test]
 fn land_driven_again_refuses_when_the_record_is_not_on_the_landing_ref_or_names_another_batch() {
     let (t, batch) = certified_round();
@@ -9141,6 +9430,7 @@ fn land_driven_again_refuses_when_the_record_is_not_on_the_landing_ref_or_names_
     assert_eq!(rc, 1, "another batch has no landing record: {e}");
 }
 
+#[test_id(tef6qut)]
 #[test]
 fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
     let (t, _) = preflight_red_round(&["ta", "tb"]);
@@ -9155,6 +9445,7 @@ fn a_preflight_red_ejects_every_recipe_changing_member_and_names_them() {
 /// sp-822b8l: a refused open names each member it did not admit as a typed stdout record
 /// (`refused=<id> kind=<kind> why=<line>`), so the batcher re-cuts without them by kind rather
 /// than abandoning on a members list that differs from the one it named.
+#[test_id(t1nc3bj)]
 #[test]
 fn a_refused_open_prints_one_typed_record_per_member_it_did_not_admit() {
     let t = round_world();
@@ -9204,6 +9495,7 @@ fn a_refused_open_prints_one_typed_record_per_member_it_did_not_admit() {
     );
 }
 
+#[test_id(tjlo9p0)]
 #[test]
 fn open_skips_a_text_only_member_and_says_it_lands_by_lint() {
     let t = round_world();
@@ -9229,6 +9521,7 @@ fn open_skips_a_text_only_member_and_says_it_lands_by_lint() {
     assert!(!t.err().contains("sp-b:") && !t.qfile("round").exists());
 }
 
+#[test_id(tjtmbh4)]
 #[test]
 fn open_admits_a_text_only_harness_member_the_release_in_force_cannot_lend_to() {
     let mut t = round_world();
@@ -9244,6 +9537,7 @@ fn open_admits_a_text_only_harness_member_the_release_in_force_cannot_lend_to() 
     assert!(!t.err().contains("text-only"), "{}", t.err());
 }
 
+#[test_id(tkv6yp3)]
 #[test]
 fn open_admits_a_member_that_touches_a_source_file() {
     let t = round_world();
@@ -9261,6 +9555,7 @@ fn open_admits_a_member_that_touches_a_source_file() {
     assert!(!t.err().contains("text-only"), "{}", t.err());
 }
 
+#[test_id(t7cgbbs)]
 #[test]
 fn open_admits_a_text_only_member_that_has_fallen_behind_the_landing_ref() {
     let t = round_world();
@@ -9274,6 +9569,7 @@ fn open_admits_a_text_only_member_that_has_fallen_behind_the_landing_ref() {
     assert!(!t.err().contains("text-only"), "{}", t.err());
 }
 
+#[test_id(t12zgp3)]
 #[test]
 fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_each() {
     let t = round_world();
@@ -9339,6 +9635,7 @@ fn ejecting_every_member_on_an_integration_test_red_returns_each_red_and_logs_ea
     }
 }
 
+#[test_id(tduk2n9)]
 #[test]
 fn absolve_deletes_the_gate_workers_stored_verdict_for_the_tip() {
     use landing_pass::gateq::GateQueue;
@@ -9382,6 +9679,7 @@ fn failed_round_with_mender(t: &T, suite: &str, mender: &str) -> String {
     batch
 }
 
+#[test_id(tgwysrn)]
 #[test]
 fn a_return_names_the_member_it_sends_back_and_one_outside_the_round_or_none_is_refused() {
     let t = round_world();
@@ -9399,6 +9697,7 @@ fn a_return_names_the_member_it_sends_back_and_one_outside_the_round_or_none_is_
     assert!(ev.contains(r#""members":["sp-a"]"#), "{ev}");
 }
 
+#[test_id(tgmvao0)]
 #[test]
 fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_mender_bead_is_retired() {
     let t = round_world();
@@ -9425,6 +9724,7 @@ fn a_concierge_hand_mends_a_waiting_failure_with_provenance_and_the_mender_bead_
     assert!(marker(&t, &batch, "mender-1-test-z.sh.retired").exists());
 }
 
+#[test_id(t1mwjfv)]
 #[test]
 fn a_flaky_verdict_records_flaky_and_runs_no_testenv() {
     let t = round_world();
@@ -9434,6 +9734,7 @@ fn a_flaky_verdict_records_flaky_and_runs_no_testenv() {
     assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("observe-flake")), "{:?}", t.scripts.calls.borrow());
 }
 
+#[test_id(ttempcd)]
 #[test]
 fn a_by_that_is_not_the_concierge_or_operator_is_refused_before_anything_is_recorded() {
     let t = round_world();
@@ -9449,6 +9750,7 @@ fn a_by_that_is_not_the_concierge_or_operator_is_refused_before_anything_is_reco
     assert!(!t.lib.has("bead_close"));
 }
 
+#[test_id(t0rxb72)]
 #[test]
 fn a_mender_that_mends_its_own_failure_keeps_its_bead() {
     let t = round_world();
@@ -9458,6 +9760,7 @@ fn a_mender_that_mends_its_own_failure_keeps_its_bead() {
     assert!(!t.lib.has("bead_close"), "{:?}", t.lib.calls.borrow());
 }
 
+#[test_id(tpxp2kx)]
 #[test]
 fn a_hand_mend_without_its_reason_evidence_or_evidence_tip_is_refused_before_spira_lc_hears_of_it() {
     let t = round_world();
@@ -9476,6 +9779,7 @@ fn a_hand_mend_without_its_reason_evidence_or_evidence_tip_is_refused_before_spi
     assert!(!t.lc.has("mend "));
 }
 
+#[test_id(ts3afc2)]
 #[test]
 fn stop_records_owner_reason_and_release_condition_and_status_prints_them() {
     let t = round_world();
@@ -9495,6 +9799,7 @@ fn stop_records_owner_reason_and_release_condition_and_status_prints_them() {
     );
 }
 
+#[test_id(tz9ppdh)]
 #[test]
 fn a_stop_stands_after_a_round_lands_until_start_lifts_it() {
     let t = concurrent_world();
@@ -9518,12 +9823,14 @@ fn a_stop_stands_after_a_round_lands_until_start_lifts_it() {
     assert!(!t.out()[mark..].contains("stop="), "{}", &t.out()[mark..]);
 }
 
+#[test_id(t5lies4)]
 #[test]
 fn stop_without_a_release_condition_is_refused() {
     let t = round_world();
     assert_eq!(t.run(&["round", "stop", "--by", "concierge", "--reason", "x"]), 2);
 }
 
+#[test_id(tyi7po0)]
 #[test]
 fn start_with_no_stop_in_force_says_so_and_changes_nothing() {
     let t = round_world();
@@ -9552,6 +9859,7 @@ fn an_ejected_member_still_in_the_worktree(t: &T) -> String {
     batch
 }
 
+#[test_id(t1avj9u)]
 #[test]
 fn certify_refuses_a_worktree_that_still_holds_an_ejected_member() {
     let t = round_world();
@@ -9563,6 +9871,7 @@ fn certify_refuses_a_worktree_that_still_holds_an_ejected_member() {
     assert!(!events_of(&t, &batch).iter().any(|e| e.contains("PassStarted")));
 }
 
+#[test_id(te12snc)]
 #[test]
 fn certify_attest_and_rehead_refuse_a_worktree_that_still_holds_an_ejected_member() {
     let t = round_world();
@@ -9579,6 +9888,7 @@ fn certify_attest_and_rehead_refuse_a_worktree_that_still_holds_an_ejected_membe
     assert!(!events_of(&t, &batch).iter().any(|e| e.contains("PassStarted")));
 }
 
+#[test_id(tgs1eu9)]
 #[test]
 fn pass_start_refuses_a_worktree_that_still_holds_an_ejected_member() {
     let t = round_world();
@@ -9589,6 +9899,7 @@ fn pass_start_refuses_a_worktree_that_still_holds_an_ejected_member() {
     assert!(!events_of(&t, &batch).iter().any(|e| e.contains("PassStarted")));
 }
 
+#[test_id(tqvqfgl)]
 #[test]
 fn an_eject_that_rebuilds_records_the_rebuilt_tree_as_the_rounds_head() {
     let t = round_world();
@@ -9608,6 +9919,7 @@ fn an_eject_that_rebuilds_records_the_rebuilt_tree_as_the_rounds_head() {
     assert_eq!(kv_of(&t, "round")["head"], "merged-ta");
 }
 
+#[test_id(tn5qbmp)]
 #[test]
 fn a_worktree_rebuilt_from_the_surviving_members_after_an_eject_is_adopted_by_certify() {
     let t = round_world();
@@ -9626,6 +9938,7 @@ fn a_worktree_rebuilt_from_the_surviving_members_after_an_eject_is_adopted_by_ce
     assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
 }
 
+#[test_id(toz71hx)]
 #[test]
 fn a_worktree_carrying_a_commit_no_member_owns_is_not_adopted_by_certify() {
     let t = round_world();
@@ -9643,6 +9956,7 @@ fn a_worktree_carrying_a_commit_no_member_owns_is_not_adopted_by_certify() {
     assert_ne!(kv_of(&t, "round")["head"], "merged-ta");
 }
 
+#[test_id(tj0ezqp)]
 #[test]
 fn a_worktree_carrying_a_fold_commit_is_certified_when_rehead_names_its_head() {
     let t = round_world();
@@ -9664,6 +9978,7 @@ fn a_worktree_carrying_a_fold_commit_is_certified_when_rehead_names_its_head() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
 }
 
+#[test_id(tmr445a)]
 #[test]
 fn resubmit_drops_a_forced_suite_the_landing_ref_deleted_and_records_why() {
     let t = rework_world(&["manual"]);
@@ -9724,6 +10039,7 @@ fn resubmit_unit_red(t: &T) -> i32 {
     t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=r", "--evidence=e", &ev_tip()])
 }
 
+#[test_id(txns00y)]
 #[test]
 fn resubmit_runs_nothing_when_every_test_the_eject_named_is_now_disabled() {
     let t = unit_red_world(&[TEST_A], &format!("disabled\t{TEST_A}\tsp-gm7sti\t9999999999\n"));
@@ -9736,6 +10052,7 @@ fn resubmit_runs_nothing_when_every_test_the_eject_named_is_now_disabled() {
     assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
 }
 
+#[test_id(t2vrkrr)]
 #[test]
 fn resubmit_runs_only_the_still_active_tests_when_some_named_tests_are_disabled() {
     let t = unit_red_world(&[TEST_A, TEST_B], &format!("disabled\t{TEST_A}\tsp-gm7sti\t9999999999\n"));
@@ -9746,6 +10063,7 @@ fn resubmit_runs_only_the_still_active_tests_when_some_named_tests_are_disabled(
     assert!(t.out().contains(&format!("running unit-tests at {T_FIX} via testenv --tests other_test")), "{}", t.out());
 }
 
+#[test_id(tn6femf)]
 #[test]
 fn resubmit_reports_testenvs_over_cap_cause_with_the_verdict() {
     let t = unit_red_world(&[], "");
@@ -9757,6 +10075,7 @@ fn resubmit_reports_testenvs_over_cap_cause_with_the_verdict() {
     assert!(t.err().contains("over-cap: unit-tests was still running at the 600s cap") && t.err().contains("VERDICT FAULT rc=2"), "{}", t.err());
 }
 
+#[test_id(tzcufm5)]
 #[test]
 fn resubmit_runs_the_whole_check_when_the_eject_recorded_no_test_ids() {
     let t = unit_red_world(&[], "");
@@ -9771,6 +10090,7 @@ fn deny_path_of(t: &T) -> String {
     runs[0].split(" deny=").nth(1).unwrap().to_string()
 }
 
+#[test_id(tux2f78)]
 #[test]
 fn resubmit_hands_a_whole_run_the_deny_rows_when_the_eject_recorded_no_test_ids() {
     let row = "disabled\tunit:queue other_test\tsp-quvpmf\t9999999999\n";
@@ -9780,6 +10100,7 @@ fn resubmit_hands_a_whole_run_the_deny_rows_when_the_eject_recorded_no_test_ids(
     assert!(text.contains(row), "{text}");
 }
 
+#[test_id(t8anhrt)]
 #[test]
 fn resubmit_refuses_and_runs_nothing_when_the_deny_list_cannot_be_read() {
     let t = unit_red_world(&[], "");
@@ -9789,6 +10110,7 @@ fn resubmit_refuses_and_runs_nothing_when_the_deny_list_cannot_be_read() {
     assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run")));
 }
 
+#[test_id(ttl5v0c)]
 #[test]
 fn resubmit_keeps_a_red_runs_whole_output_and_names_its_failing_tests() {
     let t = unit_red_world(&[], "");
@@ -9818,6 +10140,7 @@ fn recorded(t: &T, kind: &str, by: &str, batch: &str) -> bool {
     round_records(t).contains(&(kind.into(), by.into(), batch.into()))
 }
 
+#[test_id(t3vcjyg)]
 #[test]
 fn a_hand_eject_names_the_concierge_in_the_landing_log_and_the_log_record() {
     let t = round_world();
@@ -9860,6 +10183,7 @@ fn a_hand_eject_names_the_concierge_in_the_landing_log_and_the_log_record() {
     );
 }
 
+#[test_id(txug3of)]
 #[test]
 fn a_batcher_eject_names_the_batcher_in_both_places() {
     let t = round_world();
@@ -9896,6 +10220,7 @@ fn a_batcher_eject_names_the_batcher_in_both_places() {
     assert!(!recorded(&t, "eject", "concierge", &batch));
 }
 
+#[test_id(tt93u65)]
 #[test]
 fn open_land_and_abandon_record_their_actor_in_both_places() {
     let t = round_world();
@@ -9963,6 +10288,7 @@ fn open_land_and_abandon_record_their_actor_in_both_places() {
     assert!(recorded(&t, "abandon", "operator", &batch));
 }
 
+#[test_id(teaht9w)]
 #[test]
 fn a_settings_refusal_inside_certify_records_the_certifying_actor_on_its_eject() {
     let t = round_world();
@@ -9984,6 +10310,7 @@ fn a_settings_refusal_inside_certify_records_the_certifying_actor_on_its_eject()
     );
 }
 
+#[test_id(tzwi94j)]
 #[test]
 fn a_round_verb_without_a_known_actor_is_usage_and_writes_nothing() {
     let t = round_world();
@@ -10034,6 +10361,7 @@ fn a_round_verb_without_a_known_actor_is_usage_and_writes_nothing() {
     }
 }
 
+#[test_id(tns2gfa)]
 #[test]
 fn open_whose_cut_answers_cannot_tell_and_applies_later_keeps_its_worktree_and_one_round() {
     let t = round_world();
@@ -10099,6 +10427,7 @@ fn plant_batcher_red_tip(t: &T, id: &str, tip: &str) -> PathBuf {
     p
 }
 
+#[test_id(t8xfbi1)]
 #[test]
 fn absolve_clears_the_batchers_own_red_tip_record() {
     let t = round_world();
@@ -10116,6 +10445,7 @@ fn absolve_clears_the_batchers_own_red_tip_record() {
     assert!(other.exists(), "another bead's record is untouched");
 }
 
+#[test_id(te77mnd)]
 #[test]
 fn resubmit_at_the_ejected_red_tip_clears_the_batchers_own_red_tip_record() {
     let t = rework_world(&["manual"]);
@@ -10131,6 +10461,7 @@ fn resubmit_at_the_ejected_red_tip_clears_the_batchers_own_red_tip_record() {
     assert!(!rec.exists());
 }
 
+#[test_id(tm6o8ng)]
 #[test]
 fn an_integration_red_hands_the_mender_the_integration_output_and_the_failed_test_names() {
     let t = round_world();
@@ -10158,6 +10489,7 @@ fn an_integration_red_hands_the_mender_the_integration_output_and_the_failed_tes
     assert!(out.contains(&format!("FAIL {test}")) && out.contains(&format!("integration-tests failed: {test}")), "{out}");
 }
 
+#[test_id(tfpoukr)]
 #[test]
 fn an_ejects_red_evidence_is_kept_where_the_next_pass_start_does_not_wipe_it() {
     let t = round_world();
@@ -10196,6 +10528,7 @@ fn kept_evidence_after_eject(t: &T, batch: &str, suites: &str) -> std::path::Pat
     std::path::PathBuf::from(p)
 }
 
+#[test_id(tx8av7s)]
 #[test]
 fn an_ejects_kept_evidence_holds_each_red_suites_whole_output() {
     let t = round_world();
@@ -10216,6 +10549,7 @@ fn an_ejects_kept_evidence_holds_each_red_suites_whole_output() {
     assert!(text.contains("not ok 2 - b broke") && text.contains("test-b.sh.out"), "{text}");
 }
 
+#[test_id(t53pj44)]
 #[test]
 fn a_unit_tests_ejects_kept_evidence_holds_each_red_phases_whole_output() {
     let t = round_world();
@@ -10247,6 +10581,7 @@ fn deploy_faulting_round(detached: bool) -> (T, String) {
     (t, batch)
 }
 
+#[test_id(tujm874)]
 #[test]
 fn a_detached_activation_that_exits_0_leaving_current_behind_is_a_deploy_fault() {
     let (t, batch) = deploy_faulting_round(true);
@@ -10256,6 +10591,7 @@ fn a_detached_activation_that_exits_0_leaving_current_behind_is_a_deploy_fault()
     assert!(m.contains("exited 0 but current is"), "{m}");
 }
 
+#[test_id(tgcdkij)]
 #[test]
 fn a_deferred_landing_whose_activation_faults_mails_once_after_it_with_the_fault() {
     let (t, batch) = deploy_faulting_round(false);
@@ -10266,6 +10602,7 @@ fn a_deferred_landing_whose_activation_faults_mails_once_after_it_with_the_fault
     assert!(landing[0].1.contains("DEPLOY FAULT:"), "{}", landing[0].1);
 }
 
+#[test_id(tju6cdq)]
 #[test]
 fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
     let (t, batch) = certified_round();
@@ -10279,6 +10616,7 @@ fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
     assert!(!lines[0].contains("release=none") && !lines[0].contains("not activated"), "{}", lines[0]);
 }
 
+#[test_id(t8qp4wn)]
 #[test]
 fn a_green_round_clears_its_members_registry_rows_before_the_release_activates() {
     let (t, batch) = certified_round();
@@ -10293,6 +10631,7 @@ fn a_green_round_clears_its_members_registry_rows_before_the_release_activates()
     assert!(t.out().contains("queue.sh land-local: landing cleared registry row(s) unit:a::t"), "{}", t.out());
 }
 
+#[test_id(tu2mmj7)]
 #[test]
 fn a_landing_whose_registry_clear_fails_still_lands_and_says_so() {
     let (t, batch) = certified_round();
@@ -10302,6 +10641,7 @@ fn a_landing_whose_registry_clear_fails_still_lands_and_says_so() {
     assert!(t.err().contains("queue.sh land-local: landed but registry rows were not cleared: registry busy"), "{}", t.err());
 }
 
+#[test_id(tibws6k)]
 #[test]
 fn a_landing_with_no_registry_rows_prints_no_clearing_line() {
     let (t, batch) = certified_round();

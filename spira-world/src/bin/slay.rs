@@ -6,6 +6,9 @@
 //! chokepoint (the one permitted door onto `git worktree remove` / `git branch -D`), and the
 //! dwarf's own pidfiles and unit.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -332,6 +335,7 @@ mod tests {
     use spira_store::lc_call::fake::Content;
     use std::sync::Arc;
 
+    #[test_id(tw3a0pm)]
     #[test]
     fn slays_bead_writes_are_content_requests() {
         let door = Arc::new(Content::new(vec![]));

@@ -486,6 +486,7 @@ mod tests {
         DeliveryEvent { expect, version, kind, actor: "test".into() }
     }
 
+    #[test_id(thtqkvj)]
     #[test]
     fn every_state_event_pair_has_an_explicit_outcome() {
         for &state in &[
@@ -511,6 +512,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2kgfzu)]
     #[test]
     fn terminal_absorbs_everything() {
         // A queue-mode Exited row: the four shared exits refuse as Terminal, exactly as
@@ -543,6 +545,7 @@ mod tests {
         }
     }
 
+    #[test_id(tkeae34)]
     #[test]
     fn queue_mode_full_cycle() {
         let row = DeliveryRow::start_queue("sp-x");
@@ -557,6 +560,7 @@ mod tests {
         assert_eq!(out2.row.exit, Some(Exit::Delivered));
     }
 
+    #[test_id(teec0e4)]
     #[test]
     fn pr_mode_requeues_only_for_the_harness() {
         let row = DeliveryRow::start_pr("sp-x", 42);
@@ -571,6 +575,7 @@ mod tests {
         assert_eq!(out.row.exit, Some(Exit::Requeued));
     }
 
+    #[test_id(tlycpys)]
     #[test]
     fn push_mode_can_requeue_or_return_on_rejection() {
         let row = DeliveryRow::start_push("sp-x");
@@ -584,6 +589,7 @@ mod tests {
         assert_eq!(out.row.exit, Some(Exit::Returned));
     }
 
+    #[test_id(tkpwkhh)]
     #[test]
     fn cut_is_illegal_outside_queue_mode() {
         let row = DeliveryRow::start_pr("sp-x", 1);
@@ -595,6 +601,7 @@ mod tests {
         assert!(!out.applied);
     }
 
+    #[test_id(tj86dd3)]
     #[test]
     fn expect_mismatch_never_mutates() {
         let row = DeliveryRow::start_queue("sp-x");
@@ -606,6 +613,7 @@ mod tests {
     // ── local mode (design local-main-2026-09-27 §3, row 8): submitted -> batched ->
     // landed_local -> published | publish_red ──────────────────────────────────────────
 
+    #[test_id(tjwtlrr)]
     #[test]
     fn local_mode_lands_then_publishes_green() {
         let row = DeliveryRow::start_local("sp-x");
@@ -636,6 +644,7 @@ mod tests {
         assert!(out3.row.state.is_terminal());
     }
 
+    #[test_id(tuzro5o)]
     #[test]
     fn local_mode_lands_then_publish_red_never_reopens() {
         let mut row = DeliveryRow::start_local("sp-x");
@@ -654,6 +663,7 @@ mod tests {
         assert!(matches!(again.refusal, Some(Refusal::Terminal { .. })));
     }
 
+    #[test_id(tebwjg9)]
     #[test]
     fn publish_facts_are_refused_before_landed_local() {
         // Not yet Exited: neither publish fact is legal, for any mode.
@@ -676,6 +686,7 @@ mod tests {
         }
     }
 
+    #[test_id(t32df9v)]
     #[test]
     fn publish_facts_are_refused_for_every_non_local_mode() {
         for mut row in [DeliveryRow::start_queue("sp-a"), DeliveryRow::start_pr("sp-b", 1), DeliveryRow::start_push("sp-c")] {
@@ -690,6 +701,7 @@ mod tests {
         }
     }
 
+    #[test_id(todirvg)]
     #[test]
     fn a_bead_closes_on_landed_local_and_a_later_publish_never_touches_it() {
         // The cross-machine property the acceptance criteria names: landed_local closes the
@@ -748,6 +760,7 @@ mod tests {
         apply(row, &ev(row.state, row.version, kind))
     }
 
+    #[test_id(tr29pu5)]
     #[test]
     fn publishing_records_the_pr_and_walks_ci_to_published() {
         let started = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 });
@@ -771,6 +784,7 @@ mod tests {
         assert_eq!(done.row.merge_sha.as_deref(), Some("f1"));
     }
 
+    #[test_id(t7k043s)]
     #[test]
     fn publishing_goes_red_from_any_ci_state() {
         for ci in CiState::ALL {
@@ -782,6 +796,7 @@ mod tests {
         }
     }
 
+    #[test_id(t0x47pz)]
     #[test]
     fn published_needs_green_ci_and_ci_only_moves_forward() {
         let started = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 }).row;
@@ -811,6 +826,7 @@ mod tests {
         }
     }
 
+    #[test_id(ta0eo45)]
     #[test]
     fn publish_started_is_local_only_and_only_from_exited() {
         for mut row in [DeliveryRow::start_queue("sp-a"), DeliveryRow::start_pr("sp-b", 1), DeliveryRow::start_push("sp-c")] {
@@ -828,6 +844,7 @@ mod tests {
         assert!(!step(&queued, DeliveryEventKind::PublishStarted { pr: 9 }).applied);
     }
 
+    #[test_id(tb3mk5t)]
     #[test]
     fn a_publishing_row_never_reopens_the_exit() {
         let publishing = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 }).row;
@@ -838,6 +855,7 @@ mod tests {
         }
     }
 
+    #[test_id(t64sbee)]
     #[test]
     fn ci_names_round_trip() {
         for ci in CiState::ALL {

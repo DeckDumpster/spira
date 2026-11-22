@@ -159,6 +159,7 @@ mod tests {
 
     const EXIT: &str = concat!("process", "::exit(1)");
 
+    #[test_id(tgvso5x)]
     #[test]
     fn exit_outside_main_is_caught_and_main_comments_strings_and_tests_pass() {
         let t = TempDir::new("pexit-fail");
@@ -173,6 +174,7 @@ mod tests {
         assert_eq!(got, vec![format!("{NAME}: a/src/lib.rs:2: {msg}"), format!("{NAME}: a/src/main.rs:2: {msg}")]);
     }
 
+    #[test_id(tc0hmw7)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("pexit-allow");
@@ -185,6 +187,7 @@ mod tests {
         );
     }
 
+    #[test_id(t1lycfo)]
     #[test]
     fn no_rust_files_is_a_refusal() {
         let t = TempDir::new("pexit-empty");

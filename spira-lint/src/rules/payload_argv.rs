@@ -213,6 +213,7 @@ mod tests {
 
     // ── the bash suite's cases ────────────────────────────────────────────────────────
 
+    #[test_id(tz46gv3)]
     #[test]
     fn positive_control_argv_and_env_shapes() {
         let src = r#"#!/usr/bin/env bash
@@ -237,6 +238,7 @@ print(os.environ["LABELED_JSON"])
         );
     }
 
+    #[test_id(tehrpsx)]
     #[test]
     fn the_fix_is_silent() {
         let src = r#"#!/usr/bin/env bash
@@ -264,6 +266,7 @@ report() {
         assert_eq!(kinds(src), vec![]);
     }
 
+    #[test_id(tm1l9wa)]
     #[test]
     fn a_bounded_non_json_argv_token_is_silent() {
         let src = "epic_parent_lookup() {\n    python3 -c '\nimport sys\nprint(sys.argv[1])\n' \"$started_csv\"\n}\n";
@@ -272,6 +275,7 @@ report() {
 
     // ── where the bash heuristic was wrong ────────────────────────────────────────────
 
+    #[test_id(tjyaekh)]
     #[test]
     fn misses_of_the_bash_regex_are_caught() {
         assert_eq!(kinds("X_JSON=\"$(bd list)\" python3 -c 'p'\n"), vec![("env", 1, s(&["X_JSON"]))]);
@@ -284,6 +288,7 @@ report() {
         assert_eq!(kinds("command /usr/bin/python3 - \"$x_json\" <f\n"), vec![("argv", 1, s(&["x_json"]))]);
     }
 
+    #[test_id(tyw698b)]
     #[test]
     fn false_positives_of_the_bash_regex_are_silent() {
         assert_eq!(kinds("local a_json=\"$1\"; python3 -c 'print(1)'\n"), vec![], "not python3's environment");
@@ -297,6 +302,7 @@ report() {
 
     // ── the tree walk, allow list and scope ───────────────────────────────────────────
 
+    #[test_id(txvq1hu)]
     #[test]
     fn walk_allow_and_scope() {
         let t = TempDir::new("pal");

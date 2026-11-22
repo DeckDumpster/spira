@@ -142,6 +142,7 @@ fn stepped(rec: &PassRecord) -> Vec<String> {
     rec.steps.iter().map(|s| s.section.clone()).collect()
 }
 
+#[test_id(t8g249e)]
 #[test]
 fn a_step_is_written_read_back_and_holds_its_neighbourhood_until_it_is_judged() {
     let r = rig();
@@ -178,6 +179,7 @@ fn a_step_is_written_read_back_and_holds_its_neighbourhood_until_it_is_judged() 
     assert!(r.record().judged.is_empty());
 }
 
+#[test_id(tqwmlsg)]
 #[test]
 fn an_acked_intent_past_its_horizon_is_judged_on_the_field_it_moves() {
     let r = rig();
@@ -199,6 +201,7 @@ fn an_acked_intent_past_its_horizon_is_judged_on_the_field_it_moves() {
     assert_eq!(rec.steps[0].from, json!(1), "the next step starts from the knob the owner moved");
 }
 
+#[test_id(tcfyi2k)]
 #[test]
 fn a_failed_step_backs_off_doubling_to_a_day_and_its_only_candidate_is_exhausted() {
     assert_eq!(backoff_secs(600, 1), 1200);
@@ -245,6 +248,7 @@ fn a_failed_step_backs_off_doubling_to_a_day_and_its_only_candidate_is_exhausted
     assert_eq!(stepped(&r.record()), ["Probe/a"]);
 }
 
+#[test_id(ty3ipix)]
 #[test]
 fn a_refused_ack_is_recorded_and_replanned_from_the_fresh_from() {
     let r = rig();
@@ -269,6 +273,7 @@ fn a_refused_ack_is_recorded_and_replanned_from_the_fresh_from() {
     assert!(r.record().acks_refused.is_empty(), "recorded once, by the pass after it");
 }
 
+#[test_id(tu4i1v5)]
 #[test]
 fn an_unacknowledged_intent_past_its_horizon_is_the_owners_gap_and_is_never_judged() {
     let r = rig();
@@ -285,6 +290,7 @@ fn an_unacknowledged_intent_past_its_horizon_is_the_owners_gap_and_is_never_judg
     assert_eq!(r.intents().len(), 1, "no more intents pile on an owner that does not ack");
 }
 
+#[test_id(tpap7xm)]
 #[test]
 fn an_open_condition_no_action_addresses_is_no_lever_recorded_once_beside_the_gaps_one_step() {
     let r = rig();
@@ -312,6 +318,7 @@ fn an_open_condition_no_action_addresses_is_no_lever_recorded_once_beside_the_ga
     assert_eq!(only.no_lever[0].conditions, ["Wedged"]);
 }
 
+#[test_id(tscavu7)]
 #[test]
 fn a_section_with_no_actions_is_a_term_and_records_nothing_beyond_its_rank() {
     let r = rig();
@@ -323,6 +330,7 @@ fn a_section_with_no_actions_is_a_term_and_records_nothing_beyond_its_rank() {
     assert!(rec.steps.is_empty() && rec.refused.is_empty() && rec.exhausted.is_empty() && rec.no_lever.is_empty(), "{rec:?}");
 }
 
+#[test_id(t2ttq2u)]
 #[test]
 fn capacity_steps_sharing_a_resource_are_never_both_in_flight_and_local_steps_on_two_targets_may_be() {
     let r = rig();
@@ -344,6 +352,7 @@ fn capacity_steps_sharing_a_resource_are_never_both_in_flight_and_local_steps_on
     assert_eq!(stepped(&r.record()), ["Probe/a", "Probe/b"]);
 }
 
+#[test_id(tar2gxf)]
 #[test]
 fn a_step_fails_closed_on_an_absent_or_stale_upstream_a_stale_target_and_a_missing_andon() {
     // No section produces what the raise consumes.
@@ -394,6 +403,7 @@ fn a_step_fails_closed_on_an_absent_or_stale_upstream_a_stale_target_and_a_missi
     assert!(r.intents().is_empty());
 }
 
+#[test_id(tqzi371)]
 #[test]
 fn a_knob_the_step_cannot_read_refuses_the_step() {
     let r = rig();
@@ -404,6 +414,7 @@ fn a_knob_the_step_cannot_read_refuses_the_step() {
     assert_eq!(codes(&r.record()), [("Probe/a".to_string(), "knob-absent".to_string())]);
 }
 
+#[test_id(tj0wnee)]
 #[test]
 fn a_second_pass_finding_the_lock_held_stands_by_naming_the_holder_and_writes_no_pass_record() {
     let r = rig();
@@ -420,6 +431,7 @@ fn a_second_pass_finding_the_lock_held_stands_by_naming_the_holder_and_writes_no
     r.ok(&["lock", "release", "reconciler", "--token", held["token"].as_str().unwrap()], None);
 }
 
+#[test_id(tv80w9t)]
 #[test]
 fn the_lock_is_free_after_every_pass_and_a_write_under_a_previous_token_is_refused() {
     let r = rig();
@@ -437,6 +449,7 @@ fn the_lock_is_free_after_every_pass_and_a_write_under_a_previous_token_is_refus
     assert_eq!(r.record().n, 1, "the fenced write left the record as it was");
 }
 
+#[test_id(tmh9bdp)]
 #[test]
 fn under_a_halt_and_for_a_shadowed_kind_the_record_holds_the_would_be_step_and_intents_are_unchanged() {
     for (halted, shadow, held, mode) in [
@@ -459,6 +472,7 @@ fn under_a_halt_and_for_a_shadowed_kind_the_record_holds_the_would_be_step_and_i
     }
 }
 
+#[test_id(tm6sbrf)]
 #[test]
 fn under_a_halt_or_a_shadow_an_intent_due_for_judgement_is_left_unjudged() {
     for (halted, shadow) in [(true, vec![]), (false, vec!["Probe".to_string()]), (false, vec!["*".to_string()])] {
@@ -478,6 +492,7 @@ fn under_a_halt_or_a_shadow_an_intent_due_for_judgement_is_left_unjudged() {
     }
 }
 
+#[test_id(tt2h0fg)]
 #[test]
 fn a_target_behind_its_spec_is_refused_as_not_caught_up() {
     let r = rig();
@@ -488,6 +503,7 @@ fn a_target_behind_its_spec_is_refused_as_not_caught_up() {
     assert!(r.intents().is_empty());
 }
 
+#[test_id(tlo2vau)]
 #[test]
 fn a_capacity_step_with_nothing_consumed_still_holds_its_own_target() {
     let r = rig();
@@ -519,6 +535,7 @@ impl<B: Backend> Lc for Slow<'_, B> {
     }
 }
 
+#[test_id(tnehxu0)]
 #[test]
 fn the_pass_stops_writing_at_its_own_deadline_and_still_releases_the_lock() {
     let r = rig();
@@ -552,6 +569,7 @@ impl<B: Backend> Lc for Forgetful<'_, B> {
     }
 }
 
+#[test_id(txlett8)]
 #[test]
 fn a_step_counts_only_once_its_intent_reads_back() {
     let r = rig();
@@ -561,6 +579,7 @@ fn a_step_counts_only_once_its_intent_reads_back() {
     assert_eq!(codes(&p.record), [("Probe/a".to_string(), "no-read-back".to_string())]);
 }
 
+#[test_id(tlo5lmj)]
 #[test]
 fn pass_history_lists_every_retained_record_oldest_first_and_reads_back_as_records() {
     let r = rig();

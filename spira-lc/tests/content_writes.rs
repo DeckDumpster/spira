@@ -2,6 +2,9 @@
 //! real Dolt server: with a provisioned writer each is one transaction and starts no process;
 //! without one it still goes through bd.
 
+#[macro_use]
+extern crate spira_test_id;
+
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -318,6 +321,7 @@ fn provision(lc: &Lc) {
     lc.admin("admin-provision-reader");
 }
 
+#[test_id(t6zrd6z)]
 #[test]
 fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -332,6 +336,7 @@ fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_
     }
 }
 
+#[test_id(tp4mu6r)]
 #[test]
 fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
     let Some(store) = Store::up() else { return };
@@ -361,6 +366,7 @@ fn first_line(out: &str) -> String {
     out.lines().next().unwrap_or_default().trim().to_string()
 }
 
+#[test_id(tehblp4)]
 #[test]
 fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -379,6 +385,7 @@ fn a_create_gets_its_id_from_the_server_in_the_one_transaction_and_starts_no_pro
     assert!(rc == 0 && row.to_lowercase().contains("ready"), "create-bead files the lifecycle row from the create's output ({rc}): {row}");
 }
 
+#[test_id(t2itwbv)]
 #[test]
 fn two_creates_sent_at_once_get_two_ids_and_bd_reads_both() {
     let Some(store) = Store::up() else { return };
@@ -396,6 +403,7 @@ fn two_creates_sent_at_once_get_two_ids_and_bd_reads_both() {
     }
 }
 
+#[test_id(t8ftyd2)]
 #[test]
 fn a_child_takes_the_next_number_under_its_parent() {
     let Some(store) = Store::up() else { return };
@@ -495,6 +503,7 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
     children
 }
 
+#[test_id(tsnw0w7)]
 #[test]
 fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -504,6 +513,7 @@ fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
     }
 }
 
+#[test_id(t1af6b0)]
 #[test]
 fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_same_rows() {
     let Some(store) = Store::up() else { return };
@@ -524,6 +534,7 @@ const CREATES: &[(&str, &[&str], Option<&str>)] = &[
     ("a discovered-from edge", &["found while", "--deps", "discovered-from:{B}", "-d", "by flag"], None),
 ];
 
+#[test_id(ty31y7m)]
 #[test]
 fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
     let Some(store) = Store::up() else { return };
@@ -549,6 +560,7 @@ fn a_create_makes_the_row_bd_makes_for_every_filing_flag() {
     }
 }
 
+#[test_id(tk2b8ij)]
 #[test]
 fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
     let Some(store) = Store::up() else { return };
@@ -571,6 +583,7 @@ fn a_create_prints_what_bd_prints_with_json_and_with_neither_flag() {
     assert_eq!(text.replace(&id, "ID").lines().take(3).collect::<Vec<_>>(), said.replace(&bd_id, "ID").lines().take(3).collect::<Vec<_>>(), "{text} vs {said}");
 }
 
+#[test_id(tpe5vdv)]
 #[test]
 fn a_blocking_edge_blocks_its_dependent_and_closing_the_blocker_unblocks_it_as_bd_reads_it() {
     let Some(store) = Store::up() else { return };
@@ -592,6 +605,7 @@ fn said(out: &str, key: &str) -> String {
     out.replace(key, "KEY")
 }
 
+#[test_id(tnmxdom)]
 #[test]
 fn the_key_value_and_memory_verbs_write_the_config_rows_bd_writes_in_sql_and_start_no_process() {
     let Some(store) = Store::up() else { return };
@@ -625,6 +639,7 @@ fn the_key_value_and_memory_verbs_write_the_config_rows_bd_writes_in_sql_and_sta
     assert!(!memories.contains("mem-a") && !memories.contains("mem-b"), "{memories}");
 }
 
+#[test_id(txxx5qs)]
 #[test]
 fn a_key_value_write_to_the_planning_watermark_is_refused_by_the_door() {
     let Some(store) = Store::up() else { return };
@@ -661,6 +676,7 @@ fn expire_gate(store: &Store, gate: &str) {
     store.sql(&format!("UPDATE issues SET created_at = UTC_TIMESTAMP() - INTERVAL 1 HOUR WHERE id = '{gate}'; CALL DOLT_COMMIT('--allow-empty', '-Am', 'expire timer gate')"));
 }
 
+#[test_id(ttfnncn)]
 #[test]
 fn a_gate_check_closes_the_timer_gates_that_expired_as_bd_does_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -684,6 +700,7 @@ fn a_gate_check_closes_the_timer_gates_that_expired_as_bd_does_in_sql_and_starts
     assert_eq!((children, out.trim()), (0, "No open gates of type 'gh:run' found."));
 }
 
+#[test_id(tozarv6)]
 #[test]
 fn a_gate_resolve_closes_the_gate_and_unblocks_what_it_blocked_as_bd_does() {
     let Some(store) = Store::up() else { return };
@@ -699,6 +716,7 @@ fn a_gate_resolve_closes_the_gate_and_unblocks_what_it_blocked_as_bd_does() {
     assert!(!store.bd(&["blocked", "--json"], None).contains(&a), "{a} is still blocked by its resolved gate");
 }
 
+#[test_id(txrm626)]
 #[test]
 fn purge_alerts_deletes_the_alerts_rows_in_sql_and_unblocks_what_they_blocked() {
     let Some(store) = Store::up() else { return };
@@ -738,6 +756,7 @@ fn stale_pair(store: &Store) -> (String, String, String) {
     (blocked, blocker, free)
 }
 
+#[test_id(t0y6hdk)]
 #[test]
 fn recompute_blocked_repairs_stale_flags_and_says_what_bd_says_in_sql_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
@@ -755,6 +774,7 @@ fn recompute_blocked_repairs_stale_flags_and_says_what_bd_says_in_sql_and_starts
     assert_eq!(lc.run(&["content", "recompute-blocked"], None).1, "is_blocked already consistent — nothing to recompute.\n");
 }
 
+#[test_id(tljrx4z)]
 #[test]
 fn a_gate_check_over_a_github_gate_is_left_to_bd() {
     let Some(store) = Store::up() else { return };
@@ -775,6 +795,7 @@ fn recording_bd(store: &Store, log: &Path) -> String {
     path.display().to_string()
 }
 
+#[test_id(tu3jyzu)]
 #[test]
 fn a_planning_write_moves_the_kv_watermark_in_sql_and_starts_no_bd_kv() {
     let Some(store) = Store::up() else { return };

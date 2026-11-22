@@ -56,6 +56,7 @@ pub fn lc_state(lc_bin: &str, env: &[(String, String)], id: &str) -> Option<Stri
 mod tests {
     use super::*;
 
+    #[test_id(t1vs59r)]
     #[test]
     fn only_a_landed_row_is_landed_and_an_unanswerable_record_is_unknown() {
         assert_eq!(answer(Some(0), "LANDED\n"), Some(true));
@@ -66,6 +67,7 @@ mod tests {
         assert_eq!(answer(None, ""), None, "killed by the deadline");
     }
 
+    #[test_id(tqmugde)]
     #[test]
     fn no_commit_subject_search_survives() {
         // sp-2c1n0 guard: the subject oracle (`git log --grep` for `spira: land <id>`) is gone.

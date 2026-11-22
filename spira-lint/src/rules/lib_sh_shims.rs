@@ -371,6 +371,7 @@ mod tests {
         LibShShims.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tyeedxi)]
     #[test]
     fn a_one_line_shim_onto_a_delegate_is_clean() {
         let t = TempDir::new("shim");
@@ -379,6 +380,7 @@ mod tests {
         assert!(run(&t, &["spira/lib.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tqq739y)]
     #[test]
     fn a_bare_if_guard_with_no_else_is_still_a_shim() {
         let t = TempDir::new("guard");
@@ -390,6 +392,7 @@ mod tests {
         assert!(run(&t, &["spira/lib.sh"]).unwrap().is_empty());
     }
 
+    #[test_id(tlaguke)]
     #[test]
     fn calling_a_sibling_shim_is_still_delegation() {
         let t = TempDir::new("sibling");
@@ -403,6 +406,7 @@ mod tests {
 
     /// The positive control: a planted real-bodied function — two raw `git` calls chained
     /// on a condition, exactly the retired bash content check's own shape — must fail.
+    #[test_id(tf9dq3b)]
     #[test]
     fn a_planted_real_bodied_function_is_caught() {
         let t = TempDir::new("planted");
@@ -417,6 +421,7 @@ mod tests {
         assert!(got[0].contains("no allow-list entry"), "{got:?}");
     }
 
+    #[test_id(t254neq)]
     #[test]
     fn a_loop_or_an_if_else_is_real_even_with_no_foreign_call() {
         let t = TempDir::new("loopy");
@@ -430,6 +435,7 @@ mod tests {
         assert!(got[0].contains("spira_status_seam"), "{got:?}");
     }
 
+    #[test_id(tnacfin)]
     #[test]
     fn an_inline_python_script_is_real() {
         let t = TempDir::new("py");
@@ -443,6 +449,7 @@ mod tests {
         assert!(got[0].contains("spira_bead_status"), "{got:?}");
     }
 
+    #[test_id(tjhdkcc)]
     #[test]
     fn a_listed_entry_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("allow");
@@ -456,6 +463,7 @@ mod tests {
         assert!(got[0].contains("gone_function") && got[0].contains("no longer defines"), "{got:?}");
     }
 
+    #[test_id(tfods0q)]
     #[test]
     fn nested_and_non_lib_files_are_out_of_scope() {
         let t = TempDir::new("scope");

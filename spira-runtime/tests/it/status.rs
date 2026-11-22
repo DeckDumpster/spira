@@ -44,6 +44,7 @@ impl runtime::Handler for Silent {
     }
 }
 
+#[test_id(trts8jw)]
 #[test]
 fn status_halt_and_resume_round_trip_over_the_socket() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
@@ -126,6 +127,7 @@ fn bound_rig(body: &'static str) -> (Engine, std::path::PathBuf, testkit::TempDi
     (e, path, dir, clock)
 }
 
+#[test_id(tb2sln6)]
 #[test]
 fn scheduler_bound_answers_the_carried_array_and_refuses_before_the_first_pass() {
     let (mut e, path, _dir, clock) = bound_rig(r#"{"bound":[{"class":"build-disk","limit":7,"held":9,"waiting":3,"over":true}]}"#);
@@ -138,6 +140,7 @@ fn scheduler_bound_answers_the_carried_array_and_refuses_before_the_first_pass()
     assert_eq!(got, serde_json::json!([{"class": "build-disk", "limit": 7, "held": 9, "waiting": 3, "over": true}]));
 }
 
+#[test_id(t2bykgh)]
 #[test]
 fn scheduler_bound_refuses_when_the_carry_holds_no_pass() {
     let (mut e, path, _dir, clock) = bound_rig("{}");
@@ -148,6 +151,7 @@ fn scheduler_bound_refuses_when_the_carry_holds_no_pass() {
     assert!(err.0.contains("no call pass has run yet"), "{err}");
 }
 
+#[test_id(t4vt9dn)]
 #[test]
 fn scheduler_uncalled_refuses_before_the_first_pass_and_answers_the_carried_map() {
     let (mut e, path, _dir, clock) = bound_rig(r#"{"uncalled":{"skuld":"yielding — urgent bead(s) unclaimed: sp-x"}}"#);
@@ -160,6 +164,7 @@ fn scheduler_uncalled_refuses_before_the_first_pass_and_answers_the_carried_map(
     assert_eq!(got, serde_json::json!({"skuld": "yielding — urgent bead(s) unclaimed: sp-x"}));
 }
 
+#[test_id(t47mitc)]
 #[test]
 fn the_reconciler_host_reads_uncalled_from_the_carry_scheduler_uncalled_serves() {
     use reconciler::Host;
@@ -178,6 +183,7 @@ fn the_reconciler_host_reads_uncalled_from_the_carry_scheduler_uncalled_serves()
     assert_eq!(host.uncalled(), Some(Ok(want)));
 }
 
+#[test_id(tdwgh2d)]
 #[test]
 fn the_reconciler_host_names_a_carry_it_cannot_decode() {
     use reconciler::Host;

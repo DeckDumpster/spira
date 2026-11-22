@@ -460,6 +460,7 @@ pub fn cksum(data: &[u8]) -> (u32, usize) {
 mod tests {
     use super::*;
 
+    #[test_id(t9kblgz)]
     #[test]
     fn cksum_matches_coreutils() {
         // printf 'hello\n' | cksum -> "3015617425 6"
@@ -467,11 +468,13 @@ mod tests {
     }
 
     // Vectors computed with testenv-batch.sh's own _fp function (bash + sed + cksum).
+    #[test_id(trydvyp)]
     #[test]
     fn fingerprint_matches_bash_fp_for_empty_output() {
         assert_eq!(fingerprint(1, ""), "4414460516");
     }
 
+    #[test_id(tn0ee4z)]
     #[test]
     fn fingerprint_uses_tail_when_no_fail_line() {
         assert_eq!(fingerprint(1, "ok 1 - a\nnot ok 2 - b"), "164262933127");
@@ -479,6 +482,7 @@ mod tests {
         assert_eq!(fingerprint(1, &seq.join("\n")), "109937514765");
     }
 
+    #[test_id(t7ogr5o)]
     #[test]
     fn fingerprint_normalises_paths_times_and_numbers() {
         let out = "x\nFAIL: thing at /tmp/abc.123/foo 2026-09-28T12:34:56Z\nmore\nFAIL again 12:00:01 count 12345";
@@ -489,11 +493,13 @@ mod tests {
         );
     }
 
+    #[test_id(tnlyytq)]
     #[test]
     fn fingerprint_ignores_trailing_newlines() {
         assert_eq!(fingerprint(1, "ok 1 - a\nnot ok 2 - b\n\n"), "164262933127");
     }
 
+    #[test_id(t2crbm3)]
     #[test]
     fn record_round_trips_seven_fields() {
         let r = ResultRecord::from_exit(
@@ -512,6 +518,7 @@ mod tests {
         assert_eq!(ResultRecord::parse(&line), Some(r));
     }
 
+    #[test_id(tjbcqmn)]
     #[test]
     fn unreached_keeps_the_four_field_form_and_parses() {
         let r = ResultRecord::unreached(5);
@@ -522,6 +529,7 @@ mod tests {
         );
     }
 
+    #[test_id(tc33h6u)]
     #[test]
     // covers: UC-test-infrastructure-30
     fn exit_codes_map_to_statuses() {
@@ -546,6 +554,7 @@ mod tests {
     /// podman returning rc 255 with its own exec-wait-timeout message — even with the
     /// suite's own fully-passing TAP output ahead of it, the real shape podman left behind
     /// — now yields Fault, never Red, and is never blocking or quarantinable.
+    #[test_id(tvp8j96)]
     #[test]
     fn podman_exec_wait_timeout_is_a_fault_never_a_red() {
         let evidence = "TAP version 14\n1..4\nok 1 - a\nok 2 - b\nok 3 - c\nok 4 - d\n\n4 passed, 0 failed, 0 skipped\nError: timed out waiting for file /var/lib/containers/storage/overlay-containers/d609b04df0f16dfeda8af8adf28901c5d60de417ee573f9a66bfadf26b14e4f6/userdata/341cfdc06753bbf5d930ce5f9764fe6b5925ed6791e5bccfcb18cc41dc1d50ed/exit/d609b04df0f16dfeda8af8adf28901c5d60de417ee573f9a66bfadf26b14e4f6\n";
@@ -583,6 +592,7 @@ mod tests {
         );
     }
 
+    #[test_id(t93oljo)]
     #[test]
     fn is_podman_exec_lost_needs_both_the_rc_and_the_exact_podman_signature() {
         // rc 255 alone (a suite legitimately exiting 255) is not enough
@@ -598,6 +608,7 @@ mod tests {
         ));
     }
 
+    #[test_id(tdngntn)]
     #[test]
     fn skip_fingerprint_names_the_reason_and_normalizes_it() {
         let rec = ResultRecord::from_exit(
@@ -625,6 +636,7 @@ mod tests {
         assert_eq!(rec.fingerprint, "skip:not_found_at_/tmp/X");
     }
 
+    #[test_id(t7eaqan)]
     #[test]
     fn skip_without_the_tap_convention_gets_a_fixed_unclaimable_fingerprint() {
         let rec = ResultRecord::from_exit(
@@ -633,6 +645,7 @@ mod tests {
         assert_eq!(rec.fingerprint, "skip:(no_reason_given)");
     }
 
+    #[test_id(t3a0vkt)]
     #[test]
     fn an_undeclared_skip_reclassified_red_names_the_requirement_in_its_line() {
         let rec = ResultRecord {
@@ -661,6 +674,7 @@ mod tests {
         );
     }
 
+    #[test_id(tbbv0go)]
     #[test]
     fn disabled_and_skip_req_render_a_dash_rc() {
         let r = ResultRecord {
@@ -675,6 +689,7 @@ mod tests {
         assert_eq!(r.to_string(), "skip-req 9 0 requires:jq parallel diff -");
     }
 
+    #[test_id(t9wy99b)]
     #[test]
     fn suite_lines_match_the_grepped_shapes() {
         let mk = |status, rc, secs| ResultRecord {
@@ -724,6 +739,7 @@ mod tests {
         assert!(!re.is_match(&suite_line("test-a.sh", &mk(Status::Unreached, None, 0))));
     }
 
+    #[test_id(tynyd22)]
     #[test]
     fn deferred_records_are_neither_executed_nor_blocking_and_round_trip() {
         let killed =
@@ -753,6 +769,7 @@ mod tests {
         assert!(!re.is_match(&suite_line("test-p.sh", &killed)));
     }
 
+    #[test_id(tuft4ho)]
     #[test]
     fn output_normalisation_matches_bash_capture() {
         assert_eq!(normalize_output("a\nb\n\n\n"), "a\nb\n");

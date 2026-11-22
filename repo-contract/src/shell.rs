@@ -134,6 +134,7 @@ mod tests {
 
     const FIXTURE: &str = include_str!("../tests/print-dev-env.json");
 
+    #[test_id(tt1d2c8)]
     #[test]
     fn cache_key_changes_when_either_file_changes() {
         let base = cache_key(b"a", b"b");
@@ -143,6 +144,7 @@ mod tests {
         assert_eq!(base, cache_key(b"a", b"b"));
     }
 
+    #[test_id(tujoigw)]
     #[test]
     fn parse_dev_env_keeps_only_exported_variables() {
         let env = parse_dev_env(FIXTURE).unwrap();
@@ -153,6 +155,7 @@ mod tests {
         assert!(env.path_dirs()[0].ends_with("aaa-jq-1.7.1-bin/bin"));
     }
 
+    #[test_id(ttx6u5d)]
     #[test]
     fn parse_dev_env_refuses_malformed_json_by_name() {
         assert!(parse_dev_env("{not json").unwrap_err().contains("not JSON"));
@@ -160,6 +163,7 @@ mod tests {
         assert!(parse_dev_env(r#"{"variables":{}}"#).unwrap_err().contains("PATH"));
     }
 
+    #[test_id(tc5bx3v)]
     #[test]
     fn a_tree_without_a_flake_has_no_shell_and_spawns_nothing() {
         let dir = testkit::TempDir::new("repo-contract-noflake");
@@ -167,6 +171,7 @@ mod tests {
         assert_eq!(r, Ok(DevShell::Undeclared));
     }
 
+    #[test_id(tk2eud5)]
     #[test]
     fn a_cached_shell_whose_store_paths_are_gone_is_realised_again_not_trusted() {
         let dir = testkit::TempDir::new("repo-contract-gc");
@@ -179,6 +184,7 @@ mod tests {
         assert!(r.is_err());
     }
 
+    #[test_id(t4avzjq)]
     #[test]
     fn a_flake_with_no_dev_shell_has_no_shell_and_spawns_nothing() {
         let dir = testkit::TempDir::new("repo-contract-nodevshell");
@@ -187,6 +193,7 @@ mod tests {
         assert_eq!(r, Ok(DevShell::Undeclared));
     }
 
+    #[test_id(tj70yls)]
     #[test]
     fn a_cached_environment_is_read_without_running_nix() {
         let dir = testkit::TempDir::new("repo-contract-cached");
@@ -205,6 +212,7 @@ mod tests {
         nix
     }
 
+    #[test_id(te4vsj7)]
     #[test]
     fn a_nix_that_refuses_the_flake_is_a_shell_that_does_not_enter() {
         let dir = testkit::TempDir::new("repo-contract-refused");
@@ -213,6 +221,7 @@ mod tests {
         assert_eq!(shell_env(&dir, &nix, &dir.join("cache")), Ok(DevShell::DoesNotEnter("boom".into())));
     }
 
+    #[test_id(tzfzk7q)]
     #[test]
     fn a_nix_that_cannot_be_run_is_a_fault_of_the_checker() {
         let dir = testkit::TempDir::new("repo-contract-nonix");
@@ -220,6 +229,7 @@ mod tests {
         assert!(shell_env(&dir, &dir.join("no-nix"), &dir.join("cache")).unwrap_err().contains("cannot run"));
     }
 
+    #[test_id(t7cvnvg)]
     #[test]
     fn a_nix_that_the_timeout_could_not_run_or_cut_is_a_fault_of_the_checker() {
         let dir = testkit::TempDir::new("repo-contract-timeout-codes");
@@ -230,6 +240,7 @@ mod tests {
         }
     }
 
+    #[test_id(tikxrdq)]
     #[test]
     fn a_cache_that_cannot_be_written_is_a_fault_of_the_checker() {
         let dir = testkit::TempDir::new("repo-contract-cache-fault");
@@ -242,6 +253,7 @@ mod tests {
         assert!(shell_env(&dir, &nix, &cache).unwrap_err().contains("cannot create"));
     }
 
+    #[test_id(trp8n4h)]
     #[test]
     fn a_nix_that_prints_a_dev_env_enters_and_is_cached() {
         let dir = testkit::TempDir::new("repo-contract-enters");

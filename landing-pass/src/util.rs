@@ -253,6 +253,7 @@ pub fn run_capture(mut c: Command) -> (i32, Vec<u8>, Vec<u8>) {
 mod tests {
     use super::*;
 
+    #[test_id(tsbj0wk)]
     #[test]
     fn iso_matches_date() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
@@ -260,6 +261,7 @@ mod tests {
         assert_eq!(iso_utc(951_782_400), "2000-02-29T00:00:00Z");
     }
 
+    #[test_id(t1mr2ur)]
     #[test]
     fn iso_round_trips_and_refuses_naive() {
         assert_eq!(parse_iso("2026-09-29T03:47:18Z"), Some(1_790_653_638));
@@ -270,6 +272,7 @@ mod tests {
         assert_eq!(parse_iso(&iso_utc(1_790_000_000)), Some(1_790_000_000));
     }
 
+    #[test_id(txqjqoj)]
     #[test]
     fn tails_match_the_shell() {
         assert_eq!(tail_lines("a\nb\nc\n", 2), "b\nc");
@@ -287,6 +290,7 @@ mod runnable_tests {
     use super::runnable;
     use std::path::Path;
 
+    #[test_id(tr3l6ec)]
     #[test]
     fn a_bare_name_is_looked_up_on_path_and_a_path_is_statted() {
         assert!(runnable(Path::new("sh")), "sh is on every PATH");

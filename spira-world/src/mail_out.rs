@@ -97,6 +97,7 @@ mod tests {
         }
     }
 
+    #[test_id(ty5cs5a)]
     #[test]
     fn a_dwarf_notice_lands_in_its_mailbox_from_world_without_a_kinds_dir() {
         let tmp = testkit::TempDir::new("world-mail");

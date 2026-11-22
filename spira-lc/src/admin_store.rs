@@ -123,6 +123,7 @@ mod tests {
         w.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t5n9pag)]
     #[test]
     fn admin_store_takes_only_its_closed_list_and_never_the_socket() {
         assert!(crate::client::try_socket(&words(&["admin-store", "migrate"])).is_none());
@@ -131,6 +132,7 @@ mod tests {
         assert_eq!(run(&words(&["config", "set", "types.custom"])), 2);
     }
 
+    #[test_id(twxoo9a)]
     #[test]
     fn admin_store_execs_bd_with_the_stores_argv() {
         let dir = testkit::TempDir::new("admin-store-stub");
@@ -164,6 +166,7 @@ mod tests {
         assert!(!seen.contains(&format!("[-C][{db}][init]")), "init runs in the store dir: {seen}");
     }
 
+    #[test_id(th3i9bi)]
     #[test]
     fn the_store_callers_name_no_bd() {
         let files: [(&str, &str); 8] = [
@@ -187,12 +190,14 @@ mod tests {
         text.lines().filter(|l| banned.iter().any(|b| l.contains(b)) && !l.trim_start().starts_with("//") && !l.trim_start().starts_with('#')).collect()
     }
 
+    #[test_id(tkqoib6)]
     #[test]
     fn the_bd_matcher_finds_a_planted_offender() {
         let planted = "x=$(timeout 30 bd -C \"$DB\" migrate schema)\nCommand::new(\"bd-embedded\")\n# bd -C in a comment\n";
         assert_eq!(bd_command_words(planted).len(), 2);
     }
 
+    #[test_id(t27rs3y)]
     #[test]
     fn version_prints_bds_first_line_then_its_path_and_a_failure_exits_2() {
         let dir = testkit::TempDir::new("admin-store-version");

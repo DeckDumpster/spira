@@ -170,6 +170,7 @@ pub fn default_unit_dir(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf>
 mod tests {
     use super::*;
 
+    #[test_id(tcrftuu)]
     #[test]
     fn conflicts_run_in_order_and_the_first_hit_wins() {
         let mut c = ConflictInputs { our_home: "home".into(), ..Default::default() };
@@ -179,6 +180,7 @@ mod tests {
         assert!(err.message.contains("foreign") || err.message.contains("exec from"), "{}", err.message);
     }
 
+    #[test_id(taqhhr6)]
     #[test]
     fn a_clean_box_has_no_conflicts() {
         let c = ConflictInputs { our_home: "home".into(), our_unit_dir: "u".into(), ..Default::default() };
@@ -214,12 +216,14 @@ mod tests {
         }
     }
 
+    #[test_id(ttsb7g0)]
     #[test]
     fn dolt_query_ready_retries_until_the_port_answers_real_queries() {
         let d = FakeDeps { queries_ok_after: std::cell::Cell::new(2), clock: std::cell::Cell::new(0) };
         assert!(wait_for_dolt_query_ready(&d, 3307, 30));
     }
 
+    #[test_id(to50c1x)]
     #[test]
     fn dolt_query_ready_gives_up_at_the_bound() {
         let d = FakeDeps { queries_ok_after: std::cell::Cell::new(9999), clock: std::cell::Cell::new(0) };
@@ -251,6 +255,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-24
+    #[test_id(tf0zxe4)]
     #[test]
     fn phase_4_waits_for_the_store_port_to_open_and_gives_up_exactly_at_the_bound() {
         let late = listener(3, u64::MAX);
@@ -263,6 +268,7 @@ mod tests {
     }
 
     // covers: UC-config-store-preflight-24
+    #[test_id(txo1mk5)]
     #[test]
     fn phase_4_waits_for_the_temporary_server_to_release_the_port_before_starting_the_unit() {
         let dying = listener(0, 2);

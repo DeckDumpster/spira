@@ -163,12 +163,14 @@ mod tests {
         matches!(id, "c1" | "c2").then(|| "LANDED".to_string())
     }
 
+    #[test_id(twgm93c)]
     #[test]
     fn the_partition_is_label_scoped_and_an_empty_epic_is_not_complete() {
         let es = epics(&world(), &["spira".into()], &landed);
         assert_eq!(es.iter().map(|e| (e.id.as_str(), e.total, e.complete())).collect::<Vec<_>>(), [("e1", 2, true), ("e3", 0, false)]);
     }
 
+    #[test_id(tmuyfpc)]
     #[test]
     fn complete_announces_deferred_waits_reopened_clears() {
         let es = epics(&world(), &["spira".into()], &landed);
@@ -185,6 +187,7 @@ mod tests {
     /// A child's state is its lifecycle row's, never its bd status: a bd-closed child whose row
     /// is still CERTIFIED keeps the epic open, and a rowless child counts only when it is not
     /// a work bead (a sub-epic closed in bd).
+    #[test_id(tsi6c38)]
     #[test]
     fn a_child_is_closed_by_its_lifecycle_row_not_its_bd_status() {
         let beads = parse_beads(r#"[{"id":"e1","title":"M","status":"open","issue_type":"epic","labels":["spira"]},
@@ -200,6 +203,7 @@ mod tests {
         assert_eq!((e.total, e.closed), (3, 2));
     }
 
+    #[test_id(tswl8zv)]
     #[test]
     fn addresses_and_the_close_reason_read_as_the_script_wrote_them() {
         assert_eq!(address("ryan", "ryan"), Address::Operator);

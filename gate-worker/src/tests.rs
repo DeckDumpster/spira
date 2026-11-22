@@ -39,6 +39,7 @@ fn drain_one(rc: i32, out: &str) -> GateRun {
     q.take_done("r", "spira/sp-a", "t1").unwrap().run
 }
 
+#[test_id(tfigiqt)]
 #[test]
 fn the_gates_own_statuses_keep_their_meaning() {
     assert_eq!(drain_one(0, "gate: VERDICT=PASS").outcome, GateOutcome::Pass);
@@ -48,6 +49,7 @@ fn the_gates_own_statuses_keep_their_meaning() {
     assert_eq!((b.outcome, b.suite.as_str()), (GateOutcome::BaseFail, "test-y.sh"));
 }
 
+#[test_id(tn4nfkj)]
 #[test]
 fn a_gate_that_never_ran_is_never_the_branchs_fault() {
     for (rc, why) in [(-1, "gate-did-not-start"), (127, "gate-not-found"), (126, "gate-not-found"), (137, "gate-killed"), (143, "gate-killed")] {
@@ -57,6 +59,7 @@ fn a_gate_that_never_ran_is_never_the_branchs_fault() {
     }
 }
 
+#[test_id(t0hn3su)]
 #[test]
 fn a_dropped_branch_or_a_moved_tip_files_no_verdict() {
     for tip in [None, Some("elsewhere".to_string())] {
@@ -70,6 +73,7 @@ fn a_dropped_branch_or_a_moved_tip_files_no_verdict() {
     }
 }
 
+#[test_id(t4l1gwz)]
 #[test]
 fn a_dead_workers_claim_is_gated_by_the_next() {
     let d = tmp("recover");
@@ -82,6 +86,7 @@ fn a_dead_workers_claim_is_gated_by_the_next() {
     assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Done));
 }
 
+#[test_id(tuen18k)]
 #[test]
 fn lock_wait_is_two_trials_whatever_is_asked() {
     assert_eq!(lock_wait(Some("100"), None), 200);
@@ -95,6 +100,7 @@ fn overlaps(spans: &[(u64, u64)]) -> bool {
     spans.iter().enumerate().any(|(i, a)| spans.iter().skip(i + 1).any(|b| a.0 < b.1 && b.0 < a.1))
 }
 
+#[test_id(t7dtczf)]
 #[test]
 fn overlaps_reads_intersecting_spans_and_not_touching_ones() {
     assert!(overlaps(&[(0, 20), (10, 30)]));
@@ -130,6 +136,7 @@ impl Gate for Exclusive<'_> {
     }
 }
 
+#[test_id(tcpzhx9)]
 #[test]
 fn the_overlap_check_sees_a_deliberate_overlap() {
     let spans = Mutex::new(Vec::new());
@@ -142,6 +149,7 @@ fn the_overlap_check_sees_a_deliberate_overlap() {
     assert!(overlaps(&spans.lock().unwrap()), "two gates run at once must read as overlapping");
 }
 
+#[test_id(tp185xs)]
 #[test]
 fn two_branches_queued_for_one_tree_are_gated_one_at_a_time() {
     let d = tmp("serial");
@@ -169,6 +177,7 @@ fn two_branches_queued_for_one_tree_are_gated_one_at_a_time() {
     assert!(!overlaps(&recorded), "recorded verdict windows overlapped: {recorded:?}");
 }
 
+#[test_id(ttzl0in)]
 #[test]
 fn worker_count_is_certify_par_floored_at_one() {
     assert_eq!(worker_count(0), 1);
@@ -176,6 +185,7 @@ fn worker_count_is_certify_par_floored_at_one() {
     assert_eq!(worker_count(4), 4);
 }
 
+#[test_id(t2aoisx)]
 #[test]
 fn with_n_2_a_second_worker_gets_slot_1_and_a_third_exits() {
     let d = tmp("slots");
@@ -189,6 +199,7 @@ fn with_n_2_a_second_worker_gets_slot_1_and_a_third_exits() {
     drop(held_b);
 }
 
+#[test_id(taniyut)]
 #[test]
 fn n_1_is_the_old_single_slot_behavior() {
     let d = tmp("n1");
@@ -204,6 +215,7 @@ fn n_1_is_the_old_single_slot_behavior() {
 /// `landing_pass::gateq::tests`): two worker instances — one per slot, standing in for two
 /// concurrent `gate-worker run` processes — draining the same queue gate every job exactly
 /// once between them, and slot 0's drain never touches slot 1's own live, in-flight claim.
+#[test_id(tjob0s6)]
 #[test]
 fn two_workers_at_different_slots_each_gate_a_job_exactly_once() {
     let d = tmp("two-workers");
@@ -257,6 +269,7 @@ fn two_workers_at_different_slots_each_gate_a_job_exactly_once() {
     }
 }
 
+#[test_id(tyr535o)]
 #[test]
 fn a_superseded_release_stops_after_its_in_flight_job() {
     let d = tmp("stale");
@@ -275,6 +288,7 @@ fn a_superseded_release_stops_after_its_in_flight_job() {
     assert_eq!(g.0.borrow().len(), 1, "the second job must not be gated");
 }
 
+#[test_id(t8x15b5)]
 #[test]
 fn release_currency_follows_the_sibling_current_link() {
     let d = tmp("rel");
@@ -291,6 +305,7 @@ fn release_currency_follows_the_sibling_current_link() {
     assert!(!release_is_current(&old));
 }
 
+#[test_id(tssbnfj)]
 #[test]
 fn a_path_inside_a_release_follows_the_release_not_its_subdirectory() {
     let d = tmp("sub");
@@ -306,6 +321,7 @@ fn a_path_inside_a_release_follows_the_release_not_its_subdirectory() {
     assert!(!release_is_current(&d.join("old/spira")));
 }
 
+#[test_id(t6z8cww)]
 #[test]
 fn a_fault_keeps_the_gates_whole_output_and_a_pass_does_not() {
     let big = format!("{}\ngate: VERDICT=NO_VERDICT reason=harness-fault", "x\n".repeat(20000));
@@ -333,6 +349,7 @@ fn worker_over<'a>(q: &'a GateQueue, g: &'a Scripted, tip: &'a Tip, clock: &'a T
     Worker { queue: q, gate: g, branches: tip, clock, lock_wait: 5400, log: &|_| {}, slot: 0 }
 }
 
+#[test_id(t0v98a6)]
 #[test]
 fn a_run_killed_at_the_cap_is_queued_again_not_filed_for_the_pass() {
     let d = tmp("cap-retry");
@@ -344,6 +361,7 @@ fn a_run_killed_at_the_cap_is_queued_again_not_filed_for_the_pass() {
     assert_eq!(q.queued()[0].deaths.len(), 1);
 }
 
+#[test_id(tvhq1ty)]
 #[test]
 fn a_second_death_at_the_cap_is_filed_with_both_deaths_as_evidence() {
     let d = tmp("cap-twice");
@@ -357,11 +375,13 @@ fn a_second_death_at_the_cap_is_filed_with_both_deaths_as_evidence() {
     assert!(run.out.contains("phases=fences:11,build:203,test:80"), "{}", run.out);
 }
 
+#[test_id(tw0gmnq)]
 #[test]
 fn a_gate_that_ends_for_another_reason_is_filed_at_once() {
     assert_eq!(drain_one(75, "gate: VERDICT=NO_VERDICT reason=lock").reason.as_deref(), Some("lock"));
 }
 
+#[test_id(tnk028m)]
 #[test]
 fn the_pick_log_line_names_an_express_job() {
     let d = tmp("express-log");

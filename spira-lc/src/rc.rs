@@ -145,6 +145,7 @@ mod tests {
         run(s, &["rc".into(), "list".into(), "--json".into(), body.to_string()])
     }
 
+    #[test_id(tun92s5)]
     #[test]
     fn a_state_filtered_list_answers_only_the_items_in_those_states_under_the_prefix() {
         let s = store();
@@ -154,6 +155,7 @@ mod tests {
         assert_eq!(keys, ["batches/r/a", "batches/r/c"]);
     }
 
+    #[test_id(tef1trm)]
     #[test]
     fn a_state_filtered_list_over_its_limit_is_cannot_tell_not_a_part() {
         let s = store();
@@ -186,6 +188,7 @@ mod tests {
             })
         }
 
+        #[test_id(t28g0dq)]
         #[test]
         fn the_ledger_and_round_keys_are_written_read_and_listed_on_a_store_file() {
             let (_dir, s) = file();
@@ -203,6 +206,7 @@ mod tests {
             assert_eq!(keys, ["verdicts/r/h", "verdicts/r/h/attempt/1"]);
         }
 
+        #[test_id(t24hkb9)]
         #[test]
         fn a_retry_under_the_same_request_id_finds_its_first_commit_on_a_store_file() {
             let (_dir, s) = file();
@@ -218,6 +222,7 @@ mod tests {
             assert_eq!(again.rev, first.rev);
         }
 
+        #[test_id(tsoklkw)]
         #[test]
         fn a_write_outside_the_round_record_prefixes_is_refused_and_leaves_the_file_unchanged() {
             let (_dir, s) = file();
@@ -229,6 +234,7 @@ mod tests {
             assert!(got.is_none());
         }
 
+        #[test_id(tt6bnnx)]
         #[test]
         fn a_lock_is_taken_renewed_and_released_on_a_store_file() {
             let (_dir, s) = file();

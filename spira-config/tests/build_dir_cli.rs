@@ -1,5 +1,7 @@
 //! `spira-build-dir lease` is the hand-build door onto the pool dwarves lease from.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -112,6 +114,7 @@ fn wait_released(b: &Box_) {
     );
 }
 
+#[test_id(tqvbzcp)]
 #[test]
 fn two_concurrent_hand_leases_get_different_owned_directories() {
     let b = setup("bdcli-two");
@@ -126,6 +129,7 @@ fn two_concurrent_hand_leases_get_different_owned_directories() {
     let _ = (p1.kill(), p2.kill(), p1.wait(), p2.wait());
 }
 
+#[test_id(tiw0ppl)]
 #[test]
 fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_clean() {
     let b = setup("bdcli-warm");
@@ -170,6 +174,7 @@ fn cargo_log(b: &Box_) -> String {
     std::fs::read_to_string(&b.log).unwrap_or_default().trim().to_string()
 }
 
+#[test_id(tvhsbzd)]
 #[test]
 fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_the_record() {
     let b = setup("bdcli-record");
@@ -207,6 +212,7 @@ fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_t
     let _ = (p4.kill(), p4.wait());
 }
 
+#[test_id(t7idqqx)]
 #[test]
 fn a_file_rewritten_with_the_same_bytes_during_the_lease_is_cleaned_on_release() {
     let b = setup("bdcli-same-bytes");
@@ -218,6 +224,7 @@ fn a_file_rewritten_with_the_same_bytes_during_the_lease_is_cleaned_on_release()
     assert_eq!(cargo_log(&b), "clean -q -p crate-a");
 }
 
+#[test_id(tx3uue5)]
 #[test]
 fn a_lockfile_change_during_the_lease_cleans_the_workspace_on_release() {
     let b = setup("bdcli-lock");
@@ -229,6 +236,7 @@ fn a_lockfile_change_during_the_lease_cleans_the_workspace_on_release() {
     assert_eq!(cargo_log(&b), "clean --workspace -q");
 }
 
+#[test_id(tlf3w20)]
 #[test]
 fn a_file_outside_every_crate_that_a_crate_read_is_cleaned_on_release_when_touched() {
     let b = setup("bdcli-extras");

@@ -75,6 +75,7 @@ pub fn render(disk_pct: Option<i64>, mem_mb: Option<i64>, cfg: &Cfg) -> DiskMem 
 mod tests {
     use super::*;
 
+    #[test_id(t2qb1cg)]
     #[test]
     fn mem_available_mb_reads_the_fixture() {
         let d = testkit::TempDir::new("wt-meminfo");
@@ -83,6 +84,7 @@ mod tests {
         assert_eq!(mem_available_mb(&p), Some(2000));
     }
 
+    #[test_id(ti3j1fn)]
     #[test]
     fn mem_available_mb_is_none_when_the_key_is_absent() {
         let d = testkit::TempDir::new("wt-meminfo-missing-key");
@@ -91,6 +93,7 @@ mod tests {
         assert_eq!(mem_available_mb(&p), None);
     }
 
+    #[test_id(t9xnvkr)]
     #[test]
     fn render_flags_breach_only_at_or_over_the_disk_threshold() {
         let cfg = Cfg::default();
@@ -102,6 +105,7 @@ mod tests {
         assert_eq!(r2.disk_disp, "89%");
     }
 
+    #[test_id(tnvcxzx)]
     #[test]
     fn render_flags_mem_breach_strictly_below_threshold() {
         let cfg = Cfg::default();
@@ -111,6 +115,7 @@ mod tests {
         assert!(!r2.mem_breach);
     }
 
+    #[test_id(tlk4zr7)]
     #[test]
     fn render_is_unknown_never_zero_on_a_failed_read() {
         let cfg = Cfg::default();

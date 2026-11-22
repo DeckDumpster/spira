@@ -2,6 +2,8 @@
 //! forge remote) in the scheduler's own process and records what it read for lc-serve; the body it
 //! sends is the one `git-fact put unpublished` accepts (spira-lc's `unpublished_record_*` tests).
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +22,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+#[test_id(tpr5txo)]
 #[test]
 fn the_snapshot_records_the_unpublished_range_it_measured_and_runs_no_verb_that_measures() {
     let dir = testkit::TempDir::new("world-publish-backlog");

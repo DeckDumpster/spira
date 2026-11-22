@@ -81,22 +81,26 @@ mod tests {
         got
     }
 
+    #[test_id(t8p10b1)]
     #[test]
     fn both_notices_carry_the_remaining_time() {
         let got = run(1800, &["sp-a"], &[0, 10, 1490, 1500, 1510]);
         assert_eq!(got, vec![("sp-a".into(), Stage::First, 1800), ("sp-a".into(), Stage::Second, 310 - 10)]);
     }
 
+    #[test_id(tya9umt)]
     #[test]
     fn no_live_dwarves_sends_nothing() {
         assert!(run(1800, &[], &[0, 1500]).is_empty());
     }
 
+    #[test_id(tl4v0bh)]
     #[test]
     fn a_short_window_gets_one_notice() {
         assert_eq!(run(240, &["sp-a"], &[0, 10, 200]).len(), 1);
     }
 
+    #[test_id(tj5o4kz)]
     #[test]
     fn message_names_the_deadline_and_both_choices() {
         let m = message(Stage::First, "draining", 1800, "12:30:00Z");

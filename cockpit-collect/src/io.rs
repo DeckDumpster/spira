@@ -664,6 +664,7 @@ pub fn sleep(d: Duration) {
 mod tests {
     use super::*;
 
+    #[test_id(t6e4w9c)]
     #[test]
     fn unit_activity_is_read_through_the_units_port() {
         use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
@@ -681,6 +682,7 @@ mod tests {
         assert!(units.calls().is_empty(), "a read starts and stops nothing");
     }
 
+    #[test_id(tzzzsms)]
     #[test]
     fn etimes_is_uptime_less_the_start_tick_and_survives_a_spaced_command_name() {
         let stat = "4242 (a (weird) name) S 1 4242 4242 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 1 0 50000 1000 200";
@@ -690,6 +692,7 @@ mod tests {
         assert_eq!(proc_etimes(i32::MAX as i64), None);
     }
 
+    #[test_id(tjym4eo)]
     #[test]
     fn the_slots_row_is_appended_in_process_as_tsd_write_wrote_it() {
         let dir = testkit::TempDir::new("cockpit-collect-slots-row");
@@ -703,6 +706,7 @@ mod tests {
         assert_eq!(row["capacity_paused"], "?");
     }
 
+    #[test_id(tfmosbg)]
     #[test]
     fn dwarf_named_is_answered_in_process_and_the_queue_shims_are_not() {
         let dir = testkit::TempDir::new("cockpit-collect-dwarf-named");
@@ -713,6 +717,7 @@ mod tests {
         assert_eq!(lib_inproc(dir.path(), "queue_certified_list", &["r"]), None);
     }
 
+    #[test_id(tpnqg4d)]
     #[test]
     fn json_only_drops_banner_lines() {
         assert_eq!(json_only("warning: thing\n[1,2,3]\n"), "[1,2,3]\n");
@@ -723,6 +728,7 @@ mod tests {
 
     // Pins the sp-pwmlj collapse: before it, this function's own copy tolerated leading
     // whitespace before `[`/`{` — `sed -n '/^[[{]/,$p'` do not.
+    #[test_id(tktaxnj)]
     #[test]
     fn json_only_requires_column_one_same_as_the_real_fence() {
         assert_eq!(json_only("  [1]\n"), "");
@@ -735,6 +741,7 @@ mod tests {
         }
     }
 
+    #[test_id(t73kcm0)]
     #[test]
     fn importable_never_exports_the_forbidden_keys_even_when_resolved() {
         let r = resolved_with(&[
@@ -753,6 +760,7 @@ mod tests {
         assert_eq!(got.get("SPIRA_WIKI"), Some(&"var/spira/wiki".to_string()));
     }
 
+    #[test_id(toazksj)]
     #[test]
     fn importable_never_overrides_an_already_set_key() {
         let r = resolved_with(&[("SPIRA_ASK_LABEL", "from-resolve")]);
@@ -761,6 +769,7 @@ mod tests {
         assert!(!got.contains_key("SPIRA_ASK_LABEL"), "{got:?}");
     }
 
+    #[test_id(t0spuen)]
     #[test]
     fn importable_passes_through_every_other_resolved_key() {
         let r = resolved_with(&[("SPIRA_ASK_LABEL", "needs-ryan"), ("SPIRA_CI_PARK_MAX", "5")]); // literal-ok: fixture/fallback
@@ -786,6 +795,7 @@ mod tests {
 mod pane_read_tests {
     use super::*;
 
+    #[test_id(tblp8zp)]
     #[test]
     fn twelve_probes_in_a_pane_pass_share_one_fetch() {
         let t = testkit::TempDir::new("pane-read");
@@ -800,6 +810,7 @@ mod pane_read_tests {
         assert_eq!(calls.get(), 1);
     }
 
+    #[test_id(tto8jw4)]
     #[test]
     fn no_probe_reads_all_history_from_the_store() {
         let probes = [
@@ -832,6 +843,7 @@ mod history_tests {
     use spira_store::lc_call::{fake::Content, LcClient};
     use std::sync::Arc;
 
+    #[test_id(tndvyeb)]
     #[test]
     fn history_reads_only_the_window_it_names() {
         let now = 1_794_000_000;

@@ -20,8 +20,7 @@ path = "src/bin/round-recert.rs"
 test = false
 
 [features]
-integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "system-paths/integration", "testkit/integration"]
-
+integration = ["runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "state-store/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 sha2 = "0.10"
@@ -36,4 +35,5 @@ state-store = { path = "../state-store" }
 runtime = { path = "../runtime" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

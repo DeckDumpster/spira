@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(t9yrpay)]
 #[test]
 fn an_abandon_whose_member_moved_after_the_plan_writes_nothing() {
     let r = Rig::new();
@@ -30,6 +31,7 @@ fn an_abandon_whose_member_moved_after_the_plan_writes_nothing() {
     }
 }
 
+#[test_id(tfpoalg)]
 #[test]
 fn an_abandon_notes_its_reason_on_each_released_member() {
     let r = Rig::new();

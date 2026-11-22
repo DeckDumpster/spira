@@ -47,6 +47,7 @@ mod tests {
         v[key].as_array().unwrap().iter().map(|l| l.as_str().unwrap().to_string()).collect()
     }
 
+    #[test_id(tuissq8)]
     #[test]
     fn the_page_serves_the_lines_the_pane_prints() {
         let snap = Snapshot::parse(FIXTURE);
@@ -58,6 +59,7 @@ mod tests {
         assert!(joined.contains("step `hold-member b-17@3f2a` acked 14:02, horizon 10m"), "{v}");
     }
 
+    #[test_id(tdaqal4)]
     #[test]
     fn a_stale_pass_is_marked_dim_with_its_age_on_the_page() {
         let stale = Snapshot::parse(&FIXTURE.replace("PASS_AT='999986'", "PASS_AT='999100'"));
@@ -67,6 +69,7 @@ mod tests {
         assert!(render_page(&Snapshot::parse(FIXTURE), 300, NOW).contains("<pre class=\"\">"));
     }
 
+    #[test_id(t6guy3t)]
     #[test]
     fn without_a_pass_record_the_page_reads_question_marks_never_zero() {
         let none = render_json(&Snapshot::parse(""), 300, NOW);
@@ -74,6 +77,7 @@ mod tests {
         assert!(text.contains("GOODPUT ?/day of ?") && text.contains("pass ?") && !text.contains('0'), "{text}");
     }
 
+    #[test_id(t84d41b)]
     #[test]
     fn no_line_on_the_page_is_wider_than_a_phone() {
         let v = render_json(&Snapshot::parse(&FIXTURE.replace("PASS_AT='999986'", "PASS_AT='999100'")), 300, NOW);

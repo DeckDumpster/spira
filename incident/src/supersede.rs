@@ -93,6 +93,7 @@ mod tests {
         OpenRed { id: id.into(), external_ref: Some(format!("basefail-local:{repo}:{suite}:local-tier:1234abcd")), last_seen }
     }
 
+    #[test_id(tsxn5ly)]
     #[test]
     fn a_green_landing_closes_every_earlier_round_red_of_its_repo_naming_the_landing() {
         let f = Fake { open: vec![red("sp-a", "fx", "t1.sh", Some(100)), red("sp-b", "fx", "t2.sh", Some(200))], closed: Default::default() };
@@ -103,6 +104,7 @@ mod tests {
         assert!(closed.iter().all(|(_, e)| e.contains("deadbeef")), "{closed:?}");
     }
 
+    #[test_id(ty0dti9)]
     #[test]
     fn a_red_of_another_repo_a_newer_red_and_one_with_no_readable_time_stay_open() {
         let mut other = red("sp-o", "other", "t.sh", Some(1));

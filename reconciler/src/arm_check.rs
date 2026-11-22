@@ -125,6 +125,7 @@ mod tests {
         ["DwarfFleet", "Lifecycle", "Alarms"].map(String::from).to_vec()
     }
 
+    #[test_id(t1jtuyw)]
     #[test]
     fn a_ready_kind_prints_the_one_write_that_arms_it_and_writes_nothing() {
         let lc = canned("fresh");
@@ -137,6 +138,7 @@ mod tests {
         assert_eq!(*lc.calls.borrow(), ["section snapshot", "pass history"], "reads only");
     }
 
+    #[test_id(tzu9s93)]
     #[test]
     fn an_unmet_precondition_refuses_naming_it_with_the_report() {
         let lc = canned("waiting");
@@ -144,6 +146,7 @@ mod tests {
         assert!(e.contains("[FAIL] dead-man") && e.ends_with("DwarfFleet is not ready to arm: dead-man"), "{e}");
     }
 
+    #[test_id(ti84nxg)]
     #[test]
     fn disarm_prints_the_reverse_write_without_reading_the_store_and_bad_words_are_usage() {
         let lc = canned("fresh");

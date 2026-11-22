@@ -315,6 +315,7 @@ mod tests {
     use super::*;
     use crate::testutil::TempDir;
 
+    #[test_id(tbvfhnk)]
     #[test]
     fn a_retired_key_is_declared_removed_so_the_rule_is_silent() {
         let t = TempDir::new("config-delta-retire");
@@ -351,6 +352,7 @@ mod tests {
         (t, String::new())
     }
 
+    #[test_id(t2af9ez)]
     #[test]
     fn a_task_dropped_from_the_default_without_removed_tasks_is_found_and_declaring_it_clears_it() {
         let (t, _) = task_tree("a=act b=act", "a=act");
@@ -364,6 +366,7 @@ mod tests {
         assert!(found.is_empty(), "{:?}", found.iter().map(|f| &f.message).collect::<Vec<_>>());
     }
 
+    #[test_id(ty5p5dd)]
     #[test]
     fn a_side_without_a_task_modes_file_skips_the_task_check() {
         let (t, _) = task_tree("a=act b=act", "a=act");
@@ -415,6 +418,7 @@ mod tests {
     const A: &str = "removed = [\"spira.a\"]\n";
     const AB: &str = "removed = [\"spira.a\", \"spira.b\"]\n";
 
+    #[test_id(t53gblw)]
     #[test]
     fn a_branch_editing_the_folded_delta_gets_one_finding() {
         let t = TempDir::new("folded-edit");
@@ -424,6 +428,7 @@ mod tests {
         assert!(f[0].message.contains("spira/config-delta.d/<bead>.toml"));
     }
 
+    #[test_id(tl3am9w)]
     #[test]
     fn a_tree_whose_diff_is_exactly_a_fold_gets_none() {
         let t = TempDir::new("folded-fold");
@@ -432,6 +437,7 @@ mod tests {
         assert!(ConfigDeltaFolded.check(&tree).unwrap().is_empty());
     }
 
+    #[test_id(tcy5csv)]
     #[test]
     fn a_round_fold_of_a_fragment_its_own_member_added_gets_none() {
         let t = TempDir::new("folded-member");
@@ -440,6 +446,7 @@ mod tests {
         assert!(ConfigDeltaFolded.check(&tree).unwrap().is_empty());
     }
 
+    #[test_id(t0yaxm1)]
     #[test]
     fn a_hand_edit_after_a_round_fold_is_still_refused() {
         let t = TempDir::new("folded-hand");
@@ -449,6 +456,7 @@ mod tests {
         assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1);
     }
 
+    #[test_id(tccj3hc)]
     #[test]
     fn a_fold_that_drops_an_entry_is_refused() {
         let t = TempDir::new("folded-drop");
@@ -457,6 +465,7 @@ mod tests {
         assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1, "a fold that drops the fragment's entry is an edit");
     }
 
+    #[test_id(t1yefca)]
     #[test]
     fn a_commit_adding_a_fragment_beside_the_fold_is_not_a_fold() {
         let t = TempDir::new("folded-extra");
@@ -466,6 +475,7 @@ mod tests {
         assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1);
     }
 
+    #[test_id(tapbtig)]
     #[test]
     fn a_worktree_edit_on_top_of_an_exact_fold_is_refused() {
         let t = TempDir::new("folded-worktree");
@@ -474,6 +484,7 @@ mod tests {
         assert_eq!(ConfigDeltaFolded.check(&tree).unwrap().len(), 1);
     }
 
+    #[test_id(tapt6c1)]
     #[test]
     fn a_branch_adding_only_a_fragment_gets_none() {
         let t = TempDir::new("folded-frag");

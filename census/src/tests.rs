@@ -194,6 +194,7 @@ impl World for Fake {
 
 // ============================================================================ clock skew guard
 
+#[test_id(torrxhy)]
 #[test]
 fn clock_skew_within_tolerance_proceeds() {
     let f = Fake::default();
@@ -206,6 +207,7 @@ fn clock_skew_within_tolerance_proceeds() {
     assert!(!f.stderr.borrow().iter().any(|l| l.contains("clock") || l.contains("refusing to rank blind")));
 }
 
+#[test_id(t1e77oa)]
 #[test]
 fn clock_skew_beyond_tolerance_refuses() {
     let f = Fake::default();
@@ -216,6 +218,7 @@ fn clock_skew_beyond_tolerance_refuses() {
     assert!(f.stderr.borrow().iter().any(|l| l.contains("clock skew is 500s")));
 }
 
+#[test_id(tibhys2)]
 #[test]
 fn clock_query_failure_refuses() {
     let f = Fake::default();
@@ -225,6 +228,7 @@ fn clock_query_failure_refuses() {
     assert!(f.stderr.borrow().iter().any(|l| l.contains("refusing to rank blind")));
 }
 
+#[test_id(tmczgoj)]
 #[test]
 fn clock_row_unparseable_refuses() {
     let f = Fake::default();
@@ -235,6 +239,7 @@ fn clock_row_unparseable_refuses() {
 
 // ============================================================================ events substrate
 
+#[test_id(tw54fok)]
 #[test]
 fn events_substrate_unreachable_refuses() {
     let f = Fake::default();
@@ -248,6 +253,7 @@ fn events_substrate_unreachable_refuses() {
 // ============================================================================ watermark / all-time formatting
 
 // covers: UC-ops-detection-remediation-13
+#[test_id(tm7fymi)]
 #[test]
 fn no_watermark_file_falls_back_to_all_time_format() {
     let f = Fake::default();
@@ -261,6 +267,7 @@ fn no_watermark_file_falls_back_to_all_time_format() {
 }
 
 // covers: UC-ops-detection-remediation-13
+#[test_id(tklj3xb)]
 #[test]
 fn unreadable_watermark_warns_and_falls_back() {
     let f = Fake::default();
@@ -274,6 +281,7 @@ fn unreadable_watermark_warns_and_falls_back() {
 }
 
 // covers: UC-ops-detection-remediation-13
+#[test_id(tt229jh)]
 #[test]
 fn valid_watermark_uses_cluster_merge() {
     let f = Fake::default();
@@ -293,6 +301,7 @@ fn valid_watermark_uses_cluster_merge() {
 // ============================================================================ suppression
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(tmk90bo)]
 #[test]
 fn open_remedy_suppresses_by_default_and_shows_with_flag() {
     let f = Fake::default();
@@ -307,6 +316,7 @@ fn open_remedy_suppresses_by_default_and_shows_with_flag() {
 }
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(tqrizvf)]
 #[test]
 fn open_remedy_suppressed_shown_with_suppressed_flag() {
     let f = Fake::default();
@@ -320,6 +330,7 @@ fn open_remedy_suppressed_shown_with_suppressed_flag() {
 }
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(t2me5da)]
 #[test]
 fn closed_remedy_with_live_branch_is_suppressed() {
     let f = Fake::default();
@@ -334,6 +345,7 @@ fn closed_remedy_with_live_branch_is_suppressed() {
     assert!(f.stdout_joined().contains("[suppressed: remedy closed, not landed]"), "{}", f.stdout_joined());
 }
 
+#[test_id(t9vqu5v)]
 #[test]
 fn closed_remedy_with_no_branch_is_orphaned() {
     let f = Fake::default();
@@ -351,6 +363,7 @@ fn closed_remedy_with_no_branch_is_orphaned() {
 }
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(tzmn1jc)]
 #[test]
 fn closed_remedy_landed_is_neither_suppressed_nor_orphaned() {
     let f = Fake::default();
@@ -366,6 +379,7 @@ fn closed_remedy_landed_is_neither_suppressed_nor_orphaned() {
     assert!(!out.contains("suppressed") && !out.contains("orphaned"));
 }
 
+#[test_id(tla6hr6)]
 #[test]
 fn closed_remedy_unknown_land_status_is_not_suppressed_and_warns() {
     let f = Fake::default();
@@ -383,6 +397,7 @@ fn closed_remedy_unknown_land_status_is_not_suppressed_and_warns() {
 
 // ============================================================================ --with-suppressed extras
 
+#[test_id(tnmyy55)]
 #[test]
 fn with_suppressed_prints_handwritten_and_deliberate() {
     let f = Fake::default();
@@ -398,6 +413,7 @@ fn with_suppressed_prints_handwritten_and_deliberate() {
     assert!(out.contains("deliberate, not ranked: sp-reopen-eject"));
 }
 
+#[test_id(tgp3vnf)]
 #[test]
 fn without_with_suppressed_extras_are_silent() {
     let f = Fake::default();
@@ -410,6 +426,7 @@ fn without_with_suppressed_extras_are_silent() {
     assert!(!f.stdout_joined().contains("hand-written"));
 }
 
+#[test_id(t798nhg)]
 #[test]
 fn plain_class_with_no_remedy_is_unsuppressed() {
     let f = Fake::default();
@@ -425,6 +442,7 @@ fn plain_class_with_no_remedy_is_unsuppressed() {
 /// class; one SUBMITTED whose bd row was reopened by hand is a closed remedy, checked for a
 /// landing; a remedy with no lifecycle row is neither, and says so.
 // covers: UC-ops-detection-remediation-14
+#[test_id(tmql97g)]
 #[test]
 fn remedies_are_split_by_the_lifecycle_row_not_bd_status() {
     let f = Fake::default();
@@ -447,6 +465,7 @@ fn remedies_are_split_by_the_lifecycle_row_not_bd_status() {
 }
 
 /// A remedy's row is asked for by id: a closed remedy's row is terminal, which no live read holds.
+#[test_id(twn1cnn)]
 #[test]
 fn the_lifecycle_rows_asked_for_are_the_remedies_named_not_every_row() {
     let f = Fake::default();
@@ -461,6 +480,7 @@ fn the_lifecycle_rows_asked_for_are_the_remedies_named_not_every_row() {
 
 /// A lifecycle machine that cannot answer suppresses nothing and says why: no remedy is
 /// split by a guess.
+#[test_id(t28yvp4)]
 #[test]
 fn an_unreachable_lifecycle_machine_suppresses_nothing() {
     let f = Fake::default();
@@ -491,6 +511,7 @@ fn remedy_census(state: &str, label: &str, with_suppressed: bool, landed: Option
 }
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(tlqwqmd)]
 #[test]
 fn a_remedy_a_builder_still_holds_hides_the_class_it_covers_in_every_working_state() {
     for state in ["READY", "WORKING", "REWORK"] {
@@ -500,6 +521,7 @@ fn a_remedy_a_builder_still_holds_hides_the_class_it_covers_in_every_working_sta
 }
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(tcjfhnu)]
 #[test]
 fn a_remedy_covering_an_unrelated_class_leaves_the_class_ranked() {
     let f = remedy_census("WORKING", "covers:sp-recur-something-else", false, None);
@@ -507,6 +529,7 @@ fn a_remedy_covering_an_unrelated_class_leaves_the_class_ranked() {
 }
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(t7vosi0)]
 #[test]
 fn with_suppressed_annotates_the_covered_class_instead_of_hiding_it() {
     let f = remedy_census("WORKING", "covers:sp-recur-suite-red", true, None);
@@ -514,6 +537,7 @@ fn with_suppressed_annotates_the_covered_class_instead_of_hiding_it() {
 }
 
 // covers: UC-ops-detection-remediation-14
+#[test_id(tm3gqaq)]
 #[test]
 fn a_submitted_remedy_keeps_suppressing_until_the_lifecycle_record_says_landed() {
     let f = remedy_census("SUBMITTED", "covers:sp-recur-suite-red", false, Some(1));
@@ -523,6 +547,7 @@ fn a_submitted_remedy_keeps_suppressing_until_the_lifecycle_record_says_landed()
 }
 
 // covers: UC-ops-detection-remediation-13
+#[test_id(t5dx0o3)]
 #[test]
 fn with_a_watermark_a_stale_class_ranks_last_with_zero_since_and_its_all_time_count() {
     let f = Fake::default();
@@ -548,6 +573,7 @@ mod pipeline_tests {
 
     const HDR: &str = "+---+\n| event_type | new_value | issue_id | ts |\n+---+\n";
 
+    #[test_id(tae8m9n)]
     #[test]
     fn cluster_collapses_a_burst_and_keeps_victims() {
         let rows = format!("{HDR}| requeued | x | a | 100 |\n| requeued | x | b | 150 |\n| requeued | x | a | 1000 |\n| bogus | x | a | 1 |\n(3 rows)\n");
@@ -557,6 +583,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(t0ccfmr)]
     #[test]
     fn cluster_ranks_and_names_classes() {
         let rows = "| reclaimed | | a | 1 |\n| reopened | r | a | 1 |\n| reopen | r | b | 9999 |\n| lapsed | | a | 1 |\n";
@@ -564,6 +591,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-13
+    #[test_id(t591owv)]
     #[test]
     fn merge_ranks_by_since_counts_and_survives_malformed_input() {
         assert_eq!(
@@ -574,6 +602,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-14
+    #[test_id(tmj8bw4)]
     #[test]
     fn covers_resolves_aliases_and_ignores_garbage() {
         let j = r#"[{"labels":["spira","covers:old"]},{"labels":["covers:c"]},{"labels":null}]"#;
@@ -583,6 +612,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-14
+    #[test_id(td9a3os)]
     #[test]
     fn covers_closed_applies_the_window() {
         let now = 1_800_000_000;
@@ -594,6 +624,7 @@ mod pipeline_tests {
         assert_eq!(covers_closed(j, "", 30, now), "r1 x\nr3 y\nr4 z\n");
     }
 
+    #[test_id(tfhu6t3)]
     #[test]
     fn handwritten_and_deliberate_rank_and_skip_zero() {
         let hw = "| requeued | c | bot | 2 | 3 |\n| requeued | d | bot | 5 | 5 |\n| requeued | e | bot | 0 | 1 |\n";
@@ -609,6 +640,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(tu36r0d)]
     #[test]
     fn each_event_type_maps_to_its_cause_suffixed_class() {
         let rows = "| requeued | prod-dirty | a | 1 |\n| recurred | suite-red | a | 1 |\n| reclaimed | timeout | a | 1 |\n| reclaimed |  | a | 1 |\n| lapsed | cause-x | a | 1 |\n| reopen | rebase-conflict | a | 1 |\n| mystery | x | a | 1 |\n| recurred | x | a |\n";
@@ -623,6 +655,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(tg7tsf9)]
     #[test]
     fn a_null_cause_counts_under_unrecorded_and_shifts_no_column() {
         let rows = format!("{HDR}| reopened |  | a | 100 |\n| reopened |  | b | 9000 |\n| requeued |  | c | 100 |\n");
@@ -630,6 +663,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(toxr491)]
     #[test]
     fn a_requeue_and_a_reopen_of_one_class_stay_two_classes_the_sql_does_the_folding() {
         let rows = "| requeued | merge-conflict | a | 100 |\n| reopen | rebase-conflict | b | 100 |\n";
@@ -637,6 +671,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(tsvj5mz)]
     #[test]
     fn classes_rank_by_causal_events_then_distinct_beads_then_detections() {
         let rows = "| recurred | few-beads | a | 1000 |\n| recurred | few-beads | b | 2000 |\n| recurred | few-beads | c | 3000 |\n| recurred | one-sweep | d | 1000 |\n| recurred | one-sweep | e | 1010 |\n| recurred | one-sweep | f | 1020 |\n| recurred | one-sweep | g | 1030 |\n| recurred | one-sweep | h | 1040 |\n";
@@ -644,6 +679,7 @@ mod pipeline_tests {
     }
 
     // covers: UC-ops-detection-remediation-11
+    #[test_id(tweaxl9)]
     #[test]
     fn an_empty_store_gives_empty_output() {
         assert_eq!(cluster("", 300), "");

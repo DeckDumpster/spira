@@ -155,6 +155,7 @@ mod tests {
         ReleaseToolExec.check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(tcqsp5e)]
     #[test]
     fn every_bare_shape_is_caught_and_the_routed_and_test_ones_pass() {
         let t = TempDir::new("rte");
@@ -175,6 +176,7 @@ mod tests {
         assert_eq!(files, ["a/src/lib.rs", "b/src/lib.rs", "c/src/lib.rs", "d/src/lib.rs", "e/src/lib.rs", "i/src/lib.rs"], "{got:?}");
     }
 
+    #[test_id(ttylg4d)]
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("rte-allow");

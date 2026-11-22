@@ -157,6 +157,7 @@ mod tests {
         v.to_string()
     }
 
+    #[test_id(tlw0b6m)]
     #[test]
     fn an_assistant_text_message_starts_turn_one() {
         let t = line(serde_json::json!({"message": {"role": "assistant", "id": "m1", "content": [{"type": "text", "text": "hello"}]}}));
@@ -164,6 +165,7 @@ mod tests {
         assert_eq!(out, "--- turn 1 [assistant]\nhello\n");
     }
 
+    #[test_id(ta3rqi7)]
     #[test]
     fn a_repeated_assistant_id_does_not_advance_the_turn_counter() {
         let a = line(serde_json::json!({"message": {"role": "assistant", "id": "m1", "content": [{"type": "text", "text": "a"}]}}));
@@ -172,6 +174,7 @@ mod tests {
         assert_eq!(out, "--- turn 1 [assistant]\na\n--- turn 1 [assistant]\nb\n");
     }
 
+    #[test_id(t5wso7b)]
     #[test]
     fn a_user_message_with_text_is_numbered_for_the_turn_it_produces() {
         let a = line(serde_json::json!({"message": {"role": "assistant", "id": "m1", "content": [{"type": "text", "text": "a"}]}}));
@@ -180,6 +183,7 @@ mod tests {
         assert!(out.contains("--- turn 2 [user]\ngo do X\n"), "got: {out}");
     }
 
+    #[test_id(tunzn49)]
     #[test]
     fn a_tool_use_block_is_rendered_with_its_named_argument() {
         let t = line(serde_json::json!({"message": {"role": "assistant", "id": "m1", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls   -la   /tmp"}}]}}));
@@ -187,6 +191,7 @@ mod tests {
         assert_eq!(out, "--- turn 1 [assistant]\n    · Bash ls -la /tmp\n");
     }
 
+    #[test_id(tqcvf2p)]
     #[test]
     fn tool_results_are_dropped_by_default_and_kept_with_full() {
         let t = line(serde_json::json!({"message": {"role": "user", "content": [{"type": "tool_result", "content": "some output"}]}}));
@@ -195,6 +200,7 @@ mod tests {
         assert!(out_full.contains("    > some output"), "got: {out_full}");
     }
 
+    #[test_id(tqe02ce)]
     #[test]
     fn from_turn_filters_out_earlier_turns() {
         let a = line(serde_json::json!({"message": {"role": "assistant", "id": "m1", "content": [{"type": "text", "text": "a"}]}}));
@@ -203,6 +209,7 @@ mod tests {
         assert_eq!(out, "--- turn 2 [assistant]\nb\n");
     }
 
+    #[test_id(t569ksy)]
     #[test]
     fn a_queue_operation_remove_with_content_is_rendered_as_a_user_turn() {
         let q = line(serde_json::json!({"type": "queue-operation", "operation": "remove", "content": "typed mid-turn"}));
@@ -210,18 +217,21 @@ mod tests {
         assert_eq!(out, "--- turn 1 [user]\ntyped mid-turn\n");
     }
 
+    #[test_id(tg5k3in)]
     #[test]
     fn a_queue_operation_dequeue_is_silent() {
         let q = line(serde_json::json!({"type": "queue-operation", "operation": "dequeue", "content": "should not appear"}));
         assert_eq!(render(&q, 0, false), "");
     }
 
+    #[test_id(tz9qa6a)]
     #[test]
     fn a_malformed_line_is_skipped_without_aborting_the_rest() {
         let out = render("not json\n{\"message\": {\"role\": \"assistant\", \"id\": \"m1\", \"content\": [{\"type\": \"text\", \"text\": \"ok\"}]}}", 0, false);
         assert_eq!(out, "--- turn 1 [assistant]\nok\n");
     }
 
+    #[test_id(t9fdz9x)]
     #[test]
     fn long_tool_arguments_are_truncated_to_160_chars() {
         let long = "x".repeat(200);

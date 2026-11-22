@@ -28,6 +28,7 @@ fn a_request_whose_write_failed_and_was_said() -> TaskRig {
     rig_reading(held(Reading::Request { succ: "sp-new".into(), own: "HELD".into(), succ_state: "LANDED".into() }), Err("lifecycle refused"))
 }
 
+#[test_id(tiii9ba)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let read = kit::assert_kept_as_rows(&a_hold_read_as_something_else(), NAME);
@@ -36,16 +37,19 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     assert!(failed.iter().any(|k| k == "failed"), "{failed:?}");
 }
 
+#[test_id(tj7pmhu)]
 #[test]
 fn a_boot_asks_the_world_only_about_the_holds_it_had_not_read() {
     kit::assert_boot_matches_an_unstopped_run(a_hold_read_as_something_else, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(to9ygod)]
 #[test]
 fn a_boot_does_not_say_a_failed_write_or_its_successor_line_again() {
     kit::assert_boot_matches_an_unstopped_run(a_request_whose_write_failed_and_was_said, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(t88dpc1)]
 #[test]
 fn two_writes_failing_in_one_batch_are_both_remembered_as_failed() {
     let req = |id: &str| Held { id: id.into(), version: "3".into(), reading: Reading::Request { succ: "sp-new".into(), own: "HELD".into(), succ_state: "LANDED".into() } };

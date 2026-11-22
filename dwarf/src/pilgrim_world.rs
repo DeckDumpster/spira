@@ -76,6 +76,7 @@ mod tests {
     }
     const ENV: &str = "SPIRA_LC_SOCKET=w/lc.sock\nSPIRA_TOML=w/config/sim.toml\nOTHER=1\n";
 
+    #[test_id(t5gmkjd)]
     #[test]
     fn a_pilgrim_session_is_told_the_worlds_socket_and_registry_not_production() {
         let t = testkit::TempDir::new("pilgrim-world-up");
@@ -88,6 +89,7 @@ mod tests {
         assert!(env.iter().all(|(k, _)| k != "SPIRA_LC_SOCKET"), "production's socket is the session's, untouched");
     }
 
+    #[test_id(t3axk4y)]
     #[test]
     fn a_world_that_does_not_come_up_refuses_and_is_taken_down() {
         let t = testkit::TempDir::new("pilgrim-world-fail");
@@ -97,6 +99,7 @@ mod tests {
         assert_eq!(sim.calls.lock().unwrap().last().map(String::as_str), Some("world down"));
     }
 
+    #[test_id(ts4b7qw)]
     #[test]
     fn a_world_whose_env_names_no_socket_is_refused() {
         let t = testkit::TempDir::new("pilgrim-world-nosock");

@@ -529,6 +529,7 @@ mod gh_tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
 
+    #[test_id(tu66npu)]
     #[test]
     fn a_release_list_through_a_fake_gh_is_counted_once_under_skew_release_list() {
         let fake = |_: &[&str]| Ok(std::process::Output { status: std::process::ExitStatus::from_raw(0), stdout: b"[]".to_vec(), stderr: Vec::new() });
@@ -588,6 +589,7 @@ mod send_tests {
         }
     }
 
+    #[test_id(tvlbvev)]
     #[test]
     fn an_escalation_is_delivered_to_the_concierge_and_never_the_operator() {
         let f = crate::tests::Fake::default();
@@ -609,6 +611,7 @@ mod swap_tests {
     use std::os::unix::fs::MetadataExt;
 
     // covers: UC-instance-lifecycle-37
+    #[test_id(tml9443)]
     #[test]
     fn write_staged_swaps_in_a_new_inode_so_a_held_handle_keeps_the_old_content() {
         let tmp = testkit::TempDir::new("skew-swap");

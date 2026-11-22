@@ -58,6 +58,7 @@ impl Watch {
 mod tests {
     use super::*;
 
+    #[test_id(tv5upgt)]
     #[test]
     fn a_line_every_interval_under_the_bound_never_stalls() {
         let mut w = Watch::new(300, 0);
@@ -67,6 +68,7 @@ mod tests {
         }
     }
 
+    #[test_id(tot67b5)]
     #[test]
     fn cpu_growth_is_progress_and_a_flat_counter_is_not() {
         let mut w = Watch::new(300, 0);
@@ -76,6 +78,7 @@ mod tests {
         assert!(w.stalled(500));
     }
 
+    #[test_id(tc13l31)]
     #[test]
     fn the_stall_message_names_the_last_line_seen_or_none() {
         let mut w = Watch::new(300, 0);

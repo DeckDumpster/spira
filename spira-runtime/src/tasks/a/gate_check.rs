@@ -222,6 +222,7 @@ impl Handler for GateCheck {
 mod no_gh_tests {
     use super::*;
 
+    #[test_id(tg0nd2q)]
     #[test]
     fn a_tick_over_a_snapshot_full_of_ci_facts_emits_nothing_that_runs_gh() {
         let snap: Snapshot = serde_json::from_value(serde_json::json!({
@@ -247,9 +248,10 @@ mod no_gh_tests {
 
 #[cfg(test)]
 mod leg_argv_tests {
+    #[test_id(tlf5wrf)]
     #[test]
     fn the_gate_legs_go_to_the_content_door_not_bdq() {
-        assert_eq!(super::discover_argv("spira", "b").join(" "), "spira-lc content gate discover --branch b --repo spira");
-        assert_eq!(super::resolve_argv("sp-g").join(" "), "spira-lc content gate resolve sp-g");
+        assert_eq!(super::super::discover_argv("spira", "b").join(" "), "spira-lc content gate discover --branch b --repo spira");
+        assert_eq!(super::super::resolve_argv("sp-g").join(" "), "spira-lc content gate resolve sp-g");
     }
 }

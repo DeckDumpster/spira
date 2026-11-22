@@ -244,6 +244,7 @@ mod tests {
         Candidate { id: "sp-inc".into(), external_ref: Some("incident:x.service".into()), labels: labels.iter().map(|s| s.to_string()).collect(), fixes: vec!["sp-fix".into()] }
     }
 
+    #[test_id(te0q54j)]
     #[test]
     fn a_landed_fix_and_a_quiet_detector_close_the_incident_with_evidence() {
         let f = Fake::new(FixState::Landed, Detector::Quiet);
@@ -257,6 +258,7 @@ mod tests {
         assert!(f.persisted.borrow().is_empty());
     }
 
+    #[test_id(tyu5v2e)]
     #[test]
     fn a_landed_fix_and_a_firing_detector_send_it_to_ops_once() {
         let f = Fake::new(FixState::Landed, Detector::Firing("unit is failed".into()));
@@ -269,6 +271,7 @@ mod tests {
         assert_eq!(f.persisted.borrow().len(), 1);
     }
 
+    #[test_id(tz40jhz)]
     #[test]
     fn an_unlanded_fix_is_left_alone_and_the_detector_is_never_run() {
         let f = Fake::new(FixState::Unlanded("CERTIFIED".into()), Detector::Quiet);
@@ -276,6 +279,7 @@ mod tests {
         assert!(f.closed.borrow().is_empty() && f.persisted.borrow().is_empty());
     }
 
+    #[test_id(t7bpk44)]
     #[test]
     fn a_dropped_fix_does_not_block_the_incident() {
         let f = Fake::new(FixState::Unlanded("DROPPED".into()), Detector::Quiet);
@@ -286,6 +290,7 @@ mod tests {
         assert_eq!(settle_one(&g, &cand(&[])), Outcome::Persists { id: "sp-inc".into() });
     }
 
+    #[test_id(tcb43sx)]
     #[test]
     fn a_waiting_line_is_logged_only_when_it_changes() {
         let w = |why: &str| vec![Outcome::Waiting { id: "a".into(), why: why.into() }, Outcome::Persists { id: "b".into() }];
@@ -298,6 +303,7 @@ mod tests {
         assert_eq!(changed_waiting(&state, &y).0.len(), 2);
     }
 
+    #[test_id(tqpc2cw)]
     #[test]
     fn a_landed_fix_the_active_release_lacks_waits() {
         let mut f = Fake::new(FixState::Landed, Detector::Quiet);
@@ -306,6 +312,7 @@ mod tests {
         assert!(f.closed.borrow().is_empty());
     }
 
+    #[test_id(tngtzbx)]
     #[test]
     fn a_landed_fix_closes_an_incident_with_no_probe() {
         let mut f = Fake::new(FixState::Landed, Detector::NoProbe);
@@ -317,6 +324,7 @@ mod tests {
         }
     }
 
+    #[test_id(tdeabb4)]
     #[test]
     fn an_incident_with_no_fix_is_never_closed() {
         let g = Fake::new(FixState::Landed, Detector::Quiet);
@@ -335,6 +343,7 @@ mod tests {
         FixState::Superseded { by: by.into() }
     }
 
+    #[test_id(t62dedx)]
     #[test]
     fn a_superseded_fix_closes_through_its_landed_successor() {
         let f = chain(&[("sp-fix", sup("sp-succ")), ("sp-succ", FixState::Landed)]);
@@ -342,6 +351,7 @@ mod tests {
         assert!(f.closed.borrow()[0].1.contains("sp-fix superseded by sp-succ"), "{:?}", f.closed);
     }
 
+    #[test_id(txfcede)]
     #[test]
     fn a_superseded_fix_whose_successor_is_unlanded_waits() {
         let f = chain(&[("sp-fix", sup("sp-succ")), ("sp-succ", FixState::Unlanded("REWORK".into()))]);
@@ -349,6 +359,7 @@ mod tests {
         assert!(f.closed.borrow().is_empty());
     }
 
+    #[test_id(t79asy2)]
     #[test]
     fn a_supersede_chain_longer_than_three_hops_is_skipped_though_it_ends_landed() {
         let f = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-c")), ("sp-c", sup("sp-d")), ("sp-d", sup("sp-e")), ("sp-e", FixState::Landed)]);
@@ -357,6 +368,7 @@ mod tests {
         assert!(matches!(settle_one(&three, &cand(&[])), Outcome::Closed { .. }));
     }
 
+    #[test_id(tq1snkd)]
     #[test]
     fn a_no_probe_incident_whose_only_fix_was_dropped_is_never_closed() {
         let f = Fake::new(FixState::Unlanded("DROPPED".into()), Detector::NoProbe);
@@ -364,12 +376,14 @@ mod tests {
         assert!(f.closed.borrow().is_empty());
     }
 
+    #[test_id(tza0tp5)]
     #[test]
     fn a_supersede_cycle_is_skipped() {
         let f = chain(&[("sp-fix", sup("sp-b")), ("sp-b", sup("sp-fix"))]);
         assert_eq!(settle_one(&f, &cand(&[])), Outcome::Skipped { id: "sp-inc".into(), why: "supersede chain of sp-fix is too long".into() });
     }
 
+    #[test_id(tclyzwh)]
     #[test]
     fn the_fired_label_is_stable_across_fix_order_and_differs_per_fix_set() {
         let a = fired_label(&["b".into(), "a".into()]);

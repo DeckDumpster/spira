@@ -412,6 +412,7 @@ pub fn last_pass_age(cfg: &Config) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tpjoi0i)]
     #[test]
     fn scheduler_reason_names_the_partitions_runes_the_scheduler_refused() {
         let map: Result<std::collections::BTreeMap<String, String>, String> = Ok([("skuld".to_string(), "at concurrency cap".to_string()), ("other".to_string(), "x".to_string())].into());
@@ -440,6 +441,7 @@ mod tests {
         (fake, lc)
     }
 
+    #[test_id(ttff11i)]
     #[test]
     fn sp_yf8lf0_the_store_view_is_the_open_beads_and_the_closed_ones_they_name() {
         let (fake, lc) = door(vec![
@@ -459,6 +461,7 @@ mod tests {
         assert!(seen[1..].iter().all(|r| r.iter().any(|x| x == "--id")), "{seen:?}");
     }
 
+    #[test_id(tmaz543)]
     #[test]
     fn sp_yf8lf0_an_open_epic_with_only_closed_children_keeps_them() {
         let mut epic = row("sp-e", "open", None, &[]);
@@ -470,6 +473,7 @@ mod tests {
         assert!(fake.requests().iter().skip(1).all(|r| r.iter().any(|x| x == "--parent")), "{:?}", fake.requests());
     }
 
+    #[test_id(trzlos2)]
     #[test]
     fn sp_yf8lf0_a_refused_read_is_an_error_not_an_empty_store() {
         struct Refusing;
@@ -482,6 +486,7 @@ mod tests {
         assert!(load_store(&lc).is_err());
     }
 
+    #[test_id(t79od6r)]
     #[test]
     fn sp_yf8lf0_a_blocker_in_neither_read_stays_unknown() {
         let (_fake, lc) = door(vec![row("sp-a", "open", None, &["sp-gone"])]);
@@ -489,6 +494,7 @@ mod tests {
         assert!(store.iter().all(|b| b.id != "sp-gone"));
     }
 
+    #[test_id(tk1wwi6)]
     #[test]
     fn sp_yf8lf0_many_named_blockers_are_read_in_chunks_of_500_each_once() {
         let mut rows: Vec<_> = (0..1100).map(|i| row(&format!("sp-b{i}"), "closed", None, &[])).collect();
@@ -504,6 +510,7 @@ mod tests {
         assert_eq!(ids.iter().collect::<HashSet<_>>().len(), 1100, "no id is asked twice");
     }
 
+    #[test_id(tmziypd)]
     #[test]
     fn sp_yf8lf0_show_reads_one_bead_through_the_door_and_is_none_when_refused() {
         struct Show(i32);
@@ -521,6 +528,7 @@ mod tests {
 
     // ---- holder_alive: delegates to hel::reap (wave 4.23, sp-0ffox) -------------------
 
+    #[test_id(tzluq4x)]
     #[test]
     fn holder_alive_is_hels_own_predicate() {
         let run = testkit::TempDir::new("strand-holder-alive");
@@ -541,6 +549,7 @@ mod tests {
 
     // ---- dwarf_count / rune_free (wave 4.23, sp-0ffox) ------------------
 
+    #[test_id(tju2r9r)]
     #[test]
     fn dwarf_count_pid_fallback_ignores_exclude_exactly_as_the_bash_original() {
         let t = testkit::TempDir::new("strand-dwarf-count-fallback");
@@ -565,6 +574,7 @@ mod tests {
         script.to_string_lossy().into_owned()
     }
 
+    #[test_id(tzzgq01)]
     #[test]
     fn sp_li4zys_dwarves_the_scheduler_started_are_counted() {
         let t = testkit::TempDir::new("strand-sp-li4zys");
@@ -583,6 +593,7 @@ mod tests {
         assert_eq!(dwarves_live_total(&cfg), 3, "every live dwarf; the landing pass is not one");
     }
 
+    #[test_id(tc3dpmu)]
     #[test]
     fn the_report_names_the_scheduler_started_dwarf_even_when_the_call_mode_is_not_systemd_run() {
         let t = testkit::TempDir::new("strand-evtrs9-live");
@@ -591,6 +602,7 @@ mod tests {
         assert_eq!(live_units(&cfg).unwrap(), vec![u.to_string()]);
     }
 
+    #[test_id(t7ypxjf)]
     #[test]
     fn a_directed_dwarf_is_a_live_unit_and_the_directed_count_is_part_of_the_total() {
         let t = testkit::TempDir::new("strand-sp-ljgmia");
@@ -601,6 +613,7 @@ mod tests {
         assert_eq!(dwarves_live_directed(&cfg).unwrap(), 1);
     }
 
+    #[test_id(tykrmgs)]
     #[test]
     fn an_unanswering_systemctl_is_an_error_not_zero_live_dwarves() {
         let t = testkit::TempDir::new("strand-evtrs9-unreadable");
@@ -611,6 +624,7 @@ mod tests {
         assert!(e.contains("live dwarves are unknown") && e.contains("Failed to connect"), "{e}");
     }
 
+    #[test_id(t1ed66x)]
     #[test]
     fn the_last_pass_is_the_sentinel_pass_tick_and_never_ticked_is_negative() {
         let run = testkit::TempDir::new("strand-evtrs9-pass");
@@ -620,6 +634,7 @@ mod tests {
         assert!((0..5).contains(&last_pass_age(&cfg)));
     }
 
+    #[test_id(teb2vj0)]
     #[test]
     fn a_directed_dwarf_counts_in_its_runes_count_and_the_total() {
         let t = testkit::TempDir::new("strand-directed");
@@ -629,6 +644,7 @@ mod tests {
         assert_eq!(dwarves_live_total(&cfg), 2);
     }
 
+    #[test_id(t73quzf)]
     #[test]
     fn rune_free_matches_the_bash_originals_arithmetic() {
         let t = testkit::TempDir::new("strand-rune-free");
@@ -652,6 +668,7 @@ mod tests {
         assert_eq!(rune_free(&cfg, "laner", None, None), 1);
     }
 
+    #[test_id(t24dxgo)]
     #[test]
     fn roster_lines() {
         let r = parse_roster("spira,plan\tspira-poison,ask-x\tbuilder \nspira,incident\t\tops\n\n");
@@ -662,6 +679,7 @@ mod tests {
         assert_eq!(r[1].exclude, "");
     }
 
+    #[test_id(ti5f544)]
     #[test]
     fn truncation_reads_only_the_last_pass() {
         let log = "a: state: open=1\nCHECK7 builder: not evaluated (pass budget exhausted)\nb: state: open=2\nCHECK7 ops: ok\n";
@@ -671,6 +689,7 @@ mod tests {
         assert!(!pass_truncated("no passes", &["builder".into()]));
     }
 
+    #[test_id(t5nizp7)]
     #[test]
     fn sql_safety() {
         assert!(sql_safe("sp-zs04v.5"));
@@ -678,6 +697,7 @@ mod tests {
         assert!(!sql_safe(""));
     }
 
+    #[test_id(tqndvv9)]
     #[test]
     fn throttle_states_from_the_stamp() {
         let dir = testkit::TempDir::new("strand-throttle");

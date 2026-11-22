@@ -13,8 +13,7 @@ name = "gate-check"
 path = "src/main.rs"
 
 [features]
-integration = ["forge/integration", "testkit/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration"]
-
+integration = ["forge/integration", "testkit/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "spira-test-id/integration"]
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 forge = { path = "../forge" }
@@ -23,6 +22,7 @@ spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
 [profile.release]

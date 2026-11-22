@@ -99,6 +99,7 @@ mod tests {
         CockpitNoBd::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(t3jl76s)]
     #[test]
     fn every_way_of_invoking_bd_is_caught() {
         let t = TempDir::new("cnb");
@@ -109,6 +110,7 @@ mod tests {
         assert_eq!(got.len(), 6, "{got:?}");
     }
 
+    #[test_id(thg7nua)]
     #[test]
     fn spira_lc_content_comments_and_other_trees_are_silent() {
         let t = TempDir::new("cnb-ok");
@@ -118,6 +120,7 @@ mod tests {
         assert_eq!(run(&t, &["cockpit/a.rs", "cockpit/x.sh", "spira/y.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tbj02aq)]
     #[test]
     fn an_integration_test_that_bans_bd_is_out_of_scope() {
         let t = TempDir::new("cnb-tests");
@@ -128,6 +131,7 @@ mod tests {
         assert!(got[0].contains("cockpit/ops/src/a.rs"), "{got:?}");
     }
 
+    #[test_id(t9skgvs)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("cnb-none");

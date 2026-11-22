@@ -138,6 +138,7 @@ pub fn close_inherited_fds(cmd: &mut std::process::Command) {
 mod tests {
     use super::*;
 
+    #[test_id(tuocoa8)]
     #[test]
     fn iso_utc_matches_date() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
@@ -146,6 +147,7 @@ mod tests {
         assert_eq!(iso_utc(951_782_400), "2000-02-29T00:00:00Z");
     }
 
+    #[test_id(tuo68c7)]
     #[test]
     fn proc_readers() {
         let mi = "MemTotal:       65000000 kB\nMemAvailable:   32000000 kB\n";
@@ -172,10 +174,11 @@ pub fn drop_activation_env() {
 
 #[cfg(test)]
 mod activation_env_tests {
+    #[test_id(t553aiw)]
     #[test]
     fn socket_activation_variables_are_dropped() {
         let _env = testkit::env(&[("LISTEN_FDS", Some("1"))]);
-        super::drop_activation_env();
+        super::super::drop_activation_env();
         assert!(std::env::var_os("LISTEN_FDS").is_none());
     }
 }

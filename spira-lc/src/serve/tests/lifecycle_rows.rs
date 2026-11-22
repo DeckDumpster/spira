@@ -2,6 +2,7 @@ use super::*;
 
 /// A create through the door leaves the lifecycle state a create through bdq leaves: the
 /// row, READY, written by the server in the same request.
+#[test_id(tafqpyb)]
 #[test]
 fn a_content_create_gets_its_lifecycle_row_in_the_same_request() {
     let w = World::new();
@@ -25,6 +26,7 @@ impl spira_store::lc_call::Transport for InProcess {
     }
 }
 
+#[test_id(t0w07s6)]
 #[test]
 fn bdqs_after_create_step_gives_the_row_the_repo_the_create_was_labelled_with() {
     let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
@@ -58,6 +60,7 @@ fn filed_world(labels: &[&str], parent: Option<&str>) -> (std::sync::Arc<InProce
     (world, client)
 }
 
+#[test_id(tz8i1mr)]
 #[test]
 fn a_filed_beads_parent_and_labels_are_on_its_record_once_bdqs_hooks_have_run() {
     // literal-ok: test fixture label
@@ -69,6 +72,7 @@ fn a_filed_beads_parent_and_labels_are_on_its_record_once_bdqs_hooks_have_run() 
     assert_eq!(listed_row(&world, "sp-new")["claim"], serde_json::json!({"blocks": [], "parent": "sp-e", "labels": ["repo:spira", "no-loop"]}));
 }
 
+#[test_id(thq64lw)]
 #[test]
 fn a_dep_add_then_a_dep_remove_move_the_records_blocks_and_a_related_edge_does_not() {
     let (world, client) = filed_world(&[], None);
@@ -85,6 +89,7 @@ fn a_dep_add_then_a_dep_remove_move_the_records_blocks_and_a_related_edge_does_n
     assert_eq!(blocks(), serde_json::json!([]));
 }
 
+#[test_id(ta9ccnm)]
 #[test]
 fn a_label_added_through_the_content_door_is_on_the_record_in_the_same_request() {
     struct Labelling<'w>(&'w World);
@@ -122,6 +127,7 @@ fn a_label_added_through_the_content_door_is_on_the_record_in_the_same_request()
     assert_eq!(row["claim"]["labels"], serde_json::json!(["incident"]), "{row}");
 }
 
+#[test_id(t9gtki6)]
 #[test]
 fn set_carrier_names_the_integration_on_each_member_and_clear_takes_it_off_and_a_member_without_a_record_is_named() {
     let w = World::new();
@@ -139,6 +145,7 @@ fn set_carrier_names_the_integration_on_each_member_and_clear_takes_it_off_and_a
     assert_eq!((carried("sp-a"), carried("sp-b")), (serde_json::Value::Null, serde_json::Value::Null), "the rest are written");
 }
 
+#[test_id(tzzq6gy)]
 #[test]
 fn set_carrier_only_if_unset_keeps_a_member_already_carried_and_sets_one_that_is_not() {
     let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
@@ -156,6 +163,7 @@ fn set_carrier_only_if_unset_keeps_a_member_already_carried_and_sets_one_that_is
     assert_eq!(listed_row(&world, "sp-b")["carried_by"], "sp-i2");
 }
 
+#[test_id(tu6uxuz)]
 #[test]
 fn a_claim_input_sync_that_fails_after_the_content_write_is_reported_with_its_repair_and_the_write_stands() {
     let w = World::new();
@@ -172,6 +180,7 @@ fn create_bead_served(w: &World) -> super::Answer {
     super::answer(req, &mut m, &mut b, &Content::default(), &|| Err("no run dir here".to_string()))
 }
 
+#[test_id(tefq3n8)]
 #[test]
 fn a_row_created_over_the_socket_carries_its_claim_inputs_from_the_content_store() {
     let w = World::new();
@@ -186,6 +195,7 @@ fn a_row_created_over_the_socket_carries_its_claim_inputs_from_the_content_store
     assert_ne!(row["claim_view"]["verdict"], "cannot-tell", "{row}");
 }
 
+#[test_id(tomgplr)]
 #[test]
 fn a_create_whose_claim_sync_fails_stands_and_names_the_repair() {
     let w = World::new();
@@ -197,6 +207,7 @@ fn a_create_whose_claim_sync_fails_stands_and_names_the_repair() {
     assert!(ans.stderr.contains("repair: spira-lc sync-claim-inputs sp-new"), "{ans:?}");
 }
 
+#[test_id(tj6uut5)]
 #[test]
 fn sync_claim_inputs_only_if_unset_keeps_a_written_claim_and_fills_a_null_one() {
     let (world, client) = filed_world(&["incident"], Some("sp-e"));
@@ -237,6 +248,7 @@ impl crate::callers::Machine for Primitives<'_> {
     }
 }
 
+#[test_id(t7m0bkf)]
 #[test]
 fn a_served_backfill_sets_a_null_claim_and_keeps_a_written_one() {
     let w = World::new();
@@ -261,6 +273,7 @@ fn a_served_backfill_sets_a_null_claim_and_keeps_a_written_one() {
     assert_eq!(claim("sp-set"), serde_json::json!({"blocks": ["sp-b"], "parent": null, "labels": []}));
 }
 
+#[test_id(tscocfw)]
 #[test]
 fn syncing_an_id_with_no_record_names_it_and_makes_none() {
     let world = std::sync::Arc::new(InProcess(std::sync::Mutex::new(World::new())));
@@ -271,6 +284,7 @@ fn syncing_an_id_with_no_record_names_it_and_makes_none() {
     assert_eq!(world.0.lock().unwrap().ok(&["list", "--live"]).trim(), "[]");
 }
 
+#[test_id(tjl0s52)]
 #[test]
 fn a_lifecycle_row_the_server_cannot_write_is_reported_and_bds_create_stands() {
     let w = World::new();

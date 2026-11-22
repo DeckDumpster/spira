@@ -186,24 +186,28 @@ mod tests {
         OpenAsk { id: id.into(), subject: title.into(), text: format!("{title} {desc}") }
     }
 
+    #[test_id(td55e9d)]
     #[test]
     fn an_open_ask_with_the_same_question_holds_it() {
         let asks = [ask("sp-e1k1gt", "Approve kit-catalog v2 rollout", "")];
         assert_eq!(held_by_open_ask("kit-catalog v2 approval needed?", &[], &asks).as_deref(), Some("sp-e1k1gt"));
     }
 
+    #[test_id(tmj3wcu)]
     #[test]
     fn an_unrelated_question_is_not_held() {
         let asks = [ask("sp-e1k1gt", "Approve kit-catalog v2 rollout", "")];
         assert_eq!(held_by_open_ask("Which timezone should the digest mail use", &[], &asks), None);
     }
 
+    #[test_id(te9oyjz)]
     #[test]
     fn citing_an_open_ask_id_is_held() {
         let asks = [ask("sp-cbz7we", "Two MFA codes", "")];
         assert!(held_by_open_ask("Follow-up to sp-cbz7we about retention", &[], &asks).is_some());
     }
 
+    #[test_id(tidd12u)]
     #[test]
     fn a_shared_bead_lowers_the_bar_but_does_not_remove_it() {
         let asks = [ask("sp-ask111", "Gate budget for sp-bead99", "raise the gate budget for sp-bead99")];
@@ -212,6 +216,7 @@ mod tests {
         assert!(held_by_open_ask("rename the dashboard", &beads, &asks).is_none());
     }
 
+    #[test_id(tpsdyij)]
     #[test]
     fn open_asks_parse_and_drop_rows_without_an_id() {
         let a = open_asks(r#"[{"id":"sp-a","title":"t","description":"d"},{"title":"x"}]"#);
@@ -226,18 +231,21 @@ mod tests {
         )
     }
 
+    #[test_id(t7afu0m)]
     #[test]
     fn a_question_the_session_filed_and_got_an_id_for_is_covered() {
         let t = filed_row("kit-catalog v2 approval", "filed sp-e1k1gt");
         assert!(covered_by_transcript("approve kit-catalog v2?", &t, 0).unwrap().contains("sp-e1k1gt"));
     }
 
+    #[test_id(tds4s3o)]
     #[test]
     fn a_filing_that_returned_no_id_is_not_covered() {
         let t = filed_row("kit-catalog v2 approval", "refused: no default");
         assert!(covered_by_transcript("approve kit-catalog v2?", &t, 0).is_none());
     }
 
+    #[test_id(tn0o4gb)]
     #[test]
     fn a_question_asked_in_chat_is_covered_only_once_answered_within_the_hour() {
         let asked = r#"{"type":"assistant","timestamp":"2026-10-30T10:00:00Z","message":{"content":[{"type":"text","text":"Should the digest mail use UTC timezone?"}]}}"#;
@@ -249,12 +257,14 @@ mod tests {
         assert!(covered_by_transcript("digest mail timezone UTC?", &format!("{asked}\n{answer}"), later).is_none());
     }
 
+    #[test_id(tceabjf)]
     #[test]
     fn epoch_of_matches_a_known_instant() {
         assert_eq!(epoch_of("1970-01-02T00:00:01Z"), Some(86_401));
         assert_eq!(epoch_of("2000-03-01T00:00:00Z"), Some(951_868_800));
     }
 
+    #[test_id(tv4hnzh)]
     #[test]
     fn liveness_comes_from_a_running_pid_in_the_registry_not_file_age() {
         let root = testkit::TempDir::new("archivist-registry");

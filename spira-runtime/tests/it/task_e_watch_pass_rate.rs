@@ -33,6 +33,7 @@ fn carry(r: &TaskRig) -> Carry {
     r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
+#[test_id(ttplbj0)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_fifteen_minute_tick() {
     let t = acc::row(NAME);
@@ -47,6 +48,7 @@ fn t1_the_row_is_registered_and_its_boot_arms_the_fifteen_minute_tick() {
     assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
+#[test_id(tzbj16h)]
 #[test]
 fn t2_a_ledger_under_the_limit_journals_nothing() {
     let mut r = rig(1, Arc::new(Mutex::new(rate(12, 10))));
@@ -54,6 +56,7 @@ fn t2_a_ledger_under_the_limit_journals_nothing() {
     acc::assert_healthy(&r, STREAM);
 }
 
+#[test_id(ty17a6u)]
 #[test]
 fn t3_ok_to_over_mails_over_over_to_ok_mails_clear_and_blind_is_no_transition() {
     let w = Arc::new(Mutex::new(rate(40, 10)));
@@ -72,6 +75,7 @@ fn t3_ok_to_over_mails_over_over_to_ok_mails_clear_and_blind_is_no_transition() 
     assert_eq!(mails(&r).len(), 4, "but it says BLIND every tick, as today");
 }
 
+#[test_id(t2b8dyg)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
     assert_eq!(acc::launcher(&acc::module_source("e/watch_pass_rate.rs")), None);
@@ -83,6 +87,7 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 }
 
 /// The lines `spira/pass-rate.sh:195-201` mailed to the concierge mailbox.
+#[test_id(ts2vltb)]
 #[test]
 fn t5_the_lines_are_the_ones_pass_rate_mailed() {
     let w = Arc::new(Mutex::new(rate(40, 10)));
@@ -105,12 +110,14 @@ fn over() -> TaskRig {
     rig(1, Arc::new(Mutex::new(rate(40, 10))))
 }
 
+#[test_id(tnunc9f)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&over(), NAME);
     assert_eq!(rows, ["state"]);
 }
 
+#[test_id(t12doow)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(over, registration, STREAM, runtime::event::EventKind::new(TICK, ""));

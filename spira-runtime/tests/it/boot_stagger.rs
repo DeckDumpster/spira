@@ -33,6 +33,7 @@ impl EffectRunner for NoEffects {
     }
 }
 
+#[test_id(tqk5aay)]
 #[test]
 fn every_task_first_ticks_in_turn_boot_stagger_apart() {
     let boots = tasks::boots();

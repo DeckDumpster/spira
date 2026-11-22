@@ -85,12 +85,14 @@ pub fn is_space_failure(output: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test_id(tim49q0)]
     #[test]
     fn quota_headroom_below_fs_free_wins() {
         let q = Quota { limit: 20 * 1024 * MIB, used: 18 * 1024 * MIB };
         assert_eq!(combine_mib(Some(6200), Some(q)), Some(2048));
     }
 
+    #[test_id(tv7o2gv)]
     #[test]
     fn fs_free_wins_when_smaller_and_no_quota_means_fs_free() {
         let q = Quota { limit: 20 * 1024 * MIB, used: MIB };
@@ -99,12 +101,14 @@ mod tests {
         assert_eq!(combine_mib(None, None), None);
     }
 
+    #[test_id(tpauyy4)]
     #[test]
     fn over_quota_is_zero_headroom() {
         let q = Quota { limit: MIB, used: 5 * MIB };
         assert_eq!(combine_mib(Some(9000), Some(q)), Some(0));
     }
 
+    #[test_id(t3ev8m2)]
     #[test]
     fn space_failures_are_recognised_and_ordinary_output_is_not() {
         assert!(is_space_failure("error: write: Disk quota exceeded (os error 122)"));
@@ -112,6 +116,7 @@ mod tests {
         assert!(!is_space_failure("Compiling x v0.1.0\nFinished release"));
     }
 
+    #[test_id(tg3xevw)]
     #[test]
     fn real_probe_answers_on_a_real_path() {
         assert!(avail_mib(Path::new(system_paths::TMP)).is_some());

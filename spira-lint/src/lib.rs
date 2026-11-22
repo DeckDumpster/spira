@@ -9,6 +9,9 @@
 //! non-zero exit. A rule that cannot find anything to check refuses to report clean
 //! (law-absence-needs-a-positive-control) — that is an error, not a pass.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::sync::OnceLock;
 
 const GIT_HANG_GUARD_SECS: &str = "120";
@@ -647,6 +650,7 @@ mod tests {
 
     use super::*;
 
+    #[test_id(tb07su8)]
     #[test]
     fn diff_scope_diffs_against_the_fork_not_the_base_tip() {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
@@ -666,6 +670,7 @@ mod tests {
         assert!(seen.iter().any(|c| c.starts_with("diff") && c.ends_with(" F")), "{seen:?}");
     }
 
+    #[test_id(tzydbae)]
     #[test]
     fn base_commit_with_no_merge_base_is_refused() {
         let t = Tree::from_paths(Path::new("nowhere"), Vec::<String>::new(), Vec::<String>::new())
@@ -679,6 +684,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+    #[test_id(tcrhqf9)]
     #[test]
     fn diff_scope_keeps_only_changed_lines_and_touched_files() {
         let mut d = DiffScope { files: Default::default() };
@@ -690,6 +696,7 @@ mod tests {
         assert!(!d.keeps(&f("z.rs", None)) && !d.keeps(&f("z.rs", Some(1))));
     }
 
+    #[test_id(tmkyy4x)]
     #[test]
     fn diff_scope_keeps_a_finding_whose_message_names_a_touched_path() {
         let mut d = DiffScope { files: Default::default() };
@@ -703,6 +710,7 @@ mod tests {
         assert!(d.keeps(&f("lists SPIRA_TOML for spira/gone.sh, which no longer names it")));
     }
 
+    #[test_id(tfdpzbv)]
     #[test]
     fn pathspec_star_crosses_slashes() {
         assert!(pathspec_match("spira/*.sh", "spira/a.sh"));
@@ -712,6 +720,7 @@ mod tests {
         assert!(!pathspec_match("spira/gate-suites", "spira/gate-suites2"));
     }
 
+    #[test_id(tl32hs3)]
     #[test]
     fn every_base_relative_name_is_a_rule_and_no_new_shell_suite_is_one() {
         let names: Vec<&str> = all_rules().iter().map(|r| r.name()).collect();
@@ -721,6 +730,7 @@ mod tests {
         assert!(BASE_RELATIVE.contains(&"no-new-shell-suite"));
     }
 
+    #[test_id(tqtqaiw)]
     #[test]
     fn red_summary_names_refused_and_reported_separately() {
         let l = red_summary(&[("inventory", 53), ("literal-lint", 8)], &[], &[("ffx-vocabulary", 479)]);
@@ -730,12 +740,14 @@ mod tests {
         );
     }
 
+    #[test_id(tisedfx)]
     #[test]
     fn red_summary_refused_only_has_no_reported_clause() {
         let l = red_summary(&[("inventory", 1)], &[], &[]);
         assert_eq!(l, "spira-lint: RED — refused by inventory (1); errored: none");
     }
 
+    #[test_id(t8xahvt)]
     #[test]
     fn red_summary_errored_only_names_the_rule() {
         let l = red_summary(&[], &["deps-lint"], &[]);
@@ -762,6 +774,7 @@ mod tests {
         }
     }
 
+    #[test_id(tjs8x4c)]
     #[test]
     fn a_run_over_an_enforcing_and_a_report_rule_names_each_in_its_own_clause() {
         let t = Tree::from_paths(Path::new("nowhere"), ["a"], Vec::<String>::new());

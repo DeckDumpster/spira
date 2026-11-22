@@ -220,6 +220,7 @@ pub fn id_of<'a>(prefix: &str, key: &'a str) -> Option<&'a str> {
 mod tests {
     use super::*;
 
+    #[test_id(tza86ut)]
     #[test]
     fn id_of_reads_only_a_direct_child() {
         assert_eq!(id_of(LIFECYCLE, "lifecycle/sp-a"), Some("sp-a"));

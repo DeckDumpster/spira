@@ -101,6 +101,7 @@ mod tests {
         &kv.iter().find(|(key, _)| key == k).unwrap().1
     }
 
+    #[test_id(tr0wdw8)]
     #[test]
     fn known_rows_render_the_headlines() {
         let kv = tsd_keys_with(|q| {
@@ -114,6 +115,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "3 reopened / 9 landed  gate-red 2, ejected 1");
     }
 
+    #[test_id(tucgoil)]
     #[test]
     fn the_tests_headline_is_the_latest_rounds_test_count_alone() {
         let kv = tsd_keys_with(|q| {
@@ -127,6 +129,7 @@ mod tests {
         assert_eq!(get(&tsd_keys_with(|_| None), "SP_TSD_TESTS"), "?");
     }
 
+    #[test_id(tcbhzrw)]
     #[test]
     fn a_failed_query_is_a_question_mark_never_zero() {
         let kv = tsd_keys_with(|_| None);
@@ -134,6 +137,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "?");
     }
 
+    #[test_id(t7vdn3h)]
     #[test]
     fn unparseable_or_foreign_output_is_a_question_mark() {
         let kv = tsd_keys_with(|q| Some(if q == "where" { "Conversion Error: nope".into() } else { r#"[{"x":1}]"#.into() }));
@@ -141,6 +145,7 @@ mod tests {
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "?");
     }
 
+    #[test_id(t3ttwpy)]
     #[test]
     fn an_empty_pipeline_says_so() {
         let kv = tsd_keys_with(|_| Some("[]".to_string()));

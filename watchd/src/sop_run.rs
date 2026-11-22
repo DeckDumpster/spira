@@ -182,6 +182,7 @@ mod tests {
 
     const PAYLOAD: &str = "FAIL round batch=b42 ended with no verdict";
 
+    #[test_id(tfa6rq4)]
     #[test]
     fn a_matching_sop_with_a_run_runs_the_tool_records_it_and_tells_the_concierge() {
         let d = TempDir::new("watchd-sop");
@@ -196,6 +197,7 @@ mod tests {
         assert!(mail[0].2.contains("recertified b42"), "{}", mail[0].2);
     }
 
+    #[test_id(t77i8wp)]
     #[test]
     fn a_payload_no_sop_matches_escalates_without_a_note_and_runs_nothing() {
         let d = TempDir::new("watchd-sop");
@@ -205,6 +207,7 @@ mod tests {
         assert!(ops.tool_calls.borrow().is_empty());
     }
 
+    #[test_id(tkbl37z)]
     #[test]
     fn a_failing_tool_mails_an_alert_and_escalates_naming_the_sop_and_exit_code() {
         let d = TempDir::new("watchd-sop");
@@ -216,6 +219,7 @@ mod tests {
         assert!(ops.concierge_mail.borrow()[0].2.contains("boom"));
     }
 
+    #[test_id(tk0f3j8)]
     #[test]
     fn a_tool_that_times_out_escalates_as_a_failure() {
         let d = TempDir::new("watchd-sop");
@@ -224,6 +228,7 @@ mod tests {
         assert!(note.contains("timed out after 60s"), "{note}");
     }
 
+    #[test_id(tygbca4)]
     #[test]
     fn a_third_occurrence_within_the_window_escalates_instead_of_running() {
         let d = TempDir::new("watchd-sop");
@@ -240,6 +245,7 @@ mod tests {
         assert!(matches!(attempt(&ops, &c, "rounds", "other", PAYLOAD), Verdict::Handled), "a different incident key counts on its own");
     }
 
+    #[test_id(to4rcqi)]
     #[test]
     fn several_matches_a_missing_run_and_a_missing_field_all_escalate_naming_why() {
         let d = TempDir::new("watchd-sop");
@@ -263,6 +269,7 @@ mod tests {
         assert!(ops.tool_calls.borrow().is_empty());
     }
 
+    #[test_id(tpsruap)]
     #[test]
     fn a_runbook_with_no_run_does_not_block_the_one_runnable_match() {
         let d = TempDir::new("watchd-sop");
@@ -274,6 +281,7 @@ mod tests {
         assert_eq!(ops.concierge_mail.borrow().len(), 1);
     }
 
+    #[test_id(tszvq47)]
     #[test]
     fn a_tool_missing_from_the_release_escalates_without_recording_an_application() {
         let d = TempDir::new("watchd-sop");
@@ -283,6 +291,7 @@ mod tests {
         assert!(ops.applied.borrow().is_empty());
     }
 
+    #[test_id(tuzfio1)]
     #[test]
     fn an_incident_naming_a_bead_records_the_application_against_it() {
         let d = TempDir::new("watchd-sop");
@@ -291,6 +300,7 @@ mod tests {
         assert_eq!(ops.applied.borrow()[0].1, "sp-abc123");
     }
 
+    #[test_id(txsbg3o)]
     #[test]
     fn incident_fields_take_only_the_named_clean_values() {
         let f = incident_fields("x batch=b1, repo=a/b bead=$(rm) bead=sp-1 other=3");

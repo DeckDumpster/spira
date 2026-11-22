@@ -376,6 +376,7 @@ impl Files {
 mod deferred_tests {
     use super::*;
 
+    #[test_id(t1p0jsb)]
     #[test]
     fn a_deferral_is_a_record_a_watcher_can_read() {
         let d = testkit::TempDir::new("lp-deferred-rec");
@@ -392,6 +393,7 @@ mod deferred_tests {
         assert!(f.deferred_records().is_empty());
     }
 
+    #[test_id(tsn43gv)]
     #[test]
     fn a_legacy_bare_counter_still_counts() {
         let d = testkit::TempDir::new("lp-deferred-legacy");
@@ -406,6 +408,7 @@ mod deferred_tests {
 mod tests {
     use super::*;
 
+    #[test_id(ttw9458)]
     #[test]
     fn a_backed_off_tip_waits_out_its_window_and_a_moved_tip_does_not() {
         let d = crate::testutil::tmpdir("backoff");
@@ -419,6 +422,7 @@ mod tests {
         assert!(!f.backing_off("spira/sp-a", "t1", 150));
     }
 
+    #[test_id(t7v3pmh)]
     #[test]
     fn clearing_a_branch_keeps_the_counters_of_a_branch_that_extends_its_name() {
         let d = crate::testutil::tmpdir("clear-prefix");
@@ -432,6 +436,7 @@ mod tests {
         assert!(d.join("noverdict/spira-sp-ab-conflict").exists());
     }
 
+    #[test_id(tad0kyp)]
     #[test]
     fn a_verdict_ages_by_the_stamp_the_gate_wrote_not_by_its_mtime() {
         let d = crate::testutil::tmpdir("prune-stamp");

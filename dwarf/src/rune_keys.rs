@@ -99,6 +99,7 @@ mod tests {
 
     const RUNE: &str = "RUNE_NAME=x\nRUNE_LIVE_VAR=1\nRUNE_LIVE_GET=2\nRUNE_DEAD=3\nRUNE_DESC=\"doc\"\n# RUNE_COMMENTED=1\n";
 
+    #[test_id(tzgbed9)]
     #[test]
     fn dead_key_found_and_live_keys_pass() {
         let d = tree("fixture");
@@ -111,6 +112,7 @@ mod tests {
         assert!(unconsumed(RUNE, &d, &d.join("spira/runes")).unwrap().is_empty());
     }
 
+    #[test_id(tswu5wd)]
     #[test]
     fn check_names_the_dead_key_and_passes_a_non_workspace_corpus() {
         let d = tree("check");
@@ -124,6 +126,7 @@ mod tests {
         assert!(e.contains("RUNE_DEAD"), "{e}");
     }
 
+    #[test_id(t6js7g7)]
     #[test]
     fn a_rune_without_working_exits_fails_to_load_naming_the_key() {
         let d = tree("exits");

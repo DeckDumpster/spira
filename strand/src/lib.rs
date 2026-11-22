@@ -12,6 +12,9 @@
 //! `all_partition_members`. `groomer`, `mimir-trigger` and `cockpit-collect` call it
 //! in-process instead of shelling back into lib.sh.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod check;
 pub mod classify;
 pub mod closereason;

@@ -86,6 +86,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2p4p6y)]
     #[test]
     fn parses_git_log_records() {
         let raw = "aaa\u{1f}p1 p2\u{1f}spira: land sp-x — title\0\nbbb\u{1f}p3\u{1f}round 1: fix\0";
@@ -95,6 +96,7 @@ mod tests {
         assert_eq!(v[1].subject, "round 1: fix");
     }
 
+    #[test_id(tmzbjdz)]
     #[test]
     fn land_id_reads_titled_and_bare_subjects() {
         assert_eq!(land_id("spira: land sp-atbfa"), Some("sp-atbfa"));
@@ -106,6 +108,7 @@ mod tests {
         assert_eq!(land_id("round 122: x"), None);
     }
 
+    #[test_id(tabm1bz)]
     #[test]
     fn members_survive_missing_lifecycle_rows() {
         let commits = vec![
@@ -119,6 +122,7 @@ mod tests {
         assert_eq!(got, vec!["sp-a:t1", "sp-b:t2", "sp-c:t3"]);
     }
 
+    #[test_id(tpikukp)]
     #[test]
     fn row_tip_wins_only_when_in_range() {
         let commits = vec![c("m1", &["f0", "t1"], "spira: land sp-a")];
@@ -144,6 +148,7 @@ mod tests {
         assert_eq!(members(&commits, &ls, &|_| true)[0].tip, "t1");
     }
 
+    #[test_id(t4t3xm7)]
     #[test]
     fn a_single_parent_land_commit_is_its_own_tip_and_duplicates_collapse() {
         let commits = vec![
@@ -155,6 +160,7 @@ mod tests {
         assert_eq!(ms[0].tip, "n2");
     }
 
+    #[test_id(ts083v9)]
     #[test]
     fn no_land_commit_is_no_member() {
         assert!(members(&[c("x", &["y"], "round 3: x")], &BTreeMap::new(), &|_| true).is_empty());

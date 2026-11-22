@@ -1,6 +1,8 @@
 //! `World::sweep_repair` completes a rowless bead in order: the row OPEN, each `blocks` edge the
 //! content bead carries, then the promote, so the bead is never claimable ahead of its blockers.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::os::unix::net::UnixListener;
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +31,7 @@ fn world(edges: Result<&'static str, &'static str>) -> (World, Arc<Mutex<Vec<Str
     (World { lc_socket: path, run_dir: dir.path().join("run"), ..World::default() }, sent, dir)
 }
 
+#[test_id(t0kk2m2)]
 #[test]
 fn a_rowless_bead_gets_an_open_row_then_its_blocks_edge_then_the_promote() {
     let (w, sent, _dir) = world(Ok(r#"[{"depends_on_id":"sp-blocker"}]"#));
@@ -40,6 +43,7 @@ fn a_rowless_bead_gets_an_open_row_then_its_blocks_edge_then_the_promote() {
     assert_eq!(writes, ["create-bead sp-new --repo spira", "dep-add sp-new sp-blocker --type blocks", "promote-filed sp-new"]);
 }
 
+#[test_id(tajm99d)]
 #[test]
 fn a_bead_whose_edges_cannot_be_read_keeps_its_open_row_and_is_not_promoted() {
     let (w, sent, _dir) = world(Err("store unreadable"));

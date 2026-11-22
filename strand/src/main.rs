@@ -22,6 +22,9 @@
 //!   strand detect-livelocked               strand detect-incident-needs-builder
 //!   strand detect-invalid-closed           strand all-partition-members
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use strand::{check, config, detectors, probe};
 
 use std::io::Read;
@@ -322,6 +325,7 @@ mod tests {
         parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>())
     }
 
+    #[test_id(tun4h9q)]
     #[test]
     fn modes_and_flags() {
         assert_eq!(p(&[]).unwrap().mode, Mode::Report);

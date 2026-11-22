@@ -65,6 +65,7 @@ fn tc(v: &str) -> String {
     format!("[toolchain]\nchannel = \"{v}\"\n")
 }
 
+#[test_id(t07f53f)]
 #[test]
 fn a_rust_pin_two_releases_behind_files_one_bead_and_a_second_pass_files_nothing() {
     let mut w = Fake { rust: Some("1.94.0".into()), ..Default::default() }.file("old", "rust-toolchain.toml", &tc("1.92.0"));
@@ -82,6 +83,7 @@ fn a_rust_pin_two_releases_behind_files_one_bead_and_a_second_pass_files_nothing
     assert_eq!(w.filed.borrow().len(), 1);
 }
 
+#[test_id(tvv7fhm)]
 #[test]
 fn a_rust_pin_on_stable_or_inside_the_grace_files_nothing() {
     let w = Fake { rust: Some("1.94.0".into()), ..Default::default() }
@@ -93,6 +95,7 @@ fn a_rust_pin_on_stable_or_inside_the_grace_files_nothing() {
     assert_eq!(o.current, vec!["current rust", "grace rust"]);
 }
 
+#[test_id(t8nfr0z)]
 #[test]
 fn an_unreachable_source_is_cannot_check_and_files_nothing() {
     let w = Fake::default().file("old", "rust-toolchain.toml", &tc("1.50.0")).file("n", ".nvmrc", "14\n");
@@ -101,6 +104,7 @@ fn an_unreachable_source_is_cannot_check_and_files_nothing() {
     assert_eq!(o.cannot_check.len(), 2, "{o:?}");
 }
 
+#[test_id(t8bzqzy)]
 #[test]
 fn a_node_pin_past_end_of_life_files_one_bead() {
     let node = eol(&[("18", "2025-04-30"), ("22", "2027-04-30")], "22.11.0");
@@ -116,6 +120,7 @@ fn a_node_pin_past_end_of_life_files_one_bead() {
     assert!(filed[0].1.contains("`18` in `package.json`"));
 }
 
+#[test_id(t7x9cbc)]
 #[test]
 fn a_python_floor_past_end_of_life_files_one_bead() {
     let py = eol(&[("3.8", "2024-10-07"), ("3.13", "2029-10-31")], "3.13.1");
@@ -123,6 +128,7 @@ fn a_python_floor_past_end_of_life_files_one_bead() {
     assert_eq!(pass(&w, 10).filed, vec!["deck python"]);
 }
 
+#[test_id(tvu9nrm)]
 #[test]
 fn the_batch_is_bounded() {
     let mut w = Fake { rust: Some("1.94.0".into()), ..Default::default() };
@@ -132,6 +138,7 @@ fn the_batch_is_bounded() {
     assert_eq!(pass(&w, 2).filed.len(), 2);
 }
 
+#[test_id(tk1zgu7)]
 #[test]
 fn an_unlisted_node_line_is_cannot_check_not_supported() {
     let w = Fake { node: Some(eol(&[("22", "2027-04-30")], "22.1.0")), ..Default::default() }.file("w", ".nvmrc", "99\n");
@@ -140,6 +147,7 @@ fn an_unlisted_node_line_is_cannot_check_not_supported() {
     assert_eq!(o.cannot_check.len(), 1);
 }
 
+#[test_id(tm76v1s)]
 #[test]
 fn parsers_read_the_upstream_shapes() {
     let toml = "[pkg.cargo]\nversion = \"1.0.0 (x)\"\n[pkg.rust]\nversion = \"1.94.0 (abc 2026-03-01)\"\n";
@@ -157,6 +165,7 @@ fn parsers_read_the_upstream_shapes() {
     assert!(parse_node("not json", "[]", TODAY).is_err());
 }
 
+#[test_id(tfh58i6)]
 #[test]
 fn civil_date_is_the_calendar_date() {
     assert_eq!(civil_date(0), "1970-01-01");
@@ -164,6 +173,7 @@ fn civil_date_is_the_calendar_date() {
     assert_eq!(civil_date(951_782_400), "2000-02-29");
 }
 
+#[test_id(t9b509a)]
 #[test]
 fn a_bump_bead_filed_outside_the_ledger_is_amended_not_duplicated() {
     let foreign = vec![("old".to_string(), "sp-hand".to_string(), "Bump Rust toolchain 1.82.0 -> 1.99.1".to_string())];
@@ -173,6 +183,7 @@ fn a_bump_bead_filed_outside_the_ledger_is_amended_not_duplicated() {
     assert_eq!(o.open, vec!["old rust"]);
 }
 
+#[test_id(t40lxrt)]
 #[test]
 fn names_bump_needs_the_runtime_and_a_bump_word() {
     assert!(names_bump("bump rust 1.82.0 to 1.99.1", Runtime::Rust));

@@ -87,6 +87,7 @@ fn seed_judged(s: &Store<MemBackend>, id: &str, request: &str) {
     s.publish_readiness(&judged, &pass, &req(request)).unwrap();
 }
 
+#[test_id(t0jeypg)]
 #[test]
 fn a_readiness_pass_between_a_read_and_a_claim_does_not_conflict_the_claim() {
     let (s, _, _) = fresh();
@@ -117,6 +118,7 @@ fn a_readiness_pass_between_a_read_and_a_claim_does_not_conflict_the_claim() {
     assert_eq!(r.judged_at.as_deref(), Some("2026-10-31T12:00:00Z"));
 }
 
+#[test_id(tc1w5hb)]
 #[test]
 fn a_transition_is_one_txn_on_the_records_mod_rev_audited_in_its_events_key() {
     let (s, _, _) = fresh();
@@ -152,6 +154,7 @@ fn a_transition_is_one_txn_on_the_records_mod_rev_audited_in_its_events_key() {
     );
 }
 
+#[test_id(tde5sgc)]
 #[test]
 fn a_write_from_a_stale_read_loses_the_race_and_the_loss_is_audited() {
     let (s, _, _) = fresh();
@@ -196,6 +199,7 @@ fn a_write_from_a_stale_read_loses_the_race_and_the_loss_is_audited() {
     );
 }
 
+#[test_id(ttc4tih)]
 #[test]
 fn a_machine_refusal_writes_no_record_and_is_audited_with_its_reason() {
     let (s, _, _) = fresh();
@@ -223,6 +227,7 @@ fn a_machine_refusal_writes_no_record_and_is_audited_with_its_reason() {
     );
 }
 
+#[test_id(tth1w2y)]
 #[test]
 fn create_twice_with_an_equal_value_succeeds_and_with_a_different_one_conflicts() {
     let (s, _, _) = fresh();
@@ -251,6 +256,7 @@ fn create_twice_with_an_equal_value_succeeds_and_with_a_different_one_conflicts(
     ));
 }
 
+#[test_id(thvwntu)]
 #[test]
 fn a_tip_promotes_an_untouched_birth_and_a_born_submitted_record_audits_its_submit() {
     let (s, _, _) = fresh();
@@ -272,6 +278,7 @@ fn a_tip_promotes_an_untouched_birth_and_a_born_submitted_record_audits_its_subm
     );
 }
 
+#[test_id(t3dwaoz)]
 #[test]
 fn deleting_a_record_whose_bead_is_open_marks_it_and_it_goes_only_once_planning_closes_it() {
     let (s, _, clock) = fresh();
@@ -304,6 +311,7 @@ fn deleting_a_record_whose_bead_is_open_marks_it_and_it_goes_only_once_planning_
     ));
 }
 
+#[test_id(t6rmpmn)]
 #[test]
 fn a_holders_submit_after_its_lock_expired_and_another_holder_retook_it_is_refused() {
     let (s, _, clock) = fresh();
@@ -369,6 +377,7 @@ fn a_holders_submit_after_its_lock_expired_and_another_holder_retook_it_is_refus
     );
 }
 
+#[test_id(ty4ss07)]
 #[test]
 fn a_holders_write_after_its_lock_expired_is_refused_even_before_anyone_retakes_it() {
     let (s, _, clock) = fresh();
@@ -402,6 +411,7 @@ fn a_holders_write_after_its_lock_expired_is_refused_even_before_anyone_retakes_
     );
 }
 
+#[test_id(tblzy4w)]
 #[test]
 fn a_claim_is_one_txn_and_the_holders_token_is_its_locks_create_rev() {
     let (s, _, _) = fresh();
@@ -465,6 +475,7 @@ fn a_claim_is_one_txn_and_the_holders_token_is_its_locks_create_rev() {
     assert_eq!(s.holder_fence("sp-a").unwrap(), None);
 }
 
+#[test_id(t5wl7lj)]
 #[test]
 fn a_claim_while_another_claims_lock_is_live_writes_nothing_and_answers_locked() {
     let (s, _, _) = fresh();
@@ -490,6 +501,7 @@ fn a_claim_while_another_claims_lock_is_live_writes_nothing_and_answers_locked()
     );
 }
 
+#[test_id(t1dhl8q)]
 #[test]
 fn a_working_records_lease_until_is_its_locks_expiry_and_follows_a_renew() {
     let (s, _, clock) = fresh();
@@ -530,6 +542,7 @@ fn a_working_records_lease_until_is_its_locks_expiry_and_follows_a_renew() {
     );
 }
 
+#[test_id(tvrxmox)]
 #[test]
 fn a_refused_claim_takes_no_lock() {
     let (s, _, _) = fresh();
@@ -560,6 +573,7 @@ fn a_refused_claim_takes_no_lock() {
     assert!(s.contract().get(&lock).unwrap().is_none());
 }
 
+#[test_id(tx62kmz)]
 #[test]
 fn a_claims_lock_lasts_its_lease_but_never_less_than_the_floor() {
     let (s, _, clock) = fresh();
@@ -602,6 +616,7 @@ fn a_claims_lock_lasts_its_lease_but_never_less_than_the_floor() {
     );
 }
 
+#[test_id(t3bsxd5)]
 #[test]
 fn renew_extends_the_lock_and_writes_nothing_to_the_record() {
     let (s, _, clock) = fresh();
@@ -637,6 +652,7 @@ fn renew_extends_the_lock_and_writes_nothing_to_the_record() {
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
 }
 
+#[test_id(t2mju2v)]
 #[test]
 fn restarting_the_store_leaves_every_live_lock_valid() {
     let (s, b, clock) = fresh();
@@ -670,6 +686,7 @@ fn restarting_the_store_leaves_every_live_lock_valid() {
     assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
 }
 
+#[test_id(tgaou3n)]
 #[test]
 fn a_retried_claim_is_answered_from_its_request_and_writes_nothing() {
     let (s, _, _) = fresh();
@@ -683,6 +700,7 @@ fn a_retried_claim_is_answered_from_its_request_and_writes_nothing() {
     assert_eq!(s.contract().head().unwrap(), head, "a retry wrote again");
 }
 
+#[test_id(t3vfdlw)]
 #[test]
 fn a_retried_claim_hands_back_no_fence_once_its_lock_has_lapsed() {
     let (s, _, clock) = fresh();
@@ -697,6 +715,7 @@ fn a_retried_claim_hands_back_no_fence_once_its_lock_has_lapsed() {
     assert_eq!(f2, None, "a retry handed back a lapsed fence");
 }
 
+#[test_id(t2kfmtc)]
 #[test]
 fn a_claim_request_that_lost_stays_lost_on_retry_and_a_new_request_claims() {
     let (s, _, _) = fresh();
@@ -725,6 +744,7 @@ fn a_claim_request_that_lost_stays_lost_on_retry_and_a_new_request_claims() {
     assert!(f.is_some());
 }
 
+#[test_id(t7kniba)]
 #[test]
 fn a_record_read_at_an_old_rev_does_not_borrow_a_later_claims_lease() {
     let (s, _, clock) = fresh();
@@ -770,6 +790,7 @@ fn a_record_read_at_an_old_rev_does_not_borrow_a_later_claims_lease() {
     );
 }
 
+#[test_id(tyxzjl2)]
 #[test]
 fn a_retried_event_is_answered_from_its_request_and_writes_nothing() {
     let (s, _, _) = fresh();
@@ -787,6 +808,7 @@ fn a_retried_event_is_answered_from_its_request_and_writes_nothing() {
     assert_eq!(s.contract().head().unwrap(), head, "a retry wrote again");
 }
 
+#[test_id(tyqzzfs)]
 #[test]
 fn a_claim_without_its_at_or_outside_claim_is_refused_before_any_write() {
     let (s, _, _) = fresh();
@@ -799,6 +821,7 @@ fn a_claim_without_its_at_or_outside_claim_is_refused_before_any_write() {
     assert_eq!(s.contract().head().unwrap(), head);
 }
 
+#[test_id(t2h35ub)]
 #[test]
 fn a_reaper_moving_a_record_out_of_working_releases_the_claim_lock_at_once() {
     let (s, _, _) = fresh();
@@ -835,6 +858,7 @@ fn a_reaper_moving_a_record_out_of_working_releases_the_claim_lock_at_once() {
     assert!(f.is_some());
 }
 
+#[test_id(tg8speu)]
 #[test]
 fn a_record_marked_for_deletion_is_not_recreated_as_equal() {
     let (s, _, _) = fresh();
@@ -847,6 +871,7 @@ fn a_record_marked_for_deletion_is_not_recreated_as_equal() {
     ));
 }
 
+#[test_id(tosvml1)]
 #[test]
 fn deleting_a_record_that_is_already_gone_succeeds() {
     let (s, _, _) = fresh();
@@ -856,6 +881,7 @@ fn deleting_a_record_that_is_already_gone_succeeds() {
     ));
 }
 
+#[test_id(tozmrts)]
 #[test]
 fn readiness_and_progress_are_owned_and_go_with_their_record_and_batch() {
     let (s, _, clock) = fresh();
@@ -887,6 +913,7 @@ fn readiness_and_progress_are_owned_and_go_with_their_record_and_batch() {
         .is_none());
 }
 
+#[test_id(tjb15z3)]
 #[test]
 fn a_progress_that_is_not_one_object_is_refused() {
     let (s, _, _) = fresh();
@@ -903,6 +930,7 @@ fn a_progress_that_is_not_one_object_is_refused() {
         .is_err());
 }
 
+#[test_id(tkm4myw)]
 #[test]
 fn batch_progress_goes_under_its_own_key_and_never_moves_the_batch() {
     let (s, _, _) = fresh();
@@ -936,6 +964,7 @@ fn batch_progress_goes_under_its_own_key_and_never_moves_the_batch() {
     ));
 }
 
+#[test_id(ttuezpx)]
 #[test]
 fn records_are_listed_from_one_snapshot_with_its_rev_and_without_other_kinds() {
     let (s, _, _) = fresh();
@@ -964,6 +993,7 @@ fn records_are_listed_from_one_snapshot_with_its_rev_and_without_other_kinds() {
     assert_eq!(first.value, records[1].value);
 }
 
+#[test_id(tf0lfyh)]
 #[test]
 fn a_transition_the_store_commits_is_shipped_with_its_machine_states_bead_and_actor() {
     use spira_otel::vlogs::fake::FakeLogs;
@@ -982,6 +1012,7 @@ fn a_transition_the_store_commits_is_shipped_with_its_machine_states_bead_and_ac
     assert_eq!(r["at"], 100);
 }
 
+#[test_id(tl2tcxm)]
 #[test]
 fn a_refused_transition_and_a_retried_request_ship_nothing() {
     use spira_otel::vlogs::fake::FakeLogs;
@@ -1138,6 +1169,7 @@ fn lock_expiry<B: Backend>(s: &Store<B>) -> Option<u64> {
         .and_then(|l| l.lock_expires_at_ms)
 }
 
+#[test_id(tzaf8vg)]
 #[test]
 fn a_renewal_is_one_commit_that_restarts_the_lock_and_writes_the_record() {
     let (s, tally, clock, f) = counted_claim();
@@ -1175,6 +1207,7 @@ fn a_renewal_is_one_commit_that_restarts_the_lock_and_writes_the_record() {
     );
 }
 
+#[test_id(tkf8x6c)]
 #[test]
 fn a_renewal_after_the_lock_lapsed_is_lock_lost_and_leaves_the_record() {
     let (s, _, clock, f) = counted_claim();
@@ -1187,6 +1220,7 @@ fn a_renewal_after_the_lock_lapsed_is_lock_lost_and_leaves_the_record() {
     assert_eq!(s.record("sp-a").unwrap().unwrap().mod_rev, before);
 }
 
+#[test_id(tlvu896)]
 #[test]
 fn a_non_holders_renewal_is_refused_and_the_lock_expiry_is_unchanged() {
     let (s, _, _, f) = counted_claim();
@@ -1228,6 +1262,7 @@ fn dropped(s: &Store<MemBackend>, id: &str, request: &str) -> Outcome {
     s.apply(id, &ev(cur.value.row.state, cur.value.row.version, kind, "operator", 120), &req(request)).unwrap()
 }
 
+#[test_id(tanzft1)]
 #[test]
 fn a_github_bead_entering_a_terminal_state_enqueues_exactly_one_closeout() {
     let (s, _, _) = fresh();
@@ -1245,6 +1280,7 @@ fn a_github_bead_entering_a_terminal_state_enqueues_exactly_one_closeout() {
     assert_eq!(s.gh_closeouts().unwrap().len(), 1, "a repeated event enqueues none");
 }
 
+#[test_id(tobsi19)]
 #[test]
 fn a_bead_with_no_or_a_non_github_reference_enqueues_nothing() {
     let (s, _, _) = fresh();
@@ -1256,6 +1292,7 @@ fn a_bead_with_no_or_a_non_github_reference_enqueues_nothing() {
     assert!(s.gh_closeouts().unwrap().is_empty());
 }
 
+#[test_id(tb7d82t)]
 #[test]
 fn a_reference_the_content_store_cannot_read_fails_the_transition_closed() {
     let (s, _, _) = fresh();
@@ -1268,6 +1305,7 @@ fn a_reference_the_content_store_cannot_read_fails_the_transition_closed() {
     assert_eq!(s.record("sp-gh").unwrap().unwrap().value.row.state, BeadState::Ready, "the bead did not move");
 }
 
+#[test_id(tde9xud)]
 #[test]
 fn a_closeout_is_asked_failed_and_done_idempotently() {
     let (s, _, _) = fresh();
@@ -1285,6 +1323,7 @@ fn a_closeout_is_asked_failed_and_done_idempotently() {
     assert!(!s.gh_closeout_failed("sp-gh", &req("f3")).unwrap(), "no row is no failure to count");
 }
 
+#[test_id(tfrkin8)]
 #[test]
 fn the_pending_verb_names_every_column_the_drain_reads() {
     let (s, _, _) = fresh();
@@ -1334,6 +1373,7 @@ mod on_sqlite {
         ok(s, &["event", "bead", id, "--expect", "READY", "--version", "0", "--actor", "t", "--kind", r#"{"Claim":{"holder":"dwarf-1","lease_until":1767229200}}"#]);
     }
 
+    #[test_id(t5frjsb)]
     #[test]
     fn a_show_and_a_list_in_the_same_thread_reflect_the_create_just_made_with_no_wait() {
         let (_dir, s) = sqlite();
@@ -1347,6 +1387,7 @@ mod on_sqlite {
         assert_eq!(shown["bead"]["state"], "WORKING", "{shown}");
     }
 
+    #[test_id(t5nqbx4)]
     #[test]
     fn a_bare_list_returns_the_lifecycle_rows_without_consulting_the_claim_view_inputs() {
         let (_dir, s) = sqlite();
@@ -1361,6 +1402,7 @@ mod on_sqlite {
         assert!(rows[0]["claim_view"].is_null(), "{out}");
     }
 
+    #[test_id(tjk8zkr)]
     #[test]
     fn a_list_without_bare_still_carries_the_claim_view() {
         let (_dir, s) = sqlite();
@@ -1369,6 +1411,7 @@ mod on_sqlite {
         assert!(!rows[0]["claim_view"].is_null(), "{rows:?}");
     }
 
+    #[test_id(tot6s3x)]
     #[test]
     fn a_list_row_and_a_show_carry_the_beads_builder_time_and_session_count() {
         let (_dir, s) = sqlite();
@@ -1381,6 +1424,7 @@ mod on_sqlite {
     }
 }
 
+#[test_id(tzq1kkg)]
 #[test]
 fn a_txn_whose_audits_on_one_key_do_not_chain_is_refused_and_writes_nothing() {
     let (s, _b, _c) = fresh();

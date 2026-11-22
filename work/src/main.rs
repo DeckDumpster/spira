@@ -12,6 +12,9 @@
 //! sp-xethq, and the restricted unit environment this bead only provides — see
 //! dwarf/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use work::help::{refusal, R};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -1079,6 +1082,7 @@ fn unresolved_programs() -> Vec<String> {
 mod tests {
     use super::*;
 
+    #[test_id(t8iwu51)]
     #[test]
     fn an_absent_store_socket_is_not_running_after_the_wait_and_nothing_was_sent() {
         let dir = testkit::TempDir::new("work-not-running");
@@ -1086,6 +1090,7 @@ mod tests {
         assert!(matches!(e, Unsent::NotRunning { .. }), "{e:?}");
     }
 
+    #[test_id(taeb2w3)]
     #[test]
     fn a_socket_that_cannot_be_a_store_stays_a_fault_not_a_wait() {
         let dir = testkit::TempDir::new("work-not-a-store");
@@ -1094,6 +1099,7 @@ mod tests {
         assert!(matches!(e, Unsent::Other(_)), "{e:?}");
     }
 
+    #[test_id(t3czz4v)]
     #[test]
     fn the_refusal_reports_the_wait() {
         assert!(refusal(R::StoreNotRunning, "", &[("secs", "30")]).contains("store not running: nothing was sent; waited 30s"));
@@ -1122,6 +1128,7 @@ mod tests {
         }
     }
 
+    #[test_id(t00wo9z)]
     #[test]
     fn a_recorded_ami_result_is_read_from_its_record_not_its_receipt() {
         use work::image::{Build, Ports};
@@ -1129,6 +1136,7 @@ mod tests {
         assert_eq!(p.result("b").unwrap(), Build::Success("123".into()));
     }
 
+    #[test_id(t4kmipg)]
     #[test]
     fn a_recorded_ami_push_that_exits_nonzero_is_refused_naming_route_and_code() {
         use work::image::Ports;
@@ -1136,6 +1144,7 @@ mod tests {
         assert!(e.contains("`work forge ami-push`") && e.contains("exited 1") && e.contains("push rejected"), "{e}");
     }
 
+    #[test_id(tjgjdqb)]
     #[test]
     fn a_reply_that_is_not_a_receipt_is_returned_without_polling() {
         let calls = std::cell::Cell::new(0);
@@ -1152,12 +1161,14 @@ mod tests {
         assert_eq!(calls.get(), 2);
     }
 
+    #[test_id(txq65iv)]
     #[test]
     fn a_recorded_verb_prints_the_answer_of_its_record() {
         let send = recorded(0, "done it");
         assert_eq!(answered(&send, &["x".into()], Duration::from_secs(1)).unwrap(), (0, "done it".to_string()));
     }
 
+    #[test_id(tx3ko1x)]
     #[test]
     fn dispatch_is_sent_only_after_the_push_record_is_read_and_each_answer_is_the_record() {
         use work::image::Ports;

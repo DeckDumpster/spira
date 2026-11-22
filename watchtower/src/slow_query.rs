@@ -108,6 +108,7 @@ mod tests {
         (inc.to_string_lossy().into_owned(), calls)
     }
 
+    #[test_id(t0r9l4t)]
     #[test]
     fn an_empty_log_files_nothing() {
         let d = testkit::TempDir::new("wt-slow-none");
@@ -118,6 +119,7 @@ mod tests {
         assert!(!calls.exists());
     }
 
+    #[test_id(t4sy048)]
     #[test]
     fn the_title_names_the_slowest_verb_its_duration_the_threshold_and_the_count() {
         let d = testkit::TempDir::new("wt-slow-title");
@@ -136,12 +138,14 @@ mod tests {
         }
     }
 
+    #[test_id(tg3e7xv)]
     #[test]
     fn distinct_shapes_group_separately() {
         let g = group("1\ta\t1100\tX\n2\tb\t1200\tY\n3\ta\t1300\tX\n");
         assert_eq!(g.len(), 2);
     }
 
+    #[test_id(tsolnez)]
     #[test]
     fn a_line_with_a_caller_groups_with_the_same_shape_without_one() {
         let g = group("1\ta\t1100\tX\n2\ta\tspira-lc\t1200\tX\n3\tb\tclaim\t1300\tREQUEST\n");

@@ -2,6 +2,8 @@
 //! it again once the cause is gone. This spawns `spira-lc serve` because the cell that must not
 //! keep the failure lives for the life of the server process (law-a-unit-test-calls-no-binary).
 
+#[macro_use]
+extern crate spira_test_id;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
@@ -18,6 +20,7 @@ fn write_comment(socket: &std::path::Path) -> spira_store::lc_call::Reply {
         .unwrap_or_else(|e| panic!("no answer: {e:?}"))
 }
 
+#[test_id(t183qgz)]
 #[test]
 fn a_content_write_builds_the_writer_again_once_its_password_file_exists() {
     let dir = testkit::TempDir::new("spira-lc-writer-retry");

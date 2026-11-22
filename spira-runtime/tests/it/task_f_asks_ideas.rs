@@ -47,6 +47,7 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
     r
 }
 
+#[test_id(t9bdl0b)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
@@ -58,6 +59,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
 }
 
+#[test_id(t5j1uds)]
 #[test]
 fn t2_busy_with_no_idle_spell_journals_nothing_and_asks_only_for_its_probe() {
     let mut r = rig(1, |_| snap(NOW, 10, true));
@@ -66,6 +68,7 @@ fn t2_busy_with_no_idle_spell_journals_nothing_and_asks_only_for_its_probe() {
     running(&r);
 }
 
+#[test_id(tqose75)]
 #[test]
 fn t3_busy_idle_prompted_busy_is_legal_and_a_second_prompt_is_refused_naming_the_state() {
     for t in TRANSITIONS {
@@ -75,6 +78,7 @@ fn t3_busy_idle_prompted_busy_is_legal_and_a_second_prompt_is_refused_naming_the
     assert!(refused.contains("Prompted"), "{refused}");
 }
 
+#[test_id(t1ohdv0)]
 #[test]
 fn t3_the_carry_changes_only_on_an_edge_and_reads_back_as_recorded() {
     let (idle, _, _) = decide(&Carry::default(), &snap(NOW, 10, false), &config());
@@ -85,6 +89,7 @@ fn t3_the_carry_changes_only_on_an_edge_and_reads_back_as_recorded() {
     assert_eq!(back, idle);
 }
 
+#[test_id(tgpzyh2)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
@@ -96,6 +101,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
+#[test_id(tj4aqpd)]
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
@@ -104,6 +110,7 @@ fn t4_the_module_launches_no_process() {
     assert_eq!(launcher(MODULE), None);
 }
 
+#[test_id(ts9lcan)]
 #[test]
 fn t5_parity_thirty_idle_minutes_in_waking_hours_prompt_once() {
     let spell = Carry { idle_since: Some(NOW - 1_800), last_prompt: None, prompted: false };
@@ -116,6 +123,7 @@ fn t5_parity_thirty_idle_minutes_in_waking_hours_prompt_once() {
     assert_eq!((outcome, acts.len()), (Outcome::AlreadyPrompted, 0));
 }
 
+#[test_id(ttlr3h6)]
 #[test]
 fn t5_parity_outside_waking_hours_and_no_ideas_ask_nothing() {
     let spell = Carry { idle_since: Some(NOW - 1_800), last_prompt: None, prompted: false };
@@ -156,6 +164,7 @@ fn prompted_then_idle_again() -> TaskRig {
     r
 }
 
+#[test_id(tqnzymh)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&prompted_once(), NAME);
@@ -164,16 +173,19 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     }
 }
 
+#[test_id(t1r5gx7)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     boot_matches(idle_spell_opened);
 }
 
+#[test_id(tq3ui4g)]
 #[test]
 fn a_boot_after_the_ask_does_not_ask_again_for_the_same_idle_spell() {
     boot_matches(prompted_once);
 }
 
+#[test_id(tqwmlud)]
 #[test]
 fn a_boot_after_an_ask_keeps_the_gap_that_holds_back_the_next_one() {
     boot_matches(prompted_then_idle_again);

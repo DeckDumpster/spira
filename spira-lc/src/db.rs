@@ -357,16 +357,19 @@ mod password_tests {
         Err(std::io::Error::new(std::io::ErrorKind::NotFound, "read must not be called"))
     }
 
+    #[test_id(tmrv5fs)]
     #[test]
     fn an_empty_password_file_falls_back_to_the_password() {
         assert_eq!(password_from(Some(String::new()), Some("pw".into()), no_read), Ok("pw".into()));
     }
 
+    #[test_id(t72k7kv)]
     #[test]
     fn a_named_password_file_wins_and_is_trimmed() {
         assert_eq!(password_from(Some("c".into()), Some("pw".into()), |_| Ok("secret\n".into())), Ok("secret".into()));
     }
 
+    #[test_id(te9i6d9)]
     #[test]
     fn an_unreadable_named_file_is_an_error_not_a_blank_password() {
         assert!(password_from(Some("missing".into()), None, no_read).is_err());
@@ -377,6 +380,7 @@ mod password_tests {
 mod connect_tests {
     use super::*;
 
+    #[test_id(tdh7rz7)]
     #[test]
     fn a_refusal_from_the_server_is_not_retried_but_a_dead_socket_is() {
         assert!(refused_for_good(&ScriptFailure::CannotTell("Error 1045 (28000): Access denied".into())));
@@ -384,6 +388,7 @@ mod connect_tests {
         assert!(!refused_for_good(&ScriptFailure::CannotTell("Connection refused".into())));
     }
 
+    #[test_id(tsyfa4h)]
     #[test]
     fn a_rotated_credential_file_is_picked_up_and_an_unchanged_one_is_not() {
         let read = |_: &str| Ok("new\n".to_string());
@@ -392,6 +397,7 @@ mod connect_tests {
         assert_eq!(reloaded_password("f", "old", |_: &str| Ok("  \n".to_string())), None);
     }
 
+    #[test_id(t7mja4h)]
     #[test]
     fn connect_backoff_doubles_from_200ms() {
         assert_eq!(connect_backoff(1), std::time::Duration::from_millis(200));
@@ -481,6 +487,7 @@ mod session_pool_tests {
 
     const BOUND: Duration = Duration::from_secs(1);
 
+    #[test_id(tfxbhcl)]
     #[test]
     fn a_held_read_does_not_block_another() {
         let rig = Rig::new(READER_SESSIONS);
@@ -492,6 +499,7 @@ mod session_pool_tests {
         first.recv_timeout(BOUND).unwrap();
     }
 
+    #[test_id(tgqkvyv)]
     #[test]
     fn the_cap_holds_and_a_read_over_it_waits_for_a_release() {
         let rig = Rig::new(READER_SESSIONS);
@@ -521,12 +529,14 @@ mod session_pool_tests {
         rec.snapshot()
     }
 
+    #[test_id(ti3db5s)]
     #[test]
     fn a_run_records_one_content_query() {
         let rig = Rig::new(1);
         assert_eq!(run_tracked(&rig, "fast").content_queries, 1);
     }
 
+    #[test_id(t7blkfu)]
     #[test]
     fn a_run_waiting_for_the_only_session_records_the_wait() {
         let rig = Rig::new(1);
@@ -547,6 +557,7 @@ mod session_pool_tests {
         assert!(waited >= 50_000, "waited {waited} us");
     }
 
+    #[test_id(tjw9e1l)]
     #[test]
     fn a_panicking_read_gives_its_place_back() {
         let rig = Rig::new(1);
@@ -554,6 +565,7 @@ mod session_pool_tests {
         rig.read("fast").recv_timeout(BOUND).expect("the next read answered");
     }
 
+    #[test_id(t3znxfn)]
     #[test]
     fn the_reader_holds_the_reader_cap_and_the_administrator_one() {
         let admin = Conn::administrator("h", 1, "u", String::new());
@@ -565,6 +577,7 @@ mod session_pool_tests {
         assert_eq!(r.sessions.cap, READER_SESSIONS);
     }
 
+    #[test_id(tge9nqc)]
     #[test]
     fn a_failed_session_is_not_reused() {
         let rig = Rig::new(READER_SESSIONS);

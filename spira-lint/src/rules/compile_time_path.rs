@@ -272,6 +272,7 @@ mod tests {
         CompileTimePath::default().check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(t0asp82)]
     #[test]
     fn each_compile_time_path_shape_is_a_finding_at_its_line() {
         for src in [
@@ -292,6 +293,7 @@ mod tests {
         assert!(run("fn f() { \"/srv/spira/run/y\"; }\n")[0].contains("an absolute path literal"));
     }
 
+    #[test_id(tj29yti)]
     #[test]
     fn the_registry_carries_the_rule_and_fires_it_on_a_planted_violation() {
         let rule = crate::all_rules().into_iter().find(|r| r.name() == NAME).expect("registered by build.rs");
@@ -302,6 +304,7 @@ mod tests {
         assert_eq!(rule.checked().map(|c| c.0), Some(1));
     }
 
+    #[test_id(tnqofj9)]
     #[test]
     fn content_and_non_paths_are_clean() {
         for src in [
@@ -315,6 +318,7 @@ mod tests {
         }
     }
 
+    #[test_id(tm5db9l)]
     #[test]
     fn every_absolute_path_literal_is_a_finding_at_its_line() {
         for lit in ["\"/r/spira-releases/x\"", "\"/home/x\"", "\"/tmp/w1\"", "r\"/h/spira\"", "b\"/dev/null\"", "r#\"/h/x\"#", "\"/usr/bin:/rel/bin\""] {
@@ -324,6 +328,7 @@ mod tests {
         }
     }
 
+    #[test_id(tc5kbck)]
     #[test]
     fn forms_that_are_not_filesystem_paths_are_clean() {
         for src in [
@@ -346,6 +351,7 @@ mod tests {
         assert_eq!(run("fn f(p: &str) { p.strip_suffix(\"/src/a.rs\"); }\n").len(), 1);
     }
 
+    #[test_id(ttqdd2c)]
     #[test]
     fn a_marker_needs_a_reason_and_cannot_excuse_a_root() {
         for src in ["const A: &str = \"/u/x\"; // not a path:\n", "const A: &str = \"/u/x\"; // not a path:   \n", "const A: &str = \"/home/x\"; // not a path: url\n", "const A: &str = \"/proc/x\"; // not a path: url\n", "const A: &str = \"/nonexistent\"; // not a path: x\n", "const A: &str = \"/srv/x\"; // not a path: x\n", "const A: &str = \"@U/x\"; // not a path: x\n", "const A: &[u8] = b\"/work/x\"; // not a path: x\n"] {
@@ -355,6 +361,7 @@ mod tests {
         }
     }
 
+    #[test_id(thxcz9m)]
     #[test]
     fn only_the_system_paths_crate_may_name_a_real_path() {
         let t = TempDir::new("ctp-sys");
@@ -378,6 +385,7 @@ mod tests {
         CompileTimePath::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(t1176u8)]
     #[test]
     fn a_literal_in_a_pending_crate_is_clean_and_env_is_not() {
         let t = TempDir::new("ctp-pend");
@@ -387,6 +395,7 @@ mod tests {
         assert_eq!(pending(&t, &[("a/b", "sp-1")], &["a/b/src/lib.rs"]).unwrap().len(), 1);
     }
 
+    #[test_id(t3y5m4v)]
     #[test]
     fn a_pending_entry_with_no_literal_left_is_stale_and_a_bad_id_is_refused() {
         let t = TempDir::new("ctp-stale");
@@ -397,6 +406,7 @@ mod tests {
         assert!(pending(&t, &[("a", "nope")], &["a/src/lib.rs"]).is_err());
     }
 
+    #[test_id(tqchkj4)]
     #[test]
     fn an_entry_the_base_did_not_have_is_a_growth_finding() {
         let t = TempDir::new("ctp-grow");
@@ -417,6 +427,7 @@ mod tests {
         assert!(got[0].message.contains("the list only shrinks") && got[0].path.ends_with("/b"), "{got:?}");
     }
 
+    #[test_id(tngm429)]
     #[test]
     fn an_env_read_after_an_include_call_is_still_a_finding() {
         let got = run("const A: &str = include_str!(\"a.txt\");\nconst B: &str = env!(\"CARGO_MANIFEST_DIR\");\n");
@@ -424,6 +435,7 @@ mod tests {
         assert!(got[0].contains(":2:"), "{got:?}");
     }
 
+    #[test_id(tcr0k98)]
     #[test]
     fn manifest_dir_message_names_every_run_time_door() {
         let m = &run("fn f() { env!(\"CARGO_MANIFEST_DIR\"); }\n")[0];
@@ -432,6 +444,7 @@ mod tests {
         }
     }
 
+    #[test_id(t2lc4o1)]
     #[test]
     fn a_finding_deep_in_a_file_names_its_own_line() {
         let got = run("// c\nconst A: &str = include_bytes!(\"a\");\n\n// env!(\"OUT_DIR\")\nfn f() { env!(\"OUT_DIR\"); }\n");
@@ -439,17 +452,20 @@ mod tests {
         assert!(got[0].contains(":5:"), "{got:?}");
     }
 
+    #[test_id(tiqnmxl)]
     #[test]
     fn an_unbalanced_include_does_not_exempt_the_rest_of_the_file() {
         let got = run("const A: &str = include_str!(\"a.txt\";\nconst B: &str = env!(\"CARGO_MANIFEST_DIR\");\n");
         assert_eq!(got.len(), 1, "{got:?}");
     }
 
+    #[test_id(toc7ftf)]
     #[test]
     fn a_string_with_a_paren_inside_an_include_does_not_end_the_exemption() {
         assert_eq!(run("const A: &str = include_str!(concat!(\")\", env!(\"OUT_DIR\")));\n"), Vec::<String>::new());
     }
 
+    #[test_id(ttf0108)]
     #[test]
     fn own_source_and_target_are_not_scanned_and_checked_counts_the_rest() {
         let t = TempDir::new("ctp-scope");
@@ -464,6 +480,7 @@ mod tests {
         assert_eq!(rule.checked(), Some((1, "rust files".to_string())));
     }
 
+    #[test_id(tqyma26)]
     #[test]
     fn no_rust_files_is_a_refusal() {
         let t = TempDir::new("ctp-empty");

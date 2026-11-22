@@ -212,6 +212,7 @@ mod tests {
         Request::new(id, "test", "t")
     }
 
+    #[test_id(tj83bh7)]
     #[test]
     fn an_edge_is_kept_sorted_once_and_a_non_blocking_kind_takes_it_back() {
         let s = store();
@@ -241,6 +242,7 @@ mod tests {
         );
     }
 
+    #[test_id(tfp9e6j)]
     #[test]
     fn set_repo_changes_only_the_repo_and_leaves_a_working_record_alone() {
         let s = store();

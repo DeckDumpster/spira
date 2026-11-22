@@ -1533,6 +1533,7 @@ mod tests {
     use super::fake::FakeRuntime;
     use super::*;
 
+    #[test_id(tnckqxa)]
     #[test]
     fn a_reaped_containers_volumes_are_named_for_its_original_name() {
         let reap = reap_name("spira-warm-0-17-42-0");
@@ -1568,6 +1569,7 @@ mod tests {
         (t, left, detached, hold)
     }
 
+    #[test_id(tj3kjya)]
     #[test]
     fn a_timed_out_setup_runner_has_its_container_removed_before_the_verdict() {
         let (t, left, detached, _hold) = timed_out_setup(false);
@@ -1576,6 +1578,7 @@ mod tests {
         assert_eq!(detached, 0, "a fault's removal is never left in flight");
     }
 
+    #[test_id(t61pc7s)]
     #[test]
     fn only_a_settled_uncancelled_run_leaves_its_removal_in_flight() {
         let (t, left, detached, _hold) = timed_out_setup(true);
@@ -1584,6 +1587,7 @@ mod tests {
         assert_eq!(detached, 1);
     }
 
+    #[test_id(tokmbdh)]
     #[test]
     fn the_summary_line_parses_a_cgroup_peak() {
         assert_eq!(pids_peak_line("21345\n", "32768\n").as_deref(), Some("peak tasks 21345 of 32768"));
@@ -1592,6 +1596,7 @@ mod tests {
         assert_eq!(pids_peak_line("12", "lots"), None);
     }
 
+    #[test_id(tsgw3gb)]
     #[test]
     fn suspension_reasons_do_not_blame_the_image_rustc() {
         for (unit, reason) in SUSPENDED_UNITS {
@@ -1613,6 +1618,7 @@ mod tests {
         s
     }
 
+    #[test_id(tdviav9)]
     #[test]
     fn a_suite_home_is_made_by_the_bd_meter_and_falls_back_to_mkdir_without_it() {
         let rt = FakeRuntime::new();
@@ -1643,6 +1649,7 @@ mod tests {
         );
     }
 
+    #[test_id(tqk6gal)]
     #[test]
     fn testdb_template_runs_the_artifact_under_test_as_the_suite_user() {
         let rt = FakeRuntime::new();
@@ -1660,6 +1667,7 @@ mod tests {
         s.setup(RUNNER, provision, tokens.iter().copied(), &|_| {})
     }
 
+    #[test_id(tmox7un)]
     #[test]
     fn install_runs_configure_suspends_then_install_from_the_staged_release() {
         let rt = FakeRuntime::new();
@@ -1711,6 +1719,7 @@ mod tests {
         );
     }
 
+    #[test_id(tq4pmiv)]
     #[test]
     fn configure_provision_stages_and_configures_and_never_suspends_or_installs() {
         let rt = FakeRuntime::new();
@@ -1734,6 +1743,7 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("no install") && l.contains("# requires: testenv")), "{lines:?}");
     }
 
+    #[test_id(tbuctne)]
     #[test]
     fn a_batch_provisions_the_install_only_when_a_suite_needs_it() {
         assert_eq!(Provision::for_batch(true, true), Provision::Install);
@@ -1742,6 +1752,7 @@ mod tests {
         assert_eq!(Provision::for_batch(false, false), Provision::Stage);
     }
 
+    #[test_id(tw2egjh)]
     #[test]
     fn staging_links_the_tree_and_the_workspace_binaries_as_a_release() {
         let rt = FakeRuntime::new();
@@ -1766,6 +1777,7 @@ mod tests {
         assert_eq!(rt.exec_argv().len(), 1, "nothing runs after a failed stage");
     }
 
+    #[test_id(tao7fhv)]
     #[test]
     fn a_failed_step_is_an_install_fault_and_stops() {
         let rt = FakeRuntime::new();
@@ -1783,6 +1795,7 @@ mod tests {
         assert_eq!(rt.exec_argv().len(), 3, "stage, configure, the failed suspend — then nothing");
     }
 
+    #[test_id(tlu7600)]
     #[test]
     fn the_whole_setup_is_one_exec_as_the_suite_user_under_the_cutoff() {
         let rt = FakeRuntime::new();
@@ -1803,6 +1816,7 @@ mod tests {
         );
     }
 
+    #[test_id(t0w3se1)]
     #[test]
     fn a_setup_cut_during_install_is_a_deadline_fault_named_install() {
         let rt = FakeRuntime::new();
@@ -1814,6 +1828,7 @@ mod tests {
         assert_eq!(e.fault, Fault::Deadline("install"));
     }
 
+    #[test_id(tt4giut)]
     #[test]
     fn a_template_cut_at_the_cutoff_is_a_deadline_fault_not_a_fallback() {
         let rt = FakeRuntime::new();
@@ -1825,6 +1840,7 @@ mod tests {
         assert_eq!(e.fault, Fault::Deadline("testdb"));
     }
 
+    #[test_id(t1g66j7)]
     #[test]
     fn a_failed_template_is_reported_not_a_fault() {
         let rt = FakeRuntime::new();
@@ -1837,6 +1853,7 @@ mod tests {
         assert!(got.template.output.contains("bd init"));
     }
 
+    #[test_id(t6rf0t7)]
     #[test]
     fn a_runner_that_says_nothing_is_a_harness_fault_never_a_pass() {
         let rt = FakeRuntime::new();
@@ -1852,6 +1869,7 @@ mod tests {
         assert_eq!(e.fault, Fault::Deadline("install"));
     }
 
+    #[test_id(tibng2t)]
     #[test]
     fn the_template_and_server_fixtures_live_on_the_container_tmpfs() {
         let rt = FakeRuntime::new();
@@ -1865,6 +1883,7 @@ mod tests {
         assert!(env.contains(&("TESTDB_REQUIRE_TMPFS".into(), "1".into())));
     }
 
+    #[test_id(tr6mckm)]
     #[test]
     fn up_then_probe_and_their_faults() {
         let wt = testkit::TempDir::new("testenv-up");
@@ -1881,6 +1900,7 @@ mod tests {
         assert_eq!(session(&rt).up(wt.path()).unwrap_err().rc(), 2);
     }
 
+    #[test_id(thjbtic)]
     #[test]
     fn a_target_volume_is_passed_to_up_and_otherwise_absent() {
         let wt = testkit::TempDir::new("testenv-up");
@@ -1892,6 +1912,7 @@ mod tests {
         assert!(calls[0].windows(2).any(|w| w == ["--cargo-target-volume", "vol-x"]));
     }
 
+    #[test_id(tw197xm)]
     #[test]
     fn the_template_step_reads_the_host_cache_only_when_the_session_binds_one() {
         let wt = testkit::TempDir::new("testenv-up");
@@ -1927,6 +1948,7 @@ mod tests {
         }
     }
 
+    #[test_id(t41sjr7)]
     #[test]
     fn storing_a_template_is_bounded_even_when_the_batch_has_no_setup_cutoff() {
         let rt = FakeRuntime::new();
@@ -1940,6 +1962,7 @@ mod tests {
         assert_eq!(s.store_deadline(t0), t0 + TEMPLATE_STORE_TIMEOUT, "a later cutoff: the cap");
     }
 
+    #[test_id(tx9nouz)]
     #[test]
     fn a_built_template_is_copied_out_to_the_host_cache_and_a_cached_one_is_not() {
         let d = testkit::TempDir::new("testenv-keep-template");
@@ -1971,6 +1994,7 @@ mod tests {
         assert_eq!(s.keep_template(&template_out(crate::testdb::Origin::Built)), None);
     }
 
+    #[test_id(tnljfjh)]
     #[test]
     fn requirements_are_checked_once_each_and_testenv_is_always_met() {
         let rt = FakeRuntime::new();
@@ -1991,6 +2015,7 @@ mod tests {
         assert_eq!(checks, 2, "once per distinct token; testenv is never checked");
     }
 
+    #[test_id(t7tk0qq)]
     #[test]
     fn setup_execs_carry_the_cutoff_and_suite_execs_never_do() {
         let rt = FakeRuntime::new();
@@ -2012,6 +2037,7 @@ mod tests {
         assert_eq!(suite.deadline, None, "a suite is bounded by the suite phase, not setup");
     }
 
+    #[test_id(tfdra1m)]
     #[test]
     fn a_requirement_check_killed_at_the_cutoff_is_a_deadline_fault_not_unmet() {
         let rt = FakeRuntime::new();
@@ -2031,6 +2057,7 @@ mod tests {
         );
     }
 
+    #[test_id(ttcvtz8)]
     #[test]
     fn a_container_up_past_the_cutoff_is_a_deadline_fault_named_up() {
         let wt = testkit::TempDir::new("testenv-up");
@@ -2045,6 +2072,7 @@ mod tests {
         assert_eq!(Fault::Deadline("up").rc(), 2);
     }
 
+    #[test_id(trq1mva)]
     #[test]
     fn a_bounded_up_never_builds_and_an_unbuilt_image_is_its_own_fault() {
         let wt = testkit::TempDir::new("testenv-up");
@@ -2057,6 +2085,7 @@ mod tests {
         assert_eq!(Fault::ImageNotReady.rc(), 2);
     }
 
+    #[test_id(ti6ae86)]
     #[test]
     fn baseline_parses_or_falls_back() {
         let rt = FakeRuntime::new();
@@ -2080,6 +2109,7 @@ mod tests {
         );
     }
 
+    #[test_id(tza1pl5)]
     #[test]
     fn a_server_tier_sends_every_suite_to_a_private_server() {
         let rt = FakeRuntime::new();
@@ -2113,6 +2143,7 @@ mod tests {
         assert_eq!(r.env_value("TESTDB_SHARED"), Some("1"));
     }
 
+    #[test_id(t4mkhlc)]
     #[test]
     fn parallel_suites_get_private_home_instance_and_run() {
         let rt = FakeRuntime::new();
@@ -2149,6 +2180,7 @@ mod tests {
         );
     }
 
+    #[test_id(tzm5kgy)]
     #[test]
     fn bd_logs_of_many_suites_are_read_in_one_exec() {
         let rt = FakeRuntime::new();
@@ -2170,6 +2202,7 @@ mod tests {
         assert!(paths.iter().all(|p| execs[0].argv.contains(p)));
     }
 
+    #[test_id(tzekspy)]
     #[test]
     fn liveness_retries_empties_but_believes_a_definitive_false() {
         let rt = FakeRuntime::new();
@@ -2195,6 +2228,7 @@ mod tests {
     /// run of failed/empty inspects — the observed shape of podman control-plane contention,
     /// DESIGN.md §11.4 — must say the lookup never got a definitive answer, never assert an
     /// `ExitCode`/`OOMKilled` that was never actually read.
+    #[test_id(td3gp47)]
     #[test]
     fn liveness_detail_names_the_container_and_distinguishes_unreachable_from_confirmed_dead() {
         let rt = FakeRuntime::new();
@@ -2230,6 +2264,7 @@ mod tests {
         );
     }
 
+    #[test_id(tqgu8iq)]
     #[test]
     fn df_summary_names_each_mount_and_its_free_space() {
         let df = &format!("Filesystem Size Used Avail Use% Mounted on\ntmpfs 2.0G 2.0G 0 100% {WORKSPACE}\n");
@@ -2237,6 +2272,7 @@ mod tests {
         assert_eq!(df_summary("df: error"), "unknown");
     }
 
+    #[test_id(trr0j0l)]
     #[test]
     fn account_fault_shape() {
         assert!(is_user_account_fault(

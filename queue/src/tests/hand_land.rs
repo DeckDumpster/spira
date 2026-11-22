@@ -46,6 +46,7 @@ fn state(t: &T, id: &str) -> String {
     t.lc.bead_row(id).map(|r| r.state).unwrap_or_default()
 }
 
+#[test_id(t0cdy6c)]
 #[test]
 fn land_local_under_an_open_round_exits_3_naming_the_round_and_the_verb() {
     let t = world();
@@ -58,6 +59,7 @@ fn land_local_under_an_open_round_exits_3_naming_the_round_and_the_verb() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
 }
 
+#[test_id(thp5daa)]
 #[test]
 fn land_local_with_no_round_open_still_lands() {
     let t = round_world();
@@ -68,6 +70,7 @@ fn land_local_with_no_round_open_still_lands() {
     assert_eq!(t.landed_ref().as_deref(), Some(TIP));
 }
 
+#[test_id(tfvnrvq)]
 #[test]
 fn a_dry_run_prints_the_round_its_green_passes_and_the_cost_and_changes_nothing() {
     let t = world();
@@ -85,6 +88,7 @@ fn a_dry_run_prints_the_round_its_green_passes_and_the_cost_and_changes_nothing(
     assert!(!t.landing_log().contains("HAND-LAND"));
 }
 
+#[test_id(td3vsxn)]
 #[test]
 fn a_dry_run_with_wait_says_the_landing_waits_and_with_no_round_says_none_is_open() {
     let t = world();
@@ -96,6 +100,7 @@ fn a_dry_run_with_wait_says_the_landing_waits_and_with_no_round_says_none_is_ope
     assert!(none.out().contains("no round open"), "{}", none.out());
 }
 
+#[test_id(tjpx1bn)]
 #[test]
 fn a_dry_run_names_the_config_keys_the_tip_adds_and_retires() {
     let t = world();
@@ -106,6 +111,7 @@ fn a_dry_run_names_the_config_keys_the_tip_adds_and_retires() {
     assert!(t.out().contains("adds: SPIRA_NEW; retires: SPIRA_OLD"), "{}", t.out());
 }
 
+#[test_id(t7jgb0s)]
 #[test]
 fn a_hand_landing_needs_a_round_policy() {
     let t = world();
@@ -114,6 +120,7 @@ fn a_hand_landing_needs_a_round_policy() {
     assert_eq!(hand_land(&t, &["--round", "later"]), 2);
 }
 
+#[test_id(t7sblrp)]
 #[test]
 fn subvert_voids_the_round_with_the_cause_lands_and_hands_the_members_back() {
     let t = world();
@@ -134,6 +141,7 @@ fn subvert_voids_the_round_with_the_cause_lands_and_hands_the_members_back() {
     assert!(!t.qfile("cut-hold").exists(), "the cut hold is lifted when the landing is done");
 }
 
+#[test_id(tbu057k)]
 #[test]
 fn subvert_takes_a_leased_round_under_its_holders_token() {
     let t = world();
@@ -145,6 +153,7 @@ fn subvert_takes_a_leased_round_under_its_holders_token() {
     assert_eq!(t.landed_ref().as_deref(), Some(TIP));
 }
 
+#[test_id(tauymxm)]
 #[test]
 fn wait_holds_the_cut_until_the_round_ends_then_lands_in_that_gap() {
     let t = world();
@@ -170,6 +179,7 @@ fn wait_holds_the_cut_until_the_round_ends_then_lands_in_that_gap() {
     assert!(!t.lc.has("abandon-batch"), "wait voids nothing");
 }
 
+#[test_id(t10on99)]
 #[test]
 fn wait_gives_up_at_the_rounds_bound_lands_nothing_and_lifts_the_hold() {
     let t = world();
@@ -179,6 +189,7 @@ fn wait_gives_up_at_the_rounds_bound_lands_nothing_and_lifts_the_hold() {
     assert!(!t.qfile("cut-hold").exists());
 }
 
+#[test_id(tg3d25h)]
 #[test]
 fn a_cut_already_held_by_another_hand_landing_refuses() {
     let t = world();
@@ -195,6 +206,7 @@ fn a_cut_already_held_by_another_hand_landing_refuses() {
     assert!(t.qfile("round").exists(), "the round was left alone");
 }
 
+#[test_id(tq00sfw)]
 #[test]
 fn a_tip_that_does_not_contain_the_landing_ref_is_refused_before_anything_is_touched() {
     let t = world();
@@ -214,6 +226,7 @@ fn harness(t: &mut T) -> testkit::TempDir {
     bins
 }
 
+#[test_id(t4yneaf)]
 #[test]
 fn a_new_release_is_read_through_after_it_is_activated() {
     let mut t = world();
@@ -225,6 +238,7 @@ fn a_new_release_is_read_through_after_it_is_activated() {
     assert!(t.landing_log().contains("verify=ok"), "{}", t.landing_log());
 }
 
+#[test_id(tzzcgh1)]
 #[test]
 fn a_release_whose_content_read_is_refused_is_rolled_back_and_the_read_is_named() {
     let mut t = world();
@@ -260,6 +274,7 @@ fn open_round_for_certify() -> (T, String) {
     (t, batch)
 }
 
+#[test_id(tx6stms)]
 #[test]
 fn a_pass_refused_for_its_tree_after_the_base_moved_says_so_and_rebuilds_instead_of_faulting() {
     let (t, batch) = open_round_for_certify();
@@ -276,6 +291,7 @@ fn a_pass_refused_for_its_tree_after_the_base_moved_says_so_and_rebuilds_instead
     assert!(t.landing_log().contains("QUEUE ROUND-REMERGE"), "{}", t.landing_log());
 }
 
+#[test_id(t3anwb5)]
 #[test]
 fn a_pass_refused_for_its_tree_with_the_base_unmoved_stays_a_round_fault() {
     let (t, batch) = open_round_for_certify();
@@ -286,6 +302,7 @@ fn a_pass_refused_for_its_tree_with_the_base_unmoved_stays_a_round_fault() {
     assert!(!t.landing_log().contains("QUEUE ROUND-REMERGE"));
 }
 
+#[test_id(t9915hl)]
 #[test]
 fn wait_refuses_a_tip_that_the_round_it_waited_for_landed_past() {
     let t = world();
@@ -311,6 +328,7 @@ fn uncertified_world() -> T {
     t
 }
 
+#[test_id(towgpll)]
 #[test]
 fn subvert_lands_an_uncertified_tip_on_the_verbs_own_evidence_with_no_environment() {
     let t = uncertified_world();
@@ -320,6 +338,7 @@ fn subvert_lands_an_uncertified_tip_on_the_verbs_own_evidence_with_no_environmen
     assert!(t.out().contains("verify: "), "{}", t.out());
 }
 
+#[test_id(t5ianmz)]
 #[test]
 fn a_landing_that_cannot_be_admitted_exits_before_the_round_is_touched() {
     let t = uncertified_world();
@@ -334,6 +353,7 @@ fn a_landing_that_cannot_be_admitted_exits_before_the_round_is_touched() {
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
+#[test_id(txw0sjv)]
 #[test]
 fn a_certified_bead_at_an_older_tip_is_landed_at_the_tip_given_and_the_line_names_both() {
     let t = uncertified_world();
@@ -348,6 +368,7 @@ fn a_certified_bead_at_an_older_tip_is_landed_at_the_tip_given_and_the_line_name
     assert!(t.out().contains("member sp-a: "), "the round was voided first: {}", t.out());
 }
 
+#[test_id(t7kg9rv)]
 #[test]
 fn the_verbs_own_flags_win_over_a_conflicting_ungated_environment() {
     let t = uncertified_world();
@@ -359,6 +380,7 @@ fn the_verbs_own_flags_win_over_a_conflicting_ungated_environment() {
     assert!(log.contains("by=concierge") && !log.contains("env reason"), "{log}");
 }
 
+#[test_id(tbh6xqm)]
 #[test]
 fn a_landing_refused_after_the_round_was_voided_says_so_and_what_state_the_bead_is_in() {
     let t = uncertified_world();
@@ -386,6 +408,7 @@ fn build_calls(t: &T) -> Vec<String> {
     t.scripts.calls.borrow().iter().filter(|c| c.starts_with("build_release ")).cloned().collect()
 }
 
+#[test_id(t59avjv)]
 #[test]
 fn a_certified_harness_bead_with_no_round_open_lands_on_a_build_of_the_tip_it_makes_itself() {
     let (t, _keep) = certified_harness_world();
@@ -398,6 +421,7 @@ fn a_certified_harness_bead_with_no_round_open_lands_on_a_build_of_the_tip_it_ma
     assert!(release_argv(&t).iter().any(|a| a.starts_with("activate ")));
 }
 
+#[test_id(tu70tur)]
 #[test]
 fn a_hand_landing_given_a_worktree_builds_nothing() {
     let (t, _keep) = certified_harness_world();
@@ -409,6 +433,7 @@ fn a_hand_landing_given_a_worktree_builds_nothing() {
     assert!(build_calls(&t).is_empty());
 }
 
+#[test_id(tkwu8t2)]
 #[test]
 fn a_refused_landing_step_exits_non_zero_and_says_the_bead_did_not_land() {
     let (t, _keep) = certified_harness_world();
@@ -420,6 +445,7 @@ fn a_refused_landing_step_exits_non_zero_and_says_the_bead_did_not_land() {
     assert_eq!(state(&t, "sp-z"), "CERTIFIED");
 }
 
+#[test_id(t9ob7hc)]
 #[test]
 fn a_landing_the_gate_refuses_exits_non_zero_and_says_the_bead_did_not_land() {
     let (t, _keep) = certified_harness_world();
@@ -428,6 +454,7 @@ fn a_landing_the_gate_refuses_exits_non_zero_and_says_the_bead_did_not_land() {
     assert!(t.err().contains("sp-z did not land"), "{}", t.err());
 }
 
+#[test_id(t5t5o3l)]
 #[test]
 fn a_dry_run_says_a_build_will_be_needed_and_its_last_measured_duration() {
     let (t, _keep) = certified_harness_world();
@@ -439,6 +466,7 @@ fn a_dry_run_says_a_build_will_be_needed_and_its_last_measured_duration() {
     assert!(build_calls(&t).is_empty());
 }
 
+#[test_id(to6fz3z)]
 #[test]
 fn a_build_that_succeeds_records_its_duration_for_the_next_dry_run() {
     let (t, _keep) = certified_harness_world();
@@ -446,6 +474,7 @@ fn a_build_that_succeeds_records_its_duration_for_the_next_dry_run() {
     assert_eq!(fs::read_to_string(t.s().run.join("release-build-secs")).unwrap(), "0\n");
 }
 
+#[test_id(t8xqjts)]
 #[test]
 fn a_hand_land_clears_its_beads_registry_rows() {
     let t = world();

@@ -135,6 +135,7 @@ mod tests {
         Snapshot { wiki: "w".into(), not_repo: false, dirty: dirty.iter().map(|(p, m)| (p.to_string(), *m)).collect() }
     }
 
+    #[test_id(t142j5c)]
     #[test]
     fn porcelain_records_yield_paths_and_a_rename_origin_is_not_one() {
         let raw = b" M a b.md\0?? new.md\0R  to.md\0from.md\0C  cp.md\0orig.md\0A  last.md\0";
@@ -143,6 +144,7 @@ mod tests {
         assert!(porcelain_paths(b"").is_empty());
     }
 
+    #[test_id(thzn6ix)]
     #[test]
     fn a_path_older_than_the_limit_is_said_once_per_mtime() {
         let (c, say) = decide(&cfg(), &Carry::default(), &snap(&[("old.md", 1000), ("fresh.md", 9000)]), 10_000);
@@ -151,12 +153,14 @@ mod tests {
         assert_eq!(decide(&cfg(), &c, &snap(&[("old.md", 2000)]), 10_100).1.len(), 1, "an edit is a new offence");
     }
 
+    #[test_id(tejyito)]
     #[test]
     fn a_path_exactly_at_the_limit_is_not_yet_stale() {
         assert!(decide(&cfg(), &Carry::default(), &snap(&[("p.md", 8200)]), 10_000).1.is_empty());
         assert_eq!(decide(&cfg(), &Carry::default(), &snap(&[("p.md", 8199)]), 10_000).1.len(), 1);
     }
 
+    #[test_id(tag4b8x)]
     #[test]
     fn a_failed_or_timed_out_observe_says_nothing_and_marks_nothing() {
         use runtime::ports::VirtualClock;
@@ -173,6 +177,7 @@ mod tests {
         }
     }
 
+    #[test_id(tshsxfd)]
     #[test]
     fn a_wiki_that_is_not_a_repository_is_said_once() {
         let s = Snapshot { not_repo: true, ..snap(&[]) };

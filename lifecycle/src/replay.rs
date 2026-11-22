@@ -49,6 +49,7 @@ mod tests {
 
     /// Byte-for-byte, per the acceptance criteria: replaying the whole log from scratch
     /// must equal the row built incrementally, one event at a time, as it happened live.
+    #[test_id(tbuwn1s)]
     #[test]
     fn bead_replay_matches_incremental_application_byte_for_byte() {
         let log = vec![
@@ -76,6 +77,7 @@ mod tests {
         assert_eq!(replayed.gate_key.as_deref(), Some("k1"));
     }
 
+    #[test_id(tc5guu6)]
     #[test]
     fn bead_replay_is_stable_under_re_chunking() {
         let log = vec![
@@ -99,6 +101,7 @@ mod tests {
         assert_eq!(whole, resumed);
     }
 
+    #[test_id(tzssgwq)]
     #[test]
     fn delivery_replay_matches_incremental_application() {
         let log = vec![
@@ -115,6 +118,7 @@ mod tests {
         assert_eq!(incremental, replayed);
     }
 
+    #[test_id(teobuf7)]
     #[test]
     fn batch_replay_matches_incremental_application() {
         let log = vec![

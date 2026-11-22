@@ -264,6 +264,7 @@ mod tests {
         ]))
     }
 
+    #[test_id(tgal57l)]
     #[test]
     fn lint_reads_three_beads_and_their_blocker_in_two_requests() {
         let fake = fixture();
@@ -278,6 +279,7 @@ mod tests {
         assert!(seen.iter().all(|r| r[..2] == ["content", "list"] && r.contains(&"--id".to_string())), "{seen:?}");
     }
 
+    #[test_id(te93l4g)]
     #[test]
     fn the_lifecycle_read_is_of_the_ids_the_door_holds_never_the_whole_table() {
         let client = LcClient::over(fixture(), true);
@@ -292,6 +294,7 @@ mod tests {
         assert_eq!(*asked.borrow(), [["sp-a", "sp-b", "sp-d"].map(String::from).to_vec()]);
     }
 
+    #[test_id(tvebezg)]
     #[test]
     fn a_bead_the_store_did_not_return_is_unreadable() {
         let client = LcClient::over(fixture(), true);
@@ -301,6 +304,7 @@ mod tests {
         assert_eq!(lines, vec!["bead: sp-gone: unreadable (bd show failed)".to_string()]);
     }
 
+    #[test_id(tw0n24a)]
     #[test]
     fn lint_all_reads_the_set_once_and_the_absent_blocker_by_id() {
         let fake = Arc::new(Content::new(vec![
@@ -323,6 +327,7 @@ mod tests {
         }
     }
 
+    #[test_id(tq4ay2u)]
     #[test]
     fn a_door_that_cannot_be_reached_fails_the_load_rather_than_linting_nothing() {
         let client = LcClient::over(Arc::new(Down), true);
@@ -330,6 +335,7 @@ mod tests {
         assert!(DoorSource::load(&client, Set::Ids(vec!["sp-a".into()]), |_| Ok(HashMap::new())).is_err());
     }
 
+    #[test_id(tmkdto9)]
     #[test]
     fn ideas_read_open_rows_under_the_label_with_no_limit() {
         let fake = Arc::new(Content::new(vec![]));
@@ -354,6 +360,7 @@ mod tests {
         (d.clone(), LcClient::over(d, true))
     }
 
+    #[test_id(t50vpo3)]
     #[test]
     fn a_work_filing_reaches_the_door_as_one_create_with_the_body_on_stdin_and_its_id_is_the_last_line() {
         let (d, client) = door(vec![("create", 0, "noise\nsp-new\n")]);
@@ -363,6 +370,7 @@ mod tests {
         assert_eq!(sent, vec![(want, Some("the body".to_string()))]);
     }
 
+    #[test_id(t7hi4jr)]
     #[test]
     fn a_filing_the_door_refuses_is_an_error_carrying_its_text() {
         let (_, client) = door(vec![("create", 2, "bead: refusing: no build spec\n")]);
@@ -370,6 +378,7 @@ mod tests {
         assert_eq!(e, "exited 2: bead: refusing: no build spec");
     }
 
+    #[test_id(tm3pr6l)]
     #[test]
     fn an_amend_replaces_the_description_then_notes_it() {
         let (d, client) = door(vec![]);
@@ -379,6 +388,7 @@ mod tests {
         assert_eq!(sent[1], (["content", "note", "sp-a", "--stdin"].map(String::from).to_vec(), Some("moved".to_string())));
     }
 
+    #[test_id(tmclp98)]
     #[test]
     fn an_append_keeps_the_old_description_under_a_dated_separator() {
         let (d, client) = door(vec![("show", 0, r#"[{"description":"old"}]"#)]);
@@ -388,6 +398,7 @@ mod tests {
         assert!(body.starts_with("old\n\n--- appended ") && body.ends_with("---\n\nmore\n"), "{body}");
     }
 
+    #[test_id(t13hwvo)]
     #[test]
     fn a_held_beads_amend_is_noted_alone_with_the_appended_text_and_a_refused_one_writes_nothing() {
         let claimed = "bead: sp-a is claimed by dwarf-sp-a (lease expires x) — editing. Pass --force-claimed \"<reason>\" to override.\n";
@@ -402,6 +413,7 @@ mod tests {
         assert_eq!(d.0.lock().unwrap().len(), 1, "no note follows a refused body");
     }
 
+    #[test_id(tsxzgxi)]
     #[test]
     fn a_planted_bead_fork_is_found_and_the_door_filing_is_not() {
         let planted = ["let mut c = bounded_for(\"bead.sh\", \"120\");", "Command::new(\"bead\")", "let b = bounded_for(&self.bdq_path, \"1\"); x(\"bdq\")"];

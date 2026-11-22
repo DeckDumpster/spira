@@ -647,6 +647,7 @@ pub fn resolve_stop(git: &Git, rules: &Rules) -> Result<usize, Vec<ConflictFile>
 mod tests {
     use super::*;
 
+    #[test_id(tlwvchl)]
     #[test]
     fn lineset_keeps_ours_order_and_appends_theirs() {
         assert_eq!(
@@ -656,6 +657,7 @@ mod tests {
         assert_eq!(lineset_union("a\n\nb\n", "a\nb\n\nz\n"), "a\n\nb\nz\n");
     }
 
+    #[test_id(t57t3tr)]
     #[test]
     fn comment_union_merges_comment_only_regions() {
         let t = "fn a() {}\n<<<<<<< HEAD\n// from main\n=======\n// from branch\n>>>>>>> abc (x)\nfn b() {}\n";
@@ -665,6 +667,7 @@ mod tests {
         );
     }
 
+    #[test_id(tjxaq2l)]
     #[test]
     fn comment_union_refuses_code() {
         let t = "<<<<<<< HEAD\n// c\nlet x = 1;\n=======\n// d\n>>>>>>> abc\n";
@@ -674,6 +677,7 @@ mod tests {
         assert!(comment_union(t, comment_prefixes("x.rs", None).unwrap()).is_err());
     }
 
+    #[test_id(tjs3ohm)]
     #[test]
     fn comment_syntax_is_per_file_type() {
         assert_eq!(comment_prefixes("a/b.rs", None), Some(&["//"][..]));
@@ -686,6 +690,7 @@ mod tests {
         assert_eq!(comment_prefixes("bin/blob", Some("\x7fELF")), None);
     }
 
+    #[test_id(tyt81fr)]
     #[test]
     fn keylist_union_appends_new_keys_to_ours_last_line() {
         let t = "X=1\n<<<<<<< HEAD\nSPIRA_A SPIRA_B\n=======\nSPIRA_A SPIRA_C COCKPIT_D\n>>>>>>> abc\nY=2\n";
@@ -701,6 +706,7 @@ mod tests {
         BASE.replace("}\n}\n", &format!("}}\n{test}}}\n"))
     }
 
+    #[test_id(t1w0jp3)]
     #[test]
     fn insertion_union_keeps_ours_then_theirs_before_the_one_closing_brace() {
         let o = with("    #[test]\n    fn ours() {\n    }\n");
@@ -710,6 +716,7 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    #[test_id(tfjazkf)]
     #[test]
     fn insertion_union_refuses_a_side_that_edits_a_base_line() {
         let o = with("    fn ours() {\n    }\n");
@@ -717,6 +724,7 @@ mod tests {
         assert!(insertion_union(BASE, &o, &t, true).unwrap_err().contains("theirs changed or deleted"));
     }
 
+    #[test_id(tcmifbw)]
     #[test]
     fn insertion_union_refuses_a_block_with_an_unbalanced_brace() {
         let o = with("    fn ours() {\n");
@@ -725,12 +733,14 @@ mod tests {
         assert!(e.contains("ours's inserted block") && e.contains("fn ours"), "{e}");
     }
 
+    #[test_id(twrs6rs)]
     #[test]
     fn insertion_union_ignores_braces_in_strings_chars_and_comments() {
         let o = with("    fn ours() {\n        let _ = (\"{\", '}', r#\"{\"#); // {\n    }\n");
         assert!(insertion_union(BASE, &o, BASE, true).is_ok());
     }
 
+    #[test_id(tj5dy1h)]
     #[test]
     fn insertion_union_applies_insertions_at_different_places_as_they_are() {
         let o = format!("// top\n{BASE}");
@@ -739,6 +749,7 @@ mod tests {
         assert!(got.starts_with("// top\nmod tests") && got.contains("fn theirs"));
     }
 
+    #[test_id(tdgzh3q)]
     #[test]
     fn the_none_arm_alone_calls_inserted_rust_a_real_conflict() {
         let text = "<<<<<<< HEAD\n    fn ours() {\n    }\n=======\n    fn theirs() {\n    }\n>>>>>>> x\n";
@@ -746,12 +757,14 @@ mod tests {
         assert!(comment_union(text, pf).unwrap_err().contains("not a comment-only hunk"));
     }
 
+    #[test_id(t2mac32)]
     #[test]
     fn insertion_union_writes_a_block_both_sides_inserted_once() {
         let both = with("    use_it();\n");
         assert_eq!(insertion_union(BASE, &both, &both, true).unwrap(), both);
     }
 
+    #[test_id(to8ljou)]
     #[test]
     fn insertion_union_refuses_an_insertion_beside_an_identical_base_line() {
         let base = "a\n\nb\n";

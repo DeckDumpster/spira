@@ -16,8 +16,7 @@ path = "tests/store_parity.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["reconciler-engine/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration"]
-
+integration = ["reconciler-engine/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
@@ -35,5 +34,6 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
 spira-otel = { path = "../spira-otel" }
 testkit = { path = "../testkit" }

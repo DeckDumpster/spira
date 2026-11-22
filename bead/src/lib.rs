@@ -6,6 +6,9 @@
 //! `bdq` (the module, not the `bead` binary's own bridge to it) is `bdq` the standalone
 //! binary's own pure logic — see `src/bin/bdq.rs` and `bdq.rs`'s own module doc.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod bdq;
 #[path = "../tests/fixtures/bdsim.rs"]
 pub mod bdsim;
@@ -938,6 +941,7 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
 mod tests {
     use super::{depends_prose, depends_refusal, draft_depends_refusals};
 
+    #[test_id(t7mmyaf)]
     #[test]
     fn prose_on_the_depends_line_is_named_not_reported_as_a_flag_mismatch() {
         let body = "Depends: none. Related: sp-a (x). Both touch y; sequence them\n";
@@ -950,6 +954,7 @@ mod tests {
         }
     }
 
+    #[test_id(tqpawsr)]
     #[test]
     fn only_the_draft_with_prose_is_named() {
         let notes = "### Draft: First\n\nDepends: none\n\n### Draft: Second\n\nDepends: sp-a and more\n";
@@ -962,6 +967,7 @@ mod tests {
         v.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(t2qxiht)]
     #[test]
     fn prose_depends_on_with_no_depends_line_is_refused() {
         let why = depends_refusal("This item depends on draft 1.\n", &[]).expect("refused");
@@ -969,6 +975,7 @@ mod tests {
         assert_eq!(depends_refusal("Nothing to wait for.\n", &[]), None, "the control: no prose, no line");
     }
 
+    #[test_id(tcszd0i)]
     #[test]
     fn a_depends_line_matching_the_flags_is_accepted() {
         assert_eq!(depends_refusal("depends on sp-a\n\nDepends: sp-a\n", &ids(&["sp-a"])), None);
@@ -976,6 +983,7 @@ mod tests {
         assert_eq!(depends_refusal("Depends: none\n", &[]), None);
     }
 
+    #[test_id(tg8hx6a)]
     #[test]
     fn a_depends_line_the_flags_do_not_match_is_refused_both_ways() {
         assert!(depends_refusal("Depends: sp-b\n", &[]).is_some());
@@ -983,6 +991,7 @@ mod tests {
         assert!(depends_refusal("Depends: sp-a\n", &ids(&["sp-a", "sp-c"])).is_some(), "a flag the line omits");
     }
 
+    #[test_id(tl5gluc)]
     #[test]
     fn a_draft_n_on_the_line_is_matched_by_one_extra_flag() {
         assert_eq!(depends_refusal("Depends: draft 1, sp-c\n", &ids(&["sp-c", "sp-x"])), None);
@@ -990,6 +999,7 @@ mod tests {
     }
 
 
+    #[test_id(ta85j73)]
     #[test]
     fn skuld_drafted_passes_an_exact_match_and_an_open_line_after_it() {
         let l = vec!["draft".to_string()];
@@ -999,6 +1009,7 @@ mod tests {
         assert!(skuld_drafted("T", "body line\nmore", "draft", "sp-r", &l, open).is_ok());
     }
 
+    #[test_id(t8n13bm)]
     #[test]
     fn the_skuld_fence_spares_only_a_parent_named_rule() {
         assert!(!skuld_fence_binds(true, true, b"rule\0enact\0law-x\0"));
@@ -1013,6 +1024,7 @@ mod tests {
         assert!(SKULD_NEEDS_DRAFT.starts_with("a builder bead the Concierge files needs --drafted-by <request-id>"));
     }
 
+    #[test_id(teu5pxv)]
     #[test]
     fn draft_trailer_refusals_name_prose_after_an_open_line_only() {
         let sp = "### Draft: First\n\nbody\nOpen: q; default: d\nCorrection to \"First\": 12, not 11.\n### Draft: Second\n\nbody2\n";
@@ -1024,6 +1036,7 @@ mod tests {
         assert!(draft_trailer_refusals("### Draft: T\n\nbody\nOpen: q\n\nSubmitted: work committed on branch x\n").is_empty());
     }
 
+    #[test_id(tui95nw)]
     #[test]
     fn skuld_drafted_names_the_line_that_follows_a_body() {
         let l = vec!["draft".to_string()];
@@ -1034,6 +1047,7 @@ mod tests {
         assert!(err.contains("holds this body verbatim"), "{err}");
     }
 
+    #[test_id(t7lt8f9)]
     #[test]
     fn skuld_drafted_passes_a_draft_followed_by_the_harness_submit_note() {
         let l = vec!["draft".to_string()];
@@ -1041,6 +1055,7 @@ mod tests {
         assert!(skuld_drafted("T", "body line\nmore", "draft", "sp-r", &l, notes).is_ok());
     }
 
+    #[test_id(t3qvtzd)]
     #[test]
     fn skuld_drafted_refuses_an_edited_body_a_foreign_request_and_an_empty_body() {
         let l = vec!["draft".to_string()];
@@ -1063,6 +1078,7 @@ mod tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test_id(tqp61dp)]
     #[test]
     fn pilgrimage_after_takes_every_id_up_to_the_next_flag() {
         let p = pilgrimage_args(&sv(&["d.md", "--repo", "spira", "--after", "sp-a", "sp-b", "sp-c"])).unwrap();
@@ -1070,24 +1086,28 @@ mod tests {
         assert_eq!(p.design, "d.md");
     }
 
+    #[test_id(tfdrp16)]
     #[test]
     fn pilgrimage_after_repeated_accumulates() {
         let p = pilgrimage_args(&sv(&["d.md", "--repo", "r", "--after", "sp-a", "--after", "sp-b"])).unwrap();
         assert_eq!(p.after, sv(&["sp-a", "sp-b"]));
     }
 
+    #[test_id(tkm5267)]
     #[test]
     fn pilgrimage_after_with_no_id_is_usage() {
         assert!(pilgrimage_args(&sv(&["d.md", "--after", "--repo", "r"])).unwrap_err().contains("usage"));
         assert!(pilgrimage_args(&sv(&["d.md", "--repo", "r", "--after"])).unwrap_err().contains("usage"));
     }
 
+    #[test_id(tvn9yid)]
     #[test]
     fn pilgrimage_two_design_files_are_refused_naming_both() {
         let e = pilgrimage_args(&sv(&["a.md", "b.md", "--repo", "r", "--after", "sp-a"])).unwrap_err();
         assert!(e.contains("two design files: a.md and b.md"), "{e}");
     }
 
+    #[test_id(t9twz39)]
     #[test]
     fn pilgrimage_spec_carries_intent_and_user_path() {
         let (title, body) = pilgrimage_spec(DESIGN).unwrap();
@@ -1098,6 +1118,7 @@ mod tests {
         assert!(!body.contains("foo"));
     }
 
+    #[test_id(t3lt7id)]
     #[test]
     fn pilgrimage_spec_refuses_a_design_without_a_user_path() {
         let planted = DESIGN.replace("## User path", "## Walkthrough");
@@ -1115,12 +1136,14 @@ mod tests {
     // literal-ok: test fixture mirroring schema.sh's shipped default for `no_loop`
     const NO_LOOP: &str = "no-loop";
 
+    #[test_id(tb5yyjq)]
     #[test]
     fn appended_body_keeps_old_text_under_a_dated_separator() {
         let got = appended_body("old text\n", "new text\n", "2026-10-11");
         assert_eq!(got, "old text\n\n--- appended 2026-10-11 ---\n\nnew text\n");
     }
 
+    #[test_id(tsvtbkb)]
     #[test]
     fn replaced_body_summary_names_length_and_head() {
         let got = replaced_body_summary("a\nb\nc\nd");
@@ -1128,6 +1151,7 @@ mod tests {
         assert!(!got.contains("b\n  c\n  d"));
     }
 
+    #[test_id(th8w2db)]
     #[test]
     fn parse_description_reads_array_and_object() {
         assert_eq!(parse_description(r#"[{"description":"x"}]"#).as_deref(), Some("x"));
@@ -1135,6 +1159,7 @@ mod tests {
         assert_eq!(parse_description("nope"), None);
     }
 
+    #[test_id(txlhi7c)]
     #[test]
     fn repos_by_name_reads_names_and_typed_lanes() {
         let map = "# comment row, must not appear as a repo\ntestrepo  | /tmp/test | push | origin/main | | true | plan\ndev-repo  | /tmp/dev  | push | origin/main | | true | develop\nself-repo | /tmp/self | push | origin/main | | true | self\n";
@@ -1161,11 +1186,13 @@ mod tests {
         );
     }
 
+    #[test_id(tj7ind2)]
     #[test]
     fn repos_by_name_empty_on_no_map() {
         assert!(repos_by_name("").is_empty());
     }
 
+    #[test_id(tfarpoq)]
     #[test]
     fn repos_by_name_empty_map_when_any_row_names_an_unknown_lane() {
         // Fail closed (DESIGN.md "Observed but preserved"): one bad row makes every repo
@@ -1174,6 +1201,7 @@ mod tests {
         assert!(repos_by_name(map).is_empty());
     }
 
+    #[test_id(tlpqv03)]
     #[test]
     fn label_to_lane_round_trips_every_shipped_spelling() {
         for (label, lane) in [
@@ -1190,6 +1218,7 @@ mod tests {
         assert_eq!(label_to_lane("alpha-work"), None);
     }
 
+    #[test_id(ty09bel)]
     #[test]
     fn rune_partition_last_match_wins() {
         assert_eq!(rune_partition("testscope,plan"), Some(Lane::Plan));
@@ -1204,6 +1233,7 @@ mod tests {
         )
     }
 
+    #[test_id(txwf6ds)]
     #[test]
     fn lane_check_admits_self_repo_for_any_partition() {
         let repos = repo_map_fixture();
@@ -1211,6 +1241,7 @@ mod tests {
         assert!(matches!(result, LaneCheck::Admitted));
     }
 
+    #[test_id(tda1lzo)]
     #[test]
     fn lane_check_refuses_mimir_on_a_develop_repo() {
         let repos = repo_map_fixture();
@@ -1225,6 +1256,7 @@ mod tests {
         }
     }
 
+    #[test_id(trylqk6)]
     #[test]
     fn lane_check_override_admits_everything() {
         let repos = repo_map_fixture();
@@ -1232,6 +1264,7 @@ mod tests {
         assert!(matches!(result, LaneCheck::Admitted));
     }
 
+    #[test_id(tr33whz)]
     #[test]
     fn lane_check_plan_is_always_admitted() {
         let repos = repo_map_fixture();
@@ -1241,11 +1274,13 @@ mod tests {
 
     // -- label composition ----------------------------------------------------------------
 
+    #[test_id(t0bbs2l)]
     #[test]
     fn work_labels_appends_repo_and_never_express() {
         assert_eq!(work_labels("testscope,plan", "testrepo"), "testscope,plan,repo:testrepo");
     }
 
+    #[test_id(tqlnj6t)]
     #[test]
     fn the_contract_fix_flag_adds_its_label_and_its_absence_changes_nothing() {
         let base = work_labels("testscope,plan", "testrepo");
@@ -1253,6 +1288,7 @@ mod tests {
         assert_eq!(with_contract_fix(base, true), "testscope,plan,repo:testrepo,repo-contract-fix");
     }
 
+    #[test_id(t99ud3x)]
     #[test]
     fn non_work_labels_event_has_no_partition() {
         let got = non_work_labels("testscope", None, None);
@@ -1260,6 +1296,7 @@ mod tests {
         assert!(!got.contains("plan"));
     }
 
+    #[test_id(tn5r2ct)]
     #[test]
     fn idea_rows_are_open_only_newest_first() {
         let got = idea_rows(r#"[{"id":"sp-a","title":"old","status":"open","created_at":"2026-10-01T00:00:00Z"},{"id":"sp-b","title":"new","status":"open","created_at":"2026-10-20T00:00:00Z"},{"id":"sp-c","title":"gone","status":"closed","created_at":"2026-10-25T00:00:00Z"}]"#);
@@ -1267,17 +1304,20 @@ mod tests {
         assert!(idea_rows("not json").is_empty());
     }
 
+    #[test_id(tpr56p7)]
     #[test]
     fn idea_kind_carries_the_idea_label_and_no_partition() {
         assert_eq!(non_work_labels("testscope", Some("idea"), Some("spira")), "testscope,idea,repo:spira");
     }
 
+    #[test_id(tuarkk5)]
     #[test]
     fn non_work_labels_insight_carries_its_label() {
         let got = non_work_labels("testscope", Some("insight"), None);
         assert_eq!(got, "testscope,insight");
     }
 
+    #[test_id(tzn9s3a)]
     #[test]
     fn non_work_labels_carry_the_repo() {
         let got = non_work_labels("testscope", None, Some("testrepo"));
@@ -1289,6 +1329,7 @@ mod tests {
     // literal-ok: test fixture partition vocabulary, mirroring the bash suite's own PART
     const PART: &str = "plan mimir-sweep spike czar-trigger incident groom";
 
+    #[test_id(tk8pj6e)]
     #[test]
     fn lint_judge_rows_match_the_bash_suite_table() {
         let add_one = format!("no partition label; add one or mark {NO_LOOP}");
@@ -1329,6 +1370,7 @@ mod tests {
 
     /// sp-mve9i: the partition check runs for a bead the machine has waiting for a builder
     /// and for no other, whatever bd's status says.
+    #[test_id(tnolkv2)]
     #[test]
     fn the_partition_check_follows_the_lifecycle_row_not_bd_status() {
         use spira_store::lc_state::Row;
@@ -1340,6 +1382,7 @@ mod tests {
         assert!(!awaits_dispatch(None), "a bead with no row can never be claimed");
     }
 
+    #[test_id(t7ohrz5)]
     #[test]
     fn lint_judge_no_loop_label_unset_has_no_add_one_suffix() {
         let (n, lines) = lint_judge("repo:spira", true, "task", PART, "");
@@ -1347,6 +1390,7 @@ mod tests {
         assert_eq!(lines, vec!["no partition label".to_string()]);
     }
 
+    #[test_id(t7668gy)]
     #[test]
     fn runes_partitions_dedupes_and_excludes_scope() {
         let personas = vec![
@@ -1361,6 +1405,7 @@ mod tests {
 
     // -- show/dep-list JSON -----------------------------------------------------------------
 
+    #[test_id(tftkc11)]
     #[test]
     fn parse_show_row_handles_bare_object_and_one_element_array() {
         let obj = r#"{"labels":["repo:spira","plan"],"status":"open","issue_type":"task"}"#;
@@ -1374,6 +1419,7 @@ mod tests {
         assert_eq!(row2.labels, row.labels);
     }
 
+    #[test_id(tbepon4)]
     #[test]
     fn priority_helpers() {
         assert_eq!(parse_priority(r#"[{"priority":2}]"#), Some(2));
@@ -1396,6 +1442,7 @@ mod tests {
         assert_eq!(priority_note("ryan", None, 1, None), "Priority changed P1 (was unknown) by ryan.");
     }
 
+    #[test_id(tfkd0fk)]
     #[test]
     fn a_build_spec_is_a_build_heading_with_content_under_it() {
         assert!(has_build_spec("Why.\n\n## Build\n\nA proxy in spira/foo.\n"));
@@ -1406,11 +1453,13 @@ mod tests {
         assert!(!has_build_spec("Rebuild the ## Build step"));
     }
 
+    #[test_id(tdgnk7j)]
     #[test]
     fn parse_show_row_none_on_garbage() {
         assert!(parse_show_row("not json").is_none());
     }
 
+    #[test_id(t60tbd7)]
     #[test]
     fn parse_blocks_targets_reads_either_key() {
         let json = r#"[{"depends_on_id":"sp-a"},{"id":"sp-b"},{"depends_on_id":""}]"#;
@@ -1420,6 +1469,7 @@ mod tests {
         );
     }
 
+    #[test_id(tw79efl)]
     #[test]
     fn relates_only_targets_drops_blockers_and_refuses_an_unreadable_list() {
         let blocks = vec!["sp-a".to_string()];
@@ -1429,6 +1479,7 @@ mod tests {
         assert!(relates_only_targets(&blocks, r#"{"error":"x"}"#).is_err());
     }
 
+    #[test_id(t9pznv6)]
     #[test]
     fn parse_created_id_reads_silent_and_json_shapes() {
         assert_eq!(parse_created_id("sp-abc1\n").as_deref(), Some("sp-abc1"));
@@ -1438,6 +1489,7 @@ mod tests {
         assert_eq!(parse_created_id(""), None);
     }
 
+    #[test_id(t3r2o06)]
     #[test]
     fn readback_tells_a_missing_bead_from_an_unreadable_store() {
         let since = "2026-11-13T10:00:00";
@@ -1455,6 +1507,7 @@ mod tests {
         assert_eq!(readback(0, "{}", "t", since), Readback::Unreadable);
     }
 
+    #[test_id(tbefgmn)]
     #[test]
     fn parse_list_ids_excludes_events() {
         let json = r#"[{"id":"sp-a","issue_type":"task"},{"id":"sp-ev.1","issue_type":"event"},{"id":"sp-b","issue_type":"bug"}]"#;
@@ -1464,16 +1517,19 @@ mod tests {
         );
     }
 
+    #[test_id(th58qik)]
     #[test]
     fn parse_list_ids_empty_on_garbage() {
         assert_eq!(parse_list_ids("nope"), Vec::<String>::new());
     }
 
+    #[test_id(tywwn0g)]
     #[test]
     fn parse_blocks_targets_empty_on_garbage() {
         assert_eq!(parse_blocks_targets("nope"), Vec::<String>::new());
     }
 
+    #[test_id(tlmik8x)]
     #[test]
     fn branch_label_finds_first_and_strips_spira_prefix() {
         let labels = vec!["repo:spira".to_string(), "branch:spira/sp-x".to_string()];
@@ -1483,6 +1539,7 @@ mod tests {
 
     // -- dep add ------------------------------------------------------------------------------
 
+    #[test_id(t59lw6t)]
     #[test]
     fn is_blocks_type_covers_every_alias() {
         assert!(is_blocks_type(None));
@@ -1492,6 +1549,7 @@ mod tests {
         assert!(!is_blocks_type(Some("relates-to")));
     }
 
+    #[test_id(ttj64zy)]
     #[test]
     fn epic_blocks_refusal_names_parent_child() {
         let msg = epic_blocks_refusal("sp-a", "sp-e");
@@ -1499,6 +1557,7 @@ mod tests {
         assert!(msg.contains("sp-e"));
     }
 
+    #[test_id(tdf5hij)]
     #[test]
     fn incident_blocks_refusal_names_the_alternative() {
         let msg = incident_blocks_refusal("sp-a", "sp-b", "incident-test");
@@ -1508,6 +1567,7 @@ mod tests {
 
     // -- contract -------------------------------------------------------------------------
 
+    #[test_id(tmw85sm)]
     #[test]
     fn persona_line_no_labels_fallback() {
         assert_eq!(
@@ -1517,6 +1577,7 @@ mod tests {
         assert_eq!(persona_line("beta", ""), "  beta           (no labels)");
     }
 
+    #[test_id(tlv7rxz)]
     #[test]
     fn repos_section_lists_names_or_reports_absence() {
         let repos = repos_by_name("custrepo-one | /tmp/one | push | origin/main | | true | plan\n");
@@ -1524,6 +1585,7 @@ mod tests {
         assert_eq!(repos_section(&BTreeMap::new()), "  (no repository map)\n");
     }
 
+    #[test_id(t23ego9)]
     #[test]
     fn a_stack_base_must_be_live_same_repo_work() {
         let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into(), description: String::new(), notes: String::new() };
@@ -1653,6 +1715,7 @@ mod tests {
         (rc, lines.join("\n"))
     }
 
+    #[test_id(tsbn7re)]
     #[test]
     fn a_failed_dep_list_is_unreadable_not_no_blockers() {
         struct DepsDown(Rows);
@@ -1669,6 +1732,7 @@ mod tests {
         assert_eq!(lines, vec!["bead: dep-a: unreadable (bd dep list failed)".to_string()]);
     }
 
+    #[test_id(tl3m7ep)]
     #[test]
     fn a_failed_relates_list_on_an_incident_is_unreadable_with_the_original_text() {
         struct RelatesDown(Rows);
@@ -1701,12 +1765,14 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t1a6fu8)]
     #[test]
     fn all_exits_1_when_offenders_are_present() {
         assert_eq!(run(&mix(), &[]).0, 1);
     }
 
     // covers: UC-dispatch-04
+    #[test_id(txz6lu2)]
     #[test]
     fn all_reports_exactly_the_offenders() {
         let (_, out) = run(&mix(), &[]);
@@ -1725,6 +1791,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(td8wy4y)]
     #[test]
     fn a_builder_bead_without_a_build_spec_exits_1_alone_and_with_one_exits_0() {
         assert_eq!(run(&mix(), &["spec-none"]).0, 1);
@@ -1732,6 +1799,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(thp0x7m)]
     #[test]
     fn an_unreadable_id_is_unreadable_not_a_label_defect() {
         let (rc, out) = run(&mix(), &["mix-nonexistent"]);
@@ -1741,12 +1809,14 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(thv5gys)]
     #[test]
     fn a_branch_label_naming_the_bead_itself_passes() {
         assert_eq!(run(&mix(), &["mix-brgood"]).0, 0);
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t33233x)]
     #[test]
     fn a_branch_label_naming_another_bead_exits_1_and_is_reported() {
         let (rc, out) = run(&mix(), &["mix-brbad"]);
@@ -1768,6 +1838,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(txat8sj)]
     #[test]
     fn a_blocks_edge_between_two_asks_is_flagged() {
         let (rc, out) = run(&asks(), &[]);
@@ -1776,6 +1847,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t6w3cug)]
     #[test]
     fn relates_to_between_asks_and_a_work_bead_under_an_ask_are_not_flagged() {
         let (_, out) = run(&asks(), &[]);
@@ -1784,6 +1856,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(tr0kdv9)]
     #[test]
     fn the_non_blocking_end_of_a_flagged_ask_edge_passes_alone() {
         assert_eq!(run(&asks(), &["ask-a"]).0, 0);
@@ -1802,6 +1875,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(tdqh41a)]
     #[test]
     fn a_blocks_edge_onto_an_incident_is_flagged_by_the_configured_label() {
         let (rc, out) = run(&incidents(), &[]);
@@ -1810,6 +1884,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t23rj3x)]
     #[test]
     fn relates_to_an_incident_and_work_onto_work_are_not_flagged() {
         let (_, out) = run(&incidents(), &[]);
@@ -1818,6 +1893,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t55ov43)]
     #[test]
     fn the_alarm_alone_and_work_b_alone_pass() {
         assert_eq!(run(&incidents(), &["inc-alarm"]).0, 0);
@@ -1840,6 +1916,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(tzppr95)]
     #[test]
     fn an_open_remedy_linked_relates_to_only_is_flagged() {
         let (rc, out) = run(&remedies(), &["rem-bad"]);
@@ -1848,18 +1925,21 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t82zjuh)]
     #[test]
     fn a_blocks_linked_remedy_passes() {
         assert_eq!(run(&remedies(), &["rem-good"]).0, 0);
     }
 
     // covers: UC-dispatch-04
+    #[test_id(tjwadnc)]
     #[test]
     fn a_relates_to_remedy_that_already_landed_passes() {
         assert_eq!(run(&remedies(), &["rem-done"]).0, 0);
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t41yi2u)]
     #[test]
     fn filing_a_remedy_under_an_incident_adds_the_blocks_edge() {
         let labels = vec![INCIDENT.to_string(), "repo:spira".to_string()];
@@ -1867,6 +1947,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t3x4cn9)]
     #[test]
     fn filing_under_an_ordinary_parent_adds_no_edge() {
         let labels = vec!["repo:spira".to_string(), "plan".to_string()];
@@ -1874,6 +1955,7 @@ mod tests {
     }
 
     // covers: UC-dispatch-04
+    #[test_id(t72yxeq)]
     #[test]
     fn an_unreadable_lifecycle_state_fails_the_partition_check_and_is_said_once() {
         let mut rows = mix();

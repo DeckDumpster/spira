@@ -33,6 +33,7 @@ fn status(t: &T) -> String {
     t.out()[from..].to_string()
 }
 
+#[test_id(tcas32w)]
 #[test]
 fn with_the_store_status_names_only_the_open_round_and_parses_unchanged() {
     let t = store_world();
@@ -58,6 +59,7 @@ fn with_the_store_status_names_only_the_open_round_and_parses_unchanged() {
 /// spelling spira-lc's `BatchRecord` writes (`Landed`, `Abandoned`). Status names the one open
 /// round, asks the lifecycle for its phase once, and reads O(1) round records — never the
 /// history (law-list-reads-run-on-indexed-tables, law-list-reads-paginate-in-the-database).
+#[test_id(tlwfmd3)]
 #[test]
 fn with_a_thousand_ended_rounds_status_reads_only_the_open_one() {
     let t = round_world();
@@ -124,6 +126,7 @@ fn with_a_thousand_ended_rounds_status_reads_only_the_open_one() {
     assert!(shows <= 1, "status asked the lifecycle {shows} times");
 }
 
+#[test_id(thczq3l)]
 #[test]
 fn status_reads_the_same_from_the_store_as_from_the_round_file() {
     let record = "batch_id=spira-open\nrepo=spira\nhead=h1\nbase=b0\nmembers=sp-a:ta\nworktree=/wt/spira-open\nactor=overseer\nopened=900\nred=test-a.sh\n";
@@ -141,6 +144,7 @@ fn status_reads_the_same_from_the_store_as_from_the_round_file() {
     assert_eq!(status(&store), status(&files));
 }
 
+#[test_id(tg40ul5)]
 #[test]
 fn with_the_store_a_verb_naming_an_ended_round_is_refused_naming_only_the_open_one() {
     let t = store_world();
@@ -164,6 +168,7 @@ fn with_the_store_a_verb_naming_an_ended_round_is_refused_naming_only_the_open_o
     assert!(!t.lc.has("land "), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(toaljrp)]
 #[test]
 fn with_the_store_open_certify_and_land_run_the_round_the_whole_way_with_no_round_file() {
     let t = round_world();
@@ -202,6 +207,7 @@ fn with_the_store_open_certify_and_land_run_the_round_the_whole_way_with_no_roun
     assert!(!t.qfile("round").exists() && !t.qfile(&format!("round.{batch}")).exists());
 }
 
+#[test_id(tmsg4bb)]
 #[test]
 fn with_the_store_no_ended_round_counts_toward_the_limit_or_is_a_parent() {
     let mut t = store_world();
@@ -244,6 +250,7 @@ fn with_the_store_no_ended_round_counts_toward_the_limit_or_is_a_parent() {
     );
 }
 
+#[test_id(txptfyb)]
 #[test]
 fn with_the_store_unreadable_every_verb_refuses_saying_it_cannot_tell() {
     let t = store_world();
@@ -270,6 +277,7 @@ fn with_the_store_unreadable_every_verb_refuses_saying_it_cannot_tell() {
     );
 }
 
+#[test_id(t6t9929)]
 #[test]
 fn with_the_store_eject_acts_on_the_open_round_and_keeps_its_fields_in_the_record() {
     let t = round_world();
@@ -303,6 +311,7 @@ fn with_the_store_eject_acts_on_the_open_round_and_keeps_its_fields_in_the_recor
     );
 }
 
+#[test_id(tuq47k1)]
 #[test]
 fn an_eject_records_who_made_it_beside_the_ejected_bead() {
     let t = round_world();
@@ -316,6 +325,7 @@ fn an_eject_records_who_made_it_beside_the_ejected_bead() {
     assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("batcher concierge ")), "{:?}", rec.kv);
 }
 
+#[test_id(t00cs1p)]
 #[test]
 fn an_eject_leaves_an_earlier_eject_with_no_recorded_actor_unclaimed_and_stamps_every_stacked_one() {
     let t = round_world();
@@ -331,6 +341,7 @@ fn an_eject_leaves_an_earlier_eject_with_no_recorded_actor_unclaimed_and_stamps_
     assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("- batcher ")), "{:?}", rec.kv);
 }
 
+#[test_id(tmqhh9k)]
 #[test]
 fn plain_eject_of_a_round_member_refuses_naming_the_round_eject_and_changes_nothing() {
     let t = round_world();
@@ -359,6 +370,7 @@ fn plain_eject_of_a_round_member_refuses_naming_the_round_eject_and_changes_noth
     assert!(!t.lib.has("bead_reopen"));
 }
 
+#[test_id(tmo9rvt)]
 #[test]
 fn with_the_store_abandon_closes_the_open_round_and_finishes_one_the_reconciler_abandoned() {
     let t = store_world();
@@ -397,6 +409,7 @@ fn with_the_store_abandon_closes_the_open_round_and_finishes_one_the_reconciler_
     assert!(status(&t).contains("round=none"));
 }
 
+#[test_id(txfiayw)]
 #[test]
 fn with_the_store_a_second_abandon_of_a_closed_round_writes_no_second_audit_line() {
     let t = store_world();
@@ -411,6 +424,7 @@ fn with_the_store_a_second_abandon_of_a_closed_round_writes_no_second_audit_line
     assert_eq!(t.landing_log().matches("ROUND-ABANDON").count(), 1, "{}", t.landing_log());
 }
 
+#[test_id(t0v837e)]
 #[test]
 fn with_the_store_a_round_the_lifecycle_ended_is_swept_once_under_the_lock() {
     let t = store_world();
@@ -431,6 +445,7 @@ fn with_the_store_a_round_the_lifecycle_ended_is_swept_once_under_the_lock() {
     );
 }
 
+#[test_id(twwfrli)]
 #[test]
 fn with_the_store_the_lock_sweep_reads_the_open_rounds_and_marked_ones_never_every_round() {
     let t = store_world();
@@ -449,6 +464,7 @@ fn with_the_store_the_lock_sweep_reads_the_open_rounds_and_marked_ones_never_eve
     assert!(marker(&t, "spira-orphaned", "result").exists());
 }
 
+#[test_id(tjw81xp)]
 #[test]
 fn a_swept_round_sharing_a_live_rounds_worktree_is_closed_out_once() {
     let t = store_world();
@@ -471,6 +487,7 @@ fn a_swept_round_sharing_a_live_rounds_worktree_is_closed_out_once() {
     );
 }
 
+#[test_id(t1wzmwn)]
 #[test]
 fn with_the_store_stage_stages_behind_the_open_round_or_reports_none_open() {
     let t = round_world();
@@ -504,6 +521,7 @@ fn with_the_store_stage_stages_behind_the_open_round_or_reports_none_open() {
     );
 }
 
+#[test_id(twnoayg)]
 #[test]
 fn with_the_store_publish_asks_only_the_open_round_whether_a_pass_holds_the_hypervisor() {
     let t = T::new(LandMode::QueueLocal);
@@ -538,6 +556,7 @@ fn with_the_store_publish_asks_only_the_open_round_whether_a_pass_holds_the_hype
     );
 }
 
+#[test_id(tiu6j0h)]
 #[test]
 fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
     let t = T::new(LandMode::Queue);
@@ -554,6 +573,7 @@ fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
     assert!(status.lines().any(|l| l == "rounds=0"), "{status}");
 }
 
+#[test_id(tcyojrd)]
 #[test]
 fn status_after_an_eject_keeps_the_round_in_progress_while_phase_reads_opened() {
     let t = round_world();
@@ -576,6 +596,7 @@ fn status_after_an_eject_keeps_the_round_in_progress_while_phase_reads_opened() 
     }
 }
 
+#[test_id(tg11z8c)]
 #[test]
 fn usage_says_which_status_fields_mean_a_round_is_in_progress_and_that_phase_is_informational() {
     assert!(crate::cli::USAGE.contains("rounds=<n>, 0 when none, say whether a round is in progress"));
@@ -594,6 +615,7 @@ fn opened(t: &T, name: &str, members: &str) -> String {
     name.to_string()
 }
 
+#[test_id(t779i33)]
 #[test]
 fn with_the_store_an_emptied_round_whose_abandon_is_refused_is_ended_visibly_and_abandoned_later() {
     let t = round_world();
@@ -635,6 +657,7 @@ fn with_the_store_an_emptied_round_whose_abandon_is_refused_is_ended_visibly_and
     );
 }
 
+#[test_id(t48outm)]
 #[test]
 fn with_the_store_a_round_whose_landing_record_is_refused_is_ended_and_recorded_at_the_next_open() {
     let t = round_world();
@@ -672,6 +695,7 @@ fn with_the_store_a_round_whose_landing_record_is_refused_is_ended_and_recorded_
     );
 }
 
+#[test_id(td3qdl0)]
 #[test]
 fn with_the_store_the_round_fields_ride_in_the_lifecycle_events_not_a_write_of_their_own() {
     let t = round_world();
@@ -702,6 +726,7 @@ fn with_the_store_the_round_fields_ride_in_the_lifecycle_events_not_a_write_of_t
     );
 }
 
+#[test_id(tev4lsi)]
 #[test]
 fn with_the_store_unreadable_a_passes_members_are_an_error_not_none() {
     let t = store_world();
@@ -719,6 +744,7 @@ fn with_the_store_unreadable_a_passes_members_are_an_error_not_none() {
 /// sp-av82ny: every round on a repo opens at `.round-<repo>` by default, so an abandoned round's
 /// record names the very tree the next round stands in. Its sweep under certify's lock never
 /// removes a tree an unended round records.
+#[test_id(t7lezd2)]
 #[test]
 fn with_the_store_an_abandoned_rounds_sweep_spares_the_next_rounds_tree_at_the_same_path() {
     let t = round_world();
@@ -767,6 +793,7 @@ fn with_the_store_an_abandoned_rounds_sweep_spares_the_next_rounds_tree_at_the_s
     );
 }
 
+#[test_id(t0ypysx)]
 #[test]
 fn open_whose_cut_reply_is_lost_never_leaves_a_round_without_its_worktree() {
     let t = round_world();
@@ -800,6 +827,7 @@ fn open_whose_cut_reply_is_lost_never_leaves_a_round_without_its_worktree() {
     );
 }
 
+#[test_id(t75scrs)]
 #[test]
 fn the_sweep_reclaims_an_open_round_whose_worktree_is_missing() {
     let t = round_world();
@@ -822,6 +850,7 @@ fn the_sweep_reclaims_an_open_round_whose_worktree_is_missing() {
     assert_eq!(state, "ABANDONED", "{}", t.err());
 }
 
+#[test_id(tb9i6ss)]
 #[test]
 fn the_sweep_stops_the_legs_of_a_round_the_lifecycle_ended_before_it_frees_the_tree() {
     let t = store_world();
@@ -843,6 +872,7 @@ fn the_sweep_stops_the_legs_of_a_round_the_lifecycle_ended_before_it_frees_the_t
     );
 }
 
+#[test_id(t38qu6s)]
 #[test]
 fn the_sweep_keeps_the_tree_and_the_record_of_an_ended_round_whose_leg_will_not_stop() {
     let t = store_world();
@@ -874,6 +904,7 @@ fn attributing_status(progress: Option<serde_json::Value>, state: &str) -> Strin
     status(&t)
 }
 
+#[test_id(tnupcnc)]
 #[test]
 fn status_of_an_attributing_round_shows_target_probes_suspects_and_last_probe() {
     let s = attributing_status(
@@ -895,12 +926,14 @@ fn status_of_an_attributing_round_shows_target_probes_suspects_and_last_probe() 
     }
 }
 
+#[test_id(tmom4e0)]
 #[test]
 fn status_of_an_attributing_round_without_progress_shows_zero_probes() {
     let s = attributing_status(None, "ATTRIBUTING");
     assert!(s.lines().any(|x| x == "attribution_probes=0"), "{s}");
 }
 
+#[test_id(tazlwew)]
 #[test]
 fn status_of_a_certifying_round_shows_no_attribution_lines() {
     let s = attributing_status(
@@ -913,6 +946,7 @@ fn status_of_a_certifying_round_shows_no_attribution_lines() {
     );
 }
 
+#[test_id(t6vspht)]
 #[test]
 fn status_prefixes_a_later_attributing_round_and_shows_why_and_open_ceiling() {
     let t = store_world();

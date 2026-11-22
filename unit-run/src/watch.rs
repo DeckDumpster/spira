@@ -323,6 +323,7 @@ mod tests {
     }
     const P: &str = "/org/freedesktop/systemd1/unit/job_2dx_2eservice";
 
+    #[test_id(t9ultmr)]
     #[test]
     fn a_unit_object_path_decodes_to_its_unit_name() {
         assert_eq!(unit_name(P).as_deref(), Some("job-x.service"));
@@ -330,6 +331,7 @@ mod tests {
         assert_eq!(unit_name("elsewhere"), None);
     }
 
+    #[test_id(tysfxqj)]
     #[test]
     fn transient_run_units_share_one_metric_label() {
         assert_eq!(metric_unit("run-r1a2b3c4d5e6f7081.service"), "run-*.service");
@@ -347,6 +349,7 @@ mod tests {
         t.finish(P, now)
     }
 
+    #[test_id(t36c4nn)]
     #[test]
     fn a_successful_run_is_one_record_with_success_and_its_duration() {
         let mut t = Tracker::new(0);
@@ -356,6 +359,7 @@ mod tests {
         assert_eq!(t.open_count(), 0);
     }
 
+    #[test_id(t0fr5ug)]
     #[test]
     fn a_nonzero_exit_and_a_timeout_carry_their_result_and_status() {
         let mut t = Tracker::new(0);
@@ -366,6 +370,7 @@ mod tests {
         assert_eq!((r.result.as_str(), r.exit_code.as_deref(), r.exit_status), ("timeout", Some("killed"), Some(15)));
     }
 
+    #[test_id(twev453)]
     #[test]
     fn a_run_is_recorded_once_and_history_is_not_an_event() {
         let mut t = Tracker::new(0);
@@ -375,6 +380,7 @@ mod tests {
         assert!(close(&mut late, "inactive", vec![], 9).is_none());
     }
 
+    #[test_id(tt5t0gp)]
     #[test]
     fn non_run_units_and_idle_signals_open_nothing() {
         let mut t = Tracker::new(0);
@@ -384,6 +390,7 @@ mod tests {
         assert!(matches!(t.apply(P, UNIT_IFACE, &[("ActiveState".into(), s("inactive"))], true), Next::Nothing), "an inactive state seen before any live one is not a run's end");
     }
 
+    #[test_id(tdjnk4k)]
     #[test]
     fn the_resume_point_is_the_latest_recorded_end() {
         let rows = [serde_json::json!({"ended_at": "2026-10-17T10:00:05Z"}), serde_json::json!({"ended_at": "2026-10-17T10:00:01Z"}), serde_json::json!({"unit": "x"})];
@@ -396,6 +403,7 @@ mod tests {
 mod idle_tests {
     use super::*;
 
+    #[test_id(tox2jf7)]
     #[test]
     fn a_listener_is_superseded_only_when_current_names_a_different_release() {
         assert!(superseded(Some("r/spira-releases/aaa"), Some("bbb")));
@@ -405,6 +413,7 @@ mod idle_tests {
         assert!(!superseded(None, Some("bbb")));
     }
 
+    #[test_id(tspeex9)]
     #[test]
     fn a_superseded_listener_restarts_only_with_nothing_in_flight_and_its_rows_stored() {
         let (old, cur) = (Some("r/aaa"), Some("bbb"));
@@ -414,6 +423,7 @@ mod idle_tests {
         assert!(!restart_now(0, true, Some("r/bbb"), cur));
     }
 
+    #[test_id(tn91yg5)]
     #[test]
     fn only_a_run_seen_live_is_in_flight() {
         let mut t = Tracker::new(0);

@@ -378,6 +378,7 @@ mod tests {
         StoreDoor.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tbaukhw)]
     #[test]
     fn rust_form_is_caught() {
         let t = TempDir::new("sd-rs");
@@ -385,6 +386,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/src/a.rs"]).unwrap().len(), 2);
     }
 
+    #[test_id(tidenb3)]
     #[test]
     fn shell_form_is_caught() {
         let t = TempDir::new("sd-sh");
@@ -392,6 +394,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/x.sh"]).unwrap().len(), 3);
     }
 
+    #[test_id(t8b92wt)]
     #[test]
     fn sql_connection_form_is_caught() {
         let t = TempDir::new("sd-sql");
@@ -400,6 +403,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/src/a.rs", "foo/y.sh"]).unwrap().len(), 2);
     }
 
+    #[test_id(tettgn3)]
     #[test]
     fn an_allow_listed_door_passes() {
         let t = TempDir::new("sd-door");
@@ -408,6 +412,7 @@ mod tests {
         assert_eq!(run(&t, &["spira-lc/src/a.rs", "foo/src/b.rs"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(trw9pom)]
     #[test]
     fn override_and_comments_pass() {
         let t = TempDir::new("sd-ok");
@@ -416,6 +421,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/a.rs", "foo/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tnq3bpl)]
     #[test]
     fn a_program_read_from_config_is_caught() {
         let t = TempDir::new("sd-cfg");
@@ -426,6 +432,7 @@ mod tests {
         assert_eq!(got.len(), 5, "{got:?}");
     }
 
+    #[test_id(tqz2e7e)]
     #[test]
     fn a_field_bound_from_config_in_another_file_of_the_crate_is_caught() {
         let t = TempDir::new("sd-field");
@@ -437,6 +444,7 @@ mod tests {
         assert!(got[0].contains("foo/src/store.rs:3"), "{got:?}");
     }
 
+    #[test_id(t8anexj)]
     #[test]
     fn a_store_program_handed_to_a_wrapper_is_caught() {
         let t = TempDir::new("sd-wrap");
@@ -446,6 +454,7 @@ mod tests {
         assert!(got[0].contains("foo/src/a.rs:3"), "{got:?}");
     }
 
+    #[test_id(t567i7k)]
     #[test]
     fn other_programs_and_wrapper_methods_pass() {
         let t = TempDir::new("sd-neg");
@@ -454,6 +463,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/src/a.rs", "foo/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tazviuq)]
     #[test]
     fn a_bdq_bound_from_the_release_is_caught() {
         let t = TempDir::new("sd-bdq");
@@ -466,6 +476,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/src/main.rs", "foo/src/real.rs"]).unwrap().len(), 1);
     }
 
+    #[test_id(tykj3ll)]
     #[test]
     fn a_spawn_spec_program_field_is_caught() {
         let t = TempDir::new("sd-spec");
@@ -476,6 +487,7 @@ mod tests {
         assert!(got[0].contains("foo/src/bd.rs:2"), "{got:?}");
     }
 
+    #[test_id(t03r4el)]
     #[test]
     fn shell_bdq_bdjson_and_bd_embedded_are_caught() {
         let t = TempDir::new("sd-shbdq");
@@ -483,6 +495,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/x.sh"]).unwrap().len(), 4);
     }
 
+    #[test_id(tlpvhr8)]
     #[test]
     fn bead_sh_and_spira_lc_pass() {
         let t = TempDir::new("sd-door-cmds");
@@ -490,6 +503,7 @@ mod tests {
         assert_eq!(run(&t, &["foo/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(tr0l0m0)]
     #[test]
     fn a_bdq_spawn_inside_bead_but_outside_bdq_rs_is_caught() {
         let t = TempDir::new("sd-bead");
@@ -498,6 +512,7 @@ mod tests {
         assert_eq!(run(&t, &["bead/src/main.rs", "bead/src/bin/bdq.rs"]).unwrap().len(), 1);
     }
 
+    #[test_id(tmc7z0z)]
     #[test]
     fn the_allow_list_counts_and_never_adds() {
         let t = TempDir::new("sd-allow");
@@ -513,6 +528,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/x.sh", "spira/y.sh"]).unwrap().len(), 1, "an unlisted file is refused; a file under its count passes");
     }
 
+    #[test_id(tqwl4jj)]
     #[test]
     fn render_allow_round_trips() {
         let t = TempDir::new("sd-render");
@@ -524,6 +540,7 @@ mod tests {
         assert_eq!(run(&t, &["spira/x.sh"]).unwrap(), Vec::<String>::new());
     }
 
+    #[test_id(t38qrty)]
     #[test]
     fn the_shipped_list_counts_the_known_executors() {
         let list = parse_count_allow(ALLOW_FILE, include_str!("../../store-door-allow")).unwrap();
@@ -532,6 +549,7 @@ mod tests {
         }
     }
 
+    #[test_id(tn3z0dc)]
     #[test]
     fn a_shell_function_named_bdq_and_the_calls_in_its_body_are_both_counted() {
         let t = TempDir::new("sd-fn");
@@ -540,6 +558,7 @@ mod tests {
         assert_eq!(got.len(), 4, "{got:?}");
     }
 
+    #[test_id(ts9pr8h)]
     #[test]
     fn nothing_in_scope_refuses() {
         let t = TempDir::new("sd-none");

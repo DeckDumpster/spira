@@ -71,6 +71,7 @@ mod tests {
         d
     }
 
+    #[test_id(tictz8l)]
     #[test]
     fn build_tier_is_declared_by_a_build_tier_and_is_not_a_suite() {
         let d = testkit::TempDir::new("gate-own-build");
@@ -82,16 +83,19 @@ mod tests {
         assert!(!build_tier(&d));
     }
 
+    #[test_id(tngynt5)]
     #[test]
     fn a_tree_with_only_a_declaration_judges_itself() {
         assert!(declares_own_testenv(&tree(&[DECL])));
     }
 
+    #[test_id(tttuwss)]
     #[test]
     fn the_harness_image_makes_it_the_harness() {
         assert!(!declares_own_testenv(&tree(&[DECL, HARNESS_IMAGE, "x"])));
     }
 
+    #[test_id(t83y4vk)]
     #[test]
     fn an_undeclared_tree_is_not_its_own() {
         assert!(!declares_own_testenv(&tree(&["a", "b"])));
@@ -104,12 +108,14 @@ mod tests {
         d
     }
 
+    #[test_id(t07irkl)]
     #[test]
     fn a_declared_default_is_the_default_tiers() {
         let d = declared("default = [\"gate\"]\n[tier.gate]\ncmd = \"x\"\n[tier.other]\ncmd = \"y\"\n[tier.build]\ncmd = \"z\"\n");
         assert_eq!(default_tiers(&d).unwrap(), vec!["gate".to_string()]);
     }
 
+    #[test_id(tyx7vsd)]
     #[test]
     fn without_a_default_the_default_tiers_are_the_declared_tiers_but_build() {
         let d = declared("[tier.gate]\ncmd = \"x\"\n[tier.build]\ncmd = \"z\"\n");

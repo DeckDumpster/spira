@@ -478,6 +478,7 @@ mod tests {
         Proc { pid, start_ticks: 1, argv: argv.iter().map(|s| s.to_string()).collect(), age_secs: age, ledgered: false }
     }
 
+    #[test_id(twzph60)]
     #[test]
     fn the_cut_off_removes_every_container_the_run_still_holds() {
         let removed = Mutex::new(Vec::new());
@@ -494,12 +495,14 @@ mod tests {
         assert!(mine(&removed).is_empty(), "a released container is not the cut-off's to remove");
     }
 
+    #[test_id(tyzcyxi)]
     #[test]
     fn a_deadline_run_carries_the_gate_cap_and_any_other_the_suite_cap() {
         assert_eq!(limit(900, 300, None), Cap { secs: 900, source: "suite cap" });
         assert_eq!(limit(900, 300, Some(120)), Cap { secs: 300 + SETTLE, source: "gate cap plus settle" });
     }
 
+    #[test_id(tk7dyn7)]
     #[test]
     fn an_explicit_deadline_above_the_gate_cap_governs() {
         assert_eq!(limit(900, 300, Some(600)), Cap { secs: 600 + SETTLE, source: "--deadline plus settle" });
@@ -511,6 +514,7 @@ mod tests {
         assert_eq!(breaches(&[over], 900, 300, 0, 0, GRACE, None)[0].cap, 630);
     }
 
+    #[test_id(t8n0dep)]
     #[test]
     fn only_runs_past_cap_plus_grace_are_breaches() {
         let procs = [
@@ -526,6 +530,7 @@ mod tests {
         assert_eq!(got, vec![(2, "suite"), (4, "gate")]);
     }
 
+    #[test_id(tc8ijtx)]
     #[test]
     fn a_suite_run_is_allowed_its_load_wait_on_top_of_cap_and_grace() {
         let waited = p(1, 600 + 240 + GRACE, &["testenv", "b"]);
@@ -537,6 +542,7 @@ mod tests {
         assert_eq!(breaches(&gate, 600, 300, 240, 0, GRACE, None).len(), 1);
     }
 
+    #[test_id(tm52xst)]
     #[test]
     fn any_run_is_allowed_its_slot_wait_on_top_of_cap_load_wait_and_grace() {
         let waited = p(1, 600 + 240 + 300 + GRACE, &["testenv", "b"]);
@@ -549,6 +555,7 @@ mod tests {
         assert_eq!(breaches(&[gate_over], 600, 300, 240, 300, GRACE, None).len(), 1);
     }
 
+    #[test_id(t5omk6h)]
     #[test]
     fn remaining_is_the_armed_cap_less_counted_time_and_a_hold_does_not_spend_it() {
         assert_eq!(remaining(), None);
@@ -561,6 +568,7 @@ mod tests {
         assert!((1_599..=1_600).contains(&queued.left().as_secs()), "{:?}", queued.left());
     }
 
+    #[test_id(trxaj4s)]
     #[test]
     fn a_hold_stops_the_clock_until_it_is_released() {
         let armed = arm(Cap { secs: 9_999, source: "test" }, None);
@@ -573,6 +581,7 @@ mod tests {
         assert!(!armed_here());
     }
 
+    #[test_id(tgelvar)]
     #[test]
     fn a_run_admitted_after_a_slot_wait_longer_than_the_cap_gets_its_whole_cap() {
         let ago = |s| Instant::now() - Duration::from_secs(s);
@@ -582,6 +591,7 @@ mod tests {
         assert!(queued.counted() < Duration::from_secs(10));
     }
 
+    #[test_id(t48dljh)]
     #[test]
     fn the_scan_does_not_count_the_slot_waits_a_run_published() {
         let dir = testkit::TempDir::new("testenv-cap-ledger");
@@ -600,6 +610,7 @@ mod tests {
         assert!(!ledger_path(&run, me).exists(), "a finished run leaves none");
     }
 
+    #[test_id(tyn5w28)]
     #[test]
     fn arm_leaves_a_ledger_before_any_hold() {
         let dir = testkit::TempDir::new("testenv-cap-arm-ledger");
@@ -615,6 +626,7 @@ mod tests {
         assert!(!uncounted(&run, vec![mine])[0].ledgered);
     }
 
+    #[test_id(tjzjn40)]
     #[test]
     fn arm_removes_the_ledgers_of_runs_that_died() {
         let dir = testkit::TempDir::new("testenv-cap-sweep");
@@ -634,6 +646,7 @@ mod tests {
         armed.finish();
     }
 
+    #[test_id(tp5tzuv)]
     #[test]
     fn a_ledgered_run_is_not_given_the_flat_slot_wait() {
         let mut never = p(1, 660, &["testenv", "b"]);
@@ -643,12 +656,14 @@ mod tests {
         assert_eq!(breaches(&[never], 600, 300, 0, 600, GRACE, None).len(), 1);
     }
 
+    #[test_id(t0lklm8)]
     #[test]
     fn a_dash_dash_branch_named_like_a_subcommand_is_still_a_run() {
         assert!(is_run(&["testenv".into(), "--".into(), "suites".into()]));
         assert!(!is_run(&["testenv".into(), "suites".into()]));
     }
 
+    #[test_id(tmx0m0i)]
     #[test]
     fn a_pid_whose_cmdline_changed_is_not_killed() {
         let me = std::process::id();

@@ -114,6 +114,7 @@ mod tests {
         (f.answered.values().sum(), f.surfaced.values().sum())
     }
 
+    #[test_id(tf3b6u5)]
     #[test]
     fn asking_again_inside_the_window_and_getting_an_answer_is_answered() {
         let mut f = Followups::default();
@@ -123,6 +124,7 @@ mod tests {
         assert_eq!((f.answered["spira-runtime"], total(&f).1), (1, 0));
     }
 
+    #[test_id(t5muf06)]
     #[test]
     fn a_caller_failing_again_does_not_extend_the_window() {
         let mut f = Followups::default();
@@ -132,6 +134,7 @@ mod tests {
         assert_eq!((f.surfaced["spira-runtime"], total(&f).0), (1, 0));
     }
 
+    #[test_id(torbsze)]
     #[test]
     fn no_follow_up_past_the_window_is_surfaced() {
         let mut f = Followups::default();
@@ -142,6 +145,7 @@ mod tests {
         assert_eq!((f.surfaced["spira-runtime"], total(&f).0), (1, 0));
     }
 
+    #[test_id(tvg5jg0)]
     #[test]
     fn a_follow_up_from_another_caller_or_verb_does_not_settle_it() {
         let mut f = Followups::default();
@@ -153,6 +157,7 @@ mod tests {
         assert_eq!(f.surfaced["spira-runtime"], 1);
     }
 
+    #[test_id(tkp32l8)]
     #[test]
     fn a_touched_request_that_answered_is_answered_at_once() {
         let mut f = Followups::default();
@@ -160,6 +165,7 @@ mod tests {
         assert_eq!(f.answered["work"], 1);
     }
 
+    #[test_id(ttr3034)]
     #[test]
     fn a_touched_success_after_a_pending_failure_counts_both_requests() {
         let mut f = Followups::default();
@@ -168,6 +174,7 @@ mod tests {
         assert_eq!(f.answered["work"], 2);
     }
 
+    #[test_id(tlh4br7)]
     #[test]
     fn an_untouched_request_counts_nothing() {
         let mut f = Followups::default();
@@ -177,6 +184,7 @@ mod tests {
         assert_eq!(total(&f), (0, 0));
     }
 
+    #[test_id(tu07d4l)]
     #[test]
     fn a_late_follow_up_settles_the_expired_entry_as_surfaced_first() {
         let mut f = Followups::default();
@@ -185,6 +193,7 @@ mod tests {
         assert_eq!(total(&f), (0, 1));
     }
 
+    #[test_id(tse7xsu)]
     #[test]
     fn pending_is_bounded_and_the_oldest_surfaces() {
         let mut f = Followups::default();
@@ -195,6 +204,7 @@ mod tests {
         assert_eq!(total(&f).1, 3);
     }
 
+    #[test_id(t8vv1uz)]
     #[test]
     fn series_carry_caller_and_outcome_labels_and_only_the_delta() {
         let mut f = Followups::default();

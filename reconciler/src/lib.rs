@@ -14,6 +14,9 @@
 // already watched there — reconciling it a second time here would file a second incident
 // for the same fault).
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use reconciler_engine::alert::{compose_alert, should_alert};
 use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{load_alerted, load_state, push_status, save_alerted, save_state, status_record, AlertedSinceMap, StateMap, StatusRecord};
@@ -2772,6 +2775,7 @@ fn stamp_pass(cfg: &Config) {
 mod tests {
     use super::*;
 
+    #[test_id(tjabbj3)]
     #[test]
     fn seams_refuse_naming_spira_release_when_it_is_unset_or_lacks_a_tool() {
         let e = Seams::from_release(None).err().unwrap();
@@ -2795,6 +2799,7 @@ mod tests {
         (d, repo.to_string_lossy().to_string(), sha)
     }
 
+    #[test_id(to15c29)]
     #[test]
     fn a_locked_half_initialised_registration_is_cleared_and_the_tree_added() {
         let (d, repo, sha) = main_health_repo();
@@ -2807,6 +2812,7 @@ mod tests {
         assert_eq!(testkit::git(&tree, &["rev-parse", "HEAD"]).trim(), sha);
     }
 
+    #[test_id(t0sfc5t)]
     #[test]
     fn a_clean_path_is_added_and_a_second_pass_replaces_it() {
         let (d, repo, sha) = main_health_repo();
@@ -2817,6 +2823,7 @@ mod tests {
         assert!(!tree.exists());
     }
 
+    #[test_id(tgseq30)]
     #[test]
     fn a_failed_checkout_carries_gits_own_stderr() {
         let (d, repo, _) = main_health_repo();
@@ -2844,6 +2851,7 @@ mod tests {
         d.path().join("releases/current/bin/spira-lint").to_string_lossy().into_owned()
     }
 
+    #[test_id(ta01vrt)]
     #[test]
     fn a_red_from_one_build_is_rejudged_once_another_build_is_live() {
         let d = two_builds();
@@ -2857,6 +2865,7 @@ mod tests {
         assert!(cached_verdict(&entry, "lint", "S", &judge_b).is_none());
     }
 
+    #[test_id(tl8ffgb)]
     #[test]
     fn a_green_is_a_hit_for_the_same_sha_and_judge_only() {
         let entry = serde_json::json!({"sha": "S", "judge": "j"});
@@ -2864,12 +2873,14 @@ mod tests {
         assert!(cached_verdict(&entry, "lint", "T", "j").is_none());
     }
 
+    #[test_id(tecuaed)]
     #[test]
     fn an_entry_without_a_judge_is_a_miss() {
         let entry = serde_json::json!({"sha": "S"});
         assert!(cached_verdict(&entry, "lint", "S", "j").is_none());
     }
 
+    #[test_id(tricx5k)]
     #[test]
     fn fence_judge_of_a_missing_program_names_it() {
         let e = fence_judge("nonexistent/bin/spira-lint").unwrap_err();
@@ -2880,6 +2891,7 @@ mod tests {
         testkit::TempDir::new(&format!("reconciler-test-{}-{}", name, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
     }
 
+    #[test_id(tq0jsf2)]
     #[test]
     fn orphan_reading_is_a_gap_only_when_an_orphan_is_named() {
         let gap = orphan_reading(r#"{"orphans":["sp-a","sp-b"],"requeued":[],"failed":[]}"#);
@@ -2889,6 +2901,7 @@ mod tests {
         assert!(matches!(orphan_reading("{}"), RawStatus::Unobservable { .. }));
     }
 
+    #[test_id(tch40l8)]
     #[test]
     fn repo_root_finds_the_named_repo() {
         let dir = scratch_dir("repo-root");
@@ -2897,11 +2910,13 @@ mod tests {
         assert_eq!(repo_root("spira", &Some(map)), Some(PathBuf::from("r/checkouts/spira")));
     }
 
+    #[test_id(t0rvbpe)]
     #[test]
     fn repo_root_with_no_map_configured_is_none() {
         assert_eq!(repo_root("spira", &None), None);
     }
 
+    #[test_id(t93wldb)]
     #[test]
     fn queue_repo_names_lists_only_directories() {
         let dir = scratch_dir("queue-repo-names");
@@ -2910,12 +2925,14 @@ mod tests {
         assert_eq!(queue_repo_names(&dir), vec!["spira".to_string()]);
     }
 
+    #[test_id(t9lqubw)]
     #[test]
     fn queue_repo_names_missing_dir_is_empty() {
         let dir = scratch_dir("queue-repo-names-missing").join("does-not-exist");
         assert!(queue_repo_names(&dir).is_empty());
     }
 
+    #[test_id(tv2dlw3)]
     #[test]
     fn describe_reports_the_raw_reading_not_a_smoothed_word() {
         let (verdict, _) = step(
@@ -2927,6 +2944,7 @@ mod tests {
         assert_eq!(describe(&verdict), "desired=d observed=o");
     }
 
+    #[test_id(tvo8hin)]
     #[test]
     fn evaluate_inside_grace_raises_nothing() {
         let dir = scratch_dir("evaluate-inside-grace");
@@ -2949,6 +2967,7 @@ mod tests {
         assert_eq!(state.get("k"), Some(&expect_next), "the streak's `since` must still be recorded");
     }
 
+    #[test_id(tjpgp8x)]
     #[test]
     fn stranded_runs_reads_one_entry_per_run_and_ignores_other_lines() {
         let out = "STRANDED run=77 job=\"a\" label=ci-r-77-1 queued=700s runner=none vmid=?\n\
@@ -2959,6 +2978,7 @@ mod tests {
         assert!(stranded_runs("").is_empty());
     }
 
+    #[test_id(tvutyjn)]
     #[test]
     fn junk_rows_are_ready_rows_without_a_bead() {
         let row = |id: &str, state: &str| spira_store::lc_state::Row {
@@ -2971,6 +2991,7 @@ mod tests {
         assert_eq!(junk_row_ids(&rows, &store), vec!["prose key".to_string()]);
     }
 
+    #[test_id(t0hbyi2)]
     #[test]
     fn junk_rows_are_read_from_the_ready_rows_and_exactly_those_ids() {
         let dir = scratch_dir("junk-rows");
@@ -2984,6 +3005,7 @@ mod tests {
         assert!(logged.contains("invariant junk-row: 2 READY row(s) read, 1 without a bead"), "{logged}");
     }
 
+    #[test_id(t6p4lx2)]
     #[test]
     fn a_content_read_that_knows_none_of_the_ready_ids_is_unobservable_not_a_gap_per_row() {
         let dir = scratch_dir("junk-rows-blank");
@@ -2994,6 +3016,7 @@ mod tests {
         assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.contains("knows none of 2")), "{checks:?}");
     }
 
+    #[test_id(tcz2qd0)]
     #[test]
     fn no_ready_rows_means_no_content_read_and_no_checks() {
         let dir = scratch_dir("junk-rows-none");
@@ -3004,6 +3027,7 @@ mod tests {
         assert!(!quiet.asked.lock().unwrap().iter().any(|a| a.starts_with("content")));
     }
 
+    #[test_id(ti46jp9)]
     #[test]
     fn reminder_due_reads_until_and_owner() {
         assert_eq!(reminder_due("sp-1", None, "2026-10-07", false), Due::NotDue);
@@ -3011,6 +3035,7 @@ mod tests {
         assert_eq!(reminder_due("sp-1", Some("2026-10-08"), "2026-10-07", true), Due::OwnerLanded("sp-1".into()));
     }
 
+    #[test_id(tjcogyh)]
     #[test]
     fn suspension_of_matches_unit_base_and_instance_stripped_subject() {
         let mut d = spira_ctrl::CtrlData::new();
@@ -3042,6 +3067,7 @@ mod tests {
         (cfg, store)
     }
 
+    #[test_id(t1yjqrj)]
     #[test]
     fn a_served_lc_read_goes_over_the_client_without_a_program() {
         let (cfg, store) = served_config();
@@ -3049,6 +3075,7 @@ mod tests {
         assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["show".to_string(), "sp-1".into()]]);
     }
 
+    #[test_id(t54b943)]
     #[test]
     fn a_composed_verb_goes_over_the_client_and_an_unserved_one_is_refused_unsent() {
         let (cfg, store) = served_config();
@@ -3059,6 +3086,7 @@ mod tests {
         assert_eq!(store.0.lock().unwrap().len(), 2, "the unserved verb was never sent");
     }
 
+    #[test_id(tdagg7n)]
     #[test]
     fn a_served_lc_remedy_step_goes_over_the_client() {
         let (cfg, store) = served_config();
@@ -3129,6 +3157,7 @@ mod tests {
         std::mem::take(&mut *host.asked.lock().unwrap())
     }
 
+    #[test_id(th9lcju)]
     #[test]
     fn with_no_forge_ci_in_flight_a_pass_asks_the_forge_about_no_runners() {
         let (cfg, host, _dir) = stranded_world("stranded-idle", &[]);
@@ -3136,6 +3165,7 @@ mod tests {
         assert_eq!(asked(&host), Vec::<String>::new());
     }
 
+    #[test_id(tgyy7br)]
     #[test]
     fn a_repo_with_ci_in_flight_is_asked_alone_and_a_stranded_run_is_still_a_gap() {
         let (cfg, host, _dir) = stranded_world("stranded-flight", &[("beta", Ok(true))]);
@@ -3146,6 +3176,7 @@ mod tests {
         assert!(matches!(checks[0].raw, RawStatus::Gap { .. }));
     }
 
+    #[test_id(tgi1l9l)]
     #[test]
     fn one_sweep_follows_the_ci_once_the_min_age_has_passed_then_none() {
         let (mut cfg, host, _dir) = stranded_world("stranded-trailing", &[("beta", Ok(true))]);
@@ -3162,6 +3193,7 @@ mod tests {
         }
     }
 
+    #[test_id(tgtu37o)]
     #[test]
     fn a_trailing_sweep_owed_is_kept_on_disk_until_it_runs() {
         let (mut cfg, _, _dir) = stranded_world("stranded-restart", &[("beta", Ok(true))]);
@@ -3174,6 +3206,7 @@ mod tests {
         assert!(load_stranded_seen(&cfg.stranded_seen_path).is_empty(), "the swept entry is cleared");
     }
 
+    #[test_id(td7e560)]
     #[test]
     fn a_host_that_cannot_tell_makes_no_call_and_is_unobservable_not_satisfied() {
         let (cfg, host, _dir) = stranded_world("stranded-unknown", &[("alpha", Err("no store view".into()))]);
@@ -3184,6 +3217,7 @@ mod tests {
         assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.contains("no store view")));
     }
 
+    #[test_id(ttz1ba1)]
     #[test]
     fn stranded_repos_come_from_the_repo_map_not_the_queue_directory() {
         let (mut cfg, host, _dir) = stranded_world("stranded-source", &[("sp-ghost", Ok(true))]);
@@ -3238,6 +3272,7 @@ mod tests {
         store.0.lock().unwrap().iter().find(|a| a.iter().any(|x| x == "--apply")).cloned().unwrap_or_default()
     }
 
+    #[test_id(tnaw3ha)]
     #[test]
     fn orphan_apply_spares_a_round_whose_leg_is_live() {
         let mut cfg = test_config();
@@ -3247,6 +3282,7 @@ mod tests {
         assert_eq!(*seen.lock().unwrap(), ["requeue-orphans", "--actor", "reconciler", "--apply", "--live-round", "b-live"]);
     }
 
+    #[test_id(top74jm)]
     #[test]
     fn orphan_apply_spares_every_round_when_liveness_cannot_be_told() {
         let (cfg, store) = served_config();
@@ -3255,6 +3291,7 @@ mod tests {
         assert!(argv.windows(2).any(|w| w == ["--live-round", "b-live"]) && argv.windows(2).any(|w| w == ["--live-round", "b-dead"]), "{argv:?}");
     }
 
+    #[test_id(tmcucsc)]
     #[test]
     fn orphan_apply_without_a_readable_dry_run_applies_nothing() {
         struct Garbled(Arc<std::sync::Mutex<Vec<String>>>);
@@ -3271,6 +3308,7 @@ mod tests {
         assert!(!seen.lock().unwrap().iter().any(|a| a == "--apply"));
     }
 
+    #[test_id(tx7f42d)]
     #[test]
     fn free_space_is_read_without_df() {
         assert!(free_pct("/").is_some_and(|p| (0..=100).contains(&p)));
@@ -3382,6 +3420,7 @@ mod tests {
         Arc::new(Quiet { asked: Default::default(), server, blank_content: false, no_ready: false })
     }
 
+    #[test_id(to1n5tb)]
     #[test]
     fn a_quiet_world_launches_no_program_over_ten_ticks_and_the_unhosted_pass_does() {
         let dir = scratch_dir("quiet-ticks");
@@ -3412,6 +3451,7 @@ mod tests {
         }
     }
 
+    #[test_id(t8qb575)]
     #[test]
     fn a_healthy_cockpit_is_asked_of_tmux_once_per_window_and_a_down_server_is_never_held() {
         let dir = scratch_dir("cockpit-window");
@@ -3509,6 +3549,7 @@ mod tests {
         (checks, mails)
     }
 
+    #[test_id(t87s4qi)]
     #[test]
     fn a_failed_unit_listing_raises_one_listing_mail_not_one_per_unit() {
         let host = Arc::new(Listing::new(21));
@@ -3526,6 +3567,7 @@ mod tests {
         assert!(mails.is_empty(), "a streak pages once");
     }
 
+    #[test_id(t4t3533)]
     #[test]
     fn the_unobserved_count_leaves_out_skipped_units() {
         let host = Arc::new(Listing::new(21));
@@ -3538,6 +3580,7 @@ mod tests {
         assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.ends_with("; 19 units not observed")));
     }
 
+    #[test_id(tz3fjj9)]
     #[test]
     fn one_diverging_timer_is_the_only_unit_gap_when_listing_answers() {
         let mut h = Listing::new(21);
@@ -3551,6 +3594,7 @@ mod tests {
         assert!(checks.iter().any(|c| c.key == "units:listing" && matches!(c.raw, RawStatus::Satisfied)));
     }
 
+    #[test_id(tv1r0m3)]
     #[test]
     fn a_listing_that_answers_again_clears_the_streak_and_a_later_failure_pages_again() {
         let host = Arc::new(Listing::new(3));
@@ -3571,6 +3615,7 @@ mod tests {
         assert_eq!(mails.len(), 1);
     }
 
+    #[test_id(tdlmg0p)]
     #[test]
     fn one_failing_listing_pass_from_default_state_sends_no_mail() {
         let host = Arc::new(Listing::new(21));
@@ -3585,6 +3630,7 @@ mod tests {
         decide(&rules, &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), Check { key: "fleet:a".into(), raw, remedy: Remedy::Escalate })
     }
 
+    #[test_id(ti29zhf)]
     #[test]
     fn a_shadowed_kinds_page_is_recorded_not_sent_and_an_unshadowed_kinds_page_is_sent() {
         let sent = |acts: &[Act]| acts.iter().any(|a| matches!(a, Act::Mail { .. }));
@@ -3595,6 +3641,7 @@ mod tests {
         assert!(!sent(&held) && recorded(&held));
     }
 
+    #[test_id(tvu6xgh)]
     #[test]
     fn a_page_held_while_shadowed_is_still_sent_once_the_kind_is_unshadowed() {
         let raw = || RawStatus::Gap { desired: "up".into(), observed: "down".into(), since_hint: None };
@@ -3669,6 +3716,7 @@ mod tests {
         checks[0].raw.clone()
     }
 
+    #[test_id(tpzfw90)]
     #[test]
     fn a_reactive_partition_with_ready_work_below_the_ceiling_is_a_gap() {
         assert!(matches!(reactive_check(3, "5"), RawStatus::Gap { .. }));
@@ -3681,6 +3729,7 @@ mod tests {
         observe_fleet(&cfg).remove(0).raw
     }
 
+    #[test_id(tzxma1z)]
     #[test]
     fn a_partition_the_sentinel_left_uncalled_with_a_reason_is_deliberate_not_a_gap() {
         let left = BTreeMap::from([("mender".to_string(), "yielding — urgent bead(s) unclaimed: sp-x".to_string())]);
@@ -3690,22 +3739,26 @@ mod tests {
         }
     }
 
+    #[test_id(tzu4c5m)]
     #[test]
     fn a_partition_the_sentinel_did_not_account_for_stays_a_gap() {
         assert!(matches!(uncalled_check(Some(Ok(BTreeMap::from([("other".to_string(), "full".to_string())])))), RawStatus::Gap { .. }));
         assert!(matches!(uncalled_check(Some(Ok(BTreeMap::new()))), RawStatus::Gap { .. }));
     }
 
+    #[test_id(t3fux1s)]
     #[test]
     fn an_unreadable_sentinel_pass_makes_the_gap_unobservable() {
         assert_eq!(uncalled_check(Some(Err("no sentinel pass yet".into()))), RawStatus::Unobservable { reason: "no sentinel pass yet".into() });
     }
 
+    #[test_id(tafy6v7)]
     #[test]
     fn a_host_that_cannot_read_the_sentinel_leaves_the_gap_as_it_was() {
         assert!(matches!(uncalled_check(None), RawStatus::Gap { .. }));
     }
 
+    #[test_id(tsbkz55)]
     #[test]
     fn a_reactive_partition_at_the_ceiling_is_satisfied() {
         assert_eq!(reactive_check(5, "5"), RawStatus::Satisfied);
@@ -3728,6 +3781,7 @@ mod tests {
         cfg
     }
 
+    #[test_id(t4utjju)]
     #[test]
     fn a_fleet_gap_names_the_claimable_bead_behind_it_and_its_age() {
         let cfg = plan_fleet(&[("sp-x", "2026-10-28T03:45:43Z")]);
@@ -3746,12 +3800,14 @@ mod tests {
         assert!(subject.contains("sp-x"), "{subject}");
     }
 
+    #[test_id(t812cg8)]
     #[test]
     fn ready_rows_read_from_the_json_and_an_unreadable_answer_is_no_beads() {
         assert_eq!(parse_ready_rows(r#"[{"id":"sp-a","updated_at":"2026-11-19T00:00:00Z"},{"id":"sp-b"}]"#), vec![("sp-a".into(), "2026-11-19T00:00:00Z".into()), ("sp-b".into(), String::new())]);
         assert!(parse_ready_rows("0").is_empty() && parse_ready_rows("").is_empty());
     }
 
+    #[test_id(tt7x10k)]
     #[test]
     fn a_fleet_gap_names_at_most_five_beads_and_counts_the_rest() {
         let named: Vec<(String, String)> = (0..7).map(|i| (format!("sp-{i}"), String::new())).collect();
@@ -3765,6 +3821,7 @@ mod tests {
         }
     }
 
+    #[test_id(tvmkxyq)]
     #[test]
     fn a_lane_with_no_claimable_bead_is_satisfied_and_pages_nothing_even_after_a_gap_streak() {
         let rules = Rules { now_secs: 100, grace_secs: 0, effect_passes: 2, shadow_kinds: vec![] };
@@ -3786,21 +3843,25 @@ mod tests {
         checks[0].raw.clone()
     }
 
+    #[test_id(tjp22oq)]
     #[test]
     fn a_task_partition_above_the_pool_cap_is_satisfied() {
         assert_eq!(task_check("3", 4), RawStatus::Satisfied);
     }
 
+    #[test_id(txrj7z1)]
     #[test]
     fn a_task_partition_at_the_pool_cap_is_satisfied() {
         assert_eq!(task_check("3", 3), RawStatus::Satisfied);
     }
 
+    #[test_id(t3edafe)]
     #[test]
     fn a_task_partition_below_the_pool_cap_is_a_gap_desiring_the_pool() {
         assert_eq!(desired_count(&task_check("3", 2)), ("3".to_string(), "2".to_string()));
     }
 
+    #[test_id(tt1znpv)]
     #[test]
     fn reactive_dwarves_do_not_spend_the_task_pool() {
         let mut cfg = test_config();
@@ -3810,12 +3871,14 @@ mod tests {
         assert_eq!(desired_count(&observe_fleet(&cfg)[0].raw), ("3".to_string(), "2".to_string()));
     }
 
+    #[test_id(to7uc8r)]
     #[test]
     fn a_paused_task_pool_is_satisfied() {
         assert_eq!(task_check("0", 0), RawStatus::Satisfied);
     }
 
 
+    #[test_id(toesh2v)]
     #[test]
     fn a_task_partition_with_a_start_in_flight_is_satisfied_and_without_it_a_gap() {
         let check = |starting: &[(&str, u64)]| {
@@ -3840,6 +3903,7 @@ mod tests {
         acts.iter().filter_map(|a| if let Act::Mail { mail, .. } = a { Some(mail) } else { None }).collect()
     }
 
+    #[test_id(tn35aki)]
     #[test]
     fn a_fleet_gap_past_grace_redrives_the_sentinel_then_pages_once_naming_the_redrive() {
         let mut d = Default::default();
@@ -3857,6 +3921,7 @@ mod tests {
         assert!(sent[0].body.contains("last remedy tried: asked the sentinel's call pass to run (call.wanted)"), "{}", sent[0].body);
     }
 
+    #[test_id(to9610a)]
     #[test]
     fn a_fleet_gap_that_closes_after_the_redrive_sends_no_mail() {
         let mut d = Default::default();
@@ -3867,6 +3932,7 @@ mod tests {
         }
     }
 
+    #[test_id(tdwdmmj)]
     #[test]
     fn a_redrive_with_no_effect_is_paged_once_by_the_escalation_and_not_by_a_second_note() {
         let mut d = Default::default();
@@ -3879,6 +3945,7 @@ mod tests {
         assert!(all.iter().any(|a| matches!(a, Act::Event(e) if e.event == "no-effect")));
     }
 
+    #[test_id(txuby76)]
     #[test]
     fn another_remedys_no_effect_still_sends_its_note() {
         let rules = Rules { now_secs: 0, grace_secs: 0, effect_passes: 1, shadow_kinds: vec![] };
@@ -3893,6 +3960,7 @@ mod tests {
         assert!(mails(&all).iter().any(|m| m.subject.contains("had no effect")), "{all:?}");
     }
 
+    #[test_id(tmud739)]
     #[test]
     fn the_shell_pass_logs_the_redrive_it_cannot_send() {
         let d = testkit::TempDir::new("redrive-log");
@@ -3949,6 +4017,7 @@ mod tests {
         }
     }
 
+    #[test_id(txhrlrt)]
     #[test]
     fn a_full_store_data_directory_is_remedied_by_an_online_gc_not_by_reaping_build_output() {
         let (store, other) = (testkit::TempDir::new("disk-store"), testkit::TempDir::new("disk-other"));
@@ -3961,6 +4030,7 @@ mod tests {
         assert!(remedy(other.path()).contains("image prune"), "other paths keep the podman remedy");
     }
 
+    #[test_id(thlsd5t)]
     #[test]
     fn a_sequence_remedy_describes_and_runs_every_step() {
         let r = Remedy::Sequence(vec![("a".into(), vec!["1".into()]), ("b".into(), vec![])]);
@@ -3992,6 +4062,7 @@ mod lane_tests {
         spira_config::scoped_stop::pause_repo(run, repo, &[REMEDIES_LANE.to_string()], "cutover-mode", "cutover", "world stop", 1).unwrap();
     }
 
+    #[test_id(tlo41i1)]
     #[test]
     fn a_pass_holds_only_when_the_remedies_lane_is_stopped_on_every_registered_repo() {
         let (_d, run, edits) = world("reconciler-held");
@@ -4006,6 +4077,7 @@ mod lane_tests {
         assert!(why.starts_with("reconciler: skipped") && why.contains("world stop"), "{why}");
     }
 
+    #[test_id(tzeje5u)]
     #[test]
     fn run_pass_stamps_and_takes_no_lock_while_the_remedies_lane_is_stopped_everywhere() {
         let (_d, run, edits) = world("reconciler-run-pass");
@@ -4018,6 +4090,7 @@ mod lane_tests {
         assert!(!run.join("reconciler.lock").exists(), "a held pass went on to take its lock");
     }
 
+    #[test_id(t33ikeb)]
     #[test]
     fn observe_reports_halted_and_stamps_while_the_remedies_lane_is_stopped_everywhere() {
         let (_d, run, edits) = world("reconciler-observe");

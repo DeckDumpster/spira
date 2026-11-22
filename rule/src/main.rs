@@ -2,6 +2,9 @@
 //! it sources `conf.sh` for its side effects and `exec`s into this binary by bare name on
 //! the release PATH.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -1457,6 +1460,7 @@ mod statute_dir_tests {
         }
     }
 
+    #[test_id(tgo5rt9)]
     #[test]
     fn the_memories_read_is_a_content_memories_json_request() {
         let t = std::sync::Arc::new(Answers(Default::default(), 0));
@@ -1467,6 +1471,7 @@ mod statute_dir_tests {
         assert_eq!(failed, "");
     }
 
+    #[test_id(tw9e7zp)]
     #[test]
     fn an_empty_key_defaults_under_run() {
         assert_eq!(statute_dir_from("", "r"), Some("r/statutes".into()));

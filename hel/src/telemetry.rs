@@ -26,6 +26,7 @@ mod tests {
     use super::*;
     use spira_otel::metrics::fixture;
 
+    #[test_id(tqp8iur)]
     #[test]
     fn a_run_pushes_its_count_and_seconds_labelled_by_component_operation_and_outcome() {
         let (code, got) = fixture::capture(|s| run(s, Some("reap-terminal"), || 1));
@@ -35,12 +36,14 @@ mod tests {
         assert!(got.iter().any(|c| c.name == metrics::RUN_DURATION), "run seconds pushed");
     }
 
+    #[test_id(tgxy2aa)]
     #[test]
     fn an_argument_that_is_no_operation_is_other() {
         assert_eq!(operation(Some("sp-abc123")), "other");
         assert_eq!(operation(None), "other");
     }
 
+    #[test_id(tqo0qzj)]
     #[test]
     fn a_sweep_flag_is_the_sweep_operation() {
         assert_eq!(operation(Some("--all")), "sweep");

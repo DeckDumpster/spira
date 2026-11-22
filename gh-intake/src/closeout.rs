@@ -354,6 +354,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
 
+    #[test_id(tnzretx)]
     #[test]
     fn parse_gh_ref_splits_on_first_and_last_hash() {
         assert_eq!(parse_gh_ref("github:fixture/testrepo#7"), Some(("fixture/testrepo".into(), "7".into())));
@@ -362,6 +363,7 @@ mod tests {
         assert_eq!(parse_gh_ref("github:"), None);
     }
 
+    #[test_id(tnbvune)]
     #[test]
     fn comment_body_cites_sha_and_commit_link_with_and_without_subject() {
         let b = comment_body("abc1234", "a fix", "fixture/testrepo", "abc1234full");
@@ -532,6 +534,7 @@ mod tests {
         w
     }
 
+    #[test_id(tefkxsu)]
     #[test]
     fn a_drain_reads_only_the_pending_rows_and_points_by_id_and_settles_each_issue_once() {
         let tmp = testkit::TempDir::new("gh-intake-drain-points");
@@ -551,6 +554,7 @@ mod tests {
         assert_eq!(w.calls.borrow().len(), before + 1, "the second drain only asks what is pending");
     }
 
+    #[test_id(tm71586)]
     #[test]
     fn a_failed_close_leaves_the_row_pending_and_the_next_drain_closes_the_issue_once() {
         let tmp = testkit::TempDir::new("gh-intake-drain-retry");
@@ -567,6 +571,7 @@ mod tests {
         assert_eq!(gh.comments.borrow().len(), 1, "the retry does not comment again");
     }
 
+    #[test_id(tyzlckz)]
     #[test]
     fn a_landed_closeout_comments_the_machines_merge_sha_not_the_tip_recorded_at_enqueue() {
         let tmp = testkit::TempDir::new("gh-intake-drain-sha");
@@ -580,6 +585,7 @@ mod tests {
         assert!(!comments.is_empty());
     }
 
+    #[test_id(tehv413)]
     #[test]
     fn a_successor_still_in_flight_leaves_the_row_untouched() {
         let tmp = testkit::TempDir::new("gh-intake-drain-inflight");
@@ -592,6 +598,7 @@ mod tests {
         assert!(gh.comments.borrow().is_empty() && mail.sent.borrow().is_empty());
     }
 
+    #[test_id(ttojw85)]
     #[test]
     fn a_drop_with_no_named_outcome_asks_once_and_records_the_ask_on_the_row() {
         let tmp = testkit::TempDir::new("gh-intake-drain-ask");
@@ -605,6 +612,7 @@ mod tests {
         assert!(gh.comments.borrow().is_empty());
     }
 
+    #[test_id(tiutoqd)]
     #[test]
     fn a_row_whose_issue_closed_on_github_closes_its_ask_by_id_and_is_done() {
         let tmp = testkit::TempDir::new("gh-intake-drain-stale-ask");
@@ -620,6 +628,7 @@ mod tests {
         assert!(gh.comments.borrow().is_empty(), "an issue closed elsewhere is not commented on");
     }
 
+    #[test_id(trfuuwy)]
     #[test]
     fn a_closeout_for_a_bead_with_no_github_reference_posts_nothing() {
         let tmp = testkit::TempDir::new("gh-intake-closeout-no-ref");

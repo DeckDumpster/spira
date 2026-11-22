@@ -229,6 +229,7 @@ mod tests {
         }
     }
 
+    #[test_id(t5iuif8)]
     #[test]
     fn the_registry_change_probe_asks_for_the_three_dot_range() {
         let g = Rec(Mutex::new(Vec::new()));
@@ -241,6 +242,7 @@ mod tests {
         red(&G(0), &Steps(lint, fence, stderr), &w.join("."), &w.join("."), "b", "base", false).unwrap()
     }
 
+    #[test_id(twxisdv)]
     #[test]
     fn a_fence_killed_by_sigterm_with_no_output_is_a_harness_red_naming_the_signal() {
         let r = fence_red(0, 143, "build-fence: cargo check -p dwarf\n");
@@ -248,6 +250,7 @@ mod tests {
         assert!(r.text.starts_with("spira/build-fence.sh killed by SIGTERM (rc=143)"), "{r:?}");
     }
 
+    #[test_id(triph3i)]
     #[test]
     fn a_fence_compile_failure_is_a_branch_red() {
         for rc in [1, 101] {
@@ -257,6 +260,7 @@ mod tests {
         }
     }
 
+    #[test_id(t90s6ng)]
     #[test]
     fn a_lint_killed_by_a_signal_is_harness_too() {
         let r = fence_red(137, 0, "");
@@ -273,6 +277,7 @@ mod tests {
         d
     }
 
+    #[test_id(t955k19)]
     #[test]
     fn spira_lint_and_the_build_fence_both_run_against_the_branch_base() {
         let steps = steps("refs/heads/local/main", false);
@@ -286,6 +291,7 @@ mod tests {
         assert_eq!(steps[1].1[steps[1].1.len() - 2..], ["bash".to_string(), "spira/build-fence.sh".to_string()]);
     }
 
+    #[test_id(t4e7myg)]
     #[test]
     fn a_registry_changing_branch_lints_with_a_binary_built_from_its_tree() {
         let steps = steps("base", true);
@@ -302,6 +308,7 @@ mod tests {
         assert!(e.1.lock().unwrap()[0].contains(&"cargo".to_string()));
     }
 
+    #[test_id(t73oa5l)]
     #[test]
     fn a_green_tier_runs_both_steps_and_is_not_red() {
         let w = tree("green", true);
@@ -310,6 +317,7 @@ mod tests {
         assert_eq!(e.1.lock().unwrap().len(), 2);
     }
 
+    #[test_id(tkskqbp)]
     #[test]
     fn a_failing_step_is_red_and_names_itself() {
         let w = tree("failing", true);
@@ -318,6 +326,7 @@ mod tests {
         assert!(!r.harness);
     }
 
+    #[test_id(trx8god)]
     #[test]
     fn a_lint_probe_failure_is_harness_and_a_finding_is_not() {
         let w = tree("probe", true);
@@ -328,6 +337,7 @@ mod tests {
         assert!(!r.harness, "{r:?}");
     }
 
+    #[test_id(tayxhgz)]
     #[test]
     fn a_rebase_conflict_is_red() {
         let w = tree("rebase", true);
@@ -335,6 +345,7 @@ mod tests {
         assert!(r.text.contains("does not rebase onto base cleanly"), "{r:?}");
     }
 
+    #[test_id(teeqti8)]
     #[test]
     fn conflict_paths_are_read_from_conflict_lines_only() {
         let red = "b does not rebase onto base cleanly:\nAuto-merging x\nCONFLICT (content): Merge conflict in deploy/ci.sh\nCONFLICT (add/add): Merge conflict in a/__init__.py\nCONFLICT (modify/delete): gone.rs deleted in HEAD and modified in b.\n";
@@ -342,6 +353,7 @@ mod tests {
         assert!(conflict_paths("spira-lint failed (rc=1):\nCONFLICT (content): Merge conflict in x\n").is_empty(), "a lint red is not a rebase conflict");
     }
 
+    #[test_id(tywc6jo)]
     #[test]
     fn an_absent_tool_is_skipped_unless_strict() {
         let w = tree("absent", true);
@@ -349,6 +361,7 @@ mod tests {
         assert!(red(&G(0), &E(127, Mutex::new(vec![])), &w.join("."), &w.join("."), "b", "base", true).is_some());
     }
 
+    #[test_id(tl5ep0a)]
     #[test]
     fn a_tree_without_the_fence_is_skipped_unless_strict() {
         let w = tree("nofence", false);
@@ -358,6 +371,7 @@ mod tests {
         assert!(e.1.lock().unwrap().is_empty());
     }
 
+    #[test_id(tkq7k2w)]
     #[test]
     fn the_digest_keeps_two_errors_and_their_locations_out_of_fifty_warnings() {
         let mut red = String::from("spira/build-fence.sh failed (rc=101):\n");
@@ -377,6 +391,7 @@ mod tests {
         assert!(names_compile_error(&d));
     }
 
+    #[test_id(tgip07z)]
     #[test]
     fn a_rebase_conflict_digest_keeps_its_paths_and_is_capped() {
         let red = format!("b does not rebase onto base cleanly:\n{}", (0..200).map(|i| format!("CONFLICT (content): Merge conflict in f{i}.rs\n")).collect::<String>());
@@ -385,6 +400,7 @@ mod tests {
         assert!(d.contains("in f1.rs") && !names_compile_error(&d));
     }
 
+    #[test_id(t0du1cj)]
     #[test]
     fn a_multi_line_lint_red_is_recorded_whole_and_the_tip_round_trips() {
         let red = "spira-lint failed (rc=1):\nrule-a: f.rs:3: bad thing\nrule-b: g.rs:9: other\n";
@@ -404,6 +420,7 @@ mod tests {
         }
     }
 
+    #[test_id(tby638t)]
     #[test]
     fn a_red_is_shown_only_for_the_tip_it_judged_and_a_conflict_only_while_it_holds() {
         let w = Path::new(".");
@@ -417,6 +434,7 @@ mod tests {
         assert_eq!(current_digest(&conflicting, w, w, "base", "no tip recorded"), "");
     }
 
+    #[test_id(twiwgyy)]
     #[test]
     fn the_rebase_check_judges_the_tip_sha_not_a_ref_name() {
         struct S(Mutex<Vec<Vec<String>>>);

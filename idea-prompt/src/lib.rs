@@ -1,6 +1,9 @@
 //! The idle detector behind the parked-ideas prompt. Pure decision over injected ports: the
 //! clock, the busy probe, the idea list and the mail door come in through [`Ports`].
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 pub mod real;
 
 pub struct Idea {

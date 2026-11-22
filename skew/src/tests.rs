@@ -264,6 +264,7 @@ impl World for Fake {
 
 // ============================================================================ check()
 
+#[test_id(ttd9j0f)]
 #[test]
 fn check_no_releases_env_cannot_check() {
     let f = Fake::default();
@@ -272,6 +273,7 @@ fn check_no_releases_env_cannot_check() {
 }
 
 // covers: UC-instance-lifecycle-35
+#[test_id(tqxnkb1)]
 #[test]
 fn check_not_latest_and_manifest_mismatch_both_fire() {
     let f = Fake::default();
@@ -296,6 +298,7 @@ fn check_not_latest_and_manifest_mismatch_both_fire() {
 }
 
 // covers: UC-instance-lifecycle-35
+#[test_id(t9kbjof)]
 #[test]
 fn check_clean_when_tag_matches_and_is_latest() {
     let f = Fake::default();
@@ -319,6 +322,7 @@ fn check_clean_when_tag_matches_and_is_latest() {
 /// `.tag` sidecars (not a git repo) — `resolve_all_tags` must read those sidecar files
 /// directly, never dial `git tag -l` against the directory (which returns nothing and was
 /// read as "no release tags found", caught live by testenv's "local-dir" cases, sp-yyk47).
+#[test_id(th3mgtq)]
 #[test]
 fn resolve_all_tags_reads_local_tag_sidecars_not_git_tag() {
     let root = testkit::TempDir::new("skew-local-sidecars");
@@ -345,6 +349,7 @@ fn resolve_all_tags_reads_local_tag_sidecars_not_git_tag() {
 /// against, so this is not a transient "could not check" (CANNOT-VERIFY, exit 3); the
 /// question does not apply on this kind of install at all, and must say so on stdout at
 /// exit 0 -- never a silent pass, and never the escalation path either.
+#[test_id(td9caua)]
 #[test]
 fn check_no_harness_checkout_is_not_applicable_not_cannot_verify() {
     let f = Fake::default();
@@ -363,6 +368,7 @@ fn check_no_harness_checkout_is_not_applicable_not_cannot_verify() {
 
 // ============================================================================ check_local()
 
+#[test_id(twtx0ae)]
 #[test]
 fn check_local_tampered_and_behind_both_fire() {
     let f = Fake::default();
@@ -385,6 +391,7 @@ fn check_local_tampered_and_behind_both_fire() {
 
 /// BY NAME, NOT BY PATH — same scar as `refresh_queue_local_resolves_landref_by_name_never_by_path`,
 /// for `check_local`'s own call site.
+#[test_id(tejvmpp)]
 #[test]
 fn check_local_resolves_landref_by_name_never_by_path() {
     let f = Fake::default();
@@ -403,6 +410,7 @@ fn check_local_resolves_landref_by_name_never_by_path() {
     assert!(f.stdout_joined().contains("in effect"));
 }
 
+#[test_id(ti49b98)]
 #[test]
 fn check_local_hotfix_is_clean() {
     let f = Fake::default();
@@ -419,6 +427,7 @@ fn check_local_hotfix_is_clean() {
     assert!(f.stdout_joined().contains("recorded standing hotfix"));
 }
 
+#[test_id(tutlpgr)]
 #[test]
 fn check_local_unresolvable_divergence_is_cannot_verify() {
     let f = Fake::default();
@@ -437,6 +446,7 @@ fn check_local_unresolvable_divergence_is_cannot_verify() {
 // ============================================================================ foreign()
 
 // covers: UC-instance-lifecycle-36
+#[test_id(t5dins9)]
 #[test]
 fn foreign_override_env_exempts() {
     let f = Fake::default();
@@ -444,6 +454,7 @@ fn foreign_override_env_exempts() {
     assert_eq!(foreign(&f, "some/repo", "base", "ref"), 0);
 }
 
+#[test_id(tli08q8)]
 #[test]
 fn foreign_missing_args_refuses() {
     let f = Fake::default();
@@ -451,6 +462,7 @@ fn foreign_missing_args_refuses() {
 }
 
 // covers: UC-instance-lifecycle-36
+#[test_id(tgiahti)]
 #[test]
 fn foreign_exempts_own_repo() {
     let f = Fake::default();
@@ -458,6 +470,7 @@ fn foreign_exempts_own_repo() {
     assert_eq!(foreign(&f, "harness", "base", "ref"), 0);
 }
 
+#[test_id(tmuympx)]
 #[test]
 fn foreign_no_copy_in_ref_allows() {
     let f = Fake::default();
@@ -467,6 +480,7 @@ fn foreign_no_copy_in_ref_allows() {
 }
 
 // covers: UC-instance-lifecycle-36
+#[test_id(ts8shs9)]
 #[test]
 fn foreign_refuses_a_change_inside_the_vendored_copy() {
     let f = Fake::default();
@@ -482,6 +496,7 @@ fn foreign_refuses_a_change_inside_the_vendored_copy() {
     assert!(f.stderr_joined().contains("REFUSED by skew"));
 }
 
+#[test_id(t4ikl17)]
 #[test]
 fn foreign_dot_directory_matches_every_changed_file() {
     let f = Fake::default();
@@ -493,6 +508,7 @@ fn foreign_dot_directory_matches_every_changed_file() {
     assert_eq!(foreign(&f, "some/repo", "base", "ref"), 1);
 }
 
+#[test_id(tk5psvw)]
 #[test]
 fn foreign_change_outside_the_copy_allows() {
     let f = Fake::default();
@@ -506,6 +522,7 @@ fn foreign_change_outside_the_copy_allows() {
 
 // ============================================================================ copies()
 
+#[test_id(tv43gei)]
 #[test]
 fn copies_found_reports_self_and_second() {
     let f = Fake::default();
@@ -523,6 +540,7 @@ fn copies_found_reports_self_and_second() {
     assert!(out.contains("b repo-b vendor/h second"));
 }
 
+#[test_id(tkekhgi)]
 #[test]
 fn copies_none_found_is_a_finding() {
     let f = Fake::default();
@@ -531,6 +549,7 @@ fn copies_none_found_is_a_finding() {
 
 // ============================================================================ gap()
 
+#[test_id(tlvbryn)]
 #[test]
 fn gap_clean() {
     let f = Fake::default();
@@ -545,6 +564,7 @@ fn gap_clean() {
     assert_eq!(gap(&f, None), EXIT_OK);
 }
 
+#[test_id(tquppdn)]
 #[test]
 fn gap_not_a_checkout_cannot_check() {
     let f = Fake::default();
@@ -554,6 +574,7 @@ fn gap_not_a_checkout_cannot_check() {
 }
 
 // covers: UC-instance-lifecycle-37
+#[test_id(t3qfe6p)]
 #[test]
 fn gap_behind_is_a_finding() {
     let f = Fake::default();
@@ -570,6 +591,7 @@ fn gap_behind_is_a_finding() {
 
 // ============================================================================ escalate()
 
+#[test_id(tho40c3)]
 #[test]
 fn escalate_sends_once_per_condition_per_run() {
     let f = Fake::default();
@@ -581,6 +603,7 @@ fn escalate_sends_once_per_condition_per_run() {
     assert!(f.stdout_joined().contains("condition already reported"));
 }
 
+#[test_id(t2ffkcu)]
 #[test]
 fn escalate_distinct_conditions_both_send() {
     let f = Fake::default();
@@ -589,6 +612,7 @@ fn escalate_distinct_conditions_both_send() {
     assert_eq!(f.mail_calls.borrow().len(), 2);
 }
 
+#[test_id(t77edlb)]
 #[test]
 fn escalate_picks_the_local_behind_default_action() {
     let f = Fake::default();
@@ -614,6 +638,7 @@ fn behind_latest_release() -> Fake {
 }
 
 // covers: UC-operator-channel-25
+#[test_id(t7u21va)]
 #[test]
 fn an_escalation_asks_a_question_that_carries_its_default() {
     let f = behind_latest_release();
@@ -628,6 +653,7 @@ fn an_escalation_asks_a_question_that_carries_its_default() {
 }
 
 // covers: UC-operator-channel-25
+#[test_id(tr0lvkt)]
 #[test]
 fn a_mailer_that_refuses_is_reported_with_its_output_and_the_finding_still_exits_one() {
     let f = behind_latest_release();
@@ -639,6 +665,7 @@ fn a_mailer_that_refuses_is_reported_with_its_output_and_the_finding_still_exits
 }
 
 // covers: UC-operator-channel-25
+#[test_id(tea8sbt)]
 #[test]
 fn a_check_without_escalate_prints_the_finding_and_mails_nobody() {
     let f = behind_latest_release();
@@ -650,6 +677,7 @@ fn a_check_without_escalate_prints_the_finding_and_mails_nobody() {
 
 // ============================================================================ refresh()
 
+#[test_id(te27n35)]
 #[test]
 fn refresh_queue_local_match_is_clean() {
     let f = Fake::default();
@@ -671,6 +699,7 @@ fn refresh_queue_local_match_is_clean() {
 /// key, must never be consulted. Caught live by testenv against sp-yyk47's merged tree —
 /// the first port used `w.landref(repo)` here and silently resolved the wrong ref whenever
 /// a caller's path-derived guess disagreed with the name already in hand.
+#[test_id(tov80jj)]
 #[test]
 fn refresh_queue_local_resolves_landref_by_name_never_by_path() {
     let f = Fake::default();
@@ -693,6 +722,7 @@ fn refresh_queue_local_resolves_landref_by_name_never_by_path() {
     assert!(f.mail_calls.borrow().is_empty());
 }
 
+#[test_id(tqud69e)]
 #[test]
 fn refresh_queue_local_mismatch_escalates_local_skew() {
     let f = Fake::default();
@@ -711,6 +741,7 @@ fn refresh_queue_local_mismatch_escalates_local_skew() {
     assert_eq!(f.mail_calls.borrow().len(), 1);
 }
 
+#[test_id(tu0pa4t)]
 #[test]
 fn refresh_queue_local_mismatch_during_a_land_local_does_not_escalate() {
     let f = Fake::default();
@@ -729,6 +760,7 @@ fn refresh_queue_local_mismatch_during_a_land_local_does_not_escalate() {
     assert!(f.mail_calls.borrow().is_empty());
 }
 
+#[test_id(tm5iedq)]
 #[test]
 fn refresh_queue_local_hotfix_never_resets() {
     let f = Fake::default();
@@ -747,6 +779,7 @@ fn refresh_queue_local_hotfix_never_resets() {
     assert!(f.mail_calls.borrow().is_empty());
 }
 
+#[test_id(t4iy8ey)]
 #[test]
 fn refresh_release_mode_already_at_base() {
     let f = Fake::default();
@@ -761,6 +794,7 @@ fn refresh_release_mode_already_at_base() {
     assert!(f.stdout_joined().contains("already at"));
 }
 
+#[test_id(tpcep3p)]
 #[test]
 fn refresh_release_mode_builds_and_activates() {
     let f = Fake::default();
@@ -778,6 +812,7 @@ fn refresh_release_mode_builds_and_activates() {
     assert_eq!(f.overrides_applied.borrow().len(), 1);
 }
 
+#[test_id(t7fim1m)]
 #[test]
 fn refresh_release_failure_logs_releases_first_error_line() {
     let f = Fake::default();
@@ -793,6 +828,7 @@ fn refresh_release_failure_logs_releases_first_error_line() {
     assert!(f.stdout_joined().contains("of newsha failed: build failed"));
 }
 
+#[test_id(t21j84b)]
 #[test]
 fn refresh_product_repo_never_calls_release() {
     let f = Fake::default();
@@ -814,6 +850,7 @@ fn refresh_product_repo_never_calls_release() {
     assert!(!out.contains("release build"), "{out}");
 }
 
+#[test_id(tk2ncu6)]
 #[test]
 fn refresh_checkout_mode_declines_off_base_branch() {
     let f = Fake::default();
@@ -829,6 +866,7 @@ fn refresh_checkout_mode_declines_off_base_branch() {
 }
 
 // covers: UC-instance-lifecycle-37
+#[test_id(tizpmdw)]
 #[test]
 fn refresh_checkout_mode_stages_and_swaps() {
     let f = Fake::default();
@@ -858,6 +896,7 @@ fn refresh_checkout_mode_stages_and_swaps() {
 // ============================================================================ units()
 
 // covers: UC-instance-lifecycle-34
+#[test_id(th9s2y6)]
 #[test]
 fn units_installer_missing_cannot_check() {
     let f = Fake::default();
@@ -868,6 +907,7 @@ fn units_installer_missing_cannot_check() {
 }
 
 // covers: UC-instance-lifecycle-34
+#[test_id(tpam9am)]
 #[test]
 fn units_clean() {
     let f = Fake::default();
@@ -879,6 +919,7 @@ fn units_clean() {
 }
 
 // covers: UC-instance-lifecycle-34
+#[test_id(t6vjtyn)]
 #[test]
 fn units_stale_is_a_finding() {
     let f = Fake::default();
@@ -893,6 +934,7 @@ fn units_stale_is_a_finding() {
 /// SPIRA_INSTALL_SH, when set, is an explicit pin that wins over a PATH lookup — matching
 /// skew.sh's own fix (sp-31dm0): an operator who built units-install somewhere non-standard
 /// must be able to point skew at it without touching PATH.
+#[test_id(tipup3l)]
 #[test]
 fn units_spira_install_sh_env_wins_over_path() {
     let f = Fake::default();
@@ -909,6 +951,7 @@ fn units_spira_install_sh_env_wins_over_path() {
 /// something that exists but is not executable (or does not exist at all) is exactly as
 /// unanswerable as no pin and no PATH hit; it must never be handed to install_diff and
 /// reported as a "finding" (exit 1) instead of CANNOT_CHECK (exit 3).
+#[test_id(tza7qtr)]
 #[test]
 fn units_spira_install_sh_set_but_not_executable_cannot_check() {
     let f = Fake::default();
@@ -933,6 +976,7 @@ fn dirty_checkout(dirty: &str) -> Fake {
     f
 }
 
+#[test_id(tx2tash)]
 #[test]
 fn refresh_checkout_with_every_tracked_file_deleted_is_restored_not_stashed() {
     let f = dirty_checkout(" D a.sh\n D b/c.sh\n");
@@ -944,6 +988,7 @@ fn refresh_checkout_with_every_tracked_file_deleted_is_restored_not_stashed() {
     assert!(!out.contains("declined"), "{out}");
 }
 
+#[test_id(t1sb3an)]
 #[test]
 fn refresh_declines_naming_the_restore_failure() {
     let f = dirty_checkout(" D a.sh\n");
@@ -952,6 +997,7 @@ fn refresh_declines_naming_the_restore_failure() {
     assert!(f.stdout_joined().contains("restoring them failed: fatal: Unable to create index.lock"));
 }
 
+#[test_id(tt40eqq)]
 #[test]
 fn refresh_declines_naming_the_stash_failure_for_a_mixed_dirty_tree() {
     let f = dirty_checkout(" D a.sh\n M b.sh\n");
@@ -974,6 +1020,7 @@ fn declining_checkout() -> Fake {
     f
 }
 
+#[test_id(tt8vu6r)]
 #[test]
 fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_third_pass() {
     let f = declining_checkout();
@@ -994,6 +1041,7 @@ fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_th
     assert!(f.removed.borrow().is_empty(), "the dirt is never touched");
 }
 
+#[test_id(tqk6vin)]
 #[test]
 fn refresh_clears_a_stale_lock_with_no_live_git_before_stashing() {
     let f = declining_checkout();
@@ -1003,6 +1051,7 @@ fn refresh_clears_a_stale_lock_with_no_live_git_before_stashing() {
     assert!(f.stdout_joined().contains("removed stale index.lock"), "{}", f.stdout_joined());
 }
 
+#[test_id(tg2kh4m)]
 #[test]
 fn refresh_leaves_a_fresh_or_owned_lock_alone() {
     for (age, live) in [(30, false), (86_400, true)] {
@@ -1014,6 +1063,7 @@ fn refresh_leaves_a_fresh_or_owned_lock_alone() {
     }
 }
 
+#[test_id(tr3ealg)]
 #[test]
 fn refresh_escalates_a_lock_it_cannot_clear_once_not_every_pass() {
     let f = declining_checkout();
@@ -1027,6 +1077,7 @@ fn refresh_escalates_a_lock_it_cannot_clear_once_not_every_pass() {
     assert!(rows[0].1.contains("Permission denied"));
 }
 
+#[test_id(tw8xgks)]
 #[test]
 fn refresh_decline_does_not_call_a_fresh_or_owned_lock_stale() {
     let f = declining_checkout();
@@ -1039,6 +1090,7 @@ fn refresh_decline_does_not_call_a_fresh_or_owned_lock_stale() {
     assert!(!f.stdout_joined().contains("STALE-INDEX-LOCK"));
 }
 
+#[test_id(terutka)]
 #[test]
 fn refresh_success_resets_the_decline_streak() {
     let f = declining_checkout();
@@ -1052,6 +1104,7 @@ fn refresh_success_resets_the_decline_streak() {
     assert!(f.run_log.borrow().is_empty(), "two passes after a reset is not three in a row");
 }
 
+#[test_id(t1v8amt)]
 #[test]
 fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished() {
     let f = declining_checkout();
@@ -1067,6 +1120,7 @@ fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished()
     assert_eq!(rows, 2);
 }
 
+#[test_id(tpznggy)]
 #[test]
 fn the_refresh_stamp_is_read_from_the_clock_in_process() {
     assert_eq!(crate::real::stamp_of(1_793_166_343), "20261028T054543Z");
@@ -1076,6 +1130,7 @@ fn the_refresh_stamp_is_read_from_the_clock_in_process() {
 // ============================================================================ plan cells 35-37
 
 // covers: UC-instance-lifecycle-35
+#[test_id(tauymgc)]
 #[test]
 fn check_cannot_check_without_current_or_manifest_and_reads_artifact_tags_through_gh() {
     let f = Fake::default();
@@ -1106,6 +1161,7 @@ fn check_cannot_check_without_current_or_manifest_and_reads_artifact_tags_throug
 }
 
 // covers: UC-instance-lifecycle-36
+#[test_id(t45sike)]
 #[test]
 fn init_guard_reports_could_not_check_when_config_cannot_resolve() {
     assert_eq!(init_verdict(false), Some(EXIT_CANNOT_CHECK));
@@ -1113,6 +1169,7 @@ fn init_guard_reports_could_not_check_when_config_cannot_resolve() {
 }
 
 // covers: UC-instance-lifecycle-37
+#[test_id(tnwzjsj)]
 #[test]
 fn refresh_stashes_dirty_files_and_advances_with_no_lease_consulted() {
     let f = dirty_checkout(" M conf.sh\n");
@@ -1124,6 +1181,7 @@ fn refresh_stashes_dirty_files_and_advances_with_no_lease_consulted() {
 }
 
 // covers: UC-instance-lifecycle-35
+#[test_id(trh98ub)]
 #[test]
 fn check_cannot_check_when_gh_cannot_list_the_forge_releases_and_says_why() {
     let f = Fake::default();

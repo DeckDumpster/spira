@@ -1069,6 +1069,7 @@ pub fn run_committer() {
 mod tests {
     use super::*;
 
+    #[test_id(tonbytt)]
     #[test]
     fn a_failed_writer_build_is_tried_again_and_a_built_writer_is_kept() {
         let cell: Built<u32> = Built::new();
@@ -1083,6 +1084,7 @@ mod tests {
         assert_eq!(builds.get(), 2);
     }
 
+    #[test_id(tz26imh)]
     #[test]
     fn the_kv_upsert_moves_a_number_forward_only_and_names_the_prefixed_key() {
         let sql = kv_upsert_sql("`beads`", "spira.planning_watermark", 7);
@@ -1117,6 +1119,7 @@ mod tests {
         }
     }
 
+    #[test_id(tzivjd4)]
     #[test]
     fn only_the_served_verbs_are_mutations() {
         for argv in [
@@ -1147,6 +1150,7 @@ mod tests {
         assert!(Mutation::of(&v(&["update", "sp-a", "--add-label", "x", "--priority", "1"]), None).is_some());
     }
 
+    #[test_id(tfc0up5)]
     #[test]
     fn every_write_the_door_and_the_lanes_make_is_a_mutation() {
         for (argv, body) in [
@@ -1181,6 +1185,7 @@ mod tests {
         }
     }
 
+    #[test_id(tcvjlz5)]
     #[test]
     fn a_verb_the_port_does_not_make_exactly_stays_bds() {
         for argv in [&["set-state", "sp-a", "branch="][..], &["set-state", "sp-a", "=x"], &["duplicate", "sp-a"], &["gate", "check"], &["gate", "discover", "--branch", "b", "--repo", "r"], &["kv", "set", "k"], &["remember", "--key"]] {
@@ -1189,6 +1194,7 @@ mod tests {
         assert!(Mutation::of(&v(&["recompute-blocked"]), Some("stdin")).is_none());
     }
 
+    #[test_id(t09dwwg)]
     #[test]
     fn a_duplicate_is_a_closed_bead_with_a_duplicates_edge_and_no_dependency_event() {
         let s = script(&["duplicate", "sp-a", "--of", "sp-b"], None);
@@ -1197,6 +1203,7 @@ mod tests {
         assert!(s.iter().any(|q| q.starts_with("UPDATE `beads`.issues SET status = 'closed'")), "{s:?}");
     }
 
+    #[test_id(tjt3rmo)]
     #[test]
     fn a_recompute_settles_every_bead_and_not_only_a_scope() {
         let s = blocked_passes("`d`", None, 2);
@@ -1205,6 +1212,7 @@ mod tests {
         assert!(blocked_passes("`d`", Some("SELECT 'x'"), 1).iter().all(|q| q.contains("i.id IN (SELECT 'x')")));
     }
 
+    #[test_id(tebprls)]
     #[test]
     fn a_create_reads_its_flags_as_bd_does() {
         let c = |args: &[&str], body| match Mutation::of(&v(&[&["create"], args].concat()), body).unwrap().ops.remove(0) {
@@ -1222,11 +1230,13 @@ mod tests {
         assert_eq!(wired.deps, [("blocks".to_string(), "sp-b".to_string()), ("relates-to".to_string(), "sp-c".to_string())]);
     }
 
+    #[test_id(tcfa1uj)]
     #[test]
     fn a_priority_is_a_digit_or_p_and_a_digit() {
         assert_eq!([priority_of("2"), priority_of("P0"), priority_of("p4"), priority_of("5"), priority_of("high"), priority_of("")], [Some(2), Some(0), Some(4), None, None, None]);
     }
 
+    #[test_id(t2jyl8g)]
     #[test]
     fn a_close_files_one_event_and_the_close_columns_only_for_a_bead_that_is_open() {
         let s = script(&["close", "sp-a", "--reason", "it's done"], None);
@@ -1242,6 +1252,7 @@ mod tests {
         assert!(!t.iter().any(|q| q.contains("leases") || q.contains("local_metadata")), "{t:?}");
     }
 
+    #[test_id(tpgkv20)]
     #[test]
     fn a_dependency_edge_is_keyed_as_bd_keys_it_and_filed_once() {
         let s = script(&["dep", "add", "sp-a", "sp-b", "--type", "discovered-from"], None);
@@ -1258,6 +1269,7 @@ mod tests {
         assert!(parent.iter().any(|q| q.starts_with("REPLACE INTO `beads`.local_metadata")));
     }
 
+    #[test_id(tzzxqy9)]
     #[test]
     fn a_relate_adds_both_edges_and_a_supersede_adds_one_without_an_event_and_closes() {
         let r = script(&["dep", "relate", "sp-a", "sp-b"], None);
@@ -1270,6 +1282,7 @@ mod tests {
         assert!(s.iter().any(|q| q.starts_with("UPDATE `beads`.issues SET status = 'closed'")));
     }
 
+    #[test_id(txl1md1)]
     #[test]
     fn a_status_and_an_assignee_edit_make_one_event_and_a_reopen_clears_what_a_close_set() {
         let s = script(&["update", "sp-a", "--status", "open", "--assignee", ""], None);
@@ -1286,6 +1299,7 @@ mod tests {
         assert!(!d.iter().any(|q| q.contains("leases")), "a description edit holds no lease");
     }
 
+    #[test_id(t7c7o45)]
     #[test]
     fn a_create_inserts_the_row_its_created_event_its_labels_and_its_edges_in_one_transaction() {
         let m = Mutation::of(&v(&["create", "T", "--parent", "sp-p", "-l", "x"]), None).unwrap();
@@ -1304,6 +1318,7 @@ mod tests {
         assert!(s[1].starts_with("REPLACE INTO `beads`.local_metadata"));
     }
 
+    #[test_id(t5hogro)]
     #[test]
     fn a_create_prints_what_bd_prints_for_the_same_flags() {
         let c = |args: &[&str]| Mutation::of(&v(&[&["create"], args].concat()), None).unwrap().create().unwrap().clone();
@@ -1316,6 +1331,7 @@ mod tests {
         assert!(c(&["T"]).stdout("sp-x1", &[], 0).starts_with("✓ Created issue: sp-x1"));
     }
 
+    #[test_id(tfgd8bw)]
     #[test]
     fn a_label_add_is_one_transaction_that_records_the_event_before_the_row_and_leaves_the_issue_row_alone() {
         let s = script(&["label", "add", "sp-a", "overseer"], None);
@@ -1330,6 +1346,7 @@ mod tests {
         );
     }
 
+    #[test_id(t402tw9)]
     #[test]
     fn a_label_remove_and_an_update_that_carries_it_make_the_same_changes() {
         let a = script(&["label", "remove", "sp-a", "branch:spira/sp-a"], None);
@@ -1338,6 +1355,7 @@ mod tests {
         assert!(a[2].starts_with("DELETE FROM `beads`.labels WHERE issue_id = 'sp-a' AND label = 'branch:spira/sp-a'"));
     }
 
+    #[test_id(toqnqfz)]
     #[test]
     fn a_note_appends_a_comment_inserts_metadata_merges_and_priority_sets() {
         let n = script(&["note", "sp-a", "--stdin"], Some("body\n"));
@@ -1351,6 +1369,7 @@ mod tests {
         assert_eq!(p[3], "UPDATE `beads`.issues SET priority = 2 WHERE id = 'sp-a'");
     }
 
+    #[test_id(t0o2faq)]
     #[test]
     fn an_update_event_carries_the_issue_as_it_was_and_the_value_it_became() {
         for s in [script(&["note", "sp-a", "t"], None), script(&["update", "sp-a", "--set-metadata", "k=v"], None), script(&["update", "sp-a", "-p", "1"], None)] {
@@ -1362,6 +1381,7 @@ mod tests {
         }
     }
 
+    #[test_id(t4stqo9)]
     #[test]
     fn a_metadata_number_boolean_or_null_is_stored_as_that_json_value_and_anything_else_as_text() {
         for (v, json) in [("5", true), ("-3", true), ("1.5", true), ("true", true), ("null", true), ("hi", false), ("\"q\"", false), ("[1,2]", false), ("{\"x\":1}", false), (" 5", false), ("", false)] {
@@ -1369,6 +1389,7 @@ mod tests {
         }
     }
 
+    #[test_id(ttzca40)]
     #[test]
     fn a_quote_in_a_note_cannot_end_the_string() {
         let s = script(&["note", "sp-a", "--stdin"], Some("x'; DROP TABLE issues; --"));
@@ -1376,6 +1397,7 @@ mod tests {
         assert!(!s[3].contains("x'; DROP"));
     }
 
+    #[test_id(tv5rirn)]
     #[test]
     fn a_failure_on_the_second_statement_sends_no_commit() {
         let s = script(&["label", "add", "sp-a", "x"], None);
@@ -1385,6 +1407,7 @@ mod tests {
         assert!(!tx.sent.iter().any(|q| q == "COMMIT"));
     }
 
+    #[test_id(t4upfsn)]
     #[test]
     fn writes_owed_before_the_committer_wakes_cost_one_commit() {
         let c = Committer::new();
@@ -1395,6 +1418,7 @@ mod tests {
         assert!(!*c.owed.lock().unwrap(), "one take settles every write owed so far");
     }
 
+    #[test_id(t3tedfw)]
     #[test]
     fn a_conflict_retries_once_then_gives_up() {
         let s = script(&["label", "add", "sp-a", "x"], None);

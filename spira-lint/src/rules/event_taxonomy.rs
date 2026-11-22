@@ -172,6 +172,7 @@ mod tests {
         EventTaxonomy.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
+    #[test_id(tls1fjd)]
     #[test]
     fn a_planted_undeclared_kind_is_caught_and_a_declared_one_is_not() {
         let t = TempDir::new("ev");
@@ -186,6 +187,7 @@ mod tests {
         );
     }
 
+    #[test_id(tuwtiv1)]
     #[test]
     fn declared_kinds_must_fit_the_column() {
         assert!(kind_valid("dwarf.claimed").is_ok());
@@ -201,6 +203,7 @@ mod tests {
         assert_eq!(got, vec!["event-taxonomy: spira-lint/event-kinds:6: kind 'Bad.Kind': not lowercase dotted segments"]);
     }
 
+    #[test_id(tyg17np)]
     #[test]
     fn an_unwired_call_site_is_caught() {
         let t = TempDir::new("ev-wire");
@@ -218,6 +221,7 @@ mod tests {
     // lib.sh will eventually retire its own shell call sites the same way. The positive
     // control must not fire just because the shell side of the taxonomy went fully native;
     // the WIRED Rust sites prove the matcher measures something on their own.
+    #[test_id(tf7c1ql)]
     #[test]
     fn wired_rust_sites_alone_satisfy_the_positive_control() {
         let t = TempDir::new("ev-rust-only");
@@ -233,6 +237,7 @@ mod tests {
         assert_eq!(run(&t, files, &[]), Ok(vec![]));
     }
 
+    #[test_id(tpcxcm8)]
     #[test]
     fn no_call_site_at_all_is_a_refusal_not_a_pass() {
         let t = TempDir::new("ev-none");

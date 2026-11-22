@@ -74,6 +74,7 @@ fn run(seed: u64) -> Run {
     (trace(&*j), jobs.0.load(Ordering::SeqCst))
 }
 
+#[test_id(tu8tqlb)]
 #[test]
 fn scripted_submissions_land_at_their_virtual_times_and_effects_run_synchronously() {
     let (t, jobs) = run(7);
@@ -86,11 +87,13 @@ fn scripted_submissions_land_at_their_virtual_times_and_effects_run_synchronousl
     assert_eq!(ticked, ["0", &DAY.to_string(), &(2 * DAY).to_string(), &(3 * DAY).to_string()], "the clock jumps from timer to timer across days");
 }
 
+#[test_id(tafx5r0)]
 #[test]
 fn same_seed_same_trace() {
     assert_eq!(run(11), run(11));
 }
 
+#[test_id(tyn0plj)]
 #[test]
 fn a_reply_hears_acceptance_and_a_stopped_host_drops_it() {
     let (mem, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -110,6 +113,7 @@ fn a_reply_hears_acceptance_and_a_stopped_host_drops_it() {
     assert!(late_rx.try_recv().is_err(), "a host that stopped first drops the reply: the sender reads it as not accepted");
 }
 
+#[test_id(tug92pc)]
 #[test]
 fn a_reply_waits_for_the_turn_that_handles_its_event_to_commit() {
     let (mem, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -122,6 +126,7 @@ fn a_reply_waits_for_the_turn_that_handles_its_event_to_commit() {
     assert!(bodies(&*mem, "pong").len() == 1);
 }
 
+#[test_id(t73olsu)]
 #[test]
 fn a_reply_hears_the_refusal_when_the_store_refuses_the_turn() {
     let clock = VirtualClock::new(0);
@@ -143,6 +148,7 @@ impl Source for Bus {
     fn run(self: Box<Self>, _: mpsc::Sender<Submit>) {}
 }
 
+#[test_id(tgahczo)]
 #[test]
 fn a_source_that_reads_the_world_is_refused_under_virtual_time_and_names_are_unique() {
     let clock = VirtualClock::new(0);
@@ -154,6 +160,7 @@ fn a_source_that_reads_the_world_is_refused_under_virtual_time_and_names_are_uni
     assert!(err.0.contains("bus") && !err.0.contains("script"), "{err}");
 }
 
+#[test_id(tj00xsx)]
 #[test]
 fn a_scripted_source_on_its_own_thread_sends_when_its_clock_arrives() {
     let clock = VirtualClock::new(0);
@@ -169,6 +176,7 @@ fn a_scripted_source_on_its_own_thread_sends_when_its_clock_arrives() {
     assert!(rx.blocking_recv().is_none(), "the source ends and drops its sender");
 }
 
+#[test_id(tolj6fj)]
 #[tokio::test]
 async fn the_wall_driver_runs_sources_beside_submissions_and_answers_the_reply() {
     let j: Arc<dyn Journal> = MemJournal::new();
@@ -187,6 +195,7 @@ async fn the_wall_driver_runs_sources_beside_submissions_and_answers_the_reply()
     assert_eq!(bodies(&*j, "pong").len(), 1);
 }
 
+#[test_id(tfus656)]
 #[tokio::test]
 async fn the_virtual_driver_takes_queued_submissions_and_stops_at_its_horizon() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
@@ -209,6 +218,7 @@ impl EffectRunner for Named {
     }
 }
 
+#[test_id(ttu2xj4)]
 #[test]
 fn settle_names_the_registered_task_to_the_runner() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));

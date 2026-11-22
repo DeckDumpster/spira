@@ -127,12 +127,14 @@ mod tests {
         f(&full_view(true)).union(&f(&full_view(false))).cloned().collect()
     }
 
+    #[test_id(t5dvm9d)]
     #[test]
     fn the_pane_and_the_page_draw_exactly_the_registry() {
         let (pane, web) = (both(pane_keys), both(web_keys));
         assert_eq!(violations(&registry(), &pane, &web, &allow()), Vec::<String>::new());
     }
 
+    #[test_id(tqbr9kq)]
     #[test]
     fn a_section_on_one_surface_only_is_a_violation() {
         let (pane, web) = (both(pane_keys), both(web_keys));
@@ -148,6 +150,7 @@ mod tests {
         assert!(v.iter().any(|m| m.contains("no reason")), "{v:?}");
     }
 
+    #[test_id(tesgu21)]
     #[test]
     fn every_section_names_a_view_field_the_api_serves() {
         let api = serde_json::to_value(full_view(true)).unwrap();
@@ -156,6 +159,7 @@ mod tests {
         }
     }
 
+    #[test_id(tc4jicw)]
     #[test]
     fn work_in_flight_is_drawn_on_both_surfaces_and_unread_is_not_idle() {
         let v = full_view(true);

@@ -5,6 +5,7 @@ use super::*;
 
 // ---- the skip contract (DESIGN.md §3.7): fail closed, not open --------------------------
 
+#[test_id(tmhv2vv)]
 #[test]
 fn the_verdict_line_records_slot_wait_and_suite_time_separately() {
     let timed = Finish { timing: Some(Box::new((1212, 62))), ..Finish::green(1) };
@@ -13,6 +14,7 @@ fn the_verdict_line_records_slot_wait_and_suite_time_separately() {
     assert_eq!(fault.verdict_line(), "VERDICT FAULT rc=2 ran=0 reason=over-cap slot_wait=7s suite=600s");
 }
 
+#[test_id(trof4xj)]
 #[test]
 fn verdict_lines() {
     assert_eq!(Finish::green(3).verdict_line(), "VERDICT GREEN ran=3");
@@ -126,6 +128,7 @@ fn verdict_lines() {
 
 // ---------------------------------------------------------------- admission (sp-f4ig1)
 
+#[test_id(tzm1x5n)]
 #[test]
 fn a_green_run_records_a_full_suite_pass_only_when_it_selected_every_suite() {
     use spira_config::local_pass::{check, Kind, Verdict};
@@ -142,12 +145,14 @@ fn a_green_run_records_a_full_suite_pass_only_when_it_selected_every_suite() {
     assert_eq!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0"), Ok(Verdict::Passed));
 }
 
+#[test_id(t85ceeg)]
 #[test]
 fn a_run_with_no_warm_slot_and_no_deadline_never_sweeps_inline() {
     assert_eq!(sweep_placement(None), SweepPlacement::Detached);
     assert_eq!(sweep_placement(Some(0)), SweepPlacement::WarmRefill);
 }
 
+#[test_id(ttitzbc)]
 #[test]
 fn a_diff_selected_run_with_tiers_excluding_t1_runs_a_t1_suite_whose_covers_names_the_changed_file() {
     use suite_select::{corpus::{Corpus, Suite}, select::{select, Buckets, Change}};
@@ -400,6 +405,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         (left, lines)
     }
 
+    #[test_id(td8uaax)]
     #[test]
     fn a_builder_run_with_a_deadline_above_the_suite_cap_is_refused_before_any_slot() {
         let (left, lines) = deadline_run("sp-x", &["--deadline", "3000"]);
@@ -407,6 +413,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(left, ["slot.1"], "only the planted holder's lease may exist");
     }
 
+    #[test_id(tdrxb6s)]
     #[test]
     fn the_refusal_names_the_bead_the_deadline_the_cap_and_the_way_through() {
         let msg = builder_deadline_refusal(Some(3000), 600, Some("sp-x".into())).unwrap();
@@ -415,6 +422,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         }
     }
 
+    #[test_id(tjutywm)]
     #[test]
     fn a_builder_deadline_at_the_cap_or_none_and_a_non_builder_deadline_are_not_refused() {
         for (bead, flags) in [("sp-x", &["--deadline", "600"][..]), ("sp-x", &[][..]), ("", &["--deadline", "3000"][..])] {
@@ -423,6 +431,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         }
     }
 
+    #[test_id(thbo8zs)]
     #[test]
     fn a_share_publish_call_merges_the_kept_share_and_runs_no_container_and_no_verdict() {
         let root = testkit::TempDir::new("testenv-share-publish");
@@ -491,6 +500,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(again.contains("not found: nothing to publish"), "{again}");
     }
 
+    #[test_id(tjnhyc9)]
     #[test]
     fn a_foreign_tier_run_records_each_tier_status_beside_its_results_and_in_the_file_the_caller_named() {
         let root = testkit::TempDir::new("testenv-tier-events");
@@ -549,6 +559,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(kept.suites().get("gate").map(String::as_str), Some("ok"), "{seen}");
     }
 
+    #[test_id(tgiyllr)]
     #[test]
     fn a_suite_the_deny_list_disables_is_preempted_and_the_others_still_run() {
         let list = "disabled\tsuite:test-a.sh\tsp-1\t-\nquarantined\tunit:x y\tsp-2\t-\n";
@@ -558,6 +569,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(slept, 1, "test-b.sh went on to the pool wait; last={last}");
     }
 
+    #[test_id(tc6msgp)]
     #[test]
     fn a_quarantined_deny_row_runs_the_suite_and_a_tree_suite_state_row_is_not_read() {
         let one = |deny: &str, state: Option<&str>| run_with_deny("test", "test-a.sh", Some(deny), state);
@@ -573,6 +585,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(preempted(&lines), "disabled and quarantined together disable: {lines:?}");
     }
 
+    #[test_id(tf00fqv)]
     #[test]
     fn tests_without_suites_select_the_unit_tier_alone() {
         let (last, _, _, lines) = run_flags("test", "unit-tests.sh", None, None, &["--tests", "foo"], "");
@@ -580,6 +593,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(lines.iter().any(|l| l.contains("the unit-tests tier alone")), "{lines:?}");
     }
 
+    #[test_id(tpgowvg)]
     #[test]
     fn an_explicit_suite_list_without_the_unit_tier_is_refused_naming_both_exits() {
         let (last, _, _, _) = run_flags("test", "test-a.sh", None, None, &["--suites", "test-a.sh", "--tests", "foo"], "");
@@ -588,6 +602,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(m.contains("add unit-tests to --suites") && m.contains("drop --suites"), "{m}");
     }
 
+    #[test_id(t81n0yb)]
     #[test]
     fn tests_on_a_diff_touching_no_crate_run_the_crates_that_hold_them() {
         let (last, _, _, lines) = run_flags("test", "unit-tests.sh", None, None, &["--tests", "held_test_name"], "held_test_name");
@@ -595,6 +610,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(lines.iter().any(|l| l.contains("the diff touches no crate; 1 workspace crate(s) hold them: c")), "{lines:?}");
     }
 
+    #[test_id(tlao49l)]
     #[test]
     fn a_malformed_deny_list_faults_the_run_before_any_suite() {
         let (last, _, slept, _) = run_with_deny("test", "test-a.sh", Some("disabled\tsuite:test-a.sh\n"), None);
@@ -602,6 +618,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(slept, 0);
     }
 
+    #[test_id(tpjgxum)]
     #[test]
     fn a_unit_pool_wait_ends_interrupted_on_a_caught_signal_and_leaves_no_waiter_file() {
         let (last, left, slept) = run_cancelled_while_waiting("unit", "unit-tests.sh");
@@ -610,6 +627,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert_eq!(slept, 1, "the wait loop, not an earlier check, ended the run");
     }
 
+    #[test_id(tibk7ci)]
     #[test]
     fn a_test_pool_wait_ends_interrupted_on_a_caught_signal_and_leaves_no_waiter_file() {
         let (last, left, slept) = run_cancelled_while_waiting("test", "test-a.sh");
@@ -698,6 +716,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         (got, after - before)
     }
 
+    #[test_id(t1srnmv)]
     #[test]
     fn a_cached_green_replays_each_suites_recorded_line_before_the_verdict() {
         let (lines, calls) = replay_cached_green(Some("ok 100 334 - batch testenv 0"));
@@ -707,6 +726,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(at < verdict, "{lines:#?}");
     }
 
+    #[test_id(t5vfici)]
     #[test]
     fn a_cached_green_replays_a_skipped_suite_as_skipped() {
         let (lines, calls) = replay_cached_green(Some("skip 100 0 - batch testenv 0"));
@@ -715,6 +735,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(!lines.iter().any(|l| l.contains("test-a.sh") && l.contains(" ok ")), "{lines:#?}");
     }
 
+    #[test_id(tjkmyhx)]
     #[test]
     fn a_cached_green_with_no_suite_record_is_a_miss_and_runs() {
         let (lines, calls) = replay_cached_green(None);
@@ -723,6 +744,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         assert!(calls > 0, "the run did not proceed to the runtime: {lines:#?}");
     }
 
+    #[test_id(t0bvzl5)]
     #[test]
     fn one_missing_record_makes_the_whole_cached_replay_a_miss() {
         let dir = testkit::TempDir::new("testenv-cached-lines");

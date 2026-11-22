@@ -23,7 +23,7 @@ lc_fix_init "$TMP/lc"
 export SPIRA_LC_BIN PATH="$LC_FIX:$HERE:$PATH"
 
 TEST=a_pilgrims_file_followup_files_an_unparented_defect_the_pilgrimage_waits_on
-out="$("$BIN" --exact "work::store_tests::$TEST" 2>&1)"; rc=$?
+out="$("$BIN" --exact "work::store_tests::$TEST::tglei5n" 2>&1)"; rc=$?
 echo "$out" | tail -15
 echo "$out" | grep -q "1 passed" || rc=1
 exit $rc

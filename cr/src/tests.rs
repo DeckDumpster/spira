@@ -107,6 +107,7 @@ fn closed(r: Row, at: u64, how: ClosedAs) -> Row {
     r.closing(at, how, None)
 }
 
+#[test_id(tdi4akr)]
 #[test]
 fn a_fixed_seed_draws_the_same_unit_with_the_same_terms() {
     let p = ports();
@@ -127,6 +128,7 @@ fn a_fixed_seed_draws_the_same_unit_with_the_same_terms() {
     assert_eq!(v["weight"]["total"], 2.0);
 }
 
+#[test_id(tpkund3)]
 #[test]
 fn text_form_names_unit_weight_stratum_seed_and_commit() {
     let o = go(&ports(), &["pick", "--seed", "7"]);
@@ -136,6 +138,7 @@ fn text_form_names_unit_weight_stratum_seed_and_commit() {
     }
 }
 
+#[test_id(tjdhmw5)]
 #[test]
 fn the_seed_defaults_to_the_environment_then_the_clock_and_is_printed() {
     let mut p = ports();
@@ -145,6 +148,7 @@ fn the_seed_defaults_to_the_environment_then_the_clock_and_is_printed() {
     assert_eq!(json(&p, &["pick"]).1["seed"], NOW);
 }
 
+#[test_id(t2gw4az)]
 #[test]
 fn a_module_unit_holds_the_source_its_test_sibling_and_the_integration_test() {
     let (_, v) = json(&ports(), &["pick", "--aim", "demo/src/store.rs"]);
@@ -153,6 +157,7 @@ fn a_module_unit_holds_the_source_its_test_sibling_and_the_integration_test() {
     assert_eq!(v["weight"]["commits"], 2);
 }
 
+#[test_id(t1rmmcp)]
 #[test]
 fn a_trait_unit_holds_the_trait_its_impls_and_the_dyn_caller() {
     let (_, v) = json(&ports(), &["pick", "--aim", "Sink"]);
@@ -182,6 +187,7 @@ fn trait_unit_files(units: &[crate::units::Unit], id: &str) -> Vec<String> {
     units.iter().find(|u| u.id == id).unwrap_or_else(|| panic!("no unit {id}")).files.iter().map(|f| f.path.clone()).collect()
 }
 
+#[test_id(tqii6im)]
 #[test]
 fn a_trait_unit_holds_only_what_resolves_to_that_trait_by_path() {
     let ix = crate::index::Index::build(&two_worlds()).unwrap();
@@ -191,6 +197,7 @@ fn a_trait_unit_holds_only_what_resolves_to_that_trait_by_path() {
     assert_eq!(trait_unit_files(&units, "trait:c/src/ports.rs::World"), ["c/src/ports.rs", "a/src/far.rs"]);
 }
 
+#[test_id(tejcb8b)]
 #[test]
 fn a_trait_is_reached_by_glob_rename_and_crate_root_reexport() {
     let t = two_worlds()
@@ -208,6 +215,7 @@ fn a_trait_is_reached_by_glob_rename_and_crate_root_reexport() {
     assert!(!files.contains(&"b/src/sup.rs".to_string()), "{files:?}");
 }
 
+#[test_id(tzc8sfr)]
 #[test]
 fn a_local_trait_of_the_same_name_shadows_a_glob_and_pub_crate_use_reexports() {
     let t = two_worlds()
@@ -227,6 +235,7 @@ fn a_local_trait_of_the_same_name_shadows_a_glob_and_pub_crate_use_reexports() {
     }
 }
 
+#[test_id(t8vaty8)]
 #[test]
 fn a_boundary_unit_holds_the_caller_and_the_module_it_uses() {
     let p = ports_with(fixture(), vec![row("module", "module:elsewhere", NOW, &[("elsewhere.rs", "x")])], cfg());
@@ -235,6 +244,7 @@ fn a_boundary_unit_holds_the_caller_and_the_module_it_uses() {
     assert_eq!(unit_files(&v), ["demo/src/net.rs", "other/src/util.rs"]);
 }
 
+#[test_id(tgw8kcn)]
 #[test]
 fn aim_followed_by_json_takes_json_as_the_aim_and_help_as_a_value_is_no_help() {
     let o = go(&ports(), &["pick", "--aim", "--json"]);
@@ -243,6 +253,7 @@ fn aim_followed_by_json_takes_json_as_the_aim_and_help_as_a_value_is_no_help() {
     assert!(go(&ports(), &["pick", "--aim", "-h"]).stdout.is_empty());
 }
 
+#[test_id(tne1ly2)]
 #[test]
 fn every_default_exclude_form_weighs_zero() {
     for path in ["a/fixtures/x.rs", "fixtures/x.rs", "a/b.generated.rs", "x/vendor/y/z.rs", "Cargo.lock", "sub/Cargo.lock"] {
@@ -253,6 +264,7 @@ fn every_default_exclude_form_weighs_zero() {
     }
 }
 
+#[test_id(tbbh51t)]
 #[test]
 fn a_script_unit_holds_the_script_and_the_binary_it_runs() {
     let (_, v) = json(&ports(), &["pick", "--aim", "spira/run.sh"]);
@@ -260,6 +272,7 @@ fn a_script_unit_holds_the_script_and_the_binary_it_runs() {
     assert_eq!(unit_files(&v), ["spira/run.sh", "demo/src/main.rs"]);
 }
 
+#[test_id(tplfsb2)]
 #[test]
 fn a_persona_unit_groups_hooks_by_prefix_with_the_prompt() {
     let (_, v) = json(&ports(), &["pick", "--aim", "spira/hooks/alpha-stop.sh"]);
@@ -267,6 +280,7 @@ fn a_persona_unit_groups_hooks_by_prefix_with_the_prompt() {
     assert_eq!(unit_files(&v), ["spira/hooks/alpha-fence.sh", "spira/hooks/alpha-stop.sh", "spira/runes/alpha.md"]);
 }
 
+#[test_id(tx1ecut)]
 #[test]
 fn a_large_file_is_drawn_whole() {
     let p = ports();
@@ -282,6 +296,7 @@ fn a_large_file_is_drawn_whole() {
     }
 }
 
+#[test_id(t88d7ee)]
 #[test]
 fn excluded_paths_are_never_drawn_across_a_hundred_seeds() {
     let loose = Config { exclude: vec![], ..cfg() };
@@ -307,6 +322,7 @@ fn store_row() -> Row {
     row("module", STORE_ID, NOW - 40 * DAY, &[("demo/src/store.rs", &blob_of(STORE.as_bytes()))])
 }
 
+#[test_id(td8lepk)]
 #[test]
 fn a_review_closed_unpublished_leaves_its_unit_never_reviewed() {
     let open = store_row();
@@ -324,6 +340,7 @@ fn a_review_closed_unpublished_leaves_its_unit_never_reviewed() {
     assert_eq!(code, 1, "a published review at the same blob is not drawn: {v}");
 }
 
+#[test_id(tqze4u9)]
 #[test]
 fn a_changed_file_is_drawable_again_and_weighs_by_lines_changed() {
     let open = store_row();
@@ -348,6 +365,7 @@ fn a_changed_file_is_drawable_again_and_weighs_by_lines_changed() {
     assert!((v["weight"]["changed_term"].as_f64().unwrap() - (1.0 + changed / lines)).abs() < 1e-9, "{v}");
 }
 
+#[test_id(tc6s3vw)]
 #[test]
 fn a_renamed_file_keeps_its_review() {
     let mut old = row("module", "module:demo/src/old.rs", NOW - 40 * DAY, &[("demo/src/old.rs", &blob_of(STORE.as_bytes()))]);
@@ -360,6 +378,7 @@ fn a_renamed_file_keeps_its_review() {
     assert_eq!(code, 0, "without the rename the new path is unreviewed: {v}");
 }
 
+#[test_id(tg1y3x0)]
 #[test]
 fn pick_refuses_when_the_ledger_file_is_missing_or_the_repository_unnamed() {
     let mut p = ports();
@@ -374,6 +393,7 @@ fn pick_refuses_when_the_ledger_file_is_missing_or_the_repository_unnamed() {
     assert!(v["error"].as_str().unwrap().contains("SPIRA_CR_REPO_OWNER"), "{v}");
 }
 
+#[test_id(t3orwqe)]
 #[test]
 fn with_only_modules_in_the_ledger_the_next_pick_is_not_a_module() {
     let p = ports_with(fixture(), vec![row("module", "module:elsewhere", NOW - DAY, &[("elsewhere.rs", "x")])], cfg());
@@ -384,6 +404,7 @@ fn with_only_modules_in_the_ledger_the_next_pick_is_not_a_module() {
     }
 }
 
+#[test_id(toabce1)]
 #[test]
 fn an_empty_kind_falls_through_to_the_next() {
     let tree = FixtureTree::new("c").with_file("Cargo.toml", "[workspace]\nmembers = [\"k\"]\n").with_file("k/Cargo.toml", "[package]\nname = \"k\"\n").with_file("k/src/lib.rs", "pub fn a() {}\n");
@@ -395,6 +416,7 @@ fn an_empty_kind_falls_through_to_the_next() {
     assert_eq!(v["stratum"]["kind"], "module");
 }
 
+#[test_id(tj1m6x0)]
 #[test]
 fn aim_resolves_a_path_a_crate_a_type_and_words() {
     let p = ports();
@@ -414,6 +436,7 @@ fn aim_resolves_a_path_a_crate_a_type_and_words() {
     assert!(unit_files(&v).contains(&"other/src/util.rs".to_string()));
 }
 
+#[test_id(t8shrde)]
 #[test]
 fn an_aim_that_matches_nothing_exits_two_and_names_each_resolution() {
     let o = go(&ports(), &["pick", "--aim", "nothing-matches-this"]);
@@ -425,6 +448,7 @@ fn an_aim_that_matches_nothing_exits_two_and_names_each_resolution() {
     assert_eq!((code, v["ok"].clone(), v["tried"].as_array().unwrap().len()), (2, Value::Bool(false), 4));
 }
 
+#[test_id(tln9vf1)]
 #[test]
 fn a_bare_positional_exits_two_naming_aim() {
     let o = go(&ports(), &["pick", "store"]);
@@ -435,6 +459,7 @@ fn a_bare_positional_exits_two_naming_aim() {
     assert!(v["error"].as_str().unwrap().contains("--aim"));
 }
 
+#[test_id(t9e9c6u)]
 #[test]
 fn help_documents_every_flag_and_the_exit_codes() {
     let o = go(&ports(), &["-h"]);
@@ -462,6 +487,7 @@ fn count_ports() -> Ports {
     ports_with(count_tree(), vec![], cfg())
 }
 
+#[test_id(tfqslgb)]
 #[test]
 fn count_totals_every_code_line_skips_comments_and_cuts_the_list_at_the_limit() {
     let o = go(&count_ports(), &["count", "--regex", "hit_", "--limit", "5"]);
@@ -473,6 +499,7 @@ fn count_totals_every_code_line_skips_comments_and_cuts_the_list_at_the_limit() 
     assert_eq!(out.len(), 7);
 }
 
+#[test_id(tj0csw1)]
 #[test]
 fn count_lists_everything_without_a_closing_line_when_nothing_is_cut() {
     let o = go(&count_ports(), &["count", "--regex", "hit_c", "--limit", "5"]);
@@ -482,6 +509,7 @@ fn count_lists_everything_without_a_closing_line_when_nothing_is_cut() {
     assert_eq!(o.stdout.lines().collect::<Vec<_>>(), ["total 2 lines in 2 files (4 files searched, 0 comment lines skipped) at beef01", "a/one.rs:41: let hit_39 = 1;", "a/two.rs:40: let hit_39 = 1;"]);
 }
 
+#[test_id(tkq4wim)]
 #[test]
 fn count_path_globs_narrow_the_search_and_may_repeat() {
     let (_, v) = json(&count_ports(), &["count", "--regex", "hit_", "--path", "a/**"]);
@@ -490,6 +518,7 @@ fn count_path_globs_narrow_the_search_and_may_repeat() {
     assert_eq!((v["total"].clone(), v["files"].clone()), (70.into(), 2.into()));
 }
 
+#[test_id(tp3gfr8)]
 #[test]
 fn count_ignores_excluded_paths_and_prose_files() {
     let (_, v) = json(&count_ports(), &["count", "--regex", "hit_8$|hit_md", "--limit", "50"]);
@@ -497,6 +526,7 @@ fn count_ignores_excluded_paths_and_prose_files() {
     assert!(!paths.iter().any(|p| p.contains("fixtures") || p.ends_with(".md")), "{paths:?}");
 }
 
+#[test_id(t1u2knx)]
 #[test]
 fn count_of_nothing_is_zero_and_shows_it_looked() {
     let o = go(&count_ports(), &["count", "--regex", "zzz_absent"]);
@@ -551,6 +581,7 @@ impl SourceTree for Unreadable {
     }
 }
 
+#[test_id(tcw1twd)]
 #[test]
 fn count_on_an_unreadable_tree_exits_one_and_prints_no_total() {
     let p = ports_with_tree(Box::new(Unreadable));
@@ -562,6 +593,7 @@ fn count_on_an_unreadable_tree_exits_one_and_prints_no_total() {
     assert!(v["error"].as_str().unwrap().contains("object store"));
 }
 
+#[test_id(t6x6wzm)]
 #[test]
 fn count_with_a_bad_regex_or_a_bare_positional_exits_two() {
     let o = go(&count_ports(), &["count", "--regex", "("]);
@@ -574,12 +606,14 @@ fn count_with_a_bad_regex_or_a_bare_positional_exits_two() {
     assert_eq!(go(&count_ports(), &["count"]).code, 2);
 }
 
+#[test_id(t706i8n)]
 #[test]
 fn count_limit_defaults_to_the_configured_key() {
     let (_, v) = json(&count_ports(), &["count", "--regex", "hit_"]);
     assert_eq!((v["sites"].as_array().unwrap().len(), v["more"].clone()), (7, 112.into()));
 }
 
+#[test_id(tyqk7z8)]
 #[test]
 fn count_json_matches_the_text_totals_and_names_the_commit() {
     let (code, v) = json(&count_ports(), &["count", "--regex", "hit_", "--limit", "2"]);
@@ -589,6 +623,7 @@ fn count_json_matches_the_text_totals_and_names_the_commit() {
     assert_eq!(v["sites"][1], serde_json::json!({"path": "a/one.rs", "line": 3, "text": "let hit_1 = 1;"}));
 }
 
+#[test_id(t4ygjby)]
 #[test]
 fn count_comment_markers_follow_the_file_type() {
     let t = FixtureTree::new("c1").with_file("x.sh", "# hit\n  hit\n").with_file("y.py", "# hit\nhit\n").with_file("z.toml", "# hit\n").with_file("w.rs", "# hit\n// hit\n");
@@ -596,6 +631,7 @@ fn count_comment_markers_follow_the_file_type() {
     assert_eq!((v["total"].clone(), v["skipped_comments"].clone()), (3.into(), 4.into()));
 }
 
+#[test_id(tjdc8mk)]
 #[test]
 fn help_documents_count_and_its_exit_codes() {
     let o = go(&count_ports(), &["-h"]);
@@ -622,6 +658,7 @@ fn attended(comments: &[(&str, u32)]) -> Vec<Row> {
     ]
 }
 
+#[test_id(t0fd2bz)]
 #[test]
 fn his_comments_raise_weights_in_their_area_only() {
     let p = ports_with(fixture(), attended(&[("demo/src/old.rs", 3)]), cfg());
@@ -651,6 +688,7 @@ fn his_comments_raise_weights_in_their_area_only() {
     assert!((a - 2.0 * b).abs() < 1e-9, "{a} vs {b}");
 }
 
+#[test_id(ty56wtg)]
 #[test]
 fn a_renamed_file_keeps_his_comments_in_its_new_area() {
     let mut rows = attended(&[("demo/src/old.rs", 1), ("other/x.rs", 1)]);
@@ -666,6 +704,7 @@ fn a_renamed_file_keeps_his_comments_in_its_new_area() {
     assert_eq!(v["weight"]["attention_share"].as_f64(), Some(1.0), "{v}");
 }
 
+#[test_id(ty9zap7)]
 #[test]
 fn attention_counts_only_published_reviews() {
     let mut rows = attended(&[("demo/a.rs", 3)]);
@@ -677,6 +716,7 @@ fn attention_counts_only_published_reviews() {
     assert_eq!(v["weight"]["attention_term"].as_f64(), Some(1.0), "{v}");
 }
 
+#[test_id(tm1aytu)]
 #[test]
 fn attention_does_not_move_the_rotation_of_kinds() {
     let mut rows = vec![row(
@@ -703,6 +743,7 @@ fn attention_does_not_move_the_rotation_of_kinds() {
     }
 }
 
+#[test_id(tki31r8)]
 #[test]
 fn the_weight_line_names_his_comments_in_the_candidates_area() {
     let p = ports_with(fixture(), attended(&[("demo/src/old.rs", 3)]), cfg());

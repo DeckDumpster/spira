@@ -15,7 +15,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"
 
-TEST=exec_lines_carry_no_unescaped_percent_specifier
+TEST=exec_lines_carry_no_unescaped_percent_specifier::tfyk96f
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 BIN="$(cd "$HARNESS" && cargo test -p install --features integration --test units_lint --no-run --message-format=json 2>/dev/null \

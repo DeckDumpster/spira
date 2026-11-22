@@ -234,6 +234,7 @@ fn go(f: &mut Fake, verb: &str, args: &[&str]) -> Answer {
     run(verb, &v(args), f)
 }
 
+#[test_id(t5c29bm)]
 #[test]
 fn every_verb_is_a_caller_verb_and_no_primitive_is() {
     for verb in VERBS {
@@ -244,6 +245,7 @@ fn every_verb_is_a_caller_verb_and_no_primitive_is() {
 
 // ---- holds -----------------------------------------------------------------------------
 
+#[test_id(ta8x9ny)]
 #[test]
 fn a_manual_hold_with_a_bare_bead_id_or_no_reason_is_refused_and_a_snooze_is_a_wait_hold() {
     let mut f = Fake::default();
@@ -257,6 +259,7 @@ fn a_manual_hold_with_a_bare_bead_id_or_no_reason_is_refused_and_a_snooze_is_a_w
     assert_eq!(go(&mut f, "holds", &["sp-m"]).stdout, "wait");
 }
 
+#[test_id(t32olkc)]
 #[test]
 fn a_manual_hold_carries_its_reason_and_review_date_in_the_event() {
     let mut f = Fake::default();
@@ -277,6 +280,7 @@ fn a_manual_hold_carries_its_reason_and_review_date_in_the_event() {
     assert!(f.events[1].5.contains(r#""detail":"review-by:2026-11-15T22:00:00Z x""#), "{}", f.events[1].5);
 }
 
+#[test_id(tl7etz1)]
 #[test]
 fn hold_suspends_without_moving_state_and_unhold_restores_it() {
     let mut f = Fake::default();
@@ -297,6 +301,7 @@ fn hold_suspends_without_moving_state_and_unhold_restores_it() {
     }
 }
 
+#[test_id(tgqgrrh)]
 #[test]
 fn hold_event_is_byte_identical_to_the_shell_librarys() {
     let mut f = Fake::default();
@@ -320,6 +325,7 @@ fn hold_event_is_byte_identical_to_the_shell_librarys() {
     assert_eq!((f.events[1].3.as_str(), f.events[1].4.as_str()), ("1", "sentinel"));
 }
 
+#[test_id(tmmak1y)]
 #[test]
 fn hold_refusals_and_absences_keep_the_shell_exit_codes() {
     let mut f = Fake::default();
@@ -337,6 +343,7 @@ fn hold_refusals_and_absences_keep_the_shell_exit_codes() {
 
 // ---- sp-cxfgj5: a read that failed is cannot tell, never an answer ---------------------
 
+#[test_id(trywbcs)]
 #[test]
 fn holds_on_a_machine_that_cannot_tell_is_exit_2_not_an_empty_list() {
     let mut down = Fake { down: true, ..Default::default() };
@@ -348,6 +355,7 @@ fn holds_on_a_machine_that_cannot_tell_is_exit_2_not_an_empty_list() {
     assert_eq!(go(&mut down, "list-state", &["READY"]).code, CANNOT_TELL);
 }
 
+#[test_id(tmemry0)]
 #[test]
 fn a_holds_column_that_does_not_parse_is_cannot_tell_never_unheld() {
     let mut f = Fake { garble_holds: true, ..Default::default() };
@@ -359,6 +367,7 @@ fn a_holds_column_that_does_not_parse_is_cannot_tell_never_unheld() {
     assert!(f.events.is_empty());
 }
 
+#[test_id(tn8afg5)]
 #[test]
 fn holds_and_state_answer_typed_json_and_no_row_is_exit_1() {
     let mut f = Fake::default();
@@ -379,6 +388,7 @@ fn holds_and_state_answer_typed_json_and_no_row_is_exit_1() {
     assert_eq!((a.code, a.stdout.as_str()), (CANNOT_TELL, ""));
 }
 
+#[test_id(tnu8sui)]
 #[test]
 fn a_delivery_exit_whose_read_cannot_tell_is_cannot_tell_not_inert() {
     let mut f = Fake { show_fails_after: Some(0), ..Default::default() };
@@ -388,6 +398,7 @@ fn a_delivery_exit_whose_read_cannot_tell_is_cannot_tell_not_inert() {
     assert!(f.events.is_empty());
 }
 
+#[test_id(tg7muyf)]
 #[test]
 fn an_infra_verdict_whose_stale_tip_check_cannot_read_is_not_applied() {
     let mut f = Fake { show_fails_after: Some(1), ..Default::default() };
@@ -397,6 +408,7 @@ fn an_infra_verdict_whose_stale_tip_check_cannot_read_is_not_applied() {
     assert!(f.events.is_empty(), "{:?}", f.events);
 }
 
+#[test_id(t3ldm2o)]
 #[test]
 fn a_reply_by_seq_whose_history_cannot_tell_is_cannot_tell_not_refused() {
     let mut f = Fake { history_down: true, ..Default::default() };
@@ -405,6 +417,7 @@ fn a_reply_by_seq_whose_history_cannot_tell_is_cannot_tell_not_refused() {
     assert!(f.events.is_empty());
 }
 
+#[test_id(tn48t5j)]
 #[test]
 fn a_snooze_with_an_explanation_holds_and_a_malformed_one_is_refused_unheld() {
     let mut f = Fake::default();
@@ -421,6 +434,7 @@ fn a_snooze_with_an_explanation_holds_and_a_malformed_one_is_refused_unheld() {
 
 // ---- releases, drops, returns, content-on-base -----------------------------------------
 
+#[test_id(t2p511g)]
 #[test]
 fn release_and_holder_dead_return_working_to_ready_and_refuse_elsewhere() {
     let mut f = Fake::default();
@@ -438,6 +452,7 @@ fn release_and_holder_dead_return_working_to_ready_and_refuse_elsewhere() {
     assert_eq!(f.events.last().unwrap().5, r#""HolderDead""#);
 }
 
+#[test_id(tcw3uzt)]
 #[test]
 fn writers_acting_on_a_state_that_moved_send_no_event() {
     let mut f = Fake::default();
@@ -452,6 +467,7 @@ fn writers_acting_on_a_state_that_moved_send_no_event() {
     assert!(f.events.is_empty(), "{:?}", f.events);
 }
 
+#[test_id(t8mhshr)]
 #[test]
 fn a_reply_by_hold_seq_lifts_an_ask_whose_mail_is_lost() {
     let mut f = Fake::default();
@@ -463,6 +479,7 @@ fn a_reply_by_hold_seq_lifts_an_ask_whose_mail_is_lost() {
     assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "");
 }
 
+#[test_id(twoxwcj)]
 #[test]
 fn certify_on_a_bead_sent_to_rework_sends_neither_submit_nor_verdict() {
     let mut f = Fake::default();
@@ -473,6 +490,7 @@ fn certify_on_a_bead_sent_to_rework_sends_neither_submit_nor_verdict() {
     assert!(f.events.is_empty(), "{:?}", f.events);
 }
 
+#[test_id(t29any8)]
 #[test]
 fn drop_is_orthogonal_and_terminal() {
     let mut f = Fake::default();
@@ -483,6 +501,7 @@ fn drop_is_orthogonal_and_terminal() {
     assert_eq!(go(&mut f, "drop", &["sp-x", "again"]).code, REFUSED);
 }
 
+#[test_id(tq23zlx)]
 #[test]
 fn returned_moves_in_delivery_to_rework_as_batch_ejected() {
     let mut f = Fake::default();
@@ -492,6 +511,7 @@ fn returned_moves_in_delivery_to_rework_as_batch_ejected() {
     assert_eq!(f.events[0].5, r#"{"Returned":{"reason":"batch-ejected"}}"#);
 }
 
+#[test_id(tgkgdm2)]
 #[test]
 fn content_on_base_lands_any_non_terminal_state_with_its_proof() {
     let mut f = Fake::default();
@@ -503,6 +523,7 @@ fn content_on_base_lands_any_non_terminal_state_with_its_proof() {
     assert_eq!(go(&mut f, "content-on-base", &["sp-c", "again"]).code, REFUSED);
 }
 
+#[test_id(t58jq45)]
 #[test]
 fn supersede_retires_a_non_terminal_bead_by_its_successor_and_refuses_a_terminal_one() {
     let mut f = Fake::default();
@@ -517,6 +538,7 @@ fn supersede_retires_a_non_terminal_bead_by_its_successor_and_refuses_a_terminal
 
 // ---- reads -----------------------------------------------------------------------------
 
+#[test_id(tjvt7oa)]
 #[test]
 fn state_and_the_bulk_lists_keep_their_line_shapes() {
     let mut f = Fake::default();
@@ -533,6 +555,7 @@ fn state_and_the_bulk_lists_keep_their_line_shapes() {
     assert_eq!(go(&mut f, "list-state", &["WORKING"]).stdout, "sp-1\t1700000000\tpoison,wait\nsp-3\t\t");
 }
 
+#[test_id(ts2fige)]
 #[test]
 fn list_all_is_refused_with_the_bounded_reads_and_sends_no_list_call() {
     let mut f = Fake::default();
@@ -544,6 +567,7 @@ fn list_all_is_refused_with_the_bounded_reads_and_sends_no_list_call() {
     assert!(r.sent.is_empty(), "{:?}", r.sent);
 }
 
+#[test_id(tf6cslw)]
 #[test]
 fn list_held_never_names_a_terminal_bead() {
     let mut f = Fake::default();
@@ -558,6 +582,7 @@ fn list_held_never_names_a_terminal_bead() {
 
 // ---- certification ---------------------------------------------------------------------
 
+#[test_id(ttifz2u)]
 #[test]
 fn certify_on_a_bead_a_dwarf_is_working_sends_neither_submit_nor_verdict() {
     let tip = "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6";
@@ -574,6 +599,7 @@ fn certify_on_a_bead_a_dwarf_is_working_sends_neither_submit_nor_verdict() {
     }
 }
 
+#[test_id(tx4d908)]
 #[test]
 fn certify_by_queue_submit_still_walks_a_working_bead_through_submit_to_its_verdict() {
     let tip = "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6";
@@ -586,6 +612,7 @@ fn certify_by_queue_submit_still_walks_a_working_bead_through_submit_to_its_verd
     assert_eq!(kinds, ["Submit", "GatePass"]);
 }
 
+#[test_id(to3fraj)]
 #[test]
 fn certify_by_queue_submit_walks_an_unclaimed_ready_bead_through_claim_and_submit() {
     let mut f = Fake::default();
@@ -607,6 +634,7 @@ fn certify_by_queue_submit_walks_an_unclaimed_ready_bead_through_claim_and_submi
     assert_eq!((a.code, f.state("sp-held")), (REFUSED, "READY"), "a held bead is not walked past its hold");
 }
 
+#[test_id(tyqgwjz)]
 #[test]
 fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
     let mut f = Fake::default();
@@ -626,6 +654,7 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
     assert_eq!(f.events[0].4, "lifecycle-cert", "default actor");
 }
 
+#[test_id(tdben6i)]
 #[test]
 fn certify_records_a_moved_tip_on_a_submitted_bead_before_a_pass_and_never_before_a_red() {
     let (old, new) = ("a".repeat(40), "b".repeat(40));
@@ -650,6 +679,7 @@ fn certify_records_a_moved_tip_on_a_submitted_bead_before_a_pass_and_never_befor
     assert_eq!(f.beads["sp-n"].tip.as_deref(), Some(old), "{a:?}");
 }
 
+#[test_id(tb99qgr)]
 #[test]
 fn a_red_certify_records_the_step_and_message_on_the_gate_red_and_omits_them_when_empty() {
     let tip = "dddddddddddddddddddddddddddddddddddddddd";
@@ -664,6 +694,7 @@ fn a_red_certify_records_the_step_and_message_on_the_gate_red_and_omits_them_whe
     assert_eq!(f.events[0].5, format!(r#"{{"GateRed":{{"tip":"{tip}","reason":"suites-failed"}}}}"#));
 }
 
+#[test_id(trc7vk3)]
 #[test]
 fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
     let mut f = Fake::default();
@@ -674,6 +705,7 @@ fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
     assert_eq!(go(&mut f, "certify", &["sp-st", "9191919191919191919191919191919191919191", "infra", "-"]).code, APPLIED);
 }
 
+#[test_id(tcktc0p)]
 #[test]
 fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
     for (raw, want) in [("branch-red", "suites-failed"), ("syntax", "syntax"), ("beads-data", "policy-violation"), ("foreign-harness", "policy-violation"), ("no-rebase", "no-rebase"), ("timeout", "timeout"), ("confine", "confine"), ("phantom-bead-id", "phantom-bead-id"), ("a-reason-never-heard-of", "suites-failed")] {
@@ -704,6 +736,7 @@ fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
     assert_eq!((a.code, a.cert_log.unwrap().1), (CANNOT_TELL, "unknown outcome bogus".into()));
 }
 
+#[test_id(ta5mkmq)]
 #[test]
 fn certify_records_a_red_verdict_for_a_bead_already_in_delivery_and_ignores_the_rest() {
     let mut f = Fake::default();
@@ -725,6 +758,7 @@ fn certify_records_a_red_verdict_for_a_bead_already_in_delivery_and_ignores_the_
     assert_eq!((a.code, f.events.len()), (REFUSED, n), "a pass in delivery changes nothing");
 }
 
+#[test_id(t4f1kq8)]
 #[test]
 fn resubmit_records_a_moved_tip_with_no_verdict() {
     let mut f = Fake::default();
@@ -738,6 +772,7 @@ fn resubmit_records_a_moved_tip_with_no_verdict() {
     assert_eq!(go(&mut f, "resubmit", &["sp-none", "dddddddddddddddddddddddddddddddddddddddd"]).code, CANNOT_TELL);
 }
 
+#[test_id(t9e00qk)]
 #[test]
 fn resubmit_submitted_moves_a_submitted_row_to_the_gated_tip_and_only_then() {
     let mut f = Fake::default();
@@ -755,6 +790,7 @@ fn resubmit_submitted_moves_a_submitted_row_to_the_gated_tip_and_only_then() {
     assert_eq!((a.code, f.state("sp-s")), (REFUSED, "CERTIFIED"), "only a SUBMITTED row is moved");
 }
 
+#[test_id(tm85g57)]
 #[test]
 fn resubmit_on_a_rework_bead_names_its_refusal() {
     let mut f = Fake::default();
@@ -764,6 +800,7 @@ fn resubmit_on_a_rework_bead_names_its_refusal() {
     assert!(a.stderr.contains("sp-rw is REWORK") && a.stderr.contains("spira-lc event"), "{}", a.stderr);
 }
 
+#[test_id(tjylmyu)]
 #[test]
 fn retip_moves_ready_and_held_rework_beads_to_submitted_and_refuses_a_working_one() {
     let mut f = Fake::default();
@@ -778,6 +815,7 @@ fn retip_moves_ready_and_held_rework_beads_to_submitted_and_refuses_a_working_on
     assert_eq!((a.code, f.state("sp-w")), (REFUSED, "WORKING"));
 }
 
+#[test_id(t41gc25)]
 #[test]
 fn unholding_a_red_rework_bead_by_hand_needs_provenance() {
     let mut f = Fake::default();
@@ -796,6 +834,7 @@ fn unholding_a_red_rework_bead_by_hand_needs_provenance() {
     assert!(f.beads["sp-g"].reason.as_deref().unwrap_or("").contains("break_glass=true"));
 }
 
+#[test_id(tsy3cpt)]
 #[test]
 fn retip_refuses_without_provenance_naming_the_missing_field() {
     let mut f = Fake::default();
@@ -812,6 +851,7 @@ fn retip_refuses_without_provenance_naming_the_missing_field() {
     }
 }
 
+#[test_id(tb92v43)]
 #[test]
 fn absolve_refuses_without_evidence_and_clears_the_recorded_red_with_it() {
     let mut f = Fake::default();
@@ -832,6 +872,7 @@ fn absolve_refuses_without_evidence_and_clears_the_recorded_red_with_it() {
     assert_eq!((f.state("sp-a"), f.beads["sp-a"].ejected_red_tip.clone()), ("CERTIFIED", None));
 }
 
+#[test_id(txnhyhn)]
 #[test]
 fn every_event_verb_needs_its_arguments() {
     let mut f = Fake::default();
@@ -843,6 +884,7 @@ fn every_event_verb_needs_its_arguments() {
     assert_eq!(f.calls, 0, "a malformed call reads nothing");
 }
 
+#[test_id(tor0uvk)]
 #[test]
 fn log_lines_carry_libsh_logs_timestamp() {
     assert_eq!(fmt_utc(0), "1970-01-01T00:00:00Z");
@@ -852,6 +894,7 @@ fn log_lines_carry_libsh_logs_timestamp() {
     assert!(l.len() == "2026-09-21T14:13:20Z spira: x\n".len() && l.ends_with("Z spira: x\n"), "{l}");
 }
 
+#[test_id(tj94he9)]
 #[test]
 fn a_push_landing_with_no_delivery_round_records_landed_on_a_certified_bead() {
     // Push mode creates no delivery row; the landing is recorded on the bead (sp-51lgh).
@@ -951,6 +994,7 @@ impl Bd for FakeBd {
     }
 }
 
+#[test_id(tp4d5ai)]
 #[test]
 fn unclaim_releases_the_row_under_the_holders_name() {
     let mut f = Fake::default();
@@ -960,6 +1004,7 @@ fn unclaim_releases_the_row_under_the_holders_name() {
     assert_eq!(f.events.last().unwrap().5, r#""Release""#);
 }
 
+#[test_id(td89kx8)]
 #[test]
 fn unclaim_never_robs_another_holder_and_a_claim_already_over_is_success() {
     let mut f = Fake::default();
@@ -976,6 +1021,7 @@ fn unclaim_never_robs_another_holder_and_a_claim_already_over_is_success() {
 }
 
 // covers: UC-dwarf-execution-20
+#[test_id(tfpc94v)]
 #[test]
 fn releasing_under_the_rune_name_leaves_the_claim_held_and_the_claiming_actor_frees_it() {
     let mut f = Fake::default();
@@ -987,6 +1033,7 @@ fn releasing_under_the_rune_name_leaves_the_claim_held_and_the_claiming_actor_fr
     assert_eq!(f.state("sp-r"), "READY");
 }
 
+#[test_id(thficws)]
 #[test]
 fn unclaim_needs_an_actor() {
     let mut f = Fake::default();
@@ -995,6 +1042,7 @@ fn unclaim_needs_an_actor() {
     assert_eq!(f.calls, 0);
 }
 
+#[test_id(tw8e34r)]
 #[test]
 fn close_epic_closes_only_an_epic_and_writes_it_no_record() {
     let w = super::world::World::new();
@@ -1012,6 +1060,7 @@ fn close_epic_closes_only_an_epic_and_writes_it_no_record() {
     assert_eq!(w.writes.borrow().len(), 1);
 }
 
+#[test_id(t5jhu4o)]
 #[test]
 fn close_epic_refuses_while_a_child_is_live_and_closes_once_every_child_is_terminal() {
     let w = super::world::World::new();
@@ -1033,6 +1082,7 @@ fn close_epic_refuses_while_a_child_is_live_and_closes_once_every_child_is_termi
 
 // ---- renew (sp-2jf0a): the working dwarf's lease renewal --------------------------------
 
+#[test_id(tpdkbvu)]
 #[test]
 fn renew_advances_the_holders_lease_and_keeps_the_row_working() {
     let mut f = Fake::default();
@@ -1049,6 +1099,7 @@ fn renew_advances_the_holders_lease_and_keeps_the_row_working() {
     assert_eq!((expect.as_str(), actor.as_str(), kind.as_str()), ("WORKING", "dwarf-1", r#"{"Renew":{"lease_until":780}}"#));
 }
 
+#[test_id(two7r7i)]
 #[test]
 fn renew_by_a_non_holder_is_refused_and_leaves_the_lease_alone() {
     let mut f = Fake::default();
@@ -1069,6 +1120,7 @@ fn renew_by_a_non_holder_is_refused_and_leaves_the_lease_alone() {
     assert_eq!(go(&mut f, "renew", &["sp-none", "dwarf-1", "9999"]).code, NO_ROW);
 }
 
+#[test_id(t3ayob3)]
 #[test]
 fn renew_needs_a_numeric_deadline_and_reads_nothing_without_one() {
     let mut f = Fake::default();
@@ -1084,6 +1136,7 @@ fn renew_needs_a_numeric_deadline_and_reads_nothing_without_one() {
 
 // ---- reconcile-closed (sp-bc0rlt) ------------------------------------------------------
 
+#[test_id(t9jzbml)]
 #[test]
 fn reconcile_closed_moves_a_closed_beads_ready_row_to_the_terminal_its_reason_earns() {
     let mut f = Fake::default();
@@ -1110,6 +1163,7 @@ fn reconcile_closed_moves_a_closed_beads_ready_row_to_the_terminal_its_reason_ea
     assert_eq!(f.state("sp-w"), "WORKING", "only never-claimed READY rows are rewritten");
 }
 
+#[test_id(t8qn03m)]
 #[test]
 fn reconcile_closed_with_ids_touches_only_those_and_cannot_tell_when_bd_is_down() {
     let mut f = Fake::default();
@@ -1125,6 +1179,7 @@ fn reconcile_closed_with_ids_touches_only_those_and_cannot_tell_when_bd_is_down(
     assert_eq!(reconcile_closed(&v(&["--bogus"]), &mut f, &mut b).code, 2);
 }
 
+#[test_id(tdhormu)]
 #[test]
 fn reconcile_closed_reports_an_ask_hold_as_refused() {
     let mut f = Fake::default();
@@ -1138,6 +1193,7 @@ fn reconcile_closed_reports_an_ask_hold_as_refused() {
 
 // ---- reconcile-content: epics -----------------------------------------------------------
 
+#[test_id(t3xxhun)]
 #[test]
 fn reconcile_content_closes_an_epic_once_every_child_is_terminal_and_never_one_with_none() {
     let w = super::world::World::new();
@@ -1168,6 +1224,7 @@ fn reconcile_content_closes_an_epic_once_every_child_is_terminal_and_never_one_w
 
 // ---- reconcile-content ------------------------------------------------------------------
 
+#[test_id(txcbyaq)]
 #[test]
 fn reconcile_content_closes_the_store_bead_of_every_terminal_state_and_only_those() {
     let mut f = Fake::default();
@@ -1208,6 +1265,7 @@ fn reconcile_content_closes_the_store_bead_of_every_terminal_state_and_only_thos
     assert_eq!(reconcile_content(&v(&["--apply"]), &mut f, &mut b).stdout, "reconcile-content: 0 closed");
 }
 
+#[test_id(tw03vie)]
 #[test]
 fn reconcile_content_since_seq_reads_only_what_changed_and_nothing_when_nothing_did() {
     let mut f = Fake::default();
@@ -1230,6 +1288,7 @@ fn reconcile_content_since_seq_reads_only_what_changed_and_nothing_when_nothing_
     assert_eq!(reconcile_content(&v(&["--since-seq", "x"]), &mut f, &mut b).code, 2);
 }
 
+#[test_id(trfoexp)]
 #[test]
 fn reconcile_content_since_seq_and_apply_by_id_never_list_every_record() {
     let mut f = Fake::default();
@@ -1251,6 +1310,7 @@ fn reconcile_content_since_seq_and_apply_by_id_never_list_every_record() {
     assert_eq!(f.whole_lists, 1, "a full pass lists once");
 }
 
+#[test_id(tltxtes)]
 #[test]
 fn apply_by_id_in_lc_serve_owes_the_close_and_settles_it_after_the_answer() {
     let w = super::world::World::new();
@@ -1267,6 +1327,7 @@ fn apply_by_id_in_lc_serve_owes_the_close_and_settles_it_after_the_answer() {
     assert_eq!(*w.writes.borrow(), ["close sp-a"]);
 }
 
+#[test_id(t48gf2k)]
 #[test]
 fn apply_by_id_reads_the_ask_by_key_and_the_planning_row_once() {
     let mut f = Fake { ask_rows: vec!["sp-a".into()], ..Default::default() };
@@ -1280,6 +1341,7 @@ fn apply_by_id_reads_the_ask_by_key_and_the_planning_row_once() {
     assert_eq!(f.list_asks, 0, "the ask is read by key, never listed");
 }
 
+#[test_id(t5mo803)]
 #[test]
 fn apply_by_id_with_the_planes_skewed_refuses_and_owes_nothing() {
     let mut f = Fake::default();
@@ -1293,6 +1355,7 @@ fn apply_by_id_with_the_planes_skewed_refuses_and_owes_nothing() {
     assert!(ans.owed.is_empty() && b.closed.is_empty());
 }
 
+#[test_id(tfr28yf)]
 #[test]
 fn reconcile_content_since_seq_scoped_to_a_child_still_closes_its_complete_epic() {
     let w = super::world::World::new();
@@ -1309,6 +1372,7 @@ fn reconcile_content_since_seq_scoped_to_a_child_still_closes_its_complete_epic(
     assert_eq!(w.status("sp-e"), "closed", "{}", done.stdout);
 }
 
+#[test_id(txoh7ap)]
 #[test]
 fn reconcile_content_reads_no_bd_and_cannot_tell_when_the_store_is_down() {
     let mut f = Fake::default();
@@ -1340,6 +1404,7 @@ fn reconcile_content_reads_no_bd_and_cannot_tell_when_the_store_is_down() {
 
 // ---- drop-orphans (sp-b411iv) ------------------------------------------------------------
 
+#[test_id(to39ezp)]
 #[test]
 fn drop_orphans_moves_only_ready_rows_bd_has_no_bead_for() {
     let mut f = Fake::default();
@@ -1360,6 +1425,7 @@ fn drop_orphans_moves_only_ready_rows_bd_has_no_bead_for() {
     assert_eq!(f.state("sp-work"), "WORKING", "only READY rows are rewritten");
 }
 
+#[test_id(tgm5jwg)]
 #[test]
 fn drop_orphans_cannot_tell_when_bd_is_down_or_knows_nothing() {
     let mut f = Fake::default();
@@ -1380,6 +1446,7 @@ fn drop_orphans_cannot_tell_when_bd_is_down_or_knows_nothing() {
 
 const SKEWED: &str = "refused: the planes' planning watermarks differ by 50, past SPIRA_PLANE_SKEW_MAX 25 (control plane 90, bd 40); the exit is the restore procedure: after a restore: (0)";
 
+#[test_id(t20zn2m)]
 #[test]
 fn with_the_planes_skewed_reconcile_content_and_drop_orphans_refuse_to_act_and_name_the_exit() {
     let mut f = Fake::default();
@@ -1416,6 +1483,7 @@ fn with_the_planes_skewed_reconcile_content_and_drop_orphans_refuse_to_act_and_n
     assert_eq!(drop_orphans(&v(&["--dry-run", "--apply"]), &mut f, &mut b).code, 2);
 }
 
+#[test_id(thy2eqb)]
 #[test]
 fn a_close_reason_naming_a_successor_supersedes_otherwise_drops() {
     assert_eq!(terminal_event_for("dup. superseded by sp-9x."), BeadEventKind::Supersede { by: "sp-9x".into() });
@@ -1429,6 +1497,7 @@ fn no_file(_: &str) -> Result<String, String> {
     Err("no reason file in this test".into())
 }
 
+#[test_id(tw46yyk)]
 #[test]
 fn close_records_the_end_on_the_row_before_the_store_closes() {
     let mut f = Fake::default();
@@ -1442,6 +1511,7 @@ fn close_records_the_end_on_the_row_before_the_store_closes() {
     assert_eq!(f.events.last().unwrap().4, "close", "default actor");
 }
 
+#[test_id(tgqm658)]
 #[test]
 fn a_mail_close_never_drops_a_live_work_bead_unless_the_reply_says_drop() {
     let mut f = Fake::default();
@@ -1456,6 +1526,7 @@ fn a_mail_close_never_drops_a_live_work_bead_unless_the_reply_says_drop() {
     assert_eq!(f.state("sp-w"), "DROPPED");
 }
 
+#[test_id(t6q6amn)]
 #[test]
 fn close_withdraws_an_open_ask_first_and_names_a_successor() {
     let mut f = Fake::default();
@@ -1474,6 +1545,7 @@ fn close_withdraws_an_open_ask_first_and_names_a_successor() {
     assert_eq!(f.beads["sp-c"].reason.as_deref(), Some("sp-z"));
 }
 
+#[test_id(tudc13f)]
 #[test]
 fn closing_an_ask_withdraws_the_hold_on_its_work_bead_and_moves_nothing_else() {
     for state in [BeadState::Submitted, BeadState::Ready, BeadState::Certified] {
@@ -1491,6 +1563,7 @@ fn closing_an_ask_withdraws_the_hold_on_its_work_bead_and_moves_nothing_else() {
     }
 }
 
+#[test_id(tt5park)]
 #[test]
 fn closing_an_ask_with_no_bead_row_closes_its_ask_row_withdrawn_and_a_bead_with_a_row_does_not() {
     let mut f = Fake { ask_rows: vec!["sp-ask".into()], ..Default::default() };
@@ -1505,6 +1578,7 @@ fn closing_an_ask_with_no_bead_row_closes_its_ask_row_withdrawn_and_a_bead_with_
     assert_eq!(f.ask_closes.len(), 1, "a bead with a row is no ask");
 }
 
+#[test_id(te78a8b)]
 #[test]
 fn closing_an_ask_whose_work_bead_has_no_hold_or_no_row_still_closes() {
     let mut f = Fake::default();
@@ -1515,6 +1589,7 @@ fn closing_an_ask_whose_work_bead_has_no_hold_or_no_row_still_closes() {
     assert_eq!(f.state("sp-w"), "SUBMITTED");
 }
 
+#[test_id(t2fbwit)]
 #[test]
 fn close_of_a_terminal_or_rowless_bead_closes_the_store_alone() {
     let mut f = Fake::default();
@@ -1528,6 +1603,7 @@ fn close_of_a_terminal_or_rowless_bead_closes_the_store_alone() {
     assert_eq!(a.owed.to_vec(), vec![("sp-l".to_string(), "landed at abc".to_string())]);
 }
 
+#[test_id(ty98fir)]
 #[test]
 fn close_answers_success_once_the_row_is_terminal_even_when_the_store_close_would_fail() {
     let mut f = Fake::default();
@@ -1546,6 +1622,7 @@ fn close_answers_success_once_the_row_is_terminal_even_when_the_store_close_woul
     assert_eq!(left, vec!["sp-d"]);
 }
 
+#[test_id(t07pkm6)]
 #[test]
 fn close_never_closes_the_store_when_the_row_cannot_be_read_or_moved() {
     let mut f = Fake { down: true, ..Default::default() };
@@ -1555,6 +1632,7 @@ fn close_never_closes_the_store_when_the_row_cannot_be_read_or_moved() {
     assert!(bd.closed.is_empty(), "fail closed: no store close without the row's end");
 }
 
+#[test_id(t0vh92o)]
 #[test]
 fn close_reads_its_reason_from_a_file_and_refuses_without_one() {
     let mut f = Fake::default();
@@ -1573,6 +1651,7 @@ fn close_reads_its_reason_from_a_file_and_refuses_without_one() {
     assert!(a.owed.is_empty() && bd.closed.is_empty());
 }
 
+#[test_id(tpy5e5o)]
 #[test]
 fn a_landing_close_leaves_the_row_to_the_delivery_and_is_refused_outside_it() {
     let mut f = Fake::default();
@@ -1615,6 +1694,7 @@ fn claimable_by_a_builder(f: &mut Fake, id: &str) -> bool {
     o.applied
 }
 
+#[test_id(tv78k11)]
 #[test]
 fn reopen_records_the_event_each_row_state_implies_and_leaves_the_bead_claimable() {
     let cases: [(BeadState, &str, &[&str]); 6] = [
@@ -1643,6 +1723,7 @@ fn reopen_records_the_event_each_row_state_implies_and_leaves_the_bead_claimable
     }
 }
 
+#[test_id(tu1xnus)]
 #[test]
 fn reopen_refuses_a_terminal_row_and_a_missing_row_and_an_unreachable_machine() {
     for st in [BeadState::Landed, BeadState::Superseded, BeadState::Dropped, BeadState::Done] {
@@ -1667,6 +1748,7 @@ fn reopen_refuses_a_terminal_row_and_a_missing_row_and_an_unreachable_machine() 
     assert_eq!(reopen_cmd(&v(&["sp-s"]), &mut f, &mut bd).code, CANNOT_TELL, "the store reopen failing is reported");
 }
 
+#[test_id(t1bghxw)]
 #[test]
 fn a_row_the_machine_cannot_read_is_refused_with_the_machines_own_answer() {
     let down = || Fake { down: true, ..Default::default() };
@@ -1684,18 +1766,21 @@ fn a_row_the_machine_cannot_read_is_refused_with_the_machines_own_answer() {
     }
 }
 
+#[test_id(t2t9uwu)]
 #[test]
 fn settle_owed_reopen_of_a_row_the_machine_cannot_read_carries_the_machines_answer() {
     let e = crate::reconcile_content::settle_owed_reopen(&mut Fake { down: true, ..Default::default() }, &mut FakeBd::default(), "sp-t").unwrap_err();
     assert!(e.contains("cannot tell: down"), "{e}");
 }
 
+#[test_id(t6wd4vw)]
 #[test]
 fn record_state_of_a_row_the_machine_cannot_read_carries_the_machines_answer() {
     let e = crate::reconcile_content::record_state(&mut Fake { down: true, ..Default::default() }, "sp-t").unwrap_err();
     assert!(e.contains("cannot tell: down"), "{e}");
 }
 
+#[test_id(torsr4s)]
 #[test]
 fn a_reopen_inside_lc_serve_reads_the_row_once_and_owes_the_bd_half_to_the_settler() {
     let settler = crate::settle::install_for_test();
@@ -1712,6 +1797,7 @@ fn a_reopen_inside_lc_serve_reads_the_row_once_and_owes_the_bd_half_to_the_settl
     assert_eq!(settler.owed_reopens(), ["sp-q"]);
 }
 
+#[test_id(t53zzxu)]
 #[test]
 fn a_reopen_of_a_row_already_open_inside_lc_serve_owes_the_bd_half_and_records_no_event() {
     let settler = crate::settle::install_for_test();
@@ -1725,6 +1811,7 @@ fn a_reopen_of_a_row_already_open_inside_lc_serve_owes_the_bd_half_and_records_n
     }
 }
 
+#[test_id(t0nrpb0)]
 #[test]
 fn a_reopen_with_no_settler_writes_the_bd_half_inline() {
     let mut f = Fake::default();
@@ -1734,6 +1821,7 @@ fn a_reopen_with_no_settler_writes_the_bd_half_inline() {
     assert_eq!(bd.reopened, ["sp-q"]);
 }
 
+#[test_id(tc2lbyu)]
 #[test]
 fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
     let mut f = Fake::default();
@@ -1744,6 +1832,7 @@ fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
     assert!(f.beads["sp-e"].holds.contains(&HoldKind::Manual), "reopening is not an unhold");
 }
 
+#[test_id(t4arrxf)]
 #[test]
 fn reopen_names_a_red_eject_so_the_tip_is_barred() {
     let mut f = Fake::default();
@@ -1753,6 +1842,7 @@ fn reopen_names_a_red_eject_so_the_tip_is_barred() {
     assert_eq!(f.beads["sp-r"].ejected_red_tip.as_deref(), Some("red1"));
 }
 
+#[test_id(tesbijg)]
 #[test]
 fn reopen_is_refused_while_a_live_round_holds_the_bead() {
     let mut f = Fake::default();
@@ -1779,6 +1869,7 @@ fn external_world() -> (Fake, FakeBd) {
     (f, b)
 }
 
+#[test_id(t7hqr01)]
 #[test]
 fn closing_an_external_bead_with_no_named_outcome_is_refused() {
     let (mut f, mut bd) = external_world();
@@ -1789,6 +1880,7 @@ fn closing_an_external_bead_with_no_named_outcome_is_refused() {
     assert!(bd.closed.is_empty() && f.events.is_empty(), "nothing written");
 }
 
+#[test_id(tq5yehw)]
 #[test]
 fn an_external_bead_closes_on_a_named_outcome_or_a_successor() {
     let (mut f, mut bd) = external_world();
@@ -1801,6 +1893,7 @@ fn an_external_bead_closes_on_a_named_outcome_or_a_successor() {
     assert_eq!(f.state("sp-x"), "SUPERSEDED");
 }
 
+#[test_id(tvgk6wv)]
 #[test]
 fn a_bead_with_no_external_origin_still_closes_bare() {
     let mut f = Fake::default();
@@ -1809,6 +1902,7 @@ fn a_bead_with_no_external_origin_still_closes_bare() {
     assert_eq!(close(&v(&["sp-n", "--reason", "decided"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
 }
 
+#[test_id(ttxogox)]
 #[test]
 fn an_unreadable_origin_refuses_the_close() {
     let (mut f, mut bd) = external_world();
@@ -1816,6 +1910,7 @@ fn an_unreadable_origin_refuses_the_close() {
     assert_eq!(close(&v(&["sp-x", "--reason", "duplicate-of sp-7"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
 }
 
+#[test_id(tvzp5zf)]
 #[test]
 fn the_drop_verb_refuses_a_bare_drop_of_an_external_bead() {
     let (mut f, mut bd) = external_world();
@@ -1825,6 +1920,7 @@ fn the_drop_verb_refuses_a_bare_drop_of_an_external_bead() {
     assert_eq!(f.state("sp-x"), "DROPPED");
 }
 
+#[test_id(txrplcf)]
 #[test]
 fn reconcile_closed_leaves_an_external_residue_ready() {
     let (mut f, mut bd) = external_world();
@@ -1843,6 +1939,7 @@ fn claim_for(f: &mut Fake, id: &str, holder: &str) {
     assert_eq!(rc, 0, "{out}");
 }
 
+#[test_id(tb1id4k)]
 #[test]
 fn phase_walks_the_holder_forward_and_show_reads_back_exactly_what_was_recorded() {
     let mut f = Fake::default();
@@ -1855,6 +1952,7 @@ fn phase_walks_the_holder_forward_and_show_reads_back_exactly_what_was_recorded(
     }
 }
 
+#[test_id(tc7twyd)]
 #[test]
 fn a_phase_for_a_bead_the_queue_already_dropped_sends_no_event() {
     let mut f = Fake::default();
@@ -1867,6 +1965,7 @@ fn a_phase_for_a_bead_the_queue_already_dropped_sends_no_event() {
     assert_eq!(f.events.len(), sent, "a refused event is a row the incident detector counts");
 }
 
+#[test_id(tihye7h)]
 #[test]
 fn disposition_is_recorded_on_the_working_row_and_refused_elsewhere() {
     let mut f = Fake::default();
@@ -1882,6 +1981,7 @@ fn disposition_is_recorded_on_the_working_row_and_refused_elsewhere() {
     assert_eq!(go(&mut f, "disposition", &["sp-r", "slain", "x"]).code, REFUSED);
 }
 
+#[test_id(t5htrxp)]
 #[test]
 fn close_delivered_ends_hand_delivered_work_done_with_its_reason_and_refuses_an_empty_one() {
     let mut f = Fake::default();
@@ -1900,6 +2000,7 @@ fn close_delivered_ends_hand_delivered_work_done_with_its_reason_and_refuses_an_
     assert_eq!(close(&v(&["sp-p", "--delivered", "--landing", "--reason", "x"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
 }
 
+#[test_id(tqdi39p)]
 #[test]
 fn close_delivered_corrects_a_dropped_bead_to_done() {
     let mut f = Fake::default();
@@ -1913,6 +2014,7 @@ fn close_delivered_corrects_a_dropped_bead_to_done() {
 
 // ---- drop-bead -------------------------------------------------------------------------
 
+#[test_id(tsiqihc)]
 #[test]
 fn drop_bead_ends_a_live_work_bead_as_dropped_with_the_reason_from_any_live_state() {
     for st in [BeadState::Submitted, BeadState::InDelivery, BeadState::Rework] {
@@ -1927,6 +2029,7 @@ fn drop_bead_ends_a_live_work_bead_as_dropped_with_the_reason_from_any_live_stat
     }
 }
 
+#[test_id(tihjlk4)]
 #[test]
 fn a_dropped_bead_leaves_its_batches_first_and_is_never_claimable_again() {
     let mut f = Fake::default();
@@ -1941,6 +2044,7 @@ fn a_dropped_bead_leaves_its_batches_first_and_is_never_claimable_again() {
     assert_eq!(again.code, REFUSED, "terminal: nothing further can batch or call it");
 }
 
+#[test_id(tnlyns7)]
 #[test]
 fn a_bead_in_a_batch_that_cannot_release_it_is_not_dropped() {
     let mut f = Fake::default();
@@ -1954,6 +2058,7 @@ fn a_bead_in_a_batch_that_cannot_release_it_is_not_dropped() {
     assert!(bd.closed.is_empty());
 }
 
+#[test_id(t1djvf3)]
 #[test]
 fn a_bead_in_a_round_whose_pass_is_running_is_not_dropped_and_the_refusal_names_its_exit() {
     let mut f = Fake::default();
@@ -1968,6 +2073,7 @@ fn a_bead_in_a_round_whose_pass_is_running_is_not_dropped_and_the_refusal_names_
     assert!(f.batches["sp-a"].len() == 1, "still a member");
 }
 
+#[test_id(tegbg6v)]
 #[test]
 fn drop_bead_with_an_open_dependent_refuses_naming_it() {
     let mut f = Fake::default();
@@ -1983,6 +2089,7 @@ fn drop_bead_with_an_open_dependent_refuses_naming_it() {
     assert_eq!(drop_bead(&v(&["sp-p", "--reason", "no"]), &mut f, &mut bd).code, APPLIED, "a closed dependent is no obstacle");
 }
 
+#[test_id(t9bovsl)]
 #[test]
 fn drop_bead_needs_a_reason_and_a_work_bead() {
     let mut f = Fake::default();
@@ -1991,6 +2098,7 @@ fn drop_bead_needs_a_reason_and_a_work_bead() {
     assert_eq!(drop_bead(&v(&["sp-none", "--reason", "x"]), &mut f, &mut bd).code, REFUSED);
 }
 
+#[test_id(tjssv4p)]
 #[test]
 fn free_text_in_the_actor_slot_is_refused_not_sent() {
     let mut f = Fake::default();
@@ -2005,6 +2113,7 @@ fn free_text_in_the_actor_slot_is_refused_not_sent() {
 
 // ---- drop-row --------------------------------------------------------------------------
 
+#[test_id(tr5e7ba)]
 #[test]
 fn drop_row_removes_a_no_row_kinds_row_and_closes_nothing() {
     let mut f = Fake::default();
@@ -2017,6 +2126,7 @@ fn drop_row_removes_a_no_row_kinds_row_and_closes_nothing() {
     assert!(bd.closed.is_empty(), "the content bead stays open");
 }
 
+#[test_id(t4grb6m)]
 #[test]
 fn drop_row_refuses_a_work_bead() {
     let mut f = Fake::default();
@@ -2040,6 +2150,7 @@ impl Machine for Recording<'_> {
     }
 }
 
+#[test_id(tt4ubfv)]
 #[test]
 fn the_admin_verbs_that_read_the_table_ask_for_pages_or_the_one_state_they_act_on() {
     let mut f = Fake::default();

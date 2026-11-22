@@ -3,6 +3,9 @@
 //! A filing is acknowledged on the host only after its bead holds it, and a filing already
 //! applied but not yet acknowledged is acknowledged without being applied again.
 
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -3,6 +3,9 @@
 //! release's `bin/` for the program a tool verb starts. The service records the verb and answers
 //! at once; the program runs in `work-exec`, never in the service.
 
+#[macro_use]
+extern crate spira_test_id;
+
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -159,6 +162,7 @@ fn who_ran_me(w: &World, out: &str) -> String {
     )
 }
 
+#[test_id(t0yqx29)]
 #[test]
 fn a_tool_verb_is_recorded_by_the_service_and_run_by_the_scheduler_in_work_exec() {
     let w = world();
@@ -173,6 +177,7 @@ fn a_tool_verb_is_recorded_by_the_service_and_run_by_the_scheduler_in_work_exec(
     assert!(nanos(&spans[0], "endTimeUnixNano") - nanos(&spans[0], "startTimeUnixNano") < 900_000_000, "the service answered inside the program's second");
 }
 
+#[test_id(tbheoky)]
 #[test]
 fn a_killed_runner_leaves_the_request_finished_124_and_the_client_prints_why() {
     let w = world();
@@ -182,6 +187,7 @@ fn a_killed_runner_leaves_the_request_finished_124_and_the_client_prints_why() {
     assert!(out.contains("before recording an answer") && out.contains("stage: running"), "the reason names how the runner ended: {out}");
 }
 
+#[test_id(t5rmm18)]
 #[test]
 fn a_request_the_ledger_has_run_is_not_run_again_after_the_scheduler_restarts() {
     let w = world();
@@ -196,6 +202,7 @@ fn a_request_the_ledger_has_run_is_not_run_again_after_the_scheduler_restarts() 
     assert_eq!(marker(&w, "ran.count").lines().count(), 1, "the program did not run twice");
 }
 
+#[test_id(tmvlyfb)]
 #[test]
 fn a_restart_while_a_request_is_running_leaves_it_to_its_runner_and_the_client_gets_that_runners_answer() {
     let w = world();

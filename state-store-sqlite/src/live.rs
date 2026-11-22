@@ -314,6 +314,7 @@ fn remove_prefix(backend: &SqliteBackend, prefix: &str) -> Result<usize> {
 mod tests {
     use super::*;
 
+    #[test_id(t0pz231)]
     #[test]
     fn the_live_run_names_every_scenario_but_the_excluded() {
         let mut named: Vec<&str> = LIVE_SCENARIOS

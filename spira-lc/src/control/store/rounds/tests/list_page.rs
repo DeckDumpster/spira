@@ -1,5 +1,6 @@
 use super::*;
 
+#[test_id(tl2gr39)]
 #[test]
 fn a_list_with_after_and_limit_answers_one_page_of_rows_in_id_order() {
     let r = Rig::new();
@@ -25,6 +26,7 @@ fn a_list_with_after_and_limit_answers_one_page_of_rows_in_id_order() {
     }
 }
 
+#[test_id(t2qc7sb)]
 #[test]
 fn a_batch_filter_answers_the_round_for_an_id_with_a_slash_and_for_a_plain_id() {
     let r = Rig::new();
@@ -54,6 +56,7 @@ fn a_batch_filter_answers_the_round_for_an_id_with_a_slash_and_for_a_plain_id() 
 /// law: every list paginates in the store. `list --state X --limit N --after ID` over many
 /// records is one state-index read bounded by the page plus a point read per row it answers;
 /// it never ranges over `lifecycle/`, `readiness/` or the claim locks.
+#[test_id(t5l3c5w)]
 #[test]
 fn a_state_filtered_page_is_one_bounded_read_of_the_state_index() {
     let r = Rig::on(Counting::default(), &clock());
@@ -80,6 +83,7 @@ fn a_state_filtered_page_is_one_bounded_read_of_the_state_index() {
     assert!(gets <= 3 * ids.len(), "{gets} point reads for {} rows: {reads:?}", ids.len());
 }
 
+#[test_id(tj6zigz)]
 #[test]
 fn a_list_that_would_read_every_row_is_refused_naming_the_filters_that_do_not() {
     let r = Rig::new();

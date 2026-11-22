@@ -617,6 +617,7 @@ impl SourceTree for GitTree {
 mod tests {
     use super::*;
 
+    #[test_id(tl05c11)]
     #[test]
     fn incidents_in_keeps_only_beads_labelled_incident_and_never_an_empty_title() {
         let items: Vec<serde_json::Value> = serde_json::from_str(r#"[{"id":"sp-a","title":"lost write","labels":["incident"]},{"id":"sp-b","title":"x","labels":["other"]},{"id":"sp-c","title":"y"},{"id":"sp-d","labels":["incident"]}]"#).unwrap();
@@ -625,6 +626,7 @@ mod tests {
         assert_eq!(got.into_iter().collect::<Vec<_>>(), vec![("sp-a".into(), "lost write".into()), ("sp-d".into(), "(untitled)".into())]);
     }
 
+    #[test_id(td7c7z4)]
     #[test]
     fn an_unconfigured_incident_label_is_an_error_not_none_found() {
         let beads = LcBeads { incident_label: String::new() };

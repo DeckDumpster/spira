@@ -109,6 +109,7 @@ mod tests {
         ))
     }
 
+    #[test_id(t4zymrq)]
     #[test]
     fn decide_below_threshold_none() {
         assert_eq!(run(2, 0, 0, "", "0:0:0:0", false), "none");
@@ -116,12 +117,14 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-21
+    #[test_id(tccgl60)]
     #[test]
     fn decide_poison_at_threshold() {
         assert_eq!(run(3, 0, 0, "", "0:0:0:0", false), "poison ask");
         assert_eq!(run(7, 0, 0, "", "0:0:0", false), "poison ask");
     }
 
+    #[test_id(tl510e0)]
     #[test]
     fn decide_already_poisoned_no_poison_token() {
         // Held, still over: no poison, no clear; the ask is its own dedup.
@@ -130,6 +133,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-21
+    #[test_id(twe0tmk)]
     #[test]
     fn decide_clear_below_threshold_when_poisoned() {
         assert_eq!(run(1, 0, 0, "", "1:1:1", true), "clear");
@@ -137,6 +141,7 @@ mod tests {
     }
 
     // covers: UC-dwarf-execution-21
+    #[test_id(t5gsh7y)]
     #[test]
     fn poison_at_zero_needs_a_charged_attempt() {
         let t = Thresholds { poison_at: 0, ..Thresholds::default() };
@@ -145,22 +150,26 @@ mod tests {
         assert_eq!(d(1), "poison ask");
     }
 
+    #[test_id(t8y7nqb)]
     #[test]
     fn ask_suppressed_by_stamp() {
         assert_eq!(run(3, 0, 0, "", "0:0:1:0", false), "poison");
     }
 
+    #[test_id(tygud01)]
     #[test]
     fn lift_at_or_above_n_suppresses_poison() {
         assert_eq!(run(3, 0, 0, "", "0:0:1:1", false), "none");
     }
 
+    #[test_id(t88q4gq)]
     #[test]
     fn new_failure_after_lift_poisons() {
         // Lifted at 3; n is now 4, so the caller's stamp has lifted=0.
         assert_eq!(run(4, 0, 0, "", "0:0:0:0", false), "poison ask");
     }
 
+    #[test_id(tst3vy8)]
     #[test]
     fn decide_requeue_mail_at_cap() {
         assert_eq!(run(0, 5, 0, "", "0:0:0", false), "requeue-mail");
@@ -169,18 +178,21 @@ mod tests {
         assert_eq!(run(0, 9, 0, "repo:spira,delivers:action", "0:0:0", false), "none");
     }
 
+    #[test_id(txyiuku)]
     #[test]
     fn reclaim_mail_at_cap() {
         assert_eq!(run(0, 0, 5, "", "0:0:0", false), "reclaim-mail");
         assert_eq!(run(0, 0, 5, "", "0:1:0", false), "none");
     }
 
+    #[test_id(tecikbg)]
     #[test]
     fn supplement_call_shape_only_ever_requeue_mail() {
         // sentinel's closed-bead supplement: check4_decide 0 <rq> 0 <labels> "<rq>:1:1"
         assert_eq!(run(0, 6, 0, "plan", "0:1:1", false), "requeue-mail");
     }
 
+    #[test_id(tbgap8z)]
     #[test]
     fn stamp_parse_is_bash_lenient() {
         assert_eq!(AskedStamp::parse(""), AskedStamp::default());
