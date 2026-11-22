@@ -33,6 +33,7 @@ mod task_a_batcher_local_emptied_round;
 mod task_a_batcher_local_gate_red;
 mod task_a_batcher_local_superseded_leg;
 mod task_a_batcher_local_rebuilt_head;
+mod task_a_batcher_local_runner_difference;
 mod task_a_batcher_local_vm_lost;
 mod task_a_batcher_local_eject_refused;
 mod task_a_czar;

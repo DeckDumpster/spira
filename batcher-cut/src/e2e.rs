@@ -386,6 +386,7 @@ impl CloneMembers for RoundEnd {
             RoundEnd::Emptied(w) => format!("emptied: {w}"),
             RoundEnd::Faulted(w) => format!("faulted: {w}"),
             RoundEnd::Stalled(w) => format!("stalled: {w}"),
+            RoundEnd::RunnerDifference { red_on, green_on, .. } => format!("runner difference: red on {red_on}, green on {green_on}"),
             RoundEnd::Abandoned => "abandoned".to_string(),
             RoundEnd::BaseRed { base, why } => format!("base red at {base}: {why}"),
             RoundEnd::Unconverged { red, probes, .. } => format!("unconverged: {red} after {probes} probes"),

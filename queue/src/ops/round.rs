@@ -195,6 +195,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             attest,
             ran,
             rehead,
+            host_only,
             lease_token,
         } => certify(
             w,
@@ -204,6 +205,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             attest.as_deref(),
             ran.as_deref().and_then(|r| r.parse().ok()),
             rehead.as_deref(),
+            *host_only,
             LeaseCheck::Check(lease_token.as_deref()),
         ),
         Round::Eject {
@@ -3744,6 +3746,7 @@ pub(super) fn certify(
     attest: Option<&str>,
     attested_ran: Option<usize>,
     rehead: Option<&str>,
+    host_only: bool,
     lease: LeaseCheck,
 ) -> i32 {
     let label = "round certify";
@@ -3783,6 +3786,7 @@ pub(super) fn certify(
         attest,
         attested_ran,
         rehead,
+        host_only,
         &mut over,
     );
     while let Some(unreached) = over.take() {
@@ -3818,6 +3822,7 @@ pub(super) fn certify(
                 None,
                 attested_ran,
                 None,
+                host_only,
                 &mut over,
             );
             continue;
@@ -3911,6 +3916,7 @@ fn certify_pass(
     attest: Option<&str>,
     attested_ran: Option<usize>,
     rehead: Option<&str>,
+    host_only: bool,
     over: &mut Option<usize>,
 ) -> i32 {
     let who = actor(w);
@@ -4149,6 +4155,7 @@ fn certify_pass(
                 ami,
                 recipe,
                 Some(&deny_path),
+                host_only,
             )
         };
         let run_on = |image: &Image| match image {

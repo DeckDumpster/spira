@@ -688,9 +688,10 @@ impl Scripts for FScripts {
         ami: Option<&str>,
         candidate_recipe: Option<&str>,
         deny_list: Option<&Path>,
+        host_only: bool,
     ) -> RunOut {
         self.calls.borrow_mut().push(format!(
-            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}{}",
+            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}{}{}",
             tree.display(),
             round.0,
             round.1,
@@ -700,7 +701,8 @@ impl Scripts for FScripts {
                 .unwrap_or_default(),
             deny_list
                 .map(|d| format!(" deny-list={}", d.display()))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            if host_only { " place=host" } else { "" }
         ));
         fs::write(handle, "777").unwrap();
         if let Some(f) = self.during_vm.borrow().as_ref() {
