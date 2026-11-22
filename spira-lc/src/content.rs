@@ -307,6 +307,8 @@ pub fn after(args: &[String], stdout: &str, m: &mut dyn crate::callers::Machine,
     report
 }
 
+const NOT_MIRRORED: &str = "is in bd but was not mirrored to the lifecycle store";
+
 /// A `dep add`/`dep remove` bd applied is mirrored into the lifecycle store, as `bead.sh` does.
 fn mirror_after(args: &[String], m: &mut dyn crate::callers::Machine) -> String {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -318,7 +320,8 @@ fn mirror_after(args: &[String], m: &mut dyn crate::callers::Machine) -> String 
     };
     match m.call(&bead::lc::dep_argv(verb, id, dep, t)) {
         (0, _) => String::new(),
-        (code, out) => format!("spira-lc content: LIFECYCLE: {verb} {id} -> {dep} is in bd but was not mirrored to the lifecycle store (exit {code}: {}); re-run the `dep` verb to mirror it\n", out.trim()),
+        (_, _) if state_store::phases::deadline_passed() && crate::settle::owe_edge(verb, id, dep, t) => String::new(),
+        (code, out) => format!("spira-lc content: LIFECYCLE: {verb} {id} -> {dep} {NOT_MIRRORED} (exit {code}: {}); re-run the `dep` verb to mirror it\n", out.trim()),
     }
 }
 
@@ -430,7 +433,11 @@ pub fn run(
         Ok(out) => after(&args, out),
         Err(_) => String::new(),
     };
-    answer_of(res, format!("{log}{report}"))
+    let mut ans = answer_of(res, format!("{log}{report}"));
+    if ans.code == 0 && report.contains(NOT_MIRRORED) {
+        ans.code = CANNOT_TELL;
+    }
+    ans
 }
 
 fn answer_of(res: Result<String, String>, stderr: String) -> Answer {
@@ -1136,6 +1143,8 @@ mod tests {
         }
         let report = after(&v(&["dep", "add", "sp-a", "sp-b"]), "", &mut Down, &mut NoBd, 0);
         assert!(report.contains("dep-add sp-a -> sp-b is in bd but was not mirrored") && report.contains("store down"), "{report}");
+        let ans = run(&v(&["dep", "add", "sp-a", "sp-b"]), &mut || Ok(String::new()), &mut |_, _| Ok(String::new()), &mut |a, _| after(a, "", &mut Down, &mut NoBd, 0), &|_| Ok(String::new()), &|_, _| Ok("Added".into()));
+        assert_eq!(ans.code, CANNOT_TELL, "{ans:?}");
     }
 
     #[test_id(ttdn3pq)]
