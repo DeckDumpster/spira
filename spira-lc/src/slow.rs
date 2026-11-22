@@ -7,8 +7,11 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use runtime::ports::{Proc, ProcOutput, ProcSpec};
 
 thread_local! {
     static VERB: RefCell<String> = const { RefCell::new(String::new()) };
@@ -36,6 +39,8 @@ static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(),
 
 /// Child processes started by lc-serve requests, by verb, caller and task; expected 0.
 pub const CHILDREN: &str = "spira_lc_children";
+/// Child processes lc-serve started in all, from a request or not, per push interval; 0 when none.
+pub const CHILDREN_STARTED: &str = "spira_lc_children_started";
 /// Reads the store ended at its limit, by verb.
 pub const READS_ENDED: &str = "spira_lc_reads_ended";
 /// Reads that ran past the limit without being ended, by verb; expected 0.
@@ -45,6 +50,44 @@ pub const READS_ENDED_BY_RESET: &str = "spira_lc_reads_ended_by_reset";
 
 /// The longest wait at the store's read gate by one request of a verb, per push interval.
 pub const GATE_WAIT_MAX_SECONDS: &str = "spira_lc_gate_wait_max_seconds";
+
+static PROCESS_CHILDREN: AtomicU64 = AtomicU64::new(0);
+
+/// A `Proc` that counts every run into the process-wide child count, then runs it.
+pub struct CountedProc {
+    inner: Arc<dyn Proc>,
+    count: &'static AtomicU64,
+}
+
+impl CountedProc {
+    pub fn new(inner: Arc<dyn Proc>) -> Self {
+        Self::counting(inner, &PROCESS_CHILDREN)
+    }
+
+    fn counting(inner: Arc<dyn Proc>, count: &'static AtomicU64) -> Self {
+        CountedProc { inner, count }
+    }
+}
+
+impl Proc for CountedProc {
+    fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
+        self.count.fetch_add(1, Ordering::Relaxed);
+        self.inner.run(spec)
+    }
+}
+
+fn children_started_series(started: u64, pushed: u64, at: std::time::SystemTime) -> spira_otel::metrics::Series {
+    spira_otel::metrics::Series { name: CHILDREN_STARTED.into(), value: started.saturating_sub(pushed) as f64, labels: Vec::new(), at }
+}
+
+/// Pushes how many child processes started since the last push, 0 included, so an idle server
+/// is told apart from a missing one; `pushed` advances only when the push succeeds.
+pub fn push_children_started(sink: &spira_otel::metrics::MetricsSink, pushed: &mut u64) {
+    let started = PROCESS_CHILDREN.load(Ordering::Relaxed);
+    if sink.try_push_series(&[children_started_series(started, *pushed, std::time::SystemTime::now())]).is_ok() {
+        *pushed = started;
+    }
+}
 
 /// How often the counts are pushed over OTLP.
 pub const METRICS_EVERY: Duration = Duration::from_secs(60);
@@ -169,6 +212,7 @@ pub fn push_gate_waits(sink: &spira_otel::metrics::MetricsSink) {
 pub fn request_done(verb: &str, method: &str, caller: &str, task: Option<&str>, took: Duration, children: u64) {
     let (verb, caller, task) = (clean(verb), clean(caller), clean(task.unwrap_or("")));
     let over = limits().is_some_and(|l| l.is_over(method, took.as_millis() as u64));
+    PROCESS_CHILDREN.fetch_add(children, Ordering::Relaxed);
     if let Ok(mut c) = COUNTERS.lock() {
         let v = c.verbs.entry(verb.clone()).or_default();
         v.0 += 1;
@@ -863,6 +907,35 @@ mod tests {
         assert!(kids[0].labels.contains(&("caller".to_string(), "kid-caller".to_string())) && kids[0].labels.contains(&("task".to_string(), "-".to_string())));
         let pushed = c.tasks.clone();
         assert!(mine(series_since(&c, &pushed, at)).is_empty(), "nothing moved, nothing pushed");
+    }
+
+    #[test_id(t7kq2md)]
+    #[test]
+    fn an_interval_with_no_child_started_pushes_a_zero() {
+        let s = children_started_series(7, 7, std::time::SystemTime::now());
+        assert_eq!((s.name.as_str(), s.value), (CHILDREN_STARTED, 0.0));
+        assert_eq!(children_started_series(10, 7, std::time::SystemTime::now()).value, 3.0);
+    }
+
+    #[test_id(t9hw3xe)]
+    #[test]
+    fn a_process_run_outside_any_request_is_counted_whether_or_not_it_succeeds() {
+        struct Fails;
+        impl Proc for Fails {
+            fn run(&self, _: &ProcSpec) -> Result<ProcOutput, String> {
+                Err("down".into())
+            }
+        }
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        let proc = CountedProc::counting(Arc::new(Fails), &COUNT);
+        let spec = ProcSpec { prog: "curl".into(), args: vec![], stdin: vec![], deadline: Duration::from_secs(1) };
+        std::thread::spawn(move || {
+            let _ = proc.run(&spec);
+            let _ = proc.run(&spec);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(COUNT.load(Ordering::Relaxed), 2);
     }
 
     #[test_id(tz4r1bn)]

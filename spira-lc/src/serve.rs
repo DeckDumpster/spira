@@ -364,11 +364,13 @@ pub fn run(args: &[String]) -> i32 {
             let mut pushed = Default::default();
             let mut pushed_reads = Default::default();
             let mut pushed_followups = Default::default();
+            let mut pushed_children = 0;
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
                 crate::slow::push_reads(&metrics, &mut pushed_reads);
                 crate::slow::push_gate_waits(&metrics);
+                crate::slow::push_children_started(&metrics, &mut pushed_children);
                 crate::followups::push(&metrics, &mut pushed_followups);
                 if let Some(Ok(store)) = crate::control::served::configured() {
                     match crate::store_gauges::file_series(store.contract().backend(), SystemTime::now()) {

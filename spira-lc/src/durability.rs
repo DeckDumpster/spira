@@ -59,7 +59,7 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = Uploader { dest, creds, proc: Arc::new(SysProc), deadline: PUT_DEADLINE };
+        let put = Uploader { dest, creds, proc: Arc::new(crate::slow::CountedProc::new(Arc::new(SysProc))), deadline: PUT_DEADLINE };
         let cfg = ShipConfig {
             dir: ship_dir(run),
             max_mains: MAX_MAINS,
@@ -173,7 +173,7 @@ pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = Uploader { dest, creds, proc: Arc::new(SysProc), deadline: TABLE_PUT_DEADLINE };
+        let put = Uploader { dest, creds, proc: Arc::new(crate::slow::CountedProc::new(Arc::new(SysProc))), deadline: TABLE_PUT_DEADLINE };
         dolt::ship(&put, Path::new(sync), Path::new(state), db, stamp, head)
     };
     match run() {
@@ -218,7 +218,7 @@ pub fn admin_archive_put(args: &[String], backup_url: &str) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        Ok(Uploader { dest, creds, proc: Arc::new(SysProc), deadline: ARCHIVE_PUT_DEADLINE })
+        Ok(Uploader { dest, creds, proc: Arc::new(crate::slow::CountedProc::new(Arc::new(SysProc))), deadline: ARCHIVE_PUT_DEADLINE })
     }) {
         Ok(u) => u,
         Err(e) => return (CANNOT_TELL, format!("admin-archive-put: {e}")),
