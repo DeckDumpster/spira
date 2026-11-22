@@ -324,6 +324,9 @@ impl crate::content_write::Tx for WireTx<'_> {
             ScriptFailure::LostRace => crate::content_write::Fail::Conflict,
             ScriptFailure::CannotTell(m) => {
                 self.healthy = false;
+                if m.starts_with("Error 1142 ") {
+                    return crate::content_write::Fail::Denied(m);
+                }
                 crate::content_write::Fail::Other(m)
             }
         })
