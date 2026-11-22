@@ -243,3 +243,49 @@ fn a_kept_row_expires_on_its_new_hold_and_its_test_blocks_the_next_round_again()
     assert!(r.reds.iter().any(|(at, _, t)| t == LIFTED && *at >= 8_000_000), "{:?}", r.reds);
     assert_eq!(r.kept[0].until - r.kept[0].since, 7_200, "the new row holds for the registry's hold");
 }
+
+/// A disabled test whose row belongs to a bead that is not in the round; a member that is not its
+/// owner edits the test's body.
+fn claim_script() -> Script {
+    loopworld::parse(&format!(
+        r#"
+driver = "loop"
+until = 10000000
+max_concurrent = 2
+settings = {{ SPIRA_TEST_REGISTRY_HOLD_SECS = "7200" }}
+
+[[bead]]
+id = "sp-cl01"
+at = 8000000
+
+[[bead]]
+id = "sp-cl02"
+at = 30000
+
+[[lift]]
+test = "{CLAIMED}"
+owner = "sp-cl01"
+fix = "sp-cl03"
+red = false
+claimed_by = "sp-cl02"
+
+[[look]]
+at = 3000000
+rows = []
+"#
+    ))
+    .expect("it parses")
+}
+
+const CLAIMED: &str = "test:t0aaaaa";
+
+#[test_id(tcl9i0j)]
+#[test]
+fn a_member_that_edits_a_disabled_tests_body_lands_green_and_clears_the_row_it_does_not_own() {
+    let script = claim_script();
+    let r = walk(script.clone());
+    assert_eq!(r.missed(&script), None, "{}", r.dump());
+    assert_eq!(r.rows["sp-cl02"].state, BeadState::Landed, "{}", r.dump());
+    assert!(r.cleared.iter().any(|(_, rows)| rows.iter().any(|t| t == CLAIMED)), "{:?}", r.cleared);
+    assert!(r.reds.is_empty(), "{:?}", r.reds);
+}

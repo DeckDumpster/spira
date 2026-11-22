@@ -78,6 +78,10 @@ impl Registry {
         Ok(self.said(at_ms, &args)?.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
     }
 
+    pub fn activate(&self, at_ms: u64, test: &str, reason: &str) -> Result<(), String> {
+        self.said(at_ms, &["activate", "--test", test, "--reason", reason, "--actor", "batcher"]).map(|_| ())
+    }
+
     /// The tests the deny list holds out of a run at `at_ms`.
     pub fn denied(&self, at_ms: u64) -> Result<Vec<String>, String> {
         Ok(self.said(at_ms, &["deny-list", "--at", &epoch_at(at_ms).to_string()])?.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).map(String::from).collect())

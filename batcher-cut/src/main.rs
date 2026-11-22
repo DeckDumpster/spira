@@ -365,6 +365,8 @@ struct StableRound {
     staged: Option<String>,
     /// The deny list the round ran with; None for an attested round, whose pass ran elsewhere.
     deny: Option<vm::DenySnapshot>,
+    /// (test, member) of each claimed row the round left standing.
+    claimed: Vec<(String, String)>,
 }
 
 /// The effects of a round besides running suites (drive::RoundOps), on this box.
@@ -1024,6 +1026,20 @@ fn append_round(env_: &Env, deny: Option<&vm::DenySnapshot>, fields: &[(&str, St
     io::tsd_append_round(env_, &all);
 }
 
+fn clear_claimed_rows(env_: &Env, repo: &Repo, round: &str, claims: &[(String, String)]) {
+    if claims.is_empty() {
+        return;
+    }
+    let registry = match spira_config::release_env::tool("test-registry") {
+        Ok(r) => r,
+        Err(e) => return println!("batcher {}: landed but claimed registry rows were not cleared: {e}", repo.name),
+    };
+    let failed = io::activate_claimed_with(&mut |test, reason| io::registry_activate(&registry, env_, test, reason), round, claims);
+    for (test, why) in failed {
+        println!("batcher {}: landed but claimed row {test} was not cleared: {why}", repo.name);
+    }
+}
+
 fn resolve_deny(env_: &Env, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
     snapshot_from(io::deny_list_snapshot(env_, at), at)
 }
@@ -1031,7 +1047,7 @@ fn resolve_deny(env_: &Env, at: u64) -> Result<vm::DenySnapshot, pace::CutError>
 fn snapshot_from(resolved: Result<String, String>, at: u64) -> Result<vm::DenySnapshot, pace::CutError> {
     let text = resolved
         .map_err(|e| pace::CutError::new(pace::CutKind::Other, format!("no round cut — the deny list could not be resolved: {e}")))?;
-    Ok(vm::DenySnapshot { text, at, lifted: vec![] })
+    Ok(vm::DenySnapshot { text, at, lifted: vec![], claimed: vec![] })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1113,6 +1129,7 @@ fn stabilize_round(
             regreen_seconds: None,
             staged: None,
             deny: None,
+            claimed: vec![],
         }));
     }
     if suites.is_empty() && repo.land == Land::Local && gate::own::declares_own_testenv(wt) {
@@ -1125,6 +1142,7 @@ fn stabilize_round(
             regreen_seconds: None,
             staged: None,
             deny: None,
+            claimed: vec![],
         }));
     }
     if suites.is_empty() {
@@ -1137,7 +1155,12 @@ fn stabilize_round(
         .collect();
 
     let member_ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
-    let (lifted_deny, lifted) = deny.lifting(&member_ids);
+    let rows = deny.test_rows();
+    let claims: Vec<(String, String)> = members
+        .iter()
+        .flat_map(|m| io::member_claims(repo, start_sha, &m.tip, &rows).into_iter().map(|t| (t, m.id.clone())))
+        .collect();
+    let (lifted_deny, lifted) = deny.lifting(&member_ids, &claims);
     let deny = &lifted_deny;
     let mut runner =
         vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?.with_round_commits(own_commits.clone()).in_batch(batch).with_deny_list(deny)?;
@@ -1233,7 +1256,8 @@ fn stabilize_round(
                 attribution_seconds: attribution_secs,
                 regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
                 staged,
-                deny: Some(vm::DenySnapshot { lifted: deny.lifted.clone(), ..vm::DenySnapshot::from_pass(&runner.results).unwrap_or_else(|| deny.clone()) }),
+                claimed: ops.lifted.standing_claims(),
+                deny: Some(vm::DenySnapshot { lifted: deny.lifted.clone(), claimed: deny.claimed.clone(), ..vm::DenySnapshot::from_pass(&runner.results).unwrap_or_else(|| deny.clone()) }),
             }))
         }
         drive::RoundEnd::Blocked(why) => {
@@ -1565,6 +1589,8 @@ fn finish_local_round(
         return Ok(None);
     }
 
+    clear_claimed_rows(env_, repo, batch, &stable.claimed);
+
     match io::unpause_after_land(env_) {
         Ok(io::Unpause::Cleared) => println!("batcher {}: landed; cut pause cleared", repo.name),
         Ok(io::Unpause::Held) => println!(
@@ -1895,6 +1921,7 @@ fn follow_promoted(
             regreen_seconds: None,
             staged: None,
             deny: None,
+            claimed: vec![],
         }
     } else {
         let deny = resolve_deny(env_, round_start)?;
@@ -3504,7 +3531,7 @@ mod cut_tests {
     fn an_ejected_owners_row_goes_back_into_the_deny_list_with_no_expiry_written_as_a_dash() {
         let d = testkit::TempDir::new("batcher-cut-restore-row");
         let (_, results, _, _) = flip_fixture(&d);
-        let row = vm::LiftedRow { state: "disabled".into(), test: "suite:test-y.sh".into(), bead: "sp-own".into(), until: -1 };
+        let row = vm::LiftedRow { state: "disabled".into(), test: "suite:test-y.sh".into(), bead: "sp-own".into(), until: -1, claimed_by: None };
         io::add_row_to_pass(&results, &row).unwrap();
         assert_eq!(
             vm::DenySnapshot::from_pass(&results).unwrap().text,
@@ -3513,7 +3540,7 @@ mod cut_tests {
     }
 
     fn lifted_pair() -> io::LiftedRows {
-        let row = |t: &str, b: &str| vm::LiftedRow { state: "disabled".into(), test: t.into(), bead: b.into(), until: 900 };
+        let row = |t: &str, b: &str| vm::LiftedRow { state: "disabled".into(), test: t.into(), bead: b.into(), until: 900, claimed_by: None };
         io::LiftedRows::new(vec![row("suite:test-x.sh", "sp-own"), row("test:t0yyyyy", "sp-own"), row("suite:test-z.sh", "sp-other")])
     }
 
@@ -3563,8 +3590,8 @@ mod cut_tests {
         let log = d.join("tsd.log");
         env.tsd_bin = Some(d.join("tsd-write"));
         testkit::write_exe(env.tsd_bin.as_ref().unwrap(), &format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display()));
-        let all = vm::DenySnapshot { text: "# test-registry deny-list at=5 rows=1\ndisabled\tsuite:a.sh\tsp-m\t9\n".into(), at: 5, lifted: vec![] };
-        let (deny, _) = all.lifting(&["sp-m".to_string()]);
+        let all = vm::DenySnapshot { text: "# test-registry deny-list at=5 rows=1\ndisabled\tsuite:a.sh\tsp-m\t9\n".into(), at: 5, lifted: vec![], claimed: vec![] };
+        let (deny, _) = all.lifting(&["sp-m".to_string()], &[]);
         append_round(&env, Some(&deny), &[("repo", "fx".to_string())]);
         assert!(std::fs::read_to_string(&log).unwrap().contains("--field-str deny_lifted=suite:a.sh"));
     }

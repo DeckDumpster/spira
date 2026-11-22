@@ -133,6 +133,7 @@ dependencies = [
  "sha2",
  "sift",
  "spira-config",
+ "spira-lint",
  "spira-otel",
  "spira-store",
  "spira-test-id",
