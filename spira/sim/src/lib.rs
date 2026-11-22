@@ -5,6 +5,7 @@ pub mod agent;
 pub mod ci;
 pub mod drive;
 pub mod gh;
+pub mod grafana;
 pub mod jq;
 pub mod launch;
 pub mod loopworld;

@@ -129,14 +129,31 @@ fn run(args: &[String]) -> Result<(), String> {
             let _ = std::fs::remove_dir_all(&tmp);
             built?;
             spira_sim::pilgrim::up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?, spira_sim::pilgrim::FIXTURE, &ProcessSteps)?;
-            Ok(())
+            grafana_up(&PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?)
+
         }
         ["world", "fixture", root, dir] => world::fixture_repo(&PathBuf::from(root), &PathBuf::from(dir)),
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),
         ["world", "seed", "--tree", rev] => world::ensure_seed(&cwd, rev).map(|_| ()),
-        ["world", "down", dir] => world::down(&PathBuf::from(dir), &ProcessSteps),
+        ["world", "down", dir] => {
+            if let Some((base, admin)) = grafana_install()? {
+                spira_sim::grafana::revoke(&spira_sim::grafana::Curl, &PathBuf::from(dir), &base, &admin)?;
+            }
+            world::down(&PathBuf::from(dir), &ProcessSteps)
+        }
         _ => Err(USAGE.to_string()),
     }
+}
+
+fn grafana_install() -> Result<Option<(String, String)>, String> {
+    let get = |k: &str| spira_config::process::cfg(k).unwrap_or_default();
+    spira_sim::grafana::install(&get("SPIRA_METRICS_GRAFANA_ADDR"), &get("SPIRA_METRICS_DATA"))
+}
+
+/// Gives a pilgrim world its own Viewer sign-in when the install runs Grafana.
+fn grafana_up(world: &std::path::Path) -> Result<(), String> {
+    let Some((base, admin)) = grafana_install()? else { return Ok(()) };
+    spira_sim::grafana::up_world(&spira_sim::grafana::Curl, world, &base, &admin)
 }
 
 fn gh_main(state: &std::path::Path, cwd: &std::path::Path, args: &[String]) -> Result<(), String> {
