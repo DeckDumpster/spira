@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime asks of lc-serve for its content writer's grant verdict.
+SCHEMA=Seconds between spira-runtime writer-grants observations (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_WRITER_GRANTS_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

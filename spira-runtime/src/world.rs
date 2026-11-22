@@ -690,6 +690,11 @@ impl World {
         overrides_apply()
     }
 
+    /// lc-serve's kept verdict on the content writer's grants, as the `writer-grants` verb answers it.
+    pub fn writer_grants_snapshot(&self) -> Result<String, String> {
+        lc_call(&self.lc_socket, &["writer-grants"]).map_err(|e| e.to_string())
+    }
+
     /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none
     /// and is left out; an unset wiki observes nothing.
     pub fn brain_dirty_snapshot(&self) -> Result<String, String> {

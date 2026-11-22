@@ -147,11 +147,6 @@ runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
 # refreshes are landing.
 skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
 
-# LC-GRANTS is the alarm for a content writer whose grants the code has outgrown: lc-serve's
-# startup grant check writes it, through `watchd page`, and nothing else does. A quiet log means
-# the writer holds every grant the code needs.
-lc-grants|log|@SPIRA_RUN@/lc-grants.log
-
 # ROUNDS-LOOP is where the round supervisor's pages are recorded. Nothing writes the Concierge inbox
 # for it directly: it calls `watchd page rounds-loop <text> batch=.. repo=.. members=.. phase=..
 # verdict=.. red=..`, which offers the incident to a matching SOP's tool first and puts the page in the

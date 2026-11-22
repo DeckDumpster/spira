@@ -101,6 +101,33 @@ pub(crate) fn check_grants() -> Option<Result<Vec<String>, String>> {
     Some(run())
 }
 
+type Verdict = Option<Result<Vec<String>, String>>;
+
+static CHECKED: std::sync::OnceLock<(u64, Verdict)> = std::sync::OnceLock::new();
+
+/// Runs the check and keeps its verdict, with the time it was taken, for `grants_json`.
+pub(crate) fn record_check() -> Verdict {
+    let verdict = check_grants();
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    CHECKED.get_or_init(|| (at, verdict)).1.clone()
+}
+
+/// The kept verdict as the `writer-grants` verb answers it; no store read.
+pub(crate) fn grants_json() -> String {
+    let v = match CHECKED.get() {
+        None => serde_json::json!({"checked_at": null, "writer": false, "missing": [], "error": null}),
+        Some((at, verdict)) => {
+            let (missing, error) = match verdict {
+                Some(Ok(m)) => (m.clone(), None),
+                Some(Err(e)) => (vec![], Some(e.clone())),
+                None => (vec![], None),
+            };
+            serde_json::json!({"checked_at": at, "writer": verdict.is_some(), "missing": missing, "error": error})
+        }
+    };
+    v.to_string()
+}
+
 fn provision(admin: &dyn Dolt, db: &str, user: &str, password: &str) -> Result<String, String> {
     let schema = db.trim_matches('`');
     let present = names(&admin.rows(&format!("{TABLES_SQL}'{schema}'"))?);
