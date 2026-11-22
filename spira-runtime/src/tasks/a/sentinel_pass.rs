@@ -600,10 +600,15 @@ pub fn land_escalation(age_secs: u64, log_tail: &str) -> Write {
     Write { subject, text, cause: LAND_ESCALATE_DEFAULT.into(), ..Write::default() }
 }
 
-/// CHECK 6's second trigger: no leg running and none completed within `SPIRA_LAND_STALE`.
+/// Unreadable rows count as landable work: a leg that finds nothing is cheap, a skipped one is not.
+fn landable_work(snap: &Snapshot) -> bool {
+    snap.rows.as_ref().is_none_or(|rows| rows.iter().any(|r| matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY")))
+}
+
+/// CHECK 6's second trigger: landable work, no leg running and none completed within `SPIRA_LAND_STALE`.
 fn land_escalate(carry: &Carry, next: &mut Carry, snap: &Snapshot, acts: &mut Vec<Act>) {
     let Some(age) = snap.land_age_secs else { return };
-    if snap.landing_active || age <= snap.land_stale_secs {
+    if snap.landing_active || age <= snap.land_stale_secs || !landable_work(snap) {
         return;
     }
     let since = carry.land_escalated_at_ms.map_or(u64::MAX, |at| snap.now_ms.saturating_sub(at) / 1000);
@@ -655,7 +660,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
         acts.push(Act::new(RECOMPUTE_BLOCKED, format!("recompute:{now}")));
     }
     // CHECK 6: the landing leg, unless one is in flight or this is not the current release.
-    if snap.world_running && snap.skew.is_none() && !snap.landing_active {
+    if snap.world_running && snap.skew.is_none() && !snap.landing_active && landable_work(snap) {
         acts.push(act(LANDING_START, LANDING_UNIT, Write { max_secs: snap.land_maxsec, ..Write::default() }));
         landing = true;
     }

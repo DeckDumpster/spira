@@ -158,7 +158,7 @@ fn t5_check7_call_wanted_is_delivered_to_the_call() {
 #[test_id(t1ztxqn)]
 #[test]
 fn t5_check6_the_landing_leg_carries_its_runtime_bound_and_its_log() {
-    let (_, acts) = decide(&Carry::default(), &Snapshot { landing_active: false, land_maxsec: 900, ..idle() });
+    let (_, acts) = decide(&Carry::default(), &Snapshot { landing_active: false, land_maxsec: 900, ..submitted() });
     let start = acts.iter().find(|a| a.effect == LANDING_START).expect("the landing leg starts");
     let w: Write = serde_json::from_str(&start.input).unwrap();
     let props = landing_props(&w, std::path::Path::new("run/spira"));
@@ -167,8 +167,41 @@ fn t5_check6_the_landing_leg_carries_its_runtime_bound_and_its_log() {
     assert_eq!(landing_props(&Write::default(), std::path::Path::new("r")).runtime_max_ms, None, "0 is no bound");
 }
 
+fn submitted() -> Snapshot {
+    let mut snap = idle();
+    snap.rows.as_mut().unwrap().push(Row { id: "sp-s".into(), state: "SUBMITTED".into(), version: 1, ..Row::default() });
+    snap
+}
+
+#[test_id(tzghix6)]
+#[test]
+fn t5_check6_an_idle_snapshot_starts_no_landing_leg_and_a_submitted_row_starts_one() {
+    let idle_now = Snapshot { landing_active: false, ..idle() };
+    assert!(effects(&decide(&Carry::default(), &idle_now).1, LANDING_START).is_empty());
+    for state in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
+        let mut snap = idle_now.clone();
+        snap.rows.as_mut().unwrap().push(Row { id: "sp-s".into(), state: state.into(), version: 1, ..Row::default() });
+        assert_eq!(effects(&decide(&Carry::default(), &snap).1, LANDING_START).len(), 1, "{state}");
+    }
+}
+
+#[test_id(t0zifc9)]
+#[test]
+fn t5_check6_an_idle_snapshot_does_not_escalate_for_the_age_of_the_leg() {
+    let idle_stale = Snapshot { rows: idle().rows, ..stale() };
+    let (_, acts) = decide(&Carry::default(), &idle_stale);
+    assert!(asks(&acts).is_empty() && effects(&acts, LANDING_START).is_empty());
+}
+
+#[test_id(tx082tt)]
+#[test]
+fn t5_check6_unreadable_rows_still_start_the_landing_leg() {
+    let snap = Snapshot { landing_active: false, rows: None, ..idle() };
+    assert_eq!(effects(&decide(&Carry::default(), &snap).1, LANDING_START).len(), 1);
+}
+
 fn stale() -> Snapshot {
-    Snapshot { landing_active: false, land_age_secs: Some(7_200), land_stale_secs: 1_800, land_escalate_every_secs: 3_600, land_log_tail: "gate red".into(), ..idle() }
+    Snapshot { landing_active: false, land_age_secs: Some(7_200), land_stale_secs: 1_800, land_escalate_every_secs: 3_600, land_log_tail: "gate red".into(), ..submitted() }
 }
 
 fn asks(acts: &[Act]) -> Vec<Act> {
