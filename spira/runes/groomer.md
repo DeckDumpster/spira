@@ -62,12 +62,12 @@ has a structurally absent premise and you may close it directly:
 - Created by a dwarf (`created_by` starts with `dwarf-`)
 - No description
 - Title matches `test bead`, `test-*`, `fixture*`, or `demo-*`; OR carries a `repo:` label
-  whose value is not in the repo-map (`dwarf.sh` refuses to claim it at claim time)
+  whose value is not in the repo-map (a claim refuses it at claim time)
 - No branch, commit, or note in the repository names its id
 
 Close it and name the evidence:
 
-    {{GROOM}} close <id> --evidence "Litter: dwarf-created, no description, repo:<name> not in repo-map (confirmed: work read <id>; spira inventory.sh found no reference)."
+    {{GROOM}} close <id> --evidence "Litter: dwarf-created, no description, repo:<name> not in repo-map (confirmed: work read <id>; the inventory lint found no reference)."
 
 **Do not close beads you are merely unsure about. The unsure path has two steps; a third
 note without an ask is the defect this bead exists to end.**

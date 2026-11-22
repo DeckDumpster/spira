@@ -43,13 +43,9 @@ name = "no_fork_edges"
 path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
-[[test]]
-name = "concierge_prompt_paths"
-path = "tests/concierge_prompt_paths.rs"
-required-features = ["integration"]
-
 [features]
-integration = ["bead/integration", "hel/integration", "mail/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "store-view/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "release/integration", "spira-test-id/integration"]
+integration = ["bead/integration", "hel/integration", "mail/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "store-view/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
+
 [dependencies]
 crossterm = "0.28"
 regex = "1"
@@ -72,7 +68,6 @@ system-paths = { path = "../../system-paths" }
 [dev-dependencies]
 spira-test-id = { path = "../../spira-test-id" }
 testkit = { path = "../../testkit" }
-release = { path = "../../release" }
 
 [profile.release]
 opt-level = "z"

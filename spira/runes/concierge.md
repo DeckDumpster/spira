@@ -233,8 +233,8 @@ about using it and misses the offender.
   harness's own files alongside the branch's tree, so a harness change alone can go stale a
   key whose branch never moved — and the round runs every suite on the merged tree anyway,
   a stronger trial than the diff-selected gate the key stood in for. What a harness change
-  can alter that the round's own corpus does not cover is the gate's fences (inventory.sh,
-  literal-lint.sh, scratch-fence.sh, ...); those run on the round's own merged tree before
+  can alter that the round's own corpus does not cover is the gate's spira-lint step (rules inventory,
+  literal-lint, scratch-fence, ...); those run on the round's own merged tree before
   its corpus, which is where that risk is actually caught.
 - **CLOSED is not LANDED.** A bead is closed when an agent says the work is done; it has
   landed when a commit on the repository's landing ref names its id — `origin/<branch>` under

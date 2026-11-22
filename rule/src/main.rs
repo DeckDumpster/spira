@@ -669,6 +669,41 @@ fn open_bead_titles(db: &str) -> Vec<String> {
         .collect()
 }
 
+struct PromptAudit {
+    findings: Vec<rule::audit::Finding>,
+    total: usize,
+}
+
+/// Every `*.md` under `<home>/runes`, one `Finding` per prompt that names something the release
+/// lacks; its `missing` holds the full `runes/<file>:<line>: <token>` lines.
+fn prompt_audit(home: &str) -> Result<PromptAudit, String> {
+    let dir = Path::new(home).join("runes");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("rule: audit cannot read {}: {e}", dir.display()))?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".md"))
+        .collect();
+    if names.is_empty() {
+        return Err(format!("rule: audit found no persona prompts (*.md) in {} — refusing to report them clean", dir.display()));
+    }
+    names.sort();
+    let root = Path::new(home).parent().map(Path::to_path_buf).unwrap_or_default();
+    let bins: std::collections::BTreeSet<String> =
+        std::fs::read_dir(root.join("bin")).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let resolve = rule::audit::placeholder_resolver(&root, &bins);
+    let lookup = rule::audit::release_lookup(home);
+    let mut findings = Vec::new();
+    for n in &names {
+        let text = std::fs::read_to_string(dir.join(n)).map_err(|e| format!("rule: audit cannot read {}: {e}", dir.join(n).display()))?;
+        let missing = rule::audit::prompt_findings(n, &text, &resolve, &lookup);
+        if !missing.is_empty() {
+            findings.push(rule::audit::Finding { slug: format!("runes/{n}"), missing });
+        }
+    }
+    Ok(PromptAudit { findings, total: names.len() })
+}
+
 fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
     let (mut file, mut persona, mut repo, mut max) = (false, None, None, 5usize);
     let mut it = rest.iter();
@@ -711,6 +746,21 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
         println!("{}: {}", f.slug, f.missing.join(", "));
     }
     println!("{} of {} statutes name something the release does not have", findings.len(), memories.keys().filter(|k| k.starts_with("law-")).count());
+    let prompts = match prompt_audit(home) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    for f in &prompts.findings {
+        for t in &f.missing {
+            println!("{}", t);
+        }
+    }
+    println!("{} of {} persona prompts name something the release does not have", prompts.findings.len(), prompts.total);
+    let mut findings = findings;
+    findings.extend(prompts.findings);
     if !file {
         return 0;
     }
