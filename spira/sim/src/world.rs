@@ -872,6 +872,16 @@ fn place_seed(seed: &Path, origin: &Path, work: &Path, runner: &Path) -> Result<
     Ok(())
 }
 
+/// What a registered repository must hold to meet the landing contract, so `work file` accepts
+/// the repositories a world registers.
+const CONTRACT_FILES: &[(&str, &str)] = &[
+    ("flake.nix", include_str!("../fixtures/world-repo/flake.nix")),
+    ("flake.lock", include_str!("../fixtures/world-repo/flake.lock")),
+    (".spira/checks.toml", include_str!("../fixtures/world-repo/.spira/checks.toml")),
+    (".spira/testenv.toml", include_str!("../fixtures/world-repo/.spira/testenv.toml")),
+    (".spira/deploy.toml", include_str!("../fixtures/world-repo/.spira/deploy.toml")),
+];
+
 /// A repository beyond the world's own: one commit (the stub gate string, so its gate runs the
 /// world's runner) on its trunk, pushed to its bare origin; a `queue.local` one also gets its
 /// local landing branch.
@@ -884,7 +894,12 @@ fn place_extra(world: &Path, spec: &RepoSpec, runner: &Path) -> Result<(), Strin
     git(parent, &["init", "-q", &branch, &p(&work)])?;
     git(parent, &["init", "-q", "--bare", &branch, &p(&origin)])?;
     std::fs::write(work.join("gate.steps"), stub_gate_steps(runner)).map_err(|e| e.to_string())?;
-    git(&work, &["add", "gate.steps"])?;
+    for (path, text) in CONTRACT_FILES {
+        let file = work.join(path);
+        std::fs::create_dir_all(file.parent().ok_or("a contract file has a directory")?).map_err(|e| e.to_string())?;
+        std::fs::write(&file, text).map_err(|e| e.to_string())?;
+    }
+    git(&work, &["add", "-A"])?;
     git(&work, &["commit", "-q", "-m", &format!("sim repo {}", spec.name)])?;
     git(&work, &["remote", "add", "origin", &p(&origin)])?;
     git(&work, &["push", "-q", "-u", "origin", &spec.trunk])?;
@@ -1329,6 +1344,21 @@ pub fn down(dir: &Path, steps: &dyn Steps) -> Result<(), String> {
 #[cfg(test)]
 mod locator_tests {
     use super::*;
+
+    #[test_id(tljx42u)]
+    #[test]
+    fn a_registered_repository_commits_the_files_the_landing_contract_reads() {
+        let t = testkit::TempDir::new("extra-contract");
+        let spec = RepoSpec::parse(crate::pilgrim::FIXTURE_REPO).unwrap();
+        place_extra(t.path(), &spec, Path::new("runner")).unwrap();
+        let show = |f: &str| git(&spec.work(t.path()), &["show", &format!("HEAD:{f}")]).unwrap_or_else(|e| panic!("{f} is not committed: {e}"));
+        assert!(show("flake.nix").contains("devShells"));
+        show("flake.lock");
+        assert!(show(".spira/checks.toml").parse::<toml::Table>().unwrap().contains_key("check"));
+        assert!(show(".spira/testenv.toml").parse::<toml::Table>().unwrap()["default"].as_array().is_some_and(|d| !d.is_empty()));
+        assert!(show(".spira/deploy.toml").parse::<toml::Table>().unwrap()["after_landing"].as_str().is_some_and(|d| !d.is_empty()));
+        show("gate.steps");
+    }
 
     #[test_id(twb1p8q)]
     #[test]

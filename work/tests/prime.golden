@@ -341,6 +341,14 @@ Arguments:
 Checks:
   - the broker's allow row for your persona names this verb
 
+### work claim
+Takes a READY bead as a builder, in a pilgrim world only.
+Use when: A pilgrim walks a builder's path: claim the world's bead, commit on spira/<bead>, `work submit`.
+Arguments:
+  <bead-id>
+Checks:
+  - the broker's allow row for your persona names this verb
+
 ### work close-ask
 Closes an ask in the operator mailbox.
 Use when: The decision that settled it is known.

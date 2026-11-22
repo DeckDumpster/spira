@@ -73,6 +73,8 @@ pub struct SeedDef {
     pub body: Option<String>,
 }
 
+const REGISTERED_REPO_CONSIDERED: &str = "a world's registered repository commits the contract files itself; the checker's nix and forge refs are not in the world";
+
 const SEEDS_DIR: &str = "$SPIRA_RUN/seeds";
 
 fn handle_ok(h: &str) -> bool {
@@ -98,7 +100,11 @@ impl SeedDef {
             _ => return Err(format!("scenario: seed {h}: exactly one of `for` and `kind`")),
         };
         let mut cmd = format!("mkdir -p \"{SEEDS_DIR}\"");
-        let mut file = format!("bead.sh file {} {who} --repo {}", shell_quote(&self.title), shell_quote(self.repo.as_deref().unwrap_or(REPO)));
+        let consider = match self.repo.as_deref() {
+            Some(r) if r != REPO => format!("BEAD_CONTRACT_CONSIDERED={} ", shell_quote(REGISTERED_REPO_CONSIDERED)),
+            _ => String::new(),
+        };
+        let mut file = format!("{consider}bead.sh file {} {who} --repo {}", shell_quote(&self.title), shell_quote(self.repo.as_deref().unwrap_or(REPO)));
         if let Some(p) = self.priority {
             file += &format!(" --priority {p}");
         }
@@ -902,5 +908,22 @@ mod profile_cut_tests {
         let log = format!("=== t=0 a: exit status: 1 in 5ms\n{cut}\n=== t=1 b: exit status: 1 in 5ms\n{cut}\n=== t=2 c: exit status: 0 in 5ms\nfine\n");
         assert!(cuts(&log).contains(" cuts=2 "), "{}", cuts(&log));
         assert!(cuts("=== t=0 a: exit status: 0 in 5ms\nfine\n").contains(" cuts=0 "));
+    }
+}
+
+#[cfg(test)]
+mod seed_contract_tests {
+    use super::*;
+
+    fn seed(repo: Option<&str>) -> SeedDef {
+        SeedDef { at: 0, handle: "s".into(), title: "t".into(), persona: Some("builder".into()), kind: None, repo: repo.map(str::to_string), priority: None, labels: vec![], deps: vec![], body: None }
+    }
+
+    #[test_id(tevg9cw)]
+    #[test]
+    fn a_seed_filed_against_a_registered_repository_names_why_the_contract_check_is_waived() {
+        assert!(seed(Some("fixture")).shell().unwrap().contains("BEAD_CONTRACT_CONSIDERED='"));
+        assert!(!seed(None).shell().unwrap().contains("BEAD_CONTRACT_CONSIDERED"));
+        assert!(!seed(Some(REPO)).shell().unwrap().contains("BEAD_CONTRACT_CONSIDERED"));
     }
 }

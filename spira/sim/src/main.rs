@@ -102,7 +102,10 @@ fn run(args: &[String]) -> Result<(), String> {
         ["world", "up", rest @ ..] => {
             let (pos, set, repos) = flags_repeated(&rest.iter().map(|a| a.to_string()).collect::<Vec<_>>(), &["--tree"], &["--pilgrim"], &["--repo"])?;
             let [dir] = pos.as_slice() else { return Err(USAGE.to_string()) };
-            let repos = repos.iter().map(|r| world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>()?;
+            let mut repos = repos.iter().map(|r| world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>()?;
+            if set.contains_key("--pilgrim") && !repos.iter().any(|r| r.name == spira_sim::pilgrim::FIXTURE_REPO.split(':').next().unwrap_or_default()) {
+                repos.push(world::RepoSpec::parse(spira_sim::pilgrim::FIXTURE_REPO)?);
+            }
             let tree = set.get("--tree").map_or("HEAD", String::as_str);
             if !set.contains_key("--pilgrim") {
                 return world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()));

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 pub const FIXTURE: &str = include_str!("../fixtures/pilgrim-world.toml");
+pub const FIXTURE_REPO: &str = "fixture:queue.forge";
 const SHELL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(600); // batch-job: a tool run in a world, Loom and lc-view's loop for a whole suite
 
 /// A command under the world's own environment and PATH — its config, socket and release — so a
@@ -111,6 +112,26 @@ pub fn link(world: &Path, bead: &str, depends_on: &str) -> Result<(), String> {
 
 pub fn close(world: &Path, bead: &str, evidence: &str) -> Result<(), String> {
     ok(world, "close-other", &[bead, "--evidence", evidence]).map(|_| ())
+}
+
+/// The id the fixture's standing bead was filed under.
+pub fn standing_bead(world: &Path) -> Result<String, String> {
+    let out = exec(world, "cat \"$SPIRA_RUN/seeds/standing.id\"")?;
+    String::from_utf8_lossy(&out.stdout).lines().next().map(str::to_string).filter(|id| !id.is_empty()).ok_or_else(|| "the world filed no standing bead".to_string())
+}
+
+/// Takes `bead` as a builder in the world.
+pub fn claim(world: &Path, bead: &str) -> Result<(), String> {
+    ok(world, "claim", &[bead]).map(|_| ())
+}
+
+/// One `work <verb>` run from `worktree` under `session` (the variables that bind it to a bead
+/// and a persona), through the `work` client a builder uses: `(exit code, output)`.
+pub fn work_bound(world: &Path, session: &[(&str, &str)], worktree: &Path, verb: &str) -> Result<(i32, String), String> {
+    let mut cmd = bound_command(world, &format!("exec work {verb}"))?;
+    cmd.current_dir(worktree).envs(session.iter().copied());
+    let (status, stdout, stderr) = world::run_capture(&mut cmd, SHELL_DEADLINE)?;
+    Ok((status.code().unwrap_or(-1), stdout + &stderr))
 }
 
 /// `lc-view once` under the world's own config and socket.
