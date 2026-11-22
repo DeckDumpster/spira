@@ -549,7 +549,9 @@ pub fn profile_line(world: &Path) -> String {
         .collect();
     let (mut cmds, mut cmd_ms, mut probes, mut probe_ms) = (0u64, 0u64, 0u64, 0u64);
     let mut timed_cmds: Vec<(u64, String)> = Vec::new();
+    let mut cuts = 0u64;
     for l in std::fs::read_to_string(world.join(EXEC_LOG)).unwrap_or_default().lines() {
+        cuts += l.contains(spira_store::lc_call::DEADLINE_ANSWER) as u64;
         let timed = l.contains("(probe): in ") || l.contains(": exit status: ");
         let Some(ms) = timed.then_some(l).and_then(|l| l.rsplit_once(" in ")).and_then(|(_, t)| t.strip_suffix("ms")).and_then(|t| t.parse::<u64>().ok()) else { continue };
         if l.contains("(probe): in ") {
@@ -563,7 +565,7 @@ pub fn profile_line(world: &Path) -> String {
     }
     timed_cmds.sort_by_key(|c| std::cmp::Reverse(c.0));
     let slowest: Vec<String> = timed_cmds.iter().take(4).map(|(ms, c)| format!("{ms}ms {c}")).collect();
-    format!("{} cpu={}ms commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms slowest: {}", phases.join(" "), children_cpu_ms(), slowest.join(" | "))
+    format!("{} cpu={}ms commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms cuts={cuts} slowest: {}", phases.join(" "), children_cpu_ms(), slowest.join(" | "))
 }
 
 pub struct ProcessProbe {
@@ -596,7 +598,8 @@ impl Probe for ProcessProbe {
     fn snapshot(&mut self) -> Result<Snapshot, String> {
         let started = std::time::Instant::now();
         let snap = self.take();
-        self.exec.log("(probe)", 0, &format!("in {}ms", started.elapsed().as_millis()), "", "");
+        let failed = snap.as_ref().err().map(|e| format!("{e}\n")).unwrap_or_default();
+        self.exec.log("(probe)", 0, &format!("in {}ms", started.elapsed().as_millis()), "", &failed);
         snap
     }
 }
@@ -879,5 +882,24 @@ mod scenario_path_tests {
         std::fs::write(dir.join("x.toml"), "").unwrap();
         assert_eq!(scenario_path(h.path(), "x"), dir.join("x.toml"));
         assert_eq!(scenario_path(h.path(), "a/b.toml"), PathBuf::from("a/b.toml"));
+    }
+}
+
+#[cfg(test)]
+mod profile_cut_tests {
+    use super::*;
+
+    fn cuts(log: &str) -> String {
+        let w = testkit::TempDir::new("profile-cuts");
+        std::fs::write(w.path().join(EXEC_LOG), log).unwrap();
+        profile_line(w.path())
+    }
+
+    #[test]
+    fn the_profile_counts_calls_the_service_cut_at_its_deadline() {
+        let cut = spira_store::lc_call::DEADLINE_ANSWER;
+        let log = format!("=== t=0 a: exit status: 1 in 5ms\n{cut}\n=== t=1 b: exit status: 1 in 5ms\n{cut}\n=== t=2 c: exit status: 0 in 5ms\nfine\n");
+        assert!(cuts(&log).contains(" cuts=2 "), "{}", cuts(&log));
+        assert!(cuts("=== t=0 a: exit status: 0 in 5ms\nfine\n").contains(" cuts=0 "));
     }
 }

@@ -145,3 +145,13 @@ fn a_write_the_server_cut_at_its_deadline_is_resent_under_its_id_and_applied_onc
     assert!(ids[0].is_some() && ids[0] == ids[1], "both sends carry one request id: {ids:?}");
     assert_eq!(r.notes.mutations().len(), 1, "the write is applied once");
 }
+
+#[test]
+fn a_test_started_serve_runs_under_the_ceiling_the_complete_fixture_carries() {
+    let dir = testkit::TempDir::new("complete-deadline");
+    let toml = spira_config::process::fixture_toml(dir.path(), &[]);
+    let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+    let read = spira_config::process::fresh(&["SPIRA_LC_REQUEST_DEADLINE_MS".to_string()]).unwrap();
+    let got = super::deadlines_from(|k| read.get(k).cloned().ok_or_else(|| format!("{k} missing"))).unwrap();
+    assert_eq!(got.default, Duration::from_millis(super::MAX_CONFIGURED_MS));
+}
