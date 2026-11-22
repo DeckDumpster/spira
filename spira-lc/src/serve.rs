@@ -701,13 +701,13 @@ impl<'scope, 'env, F> Workers<'scope, 'env, F>
 where
     F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
 {
-    fn new(scope: &'scope std::thread::Scope<'scope, 'env>, serve: F) -> Self {
+    fn new(scope: &'scope std::thread::Scope<'scope, 'env>, serve: F, idle: Arc<AtomicUsize>) -> Self {
         let (queue, inbox) = std::sync::mpsc::channel();
-        Workers { scope, serve, queue, inbox: Arc::new(std::sync::Mutex::new(inbox)), idle: Arc::new(AtomicUsize::new(0)), started: 0 }
+        Workers { scope, serve, queue, inbox: Arc::new(std::sync::Mutex::new(inbox)), idle, started: 0 }
     }
 
     fn dispatch(&mut self, stream: UnixStream) {
-        let claimed = self.idle.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
+        let claimed = self.idle.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
         if claimed {
             let _ = self.queue.send(stream);
             return;
@@ -742,8 +742,24 @@ fn accept_until_stopped<'scope, 'env, F>(
 where
     F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
 {
+    accept_counting_idle(listener, socket_path, scope, stopping, serve, Arc::default())
+}
+
+/// `accept_until_stopped` with the idle-worker count shared with the caller, which a test reads
+/// to know a worker has finished its reply's aftermath.
+fn accept_counting_idle<'scope, 'env, F>(
+    listener: &UnixListener,
+    socket_path: &str,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    stopping: &AtomicBool,
+    serve: F,
+    idle: Arc<AtomicUsize>,
+) -> usize
+where
+    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+{
     use std::os::unix::io::AsRawFd;
-    let mut workers = Workers::new(scope, serve);
+    let mut workers = Workers::new(scope, serve, idle);
     let mut ready = PollFd { fd: listener.as_raw_fd(), events: POLLIN, revents: 0 };
     while !stopping.load(Ordering::SeqCst) {
         ready.revents = 0;
