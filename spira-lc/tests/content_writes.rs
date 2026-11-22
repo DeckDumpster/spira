@@ -836,6 +836,7 @@ fn a_planning_write_moves_the_kv_watermark_in_sql_and_starts_no_bd_kv() {
     panic!("kv never reached {want}: {last}");
 }
 
+#[test_id(t0m04je)]
 #[test]
 fn a_write_the_writers_grants_deny_names_its_verb_the_missing_grant_and_the_provisioning_verb() {
     let Some(store) = Store::up() else { return };
@@ -876,6 +877,7 @@ fn provisioned_lc_with_watchd(store: &Store, name: &str) -> (Lc, PathBuf) {
     (lc, log)
 }
 
+#[test_id(tmpwngi)]
 #[test]
 fn a_writer_that_lost_a_grant_is_named_on_stderr_and_paged_once_without_changing_a_grant() {
     let Some(store) = Store::up() else { return };
@@ -898,6 +900,7 @@ fn a_writer_that_lost_a_grant_is_named_on_stderr_and_paged_once_without_changing
     assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before, "the check changed the writer's grants");
 }
 
+#[test_id(tmte5ub)]
 #[test]
 fn a_fully_provisioned_writer_says_nothing_and_pages_nobody_at_start() {
     let Some(store) = Store::up() else { return };

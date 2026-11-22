@@ -210,16 +210,19 @@ mod tests {
         g
     }
 
+    #[test_id(twdt52q)]
     #[test]
     fn a_writer_holding_every_written_table_is_missing_none() {
         assert_eq!(missing_writes(&grants_on("d", &[], FOUR), "`d`", &present(&ALL)), Ok(vec![]));
     }
 
+    #[test_id(tkavs99)]
     #[test]
     fn a_writer_without_dependencies_is_missing_exactly_that() {
         assert_eq!(missing_writes(&grants_on("d", &["dependencies"], FOUR), "d", &present(&ALL)), Ok(vec!["dependencies".to_string()]));
     }
 
+    #[test_id(toyeydy)]
     #[test]
     fn select_alone_on_a_present_table_is_missing_it() {
         let mut g = grants_on("d", &["leases"], FOUR);
@@ -227,12 +230,14 @@ mod tests {
         assert_eq!(missing_writes(&g, "d", &present(&ALL)), Ok(vec!["leases".to_string()]));
     }
 
+    #[test_id(two2xbi)]
     #[test]
     fn a_table_the_store_lacks_is_not_required() {
         let some: Vec<&str> = ALL.iter().copied().filter(|t| *t != "local_metadata").collect();
         assert_eq!(missing_writes(&grants_on("d", &["local_metadata"], FOUR), "d", &present(&some)), Ok(vec![]));
     }
 
+    #[test_id(tz4b59l)]
     #[test]
     fn all_privileges_on_everything_covers_every_table() {
         for line in ["GRANT ALL PRIVILEGES ON *.* TO `wr`@`%`", "GRANT ALL ON *.* TO `wr`@`%`", "GRANT ALL ON `d`.* TO `wr`@`%`"] {
@@ -240,6 +245,7 @@ mod tests {
         }
     }
 
+    #[test_id(tur5bt5)]
     #[test]
     fn grants_naming_another_database_or_nothing_are_not_a_verdict() {
         assert!(missing_writes(&grants_on("other", &[], FOUR), "d", &present(&ALL)).is_err());

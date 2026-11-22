@@ -1282,6 +1282,7 @@ mod tests {
         assert_eq!(tables_written("SELECT 1"), None);
     }
 
+    #[test_id(t9t2j2u)]
     #[test]
     fn a_denied_statement_names_the_verb_the_privilege_the_table_and_the_provisioning_verb() {
         let s = script(&["dep", "add", "sp-a", "sp-b"], None);
@@ -1293,11 +1294,13 @@ mod tests {
         assert!(!tx.sent.iter().any(|q| q.starts_with("COMMIT")), "{:?}", tx.sent);
     }
 
+    #[test_id(tht2n8h)]
     #[test]
     fn a_verb_is_named_by_its_door_words() {
         assert_eq!([verb_of(&v(&["dep", "add", "a", "b"])), verb_of(&v(&["close", "a"])), verb_of(&v(&["kv", "set", "k", "v"]))], ["dep add", "close", "kv set"]);
     }
 
+    #[test_id(ttklzic)]
     #[test]
     fn a_verb_the_port_does_not_make_exactly_stays_bds() {
         for argv in [&["set-state", "sp-a", "branch="][..], &["set-state", "sp-a", "=x"], &["duplicate", "sp-a"], &["gate", "check"], &["gate", "discover", "--branch", "b", "--repo", "r"], &["kv", "set", "k"], &["remember", "--key"]] {
