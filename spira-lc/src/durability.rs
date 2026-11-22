@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use runtime::ports::{Clock, SysProc, WallClock};
+use runtime::ports::{Clock, WallClock};
 use spira_otel::metrics::{MetricsSink, Point};
 use state_store_sqlite::durability::dolt;
 use state_store_sqlite::durability::drill::{self, Exclusions};
@@ -59,7 +59,7 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = Uploader { dest, creds, proc: Arc::new(crate::slow::CountedProc::new(Arc::new(SysProc))), deadline: PUT_DEADLINE };
+        let put = Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline: PUT_DEADLINE };
         let cfg = ShipConfig {
             dir: ship_dir(run),
             max_mains: MAX_MAINS,
@@ -173,7 +173,7 @@ pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = Uploader { dest, creds, proc: Arc::new(crate::slow::CountedProc::new(Arc::new(SysProc))), deadline: TABLE_PUT_DEADLINE };
+        let put = Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline: TABLE_PUT_DEADLINE };
         dolt::ship(&put, Path::new(sync), Path::new(state), db, stamp, head)
     };
     match run() {
@@ -218,7 +218,7 @@ pub fn admin_archive_put(args: &[String], backup_url: &str) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        Ok(Uploader { dest, creds, proc: Arc::new(crate::slow::CountedProc::new(Arc::new(SysProc))), deadline: ARCHIVE_PUT_DEADLINE })
+        Ok(Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline: ARCHIVE_PUT_DEADLINE })
     }) {
         Ok(u) => u,
         Err(e) => return (CANNOT_TELL, format!("admin-archive-put: {e}")),
@@ -271,7 +271,7 @@ mod tests {
     fn shipped(dir: &Path, clock: &VirtualClock) -> Shipper {
         let b = SqliteBackend::open(&dir.join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let c = suite::open(b.clone(), clock);
-        let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, proc: Arc::new(SysProc), deadline: PUT_DEADLINE });
+        let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE });
         let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX };
         let mut sh = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
         sh.tick().unwrap();
@@ -471,7 +471,7 @@ mod tests {
         let c = suite::open(b.clone(), &clock);
         let blocked = dir.path().join("blocked");
         std::fs::write(&blocked, "").unwrap();
-        let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(blocked), creds: None, proc: Arc::new(SysProc), deadline: PUT_DEADLINE });
+        let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(blocked), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE });
         let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
         let mut s = Shipping {
             shipper: Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap(),

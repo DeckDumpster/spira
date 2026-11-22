@@ -60,8 +60,9 @@ pub struct CountedProc {
 }
 
 impl CountedProc {
-    pub fn new(inner: Arc<dyn Proc>) -> Self {
-        Self::counting(inner, &PROCESS_CHILDREN)
+    /// The system's `Proc`, counted into the process-wide child count.
+    pub fn sys() -> Arc<dyn Proc> {
+        Arc::new(Self::counting(Arc::new(runtime::ports::SysProc), &PROCESS_CHILDREN))
     }
 
     fn counting(inner: Arc<dyn Proc>, count: &'static AtomicU64) -> Self {
@@ -83,8 +84,11 @@ fn children_started_series(started: u64, pushed: u64, at: std::time::SystemTime)
 /// Pushes how many child processes started since the last push, 0 included, so an idle server
 /// is told apart from a missing one; `pushed` advances only when the push succeeds.
 pub fn push_children_started(sink: &spira_otel::metrics::MetricsSink, pushed: &mut u64) {
-    let started = PROCESS_CHILDREN.load(Ordering::Relaxed);
-    if sink.try_push_series(&[children_started_series(started, *pushed, std::time::SystemTime::now())]).is_ok() {
+    push_children_count(PROCESS_CHILDREN.load(Ordering::Relaxed), pushed, |series| sink.try_push_series(series));
+}
+
+fn push_children_count(started: u64, pushed: &mut u64, push: impl Fn(&[spira_otel::metrics::Series]) -> std::io::Result<()>) {
+    if push(&[children_started_series(started, *pushed, std::time::SystemTime::now())]).is_ok() {
         *pushed = started;
     }
 }
@@ -915,6 +919,31 @@ mod tests {
         let s = children_started_series(7, 7, std::time::SystemTime::now());
         assert_eq!((s.name.as_str(), s.value), (CHILDREN_STARTED, 0.0));
         assert_eq!(children_started_series(10, 7, std::time::SystemTime::now()).value, 3.0);
+    }
+
+    #[test_id(tn3c8vb)]
+    #[test]
+    fn each_interval_pushes_the_delta_zero_included_and_a_failed_push_keeps_it_owed() {
+        let sent = Mutex::new(Vec::new());
+        let ok = |s: &[spira_otel::metrics::Series]| {
+            sent.lock().unwrap().push(s[0].value);
+            Ok(())
+        };
+        let mut pushed = 0;
+        push_children_count(0, &mut pushed, ok);
+        push_children_count(4, &mut pushed, |_| Err(std::io::Error::other("down")));
+        assert_eq!(pushed, 0, "a failed push advances nothing");
+        push_children_count(4, &mut pushed, ok);
+        push_children_count(4, &mut pushed, ok);
+        assert_eq!(*sent.lock().unwrap(), [0.0, 4.0, 0.0]);
+    }
+
+    #[test_id(t4yd6pj)]
+    #[test]
+    fn a_child_a_request_started_moves_the_whole_process_count() {
+        let before = PROCESS_CHILDREN.load(Ordering::Relaxed);
+        request_done("whole-verb", "whole-verb", "whole-caller", None, Duration::from_millis(1), 4);
+        assert!(PROCESS_CHILDREN.load(Ordering::Relaxed) >= before + 4);
     }
 
     #[test_id(t9hw3xe)]
