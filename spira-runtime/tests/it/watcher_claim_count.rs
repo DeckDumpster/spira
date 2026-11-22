@@ -185,3 +185,59 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_neither_pages_a_paged_item_again_nor_misses_a_crossing() {
     kit::assert_boot_matches_an_unstopped_run(two_items_one_paged, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test_id(tsp6r5x)]
+#[test]
+fn the_kept_ends_cutoff_is_the_lifecycle_rows_and_a_longer_walk_says_so() {
+    let mut row = LifecycleRow::filed("sp-long");
+    let live: Live = Arc::new(Mutex::new(vec![]));
+    let (mut rig, lines) = rig(&live);
+    start(&mut rig);
+    for n in 1..=12 {
+        row = claim(&row);
+        if n < 12 {
+            row = end_session(&row, n);
+        }
+        if n == 11 {
+            live.lock().unwrap().push(row.clone());
+        }
+    }
+    live.lock().unwrap()[0] = row;
+    tick(&mut rig);
+    let said = lines.lock().unwrap().clone();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("12 times") && said[0].ends_with("(newest 8 kept)"), "{said:?}");
+    assert_eq!(said[0].matches(" -> ").count(), lifecycle::bead::SESSION_ENDS_KEPT, "{said:?}");
+}
+
+#[test_id(tiaw2is)]
+#[test]
+fn a_failed_observe_pages_nothing_and_the_crossing_is_paged_once_when_it_recovers() {
+    let mut row = LifecycleRow::filed("sp-flaky");
+    let live: Live = Arc::new(Mutex::new(vec![]));
+    let (mut rig, lines) = rig(&live);
+    let (rows, failing) = (live.clone(), Arc::new(Mutex::new(false)));
+    let fail = failing.clone();
+    rig = rig.double(OBSERVE, move |_| {
+        if *fail.lock().unwrap() {
+            return Err("store unavailable".into());
+        }
+        let live: Vec<Claims> = rows.lock().unwrap().iter().map(claims_of).collect();
+        Ok(serde_json::to_string(&Snapshot { rows: live }).unwrap())
+    });
+    start(&mut rig);
+    for n in 1..=4 {
+        row = claim(&row);
+        if n < 4 {
+            row = end_session(&row, n);
+        }
+    }
+    live.lock().unwrap().push(row);
+    *failing.lock().unwrap() = true;
+    tick(&mut rig);
+    assert!(lines.lock().unwrap().is_empty(), "a failed observe pages nothing");
+    *failing.lock().unwrap() = false;
+    tick(&mut rig);
+    tick(&mut rig);
+    assert_eq!(lines.lock().unwrap().len(), 1, "{:?}", lines.lock().unwrap());
+}
