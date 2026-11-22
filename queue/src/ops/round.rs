@@ -2581,7 +2581,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         ));
     }
     let Some(kv) = open.first() else {
-        w.out(format!("round=none\nrepo={}", c.r.name));
+        w.out(format!("round=none\nrepo={}\nrounds=0\nopen_batches=", c.r.name));
         return OK;
     };
     let since = |kv: &Kv, k: &str| {
