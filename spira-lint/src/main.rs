@@ -1,4 +1,4 @@
-//! spira-lint [--root <dir>] [--only <rule>] [--base <rev>]
+//! spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--findings <file>]
 //! spira-lint --only inventory --scan <file>
 //!
 //! Exit: 0 clean, 1 any finding, 2 usage, 3 a rule refused to report clean,
@@ -9,6 +9,9 @@
 //! whole-file finding only for a file the diff touches. A finding is also kept when its message
 //! names a touched file as an exact path. Rules that already judge against the
 //! base (`BASE_RELATIVE`) are left whole. Without it, every finding in the tree is reported.
+//!
+//! `--findings <file>` also writes each reported finding as one `record::FindingRecord` JSON
+//! line, for a reader that attributes a red without parsing the text on stdout.
 //!
 //! `--base` defaults to `SPIRA_GATE_BASE` (the gate sets it). On a clean run the positive
 //! controls go to stderr: one `fence: <rule> checked <n> <unit>` per rule that reports one,
@@ -28,7 +31,7 @@ use std::process::ExitCode;
 
 use spira_lint::{all_rules, run, Tree};
 
-const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow]\n       spira-lint --only inventory --scan <file>";
+const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow] [--findings <file>]\n       spira-lint --only inventory --scan <file>";
 
 fn default_root() -> Option<PathBuf> {
     let out = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok()?;
@@ -49,6 +52,7 @@ fn real_main() -> ExitCode {
     let mut scan: Option<PathBuf> = None;
     let mut diff = false;
     let mut emit_allow = false;
+    let mut findings_file: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -60,6 +64,7 @@ fn real_main() -> ExitCode {
                 diff = true;
             }
             "--emit-allow" => emit_allow = true,
+            "--findings" => findings_file = args.next().map(PathBuf::from),
             "--scan" => scan = args.next().map(PathBuf::from),
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -99,6 +104,7 @@ fn real_main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let mut rules = all_rules();
+    let sources = spira_lint::all_rules_with_source();
     if let Some(o) = &only {
         rules.retain(|r| r.name() == o);
         if rules.is_empty() {
@@ -160,6 +166,7 @@ fn real_main() -> ExitCode {
     };
     let (mut findings, mut refused) = (0usize, false);
     let mut controls = Vec::new();
+    let mut records = String::new();
     let results = run(&tree, &rules);
     for r in &results {
         if let Some((n, unit)) = &r.checked {
@@ -178,6 +185,11 @@ fn real_main() -> ExitCode {
                 findings += v.len();
                 for f in &v {
                     println!("{f}");
+                    if findings_file.is_some() {
+                        let rule = sources.iter().find(|(_, x)| x.name() == f.rule);
+                        records.push_str(&spira_lint::record::FindingRecord::of(f, rule.map(|(s, x)| (*s, x.allow_file()))).to_line());
+                        records.push('\n');
+                    }
                 }
                 if !r.hint.is_empty() {
                     eprintln!("{}: {}", r.rule, r.hint);
@@ -187,6 +199,12 @@ fn real_main() -> ExitCode {
                 refused = true;
                 eprintln!("{}: error: {e}", r.rule);
             }
+        }
+    }
+    if let Some(file) = &findings_file {
+        if let Err(e) = std::fs::write(file, &records) {
+            eprintln!("spira-lint: {}: {e}", file.display());
+            return ExitCode::from(3);
         }
     }
     if refused || findings > 0 {

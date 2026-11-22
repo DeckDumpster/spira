@@ -103,11 +103,8 @@ testenv declares `default-run`.
 **The lint step.** With `--base <ref>` the host mirrors that ref as `base`, and the VM runs the
 tree's own `spira-lint --base origin/base` before the suites. A hit makes the round red: a
 `spira-lint.result` (status `red`) and `spira-lint.out` land in the results beside the suites,
-each finding is printed as `member=<bead> <finding>` for the first member commit (first-parent
-walk of `base..HEAD`) whose diff touches the file, else the first whose diff changes the finding's rule (its
-`spira-lint/src/rules/*.rs` source or an allow list that source names) — `the base itself` when
-none does — and a finding the VM names `the base itself` is attributed on the host by the
-paths its text names (batcher-cut `named_path_owner`) — and the
+the findings land as `spira-lint.findings.jsonl`, one typed record per line (`spira_lint::record`),
+which the host attributes from the members' changed paths and the round's own commits, and the
 step's wall time is reported as `LINT: <n>s of the 900s cap`. Without `--base` no lint runs.
 `queue round certify` and `batcher-cut` both pass it.
 

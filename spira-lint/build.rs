@@ -18,7 +18,7 @@ fn main() {
         .map(|n| format!("#[path = {:?}]\npub mod {n};\n", dir.join(format!("{n}.rs"))))
         .collect();
     fs::write(Path::new(&out).join("rule_mods.rs"), mods).unwrap();
-    let calls: String = names.iter().map(|n| format!("    all.extend(rules::{n}::rules());\n")).collect();
-    let body = format!("{{\n    let mut all: Vec<Box<dyn Rule>> = Vec::new();\n{calls}    all\n}}\n");
+    let calls: String = names.iter().map(|n| format!("    all.extend(rules::{n}::rules().into_iter().map(|r| (\"spira-lint/src/rules/{n}.rs\", r)));\n")).collect();
+    let body = format!("{{\n    let mut all: Vec<(&'static str, Box<dyn Rule>)> = Vec::new();\n{calls}    all\n}}\n");
     fs::write(Path::new(&out).join("all_rules.rs"), body).unwrap();
 }

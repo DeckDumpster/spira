@@ -20,6 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub mod lex;
+pub mod record;
 pub mod rules;
 pub mod rust_test;
 
@@ -310,10 +311,15 @@ pub struct Finding {
 
 impl fmt::Display for Finding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(n) => write!(f, "{}: {}:{}: {}", self.rule, self.path, n, self.message),
-            None => write!(f, "{}: {}: {}", self.rule, self.path, self.message),
-        }
+        render_finding(f, self.rule, &self.path, self.line, &self.message)
+    }
+}
+
+/// The one text form of a finding, `<rule>: <path>[:line]: <message>`.
+pub fn render_finding(f: &mut fmt::Formatter<'_>, rule: &str, path: &str, line: Option<usize>, message: &str) -> fmt::Result {
+    match line {
+        Some(n) => write!(f, "{rule}: {path}:{n}: {message}"),
+        None => write!(f, "{rule}: {path}: {message}"),
     }
 }
 
@@ -501,6 +507,11 @@ pub fn lines(content: &[u8]) -> Vec<&[u8]> {
 
 /// Every rule, in rule-file name order: each `rules/*.rs` exports `rules()` and build.rs collects them.
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
+    all_rules_with_source().into_iter().map(|(_, r)| r).collect()
+}
+
+/// Every rule with the repo-relative path of the module that defines it, a fact of the build.
+pub fn all_rules_with_source() -> Vec<(&'static str, Box<dyn Rule>)> {
     include!(concat!(env!("OUT_DIR"), "/all_rules.rs"))
 }
 

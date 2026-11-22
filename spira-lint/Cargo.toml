@@ -2,6 +2,7 @@
 name = "spira-lint"
 version = "0.1.0"
 edition = "2021"
+autotests = false
 description = "spira-lint — the harness's static fences as one binary: one walk of the tracked tree, one Rule per fence, each with a named, shrink-only allow list."
 
 [features]
@@ -11,6 +12,7 @@ system-paths = { path = "../system-paths" }
 spira-otel = { path = "../spira-otel" }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
@@ -25,3 +27,8 @@ test = false
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
+
+[[test]]
+name = "findings_record"
+path = "tests/findings_record.rs"
+required-features = ["integration"]
