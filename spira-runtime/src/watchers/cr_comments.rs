@@ -82,6 +82,7 @@ pub struct Carry {
 pub struct Change {
     pub number: u32,
     pub state: State,
+    /// Milliseconds since the epoch.
     pub at: u64,
 }
 
@@ -113,6 +114,11 @@ fn comment_line(number: u32, pr: u64, c: &Comment) -> String {
         _ => String::new(),
     };
     format!("CR {number:03} #{pr} comment {} by {}{at}: {} — cr thread --review {number:03} --comment {}", c.id, c.author, one_line(&c.body), c.id)
+}
+
+/// The one place the forge's epoch seconds become the record's milliseconds.
+fn forge_ms(secs: u64) -> u64 {
+    secs * 1000
 }
 
 /// The lines a snapshot calls for, the record changes and comments to keep, and the state to carry.
@@ -147,7 +153,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now: u64) -> (Carry, Vec<String>, 
             if !r.bot && PUBLISHING.contains(&r.state.as_str()) {
                 said.push(format!("CR {:03} published (review {} by {})", obs.number, r.id, r.author));
                 if obs.state == Some(State::Open) {
-                    records.changes.push(Change { number: obs.number, state: State::Published, at: r.submitted_at });
+                    records.changes.push(Change { number: obs.number, state: State::Published, at: forge_ms(r.submitted_at) });
                 }
             }
         }
@@ -156,7 +162,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now: u64) -> (Carry, Vec<String>, 
                 rc.closed = true;
                 said.push(format!("CR {:03} closed", obs.number));
             }
-            records.changes.push(Change { number: obs.number, state: State::Closed, at: p.closed_at.unwrap_or(now) });
+            records.changes.push(Change { number: obs.number, state: State::Closed, at: forge_ms(p.closed_at.unwrap_or(now)) });
         }
     }
     (c, said, records)
@@ -289,7 +295,7 @@ mod tests {
         r.reviews = Some(vec![submitted(false, "COMMENTED")]);
         let (c, said, records) = decide(&Carry::default(), &snap(r.clone()), 1000);
         assert_eq!(said, ["CR 007 published (review 70 by reviewer)"]);
-        assert_eq!(records.changes, [Change { number: 7, state: State::Published, at: 900 }]);
+        assert_eq!(records.changes, [Change { number: 7, state: State::Published, at: 900_000 }]);
         let (_, said, records) = decide(&c, &snap(r), 1030);
         assert_eq!((said, records.changes), (vec![], vec![]));
     }
@@ -321,8 +327,17 @@ mod tests {
         r.pull = Some(Pull { state: "closed".into(), closed_at: Some(950) });
         let (c, said, records) = decide(&Carry::default(), &snap(r.clone()), 1000);
         assert_eq!(said, ["CR 007 closed"]);
-        assert_eq!(records.changes, [Change { number: 7, state: State::Closed, at: 950 }]);
+        assert_eq!(records.changes, [Change { number: 7, state: State::Closed, at: 950_000 }]);
         assert!(decide(&c, &snap(r), 1030).1.is_empty(), "the line is said once");
+    }
+
+    #[test_id(tq7dkah)]
+    #[test]
+    fn a_closed_pull_closed_at_950_forge_seconds_is_recorded_as_950000_milliseconds() {
+        let mut r = review(vec![]);
+        r.pull = Some(Pull { state: "closed".into(), closed_at: Some(950) });
+        let (_, _, records) = decide(&Carry::default(), &snap(r), 1000);
+        assert_eq!(records.changes, [Change { number: 7, state: State::Closed, at: 950_000 }]);
     }
 
     #[test_id(tru75t0)]
@@ -334,7 +349,7 @@ mod tests {
         let (_, _, records) = decide(&Carry::default(), &snap(r), 1000);
         assert_eq!(
             records.changes,
-            [Change { number: 7, state: State::Published, at: 900 }, Change { number: 7, state: State::Closed, at: 950 }]
+            [Change { number: 7, state: State::Published, at: 900_000 }, Change { number: 7, state: State::Closed, at: 950_000 }]
         );
     }
 

@@ -38,6 +38,7 @@ impl Kind {
     }
 }
 
+/// Every time field is milliseconds since the epoch, whoever writes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Review {
     pub number: u32,

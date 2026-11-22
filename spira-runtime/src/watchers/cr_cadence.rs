@@ -34,6 +34,7 @@ pub struct ReviewObs {
     pub number: u32,
     pub kind: Kind,
     pub state: State,
+    /// Milliseconds since the epoch, as the review record holds them.
     pub staged_at: u64,
     pub closed_at: Option<u64>,
 }
@@ -68,7 +69,7 @@ pub fn decide(cfg: &CrCadence, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
     }
     let mut said = vec![];
     for r in snap.reviews.iter().filter(|r| live(r)) {
-        let age = now.saturating_sub(r.staged_at);
+        let age = now.saturating_sub(r.staged_at / 1000);
         if age > cfg.stale_days * DAY && next.reported.insert(r.number) {
             said.push(format!("CR {:03} open {} days", r.number, age / DAY));
         }
@@ -152,7 +153,7 @@ mod tests {
     }
 
     fn rev(number: u32, kind: Kind, state: State) -> ReviewObs {
-        ReviewObs { number, kind, state, staged_at: DUE - DAY, closed_at: (state == State::Closed).then_some(DUE - 3600) }
+        ReviewObs { number, kind, state, staged_at: (DUE - DAY) * 1000, closed_at: (state == State::Closed).then_some((DUE - 3600) * 1000) }
     }
 
     fn snap(reviews: Vec<ReviewObs>) -> Snapshot {
@@ -198,11 +199,24 @@ mod tests {
     #[test]
     fn a_review_past_the_stale_days_is_reported_once() {
         let mut r = rev(4, Kind::OnDemand, State::Open);
-        r.staged_at = 100 * DAY - 8 * DAY - 5;
+        r.staged_at = (100 * DAY - 8 * DAY - 5) * 1000;
         let s = snap(vec![r]);
         let (carry, _, said) = decide(&cfg(), &Carry::default(), &s, 100 * DAY);
         assert_eq!(said, ["CR 004 open 8 days"]);
         assert!(decide(&cfg(), &carry, &s, 100 * DAY + 300).2.is_empty());
+    }
+
+    #[test_id(t8tbtgn)]
+    #[test]
+    fn a_review_staged_in_milliseconds_eight_days_before_the_tick_is_reported_once() {
+        let tick_ms: u64 = 100 * DAY * 1000;
+        let mut r = rev(4, Kind::OnDemand, State::Open);
+        r.staged_at = tick_ms - 8 * DAY * 1000;
+        let s = snap(vec![r]);
+        let now = tick_ms / 1000;
+        let (carry, _, said) = decide(&cfg(), &Carry::default(), &s, now);
+        assert_eq!(said, ["CR 004 open 8 days"]);
+        assert!(decide(&cfg(), &carry, &s, now + 300).2.is_empty());
     }
 
     #[test_id(tx0mq28)]
@@ -211,7 +225,7 @@ mod tests {
         let mut old_closed = rev(1, Kind::OnDemand, State::Closed);
         old_closed.staged_at = 0;
         let mut young = rev(2, Kind::OnDemand, State::Open);
-        young.staged_at = 100 * DAY - 7 * DAY;
+        young.staged_at = (100 * DAY - 7 * DAY) * 1000;
         assert!(decide(&cfg(), &Carry::default(), &snap(vec![old_closed, young]), 100 * DAY).2.is_empty());
     }
 
