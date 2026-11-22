@@ -79,8 +79,7 @@ fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     assert!(unmarked("g.rs", "let o = Command::new(\"git\");\n").is_empty());
 }
 
-/// Every `file:line` in `now_keys`' own source (and the helpers it calls for those two keys)
-/// that runs one of the in-process-read tools through `run_tool`.
+/// Every `file:line` of a one-line `run_tool("…"` call naming a tool the probe reads in-process.
 fn now_probe_tool_runs(name: &str, text: &str) -> Vec<String> {
     text.lines()
         .enumerate()
