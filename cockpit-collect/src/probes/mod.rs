@@ -1483,7 +1483,12 @@ pub fn drift_keys() -> Kv {
     }
     let (rc, text) = run_one(&co_args);
     push(&mut out, "SP_CHECKOUT_DRIFT", drift_value(rc, &text, "DIRTY", "DIRTY "));
-    let (rc, text) = run_one(&["units"]);
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let (rc, text) = match install::unit_drift::units_drift(&home.join(".config/systemd/user")) {
+        install::unit_drift::UnitDrift::Clean => (Some(0), String::new()),
+        install::unit_drift::UnitDrift::Drift(t) => (Some(1), t),
+        install::unit_drift::UnitDrift::Unreadable => (None, String::new()),
+    };
     push(&mut out, "SP_UNIT_DRIFT", drift_value(rc, &text, "UNSHIPPED", "UNSHIPPED "));
     out
 }

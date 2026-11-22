@@ -31,4 +31,5 @@ pub mod round_records;
 pub mod seed_instance;
 pub mod systemctl;
 pub mod telemetry;
+pub mod unit_drift;
 pub mod values;

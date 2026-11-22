@@ -31,6 +31,7 @@ tsd = { path = "../tsd" }
 libc = "0.2"
 system-paths = { path = "../system-paths" }
 release = { path = "../release" }
+install = { path = "../install" }
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
