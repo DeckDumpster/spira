@@ -336,6 +336,166 @@ pub fn cockpit_window_targets(
     out
 }
 
+/// The one read `ensure` makes: every pane of every window, with the options the per-window
+/// steps would otherwise each fetch with their own tmux process.
+const SNAPSHOT_FORMAT: &str = "#{window_id}|#{session_name}:#{window_index}|#{@cockpit}|#{@cockpit_up}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_active}|#{pane_height}|#{window_height}|#{mouse}|#{set-clipboard}|#{window-size}|#{window-resized}|#{client-resized}|#{client-attached}";
+const SNAPSHOT_FIELDS: usize = 16;
+const RESIZE_HOOKS: [&str; 3] = ["window-resized", "client-resized", "client-attached"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneRow {
+    pub window_id: String,
+    pub target: String,
+    pub tag: String,
+    pub cockpit_up: String,
+    pub pane_id: String,
+    pub pid: Option<i32>,
+    pub dead: bool,
+    pub active: bool,
+    pub pane_height: Option<i64>,
+    pub window_height: Option<i64>,
+    pub mouse: String,
+    pub clipboard: String,
+    pub window_size: String,
+    pub hooks: [String; 3],
+}
+
+pub fn parse_snapshot(text: &str) -> Vec<PaneRow> {
+    text.lines()
+        .filter_map(|line| {
+            let c: Vec<&str> = line.splitn(SNAPSHOT_FIELDS, '|').collect();
+            if c.len() != SNAPSHOT_FIELDS {
+                return None;
+            }
+            Some(PaneRow {
+                window_id: c[0].into(),
+                target: c[1].into(),
+                tag: c[2].into(),
+                cockpit_up: c[3].into(),
+                pane_id: c[4].into(),
+                pid: c[5].parse().ok(),
+                dead: c[6] == "1",
+                active: c[7] == "1",
+                pane_height: c[8].parse().ok(),
+                window_height: c[9].parse().ok(),
+                mouse: c[10].into(),
+                clipboard: c[11].into(),
+                window_size: c[12].into(),
+                hooks: [c[13].into(), c[14].into(), c[15].into()],
+            })
+        })
+        .collect()
+}
+
+/// `cockpit_window_targets` over a snapshot.
+pub fn snapshot_window_targets(rows: &[PaneRow]) -> Vec<String> {
+    let panes: String = rows.iter().map(|r| format!("{}|{}|{}\n", r.window_id, r.target, r.tag)).collect();
+    let wins: String = rows.iter().map(|r| format!("{}|{}|{}\n", r.window_id, r.target, r.cockpit_up)).collect();
+    cockpit_window_targets(&panes, &wins)
+}
+
+fn args(a: &[&str]) -> Vec<String> {
+    a.iter().map(|s| s.to_string()).collect()
+}
+
+/// The tmux writes that bring the server-wide options to what the config wants. The mouse
+/// binding is written with the mouse option: a server that lost one lost both.
+pub fn option_writes(rows: &[PaneRow], mouse_on: bool, clipboard_on: bool) -> Vec<Vec<String>> {
+    let Some(first) = rows.first() else { return Vec::new() };
+    let mut out = Vec::new();
+    if mouse_on && !matches!(first.mouse.as_str(), "1" | "on") {
+        out.push(args(&["set-option", "-g", "mouse", "on"]));
+        out.push(args(&[
+            "bind-key",
+            "-T",
+            "root",
+            "MouseDrag1Pane",
+            "if-shell",
+            "-F",
+            "#{||:#{pane_in_mode},#{mouse_any_flag}}",
+            "send-keys -M",
+            "copy-mode -M",
+        ]));
+    }
+    if clipboard_on && first.clipboard != "on" {
+        out.push(args(&["set-option", "-g", "set-clipboard", "on"]));
+    }
+    out
+}
+
+/// One `window-size latest` write per session holding a cockpit window that lacks it.
+pub fn window_size_writes(rows: &[PaneRow], windows: &[String]) -> Vec<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for w in windows {
+        let session = session_of(w);
+        let lacks = rows.iter().any(|r| r.target == *w && r.window_size != "latest");
+        if lacks && seen.insert(session.to_string()) {
+            out.push(args(&["set-option", "-t", session, "window-size", "latest"]));
+        }
+    }
+    out
+}
+
+fn without_quotes(s: &str) -> String {
+    s.chars().filter(|c| *c != '"').collect()
+}
+
+/// The `set-hook` writes for one window whose hooks differ from the resize command for its
+/// health pane. tmux echoes a hook back with its arguments quoted, so the compare ignores quotes.
+pub fn hook_writes(window_rows: &[&PaneRow], right_pct: u32) -> Vec<Vec<String>> {
+    let Some(health) = window_rows.iter().find(|r| r.tag == "health") else { return Vec::new() };
+    let cmd = format!("resize-pane -t {} -x {right_pct}%", health.pane_id);
+    let session = session_of(&health.target);
+    RESIZE_HOOKS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| without_quotes(&health.hooks[*i]) != cmd)
+        .map(|(_, hook)| args(&["set-hook", "-t", session, hook, &cmd]))
+        .collect()
+}
+
+/// What `window_is_healthy` needs to know that the snapshot cannot say.
+pub struct HealthFacts<'a> {
+    pub mail_wanted: bool,
+    pub role_of: &'a dyn Fn(i32) -> Option<Role>,
+    pub health_stale: &'a dyn Fn(i32) -> bool,
+}
+
+/// True when every per-window repair step would find nothing to do: panes tagged as what they
+/// run, a session pane, exactly one health pane at full height, mail when wanted, an active
+/// pane, and a health pane running current code. False sends the window down the repairing
+/// path, which reads tmux for itself.
+pub fn window_is_healthy(rows: &[&PaneRow], facts: &HealthFacts) -> bool {
+    for r in rows {
+        let Some(pid) = r.pid else { continue };
+        let tag_ok = match (facts.role_of)(pid) {
+            Some(role) => r.tag == role.as_str(),
+            None => r.tag.is_empty() || r.dead,
+        };
+        if !tag_ok {
+            return false;
+        }
+    }
+    let health: Vec<&&PaneRow> = rows.iter().filter(|r| r.tag == "health").collect();
+    let [health] = health.as_slice() else { return false };
+    if !rows.iter().any(|r| r.tag != "health" && r.tag != "mail") {
+        return false;
+    }
+    if facts.mail_wanted && !rows.iter().any(|r| r.tag == "mail") {
+        return false;
+    }
+    if let (Some(ph), Some(wh)) = (health.pane_height, health.window_height) {
+        if ph < wh {
+            return false;
+        }
+    }
+    if !rows.iter().any(|r| r.active) {
+        return false;
+    }
+    !health.pid.is_some_and(|pid| (facts.health_stale)(pid))
+}
+
 /// Wall-clock seconds since the Unix epoch, saturating to 0 on a clock error — used only
 /// for idle-client detection and heal cooldown timing, neither of which is safety-critical
 /// enough to justify a panic on an unreadable clock.
@@ -732,17 +892,6 @@ impl Layout {
         let _ = fs::write(self.conf.heal_stamp_path(), "");
     }
 
-    fn cockpit_windows(&self) -> Vec<String> {
-        let panes = self
-            .tmux
-            .run(&["list-panes", "-a", "-F", "#{window_id}|#{session_name}:#{window_index}|#{@cockpit}"])
-            .unwrap_or_default();
-        let wins = self
-            .tmux
-            .run(&["list-windows", "-a", "-F", "#{window_id}|#{session_name}:#{window_index}|#{@cockpit_up}"])
-            .unwrap_or_default();
-        cockpit_window_targets(&panes, &wins)
-    }
 
     /// `ensure` — heal every window already carrying a cockpit; silent when nothing needs
     /// it. Refuses (exit 0) when this binary is not the installed one, so a worktree copy
@@ -757,18 +906,21 @@ impl Layout {
             ));
         }
 
-        if !self.tmux.installed() {
+        let snapshot = self.tmux.run(&["list-panes", "-a", "-F", SNAPSHOT_FORMAT]);
+        if snapshot.is_none() && !self.tmux.installed() {
             self.heal_log("headless install: no tmux, nothing to heal");
             return Ok(String::new());
         }
+        let rows = parse_snapshot(&snapshot.unwrap_or_default());
 
         self.detach_idle_clients();
-        self.apply_mouse_mode();
-        self.apply_clipboard_mode();
-
-        let windows = self.cockpit_windows();
-        for w in &windows {
-            self.tmux.run_ok(&["set-option", "-t", session_of(w), "window-size", "latest"]);
+        let windows = snapshot_window_targets(&rows);
+        let writes = option_writes(&rows, self.conf.mouse_on, self.conf.clipboard_on)
+            .into_iter()
+            .chain(window_size_writes(&rows, &windows));
+        for w in writes {
+            let a: Vec<&str> = w.iter().map(String::as_str).collect();
+            self.tmux.run_ok(&a);
         }
 
         if windows.is_empty() {
@@ -798,7 +950,23 @@ impl Layout {
             }
         }
 
+        let mail_exe = self.mail_exe();
+        let role_of = |pid: i32| pane_role(pid, mail_exe.as_deref());
+        let health_stale = |pid: i32| self.health_needs_restart(pid);
+        let facts = HealthFacts {
+            mail_wanted: self.conf.mail_cmd.is_some(),
+            role_of: &role_of,
+            health_stale: &health_stale,
+        };
         for w in &windows {
+            let window_rows: Vec<&PaneRow> = rows.iter().filter(|r| r.target == *w).collect();
+            if window_is_healthy(&window_rows, &facts) {
+                for write in hook_writes(&window_rows, self.conf.right_pct) {
+                    let a: Vec<&str> = write.iter().map(String::as_str).collect();
+                    self.tmux.run_ok(&a);
+                }
+                continue;
+            }
             self.adopt_untagged(w);
             self.retag_dashboards(w);
             if self.session_pane(w).is_some() {
@@ -895,6 +1063,21 @@ impl Layout {
                 }
             }
         }
+    }
+
+    /// Would `restart_if_stale` respawn the health pane whose process is `pid`? An unreadable
+    /// start time counts: that path logs, and logging belongs to the repairing path.
+    fn health_needs_restart(&self, pid: i32) -> bool {
+        let src = std::path::Path::new(&self.conf.spira_release).join("bin").join(Role::Health.as_str());
+        let Ok(src_meta) = fs::metadata(&src) else { return false };
+        let Some(started) = proc_start(pid) else { return true };
+        let mtime = src_meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        mtime > started
     }
 
     fn restart_if_stale(&self, window: &str, role: Role) {
@@ -1165,5 +1348,222 @@ mod tests {
         assert!(p.contains("SPIRA_CONF='etc/spira-custom.conf'"));
         assert!(p.contains("SPIRA_RELEASE='rel'"));
         assert!(p.contains("PATH='rel/bin:rel/spira:/usr/local/bin:/usr/bin:/bin'"));
+    }
+
+    /// A fixture tmux: logs every invocation, answers the snapshot read with `fixture`.
+    struct FakeTmux {
+        bin: PathBuf,
+        log: PathBuf,
+    }
+
+    impl FakeTmux {
+        fn new(dir: &std::path::Path, fixture: &str) -> FakeTmux {
+            let log = dir.join("calls.log");
+            let fix = dir.join("fixture.txt");
+            fs::write(&fix, fixture).unwrap();
+            let bin = dir.join("tmux");
+            testkit::write_exe(
+                &bin,
+                &format!(
+                    "#!/bin/sh\necho \"$*\" >> {log}\ncase \"$1 $2\" in\n\"list-panes -a\") cat {fix};;\nesac\nexit 0\n",
+                    log = log.display(),
+                    fix = fix.display()
+                ),
+            );
+            FakeTmux { bin, log }
+        }
+        fn calls(&self) -> Vec<String> {
+            fs::read_to_string(&self.log).unwrap_or_default().lines().map(str::to_string).collect()
+        }
+    }
+
+    fn snapshot_row(window: &str, target: &str, tag: &str, pane: &str, pid: u32, active: &str, height: u32) -> String {
+        let hook = "resize-pane -t \"%2\" -x \"33%\"";
+        format!("{window}|{target}|{tag}||{pane}|{pid}|0|{active}|{height}|24|1|on|latest|{hook}|{hook}|{hook}")
+    }
+
+    /// Runs `ensure` once over `rows` with a fake tmux, a live health pane and a live
+    /// session pane, and returns what tmux was asked.
+    fn ensure_calls(name: &str, rows: impl Fn(u32, u32) -> Vec<String>, idle_secs: i64) -> Vec<String> {
+        let dir = testkit::TempDir::new(name);
+        let script = dir.join("health.sh");
+        fs::write(&script, "sleep 30\n").unwrap();
+        let mut health = std::process::Command::new("sh").arg(&script).spawn().unwrap();
+        let mut sess = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let fixture = rows(sess.id(), health.id()).join("\n") + "\n";
+        let fake = FakeTmux::new(&dir, &fixture);
+        let mut conf = conf_with("", "");
+        conf.run = dir.path().to_path_buf();
+        conf.clipboard_on = true;
+        conf.idle_secs = idle_secs;
+        let layout = Layout { tmux: Tmux::with_bin(fake.bin.to_str().unwrap()), conf };
+        let me = std::env::current_exe().unwrap();
+        let out = layout.ensure(&me, &me);
+        for c in [&mut health, &mut sess] {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        assert_eq!(out, Ok(String::new()));
+        fake.calls()
+    }
+
+    fn healthy_fixture(sess: u32, health: u32) -> Vec<String> {
+        vec![
+            snapshot_row("@1", "cockpit:0", "", "%1", sess, "1", 24),
+            snapshot_row("@1", "cockpit:0", "health", "%2", health, "0", 24),
+        ]
+    }
+
+    #[test_id(tpt7ba1)]
+    #[test]
+    fn ensure_over_a_healthy_layout_makes_one_tmux_read_and_no_writes() {
+        let calls = ensure_calls("layout-ensure-healthy", healthy_fixture, 0);
+        assert_eq!(calls.len(), 1, "one snapshot read and nothing else: {calls:?}");
+        assert!(calls[0].starts_with("list-panes -a"), "{calls:?}");
+    }
+
+    #[test_id(tf2k9xc)]
+    #[test]
+    fn ensure_with_an_idle_limit_adds_only_the_client_read() {
+        let calls = ensure_calls("layout-ensure-idle", healthy_fixture, 600);
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].starts_with("list-panes -a") && calls[1].starts_with("list-clients"), "{calls:?}");
+    }
+
+    #[test_id(tg8m1wz)]
+    #[test]
+    fn ensure_over_a_window_whose_session_pane_is_gone_takes_the_repair_path() {
+        let calls = ensure_calls(
+            "layout-ensure-repair",
+            |_, health| vec![snapshot_row("@1", "cockpit:0", "health", "%2", health, "1", 24)],
+            0,
+        );
+        assert!(calls.iter().any(|c| c.starts_with("list-panes -t cockpit:0")), "{calls:?}");
+    }
+
+    #[test_id(tb5r7nd)]
+    #[test]
+    fn ensure_over_a_server_with_mouse_off_writes_exactly_the_mouse_option_and_binding() {
+        let calls = ensure_calls(
+            "layout-ensure-mouse",
+            |s, h| healthy_fixture(s, h).into_iter().map(|r| r.replace("|1|on|latest|", "|0|on|latest|")).collect(),
+            0,
+        );
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert_eq!(calls[1], "set-option -g mouse on");
+        assert!(calls[2].starts_with("bind-key -T root MouseDrag1Pane"), "{calls:?}");
+    }
+
+    fn healthy_rows() -> Vec<PaneRow> {
+        let text = format!(
+            "{}\n{}\n{}\n",
+            snapshot_row("@1", "cockpit:0", "", "%1", 10, "1", 24),
+            snapshot_row("@1", "cockpit:0", "health", "%2", 11, "0", 24),
+            snapshot_row("@1", "cockpit:0", "mail", "%3", 12, "0", 7),
+        );
+        parse_snapshot(&text)
+    }
+
+    fn facts<'a>(
+        role_of: &'a dyn Fn(i32) -> Option<Role>,
+        stale: &'a dyn Fn(i32) -> bool,
+        mail_wanted: bool,
+    ) -> HealthFacts<'a> {
+        HealthFacts { mail_wanted, role_of, health_stale: stale }
+    }
+
+    fn role_by_pid(pid: i32) -> Option<Role> {
+        match pid {
+            11 => Some(Role::Health),
+            12 => Some(Role::Mail),
+            _ => None,
+        }
+    }
+
+    #[test_id(tkw1h9d)]
+    #[test]
+    fn a_healthy_snapshot_decides_zero_writes() {
+        let rows = healthy_rows();
+        assert!(option_writes(&rows, true, true).is_empty());
+        assert!(window_size_writes(&rows, &["cockpit:0".to_string()]).is_empty());
+        let refs: Vec<&PaneRow> = rows.iter().collect();
+        assert!(hook_writes(&refs, 33).is_empty());
+        assert!(window_is_healthy(&refs, &facts(&role_by_pid, &|_| false, true)));
+    }
+
+    #[test_id(tm5q2zr)]
+    #[test]
+    fn mouse_off_decides_exactly_the_mouse_option_and_its_binding() {
+        let mut rows = healthy_rows();
+        for r in &mut rows {
+            r.mouse = "0".into();
+        }
+        let w = option_writes(&rows, true, true);
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert_eq!(w[0], vec!["set-option", "-g", "mouse", "on"]);
+        assert_eq!(&w[1][..4], ["bind-key", "-T", "root", "MouseDrag1Pane"]);
+    }
+
+    #[test_id(tc8n4vx)]
+    #[test]
+    fn a_config_that_wants_no_mouse_or_clipboard_decides_no_option_writes() {
+        let mut rows = healthy_rows();
+        for r in &mut rows {
+            r.mouse = "0".into();
+            r.clipboard = "external".into();
+        }
+        assert!(option_writes(&rows, false, false).is_empty());
+    }
+
+    #[test_id(tj3x6ue)]
+    #[test]
+    fn a_window_not_on_latest_size_gets_one_session_write() {
+        let mut rows = healthy_rows();
+        for r in &mut rows {
+            r.window_size = "smallest".into();
+        }
+        let w = window_size_writes(&rows, &["cockpit:0".to_string()]);
+        assert_eq!(w, vec![vec!["set-option", "-t", "cockpit", "window-size", "latest"]]);
+    }
+
+    #[test_id(tr0f7sa)]
+    #[test]
+    fn a_missing_resize_hook_decides_only_that_hook() {
+        let mut rows = healthy_rows();
+        rows[1].hooks[1] = String::new();
+        let refs: Vec<&PaneRow> = rows.iter().collect();
+        let w = hook_writes(&refs, 33);
+        assert_eq!(w, vec![vec!["set-hook", "-t", "cockpit", "client-resized", "resize-pane -t %2 -x 33%"]]);
+    }
+
+    #[test_id(tz9b1ye)]
+    #[test]
+    fn a_window_whose_session_pane_is_gone_takes_the_repair_path() {
+        let rows: Vec<PaneRow> = healthy_rows().into_iter().filter(|r| !r.tag.is_empty()).collect();
+        let refs: Vec<&PaneRow> = rows.iter().collect();
+        assert!(!window_is_healthy(&refs, &facts(&role_by_pid, &|_| false, true)));
+    }
+
+    #[test_id(tq4d8wm)]
+    #[test]
+    fn an_untagged_dashboard_a_stale_health_or_a_short_health_takes_the_repair_path() {
+        let rows = healthy_rows();
+        let refs: Vec<&PaneRow> = rows.iter().collect();
+        let untagged = |pid: i32| if pid == 10 { Some(Role::Mail) } else { role_by_pid(pid) };
+        assert!(!window_is_healthy(&refs, &facts(&untagged, &|_| false, true)));
+        assert!(!window_is_healthy(&refs, &facts(&role_by_pid, &|_| true, true)));
+        let mut short = healthy_rows();
+        short[1].pane_height = Some(12);
+        let refs: Vec<&PaneRow> = short.iter().collect();
+        assert!(!window_is_healthy(&refs, &facts(&role_by_pid, &|_| false, true)));
+    }
+
+    #[test_id(tn6v3ho)]
+    #[test]
+    fn a_missing_mail_pane_is_only_a_fault_when_mail_is_wanted() {
+        let rows: Vec<PaneRow> = healthy_rows().into_iter().filter(|r| r.tag != "mail").collect();
+        let refs: Vec<&PaneRow> = rows.iter().collect();
+        assert!(window_is_healthy(&refs, &facts(&role_by_pid, &|_| false, false)));
+        assert!(!window_is_healthy(&refs, &facts(&role_by_pid, &|_| false, true)));
     }
 }
