@@ -1187,7 +1187,7 @@ mod in_process_tests {
         let views = Arc::new(store_view::Projection::new(LcClient::over(followed.clone(), true), Duration::from_secs(30), Arc::new(std::time::Instant::now)));
         views.load().unwrap();
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let watch = { let (v, s) = (views.clone(), stop.clone()); std::thread::spawn(move || v.run(&s)) };
+        let watch = { let (v, s) = (views.clone(), stop.clone()); std::thread::spawn(move || v.run(&s, &mut |_| {})) };
         // clock-safe: a cap on the wait for the watch thread to start
         for _ in 0..6000 {
             if views.watching() {

@@ -176,9 +176,12 @@ impl Journal for Overheard {
     }
 }
 
+/// The installed store views and the table of the revision applied to them.
+pub type StoreViews = (Arc<store_view::Projection>, Arc<store::ChangeTable>);
+
 /// Everything that must finish before the dispatch loop can start. The journal is asked for at
 /// most half of `deadline`, so a store that cannot tell is reported here with time left to print it.
-pub fn start_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, board: Arc<runtime::engine::StatusBoard>, startup: &Arc<Startup>) -> Result<(Engine, Option<store::Store>), String> {
+pub fn start_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, board: Arc<runtime::engine::StatusBoard>, startup: &Arc<Startup>) -> Result<(Engine, Option<StoreViews>), String> {
     startup.enter("journal boot");
     let journal = Arc::new(Overheard { inner: journal, startup: startup.clone() });
     let engine = open_engine(s, journal, clock, marker, sink, vec![], startup.deadline / 2).map_err(|e| stamped(&format!("spira-runtime: startup, journal boot: {e}")))?;
