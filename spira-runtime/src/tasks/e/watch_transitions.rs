@@ -229,6 +229,9 @@ pub struct Bead {
     /// The unlanded prerequisite the batcher refused this CERTIFIED bead for: it waits on that, not on a cut.
     #[serde(default)]
     pub waits_on: Option<String>,
+    /// The first pass on which nothing explained this bead's wait, after a pass on which something did.
+    #[serde(default)]
+    pub wait_from: Option<u64>,
 }
 
 /// A SUBMITTED bead's gate, as the gate queue and the gate's admission lease show it.
@@ -249,6 +252,10 @@ impl Bead {
     }
 
     /// Whether the bead is waiting for its gate or a cut: SUBMITTED or CERTIFIED, not held, not landed.
+    fn wait_start(&self) -> u64 {
+        self.since.max(self.wait_from.unwrap_or(0))
+    }
+
     fn awaits_cut(&self) -> bool {
         matches!(self.state.as_str(), "SUBMITTED" | "CERTIFIED") && !self.held && !self.landed
     }
@@ -368,6 +375,10 @@ pub struct Carry {
     /// Per repo, when a bead was last seen to leave delivery for good.
     #[serde(default)]
     pub delivered: BTreeMap<String, u64>,
+    /// Per SUBMITTED or CERTIFIED bead: `None` while something explains its wait, else the time its
+    /// wait counts from (0: from when it entered its state).
+    #[serde(default)]
+    pub unexplained: BTreeMap<String, Option<u64>>,
     /// What holds the stall edges while the work plane is halted; empty when it is not.
     pub halted: String,
     /// The last time a halt was seen: no edge's wait counts from before it.
@@ -542,7 +553,7 @@ fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> u64 {
     snap.beads
         .iter()
         .filter(|b| uncovered(snap, b, scope, now, cfg))
-        .map(|b| now.saturating_sub(b.since))
+        .map(|b| now.saturating_sub(b.wait_start()))
         .max()
         .unwrap_or(0)
 }
@@ -553,13 +564,13 @@ fn uncovered(snap: &Snapshot, b: &Bead, scope: &str, now: u64, cfg: &Config) -> 
 
 /// The oldest uncovered bead in `scope`, and what holds it back.
 fn oldest_uncovered(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> String {
-    let Some(b) = snap.beads.iter().filter(|b| uncovered(snap, b, scope, now, cfg)).min_by_key(|b| b.since) else { return String::new() };
+    let Some(b) = snap.beads.iter().filter(|b| uncovered(snap, b, scope, now, cfg)).min_by_key(|b| b.wait_start()) else { return String::new() };
     let why = match (b.state.as_str(), &b.gate) {
         ("CERTIFIED", _) => "certified, not cut".to_string(),
         (_, Some(Gating::Running { since })) => format!("gate running {}, past SPIRA_GATE_TIMEOUT {}", dur(now.saturating_sub(*since)), dur(cfg.gate_timeout_s)),
         _ => "no gate queued or running".to_string(),
     };
-    format!("; oldest uncovered: {} {} {} ({why})", b.id, b.state, dur(now.saturating_sub(b.since)))
+    format!("; oldest uncovered: {} {} {} ({why})", b.id, b.state, dur(now.saturating_sub(b.wait_start())))
 }
 
 /// Every edge stalled in every scope of `snap`. The `*` scope stands only for an edge no single
@@ -964,13 +975,27 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         }
     }
     next.in_delivery = snap.beads.iter().filter(|b| b.state == "IN_DELIVERY").map(|b| (b.id.clone(), b.repo.clone())).collect();
-    let amended = with_delivered(snap, &next.delivered);
+    let mut amended = with_delivered(snap, &next.delivered);
+    next.unexplained = BTreeMap::new();
+    for b in amended.beads.iter_mut().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")) {
+        let entry = if uncovered(snap, b, ALL, now, cfg) {
+            match carry.unexplained.get(&b.id) {
+                Some(None) => Some(now),
+                Some(Some(from)) => Some(*from),
+                None => Some(0),
+            }
+        } else {
+            None
+        };
+        b.wait_from = entry.filter(|from| *from > 0);
+        next.unexplained.insert(b.id.clone(), entry);
+    }
     let snap = &amended;
     let table = table_line(snap, now, cfg);
     acts.push(log_line(now_ms, &table));
     let rows = over_rows(snap, now, cfg);
     next.over = rows.iter().map(|(row, _, _)| row.to_string()).collect();
-    let fresh: Vec<String> = rows.iter().filter(|(row, _, _)| !carry.over.contains(*row)).map(|(row, age, bound)| format!("OVER {row} {} (bound {})", dur(*age), dur(*bound))).collect();
+    let fresh: Vec<String> = rows.iter().filter(|(row, _, _)| !carry.over.contains(*row)).map(|(row, age, bound)| format!("OVER {row} {} (bound {}){}", dur(*age), dur(*bound), if *row == "SUBMITTED" { oldest_uncovered(snap, ALL, now, cfg) } else { String::new() })).collect();
     if !fresh.is_empty() {
         acts.push(say(now_ms, &format!("{} — {table}", fresh.join(", "))));
     } else if carry.blind {
@@ -1013,7 +1038,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Map { name: "unexplained", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over")];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {
