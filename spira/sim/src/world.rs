@@ -1349,7 +1349,7 @@ mod locator_tests {
     #[test]
     fn a_registered_repository_commits_the_files_the_landing_contract_reads() {
         let t = testkit::TempDir::new("extra-contract");
-        let spec = RepoSpec::parse("fixture:push").unwrap();
+        let spec = RepoSpec::parse(crate::pilgrim::FIXTURE_REPO).unwrap();
         place_extra(t.path(), &spec, Path::new("runner")).unwrap();
         let show = |f: &str| git(&spec.work(t.path()), &["show", &format!("HEAD:{f}")]).unwrap_or_else(|e| panic!("{f} is not committed: {e}"));
         assert!(show("flake.nix").contains("devShells"));

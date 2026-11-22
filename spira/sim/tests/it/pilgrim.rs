@@ -207,7 +207,7 @@ fn pilgrim_up_from_non_spira_worktree(sim_release: bool, in_testenv: bool) {
     let mut cmd = std::process::Command::new(testkit::bin_exe("sim"));
     cmd.args(["world", "up"])
         .arg(&dir)
-        .args(["--pilgrim", "--repo", "fixture:push"])
+        .args(["--pilgrim", "--repo", "fixture:queue.forge"])
         .current_dir(&repo)
         .env_clear()
         .env("PATH", system_paths::SYSTEM_PATH_MIN)
