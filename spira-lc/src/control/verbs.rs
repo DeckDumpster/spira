@@ -14,13 +14,14 @@ use super::store::Store;
 use crate::{flag, CANNOT_TELL};
 
 /// The verbs this module answers.
-pub const VERBS: &[&str] = &["watch", "history", "event-seq", "audits", "dwell", "store-usage", "plane-bead", "plane-ejected", "plane-gate-red"];
+pub const VERBS: &[&str] = &["watch", "history", "backfill-history-audits", "event-seq", "audits", "dwell", "store-usage", "plane-bead", "plane-ejected", "plane-gate-red"];
 
 pub fn run<B: Backend>(store: &Store<B>, args: &[String]) -> (i32, String) {
     let rest = &args[1..];
     let answer = match args.first().map(String::as_str) {
         Some("watch") => watch(store, rest),
         Some("history") => history(store, rest),
+        Some("backfill-history-audits") => backfill_history_audits(store, rest),
         Some("event-seq") => event_seq(store, rest),
         Some("audits") => audits(store, rest),
         Some("dwell") => dwell(store, rest),
@@ -184,6 +185,31 @@ fn history<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, Stri
         rows.push(Value::Object(row));
     }
     serde_json::to_string_pretty(&Value::Array(rows)).map_err(|e| e.to_string())
+}
+
+const BACKFILL_USE: &str = "backfill-history-audits [--apply | --dry-run] [<id>...]";
+
+/// `backfill-history-audits [--apply | --dry-run] [<id>...]`: give each legacy history entry its
+/// audits, so `history` reads no `events/` key. A dry run unless `--apply`.
+fn backfill_history_audits<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
+    let apply = args.iter().any(|a| a == "--apply");
+    if apply && args.iter().any(|a| a == "--dry-run") {
+        return Err(format!("usage: {BACKFILL_USE} (--apply and --dry-run together)"));
+    }
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && !matches!(a.as_str(), "--apply" | "--dry-run")) {
+        return Err(format!("usage: {BACKFILL_USE} (unknown flag {bad})"));
+    }
+    let ids: Vec<String> = args.iter().filter(|a| !a.starts_with('-')).cloned().collect();
+    let done = store.backfill_history_audits(&ids, apply).map_err(|e| format!("backfill-history-audits: {e}"))?;
+    let mut lines: Vec<String> = done.lost.iter().map(|k| format!("lost {k}: its events key is gone")).collect();
+    let (verb, tail) = if apply { ("rewritten", "") } else { ("would rewrite", " (dry run; --apply to write)") };
+    lines.push(format!(
+        "backfill-history-audits: {} {verb}, {} already inline, {} lost{tail}",
+        done.rewritten,
+        done.inline,
+        done.lost.len()
+    ));
+    Ok(lines.join("\n"))
 }
 
 /// `event-seq [--since N | --head]`: the revision read at and the bead ids with an applied event

@@ -380,14 +380,130 @@ fn history_reads_a_beads_keys_in_pages_and_their_events_in_chunks_at_one_revisio
     let h = call(&s, &["history", "sp-a"]);
     let reads = s.contract().backend().take();
     let history_keys = txns + 1 + imported;
-    let bound = 1 + history_keys.div_ceil(RECORD_CHUNK) + (txns + 1).div_ceil(RECORD_CHUNK);
+    let bound = 1 + history_keys.div_ceil(RECORD_CHUNK);
     assert!(reads.len() <= bound, "{} reads, over {bound}: {reads:?}", reads.len());
-    assert!(!reads.iter().any(|(k, key, _)| *k == "get" && key.starts_with("events/")), "{reads:?}");
+    assert!(!reads.iter().any(|(_, key, _)| key.starts_with("events/")), "{reads:?}");
     assert!(reads.iter().all(|(_, _, n)| *n <= RECORD_CHUNK), "{reads:?}");
     let got = seqs(&h);
     assert_eq!(got[..imported], [1, 2, 3], "the imported changes come first, at their old seqs");
     assert_eq!(got[got.len() - txns..], revs[..], "then each txn's change in revision order");
     assert_eq!(call(&s, &["history", "sp-a", "--machine", "bead"]), h);
+}
+
+/// Rewrites every history entry of `id` to the legacy empty shape, straight through the backend.
+fn make_legacy<B: Backend>(s: &Store<B>, id: &str) -> usize {
+    use state_store::{Selector, Write};
+    let page = s
+        .contract()
+        .list_page(&[keys::history(id).as_str()], &Selector::Everything, 1_000, None)
+        .unwrap();
+    let mut n = 0;
+    for it in page.items {
+        let head = s.contract().head().unwrap();
+        let events = s.contract().get(&state_store::events_key(it.mod_rev.main)).unwrap().unwrap();
+        s.contract()
+            .backend()
+            .commit(head, &[
+                Write::Put {
+                    key: it.key.clone(),
+                    value: state_store::Object::new(serde_json::json!({})).encode(),
+                    create_rev: it.create_rev,
+                    prev: Some(it.mod_rev),
+                },
+                Write::Put {
+                    key: state_store::events_key(head + 1),
+                    value: events.value.encode(),
+                    create_rev: state_store::Rev::new(head + 1, 0),
+                    prev: None,
+                },
+            ])
+            .unwrap();
+        n += 1;
+    }
+    n
+}
+
+fn backfill<B: Backend>(s: &Store<B>, flag: &str) -> String {
+    let (code, out) = verbs::run(s, &["backfill-history-audits", flag].map(String::from));
+    assert_eq!(code, 0, "{out}");
+    out
+}
+
+#[test_id(t37xlkm)]
+#[test]
+fn a_beads_history_outlives_the_events_day_file_that_held_its_changes() {
+    on_sqlite_across_days(|s| {
+        create(s, "sp-a");
+        let revs: Vec<u64> = (0..6).map(|n| toggle(s, "sp-a", n)).collect();
+        create(s, "sp-b");
+        for n in 0..150 {
+            toggle(s, "sp-b", n);
+        }
+        let got: Vec<u64> = call(s, &["history", "sp-a"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["seq"].as_u64().unwrap())
+            .collect();
+        assert_eq!(got[got.len() - 6..], revs[..]);
+    });
+}
+
+#[test_id(ti6is09)]
+#[test]
+fn backfill_history_audits_rewrites_legacy_entries_and_leaves_history_unchanged() {
+    use crate::counting::Counting;
+    let s = store(Counting::new(MemBackend::new()), &VirtualClock::new(0));
+    create(&s, "sp-a");
+    toggle(&s, "sp-a", 1);
+    refused(&s, "sp-a", 2);
+    toggle(&s, "sp-a", 3);
+    let inline = call(&s, &["history", "sp-a"]);
+    let legacy = make_legacy(&s, "sp-a");
+    let before = call(&s, &["history", "sp-a"]);
+    let unseq = |h: &Value| -> Vec<Value> {
+        h.as_array().unwrap().iter().map(|r| { let mut r = r.clone(); r.as_object_mut().unwrap().remove("seq"); r }).collect()
+    };
+    assert_eq!(unseq(&before), unseq(&inline), "the legacy path reads the same changes");
+
+    let dry = backfill(&s, "--dry-run");
+    assert!(dry.contains(&format!("backfill-history-audits: {legacy} would rewrite, 0 already inline, 0 lost")), "{dry}");
+    assert_eq!(backfill(&s, "--dry-run"), dry, "a dry run writes nothing");
+    let head = s.contract().head().unwrap();
+    let done = backfill(&s, "--apply");
+    assert!(done.contains(&format!("backfill-history-audits: {legacy} rewritten, 0 already inline, 0 lost")), "{done}");
+    assert!(s.contract().head().unwrap() > head);
+
+    s.contract().backend().take();
+    assert_eq!(call(&s, &["history", "sp-a"]), before, "byte-identical after the rewrite");
+    let reads = s.contract().backend().take();
+    assert!(!reads.iter().any(|(_, key, _)| key.starts_with("events/")), "{reads:?}");
+    let again = backfill(&s, "--apply");
+    assert!(again.contains(&format!("0 rewritten, {legacy} already inline, 0 lost")), "{again}");
+}
+
+#[test_id(t7s7zyz)]
+#[test]
+fn backfill_history_audits_names_an_entry_whose_events_key_is_gone_and_leaves_it() {
+    use state_store::{Object, Rev, Write};
+    let s = store(MemBackend::new(), &VirtualClock::new(0));
+    create(&s, "sp-a");
+    let head = s.contract().head().unwrap();
+    let key = keys::history_entry("sp-a", 1, "orphan");
+    s.contract()
+        .backend()
+        .commit(head, &[Write::Put {
+            key: key.clone(),
+            value: Object::new(serde_json::json!({})).encode(),
+            create_rev: Rev::new(head + 1, 0),
+            prev: None,
+        }])
+        .unwrap();
+    let out = backfill(&s, "--apply");
+    assert!(out.contains("0 rewritten, 1 already inline, 1 lost") || out.contains("0 rewritten, 0 already inline, 1 lost"), "{out}");
+    assert!(out.contains(&key), "{out}");
+    let item = s.contract().get(&key).unwrap().unwrap();
+    assert_eq!(item.value.data, serde_json::json!({}));
 }
 
 #[test_id(tmgztoq)]

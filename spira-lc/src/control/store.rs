@@ -189,6 +189,13 @@ fn is_applied_renew(a: &Audit) -> bool {
     a.machine == "bead" && a.event == "Renew" && a.applied
 }
 
+/// A history entry's value: the audits of one branch that name `id`, so a read of the history
+/// needs no `events/` key.
+fn history_value(id: &str, audits: &[Audit]) -> Result<Object> {
+    let own = audits.iter().filter(|a| a.lc_key == id).map(encode).collect::<Result<Vec<_>>>()?;
+    Ok(Object::new(serde_json::json!({ "audits": own })))
+}
+
 fn audited_ids(audits: &[Audit]) -> std::collections::BTreeSet<&str> {
     audits.iter().map(|a| a.lc_key.as_str()).collect()
 }
@@ -649,10 +656,10 @@ impl<B: Backend> Store<B> {
             if then.iter().filter(|a| a.lc_key == id).all(is_applied_renew) {
                 continue;
             }
-            t = t.put(&entry(id), Object::new(serde_json::json!({})));
+            t = t.put(&entry(id), history_value(id, then)?);
         }
         for id in audited_ids(els) {
-            t = t.or_put(&entry(id), Object::new(serde_json::json!({})));
+            t = t.or_put(&entry(id), history_value(id, els)?);
         }
         let r = self.contract.txn(&t, &sub)?;
         if r.succeeded && !r.already_applied {
