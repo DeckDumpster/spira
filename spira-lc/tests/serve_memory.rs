@@ -121,7 +121,7 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
             });
         }
     });
-    // Workers are reused and stay parked, bounded by peak concurrency, not by requests; a request past its
+    // Workers are reused and stay parked, bounded by concurrency (at most 2x the clients, far below the requests), not by requests; a request past its
     // deadline is answered and its worker runs on: wait for the count to settle at that bound.
     let mut polls = 0;
     while threads(pid) > threads_at_ready + 2 * CONNECTIONS as u64 {
