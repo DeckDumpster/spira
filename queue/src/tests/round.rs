@@ -10620,7 +10620,7 @@ fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
 #[test]
 fn a_green_round_clears_its_members_registry_rows_before_the_release_activates() {
     let (t, batch) = certified_round();
-    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["unit:a::t".into()]));
+    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["test:t0aaaaa".into()]));
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     let calls = t.scripts.calls.borrow();
     let clears: Vec<_> = calls.iter().enumerate().filter(|(_, c)| c.starts_with("clear-landed ")).collect();
@@ -10628,7 +10628,7 @@ fn a_green_round_clears_its_members_registry_rows_before_the_release_activates()
     assert_eq!(clears[0].1, "clear-landed sp-a,sp-b");
     let activate = calls.iter().position(|c| c == "release activate").expect("the release activated");
     assert!(clears[0].0 < activate, "{calls:?}");
-    assert!(t.out().contains("queue.sh land-local: landing cleared registry row(s) unit:a::t"), "{}", t.out());
+    assert!(t.out().contains("queue.sh land-local: landing cleared registry row(s) test:t0aaaaa"), "{}", t.out());
 }
 
 #[test_id(tu2mmj7)]

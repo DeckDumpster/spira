@@ -478,8 +478,8 @@ fn a_build_that_succeeds_records_its_duration_for_the_next_dry_run() {
 #[test]
 fn a_hand_land_clears_its_beads_registry_rows() {
     let t = world();
-    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["unit:z::t".into()]));
+    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["test:t0aaaaa".into()]));
     assert_eq!(hand_land(&t, &["--round", "subvert"]), 0, "{}", t.err());
     assert!(t.scripts.calls.borrow().iter().any(|c| c == "clear-landed sp-z"), "{:?}", t.scripts.calls.borrow());
-    assert!(t.out().contains("landing cleared registry row(s) unit:z::t"), "{}", t.out());
+    assert!(t.out().contains("landing cleared registry row(s) test:t0aaaaa"), "{}", t.out());
 }
