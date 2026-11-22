@@ -1,5 +1,7 @@
 //! Every persona prompt in the tree names only tools and paths the release ships.
 
+#[macro_use]
+extern crate spira_test_id;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -57,6 +59,7 @@ fn lookup<'a>(root: &'a Path, bins: &'a BTreeMap<String, String>) -> impl Fn(&st
     move |name: &str| read(name).map(|t| rule::audit::follow_shim(&t, &read))
 }
 
+#[test_id(tbvuewc)]
 #[test]
 fn every_persona_prompt_names_only_what_the_release_ships() {
     let root = repo_root();
@@ -80,6 +83,7 @@ fn every_persona_prompt_names_only_what_the_release_ships() {
     assert!(bad.is_empty(), "\n{}\n", bad.join("\n"));
 }
 
+#[test_id(tuffm5c)]
 #[test]
 fn the_tree_check_resolves_what_ships_and_flags_a_planted_miss() {
     let root = repo_root();

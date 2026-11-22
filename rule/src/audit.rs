@@ -287,12 +287,14 @@ mod tests {
         assert_eq!(audit(&m, &other_verb).len(), 1, "positive control: a verb the binary lacks is a finding");
     }
 
+    #[test_id(te46isn)]
     #[test]
     fn a_missing_cockpit_path_is_found_on_its_line() {
         let none = |_: &str| false;
         assert_eq!(prompt_findings("x.md", "ok\n{{COCKPIT}}/no-such.sh", &none, &release), vec!["runes/x.md:2: {{COCKPIT}}/no-such.sh".to_string()]);
     }
 
+    #[test_id(tk1i8b6)]
     #[test]
     fn a_shipped_bin_behind_spira_home_is_clean() {
         let bins: std::collections::BTreeSet<String> = ["reply".to_string()].into();
@@ -302,6 +304,7 @@ mod tests {
         assert_eq!(prompt_findings("x.md", "{{SPIRA_HOME}}/../bin/gone x", &r, &release).len(), 1);
     }
 
+    #[test_id(t911bgq)]
     #[test]
     fn a_shim_is_judged_by_the_binary_it_execs() {
         let shim = |n: &str| match n {
@@ -314,6 +317,7 @@ mod tests {
         assert_eq!(prompt_findings("x.md", "see t.sh gone", &|_| false, &look).len(), 1);
     }
 
+    #[test_id(tdqarnp)]
     #[test]
     fn prose_after_a_script_name_is_not_a_verb() {
         let r = extract_refs("the stamp is read by mimir-trigger.sh reads it; bead.sh status works");
@@ -321,12 +325,14 @@ mod tests {
         assert_eq!(r[1].verb.as_deref(), Some("status"));
     }
 
+    #[test_id(tj2h7gi)]
     #[test]
     fn a_script_the_release_lacks_is_flagged() {
         let none = |_: &str| false;
         assert_eq!(prompt_findings("x.md", "run gone.sh now", &none, &release), vec!["runes/x.md:1: gone.sh".to_string()]);
     }
 
+    #[test_id(tlz1dbe)]
     #[test]
     fn a_placeholder_rooted_script_is_not_judged_by_base_name() {
         let present = |t: &str| t == "{{COCKPIT}}/panel-run.sh";
