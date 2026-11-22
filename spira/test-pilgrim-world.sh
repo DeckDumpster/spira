@@ -128,5 +128,14 @@ is "Loom offers A as claimable" 0 "$?"
 loom_view | jq -e '.view.blocked | length == 0' >/dev/null
 is "Loom shows nothing blocked" 0 "$?"
 
+# The rune's documented prefix, from a session whose own SPIRA_TOML names the other store: the registry beside the socket decides, the socket alone does not.
+session_rows() { env "${NOLOC[@]}" SPIRA_HOME="$SPIRA_RELEASE/spira" SPIRA_TOML="$T/plain/config/sim.toml" "$@" "$SPIRA_RELEASE/bin/spira-lc" list --live --json | jq length; }
+WORLD_ROWS="$(in_world "$T/pilgrim" "spira-lc list --live --json" | jq length)"
+[ "$WORLD_ROWS" != "$PROD_ROWS" ]
+is "the two worlds hold different stores" 0 "$?"
+is "the session's registry alone reads its own store" "$PROD_ROWS" "$(session_rows)"
+is "the rune's prefix reads the pilgrim world's store" "$WORLD_ROWS" "$(session_rows SPIRA_TOML="$T/pilgrim/config/sim.toml" SPIRA_LC_SOCKET="$T/pilgrim/lc.sock")"
+is "the socket alone is overridden by the session's registry" "$PROD_ROWS" "$(session_rows SPIRA_LC_SOCKET="$T/pilgrim/lc.sock")"
+
 is "production's claimable set is unchanged" "$PROD_BEFORE" "$(claimable_ids "$T/plain")"
 tl_summary
