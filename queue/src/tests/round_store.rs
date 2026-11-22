@@ -523,6 +523,35 @@ fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
     );
     let status = status(&t);
     assert!(status.starts_with("round=none\nrepo=spira\n"), "{status}");
+    assert!(status.lines().any(|l| l == "rounds=0"), "{status}");
+}
+
+#[test]
+fn status_after_an_eject_keeps_the_round_in_progress_while_phase_reads_opened() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    let batch = opened(&t, "spira-1", "sp-a:ta,sp-b:tb");
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--by", "batcher", "--reason", "r"]),
+        0,
+        "{}",
+        t.err()
+    );
+    // The in-memory door does not model eject returning the batch to OPEN; set it as the real store has it.
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.set_state("spira", &batch, "OPEN");
+    let status = status(&t);
+    for line in ["round=open", "rounds=1", "phase=opened"] {
+        assert!(status.lines().any(|l| l == line), "{line}: {status}");
+    }
+}
+
+#[test]
+fn usage_says_which_status_fields_mean_a_round_is_in_progress_and_that_phase_is_informational() {
+    assert!(crate::cli::USAGE.contains("rounds=<n>, 0 when none, say whether a round is in progress"));
+    assert!(crate::cli::USAGE.contains("again between an eject and the re-certify"));
 }
 
 /// A store round `name` opened through `round open` (members `members`).
