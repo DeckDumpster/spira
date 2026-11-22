@@ -799,7 +799,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             Some(Ok(n)) if n > 0 => proposal_part = Some(n),
             _ => {
                 eprintln!("bead: refusing: a law proposal is filed into a Part of the code. Pass --part <n>; the Parts are:");
-                eprint!("{}", law_contents(home));
+                eprint!("{}", law_contents());
                 return 2;
             }
         }
@@ -1020,11 +1020,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 }
 
-/// `work law`'s table of contents, read from the home repository's tracked `law/` tree.
-fn law_contents(home: &str) -> String {
-    let reg = spira_config::repos::Registry::from_env_checkout(env::vars().collect(), Path::new(home));
-    let path = reg.root("").map(|r| Path::new(&r).join("law/index.md"));
-    path.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_else(|| "(law/index.md not found — run `work law`)\n".to_string())
+/// `work law`'s table of contents, read from the statute book in the wiki checkout.
+fn law_contents() -> String {
+    let key = |k: &str| spira_config::process::cfg(k).ok().filter(|v| !v.is_empty());
+    let path = key("SPIRA_WIKI").zip(key("SPIRA_LAW_BOOK")).map(|(wiki, book)| Path::new(&wiki).join(book).join("index.md"));
+    path.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_else(|| "(the statute book's index.md not found — run `work law`)\n".to_string())
 }
 
 /// Files the design's pilgrimage bead for the pilgrim, blocked by every build bead named with `--after`.

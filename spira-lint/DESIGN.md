@@ -1640,7 +1640,7 @@ the migration's progress meter and, once switched to `enforce`, the fence that s
 words returning. The table holds each term's replacement; `rule enact` refuses statute text against it (rule/DESIGN.md).
 
 **Scope.** Every walked path and every text file's contents, minus `docs/spikes/`, `raw/spira-beads/`
-(the bead mirror), the config key history and `law/pointers.toml` (the book's rename history, the same class), `*.tsv` corpora, this rule's own source and any line carrying `ffx-ok` (a retired name kept on purpose, such as a retired config key). A file holding a NUL byte is
+(the bead mirror), the config key history, `*.tsv` corpora, this rule's own source and any line carrying `ffx-ok` (a retired name kept on purpose, such as a retired config key). A file holding a NUL byte is
 matched by path only. Commit history is not walked.
 
 **Matching.** A name or line is split into words at every non-alphanumeric and at camelCase
@@ -1671,8 +1671,6 @@ words before it, and is otherwise left in place so it is reported and the caller
   the path itself), then a `count <term> <n>` line per term and a closing `remaining <n> hit(s)`
   line, and exits 0. Each gate round's lint step logs it.
 - `enforce` reports each hit as an ordinary finding, so the run exits 1.
-
-**Retired slugs in `law/`.** Under `law/`, a slug that `law/pointers.toml` retires (or merges away while `law/toc.toml` still lists it) is an identifier, not prose, and is removed from the path and each line before matching; the lint reads both files from the tree itself, and a missing or unparseable file leaves every finding standing.
 
 **No allow list.** The migration is the allow list; nothing is excepted but the history paths and `ffx-ok` lines above.
 

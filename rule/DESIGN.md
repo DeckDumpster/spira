@@ -26,7 +26,7 @@ bash still printed the success banner).
 ```
 rule.sh                                                # every caller, unchanged — concierge.sh, the suites
 rule [--home <spira-dir>] enact <slug> "<text>" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) --part <n> [--dry-run]
-rule code [--check] [--texts <dir>]   # regenerate or check the law/ tree (law/toc.toml + statute texts); enact appends to a Part and stages it
+rule code [--check] [--texts <dir>]   # regenerate or check the book in the wiki checkout (toc.toml + statute texts); enact appends to a Part and commits it there
 rule [--home <spira-dir>] audit [--file --for <persona> [--repo <name>] --max N]
 rule [--home <spira-dir>] retire <slug> --reason <why> [--replaced-by <slug> | --merged-into <slug>]
 rule [--home <spira-dir>] rename-vocabulary [--dry-run]
@@ -36,7 +36,7 @@ rule [--home <spira-dir>] render-memories [prefix-csv] [char-budget] [core-csv]
 rule system-prompt-split <sysfile> <taskfile> <statutes> <prompt>
 ```
 
-`enact` finds the home repository through the repo map, never the caller's directory. It refuses text the `inventory` fence of spira-lint would refuse, then writes the statute to the store, regenerates the wiki page and files no bead of its own. It then lands the whole statute book: `code::catch_up` first drops every toc slug the store lacks (`code::without_missing`; `code::in_force` is the same step plus the moves, for `rule code`), then appends every store slug the landing-ref toc and `law/pointers.toml` do not name (`code::behind`) under Part 1 in store key order, the enacted slug under its `--part`, and `law/` is committed and submitted under one bead exactly as `retire` does it (`retire` catches up the same way, after leaving a `retired-law-*` record in the store). `commit_law` cuts from the newest unlanded `law/*` or `spira/*` branch whose change against the landing ref stays within `law/` and `spira/statutes/`, so two writes made before either lands do not conflict: the second fast-forwards. When that tip is a `spira/<id>` branch whose bead is SUBMITTED, `land_law` moves the branch to the new commit, deletes the temporary `law/*` branch and re-submits it under the same bead (`code::carrier_of` decides) instead of filing a new item; a cut from the base or from a `law/*` branch files one as before. `rule code --land` is the same landing with no store write, for catch-up and retry, and says `law/: book is up to date with the store.` when nothing is behind or drifted. A landing failure appends one line to `<SPIRA_RUN>/law-book.log` (a `law-book` row in `spira/watchers`, so it reaches the Concierge inbox) and exits 1; the statute stays in force. `rule code --check` reports the gap as `law/: behind the store by N: <slugs>` and exits 1. `rule.sh code` writes the seed texts under `spira/statutes/` along with law/, and removes any seed that is not a numbered statute (a runbook copy or a retired slug). The book holds `law-` keys only: a store key of another family is neither counted behind nor carried from an in-flight toc, and a dated `(per <Name>, YYYY-MM-DD…)` provenance mark is dropped wherever it sits in a text, a trailing one keeping its full stop.
+`enact` refuses text the `inventory` fence of spira-lint would refuse, then writes the statute to the store, regenerates the wiki page and files no bead of its own. It then writes the whole statute book into the brain checkout: the `SPIRA_LAW_BOOK` directory (default `wiki/law`) of `SPIRA_WIKI`, resolved by `code::book_dir` (an empty key, or a `SPIRA_WIKI` with no `.git`, is refused by name). `code::catch_up` first drops every toc slug the store lacks (`code::without_missing`; `code::in_force` is the same step plus the moves, for `rule code`), then appends every store slug the book's toc and `pointers.toml` do not name (`code::behind`) under Part 1 in store key order, the enacted slug under its `--part`; `land_book` renders `toc.toml`, `pointers.toml`, `index.md` and the Part trees, takes the paths git reports changed under the book, and commits and pushes only those through `wiki-commit.sh` under `law: <verb> <key>` (`retire` catches up the same way, after leaving a `retired-law-*` record in the store). No branch, worktree, bead or submit is made and the harness landing ref does not move. Each write regenerates the whole book from the store, so concurrent writers converge and `rule code --land` is the retry: it says `law: book is up to date with the store.` when nothing is behind or drifted. A write failure appends one line to `<SPIRA_RUN>/law-book.log` (a `law-book` row in `spira/watchers`, so it reaches the Concierge inbox) and exits 1; the statute stays in force. `rule code --check` reports the gap as `behind the store by N: <slugs>` and exits 1; `rule code` with no `--check` writes the book without committing it. The seed texts under `spira/statutes/` are `spira/seed.sh`'s shipped set and `rule` never writes them. The book holds `law-` keys only: a store key of another family is not counted behind, and a dated `(per <Name>, YYYY-MM-DD…)` provenance mark is dropped wherever it sits in a text, a trailing one keeping its full stop.
 
 `<slug>` is written without the `law-` prefix; it is added for you (stripped once if
 already present, so `rule enact law-foo ...` and `rule enact foo ...` enact the same key).
@@ -125,7 +125,7 @@ call this binary makes, so the two are never observably different.
 `enact` (which is also the amend, and includes `--dry-run`) exits 1 when the slug or the text holds a
 term spira-lint's `ffx-vocabulary` would flag, printing `"term" → "replacement"` per term. The check
 uses that rule's own table (`spira_lint::rules::ffx_vocabulary`), so an accepted statute projects
-`law/` and `spira/statutes/` files that pass the lint. A statute that must quote a retired term
+book files that pass the lint. A statute that must quote a retired term
 carries `ffx-ok` in its first sentence: only that sentence reaches each Part's `index.md`, where the
 lint fires. `retire` writes no text and is not checked.
 
@@ -137,7 +137,7 @@ slug holds a term is enacted under the renamed slug and the old key forgotten. E
 singular determiner before "summons" or "chamber" gives "call" or "rune", and the article fix <!-- ffx-ok -->
 reaches slugs. A bare "summons" (no determiner, no count before it) is unreadable as singular or <!-- ffx-ok -->
 plural and is listed as unresolved. A rename onto a key in force, and a term with no replacement,
-are listed and left, exit 1; the rest is applied and `law/` landed once. `--dry-run` prints each
+are listed and left, exit 1; the rest is applied and the book committed once. `--dry-run` prints each
 statute and, under it, each changed sentence as a `-` old and `+` new line (a rename prints
 `old → new`), and writes nothing; its tail line counts statutes and runbooks apart.
 
@@ -146,14 +146,14 @@ amended; one whose name holds a term is written under the new name, then a `reti
 (`sop::shelf::Retired`, `replaced_by` = the new key, `text` = the old text) is remembered, then the old
 key forgotten, and the record forgotten again if that fails. `sop show <old>` follows `replaced_by`:
 it prints `<old> was renamed to <new>` and the new text. A runbook rename is neither numbered nor
-pointed at in `law/`, and a target that is a key or has a `retired-` record is a collision. `law/` is
-landed only when a statute was written; otherwise `law/: no statute rewritten; nothing to land.`
+pointed at in the book, and a target that is a key or has a `retired-` record is a collision. The book is
+committed only when a statute was written; otherwise `law: no statute rewritten; nothing to commit.`
 
 ## Pointers: a change to the book leaves one, never a gap
 
 A statute's slug is its identity; its `§Part.Section` is presentation, derived from
-`law/toc.toml`, and may be renumbered by editing the toc and running `rule code`. Whatever
-moved, merged or retired leaves a record in `law/pointers.toml`, an input like `toc.toml`
+the book's `toc.toml`, and may be renumbered by editing the toc and running `rule code`. Whatever
+moved, merged or retired leaves a record in the book's `pointers.toml`, an input like `toc.toml`
 (`write_tree` never deletes it). It carries `version = 1` and refuses unknown fields. The book is
 exactly the statutes in force: a slug the store no longer holds leaves `toc.toml` and its section
 file, and its pointer stays so the old name still resolves. Three entry kinds:

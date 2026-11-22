@@ -139,7 +139,7 @@ The full walk-through, with the crate and task behind each step, is
 | `spira-runtime/`, `runtime/`, `sim/` | the scheduler, its contract and journal, and virtual-time simulation |
 | `spira-lc/`, `state-store/`, `state-store-sqlite/`, `store-view/`, `lifecycle/` | the store server, the control-store contract and backend, in-memory hot reads, the lifecycle machines |
 | `bead/`, `work/`, `spira-claim/`, `gh-intake/` | filing, the dwarf's client, claiming, GitHub intake |
-| `dwarf/`, `sentinel/`, `law/`, `habits/` | the session runner, the caller, statutes, session habits |
+| `dwarf/`, `sentinel/`, `rule/`, `habits/` | the session runner, the caller, statutes, session habits |
 | `sift/`, `gate*/`, `batcher*/`, `queue/`, `landing-pass/`, `round-vm/`, `testenv/` | screening, gating, rounds, landing, the test environment |
 | `release/`, `install/`, `skew/`, `doctor/` | building, installing and checking a release |
 | `reconciler*/`, `watchd/`, `watchtower/`, `strand/`, `hel/`, `census/` | reconciling, watching, finding stuck work, cleanup, failure census |

@@ -1,12 +1,9 @@
-//! The statute code: `law/toc.toml` plus the statute texts generate a tree of Parts and
+//! The statute code: the book's `toc.toml` plus the statute texts generate a tree of Parts and
 //! numbered sections. A slug is a statute's identity; its §N.M number is presentation, derived
-//! from `toc.toml`. A change to the book leaves a pointer in `law/pointers.toml`, never a gap.
+//! from `toc.toml`. A change to the book leaves a pointer in `pointers.toml`, never a gap.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Part {
@@ -18,28 +15,28 @@ pub struct Part {
 }
 
 pub fn parse_toc(text: &str) -> Result<Vec<Part>, String> {
-    let table: toml::Table = text.parse().map_err(|e| format!("law/toc.toml: {e}"))?;
+    let table: toml::Table = text.parse().map_err(|e| format!("toc.toml: {e}"))?;
     let rows = match table.get("part") {
         Some(toml::Value::Array(a)) => a.clone(),
-        Some(_) => return Err("law/toc.toml: `part` must be an array of tables".into()),
+        Some(_) => return Err("toc.toml: `part` must be an array of tables".into()),
         None => Vec::new(),
     };
     let mut parts: Vec<Part> = Vec::new();
     for row in &rows {
-        let str_of = |k: &str| row.get(k).and_then(|v| v.as_str()).map(str::to_string).ok_or_else(|| format!("law/toc.toml: a part has no string `{k}`"));
+        let str_of = |k: &str| row.get(k).and_then(|v| v.as_str()).map(str::to_string).ok_or_else(|| format!("toc.toml: a part has no string `{k}`"));
         let number = row
             .get("number")
             .and_then(|v| v.as_integer())
             .and_then(|n| u32::try_from(n).ok())
             .filter(|n| *n > 0)
-            .ok_or("law/toc.toml: a part has no positive integer `number`")?;
+            .ok_or("toc.toml: a part has no positive integer `number`")?;
         let slugs = match row.get("slugs") {
-            Some(toml::Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).ok_or("law/toc.toml: `slugs` must be strings")).collect::<Result<Vec<_>, _>>()?,
-            _ => return Err(format!("law/toc.toml: part {number} has no `slugs` array")),
+            Some(toml::Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).ok_or("toc.toml: `slugs` must be strings")).collect::<Result<Vec<_>, _>>()?,
+            _ => return Err(format!("toc.toml: part {number} has no `slugs` array")),
         };
         let part = Part { number, name: str_of("name")?, slug: str_of("slug")?, scope: str_of("scope")?, slugs };
         if parts.iter().any(|p| p.number == number) {
-            return Err(format!("law/toc.toml: part {number} appears twice"));
+            return Err(format!("toc.toml: part {number} appears twice"));
         }
         parts.push(part);
     }
@@ -47,7 +44,7 @@ pub fn parse_toc(text: &str) -> Result<Vec<Part>, String> {
     for p in &parts {
         for s in &p.slugs {
             if let Some(other) = seen.insert(s, p.number) {
-                return Err(format!("law/toc.toml: {s} is in part {other} and part {}", p.number));
+                return Err(format!("toc.toml: {s} is in part {other} and part {}", p.number));
             }
         }
     }
@@ -75,7 +72,7 @@ pub fn render_toc(parts: &[Part]) -> String {
 
 pub fn parts_list(parts: &[Part]) -> String {
     if parts.is_empty() {
-        return "  (no Parts in law/toc.toml)\n".to_string();
+        return "  (no Parts in toc.toml)\n".to_string();
     }
     parts.iter().map(|p| format!("  {} — {}: {}\n", p.number, p.name, p.scope)).collect()
 }
@@ -105,7 +102,7 @@ pub struct Retired {
     pub on: String,
 }
 
-/// `law/pointers.toml`: where a statute's old number, or the statute itself, went.
+/// `pointers.toml`: where a statute's old number, or the statute itself, went.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Pointers {
     pub moved: Vec<Moved>,
@@ -114,7 +111,7 @@ pub struct Pointers {
 }
 
 fn pointer_rows(table: &toml::Table, kind: &str, keys: &[&str], optional: &[&str]) -> Result<Vec<BTreeMap<String, String>>, String> {
-    let file = "law/pointers.toml";
+    let file = "pointers.toml";
     let rows = match table.get(kind) {
         Some(toml::Value::Array(a)) => a.clone(),
         Some(_) => return Err(format!("{file}: `{kind}` must be an array of tables")),
@@ -140,7 +137,7 @@ fn pointer_rows(table: &toml::Table, kind: &str, keys: &[&str], optional: &[&str
 }
 
 pub fn parse_pointers(text: &str) -> Result<Pointers, String> {
-    let file = "law/pointers.toml";
+    let file = "pointers.toml";
     let table: toml::Table = text.parse().map_err(|e| format!("{file}: {e}"))?;
     match table.get("version").and_then(|v| v.as_integer()) {
         Some(1) => {}
@@ -217,7 +214,7 @@ pub fn numbers_of(files: &[String]) -> BTreeMap<String, String> {
 /// lacks has left the book and records no move.
 pub fn record_moves(old: &BTreeMap<String, String>, new_toc: &[Part], pointers: &Pointers, today: &str, book: &BTreeMap<String, String>) -> Result<Pointers, String> {
     if let Some(gone) = old.keys().find(|s| section_of(new_toc, s).is_none() && book.contains_key(*s)) {
-        return Err(format!("law/toc.toml no longer lists {gone}, which holds §{} and is still in the store — a statute in force stays in the toc; retire it with `rule.sh retire` instead", old[gone]));
+        return Err(format!("toc.toml no longer lists {gone}, which holds §{} and is still in the store — a statute in force stays in the toc; retire it with `rule.sh retire` instead", old[gone]));
     }
     let mut out = pointers.clone();
     for (slug, was) in old {
@@ -391,7 +388,7 @@ pub fn append(parts: &[Part], number: u32, slug: &str) -> Result<Vec<Part>, Stri
     let mut out = parts.to_vec();
     if let Some(home) = out.iter().find(|p| p.slugs.iter().any(|s| s == slug)) {
         if home.number != number {
-            return Err(format!("{slug} is already section of Part {} — to move it, edit law/toc.toml and run `rule.sh code`", home.number));
+            return Err(format!("{slug} is already section of Part {} — to move it, edit toc.toml and run `rule.sh code`", home.number));
         }
         return Ok(out);
     }
@@ -469,7 +466,7 @@ pub fn part_dir(p: &Part) -> String {
     format!("{}-{}", p.number, p.slug)
 }
 
-/// Every file of the tree, keyed by path relative to `law/`. `toc.toml` and `pointers.toml` are
+/// Every file of the tree, keyed by path relative to the book directory. `toc.toml` and `pointers.toml` are
 /// inputs, not output. A slug the book no longer holds renders its pointer record, or as a
 /// reserved section when it has none.
 pub fn generate(parts: &[Part], pointers: &Pointers, text_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
@@ -539,34 +536,6 @@ pub fn drift(dir: &Path, expected: &BTreeMap<String, String>) -> Vec<String> {
     out
 }
 
-/// File names under `law/` at `base` of the repository at `repo_path`.
-pub fn law_files_at(repo_path: &Path, base: &str) -> Result<Vec<String>, String> {
-    let out = git_in(repo_path, &["ls-tree", "-r", "--name-only", base, "law/"])?;
-    Ok(out.lines().filter_map(|l| l.strip_prefix("law/")).map(str::to_string).collect())
-}
-
-/// `drift` for the `law/` tree at `base`, read from git rather than a directory.
-pub fn drift_at(repo_path: &Path, base: &str, expected: &BTreeMap<String, String>) -> Result<Vec<String>, String> {
-    let mut on_ref = law_files_at(repo_path, base)?;
-    on_ref.retain(|f| f != "toc.toml" && f != POINTERS_FILE);
-    let mut out = Vec::new();
-    for (f, want) in expected {
-        match git_blob(repo_path, &format!("{base}:law/{f}")) {
-            Some(have) if &have == want => {}
-            Some(_) => out.push(format!("{f}: differs from what toc.toml generates")),
-            None => out.push(format!("{f}: missing")),
-        }
-    }
-    out.extend(on_ref.into_iter().filter(|f| !expected.contains_key(f)).map(|f| format!("{f}: not generated by toc.toml")));
-    out.sort();
-    Ok(out)
-}
-
-fn git_blob(repo_path: &Path, spec: &str) -> Option<String> {
-    let out = spira_config::bounded::bounded("git").arg("-C").arg(repo_path).args(["cat-file", "blob", spec]).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
 /// Makes `dir` hold exactly `expected` (plus `toc.toml`, which it writes from `toc`, and any
 /// `pointers.toml`, which it leaves alone).
 pub fn write_tree(dir: &Path, toc: &str, expected: &BTreeMap<String, String>) -> std::io::Result<()> {
@@ -592,188 +561,6 @@ pub fn write_tree(dir: &Path, toc: &str, expected: &BTreeMap<String, String>) ->
     Ok(())
 }
 
-pub fn git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = spira_config::bounded::bounded("git").arg("-C").arg(dir).args(args).output().map_err(|e| format!("rule: git: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    } else {
-        Err(format!("rule: git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
-    }
-}
-
-/// Where each statute's seed text lives in the tree: what `the_committed_tree_is_what_toc_toml_generates`
-/// generates law/ from.
-pub const SEEDS_DIR: &str = "spira/statutes";
-
-/// Writes the seed text of every statute the table of contents files, from the book, so the
-/// committed law/ is reproducible from the tree alone. The trailing citation is dropped, as
-/// law/ drops it: the case history stays in the store, and the shipped tree carries mechanism.
-pub fn write_seeds(wt: &Path, toc: &[Part], book: &BTreeMap<String, String>) -> Result<(), String> {
-    let dir = wt.join(SEEDS_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("rule: {}: {e}", dir.display()))?;
-    for slug in toc.iter().flat_map(|p| p.slugs.iter()) {
-        let f = dir.join(format!("{slug}.txt"));
-        if let Some(text) = book.get(slug) {
-            std::fs::write(&f, without_citation(text).as_ref()).map_err(|e| format!("rule: {}: {e}", f.display()))?;
-        }
-    }
-    let kept: std::collections::BTreeSet<&str> = toc.iter().flat_map(|p| p.slugs.iter()).filter(|s| book.contains_key(*s)).map(String::as_str).collect();
-    for entry in std::fs::read_dir(&dir).map_err(|e| format!("rule: {}: {e}", dir.display()))? {
-        let path = entry.map_err(|e| format!("rule: {}: {e}", dir.display()))?.path();
-        let stale = path.extension().is_some_and(|x| x == "txt") && !path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| kept.contains(s));
-        if stale {
-            std::fs::remove_file(&path).map_err(|e| format!("rule: {}: {e}", path.display()))?;
-        }
-    }
-    Ok(())
-}
-
-/// law/ in this worktree against what toc.toml generates from its seeds and `pointers`: what
-/// the committed tree must reproduce.
-pub fn seed_drift(wt: &Path, toc: &[Part], pointers: &Pointers) -> Vec<String> {
-    let seeds = wt.join(SEEDS_DIR);
-    let text = |slug: &str| std::fs::read_to_string(seeds.join(format!("{slug}.txt"))).ok();
-    drift(&wt.join("law"), &generate(toc, pointers, text))
-}
-
-/// A checkout outruns the 5s default on a loaded disk; the kill leaves stderr empty, so the status is reported.
-const WORKTREE_ADD_SECS: &str = "120";
-
-fn add_worktree(repo_path: &Path, branch: &str, wt: &str, base: &str) -> Result<(), String> {
-    let args = ["worktree", "add", "-q", "-b", branch, wt, base];
-    let out = spira_config::bounded::bounded_for("git", WORKTREE_ADD_SECS).arg("-C").arg(repo_path).args(args).output().map_err(|e| format!("rule: git: {e}"))?;
-    if out.status.success() {
-        return Ok(());
-    }
-    let code = out.status.code().map_or("killed by a signal".to_string(), |c| format!("exit {c}"));
-    Err(format!("rule: git {} ({code}): {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
-}
-
-/// Regenerates `law/` in a short-lived worktree of `repo`, commits it on a branch of its own and
-/// removes the worktree. The caller's directory and the repo's own checkout are never touched.
-#[allow(clippy::too_many_arguments)]
-pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<String, String> {
-    commit_law_cut(repo_path, base, wt_root, verb, key, toc, pointers, book).map(|(branch, _)| branch)
-}
-
-/// [`commit_law`], also naming the ref the commit was cut from: the newest book-only unlanded
-/// tip (`refs/heads/...`), or `None` when it was cut from the base.
-#[allow(clippy::too_many_arguments)]
-pub fn commit_law_cut(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, Option<String>), String> {
-    std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
-    let stamp = format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0), std::process::id());
-    let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
-    let wt = wt_root.join(format!("rule-{verb}-{}-{stamp}", key.trim_start_matches("law-")));
-    let wt_s = wt.display().to_string();
-    let base = base.map(str::to_string).or_else(|| {
-        let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), repo_path);
-        spira_config::repos::landref(&reg, &repo_path.display().to_string())
-    });
-    let base = base.ok_or_else(|| format!("rule: no landing ref resolves for {} — refusing to cut law/ from its checkout's HEAD", repo_path.display()))?;
-    let tip = newest_book_only_tip(repo_path, &base);
-    let cut_from = tip.clone().unwrap_or(base);
-    if let Err(e) = add_worktree(repo_path, &branch, &wt_s, &cut_from) {
-        let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
-        let _ = git_in(repo_path, &["branch", "-D", &branch]);
-        return Err(e);
-    }
-    let done = (|| {
-        write_law(&wt.join("law"), toc, pointers, book)?;
-        write_seeds(&wt, toc, book)?;
-        let drifted = seed_drift(&wt, toc, pointers);
-        if !drifted.is_empty() {
-            return Err(format!("rule: law/ would not be what toc.toml generates from spira/statutes: {drifted:?}"));
-        }
-        git_in(&wt, &["add", "-A", "--", "law", SEEDS_DIR])?;
-        let mut child = spira_config::bounded::bounded("git")
-            .arg("-C")
-            .arg(&wt)
-            .args(["commit", "-q", "-F", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("rule: git commit: {e}"))?;
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = writeln!(stdin, "law: {verb} {key}");
-        }
-        let out = child.wait_with_output().map_err(|e| format!("rule: git commit: {e}"))?;
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(format!("rule: git commit: {} {}", String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim()).trim_end().to_string())
-        }
-    })();
-    let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
-    if done.is_err() {
-        let _ = git_in(repo_path, &["branch", "-D", &branch]);
-    }
-    done.map(|()| (branch, tip))
-}
-
-/// The home repository: its checkout, the ref `law/` is cut from, and its name in the repo map.
-pub struct LawRepo<'a> {
-    pub path: &'a Path,
-    pub base: Option<&'a str>,
-    pub name: &'a str,
-}
-
-/// Commits the `law/` projection on a branch of its own and hands it to the queue under a
-/// bead, so the next round lands it. Returns the bead id and the branch the queue holds.
-pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
-    let (repo_path, repo_name) = (repo.path, repo.name);
-    let (law_branch, cut_from) = commit_law_cut(repo_path, repo.base, wt_root, verb, key, toc, pointers, book)?;
-    let carrier = carrier_of(cut_from.as_deref(), bead_state);
-    match carrier {
-        Some(id) => carry_on(repo_path, repo_name, &law_branch, &id).map(|branch| (id, branch)),
-        None => submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key),
-    }
-}
-
-/// The bead an unlanded law/ stack already rides: the id of the `spira/<id>` ref a commit was
-/// cut from when the store holds that bead SUBMITTED. A base cut, a `law/*` cut, or a bead in
-/// any other state files a new item.
-pub fn carrier_of(cut_from: Option<&str>, state_of: impl Fn(&str) -> Option<String>) -> Option<String> {
-    let id = cut_from?.strip_prefix("refs/heads/spira/")?;
-    (state_of(id).as_deref() == Some("SUBMITTED")).then(|| id.to_string())
-}
-
-/// The lifecycle state of bead `id` through the store's own client; `None` when unreadable.
-fn bead_state(id: &str) -> Option<String> {
-    let lc = spira_store::lc_call::LcClient::configured().ok()?;
-    let r = lc.call(&["show", id]).ok().filter(|r| r.code == 0)?;
-    state_in_show(&r.out)
-}
-
-/// The `bead.state` of a `spira-lc show` reply.
-pub fn state_in_show(out: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(out).ok()?;
-    v.get("bead")?.get("state")?.as_str().map(str::to_string)
-}
-
-/// Moves `spira/<id>` to the tip of `law_branch` and deletes `law_branch`. Refuses when that is
-/// not a fast-forward, leaving both branches as they were.
-pub fn fast_forward_onto(repo_path: &Path, law_branch: &str, carrier_branch: &str) -> Result<(), String> {
-    if git_in(repo_path, &["merge-base", "--is-ancestor", carrier_branch, law_branch]).is_err() {
-        return Err(format!("rule: {law_branch} does not fast-forward {carrier_branch}; the law/ commit is kept on {law_branch}"));
-    }
-    git_in(repo_path, &["branch", "-f", carrier_branch, law_branch])?;
-    git_in(repo_path, &["branch", "-D", law_branch])?;
-    Ok(())
-}
-
-fn carry_on(repo_path: &Path, repo_name: &str, law_branch: &str, id: &str) -> Result<String, String> {
-    let branch = format!("spira/{id}");
-    fast_forward_onto(repo_path, law_branch, &branch)?;
-    let queue = spira_config::release_env::tool("queue").map_err(|e| format!("rule: {e}\nrule: the law/ commit is on {branch}"))?;
-    let submit = queue_submit_command(&queue, &branch, repo_name).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
-    if !submit.status.success() {
-        return Err(format!("rule: queue submit {branch} (bead {id}): {}", String::from_utf8_lossy(&submit.stderr).trim()));
-    }
-    println!("law/: committed on {branch}, carried by {id} (SUBMITTED).");
-    Ok(branch)
-}
-
 /// Store slugs the landing-ref toc does not list and no pointer accounts for: the statute
 /// book is behind the store by these.
 pub fn behind(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Vec<String> {
@@ -797,283 +584,49 @@ pub fn catch_up(toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, Strin
     Ok((out, pointers))
 }
 
-/// The newest unlanded `law/` or `spira/` branch cut on `base`'s current tip whose change stays
-/// within the statute book, so a later law commit cut on it fast-forwards.
-pub fn newest_book_only_tip(repo_path: &Path, base: &str) -> Option<String> {
-    let refs = git_in(repo_path, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]).ok()?;
-    let held = base_book(repo_path, base);
-    refs.lines().find(|r| {
-        git_in(repo_path, &["merge-base", "--is-ancestor", base, r]).is_ok()
-            && git_in(repo_path, &["diff", "--name-only", &format!("{base}...{r}")]).is_ok_and(|names| !names.is_empty() && names.lines().all(|n| n.starts_with("law/") || n.starts_with("spira/statutes/")))
-            && !(r.starts_with("refs/heads/law/") && in_book(repo_path, r, held.as_ref()))
-    }).map(str::to_string)
-}
-
-fn base_book(repo_path: &Path, base: &str) -> Option<(Vec<Part>, Pointers)> {
-    let toc = parse_toc(&git_in(repo_path, &["show", &format!("{base}:law/toc.toml")]).ok()?).ok()?;
-    let pointers = git_in(repo_path, &["show", &format!("{base}:law/{POINTERS_FILE}")]).ok().and_then(|t| parse_pointers(&t).ok()).unwrap_or_default();
-    Some((toc, pointers))
-}
-
-/// Whether every slug and pointer record on `r` is already on the base.
-fn in_book(repo_path: &Path, r: &str, held: Option<&(Vec<Part>, Pointers)>) -> bool {
-    let Some((toc, pointers)) = held else { return false };
-    let Some(theirs) = git_in(repo_path, &["show", &format!("{r}:law/toc.toml")]).ok().and_then(|t| parse_toc(&t).ok()) else { return false };
-    let their_pointers = match git_in(repo_path, &["show", &format!("{r}:law/{POINTERS_FILE}")]) {
-        Ok(t) => match parse_pointers(&t) {
-            Ok(p) => p,
-            Err(_) => return false,
-        },
-        Err(_) if git_in(repo_path, &["cat-file", "-e", &format!("{r}:law/{POINTERS_FILE}")]).is_err() => Pointers::default(),
-        Err(_) => return false,
-    };
-    theirs.iter().all(|p| p.slugs.iter().all(|s| toc.iter().any(|b| b.slugs.contains(s))))
-        && their_pointers.moved.iter().all(|m| pointers.moved.contains(m))
-        && their_pointers.merged.iter().all(|m| pointers.merged.contains(m))
-        && their_pointers.retired.iter().all(|m| pointers.retired.contains(m))
-}
-
-/// What `law_branches` finds a `law/*` branch not merged into the base to be.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LawBranch {
-    Tip,
-    CarriedBy(String),
-    ReplacedBy(String),
-    InBook,
-    Unreconciled,
-}
-
-/// Every `law/*` branch not merged into `base`, newest first, with what becomes of it.
-pub fn law_branches(repo_path: &Path, base: &str) -> Vec<(String, LawBranch)> {
-    let Ok(refs) = git_in(repo_path, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law"]) else {
-        return Vec::new();
-    };
-    let held = base_book(repo_path, base);
-    let tip = newest_book_only_tip(repo_path, base);
-    refs.lines()
-        .map(|r| {
-            let kind = if in_book(repo_path, r, held.as_ref()) {
-                LawBranch::InBook
-            } else if tip.as_deref() == Some(r) {
-                LawBranch::Tip
-            } else if let Some(t) = tip.as_deref().filter(|t| git_in(repo_path, &["merge-base", "--is-ancestor", r, t]).is_ok()) {
-                LawBranch::CarriedBy(t.strip_prefix("refs/heads/").unwrap_or(t).to_string())
-            } else if let Some(t) = tip.as_deref().filter(|t| in_book(repo_path, r, base_book(repo_path, t).as_ref())) {
-                LawBranch::ReplacedBy(t.strip_prefix("refs/heads/").unwrap_or(t).to_string())
-            } else {
-                LawBranch::Unreconciled
-            };
-            (r.strip_prefix("refs/heads/").unwrap_or(r).to_string(), kind)
-        })
-        .collect()
-}
-
-/// Where the newest book-only unlanded tip sits: a `law/*` branch no bead carries yet, or a
-/// `spira/<id>` branch already submitted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BookTip {
-    Stranded(String),
-    InFlight(String),
-}
-
-/// Names the branch [`newest_book_only_tip`] measures, short, classified by its namespace.
-pub fn book_tip_ref(repo_path: &Path, base: &str) -> Option<BookTip> {
-    let r = newest_book_only_tip(repo_path, base)?;
-    let name = r.strip_prefix("refs/heads/").unwrap_or(&r).to_string();
-    if name.starts_with("law/") {
-        Some(BookTip::Stranded(name))
-    } else {
-        Some(BookTip::InFlight(name))
-    }
-}
-
-/// Whether the tree `commit_law` would cut from (the newest book-only unlanded tip, else `base`)
-/// holds anything but what `toc`, `pointers` and `book` generate.
-pub fn book_drifted(repo_path: &Path, base: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> bool {
-    let rev = newest_book_only_tip(repo_path, base).unwrap_or_else(|| base.to_string());
-    let mut files = generate(toc, pointers, |slug| book.get(slug).cloned());
-    files.insert("toc.toml".to_string(), render_toc(toc));
-    files.insert(POINTERS_FILE.to_string(), render_pointers(pointers));
-    files.iter().any(|(f, want)| git_in(repo_path, &["cat-file", "blob", &format!("{rev}:law/{f}")]).map_or(true, |have| have.trim_end() != want.trim_end()))
-}
-
-/// `toc` plus every slug that a branch not yet on `base` has filed in a Part (a `law/` branch,
-/// or the `spira/<bead>` branch one was submitted as), so two enacts made before either lands
-/// take different section numbers.
-pub fn with_in_flight(repo_path: &Path, base: Option<&str>, toc: Vec<Part>) -> Vec<Part> {
-    let base = base.unwrap_or("HEAD");
-    let Ok(refs) = git_in(repo_path, &["for-each-ref", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]) else {
-        return toc;
-    };
-    let mut merged = toc;
-    for r in refs.lines() {
-        let Ok(text) = git_in(repo_path, &["show", &format!("{r}:law/toc.toml")]) else { continue };
-        let Ok(theirs) = parse_toc(&text) else { continue };
-        for p in &theirs {
-            for slug in p.slugs.iter().filter(|s| s.starts_with("law-")) {
-                if !merged.iter().any(|m| m.slugs.contains(slug)) {
-                    if let Some(home) = merged.iter_mut().find(|m| m.number == p.number) {
-                        home.slugs.push(slug.clone());
-                    }
-                }
-            }
-        }
-    }
-    merged
-}
-
-/// `pointers` plus every record a branch not yet on `base` has filed, so two retirements made
-/// before either lands do not overwrite each other's pointer.
-pub fn with_in_flight_pointers(repo_path: &Path, base: Option<&str>, pointers: Pointers) -> Pointers {
-    let base = base.unwrap_or("HEAD");
-    let Ok(refs) = git_in(repo_path, &["for-each-ref", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]) else {
-        return pointers;
-    };
-    let mut merged = pointers;
-    for r in refs.lines() {
-        let Ok(text) = git_in(repo_path, &["show", &format!("{r}:law/{POINTERS_FILE}")]) else { continue };
-        let Ok(theirs) = parse_pointers(&text) else { continue };
-        for m in theirs.moved {
-            if !merged.moved.contains(&m) {
-                merged.moved.push(m);
-            }
-        }
-        for m in theirs.merged {
-            if !merged.merged.contains(&m) {
-                merged.merged.push(m);
-            }
-        }
-        for m in theirs.retired {
-            if !merged.retired.contains(&m) {
-                merged.retired.push(m);
-            }
-        }
-    }
-    merged
-}
-
-/// Files a SUBMITTED bead at the tip of `law_branch`, renames the branch to the bead's own
-/// (`spira/<id>`, the name the queue lands) and submits it. Returns the bead id and the branch.
-pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str) -> Result<(String, String), String> {
-    let mut held = law_branch.to_string();
-    submit_law_on(repo_path, repo_name, wt_root, law_branch, verb, key, &mut held).map_err(|e| format!("{e}\nrule: the law/ commit is kept on branch {held}"))
-}
-
-/// Renames `law_branch` to `branch`; a refiled item's existing branch is replaced, not refused.
-pub fn name_law_branch(repo_path: &Path, law_branch: &str, branch: &str, refiled: bool) -> Result<(), String> {
-    git_in(repo_path, &["branch", if refiled { "-M" } else { "-m" }, law_branch, branch]).map(|_| ())
-}
-
-fn submit_law_on(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str, held: &mut String) -> Result<(String, String), String> {
-    let tip = git_in(repo_path, &["rev-parse", law_branch])?;
-    let title = format!("law: {verb} {key} — land its law/ commit");
-    let body = format!(
-        "## Outcome\n\nThe law/ projection of the statute book after `rule.sh {verb} {key}` is on the landing ref.\n\n\
-         ## Build\n\nThe commit at the tip of branch `{law_branch}` (`{tip}`), which rewrites the files under law/ (toc.toml, the section files and the pointers file). Nothing else changes: submit that branch as it stands.\n\n\
-         ## Acceptance\n\n- The commit lands on the landing ref.\n- `rule.sh code --check` is clean afterwards.\n"
-    );
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let body_file = wt_root.join(format!("rule-{verb}-{key}-{}-{stamp}.bead.txt", std::process::id()));
-    std::fs::write(&body_file, body).map_err(|e| format!("rule: {}: {e}", body_file.display()))?;
-    let filed = spira_config::bounded::bounded("bead.sh")
-        .args(["file", &title, "--for", "builder", "--repo", repo_name, "--submitted", "--tip", &tip, "--json", "--body-file"])
-        .arg(&body_file)
-        .stdin(Stdio::null())
-        .output();
-    let _ = std::fs::remove_file(&body_file);
-    let filed = filed.map_err(|e| format!("rule: bead.sh: {e}"))?;
-    if !filed.status.success() {
-        return Err(format!("rule: bead.sh file: {}", String::from_utf8_lossy(&filed.stderr).trim()));
-    }
-    let said = String::from_utf8_lossy(&filed.stderr);
-    if said.contains("reporting it as filed") {
-        eprintln!("rule: the law/ item was already filed; submitting its branch");
-    }
-    let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
-    let branch = format!("spira/{id}");
-    name_law_branch(repo_path, law_branch, &branch, said.contains("reporting it as filed"))?;
-    *held = branch.clone();
-    let queue = spira_config::release_env::tool("queue").map_err(|e| format!("rule: {e}"))?;
-    let submit = queue_submit_command(&queue, &branch, repo_name).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
-    if let Some(note) = submit_outcome(submit.status.code(), &String::from_utf8_lossy(&submit.stderr), &id, &branch)? {
-        eprintln!("{note}");
-    }
-    Ok((id, branch))
-}
-
-/// Marks an error raised after the law/ item was filed: the item exists and the gate judged it red.
-pub const RED_AFTER_FILING: &str = "(SUBMITTED) but red at the gate";
-
-/// The closing line for a failed landing: a red on a filed item says so; anything earlier says the item was never submitted.
-pub fn unlanded_message(err: &str, not_submitted: &str) -> String {
-    if err.contains(RED_AFTER_FILING) {
-        "rule: the law/ item is submitted and red; the gate's verdict above stands — fix the branch it names, then resubmit it".to_string()
-    } else {
-        not_submitted.to_string()
-    }
-}
-
-/// Reads `queue submit`'s exit status. 75 (no verdict) and 76 (base red) are not a fault in the
-/// law/ commit: the item stays SUBMITTED and the round's gate judges it, so they yield a note.
-/// Any other failure is a red gate on a filed item.
-pub fn submit_outcome(code: Option<i32>, stderr: &str, id: &str, branch: &str) -> Result<Option<String>, String> {
-    let gate = stderr.lines().map(str::trim).filter(|l| l.contains("VERDICT=")).collect::<Vec<_>>().join(" ");
-    let gate = if gate.is_empty() { stderr.split_whitespace().collect::<Vec<_>>().join(" ") } else { gate };
-    match code {
-        Some(0) => Ok(None),
-        Some(75 | 76) => Ok(Some(format!("rule: {gate}; submitted under {id} (SUBMITTED); the round's gate judges it"))),
-        _ => Err(format!("rule: queue submit {branch}: submitted under {id} {RED_AFTER_FILING}: {}", stderr.trim())),
-    }
-}
-
-/// `queue submit <branch> <repo>`, with no call deadline: queue submit runs the gate before it
-/// returns, and a 5 s `timeout` around it SIGTERMs the gate, which then records "died" (sp-esepir).
-pub fn queue_submit_command(queue: &str, branch: &str, repo_name: &str) -> std::process::Command {
-    // batch-job: runs the gate
-    let mut c = std::process::Command::new(queue);
-    c.args(["submit", branch, repo_name]);
-    c
-}
-
-/// The id `bead.sh file --json` printed: the first JSON object (or one-element array) on stdout.
-pub fn filed_id(out: &str) -> Result<String, String> {
-    let start = out.find(['{', '[']).ok_or_else(|| format!("rule: no JSON in bead.sh file's output: {out:?}"))?;
-    let v: serde_json::Value = serde_json::from_str(out[start..].trim()).map_err(|e| format!("rule: bead.sh file's output is not JSON: {e}"))?;
-    let v = match v {
-        serde_json::Value::Array(a) => a.into_iter().next().ok_or("rule: bead.sh file printed an empty JSON array")?,
-        o => o,
-    };
-    v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("rule: no id in bead.sh file's output: {out:?}"))
-}
-
-/// Writes `toc`, `pointers` and the generated tree under `law` and stages it.
+/// Writes `toc`, `pointers` and the generated tree under `law`.
 pub fn write_law(law: &Path, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(), String> {
     let files = generate(toc, pointers, |slug| book.get(slug).cloned());
     write_tree(law, &render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
-    std::fs::write(law.join(POINTERS_FILE), render_pointers(pointers)).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
-    let root = law.parent().unwrap_or(law);
-    let add = spira_config::bounded::bounded("git").arg("-C").arg(root).args(["add", "-A", "--", "law"]).output();
-    match add {
-        Ok(o) if o.status.success() => {}
-        _ => return Err("rule: git add law failed".to_string()),
-    }
-    Ok(())
+    std::fs::write(law.join(POINTERS_FILE), render_pointers(pointers)).map_err(|e| format!("rule: writing {}: {e}", law.display()))
 }
 
-#[cfg(test)]
-mod filed_id_tests {
-    use super::filed_id;
-
-    #[test_id(tjxkpwa)]
-    #[test]
-    fn filed_id_accepts_the_object_bead_prints_for_an_already_filed_item() {
-        assert_eq!(filed_id("{\"id\":\"sp-x\"}\n").as_deref(), Ok("sp-x"));
+/// The brain checkout and the book's directory within it, from `SPIRA_WIKI` and `SPIRA_LAW_BOOK`.
+pub fn wiki_and_book() -> Result<(std::path::PathBuf, String), String> {
+    let key = |k: &str| match spira_config::process::cfg(k) {
+        Ok(v) if !v.is_empty() => Ok(v),
+        Ok(_) => Err(format!("rule: {k} is empty — the statute book lives in the wiki checkout it names")),
+        Err(e) => Err(format!("rule: {k}: {e}")),
+    };
+    let wiki = key("SPIRA_WIKI")?;
+    let rel = key("SPIRA_LAW_BOOK")?;
+    if !Path::new(&wiki).join(".git").exists() {
+        return Err(format!("rule: SPIRA_WIKI {wiki} is not a git checkout — refusing"));
     }
-
-    #[test_id(tlubq7p)]
-    #[test]
-    fn filed_id_on_a_bare_id_names_bead_sh_s_output() {
-        let e = filed_id("sp-x\n").unwrap_err();
-        assert!(e.contains("bead.sh file's output"), "{e}");
+    let rel_path = Path::new(&rel);
+    if rel_path.is_absolute() || rel_path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return Err(format!("rule: SPIRA_LAW_BOOK {rel} must be a plain path relative to SPIRA_WIKI"));
     }
+    Ok((std::path::PathBuf::from(wiki), rel.trim_end_matches('/').to_string()))
+}
+
+/// The directory that holds the statute book: `SPIRA_LAW_BOOK` within `SPIRA_WIKI`.
+pub fn book_dir() -> Result<std::path::PathBuf, String> {
+    wiki_and_book().map(|(wiki, rel)| wiki.join(rel))
+}
+
+/// Paths, relative to `wiki`, under `rel` that git sees as added, modified or deleted.
+pub fn changed_paths(wiki: &Path, rel: &str) -> Result<Vec<String>, String> {
+    let out = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(wiki)
+        .args(["status", "--porcelain", "-z", "--untracked-files=all", "--"])
+        .arg(rel)
+        .output()
+        .map_err(|e| format!("rule: git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("rule: git status {rel}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(text.split('\0').filter(|e| e.len() > 3).map(|e| e[3..].to_string()).collect())
 }

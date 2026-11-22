@@ -1048,10 +1048,9 @@ mod tests {
     }
 }
 
-/// What `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]` prints, read from the tracked `law/` tree
-/// under `root`. `Err` carries the Part list when nothing matches.
-pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (String, String)> {
-    let law = root.join("law");
+/// What `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]` prints, read from the statute book
+/// directory `law`. `Err` carries the Part list when nothing matches.
+pub fn law_view(law: &std::path::Path, arg: Option<&str>) -> Result<String, (String, String)> {
     let index = std::fs::read_to_string(law.join("index.md")).map_err(|e| (format!("{}: {e}", law.join("index.md").display()), String::new()))?;
     let Some(arg) = arg else { return Ok(index) };
     let miss = || (format!("no Part or section '{arg}'; the Parts are:"), index.clone());
@@ -1103,7 +1102,7 @@ mod law_tests {
     fn fixture() -> testkit::TempDir {
         let d = testkit::TempDir::new("work-law");
         let w = |p: &str, t: &str| {
-            let path = d.join("law").join(p);
+            let path = d.join(p);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, t).unwrap();
         };

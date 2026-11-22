@@ -534,21 +534,21 @@ fn review(args: &[String]) -> i32 {
     }
 }
 
-/// `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]`: reads the tracked `law/` tree of the worktree
-/// it runs in; no store, no socket.
+/// `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]`: reads the statute book in the configured
+/// wiki checkout; no store, no socket.
 fn law(args: &[String]) -> i32 {
     if args.len() > 1 {
         eprintln!("{}", refusal(R::LawUsage, "law", &[]));
         return REFUSED;
     }
-    let root = spira_config::bounded::bounded("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| ".".to_string());
-    match work::law_view(std::path::Path::new(&root), args.first().map(String::as_str)) {
+    let book = match rule::code::book_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{}", refusal(R::LawNotFound, "law", &[("err", &e)]));
+            return REFUSED;
+        }
+    };
+    match work::law_view(&book, args.first().map(String::as_str)) {
         Ok(text) => {
             print!("{text}");
             0
