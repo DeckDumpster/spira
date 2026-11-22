@@ -1065,6 +1065,30 @@ mod in_process_tests {
     }
 
     #[tokio::test]
+    async fn the_overview_chip_names_the_sources_failing_in_the_latest_gather_and_no_total() {
+        let d = testkit::TempDir::new("loom-serve-failing");
+        let cfg = Config { run: d.path().to_str().unwrap().into(), ..test_config() };
+        let loom = Arc::new(Loom::with_limits(cfg, Arc::new(|_| Ok(Default::default()))));
+        async fn body(loom: &Arc<Loom>) -> String {
+            let r = next_route(State(loom.clone()), "/".parse().unwrap()).await;
+            String::from_utf8(axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap()
+        }
+        std::fs::create_dir_all(d.join("lcview")).unwrap();
+        let old = serde_json::json!({"now": now_s(), "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": [], "failures": 2849});
+        std::fs::write(d.join("lcview/snapshot.json"), old.to_string()).unwrap();
+        let b = body(&loom).await;
+        assert!(!b.contains("source failure") && !b.contains("source failing") && !b.contains("2849"));
+        let one = serde_json::json!({"now": now_s(), "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": [], "failed": ["victorialogs: refused"]});
+        std::fs::write(d.join("lcview/snapshot.json"), one.to_string()).unwrap();
+        let b = body(&loom).await;
+        assert!(b.contains("chip bad") && b.contains("1 source failing: victorialogs: refused"), "{b}");
+        let two = serde_json::json!({"now": now_s(), "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": [], "failed": ["a<b", "c&d"]});
+        std::fs::write(d.join("lcview/snapshot.json"), two.to_string()).unwrap();
+        let b = body(&loom).await;
+        assert!(b.contains("title=\"a&lt;b\nc&amp;d\"") && b.contains("2 source"), "{b}");
+    }
+
+    #[tokio::test]
     async fn api_ops_claimable_keys_follow_the_claim_view_and_go_unknown_when_it_is_stale() {
         let d = testkit::TempDir::new("loom-serve-ops");
         let cfg = Config { run: d.path().to_str().unwrap().into(), ..test_config() };

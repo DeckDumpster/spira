@@ -517,9 +517,9 @@ pub struct Snapshot {
     pub not_running: bool,
     #[serde(default)]
     pub gather_ms: u64,
-    /// Sources that failed, summed over the refreshes since the pane started.
+    /// The sources that failed in this gather, by their error line.
     #[serde(default)]
-    pub failures: u64,
+    pub failed: Vec<String>,
     #[serde(default)]
     pub graph: Vec<GraphEdge>,
     #[serde(default)]
@@ -603,6 +603,7 @@ pub fn first_frame(published: Option<&Snapshot>, now: i64) -> Option<Snapshot> {
     s.store_errors.clear();
     s.asks_error = None;
     s.errors.clear();
+    s.failed.clear();
     if now - s.good_at > STALE_WARN_S {
         s.errors.push(format!("showing the last good read from {} ago", age(now - s.good_at)));
     }
@@ -985,7 +986,7 @@ pub struct View {
     /// Set while no store is running: the age of the data drawn in its place.
     pub not_running: Option<String>,
     pub gather_ms: u64,
-    pub failures: u64,
+    pub failures: Vec<String>,
     /// FLOW: (state, count) in pipeline order, LANDED as its 24 h count.
     pub flow: Vec<(String, Option<usize>)>,
     pub ready: usize,
@@ -1529,7 +1530,7 @@ pub fn view(s: &Snapshot) -> View {
         read_age: (s.good_at > 0 && s.now - s.good_at <= STALE_WARN_S).then(|| age(s.now - s.good_at)),
         not_running: s.not_running.then(|| if s.good_at > 0 { age(s.now - s.good_at) } else { String::new() }),
         gather_ms: s.gather_ms,
-        failures: s.failures,
+        failures: s.failed.clone(),
         ready: ready.len(),
         ready_held,
         held_pct: ready_held * 100 / ready.len().max(1),
@@ -1835,11 +1836,21 @@ const REWORK_SHOWN: usize = 3;
 const NEXT_SHOWN: usize = 5;
 const RECENT_SHOWN: usize = 5;
 
+/// The one sentence every surface draws for the sources failing in the latest gather.
+pub fn failing_label(v: &View, width: usize) -> Option<String> {
+    let first = v.failures.first()?;
+    let n = v.failures.len();
+    let more = if n > 1 { format!(" (+{} more)", n - 1) } else { String::new() };
+    let head = format!("{n} source{} failing: ", if n == 1 { "" } else { "s" });
+    let room = width.saturating_sub(head.chars().count() + more.chars().count());
+    Some(format!("{head}{}{more}", cut(first, room.max(8))))
+}
+
 pub fn render(v: &View, width: usize) -> Vec<String> {
     let w = width.max(60);
     let mut out = Vec::new();
     out.push(format!(
-        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}{}{}  {D}refresh {}ms · failures {}{R}",
+        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}{}{}  {D}refresh {}ms{R}{}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 30)) },
@@ -1848,7 +1859,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         if v.ceiling_pending.is_empty() { String::new() } else { format!(" {YEL}(config {} after {}){R}", v.ceiling_pending, cut(&v.ceiling_waits, 40)) },
         if v.directed == 0 { String::new() } else { format!(" {D}({} directed){R}", v.directed) },
         v.gather_ms,
-        v.failures
+        failing_label(v, w.saturating_sub(40)).map(|l| format!("  {RED}{l}{R}")).unwrap_or_default()
     ));
     if let Some(l) = read_age_notice(v) {
         out.push(l);
@@ -3320,6 +3331,26 @@ BATCH
         let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[]});
         let s: Snapshot = serde_json::from_value(old).unwrap();
         assert!(s.graph.is_empty() && s.dwell.is_empty());
+    }
+
+    #[test]
+    fn a_published_failure_total_draws_no_failure_on_the_first_frame() {
+        let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[],"store_errors":[],"failures":2849});
+        let s: Snapshot = serde_json::from_value(old).unwrap();
+        let f = first_frame(Some(&s), 2).unwrap();
+        let banner = plain(&render(&view(&f), 120));
+        assert!(!banner.contains("2849") && !banner.contains("failing"), "{banner}");
+    }
+
+    #[test]
+    fn a_clean_gather_after_a_failed_one_draws_no_failure() {
+        let last = Snapshot { failed: vec!["victorialogs: refused".into()], ..snap(vec![]) };
+        let mut new = snap(vec![]);
+        carry_forward(&mut new, &last);
+        assert!(!plain(&render(&view(&new), 120)).contains("failing"));
+        let two = Snapshot { failed: vec!["spira-lc list: exit 124".into(), "victorialogs: refused".into()], ..snap(vec![]) };
+        let text = plain(&render(&view(&two), 120));
+        assert!(text.contains("2 sources failing: spira-lc list: exit 124 (+1 more)"), "{text}");
     }
 
     #[test]

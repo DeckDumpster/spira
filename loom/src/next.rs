@@ -168,8 +168,8 @@ pub fn header(p: &Page) -> String {
     if p.age_s > crate::LIFECYCLE_STALE_S {
         chips.push_str(&format!("<span class=\"chip bad\">stale {}</span>", dur(p.age_s)));
     }
-    if v.failures > 0 {
-        chips.push_str(&format!("<span class=\"chip bad\">{} source failure{}</span>", v.failures, if v.failures == 1 { "" } else { "s" }));
+    if let Some(l) = lcview::failing_label(v, 48) {
+        chips.push_str(&format!("<span class=\"chip bad\" title=\"{}\">{}</span>", esc(&v.failures.join("\n")), esc(&l)));
     }
     format!(
         "<header class=top id=head>{}<span class=dim title=\"{}\">{}</span><span>dwarves {}/{}</span><span class=dim>{} · {} ms</span>{chips}</header>",
