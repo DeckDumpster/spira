@@ -154,6 +154,7 @@ landing_pass_bin
 land_maxsec
 lanes
 lanes_max_live
+law_book
 lc_bin
 lifecycle_enforce
 liveness_model

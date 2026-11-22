@@ -148,6 +148,6 @@ skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
 # inbox only when none handled it.
 rounds-loop|log|@SPIRA_RUN@/rounds-loop.log
 
-# LAW-BOOK is appended by `rule enact`, `rule retire` and `rule code --land` when landing law/ fails: one
-# line naming the verb, the key and the error. A quiet log means every statute written has been submitted.
+# LAW-BOOK is appended by `rule enact`, `rule retire` and `rule code --land` when committing the statute book to the wiki fails: one
+# line naming the verb, the key and the error. A quiet log means every statute written is in the book.
 law-book|log|@SPIRA_RUN@/law-book.log

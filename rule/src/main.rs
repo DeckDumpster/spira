@@ -79,10 +79,10 @@ fn main() {
         "retire" => cmd_retire(&db, &home, &rest),
         "rename-vocabulary" => cmd_rename_vocabulary(&db, &home, &rest),
         "list" => cmd_list(&db),
-        "show" => cmd_show(&db, &home, &rest),
+        "show" => cmd_show(&db, &rest),
         "audit" => cmd_audit(&db, &home, &rest),
         "code" if rest.len() == 1 && rest[0] == "--land" => cmd_land_book(&db, &home),
-        "code" => cmd_code(&db, &home, &rest),
+        "code" => cmd_code(&db, &rest),
         "render-memories" => cmd_render_memories(&home, &rest),
         "system-prompt-split" => cmd_system_prompt_split(&rest),
         _ => {
@@ -219,48 +219,48 @@ fn rollback(db: &str, key: &str, prior: Option<&str>, before: &BTreeMap<String, 
     code == 0 && mirror_book(before).is_ok()
 }
 
-/// Commits the `SPIRA_STATUTE_PAGE` page through `<home>/wiki-commit.sh`, immediately after
-/// `synth()` regenerates it, named only under `law: <verb> <key>` (sp-4fl2e). Best-effort:
-/// no `$SPIRA_WIKI` checkout, or nothing to stage, are not failures.
-fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
-    // SPIRA_WIKI/SPIRA_STATUTE_PAGE are registered config keys (spira/conf.d) — the one
-    // source of config; no second, process-environment read behind it.
-    let wiki = match spira_config::process::cfg("SPIRA_WIKI") {
-        Ok(w) if !w.is_empty() && Path::new(&w).join(".git").is_dir() => w,
-        _ => return CommitOutcome::Skipped,
-    };
+/// Commits and pushes `paths` (relative to `wiki`) through `<home>/wiki-commit.sh` under `msg`.
+fn wiki_commit(home: &str, wiki: &str, msg: &str, paths: &[String]) -> Result<(), String> {
     let script = format!("{home}/wiki-commit.sh");
-    let msg = format!("law: {verb} {key}");
-    let finish = format!("run: echo <page> | bash {script} {wiki} '{msg}'");
-    let failed = |why: String| CommitOutcome::Failed(format!("{}; {finish}", why.trim()));
-    let page = match spira_config::process::cfg("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()) {
-        Some(p) => p,
-        None => return failed("SPIRA_STATUTE_PAGE is not resolvable from spira_config".to_string()),
-    };
-    let envs = match spira_config::release_env::child_path_env_for_process() {
-        Ok(e) => e,
-        Err(e) => return failed(e.to_string()),
-    };
+    let finish = format!("run: printf '%s\\n' <paths> | bash {script} {wiki} '{msg}'");
+    let failed = |why: String| format!("{}; {finish}", why.trim());
+    let envs = spira_config::release_env::child_path_env_for_process().map_err(|e| failed(e.to_string()))?;
     // batch-job: runs a gate, build or forge script that takes as long as its work
-    let mut child = match Command::new("bash").envs(envs)
+    let mut child = Command::new("bash")
+        .envs(envs)
         .arg(&script)
-        .arg(&wiki)
-        .arg(&msg)
+        .arg(wiki)
+        .arg(msg)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => return failed(format!("{script}: {e}")),
-    };
+        .map_err(|e| failed(format!("{script}: {e}")))?;
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = writeln!(stdin, "{page}");
+        for p in paths {
+            let _ = writeln!(stdin, "{p}");
+        }
     }
     match child.wait_with_output() {
-        Ok(out) if out.status.success() => CommitOutcome::Committed,
-        Ok(out) => failed(format!("{} ({})", String::from_utf8_lossy(&out.stderr).trim(), out.status)),
-        Err(e) => failed(format!("{script}: {e}")),
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(failed(format!("{} ({})", String::from_utf8_lossy(&out.stderr).trim(), out.status))),
+        Err(e) => Err(failed(format!("{script}: {e}"))),
+    }
+}
+
+/// Commits the `SPIRA_STATUTE_PAGE` page immediately after `synth()` regenerates it, named only
+/// under `law: <verb> <key>`. Best-effort: no `$SPIRA_WIKI` checkout is not a failure.
+fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
+    let wiki = match spira_config::process::cfg("SPIRA_WIKI") {
+        Ok(w) if !w.is_empty() && Path::new(&w).join(".git").is_dir() => w,
+        _ => return CommitOutcome::Skipped,
+    };
+    let Some(page) = spira_config::process::cfg("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()) else {
+        return CommitOutcome::Failed("SPIRA_STATUTE_PAGE is not resolvable from spira_config".to_string());
+    };
+    match wiki_commit(home, &wiki, &format!("law: {verb} {key}"), &[page]) {
+        Ok(()) => CommitOutcome::Committed,
+        Err(e) => CommitOutcome::Failed(e),
     }
 }
 
@@ -325,14 +325,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
 
-    let repo = match locate_repo(home) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
-    };
-    let toc = match read_toc_at(&repo) {
+    let toc = match code::book_dir().and_then(|d| read_toc(&d)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("{e}");
@@ -430,32 +423,33 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return rc;
     }
     let book = strings(&after);
-    let landed = read_pointers_for_write(&repo, &book).and_then(|pointers| {
-        let (caught, pointers) = code::catch_up(&toc, &pointers, &book, Some((key.as_str(), part)), &landed_numbers(&repo)?, &today()).map_err(|e| format!("rule: {e}"))?;
+    let landed = code::book_dir().and_then(|dir| {
+        let pointers = read_pointers_for_write(&dir, &book)?;
+        let (caught, pointers) = code::catch_up(&toc, &pointers, &book, Some((key.as_str(), part)), &code::numbers_on_disk(&dir), &today()).map_err(|e| format!("rule: {e}"))?;
         let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>().saturating_sub(toc.iter().map(|p| p.slugs.len()).sum::<usize>());
-        land_law(home, &repo, "enact", &key, &caught, &pointers, &book).map(|(branch, bead)| (added, branch, bead))
+        Ok((land_book(home, "enact", &key, &caught, &pointers, &book)? > 0).then_some(added))
     });
     match landed {
-        Ok((n, branch, bead)) => {
-            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead} (SUBMITTED).");
+        Ok(Some(n)) => {
+            println!("law: {n} statute(s) added; committed and pushed to {}.", book_name());
+            0
+        }
+        Ok(None) => {
+            println!("law: book is up to date with the store.");
             0
         }
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("enact", &key, &e);
-            report_unlanded(&e, &format!("rule: {key} is in force but law/ was not submitted — run rule.sh code --land"));
+            eprintln!("rule: {key} is in force but was not committed to the book — run rule.sh code --land");
             1
         }
     }
 }
 
-fn report_unlanded(err: &str, not_submitted: &str) {
-    eprintln!("{}", code::unlanded_message(err, not_submitted));
-}
-
 fn log_law_book_failure(verb: &str, key: &str, err: &str) {
     let at = spira_config::bounded::bounded("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-    let line = format!("{at} rule: {verb} {key}: law/ not landed: {}; run rule.sh code --land\n", err.split_whitespace().collect::<Vec<_>>().join(" "));
+    let line = format!("{at} rule: {verb} {key}: the book was not committed: {}; run rule.sh code --land\n", err.split_whitespace().collect::<Vec<_>>().join(" "));
     let wrote = spira_config::process::cfg("SPIRA_RUN").map_err(|e| e.to_string()).and_then(|run| {
         let log = Path::new(&run).join("law-book.log");
         std::fs::OpenOptions::new().create(true).append(true).open(&log).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes())).map_err(|e| format!("{}: {e}", log.display()))
@@ -465,93 +459,27 @@ fn log_law_book_failure(verb: &str, key: &str, err: &str) {
     }
 }
 
-enum Landed {
-    Added(usize, String, String),
-    Stranded(String, String),
-    InFlight(String),
-}
-
-fn submit_stranded(home: &str, repo: &(String, Option<String>), branch: &str) -> Result<String, String> {
-    let wt_root = spira_config::process::cfg("SPIRA_RUN").map(|r| Path::new(&r).join("worktree"))?;
-    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
-    code::submit_law(Path::new(&repo.0), reg.home_repo(), &wt_root, branch, "code", "book").map(|(id, _)| id)
-}
-
-fn report_law_branches(home: &str) -> Result<bool, String> {
-    let repo = locate_repo(home)?;
-    let base = repo.1.clone().ok_or("rule: no landing ref resolves for the home repository — refusing")?;
-    let path = Path::new(&repo.0);
-    let branches = code::law_branches(path, &base);
-    let tip = code::book_tip_ref(path, &base).map(|t| match t {
-        code::BookTip::Stranded(b) | code::BookTip::InFlight(b) => b,
-    });
-    let mut clean = true;
-    for (branch, kind) in &branches {
-        match kind {
-            code::LawBranch::Tip => {}
-            code::LawBranch::CarriedBy(by) => println!("law/: {branch} carried by {by}"),
-            code::LawBranch::ReplacedBy(by) => {
-                code::git_in(path, &["branch", "-D", branch])?;
-                println!("law/: {branch} replaced by {by}; deleted");
-            }
-            code::LawBranch::InBook => {
-                code::git_in(path, &["branch", "-D", branch])?;
-                println!("law/: {branch} already in the book at {base}; deleted");
-            }
-            code::LawBranch::Unreconciled => {
-                println!("law/: {branch} holds statutes neither the book nor {} carries — refusing to delete it", tip.as_deref().unwrap_or(&base));
-                clean = false;
-            }
-        }
-    }
-    Ok(clean)
+fn book_name() -> String {
+    spira_config::process::cfg("SPIRA_LAW_BOOK").unwrap_or_default()
 }
 
 fn cmd_land_book(db: &str, home: &str) -> i32 {
-    let code = cmd_land_tip(db, home);
-    match report_law_branches(home) {
-        Ok(true) => code,
-        Ok(false) => 1,
-        Err(e) => {
-            eprintln!("{e}");
-            1
-        }
-    }
-}
-
-fn cmd_land_tip(db: &str, home: &str) -> i32 {
-    let run = || -> Result<Option<Landed>, String> {
-        let repo = locate_repo(home)?;
-        let toc = read_toc_at(&repo)?;
+    let run = || -> Result<Option<usize>, String> {
+        let dir = code::book_dir()?;
+        let toc = read_toc(&dir)?;
         let book = strings(&read_book(db)?);
-        let pointers = read_pointers_for_write(&repo, &book)?;
-        let (caught, caught_pointers) = code::catch_up(&toc, &pointers, &book, None, &landed_numbers(&repo)?, &today()).map_err(|e| format!("rule: {e}"))?;
-        let base = repo.1.clone().ok_or("rule: no landing ref resolves for the home repository — refusing")?;
-        if caught == toc && caught_pointers == pointers && !code::book_drifted(Path::new(&repo.0), &base, &toc, &pointers, &book) {
-            return match code::book_tip_ref(Path::new(&repo.0), &base) {
-                Some(code::BookTip::Stranded(branch)) => submit_stranded(home, &repo, &branch).map(|bead| Some(Landed::Stranded(branch, bead))),
-                Some(code::BookTip::InFlight(branch)) => Ok(Some(Landed::InFlight(branch))),
-                None => Ok(None),
-            };
-        }
+        let pointers = read_pointers_for_write(&dir, &book)?;
+        let (caught, caught_pointers) = code::catch_up(&toc, &pointers, &book, None, &code::numbers_on_disk(&dir), &today()).map_err(|e| format!("rule: {e}"))?;
         let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>().saturating_sub(toc.iter().map(|p| p.slugs.len()).sum::<usize>());
-        land_law(home, &repo, "code", "book", &caught, &caught_pointers, &book).map(|(branch, bead)| Some(Landed::Added(added, branch, bead)))
+        Ok((land_book(home, "code", "book", &caught, &caught_pointers, &book)? > 0).then_some(added))
     };
     match run() {
         Ok(None) => {
-            println!("law/: book is up to date with the store.");
+            println!("law: book is up to date with the store.");
             0
         }
-        Ok(Some(Landed::Added(n, branch, bead))) => {
-            println!("law/: {n} statute(s) added; committed on {branch}, submitted under {bead} (SUBMITTED).");
-            0
-        }
-        Ok(Some(Landed::Stranded(branch, bead))) => {
-            println!("law/: submitted stranded {branch} under {bead}.");
-            0
-        }
-        Ok(Some(Landed::InFlight(branch))) => {
-            println!("law/: in flight on {branch}.");
+        Ok(Some(n)) => {
+            println!("law: {n} statute(s) added; committed and pushed to {}.", book_name());
             0
         }
         Err(e) => {
@@ -562,46 +490,17 @@ fn cmd_land_tip(db: &str, home: &str) -> i32 {
     }
 }
 
-fn land_law(home: &str, repo: &(String, Option<String>), verb: &str, key: &str, toc: &[code::Part], pointers: &code::Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
-    let wt_root = spira_config::process::cfg("SPIRA_RUN").map(|r| Path::new(&r).join("worktree"))?;
-    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
-    let (id, branch) = code::land_law(&code::LawRepo { path: Path::new(&repo.0), base: repo.1.as_deref(), name: reg.home_repo() }, &wt_root, verb, key, toc, pointers, book)?;
-    Ok((branch, id))
-}
-
-fn law_dir() -> Result<std::path::PathBuf, String> {
-    let out = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().map_err(|e| format!("rule: git: {e}"))?;
-    if !out.status.success() {
-        return Err("rule: not inside a git checkout — law/ is a tracked tree, run this from your worktree".to_string());
+/// Renders the book into the wiki checkout and commits and pushes only the paths that changed.
+/// Returns how many paths were committed; 0 when the book already matched the store.
+fn land_book(home: &str, verb: &str, key: &str, toc: &[code::Part], pointers: &code::Pointers, book: &BTreeMap<String, String>) -> Result<usize, String> {
+    let (wiki, rel) = code::wiki_and_book()?;
+    code::write_law(&wiki.join(&rel), toc, pointers, book)?;
+    let paths = code::changed_paths(&wiki, &rel)?;
+    if paths.is_empty() {
+        return Ok(0);
     }
-    Ok(Path::new(String::from_utf8_lossy(&out.stdout).trim()).join("law"))
-}
-
-/// The home repository's checkout and the ref its `law/` is cut from — found through the
-/// repo map, never through the caller's working directory.
-fn locate_repo(home: &str) -> Result<(String, Option<String>), String> {
-    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
-    let root = reg.root("").ok_or("rule: the repo map has no path for the home repository — refusing")?;
-    if !Path::new(&root).join(".git").exists() {
-        return Err(format!("rule: {root} is not a git checkout — refusing"));
-    }
-    let base = spira_config::repos::landref(&reg, &root);
-    Ok((root, base))
-}
-
-fn read_toc_at(repo: &(String, Option<String>)) -> Result<Vec<code::Part>, String> {
-    let (root, base) = repo;
-    let text = match base {
-        Some(b) => {
-            let out = spira_config::bounded::bounded("git").arg("-C").arg(root).arg("show").arg(format!("{b}:law/toc.toml")).output().map_err(|e| format!("rule: git: {e}"))?;
-            if !out.status.success() {
-                return Err(format!("rule: {b}:law/toc.toml: {}", String::from_utf8_lossy(&out.stderr).trim()));
-            }
-            String::from_utf8_lossy(&out.stdout).into_owned()
-        }
-        None => std::fs::read_to_string(Path::new(root).join("law/toc.toml")).map_err(|e| format!("rule: {root}/law/toc.toml: {e}"))?,
-    };
-    code::parse_toc(&text).map(|t| code::with_in_flight(Path::new(root), base.as_deref(), t)).map_err(|e| format!("rule: {e}"))
+    wiki_commit(home, &wiki.to_string_lossy(), &format!("law: {verb} {key}"), &paths).map_err(|e| format!("rule: the book could not be committed: {e}"))?;
+    Ok(paths.len())
 }
 
 fn today() -> String {
@@ -622,43 +521,13 @@ fn read_pointers(law: &Path) -> Result<code::Pointers, String> {
     }
 }
 
-/// `law/<file>` at the land ref of the home repository (its checkout when there is none);
-/// `None` when the ref has no such file.
-fn read_law_file_at(repo: &(String, Option<String>), file: &str) -> Result<Option<String>, String> {
-    let (root, base) = repo;
-    match base {
-        Some(b) => {
-            let out = spira_config::bounded::bounded("git").arg("-C").arg(root).arg("show").arg(format!("{b}:law/{file}")).output().map_err(|e| format!("rule: git: {e}"))?;
-            Ok(out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned()))
-        }
-        None => Ok(std::fs::read_to_string(Path::new(root).join("law").join(file)).ok()),
-    }
-}
-
-fn read_pointers_at(repo: &(String, Option<String>)) -> Result<code::Pointers, String> {
-    match read_law_file_at(repo, code::POINTERS_FILE)? {
-        Some(t) => code::parse_pointers(&t).map_err(|e| format!("rule: {e}")),
-        None => Ok(code::Pointers::default()),
-    }
-}
-
-fn read_pointers_for_write(repo: &(String, Option<String>), book: &BTreeMap<String, String>) -> Result<code::Pointers, String> {
-    read_pointers_at(repo).map(|p| code::with_store_pointers(code::with_in_flight_pointers(Path::new(&repo.0), repo.1.as_deref(), p), book))
-}
-
-/// Slug -> section of the `law/` tree on the landing ref (the checkout when there is none).
-fn landed_numbers(repo: &(String, Option<String>)) -> Result<BTreeMap<String, String>, String> {
-    match &repo.1 {
-        Some(b) => code::law_files_at(Path::new(&repo.0), b).map(|f| code::numbers_of(&f)),
-        None => Ok(code::numbers_on_disk(&Path::new(&repo.0).join("law"))),
-    }
+fn read_pointers_for_write(book_dir: &Path, book: &BTreeMap<String, String>) -> Result<code::Pointers, String> {
+    read_pointers(book_dir).map(|p| code::with_store_pointers(p, book))
 }
 
 fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
-    let text = std::fs::read_to_string(law.join("toc.toml")).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => format!("rule: {} not found — run this from a worktree of the home repository", law.join("toc.toml").display()),
-        _ => format!("rule: {}: {e}", law.join("toc.toml").display()),
-    })?;
+    let file = law.join("toc.toml");
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("rule: {}: {e}", file.display()))?;
     code::parse_toc(&text).map_err(|e| format!("rule: {e}"))
 }
 
@@ -671,7 +540,7 @@ fn book_texts(book: &BTreeMap<String, serde_json::Value>) -> impl Fn(&str) -> Op
 }
 
 
-fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
+fn cmd_code(db: &str, rest: &[String]) -> i32 {
     let (mut check, mut texts) = (false, None);
     let mut it = rest.iter();
     while let Some(a) = it.next() {
@@ -684,35 +553,14 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
             }
         }
     }
-    // With no config naming a repo map there is no home repository to ask; fall back to the caller's checkout.
-    let repo = if check && spira_config::process::spec().is_ok() {
-        match locate_repo(home) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
+    let law = match code::book_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
         }
-    } else {
-        None
     };
-    let law = match &repo {
-        Some((root, _)) => Path::new(root).join("law"),
-        None => match law_dir() {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        },
-    };
-    let loaded = match &repo {
-        Some(r) => read_toc_at(r).and_then(|t| {
-            let p = read_pointers_at(r);
-            Ok((t, p, landed_numbers(r)?))
-        }),
-        None => read_toc(&law).map(|t| (t, read_pointers(&law), code::numbers_on_disk(&law))),
-    };
+    let loaded = read_toc(&law).map(|t| (t, read_pointers(&law), code::numbers_on_disk(&law)));
     let (toc, on_disk, numbers) = match loaded {
         Ok(l) => l,
         Err(e) => {
@@ -756,17 +604,7 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
     let recorded = pointers.retired.len() == recorded_retired;
     if check {
         let expected = code::generate(&toc, &pointers, book_texts(&book));
-        let found = match &repo {
-            Some((root, Some(b))) => code::drift_at(Path::new(root), b, &expected),
-            _ => Ok(code::drift(&law, &expected)),
-        };
-        let mut drift = match found {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
+        let mut drift = code::drift(&law, &expected);
         if toc != loaded_toc {
             drift.push("toc.toml: lists statutes the store lacks".to_string());
         }
@@ -776,11 +614,11 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
         drift.extend(code::check_pointers(&toc, &pointers));
         drift.extend(new_moves.iter().map(|m| format!("{}: §{} moved to {}, not yet recorded", code::POINTERS_FILE, m.section, code::section_of(&toc, &m.slug).unwrap_or_default())));
         for d in &drift {
-            eprintln!("law/{d}");
+            eprintln!("{}/{d}", book_name());
         }
         let behind = code::behind(&toc, &pointers, &strings(&book));
         if !behind.is_empty() {
-            eprintln!("law/: behind the store by {}: {}", behind.len(), behind.join(", "));
+            eprintln!("behind the store by {}: {}", behind.len(), behind.join(", "));
             return 1;
         }
         return if drift.is_empty() { 0 } else { 1 };
@@ -788,15 +626,14 @@ fn cmd_code(db: &str, home: &str, rest: &[String]) -> i32 {
     let bad = code::check_pointers(&toc, &pointers);
     if !bad.is_empty() {
         for b in &bad {
-            eprintln!("law/{b}");
+            eprintln!("{}/{b}", book_name());
         }
         return 1;
     }
     for m in new_moves {
         println!("§{} moved: {} is now §{}", m.section, m.slug, code::section_of(&toc, &m.slug).unwrap_or_default());
     }
-    let seeds = texts.is_none().then(|| code::write_seeds(law.parent().unwrap_or(&law), &toc, &strings(&book)));
-    match code::write_law(&law, &toc, &pointers, &strings(&book)).and(seeds.unwrap_or(Ok(()))) {
+    match code::write_law(&law, &toc, &pointers, &strings(&book)) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");
@@ -963,14 +800,14 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         Ok(h) => h,
         Err(e) => return refuse_hook(&e),
     };
-    let repo = match locate_repo(home) {
-        Ok(r) => r,
+    let law = match code::book_dir() {
+        Ok(d) => d,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo, &strings(&memories)).map(|p| (t, p))) {
+    let (toc, mut pointers) = match read_toc(&law).and_then(|t| read_pointers_for_write(&law, &strings(&memories)).map(|p| (t, p))) {
         Ok(tp) => tp,
         Err(e) => {
             eprintln!("{e}");
@@ -978,7 +815,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
     if code::section_of(&toc, &key).is_none() {
-        eprintln!("rule: refusing — {key} holds no section in law/toc.toml, so no pointer can be left for it. If its law bead has not landed, land it first (rule.sh code on the tip lists it in a Part).");
+        eprintln!("rule: refusing — {key} holds no section in the book's toc.toml, so no pointer can be left for it. Run rule.sh code --land to file it in a Part, then retire it again.");
         return 1;
     }
     let on = today();
@@ -1027,18 +864,18 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return rc;
     }
     let book = strings(&after);
-    let landed = landed_numbers(&repo)
-        .and_then(|n| code::catch_up(&toc, &pointers, &book, None, &n, &today()).map_err(|e| format!("rule: {e}")))
-        .and_then(|(caught, pointers)| land_law(home, &repo, "retire", &key, &caught, &pointers, &book));
+    let landed = code::catch_up(&toc, &pointers, &book, None, &code::numbers_on_disk(&law), &today())
+        .map_err(|e| format!("rule: {e}"))
+        .and_then(|(caught, pointers)| land_book(home, "retire", &key, &caught, &pointers, &book));
     match landed {
-        Ok((branch, bead)) => {
-            println!("law/: {key} leaves the book and its pointer stays; committed on {branch}, submitted under {bead}.");
+        Ok(_) => {
+            println!("law: {key} leaves the book and its pointer stays; committed and pushed to {}.", book_name());
             0
         }
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("retire", &key, &e);
-            report_unlanded(&e, &format!("rule: {key} is retired but law/ was not submitted — run `rule.sh code --land`."));
+            eprintln!("rule: {key} is retired but was not committed to the book — run `rule.sh code --land`.");
             1
         }
     }
@@ -1072,14 +909,14 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let repo = match locate_repo(home) {
-        Ok(r) => r,
+    let law = match code::book_dir() {
+        Ok(d) => d,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let (toc, pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo, &strings(&before)).map(|p| (t, p))) {
+    let (toc, pointers) = match read_toc(&law).and_then(|t| read_pointers_for_write(&law, &strings(&before)).map(|p| (t, p))) {
         Ok(tp) => tp,
         Err(e) => {
             eprintln!("{e}");
@@ -1186,17 +1023,17 @@ fn cmd_rename_vocabulary(db: &str, home: &str, rest: &[String]) -> i32 {
         Err(e) => eprintln!("rule: {e} — wiki page NOT regenerated."),
     }
     if statutes_written == 0 {
-        println!("law/: no statute rewritten; nothing to land.");
+        println!("law: no statute rewritten; nothing to commit.");
         return i32::from(failed);
     }
     let book = strings(&after);
-    let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &book, None, &landed_numbers(&repo)?, &today())).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_law(home, &repo, "rename-vocabulary", "book", &caught, &pointers, &book));
+    let landed = rule::vocab::record_renames(&toc, &pointers, &renamed, &today()).and_then(|(toc, pointers)| code::catch_up(&toc, &pointers, &book, None, &code::numbers_on_disk(&law), &today())).map_err(|e| format!("rule: {e}")).and_then(|(caught, pointers)| land_book(home, "rename-vocabulary", "book", &caught, &pointers, &book));
     match landed {
-        Ok((branch, bead)) => println!("law/: {statutes_written} statute(s) rewritten ({runbooks_written} runbook(s) in the store); committed on {branch}, submitted under {bead}."),
+        Ok(_) => println!("law: {statutes_written} statute(s) rewritten ({runbooks_written} runbook(s) in the store); committed and pushed to {}.", book_name()),
         Err(e) => {
             eprintln!("{e}");
             log_law_book_failure("rename-vocabulary", "book", &e);
-            report_unlanded(&e, "rule: the store is rewritten but law/ was not submitted — run `rule.sh code --land`.");
+            eprintln!("rule: the store is rewritten but the book was not committed — run `rule.sh code --land`.");
             return 1;
         }
     }
@@ -1216,7 +1053,7 @@ fn cmd_list(db: &str) -> i32 {
     }
 }
 
-fn cmd_show(db: &str, home: &str, rest: &[String]) -> i32 {
+fn cmd_show(db: &str, rest: &[String]) -> i32 {
     if rest.len() != 1 {
         println!("{USAGE}");
         return 1;
@@ -1238,10 +1075,7 @@ fn cmd_show(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     }
     let arg = if is_number { numbered } else { key.as_str() };
-    let looked = locate_repo(home).and_then(|repo| {
-        let toc = code::parse_toc(&read_law_file_at(&repo, "toc.toml")?.unwrap_or_default()).map_err(|e| format!("rule: {e}"))?;
-        Ok((toc, read_pointers_at(&repo)?))
-    });
+    let looked = code::book_dir().and_then(|law| Ok((read_toc(&law)?, read_pointers(&law)?)));
     let resolved = looked.map(|(toc, pointers)| (code::resolve(&toc, &pointers, arg), toc));
     match resolved {
         Ok((Ok(r), toc)) => {

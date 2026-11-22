@@ -4,7 +4,7 @@
 extern crate spira_test_id;
 use std::collections::BTreeMap;
 
-use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, submit_outcome, unlanded_message, Merged, Moved, Pointers, Retired};
+use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Moved, Pointers, Retired};
 
 const TOC: &str = r#"[[part]]
 number = 1
@@ -230,45 +230,6 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
     assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n");
 }
 
-#[test_id(tvatnc8)]
-#[test]
-fn law_submission_runs_queue_submit_with_no_call_timeout_so_the_gate_survives() {
-    let _env = testkit::env_read();
-    let c = rule::code::queue_submit_command("queue", "spira/sp-x", "spira");
-    let program = std::path::Path::new(c.get_program());
-    assert_eq!(program.file_name().and_then(|n| n.to_str()), Some("queue"), "queue submit must not run under a call-timeout wrapper: it runs the gate");
-    let args: Vec<_> = c.get_args().collect();
-    assert_eq!(args, ["submit", "spira/sp-x", "spira"]);
-}
-
-#[test_id(tzslvjp)]
-#[test]
-fn code_check_reports_a_store_slug_the_toc_lacks() {
-    let _env = testkit::env_read();
-    let repo = testkit::TempDir::new("rule-behind");
-    std::fs::create_dir_all(repo.path().join("law")).unwrap();
-    std::fs::write(repo.path().join("law/toc.toml"), TOC).unwrap();
-    testkit::git(repo.path(), &["init", "-q"]);
-    let texts = testkit::TempDir::new("rule-behind-texts");
-    for (slug, text) in [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three.")] {
-        std::fs::write(texts.path().join(format!("{slug}.txt")), text).unwrap();
-    }
-    let home = repo.path().to_str().unwrap();
-    let rule = |args: &[&str]| {
-        std::process::Command::new(testkit::bin_exe("rule")).args(["--home", home, "code"]).args(args).arg("--texts").arg(texts.path()).current_dir(repo.path()).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).output().unwrap()
-    };
-    let written = rule(&[]);
-    assert_eq!(written.status.code(), Some(0), "{}", String::from_utf8_lossy(&written.stderr));
-    let clean = rule(&["--check"]);
-    assert_eq!(clean.status.code(), Some(0), "{}", String::from_utf8_lossy(&clean.stderr));
-
-    std::fs::write(texts.path().join("law-four.txt"), "Do four.").unwrap();
-    let out = rule(&["--check"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert_eq!(stderr.trim(), "law/: behind the store by 1: law-four");
-}
-
 #[test_id(ttle7bw)]
 #[test]
 fn behind_names_store_slugs_the_toc_and_pointers_do_not_account_for() {
@@ -296,201 +257,12 @@ fn catch_up_appends_every_behind_slug_and_numbers_the_enacted_key_in_its_part() 
     assert_eq!(out.iter().map(|p| p.slugs.len()).sum::<usize>(), 6);
 }
 
-fn law_repo() -> testkit::TempDir {
-    let repo = testkit::TempDir::new("rule-inflight");
-    let p = repo.path();
-    testkit::git(p, &["init", "-q", "-b", "main"]);
-    std::fs::create_dir_all(p.join("law")).unwrap();
-    std::fs::write(p.join("law/toc.toml"), TOC).unwrap();
-    testkit::git(p, &["add", "-A"]);
-    testkit::git(p, &["commit", "-q", "-m", "base"]);
-    repo
-}
-
-#[test_id(tuvid42)]
-#[test]
-fn a_second_law_commit_is_cut_on_the_unlanded_first() {
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let wt_root = testkit::TempDir::new("rule-inflight-wt");
-    let base_toc = parse_toc(TOC).unwrap();
-    let main_tip = testkit::git(repo.path(), &["rev-parse", "main"]);
-    let commit = |key: &str, toc: &[rule::code::Part], slugs: &[&str]| {
-        rule::code::commit_law(repo.path(), Some("main"), wt_root.path(), "enact", key, toc, &Pointers::default(), &store(slugs)).unwrap()
-    };
-    let t1 = append(&base_toc, 1, "law-four").unwrap();
-    let first = commit("law-four", &t1, &["law-one", "law-two", "law-three", "law-four"]);
-    let t2 = append(&rule::code::with_in_flight(repo.path(), Some("main"), base_toc), 1, "law-five").unwrap();
-    let second = commit("law-five", &t2, &["law-one", "law-two", "law-three", "law-four", "law-five"]);
-    let first_tip = testkit::git(repo.path(), &["rev-parse", &first]);
-    assert_eq!(testkit::git(repo.path(), &["rev-parse", &format!("{second}^")]), first_tip);
-    assert_ne!(first_tip, main_tip);
-    let toc = testkit::git(repo.path(), &["show", &format!("{second}:law/toc.toml")]);
-    assert!(toc.contains("law-four") && toc.contains("law-five"));
-}
-
-#[test_id(tv9jc19)]
-#[test]
-fn the_newest_book_only_tip_is_named_stranded_or_in_flight_by_its_namespace() {
-    use rule::code::BookTip;
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let wt_root = testkit::TempDir::new("rule-tip-wt");
-    assert_eq!(rule::code::book_tip_ref(repo.path(), "main"), None, "nothing unlanded names no tip");
-    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
-    let branch = rule::code::commit_law(repo.path(), Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    assert!(branch.starts_with("law/"), "{branch}");
-    assert_eq!(rule::code::book_tip_ref(repo.path(), "main"), Some(BookTip::Stranded(branch.clone())));
-    testkit::git(repo.path(), &["branch", "-m", &branch, "spira/sp-abc"]);
-    assert_eq!(rule::code::book_tip_ref(repo.path(), "main"), Some(BookTip::InFlight("spira/sp-abc".to_string())));
-}
-
-#[test_id(tsqtftj)]
-#[test]
-fn a_second_commit_on_a_submitted_in_flight_item_rides_it_and_leaves_no_law_branch() {
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let p = repo.path();
-    let wt_root = testkit::TempDir::new("rule-carry-wt");
-    let base_toc = parse_toc(TOC).unwrap();
-    let t1 = append(&base_toc, 1, "law-four").unwrap();
-    let first = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &t1, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    testkit::git(p, &["branch", "-m", &first, "spira/sp-abc"]);
-    let first_tip = testkit::git(p, &["rev-parse", "spira/sp-abc"]);
-    let t2 = append(&rule::code::with_in_flight(p, Some("main"), base_toc), 1, "law-five").unwrap();
-    let (second, cut_from) = rule::code::commit_law_cut(p, Some("main"), wt_root.path(), "enact", "law-five", &t2, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four", "law-five"])).unwrap();
-    let carrier = rule::code::carrier_of(cut_from.as_deref(), |id| (id == "sp-abc").then(|| "SUBMITTED".to_string()));
-    assert_eq!(carrier.as_deref(), Some("sp-abc"));
-    rule::code::fast_forward_onto(p, &second, "spira/sp-abc").unwrap();
-    assert_eq!(testkit::git(p, &["rev-parse", "spira/sp-abc^"]), first_tip);
-    assert!(testkit::git(p, &["show", "spira/sp-abc:law/toc.toml"]).contains("law-five"));
-    assert_eq!(testkit::git(p, &["branch", "--list", "law/*"]), "");
-}
-
-#[test_id(tw5n0fq)]
-#[test]
-fn fast_forward_onto_refuses_a_branch_that_does_not_descend_from_the_carrier() {
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let p = repo.path();
-    let wt_root = testkit::TempDir::new("rule-carry-refuse-wt");
-    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
-    let book = store(&["law-one", "law-two", "law-three", "law-four"]);
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
-    testkit::git(p, &["branch", "spira/sp-abc", "main"]);
-    testkit::git(p, &["commit", "-q", "--allow-empty", "-m", "elsewhere"]);
-    testkit::git(p, &["branch", "-f", "spira/sp-abc", "HEAD"]);
-    assert!(rule::code::fast_forward_onto(p, &branch, "spira/sp-abc").is_err());
-    assert!(!testkit::git(p, &["branch", "--list", "law/*"]).is_empty(), "the law/ commit is kept");
-}
-
-#[test_id(tbymwyb)]
-#[test]
-fn the_carry_decision_names_a_submitted_spira_item_and_files_anew_otherwise() {
-    let _env = testkit::env_read();
-    use rule::code::carrier_of;
-    let submitted = |_: &str| Some("SUBMITTED".to_string());
-    assert_eq!(carrier_of(Some("refs/heads/spira/sp-abc"), submitted).as_deref(), Some("sp-abc"));
-    assert_eq!(carrier_of(None, submitted), None, "cut from the base");
-    assert_eq!(carrier_of(Some("refs/heads/law/four-1"), submitted), None, "a stranded law/ branch");
-    assert_eq!(carrier_of(Some("refs/heads/spira/sp-abc"), |_| Some("IN_DELIVERY".to_string())), None);
-    assert_eq!(carrier_of(Some("refs/heads/spira/sp-abc"), |_| None), None, "an unreadable bead");
-}
-
-#[test_id(tca1nmt)]
-#[test]
-fn a_show_reply_gives_the_beads_lifecycle_state() {
-    let _env = testkit::env_read();
-    assert_eq!(rule::code::state_in_show(r#"{"bead":{"bead_id":"sp-a","state":"SUBMITTED"},"delivery":null}"#).as_deref(), Some("SUBMITTED"));
-    assert_eq!(rule::code::state_in_show("not json"), None);
-}
-
 #[test_id(tjo1wgd)]
 #[test]
 fn the_law_book_log_is_watched() {
     let _env = testkit::env_read();
     let rows = include_str!("../../spira/watchers");
     assert!(rows.lines().any(|l| l.starts_with("law-book|log|")), "no law-book log row in spira/watchers");
-}
-
-#[test_id(thilizv)]
-#[test]
-fn a_law_commit_is_cut_from_the_landing_ref_when_the_unlanded_branch_touches_more_than_the_book() {
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let p = repo.path();
-    testkit::git(p, &["checkout", "-q", "-b", "spira/sp-other"]);
-    std::fs::write(p.join("other.rs"), "x").unwrap();
-    testkit::git(p, &["add", "-A"]);
-    testkit::git(p, &["commit", "-q", "-m", "other"]);
-    testkit::git(p, &["checkout", "-q", "main"]);
-    let wt_root = testkit::TempDir::new("rule-inflight-other-wt");
-    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    assert_eq!(testkit::git(p, &["rev-parse", &format!("{branch}^")]), testkit::git(p, &["rev-parse", "main"]));
-}
-
-fn author_env() -> testkit::EnvGuard {
-    testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))])
-}
-
-#[test_id(t6y97oy)]
-#[test]
-fn a_branch_whose_statutes_are_on_the_base_is_never_the_tip() {
-    use rule::code::LawBranch;
-    let _env = author_env();
-    let repo = law_repo();
-    let p = repo.path();
-    let wt_root = testkit::TempDir::new("rule-inbook-wt");
-    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    testkit::git(p, &["checkout", "-q", "main"]);
-    testkit::git(p, &["checkout", "-q", &branch, "--", "law"]);
-    testkit::git(p, &["commit", "-q", "-m", "the same book, landed another way"]);
-    assert_eq!(rule::code::book_tip_ref(p, "main"), None);
-    assert_eq!(rule::code::law_branches(p, "main"), vec![(branch, LawBranch::InBook)]);
-}
-
-#[test_id(tp5qg6e)]
-#[test]
-fn law_branches_names_the_tip_and_what_it_carries() {
-    use rule::code::LawBranch;
-    let _env = author_env();
-    let repo = law_repo();
-    let p = repo.path();
-    let wt_root = testkit::TempDir::new("rule-chain-wt");
-    let base_toc = parse_toc(TOC).unwrap();
-    let t1 = append(&base_toc, 1, "law-four").unwrap();
-    let first = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &t1, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    let t2 = append(&rule::code::with_in_flight(p, Some("main"), base_toc), 1, "law-five").unwrap();
-    let second = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-five", &t2, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four", "law-five"])).unwrap();
-    let got: std::collections::BTreeMap<_, _> = rule::code::law_branches(p, "main").into_iter().collect();
-    assert_eq!(got[&first], LawBranch::CarriedBy(second.clone()));
-    assert_eq!(got[&second], LawBranch::Tip);
-}
-
-#[test_id(tm3535a)]
-#[test]
-fn a_branch_adding_a_slug_neither_the_base_nor_the_tip_holds_is_unreconciled() {
-    use rule::code::LawBranch;
-    let repo = law_repo();
-    let p = repo.path();
-    let env = author_env();
-    let wt_root = testkit::TempDir::new("rule-unrec-wt");
-    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    drop(env);
-    {
-        let _old = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t")), ("GIT_COMMITTER_DATE", Some("2001-01-01T00:00:00Z"))]);
-        testkit::git(p, &["checkout", "-q", "-b", "law/stray", "main"]);
-        let stray = append(&parse_toc(TOC).unwrap(), 1, "law-nine").unwrap();
-        std::fs::write(p.join("law/toc.toml"), rule::code::render_toc(&stray)).unwrap();
-        testkit::git(p, &["commit", "-q", "-am", "stray"]);
-        testkit::git(p, &["checkout", "-q", "main"]);
-    }
-    let got: std::collections::BTreeMap<_, _> = rule::code::law_branches(p, "main").into_iter().collect();
-    assert_eq!(got[&branch], LawBranch::Tip);
-    assert_eq!(got["law/stray"], LawBranch::Unreconciled);
 }
 
 #[test_id(t2df1u9)]
@@ -515,216 +287,10 @@ fn a_dated_provenance_mark_never_reaches_a_rendered_file() {
     }
 }
 
-#[test_id(tiumk2w)]
-#[test]
-fn an_in_flight_toc_slug_that_is_not_a_statute_is_not_carried() {
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let p = repo.path();
-    testkit::git(p, &["checkout", "-q", "-b", "law/polluted"]);
-    std::fs::write(p.join("law/toc.toml"), TOC.replace("\"law-two\",", "\"law-two\",\n  \"sop-y\",\n  \"law-nine\",")).unwrap();
-    testkit::git(p, &["commit", "-q", "-am", "polluted"]);
-    testkit::git(p, &["checkout", "-q", "main"]);
-    let out = rule::code::with_in_flight(p, Some("main"), parse_toc(TOC).unwrap());
-    let slugs: Vec<_> = out.iter().flat_map(|x| x.slugs.iter().cloned()).collect();
-    assert!(!slugs.contains(&"sop-y".to_string()), "{slugs:?}");
-    assert!(slugs.contains(&"law-nine".to_string()), "{slugs:?}");
-}
-
-#[test_id(tuajhww)]
-#[test]
-fn seed_texts_carry_no_dated_provenance_whatever_punctuation_follows_it() {
-    let _env = testkit::env_read();
-    let toc = parse_toc(TOC).unwrap();
-    let mark = format!("(per Ann, 2026-{}, sp-xu7la)", "09-19");
-    let book: BTreeMap<String, String> = [
-        ("law-one", format!("Do one {mark};  the broker holds.")),
-        ("law-two", format!("Do two {mark}.")),
-        ("law-three", "Do three (per the spec) always.".to_string()),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v))
-    .collect();
-    let wt = testkit::TempDir::new("rule-seeds");
-    rule::code::write_seeds(wt.path(), &toc, &book).unwrap();
-    let dir = wt.path().join(rule::code::SEEDS_DIR);
-    let one = std::fs::read_to_string(dir.join("law-one.txt")).unwrap();
-    assert_eq!(one.split_whitespace().collect::<Vec<_>>().join(" "), "Do one; the broker holds.");
-    assert_eq!(std::fs::read_to_string(dir.join("law-two.txt")).unwrap(), "Do two.");
-    assert_eq!(std::fs::read_to_string(dir.join("law-three.txt")).unwrap(), "Do three (per the spec) always.");
-    let pat = spira_lint::rules::inventory::pattern_re(&[]).unwrap();
-    for slug in ["law-one", "law-two", "law-three"] {
-        let t = std::fs::read(dir.join(format!("{slug}.txt"))).unwrap();
-        assert!(spira_lint::rules::inventory::scan(&t, &pat).is_empty(), "{slug}");
-    }
-}
-
-#[test_id(tb9fgx2)]
-#[test]
-fn write_seeds_removes_every_text_that_is_not_a_numbered_statute() {
-    let _env = testkit::env_read();
-    let toc = parse_toc(TOC).unwrap();
-    let wt = testkit::TempDir::new("rule-seeds-stale");
-    let dir = wt.path().join(rule::code::SEEDS_DIR);
-    std::fs::create_dir_all(&dir).unwrap();
-    for f in ["sop-x.txt", "law-gone.txt", "README.md"] {
-        std::fs::write(dir.join(f), "x").unwrap();
-    }
-    let book: BTreeMap<String, String> = ["law-one", "law-two", "law-three"].iter().map(|k| (k.to_string(), format!("Do {k}."))).collect();
-    rule::code::write_seeds(wt.path(), &toc, &book).unwrap();
-    let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    names.sort();
-    assert_eq!(names, ["README.md", "law-one.txt", "law-three.txt", "law-two.txt"]);
-}
-
-#[test_id(txi2flw)]
-#[test]
-fn a_law_commit_does_not_inherit_a_stale_seed_from_the_landing_ref() {
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let p = repo.path();
-    std::fs::create_dir_all(p.join("spira/statutes")).unwrap();
-    std::fs::write(p.join("spira/statutes/sop-x.txt"), "stale").unwrap();
-    testkit::git(p, &["add", "-A"]);
-    testkit::git(p, &["commit", "-q", "-m", "stale seed"]);
-    let wt_root = testkit::TempDir::new("rule-stale-wt");
-    let toc = append(&parse_toc(TOC).unwrap(), 1, "law-four").unwrap();
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    let tree = testkit::git(p, &["ls-tree", "-r", "--name-only", &branch]);
-    assert!(!tree.contains("sop-x.txt"), "{tree}");
-    assert!(tree.contains("spira/statutes/law-four.txt"), "{tree}");
-}
-
-#[test_id(tnxn9wt)]
-#[test]
-fn code_check_reads_law_at_the_landing_ref_from_a_directory_that_is_not_a_checkout() {
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let world = testkit::TempDir::new("rule-check-ref");
-    let map = spira_config::process::fixture_repo_map(world.path(), &["fixture"]);
-    let toml = spira_config::process::fixture_toml(world.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "fixture")]);
-    let p = world.path().join("fixture");
-    std::fs::create_dir_all(&p).unwrap();
-    testkit::git(&p, &["init", "-q", "-b", "scratch"]);
-    let texts = testkit::TempDir::new("rule-check-ref-texts");
-    for (slug, text) in [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three.")] {
-        std::fs::write(texts.path().join(format!("{slug}.txt")), text).unwrap();
-    }
-    let elsewhere = testkit::TempDir::new("rule-check-ref-cwd");
-    let harness_home = spira_config::resolve::locate_home_for_process().unwrap();
-    let home = p.to_str().unwrap();
-    let run = |args: &[&str], cwd: &std::path::Path| {
-        std::process::Command::new(testkit::bin_exe("rule"))
-            .args(["--home", home, "code"])
-            .args(args)
-            .arg("--texts")
-            .arg(texts.path())
-            .current_dir(cwd)
-            .env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("SPIRA_TOML", &toml)
-            .env("SPIRA_HOME", &harness_home)
-            .output()
-            .unwrap()
-    };
-    std::fs::create_dir_all(p.join("law")).unwrap();
-    std::fs::write(p.join("law/toc.toml"), TOC).unwrap();
-    assert_eq!(run(&[], &p).status.code(), Some(0));
-    testkit::git(&p, &["add", "-A"]);
-    testkit::git(&p, &["commit", "-q", "-m", "law"]);
-    testkit::git(&p, &["branch", "local/main"]);
-
-    let clean = run(&["--check"], elsewhere.path());
-    assert_eq!(clean.status.code(), Some(0), "{}", String::from_utf8_lossy(&clean.stderr));
-
-    let section = testkit::git(&p, &["ls-files", "law/1-alpha"]).lines().next().unwrap().to_string();
-    std::fs::write(p.join(&section), "edited\n").unwrap();
-    testkit::git(&p, &["commit", "-q", "-am", "edit"]);
-    testkit::git(&p, &["branch", "-f", "local/main", "scratch"]);
-    std::fs::write(p.join("law/stray.md"), "x").unwrap();
-    testkit::git(&p, &["add", "law/stray.md"]);
-    testkit::git(&p, &["commit", "-q", "-m", "stray"]);
-    testkit::git(&p, &["branch", "-f", "local/main", "scratch"]);
-    testkit::git(&p, &["checkout", "-q", "HEAD~2", "--", "law"]);
-    testkit::git(&p, &["rm", "-q", "-f", "--cached", "law/stray.md"]);
-    let _ = std::fs::remove_file(p.join("law/stray.md"));
-    let drifted = run(&["--check"], elsewhere.path());
-    assert_eq!(drifted.status.code(), Some(1));
-    let name = section.strip_prefix("law/").unwrap();
-    assert!(String::from_utf8_lossy(&drifted.stderr).contains(&format!("law/{name}: differs")), "{}", String::from_utf8_lossy(&drifted.stderr));
-    assert!(String::from_utf8_lossy(&drifted.stderr).contains("law/stray.md: not generated by toc.toml"), "{}", String::from_utf8_lossy(&drifted.stderr));
-}
-
-#[test_id(t8065ft)]
-#[test]
-fn code_without_check_in_a_checkout_with_no_toc_says_to_use_a_worktree_of_the_home_repository() {
-    let _env = testkit::env_read();
-    let repo = testkit::TempDir::new("rule-no-toc");
-    testkit::git(repo.path(), &["init", "-q"]);
-    let out = std::process::Command::new(testkit::bin_exe("rule")).args(["--home", repo.path().to_str().unwrap(), "code"]).current_dir(repo.path()).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).output().unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("run this from a worktree of the home repository"), "{}", String::from_utf8_lossy(&out.stderr));
-}
-
-#[test_id(t2vb8z5)]
-#[test]
-fn one_rename_vocabulary_leaves_the_generated_book_clean_of_retired_terms_runbooks_included() {
-    use rule::vocab::{plan, record_renames, Entry};
-    use spira_lint::rules::ffx_vocabulary::{FfxVocabulary, Mode};
-    use spira_lint::Rule;
-    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("t")), ("GIT_AUTHOR_EMAIL", Some("t@t")), ("GIT_COMMITTER_NAME", Some("t")), ("GIT_COMMITTER_EMAIL", Some("t@t"))]);
-    let repo = law_repo();
-    let p = repo.path();
-    let toc_text = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-old\",\n]\n"; // ffx-ok
-    std::fs::write(p.join("law/toc.toml"), toc_text).unwrap();
-    let pointers_text = "version = 1\n\n[[retired]]\nslug = \"law-aeon-old\"\nreason = \"gone\"\nreplaced_by = \"law-one\"\non = \"2026-01-01\"\n"; // ffx-ok
-    std::fs::write(p.join("law/pointers.toml"), pointers_text).unwrap();
-    std::fs::create_dir_all(p.join("spira/statutes")).unwrap();
-    std::fs::write(p.join("spira/statutes/sop-aeon-x.txt"), "SYMPTOM: an aeon stalls").unwrap(); // ffx-ok
-    testkit::git(p, &["add", "-A"]);
-    testkit::git(p, &["commit", "-q", "-m", "stale runbook seed"]);
-
-    let toc = parse_toc(toc_text).unwrap();
-    let pointers = parse_pointers(pointers_text).unwrap();
-    let mut book: BTreeMap<String, String> = [("law-one", "An aeon acts."), ("sop-aeon-x", "SYMPTOM: an aeon stalls")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(); // ffx-ok
-    let mut renamed = Vec::new();
-    for e in plan(&book.clone(), &toc, &pointers) {
-        match e {
-            Entry::Amend { key, text } => {
-                book.insert(key, text);
-            }
-            Entry::Rename { from, to, text, numbered } => {
-                book.remove(&from);
-                book.insert(to.clone(), text);
-                if from.starts_with("law-") {
-                    renamed.push((from, to, numbered));
-                }
-            }
-            other => panic!("{other:?}"),
-        }
-    }
-    assert_eq!(book["sop-dwarf-x"], "SYMPTOM: a dwarf stalls");
-    let (toc, pointers) = record_renames(&toc, &pointers, &renamed, "2026-01-02").unwrap();
-    let (toc, pointers) = rule::code::catch_up(&toc, &pointers, &book, None, &BTreeMap::new(), "2026-01-02").unwrap();
-    let wt_root = testkit::TempDir::new("rule-vocab-e2e-wt");
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "rename-vocabulary", "book", &toc, &pointers, &book).unwrap();
-    testkit::git(p, &["checkout", "-q", &branch]);
-
-    let tree = spira_lint::Tree::from_git(p).unwrap();
-    let found = FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&tree).unwrap();
-    assert!(found.is_empty(), "{found:?}");
-}
-
 fn retired_record(replaced_by: &str) -> String {
     sop::shelf::Retired { by: "t".into(), at: "2026-11-20T10:00:00Z".into(), epoch: 1, reason: "renamed out of retired vocabulary".into(), text: "Do it.".into(), replaced_by: Some(replaced_by.into()) }.to_json()
 }
 
-const RENAMED_TOC: &str = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-x\",\n  \"law-two\",\n]\n"; // ffx-ok
-
-fn lint_finds(p: &std::path::Path) -> Vec<spira_lint::Finding> {
-    use spira_lint::rules::ffx_vocabulary::{FfxVocabulary, Mode};
-    use spira_lint::Rule;
-    FfxVocabulary::with_mode(Ok(Mode::Enforce)).check(&spira_lint::Tree::from_git(p).unwrap()).unwrap()
-}
 
 #[test_id(t8k33lx)]
 #[test]
@@ -741,213 +307,205 @@ fn store_pointers_reads_one_row_per_retirement_record_and_never_a_second_for_a_p
     assert_eq!(rule::code::with_store_pointers(Pointers::default(), &held).retired, rows);
 }
 
-#[test_id(tae4qf6)]
-#[test]
-fn code_writes_the_book_the_store_holds_when_a_statute_was_renamed_and_the_old_name_lived_only_on_a_lost_branch() {
-    let _env = author_env();
-    let world = testkit::TempDir::new("rule-renamed");
-    let map = spira_config::process::fixture_repo_map(world.path(), &["fixture"]);
-    let toml = spira_config::process::fixture_toml(world.path(), &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "fixture")]);
-    let p = world.path().join("fixture");
-    std::fs::create_dir_all(p.join("law")).unwrap();
-    testkit::git(&p, &["init", "-q", "-b", "scratch"]);
-    let texts = testkit::TempDir::new("rule-renamed-texts");
-    let put = |slug: &str, text: &str| std::fs::write(texts.path().join(format!("{slug}.txt")), text).unwrap();
-    for slug in ["law-one", "law-aeon-x", "law-two"] { // ffx-ok
-        put(slug, "Do it.");
+struct World {
+    dir: testkit::TempDir,
+    texts: testkit::TempDir,
+    toml: std::path::PathBuf,
+    harness: std::path::PathBuf,
+}
+
+impl World {
+    fn new(tag: &str, law_book: &str, slugs: &[&str]) -> World {
+        let dir = testkit::TempDir::new(tag);
+        let map = spira_config::process::fixture_repo_map(dir.path(), &["fixture"]);
+        let wiki = dir.path().join("brain");
+        let texts = testkit::TempDir::new(&format!("{tag}-texts"));
+        for slug in slugs {
+            std::fs::write(texts.path().join(format!("{slug}.txt")), format!("Do {slug}.")).unwrap();
+        }
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let toml = spira_config::process::fixture_toml(
+            dir.path(),
+            &[
+                ("SPIRA_REPO_MAP", map.to_str().unwrap()),
+                ("SPIRA_HOME_REPO", "fixture"),
+                ("SPIRA_WIKI", wiki.to_str().unwrap()),
+                ("SPIRA_LAW_BOOK", law_book),
+                ("SPIRA_STATUTE_DIR", texts.path().to_str().unwrap()),
+                ("SPIRA_RUN", run.to_str().unwrap()),
+            ],
+        );
+        let harness = spira_config::resolve::locate_home_for_process().unwrap();
+        World { dir, texts, toml, harness }
     }
-    std::fs::write(p.join("law/toc.toml"), RENAMED_TOC).unwrap();
-    let harness_home = spira_config::resolve::locate_home_for_process().unwrap();
-    let home = p.to_str().unwrap();
-    let run = |args: &[&str]| {
+
+    fn wiki(&self) -> std::path::PathBuf {
+        self.dir.path().join("brain")
+    }
+
+    fn book(&self) -> std::path::PathBuf {
+        self.wiki().join("wiki/law")
+    }
+
+    fn brain_with_remote(&self) -> std::path::PathBuf {
+        let bare = self.dir.path().join("remote.git");
+        testkit::git(self.dir.path(), &["init", "-q", "--bare", "-b", "main", bare.to_str().unwrap()]);
+        let w = self.wiki();
+        std::fs::create_dir_all(w.join("wiki/law")).unwrap();
+        std::fs::create_dir_all(w.join("wiki/notes")).unwrap();
+        testkit::git(&w, &["init", "-q", "-b", "main"]);
+        testkit::git(&w, &["config", "user.email", "t@example.com"]);
+        testkit::git(&w, &["config", "user.name", "t"]);
+        testkit::git(&w, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        std::fs::write(w.join("wiki/law/toc.toml"), TOC).unwrap();
+        std::fs::write(w.join("wiki/notes/x.md"), "x\n").unwrap();
+        testkit::git(&w, &["add", "-A"]);
+        testkit::git(&w, &["commit", "-q", "-m", "seed"]);
+        testkit::git(&w, &["push", "-q", "-u", "origin", "main"]);
+        bare
+    }
+
+    fn rule(&self, args: &[&str], cwd: &std::path::Path) -> std::process::Output {
         std::process::Command::new(testkit::bin_exe("rule"))
-            .args(["--home", home, "code"])
+            .args(["--home", self.harness.to_str().unwrap()])
             .args(args)
-            .arg("--texts")
-            .arg(texts.path())
-            .current_dir(&p)
+            .current_dir(cwd)
             .env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("SPIRA_TOML", &toml)
-            .env("SPIRA_HOME", &harness_home)
+            .env("SPIRA_TOML", &self.toml)
+            .env("SPIRA_HOME", &self.harness)
+            .env("SPIRA_RELEASE", &self.harness)
+            .env("HOME", self.dir.path())
             .output()
             .unwrap()
-    };
+    }
+}
+
+fn said(o: &std::process::Output) -> String {
+    format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+}
+
+#[test_id(tipyxzt)]
+#[test]
+fn code_land_commits_and_pushes_the_book_in_the_wiki_and_leaves_the_home_repo_untouched() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-land-book", "wiki/law", &["law-one", "law-two", "law-three", "law-extra"]);
+    let home_repo = world.dir.path().join("fixture");
+    std::fs::create_dir_all(&home_repo).unwrap();
+    testkit::git(&home_repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(home_repo.join("f"), "f").unwrap();
+    testkit::git(&home_repo, &["add", "-A"]);
+    testkit::git(&home_repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+    testkit::git(&home_repo, &["branch", "local/main"]);
+    let bare = world.brain_with_remote();
+    let w = world.wiki();
+    std::fs::write(w.join("wiki/notes/x.md"), "modified\n").unwrap();
+    let before = (testkit::git(&home_repo, &["for-each-ref"]), testkit::git(&home_repo, &["worktree", "list"]));
+    let elsewhere = testkit::TempDir::new("rule-land-book-cwd");
+
+    let out = world.rule(&["code", "--land"], elsewhere.path());
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert_eq!(testkit::git(&w, &["log", "-1", "--format=%s"]), "law: code book");
+    let names = testkit::git(&w, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(names.lines().all(|l| l.starts_with("wiki/law/")), "{names}");
+    assert!(names.contains("law-extra.md"), "{names}");
+    assert_eq!(testkit::git(&bare, &["rev-parse", "main"]), testkit::git(&w, &["rev-parse", "HEAD"]));
+    assert_eq!(testkit::git(&w, &["status", "--porcelain"]), "M wiki/notes/x.md");
+    assert_eq!((testkit::git(&home_repo, &["for-each-ref"]), testkit::git(&home_repo, &["worktree", "list"])), before);
+
+    let head = testkit::git(&w, &["rev-parse", "HEAD"]);
+    let again = world.rule(&["code", "--land"], elsewhere.path());
+    assert_eq!(again.status.code(), Some(0), "{}", said(&again));
+    assert!(said(&again).contains("law: book is up to date with the store."), "{}", said(&again));
+    assert_eq!(testkit::git(&w, &["rev-parse", "HEAD"]), head);
+}
+
+#[test_id(t4x4h0c)]
+#[test]
+fn code_check_reads_the_book_in_the_configured_wiki() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-check-book", "wiki/law", &["law-one", "law-two", "law-three"]);
+    world.brain_with_remote();
+    let elsewhere = testkit::TempDir::new("rule-check-book-cwd");
+    let texts = world.texts.path().to_str().unwrap().to_string();
+    let run = |args: &[&str]| world.rule(&[&["code"], args, &["--texts", &texts]].concat(), elsewhere.path());
     assert_eq!(run(&[]).status.code(), Some(0));
-    testkit::git(&p, &["add", "-A"]);
-    testkit::git(&p, &["commit", "-q", "-m", "law"]);
-    testkit::git(&p, &["branch", "local/main"]);
-
-    std::fs::remove_file(texts.path().join("law-aeon-x.txt")).unwrap(); // ffx-ok
-    put("law-dwarf-x", "Do it.");
-    put("retired-law-aeon-x", &retired_record("law-dwarf-x")); // ffx-ok
-    let stale = run(&["--check"]);
-    assert_eq!(stale.status.code(), Some(1));
-    let said = String::from_utf8_lossy(&stale.stderr);
-    assert!(said.contains("toc.toml: lists statutes the store lacks") && said.contains("retirements in the store not yet recorded"), "{said}");
-    let out = run(&[]);
-    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
-
-    let toc = parse_toc(&std::fs::read_to_string(p.join("law/toc.toml")).unwrap()).unwrap();
-    assert_eq!(toc[0].slugs, ["law-one", "law-dwarf-x", "law-two"]);
-    assert!(p.join("law/1-alpha/1.2-law-dwarf-x.md").exists());
-    assert!(!testkit::git(&p, &["ls-files", "law"]).contains("aeon"), "{}", testkit::git(&p, &["ls-files", "law"])); // ffx-ok
-    assert!(!std::fs::read_dir(p.join("law/1-alpha")).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("aeon"))); // ffx-ok
-    let pointers = parse_pointers(&std::fs::read_to_string(p.join("law/pointers.toml")).unwrap()).unwrap();
-    assert_eq!(pointers.retired.len(), 1);
-    assert_eq!((pointers.retired[0].slug.as_str(), pointers.retired[0].replaced_by.as_deref()), ("law-aeon-x", Some("law-dwarf-x"))); // ffx-ok
-
-    testkit::git(&p, &["add", "-A"]);
-    testkit::git(&p, &["commit", "-q", "-m", "book"]);
-    testkit::git(&p, &["branch", "-f", "local/main", "scratch"]);
     let clean = run(&["--check"]);
-    assert_eq!(clean.status.code(), Some(0), "{}", String::from_utf8_lossy(&clean.stderr));
-    assert!(lint_finds(&p).is_empty());
-}
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
 
-fn lost_branch_repo() -> testkit::TempDir {
-    let repo = law_repo();
-    let p = repo.path();
-    let toc = parse_toc(RENAMED_TOC).unwrap();
-    let files = generate(&toc, &Pointers::default(), |s| Some(format!("Do {s}.")));
-    write_tree(&p.join("law"), &render_toc(&toc), &files).unwrap();
-    testkit::git(p, &["add", "-A"]);
-    testkit::git(p, &["commit", "-q", "-m", "book with the old name"]);
-    testkit::git(p, &["checkout", "-q", "-b", "law/kept"]);
-    std::fs::write(p.join("law/note.md"), "kept\n").unwrap();
-    testkit::git(p, &["add", "-A"]);
-    testkit::git(p, &["commit", "-q", "-m", "kept branch"]);
-    testkit::git(p, &["checkout", "-q", "main"]);
-    repo
-}
+    let book = world.book();
+    let section = std::fs::read_dir(book.join("1-alpha")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).find(|n| n.contains("law-one")).unwrap();
+    std::fs::write(book.join("1-alpha").join(&section), "edited\n").unwrap();
+    std::fs::write(book.join("stray.md"), "x").unwrap();
+    let drifted = run(&["--check"]);
+    assert_eq!(drifted.status.code(), Some(1));
+    let text = said(&drifted);
+    assert!(text.contains(&format!("{section}: differs")), "{text}");
+    assert!(text.contains("stray.md: not generated by toc.toml"), "{text}");
 
-fn land_from_surviving_branches(p: &std::path::Path, held: &BTreeMap<String, String>) -> (Vec<rule::code::Part>, Pointers) {
-    let landed = rule::code::numbers_of(&rule::code::law_files_at(p, "main").unwrap());
-    let toc = rule::code::with_in_flight(p, Some("main"), parse_toc(&testkit::git(p, &["show", "main:law/toc.toml"])).unwrap());
-    let pointers = rule::code::with_store_pointers(rule::code::with_in_flight_pointers(p, Some("main"), Pointers::default()), held);
-    rule::code::catch_up(&toc, &pointers, held, None, &landed, "2026-11-20").unwrap()
+    assert_eq!(run(&[]).status.code(), Some(0));
+    std::fs::write(world.texts.path().join("law-x.txt"), "Do x.").unwrap();
+    let behind = run(&["--check"]);
+    assert_eq!(behind.status.code(), Some(1));
+    assert!(said(&behind).contains("behind the store by 1: law-x"), "{}", said(&behind));
 }
 
 #[test_id(tt3vhsr)]
 #[test]
-fn a_kept_branch_naming_a_statute_renamed_on_a_lost_branch_is_not_carried_into_the_book() {
-    let _env = author_env();
-    let repo = lost_branch_repo();
-    let p = repo.path();
-    let wt_root = testkit::TempDir::new("rule-lost-wt");
-    let mut held = store(&["law-one", "law-dwarf-x", "law-two"]);
-    held.insert("retired-law-aeon-x".into(), retired_record("law-dwarf-x")); // ffx-ok
-    let (toc, pointers) = land_from_surviving_branches(p, &held);
+fn code_refuses_by_name_when_the_book_is_not_configured() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-unconfigured", "", &["law-one"]);
+    world.brain_with_remote();
+    let elsewhere = testkit::TempDir::new("rule-unconfigured-cwd");
+    let out = world.rule(&["code", "--check", "--texts", world.texts.path().to_str().unwrap()], elsewhere.path());
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("SPIRA_LAW_BOOK"), "{}", said(&out));
+}
+
+#[test_id(tqmslin)]
+#[test]
+fn show_resolves_a_section_through_the_wiki_book_and_follows_one_moved_hop() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-show-book", "wiki/law", &["law-one", "law-two", "law-three"]);
+    world.brain_with_remote();
+    std::fs::write(world.book().join("pointers.toml"), "version = 1\n\n[[moved]]\nsection = \"9.9\"\nslug = \"law-two\"\non = \"2026-01-01\"\n").unwrap();
+    let elsewhere = testkit::TempDir::new("rule-show-book-cwd");
+    let current = world.rule(&["show", "1.2"], elsewhere.path());
+    assert_eq!(current.status.code(), Some(0), "{}", said(&current));
+    assert_eq!(String::from_utf8_lossy(&current.stdout).trim(), "Do law-two.");
+    let moved = world.rule(&["show", "9.9"], elsewhere.path());
+    assert_eq!(moved.status.code(), Some(0), "{}", said(&moved));
+    assert_eq!(String::from_utf8_lossy(&moved.stdout).trim(), "§9.9 moved: law-two is now §1.2\nDo law-two.");
+}
+
+#[test_id(tj78yi7)]
+#[test]
+fn code_land_records_a_statute_renamed_in_the_store_as_a_pointer_and_commits_only_the_book() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-land-renamed", "wiki/law", &["law-one", "law-aeon-x", "law-two"]); // ffx-ok
+    world.brain_with_remote();
+    let w = world.wiki();
+    std::fs::write(w.join("wiki/law/toc.toml"), "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-x\",\n  \"law-two\",\n]\n").unwrap(); // ffx-ok
+    let elsewhere = testkit::TempDir::new("rule-land-renamed-cwd");
+    let landed = world.rule(&["code", "--land"], elsewhere.path());
+    assert_eq!(landed.status.code(), Some(0), "{}", said(&landed));
+
+    std::fs::remove_file(world.texts.path().join("law-aeon-x.txt")).unwrap(); // ffx-ok
+    std::fs::write(world.texts.path().join("law-dwarf-x.txt"), "Do it.").unwrap();
+    std::fs::write(world.texts.path().join("retired-law-aeon-x.txt"), retired_record("law-dwarf-x")).unwrap(); // ffx-ok
+    let out = world.rule(&["code", "--land"], elsewhere.path());
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert_eq!(testkit::git(&w, &["log", "-1", "--format=%s"]), "law: code book");
+    let names = testkit::git(&w, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(names.lines().all(|l| l.starts_with("wiki/law/")), "{names}");
+
+    let toc = parse_toc(&std::fs::read_to_string(world.book().join("toc.toml")).unwrap()).unwrap();
     assert_eq!(toc[0].slugs, ["law-one", "law-dwarf-x", "law-two"]);
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "code", "book", &toc, &pointers, &held).unwrap();
-    testkit::git(p, &["checkout", "-q", &branch]);
-    assert!(testkit::git(p, &["ls-files", "law"]).contains("1.2-law-dwarf-x.md"));
-    assert!(!testkit::git(p, &["ls-files", "law"]).contains("aeon")); // ffx-ok
-    assert!(lint_finds(p).is_empty());
-}
-
-#[test_id(t8fpkca)]
-#[test]
-fn a_statute_the_store_lost_with_no_record_leaves_and_the_later_sections_record_their_move() {
-    let _env = author_env();
-    let repo = lost_branch_repo();
-    let p = repo.path();
-    let wt_root = testkit::TempDir::new("rule-gone-wt");
-    let held = store(&["law-one", "law-dwarf-x", "law-two"]);
-    let (toc, pointers) = land_from_surviving_branches(p, &held);
-    assert_eq!(toc[0].slugs, ["law-one", "law-two", "law-dwarf-x"]);
-    assert_eq!(pointers.moved, [Moved { section: "1.3".into(), slug: "law-two".into(), on: "2026-11-20".into() }]);
-    let branch = rule::code::commit_law(p, Some("main"), wt_root.path(), "code", "book", &toc, &pointers, &held).unwrap();
-    testkit::git(p, &["checkout", "-q", &branch]);
-    assert!(!testkit::git(p, &["ls-files", "law"]).contains("aeon")); // ffx-ok
-    assert!(lint_finds(p).is_empty());
-}
-
-#[test_id(tjmedg1)]
-#[test]
-fn a_book_branch_the_base_has_moved_past_is_replaced_not_built_upon() {
-    use rule::code::LawBranch;
-    let _env = author_env();
-    let repo = law_repo();
-    let p = repo.path();
-    let wt_root = testkit::TempDir::new("rule-moved-wt");
-    let base_toc = parse_toc(TOC).unwrap();
-    let t4 = append(&base_toc, 1, "law-four").unwrap();
-    let a = rule::code::commit_law(p, Some("main"), wt_root.path(), "enact", "law-four", &t4, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four"])).unwrap();
-    let a_tip = testkit::git(p, &["rev-parse", &a]);
-    let t6 = append(&base_toc, 1, "law-six").unwrap();
-    std::fs::write(p.join("law/toc.toml"), render_toc(&t6)).unwrap();
-    testkit::git(p, &["commit", "-q", "-am", "enact law-six"]);
-    let main_tip = testkit::git(p, &["rev-parse", "main"]);
-    let both = append(&t4, 1, "law-six").unwrap();
-    let new = rule::code::commit_law(p, Some("main"), wt_root.path(), "code", "book", &both, &Pointers::default(), &store(&["law-one", "law-two", "law-three", "law-four", "law-six"])).unwrap();
-    assert_eq!(testkit::git(p, &["rev-parse", &format!("{new}^")]), main_tip);
-    assert_ne!(testkit::git(p, &["rev-parse", &format!("{new}^")]), a_tip);
-    let merged = std::process::Command::new("git").arg("-C").arg(p).args(["merge-tree", "--write-tree", "main", &new]).output().unwrap();
-    assert!(merged.status.success(), "{}", String::from_utf8_lossy(&merged.stdout));
-    assert_eq!(rule::code::book_tip_ref(p, "main"), Some(rule::code::BookTip::Stranded(new.clone())));
-    let kinds: BTreeMap<String, LawBranch> = rule::code::law_branches(p, "main").into_iter().collect();
-    assert_eq!(kinds.get(&a), Some(&LawBranch::ReplacedBy(new)));
-}
-
-#[test_id(t9856yg)]
-#[test]
-fn a_refiled_law_branch_replaces_the_beads_existing_branch_and_a_first_filing_takes_a_free_name() {
-    let _env = author_env();
-    let repo = law_repo();
-    let p = repo.path();
-    testkit::git(p, &["branch", "spira/sp-x"]);
-    std::fs::write(p.join("law/extra"), "x").unwrap();
-    testkit::git(p, &["checkout", "-q", "-b", "law/fresh"]);
-    testkit::git(p, &["add", "-A"]);
-    testkit::git(p, &["commit", "-q", "-m", "fresh"]);
-    let fresh = testkit::git(p, &["rev-parse", "law/fresh"]);
-    assert!(rule::code::name_law_branch(p, "law/fresh", "spira/sp-x", false).is_err());
-    rule::code::name_law_branch(p, "law/fresh", "spira/sp-x", true).unwrap();
-    assert_eq!(testkit::git(p, &["rev-parse", "spira/sp-x"]), fresh);
-    testkit::git(p, &["branch", "law/second"]);
-    rule::code::name_law_branch(p, "law/second", "spira/sp-y", false).unwrap();
-    assert_eq!(testkit::git(p, &["rev-parse", "spira/sp-y"]), fresh);
-}
-
-const ADMISSION: &str = "gate: VERDICT=NO_VERDICT reason=admission-timeout all 3 host-wide gate admission slots busy for 0s\n";
-
-#[test_id(t0ep6ro)]
-#[test]
-fn a_gate_with_no_verdict_leaves_the_law_item_submitted() {
-    let _env = testkit::env_read();
-    let note = submit_outcome(Some(75), ADMISSION, "sp-x", "spira/sp-x").unwrap().unwrap();
-    assert!(note.contains("admission-timeout") && note.contains("sp-x (SUBMITTED)"), "{note}");
-    assert!(!note.contains('\n'));
-}
-
-#[test_id(t5y34rt)]
-#[test]
-fn a_red_base_leaves_the_law_item_submitted() {
-    let _env = testkit::env_read();
-    assert!(submit_outcome(Some(76), "gate: VERDICT=BASE_FAIL reason=base\n", "sp-x", "spira/sp-x").unwrap().is_some());
-}
-
-#[test_id(tayd8d5)]
-#[test]
-fn a_red_gate_names_the_item_as_submitted_and_red() {
-    let _env = testkit::env_read();
-    let e = submit_outcome(Some(1), "gate: VERDICT=FAIL\n", "sp-x", "spira/sp-x").unwrap_err();
-    assert!(e.contains("SUBMITTED") && e.contains("sp-x") && e.contains(rule::code::RED_AFTER_FILING), "{e}");
-}
-
-#[test_id(tvuewny)]
-#[test]
-fn a_passing_gate_has_nothing_to_say() {
-    let _env = testkit::env_read();
-    assert_eq!(submit_outcome(Some(0), "", "sp-x", "spira/sp-x"), Ok(None));
-}
-
-#[test_id(t3gngdc)]
-#[test]
-fn only_a_failure_before_filing_says_law_was_not_submitted() {
-    let _env = testkit::env_read();
-    let red = submit_outcome(Some(1), "gate: VERDICT=FAIL\n", "sp-x", "spira/sp-x").unwrap_err();
-    assert!(!unlanded_message(&red, "law/ was not submitted").contains("not submitted"));
-    assert_eq!(unlanded_message("rule: bead.sh file: boom", "law/ was not submitted"), "law/ was not submitted");
+    assert!(world.book().join("1-alpha/1.2-law-dwarf-x.md").exists());
+    assert!(!testkit::git(&w, &["ls-files", "wiki/law"]).contains("aeon")); // ffx-ok
+    let pointers = parse_pointers(&std::fs::read_to_string(world.book().join("pointers.toml")).unwrap()).unwrap();
+    assert_eq!((pointers.retired[0].slug.as_str(), pointers.retired[0].replaced_by.as_deref()), ("law-aeon-x", Some("law-dwarf-x"))); // ffx-ok
+    let clean = world.rule(&["code", "--check"], elsewhere.path());
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
 }

@@ -168,7 +168,7 @@ fn exempt(path: &str) -> bool {
         || b == "conf.d.keys.generated.sh"
         || b == "conf.d.defaults.generated.sh"
         || path.ends_with(".md")
-        // Statute seeds are the store's prose, the source of the exempt law/**/*.md pages.
+        // Statute seeds are the store's prose, the source of the rendered book.
         || (path.starts_with("spira/statutes/") && path.ends_with(".txt"))
         || (b.starts_with("test-") && b.ends_with(".sh"))
         || path.ends_with(".json")

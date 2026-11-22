@@ -1048,10 +1048,9 @@ mod tests {
     }
 }
 
-/// What `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]` prints, read from the tracked `law/` tree
-/// under `root`. `Err` carries the Part list when nothing matches.
-pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (String, String)> {
-    let law = root.join("law");
+/// What `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]` prints, read from the statute book
+/// directory `law`. `Err` carries the Part list when nothing matches.
+pub fn law_view(law: &std::path::Path, arg: Option<&str>) -> Result<String, (String, String)> {
     let index = std::fs::read_to_string(law.join("index.md")).map_err(|e| (format!("{}: {e}", law.join("index.md").display()), String::new()))?;
     let Some(arg) = arg else { return Ok(index) };
     let miss = || (format!("no Part or section '{arg}'; the Parts are:"), index.clone());
@@ -1061,7 +1060,7 @@ pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (St
         v
     };
     let key_of = |name: &str| name.split_once('-').map(|(k, _)| k.to_string());
-    let part_dir = |n: &str| entries(&law).into_iter().find(|(name, p)| p.is_dir() && key_of(name).as_deref() == Some(n));
+    let part_dir = |n: &str| entries(law).into_iter().find(|(name, p)| p.is_dir() && key_of(name).as_deref() == Some(n));
     let read = |p: &std::path::Path| std::fs::read_to_string(p).map_err(|e| (format!("{}: {e}", p.display()), String::new()));
     if arg.chars().all(|c| c.is_ascii_digit()) && !arg.is_empty() {
         let (_, dir) = part_dir(arg).ok_or_else(miss)?;
@@ -1069,7 +1068,7 @@ pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (St
     }
     let by_slug = |slug: &str| {
         let want = format!("{slug}.md");
-        entries(&law).into_iter().filter(|(_, p)| p.is_dir()).find_map(|(_, dir)| entries(&dir).into_iter().find(|(name, _)| name.split_once('-').is_some_and(|(_, rest)| rest == want)).map(|(_, f)| f))
+        entries(law).into_iter().filter(|(_, p)| p.is_dir()).find_map(|(_, dir)| entries(&dir).into_iter().find(|(name, _)| name.split_once('-').is_some_and(|(_, rest)| rest == want)).map(|(_, f)| f))
     };
     if let Some(toc) = std::fs::read_to_string(law.join("toc.toml")).ok().and_then(|t| rule::code::parse_toc(&t).ok()) {
         let pointers = match std::fs::read_to_string(law.join("pointers.toml")) {
@@ -1103,7 +1102,7 @@ mod law_tests {
     fn fixture() -> testkit::TempDir {
         let d = testkit::TempDir::new("work-law");
         let w = |p: &str, t: &str| {
-            let path = d.join("law").join(p);
+            let path = d.join(p);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, t).unwrap();
         };
