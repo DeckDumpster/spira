@@ -2293,6 +2293,7 @@ fn an_attribution_line_saying_abandoned_ends_the_round_unjudged_and_the_repo_cut
     assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE]);
 }
 
+#[test_id(t7laz50)]
 #[test]
 fn an_attribution_whose_member_was_ejected_by_the_concierge_is_stopped_and_certifies_the_survivors_once() {
     let mut carry = driving(State::Attributing, "spira.a2");
@@ -2310,6 +2311,7 @@ fn an_attribution_whose_member_was_ejected_by_the_concierge_is_stopped_and_certi
     assert_eq!(stops(&again), 0, "one stop per eject: {again:?}");
 }
 
+#[test_id(tgme52o)]
 #[test]
 fn an_attribution_whose_member_the_batcher_itself_ejected_runs_on_and_certifies_its_rebuilt_head() {
     use batcher_cut::attribute::Attribution;

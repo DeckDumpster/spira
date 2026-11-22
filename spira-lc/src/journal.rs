@@ -945,6 +945,7 @@ mod tests {
         assert_eq!(clip("short"), "short");
     }
 
+    #[test_id(te5h1y9)]
     #[test]
     fn the_sweep_command_line_takes_from_in_either_order_and_refuses_a_bad_cursor() {
         let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -957,6 +958,7 @@ mod tests {
         assert!(msg.contains("is not schedule:<key>, legacy:<key> or effect:<key>"), "{msg}");
     }
 
+    #[test_id(ttunju6)]
     #[test]
     fn a_sweep_malformed_flag_is_refused_and_a_stop_names_the_command_that_resumes_it() {
         let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();

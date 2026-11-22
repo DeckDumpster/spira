@@ -1036,6 +1036,7 @@ mod tests {
         assert!(draft_trailer_refusals("### Draft: T\n\nbody\nOpen: q\n\nSubmitted: work committed on branch x\n").is_empty());
     }
 
+    #[test_id(tui95nw)]
     #[test]
     fn skuld_drafted_names_the_line_that_follows_a_body() {
         let l = vec!["draft".to_string()];
@@ -1046,6 +1047,7 @@ mod tests {
         assert!(err.contains("holds this body verbatim"), "{err}");
     }
 
+    #[test_id(t7lt8f9)]
     #[test]
     fn skuld_drafted_passes_a_draft_followed_by_the_harness_submit_note() {
         let l = vec!["draft".to_string()];

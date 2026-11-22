@@ -6102,6 +6102,7 @@ mod land_exit_tests {
         assert_eq!((rounds[0].ejected.clone(), rounds[1].ejected.clone()), (vec!["sp-a".to_string(), "sp-b".to_string()], vec!["sp-c".to_string()]));
     }
 
+    #[test_id(tp6mqdm)]
     #[test]
     fn status_lists_who_ejected_each_ejected_bead_in_order() {
         let out = "round=open\nbatch_id=r1\nejected=sp-a sp-b \nejected_by=batcher concierge \n";

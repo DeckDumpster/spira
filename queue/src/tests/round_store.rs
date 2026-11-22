@@ -325,6 +325,7 @@ fn an_eject_records_who_made_it_beside_the_ejected_bead() {
     assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("batcher concierge ")), "{:?}", rec.kv);
 }
 
+#[test_id(t00cs1p)]
 #[test]
 fn an_eject_leaves_an_earlier_eject_with_no_recorded_actor_unclaimed_and_stamps_every_stacked_one() {
     let t = round_world();
@@ -340,6 +341,7 @@ fn an_eject_leaves_an_earlier_eject_with_no_recorded_actor_unclaimed_and_stamps_
     assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("- batcher ")), "{:?}", rec.kv);
 }
 
+#[test_id(tmqhh9k)]
 #[test]
 fn plain_eject_of_a_round_member_refuses_naming_the_round_eject_and_changes_nothing() {
     let t = round_world();

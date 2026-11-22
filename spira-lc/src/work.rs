@@ -2856,6 +2856,7 @@ mod tests {
         assert!(!msg.contains("Second"), "{msg}");
     }
 
+    #[test_id(td6fwh4)]
     #[test]
     fn a_working_exit_the_rune_does_not_declare_is_refused_by_name() {
         let exits = v(&["DONE", "ask", "park", "hold"]);
