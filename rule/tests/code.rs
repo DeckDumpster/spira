@@ -73,9 +73,7 @@ fn a_regenerated_page_keeps_its_dates_until_its_body_changes() {
     assert_eq!(again, first);
     let changed = generate(&parts, &Pointers::default(), |s| if s == "law-two" { Some("Do two, differently.".into()) } else { book(s) }, &first, "2026-12-01");
     for (k, v) in &changed {
-        if k == "1-alpha/1.2-law-two.md" {
-            assert!(v.contains("created: 2026-11-22\nupdated: 2026-12-01\n"), "{v}");
-        } else if k == "1-alpha/index.md" {
+        if k == "1-alpha/1.2-law-two.md" || k == "1-alpha/index.md" {
             assert!(v.contains("created: 2026-11-22\nupdated: 2026-12-01\n"), "{v}");
         } else {
             assert_eq!(v, &first[k], "{k}");
