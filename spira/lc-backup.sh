@@ -375,7 +375,7 @@ _lcb_record_deferral() {
 }
 
 _lcb_drill_wait_quiet() {
-    local why t0; t0="$(_lcb_now_ns)"
+    local why t0; t0="$(date +%s)"
     while why="$(_lcb_drill_busy)"; [ -n "$why" ]; do
         if [ "$(date +%s)" -ge "$_LCB_DRILL_DEADLINE" ]; then
             echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why (quiet wait $(( $(date +%s) - t0 ))s)" | _lcb_record_deferral "$@" >&2
