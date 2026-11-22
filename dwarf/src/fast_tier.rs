@@ -44,8 +44,14 @@ pub struct Red {
     pub harness: bool,
     /// The signal that killed the step before it judged the branch.
     pub killed_by: Option<i32>,
+    /// The fence ran and declared it could not judge the branch.
+    pub could_not_run: bool,
     pub text: String,
 }
+
+/// The build fence's exit for "the compile did not judge the tree"; `gate::engine::NOVERDICT`
+/// is the same value (dwarf does not depend on gate).
+pub const FENCE_COULD_NOT_RUN: i32 = 75;
 
 /// The signal behind a `128+sig` exit, for the signals a stopped unit delivers.
 fn killing_signal(rc: i32) -> Option<i32> {
@@ -64,7 +70,7 @@ fn signal_name(sig: i32) -> String {
 
 /// A step killed by a signal never judged the branch: certification builds the tree in full.
 pub fn certify_anyway(red: &Red) -> bool {
-    red.killed_by.is_some()
+    red.killed_by.is_some() || red.could_not_run
 }
 
 /// Whether the branch changes what spira-lint compiles in (the key registry), so the installed
@@ -83,20 +89,23 @@ pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &st
     let head = git.git(work, &["rev-parse", "HEAD"]);
     let tip = if head.success() && !head.stdout.trim().is_empty() { head.stdout.trim().to_string() } else { branch.to_string() };
     if let Merge::Conflict { text, .. } = merge_onto(&|a| run_git(git, repo, a), base_fq, &tip) {
-        return Some(Red { harness: false, killed_by: None, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{text}") });
+        return Some(Red { harness: false, killed_by: None, could_not_run: false, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{text}") });
     }
     if !work.join("spira/build-fence.sh").is_file() {
-        return strict.then(|| Red { harness: false, killed_by: None, text: format!("{} carries no spira/build-fence.sh — there is no fast tier to run", work.display()) });
+        return strict.then(|| Red { harness: false, killed_by: None, could_not_run: false, text: format!("{} carries no spira/build-fence.sh — there is no fast tier to run", work.display()) });
     }
     for (prog, args) in steps(base_fq, changes_compiled_registry(git, work, base_fq)) {
         let o = exec.exec(prog, &args, None, Some(work));
         if o.code != 0 && (o.code != 127 || strict) {
             let name = if args.iter().any(|a| a == "spira/build-fence.sh") { "spira/build-fence.sh" } else { "spira-lint" };
             if let Some(sig) = killing_signal(o.code) {
-                return Some(Red { harness: true, killed_by: Some(sig), text: format!("{name} killed by {} (rc={}) before it judged the branch:\n{}{}", signal_name(sig), o.code, o.stdout, o.stderr) });
+                return Some(Red { harness: true, killed_by: Some(sig), could_not_run: false, text: format!("{name} killed by {} (rc={}) before it judged the branch:\n{}{}", signal_name(sig), o.code, o.stdout, o.stderr) });
+            }
+            if name == "spira/build-fence.sh" && o.code == FENCE_COULD_NOT_RUN {
+                return Some(Red { harness: true, killed_by: None, could_not_run: true, text: format!("{name} could not run (rc={}):\n{}{}", o.code, o.stdout, o.stderr) });
             }
             let harness = name == "spira-lint" && o.code == LINT_PROBE_FAILED;
-            return Some(Red { harness, killed_by: None, text: format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr) });
+            return Some(Red { harness, killed_by: None, could_not_run: false, text: format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr) });
         }
     }
     None
@@ -248,6 +257,14 @@ mod tests {
         let r = fence_red(0, 143, "build-fence: cargo check -p dwarf\n");
         assert!(r.harness && r.killed_by == Some(15) && certify_anyway(&r), "{r:?}");
         assert!(r.text.starts_with("spira/build-fence.sh killed by SIGTERM (rc=143)"), "{r:?}");
+    }
+
+    #[test_id(t9unhgp)]
+    #[test]
+    fn a_fence_that_could_not_run_is_a_harness_red_handed_to_certification() {
+        let r = fence_red(0, 75, "error: could not compile `sift` (lib)\n\nCaused by:\n  process didn't exit successfully: `sccache rustc --crate-name sift …` (signal: 9, SIGKILL: kill)\n");
+        assert!(certify_anyway(&r) && r.harness, "{r:?}");
+        assert!(r.text.starts_with("spira/build-fence.sh could not run (rc=75)"), "{r:?}");
     }
 
     #[test_id(triph3i)]
