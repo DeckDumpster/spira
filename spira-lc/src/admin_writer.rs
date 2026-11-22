@@ -114,7 +114,11 @@ pub(crate) fn record_check() -> Verdict {
 
 /// The kept verdict as the `writer-grants` verb answers it; no store read.
 pub(crate) fn grants_json() -> String {
-    let v = match CHECKED.get() {
+    answer(CHECKED.get())
+}
+
+fn answer(kept: Option<&(u64, Verdict)>) -> String {
+    let v = match kept {
         None => serde_json::json!({"checked_at": null, "writer": false, "missing": [], "error": null}),
         Some((at, verdict)) => {
             let (missing, error) = match verdict {
@@ -190,6 +194,22 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     use std::cell::RefCell;
+
+    #[test_id(tagzzkj)]
+    #[test]
+    fn the_writer_grants_answer_tells_not_yet_checked_no_writer_missing_and_cannot_apart() {
+        let parse = |k: Option<&(u64, Verdict)>| serde_json::from_str::<Value>(&answer(k)).unwrap();
+        assert_eq!(parse(None), json!({"checked_at": null, "writer": false, "missing": [], "error": null}));
+        assert_eq!(parse(Some(&(7, None))), json!({"checked_at": 7, "writer": false, "missing": [], "error": null}));
+        assert_eq!(
+            parse(Some(&(7, Some(Ok(vec!["dependencies".into()]))))),
+            json!({"checked_at": 7, "writer": true, "missing": ["dependencies"], "error": null})
+        );
+        assert_eq!(
+            parse(Some(&(7, Some(Err("no route".into()))))),
+            json!({"checked_at": 7, "writer": true, "missing": [], "error": "no route"})
+        );
+    }
 
     struct Server {
         tables: Vec<&'static str>,
