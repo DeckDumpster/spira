@@ -562,6 +562,7 @@ mod tests {
         }
     }
 
+    #[test_id(toc04ye)]
     #[test]
     fn rss_anon_is_read_from_its_own_status_line_not_vmrss() {
         let status = "VmRSS:\t  900 kB\nRssAnon:\t  2048 kB\nRssFile:\t 10 kB\n";
@@ -569,12 +570,14 @@ mod tests {
         assert_eq!(rss_anon_bytes_of("VmRSS: 9 kB\n"), None);
     }
 
+    #[test_id(tnu1ew9)]
     #[test]
     fn a_verb_is_first_once() {
         assert!(first_of_verb("first-of-verb-test"));
         assert!(!first_of_verb("first-of-verb-test"));
     }
 
+    #[test_id(t0xj0zz)]
     #[test]
     fn one_call_over_the_limit_raises_one_red_for_its_own_pair() {
         let (lim, t0, mut l) = (limits(&["watch"]), std::time::Instant::now(), Latency::default());
@@ -586,6 +589,7 @@ mod tests {
         assert!(l.transitions(&lim, t0, 8).is_empty(), "a pair stays red without repeating");
     }
 
+    #[test_id(t4skdoo)]
     #[test]
     fn a_red_pair_clears_once_the_window_holds_no_call_over_the_limit() {
         let (lim, t0, mut l) = (limits(&["watch"]), std::time::Instant::now(), Latency::default());
@@ -597,6 +601,7 @@ mod tests {
         assert!(l.transitions(&lim, later, 10).is_empty());
     }
 
+    #[test_id(t8bgdt2)]
     #[test]
     fn a_red_pair_that_goes_silent_still_clears() {
         let (lim, t0, mut l) = (limits(&[]), std::time::Instant::now(), Latency::default());
@@ -607,6 +612,7 @@ mod tests {
         assert!(l.transitions(&lim, later, 3).is_empty());
     }
 
+    #[test_id(tc6usev)]
     #[test]
     fn the_waiting_verbs_exempt_come_from_the_configuration() {
         let (lim, t0, mut l) = (limits(&["watch", "foo-poll"]), std::time::Instant::now(), Latency::default());
@@ -618,6 +624,7 @@ mod tests {
         assert_eq!(l.transitions(&lim, t0, 2).len(), 1, "a verb the list does not name is held to the limit");
     }
 
+    #[test_id(txkct29)]
     #[test]
     fn brokered_batch_methods_are_not_alarmed() {
         let (lim, t0, mut l) = (limits(&[]), std::time::Instant::now(), Latency::default());
@@ -628,6 +635,7 @@ mod tests {
         assert_eq!(l.transitions(&lim, t0, 2).len(), 1, "a verb recorded for the scheduler is a store write, held to the limit");
     }
 
+    #[test_id(tcw2d9p)]
     #[test]
     fn a_note_or_label_write_answered_in_the_service_is_held_to_the_limit() {
         let (lim, t0, mut l) = (limits(&[]), std::time::Instant::now(), Latency::default());
@@ -640,6 +648,7 @@ mod tests {
         assert!(is_batch_method("work:read"));
     }
 
+    #[test_id(tlpkksv)]
     #[test]
     fn calls_over_the_limit_are_counted_by_verb_and_caller() {
         request_done("over-probe", "over-probe", "over-probe-caller", None, Duration::from_millis(150));
@@ -652,6 +661,7 @@ mod tests {
         assert_eq!(over("over-probe-wait"), None, "a waiting verb is never over");
     }
 
+    #[test_id(toqkeuh)]
     #[test]
     fn answer_limits_are_refused_by_key_when_missing_or_unparsable() {
         let ok = |k: &str| match k {
@@ -668,6 +678,7 @@ mod tests {
         assert!(answer_limits_from(|k| Ok(if k == ANSWER_KEY { "100".into() } else { String::new() })).unwrap().waiting.is_empty(), "an empty list exempts nothing");
     }
 
+    #[test_id(t0c1xjn)]
     #[test]
     fn a_work_request_is_measured_by_its_lane_verb() {
         let a = |v: &[&str]| method_of(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
@@ -678,6 +689,7 @@ mod tests {
         assert_eq!(a(&["ops-view", "not-a-view"]), "ops-view", "an unknown argument is no new label");
     }
 
+    #[test_id(tg0jzvd)]
     #[test]
     fn spira_caller_is_read_from_the_environment_block() {
         assert_eq!(env_caller(b"A=1\0SPIRA_CALLER=batcher\0B=2\0").as_deref(), Some("batcher"));
@@ -685,6 +697,7 @@ mod tests {
         assert_eq!(env_caller(b"XSPIRA_CALLER=y\0"), None);
     }
 
+    #[test_id(tro6n8g)]
     #[test]
     fn a_parent_is_named_by_program_and_subcommand() {
         assert_eq!(cmdline_caller(b"cockpit-collect\0core\0--x\0").as_deref(), Some("cockpit-collect/core"));
@@ -694,6 +707,7 @@ mod tests {
         assert_eq!(cmdline_caller(b""), None);
     }
 
+    #[test_id(tr0wbd9)]
     #[test]
     fn wrappers_are_recognised_and_programs_are_not() {
         for w in [&b"timeout\x0030\0spira-lc\0show\0"[..], b"usr/bin/env\0X=1\0y\0", b"nice\0-n\x0010\0z\0", b"bash\0-c\0. lib; f\0", b"spira-supervise\0x\0"] {
@@ -704,6 +718,7 @@ mod tests {
         }
     }
 
+    #[test_id(t6bj1dz)]
     #[test]
     fn shape_drops_values_and_folds_lists() {
         let a = shape("SELECT * FROM bead WHERE id = 'sp-1' AND version = 12 AND s IN ('a','b', 'c')");
@@ -713,6 +728,7 @@ mod tests {
         assert!(a.contains("bead"));
     }
 
+    #[test_id(thy1ayi)]
     #[test]
     fn a_threshold_the_config_does_not_declare_is_refused_by_name() {
         let missing = "SPIRA_SLOW_QUERY_MS is not a registered config key (spira/conf.d) — refusing".to_string();
@@ -722,11 +738,13 @@ mod tests {
         assert!(threshold_from(Ok("fast".into())).unwrap_err().contains("SPIRA_SLOW_QUERY_MS"));
     }
 
+    #[test_id(tkzthj3)]
     #[test]
     fn digits_inside_identifiers_survive() {
         assert!(shape("SELECT a1 FROM t2").contains("a1 FROM t2"));
     }
 
+    #[test_id(tgjfas4)]
     #[test]
     fn a_fast_query_writes_nothing_and_a_slow_one_one_line() {
         let d = testkit::TempDir::new("slow-rec");
@@ -744,6 +762,7 @@ mod tests {
         assert_eq!((f[1], f[2], f[3], f[4]), ("list", "spira-lc", "1500", "SELECT * FROM bead WHERE id = ?"));
     }
 
+    #[test_id(t4mslry)]
     #[test]
     fn a_request_is_logged_whole_and_counted_per_verb_and_caller() {
         let d = testkit::TempDir::new("slow-req");
@@ -764,6 +783,7 @@ mod tests {
         assert!(s["callers"].as_array().unwrap().iter().any(|c| c["verb"] == "probe-verb" && c["caller"] == "probe_caller" && c["task"] == "-" && c["count"] == 2 && c["total_ms"] == 100));
     }
 
+    #[test_id(toxf2sm)]
     #[test]
     fn series_carry_verb_caller_and_task_and_only_the_delta() {
         let mut c = Counters::default();
@@ -789,6 +809,7 @@ mod tests {
         assert_eq!(flat, [1.0, 0.2]);
     }
 
+    #[test_id(t3o0b28)]
     #[test]
     fn reads_ended_and_overran_are_pushed_by_verb_summed_over_requests() {
         let mut c = Counters::default();
@@ -807,6 +828,7 @@ mod tests {
         assert!(read_series_since(&c, &pushed, std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "only the delta");
     }
 
+    #[test_id(tpjupr9)]
     #[test]
     fn the_longest_gate_wait_of_a_verb_is_pushed_once_per_interval() {
         gate_waited("list", Duration::from_millis(20));
@@ -819,6 +841,7 @@ mod tests {
         assert!(take_gate_wait_series(std::time::SystemTime::now()).iter().all(|s| s.labels[0].1 != "list"), "taken once");
     }
 
+    #[test_id(t4kpgzc)]
     #[test]
     fn reads_done_accumulates_into_the_counters() {
         reads_done("reads-probe", 1, 0);
@@ -826,6 +849,7 @@ mod tests {
         assert_eq!(COUNTERS.lock().unwrap().reads["reads-probe"], (3, 5));
     }
 
+    #[test_id(towqmdb)]
     #[test]
     fn resident_memory_is_read_from_the_vmrss_line_in_kb() {
         assert_eq!(rss_bytes_of("Name:\tspira-lc\nVmRSS:\t  2048 kB\nThreads:\t4\n"), Some(2048 * 1024));
@@ -834,6 +858,7 @@ mod tests {
         assert!(rss_bytes_of(&own).is_some_and(|b| b > 0), "this process's own status names its resident size");
     }
 
+    #[test_id(t4lq1md)]
     #[test]
     fn a_failed_push_keeps_the_delta_for_the_next_period() {
         request_done("push-probe", "push-probe", "who", Some("t"), Duration::from_millis(3));
@@ -845,6 +870,7 @@ mod tests {
         assert!(series_since(&c, &pushed, std::time::SystemTime::now()).iter().any(|s| s.labels.contains(&("verb".into(), "push-probe".into()))));
     }
 
+    #[test_id(t5s0h5b)]
     #[test]
     fn a_caller_name_is_the_comm_of_the_pid_and_unknown_pids_are_dashes() {
         let comm = std::fs::read_to_string(format!("{}/comm", system_paths::PROC_SELF)).unwrap();
