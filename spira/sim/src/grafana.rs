@@ -7,7 +7,6 @@ use std::process::{Command, Stdio};
 pub const URL_ENV: &str = "PILGRIM_GRAFANA_URL";
 pub const TOKEN_FILE: &str = "config/grafana-token";
 const ACCOUNT_FILE: &str = "config/grafana-account";
-const CALL_SECS: &str = "5";
 
 pub struct Reply {
     pub status: u16,
@@ -31,8 +30,8 @@ impl Http for Curl {
         if let Some(t) = bearer {
             cfg += &format!("header = \"Authorization: Bearer {t}\"\n");
         }
-        let mut cmd = Command::new("curl"); // bounded by --max-time CALL_SECS
-        cmd.args(["-sS", "--max-time", CALL_SECS, "-K", "-", "-X", method, "-w", "\n%{http_code}", url]);
+        let mut cmd = Command::new("curl");
+        cmd.args(["-sS", "--max-time", "5", "-K", "-", "-X", method, "-w", "\n%{http_code}", url]);
         if let Some(b) = body {
             cmd.args(["-H", "Content-Type: application/json", "--data-binary", b]);
         }
