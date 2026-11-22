@@ -171,7 +171,7 @@ pub fn draft_trailer_refusals(notes: &str) -> Vec<String> {
             let (title, body) = d.split_once('\n').unwrap_or((d, ""));
             let after_open = body.lines().skip_while(|l| !l.starts_with("Open:")).skip(1);
             let line = after_open.map(str::trim).find(|l| !l.is_empty() && !l.starts_with(HARNESS_SUBMIT_NOTE))?;
-            Some(format!("draft \"{}\": after its Open: line comes `{line}`; a correction is the whole draft again as a new note, never a paragraph after one; keep `Open:` on one line", title.trim()))
+            Some(format!("draft \"{}\": after its Open: line comes `{line}`; a correction is the whole draft again as a new note, never a paragraph after one", title.trim()))
         })
         .collect()
 }
