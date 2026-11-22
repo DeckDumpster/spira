@@ -44,10 +44,7 @@ fn scan(dry: bool, grace: u64, exe: Option<&str>) -> Result<usize, String> {
     let (suite, gate, load_wait, slot_wait) = caps()?;
     let inbox = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?;
     let run = std::path::PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?);
-    let procs: Vec<cap::Proc> = cap::live()
-        .into_iter()
-        .map(|p| cap::Proc { age_secs: p.age_secs.saturating_sub(cap::excused_secs(&run, &p)), ..p })
-        .collect();
+    let procs = cap::uncounted(&run, cap::live());
     let mut killed = 0;
     for b in cap::breaches(&procs, suite, gate, load_wait, slot_wait, grace, exe) {
         if dry {

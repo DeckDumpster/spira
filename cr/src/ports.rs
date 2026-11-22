@@ -68,31 +68,52 @@ pub struct Config {
 /// The `issue_type` of each bead named, read through spira-lc; a bead the store lacks is absent.
 pub trait Beads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String>;
+    /// Of the beads named, those labelled `incident`, with their titles.
+    fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String>;
 }
 
 const BEAD_CHUNK: usize = 50;
 
-pub struct LcBeads;
+pub struct LcBeads {
+    pub incident_label: String,
+}
 
 impl Beads for LcBeads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        let lc = spira_store::lc_call::LcClient::configured()?;
         let mut out = BTreeMap::new();
-        for chunk in ids.chunks(BEAD_CHUNK) {
-            let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
-            let reply = lc.call(&argv).map_err(String::from)?;
-            let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
-            let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
-                return Err(format!("spira-lc plan items: {}", reply.why()));
-            };
-            for item in &items {
-                if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
-                    out.insert(id.to_string(), kind.to_string());
-                }
+        for item in plan_items(ids)? {
+            if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
+                out.insert(id.to_string(), kind.to_string());
             }
         }
         Ok(out)
     }
+    fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        if self.incident_label.is_empty() {
+            return Err("SPIRA_INCIDENT_LABEL is empty: cannot tell which beads are incidents".into());
+        }
+        Ok(incidents_in(&plan_items(ids)?, &self.incident_label))
+    }
+}
+
+fn incidents_in(items: &[serde_json::Value], label: &str) -> BTreeMap<String, String> {
+    let labelled = |i: &&serde_json::Value| i["labels"].as_array().is_some_and(|l| l.iter().any(|x| x == label));
+    items.iter().filter(labelled).filter_map(|i| Some((i["id"].as_str()?.to_string(), i["title"].as_str().unwrap_or("(untitled)").to_string()))).collect()
+}
+
+fn plan_items(ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
+    let lc = spira_store::lc_call::LcClient::configured()?;
+    let mut all = Vec::new();
+    for chunk in ids.chunks(BEAD_CHUNK) {
+        let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
+        let reply = lc.call(&argv).map_err(String::from)?;
+        let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
+        let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
+            return Err(format!("spira-lc plan items: {}", reply.why()));
+        };
+        all.extend(items);
+    }
+    Ok(all)
 }
 
 /// Every test the registry ever disabled, with the first time (epoch seconds) it was.
@@ -115,17 +136,23 @@ impl Registry for SqliteRegistry {
 
 /// A fixed answer for tests and simulation.
 #[derive(Clone)]
-pub struct FixtureBeads(pub Result<BTreeMap<String, String>, String>);
+pub struct FixtureBeads {
+    pub types: Result<BTreeMap<String, String>, String>,
+    pub incidents: Result<BTreeMap<String, String>, String>,
+}
 
 impl Default for FixtureBeads {
     fn default() -> Self {
-        FixtureBeads(Ok(BTreeMap::new()))
+        FixtureBeads { types: Ok(BTreeMap::new()), incidents: Ok(BTreeMap::new()) }
     }
 }
 
 impl Beads for FixtureBeads {
     fn types(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        self.0.clone()
+        self.types.clone()
+    }
+    fn incidents(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        self.incidents.clone()
     }
 }
 
@@ -583,5 +610,26 @@ impl SourceTree for GitTree {
         let mut cols = line.split('\t');
         let (added, deleted): (u32, u32) = (cols.next()?.parse().ok()?, cols.next()?.parse().ok()?);
         Some(added.max(deleted))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(tl05c11)]
+    #[test]
+    fn incidents_in_keeps_only_beads_labelled_incident_and_never_an_empty_title() {
+        let items: Vec<serde_json::Value> = serde_json::from_str(r#"[{"id":"sp-a","title":"lost write","labels":["incident"]},{"id":"sp-b","title":"x","labels":["other"]},{"id":"sp-c","title":"y"},{"id":"sp-d","labels":["incident"]}]"#).unwrap();
+        let got = incidents_in(&items, "incident");
+        assert!(incidents_in(&items, "alarm").is_empty());
+        assert_eq!(got.into_iter().collect::<Vec<_>>(), vec![("sp-a".into(), "lost write".into()), ("sp-d".into(), "(untitled)".into())]);
+    }
+
+    #[test_id(td7c7z4)]
+    #[test]
+    fn an_unconfigured_incident_label_is_an_error_not_none_found() {
+        let beads = LcBeads { incident_label: String::new() };
+        assert!(beads.incidents(&["sp-a".to_string()]).unwrap_err().contains("SPIRA_INCIDENT_LABEL"));
     }
 }

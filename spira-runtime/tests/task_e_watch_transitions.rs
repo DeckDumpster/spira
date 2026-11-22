@@ -1369,7 +1369,7 @@ fn a_gate_is_read_from_the_queue_and_the_admission_leases() {
     use landing_pass::gateq::{Job, Where};
     use spira_config::admission::Lease;
     let job = |branch: &str, bead: &str| Job::new("spira", branch, bead, "t", false);
-    let lease = |who: &str, since: u64| Lease { slot: 1, pid: 1, start: 1, who: who.into(), since, waited: 0, last: since, weight: 1 };
+    let lease = |who: &str, since: u64| Lease { slot: 1, pid: 1, start: 1, who: who.into(), since, waited: 0, last: since, weight: 1, until: None };
     let jobs = vec![(Where::Inbox, job("spira/sp-q", "sp-q")), (Where::Claimed, job("spira/sp-a1", "sp-a1")), (Where::Claimed, job("spira/sp-w", "sp-w"))];
     let got = gates_of(&jobs, &[lease("spira/sp-a1", 100)]);
     assert_eq!(got.get("sp-q"), Some(&Gating::Queued));

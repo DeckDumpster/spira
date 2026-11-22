@@ -39,6 +39,19 @@ pub fn commits_line(paths: &[String], tree: &dyn SourceTree, beads: &dyn Beads) 
     format!("- Commits: {} ever, {reverts} reverts, {fixes}\n", commits.len())
 }
 
+/// The body of the incidents section: each incident bead named by a commit touching `paths`, or why it is unknown.
+pub fn incident_lines(paths: &[String], tree: &dyn SourceTree, beads: &dyn Beads) -> String {
+    let named: BTreeSet<String> = paths.iter().flat_map(|p| tree.log(p)).filter_map(|c| bead_of(&c.subject)).collect();
+    if named.is_empty() {
+        return "None found.\n".to_string();
+    }
+    match beads.incidents(&named.into_iter().collect::<Vec<_>>()) {
+        Err(e) => format!("- Incidents: unknown ({e})\n"),
+        Ok(found) if found.is_empty() => "None found.\n".to_string(),
+        Ok(found) => found.iter().map(|(id, title)| format!("- `{id}`: {title}\n")).collect(),
+    }
+}
+
 pub fn rewritten_line(paths: &[String], tree: &dyn SourceTree, now_ms: u64, days: u32) -> String {
     let mut ages: Vec<u64> = paths.iter().flat_map(|p| tree.line_times(p)).map(|t| now_ms.saturating_sub(t)).collect();
     if ages.is_empty() {

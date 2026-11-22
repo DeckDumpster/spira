@@ -1085,6 +1085,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             who: &who,
             inherit: inherit.as_deref(),
             weight: 1,
+            bound_secs: cap::remaining(),
         };
         let seams = admission::Seams {
             size_of: &size_of,

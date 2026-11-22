@@ -29,11 +29,11 @@ impl Procs for FakeProcs {
 }
 
 fn h(pid: u32, start: u64, who: &str) -> Holder {
-    Holder { pid, start, who: who.into(), weight: 1 }
+    Holder { pid, start, who: who.into(), weight: 1, bound_secs: None }
 }
 
 fn hw(pid: u32, start: u64, who: &str, weight: u64) -> Holder {
-    Holder { pid, start, who: who.into(), weight }
+    Holder { pid, start, who: who.into(), weight, bound_secs: None }
 }
 
 fn run_dir() -> testkit::TempDir {
@@ -94,9 +94,9 @@ fn pools_have_their_own_directories_and_keys() {
 #[test_id(t0r4u4o)]
 #[test]
 fn a_lease_round_trips_and_a_blank_who_is_a_dash() {
-    let l = Lease { slot: 2, pid: 10, start: 99, who: "sp-abc".into(), since: 5, waited: 3, last: 7, weight: 4 };
+    let l = Lease { slot: 2, pid: 10, start: 99, who: "sp-abc".into(), since: 5, waited: 3, last: 7, weight: 4, until: None };
     assert_eq!(Lease::parse(2, &l.render()), Some(l));
-    let blank = Lease { slot: 1, pid: 10, start: 99, who: "a b".into(), since: 5, waited: 0, last: 5, weight: 1 };
+    let blank = Lease { slot: 1, pid: 10, start: 99, who: "a b".into(), since: 5, waited: 0, last: 5, weight: 1, until: None };
     // A lease written before weights existed reads as weight 1.
     assert_eq!(Lease::parse(1, "pid=10 start=99 who=x since=5 waited=0 last=5").unwrap().weight, 1);
     assert!(blank.render().contains("who=a_b "));
@@ -199,7 +199,7 @@ fn acquire_waits_visibly_then_admits_and_the_guard_releases() {
         *sleeps.borrow_mut() += 1;
         p.kill(10);
     };
-    let q = Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "sp-new", inherit: None, weight: 1 };
+    let q = Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "sp-new", inherit: None, weight: 1, bound_secs: None };
     let g = acquire(&q, &Seams { size_of: &|| 1, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
     assert!(g.held());
     assert_eq!((g.slot(), g.token.as_str()), (1, "test:1"));
@@ -221,12 +221,12 @@ fn acquire_under_an_admitted_job_takes_nothing_and_never_waits() {
     try_take(&d, Pool::Test, 1, &h(10, 1, "sp-held"), 0, 100, &p).unwrap();
     let never = |_: Duration| panic!("an inherited job must not wait");
     let seams = Seams { size_of: &|| 1, procs: &p, sleep: &never };
-    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some("gate:2"), weight: 1 }, &seams, &mut |_| {});
+    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some("gate:2"), weight: 1, bound_secs: None }, &seams, &mut |_| {});
     assert!(!g.held());
     assert_eq!(g.token, "gate:2");
     // An empty value is not an inheritance.
     p.kill(10);
-    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some(" "), weight: 1 }, &seams, &mut |_| {});
+    let g = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "x", inherit: Some(" "), weight: 1, bound_secs: None }, &seams, &mut |_| {});
     assert!(g.held());
 }
 
@@ -236,7 +236,7 @@ fn an_unreadable_holder_runs_unadmitted_rather_than_failing() {
     let d = run_dir();
     let p = FakeProcs::default();
     let mut said = Vec::new();
-    let q = Request { run: &d, pool: Pool::Test, holder_pid: 77, who: "x", inherit: None, weight: 1 };
+    let q = Request { run: &d, pool: Pool::Test, holder_pid: 77, who: "x", inherit: None, weight: 1, bound_secs: None };
     let g = acquire(&q, &Seams { size_of: &|| 1, procs: &p, sleep: &|_| {} }, &mut |l: &str| said.push(l.to_string()));
     assert!(!g.held());
     assert!(said[0].contains("running without a test slot"), "{said:?}");
@@ -261,7 +261,7 @@ fn a_heavy_build_is_admitted_beside_holders_once_the_document_raises_the_pool() 
     let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
     let b = Host { cores: 32, mem_avail_mib: 36_000 };
     try_take(&d, Pool::Test, 3, &h(10, 1, "sp-held"), 0, now_epoch(), &p).unwrap();
-    let q = Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "sp-heavy", inherit: None, weight: 4 };
+    let q = Request { run: &d, pool: Pool::Test, holder_pid: 20, who: "sp-heavy", inherit: None, weight: 4, bound_secs: None };
     // Sized as the session's environment says (3), it does not fit beside the holder.
     let stale = || size_in(Pool::Test, None, Some("3"), b);
     assert!(acquire_unless(&q, &Seams { size_of: &stale, procs: &p, sleep: &|_| {} }, &mut |_: &str| {}, &|| true).is_none(), "under 3 it waits");
@@ -388,7 +388,7 @@ fn a_second_cold_build_waits_on_the_cold_slot_until_the_first_releases() {
     let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
     let size = || derive(Pool::Cold, Host { cores: 32, mem_avail_mib: 36_000 });
     assert_eq!(size(), 1);
-    let first = acquire(&Request { run: &d, pool: Pool::Cold, holder_pid: 10, who: "sp-a", inherit: None, weight: 1 }, &Seams { size_of: &size, procs: &p, sleep: &|_| panic!("the first cold build must not wait") }, &mut |_| {});
+    let first = acquire(&Request { run: &d, pool: Pool::Cold, holder_pid: 10, who: "sp-a", inherit: None, weight: 1, bound_secs: None }, &Seams { size_of: &size, procs: &p, sleep: &|_| panic!("the first cold build must not wait") }, &mut |_| {});
     assert!(first.held());
     let first = RefCell::new(Some(first));
     let mut said = Vec::new();
@@ -397,7 +397,7 @@ fn a_second_cold_build_waits_on_the_cold_slot_until_the_first_releases() {
         *sleeps.borrow_mut() += 1;
         first.borrow_mut().take();
     };
-    let second = acquire(&Request { run: &d, pool: Pool::Cold, holder_pid: 20, who: "sp-b", inherit: None, weight: 1 }, &Seams { size_of: &size, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
+    let second = acquire(&Request { run: &d, pool: Pool::Cold, holder_pid: 20, who: "sp-b", inherit: None, weight: 1, bound_secs: None }, &Seams { size_of: &size, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
     assert!(second.held());
     assert_eq!(*sleeps.borrow(), 1, "held for exactly as long as the first held");
     assert!(said[0].starts_with("waiting for a cold slot: 1 of 1 held by sp-a"), "{said:?}");
@@ -426,11 +426,11 @@ fn a_second_unit_tests_batch_waits_for_the_first_and_names_it_while_other_pools_
     let host = Host { cores: 32, mem_avail_mib: 36_000 };
     let unit = || derive(Pool::Unit, host);
     assert_eq!(unit(), 1);
-    let first = acquire(&Request { run: &d, pool: Pool::Unit, holder_pid: 10, who: "sp-a", inherit: None, weight: 1 }, &Seams { size_of: &unit, procs: &p, sleep: &|_| panic!("the first unit batch must not wait") }, &mut |_| {});
+    let first = acquire(&Request { run: &d, pool: Pool::Unit, holder_pid: 10, who: "sp-a", inherit: None, weight: 1, bound_secs: Some(600) }, &Seams { size_of: &unit, procs: &p, sleep: &|_| panic!("the first unit batch must not wait") }, &mut |_| {});
     assert!(first.held());
 
     let test = || derive(Pool::Test, host);
-    let other = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 30, who: "sp-c", inherit: None, weight: 1 }, &Seams { size_of: &test, procs: &p, sleep: &|_| panic!("a non-unit batch must not wait on the unit slot") }, &mut |_| {});
+    let other = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 30, who: "sp-c", inherit: None, weight: 1, bound_secs: None }, &Seams { size_of: &test, procs: &p, sleep: &|_| panic!("a non-unit batch must not wait on the unit slot") }, &mut |_| {});
     assert!(other.held());
 
     let first = RefCell::new(Some(first));
@@ -438,9 +438,31 @@ fn a_second_unit_tests_batch_waits_for_the_first_and_names_it_while_other_pools_
     let sleep = |_: Duration| {
         first.borrow_mut().take();
     };
-    let second = acquire(&Request { run: &d, pool: Pool::Unit, holder_pid: 20, who: "sp-b", inherit: None, weight: 1 }, &Seams { size_of: &unit, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
+    let second = acquire(&Request { run: &d, pool: Pool::Unit, holder_pid: 20, who: "sp-b", inherit: None, weight: 1, bound_secs: None }, &Seams { size_of: &unit, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
     assert!(second.held());
     assert!(said[0].starts_with("waiting for a unit slot: 1 of 1 held by sp-a"), "{said:?}");
+    assert!(said[0].contains("may run "), "{said:?}");
+}
+
+#[test_id(tg4oes3)]
+#[test]
+fn a_waiters_line_says_how_long_each_holder_may_still_run_or_how_far_past_its_cap_it_is() {
+    let lease = |until| Lease { slot: 1, pid: 10, start: 1, who: "sp-a".into(), since: 1000, waited: 0, last: 1000, weight: 1, until };
+    assert_eq!(wait_line(Pool::Unit, 1, &[lease(Some(1600))], 1259), "waiting for a unit slot: 1 of 1 held by sp-a (pid 10, 259s, may run 341s more)");
+    assert_eq!(wait_line(Pool::Unit, 1, &[lease(Some(1600))], 1640), "waiting for a unit slot: 1 of 1 held by sp-a (pid 10, 640s, past its cap by 40s)");
+    assert_eq!(wait_line(Pool::Unit, 1, &[lease(None)], 1259), "waiting for a unit slot: 1 of 1 held by sp-a (pid 10, 259s)");
+}
+
+#[test_id(tp9wtup)]
+#[test]
+fn a_lease_with_a_cap_end_round_trips_and_one_written_without_it_reads_as_none() {
+    let l = Lease { slot: 1, pid: 10, start: 99, who: "sp-abc".into(), since: 5, waited: 3, last: 7, weight: 1, until: Some(605) };
+    assert!(l.render().contains(" until=605"));
+    assert_eq!(Lease::parse(1, &l.render()), Some(l.clone()));
+    let bare = Lease { until: None, ..l };
+    assert!(!bare.render().contains("until"));
+    assert_eq!(Lease::parse(1, &bare.render()), Some(bare));
+    assert_eq!(Lease::parse(1, "pid=10 start=99 who=x since=5 waited=0 last=5 weight=1").unwrap().until, None);
 }
 
 #[test_id(tuue9fk)]
@@ -456,7 +478,7 @@ fn the_run_ceiling_is_the_cores_over_one_runs_cargo_jobs_and_never_below_one() {
 #[test_id(ttqozvw)]
 #[test]
 fn a_run_slot_waiter_says_what_it_waits_for() {
-    let holders = [Lease { slot: 1, pid: 7, start: 1, who: "sp-a".into(), since: 100, waited: 0, last: 100, weight: 1 }];
+    let holders = [Lease { slot: 1, pid: 7, start: 1, who: "sp-a".into(), since: 100, waited: 0, last: 100, weight: 1, until: None }];
     assert_eq!(wait_line(Pool::Run, 1, &holders, 130), "testenv: waiting for a CPU slot (1 running)");
 }
 

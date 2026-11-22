@@ -237,7 +237,7 @@ fn age_days(from_ms: u64, to_ms: u64) -> u64 {
     to_ms.saturating_sub(from_ms) / DAY_MS
 }
 
-const SECTIONS: [&str; 6] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Tests that exercise it"];
+const SECTIONS: [&str; 7] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Incidents that touched it", "## Tests that exercise it"];
 
 pub(crate) fn missing_section(body: &str) -> Option<&'static str> {
     SECTIONS.into_iter().find(|h| {
@@ -347,6 +347,8 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     m.push_str(&history::rewritten_line(&paths, tree, now, ports.config.rewrite_days));
     m.push_str(&format!("- Authors: {}\n", if authors.is_empty() { "none recorded".to_string() } else { authors.join(", ") }));
     m.push_str(&format!("\n{}\n\n", SECTIONS[5]));
+    m.push_str(&history::incident_lines(&paths, tree, ports.beads.as_ref()));
+    m.push_str(&format!("\n{}\n\n", SECTIONS[6]));
     let tests = tests_by_call_path(ix, u, &dependents);
     if tests.is_empty() {
         m.push_str("None found by call path.\n");
