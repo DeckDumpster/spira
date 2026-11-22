@@ -55,7 +55,7 @@
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Corpus, Attributing, Certifying | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the carried leg is stopped in the same tick |
-//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own ejects are the leg's work and leave it running) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
+//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own eject is the leg's work: the leg stays carried and adopts the record's moved head) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped (a batcher eject: stays Attributing) |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
@@ -1670,6 +1670,11 @@ impl Machine<'_> {
         if self.rc.leg_head == open.head || self.certifying_rebuilt_head(&seen, &open.head) {
             return false;
         }
+        if self.rc.state == State::Attributing && self.ejected_only_by_batcher(&open) {
+            self.rc.leg_head = open.head.clone();
+            self.rc.certify_head = open.head.clone();
+            return false;
+        }
         let mut recertify = false;
         if self.rc.discarded_head != open.head {
             recertify = open.phase != "green" && self.rc.certify_head.is_empty() && matches!(self.rc.state, State::Corpus | State::Certifying);
@@ -1698,6 +1703,13 @@ impl Machine<'_> {
         self.land_green()
     }
 
+    /// True when a carried member is gone from the record and the batcher's own eject is the last word on every one that is.
+    fn ejected_only_by_batcher(&self, open: &Round) -> bool {
+        let mut lost = self.rc.members.iter().map(|(m, _)| m).filter(|m| !open.members.contains(m)).peekable();
+        lost.peek().is_some()
+            && lost.all(|m| open.ejected.iter().zip(open.ejected_by.iter()).rfind(|(e, _)| *e == m).is_some_and(|(_, by)| by == batcher_cut::io::BATCHER_ACTOR))
+    }
+
     /// Another actor (not the batcher's own attribution) ejected a member the attribution leg carries: the leg is stopped and the
     /// record's survivors are certified at the record's head. Once per eject: the state leaves
     /// Attributing.
@@ -1713,10 +1725,7 @@ impl Machine<'_> {
         if survivors.is_empty() || survivors.len() == self.rc.members.len() {
             return false;
         }
-        let lost_to_another_actor = self.rc.members.iter().filter(|(m, _)| !survivors.iter().any(|(s, _)| s == m)).any(|(m, _)| {
-            open.ejected.iter().zip(open.ejected_by.iter()).rfind(|(e, _)| *e == m).is_none_or(|(_, by)| by != batcher_cut::io::BATCHER_ACTOR)
-        });
-        if !lost_to_another_actor {
+        if self.ejected_only_by_batcher(&open) {
             return false;
         }
         self.stop_carried_leg();

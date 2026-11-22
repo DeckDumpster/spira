@@ -2193,3 +2193,32 @@ fn an_attribution_whose_member_the_batcher_itself_ejected_runs_on_and_certifies_
     let argv = certify_argv("q", &certify.1);
     assert!(argv.windows(2).any(|w| w == ["--rehead", "h2"]), "{argv:?}");
 }
+
+#[test]
+fn an_attribution_that_ejects_one_of_three_members_keeps_its_leg_and_certifies_the_two_left() {
+    use batcher_cut::attribute::Attribution;
+    let mut carry = driving(State::Attributing, "spira.a2");
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.members = vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into()), ("sp-c".into(), "t3".into())];
+    rc.leg_head = "h0".into();
+    rc.head = "h0".into();
+    rc.leg_at_ms = NOW;
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-c".into()], tips: vec!["t1".into(), "t3".into()], head: "h1".into(), worktree: "w".into(), phase: "attributing".into(), driven: false, ejected: vec!["sp-b".into()], ejected_by: vec!["batcher".into()], ..Round::default() };
+    let at = |now_ms| Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round.clone()), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms };
+    let (next, acts) = decide(&carry, &at(NOW));
+    let (later, more) = decide(&next, &at(NOW + LEG_START_GRACE_MS + 15_000));
+    for a in acts.iter().chain(more.iter()) {
+        assert!(a.effect != ABANDON && a.effect != runtime::units::UNIT_STOP, "{a:?}");
+    }
+    let rc = &later.repos["spira"];
+    assert_eq!((rc.state, rc.leg.as_deref()), (State::Attributing, Some("spira.a2")));
+
+    let mut r = carried(&later);
+    let n = r.requested().len();
+    let land = Attribution::Land { members: vec![("sp-a".into(), "t1".into()), ("sp-c".into(), "t3".into())], attribution_secs: None, mended: false, head: "h1".into() }.line();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let after = asked_after(&r, n);
+    let certify = after.iter().find(|(e, _)| e == CERTIFY).unwrap_or_else(|| panic!("no certify: {after:?}"));
+    assert_eq!(certify.1.head, "h1");
+}
