@@ -58,6 +58,38 @@ pub const HALT_STREAM: &str = "scheduler.halt";
 pub const SCHEDULER_HALTED: EventKindTag = "scheduler.halted";
 pub const SCHEDULER_RESUMED: EventKindTag = "scheduler.resumed";
 
+/// The store changed under the scheduler's watch. Memory-only: the engine never journals it, and
+/// one lost is what a later sweep of [`crate::changes::Changes`] catches.
+pub const STORE_CHANGED: EventKindTag = "store.changed";
+pub const STORE_STREAM: &str = "store.changed";
+
+/// The body of a [`STORE_CHANGED`] event, as JSON.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoreChanged {
+    /// The revision the in-process copy now holds.
+    pub rev: u64,
+    /// The distinct keys the applied events named, in answer order; empty on a reload.
+    pub keys: Vec<String>,
+    /// Every view was read afresh, so any key may have changed.
+    pub reload: bool,
+}
+
+impl StoreChanged {
+    pub fn kind(&self) -> EventKind {
+        EventKind::new(STORE_CHANGED, &serde_json::to_string(self).unwrap_or_default())
+    }
+
+    /// The submission for this change, its id keyed by the revision (and apart for a reload).
+    pub fn submit(&self) -> crate::host::Submit {
+        let id = if self.reload { format!("{STORE_STREAM}/reload/{}", self.rev) } else { format!("{STORE_STREAM}/{}", self.rev) };
+        crate::host::Submit::new(&id, STORE_STREAM, self.kind())
+    }
+
+    pub fn parse(body: &str) -> Option<Self> {
+        serde_json::from_str(body).ok()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventKind {
     pub tag: String,

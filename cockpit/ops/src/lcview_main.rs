@@ -677,7 +677,7 @@ fn keep_views() {
     if let Err(e) = views.load() {
         eprintln!("lc-view: store views not loaded at start: {e}");
     }
-    std::thread::spawn(move || views.run(&std::sync::atomic::AtomicBool::new(false)));
+    std::thread::spawn(move || views.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
 }
 
 fn main() {
@@ -759,7 +759,7 @@ mod tests {
         let views = store_view::install(Arc::new(store_view::Projection::new(LcClient::over(store.clone(), true), Duration::from_secs(30), Arc::new(std::time::Instant::now))));
         views.load().unwrap();
         let watcher = views.clone();
-        std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false)));
+        std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
         // clock-safe: a cap on the wait for the watch thread to start
         for _ in 0..6000 {
             if views.watching() {

@@ -617,3 +617,50 @@ mod fan_out_tests {
         assert_eq!([0, 1, 2, 4, 5].map(task_fan_out), [1, 1, 1, 2, 2]);
     }
 }
+
+#[cfg(test)]
+mod store_changed_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::changes::{Changes, ScriptedChanges};
+    use crate::sources::ScriptedStoreChanges;
+    use crate::{Command, Ctx, Event, EventKindTag, Handler, MemJournal, Projection, Registration, StoreChanged, STORE_CHANGED, STORE_STREAM};
+
+    struct Watcher(Arc<std::sync::Mutex<Vec<StoreChanged>>>);
+    impl Handler for Watcher {
+        fn interests(&self) -> &[EventKindTag] {
+            &[STORE_CHANGED]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            self.0.lock().unwrap().extend(StoreChanged::parse(&ev.kind.body));
+            vec![]
+        }
+    }
+
+    struct NoEffects;
+    impl EffectRunner for NoEffects {
+        fn run(&self, _: &str, _: &crate::EffectSpec) -> std::result::Result<String, String> {
+            Ok(String::new())
+        }
+    }
+
+    #[test_id(tbgidwj)]
+    #[test]
+    fn a_swallowed_store_change_advances_the_table_and_reaches_no_handler_and_no_journal() {
+        let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("watcher", Watcher(seen.clone()))], 1).unwrap();
+        let changes = Arc::new(ScriptedChanges::default());
+        let entry = |rev| StoreChanged { rev, keys: vec![format!("lifecycle/sp-{rev}")], reload: false };
+        let script = vec![(1_000, entry(5)), (2_000, entry(7))];
+        let mut sources = Sources::default();
+        sources.register(Box::new(ScriptedStoreChanges::new(Arc::new(clock.clone()), changes.clone(), script).swallowing(1))).unwrap();
+        let mut v = VirtualDriver::new(engine, clock.clone(), Arc::new(NoEffects)).with_sources(sources).unwrap();
+        assert_eq!(changes.rev(), None);
+        v.run_until(2_000).unwrap();
+        assert_eq!(seen.lock().unwrap().iter().map(|c| c.rev).collect::<Vec<_>>(), [5]);
+        assert_eq!(changes.rev(), Some(7));
+        assert!(journal.log().iter().all(|e| e.stream.0 != STORE_STREAM), "a store change is never journaled");
+    }
+}

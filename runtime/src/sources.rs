@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
+use crate::changes::ScriptedChanges;
+use crate::event::StoreChanged;
 use crate::host::Submit;
 use crate::ports::Clock;
 use crate::units::{RanOutput, ScriptedUnits, UnitCompletions, UnitRan, UNIT_RAN};
@@ -242,5 +244,76 @@ impl Scripted for UnitRanSource {
     /// Drained every turn the driver takes: whatever ended by now, each once.
     fn take_due(&mut self, _now_ms: u64) -> Vec<Submit> {
         self.drain()
+    }
+}
+
+/// The `store.changed` source's virtual-time stand-in: at each entry's time it advances `changes`
+/// to the entry's revision and submits the event, except the swallowed entry, which only advances
+/// `changes`.
+pub struct ScriptedStoreChanges {
+    clock: Arc<dyn Clock>,
+    changes: Arc<ScriptedChanges>,
+    script: Vec<(u64, StoreChanged, bool)>,
+}
+
+impl ScriptedStoreChanges {
+    pub const NAME: &'static str = "store.changed";
+
+    /// Equal times keep the order given.
+    pub fn new(clock: Arc<dyn Clock>, changes: Arc<ScriptedChanges>, mut script: Vec<(u64, StoreChanged)>) -> Self {
+        script.sort_by_key(|(at, _)| *at);
+        ScriptedStoreChanges { clock, changes, script: script.into_iter().map(|(at, c)| (at, c, false)).collect() }
+    }
+
+    /// The entry at `index` (in time order) advances the changes but is never submitted.
+    pub fn swallowing(mut self, index: usize) -> Self {
+        if let Some(e) = self.script.get_mut(index) {
+            e.2 = true;
+        }
+        self
+    }
+
+    fn deliver(&self, c: &StoreChanged, swallowed: bool) -> Option<Submit> {
+        self.changes.set(c.rev);
+        (!swallowed).then(|| c.submit())
+    }
+}
+
+impl Source for ScriptedStoreChanges {
+    fn name(&self) -> &str {
+        Self::NAME
+    }
+
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+        for (at, c, swallowed) in &self.script {
+            loop {
+                let now = self.clock.now_ms();
+                if now >= *at {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis((*at - now).min(WAIT_STEP_MS))); // clock-safe: waits on the source's own thread, rechecking its Clock port
+            }
+            if let Some(s) = self.deliver(c, *swallowed) {
+                if tx.blocking_send(s).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+
+    fn scripted(&mut self) -> Option<&mut dyn Scripted> {
+        Some(self)
+    }
+}
+
+impl Scripted for ScriptedStoreChanges {
+    fn next_at(&self) -> Option<u64> {
+        self.script.first().map(|(at, _, _)| *at)
+    }
+
+    fn take_due(&mut self, now_ms: u64) -> Vec<Submit> {
+        let n = self.script.iter().take_while(|(at, _, _)| *at <= now_ms).count();
+        let due: Vec<_> = self.script.drain(..n).collect();
+        due.iter().filter_map(|(_, c, swallowed)| self.deliver(c, *swallowed)).collect()
     }
 }
