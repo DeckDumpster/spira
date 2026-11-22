@@ -1726,7 +1726,8 @@ mod tests {
         let t = testkit::TempDir::new("hotfix-keys");
         let state = t.path().join("run/release");
         std::fs::create_dir_all(&state).unwrap();
-        std::fs::write(state.join("hotfix"), format!("sha {SHA}\nreason fix it\nat 2020-01-01T00:00:00Z\n")).unwrap();
+        const RECORD: &str = "hotfix";
+        std::fs::write(state.join(RECORD), format!("sha {SHA}\nreason fix it\nat 2020-01-01T00:00:00Z\n")).unwrap();
         let mut env = release::config::Env::new();
         env.insert("HOME".into(), t.path().display().to_string());
         let flags = release::config::Flags { releases: Some(t.path().join("rel")), run: Some(t.path().join("run")), keep: Some(2) };

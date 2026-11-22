@@ -8,7 +8,7 @@
 2 cockpit-collect/src/io.rs
 1 cockpit-collect/src/probes/core_detail.rs
 3 cockpit-collect/src/probes/lc.rs
-9 cockpit-collect/src/probes/mod.rs
+7 cockpit-collect/src/probes/mod.rs
 2 cockpit-collect/src/probes/queue.rs
 1 cockpit-collect/src/probes/round.rs
 1 cockpit-collect/src/probes/unsent.rs
