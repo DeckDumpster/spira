@@ -752,6 +752,7 @@ impl drive::RoundOps for LiveOps<'_> {
             "mender-page" => "the menders' passes ended in a box fault the loop cannot fix",
             drive::CONFIG_DELTA => "the merged config delta does not apply",
             drive::ATTRIBUTION_STALLED => "the attribution leg made no progress past its bound",
+            drive::RUNNER_DIFFERENCE => "a unit tier red on one runner is green on the host it last ran green on; no member is implicated",
             _ => "workspace failed to build",
         };
         match io::file_local_red_incident(
@@ -1240,6 +1241,10 @@ fn stabilize_round(
         }
         drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why) => {
             println!("batcher {}: {why}", repo.name);
+            Ok(Stabilized::Blocked)
+        }
+        drive::RoundEnd::RunnerDifference { red_on, green_on, .. } => {
+            println!("batcher {}: red on {red_on}, green on {green_on} — a runner difference; no member charged", repo.name);
             Ok(Stabilized::Blocked)
         }
         drive::RoundEnd::Emptied(why) => {
@@ -2555,6 +2560,9 @@ fn attribute_in(
         Ok(drive::RoundEnd::BaseRed { base, why }) => Attribution::Blocked(format!("base red at {base}: {why}")),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
         Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
+        Ok(drive::RoundEnd::RunnerDifference { tests, red_on, green_on }) => {
+            Attribution::RunnerDifference { tests, red_on, green_on }
+        }
         Ok(drive::RoundEnd::Abandoned) => Attribution::Abandoned,
         Ok(drive::RoundEnd::Unconverged { red, probes, suspects }) => Attribution::Unconverged(format!(
             "{red} red reproduces but {probes} probes named no member; suspects: {}",
