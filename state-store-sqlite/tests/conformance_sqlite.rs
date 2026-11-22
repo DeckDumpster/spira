@@ -2145,8 +2145,6 @@ fn a_restart_below_the_wal_line_still_gives_up_while_a_read_is_held() {
     h.release_reader();
 }
 
-/// A [`VirtualClock`] that notes when the thread named `pass` first reads it: the restart reads
-/// it as it begins, so the flag says the restart has taken its start time.
 #[test]
 fn the_background_checkpointer_starts_a_pass_when_the_wal_reaches_the_line_whatever_the_commit_count() {
     const LINE: u64 = 1 << 20;
@@ -2173,9 +2171,11 @@ fn the_background_checkpointer_starts_a_pass_when_the_wal_reaches_the_line_whate
         largest = largest.max(wal_len());
     }
     assert!(largest <= LINE + 2 * commit_bytes, "the WAL grew to {largest} B, past the line {LINE} B plus two commits");
-    assert!(b.checkpoints_completed() > 0, "no pass ever ran");
+    assert!(b.checkpoints_completed() >= 3, "only {} passes ran over 4 MiB at a 1 MiB line", b.checkpoints_completed());
 }
 
+/// A [`VirtualClock`] that notes when the thread named `pass` first reads it: the restart reads
+/// it as it begins, so the flag says the restart has taken its start time.
 #[derive(Clone)]
 struct PassClock {
     time: VirtualClock,
