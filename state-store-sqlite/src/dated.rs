@@ -7,14 +7,15 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
 use state_store::backend::state_of;
 use state_store::{Error, Result, Rev, Version, EVENTS_PREFIX, REQUESTS_PREFIX};
 
-use super::{db, exec, key_of, lock, main_i64, rev, successor};
+use super::{db, exec, PROGRESS_STEPS, key_of, lock, main_i64, rev, successor};
 
 pub(crate) const DAY_MS: u64 = 86_400_000;
 
@@ -159,21 +160,31 @@ pub fn family_files(path: &Path, now_ms: u64) -> Result<Vec<state_store::FamilyF
     Ok(out)
 }
 
-/// What a day-file read shares with the store's reads.
-#[derive(Default)]
+/// What a day-file read shares with the store's reads: one deadline per store reader, which
+/// that reader's connection to every day file stops at.
 pub struct ReadSlots {
+    deadlines: Vec<Arc<AtomicU64>>,
+    clock: Arc<dyn Clock>,
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
+/// The slot of a caller that is not a store reader and has no deadline.
+pub const AUX: usize = usize::MAX;
+
 impl ReadSlots {
-    pub fn new(probe: Option<Arc<dyn Fn() + Send + Sync>>) -> Arc<Self> {
-        Arc::new(ReadSlots { probe })
+    pub fn new(deadlines: Vec<Arc<AtomicU64>>, clock: Arc<dyn Clock>, probe: Option<Arc<dyn Fn() + Send + Sync>>) -> Arc<Self> {
+        Arc::new(ReadSlots { deadlines, clock, probe })
     }
 
-    fn row(&self) {
+    fn unbounded() -> Arc<Self> {
+        Self::new(Vec::new(), Arc::new(runtime::ports::WallClock), None)
+    }
+
+    fn row(&self, deadline: &dyn Fn() -> Result<()>) -> Result<()> {
         if let Some(p) = &self.probe {
             p();
         }
+        deadline()
     }
 }
 
@@ -183,14 +194,16 @@ pub struct DatedFile {
     pub day: i64,
     path: PathBuf,
     writer: Mutex<Option<Connection>>,
-    reader: Mutex<Option<Connection>>,
+    readers: Vec<Mutex<Option<Connection>>>,
     retired: AtomicBool,
 }
 
 impl Drop for DatedFile {
     fn drop(&mut self) {
         drop(self.writer.get_mut().unwrap_or_else(|p| p.into_inner()).take());
-        drop(self.reader.get_mut().unwrap_or_else(|p| p.into_inner()).take());
+        for r in &mut self.readers {
+            drop(r.get_mut().unwrap_or_else(|p| p.into_inner()).take());
+        }
         if self.retired.load(Ordering::SeqCst) {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", self.path.display()));
@@ -250,13 +263,13 @@ impl DatedFile {
         for sql in SCHEMA {
             exec(&writer, sql, [])?;
         }
-        let reader = open_conn(&path, true)?;
+        let readers = (0..=reads.deadlines.len()).map(|_| Mutex::new(None)).collect();
         Ok(Arc::new(DatedFile {
             reads,
             day,
             path,
             writer: Mutex::new(Some(writer)),
-            reader: Mutex::new(Some(reader)),
+            readers,
             retired: AtomicBool::new(false),
         }))
     }
@@ -271,10 +284,18 @@ impl DatedFile {
         f(conn)
     }
 
-    fn with_reader<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let g = lock(&self.reader);
-        let conn = g.as_ref().ok_or_else(|| Error::Backend(format!("{} is closed", self.path.display())))?;
-        f(conn)
+    fn with_reader<T>(&self, slot: usize, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let i = slot.min(self.readers.len() - 1);
+        let mut g = lock(&self.readers[i]);
+        if g.is_none() {
+            let conn = open_conn(&self.path, true)?;
+            if let Some(deadline) = self.reads.deadlines.get(i) {
+                let (d, clock) = (deadline.clone(), self.reads.clock.clone());
+                conn.progress_handler(PROGRESS_STEPS, Some(move || clock.now_ms() > d.load(Ordering::SeqCst)));
+            }
+            *g = Some(conn);
+        }
+        f(g.as_ref().expect("the connection was just opened"))
     }
 
     /// Files `rows` as main `main` and commits.
@@ -340,9 +361,10 @@ impl DatedFile {
         self.with_writer(|conn| exec(conn, "DELETE FROM rows WHERE main > ?1", [main_i64(head)?]).map(drop))
     }
 
-    pub fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
+    pub fn get(&self, slot: usize, key: &str, at: u64, deadline: &dyn Fn() -> Result<()>) -> Result<Option<Version>> {
         let at = main_i64(at)?;
-        self.with_reader(|conn| {
+        self.with_reader(slot, |conn| {
+            self.reads.row(deadline)?;
             use rusqlite::OptionalExtension;
             conn.prepare_cached(
                 "SELECT key, main, sub, value, create_main, create_sub FROM rows WHERE key = ?1 AND main <= ?2",
@@ -357,18 +379,20 @@ impl DatedFile {
     /// `state`, only those whose value's `data.state` is it.
     pub fn range(
         &self,
+        slot: usize,
         lo: &[u8],
         hi: Option<&[u8]>,
         limit: usize,
         at: u64,
         state: Option<&str>,
+        deadline: &dyn Fn() -> Result<()>,
     ) -> Result<Vec<(String, Version)>> {
         let at = main_i64(at)?;
         let mut out = Vec::new();
         let mut cursor = lo.to_vec();
         let page = i64::try_from(if state.is_some() { STATE_PAGE } else { limit }).unwrap_or(i64::MAX);
         while out.len() < limit {
-            let rows = self.with_reader(|conn| {
+            let rows = self.with_reader(slot, |conn| {
                 let mut stmt = conn
                     .prepare_cached(
                         "SELECT key, main, sub, value, create_main, create_sub FROM rows
@@ -378,7 +402,7 @@ impl DatedFile {
                 let mut rows = stmt.query(params![cursor, hi, at, page]).map_err(db)?;
                 let mut out = Vec::new();
                 while let Some(r) = rows.next().map_err(db)? {
-                    self.reads.row();
+                    self.reads.row(deadline)?;
                     out.push(version_of(r).map_err(db)?);
                 }
                 Ok(out)
@@ -412,7 +436,7 @@ pub struct Files {
 
 impl Files {
     pub fn new(family: Family, main: &Path) -> Self {
-        Self::with_reads(family, main, Arc::new(ReadSlots::default()))
+        Self::with_reads(family, main, ReadSlots::unbounded())
     }
 
     pub fn with_reads(family: Family, main: &Path, reads: Arc<ReadSlots>) -> Self {
