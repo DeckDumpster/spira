@@ -147,7 +147,8 @@ mod tests {
             assert!(got.contains(want), "{want} missing from {first}");
         }
     }
-    #[test_id(tg3e7xv)]
+
+    #[test_id(tvtz80k)]
     #[test]
     fn a_wal_shape_files_an_incident_naming_the_open_verb_and_wal_pressure() {
         let d = testkit::TempDir::new("wt-slow-wal");
