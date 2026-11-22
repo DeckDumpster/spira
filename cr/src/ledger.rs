@@ -181,21 +181,53 @@ pub fn load(ports: &Ports) -> Result<(Ledger, String), String> {
 
 /// Adds `rows` to the forge's ledger. A write that fails is retried only on a sha that moved.
 pub fn append(ports: &Ports, rows: &[Row]) -> Result<(), String> {
-    let ep = endpoint(ports);
-    let repo = format!("repos/{}/{}", ports.repo_owner, ports.repo_name);
-    let branch = text_field(&gh(ports, "GET", &repo, None)?, &["default_branch"], &repo)?;
     let mut added = String::new();
     for r in rows {
         added.push_str(&serde_json::to_string(r).map_err(|e| e.to_string())?);
         added.push('\n');
     }
     let message = format!("ledger: {}", rows.iter().map(|r| format!("{} {}", r.review, if r.closed_at.is_some() { "closed" } else { "opened" })).collect::<Vec<_>>().join(", "));
+    rewrite(ports, &message, |text| Ok(format!("{text}{added}")))
+}
+
+/// Writes `row` as its review's only row: it takes the place of the first row of that review and
+/// the others go; with none, it is appended. Other lines are kept as they stand.
+pub fn put_review(ports: &Ports, row: &Row) -> Result<(), String> {
+    let line = serde_json::to_string(row).map_err(|e| e.to_string())?;
+    rewrite(ports, &format!("ledger: {} adopted", row.review), |text| {
+        let mut out = String::new();
+        let mut placed = false;
+        for (n, l) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+            let v: serde_json::Value = serde_json::from_str(l).map_err(|e| format!("{FILE} line {}: {e}", n + 1))?;
+            if v.get("review").and_then(|r| r.as_str()) == Some(row.review.as_str()) {
+                if !placed {
+                    out.push_str(&line);
+                    out.push('\n');
+                    placed = true;
+                }
+            } else {
+                out.push_str(l);
+                out.push('\n');
+            }
+        }
+        if !placed {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        Ok(out)
+    })
+}
+
+fn rewrite(ports: &Ports, message: &str, edit: impl Fn(&str) -> Result<String, String>) -> Result<(), String> {
+    let ep = endpoint(ports);
+    let repo = format!("repos/{}/{}", ports.repo_owner, ports.repo_name);
+    let branch = text_field(&gh(ports, "GET", &repo, None)?, &["default_branch"], &repo)?;
     let (mut text, mut sha) = fetch(ports)?;
     for _ in 0..ATTEMPTS {
         if !text.is_empty() && !text.ends_with('\n') {
             text.push('\n');
         }
-        let content = base64::engine::general_purpose::STANDARD.encode(format!("{text}{added}"));
+        let content = base64::engine::general_purpose::STANDARD.encode(edit(&text)?);
         let err = match gh(ports, "PUT", &ep, Some(&json!({"message": message, "content": content, "sha": sha, "branch": branch}))) {
             Ok(_) => return Ok(()),
             Err(e) => e,
@@ -206,7 +238,7 @@ pub fn append(ports: &Ports, rows: &[Row]) -> Result<(), String> {
         }
         (text, sha) = (now_text, now_sha);
     }
-    Err(format!("{FILE} moved under {ATTEMPTS} writes in a row; nothing was appended"))
+    Err(format!("{FILE} moved under {ATTEMPTS} writes in a row; nothing was written"))
 }
 
 /// `cr ledger-close`: records how a review closed, once.
