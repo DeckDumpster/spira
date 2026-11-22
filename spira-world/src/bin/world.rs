@@ -1286,6 +1286,7 @@ mod tests {
         }
     }
 
+    #[test_id(twaslae)]
     #[test]
     fn store_maintenance_refuses_a_missing_owner_why_or_command_with_exit_2_before_acting() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -1303,6 +1304,7 @@ mod tests {
         assert_eq!((ok.owner.as_str(), ok.why.as_str(), ok.command), ("o", "w", a(&["ls", "--owner"])));
     }
 
+    #[test_id(te4yok7)]
     #[test]
     fn a_command_killed_by_a_signal_returns_128_plus_the_signal() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();

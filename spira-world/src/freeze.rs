@@ -167,9 +167,13 @@ pub fn maintain(s: &Store, u: &mut dyn Units, run_dir: &Path, m: &Maintenance, w
     };
     let release = release(s, u);
     if let Err(e) = hold {
-        let _ = release;
-        let _ = remove_maintenance_record(run_dir);
-        return Err(format!("{e}; the hold was released"));
+        return match release {
+            Ok(()) => {
+                let _ = remove_maintenance_record(run_dir);
+                Err(format!("{e}; the hold was released"))
+            }
+            Err(r) => Err(format!("{e}; {r}; the maintenance record stays, run world thaw-store")),
+        };
     }
     release.map_err(|e| format!("{e}; the maintenance record stays, run world thaw-store"))?;
     remove_maintenance_record(run_dir)?;
@@ -383,6 +387,7 @@ mod tests {
         assert_eq!(u.active_state(&s.runtime), "active");
     }
 
+    #[test_id(te6u2zx)]
     #[test]
     fn thaw_starts_the_service_after_its_start_limit_is_spent() {
         let d = TempDir::new("freeze-limit");
@@ -401,6 +406,7 @@ mod tests {
         Maintenance { owner: "concierge".into(), why: "compact".into(), since: 1_700_000_000, pid: std::process::id() }
     }
 
+    #[test_id(t90glwe)]
     #[test]
     fn maintenance_holds_the_service_stopped_through_fifteen_pulled_starts_and_starts_it_after() {
         let d = TempDir::new("maintain-holds");
@@ -437,6 +443,7 @@ mod tests {
         assert!(!s.dropin_path(SERVICE).exists());
     }
 
+    #[test_id(tenbj3q)]
     #[test]
     fn a_failed_command_still_ends_the_maintenance_and_returns_its_code() {
         let d = TempDir::new("maintain-fails");
@@ -448,6 +455,7 @@ mod tests {
         assert!(!maintenance_path(d.path()).exists());
     }
 
+    #[test_id(tsezknw)]
     #[test]
     fn a_start_that_fails_keeps_the_record_and_names_thaw_store() {
         let d = TempDir::new("maintain-start-fails");
@@ -466,6 +474,7 @@ mod tests {
         assert!(maintenance_path(d.path()).exists());
     }
 
+    #[test_id(t9lyet2)]
     #[test]
     fn the_record_round_trips_and_its_owner_is_alive_only_while_the_pid_exists() {
         let d = TempDir::new("maintain-record");
@@ -476,6 +485,7 @@ mod tests {
         assert!(!owner_alive(&Maintenance { pid: u32::MAX, ..m }));
     }
 
+    #[test_id(t7sy442)]
     #[test]
     fn a_thaw_removes_a_maintenance_record_left_behind() {
         let d = TempDir::new("thaw-record");
