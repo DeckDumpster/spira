@@ -3161,7 +3161,7 @@ pub mod edge {
         let combined = batcher::core::combine(&batcher::core::CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
         let conflicts = sorted.iter().filter(|m| merges.get(&m.id) == Some(&batcher::core::MergeResult::Conflict)).map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>();
         let base_conflicts = conflicts.iter().filter(|(_, tip)| io::base_conflict(&repo, &base, tip).is_some()).map(|(id, _)| id.clone()).collect();
-        let suites = !io::suites_in(&wt, "HEAD").is_empty();
+        let suites = !io::suites_in(&wt, "HEAD")?.is_empty();
         json(&Assembled { merged: combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), own_testenv: batcher_cut::declares_own_testenv(&wt), wt: wt.display().to_string(), base, suites, conflicts, base_conflicts, cleared })
     }
 
@@ -3199,7 +3199,7 @@ pub mod edge {
         }
         let wt = PathBuf::from(&leg.wt);
         let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();
-        let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;
+        let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD")?, &history).list;
         let results = super::round_results(&leg.wt, &leg.unit);
         let argv = ["timeout", "-k", "10", &env.wall_secs.to_string()].iter().map(|s| s.to_string()).chain([env.round_vm.display().to_string(), "run".into(), wt.display().to_string(), "--suites".into(), suites.join(","), "--maxpar".into(), env.maxpar.to_string(), "--results-dir".into(), results.display().to_string(), "--base".into(), repo.base.clone()]).collect();
         start_unit(e, task, &leg.unit, argv, home_vars(&env), None)

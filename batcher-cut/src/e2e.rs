@@ -282,8 +282,8 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     let merged = crate::merge_round(&env, &repo, &wt, &base, members.clone(), &Default::default()).unwrap();
     assert_eq!(merged.len(), 3);
     let branch = "spira/batcher-attr/fx-proof";
-    crate::io::set_branch(&repo, branch, &crate::io::head_of(&wt).unwrap());
-    let suites = crate::io::all_suites(&repo, branch);
+    crate::io::set_branch(&repo, branch, &crate::io::head_of(&wt).unwrap()).unwrap();
+    let suites = crate::io::all_suites(&repo, branch).unwrap();
     let changed: BTreeMap<String, Vec<String>> = merged
         .iter()
         .map(|m| (m.id.clone(), crate::io::changed_paths(&repo, &base, &m.tip)))

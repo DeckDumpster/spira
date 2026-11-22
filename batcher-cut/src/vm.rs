@@ -1095,7 +1095,7 @@ impl<'a> VmRunner<'a> {
         let branch = self.branch(&self.job_name(job));
         if job.removal.is_empty() {
             let head = io::head_of(&self.wt)?;
-            io::set_branch(self.repo, &branch, &head);
+            io::set_branch(self.repo, &branch, &head)?;
             return Ok(branch);
         }
         self.tree_without(branch, &job.id.to_string(), &job.removal)
@@ -1130,7 +1130,7 @@ impl<'a> VmRunner<'a> {
             .arg(&wt)
             .status();
         result?;
-        io::set_branch(self.repo, &branch, &head?);
+        io::set_branch(self.repo, &branch, &head?)?;
         Ok(branch)
     }
 
@@ -1343,7 +1343,7 @@ impl RoundRunner for VmRunner<'_> {
                 }
                 if self.corpus_runs == 0 {
                     if !self.subset {
-                        self.corpus_list_ok(&io::suites_in(&self.wt, "HEAD"), suites)?;
+                        self.corpus_list_ok(&io::suites_in(&self.wt, "HEAD")?, suites)?;
                     }
                 } else {
                     clear_results(&self.results, suites);
@@ -1364,7 +1364,7 @@ impl RoundRunner for VmRunner<'_> {
                 self.verify_n += 1;
                 let job = format!("v{}", self.verify_n);
                 let branch = self.branch(&job);
-                io::set_branch(self.repo, &branch, &io::head_of(&self.wt)?);
+                io::set_branch(self.repo, &branch, &io::head_of(&self.wt)?)?;
                 self.request(&job, &branch, suites, "round")?;
                 self.main = Main::Verify {
                     job,
