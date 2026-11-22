@@ -148,6 +148,9 @@ pub struct Lift {
     /// From this virtual time (ms) a round must find the kept test red again.
     #[serde(default)]
     pub blocks_again_after: Option<u64>,
+    /// A member that is not the owner and edits the test's body: its change is the row's claimed fix.
+    #[serde(default)]
+    pub claimed_by: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -233,7 +236,7 @@ pub fn parse(text: &str) -> Result<Script, String> {
         }
     }
     for l in &s.lifts {
-        if !seen.contains(&l.owner.as_str()) || seen.contains(&l.fix.as_str()) {
+        if !seen.contains(&l.owner.as_str()) || seen.contains(&l.fix.as_str()) || l.claimed_by.as_ref().is_some_and(|c| !seen.contains(&c.as_str())) {
             return Err(format!("loop scenario: lift {} names an owner the scenario does not file, or a fix it files itself", l.test));
         }
     }
@@ -714,8 +717,13 @@ fn lifted_reds(w: &World, leg: &bl::Leg) -> Result<Vec<(Lift, batcher_cut::vm::L
     }
     let dir = reg.pass_dir(w.now(), &format!("probe-{}", leg.batch))?;
     let ids: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
-    let (_, rows) = batcher_cut::vm::DenySnapshot::from_pass(&dir).ok_or("no deny list")?.lifting(&ids);
+    let (_, rows) = batcher_cut::vm::DenySnapshot::from_pass(&dir).ok_or("no deny list")?.lifting(&ids, &claims_among(w, &ids));
     Ok(rows.into_iter().filter_map(|r| w.script.lifts.iter().find(|l| l.test == r.test && l.red).map(|l| (l.clone(), r))).collect())
+}
+
+/// (test, member) of each scripted claim whose member is among `ids`.
+fn claims_among(w: &World, ids: &[String]) -> Vec<(String, String)> {
+    w.script.lifts.iter().filter_map(|l| Some((l.test.clone(), l.claimed_by.clone().filter(|c| ids.contains(c))?))).collect()
 }
 
 fn names(list: &[String], test: &str) -> bool {
@@ -737,7 +745,7 @@ fn attribute_lifts(w: &World, leg: &bl::Leg, lifted: &[(Lift, batcher_cut::vm::L
     let reg = w.lc().reg.clone().ok_or("lifts without a registry")?;
     let ids: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
     let pass = reg.pass_dir(now, &format!("pass-{}", leg.batch))?;
-    let (lifted_deny, _) = batcher_cut::vm::DenySnapshot::from_pass(&pass).ok_or("no deny list")?.lifting(&ids);
+    let (lifted_deny, _) = batcher_cut::vm::DenySnapshot::from_pass(&pass).ok_or("no deny list")?.lifting(&ids, &claims_among(w, &ids));
     std::fs::write(pass.join(batcher_cut::vm::DenySnapshot::FILE), &lifted_deny.text).map_err(|e| e.to_string())?;
     let (head, base) = {
         let lc = w.lc();
@@ -830,6 +838,22 @@ fn batcher_land(w: &World, input: &str) -> Result<String, String> {
             Ok(cleared) if !cleared.is_empty() => lc.cleared.push((now, cleared)),
             Ok(_) => {}
             Err(e) => lc.refused.push(e),
+        }
+        let kept: Vec<String> = lc.kept.iter().map(|k| k.test.clone()).collect();
+        let standing: Vec<(String, String)> = claims_among(w, &ids).into_iter().filter(|(t, _)| !names(&kept, t)).collect();
+        let mut activated = vec![];
+        for failed in batcher_cut::io::activate_claimed_with(
+            &mut |t, reason| {
+                activated.push(t.to_string());
+                reg.activate(now, t, reason)
+            },
+            &leg.batch,
+            &standing,
+        ) {
+            lc.refused.push(format!("{}: {}", failed.0, failed.1));
+        }
+        if !activated.is_empty() {
+            lc.cleared.push((now, activated));
         }
     }
     lc.lands.push(leg.members.clone());

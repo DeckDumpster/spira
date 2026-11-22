@@ -4777,6 +4777,50 @@ pub fn add_row_to_pass(results: &Path, row: &crate::vm::LiftedRow) -> Result<(),
     fs::write(&path, &next.text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// The `test:<id>` rows among `rows` that `tip` claims against `base_sha`: its diff changes the
+/// body of the test the row names.
+pub fn member_claims(repo: &Repo, base_sha: &str, tip: &str, rows: &[String]) -> Vec<String> {
+    if rows.is_empty() {
+        return vec![];
+    }
+    let paths: Vec<String> = changed_paths_checked(repo, base_sha, tip).unwrap_or_default().into_iter().filter(|p| p.ends_with(".rs")).collect();
+    let read = |rev: &str| -> Vec<(String, Vec<u8>)> { paths.iter().filter_map(|p| file_at(repo, rev, p).map(|t| (p.clone(), t.into_bytes()))).collect() };
+    crate::claim::claimed_rows(rows, &read(base_sha), &read(tip))
+}
+
+/// `test-registry activate` of `test` as the batcher.
+pub fn registry_activate(bin: &str, env: &Env, test: &str, reason: &str) -> Result<(), String> {
+    // batch-job: a registry write, bounded by the registry's own busy timeout
+    // FORK-EDGE: machine leg test-registry (activate a claimed row the round landed green)
+    let out = Command::new(bin)
+        .args(["activate", "--test", test, "--reason", reason, "--actor", "batcher"])
+        .env("SPIRA_HOME", &env.home)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("{bin} activate: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "{bin} activate --test {test} exited {}: {}{}",
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
+/// Clears each claimed row a landed round left standing: one `activate` per row. Returns the
+/// rows it could not clear, with why; a failed clear never undoes the landing.
+pub fn activate_claimed_with(activate: &mut dyn FnMut(&str, &str) -> Result<(), String>, round: &str, claims: &[(String, String)]) -> Vec<(String, String)> {
+    claims
+        .iter()
+        .filter_map(|(test, member)| {
+            let reason = format!("body changed by {member}; green in round {round}");
+            activate(test, &reason).err().map(|e| (test.clone(), e))
+        })
+        .collect()
+}
+
 /// The registry rows a round lifted, and what became of each: kept (re-pointed at a fix bead) or
 /// put back because their owner left.
 #[derive(Default)]
@@ -4796,7 +4840,17 @@ impl LiftedRows {
         self.rows
             .iter()
             .filter(|r| !self.kept.contains_key(&r.test) && !self.restored.contains(&r.test))
-            .map(|r| (r.test.clone(), r.bead.clone()))
+            .map(|r| (r.test.clone(), r.claimed_by.clone().unwrap_or_else(|| r.bead.clone())))
+            .collect()
+    }
+
+    /// (test, member) of each claimed row still lifted: the rows a landing activates.
+    pub fn standing_claims(&self) -> Vec<(String, String)> {
+        let standing = self.standing();
+        self.rows
+            .iter()
+            .filter(|r| standing.iter().any(|(t, _)| *t == r.test))
+            .filter_map(|r| Some((r.test.clone(), r.claimed_by.clone()?)))
             .collect()
     }
 
@@ -4813,7 +4867,7 @@ impl LiftedRows {
 
     /// Puts `owner`'s lifted rows back in the pass's deny list, except those already kept.
     pub fn restore_rows_of(&mut self, owner: &str, results: &Path) -> Result<(), String> {
-        for row in self.rows.iter().filter(|r| r.bead == owner) {
+        for row in self.rows.iter().filter(|r| r.claimed_by.as_deref().unwrap_or(&r.bead) == owner) {
             if self.kept.contains_key(&row.test) || !self.restored.insert(row.test.clone()) {
                 continue;
             }
@@ -4839,7 +4893,7 @@ pub fn keep_row_with(
     let row = disable(&kept.test, &bead, &reason).map_err(|e| format!("cannot re-point {} (fix {bead}): {e}", kept.test))?;
     add_row_to_pass(
         results,
-        &crate::vm::LiftedRow { state: row.state.clone(), test: row.test.clone(), bead: row.bead.clone(), until: row.until },
+        &crate::vm::LiftedRow { state: row.state.clone(), test: row.test.clone(), bead: row.bead.clone(), until: row.until, claimed_by: None },
     )?;
     Ok(row)
 }
@@ -5976,6 +6030,68 @@ mod land_exit_tests {
         assert!(got.ends_with(" touch x"), "{got}");
         assert_eq!(last_touching(&repo, "HEAD", &["nope".to_string()]), None);
         assert_eq!(last_touching(&repo, "HEAD", &[]), None);
+    }
+
+    fn claims_repo(t: &testkit::TempDir, base: &str, tip: &[(&str, &str)]) -> (Repo, String, String) {
+        let d = t.path();
+        let git = |args: &[&str]| testkit::git(d, &["-c", "user.name=t", "-c", "user.email=t@t"].iter().chain(args).copied().collect::<Vec<_>>());
+        git(&["init", "-q", "-b", "main"]);
+        fs::write(d.join("a.rs"), base).unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "base"]);
+        let start = git(&["rev-parse", "HEAD"]);
+        git(&["checkout", "-q", "-b", "member"]);
+        git(&["rm", "-q", "a.rs"]);
+        for (path, text) in tip {
+            fs::create_dir_all(d.join(path).parent().unwrap()).unwrap();
+            fs::write(d.join(path), text).unwrap();
+        }
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "member"]);
+        let tip = git(&["rev-parse", "HEAD"]);
+        (repo_at(d), start, tip)
+    }
+
+    const CLAIM_BASE: &str = "#[test_id(t0aaaaa)]\n#[test]\nfn t() {\n    one();\n}\n#[test_id(t0bbbbb)]\n#[test]\nfn u() {\n    two();\n}\n";
+
+    #[test_id(tcl1a2b)]
+    #[test]
+    fn a_member_that_edits_inside_a_disabled_tests_body_claims_its_row_and_one_that_edits_another_test_does_not() {
+        let rows = vec!["test:t0aaaaa".to_string()];
+        let t = testkit::TempDir::new("batcher-cut-claim-edit");
+        let (repo, base, tip) = claims_repo(&t, CLAIM_BASE, &[("a.rs", &CLAIM_BASE.replace("one()", "three()"))]);
+        assert_eq!(member_claims(&repo, &base, &tip, &rows), ["test:t0aaaaa"]);
+        let t = testkit::TempDir::new("batcher-cut-claim-other");
+        let (repo, base, tip) = claims_repo(&t, CLAIM_BASE, &[("a.rs", &CLAIM_BASE.replace("two()", "three()"))]);
+        assert_eq!(member_claims(&repo, &base, &tip, &rows), Vec::<String>::new());
+    }
+
+    #[test_id(tcl3c4d)]
+    #[test]
+    fn a_member_that_renames_and_moves_the_test_with_an_identical_body_claims_nothing() {
+        let t = testkit::TempDir::new("batcher-cut-claim-move");
+        let moved = CLAIM_BASE.replace("fn t()", "fn renamed()");
+        let (repo, base, tip) = claims_repo(&t, CLAIM_BASE, &[("sub/b.rs", &moved)]);
+        assert_eq!(member_claims(&repo, &base, &tip, &["test:t0aaaaa".to_string()]), Vec::<String>::new());
+    }
+
+    #[test_id(tcl5e6f)]
+    #[test]
+    fn a_landing_with_a_claimed_row_standing_activates_it_once_naming_the_member_and_round() {
+        let row = |claimed_by: Option<&str>| crate::vm::LiftedRow { state: "disabled".into(), test: "test:t0aaaaa".into(), bead: "sp-own".into(), until: -1, claimed_by: claimed_by.map(String::from) };
+        let rows = LiftedRows::new(vec![row(Some("sp-m")), crate::vm::LiftedRow { test: "test:t0bbbbb".into(), ..row(None) }]);
+        let mut seen = vec![];
+        let failed = activate_claimed_with(
+            &mut |t, r| {
+                seen.push((t.to_string(), r.to_string()));
+                Ok(())
+            },
+            "r9",
+            &rows.standing_claims(),
+        );
+        assert!(failed.is_empty());
+        assert_eq!(seen, [("test:t0aaaaa".to_string(), "body changed by sp-m; green in round r9".to_string())]);
+        assert_eq!(rows.standing()[0], ("test:t0aaaaa".to_string(), "sp-m".to_string()), "the claimer owns the row for the round");
     }
 
     #[test_id(tb7u376)]

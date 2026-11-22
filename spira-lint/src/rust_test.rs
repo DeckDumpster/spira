@@ -320,6 +320,18 @@ pub fn test_sites(src: &[u8]) -> Vec<TestSite> {
     sites
 }
 
+/// The bytes of the `{…}` body of the fn `site` decorates, comments included; `None` when it never closes.
+pub fn test_body(src: &[u8], site: &TestSite) -> Option<Vec<u8>> {
+    let cl = rust::classify(src);
+    let code = cl.code_only();
+    let from = src.split(|&b| b == b'\n').take(site.line.saturating_sub(1)).map(|l| l.len() + 1).sum::<usize>().min(code.len());
+    let needle = format!("fn {}", site.fn_name);
+    let at = from + code[from..].windows(needle.len()).position(|w| w == needle.as_bytes())?;
+    let open = at + code[at..].iter().position(|&b| b == b'{')?;
+    let end = close_of(&code, open)?;
+    Some(src[open..end].to_vec())
+}
+
 /// Every `#[test_id(<id>)]` in code whose argument is a literal id, as (1-based line, id): a
 /// test site's own and a macro invocation's argument alike. A `$` fragment is no literal.
 pub fn literal_test_ids(src: &[u8]) -> Vec<(usize, String)> {
@@ -390,5 +402,13 @@ mod test_sites_tests {
         let s = sites("/// doc\n#[allow(unused)]\n#[test]\n#[should_panic(expected = \"x\")]\n#[cfg(unix)]\npub async fn a() -> Result<(), String> {}\n");
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].line, 3);
+    }
+    #[test_id(t8bd3qn)]
+    #[test]
+    fn a_tests_body_is_its_braces_and_not_a_neighbours_or_a_braces_in_a_string() {
+        let src = "#[test]\nfn a() { let s = \"}\"; }\n#[test]\nfn b() {\n    if true { x(); }\n}\n";
+        let s = sites(src);
+        assert_eq!(crate::rust_test::test_body(src.as_bytes(), &s[0]).unwrap(), b"{ let s = \"}\"; }");
+        assert_eq!(crate::rust_test::test_body(src.as_bytes(), &s[1]).unwrap(), b"{\n    if true { x(); }\n}");
     }
 }

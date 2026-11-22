@@ -340,6 +340,8 @@ pub struct DenySnapshot {
     pub at: u64,
     /// The registry ids of the rows `lifting` took out for this round.
     pub lifted: Vec<String>,
+    /// (test, member) of each lifted row a member claimed by changing the test's body.
+    pub claimed: Vec<(String, String)>,
 }
 
 /// A registry row the round lifted because its owning bead is a member.
@@ -349,6 +351,8 @@ pub struct LiftedRow {
     pub test: String,
     pub bead: String,
     pub until: i64,
+    /// The member whose change to the test's body lifted the row; `None` for a row its own bead owns.
+    pub claimed_by: Option<String>,
 }
 
 impl DenySnapshot {
@@ -358,6 +362,11 @@ impl DenySnapshot {
         use sha2::{Digest, Sha256};
         let hex: String = Sha256::digest(self.text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
         hex[..12].to_string()
+    }
+
+    /// The `test:<id>` rows of the list.
+    pub fn test_rows(&self) -> Vec<String> {
+        self.text.lines().filter_map(|l| l.split('\t').nth(1)).filter(|t| t.starts_with("test:")).map(String::from).collect()
     }
 
     pub fn rows(&self) -> usize {
@@ -375,6 +384,9 @@ impl DenySnapshot {
         if !self.lifted.is_empty() {
             out.push(("deny_lifted", self.lifted.join(",")));
         }
+        if !self.claimed.is_empty() {
+            out.push(("deny_claimed", self.claimed.iter().map(|(t, m)| format!("{t}={m}")).collect::<Vec<_>>().join(",")));
+        }
         out
     }
 
@@ -389,8 +401,9 @@ impl DenySnapshot {
         }
     }
 
-    /// This list without the rows whose bead is one of `beads`, and those rows.
-    pub fn lifting(&self, beads: &[String]) -> (DenySnapshot, Vec<LiftedRow>) {
+    /// This list without the rows whose bead is one of `beads` or whose test a member claimed
+    /// (`claims` is (test, member)), and those rows. A row both owned and claimed is the owner's.
+    pub fn lifting(&self, beads: &[String], claims: &[(String, String)]) -> (DenySnapshot, Vec<LiftedRow>) {
         let mut lines = self.text.lines();
         let header = lines.next().unwrap_or_default();
         let (mut kept, mut lifted) = (vec![], vec![]);
@@ -402,6 +415,14 @@ impl DenySnapshot {
                     test: test.into(),
                     bead: bead.into(),
                     until: until.parse().unwrap_or(-1),
+                    claimed_by: None,
+                }),
+                [state, test, bead, until] if claims.iter().any(|(t, _)| t == test) => lifted.push(LiftedRow {
+                    state: state.into(),
+                    test: test.into(),
+                    bead: bead.into(),
+                    until: until.parse().unwrap_or(-1),
+                    claimed_by: claims.iter().find(|(t, _)| t == test).map(|(_, m)| m.clone()),
                 }),
                 _ => kept.push(line),
             }
@@ -412,7 +433,8 @@ impl DenySnapshot {
             text.push('\n');
         }
         let ids = lifted.iter().map(|r| r.test.clone()).collect();
-        (DenySnapshot { text, at: self.at, lifted: ids }, lifted)
+        let claimed = lifted.iter().filter_map(|r| Some((r.test.clone(), r.claimed_by.clone()?))).collect();
+        (DenySnapshot { text, at: self.at, lifted: ids, claimed }, lifted)
     }
 
     /// This list with one more row, in the registry's own row shape; the header's count follows.
@@ -428,14 +450,14 @@ impl DenySnapshot {
         }
         let until = if until < 0 { "-".to_string() } else { until.to_string() };
         text.push_str(&format!("{state}\t{test}\t{bead}\t{until}\n"));
-        DenySnapshot { text, at: self.at, lifted: self.lifted.clone() }
+        DenySnapshot { text, at: self.at, lifted: self.lifted.clone(), claimed: self.claimed.clone() }
     }
 
     /// A snapshot an earlier pass of the round wrote at `dir/deny-list`; its instant is the header's `at=`.
     pub fn from_pass(dir: &Path) -> Option<DenySnapshot> {
         let text = fs::read_to_string(dir.join(Self::FILE)).ok()?;
         let at = text.lines().next()?.split_whitespace().find_map(|w| w.strip_prefix("at=")?.parse().ok())?;
-        Some(DenySnapshot { text, at, lifted: vec![] })
+        Some(DenySnapshot { text, at, lifted: vec![], claimed: vec![] })
     }
 }
 
@@ -2993,7 +3015,7 @@ mod deny_snapshot_tests {
         let (env, repo) = (lifecycle_tests_env(d.path()), repo(d.path()));
         let r = runner(&env, &repo, d.path());
         assert!(r.deny_args().is_empty(), "a runner given no list passes none");
-        let r = r.with_deny_list(&DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] }).unwrap();
+        let r = r.with_deny_list(&DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![], claimed: vec![] }).unwrap();
         let file = r.results.join("deny-list");
         assert_eq!(fs::read_to_string(&file).unwrap(), LIST);
         assert_eq!(r.deny_args(), vec![std::ffi::OsString::from("--deny-list"), file.clone().into()]);
@@ -3004,7 +3026,7 @@ mod deny_snapshot_tests {
     #[test_id(ty6aax0)]
     #[test]
     fn a_row_added_to_a_snapshot_keeps_the_registry_shape_counts_itself_and_changes_the_digest() {
-        let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] };
+        let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![], claimed: vec![] };
         let t = s.with_row("disabled", "test:t0flip0", "sp-y", 9000);
         assert_eq!(
             t.text,
@@ -3021,27 +3043,43 @@ mod deny_snapshot_tests {
             text: "# test-registry deny-list at=2000 rows=3\ndisabled\tsuite:a.sh\tsp-m\t9000\ndisabled\ttest:t0xxxxx\tsp-other\t-\ndisabled\ttest:t0yyyyy\tsp-m\t-\n".into(),
             at: 2000,
             lifted: vec![],
+            claimed: vec![],
         };
-        let (rest, rows) = s.lifting(&["sp-m".to_string()]);
+        let (rest, rows) = s.lifting(&["sp-m".to_string()], &[]);
         assert_eq!(rest.text, "# test-registry deny-list at=2000 rows=1\ndisabled\ttest:t0xxxxx\tsp-other\t-\n");
         assert_eq!(rest.rows(), 1);
         assert_eq!(rows.iter().map(|r| (r.test.as_str(), r.until)).collect::<Vec<_>>(), [("suite:a.sh", 9000), ("test:t0yyyyy", -1)]);
         assert_eq!(rest.fields()[2], ("deny_lifted", "suite:a.sh,test:t0yyyyy".to_string()));
-        let (same, none) = s.lifting(&["sp-nobody".to_string()]);
+        let (same, none) = s.lifting(&["sp-nobody".to_string()], &[]);
         assert_eq!((same.text.as_str(), none.len()), (s.text.as_str(), 0));
         assert_eq!(same.fields().len(), 2);
+    }
+
+    #[test_id(tcl7g8h)]
+    #[test]
+    fn lifting_takes_a_claimed_row_out_with_the_claimer_recorded_and_leaves_an_unclaimed_one() {
+        let s = DenySnapshot {
+            text: "# test-registry deny-list at=2000 rows=2\ndisabled\ttest:t0aaaaa\tsp-other\t-\ndisabled\ttest:t0bbbbb\tsp-other\t-\n".into(),
+            at: 2000,
+            lifted: vec![],
+            claimed: vec![],
+        };
+        let (rest, rows) = s.lifting(&["sp-m".to_string()], &[("test:t0aaaaa".to_string(), "sp-m".to_string())]);
+        assert_eq!(rest.text, "# test-registry deny-list at=2000 rows=1\ndisabled\ttest:t0bbbbb\tsp-other\t-\n");
+        assert_eq!(rows.iter().map(|r| (r.test.as_str(), r.claimed_by.as_deref())).collect::<Vec<_>>(), [("test:t0aaaaa", Some("sp-m"))]);
+        assert_eq!(rest.fields().last().unwrap(), &("deny_claimed", "test:t0aaaaa=sp-m".to_string()));
     }
 
     #[test_id(tcy96pi)]
     #[test]
     fn a_snapshot_names_its_instant_digest_and_rows_and_is_read_back_from_a_pass() {
-        let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![] };
+        let s = DenySnapshot { text: LIST.into(), at: 2000, lifted: vec![], claimed: vec![] };
         assert_eq!(s.rows(), 1);
         assert_eq!(s.label(), format!("2000/{}", s.digest()));
         assert_eq!(s.digest().len(), 12);
-        assert_eq!(DenySnapshot { text: "abc".into(), at: 0, lifted: vec![] }.digest(), "ba7816bf8f01", "the digest test-registry prints for the same text");
+        assert_eq!(DenySnapshot { text: "abc".into(), at: 0, lifted: vec![], claimed: vec![] }.digest(), "ba7816bf8f01", "the digest test-registry prints for the same text");
         assert_eq!(s.fields(), [("deny_list", s.label()), ("deny_rows", "1".to_string())]);
-        assert_eq!(DenySnapshot { text: String::new(), at: 1, lifted: vec![] }.rows(), 0);
+        assert_eq!(DenySnapshot { text: String::new(), at: 1, lifted: vec![], claimed: vec![] }.rows(), 0);
         let d = testkit::TempDir::new("vm-deny-pass");
         assert!(DenySnapshot::from_pass(d.path()).is_none());
         fs::write(d.path().join("deny-list"), LIST).unwrap();

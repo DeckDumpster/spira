@@ -8,6 +8,7 @@
 #[macro_use]
 extern crate spira_test_id;
 pub mod attribute;
+pub mod claim;
 #[allow(dead_code)]
 pub mod endpass;
 pub mod io;
