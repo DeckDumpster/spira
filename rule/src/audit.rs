@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn a_shipped_bin_behind_spira_home_is_clean() {
         let bins: std::collections::BTreeSet<String> = ["reply".to_string()].into();
-        let root = std::path::Path::new("/nonexistent-root");
+        let root = std::path::Path::new("no-such-root");
         let r = placeholder_resolver(root, &bins);
         assert!(prompt_findings("x.md", "{{SPIRA_HOME}}/../bin/reply x", &r, &release).is_empty());
         assert_eq!(prompt_findings("x.md", "{{SPIRA_HOME}}/../bin/gone x", &r, &release).len(), 1);
