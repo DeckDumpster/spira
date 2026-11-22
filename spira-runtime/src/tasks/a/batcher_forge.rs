@@ -443,6 +443,7 @@ impl Machine<'_> {
                     let why = match outcome {
                         Some(Attribution::Blocked(why) | Attribution::Emptied(why) | Attribution::Fault(why) | Attribution::Faulted(why) | Attribution::Unconverged(why)) => why,
                         Some(Attribution::Land { .. }) => "attribution withdrew every member".into(),
+                        Some(Attribution::RunnerDifference { red_on, green_on, .. }) => format!("the red ran on {red_on} and is green on {green_on}: a runner difference, no member charged"),
                         Some(Attribution::Abandoned) => "the round was abandoned".into(),
                         None => format!("the attribution leg ended ({exit:?}) with no outcome"),
                     };

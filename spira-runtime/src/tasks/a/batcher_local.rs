@@ -59,6 +59,7 @@
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
+//! | Attributing | `unit.ran` runner-difference (the red tier is green on the host it last ran green on) | Certifying (`certify` again, its one next pass pinned to the host with `--place host`; no member charged, nothing ejected) |
 //! | Landing | observe: no `land` in flight (a restart) | Landing (`lc_certify`, `land` again; each walks the store's own state) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
@@ -433,6 +434,8 @@ pub enum Trigger {
     /// The certify leg exited [`queue::ops::round::VM_LOST`]: the pass is incomplete, the round
     /// is not judged, and it is certified again on its head (sp-e30jhh; not in the contract's table).
     CertifyLost,
+    /// The attribution found the red tier green on the host: no member is charged and the round is certified again there.
+    RerunRunnerDifference,
     /// The VM was lost under more passes than [`LOST_VM_RECERTIFIES`] allows.
     CertifyLostSpent,
     /// A pass on the round's current head passed while the carried leg was started for an earlier
@@ -479,6 +482,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Corpus, Trigger::LegGreen, State::Certifying),
     (State::Attributing, Trigger::RerunMending, State::Mending),
     (State::Attributing, Trigger::RerunCertifying, State::Certifying),
+    (State::Attributing, Trigger::RerunRunnerDifference, State::Certifying),
     (State::Corpus, Trigger::RerunCertifying, State::Certifying),
     (State::Certifying, Trigger::RerunCertifying, State::Certifying),
     (State::Attributing, Trigger::RerunBlocked, State::Done),
@@ -630,6 +634,9 @@ pub struct RepoCarry {
     /// Certify passes of this round whose VM was lost under them (sp-e30jhh).
     #[serde(default)]
     pub lost_vms: u32,
+    /// The round's next certify is pinned to the host: a runner difference was found, and that pass is the proof.
+    #[serde(default)]
+    pub host_pin: bool,
     /// This round's unnamed certify red has already been attributed.
     #[serde(default)]
     pub attributed: bool,
@@ -757,6 +764,7 @@ impl RepoCarry {
             own_testenv: self.own_testenv,
             suites: self.suites,
             lost_vms: self.lost_vms,
+            host_pin: self.host_pin,
             attributed: self.attributed,
             confirmed: self.confirmed,
             attributed_reds: self.attributed_reds.clone(),
@@ -799,6 +807,7 @@ impl RepoCarry {
             own_testenv: round.own_testenv,
             suites: round.suites,
             lost_vms: round.lost_vms,
+            host_pin: round.host_pin,
             attributed: round.attributed,
             confirmed: round.confirmed,
             attributed_reds: round.attributed_reds.clone(),
@@ -901,6 +910,9 @@ pub struct Leg {
     /// The attribution follows a red certify: it reads the pass `queue round certify` kept for the batch.
     #[serde(default)]
     pub after_certify: bool,
+    /// The certify runs on the host only (`--place host`).
+    #[serde(default)]
+    pub place_host: bool,
     /// The attribution names suspects from the red suites' `# covers:` instead of mending.
     #[serde(default)]
     pub confirmed: bool,
@@ -1081,6 +1093,9 @@ pub fn certify_argv(queue_bin: &str, leg: &Leg) -> Vec<String> {
     ];
     if !leg.head.is_empty() {
         argv.extend(["--rehead".to_string(), leg.head.clone()]);
+    }
+    if leg.place_host {
+        argv.extend(["--place".to_string(), "host".to_string()]);
     }
     argv
 }
@@ -1303,7 +1318,8 @@ impl Machine<'_> {
         }
         let head = if self.rc.certify_head.is_empty() { self.rc.head.clone() } else { self.rc.certify_head.clone() };
         self.rc.leg_head = head.clone();
-        let leg = Leg { key: unit.clone(), unit, head: if effect == CERTIFY { self.rc.certify_head.clone() } else { String::new() }, ..self.leg() };
+        let place_host = effect == CERTIFY && std::mem::take(&mut self.rc.host_pin);
+        let leg = Leg { key: unit.clone(), unit, place_host, head: if effect == CERTIFY { self.rc.certify_head.clone() } else { String::new() }, ..self.leg() };
         self.acts.push(leg.act(effect));
     }
 
@@ -2154,6 +2170,13 @@ impl Machine<'_> {
                         self.acts.push(leg.act(ABANDON));
                     }
                     self.finish(pace::Outcome::Quiet, "");
+                }
+                Some(Attribution::RunnerDifference { red_on, green_on, .. }) => {
+                    eprintln!("{NAME} {}: batch {:?}: the red ran on {red_on} and is green on {green_on} — certifying again on the host, no member charged", self.repo, self.rc.batch);
+                    self.go(Trigger::RerunRunnerDifference);
+                    self.rc.host_pin = true;
+                    self.rc.run += 1;
+                    self.certify();
                 }
                 Some(Attribution::Faulted(why)) => {
                     self.go(Trigger::RerunBlocked);
