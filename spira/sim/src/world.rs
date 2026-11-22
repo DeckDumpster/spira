@@ -1216,6 +1216,7 @@ pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
     vec![
         ("spira.lc_socket".to_string(), lc_socket(world).display().to_string()),
         ("spira.lc_password_file".to_string(), world.join("config/lc-credential").display().to_string()),
+        ("spira.beads_sql_writer_password_file".to_string(), world.join("config/lc-credential").display().to_string()),
         ("spira.run".to_string(), world.join("run").display().to_string()),
         ("spira.lc_store_path".to_string(), control_store(world).display().to_string()),
         ("spira.lc_lifecycle_on_store".to_string(), "1".to_string()),
@@ -1354,6 +1355,12 @@ mod locator_tests {
     }
 
     #[test_id(tbczw37)]
+    #[test]
+    fn a_worlds_content_writes_name_its_own_writer_credential() {
+        let s = lc_settings(Path::new("w"));
+        assert!(s.contains(&("spira.beads_sql_writer_password_file".to_string(), "w/config/lc-credential".to_string())));
+    }
+
     #[test]
     fn the_production_locator_refusal_names_its_exit() {
         let e = refuse_production(&|k| matches!(k, "SPIRA_TOML" | "SPIRA_LC_SOCKET").then(|| "x".to_string())).unwrap_err();
