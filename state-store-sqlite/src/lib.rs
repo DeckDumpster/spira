@@ -1669,6 +1669,13 @@ impl SqliteBackend {
         Ok((mode, sync))
     }
 
+    /// One restart of the WAL as the checkpointer runs it, past `line` WAL bytes: the read gate held while readers drain.
+    pub fn restart_wal_now(&self, line: u64) -> std::result::Result<(Checkpoint, bool), String> {
+        let inner = &self.0;
+        let terms = RestartTerms { clock: &*inner.clock, max_read_ms: inner.max_read_ms.load(Ordering::SeqCst), line };
+        restart_wal(&inner.writer, &inner.read_gate, &terms)
+    }
+
     /// A TRUNCATE checkpoint on the writer connection; it never waits for a reader.
     pub fn checkpoint(&self) -> Result<Checkpoint> {
         let w = lock(&self.0.writer);
@@ -1744,8 +1751,10 @@ impl SqliteBackend {
             Error::Backend(m) if m == INTERRUPTED => ended(),
             e => e,
         });
+        let held_past_limit = began > deadline;
         let end = match &out {
             _ if overran => phases::ReadEnd::Overran,
+            Err(e) if held_past_limit && is_read_ended(e) => phases::ReadEnd::EndedByReset,
             Err(e) if is_read_ended(e) => phases::ReadEnd::Ended,
             _ => phases::ReadEnd::Finished,
         };
