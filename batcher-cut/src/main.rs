@@ -3394,7 +3394,7 @@ mod cut_tests {
         let mut env = io::lifecycle_tests_env(&d);
         let bin = d.join("test-registry");
         env.test_registry_bin = Some(bin.clone());
-        let body = r#"{"ok":true,"rows":[{"test":"suite:a.sh","bead":"sp-two"},{"test":"unit:x t::y","bead":"sp-one"},{"test":"suite:b.sh","bead":"sp-two"}]}"#;
+        let body = r#"{"ok":true,"rows":[{"test":"suite:a.sh","bead":"sp-two"},{"test":"unit:x t::y","bead":"sp-one"},{"test":"suite:b.sh","bead":"sp-two"},{"test":"suite:c.sh","bead":"-"}]}"#;
         testkit::write_exe(&bin, &format!("#!/bin/sh\n[ \"$1 $2\" = \"list --json\" ] || exit 9\necho '{body}'\n"));
         assert_eq!(io::registry_row_beads(&env).unwrap(), vec!["sp-one".to_string(), "sp-two".to_string()]);
         testkit::write_exe(&bin, "#!/bin/sh\necho \"registry locked $*\" >&2\nexit 3\n");

@@ -3132,6 +3132,9 @@ pub mod edge {
 
     /// The beads the registry's rows name that the lifecycle reports LANDED; empty, said on stderr, when either read fails.
     fn registry_landed(env: &Env) -> Vec<String> {
+        if env.test_registry_bin.is_none() {
+            return vec![];
+        }
         let ids = match batcher_cut::io::registry_row_beads(env) {
             Ok(ids) => ids,
             Err(why) => {
