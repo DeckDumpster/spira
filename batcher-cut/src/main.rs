@@ -68,6 +68,7 @@ struct Opts {
     by: Option<String>,
     reason: Option<String>,
     all: bool,
+    held_since: Option<u64>,
 }
 
 fn usage() -> ExitCode {
@@ -79,7 +80,7 @@ fn usage() -> ExitCode {
     eprintln!("       batcher path-attribute <repo> --members id:tip,... --reds FILE [--record FILE] [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher attribute <repo> --members id:tip,... --wt DIR --base SHA [--batch ID] [--after-pass RESULTS] [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher pause-set --repo R --by concierge|operator --reason TEXT [--run DIR]");
-    eprintln!("       batcher pause-show (--repo R | --all) [--run DIR]");
+    eprintln!("       batcher pause-show (--repo R [--held-since EPOCH] | --all) [--run DIR]");
     eprintln!("       batcher pause-lift --repo R --by concierge|operator --reason TEXT [--run DIR]");
     eprintln!("exit codes: 0 done (a lift with no pause says so and exits 0); 1 refused or failed; 2 usage");
     ExitCode::from(2)
@@ -114,6 +115,7 @@ fn parse() -> Result<Opts, String> {
         by: None,
         reason: None,
         all: false,
+        held_since: None,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -136,6 +138,7 @@ fn parse() -> Result<Opts, String> {
             "--by" => o.by = Some(val()?),
             "--reason" => o.reason = Some(val()?),
             "--all" => o.all = true,
+            "--held-since" => o.held_since = Some(val()?.parse().map_err(|_| "--held-since takes epoch seconds".to_string())?),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -2250,6 +2253,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
                 by: None,
                 reason: None,
                 all: false,
+                held_since: None,
             };
             if paced && reg.land(name) == "queue.local" {
                 paced_cut(&env_, name, &one).map_err(|e| e.msg)
@@ -2317,6 +2321,7 @@ fn sifts(o: &Opts) -> Result<(), String> {
             by: None,
             reason: None,
             all: false,
+            held_since: None,
         };
         if let Err(e) = sift_one(&one) {
             eprintln!("batcher sifts: {name}: {e}");
@@ -2769,6 +2774,9 @@ fn pause_show(o: &Opts, out: &mut dyn std::io::Write) -> Result<(), String> {
         let files = pace::Files::new(&run, r);
         if let Some(text) = files.pause_text() {
             shown = true;
+            if o.held_since.is_some() && files.pause_set_at() == o.held_since {
+                return Err(format!("{r}: the pause set at {} still holds ({})", o.held_since.unwrap_or_default(), text.trim()));
+            }
             let kind = if text.starts_with("hold:") { "hold" } else { "red" };
             let since = files.pause_set_at().map_or("unknown".to_string(), |t| t.to_string());
             writeln!(out, "{r}: paused kind={kind} since={since} text={}", text.trim()).map_err(|e| e.to_string())?;
@@ -2872,6 +2880,7 @@ mod tests {
             by: by.map(String::from),
             reason: Some("eject done".into()),
             all: false,
+            held_since: None,
         }
     }
 
@@ -2880,6 +2889,17 @@ mod tests {
         std::fs::create_dir_all(f.pause_file().parent().unwrap()).unwrap();
         std::fs::write(f.pause_file(), "red:1\n").unwrap();
         f
+    }
+
+    #[test]
+    fn sp_plukb4_pause_show_held_since_fails_only_while_that_pause_holds() {
+        let d = testkit::TempDir::new("batcher-pause-held-since");
+        let f = red_pause(d.path());
+        let since = |n| Opts { held_since: Some(n), ..pause_opts(d.path(), None) };
+        assert!(pause_show(&since(1), &mut Vec::new()).is_err(), "the pause set at 1 holds");
+        assert!(pause_show(&since(2), &mut Vec::new()).is_ok(), "another since is no longer this pause");
+        std::fs::remove_file(f.pause_file()).unwrap();
+        assert!(pause_show(&since(1), &mut Vec::new()).is_ok(), "no pause holds");
     }
 
     #[test]
@@ -3539,6 +3559,7 @@ mod cut_tests {
             by: None,
             reason: None,
             all: false,
+            held_since: None,
             confirmed: false,
         };
         let given = vec![("sp-8br220".to_string(), tips[0].clone()), ("sp-x".to_string(), tips[1].clone())];

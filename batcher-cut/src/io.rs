@@ -2721,6 +2721,16 @@ fn test_phase_evidence(results: &Path) -> Vec<String> {
     lines
 }
 
+/// The first `<stage> failed: <names>` line of the newest kept round results under `run`, with
+/// the panic line the failure excerpt holds, if any.
+pub fn red_test_line(run: &Path) -> Option<String> {
+    let newest = fs::read_dir(run.join("rounds")).ok()?.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".results")).filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).max()?.1;
+    let lines = test_phase_evidence(&newest);
+    let failed = lines.iter().find(|l| l.contains(" failed: "))?.clone();
+    let panic = lines.iter().flat_map(|l| l.lines()).map(str::trim).find(|l| l.contains("panicked at"));
+    Some(panic.map_or(failed.clone(), |p| format!("{failed}; {p}")))
+}
+
 /// The failing tests' names and each red suite's first FAIL line, kept under the send-back
 /// store, which the next pass's wipe of the round's results does not reach. Returns the kept
 /// path, or why nothing was kept.
