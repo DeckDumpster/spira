@@ -510,6 +510,23 @@ mod tests {
         assert_eq!((s.reads_ended, s.reads_overran), (1, 1));
     }
 
+    #[test_id(tzuu5qi)]
+    #[test]
+    fn the_longest_content_statement_wins_and_its_shape_is_built_only_then() {
+        let rec = tracked();
+        let built = std::cell::Cell::new(0);
+        for (us, shape) in [(40, "a"), (900, "b"), (10, "c")] {
+            record_content_statement(Duration::from_micros(us), || {
+                built.set(built.get() + 1);
+                shape.to_string()
+            });
+        }
+        untrack();
+        let s = rec.snapshot();
+        assert_eq!((s.content_query_max_us, s.content_query_max_shape.as_str(), built.get()), (900, "b", 2));
+        record_content_statement(Duration::from_micros(1), || unreachable!("no recorder installed"));
+    }
+
     #[test_id(t0pt99i)]
     #[test]
     fn recording_a_read_with_no_recorder_installed_does_nothing() {

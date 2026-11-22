@@ -249,8 +249,9 @@ impl<S: Session> Sessions<S> {
         self.with_session(open, |session| {
             let started = std::time::Instant::now();
             let out = state_store::phases::time(state_store::phases::Phase::ContentQuery, || session.exec(script));
-            crate::slow::record(started.elapsed(), script);
-            state_store::phases::record_content_statement(started.elapsed(), || crate::slow::shape(script));
+            let took = started.elapsed();
+            crate::slow::record(took, script);
+            state_store::phases::record_content_statement(took, || crate::slow::shape(script));
             let healthy = out.is_ok();
             (out, healthy)
         })?
@@ -320,8 +321,9 @@ impl crate::content_write::Tx for WireTx<'_> {
     fn send(&mut self, sql: &str) -> Result<(), crate::content_write::Fail> {
         let started = std::time::Instant::now();
         let out = state_store::phases::time(state_store::phases::Phase::ContentQuery, || self.wire.exec(sql));
-        crate::slow::record(started.elapsed(), sql);
-        state_store::phases::record_content_statement(started.elapsed(), || crate::slow::shape(sql));
+        let took = started.elapsed();
+        crate::slow::record(took, sql);
+        state_store::phases::record_content_statement(took, || crate::slow::shape(sql));
         out.map(|_| ()).map_err(|e| match e {
             ScriptFailure::LostRace => crate::content_write::Fail::Conflict,
             ScriptFailure::CannotTell(m) => {
@@ -539,6 +541,14 @@ mod session_pool_tests {
     fn a_run_records_one_content_query() {
         let rig = Rig::new(1);
         assert_eq!(run_tracked(&rig, "fast").content_queries, 1);
+    }
+
+    #[test_id(t84ywnh)]
+    #[test]
+    fn a_run_records_its_statement_shape_for_the_span() {
+        let rig = Rig::new(1);
+        let snap = run_tracked(&rig, "SELECT a FROM t WHERE id = 'x'");
+        assert_eq!(snap.content_query_max_shape, "SELECT a FROM t WHERE id = ?");
     }
 
     #[test_id(t7blkfu)]

@@ -813,6 +813,16 @@ mod tests {
         assert!(got.chars().count() <= 300, "{got}");
     }
 
+    #[test_id(tgf2bfi)]
+    #[test]
+    fn a_shape_with_no_from_or_a_tail_over_the_cap_is_cut_at_the_cap() {
+        let no_from = format!("SELECT {}", "a, ".repeat(200));
+        assert_eq!(shape(&no_from).chars().count(), 300);
+        let long_tail = format!("SELECT a FROM t WHERE {}", "x = y AND ".repeat(60));
+        let got = shape(&long_tail);
+        assert!(got.starts_with("FROM t WHERE") && got.chars().count() == 300, "{got}");
+    }
+
     #[test_id(thy1ayi)]
     #[test]
     fn a_threshold_the_config_does_not_declare_is_refused_by_name() {
