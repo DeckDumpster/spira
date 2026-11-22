@@ -4,7 +4,7 @@
 extern crate spira_test_id;
 use std::collections::BTreeMap;
 
-use rule::code::{append, drift, generate, page_dates, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Moved, Pointers, Retired};
+use rule::code::{append, drift, generate, page_dates, require_dates, with_frontmatter, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Moved, Pointers, Retired};
 
 const TOC: &str = r#"[[part]]
 number = 1
@@ -82,6 +82,12 @@ fn a_regenerated_page_keeps_its_dates_until_its_body_changes() {
     let bare: BTreeMap<String, String> = first.iter().map(|(k, v)| (k.clone(), v.split_once("---\n").unwrap().1.split_once("---\n").unwrap().1.to_string())).collect();
     let fresh = generate(&parts, &Pointers::default(), book, &bare, "2026-12-01");
     assert!(fresh.values().all(|v| v.contains("created: 2026-12-01\nupdated: 2026-12-01\n")));
+    let dated = |c: &str, u: &str| with_frontmatter(c, u, &["law"], "b\n");
+    assert_eq!(page_dates(Some(&dated("2026-01-01", "2026-02-02")), "b\n", "2026-12-01"), ("2026-01-01".into(), "2026-02-02".into()));
+    assert_eq!(page_dates(Some(&dated("2026-01-01", "soon")), "b\n", "2026-12-01"), ("2026-01-01".into(), "2026-12-01".into()));
+    assert_eq!(page_dates(Some(&dated("never", "2026-02-02")), "b\n", "2026-12-01"), ("2026-12-01".into(), "2026-12-01".into()));
+    assert!(require_dates(&BTreeMap::from([("a.md".to_string(), with_frontmatter("", "", &["law"], "b\n"))])).is_err());
+    assert!(require_dates(&first).is_ok());
     assert_eq!(page_dates(None, "b", "2026-12-01"), ("2026-12-01".to_string(), "2026-12-01".to_string()));
 }
 
@@ -567,6 +573,13 @@ fn code_check_reads_the_book_in_the_configured_wiki() {
     assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
 
     let book = world.book();
+    let index = book.join("index.md");
+    let old = std::fs::read_to_string(&index).unwrap().replace("created: 20", "created: 19").replace("updated: 20", "updated: 19");
+    std::fs::write(&index, &old).unwrap();
+    let kept = run(&["--check"]);
+    assert_eq!(kept.status.code(), Some(0), "an older page's dates are read, not replaced: {}", said(&kept));
+    assert_eq!(run(&[]).status.code(), Some(0));
+    assert_eq!(std::fs::read_to_string(&index).unwrap(), old);
     let section = std::fs::read_dir(book.join("1-alpha")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).find(|n| n.contains("law-one")).unwrap();
     std::fs::write(book.join("1-alpha").join(&section), "edited\n").unwrap();
     std::fs::write(book.join("stray.md"), "x").unwrap();
