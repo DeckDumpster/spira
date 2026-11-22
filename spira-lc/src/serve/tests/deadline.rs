@@ -3,6 +3,7 @@ use super::*;
 #[test_id(trztch4)]
 #[test]
 fn a_write_held_past_its_request_deadline_answers_cannot_tell_and_never_commits() {
+    let _env = testkit::env_read();
     use state_store::{contract::{Config, Contract, Ports}, MemBackend, Object, Request, Txn};
     use std::{sync::Arc, time::{Duration, Instant}};
     let c = Arc::new(Contract::open(MemBackend::new(), Ports::virtual_clock(&runtime::ports::VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap());
@@ -28,6 +29,7 @@ fn a_write_held_past_its_request_deadline_answers_cannot_tell_and_never_commits(
 #[test_id(tr82uyg)]
 #[test]
 fn a_store_call_is_abandoned_at_the_configured_default_and_only_batch_verbs_wait_longer() {
+    let _env = testkit::env_read();
     let d = |v: &str| dl(&[v.to_string(), "x".to_string()]);
     for verb in ["show", "list", "event", "fact", "cut", "land", "stats", "content", "audits", "ops-view", ""] {
         assert_eq!(d(verb), std::time::Duration::from_millis(1000), "{verb}");
@@ -64,6 +66,7 @@ fn watch_door(held: Duration) -> Arc<super::Door> {
 #[test_id(tlv64af)]
 #[test]
 fn a_watch_holding_two_seconds_is_not_cut_by_a_one_second_request_cutoff() {
+    let _env = testkit::env_read();
     let door = watch_door(Duration::from_secs(2));
     let (code, out) = send(&door, &["watch", "p/", "--from-rev", "0", "--wait-ms", "2000"], None);
     assert_eq!((code, out.as_str()), (0, "idle"));
@@ -72,6 +75,7 @@ fn a_watch_holding_two_seconds_is_not_cut_by_a_one_second_request_cutoff() {
 #[test_id(tqvecu8)]
 #[test]
 fn a_zero_wait_watch_is_cut_at_the_margin() {
+    let _env = testkit::env_read();
     let door = watch_door(Duration::from_millis(1500));
     let got = send(&door, &["watch", "p/", "--from-rev", "0", "--wait-ms", "0"], None);
     assert_eq!(got, (2, "cannot tell: deadline".to_string()));
@@ -80,6 +84,7 @@ fn a_zero_wait_watch_is_cut_at_the_margin() {
 #[test_id(t5bw0o8)]
 #[test]
 fn deadlines_come_from_config_and_bad_config_refuses_naming_its_key() {
+    let _env = testkit::env_read();
     let ok = super::deadlines_from(config(Some("800"))).unwrap();
     assert_eq!(ok.default, Duration::from_millis(800));
     for deadline in [None, Some("4000"), Some("0")] {
@@ -91,6 +96,7 @@ fn deadlines_come_from_config_and_bad_config_refuses_naming_its_key() {
 #[test_id(tnfn8dy)]
 #[test]
 fn a_composed_verb_keeps_the_configured_default_and_only_its_sweeps_are_batch_jobs() {
+    let _env = testkit::env_read();
     let d = |v: &str| dl(&[v.to_string(), "x".to_string()]);
     for verb in ["close", "reopen", "reconcile-closed", "close-ask", "hold", "unhold", "drop", "disposition", "held", "reply", "content"] {
         assert_eq!(d(verb), std::time::Duration::from_millis(1000), "{verb}");
@@ -103,6 +109,7 @@ fn a_composed_verb_keeps_the_configured_default_and_only_its_sweeps_are_batch_jo
 #[test_id(tm9q4t5)]
 #[test]
 fn a_write_the_server_cut_at_its_deadline_is_resent_under_its_id_and_applied_once() {
+    let _env = testkit::env_read();
     use std::io::{BufRead, Read, Write};
     let dir = testkit::TempDir::new("lc-serve-resend");
     let path = dir.join("sock");
