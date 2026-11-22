@@ -2147,6 +2147,35 @@ fn a_restart_below_the_wal_line_still_gives_up_while_a_read_is_held() {
 
 /// A [`VirtualClock`] that notes when the thread named `pass` first reads it: the restart reads
 /// it as it begins, so the flag says the restart has taken its start time.
+#[test]
+fn the_background_checkpointer_starts_a_pass_when_the_wal_reaches_the_line_whatever_the_commit_count() {
+    const LINE: u64 = 1 << 20;
+    let dir = TempDir::new("sqlite-wal-line-trigger");
+    let path = dir.path().join("s.db");
+    let wal = format!("{}-wal", path.display());
+    let opts = Options { checkpoint_every: u64::MAX, wal_line_bytes: LINE, readers: 4, ..Options::default() };
+    let b = SqliteBackend::open(&path, opts).unwrap();
+    let commit_bytes = u64::from(frames_per_commit()) * (4096 + 24);
+    let wal_len = || std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+    let mut written = 0u64;
+    let mut largest = 0u64;
+    while written < 4 << 20 {
+        let before = b.checkpoints_completed();
+        put_next(&b);
+        written += commit_bytes;
+        if wal_len() >= LINE {
+            let seen = wal_len();
+            assert!(
+                state_store_sqlite::bench::await_checkpoint(&b, before, CHECKPOINT_CAP).is_some(),
+                "the WAL is {seen} B, at the line {LINE} B, and no pass ran"
+            );
+        }
+        largest = largest.max(wal_len());
+    }
+    assert!(largest <= LINE + 2 * commit_bytes, "the WAL grew to {largest} B, past the line {LINE} B plus two commits");
+    assert!(b.checkpoints_completed() > 0, "no pass ever ran");
+}
+
 #[derive(Clone)]
 struct PassClock {
     time: VirtualClock,

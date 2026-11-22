@@ -125,6 +125,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(1);
 struct CheckpointState {
     pending: u64,
     completed: u64,
+    wal_bytes: u64,
     stop: bool,
 }
 
@@ -275,14 +276,17 @@ struct Checkpointer {
     done: Condvar,
     every: u64,
     line: u64,
+    wal: PathBuf,
     clock: Arc<dyn Clock>,
 }
 
 impl Checkpointer {
     fn committed(&self) {
+        let wal_bytes = wal_len(&self.wal);
         let mut s = lock(&self.state);
         s.pending += 1;
-        if s.pending >= self.every {
+        s.wal_bytes = wal_bytes;
+        if s.pending >= self.every || s.wal_bytes >= self.line {
             self.wake.notify_one();
         }
     }
@@ -297,32 +301,30 @@ impl Checkpointer {
         metrics: Option<spira_otel::metrics::MetricsSink>,
         max_read_ms: Arc<AtomicU64>,
     ) {
-        let wal_path = format!("{}-wal", path.display());
-        let wal_bytes = || std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
         let mut counts = PassCounts::default();
         let mut last_pushed = None;
         let mut last_failure = None;
         let mut owed = false;
         let push = |pending: u64, counts: &mut PassCounts, last: &mut Option<std::time::Instant>| {
             if let Some(m) = &metrics {
-                m.push(&take_points(pending, wal_bytes(), counts), &[]);
+                m.push(&take_points(pending, wal_len(&self.wal), counts), &[]);
                 *last = Some(std::time::Instant::now());
             }
         };
         let mut wait = GAUGE_EVERY;
         loop {
-            let seen = {
+            let (seen, size) = {
                 let mut s = lock(&self.state);
-                if !s.stop && (s.pending < self.every || wait == RETRY_AFTER) {
+                if !s.stop && ((s.pending < self.every && s.wal_bytes < self.line) || wait == RETRY_AFTER) {
                     s = self.wake.wait_timeout(s, wait).unwrap_or_else(|p| p.into_inner()).0;
                 }
                 if s.stop {
                     return;
                 }
-                s.pending
+                (s.pending, s.wal_bytes)
             };
             wait = GAUGE_EVERY;
-            if seen >= self.every || owed {
+            if seen >= self.every || owed || size >= self.line {
                 let mut passive_done = None;
                 let step = checkpoint_step(&conn, &writer, &gate, &RestartTerms { clock: &*self.clock, max_read_ms: max_read_ms.load(Ordering::SeqCst), line: self.line }, seen >= self.every, |done| {
                     passive_done = Some(done);
@@ -333,7 +335,7 @@ impl Checkpointer {
                 .map(|(p, forced)| {
                     counts.record(&p, forced);
                     owed = p.busy;
-                    if !p.busy && passive_done == Some(false) {
+                    if !p.busy && passive_done != Some(true) {
                         let mut st = lock(&self.state);
                         st.pending = st.pending.saturating_sub(seen);
                     }
@@ -341,7 +343,10 @@ impl Checkpointer {
                 });
                 match step {
                     Ok(true) => {
-                        lock(&self.state).completed += 1;
+                        let mut st = lock(&self.state);
+                        st.completed += 1;
+                        st.wal_bytes = 0;
+                        drop(st);
                         self.done.notify_all();
                     }
                     Ok(false) => wait = RETRY_AFTER,
@@ -1292,6 +1297,7 @@ impl SqliteBackend {
             done: Condvar::new(),
             every: opts.checkpoint_every.max(1),
             line: opts.wal_line_bytes,
+            wal: wal_of(path),
             clock: opts.clock.clone(),
         });
         let checkpoint_conn = connect(path)?;
@@ -2480,6 +2486,10 @@ impl Backend for SqliteBackend {
         lock(&self.0.history).forget_through(rev);
         Ok(())
     }
+}
+
+fn wal_len(wal: &Path) -> u64 {
+    std::fs::metadata(wal).map(|m| m.len()).unwrap_or(0)
 }
 
 pub(crate) fn wal_of(path: &Path) -> PathBuf {
