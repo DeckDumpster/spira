@@ -310,7 +310,7 @@ fn newest_mtime_ms(p: &Path) -> u64 {
 /// backup does not carry. `server_yaml` is false only when seeding from another directory,
 /// whose server config names that directory, not `cfg.data`.
 fn pass_from(l: &Layout, source: &Path, mode: Mode, server_yaml: bool, dolt: &dyn Dolt, clock: &dyn Clock) -> Result<State, String> {
-    let incremental = mode == Mode::Offline && server_yaml;
+    let incremental = server_yaml;
     let conn = conn_for(source, mode, dolt)?;
     let _lock = lock(l)?;
     let live = data_dbs(source)?;
