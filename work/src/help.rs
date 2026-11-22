@@ -343,6 +343,7 @@ pub static ENTRIES: &[Entry] = &[
     lane("relate", "Relates two beads without blocking.", "A lane persona links related work.", &["<bead-id>", "<other-id>"]),
     lane("reopen", "Reopens a bead.", "A lane persona returns work to the queue.", &["<bead-id>"]),
     lane("close-other", "Closes another bead with a reason.", "A lane persona retires work.", &["<bead-id>", "<reason>"]),
+    lane("claim", "Takes a READY bead as a builder, in a pilgrim world only.", "A pilgrim walks a builder's path: claim the world's bead, commit on spira/<bead>, `work submit`.", &["<bead-id>"]),
     lane("close-ask", "Closes an ask in the operator mailbox.", "The decision that settled it is known.", &["<ask-id>", "<what decided it>"]),
     lane("file", "Files a bead outside any parent.", "A lane persona with a remit to file.", &["<title> --for <persona> --repo <name> --body-file -   (work)", "<title> --kind <kind> --body-file -   (a record)"]),
     lane("groom", "Runs the groomer.", "Grooming persona only.", &["<sub>"]),

@@ -1,0 +1,4 @@
+[[check]]
+name = "tree"
+run = "bash -c true"
+budget_ms = 60000

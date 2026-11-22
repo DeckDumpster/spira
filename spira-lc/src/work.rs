@@ -1337,7 +1337,7 @@ fn landing_commit(id: &str) -> Option<String> {
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge", "claim",
 ];
 
 const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "cite-check"];
@@ -1373,7 +1373,7 @@ pub fn brokers_tool(verb: &str) -> bool {
 }
 
 /// The brokered verbs that start no program in the scheduler: a content read, a config lookup, or a note or label write the service makes itself.
-const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence", "note-on", "label-add", "label-remove"];
+const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence", "note-on", "label-add", "label-remove", "claim"];
 
 /// The answered-in-service verbs that write: held to the latency limit like any store call, not exempted as batch jobs.
 pub fn answered_write(verb: &str) -> bool {
@@ -1657,7 +1657,7 @@ pub fn op_key(verb: &str, args: &[String]) -> String {
 
 /// What the pilgrim may run, and only in a pilgrim world: its scratch beads stay in a store the
 /// dispatcher never claims from.
-pub const PILGRIM_WORLD_ALLOW: &[&str] = &["file", "dep-add", "close-other"];
+pub const PILGRIM_WORLD_ALLOW: &[&str] = &["file", "dep-add", "close-other", "claim"];
 
 fn in_pilgrim_world() -> bool {
     spira_config::process::cfg("SPIRA_LC_SOCKET").is_ok_and(|socket| socket_is_a_pilgrim_world(&socket))
@@ -1687,6 +1687,13 @@ pub fn permitted(op: &str, actor: Option<&str>, pilgrim_world: bool) -> Result<(
         Err((REFUSED, format!("refused: persona {actor} may not run `work {op}` (allowed: {})", who.join(", "))))
     }
 }
+
+/// The pilgrim's claim: a builder's, held for as long as a walk takes.
+fn pilgrim_claim() -> BeadEventKind {
+    BeadEventKind::Claim { holder: "pilgrim".into(), lease_until: crate::db::now_epoch() + PILGRIM_LEASE_SECS, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: Some("builder".into()), directed: None }
+}
+
+const PILGRIM_LEASE_SECS: i64 = 3_600;
 
 fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
     gate_in(verb, rest, in_pilgrim_world)
@@ -1719,6 +1726,8 @@ pub enum Step {
     /// `work search`: the SQL reader's `search`, ranked as the door ranks it.
     Search { query: String, limit: Option<String>, json: bool },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
+    /// `work claim`: the caller takes a READY bead as a builder; served only in a pilgrim world.
+    Claim { bead: String },
     CreateRow { repo: String },
     /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
     /// (only a `Reply` or `AskWithdrawn` lifts it), and dwarf's teardown reads the hold to
@@ -1900,6 +1909,11 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                 Step::Tool { program: "spira-lc", args: vec![s("reopen"), id.clone(), s("operator-reopen"), actor.to_string()], stdin: None },
                 Step::Bd { args: vec![s("note"), id, s("--stdin")], stdin: Some(format!("reopened by {actor}: {ev}")) },
             ])
+        }
+        "claim" => {
+            let id = bead_arg(verb, a, 0, "<bead-id>")?;
+            parse_flags(verb, a, 1, &[], &[])?;
+            Ok(vec![Step::Claim { bead: id }])
         }
         "close-other" => {
             let id = bead_arg(verb, a, 0, "<bead-id>")?;
@@ -2432,6 +2446,13 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
                         code,
                         format!("the question WAS delivered (do not ask again), but the ask hold on {bead} was not applied: {e}"),
                     ),
+                }
+            }
+            Step::Claim { bead } => {
+                let kind = pilgrim_claim();
+                match crate::plane::apply(&bead, actor, kind) {
+                    (0, _) => (0, format!("{bead} is WORKING: branch spira/{bead} is yours to commit on and submit\n")),
+                    refused => refused,
                 }
             }
             Step::CreateRow { repo } => {
@@ -3401,9 +3422,31 @@ mod tests {
         }
     }
 
+    
+    #[test_id(ty3jdm9)]
+    #[test]
+    fn the_pilgrim_claims_a_bead_only_in_a_pilgrim_world_and_the_service_answers_it_itself() {
+        let args = v(&["sp-a1", "--actor", "pilgrim"]);
+        assert_eq!(gate_in("claim", &args, || false).unwrap_err().0, REFUSED, "claim on a production store");
+        assert!(gate_in("claim", &args, || true).is_ok());
+        assert_eq!(gate_in("claim", &v(&["sp-a1", "--actor", "builder"]), || true).unwrap_err().0, REFUSED, "a persona's own claim comes from the dispatcher");
+        assert_eq!(plan("claim", "-", &call(&["sp-a1"], "pilgrim")).unwrap(), vec![Step::Claim { bead: s("sp-a1") }]);
+        assert!(plan("claim", "-", &call(&[], "pilgrim")).is_err(), "a bead is required");
+        assert!(!exec_verb("claim") && brokers_tool("claim"));
+    }
+
+    
+    #[test_id(tjzwvk3)]
+    #[test]
+    fn the_pilgrims_claim_is_a_builders_so_its_submit_leaves_working_by_the_builders_exits() {
+        let BeadEventKind::Claim { holder, persona, lease_until, .. } = pilgrim_claim() else { panic!("not a claim") };
+        assert_eq!((holder.as_str(), persona.as_deref()), ("pilgrim", Some("builder")));
+        assert!(lease_until > crate::db::now_epoch());
+    }
+
     #[test_id(tz0g2n9)]
     #[test]
-    fn a_pilgrim_world_widens_nothing_but_the_pilgrims_three_verbs() {
+    fn a_pilgrim_world_widens_nothing_but_the_pilgrims_own_verbs() {
         assert_eq!(gate_in("dep-add", &v(&["sp-a1", "sp-b2", "--actor", "builder"]), || true).unwrap_err().0, REFUSED);
         assert_eq!(gate_in("label-add", &v(&["sp-a1", "x", "--actor", "pilgrim"]), || true).unwrap_err().0, REFUSED);
         assert_eq!(gate_in("reopen", &v(&["sp-a1", "--evidence", "e", "--actor", "pilgrim"]), || true).unwrap_err().0, REFUSED);

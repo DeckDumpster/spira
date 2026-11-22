@@ -331,13 +331,13 @@ pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", 
 /// this client's — a client-side check is one the caller could skip.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender", "forge", "claim",
 ];
 
 pub const VERBS: &[&str] = &[
     "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "logs", "cite-check", "ask", "read", "list", "search", "note-on", "label-add",
     "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand",
-    "fence", "hel", "mender", "forge",
+    "fence", "hel", "mender", "forge", "claim",
 ];
 
 /// Verbs answered in this process, never sent to the socket.

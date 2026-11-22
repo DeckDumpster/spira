@@ -61,7 +61,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         "HEAD",
         &|k| std::env::var(k).ok(),
         &ProcessSteps,
-        &[],
+        &[world::RepoSpec::parse(pilgrim::FIXTURE_REPO).unwrap()],
         &|_| Ok(()),
     )
     .unwrap();
@@ -75,7 +75,7 @@ fn a_pilgrim_files_links_and_closes_in_a_world_of_its_own_and_both_views_follow(
         "HEAD",
         &|k| std::env::var(k).ok(),
         &ProcessSteps,
-        &[],
+        &[world::RepoSpec::parse(pilgrim::FIXTURE_REPO).unwrap()],
         &|_| Ok(()),
     )
     .unwrap();
@@ -393,4 +393,41 @@ mod landing {
         assert!(reg.denied(AT_MS).unwrap().is_empty(), "the row reads active");
         assert!(history(&reg).contains("cleared-landed"), "{}", history(&reg));
     }
+}
+
+#[test_id(t7reb5v)]
+#[test]
+#[ignore = "needs SPIRA_SIM_RELEASE, nix and a Dolt fixture: run with --ignored"]
+fn a_pilgrim_claims_the_standing_bead_commits_on_its_branch_and_submits_it() {
+    let release = std::env::var(world::RELEASE_ENV).unwrap_or_else(|_| panic!("{} is unset", world::RELEASE_ENV));
+    assert!(Path::new(&release).is_dir(), "{release}");
+    let t = testkit::TempDir::new("pw-submit");
+    let repo = t.join("repo");
+    world::fixture_repo(&testkit::manifest_dir().join("../.."), &repo).unwrap();
+    let dir = t.join("w");
+    let fixture = world::RepoSpec::parse(pilgrim::FIXTURE_REPO).unwrap();
+    world::up_repos(&repo, &dir, "HEAD", &|k| std::env::var(k).ok(), &ProcessSteps, std::slice::from_ref(&fixture), &|_| Ok(())).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let _down = Up(&dir);
+    pilgrim::up(&dir, pilgrim::FIXTURE, &ProcessSteps).unwrap();
+
+    let bead = pilgrim::standing_bead(&dir).unwrap();
+    pilgrim::claim(&dir, &bead).unwrap();
+    let tree = t.join("fixture-tree");
+    let checkout = fixture.work(&dir);
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git").arg("-C").arg(&tree).args(["-c", "user.name=pilgrim", "-c", "user.email=p@sim.invalid"]).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    assert!(std::process::Command::new("git").arg("-C").arg(&checkout).args(["worktree", "add", "-q", "-b", &format!("spira/{bead}")]).arg(&tree).arg("origin/main").status().unwrap().success());
+    std::fs::write(tree.join("walked.txt"), "the pilgrim was here\n").unwrap();
+    git(&["add", "walked.txt"]);
+    git(&["commit", "-q", "-m", &format!("{bead}: the pilgrim's change")]);
+
+    let session = [("SPIRA_WORK_BEAD_ID", bead.as_str()), ("SPIRA_RUNE", "pilgrim")];
+    let (code, out) = pilgrim::work_bound(&dir, &session, &tree, "submit").unwrap();
+    assert_eq!(code, 0, "{out}");
+    let (code, shown) = pilgrim::work_bound(&dir, &session, &tree, "show").unwrap();
+    assert_eq!(code, 0, "{shown}");
+    assert!(shown.contains("LIFECYCLE: SUBMITTED"), "{shown}");
 }
