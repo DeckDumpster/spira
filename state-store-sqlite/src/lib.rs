@@ -2905,6 +2905,18 @@ mod tests {
     }
 
     #[test]
+    fn a_day_file_get_past_max_read_ms_is_ended_and_not_overrun() {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let probe_clock = clock.clone();
+        let probe: Arc<dyn Fn() + Send + Sync> = Arc::new(move || probe_clock.advance(500));
+        let (_dir, b) = day_file_store("sqlite-dated-get", &clock, 1, probe);
+        let head = b.head().unwrap();
+        let (out, snap) = recorded(|| b.get(&format!("events/{:020}", 1), head));
+        assert!(matches!(&out, Err(Error::Backend(m)) if m.starts_with(READ_ENDED)), "{out:?}");
+        assert_eq!((snap.reads_ended, snap.reads_overran), (1, 0));
+    }
+
+    #[test]
     fn two_readers_of_one_day_file_do_not_queue_on_a_single_connection() {
         let clock = runtime::ports::VirtualClock::new(0);
         let held = Arc::new((Mutex::new((false, false)), Condvar::new()));
