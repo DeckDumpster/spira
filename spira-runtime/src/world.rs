@@ -431,7 +431,7 @@ impl World {
         let reviews = cr::record::all(&self.run_dir)?;
         let newest_closed = reviews.iter().filter(|r| r.kind == cr::record::Kind::Scheduled).max_by_key(|r| r.number).and_then(|r| r.closed_at);
         let due_at = match newest_closed {
-            Some(closed) => cr_open_epoch(tz, hour, closed, 1)?,
+            Some(closed) => cr_open_epoch(tz, hour, closed / 1000, 1)?,
             None => {
                 let base = carry.anchor.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
                 let today = cr_open_epoch(tz, hour, base, 0)?;
@@ -1996,7 +1996,7 @@ mod cr_cadence_tests {
     #[test]
     fn a_review_closed_at_half_past_eleven_local_is_due_the_next_days_open_hour() {
         let t = testkit::TempDir::new("cr-cadence-late");
-        scheduled(t.path(), State::Closed, Some(LATE));
+        scheduled(t.path(), State::Closed, Some(LATE * 1000));
         assert_eq!(due(&world(t.path(), LA, "7"), ""), SEVEN_NEXT_MORNING);
     }
 
