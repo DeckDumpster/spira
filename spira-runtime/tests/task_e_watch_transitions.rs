@@ -153,6 +153,7 @@ fn a_healthy_flow_raises_no_stall() {
     assert_eq!(tables(log_lines(&r)), 13, "one table line per period");
 }
 
+#[test_id(takgfwp)]
 #[test]
 fn a_row_over_its_bound_wakes_the_inbox_once_per_episode() {
     let late = |now: u64| {
@@ -174,6 +175,7 @@ fn a_row_over_its_bound_wakes_the_inbox_once_per_episode() {
     assert_eq!(overs(&r).len(), 2, "back inside, then over again: one more wake");
 }
 
+#[test_id(tzk71vr)]
 #[test]
 fn the_first_sighted_pass_after_blind_reaches_the_inbox() {
     let (mut r, w) = rig_at(|_| blind("spira-lc dwell: locked"));
@@ -1629,6 +1631,7 @@ fn an_unreadable_store_outside_any_activation_window_pages_blind() {
     assert!(next.blind);
 }
 
+#[test_id(t8yekzf)]
 #[test]
 fn over_names_each_judged_row_past_its_bound_and_never_ready_or_rework() {
     let now = T0;

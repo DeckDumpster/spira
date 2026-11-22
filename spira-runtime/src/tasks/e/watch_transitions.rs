@@ -1058,6 +1058,7 @@ impl Handler for WatchTransitions {
 mod tests {
     use super::*;
 
+    #[test_id(tqaijo7)]
     #[test]
     fn the_log_is_cut_to_its_last_2000_lines_past_4000() {
         let dir = testkit::TempDir::new("transitions-log");
