@@ -387,6 +387,8 @@ pub struct Options {
     /// Runs inside every read transaction once its snapshot is taken: the seam a test holds a
     /// reader open with.
     pub read_probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Runs once per row inside a day-file read: the seam a test holds or slows one with.
+    pub dated_read_probe: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Jump an existing store's head by [`JUMP`] on open. Off only for a store being restored
     /// or verified, whose revisions must stay exactly as the log has them.
     pub jump_on_open: bool,
@@ -422,6 +424,7 @@ impl Default for Options {
             readers: 4,
             clock: Arc::new(state_store::MonotonicClock::new()),
             read_probe: None,
+            dated_read_probe: None,
             jump_on_open: true,
             history_bytes: 64 * 1024 * 1024,
             outbox: true,
@@ -1243,7 +1246,7 @@ impl SqliteBackend {
         let mut head = meta(&conn, "head")?.unwrap_or(0);
         let floor = head;
         let now = opts.wall.now_ms();
-        let dated: Vec<Files> = FAMILIES.iter().map(|f| Files::new(*f, path)).collect();
+        let dated: Vec<Files> = FAMILIES.iter().map(|f| Files::with_reads(*f, path, dated::ReadSlots::new(opts.dated_read_probe.clone()))).collect();
         for files in &dated {
             files.open_existing()?;
             for f in files.handles() {

@@ -159,8 +159,27 @@ pub fn family_files(path: &Path, now_ms: u64) -> Result<Vec<state_store::FamilyF
     Ok(out)
 }
 
+/// What a day-file read shares with the store's reads.
+#[derive(Default)]
+pub struct ReadSlots {
+    probe: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl ReadSlots {
+    pub fn new(probe: Option<Arc<dyn Fn() + Send + Sync>>) -> Arc<Self> {
+        Arc::new(ReadSlots { probe })
+    }
+
+    fn row(&self) {
+        if let Some(p) = &self.probe {
+            p();
+        }
+    }
+}
+
 /// One day's file.
 pub struct DatedFile {
+    reads: Arc<ReadSlots>,
     pub day: i64,
     path: PathBuf,
     writer: Mutex<Option<Connection>>,
@@ -226,13 +245,14 @@ fn version_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Vec<u8>, Version)> {
 }
 
 impl DatedFile {
-    pub fn open(path: PathBuf, day: i64) -> Result<Arc<Self>> {
+    pub fn open(path: PathBuf, day: i64, reads: Arc<ReadSlots>) -> Result<Arc<Self>> {
         let writer = open_conn(&path, false)?;
         for sql in SCHEMA {
             exec(&writer, sql, [])?;
         }
         let reader = open_conn(&path, true)?;
         Ok(Arc::new(DatedFile {
+            reads,
             day,
             path,
             writer: Mutex::new(Some(writer)),
@@ -355,8 +375,13 @@ impl DatedFile {
                          WHERE key >= ?1 AND (?2 IS NULL OR key < ?2) AND main <= ?3 ORDER BY key LIMIT ?4",
                     )
                     .map_err(db)?;
-                let rows = stmt.query_map(params![cursor, hi, at, page], version_of).map_err(db)?;
-                rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
+                let mut rows = stmt.query(params![cursor, hi, at, page]).map_err(db)?;
+                let mut out = Vec::new();
+                while let Some(r) = rows.next().map_err(db)? {
+                    self.reads.row();
+                    out.push(version_of(r).map_err(db)?);
+                }
+                Ok(out)
             })?;
             let full = rows.len() as i64 == page;
             if let Some((last, _)) = rows.last() {
@@ -381,13 +406,18 @@ pub struct Files {
     pub family: Family,
     dir: PathBuf,
     stem: String,
+    reads: Arc<ReadSlots>,
     open: Mutex<BTreeMap<i64, Arc<DatedFile>>>,
 }
 
 impl Files {
     pub fn new(family: Family, main: &Path) -> Self {
+        Self::with_reads(family, main, Arc::new(ReadSlots::default()))
+    }
+
+    pub fn with_reads(family: Family, main: &Path, reads: Arc<ReadSlots>) -> Self {
         let dir = main.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
-        Files { family, dir, stem: stem_of(main), open: Mutex::new(BTreeMap::new()) }
+        Files { family, dir, stem: stem_of(main), reads, open: Mutex::new(BTreeMap::new()) }
     }
 
     /// Opens every file of this family found beside the main file.
@@ -399,7 +429,7 @@ impl Files {
             let Some(day) = name.to_str().and_then(|n| self.family.day_of_file(&self.stem, n)) else {
                 continue;
             };
-            let file = DatedFile::open(self.dir.join(&name), day)?;
+            let file = DatedFile::open(self.dir.join(&name), day, self.reads.clone())?;
             lock(&self.open).insert(day, file);
         }
         Ok(())
@@ -411,7 +441,7 @@ impl Files {
         if let Some(f) = open.get(&day) {
             return Ok((f.clone(), false));
         }
-        let f = DatedFile::open(self.dir.join(self.family.file_name(&self.stem, day)), day)?;
+        let f = DatedFile::open(self.dir.join(self.family.file_name(&self.stem, day)), day, self.reads.clone())?;
         open.insert(day, f.clone());
         Ok((f, true))
     }
