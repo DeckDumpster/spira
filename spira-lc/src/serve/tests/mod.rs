@@ -14,6 +14,7 @@ mod spans;
 mod startup;
 mod sweep;
 mod wire;
+mod workers;
 
 fn lc(store: &crate::control::store::Store<state_store::MemBackend>, argv: &[&str], now: i64) -> String {
     let args: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
