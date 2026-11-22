@@ -31,7 +31,7 @@ fn snapshot_marked(gate_red: Vec<(&str, &str)>, mark: &str) -> Snapshot {
     let gate_red = gate_red.into_iter().map(|(id, tip)| (id.to_string(), tip.to_string(), mark.to_string())).collect();
     let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-b".into()], head: "H".into(), worktree: "w".into(), driven: true, phase: "certifying".into(), gate_red, ..Round::default() };
     let repo = Repo { open_round: Some(round), base_sha: "b1".into(), live_legs: Some(vec![LEG.into()]), ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW }
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW, ..Default::default() }
 }
 
 const RED: &str = "suites-failed; failing step: test-a.sh; failing line: error: callers.rs:726 retires x_secs";
@@ -143,7 +143,7 @@ fn an_idle_repo_whose_pool_holds_only_submitted_beads_cuts_a_round_naming_them()
     let member = |id: &str, tip: &str| Member { id: id.into(), state: "SUBMITTED".into(), version: 5, tip: tip.into(), sifted_tip: Some(tip.into()), title: id.into(), priority: 2, ..Member::default() };
     let pool = vec![member("sp-s1", "t1"), member("sp-s2", "t2")];
     let branch_tips = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let snap = Snapshot { repos: [("spira".to_string(), Repo { pool, branch_tips, base_sha: "b1".into(), ..Repo::default() })].into(), now_ms: NOW };
+    let snap = Snapshot { repos: [("spira".to_string(), Repo { pool, branch_tips, base_sha: "b1".into(), ..Repo::default() })].into(), now_ms: NOW, ..Default::default() };
     let (carry, acts) = decide(&Carry::default(), &snap);
     assert_eq!(carry.repos["spira"].state, State::Assembling, "{acts:?}");
     let cut: Leg = serde_json::from_str(&acts.iter().find(|a| a.effect == ASSEMBLE).expect("a cut").input).unwrap();

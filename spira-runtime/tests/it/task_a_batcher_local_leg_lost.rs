@@ -15,7 +15,7 @@ fn corpus(leg: &str, at: u64) -> Carry {
 
 fn snap(now_ms: u64, live: Option<Vec<String>>) -> Snapshot {
     let repo = Repo { open_round: Some(Round { id: "r9".into(), worktree: "w".into(), ..Round::default() }), live_legs: live, ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms }
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms, ..Default::default() }
 }
 
 fn names(acts: &[Act]) -> Vec<&str> {
@@ -144,7 +144,7 @@ fn a_round_certify_would_refuse_is_abandoned_after_the_wait_not_left_open() {
     let mut acts = vec![];
     let (mut carry, mut t) = (Carry::default(), NOW);
     while t <= NOW + (Policy::default().orphan_wait_s + 60) * 1000 {
-        let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t });
+        let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t, ..Default::default() });
         carry = c;
         if names(&a).contains(&ABANDON) {
             repo.open_round = None;
@@ -163,7 +163,7 @@ fn abandon_undriven(mut carry: Carry, id: &str, from: u64) -> (Carry, Vec<Act>, 
     let repo = Repo { open_round: Some(Round { id: id.into(), worktree: "w".into(), ..Round::default() }), unfit: Some("the round worktree is moved".into()), ..Repo::default() };
     let (mut acts, mut t) = (vec![], from);
     while t <= from + (Policy::default().orphan_wait_s + 60) * 1000 {
-        let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t });
+        let (c, a) = decide(&carry, &Snapshot { repos: [("spira".to_string(), repo.clone())].into(), now_ms: t, ..Default::default() });
         carry = c;
         let done = names(&a).contains(&ABANDON);
         acts.extend(a);
@@ -355,7 +355,7 @@ fn snap_rounds(now_ms: u64, live: Option<Vec<String>>, below: Option<Round>, r: 
         None => (Some(r), vec![]),
     };
     let repo = Repo { open_round, open_above, live_legs: live, base_sha: "b1".into(), ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms }
+    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms, ..Default::default() }
 }
 
 /// Carries the round through the gate-red eject into a started certify leg on head h1, then lets

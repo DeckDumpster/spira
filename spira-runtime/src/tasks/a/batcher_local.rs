@@ -61,6 +61,7 @@
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
 //! | Attributing | `unit.ran` runner-difference (the red tier is green on the host it last ran green on) | Certifying (`certify` again, its one next pass pinned to the host with `--place host`; no member charged, nothing ejected) |
 //! | Landing | observe: no `land` in flight (a restart) | Landing (`lc_certify`, `land` again; each walks the store's own state) |
+//! | Landing | observe: batch settled LANDED in the lifecycle | forgotten, after `supersede_reds` with the round's members (ABANDONED: forgotten, nothing asked) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
 //! | Promoting | promotion named | Certifying for the staged round (`main.rs:1069`) |
@@ -92,6 +93,7 @@
 //! | `batcher.local.redrive` | unit | 60 s | batch | once per orphan (`io.rs:1772`) |
 //! | `batcher.local.file` (incident/judgement/flip) | store | 30 s | incident ref, e.g. `round-orphan:<repo>:<batch>` | duplicate ref (`io.rs:1780`, `:2066`, `:2129`, `:2178`) |
 //! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head + members | none: the close and the registry clearing say their failure and never block the landing |
+//! | `batcher.local.clear_landed` | store | 30 s | the registry's LANDED beads | none: a failed clear is tried again on the next tick |
 //! | `batcher.local.pause` | store | 5 s | repo + lane | — (`pace.rs:248`) |
 //! | `batcher.local.pause_ask` | store | 15 s | `<repo>:pause:<since>` | open duplicate ask (`mail`) |
 //! | `inbox.append` | store | 10 s | line | — (`pace.rs:269`, `main.rs:930`) |
@@ -150,6 +152,7 @@ pub const PROMOTE: &str = "batcher.local.promote";
 pub const REDRIVE: &str = "batcher.local.redrive";
 pub const FILE: &str = "batcher.local.file";
 pub const SUPERSEDE_REDS: &str = "batcher.local.supersede_reds";
+pub const CLEAR_LANDED: &str = "batcher.local.clear_landed";
 pub const PAUSE: &str = "batcher.local.pause";
 pub const PAUSE_ASK: &str = "batcher.local.pause_ask";
 pub const KEEP_CERTIFY_OUTPUT: &str = "batcher.local.keep_certify_output";
@@ -187,6 +190,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (REDRIVE, 60_000),
     (FILE, 30_000),
     (SUPERSEDE_REDS, 30_000),
+    (CLEAR_LANDED, 30_000),
     (PAUSE, 5_000),
     (PAUSE_ASK, 15_000),
     (KEEP_CERTIFY_OUTPUT, 5_000),
@@ -195,7 +199,7 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, PAUSE_ASK, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, CLEAR_LANDED, PAUSE, PAUSE_ASK, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -342,6 +346,9 @@ pub struct Repo {
     /// The carried batches the lifecycle reports LANDED or ABANDONED.
     #[serde(default)]
     pub settled: Vec<String>,
+    /// The subset of `settled` whose lifecycle state is LANDED.
+    #[serde(default)]
+    pub landed: Vec<String>,
     /// Beads the pool read kept out of the pool, with why (held, ejected red, tip moved, ...).
     #[serde(default)]
     pub left_out: Vec<batcher_cut::io::LeftOut>,
@@ -358,6 +365,9 @@ impl Repo {
 pub struct Snapshot {
     pub repos: BTreeMap<String, Repo>,
     pub now_ms: u64,
+    /// The beads test-registry rows name that the lifecycle reports LANDED.
+    #[serde(default)]
+    pub registry_landed: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1554,6 +1564,10 @@ impl Machine<'_> {
     fn observe(&mut self, policy: &Policy, repo: &Repo) {
         if self.settled(repo) {
             let batch = self.rc.batch.clone();
+            if batch.as_ref().is_some_and(|b| repo.landed.contains(b)) {
+                let batch = batch.clone().unwrap_or_default();
+                self.acts.push(Leg { key: format!("supersede:{batch}"), members: self.rc.members.clone(), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
+            }
             self.forget_round();
             self.rc.reconciled = batch;
             return;
@@ -2609,6 +2623,11 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, V
         store(&mut next, name, rc);
         acts.extend(more);
     }
+    if !snap.registry_landed.is_empty() {
+        let ids = &snap.registry_landed;
+        let home = snap.repos.keys().next().map(String::as_str).unwrap_or_default();
+        acts.push(Leg { key: format!("clear-landed:{}", ids.join(",")), members: ids.iter().map(|i| (i.clone(), String::new())).collect(), ..Leg::on(home) }.act(CLEAR_LANDED));
+    }
     (next, acts)
 }
 
@@ -3083,25 +3102,50 @@ pub mod edge {
             let mut seen = observe_repo(&env, &repo, units)?;
             seen.live_legs = live_legs(e);
             seen.scoped_batches = scoped_batches(e, &name, &carried);
-            seen.settled = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
+            (seen.settled, seen.landed) = carried.repos.get(&name).map(|rc| settled_batches(&env, rc, &seen)).unwrap_or_default();
             snap.repos.insert(name.clone(), seen);
         }
+        snap.registry_landed = registry_landed(&env);
         json(&snap)
     }
 
     /// The batches of `rc`'s leg-driven rounds that the queue no longer holds open and the
     /// lifecycle reports LANDED or ABANDONED; a batch the store cannot say is not settled.
-    fn settled_batches(env: &Env, rc: &super::RepoCarry, seen: &Repo) -> Vec<String> {
-        rc.rounds()
+    fn settled_batches(env: &Env, rc: &super::RepoCarry, seen: &Repo) -> (Vec<String>, Vec<String>) {
+        let settled: Vec<(String, bool)> = rc.rounds()
             .into_iter()
             .filter(|r| super::lifecycle_driven(r.state))
             .filter_map(|r| r.batch)
             .filter(|b| !seen.open_rounds().any(|o| &o.id == b))
-            .filter(|b| {
-                let shown = io::lcq_held(env, &["show-batch", b]).ok().and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok());
-                matches!(shown.as_ref().and_then(|v| v.get("state")).and_then(|s| s.as_str()), Some("LANDED" | "ABANDONED"))
+            .filter_map(|b| {
+                let shown = io::lcq_held(env, &["show-batch", &b]).ok().and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok());
+                match shown.as_ref().and_then(|v| v.get("state")).and_then(|s| s.as_str()) {
+                    Some("LANDED") => Some((b, true)),
+                    Some("ABANDONED") => Some((b, false)),
+                    _ => None,
+                }
             })
-            .collect()
+            .collect();
+        let landed = settled.iter().filter(|(_, l)| *l).map(|(b, _)| b.clone()).collect();
+        (settled.into_iter().map(|(b, _)| b).collect(), landed)
+    }
+
+    /// The beads the registry's rows name that the lifecycle reports LANDED; empty, said on stderr, when either read fails.
+    fn registry_landed(env: &Env) -> Vec<String> {
+        let ids = match batcher_cut::io::registry_row_beads(env) {
+            Ok(ids) => ids,
+            Err(why) => {
+                eprintln!("{}: cannot read the registry's rows: {why}", super::NAME);
+                return vec![];
+            }
+        };
+        match batcher_cut::io::lc_rows_of(env, &ids) {
+            Ok(rows) => rows.iter().filter(|r| r.get("state").and_then(|s| s.as_str()) == Some("LANDED")).filter_map(|r| r.get("id").and_then(|i| i.as_str())).map(String::from).collect(),
+            Err(why) => {
+                eprintln!("{}: cannot read the lifecycle state of the registry's beads: {why}", super::NAME);
+                vec![]
+            }
+        }
     }
 
     /// The keys of this task's leg units the manager lists as running; `None` when it cannot say.
@@ -3441,6 +3485,17 @@ pub mod edge {
         Ok("{}".into())
     }
 
+    /// Clears the registry rows of beads the lifecycle reports LANDED; a failure leaves the rows for the next tick.
+    pub fn clear_landed(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let (env, leg) = (env()?, leg(spec)?);
+        let ids: Vec<String> = leg.members.iter().map(|(id, _)| id.clone()).collect();
+        let cleared = batcher_cut::io::clear_landed_rows(&env, &ids)?;
+        if !cleared.is_empty() {
+            println!("{}: re-drove the registry clearing for {}: cleared {}", super::NAME, ids.join(" "), cleared.join(" "));
+        }
+        Ok("{}".into())
+    }
+
     /// Notes each bead the cut left out, once per (cause, tip), as the legacy cut does.
     pub fn note_left_out(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let (env, leg) = (env()?, leg(spec)?);
@@ -3655,7 +3710,7 @@ pub mod edge {
         fn lands(driven: bool) -> bool {
             let open = Round { id: "b1".into(), members: vec!["m1".into()], tips: vec!["t1".into()], head: "h1".into(), phase: "green".into(), driven, ..Round::default() };
             let repo = Repo { open_round: Some(open), base_sha: "base".into(), ..Repo::default() };
-            let snap = Snapshot { repos: [("r".to_string(), repo)].into(), now_ms: 1_000_000 };
+            let snap = Snapshot { repos: [("r".to_string(), repo)].into(), now_ms: 1_000_000, ..Default::default() };
             decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND)
         }
 
