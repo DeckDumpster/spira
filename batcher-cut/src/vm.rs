@@ -596,15 +596,10 @@ fn round_commit_culprit(line: &str, own_commits: &[String]) -> bool {
     }
 }
 
-/// The low-pass filter that ended the pass red in `results`, with each member its output blames.
-fn filter_red_in(
-    results: &Path,
-    members: &[Member],
-    changed: &BTreeMap<Id, Vec<String>>,
-    own_commits: &[String],
-) -> Option<FilterRed> {
+/// The `spira-lint` and `fence-*` stems whose `.result` is red in `results`.
+pub fn red_filters(results: &Path) -> Vec<String> {
     let mut reds: Vec<String> = vec![];
-    for e in fs::read_dir(results).ok()?.flatten() {
+    for e in fs::read_dir(results).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if let Some(stem) = name
             .strip_suffix(".result")
@@ -615,6 +610,17 @@ fn filter_red_in(
             }
         }
     }
+    reds
+}
+
+/// The low-pass filter that ended the pass red in `results`, with each member its output blames.
+fn filter_red_in(
+    results: &Path,
+    members: &[Member],
+    changed: &BTreeMap<Id, Vec<String>>,
+    own_commits: &[String],
+) -> Option<FilterRed> {
+    let mut reds = red_filters(results);
     let phases: Vec<&str> = TEST_PHASES
         .iter()
         .filter(|(json, _)| phase_red(results, json))
@@ -625,6 +631,7 @@ fn filter_red_in(
     let name = reds.first()?.clone();
     let mut named: Vec<(Id, String)> = vec![];
     let mut harness: Vec<String> = vec![];
+    let mut unnamed: Vec<String> = vec![];
     for stage in &phases {
         for (id, line) in phase_owner(results, stage, members, changed) {
             if !named.iter().any(|(n, _)| *n == id) {
@@ -644,10 +651,16 @@ fn filter_red_in(
                 None if red == LINT => named_path_owner(line, members, changed),
                 None => None,
             };
-            if let Some((id, line)) = owner {
-                if !named.iter().any(|(n, _)| *n == id) {
-                    named.push((id, line));
-                }
+            match owner {
+                Some((id, line)) => match named.iter_mut().find(|(n, _)| *n == id) {
+                    Some((_, all)) => {
+                        all.push('\n');
+                        all.push_str(&line);
+                    }
+                    None => named.push((id, line)),
+                },
+                None if red == LINT && line.starts_with("member=") => unnamed.push(line.to_string()),
+                None => {}
             }
         }
     }
@@ -661,7 +674,7 @@ fn filter_red_in(
         .filter(|(_, stage)| phases.contains(stage))
         .flat_map(|(_, stage)| batcher::unitattr::assertion_delta(&fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default()))
         .collect();
-    Some(FilterRed { name, named, failed, harness, assertion_lines })
+    Some(FilterRed { name, named, failed, harness, assertion_lines, unnamed })
 }
 
 const UNIT_TESTS: &str = "unit-tests";
@@ -1881,7 +1894,9 @@ mod tests {
         assert_eq!(red.name, "spira-lint");
         assert_eq!(red.named.len(), 1);
         assert_eq!(red.named[0].0, "sp-b");
-        assert!(red.named[0].1.contains("f.rs:1"));
+        assert!(red.named[0].1.contains("f.rs:1") && red.named[0].1.contains("g.rs:2"));
+        assert_eq!(red.unnamed.len(), 1);
+        assert!(red.unnamed[0].contains("h.rs:3"));
         fs::write(
             d.path().join("spira-lint.out"),
             "member=the base itself (z) r: h.rs:3: z\n",
