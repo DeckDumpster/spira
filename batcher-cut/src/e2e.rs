@@ -449,6 +449,7 @@ fn e2e_an_attribution_leg_with_no_corpus_gets_its_control_probe_answered() {
         by: None,
         reason: None,
         all: false,
+        held_since: None,
         confirmed: false,
     };
     let given = vec![("sp-a".to_string(), tips[0].clone()), ("sp-b".to_string(), tips[1].clone())];

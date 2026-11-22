@@ -92,6 +92,7 @@
 //! | `batcher.local.file` (incident/judgement/flip) | store | 30 s | incident ref, e.g. `round-orphan:<repo>:<batch>` | duplicate ref (`io.rs:1780`, `:2066`, `:2129`, `:2178`) |
 //! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head + members | none: the close and the registry clearing say their failure and never block the landing |
 //! | `batcher.local.pause` | store | 5 s | repo + lane | — (`pace.rs:248`) |
+//! | `batcher.local.pause_ask` | store | 15 s | `<repo>:pause:<since>` | open duplicate ask (`mail`) |
 //! | `inbox.append` | store | 10 s | line | — (`pace.rs:269`, `main.rs:930`) |
 //!
 //! Metrics (`tsd-write --family batch-round`, `io.rs:2104-2118`) become in-process `spira-otel` pushes, not an effect.
@@ -149,6 +150,7 @@ pub const REDRIVE: &str = "batcher.local.redrive";
 pub const FILE: &str = "batcher.local.file";
 pub const SUPERSEDE_REDS: &str = "batcher.local.supersede_reds";
 pub const PAUSE: &str = "batcher.local.pause";
+pub const PAUSE_ASK: &str = "batcher.local.pause_ask";
 pub const KEEP_CERTIFY_OUTPUT: &str = "batcher.local.keep_certify_output";
 pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
 
@@ -185,13 +187,14 @@ pub const ACTS: &[(&str, u64)] = &[
     (FILE, 30_000),
     (SUPERSEDE_REDS, 30_000),
     (PAUSE, 5_000),
+    (PAUSE_ASK, 15_000),
     (KEEP_CERTIFY_OUTPUT, 5_000),
     (INBOX_APPEND, 10_000),
 ];
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, PAUSE_ASK, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -318,6 +321,9 @@ pub struct Repo {
     /// When a red round's pause was set, in epoch seconds; `None` for no pause or a `hold:`.
     #[serde(default)]
     pub paused_since: Option<u64>,
+    /// The failing test line of the round's kept results, for a red pause's page.
+    #[serde(default)]
+    pub pause_evidence: Option<String>,
     pub declares_own_testenv: bool,
     /// Why `round certify` would refuse the open round at once (`round_certifiable`), if it would.
     #[serde(default)]
@@ -547,6 +553,9 @@ pub struct Pace {
     pub infra_batch: String,
     #[serde(default)]
     pub open_failed: u32,
+    /// The `paused_since` of the pause last paged as unattended.
+    #[serde(default)]
+    pub pause_paged: u64,
 }
 
 /// The reason a failed `round_open` carries into the pace page; a timeout arrives as an empty body.
@@ -590,6 +599,7 @@ impl Pace {
             pause_lifts: st.pause_lifts,
             infra_batch: prev.infra_batch.clone(),
             open_failed: st.open_failed,
+            pause_paged: prev.pause_paged,
         }
     }
 }
@@ -2043,6 +2053,9 @@ impl Machine<'_> {
             self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
             return false;
         }
+        if let Some(since) = repo.paused_since.filter(|_| held_for.is_some_and(|h| h > policy.pause_lift_s) && !repo.pool.is_empty() && self.rc.pace.pause_paged != repo.paused_since.unwrap_or_default()) {
+            self.page_unattended(repo, text, since, held_for.unwrap_or_default());
+        }
         match self.rc.paused_on.clone() {
             None => {
                 self.rc.paused_on = Some(repo.base_sha.clone());
@@ -2056,6 +2069,23 @@ impl Machine<'_> {
             }
             Some(_) => true,
         }
+    }
+
+    /// A red pause held past its bound with no lift left: one page and one ask for this pause.
+    fn page_unattended(&mut self, repo: &Repo, text: &str, since: u64, held: u64) {
+        self.rc.pace.pause_paged = since;
+        let reason = match text.trim() {
+            t if t.is_empty() || t.starts_with("red:") => "a red round",
+            t => t,
+        };
+        let evidence = repo.pause_evidence.as_deref().map(|e| format!(" — {e}")).unwrap_or_default();
+        let page = format!("PAUSE UNATTENDED {}: {reason}, held {held}s, {} certified waiting{evidence} — attribute and eject, then batcher pause-lift --repo {} --by concierge --reason \"<why>\"", self.repo, repo.pool.len(), self.repo);
+        self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
+        let key = format!("{}:pause:{since}", self.repo);
+        let body = format!("## Question\n{page}\n\n## Default\nLift the pause once the red is attributed and its members ejected.\n\n## Class basis\nWhether a red pause stays held is policy (law-a-pause-releases-itself).\n\nMOOT-WHEN: batcher pause-show --repo {} --held-since {since}\n", self.repo);
+        let message = tsd::alarm::Message { mailbox: "operator".into(), subject: format!("P0 {key}: red pause held {held}s with {} certified waiting", repo.pool.len()), kind: "question".into(), class: Some("policy".into()), default: "Lift the pause once the red is attributed and its members ejected.".into(), body };
+        let send = crate::tasks::b::incident_alarms::Send { reference: key.clone(), kind: "pause".into(), message, rows: vec![], binding: Some(key.clone()) };
+        self.acts.push(Act::new(PAUSE_ASK, key).with_input(serde_json::to_string(&send).unwrap_or_default()));
     }
 
     /// `repo` without the members `queue round open` refused at their current tip and base, and
@@ -3113,10 +3143,11 @@ pub mod edge {
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
         let (stopped, stop_why, paused, paused_since) = holds(env, &repo.name);
+        let pause_evidence = paused.as_deref().filter(|p| !p.starts_with("hold:")).and_then(|_| io::red_test_line(&env.run));
         let cut_hold = cut_hold_in_force(&env.queue_dir, &repo.name);
         let unfit = open_round.as_ref().and_then(|r| r.unfit.clone());
         let base_sha = if open_round.is_some() { io::resolve_base_sha(repo).unwrap_or_default() } else { io::resolve_base_sha(repo)? };
-        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, cut_hold, paused, paused_since, unfit, left_out, ..Repo::default() })
+        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, cut_hold, paused, paused_since, pause_evidence, unfit, left_out, ..Repo::default() })
     }
 
     pub fn refuse_if_cut_held(queue_dir: &std::path::Path, repo: &str) -> Result<(), String> {
@@ -3399,6 +3430,12 @@ pub mod edge {
         let path = dir.join(name);
         std::fs::write(&path, &leg.why).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok("{}".into())
+    }
+
+    /// Files the unattended-pause ask through the alarms delivery path, as the floor ask is filed.
+    pub fn pause_ask(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let d = crate::tasks::b::incident_alarms::Delivery::configured(&crate::tasks::b::lc(e), &e.world.run_dir)?;
+        crate::tasks::b::incident_alarms::send(&d, &spec.input)
     }
 
     /// The pace's hold: the pause file on a red, the scoped stop on repeated infra faults.

@@ -941,8 +941,50 @@ fn sp_qmd5g4_a_red_pause_inside_its_bound_stays_held() {
 fn sp_qmd5g4_a_second_red_after_a_lift_stays_paused_however_long_it_stands() {
     let (carry, snap) = expiring(100_000, 1);
     let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
-    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(effects(&acts), [INBOX_APPEND, PAUSE_ASK], "it pages and asks, and cuts nothing: {acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Held);
+}
+
+/// A red pause held past its bound with its lift spent: the page and the ask, once per pause.
+fn unattended(since: u64) -> (Carry, Snapshot) {
+    let (carry, mut snap) = expiring(0, batcher_cut::pace::PAUSE_LIFTS_MAX);
+    let r = snap.repos.get_mut("spira").unwrap();
+    r.paused_since = Some(since);
+    r.pause_evidence = Some("unit-tests failed: it::batcher_x::the_failing_test; thread 'it::batcher_x::the_failing_test' panicked at src/x.rs:1:1".into());
+    snap.now_ms = (since + 400 + 1) * 1000;
+    (carry, snap)
+}
+
+#[test]
+fn sp_plukb4_a_pause_held_past_its_bound_with_its_lift_spent_pages_and_asks_once_per_pause() {
+    let t = NOW / 1000;
+    let (carry, snap) = unattended(t);
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert_eq!(effects(&acts), [INBOX_APPEND, PAUSE_ASK], "{acts:?}");
+    assert!(acts[0].input.contains("PAUSE UNATTENDED spira:"), "{}", acts[0].input);
+    for want in ["held 401s", "1 certified waiting", "the_failing_test", "panicked at"] {
+        assert!(acts[0].input.contains(want), "{want}: {}", acts[0].input);
+    }
+    assert_eq!(acts[1].key, format!("spira:pause:{t}"));
+    assert!(acts[1].input.contains("MOOT-WHEN: batcher pause-show --repo spira"), "{}", acts[1].input);
+    assert!(acts[1].input.contains(&t.to_string()), "the predicate names this pause's since: {}", acts[1].input);
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "the same pause is not paged again: {acts:?}");
+    let (_, snap2) = unattended(t + 5000);
+    let (_, acts) = decide_with(&pinned_lift(400), &carry, &snap2);
+    assert_eq!(effects(&acts), [INBOX_APPEND, PAUSE_ASK], "a new pause pages afresh: {acts:?}");
+}
+
+#[test]
+fn sp_plukb4_an_unattended_pause_with_no_work_waiting_or_a_hold_pages_nothing() {
+    let (carry, mut snap) = unattended(NOW / 1000);
+    snap.repos.get_mut("spira").unwrap().pool.clear();
+    let (_, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+    let (carry, mut snap) = unattended(NOW / 1000);
+    snap.repos.get_mut("spira").unwrap().paused = Some("hold: operator maintenance".into());
+    let (_, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "{acts:?}");
 }
 
 #[test]

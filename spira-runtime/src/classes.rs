@@ -48,6 +48,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("batcher.local.note_left_out", Store),
     ("batcher.local.observe", Store),
     ("batcher.local.pause", Store),
+    ("batcher.local.pause_ask", Store),
     ("batcher.local.promote", Git),
     ("batcher.local.rebase_stale", Unit),
     ("batcher.local.keep_certify_output", Host),
