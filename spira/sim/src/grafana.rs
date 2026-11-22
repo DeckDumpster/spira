@@ -30,8 +30,8 @@ impl Http for Curl {
         if let Some(t) = bearer {
             cfg += &format!("header = \"Authorization: Bearer {t}\"\n");
         }
-        let mut cmd = Command::new("curl");
-        cmd.args(["-sS", "--max-time", "5", "-K", "-", "-X", method, "-w", "\n%{http_code}", url]);
+        let mut cmd = Command::new("timeout");
+        cmd.args(["5", "curl", "-sS", "--max-time", "4", "-K", "-", "-X", method, "-w", "\n%{http_code}", url]);
         if let Some(b) = body {
             cmd.args(["-H", "Content-Type: application/json", "--data-binary", b]);
         }
@@ -88,6 +88,19 @@ pub fn revoke(http: &dyn Http, world: &Path, base: &str, admin: &str) -> Result<
         return Ok(());
     }
     Err(format!("grafana delete account {}: HTTP {}", id.trim(), r.status))
+}
+
+/// Provisions the world's sign-in and names it to the session in `sim.env`. A failure takes back
+/// what was made, so no account outlives a world that never came up.
+pub fn up_world(http: &dyn Http, world: &Path, base: &str, admin: &str) -> Result<(), String> {
+    let made = provision(http, world, base, admin).and_then(|()| {
+        use std::io::Write;
+        let mut env = std::fs::OpenOptions::new().append(true).open(world.join("config/sim.env")).map_err(|e| e.to_string())?;
+        writeln!(env, "{URL_ENV}={base}").map_err(|e| e.to_string())
+    });
+    made.inspect_err(|_| {
+        let _ = revoke(http, world, base, admin);
+    })
 }
 
 /// Where Grafana is and how to sign in as its admin, from the install's config; `None` when the
@@ -157,6 +170,31 @@ mod tests {
         revoke(&g, &t.join("w"), "http://g", "admin:pw").unwrap();
         assert_eq!(dashboard(&g, Some(&token)), 401);
         assert!(!t.join("w").join(TOKEN_FILE).exists());
+    }
+
+    #[test]
+    fn a_world_that_comes_up_names_the_grafana_url_and_a_failed_one_leaves_no_account() {
+        let t = testkit::TempDir::new("pilgrim-grafana-up");
+        std::fs::create_dir_all(t.join("w/config")).unwrap();
+        std::fs::write(t.join("w/config/sim.env"), "A=1\n").unwrap();
+        let g = FakeGrafana::default();
+        up_world(&g, &t.join("w"), "http://g", "admin:pw").unwrap();
+        let env = std::fs::read_to_string(t.join("w/config/sim.env")).unwrap();
+        assert!(env.contains("PILGRIM_GRAFANA_URL=http://g\n"), "{env}");
+        let bad = FakeGrafana::default();
+        std::fs::remove_file(t.join("w/config/sim.env")).unwrap();
+        assert!(up_world(&bad, &t.join("w"), "http://g", "admin:pw").is_err());
+        assert!(bad.accounts.borrow().is_empty(), "the account made before the failure is deleted");
+    }
+
+    #[test]
+    fn a_revoke_that_fails_keeps_the_account_id_for_a_retry() {
+        let t = testkit::TempDir::new("pilgrim-grafana-retry");
+        std::fs::create_dir_all(t.join("w/config")).unwrap();
+        let g = FakeGrafana::default();
+        provision(&g, &t.join("w"), "http://g", "admin:pw").unwrap();
+        assert!(revoke(&g, &t.join("w"), "http://g", "admin:wrong").is_err());
+        assert!(t.join("w").join(ACCOUNT_FILE).exists());
     }
 
     #[test]

@@ -136,9 +136,10 @@ fn run(args: &[String]) -> Result<(), String> {
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),
         ["world", "seed", "--tree", rev] => world::ensure_seed(&cwd, rev).map(|_| ()),
         ["world", "down", dir] => {
-            let revoked = grafana_install().and_then(|g| g.map_or(Ok(()), |(base, admin)| spira_sim::grafana::revoke(&spira_sim::grafana::Curl, &PathBuf::from(dir), &base, &admin)));
-            world::down(&PathBuf::from(dir), &ProcessSteps)?;
-            revoked
+            if let Some((base, admin)) = grafana_install()? {
+                spira_sim::grafana::revoke(&spira_sim::grafana::Curl, &PathBuf::from(dir), &base, &admin)?;
+            }
+            world::down(&PathBuf::from(dir), &ProcessSteps)
         }
         _ => Err(USAGE.to_string()),
     }
@@ -152,10 +153,7 @@ fn grafana_install() -> Result<Option<(String, String)>, String> {
 /// Gives a pilgrim world its own Viewer sign-in when the install runs Grafana.
 fn grafana_up(world: &std::path::Path) -> Result<(), String> {
     let Some((base, admin)) = grafana_install()? else { return Ok(()) };
-    spira_sim::grafana::provision(&spira_sim::grafana::Curl, world, &base, &admin)?;
-    use std::io::Write;
-    let mut env = std::fs::OpenOptions::new().append(true).open(world.join("config/sim.env")).map_err(|e| e.to_string())?;
-    writeln!(env, "{}={base}", spira_sim::grafana::URL_ENV).map_err(|e| e.to_string())
+    spira_sim::grafana::up_world(&spira_sim::grafana::Curl, world, &base, &admin)
 }
 
 fn gh_main(state: &std::path::Path, cwd: &std::path::Path, args: &[String]) -> Result<(), String> {
