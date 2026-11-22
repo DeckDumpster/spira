@@ -43,7 +43,7 @@ pub fn run(args: &[String]) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     let out = state_store::phases::child("git", || {
-        spira_config::bounded::bounded("git").arg("-C").arg(&repo).args(["log", "-z", "--format=%H%n%B", &format!("{base}..{branch}")]).output()
+        crate::proc::bounded("git").map_err(std::io::Error::other)?.arg("-C").arg(&repo).args(["log", "-z", "--format=%H%n%B", &format!("{base}..{branch}")]).output()
     });
     let commits = match out {
         Ok(o) if o.status.success() => parse_log(&String::from_utf8_lossy(&o.stdout)),

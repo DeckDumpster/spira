@@ -3,10 +3,13 @@
 
 use std::path::Path;
 
-const SPAWNS: [&str; 3] = [
+const SPAWNS: [&str; 6] = [
     "Command::new(",
     "bounded::bounded(",
     "bounded::bounded_for(",
+    "proc::command(",
+    "proc::bounded(",
+    "proc::bounded_for(",
 ];
 const WRAPPERS: [&str; 2] = ["spawn(", "spawn_with("];
 
@@ -60,7 +63,7 @@ fn unwrapped(text: &str) -> Vec<String> {
         let body = lines[start..end].join("\n");
         let sites = lines[start..end].iter().filter(|l| !is_comment(l) && SPAWNS.iter().any(|s| l.contains(s))).count();
         let wraps = body.matches("phases::child(").count() + WRAPPERS.iter().map(|w| body.matches(&format!(" {w}")).count() + body.matches(&format!("({w}")).count()).sum::<usize>();
-        let builds_only = lines[start].contains("-> Command") || lines[start].contains("-> std::process::Command");
+        let builds_only = ["-> Command", "-> std::process::Command", "-> Result<Command", "-> std::io::Result<spira_config::bounded::Bounded>"].iter().any(|r| lines[start].contains(r));
         let wrapped = wraps >= sites || (builds_only && text.contains("phases::child("));
         if !wrapped {
             bad.push(line.trim().to_string());
@@ -81,6 +84,7 @@ fn sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             && name != "tests.rs"
             && !name.ends_with("_tests.rs")
             && name != "child_spans.rs"
+            && name != "proc.rs"
         {
             out.push(p);
         }
@@ -116,6 +120,8 @@ fn every_spawn_site_runs_inside_a_child_phase() {
 fn the_matcher_finds_planted_spawns_and_passes_wrapped_ones() {
     let planted = "fn a() {\n    let o = Command::new(\"git\").output();\n}\nfn b() {\n    let o = bounded::bounded(\"git\").output();\n}\nfn c() {\n    let o = bounded::bounded_for(\"git\", 1).output();\n}\n";
     assert_eq!(unwrapped(planted).len(), 3);
+    let doored = "fn a() {\n    let o = proc::command(\"git\").unwrap().output();\n}\nfn b() {\n    let o = crate::proc::bounded_for(\"git\", \"1\");\n}\n";
+    assert_eq!(unwrapped(doored).len(), 2);
     let mixed = "fn a() {\n    state_store::phases::child(\"git\", || Command::new(\"git\").output());\n    Command::new(\"git\").output();\n}\n";
     assert_eq!(unwrapped(mixed).len(), 2, "one wrapped site must not hide an unwrapped one");
     let ok = "fn a() {\n    let o = state_store::phases::child(\"git\", || Command::new(\"git\").output());\n}\nfn b(cmd: Command) {\n    let c = Command::new(\"x\");\n    spawn(c);\n}\n#[cfg(test)]\nmod t {\n    fn x() { Command::new(\"git\"); }\n}\n";

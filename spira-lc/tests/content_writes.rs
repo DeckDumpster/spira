@@ -1,6 +1,6 @@
 //! The bd writes the SQL writer serves, made through every verb that asks for one, against a
 //! real Dolt server: with a provisioned writer each is one transaction and starts no process;
-//! without one it still goes through bd.
+//! without one it is refused by the key that provisions the writer.
 
 #[macro_use]
 extern crate spira_test_id;
@@ -268,6 +268,22 @@ impl Lc {
         }
     }
 
+    /// A request the service refuses: its exit code, its answer, and the children its span counted.
+    fn refused_of(&self, method: &str, args: &[&str], stdin: Option<&str>) -> (i32, String, i64) {
+        let before = self.spans(method).len();
+        let (rc, out) = self.settled(args, stdin);
+        let mut polls = 0;
+        loop {
+            let now = self.spans(method);
+            if now.len() > before {
+                return (rc, out, now[before..].iter().copied().max().unwrap_or(0));
+            }
+            polls += 1;
+            assert!(polls < 3_000, "no {method} span after {args:?}");
+            std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the span file, the signal waited on
+        }
+    }
+
     /// The bead as `content show --json` prints it, once its own span is written, so a later
     /// request never mistakes it for its own.
     fn shows(&self, id: &str) -> String {
@@ -349,19 +365,23 @@ fn with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_
 
 #[test_id(tp4mu6r)]
 #[test]
-fn without_a_writer_credential_the_same_verbs_still_write_through_bd() {
+fn a_content_write_against_a_store_with_no_writer_key_is_refused_by_the_key_and_starts_no_bd() {
     let Some(store) = Store::up() else { return };
     let id = store.create_bead();
-    let mut lc = Lc::new(&store, "u", "");
+    let log = store.dir.join("bd-argv.log");
+    let bd = recording_bd(&store, &log);
+    let mut lc = Lc::with_bd(&store, "u", "", &bd);
     provision(&lc);
     lc.serve();
-    for (verb, children, cut) in drive(&lc, &id) {
-        if cut {
-            continue;
-        }
-        let forks = i64::from(!verb.starts_with("work ") || matches!(verb, "work note -" | "work note-on" | "work label-add" | "work label-remove"));
-        assert_eq!(children, forks, "{verb}: the service forks bd itself except for a `work` verb it records for the runner");
+    for args in [vec!["content", "note", id.as_str(), "refused note"], vec!["content", "label", "add", id.as_str(), "writes:refused"]] {
+        let (rc, out, children) = lc.refused_of("content", &args, None);
+        assert_ne!(rc, 0, "{args:?} was accepted: {out}");
+        assert!(out.contains("spira.beads_sql_writer_password_file"), "{args:?} did not name the key: {out}");
+        assert_eq!(children, 0, "{args:?} started a process");
     }
+    assert!(std::fs::read_to_string(&log).unwrap_or_default().lines().all(|l| !l.contains("refused")), "bd was started for a refused write");
+    let shown = lc.shows(&id);
+    assert!(!shown.contains("refused note") && !shown.contains("writes:refused"), "a refused write landed: {shown}");
 }
 
 fn writer_lc(store: &Store, name: &str) -> Lc {
@@ -521,18 +541,6 @@ fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
     let lc = writer_lc(&store, "t");
     for (verb, children, out) in twins(&store, &lc) {
         assert_eq!(children, 0, "{verb} started a process: {out}");
-    }
-}
-
-#[test_id(t1af6b0)]
-#[test]
-fn without_a_writer_credential_those_writes_still_go_through_bd_and_make_the_same_rows() {
-    let Some(store) = Store::up() else { return };
-    let mut lc = Lc::new(&store, "n", "");
-    provision(&lc);
-    lc.serve();
-    for (verb, children, out) in twins(&store, &lc) {
-        assert!(children > 0 || out.contains("deadline"), "{verb} should have forked bd: {out}");
     }
 }
 
@@ -817,13 +825,14 @@ fn recompute_blocked_repairs_stale_flags_and_says_what_bd_says_in_sql_and_starts
 
 #[test_id(tljrx4z)]
 #[test]
-fn a_gate_check_over_a_github_gate_is_left_to_bd() {
+fn a_gate_check_over_a_github_gate_is_refused_rather_than_forked() {
     let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "gh");
     let a = store.create_bead();
     gate_for(&store, &a, &["--type=gh:run", "--await-id=1"]);
-    let (out, children) = lc.children_of("content", &["content", "gate", "check", "--type=gh:run"], None);
-    assert!(children > 0 || out.contains("deadline"), "bd asks GitHub, so it must have run: {out}");
+    let (rc, out, children) = lc.refused_of("content", &["content", "gate", "check", "--type=gh:run"], None);
+    assert_ne!(rc, 0, "bd asks GitHub and the service starts no bd: {out}");
+    assert_eq!(children, 0, "{out}");
 }
 
 /// A `bd` that records every argv it is run with, then is the real one.
@@ -906,26 +915,16 @@ fn provisioned_lc_with_watchd(store: &Store, name: &str) -> (Lc, PathBuf) {
     (lc, log)
 }
 
-#[test_id(tmpwngi)]
+#[test_id(tdn0akz)]
 #[test]
-fn a_writer_that_lost_a_grant_is_named_on_stderr_and_paged_once_without_changing_a_grant() {
+fn a_writer_that_lost_a_grant_is_named_on_stderr_and_pages_no_process_without_changing_a_grant() {
     let Some(store) = Store::up() else { return };
     let (mut lc, log) = provisioned_lc_with_watchd(&store, "g");
     store.sql("REVOKE INSERT, UPDATE, DELETE ON sptest.dependencies FROM 'spira_lc'@'%'");
     let before = store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'");
     let said = lc.serve_said();
     assert!(said.contains("dependencies") && said.contains("admin-provision-writer"), "{said}");
-    let mut paged = String::new();
-    for _ in 0..600 {
-        paged = std::fs::read_to_string(&log).unwrap_or_default();
-        if !paged.is_empty() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the stub's log, the signal waited on
-    }
-    let calls: Vec<&str> = paged.lines().collect();
-    assert_eq!(calls.len(), 1, "{paged}");
-    assert!(calls[0].starts_with("page lc-grants ") && calls[0].ends_with(" missing=dependencies"), "{paged}");
+    assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap_or_default());
     assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before, "the check changed the writer's grants");
 }
 

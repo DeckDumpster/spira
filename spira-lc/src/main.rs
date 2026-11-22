@@ -33,6 +33,7 @@ mod control;
 #[cfg(test)]
 mod counting;
 mod plan;
+mod proc;
 mod compact;
 mod relayout;
 mod store_gc;
@@ -144,6 +145,7 @@ fn main() {
             println!("{out}");
             std::process::exit(code)
         }
+        Some("admin-store") => std::process::exit(admin_store::run(&args[1..])),
         Some("admin-store-relayout") => {
             let (code, out) = relayout::admin_store_relayout(&args[1..], &control::served::Wall);
             println!("{out}");
@@ -366,7 +368,6 @@ pub fn dispatch(args: &[String]) -> (i32, String) {
         // A round assembled behind a running one, and its promotion (queue round stage/promote).
         Some("admin-create-store") => control::served::create_store(),
         Some("admin-drop-lifecycle") => admin_drop::run(&args[1..]),
-        Some("admin-store") => (admin_store::run(&args[1..]), String::new()),
         Some("admin-provision-reader") => admin_reader::run(&args[1..]),
         Some("admin-provision-writer") => admin_writer::run(&args[1..]),
         // The ops read model: a view as JSON.
@@ -420,6 +421,14 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(ts945pl)]
+    #[test]
+    fn a_served_admin_store_is_not_a_verb_and_runs_nothing() {
+        let (code, out) = dispatch(&["admin-store".to_string(), "version".to_string()]);
+        assert_ne!(code, 0, "{out}");
+        assert!(out.contains("usage"), "{out}");
+    }
+
     use super::*;
 
     #[test_id(tc2upq1)]

@@ -3,7 +3,7 @@
 //! stdout, stderr and exit code through unchanged so callers keep parsing bd's own text.
 
 use std::os::unix::process::CommandExt;
-use std::process::Command;
+use crate::proc::Command;
 
 use crate::CANNOT_TELL;
 
@@ -51,15 +51,15 @@ pub(crate) fn plan_of(args: &[String], stdin: &mut dyn FnMut() -> Result<String,
     }
 }
 
-pub(crate) fn command(p: &Plan, bd: &str, db: &str) -> Command {
-    let mut cmd = Command::new(bd);
+pub(crate) fn command(p: &Plan, bd: &str, db: &str) -> Result<Command, String> {
+    let mut cmd = crate::proc::command(bd)?;
     if p.in_store_dir {
         cmd.current_dir(db);
     } else if !db.is_empty() {
         cmd.args(["-C", db]);
     }
     cmd.args(&p.argv);
-    cmd
+    Ok(cmd)
 }
 
 fn resolved_path(bd: &str) -> String {
@@ -95,7 +95,13 @@ pub fn run(args: &[String]) -> i32 {
             return CANNOT_TELL;
         }
     };
-    let mut cmd = command(&p, &bd, &db);
+    let mut cmd = match command(&p, &bd, &db) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("admin-store: {e}");
+            return CANNOT_TELL;
+        }
+    };
     if p.with_path {
         return match state_store::phases::child(&bd, || cmd.output()) {
             Ok(o) => {
@@ -145,13 +151,13 @@ mod tests {
         let mut none = || Err("no stdin".to_string());
         for args in [vec!["migrate"], vec!["dolt-start"], vec!["config", "set", "status.custom", "a,b"]] {
             let p = plan_of(&words(&args), &mut none).unwrap();
-            assert!(command(&p, bd, db).status().unwrap().success());
+            assert!(command(&p, bd, db).unwrap().status().unwrap().success());
         }
         let mut sql = || Ok("select 1\n".to_string());
         let p = plan_of(&words(&["sql", "--json"]), &mut sql).unwrap();
-        assert!(command(&p, bd, db).status().unwrap().success());
+        assert!(command(&p, bd, db).unwrap().status().unwrap().success());
         let p = plan_of(&words(&["init"]), &mut none).unwrap();
-        assert!(command(&p, bd, db).status().unwrap().success());
+        assert!(command(&p, bd, db).unwrap().status().unwrap().success());
         let seen = std::fs::read_to_string(&log).unwrap();
         let want = [
             format!("[-C][{db}][migrate][schema]"),
@@ -205,7 +211,7 @@ mod tests {
         testkit::write_exe(&stub, "#!/bin/sh\necho 'bd version 9.9'\necho second\n");
         let mut none = || Err("no stdin".to_string());
         let p = plan_of(&["version".to_string()], &mut none).unwrap();
-        let out = command(&p, stub.to_str().unwrap(), "").output().unwrap();
+        let out = command(&p, stub.to_str().unwrap(), "").unwrap().output().unwrap();
         assert!(String::from_utf8_lossy(&out.stdout).starts_with("bd version 9.9"));
         assert_eq!(resolved_path(stub.to_str().unwrap()), stub.to_str().unwrap());
         let mut empty = || Ok("  \n".to_string());

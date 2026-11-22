@@ -192,6 +192,18 @@ mod tests {
 
     #[test_id(tknfgnh)]
     #[test]
+    fn the_dashboard_counts_lc_serve_children_by_verb_under_the_metric_the_series_carries() {
+        let board: serde_json::Value = serde_json::from_str(include_str!("../../spira/metrics/grafana/dashboards/bead-store.json")).unwrap();
+        let panels = board["panels"].as_array().unwrap();
+        let panel = panels.iter().find(|p| p["title"] == "lc-serve child processes started, by verb").expect("no child-process panel");
+        let expr = panel["targets"][0]["expr"].as_str().unwrap();
+        assert_eq!(expr, format!("sum by (verb) (sum_over_time({}{{verb=~\"$verb\"}}[$__interval]))", crate::slow::CHILDREN));
+        let ids: std::collections::BTreeSet<_> = panels.iter().map(|p| p["id"].as_u64().unwrap()).collect();
+        assert_eq!(ids.len(), panels.len(), "panel ids are unique");
+    }
+
+    #[test_id(tada2ds)]
+    #[test]
     fn the_checkpointing_row_queries_each_metric_by_its_const_and_the_wal_panel_carries_its_lines() {
         use crate::slow::{GATE_WAIT_MAX_SECONDS, READS_ENDED, READS_ENDED_BY_RESET, READS_OVERRAN};
         use state_store_sqlite::{WAL_FORCED_GIVEN_UP, WAL_FORCED_RESETS, WAL_RESETS_COMPLETED, WAL_RESETS_GIVEN_UP};

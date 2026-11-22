@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 
@@ -66,11 +66,11 @@ pub fn show_row_via(id: &str, call: &mut Door) -> Option<Row> {
 }
 
 fn branch_exists(root: &str, branch: &str) -> bool {
-    state_store::phases::child("git", || Command::new("timeout").args([CALL_SECS, "git", "-C", root, "show-ref", "--verify", "-q", &format!("refs/heads/{branch}")]).status()).map(|s| s.success()).unwrap_or(false)
+    state_store::phases::child("git", || crate::proc::command("timeout").map_err(std::io::Error::other)?.args([CALL_SECS, "git", "-C", root, "show-ref", "--verify", "-q", &format!("refs/heads/{branch}")]).status()).map(|s| s.success()).unwrap_or(false)
 }
 
 fn reap(id: &str, branch: &str, root: &str, why: &str) -> Result<(), String> {
-    let mut c = Command::new("timeout");
+    let mut c = crate::proc::command("timeout")?;
     c.args([CALL_SECS, "hel", "reap-landed-branch"]);
     if let Ok(f) = std::env::var("SPIRA_STATUS_FILE") {
         c.arg("--status-from").arg(f);
