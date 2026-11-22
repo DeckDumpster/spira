@@ -108,3 +108,30 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_page_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(said_one_and_changed_the_answer, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+
+#[test_id(t2exbft)]
+#[test]
+fn an_answer_that_is_not_a_snapshot_pages_nothing() {
+    let (mut r, world, lines) = rig(Ok("usage: spira-lc show <bead-id> | ...".into()));
+    next_tick(&mut r);
+    *world.lock().unwrap() = Ok(String::new());
+    next_tick(&mut r);
+    assert!(lines.lock().unwrap().is_empty(), "{:?}", lines.lock().unwrap());
+}
+
+
+#[test_id(tsa57nn)]
+#[test]
+fn a_timed_out_observe_pages_nothing() {
+    let lines: Lines = Arc::new(Mutex::new(vec![]));
+    let kept = lines.clone();
+    let mut r = TaskRig::new(1, registration()).unwrap().timing_out().double(OBSERVE, |_| answer(&["dependencies"], None)).double(INBOX_APPEND, move |l| {
+        kept.lock().unwrap().push(l.to_string());
+        Ok(l.into())
+    });
+    r.advance(2_000_000).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    next_tick(&mut r);
+    assert!(lines.lock().unwrap().is_empty());
+}
