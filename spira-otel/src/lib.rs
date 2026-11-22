@@ -77,6 +77,11 @@ pub struct Call<'a> {
     pub open_phase: Option<&'a str>,
     /// Dolt SQL statements run.
     pub content_queries: u64,
+    /// The longest single Dolt statement, in microseconds, and its shape.
+    pub content_query_max_us: u64,
+    pub content_query_max_shape: &'a str,
+    /// The scheduler task whose effect made the call.
+    pub task: Option<&'a str>,
     /// Child processes run.
     pub children: u64,
     /// Basenames of the child programs, in order.
@@ -171,6 +176,11 @@ impl Sink {
         }
         if c.content_queries > 0 {
             attributes.push(kv_int("spira.content.queries", c.content_queries));
+            attributes.push(kv_int("spira.content.query_max_us", c.content_query_max_us));
+            attributes.push(kv_str("spira.content.query_max_shape", c.content_query_max_shape));
+        }
+        if let Some(task) = c.task {
+            attributes.push(kv_str("spira.task", task));
         }
         if c.children > 0 {
             attributes.push(kv_int("spira.children", c.children));
@@ -290,7 +300,7 @@ mod tests {
 
     fn call(code: i32) -> Call<'static> {
         let start = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, children: 0, programs: &[], subverb: None }
+        Call { method: "list", caller: "work/list", request_size: 40, response_size: 439_002, exit_code: code, start, end: start + Duration::from_millis(12), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, content_query_max_us: 0, content_query_max_shape: "", task: None, children: 0, programs: &[], subverb: None }
     }
 
     fn tmp(name: &str) -> testkit::TempDir {
@@ -333,6 +343,24 @@ mod tests {
         assert_eq!(attr(&spans[0], "spira.children"), Some(&Value::IntValue(2)));
         assert_eq!(attr(&spans[0], "spira.content.queries"), Some(&Value::IntValue(3)));
         for k in ["spira.subverb", "spira.children", "spira.children.programs", "spira.content.queries"] {
+            assert_eq!(attr(&spans[1], k), None, "{k}");
+        }
+    }
+
+    #[test_id(toh8axn)]
+    #[test]
+    fn the_longest_statement_and_the_task_are_written_only_when_present() {
+        let dir = tmp("query-max");
+        let sink = Sink::new(dir.path(), "spira-lc", 14);
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        sink.write(&Call { content_queries: 2, content_query_max_us: 938_132, content_query_max_shape: "SELECT a FROM t WHERE x = ?", task: Some("sentinel"), ..call(0) }, now).unwrap();
+        sink.write(&Call { content_query_max_us: 5, content_query_max_shape: "SELECT 1", ..call(0) }, now).unwrap();
+        let text = fs::read_to_string(dir.join("spira-lc.2023-11-14.jsonl")).unwrap();
+        let spans: Vec<Span> = text.lines().map(|l| serde_json::from_str::<ExportTraceServiceRequest>(l).unwrap().resource_spans[0].scope_spans[0].spans[0].clone()).collect();
+        assert_eq!(attr(&spans[0], "spira.content.query_max_us"), Some(&Value::IntValue(938_132)));
+        assert_eq!(attr(&spans[0], "spira.content.query_max_shape"), Some(&Value::StringValue("SELECT a FROM t WHERE x = ?".into())));
+        assert_eq!(attr(&spans[0], "spira.task"), Some(&Value::StringValue("sentinel".into())));
+        for k in ["spira.content.query_max_us", "spira.content.query_max_shape", "spira.task"] {
             assert_eq!(attr(&spans[1], k), None, "{k}");
         }
     }
@@ -449,7 +477,7 @@ mod tests {
         let rows = [("show", "work/show", 61, 1_204, 0, 8), ("list", "work/list", 33, 439_002, 0, 212), ("show", "gate-run", 58, 96, 1, 3), ("event", "lifecycle/event", 412, 0, 0, 41)];
         for (i, (m, who, rq, rs, code, ms)) in rows.into_iter().enumerate() {
             let start = t0 + Duration::from_secs(i as u64);
-            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, children: 0, programs: &[], subverb: None };
+            let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms), queue_wait: Duration::ZERO, before_work: Duration::ZERO, answer_wait: Duration::ZERO, after_answer: Duration::ZERO, cut: false, answered: None, cut_at: None, phases: &[], commits_us: &[], reads: 0, read_max_us: 0, reads_ended: 0, reads_overran: 0, open_phase: None, content_queries: 0, content_query_max_us: 0, content_query_max_shape: "", task: None, children: 0, programs: &[], subverb: None };
             sink.write(&c, start).unwrap();
         }
         fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), testkit::manifest_dir().join("tests/fixtures/spira-lc.ndjson")).unwrap();

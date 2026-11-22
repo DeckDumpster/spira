@@ -65,6 +65,8 @@ struct Inner {
     reads_overran: u64,
     reads_ended_by_reset: u64,
     reads_reset_ended: u64,
+    content_max: Duration,
+    content_max_shape: String,
 }
 
 /// What a request recorded; shared between the worker thread and the one that answers.
@@ -94,6 +96,9 @@ pub struct Snapshot {
     pub open: Option<&'static str>,
     /// Dolt SQL statements run.
     pub content_queries: u64,
+    /// The longest single Dolt statement, in microseconds, and its shape.
+    pub content_query_max_us: u64,
+    pub content_query_max_shape: String,
     /// Child processes run.
     pub children: u64,
     /// Basename of each child's program, in order.
@@ -131,6 +136,8 @@ impl Recorder {
             reads_reset_ended: g.reads_reset_ended,
             open: g.open.last().map(|p| p.name()),
             content_queries: g.count[Phase::ContentQuery as usize],
+            content_query_max_us: g.content_max.as_micros() as u64,
+            content_query_max_shape: g.content_max_shape.clone(),
             children: g.count[Phase::Child as usize],
             programs: g.programs.clone(),
         }
@@ -352,6 +359,17 @@ pub fn record_read(took: Duration, end: ReadEnd) {
     }
 }
 
+/// Notes one Dolt statement's duration; `shape` is called only when it is the longest so far.
+pub fn record_content_statement(took: Duration, shape: impl FnOnce() -> String) {
+    if let Some(rec) = current() {
+        let mut g = rec.inner();
+        if took > g.content_max || g.content_max_shape.is_empty() {
+            g.content_max = took;
+            g.content_max_shape = shape();
+        }
+    }
+}
+
 /// Times `f`, a child process of `program`, as one `child` and records the program's basename.
 pub fn child<T>(program: &str, f: impl FnOnce() -> T) -> T {
     let out = time(Phase::Child, f);
@@ -490,6 +508,23 @@ mod tests {
         assert_eq!(s.read_max_us, 70);
         assert_eq!(s.phases, vec![("read", 100)]);
         assert_eq!((s.reads_ended, s.reads_overran), (1, 1));
+    }
+
+    #[test_id(tzuu5qi)]
+    #[test]
+    fn the_longest_content_statement_wins_and_its_shape_is_built_only_then() {
+        let rec = tracked();
+        let built = std::cell::Cell::new(0);
+        for (us, shape) in [(40, "a"), (900, "b"), (10, "c")] {
+            record_content_statement(Duration::from_micros(us), || {
+                built.set(built.get() + 1);
+                shape.to_string()
+            });
+        }
+        untrack();
+        let s = rec.snapshot();
+        assert_eq!((s.content_query_max_us, s.content_query_max_shape.as_str(), built.get()), (900, "b", 2));
+        record_content_statement(Duration::from_micros(1), || unreachable!("no recorder installed"));
     }
 
     #[test_id(t0pt99i)]

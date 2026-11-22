@@ -549,7 +549,22 @@ pub fn shape(sql: &str) -> String {
     while folded.contains("?, ?") || folded.contains("?,?") {
         folded = folded.replace("?, ?", "?").replace("?,?", "?");
     }
-    folded.chars().take(300).collect()
+    cap_keeping_tail(&folded)
+}
+
+const SHAPE_CAP: usize = 300;
+
+/// Past the cap the select list gives way and `FROM … WHERE …` stays, since the WHERE is what tells one statement from another.
+fn cap_keeping_tail(folded: &str) -> String {
+    if folded.chars().count() <= SHAPE_CAP {
+        return folded.to_string();
+    }
+    let Some(from) = folded.find(" FROM ") else { return folded.chars().take(SHAPE_CAP).collect() };
+    let tail = &folded[from + 1..];
+    let room = SHAPE_CAP.saturating_sub(tail.chars().count() + 2);
+    let head: String = folded[..from].chars().take(room).collect();
+    let joined = if head.is_empty() { tail.to_string() } else { format!("{head}… {tail}") };
+    joined.chars().take(SHAPE_CAP).collect()
 }
 
 pub fn line(epoch: i64, verb: &str, caller: &str, took: Duration, sql: &str) -> String {
@@ -787,6 +802,25 @@ mod tests {
         assert_eq!(a, b);
         assert!(!a.contains("sp-1") && !a.contains("12"));
         assert!(a.contains("bead"));
+    }
+
+    #[test_id(tekp1ee)]
+    #[test]
+    fn a_long_shape_keeps_its_where_and_gives_up_the_select_list() {
+        let list = crate::content_sql::List { labels_any: vec!["x".into()], ..Default::default() };
+        let got = shape(&list.issues_sql("`d`"));
+        assert!(got.contains("WHERE") && got.contains("labels"), "{got}");
+        assert!(got.chars().count() <= 300, "{got}");
+    }
+
+    #[test_id(tgf2bfi)]
+    #[test]
+    fn a_shape_with_no_from_or_a_tail_over_the_cap_is_cut_at_the_cap() {
+        let no_from = format!("SELECT {}", "a, ".repeat(200));
+        assert_eq!(shape(&no_from).chars().count(), 300);
+        let long_tail = format!("SELECT a FROM t WHERE {}", "x = y AND ".repeat(60));
+        let got = shape(&long_tail);
+        assert!(got.starts_with("FROM t WHERE") && got.chars().count() == 300, "{got}");
     }
 
     #[test_id(thy1ayi)]
