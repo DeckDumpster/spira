@@ -127,7 +127,7 @@ pub fn lc_call_within(path: &std::path::Path, argv: &[&str], deadline: Duration)
     let down = |why: &dyn std::fmt::Display| RuntimeError::cannot_tell(format!("cannot tell: spira-lc is not answering on {}: {why}", path.display()));
     let stream = connect(path).map_err(|e| down(&e))?;
     stream.set_read_timeout(Some(deadline)).and_then(|_| stream.set_write_timeout(Some(deadline))).map_err(|e| down(&e))?;
-    let request = serde_json::to_string(argv).map_err(|e| RuntimeError::new(e.to_string()))?;
+    let request = serde_json::to_string(&serde_json::json!({ "argv": argv, "task": crate::journal::SCHEDULER_TASK })).map_err(|e| RuntimeError::new(e.to_string()))?;
     writeln!(&stream, "{request}").map_err(|e| down(&e))?;
 
     let lost = |why: &str| RuntimeError::cannot_tell(format!("cannot tell: spira-lc took the journal request but its reply was lost ({why})"));
@@ -267,6 +267,27 @@ mod tests {
         client.read_to_string(&mut got).unwrap();
         t.join().unwrap();
         assert_eq!(got.lines().nth(1), Some("hold sp-a"), "{got}");
+    }
+
+    #[test_id(t1io6s9)]
+    #[test]
+    fn a_journal_request_head_names_the_scheduler_task_beside_the_argv() {
+        let dir = testkit::TempDir::new("socket-task-head");
+        let path = dir.path().join("s.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let t = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let body = r#"{"rows":[],"next":null}"#;
+            writeln!(&stream, "{}", serde_json::json!({ "exit_code": 0, "len": body.len() })).unwrap();
+            (&stream).write_all(body.as_bytes()).unwrap();
+            line
+        });
+        let _ = SocketJournal::new(&path, Shipper::start("http://127.0.0.1:9")).send(&["cursor"]);
+        let head: serde_json::Value = serde_json::from_str(t.join().unwrap().trim()).unwrap();
+        assert_eq!(head["task"], crate::journal::SCHEDULER_TASK);
+        assert_eq!(head["argv"], serde_json::json!(["journal", "cursor"]));
     }
 
     #[test_id(trnxatt)]
