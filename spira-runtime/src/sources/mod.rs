@@ -82,7 +82,7 @@ mod tests {
         let units = || Arc::new(ScriptedUnits::new(clock.clone()));
         let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), None).unwrap();
         assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission"]);
-        let views = Arc::new(store_view::Projection::new(spira_store::lc_call::LcClient::socket("/nonexistent"), std::time::Duration::from_secs(1), Arc::new(std::time::Instant::now)));
+        let views = Arc::new(store_view::Projection::new(spira_store::lc_call::LcClient::socket("no-such-socket"), std::time::Duration::from_secs(1), Arc::new(std::time::Instant::now)));
         let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), Some((views, Arc::new(crate::store::ChangeTable::default())))).unwrap();
         assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "store.changed"]);
         let err = s.into_scripted().err().expect("real sources are refused under virtual time");
