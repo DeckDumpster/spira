@@ -59,9 +59,16 @@ fn quoted_value(line: &str, key: &str) -> Option<String> {
     Some(rest[..rest.find('"')?].to_string())
 }
 
-fn files_in(dir: &Path, want: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file() && want(p)).collect();
+/// Symlinks are skipped, as `find -type f` does in `drift.sh units`.
+fn entries_in(dir: &Path, kind: impl Fn(&std::fs::FileType) -> bool) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| kind(&t))).map(|e| e.path()).collect();
     v.sort();
+    v
+}
+
+fn files_in(dir: &Path, want: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    let mut v = entries_in(dir, |t| t.is_file());
+    v.retain(|p| want(p));
     v
 }
 
@@ -90,8 +97,8 @@ pub fn units_drift_with(unitdir: &Path, shipped: Result<BTreeSet<String>, String
             verdict(&f, "unit file this install does not ship");
         }
     }
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(unitdir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir() && p.extension().is_some_and(|e| e == "d")).collect();
-    dirs.sort();
+    let mut dirs = entries_in(unitdir, |t| t.is_dir());
+    dirs.retain(|p| p.extension().is_some_and(|e| e == "d"));
     for d in dirs {
         for f in files_in(&d, |p| p.extension().is_some_and(|e| e == "conf")) {
             if !KNOWN_DROPINS.contains(&name(&f).as_str()) {
@@ -122,4 +129,72 @@ pub fn units_drift(unitdir: &Path) -> UnitDrift {
         spira_store::lc_state::list_ids_on(&c, &[bead.to_string()]).ok().is_some_and(|rows| rows.iter().any(|r| r.bead_id == bead && r.state == "LANDED"))
     };
     units_drift_with(unitdir, shipped_names(&instance), &local, &local_path, &is_done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn set(names: &[&str]) -> Result<BTreeSet<String>, String> {
+        Ok(names.iter().map(|n| n.to_string()).collect())
+    }
+
+    const LOCAL: &str = "[[unit]]\npath = \"concierge-memory-commit.service\"\npermanent = true\n[[unit]]\npath = \"dolt-beads.service.d/refuse-manual-stop.conf\"\npermanent = true\n";
+
+    #[test_id(tdoegv3)]
+    #[test]
+    fn production_shaped_directory_with_symlinked_units_is_clean() {
+        let d = testkit::TempDir::new("unit-drift-prod");
+        let outside = testkit::TempDir::new("unit-drift-outside");
+        let u = d.path();
+        for f in ["spira-runtime-prod.service", "cockpit-ensure.timer", "concierge-memory-commit.service"] {
+            std::fs::write(u.join(f), "").unwrap();
+        }
+        for (w, f) in [("default.target.wants", "spira-runtime-prod.service"), ("timers.target.wants", "cockpit-ensure.timer")] {
+            std::fs::create_dir(u.join(w)).unwrap();
+            symlink(u.join(f), u.join(w).join(f)).unwrap();
+        }
+        for f in ["concierge-handoff.service", "concierge-promise.timer"] {
+            std::fs::write(outside.path().join(f), "").unwrap();
+            symlink(outside.path().join(f), u.join(f)).unwrap();
+        }
+        std::fs::create_dir(u.join("dolt-beads.service.d")).unwrap();
+        std::fs::write(u.join("dolt-beads.service.d/refuse-manual-stop.conf"), "").unwrap();
+        std::fs::create_dir(u.join("lc-serve.service.d")).unwrap();
+        let shipped = set(&["spira-runtime-prod.service", "cockpit-ensure.timer", "spira-optional-prod.service"]);
+        assert_eq!(units_drift_with(u, shipped, LOCAL, "", &|_| false), UnitDrift::Clean);
+    }
+
+    #[test_id(t71qn1k)]
+    #[test]
+    fn symlinked_dropin_directory_is_not_descended_into() {
+        let d = testkit::TempDir::new("unit-drift-dropin");
+        let outside = testkit::TempDir::new("unit-drift-dropin-out");
+        std::fs::write(outside.path().join("stray.conf"), "").unwrap();
+        symlink(outside.path(), d.path().join("x.service.d")).unwrap();
+        assert_eq!(units_drift_with(d.path(), set(&["a.service"]), "", "", &|_| false), UnitDrift::Clean);
+    }
+
+    #[test_id(ta3b5ge)]
+    #[test]
+    fn regular_unshipped_unit_and_unknown_dropin_are_drift() {
+        let d = testkit::TempDir::new("unit-drift-regular");
+        std::fs::write(d.path().join("stray.service"), "").unwrap();
+        std::fs::create_dir(d.path().join("y.service.d")).unwrap();
+        std::fs::write(d.path().join("y.service.d/stray.conf"), "").unwrap();
+        let UnitDrift::Drift(t) = units_drift_with(d.path(), set(&["a.service"]), "", "", &|_| false) else { panic!("expected drift") };
+        assert!(t.contains("stray.service") && t.contains("y.service.d/stray.conf"), "{t}");
+    }
+
+    #[test_id(tfawkmw)]
+    #[test]
+    fn symlinked_conf_inside_a_real_dropin_directory_is_skipped() {
+        let d = testkit::TempDir::new("unit-drift-conf-link");
+        let outside = testkit::TempDir::new("unit-drift-conf-link-out");
+        std::fs::write(outside.path().join("stray.conf"), "").unwrap();
+        std::fs::create_dir(d.path().join("x.service.d")).unwrap();
+        symlink(outside.path().join("stray.conf"), d.path().join("x.service.d/stray.conf")).unwrap();
+        assert_eq!(units_drift_with(d.path(), set(&["a.service"]), "", "", &|_| false), UnitDrift::Clean);
+    }
 }
