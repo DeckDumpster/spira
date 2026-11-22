@@ -1705,3 +1705,36 @@ fn the_over_submitted_line_names_the_bead() {
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].contains("sp-s1"), "{}", lines[0]);
 }
+
+#[test_id(t839wy5)]
+#[test]
+fn the_unexplained_map_survives_a_restart_including_an_explained_bead() {
+    let cfg = gate_cfg();
+    let (carry, _) = decide(&Carry::default(), &wait_world(T0, "CERTIFIED", T0 - 31 * MIN, 1, None), T0 * 1000, &cfg);
+    assert_eq!(carry.unexplained.get("sp-c1"), Some(&None));
+    let parts = [runtime::rows::Part::Map { name: "unexplained", drop: &[] }];
+    let body = serde_json::to_string(&carry).unwrap();
+    let back: Carry = serde_json::from_str(&runtime::rows::join(&runtime::rows::split(&body, &parts), &parts)).unwrap();
+    assert_eq!(back.unexplained, carry.unexplained);
+}
+
+#[test_id(tgbj1gv)]
+#[test]
+fn a_wait_explained_again_after_a_gap_is_counted_afresh_and_a_departed_bead_is_forgotten() {
+    let cfg = gate_cfg();
+    let since = T0 - 31 * MIN;
+    let at = |carry: &Carry, t: u64, rounds: u64| decide(carry, &wait_world(t, "CERTIFIED", since, rounds, None), t * 1000, &cfg);
+    let (c1, _) = at(&Carry::default(), T0, 1);
+    let (c2, _) = at(&c1, T0 + 6 * MIN, 0);
+    assert_eq!(c2.unexplained.get("sp-c1"), Some(&Some(T0 + 6 * MIN)));
+    let (c3, a3) = at(&c2, T0 + 8 * MIN, 1);
+    assert_eq!(c3.unexplained.get("sp-c1"), Some(&None));
+    assert_eq!(over_submitted(&a3), Vec::<String>::new());
+    let (c4, a4) = at(&c3, T0 + 9 * MIN, 0);
+    assert_eq!(c4.unexplained.get("sp-c1"), Some(&Some(T0 + 9 * MIN)));
+    assert_eq!(over_submitted(&a4), Vec::<String>::new());
+    let mut gone = wait_world(T0 + 10 * MIN, "CERTIFIED", since, 0, None);
+    gone.beads.clear();
+    let (c5, _) = decide(&c4, &gone, (T0 + 10 * MIN) * 1000, &cfg);
+    assert!(c5.unexplained.is_empty(), "{:?}", c5.unexplained);
+}
