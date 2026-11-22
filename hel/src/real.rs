@@ -444,7 +444,7 @@ mod tests {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.seen.lock().unwrap().push(argv.join(" "));
             let (code, out) = (self.reply)(argv);
-            Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code, out, err: String::new(), read_ended: false })
         }
     }
 

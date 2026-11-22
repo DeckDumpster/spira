@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn the_holds_are_read_over_the_client_and_each_checkpoint_is_lifted() {
         let rows = r#"[{"bead_id":"sp-a","reason":"checkpoint-until: 2026-11-04"},{"bead_id":"sp-b","reason":"waiting on ci"},{"bead_id":"sp-c","reason":"checkpoint-until: x"}]"#;
-        let (t, c) = client(Ok(Reply { code: 0, out: rows.into(), err: String::new() }));
+        let (t, c) = client(Ok(Reply { code: 0, out: rows.into(), err: String::new(), read_ended: false }));
         let (lifted, failed) = lift_all_over(&c, &|b| b == "sp-a");
         assert_eq!(*t.asked.lock().unwrap(), vec![vec!["list".to_string(), "--hold".into(), "wait".into(), "--live".into()]]);
         assert_eq!((lifted, failed), (vec!["sp-a".to_string()], vec!["sp-c".to_string()]));
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn a_refused_or_unanswered_list_lifts_nothing_and_says_which() {
-        let (_, refused) = client(Ok(Reply { code: 3, out: "no".into(), err: String::new() }));
+        let (_, refused) = client(Ok(Reply { code: 3, out: "no".into(), err: String::new(), read_ended: false }));
         assert_eq!(lift_all_over(&refused, &|_| true), (vec![], vec!["(spira-lc list refused)".to_string()]));
         let (_, down) = client(Err("cannot tell: down".into()));
         assert_eq!(lift_all_over(&down, &|_| true), (vec![], vec!["(spira-lc list could not run)".to_string()]));
@@ -83,10 +83,10 @@ mod tests {
 
     #[test]
     fn the_unhold_goes_over_the_client_and_only_an_applied_one_counts() {
-        let (t, ok) = client(Ok(Reply { code: 0, out: String::new(), err: String::new() }));
+        let (t, ok) = client(Ok(Reply { code: 0, out: String::new(), err: String::new(), read_ended: false }));
         assert!(unhold_wait(&ok, "sp-a"));
         assert_eq!(*t.asked.lock().unwrap(), vec![["unhold", "sp-a", "wait", "world"].map(String::from).to_vec()]);
-        let (_, refused) = client(Ok(Reply { code: 3, out: String::new(), err: "lc: refused".into() }));
+        let (_, refused) = client(Ok(Reply { code: 3, out: String::new(), err: "lc: refused".into(), read_ended: false }));
         assert!(!unhold_wait(&refused, "sp-a"));
         let (_, down) = client(Err("cannot tell: down".into()));
         assert!(!unhold_wait(&down, "sp-a"));

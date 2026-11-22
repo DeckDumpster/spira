@@ -31,7 +31,7 @@ impl Rig for Sqlite {
     fn fresh(&self) -> SqliteBackend {
         let n = self.n.fetch_add(1, Ordering::SeqCst);
         let path = self.dir.path().join(format!("store-{n}.db"));
-        SqliteBackend::open(&path, Options::default()).expect("open")
+        SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).expect("open")
     }
     /// One opener per file, so a second handle shares the first's connections; a real
     /// close and reopen is its own test below.
@@ -127,7 +127,7 @@ fn put(c: &Contract<SqliteBackend>, key: &str, v: serde_json::Value, id: &str) -
 }
 
 fn open(path: &Path) -> SqliteBackend {
-    SqliteBackend::open(path, Options::default()).unwrap()
+    SqliteBackend::open(path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap()
 }
 
 fn keys_at(b: &SqliteBackend, prefix: &str, at: u64) -> Vec<(String, Vec<u8>)> {
@@ -204,7 +204,7 @@ fn a_revision_the_ring_has_turned_past_is_too_old_to_read_or_watch() {
     let clock = VirtualClock::new(1_000);
     let b = SqliteBackend::open(
         &dir.path().join("s.db"),
-        Options { history_bytes: 4_000, ..Options::default() },
+        Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, history_bytes: 4_000, ..Options::default() },
     )
     .unwrap();
     let c = contract(b, &clock);
@@ -233,7 +233,7 @@ fn a_second_open_of_the_same_file_is_refused() {
     let dir = TempDir::new("sqlite-exclusive");
     let path = dir.path().join("s.db");
     let first = open(&path);
-    match SqliteBackend::open(&path, Options::default()) {
+    match SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }) {
         Err(Error::Backend(m)) => assert!(m.contains("already open"), "{m}"),
         Err(e) => panic!("refused for another reason: {e}"),
         Ok(_) => panic!("a second opener was let in"),
@@ -366,6 +366,7 @@ fn a_snapshot_copy_matches_the_live_keys_at_its_revision_and_refuses_an_existing
         &dest,
         Options {
             jump_on_open: false,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             ..Options::default()
         },
     )
@@ -403,7 +404,7 @@ fn a_snapshot_copy_taken_while_another_thread_commits_holds_one_revision() {
         rev
     });
     let live = c.backend().clone();
-    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    let copy = SqliteBackend::open(&dest, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() }).unwrap();
     assert_eq!(copy.head().unwrap(), rev);
     assert_eq!(keys_at(&copy, "", rev), keys_at(&live, "", rev));
 }
@@ -437,7 +438,7 @@ fn gc_range_skips_events_and_history_and_pages_across_them() {
 fn a_snapshot_copy_does_not_carry_the_pages_deleted_rows_left_free_in_the_live_file() {
     let dir = TempDir::new("sqlite-snapshot-vacuum");
     let path = dir.path().join("s.db");
-    let b = SqliteBackend::open(&path, Options { day_receipts: false, ..Options::default() }).unwrap();
+    let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, day_receipts: false, ..Options::default() }).unwrap();
     let clock = VirtualClock::new(0);
     let c = contract(b, &clock);
     for i in 0..200 {
@@ -473,6 +474,7 @@ fn a_snapshot_is_compacted_straight_to_its_destination_in_rollback_mode() {
         &dest,
         Options {
             jump_on_open: false,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             ..Options::default()
         },
     )
@@ -486,7 +488,7 @@ const D0: u64 = 20_000 * DAY_MS;
 
 /// Reads in day-file tests are never ended by time: the read clock is separate from `wall` and never advances.
 fn day_opts(wall: &VirtualClock) -> Options {
-    Options { wall: Arc::new(wall.clone()), clock: Arc::new(VirtualClock::new(0)), ..Options::default() }
+    Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, wall: Arc::new(wall.clone()), clock: Arc::new(VirtualClock::new(0)), ..Options::default() }
 }
 
 fn receipt_files(dir: &Path) -> Vec<String> {
@@ -1129,7 +1131,7 @@ fn a_snapshot_copy_carries_the_receipts_up_to_its_revision_in_one_file() {
     let dest = dir.path().join("snap.db");
     let rev = b.snapshot_to(&dest).unwrap();
     b.commit(1, &[receipt("r2", b"y", 2)]).unwrap();
-    let copy = SqliteBackend::open(&dest, Options { jump_on_open: false, ..Options::default() }).unwrap();
+    let copy = SqliteBackend::open(&dest, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() }).unwrap();
     assert_eq!(copy.get("requests/r1", rev).unwrap().unwrap().value, b"x");
     assert!(copy.get("requests/r2", rev).unwrap().is_none());
     assert_eq!(receipt_files(dir.path()).len(), 1, "the copy made no day file of its own");
@@ -1310,7 +1312,7 @@ mod relayout {
         assert_eq!(count(&new, "PRAGMA auto_vacuum"), 2, "the --to file is incremental");
         assert_eq!((report.live.read, report.live.copied), (200, 200));
 
-        let b = SqliteBackend::open(&new, Options { jump_on_open: false, wall: Arc::new(VirtualClock::new(WALL)), ..Options::default() }).unwrap();
+        let b = SqliteBackend::open(&new, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, wall: Arc::new(VirtualClock::new(WALL)), ..Options::default() }).unwrap();
         assert_eq!(b.head().unwrap(), HEAD);
         assert_eq!(b.jumps(0, HEAD).unwrap(), vec![(3000, 4000)]);
         let live: Vec<_> = b.range("", None, usize::MAX, HEAD).unwrap().into_iter().filter(|(k, _)| !is_audit(k.as_bytes())).collect();
@@ -1491,7 +1493,7 @@ fn put_next(b: &SqliteBackend) {
 fn no_commit_runs_a_wal_checkpoint() {
     let dir = TempDir::new("sqlite-no-commit-checkpoint");
     let path = dir.path().join("s.db");
-    let opts = Options { checkpoint_every: u64::MAX, ..Options::default() };
+    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, ..Options::default() };
     let b = SqliteBackend::open(&path, opts).unwrap();
     let mut moved = Vec::new();
     for i in 0..state_store_sqlite::JUMP + 10 {
@@ -1508,7 +1510,7 @@ fn no_commit_runs_a_wal_checkpoint() {
 fn a_checkpoint_completes_after_checkpoint_every_commits() {
     let dir = TempDir::new("sqlite-background-checkpoint");
     let path = dir.path().join("s.db");
-    let b = SqliteBackend::open(&path, Options::default()).unwrap();
+    let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
     for _ in 0..state_store_sqlite::CHECKPOINT_EVERY {
         put_next(&b);
     }
@@ -1705,7 +1707,7 @@ fn compact_refuses_while_the_store_is_open_and_writes_nothing() {
     let dir = TempDir::new("sqlite-compact-open");
     let path = dir.path().join("s.db");
     none_mode_store_with_free_pages(&path);
-    let b = SqliteBackend::open(&path, Options::default()).unwrap();
+    let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
     let sum = std::fs::read(&path).unwrap();
     let err = state_store_sqlite::compact::compact(&path).unwrap_err().to_string();
     assert!(err.contains("the store is open") && err.contains("stop lc-serve first"), "{err}");
@@ -1765,7 +1767,7 @@ fn a_snapshot_of_a_none_mode_store_is_incremental_and_so_is_its_restore() {
     let dir = TempDir::new("sqlite-snapshot-incremental");
     let path = dir.path().join("s.db");
     none_mode_store_with_free_pages(&path);
-    let b = SqliteBackend::open(&path, Options { day_receipts: false, ..Options::default() }).unwrap();
+    let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, day_receipts: false, ..Options::default() }).unwrap();
     b.commit(0, &[put_write("live/a", b"1", 1, None)]).unwrap();
     assert_eq!(count(&path, "PRAGMA auto_vacuum"), 0);
     let snap = dir.path().join("snap.db");
@@ -1796,7 +1798,7 @@ const CHECKPOINT_CAP: std::time::Duration = std::time::Duration::from_secs(60);
 /// background thread never takes a pass: the workload runs each interval's checkpoint itself
 /// when `checkpoint`, so host load cannot decide when it happens.
 fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
-    let opts = Options { checkpoint_every: u64::MAX, readers: 4, ..Options::default() };
+    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, readers: 4, ..Options::default() };
     let b = SqliteBackend::open(path, opts).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let reader = {
@@ -1824,7 +1826,7 @@ fn bounded_wal_workload(path: &Path, checkpoint: bool) -> SqliteBackend {
 fn frames_per_commit() -> u32 {
     let dir = TempDir::new("sqlite-frames-per-commit");
     let p = dir.path().join("f.db");
-    let b = SqliteBackend::open(&p, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+    let b = SqliteBackend::open(&p, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
     let before = mx_frame(&p);
     for _ in 0..10 {
         put_next(&b);
@@ -1847,7 +1849,7 @@ fn the_wal_stays_within_three_checkpoint_intervals_while_reads_never_stop() {
 fn a_checkpoint_pass_on_an_idle_store_restarts_the_wal() {
     let dir = TempDir::new("sqlite-checkpoint-pass-idle");
     let path = dir.path().join("s.db");
-    let b = SqliteBackend::open(&path, Options { checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
+    let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, ..Options::default() }).unwrap();
     for _ in 0..4 {
         put_next(&b);
     }
@@ -1894,7 +1896,7 @@ fn child_work_when_asked() {
             std::process::exit(0);
         }
         "fail" => {
-            let b = SqliteBackend::open(path, Options { checkpoint_every: 4, ..Options::default() }).unwrap();
+            let b = SqliteBackend::open(path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: 4, ..Options::default() }).unwrap();
             for _ in 0..8 {
                 put_next(&b);
             }
@@ -1932,7 +1934,7 @@ fn a_checkpoint_failure_is_logged_once_with_sqlites_error() {
     let dir = TempDir::new("sqlite-checkpoint-failure");
     let path = dir.path().join("s.db");
     {
-        let b = SqliteBackend::open(&path, Options::default()).unwrap();
+        let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         fill_main_file(&b, 2_400);
         b.checkpoint().unwrap();
     }
@@ -1949,7 +1951,7 @@ fn a_large_store_left_by_an_unclean_stop_has_only_a_bounded_wal_to_recover() {
     let dir = TempDir::new("sqlite-bounded-recovery");
     let path = dir.path().join("s.db");
     {
-        let b = SqliteBackend::open(&path, Options::default()).unwrap();
+        let b = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         fill_main_file(&b, 17_000);
         b.checkpoint().unwrap();
     }
@@ -1959,7 +1961,7 @@ fn a_large_store_left_by_an_unclean_stop_has_only_a_bounded_wal_to_recover() {
     let bound = u64::from(frames_per_commit()) * 3 * BOUND_EVERY;
     let frames = std::fs::metadata(&wal).unwrap().len() / 4120;
     assert!(frames <= bound, "the WAL the next open recovers holds {frames} frames, over {bound}");
-    SqliteBackend::open(&path, Options { outbox: false, ..Options::default() }).unwrap();
+    SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, outbox: false, ..Options::default() }).unwrap();
 }
 
 #[test]
@@ -1981,7 +1983,7 @@ fn a_commit_is_not_held_by_a_wal_restart_that_is_waiting_on_a_reader() {
         }) as Arc<dyn Fn() + Send + Sync>
     };
     let opts = Options {
-        max_read_ms: 120_000,
+        max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
         readers: 1,
         read_probe: Some(probe),
         ..Options::default()
@@ -2061,7 +2063,7 @@ impl HeldRead {
             }) as Arc<dyn Fn() + Send + Sync>
         };
         let opts = Options {
-            max_read_ms: 120_000,
+            max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
             readers: 1,
             checkpoint_every: u64::MAX,
             wal_line_bytes: line_bytes,

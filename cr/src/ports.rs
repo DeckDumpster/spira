@@ -1,7 +1,6 @@
 //! Ports `cr` reads the world through. `Clock` and `Rng` are `runtime::ports`; `SourceTree`
 //! answers for one commit of the home repository.
 
-use crate::ledger::Ledger;
 pub use forge::ports::Gh;
 pub use runtime::ports::{Clock, Rng, SeededRng, VirtualClock, WallClock};
 use std::cell::RefCell;
@@ -50,6 +49,10 @@ pub trait SourceTree {
     fn removed_tests(&self, paths: &[String]) -> Vec<RemovedTest>;
     /// The same repository at another commit.
     fn at(&self, commit: &str) -> Result<Box<dyn SourceTree>, String>;
+    /// Files renamed between `commit` and this tree's commit, old path to new.
+    fn renamed_since(&self, commit: &str) -> Result<BTreeMap<String, String>, String>;
+    /// Lines that differ between the blob `old_blob` and `path`'s blob here; `None` when unknown.
+    fn changed_lines(&self, old_blob: &str, path: &str) -> Option<u32>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,36 +62,58 @@ pub struct Config {
     pub churn_days: u32,
     pub rewrite_days: u32,
     pub count_limit: usize,
+    pub status_limit: usize,
 }
 
 /// The `issue_type` of each bead named, read through spira-lc; a bead the store lacks is absent.
 pub trait Beads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String>;
+    /// Of the beads named, those labelled `incident`, with their titles.
+    fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String>;
 }
 
 const BEAD_CHUNK: usize = 50;
 
-pub struct LcBeads;
+pub struct LcBeads {
+    pub incident_label: String,
+}
 
 impl Beads for LcBeads {
     fn types(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        let lc = spira_store::lc_call::LcClient::configured()?;
         let mut out = BTreeMap::new();
-        for chunk in ids.chunks(BEAD_CHUNK) {
-            let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
-            let reply = lc.call(&argv).map_err(String::from)?;
-            let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
-            let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
-                return Err(format!("spira-lc plan items: {}", reply.why()));
-            };
-            for item in &items {
-                if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
-                    out.insert(id.to_string(), kind.to_string());
-                }
+        for item in plan_items(ids)? {
+            if let (Some(id), Some(kind)) = (item["id"].as_str(), item["issue_type"].as_str()) {
+                out.insert(id.to_string(), kind.to_string());
             }
         }
         Ok(out)
     }
+    fn incidents(&self, ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        if self.incident_label.is_empty() {
+            return Err("SPIRA_INCIDENT_LABEL is empty: cannot tell which beads are incidents".into());
+        }
+        Ok(incidents_in(&plan_items(ids)?, &self.incident_label))
+    }
+}
+
+fn incidents_in(items: &[serde_json::Value], label: &str) -> BTreeMap<String, String> {
+    let labelled = |i: &&serde_json::Value| i["labels"].as_array().is_some_and(|l| l.iter().any(|x| x == label));
+    items.iter().filter(labelled).filter_map(|i| Some((i["id"].as_str()?.to_string(), i["title"].as_str().unwrap_or("(untitled)").to_string()))).collect()
+}
+
+fn plan_items(ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
+    let lc = spira_store::lc_call::LcClient::configured()?;
+    let mut all = Vec::new();
+    for chunk in ids.chunks(BEAD_CHUNK) {
+        let argv = ["plan".to_string(), "items".into(), "--ids".into(), chunk.join(",")];
+        let reply = lc.call(&argv).map_err(String::from)?;
+        let items = serde_json::from_str::<serde_json::Value>(reply.out.trim()).ok().and_then(|mut v| v.get_mut("items").map(serde_json::Value::take));
+        let Some(serde_json::Value::Array(items)) = items.filter(|_| reply.code == 0) else {
+            return Err(format!("spira-lc plan items: {}", reply.why()));
+        };
+        all.extend(items);
+    }
+    Ok(all)
 }
 
 /// Every test the registry ever disabled, with the first time (epoch seconds) it was.
@@ -111,17 +136,23 @@ impl Registry for SqliteRegistry {
 
 /// A fixed answer for tests and simulation.
 #[derive(Clone)]
-pub struct FixtureBeads(pub Result<BTreeMap<String, String>, String>);
+pub struct FixtureBeads {
+    pub types: Result<BTreeMap<String, String>, String>,
+    pub incidents: Result<BTreeMap<String, String>, String>,
+}
 
 impl Default for FixtureBeads {
     fn default() -> Self {
-        FixtureBeads(Ok(BTreeMap::new()))
+        FixtureBeads { types: Ok(BTreeMap::new()), incidents: Ok(BTreeMap::new()) }
     }
 }
 
 impl Beads for FixtureBeads {
     fn types(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
-        self.0.clone()
+        self.types.clone()
+    }
+    fn incidents(&self, _ids: &[String]) -> Result<BTreeMap<String, String>, String> {
+        self.incidents.clone()
     }
 }
 
@@ -189,7 +220,6 @@ pub struct Ports {
     pub tree: Box<dyn SourceTree>,
     pub beads: Box<dyn Beads>,
     pub registry: Box<dyn Registry>,
-    pub ledger: Ledger,
     pub config: Config,
     pub env_seed: Option<String>,
 }
@@ -204,6 +234,8 @@ pub struct FixtureTree {
     logs: HashMap<String, Vec<CommitInfo>>,
     line_ages: HashMap<String, Vec<u64>>,
     removed: Vec<RemovedTest>,
+    renames: HashMap<String, BTreeMap<String, String>>,
+    changed: HashMap<(String, String), u32>,
 }
 
 impl FixtureTree {
@@ -233,6 +265,16 @@ impl FixtureTree {
 
     pub fn with_removed_test(mut self, path: &str, name: &str, sha: &str, at_ms: u64) -> Self {
         self.removed.push(RemovedTest { path: path.to_string(), name: name.to_string(), sha: sha.to_string(), at_ms });
+        self
+    }
+
+    pub fn with_rename(mut self, commit: &str, old: &str, new: &str) -> Self {
+        self.renames.entry(commit.to_string()).or_default().insert(old.to_string(), new.to_string());
+        self
+    }
+
+    pub fn with_changed(mut self, path: &str, old_blob: &str, lines: u32) -> Self {
+        self.changed.insert((path.to_string(), old_blob.to_string()), lines);
         self
     }
 
@@ -290,6 +332,12 @@ impl SourceTree for FixtureTree {
             Err(format!("the fixture tree holds commit {} only, not {commit}", self.commit_id))
         }
     }
+    fn renamed_since(&self, commit: &str) -> Result<BTreeMap<String, String>, String> {
+        Ok(self.renames.get(commit).cloned().unwrap_or_default())
+    }
+    fn changed_lines(&self, old_blob: &str, path: &str) -> Option<u32> {
+        self.changed.get(&(path.to_string(), old_blob.to_string())).copied()
+    }
 }
 
 /// `git -C <root>` against one resolved commit.
@@ -300,6 +348,7 @@ pub struct GitTree {
     contents: RefCell<Option<HashMap<String, Vec<u8>>>>,
     log: RefCell<Option<HashMap<String, Vec<u64>>>>,
     full_log: RefCell<Option<FullLog>>,
+    renames: RefCell<HashMap<String, BTreeMap<String, String>>>,
 }
 
 /// Every commit, and for each path the indexes of the commits touching it.
@@ -313,7 +362,7 @@ impl GitTree {
         let spec = format!("{base}^{{commit}}");
         let out = git(&root, &["rev-parse", "--verify", &spec])?;
         let commit = String::from_utf8_lossy(&out).trim().to_string();
-        Ok(GitTree { root, commit, listing: RefCell::new(None), contents: RefCell::new(None), log: RefCell::new(None), full_log: RefCell::new(None) })
+        Ok(GitTree { root, commit, listing: RefCell::new(None), contents: RefCell::new(None), log: RefCell::new(None), full_log: RefCell::new(None), renames: RefCell::new(HashMap::new()) })
     }
 
     fn listing(&self) -> Result<std::cell::Ref<'_, BTreeMap<String, String>>, String> {
@@ -536,5 +585,49 @@ impl SourceTree for GitTree {
     }
     fn at(&self, commit: &str) -> Result<Box<dyn SourceTree>, String> {
         Ok(Box::new(GitTree::new(&self.root.to_string_lossy(), commit)?))
+    }
+    fn renamed_since(&self, commit: &str) -> Result<BTreeMap<String, String>, String> {
+        if let Some(m) = self.renames.borrow().get(commit) {
+            return Ok(m.clone());
+        }
+        let out = git(&self.root, &["diff", "-M", "--name-status", "-z", commit, &self.commit])?;
+        let mut map = BTreeMap::new();
+        let mut toks = out.split(|b| *b == 0).filter(|t| !t.is_empty()).map(|t| String::from_utf8_lossy(t).into_owned());
+        while let Some(status) = toks.next() {
+            let paths = if status.starts_with('R') || status.starts_with('C') { 2 } else { 1 };
+            let named: Vec<String> = toks.by_ref().take(paths).collect();
+            if status.starts_with('R') && named.len() == 2 {
+                map.insert(named[0].clone(), named[1].clone());
+            }
+        }
+        self.renames.borrow_mut().insert(commit.to_string(), map.clone());
+        Ok(map)
+    }
+    fn changed_lines(&self, old_blob: &str, path: &str) -> Option<u32> {
+        let now = self.blob(path)?;
+        let out = git(&self.root, &["diff", "--numstat", old_blob, &now]).ok()?;
+        let line = String::from_utf8_lossy(&out).lines().next()?.to_string();
+        let mut cols = line.split('\t');
+        let (added, deleted): (u32, u32) = (cols.next()?.parse().ok()?, cols.next()?.parse().ok()?);
+        Some(added.max(deleted))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn incidents_in_keeps_only_beads_labelled_incident_and_never_an_empty_title() {
+        let items: Vec<serde_json::Value> = serde_json::from_str(r#"[{"id":"sp-a","title":"lost write","labels":["incident"]},{"id":"sp-b","title":"x","labels":["other"]},{"id":"sp-c","title":"y"},{"id":"sp-d","labels":["incident"]}]"#).unwrap();
+        let got = incidents_in(&items, "incident");
+        assert!(incidents_in(&items, "alarm").is_empty());
+        assert_eq!(got.into_iter().collect::<Vec<_>>(), vec![("sp-a".into(), "lost write".into()), ("sp-d".into(), "(untitled)".into())]);
+    }
+
+    #[test]
+    fn an_unconfigured_incident_label_is_an_error_not_none_found() {
+        let beads = LcBeads { incident_label: String::new() };
+        assert!(beads.incidents(&["sp-a".to_string()]).unwrap_err().contains("SPIRA_INCIDENT_LABEL"));
     }
 }

@@ -189,7 +189,8 @@ fn verdict(text: &str) -> String {
     let named = text.lines().find_map(|l| l.trim().strip_prefix("red=")).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).or_else(|| {
         text.lines().find_map(|l| {
             let rest = l.split_once(" is RED at ")?.1;
-            Some(rest.split_once(": ")?.1.trim().to_string()).filter(|s| !s.is_empty())
+            let steps = rest.split_once(": ")?.1.split(" runner=").next()?.trim();
+            Some(steps.to_string()).filter(|s| !s.is_empty())
         })
     });
     let fault = text.lines().find_map(|l| l.trim().strip_prefix("fault=")).map(str::trim).filter(|s| s.starts_with("FAULT"));
@@ -444,6 +445,7 @@ mod tests {
         );
         assert_eq!(verdict("fault=over-cap unreached=3\n"), "incomplete, no red named", "only a named FAULT line");
         assert_eq!(verdict("red=\nround r is RED at abc: lint\n"), "RED: lint");
+        assert_eq!(verdict("red=\nround r is RED at abc: lint runner=ec2 (host io pressure full avg300 55.0 above 50.0) runner_changed=host->ec2\n"), "RED: lint");
         assert_eq!(verdict("red-output=/tmp/x\n"), "RED");
         let line = not_green_line("r-1", &Out { code: Some(1), text: "red=unit-tests\n".into() });
         assert!(line.contains("RED: unit-tests") && !line.contains("incomplete"), "{line}");

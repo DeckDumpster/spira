@@ -4,7 +4,8 @@
 # (spira-config build_dir). The target is ${CARGO_TARGET_DIR:-<root>/target}.
 #
 #   target-clean.sh <root>            clean what differs from the recorded tree, then record <root>
-#   target-clean.sh --record <root>   record <root> without cleaning (a lease's release)
+#   target-clean.sh --release <root>  a lease's release: clean what differs from the record or
+#                                     was modified since it was written, then record <root>
 #
 # A target is shared by every tree built in it and cargo trusts mtimes across them, so a
 # workspace crate whose bytes differ from the tree it was last built from is cleaned;
@@ -16,9 +17,9 @@
 # record, or a tree that cannot be hashed cleans the whole workspace. A tree with no Cargo.toml
 # is no cargo workspace: nothing to clean or record.
 set -uo pipefail
-record_only=""
-if [ "${1:-}" = "--record" ]; then record_only=1; shift; fi
-ROOT="${1:?usage: target-clean.sh [--record] <root>}"
+release=""
+if [ "${1:-}" = "--release" ]; then release=1; shift; fi
+ROOT="${1:?usage: target-clean.sh [--release] <root>}"
 cd "$ROOT" || exit 2
 ROOT="$(pwd -P)"
 [ -f Cargo.toml ] || exit 0
@@ -45,9 +46,8 @@ manifest="$({ for r in "${roots[@]}"; do [ -f "$r" ] && printf '%s\0' "$r"; done
               extras; } | LC_ALL=C sort -zu | xargs -0r sha256sum)" || manifest=""
 [ "${#members[@]}" -gt 0 ] || manifest=""
 mkdir -p "$TARGET" || exit 2
-if [ -n "$record_only" ]; then
-  # An unhashable tree leaves no record, so the next lease cleans the whole workspace.
-  if [ -n "$manifest" ]; then printf '%s\n' "$manifest" > "$BUILT" || exit 2; else rm -f "$BUILT" || exit 2; fi
+if [ -n "$release" ] && [ -z "$manifest" ]; then
+  rm -f "$BUILT" || exit 2
   exit 0
 fi
 clean_all() {
@@ -57,8 +57,18 @@ clean_all() {
 if [ -z "$manifest" ] || [ ! -f "$BUILT" ]; then
   echo "unit-tests: no record of the tree this target was built from — cleaning the workspace crates"
   clean_all
-elif [ "$(cat "$BUILT")" != "$manifest" ]; then
+else
   changed="$(diff <(cat "$BUILT") <(printf '%s\n' "$manifest") | sed -n 's/^[<>] [0-9a-f]\{64\}  //p' | LC_ALL=C sort -u)"
+  if [ -n "$release" ]; then
+    # A listing that fails names Cargo.toml: the whole workspace is cleaned.
+    # A file touched since the record may have been built at a state the record does not name.
+    touched="$({ for r in "${roots[@]}"; do [ "$r" -nt "$BUILT" ] && printf '%s\n' "$r"; done
+                 find "${members[@]}" -path '*/target' -prune -o -type f -newer "$BUILT" -print || echo Cargo.toml
+                 extras | tr '\0' '\n' | while IFS= read -r f; do [ "$f" -nt "$BUILT" ] && printf '%s\n' "$f"; done; })"
+    changed="$(printf '%s\n%s\n' "$changed" "$touched" | sed '/^$/d' | LC_ALL=C sort -u)"
+  fi
+fi
+if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
   root_changed=""
   for r in "${roots[@]}"; do grep -qxF "$r" <<< "$changed" && root_changed="$r"; done
   if [ -n "$root_changed" ]; then

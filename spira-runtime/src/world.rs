@@ -451,6 +451,19 @@ impl World {
         Err(format!("cr exited {}: {}", out.status, err.trim()))
     }
 
+    /// Has `cr` write the review's close row to the ledger on the review repository.
+    fn cr_ledger_close(&self, number: u32, at: u64) -> Result<(), String> {
+        let cr = spira_config::release_env::tool("cr")?;
+        let out = spira_config::bounded::bounded_for(cr, &cr_cadence::OPEN_CALL_SECS.to_string())
+            .args(["ledger-close", "--review", &format!("{number:03}"), "--at", &at.to_string()])
+            .output()
+            .map_err(|e| format!("cr: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("cr ledger-close {number:03} exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
     /// Applies the review state changes and keeps each review's comments where `cr thread` reads them.
     pub fn cr_record(&self, input: &str) -> Result<String, String> {
         let records: cr_comments::Records = serde_json::from_str(input).map_err(|e| e.to_string())?;
@@ -459,6 +472,9 @@ impl World {
             cr::record::write_atomic(&cr::thread::comments_path(&self.run_dir, *number), text.as_bytes())?;
         }
         for c in &records.changes {
+            if c.state == cr::record::State::Closed {
+                self.cr_ledger_close(c.number, c.at)?;
+            }
             cr::record::set_state(&self.run_dir, c.number, c.state, c.at)?;
         }
         Ok(format!("{} states, {} threads", records.changes.len(), records.threads.len()))
@@ -1399,6 +1415,7 @@ fn lc_bounded(client: &spira_store::lc_call::LcClient, total: std::time::Duratio
     }
     client.within(left).answer(argv).map_err(|e| match e {
         LcError::NotRunning(m) | LcError::Fault(m) => format!("store unavailable: {m}"),
+        LcError::ReadEnded(m) => format!("read ended at the store's read limit: {m}"),
         e => e.to_string(),
     })
 }
@@ -1766,6 +1783,25 @@ mod bounded_store_tests {
         let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(10), &["dwell"]).unwrap_err();
         assert!(why.starts_with("store unavailable:") && why.contains("waited 15 s"), "{why}");
         assert_eq!(*double.0.lock().unwrap(), [Duration::from_secs(15)], "the client was bounded by the time left");
+    }
+
+    struct Ended;
+
+    impl Transport for Ended {
+        fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            unreachable!("a socket client asks exchange_kind")
+        }
+        fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, _: Duration) -> Result<Reply, LcError> {
+            Ok(Reply { code: 2, out: "cannot tell: dwell".into(), err: String::new(), read_ended: true })
+        }
+    }
+
+    #[test]
+    fn a_read_the_store_ended_at_its_limit_is_reported_as_that_and_not_as_an_unavailable_store() {
+        let client = LcClient::over(Arc::new(Ended), true);
+        let why = lc_bounded(&client, Duration::from_secs(25), Duration::ZERO, &["dwell"]).unwrap_err();
+        assert!(why.starts_with("read ended at the store's read limit"), "{why}");
+        assert!(!why.contains("store unavailable"), "{why}");
     }
 
     #[test]

@@ -28,12 +28,13 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr finding --review <NNN> < finding.json
   cr findings --review <NNN> [--post]
   cr unseal --review <NNN> [--said <comment-id>]
+  cr ledger-close --review <NNN> --at <ms>
   cr thread --review <NNN> --comment <id>
   cr reply --review <NNN> --comment <id> < reply.txt
   cr status [--json]
 
   finding records one verdict of a review (JSON: {id?, words, comment_id?, exemplar: {path, line},
-  kind, rule, scope, became, generalised_by?}) and prints its id; an id already recorded is
+  kind, rule, scope, became, generalised_by?, endorses?}) and prints its id; an id already recorded is
   replaced. kind is question|fix|refactor|condemn|replicate|style|other; fix is for this unit
   only (scope unit, no statute or catalogue), other names one only with generalised_by. findings
   regenerates the review's page and the pattern catalogue in SPIRA_CR_FINDINGS_DIR, commits those
@@ -41,8 +42,20 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
 
   open stages N units (default 1) as reviews and makes no forge call. seal reads the
   Concierge's own review as one JSON object
-  {does, look_first, comments: [{path, line, body}]}, stores the comments hashed, and opens the
+  {does, look_first, lens: [{path, line, body}], fresh: [{path, line, body}]}, stores both halves hashed, and opens the
   pull request in the review repository with does and look_first in its description. unseal posts it once the operator has published.
+
+  status prints the open reviews, then coverage at the landing-ref commit: the share of files a
+  published review has reached, by area (first path component) and by unit kind, the oldest
+  never-reviewed files, and the files changed since their review with lines changed and the review
+  that covered them. Both lists are cut to SPIRA_CR_STATUS_LIMIT and end `… <k> more`. It also
+  scores each published or closed review, oldest first: his lens by how many of his comments it
+  predicted, the fresh read by how many of its points he endorsed. --json prints
+  {reviews, scores, coverage}. Coverage is reported, never a target.
+
+  The coverage ledger is ledger.jsonl on the review repository's default branch; seal appends a
+  review's open row. ledger-close appends its close row once, as published if the operator
+  published and as unpublished if not; only a published review counts a file as reviewed.
 
   --aim <X>   aim the draw: a path, a workspace crate, a struct/enum/trait/type name, or words
               (every word must appear in a unit's paths or module docs, case-folded)
@@ -92,6 +105,8 @@ enum Cmd {
     Open(review::OpenArgs),
     Seal(u32),
     Unseal { number: u32, said: Option<String> },
+    LedgerClose { number: u32, at: u64 },
+  
     Finding(u32),
     Findings { number: u32, post: bool },
     Thread { number: u32, comment: u64 },
@@ -99,12 +114,13 @@ enum Cmd {
     Status { json: bool },
 }
 
-const VERBS: [(&str, &[&str], &[&str]); 10] = [
+const VERBS: [(&str, &[&str], &[&str]); 11] = [
     ("pick", &["--aim", "--seed"], &["--json"]),
     ("count", &["--regex", "--path", "--limit"], &["--json"]),
     ("open", &["--count", "--aim", "--seed"], &["--scheduled"]),
     ("seal", &["--review"], &[]),
     ("unseal", &["--review", "--said"], &[]),
+    ("ledger-close", &["--review", "--at"], &[]),
     ("finding", &["--review"], &[]),
     ("findings", &["--review"], &["--post"]),
     ("thread", &["--review", "--comment"], &[]),
@@ -197,6 +213,10 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
             Cmd::Open(review::OpenArgs { count, aim: values.get("--aim").cloned(), seed, scheduled: set.contains(&"--scheduled") })
         }
         "seal" => Cmd::Seal(review()?),
+        "ledger-close" => {
+            let v = values.get("--at").ok_or("--at <ms> is required")?;
+            Cmd::LedgerClose { number: review()?, at: v.parse().map_err(|_| format!("--at {v:?} is not a millisecond time"))? }
+        }
         "unseal" => Cmd::Unseal { number: review()?, said: values.get("--said").cloned() },
         "finding" => Cmd::Finding(review()?),
         "findings" => Cmd::Findings { number: review()?, post: set.contains(&"--post") },
@@ -238,6 +258,7 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         Ok(Cmd::Open(a)) => return review::open(&a, ports),
         Ok(Cmd::Seal(n)) => return review::seal(n, ports),
         Ok(Cmd::Unseal { number, said }) => return review::unseal(number, said.as_deref(), ports),
+        Ok(Cmd::LedgerClose { number, at }) => return crate::ledger::close(number, at, ports),
         Ok(Cmd::Finding(n)) => return findings::record_finding(n, ports),
         Ok(Cmd::Findings { number, post }) => return findings::findings(number, post, ports),
         Ok(Cmd::Thread { number, comment }) => return thread::thread(number, comment, ports),
@@ -266,10 +287,13 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         },
     };
 
-    let scored = pick::score_all(&ix, ports.tree.as_ref(), pool, &ports.config, &ports.ledger, now);
+    let (scored, ledger) = match pick::candidates(ports, &ix, pool, now) {
+        Ok(c) => c,
+        Err(e) => return fail(1, json, &e, &[], Some(seed), Some(&commit)),
+    };
     let mut rng = SeededRng::new(seed);
-    let Some((i, stratum)) = pick::draw(&scored, &ports.ledger, &mut rng) else {
-        let why = if args.aim.is_some() { "every unit the aim matched is excluded or already reviewed at its current blob" } else { "no unit is drawable: all are excluded or already reviewed at their current blobs" };
+    let Some((i, stratum)) = pick::draw(&scored, &ledger, &mut rng) else {
+        let why = if args.aim.is_some() { "every unit the aim matched is excluded or reviewed at its current blob or in flight" } else { "no unit is drawable: all are excluded or reviewed at their current blobs or in flight" };
         return fail(1, json, why, &[], Some(seed), Some(&commit));
     };
     let chosen = &scored[i];
@@ -320,9 +344,9 @@ fn run_count(a: CountArgs, json: bool, ports: &Ports) -> Outcome {
 
 fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static str, usize)>, seed: u64, commit: &str, page_lines: u32) -> (Value, String) {
     let w = &c.weight;
-    let review = match w.days_since_sent {
-        None => "never sent".to_string(),
-        Some(d) => format!("last sent {d:.1} days ago"),
+    let review = match w.days_since_reviewed {
+        None => "never reviewed".to_string(),
+        Some(d) => format!("last reviewed {d:.1} days ago"),
     };
     let stratum_reason = match st.last_sent_ms {
         None => format!("{} has never been sent", st.kind.as_str()),
@@ -334,6 +358,10 @@ fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static
         "unit": {"id": c.unit.id, "kind": c.unit.kind.as_str(), "title": c.unit.title, "files": files},
         "weight": {
             "review_factor": w.review_factor,
+            "changed_lines": w.changed_lines,
+            "changed_term": w.changed_term(),
+            "attention_share": w.attention_share(),
+            "attention_term": w.attention_term(),
             "review": review,
             "commits": w.commits,
             "churn_term": w.churn_term(),
@@ -353,8 +381,8 @@ fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static
         t.push_str(&format!("  {} ({} lines)\n", f.path, ix.lines(&f.path)));
     }
     t.push_str(&format!(
-        "weight: {:.3} = review {:.2} ({review}) x churn {:.0} (1 + {} commits) x dependents {:.3} (1 + ln(1 + {})) x size {:.3} (min({} lines / {page_lines}, 3))\n",
-        w.total, w.review_factor, w.churn_term(), w.commits, w.dependents_term(), w.dependents, w.size_term(page_lines), w.lines
+        "weight: {:.3} = review {:.2} ({review}) x attention {:.3} ({} of his {} comments in {}) x changed {:.3} (1 + min({} changed lines / {} lines, 1)) x churn {:.0} (1 + {} commits) x dependents {:.3} (1 + ln(1 + {})) x size {:.3} (min({} lines / {page_lines}, 3))\n",
+        w.total, w.review_factor, w.attention_term(), w.area_comments, w.his_comments, w.area, w.changed_term(), w.changed_lines, w.lines.max(1), w.churn_term(), w.commits, w.dependents_term(), w.dependents, w.size_term(page_lines), w.lines
     ));
     t.push_str(&format!("stratum: {stratum_reason}\n"));
     match aim {

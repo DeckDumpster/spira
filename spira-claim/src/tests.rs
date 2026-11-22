@@ -147,7 +147,7 @@ mod published {
                 ["plan", "items", ..] => r#"{"watermark":7,"items":[]}"#.to_string(),
                 _ => String::new(),
             };
-            Ok(Reply { code: 0, out, err: String::new() })
+            Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
         }
     }
 
@@ -156,7 +156,7 @@ mod published {
     impl Transport for Refusing {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
             let r = self.0.exchange(argv, stdin, d)?;
-            Ok(if argv[0] == "publish-readiness" { Reply { code: 3, out: String::new(), err: "refused: no payload".into() } } else { r })
+            Ok(if argv[0] == "publish-readiness" { Reply { code: 3, out: String::new(), err: "refused: no payload".into(), read_ended: false } } else { r })
         }
     }
 
@@ -357,7 +357,7 @@ mod claim_view_read {
                 ["plan", "watermark"] => (0, r#"{"watermark":7}"#.into(), String::new()),
                 _ => (0, String::new(), String::new()),
             };
-            Ok(Reply { code, out, err })
+            Ok(Reply { code, out, err, read_ended: false })
         }
     }
 
@@ -439,7 +439,7 @@ mod claim_view_read {
                 .to_string(),
                 _ => String::new(),
             };
-            Ok(Reply { code: 0, out, err: String::new() })
+            Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
         }
     }
 

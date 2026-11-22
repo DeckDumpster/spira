@@ -12,6 +12,8 @@
 #                           This is BUILDING a tree under test, so it is passed by explicit
 #                           variable; every other tool a step uses is the running release's,
 #                           invoked by bare name on the launcher's PATH (sp-gypjk)
+#   own <path>              a change to this path (a trailing / is a directory prefix) enters a
+#                           round only once its own gate certified it, not provisionally
 #   # comment, blank line   ignored
 #
 # Every `step bash <path>` must name a file this tree carries (the gate refuses the branch

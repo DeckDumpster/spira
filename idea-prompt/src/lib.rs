@@ -67,12 +67,15 @@ pub fn in_waking_hours(hour: u32, cfg: &Config) -> bool {
     hour >= cfg.wake_from && hour < cfg.wake_until
 }
 
+pub const DEFAULT_ANSWER: &str = "not now";
+
 pub fn render_body(ideas: &[Idea]) -> String {
-    let mut out = String::from("Spira has been idle. These ideas are parked, newest first:\n\n");
+    let mut out = String::from("## Question\nSpira has been idle. These ideas are parked, newest first:\n\n");
     for (i, idea) in ideas.iter().enumerate() {
         out.push_str(&format!("{}. {} — {}\n", i + 1, idea.id, idea.title));
     }
     out.push_str("\nReply with the number of the one to start and the Concierge opens a design review for it. \"not now\" (or no answer) leaves them parked until Spira has been busy and gone idle again.\n");
+    out.push_str(&format!("\n## Default\n{DEFAULT_ANSWER}\n\n## Class basis\ndesign: starting a parked idea is the operator's call; work enters only from the operator, and which idea comes first is a design choice.\n"));
     out
 }
 
@@ -105,7 +108,7 @@ pub fn pass(ports: &dyn Ports, cfg: &Config, state: &mut State) -> Result<Outcom
     }
     ports.send(
         &format!("{} parked idea(s) — start any?", ideas.len()),
-        "not now",
+        DEFAULT_ANSWER,
         &render_body(&ideas),
     )?;
     state.prompted = true;

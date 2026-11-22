@@ -2381,7 +2381,15 @@ fn judgement_ci(o: &Opts) -> Result<(), String> {
 fn attribute(o: &Opts) -> Result<(), String> {
     let failed = attribute_run(o);
     if let Err(why) = &failed {
-        println!("{}", batcher_cut::attribute::Attribution::Blocked(why.clone()).line());
+        let ended = match (o.batch.as_deref(), o.run.as_deref()) {
+            (Some(batch), Some(run)) => spira_config::round_ended::is_ended(run, batch),
+            _ => false,
+        };
+        let outcome = failed_attribution(ended, why.clone());
+        println!("{}", outcome.line());
+        if ended {
+            return failed;
+        }
         if let (Some(batch), Some(home), Some(run)) = (o.batch.as_deref(), o.home.clone(), o.run.clone()) {
             if let Ok(env_) = env_for(o, home, run) {
                 if let Ok(repo) = find_repo(&env_, &o.repo) {
@@ -2391,6 +2399,13 @@ fn attribute(o: &Opts) -> Result<(), String> {
         }
     }
     failed
+}
+
+/// What a failed attribution prints: a round abandoned under it was never judged, so its
+/// failure is no red.
+fn failed_attribution(ended: bool, why: String) -> batcher_cut::attribute::Attribution {
+    use batcher_cut::attribute::Attribution;
+    if ended { Attribution::Abandoned } else { Attribution::Blocked(why) }
 }
 
 fn attribute_run(o: &Opts) -> Result<(), String> {
@@ -2544,7 +2559,7 @@ fn attribute_in(
         Ok(drive::RoundEnd::BaseRed { base, why }) => Attribution::Blocked(format!("base red at {base}: {why}")),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
         Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
-        Ok(drive::RoundEnd::Abandoned) => Attribution::Blocked("the round was abandoned".into()),
+        Ok(drive::RoundEnd::Abandoned) => Attribution::Abandoned,
         Ok(drive::RoundEnd::Unconverged { red, probes, suspects }) => Attribution::Unconverged(format!(
             "{red} red reproduces but {probes} probes named no member; suspects: {}",
             if suspects.is_empty() { "none".to_string() } else { suspects.join(",") }
@@ -2814,6 +2829,13 @@ fn dispatch() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_attribution_of_an_ended_round_is_abandoned_not_blocked() {
+        use batcher_cut::attribute::Attribution;
+        assert_eq!(failed_attribution(true, "x".into()), Attribution::Abandoned);
+        assert_eq!(failed_attribution(false, "x".into()), Attribution::Blocked("x".into()));
+    }
 
     #[test]
     fn a_returned_row_of_the_attributed_pass_is_read_by_its_pass_number_not_the_current_one() {

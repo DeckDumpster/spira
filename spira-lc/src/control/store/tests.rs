@@ -1316,7 +1316,7 @@ mod on_sqlite {
 
     fn sqlite() -> (testkit::TempDir, Store<SqliteBackend>) {
         let dir = testkit::TempDir::new("lc-sqlite-store");
-        let backend = SqliteBackend::open(&dir.join("control.db"), Options::default()).unwrap();
+        let backend = SqliteBackend::open(&dir.join("control.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let clock = VirtualClock::new(AT as u64 * 1_000);
         let contract = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: super::FLOOR_MS }).unwrap();
         (dir, Store::new(contract, super::FLOOR_MS))

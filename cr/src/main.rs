@@ -1,7 +1,6 @@
 //! `cr pick | count | open | seal | unseal | thread | reply | status` — see `cr -h`.
 
 use cr::cli::{self, Outcome};
-use cr::ledger::Ledger;
 use cr::ports::{Clock, Config, GitTree, Ports, VirtualClock, WallClock};
 use spira_config::process::cfg_parse;
 use spira_config::repos::{Column, Registry};
@@ -15,13 +14,13 @@ fn build_ports() -> Result<Ports, String> {
     let root = reg.root(&repo).ok_or_else(|| format!("the repo map has no path for the home repository {repo:?}"))?;
     let base = reg.field(&repo, Column::Base).filter(|b| !b.is_empty()).ok_or_else(|| format!("the repo map names no base for the home repository {repo:?}"))?;
     let tree = GitTree::new(&root, &base)?;
-    let ledger_path = spira_config::resolve::run_dir_for_process()?.join("cr").join("ledger.jsonl");
     let exclude: String = cfg_parse("SPIRA_CR_EXCLUDE")?;
     let config = Config {
         page_lines: cfg_parse("SPIRA_CR_PAGE_LINES")?,
         churn_days: cfg_parse("SPIRA_CR_CHURN_DAYS")?,
         rewrite_days: cfg_parse("SPIRA_CR_REWRITE_DAYS")?,
         count_limit: cfg_parse::<u32>("SPIRA_CR_COUNT_LIMIT")? as usize,
+        status_limit: cfg_parse::<u32>("SPIRA_CR_STATUS_LIMIT")? as usize,
         exclude: exclude.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
     };
     let clock: Box<dyn Clock> = match spira_config::vtime::override_epoch() {
@@ -48,7 +47,7 @@ fn build_ports() -> Result<Ports, String> {
         committer: Box::new(cr::ports::GitCommitter),
         source_repo: repo.clone(),
         stdin,
-        clock, tree: Box::new(tree), beads: Box::new(cr::ports::LcBeads), registry: Box::new(cr::ports::SqliteRegistry { path: registry_path }), ledger: Ledger::load(&ledger_path)?, config,
+        clock, tree: Box::new(tree), beads: Box::new(cr::ports::LcBeads { incident_label: key("SPIRA_INCIDENT_LABEL") }), registry: Box::new(cr::ports::SqliteRegistry { path: registry_path }), config,
         env_seed: spira_config::process::cfg("SPIRA_SEED").ok().filter(|s| !s.is_empty()),
     })
 }
@@ -64,7 +63,7 @@ fn main() -> std::process::ExitCode {
     if cli::wants_help(&argv) {
         return emit(&Outcome { code: 0, stdout: cli::HELP.to_string(), stderr: String::new() });
     }
-    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", argv.first().map(String::as_str).filter(|v| matches!(*v, "pick" | "count" | "open" | "seal" | "unseal" | "thread" | "reply" | "status" | "finding" | "findings")).unwrap_or("none"));
+    let metrics = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cr", argv.first().map(String::as_str).filter(|v| matches!(*v, "pick" | "count" | "open" | "seal" | "unseal" | "ledger-close" | "thread" | "reply" | "status" | "finding" | "findings")).unwrap_or("none"));
     let outcome = match build_ports() {
         Ok(ports) => cli::run(&argv, &ports),
         Err(e) => cli::error_outcome(1, cli::wants_json(&argv), &e),

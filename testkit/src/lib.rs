@@ -486,3 +486,10 @@ pub mod otlp {
         }
     }
 }
+
+/// Load allowance for tests that open a real store and whose reads are not under test: the
+/// default 100 ms `max_read_ms` ends a read on a loaded host. Tuned on the round corpus at the
+/// width the round VM runs (sp-b0w0ox, sp-y6ipza); tests about the read limit set their own.
+/// `spira/testlib/complete.toml` carries the same value as `lc_max_read_ms` for every test-started
+/// serve; a spira-config test pins the two.
+pub const LOADED_HOST_MAX_READ_MS: u64 = 120_000;

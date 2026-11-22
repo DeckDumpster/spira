@@ -1,7 +1,7 @@
 //! `cr pick` through `cli::run`, over an in-memory tree and ledger: no git, no process.
 
 use crate::cli::{run, Outcome};
-use crate::ledger::{Ledger, LedgerFile, Row};
+use crate::ledger::{Attention, ClosedAs, Ledger, LedgerFile, Row};
 use crate::ports::{blob_of, Config, FixtureTree, History, Ports, SourceTree, VirtualClock};
 use serde_json::Value;
 
@@ -14,7 +14,7 @@ const DAY: u64 = 86_400_000;
 pub(crate) const NOW: u64 = 100 * DAY;
 
 pub(crate) fn cfg() -> Config {
-    Config { page_lines: 10, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, rewrite_days: 45, count_limit: 7 }
+    Config { page_lines: 10, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, rewrite_days: 45, count_limit: 7, status_limit: 10 }
 }
 
 fn big_source() -> String {
@@ -53,12 +53,20 @@ pub(crate) fn fixture() -> FixtureTree {
         .with_commits("demo/src/store.rs", &[NOW - DAY, NOW - 2 * DAY, NOW - 90 * DAY])
 }
 
+pub(crate) fn seeded(rows: &[Row]) -> gh::FakeGh {
+    gh::FakeGh::default().with_ledger_text(&rows.iter().map(|r| format!("{}\n", serde_json::to_string(r).unwrap())).collect::<String>())
+}
+
+pub(crate) fn ledger_rows(g: &gh::FakeGh) -> Vec<Row> {
+    Ledger::parse(&g.ledger_text()).unwrap().rows
+}
+
 fn ports_with(tree: FixtureTree, ledger: Vec<Row>, config: Config) -> Ports {
-    Ports { tree: Box::new(tree), ledger: Ledger::from_rows(ledger), config, ..ports_with_tree(Box::new(Unreadable)) }
+    Ports { tree: Box::new(tree), gh: Box::new(seeded(&ledger)), repo_owner: gh::OWNER.into(), repo_name: gh::NAME.into(), config, ..ports_with_tree(Box::new(Unreadable)) }
 }
 
 fn ports_with_tree(tree: Box<dyn SourceTree>) -> Ports {
-    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), ledger: Ledger::from_rows(vec![]), config: cfg(), env_seed: None }
+    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), config: cfg(), env_seed: None }
 }
 
 fn ports() -> Ports {
@@ -83,13 +91,20 @@ fn unit_files(v: &Value) -> Vec<String> {
 
 fn row(kind: &str, unit_id: &str, at: u64, files: &[(&str, &str)]) -> Row {
     Row {
-        review: "r1".into(),
-        at,
-        commit: "old".into(),
+        review: format!("r-{unit_id}"),
         kind: kind.into(),
         unit_id: unit_id.into(),
+        commit: "old".into(),
         files: files.iter().map(|(p, b)| LedgerFile { path: p.to_string(), blob: b.to_string() }).collect(),
+        opened_at: at,
+        closed_at: None,
+        closed_as: None,
+        attention: None,
     }
+}
+
+fn closed(r: Row, at: u64, how: ClosedAs) -> Row {
+    r.closing(at, how, None)
 }
 
 #[test]
@@ -143,6 +158,73 @@ fn a_trait_unit_holds_the_trait_its_impls_and_the_dyn_caller() {
     let (_, v) = json(&ports(), &["pick", "--aim", "Sink"]);
     assert_eq!(v["unit"]["kind"], "trait");
     assert_eq!(unit_files(&v), ["demo/src/sink.rs", "demo/src/file_sink.rs", "demo/src/mem_sink.rs", "demo/src/router.rs"]);
+}
+
+fn two_worlds() -> FixtureTree {
+    FixtureTree::new("c0ffee")
+        .with_file("Cargo.toml", "[workspace]\nmembers = [\"a\", \"b\", \"c\"]\n")
+        .with_file("a/Cargo.toml", "[package]\nname = \"a\"\n\n[dependencies]\nc = { path = \"../c\" }\n")
+        .with_file("b/Cargo.toml", "[package]\nname = \"b\"\n\n[dependencies]\na = { path = \"../a\" }\n")
+        .with_file("c/Cargo.toml", "[package]\nname = \"c\"\n")
+        .with_file("c/src/lib.rs", "pub mod ports;\n")
+        .with_file("c/src/ports.rs", "pub trait World { fn far(&self); }\n")
+        .with_file("a/src/ports.rs", "pub trait World { fn go(&self); }\n")
+        .with_file("a/src/real.rs", "use crate::ports::World;\n\npub struct Real;\n\nimpl World for Real {\n    fn go(&self) {}\n}\n")
+        .with_file("a/src/far.rs", "use c::ports::World;\n\npub struct Far;\n\nimpl World for Far {\n    fn far(&self) {}\n}\n")
+        .with_file("a/src/lib.rs", "pub mod ports;\npub mod real;\n\npub fn run(w: &dyn ports::World) {}\n")
+        .with_file("b/src/ports.rs", "pub trait World { fn stop(&self); }\n")
+        .with_file("b/src/real.rs", "use crate::ports::World;\n\npub struct Real;\n\nimpl World for Real {\n    fn stop(&self) {}\n}\n")
+        .with_file("b/src/bridge.rs", "use a::ports::World;\n\npub struct Bridge;\n\nimpl World for Bridge {\n    fn go(&self) {}\n}\n")
+        .with_file("b/src/main.rs", "fn go(w: &dyn a::ports::World) {}\n")
+}
+
+fn trait_unit_files(units: &[crate::units::Unit], id: &str) -> Vec<String> {
+    units.iter().find(|u| u.id == id).unwrap_or_else(|| panic!("no unit {id}")).files.iter().map(|f| f.path.clone()).collect()
+}
+
+#[test]
+fn a_trait_unit_holds_only_what_resolves_to_that_trait_by_path() {
+    let ix = crate::index::Index::build(&two_worlds()).unwrap();
+    let units = crate::units::trait_units(&ix);
+    assert_eq!(trait_unit_files(&units, "trait:a/src/ports.rs::World"), ["a/src/ports.rs", "a/src/real.rs", "b/src/bridge.rs", "a/src/lib.rs", "b/src/main.rs"]);
+    assert_eq!(trait_unit_files(&units, "trait:b/src/ports.rs::World"), ["b/src/ports.rs", "b/src/real.rs"]);
+    assert_eq!(trait_unit_files(&units, "trait:c/src/ports.rs::World"), ["c/src/ports.rs", "a/src/far.rs"]);
+}
+
+#[test]
+fn a_trait_is_reached_by_glob_rename_and_crate_root_reexport() {
+    let t = two_worlds()
+        .with_file("a/src/lib.rs", "pub mod ports;\npub mod real;\npub use ports::World;\n")
+        .with_file("a/src/glob.rs", "use crate::ports::*;\n\nimpl World for G {}\n")
+        .with_file("a/src/renamed.rs", "use crate::ports::World as W;\n\nimpl W for R {}\n")
+        .with_file("b/src/root.rs", "use a::World;\n\nimpl World for Q {}\n")
+        .with_file("b/src/qualified.rs", "impl a::ports::World for P {}\n")
+        .with_file("b/src/sup.rs", "use super::ports::World;\n\nimpl World for S {}\n");
+    let ix = crate::index::Index::build(&t).unwrap();
+    let files = trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World");
+    for f in ["a/src/glob.rs", "a/src/renamed.rs", "b/src/root.rs", "b/src/qualified.rs"] {
+        assert!(files.contains(&f.to_string()), "{f} missing from {files:?}");
+    }
+    assert!(!files.contains(&"b/src/sup.rs".to_string()), "{files:?}");
+}
+
+#[test]
+fn a_local_trait_of_the_same_name_shadows_a_glob_and_pub_crate_use_reexports() {
+    let t = two_worlds()
+        .with_file("a/src/lib.rs", "pub mod ports;\npub mod real;\npub mod mid;\n")
+        .with_file("a/src/mid.rs", "pub(crate) use crate::ports::World;\n")
+        .with_file("a/src/shadow.rs", "use crate::ports::*;\n\ntrait World {}\n\nimpl World for X {}\n")
+        .with_file("a/src/viamid.rs", "use crate::mid::World;\n\nimpl World for M {}\n")
+        .with_file("a/src/arg.rs", "use crate::ports as p;\n\nfn f(w: impl p::World) {}\nfn g(w: &dyn p::World) {}\n")
+        .with_file("a/src/private.rs", "fn f(x: (u8)) {}\nuse crate::ports::World;\n")
+        .with_file("a/src/viaprivate.rs", "use crate::private::World;\n\nimpl World for N {}\n");
+    let ix = crate::index::Index::build(&t).unwrap();
+    let files = trait_unit_files(&crate::units::trait_units(&ix), "trait:a/src/ports.rs::World");
+    assert!(!files.contains(&"a/src/shadow.rs".to_string()), "{files:?}");
+    assert!(!files.contains(&"a/src/viaprivate.rs".to_string()), "{files:?}");
+    for f in ["a/src/viamid.rs", "a/src/arg.rs"] {
+        assert!(files.contains(&f.to_string()), "{f} missing from {files:?}");
+    }
 }
 
 #[test]
@@ -218,19 +300,78 @@ fn excluded_paths_are_never_drawn_across_a_hundred_seeds() {
     assert_eq!(code, 1, "{v}");
 }
 
-#[test]
-fn a_unit_sent_at_its_current_blob_is_not_drawn_until_the_file_changes() {
-    let store = "//! The store.\n\npub struct Store;\n\nimpl Store {\n    pub fn open() -> Store {\n        Store\n    }\n}\n";
-    let sent = row("module", "module:demo/src/store.rs", NOW - DAY, &[("demo/src/store.rs", &blob_of(store.as_bytes()))]);
-    let p = ports_with(fixture(), vec![sent.clone()], cfg());
-    let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
-    assert_eq!(code, 1, "{v}");
+const STORE: &str = "//! The store.\n\npub struct Store;\n\nimpl Store {\n    pub fn open() -> Store {\n        Store\n    }\n}\n";
+const STORE_ID: &str = "module:demo/src/store.rs";
 
-    let changed = fixture().with_file("demo/src/store.rs", &format!("{store}// edited\n"));
-    let p = ports_with(changed, vec![sent], cfg());
+fn store_row() -> Row {
+    row("module", STORE_ID, NOW - 40 * DAY, &[("demo/src/store.rs", &blob_of(STORE.as_bytes()))])
+}
+
+#[test]
+fn a_review_closed_unpublished_leaves_its_unit_never_reviewed() {
+    let open = store_row();
+    let p = ports_with(fixture(), vec![open.clone()], cfg());
+    let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 1, "an open row alone holds the unit: {v}");
+
+    let p = ports_with(fixture(), vec![open.clone(), closed(open.clone(), NOW - DAY, ClosedAs::Unpublished)], cfg());
     let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
     assert_eq!(code, 0, "{v}");
-    assert!(v["weight"]["review_factor"].as_f64().unwrap() < 4.0);
+    assert_eq!(v["weight"]["review_factor"].as_f64().unwrap(), 4.0);
+
+    let p = ports_with(fixture(), vec![open.clone(), closed(open.clone(), NOW - DAY, ClosedAs::Published)], cfg());
+    let (code, v) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 1, "a published review at the same blob is not drawn: {v}");
+}
+
+#[test]
+fn a_changed_file_is_drawable_again_and_weighs_by_lines_changed() {
+    let open = store_row();
+    let rows = vec![open.clone(), closed(open, NOW - 30 * DAY, ClosedAs::Published)];
+    let old = blob_of(STORE.as_bytes());
+    let edited = fixture().with_file("demo/src/store.rs", &format!("{STORE}// edited\n")).with_changed("demo/src/store.rs", &old, 4);
+    let (code, v) = json(&ports_with(edited, rows.clone(), cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 0, "{v}");
+    let w = &v["weight"];
+    assert_eq!(w["changed_lines"], 4);
+    let lines = w["lines"].as_f64().unwrap();
+    let term = 1.0 + (4.0 / lines).min(1.0);
+    assert!((w["changed_term"].as_f64().unwrap() - term).abs() < 1e-9, "{w}");
+    assert!((w["review_factor"].as_f64().unwrap() - 2.0).abs() < 1e-9, "{w}");
+    let product = w["review_factor"].as_f64().unwrap() * term * w["churn_term"].as_f64().unwrap() * w["dependents_term"].as_f64().unwrap() * w["size_term"].as_f64().unwrap();
+    assert!((w["total"].as_f64().unwrap() - product).abs() < 1e-9, "{w}");
+
+    let unmeasured = fixture().with_file("demo/src/store.rs", &format!("{STORE}// edited\n"));
+    let (_, v) = json(&ports_with(unmeasured, rows, cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    let (changed, lines) = (v["weight"]["changed_lines"].as_f64().unwrap(), v["weight"]["lines"].as_f64().unwrap());
+    assert_eq!(changed, 10.0, "an undiffable blob counts as wholly changed: {v}");
+    assert!((v["weight"]["changed_term"].as_f64().unwrap() - (1.0 + changed / lines)).abs() < 1e-9, "{v}");
+}
+
+#[test]
+fn a_renamed_file_keeps_its_review() {
+    let mut old = row("module", "module:demo/src/old.rs", NOW - 40 * DAY, &[("demo/src/old.rs", &blob_of(STORE.as_bytes()))]);
+    old.commit = "before".into();
+    let rows = vec![old.clone(), closed(old, NOW - DAY, ClosedAs::Published)];
+    let renamed = fixture().with_rename("before", "demo/src/old.rs", "demo/src/store.rs");
+    let (code, v) = json(&ports_with(renamed, rows.clone(), cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 1, "the renamed file is still reviewed: {v}");
+    let (code, v) = json(&ports_with(fixture(), rows, cfg()), &["pick", "--aim", "demo/src/store.rs"]);
+    assert_eq!(code, 0, "without the rename the new path is unreviewed: {v}");
+}
+
+#[test]
+fn pick_refuses_when_the_ledger_file_is_missing_or_the_repository_unnamed() {
+    let mut p = ports();
+    p.gh = Box::new(gh::FakeGh::default());
+    let (code, v) = json(&p, &["pick"]);
+    assert_eq!(code, 1);
+    assert!(v["error"].as_str().unwrap().contains("create it empty"), "{v}");
+    let mut p = ports();
+    p.repo_owner = String::new();
+    let (code, v) = json(&p, &["pick"]);
+    assert_eq!(code, 1);
+    assert!(v["error"].as_str().unwrap().contains("SPIRA_CR_REPO_OWNER"), "{v}");
 }
 
 #[test]
@@ -301,17 +442,6 @@ fn help_documents_every_flag_and_the_exit_codes() {
     for want in ["--aim", "--seed", "--json", "Exit codes", "  0 ", "  1 ", "  2 "] {
         assert!(o.stdout.contains(want), "{want}");
     }
-}
-
-#[test]
-fn the_ledger_round_trips_through_a_file() {
-    let dir = testkit::TempDir::new("cr-ledger");
-    let path = dir.path().join("cr").join("ledger.jsonl");
-    assert!(Ledger::load(&path).unwrap().rows.is_empty());
-    let r = row("module", "m", 5, &[("a.rs", "b1")]);
-    Ledger::append(&path, &r).unwrap();
-    Ledger::append(&path, &r).unwrap();
-    assert_eq!(Ledger::load(&path).unwrap().rows, vec![r.clone(), r]);
 }
 
 fn lines(n: std::ops::Range<u32>) -> String {
@@ -413,6 +543,12 @@ impl SourceTree for Unreadable {
     fn at(&self, _: &str) -> Result<Box<dyn SourceTree>, String> {
         Err("unreadable".into())
     }
+    fn renamed_since(&self, _: &str) -> Result<std::collections::BTreeMap<String, String>, String> {
+        Ok(Default::default())
+    }
+    fn changed_lines(&self, _: &str, _: &str) -> Option<u32> {
+        None
+    }
 }
 
 #[test]
@@ -466,4 +602,110 @@ fn help_documents_count_and_its_exit_codes() {
     for want in ["cr count", "--regex", "--path", "--limit"] {
         assert!(o.stdout.contains(want), "{want}");
     }
+}
+
+fn attended(comments: &[(&str, u32)]) -> Vec<Row> {
+    let mut open = row(
+        "persona",
+        "persona:elsewhere",
+        NOW - 3 * DAY,
+        &[("elsewhere.md", "x")],
+    );
+    open.review = "r-attended".into();
+    let how = Attention {
+        comments_by_path: comments.iter().map(|(p, n)| (p.to_string(), *n)).collect(),
+        finding_kinds: Default::default(),
+    };
+    vec![
+        open.clone(),
+        open.closing(NOW - 2 * DAY, ClosedAs::Published, Some(how)),
+    ]
+}
+
+#[test]
+fn his_comments_raise_weights_in_their_area_only() {
+    let p = ports_with(fixture(), attended(&[("demo/src/old.rs", 3)]), cfg());
+    let (_, plain) = json(&ports(), &["pick", "--aim", "demo/src/store.rs"]);
+    let (_, demo) = json(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    let (_, other) = json(&p, &["pick", "--aim", "other/src/util.rs"]);
+    assert_eq!(
+        (
+            demo["weight"]["attention_share"].as_f64(),
+            demo["weight"]["attention_term"].as_f64()
+        ),
+        (Some(1.0), Some(2.0)),
+        "{demo}"
+    );
+    assert_eq!(
+        (
+            other["weight"]["attention_share"].as_f64(),
+            other["weight"]["attention_term"].as_f64()
+        ),
+        (Some(0.0), Some(1.0)),
+        "{other}"
+    );
+    let (a, b) = (
+        demo["weight"]["total"].as_f64().unwrap(),
+        plain["weight"]["total"].as_f64().unwrap(),
+    );
+    assert!((a - 2.0 * b).abs() < 1e-9, "{a} vs {b}");
+}
+
+#[test]
+fn a_renamed_file_keeps_his_comments_in_its_new_area() {
+    let mut rows = attended(&[("demo/src/old.rs", 1), ("other/x.rs", 1)]);
+    for r in &mut rows {
+        r.commit = "before".into();
+    }
+    let p = ports_with(
+        fixture().with_rename("before", "demo/src/old.rs", "other/src/old.rs"),
+        rows,
+        cfg(),
+    );
+    let (_, v) = json(&p, &["pick", "--aim", "other/src/util.rs"]);
+    assert_eq!(v["weight"]["attention_share"].as_f64(), Some(1.0), "{v}");
+}
+
+#[test]
+fn attention_counts_only_published_reviews() {
+    let mut rows = attended(&[("demo/a.rs", 3)]);
+    rows[1].closed_as = Some(ClosedAs::Unpublished);
+    let (_, v) = json(
+        &ports_with(fixture(), rows, cfg()),
+        &["pick", "--aim", "demo/src/store.rs"],
+    );
+    assert_eq!(v["weight"]["attention_term"].as_f64(), Some(1.0), "{v}");
+}
+
+#[test]
+fn attention_does_not_move_the_rotation_of_kinds() {
+    let mut rows = vec![row(
+        "module",
+        "module:elsewhere",
+        NOW - DAY,
+        &[("elsewhere.rs", "x")],
+    )];
+    rows[0].review = "r-module".into();
+    rows.extend(
+        attended(&[("demo/src/store.rs", 50)])
+            .into_iter()
+            .skip(1)
+            .map(|mut r| {
+                r.kind = "module".into();
+                r
+            }),
+    );
+    let p = ports_with(fixture(), rows, cfg());
+    for seed in 0..20 {
+        let (_, v) = json(&p, &["pick", "--seed", &seed.to_string()]);
+        assert_ne!(v["unit"]["kind"], "module", "seed {seed}");
+        assert_eq!(v["stratum"]["kind"], "trait");
+    }
+}
+
+#[test]
+fn the_weight_line_names_his_comments_in_the_candidates_area() {
+    let p = ports_with(fixture(), attended(&[("demo/src/old.rs", 3)]), cfg());
+    let o = go(&p, &["pick", "--aim", "demo/src/store.rs"]);
+    assert!(o.stdout.contains("x attention 2.000 (3 of his 3 comments in demo)"), "{}", o.stdout);
 }

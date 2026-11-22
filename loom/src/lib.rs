@@ -1014,7 +1014,7 @@ mod in_process_tests {
             self.0
                 .iter()
                 .find(|(k, _, _)| key == *k || argv.first().map(String::as_str) == Some(*k))
-                .map(|(_, code, out)| Reply { code: *code, out: out.clone(), err: String::new() })
+                .map(|(_, code, out)| Reply { code: *code, out: out.clone(), err: String::new(), read_ended: false })
                 .ok_or_else(|| format!("unscripted {argv:?}"))
         }
     }
@@ -1107,7 +1107,7 @@ mod in_process_tests {
                 other => return Err(format!("unscripted {other}")),
             };
             let (code, out) = self.1.iter().find(|(k, _, _)| *k == key).map(|(_, c, o)| (*c, o.clone())).unwrap_or((code, out));
-            Ok(Reply { code, out, err: String::new() })
+            Ok(Reply { code, out, err: String::new(), read_ended: false })
         }
     }
 
@@ -1142,7 +1142,7 @@ mod in_process_tests {
                 }
                 _ => "[]".to_string(),
             };
-            Ok(Reply { code: 0, out, err: String::new() })
+            Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
         }
     }
 

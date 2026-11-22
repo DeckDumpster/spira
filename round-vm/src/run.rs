@@ -2460,10 +2460,10 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         f.started = Some(crate::progress::now_secs());
         f.marks = Some(progress.lock().unwrap_or_else(|e| e.into_inner()).marks());
     }
-    let (host_slot, spill_reason) = match place_on_host(env, args) {
-        HostPlacement::Host(slot) => (Some(slot), None),
-        HostPlacement::Spill(why) => (None, Some(why)),
-        HostPlacement::NotOffered => (None, None),
+    let (host_slot, spill_reason, decision) = match place_on_host(env, args) {
+        HostPlacement::Host(slot, d) => (Some(slot), None, Some(d)),
+        HostPlacement::Spill(why, d) => (None, Some(why), Some(d)),
+        HostPlacement::NotOffered => (None, None, None),
     };
     let spill_setting = crate::config::declared("SPIRA_ROUND_VM_SPILL");
     let leased_at = crate::progress::now_secs();
@@ -2510,14 +2510,14 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             eprintln!("round-vm run: the round image for recipe {recipe} is still baking; the pass waits for it, then runs on it");
             let e = format!("round image for recipe {recipe} pending");
             let history = pool_recent(&env.pool.state_file(), leased_at);
-            progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &history, Some(&e)));
+            progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &history, Some(&e), None));
             progress.finish(&results_dir, IMAGE_PENDING_EXIT);
             return IMAGE_PENDING_EXIT;
         }
         Err(crate::pool::AcquireError::Failed(e)) => {
             eprintln!("round-vm run: acquire failed: {e}");
             let history = pool_recent(&env.pool.state_file(), leased_at);
-            progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &history, Some(&e)));
+            progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), None, &history, Some(&e), None));
             match crate::ec2::throttle_code(&e) {
                 Some(code) => {
                     eprintln!("round-vm run: infrastructure refusal, not a suite red: AWS answered {code}; the pass did not run");
@@ -2532,7 +2532,13 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     if !on_host {
         env.pool.label(&vm.handle, &run_label(args));
     }
-    progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), Some(place_of(&vm.handle)), &pool_history(&env.pool.state_file(), &vm.handle), None));
+    let decided = match (&decision, image_missing && !on_host) {
+        (_, true) => Decision { why: "the local template does not hold the round's image".into(), load: decision.as_ref().map(|d| d.load).unwrap_or_default() },
+        (Some(d), false) => d.clone(),
+        (None, false) => Decision { why: "the round was not offered to the host".into(), load: Default::default() },
+    };
+    write_runner_place(&results_dir, place_of(&vm.handle), &decided);
+    progress.placement(&results_dir, placement_record(spill_setting.as_deref(), spill_reason.as_deref(), Some(place_of(&vm.handle)), &pool_history(&env.pool.state_file(), &vm.handle), None, Some(&decided)));
     progress.place(&results_dir, place_of(&vm.handle));
     let instance_type = if on_host { Some(format!("{}vcpu", host_vcpus())) } else { (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle)) };
     {
@@ -2663,10 +2669,11 @@ fn pool_detail(state_file: &Path) -> Option<String> {
 /// What the pass's record keeps of its placement: the configured spill setting, the host's
 /// refusal, the pool's reasons for this VM (the Proxmox outcome that preceded EC2), and where
 /// it ended up or the acquire refusal, with the AWS code when that refusal is a request limit.
-fn placement_record(setting: Option<&str>, host_refusal: Option<&str>, placed: Option<&str>, history: &[String], refusal: Option<&str>) -> serde_json::Value {
+fn placement_record(setting: Option<&str>, host_refusal: Option<&str>, placed: Option<&str>, history: &[String], refusal: Option<&str>, decided: Option<&Decision>) -> serde_json::Value {
     serde_json::json!({
         "spill_setting": setting,
         "host_refusal": host_refusal,
+        "decided": decided.map(|d| serde_json::json!({"why": d.why, "io_full_avg300": d.load.io_full.map(|p| p.value), "cpu_some_avg300": d.load.cpu_some.map(|p| p.value)})),
         "placed": placed,
         "pool_history": history,
         "refusal": refusal,
@@ -2700,9 +2707,28 @@ fn host_vcpus() -> u32 {
     std::thread::available_parallelism().map_or(1, |n| n.get() as u32)
 }
 
+/// The placement decision line and the pressure readings it was made on, as observed.
+#[derive(Clone)]
+struct Decision {
+    why: String,
+    load: crate::spill::HostLoad,
+}
+
+/// File beside `runner.meta` that names where the pass ran and the decision that put it there.
+const RUNNER_PLACE_FILE: &str = "runner.place";
+
+fn write_runner_place(results_dir: &Path, place: &str, d: &Decision) {
+    let flat = |s: &str| s.replace('\n', " ");
+    let reading = |p: Option<crate::spill::Pressure>| p.map(|p| format!("{:.1}", p.value)).unwrap_or_default();
+    let body = format!("place={place}\nwhy={}\nio_full_avg300={}\ncpu_some_avg300={}\n", flat(&d.why), reading(d.load.io_full), reading(d.load.cpu_some));
+    if let Err(e) = fs::create_dir_all(results_dir).and_then(|_| fs::write(results_dir.join(RUNNER_PLACE_FILE), body)) {
+        eprintln!("round-vm run: warning: could not record {RUNNER_PLACE_FILE}: {e}");
+    }
+}
+
 enum HostPlacement {
-    Host(crate::host::HostSlot),
-    Spill(String),
+    Host(crate::host::HostSlot, Decision),
+    Spill(String, Decision),
     NotOffered,
 }
 
@@ -2713,14 +2739,18 @@ fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
     let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else { return HostPlacement::NotOffered };
     let slot = match crate::host::HostSlot::try_take(&env.cfg.state_dir) {
         Ok(slot) => slot,
-        Err(e) => return HostPlacement::Spill(format!("the host round slot is unreadable: {e}")),
+        Err(e) => {
+            let why = format!("the host round slot is unreadable: {e}");
+            return HostPlacement::Spill(why.clone(), Decision { why, load: Default::default() });
+        }
     };
-    match decide_host(&plan.rule, slot.is_some(), (plan.load)()) {
+    let load = (plan.load)();
+    match decide_host(&plan.rule, slot.is_some(), load) {
         HostPlace::Host(line) => {
             eprintln!("round-vm run: {line}");
-            slot.map_or(HostPlacement::NotOffered, HostPlacement::Host)
+            slot.map_or(HostPlacement::NotOffered, |s| HostPlacement::Host(s, Decision { why: line, load }))
         }
-        HostPlace::Ec2(why) => HostPlacement::Spill(why),
+        HostPlace::Ec2(why) => HostPlacement::Spill(why.clone(), Decision { why, load }),
     }
 }
 
@@ -3445,10 +3475,10 @@ mod tests {
     #[test]
     fn a_request_limit_refusal_is_recorded_as_an_aws_refusal_with_the_spill_decision() {
         let e = "round-vm: acquire: EC2 launch failed (no local VM within 30s), placement ec2-only has no local fallback: aws run-instances: An error occurred (RequestLimitExceeded) when calling the RunInstances operation (still refused after 4 retries with backoff)";
-        let r = placement_record(Some("ec2-only"), Some("the host round slot is taken"), None, &[], Some(e));
+        let r = placement_record(Some("ec2-only"), Some("the host round slot is taken"), None, &[], Some(e), None);
         assert_eq!((r["spill_setting"].as_str(), r["aws_refusal"].as_str()), (Some("ec2-only"), Some("RequestLimitExceeded")));
         assert!(r["refusal"].as_str().unwrap().contains("no local VM within 30s") && r["host_refusal"] == "the host round slot is taken");
-        assert!(placement_record(None, None, None, &[], Some("clone refused")).get("aws_refusal").is_some_and(|v| v.is_null()));
+        assert!(placement_record(None, None, None, &[], Some("clone refused"), None).get("aws_refusal").is_some_and(|v| v.is_null()));
     }
 
     #[test]
@@ -5244,6 +5274,15 @@ mod tests {
         assert_eq!(fx.fp.count("clone"), 0, "no VM is cloned for a host round");
         assert!(vm_remote.jobs.lock().unwrap().is_empty(), "the VM's ssh is never touched");
         assert_eq!(recorded_where(&fx), "host");
+        let placed = runner_place(&fx);
+        assert_eq!(placed["place"], "host");
+        assert!(placed["why"].contains("at or under"), "{placed:?}");
+        assert_eq!(placed["io_full_avg300"], "1.0");
+    }
+
+    fn runner_place(fx: &Fixture) -> std::collections::HashMap<String, String> {
+        let t = fs::read_to_string(fx.cfg.run_dir.join("results").join(RUNNER_PLACE_FILE)).expect("runner.place is written");
+        t.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     struct SharedRemote(std::sync::Arc<FakeRemote>);
@@ -5376,6 +5415,10 @@ mod tests {
         go_with_host(&fx, &vm_remote, &plan, &round_args(&fx));
         assert_eq!(fx.fp.count("clone"), 1);
         assert_ne!(recorded_where(&fx), "host");
+        let placed = runner_place(&fx);
+        assert_ne!(placed["place"], "host");
+        assert!(placed["why"].contains("above"), "{placed:?}");
+        assert_eq!(placed["io_full_avg300"], "55.0");
     }
 
     #[test]

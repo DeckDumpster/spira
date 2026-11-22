@@ -347,7 +347,7 @@ mod tests {
             let n = self.0.lock().unwrap().len();
             self.0.lock().unwrap().push(argv.join(" "));
             let (code, out) = self.1[n.min(self.1.len() - 1)].clone();
-            Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code, out, err: String::new(), read_ended: false })
         }
     }
 

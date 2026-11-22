@@ -10,7 +10,7 @@ use crate::db::Conn;
 use crate::{CANNOT_TELL, REFUSED};
 
 /// The tables a content write changes.
-const WRITTEN: [&str; 6] = ["issues", "labels", "comments", "events", "dependencies", "child_counters"];
+const WRITTEN: [&str; 7] = ["issues", "labels", "comments", "events", "dependencies", "child_counters", "config"];
 
 /// The tables a content write changes when the store has them: leases and the coordination
 /// cells are local state older stores do not carry.
@@ -117,9 +117,9 @@ mod tests {
         let grants: Vec<&String> = grants.into_iter().filter(|g| !g.contains("EXECUTE")).collect();
         let (write, read): (Vec<&&String>, Vec<&&String>) = grants.iter().partition(|g| g.contains("INSERT"));
         let written: Vec<&str> = write.iter().map(|g| g.split('`').nth(3).unwrap()).collect();
-        assert_eq!(written, ["issues", "labels", "comments", "events", "dependencies", "child_counters", "leases"], "a table the store lacks is not granted");
+        assert_eq!(written, ["issues", "labels", "comments", "events", "dependencies", "child_counters", "config", "leases"], "a table the store lacks is not granted");
         assert!(write.iter().all(|g| g.starts_with("GRANT SELECT, INSERT, UPDATE, DELETE ON `beadsdb`.`") && g.ends_with("TO 'wr'@'%'")), "{grants:?}");
-        assert_eq!(read.iter().map(|g| g.as_str()).collect::<Vec<_>>(), ["GRANT SELECT ON `beadsdb`.`config` TO 'wr'@'%'", "GRANT SELECT ON `beadsdb`.`wisps` TO 'wr'@'%'"], "every other table is readable, not writable");
+        assert_eq!(read.iter().map(|g| g.as_str()).collect::<Vec<_>>(), ["GRANT SELECT ON `beadsdb`.`wisps` TO 'wr'@'%'"], "every other table is readable, not writable");
         assert!(!seen.iter().any(|q| q.contains(" ALL")), "no blanket grant");
     }
 

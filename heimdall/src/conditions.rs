@@ -133,7 +133,7 @@ mod tests {
     impl spira_store::lc_call::Transport for Store {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            self.1.map(|(code, out)| spira_store::lc_call::Reply { code, out: out.into(), err: String::new() }).map_err(String::from)
+            self.1.map(|(code, out)| spira_store::lc_call::Reply { code, out: out.into(), err: String::new(), read_ended: false }).map_err(String::from)
         }
     }
 

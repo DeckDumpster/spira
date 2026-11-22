@@ -116,6 +116,20 @@ fn the_record_effect_keeps_the_comments_for_cr_thread_and_moves_the_review_state
 }
 
 #[test]
+fn a_closed_change_whose_ledger_close_fails_leaves_the_review_state_unchanged() {
+    let t = testkit::TempDir::new("cr-comments-close-fails");
+    record::allocate(t.path()).unwrap();
+    record::save(t.path(), &review(1, Some(7), State::Open)).unwrap();
+    let release = std::env::var(spira_config::RELEASE_ENV).ok();
+    assert!(release.is_none(), "this test needs a process with no release to resolve cr from");
+    let world = World { run_dir: t.path().into(), ..World::default() };
+    let records = Records { changes: vec![Change { number: 1, state: State::Closed, at: 900 }], threads: vec![] };
+    let e = world.cr_record(&serde_json::to_string(&records).unwrap()).unwrap_err();
+    assert!(e.contains("cr"), "{e}");
+    assert_eq!(record::load(t.path(), 1).unwrap().state, State::Open);
+}
+
+#[test]
 fn the_row_is_registered_with_its_cadence_and_effects() {
     let t = spira_runtime::tasks::d::acceptance::row(NAME);
     let s = spira_runtime::tasks::d::acceptance::pinned_settings(&[]).expect("settings from the complete fixture");

@@ -1,5 +1,1950 @@
 version = 1
 
+[[moved]]
+section = "1.55"
+slug = "law-a-bead-reference-carries-its-details"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.56"
+slug = "law-a-bead-title-omits-its-repo"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.57"
+slug = "law-a-beads-priority-is-a-floor"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.58"
+slug = "law-a-binary-resolves-the-config-it-reads"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.42"
+slug = "law-a-blinded-operator-surface-is-p0"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.59"
+slug = "law-a-broken-prod-surface-is-fixed-by-hand-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.60"
+slug = "law-a-budget-is-a-cutoff"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.61"
+slug = "law-a-bug-with-a-fix-in-flight-depends-on-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.62"
+slug = "law-a-builder-bead-names-what-to-build"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.63"
+slug = "law-a-cap-breach-is-acted-on-not-explained"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.18"
+slug = "law-a-capacity-limit-is-fixed-at-its-consumer"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.64"
+slug = "law-a-catchup-targets-a-fixed-point"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.65"
+slug = "law-a-check-reports-every-unit"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.66"
+slug = "law-a-component-reports-what-it-observed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.67"
+slug = "law-a-concierge-duty-is-a-missing-mechanism"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.68"
+slug = "law-a-concurrency-ceiling-names-its-measurement"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.69"
+slug = "law-a-config-value-has-no-fallback"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.70"
+slug = "law-a-control-that-cannot-check-must-refuse"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.71"
+slug = "law-a-cutover-is-certified-per-path"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.72"
+slug = "law-a-cutover-takes-downtime"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.73"
+slug = "law-a-delegated-study-starts-from-the-brain"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.74"
+slug = "law-a-deliberate-state-is-not-a-fault"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.75"
+slug = "law-a-design-for-approval-reaches-his-phone"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.76"
+slug = "law-a-design-prices-what-it-rejects"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.77"
+slug = "law-a-design-time-is-a-goal-not-an-assertion"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.78"
+slug = "law-a-designation-is-never-derived"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.79"
+slug = "law-a-detector-files-a-bounded-batch"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.80"
+slug = "law-a-dismissal-names-its-cover"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.81"
+slug = "law-a-documented-control-must-exist"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.82"
+slug = "law-a-duplicate-close-moves-the-deliverable"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.396"
+slug = "law-a-dwarf-touches-only-its-own-ref"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.83"
+slug = "law-a-failure-carries-its-own-explanation"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.84"
+slug = "law-a-fallback-has-a-forced-mode"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.85"
+slug = "law-a-flipping-test-is-disabled-by-a-registry-row"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.86"
+slug = "law-a-forked-sibling-diverges-only-by-decision"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.87"
+slug = "law-a-gate-closes-on-the-reply"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.88"
+slug = "law-a-guard-refuses-it-does-not-tidy"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.41"
+slug = "law-a-hand-dispatched-p0-builder-runs-under-a-watcher"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.89"
+slug = "law-a-hand-fix-names-its-root-cause"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.90"
+slug = "law-a-hand-substitute-never-satisfies-the-duty"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.13"
+slug = "law-a-kit-mechanizes-the-sites-it-never-competes"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.33"
+slug = "law-a-knob-is-set-inside-its-model"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.91"
+slug = "law-a-known-red-preempts-the-pass"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.45"
+slug = "law-a-landing-stall-starts-a-repair"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.20"
+slug = "law-a-landing-stop-is-reverted-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.92"
+slug = "law-a-lane-runs-only-where-the-repo-admits-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.93"
+slug = "law-a-lane-spills-over-the-ceiling"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.94"
+slug = "law-a-learned-failure-mode-becomes-a-state"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.95"
+slug = "law-a-lesson-applies-to-every-queue-mode"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.96"
+slug = "law-a-load-red-waits-on-a-signal"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.97"
+slug = "law-a-local-green-names-what-it-missed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.43"
+slug = "law-a-loops-hot-read-is-in-process"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.98"
+slug = "law-a-lost-verified-result-is-data-loss"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.99"
+slug = "law-a-matcher-reads-code-not-prose"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.30"
+slug = "law-a-measurement-ends-when-its-verdict-settles"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.35"
+slug = "law-a-migration-certifies-the-living-and-imports-the-dead-as-stored"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.100"
+slug = "law-a-money-ceiling-binds-only-in-steady-state"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.8"
+slug = "law-a-p0-in-spira-itself-is-built-by-hand"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.47"
+slug = "law-a-page-is-looked-at-then-the-issue-or-the-detector-is-fixed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.101"
+slug = "law-a-pattern-match-is-not-an-identity-check"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.102"
+slug = "law-a-pause-releases-itself"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.103"
+slug = "law-a-pipeline-builds-each-artifact-once"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.104"
+slug = "law-a-provisional-member-leaves-on-its-gate-red"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.105"
+slug = "law-a-published-design-carries-its-ask"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.106"
+slug = "law-a-questioned-statute-stays-in-force"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.107"
+slug = "law-a-rebase-loop-is-sequenced-not-split"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.7"
+slug = "law-a-reconciler-redrives-it-does-not-alarm"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.108"
+slug = "law-a-red-run-report-closes-on-its-fixes"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.109"
+slug = "law-a-refusal-is-not-an-undo"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.110"
+slug = "law-a-refusal-names-its-exit"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.111"
+slug = "law-a-regression-test-must-be-seen-to-fail"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.112"
+slug = "law-a-release-passes-acceptance-on-its-tag"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.113"
+slug = "law-a-remainder-is-not-a-cap"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.114"
+slug = "law-a-rename-repoints-no-reader"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.115"
+slug = "law-a-repo-is-defined-in-its-own-terms"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.116"
+slug = "law-a-report-is-not-a-filing"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.17"
+slug = "law-a-required-key-ships-with-the-change-that-needs-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.117"
+slug = "law-a-restart-is-bounded-not-avoided"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.118"
+slug = "law-a-retry-must-change-an-input"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.119"
+slug = "law-a-reversal-is-announced-as-one"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.120"
+slug = "law-a-reversal-is-written-where-the-ruling-is-quoted"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.121"
+slug = "law-a-review-outlives-its-session"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.122"
+slug = "law-a-round-is-feature-first-then-catch-all"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.123"
+slug = "law-a-round-lands-only-on-a-green-pass"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.46"
+slug = "law-a-round-loser-is-fixed-and-landed-by-hand"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.51"
+slug = "law-a-round-lost-without-cause-stops-the-rounds"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.124"
+slug = "law-a-runner-takes-a-list"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.125"
+slug = "law-a-second-defect-gets-its-own-bead"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.126"
+slug = "law-a-secret-never-travels-through-the-transcript"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.127"
+slug = "law-a-shared-runner-image-is-general-purpose"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.128"
+slug = "law-a-split-repoints-nothing"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.129"
+slug = "law-a-statute-names-its-tool"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.130"
+slug = "law-a-statutes-silence-is-not-permission"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.36"
+slug = "law-a-stop-stops-everything"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.397"
+slug = "law-a-store-call-answers-in-100ms"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.131"
+slug = "law-a-store-write-is-not-a-delivery"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.132"
+slug = "law-a-summary-request-gets-the-data"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.133"
+slug = "law-a-sweep-is-not-a-bead"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.134"
+slug = "law-a-target-closes-only-met-or-contradicted"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.135"
+slug = "law-a-test-never-builds-spira"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.136"
+slug = "law-a-tested-tree-is-not-retested-on-push"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.29"
+slug = "law-a-tool-bounds-the-state-it-leaves"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.137"
+slug = "law-a-tool-needs-a-runner"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.37"
+slug = "law-a-twice-failed-landing-is-traced-before-the-third"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.32"
+slug = "law-a-unit-test-calls-no-binary"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.138"
+slug = "law-a-wait-names-what-it-waits-for"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.139"
+slug = "law-a-watcher-asks-the-component-that-decides"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.140"
+slug = "law-a-workflow-lands-on-its-own-run"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.141"
+slug = "law-a-writable-resource-gets-full-crudl"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.142"
+slug = "law-a-wrong-lane-attempt-is-not-the-works"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.143"
+slug = "law-address-the-store-with-spira-bd"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.147"
+slug = "law-alerts-must-be-actionable"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.149"
+slug = "law-an-agent-is-the-first-production-customer"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.150"
+slug = "law-an-answer-that-contradicts-a-statute-amends-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.151"
+slug = "law-an-eject-names-its-evidence"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.6"
+slug = "law-an-event-loop-never-blocks"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.152"
+slug = "law-an-incident-waits-on-its-fix-landing"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.153"
+slug = "law-anomalies-are-not-coincidences"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.154"
+slug = "law-answer-the-question-before-widening"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.155"
+slug = "law-answers-arrive-only-as-mail"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.156"
+slug = "law-answers-need-a-delivery-path"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.157"
+slug = "law-archivist-does-not-file-live-work"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.158"
+slug = "law-arm-before-you-retire"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.159"
+slug = "law-ask-before-you-acquire"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.160"
+slug = "law-attempts-count-the-harness"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.161"
+slug = "law-bake-rules-into-tools"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.26"
+slug = "law-batcher-earns-the-round-by-parity"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.162"
+slug = "law-batching-is-not-scheduling"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.28"
+slug = "law-bead-facts-come-from-the-lifecycle"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.163"
+slug = "law-beads-is-never-public"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.22"
+slug = "law-bisect-by-time-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.164"
+slug = "law-blocking-edges-are-real-dependencies"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.165"
+slug = "law-bound-the-rare-path"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.166"
+slug = "law-branch-affinity-is-recorded"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.167"
+slug = "law-buy-capacity-rather-than-wait"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.15"
+slug = "law-calls-have-deadlines"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.168"
+slug = "law-chain-the-check-to-the-commit"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.169"
+slug = "law-charge-only-a-named-outcome"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.170"
+slug = "law-cheap-answers-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.171"
+slug = "law-check-it-yourself-before-asking"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.54"
+slug = "law-check-the-law-at-the-decision"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.172"
+slug = "law-check-whether-the-precondition-already-holds"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.173"
+slug = "law-ci-builds-what-ci-depends-on"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.174"
+slug = "law-cite-only-statutes-that-exist"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.175"
+slug = "law-claim-before-you-work"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.176"
+slug = "law-clock-reducers-go-straight-to-ci"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.177"
+slug = "law-close-on-merge-not-submit"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.178"
+slug = "law-close-the-loop-on-confirmation"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.179"
+slug = "law-close-with-the-evidence-asked-for"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.180"
+slug = "law-closed-is-not-landed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.181"
+slug = "law-closing-an-ask-names-what-decided-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.182"
+slug = "law-commit-messages-via-stdin"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.183"
+slug = "law-commit-only-paths-you-changed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.184"
+slug = "law-commit-to-a-recommendation"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.185"
+slug = "law-components-push-metrics-directly"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.186"
+slug = "law-concierge-signals-ride-watchd-rows"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.187"
+slug = "law-concierge-tools-converge-with-their-rules"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.188"
+slug = "law-concierge-watches-every-registered-repo"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.189"
+slug = "law-config-through-the-cli-only"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.190"
+slug = "law-conflicts-are-not-escalations"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.191"
+slug = "law-constrain-what-can-be-claimed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.192"
+slug = "law-converge-by-reconciliation-not-atomicity"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.193"
+slug = "law-copy-is-written-for-its-domain"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.194"
+slug = "law-count-things-not-log-lines"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.195"
+slug = "law-craft-knowledge-goes-in-the-wiki"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.196"
+slug = "law-decisions-surface-immediately"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.197"
+slug = "law-declining-for-want-of-a-tool"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.198"
+slug = "law-decompose-by-deliverable"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.199"
+slug = "law-dedup-must-be-measured"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.200"
+slug = "law-defects-are-filed-and-features-rank-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.201"
+slug = "law-defects-in-a-replaced-component-are-requirements"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.202"
+slug = "law-dependencies-are-fulfilled-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.203"
+slug = "law-deploy-the-tested-artifacts"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.204"
+slug = "law-design-approval-is-ryans"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.205"
+slug = "law-destructive-beads-are-never-dispatchable"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.206"
+slug = "law-detect-drift-never-install"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.207"
+slug = "law-detection-outranks-rejection"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.208"
+slug = "law-deterministic-before-inference"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.209"
+slug = "law-development-goes-to-the-loop"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.12"
+slug = "law-diagnose-before-you-buy-capacity"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.21"
+slug = "law-diagnosis-is-time-boxed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.210"
+slug = "law-do-not-ask-whether-to-file"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.211"
+slug = "law-dont-invent-his-deadlines"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.10"
+slug = "law-doomed-work-is-stopped-fixed-then-resumed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.398"
+slug = "law-drain-gates-calls-not-delivery"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.213"
+slug = "law-drop-a-bead-through-the-tool"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.214"
+slug = "law-duplicate-not-a-hard-merge"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.399"
+slug = "law-dwarf-commits-name-their-bead"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.400"
+slug = "law-dwarves-hold-no-forge-credential"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.401"
+slug = "law-dwarves-never-operate-the-queue"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.215"
+slug = "law-escalate-decisions-not-problems"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.216"
+slug = "law-escalations-carry-their-evidence"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.217"
+slug = "law-escalations-lead-with-the-bead"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.218"
+slug = "law-event-needs-a-recipient"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.52"
+slug = "law-every-bead-is-written-or-reviewed-by-skuld"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.219"
+slug = "law-every-component-sends-otlp"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.53"
+slug = "law-every-decision-passes-the-statute-check"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.220"
+slug = "law-every-hold-has-a-steward"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.221"
+slug = "law-every-hold-names-who-lifts-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.222"
+slug = "law-every-session-is-composed-from-a-persona"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.223"
+slug = "law-every-workflow-is-a-state-machine"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.224"
+slug = "law-fail-closed-at-the-source"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.24"
+slug = "law-faster-over-safer"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.225"
+slug = "law-fence-loops-on-shared-hardware"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.226"
+slug = "law-file-it-and-let-the-loop-fix-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.227"
+slug = "law-file-less-than-you-land"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.228"
+slug = "law-filed-bead-queued-xor-escalated"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.229"
+slug = "law-finish-before-you-start"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.230"
+slug = "law-finish-the-procedure-he-is-running"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.16"
+slug = "law-fix-the-harness-not-the-instance"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.231"
+slug = "law-fix-the-worker-never-schedule-around-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.232"
+slug = "law-fixed-when-a-real-test-starts"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.233"
+slug = "law-fixtures-carry-real-cadence"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.234"
+slug = "law-forge-repos-are-public-on-a-free-org"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.235"
+slug = "law-functional-behaviour-is-tested-not-soaked"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.236"
+slug = "law-gate-earns-its-place"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.50"
+slug = "law-gates-run-in-a-clean-environment"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.237"
+slug = "law-git-dash-c-not-cd"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.238"
+slug = "law-green-prs-merge-themselves"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.239"
+slug = "law-guard-binds-the-caller"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.240"
+slug = "law-guard-proved-where-the-offender-runs"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.241"
+slug = "law-hand-land-the-unblocker"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.242"
+slug = "law-hand-over-in-four-stages"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.243"
+slug = "law-hand-recovery-leaves-a-tool"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.244"
+slug = "law-harness-ships-mechanism-not-inventory"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.245"
+slug = "law-his-engagement-sets-the-queue"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.246"
+slug = "law-hot-reads-answer-in-500ms"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.247"
+slug = "law-infrastructure-is-terraform"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.248"
+slug = "law-install-installs-every-dependency"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.249"
+slug = "law-instrument-instead-of-caution"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.250"
+slug = "law-investigate-near-misses"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.251"
+slug = "law-land-proven-work-alone"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.252"
+slug = "law-landed-is-content"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.253"
+slug = "law-landed-is-not-in-force"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.44"
+slug = "law-landing-rounds-run-the-full-suite-on-a-vm"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.254"
+slug = "law-leave-scheduling-to-the-os"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.255"
+slug = "law-lifecycle-state-is-not-text"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.40"
+slug = "law-list-reads-paginate-in-the-database"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.39"
+slug = "law-list-reads-run-on-indexed-tables"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.256"
+slug = "law-local-drift-converges"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.257"
+slug = "law-local-gates-buy-latency-not-coverage"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.258"
+slug = "law-long-lived-processes-pin-their-config"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.259"
+slug = "law-lossless-reclamation-needs-no-ask"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.260"
+slug = "law-measure-inside-the-fence"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.261"
+slug = "law-measure-the-outcome"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.262"
+slug = "law-measurement-is-a-grafana-panel"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.263"
+slug = "law-never-derive-an-id-from-output"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.264"
+slug = "law-never-disarm-a-check-to-proceed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.265"
+slug = "law-never-green-is-not-queued"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.266"
+slug = "law-never-read-a-cause-from-failure-path-output"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.267"
+slug = "law-never-remove-a-control-for-one-not-in-force"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.268"
+slug = "law-never-repair-a-store-on-a-guessed-binary"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.269"
+slug = "law-never-spend-a-run-on-what-the-next-real-run-shows"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.270"
+slug = "law-never-wait-on-a-gate-that-never-opens"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.271"
+slug = "law-new-subsystems-are-rust"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.272"
+slug = "law-new-subsystems-are-simulation-ready"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.273"
+slug = "law-no-close-reason-admits-unfinished"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.274"
+slug = "law-no-correction-history"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.275"
+slug = "law-no-cutover-before-the-work-lands"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.276"
+slug = "law-no-data-lives-in-code"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.277"
+slug = "law-no-decision-work-has-a-persona-owner"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.31"
+slug = "law-no-fallbacks"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.278"
+slug = "law-no-filing-only-escalation"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.279"
+slug = "law-no-gate-runs-doctests"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.280"
+slug = "law-no-grep-q-under-pipefail"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.281"
+slug = "law-no-horizontal-scroll-on-mobile"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.395"
+slug = "law-no-new-shell-test-suites"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.282"
+slug = "law-no-path-is-fixed-at-compile-time"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.283"
+slug = "law-no-product-service-runs-on-the-spira-host"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.284"
+slug = "law-no-unsupported-language-releases"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.285"
+slug = "law-no-wall-clock-budgets-in-the-corpus"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.286"
+slug = "law-nothing-reads-the-journal"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.287"
+slug = "law-nothing-runs-on-ci-until-it-passes-locally"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.288"
+slug = "law-nothing-waits-without-progress"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.289"
+slug = "law-off-box-backups-are-private-and-write-only"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.290"
+slug = "law-off-path-transitions-carry-provenance"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.402"
+slug = "law-one-dwarf-one-worktree"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.292"
+slug = "law-one-feature-certifies-all-up"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.293"
+slug = "law-one-language-runtime-per-repo"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.294"
+slug = "law-one-supervised-pass-before-you-arm"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.49"
+slug = "law-only-spira-lc-talks-to-the-stores"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.295"
+slug = "law-only-the-operator-closes-his-ask"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.9"
+slug = "law-operator-asked-transcript-reads-are-observation"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.296"
+slug = "law-operator-asks-carry-their-check"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.297"
+slug = "law-operator-commands-go-in-chat"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.298"
+slug = "law-operator-mail-is-not-about-beads"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.299"
+slug = "law-operator-surfaces-change-on-approval-then-live"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.300"
+slug = "law-operator-surfaces-change-together"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.301"
+slug = "law-operator-views-are-trees-of-his-units"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.302"
+slug = "law-overlays-are-ported-not-patched"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.303"
+slug = "law-parallel-by-default"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.304"
+slug = "law-payloads-go-on-stdin"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.305"
+slug = "law-periodic-tool-needs-a-tested-timer"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.34"
+slug = "law-periodic-work-is-incremental"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.306"
+slug = "law-pin-by-migration-count"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.307"
+slug = "law-prefer-no-comment"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.308"
+slug = "law-prefer-the-real-dependency"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.309"
+slug = "law-probe-a-fixture-not-production"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.310"
+slug = "law-prod-is-a-different-checkout"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.311"
+slug = "law-producers-declare-what-they-know"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.312"
+slug = "law-producers-stamp-their-own-clock"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.313"
+slug = "law-product-aws-resources-live-in-the-ci-account"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.314"
+slug = "law-product-backups-live-in-the-ci-account"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.315"
+slug = "law-production-is-not-a-working-tree"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.316"
+slug = "law-publish-ci-runs-the-full-suite"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.317"
+slug = "law-query-the-graph-before-asserting"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.318"
+slug = "law-query-the-graph-before-working"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.319"
+slug = "law-queue-back-pressure-is-an-open-pr"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.320"
+slug = "law-raise-the-cap-before-you-optimize"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.321"
+slug = "law-read-the-manual-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.322"
+slug = "law-read-the-servers-own-log-first"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.323"
+slug = "law-read-what-you-launched"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.324"
+slug = "law-reading-his-accounts-is-a-permissions-ask"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.325"
+slug = "law-record-the-act-only-on-the-act"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.326"
+slug = "law-reduce-the-count-never-throttle-the-job"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.327"
+slug = "law-regenerate-derived-summaries"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.328"
+slug = "law-remeasure-after-you-change-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.329"
+slug = "law-repeating-conditions-escalate-once"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.330"
+slug = "law-replace-running-scripts-atomically"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.331"
+slug = "law-reply-in-the-thread"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.332"
+slug = "law-reproduce-acceptance-locally-before-remote"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.333"
+slug = "law-require-the-right-value"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.334"
+slug = "law-resolved-operator-mail-is-cleared"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.335"
+slug = "law-retire-dont-suspend"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.336"
+slug = "law-reversibility-outranks-coverage"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.337"
+slug = "law-reversible-only-with-infrastructure-credentials"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.338"
+slug = "law-review-reads-the-raw-transcript"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.339"
+slug = "law-run-it-once-before-you-decompose"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.340"
+slug = "law-run-the-suite-in-a-container"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.341"
+slug = "law-rust-rewrite-order"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.342"
+slug = "law-rust-rewrites-start-from-intent"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.343"
+slug = "law-rust-then-java"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.344"
+slug = "law-schema-over-code"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.345"
+slug = "law-scope-is-a-runtime-key"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.346"
+slug = "law-seen-red-must-be-seen-in-ci"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.347"
+slug = "law-self-filing-earns-its-priority"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.348"
+slug = "law-settable-in-the-operators-words"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.349"
+slug = "law-setup-never-outlasts-the-suite"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.350"
+slug = "law-ships-for-a-colleague"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.351"
+slug = "law-sops-are-amended-by-the-session-that-found-the-gap"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.352"
+slug = "law-spira-does-not-deploy"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.353"
+slug = "law-spira-reaches-prod-only-through-a-release"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.354"
+slug = "law-stale-red-pr"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.355"
+slug = "law-state-is-never-read-from-text"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.356"
+slug = "law-status-after-a-pipe-is-the-last-command"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.357"
+slug = "law-stop-the-bleeding-before-fixing"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.358"
+slug = "law-stop-the-world-for-an-unexpected-bottleneck"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.359"
+slug = "law-take-the-simple-fix-with-a-meter"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.360"
+slug = "law-test-selection-and-plan-are-one-source"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.361"
+slug = "law-test-statute"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.27"
+slug = "law-tests-are-the-unit-of-measure"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.362"
+slug = "law-tests-run-only-through-testenv"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.38"
+slug = "law-text-only-changes-land-without-a-round"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.363"
+slug = "law-the-allocator-assigns-the-identifier"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.364"
+slug = "law-the-concierge-drives-rounds-with-the-batchers-tools"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.365"
+slug = "law-the-concierge-rotates-through-the-tool"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.366"
+slug = "law-the-corpus-is-not-an-authority"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.367"
+slug = "law-the-czar-reads-what-the-concierge-reads"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.23"
+slug = "law-the-direct-path-wins"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.368"
+slug = "law-the-harness-checkout-is-production"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.14"
+slug = "law-the-harness-switches-his-cockpit"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.369"
+slug = "law-the-lifecycle-is-the-only-authority-on-bead-state"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.48"
+slug = "law-the-lifecycle-store-serves-online-data"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.370"
+slug = "law-the-only-slot-is-not-a-timers"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.371"
+slug = "law-the-ops-pane-is-cheap"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.372"
+slug = "law-third-party-tools-are-official-releases"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.373"
+slug = "law-timers-active-is-not-running"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.374"
+slug = "law-tmux-server-env-is-frozen"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.375"
+slug = "law-tools-take-named-arguments"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.376"
+slug = "law-total-blockage-announces-itself"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.377"
+slug = "law-transcript-is-not-authorization"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.378"
+slug = "law-tuning-is-not-policy"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.379"
+slug = "law-ui-changes-need-screenshots"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.380"
+slug = "law-unexpected-image-builds-are-killed-then-fixed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.11"
+slug = "law-unit-tests-run-under-a-second"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.381"
+slug = "law-units-build-what-they-exec"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.382"
+slug = "law-up-next-is-read-from-the-ops-pane"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.383"
+slug = "law-upgrade-window-is-seven-days"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.384"
+slug = "law-verified-artifacts-are-typed"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.385"
+slug = "law-verify-nothing-was-dropped"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.386"
+slug = "law-verify-the-discriminating-fact"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.387"
+slug = "law-verify-through-the-users-path"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.388"
+slug = "law-waive-upgrade-once-when-the-fix-cannot-reach-the-predecessor"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.389"
+slug = "law-wake-only-for-what-must-be-decided"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.390"
+slug = "law-when-asked-about-a-missing-mechanism-build-it"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.391"
+slug = "law-work-enters-only-from-the-operator"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.392"
+slug = "law-workers-verify-with-container-tests"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.393"
+slug = "law-worktrees-in-the-sanctioned-root"
+on = "2026-11-20"
+
+[[moved]]
+section = "1.394"
+slug = "law-write-only-inside-your-worktree"
+on = "2026-11-20"
+
 [[retired]]
 slug = "law-throughput-floor"
 reason = "Ryan ruled on sp-qlliks (2026-11-08): fire on a stall and start diagnosis and repair, not a halt on a daily rate"

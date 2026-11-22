@@ -634,7 +634,7 @@ pub fn run_all(cmd: &str) -> String {
 
 /// (crate, package) pairs: the crate's tests run the package's binary prebuilt in the target
 /// directory (batcher-cut's fence probe test runs the built gate), so selecting the crate builds it too.
-const NEEDS_BUILT: [(&str, &str); 1] = [("batcher-cut", "gate")];
+const NEEDS_BUILT: [(&str, &str); 4] = [("batcher-cut", "gate"), ("spira-lc", "testenv"), ("spira-runtime", "work"), ("spira-runtime", "spira-lc")];
 
 /// The words of the unit build line, shared by the gate's build phase and testenv's unit tier so
 /// both produce the same artefacts for the same crates: the default profile, no config override, no `-j`.
@@ -1387,7 +1387,7 @@ mod tests {
     fn the_unit_build_and_test_name_only_the_changed_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4, &Default::default());
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
-        assert!(b.1.ends_with(" --features integration -p spira-runtime"), "{}", b.1);
+        assert!(b.1.ends_with(" --features integration -p spira-runtime -p work -p spira-lc"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
         let [b, _] = unit_commands(&["spira-sim".into()], ALL, 4, &Default::default());
         assert!(b.1.ends_with(" --features integration -p spira-sim"), "{}", b.1);
@@ -1522,6 +1522,21 @@ mod tests {
         assert!(!t.1.contains("-p gate"), "{}", t.1);
         let [b, _] = unit_commands(&["batcher-cut".into(), "gate".into()], ALL, 4, &Default::default());
         assert_eq!(b.1.matches("-p gate").count(), 1, "{}", b.1);
+    }
+
+    #[test]
+    fn selecting_spira_lc_builds_the_testenv_its_content_writes_tests_run() {
+        assert!(unit_build_words(&["spira-lc".into()]).join(" ").contains("-p testenv"));
+        let both = unit_build_words(&["spira-lc".into(), "testenv".into()]).join(" ");
+        assert_eq!(both.matches("-p testenv").count(), 1, "{both}");
+    }
+
+    #[test]
+    fn selecting_spira_runtime_builds_the_work_client_and_service_its_broker_exec_test_runs() {
+        let words = unit_build_words(&["spira-runtime".into()]).join(" ");
+        assert!(words.contains("-p work") && words.contains("-p spira-lc"), "{words}");
+        let words = unit_build_words(&["spira-runtime".into(), "work".into(), "spira-lc".into()]).join(" ");
+        assert_eq!((words.matches("-p work").count(), words.matches("-p spira-lc").count()), (1, 1), "{words}");
     }
 
     #[test]

@@ -296,6 +296,64 @@ pub const MIGRATIONS: &[&[&str]] = &[
             THEN json_extract(CAST(value AS TEXT), '$.data.seq') END) VIRTUAL",
         "CREATE INDEX latest_by_history_seq ON latest (history_seq, key) WHERE history_seq IS NOT NULL",
     ],
+    // 10 (sp-6qijd2): each lifecycle record under an Ask hold keeps `ask_since`, the `at` of the
+    // newest applied bead `Hold` of kind Ask in its history, so `dwell` reads when an ask was
+    // raised from the record and never from history. History is read as migration 7 reads it;
+    // the value is rewritten at its own revision, in `latest` and in the `versions` row it
+    // mirrors. A record under no Ask hold is untouched.
+    &[
+        "CREATE TEMP TABLE m10_asks (id TEXT NOT NULL, main INTEGER NOT NULL, hkey TEXT NOT NULL, at INTEGER NOT NULL)",
+        "INSERT INTO m10_asks
+         SELECT id, main, hkey, json_extract(a, '$.at')
+         FROM (SELECT substr(CAST(key AS TEXT), 9, instr(substr(CAST(key AS TEXT), 9), '/') - 1) AS id,
+                      main, CAST(key AS TEXT) AS hkey, json_extract(CAST(value AS TEXT), '$.data.audit') AS a
+               FROM latest WHERE key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB)
+                 AND json_valid(CAST(value AS TEXT))
+                 AND json_extract(CAST(value AS TEXT), '$.data.seq') IS NOT NULL)
+         WHERE json_valid(a)
+           AND json_extract(a, '$.machine') = 'bead' AND json_extract(a, '$.event') = 'Hold'
+           AND json_extract(a, '$.applied') = 1 AND json_extract(a, '$.lc_key') = id
+           AND json_extract(a, '$.evidence.Hold.kind') = 'Ask'
+           AND json_type(a, '$.at') = 'integer'",
+        "INSERT INTO m10_asks
+         SELECT h.id, h.main, h.hkey, json_extract(a.value, '$.at')
+         FROM (SELECT substr(CAST(key AS TEXT), 9, instr(substr(CAST(key AS TEXT), 9), '/') - 1) AS id, main, CAST(key AS TEXT) AS hkey
+               FROM latest WHERE key >= CAST('history/' AS BLOB) AND key < CAST('history0' AS BLOB)
+                 AND json_valid(CAST(value AS TEXT))
+                 AND json_extract(CAST(value AS TEXT), '$.data.seq') IS NULL) AS h
+         JOIN latest AS e ON e.key = CAST('events/' || printf('%020d', h.main) AS BLOB)
+         JOIN json_each(CAST(e.value AS TEXT),
+              CASE WHEN json_extract(CAST(e.value AS TEXT), '$.data.refused')
+                   THEN '$.data.evidence.else' ELSE '$.data.evidence.then' END) AS a
+         WHERE json_extract(a.value, '$.machine') = 'bead'
+           AND json_extract(a.value, '$.event') = 'Hold'
+           AND json_extract(a.value, '$.lc_key') = h.id
+           AND json_extract(a.value, '$.applied') = 1
+           AND json_extract(a.value, '$.evidence.Hold.kind') = 'Ask'
+           AND json_type(a.value, '$.at') = 'integer'",
+        "CREATE TEMP TABLE m10_newest (id TEXT PRIMARY KEY, at INTEGER NOT NULL)",
+        "INSERT INTO m10_newest
+         SELECT id, at
+         FROM (SELECT *, row_number() OVER (PARTITION BY id ORDER BY at DESC, main DESC, hkey DESC) AS n FROM m10_asks)
+         WHERE n = 1",
+        "UPDATE latest
+         SET value = CAST(json_set(CAST(value AS TEXT), '$.data.ask_since',
+             (SELECT at FROM m10_newest WHERE id = substr(CAST(latest.key AS TEXT), 11))) AS BLOB)
+         WHERE key >= CAST('lifecycle/' AS BLOB) AND key < CAST('lifecycle0' AS BLOB)
+           AND instr(substr(CAST(key AS TEXT), 11), '/') = 0
+           AND json_valid(CAST(value AS TEXT))
+           AND json_type(CAST(value AS TEXT), '$.data.holds') = 'array'
+           AND json_type(CAST(value AS TEXT), '$.data.ask_since') IS NULL
+           AND EXISTS (SELECT 1 FROM json_each(CAST(latest.value AS TEXT), '$.data.holds') AS j WHERE j.value = 'Ask')
+           AND EXISTS (SELECT 1 FROM m10_newest WHERE id = substr(CAST(latest.key AS TEXT), 11))",
+        "UPDATE versions SET value = l.value
+         FROM latest AS l
+         WHERE l.key = versions.key AND l.main = versions.main
+           AND l.key >= CAST('lifecycle/' AS BLOB) AND l.key < CAST('lifecycle0' AS BLOB)
+           AND versions.value IS NOT l.value",
+        "DROP TABLE m10_asks",
+        "DROP TABLE m10_newest",
+    ],
 ];
 
 #[cfg(test)]
@@ -320,9 +378,10 @@ mod cost {
     }
 
     fn audit(machine: &str, id: &str, event: &str, to: &str, at: i64) -> Value {
+        let kind = if at == 10 { "Manual" } else { "Ask" };
         json!({ "machine": machine, "lc_key": id, "event": event, "to_state": to, "at": at,
                 "applied": true,
-                "evidence": { "n": at, "Hold": { "kind": "Manual", "cause": "c", "detail": "d" } } })
+                "evidence": { "n": at, "Hold": { "kind": kind, "cause": "c", "detail": "d" } } })
     }
 
     /// A store of production shape: per round a batch, a delivery, 8 history entries each
@@ -357,18 +416,18 @@ mod cost {
             rows.push((
                 format!("lifecycle/d-{i}"),
                 next(),
-                obj(json!({}), json!({ "holds": ["Manual"] })),
+                obj(json!({}), json!({ "holds": ["Manual", "Ask"] })),
             ));
             for id in [format!("r-{i}"), format!("d-{i}")] {
                 for seq in 0..4i64 {
-                    let machine = if seq == 0 && id.starts_with('d') {
+                    let machine = if seq <= 1 && id.starts_with('d') {
                         "bead"
                     } else if id.starts_with('r') {
                         "batch"
                     } else {
                         "delivery"
                     };
-                    let event = ["Hold", "PassRed", "Eject", "PassGreen"][seq as usize];
+                    let event = ["Hold", "Hold", "Eject", "PassGreen"][seq as usize];
                     rows.push((
                     format!("history/{id}/0/import/{seq}"),
                     1,

@@ -483,6 +483,10 @@ fn report_law_branches(home: &str) -> Result<bool, String> {
         match kind {
             code::LawBranch::Tip => {}
             code::LawBranch::CarriedBy(by) => println!("law/: {branch} carried by {by}"),
+            code::LawBranch::ReplacedBy(by) => {
+                code::git_in(path, &["branch", "-D", branch])?;
+                println!("law/: {branch} replaced by {by}; deleted");
+            }
             code::LawBranch::InBook => {
                 code::git_in(path, &["branch", "-D", branch])?;
                 println!("law/: {branch} already in the book at {base}; deleted");
@@ -1445,7 +1449,7 @@ mod statute_dir_tests {
     impl spira_store::lc_call::Transport for Answers {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_store::lc_call::Reply { code: self.1, out: "warning\n{\"law-a\":\"x\"}\n".into(), err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: self.1, out: "warning\n{\"law-a\":\"x\"}\n".into(), err: String::new(), read_ended: false })
         }
     }
 

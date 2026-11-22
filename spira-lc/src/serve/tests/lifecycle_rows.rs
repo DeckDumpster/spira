@@ -21,7 +21,7 @@ impl spira_store::lc_call::Transport for InProcess {
         let world = self.0.lock().unwrap();
         let mut m = &*world;
         let (code, out) = m.call(argv);
-        Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
+        Ok(spira_store::lc_call::Reply { code, out, err: String::new(), read_ended: false })
     }
 }
 

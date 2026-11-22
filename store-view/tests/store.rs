@@ -25,7 +25,7 @@ impl Transport for Double {
     fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
         let mut s = self.0.lock().unwrap();
         s.seen.push(argv.to_vec());
-        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new() });
+        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
         match argv[0].as_str() {
             "rc" => {
                 let body: Value = serde_json::from_str(argv.last().unwrap()).unwrap();
@@ -62,7 +62,7 @@ impl Transport for Double {
                 ok(serde_json::to_string(&rows).unwrap())
             }
             "watch" => match s.watches.pop_front() {
-                Some((code, out)) => Ok(Reply { code, out, err: String::new() }),
+                Some((code, out)) => Ok(Reply { code, out, err: String::new(), read_ended: false }),
                 None if s.quiet => {
                     drop(s);
                     // clock-safe: the double's long-poll, ending after a pause

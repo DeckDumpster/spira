@@ -269,7 +269,7 @@ mod tests {
     }
 
     fn shipped(dir: &Path, clock: &VirtualClock) -> Shipper {
-        let b = SqliteBackend::open(&dir.join("live.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let c = suite::open(b.clone(), clock);
         let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, proc: Arc::new(SysProc), deadline: PUT_DEADLINE });
         let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX };
@@ -392,7 +392,7 @@ mod tests {
         let creds = S3Creds::from_vars(|k| env.get(k).cloned()).expect("the unit's environment carries the backup credentials");
 
         let clock = VirtualClock::new(1_000);
-        let b = SqliteBackend::open(&dir.path().join("live.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let c = suite::open(b.clone(), &clock);
         let curl = Arc::new(RecordingCurl::default());
         let put: Arc<dyn Put> = Arc::new(Uploader {
@@ -459,7 +459,7 @@ mod tests {
     fn the_ship_tick_writes_one_alarm_line_per_crossing() {
         let dir = TempDir::new("lc-ship-alarm");
         let clock = VirtualClock::new(1_000);
-        let b = SqliteBackend::open(&dir.path().join("live.db"), Options::default()).unwrap();
+        let b = SqliteBackend::open(&dir.path().join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let c = suite::open(b.clone(), &clock);
         let blocked = dir.path().join("blocked");
         std::fs::write(&blocked, "").unwrap();

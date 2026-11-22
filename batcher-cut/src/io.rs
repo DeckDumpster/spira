@@ -426,6 +426,7 @@ pub enum Cause {
     NoSift,
     RoundFull { cap: usize },
     OutsideFeature { root: String },
+    GateUnjudged { paths: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -448,6 +449,7 @@ impl LeftOut {
             Cause::NoSift => "no-sift".into(),
             Cause::RoundFull { .. } => "round-full".into(),
             Cause::OutsideFeature { .. } => "outside-feature".into(),
+            Cause::GateUnjudged { .. } => "gate-unjudged".into(),
         }
     }
 
@@ -494,6 +496,14 @@ impl LeftOut {
                 format!("this round is feature {root} and it is not part of it"),
                 format!("the {root} round landing lets the next cut take it"),
             ),
+            Cause::GateUnjudged { paths } => {
+                let shown = paths.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+                let more = if paths.len() > 5 { format!(", +{} more", paths.len() - 5) } else { String::new() };
+                (
+                    format!("it changes the gate's own files ({shown}{more}) and its own gate has not certified {tip}"),
+                    format!("a PASS from its gate at {tip} (state CERTIFIED) readmits it; a no-verdict or red keeps it out"),
+                )
+            }
         };
         format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")
     }
@@ -653,6 +663,92 @@ fn pool_rows(rows: &[serde_json::Value], repo: &str) -> (Vec<PoolRow>, Vec<LeftO
     (pool, left)
 }
 
+/// Leaves out each provisional row that changes a file the gate declares its own: such a
+/// change enters a cut only once its own gate certified it.
+fn gate_own_left_out(
+    pool: Vec<PoolRow>,
+    own: &gate::def::Def,
+    changed: &BTreeMap<String, Vec<String>>,
+) -> (Vec<PoolRow>, Vec<LeftOut>) {
+    let mut kept = Vec::new();
+    let mut left = Vec::new();
+    for row in pool {
+        let paths: Vec<String> = if row.5 {
+            changed.get(&row.0).into_iter().flatten().filter(|p| own.owns(p)).cloned().collect()
+        } else {
+            Vec::new()
+        };
+        if paths.is_empty() {
+            kept.push(row);
+        } else {
+            left.push(LeftOut { id: row.0, tip: row.1, cause: Cause::GateUnjudged { paths } });
+        }
+    }
+    (kept, left)
+}
+
+/// The provisional rows the gate definition text holds out of the cut. No text (an ungated
+/// landing ref) holds out nothing. A definition that does not read, or a diff that cannot be
+/// read, holds the row out: a control that cannot check refuses.
+fn gate_own_apply(
+    pool: Vec<PoolRow>,
+    text: Option<&str>,
+    changed: &mut dyn FnMut(&PoolRow) -> Result<Vec<String>, String>,
+) -> (Vec<PoolRow>, Vec<LeftOut>) {
+    let Some(text) = text else {
+        return (pool, Vec::new());
+    };
+    let unjudged = |r: PoolRow, why: String| LeftOut { id: r.0, tip: r.1, cause: Cause::GateUnjudged { paths: vec![why] } };
+    let def = match gate::def::parse(text) {
+        Ok(d) => d,
+        Err(e) => {
+            let why = format!("{} on the landing ref does not read: {e}", gate::def::PATH);
+            let (provisional, certified): (Vec<_>, Vec<_>) = pool.into_iter().partition(|r| r.5);
+            return (certified, provisional.into_iter().map(|r| unjudged(r, why.clone())).collect());
+        }
+    };
+    let mut map = BTreeMap::new();
+    let mut left = Vec::new();
+    let mut readable = Vec::new();
+    for r in pool {
+        if !r.5 {
+            readable.push(r);
+            continue;
+        }
+        match changed(&r) {
+            Ok(paths) => {
+                map.insert(r.0.clone(), paths);
+                readable.push(r);
+            }
+            Err(e) => left.push(unjudged(r, format!("its changed paths could not be read: {e}"))),
+        }
+    }
+    let (kept, owned) = gate_own_left_out(readable, &def, &map);
+    left.extend(owned);
+    (kept, left)
+}
+
+/// `gate.steps` at the landing ref: None when the ref has none, Err when git cannot say.
+fn gate_def_at(repo: &Repo, rev: &str) -> Result<Option<String>, String> {
+    let listed = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["ls-tree", "--name-only", rev, gate::def::PATH]),
+        "git ls-tree gate definition",
+    )?;
+    if listed.trim().is_empty() {
+        return Ok(None);
+    }
+    file_at(repo, rev, gate::def::PATH).map(Some).ok_or_else(|| format!("{} on {rev} could not be read", gate::def::PATH))
+}
+
+fn gate_own_check(repo: &Repo, pool: Vec<PoolRow>) -> Result<(Vec<PoolRow>, Vec<LeftOut>), String> {
+    if !pool.iter().any(|r| r.5) {
+        return Ok((pool, Vec::new()));
+    }
+    let base_sha = resolve_base_sha(repo)?;
+    let text = gate_def_at(repo, &base_sha)?;
+    Ok(gate_own_apply(pool, text.as_deref(), &mut |r| changed_paths_checked(repo, &base_sha, &r.1)))
+}
+
 /// Beads that carry their commits into whatever stacks on them yet may not be batched
 /// themselves: held, or ejected at their current tip.
 fn barred_ids(
@@ -809,6 +905,9 @@ pub fn certified_pool_left_out(env: &Env, repo: &Repo) -> Result<(Vec<Member>, V
         .into_iter()
         .filter(|(id, tip, ..)| tip_current(tip, id, &branches))
         .collect();
+    let (certified, gate_left) = gate_own_check(repo, certified)?;
+    barred.extend(gate_left.iter().map(|l| l.id.clone()));
+    left.extend(gate_left);
     let ids: Vec<String> = certified.iter().map(|(id, ..)| id.clone()).collect();
     let v = bd_show(env, &ids)?;
     let items = match v {
@@ -1908,22 +2007,25 @@ pub fn last_touching(repo: &Repo, at: &str, paths: &[String]) -> Option<String> 
     Some(out.trim().to_string()).filter(|l| !l.is_empty())
 }
 
+fn diff_names(repo: &Repo, base_sha: &str, tip: &str, no_renames: bool) -> Result<Vec<String>, String> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(&repo.path).args(["diff", "--name-only"]);
+    if no_renames {
+        cmd.arg("--no-renames");
+    }
+    let out = run(cmd.arg(format!("{base_sha}...{tip}")), "git diff changed paths")?;
+    Ok(out.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
+}
+
+/// Like `changed_paths`, but a rename lists its old path too and a git failure is an error.
+pub fn changed_paths_checked(repo: &Repo, base_sha: &str, tip: &str) -> Result<Vec<String>, String> {
+    diff_names(repo, base_sha, tip, true)
+}
+
 /// The paths `tip` changed since it forked from `base_sha` (`git diff base...tip`) — what
 /// attribution orders suspects by and decides a rerun's build by.
 pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
-    run(
-        Command::new("git").arg("-C").arg(&repo.path).args([
-            "diff",
-            "--name-only",
-            &format!("{base_sha}...{tip}"),
-        ]),
-        "git diff changed paths",
-    )
-    .unwrap_or_default()
-    .lines()
-    .filter(|l| !l.is_empty())
-    .map(str::to_string)
-    .collect()
+    diff_names(repo, base_sha, tip, false).unwrap_or_default()
 }
 
 fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
@@ -5021,6 +5123,79 @@ mod pool_parity_tests {
         assert_eq!(flags, [("sp-c", false), ("sp-s", true)]);
     }
 
+    fn gate_own_pool(rows: &[serde_json::Value], changed: &[(&str, &[&str])]) -> (Vec<PoolRow>, Vec<LeftOut>) {
+        let own = gate::def::parse("own gate.steps\nown gate/\nstep a\n").unwrap();
+        let changed = changed.iter().map(|(id, ps)| (id.to_string(), ps.iter().map(|p| p.to_string()).collect())).collect();
+        gate_own_left_out(pool_rows(rows, "spira").0, &own, &changed)
+    }
+
+    #[test]
+    fn a_submitted_item_touching_a_gate_own_file_is_left_out_naming_the_paths() {
+        let row = serde_json::json!({"bead_id": "sp-g", "state": "SUBMITTED", "tip": "tg", "holds": []});
+        let (pool, left) = gate_own_pool(std::slice::from_ref(&row), &[("sp-g", &["a.rs", "gate.steps"])]);
+        assert!(pool.is_empty());
+        assert_eq!(left, [LeftOut { id: "sp-g".into(), tip: "tg".into(), cause: Cause::GateUnjudged { paths: vec!["gate.steps".into()] } }]);
+        let (pool, left) = gate_own_pool(&[row], &[("sp-g", &["gate/src/fence.rs"])]);
+        assert!(pool.is_empty());
+        assert_eq!(left[0].cause, Cause::GateUnjudged { paths: vec!["gate/src/fence.rs".into()] });
+    }
+
+    #[test]
+    fn the_same_item_certified_at_its_tip_is_cut() {
+        let row = serde_json::json!({"bead_id": "sp-g", "state": "CERTIFIED", "tip": "tg", "holds": []});
+        let (pool, left) = gate_own_pool(&[row], &[("sp-g", &["gate.steps"])]);
+        assert!(left.is_empty());
+        assert_eq!(pool.iter().map(|p| (p.0.as_str(), p.5)).collect::<Vec<_>>(), [("sp-g", false)]);
+    }
+
+    #[test]
+    fn a_submitted_item_touching_no_gate_own_file_is_cut_provisional_as_today() {
+        let plain = serde_json::json!({"bead_id": "sp-o", "state": "SUBMITTED", "tip": "to", "holds": []});
+        let express = serde_json::json!({"bead_id": "sp-x", "state": "SUBMITTED", "tip": "tx", "holds": [], "express": true});
+        let express_gate = serde_json::json!({"bead_id": "sp-y", "state": "SUBMITTED", "tip": "ty", "holds": [], "express": true});
+        let (pool, left) = gate_own_pool(
+            &[plain, express, express_gate],
+            &[("sp-o", &["spira-lc/src/work.rs"]), ("sp-x", &["spira-lc/src/work.rs"]), ("sp-y", &["gate.steps"])],
+        );
+        assert_eq!(pool.iter().map(|p| (p.0.as_str(), p.5)).collect::<Vec<_>>(), [("sp-o", true), ("sp-x", true)]);
+        assert_eq!(left.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["sp-y"]);
+    }
+
+    #[test]
+    fn an_unreadable_gate_definition_or_diff_leaves_out_provisional_rows_and_keeps_certified_ones() {
+        let rows = [
+            serde_json::json!({"bead_id": "sp-p", "state": "SUBMITTED", "tip": "tp", "holds": []}),
+            serde_json::json!({"bead_id": "sp-c", "state": "CERTIFIED", "tip": "tc", "holds": []}),
+        ];
+        let pool = || pool_rows(&rows, "spira").0;
+        let ids = |p: &[PoolRow]| p.iter().map(|r| r.0.clone()).collect::<Vec<_>>();
+        let (kept, left) = gate_own_apply(pool(), Some("nonsense\n"), &mut |_| Ok(vec![]));
+        assert_eq!((ids(&kept), ids_of(&left)), (vec!["sp-c".to_string()], vec!["sp-p".to_string()]));
+        let (kept, left) = gate_own_apply(pool(), Some("own gate/\nstep a\n"), &mut |_| Err("boom".into()));
+        assert_eq!((ids(&kept), ids_of(&left)), (vec!["sp-c".to_string()], vec!["sp-p".to_string()]));
+        let (kept, left) = gate_own_apply(pool(), None, &mut |_| panic!("an ungated repo reads no diff"));
+        assert_eq!((kept.len(), left.len()), (2, 0));
+        let mut asked = Vec::new();
+        gate_own_apply(pool(), Some("own gate/\nstep a\n"), &mut |r| { asked.push(r.0.clone()); Ok(vec![]) });
+        assert_eq!(asked, ["sp-p"]);
+    }
+
+    fn ids_of(left: &[LeftOut]) -> Vec<String> {
+        left.iter().map(|l| l.id.clone()).collect()
+    }
+
+    #[test]
+    fn a_gate_unjudged_item_is_noted_once_per_tip() {
+        let run = testkit::TempDir::new("batcher-cut-gate-unjudged");
+        let at = |tip: &str| [LeftOut { id: "sp-g".into(), tip: tip.into(), cause: Cause::GateUnjudged { paths: vec!["gate.steps".into()] } }];
+        let announce = |left: &[LeftOut]| announce_with(run.path(), "r", left, &mut |_, _| Ok(()));
+        let first = announce(&at("t1"));
+        assert_eq!(first.len(), 1);
+        assert!(first[0].contains("gate.steps") && first[0].contains("CERTIFIED"), "{first:?}");
+        assert!(announce(&at("t1")).is_empty());
+        assert_eq!(announce(&at("t2")).len(), 1);
+    }
+
     #[test]
     fn a_submitted_bead_held_or_at_its_ejected_red_tip_is_left_out_naming_its_cause() {
         let held = |kind: &str| serde_json::json!({"bead_id": "sp-h", "state": "SUBMITTED", "tip": "th", "holds": [kind]});
@@ -6099,7 +6274,7 @@ mod forge_release_tests {
             lc_answer(Ok(Reply {
                 code: 0,
                 out: "[]".into(),
-                err: String::new()
+                err: String::new(), read_ended: false
             })),
             Ok("[]".into())
         );
@@ -6107,7 +6282,7 @@ mod forge_release_tests {
             lc_answer(Ok(Reply {
                 code: 3,
                 out: "x\nrefused: held\n".into(),
-                err: String::new()
+                err: String::new(), read_ended: false
             })),
             Err("spira-lc exited 3: refused: held".into())
         );
@@ -6329,7 +6504,7 @@ mod abandon_hold_tests {
         fn exchange(&self, argv: &[String], stdin: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push((argv.to_vec(), stdin.map(str::to_string)));
             let out = if argv[0] == "show-batch" { r#"{"progress":{"passes":2}}"# } else { "" };
-            Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new() })
+            Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
         }
     }
 
@@ -6487,6 +6662,35 @@ mod config_key_tests {
         let (added, retired) = config_key_changes(&repo, &base, &tip);
         assert_eq!((added, retired), (vec!["NEW_SECS".to_string(), "new_secs".to_string()], vec!["retired_secs".to_string()]));
         assert_eq!(config_key_changes(&repo, &base, &by), (vec![], vec![]));
+    }
+
+    #[test]
+    fn gate_own_check_leaves_out_a_provisional_row_that_moves_an_owned_file_and_skips_an_ungated_ref() {
+        let root = testkit::TempDir::new("gate-own-git");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        std::fs::write(d.join("gate.steps"), "own spira/fence.sh\nstep true\n").unwrap();
+        std::fs::write(d.join("spira/fence.sh"), "echo fence\n".repeat(20)).unwrap();
+        commit(d, "base");
+        testkit::git(d, &["checkout", "-q", "-b", "mover"]);
+        testkit::git(d, &["mv", "spira/fence.sh", "elsewhere.sh"]);
+        let mover = commit(d, "move");
+        testkit::git(d, &["checkout", "-q", "main"]);
+        testkit::git(d, &["checkout", "-q", "-b", "bystander"]);
+        std::fs::write(d.join("other"), "x\n").unwrap();
+        let by = commit(d, "other");
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        let row = |id: &str, tip: &str| (id.to_string(), tip.to_string(), 0u64, false, Vec::<String>::new(), true);
+        let (kept, left) = gate_own_check(&repo, vec![row("sp-m", &mover), row("sp-b", &by)]).unwrap();
+        assert_eq!(kept.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), vec!["sp-b"]);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].cause, Cause::GateUnjudged { paths: vec!["spira/fence.sh".into()] });
+        testkit::git(d, &["checkout", "-q", "main"]);
+        testkit::git(d, &["rm", "-q", "-f", "gate.steps"]);
+        commit(d, "ungated");
+        let (kept, left) = gate_own_check(&repo, vec![row("sp-m", &mover)]).unwrap();
+        assert_eq!((kept.len(), left.len()), (1, 0), "a landing ref with no gate.steps skips the check");
     }
 
     #[test]

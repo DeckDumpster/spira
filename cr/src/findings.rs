@@ -4,7 +4,7 @@
 use crate::cli::Outcome;
 use crate::ports::Ports;
 use crate::record::{self, Review};
-use crate::review::{self, Comment};
+use crate::review::{self, Comment, Sealed};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -27,7 +27,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Kind::Question => "question",
             Kind::Refactor => "refactor",
@@ -95,6 +95,8 @@ pub struct Finding {
     pub became: Became,
     #[serde(default)]
     pub generalised_by: Option<Value>,
+    #[serde(default)]
+    pub endorses: Option<u32>,
 }
 
 fn refuse(code: i32, msg: &str) -> Outcome {
@@ -105,7 +107,7 @@ fn findings_path(run: &Path, number: u32) -> PathBuf {
     record::dir(run, number).join("findings.jsonl")
 }
 
-fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
+pub(crate) fn load(run: &Path, number: u32) -> Result<Vec<Finding>, String> {
     let path = findings_path(run, number);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -132,7 +134,7 @@ pub fn record_finding(number: u32, ports: &Ports) -> Outcome {
     };
     let mut f: Finding = match serde_json::from_str(&ports.stdin) {
         Ok(f) => f,
-        Err(e) => return refuse(2, &format!("stdin is not a finding {{id?, words, comment_id?, exemplar: {{path, line}}, kind, rule, scope, became, generalised_by?}}: {e}")),
+        Err(e) => return refuse(2, &format!("stdin is not a finding {{id?, words, comment_id?, exemplar: {{path, line}}, kind, rule, scope, became, generalised_by?, endorses?}}: {e}")),
     };
     let widens = !f.became.statutes.is_empty() || !f.became.catalogue.is_empty();
     if f.kind == Kind::Fix && (f.scope != Scope::Unit || widens) {
@@ -158,6 +160,15 @@ pub fn record_finding(number: u32, ports: &Ports) -> Outcome {
     let total = review::line_count(&bytes);
     if f.exemplar.line == 0 || f.exemplar.line > total {
         return refuse(2, &format!("exemplar line {} is past the end of {} at {} ({total} lines)", f.exemplar.line, f.exemplar.path, r.source_sha));
+    }
+    if let Some(n) = f.endorses {
+        let fresh = match Sealed::load(run, number) {
+            Ok(s) => s.map_or(0, |s| s.fresh.len()),
+            Err(e) => return refuse(1, &e),
+        };
+        if n == 0 || n as usize > fresh {
+            return refuse(2, &format!("endorses {n} is not a fresh-read comment: review {number:03} has {fresh}, numbered from 1"));
+        }
     }
     let mut rows = match load(run, number) {
         Ok(r) => r,
@@ -293,18 +304,38 @@ struct Theirs {
     user: Option<Author>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Half {
+    Lens,
+    Fresh,
+}
+
+impl Half {
+    fn tag(self) -> &'static str {
+        match self {
+            Half::Lens => "lens",
+            Half::Fresh => "fresh",
+        }
+    }
+}
+
 struct Agreement {
-    agreed: Vec<(Comment, String)>,
+    agreed: Vec<(Half, Comment, String)>,
     only_you: Vec<String>,
-    only_concierge: Vec<Comment>,
+    only_concierge: Vec<(Half, Comment)>,
+    his_comments: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scores {
+    pub lens_predicted: usize,
+    pub his_comments: usize,
+    pub fresh_endorsed: usize,
+    pub fresh_points: usize,
 }
 
 fn agreement(run: &Path, r: &Review) -> Result<Agreement, String> {
-    let sealed: Vec<Comment> = match std::fs::read(record::dir(run, r.number).join("sealed.json")) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("sealed.json: {e}"))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(format!("reading sealed.json: {e}")),
-    };
+    let sealed = Sealed::load(run, r.number)?.unwrap_or(Sealed { lens: Vec::new(), fresh: Vec::new() });
     let path = record::dir(run, r.number).join("comments.json");
     let theirs: Vec<Theirs> = match std::fs::read(&path) {
         Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("{}: {e}", path.display()))?,
@@ -312,8 +343,9 @@ fn agreement(run: &Path, r: &Review) -> Result<Agreement, String> {
         Err(e) => return Err(format!("reading {}: {e}", path.display())),
     };
     let mut theirs: Vec<(Theirs, bool)> = theirs.into_iter().filter(|t| t.user.as_ref().and_then(|u| u.kind.as_deref()) != Some("Bot")).map(|t| (t, false)).collect();
-    let mut out = Agreement { agreed: Vec::new(), only_you: Vec::new(), only_concierge: Vec::new() };
-    for c in sealed {
+    let mut out = Agreement { agreed: Vec::new(), only_you: Vec::new(), only_concierge: Vec::new(), his_comments: theirs.len() };
+    let tagged = sealed.lens.into_iter().map(|c| (Half::Lens, c)).chain(sealed.fresh.into_iter().map(|c| (Half::Fresh, c)));
+    for (half, c) in tagged {
         let here = i64::from(c.line);
         let hit = theirs
             .iter()
@@ -324,16 +356,29 @@ fn agreement(run: &Path, r: &Review) -> Result<Agreement, String> {
         match hit {
             Some(i) => {
                 theirs[i].1 = true;
-                out.agreed.push((c, theirs[i].0.body.clone()));
+                out.agreed.push((half, c, theirs[i].0.body.clone()));
             }
-            None => out.only_concierge.push(c),
+            None => out.only_concierge.push((half, c)),
         }
     }
     out.only_you = theirs.into_iter().filter(|(_, used)| !used).map(|(t, _)| format!("{}:{} {}", t.path, t.line.unwrap_or(0), t.body)).collect();
     Ok(out)
 }
 
-fn closeout(r: &Review, rows: &[Finding], a: &Agreement) -> String {
+fn score(a: &Agreement, fresh_points: usize, rows: &[Finding]) -> Scores {
+    let mut endorsed: Vec<u32> = rows.iter().filter_map(|f| f.endorses).collect();
+    endorsed.sort_unstable();
+    endorsed.dedup();
+    Scores { lens_predicted: a.agreed.iter().filter(|(h, _, _)| *h == Half::Lens).count(), his_comments: a.his_comments, fresh_endorsed: endorsed.len(), fresh_points }
+}
+
+pub(crate) fn scores(r: &Review, ports: &Ports) -> Result<Scores, String> {
+    let run = &ports.run_dir;
+    let fresh = Sealed::load(run, r.number)?.map_or(0, |s| s.fresh.len());
+    Ok(score(&agreement(run, r)?, fresh, &load(run, r.number)?))
+}
+
+fn closeout(r: &Review, rows: &[Finding], a: &Agreement, sc: &Scores) -> String {
     let mut s = format!("## Review {:03}: findings\n\n", r.number);
     if rows.is_empty() {
         s.push_str("No findings recorded.\n");
@@ -341,17 +386,18 @@ fn closeout(r: &Review, rows: &[Finding], a: &Agreement) -> String {
     for f in rows {
         s.push_str(&format!("- {} [{}] {} → {}\n", id_of(f), f.kind.as_str(), f.rule, became_text(&f.became)));
     }
+    s.push_str(&format!("\n## The Concierge's review\n\n- His lens: predicted {} of your {} comments\n- Fresh read: you endorsed {} of its {} points\n", sc.lens_predicted, sc.his_comments, sc.fresh_endorsed, sc.fresh_points));
     s.push_str("\n## Agreement\n\n### Agreed\n");
-    for (c, theirs) in &a.agreed {
-        s.push_str(&format!("- {}:{} — Concierge: {} / you: {}\n", c.path, c.line, c.body, theirs));
+    for (half, c, theirs) in &a.agreed {
+        s.push_str(&format!("- {}:{} — Concierge ({}): {} / you: {}\n", c.path, c.line, half.tag(), c.body, theirs));
     }
     s.push_str("\n### Only you\n");
     for t in &a.only_you {
         s.push_str(&format!("- {t}\n"));
     }
     s.push_str("\n### Only the Concierge\n");
-    for c in &a.only_concierge {
-        s.push_str(&format!("- {}:{} {}\n", c.path, c.line, c.body));
+    for (half, c) in &a.only_concierge {
+        s.push_str(&format!("- {}:{} ({}) {}\n", c.path, c.line, half.tag(), c.body));
     }
     s
 }
@@ -389,7 +435,8 @@ pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
         write_if_changed(&dir.join(CATALOGUE), &catalogue(run)?)?;
         let message = format!("cr findings: review {number:03}, {} finding(s)\n\nRegenerated {review_name} and {CATALOGUE} from the findings records.\n", rows.len());
         ports.committer.commit(dir, &[review_name.as_str(), CATALOGUE], &message)?;
-        Ok(closeout(&r, &rows, &a))
+        let fresh = Sealed::load(run, number)?.map_or(0, |s| s.fresh.len());
+        Ok(closeout(&r, &rows, &a, &score(&a, fresh, &rows)))
     })();
     let text = match result {
         Ok(t) => t,

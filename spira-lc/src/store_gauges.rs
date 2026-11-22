@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn file_and_family_gauges_carry_their_names_and_the_family_label() {
         let dir = testkit::TempDir::new("store-gauges");
-        let b = state_store_sqlite::SqliteBackend::open(&dir.path().join("control.db"), state_store_sqlite::Options::default()).unwrap();
+        let b = state_store_sqlite::SqliteBackend::open(&dir.path().join("control.db"), state_store_sqlite::Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..state_store_sqlite::Options::default() }).unwrap();
         let mut head = 0;
         let bulk = vec![b'x'; 8_000];
         for i in 0..200 {
@@ -201,6 +201,7 @@ mod tests {
         assert!(reads.contains(READS_ENDED) && reads.contains(READS_OVERRAN), "{reads}");
         let gate = panel("control store longest gate wait by verb");
         assert!(exprs("control store longest gate wait by verb").contains(GATE_WAIT_MAX_SECONDS));
+        assert!(exprs("reads ended or held at the gate: what the caller did next").contains(crate::followups::READ_FOLLOWUPS));
         let line = |p: &serde_json::Value| -> Vec<f64> { p["fieldConfig"]["defaults"]["thresholds"]["steps"].as_array().unwrap().iter().filter_map(|s| s["value"].as_f64()).collect() };
         assert_eq!(line(gate), [0.1]);
         let wal = panel("control store WAL size");

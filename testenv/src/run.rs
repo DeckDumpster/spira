@@ -958,7 +958,19 @@ fn lease_label(args: &RunArgs, deps: &Deps) -> String {
 }
 
 /// Runs, then records the verdict in the run's event file once one was started.
+fn builder_deadline_refusal(deadline: Option<u64>, cap: u64, bead: Option<String>) -> Option<String> {
+    let bead = bead.filter(|b| !b.is_empty())?;
+    let given = deadline.filter(|d| *d > cap)?;
+    Some(format!(
+        "batch: --deadline {given} is above the {cap}s suite cap for a builder run ({bead}): drop --deadline, or pass --deadline {cap} or less and narrow --tests/--crates; a longer run is the Concierge's (no SPIRA_WORK_BEAD_ID)"
+    ))
+}
+
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
+    if let Some(msg) = builder_deadline_refusal(args.deadline, deps.settings.suite_cap, (deps.env)("SPIRA_WORK_BEAD_ID")) {
+        stderr(&msg);
+        return Finish::fault(2, "deadline-over-cap", 0);
+    }
     let results = std::cell::RefCell::new(None);
     let rec = std::cell::RefCell::new(gate::unitrecord::UnitRecord::default());
     let load1_start = (deps.load1)();
@@ -1073,6 +1085,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             who: &who,
             inherit: inherit.as_deref(),
             weight: 1,
+            bound_secs: cap::remaining(),
         };
         let seams = admission::Seams {
             size_of: &size_of,

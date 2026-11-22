@@ -1,9 +1,11 @@
 //! `cr open`, `cr seal`, `cr unseal` and `cr status`: a review's life from staged to published.
 
 use crate::cli::Outcome;
+use crate::coverage::{self, Coverage, Tally};
+use crate::findings;
 use crate::history;
 use crate::index::Index;
-use crate::ledger::{Ledger, LedgerFile, Row};
+use crate::ledger::{self, LedgerFile, Row};
 use crate::pick;
 use crate::ports::{Ports, SeededRng, SourceTree};
 use crate::record::{self, Kind, Review, State};
@@ -28,6 +30,35 @@ pub struct Comment {
     pub body: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Sealed {
+    pub lens: Vec<Comment>,
+    pub fresh: Vec<Comment>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredSeal {
+    Halves { lens: Vec<Comment>, fresh: Vec<Comment> },
+    Single(Vec<Comment>),
+}
+
+impl Sealed {
+    /// `None` when the review was never sealed. A review sealed as one undivided array is all lens.
+    pub(crate) fn load(run: &Path, number: u32) -> Result<Option<Sealed>, String> {
+        let path = record::dir(run, number).join("sealed.json");
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("reading sealed.json: {e}")),
+        };
+        match serde_json::from_slice(&bytes).map_err(|e| format!("sealed.json: {e}"))? {
+            StoredSeal::Halves { lens, fresh } => Ok(Some(Sealed { lens, fresh })),
+            StoredSeal::Single(lens) => Ok(Some(Sealed { lens, fresh: Vec::new() })),
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Progress {
     base_branch: Option<String>,
@@ -38,6 +69,7 @@ struct Progress {
     commit: Option<String>,
     ref_made: bool,
     pr: Option<(u64, String)>,
+    ledger_row: bool,
 }
 
 fn done(stdout: String) -> Outcome {
@@ -97,20 +129,21 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
             Err(tried) => return refuse(2, &format!("--aim {aim:?} matched nothing at commit {}\n  tried {}", ix.commit, tried.join("\n  tried "))),
         },
     };
-    let scored = pick::score_all(&ix, ports.tree.as_ref(), pool, &ports.config, &ports.ledger, now);
+    let (scored, mut ledger) = match pick::candidates(ports, &ix, pool, now) {
+        Ok(c) => c,
+        Err(e) => return refuse(1, &e),
+    };
     let mut rng = SeededRng::new(seed);
-    let mut ledger = ports.ledger.clone();
     let mut chosen: Vec<units::Unit> = Vec::new();
     for _ in 0..a.count {
         let left: Vec<pick::Scored> = scored.iter().filter(|s| !chosen.iter().any(|u| u.id == s.unit.id)).cloned().collect();
         let Some((i, _)) = pick::draw(&left, &ledger, &mut rng) else {
-            return refuse(1, &format!("only {} of {} units are drawable: the rest are excluded or already reviewed at their current blobs", chosen.len(), a.count));
+            return refuse(1, &format!("only {} of {} units are drawable: the rest are excluded, in flight, or reviewed at their current blobs", chosen.len(), a.count));
         };
         let unit = left[i].unit.clone();
-        ledger.rows.push(Row { review: String::new(), at: now, commit: ix.commit.clone(), kind: unit.kind.as_str().to_string(), unit_id: unit.id.clone(), files: Vec::new() });
+        ledger.rows.push(Row { review: String::new(), kind: unit.kind.as_str().to_string(), unit_id: unit.id.clone(), commit: ix.commit.clone(), files: Vec::new(), opened_at: now, closed_at: None, closed_as: None, attention: None });
         chosen.push(unit);
     }
-    let ledger_path = record::root(&ports.run_dir).join("ledger.jsonl");
     let mut out = String::new();
     for unit in chosen {
         let number = match record::allocate(&ports.run_dir) {
@@ -133,15 +166,7 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
             published_at: None,
             closed_at: None,
         };
-        let row = Row {
-            review: format!("{number:03}"),
-            at: now,
-            commit: ix.commit.clone(),
-            kind: unit.kind.as_str().to_string(),
-            unit_id: unit.id.clone(),
-            files: unit.files.iter().map(|f| LedgerFile { path: f.path.clone(), blob: ix.blobs.get(&f.path).cloned().unwrap_or_default() }).collect(),
-        };
-        if let Err(e) = record::save(&ports.run_dir, &r).and_then(|()| Ledger::append(&ledger_path, &row)) {
+        if let Err(e) = record::save(&ports.run_dir, &r) {
             return refuse(1, &e);
         }
         out.push_str(&format!("{number:03} {}\nseal with: cr seal --review {number:03} < seal.json\n", unit.id));
@@ -170,10 +195,10 @@ struct Cover {
 
 struct SealInput {
     cover: Cover,
-    comments: Vec<Comment>,
+    sealed: Sealed,
 }
 
-const SHAPE: &str = "stdin is one JSON object {\"does\": \"<sentences>\", \"look_first\": \"<sentences>\", \"comments\": [{path, line, body}, ...]}";
+const SHAPE: &str = "stdin is one JSON object {\"does\": \"<sentences>\", \"look_first\": \"<sentences>\", \"lens\": [{path, line, body}, ...], \"fresh\": [{path, line, body}, ...]}";
 
 fn parse_input(stdin: &str) -> Result<SealInput, String> {
     let v: Value = serde_json::from_str(stdin).map_err(|e| format!("{SHAPE}: {e}"))?;
@@ -186,13 +211,15 @@ fn parse_input(stdin: &str) -> Result<SealInput, String> {
         _ => Err(format!("`{key}` is missing or blank; {SHAPE}")),
     };
     let cover = Cover { does: prose("does")?, look_first: prose("look_first")? };
-    let comments: Vec<Comment> = serde_json::from_value(obj.get("comments").cloned().unwrap_or(Value::Null)).map_err(|e| format!("`comments` is not a JSON array of {{path, line, body}}: {e}"))?;
-    Ok(SealInput { cover, comments })
+    let half = |key: &str| -> Result<Vec<Comment>, String> {
+        serde_json::from_value(obj.get(key).cloned().unwrap_or(Value::Null)).map_err(|e| format!("`{key}` is missing or not a JSON array of {{path, line, body}}: {e}"))
+    };
+    Ok(SealInput { cover, sealed: Sealed { lens: half("lens")?, fresh: half("fresh")? } })
 }
 
-fn validate(comments: &[Comment], files: &[(String, Vec<u8>)]) -> Result<(), String> {
+fn validate(half: &str, comments: &[Comment], files: &[(String, Vec<u8>)]) -> Result<(), String> {
     if comments.is_empty() {
-        return Err("the sealed review is empty: an empty array is refused".to_string());
+        return Err(format!("the `{half}` half of the sealed review is empty: each half needs at least one comment"));
     }
     for c in comments {
         let Some((_, bytes)) = files.iter().find(|(p, _)| *p == c.path) else {
@@ -210,7 +237,7 @@ fn age_days(from_ms: u64, to_ms: u64) -> u64 {
     to_ms.saturating_sub(from_ms) / DAY_MS
 }
 
-const SECTIONS: [&str; 6] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Tests that exercise it"];
+const SECTIONS: [&str; 7] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Incidents that touched it", "## Tests that exercise it"];
 
 pub(crate) fn missing_section(body: &str) -> Option<&'static str> {
     SECTIONS.into_iter().find(|h| {
@@ -320,6 +347,8 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     m.push_str(&history::rewritten_line(&paths, tree, now, ports.config.rewrite_days));
     m.push_str(&format!("- Authors: {}\n", if authors.is_empty() { "none recorded".to_string() } else { authors.join(", ") }));
     m.push_str(&format!("\n{}\n\n", SECTIONS[5]));
+    m.push_str(&history::incident_lines(&paths, tree, ports.beads.as_ref()));
+    m.push_str(&format!("\n{}\n\n", SECTIONS[6]));
     let tests = tests_by_call_path(ix, u, &dependents);
     if tests.is_empty() {
         m.push_str("None found by call path.\n");
@@ -369,13 +398,12 @@ fn save_progress(dir: &Path, p: &Progress) -> Result<(), String> {
     record::write_atomic(&dir.join("progress.json"), serde_json::to_string_pretty(p).map_err(|e| e.to_string())?.as_bytes())
 }
 
+pub(crate) fn repo_refusal_message(ports: &Ports) -> Option<String> {
+    [(OWNER_KEY, &ports.repo_owner), (NAME_KEY, &ports.repo_name)].into_iter().find(|(_, v)| v.trim().is_empty()).map(|(key, _)| format!("{key} is empty; name the review repository in the config, it has no default"))
+}
+
 pub(crate) fn repo_refusal(ports: &Ports) -> Option<Outcome> {
-    for (key, v) in [(OWNER_KEY, &ports.repo_owner), (NAME_KEY, &ports.repo_name)] {
-        if v.trim().is_empty() {
-            return Some(refuse(2, &format!("{key} is empty; name the review repository in the config, it has no default")));
-        }
-    }
-    None
+    repo_refusal_message(ports).map(|m| refuse(2, &m))
 }
 
 pub fn seal(number: u32, ports: &Ports) -> Outcome {
@@ -408,8 +436,8 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     }
     if sealed_path.exists() {
         if let Some(Ok(input)) = &supplied {
-            let stored: Option<Vec<Comment>> = std::fs::read(&sealed_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
-            if Some(&input.comments) != stored.as_ref() {
+            let stored = Sealed::load(run, number).ok().flatten();
+            if Some(&input.sealed) != stored.as_ref() {
                 return refuse(2, &format!("review {number:03} is already sealed with different comments; a sealed review is not replaced"));
             }
             if stored_cover.as_ref().is_some_and(|c| *c != input.cover) {
@@ -423,10 +451,12 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
             Some(Err(e)) => return refuse(2, e),
             None => return refuse(2, &format!("stdin is empty; {SHAPE}")),
         };
-        if let Err(e) = validate(&input.comments, &files) {
-            return refuse(2, &e);
+        for (half, comments) in [("lens", &input.sealed.lens), ("fresh", &input.sealed.fresh)] {
+            if let Err(e) = validate(half, comments, &files) {
+                return refuse(2, &e);
+            }
         }
-        let bytes = serde_json::to_string_pretty(&input.comments).expect("comments serialise").into_bytes();
+        let bytes = serde_json::to_string_pretty(&input.sealed).expect("comments serialise").into_bytes();
         let cover_bytes = serde_json::to_string_pretty(&input.cover).expect("cover serialises").into_bytes();
         r.sealed_sha256 = Some(sha256_hex(&bytes));
         if let Err(e) = record::write_atomic(&cover_path, &cover_bytes).and_then(|()| record::write_atomic(&sealed_path, &bytes)).and_then(|()| record::save(run, &r)) {
@@ -465,6 +495,25 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     let mut p = load_progress(&dir);
     match push_branch(&mut p, &dir, &r, &files, &body, ports) {
         Ok((pr, url)) => {
+            if !p.ledger_row {
+                let row = Row {
+                    review: format!("{number:03}"),
+                    kind: r.unit.kind.as_str().to_string(),
+                    unit_id: r.unit.id.clone(),
+                    commit: r.source_sha.clone(),
+                    files: r.unit.files.iter().map(|f| LedgerFile { path: f.path.clone(), blob: ix.blobs.get(&f.path).cloned().unwrap_or_default() }).collect(),
+                    opened_at: ports.clock.now_ms(),
+                    closed_at: None,
+                    closed_as: None,
+                    attention: None,
+                };
+                if let Err(e) = ledger::append(ports, &[row]).and_then(|()| {
+                    p.ledger_row = true;
+                    save_progress(&dir, &p)
+                }) {
+                    return refuse(1, &e);
+                }
+            }
             r.pr = Some(pr);
             r.pr_url = Some(url.clone());
             if let Err(e) = record::save(run, &r).and_then(|()| record::set_state(run, number, State::Open, ports.clock.now_ms()).map(|_| ())) {
@@ -583,11 +632,13 @@ pub fn unseal(number: u32, said: Option<&str>, ports: &Ports) -> Outcome {
     if r.sealed_sha256.as_deref() != Some(sha256_hex(&sealed).as_str()) {
         return refuse(2, &format!("sealed.json no longer hashes to the sha256 recorded when review {number:03} was sealed; nothing is posted"));
     }
-    let comments: Vec<Comment> = match serde_json::from_slice(&sealed) {
-        Ok(c) => c,
-        Err(e) => return refuse(1, &format!("sealed.json: {e}")),
+    let halves = match Sealed::load(run, number) {
+        Ok(Some(h)) => h,
+        Ok(None) => return refuse(1, "sealed.json is missing"),
+        Err(e) => return refuse(1, &e),
     };
-    let payload: Vec<Value> = comments.iter().map(|c| json!({"path": c.path, "line": c.line, "side": "RIGHT", "body": c.body})).collect();
+    let labelled = halves.lens.iter().map(|c| ("**His lens:** ", c)).chain(halves.fresh.iter().map(|c| ("**Fresh read:** ", c)));
+    let payload: Vec<Value> = labelled.map(|(label, c)| json!({"path": c.path, "line": c.line, "side": "RIGHT", "body": format!("{label}{}", c.body)})).collect();
     let ep = format!("{repo}/pulls/{pr}/reviews");
     if let Err(e) = gh(ports, "POST", &ep, Some(&json!({"event": "COMMENT", "comments": payload}))) {
         return refuse(1, &e);
@@ -595,7 +646,7 @@ pub fn unseal(number: u32, said: Option<&str>, ports: &Ports) -> Outcome {
     if let Err(e) = record::write_atomic(&dir.join("posted"), b"") {
         return refuse(1, &e);
     }
-    done(format!("posted {} comments on pull request {pr}\n", comments.len()))
+    done(format!("posted {} comments on pull request {pr}\n", payload.len()))
 }
 
 // ───────────────────────────── status ─────────────────────────────
@@ -615,16 +666,80 @@ pub fn status(json_out: bool, ports: &Ports) -> Outcome {
         Err(e) => return refuse(1, &e),
     };
     let now = ports.clock.now_ms();
+    let cov = match status_coverage(ports) {
+        Ok(c) => c,
+        Err(e) => return refuse(1, &e),
+    };
+    let scores = match review_scores(&rs, ports) {
+        Ok(s) => s,
+        Err(e) => return refuse(1, &e),
+    };
+    let limit = ports.config.status_limit;
+    let cut = |n: usize| n.saturating_sub(limit);
     if json_out {
-        let v: Vec<Value> = rs
+        let reviews: Vec<Value> = rs
             .iter()
             .map(|r| json!({"number": format!("{:03}", r.number), "kind": r.kind.as_str(), "state": r.state.as_str(), "age": age(r.staged_at, now), "pr": r.pr, "url": r.pr_url, "title": r.unit.title}))
             .collect();
-        return done(format!("{}\n", Value::Array(v)));
+        let tally = |a: &str, t: &Tally| json!({"area": a, "reviewed": t.reviewed, "current": t.current, "total": t.total});
+        return done(format!(
+            "{}\n",
+            json!({"reviews": reviews, "scores": scores.iter().map(|(n, s)| json!({"review": format!("{n:03}"), "lens_predicted": s.lens_predicted, "his_comments": s.his_comments, "fresh_endorsed": s.fresh_endorsed, "fresh_points": s.fresh_points})).collect::<Vec<_>>(), "coverage": {
+                "commit": cov.commit,
+                "files": {"reviewed": cov.files.reviewed, "current": cov.files.current, "total": cov.files.total},
+                "areas": cov.areas.iter().map(|(a, t)| tally(a, t)).collect::<Vec<_>>(),
+                "kinds": cov.kinds.iter().map(|(k, r, t)| json!({"kind": k, "reviewed": r, "total": t})).collect::<Vec<_>>(),
+                "never_reviewed": {"files": cov.never_reviewed.iter().take(limit).map(|n| json!({"path": n.path, "first_commit_ms": n.first_commit_ms})).collect::<Vec<_>>(), "more": cut(cov.never_reviewed.len())},
+                "changed": {"files": cov.changed.iter().take(limit).map(|c| json!({"path": c.path, "review": c.review, "changed_lines": c.changed_lines})).collect::<Vec<_>>(), "more": cut(cov.changed.len())},
+            }})
+        ));
     }
-    let mut out = String::new();
+    let pct = |r: u32, t: u32| if t == 0 { 0 } else { u64::from(r) * 100 / u64::from(t) };
+    let mut out = String::from("open reviews\n");
     for r in rs {
         out.push_str(&format!("{:03} {} {} {} {} {}\n", r.number, r.kind.as_str(), r.state.as_str(), age(r.staged_at, now), r.pr_url.as_deref().unwrap_or("-"), r.unit.title));
     }
+    out.push_str("\nscores\n");
+    for (n, s) in &scores {
+        out.push_str(&format!("  {n:03} lens {}/{} fresh {}/{}\n", s.lens_predicted, s.his_comments, s.fresh_endorsed, s.fresh_points));
+    }
+    out.push_str(&format!("\ncoverage at {}: {}/{} files ({}%), {} at their current blob\n", cov.commit, cov.files.reviewed, cov.files.total, pct(cov.files.reviewed, cov.files.total), cov.files.current));
+    for (a, t) in &cov.areas {
+        out.push_str(&format!("  area {a}: {}/{} ({}%), {} current\n", t.reviewed, t.total, pct(t.reviewed, t.total), t.current));
+    }
+    for (k, r, t) in &cov.kinds {
+        out.push_str(&format!("  kind {k}: {r}/{t} units ({}%)\n", pct(*r, *t)));
+    }
+    out.push_str("\noldest never-reviewed files\n");
+    for n in cov.never_reviewed.iter().take(limit) {
+        out.push_str(&format!("  {} first committed {}\n", n.path, n.first_commit_ms.map_or("unknown".to_string(), |m| format!("{} ago", age(m, now)))));
+    }
+    if cut(cov.never_reviewed.len()) > 0 {
+        out.push_str(&format!("  … {} more\n", cut(cov.never_reviewed.len())));
+    }
+    out.push_str("\nchanged since review\n");
+    for c in cov.changed.iter().take(limit) {
+        out.push_str(&format!("  {} {} lines since review {}\n", c.path, c.changed_lines, c.review));
+    }
+    if cut(cov.changed.len()) > 0 {
+        out.push_str(&format!("  … {} more\n", cut(cov.changed.len())));
+    }
     done(out)
+}
+
+fn review_scores(rs: &[Review], ports: &Ports) -> Result<Vec<(u32, findings::Scores)>, String> {
+    let mut out = Vec::new();
+    for r in rs.iter().filter(|r| matches!(r.state, State::Published | State::Closed)) {
+        if record::dir(&ports.run_dir, r.number).join("sealed.json").exists() {
+            out.push((r.number, findings::scores(r, ports)?));
+        }
+    }
+    Ok(out)
+}
+
+fn status_coverage(ports: &Ports) -> Result<Coverage, String> {
+    let ix = Index::build(ports.tree.as_ref())?;
+    let (ledger, _) = ledger::load(ports)?;
+    let ledger = ledger.at_tree(ports.tree.as_ref())?;
+    Ok(coverage::coverage(&ix, ports.tree.as_ref(), &ledger, &ports.config))
 }

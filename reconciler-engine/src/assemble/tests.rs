@@ -36,7 +36,7 @@ mod verb {
     impl Transport for Store {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(Reply { code: self.1, out: self.2.clone(), err: String::new() })
+            Ok(Reply { code: self.1, out: self.2.clone(), err: String::new(), read_ended: false })
         }
     }
 

@@ -159,31 +159,95 @@ fn a_lease_after_the_holder_exits_reuses_the_warm_directory_with_a_selective_cle
     let _ = (p2.kill(), p2.wait());
 }
 
+const LEASE_BYTES: &str = "pub fn f() {}\n";
+
+fn release(b: &Box_, holder: &mut Child) {
+    let _ = (holder.kill(), holder.wait());
+    wait_released(b);
+}
+
+fn cargo_log(b: &Box_) -> String {
+    std::fs::read_to_string(&b.log).unwrap_or_default().trim().to_string()
+}
+
 #[test]
-fn an_unchanged_tree_cleans_nothing_and_a_release_records_a_change_without_cleaning() {
+fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_the_record() {
     let b = setup("bdcli-record");
     let mut p1 = sleeper();
     let (d1, _) = b.lease("hand-1", &p1);
-    let _ = (p1.kill(), p1.wait());
-    wait_released(&b);
+    release(&b, &mut p1);
 
     let _ = std::fs::remove_file(&b.log);
     let mut p2 = sleeper();
     let (d2, err) = b.lease("hand-2", &p2);
     assert_eq!(d2, d1, "the released directory is reused");
     assert!(!b.log.exists(), "the same tree again cleans nothing: {err}");
-
-    std::fs::write(b.tree.join("Cargo.lock"), "# lock changed\n").unwrap();
-    let _ = (p2.kill(), p2.wait());
-    wait_released(&b);
-    assert!(!b.log.exists(), "a release records the change and never cleans");
+    release(&b, &mut p2);
+    assert!(!b.log.exists(), "an unchanged tree cleans nothing on release");
 
     let mut p3 = sleeper();
-    let (d3, err) = b.lease("hand-3", &p3);
-    assert_eq!(d3, d1, "the released directory is reused");
-    assert!(
-        !b.log.exists(),
-        "the change the release recorded cleans nothing on the next lease: {err}"
+    b.lease("hand-3", &p3);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 2; }\n").unwrap();
+    release(&b, &mut p3);
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a", "release cleans only the crate changed in the lease");
+
+    let a = std::fs::File::options().write(true).open(b.tree.join("a/src/lib.rs")).unwrap();
+    std::fs::write(b.tree.join("a/src/lib.rs"), LEASE_BYTES).unwrap();
+    a.set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
+    let _ = std::fs::remove_file(&b.log);
+    let mut p4 = sleeper();
+    let (d4, err) = b.lease("hand-4", &p4);
+    assert_eq!(d4, d1);
+    assert_eq!(
+        cargo_log(&b),
+        "clean -q -p crate-a",
+        "bytes that differ from the release record are cleaned: {err}"
     );
-    let _ = (p3.kill(), p3.wait());
+    let _ = (p4.kill(), p4.wait());
+}
+
+#[test]
+fn a_file_rewritten_with_the_same_bytes_during_the_lease_is_cleaned_on_release() {
+    let b = setup("bdcli-same-bytes");
+    let mut p1 = sleeper();
+    b.lease("hand-1", &p1);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("a/src/lib.rs"), LEASE_BYTES).unwrap();
+    release(&b, &mut p1);
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+}
+
+#[test]
+fn a_lockfile_change_during_the_lease_cleans_the_workspace_on_release() {
+    let b = setup("bdcli-lock");
+    let mut p1 = sleeper();
+    b.lease("hand-1", &p1);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("Cargo.lock"), "# lock changed\n").unwrap();
+    release(&b, &mut p1);
+    assert_eq!(cargo_log(&b), "clean --workspace -q");
+}
+
+#[test]
+fn a_file_outside_every_crate_that_a_crate_read_is_cleaned_on_release_when_touched() {
+    let b = setup("bdcli-extras");
+    let root = std::fs::canonicalize(&b.tree).unwrap();
+    std::fs::write(root.join("doc.txt"), "doc\n").unwrap();
+    let mut p1 = sleeper();
+    let (d1, _) = b.lease("hand-1", &p1);
+    std::fs::create_dir_all(d1.join("debug/deps")).unwrap();
+    std::fs::write(
+        d1.join("debug/deps/crate_a-1.d"),
+        format!("x: {0}/a/src/lib.rs {0}/doc.txt\n", root.display()),
+    )
+    .unwrap();
+    release(&b, &mut p1);
+
+    let mut p2 = sleeper();
+    b.lease("hand-2", &p2);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(root.join("doc.txt"), "doc\n").unwrap();
+    release(&b, &mut p2);
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
 }

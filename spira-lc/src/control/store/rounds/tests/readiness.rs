@@ -80,7 +80,7 @@ fn readiness_of_spread_ids_reads_their_keys_and_never_ranges_the_table() {
 #[test]
 fn list_live_costs_the_same_over_a_larger_readiness_table_on_the_real_store() {
     let dir = testkit::TempDir::new("lc-live-steps");
-    let b = SqliteBackend::open(&dir.path().join("c.db"), state_store_sqlite::Options { max_read_ms: 120_000, ..Default::default() }).unwrap();
+    let b = SqliteBackend::open(&dir.path().join("c.db"), state_store_sqlite::Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Default::default() }).unwrap();
     let r = Rig::on(b, &clock());
     for i in 0..300 {
         r.ok(&["create-bead", &format!("sp-{:05}", i * 11), "--repo", "spira", "--ready"]);

@@ -166,7 +166,7 @@ struct Timed(std::sync::Mutex<Vec<std::time::Duration>>);
 impl spira_store::lc_call::Transport for Timed {
     fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
         let at = std::time::Instant::now();
-        let reply = spira_store::lc_call::Reply { code: 0, out: "[]".into(), err: String::new() };
+        let reply = spira_store::lc_call::Reply { code: 0, out: "[]".into(), err: String::new(), read_ended: false };
         self.0.lock().unwrap().push(at.elapsed());
         Ok(reply)
     }

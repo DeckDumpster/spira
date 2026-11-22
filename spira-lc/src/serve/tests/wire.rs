@@ -5,7 +5,7 @@ fn a_response_is_a_header_line_then_the_raw_bytes_once() {
     use std::io::Read;
     let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
     let body = "{\"q\": \"x\"}\nsecond line";
-    super::write_response(&a, 3, body, "").unwrap();
+    super::write_response(&a, 3, body, "", false).unwrap();
     drop(a);
     let mut got = String::new();
     b.read_to_string(&mut got).unwrap();
@@ -54,7 +54,7 @@ fn a_request_body_is_read_to_exactly_its_length() {
 fn a_stderr_answer_rides_after_stdout_with_its_own_length() {
     use std::io::Read;
     let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
-    super::write_response(&a, 3, "out", "why\n").unwrap();
+    super::write_response(&a, 3, "out", "why\n", false).unwrap();
     drop(a);
     let mut got = String::new();
     b.read_to_string(&mut got).unwrap();

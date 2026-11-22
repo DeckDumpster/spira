@@ -795,6 +795,7 @@ cr_churn_days
 cr_exclude
 seed
 cr_count_limit
+cr_status_limit
 cr_repo_owner
 cr_repo_name
 lc_request_deadline_ms
@@ -813,3 +814,4 @@ beads_sql_writer_password_file
 cr_rewrite_days
 lc_wal_line_bytes
 runtime_broker_cap
+lc_max_read_ms

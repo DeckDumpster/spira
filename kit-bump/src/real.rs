@@ -173,7 +173,7 @@ mod store_client_tests {
     impl Transport for Scripted {
         fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
             self.0.lock().unwrap().push(argv.join(" "));
-            let reply = |code, out: &str| Ok(Reply { code, out: out.into(), err: String::new() });
+            let reply = |code, out: &str| Ok(Reply { code, out: out.into(), err: String::new(), read_ended: false });
             match argv.get(1).map(String::as_str) {
                 Some("sp-open") => reply(0, r#"{"bead":{"state":"READY"}}"#),
                 Some("sp-done") => reply(0, r#"{"bead":{"state":"LANDED"}}"#),

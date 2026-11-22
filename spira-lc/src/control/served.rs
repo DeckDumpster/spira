@@ -45,6 +45,18 @@ fn lock_floor_ms() -> Result<u64, String> {
     }
 }
 
+/// The longest one read may hold before the store ends it: `SPIRA_LC_MAX_READ_MS`.
+fn max_read_ms() -> Result<u64, String> {
+    nonzero_read_limit(spira_config::process::cfg_parse::<u64>("SPIRA_LC_MAX_READ_MS")?)
+}
+
+fn nonzero_read_limit(ms: u64) -> Result<u64, String> {
+    match ms {
+        0 => Err("SPIRA_LC_MAX_READ_MS must be at least 1".into()),
+        n => Ok(n),
+    }
+}
+
 /// The wall clock lock expiries are read on: the whole second events are stamped at, pinned with
 /// the rest of the process by `SPIRA_NOW`, so a lease reads back as the second it was asked for.
 pub(crate) struct Wall;
@@ -75,16 +87,17 @@ fn backend_at(path: &str, opts: Options) -> Result<Served, String> {
     Ok(backend)
 }
 
-fn served_options(history_bytes: usize, wal_line_bytes: u64, metrics: Option<spira_otel::metrics::MetricsSink>) -> Options {
-    Options { history_bytes, wal_line_bytes, wall: Arc::new(Wall), metrics, readers: READERS, ..Options::default() }
+fn served_options(history_bytes: usize, wal_line_bytes: u64, max_read_ms: u64, metrics: Option<spira_otel::metrics::MetricsSink>) -> Options {
+    Options { history_bytes, wal_line_bytes, max_read_ms, wall: Arc::new(Wall), metrics, readers: READERS, ..Options::default() }
 }
 
 fn open(path: &str) -> Result<Store<Served>, String> {
     let history_bytes = spira_config::process::cfg_parse::<usize>("SPIRA_LC_HISTORY_RING_BYTES")?;
     let wal_line_bytes = spira_config::process::cfg_parse::<u64>("SPIRA_LC_WAL_LINE_BYTES")?;
+    let max_read_ms = max_read_ms()?;
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let metrics = Some(spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", std::time::Duration::from_millis(250)));
-    let backend = backend_at(path, served_options(history_bytes, wal_line_bytes, metrics))?;
+    let backend = backend_at(path, served_options(history_bytes, wal_line_bytes, max_read_ms, metrics))?;
     let floor = lock_floor_ms()?;
     let ports = Ports {
         mono: Arc::new(MonotonicClock::new()),
@@ -383,11 +396,11 @@ mod tests {
     fn steps_to_open(tag: &str, keys: usize) -> (u64, testkit::TempDir, Contract<Served>) {
         let dir = testkit::TempDir::new(tag);
         let path = dir.join("control.db");
-        let seed = SqliteBackend::open(&path, Options::default()).unwrap();
+        let seed = SqliteBackend::open(&path, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let rows: Vec<_> = (0..keys).map(|i| (format!("{}sp-{i:05}", crate::control::keys::LIFECYCLE), b"{}".to_vec())).collect();
         seed.bulk_load(2, rows).unwrap();
         drop(seed);
-        let backend = backend_at(path.to_str().unwrap(), Options::default()).unwrap();
+        let backend = backend_at(path.to_str().unwrap(), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let clock = runtime::ports::VirtualClock::new(0);
         let contract = Contract::open(backend, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
         (contract.backend().take_read_steps(), dir, contract)
@@ -416,7 +429,7 @@ mod tests {
                     probe_clock.0.fetch_add(150, Ordering::SeqCst);
                 }
             })),
-            ..served_options(1 << 20, 8 << 20, None)
+            ..served_options(1 << 20, 8 << 20, 100, None)
         };
         let backend = backend_at(path.to_str().unwrap(), opts).unwrap();
         let vclock = runtime::ports::VirtualClock::new(0);
@@ -460,6 +473,36 @@ mod tests {
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
         let err = open(dir.path().join("control.db").to_str().unwrap()).err().expect("a missing key is refused");
         assert!(err.contains("SPIRA_LC_WAL_LINE_BYTES"), "{err}");
+    }
+
+    #[test]
+    fn the_served_store_reads_under_the_fixture_allowance() {
+        let dir = testkit::TempDir::new("lc-served-max-read");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[]);
+        let doc = spira_config::validate(&std::fs::read_to_string(toml).unwrap()).unwrap();
+        let declared = doc.spira.as_ref().unwrap().get_u64("SPIRA_LC_MAX_READ_MS").unwrap().expect("the fixture declares the key");
+        let opts = served_options(1, 1, nonzero_read_limit(declared).unwrap(), None);
+        assert_eq!(opts.max_read_ms, testkit::LOADED_HOST_MAX_READ_MS);
+    }
+
+    #[test]
+    fn open_refuses_a_config_that_lacks_the_read_limit_naming_the_key() {
+        let dir = testkit::TempDir::new("lc-served-read-limit-absent");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[]);
+        let text = std::fs::read_to_string(&toml).unwrap();
+        assert!(text.contains("lc_max_read_ms = 120000"), "the complete fixture declares the key");
+        let without: String = text.lines().filter(|l| !l.starts_with("lc_max_read_ms")).map(|l| format!("{l}\n")).collect();
+        std::fs::write(&toml, without).unwrap();
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let err = open(dir.path().join("control.db").to_str().unwrap()).err().expect("a missing key is refused");
+        assert!(err.contains("SPIRA_LC_MAX_READ_MS"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_read_limit_is_refused_naming_the_key() {
+        let err = nonzero_read_limit(0).unwrap_err();
+        assert!(err.contains("SPIRA_LC_MAX_READ_MS"), "{err}");
+        assert_eq!(nonzero_read_limit(100), Ok(100));
     }
 
     #[test]

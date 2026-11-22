@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use lifecycle::bead::BeadState;
 use serde_json::Value;
 
-use crate::callers::{bead_field, s, show, usage, Answer, Bd, Machine, APPLIED, CANNOT_TELL, NO_ROW, REFUSED};
+use crate::callers::{bead_field, s, show_cause, usage, Answer, Bd, Machine, APPLIED, CANNOT_TELL, NO_ROW, REFUSED};
 
 const CHUNK: usize = 100;
 const USE: &str = "reconcile-content [--apply | --dry-run] [--since-seq N] [<bead-id>...]";
@@ -353,10 +353,10 @@ pub fn settle_owed_reopen(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Res
 }
 
 pub(crate) fn record_state(m: &mut dyn Machine, id: &str) -> Result<Option<String>, String> {
-    match show(m, id) {
+    match show_cause(m, id) {
         Ok(v) => Ok(Some(bead_field(&v, "state"))),
-        Err(NO_ROW) => Ok(None),
-        Err(rc) => Err(format!("the lifecycle row is unreadable (exit {rc})")),
+        Err((NO_ROW, _)) => Ok(None),
+        Err((rc, why)) => Err(format!("cannot read the lifecycle row (exit {rc}): {why}")),
     }
 }
 

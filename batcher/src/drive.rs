@@ -43,6 +43,8 @@ pub enum MainEnd {
 pub enum MainKind {
     Corpus,
     Verify,
+    /// Attribution seeded from the certify pass's reds: jobs only, no main run.
+    Seeded,
 }
 
 pub trait RoundRunner {
@@ -445,9 +447,19 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
         .collect();
     let mut lifted_reds: Vec<String> = vec![];
     runner.set_members(members);
-    runner.start_main(kind, suites)?;
     let mut seen = std::collections::BTreeSet::new();
     let mut main_end_at = None;
+    if kind == MainKind::Seeded {
+        let now = runner.now();
+        for s in suites {
+            seen.insert(s.clone());
+            red_main(&mut a, ops, s, &ids, now);
+        }
+        a.on_main_done(now);
+        main_end_at = Some(now);
+    } else {
+        runner.start_main(kind, suites)?;
+    }
     let mut idle = Idle::new(runner);
     let mut flying: BTreeMap<u64, String> = BTreeMap::new();
     loop {
@@ -482,7 +494,11 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 lifted_reds: vec![],
             });
         }
-        let poll = runner.poll_main()?;
+        let poll = if kind == MainKind::Seeded {
+            MainPoll::default()
+        } else {
+            runner.poll_main()?
+        };
         let now = runner.now();
         for (suite, green) in poll.results {
             if seen.insert(suite.clone()) {
@@ -2378,7 +2394,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             return confirmed_attribution(runner, ops, &members, &prior_reds);
         }
         suites = prior_reds;
-        kind = MainKind::Corpus;
+        kind = MainKind::Seeded;
     }
     for iteration in 0..bound {
         if runner.abandoned() {
@@ -2937,6 +2953,7 @@ pub(crate) mod tests {
         pub main: Vec<(String, u64, bool)>,
         pub main_kind: Vec<(MainKind, Vec<String>)>,
         pub jobs: Vec<(Job, u64, JobResult)>,
+        pub launched: Vec<Job>,
         pub reported: BTreeSet<String>,
         pub main_ended: Option<u64>,
         pub first_launch: Option<u64>,
@@ -3020,6 +3037,7 @@ pub(crate) mod tests {
                 main: vec![],
                 main_kind: vec![],
                 jobs: vec![],
+                launched: vec![],
                 reported: BTreeSet::new(),
                 main_ended: None,
                 first_launch: None,
@@ -3261,9 +3279,8 @@ pub(crate) mod tests {
             Ok(())
         }
         fn launch(&mut self, job: &Job) -> Result<(), String> {
-            if self.needs_runner && !self.runner_started {
-                return Err("no round-vm is running to answer the job request".into());
-            }
+            self.runner_started = true;
+            self.launched.push(job.clone());
             if self.refuses_removals && !job.removal.is_empty() {
                 return Err("no tree without those members".into());
             }
@@ -4301,10 +4318,7 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            f.main_kind[0],
-            (MainKind::Corpus, vec!["test-03.sh".into()])
-        );
+        assert!(f.main_kind.iter().all(|(k, _)| *k != MainKind::Corpus), "{:?}", f.main_kind);
         assert!(
             f.main_kind
                 .iter()
@@ -4696,7 +4710,34 @@ pub(crate) mod tests {
         f.prior_suites = reds3();
         let mut ops = touching_ops(&[("test-00.sh", &["m1"])]);
         attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
-        assert!(!f.main_kind.is_empty(), "the corpus attribution ran");
+        assert!(!f.launched.is_empty(), "the attribution ran its jobs");
+        assert!(f.main_kind.iter().all(|(k, _)| *k != MainKind::Corpus), "{:?}", f.main_kind);
+    }
+
+    #[test]
+    fn an_unconfirmed_prior_red_is_attributed_from_its_plain_job_without_a_corpus_main() {
+        let mut f = Fake::new(|_, tree| tree.contains("m1"));
+        f.needs_runner = true;
+        f.prior_suites = vec!["test-01.sh".into()];
+        let mut ops = touching_ops(&[("test-01.sh", &["m1"])]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(gone, ["m1"]);
+        assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 1), "{end:?}");
+        assert!(f.main_kind.iter().all(|(k, _)| *k != MainKind::Corpus), "{:?}", f.main_kind);
+        let first = &f.launched[0];
+        assert_eq!((first.suite.as_str(), first.purpose.clone(), first.removal.is_empty()), ("test-01.sh", Purpose::Plain, true));
+    }
+
+    #[test]
+    fn a_prior_red_that_does_not_reproduce_in_its_plain_job_lands_both_members() {
+        let mut f = Fake::new(|_, _| false);
+        f.needs_runner = true;
+        f.prior_suites = vec!["test-01.sh".into()];
+        let mut ops = touching_ops(&[("test-01.sh", &["m1"])]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), vec![member("m1"), member("m2")], budget6()).unwrap();
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(matches!(&end, RoundEnd::Land { members, .. } if members.len() == 2), "{end:?}");
     }
 
     #[test]

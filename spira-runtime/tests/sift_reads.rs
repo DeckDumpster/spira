@@ -18,7 +18,7 @@ struct Counting {
 
 impl Transport for Counting {
     fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new() });
+        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
         let named = |flag: &str| argv.iter().position(|a| a == flag).map(|i| argv[i + 1].clone());
         let by_id = |id: &str| self.rows.iter().find(|r| r["bead_id"] == id).cloned();
         self.asked.lock().unwrap().push(argv.join(" "));

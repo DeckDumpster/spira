@@ -4,7 +4,6 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 use state_store_sqlite::{Options, SqliteBackend};
 
@@ -14,10 +13,9 @@ fn closed_port() -> String {
 }
 
 fn write_comment(socket: &std::path::Path) -> spira_store::lc_call::Reply {
-    let argv: Vec<String> = ["content", "comments", "add", "sp-none", "hello"].iter().map(|s| s.to_string()).collect();
-    let stream = spira_store::lc_call::connect(socket).expect("connect");
-    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-    spira_store::lc_call::exchange_once(stream, &argv, None).unwrap_or_else(|_| panic!("no answer"))
+    spira_store::lc_call::LcClient::socket(socket)
+        .call(&["content", "comments", "add", "sp-none", "hello"])
+        .unwrap_or_else(|e| panic!("no answer: {e:?}"))
 }
 
 #[test]
@@ -26,7 +24,7 @@ fn a_content_write_builds_the_writer_again_once_its_password_file_exists() {
     let run_dir = dir.join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
     let store = dir.join("control.db");
-    drop(SqliteBackend::open(&store, Options::default()).unwrap());
+    drop(SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
     let socket = dir.join("lc.sock");
     let beads = dir.join("beads");
     std::fs::create_dir_all(beads.join(".beads")).unwrap();
@@ -46,6 +44,8 @@ fn a_content_write_builds_the_writer_again_once_its_password_file_exists() {
             ("SPIRA_BEADS_SQL_HOST", "127.0.0.1"),
             ("SPIRA_BEADS_SQL_PORT", &port),
             ("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE", &pw),
+            // Every write crosses the deadline path a loaded host takes; the ledger must answer the re-send.
+            ("SPIRA_LC_REQUEST_DEADLINE_MS", "1"),
         ],
     );
     std::fs::create_dir_all(dir.join("release/bin")).unwrap();
@@ -78,6 +78,18 @@ fn a_content_write_builds_the_writer_again_once_its_password_file_exists() {
     let _ = child.wait();
 
     let reading = format!("reading {pw}");
-    assert!(first.code != 0 && first.err.contains(&reading), "first write: code {} err {:?}", first.code, first.err);
-    assert!(!second.err.contains(&reading), "the failed build was kept: {:?}", second.err);
+    assert!(
+        first.code != 0 && first.err.contains(&reading),
+        "first write: code {} out {:?} err {:?}",
+        first.code,
+        first.out,
+        first.err
+    );
+    assert!(
+        !second.err.contains(&reading) && !second.out.contains(spira_store::lc_call::DEADLINE_ANSWER),
+        "second write: code {} out {:?} err {:?}: the failed build was kept",
+        second.code,
+        second.out,
+        second.err
+    );
 }

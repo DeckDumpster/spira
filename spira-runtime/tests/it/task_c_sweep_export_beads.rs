@@ -93,7 +93,7 @@ impl spira_store::lc_call::Transport for Store {
             ["content", "memories", ..] => "{}".into(),
             _ => String::new(),
         };
-        Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new() })
+        Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new(), read_ended: false })
     }
 }
 

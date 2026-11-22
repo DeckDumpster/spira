@@ -9,6 +9,12 @@ const STATE_FILE: &str = "state.json";
 const CALL_DEADLINE: Duration = Duration::from_secs(5);
 const EPOCH: &str = "2000-01-01T00:00:00Z";
 const OWNER_REPO: &str = "sim/sim";
+const REVIEW_LISTS: &[&str] = &["blobs", "trees", "git_commits", "refs", "review_comments", "reviews", "issue_comments"];
+const BASE_BRANCH: &str = "main";
+const BASE_SHA: &str = "0000000000000000000000000000000000000001";
+const BASE_TREE: &str = "0000000000000000000000000000000000000002";
+const BOT: &str = "spira-bot";
+const OPERATOR: &str = "operator";
 
 pub struct Out {
     pub code: i32,
@@ -93,6 +99,12 @@ impl State {
         } else {
             json!({"next": {}, "prs": [], "runs": [], "checks": [], "tags": [], "releases": [], "protection": {}})
         };
+        let mut v = v;
+        for k in REVIEW_LISTS {
+            if v[*k].is_null() {
+                v[*k] = json!([]);
+            }
+        }
         Ok(State { dir: dir.to_path_buf(), v })
     }
 
@@ -206,6 +218,7 @@ impl State {
             return Err(format!("pull request {n} is not open"));
         }
         p["state"] = json!("MERGED");
+        p["closedAt"] = json!(now);
         p["mergedAt"] = json!(now);
         p["mergeSha"] = p["headRefOid"].clone();
         Ok(())
@@ -487,7 +500,7 @@ fn pr_close(st: &mut State, args: &[String]) -> R<Out> {
     if p["state"] != "OPEN" {
         return Ok(Out { code: 1, stdout: Vec::new(), stderr: format!("Pull request #{n} is already {}\n", p["state"].as_str().unwrap_or("").to_lowercase()) });
     }
-    p["state"] = json!("CLOSED");
+    st.pr_close(n)?;
     Ok(Out { code: 0, stdout: Vec::new(), stderr: format!("✓ Closed pull request #{n}\n") })
 }
 
@@ -618,6 +631,7 @@ fn release_view(st: &State, args: &[String]) -> R<Out> {
 fn http_error(code: u16) -> R<Out> {
     let msg = match code {
         404 => "Not Found",
+        422 => "Unprocessable Entity",
         _ => "Error",
     };
     Ok(Out { code: 1, stdout: Vec::new(), stderr: format!("gh: {msg} (HTTP {code})\n") })
@@ -635,7 +649,7 @@ fn gh_pr_json(p: &Value) -> Value {
     let state = if p["state"] == "OPEN" { "open" } else { "closed" };
     json!({
         "number": p["number"], "state": state, "title": p["title"], "html_url": p["url"], "merged_at": p["mergedAt"],
-        "merge_commit_sha": p["mergeSha"], "head": {"ref": p["headRefName"], "sha": p["headRefOid"]}, "base": {"ref": p["baseRefName"]},
+        "merge_commit_sha": p["mergeSha"], "closed_at": p["closedAt"], "merged": p["state"] == "MERGED", "head": {"ref": p["headRefName"], "sha": p["headRefOid"]}, "base": {"ref": p["baseRefName"]},
     })
 }
 
@@ -734,7 +748,88 @@ fn api(st: &mut State, args: &[String]) -> R<Out> {
         }
         ("GET", ["actions", "runners"]) => json!({"total_count": 0, "runners": []}),
         ("GET", ["check-runs", id, "annotations"]) if id.parse::<u64>().is_ok() => json!([]),
+        ("GET", []) => json!({"default_branch": BASE_BRANCH, "full_name": segs[1..3].join("/")}),
+        ("GET", ["branches", b]) if *b == BASE_BRANCH => json!({"name": b, "protected": st.v["protection"].get(*b).is_some(), "commit": {"sha": BASE_SHA, "commit": {"tree": {"sha": BASE_TREE}}}}),
         ("GET", ["branches", b]) => json!({"name": b, "protected": st.v["protection"].get(*b).is_some()}),
+        ("POST", ["git", kind @ ("blobs" | "trees" | "commits")]) => {
+            let input = input_json(&f)?;
+            let (list, field) = match *kind {
+                "blobs" => ("blobs", "content"),
+                "trees" => ("trees", "tree"),
+                _ => ("git_commits", "message"),
+            };
+            let sha = format!("{:040x}", 0x100 + st.next("object"));
+            st.list_mut(list).push(json!({"sha": sha, field: input[field]}));
+            json!({"sha": sha})
+        }
+        ("POST", ["git", "refs"]) => {
+            let input = input_json(&f)?;
+            let name = input["ref"].as_str().ok_or("git/refs: `ref` is required")?;
+            if st.list("refs").iter().any(|r| r["ref"] == name) {
+                return http_error(422);
+            }
+            st.list_mut("refs").push(json!({"ref": name, "sha": input["sha"]}));
+            json!({"ref": name, "object": {"sha": input["sha"]}})
+        }
+        ("GET", ["git", "ref", name @ ..]) => match st.list("refs").iter().find(|r| r["ref"] == format!("refs/{}", name.join("/"))) {
+            Some(r) => json!({"ref": r["ref"], "object": {"sha": r["sha"]}}),
+            None => return http_error(404),
+        },
+        ("POST", ["pulls"]) => {
+            let input = input_json(&f)?;
+            let head = input["head"].as_str().ok_or("pulls: `head` is required")?.to_string();
+            let Some(sha) = st.list("refs").iter().find(|r| r["ref"] == format!("refs/heads/{head}")).map(|r| r["sha"].clone()) else { return http_error(422) };
+            if st.list("prs").iter().any(|p| p["headRefName"] == head.as_str() && p["state"] == "OPEN") {
+                return http_error(422);
+            }
+            let n = st.next("pr");
+            let url = format!("https://github.com/{}/pull/{n}", segs[1..3].join("/"));
+            let now = st.now();
+            st.list_mut("prs").push(json!({
+                "number": n, "title": input["title"], "body": input["body"], "state": "OPEN", "headRefName": head, "baseRefName": input["base"],
+                "headRefOid": sha, "url": url, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "isDraft": false,
+                "autoMergeRequest": Value::Null, "comments": [], "createdAt": now, "mergedAt": Value::Null, "mergeSha": Value::Null, "closedAt": Value::Null,
+            }));
+            json!({"number": n, "html_url": url})
+        }
+        ("GET", ["pulls", n]) => match st.list("prs").iter().find(|p| p["number"] == parse_u64(n).unwrap_or(0)) {
+            Some(p) => gh_pr_json(p),
+            None => return http_error(404),
+        },
+        ("GET", ["pulls", n, "comments"]) => Value::Array(st.list("review_comments").iter().filter(|c| c["pr"] == parse_u64(n).unwrap_or(0)).map(|c| c["json"].clone()).collect()),
+        ("POST", ["pulls", n, "comments", id, "replies"]) => {
+            let (n, id) = (parse_u64(n)?, parse_u64(id)?);
+            let parent = st.list("review_comments").iter().find(|c| c["pr"] == n && c["json"]["id"] == id).map(|c| c["json"].clone());
+            let Some(parent) = parent else { return http_error(404) };
+            let body = input_json(&f)?["body"].clone();
+            let root = parent["in_reply_to_id"].as_u64().unwrap_or(id);
+            st.add_review_comment(n, BOT, "Bot", parent["path"].clone(), parent["line"].clone(), body, Some(root), None)
+        }
+        ("GET", ["pulls", n, "reviews"]) => Value::Array(st.list("reviews").iter().filter(|r| r["pr"] == parse_u64(n).unwrap_or(0)).map(|r| r["json"].clone()).collect()),
+        ("POST", ["pulls", n, "reviews"]) => {
+            let n = parse_u64(n)?;
+            let input = input_json(&f)?;
+            let state = match input["event"].as_str().unwrap_or("COMMENT") {
+                "APPROVE" => "APPROVED",
+                "REQUEST_CHANGES" => "CHANGES_REQUESTED",
+                _ => "COMMENTED",
+            };
+            let review = st.add_review(n, BOT, "Bot", state);
+            for c in input["comments"].as_array().into_iter().flatten() {
+                st.add_review_comment(n, BOT, "Bot", c["path"].clone(), c["line"].clone(), c["body"].clone(), None, review["id"].as_u64());
+            }
+            review
+        }
+        ("GET", ["issues", n, "comments"]) => Value::Array(st.list("issue_comments").iter().filter(|c| c["pr"] == parse_u64(n).unwrap_or(0)).map(|c| c["json"].clone()).collect()),
+        ("POST", ["issues", n, "comments"]) => {
+            let n = parse_u64(n)?;
+            let body = input_json(&f)?["body"].clone();
+            st.add_issue_comment(n, BOT, "Bot", body)
+        }
+        ("GET", ["issues", "comments", id]) => match st.list("issue_comments").iter().find(|c| c["json"]["id"] == parse_u64(id).unwrap_or(0)) {
+            Some(c) => c["json"].clone(),
+            None => return http_error(404),
+        },
         ("GET", ["branches", b, "protection"]) => match st.v["protection"].get(*b) {
             Some(p) => p.clone(),
             None => return http_error(404),
@@ -769,6 +864,67 @@ fn api(st: &mut State, args: &[String]) -> R<Out> {
     match jq_expr {
         Some(e) => text(jq(&text_body, e)?),
         None => text(text_body + "\n"),
+    }
+}
+
+fn parse_u64(s: &str) -> R<u64> {
+    s.parse().map_err(|_| format!("not a number: {s}"))
+}
+
+fn input_json(f: &Flags) -> R<Value> {
+    let bytes = match f.get("--input") {
+        Some("-") => read_stdin()?,
+        Some(p) => std::fs::read(p).map_err(|e| format!("{p}: {e}"))?,
+        None => return Ok(Value::Null),
+    };
+    serde_json::from_slice(&bytes).map_err(|e| format!("--input is not JSON: {e}"))
+}
+
+fn user(login: &str, kind: &str) -> Value {
+    json!({"login": login, "type": kind})
+}
+
+impl State {
+    fn pr_url(&self, n: u64) -> String {
+        self.v["prs"].as_array().and_then(|ps| ps.iter().find(|p| p["number"] == n)).and_then(|p| p["url"].as_str()).unwrap_or("").to_string()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_review_comment(&mut self, pr: u64, login: &str, kind: &str, path: Value, line: Value, body: Value, reply_to: Option<u64>, review: Option<u64>) -> Value {
+        let id = self.next("comment");
+        let url = format!("{}#discussion_r{id}", self.pr_url(pr));
+        let now = self.now();
+        let j = json!({"id": id, "in_reply_to_id": reply_to, "user": user(login, kind), "path": path, "line": line, "body": body, "created_at": now, "html_url": url, "pull_request_review_id": review});
+        self.list_mut("review_comments").push(json!({"pr": pr, "json": j}));
+        j
+    }
+
+    fn add_issue_comment(&mut self, pr: u64, login: &str, kind: &str, body: Value) -> Value {
+        let id = self.next("comment");
+        let url = self.pr_url(pr);
+        let now = self.now();
+        let j = json!({"id": id, "user": user(login, kind), "body": body, "created_at": now, "html_url": format!("{url}#issuecomment-{id}"), "issue_url": format!("https://api.github.com/repos/{OWNER_REPO}/issues/{pr}")});
+        self.list_mut("issue_comments").push(json!({"pr": pr, "json": j}));
+        j
+    }
+
+    fn add_review(&mut self, pr: u64, login: &str, kind: &str, state: &str) -> Value {
+        let id = self.next("review");
+        let now = self.now();
+        let j = json!({"id": id, "user": user(login, kind), "state": state, "submitted_at": now});
+        self.list_mut("reviews").push(json!({"pr": pr, "json": j}));
+        j
+    }
+
+    fn pr_close(&mut self, n: u64) -> R<()> {
+        let now = self.now();
+        let p = self.find("prs", "number", &json!(n)).ok_or(format!("no pull request {n}"))?;
+        if p["state"] != "OPEN" {
+            return Err(format!("pull request {n} is not open"));
+        }
+        p["state"] = json!("CLOSED");
+        p["closedAt"] = json!(now);
+        Ok(())
     }
 }
 
@@ -897,6 +1053,34 @@ pub fn ctl(dir: &Path, args: &[String]) -> R<String> {
             let [n] = &f.pos[..] else { return Err("usage: pr-merge <number>".into()) };
             st.pr_merge(n.parse().map_err(|_| format!("invalid pr {n}"))?)?;
             String::new()
+        }
+        "pr-close" => {
+            let f = parse(a, &[], &[])?;
+            let [n] = &f.pos[..] else { return Err("usage: pr-close <number>".into()) };
+            st.pr_close(parse_u64(n)?)?;
+            String::new()
+        }
+        "pr-review-comment" => {
+            let f = parse(a, &[("--author", "")], &[])?;
+            let [n, path, line, body] = &f.pos[..] else { return Err("usage: pr-review-comment <pr> <path> <line> <body> [--author <login>]".into()) };
+            let c = st.add_review_comment(parse_u64(n)?, f.get("--author").unwrap_or(OPERATOR), "User", json!(path), json!(parse_u64(line)?), json!(body), None, None);
+            format!("{}\n", c["id"])
+        }
+        "pr-comment" => {
+            let f = parse(a, &[("--author", "")], &[])?;
+            let [n, body] = &f.pos[..] else { return Err("usage: pr-comment <pr> <body> [--author <login>]".into()) };
+            let c = st.add_issue_comment(parse_u64(n)?, f.get("--author").unwrap_or(OPERATOR), "User", json!(body));
+            format!("{}\n", c["id"])
+        }
+        "pr-review" => {
+            let f = parse(a, &[("--author", "")], &[])?;
+            let [n, state] = &f.pos[..] else { return Err("usage: pr-review <pr> <COMMENTED|APPROVED|CHANGES_REQUESTED> [--author <login>]".into()) };
+            let state = state.to_uppercase();
+            if !["COMMENTED", "APPROVED", "CHANGES_REQUESTED"].contains(&state.as_str()) {
+                return Err(format!("pr-review: unknown state {state}"));
+            }
+            let r = st.add_review(parse_u64(n)?, f.get("--author").unwrap_or(OPERATOR), "User", &state);
+            format!("{}\n", r["id"])
         }
         "pr-mergeable" => {
             let f = parse(a, &[], &[])?;

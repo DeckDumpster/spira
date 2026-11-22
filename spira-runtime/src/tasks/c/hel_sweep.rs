@@ -901,7 +901,7 @@ mod tests {
                 "show" => (0, r#"{"bead":{"state":"SUBMITTED","version":3}}"#.to_string()),
                 _ => (0, String::new()),
             };
-            Ok(spira_store::lc_call::Reply { code, out, err: String::new() })
+            Ok(spira_store::lc_call::Reply { code, out, err: String::new(), read_ended: false })
         }
     }
 
