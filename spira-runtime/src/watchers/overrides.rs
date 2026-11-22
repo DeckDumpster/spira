@@ -1,12 +1,14 @@
-//! Declared operator overrides: each tick runs `overrides.sh apply`, which holds every
-//! unlanded override in place and retires the ones whose bead reached the landing ref. A pass
-//! that fails is said to the Concierge once per distinct failure, not once per tick.
+//! Declared operator overrides: `overrides.sh apply` holds every unlanded override in place and
+//! retires the ones whose bead reached the landing ref. It runs at boot, when the land leg ends
+//! (the only thing that moves the landing ref), and on a backstop tick. A pass that fails is
+//! said to the Concierge once per distinct failure, not once per pass.
 
 use runtime::event::*;
 use runtime::rows::Part;
 use serde::{Deserialize, Serialize};
 
 use super::{answered_effect, carried, iso8601, INBOX_APPEND};
+use crate::tasks::a::sentinel_pass::LANDING_UNIT;
 
 pub const STREAM: &str = "watch.overrides";
 pub const TICK: EventKindTag = "overrides.tick";
@@ -49,10 +51,14 @@ pub fn decide(carry: &Carry, failure: Option<&str>) -> (Carry, Option<String>) {
 
 impl Handler for Overrides {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[TICK, runtime::units::UNIT_RAN, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.kind.tag == runtime::units::UNIT_RAN {
+            let landed = runtime::units::UnitRan::from_event_kind(&ev.kind).is_some_and(|r| r.handle.name == LANDING_UNIT);
+            return if landed { vec![Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:land:{}", ev.at), String::new(), DEADLINE_MS))] } else { vec![] };
+        }
         if ev.stream.0 != STREAM {
             return vec![];
         }
@@ -89,6 +95,7 @@ impl Handler for Overrides {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime::Executor;
 
     #[test_id(tepmef1)]
     #[test]
@@ -134,5 +141,52 @@ mod tests {
         let said: Vec<_> = e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).collect();
         assert_eq!(said.len(), 1, "the same failure on the next pass is not said again");
         assert!(said[0].spec.input.contains("bead sp-x is not in the store"));
+    }
+
+    fn ran(unit: &str) -> EventKind {
+        use runtime::units::{Exit, UnitHandle, UnitRan};
+        UnitRan { handle: UnitHandle::named(unit), exit: Exit::Code(0), duration_ms: 1 }.event_kind()
+    }
+
+    fn engine(interval_ms: u64) -> (runtime::ports::VirtualClock, runtime::Engine) {
+        use runtime::ports::VirtualClock;
+        let clock = VirtualClock::new(1_800_000_000_000);
+        let e = runtime::Engine::open(runtime::MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![Overrides { interval_ms }.registration()], 0).unwrap();
+        (clock, e)
+    }
+
+    fn applies(e: &runtime::Engine) -> usize {
+        use runtime::Executor;
+        e.pending_effects().iter().filter(|p| p.spec.name == APPLY).count()
+    }
+
+    #[test_id(tdgq78j)]
+    #[test]
+    fn the_land_leg_ending_asks_for_one_pass_and_another_unit_asks_for_none() {
+        let (_c, mut e) = engine(3_600_000);
+        e.submit("t/ran-other", runtime::sources::UNITS_STREAM, ran("spira-batch-x")).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(applies(&e), 0);
+        e.submit("t/ran", runtime::sources::UNITS_STREAM, ran(LANDING_UNIT)).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(applies(&e), 1);
+    }
+
+    #[test_id(tqqviae)]
+    #[test]
+    fn an_idle_hour_interval_asks_for_the_boot_pass_only() {
+        let (clock, mut e) = engine(3_600_000);
+        let (id, stream, kind) = Overrides::boot();
+        e.submit(id, stream, kind).unwrap();
+        e.run_until_idle().unwrap();
+        assert_eq!(applies(&e), 1);
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(applies(&e), 1, "no second pass within a minute");
+        let first = e.pending_effects().into_iter().find(|p| p.spec.name == APPLY).unwrap();
+        e.complete(&first.key, runtime::Outcome::Succeeded(String::new())).unwrap();
+        clock.advance(3_600_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(applies(&e), 1, "the backstop tick asks for a pass once the hour has elapsed");
     }
 }
