@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=runtime
+DOC=Builder claims between Concierge pages for one live item that has not landed.
+SCHEMA=A live item is paged to the Concierge inbox each time its builder-claim count crosses a multiple of this (unit: claims; integer; default 4). Must be at least 1.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CLAIM_PAGE_EVERY:=4}"
+SPIRA_CONF_DEFAULT_EOF

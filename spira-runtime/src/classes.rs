@@ -286,6 +286,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("submission-provision.observe", Store),
     ("submission-provision.password_write", Host),
     ("submission-provision.unit_restart", Host),
+    ("claim-count.observe", Store),
     ("supersede-duty.act", Store),
     ("supersede-duty.observe", Store),
     ("sweep.archive.index", Host),

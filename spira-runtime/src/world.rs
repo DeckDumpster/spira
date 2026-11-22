@@ -21,6 +21,7 @@ use crate::hunk;
 use crate::watchers::view;
 use crate::wiki_git::{git, git_ok_with, exporter_run, overrides_apply, tmux};
 use crate::watchers::brain_dirty;
+use crate::watchers::claim_count;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
 use crate::watchers::publish_backlog::{self, Read};
@@ -759,6 +760,26 @@ impl World {
             }
         }
         serde_json::to_string(&supersede_duty::Snapshot { held }).map_err(|e| e.to_string())
+    }
+
+    /// Every live item with a builder claim: its claim count and kept session ends, as the lifecycle row holds them.
+    pub fn claim_count_snapshot(&self) -> Result<String, String> {
+        let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live"])?; // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
+        let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("live list unparsed: {e}"))?;
+        let mut snap = claim_count::Snapshot::default();
+        for r in &rows {
+            let id = r["bead_id"].as_str().ok_or_else(|| format!("live row without a bead_id: {r}"))?;
+            let n: u32 = match &r["builder_claims"] {
+                Value::String(s) => s.trim().parse().map_err(|e| format!("{id}: builder_claims {s:?} unparsed: {e}"))?,
+                Value::Number(n) => n.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| format!("{id}: builder_claims {n} unparsed"))?,
+                other => return Err(format!("{id}: builder_claims is {other}, not a number")),
+            };
+            let ends = r["session_ends"].as_array().ok_or_else(|| format!("{id}: session_ends is {}, not a list", r["session_ends"]))?.clone();
+            if n >= 1 {
+                snap.rows.push(claim_count::Claims { id: id.to_string(), n, ends });
+            }
+        }
+        serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
     /// One adjudication write through the lifecycle, then the evidence note on the bead.

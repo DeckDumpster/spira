@@ -8,6 +8,7 @@ pub mod cr_comments;
 pub mod design_asks;
 pub mod halt;
 pub mod brain_dirty;
+pub mod claim_count;
 pub mod dependency;
 pub mod bead_sweep;
 pub mod inbox_keeper;
