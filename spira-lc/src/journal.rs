@@ -384,6 +384,60 @@ pub(crate) mod counting {
         }
     }
 
+    /// A backend charging a virtual clock what production measured: 1 ms per 16 KiB read and per `get`.
+    #[derive(Clone)]
+    pub(crate) struct Costed {
+        pub inner: MemBackend,
+        pub clock: runtime::ports::VirtualClock,
+        pub armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Costed {
+        fn charge(&self, bytes: usize, gets: u64) {
+            self.clock.advance((bytes / 16_384) as u64 + gets);
+        }
+    }
+
+    impl state_store::Backend for Costed {
+        fn head(&self) -> state_store::Result<u64> {
+            self.inner.head()
+        }
+        fn get(&self, key: &str, at: u64) -> state_store::Result<Option<state_store::Version>> {
+            let v = self.inner.get(key, at)?;
+            self.charge(v.as_ref().map_or(0, |v| v.value.len()), 1);
+            Ok(v)
+        }
+        fn get_many(&self, keys: &[&str], at: u64) -> state_store::Result<Vec<Option<state_store::Version>>> {
+            let v = self.inner.get_many(keys, at)?;
+            self.charge(v.iter().flatten().map(|v| v.value.len()).sum(), 0);
+            Ok(v)
+        }
+        fn range(&self, prefix: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<(String, state_store::Version)>> {
+            let rows = self.inner.range(prefix, after, limit, at)?;
+            self.charge(rows.iter().map(|r| r.1.value.len()).sum(), 0);
+            Ok(rows)
+        }
+        fn owned_by(&self, owner: &str, after: Option<&str>, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+            self.inner.owned_by(owner, after, limit, at)
+        }
+        fn due(&self, now: u64, limit: usize, at: u64) -> state_store::Result<Vec<String>> {
+            self.inner.due(now, limit, at)
+        }
+        fn commit(&self, expect: u64, batch: &[state_store::Write]) -> state_store::Result<u64> {
+            let first = self.armed.swap(false, std::sync::atomic::Ordering::SeqCst);
+            let rev = self.inner.commit(expect, batch)?;
+            if first {
+                std::mem::forget(state_store::phases::deadline_scoped(std::time::Instant::now()));
+            }
+            Ok(rev)
+        }
+        fn log(&self, from: u64, max_mains: usize) -> state_store::Result<Vec<state_store::LogEntry>> {
+            self.inner.log(from, max_mains)
+        }
+        fn compact(&self, rev: u64) -> state_store::Result<()> {
+            self.inner.compact(rev)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -499,7 +553,7 @@ mod tests {
         (crate::control::store::Store::new(c, 1_000), raw)
     }
 
-    fn put_raw(raw: &Contract<MemBackend>, key: &str, v: Value) {
+    fn put_raw<B: state_store::Backend>(raw: &Contract<B>, key: &str, v: Value) {
         let t = state_store::Txn::new().put(key, state_store::Object::new(v));
         assert!(raw.txn(&t, &state_store::Request::new(&format!("raw-{key}"), "test", "raw")).unwrap().succeeded);
     }
@@ -769,7 +823,7 @@ mod tests {
         (s, raw)
     }
 
-    fn all_keys(raw: &Contract<MemBackend>) -> Vec<String> {
+    fn all_keys<B: state_store::Backend>(raw: &Contract<B>) -> Vec<String> {
         raw.list(&["runtime/"], &state_store::Selector::Everything).unwrap().0.into_iter().map(|i| i.key).collect()
     }
 
@@ -821,6 +875,86 @@ mod tests {
         assert_eq!(out.legacy_deleted, crate::control::journal::SWEEP_STEP);
         assert!(next.unwrap().to_string().starts_with("legacy:runtime/event/"), "the cursor stays inside event");
         assert_eq!(all_keys(&raw).iter().filter(|k| k.starts_with("runtime/event/")).count(), 5);
+    }
+
+    fn costed_store() -> (crate::control::store::Store<counting::Costed>, Contract<counting::Costed>, VirtualClock, std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        let clock = VirtualClock::new(1_000);
+        let armed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let backend = counting::Costed { inner: MemBackend::new(), clock: clock.clone(), armed: armed.clone() };
+        let open = || Contract::open(backend.clone(), Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        (crate::control::store::Store::new(open(), 1_000), open(), clock, armed)
+    }
+
+    fn sweep_timed(s: &crate::control::store::Store<counting::Costed>, clock: &VirtualClock, dry_run: bool) -> (Value, u64) {
+        let mut slowest = 0;
+        let mut inner = in_process(s);
+        let (code, out) = sweep_until_done(&mut |argv| {
+            let before = clock.now_ms();
+            let r = inner(argv);
+            slowest = slowest.max(clock.now_ms() - before);
+            r
+        }, dry_run, None);
+        assert_eq!(code, 0, "{out}");
+        (serde_json::from_str(&out).unwrap(), slowest)
+    }
+
+    #[test]
+    fn every_sweep_step_answers_inside_the_store_target_whatever_the_size_of_the_rows_it_reads() {
+        let (s, raw, clock, _) = costed_store();
+        let big = json!({"pad": "x".repeat(16 * 1024)});
+        for n in 0..3_000 {
+            put_raw(&raw, &crate::control::keys::runtime("event", &[&format!("e{n:05}")]), big.clone());
+        }
+        for n in 0..2_000 {
+            let id = format!("r{n:05}");
+            put_raw(&raw, &crate::control::keys::runtime("effect", &["t", &format!("k{id}")]), effect_n(&id));
+            if n % 2 == 0 {
+                put_raw(&raw, &crate::control::keys::runtime("resolved", &[&id]), json!({}));
+            }
+        }
+        for dry_run in [true, false] {
+            let (v, slowest) = sweep_timed(&s, &clock, dry_run);
+            assert_eq!((v["legacy_deleted"].clone(), v["indexed_effects"].clone(), v["retained"].clone()), (json!(3_000), json!(1_000), json!(1_000)), "{v}");
+            assert!(slowest <= 100, "a step took {slowest} ms of virtual time (dry_run {dry_run})");
+        }
+        assert!(all_keys(&raw).iter().all(|k| !k.starts_with("runtime/event/")));
+        assert!(raw.get(&crate::control::keys::runtime("journal-meta", &["indexed"])).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_step_whose_later_write_is_refused_for_the_deadline_answers_the_pages_that_committed() {
+        use crate::control::journal::SWEEP_PAGE;
+        let (s, raw, _clock, armed) = costed_store();
+        let ev = |n: usize| crate::control::keys::runtime("event", &[&format!("e{n:05}")]);
+        for n in 0..3 * SWEEP_PAGE {
+            put_raw(&raw, &ev(n), json!({}));
+        }
+        armed.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (code, out) = call(&s, &["sweep", "--from", "legacy:"]);
+        drop(state_store::phases::deadline_scoped(std::time::Instant::now()));
+        assert_eq!(code, 0, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!((v["legacy_deleted"].clone(), v["next"].clone()), (json!(SWEEP_PAGE), json!(format!("legacy:{}", ev(SWEEP_PAGE - 1)))), "{v}");
+        let (code, out) = call(&s, &["sweep", "--from", v["next"].as_str().unwrap()]);
+        assert_eq!(code, 0, "{out}");
+        let rest: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(rest["legacy_deleted"], json!(2 * SWEEP_PAGE), "{rest}");
+    }
+
+    #[test]
+    fn a_first_page_whose_write_is_refused_for_the_deadline_still_answers_the_error() {
+        use crate::control::journal::SWEEP_PAGE;
+        let (s, raw, _clock, armed) = costed_store();
+        for n in 0..SWEEP_PAGE {
+            let id = format!("r{n:05}");
+            put_raw(&raw, &crate::control::keys::runtime("effect", &["t", &format!("k{id}")]), effect_n(&id));
+            put_raw(&raw, &crate::control::keys::runtime("resolved", &[&id]), json!({}));
+        }
+        armed.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (code, out) = call(&s, &["sweep", "--from", "effect:"]);
+        drop(state_store::phases::deadline_scoped(std::time::Instant::now()));
+        assert_eq!(code, CANNOT_TELL, "{out}");
+        assert!(out.contains("Deadline"), "{out}");
     }
 
     #[test]
