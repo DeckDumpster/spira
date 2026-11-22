@@ -186,4 +186,15 @@ mod tests {
         let UnitDrift::Drift(t) = units_drift_with(d.path(), set(&["a.service"]), "", "", &|_| false) else { panic!("expected drift") };
         assert!(t.contains("stray.service") && t.contains("y.service.d/stray.conf"), "{t}");
     }
+
+    #[test_id(tfawkmw)]
+    #[test]
+    fn symlinked_conf_inside_a_real_dropin_directory_is_skipped() {
+        let d = testkit::TempDir::new("unit-drift-conf-link");
+        let outside = testkit::TempDir::new("unit-drift-conf-link-out");
+        std::fs::write(outside.path().join("stray.conf"), "").unwrap();
+        std::fs::create_dir(d.path().join("x.service.d")).unwrap();
+        symlink(outside.path().join("stray.conf"), d.path().join("x.service.d/stray.conf")).unwrap();
+        assert_eq!(units_drift_with(d.path(), set(&["a.service"]), "", "", &|_| false), UnitDrift::Clean);
+    }
 }
