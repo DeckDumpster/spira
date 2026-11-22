@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=dolt
+DOC=Seconds past which store-persist run removes an entry of the dolt-beads temp spool that the server holds no fd on. Held spills are kept until the filesystem is at SPIRA_DOLT_TMP_PRESSURE_PCT.
+SCHEMA=Age in seconds at which an unheld temp spool entry is pruned (default 86400).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DOLT_TMP_TTL:=86400}"
+SPIRA_CONF_DEFAULT_EOF

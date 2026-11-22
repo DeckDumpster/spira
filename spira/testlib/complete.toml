@@ -330,6 +330,7 @@ land_stale = 1800
 land_escalate_every = 3600
 bead_file_retry_window_secs = 900
 dolt_tmp_pressure_pct = 85
+dolt_tmp_ttl = 86400
 eviction_escalate_at = "3"
 exporter = ""
 failed_unit_runs = 3

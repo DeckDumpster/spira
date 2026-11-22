@@ -128,7 +128,7 @@ fn world() -> World {
     put(&old.join(".doltcfg/privileges.db"), "grants");
     put(&old.join("dolt-server.yaml"), &yaml(&old));
     put(&data.join("dolt-server.yaml"), &yaml(&data));
-    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150, gc_interval_secs: 100, run: tmp.join("run"), history_keep: 3 };
+    let cfg = Config { data, durable: Some(durable), interval_secs: 7, max_lag_secs: 40, compact_pct: 150, gc_interval_secs: 100, run: tmp.join("run"), history_keep: 3, tmp_pressure_pct: 77, tmp_ttl_secs: 3600, proc_dir: tmp.join("proc") };
     World { _tmp: tmp, cfg, old, dolt: FakeDolt::default(), clock: FakeClock(Cell::new(1_000)) }
 }
 
@@ -157,6 +157,8 @@ fn values(root: &Path, drop: Option<&str>) -> BTreeMap<String, String> {
         (KEY_GC_INTERVAL, "100".to_string()),
         (KEY_RUN, root.join("run").display().to_string()),
         (KEY_HISTORY_KEEP, "3".to_string()),
+        (KEY_TMP_PRESSURE_PCT, "77".to_string()),
+        (KEY_TMP_TTL, "3600".to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -335,7 +337,7 @@ fn the_daemon_reports_a_recovery_once() {
 
 fn keep_upkeep(w: &World, gc_ago_s: u64, compact_ago_s: u64) {
     let now = w.clock.now_ms();
-    let u = Upkeep { last_gc_ms: now - gc_ago_s * 1000, last_compact_ms: now - compact_ago_s * 1000 };
+    let u = Upkeep { last_gc_ms: now - gc_ago_s * 1000, last_compact_ms: now - compact_ago_s * 1000, ..Default::default() };
     put_durable(&layout(w).upkeep(), u.render().as_bytes()).unwrap();
 }
 
@@ -680,3 +682,122 @@ fn a_failed_graft_abandons_the_side_branch_keeps_the_log_and_does_not_rebuild_th
     assert!(out.lines.iter().all(|o| !o.contains("rebuilt")), "{out:?}");
 }
 
+
+/// Epoch ms the fixtures call "now"; entries are aged against it, not the real clock.
+const NOW_MS: u64 = 10_000_000;
+
+fn spill(data: &Path, name: &str, bytes: usize, mtime_ms: u64) -> PathBuf {
+    let p = data.join(".dolt/tmp").join(name);
+    put(&p, &"x".repeat(bytes));
+    let f = fs::OpenOptions::new().write(true).open(&p).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(mtime_ms)).unwrap();
+    p
+}
+
+fn serve_holding(w: &World, pid: u32, held: &Path) {
+    put(&w.cfg.data.join(".dolt/sql-server.info"), &format!("{pid}:3999:s3cret"));
+    let fd = w.cfg.proc_dir.join(pid.to_string()).join("fd");
+    fs::create_dir_all(&fd).unwrap();
+    std::os::unix::fs::symlink(held, fd.join("7")).unwrap();
+}
+
+fn prune(w: &World) -> Vec<String> {
+    prune_tmp(&w.cfg.data, &w.cfg.proc_dir, 101, w.cfg.tmp_ttl_secs, NOW_MS)
+}
+
+#[test_id(tp4q8mz)]
+#[test]
+fn prune_tmp_removes_a_stale_entry_nothing_holds() {
+    let w = world();
+    let stale = spill(&w.cfg.data, "stale", 10, 0);
+    let log = prune(&w);
+    assert!(!stale.exists());
+    assert!(log.len() == 1 && log[0].contains("pruned dolt tmp entry") && log[0].contains("age 10000s >= window 3600s"), "{log:?}");
+}
+
+#[test_id(tr6j2xw)]
+#[test]
+fn prune_tmp_keeps_a_stale_entry_the_server_holds_open() {
+    let w = world();
+    let held = spill(&w.cfg.data, "held", 10, 0);
+    serve_holding(&w, 4242, &held);
+    assert!(prune(&w).is_empty());
+    assert!(held.exists());
+}
+
+#[test_id(tv9d3ns)]
+#[test]
+fn prune_tmp_keeps_a_fresh_entry() {
+    let w = world();
+    let fresh = spill(&w.cfg.data, "fresh", 10, NOW_MS - 60_000);
+    assert!(prune(&w).is_empty());
+    assert!(fresh.exists());
+}
+
+#[test_id(tg2h7ck)]
+#[test]
+fn prune_tmp_under_pressure_removes_the_largest_entry_first_held_or_not() {
+    let w = world();
+    let big = spill(&w.cfg.data, "big", 40_000, NOW_MS);
+    let small = spill(&w.cfg.data, "small", 10, NOW_MS);
+    serve_holding(&w, 4242, &big);
+    let mut calls = 0;
+    let log = prune_tmp_using(&w.cfg.data, &w.cfg.proc_dir, 80, 3600, NOW_MS, &mut || {
+        calls += 1;
+        Some(if calls == 1 { 90 } else { 10 })
+    });
+    assert!(!big.exists() && small.exists());
+    assert!(log.len() == 1 && log[0].contains("big") && log[0].contains("filesystem at 90% >= threshold 80%"), "{log:?}");
+}
+
+struct PlantingClock {
+    now: Cell<u64>,
+    dir: PathBuf,
+    sleeps: Cell<u32>,
+    /// Whether the entry planted by the first sleep still existed when the second began.
+    survived_first_gap: Cell<bool>,
+}
+
+impl Clock for PlantingClock {
+    fn now_ms(&self) -> u64 {
+        self.now.get()
+    }
+    fn sleep(&self, secs: u64) {
+        let n = self.sleeps.get() + 1;
+        self.sleeps.set(n);
+        if n == 2 {
+            self.survived_first_gap.set(self.dir.join("planted-1").exists());
+        }
+        self.now.set(self.now.get() + secs * 1000);
+        spill(self.dir.parent().unwrap().parent().unwrap(), &format!("planted-{n}"), 1, 0);
+    }
+}
+
+#[test_id(tw5m1ab)]
+#[test]
+fn run_prunes_the_spool_once_a_minute_not_on_every_pass() {
+    let mut w = seeded();
+    w.cfg.interval_secs = 30;
+    w.cfg.max_lag_secs = 90;
+    w.cfg.tmp_pressure_pct = 101;
+    live_server(&w, 4242);
+    spill(&w.cfg.data, "planted-0", 1, 0);
+    let clock = PlantingClock { now: Cell::new(NOW_MS), dir: w.cfg.data.join(".dolt/tmp"), sleeps: Cell::new(0), survived_first_gap: Cell::new(false) };
+    let mut log = Vec::new();
+    run(&w.cfg, &w.dolt, &clock, Some(4), &mut |l| log.push(l.to_string()));
+    let pruned = |n: u32| log.iter().filter(|l| l.contains(&format!("planted-{n} "))).count();
+    assert_eq!((pruned(0), pruned(1), pruned(2)), (1, 1, 1), "{log:?}");
+    assert!(clock.survived_first_gap.get(), "the 30 s pass pruned");
+}
+
+#[test_id(tf8r3qd)]
+#[test]
+fn prune_tmp_reads_the_real_filesystem_and_cuts_the_largest_at_a_zero_threshold() {
+    let w = world();
+    let big = spill(&w.cfg.data, "big", 40_000, NOW_MS);
+    let small = spill(&w.cfg.data, "small", 10, NOW_MS);
+    let log = prune_tmp(&w.cfg.data, &w.cfg.proc_dir, 0, 3600, NOW_MS);
+    assert!(!big.exists() && !small.exists());
+    assert!(log[0].contains("big") && log[1].contains("small"), "{log:?}");
+    assert!(prune_tmp(&w.cfg.data, &w.cfg.proc_dir, 101, 3600, NOW_MS).is_empty());
+}
