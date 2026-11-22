@@ -1389,7 +1389,7 @@ mod tests {
         let script = dir.join("health.sh");
         fs::write(&script, "sleep 30\n").unwrap();
         let mut health = std::process::Command::new("sh").arg(&script).spawn().unwrap();
-        let mut sess = std::process::Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let mut sess = std::process::Command::new("sleep").arg("30").spawn().unwrap();
         let fixture = format!(
             "{}\n{}\n",
             snapshot_row("@1", "cockpit:0", "", "%1", sess.id(), "1", 24),
