@@ -251,11 +251,11 @@ impl Bead {
         }
     }
 
-    /// Whether the bead is waiting for its gate or a cut: SUBMITTED or CERTIFIED, not held, not landed.
     fn wait_start(&self) -> u64 {
         self.since.max(self.wait_from.unwrap_or(0))
     }
 
+    /// Whether the bead is waiting for its gate or a cut: SUBMITTED or CERTIFIED, not held, not landed.
     fn awaits_cut(&self) -> bool {
         matches!(self.state.as_str(), "SUBMITTED" | "CERTIFIED") && !self.held && !self.landed
     }
