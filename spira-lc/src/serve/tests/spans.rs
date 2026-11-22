@@ -3,6 +3,7 @@ use super::*;
 #[test_id(tq5yuhc)]
 #[test]
 fn a_served_request_writes_one_span_and_a_dead_sink_changes_nothing() {
+    let _env = testkit::env_read();
     let dir = testkit::TempDir::new("lc-serve-otel");
     let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
     let req = "[\"no-such-verb\"]\n";
@@ -75,6 +76,7 @@ fn span_of(snapshot: &state_store::phases::Snapshot) -> opentelemetry_proto::ton
 #[test_id(t0nfoaq)]
 #[test]
 fn a_span_from_a_recorder_with_two_commits_names_both() {
+    let _env = testkit::env_read();
     use state_store::phases::{self, Phase};
     let rec = std::sync::Arc::new(phases::Recorder::default());
     phases::track(rec.clone());
@@ -102,6 +104,7 @@ fn a_span_from_a_recorder_with_two_commits_names_both() {
 #[test_id(tzac7dh)]
 #[test]
 fn a_span_names_its_children_and_content_queries() {
+    let _env = testkit::env_read();
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     use state_store::phases::{self, Phase};
     let rec = std::sync::Arc::new(phases::Recorder::default());
@@ -124,6 +127,7 @@ fn a_span_names_its_children_and_content_queries() {
 #[test_id(tkmj6qp)]
 #[test]
 fn the_subverb_is_a_plain_second_word_and_never_an_id_or_free_text() {
+    let _env = testkit::env_read();
     let argv = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(super::subverb_of(&argv(&["content", "note", "sp-a", "x"])), Some("note"));
     assert_eq!(super::subverb_of(&argv(&["history", "sp-a1b2"])), None);
@@ -134,6 +138,7 @@ fn the_subverb_is_a_plain_second_word_and_never_an_id_or_free_text() {
 #[test_id(tmmn47y)]
 #[test]
 fn a_request_cut_at_its_deadline_leaves_the_phase_it_was_in_on_the_recorder() {
+    let _env = testkit::env_read();
     use state_store::phases::{begin, track_scoped, Phase, Recorder};
     use std::{sync::Arc, time::Duration};
     let rec = Arc::new(Recorder::default());
@@ -156,6 +161,7 @@ fn a_request_cut_at_its_deadline_leaves_the_phase_it_was_in_on_the_recorder() {
 #[test_id(tsu4sm5)]
 #[test]
 fn the_answer_time_is_taken_before_the_owed_close_settles() {
+    let _env = testkit::env_read();
     let (server, _client) = std::os::unix::net::UnixStream::pair().unwrap();
     let ans = super::Answer { owed: vec![("sp-d".into(), "why".into())].into(), ..Default::default() };
     let (read_at, order) = (std::time::Instant::now(), std::cell::RefCell::new(Vec::new()));
@@ -180,6 +186,7 @@ fn the_answer_time_is_taken_before_the_owed_close_settles() {
 #[test_id(tupt2tz)]
 #[test]
 fn a_request_that_touched_no_store_carries_no_phase_attribute() {
+    let _env = testkit::env_read();
     let span = span_of(&state_store::phases::Snapshot::default());
     let named: Vec<_> = span.attributes.iter().map(|a| a.key.as_str()).filter(|k| k.starts_with("spira.phase.") || k.starts_with("spira.store.")).collect();
     assert!(named.is_empty(), "{named:?}");
@@ -204,6 +211,7 @@ fn span_attr(dir: &testkit::TempDir, verb: &str, key: &str) -> Option<Option<i64
 #[test_id(t70wf5b)]
 #[test]
 fn a_span_records_the_cutoff_only_for_a_call_the_cutoff_abandoned() {
+    let _env = testkit::env_read();
     let dir = testkit::TempDir::new("lc-serve-cut");
     let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
     let r = rig(false, three_seconds());
@@ -244,6 +252,7 @@ fn serve_value(span: &opentelemetry_proto::tonic::trace::v1::Span, key: &str) ->
 #[test_id(t7w6dtq)]
 #[test]
 fn a_span_cut_at_its_deadline_says_where_its_time_went() {
+    let _env = testkit::env_read();
     let dir = testkit::TempDir::new("lc-serve-stages");
     let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
     let parked = rig(true, fifty_ms());
@@ -276,6 +285,7 @@ fn check_stages(span: &opentelemetry_proto::tonic::trace::v1::Span) {
 #[test_id(t0v9mng)]
 #[test]
 fn a_call_answered_in_time_writes_cut_false() {
+    let _env = testkit::env_read();
     use opentelemetry_proto::tonic::common::v1::any_value::Value;
     let dir = testkit::TempDir::new("lc-serve-stages-ok");
     let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
@@ -312,6 +322,7 @@ fn door_answering(code: i32, ended: Option<state_store::phases::ReadEnd>) -> Arc
 #[test_id(t8o880r)]
 #[test]
 fn a_cannot_tell_whose_store_read_was_ended_at_the_limit_says_so_in_its_head() {
+    let _env = testkit::env_read();
     use state_store::phases::ReadEnd;
     for end in [ReadEnd::Ended, ReadEnd::Overran] {
         assert_eq!(head_of(&door_answering(2, Some(end)))["read_ended"], true, "{end:?}");
@@ -319,4 +330,25 @@ fn a_cannot_tell_whose_store_read_was_ended_at_the_limit_says_so_in_its_head() {
     assert!(head_of(&door_answering(2, None)).get("read_ended").is_none(), "another failure is not marked");
     assert!(head_of(&door_answering(2, Some(ReadEnd::Finished))).get("read_ended").is_none(), "a read that finished is not marked");
     assert!(head_of(&door_answering(0, Some(ReadEnd::Ended))).get("read_ended").is_none(), "an answer that applied is not marked");
+}
+
+#[test_id(tyvvzq9)]
+#[test]
+fn a_request_whose_read_a_forced_wal_restart_cut_pages_the_slow_query_log_with_its_verb() {
+    use state_store::phases;
+    let dir = testkit::TempDir::new("lc-serve-wal-page");
+    let log = dir.join("slow.log");
+    let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+    let work: super::Work = Arc::new(|_| {
+        let since = phases::forced_stamp();
+        drop(phases::forced_reset_scoped());
+        phases::record_read(std::time::Duration::from_millis(150), phases::ReadEnd::Ended);
+        phases::record_reset_ended(since, phases::ReadEnd::Ended);
+        crate::callers::Answer { code: 2, stdout: "cannot tell: list".into(), ..Default::default() }
+    });
+    let door = Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, deadlines: test_deadlines() });
+    head_of(&door);
+    let got = std::fs::read_to_string(&log).unwrap();
+    let f: Vec<&str> = got.lines().find(|l| l.ends_with("WAL-RESET-ENDED")).unwrap_or_else(|| panic!("{got}")).split('\t').collect();
+    assert_eq!(f[1], "list", "{got}");
 }

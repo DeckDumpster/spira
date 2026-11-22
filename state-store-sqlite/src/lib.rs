@@ -173,6 +173,7 @@ struct RestartTerms<'a> {
 fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, terms: &RestartTerms) -> std::result::Result<(Checkpoint, bool), String> {
     let RestartTerms { clock, max_read_ms, line } = *terms;
     let mut forced = false;
+    let mut forcing = None;
     let started = clock.now_ms();
     let _gate = lock(gate);
     loop {
@@ -197,6 +198,7 @@ fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, terms: &RestartTerms) -
             }
         } else {
             forced = true;
+            forcing.get_or_insert_with(phases::forced_reset_scoped);
             if held > max_read_ms {
                 return Ok((pass, forced));
             }
@@ -289,6 +291,7 @@ impl Checkpointer {
         let mut s = lock(&self.state);
         s.pending += 1;
         s.wal_bytes = wal_bytes;
+        phases::set_wal_over_line(wal_bytes >= self.line);
         if s.pending >= self.every || s.wal_bytes >= self.line {
             self.wake.notify_one();
         }
@@ -310,7 +313,9 @@ impl Checkpointer {
         let mut owed = false;
         let push = |pending: u64, counts: &mut PassCounts, last: &mut Option<std::time::Instant>| {
             if let Some(m) = &metrics {
-                m.push(&take_points(pending, wal_len(&self.wal), counts), &[]);
+                let wal_bytes = wal_len(&self.wal);
+                phases::set_wal_over_line(wal_bytes >= self.line);
+                m.push(&take_points(pending, wal_bytes, counts), &[]);
                 *last = Some(std::time::Instant::now());
             }
         };
@@ -1718,6 +1723,7 @@ impl SqliteBackend {
         let began = inner.clock.now_ms();
         waiting.confirm_after(Duration::from_millis(began.saturating_sub(gate_began)));
         let _reading = phases::begin(Phase::Read);
+        let forced_since = phases::forced_stamp();
         reader.deadline.store(deadline, Ordering::SeqCst);
         let ended = || Error::Backend(format!("{READ_ENDED} ({max_read_ms} ms)"));
         let check = || {
@@ -1759,6 +1765,7 @@ impl SqliteBackend {
             _ => phases::ReadEnd::Finished,
         };
         phases::record_read(took, end);
+        phases::record_reset_ended(forced_since, end);
         out
     }
 
@@ -3034,6 +3041,37 @@ mod tests {
         assert!(is_read_ended(&out.unwrap_err()));
         assert_eq!((snap.reads_overran, snap.reads_ended), (1, 0));
         assert_eq!(snap.read_max_us, 500_000);
+    }
+
+    #[test_id(tk6d1kw)]
+    #[test]
+    fn a_read_cut_at_its_limit_while_a_forced_wal_restart_waits_is_counted_reset_ended() {
+        let dir = testkit::TempDir::new("sqlite-reset-ended");
+        let clock = Arc::new(Steered(AtomicU64::new(0)));
+        let opts = Options { max_read_ms: 100, readers: 1, clock: clock.clone(), wal_line_bytes: 1, ..Options::default() };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        let (reading_tx, reading_rx) = std::sync::mpsc::channel();
+        let reader = {
+            let (b, clock) = (b.clone(), clock.clone());
+            std::thread::spawn(move || {
+                recorded(|| {
+                    b.read(|conn, _, _| {
+                        conn.prepare("SELECT count(*) FROM sqlite_master").and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0))).map_err(db)?;
+                        reading_tx.send(()).unwrap();
+                        while !phases::wal_forcing() {
+                            std::thread::yield_now();
+                        }
+                        clock.0.store(500, Ordering::SeqCst);
+                        Ok(())
+                    })
+                })
+            })
+        };
+        reading_rx.recv().unwrap();
+        b.commit(0, &[put_write("k", b"v", 1, None)]).unwrap();
+        let (out, snap) = reader.join().unwrap();
+        assert!(is_read_ended(&out.unwrap_err()));
+        assert_eq!(snap.reads_reset_ended, 1);
     }
 
     #[test_id(t6hfecq)]

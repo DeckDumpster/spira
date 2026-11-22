@@ -933,6 +933,7 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
     let store = recorder.snapshot();
     crate::slow::reads_done(measured, store.reads_ended, store.reads_overran, store.reads_ended_by_reset);
+    crate::slow::wal_pages(measured, &caller, answered, store.reads_reset_ended, state_store::phases::wal_over_line());
     let gate_wait = store.phases.iter().find(|p| p.0 == "gate_wait");
     if let Some((_, us)) = gate_wait {
         crate::slow::gate_waited(measured, Duration::from_micros(*us));
