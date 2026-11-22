@@ -42,6 +42,7 @@ fn idle_tick(registry_landed: serde_json::Value) -> Vec<(String, String)> {
     ran
 }
 
+#[test_id(t3phln2)]
 #[test]
 fn an_idle_tick_clears_the_registry_rows_of_beads_the_lifecycle_reports_landed() {
     let ran = idle_tick(serde_json::json!(["sp-o82moc", "sp-msth37"]));
@@ -52,6 +53,7 @@ fn an_idle_tick_clears_the_registry_rows_of_beads_the_lifecycle_reports_landed()
     assert_eq!(ids, ["sp-o82moc", "sp-msth37"]);
 }
 
+#[test_id(ta4day6)]
 #[test]
 fn an_idle_tick_with_no_landed_registry_row_runs_no_clear_landed() {
     let ran = idle_tick(serde_json::json!([]));

@@ -3402,6 +3402,7 @@ mod cut_tests {
         assert!(err.contains("registry locked list --json") && err.contains("exited 3"), "{err}");
     }
 
+    #[test_id(tpftdo6)]
     #[test]
     fn clear_landed_rows_passes_each_bead_and_returns_the_cleared_tests_or_the_registrys_words() {
         let d = testkit::TempDir::new("batcher-cut-clear-landed-rows");
@@ -3417,6 +3418,7 @@ mod cut_tests {
         assert!(err.contains("exited 5") && err.contains("registry busy"), "{err}");
     }
 
+    #[test_id(t2va2j5)]
     #[test]
     fn a_failing_registry_cuts_no_round_and_says_what_it_printed() {
         let d = testkit::TempDir::new("batcher-cut-deny-fail");

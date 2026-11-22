@@ -165,6 +165,7 @@ fn three_member_row() -> String {
     row
 }
 
+#[test_id(thezxlm)]
 #[test]
 fn a_landing_row_dropped_because_its_batch_is_landed_closes_the_reds_for_every_member() {
     let (ran, supersede) = tick_on_row_landed(&three_member_row(), BATCH, true);
@@ -174,6 +175,7 @@ fn a_landing_row_dropped_because_its_batch_is_landed_closes_the_reds_for_every_m
     assert_eq!(ids, ["sp-o82moc", "sp-msth37", "sp-vtnwny"]);
 }
 
+#[test_id(tm71pbt)]
 #[test]
 fn a_landing_row_dropped_because_its_batch_is_abandoned_closes_no_reds() {
     let (ran, _) = tick_on_row_landed(&three_member_row(), BATCH, false);
