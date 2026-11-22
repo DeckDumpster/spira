@@ -511,6 +511,17 @@ mod tests {
         assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_FLOW_WINDOW_HOURS"));
     }
 
+    #[test_id(tyad1im)]
+    #[test]
+    fn the_writer_grants_interval_is_read_in_seconds_and_a_zero_is_refused() {
+        let base = lookup("7");
+        let pinned = move |k: &str| if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" { Ok("42".to_string()) } else { base(k) };
+        assert_eq!(Settings::from_lookup(&pinned).unwrap().writer_grants.interval_ms, 42_000);
+        let base = lookup("7");
+        let zero = move |k: &str| if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" { Ok("0".to_string()) } else { base(k) };
+        assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_RUNTIME_WRITER_GRANTS_SECS"));
+    }
+
     #[test_id(tr53nnj)]
     #[test]
     fn each_task_takes_the_mode_the_table_gives_it_and_a_task_left_out_refuses_the_load() {
