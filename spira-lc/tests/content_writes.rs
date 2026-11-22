@@ -885,26 +885,16 @@ fn provisioned_lc_with_watchd(store: &Store, name: &str) -> (Lc, PathBuf) {
     (lc, log)
 }
 
-#[test_id(tmpwngi)]
+#[test_id(tdn0akz)]
 #[test]
-fn a_writer_that_lost_a_grant_is_named_on_stderr_and_paged_once_without_changing_a_grant() {
+fn a_writer_that_lost_a_grant_is_named_on_stderr_and_pages_no_process_without_changing_a_grant() {
     let Some(store) = Store::up() else { return };
     let (mut lc, log) = provisioned_lc_with_watchd(&store, "g");
     store.sql("REVOKE INSERT, UPDATE, DELETE ON sptest.dependencies FROM 'spira_lc'@'%'");
     let before = store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'");
     let said = lc.serve_said();
     assert!(said.contains("dependencies") && said.contains("admin-provision-writer"), "{said}");
-    let mut paged = String::new();
-    for _ in 0..600 {
-        paged = std::fs::read_to_string(&log).unwrap_or_default();
-        if !paged.is_empty() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the stub's log, the signal waited on
-    }
-    let calls: Vec<&str> = paged.lines().collect();
-    assert_eq!(calls.len(), 1, "{paged}");
-    assert!(calls[0].starts_with("page lc-grants ") && calls[0].ends_with(" missing=dependencies"), "{paged}");
+    assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap_or_default());
     assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before, "the check changed the writer's grants");
 }
 
