@@ -425,13 +425,14 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     let book = strings(&after);
     let landed = code::book_dir().and_then(|dir| {
         let pointers = read_pointers_for_write(&dir, &book)?;
+        let before_pointers = pointers.clone();
         let (caught, pointers) = code::catch_up(&toc, &pointers, &book, Some((key.as_str(), part)), &code::numbers_on_disk(&dir), &today()).map_err(|e| format!("rule: {e}"))?;
-        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>().saturating_sub(toc.iter().map(|p| p.slugs.len()).sum::<usize>());
-        Ok((land_book(home, "enact", &key, &caught, &pointers, &book)? > 0).then_some(added))
+        let change = code::book_change(&toc, &before_pointers, &caught, &pointers);
+        Ok((land_book(home, "enact", &key, &caught, &pointers, &book)? > 0).then_some(change))
     });
     match landed {
         Ok(Some(n)) => {
-            println!("law: {n} statute(s) added; committed and pushed to {}.", book_name());
+            println!("law: {n}; committed and pushed to {}.", book_name());
             0
         }
         Ok(None) => {
@@ -464,14 +465,14 @@ fn book_name() -> String {
 }
 
 fn cmd_land_book(db: &str, home: &str) -> i32 {
-    let run = || -> Result<Option<usize>, String> {
+    let run = || -> Result<Option<code::BookChange>, String> {
         let dir = code::book_dir()?;
         let toc = read_toc(&dir)?;
         let book = strings(&read_book(db)?);
         let pointers = read_pointers_for_write(&dir, &book)?;
         let (caught, caught_pointers) = code::catch_up(&toc, &pointers, &book, None, &code::numbers_on_disk(&dir), &today()).map_err(|e| format!("rule: {e}"))?;
-        let added = caught.iter().map(|p| p.slugs.len()).sum::<usize>().saturating_sub(toc.iter().map(|p| p.slugs.len()).sum::<usize>());
-        Ok((land_book(home, "code", "book", &caught, &caught_pointers, &book)? > 0).then_some(added))
+        let change = code::book_change(&toc, &pointers, &caught, &caught_pointers);
+        Ok((land_book(home, "code", "book", &caught, &caught_pointers, &book)? > 0).then_some(change))
     };
     match run() {
         Ok(None) => {
@@ -479,7 +480,7 @@ fn cmd_land_book(db: &str, home: &str) -> i32 {
             0
         }
         Ok(Some(n)) => {
-            println!("law: {n} statute(s) added; committed and pushed to {}.", book_name());
+            println!("law: {n}; committed and pushed to {}.", book_name());
             0
         }
         Err(e) => {
@@ -590,7 +591,7 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
         },
     };
     let loaded_toc = toc.clone();
-    let recorded_retired = on_disk.as_ref().map_or(0, |p| p.retired.len());
+    let recorded_retired: Vec<String> = on_disk.as_ref().map_or(Vec::new(), |p| p.retired.iter().map(|r| r.slug.clone()).collect());
     let on_disk = on_disk.map(|p| code::with_store_pointers(p, &strings(&book)));
     let (toc, pointers) = match on_disk.as_ref().map_err(String::clone).and_then(|p| code::in_force(&toc, p, &strings(&book), &numbers, &today())) {
         Ok(p) => p,
@@ -601,15 +602,21 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
     };
     let old = on_disk.unwrap_or_default();
     let new_moves = &pointers.moved[old.moved.len()..];
-    let recorded = pointers.retired.len() == recorded_retired;
+    let unrecorded: Vec<&str> = pointers.retired.iter().map(|r| r.slug.as_str()).filter(|s| !recorded_retired.iter().any(|r| r == s)).collect();
     if check {
         let expected = code::generate(&toc, &pointers, book_texts(&book));
         let mut drift = code::drift(&law, &expected);
         if toc != loaded_toc {
-            drift.push("toc.toml: lists statutes the store lacks".to_string());
+            let store = strings(&book);
+            let lacked: Vec<&str> = loaded_toc.iter().flat_map(|p| p.slugs.iter().map(String::as_str)).filter(|s| !store.contains_key(*s)).collect();
+            if lacked.is_empty() {
+                drift.push("toc.toml: differs from the book the store generates".to_string());
+            } else {
+                drift.push(format!("toc.toml: lists statutes the store lacks: {}", lacked.join(", ")));
+            }
         }
-        if !recorded {
-            drift.push(format!("{}: retirements in the store not yet recorded", code::POINTERS_FILE));
+        if !unrecorded.is_empty() {
+            drift.push(format!("{}: retirements in the store not yet recorded: {}", code::POINTERS_FILE, unrecorded.join(", ")));
         }
         drift.extend(code::check_pointers(&toc, &pointers));
         drift.extend(new_moves.iter().map(|m| format!("{}: §{} moved to {}, not yet recorded", code::POINTERS_FILE, m.section, code::section_of(&toc, &m.slug).unwrap_or_default())));
