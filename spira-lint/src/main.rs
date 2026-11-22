@@ -283,7 +283,7 @@ mod tests {
     #[test_id(taz1kyq)]
     #[test]
     fn a_deny_list_path_is_carried_onto_the_arguments() {
-        let Ok(Parsed::Run(a)) = parse_args(argv(&["--deny-list", "/x/deny"]), None) else { panic!() };
-        assert_eq!(a.deny_list.as_deref(), Some("/x/deny"));
+        let Ok(Parsed::Run(a)) = parse_args(argv(&["--deny-list", "x/deny"]), None) else { panic!() };
+        assert_eq!(a.deny_list.as_deref(), Some("x/deny"));
     }
 }
