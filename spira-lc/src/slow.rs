@@ -551,6 +551,7 @@ fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spira_test_id::test_id;
 
     fn limits(waiting: &[&str]) -> Limits {
         Limits { answer_ms: 100, waiting: waiting.iter().map(|w| w.to_string()).collect() }

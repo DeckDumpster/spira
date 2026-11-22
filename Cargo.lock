@@ -2213,6 +2213,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "spira-store",
+ "spira-test-id",
  "state-store",
  "state-store-sqlite",
  "system-paths",
