@@ -30,6 +30,7 @@ runtime = { path = "../runtime" }
 tsd = { path = "../tsd" }
 libc = "0.2"
 system-paths = { path = "../system-paths" }
+release = { path = "../release" }
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }

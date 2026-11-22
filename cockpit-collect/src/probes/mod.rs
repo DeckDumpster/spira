@@ -318,9 +318,7 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_HEIMDALL_FIRING", firing);
     push(&mut out, "SP_HEIMDALL_KEYS", keys);
 
-    let rs_out = io::run_tool("release", &["status"], None).unwrap_or_default();
-    let rs_line = rs_out.lines().find(|l| l.starts_with("RUNNING UNLANDED ")).unwrap_or("");
-    let rs_alert = rs_out.lines().find(|l| l.starts_with("ALERT ")).unwrap_or("");
+    let (rs_line, rs_alert) = hotfix_lines();
     push(&mut out, "SP_HOTFIX_LINE", rs_line);
     push(&mut out, "SP_HOTFIX_ALERT", rs_alert);
 
@@ -329,7 +327,8 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
         push(&mut out, "SP_LC_NOT_RUNNING", "1");
     }
 
-    let (ov_n, ov_failed, ov_list) = overrides_summary();
+    let overrides_dir = spira_config::process::cfg("SPIRA_OVERRIDES").unwrap_or_default();
+    let (ov_n, ov_failed, ov_list) = overrides_summary(Path::new(&overrides_dir));
     push(&mut out, "SP_OVERRIDES_N", ov_n.to_string());
     push(&mut out, "SP_OVERRIDES_FAILED", ov_failed.to_string());
     push(&mut out, "SP_OVERRIDES_LIST", ov_list);
@@ -406,25 +405,50 @@ fn heimdall_alerts(reply: Option<String>) -> (String, String) {
     (keys.len().to_string(), keys.join(","))
 }
 
-fn overrides_summary() -> (usize, usize, String) {
-    let out = io::run_tool("overrides.sh", &["list"], None).unwrap_or_default();
-    let mut n = 0;
+/// The `RUNNING UNLANDED` and `ALERT` lines of `release status`, read in-process.
+fn hotfix_lines() -> (String, String) {
+    let cfg = release::config::Config::resolve(&release::config::Flags::default(), &release::config::process_env());
+    cfg.ok().map(|c| hotfix_lines_of(&c)).unwrap_or_default()
+}
+
+fn hotfix_lines_of(cfg: &release::config::Config) -> (String, String) {
+    let status = release::activate::status(cfg).unwrap_or_default();
+    let pick = |prefix: &str| status.lines().find(|l| l.starts_with(prefix)).unwrap_or("").to_string();
+    (pick("RUNNING UNLANDED "), pick("ALERT "))
+}
+
+/// (active + failed count, failed count, `name:bead,…`) over the override specs in `dir`;
+/// retired specs are skipped. A spec is failed when `.state/<name>.failed` exists.
+fn overrides_summary(dir: &Path) -> (usize, usize, String) {
+    let specs = |d: &Path| -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = std::fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_str()?.strip_suffix(".override")?.to_string();
+                let body = std::fs::read_to_string(e.path()).unwrap_or_default();
+                let bead = body
+                    .lines()
+                    .rev()
+                    .find_map(|l| l.strip_prefix("BEAD=").map(|v| v.trim().trim_matches(|c| c == '"' || c == '\'').to_string()))
+                    .filter(|b| !b.is_empty())
+                    .unwrap_or_else(|| "?".to_string());
+                Some((name, bead))
+            })
+            .collect();
+        found.sort();
+        found
+    };
     let mut failed = 0;
     let mut list = Vec::new();
-    for line in out.lines() {
-        let mut it = line.split_whitespace();
-        let (Some(name), Some(bead), state) = (it.next(), it.next(), it.next()) else { continue };
-        let state = state.unwrap_or("");
-        if state == "retired" {
-            continue;
-        }
-        if state.starts_with("failed:") {
+    for (name, bead) in specs(dir) {
+        if dir.join(".state").join(format!("{name}.failed")).is_file() {
             failed += 1;
         }
-        n += 1;
         list.push(format!("{name}:{bead}"));
     }
-    (n, failed, list.join(","))
+    (list.len(), failed, list.join(","))
 }
 
 #[allow(clippy::type_complexity)]
@@ -1679,6 +1703,39 @@ mod tests {
     }
 
     use super::*;
+
+    #[test_id(tt1wfi2)]
+    #[test]
+    fn overrides_are_counted_from_the_spec_files_with_no_child_process() {
+        let t = testkit::TempDir::new("ov-summary");
+        let d = t.path();
+        std::fs::create_dir_all(d.join(".state")).unwrap();
+        std::fs::create_dir_all(d.join("retired")).unwrap();
+        std::fs::write(d.join("alpha.override"), "needed() { true; }\nBEAD=\"sp-aaa\"\n").unwrap();
+        std::fs::write(d.join("beta.override"), "BEAD='sp-bbb'\n").unwrap();
+        std::fs::write(d.join(".state/beta.failed"), "apply-failed\n").unwrap();
+        std::fs::write(d.join("retired/old.override"), "BEAD=\"sp-old\"\n").unwrap();
+        assert_eq!(overrides_summary(d), (2, 1, "alpha:sp-aaa,beta:sp-bbb".to_string()));
+        assert_eq!(overrides_summary(&d.join("absent")), (0, 0, String::new()));
+    }
+
+    #[test_id(t3mshqe)]
+    #[test]
+    fn hotfix_keys_come_from_the_release_state_dir_in_process() {
+        const SHA: &str = "abc1230000000000000000000000000000000000";
+        let t = testkit::TempDir::new("hotfix-keys");
+        let state = t.path().join("run/release");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("hotfix"), format!("sha {SHA}\nreason fix it\nat 2020-01-01T00:00:00Z\n")).unwrap();
+        let mut env = release::config::Env::new();
+        env.insert("HOME".into(), t.path().display().to_string());
+        let flags = release::config::Flags { releases: Some(t.path().join("rel")), run: Some(t.path().join("run")), keep: Some(2) };
+        let reg = release::config::Registered { releases_keep: "2".into(), ..Default::default() };
+        let cfg = release::config::Config::resolve_with(&flags, &env, None, &reg).unwrap();
+        let (line, alert) = hotfix_lines_of(&cfg);
+        assert!(line.starts_with(&format!("RUNNING UNLANDED {SHA}: fix it")), "{line}");
+        assert!(alert.starts_with(&format!("ALERT hotfix {SHA}")), "{alert}");
+    }
 
     fn lcmap(rows: &[(&str, &str, &[&str])]) -> HashMap<String, lc::Row> {
         rows.iter()
