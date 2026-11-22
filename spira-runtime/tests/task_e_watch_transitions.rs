@@ -1628,3 +1628,18 @@ fn an_unreadable_store_outside_any_activation_window_pages_blind() {
     assert!(acts.iter().any(|a| a.input.contains("P0 BLIND")));
     assert!(next.blind);
 }
+
+#[test]
+fn over_names_each_judged_row_past_its_bound_and_never_ready_or_rework() {
+    let now = T0;
+    let mut s = healthy(now);
+    assert_eq!(over(&s, now, &config()), std::collections::BTreeSet::new());
+    s.beads.push(bead("sp-r2", "spira", "READY", now - 30 * HOUR));
+    s.beads.push(bead("sp-rw", "spira", "REWORK", now - 30 * HOUR));
+    s.beads.push(bead("sp-w9", "spira", "WORKING", now - 91 * MIN));
+    let mut ask = bead("sp-a1", "spira", "WORKING", now - 5 * MIN);
+    ask.ask_held = true;
+    ask.ask_since = Some(now - 61 * MIN);
+    s.beads.push(ask);
+    assert_eq!(over(&s, now, &config()), ["ASK", "WORKING"].into_iter().collect());
+}

@@ -1069,6 +1069,7 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join("transitions.log")).unwrap();
         assert_eq!(text.lines().count(), 2_000);
         assert_eq!(text.lines().last(), Some("line 4000"));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temp file is left behind");
         cfg.run = dir.path().join("missing");
         assert!(log_append(&cfg, "x").is_err());
     }
