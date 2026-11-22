@@ -42,7 +42,7 @@ fn config() -> Config {
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
-    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None, waits_on: None }
+    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None, waits_on: None, wait_from: None }
 }
 
 fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -1645,4 +1645,96 @@ fn over_names_each_judged_row_past_its_bound_and_never_ready_or_rework() {
     ask.ask_since = Some(now - 61 * MIN);
     s.beads.push(ask);
     assert_eq!(over(&s, now, &config()), ["ASK", "WORKING"].into_iter().collect());
+}
+
+fn over_submitted(acts: &[runtime::event::EffectSpec]) -> Vec<String> {
+    acts.iter().map(|a| a.input.clone()).filter(|l| l.contains("OVER SUBMITTED")).collect()
+}
+
+fn wait_world(now: u64, state: &str, since: u64, rounds_open: u64, gate: Option<Gating>) -> Snapshot {
+    let mut s = healthy(now);
+    let mut b = bead(if state == "CERTIFIED" { "sp-c1" } else { "sp-s1" }, "spira", state, since);
+    b.gate = gate;
+    s.beads = vec![b];
+    s.last = last("spira", &[("Cut", now - 2 * MIN), ("Delivered", now - MIN)]);
+    s.open_rounds = Some(rounds_in("spira", rounds_open));
+    s.owners.clear();
+    s
+}
+
+#[test_id(tcbh0jq)]
+#[test]
+fn a_certified_wait_behind_an_open_round_counts_from_the_round_landing() {
+    let cfg = gate_cfg();
+    let since = T0 - 31 * MIN;
+    let pass = |carry: &Carry, at: u64, rounds: u64| decide(carry, &wait_world(at, "CERTIFIED", since, rounds, None), at * 1000, &cfg);
+    let (c1, a1) = pass(&Carry::default(), T0, 1);
+    assert_eq!(over_submitted(&a1), Vec::<String>::new());
+    let (c2, a2) = pass(&c1, T0 + 5 * MIN, 0);
+    assert_eq!(over_submitted(&a2), Vec::<String>::new());
+    let (_, a3) = pass(&c2, T0 + 10 * MIN, 0);
+    let lines = over_submitted(&a3);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("sp-c1") && lines[0].contains("CERTIFIED") && lines[0].contains("certified, not cut"), "{}", lines[0]);
+}
+
+#[test_id(tsw9k2m)]
+#[test]
+fn a_submitted_wait_behind_a_gate_counts_from_the_gate_finishing() {
+    let cfg = gate_cfg();
+    let since = T0 - 8 * MIN;
+    let running = Some(Gating::Running { since: T0 - 6 * MIN });
+    let (c1, a1) = decide(&Carry::default(), &wait_world(T0, "SUBMITTED", since, 0, running), T0 * 1000, &cfg);
+    assert_eq!(over_submitted(&a1), Vec::<String>::new());
+    let t2 = T0 + MIN;
+    let (c2, a2) = decide(&c1, &wait_world(t2, "SUBMITTED", since, 0, None), t2 * 1000, &cfg);
+    assert_eq!(over_submitted(&a2), Vec::<String>::new());
+    let t3 = t2 + 5 * MIN;
+    let (_, a3) = decide(&c2, &wait_world(t3, "SUBMITTED", since, 0, None), t3 * 1000, &cfg);
+    let lines = over_submitted(&a3);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("sp-s1") && lines[0].contains("no gate queued or running"), "{}", lines[0]);
+}
+
+#[test_id(tnm4x7q)]
+#[test]
+fn the_over_submitted_line_names_the_bead() {
+    let cfg = gate_cfg();
+    let (_, acts) = decide(&Carry::default(), &wait_world(T0, "SUBMITTED", T0 - 8 * MIN, 0, None), T0 * 1000, &cfg);
+    let lines = over_submitted(&acts);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("sp-s1"), "{}", lines[0]);
+}
+
+#[test_id(t839wy5)]
+#[test]
+fn the_unexplained_map_survives_a_restart_including_an_explained_bead() {
+    let cfg = gate_cfg();
+    let (carry, _) = decide(&Carry::default(), &wait_world(T0, "CERTIFIED", T0 - 31 * MIN, 1, None), T0 * 1000, &cfg);
+    assert_eq!(carry.unexplained.get("sp-c1"), Some(&None));
+    let parts = [runtime::rows::Part::Map { name: "unexplained", drop: &[] }];
+    let body = serde_json::to_string(&carry).unwrap();
+    let back: Carry = serde_json::from_str(&runtime::rows::join(&runtime::rows::split(&body, &parts), &parts)).unwrap();
+    assert_eq!(back.unexplained, carry.unexplained);
+}
+
+#[test_id(tgbj1gv)]
+#[test]
+fn a_wait_explained_again_after_a_gap_is_counted_afresh_and_a_departed_bead_is_forgotten() {
+    let cfg = gate_cfg();
+    let since = T0 - 31 * MIN;
+    let at = |carry: &Carry, t: u64, rounds: u64| decide(carry, &wait_world(t, "CERTIFIED", since, rounds, None), t * 1000, &cfg);
+    let (c1, _) = at(&Carry::default(), T0, 1);
+    let (c2, _) = at(&c1, T0 + 6 * MIN, 0);
+    assert_eq!(c2.unexplained.get("sp-c1"), Some(&Some(T0 + 6 * MIN)));
+    let (c3, a3) = at(&c2, T0 + 8 * MIN, 1);
+    assert_eq!(c3.unexplained.get("sp-c1"), Some(&None));
+    assert_eq!(over_submitted(&a3), Vec::<String>::new());
+    let (c4, a4) = at(&c3, T0 + 9 * MIN, 0);
+    assert_eq!(c4.unexplained.get("sp-c1"), Some(&Some(T0 + 9 * MIN)));
+    assert_eq!(over_submitted(&a4), Vec::<String>::new());
+    let mut gone = wait_world(T0 + 10 * MIN, "CERTIFIED", since, 0, None);
+    gone.beads.clear();
+    let (c5, _) = decide(&c4, &gone, (T0 + 10 * MIN) * 1000, &cfg);
+    assert!(c5.unexplained.is_empty(), "{:?}", c5.unexplained);
 }
