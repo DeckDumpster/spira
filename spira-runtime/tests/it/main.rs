@@ -65,6 +65,7 @@ mod task_c_hel_reap_terminal;
 mod task_c_hel_sweep;
 mod task_c_mail_tidy;
 mod task_c_roundvm_ami_prune;
+mod task_c_lc_ship;
 mod task_c_roundvm_drain;
 mod task_c_sweep_archive;
 mod task_c_sweep_escape_census;

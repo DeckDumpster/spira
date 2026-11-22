@@ -53,30 +53,6 @@ pub const GATE_WAIT_MAX_SECONDS: &str = "spira_lc_gate_wait_max_seconds";
 
 static PROCESS_CHILDREN: AtomicU64 = AtomicU64::new(0);
 
-/// A `Proc` that counts every run into the process-wide child count, then runs it.
-pub struct CountedProc {
-    inner: Arc<dyn Proc>,
-    count: &'static AtomicU64,
-}
-
-impl CountedProc {
-    /// The system's `Proc`, counted into the process-wide child count.
-    pub fn sys() -> Arc<dyn Proc> {
-        Arc::new(Self::counting(Arc::new(runtime::ports::SysProc), &PROCESS_CHILDREN))
-    }
-
-    fn counting(inner: Arc<dyn Proc>, count: &'static AtomicU64) -> Self {
-        CountedProc { inner, count }
-    }
-}
-
-impl Proc for CountedProc {
-    fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
-        self.count.fetch_add(1, Ordering::Relaxed);
-        self.inner.run(spec)
-    }
-}
-
 #[cfg(test)]
 pub fn process_children() -> u64 {
     PROCESS_CHILDREN.load(Ordering::Relaxed)
@@ -949,27 +925,6 @@ mod tests {
         let before = PROCESS_CHILDREN.load(Ordering::Relaxed);
         request_done("whole-verb", "whole-verb", "whole-caller", None, Duration::from_millis(1), 4);
         assert!(PROCESS_CHILDREN.load(Ordering::Relaxed) >= before + 4);
-    }
-
-    #[test_id(t9hw3xe)]
-    #[test]
-    fn a_process_run_outside_any_request_is_counted_whether_or_not_it_succeeds() {
-        struct Fails;
-        impl Proc for Fails {
-            fn run(&self, _: &ProcSpec) -> Result<ProcOutput, String> {
-                Err("down".into())
-            }
-        }
-        static COUNT: AtomicU64 = AtomicU64::new(0);
-        let proc = CountedProc::counting(Arc::new(Fails), &COUNT);
-        let spec = ProcSpec { prog: "curl".into(), args: vec![], stdin: vec![], deadline: Duration::from_secs(1) };
-        std::thread::spawn(move || {
-            let _ = proc.run(&spec);
-            let _ = proc.run(&spec);
-        })
-        .join()
-        .unwrap();
-        assert_eq!(COUNT.load(Ordering::Relaxed), 2);
     }
 
     #[test_id(tz4r1bn)]
