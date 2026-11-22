@@ -1670,7 +1670,7 @@ impl Machine<'_> {
         if self.rc.leg_head == open.head || self.certifying_rebuilt_head(&seen, &open.head) {
             return false;
         }
-        if self.rc.state == State::Attributing && self.ejected_only_by_batcher(&open) {
+        if self.rc.state == State::Attributing && self.ejected_only_by_batcher(open) {
             self.rc.leg_head = open.head.clone();
             self.rc.certify_head = open.head.clone();
             return false;
@@ -1725,7 +1725,7 @@ impl Machine<'_> {
         if survivors.is_empty() || survivors.len() == self.rc.members.len() {
             return false;
         }
-        if self.ejected_only_by_batcher(&open) {
+        if self.ejected_only_by_batcher(open) {
             return false;
         }
         self.stop_carried_leg();
