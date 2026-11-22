@@ -1202,9 +1202,55 @@ fn a_renewal_is_one_commit_that_restarts_the_lock_and_writes_the_record() {
         .unwrap()
         .0;
     assert!(
-        history.iter().any(|h| h.key.ends_with("/renew-1/apply")), // not a path: a store-key suffix
-        "the record's history has a Renew entry: {history:?}"
+        !history.iter().any(|h| h.key.ends_with("/renew-1/apply")), // not a path: a store-key suffix
+        "an applied renewal writes no history entry: {history:?}"
     );
+}
+
+#[test_id(te0wzyw)]
+#[test]
+fn a_beads_history_grows_with_its_moves_not_its_renewals() {
+    let (s, _, clock, f) = counted_claim();
+    for i in 1..=3u64 {
+        clock.advance(500);
+        let mut renew = renewal(150 + 10 * i as i64, 100 + i as i64);
+        renew.version = i;
+        let out = s
+            .renew_lease("sp-a", &f, &renew, &req(&format!("renew-{i}")))
+            .unwrap();
+        assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    }
+    let phase = ev(
+        BeadState::Working,
+        4,
+        BeadEventKind::Phase { phase: lifecycle::bead::DwarfPhase::Building },
+        "dwarf-1",
+        104,
+    );
+    let out = s.apply("sp-a", &phase, &req("phase-1")).unwrap();
+    assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    let stranger = ev(
+        BeadState::Ready,
+        5,
+        BeadEventKind::Renew { lease_until: 160 },
+        "dwarf-2",
+        105,
+    );
+    let out = s.renew_lease("sp-a", &f, &stranger, &req("renew-4")).unwrap();
+    assert!(matches!(out, Outcome::Refused { .. }), "{out:?}");
+
+    let h = s.history("sp-a", Some("bead")).unwrap();
+    let seen: Vec<(&str, bool)> = h
+        .iter()
+        .map(|c| (c.audit.event.as_str(), c.audit.applied))
+        .collect();
+    assert!(
+        !seen.contains(&("Renew", true)),
+        "an applied renewal is in the history: {seen:?}"
+    );
+    assert!(seen.contains(&("Claim", true)), "{seen:?}");
+    assert!(seen.contains(&("Phase", true)), "{seen:?}");
+    assert!(seen.contains(&("Renew", false)), "the refusal is kept: {seen:?}");
 }
 
 #[test_id(tkf8x6c)]

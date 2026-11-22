@@ -184,6 +184,11 @@ fn refuse_discontinuity(then: &[Audit]) -> Result<()> {
     Ok(())
 }
 
+/// An applied renewal's audit stays in the txn's events; its history entry would cost a row per heartbeat.
+fn is_applied_renew(a: &Audit) -> bool {
+    a.machine == "bead" && a.event == "Renew" && a.applied
+}
+
 fn audited_ids(audits: &[Audit]) -> std::collections::BTreeSet<&str> {
     audits.iter().map(|a| a.lc_key.as_str()).collect()
 }
@@ -626,7 +631,7 @@ impl<B: Backend> Store<B> {
     }
 
     /// Commits `t` with each branch's audit as its evidence and, on that branch, a history
-    /// entry for every id the audit names.
+    /// entry for every id the audit names, except an id whose audits here are all applied renewals.
     fn audited_txn(
         &self,
         mut t: Txn,
@@ -641,6 +646,9 @@ impl<B: Backend> Store<B> {
         let planned_at = self.contract.head()?;
         let entry = |id: &str| keys::history_entry(id, planned_at, &sub.id);
         for id in audited_ids(then) {
+            if then.iter().filter(|a| a.lc_key == id).all(is_applied_renew) {
+                continue;
+            }
             t = t.put(&entry(id), Object::new(serde_json::json!({})));
         }
         for id in audited_ids(els) {
