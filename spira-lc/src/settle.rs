@@ -18,6 +18,7 @@ const CLOSE_TRIES: u32 = 3;
 #[derive(Default)]
 struct Owed {
     rows: BTreeSet<(String, Option<String>)>,
+    edges: BTreeSet<(String, String, String, Option<String>)>,
     claims: BTreeSet<String>,
     only_if_unset: BTreeSet<String>,
     stamp: bool,
@@ -29,6 +30,7 @@ struct Owed {
 impl Owed {
     fn is_empty(&self) -> bool {
         self.rows.is_empty()
+            && self.edges.is_empty()
             && self.claims.is_empty()
             && self.only_if_unset.is_empty()
             && !self.stamp
@@ -122,6 +124,14 @@ pub fn owe_row(id: &str, repo: Option<&str>) -> bool {
     true
 }
 
+/// Queues one dependency edge bd applied and the store refused; `false` when no settler is installed.
+pub fn owe_edge(verb: &str, id: &str, dep: &str, t: Option<&str>) -> bool {
+    let Some(s) = current() else { return false };
+    s.owed.lock().unwrap_or_else(|e| e.into_inner()).edges.insert((verb.to_string(), id.to_string(), dep.to_string(), t.map(String::from)));
+    s.wake.notify_one();
+    true
+}
+
 /// Queues the store closes a reply owes; `false` when no settler is installed.
 pub fn owe_closes(owed: &[(String, String)]) -> bool {
     let Some(s) = current() else { return false };
@@ -174,6 +184,15 @@ impl Settler {
             }
         }
         taken.rows = BTreeSet::new();
+        for (verb, id, dep, t) in taken.edges {
+            let _deadline = fresh_deadline();
+            let (code, _) = m.call(&bead::lc::dep_argv(&verb, &id, &dep, t.as_deref()));
+            if code != 0 {
+                count_refused("edge");
+                back.edges.insert((verb, id, dep, t));
+            }
+        }
+        taken.edges = BTreeSet::new();
         for (ids, only_if_unset) in [(taken.claims, false), (taken.only_if_unset, true)] {
             for id in ids {
                 let mut args = vec![id.clone()];
@@ -230,6 +249,7 @@ impl Settler {
         back.close_tries = tries.into_iter().filter(|(id, _)| back.closes.contains_key(id)).collect();
         let mut g = self.owed.lock().unwrap_or_else(|e| e.into_inner());
         g.rows.extend(back.rows);
+        g.edges.extend(back.edges);
         for (id, reason) in back.closes {
             g.closes.entry(id).or_insert(reason);
         }
@@ -429,6 +449,78 @@ mod tests {
         settler.pass(&mut &w, &mut &w, &mut || Ok(1));
         assert_eq!(claim_of(&w, "sp-new")["parent"], "sp-e");
         assert!(!settler.owes());
+    }
+
+    fn two_ready(w: &World) {
+        for id in ["sp-a", "sp-b"] {
+            w.file(id, "task", Some("sp-e"), &[]);
+            w.ok(&["create-bead", id, "--ready"]);
+        }
+    }
+
+    fn blocked_by(w: &World) -> Vec<String> {
+        w.store.readiness("sp-a").unwrap().map(|r| r.value.blocked_by.clone()).unwrap_or_default()
+    }
+
+    fn owed_edge_after_deadline(w: &World, verb: &str) -> Arc<Settler> {
+        let settler = installed();
+        let (mut m, mut b) = (Expires(w, Vec::new()), w);
+        m.call(&["list".to_string()]);
+        let report = crate::content::after(&["dep", verb, "sp-a", "sp-b"].map(String::from), "", &mut m, &mut b, 0);
+        assert_eq!(report, "");
+        assert!(settler.owes());
+        settler
+    }
+
+    #[test_id(tth1nba)]
+    #[test]
+    fn a_dep_add_mirror_refused_past_the_deadline_is_owed_and_the_settler_writes_it() {
+        let w = World::new();
+        two_ready(&w);
+        let settler = owed_edge_after_deadline(&w, "add");
+        assert!(blocked_by(&w).is_empty());
+        settler.pass(&mut &w, &mut &w, &mut || Ok(1));
+        assert_eq!(blocked_by(&w), ["sp-b"]);
+        assert!(!settler.owes());
+    }
+
+    #[test_id(te6pgei)]
+    #[test]
+    fn a_dep_remove_mirror_refused_past_the_deadline_is_owed_and_the_settler_takes_it_out() {
+        let w = World::new();
+        two_ready(&w);
+        w.ok(&["dep-add", "sp-a", "sp-b"]);
+        assert_eq!(blocked_by(&w), ["sp-b"]);
+        let settler = owed_edge_after_deadline(&w, "remove");
+        assert_eq!(blocked_by(&w), ["sp-b"]);
+        settler.pass(&mut &w, &mut &w, &mut || Ok(1));
+        assert!(blocked_by(&w).is_empty());
+        assert!(!settler.owes());
+    }
+
+    #[test_id(t6gx3x3)]
+    #[test]
+    fn a_refused_owed_edge_stays_owed_and_the_next_pass_writes_it() {
+        let w = World::new();
+        two_ready(&w);
+        let settler = installed();
+        assert!(owe_edge("dep-add", "sp-a", "sp-b", None));
+        struct Refuses<'w>(&'w World, bool);
+        impl Machine for Refuses<'_> {
+            fn call(&mut self, args: &[String]) -> (i32, String) {
+                if std::mem::take(&mut self.1) {
+                    return (crate::callers::CANNOT_TELL, "cannot tell: Deadline".into());
+                }
+                let mut w = self.0;
+                w.call(args)
+            }
+        }
+        let mut m = Refuses(&w, true);
+        settler.pass(&mut m, &mut &w, &mut || Ok(1));
+        assert!(settler.owes() && blocked_by(&w).is_empty());
+        settler.pass(&mut m, &mut &w, &mut || Ok(1));
+        assert!(!settler.owes());
+        assert_eq!(blocked_by(&w), ["sp-b"]);
     }
 
     #[test_id(tv4m3w8)]
