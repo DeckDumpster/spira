@@ -281,7 +281,7 @@ mod landing {
     use std::path::Path;
 
     const AT_MS: u64 = 5_000_000;
-    const LIB: &str = "spira/pilgrim-fixture/crate/src/lib.rs";
+    const LIB: &str = "pilgrim-fixture/crate/src/lib.rs";
 
     struct AtRegistry<'a>(&'a Registry);
     impl RoundRegistry for AtRegistry<'_> {

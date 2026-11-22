@@ -13,10 +13,10 @@ use std::time::Duration;
 const TESTS_DEADLINE: Duration = Duration::from_secs(900); // batch-job: a cold offline build and run of the fixture crates
 const TREE: &[(&str, &str)] = &[
     ("Cargo.toml", include_str!("../fixtures/pilgrim-tree/Cargo.toml.txt")),
-    ("spira/pilgrim-fixture/test-id/Cargo.toml", include_str!("../fixtures/pilgrim-tree/test-id.Cargo.toml.txt")),
-    ("spira/pilgrim-fixture/test-id/src/lib.rs", include_str!("../fixtures/pilgrim-tree/test-id.lib.rs.txt")),
-    ("spira/pilgrim-fixture/crate/Cargo.toml", include_str!("../fixtures/pilgrim-tree/crate.Cargo.toml.txt")),
-    ("spira/pilgrim-fixture/crate/src/lib.rs", include_str!("../fixtures/pilgrim-tree/crate.lib.rs.txt")),
+    ("pilgrim-fixture/test-id/Cargo.toml", include_str!("../fixtures/pilgrim-tree/test-id.Cargo.toml.txt")),
+    ("pilgrim-fixture/test-id/src/lib.rs", include_str!("../fixtures/pilgrim-tree/test-id.lib.rs.txt")),
+    ("pilgrim-fixture/crate/Cargo.toml", include_str!("../fixtures/pilgrim-tree/crate.Cargo.toml.txt")),
+    ("pilgrim-fixture/crate/src/lib.rs", include_str!("../fixtures/pilgrim-tree/crate.lib.rs.txt")),
 ];
 /// The stamped test the fixture tree carries, for a pilgrim to disable and fix.
 pub const FIXTURE_TEST: &str = "test:tpgfix1";
@@ -25,7 +25,7 @@ pub const FIXTURE_TEST: &str = "test:tpgfix1";
 /// lands it on the world's trunk and landing branch.
 pub fn install_tree(work: &Path, base: &str) -> Result<(), String> {
     write_tree(work)?;
-    git(work, &["add", "-f", "Cargo.toml", "spira/pilgrim-fixture"])?;
+    git(work, &["add", "-f", "Cargo.toml", "pilgrim-fixture"])?;
     git(work, &["commit", "-q", "-m", "sim pilgrim fixture tree"])?;
     git(work, &["push", "-q", "origin", "main"])?;
     git(work, &["branch", "-f", base, "main"])?;
