@@ -291,7 +291,6 @@ fn retired_record(replaced_by: &str) -> String {
     sop::shelf::Retired { by: "t".into(), at: "2026-11-20T10:00:00Z".into(), epoch: 1, reason: "renamed out of retired vocabulary".into(), text: "Do it.".into(), replaced_by: Some(replaced_by.into()) }.to_json()
 }
 
-const RENAMED_TOC: &str = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-x\",\n  \"law-two\",\n]\n"; // ffx-ok
 
 #[test_id(t8k33lx)]
 #[test]
