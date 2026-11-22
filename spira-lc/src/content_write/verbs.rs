@@ -296,8 +296,8 @@ pub(super) mod tests {
         let env = Env::default();
         let mut all = vec![config_set(db, "kv.k", "v"), config_delete(db, "kv.k")];
         all.extend(blocked_passes(db, None, 1));
-        all.extend(delete_script(db, &env, &["sp-a"], &["sp-b"]));
-        all.extend(close_sql(db, "sp-a", "r", &env));
+        all.extend(delete_script(db, &env, &["sp-a"], &["sp-b".to_string()]));
+        all.extend(close_sql(db, "sp-a", "r", &env, &["sp-b".to_string()]));
         all
     }
 
