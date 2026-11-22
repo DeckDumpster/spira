@@ -291,6 +291,7 @@ pub fn own_alarm(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock,
         None => None,
     };
     if let Some(reason) = failed {
+        let reason = reason.strip_suffix("; the event stays spooled").unwrap_or(&reason);
         let reason = format!("{reason}; not spooled — the finding text is in this attempt's message");
         record_attempt(env, "incident-alarm-owner", "incident", reference, tsd::alarm::Outcome::Failed { reason }, Some(note_of(title, body)));
         ilog(env, &format!("incident: {reference} was not filed; its text was recorded as a failed alarm attempt"));
@@ -616,7 +617,7 @@ mod tests {
         String::from_utf8(format_entry(&e)).unwrap()
     }
 
-    
+
     #[test_id(tid9pph)]
     #[test]
     fn an_alarm_whose_owner_cannot_be_filed_records_its_text_as_a_failed_attempt() {
@@ -639,7 +640,7 @@ mod tests {
         assert!(std::fs::read_to_string(&env.log_path).unwrap().contains("recorded as a failed alarm attempt"));
     }
 
-    
+
     #[test_id(t56wsj2)]
     #[test]
     fn an_alarm_with_no_bead_history_records_no_owner_attempt() {
