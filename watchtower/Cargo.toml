@@ -16,7 +16,7 @@ path = "tests/stand_down.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration"]
+integration = ["install/integration", "system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 install = { path = "../install" }

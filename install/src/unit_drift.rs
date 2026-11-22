@@ -65,8 +65,8 @@ fn files_in(dir: &Path, want: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
     v
 }
 
-/// `landed` answers whether a retiring bead has landed; it is asked only for declared units.
-pub fn units_drift_with(unitdir: &Path, shipped: Result<BTreeSet<String>, String>, local_manifest: &str, local_path: &str, landed: &dyn Fn(&str) -> bool) -> UnitDrift {
+/// `is_done` answers whether a retiring bead has landed; it is asked only for declared units.
+pub fn units_drift_with(unitdir: &Path, shipped: Result<BTreeSet<String>, String>, local_manifest: &str, local_path: &str, is_done: &dyn Fn(&str) -> bool) -> UnitDrift {
     let Ok(shipped) = shipped else { return UnitDrift::Unreadable };
     if !unitdir.is_dir() || shipped.is_empty() {
         return UnitDrift::Unreadable;
@@ -79,7 +79,7 @@ pub fn units_drift_with(unitdir: &Path, shipped: Result<BTreeSet<String>, String
         match declared.get(&rel).map(String::as_str) {
             Some("-") => {}
             Some("?") => found.push(format!("UNSHIPPED {} (declared but names no bead and is not permanent = true)", f.display())),
-            Some(b) if landed(b) => found.push(format!("RETIRE-NOW {} (declared local override; retiring bead {b} has landed)", f.display())),
+            Some(b) if is_done(b) => found.push(format!("RETIRE-NOW {} (declared local override; retiring bead {b} has landed)", f.display())),
             Some(_) => {}
             None => found.push(format!("UNSHIPPED {} ({why})", f.display())),
         }
@@ -110,12 +110,12 @@ pub fn units_drift_with(unitdir: &Path, shipped: Result<BTreeSet<String>, String
 
 /// The production answer: this box's manifest, `SPIRA_LOCAL_UNITS`, and the lifecycle store.
 pub fn units_drift(unitdir: &Path) -> UnitDrift {
-    let instance = std::env::var("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "prod".into());
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "prod".into());
     let local_path = spira_config::process::cfg("SPIRA_LOCAL_UNITS").unwrap_or_default();
     let local = std::fs::read_to_string(&local_path).unwrap_or_default();
-    let landed = |bead: &str| {
+    let is_done = |bead: &str| {
         let Ok(c) = spira_store::lc_call::LcClient::configured() else { return false };
         spira_store::lc_state::list_ids_on(&c, &[bead.to_string()]).ok().is_some_and(|rows| rows.iter().any(|r| r.bead_id == bead && r.state == "LANDED"))
     };
-    units_drift_with(unitdir, shipped_names(&instance), &local, &local_path, &landed)
+    units_drift_with(unitdir, shipped_names(&instance), &local, &local_path, &is_done)
 }
