@@ -168,6 +168,18 @@ pub struct ReadSlots {
     probe: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
+/// Who a day-file read is for: the store reader whose connection it takes, and that read's
+/// deadline check.
+pub struct ReadAs<'a> {
+    pub slot: usize,
+    pub deadline: &'a dyn Fn() -> Result<()>,
+}
+
+impl ReadAs<'_> {
+    /// A caller that is not a store read: the shared connection, no deadline.
+    pub const AUX: ReadAs<'static> = ReadAs { slot: AUX, deadline: &|| Ok(()) };
+}
+
 /// The slot of a caller that is not a store reader and has no deadline.
 pub const AUX: usize = usize::MAX;
 
@@ -361,10 +373,10 @@ impl DatedFile {
         self.with_writer(|conn| exec(conn, "DELETE FROM rows WHERE main > ?1", [main_i64(head)?]).map(drop))
     }
 
-    pub fn get(&self, slot: usize, key: &str, at: u64, deadline: &dyn Fn() -> Result<()>) -> Result<Option<Version>> {
+    pub fn get(&self, by: &ReadAs<'_>, key: &str, at: u64) -> Result<Option<Version>> {
         let at = main_i64(at)?;
-        self.with_reader(slot, |conn| {
-            self.reads.row(deadline)?;
+        self.with_reader(by.slot, |conn| {
+            self.reads.row(by.deadline)?;
             use rusqlite::OptionalExtension;
             conn.prepare_cached(
                 "SELECT key, main, sub, value, create_main, create_sub FROM rows WHERE key = ?1 AND main <= ?2",
@@ -379,20 +391,19 @@ impl DatedFile {
     /// `state`, only those whose value's `data.state` is it.
     pub fn range(
         &self,
-        slot: usize,
+        by: &ReadAs<'_>,
         lo: &[u8],
         hi: Option<&[u8]>,
         limit: usize,
         at: u64,
         state: Option<&str>,
-        deadline: &dyn Fn() -> Result<()>,
     ) -> Result<Vec<(String, Version)>> {
         let at = main_i64(at)?;
         let mut out = Vec::new();
         let mut cursor = lo.to_vec();
         let page = i64::try_from(if state.is_some() { STATE_PAGE } else { limit }).unwrap_or(i64::MAX);
         while out.len() < limit {
-            let rows = self.with_reader(slot, |conn| {
+            let rows = self.with_reader(by.slot, |conn| {
                 let mut stmt = conn
                     .prepare_cached(
                         "SELECT key, main, sub, value, create_main, create_sub FROM rows
@@ -402,7 +413,7 @@ impl DatedFile {
                 let mut rows = stmt.query(params![cursor, hi, at, page]).map_err(db)?;
                 let mut out = Vec::new();
                 while let Some(r) = rows.next().map_err(db)? {
-                    self.reads.row(deadline)?;
+                    self.reads.row(by.deadline)?;
                     out.push(version_of(r).map_err(db)?);
                 }
                 Ok(out)

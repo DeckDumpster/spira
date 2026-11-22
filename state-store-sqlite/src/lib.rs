@@ -960,7 +960,7 @@ fn merge_dated(
     let mut filed = std::collections::BTreeMap::new();
     for (_, files) in reached {
         for f in files {
-            for (k, v) in f.range(snap.slot, lo, hi, limit, snap.head, state, deadline)? {
+            for (k, v) in f.range(&dated::ReadAs { slot: snap.slot, deadline }, lo, hi, limit, snap.head, state)? {
                 filed.entry(k).or_insert(v);
             }
         }
@@ -1881,7 +1881,7 @@ impl SqliteBackend {
         for f in files {
             let mut cursor = Vec::new();
             loop {
-                let page = f.range(dated::AUX, &cursor, None, 2_000, rev, None, &|| Ok(()))?;
+                let page = f.range(&dated::ReadAs::AUX, &cursor, None, 2_000, rev, None)?;
                 for (key, v) in &page {
                     exec(
                         &copy,
@@ -1937,7 +1937,7 @@ impl SqliteBackend {
         for (family, files) in &snap.dated {
             if family.holds(key) {
                 for f in files {
-                    if let Some(v) = f.get(snap.slot, key, at, deadline)? {
+                    if let Some(v) = f.get(&dated::ReadAs { slot: snap.slot, deadline }, key, at)? {
                         return Ok(Some(v));
                     }
                 }
@@ -2387,7 +2387,7 @@ impl Backend for SqliteBackend {
                             unfiled[fam].push(key);
                             if previous.is_none() {
                                 for f in &files[fam] {
-                                    previous = f.get(dated::AUX, key, head, &|| Ok(()))?;
+                                    previous = f.get(&dated::ReadAs::AUX, key, head)?;
                                     if previous.is_some() {
                                         break;
                                     }
