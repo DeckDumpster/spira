@@ -11,21 +11,23 @@ const FUNCTIONS: &[&str] = &[
     "_lcb_verdict", "_lcb_drill_fail", "_lcb_restored_sql", "_lcb_text", "_lcb_query_report", "_lcb_lap", "_lcb_phases_note", "_lcb_drill_db_locked", "_lcb_drill_db", "_lcb_drill_control", "cmd_drill",
 ];
 const STUBS: &str = r#"#!/bin/bash
+advance() { echo "$(( $(cat "$STUB_CLOCK") + ${1:-0} ))" > "$STUB_CLOCK"; }
 case "$(basename "$0")" in
 dolt)
     case "$1 $2" in
-    "backup restore") sleep "${STUB_SLEEP:-0}"; [ -z "${STUB_RESTORE_FAIL:-}" ] || exit 5; mkdir -p "$4"; exit 0 ;;
+    "backup restore") advance "$STUB_ADV_RESTORE"; [ -z "${STUB_RESTORE_FAIL:-}" ] || exit 5; mkdir -p "$4"; exit 0 ;;
     esac
     q="$5"
     case "$q" in
     *"SELECT commit_hash"*) [ -z "${STUB_HEAD_ERR:-}" ] || { echo "$STUB_HEAD_ERR" >&2; exit 4; }; printf 'commit_hash\n%s\n' "$STUB_RESTORED_HEAD" ;;
     *"FROM dolt_log WHERE"*) [ -z "${STUB_CONTAINS_ERR:-}" ] || { echo "$STUB_CONTAINS_ERR" >&2; exit 3; }; printf 'c\n%s\n' "$STUB_CONTAINS" ;;
     *"SHOW FULL TABLES"*) printf 'Tables\nt1\n' ;;
-    *"COUNT(*) FROM \`t1\`"*) sleep "${STUB_SLEEP:-0}"; printf 'c\n5\n' ;;
+    *"COUNT(*) FROM \`t1\`"*) case "$PWD" in */scratch/*) advance "$STUB_ADV_RESTORED" ;; *) advance "$STUB_ADV_LIVE" ;; esac; printf 'c\n5\n' ;;
     esac ;;
 spira-lc)
     echo "$*" >> "$STUB_LOG"
     [ "$1" != admin-drill ] || { printf '%s\n' "$STUB_DRILL_OUT"; exit 0; }
+    sleep "${STUB_REAL_SLEEP:-0}"; advance "$STUB_ADV_ASSEMBLE"
     m="$STUB_MANIFEST"
     while [ $# -gt 0 ]; do [ "$1" = --manifest ] && m="$2"; shift; done
     echo "$STUB_SET_HEAD 1 1024 $m" ;;
@@ -50,14 +52,23 @@ struct Run {
     control: String,
 }
 
+#[derive(Default)]
+struct Knobs {
+    restore: u64,
+    live: u64,
+    restored: u64,
+    assemble: u64,
+    real_assemble_sleep: u64,
+}
+
 const DRILL_OUT: &str = "sqlite-checkpoint: /x/control.db: 482 passes\ndrill ok: snapshot at 0, restored through 6, 6 keys compared";
 
 fn drill(args: &str, restored: &str, contains: &str, contains_err: &str, head_err: &str, restore_fail: &str) -> Run {
-    drill_with(args, restored, contains, contains_err, head_err, restore_fail, DRILL_OUT, "")
+    drill_with(args, restored, contains, contains_err, head_err, restore_fail, DRILL_OUT, &Knobs::default())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn drill_with(args: &str, restored: &str, contains: &str, contains_err: &str, head_err: &str, restore_fail: &str, drill_out: &str, sleep: &str) -> Run {
+fn drill_with(args: &str, restored: &str, contains: &str, contains_err: &str, head_err: &str, restore_fail: &str, drill_out: &str, knobs: &Knobs) -> Run {
     let tmp = testkit::TempDir::new("lc-backup-drill");
     let d = tmp.path();
     for sub in ["bin", "run", "data/alpha/.dolt", "sync", "scratch"] {
@@ -69,11 +80,14 @@ fn drill_with(args: &str, restored: &str, contains: &str, contains_err: &str, he
     std::fs::write(d.join("run/lc-backup.alpha.ok"), "1 hhhh -\n").unwrap();
     let manifest = d.join("20261120T164737186Z-hhhh");
     std::fs::write(&manifest, "").unwrap();
+    let clock = d.join("clock");
+    std::fs::write(&clock, "1700000000\n").unwrap();
     let mut script = String::from("_lcb_import_drill_stamps() { :; }\n_lcb_drill_wait_quiet() { :; }\n");
     for f in FUNCTIONS {
         script += &function(f);
         script += "\n";
     }
+    script += "_lcb_now_ns() { echo \"$(( $(cat \"$STUB_CLOCK\") * 1000000000 ))\"; }\n";
     script += &format!("_LCB_DRILL_DEADLINE=$(( $(date +%s) + 5 ))\ncmd_drill {args}\n");
     let out = Command::new("bash")
         .arg("-c")
@@ -89,7 +103,12 @@ fn drill_with(args: &str, restored: &str, contains: &str, contains_err: &str, he
         .env("SPIRA_LC_BACKUP_DRILL_WAIT_SECS", "5")
         .env("SPIRA_LC_STORE_PATH", if args.contains("control") { "control-store" } else { "" })
         .env("STUB_DRILL_OUT", drill_out)
-        .env("STUB_SLEEP", sleep)
+        .env("STUB_CLOCK", &clock)
+        .env("STUB_ADV_RESTORE", knobs.restore.to_string())
+        .env("STUB_ADV_LIVE", knobs.live.to_string())
+        .env("STUB_ADV_RESTORED", knobs.restored.to_string())
+        .env("STUB_ADV_ASSEMBLE", knobs.assemble.to_string())
+        .env("STUB_REAL_SLEEP", knobs.real_assemble_sleep.to_string())
         .env("STUB_LOG", d.join("assemble.log"))
         .env("STUB_MANIFEST", &manifest)
         .env("STUB_SET_HEAD", "hhhh")
@@ -211,26 +230,20 @@ fn the_control_verdict_keeps_the_drill_ok_line_and_its_seconds() {
     assert!(seconds_of(&r.control, "admin-drill"), "{}", r.control);
 }
 
-fn phase_seconds(verdict: &str, phase: &str) -> u64 {
-    let at = verdict.find(&format!("{phase} ")).unwrap() + phase.len() + 1;
-    verdict[at..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap()
-}
-
 #[test_id(tjruezk)]
 #[test]
 fn a_phase_clock_counts_the_seconds_the_phase_took() {
-    let r = drill_with("--db alpha", "hhhh", "1", "", "", "", DRILL_OUT, "1");
+    let knobs = Knobs { restore: 3, live: 2, restored: 1, assemble: 0, real_assemble_sleep: 1 };
+    let r = drill_with("--db alpha", "hhhh", "1", "", "", "", DRILL_OUT, &knobs);
     assert_eq!(r.code, Some(0), "{}", r.out);
-    for phase in ["restore", "live counts", "restored counts"] {
-        assert!(phase_seconds(&r.verdict, phase) >= 1, "{phase}: {}", r.verdict);
-    }
-    assert_eq!(phase_seconds(&r.verdict, "assemble"), 0, "{}", r.verdict);
+    let want = "quiet wait 0s, lock wait 0s, assemble 0s, restore 3s, head check 0s, live counts 2s, restored counts 1s";
+    assert!(r.verdict.contains(want), "{}", r.verdict);
 }
 
 #[test_id(tqjk9s9)]
 #[test]
 fn a_control_drill_without_a_drill_ok_line_fails_rather_than_passing_on_another_line() {
-    let r = drill_with("--db control", "hhhh", "1", "", "", "", "sqlite-checkpoint: fine", "");
+    let r = drill_with("--db control", "hhhh", "1", "", "", "", "sqlite-checkpoint: fine", &Knobs::default());
     assert_eq!(r.code, Some(1), "{}", r.out);
     assert!(r.control.starts_with("lc-backup: drill: control: admin-drill printed no drill ok: line"), "{}", r.control);
     assert!(seconds_of(&r.control, "admin-drill"), "{}", r.control);
