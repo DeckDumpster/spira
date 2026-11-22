@@ -1116,6 +1116,7 @@ fn run_command(command: &[String]) -> i32 {
         libc::signal(libc::SIGINT, note_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
         libc::signal(libc::SIGTERM, note_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
     }
+    // batch-job: the operator's own command, held for as long as it runs
     let mut child = match Command::new(&command[0]).args(&command[1..]).spawn() {
         Ok(c) => c,
         Err(e) => {

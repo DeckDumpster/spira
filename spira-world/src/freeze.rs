@@ -31,7 +31,7 @@ pub fn read_maintenance(run_dir: &Path) -> Option<Maintenance> {
 }
 
 pub fn owner_alive(m: &Maintenance) -> bool {
-    Path::new(&format!("/proc/{}", m.pid)).exists()
+    Path::new(system_paths::PROC).join(m.pid.to_string()).exists()
 }
 
 /// The drop-in written beside the frozen unit.
