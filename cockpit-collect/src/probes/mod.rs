@@ -1115,14 +1115,14 @@ pub fn livelock_keys() -> Kv {
     let week_ago = strand::timefmt::utc_stamp(strand::timefmt::now() - 7 * 86_400);
     livelock_report(
         &strand::detectors::detect_livelocked(&cfg, &door),
-        &strand::detectors::detect_invalid_closed_since(&cfg, &door, &week_ago),
+        strand::detectors::invalid_closed_since(&cfg, &door, &week_ago).as_deref(),
         || io::contentjson(&["list", "--limit", "1"]).is_some(),
-        || io::contentjson(&["list", "--all", "--limit", "1"]).is_some(),
     )
 }
 
-/// An empty detector answer is "none" only when the store answers at all; otherwise `?`.
-fn livelock_report(ll_out: &str, ic_out: &str, store_answers: impl FnOnce() -> bool, closed_store_answers: impl FnOnce() -> bool) -> Kv {
+/// An empty LIVELOCK answer is "none" only when the store answers at all; otherwise `?`.
+/// The invalid-closed rows follow their own read: `None` is `?`, an answered empty list is `0`.
+fn livelock_report(ll_out: &str, ic: Option<&str>, store_answers: impl FnOnce() -> bool) -> Kv {
     let mut out = Kv::new();
     if ll_out.is_empty() && !store_answers() {
         push(&mut out, "SP_LIVELOCKED", "?");
@@ -1150,12 +1150,7 @@ fn livelock_report(ll_out: &str, ic_out: &str, store_answers: impl FnOnce() -> b
     // $SPIRA_RUN/invalid-closed.allow, reported but not counted as either). None of the
     // three caps at 20 rows the way LIVELOCK above does — the bash's own cap check there is
     // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
-    if ic_out.is_empty() && !closed_store_answers() {
-        push(&mut out, "SP_INVALID_CLOSED", "?");
-        push(&mut out, "SP_INVCLSD_N", "?");
-        push(&mut out, "SP_UNFILED_FOLLOW", "?");
-        push(&mut out, "SP_UNFLFLW_N", "?");
-    } else {
+    if let Some(ic_out) = ic {
         let mut inv_n = 0;
         let mut unf_n = 0;
         let mut alw_n = 0;
@@ -1182,6 +1177,11 @@ fn livelock_report(ll_out: &str, ic_out: &str, store_answers: impl FnOnce() -> b
         push(&mut out, "SP_UNFLFLW_N", unf_n.to_string());
         push(&mut out, "SP_ALLOWED_IC", alw_n.to_string());
         push(&mut out, "SP_ALLOWEDIC_N", alw_n.to_string());
+    } else {
+        push(&mut out, "SP_INVALID_CLOSED", "?");
+        push(&mut out, "SP_INVCLSD_N", "?");
+        push(&mut out, "SP_UNFILED_FOLLOW", "?");
+        push(&mut out, "SP_UNFLFLW_N", "?");
     }
     out
 }
@@ -1956,7 +1956,7 @@ mod livelock_tests {
     #[test_id(t67kqvj)]
     #[test]
     fn a_store_that_answers_with_nothing_flagged_reports_zero_never_a_question_mark() {
-        let kv = livelock_report("", "", || true, || true);
+        let kv = livelock_report("", Some(""), || true);
         for k in ["SP_LIVELOCKED", "SP_INVALID_CLOSED", "SP_UNFILED_FOLLOW"] {
             assert_eq!(val(&kv, k), "0", "{k}");
         }
@@ -1966,9 +1966,30 @@ mod livelock_tests {
     #[test_id(t15kipb)]
     #[test]
     fn a_store_that_does_not_answer_is_a_question_mark_not_a_clean_bill() {
-        let kv = livelock_report("", "", || false, || false);
+        let kv = livelock_report("", None, || false);
         assert_eq!(val(&kv, "SP_LIVELOCKED"), "?");
         assert_eq!(val(&kv, "SP_INVALID_CLOSED"), "?");
+    }
+
+    #[test_id(tyx9qsj)]
+    #[test]
+    fn the_invalid_closed_keys_follow_the_invalid_closed_read_alone() {
+        let keys = ["SP_INVALID_CLOSED", "SP_INVCLSD_N", "SP_UNFILED_FOLLOW", "SP_UNFLFLW_N"];
+        let refused = livelock_report("", None, || true);
+        let answered = livelock_report("", Some(""), || false);
+        for k in keys {
+            assert_eq!(val(&refused, k), "?", "{k}");
+            assert_eq!(val(&answered, k), "0", "{k}");
+        }
+    }
+
+    #[test_id(tppl1jz)]
+    #[test]
+    fn livelock_keys_issues_no_whole_table_read() {
+        let src = include_str!("mod.rs");
+        let body = &src[src.find("pub fn livelock_keys").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(!body.contains(concat!("\"--", "all\"")), "{body}");
     }
 
     // covers: UC-ops-detection-remediation-29
@@ -1978,7 +1999,7 @@ mod livelock_tests {
     fn each_detector_row_reaches_its_own_count_and_an_allowed_row_counts_in_neither() {
         let ll = "LIVELOCK sp-a unclaimable — x\nLIVELOCK sp-b ci-stuck — y";
         let ic = "INVALID-CLOSED sp-c — r\nUNFILED-FOLLOW sp-d — r\nALLOWED-IC sp-e — ok";
-        let kv = livelock_report(ll, ic, || false, || false);
+        let kv = livelock_report(ll, Some(ic), || false);
         assert_eq!(val(&kv, "SP_LIVELOCKED"), "2");
         assert_eq!(val(&kv, "SP_INVALID_CLOSED"), "1");
         assert_eq!(val(&kv, "SP_UNFILED_FOLLOW"), "1");
