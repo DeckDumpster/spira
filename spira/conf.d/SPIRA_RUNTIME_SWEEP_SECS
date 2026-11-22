@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime's in-process sweeps, which run a store-reading task only if the store moved since its last run.
+SCHEMA=Seconds between the scheduler's in-process sweeps: each reads the change table in memory, sends the store nothing, and runs a task that reads only the store if the store moved since its last run (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_SWEEP_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

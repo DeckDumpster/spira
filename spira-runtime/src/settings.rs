@@ -31,6 +31,8 @@ pub struct Settings {
     pub heartbeat_url: String,
     pub heartbeat_secs: u64,
     pub stall_limit: u32,
+    /// Seconds between the engine's in-process sweeps for a store change nobody was told of.
+    pub sweep_secs: u64,
     pub metrics_endpoint: Option<String>,
     pub run_dir: PathBuf,
     pub lc_socket: PathBuf,
@@ -110,6 +112,7 @@ impl Settings {
         "SPIRA_LC_LIFECYCLE_ON_STORE",
         "SPIRA_RUN",
         "SPIRA_RUNTIME_STALL_LIMIT",
+        "SPIRA_RUNTIME_SWEEP_SECS",
         "SPIRA_METRICS_ENDPOINT",
         "SPIRA_QUEUE_DIR",
         "SPIRA_REPO_MAP",
@@ -339,6 +342,7 @@ impl Settings {
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
             heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
             stall_limit: num("SPIRA_RUNTIME_STALL_LIMIT", &get("SPIRA_RUNTIME_STALL_LIMIT")?)?,
+            sweep_secs: secs("SPIRA_RUNTIME_SWEEP_SECS")?,
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             run_dir,
             lc_socket: PathBuf::from(socket),
@@ -363,7 +367,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.writer_grants, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_comments, self.cr_cadence, self.claim_count);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.writer_grants, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_comments, self.cr_cadence, self.claim_count, self.sweep_secs);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }

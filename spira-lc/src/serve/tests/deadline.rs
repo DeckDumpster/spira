@@ -36,9 +36,10 @@ fn a_store_call_is_abandoned_at_the_configured_default_and_only_batch_verbs_wait
     }
     let watch = |wait: &[&str]| dl(&["watch", "p/", "--from-rev", "0"].iter().chain(wait).map(|s| s.to_string()).collect::<Vec<_>>());
     assert_eq!(watch(&["--wait-ms", "2000"]), std::time::Duration::from_millis(2500));
-    assert_eq!(watch(&[]), std::time::Duration::from_secs(3));
-    assert_eq!(watch(&["--wait-ms", "9999"]), std::time::Duration::from_secs(3));
-    assert_eq!(watch(&["--wait-ms", "x"]), std::time::Duration::from_secs(3));
+    assert_eq!(watch(&[]), std::time::Duration::from_millis(30_500));
+    assert_eq!(watch(&["--wait-ms", "30000"]), std::time::Duration::from_millis(30_500));
+    assert_eq!(watch(&["--wait-ms", "99999"]), std::time::Duration::from_millis(30_500));
+    assert_eq!(watch(&["--wait-ms", "x"]), std::time::Duration::from_millis(30_500));
     assert_eq!(d("work"), crate::db::QUERY_DEADLINE);
     let w = |v: &str| dl(&["work".to_string(), "sp-x".to_string(), v.to_string()]);
     for verb in ["show", "note", "done"] {

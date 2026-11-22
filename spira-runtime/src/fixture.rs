@@ -47,6 +47,7 @@ pub fn lookup(secs: &'static str) -> impl Fn(&str) -> Result<String, String> {
             "SPIRA_RUNTIME_HEARTBEAT_URL" => "http://127.0.0.1:9/ping",
             "SPIRA_RUNTIME_HEARTBEAT_SECS" => secs,
             "SPIRA_RUNTIME_STALL_LIMIT" => "3",
+            "SPIRA_RUNTIME_SWEEP_SECS" => "7",
             "SPIRA_METRICS_ENDPOINT" => "127.0.0.1:9",
             "SPIRA_RUN" => "r",
             "SPIRA_LC_LIFECYCLE_ON_STORE" => "1",

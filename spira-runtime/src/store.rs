@@ -28,11 +28,14 @@ impl Changes for ChangeTable {
     }
 }
 
+/// How long the scheduler's watch holds when the store is quiet: "30s is fine" (Ryan, 2026-11-22).
+pub const SCHEDULER_WATCH_HOLD_MS: u64 = 30_000;
+
 /// Installs the projection of the store on `lc_socket` and loads it. The first load is tried
 /// here so the first tick reads; a store that does not answer yet is the watch's to load once it
 /// does, and readers refuse until then. The watch itself is the `store.changed` source's.
 pub fn start(lc_socket: &Path) -> Result<(Arc<Projection>, Arc<ChangeTable>), String> {
-    install(Projection::configured(LcClient::socket(lc_socket))?)
+    install(Projection::configured(LcClient::socket(lc_socket))?.with_prefixes(&crate::tasks::watched_prefixes()).with_watch_wait(SCHEDULER_WATCH_HOLD_MS))
 }
 
 fn install(views: Projection) -> Result<(Arc<Projection>, Arc<ChangeTable>), String> {

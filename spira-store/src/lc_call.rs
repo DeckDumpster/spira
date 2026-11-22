@@ -45,6 +45,24 @@ const SWEEPS: &[&str] = &["reconcile-asks", "reconcile-epics", "reconcile-conten
 /// How long a client waits for a sweep: the service's query deadline plus the reply.
 pub const SWEEP_DEADLINE: Duration = Duration::from_secs(12); // batch-job: a sweep the service bounds at its 10 s query deadline
 
+/// How long a client waits for `argv`: a watch waits its own hold and a second to answer, a sweep
+/// the service's query deadline, every other verb [`DEADLINE`].
+pub fn call_wait(argv: &[String]) -> Duration {
+    match argv.first().map(String::as_str) {
+        Some("watch") => {
+            let hold = argv.iter().position(|a| a == "--wait-ms").and_then(|i| argv.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
+            Duration::from_millis(hold.unwrap_or(WATCH_HOLD_DEFAULT_MS)) + WATCH_ANSWER
+        }
+        Some(v) if SWEEPS.contains(&v) => SWEEP_DEADLINE,
+        _ => DEADLINE,
+    }
+}
+
+/// What a watch's client waits beyond the hold for the reply to arrive.
+const WATCH_ANSWER: Duration = Duration::from_secs(1);
+/// The hold the service gives a watch that names none: its longest.
+const WATCH_HOLD_DEFAULT_MS: u64 = 30_000;
+
 /// Why a call has no answer to act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LcError {
@@ -114,7 +132,7 @@ pub struct Socket {
 impl Socket {
     fn call(&self, argv: &[String], stdin: Option<&str>, deadline: Duration, not_running_wait: Duration) -> Result<Reply, Fail> {
         let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display()));
-        let wait = if argv.first().is_some_and(|v| SWEEPS.contains(&v.as_str())) { SWEEP_DEADLINE } else { DEADLINE };
+        let wait = call_wait(argv);
         let wait = if deadline == DEADLINE { wait } else { wait.min(deadline) };
         retrying_resent(argv, &self.path, wait, not_running_wait, |left| {
             let stream = connect(&self.path)?;
@@ -661,6 +679,17 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(t862q11)]
+    #[test]
+    fn a_watch_waits_its_hold_and_a_second_and_every_other_verb_keeps_the_deadline() {
+        let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(call_wait(&argv(&["watch", "lifecycle/", "--from-rev", "7", "--wait-ms", "30000"])) >= Duration::from_secs(31));
+        assert_eq!(call_wait(&argv(&["watch", "lifecycle/", "--from-rev", "7", "--wait-ms", "2000"])), Duration::from_secs(3));
+        assert!(call_wait(&argv(&["watch", "lifecycle/", "--from-rev", "7"])) >= Duration::from_secs(31), "a watch that names no hold gets the longest");
+        assert_eq!(call_wait(&argv(&["list", "--live"])), DEADLINE);
+        assert_eq!(call_wait(&argv(&["reconcile-asks"])), SWEEP_DEADLINE);
+    }
+
     #[test_id(tsmi0of)]
     #[test]
     fn a_record_answers_only_once_it_is_done() {

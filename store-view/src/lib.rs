@@ -22,7 +22,7 @@ use spira_store::lc_state::{self, BatchState, Row};
 
 /// How old a view's last confirmed revision may be before its reads refuse.
 pub const STALE_KEY: &str = "SPIRA_STORE_VIEW_STALE_MS";
-/// One long-poll's wait: under the store's 2.5 s cap and the service's 3 s request deadline.
+/// One long-poll's wait for a projection that does not ask for another.
 pub const WATCH_WAIT_MS: u64 = 2_000;
 /// The pause after a poll the store did not answer, so a down service is not spun on.
 const RETRY: Duration = Duration::from_secs(1);
@@ -240,6 +240,8 @@ pub struct Projection {
     lost: Mutex<Option<String>>,
     /// Prefixes watched beside the five this view applies; their events are only reported.
     extra: Vec<String>,
+    /// How long one watch holds, which a view may be quiet for and still be current.
+    watch_wait_ms: u64,
 }
 
 /// What one [`Projection::poll`] did.
@@ -452,12 +454,24 @@ fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
 
 impl Projection {
     pub fn new(client: LcClient, stale_after: Duration, clock: Clock) -> Self {
-        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), terminal: Mutex::new(Terminal::default()), watching: AtomicBool::new(false), lost: Mutex::new(None), extra: Vec::new() }
+        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), terminal: Mutex::new(Terminal::default()), watching: AtomicBool::new(false), lost: Mutex::new(None), extra: Vec::new(), watch_wait_ms: WATCH_WAIT_MS }
+    }
+
+    /// Holds each watch `ms`, and allows that much more quiet before a read refuses as stale: a
+    /// quiet store confirms the view once per hold, so the bound is the hold beyond [`STALE_KEY`].
+    pub fn with_watch_wait(mut self, ms: u64) -> Self {
+        self.watch_wait_ms = ms;
+        self.stale_after += Duration::from_millis(ms);
+        self
     }
 
     /// Also watches `prefixes`: events under them are reported by [`poll`](Self::poll) and not applied.
     pub fn with_prefixes(mut self, prefixes: &[&str]) -> Self {
-        self.extra.extend(prefixes.iter().map(|p| p.to_string()));
+        for p in prefixes {
+            if ![BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY].contains(p) && !self.extra.iter().any(|e| e == p) {
+                self.extra.push(p.to_string());
+            }
+        }
         self
     }
 
@@ -568,7 +582,7 @@ impl Projection {
             s.rev.filter(|_| s.beads.is_some())
         };
         let Some(from) = held else { return self.load_at().map(|rev| Polled::Reloaded { rev }) };
-        let (from_s, wait) = (from.to_string(), WATCH_WAIT_MS.to_string());
+        let (from_s, wait) = (from.to_string(), self.watch_wait_ms.to_string());
         // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
         // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
         let mut argv = vec!["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY];

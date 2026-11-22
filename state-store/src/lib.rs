@@ -45,8 +45,8 @@ pub const TTL_PREFIXES: &[&str] = &[TELEMETRY_PREFIX, INTENTS_PREFIX];
 /// [`TTL_PREFIXES`] key's, and one that does not never expires.
 pub const RETAINED_PREFIXES: &[&str] = &["runtime/effect/", "runtime/resolved/"];
 pub const REQUEST_TTL_SECS: u64 = 24 * 60 * 60;
-/// The longest a watch may wait, inside the socket protocol's 3 s deadline.
-pub const MAX_WATCH_WAIT_MS: u64 = 2_500;
+/// The longest a watch may wait. lc-serve bounds a watch at its own hold plus `WATCH_MARGIN`, not at the default request deadline.
+pub const MAX_WATCH_WAIT_MS: u64 = 30_000;
 
 /// `main` is the txn's global revision; `sub` orders the keys one txn touches.
 #[derive(
