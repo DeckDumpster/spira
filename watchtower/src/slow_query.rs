@@ -147,7 +147,6 @@ mod tests {
             assert!(got.contains(want), "{want} missing from {first}");
         }
     }
-
     #[test_id(tg3e7xv)]
     #[test]
     fn a_wal_shape_files_an_incident_naming_the_open_verb_and_wal_pressure() {
@@ -167,6 +166,7 @@ mod tests {
         assert!(!got.contains("query-attributable"), "{got}");
     }
 
+    #[test_id(tg3e7xv)]
     #[test]
     fn distinct_shapes_group_separately() {
         let g = group("1\ta\t1100\tX\n2\tb\t1200\tY\n3\ta\t1300\tX\n");

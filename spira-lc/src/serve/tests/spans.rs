@@ -321,6 +321,7 @@ fn a_cannot_tell_whose_store_read_was_ended_at_the_limit_says_so_in_its_head() {
     assert!(head_of(&door_answering(0, Some(ReadEnd::Ended))).get("read_ended").is_none(), "an answer that applied is not marked");
 }
 
+#[test_id(tyvvzq9)]
 #[test]
 fn a_request_whose_read_a_forced_wal_restart_cut_pages_the_slow_query_log_with_its_verb() {
     use state_store::phases;
