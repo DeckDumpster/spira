@@ -11,6 +11,28 @@ use std::path::{Path, PathBuf};
 pub const SERVICE: &str = "lc-serve.service";
 pub const DROPIN_NAME: &str = "zz-spira-freeze.conf";
 pub const FROZEN_CONDITION: &str = system_paths::FROZEN_CONDITION;
+pub const MAINTENANCE_FILE: &str = "store-maintenance.json";
+
+/// A deliberate store stop held by one process for the length of a command.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Maintenance {
+    pub owner: String,
+    pub why: String,
+    pub since: u64,
+    pub pid: u32,
+}
+
+pub fn maintenance_path(run_dir: &Path) -> PathBuf {
+    run_dir.join(MAINTENANCE_FILE)
+}
+
+pub fn read_maintenance(run_dir: &Path) -> Option<Maintenance> {
+    serde_json::from_slice(&std::fs::read(maintenance_path(run_dir)).ok()?).ok()
+}
+
+pub fn owner_alive(m: &Maintenance) -> bool {
+    Path::new(&format!("/proc/{}", m.pid)).exists()
+}
 
 /// The drop-in written beside the frozen unit.
 pub fn dropin() -> String {
@@ -109,9 +131,73 @@ pub fn freeze(s: &Store, u: &mut dyn Units) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// Removes the drop-ins and starts the service, then the runtime; reports thawed only once a
+fn remove_maintenance_record(run_dir: &Path) -> Result<(), String> {
+    let p = maintenance_path(run_dir);
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("{}: {e}", p.display())),
+    }
+}
+
+/// Holds only the service stopped while `work` runs, then starts it whatever `work` returned.
+/// The runtime keeps running. Returns `work`'s code and the lines to print; a start that does
+/// not leave the service active keeps the record and refuses, naming `world thaw-store`.
+pub fn maintain(s: &Store, u: &mut dyn Units, run_dir: &Path, m: &Maintenance, work: &mut dyn FnMut() -> i32) -> Result<(i32, Vec<String>), String> {
+    let mut out = Vec::new();
+    let record = serde_json::to_vec(m).map_err(|e| e.to_string())?;
+    let rp = maintenance_path(run_dir);
+    std::fs::write(&rp, record).map_err(|e| format!("{}: {e}", rp.display()))?;
+    let hold = write_dropin(&s.dropin_path(SERVICE)).and_then(|()| reload(u)).and_then(|()| {
+        if !u.run(&["stop", SERVICE]) {
+            return Err(format!("systemctl --user stop {SERVICE} failed"));
+        }
+        let state = u.active_state(SERVICE);
+        if state != "inactive" && state != "failed" {
+            return Err(format!("{SERVICE} is {state:?} after the stop: not held"));
+        }
+        Ok(())
+    });
+    let rc = match &hold {
+        Ok(()) => {
+            out.push(format!("  stopped {SERVICE}, held by {DROPIN_NAME}"));
+            work()
+        }
+        Err(_) => 0,
+    };
+    let release = release(s, u);
+    if let Err(e) = hold {
+        let _ = release;
+        let _ = remove_maintenance_record(run_dir);
+        return Err(format!("{e}; the hold was released"));
+    }
+    release.map_err(|e| format!("{e}; the maintenance record stays, run world thaw-store"))?;
+    remove_maintenance_record(run_dir)?;
+    out.push(format!("  started {SERVICE}"));
+    Ok((rc, out))
+}
+
+fn release(s: &Store, u: &mut dyn Units) -> Result<(), String> {
+    let p = s.dropin_path(SERVICE);
+    match std::fs::remove_file(&p) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {e}", p.display())),
+    }
+    reload(u)?;
+    if !u.run(&["reset-failed", SERVICE]) || !u.run(&["start", SERVICE]) {
+        return Err(format!("systemctl --user start {SERVICE} failed"));
+    }
+    let state = u.active_state(SERVICE);
+    if state != "active" {
+        return Err(format!("{SERVICE} is {state:?} after the start"));
+    }
+    Ok(())
+}
+
+/// Removes the drop-ins and the maintenance record and starts the service, then the runtime; reports thawed only once a
 /// re-read finds the service active.
-pub fn thaw(s: &Store, u: &mut dyn Units) -> Result<Vec<String>, String> {
+pub fn thaw(s: &Store, u: &mut dyn Units, run_dir: &Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for unit in s.frozen() {
         let p = s.dropin_path(unit);
@@ -122,8 +208,9 @@ pub fn thaw(s: &Store, u: &mut dyn Units) -> Result<Vec<String>, String> {
         }
     }
     reload(u)?;
+    remove_maintenance_record(run_dir)?;
     for unit in [SERVICE, &s.runtime] {
-        if !u.run(&["start", unit]) {
+        if !u.run(&["reset-failed", unit]) || !u.run(&["start", unit]) {
             return Err(format!("systemctl --user start {unit} failed"));
         }
         out.push(format!("  started {unit}"));
@@ -152,25 +239,43 @@ mod tests {
         loaded: BTreeMap<String, bool>,
         stuck: Option<String>,
         calls: Vec<String>,
+        start_attempts: u32,
     }
 
     impl Fake {
         fn new(s: &Store) -> Fake {
             let active = [SERVICE, &s.runtime].map(String::from).into();
-            Fake { dir: s.unit_dir.clone(), runtime: s.runtime.clone(), active, loaded: BTreeMap::new(), stuck: None, calls: Vec::new() }
+            Fake { dir: s.unit_dir.clone(), runtime: s.runtime.clone(), active, loaded: BTreeMap::new(), stuck: None, calls: Vec::new(), start_attempts: 0 }
         }
 
         fn condition_met(&self, unit: &str) -> bool {
             self.loaded.get(unit).copied().unwrap_or(true)
         }
 
-        fn start(&mut self, unit: &str) {
-            if unit == self.runtime && self.condition_met(SERVICE) {
+        /// One start attempt on the service: counted against the limit even when its condition
+        /// skips it, and refused once five are spent until `reset-failed`.
+        fn start_service(&mut self) -> bool {
+            self.start_attempts += 1;
+            if self.start_attempts > 5 {
+                return false;
+            }
+            if self.condition_met(SERVICE) {
                 self.active.insert(SERVICE.into());
+            }
+            true
+        }
+
+        fn start(&mut self, unit: &str) -> bool {
+            if unit == SERVICE {
+                return self.start_service();
+            }
+            if unit == self.runtime || unit == "cockpit-ensure.service" {
+                self.start_service();
             }
             if self.condition_met(unit) {
                 self.active.insert(unit.into());
             }
+            true
         }
     }
 
@@ -189,7 +294,12 @@ mod tests {
                         self.active.remove(*unit);
                     }
                 }
-                ["start", unit] => self.start(unit),
+                ["start", unit] => return self.start(unit),
+                ["reset-failed", unit] => {
+                    if *unit == SERVICE {
+                        self.start_attempts = 0;
+                    }
+                }
                 _ => return false,
             }
             true
@@ -263,10 +373,106 @@ mod tests {
         let mut u = Fake::new(&s);
         freeze(&s, &mut u).unwrap();
         u.calls.clear();
-        let out = thaw(&s, &mut u).unwrap();
+        let out = thaw(&s, &mut u, d.path()).unwrap();
         assert!(!s.dropin_path(SERVICE).exists());
-        assert_eq!(u.calls, ["daemon-reload", "start lc-serve.service", "start spira-runtime-test.service"]);
+        assert_eq!(
+            u.calls,
+            ["daemon-reload", "reset-failed lc-serve.service", "start lc-serve.service", "reset-failed spira-runtime-test.service", "start spira-runtime-test.service"]
+        );
         assert_eq!(out.last().unwrap(), "thawed: lc-serve.service active, spira-runtime-test.service started");
         assert_eq!(u.active_state(&s.runtime), "active");
+    }
+
+    #[test]
+    fn thaw_starts_the_service_after_its_start_limit_is_spent() {
+        let d = TempDir::new("freeze-limit");
+        let s = store(&d);
+        let mut u = Fake::new(&s);
+        freeze(&s, &mut u).unwrap();
+        for _ in 0..6 {
+            u.run(&["start", "cockpit-ensure.service"]);
+        }
+        assert!(!u.run(&["start", SERVICE]), "the limit is spent");
+        thaw(&s, &mut u, d.path()).unwrap();
+        assert_eq!(u.active_state(SERVICE), "active");
+    }
+
+    fn who() -> Maintenance {
+        Maintenance { owner: "concierge".into(), why: "compact".into(), since: 1_700_000_000, pid: std::process::id() }
+    }
+
+    #[test]
+    fn maintenance_holds_the_service_stopped_through_fifteen_pulled_starts_and_starts_it_after() {
+        let d = TempDir::new("maintain-holds");
+        let s = store(&d);
+        let u = std::cell::RefCell::new(Fake::new(&s));
+        // `work` and `maintain` both need the manager; the manager is shared through a cell.
+        struct Shared<'a>(&'a std::cell::RefCell<Fake>);
+        impl Units for Shared<'_> {
+            fn run(&mut self, a: &[&str]) -> bool {
+                self.0.borrow_mut().run(a)
+            }
+            fn active_state(&mut self, unit: &str) -> String {
+                self.0.borrow_mut().active_state(unit)
+            }
+        }
+        let mut states = Vec::new();
+        let mut work = || {
+            for _ in 0..15 {
+                u.borrow_mut().run(&["start", "cockpit-ensure.service"]);
+                states.push(u.borrow_mut().active_state(SERVICE));
+            }
+            assert!(maintenance_path(d.path()).exists());
+            0
+        };
+        let (rc, _) = maintain(&s, &mut Shared(&u), d.path(), &who(), &mut work).unwrap();
+        assert_eq!(rc, 0);
+        assert_eq!(states, vec!["inactive"; 15]);
+        let mut u = u.into_inner();
+        assert_eq!(u.active_state(SERVICE), "active");
+        assert_eq!(u.active_state(&s.runtime), "active");
+        assert!(!u.calls.iter().any(|c| c == &format!("stop {}", s.runtime)));
+        assert_eq!(u.calls[u.calls.len() - 2..], ["reset-failed lc-serve.service", "start lc-serve.service"]);
+        assert!(!maintenance_path(d.path()).exists());
+        assert!(!s.dropin_path(SERVICE).exists());
+    }
+
+    #[test]
+    fn a_failed_command_still_ends_the_maintenance_and_returns_its_code() {
+        let d = TempDir::new("maintain-fails");
+        let s = store(&d);
+        let mut u = Fake::new(&s);
+        let (rc, _) = maintain(&s, &mut u, d.path(), &who(), &mut || 3).unwrap();
+        assert_eq!(rc, 3);
+        assert_eq!(u.active_state(SERVICE), "active");
+        assert!(!maintenance_path(d.path()).exists());
+    }
+
+    #[test]
+    fn a_start_that_fails_keeps_the_record_and_names_thaw_store() {
+        let d = TempDir::new("maintain-start-fails");
+        let s = store(&d);
+        struct NoStart(Fake);
+        impl Units for NoStart {
+            fn run(&mut self, a: &[&str]) -> bool {
+                a.first() != Some(&"start") && self.0.run(a)
+            }
+            fn active_state(&mut self, unit: &str) -> String {
+                self.0.active_state(unit)
+            }
+        }
+        let e = maintain(&s, &mut NoStart(Fake::new(&s)), d.path(), &who(), &mut || 0).unwrap_err();
+        assert!(e.contains("world thaw-store"), "{e}");
+        assert!(maintenance_path(d.path()).exists());
+    }
+
+    #[test]
+    fn the_record_round_trips_and_its_owner_is_alive_only_while_the_pid_exists() {
+        let d = TempDir::new("maintain-record");
+        std::fs::write(maintenance_path(d.path()), serde_json::to_vec(&who()).unwrap()).unwrap();
+        let m = read_maintenance(d.path()).unwrap();
+        assert_eq!(m, who());
+        assert!(owner_alive(&m));
+        assert!(!owner_alive(&Maintenance { pid: u32::MAX, ..m }));
     }
 }
