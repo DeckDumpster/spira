@@ -116,13 +116,13 @@ fn comment_line(number: u32, pr: u64, c: &Comment) -> String {
     format!("CR {number:03} #{pr} comment {} by {}{at}: {} — cr thread --review {number:03} --comment {}", c.id, c.author, one_line(&c.body), c.id)
 }
 
-/// The lines a snapshot calls for, the record changes and comments to keep, and the state to carry.
-/// A review the forge did not answer for in part changes nothing for that part.
 /// The one place the forge's epoch seconds become the record's milliseconds.
 fn forge_ms(secs: u64) -> u64 {
     secs * 1000
 }
 
+/// The lines a snapshot calls for, the record changes and comments to keep, and the state to carry.
+/// A review the forge did not answer for in part changes nothing for that part.
 pub fn decide(carry: &Carry, snap: &Snapshot, now: u64) -> (Carry, Vec<String>, Records) {
     let mut c = carry.clone();
     let mut said = vec![];
