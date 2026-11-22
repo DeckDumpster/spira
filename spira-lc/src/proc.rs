@@ -47,17 +47,20 @@ fn command_when(serving: bool, program: impl AsRef<std::ffi::OsStr>) -> Result<C
 mod tests {
     use super::*;
 
+    #[test_id(ttgjohr)]
     #[test]
     fn serving_refuses_a_process_naming_the_program() {
         let e = command_when(true, "git").unwrap_err();
         assert_eq!(e, "lc-serve starts no process: git");
     }
 
+    #[test_id(toevcvi)]
     #[test]
     fn not_serving_builds_the_command() {
         assert_eq!(command_when(false, "git").unwrap().get_program(), "git");
     }
 
+    #[test_id(t6wrxu8)]
     #[test]
     fn the_bounded_forms_refuse_while_serving_and_build_otherwise() {
         assert_eq!(bounded_when(true, "git").err().unwrap(), "lc-serve starts no process: git");

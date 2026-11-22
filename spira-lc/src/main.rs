@@ -421,6 +421,7 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(ts945pl)]
     #[test]
     fn a_served_admin_store_is_not_a_verb_and_runs_nothing() {
         let (code, out) = dispatch(&["admin-store".to_string(), "version".to_string()]);

@@ -839,6 +839,7 @@ mod tests {
         assert!(mine(series_since(&c, &pushed, at)).is_empty(), "nothing moved, nothing pushed");
     }
 
+    #[test_id(tz4r1bn)]
     #[test]
     fn reads_ended_and_overran_are_pushed_by_verb_summed_over_requests() {
         let mut c = Counters::default();

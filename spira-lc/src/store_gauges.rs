@@ -202,6 +202,7 @@ mod tests {
         assert_eq!(ids.len(), panels.len(), "panel ids are unique");
     }
 
+    #[test_id(tada2ds)]
     #[test]
     fn the_checkpointing_row_queries_each_metric_by_its_const_and_the_wal_panel_carries_its_lines() {
         use crate::slow::{GATE_WAIT_MAX_SECONDS, READS_ENDED, READS_ENDED_BY_RESET, READS_OVERRAN};

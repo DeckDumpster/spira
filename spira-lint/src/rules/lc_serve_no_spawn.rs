@@ -92,6 +92,7 @@ mod tests {
         LcServeNoSpawn.check(&tree).unwrap().iter().map(|f| f.to_string()).collect()
     }
 
+    #[test_id(t1ai8wi)]
     #[test]
     fn a_planted_start_in_spira_lc_is_found_and_named() {
         let t = TempDir::new("lcns-planted");
@@ -101,6 +102,7 @@ mod tests {
         assert!(got[0].contains("x.rs") && got[0].contains(":2") && got[0].contains("proc::command"), "{got:?}");
     }
 
+    #[test_id(t75h3uj)]
     #[test]
     fn every_form_of_start_is_found() {
         let t = TempDir::new("lcns-forms");
@@ -111,6 +113,7 @@ mod tests {
         assert_eq!(run(&t, &["spira-lc/src/x.rs"]).len(), 5);
     }
 
+    #[test_id(tevwz6r)]
     #[test]
     fn test_code_the_door_comments_and_strings_pass() {
         let t = TempDir::new("lcns-exempt");
@@ -122,6 +125,7 @@ mod tests {
         assert_eq!(run(&t, &["spira-lc/src/x.rs", "spira-lc/src/proc.rs", "spira-lc/src/serve/tests/mod.rs", "spira-lc/src/serve.rs"]), Vec::<String>::new());
     }
 
+    #[test_id(thwnk18)]
     #[test]
     fn a_start_outside_spira_lc_is_not_this_rules_business() {
         let t = TempDir::new("lcns-scope");
@@ -129,6 +133,7 @@ mod tests {
         assert!(run(&t, &["other/src/x.rs"]).is_empty());
     }
 
+    #[test_id(tihzpbv)]
     #[test]
     fn the_door_itself_would_be_a_finding_were_it_in_scope() {
         let hits = scan(b"fn door() { Command::new(p) }\n", &|_| false);
@@ -136,6 +141,7 @@ mod tests {
         assert!(!in_scope(DOOR) && in_scope("spira-lc/src/bd.rs"));
     }
 
+    #[test_id(t04qtpc)]
     #[test]
     fn the_real_spira_lc_tree_has_no_start_outside_the_door() {
         let manifest = testkit::manifest_dir();

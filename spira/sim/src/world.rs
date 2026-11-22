@@ -1361,6 +1361,7 @@ mod locator_tests {
         assert!(s.contains(&("spira.beads_sql_writer_password_file".to_string(), "w/config/lc-credential".to_string())));
     }
 
+    #[test_id(t1pjyim)]
     #[test]
     fn the_production_locator_refusal_names_its_exit() {
         let e = refuse_production(&|k| matches!(k, "SPIRA_TOML" | "SPIRA_LC_SOCKET").then(|| "x".to_string())).unwrap_err();
