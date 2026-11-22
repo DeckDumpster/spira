@@ -237,9 +237,10 @@ cmd_age() {
 }
 
 # Phase clocks: _lcb_lap closes the phase begun at the last lap and names its seconds in _LCB_PHASES.
+_lcb_now_ns() { date +%s%N; }
 _lcb_lap() {
-    local now; now="$(date +%s)"
-    _LCB_PHASES="${_LCB_PHASES:+$_LCB_PHASES, }$1 $(( now - ${_LCB_LAP:-$now} ))s"
+    local now; now="$(_lcb_now_ns)"
+    _LCB_PHASES="${_LCB_PHASES:+$_LCB_PHASES, }$1 $(( (now - ${_LCB_LAP:-$now}) / 1000000000 ))s"
     _LCB_LAP="$now"
 }
 _lcb_phases_note() { [ -z "${_LCB_PHASES:-}" ] || printf ' (%s)' "$_LCB_PHASES"; }
@@ -248,7 +249,7 @@ _lcb_drill_db() {
     local db="$1" manifest="${2:-}" lock left
     lock="$(_lcb_lock "$db")" || return 1
     left=$(( _LCB_DRILL_DEADLINE - $(date +%s) )); [ "$left" -ge 0 ] || left=0
-    _LCB_PHASES="${_LCB_QUIET:-}"; _LCB_LAP="$(date +%s)"
+    _LCB_PHASES="${_LCB_QUIET:-}"; _LCB_LAP="$(_lcb_now_ns)"
     ( flock -w "$left" 9 || { _lcb_lap "lock wait"; echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $db: a run holds the lock$(_lcb_phases_note)" | _lcb_record_deferral "$db" >&2; exit 1; }
       _lcb_lap "lock wait"
       _lcb_drill_db_locked "$db" "$manifest" ) 9>"$lock"
@@ -304,7 +305,7 @@ _lcb_drill_db_locked() {
         || { _lcb_drill_fail "$db" "$db: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR"; return 1; }
     local which=(--state "$(_lcb_work "$db")"); [ -z "$named" ] || which=(--manifest "$named")
     local fails=() live_ns=0 restored_ns=0 t1 t2 t3
-    _LCB_LAP="$(date +%s)"
+    _LCB_LAP="$(_lcb_now_ns)"
     set="$(spira-lc admin-dolt-assemble "${which[@]}" --files "$(_lcb_sync_dir "$db")" --out "$scratch/snap" 2>&1)"; rc=$?
     _lcb_lap assemble
     [ "$rc" = 0 ] \
@@ -332,11 +333,11 @@ _lcb_drill_db_locked() {
     tables="$(_lcb_sql "$db" -r csv -q "SHOW FULL TABLES AS OF '$head' WHERE Table_type='BASE TABLE'" 2>"$scratch/tables.err" | awk -F, 'NR>1{print $1}')"
     [ -n "$tables" ] || { _lcb_drill_fail "$db" "list tables as of $head: none listed: $(_lcb_text "$scratch/tables.err" "(no stderr)")"; rm -rf "$scratch"; return 1; }
     for tbl in $tables; do
-        t1="$(date +%s%N)"
+        t1="$(_lcb_now_ns)"
         live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" 2>"$scratch/live.err" | tail -n +2)"
-        t2="$(date +%s%N)"
+        t2="$(_lcb_now_ns)"
         restored="$(_lcb_restored_sql "$scratch" "$db" restored "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'")"
-        t3="$(date +%s%N)"
+        t3="$(_lcb_now_ns)"
         live_ns=$(( live_ns + t2 - t1 )); restored_ns=$(( restored_ns + t3 - t2 ))
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
             fails+=("count $tbl: live ${live:-?} != restored ${restored:-?}: live stderr: $(_lcb_text "$scratch/live.err" "(no stderr)"); $(_lcb_query_report "$scratch" restored)"); rc=1
@@ -393,7 +394,7 @@ _lcb_drill_control() {
     scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/control.XXXXXX")" \
         || { echo "lc-backup: drill: control: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR" | tee "$verdict" >&2; return 1; }
     # batch-job: a restore and a full fold of the control store's local copy
-    t0="$(date +%s)"
+    t0="$(_lcb_now_ns)"
     out="$(spira-lc admin-drill --scratch "$scratch/restore" 2>&1)"; rc=$?
     _LCB_LAP="$t0"; _LCB_PHASES=""; _lcb_lap admin-drill
     rm -rf "$scratch"
@@ -430,7 +431,7 @@ cmd_drill() {
         [ "$only" = control ] && return "$rc"
     fi
     _LCB_DRILL_DEADLINE=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
-    _LCB_LAP="$(date +%s)"; _LCB_PHASES=""
+    _LCB_LAP="$(_lcb_now_ns)"; _LCB_PHASES=""
     _lcb_drill_wait_quiet ${only:-$(_lcb_dbs)} || return 1
     _lcb_lap "quiet wait"
     _LCB_QUIET="$_LCB_PHASES"
