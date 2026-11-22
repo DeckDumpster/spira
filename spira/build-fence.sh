@@ -47,7 +47,10 @@
 # to CARGO_TARGET_DIR, else SPIRA_FENCE_TARGET_DIR, else this worktree's target/fence-check.
 #
 # It fails CLOSED: cargo runs under the pinned toolchain, and a non-zero exit is a RED
-# certification naming the command's own output, not a suite failure.
+# certification naming the command's own output, not a suite failure. The one exception is a
+# failure after crates compiled with no compiler error at all (a rustc or its wrapper died):
+# that exits 75, "could not run", and certification judges the tree instead. Cargo's JSON
+# stream decides which, never its text.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$HERE/.." 2>/dev/null || { printf 'build-fence: cannot reach the tree holding %s\n' "$0" >&2; exit 1; }
@@ -138,10 +141,23 @@ if [ "${#scope[@]}" -eq 0 ]; then
     exit 0
 fi
 printf 'build-fence: cargo check %s\n' "${scope[*]}" >&2
-out="$("$CARGO_BIN" check "${scope[@]}" --locked 2>&1)"; rc=$?
+stream="$CARGO_TARGET_DIR/build-fence.$$.json"
+errs="$CARGO_TARGET_DIR/build-fence.$$.err"
+trap 'rm -f "$stream" "$errs"' EXIT
+"$CARGO_BIN" check "${scope[@]}" --locked --message-format=json >"$stream" 2>"$errs"; rc=$?
 if [ "$rc" -ne 0 ]; then
     printf 'build-fence: cargo check FAILED (rc=%s) — RED certification, not a suite failure\n' "$rc" >&2
-    printf '%s\n' "$out" >&2
+    jq -r 'select(.reason=="compiler-message") | .message.rendered // empty' "$stream" >&2 2>/dev/null
+    cat "$errs" >&2
+    if ! counts="$(jq -rs '[(map(select(.reason=="compiler-message" and .message.level=="error")) | length), (map(select(.reason=="compiler-artifact")) | length)] | @tsv' "$stream" 2>&1)"; then
+        printf 'build-fence: cannot read cargo'"'"'s message stream: %s\n' "$counts" >&2
+        exit 1
+    fi
+    IFS=$'\t' read -r nerr nart <<< "$counts"
+    if [ "$nerr" -eq 0 ] && [ "$nart" -ge 1 ]; then
+        printf 'build-fence: cargo check failed (rc=%s) after compiling, with no compiler error — the compile did not judge the tree; could not run\n' "$rc" >&2
+        exit 75
+    fi
     exit 1
 fi
 printf 'build-fence: cargo check ok\n' >&2
