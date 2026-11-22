@@ -180,14 +180,14 @@ fn dot(red: bool) -> String {
 
 fn banner(v: &View) -> Vec<String> {
     let mut out = vec![format!(
-        "{B}SPIRA{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
+        "{B}SPIRA{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}  {D}refresh {}ms{R}{}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 24)) },
         v.working,
         v.ceiling,
         v.gather_ms,
-        v.failures
+        crate::lcview::failing_label(v, 80).map(|l| format!("  {RED}{l}{R}")).unwrap_or_default()
     )];
     // The running pass, pinned under the banner so it is visible whatever is collapsed or
     // scrolled (per Ryan 2026-10-09); ROUND's pass subsection keeps the detail.
@@ -1072,6 +1072,18 @@ mod tests {
         let text = strip(&banner(&v).join("\n"));
         assert!(text.contains("read from 40s ago"), "{text}");
         assert!(!text.contains("source failed"), "{text}");
+    }
+
+    #[test]
+    fn the_banner_names_the_sources_failing_now_and_never_a_published_total() {
+        let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[],"store_errors":[],"failures":2849});
+        let s: crate::lcview::Snapshot = serde_json::from_value(old).unwrap();
+        let f = crate::lcview::first_frame(Some(&s), 2).unwrap();
+        let text = strip(&banner(&crate::lcview::view(&f)).join("\n"));
+        assert!(!text.contains("2849") && !text.contains("failing"), "{text}");
+        let two = crate::lcview::Snapshot { failed: vec!["spira-lc list: exit 124".into(), "victorialogs: refused".into()], ..Default::default() };
+        let text = strip(&banner(&crate::lcview::view(&two)).join("\n"));
+        assert!(text.contains("2 sources failing: spira-lc list: exit 124 (+1 more)"), "{text}");
     }
 
     fn st(name: &str, count: usize, rates: &[i64]) -> SmState {
