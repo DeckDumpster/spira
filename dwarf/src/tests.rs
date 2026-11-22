@@ -292,6 +292,49 @@ pub(crate) mod verdict_run {
         assert_eq!(envs[0].get("TMPDIR"), Some(&want));
     }
 
+    struct WorldUp(&'static str);
+    impl Exec for WorldUp {
+        fn exec(&self, _: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            if args.first().map(String::as_str) == Some("world") && args.get(1).map(String::as_str) == Some("up") {
+                let config = Path::new(&args[2]).join("config");
+                std::fs::create_dir_all(&config).unwrap();
+                std::fs::write(config.join("sim.env"), self.0).unwrap();
+            }
+            Out::ok("")
+        }
+    }
+
+    #[test_id(tgr4f1n)]
+    #[test]
+    fn a_pilgrim_session_is_started_with_the_grafana_url_its_world_names() {
+        let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
+        let work = testkit::TempDir::new("dwarf-pilgrim-grafana");
+        let w = work.path().to_path_buf();
+        let release = w.join("release");
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        testkit::write_exe(release.join("bin/sim"), "#!/bin/sh\n");
+        let _env = testkit::env(&[(spira_config::RELEASE_ENV, Some(release.to_str().unwrap()))]);
+        let cap = Capture(Default::default());
+        let mut vars = super::super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        let cwd = std::env::current_dir().unwrap();
+        let sim_env = "SPIRA_LC_SOCKET=w/lc.sock\nSPIRA_TOML=w/config/sim.toml\nPILGRIM_GRAFANA_URL=http://g:3000\n";
+        let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &WorldUp(sim_env), &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
+            r.rune = Rune::from_vars("pilgrim", &Default::default());
+            r.conf.run = w.join("run");
+            r.s.logf = Some(w.join("log"));
+            let bin = w.join("model-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            testkit::write_exe(bin.join("work"), "#!/bin/sh\n");
+            r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
+            r.session(&w).map_err(|a| format!("{a:?}"))
+        });
+        std::env::set_current_dir(cwd).unwrap();
+        res.unwrap();
+        let envs = cap.0.lock().unwrap();
+        assert_eq!(envs[0].get("PILGRIM_GRAFANA_URL").map(String::as_str), Some("http://g:3000"), "{envs:?}");
+    }
+
     #[test_id(tpl1fti)]
     #[test]
     fn the_env_the_session_port_receives_carries_the_forge_fences_and_no_token() {
