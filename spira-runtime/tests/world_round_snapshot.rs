@@ -143,6 +143,19 @@ fn the_throughput_and_transitions_snapshots_carry_the_halt_even_when_unreadable(
     assert_eq!(x.halt.map(|h| h.why), Some("operator order: freeze".to_string()));
 }
 
+#[test_id(tk9cepw)]
+#[test]
+fn the_transitions_snapshot_counts_the_gate_slots_the_pinned_pool_size_leaves_free() {
+    let _env = testkit::env_read();
+    let (dir, w) = world(true);
+    let free = |par: u32| -> u64 {
+        let input = format!(r#"{{"now":1700000000,"window_s":3600,"certify_par":{par},"releases":"{}","release_repo":"alpha"}}"#, dir.path().join("rel").display());
+        let x: spira_runtime::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&w.transitions_snapshot(&input).unwrap()).unwrap();
+        x.gate_slots_free
+    };
+    assert_eq!((free(3), free(1)), (3, 1));
+}
+
 #[test_id(ty9swqe)]
 #[test]
 fn the_throughput_snapshot_names_the_oldest_waiting_bead_certified_ones_included() {
