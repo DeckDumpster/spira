@@ -108,6 +108,10 @@ pub fn units_drift_with(unitdir: &Path, shipped: Result<BTreeSet<String>, String
     }
 }
 
+pub fn default_unit_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config/systemd/user")
+}
+
 /// The production answer: this box's manifest, `SPIRA_LOCAL_UNITS`, and the lifecycle store.
 pub fn units_drift(unitdir: &Path) -> UnitDrift {
     let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "prod".into());

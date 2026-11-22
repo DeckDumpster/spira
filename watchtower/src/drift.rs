@@ -31,20 +31,12 @@ fn drift(drift_sh: &str, args: &[&str]) -> Probe {
     }
 }
 
-pub fn unit_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config/systemd/user")
-}
-
 pub fn probe_of(d: install::unit_drift::UnitDrift) -> Probe {
     match d {
         install::unit_drift::UnitDrift::Clean => Probe::Clean,
         install::unit_drift::UnitDrift::Drift(t) => Probe::Drift(t),
         install::unit_drift::UnitDrift::Unreadable => Probe::Unreadable,
     }
-}
-
-pub fn units_drift(unitdir: &std::path::Path) -> Probe {
-    probe_of(install::unit_drift::units_drift(unitdir))
 }
 
 pub const UNREADABLE_LIMIT: u32 = 3;
@@ -73,10 +65,11 @@ fn bump(state: &std::path::Path, unreadable: bool) -> u32 {
 
 pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh: &str, run_dir: &std::path::Path) {
     let drift_sh = format!("{spira_home}/drift.sh");
-    if !incident::is_usable(incident_sh) || !std::path::Path::new(&drift_sh).is_file() {
-        log("watchtower: drift-check skipped — incident.sh or drift.sh not readable");
+    if !incident::is_usable(incident_sh) {
+        log("watchtower: drift-check skipped — incident.sh not readable");
         return;
     }
+    let checkout_runnable = std::path::Path::new(&drift_sh).is_file();
     let classes: [(&str, &[&str], &str, String); 2] = [
         (
             "checkout-drift",
@@ -99,8 +92,8 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
             continue;
         }
         let probe = match what {
-            "units" => units_drift(&unit_dir()),
-            _ if repo.is_empty() => Probe::Unreadable,
+            "units" => probe_of(install::unit_drift::units_drift(&install::unit_drift::default_unit_dir())),
+            _ if repo.is_empty() || !checkout_runnable => Probe::Unreadable,
             _ => drift(&drift_sh, args),
         };
         let n = bump(&state, matches!(probe, Probe::Unreadable));
@@ -117,7 +110,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
                 log(&format!("watchtower: drift-check: {what} check could not run ({n} consecutive)"));
                 if n >= UNREADABLE_LIMIT {
                     let title = format!("DRIFT CHECK BLIND: the {what} drift check could not run {n} times in a row");
-                    let body = format!("drift.sh {what} exited without a verdict {n} consecutive runs; the {what} half of watchtower --drift-check is not checking anything.");
+                    let body = format!("the {what} drift check exited without a verdict {n} consecutive runs; the {what} half of watchtower --drift-check is not checking anything.");
                     let f = Finding::new(db, home_repo, &title, &body)
                         .reference(format!("incident:drift-unreadable-{what}"))
                         .cause(format!("drift-unreadable-{what}"));
@@ -219,5 +212,14 @@ mod tests {
         let d = fixture(&["foo.service"]);
         assert!(matches!(probe(&d, Err("no manifest".into()), ""), Probe::Unreadable));
         assert!(matches!(probe(&d, Ok(BTreeSet::new()), ""), Probe::Unreadable));
+    }
+
+    #[test_id(tfg55hk)]
+    #[test]
+    fn a_declaration_without_a_bead_is_named_and_trailing_comments_are_ignored() {
+        let d = fixture(&["foo.service", "ok.service"]);
+        let local = "[[unit]]\n  path = \"foo.service\"  # why\n[[unit]]\npath = \"ok.service\" # x\npermanent = true # y\n";
+        let want = format!("UNSHIPPED {}/foo.service (declared but names no bead and is not permanent = true)", d.path().display());
+        assert!(matches!(probe(&d, shipped(), local), Probe::Drift(t) if t.lines().next() == Some(want.as_str()) && !t.contains("ok.service")));
     }
 }
