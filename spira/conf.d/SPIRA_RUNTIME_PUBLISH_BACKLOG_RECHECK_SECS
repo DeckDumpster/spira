@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between a failed spira-runtime publish-backlog measurement of a repo and the one re-measure that must also fail before BLIND is paged.
+SCHEMA=Seconds between a failed publish-backlog measurement and its one re-measure (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

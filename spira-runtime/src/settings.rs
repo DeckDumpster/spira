@@ -245,6 +245,7 @@ impl Settings {
         };
         let publish_backlog = PublishBacklog {
             interval_ms: secs("SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS")? * 1000,
+            recheck_ms: secs("SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS")? * 1000,
             max_count: get("SPIRA_LOCAL_BACKLOG_COUNT")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_COUNT must be a non-negative integer".to_string())?,
             max_age_secs: get("SPIRA_LOCAL_BACKLOG_AGE")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_AGE must be a non-negative integer".to_string())?,
         };
@@ -473,12 +474,13 @@ mod tests {
         let base = lookup("7");
         let distinct = move |k: &str| match k {
             "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" => Ok("21".to_string()),
+            "SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS" => Ok("24".to_string()),
             "SPIRA_LOCAL_BACKLOG_COUNT" => Ok("22".to_string()),
             "SPIRA_LOCAL_BACKLOG_AGE" => Ok("23".to_string()),
             _ => base(k),
         };
         let s = Settings::from_lookup(&distinct).unwrap();
-        assert_eq!((s.publish_backlog.interval_ms, s.publish_backlog.max_count, s.publish_backlog.max_age_secs), (21_000, 22, 23));
+        assert_eq!((s.publish_backlog.interval_ms, s.publish_backlog.recheck_ms, s.publish_backlog.max_count, s.publish_backlog.max_age_secs), (21_000, 24_000, 22, 23));
     }
 
     #[test_id(tczn6nb)]
