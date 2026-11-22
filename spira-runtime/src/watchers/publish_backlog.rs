@@ -248,6 +248,7 @@ mod tests {
         assert!(c.doubt.is_empty());
     }
 
+    #[test_id(t3c47wu)]
     #[test]
     fn a_doubt_does_not_outlive_the_repo_leaving_the_snapshot() {
         let w = watcher();
@@ -259,6 +260,7 @@ mod tests {
         assert!(say.is_empty(), "{say:?}");
     }
 
+    #[test_id(t5j5u8f)]
     #[test]
     fn a_blind_spell_is_counted_from_the_first_failure() {
         let w = watcher();
@@ -270,6 +272,7 @@ mod tests {
         assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again after 100s blind"]);
     }
 
+    #[test_id(tc28mis)]
     #[test]
     fn a_stale_forge_tip_is_named_with_its_age_in_the_line_it_qualifies() {
         let w = watcher();

@@ -83,6 +83,7 @@ fn lines_and_calls(answers: impl Fn(usize) -> Read + Send + Sync + 'static) -> (
     (rig, lines, calls)
 }
 
+#[test_id(tv2mcu1)]
 #[test]
 fn a_read_that_fails_once_is_remeasured_and_pages_nothing() {
     let (mut r, lines, calls) = lines_and_calls(|n| if n == 0 { Read::Blind("deadline".into()) } else { Read::Measured { count: 0, arrival: None, forge_tip_age_secs: None } });
@@ -96,6 +97,7 @@ fn a_read_that_fails_once_is_remeasured_and_pages_nothing() {
     assert!(!lines.iter().any(|l| l.contains("BLIND") || l.contains("SIGHTED")), "{lines:?}");
 }
 
+#[test_id(tbi1vk2)]
 #[test]
 fn a_read_that_fails_twice_pages_blind_at_the_recheck_and_only_once() {
     let (mut r, lines, _) = lines_and_calls(|_| Read::Blind("deadline".into()));
@@ -119,17 +121,20 @@ fn doubted() -> TaskRig {
     r
 }
 
+#[test_id(to50fq7)]
 #[test]
 fn a_boot_between_the_doubt_and_its_recheck_matches_an_unstopped_run() {
     kit::assert_boot_matches_an_unstopped_run(doubted, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+#[test_id(tfqu62l)]
 #[test]
 fn the_doubt_is_kept_as_its_own_rows() {
     let rows = kit::assert_kept_as_rows(&doubted(), NAME);
     assert!(rows.iter().any(|r| r == "doubt/r"), "{rows:?}");
 }
 
+#[test_id(tpt7mk0)]
 #[test]
 fn an_over_repo_that_fails_once_is_rechecked_and_keeps_its_standing_silently() {
     let over = || Read::Measured { count: 60, arrival: Some(0), forge_tip_age_secs: None };
