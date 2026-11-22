@@ -764,7 +764,7 @@ impl World {
 
     /// Every live item with a builder claim: its claim count and kept session ends, as the lifecycle row holds them.
     pub fn claim_count_snapshot(&self) -> Result<String, String> {
-        let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live"])?;
+        let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live"])?; // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("live list unparsed: {e}"))?;
         let mut snap = claim_count::Snapshot::default();
         for r in &rows {
