@@ -20,13 +20,21 @@ pub(crate) fn command(program: impl AsRef<std::ffi::OsStr>) -> Result<Command, S
 
 /// A command under the harness's default bound; refused inside lc-serve.
 pub(crate) fn bounded(program: impl AsRef<std::ffi::OsStr>) -> Result<Bounded, String> {
-    refusal(crate::plan::serving(), &program.as_ref().to_string_lossy())?;
-    Ok(spira_config::bounded::bounded(program))
+    bounded_when(crate::plan::serving(), program)
 }
 
 /// A command bounded to `secs` seconds; refused inside lc-serve.
 pub(crate) fn bounded_for(program: impl AsRef<std::ffi::OsStr>, secs: &str) -> Result<Bounded, String> {
-    refusal(crate::plan::serving(), &program.as_ref().to_string_lossy())?;
+    bounded_for_when(crate::plan::serving(), program, secs)
+}
+
+fn bounded_when(serving: bool, program: impl AsRef<std::ffi::OsStr>) -> Result<Bounded, String> {
+    refusal(serving, &program.as_ref().to_string_lossy())?;
+    Ok(spira_config::bounded::bounded(program))
+}
+
+fn bounded_for_when(serving: bool, program: impl AsRef<std::ffi::OsStr>, secs: &str) -> Result<Bounded, String> {
+    refusal(serving, &program.as_ref().to_string_lossy())?;
     Ok(spira_config::bounded::bounded_for(program, secs))
 }
 
@@ -51,8 +59,11 @@ mod tests {
     }
 
     #[test]
-    fn the_bounded_forms_refuse_only_while_serving() {
-        assert!(bounded("git").is_ok() && bounded_for("git", "5").is_ok());
-        assert!(!crate::plan::serving());
+    fn the_bounded_forms_refuse_while_serving_and_build_otherwise() {
+        assert_eq!(bounded_when(true, "git").err().unwrap(), "lc-serve starts no process: git");
+        assert_eq!(bounded_for_when(true, "git", "5").err().unwrap(), "lc-serve starts no process: git");
+        assert!(bounded_when(false, "git").is_ok() && bounded_for_when(false, "git", "5").is_ok());
+        assert!(!crate::plan::serving(), "the public doors read the process's own serving flag");
+        assert!(command("git").is_ok() && bounded("git").is_ok() && bounded_for("git", "5").is_ok());
     }
 }

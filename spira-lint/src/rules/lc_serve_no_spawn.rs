@@ -128,4 +128,20 @@ mod tests {
         t.write("other/src/x.rs", "fn f() { std::process::Command::new(\"git\"); }\n");
         assert!(run(&t, &["other/src/x.rs"]).is_empty());
     }
+
+    #[test]
+    fn the_door_itself_would_be_a_finding_were_it_in_scope() {
+        let hits = scan(b"fn door() { Command::new(p) }\n", &|_| false);
+        assert_eq!(hits.len(), 1);
+        assert!(!in_scope(DOOR) && in_scope("spira-lc/src/bd.rs"));
+    }
+
+    #[test]
+    fn the_real_spira_lc_tree_has_no_start_outside_the_door() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let tree = Tree::from_git(root).unwrap();
+        assert!(tree.entries.iter().any(|e| e.path == DOOR), "the walk must reach spira-lc for its silence to mean anything");
+        let found = LcServeNoSpawn.check(&tree).unwrap();
+        assert!(found.is_empty(), "{:?}", found.iter().map(|f| f.to_string()).collect::<Vec<_>>());
+    }
 }
