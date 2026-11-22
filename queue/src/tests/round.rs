@@ -2868,6 +2868,25 @@ fn certify_writes_the_deny_list_before_round_vm_takes_a_vm_and_hands_it_over() {
 
 #[test_id(t6pnikq)]
 #[test]
+fn certify_with_place_host_pins_its_round_vm_to_the_host_and_without_it_does_not() {
+    let (t, batch, _) = lint_red_world();
+    assert_eq!(t.run(&["round", "certify", &batch, "--place", "host"]), 1, "{}", t.err());
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    let calls = t.scripts.calls.borrow();
+    let vm: Vec<&String> = calls.iter().filter(|c| c.starts_with("round-vm ")).collect();
+    assert!(vm[0].contains(" place=host") && !vm[1].contains(" place=host"), "{vm:?}");
+}
+
+#[test_id(t1k4db3)]
+#[test]
+fn certify_refuses_a_place_other_than_host() {
+    let (t, batch, _) = lint_red_world();
+    assert_eq!(t.run(&["round", "certify", &batch, "--place", "ec2"]), 2);
+    assert!(t.err().contains("--place takes `host`"), "{}", t.err());
+}
+
+#[test_id(t39tz14)]
+#[test]
 fn a_second_certify_pass_keeps_the_round_deny_list_with_its_flip_rows() {
     let (t, batch, results) = lint_red_world();
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
@@ -4030,6 +4049,20 @@ fn a_rebuild_that_cannot_cut_the_base_restores_the_head_and_says_nothing_changed
     let wt = kv_of(&t, "round")["worktree"].to_string();
     assert_eq!(t.git.refs.borrow().get(&format!("{wt}:HEAD")), Some(&head), "the worktree is back at the round's head");
     assert!(!t.lc.has("eject-member"));
+}
+
+#[test_id(tio19bj)]
+#[test]
+fn an_eject_refused_because_a_pass_started_after_the_check_exits_pass_running() {
+    let (t, batch) = pass_world();
+    *t.lc.batch_view.borrow_mut() = Some(("ATTRIBUTING".into(), 4, 1, String::new()));
+    let before = kv_of(&t, "round");
+    t.lc.eject_refused_by_a_pass_starting.set(true);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]), crate::ops::round::PASS_RUNNING, "{}", t.err());
+    let e = t.err();
+    assert!(e.contains("pass 2") && e.contains("phase suites"), "{e}");
+    let after = kv_of(&t, "round");
+    assert_eq!((after["head"].to_string(), after["members"].to_string()), (before["head"].to_string(), before["members"].to_string()));
 }
 
 fn build_phase_world() -> (T, String) {

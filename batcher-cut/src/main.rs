@@ -71,6 +71,7 @@ struct Opts {
     by: Option<String>,
     reason: Option<String>,
     all: bool,
+    held_since: Option<u64>,
 }
 
 fn usage() -> ExitCode {
@@ -82,7 +83,7 @@ fn usage() -> ExitCode {
     eprintln!("       batcher path-attribute <repo> --members id:tip,... --reds FILE [--record FILE] [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher attribute <repo> --members id:tip,... --wt DIR --base SHA [--batch ID] [--after-pass RESULTS] [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher pause-set --repo R --by concierge|operator --reason TEXT [--run DIR]");
-    eprintln!("       batcher pause-show (--repo R | --all) [--run DIR]");
+    eprintln!("       batcher pause-show (--repo R [--held-since EPOCH] | --all) [--run DIR]");
     eprintln!("       batcher pause-lift --repo R --by concierge|operator --reason TEXT [--run DIR]");
     eprintln!("exit codes: 0 done (a lift with no pause says so and exits 0); 1 refused or failed; 2 usage");
     ExitCode::from(2)
@@ -117,6 +118,7 @@ fn parse() -> Result<Opts, String> {
         by: None,
         reason: None,
         all: false,
+        held_since: None,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -139,6 +141,7 @@ fn parse() -> Result<Opts, String> {
             "--by" => o.by = Some(val()?),
             "--reason" => o.reason = Some(val()?),
             "--all" => o.all = true,
+            "--held-since" => o.held_since = Some(val()?.parse().map_err(|_| "--held-since takes epoch seconds".to_string())?),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -755,6 +758,7 @@ impl drive::RoundOps for LiveOps<'_> {
             "mender-page" => "the menders' passes ended in a box fault the loop cannot fix",
             drive::CONFIG_DELTA => "the merged config delta does not apply",
             drive::ATTRIBUTION_STALLED => "the attribution leg made no progress past its bound",
+            drive::RUNNER_DIFFERENCE => "a unit tier red on one runner is green on the host it last ran green on; no member is implicated",
             _ => "workspace failed to build",
         };
         match io::file_local_red_incident(
@@ -1087,11 +1091,11 @@ fn stabilize_round(
     }
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
-    io::set_branch(repo, &round_branch, &io::head_of(wt)?);
+    io::set_branch(repo, &round_branch, &io::head_of(wt)?)?;
 
     let history =
         std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
-    let ordered = order::longest_first(&io::all_suites(repo, &round_branch), &history);
+    let ordered = order::longest_first(&io::all_suites(repo, &round_branch)?, &history);
     if !ordered.unmeasured.is_empty() {
         println!(
             "batcher {}: ALARM no recorded wall time for {} — scheduled first",
@@ -1220,7 +1224,7 @@ fn stabilize_round(
                 round_branch
             } else {
                 let b = format!("{round_branch}-survivors");
-                io::set_branch(repo, &b, &head);
+                io::set_branch(repo, &b, &head)?;
                 b
             };
             Ok(Stabilized::Stable(StableRound {
@@ -1243,6 +1247,10 @@ fn stabilize_round(
         }
         drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why) => {
             println!("batcher {}: {why}", repo.name);
+            Ok(Stabilized::Blocked)
+        }
+        drive::RoundEnd::RunnerDifference { red_on, green_on, .. } => {
+            println!("batcher {}: red on {red_on}, green on {green_on} — a runner difference; no member charged", repo.name);
             Ok(Stabilized::Blocked)
         }
         drive::RoundEnd::Emptied(why) => {
@@ -1385,7 +1393,7 @@ fn finish_local_round(
         } else {
             Some((
                 stable.head.as_str(),
-                io::all_suites(repo, &stable.green_branch).len(),
+                io::all_suites(repo, &stable.green_branch)?.len(),
             ))
         };
         match io::round_certify(env_, repo, batch, attest, Some(&head)) {
@@ -2253,6 +2261,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
                 by: None,
                 reason: None,
                 all: false,
+                held_since: None,
             };
             if paced && reg.land(name) == "queue.local" {
                 paced_cut(&env_, name, &one).map_err(|e| e.msg)
@@ -2320,6 +2329,7 @@ fn sifts(o: &Opts) -> Result<(), String> {
             by: None,
             reason: None,
             all: false,
+            held_since: None,
         };
         if let Err(e) = sift_one(&one) {
             eprintln!("batcher sifts: {name}: {e}");
@@ -2461,18 +2471,19 @@ fn attribute_in(
         .collect();
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
-    io::set_branch(&repo, &round_branch, &io::head_of(&wt)?);
     let history =
         std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
-    let suites = named_suites(
-        order::longest_first(&io::all_suites(&repo, &round_branch), &history).list,
-        o.suites.as_deref(),
-    );
-    if suites.is_empty() {
-        return Ok(
-            Attribution::Blocked("the round tree has none of the suites to attribute".into())
-                .line(),
-        );
+    let listed = io::set_branch(&repo, &round_branch, &io::head_of(&wt)?)
+        .and_then(|()| io::all_suites(&repo, &round_branch));
+    let suites = match listed {
+        Ok(all) => named_suites(order::longest_first(&all, &history).list, o.suites.as_deref()),
+        Err(why) => {
+            return Ok(Attribution::Fault(format!("the round tree's suites could not be listed: {why}")).line())
+        }
+    };
+    let red_phases = o.after_pass.as_deref().map(io::red_test_phases).unwrap_or_default();
+    if let Some(why) = blocks_attribution(&suites, &red_phases, o.after_pass.as_deref()) {
+        return Ok(Attribution::Blocked(why).line());
     }
     let changed: BTreeMap<String, Vec<String>> = members
         .iter()
@@ -2558,6 +2569,9 @@ fn attribute_in(
         Ok(drive::RoundEnd::BaseRed { base, why }) => Attribution::Blocked(format!("base red at {base}: {why}")),
         Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
         Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
+        Ok(drive::RoundEnd::RunnerDifference { tests, red_on, green_on }) => {
+            Attribution::RunnerDifference { tests, red_on, green_on }
+        }
         Ok(drive::RoundEnd::Abandoned) => Attribution::Abandoned,
         Ok(drive::RoundEnd::Unconverged { red, probes, suspects }) => Attribution::Unconverged(format!(
             "{red} red reproduces but {probes} probes named no member; suspects: {}",
@@ -2569,6 +2583,15 @@ fn attribute_in(
         Err(e) => Attribution::Blocked(format!("the attribution did not finish: {e}")),
     };
     Ok(outcome.line())
+}
+
+/// Why attribution cannot start: no shell suite to attribute and no red test tier in the pass either.
+fn blocks_attribution(suites: &[String], red_phases: &[String], pass: Option<&Path>) -> Option<String> {
+    if !suites.is_empty() || !red_phases.is_empty() {
+        return None;
+    }
+    let at = pass.map(|p| format!(" in {}", p.display())).unwrap_or_default();
+    Some(format!("the pass names no red the round can attribute: no shell suite and no red unit-tests or integration-tests{at}"))
 }
 
 /// `all` narrowed to the CSV `named` when one is given; a name the tree does not hold is dropped.
@@ -2772,6 +2795,9 @@ fn pause_show(o: &Opts, out: &mut dyn std::io::Write) -> Result<(), String> {
         let files = pace::Files::new(&run, r);
         if let Some(text) = files.pause_text() {
             shown = true;
+            if o.held_since.is_some() && files.pause_set_at() == o.held_since {
+                return Err(format!("{r}: the pause set at {} still holds ({})", o.held_since.unwrap_or_default(), text.trim()));
+            }
             let kind = if text.starts_with("hold:") { "hold" } else { "red" };
             let since = files.pause_set_at().map_or("unknown".to_string(), |t| t.to_string());
             writeln!(out, "{r}: paused kind={kind} since={since} text={}", text.trim()).map_err(|e| e.to_string())?;
@@ -2877,6 +2903,7 @@ mod tests {
             by: by.map(String::from),
             reason: Some("eject done".into()),
             all: false,
+            held_since: None,
         }
     }
 
@@ -2888,6 +2915,18 @@ mod tests {
     }
 
     #[test_id(tfkx6c6)]
+    #[test]
+    fn sp_plukb4_pause_show_held_since_fails_only_while_that_pause_holds() {
+        let d = testkit::TempDir::new("batcher-pause-held-since");
+        let f = red_pause(d.path());
+        let since = |n| Opts { held_since: Some(n), ..pause_opts(d.path(), None) };
+        assert!(pause_show(&since(1), &mut Vec::new()).is_err(), "the pause set at 1 holds");
+        assert!(pause_show(&since(2), &mut Vec::new()).is_ok(), "another since is no longer this pause");
+        std::fs::remove_file(f.pause_file()).unwrap();
+        assert!(pause_show(&since(1), &mut Vec::new()).is_ok(), "no pause holds");
+    }
+
+    #[test_id(t1me1ff)]
     #[test]
     fn pause_lift_by_the_concierge_lifts_and_records_the_concierge() {
         let d = testkit::TempDir::new("batcher-pause-lift");
@@ -2965,6 +3004,23 @@ mod tests {
     }
 
     #[test_id(ton3tex)]
+    #[test]
+    fn an_empty_suite_list_does_not_block_attribution_of_a_red_test_tier() {
+        let dir = testkit::TempDir::new("batcher-cut-red-tier");
+        std::fs::write(dir.path().join("integration.json"), r#"{"stage":"integration-tests","verdict":"red","failed":["x"]}"#).unwrap();
+        let red = io::red_test_phases(dir.path());
+        assert_eq!(red, ["integration-tests"]);
+        assert_eq!(blocks_attribution(&[], &red, Some(dir.path())), None);
+        let green = testkit::TempDir::new("batcher-cut-green-tier");
+        std::fs::write(green.path().join("unit.json"), r#"{"stage":"unit-tests","verdict":"green"}"#).unwrap();
+        let none = io::red_test_phases(green.path());
+        assert!(none.is_empty());
+        let why = blocks_attribution(&[], &none, Some(green.path())).expect("blocks");
+        assert!(why.contains(&green.path().display().to_string()));
+        assert_eq!(blocks_attribution(&["test-a.sh".into()], &none, None), None);
+    }
+
+    #[test_id(tt91g2o)]
     #[test]
     fn named_suites_narrow_the_corpus_and_drop_names_the_tree_lacks() {
         let all = vec!["test-a.sh".to_string(), "test-b.sh".to_string()];
@@ -3571,6 +3627,7 @@ mod cut_tests {
             by: None,
             reason: None,
             all: false,
+            held_since: None,
             confirmed: false,
         };
         let given = vec![("sp-8br220".to_string(), tips[0].clone()), ("sp-x".to_string(), tips[1].clone())];

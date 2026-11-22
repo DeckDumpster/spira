@@ -31,9 +31,13 @@ fn retained(data: &Value) -> Object {
 /// Ops one txn may carry, with room for the request's own bookkeeping.
 const CHUNK: usize = 100;
 const ATTEMPTS: usize = 8;
-/// Rows one sweep step reads: the store's page.
+/// Rows one sweep step reads at most: the store's page.
 pub const SWEEP_STEP: usize = 1_000;
 pub const STATE_PAGE: usize = 1_000;
+/// Rows one sweep page reads and writes before the step checks its budget.
+pub const SWEEP_PAGE: usize = 25;
+/// Milliseconds a sweep step spends before it stops after a page: half the store's 100 ms target.
+pub const SWEEP_BUDGET_MS: u64 = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SweepPhase {
@@ -360,63 +364,127 @@ impl<B: Backend> Store<B> {
         Ok(rows)
     }
 
-    /// One bounded step of the sweep: reads at most [`SWEEP_STEP`] rows after `from`, deletes the
+    /// One bounded step of the sweep: reads pages of [`SWEEP_PAGE`] rows after `from` until
+    /// [`SWEEP_STEP`] rows are read or [`SWEEP_BUDGET_MS`] is spent, and for each page deletes the
     /// schedule rows stored without an id, the [`LEGACY`] rows, indexes the open rows an older release stored
     /// without one, and gives each resolved effect without a lifetime [`JOURNAL_RETAIN_SECS`] unless the
     /// row changed since the step read it. The step that exhausts the effects marks the store indexed and answers no
-    /// cursor. Every write is idempotent, so a step that fails is run again from the same cursor.
+    /// cursor. A page whose write is refused for the deadline after an earlier page committed ends the step
+    /// with what committed. Every write is idempotent, so a step that fails is run again from the same cursor.
     /// With `dry_run` it counts and writes nothing.
     pub fn journal_sweep_step(&self, from: Option<&SweepCursor>, dry_run: bool, actor: &str) -> Result<(Swept, Option<SweepCursor>)> {
-        let mut out = Swept::default();
-        let mut ops: Vec<state_store::Op> = Vec::new();
-        let mut stamps: Vec<Txn> = Vec::new();
         let contract = self.contract();
+        let started = contract.now_ms();
         let head = contract.head()?;
-        let (phase, after) = from.map_or((SweepPhase::Schedule, None), |c| (c.phase, Some(c.after.as_str()).filter(|a| !a.is_empty())));
-        let legacy_at = after.filter(|_| phase == SweepPhase::Legacy).and_then(|a| LEGACY.iter().position(|t| a.starts_with(&keys::runtime_table(t)))).unwrap_or(0);
+        let (phase, start_after) = from.map_or((SweepPhase::Schedule, None), |c| (c.phase, Some(c.after.clone()).filter(|a| !a.is_empty())));
+        let legacy_at = start_after.as_deref().filter(|_| phase == SweepPhase::Legacy).and_then(|a| LEGACY.iter().position(|t| a.starts_with(&keys::runtime_table(t)))).unwrap_or(0);
         let table = match phase {
             SweepPhase::Schedule => SCHEDULE,
             SweepPhase::Legacy => LEGACY[legacy_at],
             SweepPhase::Effect => EFFECT,
         };
-        let page = contract.range_at(&keys::runtime_table(table), after, SWEEP_STEP, head)?;
-        for item in &page {
-            let v = &item.value.data;
-            match phase {
-                SweepPhase::Schedule => {
-                    let id = text(v, "id");
-                    if id.is_empty() {
-                        out.idless_schedules += 1;
-                        ops.push(state_store::Op::Delete(item.key.clone()));
-                    } else if contract.get(&keys::runtime(FIRED, &[&id]))?.is_none() {
-                        out.indexed_schedules += 1;
-                        ops.push(state_store::Op::Put(keys::runtime(PENDING, &[&id]), pending(&id)));
+        let mut out = Swept::default();
+        let mut after = start_after;
+        let mut read = 0;
+        let exhausted = loop {
+            let page = contract.range_at(&keys::runtime_table(table), after.as_deref(), SWEEP_PAGE, head)?;
+            let exhausted = page.len() < SWEEP_PAGE;
+            let mut ops: Vec<state_store::Op> = Vec::new();
+            let mut stamps: Vec<Txn> = Vec::new();
+            let mut counts = Swept::default();
+            let markers: Vec<Option<state_store::Item>> = match phase {
+                SweepPhase::Schedule | SweepPhase::Effect => {
+                    let keys: Vec<String> = page
+                        .iter()
+                        .filter_map(|item| match phase {
+                            SweepPhase::Schedule => Some(text(&item.value.data, "id")).filter(|id| !id.is_empty()).map(|id| keys::runtime(FIRED, &[&id])),
+                            _ => Some(keys::runtime(RESOLVED, &[&effect_of(&item.value.data).request_id])),
+                        })
+                        .collect();
+                    let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+                    contract.get_many_at(&refs, head)?
+                }
+                SweepPhase::Legacy => Vec::new(),
+            };
+            let mut found = markers.into_iter();
+            for item in &page {
+                let v = &item.value.data;
+                match phase {
+                    SweepPhase::Schedule => {
+                        let id = text(v, "id");
+                        if id.is_empty() {
+                            counts.idless_schedules += 1;
+                            ops.push(state_store::Op::Delete(item.key.clone()));
+                        } else if found.next().flatten().is_none() {
+                            counts.indexed_schedules += 1;
+                            ops.push(state_store::Op::Put(keys::runtime(PENDING, &[&id]), pending(&id)));
+                        }
                     }
-                }
-                SweepPhase::Legacy => {
-                    out.legacy_deleted += 1;
-                    ops.push(state_store::Op::Delete(item.key.clone()));
-                }
-                SweepPhase::Effect => {
-                    let e = effect_of(v);
-                    let marker_key = keys::runtime(RESOLVED, &[&e.request_id]);
-                    match contract.get(&marker_key)? {
-                        None => {
-                            out.indexed_effects += 1;
-                            ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
+                    SweepPhase::Legacy => {
+                        counts.legacy_deleted += 1;
+                        ops.push(state_store::Op::Delete(item.key.clone()));
+                    }
+                    SweepPhase::Effect => {
+                        let e = effect_of(v);
+                        let marker_key = keys::runtime(RESOLVED, &[&e.request_id]);
+                        match found.next().flatten() {
+                            None => {
+                                counts.indexed_effects += 1;
+                                ops.push(state_store::Op::Put(keys::runtime(OPEN_EFFECT, &[&e.request_id]), open_effect(&e.task, &e.ekey)));
+                            }
+                            Some(marker) if item.value.metadata.ttl_secs.is_none() => {
+                                stamps.push(Txn::new().when(Compare::ModRev(item.key.clone(), Some(item.mod_rev))).put(&item.key, retained(v)).put(&marker_key, retained(&marker.value.data)));
+                            }
+                            Some(_) => {}
                         }
-                        Some(marker) if item.value.metadata.ttl_secs.is_none() => {
-                            out.retained += 1;
-                            stamps.push(Txn::new().when(Compare::ModRev(item.key.clone(), Some(item.mod_rev))).put(&item.key, retained(v)).put(&marker_key, retained(&marker.value.data)));
-                        }
-                        Some(_) => {}
                     }
                 }
             }
-        }
-        let last = page.last().map(|i| i.key.clone());
-        let next = match (page.len() < SWEEP_STEP, phase) {
-            (false, _) => last.map(|after| SweepCursor { phase, after }),
+            read += page.len();
+            let last = page.last().map(|i| i.key.clone());
+            let finishing = exhausted && phase == SweepPhase::Effect;
+            if finishing {
+                ops.push(state_store::Op::Put(keys::runtime(META, &["indexed"]), Object::new(json!({}))));
+            }
+            if dry_run {
+                counts.retained = stamps.len();
+            } else {
+                let mut stamped = 0;
+                let written = (|| -> Result<()> {
+                    let req = || Request::new(&super::served::request_id(), actor, "journal-sweep");
+                    for chunk in ops.chunks(CHUNK) {
+                        contract.txn(&Txn { ops: chunk.to_vec(), ..Txn::default() }, &req())?;
+                    }
+                    for t in &stamps {
+                        stamped += usize::from(contract.txn(t, &req())?.succeeded);
+                    }
+                    Ok(())
+                })();
+                counts.retained = stamped;
+                match written {
+                    Ok(()) => {}
+                    Err(state_store::Error::Deadline) if read > page.len() => {
+                        out.retained += stamped;
+                        break false;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            out.idless_schedules += counts.idless_schedules;
+            out.legacy_deleted += counts.legacy_deleted;
+            out.indexed_schedules += counts.indexed_schedules;
+            out.indexed_effects += counts.indexed_effects;
+            out.retained += counts.retained;
+            after = last.or(after);
+            if exhausted {
+                break true;
+            }
+            if read >= SWEEP_STEP || contract.now_ms().saturating_sub(started) >= SWEEP_BUDGET_MS {
+                break false;
+            }
+        };
+        let next = match (exhausted, phase) {
+            (false, _) => after.map(|after| SweepCursor { phase, after }),
             (true, SweepPhase::Schedule) => Some(SweepCursor { phase: SweepPhase::Legacy, after: String::new() }),
             (true, SweepPhase::Legacy) => Some(match LEGACY.get(legacy_at + 1) {
                 Some(t) => SweepCursor { phase, after: keys::runtime_table(t) },
@@ -424,18 +492,6 @@ impl<B: Backend> Store<B> {
             }),
             (true, SweepPhase::Effect) => None,
         };
-        if next.is_none() {
-            ops.push(state_store::Op::Put(keys::runtime(META, &["indexed"]), Object::new(json!({}))));
-        }
-        if !dry_run {
-            for chunk in ops.chunks(CHUNK) {
-                let t = Txn { ops: chunk.to_vec(), ..Txn::default() };
-                contract.txn(&t, &Request::new(&super::served::request_id(), actor, "journal-sweep"))?;
-            }
-            for t in &stamps {
-                contract.txn(t, &Request::new(&super::served::request_id(), actor, "journal-sweep"))?;
-            }
-        }
         Ok((out, next))
     }
 

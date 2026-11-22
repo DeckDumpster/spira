@@ -128,6 +128,20 @@ pub trait RoundRunner {
     fn filter_green(&mut self, _name: &str, _members: &[Member]) -> Option<bool> {
         None
     }
+    /// Where the pass this attribution follows ran (`host`, `ec2`, …); `None` when unrecorded.
+    fn prior_runner(&mut self) -> Option<String> {
+        None
+    }
+    /// Where `tier` last ran not-red: this round's newest such pass, else the repo's newest green
+    /// pass; `None` when no pass recorded it.
+    fn green_runner(&mut self, _tier: &str) -> Option<String> {
+        None
+    }
+    /// [`RoundRunner::filter_green_in`] on a serving VM pinned to the host runner, which replaces
+    /// the current one: every probe after it runs there. `None` when the host gave no verdict.
+    fn filter_green_on_host(&mut self, _name: &str, _scope: &[String], _members: &[Member]) -> Option<bool> {
+        None
+    }
     /// Whether testenv suite `suite` is green with exactly `members` merged onto the base; `None`
     /// when the runner cannot run a suite on a subset or the run faulted.
     fn suite_green(&mut self, _suite: &str, _members: &[Member]) -> Option<bool> {
@@ -819,6 +833,13 @@ pub enum RoundEnd {
     Abandoned,
     /// The base alone reproduces the red: no member is at fault and none is ejected.
     BaseRed { base: String, why: String },
+    /// The red tier is green on the host the last green ran on: no member is charged, and the
+    /// round certifies again there.
+    RunnerDifference {
+        tests: Vec<String>,
+        red_on: String,
+        green_on: String,
+    },
     /// The probe ceiling was reached without naming a member: the red is kept for the next round.
     Unconverged {
         red: String,
@@ -1193,9 +1214,14 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         let mut kind = "unattributed";
         let mut cleared = String::new();
         let mut probes = Probes::new(members.len());
+        let moved = match (runner.prior_runner(), runner.green_runner(&f.name)) {
+            (Some(red_on), Some(green_on)) if red_on != green_on && members.len() > 1 => Some((red_on, green_on)),
+            _ => None,
+        };
         let reproduced = |scope: &[String], runner: &mut R, probes: &mut Probes| {
-            probes.control(members, &mut |m| {
-                runner.filter_green_in(&f.name, scope, m)
+            probes.control(members, &mut |m| match &moved {
+                Some(_) => runner.filter_green_on_host(&f.name, scope, m),
+                None => runner.filter_green_in(&f.name, scope, m),
             })
         };
         let control = if members.len() > 1 {
@@ -1203,10 +1229,20 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         } else {
             Control::Red
         };
+        if let (Control::Green, Some((red_on, green_on))) = (&control, &moved) {
+            return Ok(FilterEject::RunnerDifference {
+                tests: f.failed.clone(),
+                red_on: red_on.clone(),
+                green_on: green_on.clone(),
+            });
+        }
         match control {
             Control::Fault => {
                 let diffs = ops.diffs(&ids);
-                let faults = fault_reasons(runner.probe_faults());
+                let mut faults = fault_reasons(runner.probe_faults());
+                if let Some((red_on, green_on)) = &moved {
+                    faults.push_str(&format!("; the red ran on {red_on}, the tier last ran green on {green_on}, and the control on {green_on} gave no verdict either"));
+                }
                 if let Some((id, line)) = unitattr::assertion_owner(&f.assertion_lines, &diffs, &vias) {
                     let via = vias.get(&id).cloned().unwrap_or_default();
                     let why = format!(
@@ -1629,6 +1665,8 @@ enum FilterEject {
     Flipped(Vec<String>),
     /// The control probe on the full membership gave no verdict twice: the round is not judged.
     Faulted(String),
+    /// Green on the host the tier last ran green on: nobody is charged.
+    RunnerDifference { tests: Vec<String>, red_on: String, green_on: String },
     /// The probe ceiling was reached: the end the round takes.
     Unconverged(RoundEnd),
 }
@@ -2164,7 +2202,18 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     end
 }
 
-fn is_filter_suite(name: &str) -> bool {
+pub const RUNNER_DIFFERENCE: &str = "runner-difference";
+
+fn runner_difference<O: RoundOps>(ops: &mut O, tests: Vec<String>, red_on: String, green_on: String) -> RoundEnd {
+    let named: Vec<String> = tests.iter().map(|t| t.rsplit(' ').next().unwrap_or(t).to_string()).collect();
+    ops.incident(
+        RUNNER_DIFFERENCE,
+        &[format!("{}: red on {red_on}, green on {green_on}", named.join(", "))],
+    );
+    RoundEnd::RunnerDifference { tests, red_on, green_on }
+}
+
+pub fn is_filter_suite(name: &str) -> bool {
     matches!(name, "unit-tests" | "integration-tests" | "spira-lint") || name.starts_with("fence-")
 }
 
@@ -2355,6 +2404,9 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 )))
             }
             FilterEject::Faulted(why) => return Ok(RoundEnd::Faulted(why)),
+            FilterEject::RunnerDifference { tests, red_on, green_on } => {
+                return Ok(runner_difference(ops, tests, red_on, green_on))
+            }
             FilterEject::Unconverged(end) => return Ok(end),
         }
     }
@@ -2566,6 +2618,9 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                     )))
                 }
                 FilterEject::Faulted(why) => return Ok(RoundEnd::Faulted(why)),
+                FilterEject::RunnerDifference { tests, red_on, green_on } => {
+                    return Ok(runner_difference(ops, tests, red_on, green_on))
+                }
                 FilterEject::Unconverged(end) => return Ok(end),
             };
             runner.stop_main()?;
@@ -3017,6 +3072,14 @@ pub(crate) mod tests {
         /// From this time on no main result, job result or end is ever answered.
         pub stalls_at: Option<u64>,
         pub stall: Option<u64>,
+        /// Where the red pass ran, and where `tier` last ran green.
+        pub prior_runner: Option<String>,
+        pub green_runner: Option<String>,
+        /// What a control probe on the host answers; `None` is no verdict.
+        pub host_verdict: Option<bool>,
+        /// A serving VM on the host was started; every probe since runs there.
+        pub on_host: bool,
+        pub host_asked: Vec<Vec<String>>,
     }
 
     pub type BuildFn = Box<dyn Fn(&BTreeSet<String>) -> Option<String>>;
@@ -3078,6 +3141,11 @@ pub(crate) mod tests {
                 clock: None,
                 stalls_at: None,
                 stall: None,
+                prior_runner: None,
+                green_runner: None,
+                host_verdict: None,
+                on_host: false,
+                host_asked: vec![],
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -3203,6 +3271,17 @@ pub(crate) mod tests {
         fn probe_label(&self) -> String {
             "b9".into()
         }
+        fn prior_runner(&mut self) -> Option<String> {
+            self.prior_runner.clone()
+        }
+        fn green_runner(&mut self, _tier: &str) -> Option<String> {
+            self.green_runner.clone()
+        }
+        fn filter_green_on_host(&mut self, _name: &str, _scope: &[String], members: &[Member]) -> Option<bool> {
+            self.on_host = true;
+            self.host_asked.push(members.iter().map(|m| m.id.clone()).collect());
+            self.host_verdict
+        }
         fn deadline_red(&mut self, suite: &str) -> Option<DeadlineRed> {
             self.deadlines.get(suite).cloned()
         }
@@ -3243,6 +3322,9 @@ pub(crate) mod tests {
             members: &[Member],
         ) -> Option<bool> {
             self.scoped.push(packages.to_vec());
+            if self.on_host {
+                self.host_asked.push(members.iter().map(|m| m.id.clone()).collect());
+            }
             if self.rerun_green && members.len() == self.members.len() {
                 self.probes
                     .push(members.iter().map(|m| m.id.clone()).collect());
@@ -5944,6 +6026,78 @@ pub(crate) mod tests {
         let end = attribute_round(&mut f, &mut ops, &corpus(3), four(), budget6()).unwrap();
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
         assert!(matches!(end, RoundEnd::Faulted(_)), "no verdict from the control probe: {end:?}");
+    }
+
+    const SANDBOX_FAILING: [&str; 2] = [
+        "FAIL testenv::test_sandbox around_finds_the_cargo_the_gate_path_names_and_binds_its_toolchain_under_a_hidden_home",
+        "FAIL testenv::test_sandbox around_without_the_command_on_path_is_no_verdict_and_names_the_path",
+    ];
+
+    fn moved_between_runners(red_on: Option<&str>, green_on: Option<&str>, host: Option<bool>) -> (Fake, Ops, RoundEnd) {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = false;
+        f.filter = Some(release_red_when("m2"));
+        f.prior = Some(FilterRed {
+            name: "unit-tests".into(),
+            failed: SANDBOX_FAILING.iter().map(|t| t.to_string()).collect(),
+            ..Default::default()
+        });
+        f.prior_runner = red_on.map(String::from);
+        f.green_runner = green_on.map(String::from);
+        f.host_verdict = host;
+        let mut ops = two_suspects();
+        let members = vec![member("m1"), member("m2")];
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), members, budget6()).unwrap();
+        (f, ops, end)
+    }
+
+    #[test_id(tbylehh)]
+    #[test]
+    fn a_unit_red_on_another_runner_than_its_last_green_that_is_green_on_the_host_charges_nobody_and_files_the_difference() {
+        let (f, ops, end) = moved_between_runners(Some("ec2"), Some("host"), Some(true));
+        match end {
+            RoundEnd::RunnerDifference { tests, red_on, green_on } => {
+                assert!(SANDBOX_FAILING.iter().all(|t| tests.iter().any(|x| x == t)), "{tests:?}");
+                assert_eq!((red_on.as_str(), green_on.as_str()), ("ec2", "host"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        let [(kind, said)] = &ops.incidents[..] else { panic!("{:?}", ops.incidents) };
+        assert_eq!(kind, "runner-difference");
+        let said = said.join(" ");
+        assert!(said.contains("around_finds_the_cargo") && said.contains("around_without_the_command") && said.contains("ec2") && said.contains("host"), "{said}");
+        assert_eq!(f.host_asked, vec![vec!["m1".to_string(), "m2".to_string()]], "the control ran once on the host, on the full membership");
+    }
+
+    #[test_id(taj3dlo)]
+    #[test]
+    fn a_unit_red_on_another_runner_whose_host_control_has_no_verdict_faults_naming_both_runners() {
+        let (_, ops, end) = moved_between_runners(Some("ec2"), Some("host"), None);
+        assert!(ops.ejected.is_empty());
+        match end {
+            RoundEnd::Faulted(why) => assert!(why.contains("gave no verdict twice") && why.contains("ec2") && why.contains("host"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test_id(tj2zzob)]
+    #[test]
+    fn a_unit_red_on_another_runner_that_is_red_on_the_host_goes_on_attributing_there() {
+        let (f, ops, end) = moved_between_runners(Some("ec2"), Some("host"), Some(false));
+        assert!(!matches!(end, RoundEnd::RunnerDifference { .. } | RoundEnd::Faulted(_)), "{end:?}");
+        assert!(ops.incidents.iter().all(|(k, _)| k != "runner-difference"), "{:?}", ops.incidents);
+        assert!(f.host_asked.len() > 1, "the probes after the control are asked on the host too: {:?}", f.host_asked);
+    }
+
+    #[test_id(tkkft9t)]
+    #[test]
+    fn a_unit_red_on_the_runner_of_its_last_green_or_with_either_runner_unrecorded_asks_no_host_probe() {
+        for (red_on, green_on) in [(Some("host"), Some("host")), (None, Some("host")), (Some("ec2"), None), (None, None)] {
+            let (f, _, end) = moved_between_runners(red_on, green_on, Some(true));
+            assert!(matches!(end, RoundEnd::Faulted(ref why) if why.contains("gave no verdict twice")), "{red_on:?} {green_on:?}: {end:?}");
+            assert!(f.host_asked.is_empty(), "{red_on:?} {green_on:?}");
+        }
     }
 
     const SKIP_LINE: &str = "status-level = \"skip\"";

@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--deny-list <file>] [--candidate-recipe <sha>]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--deny-list <file>] [--candidate-recipe <sha>] [--place host]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  --place host: run on this host only, never spill; wait for the host slot within the run's wall, then refuse naming the slot holder\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -52,6 +52,8 @@ pub struct RunArgs {
     pub fences: Option<String>,
     /// The text of `--deny-list <file>`, already parsed once so a bad file is refused before any VM is taken.
     pub deny_list: Option<String>,
+    /// `--place host`: never spill to EC2; wait for the host slot.
+    pub pin_host: bool,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -86,6 +88,10 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
                 r.deny_list = Some(text);
             }
             "--ci-entry" => r.ci_entry = Some(val()?).filter(|v| !v.trim().is_empty()),
+            "--place" => match val()?.as_str() {
+                "host" => r.pin_host = true,
+                other => return Err(format!("round-vm run: --place takes `host`, not {other:?}")),
+            },
             "--candidate-recipe" => {
                 let v = val()?;
                 if v.trim().is_empty() {
@@ -2464,6 +2470,14 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         HostPlacement::Host(slot, d) => (Some(slot), None, Some(d)),
         HostPlacement::Spill(why, d) => (None, Some(why), Some(d)),
         HostPlacement::NotOffered => (None, None, None),
+        HostPlacement::Refused(why) => {
+            eprintln!("round-vm run: {why}");
+            let history = pool_recent(&env.pool.state_file(), crate::progress::now_secs());
+            let mut p = progress.lock().unwrap_or_else(|e| e.into_inner());
+            p.placement(&results_dir, placement_record(None, None, None, &history, Some(&why), None));
+            p.finish(&results_dir, 2);
+            return 2;
+        }
     };
     let spill_setting = crate::config::declared("SPIRA_ROUND_VM_SPILL");
     let leased_at = crate::progress::now_secs();
@@ -2730,12 +2744,16 @@ enum HostPlacement {
     Host(crate::host::HostSlot, Decision),
     Spill(String, Decision),
     NotOffered,
+    Refused(String),
 }
 
 /// Offers a harness round to this host: it runs here only with the host slot free and the host
 /// under both pressure thresholds. A slot that cannot be read is a refusal, never a free slot.
 fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
     use crate::spill::{decide_host, HostPlace};
+    if args.pin_host {
+        return pin_to_host(env, args);
+    }
     let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else { return HostPlacement::NotOffered };
     let slot = match crate::host::HostSlot::try_take(&env.cfg.state_dir) {
         Ok(slot) => slot,
@@ -2751,6 +2769,29 @@ fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
             slot.map_or(HostPlacement::NotOffered, |s| HostPlacement::Host(s, Decision { why: line, load }))
         }
         HostPlace::Ec2(why) => HostPlacement::Spill(why.clone(), Decision { why, load }),
+    }
+}
+
+const PINNED_WHY: &str = "pinned: --place host";
+
+/// `--place host`: the host slot is waited for within the run's wall, and load never spills the run.
+fn pin_to_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
+    let refuse = |why: String| HostPlacement::Refused(format!("{why}; the run was pinned by --place host and does not spill"));
+    let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else {
+        return refuse("this run cannot be placed on the host (the host is off, or the run is a foreign repository's CI)".into());
+    };
+    let wall = Duration::from_secs(env.cfg.cap_secs);
+    let waited = Instant::now();
+    loop {
+        match crate::host::HostSlot::try_take(&env.cfg.state_dir) {
+            Ok(Some(slot)) => return HostPlacement::Host(slot, Decision { why: PINNED_WHY.into(), load: (plan.load)() }),
+            Ok(None) if waited.elapsed() >= wall => {
+                let holder = crate::host::HostSlot::holder(&env.cfg.state_dir);
+                return refuse(format!("the host round slot stayed taken by {holder} for the run's {}s wall", wall.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(env.pool.wait_poll.max(Duration::from_millis(5))),
+            Err(e) => return refuse(format!("the host round slot is unreadable: {e}")),
+        }
     }
 }
 
@@ -5545,6 +5586,56 @@ mod tests {
         let a = RunArgs { ci_entry: Some("deploy/ci.sh".into()), ..round_args(&fx) };
         go_with_host(&fx, &FakeRemote::green(), &plan, &a);
         assert_eq!(fx.fp.count("clone"), 1);
+    }
+
+    fn pinned(fx: &Fixture) -> RunArgs {
+        RunArgs { pin_host: true, ..round_args(fx) }
+    }
+
+    #[test_id(ty2w5sk)]
+    #[test]
+    fn place_host_is_a_run_option_and_any_other_place_is_refused() {
+        assert!(parse_run_args(&args(&["t", "--place", "host"])).unwrap().pin_host);
+        assert!(!parse_run_args(&args(&["t"])).unwrap().pin_host);
+        assert!(parse_run_args(&args(&["t", "--place=ec2"])).unwrap_err().contains("--place"));
+    }
+
+    #[test_id(t4fd92e)]
+    #[test]
+    fn a_pinned_round_with_the_host_slot_taken_leases_no_vm_and_refuses_naming_the_holder_and_the_flag() {
+        let mut fx = fixture();
+        fx.cfg.cap_secs = 0;
+        let held = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().expect("slot free");
+        let vm_remote = FakeRemote::green();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let code = go_with_host(&fx, &vm_remote, &plan, &pinned(&fx));
+        assert_eq!(code, 2);
+        assert_eq!(fx.fp.count("clone"), 0, "a pinned round never leases EC2");
+        assert!(vm_remote.jobs.lock().unwrap().is_empty());
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join(crate::progress::FILE)).unwrap()).unwrap();
+        let why = v["placement"]["refusal"].as_str().unwrap_or_default().to_string();
+        assert!(why.contains("--place host") && why.contains(&format!("pid {}", std::process::id())), "{v}");
+        drop(held);
+    }
+
+    #[test_id(tfeku4h)]
+    #[test]
+    fn a_pinned_round_whose_host_slot_frees_runs_on_the_host_under_load_that_would_spill() {
+        let fx = fixture();
+        let held = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().expect("slot free");
+        let hot = crate::spill::HostLoad { io_full: Some(crate::spill::Pressure { value: 99.0 }), ..CALM };
+        let plan = host_plan(FakeRemote::green(), hot);
+        let vm_remote = FakeRemote::green();
+        let code = std::thread::scope(|sc| {
+            let run = sc.spawn(|| go_with_host(&fx, &vm_remote, &plan, &pinned(&fx)));
+            drop(held);
+            run.join().unwrap()
+        });
+        assert_ne!(code, 2);
+        assert_eq!(fx.fp.count("clone"), 0);
+        let placed = runner_place(&fx);
+        assert_eq!(placed["place"], "host");
+        assert_eq!(placed["why"], "pinned: --place host");
     }
 
     fn holds_open(path: &Path) -> bool {

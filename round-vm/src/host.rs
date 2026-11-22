@@ -59,7 +59,16 @@ pub struct HostSlot {
 impl HostSlot {
     /// `None` when another host round holds it.
     pub fn try_take(state_dir: &Path) -> Result<Option<HostSlot>, String> {
-        Ok(FileLock::try_exclusive(&state_dir.join(SLOT_FILE))?.map(|_lock| HostSlot { _lock }))
+        let path = state_dir.join(SLOT_FILE);
+        Ok(FileLock::try_exclusive(&path)?.map(|_lock| {
+            let _ = fs::write(&path, format!("pid {}", std::process::id()));
+            HostSlot { _lock }
+        }))
+    }
+
+    /// Who holds the slot, as its holder recorded it.
+    pub fn holder(state_dir: &Path) -> String {
+        fs::read_to_string(state_dir.join(SLOT_FILE)).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).unwrap_or_else(|| "a holder that recorded no pid".into())
     }
 }
 

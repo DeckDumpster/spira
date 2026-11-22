@@ -688,9 +688,10 @@ impl Scripts for FScripts {
         ami: Option<&str>,
         candidate_recipe: Option<&str>,
         deny_list: Option<&Path>,
+        host_only: bool,
     ) -> RunOut {
         self.calls.borrow_mut().push(format!(
-            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}{}",
+            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}{}{}",
             tree.display(),
             round.0,
             round.1,
@@ -700,7 +701,8 @@ impl Scripts for FScripts {
                 .unwrap_or_default(),
             deny_list
                 .map(|d| format!(" deny-list={}", d.display()))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            if host_only { " place=host" } else { "" }
         ));
         fs::write(handle, "777").unwrap();
         if let Some(f) = self.during_vm.borrow().as_ref() {
@@ -1130,6 +1132,7 @@ struct FLc {
     no_batch_row: Cell<bool>,
     activated: std::rc::Rc<Cell<bool>>,
     eject_refused: Cell<bool>,
+    eject_refused_by_a_pass_starting: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
     /// A batch event whose kind names this is refused.
@@ -1191,6 +1194,7 @@ impl Default for FLc {
             activated: Default::default(),
             batch_states: RefCell::default(),
             eject_refused: Cell::new(false),
+            eject_refused_by_a_pass_starting: Cell::new(false),
             event_refused: Cell::new(None),
             batch_event_refused: Cell::new(None),
             batch_event_times_out: Cell::new(None),
@@ -1482,6 +1486,10 @@ impl Lc for FLc {
         if self.deadline_after_write.get() == Some("eject-member") {
             self.deadline_after_write.set(None);
             return Err((2, "cannot tell: deadline".into()));
+        }
+        if self.eject_refused_by_a_pass_starting.get() {
+            *self.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 5, 2, "suites".into()));
+            return Err((3, "refused: Some(PassRunning)".into()));
         }
         if self.eject_refused.get() {
             return Err((3, "IllegalTransition".into()));

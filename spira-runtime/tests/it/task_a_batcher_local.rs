@@ -12,7 +12,6 @@ spira_runtime::family_a_acceptance! {
     registration: BatcherLocal::new(BTreeMap::new()).registration(),
     tick: EventKind::new(TICK, ""),
     first_timer_ms: CADENCE_MS,
-    test_ids: [ #[test_id(tygoqbl)] #[test_id(tyuwv6n)] #[test_id(twntq0t)] #[test_id(tf28eyl)] #[test_id(tr5s3pg)] ],
 }
 
 const NOW: u64 = 1_793_000_000_000;
@@ -36,7 +35,7 @@ fn busy() -> Snapshot {
     Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1"), member("sp-b", "t2")]))].into(), now_ms: NOW }
 }
 
-#[test_id(tynz6mn)]
+#[test_id(t1oe1vk)]
 #[test]
 fn t3_every_row_of_the_state_table_is_taken() {
     for (from, on, to) in TABLE {
@@ -44,14 +43,14 @@ fn t3_every_row_of_the_state_table_is_taken() {
     }
 }
 
-#[test_id(tjq6jp8)]
+#[test_id(t20prdu)]
 #[test]
 fn t3_a_foreign_round_leg_in_corpus_is_refused_naming_corpus() {
     let refused = step(State::Corpus, Trigger::ForeignLeg).expect_err("a leg of another round is illegal");
     assert!(refused.contains("Corpus"), "{refused}");
 }
 
-#[test_id(tqkjded)]
+#[test_id(t6zlevw)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
     let mut r = rig(1, busy());
@@ -61,7 +60,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 }
 
 /// T2's other two idle shapes: a held repo and a driven open round are silent too.
-#[test_id(t92l63m)]
+#[test_id(tmvpnil)]
 #[test]
 fn t2_a_held_repo_and_a_driven_round_are_silent() {
     let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
@@ -75,7 +74,7 @@ fn t2_a_held_repo_and_a_driven_round_are_silent() {
 }
 
 /// `screen::cut_pool`, `should_cut` (`core.rs`): a sifted pool cuts — fetch, then assemble.
-#[test_id(twgl5y8)]
+#[test_id(tuqj0zf)]
 #[test]
 fn t5_a_sifted_pool_is_fetched_then_assembled() {
     let (carry, acts) = decide(&Carry::default(), &busy());
@@ -85,7 +84,7 @@ fn t5_a_sifted_pool_is_fetched_then_assembled() {
 }
 
 /// `pace.rs:77`: a stopped repo holds and writes nothing.
-#[test_id(tzbicnv)]
+#[test_id(tdxc2ti)]
 #[test]
 fn t5_a_stopped_repo_holds_without_a_write() {
     let held = Snapshot { repos: [("spira".to_string(), Repo { stopped: true, ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
@@ -95,7 +94,7 @@ fn t5_a_stopped_repo_holds_without_a_write() {
 }
 
 /// A hand-landing's cut hold stops a new cut and names its owner; once it lifts the repo cuts.
-#[test_id(tkz246h)]
+#[test_id(tzgvqvk)]
 #[test]
 fn t5_a_cut_held_repo_cuts_nothing_and_cuts_again_when_the_hold_lifts() {
     let held = Snapshot { repos: [("spira".to_string(), Repo { cut_hold: Some("concierge (hand-landing) until 9".into()), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
@@ -110,7 +109,7 @@ fn t5_a_cut_held_repo_cuts_nothing_and_cuts_again_when_the_hold_lifts() {
 }
 
 /// `core.rs` `cut_pool`: a member not at its sifted tip stays out of the cut.
-#[test_id(tu2e7c8)]
+#[test_id(tnxdxrh)]
 #[test]
 fn t5_an_unsifted_tip_is_set_aside() {
     let mut s = busy();
@@ -125,7 +124,7 @@ fn t5_an_unsifted_tip_is_set_aside() {
 /// merges and the other conflicts (sim scenario `conflicting-siblings`, ported to
 /// `spira/sim/tests/it/loop_ports.rs`). The assemble effect rebuilds its members from `(id, tip)` alone
 /// (`core_members`: no priority, no stack), so the merge order is the leg's own order.
-#[test_id(tab1sei)]
+#[test_id(t0zi8fd)]
 #[test]
 fn t5_the_assemble_leg_lists_its_members_in_merge_order_priority_first() {
     let mut s = busy();
@@ -139,7 +138,7 @@ fn t5_the_assemble_leg_lists_its_members_in_merge_order_priority_first() {
 
 /// A round opens straight into certify: its one green pass is the certificate, so the leg's
 /// `unit.ran` on this task's own stream lands the round at once and no corpus leg ever runs.
-#[test_id(tzt78zr)]
+#[test_id(td9llml)]
 #[test]
 fn t3_a_green_certify_unit_ran_on_its_own_stream_certifies_and_lands_with_no_corpus() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
@@ -166,7 +165,7 @@ fn t3_a_green_certify_unit_ran_on_its_own_stream_certifies_and_lands_with_no_cor
 
 /// `work.submitted` (sift's hand-off when a pass is recorded) on this task's stream asks for an
 /// observe at once, without re-arming the tick.
-#[test_id(tonp58k)]
+#[test_id(trxqyr1)]
 #[test]
 fn t3_work_submitted_wakes_an_observe_at_once() {
     let mut r = rig(1, idle());
@@ -208,7 +207,7 @@ fn asked_after(r: &TaskRig, from: usize) -> Vec<(String, Leg)> {
 
 /// Contract: Corpus × `unit.ran` red → Attributing. The red corpus starts the attribution leg
 /// (`batcher attribute`, `drive::attribute_round`) on the round, not a blind re-run.
-#[test_id(t79xdg7)]
+#[test_id(t3bk0p1)]
 #[test]
 fn t3_a_red_corpus_enters_attribution() {
     let mut r = carried(&driving(State::Corpus, "spira.c1"));
@@ -224,7 +223,7 @@ fn t3_a_red_corpus_enters_attribution() {
 /// Attributing × `unit.ran`: the attribution's own line decides. Survivors go on to certify
 /// (alone, the owners ejected by the leg); a mender pass goes through Mending to certify; a
 /// blocked round is Done, red.
-#[test_id(tze8clo)]
+#[test_id(tkuklke)]
 #[test]
 fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
     use batcher_cut::attribute::Attribution;
@@ -256,7 +255,7 @@ fn t3_the_attribution_line_decides_certify_mending_or_blocked() {
 
 /// A round whose VM could not be acquired never ran: the attribution leg says so as a fault, and
 /// the repo cuts again at once — no pause for an operator to lift (sp-lgffas).
-#[test_id(toqq45n)]
+#[test_id(tkye5uq)]
 #[test]
 fn sp_lgffas_a_fault_in_the_attribution_leg_re_cuts_on_the_next_tick_without_a_pause() {
     use batcher_cut::attribute::Attribution;
@@ -274,7 +273,7 @@ fn sp_lgffas_a_fault_in_the_attribution_leg_re_cuts_on_the_next_tick_without_a_p
 
 /// An attribution that hit its probe ceiling abandons the round whole under its own cause, and pauses nothing:
 /// the red is kept for the next round to convict.
-#[test_id(tqf2cu0)]
+#[test_id(tunbz1y)]
 #[test]
 fn an_unconverged_attribution_abandons_the_round_with_cause_attribution_not_converging() {
     use batcher_cut::attribute::Attribution;
@@ -291,7 +290,7 @@ fn an_unconverged_attribution_abandons_the_round_with_cause_attribution_not_conv
 }
 
 /// A leg whose reruns faulted is not a red: no abandon, no pause, and the page says so.
-#[test_id(tnetdxn)]
+#[test_id(t2iznh8)]
 #[test]
 fn sp_xslgtq_a_faulted_attribution_leaves_the_round_open_and_pages_attribution_faulted() {
     use batcher_cut::attribute::Attribution;
@@ -308,7 +307,7 @@ fn sp_xslgtq_a_faulted_attribution_leaves_the_round_open_and_pages_attribution_f
 
 /// Certifying × `unit.ran` red: the guilty are ejected from the round by the certify output
 /// `queue round certify` names (`red-output=`, `io::implicated`), then the round is abandoned.
-#[test_id(tms4caf)]
+#[test_id(t2fwqxd)]
 #[test]
 fn t3_a_red_certify_ejects_the_guilty_then_abandons() {
     let mut r = carried(&driving(State::Certifying, "spira.c3"));
@@ -339,7 +338,7 @@ fn sole_member(mut c: Carry) -> Carry {
 
 /// A red `queue round certify` of a one-member round ejects that member with the red output as
 /// its evidence and writes no pause, whether or not the output names the member's files.
-#[test_id(tje87n6)]
+#[test_id(t9jl806)]
 #[test]
 fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no_pause() {
     for out in ["verdict=red\nred-output=run/rounds/r9.results/testenv.out\n", "queue.sh round certify: round r9 is RED at abc: test-a.sh\nred=test-a.sh\n", ""] {
@@ -366,7 +365,7 @@ fn sp_z43b7y_a_red_certify_of_a_one_member_round_ejects_the_member_and_writes_no
 
 /// While the sole member's eject is in flight the dead certify leg is not judged lost: the next
 /// tick starts no certify and abandons nothing.
-#[test_id(t4zmtsa)]
+#[test_id(tmst9ox)]
 #[test]
 fn sp_z1vzxd_a_tick_between_the_sole_eject_and_its_outcome_starts_nothing() {
     let mut r = carried(&attributed(sole_member(driving(State::Certifying, "spira.c3"))));
@@ -378,7 +377,7 @@ fn sp_z1vzxd_a_tick_between_the_sole_eject_and_its_outcome_starts_nothing() {
 }
 
 /// A refused eject of the sole member abandons the round, names the refusal and keeps the red evidence.
-#[test_id(tv7mspt)]
+#[test_id(t2uwbhn)]
 #[test]
 fn sp_z1vzxd_a_refused_eject_of_the_sole_member_abandons_the_round_naming_the_refusal() {
     let c = attributed(sole_member(driving(State::Certifying, "spira.c3")));
@@ -392,7 +391,7 @@ fn sp_z1vzxd_a_refused_eject_of_the_sole_member_abandons_the_round_naming_the_re
 }
 
 /// A multi-member abandon that ejected nothing at decision time claims no count.
-#[test_id(trptb3u)]
+#[test_id(tiktkv7)]
 #[test]
 fn sp_b0lhx6_an_abandon_carries_the_ejects_the_decision_made() {
     let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
@@ -403,7 +402,7 @@ fn sp_b0lhx6_an_abandon_carries_the_ejects_the_decision_made() {
 }
 
 /// Two members and no file named: the red has no culprit to eject, so the pause stands for a person.
-#[test_id(tmiih6h)]
+#[test_id(t1il1m2)]
 #[test]
 fn sp_z43b7y_a_red_certify_of_a_two_member_round_naming_no_member_still_pauses() {
     let mut c = driving(State::Certifying, "spira.c3");
@@ -419,7 +418,7 @@ fn sp_z43b7y_a_red_certify_of_a_two_member_round_naming_no_member_still_pauses()
 const THREE_REDS: &str = "queue.sh round certify: round r9 is RED at abc123: test-a.sh,test-b.sh,test-c.sh\nred=test-a.sh,test-b.sh,test-c.sh\n";
 
 /// A red that survived its attribution is attributed once more, by suspect, before anything pauses.
-#[test_id(tj10eu0)]
+#[test_id(td4ty8h)]
 #[test]
 fn sp_mg27kj_a_red_that_survived_its_attribution_is_attributed_once_more_by_suspect() {
     let mut r = carried(&attributed(driving(State::Certifying, "spira.c3")));
@@ -440,7 +439,7 @@ fn confirmed_on(reds: &[&str]) -> Carry {
 
 /// A certify red naming a suite no attribution of the round covered is attributed afresh, so its
 /// rerun can find a flip, even after the round's first and confirmed attributions were spent.
-#[test_id(tlrn7vb)]
+#[test_id(tz70ztm)]
 #[test]
 fn sp_54in0u_a_red_on_a_suite_not_yet_attributed_is_attributed_after_the_round_spent_its_two() {
     let mut r = carried(&confirmed_on(&["test-a.sh"]));
@@ -454,7 +453,7 @@ fn sp_54in0u_a_red_on_a_suite_not_yet_attributed_is_attributed_after_the_round_s
 }
 
 /// The same suite red again after its attribution is a real red: the round abandons naming it.
-#[test_id(tx7s3v9)]
+#[test_id(tgu9a98)]
 #[test]
 fn sp_54in0u_a_suite_red_again_after_its_attribution_abandons_naming_it() {
     let mut r = carried(&confirmed_on(&["test-a.sh", "test-b.sh"]));
@@ -466,7 +465,7 @@ fn sp_54in0u_a_suite_red_again_after_its_attribution_abandons_naming_it() {
     assert!(!after.iter().any(|(e, _)| e == CORPUS), "{after:?}");
 }
 
-#[test_id(tdpyl8i)]
+#[test_id(t9z21h0)]
 #[test]
 fn sp_mg27kj_a_red_after_the_confirmed_attribution_pauses_and_abandons() {
     let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
@@ -477,7 +476,7 @@ fn sp_mg27kj_a_red_after_the_confirmed_attribution_pauses_and_abandons() {
 }
 
 /// Every other path that pauses blames no member, so its pause carries the reason a person acts on.
-#[test_id(taa6j8r)]
+#[test_id(t789gb3)]
 #[test]
 fn sp_z43b7y_a_pause_without_a_culprit_carries_the_reason_a_person_acts_on() {
     let mut r = carried(&sole_member(driving(State::Attributing, "spira.a2")));
@@ -491,7 +490,7 @@ fn sp_z43b7y_a_pause_without_a_culprit_carries_the_reason_a_person_acts_on() {
 
 /// A red certify with no `red-output=` still names its suites and verdict line in the abandon
 /// act (sp-7yu70y): the Concierge attributes the red from the reason, not from a guess.
-#[test_id(tgsh741)]
+#[test_id(tqmqfru)]
 #[test]
 fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
     let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
@@ -505,7 +504,7 @@ fn sp_7yu70y_a_red_certify_abandons_naming_its_verdict_and_red_suites() {
     assert_eq!(abandon.reds, ["test-a.sh", "test-b.sh"]);
 }
 
-#[test_id(tgj5ual)]
+#[test_id(tn06kji)]
 #[test]
 fn sp_7yu70y_a_red_certify_with_only_a_red_line_still_says_what_it_had() {
     let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
@@ -519,7 +518,7 @@ fn sp_7yu70y_a_red_certify_with_only_a_red_line_still_says_what_it_had() {
 
 /// A certify red naming no suite is attributed, once per round, before it is abandoned whole
 /// (sp-7yu70y.2): the second is a fault of the machinery, not a red.
-#[test_id(tguxnd0)]
+#[test_id(tr8w23m)]
 #[test]
 fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_faults_without_a_red() {
     let mut r = carried(&driving(State::Certifying, "spira.c3"));
@@ -548,7 +547,7 @@ fn sp_7yu70y_2_an_unnamed_certify_red_attributes_once_then_faults_without_a_red(
 /// A certify that exits non-zero naming no verdict and no suite, after the attribution, is a
 /// fault of the machinery: its full output is kept and the reason carries its last line and the
 /// file, the round stays open, and no pause is written.
-#[test_id(tuk4j91)]
+#[test_id(tzg1xuk)]
 #[test]
 fn sp_byw57t_a_certify_that_judged_nothing_keeps_its_output_and_names_it_in_the_reason() {
     let mut c = driving(State::Certifying, "spira.c3");
@@ -569,7 +568,7 @@ fn sp_byw57t_a_certify_that_judged_nothing_keeps_its_output_and_names_it_in_the_
 }
 
 /// A pass scope that outlives the wall does not hold certify for good.
-#[test_id(twjj9bs)]
+#[test_id(tc5h8uo)]
 #[test]
 fn sp_byw57t_a_pass_scope_that_outlives_the_wall_releases_certify() {
     let mut c = driving(State::Certifying, "");
@@ -585,7 +584,7 @@ fn sp_byw57t_a_pass_scope_that_outlives_the_wall_releases_certify() {
 
 /// Certify refuses a round whose pass scope is still finishing: the attribution's survivors wait
 /// for the scope to end, then certify starts.
-#[test_id(tov6ufd)]
+#[test_id(t7jmo6g)]
 #[test]
 fn sp_byw57t_certify_waits_for_the_attribution_passs_scope_to_end() {
     let mut c = driving(State::Certifying, "");
@@ -611,7 +610,7 @@ fn held_eject_error() -> String {
 
 /// An eject the queue holds for a running pass is not a refusal: no abandon, no pause, and the
 /// same eject is issued again once the pass is gone, after which the survivors certify.
-#[test_id(tpu4evj)]
+#[test_id(tx3gia2)]
 #[test]
 fn sp_3p7m5b_an_eject_held_for_a_running_pass_is_issued_again_when_the_pass_ends() {
     let c = driving(State::Certifying, "spira.e1");
@@ -639,7 +638,7 @@ fn sp_3p7m5b_an_eject_held_for_a_running_pass_is_issued_again_when_the_pass_ends
 }
 
 /// The one re-issue is not retried for ever: refused again, held or not, the round ends red.
-#[test_id(t7djnot)]
+#[test_id(ti5j0z9)]
 #[test]
 fn sp_3p7m5b_a_held_eject_that_fails_again_after_its_re_issue_ends_the_round_red() {
     let mut c = driving(State::Certifying, "spira.e1");
@@ -653,7 +652,7 @@ fn sp_3p7m5b_a_held_eject_that_fails_again_after_its_re_issue_ends_the_round_red
 }
 
 /// The eject the attribution leg could not issue comes back in its outcome line: it is held the same way.
-#[test_id(tqcref5)]
+#[test_id(tplg9dz)]
 #[test]
 fn sp_3p7m5b_an_attribution_blocked_by_a_held_eject_holds_it_instead_of_pausing() {
     let c = driving(State::Attributing, "spira.a1");
@@ -666,14 +665,14 @@ fn sp_3p7m5b_an_attribution_blocked_by_a_held_eject_holds_it_instead_of_pausing(
     assert!(!names.contains(&ABANDON) && !names.contains(&PAUSE), "{names:?}");
 }
 
-#[test_id(tld6ryc)]
+#[test_id(t0i8gwh)]
 #[test]
 fn sp_3p7m5b_the_pass_running_exit_is_the_one_the_queue_returns() {
     assert_eq!(batcher_cut::io::QUEUE_PASS_RUNNING_EXIT, queue::ops::round::PASS_RUNNING);
 }
 
 /// A refused eject still keeps the member's red tip out of the next cut.
-#[test_id(t5pk5vc)]
+#[test_id(t8wnbf5)]
 #[test]
 fn sp_3p7m5b_the_red_tip_is_recorded_before_the_eject_even_when_it_is_refused() {
     let dir = testkit::TempDir::new("red-tip");
@@ -686,7 +685,7 @@ fn sp_3p7m5b_the_red_tip_is_recorded_before_the_eject_even_when_it_is_refused() 
 
 /// The pass exits green while the shared build-cache server is left in its scope: observe
 /// stops the scope and certify starts on the next decide, not when the daemon dies.
-#[test_id(tgeb523)]
+#[test_id(txk9g3j)]
 #[test]
 fn sp_b2azes_a_daemon_left_in_the_pass_scope_does_not_hold_certify() {
     use runtime::units::{ScriptedUnits, UnitFacts, UnitProcess, UnitState, Units};
@@ -711,7 +710,7 @@ fn sp_b2azes_a_daemon_left_in_the_pass_scope_does_not_hold_certify() {
 
 /// A certify red naming a suite in a round of several members is attributed on that suite,
 /// and the survivors are certified again and land (sp-b0lhx6).
-#[test_id(tmxmwm4)]
+#[test_id(th9y3a1)]
 #[test]
 fn sp_b0lhx6_a_named_suite_red_attributes_the_certify_pass_and_the_survivors_land() {
     let mut r = carried(&driving(State::Certifying, "spira.c3"));
@@ -740,7 +739,7 @@ fn sp_b0lhx6_a_named_suite_red_attributes_the_certify_pass_and_the_survivors_lan
 
 /// The first red certify of the round, named suites or not, attributes it from the certify
 /// pass's own results, for a sole member as for several: no eject, no abandon yet.
-#[test_id(t906z0j)]
+#[test_id(txiut3h)]
 #[test]
 fn a_first_red_certify_attributes_every_member_after_the_certify_pass() {
     for carry in [driving(State::Certifying, "spira.c3"), sole_member(driving(State::Certifying, "spira.c3"))] {
@@ -759,7 +758,7 @@ fn a_first_red_certify_attributes_every_member_after_the_certify_pass() {
 
 /// The certify pass's red leads the pause of an attribution that ends with no outcome, and the
 /// attribution's own last line follows it.
-#[test_id(tos4jib)]
+#[test_id(td7fk5v)]
 #[test]
 fn a_certify_red_leads_the_pause_of_an_attribution_that_ends_with_no_outcome() {
     let refusal = "results holds no deny list of the round's pass; refusing to attribute with another";
@@ -778,7 +777,7 @@ fn a_certify_red_leads_the_pause_of_an_attribution_that_ends_with_no_outcome() {
 
 /// A certify red that printed no `red-reason=` leads with its red suites, and a round whose
 /// certify never went red keeps the reason it always had.
-#[test_id(tublrqw)]
+#[test_id(t6rux2a)]
 #[test]
 fn a_certify_red_without_a_reason_line_leads_with_its_red_suites_and_no_red_leaves_the_reason() {
     let mut r = carried(&driving(State::Certifying, "spira.c3"));
@@ -799,7 +798,7 @@ fn a_certify_red_without_a_reason_line_leads_with_its_red_suites_and_no_red_leav
 
 /// No row but the carried leg's own restart reaches Corpus, and a promotion that is not yet
 /// attested certifies like an opened round.
-#[test_id(t3w905h)]
+#[test_id(tq75kdy)]
 #[test]
 fn no_path_runs_corpus_then_certify() {
     for (from, on, to) in TABLE {
@@ -818,7 +817,7 @@ fn no_path_runs_corpus_then_certify() {
 }
 
 /// The named-suite attribution runs once; a second named red abandons and says what it had.
-#[test_id(tjfmzen)]
+#[test_id(t5zidgw)]
 #[test]
 fn sp_b0lhx6_a_named_suite_red_after_attribution_abandons_without_claiming_ejects() {
     let mut r = carried(&confirmed(driving(State::Certifying, "spira.c3")));
@@ -846,7 +845,7 @@ fn paused_on(base: &str) -> Carry {
 
 /// The 2026-11-07 stall: a red round's pause stood a whole day while spira beads waited, and the
 /// pass logged nothing. A pause seen first is held, and the hold names the pause and how it lifts.
-#[test_id(tpm38jn)]
+#[test_id(t5g8kw5)]
 #[test]
 fn sp_8nlvra_a_paused_repo_is_held_and_names_the_pause() {
     let (carry, acts) = decide(&Carry::default(), &paused("b0"));
@@ -865,7 +864,7 @@ fn paused_with_undriven_round() -> Snapshot {
     s
 }
 
-#[test_id(tt2h6mb)]
+#[test_id(t9xxmh8)]
 #[test]
 fn sp_s9qcq8_a_paused_repo_drives_an_open_round_it_does_not_drive_and_cuts_no_new_one() {
     let (carry, acts) = decide(&Carry::default(), &paused_with_undriven_round());
@@ -876,7 +875,7 @@ fn sp_s9qcq8_a_paused_repo_drives_an_open_round_it_does_not_drive_and_cuts_no_ne
     assert!(why.contains("paused") && why.contains("local corpus red"), "{why}");
 }
 
-#[test_id(tyqsqnz)]
+#[test_id(taj4suw)]
 #[test]
 fn sp_s9qcq8_a_stopped_repo_still_holds_an_open_round() {
     let mut snap = paused_with_undriven_round();
@@ -890,7 +889,7 @@ fn pause_on(mut snap: Snapshot) -> Snapshot {
     snap
 }
 
-#[test_id(traateb)]
+#[test_id(tws3kye)]
 #[test]
 fn sp_s9qcq8_a_paused_repo_lands_an_open_green_round_and_attributes_an_open_red_one() {
     let (carry, snap) = green_orphan();
@@ -903,7 +902,7 @@ fn sp_s9qcq8_a_paused_repo_lands_an_open_green_round_and_attributes_an_open_red_
     assert_eq!(carry.repos["spira"].state, State::Attributing);
 }
 
-#[test_id(tpb28xy)]
+#[test_id(t7uozw4)]
 #[test]
 fn sp_s9qcq8_a_paused_repo_with_no_open_round_is_held_and_one_that_drives_it_is_not() {
     let (carry, _) = decide(&Carry::default(), &paused("b0"));
@@ -914,7 +913,7 @@ fn sp_s9qcq8_a_paused_repo_with_no_open_round_is_held_and_one_that_drives_it_is_
 
 /// Once a round has landed past the base the pause was seen on, the red it guarded is behind the
 /// repo: the pass lifts the pause and cuts the waiting member.
-#[test_id(tl3vklf)]
+#[test_id(tnjmrvg)]
 #[test]
 fn sp_8nlvra_a_landing_past_the_paused_base_lifts_the_pause_and_cuts() {
     let (carry, acts) = decide(&paused_on("b0"), &paused("b1"));
@@ -928,7 +927,7 @@ fn sp_8nlvra_a_landing_past_the_paused_base_lifts_the_pause_and_cuts() {
 
 /// A round that landed between the pause being written and the batcher first seeing it still
 /// lifts it: the base is recorded when the pause is written, not when it is first seen.
-#[test_id(tzytpjh)]
+#[test_id(taz46qq)]
 #[test]
 fn sp_56d3l3_a_pause_remembers_the_base_its_red_round_was_cut_on_so_a_landing_lifts_it() {
     let mut carry = driving(State::Attributing, "spira.a2");
@@ -956,7 +955,7 @@ fn pinned_lift(secs: u64) -> Policy {
     Policy { pause_lift_s: secs, ..Policy::default() }
 }
 
-#[test_id(te6siwa)]
+#[test_id(txu95fh)]
 #[test]
 fn sp_qmd5g4_a_red_pause_past_its_bound_is_lifted_and_cuts_with_no_landing() {
     let (carry, snap) = expiring(500, 0);
@@ -969,7 +968,7 @@ fn sp_qmd5g4_a_red_pause_past_its_bound_is_lifted_and_cuts_with_no_landing() {
     assert_eq!(carry.repos["spira"].pace.pause_lifts, 1);
 }
 
-#[test_id(tkromei)]
+#[test_id(tqh5g74)]
 #[test]
 fn sp_qmd5g4_a_pause_exactly_at_its_bound_is_lifted() {
     let (carry, snap) = expiring(400, 0);
@@ -977,7 +976,7 @@ fn sp_qmd5g4_a_pause_exactly_at_its_bound_is_lifted() {
     assert_eq!(acts[0].effect, PAUSE, "{acts:?}");
 }
 
-#[test_id(tmo3h2n)]
+#[test_id(t2mvltp)]
 #[test]
 fn sp_qmd5g4_the_lift_bound_is_read_from_its_key() {
     let pinned: BTreeMap<String, String> = [("SPIRA_BATCHER_PAUSE_LIFT_SECS".to_string(), "77".to_string())].into();
@@ -985,7 +984,7 @@ fn sp_qmd5g4_the_lift_bound_is_read_from_its_key() {
     assert_eq!(Policy::pinned(&BTreeMap::new()).pause_lift_s, 900);
 }
 
-#[test_id(tfz5thj)]
+#[test_id(tlb70fi)]
 #[test]
 fn sp_qmd5g4_a_red_pause_inside_its_bound_stays_held() {
     let (carry, snap) = expiring(300, 0);
@@ -994,16 +993,60 @@ fn sp_qmd5g4_a_red_pause_inside_its_bound_stays_held() {
     assert_eq!(carry.repos["spira"].state, State::Held);
 }
 
-#[test_id(tv4c54h)]
+#[test_id(tgrixnx)]
 #[test]
 fn sp_qmd5g4_a_second_red_after_a_lift_stays_paused_however_long_it_stands() {
     let (carry, snap) = expiring(100_000, 1);
     let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
-    assert!(acts.is_empty(), "{acts:?}");
+    assert_eq!(effects(&acts), [INBOX_APPEND, PAUSE_ASK], "it pages and asks, and cuts nothing: {acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Held);
 }
 
-#[test_id(tu5ty53)]
+/// A red pause held past its bound with its lift spent: the page and the ask, once per pause.
+fn unattended(since: u64) -> (Carry, Snapshot) {
+    let (carry, mut snap) = expiring(0, batcher_cut::pace::PAUSE_LIFTS_MAX);
+    let r = snap.repos.get_mut("spira").unwrap();
+    r.paused_since = Some(since);
+    r.pause_evidence = Some("unit-tests failed: it::batcher_x::the_failing_test; thread 'it::batcher_x::the_failing_test' panicked at src/x.rs:1:1".into());
+    snap.now_ms = (since + 400 + 1) * 1000;
+    (carry, snap)
+}
+
+#[test_id(tj209i3)]
+#[test]
+fn sp_plukb4_a_pause_held_past_its_bound_with_its_lift_spent_pages_and_asks_once_per_pause() {
+    let t = NOW / 1000;
+    let (carry, snap) = unattended(t);
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert_eq!(effects(&acts), [INBOX_APPEND, PAUSE_ASK], "{acts:?}");
+    assert!(acts[0].input.contains("PAUSE UNATTENDED spira:"), "{}", acts[0].input);
+    for want in ["held 401s", "1 certified waiting", "the_failing_test", "panicked at"] {
+        assert!(acts[0].input.contains(want), "{want}: {}", acts[0].input);
+    }
+    assert_eq!(acts[1].key, format!("spira:pause:{t}"));
+    assert!(acts[1].input.contains("MOOT-WHEN: batcher pause-show --repo spira"), "{}", acts[1].input);
+    assert!(acts[1].input.contains(&t.to_string()), "the predicate names this pause's since: {}", acts[1].input);
+    let (carry, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "the same pause is not paged again: {acts:?}");
+    let (_, snap2) = unattended(t + 5000);
+    let (_, acts) = decide_with(&pinned_lift(400), &carry, &snap2);
+    assert_eq!(effects(&acts), [INBOX_APPEND, PAUSE_ASK], "a new pause pages afresh: {acts:?}");
+}
+
+#[test_id(tz5hrwe)]
+#[test]
+fn sp_plukb4_an_unattended_pause_with_no_work_waiting_or_a_hold_pages_nothing() {
+    let (carry, mut snap) = unattended(NOW / 1000);
+    snap.repos.get_mut("spira").unwrap().pool.clear();
+    let (_, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+    let (carry, mut snap) = unattended(NOW / 1000);
+    snap.repos.get_mut("spira").unwrap().paused = Some("hold: operator maintenance".into());
+    let (_, acts) = decide_with(&pinned_lift(400), &carry, &snap);
+    assert!(acts.is_empty(), "{acts:?}");
+}
+
+#[test_id(th8qq1o)]
 #[test]
 fn sp_qmd5g4_an_operators_hold_is_never_lifted_by_the_bound() {
     let (carry, mut snap) = expiring(100_000, 0);
@@ -1023,7 +1066,7 @@ fn ran_of(leg: &str) -> runtime::units::UnitRan {
 
 /// A round the attribution emptied by ejecting every member holds no red: it is abandoned and
 /// writes no pause.
-#[test_id(tb80a0r)]
+#[test_id(t4ygo78)]
 #[test]
 fn sp_56d3l3_a_round_emptied_by_its_own_ejects_is_abandoned_without_a_pause() {
     use batcher_cut::attribute::Attribution;
@@ -1039,7 +1082,7 @@ fn sp_56d3l3_a_round_emptied_by_its_own_ejects_is_abandoned_without_a_pause() {
 /// The pause file is written by an effect a moment after the verdict, so a tick can see the repo
 /// unpaused with the verdict already carried: the base must survive that tick, or the pause is
 /// first read after the next landing and records the landed head, which nothing can move past.
-#[test_id(tzobaju)]
+#[test_id(tpls93r)]
 #[test]
 fn sp_esyv8o_a_pause_written_at_one_head_is_lifted_by_a_landing_though_a_tick_saw_no_file_first() {
     let blocked = runtime::units::RanOutput::captured(batcher_cut::attribute::Attribution::Blocked("unattributed red test-x.sh".into()).line().as_bytes(), b"");
@@ -1060,7 +1103,7 @@ fn sp_esyv8o_a_pause_written_at_one_head_is_lifted_by_a_landing_though_a_tick_sa
 }
 
 /// A pause file that is gone after the repo moved on is no pause of ours: the next one is a new pause.
-#[test_id(t0rxngg)]
+#[test_id(tinpn77)]
 #[test]
 fn sp_esyv8o_a_vanished_pause_forgets_its_base_once_the_repo_has_moved_past_it() {
     let mut gone = paused("b2");
@@ -1071,7 +1114,7 @@ fn sp_esyv8o_a_vanished_pause_forgets_its_base_once_the_repo_has_moved_past_it()
 
 /// An attribution leg stopped by a signal says nothing about the round: the Concierge's abandon
 /// stops it with SIGTERM, and a pause written for that holds the repo against nothing red.
-#[test_id(trtmyh4)]
+#[test_id(t11jdam)]
 #[test]
 fn sp_esyv8o_an_attribution_leg_stopped_by_a_signal_writes_no_pause() {
     let ran = runtime::units::UnitRan { handle: runtime::units::UnitHandle::of(NAME, "spira.a2").unwrap(), exit: runtime::units::Exit::Signal(15), duration_ms: 1 };
@@ -1083,7 +1126,7 @@ fn sp_esyv8o_an_attribution_leg_stopped_by_a_signal_writes_no_pause() {
 }
 
 /// Only the stop an abandon sends is let go: a leg killed or crashed is a red with no outcome.
-#[test_id(tuqznb2)]
+#[test_id(tzo1sn5)]
 #[test]
 fn sp_esyv8o_an_attribution_leg_killed_by_another_signal_still_pauses() {
     for sig in [9, 11] {
@@ -1094,7 +1137,7 @@ fn sp_esyv8o_an_attribution_leg_killed_by_another_signal_still_pauses() {
 }
 
 /// An operator's deliberate hold (`hold:`) is never lifted by a landing.
-#[test_id(tu00j3w)]
+#[test_id(ti5fr15)]
 #[test]
 fn sp_8nlvra_a_deliberate_hold_survives_a_landing() {
     let mut s = paused("b1");
@@ -1105,7 +1148,7 @@ fn sp_8nlvra_a_deliberate_hold_survives_a_landing() {
 }
 
 /// A scoped stop names its owner's reason.
-#[test_id(teq2jdd)]
+#[test_id(tg2pec4)]
 #[test]
 fn sp_8nlvra_a_stopped_repo_names_the_stop() {
     let mut s = busy();
@@ -1119,7 +1162,7 @@ fn sp_8nlvra_a_stopped_repo_names_the_stop() {
 
 /// An owned stop outlives the landing that lifts a red pause: the pause goes, the stop holds, and
 /// nothing is cut.
-#[test_id(tkif8v8)]
+#[test_id(t4sfher)]
 #[test]
 fn sp_banzvc_the_landing_that_lifts_a_red_pause_leaves_an_owned_stop_in_force() {
     let mut s = paused("b1");
@@ -1139,7 +1182,7 @@ fn sp_banzvc_the_landing_that_lifts_a_red_pause_leaves_an_owned_stop_in_force() 
 
 /// A feature group whose every member waits on an unlanded prerequisite must not starve the
 /// catch-all: the blocked are refused first, then the round is selected from what is left.
-#[test_id(tmzt817)]
+#[test_id(trhglwk)]
 #[test]
 fn sp_8nlvra_a_blocked_feature_group_does_not_starve_the_catch_all() {
     let mut x1 = member("sp-x.1", "t1");
@@ -1156,7 +1199,7 @@ fn sp_8nlvra_a_blocked_feature_group_does_not_starve_the_catch_all() {
 }
 
 /// Members wait but none is admissible: the pass names each and why.
-#[test_id(tdf9kp8)]
+#[test_id(tf4r9vt)]
 #[test]
 fn sp_8nlvra_a_pool_with_nothing_admissible_names_each_member() {
     let mut s = busy();
@@ -1170,7 +1213,7 @@ fn sp_8nlvra_a_pool_with_nothing_admissible_names_each_member() {
 }
 
 /// The log owes one line per change of a repo's named reason, and one when it clears.
-#[test_id(tgmr9z5)]
+#[test_id(tefzpbj)]
 #[test]
 fn sp_8nlvra_a_changed_skip_reason_is_logged_once() {
     let (held, _) = decide(&Carry::default(), &paused("b0"));
@@ -1197,7 +1240,7 @@ fn open_leg() -> Leg {
 
 /// 2026-11-07 05:26Z: four cuts abandoned members-differ because the open would not admit
 /// sp-1mspuc. The open now names it (typed), and the batcher opens the others at once.
-#[test_id(togtngn)]
+#[test_id(ttcgwbr)]
 #[test]
 fn sp_822b8l_a_pool_with_one_inadmissible_member_still_opens_a_round_of_the_others() {
     let refused = Opened { refused: vec![("sp-b".into(), "integration".into(), "sp-b: carried by integration sp-int — lands with it, not admitted".into())], ..Opened::default() };
@@ -1217,7 +1260,7 @@ fn sp_822b8l_a_pool_with_one_inadmissible_member_still_opens_a_round_of_the_othe
 
 /// The refused member stays out of later cuts at the same tip and base, named; a moved base
 /// lets it be tried again.
-#[test_id(tt7nd65)]
+#[test_id(touyvxo)]
 #[test]
 fn sp_822b8l_a_refused_member_stays_out_until_its_tip_or_the_base_moves() {
     let rc = RepoCarry { refused: [("sp-b".to_string(), ("t2".to_string(), "b1".to_string(), "integration".to_string()))].into(), ..RepoCarry::default() };
@@ -1236,7 +1279,7 @@ fn sp_822b8l_a_refused_member_stays_out_until_its_tip_or_the_base_moves() {
 
 /// A refusal the pool read already shows (held, state) is not remembered: once the pool lists the
 /// member again at the same tip and base it is cut; one the pool cannot see stays out.
-#[test_id(tibinsn)]
+#[test_id(trov4c8)]
 #[test]
 fn sp_7der7t_a_member_refused_held_is_cut_once_the_pool_shows_it_unheld() {
     for (kind, cut) in [("held", true), ("state", true), ("no-row", true), ("integration", false), ("text-only", false), ("batch-red", false)] {
@@ -1256,7 +1299,7 @@ fn sp_7der7t_a_member_refused_held_is_cut_once_the_pool_shows_it_unheld() {
 }
 
 /// 2026-11-21: sp-7wx6ql was left out of two cuts and nobody was told why.
-#[test_id(t67la8v)]
+#[test_id(t8knuvh)]
 #[test]
 fn sp_7der7t_a_cut_names_each_member_it_left_out() {
     let mut unsifted = member("sp-c", "t3");
@@ -1281,7 +1324,7 @@ fn sp_7der7t_a_cut_names_each_member_it_left_out() {
 
 /// A feature round leaves out what is not part of it; a full round leaves out its overflow; a
 /// dependency on an unlanded bead leaves the dependant out.
-#[test_id(tbh3utn)]
+#[test_id(tho8n0s)]
 #[test]
 fn sp_fssqg1_the_selection_names_the_feature_full_and_blocked_members_it_drops() {
     let mut blocked = member("sp-e", "t5");
@@ -1296,7 +1339,7 @@ fn sp_fssqg1_the_selection_names_the_feature_full_and_blocked_members_it_drops()
 }
 
 /// A list that empties clears the records once; an idle empty list pushes nothing.
-#[test_id(t0t7eu4)]
+#[test_id(tizyw2v)]
 #[test]
 fn sp_fssqg1_a_list_that_empties_is_pushed_once_to_clear_its_records() {
     let rc = RepoCarry { left_noted: vec![("sp-d".into(), "held-manual".into(), "t4".into())], ..RepoCarry::default() };
@@ -1308,7 +1351,7 @@ fn sp_fssqg1_a_list_that_empties_is_pushed_once_to_clear_its_records() {
 }
 
 /// A note that failed leaves the list unnamed, so the next decide pushes it again.
-#[test_id(t8vx3tb)]
+#[test_id(tp7byb6)]
 #[test]
 fn sp_fssqg1_a_failed_left_out_note_is_pushed_again() {
     let mut r = repo(vec![]);
@@ -1322,7 +1365,7 @@ fn sp_fssqg1_a_failed_left_out_note_is_pushed_again() {
 }
 
 /// Every named member refused: no round, no abandon, and the repo is idle with the members out.
-#[test_id(td0llhq)]
+#[test_id(tyrbnu4)]
 #[test]
 fn sp_822b8l_an_open_refusing_every_member_abandons_nothing() {
     let all = Opened { refused: ["sp-a", "sp-b", "sp-c"].iter().map(|id| (id.to_string(), "gate-red".to_string(), format!("{id}: its gate is FAIL"))).collect(), ..Opened::default() };
@@ -1346,7 +1389,7 @@ fn fail_opens(bodies: &[&str]) -> (Carry, Vec<Vec<String>>) {
     (carry, all)
 }
 
-#[test_id(tu5dk8q)]
+#[test_id(tl09qdg)]
 #[test]
 fn sp_64x7v2_one_failed_open_does_not_page_and_a_later_open_keeps_the_count_at_zero() {
     let (carry, all) = fail_opens(&[""]);
@@ -1356,7 +1399,7 @@ fn sp_64x7v2_one_failed_open_does_not_page_and_a_later_open_keeps_the_count_at_z
     assert_eq!(carry.repos["spira"].pace.open_failed, 0);
 }
 
-#[test_id(tp3boio)]
+#[test_id(tgdxksi)]
 #[test]
 fn sp_64x7v2_three_failed_opens_in_a_row_page_once_with_the_last_body() {
     let lock = "spira: another operation holds the lock";
@@ -1366,7 +1409,7 @@ fn sp_64x7v2_three_failed_opens_in_a_row_page_once_with_the_last_body() {
     assert!(all[2][0].contains(lock), "{all:?}");
 }
 
-#[test_id(tyhdkn8)]
+#[test_id(t8l169s)]
 #[test]
 fn sp_64x7v2_a_timed_out_open_page_says_it_timed_out_and_never_shows_empty_parens() {
     let (_, all) = fail_opens(&["", "", ""]);
@@ -1378,7 +1421,7 @@ fn sp_64x7v2_a_timed_out_open_page_says_it_timed_out_and_never_shows_empty_paren
 /// A landing refused for one member's change is not a red round: the round stays open with all
 /// its members, the land output is kept, no pause is written, and the page carries the refusing
 /// line and the verbs that settle it.
-#[test_id(to7q28u)]
+#[test_id(tvs8x8p)]
 #[test]
 fn sp_xmqd8k_a_refused_landing_leaves_the_green_round_open_and_pages_the_refusing_line() {
     let refusal = "queue.sh land-local: release c1ad5ddc failed to build or verify\nrelease: spira.task_modes names watch.perf_happy=observe, which this release does not register";
@@ -1408,7 +1451,7 @@ fn landing() -> Carry {
 /// 2026-11-07 07:24Z: spira-20261107T070615Z certified GREEN stacked on a parent that ended
 /// without landing; land answered base-moved (rebuilt on the new base) and the batcher abandoned
 /// it. Now it certifies the rebuilt round and lands it.
-#[test_id(tf3vbn6)]
+#[test_id(tync6c5)]
 #[test]
 fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
     let moved = serde_json::to_string(&Landed { base_moved: Some("b2".into()), ..Landed::default() }).unwrap();
@@ -1434,7 +1477,7 @@ fn sp_tjrjca_a_green_round_refused_base_moved_is_certified_again_and_landed() {
 
 /// The activation restart re-drives LAND on a round that already landed; the queue answers it
 /// ok, and that lands the round — no abandon, no red pause.
-#[test_id(tmeg328)]
+#[test_id(tj6fhhj)]
 #[test]
 fn a_land_re_driven_after_it_landed_is_landed_not_red() {
     let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
@@ -1447,7 +1490,7 @@ fn supersede_legs(acts: &[Act]) -> Vec<Leg> {
     acts.iter().filter(|a| a.effect == SUPERSEDE_REDS).map(|a| serde_json::from_str(&a.input).unwrap()).collect()
 }
 
-#[test_id(t3iisna)]
+#[test_id(te1d7ox)]
 #[test]
 fn a_landed_round_asks_for_the_repos_local_reds_to_be_closed() {
     let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
@@ -1457,7 +1500,7 @@ fn a_landed_round_asks_for_the_repos_local_reds_to_be_closed() {
     assert_eq!(legs[0].repo, "spira");
 }
 
-#[test_id(tvzxdma)]
+#[test_id(ta8pjsf)]
 #[test]
 fn a_landed_round_hands_its_members_to_the_registry_clearing() {
     let land = Leg { batch: "r9".into(), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], ..Leg::on("spira") };
@@ -1465,7 +1508,7 @@ fn a_landed_round_hands_its_members_to_the_registry_clearing() {
     assert_eq!(supersede_legs(&acts)[0].members, land.members, "{acts:?}");
 }
 
-#[test_id(tspo3ry)]
+#[test_id(thi6bra)]
 #[test]
 fn a_staged_landing_promotes_and_asks_for_the_local_reds_to_be_closed() {
     let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
@@ -1475,7 +1518,7 @@ fn a_staged_landing_promotes_and_asks_for_the_local_reds_to_be_closed() {
     assert_eq!(supersede_legs(&acts).len(), 1, "{acts:?}");
 }
 
-#[test_id(t2lv1jo)]
+#[test_id(t31xibs)]
 #[test]
 fn a_base_moved_or_refused_land_closes_no_local_reds() {
     let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
@@ -1487,7 +1530,7 @@ fn a_base_moved_or_refused_land_closes_no_local_reds() {
 }
 
 /// At most once per base change: base-moved again on the same base is a red, abandoned.
-#[test_id(tp2clxc)]
+#[test_id(tv0k615)]
 #[test]
 fn sp_tjrjca_base_moved_twice_on_one_base_is_red() {
     let mut c = landing();
@@ -1500,7 +1543,7 @@ fn sp_tjrjca_base_moved_twice_on_one_base_is_red() {
 /// A leg unit gets the base environment a dwarf gets (sp-8nlvra follow-up): without
 /// `SPIRA_TOML` the corpus and attribution legs' round-vm refused at once (exit 2) and
 /// the batcher abandoned its first live round, spira-20261108T032319Z, after 43 s.
-#[test_id(tiu8pw4)]
+#[test_id(teuhum2)]
 #[test]
 fn a_leg_unit_carries_the_release_path_home_and_config_spec() {
     use spira_runtime::tasks::a::batcher_local::edge::leg_env;
@@ -1516,7 +1559,7 @@ fn a_leg_unit_carries_the_release_path_home_and_config_spec() {
     assert_eq!(kept.iter().find(|(n, _)| n == "SPIRA_TOML").map(|(_, v)| v.as_str()), Some("own.toml"));
 }
 
-#[test_id(txopmvs)]
+#[test_id(tlkw2p1)]
 #[test]
 fn a_leg_unit_path_keeps_the_release_first_then_the_runtime_path_so_aws_is_found() {
     use spira_runtime::tasks::a::batcher_local::edge::leg_env;
@@ -1525,7 +1568,7 @@ fn a_leg_unit_path_keeps_the_release_first_then_the_runtime_path_so_aws_is_found
     assert_eq!(path_of(""), format!("r/bin:r/spira:{}", system_paths::SYSTEM_PATH), "no runtime PATH falls back to the system dirs");
 }
 
-#[test_id(t2jvepx)]
+#[test_id(t35obfe)]
 #[test]
 fn the_unit_environment_built_for_a_leg_ends_in_the_runtimes_own_path() {
     use spira_runtime::tasks::a::batcher_local::edge::base_env;
@@ -1536,7 +1579,7 @@ fn the_unit_environment_built_for_a_leg_ends_in_the_runtimes_own_path() {
 }
 
 /// A round whose land outcome never came back holds its state; the repo must not sit idle behind it.
-#[test_id(tqul4ex)]
+#[test_id(takksm3)]
 #[test]
 fn sp_2gcs4h_a_round_that_lost_its_land_outcome_is_forgotten_and_the_waiting_member_is_cut() {
     let mut stuck = driving(State::Landing, "");
@@ -1554,7 +1597,7 @@ fn sp_2gcs4h_a_round_that_lost_its_land_outcome_is_forgotten_and_the_waiting_mem
 }
 
 /// A leg that runs for hours is not an outcome wait.
-#[test_id(tok9tzx)]
+#[test_id(ttnhjt0)]
 #[test]
 fn sp_2gcs4h_a_certifying_round_is_never_forgotten_for_waiting() {
     let (seen, _) = decide(&driving(State::Certifying, "u"), &Snapshot { now_ms: NOW, ..idle() });
@@ -1562,14 +1605,14 @@ fn sp_2gcs4h_a_certifying_round_is_never_forgotten_for_waiting() {
     assert_eq!(next.repos["spira"].waiting, None);
 }
 
-#[test_id(teazqpp)]
+#[test_id(tqkyohr)]
 #[test]
 fn sp_2gcs4h_the_outcome_wait_outlasts_every_effect_a_waiting_state_issues() {
     let longest = ACTS.iter().filter(|(e, _)| [ASSEMBLE, ROUND_OPEN, LAND, LC_CERTIFY, PROMOTE, FETCH].contains(e)).map(|(_, d)| *d).max().unwrap();
     assert!(OUTCOME_WAIT_MS > longest, "{OUTCOME_WAIT_MS} vs {longest}");
 }
 
-#[test_id(taz36zi)]
+#[test_id(tz1pcj7)]
 #[test]
 fn sp_2gcs4h_after_a_landing_with_a_certified_bead_and_no_round_open_the_next_tick_cuts() {
     let landing = driving(State::Landing, "");
@@ -1586,13 +1629,13 @@ fn at_work() -> TaskRig {
     r
 }
 
-#[test_id(t5y9p4i)]
+#[test_id(tnb7zcz)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     kit::assert_kept_as_rows(&at_work(), NAME);
 }
 
-#[test_id(tbivtd8)]
+#[test_id(t7z40ls)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
@@ -1600,7 +1643,7 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 
 /// The round key lists every member as `id:tip`, so it outgrows the store's 255-char key column
 /// with the round's size; a green certify of such a round must still reach `lc_certify`.
-#[test_id(tryopbr)]
+#[test_id(tooq6r6)]
 #[test]
 fn sp_lkm2fv_a_green_certify_of_a_wide_round_is_requested_not_refused_by_the_store() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
@@ -1638,7 +1681,7 @@ fn queue_holds(id: &str, members: &[&str]) -> Snapshot {
     Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), ..repo(vec![]) })].into(), now_ms: NOW }
 }
 
-#[test_id(td9d68i)]
+#[test_id(t253iek)]
 #[test]
 fn sp_pi2ojm_the_tick_after_round_open_launches_the_certify_leg_when_the_outcome_never_arrived() {
     let (carry, acts) = decide(&opened_unadvanced(), &queue_holds("r9", &["sp-a", "sp-b"]));
@@ -1649,7 +1692,7 @@ fn sp_pi2ojm_the_tick_after_round_open_launches_the_certify_leg_when_the_outcome
     assert_eq!(leg.batch, "r9");
 }
 
-#[test_id(t8sjnfo)]
+#[test_id(t0369a4)]
 #[test]
 fn sp_pi2ojm_an_opened_round_the_queue_does_not_hold_yet_is_left_waiting() {
     let (carry, acts) = decide(&opened_unadvanced(), &queue_holds("other", &["sp-x"]));
@@ -1657,7 +1700,7 @@ fn sp_pi2ojm_an_opened_round_the_queue_does_not_hold_yet_is_left_waiting() {
     assert_eq!(carry.repos["spira"].state, State::Opened);
 }
 
-#[test_id(tfzt9zt)]
+#[test_id(tstdd1e)]
 #[test]
 fn sp_64x7v2_adopting_a_late_opened_round_resets_the_failed_open_count() {
     let mut carry = opened_unadvanced();
@@ -1666,7 +1709,7 @@ fn sp_64x7v2_adopting_a_late_opened_round_resets_the_failed_open_count() {
     assert_eq!(carry.repos["spira"].pace.open_failed, 0);
 }
 
-#[test_id(tgdben6)]
+#[test_id(tmkg1ez)]
 #[test]
 fn sp_pi2ojm_the_late_round_open_outcome_after_the_adoption_launches_no_second_leg() {
     let (carry, _) = decide(&opened_unadvanced(), &queue_holds("r9", &["sp-a", "sp-b"]));
@@ -1674,7 +1717,7 @@ fn sp_pi2ojm_the_late_round_open_outcome_after_the_adoption_launches_no_second_l
     assert!(acts.is_empty(), "{acts:?}");
 }
 
-#[test_id(tt84ylu)]
+#[test_id(tsj9742)]
 #[test]
 fn sp_pi2ojm_an_opened_round_in_another_tree_is_not_ours_to_adopt() {
     let mut snap = queue_holds("r9", &["sp-a", "sp-b"]);
@@ -1684,7 +1727,7 @@ fn sp_pi2ojm_an_opened_round_in_another_tree_is_not_ours_to_adopt() {
     assert_eq!(carry.repos["spira"].state, State::Opened);
 }
 
-#[test_id(t1li3ss)]
+#[test_id(t1f2ni1)]
 #[test]
 fn sp_pi2ojm_an_adopted_round_without_suites_certifies_in_its_own_testenv_or_is_blocked() {
     let mut own = opened_unadvanced();
@@ -1712,7 +1755,7 @@ fn pages(acts: &[Act]) -> Vec<&Act> {
     acts.iter().filter(|a| a.effect == INBOX_APPEND).collect()
 }
 
-#[test_id(t5p96k5)]
+#[test_id(tr04h4c)]
 #[test]
 fn a_failed_assemble_names_its_error_in_skip_why_from_the_first_tick() {
     let (carry, acts) = failed_assemble(&Carry::default(), LEFTOVER);
@@ -1723,7 +1766,7 @@ fn a_failed_assemble_names_its_error_in_skip_why_from_the_first_tick() {
     assert!(carry.repos["spira"].skip_why.as_deref().unwrap_or("").contains(LEFTOVER), "the next cut does not wipe it before it runs");
 }
 
-#[test_id(tyxqy8w)]
+#[test_id(tsdmrs9)]
 #[test]
 fn the_same_assemble_failure_three_ticks_running_pages_once_with_the_error() {
     let (c1, a1) = failed_assemble(&Carry::default(), LEFTOVER);
@@ -1737,7 +1780,7 @@ fn the_same_assemble_failure_three_ticks_running_pages_once_with_the_error() {
     assert!(pages(&a4).is_empty(), "a fourth tick does not page again");
 }
 
-#[test_id(tkuy9sp)]
+#[test_id(tlyp33r)]
 #[test]
 fn a_different_assemble_failure_restarts_the_count() {
     let (c1, _) = failed_assemble(&Carry::default(), LEFTOVER);
@@ -1747,7 +1790,7 @@ fn a_different_assemble_failure_restarts_the_count() {
     assert!(c3.repos["spira"].skip_why.as_deref().unwrap().contains("something else"));
 }
 
-#[test_id(tzcl892)]
+#[test_id(te34ers)]
 #[test]
 fn an_assemble_that_succeeds_after_failures_clears_the_failure_and_its_skip_why() {
     let (failed, _) = failed_assemble(&Carry::default(), LEFTOVER);
@@ -1760,7 +1803,7 @@ fn an_assemble_that_succeeds_after_failures_clears_the_failure_and_its_skip_why(
     assert_eq!(carry.repos["spira"].skip_why, None);
 }
 
-#[test_id(t2rpfpl)]
+#[test_id(t7fpelf)]
 #[test]
 fn an_assemble_lost_at_restart_is_requested_again_on_the_next_tick() {
     let (carry, _) = failed_assemble(&Carry::default(), "lost at restart");
@@ -1770,7 +1813,7 @@ fn an_assemble_lost_at_restart_is_requested_again_on_the_next_tick() {
     assert_eq!(carry.repos["spira"].state, State::Assembling);
 }
 
-#[test_id(tq3yvyn)]
+#[test_id(ta89pw0)]
 #[test]
 fn a_lost_assemble_is_not_counted_as_an_assemble_failure() {
     let (carry, acts) = failed_assemble(&Carry::default(), "lost at restart");
@@ -1778,7 +1821,7 @@ fn a_lost_assemble_is_not_counted_as_an_assemble_failure() {
     assert!(acts.is_empty(), "{acts:?}");
 }
 
-#[test_id(t8bqhho)]
+#[test_id(tg3szgl)]
 #[test]
 fn a_restart_with_assembling_carried_and_no_assemble_in_flight_requests_it_on_the_next_tick() {
     let (carry, _) = decide(&Carry::default(), &busy());
@@ -1790,7 +1833,7 @@ fn a_restart_with_assembling_carried_and_no_assemble_in_flight_requests_it_on_th
     assert_eq!(carry.repos["spira"].state, State::Assembling);
 }
 
-#[test_id(t70nql0)]
+#[test_id(tfcylgy)]
 #[test]
 fn an_assemble_in_flight_is_left_alone() {
     let (carry, _) = decide(&Carry::default(), &busy());
@@ -1802,7 +1845,7 @@ fn an_assemble_in_flight_is_left_alone() {
 }
 
 /// A scheduler restart while the assemble is open ends it lost; a round is cut within a minute.
-#[test_id(t83drxt)]
+#[test_id(tifz9it)]
 #[test]
 fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
     let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
@@ -1827,7 +1870,7 @@ fn a_round_is_cut_within_a_minute_of_a_restart_that_interrupted_the_assemble() {
 }
 
 /// The engine's own lost-at-restart outcome for an open round open is asked for again.
-#[test_id(tmwrgy9)]
+#[test_id(tb8x00y)]
 #[test]
 fn a_round_open_interrupted_by_a_restart_is_asked_again() {
     let assembled = Assembled { merged: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], wt: "w".into(), base: "b1".into(), suites: true, ..Assembled::default() };
@@ -1854,7 +1897,7 @@ fn a_round_open_interrupted_by_a_restart_is_asked_again() {
 }
 
 /// A round open that ends lost is neither a failed open nor a reason to wait out the outcome timer.
-#[test_id(t3q9jpd)]
+#[test_id(tee4jb1)]
 #[test]
 fn a_round_open_lost_at_restart_is_asked_again() {
     let mut carry = Carry::default();
@@ -1871,7 +1914,7 @@ fn a_round_open_lost_at_restart_is_asked_again() {
 }
 
 /// Certify writes its refusals to stderr: they are kept with the stdout, on their own line.
-#[test_id(tm25eou)]
+#[test_id(t6y14w0)]
 #[test]
 fn sp_byw57t_a_certify_legs_stderr_is_kept_with_its_stdout() {
     let mut c = driving(State::Certifying, "spira.c3");
@@ -1903,7 +1946,7 @@ fn effects(acts: &[Act]) -> Vec<&str> {
     acts.iter().map(|a| a.effect.as_str()).collect()
 }
 
-#[test_id(tg369ei)]
+#[test_id(tmb90f0)]
 #[test]
 fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_at_the_next_tick() {
     let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-a", "sp-b"], "w"));
@@ -1912,7 +1955,7 @@ fn sp_5u1oru_an_open_round_whose_open_answer_is_lost_is_adopted_at_the_next_tick
     assert_eq!((rc.state, rc.batch.as_deref()), (State::Certifying, Some("r9")));
 }
 
-#[test_id(twbflo2)]
+#[test_id(ty7njr9)]
 #[test]
 fn sp_5u1oru_an_open_round_of_other_members_is_not_adopted() {
     let (carry, acts) = decide(&opened_unanswered(), &open_with("opened", &["sp-x"], "w"));
@@ -1920,14 +1963,14 @@ fn sp_5u1oru_an_open_round_of_other_members_is_not_adopted() {
     assert_eq!(carry.repos["spira"].state, State::Opened);
 }
 
-#[test_id(tagnom8)]
+#[test_id(tijr8os)]
 #[test]
 fn sp_5u1oru_a_round_opened_seconds_ago_is_left_to_its_opener() {
     let (_, acts) = decide(&Carry::default(), &open_with("opened", &["sp-a"], "w"));
     assert!(!effects(&acts).contains(&REDRIVE), "{acts:?}");
 }
 
-#[test_id(tcguiu3)]
+#[test_id(tmgvejt)]
 #[test]
 fn sp_5u1oru_an_open_round_with_no_pass_and_no_driver_is_redriven_at_once_and_only_once() {
     let mut snap = open_with("opened", &["sp-a"], "w");
@@ -1949,7 +1992,7 @@ fn red_orphan() -> (Carry, Snapshot) {
     (Carry::default(), snap)
 }
 
-#[test_id(txl82ex)]
+#[test_id(tvbx7t4)]
 #[test]
 fn sp_4odl0h_an_undriven_round_whose_last_pass_ended_red_is_attributed_not_redriven_or_abandoned() {
     let (carry, snap) = red_orphan();
@@ -1964,7 +2007,7 @@ fn sp_4odl0h_an_undriven_round_whose_last_pass_ended_red_is_attributed_not_redri
     assert!(!effects(&again).contains(&REDRIVE) && !effects(&again).contains(&ABANDON), "{again:?}");
 }
 
-#[test_id(t45c2ic)]
+#[test_id(t4rmls8)]
 #[test]
 fn sp_4odl0h_an_adopted_red_rounds_attribution_naming_one_member_certifies_the_survivor() {
     let (carry, snap) = red_orphan();
@@ -1980,7 +2023,7 @@ fn sp_4odl0h_an_adopted_red_rounds_attribution_naming_one_member_certifies_the_s
     assert_eq!(after[0].1.members, [("sp-b".to_string(), "t2".to_string())]);
 }
 
-#[test_id(tvi98du)]
+#[test_id(tqve466)]
 #[test]
 fn sp_4odl0h_an_undriven_round_with_no_red_pass_is_still_redriven() {
     let (carry, mut snap) = red_orphan();
@@ -2003,7 +2046,7 @@ fn green_orphan() -> (Carry, Snapshot) {
     (carry, snap)
 }
 
-#[test_id(ttnr4vl)]
+#[test_id(t3ayw3i)]
 #[test]
 fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     let (carry, snap) = green_orphan();
@@ -2015,7 +2058,7 @@ fn sp_k7ltss_a_green_round_with_no_driver_is_landed_not_abandoned() {
     assert_eq!((rc.pace.orphan.len(), rc.pace.redriven.as_str()), (0, ""), "the orphan clock is cleared");
 }
 
-#[test_id(t73wmdz)]
+#[test_id(tkn030g)]
 #[test]
 fn sp_k7ltss_a_green_round_whose_tips_are_unknown_is_not_adopted() {
     let (carry, mut snap) = green_orphan();
@@ -2025,7 +2068,7 @@ fn sp_k7ltss_a_green_round_whose_tips_are_unknown_is_not_adopted() {
     assert_ne!(carry.repos["spira"].state, State::Landing);
 }
 
-#[test_id(tvvh3aj)]
+#[test_id(tvxr8fk)]
 #[test]
 fn sp_k7ltss_a_green_round_above_another_open_round_waits() {
     let (_, mut snap) = green_orphan();
@@ -2041,7 +2084,7 @@ fn sp_k7ltss_a_green_round_above_another_open_round_waits() {
     assert_ne!(carry.repos["spira"].batch.as_deref(), Some("r10"), "the round above is not adopted");
 }
 
-#[test_id(t5j6s0g)]
+#[test_id(t4l4rwi)]
 #[test]
 fn sp_3uxw41_a_member_blocked_on_an_unlanded_dep_records_nothing_admissible() {
     let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
@@ -2051,7 +2094,7 @@ fn sp_3uxw41_a_member_blocked_on_an_unlanded_dep_records_nothing_admissible() {
     assert_eq!(carry.repos["spira"].admissible, Vec::<String>::new());
 }
 
-#[test_id(tiqytyx)]
+#[test_id(tih6lgk)]
 #[test]
 fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep_and_one_whose_dep_is_not_a_blocker_is_not() {
     let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
@@ -2063,7 +2106,7 @@ fn a_member_refused_for_an_unlanded_dep_is_carried_with_that_dep_and_one_whose_d
     assert!(json["repos"]["spira"]["blocked"].get("sp-b").is_none(), "{json}");
 }
 
-#[test_id(t1aig98)]
+#[test_id(tu84j54)]
 #[test]
 fn a_pass_with_an_empty_pool_clears_the_carried_dependency_refusals() {
     let blocked = Member { deps: vec!["sp-base".into()], ..member("sp-a", "t1") };
@@ -2075,7 +2118,7 @@ fn a_pass_with_an_empty_pool_clears_the_carried_dependency_refusals() {
     assert!(carry.repos.get("spira").is_none_or(|rc| rc.blocked.is_empty()), "{:?}", carry.repos);
 }
 
-#[test_id(to00prj)]
+#[test_id(txk164f)]
 #[test]
 fn sp_3uxw41_an_unblocked_sifted_member_with_no_round_open_is_admissible() {
     let s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-a", "t1")]))].into(), now_ms: NOW };
@@ -2083,7 +2126,7 @@ fn sp_3uxw41_an_unblocked_sifted_member_with_no_round_open_is_admissible() {
     assert_eq!(carry.repos["spira"].admissible, ["sp-a"]);
 }
 
-#[test_id(tzo9mjy)]
+#[test_id(t871cno)]
 #[test]
 fn sp_3uxw41_a_repo_with_its_rounds_at_max_open_records_nothing_admissible() {
     let mut s = Snapshot { repos: [("spira".to_string(), repo(vec![member("sp-c", "t3")]))].into(), now_ms: NOW };
@@ -2111,7 +2154,7 @@ fn driverless_snap(driven: bool) -> Snapshot {
     Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec![]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW }
 }
 
-#[test_id(tp2abp1)]
+#[test_id(tny9wnn)]
 #[test]
 fn sp_29matj_a_driverless_round_with_no_verdict_is_abandoned_as_a_harness_fault() {
     let snap = driverless_snap(false);
@@ -2144,7 +2187,7 @@ fn assert_attributes_kept_results(acts: &[Act], round: &str) {
     assert_eq!((leg.why.as_str(), leg.after_pass.as_str()), (ATTRIBUTE, kept_results_file(round).as_str()));
 }
 
-#[test_id(tzel02u)]
+#[test_id(t3nlx6c)]
 #[test]
 fn sp_we0r0p_a_recorded_red_on_a_multi_member_round_is_attributed_not_abandoned() {
     let snap = red_snap("r9", &["sp-2ykfhe", "sp-4wxapo"], &["test-repo-check-killed.sh"], NOW);
@@ -2156,7 +2199,7 @@ fn sp_we0r0p_a_recorded_red_on_a_multi_member_round_is_attributed_not_abandoned(
     assert_eq!(leg.reds, ["test-repo-check-killed.sh"]);
 }
 
-#[test_id(t54pugv)]
+#[test_id(twvav1e)]
 #[test]
 fn sp_we0r0p_a_recorded_red_on_a_one_member_round_is_attributed_not_abandoned() {
     let snap = red_snap("r9", &["sp-yrxbnt"], &["unit-tests"], NOW);
@@ -2166,7 +2209,7 @@ fn sp_we0r0p_a_recorded_red_on_a_one_member_round_is_attributed_not_abandoned() 
     assert_eq!((rc.state, rc.pace.infra), (State::Attributing, 0));
 }
 
-#[test_id(twfms10)]
+#[test_id(t2g43ym)]
 #[test]
 fn sp_we0r0p_two_recorded_red_rounds_in_a_row_do_not_stop_the_lane_as_having_no_verdicts() {
     let mut carry = driverless_carry();
@@ -2181,7 +2224,7 @@ fn sp_we0r0p_two_recorded_red_rounds_in_a_row_do_not_stop_the_lane_as_having_no_
     assert_eq!(carry.repos["spira"].pace.infra, 0);
 }
 
-#[test_id(tggnwb8)]
+#[test_id(th4k1fc)]
 #[test]
 fn sp_we0r0p_a_head_that_is_red_and_legless_again_after_its_attribution_ends_the_round_red() {
     let snap = red_snap("r9", &["sp-2ykfhe", "sp-4wxapo"], &["test-repo-check-killed.sh"], NOW);
@@ -2199,7 +2242,7 @@ fn sp_we0r0p_a_head_that_is_red_and_legless_again_after_its_attribution_ends_the
     assert_eq!(next.repos["spira"].pace.infra, 0);
 }
 
-#[test_id(ttx5uud)]
+#[test_id(tfgc2mg)]
 #[test]
 fn sp_29matj_a_head_move_is_discarded_once_not_every_tick() {
     let mut carry = driverless_carry();
@@ -2212,7 +2255,7 @@ fn sp_29matj_a_head_move_is_discarded_once_not_every_tick() {
     assert!(acts.is_empty(), "{acts:?}");
 }
 
-#[test_id(tzhbsff)]
+#[test_id(tfwlbr0)]
 #[test]
 fn sp_29matj_a_live_pass_or_a_pass_just_started_is_left_alone() {
     let mut seen = driverless_carry();
@@ -2227,7 +2270,7 @@ fn sp_29matj_a_live_pass_or_a_pass_just_started_is_left_alone() {
     assert!(!effects(&acts).contains(&ABANDON), "inside the grace: {acts:?}");
 }
 
-#[test_id(tafivzu)]
+#[test_id(to4z6jw)]
 #[test]
 fn a_green_foreign_round_whose_bare_round_recert_unit_is_active_is_not_landed_by_the_tick() {
     use runtime::units::{ScriptedUnits, UnitFacts, UnitState};
@@ -2240,7 +2283,7 @@ fn a_green_foreign_round_whose_bare_round_recert_unit_is_active_is_not_landed_by
     assert!(!decide(&Carry::default(), &snap).1.iter().any(|a| a.effect == LAND));
 }
 
-#[test_id(tas91eu)]
+#[test_id(tl1drgz)]
 #[test]
 fn an_attribution_whose_record_lost_a_carried_member_is_stopped_and_certifies_the_survivors_once() {
     let mut carry = driving(State::Attributing, "spira.a2");
@@ -2262,7 +2305,7 @@ fn an_attribution_whose_record_lost_a_carried_member_is_stopped_and_certifies_th
 
 /// The abandon of a round stops its leg with SIGTERM: whichever leg it was, the round is not
 /// judged — no attribution, no abandon, no pause — and the repo cuts again on the next tick.
-#[test_id(txqmkse)]
+#[test_id(t6sbdmr)]
 #[test]
 fn a_leg_stopped_by_its_rounds_abandon_ends_the_round_unjudged_and_the_repo_cuts_again() {
     for (state, leg) in [(State::Certifying, "spira.c3"), (State::Corpus, "spira.c1")] {
@@ -2278,7 +2321,7 @@ fn a_leg_stopped_by_its_rounds_abandon_ends_the_round_unjudged_and_the_repo_cuts
 }
 
 /// An attribution that saw the abandon marker says so; that is no red.
-#[test_id(tjxna7b)]
+#[test_id(tpiivts)]
 #[test]
 fn an_attribution_line_saying_abandoned_ends_the_round_unjudged_and_the_repo_cuts_again() {
     use batcher_cut::attribute::Attribution;
@@ -2293,7 +2336,7 @@ fn an_attribution_line_saying_abandoned_ends_the_round_unjudged_and_the_repo_cut
     assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE]);
 }
 
-#[test_id(t7laz50)]
+#[test_id(tqpr2ti)]
 #[test]
 fn an_attribution_whose_member_was_ejected_by_the_concierge_is_stopped_and_certifies_the_survivors_once() {
     let mut carry = driving(State::Attributing, "spira.a2");
@@ -2311,7 +2354,7 @@ fn an_attribution_whose_member_was_ejected_by_the_concierge_is_stopped_and_certi
     assert_eq!(stops(&again), 0, "one stop per eject: {again:?}");
 }
 
-#[test_id(tgme52o)]
+#[test_id(tigznqq)]
 #[test]
 fn an_attribution_whose_member_the_batcher_itself_ejected_runs_on_and_certifies_its_rebuilt_head() {
     use batcher_cut::attribute::Attribution;
@@ -2337,4 +2380,34 @@ fn an_attribution_whose_member_the_batcher_itself_ejected_runs_on_and_certifies_
     assert_eq!(certify.1.head, "h2");
     let argv = certify_argv("q", &certify.1);
     assert!(argv.windows(2).any(|w| w == ["--rehead", "h2"]), "{argv:?}");
+}
+
+#[test_id(t55v5k5)]
+#[test]
+fn an_attribution_that_ejects_one_of_three_members_keeps_its_leg_and_certifies_the_two_left() {
+    use batcher_cut::attribute::Attribution;
+    let mut carry = driving(State::Attributing, "spira.a2");
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.members = vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into()), ("sp-c".into(), "t3".into())];
+    rc.leg_head = "h0".into();
+    rc.head = "h0".into();
+    rc.leg_at_ms = NOW;
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into(), "sp-c".into()], tips: vec!["t1".into(), "t3".into()], head: "h1".into(), worktree: "w".into(), phase: "attributing".into(), driven: false, ejected: vec!["sp-b".into()], ejected_by: vec!["batcher".into()], ..Round::default() };
+    let at = |now_ms| Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round.clone()), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms };
+    let (next, acts) = decide(&carry, &at(NOW));
+    let (later, more) = decide(&next, &at(NOW + LEG_START_GRACE_MS + 15_000));
+    for a in acts.iter().chain(more.iter()) {
+        assert!(a.effect != ABANDON && a.effect != runtime::units::UNIT_STOP, "{a:?}");
+    }
+    let rc = &later.repos["spira"];
+    assert_eq!((rc.state, rc.leg.as_deref()), (State::Attributing, Some("spira.a2")));
+
+    let mut r = carried(&later);
+    let n = r.requested().len();
+    let land = Attribution::Land { members: vec![("sp-a".into(), "t1".into()), ("sp-c".into(), "t3".into())], attribution_secs: None, mended: false, head: "h1".into() }.line();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let after = asked_after(&r, n);
+    let certify = after.iter().find(|(e, _)| e == CERTIFY).unwrap_or_else(|| panic!("no certify: {after:?}"));
+    assert_eq!(certify.1.head, "h1");
 }

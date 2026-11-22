@@ -283,8 +283,8 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     let merged = crate::merge_round(&env, &repo, &wt, &base, members.clone(), &Default::default()).unwrap();
     assert_eq!(merged.len(), 3);
     let branch = "spira/batcher-attr/fx-proof";
-    crate::io::set_branch(&repo, branch, &crate::io::head_of(&wt).unwrap());
-    let suites = crate::io::all_suites(&repo, branch);
+    crate::io::set_branch(&repo, branch, &crate::io::head_of(&wt).unwrap()).unwrap();
+    let suites = crate::io::all_suites(&repo, branch).unwrap();
     let changed: BTreeMap<String, Vec<String>> = merged
         .iter()
         .map(|m| (m.id.clone(), crate::io::changed_paths(&repo, &base, &m.tip)))
@@ -387,6 +387,7 @@ impl CloneMembers for RoundEnd {
             RoundEnd::Emptied(w) => format!("emptied: {w}"),
             RoundEnd::Faulted(w) => format!("faulted: {w}"),
             RoundEnd::Stalled(w) => format!("stalled: {w}"),
+            RoundEnd::RunnerDifference { red_on, green_on, .. } => format!("runner difference: red on {red_on}, green on {green_on}"),
             RoundEnd::Abandoned => "abandoned".to_string(),
             RoundEnd::BaseRed { base, why } => format!("base red at {base}: {why}"),
             RoundEnd::Unconverged { red, probes, .. } => format!("unconverged: {red} after {probes} probes"),
@@ -451,6 +452,7 @@ fn e2e_an_attribution_leg_with_no_corpus_gets_its_control_probe_answered() {
         by: None,
         reason: None,
         all: false,
+        held_since: None,
         confirmed: false,
     };
     let given = vec![("sp-a".to_string(), tips[0].clone()), ("sp-b".to_string(), tips[1].clone())];

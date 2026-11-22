@@ -454,7 +454,7 @@ fn gather() -> Snapshot {
         s.ceiling_pending = p.config.clone();
         s.ceiling_waits = p.waits.clone();
     }
-    s.failures = (s.errors.len() + s.store_errors.len()) as u64;
+    s.failed = s.errors.iter().chain(s.store_errors.iter()).cloned().collect();
     s.gather_ms = started.elapsed().as_millis() as u64;
     s
 }
@@ -523,7 +523,6 @@ fn interactive(secs: u64) -> std::io::Result<()> {
         let mut snap = gather();
         if let Some(l) = last.as_ref() {
             carry_forward(&mut snap, l);
-            snap.failures += l.failures;
         }
         last = Some(snap.clone());
         publish(&snap);
@@ -696,7 +695,6 @@ fn main() {
         }
         Some("loop") => {
             let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(10);
-            let mut failures = 0;
             let mut last = seed();
             if let Some(first) = first_frame(last.as_ref(), unix_now()) {
                 println!("\x1b[H\x1b[2J{}", render(&view(&first), width()).join("\n"));
@@ -706,8 +704,6 @@ fn main() {
                 if let Some(l) = last.as_ref() {
                     carry_forward(&mut snap, l);
                 }
-                failures += snap.failures;
-                snap.failures = failures;
                 last = Some(snap.clone());
                 publish(&snap);
                 let frame = render(&view(&snap), width());

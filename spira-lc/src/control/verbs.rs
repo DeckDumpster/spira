@@ -204,7 +204,7 @@ fn event_seq<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, St
 }
 
 /// The most audits one `audits` answer carries unless `--limit` says fewer.
-const AUDITS_PAGE: u64 = 500;
+const AUDITS_PAGE: u64 = 100;
 /// How far back `audits --newest` looks for the newest audit, in seconds.
 const NEWEST_WINDOW_SECS: i64 = 86_400;
 

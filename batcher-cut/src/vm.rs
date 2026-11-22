@@ -470,6 +470,8 @@ pub struct VmRunner<'a> {
     child: Option<Child>,
     /// `child` was started by a probe, with no corpus.
     serving: bool,
+    /// Every round-vm this runner starts from here on is pinned to the host (`--place host`).
+    host_pinned: bool,
     probe_faults: Vec<String>,
     child_rc: Option<i32>,
     install_failed: bool,
@@ -1002,6 +1004,7 @@ impl<'a> VmRunner<'a> {
             results,
             child: None,
             serving: false,
+            host_pinned: false,
             probe_faults: Vec::new(),
             child_rc: None,
             install_failed: false,
@@ -1095,7 +1098,7 @@ impl<'a> VmRunner<'a> {
         let branch = self.branch(&self.job_name(job));
         if job.removal.is_empty() {
             let head = io::head_of(&self.wt)?;
-            io::set_branch(self.repo, &branch, &head);
+            io::set_branch(self.repo, &branch, &head)?;
             return Ok(branch);
         }
         self.tree_without(branch, &job.id.to_string(), &job.removal)
@@ -1130,7 +1133,7 @@ impl<'a> VmRunner<'a> {
             .arg(&wt)
             .status();
         result?;
-        io::set_branch(self.repo, &branch, &head?);
+        io::set_branch(self.repo, &branch, &head?)?;
         Ok(branch)
     }
 
@@ -1268,6 +1271,50 @@ impl Drop for VmRunner<'_> {
     }
 }
 
+/// How far back the repo's newest green pass is looked for. A bound, not a setting.
+const GREEN_LOOKBACK_SECS: u64 = 7 * 86_400;
+
+fn place_in(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| l.strip_prefix("place=").map(|v| v.trim().to_string()))
+        .filter(|p| !p.is_empty() && p != "unrecorded")
+}
+
+fn batches_of(answer: &str) -> Vec<serde_json::Value> {
+    serde_json::from_str(answer).unwrap_or_default()
+}
+
+fn pass_place(pass: &serde_json::Value) -> Option<String> {
+    pass["runner"]["place"].as_str().map(str::to_string).filter(|p| !p.is_empty() && p != "unrecorded")
+}
+
+/// The place of the newest pass of `batch` in which `tier` was not red: `None` when no pass
+/// qualifies, `Some(None)` when the one that does recorded no place. A red pass that a filter
+/// ended before the suites ran proves nothing about `tier`, so it does not qualify.
+fn newest_not_red_in_round(batches: &[serde_json::Value], batch: &str, tier: &str) -> Option<Option<String>> {
+    let round = batches.iter().find(|b| b["batch_id"] == batch)?;
+    round["passes"].as_array()?.iter().rev().find_map(|p| {
+        let reds: Vec<&str> = p["red_suites"].as_array().into_iter().flatten().filter_map(|s| s.as_str()).collect();
+        let qualifies = match p["verdict"].as_str()? {
+            "green" => true,
+            "red" => !reds.contains(&tier) && !reds.iter().any(|s| batcher::drive::is_filter_suite(s)),
+            _ => false,
+        };
+        qualifies.then(|| pass_place(p))
+    })
+}
+
+/// The place of the newest green pass of any other round of `repo`, by when it ended.
+fn newest_green_of_repo(batches: &[serde_json::Value], repo: &str, not_batch: &str) -> Option<String> {
+    batches
+        .iter()
+        .filter(|b| b["repo"] == repo && b["batch_id"] != not_batch)
+        .flat_map(|b| b["passes"].as_array().into_iter().flatten())
+        .filter(|p| p["verdict"] == "green")
+        .max_by_key(|p| p["ended_at"].as_i64().unwrap_or(0))
+        .and_then(pass_place)
+}
+
 fn epoch() -> u64 {
     spira_config::vtime::now_epoch()
 }
@@ -1285,6 +1332,9 @@ impl VmRunner<'_> {
         a.extend(["--attr-spool".into(), self.spool.clone().into()]);
         a.extend(["--base".into(), self.repo.base.clone().into()]);
         a.extend(self.deny_args());
+        if self.host_pinned {
+            a.extend(["--place".into(), "host".into()]);
+        }
         a
     }
 
@@ -1343,7 +1393,7 @@ impl RoundRunner for VmRunner<'_> {
                 }
                 if self.corpus_runs == 0 {
                     if !self.subset {
-                        self.corpus_list_ok(&io::suites_in(&self.wt, "HEAD"), suites)?;
+                        self.corpus_list_ok(&io::suites_in(&self.wt, "HEAD")?, suites)?;
                     }
                 } else {
                     clear_results(&self.results, suites);
@@ -1364,7 +1414,7 @@ impl RoundRunner for VmRunner<'_> {
                 self.verify_n += 1;
                 let job = format!("v{}", self.verify_n);
                 let branch = self.branch(&job);
-                io::set_branch(self.repo, &branch, &io::head_of(&self.wt)?);
+                io::set_branch(self.repo, &branch, &io::head_of(&self.wt)?)?;
                 self.request(&job, &branch, suites, "round")?;
                 self.main = Main::Verify {
                     job,
@@ -1458,6 +1508,28 @@ impl RoundRunner for VmRunner<'_> {
 
     fn probe_label(&self) -> String {
         format!("b{}", self.build_n)
+    }
+
+    fn prior_runner(&mut self) -> Option<String> {
+        place_in(&fs::read_to_string(self.prior.as_deref()?.join("runner.place")).ok()?)
+    }
+
+    fn green_runner(&mut self, tier: &str) -> Option<String> {
+        let batch = self.batch.as_deref()?;
+        let round = io::lcq_held(self.env, &["list", "--batches", "--batch", batch]).ok()?;
+        if let Some(found) = newest_not_red_in_round(&batches_of(&round), batch, tier) {
+            return found;
+        }
+        let day = io::lcq_held(self.env, &["list", "--batches", "--window", &GREEN_LOOKBACK_SECS.to_string()]).ok()?;
+        newest_green_of_repo(&batches_of(&day), &self.repo.name, batch)
+    }
+
+    fn filter_green_on_host(&mut self, name: &str, scope: &[String], subset: &[Member]) -> Option<bool> {
+        if !self.host_pinned {
+            self.stop_main().ok()?;
+            self.host_pinned = true;
+        }
+        self.filter_green_in(name, scope, subset)
     }
 
     fn probe_output(&mut self) -> String {
@@ -2630,6 +2702,74 @@ mod abandon_tests {
     }
 
     #[test_id(t5j34ni)]
+    #[test]
+    fn a_runner_pinned_to_the_host_starts_every_round_vm_with_place_host() {
+        let d = testkit::TempDir::new("vm-run-pin");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        let words = |r: &VmRunner| r.round_vm_run_args(None).iter().map(|w| w.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        assert!(!words(&r).contains(&"--place".to_string()));
+        r.host_pinned = true;
+        assert!(words(&r).windows(2).any(|w| w[0] == "--place" && w[1] == "host"), "{:?}", words(&r));
+    }
+
+    #[test_id(tfa5zpu)]
+    #[test]
+    fn the_prior_pass_names_its_place_from_runner_place_and_an_unrecorded_one_is_none() {
+        assert_eq!(place_in("place=ec2\nwhy=host io pressure\n").as_deref(), Some("ec2"));
+        assert_eq!(place_in("place=unrecorded\n"), None);
+        assert_eq!(place_in("why=no place line\n"), None);
+    }
+
+    fn rounds() -> Vec<serde_json::Value> {
+        let on = |p: &str| serde_json::json!({"place": p, "why": "w"});
+        serde_json::from_value(serde_json::json!([
+            {"batch_id": "old", "repo": "r", "passes": [
+                {"n": 1, "verdict": "green", "ended_at": 10, "runner": on("host")},
+                {"n": 2, "verdict": "green", "ended_at": 90, "runner": on("ec2")}]},
+            {"batch_id": "other-repo", "repo": "x", "passes": [
+                {"n": 1, "verdict": "green", "ended_at": 99, "runner": on("proxmox")}]},
+            {"batch_id": "now", "repo": "r", "passes": [
+                {"n": 1, "verdict": "red", "red_suites": ["spira-lint"], "ended_at": 100, "runner": on("proxmox")},
+                {"n": 2, "verdict": "red", "red_suites": ["test-a.sh"], "ended_at": 200, "runner": on("host")},
+                {"n": 3, "verdict": "red", "red_suites": ["unit-tests"], "ended_at": 300, "runner": on("ec2")},
+                {"n": 4, "verdict": null}]}
+        ]))
+        .unwrap()
+    }
+
+    #[test_id(tg1a86v)]
+    #[test]
+    fn the_tiers_last_green_runner_is_the_rounds_newest_pass_that_did_not_fail_it() {
+        assert_eq!(newest_not_red_in_round(&rounds(), "now", "unit-tests"), Some(Some("host".to_string())));
+        assert_eq!(newest_not_red_in_round(&rounds(), "now", "test-b.sh"), Some(Some("host".to_string())), "a pass red in another suite is not red in this one");
+        assert_eq!(newest_not_red_in_round(&rounds(), "now", "test-a.sh"), None, "the only pass that ran suites failed it");
+        assert_eq!(newest_not_red_in_round(&rounds(), "none", "unit-tests"), None);
+    }
+
+    #[test_id(ti1b2f9)]
+    #[test]
+    fn a_pass_a_filter_ended_before_the_suites_ran_says_nothing_of_the_tier() {
+        let only: Vec<serde_json::Value> = vec![rounds().remove(2)]
+            .into_iter()
+            .map(|mut b| {
+                b["passes"] = serde_json::json!([b["passes"][0].clone()]);
+                b
+            })
+            .collect();
+        assert_eq!(newest_not_red_in_round(&only, "now", "unit-tests"), None);
+    }
+
+    #[test_id(tu5l0y6)]
+    #[test]
+    fn with_no_pass_in_the_round_the_repos_newest_green_pass_names_the_runner() {
+        assert_eq!(newest_green_of_repo(&rounds(), "r", "now").as_deref(), Some("ec2"));
+        assert_eq!(newest_green_of_repo(&rounds(), "x", "now").as_deref(), Some("proxmox"));
+        assert_eq!(newest_green_of_repo(&rounds(), "none", "now"), None);
+    }
+
+    #[test_id(tt3bl4e)]
     #[test]
     fn an_integration_probes_output_is_kept_under_the_round_and_survives_the_spool() {
         let d = testkit::TempDir::new("vm-probe-kept");

@@ -31,6 +31,13 @@ pub enum Attribution {
     /// The probe ceiling was reached without naming a member: the red is kept for the next
     /// round to convict, and the round is abandoned.
     Unconverged(String),
+    /// A tier red on one runner is green on the host it last ran green on: no member is
+    /// charged, and the round certifies again pinned to the host.
+    RunnerDifference {
+        tests: Vec<String>,
+        red_on: String,
+        green_on: String,
+    },
     /// The round was abandoned while the attribution ran: it is not judged, red or green.
     Abandoned,
 }
@@ -52,6 +59,9 @@ impl Attribution {
             Attribution::Fault(why) => json!({ "end": "fault", "why": why }),
             Attribution::Faulted(why) => json!({ "end": "faulted", "why": why }),
             Attribution::Unconverged(why) => json!({ "end": "unconverged", "why": why }),
+            Attribution::RunnerDifference { tests, red_on, green_on } => {
+                json!({ "end": "runner-difference", "tests": tests, "red_on": red_on, "green_on": green_on })
+            }
             Attribution::Abandoned => json!({ "end": "abandoned" }),
         };
         format!("{PREFIX}{body}")
@@ -88,6 +98,11 @@ impl Attribution {
             "fault" => Some(Attribution::Fault(body.get("why")?.as_str()?.to_string())),
             "faulted" => Some(Attribution::Faulted(body.get("why")?.as_str()?.to_string())),
             "unconverged" => Some(Attribution::Unconverged(body.get("why")?.as_str()?.to_string())),
+            "runner-difference" => Some(Attribution::RunnerDifference {
+                tests: body.get("tests")?.as_array()?.iter().filter_map(|t| t.as_str().map(String::from)).collect(),
+                red_on: body.get("red_on")?.as_str()?.to_string(),
+                green_on: body.get("green_on")?.as_str()?.to_string(),
+            }),
             "abandoned" => Some(Attribution::Abandoned),
             _ => None,
         }
@@ -125,6 +140,14 @@ mod tests {
     use super::*;
 
     #[test_id(t68u0e5)]
+    #[test]
+    fn a_runner_difference_outcome_reads_back_with_its_tests_and_both_runners() {
+        let seen = Attribution::RunnerDifference { tests: vec!["FAIL a b".into()], red_on: "ec2".into(), green_on: "host".into() };
+        assert!(seen.line().contains("\"end\":\"runner-difference\""));
+        assert_eq!(Attribution::parse(&seen.line()), Some(seen));
+    }
+
+    #[test_id(t9r3dg5)]
     #[test]
     fn sp_56d3l3_an_emptied_outcome_reads_back_as_emptied_not_blocked() {
         let emptied = Attribution::Emptied("unit-tests red ejected every member".into());

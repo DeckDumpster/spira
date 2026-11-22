@@ -1313,6 +1313,7 @@ impl Scripts for RealScripts {
         ami: Option<&str>,
         candidate_recipe: Option<&str>,
         deny_list: Option<&Path>,
+        host_only: bool,
     ) -> RunOut {
         run_round_vm(
             tree,
@@ -1324,6 +1325,7 @@ impl Scripts for RealScripts {
             ami,
             candidate_recipe,
             deny_list,
+            host_only,
         )
     }
     fn deny_list(&self, at: u64) -> Result<String, String> {
@@ -1422,6 +1424,7 @@ impl Scripts for RealScripts {
             None,
             None,
             None,
+            false,
         )
     }
     fn pass_alive(&self, pid: u32) -> bool {
@@ -1537,6 +1540,7 @@ fn run_round_vm(
     ami: Option<&str>,
     candidate_recipe: Option<&str>,
     deny_list: Option<&Path>,
+    host_only: bool,
 ) -> RunOut {
     // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
     // FORK-EDGE: machine leg round-vm (certify)
@@ -1562,6 +1566,7 @@ fn run_round_vm(
         .args(on_red_hook(round.0, round.1))
         .args(candidate_recipe.iter().flat_map(|r| ["--candidate-recipe", *r]))
         .args(deny_list.iter().flat_map(|d| [OsStr::new("--deny-list"), d.as_os_str()]))
+        .args(host_only.then_some(["--place", "host"]).into_iter().flatten())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

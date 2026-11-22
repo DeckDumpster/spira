@@ -13,6 +13,7 @@ use super::store::Store;
 /// Revisions read per chunk of the newest-first scan.
 pub(super) const CHUNK_REVS: u64 = 100;
 const PAGE: usize = 1_000;
+const EVENTS_PER_READ: usize = 100;
 /// The most `events/` keys one answer reads.
 pub const MAX_SCANNED: usize = 200_000;
 
@@ -169,11 +170,12 @@ impl<B: Backend> Store<B> {
         }
         let mut cursor = (after > 0).then(|| events_key(after));
         while audits.len() < limit {
-            let page = self.contract().range_at(EVENTS_PREFIX, cursor.as_deref(), PAGE, head)?;
+            let want = EVENTS_PER_READ.min(limit - audits.len()).max(1);
+            let page = self.contract().range_at(EVENTS_PREFIX, cursor.as_deref(), want, head)?;
             for item in &page {
                 audits.extend(branch_audits(item).into_iter().map(|audit| Logged { rev: item.mod_rev.main, audit }));
             }
-            if page.len() < PAGE {
+            if page.len() < want {
                 break;
             }
             cursor = page.last().map(|i| i.key.clone());
@@ -269,5 +271,23 @@ mod tests {
         let rest = s.audits_after(first).unwrap();
         assert!(rest.audits.iter().all(|l| l.rev > first && l.audit.lc_key == "sp-b"), "{:?}", rest.audits);
         assert!(!rest.audits.is_empty());
+    }
+
+    #[test_id(tteomrn)]
+    #[test]
+    fn a_limited_read_past_a_revision_asks_the_events_log_for_at_most_a_hundred_at_a_time() {
+        use super::super::super::store::counting::Counting;
+        let c = Contract::open(Counting::default(), Ports::virtual_clock(&VirtualClock::new(0)), Config { min_lock_ttl_ms: 1_000 }).unwrap();
+        let s = Store::new(c, 1_000);
+        for n in 0..1_500u64 {
+            s.create(&format!("sp-{n:04}"), None, Some("0123456789abcdef0123456789abcdef01234567"), 100, &Request::new(&format!("c{n}"), "t", "t")).unwrap();
+        }
+        s.contract().backend().take();
+        let got = s.audits_after_upto(1, 250).unwrap().audits;
+        let reads = s.contract().backend().take();
+        let asked: Vec<usize> = reads.iter().filter(|(k, p, _)| *k == "range" && p.starts_with(EVENTS_PREFIX)).map(|(_, _, n)| *n).collect();
+        assert!(!asked.is_empty() && asked.iter().all(|n| *n <= 100), "{asked:?}");
+        assert!(asked.iter().sum::<usize>() <= 250 + 100, "{asked:?}");
+        assert_eq!(got.iter().map(|l| l.rev).collect::<Vec<_>>(), (2..=251).collect::<Vec<_>>());
     }
 }

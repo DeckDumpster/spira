@@ -55,10 +55,11 @@
 //! | Certifying | `unit.ran` red / failed | Done (eject guilty, `abandon`, verdict red) |
 //! | Certifying | `unit.ran` failed naming no verdict and no suite, after the attribution | Done (output kept, round left open, pace Infra) |
 //! | Corpus, Attributing, Certifying | observe: the round's open round is green on the carried head | Landing (`land`), or Certified when stacked; the carried leg is stopped in the same tick |
-//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own ejects are the leg's work and leave it running) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped |
+//! | Attributing | observe: the round's record no longer holds a member the leg carries (ejected by another actor; the batcher's own eject is the leg's work: the leg stays carried and adopts the record's moved head) | Certifying for the record's survivors at its head, certify held until no pass runs; the attribution leg is stopped (a batcher eject: stays Attributing) |
 //! | Attributing | `unit.ran` land | Certifying, certify held until no pass of the round is running (a scope its pass has left is stopped, not waited on) |
 //! | Certifying | `unit.ran` exit 75, the VM lost under the pass | Certifying (`certify` again: same head, a new VM), at most [`LOST_VM_RECERTIFIES`] times; then Done (pace Infra, the round left open, never abandoned) (sp-e30jhh) |
 //! | Certifying | `unit.ran` exit 77, the VM produced no output | Certifying (`certify` again, a fresh VM), at most [`NO_OUTPUT_RECERTIFIES`] times; then Done (pace Infra, the round parked open, never abandoned) |
+//! | Attributing | `unit.ran` runner-difference (the red tier is green on the host it last ran green on) | Certifying (`certify` again, its one next pass pinned to the host with `--place host`; no member charged, nothing ejected) |
 //! | Landing | observe: no `land` in flight (a restart) | Landing (`lc_certify`, `land` again; each walks the store's own state) |
 //! | Landing | land exit 0 / 3 | Promoting if staged else Done (verdict green) |
 //! | Landing | land refused (lock busy ×N, or any other refusal) | Done (output kept, round left open, page with the refusing line, no pause) |
@@ -92,6 +93,7 @@
 //! | `batcher.local.file` (incident/judgement/flip) | store | 30 s | incident ref, e.g. `round-orphan:<repo>:<batch>` | duplicate ref (`io.rs:1780`, `:2066`, `:2129`, `:2178`) |
 //! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head + members | none: the close and the registry clearing say their failure and never block the landing |
 //! | `batcher.local.pause` | store | 5 s | repo + lane | — (`pace.rs:248`) |
+//! | `batcher.local.pause_ask` | store | 15 s | `<repo>:pause:<since>` | open duplicate ask (`mail`) |
 //! | `inbox.append` | store | 10 s | line | — (`pace.rs:269`, `main.rs:930`) |
 //!
 //! Metrics (`tsd-write --family batch-round`, `io.rs:2104-2118`) become in-process `spira-otel` pushes, not an effect.
@@ -149,6 +151,7 @@ pub const REDRIVE: &str = "batcher.local.redrive";
 pub const FILE: &str = "batcher.local.file";
 pub const SUPERSEDE_REDS: &str = "batcher.local.supersede_reds";
 pub const PAUSE: &str = "batcher.local.pause";
+pub const PAUSE_ASK: &str = "batcher.local.pause_ask";
 pub const KEEP_CERTIFY_OUTPUT: &str = "batcher.local.keep_certify_output";
 pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
 
@@ -185,13 +188,14 @@ pub const ACTS: &[(&str, u64)] = &[
     (FILE, 30_000),
     (SUPERSEDE_REDS, 30_000),
     (PAUSE, 5_000),
+    (PAUSE_ASK, 15_000),
     (KEEP_CERTIFY_OUTPUT, 5_000),
     (INBOX_APPEND, 10_000),
 ];
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, PAUSE, PAUSE_ASK, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -318,6 +322,9 @@ pub struct Repo {
     /// When a red round's pause was set, in epoch seconds; `None` for no pause or a `hold:`.
     #[serde(default)]
     pub paused_since: Option<u64>,
+    /// The failing test line of the round's kept results, for a red pause's page.
+    #[serde(default)]
+    pub pause_evidence: Option<String>,
     pub declares_own_testenv: bool,
     /// Why `round certify` would refuse the open round at once (`round_certifiable`), if it would.
     #[serde(default)]
@@ -433,6 +440,8 @@ pub enum Trigger {
     /// The certify leg exited [`queue::ops::round::VM_LOST`]: the pass is incomplete, the round
     /// is not judged, and it is certified again on its head (sp-e30jhh; not in the contract's table).
     CertifyLost,
+    /// The attribution found the red tier green on the host: no member is charged and the round is certified again there.
+    RerunRunnerDifference,
     /// The VM was lost under more passes than [`LOST_VM_RECERTIFIES`] allows.
     CertifyLostSpent,
     /// A pass on the round's current head passed while the carried leg was started for an earlier
@@ -479,6 +488,7 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Corpus, Trigger::LegGreen, State::Certifying),
     (State::Attributing, Trigger::RerunMending, State::Mending),
     (State::Attributing, Trigger::RerunCertifying, State::Certifying),
+    (State::Attributing, Trigger::RerunRunnerDifference, State::Certifying),
     (State::Corpus, Trigger::RerunCertifying, State::Certifying),
     (State::Certifying, Trigger::RerunCertifying, State::Certifying),
     (State::Attributing, Trigger::RerunBlocked, State::Done),
@@ -547,6 +557,9 @@ pub struct Pace {
     pub infra_batch: String,
     #[serde(default)]
     pub open_failed: u32,
+    /// The `paused_since` of the pause last paged as unattended.
+    #[serde(default)]
+    pub pause_paged: u64,
 }
 
 /// The reason a failed `round_open` carries into the pace page; a timeout arrives as an empty body.
@@ -590,6 +603,7 @@ impl Pace {
             pause_lifts: st.pause_lifts,
             infra_batch: prev.infra_batch.clone(),
             open_failed: st.open_failed,
+            pause_paged: prev.pause_paged,
         }
     }
 }
@@ -630,6 +644,9 @@ pub struct RepoCarry {
     /// Certify passes of this round whose VM was lost under them (sp-e30jhh).
     #[serde(default)]
     pub lost_vms: u32,
+    /// The round's next certify is pinned to the host: a runner difference was found, and that pass is the proof.
+    #[serde(default)]
+    pub host_pin: bool,
     /// This round's unnamed certify red has already been attributed.
     #[serde(default)]
     pub attributed: bool,
@@ -757,6 +774,7 @@ impl RepoCarry {
             own_testenv: self.own_testenv,
             suites: self.suites,
             lost_vms: self.lost_vms,
+            host_pin: self.host_pin,
             attributed: self.attributed,
             confirmed: self.confirmed,
             attributed_reds: self.attributed_reds.clone(),
@@ -799,6 +817,7 @@ impl RepoCarry {
             own_testenv: round.own_testenv,
             suites: round.suites,
             lost_vms: round.lost_vms,
+            host_pin: round.host_pin,
             attributed: round.attributed,
             confirmed: round.confirmed,
             attributed_reds: round.attributed_reds.clone(),
@@ -901,6 +920,9 @@ pub struct Leg {
     /// The attribution follows a red certify: it reads the pass `queue round certify` kept for the batch.
     #[serde(default)]
     pub after_certify: bool,
+    /// The certify runs on the host only (`--place host`).
+    #[serde(default)]
+    pub place_host: bool,
     /// The attribution names suspects from the red suites' `# covers:` instead of mending.
     #[serde(default)]
     pub confirmed: bool,
@@ -1081,6 +1103,9 @@ pub fn certify_argv(queue_bin: &str, leg: &Leg) -> Vec<String> {
     ];
     if !leg.head.is_empty() {
         argv.extend(["--rehead".to_string(), leg.head.clone()]);
+    }
+    if leg.place_host {
+        argv.extend(["--place".to_string(), "host".to_string()]);
     }
     argv
 }
@@ -1303,7 +1328,8 @@ impl Machine<'_> {
         }
         let head = if self.rc.certify_head.is_empty() { self.rc.head.clone() } else { self.rc.certify_head.clone() };
         self.rc.leg_head = head.clone();
-        let leg = Leg { key: unit.clone(), unit, head: if effect == CERTIFY { self.rc.certify_head.clone() } else { String::new() }, ..self.leg() };
+        let place_host = effect == CERTIFY && std::mem::take(&mut self.rc.host_pin);
+        let leg = Leg { key: unit.clone(), unit, place_host, head: if effect == CERTIFY { self.rc.certify_head.clone() } else { String::new() }, ..self.leg() };
         self.acts.push(leg.act(effect));
     }
 
@@ -1670,6 +1696,11 @@ impl Machine<'_> {
         if self.rc.leg_head == open.head || self.certifying_rebuilt_head(&seen, &open.head) {
             return false;
         }
+        if self.rc.state == State::Attributing && self.ejected_only_by_batcher(open) {
+            self.rc.leg_head = open.head.clone();
+            self.rc.certify_head = open.head.clone();
+            return false;
+        }
         let mut recertify = false;
         if self.rc.discarded_head != open.head {
             recertify = open.phase != "green" && self.rc.certify_head.is_empty() && matches!(self.rc.state, State::Corpus | State::Certifying);
@@ -1698,6 +1729,13 @@ impl Machine<'_> {
         self.land_green()
     }
 
+    /// True when a carried member is gone from the record and the batcher's own eject is the last word on every one that is.
+    fn ejected_only_by_batcher(&self, open: &Round) -> bool {
+        let mut lost = self.rc.members.iter().map(|(m, _)| m).filter(|m| !open.members.contains(m)).peekable();
+        lost.peek().is_some()
+            && lost.all(|m| open.ejected.iter().zip(open.ejected_by.iter()).rfind(|(e, _)| *e == m).is_some_and(|(_, by)| by == batcher_cut::io::BATCHER_ACTOR))
+    }
+
     /// Another actor (not the batcher's own attribution) ejected a member the attribution leg carries: the leg is stopped and the
     /// record's survivors are certified at the record's head. Once per eject: the state leaves
     /// Attributing.
@@ -1713,10 +1751,7 @@ impl Machine<'_> {
         if survivors.is_empty() || survivors.len() == self.rc.members.len() {
             return false;
         }
-        let lost_to_another_actor = self.rc.members.iter().filter(|(m, _)| !survivors.iter().any(|(s, _)| s == m)).any(|(m, _)| {
-            open.ejected.iter().zip(open.ejected_by.iter()).rfind(|(e, _)| *e == m).is_none_or(|(_, by)| by != batcher_cut::io::BATCHER_ACTOR)
-        });
-        if !lost_to_another_actor {
+        if self.ejected_only_by_batcher(open) {
             return false;
         }
         self.stop_carried_leg();
@@ -2034,6 +2069,9 @@ impl Machine<'_> {
             self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
             return false;
         }
+        if let Some(since) = repo.paused_since.filter(|_| held_for.is_some_and(|h| h > policy.pause_lift_s) && !repo.pool.is_empty() && self.rc.pace.pause_paged != repo.paused_since.unwrap_or_default()) {
+            self.page_unattended(repo, text, since, held_for.unwrap_or_default());
+        }
         match self.rc.paused_on.clone() {
             None => {
                 self.rc.paused_on = Some(repo.base_sha.clone());
@@ -2047,6 +2085,23 @@ impl Machine<'_> {
             }
             Some(_) => true,
         }
+    }
+
+    /// A red pause held past its bound with no lift left: one page and one ask for this pause.
+    fn page_unattended(&mut self, repo: &Repo, text: &str, since: u64, held: u64) {
+        self.rc.pace.pause_paged = since;
+        let reason = match text.trim() {
+            t if t.is_empty() || t.starts_with("red:") => "a red round",
+            t => t,
+        };
+        let evidence = repo.pause_evidence.as_deref().map(|e| format!(" — {e}")).unwrap_or_default();
+        let page = format!("PAUSE UNATTENDED {}: {reason}, held {held}s, {} certified waiting{evidence} — attribute and eject, then batcher pause-lift --repo {} --by concierge --reason \"<why>\"", self.repo, repo.pool.len(), self.repo);
+        self.acts.push(Act::new(INBOX_APPEND, page.clone()).with_input(page_line(self.now_ms, &page)));
+        let key = format!("{}:pause:{since}", self.repo);
+        let body = format!("## Question\n{page}\n\n## Default\nLift the pause once the red is attributed and its members ejected.\n\n## Class basis\nWhether a red pause stays held is policy (law-a-pause-releases-itself).\n\nMOOT-WHEN: batcher pause-show --repo {} --held-since {since}\n", self.repo);
+        let message = tsd::alarm::Message { mailbox: "operator".into(), subject: format!("P0 {key}: red pause held {held}s with {} certified waiting", repo.pool.len()), kind: "question".into(), class: Some("policy".into()), default: "Lift the pause once the red is attributed and its members ejected.".into(), body };
+        let send = crate::tasks::b::incident_alarms::Send { reference: key.clone(), kind: "pause".into(), message, rows: vec![], binding: Some(key.clone()) };
+        self.acts.push(Act::new(PAUSE_ASK, key).with_input(serde_json::to_string(&send).unwrap_or_default()));
     }
 
     /// `repo` without the members `queue round open` refused at their current tip and base, and
@@ -2154,6 +2209,13 @@ impl Machine<'_> {
                         self.acts.push(leg.act(ABANDON));
                     }
                     self.finish(pace::Outcome::Quiet, "");
+                }
+                Some(Attribution::RunnerDifference { red_on, green_on, .. }) => {
+                    eprintln!("{NAME} {}: batch {:?}: the red ran on {red_on} and is green on {green_on} — certifying again on the host, no member charged", self.repo, self.rc.batch);
+                    self.go(Trigger::RerunRunnerDifference);
+                    self.rc.host_pin = true;
+                    self.rc.run += 1;
+                    self.certify();
                 }
                 Some(Attribution::Faulted(why)) => {
                     self.go(Trigger::RerunBlocked);
@@ -2343,6 +2405,13 @@ impl Machine<'_> {
                 self.rc.round_key = Some(core::round_key(&self.rc.members));
                 self.go(Trigger::RerunCertifying);
                 self.certify();
+            }
+            (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if !ok && self.rc.eject_held.as_ref().is_none_or(|h| !h.issued) && batcher_cut::io::HeldEject::parse(body).is_some() => {
+                let held = batcher_cut::io::HeldEject::parse(body).unwrap_or_default();
+                let gone: Vec<&str> = leg.bead.split(',').take_while(|b| *b != held.id).collect();
+                self.rc.members.retain(|(id, _)| !gone.contains(&id.as_str()));
+                self.rc.round_key = Some(core::round_key(&self.rc.members));
+                self.hold_eject(held);
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) => {
                 let why = format!("{} went red on its own gate ({}) and its eject was refused ({})", leg.bead, leg.reds.join(" "), body.trim());
@@ -3104,10 +3173,11 @@ pub mod edge {
         let open_round = open.next();
         let open_above: Vec<Round> = open.collect();
         let (stopped, stop_why, paused, paused_since) = holds(env, &repo.name);
+        let pause_evidence = paused.as_deref().filter(|p| !p.starts_with("hold:")).and_then(|_| io::red_test_line(&env.run));
         let cut_hold = cut_hold_in_force(&env.queue_dir, &repo.name);
         let unfit = open_round.as_ref().and_then(|r| r.unfit.clone());
         let base_sha = if open_round.is_some() { io::resolve_base_sha(repo).unwrap_or_default() } else { io::resolve_base_sha(repo)? };
-        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, cut_hold, paused, paused_since, unfit, left_out, ..Repo::default() })
+        Ok(Repo { pool, blockers, branch_tips, open_round, open_above, base_sha, stopped, stop_why, cut_hold, paused, paused_since, pause_evidence, unfit, left_out, ..Repo::default() })
     }
 
     pub fn refuse_if_cut_held(queue_dir: &std::path::Path, repo: &str) -> Result<(), String> {
@@ -3161,7 +3231,7 @@ pub mod edge {
         let combined = batcher::core::combine(&batcher::core::CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
         let conflicts = sorted.iter().filter(|m| merges.get(&m.id) == Some(&batcher::core::MergeResult::Conflict)).map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>();
         let base_conflicts = conflicts.iter().filter(|(_, tip)| io::base_conflict(&repo, &base, tip).is_some()).map(|(id, _)| id.clone()).collect();
-        let suites = !io::suites_in(&wt, "HEAD").is_empty();
+        let suites = !io::suites_in(&wt, "HEAD")?.is_empty();
         json(&Assembled { merged: combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), own_testenv: batcher_cut::declares_own_testenv(&wt), wt: wt.display().to_string(), base, suites, conflicts, base_conflicts, cleared })
     }
 
@@ -3199,7 +3269,7 @@ pub mod edge {
         }
         let wt = PathBuf::from(&leg.wt);
         let history = std::fs::read_to_string(tsd::family_path(&env.run, "suite-timing")).unwrap_or_default();
-        let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD"), &history).list;
+        let suites = batcher_cut::order::longest_first(&io::suites_in(&wt, "HEAD")?, &history).list;
         let results = super::round_results(&leg.wt, &leg.unit);
         let argv = ["timeout", "-k", "10", &env.wall_secs.to_string()].iter().map(|s| s.to_string()).chain([env.round_vm.display().to_string(), "run".into(), wt.display().to_string(), "--suites".into(), suites.join(","), "--maxpar".into(), env.maxpar.to_string(), "--results-dir".into(), results.display().to_string(), "--base".into(), repo.base.clone()]).collect();
         start_unit(e, task, &leg.unit, argv, home_vars(&env), None)
@@ -3390,6 +3460,12 @@ pub mod edge {
         let path = dir.join(name);
         std::fs::write(&path, &leg.why).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok("{}".into())
+    }
+
+    /// Files the unattended-pause ask through the alarms delivery path, as the floor ask is filed.
+    pub fn pause_ask(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        let d = crate::tasks::b::incident_alarms::Delivery::configured(&crate::tasks::b::lc(e), &e.world.run_dir)?;
+        crate::tasks::b::incident_alarms::send(&d, &spec.input)
     }
 
     /// The pace's hold: the pause file on a red, the scoped stop on repeated infra faults.
