@@ -1421,6 +1421,8 @@ mod on_sqlite {
         assert_eq!((listed[0]["worked_s"].as_str(), listed[0]["sessions"].as_str()), (Some("0"), Some("1")));
         let shown: serde_json::Value = serde_json::from_str(&ok(&s, &["show", "sp-a"])).unwrap();
         assert_eq!(shown["bead"]["sessions"].as_str(), Some("1"), "{shown}");
+        assert_eq!((listed[0]["builder_claims"].as_str(), shown["bead"]["builder_claims"].as_str()), (Some("0"), Some("0")));
+        assert_eq!(shown["bead"]["session_ends"], serde_json::json!([]), "{shown}");
     }
 }
 

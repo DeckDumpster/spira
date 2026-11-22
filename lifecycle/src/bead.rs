@@ -606,8 +606,7 @@ fn record_builder_session(before: &LifecycleRow, ev: &BeadEvent, after: &mut Lif
             BeadEventKind::Returned { reason } => Some(format!("{}:{}", kind_name(&ev.kind), reason.as_str())),
             _ => None,
         };
-        let why = why.unwrap_or_else(|| kind_name(&ev.kind).to_string());
-        if let Some(last) = after.session_ends.last_mut() {
+        if let (Some(last), Some(why)) = (after.session_ends.last_mut(), why) {
             if last.back.is_none() {
                 last.back = Some(format!("{why} by {}", ev.actor));
             }
@@ -1712,7 +1711,8 @@ mod tests {
         r = drive(&r, "dwarf-a", builder_claim(Some("builder"), true));
         r = drive(&r, "dwarf-a", BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some("prose".into()) });
         r = drive(&r, "dwarf-a", BeadEventKind::Release);
-        r.holds.clear();
+        r = drive(&r, "operator", BeadEventKind::Reply { message_id: "m1".into() });
+        assert!(r.holds.is_empty());
         r = drive(&r, "dwarf-a", builder_claim(Some("builder"), false));
         r = drive(&r, "dwarf-a", submit());
         r = drive(&r, "gate", red(GateRedReason::SuitesFailed, Some("units")));
