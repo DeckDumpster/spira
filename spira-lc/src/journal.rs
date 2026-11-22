@@ -893,7 +893,7 @@ mod tests {
             let r = inner(argv);
             slowest = slowest.max(clock.now_ms() - before);
             r
-        }, dry_run);
+        }, dry_run, None);
         assert_eq!(code, 0, "{out}");
         (serde_json::from_str(&out).unwrap(), slowest)
     }
