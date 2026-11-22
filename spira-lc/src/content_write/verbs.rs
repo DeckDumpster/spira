@@ -191,7 +191,9 @@ fn gate_check(w: &Writer, kind: &str) -> Result<Option<String>, String> {
     }
     if !closing.is_empty() {
         let env = env_of(w)?;
-        let script: Vec<String> = closing.iter().flat_map(|(id, reason)| close_sql(db, id, reason, &env)).collect();
+        let seeds: Vec<&str> = closing.iter().map(|(id, _)| id.as_str()).collect();
+        let reach = reach_of(w, &seeds)?;
+        let script: Vec<String> = closing.iter().flat_map(|(id, reason)| close_sql(db, id, reason, &env, &reach)).collect();
         transact("gate check", w, &begin(script))?;
     }
     Ok(Some(format!("{lines}\nChecked {judged} gates: {} resolved, 0 escalated, 0 errors\n", closing.len())))
@@ -230,7 +232,7 @@ pub(super) fn set_state(w: &Writer, bead: &str, dimension: &str, value: &str) ->
     for _ in 0..ID_ATTEMPTS {
         let n = next_child(w, bead)?;
         let event_id = format!("{bead}.{n}");
-        let mut script = create_script(db, &env, &event, &event_id, &[], Some(&(bead.to_string(), n)));
+        let mut script = create_script(db, &env, &event, &event_id, &[], Some(&(bead.to_string(), n)), &[]);
         script.pop();
         script.push(format!("UPDATE {db}.issues SET closed_at = UTC_TIMESTAMP() WHERE id = '{}'", escape(&event_id)));
         if let Some(was) = &old {
@@ -251,8 +253,8 @@ pub(super) fn set_state(w: &Writer, bead: &str, dimension: &str, value: &str) ->
 }
 
 /// The statements that delete `ids` and what hangs on them, then settle the beads that depended
-/// on them; `dependents` are those beads, read before the rows go.
-fn delete_script(db: &str, env: &Env, ids: &[&str], dependents: &[&str]) -> Vec<String> {
+/// on them; `reach` is what those beads reach, read before the rows go.
+fn delete_script(db: &str, env: &Env, ids: &[&str], reach: &[String]) -> Vec<String> {
     let list = in_list(ids);
     let mut s = Vec::new();
     for (table, column) in [("labels", "issue_id"), ("comments", "issue_id"), ("events", "issue_id"), ("dependencies", "issue_id"), ("child_counters", "parent_id")] {
@@ -262,9 +264,7 @@ fn delete_script(db: &str, env: &Env, ids: &[&str], dependents: &[&str]) -> Vec<
         s.push(format!("DELETE FROM {db}.leases WHERE issue_id IN ({list})"));
     }
     s.push(format!("DELETE FROM {db}.issues WHERE id IN ({list})"));
-    if !dependents.is_empty() {
-        s.extend(settle_blocked(db, dependents));
-    }
+    s.extend(settle_blocked(db, reach));
     begin(s)
 }
 
@@ -280,7 +280,8 @@ pub fn delete(ids: &[String]) -> Option<Result<(), String>> {
         let env = env_of(w)?;
         let dependents: Vec<String> = rows(w, &format!("SELECT DISTINCT issue_id FROM {db}.dependencies WHERE depends_on_issue_id IN ({}) AND issue_id NOT IN ({})", in_list(&named), in_list(&named)))?.iter().map(|r| cell(r, "issue_id")).collect();
         let dependents: Vec<&str> = dependents.iter().map(String::as_str).collect();
-        transact("delete", w, &delete_script(db, &env, &named, &dependents))?;
+        let reach = reach_of(w, &dependents)?;
+        transact("delete", w, &delete_script(db, &env, &named, &reach))?;
         COMMITTER.owe();
         Ok(())
     };
@@ -295,8 +296,8 @@ pub(super) mod tests {
         let env = Env::default();
         let mut all = vec![config_set(db, "kv.k", "v"), config_delete(db, "kv.k")];
         all.extend(blocked_passes(db, None, 1));
-        all.extend(delete_script(db, &env, &["sp-a"], &["sp-b"]));
-        all.extend(close_sql(db, "sp-a", "r", &env));
+        all.extend(delete_script(db, &env, &["sp-a"], &["sp-b".to_string()]));
+        all.extend(close_sql(db, "sp-a", "r", &env, &["sp-b".to_string()]));
         all
     }
 
@@ -331,7 +332,7 @@ pub(super) mod tests {
     #[test_id(to19f9s)]
     #[test]
     fn a_delete_takes_each_row_that_hangs_on_a_bead_before_the_bead_and_settles_its_dependents() {
-        let s = delete_script("`d`", &Env::default(), &["sp-a", "sp-b"], &["sp-c"]);
+        let s = delete_script("`d`", &Env::default(), &["sp-a", "sp-b"], &["sp-c".to_string()]);
         let at = |needle: &str| s.iter().position(|q| q.contains(needle)).unwrap_or_else(|| panic!("{needle}: {s:?}"));
         assert_eq!((s[0].as_str(), s.last().unwrap().as_str()), ("BEGIN", "COMMIT"));
         assert!(at("`d`.labels") < at("DELETE FROM `d`.issues") && at("`d`.events") < at("DELETE FROM `d`.issues") && at("`d`.leases") < at("DELETE FROM `d`.issues"));
