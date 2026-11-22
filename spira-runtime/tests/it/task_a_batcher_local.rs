@@ -2292,3 +2292,47 @@ fn an_attribution_line_saying_abandoned_ends_the_round_unjudged_and_the_repo_cut
     let (_, acts) = decide(&carry, &busy());
     assert_eq!(acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>(), [FETCH, ASSEMBLE]);
 }
+
+#[test]
+fn an_attribution_whose_member_was_ejected_by_the_concierge_is_stopped_and_certifies_the_survivors_once() {
+    let mut carry = driving(State::Attributing, "spira.a2");
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.leg_head = "h0".into();
+    rc.head = "h0".into();
+    rc.leg_at_ms = NOW;
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into()], tips: vec!["t1".into()], head: "h1".into(), worktree: "w".into(), phase: "attributing".into(), driven: true, ejected: vec!["sp-b".into()], ejected_by: vec!["concierge".into()], ..Round::default() };
+    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let (next, acts) = decide(&carry, &snap);
+    let stops = |acts: &[Act]| acts.iter().filter(|a| a.effect == runtime::units::UNIT_STOP).count();
+    assert_eq!(stops(&acts), 1, "{acts:?}");
+    assert_eq!((next.repos["spira"].state, next.repos["spira"].head.as_str()), (State::Certifying, "h1"));
+    let (_, again) = decide(&next, &snap);
+    assert_eq!(stops(&again), 0, "one stop per eject: {again:?}");
+}
+
+#[test]
+fn an_attribution_whose_member_the_batcher_itself_ejected_runs_on_and_certifies_its_rebuilt_head() {
+    use batcher_cut::attribute::Attribution;
+    let mut carry = driving(State::Attributing, "spira.a2");
+    let rc = carry.repos.get_mut("spira").unwrap();
+    rc.leg_head = "h0".into();
+    rc.head = "h0".into();
+    rc.leg_at_ms = NOW;
+    let round = Round { id: "r9".into(), members: vec!["sp-a".into()], tips: vec!["t1".into()], head: "h0".into(), worktree: "w".into(), phase: "attributing".into(), driven: true, ejected: vec!["sp-b".into()], ejected_by: vec!["batcher".into()], ..Round::default() };
+    let snap = Snapshot { repos: [("spira".to_string(), Repo { open_round: Some(round), live_legs: Some(vec!["spira.a2".into()]), ..busy().repos["spira"].clone() })].into(), now_ms: NOW };
+    let (next, acts) = decide(&carry, &snap);
+    assert!(!acts.iter().any(|a| a.effect == runtime::units::UNIT_STOP), "{acts:?}");
+    assert_eq!(next.repos["spira"].state, State::Attributing);
+    assert_eq!(next.repos["spira"].members.len(), 2, "both members stay carried");
+
+    let mut r = carried(&next);
+    let n = r.requested().len();
+    let land = Attribution::Land { members: vec![("sp-a".into(), "t1".into())], attribution_secs: None, mended: false, head: "h2".into() }.line();
+    r.tick(STREAM, ended("spira.a2", runtime::units::Exit::Code(0), &format!("{land}\n"))).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    let after = asked_after(&r, n);
+    let certify = after.iter().find(|(e, _)| e == CERTIFY).unwrap_or_else(|| panic!("no certify: {after:?}"));
+    assert_eq!(certify.1.head, "h2");
+    let argv = certify_argv("q", &certify.1);
+    assert!(argv.windows(2).any(|w| w == ["--rehead", "h2"]), "{argv:?}");
+}
