@@ -238,7 +238,7 @@ pub struct LifecycleEventRow {
 }
 
 /// The most audits one `audits` call is asked for.
-pub const LIFECYCLE_BATCH: usize = 500;
+pub const LIFECYCLE_BATCH: usize = 100;
 
 /// One batch of the control store's audits after revision `after`, as `spira-lc audits` answers them.
 pub fn lifecycle_batch(lc: &spira_store::lc_call::LcClient, after: i64) -> Result<Vec<LifecycleEventRow>, String> {
@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(saved, [LifecycleCheckpoint { last_seq: 7 }]);
         assert_eq!(written.len(), 1);
         assert_eq!((written[0].ts.as_str(), written[0].source.as_str(), written[0].reason.as_deref()), ("1970-01-02T00:00:00Z", "lifecycle", Some("ask")));
-        assert_eq!(*wire.0.lock().unwrap(), ["audits --after 3 --limit 500", "audits --after 7 --limit 500"]);
+        assert_eq!(*wire.0.lock().unwrap(), ["audits --after 3 --limit 100", "audits --after 7 --limit 100"]);
     }
 
     #[test]
