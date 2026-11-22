@@ -861,7 +861,6 @@ fn recording_watchd(lc: &Lc) -> PathBuf {
     let log = lc.dir.join("watchd-argv.log");
     let path = lc.dir.join("release/bin/watchd");
     std::fs::write(&path, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display())).unwrap();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut std::fs::metadata(&path).unwrap().permissions(), 0o755);
     let mut perms = std::fs::metadata(&path).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
     std::fs::set_permissions(&path, perms).unwrap();

@@ -78,7 +78,7 @@ pub(crate) fn missing_writes(grants: &[String], db: &str, present: &BTreeSet<Str
 }
 
 /// The tables the code writes that the configured writer lacks grants on, read on the writer's
-/// own connection; `None` when no writer is configured. Reads only; SHOW GRANTS is refused to a user without access to `mysql`.
+/// own connection; `None` when no writer is configured. Reads only, from information_schema's privilege tables, which a user sees for itself where SHOW GRANTS needs `mysql` access.
 pub(crate) fn check_grants() -> Option<Result<Vec<String>, String>> {
     let w = match crate::content_write::writer()? {
         Ok(w) => w,
