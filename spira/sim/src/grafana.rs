@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 pub const URL_ENV: &str = "PILGRIM_GRAFANA_URL";
 pub const TOKEN_FILE: &str = "config/grafana-token";
 const ACCOUNT_FILE: &str = "config/grafana-account";
-const CALL_SECS: &str = "30"; // batch-job: one Grafana API call
+const CALL_SECS: &str = "5";
 
 pub struct Reply {
     pub status: u16,
@@ -31,7 +31,7 @@ impl Http for Curl {
         if let Some(t) = bearer {
             cfg += &format!("header = \"Authorization: Bearer {t}\"\n");
         }
-        let mut cmd = Command::new("curl");
+        let mut cmd = Command::new("curl"); // bounded by --max-time CALL_SECS
         cmd.args(["-sS", "--max-time", CALL_SECS, "-K", "-", "-X", method, "-w", "\n%{http_code}", url]);
         if let Some(b) = body {
             cmd.args(["-H", "Content-Type: application/json", "--data-binary", b]);
@@ -119,7 +119,7 @@ mod tests {
             let path = url.strip_prefix("http://g").unwrap();
             let reply = |status, body: &str| Ok(Reply { status, body: body.to_string() });
             match (method, path) {
-                ("POST", "/api/serviceaccounts") if admin == Some("admin:pw") => {
+                ("POST", "/api/serviceaccounts") if admin == Some("admin:pw") => { // not a path: an API route
                     *self.next.borrow_mut() += 1;
                     let id = *self.next.borrow();
                     self.accounts.borrow_mut().insert(id, format!("tok{id}"));
@@ -133,7 +133,7 @@ mod tests {
                     let id: u64 = p.rsplit('/').next().unwrap().parse().unwrap();
                     reply(if self.accounts.borrow_mut().remove(&id).is_some() { 200 } else { 404 }, "{}")
                 }
-                ("GET", "/api/dashboards/uid/spira-bead-store") => {
+                ("GET", "/api/dashboards/uid/spira-bead-store") => { // not a path: an API route
                     let ok = bearer.is_some_and(|t| self.accounts.borrow().values().any(|v| v == t));
                     reply(if ok { 200 } else { 401 }, "{}")
                 }
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn an_install_without_grafana_is_none_and_one_with_it_names_the_admin() {
-        assert_eq!(install("", "/d").unwrap(), None);
+        assert_eq!(install("", "data").unwrap(), None);
         let t = testkit::TempDir::new("pilgrim-grafana-install");
         std::fs::write(t.join("grafana.credential"), "s3\n").unwrap();
         let got = install("1.2.3.4:3000", &t.path().display().to_string()).unwrap().unwrap();
