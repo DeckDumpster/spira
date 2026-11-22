@@ -3043,7 +3043,7 @@ mod tests {
         assert_eq!(snap.read_max_us, 500_000);
     }
 
-    #[test_id(t6hfecq)]
+    #[test_id(tk6d1kw)]
     #[test]
     fn a_read_cut_at_its_limit_while_a_forced_wal_restart_waits_is_counted_reset_ended() {
         let dir = testkit::TempDir::new("sqlite-reset-ended");
@@ -3074,6 +3074,7 @@ mod tests {
         assert_eq!(snap.reads_reset_ended, 1);
     }
 
+    #[test_id(t6hfecq)]
     #[test]
     fn a_read_stopped_by_the_progress_handler_is_counted_ended_not_overrun() {
         let dir = testkit::TempDir::new("sqlite-ended");
