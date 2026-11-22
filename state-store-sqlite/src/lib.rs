@@ -380,7 +380,7 @@ pub fn is_read_ended(e: &Error) -> bool {
 }
 
 /// How often, in SQLite VM steps, a running read checks its deadline.
-const PROGRESS_STEPS: i32 = 1_000;
+pub(crate) const PROGRESS_STEPS: i32 = 1_000;
 
 pub struct Options {
     /// A read transaction older than this is ended, so a stuck reader cannot hold the WAL's
@@ -392,6 +392,8 @@ pub struct Options {
     /// Runs inside every read transaction once its snapshot is taken: the seam a test holds a
     /// reader open with.
     pub read_probe: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Runs once per row inside a day-file read: the seam a test holds or slows one with.
+    pub dated_read_probe: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Jump an existing store's head by [`JUMP`] on open. Off only for a store being restored
     /// or verified, whose revisions must stay exactly as the log has them.
     pub jump_on_open: bool,
@@ -427,6 +429,7 @@ impl Default for Options {
             readers: 4,
             clock: Arc::new(state_store::MonotonicClock::new()),
             read_probe: None,
+            dated_read_probe: None,
             jump_on_open: true,
             history_bytes: 64 * 1024 * 1024,
             outbox: true,
@@ -708,6 +711,8 @@ struct Snapshot<'a> {
     steps: &'a AtomicU64,
     /// The day files this read may see, per family, newest day first.
     dated: Vec<(Family, Vec<Arc<DatedFile>>)>,
+    /// The store reader this read runs on: the slot its day-file connections are taken from.
+    slot: usize,
 }
 
 impl Snapshot<'_> {
@@ -722,11 +727,12 @@ impl Snapshot<'_> {
     }
 }
 
-fn snapshot<'a>(conn: &Connection, files: &[Files], steps: &'a AtomicU64) -> Result<Snapshot<'a>> {
+fn snapshot<'a>(conn: &Connection, files: &[Files], steps: &'a AtomicU64, slot: usize) -> Result<Snapshot<'a>> {
     Ok(Snapshot {
         head: meta(conn, "head")?.unwrap_or(0),
         steps,
         dated: files.iter().map(|f| (f.family, f.handles())).collect(),
+        slot,
     })
 }
 
@@ -937,7 +943,7 @@ fn range_rows(
         Source::State(s) => Some(s),
         _ => None,
     };
-    merge_dated(out, snap, lo, hi, want, state)
+    merge_dated(out, snap, lo, hi, want, state, deadline)
 }
 
 /// `main`'s rows with the rows of the snapshot's day files in the same range laid in key
@@ -949,6 +955,7 @@ fn merge_dated(
     hi: Option<&[u8]>,
     limit: usize,
     state: Option<&str>,
+    deadline: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<(String, Version)>> {
     let reached: Vec<_> = snap.dated.iter().filter(|(fam, files)| !files.is_empty() && fam.overlaps(lo, hi)).collect();
     if reached.is_empty() {
@@ -958,7 +965,7 @@ fn merge_dated(
     let mut filed = std::collections::BTreeMap::new();
     for (_, files) in reached {
         for f in files {
-            for (k, v) in f.range(lo, hi, limit, snap.head, state)? {
+            for (k, v) in f.range(&dated::ReadAs { slot: snap.slot, deadline }, lo, hi, limit, snap.head, state)? {
                 filed.entry(k).or_insert(v);
             }
         }
@@ -1248,7 +1255,9 @@ impl SqliteBackend {
         let mut head = meta(&conn, "head")?.unwrap_or(0);
         let floor = head;
         let now = opts.wall.now_ms();
-        let dated: Vec<Files> = FAMILIES.iter().map(|f| Files::new(*f, path)).collect();
+        let deadlines: Vec<Arc<AtomicU64>> = (0..opts.readers.max(1)).map(|_| Arc::new(AtomicU64::new(u64::MAX))).collect();
+        let slots = dated::ReadSlots::new(deadlines.clone(), opts.clock.clone(), opts.dated_read_probe.clone());
+        let dated: Vec<Files> = FAMILIES.iter().map(|f| Files::with_reads(*f, path, slots.clone())).collect();
         for files in &dated {
             files.open_existing()?;
             for f in files.handles() {
@@ -1275,12 +1284,11 @@ impl SqliteBackend {
         }
 
         let mut readers = Vec::new();
-        for _ in 0..opts.readers.max(1) {
+        for deadline in deadlines {
             let r = connect(path)?;
             r.pragma_update(None, "query_only", true).map_err(db)?;
             r.busy_timeout(Duration::from_millis(opts.max_read_ms))
                 .map_err(db)?;
-            let deadline = Arc::new(AtomicU64::new(u64::MAX));
             let (d, clock) = (deadline.clone(), opts.clock.clone());
             r.progress_handler(
                 PROGRESS_STEPS,
@@ -1683,13 +1691,13 @@ impl SqliteBackend {
         let inner = &self.0;
         let n = inner.readers.len();
         let start = inner.next_reader.fetch_add(1, Ordering::Relaxed);
-        let (reader, mut conn) = phases::time(Phase::ReaderWait, || {
+        let (slot, reader, mut conn) = phases::time(Phase::ReaderWait, || {
             (0..n)
-                .map(|i| &inner.readers[(start + i) % n])
-                .find_map(|r| r.conn.try_lock().ok().map(|g| (r, g)))
+                .map(|i| (start + i) % n)
+                .find_map(|i| inner.readers[i].conn.try_lock().ok().map(|g| (i, &inner.readers[i], g)))
                 .unwrap_or_else(|| {
-                    let r = &inner.readers[start % n];
-                    (r, lock(&r.conn))
+                    let i = start % n;
+                    (i, &inner.readers[i], lock(&inner.readers[i].conn))
                 })
         });
         let max_read_ms = inner.max_read_ms.load(Ordering::SeqCst);
@@ -1714,7 +1722,7 @@ impl SqliteBackend {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Deferred)
                 .map_err(db)?;
-            let snap = snapshot(&tx, &inner.dated, &inner.read_steps)?;
+            let snap = snapshot(&tx, &inner.dated, &inner.read_steps, slot)?;
             if let Some(p) = &inner.probe {
                 p();
             }
@@ -1879,7 +1887,7 @@ impl SqliteBackend {
         for f in files {
             let mut cursor = Vec::new();
             loop {
-                let page = f.range(&cursor, None, 2_000, rev, None)?;
+                let page = f.range(&dated::ReadAs::AUX, &cursor, None, 2_000, rev, None)?;
                 for (key, v) in &page {
                     exec(
                         &copy,
@@ -1922,7 +1930,7 @@ impl SqliteBackend {
 }
 
 impl SqliteBackend {
-    fn get_in(&self, conn: &Connection, snap: &Snapshot, key: &str, at: u64) -> Result<Option<Version>> {
+    fn get_in(&self, conn: &Connection, snap: &Snapshot, key: &str, at: u64, deadline: &dyn Fn() -> Result<()>) -> Result<Option<Version>> {
         snap.readable(at)?;
         let was = if at == snap.head {
             AsOf::Live
@@ -1935,7 +1943,7 @@ impl SqliteBackend {
         for (family, files) in &snap.dated {
             if family.holds(key) {
                 for f in files {
-                    if let Some(v) = f.get(key, at)? {
+                    if let Some(v) = f.get(&dated::ReadAs { slot: snap.slot, deadline }, key, at)? {
                         return Ok(Some(v));
                     }
                 }
@@ -1957,11 +1965,11 @@ impl Backend for SqliteBackend {
     }
 
     fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
-        self.read(|conn, snap, _| self.get_in(conn, snap, key, at))
+        self.read(|conn, snap, deadline| self.get_in(conn, snap, key, at, deadline))
     }
 
     fn get_many(&self, keys: &[&str], at: u64) -> Result<Vec<Option<Version>>> {
-        self.read(|conn, snap, _| keys.iter().map(|k| self.get_in(conn, snap, k, at)).collect())
+        self.read(|conn, snap, deadline| keys.iter().map(|k| self.get_in(conn, snap, k, at, deadline)).collect())
     }
 
     fn range(
@@ -2385,7 +2393,7 @@ impl Backend for SqliteBackend {
                             unfiled[fam].push(key);
                             if previous.is_none() {
                                 for f in &files[fam] {
-                                    previous = f.get(key, head)?;
+                                    previous = f.get(&dated::ReadAs::AUX, key, head)?;
                                     if previous.is_some() {
                                         break;
                                     }
@@ -2875,6 +2883,94 @@ mod tests {
             Err(Error::Backend(m)) => assert!(m.contains("max_read_ms"), "{m}"),
             other => panic!("the long statement was not ended: {other:?}"),
         }
+    }
+
+    fn day_file_store(name: &str, clock: &runtime::ports::VirtualClock, readers: usize, probe: Arc<dyn Fn() + Send + Sync>) -> (testkit::TempDir, SqliteBackend) {
+        let dir = testkit::TempDir::new(name);
+        let opts = Options { max_read_ms: 100, readers, clock: Arc::new(clock.clone()), dated_read_probe: Some(probe), ..Options::default() };
+        let b = SqliteBackend::open(&dir.path().join("s.db"), opts).unwrap();
+        let writes: Vec<Write> = (0..3)
+            .map(|i| Write::Put { key: format!("events/{i:020}"), value: b"{}".to_vec(), create_rev: Rev::new(1, 0), prev: None })
+            .collect();
+        b.commit(0, &writes).unwrap();
+        (dir, b)
+    }
+
+    #[test]
+    fn a_day_file_read_past_max_read_ms_is_ended_while_it_runs_and_reads_no_further_row() {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let (rows, probe_clock) = (Arc::new(AtomicUsize::new(0)), clock.clone());
+        let seen = rows.clone();
+        let probe: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+            probe_clock.advance(500);
+        });
+        let (_dir, b) = day_file_store("sqlite-dated-ended", &clock, 1, probe);
+        let head = b.head().unwrap();
+        rows.store(0, Ordering::SeqCst);
+        let (out, snap) = recorded(|| b.range("events/", None, 10, head));
+        assert!(matches!(&out, Err(Error::Backend(m)) if m.starts_with(READ_ENDED)), "{out:?}");
+        assert_eq!((snap.reads_ended, snap.reads_overran), (1, 0));
+        assert_eq!(rows.load(Ordering::SeqCst), 1, "the loop read a second row");
+    }
+
+    #[test]
+    fn a_day_file_get_past_max_read_ms_is_ended_and_not_overrun() {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let probe_clock = clock.clone();
+        let probe: Arc<dyn Fn() + Send + Sync> = Arc::new(move || probe_clock.advance(500));
+        let (_dir, b) = day_file_store("sqlite-dated-get", &clock, 1, probe);
+        let head = b.head().unwrap();
+        let (out, snap) = recorded(|| b.get(&format!("events/{:020}", 1), head));
+        assert!(matches!(&out, Err(Error::Backend(m)) if m.starts_with(READ_ENDED)), "{out:?}");
+        assert_eq!((snap.reads_ended, snap.reads_overran), (1, 0));
+    }
+
+    #[test]
+    fn two_readers_of_one_day_file_do_not_queue_on_a_single_connection() {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let held = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        let hold = held.clone();
+        let armed = Arc::new(AtomicBool::new(false));
+        let gate = armed.clone();
+        let probe: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if gate.swap(false, Ordering::SeqCst) {
+                let (m, cv) = &*hold;
+                lock(m).0 = true;
+                cv.notify_all();
+                let mut g = lock(m);
+                while !g.1 {
+                    g = cv.wait(g).unwrap_or_else(|p| p.into_inner());
+                }
+            }
+        });
+        let (_dir, b) = day_file_store("sqlite-dated-parallel", &clock, 2, probe);
+        let head = b.head().unwrap();
+        armed.store(true, Ordering::SeqCst);
+        let first = {
+            let b = b.clone();
+            std::thread::spawn(move || b.range("events/", None, 10, head))
+        };
+        {
+            let (m, cv) = &*held;
+            let mut g = lock(m);
+            while !g.0 {
+                g = cv.wait(g).unwrap_or_else(|p| p.into_inner());
+            }
+        }
+        let second = {
+            let b = b.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || tx.send(b.range("events/", None, 10, head)).ok());
+            rx.recv_timeout(Duration::from_secs(30))
+        };
+        {
+            let (m, cv) = &*held;
+            lock(m).1 = true;
+            cv.notify_all();
+        }
+        first.join().unwrap().unwrap();
+        assert_eq!(second.expect("the second read queued behind the held one").unwrap().len(), 3);
     }
 
     fn recorded<T>(f: impl FnOnce() -> T) -> (T, phases::Snapshot) {

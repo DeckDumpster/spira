@@ -7,14 +7,15 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use runtime::ports::Clock;
 use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
 use state_store::backend::state_of;
 use state_store::{Error, Result, Rev, Version, EVENTS_PREFIX, REQUESTS_PREFIX};
 
-use super::{db, exec, key_of, lock, main_i64, rev, successor};
+use super::{db, exec, PROGRESS_STEPS, key_of, lock, main_i64, rev, successor};
 
 pub(crate) const DAY_MS: u64 = 86_400_000;
 
@@ -159,19 +160,62 @@ pub fn family_files(path: &Path, now_ms: u64) -> Result<Vec<state_store::FamilyF
     Ok(out)
 }
 
+/// What a day-file read shares with the store's reads: one deadline per store reader, which
+/// that reader's connection to every day file stops at.
+pub struct ReadSlots {
+    deadlines: Vec<Arc<AtomicU64>>,
+    clock: Arc<dyn Clock>,
+    probe: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+/// Who a day-file read is for: the store reader whose connection it takes, and that read's
+/// deadline check.
+pub struct ReadAs<'a> {
+    pub slot: usize,
+    pub deadline: &'a dyn Fn() -> Result<()>,
+}
+
+impl ReadAs<'_> {
+    /// A caller that is not a store read: the shared connection, no deadline.
+    pub const AUX: ReadAs<'static> = ReadAs { slot: AUX, deadline: &|| Ok(()) };
+}
+
+/// The slot of a caller that is not a store reader and has no deadline.
+pub const AUX: usize = usize::MAX;
+
+impl ReadSlots {
+    pub fn new(deadlines: Vec<Arc<AtomicU64>>, clock: Arc<dyn Clock>, probe: Option<Arc<dyn Fn() + Send + Sync>>) -> Arc<Self> {
+        Arc::new(ReadSlots { deadlines, clock, probe })
+    }
+
+    fn unbounded() -> Arc<Self> {
+        Self::new(Vec::new(), Arc::new(runtime::ports::WallClock), None)
+    }
+
+    fn row(&self, deadline: &dyn Fn() -> Result<()>) -> Result<()> {
+        if let Some(p) = &self.probe {
+            p();
+        }
+        deadline()
+    }
+}
+
 /// One day's file.
 pub struct DatedFile {
+    reads: Arc<ReadSlots>,
     pub day: i64,
     path: PathBuf,
     writer: Mutex<Option<Connection>>,
-    reader: Mutex<Option<Connection>>,
+    readers: Vec<Mutex<Option<Connection>>>,
     retired: AtomicBool,
 }
 
 impl Drop for DatedFile {
     fn drop(&mut self) {
         drop(self.writer.get_mut().unwrap_or_else(|p| p.into_inner()).take());
-        drop(self.reader.get_mut().unwrap_or_else(|p| p.into_inner()).take());
+        for r in &mut self.readers {
+            drop(r.get_mut().unwrap_or_else(|p| p.into_inner()).take());
+        }
         if self.retired.load(Ordering::SeqCst) {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", self.path.display()));
@@ -226,17 +270,18 @@ fn version_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<(Vec<u8>, Version)> {
 }
 
 impl DatedFile {
-    pub fn open(path: PathBuf, day: i64) -> Result<Arc<Self>> {
+    pub fn open(path: PathBuf, day: i64, reads: Arc<ReadSlots>) -> Result<Arc<Self>> {
         let writer = open_conn(&path, false)?;
         for sql in SCHEMA {
             exec(&writer, sql, [])?;
         }
-        let reader = open_conn(&path, true)?;
+        let readers = (0..=reads.deadlines.len()).map(|_| Mutex::new(None)).collect();
         Ok(Arc::new(DatedFile {
+            reads,
             day,
             path,
             writer: Mutex::new(Some(writer)),
-            reader: Mutex::new(Some(reader)),
+            readers,
             retired: AtomicBool::new(false),
         }))
     }
@@ -251,10 +296,18 @@ impl DatedFile {
         f(conn)
     }
 
-    fn with_reader<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let g = lock(&self.reader);
-        let conn = g.as_ref().ok_or_else(|| Error::Backend(format!("{} is closed", self.path.display())))?;
-        f(conn)
+    fn with_reader<T>(&self, slot: usize, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let i = slot.min(self.readers.len() - 1);
+        let mut g = lock(&self.readers[i]);
+        if g.is_none() {
+            let conn = open_conn(&self.path, true)?;
+            if let Some(deadline) = self.reads.deadlines.get(i) {
+                let (d, clock) = (deadline.clone(), self.reads.clock.clone());
+                conn.progress_handler(PROGRESS_STEPS, Some(move || clock.now_ms() > d.load(Ordering::SeqCst)));
+            }
+            *g = Some(conn);
+        }
+        f(g.as_ref().expect("the connection was just opened"))
     }
 
     /// Files `rows` as main `main` and commits.
@@ -320,9 +373,10 @@ impl DatedFile {
         self.with_writer(|conn| exec(conn, "DELETE FROM rows WHERE main > ?1", [main_i64(head)?]).map(drop))
     }
 
-    pub fn get(&self, key: &str, at: u64) -> Result<Option<Version>> {
+    pub fn get(&self, by: &ReadAs<'_>, key: &str, at: u64) -> Result<Option<Version>> {
         let at = main_i64(at)?;
-        self.with_reader(|conn| {
+        self.with_reader(by.slot, |conn| {
+            self.reads.row(by.deadline)?;
             use rusqlite::OptionalExtension;
             conn.prepare_cached(
                 "SELECT key, main, sub, value, create_main, create_sub FROM rows WHERE key = ?1 AND main <= ?2",
@@ -337,6 +391,7 @@ impl DatedFile {
     /// `state`, only those whose value's `data.state` is it.
     pub fn range(
         &self,
+        by: &ReadAs<'_>,
         lo: &[u8],
         hi: Option<&[u8]>,
         limit: usize,
@@ -348,15 +403,20 @@ impl DatedFile {
         let mut cursor = lo.to_vec();
         let page = i64::try_from(if state.is_some() { STATE_PAGE } else { limit }).unwrap_or(i64::MAX);
         while out.len() < limit {
-            let rows = self.with_reader(|conn| {
+            let rows = self.with_reader(by.slot, |conn| {
                 let mut stmt = conn
                     .prepare_cached(
                         "SELECT key, main, sub, value, create_main, create_sub FROM rows
                          WHERE key >= ?1 AND (?2 IS NULL OR key < ?2) AND main <= ?3 ORDER BY key LIMIT ?4",
                     )
                     .map_err(db)?;
-                let rows = stmt.query_map(params![cursor, hi, at, page], version_of).map_err(db)?;
-                rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db)
+                let mut rows = stmt.query(params![cursor, hi, at, page]).map_err(db)?;
+                let mut out = Vec::new();
+                while let Some(r) = rows.next().map_err(db)? {
+                    self.reads.row(by.deadline)?;
+                    out.push(version_of(r).map_err(db)?);
+                }
+                Ok(out)
             })?;
             let full = rows.len() as i64 == page;
             if let Some((last, _)) = rows.last() {
@@ -381,13 +441,18 @@ pub struct Files {
     pub family: Family,
     dir: PathBuf,
     stem: String,
+    reads: Arc<ReadSlots>,
     open: Mutex<BTreeMap<i64, Arc<DatedFile>>>,
 }
 
 impl Files {
     pub fn new(family: Family, main: &Path) -> Self {
+        Self::with_reads(family, main, ReadSlots::unbounded())
+    }
+
+    pub fn with_reads(family: Family, main: &Path, reads: Arc<ReadSlots>) -> Self {
         let dir = main.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
-        Files { family, dir, stem: stem_of(main), open: Mutex::new(BTreeMap::new()) }
+        Files { family, dir, stem: stem_of(main), reads, open: Mutex::new(BTreeMap::new()) }
     }
 
     /// Opens every file of this family found beside the main file.
@@ -399,7 +464,7 @@ impl Files {
             let Some(day) = name.to_str().and_then(|n| self.family.day_of_file(&self.stem, n)) else {
                 continue;
             };
-            let file = DatedFile::open(self.dir.join(&name), day)?;
+            let file = DatedFile::open(self.dir.join(&name), day, self.reads.clone())?;
             lock(&self.open).insert(day, file);
         }
         Ok(())
@@ -411,7 +476,7 @@ impl Files {
         if let Some(f) = open.get(&day) {
             return Ok((f.clone(), false));
         }
-        let f = DatedFile::open(self.dir.join(self.family.file_name(&self.stem, day)), day)?;
+        let f = DatedFile::open(self.dir.join(self.family.file_name(&self.stem, day)), day, self.reads.clone())?;
         open.insert(day, f.clone());
         Ok((f, true))
     }
