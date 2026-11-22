@@ -90,6 +90,27 @@ struct HeldBody {
 /// The ids of submitted events remembered, so the same id submitted twice dispatches once.
 const SUBMITTED_KEEP: usize = 10_000;
 
+/// The events whose wake is remembered, so an outcome that arrives long after its request still says what woke the run.
+const WAKES_KEEP: usize = 10_000;
+
+/// What started a run: the row's own periodic tick, any other timer or schedule row, or an event from outside or from another task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wake {
+    Sweep,
+    Timer,
+    Signal,
+}
+
+impl Wake {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Wake::Sweep => "sweep",
+            Wake::Timer => "timer",
+            Wake::Signal => "signal",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum LastOutcome {
     Succeeded,
@@ -139,6 +160,8 @@ pub struct TaskStatus {
     pub last_commands: Option<FireCommands>,
     /// Idempotency keys of its effects and probes with no outcome yet.
     pub in_flight: Vec<String>,
+    /// Runs begun by an event of this wake, counting the events that started a run and not those it derived.
+    pub runs_by_wake: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -182,6 +205,7 @@ struct Track {
     due_at: Option<u64>,
     outcome: Option<LastOutcome>,
     commands: Option<FireCommands>,
+    runs_by_wake: BTreeMap<String, u64>,
 }
 
 pub trait Executor {
@@ -264,6 +288,11 @@ pub struct Engine {
     /// The timer behind each queued local tick.
     tick_of: BTreeMap<EventId, ScheduleRow>,
     resolves: BTreeMap<EventId, String>,
+    /// The wake of each recent event, and whether the event began a run (`true`) or derives from one.
+    wakes: BTreeMap<EventId, (Wake, bool)>,
+    wake_order: VecDeque<EventId>,
+    /// The tick each stream was booted with: its later fires are sweeps.
+    boot_tags: BTreeMap<String, String>,
 }
 
 /// What a whole-carry row holds once its task is kept as rows: no events.
@@ -396,6 +425,9 @@ impl Engine {
             fire_of: BTreeMap::new(),
             tick_of: BTreeMap::new(),
             resolves: BTreeMap::new(),
+            wakes: BTreeMap::new(),
+            wake_order: VecDeque::new(),
+            boot_tags: BTreeMap::new(),
         };
         let boot = retry.read(e.clock.as_ref(), || e.journal.boot())?;
         let mut legacy: BTreeMap<String, StateRow> = BTreeMap::new();
@@ -528,6 +560,7 @@ impl Engine {
                     last_outcome: t.and_then(|t| t.outcome),
                     last_commands: t.and_then(|t| t.commands),
                     in_flight: self.pending.keys().filter(|k| self.owners.get(*k) == Some(&r.name)).cloned().collect(),
+                    runs_by_wake: t.map(|t| t.runs_by_wake.clone()).unwrap_or_default(),
                 }
             })
             .collect();
@@ -631,6 +664,7 @@ impl Engine {
             w.set("event.stream", e.stream.0.as_str());
             w.set("event.kind", e.kind.tag.as_str());
             w.set("event.at", e.at);
+            w.set("wake", self.wake_of(&e.id).0.as_str());
             if let Some(c) = &e.cause {
                 w.set("event.cause", c.0.as_str());
             }
@@ -775,13 +809,39 @@ impl Engine {
         self.local_seq += 1;
         let id = EventId(derive_id(format!("local/{}/{}/{at}/{}", stream.0, kind.tag, self.local_seq)));
         let correlation = cause.map_or_else(|| CorrelationId(id.0.clone()), |c| c.correlation.clone());
+        if let Some(c) = cause {
+            self.inherit_wake(&id, &c.id);
+        }
         Event { id, stream: stream.clone(), kind, at, cause: cause.map(|c| c.id.clone()), correlation }
+    }
+
+    fn set_wake(&mut self, id: &EventId, wake: Wake, root: bool) {
+        if self.wakes.insert(id.clone(), (wake, root)).is_none() {
+            self.wake_order.push_back(id.clone());
+            if self.wake_order.len() > WAKES_KEEP {
+                if let Some(old) = self.wake_order.pop_front() {
+                    self.wakes.remove(&old);
+                }
+            }
+        }
+    }
+
+    fn inherit_wake(&mut self, id: &EventId, cause: &EventId) {
+        let (wake, _) = self.wake_of(cause);
+        self.set_wake(id, wake, false);
+    }
+
+    /// An event the memory forgot is a signal that began no run of its own.
+    fn wake_of(&self, id: &EventId) -> (Wake, bool) {
+        self.wakes.get(id).map(|&(w, root)| (w, root)).unwrap_or((Wake::Signal, false))
     }
 
     /// Hand `kind` to the handlers of `stream` now, without shipping it: the way a process
     /// re-arms its memory-only timers each time it starts.
     pub fn start(&mut self, stream: &str, kind: EventKind) {
+        self.boot_tags.insert(stream.into(), kind.tag.clone());
         let ev = self.local_event(&StreamKey(stream.into()), kind, self.clock.now_ms(), None);
+        self.set_wake(&ev.id, Wake::Sweep, true);
         let id = format!("{stream}/{}", ev.kind.tag);
         self.tick_of.insert(ev.id.clone(), ScheduleRow { id, at: ev.at, stream: ev.stream.clone(), kind: ev.kind.clone(), cause: None, correlation: ev.correlation.clone() });
         self.queue.push_back((ev, true));
@@ -799,6 +859,7 @@ impl Engine {
         if at <= self.clock.now_ms() {
             return self.start(stream, kind);
         }
+        self.boot_tags.insert(stream.into(), kind.tag.clone());
         let id = format!("{stream}/{}", kind.tag);
         let correlation = CorrelationId(derive_id(format!("start/{id}/{at}")));
         self.timers.insert(id.clone(), ScheduleRow { id, at, stream: StreamKey(stream.into()), kind, cause: None, correlation });
@@ -820,6 +881,7 @@ impl Engine {
 
     fn append_derived(&mut self, id: String, stream: &StreamKey, kind: EventKind, cause: &Event, at: u64) -> Result<Event> {
         let ev = Event { id: EventId(id), stream: stream.clone(), kind, at, cause: Some(cause.id.clone()), correlation: cause.correlation.clone() };
+        self.inherit_wake(&ev.id, &cause.id);
         self.enqueue(ev.clone());
         Ok(ev)
     }
@@ -844,7 +906,9 @@ impl Engine {
                 Command::EmitTo { stream, kind } => {
                     let id = derive_id(format!("{}/{handler}/{i}>{}", ev.id.0, stream.0));
                     let e = if mode == Mode::Act {
-                        self.append_derived(id, &stream, kind, ev, ev.at)?
+                        let e = self.append_derived(id, &stream, kind, ev, ev.at)?;
+                        self.set_wake(&e.id, Wake::Signal, true);
+                        e
                     } else {
                         let body = serde_json::to_string(&ShadowedEmit { stream, kind }).map_err(|e| RuntimeError::new(e.to_string()))?;
                         self.append_derived(id, &ev.stream, EventKind::new(EMIT_SHADOWED, &body), ev, ev.at)?
@@ -1027,11 +1091,11 @@ impl Engine {
             }
             self.marker.set(&Mark { event: ev.id.clone(), handler: name.to_string(), stream: ev.stream.clone(), stalls })?;
             let now = self.clock.now_ms();
-            match self.tracks.get_mut(name) {
-                Some(t) => (t.fired_at, t.due_at) = (Some(now), Some(ev.at)),
-                None => {
-                    self.tracks.insert(name.to_string(), Track { fired_at: Some(now), due_at: Some(ev.at), ..Track::default() });
-                }
+            let (wake, began_run) = self.wake_of(&ev.id);
+            let t = self.tracks.entry(name.to_string()).or_default();
+            (t.fired_at, t.due_at) = (Some(now), Some(ev.at));
+            if began_run {
+                *t.runs_by_wake.entry(wake.as_str().into()).or_default() += 1;
             }
             self.busy.enter();
             let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, name]), self.seq, Wide::default());
@@ -1281,6 +1345,7 @@ impl Engine {
             correlation: row.correlation.clone(),
         };
         self.fire_of.insert(ev.id.clone(), row.id.clone());
+        self.set_wake(&ev.id, Wake::Timer, true);
         self.enqueue(ev);
     }
 
@@ -1297,6 +1362,8 @@ impl Engine {
         for (_, id) in due {
             if let Some(row) = self.timers.remove(&id) {
                 let ev = Event { cause: row.cause.clone(), correlation: row.correlation.clone(), ..self.local_event(&row.stream, row.kind.clone(), row.at, None) };
+                let wake = if self.boot_tags.get(&row.stream.0) == Some(&row.kind.tag) { Wake::Sweep } else { Wake::Timer };
+                self.set_wake(&ev.id, wake, true);
                 self.tick_of.insert(ev.id.clone(), row);
                 self.enqueue_local(ev);
                 n += 1;
@@ -1332,6 +1399,7 @@ impl Executor for Engine {
             cause: None,
             correlation: CorrelationId(id.into()),
         };
+        self.set_wake(&ev.id, Wake::Signal, true);
         self.enqueue(ev);
         Ok(())
     }
@@ -1363,6 +1431,7 @@ impl Executor for Engine {
             cause: Some(EventId(key.into())),
             correlation: p.correlation.clone(),
         };
+        self.inherit_wake(&ev.id, &EventId(key.into()));
         if self.memory_only.remove(key) {
             self.enqueue_local(ev.clone());
         } else {
@@ -1432,5 +1501,65 @@ mod tests {
         assert!(err.0.contains("journal open-effects: no reply from the store"), "{err}");
         assert!(err.0.contains("2 attempt(s)"), "{err}");
         assert_eq!(j.asked.load(std::sync::atomic::Ordering::SeqCst), 2, "no ask begins once 10 s are spent");
+    }
+
+    struct Waker(std::sync::atomic::AtomicBool);
+
+    impl Handler for Waker {
+        fn interests(&self) -> &[EventKindTag] {
+            &["boot", "other", "sched", "ask", EFFECT_SUCCEEDED]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            match ev.kind.tag.as_str() {
+                "boot" if !self.0.swap(true, std::sync::atomic::Ordering::SeqCst) => vec![
+                    Command::Timer { at: ev.at + 1_000, kind: EventKind::new("boot", "") },
+                    Command::Timer { at: ev.at + 500, kind: EventKind::new("other", "") },
+                    Command::Schedule { at: ev.at + 300, kind: EventKind::new("sched", "") },
+                    Command::Probe(EffectSpec::probe("look", "", 10_000)),
+                ],
+                "boot" => vec![Command::Timer { at: ev.at + 1_000, kind: EventKind::new("boot", "") }],
+                "ask" | "other" | "sched" | "effect.succeeded" => vec![Command::Emit(EventKind::new("answered", ""))],
+                _ => vec![],
+            }
+        }
+    }
+
+    fn wake_of_dispatch(sink: &crate::wide::MemSink, kind: &str) -> Vec<String> {
+        let want: Value = kind.into();
+        sink.records().iter().filter(|r| r.get("unit") == Some(&"dispatch".into()) && r.get("event.kind") == Some(&want)).filter_map(|r| match r.get("wake") { Some(Value::Str(w)) => Some(w.clone()), _ => None }).collect()
+    }
+
+    #[test_id(tf3lykx)]
+    #[test]
+    fn every_dispatch_names_what_woke_it_and_the_status_counts_runs_by_wake() {
+        let clock = VirtualClock::new(0);
+        let sink = crate::wide::MemSink::new();
+        let regs = vec![Registration::new("waker", Waker(Default::default()))];
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 1).unwrap().with_sink(sink.clone());
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let probe = e.pending_effects().into_iter().find(|p| p.spec.name == "look").expect("the boot tick asked a probe").key;
+        assert!(e.complete(&probe, Outcome::Succeeded(String::new())).unwrap());
+        e.run_until_idle().unwrap();
+        clock.advance(300);
+        e.run_until_idle().unwrap();
+        clock.advance(200);
+        e.run_until_idle().unwrap();
+        e.submit("ask-1", "s", EventKind::new("ask", "")).unwrap();
+        e.run_until_idle().unwrap();
+
+        let sweep = |k| wake_of_dispatch(&sink, k);
+        assert_eq!(sweep("boot"), vec!["sweep"]);
+        assert_eq!(sweep(EFFECT_SUCCEEDED), vec!["sweep"], "an answer carries the wake of the run that asked");
+        assert_eq!(sweep("other"), vec!["timer"]);
+        assert_eq!(sweep("sched"), vec!["timer"]);
+        assert_eq!(sweep("ask"), vec!["signal"]);
+        let runs = |e: &Engine| e.status().tasks[0].runs_by_wake.clone();
+        assert_eq!(runs(&e), BTreeMap::from([("sweep".into(), 1), ("timer".into(), 2), ("signal".into(), 1)]));
+
+        clock.advance(500);
+        e.run_until_idle().unwrap();
+        assert_eq!(sweep("boot"), vec!["sweep", "sweep"], "the re-armed boot tick is a sweep");
+        assert_eq!(runs(&e)["sweep"], 2);
     }
 }
