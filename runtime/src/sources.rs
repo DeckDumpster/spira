@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::changes::ScriptedChanges;
-use crate::event::{StoreChanged, STORE_STREAM};
+use crate::event::StoreChanged;
 use crate::host::Submit;
 use crate::ports::Clock;
 use crate::units::{RanOutput, ScriptedUnits, UnitCompletions, UnitRan, UNIT_RAN};
@@ -275,8 +275,7 @@ impl ScriptedStoreChanges {
 
     fn deliver(&self, c: &StoreChanged, swallowed: bool) -> Option<Submit> {
         self.changes.set(c.rev);
-        let id = if c.reload { format!("{STORE_STREAM}/reload/{}", c.rev) } else { format!("{STORE_STREAM}/{}", c.rev) };
-        (!swallowed).then(|| Submit::new(&id, STORE_STREAM, c.kind()))
+        (!swallowed).then(|| c.submit())
     }
 }
 

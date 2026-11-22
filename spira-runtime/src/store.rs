@@ -4,27 +4,27 @@
 //! old picture.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use runtime::changes::Changes;
+use runtime::changes::{AppliedRev, Changes};
 use spira_store::lc_call::LcClient;
 use store_view::Projection;
 
 /// The revision of the store the in-process copy has applied, set by the `store.changed` source.
 #[derive(Default)]
-pub struct ChangeTable(AtomicU64);
+pub struct ChangeTable(AppliedRev);
 
 impl ChangeTable {
     /// Moves the table to `rev`; it never moves back.
     pub fn set(&self, rev: u64) {
-        self.0.fetch_max(rev.saturating_add(1), Ordering::SeqCst);
+        self.0.set(rev);
     }
 }
 
 impl Changes for ChangeTable {
     fn rev(&self) -> Option<u64> {
-        self.0.load(Ordering::SeqCst).checked_sub(1)
+        self.0.rev()
     }
 }
 

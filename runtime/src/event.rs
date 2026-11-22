@@ -79,6 +79,12 @@ impl StoreChanged {
         EventKind::new(STORE_CHANGED, &serde_json::to_string(self).unwrap_or_default())
     }
 
+    /// The submission for this change, its id keyed by the revision (and apart for a reload).
+    pub fn submit(&self) -> crate::host::Submit {
+        let id = if self.reload { format!("{STORE_STREAM}/reload/{}", self.rev) } else { format!("{STORE_STREAM}/{}", self.rev) };
+        crate::host::Submit::new(&id, STORE_STREAM, self.kind())
+    }
+
     pub fn parse(body: &str) -> Option<Self> {
         serde_json::from_str(body).ok()
     }

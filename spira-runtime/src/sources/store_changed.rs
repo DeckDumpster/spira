@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use runtime::host::Submit;
 use runtime::sources::Source;
-use runtime::{StoreChanged as Body, STORE_STREAM};
+use runtime::StoreChanged as Body;
 use store_view::{Polled, Projection};
 use tokio::sync::mpsc;
 
@@ -35,8 +35,7 @@ impl Source for StoreChanged {
                     Polled::Reloaded { rev } => (*rev, Body { rev: *rev, keys: Vec::new(), reload: true }),
                 };
                 table.set(rev);
-                let id = if body.reload { format!("{STORE_STREAM}/reload/{rev}") } else { format!("{STORE_STREAM}/{rev}") };
-                if tx.blocking_send(Submit::new(&id, STORE_STREAM, body.kind())).is_err() {
+                if tx.blocking_send(body.submit()).is_err() {
                     closed.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             })
@@ -51,6 +50,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use runtime::changes::Changes;
+    use runtime::STORE_STREAM;
     use serde_json::json;
     use spira_store::lc_call::{LcClient, Reply, Transport};
 
@@ -111,5 +111,27 @@ mod tests {
         assert_eq!(Body::parse(&second.kind.body), Some(Body { rev: 12, keys: vec![], reload: true }));
         assert!(rx.try_recv().is_err(), "a quiet answer submits nothing");
         assert_eq!(table.rev(), Some(15));
+    }
+
+    #[test_id(trhwkl6)]
+    #[test]
+    fn the_source_ends_when_the_host_channel_closes() {
+        struct Applies;
+        impl Transport for Applies {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+                let out = match argv[0].as_str() {
+                    "rc" => json!({ "ok": { "items": [], "list_rev": 3 } }).to_string(),
+                    "list" => "[]".into(),
+                    _ => json!({ "events": [{ "key": "lifecycle/sp-a", "rev": 4, "value": {} }], "through": 4 }).to_string(),
+                };
+                Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
+            }
+        }
+        let views = Arc::new(Projection::new(LcClient::over(Arc::new(Applies), true), Duration::from_secs(30), Arc::new(Instant::now)));
+        views.load().unwrap();
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let source = Box::new(StoreChanged { views, table: Arc::new(ChangeTable::default()) });
+        source.run(tx);
     }
 }

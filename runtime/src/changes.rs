@@ -7,17 +7,20 @@ pub trait Changes: Send + Sync {
     fn rev(&self) -> Option<u64>;
 }
 
-/// [`Changes`] fed by a script under virtual time.
+/// A revision that only moves forward and reads `None` until first set.
 #[derive(Default)]
-pub struct ScriptedChanges(AtomicU64);
+pub struct AppliedRev(AtomicU64);
 
-impl ScriptedChanges {
+/// [`Changes`] fed by a script under virtual time.
+pub type ScriptedChanges = AppliedRev;
+
+impl AppliedRev {
     pub fn set(&self, rev: u64) {
         self.0.fetch_max(rev.saturating_add(1), Ordering::SeqCst);
     }
 }
 
-impl Changes for ScriptedChanges {
+impl Changes for AppliedRev {
     fn rev(&self) -> Option<u64> {
         self.0.load(Ordering::SeqCst).checked_sub(1)
     }
