@@ -1560,6 +1560,7 @@ fn maintained(pid: u32) -> spira_world::freeze::Maintenance {
     spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact the store".into(), since: T0 - 10, pid }
 }
 
+#[test_id(t88fza2)]
 #[test]
 fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
     let snap = Snapshot { maintenance: Some(maintained(std::process::id())), ..blind("spira-lc dwell: cannot tell: deadline") };
@@ -1570,6 +1571,7 @@ fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
     assert!(!next.blind);
 }
 
+#[test_id(tivttow)]
 #[test]
 fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
     let snap = Snapshot { maintenance: Some(maintained(u32::MAX)), ..blind("spira-lc dwell: cannot tell: deadline") };

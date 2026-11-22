@@ -404,6 +404,7 @@ mod tests {
         Snapshot { why: "stale past 1500ms: the watch is lost".into(), maintenance: Some(spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact".into(), since: 900, pid }), ..snap(RoundState::Unknown, 0) }
     }
 
+    #[test_id(tnxomes)]
     #[test]
     fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
         let (_, say) = decide(&cfg(), &Carry::default(), &maintained(std::process::id()), 1000);
@@ -411,6 +412,7 @@ mod tests {
         assert!(say[0].starts_with("WAIT BLIND: store stopped for maintenance by concierge since"), "{say:?}");
     }
 
+    #[test_id(t4gy0qh)]
     #[test]
     fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
         let (c, say) = decide(&cfg(), &Carry::default(), &maintained(u32::MAX), 1000);

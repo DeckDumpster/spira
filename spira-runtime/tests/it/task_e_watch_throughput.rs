@@ -876,6 +876,7 @@ fn maintained(pid: u32) -> spira_world::freeze::Maintenance {
     spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact the store".into(), since: 1_000_000, pid }
 }
 
+#[test_id(t3snu7e)]
 #[test]
 fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
     let snap = Snapshot { maintenance: Some(maintained(std::process::id())), ..unreadable_during(None) };
@@ -886,6 +887,7 @@ fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
     assert!(!v.carry.blind);
 }
 
+#[test_id(ttd4dvz)]
 #[test]
 fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
     let snap = Snapshot { maintenance: Some(maintained(u32::MAX)), ..unreadable_during(None) };
