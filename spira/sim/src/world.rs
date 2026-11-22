@@ -467,7 +467,7 @@ pub fn run_capture_traced(cmd: &mut Command, deadline: Duration, trace: Option<(
     Ok((status, stdout, stderr))
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
+pub fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
     run(
         Command::new("git")
             .arg("-C")

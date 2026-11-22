@@ -2,7 +2,7 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--pilgrim] [--repo <name>:<mode>[:<trunk>]]...\n       sim world fixture <tree root> <dir>\n       sim world exec <dir> <shell command>   (under the world's own environment)\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--pilgrim] [--repo <name>:<mode>[:<trunk>]]...\n       sim world fixture <tree root> <dir>\n       sim world exec <dir> <shell command>   (under the world's own environment)\n       sim world seed [--tree <rev>]\n       sim world land <dir> <bead>   (lands branch spira/<bead> of the world's work repo as a one-member round)\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
        sim call <systemd-run argv ending in: dwarf --home H <rune>>   (also: invoked as sim-call)
        sim launch <systemd-run argv | --user is-active <unit>>   (also: invoked as sim-launch)
@@ -135,6 +135,12 @@ fn run(args: &[String]) -> Result<(), String> {
         ["world", "fixture", root, dir] => world::fixture_repo(&PathBuf::from(root), &PathBuf::from(dir)),
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),
         ["world", "seed", "--tree", rev] => world::ensure_seed(&cwd, rev).map(|_| ()),
+        ["world", "land", dir, bead] => {
+            let dir = PathBuf::from(dir).canonicalize().map_err(|e| e.to_string())?;
+            let (report, landed) = spira_sim::pilgrim_land::land_in_world(&dir, bead)?;
+            print!("{report}");
+            if landed { Ok(()) } else { Err(format!("the round was red: {bead} did not land")) }
+        }
         ["world", "down", dir] => {
             if let Some((base, admin)) = grafana_install()? {
                 spira_sim::grafana::revoke(&spira_sim::grafana::Curl, &PathBuf::from(dir), &base, &admin)?;

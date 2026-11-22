@@ -60,6 +60,7 @@ pub fn up(world: &Path, fixture: &str, steps: &dyn Steps) -> Result<(), String> 
         "spira.loom_addr",
         &free_addr()?,
     )?;
+    crate::pilgrim_land::install_tree(&world.join("work"), world::LANDING_BASE)?;
     seed(world, fixture)
 }
 

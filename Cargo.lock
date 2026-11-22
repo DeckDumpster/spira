@@ -2409,6 +2409,7 @@ dependencies = [
  "serde_json",
  "sim",
  "spira-config",
+ "spira-lint",
  "spira-otel",
  "spira-runtime",
  "spira-store",

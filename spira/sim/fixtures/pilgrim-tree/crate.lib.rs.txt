@@ -1,0 +1,18 @@
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
+
+pub fn answer() -> u32 {
+    42
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(tpgfix1)]
+    #[test]
+    fn the_answer_is_forty_two() {
+        assert_eq!(answer(), 42);
+    }
+}
