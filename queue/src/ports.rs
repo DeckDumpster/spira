@@ -396,6 +396,8 @@ pub trait Scripts {
     ) -> RunOut;
     /// `test-registry deny-list --at <at>`: the registry's deny-list snapshot, the text a round hands to every pass.
     fn deny_list(&self, at: u64) -> Result<String, String>;
+    /// `test-registry clear-landed --bead <id>… --actor queue`: the registry rows naming landed beads are over. Returns the cleared test ids.
+    fn clear_landed(&self, beads: &[String]) -> Result<Vec<String>, String>;
     /// `round-vm recipe-sha [--tree <dir>]`: the recipe hash of the release, or of the tree; None when unreadable.
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String>;
     /// `round-vm ami-for <recipe-sha>`: the newest round image built from that recipe.
