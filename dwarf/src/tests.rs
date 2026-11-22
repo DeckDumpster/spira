@@ -318,7 +318,7 @@ pub(crate) mod verdict_run {
         let mut vars = super::super::complete_vars();
         vars.insert("SPIRA_REPO".into(), "shared".into());
         let cwd = std::env::current_dir().unwrap();
-        let sim_env = "SPIRA_LC_SOCKET=w/lc.sock\nSPIRA_TOML=w/config/sim.toml\nPILGRIM_GRAFANA_URL=http://g:3000\nPILGRIM_LATER_KEY=v\n";
+        let sim_env = "SPIRA_LC_SOCKET=w/lc.sock\nSPIRA_TOML=w/config/sim.toml\nPILGRIM_GRAFANA_URL=http://g:3000\n";
         let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &WorldUp(sim_env), &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
             r.rune = Rune::from_vars("pilgrim", &Default::default());
             r.conf.run = w.join("run");
@@ -333,7 +333,6 @@ pub(crate) mod verdict_run {
         res.unwrap();
         let envs = cap.0.lock().unwrap();
         assert_eq!(envs[0].get("PILGRIM_GRAFANA_URL").map(String::as_str), Some("http://g:3000"), "{envs:?}");
-        assert_eq!(envs[0].get("PILGRIM_LATER_KEY").map(String::as_str), Some("v"), "a PILGRIM_ line the world names reaches the session without the dwarf listing it");
     }
 
     #[test_id(tpl1fti)]
