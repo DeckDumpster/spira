@@ -4185,6 +4185,27 @@ fn staged_behind_green() -> (T, String, String) {
 
 #[test_id(tvk6pky)]
 #[test]
+fn a_stage_refuses_naming_the_gate_timeout_key_when_it_does_not_resolve_and_runs_no_gate() {
+    let mut t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let n = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &n]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert(n, ("GREEN".into(), "5".into()));
+    t.git.ancestor("ta", "merged-ta");
+    t.git.ancestor("merged-ta", "merged-tb");
+    t.git.trees.borrow_mut().insert("merged-tb".into(), T_STAGED.into());
+    t.lib.s.gate_timeout = None;
+    let gates = |t: &T| t.scripts.calls.borrow().iter().filter(|c| c.starts_with("gate ")).count();
+    let before = gates(&t);
+    assert_ne!(t.run(&["round", "stage", "--members", "sp-b:tb", "--name", "spira-staged"]), 0);
+    assert!(t.err().contains("SPIRA_GATE_TIMEOUT"), "{}", t.err());
+    assert_eq!(gates(&t), before);
+}
+
+#[test_id(tnx7pdh)]
+#[test]
 fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     let (t, n, s) = staged_behind_green();
     assert!(
@@ -4203,7 +4224,8 @@ fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     assert!(
         t.scripts.calls.borrow().iter().any(|c| c.contains("gate")
             && c.contains("spira/round-staged/spira-staged")
-            && c.contains("off")),
+            && c.contains("off")
+            && c.ends_with("lock_wait=5400")),
         "the fences run on the staged head: {:?}",
         t.scripts.calls.borrow()
     );
@@ -10559,4 +10581,38 @@ fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
     assert_eq!(lines.len(), 1, "{log}");
     assert!(lines[0].contains(" round=") && lines[0].contains(" head=") && lines[0].contains(" release="), "{}", lines[0]);
     assert!(!lines[0].contains("release=none") && !lines[0].contains("not activated"), "{}", lines[0]);
+}
+
+#[test_id(t8qp4wn)]
+#[test]
+fn a_green_round_clears_its_members_registry_rows_before_the_release_activates() {
+    let (t, batch) = certified_round();
+    *t.scripts.clear_landed.borrow_mut() = Some(Ok(vec!["unit:a::t".into()]));
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    let calls = t.scripts.calls.borrow();
+    let clears: Vec<_> = calls.iter().enumerate().filter(|(_, c)| c.starts_with("clear-landed ")).collect();
+    assert_eq!(clears.len(), 1, "{calls:?}");
+    assert_eq!(clears[0].1, "clear-landed sp-a,sp-b");
+    let activate = calls.iter().position(|c| c == "release activate").expect("the release activated");
+    assert!(clears[0].0 < activate, "{calls:?}");
+    assert!(t.out().contains("queue.sh land-local: landing cleared registry row(s) unit:a::t"), "{}", t.out());
+}
+
+#[test_id(tu2mmj7)]
+#[test]
+fn a_landing_whose_registry_clear_fails_still_lands_and_says_so() {
+    let (t, batch) = certified_round();
+    *t.scripts.clear_landed.borrow_mut() = Some(Err("registry busy".into()));
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+    assert!(t.err().contains("queue.sh land-local: landed but registry rows were not cleared: registry busy"), "{}", t.err());
+}
+
+#[test_id(tibws6k)]
+#[test]
+fn a_landing_with_no_registry_rows_prints_no_clearing_line() {
+    let (t, batch) = certified_round();
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert!(!t.out().contains("registry row"), "{}", t.out());
+    assert!(!t.err().contains("registry row"), "{}", t.err());
 }

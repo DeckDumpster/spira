@@ -995,10 +995,35 @@ fn submit_law_on(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: 
     *held = branch.clone();
     let queue = spira_config::release_env::tool("queue").map_err(|e| format!("rule: {e}"))?;
     let submit = queue_submit_command(&queue, &branch, repo_name).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
-    if !submit.status.success() {
-        return Err(format!("rule: queue submit {branch} (bead {id}): {}", String::from_utf8_lossy(&submit.stderr).trim()));
+    if let Some(note) = submit_outcome(submit.status.code(), &String::from_utf8_lossy(&submit.stderr), &id, &branch)? {
+        eprintln!("{note}");
     }
     Ok((id, branch))
+}
+
+/// Marks an error raised after the law/ item was filed: the item exists and the gate judged it red.
+pub const RED_AFTER_FILING: &str = "(SUBMITTED) but red at the gate";
+
+/// The closing line for a failed landing: a red on a filed item says so; anything earlier says the item was never submitted.
+pub fn unlanded_message(err: &str, not_submitted: &str) -> String {
+    if err.contains(RED_AFTER_FILING) {
+        "rule: the law/ item is submitted and red; the gate's verdict above stands — fix the branch it names, then resubmit it".to_string()
+    } else {
+        not_submitted.to_string()
+    }
+}
+
+/// Reads `queue submit`'s exit status. 75 (no verdict) and 76 (base red) are not a fault in the
+/// law/ commit: the item stays SUBMITTED and the round's gate judges it, so they yield a note.
+/// Any other failure is a red gate on a filed item.
+pub fn submit_outcome(code: Option<i32>, stderr: &str, id: &str, branch: &str) -> Result<Option<String>, String> {
+    let gate = stderr.lines().map(str::trim).filter(|l| l.contains("VERDICT=")).collect::<Vec<_>>().join(" ");
+    let gate = if gate.is_empty() { stderr.split_whitespace().collect::<Vec<_>>().join(" ") } else { gate };
+    match code {
+        Some(0) => Ok(None),
+        Some(75 | 76) => Ok(Some(format!("rule: {gate}; submitted under {id} (SUBMITTED); the round's gate judges it"))),
+        _ => Err(format!("rule: queue submit {branch}: submitted under {id} {RED_AFTER_FILING}: {}", stderr.trim())),
+    }
 }
 
 /// `queue submit <branch> <repo>`, with no call deadline: queue submit runs the gate before it

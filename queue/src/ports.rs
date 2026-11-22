@@ -79,6 +79,10 @@ pub struct Settings {
     /// `SPIRA_PUBLISH_NO_RUN_SECS` (declared value): seconds a publish PR's branch may go
     /// without a gate run. `None` when the key does not resolve; only a no-run settle refuses.
     pub publish_no_run_secs: Option<u64>,
+    /// `SPIRA_GATE_TIMEOUT`: `None` when the key does not resolve; a gate-running verb then refuses.
+    pub gate_timeout: Option<u64>,
+    /// `SPIRA_GATE_LOCK_WAIT` as configured; it may only raise the wait handed to gate.sh.
+    pub gate_lock_wait: Option<String>,
 }
 
 /// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for
@@ -314,7 +318,7 @@ pub trait Scripts {
     /// `deny_list` is the snapshot file testenv reads as `SPIRA_TEST_DENY_LIST`.
     fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String], deny_list: &Path) -> (i32, String);
     /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
-    fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
+    fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> (i32, String);
     /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,
     /// stdout and stderr combined (the verdict reads `id=` off it).
     fn judgement_ci(
@@ -392,6 +396,8 @@ pub trait Scripts {
     ) -> RunOut;
     /// `test-registry deny-list --at <at>`: the registry's deny-list snapshot, the text a round hands to every pass.
     fn deny_list(&self, at: u64) -> Result<String, String>;
+    /// `test-registry clear-landed --bead <id>… --actor queue`: the registry rows naming landed beads are over. Returns the cleared test ids.
+    fn clear_landed(&self, beads: &[String]) -> Result<Vec<String>, String>;
     /// `round-vm recipe-sha [--tree <dir>]`: the recipe hash of the release, or of the tree; None when unreadable.
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String>;
     /// `round-vm ami-for <recipe-sha>`: the newest round image built from that recipe.

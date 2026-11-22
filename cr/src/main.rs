@@ -30,7 +30,7 @@ fn build_ports() -> Result<Ports, String> {
     let run_dir = spira_config::resolve::run_dir_for_process()?;
     let registry_path = test_registry::cli::with_run_default(spira_config::process::cfg, || Ok(run_dir.to_string_lossy().into_owned()))(test_registry::cli::PATH_KEY)?;
     let key = |k: &str| spira_config::process::cfg(k).unwrap_or_default();
-    let stdin = if matches!(std::env::args().nth(1).as_deref(), Some("seal" | "finding" | "reply")) {
+    let stdin = if matches!(std::env::args().nth(1).as_deref(), Some("seal" | "adopt" | "finding" | "reply")) {
         use std::io::Read;
         let mut s = String::new();
         std::io::stdin().read_to_string(&mut s).map_err(|e| format!("reading stdin: {e}"))?;

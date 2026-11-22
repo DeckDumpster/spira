@@ -1578,10 +1578,6 @@ fn finish_local_round(
         repo.name,
         stable.members.len()
     );
-    let landed_ids: Vec<String> = stable.members.iter().map(|m| m.id.clone()).collect();
-    if let Some(line) = io::registry_clearing_line(env_, repo, &landed_ids) {
-        println!("{line}");
-    }
 
     let mut fields = vec![
         ("repo", repo.name.clone()),
@@ -3019,29 +3015,6 @@ mod tests {
         assert_eq!(testkit::git(&wt, &["rev-list", "--count", &format!("{base}..HEAD")]).trim(), "5", "a rebuild folds once from a reset tree: two members, two merges, one fold");
         g(&["-C", wt.to_str().unwrap(), "checkout", "-q", "--detach", &base]);
         assert_eq!(io::fold_config_delta(&env, &wt, &merged).unwrap(), None, "a tree with no fragments gets no commit");
-    }
-
-    #[test_id(twx4yfs)]
-    #[test]
-    fn a_landing_asks_the_registry_to_clear_its_members_rows_and_a_failure_is_only_said() {
-        let d = testkit::TempDir::new("batcher-cut-clear-landed");
-        let mut env = io::lifecycle_tests_env(d.path());
-        let repo = Repo { name: "alpha".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
-        let calls = d.path().join("calls");
-        let stub = d.path().join("registry-stub");
-        env.test_registry_bin = Some(stub.clone());
-        testkit::write_exe(&stub, &format!("#!/bin/sh\necho \"$@\" >> {}\necho suite:a.sh\necho suite:b.sh\n", calls.display()));
-        let beads = vec!["sp-a".to_string(), "sp-b".to_string()];
-        assert_eq!(
-            io::registry_clearing_line(&env, &repo, &beads).unwrap(),
-            "batcher alpha: landing cleared registry row(s) suite:a.sh suite:b.sh"
-        );
-        assert_eq!(std::fs::read_to_string(&calls).unwrap(), "clear-landed --bead sp-a --bead sp-b --actor batcher\n");
-        testkit::write_exe(&stub, "#!/bin/sh\necho boom >&2\nexit 3\n");
-        let said = io::registry_clearing_line(&env, &repo, &beads).unwrap();
-        assert!(said.starts_with("batcher alpha: landed but registry rows were not cleared:") && said.contains("boom"), "{said}");
-        testkit::write_exe(&stub, "#!/bin/sh\nexit 0\n");
-        assert_eq!(io::registry_clearing_line(&env, &repo, &beads), None, "nothing cleared, nothing said");
     }
 
     const ALL: Switches = Switches {

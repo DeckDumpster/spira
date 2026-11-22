@@ -74,7 +74,7 @@ impl Registry {
         for b in beads {
             args.extend(["--bead", b]);
         }
-        args.extend(["--actor", "batcher"]);
+        args.extend(["--actor", "queue"]);
         Ok(self.said(at_ms, &args)?.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
     }
 

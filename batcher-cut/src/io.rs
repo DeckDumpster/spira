@@ -2836,29 +2836,6 @@ pub fn close_superseded_reds(repo: &Repo, head: &str) {
     }
 }
 
-/// A round landed: the registry rows naming its members are over. Returns the cleared test ids.
-pub fn clear_landed_rows(env: &Env, beads: &[String]) -> Result<Vec<String>, String> {
-    let bin = env.test_registry_bin.as_ref().ok_or("test-registry is not in the release")?;
-    // FORK-EDGE: the registry's own binary owns its store; the row delete and its history row are one transaction only it can make
-    let mut cmd = Command::new(bin);
-    cmd.arg("clear-landed");
-    for b in beads {
-        cmd.args(["--bead", b]);
-    }
-    cmd.args(["--actor", "batcher"]);
-    let said = run(&mut cmd, "test-registry clear-landed")?;
-    Ok(said.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
-}
-
-/// The line a landing says about its registry clearing; `None` when nothing was cleared.
-pub fn registry_clearing_line(env_: &Env, repo: &Repo, beads: &[String]) -> Option<String> {
-    match clear_landed_rows(env_, beads) {
-        Ok(ids) if ids.is_empty() => None,
-        Ok(ids) => Some(format!("batcher {}: landing cleared registry row(s) {}", repo.name, ids.join(" "))),
-        Err(e) => Some(format!("batcher {}: landed but registry rows were not cleared: {e}", repo.name)),
-    }
-}
-
 fn local_red_cause(reason: &str) -> &'static str {
     if reason == spira_config::host_disk::CAUSE {
         spira_config::host_disk::CAUSE
