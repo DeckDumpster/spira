@@ -1382,24 +1382,20 @@ mod tests {
         format!("{window}|{target}|{tag}||{pane}|{pid}|0|{active}|{height}|24|1|on|latest|{hook}|{hook}|{hook}")
     }
 
-    #[test_id(tpt7ba1)]
-    #[test]
-    fn ensure_over_a_healthy_layout_makes_one_tmux_read_and_no_writes() {
-        let dir = testkit::TempDir::new("layout-ensure-healthy");
+    /// Runs `ensure` once over `rows` with a fake tmux, a live health pane and a live
+    /// session pane, and returns what tmux was asked.
+    fn ensure_calls(name: &str, rows: impl Fn(u32, u32) -> Vec<String>, idle_secs: i64) -> Vec<String> {
+        let dir = testkit::TempDir::new(name);
         let script = dir.join("health.sh");
         fs::write(&script, "sleep 30\n").unwrap();
         let mut health = std::process::Command::new("sh").arg(&script).spawn().unwrap();
         let mut sess = std::process::Command::new("sleep").arg("30").spawn().unwrap();
-        let fixture = format!(
-            "{}\n{}\n",
-            snapshot_row("@1", "cockpit:0", "", "%1", sess.id(), "1", 24),
-            snapshot_row("@1", "cockpit:0", "health", "%2", health.id(), "0", 24),
-        );
+        let fixture = rows(sess.id(), health.id()).join("\n") + "\n";
         let fake = FakeTmux::new(&dir, &fixture);
         let mut conf = conf_with("", "");
         conf.run = dir.path().to_path_buf();
-        conf.mouse_on = true;
         conf.clipboard_on = true;
+        conf.idle_secs = idle_secs;
         let layout = Layout { tmux: Tmux::with_bin(fake.bin.to_str().unwrap()), conf };
         let me = std::env::current_exe().unwrap();
         let out = layout.ensure(&me, &me);
@@ -1408,9 +1404,54 @@ mod tests {
             let _ = c.wait();
         }
         assert_eq!(out, Ok(String::new()));
-        let calls = fake.calls();
+        fake.calls()
+    }
+
+    fn healthy_fixture(sess: u32, health: u32) -> Vec<String> {
+        vec![
+            snapshot_row("@1", "cockpit:0", "", "%1", sess, "1", 24),
+            snapshot_row("@1", "cockpit:0", "health", "%2", health, "0", 24),
+        ]
+    }
+
+    #[test_id(tpt7ba1)]
+    #[test]
+    fn ensure_over_a_healthy_layout_makes_one_tmux_read_and_no_writes() {
+        let calls = ensure_calls("layout-ensure-healthy", healthy_fixture, 0);
         assert_eq!(calls.len(), 1, "one snapshot read and nothing else: {calls:?}");
         assert!(calls[0].starts_with("list-panes -a"), "{calls:?}");
+    }
+
+    #[test_id(tf2k9xc)]
+    #[test]
+    fn ensure_with_an_idle_limit_adds_only_the_client_read() {
+        let calls = ensure_calls("layout-ensure-idle", healthy_fixture, 600);
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].starts_with("list-panes -a") && calls[1].starts_with("list-clients"), "{calls:?}");
+    }
+
+    #[test_id(tg8m1wz)]
+    #[test]
+    fn ensure_over_a_window_whose_session_pane_is_gone_takes_the_repair_path() {
+        let calls = ensure_calls(
+            "layout-ensure-repair",
+            |_, health| vec![snapshot_row("@1", "cockpit:0", "health", "%2", health, "1", 24)],
+            0,
+        );
+        assert!(calls.iter().any(|c| c.starts_with("list-panes -t cockpit:0")), "{calls:?}");
+    }
+
+    #[test_id(tb5r7nd)]
+    #[test]
+    fn ensure_over_a_server_with_mouse_off_writes_exactly_the_mouse_option_and_binding() {
+        let calls = ensure_calls(
+            "layout-ensure-mouse",
+            |s, h| healthy_fixture(s, h).into_iter().map(|r| r.replace("|1|on|latest|", "|0|on|latest|")).collect(),
+            0,
+        );
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert_eq!(calls[1], "set-option -g mouse on");
+        assert!(calls[2].starts_with("bind-key -T root MouseDrag1Pane"), "{calls:?}");
     }
 
     fn healthy_rows() -> Vec<PaneRow> {
