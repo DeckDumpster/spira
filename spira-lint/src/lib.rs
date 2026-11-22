@@ -20,6 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub mod lex;
+pub mod record;
 pub mod rules;
 pub mod rust_test;
 
@@ -501,6 +502,11 @@ pub fn lines(content: &[u8]) -> Vec<&[u8]> {
 
 /// Every rule, in rule-file name order: each `rules/*.rs` exports `rules()` and build.rs collects them.
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
+    all_rules_with_source().into_iter().map(|(_, r)| r).collect()
+}
+
+/// Every rule with the repo-relative path of the module that defines it, a fact of the build.
+pub fn all_rules_with_source() -> Vec<(&'static str, Box<dyn Rule>)> {
     include!(concat!(env!("OUT_DIR"), "/all_rules.rs"))
 }
 

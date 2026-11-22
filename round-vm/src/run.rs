@@ -908,56 +908,18 @@ cpu_now() { awk '/^cpu /{t=0; for(i=2;i<=9;i++) t+=$i; print t, $6, $9}' /proc/s
 ) &
 sampler_pid=$!
 set +e
-# A finding's culprit: the first member whose diff touches the flagged file, else the first whose
-# diff changes the finding's rule or its allow list (the finding exists only because of it), else the base.
-lint_culprit() {
-    local tree="$1" finding="$2" rule path src c subj who a wanted
-    local -a rule_paths=()
-    rule="${finding%%: *}"
-    path="${finding#*: }"; path="${path%%:*}"
-    src="$(grep -lF -- "const NAME: &str = \"$rule\";" "$tree"/spira-lint/src/rules/*.rs 2>/dev/null | head -1)"
-    if [ -n "$src" ]; then
-        rule_paths+=("${src#"$tree"/}")
-        while IFS= read -r a; do rule_paths+=("$a"); done < <(grep -oE '"spira[a-z-]*/[^"]*-allow[^"]*"' "$src" | tr -d '"' | sort -u)
-    fi
-    lint_touches() {
-        local f want
-        while IFS= read -r f; do
-            for want in "$@"; do
-                [ "$f" = "$want" ] || [ "${f#"$want"/}" != "$f" ] && return 0
-            done
-        done < <(git -C "$tree" diff --name-only "$c^1" "$c")
-        return 1
-    }
-    for wanted in file rule; do
-        for c in $(git -C "$tree" rev-list --first-parent --reverse origin/base..HEAD); do
-            if { [ "$wanted" = file ] && lint_touches "$path"; } || { [ "$wanted" = rule ] && [ "${#rule_paths[@]}" -gt 0 ] && lint_touches "${rule_paths[@]}"; }; then
-                subj="$(git -C "$tree" log -1 --format=%s "$c")"
-                who="$(printf '%s\n' "$subj" | sed -nE -e 's/^spira: land ([^ ]+).*/\1/p;t' -e 's/.*merge ([^ ]+) .*/\1/p')"
-                echo "${who:-commit ${c:0:12} $subj}"
-                return 0
-            fi
-        done
-    done
-    echo "the base itself (no member's diff touches $path or its rule $rule)"
-}
 # THE ROUND'S LINT: the full spira-lint on the merged tree against the landing ref, before the suites.
-# A hit is a red round, named for its culprit (lint_culprit). Recorded as a suite result after the suites, so a certifier reading results sees it.
+# A hit is a red round; its typed findings record goes to the host, which attributes it. Recorded as a suite result after the suites, so a certifier reading results sees it.
 phase lint
 lint_rc=0
 lint_secs=0
 if [ -n "$lint" ]; then
     t_lint=$(date +%s)
-    "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base > ~/round-lint.out 2> ~/round-lint.err
+    "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base --findings ~/round-lint.findings.jsonl > ~/round-lint.out 2> ~/round-lint.err
     lint_rc=$?
     lint_secs=$(( $(date +%s) - t_lint ))
     if [ "$lint_rc" -ne 0 ]; then
-        {
-            while IFS= read -r finding; do
-                echo "member=$(lint_culprit "$HOME/round-work" "$finding") $finding"
-            done < ~/round-lint.out
-            cat ~/round-lint.err
-        } > ~/round-lint.report
+        cat ~/round-lint.out ~/round-lint.err > ~/round-lint.report
         phase_failed lint "$lint_rc"
         echo "round-vm: LINT: RED (spira-lint rc=$lint_rc)" >&2
         head -60 ~/round-lint.report >&2
@@ -1003,6 +965,7 @@ if [ -n "$lint" ] && { [ "${lint_rc:-0}" -ne 0 ] || [ -n "$fence_fail" ]; }; the
     mkdir -p "$early"
     if [ "${lint_rc:-0}" -ne 0 ]; then
         cp ~/round-lint.report "$early/spira-lint.out" 2>/dev/null || cp ~/round-lint.out "$early/spira-lint.out"
+        cp ~/round-lint.findings.jsonl "$early/spira-lint.findings.jsonl" 2>/dev/null
         echo "red 1 ${lint_secs:-0} - - - $lint_rc" > "$early/spira-lint.result"
     fi
     echo "$(date +%s) verdict RED lint-or-fence" >> "$early/run.events"

@@ -3614,7 +3614,7 @@ mod cut_tests {
             d,
             with_deny_list,
             &[("sp-8br220", "pilgrim.rs"), ("sp-x", "other.rs")],
-            "member=sp-8br220 r: pilgrim.rs:161: y\n",
+            &[("r", "pilgrim.rs")],
             None,
             None,
         )
@@ -3624,7 +3624,7 @@ mod cut_tests {
         d: &Path,
         with_deny_list: bool,
         members: &[(&str, &str)],
-        lint_out: &str,
+        findings: &[(&str, &str)],
         suites: Option<&str>,
         batch: Option<&str>,
     ) -> (Result<String, String>, PathBuf) {
@@ -3655,7 +3655,15 @@ mod cut_tests {
             std::fs::write(pass.join(f), "").unwrap();
         }
         std::fs::write(pass.join("spira-lint.result"), "red\n").unwrap();
-        std::fs::write(pass.join("spira-lint.out"), lint_out).unwrap();
+        std::fs::write(pass.join("spira-lint.out"), "r: plain finding text\n").unwrap();
+        let records: String = findings
+            .iter()
+            .map(|(rule, path)| {
+                let f = spira_lint::Finding { rule: Box::leak(rule.to_string().into_boxed_str()), path: path.to_string(), line: Some(1), message: "bad".into() };
+                format!("{}\n", spira_lint::record::FindingRecord::of(&f, Some(("spira-lint/src/rules/r.rs", None))).to_line())
+            })
+            .collect();
+        std::fs::write(pass.join(vm::LINT_FINDINGS_FILE), records).unwrap();
         if with_deny_list {
             std::fs::write(pass.join("deny-list"), "# test-registry deny-list at=7 rows=0\n").unwrap();
         }
@@ -3706,12 +3714,12 @@ mod cut_tests {
     #[test]
     fn a_lint_red_named_to_the_pass_ejects_every_member_it_names_with_all_their_lines() {
         let d = testkit::TempDir::new("batcher-cut-attr-lint-suites");
-        let out = "member=sp-a r: a.rs:1: one\nmember=sp-b r: b.rs:2: two\nmember=sp-a r: a.rs:3: three\n";
+        let out = [("r", "a.rs"), ("r", "b.rs"), ("r2", "a.rs")];
         let (line, calls) = lint_red_attribution_of(
             &d,
             true,
             &[("sp-a", "a.rs"), ("sp-b", "b.rs"), ("sp-c", "c.rs")],
-            out,
+            &out,
             Some("spira-lint"),
             Some("b-1"),
         );
@@ -3722,26 +3730,26 @@ mod cut_tests {
         let ejects: Vec<&str> = q.split("CALL ").filter(|c| c.contains("eject")).collect();
         assert_eq!(ejects.len(), 2, "{q:?}");
         let a = ejects.iter().find(|l| l.contains("sp-a")).unwrap();
-        assert!(a.contains("a.rs:1: one") && a.contains("a.rs:3: three"), "{a:?}");
+        assert!(a.contains("r: a.rs:1: bad") && a.contains("r2: a.rs:1: bad"), "{a:?}");
         let b = ejects.iter().find(|l| l.contains("sp-b")).unwrap();
-        assert!(b.contains("b.rs:2: two") && !b.contains("a.rs"), "{b:?}");
+        assert!(b.contains("r: b.rs:1: bad") && !b.contains("a.rs"), "{b:?}");
     }
 
     #[test_id(tvo99ct)]
     #[test]
     fn a_lint_red_line_no_member_owns_blocks_the_round_and_quotes_the_line() {
         let d = testkit::TempDir::new("batcher-cut-attr-lint-base");
-        let out = "member=sp-a r: a.rs:1: one\nmember=the base itself (z) r: h.rs:3: z\n";
+        let out = [("r", "a.rs"), ("r", "h.rs")];
         let (line, _) = lint_red_attribution_of(
             &d,
             true,
             &[("sp-a", "a.rs"), ("sp-b", "b.rs"), ("sp-c", "c.rs")],
-            out,
+            &out,
             Some("spira-lint"),
             None,
         );
         let line = line.unwrap();
-        assert!(line.contains("\"end\":\"blocked\"") && line.contains("h.rs:3"), "{line}");
+        assert!(line.contains("\"end\":\"blocked\"") && line.contains("h.rs:1"), "{line}");
     }
 
     #[test_id(t68mpx7)]

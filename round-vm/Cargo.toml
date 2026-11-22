@@ -23,11 +23,6 @@ path = "tests/image_preflight.rs"
 required-features = ["integration"]
 
 [[test]]
-name = "lint_culprit"
-path = "tests/lint_culprit.rs"
-required-features = ["integration"]
-
-[[test]]
 name = "preflight_guest_harness"
 path = "tests/preflight_guest_harness.rs"
 required-features = ["integration"]
