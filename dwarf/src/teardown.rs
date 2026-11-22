@@ -77,6 +77,21 @@ pub fn remove_session_tmpdir(dir: &Path) -> u64 {
     }
 }
 
+/// What became of the fast-tier output a reopen note refers to.
+enum Kept {
+    Entry(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for Kept {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kept::Entry(id) => write!(f, "Full output: work logs {id} fast-tier.out"),
+            Kept::Failed(e) => write!(f, "full output not kept: {e}"),
+        }
+    }
+}
+
 impl Run<'_> {
     /// A refused `work submit` ends a session with nothing the dwarf can do: say so in the inbox
     /// (one line for the bead), and page once when a second bead says it inside the window.
@@ -198,7 +213,7 @@ impl Run<'_> {
 
     /// Keeps the whole fast-tier output as a `send-back-logs` entry; answers the note line that
     /// names it, or says it was not kept. A failed keep never blocks the reopen.
-    fn keep_fast_tier_output(&self, red: &crate::fast_tier::Red) -> String {
+    fn keep_fast_tier_output(&self, red: &crate::fast_tier::Red) -> Kept {
         let lc = |args: &[String]| -> Result<String, String> {
             let o = self.d.exec.exec("spira-lc", args, None, None);
             if o.success() { Ok(o.stdout) } else { Err(o.stderr.lines().next().unwrap_or("").to_string()) }
@@ -206,10 +221,10 @@ impl Run<'_> {
         let days = self.conf.i("SPIRA_SENDBACK_KEEP_DAYS") as u32;
         let files = [("fast-tier.out".to_string(), red.text.as_bytes().to_vec())];
         match spira_config::ejection::keep_and_reference(&lc, self.run_dir(), &[&self.s.bead], "fast-tier", &files, days) {
-            Ok(id) => format!("Full output: work logs {id} fast-tier.out"),
+            Ok(id) => Kept::Entry(id),
             Err(e) => {
                 self.log(&format!("{}: {} fast-tier output not kept: {e}", self.f(), self.s.bead));
-                format!("full output not kept: {e}")
+                Kept::Failed(e.to_string())
             }
         }
     }
