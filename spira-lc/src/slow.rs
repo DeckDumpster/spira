@@ -77,6 +77,11 @@ impl Proc for CountedProc {
     }
 }
 
+#[cfg(test)]
+pub fn process_children() -> u64 {
+    PROCESS_CHILDREN.load(Ordering::Relaxed)
+}
+
 fn children_started_series(started: u64, pushed: u64, at: std::time::SystemTime) -> spira_otel::metrics::Series {
     spira_otel::metrics::Series { name: CHILDREN_STARTED.into(), value: started.saturating_sub(pushed) as f64, labels: Vec::new(), at }
 }

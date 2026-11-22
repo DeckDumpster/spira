@@ -33,6 +33,11 @@ pub struct Shipping {
 }
 
 /// `SPIRA_LC_SHIP_DIR`, or `SPIRA_RUN/lc-ship` while it is unset.
+/// The uploader every lc-serve upload goes through: each curl it starts is counted.
+fn counted_uploader(dest: Dest, creds: Option<S3Creds>, deadline: Duration) -> Uploader {
+    Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline }
+}
+
 fn ship_dir(run: &Path) -> PathBuf {
     ship_dir_at(spira_config::process::cfg("SPIRA_LC_SHIP_DIR").ok(), run)
 }
@@ -59,7 +64,7 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline: PUT_DEADLINE };
+        let put = counted_uploader(dest, creds, PUT_DEADLINE);
         let cfg = ShipConfig {
             dir: ship_dir(run),
             max_mains: MAX_MAINS,
@@ -173,7 +178,7 @@ pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline: TABLE_PUT_DEADLINE };
+        let put = counted_uploader(dest, creds, TABLE_PUT_DEADLINE);
         dolt::ship(&put, Path::new(sync), Path::new(state), db, stamp, head)
     };
     match run() {
@@ -218,7 +223,7 @@ pub fn admin_archive_put(args: &[String], backup_url: &str) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        Ok(Uploader { dest, creds, proc: crate::slow::CountedProc::sys(), deadline: ARCHIVE_PUT_DEADLINE })
+        Ok(counted_uploader(dest, creds, ARCHIVE_PUT_DEADLINE))
     }) {
         Ok(u) => u,
         Err(e) => return (CANNOT_TELL, format!("admin-archive-put: {e}")),
@@ -328,6 +333,16 @@ mod tests {
         assert_eq!(ship_dir_at(Some("ssd/ship".into()), run), Path::new("ssd/ship"));
         assert_eq!(ship_dir_at(Some(String::new()), run), Path::new("run-here/lc-ship"));
         assert_eq!(ship_dir_at(None, run), Path::new("run-here/lc-ship"));
+    }
+
+    #[test_id(tq8m1ze)]
+    #[test]
+    fn an_upload_off_any_request_thread_moves_the_whole_process_child_count() {
+        let up = counted_uploader(Dest::File(PathBuf::from("off")), None, PUT_DEADLINE);
+        let before = crate::slow::process_children();
+        let spec = runtime::ports::ProcSpec { prog: "spira-no-such-program".into(), args: vec![], stdin: vec![], deadline: Duration::from_secs(1) };
+        let _ = std::thread::spawn(move || up.proc.run(&spec)).join().unwrap();
+        assert!(crate::slow::process_children() > before);
     }
 
     #[test_id(tu4wjdt)]
