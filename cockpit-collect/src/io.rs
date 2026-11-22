@@ -357,7 +357,7 @@ fn with_labels(raw: Option<String>, labels: &str) -> Option<String> {
     serde_json::to_string(&kept).ok()
 }
 
-const LIVE_ARGS: [&str; 4] = ["list", "--limit", "0", "--json"];
+const LIVE_ARGS: [&str; 5] = ["list", "--brief", "--limit", "0", "--json"];
 
 fn read_json(args: &[&str]) -> Option<String> {
     content(args).map(|s| json_only(&s).to_string())
@@ -377,7 +377,18 @@ fn pane_ttl() -> i64 {
 
 /// The one unscoped read of live beads every label-scoped view is filtered from.
 fn live_base() -> Option<String> {
-    base_read("live", pane_ttl(), || read_json(&LIVE_ARGS))
+    base_read("live", pane_ttl(), || {
+        if fixture_mode() {
+            let sim: Vec<&str> = LIVE_ARGS.iter().copied().filter(|a| *a != "--brief").collect();
+            return read_json(&sim);
+        }
+        live_on(&spira_store::lc_call::LcClient::configured().ok()?)
+    })
+}
+
+/// [`live_base`]'s store read through `lc`: brief rows, since no probe reads a body column.
+pub fn live_on(lc: &spira_store::lc_call::LcClient) -> Option<String> {
+    content_on(lc, &LIVE_ARGS, 1).map(|s| json_only(&s).to_string())
 }
 
 /// Live beads only, what a default `list` answers; its own shared read, so no row's status is compared.
@@ -858,5 +869,21 @@ mod history_tests {
             let limits: Vec<&String> = req.windows(2).filter(|w| w[0] == "--limit").map(|w| &w[1]).collect();
             assert!(limits.iter().all(|l| *l == "0"), "{req:?}");
         }
+    }
+
+    
+    #[test_id(ti3a3n9)]
+    #[test]
+    fn live_read_asks_the_store_for_brief_rows_without_a_limit() {
+        let row = serde_json::json!({"id": "a", "status": "open", "labels": ["plan"]});
+        let fake = Arc::new(Content::new(vec![row]));
+        let lc = LcClient::over(fake.clone(), true);
+        let got = live_on(&lc).unwrap();
+        assert_eq!(json_rows(Some(got)).unwrap().len(), 1);
+        let reqs = fake.requests();
+        assert_eq!(reqs.len(), 1);
+        assert!(reqs[0].iter().any(|a| a == "list"), "{:?}", reqs[0]);
+        assert!(reqs[0].iter().any(|a| a == "--brief"), "{:?}", reqs[0]);
+        assert!(reqs[0].windows(2).any(|w| w[0] == "--limit" && w[1] == "0"), "{:?}", reqs[0]);
     }
 }
