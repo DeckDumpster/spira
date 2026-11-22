@@ -117,8 +117,8 @@ impl Machine for Fake {
             }
             "plan" if args.get(1).map(String::as_str) == Some("items") => {
                 self.content_reads += 1;
-                let ids = flag(args, "--ids").unwrap_or_default();
                 let only_open = args.iter().any(|a| a == "--open");
+                let ids = flag(args, "--ids").unwrap_or_else(|| self.content.keys().cloned().collect::<Vec<_>>().join(","));
                 let rows: Vec<Value> = ids
                     .split(',')
                     .filter_map(|i| self.content.get(i).map(|st| (i, st)))
@@ -1193,6 +1193,49 @@ fn reconcile_closed_reports_an_ask_hold_as_refused() {
 
 // ---- reconcile-content: epics -----------------------------------------------------------
 
+#[test_id(tprymqs)]
+#[test]
+fn a_full_reconcile_pass_reads_only_the_beads_bd_holds_open() {
+    let w = super::world::World::new();
+    for n in 0..250 {
+        let id = format!("sp-old{n:03}");
+        w.file(&id, "task", None, &[]);
+        w.ok(&["create-bead", &id, "--ready"]);
+        w.drop(&id);
+        w.plan.borrow_mut().get_mut(&id).unwrap().status = "closed".into();
+    }
+    w.file("sp-open", "task", None, &[]);
+    w.ok(&["create-bead", "sp-open", "--ready"]);
+    w.drop("sp-open");
+    w.file("sp-dec", "decision", None, &["ask"]);
+    w.ok(&["create-ask", "sp-dec"]);
+    w.ok(&["close-ask", "sp-dec", "--exit", "answered", "--quote", "ship it", "--actor", "operator", "--channel", "pane"]);
+    w.file("sp-epic", "epic", None, &[]);
+    w.file("sp-kid", "task", Some("sp-epic"), &[]);
+    w.ok(&["create-bead", "sp-kid", "--ready"]);
+    w.drop("sp-kid");
+    w.plan.borrow_mut().get_mut("sp-kid").unwrap().status = "closed".into();
+    w.file("sp-live-epic", "epic", None, &[]);
+    w.file("sp-live-kid", "task", Some("sp-live-epic"), &[]);
+    w.ok(&["create-bead", "sp-live-kid", "--ready"]);
+    w.plan.borrow_mut().get_mut("sp-live-kid").unwrap().status = "closed".into();
+    w.argv.borrow_mut().clear();
+
+    let (mut m, mut b) = (&w, &w);
+    let dry = reconcile_content(&[], &mut m, &mut b);
+    assert_eq!(dry.code, APPLIED, "{dry:?}");
+    let wants: Vec<&str> = dry.stdout.lines().filter(|l| l.starts_with("would close")).collect();
+    assert_eq!(wants.len(), 3, "{}", dry.stdout);
+    for id in ["sp-open", "sp-dec", "sp-epic"] {
+        assert!(wants.iter().any(|l| l.contains(id)), "{id}: {}", dry.stdout);
+    }
+    assert!(!dry.stdout.contains("sp-live-epic"), "a child closed in bd with a live record is not terminal: {}", dry.stdout);
+    let sent = w.argv.borrow().clone();
+    assert!(sent.iter().any(|a| a[0] == "list" && a.iter().any(|x| x.split(',').any(|i| i == "sp-live-kid"))), "the child's record is read by id: {sent:?}");
+    assert!(!sent.iter().any(|a| a.windows(2).any(|p| p[0] == "--ids" && p[1].contains("sp-old"))), "a closed bead's id was sent: {sent:?}");
+    assert!(!sent.iter().any(|a| a[0] == "list" && !a.iter().any(|x| x == "--ids")), "a whole list walk: {sent:?}");
+}
+
 #[test_id(t3xxhun)]
 #[test]
 fn reconcile_content_closes_an_epic_once_every_child_is_terminal_and_never_one_with_none() {
@@ -1307,7 +1350,7 @@ fn reconcile_content_since_seq_and_apply_by_id_never_list_every_record() {
     assert_eq!(b.closed.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>(), ["sp-a"]);
     assert_eq!(f.whole_lists, 0, "a scoped pass reads the records of its ids only");
     reconcile_content(&[], &mut f, &mut b);
-    assert_eq!(f.whole_lists, 1, "a full pass lists once");
+    assert_eq!(f.whole_lists, 0, "a full pass reads the records of the open beads only");
 }
 
 #[test_id(tltxtes)]

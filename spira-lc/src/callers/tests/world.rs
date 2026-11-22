@@ -31,6 +31,8 @@ pub struct World {
     pub plan: RefCell<BTreeMap<String, Item>>,
     /// Every bd status write, as `close <id>` or `reopen <id>`.
     pub writes: RefCell<Vec<String>>,
+    /// The argv of every call the machine answered, in order.
+    pub argv: RefCell<Vec<Vec<String>>>,
 }
 
 impl World {
@@ -41,7 +43,7 @@ impl World {
             Config { min_lock_ttl_ms: 1_000 },
         )
         .unwrap();
-        World { store: Store::new(c, 1_000), n: Cell::new(0), plan: RefCell::new(BTreeMap::new()), writes: RefCell::new(Vec::new()) }
+        World { store: Store::new(c, 1_000), n: Cell::new(0), plan: RefCell::new(BTreeMap::new()), writes: RefCell::new(Vec::new()), argv: RefCell::new(Vec::new()) }
     }
 
     /// A bead in the planning plane, open.
@@ -98,6 +100,7 @@ impl World {
 
 impl Machine for &World {
     fn call(&mut self, args: &[String]) -> (i32, String) {
+        self.argv.borrow_mut().push(args.to_vec());
         if args.first().map(String::as_str) == Some("plan") {
             return self.plan_answer(args);
         }

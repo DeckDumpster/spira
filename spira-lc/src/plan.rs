@@ -191,7 +191,7 @@ fn inflow_args(args: &[String]) -> Result<u32, String> {
     flag(args, "--window-secs").and_then(|w| w.parse().ok()).ok_or_else(|| "plan inflow: --window-secs <n> is required".to_string())
 }
 
-const USAGE: &str = "usage: plan items (--ids a,b|- | --label L [--status a,b] | --external-contains S | --type T) [--full] [--open] | plan edges --ids a,b|- [--dependents] | plan children --ids a,b|- [--full] [--open] | plan inflow --window-secs N | plan repo-labels --valid a,b | plan watermark | plan stamp | plan schema";
+const USAGE: &str = "usage: plan items (--ids a,b|- | --label L [--status a,b] | --external-contains S | --type T | --open) [--full] [--open] | plan edges --ids a,b|- [--dependents] | plan children --ids a,b|- [--full] [--open] | plan inflow --window-secs N | plan repo-labels --valid a,b | plan watermark | plan stamp | plan schema";
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
@@ -210,7 +210,8 @@ fn items(args: &[String], conn: &dyn Sql, cdb: &str) -> Result<Vec<Value>, Strin
         (None, Some(needle), None, None) => by_external_ref(conn, cdb, needle, full, open),
         (None, None, Some(label), None) => by_label(conn, cdb, label, flag(args, "--status"), full),
         (None, None, None, Some(kind)) => by_type(conn, cdb, kind, full, open),
-        _ => Err("plan items: exactly one of --ids <a,b,…>, --external-contains <text>, --label <label> [--status a,b] or --type <type> is required".into()),
+        (None, None, None, None) if open && flag(args, "--status").is_none() => every_open(conn, cdb, full),
+        _ => Err("plan items: exactly one of --ids <a,b,…>, --external-contains <text>, --label <label> [--status a,b], --type <type> or --open alone is required".into()),
     }
 }
 
@@ -749,6 +750,13 @@ fn by_type(conn: &dyn Sql, cdb: &str, kind: &str, full: bool, open: bool) -> Res
     fetch_with(conn, cdb, &ids, full, open)
 }
 
+/// Every bead bd holds open.
+fn every_open(conn: &dyn Sql, cdb: &str, full: bool) -> Result<Vec<Value>, String> {
+    let found = rows_of(conn, &format!("SELECT id FROM {cdb}.issues WHERE status <> 'closed' ORDER BY id"))?;
+    let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
+    fetch_with(conn, cdb, &ids, full, true)
+}
+
 fn fetch_with(conn: &dyn Sql, cdb: &str, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
     // An empty id list is an empty answer: it needs no store, so it is decided before the
     // content database is resolved (r-auto-148: an unconfigured test process was refused here).
@@ -1057,6 +1065,23 @@ mod tests {
         assert!(items(&[], &c, DB).is_err());
         assert!(edges(&[], &c, DB).unwrap_err().contains("--ids"));
         assert_eq!(cmd_plan(&a(&["nope"])).0, CANNOT_TELL);
+    }
+
+    #[test_id(tdged6f)]
+    #[test]
+    fn items_open_alone_answers_the_non_closed_rows_and_a_second_selector_is_still_refused() {
+        let c = Recording::new();
+        let rows = items(&a(&["--open"]), &c, DB).unwrap();
+        assert_eq!(rows.len(), 2);
+        let seen = c.seen.lock().unwrap().clone();
+        assert!(seen[0].contains("status <> 'closed'") && !seen[0].contains("issue_type ="), "{seen:?}");
+        assert!(seen[1].contains("status <> 'closed'"), "the issues read stays open-only: {seen:?}");
+        for second in [&["--open", "--type", "epic", "--ids", "a"][..], &["--open", "--label", "L", "--type", "epic"]] {
+            let err = items(&a(second), &c, DB).unwrap_err();
+            assert!(err.contains("exactly one of"), "{err}");
+        }
+        assert!(items(&a(&["--open", "--status", "open"]), &c, DB).unwrap_err().contains("exactly one of"));
+        assert!(items(&a(&["--full"]), &c, DB).unwrap_err().contains("exactly one of"));
     }
 
     #[test_id(tr5m1ak)]

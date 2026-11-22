@@ -48,12 +48,6 @@ fn items_of(m: &mut dyn Machine, ids: &[String], extra: &[&str]) -> Result<Vec<V
     Ok(out)
 }
 
-/// The lifecycle records, by bead id: `(state, reason)`.
-fn records(m: &mut dyn Machine) -> Result<BTreeMap<String, (String, String)>, String> {
-    let rows = spira_lc::list_pages(&[], |a| m.call(a))?;
-    Ok(rows.iter().map(|r| (s(r, "bead_id"), (s(r, "state"), s(r, "reason")))).collect())
-}
-
 /// The lifecycle records of `ids` alone, by bead id.
 fn records_of(m: &mut dyn Machine, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
     let mut out = BTreeMap::new();
@@ -128,10 +122,19 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
         scope = Some(keys);
     }
     let scoped = since.is_some() || !only.is_empty();
+    let full_pass = scope.is_none() && only.is_empty();
+    let open_rows = if full_pass {
+        match plan(m, &["items", "--open"]) {
+            Ok(rows) => rows,
+            Err(e) => return cannot(format!("content store unreadable: {e}")),
+        }
+    } else {
+        Vec::new()
+    };
     let recs = match &scope {
         Some(keys) => records_of(m, &keys.iter().cloned().collect::<Vec<_>>()),
         None if !only.is_empty() => records_of(m, &only),
-        None => records(m),
+        None => records_of(m, &open_rows.iter().map(|r| s(r, "id")).collect::<Vec<_>>()),
     };
     let recs = match recs {
         Ok(r) => r,
@@ -145,7 +148,9 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let terminal_ids: Vec<String> = recs.iter().filter(|(id, (st, _))| terminal(st) && in_scope(id)).map(|(id, _)| id.clone()).collect();
     let by_id = scope.is_none() && !only.is_empty();
     let named_open = if by_id { items_of(m, &only, &["--open"]) } else { Ok(Vec::new()) };
-    let work_open = if by_id { named_open.clone().map(|rows| rows.into_iter().filter(|r| terminal_ids.contains(&s(r, "id"))).collect()) } else { items_of(m, &terminal_ids, &["--open"]) };
+    let work_open = if full_pass {
+        Ok(open_rows.iter().filter(|r| terminal_ids.contains(&s(r, "id"))).cloned().collect())
+    } else if by_id { named_open.clone().map(|rows| rows.into_iter().filter(|r| terminal_ids.contains(&s(r, "id"))).collect()) } else { items_of(m, &terminal_ids, &["--open"]) };
     match work_open {
         Ok(open) => {
             // A no-record type with a record left from before (an epic, an ask's decision bead)
@@ -162,7 +167,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     // it never holds them back.
     let mut unread = Vec::new();
     if scope.is_none() {
-        match closed_asks(m, &only, named_open.as_deref().ok().filter(|_| by_id)) {
+        match closed_asks(m, &only, if full_pass { Some(&open_rows) } else { named_open.as_deref().ok().filter(|_| by_id) }) {
             Ok(c) => closes.extend(c),
             Err(e) => unread.push(e),
         }
@@ -170,9 +175,11 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let epics = match &scope {
         Some(keys) => parents_of(m, &keys.iter().cloned().collect::<Vec<_>>()),
         None if !only.is_empty() => Ok(only.clone()),
-        None => plan(m, &["items", "--type", "epic", "--open"]).map(|i| i.iter().map(|r| s(r, "id")).collect()),
+        None => Ok(Vec::new()),
     };
-    match epics.and_then(|e| complete_epics(m, &recs, scoped, &e, named_open.as_deref().ok().filter(|_| by_id))) {
+    let epic_rows: Vec<Value> = open_rows.iter().filter(|r| s(r, "issue_type") == "epic").cloned().collect();
+    let known_open = if full_pass { Some(epic_rows.as_slice()) } else { named_open.as_deref().ok().filter(|_| by_id) };
+    match epics.and_then(|e| complete_epics(m, &recs, scoped || full_pass, &e, known_open)) {
         Ok(c) => closes.extend(c),
         Err(e) => unread.push(e),
     }
