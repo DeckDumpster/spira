@@ -261,7 +261,6 @@ dependencies = [
  "libc",
  "mail",
  "regex",
- "release",
  "runtime",
  "serde",
  "serde_json",
@@ -1780,6 +1779,7 @@ name = "rule"
 version = "0.1.0"
 dependencies = [
  "bead",
+ "release",
  "serde_json",
  "sop",
  "spira-config",

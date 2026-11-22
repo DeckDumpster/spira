@@ -153,7 +153,7 @@ A session says two different kinds of things about work, and you must record the
 - **Promised:** the session says it will do something. *"I'll verify the sweep runs beadless."*
   This is an **outstanding obligation**, not a result. File it as work still to be done —
   a note on the relevant bead, or a new bead if none exists. Never file it as a completed fact.
-- **Performed:** the session reports the result of something it actually ran. *"Ran sweep.sh — 0 beads filed, exit 0."*
+- **Performed:** the session reports the result of something it actually ran. *"Ran the sweep — 0 beads filed, exit 0."*
   This is evidence. Record it as such, and carry what the check actually printed.
 
 **The two are never merged.** A session that says it will check something and then — later, off-screen, in a turn you did not observe — turns out to have been right is not the same as a session that checked it. The check was not in the transcript you read. You cannot confirm it. File the intention as an obligation; leave the evidence blank.

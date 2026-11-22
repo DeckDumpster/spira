@@ -212,7 +212,7 @@ a guideline. Silence is indistinguishable from a pass pointed at the wrong thing
 shape is exactly what this rule exists to surface (`law-absence-needs-a-positive-control`).
 
 **Write the lastpass stamp on every completed pass** (success or failure). The time trigger
-in `mimir-trigger.sh` reads `{{RUN}}/mimir.lastpass` to decide whether enough time
+in `mimir-trigger.sh`, which reads `{{RUN}}/mimir.lastpass` to decide whether enough time
 has elapsed since a pass last ran. It must not read the watermark for this purpose: when the
 census substrate is unreadable every pass holds the watermark, the elapsed-since-watermark
 grows without bound, and the time trigger fires on every subsequent tick (db-l85n). Write

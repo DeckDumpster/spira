@@ -197,7 +197,7 @@ Then leave the bead open and exit non-zero.
 
 A bead whose `external_ref` starts with `incident:` was filed by a periodic watcher. The
 watcher fires on a fixed interval, so closing before the condition clears means the next tick
-re-files the same ref, incident.sh reopens the bead, and another dwarf is called to repeat
+re-files the same ref, the bead is reopened (incident.sh), and another dwarf is called to repeat
 the diagnosis.
 
 **Before closing, re-read the value the watcher reads and verify it has cleared:**

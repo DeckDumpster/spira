@@ -108,6 +108,57 @@ fn names_verb(content: &str, tool: &str, verb: &str) -> bool {
         || content.contains(&format!("{verb}|"))
 }
 
+const COCKPIT: &str = "{{COCKPIT}}/";
+const SPIRA_HOME: &str = "{{SPIRA_HOME}}/";
+const BIN_PREFIX: &str = "../bin/";
+
+fn placeholder_tokens(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for prefix in [COCKPIT, SPIRA_HOME] {
+        let mut rest = line;
+        while let Some(at) = rest.find(prefix) {
+            let tail = &rest[at..];
+            let end = tail.find(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '|' | ')')).unwrap_or(tail.len());
+            out.push(tail[..end].trim_end_matches(['.', ',', ';', ':']));
+            rest = &tail[end.max(prefix.len())..];
+        }
+    }
+    out
+}
+
+/// Resolves a placeholder-rooted path against a release tree: `{{COCKPIT}}/x` is `cockpit/x`,
+/// `{{SPIRA_HOME}}/../bin/x` a shipped bin, `{{SPIRA_HOME}}/x` is `spira/x`.
+pub fn placeholder_resolver<'a>(root: &'a std::path::Path, bins: &'a std::collections::BTreeSet<String>) -> impl Fn(&str) -> bool + 'a {
+    move |token: &str| {
+        if let Some(rel) = token.strip_prefix(COCKPIT) {
+            return root.join("cockpit").join(rel).exists();
+        }
+        let Some(rel) = token.strip_prefix(SPIRA_HOME) else { return false };
+        match rel.strip_prefix(BIN_PREFIX) {
+            Some(name) => bins.contains(name),
+            None => root.join("spira").join(rel).exists(),
+        }
+    }
+}
+
+/// What a persona prompt names that the release does not have, as `runes/<name>:<line>: <token>`.
+pub fn prompt_findings(
+    name: &str,
+    text: &str,
+    resolve_path: &dyn Fn(&str) -> bool,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let mut miss: Vec<String> = placeholder_tokens(line).into_iter().filter(|t| !resolve_path(t)).map(str::to_string).collect();
+        miss.extend(missing_refs(&extract_refs(line).into_iter().filter(|r| !r.tool.starts_with("{{")).collect::<Vec<_>>(), lookup));
+        for t in miss {
+            out.push(format!("runes/{name}:{}: {t}", i + 1));
+        }
+    }
+    out
+}
+
 pub fn audit(
     memories: &BTreeMap<String, serde_json::Value>,
     lookup: &dyn Fn(&str) -> Option<String>,
@@ -124,6 +175,9 @@ pub fn audit(
 }
 
 pub fn finding_title(f: &Finding) -> String {
+    if f.slug.starts_with("runes/") {
+        return format!("Persona prompt {} names a tool or path that does not exist: {}", f.slug, f.missing.join(", "));
+    }
     format!("Statute {} names a tool or verb that does not exist: {}", f.slug, f.missing.join(", "))
 }
 
@@ -145,7 +199,18 @@ pub fn release_lookup(home: &str) -> impl Fn(&str) -> Option<String> {
     let home = std::path::Path::new(home);
     let root = home.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     let dirs = [home.to_path_buf(), root.clone(), root.join("bin"), root.join("model-bin")];
-    move |name: &str| dirs.iter().map(|d| d.join(name)).find(|p| p.is_file()).map(|p| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned())
+    let read = move |name: &str| dirs.iter().map(|d| d.join(name)).find(|p| p.is_file()).map(|p| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned());
+    move |name: &str| read(name).map(|text| follow_shim(&text, &read))
+}
+
+/// A shim script's verbs live in the binary it execs, so its text is read together with that
+/// binary's: `exec -a "$0" <bin>` appends what `lookup(<bin>)` returns.
+pub fn follow_shim(text: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
+    let target = text.lines().find_map(|l| l.trim().strip_prefix("exec -a \"$0\" ")).and_then(|r| r.split_whitespace().next());
+    match target.and_then(lookup) {
+        Some(bin) => format!("{text}\n{bin}"),
+        None => text.to_string(),
+    }
 }
 
 /// The findings `audit --file` files, in order: a finding whose slug appears in any open title
@@ -158,6 +223,9 @@ pub fn to_file<'a>(findings: &'a [Finding], open_titles: &[String], max: usize) 
 
 /// The body of the bead filed for a finding titled `title`.
 pub fn bead_body(title: &str) -> String {
+    if title.starts_with("Persona prompt ") {
+        return format!("{title}\n\nThe prompt names the above and the activated release has no such tool or path. Amend the prompt to name what exists.\n");
+    }
     format!("{title}\n\nThe statute names the above and the activated release has no such tool or verb. Build it, or amend the statute to name what exists (rule.sh enact with --tool).\n")
 }
 
@@ -211,5 +279,44 @@ mod tests {
         assert!(audit(&m, &shipped).is_empty());
         let other_verb = |n: &str| (n == "statute-check").then(|| "usage: statute-check [opts]".to_string());
         assert_eq!(audit(&m, &other_verb).len(), 1, "positive control: a verb the binary lacks is a finding");
+    }
+
+    #[test]
+    fn a_missing_cockpit_path_is_found_on_its_line() {
+        let none = |_: &str| false;
+        assert_eq!(prompt_findings("x.md", "ok\n{{COCKPIT}}/no-such.sh", &none, &release), vec!["runes/x.md:2: {{COCKPIT}}/no-such.sh".to_string()]);
+    }
+
+    #[test]
+    fn a_shipped_bin_behind_spira_home_is_clean() {
+        let bins: std::collections::BTreeSet<String> = ["reply".to_string()].into();
+        let root = std::path::Path::new("/nonexistent-root");
+        let r = placeholder_resolver(root, &bins);
+        assert!(prompt_findings("x.md", "{{SPIRA_HOME}}/../bin/reply x", &r, &release).is_empty());
+        assert_eq!(prompt_findings("x.md", "{{SPIRA_HOME}}/../bin/gone x", &r, &release).len(), 1);
+    }
+
+    #[test]
+    fn a_shim_is_judged_by_the_binary_it_execs() {
+        let shim = |n: &str| match n {
+            "t.sh" => Some("exec -a \"$0\" tbin --home x \"$@\"".to_string()),
+            "tbin" => Some("\"ideas\" => run".to_string()),
+            _ => None,
+        };
+        let look = |n: &str| shim(n).map(|t| follow_shim(&t, &shim));
+        assert!(prompt_findings("x.md", "see t.sh ideas", &|_| false, &look).is_empty());
+        assert_eq!(prompt_findings("x.md", "see t.sh gone", &|_| false, &look).len(), 1);
+    }
+
+    #[test]
+    fn a_script_the_release_lacks_is_flagged() {
+        let none = |_: &str| false;
+        assert_eq!(prompt_findings("x.md", "run gone.sh now", &none, &release), vec!["runes/x.md:1: gone.sh".to_string()]);
+    }
+
+    #[test]
+    fn a_placeholder_rooted_script_is_not_judged_by_base_name() {
+        let present = |t: &str| t == "{{COCKPIT}}/panel-run.sh";
+        assert!(prompt_findings("x.md", "{{COCKPIT}}/panel-run.sh", &present, &release).is_empty());
     }
 }
