@@ -522,7 +522,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "halted", "held", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
+    assert_eq!(rows, ["blind", "diluted", "halted", "held", "orphan_paged", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
 }
 
 #[test_id(t94hd7b)]
