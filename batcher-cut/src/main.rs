@@ -3021,6 +3021,18 @@ mod tests {
         assert_eq!(blocks_attribution(&["test-a.sh".into()], &none, &[], None), None);
     }
 
+    #[test_id(ttj3ecv)]
+    #[test]
+    fn a_red_fence_or_lint_result_is_a_red_the_round_can_attribute() {
+        let dir = testkit::TempDir::new("batcher-cut-red-filter");
+        std::fs::write(dir.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
+        let red = vm::red_filters(dir.path());
+        assert_eq!(red, ["fence-x"]);
+        assert_eq!(blocks_attribution(&[], &[], &red, Some(dir.path())), None);
+        let why = blocks_attribution(&[], &[], &[], Some(dir.path())).expect("blocks");
+        assert!(why.contains("no red lint or fence"), "{why}");
+    }
+
     #[test_id(tt91g2o)]
     #[test]
     fn named_suites_narrow_the_corpus_and_drop_names_the_tree_lacks() {
