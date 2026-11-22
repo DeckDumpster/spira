@@ -10,6 +10,7 @@ pub mod jq;
 pub mod launch;
 pub mod loopworld;
 pub mod pilgrim;
+pub mod pilgrim_land;
 pub mod probe;
 pub mod proctrace;
 pub mod registryworld;

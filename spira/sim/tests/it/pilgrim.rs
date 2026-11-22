@@ -273,3 +273,124 @@ fn a_pilgrim_world_takes_its_tree_from_the_release_so_tree_is_a_usage_error() {
     let (code, err) = refused_pilgrim_up(&["--tree", "HEAD"], Some("release"));
     assert_eq!(code, Some(2), "{err}");
 }
+
+mod landing {
+    use spira_sim::pilgrim_land::{self, CargoTests, RoundRegistry};
+    use spira_sim::registryworld::Registry;
+    use spira_sim::world::git;
+    use std::path::Path;
+
+    const AT_MS: u64 = 5_000_000;
+    const LIB: &str = "pilgrim-fixture/crate/src/lib.rs";
+
+    struct AtRegistry<'a>(&'a Registry);
+    impl RoundRegistry for AtRegistry<'_> {
+        fn deny_list(&self) -> Result<String, String> {
+            let dir = self.0.pass_dir(AT_MS, "pilgrim")?;
+            std::fs::read_to_string(dir.join(batcher_cut::vm::DenySnapshot::FILE)).map_err(|e| e.to_string())
+        }
+        fn activate(&self, test: &str, reason: &str) -> Result<(), String> {
+            self.0.activate(AT_MS, test, reason)
+        }
+        fn clear_landed(&self, bead: &str) -> Result<Vec<String>, String> {
+            self.0.clear_landed(AT_MS, &[bead.to_string()])
+        }
+    }
+
+    fn world_repo(t: &testkit::TempDir) -> std::path::PathBuf {
+        let work = t.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        git(&work, &["init", "-q", "--initial-branch=main"]).unwrap();
+        pilgrim_land::write_tree(&work).unwrap();
+        git(&work, &["add", "-f", "."]).unwrap();
+        git(&work, &["commit", "-q", "-m", "tree"]).unwrap();
+        git(&work, &["branch", "local/main", "main"]).unwrap();
+        work
+    }
+
+    fn commit_edit(work: &Path, bead: &str, from: &str, to: &str) {
+        git(work, &["checkout", "-q", "-b", &format!("spira/{bead}"), "local/main"]).unwrap();
+        let file = work.join(LIB);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains(from), "the edit finds its line: {text}");
+        std::fs::write(&file, text.replace(from, to)).unwrap();
+        git(work, &["commit", "-q", "-am", &format!("{bead}: edit")]).unwrap();
+        git(work, &["checkout", "-q", "main"]).unwrap();
+    }
+
+    fn history(reg: &Registry) -> String {
+        reg.call(AT_MS, &["history", "--test", pilgrim_land::FIXTURE_TEST]).stdout
+    }
+
+    #[test_id(tkthwz5)]
+    #[test]
+    fn a_body_change_to_a_disabled_test_is_run_by_the_pilgrims_round_and_a_green_landing_activates_its_row() {
+        let t = testkit::TempDir::new("pw-land");
+        let work = world_repo(&t);
+        let reg = Registry::new("7200").unwrap();
+        reg.disable(1000, pilgrim_land::FIXTURE_TEST, "sp-owner", "flaky").unwrap();
+        assert_eq!(reg.denied(AT_MS).unwrap(), [pilgrim_land::FIXTURE_TEST], "the row holds the test out before the round");
+        commit_edit(&work, "sp-fixer", "assert_eq!(answer(), 42);", "assert_eq!(answer() + 1, 43);");
+
+        let out = pilgrim_land::land(&work, "local/main", "sp-fixer", &AtRegistry(&reg), &CargoTests).unwrap();
+
+        assert!(out.green, "{}", out.report());
+        assert_eq!(out.ran, [pilgrim_land::FIXTURE_TEST], "{}", out.report());
+        assert!(!out.skipped.contains(&pilgrim_land::FIXTURE_TEST.to_string()), "{}", out.report());
+        assert_eq!(out.activated, [pilgrim_land::FIXTURE_TEST]);
+        assert!(reg.denied(AT_MS).unwrap().is_empty(), "the row reads active");
+        assert!(history(&reg).contains("activate"), "{}", history(&reg));
+        assert_eq!(git(&work, &["rev-parse", "local/main"]).unwrap(), git(&work, &["rev-parse", "spira/sp-fixer"]).unwrap(), "the change is on the landing branch");
+    }
+
+    #[test_id(ti3ztuu)]
+    #[test]
+    fn a_red_round_lands_nothing_and_leaves_the_disabled_row_standing() {
+        let t = testkit::TempDir::new("pw-land-red");
+        let work = world_repo(&t);
+        let reg = Registry::new("7200").unwrap();
+        reg.disable(1000, pilgrim_land::FIXTURE_TEST, "sp-owner", "flaky").unwrap();
+        commit_edit(&work, "sp-fixer", "assert_eq!(answer(), 42);", "assert_eq!(answer(), 41);");
+        let before = git(&work, &["rev-parse", "local/main"]).unwrap();
+
+        let out = pilgrim_land::land(&work, "local/main", "sp-fixer", &AtRegistry(&reg), &CargoTests).unwrap();
+
+        assert!(!out.green && out.landed_at.is_none(), "{}", out.report());
+        assert_eq!(reg.denied(AT_MS).unwrap(), [pilgrim_land::FIXTURE_TEST]);
+        assert_eq!(git(&work, &["rev-parse", "local/main"]).unwrap(), before);
+    }
+
+    #[test_id(tqpi28w)]
+    #[test]
+    fn a_change_outside_the_disabled_tests_body_leaves_it_skipped_and_its_row_standing() {
+        let t = testkit::TempDir::new("pw-land-other");
+        let work = world_repo(&t);
+        let reg = Registry::new("7200").unwrap();
+        reg.disable(1000, pilgrim_land::FIXTURE_TEST, "sp-owner", "flaky").unwrap();
+        commit_edit(&work, "sp-other", "pub fn answer() -> u32 {\n    42", "pub fn answer() -> u32 {\n    40 + 2");
+
+        let out = pilgrim_land::land(&work, "local/main", "sp-other", &AtRegistry(&reg), &CargoTests).unwrap();
+
+        assert!(out.green && out.ran.is_empty(), "{}", out.report());
+        assert_eq!(out.skipped, [pilgrim_land::FIXTURE_TEST]);
+        assert_eq!(reg.denied(AT_MS).unwrap(), [pilgrim_land::FIXTURE_TEST]);
+    }
+
+    #[test_id(t9w2o17)]
+    #[test]
+    fn a_landing_by_the_rows_own_bead_clears_it_with_a_cleared_landed_entry() {
+        let t = testkit::TempDir::new("pw-land-own");
+        let work = world_repo(&t);
+        let reg = Registry::new("7200").unwrap();
+        reg.disable(1000, pilgrim_land::FIXTURE_TEST, "sp-fixer", "flaky").unwrap();
+        commit_edit(&work, "sp-fixer", "assert_eq!(answer(), 42);", "assert_eq!(answer() + 1, 43);");
+
+        let out = pilgrim_land::land(&work, "local/main", "sp-fixer", &AtRegistry(&reg), &CargoTests).unwrap();
+
+        assert!(out.green, "{}", out.report());
+        assert_eq!(out.ran, [pilgrim_land::FIXTURE_TEST], "{}", out.report());
+        assert_eq!(out.cleared, [pilgrim_land::FIXTURE_TEST], "{}", out.report());
+        assert!(reg.denied(AT_MS).unwrap().is_empty(), "the row reads active");
+        assert!(history(&reg).contains("cleared-landed"), "{}", history(&reg));
+    }
+}

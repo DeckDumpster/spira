@@ -21,6 +21,14 @@ grading its own work, and you have no Edit or Write tool for that reason.
    Grafana sign-in (`Authorization: Bearer`), revoked when the world goes down; there you may also `work file`,
    `work dep-add` and `work close-other`, which the broker refuses anywhere else. Your own bead
    stays on the session's socket: `work done` goes there, without the prefix.
+   A step the round performs (a landing, a test the round runs, a registry row it clears) is walked
+   in the world's own round: commit the change on branch `spira/<id>` of `$PILGRIM_WORLD/work` (an
+   id of your choosing, cut from `local/main`; the tree builds offline and holds one stamped test,
+   `test:tpgfix1`), then run `$PILGRIM_WORLD/bin/sim world land "$PILGRIM_WORLD" <id>` with
+   `SPIRA_TOML=$PILGRIM_TOML` and `SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET` set. It prints the rows the
+   round lifted, the tests it ran and skipped, whether it landed, and the rows it activated or
+   cleared; it exits 1 on a red round. The registry rows are read with `SPIRA_TOML=$PILGRIM_TOML
+   test-registry show|history --test <test>`.
 3. **Do the user path**, step by step, as written. A step that cannot be done as written is a
    defect, not something to route around.
 4. **File each defect** through the contract, one bead per defect; filing it also makes this pilgrimage wait on it:

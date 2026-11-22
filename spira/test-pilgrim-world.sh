@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T3
 # requires: testenv
-# covers: spira/sim/src/pilgrim.rs spira/sim/src/world.rs spira/sim/fixtures/pilgrim-world.toml spira-lc/src/work.rs cockpit/ops/src/lcview*.rs loom/src/**
+# covers: spira/sim/src/pilgrim.rs spira/sim/src/pilgrim_land.rs spira/sim/fixtures/pilgrim-tree/* spira/sim/src/world.rs spira/sim/fixtures/pilgrim-world.toml spira-lc/src/work.rs cockpit/ops/src/lcview*.rs loom/src/**
 # lane: sim
 # pids: 400
 #
