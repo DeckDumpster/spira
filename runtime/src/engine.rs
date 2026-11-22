@@ -1400,7 +1400,11 @@ impl Executor for Engine {
             correlation: CorrelationId(id.into()),
         };
         self.set_wake(&ev.id, Wake::Signal, true);
-        self.enqueue(ev);
+        if ev.kind.tag == STORE_CHANGED {
+            self.enqueue_local(ev);
+        } else {
+            self.enqueue(ev);
+        }
         Ok(())
     }
 

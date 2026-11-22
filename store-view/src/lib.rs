@@ -238,6 +238,19 @@ pub struct Projection {
     watching: AtomicBool,
     /// Why the last poll failed; cleared by one that applied.
     lost: Mutex<Option<String>>,
+    /// Prefixes watched beside the five this view applies; their events are only reported.
+    extra: Vec<String>,
+}
+
+/// What one [`Projection::poll`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Polled {
+    /// The watch timed out with nothing new; the views are confirmed at `rev`.
+    Quiet { rev: u64 },
+    /// The watch's events were applied up to `through`; `keys` are their distinct keys, in answer order.
+    Applied { through: u64, keys: Vec<String> },
+    /// Every view was read afresh (the first load, nothing held, or a feed too old), at `rev`.
+    Reloaded { rev: u64 },
 }
 
 static SHARED: OnceLock<Arc<Projection>> = OnceLock::new();
@@ -439,7 +452,13 @@ fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
 
 impl Projection {
     pub fn new(client: LcClient, stale_after: Duration, clock: Clock) -> Self {
-        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), terminal: Mutex::new(Terminal::default()), watching: AtomicBool::new(false), lost: Mutex::new(None) }
+        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), terminal: Mutex::new(Terminal::default()), watching: AtomicBool::new(false), lost: Mutex::new(None), extra: Vec::new() }
+    }
+
+    /// Also watches `prefixes`: events under them are reported by [`poll`](Self::poll) and not applied.
+    pub fn with_prefixes(mut self, prefixes: &[&str]) -> Self {
+        self.extra.extend(prefixes.iter().map(|p| p.to_string()));
+        self
     }
 
     /// This process's installed projection, else a fresh one on `client`. Pair it with
@@ -508,6 +527,10 @@ impl Projection {
     /// Reads every view afresh: the batch records and the revision they were listed at, then
     /// the live lifecycle rows. A change after that revision is redelivered by the next watch.
     pub fn load(&self) -> Result<(), LcError> {
+        self.load_at().map(|_| ())
+    }
+
+    fn load_at(&self) -> Result<u64, LcError> {
         let (items, rev) = self.rc_list(BATCHES, &OPEN_STATES, OPEN_MAX)?;
         let beads = beads_of(&self.client.answer(&["list", "--live"])?)?;
         let batches = batches_of(items);
@@ -515,7 +538,7 @@ impl Projection {
         self.end_held(ALL);
         self.terminal().forget(None);
         *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: Some(beads.into_iter().collect()) };
-        Ok(())
+        Ok(rev)
     }
 
     /// Reads the batch records afresh and nothing else: the round and batch views answer at the
@@ -533,38 +556,45 @@ impl Projection {
 
     /// One step of keeping current: a load when nothing is held, else one watch from the held
     /// revision. Nothing moves unless the whole answer applied.
-    pub fn poll(&self) -> Result<(), LcError> {
+    pub fn poll(&self) -> Result<Polled, LcError> {
         let polled = self.poll_once();
         *self.lost.lock().unwrap_or_else(|e| e.into_inner()) = polled.as_ref().err().map(ToString::to_string);
         polled
     }
 
-    fn poll_once(&self) -> Result<(), LcError> {
+    fn poll_once(&self) -> Result<Polled, LcError> {
         let held = {
             let s = self.lock();
             s.rev.filter(|_| s.beads.is_some())
         };
-        let Some(from) = held else { return self.load() };
+        let Some(from) = held else { return self.load_at().map(|rev| Polled::Reloaded { rev }) };
         let (from_s, wait) = (from.to_string(), WATCH_WAIT_MS.to_string());
         // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
         // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
-        let w = json_of(&self.client.answer(&["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY, "--from-rev", &from_s, "--wait-ms", &wait, "--rows"])?, "watch")?;
+        let mut argv = vec!["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY];
+        argv.extend(self.extra.iter().map(String::as_str));
+        argv.extend(["--from-rev", &from_s, "--wait-ms", &wait, "--rows"]);
+        let w = json_of(&self.client.answer(&argv)?, "watch")?;
         if let Some(p) = w["progress_rev"].as_u64() {
             let mut s = self.lock();
             s.rev = Some(p.max(from));
             s.confirmed = Some((self.clock)());
-            return Ok(());
+            return Ok(Polled::Quiet { rev: p.max(from) });
         }
         if w.get("too_old").is_some() {
-            return self.load();
+            return self.load_at().map(|rev| Polled::Reloaded { rev });
         }
         let (Some(events), Some(through)) = (w["events"].as_array(), w["through"].as_u64()) else {
             return Err(fault(format!("watch: unreadable answer {w}")));
         };
         let mut batch_puts: Vec<(String, Option<Value>, Option<u64>)> = Vec::new();
         let mut dirty = BTreeSet::new();
+        let mut keys: Vec<String> = Vec::new();
         for e in events {
             let key = text(e, "key").unwrap_or_default();
+            if !keys.contains(&key) {
+                keys.push(key.clone());
+            }
             if key.starts_with(BATCHES) {
                 let value = e.get("value").filter(|v| !v.is_null()).map(|v| v["data"].clone());
                 batch_puts.push((key, value, e.get("create_rev").and_then(main_rev)));
@@ -608,11 +638,12 @@ impl Projection {
         }
         s.rev = Some(through.max(from));
         s.confirmed = Some((self.clock)());
-        Ok(())
+        Ok(Polled::Applied { through: through.max(from), keys })
     }
 
-    /// Polls until `stop` is set, pausing after a poll the store did not answer.
-    pub fn run(&self, stop: &AtomicBool) {
+    /// Polls until `stop` is set, pausing after a poll the store did not answer; `observe` sees
+    /// each poll that succeeded.
+    pub fn run(&self, stop: &AtomicBool, observe: &mut dyn FnMut(&Polled)) {
         struct Clear<'a>(&'a AtomicBool);
         impl Drop for Clear<'_> {
             fn drop(&mut self) {
@@ -622,8 +653,9 @@ impl Projection {
         self.watching.store(true, Ordering::Relaxed);
         let _clear = Clear(&self.watching);
         while !stop.load(Ordering::Relaxed) {
-            if self.poll().is_err() {
-                std::thread::sleep(RETRY);
+            match self.poll() {
+                Ok(polled) => observe(&polled),
+                Err(_) => std::thread::sleep(RETRY),
             }
         }
     }

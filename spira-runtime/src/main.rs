@@ -113,11 +113,11 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), Stampe
     };
     let mut starting = runtime::offload::offload("startup", None, boot).map_err(|e| e.to_string())?;
     let started = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| Stamped(startup.unfinished()))?.map_err(|e| e.to_string())?;
-    let (engine, _store) = started.map_err(Stamped)?;
+    let (engine, store) = started.map_err(Stamped)?;
     let (tx, rx) = mpsc::channel(SUBMIT_QUEUE);
     // One unit manager: the `unit.*` effects and the `unit.ran` source share it, so one reader drains its signals.
     let backend = runtime::units::from_env(clock.clone()).map_err(|e| format!("unit manager: {e}"))?;
-    let _sources = spira_runtime::sources::real(&|k: &str| spira_config::process::cfg(k), backend.completions(), clock.clone())?.start(tx.clone()).map_err(|e| e.to_string())?;
+    let _sources = spira_runtime::sources::real(&|k: &str| spira_config::process::cfg(k), backend.completions(), clock.clone(), store)?.start(tx.clone()).map_err(|e| e.to_string())?;
     let repin = Arc::new(spira_runtime::repin::Repin::new(settings.clone(), Arc::new(|keys: &[String]| spira_config::process::fresh(keys)), Arc::new(|k: &str| spira_config::process::cfg(k))));
     let control = spira_runtime::status::Control::new(board.clone(), spira_runtime::control_submit(tx), clock.clone()).with_repin(repin.clone());
     spira_runtime::spawn_control(&settings.control_socket, control)?;

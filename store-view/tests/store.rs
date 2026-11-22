@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use spira_store::lc_call::{LcClient, LcError, Reply, Transport};
-use store_view::{Projection, RowQuery};
+use store_view::{Polled, Projection, RowQuery};
 
 /// A scripted store: `rc list` and `list` answer from what it holds, each `watch` takes the next
 /// scripted answer, and every request is recorded.
@@ -468,7 +468,7 @@ fn an_installed_projection_is_what_hot_serves_and_a_watched_one_reads_no_batch_r
         }
         let runner = {
             let (p, stop) = (Arc::clone(&p), Arc::clone(&stop));
-            std::thread::spawn(move || p.run(&stop))
+            std::thread::spawn(move || p.run(&stop, &mut |_| {}))
         };
         while !p.watching() {
             std::thread::yield_now();
@@ -515,7 +515,7 @@ fn a_held_answer_lasts_until_a_change_that_could_alter_it_and_a_bead_history_alt
         w.p.poll().unwrap();
         let stop = std::sync::atomic::AtomicBool::new(false);
         std::thread::scope(|sc| {
-            sc.spawn(|| w.p.run(&stop));
+            sc.spawn(|| w.p.run(&stop, &mut |_| {}));
             // clock-safe: a cap on the wait for the watch to start
             while !w.p.watching() {
                 // clock-safe: a poll interval under that cap
@@ -620,7 +620,7 @@ fn a_rounds_list_is_the_stores_answer_at_the_same_revision_held_until_a_round_ch
         w.p.poll().unwrap();
         let stop = std::sync::atomic::AtomicBool::new(false);
         std::thread::scope(|sc| {
-            sc.spawn(|| w.p.run(&stop));
+            sc.spawn(|| w.p.run(&stop, &mut |_| {}));
             // clock-safe: a cap on the wait for the watch to start
             while !w.p.watching() {
                 // clock-safe: a poll interval under that cap
@@ -743,5 +743,55 @@ fn the_remembered_terminal_rows_are_bounded() {
         assert_eq!(asks(&w), before, "the newest rows are still remembered");
         w.p.ids_answer(&ids[..50]).unwrap();
         assert_eq!(asks(&w), before + 1, "the oldest were dropped at the bound and are asked again");
+    });
+}
+
+fn event(key: &str, at: u64) -> Value {
+    json!({ "key": key, "rev": rev(at), "value": {}, "create_rev": null, "prev_mod_rev": null })
+}
+
+#[test_id(tn5scp3)]
+#[test]
+fn a_poll_that_applied_events_reports_their_keys_and_the_revision() {
+    within(|| {
+        let w = world(Script { list_rev: 4, rows: vec![bead("sp-a", "READY", "[]", None, false)], ..Default::default() }, Duration::from_secs(10));
+        assert_eq!(w.p.poll().unwrap(), Polled::Reloaded { rev: 4 }, "nothing held is a load");
+        w.script.lock().unwrap().rows = vec![bead("sp-a", "WORKING", "[]", None, false)];
+        w.watch(json!({ "events": [event("lifecycle/sp-a", 8), event("work-requests/r1", 9), event("lifecycle/sp-a", 9)], "through": 9 }));
+        assert_eq!(w.p.poll().unwrap(), Polled::Applied { through: 9, keys: vec!["lifecycle/sp-a".into(), "work-requests/r1".into()] });
+        assert_eq!(w.p.ready_counts().unwrap().value.by_state["WORKING"], 1, "the row is applied as before");
+    });
+}
+
+#[test_id(ta7qb1t)]
+#[test]
+fn a_feed_too_old_reports_a_reload_at_the_listed_revision_and_progress_reports_quiet() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.script.lock().unwrap().list_rev = 21;
+        w.watch(json!({ "too_old": { "compacted": 20 }, "items": [], "list_rev": 21 }));
+        assert_eq!(w.p.poll().unwrap(), Polled::Reloaded { rev: 21 });
+        w.watch(json!({ "progress_rev": 23 }));
+        assert_eq!(w.p.poll().unwrap(), Polled::Quiet { rev: 23 });
+    });
+}
+
+#[test_id(tg7j83d)]
+#[test]
+fn added_prefixes_join_the_watch_and_without_them_the_five_are_asked_as_before() {
+    within(|| {
+        let watch_argv = |w: &World| w.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
+        let plain = world(Script { list_rev: 4, quiet: true, ..Default::default() }, Duration::from_secs(10));
+        plain.p.poll().unwrap();
+        plain.watch(json!({ "progress_rev": 5 }));
+        plain.p.poll().unwrap();
+        assert_eq!(watch_argv(&plain)[..7], ["watch", "batches/", "lifecycle/", "readiness/", "planning/", "history/", "--from-rev"].map(String::from));
+        let mut w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p = Projection::new(LcClient::over(Arc::new(Double(Arc::clone(&w.script))), true), Duration::from_secs(10), Arc::new(Instant::now)).with_prefixes(&["work-requests/"]);
+        w.p.poll().unwrap();
+        w.watch(json!({ "progress_rev": 5 }));
+        w.p.poll().unwrap();
+        assert_eq!(watch_argv(&w)[..8], ["watch", "batches/", "lifecycle/", "readiness/", "planning/", "history/", "work-requests/", "--from-rev"].map(String::from));
     });
 }

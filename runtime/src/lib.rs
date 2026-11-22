@@ -7,6 +7,7 @@
 extern crate spira_test_id;
 pub mod bridge;
 pub mod calendar;
+pub mod changes;
 pub mod conformance;
 pub mod engine;
 pub mod event;
