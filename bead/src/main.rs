@@ -2351,6 +2351,7 @@ mod tests {
         (rc, d, log)
     }
 
+    #[test_id(twyrc7c)]
     #[test]
     fn a_filing_whose_row_write_the_store_cuts_prints_the_id_after_every_write() {
         let dir = testkit::TempDir::new("bead-door-id-last");
@@ -2368,6 +2369,7 @@ mod tests {
         }
     }
 
+    #[test_id(tigbm4o)]
     #[test]
     fn a_filing_prints_only_the_id_though_its_edge_write_answers_with_text() {
         let dir = testkit::TempDir::new("bead-door-id-only");
