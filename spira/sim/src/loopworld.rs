@@ -585,7 +585,7 @@ fn batcher_observe(w: &World, input: &str) -> Result<String, String> {
     });
     let live_legs = units::Units::list(&*w.units, &units::task_glob(bl::NAME)).ok().map(|all| bl::running_legs(&all));
     let repo = bl::Repo { pool, open_round, base_sha: BASE.into(), stopped: w.now() < w.script.stopped_until, live_legs, scoped_batches: Some(w.live_pass_scopes()), ..bl::Repo::default() };
-    json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now() })
+    json(&bl::Snapshot { repos: [(REPO.to_string(), repo)].into(), now_ms: w.now(), ..Default::default() })
 }
 
 /// The merge of each member on the base in the order the batcher gave (`topo_order` of the
