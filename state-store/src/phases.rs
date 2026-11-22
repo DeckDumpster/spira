@@ -3,6 +3,7 @@
 //! so the gc, the shipper and the sweep, which are never tracked, pay one thread-local read.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -63,6 +64,7 @@ struct Inner {
     reads_ended: u64,
     reads_overran: u64,
     reads_ended_by_reset: u64,
+    reads_reset_ended: u64,
 }
 
 /// What a request recorded; shared between the worker thread and the one that answers.
@@ -86,6 +88,8 @@ pub struct Snapshot {
     pub reads_overran: u64,
     /// Reads a WAL restart's hold of the read gate used the whole limit of, so they were ended on release.
     pub reads_ended_by_reset: u64,
+    /// Reads ended or overrun at their limit while a WAL restart past the line was waiting on them.
+    pub reads_reset_ended: u64,
     /// The innermost phase still running.
     pub open: Option<&'static str>,
     /// Dolt SQL statements run.
@@ -124,6 +128,7 @@ impl Recorder {
             reads_ended: g.reads_ended,
             reads_overran: g.reads_overran,
             reads_ended_by_reset: g.reads_ended_by_reset,
+            reads_reset_ended: g.reads_reset_ended,
             open: g.open.last().map(|p| p.name()),
             content_queries: g.count[Phase::ContentQuery as usize],
             children: g.count[Phase::Child as usize],
@@ -279,6 +284,59 @@ pub enum ReadEnd {
     EndedByReset,
 }
 
+static FORCING: AtomicUsize = AtomicUsize::new(0);
+static FORCED_BEGUN: AtomicUsize = AtomicUsize::new(0);
+static WAL_OVER_LINE: AtomicBool = AtomicBool::new(false);
+
+/// Whether a WAL restart past the line is, right now, holding the read gate for reads in flight.
+pub fn wal_forcing() -> bool {
+    FORCING.load(Ordering::SeqCst) > 0
+}
+
+/// Marks a forced WAL restart as running until dropped.
+pub struct ForcedReset;
+
+impl Drop for ForcedReset {
+    fn drop(&mut self) {
+        FORCING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// What a read notes when it starts, to tell whether a forced restart waited on it.
+#[derive(Clone, Copy)]
+pub struct ForcedStamp(usize, bool);
+
+pub fn forced_stamp() -> ForcedStamp {
+    ForcedStamp(FORCED_BEGUN.load(Ordering::SeqCst), wal_forcing())
+}
+
+/// Counts a read the limit cut as ended by the reset when a forced restart began, or was
+/// already running, while it ran. The restart finishes the moment the read releases, so the
+/// read cannot ask whether one is still running.
+pub fn record_reset_ended(since: ForcedStamp, end: ReadEnd) {
+    if end == ReadEnd::Finished || !(since.1 || FORCED_BEGUN.load(Ordering::SeqCst) != since.0) {
+        return;
+    }
+    if let Some(rec) = current() {
+        rec.inner().reads_reset_ended += 1;
+    }
+}
+
+pub fn forced_reset_scoped() -> ForcedReset {
+    FORCED_BEGUN.fetch_add(1, Ordering::SeqCst);
+    FORCING.fetch_add(1, Ordering::SeqCst);
+    ForcedReset
+}
+
+/// The checkpointer's latest reading of the WAL against its line.
+pub fn set_wal_over_line(over: bool) {
+    WAL_OVER_LINE.store(over, Ordering::SeqCst);
+}
+
+pub fn wal_over_line() -> bool {
+    WAL_OVER_LINE.load(Ordering::SeqCst)
+}
+
 /// Records one read transaction's own duration and how it ended; nothing when no recorder is installed.
 pub fn record_read(took: Duration, end: ReadEnd) {
     if let Some(rec) = current() {
@@ -290,6 +348,7 @@ pub fn record_read(took: Duration, end: ReadEnd) {
             ReadEnd::Overran => g.reads_overran += 1,
             ReadEnd::EndedByReset => g.reads_ended_by_reset += 1,
         }
+
     }
 }
 

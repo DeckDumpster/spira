@@ -547,10 +547,36 @@ fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
     if took < limit {
         return;
     }
+    write_line(&line(crate::db::now_epoch(), verb, caller, took, sql));
+}
+
+fn write_line(l: &str) {
     let Some(path) = log_path() else { return };
-    let l = line(crate::db::now_epoch(), verb, caller, took, sql);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = f.write_all(l.as_bytes());
+    }
+}
+
+/// Shape of a request one of whose reads a forced WAL restart waited on until the limit cut it.
+pub const WAL_RESET_ENDED: &str = "WAL-RESET-ENDED";
+/// Shape of a request served while the WAL stood past its line.
+pub const WAL_OVER_LINE: &str = "WAL-OVER-LINE";
+
+/// One line per request is too many for a WAL that stays over its line.
+const WAL_OVER_LINE_EVERY_S: i64 = 60;
+static WAL_OVER_LINE_LAST: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
+
+/// Pages the slow-query log for what the WAL did to this request: a read ended by a restart
+/// past the line, or the WAL standing past it. Written whatever the request's own time was.
+pub fn wal_pages(verb: &str, caller: &str, took: Duration, reset_ended: u64, over_line: bool) {
+    let (verb, caller) = (clean(verb), clean(caller));
+    if reset_ended > 0 {
+        write_line(&line(crate::db::now_epoch(), &verb, &caller, took, WAL_RESET_ENDED));
+    }
+    let now = crate::db::now_epoch();
+    if over_line && now.saturating_sub(WAL_OVER_LINE_LAST.load(std::sync::atomic::Ordering::SeqCst)) >= WAL_OVER_LINE_EVERY_S {
+        WAL_OVER_LINE_LAST.store(now, std::sync::atomic::Ordering::SeqCst);
+        write_line(&line(now, &verb, &caller, took, WAL_OVER_LINE));
     }
 }
 
@@ -948,6 +974,32 @@ mod tests {
     }
 
     #[test_id(t4kpgzc)]
+    #[test]
+    fn a_wal_reset_that_ended_a_read_pages_the_log_with_the_open_verb() {
+        let d = testkit::TempDir::new("slow-wal-reset");
+        let log = d.join("slow.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        wal_pages("quiet", "c", Duration::from_millis(3), 0, false);
+        assert!(!log.exists(), "a request the WAL did not touch writes nothing");
+        wal_pages("reset-probe", "caller x", Duration::from_millis(40), 1, false);
+        let got = std::fs::read_to_string(&log).unwrap();
+        let f: Vec<&str> = got.trim_end().split('\t').collect();
+        assert_eq!((f[1], f[2], f[3], f[4]), ("reset-probe", "caller_x", "40", WAL_RESET_ENDED));
+    }
+
+    #[test]
+    fn a_wal_over_its_line_pages_the_log_once_per_interval_not_once_per_request() {
+        let d = testkit::TempDir::new("slow-wal-over");
+        let log = d.join("slow.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        WAL_OVER_LINE_LAST.store(i64::MIN, std::sync::atomic::Ordering::SeqCst);
+        wal_pages("over-probe", "c", Duration::from_millis(1), 0, true);
+        wal_pages("over-probe", "c", Duration::from_millis(1), 0, true);
+        let got = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(got.lines().count(), 1, "{got}");
+        assert!(got.trim_end().ends_with(&format!("over-probe\tc\t1\t{WAL_OVER_LINE}")), "{got}");
+    }
+
     #[test]
     fn reads_done_accumulates_into_the_counters() {
         reads_done("reads-probe", 1, 0, 0);

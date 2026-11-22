@@ -53,6 +53,10 @@ fn is_host_bound(shape: &str) -> bool {
     u == "CONNECT" || u.starts_with("START TRANSACTION") || u.starts_with("BEGIN")
 }
 
+fn is_wal(shape: &str) -> bool {
+    shape == "WAL-RESET-ENDED" || shape == "WAL-OVER-LINE"
+}
+
 pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_sh: &str, threshold_ms: u64) {
     let Ok(bytes) = std::fs::read(log_path) else {
         log("watchtower: slow-query-check — no slow-query log");
@@ -79,7 +83,13 @@ pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_
     let worst = slowest.max();
     let hits: usize = shapes.iter().map(Shape::count).sum();
     let mut body = String::from("The lifecycle store is responding slowly. One incident covers every statement seen slow; the shapes are listed as evidence.\n\n");
-    if contended {
+    let wal: Vec<&Shape> = shapes.iter().filter(|s| is_wal(&s.shape)).collect();
+    if !wal.is_empty() {
+        body.push_str(&format!(
+            "Verdict: WAL pressure. The control store's WAL stood past its line, or a restart past it cut a read at its limit; the verbs open were: {}. Find what holds a read open across checkpoints, not a slow query.\n\n",
+            wal.iter().flat_map(|s| s.verbs.iter().cloned()).collect::<Vec<_>>().join(", ")
+        ));
+    } else if contended {
         body.push_str("Verdict: host contention. A connection handshake or transaction start has no plan and no index, and it was slow in the same window, so the latency is the host (process churn, CPU or memory pressure), not any one query. Do not tune indexes; find what is loading the box.\n\n");
     } else {
         body.push_str("Verdict: query-attributable. No connect or transaction-start was slow in this window; find each verb's query and fix its plan or its index.\n\n");
@@ -87,7 +97,7 @@ pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_
     for s in &shapes {
         body.push_str(&format!("shape: {}\nverbs: {}\ncount: {}\np50: {}ms\nmax: {}ms\n\n", s.shape, s.verbs.join(", "), s.count(), s.p50(), s.max()));
     }
-    let title = format!("SLOW STORE: {} {worst}ms over {threshold_ms}ms; {hits} call(s) over in window", slowest.verbs.join("/"));
+    let title = if wal.is_empty() { format!("SLOW STORE: {} {worst}ms over {threshold_ms}ms; {hits} call(s) over in window", slowest.verbs.join("/")) } else { format!("WAL PRESSURE: {} open; {} shape(s) in window", wal.iter().flat_map(|s| s.verbs.iter().cloned()).collect::<Vec<_>>().join("/"), wal.len()) };
     let f = Finding::new(db, home_repo, &title, &body)
         .priority(1)
         .reference("incident:slow-query".to_string())
@@ -139,6 +149,24 @@ mod tests {
     }
 
     #[test_id(tg3e7xv)]
+    #[test]
+    fn a_wal_shape_files_an_incident_naming_the_open_verb_and_wal_pressure() {
+        let d = testkit::TempDir::new("wt-slow-wal");
+        let (inc, calls) = fake_incident(&d);
+        let log_path = d.join("slow-queries.log");
+        let toml = spira_config::process::fixture_toml(&d, &[]);
+        let home = spira_config::process::spira_home();
+        let release = spira_config::process::fixture_release(&d, true);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", home.to_str()), ("SPIRA_RELEASE", release.to_str())]);
+        std::fs::write(&log_path, "1\tlist-probe\tc\t40\tWAL-RESET-ENDED\n").unwrap();
+        run(&d, &log_path, "db", "spira", &inc, 1000);
+        let got = std::fs::read_to_string(&calls).unwrap();
+        for want in ["incident:slow-query", "WAL PRESSURE: list-probe", "Verdict: WAL pressure", "shape: WAL-RESET-ENDED"] {
+            assert!(got.contains(want), "{want} missing from {got}");
+        }
+        assert!(!got.contains("query-attributable"), "{got}");
+    }
+
     #[test]
     fn distinct_shapes_group_separately() {
         let g = group("1\ta\t1100\tX\n2\tb\t1200\tY\n3\ta\t1300\tX\n");
