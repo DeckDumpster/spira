@@ -381,6 +381,52 @@ pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, 
     }
 }
 
+/// A Skuld draft read from request notes: the text under its heading, and the `Open:` line that ended it.
+#[derive(Debug, PartialEq)]
+pub struct Draft {
+    pub body: String,
+    pub open: Option<String>,
+}
+
+/// The last `### Draft: <title>` in `notes` (a correction is the whole draft resent): the text after
+/// the heading and a blank line, up to another draft, an `Open:` line, the harness submit note or the end.
+pub fn draft_body(notes: &str, title: &str) -> Option<Draft> {
+    let heading = format!("### Draft: {}\n\n", title.trim());
+    let notes = notes.replace("\r\n", "\n");
+    let at = notes.match_indices(&heading).filter(|(i, _)| *i == 0 || notes[..*i].ends_with('\n')).last()?.0;
+    let rest = &notes[at + heading.len()..];
+    let mut end = rest.len();
+    let mut open = None;
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        let bare = line.trim_end();
+        if bare.starts_with("### Draft:") || bare.starts_with(HARNESS_SUBMIT_NOTE) {
+            end = offset;
+            break;
+        }
+        if bare.starts_with("Open:") {
+            end = offset;
+            open = Some(bare.to_string());
+            break;
+        }
+        offset += line.len();
+    }
+    let body = rest[..end].trim().to_string();
+    (!body.is_empty()).then_some(Draft { body, open })
+}
+
+/// The body of the Skuld request filed for a follow-up a dwarf filed: it asks for one draft headed
+/// with the follow-up's title verbatim, and carries the filer's text.
+pub fn review_request_body(followup: &str, title: &str, filer: &str, bound: &str, filer_text: &str) -> String {
+    format!(
+        "Review {followup} (\"{title}\"), a follow-up {filer} filed from {bound}. The follow-up waits on this request.\n\n\
+         Write exactly one draft with `work note -`. Its first line is the heading below, then a blank line, then the item; on `work done` it replaces {followup}'s body:\n\n\
+         ### Draft: {title}\n\n\
+         ## The filer's text\n{}\n",
+        filer_text.trim()
+    )
+}
+
 pub const INTENT_HEADING: &str = "## Intent";
 pub const USER_PATH_HEADING: &str = "## User path";
 
@@ -939,7 +985,7 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{depends_prose, depends_refusal, draft_depends_refusals};
+    use super::{depends_prose, depends_refusal, draft_body, draft_depends_refusals, review_request_body, Draft};
 
     #[test_id(t7mmyaf)]
     #[test]
@@ -1070,6 +1116,43 @@ mod tests {
         assert!(skuld_drafted("U", "body line", "draft", "sp-r", &l, notes).is_err());
         assert!(skuld_drafted("T", "body line", "draft", "sp-r", &[], notes).unwrap_err().contains("--for skuld"));
         assert!(skuld_drafted("T", "  \n", "draft", "sp-r", &l, notes).unwrap_err().contains("--for skuld"));
+    }
+
+    #[test_id(tv0u7k8)]
+    #[test]
+    fn draft_body_returns_the_body_of_a_matching_draft() {
+        let d = draft_body("chatter\n### Draft: T\n\nline a\nline b\n", "T").unwrap();
+        assert_eq!(d, Draft { body: "line a\nline b".into(), open: None });
+    }
+
+    #[test_id(tykymm6)]
+    #[test]
+    fn draft_body_takes_the_later_of_two_matching_notes() {
+        let d = draft_body("### Draft: T\n\nold\n\n### Draft: T\n\nnew\n", "T").unwrap();
+        assert_eq!(d.body, "new");
+    }
+
+    #[test_id(t7iv5gm)]
+    #[test]
+    fn draft_body_stops_at_an_open_line_and_returns_it() {
+        let d = draft_body("### Draft: T\n\nbody\nOpen: which repo?; default: spira\nmore\n", "T").unwrap();
+        assert_eq!(d, Draft { body: "body".into(), open: Some("Open: which repo?; default: spira".into()) });
+    }
+
+    #[test_id(t8jkas4)]
+    #[test]
+    fn draft_body_is_none_for_a_heading_that_differs_in_its_title() {
+        assert_eq!(draft_body("### Draft: T two\n\nbody\n", "T"), None);
+        assert_eq!(draft_body("### Draft: T\n\nbody\n", "T two"), None);
+    }
+
+    #[test_id(thkmwu6)]
+    #[test]
+    fn review_request_body_names_the_followup_and_the_verbatim_heading() {
+        let b = review_request_body("sp-f1", "Fix the thing", "builder", "sp-b0", "## Build\nx\n");
+        assert!(b.contains("sp-f1") && b.contains("sp-b0") && b.contains("builder"));
+        assert!(b.contains("### Draft: Fix the thing\n\n"));
+        assert!(b.contains("## The filer's text\n## Build\nx"));
     }
 
     const DESIGN: &str = "# Agent tools\n\n## Intent\n\nLet an agent save a card.\n\n## User path\n\n1. Sign in.\n2. Save a card.\n\n## Test strategy\n\nfoo\n";
