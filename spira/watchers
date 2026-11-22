@@ -132,6 +132,11 @@ lc-ship|log|@SPIRA_RUN@/lc-ship.log
 # quiet log means every mender is inside its bounds.
 mend-watch|log|@SPIRA_RUN@/mend-watch.log
 
+# TRANSITIONS: the watch.transitions task appends one status line per period — the wait at every
+# lifecycle state — and the log is read on demand with `watchd tail transitions`. It wakes
+# nobody; a state over its bound reaches the Concierge through the inbox.
+transitions|log|@SPIRA_RUN@/transitions.log
+
 # RUNTIME-WATCH: the watch.runtime task appends its `cannot check` lines here, so a check that
 # cannot run never goes silent.
 runtime-watch|log|@SPIRA_RUN@/runtime-watch.log

@@ -1104,6 +1104,7 @@ mod tests {
             round_max_open: 1,
             releases: "nonexistent-releases".into(),
             repo_map: "nonexistent-map".into(),
+            run: "nonexistent-run".into(),
         }
     }
 

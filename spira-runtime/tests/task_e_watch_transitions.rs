@@ -37,6 +37,7 @@ fn config() -> Config {
         releases: "rel".into(),
         repo_map: "map".into(),
         activation_bound_s: 75,
+        run: "run".into(),
     }
 }
 
@@ -76,7 +77,7 @@ fn todays_case(now: u64) -> Snapshot {
 
 fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
     let (_, stream, kind) = WatchTransitions::boot();
-    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into()));
     r.tick(stream, kind).unwrap();
     acc::assert_healthy(&r, STREAM);
     r
@@ -84,6 +85,10 @@ fn rig(world: Arc<Mutex<Snapshot>>) -> TaskRig {
 
 fn lines(r: &TaskRig) -> Vec<String> {
     r.requested().iter().filter(|q| q.name == INBOX_APPEND).map(|q| q.input.clone()).collect()
+}
+
+fn log_lines(r: &TaskRig) -> Vec<String> {
+    r.requested().iter().filter(|q| q.name == LOG_APPEND).map(|q| q.input.clone()).collect()
 }
 
 fn stalls(r: &TaskRig) -> Vec<String> {
@@ -104,7 +109,7 @@ fn rig_at(make: impl Fn(u64) -> Snapshot) -> (TaskRig, Arc<Mutex<Snapshot>>) {
         s.activated_at = s.activated_at.map(shift);
         Ok(serde_json::to_string(&s).unwrap())
     })
-    .double(INBOX_APPEND, |_| Ok("appended".into()));
+    .double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into()));
     r.advance(T0 * 1000).unwrap();
     r.tick(stream, kind).unwrap();
     (r, w)
@@ -122,7 +127,7 @@ fn six_working_and_no_submit_for_three_hours_raises_a_stall_naming_working_to_su
     assert!(page.contains("WORKING 6 oldest 2h30m"), "the evidence carries the count and ages: {page}");
     assert!(page.contains("no Submit for 3h00m (bound 1h30m)"), "{page}");
     assert!(page.contains("last: Claim "), "the evidence carries the last-event times: {page}");
-    assert!(lines(&r).iter().any(|l| l.contains("WAIT ") && l.contains("WORKING 6")), "the period's table line is written too");
+    assert!(log_lines(&r).iter().any(|l| l.contains("WAIT ") && l.contains("WORKING 6")), "the period's table line is written too");
 }
 
 #[test_id(t9cns03)]
@@ -143,8 +148,41 @@ fn a_healthy_flow_raises_no_stall() {
     let (mut r, _) = rig_at(healthy);
     r.advance(12 * 300_000).unwrap();
     assert_eq!(stalls(&r), Vec::<String>::new());
-    let tables = lines(&r).into_iter().filter(|l| l.contains("[watch:transitions] WAIT ")).count();
-    assert_eq!(tables, 13, "one table line per period");
+    let tables = |v: Vec<String>| v.into_iter().filter(|l| l.contains("[watch:transitions] WAIT ")).count();
+    assert_eq!(tables(lines(&r)), 0, "a quiet pass wakes nobody");
+    assert_eq!(tables(log_lines(&r)), 13, "one table line per period");
+}
+
+#[test]
+fn a_row_over_its_bound_wakes_the_inbox_once_per_episode() {
+    let late = |now: u64| {
+        let mut s = healthy(now);
+        s.beads.iter_mut().find(|b| b.id == "sp-d1").unwrap().since = now - 61 * MIN;
+        s
+    };
+    let (mut r, w) = rig_at(late);
+    r.advance(3 * 300_000).unwrap();
+    let overs = |r: &TaskRig| lines(r).into_iter().filter(|l| l.contains("OVER IN_DELIVERY")).collect::<Vec<_>>();
+    assert_eq!(overs(&r).len(), 1, "{:?}", lines(&r));
+    assert!(overs(&r)[0].contains("(bound 1h00m)"), "{:?}", overs(&r));
+    assert_eq!(log_lines(&r).len(), 4);
+    *w.lock().unwrap() = healthy(T0);
+    r.advance(300_000).unwrap();
+    assert_eq!(overs(&r).len(), 1);
+    *w.lock().unwrap() = late(T0);
+    r.advance(300_000).unwrap();
+    assert_eq!(overs(&r).len(), 2, "back inside, then over again: one more wake");
+}
+
+#[test]
+fn the_first_sighted_pass_after_blind_reaches_the_inbox() {
+    let (mut r, w) = rig_at(|_| blind("spira-lc dwell: locked"));
+    r.advance(300_000).unwrap();
+    let tables = |r: &TaskRig| lines(r).into_iter().filter(|l| l.contains("[watch:transitions] WAIT ") && !l.contains("WAIT BLIND")).count();
+    assert_eq!(tables(&r), 0);
+    *w.lock().unwrap() = healthy(T0);
+    r.advance(2 * 300_000).unwrap();
+    assert_eq!(tables(&r), 1, "{:?}", lines(&r));
 }
 
 #[test_id(t2uo0z1)]
@@ -165,7 +203,7 @@ fn an_unreadable_store_reports_blind_and_pages_never_clear() {
 #[test]
 fn an_observe_that_fails_is_blind_too() {
     let (_, stream, kind) = WatchTransitions::boot();
-    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().double(OBSERVE, |_| Err("lc-serve: connection refused".into())).double(INBOX_APPEND, |_| Ok("appended".into()));
+    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().double(OBSERVE, |_| Err("lc-serve: connection refused".into())).double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into()));
     r.tick(stream, kind).unwrap();
     let all = lines(&r);
     assert!(all.iter().any(|l| l.contains("P0 BLIND") && l.contains("connection refused")), "{all:?}");
@@ -1141,7 +1179,7 @@ fn a_second_unreadable_tick_does_not_page_again_and_a_readable_one_clears_blind(
 #[test]
 fn a_timed_out_observe_pages_blind_once_and_the_next_timed_out_one_does_not() {
     let (_, stream, kind) = WatchTransitions::boot();
-    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().timing_out().double(INBOX_APPEND, |_| Ok("appended".into()));
+    let mut r = TaskRig::new(1, WatchTransitions::new(config()).registration()).unwrap().timing_out().double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into()));
     r.advance(T0 * 1000).unwrap();
     r.tick(stream, kind).unwrap();
     r.advance(300_000).unwrap();
@@ -1430,7 +1468,7 @@ fn dependency_rig(make: impl Fn(u64) -> Snapshot, carry: Option<&str>) -> TaskRi
         s.activated_at = s.activated_at.map(shift);
         Ok(serde_json::to_string(&s).unwrap())
     })
-    .double(INBOX_APPEND, |_| Ok("appended".into()));
+    .double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into()));
     r.advance(T0 * 1000).unwrap();
     if let Some(body) = carry {
         r.tick(batcher_local::STREAM, EventKind::new(batcher_local::STATE, body)).unwrap();
@@ -1446,7 +1484,7 @@ const BLOCKED_CARRY: &str = r#"{"repos":{"spira":{"state":"Idle","blocked":{"sp-
 fn the_2026_11_17_page_does_not_fire_for_a_certified_bead_waiting_on_an_unlanded_dependency() {
     let r = dependency_rig(dependency_page_world, Some(BLOCKED_CARRY));
     assert_eq!(stalls(&r), Vec::<String>::new());
-    assert!(lines(&r).iter().any(|l| l.contains("WAIT ") && l.contains("sp-um4jw9 waiting on sp-f0cw5z")), "{:?}", lines(&r));
+    assert!(log_lines(&r).iter().any(|l| l.contains("WAIT ") && l.contains("sp-um4jw9 waiting on sp-f0cw5z")), "{:?}", log_lines(&r));
 }
 
 #[test_id(tqph3vl)]
@@ -1500,7 +1538,7 @@ fn the_forge_batchers_carry_is_read_too() {
     r.tick(batcher_forge::STREAM, EventKind::new(batcher_forge::STATE, r#"{"repos":{"spira":{"state":"Idle","round_key":null,"held":[],"base_moved":null,"conflict_streaks":{},"blocked":{"sp-um4jw9":"sp-f0cw5z"}}}}"#)).unwrap();
     let (_, stream, kind) = WatchTransitions::boot();
     r.tick(stream, kind).unwrap();
-    let last_wait = lines(&r).into_iter().rev().find(|l| l.contains("WAIT ")).unwrap();
+    let last_wait = log_lines(&r).into_iter().rev().find(|l| l.contains("WAIT ")).unwrap();
     assert!(last_wait.contains("sp-um4jw9 waiting on sp-f0cw5z"), "{last_wait}");
 }
 
@@ -1550,7 +1588,7 @@ fn unreadable_during(activation: Option<spira_runtime::watchers::Activation>) ->
 fn an_unreadable_store_inside_an_activation_window_waits_and_does_not_page() {
     let a = spira_runtime::watchers::Activation { sha: "0123456789abcdef0123".into(), since: T0 - 10 };
     let (next, acts) = decide(&Carry::default(), &unreadable_during(Some(a)), T0 * 1000, &config());
-    let said: Vec<&str> = acts.iter().map(|a| a.input.as_str()).collect();
+    let said: Vec<&str> = acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.as_str()).collect();
     assert!(!said.iter().any(|t| t.contains("P0 BLIND")), "{said:?}");
     assert_eq!(said.iter().filter(|t| t.contains("WAIT BLIND: store restarting") && t.contains("0123456789ab") && t.contains("bound 75s")).count(), 1, "{said:?}");
     assert!(!next.blind);
