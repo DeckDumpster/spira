@@ -1215,6 +1215,10 @@ fn a_full_reconcile_pass_reads_only_the_beads_bd_holds_open() {
     w.ok(&["create-bead", "sp-kid", "--ready"]);
     w.drop("sp-kid");
     w.plan.borrow_mut().get_mut("sp-kid").unwrap().status = "closed".into();
+    w.file("sp-live-epic", "epic", None, &[]);
+    w.file("sp-live-kid", "task", Some("sp-live-epic"), &[]);
+    w.ok(&["create-bead", "sp-live-kid", "--ready"]);
+    w.plan.borrow_mut().get_mut("sp-live-kid").unwrap().status = "closed".into();
     w.argv.borrow_mut().clear();
 
     let (mut m, mut b) = (&w, &w);
@@ -1225,7 +1229,9 @@ fn a_full_reconcile_pass_reads_only_the_beads_bd_holds_open() {
     for id in ["sp-open", "sp-dec", "sp-epic"] {
         assert!(wants.iter().any(|l| l.contains(id)), "{id}: {}", dry.stdout);
     }
+    assert!(!dry.stdout.contains("sp-live-epic"), "a child closed in bd with a live record is not terminal: {}", dry.stdout);
     let sent = w.argv.borrow().clone();
+    assert!(sent.iter().any(|a| a[0] == "list" && a.iter().any(|x| x.split(',').any(|i| i == "sp-live-kid"))), "the child's record is read by id: {sent:?}");
     assert!(!sent.iter().any(|a| a.windows(2).any(|p| p[0] == "--ids" && p[1].contains("sp-old"))), "a closed bead's id was sent: {sent:?}");
     assert!(!sent.iter().any(|a| a[0] == "list" && !a.iter().any(|x| x == "--ids")), "a whole list walk: {sent:?}");
 }

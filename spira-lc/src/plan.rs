@@ -211,7 +211,7 @@ fn items(args: &[String], conn: &dyn Sql, cdb: &str) -> Result<Vec<Value>, Strin
         (None, None, Some(label), None) => by_label(conn, cdb, label, flag(args, "--status"), full),
         (None, None, None, Some(kind)) => by_type(conn, cdb, kind, full, open),
         (None, None, None, None) if open && flag(args, "--status").is_none() => every_open(conn, cdb, full),
-        _ => Err("plan items: exactly one of --ids <a,b,…>, --external-contains <text>, --label <label> [--status a,b] or --type <type> is required".into()),
+        _ => Err("plan items: exactly one of --ids <a,b,…>, --external-contains <text>, --label <label> [--status a,b], --type <type> or --open alone is required".into()),
     }
 }
 
@@ -1080,6 +1080,7 @@ mod tests {
             let err = items(&a(second), &c, DB).unwrap_err();
             assert!(err.contains("exactly one of"), "{err}");
         }
+        assert!(items(&a(&["--open", "--status", "open"]), &c, DB).unwrap_err().contains("exactly one of"));
         assert!(items(&a(&["--full"]), &c, DB).unwrap_err().contains("exactly one of"));
     }
 
