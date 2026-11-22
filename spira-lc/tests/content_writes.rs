@@ -925,6 +925,13 @@ fn a_writer_that_lost_a_grant_is_named_on_stderr_and_pages_no_process_without_ch
     let said = lc.serve_said();
     assert!(said.contains("dependencies") && said.contains("admin-provision-writer"), "{said}");
     assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap_or_default());
+    let (out, children) = lc.children_of("writer-grants", &["writer-grants"], None);
+    assert_eq!(children, 0, "{out}");
+    let verdict: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(verdict["writer"], true, "{out}");
+    assert_eq!(verdict["missing"], serde_json::json!(["dependencies"]), "{out}");
+    assert!(verdict["error"].is_null(), "{out}");
+    assert!(verdict["checked_at"].as_u64().is_some(), "{out}");
     assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before, "the check changed the writer's grants");
 }
 
@@ -937,5 +944,9 @@ fn a_fully_provisioned_writer_says_nothing_and_pages_nobody_at_start() {
     let said = lc.serve_said();
     assert!(!said.contains("writer lacks") && !said.contains("cannot check"), "{said}");
     assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap_or_default());
+    let verdict: serde_json::Value = serde_json::from_str(&lc.settled(&["writer-grants"], None).1).unwrap();
+    assert_eq!(verdict["writer"], true);
+    assert_eq!(verdict["missing"], serde_json::json!([]));
+    assert!(verdict["error"].is_null());
     assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before);
 }

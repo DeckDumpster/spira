@@ -362,6 +362,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("watch.tower.prompt", Host),
     ("watch.transitions.log_append", Host),
     ("watch.transitions.observe", Host),
+    ("writer-grants.observe", Store),
 ];
 
 /// The class `name` runs under, `None` for a name no task registers.

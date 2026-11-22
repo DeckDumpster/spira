@@ -14,6 +14,7 @@ use crate::watchers::asks::Asks;
 use crate::watchers::design_asks::DesignAsks;
 use crate::watchers::brain_dirty::BrainDirty;
 use crate::watchers::claim_count::ClaimCount;
+use crate::watchers::writer_grants::WriterGrants;
 use crate::watchers::supersede_duty::SupersedeDuty;
 use crate::watchers::bead_sweep::BeadSweep;
 use crate::watchers::publish_backlog::PublishBacklog;
@@ -44,6 +45,7 @@ pub struct Settings {
     pub asks: Asks,
     pub design_asks: DesignAsks,
     pub brain_dirty: BrainDirty,
+    pub writer_grants: WriterGrants,
     pub supersede_duty: SupersedeDuty,
     pub claim_count: ClaimCount,
     pub bead_sweep: BeadSweep,
@@ -233,6 +235,7 @@ impl Settings {
         let asks = Asks { interval_ms: secs("SPIRA_RUNTIME_ASKS_SECS")? * 1000 };
         let design_asks = DesignAsks { interval_ms: secs("SPIRA_RUNTIME_DESIGN_ASKS_SECS")? * 1000, repeat_secs: secs("SPIRA_DESIGN_ASKS_REPEAT")? };
         let brain_dirty = BrainDirty { interval_ms: secs("SPIRA_RUNTIME_BRAIN_DIRTY_SECS")? * 1000, age_secs: secs("SPIRA_BRAIN_DIRTY_AGE")? };
+        let writer_grants = WriterGrants { interval_ms: secs("SPIRA_RUNTIME_WRITER_GRANTS_SECS")? * 1000 };
         let supersede_duty = SupersedeDuty { interval_ms: secs("SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS")? * 1000 };
         let claim_count = ClaimCount { interval_ms: secs("SPIRA_RUNTIME_CLAIM_COUNT_SECS")? * 1000, every: num("SPIRA_CLAIM_PAGE_EVERY", &get("SPIRA_CLAIM_PAGE_EVERY")?)? };
         let bead_sweep = BeadSweep {
@@ -322,6 +325,7 @@ impl Settings {
             asks,
             design_asks,
             brain_dirty,
+            writer_grants,
             supersede_duty,
             claim_count,
             bead_sweep,
@@ -359,7 +363,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_comments, self.cr_cadence, self.claim_count);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.writer_grants, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_comments, self.cr_cadence, self.claim_count);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -505,6 +509,17 @@ mod tests {
         let base = lookup("7");
         let zero = move |k: &str| if k == "SPIRA_FLOW_WINDOW_HOURS" { Ok("0".to_string()) } else { base(k) };
         assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_FLOW_WINDOW_HOURS"));
+    }
+
+    #[test_id(tyad1im)]
+    #[test]
+    fn the_writer_grants_interval_is_read_in_seconds_and_a_zero_is_refused() {
+        let base = lookup("7");
+        let pinned = move |k: &str| if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" { Ok("42".to_string()) } else { base(k) };
+        assert_eq!(Settings::from_lookup(&pinned).unwrap().writer_grants.interval_ms, 42_000);
+        let base = lookup("7");
+        let zero = move |k: &str| if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" { Ok("0".to_string()) } else { base(k) };
+        assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_RUNTIME_WRITER_GRANTS_SECS"));
     }
 
     #[test_id(tr53nnj)]

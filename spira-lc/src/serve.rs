@@ -339,7 +339,7 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("spira-lc serve: content reads are refused until this is fixed: {e}");
     }
     startup.mark("content-check");
-    page_missing_grants();
+    record_writer_grants();
     startup.mark("writer-grants");
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that.
@@ -1237,24 +1237,12 @@ pub fn notify_ready(socket: Option<&str>) -> Result<(), String> {
 #[cfg(test)]
 mod tests;
 
-/// Reads the writer's grants and, when it lacks any the code needs (or they cannot be read),
-/// says so on stderr and pages the Concierge through watchd. Never changes a grant.
-fn page_missing_grants() {
-    let (text, field) = match crate::admin_writer::check_grants() {
-        None => return,
-        Some(Ok(missing)) if missing.is_empty() => return,
-        Some(Ok(missing)) => (format!("spira-lc serve: the content writer lacks write grants on {}: run spira-lc admin-provision-writer", missing.join(", ")), format!("missing={}", missing.join(","))),
-        Some(Err(e)) => (format!("spira-lc serve: cannot check the content writer's grants: {e}"), "check=cannot".to_string()),
-    };
-    eprintln!("{text}");
-    std::thread::spawn(move || {
-        let sent = spira_config::release_env::tool("watchd").and_then(|watchd| {
-            let mut page = crate::proc::bounded(&watchd)?;
-            let out = state_store::phases::child("watchd", || page.args(["page", "lc-grants", &text, &field]).output()).map_err(|e| format!("running {watchd}: {e}"))?;
-            if out.status.success() { Ok(()) } else { Err(format!("{watchd} page: {}", String::from_utf8_lossy(&out.stderr).trim())) }
-        });
-        if let Err(e) = sent {
-            eprintln!("spira-lc serve: the lc-grants page was not sent: {e}");
-        }
-    });
+/// Runs the writer's grant check once, says on stderr what it found, and keeps the verdict for
+/// the `writer-grants` verb. Starts no process and changes no grant.
+fn record_writer_grants() {
+    match crate::admin_writer::record_check() {
+        Some(Ok(missing)) if !missing.is_empty() => eprintln!("spira-lc serve: the content writer lacks write grants on {}: run spira-lc admin-provision-writer", missing.join(", ")),
+        Some(Err(e)) => eprintln!("spira-lc serve: cannot check the content writer's grants: {e}"),
+        _ => {}
+    }
 }

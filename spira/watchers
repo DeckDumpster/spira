@@ -83,7 +83,8 @@
 # that some other component writes. Hosted, with no row:
 #
 #   pr-notify, view, inbox-keeper, publish-backlog, round-duty, asks, supersede-duty,
-#   brain-dirty, design-asks, claim-count  spira-runtime handlers (spira-runtime/src/watchers)
+#   brain-dirty, design-asks, claim-count,
+#   writer-grants  spira-runtime handlers (spira-runtime/src/watchers)
 #   lc-backup                          task watch.backup_age (lc-backup.timer still runs the backup)
 #   round-ami-stale                    task watch.ami_stale
 #   ci-spill-guard                     task watch.ci_spill
@@ -146,11 +147,6 @@ runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
 # files and any stale index.lock) and again every 180 passes while it persists. A quiet log means
 # refreshes are landing.
 skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
-
-# LC-GRANTS is the alarm for a content writer whose grants the code has outgrown: lc-serve's
-# startup grant check writes it, through `watchd page`, and nothing else does. A quiet log means
-# the writer holds every grant the code needs.
-lc-grants|log|@SPIRA_RUN@/lc-grants.log
 
 # ROUNDS-LOOP is where the round supervisor's pages are recorded. Nothing writes the Concierge inbox
 # for it directly: it calls `watchd page rounds-loop <text> batch=.. repo=.. members=.. phase=..

@@ -101,6 +101,37 @@ pub(crate) fn check_grants() -> Option<Result<Vec<String>, String>> {
     Some(run())
 }
 
+type Verdict = Option<Result<Vec<String>, String>>;
+
+static CHECKED: std::sync::OnceLock<(u64, Verdict)> = std::sync::OnceLock::new();
+
+/// Runs the check and keeps its verdict, with the time it was taken, for `grants_json`.
+pub(crate) fn record_check() -> Verdict {
+    let verdict = check_grants();
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    CHECKED.get_or_init(|| (at, verdict)).1.clone()
+}
+
+/// The kept verdict as the `writer-grants` verb answers it; no store read.
+pub(crate) fn grants_json() -> String {
+    answer(CHECKED.get())
+}
+
+fn answer(kept: Option<&(u64, Verdict)>) -> String {
+    let v = match kept {
+        None => serde_json::json!({"checked_at": null, "writer": false, "missing": [], "error": null}),
+        Some((at, verdict)) => {
+            let (missing, error) = match verdict {
+                Some(Ok(m)) => (m.clone(), None),
+                Some(Err(e)) => (vec![], Some(e.clone())),
+                None => (vec![], None),
+            };
+            serde_json::json!({"checked_at": at, "writer": verdict.is_some(), "missing": missing, "error": error})
+        }
+    };
+    v.to_string()
+}
+
 fn provision(admin: &dyn Dolt, db: &str, user: &str, password: &str) -> Result<String, String> {
     let schema = db.trim_matches('`');
     let present = names(&admin.rows(&format!("{TABLES_SQL}'{schema}'"))?);
@@ -163,6 +194,22 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     use std::cell::RefCell;
+
+    #[test_id(tagzzkj)]
+    #[test]
+    fn the_writer_grants_answer_tells_not_yet_checked_no_writer_missing_and_cannot_apart() {
+        let parse = |k: Option<&(u64, Verdict)>| serde_json::from_str::<Value>(&answer(k)).unwrap();
+        assert_eq!(parse(None), json!({"checked_at": null, "writer": false, "missing": [], "error": null}));
+        assert_eq!(parse(Some(&(7, None))), json!({"checked_at": 7, "writer": false, "missing": [], "error": null}));
+        assert_eq!(
+            parse(Some(&(7, Some(Ok(vec!["dependencies".into()]))))),
+            json!({"checked_at": 7, "writer": true, "missing": ["dependencies"], "error": null})
+        );
+        assert_eq!(
+            parse(Some(&(7, Some(Err("no route".into()))))),
+            json!({"checked_at": 7, "writer": true, "missing": [], "error": "no route"})
+        );
+    }
 
     struct Server {
         tables: Vec<&'static str>,
