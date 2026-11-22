@@ -35,12 +35,16 @@ fn wiki(tag: &str) -> (TempDir, PathBuf) {
     let t = TempDir::new(tag);
     let w = t.path().join("wiki");
     fs::create_dir(&w).unwrap();
-    git(&w, &["init", "-q"]);
+    let bare = t.path().join("origin.git");
+    git(t.path(), &["init", "-q", "--bare", "-b", "main", bare.to_str().unwrap()]);
+    git(&w, &["init", "-q", "-b", "main"]);
     git(&w, &["config", "user.email", "t@example.com"]);
     git(&w, &["config", "user.name", "t"]);
+    git(&w, &["remote", "add", "origin", bare.to_str().unwrap()]);
     fs::write(w.join("seed.md"), "seed\n").unwrap();
     git(&w, &["add", "seed.md"]);
     git(&w, &["commit", "-qm", "seed"]);
+    git(&w, &["push", "-q", "-u", "origin", "main"]);
     (t, w)
 }
 
@@ -184,4 +188,85 @@ fn a_failing_pre_commit_hook_fails_the_script_and_its_text_reaches_stderr() {
     let o = run(&w, "hook.md\n", "hooked", "1", None);
     assert_ne!(o.status.code(), Some(0));
     assert!(stderr(&o).contains("hook-says-no-commit"), "{}", stderr(&o));
+}
+
+fn remote_main(t: &TempDir) -> String {
+    git(&t.path().join("origin.git"), &["rev-parse", "main"])
+}
+
+fn refuse_pushes(t: &TempDir) {
+    let hook = t.path().join("origin.git/hooks/pre-receive");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    testkit::write_exe(&hook, "#!/bin/sh\necho 'REJECTED — refusing for the test'\nexit 1\n");
+}
+
+#[test_id(tjkwkgd)]
+#[test]
+fn a_hook_refusal_undoes_the_commit_and_keeps_the_work_unstaged() {
+    let (t, w) = wiki("wc-refused");
+    refuse_pushes(&t);
+    fs::write(w.join("page.md"), "x\n").unwrap();
+    fs::write(w.join("other.md"), "o\n").unwrap();
+    git(&w, &["add", "other.md"]);
+    let pre = git(&w, &["rev-parse", "HEAD"]);
+    let o = run(&w, "page.md\n", "msg", "1", None);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("push failed:"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("REJECTED — refusing for the test"),
+        "{}",
+        stderr(&o)
+    );
+    assert_eq!(git(&w, &["rev-parse", "HEAD"]), pre);
+    assert_eq!(pre, remote_main(&t));
+    let status = git(&w, &["status", "--porcelain"]);
+    assert!(status.lines().any(|l| l == "?? page.md"), "{status}");
+    assert!(status.lines().any(|l| l == "A  other.md"), "{status}");
+}
+
+#[test_id(tzpgrzd)]
+#[test]
+fn an_unreachable_remote_undoes_the_commit() {
+    let (t, w) = wiki("wc-unreachable");
+    git(
+        &w,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            t.path().join("missing.git").to_str().unwrap(),
+        ],
+    );
+    fs::write(w.join("page.md"), "x\n").unwrap();
+    let pre = git(&w, &["rev-parse", "HEAD"]);
+    let o = run(&w, "page.md\n", "msg", "1", None);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("push failed:"), "{}", stderr(&o));
+    assert_eq!(git(&w, &["rev-parse", "HEAD"]), pre);
+    assert!(git(&w, &["status", "--porcelain"]).lines().any(|l| l == "?? page.md"));
+}
+
+#[test_id(tlkpo9t)]
+#[test]
+fn a_head_that_moved_during_the_transfer_is_left_in_place() {
+    let (t, w) = wiki("wc-moved");
+    refuse_pushes(&t);
+    let hook = w.join(".git/hooks").join(["pre", "push"].join("-"));
+    testkit::write_exe(&hook, "#!/bin/sh\ngit commit -q --allow-empty -m intruder\nexit 0\n");
+    fs::write(w.join("page.md"), "x\n").unwrap();
+    let o = run(&w, "page.md\n", "msg", "1", None);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("commit left in place"), "{}", stderr(&o));
+    assert_eq!(git(&w, &["log", "-2", "--format=%s"]), "intruder\nmsg");
+}
+
+#[test_id(tsiidab)]
+#[test]
+fn a_good_push_leaves_the_remote_at_head() {
+    let (t, w) = wiki("wc-pushed");
+    fs::write(w.join("page.md"), "x\n").unwrap();
+    let o = run(&w, "page.md\n", "msg", "1", None);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(git(&w, &["rev-parse", "HEAD"]), remote_main(&t));
+    assert_eq!(head(&w), "msg");
 }

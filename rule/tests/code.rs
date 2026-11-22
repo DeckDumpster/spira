@@ -654,3 +654,26 @@ fn code_land_records_a_statute_renamed_in_the_store_as_a_pointer_and_commits_onl
     let clean = world.rule(&["code", "--check"], elsewhere.path());
     assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
 }
+
+#[test_id(t3n4agd)]
+#[test]
+fn code_land_with_a_refusing_remote_fails_with_its_text_and_leaves_the_wiki_at_the_remote() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-land-refused", "wiki/law", &["law-one", "law-two", "law-three", "law-extra"]);
+    let home_repo = world.dir.path().join("fixture");
+    std::fs::create_dir_all(&home_repo).unwrap();
+    testkit::git(&home_repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(home_repo.join("f"), "f").unwrap();
+    testkit::git(&home_repo, &["add", "-A"]);
+    testkit::git(&home_repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+    testkit::git(&home_repo, &["branch", "local/main"]);
+    let bare = world.brain_with_remote();
+    let hook = bare.join("hooks/pre-receive");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    testkit::write_exe(&hook, "#!/bin/sh\necho 'REJECTED — refusing for the test'\nexit 1\n");
+    let elsewhere = testkit::TempDir::new("rule-land-refused-cwd");
+    let out = world.rule(&["code", "--land"], elsewhere.path());
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(said(&out).contains("REJECTED — refusing for the test"), "{}", said(&out));
+    assert_eq!(testkit::git(&bare, &["rev-parse", "main"]), testkit::git(&world.wiki(), &["rev-parse", "HEAD"]));
+}

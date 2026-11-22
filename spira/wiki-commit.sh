@@ -3,7 +3,8 @@
 # Reads filenames (one per line) from stdin. Acquires an exclusive lock on the
 # wiki checkout, stages each file, commits, and pushes. Serialises concurrent
 # callers; commits only the named paths (--only), leaving anything else staged untouched.
-# Exits 0 on success or nothing-to-commit, 1 on lock, stage or commit error.
+# Exits 0 on success or nothing-to-commit, 1 on lock, stage, commit or push error; a failed
+# push undoes the commit (HEAD returns to where it was, the named paths stay modified).
 set -uo pipefail
 wiki="${1:?wiki-commit.sh: wiki dir required}"
 msg="${2:?wiki-commit.sh: commit message required}"
@@ -60,6 +61,7 @@ if [ "${#paths[@]}" -eq 0 ] || git -C "$wiki" diff --cached --quiet -- "${paths[
 fi
 
 rc=0
+before=$(git -C "$wiki" rev-parse HEAD 2>/dev/null)
 git -C "$wiki" commit --only -m "$msg" -- "${paths[@]}" >/dev/null || rc=$?
 if [ "$rc" -eq 0 ]; then
     committed="$(git -C "$wiki" show --name-only --format= HEAD 2>/dev/null | sort)"
@@ -70,9 +72,16 @@ if [ "$rc" -eq 0 ]; then
     fi
 fi
 if [ "$rc" -eq 0 ]; then
-    if ! perr=$(timeout 30 git -C "$wiki" push 2>&1) && grep -qi 'rejected' <<<"$perr"; then  # batch-job: network push to the brain remote
-        printf 'wiki-commit.sh: push refused:\n%s\n' "$perr" >&2
+    ours=$(git -C "$wiki" rev-parse HEAD)
+    if ! perr=$(timeout 30 git -C "$wiki" push 2>&1); then  # batch-job: network push to the brain remote
         rc=1
+        if [ "$(git -C "$wiki" rev-parse HEAD)" = "$ours" ]; then
+            git -C "$wiki" reset -q --soft "$before" && git -C "$wiki" reset -q -- "${paths[@]}" \
+                || printf 'wiki-commit.sh: could not undo the commit %s\n' "$ours" >&2
+            printf 'wiki-commit.sh: push failed:\n%s\n' "$perr" >&2
+        else
+            printf 'wiki-commit.sh: HEAD moved past %s — commit left in place\n' "$ours" >&2
+        fi
     fi
 fi
 exec {_wc_lockfd}>&-
