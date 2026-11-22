@@ -95,10 +95,10 @@ mod tests {
         };
         std::fs::write(&file, "pinned = 1\n").unwrap();
         let w = tokio::spawn(changed_with(file.clone(), Duration::from_millis(5), "PINNED=pinned = 1\n".into(), render));
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        tokio::task::yield_now().await;
         std::fs::write(&file, "pinned = 1\nother = 2\n").unwrap();
         while renders.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            tokio::time::sleep(Duration::from_millis(5)).await; // clock-safe: caps a wait on the render counter
         }
         assert!(!w.is_finished(), "an unpinned edit must not restart");
         std::fs::write(&file, "pinned = 22\n").unwrap();
