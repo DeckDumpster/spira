@@ -2,7 +2,7 @@
 
 #[macro_use]
 extern crate spira_test_id;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -212,14 +212,22 @@ fn a_release_cleans_a_crate_changed_during_the_lease_and_the_next_lease_trusts_t
     let _ = (p4.kill(), p4.wait());
 }
 
+fn touched_after_record(dir: &Path, file: &Path) {
+    let record = std::fs::metadata(dir.join(".unit-tests-built-manifest")).unwrap().modified().unwrap();
+    // clock-safe: the mtime is set relative to the record, not to the wall clock
+    let f = std::fs::File::options().write(true).open(file).unwrap();
+    f.set_modified(record + Duration::from_secs(1)).unwrap();
+}
+
 #[test_id(t7idqqx)]
 #[test]
 fn a_file_rewritten_with_the_same_bytes_during_the_lease_is_cleaned_on_release() {
     let b = setup("bdcli-same-bytes");
     let mut p1 = sleeper();
-    b.lease("hand-1", &p1);
+    let (d1, _) = b.lease("hand-1", &p1);
     let _ = std::fs::remove_file(&b.log);
     std::fs::write(b.tree.join("a/src/lib.rs"), LEASE_BYTES).unwrap();
+    touched_after_record(&d1, &b.tree.join("a/src/lib.rs"));
     release(&b, &mut p1);
     assert_eq!(cargo_log(&b), "clean -q -p crate-a");
 }
@@ -253,9 +261,10 @@ fn a_file_outside_every_crate_that_a_crate_read_is_cleaned_on_release_when_touch
     release(&b, &mut p1);
 
     let mut p2 = sleeper();
-    b.lease("hand-2", &p2);
+    let (d2, _) = b.lease("hand-2", &p2);
     let _ = std::fs::remove_file(&b.log);
     std::fs::write(root.join("doc.txt"), "doc\n").unwrap();
+    touched_after_record(&d2, &root.join("doc.txt"));
     release(&b, &mut p2);
     assert_eq!(cargo_log(&b), "clean -q -p crate-a");
 }
