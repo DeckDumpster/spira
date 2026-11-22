@@ -311,10 +311,15 @@ pub struct Finding {
 
 impl fmt::Display for Finding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(n) => write!(f, "{}: {}:{}: {}", self.rule, self.path, n, self.message),
-            None => write!(f, "{}: {}: {}", self.rule, self.path, self.message),
-        }
+        render_finding(f, self.rule, &self.path, self.line, &self.message)
+    }
+}
+
+/// The one text form of a finding, `<rule>: <path>[:line]: <message>`.
+pub fn render_finding(f: &mut fmt::Formatter<'_>, rule: &str, path: &str, line: Option<usize>, message: &str) -> fmt::Result {
+    match line {
+        Some(n) => write!(f, "{rule}: {path}:{n}: {message}"),
+        None => write!(f, "{rule}: {path}: {message}"),
     }
 }
 

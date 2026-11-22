@@ -47,11 +47,33 @@ impl FindingRecord {
         Ok(r)
     }
 
-    /// The finding as the plain text spira-lint prints it.
-    pub fn display(&self) -> String {
-        match self.line {
-            Some(n) => format!("{}: {}:{}: {}", self.rule, self.path, n, self.message),
-            None => format!("{}: {}: {}", self.rule, self.path, self.message),
+}
+
+impl std::fmt::Display for FindingRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        crate::render_finding(f, &self.rule, &self.path, self.line, &self.message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(tq5bkam)]
+    #[test]
+    fn a_record_displays_as_the_finding_it_came_from() {
+        for line in [Some(7), None] {
+            let f = Finding { rule: "r", path: "a/b.rs".into(), line, message: "bad".into() };
+            let rec = FindingRecord::of(&f, Some(("spira-lint/src/rules/r.rs", None)));
+            assert_eq!(rec.to_string(), f.to_string());
+            assert_eq!(FindingRecord::parse(&rec.to_line()).unwrap(), rec);
         }
+    }
+
+    #[test_id(tphet7i)]
+    #[test]
+    fn a_record_with_an_extra_field_is_refused_naming_the_field() {
+        let line = r#"{"schema":1,"rule":"r","path":"p","line":null,"message":"m","rule_source":"s","allow_file":null,"member":"sp-x"}"#;
+        assert!(FindingRecord::parse(line).unwrap_err().contains("member"));
     }
 }

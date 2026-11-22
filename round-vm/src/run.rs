@@ -5878,4 +5878,12 @@ mod tests {
         let child = command("sh").args(["-c", "exit 255"]).stdin(Stdio::piped()).spawn().unwrap();
         assert_eq!(feed_and_wait(child, &vec![b'#'; 200_000]).expect("the exit, not a stdin error"), 255);
     }
+
+    #[test_id(twq284f)]
+    #[test]
+    fn the_lint_phase_writes_the_typed_findings_and_keeps_them_with_a_red_result() {
+        assert!(REMOTE_SCRIPT.contains("--findings ~/round-lint.findings.jsonl"));
+        assert!(REMOTE_SCRIPT.contains("cp ~/round-lint.findings.jsonl \"$early/spira-lint.findings.jsonl\""));
+        assert!(!REMOTE_SCRIPT.contains("lint_culprit") && !REMOTE_SCRIPT.contains("member=$("));
+    }
 }

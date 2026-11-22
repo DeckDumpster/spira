@@ -629,6 +629,10 @@ fn lint_blame(results: &Path, members: &[Member], changed: &BTreeMap<Id, Vec<Str
             return blame;
         }
     };
+    if text.trim().is_empty() {
+        blame.unnamed.push(format!("{LINT_FINDINGS_FILE}: the lint is red and the file holds no record"));
+        return blame;
+    }
     let none: Vec<String> = vec![];
     let touched = |id: &Id| changed.get(id).unwrap_or(&none);
     for (n, row) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
@@ -644,7 +648,7 @@ fn lint_blame(results: &Path, members: &[Member], changed: &BTreeMap<Id, Vec<Str
             .iter()
             .find(|m| holds_path(touched(&m.id), &r.path))
             .or_else(|| members.iter().find(|m| rule_files().any(|f| holds_path(touched(&m.id), f))));
-        let display = r.display();
+        let display = r.to_string();
         match owner {
             Some(m) => {
                 let line = format!("member={} {display}", m.id);
@@ -2144,6 +2148,9 @@ mod tests {
         fs::remove_file(d.path().join(LINT_FINDINGS_FILE)).unwrap();
         let red = filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap();
         assert!(red.named.is_empty() && red.unnamed.len() == 1 && red.unnamed[0].contains("spira-lint.findings.jsonl"), "{red:?}");
+        fs::write(d.path().join(LINT_FINDINGS_FILE), "").unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap();
+        assert!(red.unnamed.len() == 1 && red.unnamed[0].contains("no record"), "an empty record on a red lint fails closed: {red:?}");
         fs::write(d.path().join(LINT_FINDINGS_FILE), "{\"schema\":1,\"extra\":2}\n").unwrap();
         let red = filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap();
         assert!(red.unnamed.len() == 1 && red.unnamed[0].contains("spira-lint.findings.jsonl"), "{red:?}");
