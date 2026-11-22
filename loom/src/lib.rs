@@ -1082,6 +1082,10 @@ mod in_process_tests {
         std::fs::write(d.join("lcview/snapshot.json"), one.to_string()).unwrap();
         let b = body(&loom).await;
         assert!(b.contains("chip bad") && b.contains("1 source failing: victorialogs: refused"), "{b}");
+        let two = serde_json::json!({"now": now_s(), "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": [], "failed": ["a<b", "c&d"]});
+        std::fs::write(d.join("lcview/snapshot.json"), two.to_string()).unwrap();
+        let b = body(&loom).await;
+        assert!(b.contains("title=\"a&lt;b\nc&amp;d\"") && b.contains("2 source"), "{b}");
     }
 
     #[tokio::test]
