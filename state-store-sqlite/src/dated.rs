@@ -243,6 +243,17 @@ fn open_conn(path: &Path, read_only: bool) -> Result<Connection> {
     Ok(conn)
 }
 
+/// A read-only connection for store reader `i`, opened with its file so no read's limit is spent
+/// opening it.
+fn open_reader(path: &Path, reads: &ReadSlots, i: usize) -> Result<Connection> {
+    let conn = open_conn(path, true)?;
+    if let Some(deadline) = reads.deadlines.get(i) {
+        let (d, clock) = (deadline.clone(), reads.clock.clone());
+        conn.progress_handler(PROGRESS_STEPS, Some(move || clock.now_ms() > d.load(Ordering::SeqCst)));
+    }
+    Ok(conn)
+}
+
 const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS rows (
         key BLOB PRIMARY KEY,
@@ -275,7 +286,9 @@ impl DatedFile {
         for sql in SCHEMA {
             exec(&writer, sql, [])?;
         }
-        let readers = (0..=reads.deadlines.len()).map(|_| Mutex::new(None)).collect();
+        let readers = (0..=reads.deadlines.len())
+            .map(|i| open_reader(&path, &reads, i).map(|c| Mutex::new(Some(c))))
+            .collect::<Result<Vec<_>>>()?;
         Ok(Arc::new(DatedFile {
             reads,
             day,
@@ -298,16 +311,13 @@ impl DatedFile {
 
     fn with_reader<T>(&self, slot: usize, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let i = slot.min(self.readers.len() - 1);
-        let mut g = lock(&self.readers[i]);
-        if g.is_none() {
-            let conn = open_conn(&self.path, true)?;
-            if let Some(deadline) = self.reads.deadlines.get(i) {
-                let (d, clock) = (deadline.clone(), self.reads.clock.clone());
-                conn.progress_handler(PROGRESS_STEPS, Some(move || clock.now_ms() > d.load(Ordering::SeqCst)));
-            }
-            *g = Some(conn);
-        }
-        f(g.as_ref().expect("the connection was just opened"))
+        let g = lock(&self.readers[i]);
+        f(g.as_ref().expect("a reader is opened with its file"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn readers_open(&self) -> usize {
+        self.readers.iter().filter(|r| lock(r).is_some()).count()
     }
 
     /// Files `rows` as main `main` and commits.
@@ -511,6 +521,16 @@ mod tests {
         assert_eq!(day_of(DAY_MS - 1), 0);
         assert_eq!(day_of(DAY_MS), 1);
         assert_eq!(date_of(day_of(1_728_000_000_000)), "2024-10-04");
+    }
+
+    #[test_id(toa8tq6)]
+    #[test]
+    fn a_day_file_has_every_reader_connection_open_before_any_read_runs() {
+        let dir = testkit::TempDir::new("dated-eager-readers");
+        let deadlines = (0..3).map(|_| Arc::new(AtomicU64::new(u64::MAX))).collect();
+        let reads = ReadSlots::new(deadlines, Arc::new(runtime::ports::WallClock), None);
+        let file = DatedFile::open(dir.path().join("s.receipts-1970-01-01.db"), 0, reads).unwrap();
+        assert_eq!(file.readers_open(), 4, "one per store reader and the shared one");
     }
 
     #[test_id(tqa3smr)]
