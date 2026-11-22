@@ -27,6 +27,7 @@ fn config() -> Config {
         submit_bound_s: 90 * MIN,
         cut_bound_s: 45 * MIN,
         gate_timeout_s: 45 * MIN,
+        certify_par: 2,
         deliver_bound_s: 60 * MIN,
         activate_bound_s: 15 * MIN,
         ask_bound_s: 60 * MIN,
@@ -53,6 +54,7 @@ fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, 
 fn healthy(now: u64) -> Snapshot {
     Snapshot {
         readable: true,
+        gate_slots_free: 0,
         activation: None,
         maintenance: None,
         why: String::new(),
@@ -1393,6 +1395,57 @@ fn a_submitted_bead_whose_gate_ran_past_the_gate_timeout_pages_and_the_page_says
     assert!(found[0].evidence.contains("past SPIRA_GATE_TIMEOUT"), "{}", found[0].evidence);
 }
 
+fn over_lines(acts: &[EffectSpec]) -> Vec<String> {
+    over_submitted(acts)
+}
+
+#[test_id(tu49z7k)]
+#[test]
+fn a_submitted_bead_the_landing_pass_backed_off_waits_on_the_backoff_and_does_not_page() {
+    let (mut s, now) = gating_fixture(8, None, "SUBMITTED");
+    s.beads[0].id = "sp-s1".into();
+    s.beads[0].tip = Some("T".into());
+    mark_gated(&mut s, &BTreeMap::new(), &[("T".to_string(), now + 10 * MIN), ("U".to_string(), 1)]);
+    assert_eq!(s.beads[0].gate, Some(Gating::BackingOff { until: now + 10 * MIN }));
+    assert_eq!(cut_stalls(&s, now), vec![]);
+    let (_, acts) = decide(&Carry::default(), &s, now * 1000, &gate_cfg());
+    assert_eq!(over_lines(&acts), Vec::<String>::new());
+}
+
+#[test_id(tkigmuy)]
+#[test]
+fn a_backoff_that_ended_pages_and_names_when_it_ended() {
+    let (mut s, now) = gating_fixture(8, None, "SUBMITTED");
+    s.beads[0].tip = Some("T".into());
+    mark_gated(&mut s, &BTreeMap::new(), &[("T".to_string(), now - MIN)]);
+    let found = cut_stalls(&s, now);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].evidence.contains("gate backed off until"), "{}", found[0].evidence);
+}
+
+#[test_id(tx4k5ok)]
+#[test]
+fn a_queued_gate_with_every_slot_held_does_not_page() {
+    let (mut s, now) = gating_fixture(8, Some(Gating::Queued), "SUBMITTED");
+    s.gate_slots_free = 0;
+    assert_eq!(cut_stalls(&s, now), vec![]);
+}
+
+#[test_id(tpiewab)]
+#[test]
+fn a_queued_gate_with_a_slot_free_for_a_full_bound_pages_once_naming_the_bead() {
+    let (mut s, now) = gating_fixture(8, Some(Gating::Queued), "SUBMITTED");
+    s.beads[0].id = "sp-s1".into();
+    s.gate_slots_free = 1;
+    let cfg = gate_cfg();
+    let (c1, a1) = decide(&Carry::default(), &s, now * 1000, &cfg);
+    assert_eq!(over_lines(&a1), Vec::<String>::new());
+    let (_, a2) = decide(&c1, &s, (now + 5 * MIN) * 1000, &cfg);
+    let lines = over_lines(&a2);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("sp-s1") && lines[0].contains("queued, a gate slot free"), "{}", lines[0]);
+}
+
 #[test_id(t76rj7b)]
 #[test]
 fn a_certified_bead_pages_whatever_its_gate_holds() {
@@ -1431,7 +1484,7 @@ fn mark_gated_sets_a_gate_on_submitted_beads_only_and_clears_a_stale_one() {
     s.open_rounds = Some(BTreeMap::new());
     s.owners.clear();
     let gates = BTreeMap::from([("sp-0m57dx".to_string(), Gating::Queued), ("sp-c1".to_string(), Gating::Queued)]);
-    mark_gated(&mut s, &gates);
+    mark_gated(&mut s, &gates, &[]);
     let gate_of = |id: &str| s.beads.iter().find(|b| b.id == id).unwrap().gate.clone();
     assert_eq!((gate_of("sp-0m57dx"), gate_of("sp-c1"), gate_of("sp-gone")), (Some(Gating::Queued), None, None));
     let found = cut_stalls(&s, now);
