@@ -2094,7 +2094,7 @@ fn a_red_recorded_before_the_deny_list_changed_is_not_replayed_after() {
     let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).cloned().expect("a red record");
     let g = Fake::new();
     g.put_var("SPIRA_VERDICT_TTL", "86400");
-    *g.deny.borrow_mut() = Ok("disabled\tintegration:p a::b\tsp-x\t9999999999\n".into());
+    *g.deny.borrow_mut() = Ok("disabled\ttest:t0pab00\tsp-x\t9999999999\n".into());
     let entry = entry.lines().map(|l| if l.starts_with("at=") { "at=999999".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
     g.files.borrow_mut().insert(p, entry);
     g.run();
@@ -2106,13 +2106,13 @@ fn a_red_recorded_before_the_deny_list_changed_is_not_replayed_after() {
 #[test]
 fn a_red_recorded_under_the_same_denied_tests_is_replayed_whatever_the_header_bead_or_expiry() {
     let f = Fake::new();
-    *f.deny.borrow_mut() = Ok("# test-registry deny-list at=1 rows=1\ndisabled\tintegration:p a::b\tsp-x\t9999999999\n".into());
+    *f.deny.borrow_mut() = Ok("# test-registry deny-list at=1 rows=1\ndisabled\ttest:t0pab00\tsp-x\t9999999999\n".into());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
     f.run();
     let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("verdicts/red/")).cloned().expect("a red record");
     let g = Fake::new();
     g.put_var("SPIRA_VERDICT_TTL", "86400");
-    *g.deny.borrow_mut() = Ok("# test-registry deny-list at=2 rows=1\ndisabled\tintegration:p a::b\tsp-y\t8888888888\n".into());
+    *g.deny.borrow_mut() = Ok("# test-registry deny-list at=2 rows=1\ndisabled\ttest:t0pab00\tsp-y\t8888888888\n".into());
     let entry = entry.lines().map(|l| if l.starts_with("at=") { "at=999999".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
     g.files.borrow_mut().insert(p, entry);
     g.run();
@@ -2854,18 +2854,18 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
 #[test_id(trpvrqf)]
 #[test]
 fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites_env() {
-    let list = "disabled\tunit:a::b t::drop\tsp-1\t-\nquarantined\tintegration:p x::y\tsp-2\t-\n";
+    let list = "disabled\ttest:t0aaaaa\tsp-1\t-\nquarantined\ttest:t0bbbbb\tsp-2\t-\n";
     let f = unit_fake(&["spira-config/src/lib.rs"]);
     *f.deny.borrow_mut() = Ok(list.to_string());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
     assert_eq!(f.run(), PASS);
     let cfg = f.unit_config.borrow().clone();
-    assert!(cfg[0].1.contains("default-filter = \"not ((binary_id(=a::b) & test(=t::drop)))\"\n"), "{cfg:?}");
+    assert!(cfg[0].1.contains("default-filter = \"not (test(/::t0aaaaa$/) | test(/::t0bbbbb$/))\"\n"), "{cfg:?}");
     let cmds = f.cmds.borrow().clone();
-    assert!(cmds[2].contains("--test '*' -- --exact --skip x::y"), "{}", cmds[2]);
+    assert!(cmds[2].contains("--test '*' -- --skip ::t0aaaaa --skip ::t0bbbbb"), "{}", cmds[2]);
     assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "the gate-string step names the list file");
     let written = f.deny_written.borrow();
-    assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c.contains("t::drop")), "{written:?}");
+    assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c.contains("test:t0aaaaa")), "{written:?}");
 
     let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh");
     *f.deny.borrow_mut() = Ok(list.to_string());
@@ -2892,7 +2892,7 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
 #[test_id(ts1j3kl)]
 #[test]
 fn a_gate_names_the_deny_list_it_ran_with_on_stderr_in_the_record_and_in_the_tsd_row() {
-    let list = "disabled\tunit:a::b t::drop\tsp-1\t-\n";
+    let list = "disabled\ttest:t0aaaaa\tsp-1\t-\n";
     let f = unit_fake(&["spira-config/src/lib.rs"]);
     *f.deny.borrow_mut() = Ok(list.to_string());
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "build-fence: make build ok".into()));
@@ -3664,6 +3664,14 @@ fn a_flip_the_gate_declines_to_judge_files_one_deletion_incident() {
     let (title, body) = (f.flips_body.borrow()[0].clone(), f.flips_body.borrow()[1].clone());
     assert_eq!(title, "test t::flip flips: red on 3 beads with disjoint diffs");
     assert!(body.contains("law-a-test-that-flips-is-deleted") && body.contains("sp-x") && body.contains("sp-y"), "{body}");
+}
+
+#[test_id(tf1r2e3)]
+#[test]
+fn a_flipping_test_with_an_id_is_keyed_and_named_by_the_id() {
+    assert_eq!(crate::ports::flip_reference("spira", "t::flip::t0aaaaa"), "test-flip:spira:test:t0aaaaa");
+    assert_eq!(crate::ports::flip_reference("spira", "t::renamed::t0aaaaa"), "test-flip:spira:test:t0aaaaa");
+    assert_eq!(crate::ports::flip_reference("spira", "t::flip"), "test-flip:spira:t::flip");
 }
 
 #[test_id(t1rpfkl)]

@@ -24,8 +24,8 @@ fn shipped_script() -> Script {
     loopworld::parse(&shipped()).expect("it parses")
 }
 
-const CLEARED: &str = "unit:loom factory::tests::cleared_by_landing";
-const EXPIRING: &str = "unit:loom factory::tests::left_to_expire";
+const CLEARED: &str = "test:t0clear";
+const EXPIRING: &str = "test:t0expir";
 
 #[test_id(tj7af0t)]
 #[test]

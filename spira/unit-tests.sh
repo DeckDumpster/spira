@@ -42,8 +42,7 @@ if [ -f "$ROOT/target/unit-tests.skip" ]; then
   while IFS= read -r t; do [ -n "$t" ] && skips+=(--skip "$t") && names+=("$t"); done < "$ROOT/target/unit-tests.skip"
   [ "${#names[@]}" -eq 0 ] || echo "unit-tests: skipped (needs a running system): ${names[*]}"
 fi
-# libtest's --skip matches the path as a substring in every binary; the gate's nextest
-# filter also pins the binary, so a same-named test in another binary is left out here too.
+# Each line is `::<id>`: libtest's --skip matches it as a substring in every binary.
 if [ -f "$ROOT/target/unit-tests.deny" ]; then
   denied=()
   while IFS= read -r t; do [ -n "$t" ] && skips+=(--skip "$t") && denied+=("$t"); done < "$ROOT/target/unit-tests.deny"
