@@ -1273,7 +1273,12 @@ pub fn brokers_tool(verb: &str) -> bool {
 /// The brokered verbs that start no program in the scheduler: a content read, a config lookup, or a note or label write the service makes itself.
 const ANSWERED_IN_SERVICE: &[&str] = &["read", "list", "search", "fence", "note-on", "label-add", "label-remove"];
 
-/// The verbs lc-serve records as a request instead of running: every one that starts a program.
+/// The answered-in-service verbs that write: held to the latency limit like any store call, not exempted as batch jobs.
+pub fn answered_write(verb: &str) -> bool {
+    matches!(verb, "note-on" | "label-add" | "label-remove")
+}
+
+/// The verbs lc-serve records as a request for the scheduler to run: the brokered tools not answered in the service.
 pub fn exec_verb(verb: &str) -> bool {
     (brokers_tool(verb) && !ANSWERED_IN_SERVICE.contains(&verb)) || matches!(verb, "blocked" | "superseded-by")
 }

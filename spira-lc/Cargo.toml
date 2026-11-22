@@ -41,7 +41,7 @@ path = "tests/verbs_on_store.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["system-paths/integration", "bead/integration", "watchtower/integration", "incident/integration", "lifecycle/integration", "gate/integration", "forge/integration", "groomer/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration"]
+integration = ["system-paths/integration", "bead/integration", "watchtower/integration", "incident/integration", "lifecycle/integration", "gate/integration", "forge/integration", "groomer/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 
 [dependencies]
 system-paths = { path = "../system-paths" }
@@ -83,6 +83,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 reconciler-engine = { path = "../reconciler-engine" }
 incident = { path = "../incident" }
 sentinel = { path = "../sentinel" }
+spira-test-id = { path = "../spira-test-id" }
 watchtower = { path = "../watchtower" }
 round-vm = { path = "../round-vm" }
 gate = { path = "../gate" }
