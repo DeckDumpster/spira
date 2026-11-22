@@ -8,10 +8,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
-
-use runtime::ports::{Proc, ProcOutput, ProcSpec};
 
 thread_local! {
     static VERB: RefCell<String> = const { RefCell::new(String::new()) };
@@ -52,11 +50,6 @@ pub const READS_ENDED_BY_RESET: &str = "spira_lc_reads_ended_by_reset";
 pub const GATE_WAIT_MAX_SECONDS: &str = "spira_lc_gate_wait_max_seconds";
 
 static PROCESS_CHILDREN: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(test)]
-pub fn process_children() -> u64 {
-    PROCESS_CHILDREN.load(Ordering::Relaxed)
-}
 
 fn children_started_series(started: u64, pushed: u64, at: std::time::SystemTime) -> spira_otel::metrics::Series {
     spira_otel::metrics::Series { name: CHILDREN_STARTED.into(), value: started.saturating_sub(pushed) as f64, labels: Vec::new(), at }
