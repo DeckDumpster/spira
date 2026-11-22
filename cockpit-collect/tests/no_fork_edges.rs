@@ -8,6 +8,8 @@ extern crate spira_test_id;
 use std::path::{Path, PathBuf};
 
 const BANNED: [&str; 10] = ["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
+/// Children the in-process `now` probe must never start: both are read from files in-process.
+const NOW_PROBE_BANNED: [&str; 2] = ["overrides.sh", "release"];
 /// The generic runners: a call through one of these names its child as its first argument.
 const RUNNERS: [&str; 2] = ["Command::new(", "bounded::bounded("];
 
@@ -75,4 +77,30 @@ fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
     let marked = "// FORK-EDGE: unserved verb content\nlet o = Command::new(\"spira-lc\");\n";
     assert!(unmarked("m.rs", marked).is_empty());
     assert!(unmarked("g.rs", "let o = Command::new(\"git\");\n").is_empty());
+}
+
+/// Every `file:line` of a one-line `run_tool("…"` call naming a tool the probe reads in-process.
+fn now_probe_tool_runs(name: &str, text: &str) -> Vec<String> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| quoted_after(l, "run_tool(").is_some_and(|c| NOW_PROBE_BANNED.contains(&c)))
+        .map(|(i, _)| format!("{name}:{}", i + 1))
+        .collect()
+}
+
+#[test_id(tsguhm2)]
+#[test]
+fn the_now_probe_runs_neither_overrides_sh_nor_release() {
+    let path = testkit::manifest_dir().join("src/probes/mod.rs");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("pub fn now_keys"), "the scan read the wrong file");
+    let found = now_probe_tool_runs(&path.display().to_string(), &text);
+    assert!(found.is_empty(), "the 5s probe starts a child it can read in-process:\n{}", found.join("\n"));
+}
+
+#[test_id(twu1xzc)]
+#[test]
+fn the_now_probe_scan_catches_a_planted_run() {
+    let planted = "let a = io::run_tool(\"release\", &[\"status\"], None);\nlet b = io::run_tool(\"overrides.sh\", &[\"list\"], None);\nlet c = io::run_tool(\"date\", &[], None);\n";
+    assert_eq!(now_probe_tool_runs("p.rs", planted), vec!["p.rs:1".to_string(), "p.rs:2".to_string()]);
 }
