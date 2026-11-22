@@ -237,6 +237,7 @@ version = "1.0.0"
 dependencies = [
  "bead",
  "dwarf",
+ "install",
  "libc",
  "release",
  "runtime",
@@ -3104,6 +3105,7 @@ version = "1.0.0"
 dependencies = [
  "cockpit-ops",
  "forge",
+ "install",
  "libc",
  "reconciler-engine",
  "runtime",
