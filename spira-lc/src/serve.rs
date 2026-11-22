@@ -1247,7 +1247,7 @@ fn page_missing_grants() {
     eprintln!("{text}");
     std::thread::spawn(move || {
         let sent = spira_config::release_env::tool("watchd").and_then(|watchd| {
-            let out = spira_config::bounded::bounded(&watchd).args(["page", "lc-grants", &text, &field]).output().map_err(|e| format!("running {watchd}: {e}"))?;
+            let out = state_store::phases::child("watchd", || spira_config::bounded::bounded(&watchd).args(["page", "lc-grants", &text, &field]).output()).map_err(|e| format!("running {watchd}: {e}"))?;
             if out.status.success() { Ok(()) } else { Err(format!("{watchd} page: {}", String::from_utf8_lossy(&out.stderr).trim())) }
         });
         if let Err(e) = sent {
