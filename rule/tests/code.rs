@@ -478,3 +478,33 @@ fn show_resolves_a_section_through_the_wiki_book_and_follows_one_moved_hop() {
     assert_eq!(moved.status.code(), Some(0), "{}", said(&moved));
     assert_eq!(String::from_utf8_lossy(&moved.stdout).trim(), "§9.9 moved: law-two is now §1.2\nDo law-two.");
 }
+
+#[test]
+fn code_land_records_a_statute_renamed_in_the_store_as_a_pointer_and_commits_only_the_book() {
+    let _env = testkit::env(&[]);
+    let world = World::new("rule-land-renamed", "wiki/law", &["law-one", "law-aeon-x", "law-two"]); // ffx-ok
+    world.brain_with_remote();
+    let w = world.wiki();
+    std::fs::write(w.join("wiki/law/toc.toml"), "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First scope.\"\nslugs = [\n  \"law-one\",\n  \"law-aeon-x\",\n  \"law-two\",\n]\n").unwrap(); // ffx-ok
+    let elsewhere = testkit::TempDir::new("rule-land-renamed-cwd");
+    let landed = world.rule(&["code", "--land"], elsewhere.path());
+    assert_eq!(landed.status.code(), Some(0), "{}", said(&landed));
+
+    std::fs::remove_file(world.texts.path().join("law-aeon-x.txt")).unwrap(); // ffx-ok
+    std::fs::write(world.texts.path().join("law-dwarf-x.txt"), "Do it.").unwrap();
+    std::fs::write(world.texts.path().join("retired-law-aeon-x.txt"), retired_record("law-dwarf-x")).unwrap(); // ffx-ok
+    let out = world.rule(&["code", "--land"], elsewhere.path());
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert_eq!(testkit::git(&w, &["log", "-1", "--format=%s"]), "law: code book");
+    let names = testkit::git(&w, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(names.lines().all(|l| l.starts_with("wiki/law/")), "{names}");
+
+    let toc = parse_toc(&std::fs::read_to_string(world.book().join("toc.toml")).unwrap()).unwrap();
+    assert_eq!(toc[0].slugs, ["law-one", "law-dwarf-x", "law-two"]);
+    assert!(world.book().join("1-alpha/1.2-law-dwarf-x.md").exists());
+    assert!(!testkit::git(&w, &["ls-files", "wiki/law"]).contains("aeon")); // ffx-ok
+    let pointers = parse_pointers(&std::fs::read_to_string(world.book().join("pointers.toml")).unwrap()).unwrap();
+    assert_eq!((pointers.retired[0].slug.as_str(), pointers.retired[0].replaced_by.as_deref()), ("law-aeon-x", Some("law-dwarf-x"))); // ffx-ok
+    let clean = world.rule(&["code", "--check"], elsewhere.path());
+    assert_eq!(clean.status.code(), Some(0), "{}", said(&clean));
+}
