@@ -2071,12 +2071,12 @@ pub fn moved_members(repo: &Repo, base_sha: &str, members: &[Member]) -> Vec<Str
         .collect()
 }
 
-pub fn set_branch(repo: &Repo, branch: &str, sha: &str) {
-    let _ = spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(&repo.path)
-        .args(["branch", "-f", branch, sha])
-        .status();
+pub fn set_branch(repo: &Repo, branch: &str, sha: &str) -> Result<(), String> {
+    run(
+        spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["branch", "-f", branch, sha]),
+        "git branch -f",
+    )
+    .map(|_| ())
 }
 
 pub fn local_branches(repo: &Repo, prefix: &str) -> Vec<String> {
@@ -2255,11 +2255,11 @@ pub fn bins_present(repo: &Repo, wt: &Path, head: &str) -> bool {
 /// added is invisible in that checkout, one it deleted still sits there, and an untracked
 /// stray in that checkout is neither — reading the branch's own tree gets all three right at
 /// once, matching exactly what testenv-batch.sh validates `--suites` against.
-pub fn all_suites(repo: &Repo, branch: &str) -> Vec<String> {
+pub fn all_suites(repo: &Repo, branch: &str) -> Result<Vec<String>, String> {
     suites_in(&repo.path, branch)
 }
 
-pub fn suites_in(path: &Path, branch: &str) -> Vec<String> {
+pub fn suites_in(path: &Path, branch: &str) -> Result<Vec<String>, String> {
     let out = run(
         Command::new("git").arg("-C").arg(path).args([
             "ls-tree",
@@ -2270,8 +2270,7 @@ pub fn suites_in(path: &Path, branch: &str) -> Vec<String> {
             "spira/",
         ]),
         "git ls-tree suites",
-    )
-    .unwrap_or_default();
+    )?;
     let mut suites: Vec<String> = out
         .lines()
         .filter_map(|l| l.rsplit('/').next())
@@ -2280,7 +2279,7 @@ pub fn suites_in(path: &Path, branch: &str) -> Vec<String> {
         .collect();
     suites.sort();
     suites.dedup();
-    suites
+    Ok(suites)
 }
 
 /// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
@@ -2701,15 +2700,24 @@ pub fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
 
 /// The failed tests and failure excerpt of each red test phase (`unit.json`, `integration.json`)
 /// in the round's results, read from that phase's own output.
+fn red_test_results(results: &Path) -> Vec<(&'static str, serde_json::Value)> {
+    [("unit.json", "unit-tests"), ("integration.json", "integration-tests")]
+        .into_iter()
+        .filter_map(|(file, stage)| {
+            let v = fs::read_to_string(results.join(file)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())?;
+            (v["verdict"] == "red").then_some((stage, v))
+        })
+        .collect()
+}
+
+/// The `unit-tests` / `integration-tests` stages whose result file in `results` says red.
+pub fn red_test_phases(results: &Path) -> Vec<String> {
+    red_test_results(results).into_iter().map(|(stage, _)| stage.to_string()).collect()
+}
+
 fn test_phase_evidence(results: &Path) -> Vec<String> {
     let mut lines = Vec::new();
-    for (file, stage) in [("unit.json", "unit-tests"), ("integration.json", "integration-tests")] {
-        let Some(v) = fs::read_to_string(results.join(file)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else {
-            continue;
-        };
-        if v["verdict"] != "red" {
-            continue;
-        }
+    for (stage, v) in red_test_results(results) {
         let names: Vec<&str> = v["failed"].as_array().into_iter().flatten().filter_map(|n| n.as_str()).collect();
         if !names.is_empty() {
             lines.push(format!("{stage} failed: {}", names.join(", ")));
@@ -6822,5 +6830,24 @@ mod reap_attribution_tests {
         assert!(deleted.is_empty());
         assert_eq!(failed.len(), 1, "{failed:?}");
         assert!(!failed[0].1.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod suites_in_tests {
+    use super::*;
+
+    #[test]
+    fn suites_in_names_git_when_the_branch_is_missing_and_lists_the_tree_otherwise() {
+        let d = testkit::TempDir::new("batcher-cut-suites-in");
+        let g = |args: &[&str]| testkit::git(d.path(), args);
+        g(&["init", "-q", "-b", "main"]);
+        let err = suites_in(d.path(), "no-such-branch").unwrap_err();
+        assert!(err.contains("git ls-tree"), "{err}");
+        std::fs::create_dir_all(d.path().join("spira")).unwrap();
+        std::fs::write(d.path().join("spira/test-a.sh"), "").unwrap();
+        g(&["add", "-A"]);
+        g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        assert_eq!(suites_in(d.path(), "main").unwrap(), ["test-a.sh"]);
     }
 }

@@ -1084,11 +1084,11 @@ fn stabilize_round(
     }
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
-    io::set_branch(repo, &round_branch, &io::head_of(wt)?);
+    io::set_branch(repo, &round_branch, &io::head_of(wt)?)?;
 
     let history =
         std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
-    let ordered = order::longest_first(&io::all_suites(repo, &round_branch), &history);
+    let ordered = order::longest_first(&io::all_suites(repo, &round_branch)?, &history);
     if !ordered.unmeasured.is_empty() {
         println!(
             "batcher {}: ALARM no recorded wall time for {} — scheduled first",
@@ -1217,7 +1217,7 @@ fn stabilize_round(
                 round_branch
             } else {
                 let b = format!("{round_branch}-survivors");
-                io::set_branch(repo, &b, &head);
+                io::set_branch(repo, &b, &head)?;
                 b
             };
             Ok(Stabilized::Stable(StableRound {
@@ -1382,7 +1382,7 @@ fn finish_local_round(
         } else {
             Some((
                 stable.head.as_str(),
-                io::all_suites(repo, &stable.green_branch).len(),
+                io::all_suites(repo, &stable.green_branch)?.len(),
             ))
         };
         match io::round_certify(env_, repo, batch, attest, Some(&head)) {
@@ -2458,18 +2458,19 @@ fn attribute_in(
         .collect();
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
-    io::set_branch(&repo, &round_branch, &io::head_of(&wt)?);
     let history =
         std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
-    let suites = named_suites(
-        order::longest_first(&io::all_suites(&repo, &round_branch), &history).list,
-        o.suites.as_deref(),
-    );
-    if suites.is_empty() {
-        return Ok(
-            Attribution::Blocked("the round tree has none of the suites to attribute".into())
-                .line(),
-        );
+    let listed = io::set_branch(&repo, &round_branch, &io::head_of(&wt)?)
+        .and_then(|()| io::all_suites(&repo, &round_branch));
+    let suites = match listed {
+        Ok(all) => named_suites(order::longest_first(&all, &history).list, o.suites.as_deref()),
+        Err(why) => {
+            return Ok(Attribution::Fault(format!("the round tree's suites could not be listed: {why}")).line())
+        }
+    };
+    let red_phases = o.after_pass.as_deref().map(io::red_test_phases).unwrap_or_default();
+    if let Some(why) = blocks_attribution(&suites, &red_phases, o.after_pass.as_deref()) {
+        return Ok(Attribution::Blocked(why).line());
     }
     let changed: BTreeMap<String, Vec<String>> = members
         .iter()
@@ -2566,6 +2567,15 @@ fn attribute_in(
         Err(e) => Attribution::Blocked(format!("the attribution did not finish: {e}")),
     };
     Ok(outcome.line())
+}
+
+/// Why attribution cannot start: no shell suite to attribute and no red test tier in the pass either.
+fn blocks_attribution(suites: &[String], red_phases: &[String], pass: Option<&Path>) -> Option<String> {
+    if !suites.is_empty() || !red_phases.is_empty() {
+        return None;
+    }
+    let at = pass.map(|p| format!(" in {}", p.display())).unwrap_or_default();
+    Some(format!("the pass names no red the round can attribute: no shell suite and no red unit-tests or integration-tests{at}"))
 }
 
 /// `all` narrowed to the CSV `named` when one is given; a name the tree does not hold is dropped.
@@ -2952,6 +2962,22 @@ mod tests {
         let mut out = Vec::new();
         pause_show(&o, &mut out).unwrap();
         assert!(String::from_utf8(out).unwrap().contains("a: paused kind=red since=1"));
+    }
+
+    #[test]
+    fn an_empty_suite_list_does_not_block_attribution_of_a_red_test_tier() {
+        let dir = testkit::TempDir::new("batcher-cut-red-tier");
+        std::fs::write(dir.path().join("integration.json"), r#"{"stage":"integration-tests","verdict":"red","failed":["x"]}"#).unwrap();
+        let red = io::red_test_phases(dir.path());
+        assert_eq!(red, ["integration-tests"]);
+        assert_eq!(blocks_attribution(&[], &red, Some(dir.path())), None);
+        let green = testkit::TempDir::new("batcher-cut-green-tier");
+        std::fs::write(green.path().join("unit.json"), r#"{"stage":"unit-tests","verdict":"green"}"#).unwrap();
+        let none = io::red_test_phases(green.path());
+        assert!(none.is_empty());
+        let why = blocks_attribution(&[], &none, Some(green.path())).expect("blocks");
+        assert!(why.contains(&green.path().display().to_string()));
+        assert_eq!(blocks_attribution(&["test-a.sh".into()], &none, None), None);
     }
 
     #[test]
