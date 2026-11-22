@@ -304,6 +304,34 @@ fn with_the_store_eject_acts_on_the_open_round_and_keeps_its_fields_in_the_recor
 }
 
 #[test]
+fn an_eject_records_who_made_it_beside_the_ejected_bead() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    for (id, by) in [("sp-b", "batcher"), ("sp-c", "concierge")] {
+        assert_eq!(t.run(&["round", "eject", &batch, id, "--reason", "red", "--by", by]), 0, "{}", t.err());
+    }
+    let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("batcher concierge ")), "{:?}", rec.kv);
+}
+
+#[test]
+fn an_eject_leaves_an_earlier_eject_with_no_recorded_actor_unclaimed_and_stamps_every_stacked_one() {
+    let t = round_world();
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--by", "concierge"]), 0, "{}", t.err());
+    let mut rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    rec.kv.remove("ejected_by");
+    batches::save(d, "spira", &rec.kv).unwrap();
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-c", "--reason", "red", "--by", "batcher"]), 0, "{}", t.err());
+    let rec = batches::batch(d, "spira", &batch).unwrap().unwrap();
+    assert_eq!((rec.kv.get("ejected"), rec.kv.get("ejected_by")), (Some("sp-b sp-c "), Some("- batcher ")), "{:?}", rec.kv);
+}
+
+#[test]
 fn plain_eject_of_a_round_member_refuses_naming_the_round_eject_and_changes_nothing() {
     let t = round_world();
     let d = t.lc.store.get_or_init(MemDoor::default);
@@ -523,6 +551,35 @@ fn with_the_store_a_queue_forge_repos_batch_is_not_a_round() {
     );
     let status = status(&t);
     assert!(status.starts_with("round=none\nrepo=spira\n"), "{status}");
+    assert!(status.lines().any(|l| l == "rounds=0"), "{status}");
+}
+
+#[test]
+fn status_after_an_eject_keeps_the_round_in_progress_while_phase_reads_opened() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    let batch = opened(&t, "spira-1", "sp-a:ta,sp-b:tb");
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--by", "batcher", "--reason", "r"]),
+        0,
+        "{}",
+        t.err()
+    );
+    // The in-memory door does not model eject returning the batch to OPEN; set it as the real store has it.
+    let d = t.lc.store.get_or_init(MemDoor::default);
+    d.set_state("spira", &batch, "OPEN");
+    let status = status(&t);
+    for line in ["round=open", "rounds=1", "phase=opened"] {
+        assert!(status.lines().any(|l| l == line), "{line}: {status}");
+    }
+}
+
+#[test]
+fn usage_says_which_status_fields_mean_a_round_is_in_progress_and_that_phase_is_informational() {
+    assert!(crate::cli::USAGE.contains("rounds=<n>, 0 when none, say whether a round is in progress"));
+    assert!(crate::cli::USAGE.contains("again between an eject and the re-certify"));
 }
 
 /// A store round `name` opened through `round open` (members `members`).

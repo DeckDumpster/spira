@@ -262,7 +262,12 @@ pub fn stage(
         return FAIL;
     }
     drop(g);
-    let (rc, out) = w.scripts.gate(&branch, &repo_name, "", "off");
+    let Some(lock_wait) = super::simple::gate_lock_wait(w, label, &c) else {
+        w.git.worktree_remove(&path, &wt);
+        w.git.branch_delete_sanctioned(&path, &branch);
+        return FAIL;
+    };
+    let (rc, out) = w.scripts.gate(&branch, &repo_name, "", "off", &lock_wait);
     let _g = match lock(w, label, &c) {
         Ok(g) => g,
         Err(rc) => {

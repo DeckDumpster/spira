@@ -25,6 +25,8 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr count --regex <re> [--path <glob>]... [--limit <n>] [--json]
   cr open [--count <N>] [--aim <X>] [--seed <n>] [--scheduled]
   cr seal --review <NNN> < seal.json
+  cr adopt --review <NNN> --pr <n> --sha256 <hex> < sealed.json
+  cr adopt --unit <id> --commit <sha> --pr <n> --sha256 <hex> < sealed.json
   cr finding --review <NNN> < finding.json
   cr findings --review <NNN> [--post]
   cr unseal --review <NNN> [--said <comment-id>]
@@ -45,6 +47,13 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   {does, look_first, lens: [{path, line, body}], fresh: [{path, line, body}]}, stores both halves hashed, and opens the
   pull request in the review repository with does and look_first in its description. unseal posts it once the operator has published.
 
+  adopt records a pull request already open in the review repository, with the sealed review on
+  stdin (a JSON array of {path, line, body}) whose sha256 is --sha256. The review is a staged one
+  (--review) or a new on-demand one for --unit at --commit. It reads the forge only: the pull
+  request must be open and every file it carries must match the source commit blob for blob, and
+  include the unit's first file. The review is then open on that pull request, its files those
+  the pull request carries, and the ledger names them. Run again, it prints the URL and changes nothing.
+
   status prints the open reviews, then coverage at the landing-ref commit: the share of files a
   published review has reached, by area (first path component) and by unit kind, the oldest
   never-reviewed files, and the files changed since their review with lines changed and the review
@@ -62,7 +71,10 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   --seed <n>  the draw's seed; default SPIRA_SEED, else the clock's milliseconds; always printed
   --count <N> how many units open stages
   --scheduled mark the reviews as scheduled rather than on demand
-  --review <NNN>  the review to seal or unseal
+  --review <NNN>  the review to seal, unseal or adopt
+  --pr <n>    (adopt) the open pull request
+  --sha256 <hex>  (adopt) the hash of the sealed review on stdin
+  --unit <id> --commit <sha>  (adopt) a new on-demand review of this unit at this commit, instead of --review
   --comment <id>  (thread, reply) a review comment of the pull request
   --said <id> the operator's conversation comment on the pull request, standing for publishing
   --json      print one JSON object on every path, errors included
@@ -104,6 +116,7 @@ enum Cmd {
     Count(CountArgs),
     Open(review::OpenArgs),
     Seal(u32),
+    Adopt(review::AdoptArgs),
     Unseal { number: u32, said: Option<String> },
     LedgerClose { number: u32, at: u64 },
   
@@ -114,11 +127,12 @@ enum Cmd {
     Status { json: bool },
 }
 
-const VERBS: [(&str, &[&str], &[&str]); 11] = [
+const VERBS: [(&str, &[&str], &[&str]); 12] = [
     ("pick", &["--aim", "--seed"], &["--json"]),
     ("count", &["--regex", "--path", "--limit"], &["--json"]),
     ("open", &["--count", "--aim", "--seed"], &["--scheduled"]),
     ("seal", &["--review"], &[]),
+    ("adopt", &["--review", "--pr", "--sha256", "--unit", "--commit"], &[]),
     ("unseal", &["--review", "--said"], &[]),
     ("ledger-close", &["--review", "--at"], &[]),
     ("finding", &["--review"], &[]),
@@ -213,6 +227,18 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
             Cmd::Open(review::OpenArgs { count, aim: values.get("--aim").cloned(), seed, scheduled: set.contains(&"--scheduled") })
         }
         "seal" => Cmd::Seal(review()?),
+        "adopt" => {
+            let target = match (values.get("--review"), values.get("--unit"), values.get("--commit")) {
+                (Some(_), None, None) => review::AdoptTarget::Review(review()?),
+                (None, Some(unit), Some(commit)) => review::AdoptTarget::OnDemand { unit: unit.clone(), commit: commit.clone() },
+                (Some(_), _, _) => return Err("--review cannot be given with --unit or --commit".to_string()),
+                _ => return Err("adopt needs --review <NNN>, or --unit <id> with --commit <sha>".to_string()),
+            };
+            let pr = values.get("--pr").ok_or("--pr <n> is required")?;
+            let pr = pr.parse().map_err(|_| format!("--pr {pr:?} is not a pull request number"))?;
+            let sha256 = values.get("--sha256").ok_or("--sha256 <hex> is required")?.clone();
+            Cmd::Adopt(review::AdoptArgs { target, pr, sha256 })
+        }
         "ledger-close" => {
             let v = values.get("--at").ok_or("--at <ms> is required")?;
             Cmd::LedgerClose { number: review()?, at: v.parse().map_err(|_| format!("--at {v:?} is not a millisecond time"))? }
@@ -257,6 +283,7 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         Ok(Cmd::Pick(a)) => a,
         Ok(Cmd::Open(a)) => return review::open(&a, ports),
         Ok(Cmd::Seal(n)) => return review::seal(n, ports),
+        Ok(Cmd::Adopt(a)) => return review::adopt(&a, ports),
         Ok(Cmd::Unseal { number, said }) => return review::unseal(number, said.as_deref(), ports),
         Ok(Cmd::LedgerClose { number, at }) => return crate::ledger::close(number, at, ports),
         Ok(Cmd::Finding(n)) => return findings::record_finding(n, ports),

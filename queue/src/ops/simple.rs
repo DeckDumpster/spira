@@ -21,6 +21,15 @@ pub fn gate_outcome(rc: i32) -> &'static str {
     }
 }
 
+/// The wait handed to gate.sh: the landing pass's fold, so a gate queues for a slot.
+pub fn gate_lock_wait(w: &World, label: &str, c: &Ctx) -> Option<String> {
+    let Some(t) = c.s.gate_timeout else {
+        w.err(format!("queue.sh {label}: SPIRA_GATE_TIMEOUT does not resolve from this release's config registry — refusing"));
+        return None;
+    };
+    Some(landing_pass::budget::gate_lock_wait(t as i64, c.s.gate_lock_wait.as_deref()))
+}
+
 pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, "submit", repo) else {
         return FAIL;
@@ -64,8 +73,11 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
     }
 
     let suites = c.s.certify_suites.clone();
+    let Some(lock_wait) = gate_lock_wait(w, "submit", &c) else {
+        return FAIL;
+    };
     let start = w.clock.now();
-    let (rc, out) = w.scripts.gate(branch, &name, &id, &suites);
+    let (rc, out) = w.scripts.gate(branch, &name, &id, &suites, &lock_wait);
     if rc != 0 {
         w.err(format!(
             "queue.sh submit: {branch} failed the gate ({})",
