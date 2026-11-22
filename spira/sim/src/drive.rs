@@ -895,6 +895,7 @@ mod profile_cut_tests {
         profile_line(w.path())
     }
 
+    #[test_id(t5d3hqk)]
     #[test]
     fn the_profile_counts_calls_the_service_cut_at_its_deadline() {
         let cut = spira_store::lc_call::DEADLINE_ANSWER;

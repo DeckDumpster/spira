@@ -153,6 +153,7 @@ fn a_write_the_server_cut_at_its_deadline_is_resent_under_its_id_and_applied_onc
     assert_eq!(r.notes.mutations().len(), 1, "the write is applied once");
 }
 
+#[test_id(tfgnsak)]
 #[test]
 fn a_test_started_serve_runs_under_the_ceiling_the_complete_fixture_carries() {
     let dir = testkit::TempDir::new("complete-deadline");
