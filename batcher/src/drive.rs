@@ -192,6 +192,8 @@ pub struct FilterRed {
     pub harness: Vec<String>,
     /// The lines one side of a failed `left == right` assertion holds and the other lacks.
     pub assertion_lines: Vec<String>,
+    /// The `spira-lint` `member=` lines that name no member of the round.
+    pub unnamed: Vec<String>,
 }
 
 /// A filter red that named no member, kept so the next round can tell it recurs.
@@ -1168,6 +1170,18 @@ fn tag_first_line(line: &str, note: &str) -> String {
     }
 }
 
+fn base_lines_why(f: &FilterRed) -> Option<String> {
+    if f.name != "spira-lint" {
+        return None;
+    }
+    let first = f.unnamed.first()?;
+    let more = match f.unnamed.len() - 1 {
+        0 => String::new(),
+        n => format!(" (and {n} more)"),
+    };
+    Some(format!("spira-lint red on a line no member owns: {first}{more}"))
+}
+
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors
 /// run the corpus again. A red naming no member cannot be attributed: it is filed (which holds
 /// this membership) instead of re-cut — unless the runner can run the filter on member subsets,
@@ -1183,6 +1197,12 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         .iter()
         .filter(|(id, _)| members.iter().any(|m| &m.id == id))
         .collect();
+    let base_lines = base_lines_why(f);
+    if named.is_empty() {
+        if let Some(why) = &base_lines {
+            return Ok(FilterEject::BaseLines(why.clone()));
+        }
+    }
     if named.is_empty() && !f.harness.is_empty() {
         return Ok(FilterEject::Harness(format!(
             "{} on round commit {}",
@@ -1397,6 +1417,9 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                     .map_err(refused)?,
             }
         }
+    }
+    if let Some(why) = base_lines {
+        return Ok(FilterEject::BaseLines(why));
     }
     let survivors: Vec<Member> = members
         .iter()
@@ -1661,6 +1684,8 @@ enum FilterEject {
     /// Nothing is left to land; who left and who stayed.
     Emptied(String),
     Survivors(Vec<Member>),
+    /// Lint lines no member owns were left after the named members were ejected.
+    BaseLines(String),
     /// The registry ids of tests proven to flip: they are disabled and the same members certify again.
     Flipped(Vec<String>),
     /// The control probe on the full membership gave no verdict twice: the round is not judged.
@@ -2366,8 +2391,10 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             f.name
         );
         if let [_] = members[..] {
-            let red = format!("{} red{}", f.name, noted_tests(&f.failed));
-            return eject_sole_member(ops, &members, &red, &f.name);
+            if f.unnamed.is_empty() {
+                let red = format!("{} red{}", f.name, noted_tests(&f.failed));
+                return eject_sole_member(ops, &members, &red, &f.name);
+            }
         }
         match eject_filter_owners(runner, ops, &f, &members)? {
             FilterEject::Flipped(ids) => {
@@ -2378,6 +2405,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                     )));
                 }
             }
+            FilterEject::BaseLines(why) => return Ok(RoundEnd::Blocked(why)),
             FilterEject::Survivors(members) => {
                 return Ok(RoundEnd::Land {
                     members,
@@ -2589,6 +2617,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             );
             let next = match eject_filter_owners(runner, ops, f, &members)? {
                 FilterEject::Survivors(next) => next,
+                FilterEject::BaseLines(why) => return Ok(RoundEnd::Blocked(why)),
                 FilterEject::Flipped(ids) => {
                     if let Err(e) = ops.disable_flips(&ids) {
                         return Ok(RoundEnd::Blocked(format!(
@@ -8633,6 +8662,47 @@ pub(crate) mod tests {
         );
         assert_eq!(ops.owner_flags, vec![("m1".to_string(), true)]);
         assert!(ops.incidents.is_empty(), "{:?}", ops.incidents);
+    }
+
+    #[test_id(t3pf4mb)]
+    #[test]
+    fn a_lint_line_no_member_owns_blocks_the_round_and_never_charges_the_sole_member() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "spira-lint".into(),
+                unnamed: vec!["member=the base itself (z) r: h.rs:3: z".into()],
+                ..Default::default()
+            })
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        match end {
+            RoundEnd::Blocked(why) => assert!(why.contains("h.rs:3"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+    }
+
+    #[test_id(t0sgopf)]
+    #[test]
+    fn a_lint_line_no_member_owns_blocks_the_round_after_the_named_member_is_ejected() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "spira-lint".into(),
+                named: vec![("m1".into(), "member=m1 r: a.rs:1: x".into())],
+                unnamed: vec!["member=the base itself (z) r: h.rs:3: z".into(), "member=the base itself (z) r: h.rs:4: z".into()],
+                ..Default::default()
+            })
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        match end {
+            RoundEnd::Blocked(why) => assert!(why.contains("h.rs:3") && why.contains("1 more"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(ops.ejected.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["m1"]);
     }
 
     #[test_id(tgedtm8)]

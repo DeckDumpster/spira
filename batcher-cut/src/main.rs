@@ -2482,7 +2482,8 @@ fn attribute_in(
         }
     };
     let red_phases = o.after_pass.as_deref().map(io::red_test_phases).unwrap_or_default();
-    if let Some(why) = blocks_attribution(&suites, &red_phases, o.after_pass.as_deref()) {
+    let red_filters = o.after_pass.as_deref().map(vm::red_filters).unwrap_or_default();
+    if let Some(why) = blocks_attribution(&suites, &red_phases, &red_filters, o.after_pass.as_deref()) {
         return Ok(Attribution::Blocked(why).line());
     }
     let changed: BTreeMap<String, Vec<String>> = members
@@ -2586,12 +2587,12 @@ fn attribute_in(
 }
 
 /// Why attribution cannot start: no shell suite to attribute and no red test tier in the pass either.
-fn blocks_attribution(suites: &[String], red_phases: &[String], pass: Option<&Path>) -> Option<String> {
-    if !suites.is_empty() || !red_phases.is_empty() {
+fn blocks_attribution(suites: &[String], red_phases: &[String], red_filters: &[String], pass: Option<&Path>) -> Option<String> {
+    if !suites.is_empty() || !red_phases.is_empty() || !red_filters.is_empty() {
         return None;
     }
     let at = pass.map(|p| format!(" in {}", p.display())).unwrap_or_default();
-    Some(format!("the pass names no red the round can attribute: no shell suite and no red unit-tests or integration-tests{at}"))
+    Some(format!("the pass names no red the round can attribute: no shell suite, no red unit-tests or integration-tests and no red lint or fence{at}"))
 }
 
 /// `all` narrowed to the CSV `named` when one is given; a name the tree does not hold is dropped.
@@ -3010,14 +3011,14 @@ mod tests {
         std::fs::write(dir.path().join("integration.json"), r#"{"stage":"integration-tests","verdict":"red","failed":["x"]}"#).unwrap();
         let red = io::red_test_phases(dir.path());
         assert_eq!(red, ["integration-tests"]);
-        assert_eq!(blocks_attribution(&[], &red, Some(dir.path())), None);
+        assert_eq!(blocks_attribution(&[], &red, &[], Some(dir.path())), None);
         let green = testkit::TempDir::new("batcher-cut-green-tier");
         std::fs::write(green.path().join("unit.json"), r#"{"stage":"unit-tests","verdict":"green"}"#).unwrap();
         let none = io::red_test_phases(green.path());
         assert!(none.is_empty());
-        let why = blocks_attribution(&[], &none, Some(green.path())).expect("blocks");
+        let why = blocks_attribution(&[], &none, &[], Some(green.path())).expect("blocks");
         assert!(why.contains(&green.path().display().to_string()));
-        assert_eq!(blocks_attribution(&["test-a.sh".into()], &none, None), None);
+        assert_eq!(blocks_attribution(&["test-a.sh".into()], &none, &[], None), None);
     }
 
     #[test_id(tt91g2o)]
@@ -3571,6 +3572,24 @@ mod cut_tests {
     }
 
     fn lint_red_attribution(d: &Path, with_deny_list: bool) -> (Result<String, String>, PathBuf) {
+        lint_red_attribution_of(
+            d,
+            with_deny_list,
+            &[("sp-8br220", "pilgrim.rs"), ("sp-x", "other.rs")],
+            "member=sp-8br220 r: pilgrim.rs:161: y\n",
+            None,
+            None,
+        )
+    }
+
+    fn lint_red_attribution_of(
+        d: &Path,
+        with_deny_list: bool,
+        members: &[(&str, &str)],
+        lint_out: &str,
+        suites: Option<&str>,
+        batch: Option<&str>,
+    ) -> (Result<String, String>, PathBuf) {
         let repo_dir = d.join("repo");
         std::fs::create_dir_all(repo_dir.join("spira")).unwrap();
         testkit::git(&repo_dir, &["init", "-q", "-b", "main"]);
@@ -3579,7 +3598,7 @@ mod cut_tests {
         testkit::git(&repo_dir, &["commit", "-q", "-m", "base"]);
         let start = testkit::git(&repo_dir, &["rev-parse", "HEAD"]);
         let mut tips = vec![];
-        for (id, file) in [("sp-8br220", "pilgrim.rs"), ("sp-x", "other.rs")] {
+        for (id, file) in members {
             testkit::git(&repo_dir, &["checkout", "-q", "-b", &format!("spira/{id}"), &start]);
             std::fs::write(repo_dir.join(file), "x\n").unwrap();
             testkit::git(&repo_dir, &["add", "-A"]);
@@ -3598,14 +3617,15 @@ mod cut_tests {
             std::fs::write(pass.join(f), "").unwrap();
         }
         std::fs::write(pass.join("spira-lint.result"), "red\n").unwrap();
-        std::fs::write(pass.join("spira-lint.out"), "member=sp-8br220 r: pilgrim.rs:161: y\n").unwrap();
+        std::fs::write(pass.join("spira-lint.out"), lint_out).unwrap();
         if with_deny_list {
             std::fs::write(pass.join("deny-list"), "# test-registry deny-list at=7 rows=0\n").unwrap();
         }
         let mut env = io::lifecycle_tests_env(d);
         let calls = d.join("round-vm-calls");
         testkit::write_exe(&env.round_vm, &format!("#!/bin/sh\necho \"$@\" >> {}\nexit 2\n", calls.display()));
-        testkit::write_exe(&env.queue_bin, "#!/bin/sh\nexit 0\n");
+        let queue_calls = d.join("queue-calls");
+        testkit::write_exe(&env.queue_bin, &format!("#!/bin/sh\necho \"CALL $*\" >> {}\ncat >> {0}\nexit 0\n", queue_calls.display()));
         env.maxpar = 1;
         let repo = io::Repo { name: "fx".into(), path: repo_dir, base: "main".into(), forge: PathBuf::new(), land: Land::Local };
         let o = Opts {
@@ -3615,7 +3635,7 @@ mod cut_tests {
             db: None,
             home: Some(d.to_path_buf()),
             round_vm: None,
-            suites: None,
+            suites: suites.map(str::to_string),
             members: None,
             evidence: None,
             reds: None,
@@ -3623,14 +3643,14 @@ mod cut_tests {
             record: None,
             wt: Some(wt.clone()),
             base: Some(start.clone()),
-            batch: None,
+            batch: batch.map(str::to_string),
             by: None,
             reason: None,
             all: false,
             held_since: None,
             confirmed: false,
         };
-        let given = vec![("sp-8br220".to_string(), tips[0].clone()), ("sp-x".to_string(), tips[1].clone())];
+        let given: Vec<(String, String)> = members.iter().zip(&tips).map(|((id, _), tip)| (id.to_string(), tip.clone())).collect();
         (attribute_in(&o, env, repo, wt, start, given), calls)
     }
 
@@ -3642,6 +3662,48 @@ mod cut_tests {
         let line = line.unwrap();
         assert!(line.contains("\"end\":\"land\"") && line.contains("[[\"sp-x\"") && !line.contains("sp-8br220"), "{line}");
         assert!(!calls.exists(), "the corpus was requested: {:?}", std::fs::read_to_string(&calls));
+    }
+
+    #[test_id(t47imqp)]
+    #[test]
+    fn a_lint_red_named_to_the_pass_ejects_every_member_it_names_with_all_their_lines() {
+        let d = testkit::TempDir::new("batcher-cut-attr-lint-suites");
+        let out = "member=sp-a r: a.rs:1: one\nmember=sp-b r: b.rs:2: two\nmember=sp-a r: a.rs:3: three\n";
+        let (line, calls) = lint_red_attribution_of(
+            &d,
+            true,
+            &[("sp-a", "a.rs"), ("sp-b", "b.rs"), ("sp-c", "c.rs")],
+            out,
+            Some("spira-lint"),
+            Some("b-1"),
+        );
+        let line = line.unwrap();
+        assert!(line.contains("\"end\":\"land\"") && line.contains("[[\"sp-c\"") && !line.contains("sp-a") && !line.contains("sp-b"), "{line}");
+        assert!(!calls.exists(), "the corpus was requested");
+        let q = std::fs::read_to_string(d.join("queue-calls")).unwrap();
+        let ejects: Vec<&str> = q.split("CALL ").filter(|c| c.contains("eject")).collect();
+        assert_eq!(ejects.len(), 2, "{q:?}");
+        let a = ejects.iter().find(|l| l.contains("sp-a")).unwrap();
+        assert!(a.contains("a.rs:1: one") && a.contains("a.rs:3: three"), "{a:?}");
+        let b = ejects.iter().find(|l| l.contains("sp-b")).unwrap();
+        assert!(b.contains("b.rs:2: two") && !b.contains("a.rs"), "{b:?}");
+    }
+
+    #[test_id(tvo99ct)]
+    #[test]
+    fn a_lint_red_line_no_member_owns_blocks_the_round_and_quotes_the_line() {
+        let d = testkit::TempDir::new("batcher-cut-attr-lint-base");
+        let out = "member=sp-a r: a.rs:1: one\nmember=the base itself (z) r: h.rs:3: z\n";
+        let (line, _) = lint_red_attribution_of(
+            &d,
+            true,
+            &[("sp-a", "a.rs"), ("sp-b", "b.rs"), ("sp-c", "c.rs")],
+            out,
+            Some("spira-lint"),
+            None,
+        );
+        let line = line.unwrap();
+        assert!(line.contains("\"end\":\"blocked\"") && line.contains("h.rs:3"), "{line}");
     }
 
     #[test_id(t68mpx7)]
