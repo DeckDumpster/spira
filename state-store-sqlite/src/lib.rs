@@ -2805,7 +2805,7 @@ mod tests {
             }) as Arc<dyn Fn() + Send + Sync>
         };
         let line = 8 * 4096;
-        let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, readers: 1, checkpoint_every: u64::MAX, wal_line_bytes: line, read_probe: Some(probe), ..Options::default() };
+        let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, readers: 1, checkpoint_every: u64::MAX, wal_line_bytes: u64::MAX, read_probe: Some(probe), ..Options::default() };
         let b = SqliteBackend::open(&path, opts).unwrap();
         let wal = format!("{}-wal", path.display());
         let put = |b: &SqliteBackend| {
