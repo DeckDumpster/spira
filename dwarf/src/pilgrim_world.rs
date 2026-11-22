@@ -101,6 +101,7 @@ mod tests {
         assert!(!has(ENV));
     }
 
+    #[test_id(tcamap5)]
     #[test]
     fn a_world_that_does_not_come_up_refuses_and_is_taken_down() {
         let t = testkit::TempDir::new("pilgrim-world-fail");

@@ -158,6 +158,7 @@ mod tests {
         g.call("GET", "http://g/api/dashboards/uid/spira-bead-store", None, token, None).unwrap().status
     }
 
+    #[test_id(tu1nmax)]
     #[test]
     fn a_pilgrims_own_token_reads_the_dashboard_until_the_world_comes_down() {
         let t = testkit::TempDir::new("pilgrim-grafana");
@@ -172,6 +173,7 @@ mod tests {
         assert!(!t.join("w").join(TOKEN_FILE).exists());
     }
 
+    #[test_id(t5pz5xb)]
     #[test]
     fn a_world_that_comes_up_names_the_grafana_url_and_a_failed_one_leaves_no_account() {
         let t = testkit::TempDir::new("pilgrim-grafana-up");
@@ -187,6 +189,7 @@ mod tests {
         assert!(bad.accounts.borrow().is_empty(), "the account made before the failure is deleted");
     }
 
+    #[test_id(tw2wrms)]
     #[test]
     fn a_revoke_that_fails_keeps_the_account_id_for_a_retry() {
         let t = testkit::TempDir::new("pilgrim-grafana-retry");
@@ -197,6 +200,7 @@ mod tests {
         assert!(t.join("w").join(ACCOUNT_FILE).exists());
     }
 
+    #[test_id(txsg5ks)]
     #[test]
     fn the_token_file_is_readable_by_the_session_alone() {
         use std::os::unix::fs::PermissionsExt;
@@ -207,6 +211,7 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    #[test_id(tnwnqtx)]
     #[test]
     fn a_wrong_admin_sign_in_provisions_nothing() {
         let t = testkit::TempDir::new("pilgrim-grafana-bad");
@@ -215,6 +220,7 @@ mod tests {
         assert!(!t.join("w").join(TOKEN_FILE).exists());
     }
 
+    #[test_id(tzxh6iv)]
     #[test]
     fn an_install_without_grafana_is_none_and_one_with_it_names_the_admin() {
         assert_eq!(install("", "data").unwrap(), None);
