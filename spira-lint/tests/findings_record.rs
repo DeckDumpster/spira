@@ -15,7 +15,7 @@ fn run_fixture(tmp: &testkit::TempDir) -> std::process::Output {
     git(&["init", "-q"]);
     git(&["add", "-A"]);
     let findings = tmp.path().join("findings.jsonl");
-    Command::new(env!("CARGO_BIN_EXE_spira-lint"))
+    Command::new(testkit::bin_exe("spira-lint"))
         .args(["--only", "bare-unit-name", "--root"])
         .arg(&root)
         .arg("--findings")
