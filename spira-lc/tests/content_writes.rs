@@ -610,6 +610,35 @@ fn a_blocking_edge_blocks_its_dependent_and_closing_the_blocker_unblocks_it_as_b
     assert!(!blocked().contains(&a), "bd reads {a} as unblocked once its blocker closed in SQL");
 }
 
+#[test]
+fn a_blocking_edge_on_a_parent_blocks_its_descendants_as_bd_blocks_them_and_starts_no_process() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "reach");
+    let chain = || {
+        let ids: Vec<String> = (0..5).map(|_| store.create_bead()).collect();
+        let [a, b, c, d, e] = [&ids[0], &ids[1], &ids[2], &ids[3], &ids[4]];
+        store.bd(&["dep", "add", c, b, "--type", "parent-child"], None);
+        store.bd(&["dep", "add", d, c, "--type", "parent-child"], None);
+        store.bd(&["dep", "add", e, a, "--type", "blocks"], None);
+        ids
+    };
+    let flagged = |ids: &[String]| -> Vec<bool> {
+        let blocked = store.bd(&["blocked", "--json"], None);
+        ids[..4].iter().map(|i| blocked.contains(i.as_str())).collect()
+    };
+    let (ours, twin) = (chain(), chain());
+    let (out, children) = lc.children_of("content", &["content", "dep", "add", &ours[1], &ours[0], "--type", "blocks"], None);
+    assert_eq!(children, 0, "{out}");
+    store.bd(&["dep", "add", &twin[1], &twin[0], "--type", "blocks"], None);
+    assert_eq!(flagged(&ours), flagged(&twin), "the service and bd read different beads as blocked");
+    assert_eq!(&flagged(&ours)[1..], [true, true, true], "B and its descendants C and D are blocked");
+    let (out, children) = lc.children_of("close", &["close", &ours[0], "--reason", "done"], None);
+    assert_eq!(children, 0, "{out}");
+    store.bd(&["close", &twin[0], "--reason", "done"], None);
+    assert_eq!(flagged(&ours), flagged(&twin));
+    assert_eq!(&flagged(&ours)[1..], [false, false, false], "closing A clears B, C and D");
+}
+
 const WATERMARK: &str = "spira.planning_watermark";
 
 fn said(out: &str, key: &str) -> String {
