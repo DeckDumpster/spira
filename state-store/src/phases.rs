@@ -288,6 +288,7 @@ static FORCING: AtomicUsize = AtomicUsize::new(0);
 static FORCED_BEGUN: AtomicUsize = AtomicUsize::new(0);
 static WAL_OVER_LINE: AtomicBool = AtomicBool::new(false);
 
+/// Per process, not per store: the serving process owns one control store.
 /// Whether a WAL restart past the line is, right now, holding the read gate for reads in flight.
 pub fn wal_forcing() -> bool {
     FORCING.load(Ordering::SeqCst) > 0
@@ -348,7 +349,6 @@ pub fn record_read(took: Duration, end: ReadEnd) {
             ReadEnd::Overran => g.reads_overran += 1,
             ReadEnd::EndedByReset => g.reads_ended_by_reset += 1,
         }
-
     }
 }
 

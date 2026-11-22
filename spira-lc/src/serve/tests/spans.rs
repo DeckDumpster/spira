@@ -320,3 +320,23 @@ fn a_cannot_tell_whose_store_read_was_ended_at_the_limit_says_so_in_its_head() {
     assert!(head_of(&door_answering(2, Some(ReadEnd::Finished))).get("read_ended").is_none(), "a read that finished is not marked");
     assert!(head_of(&door_answering(0, Some(ReadEnd::Ended))).get("read_ended").is_none(), "an answer that applied is not marked");
 }
+
+#[test]
+fn a_request_whose_read_a_forced_wal_restart_cut_pages_the_slow_query_log_with_its_verb() {
+    use state_store::phases;
+    let dir = testkit::TempDir::new("lc-serve-wal-page");
+    let log = dir.join("slow.log");
+    let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+    let work: super::Work = Arc::new(|_| {
+        let since = phases::forced_stamp();
+        drop(phases::forced_reset_scoped());
+        phases::record_read(std::time::Duration::from_millis(150), phases::ReadEnd::Ended);
+        phases::record_reset_ended(since, phases::ReadEnd::Ended);
+        crate::callers::Answer { code: 2, stdout: "cannot tell: list".into(), ..Default::default() }
+    });
+    let door = Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, deadlines: test_deadlines() });
+    head_of(&door);
+    let got = std::fs::read_to_string(&log).unwrap();
+    let f: Vec<&str> = got.lines().find(|l| l.ends_with("WAL-RESET-ENDED")).unwrap_or_else(|| panic!("{got}")).split('\t').collect();
+    assert_eq!(f[1], "list", "{got}");
+}

@@ -973,7 +973,7 @@ mod tests {
         assert_eq!(total(READS_ENDED, "limit-probe"), 1.0);
     }
 
-    #[test_id(t4kpgzc)]
+    #[test_id(t7wr1pg)]
     #[test]
     fn a_wal_reset_that_ended_a_read_pages_the_log_with_the_open_verb() {
         let d = testkit::TempDir::new("slow-wal-reset");
@@ -987,6 +987,7 @@ mod tests {
         assert_eq!((f[1], f[2], f[3], f[4]), ("reset-probe", "caller_x", "40", WAL_RESET_ENDED));
     }
 
+    #[test_id(t7wo2ln)]
     #[test]
     fn a_wal_over_its_line_pages_the_log_once_per_interval_not_once_per_request() {
         let d = testkit::TempDir::new("slow-wal-over");
@@ -1000,6 +1001,7 @@ mod tests {
         assert!(got.trim_end().ends_with(&format!("over-probe\tc\t1\t{WAL_OVER_LINE}")), "{got}");
     }
 
+    #[test_id(t4kpgzc)]
     #[test]
     fn reads_done_accumulates_into_the_counters() {
         reads_done("reads-probe", 1, 0, 0);
