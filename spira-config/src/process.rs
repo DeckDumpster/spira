@@ -13,6 +13,20 @@ use crate::resolve::Resolved;
 
 static CONFIG: OnceLock<Resolved> = OnceLock::new();
 
+thread_local! {
+    static FRESH: std::cell::RefCell<Option<Resolved>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with every [`cfg`] on this thread answered from a resolution read from the files
+/// now, not from what the process pinned. The pin is untouched: only `f` sees the fresh read.
+pub fn with_fresh<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    let resolved = resolve_now()?;
+    FRESH.with(|c| *c.borrow_mut() = Some(resolved));
+    let out = f();
+    FRESH.with(|c| *c.borrow_mut() = None);
+    Ok(out)
+}
+
 /// This process's resolved config: `$SPIRA_TOML`, read until one resolution succeeds and then
 /// pinned. A refusal is returned, never kept: the next call reads again.
 pub fn config() -> Result<&'static Resolved, String> {
@@ -84,6 +98,9 @@ fn declared_fast(key: &str) -> Option<String> {
 /// registered config key — never a default. A registered key a `prod` instance declares plainly
 /// is answered from the file without the full resolve (see [`declared_value`]).
 pub fn cfg(key: &str) -> Result<String, String> {
+    if let Some(r) = FRESH.with(|c| c.borrow().as_ref().map(|r| r.values.get(key).cloned())) {
+        return r.ok_or_else(|| format!("{key} is not a registered config key — refusing"));
+    }
     if let Some(v) = declared_fast(key) {
         if crate::registry::declares_key(&crate::resolve::locate_home_for_process()?, key) {
             return Ok(v);

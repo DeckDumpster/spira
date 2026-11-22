@@ -71,6 +71,8 @@ pub struct Config {
     pub deadman_secs: i64,
 }
 
+pub mod confwatch;
+
 impl Config {
     pub fn from_env() -> Result<Config, String> {
         use spira_config::process::{cfg, cfg_parse};
