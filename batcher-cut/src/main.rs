@@ -3403,6 +3403,21 @@ mod cut_tests {
     }
 
     #[test]
+    fn clear_landed_rows_passes_each_bead_and_returns_the_cleared_tests_or_the_registrys_words() {
+        let d = testkit::TempDir::new("batcher-cut-clear-landed-rows");
+        let mut env = io::lifecycle_tests_env(&d);
+        let bin = d.join("test-registry");
+        env.test_registry_bin = Some(bin.clone());
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"$*\" > \"$0.args\"\necho 'suite:a.sh'\necho 'unit:x t::y'\n");
+        let beads = vec!["sp-one".to_string(), "sp-two".to_string()];
+        assert_eq!(io::clear_landed_rows(&env, &beads).unwrap(), vec!["suite:a.sh".to_string(), "unit:x t::y".to_string()]);
+        assert_eq!(std::fs::read_to_string(d.join("test-registry.args")).unwrap().trim(), "clear-landed --bead sp-one --bead sp-two --actor batcher");
+        testkit::write_exe(&bin, "#!/bin/sh\necho \"registry busy\" >&2\nexit 5\n");
+        let err = io::clear_landed_rows(&env, &beads).unwrap_err();
+        assert!(err.contains("exited 5") && err.contains("registry busy"), "{err}");
+    }
+
+    #[test]
     fn a_failing_registry_cuts_no_round_and_says_what_it_printed() {
         let d = testkit::TempDir::new("batcher-cut-deny-fail");
         let env = io::lifecycle_tests_env(&d);
