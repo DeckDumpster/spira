@@ -2819,7 +2819,7 @@ mod tests {
     #[test_id(tjn7gqx)]
     #[test]
     fn the_pilgrims_world_prefix_names_the_registry_beside_the_socket() {
-        let md = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("runes/pilgrim.md")).unwrap();
+        let md = std::fs::read_to_string(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/runes/pilgrim.md")).unwrap();
         let socket_uses: Vec<&str> = md.lines().filter(|l| l.contains("SPIRA_LC_SOCKET=$PILGRIM_LC_SOCKET")).collect();
         assert!(!socket_uses.is_empty());
         for l in socket_uses {
