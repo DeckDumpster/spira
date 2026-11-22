@@ -1395,10 +1395,6 @@ fn a_submitted_bead_whose_gate_ran_past_the_gate_timeout_pages_and_the_page_says
     assert!(found[0].evidence.contains("past SPIRA_GATE_TIMEOUT"), "{}", found[0].evidence);
 }
 
-fn over_lines(acts: &[EffectSpec]) -> Vec<String> {
-    over_submitted(acts)
-}
-
 #[test_id(tu49z7k)]
 #[test]
 fn a_submitted_bead_the_landing_pass_backed_off_waits_on_the_backoff_and_does_not_page() {
@@ -1409,7 +1405,7 @@ fn a_submitted_bead_the_landing_pass_backed_off_waits_on_the_backoff_and_does_no
     assert_eq!(s.beads[0].gate, Some(Gating::BackingOff { until: now + 10 * MIN }));
     assert_eq!(cut_stalls(&s, now), vec![]);
     let (_, acts) = decide(&Carry::default(), &s, now * 1000, &gate_cfg());
-    assert_eq!(over_lines(&acts), Vec::<String>::new());
+    assert_eq!(over_submitted(&acts), Vec::<String>::new());
 }
 
 #[test_id(tkigmuy)]
@@ -1436,12 +1432,14 @@ fn a_queued_gate_with_every_slot_held_does_not_page() {
 fn a_queued_gate_with_a_slot_free_for_a_full_bound_pages_once_naming_the_bead() {
     let (mut s, now) = gating_fixture(8, Some(Gating::Queued), "SUBMITTED");
     s.beads[0].id = "sp-s1".into();
-    s.gate_slots_free = 1;
     let cfg = gate_cfg();
     let (c1, a1) = decide(&Carry::default(), &s, now * 1000, &cfg);
-    assert_eq!(over_lines(&a1), Vec::<String>::new());
-    let (_, a2) = decide(&c1, &s, (now + 5 * MIN) * 1000, &cfg);
-    let lines = over_lines(&a2);
+    assert_eq!(over_submitted(&a1), Vec::<String>::new());
+    s.gate_slots_free = 1;
+    let (c2, a2) = decide(&c1, &s, (now + 5 * MIN) * 1000, &cfg);
+    assert_eq!(over_submitted(&a2), Vec::<String>::new());
+    let (_, a3) = decide(&c2, &s, (now + 10 * MIN) * 1000, &cfg);
+    let lines = over_submitted(&a3);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].contains("sp-s1") && lines[0].contains("queued, a gate slot free"), "{}", lines[0]);
 }
