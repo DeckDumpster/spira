@@ -1,5 +1,6 @@
 //! `test-id-row-orphan` — a tip does not remove the last `#[test_id(<id>)]` an active registry
-//! `test:<id>` row names. The rows come from the file `SPIRA_TEST_DENY_LIST` names.
+//! `test:<id>` row names. The rows come from the file the caller
+//! hands spira-lint with `--deny-list` (the gate's `SPIRA_TEST_DENY_LIST`), carried on the `Tree`.
 //!
 //! The checked count is registries read, not rows: a registry with no `test:` row is a check
 //! that ran. No configured path reads nothing and counts 0, which the gate treats as silent.
@@ -29,11 +30,10 @@ struct Read {
 }
 
 impl TestIdRowOrphan {
-    fn deny_list(&self) -> Result<(String, DenyList), LintError> {
-        let path = (self.cfg)(DENY_LIST_ENV).map_err(LintError::Refused)?;
-        if path.is_empty() {
-            return Ok((path, DenyList::default()));
-        }
+    fn deny_list(tree: &Tree) -> Result<(String, DenyList), LintError> {
+        let Some(path) = tree.deny_list().map(str::to_string) else {
+            return Ok((String::new(), DenyList::default()));
+        };
         let text = std::fs::read_to_string(&path).map_err(|e| LintError::Refused(format!("{DENY_LIST_ENV} {path}: {e}")))?;
         let list = DenyList::parse(&text).map_err(|e| LintError::Refused(format!("{DENY_LIST_ENV} {path}: {e}")))?;
         Ok((path, list))
@@ -50,7 +50,7 @@ impl Rule for TestIdRowOrphan {
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
-        let (deny_path, list) = self.deny_list()?;
+        let (deny_path, list) = Self::deny_list(tree)?;
         let rows = list.test_rows();
         let read = (!deny_path.is_empty()).then(|| Read { path: deny_path.clone(), rows: list.len(), test_rows: rows.len() });
         *self.read.lock().unwrap() = read;
@@ -120,15 +120,17 @@ mod tests {
 
     const ROW: &str = "disabled\ttest:t0aaaaa\tsp-x\t-\n";
 
-    fn rule(deny: &str, gate_bead: &str) -> TestIdRowOrphan {
-        let (deny, bead) = (deny.to_string(), gate_bead.to_string());
-        let cfg: Cfg = Box::new(move |k| Ok(if k == GATE_BEAD { bead.clone() } else { deny.clone() }));
+    fn rule(gate_bead: &str) -> TestIdRowOrphan {
+        let bead = gate_bead.to_string();
+        let cfg: Cfg = Box::new(move |k| Ok(if k == GATE_BEAD { bead.clone() } else { String::new() }));
         TestIdRowOrphan { cfg, read: Mutex::new(None) }
     }
 
     fn tree(t: &TempDir, tip: &str, base: Option<&str>) -> Tree {
         t.write("c/src/lib.rs", tip);
-        let tree = Tree::from_paths(t.path(), ["c/src/lib.rs"], std::iter::empty::<&str>());
+        let deny = t.path().join("deny");
+        let tree = Tree::from_paths(t.path(), ["c/src/lib.rs"], std::iter::empty::<&str>())
+            .with_deny_list(deny.exists().then(|| deny.to_str().unwrap().to_string()));
         let Some(base_src) = base else { return tree };
         let base_src = base_src.to_string();
         tree.with_base(Some("main".into())).with_git(Box::new(move |a| match a[0] {
@@ -147,7 +149,7 @@ mod tests {
     fn a_row_whose_id_the_tip_removed_is_a_finding_at_the_file_the_base_carried_it_in() {
         let t = TempDir::new("tidorphan");
         t.write("deny", ROW);
-        let r = rule(t.path().join("deny").to_str().unwrap(), "");
+        let r = rule("");
         let got = r.check(&tree(&t, "fn a() {}\n", Some(WITH_ID))).unwrap();
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].path, "c/src/old.rs");
@@ -162,7 +164,7 @@ mod tests {
     fn a_row_whose_id_the_tip_still_carries_is_no_finding() {
         let t = TempDir::new("tidorphan-kept");
         t.write("deny", ROW);
-        let r = rule(t.path().join("deny").to_str().unwrap(), "");
+        let r = rule("");
         assert!(r.check(&tree(&t, WITH_ID, Some(WITH_ID))).unwrap().is_empty());
     }
 
@@ -171,7 +173,7 @@ mod tests {
     fn the_gates_own_bead_may_delete_its_disabled_test() {
         let t = TempDir::new("tidorphan-own");
         t.write("deny", ROW);
-        let r = rule(t.path().join("deny").to_str().unwrap(), "sp-x");
+        let r = rule("sp-x");
         assert!(r.check(&tree(&t, "fn a() {}\n", Some(WITH_ID))).unwrap().is_empty());
     }
 
@@ -180,7 +182,7 @@ mod tests {
     fn an_empty_deny_file_checks_one_registry_with_zero_test_rows() {
         let t = TempDir::new("tidorphan-empty");
         t.write("deny", "# test-registry deny-list at=1 rows=0\n");
-        let r = rule(t.path().join("deny").to_str().unwrap(), "");
+        let r = rule("");
         assert!(r.check(&tree(&t, "fn a() {}\n", None)).unwrap().is_empty());
         let (n, unit) = r.checked().unwrap();
         assert_eq!(n, 1);
@@ -192,7 +194,7 @@ mod tests {
     fn a_registry_of_only_a_suite_row_checks_one_registry_with_no_findings() {
         let t = TempDir::new("tidorphan-suite");
         t.write("deny", "disabled\tsuite:test-conf-watch.sh\tsp-x22nuk\t-\n");
-        let r = rule(t.path().join("deny").to_str().unwrap(), "");
+        let r = rule("");
         assert!(r.check(&tree(&t, "fn a() {}\n", None)).unwrap().is_empty());
         let (n, unit) = r.checked().unwrap();
         assert_eq!(n, 1);
@@ -203,7 +205,7 @@ mod tests {
     #[test]
     fn no_configured_path_reads_no_registry_and_checks_zero() {
         let t = TempDir::new("tidorphan-none");
-        let r = rule("", "");
+        let r = rule("");
         assert!(r.check(&tree(&t, "fn a() {}\n", None)).unwrap().is_empty());
         assert_eq!(r.checked().unwrap().0, 0);
     }
@@ -213,8 +215,41 @@ mod tests {
     fn test_rows_with_no_base_are_refused() {
         let t = TempDir::new("tidorphan-nobase");
         t.write("deny", ROW);
-        let r = rule(t.path().join("deny").to_str().unwrap(), "");
+        let r = rule("");
         let err = r.check(&tree(&t, "fn a() {}\n", None)).unwrap_err();
         assert!(matches!(err, LintError::Refused(_)), "{err}");
+    }
+
+    #[test_id(tnd0tym)]
+    #[test]
+    fn a_tree_handed_a_deny_file_checks_one_registry_naming_it() {
+        let t = TempDir::new("tidorphan-handed");
+        t.write("deny", ROW);
+        let r = rule("");
+        r.check(&tree(&t, WITH_ID, Some(WITH_ID))).unwrap();
+        let (n, unit) = r.checked().unwrap();
+        let path = t.path().join("deny");
+        assert_eq!((n, unit), (1, format!("registry ({}: 1 rows, 1 test rows)", path.display())));
+    }
+
+    #[test_id(t3cbq2a)]
+    #[test]
+    fn a_tree_handed_no_deny_file_reports_none_configured() {
+        let t = TempDir::new("tidorphan-unhanded");
+        let r = rule("");
+        r.check(&tree(&t, "fn a() {}\n", None)).unwrap();
+        assert_eq!(r.checked().unwrap(), (0, "registry (none configured)".to_string()));
+    }
+
+    #[test_id(tbdv8ky)]
+    #[test]
+    fn a_missing_deny_file_is_refused_naming_the_path() {
+        let t = TempDir::new("tidorphan-missing");
+        let missing = t.path().join("nope");
+        let tr = tree(&t, "fn a() {}\n", None).with_deny_list(Some(missing.to_str().unwrap().into()));
+        match rule("").check(&tr) {
+            Err(LintError::Refused(m)) => assert!(m.contains(missing.to_str().unwrap()), "{m}"),
+            other => panic!("{:?}", other.map(|v| v.len())),
+        }
     }
 }

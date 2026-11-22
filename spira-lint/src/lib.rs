@@ -47,6 +47,7 @@ pub struct Tree {
     /// rules that compare the tree with what it replaces (`plan-matrix`). `None`: not given,
     /// and such a rule refuses rather than compare against nothing.
     pub base: Option<String>,
+    deny_list: Option<String>,
     reader: Option<GitReader>,
 }
 
@@ -112,13 +113,23 @@ impl Tree {
         entries.extend(untracked.into_iter().map(|p| Entry::new(p, false)));
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         entries.dedup_by(|a, b| a.path == b.path);
-        Tree { root: root.to_path_buf(), entries, base: None, reader: None }
+        Tree { root: root.to_path_buf(), entries, base: None, deny_list: None, reader: None }
     }
 
     /// The same tree, judged against `base`.
     pub fn with_base(mut self, base: Option<String>) -> Tree {
         self.base = base.filter(|b| !b.trim().is_empty());
         self
+    }
+
+    /// The same tree, with the test deny-list file the caller handed (`--deny-list`).
+    pub fn with_deny_list(mut self, path: Option<String>) -> Tree {
+        self.deny_list = path.filter(|p| !p.is_empty());
+        self
+    }
+
+    pub fn deny_list(&self) -> Option<&str> {
+        self.deny_list.as_deref()
     }
 
     /// The same tree, answering git reads from `reader` instead of spawning git.
