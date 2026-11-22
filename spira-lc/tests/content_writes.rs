@@ -85,10 +85,15 @@ impl Store {
     /// would never write, such as a stale `is_blocked` flag, and settles it into a Dolt commit.
     /// `run_committer` commits this branch concurrently, so a test-side commit passes `--allow-empty`.
     fn sql(&self, statement: &str) {
+        self.sql_said(statement);
+    }
+
+    fn sql_said(&self, statement: &str) -> String {
         let dolt = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).or_else(|| tool("dolt")).expect("dolt, as the store came up with it");
         let out = Command::new(dolt).args(["--host", "127.0.0.1", "--port", &self.port, "--no-tls", "-u", "root", "-p", "", "--use-db", "sptest", "sql", "-q", statement]).output().expect("dolt runs");
         let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         assert!(out.status.success(), "{statement}: {said}");
+        said
     }
 
     fn create_bead(&self) -> String {
@@ -203,6 +208,11 @@ impl Lc {
     }
 
     fn serve(&mut self) {
+        self.serve_said();
+    }
+
+    /// Starts the service and returns what it wrote to stderr before it said ready.
+    fn serve_said(&mut self) -> String {
         let mut child = self.command().arg("serve").stderr(Stdio::piped()).spawn().expect("spira-lc serve runs");
         let mut stderr = BufReader::new(child.stderr.take().unwrap());
         let (mut line, mut said) = (String::new(), String::new());
@@ -215,6 +225,7 @@ impl Lc {
         self.child = Some(child);
         // the scheduler's stand-in: the service records a `work` request and a runner runs it
         self.runner = Some(self.command().arg("work-run").stdout(Stdio::null()).stderr(Stdio::null()).spawn().expect("spira-lc work-run runs"));
+        said
     }
 
     /// The children (count, programs) of every span the service has written for `method`.
@@ -823,4 +834,79 @@ fn a_planning_write_moves_the_kv_watermark_in_sql_and_starts_no_bd_kv() {
         std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the store, the signal waited on
     }
     panic!("kv never reached {want}: {last}");
+}
+
+#[test_id(t0m04je)]
+#[test]
+fn a_write_the_writers_grants_deny_names_its_verb_the_missing_grant_and_the_provisioning_verb() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "d");
+    let (a, b) = (store.create_bead(), store.create_bead());
+    store.sql("REVOKE INSERT, UPDATE, DELETE ON sptest.dependencies FROM 'spira_lc'@'%'");
+    let (rc, out) = lc.settled(&["content", "dep", "add", &a, &b, "--type", "blocks"], None);
+    assert_ne!(rc, 0, "{out}");
+    for part in ["dep add", "INSERT", "dependencies", "spira-lc admin-provision-writer"] {
+        assert!(out.contains(part), "{part} is not in the answer: {out}");
+    }
+    let (_, edges) = lc.settled(&["content", "dep", "list", &a], None);
+    assert!(!edges.contains(&b), "a refused write left an edge: {edges}");
+    lc.admin("admin-provision-writer");
+    let (rc, out) = lc.settled(&["content", "dep", "add", &a, &b, "--type", "blocks"], None);
+    assert_eq!(rc, 0, "{out}");
+    assert!(lc.settled(&["content", "dep", "list", &a], None).1.contains(&b), "the re-provisioned writer wrote no edge");
+}
+
+/// A `watchd` on the release tool path that appends its argv, one line per call, to the returned file.
+fn recording_watchd(lc: &Lc) -> PathBuf {
+    let log = lc.dir.join("watchd-argv.log");
+    let path = lc.dir.join("release/bin/watchd");
+    std::fs::write(&path, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display())).unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    log
+}
+
+fn provisioned_lc_with_watchd(store: &Store, name: &str) -> (Lc, PathBuf) {
+    let writer = store.dir.join(format!("{name}.writer"));
+    let lc = Lc::new(store, name, &writer.display().to_string());
+    provision(&lc);
+    lc.admin("admin-provision-writer");
+    let log = recording_watchd(&lc);
+    (lc, log)
+}
+
+#[test_id(tmpwngi)]
+#[test]
+fn a_writer_that_lost_a_grant_is_named_on_stderr_and_paged_once_without_changing_a_grant() {
+    let Some(store) = Store::up() else { return };
+    let (mut lc, log) = provisioned_lc_with_watchd(&store, "g");
+    store.sql("REVOKE INSERT, UPDATE, DELETE ON sptest.dependencies FROM 'spira_lc'@'%'");
+    let before = store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'");
+    let said = lc.serve_said();
+    assert!(said.contains("dependencies") && said.contains("admin-provision-writer"), "{said}");
+    let mut paged = String::new();
+    for _ in 0..600 {
+        paged = std::fs::read_to_string(&log).unwrap_or_default();
+        if !paged.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50)); // clock-safe: polls the stub's log, the signal waited on
+    }
+    let calls: Vec<&str> = paged.lines().collect();
+    assert_eq!(calls.len(), 1, "{paged}");
+    assert!(calls[0].starts_with("page lc-grants ") && calls[0].ends_with(" missing=dependencies"), "{paged}");
+    assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before, "the check changed the writer's grants");
+}
+
+#[test_id(tmte5ub)]
+#[test]
+fn a_fully_provisioned_writer_says_nothing_and_pages_nobody_at_start() {
+    let Some(store) = Store::up() else { return };
+    let (mut lc, log) = provisioned_lc_with_watchd(&store, "q");
+    let before = store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'");
+    let said = lc.serve_said();
+    assert!(!said.contains("writer lacks") && !said.contains("cannot check"), "{said}");
+    assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap_or_default());
+    assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before);
 }

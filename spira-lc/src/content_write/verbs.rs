@@ -3,8 +3,8 @@
 
 use super::*;
 
-fn transact(w: &Writer, script: &[String]) -> Result<(), String> {
-    w.conn.transaction(|tx| apply(script, tx)).and_then(|r| r)
+fn transact(what: &str, w: &Writer, script: &[String]) -> Result<(), String> {
+    w.conn.transaction(|tx| apply(what, script, tx)).and_then(|r| r)
 }
 
 fn begin(mut body: Vec<String>) -> Vec<String> {
@@ -29,6 +29,10 @@ fn config_set(db: &str, key: &str, value: &str) -> String {
     format!("REPLACE INTO {db}.config (`key`, value) VALUES ('{}', '{}')", escape(key), escape(value))
 }
 
+fn config_delete(db: &str, key: &str) -> String {
+    format!("DELETE FROM {db}.config WHERE `key` = '{}'", escape(key))
+}
+
 fn config_get(w: &Writer, key: &str) -> Result<Option<String>, String> {
     Ok(rows(w, &format!("SELECT value AS v FROM {}.config WHERE `key` = '{}'", w.db, escape(key)))?.first().map(|r| cell(r, "v")))
 }
@@ -43,7 +47,7 @@ fn kv_set(w: &Writer, key: &str, value: &str) -> Result<Option<String>, String> 
     if !kv_key_allowed(key) {
         return Ok(None);
     }
-    transact(w, &begin(vec![config_set(&w.db, &format!("kv.{key}"), value)]))?;
+    transact("kv set", w, &begin(vec![config_set(&w.db, &format!("kv.{key}"), value)]))?;
     Ok(Some(format!("Set {key} = {value}\n")))
 }
 
@@ -51,7 +55,7 @@ fn kv_clear(w: &Writer, key: &str) -> Result<Option<String>, String> {
     if !kv_key_allowed(key) {
         return Ok(None);
     }
-    transact(w, &begin(vec![format!("DELETE FROM {}.config WHERE `key` = '{}'", w.db, escape(&format!("kv.{key}")))]))?;
+    transact("kv clear", w, &begin(vec![config_delete(&w.db, &format!("kv.{key}"))]))?;
     Ok(Some(format!("Cleared {key}\n")))
 }
 
@@ -77,7 +81,7 @@ fn remember(w: &Writer, key: &str, text: &str) -> Result<Option<String>, String>
         return Ok(None);
     }
     let held = config_get(w, &memory_key(key))?.is_some();
-    transact(w, &begin(vec![config_set(&w.db, &memory_key(key), text)]))?;
+    transact("remember", w, &begin(vec![config_set(&w.db, &memory_key(key), text)]))?;
     Ok(Some(format!("{} [{key}]: {}\n", if held { "Updated" } else { "Remembered" }, memory_line(text))))
 }
 
@@ -85,7 +89,7 @@ fn forget(w: &Writer, key: &str) -> Result<Option<String>, String> {
     let Some(held) = config_get(w, &memory_key(key))?.filter(|v| !v.is_empty() && !key.trim().is_empty()) else {
         return Ok(None);
     };
-    transact(w, &begin(vec![format!("DELETE FROM {}.config WHERE `key` = '{}'", w.db, escape(&memory_key(key)))]))?;
+    transact("forget", w, &begin(vec![config_delete(&w.db, &memory_key(key))]))?;
     Ok(Some(format!("Forgot [{key}]: {}\n", memory_line(&held))))
 }
 
@@ -97,7 +101,7 @@ fn blocked_flags(w: &Writer) -> Result<Vec<(String, String)>, String> {
 
 fn recompute_blocked(w: &Writer) -> Result<String, String> {
     let before = blocked_flags(w)?;
-    transact(w, &begin(blocked_passes(&w.db, None, RECOMPUTE_PASSES)))?;
+    transact("recompute-blocked", w, &begin(blocked_passes(&w.db, None, RECOMPUTE_PASSES)))?;
     let changed = blocked_flags(w)?.iter().zip(&before).filter(|(a, b)| a != b).count();
     Ok(match changed {
         0 => "is_blocked already consistent — nothing to recompute.\n".to_string(),
@@ -188,7 +192,7 @@ fn gate_check(w: &Writer, kind: &str) -> Result<Option<String>, String> {
     if !closing.is_empty() {
         let env = env_of(w)?;
         let script: Vec<String> = closing.iter().flat_map(|(id, reason)| close_sql(db, id, reason, &env)).collect();
-        transact(w, &begin(script))?;
+        transact("gate check", w, &begin(script))?;
     }
     Ok(Some(format!("{lines}\nChecked {judged} gates: {} resolved, 0 escalated, 0 errors\n", closing.len())))
 }
@@ -234,7 +238,7 @@ pub(super) fn set_state(w: &Writer, bead: &str, dimension: &str, value: &str) ->
         }
         script.extend(label_add_sql(db, bead, &format!("{prefix}{value}")));
         script.push("COMMIT".into());
-        match transact(w, &script) {
+        match transact("set-state", w, &script) {
             Ok(()) => {
                 let previous = old.as_ref().map(|was| format!("  Previous: {was}\n")).unwrap_or_default();
                 return Ok(Some(format!("✓ Set {dimension} = {value} on {bead}\n{previous}  Event: {event_id}\n")));
@@ -276,7 +280,7 @@ pub fn delete(ids: &[String]) -> Option<Result<(), String>> {
         let env = env_of(w)?;
         let dependents: Vec<String> = rows(w, &format!("SELECT DISTINCT issue_id FROM {db}.dependencies WHERE depends_on_issue_id IN ({}) AND issue_id NOT IN ({})", in_list(&named), in_list(&named)))?.iter().map(|r| cell(r, "issue_id")).collect();
         let dependents: Vec<&str> = dependents.iter().map(String::as_str).collect();
-        transact(w, &delete_script(db, &env, &named, &dependents))?;
+        transact("delete", w, &delete_script(db, &env, &named, &dependents))?;
         COMMITTER.owe();
         Ok(())
     };
@@ -284,8 +288,17 @@ pub fn delete(ids: &[String]) -> Option<Result<(), String>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+
+    pub(crate) fn standalone_statements(db: &str) -> Vec<String> {
+        let env = Env::default();
+        let mut all = vec![config_set(db, "kv.k", "v"), config_delete(db, "kv.k")];
+        all.extend(blocked_passes(db, None, 1));
+        all.extend(delete_script(db, &env, &["sp-a"], &["sp-b"]));
+        all.extend(close_sql(db, "sp-a", "r", &env));
+        all
+    }
 
     #[test_id(tg86u3k)]
     #[test]

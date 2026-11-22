@@ -564,6 +564,8 @@ fn create_spec(args: &[&str], body: Option<&str>) -> Option<Create> {
 pub enum Fail {
     /// COMMIT lost a serialization race (40001): nothing was applied.
     Conflict,
+    /// A statement was refused for want of a privilege (MySQL 1142); carries Dolt's text.
+    Denied(String),
     Other(String),
 }
 
@@ -572,19 +574,62 @@ pub trait Tx {
     fn send(&mut self, sql: &str) -> Result<(), Fail>;
 }
 
-fn once(script: &[String], tx: &mut dyn Tx) -> Result<(), Fail> {
-    script.iter().try_for_each(|s| tx.send(s))
+fn once(what: &str, script: &[String], tx: &mut dyn Tx) -> Result<(), Fail> {
+    script.iter().try_for_each(|s| {
+        tx.send(s).map_err(|f| match f {
+            Fail::Denied(dolt) => Fail::Other(denied(what, s, &dolt)),
+            other => other,
+        })
+    })
+}
+
+/// The privilege and `<db>.<table>` a statement needs, read from its leading keywords.
+fn tables_written(sql: &str) -> Option<(&'static str, String)> {
+    let mut words = sql.split_whitespace();
+    let (privilege, table) = match words.next()?.to_ascii_uppercase().as_str() {
+        "INSERT" => {
+            let mut w = words.skip_while(|w| w.eq_ignore_ascii_case("IGNORE"));
+            w.next().filter(|w| w.eq_ignore_ascii_case("INTO"))?;
+            ("INSERT", w.next()?)
+        }
+        "REPLACE" => {
+            words.next().filter(|w| w.eq_ignore_ascii_case("INTO"))?;
+            ("INSERT and DELETE", words.next()?)
+        }
+        "UPDATE" => ("UPDATE", words.next()?),
+        "DELETE" => {
+            words.next().filter(|w| w.eq_ignore_ascii_case("FROM"))?;
+            ("DELETE", words.next()?)
+        }
+        _ => return None,
+    };
+    let table = table.split('(').next().unwrap_or(table).replace('`', "");
+    table.contains('.').then_some((privilege, table))
+}
+
+fn denied(what: &str, sql: &str, dolt: &str) -> String {
+    let lacks = match tables_written(sql) {
+        Some((privilege, table)) => format!("{privilege} on {table}"),
+        None => "a privilege this write needs".to_string(),
+    };
+    format!("{what} was not applied: the content writer lacks {lacks}; its grants predate this write — run `spira-lc admin-provision-writer`\n{dolt}")
+}
+
+/// The door's verb words for `argv`: `dep add`, `close`.
+fn verb_of(argv: &[String]) -> String {
+    let two = matches!(argv.first().map(String::as_str), Some("dep" | "label" | "comments" | "gate" | "kv"));
+    argv.iter().take(if two { 2 } else { 1 }).cloned().collect::<Vec<_>>().join(" ")
 }
 
 /// Applies `script`; a conflict is retried once. A statement that fails ends the transaction
 /// with no `COMMIT` sent.
-pub fn apply(script: &[String], tx: &mut dyn Tx) -> Result<(), String> {
-    match once(script, tx) {
-        Err(Fail::Conflict) => match once(script, tx) {
+pub fn apply(what: &str, script: &[String], tx: &mut dyn Tx) -> Result<(), String> {
+    match once(what, script, tx) {
+        Err(Fail::Conflict) => match once(what, script, tx) {
             Err(Fail::Conflict) => Err("the write conflicted with another writer twice; nothing was applied".into()),
             other => other.map_err(|f| format!("{f:?}")),
         },
-        Err(Fail::Other(e)) => Err(e),
+        Err(Fail::Other(e) | Fail::Denied(e)) => Err(e),
         Ok(()) => Ok(()),
     }
 }
@@ -618,8 +663,8 @@ impl Committer {
 
 static COMMITTER: Committer = Committer::new();
 
-struct Writer {
-    conn: crate::db::Conn,
+pub(crate) struct Writer {
+    pub(crate) conn: crate::db::Conn,
     db: String,
 }
 
@@ -659,7 +704,7 @@ fn build_writer(file: &str) -> Result<Writer, String> {
 
 /// The writer connection, or `None` when no writer credential is configured: the door then
 /// forks bd for these verbs as it always did.
-fn writer() -> Option<Result<&'static Writer, String>> {
+pub(crate) fn writer() -> Option<Result<&'static Writer, String>> {
     let file = match spira_config::process::cfg("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE") {
         Ok(f) => f,
         Err(e) => return Some(Err(e)),
@@ -751,7 +796,7 @@ fn serve(w: &Writer, m: &Mutation) -> Result<Option<String>, String> {
         return verbs::set_state(w, m.bead(), dimension, value);
     }
     let env = env_of(w)?;
-    w.conn.transaction(|tx| apply(&m.script_in(db, &env), tx)).and_then(|r| r)?;
+    w.conn.transaction(|tx| apply(&verb_of(&m.argv), &m.script_in(db, &env), tx)).and_then(|r| r)?;
     Ok(Some(m.stdout()))
 }
 
@@ -905,7 +950,7 @@ fn create(w: &Writer, c: &Create) -> Result<Option<String>, String> {
             (None, None) => (hash_id(w, &prefix, c, made.as_nanos() as i128, &conf)?, None),
         };
         let script = create_script(db, &env, c, &id, &labels, child.as_ref());
-        match w.conn.transaction(|tx| apply(&script, tx)).and_then(|r| r) {
+        match w.conn.transaction(|tx| apply("create", &script, tx)).and_then(|r| r) {
             Ok(()) => return Ok(Some(c.stdout(&id, &labels, made.as_secs()))),
             Err(e) if c.id.is_none() && (e.to_lowercase().contains("duplicate") || e.contains("conflicted with another writer")) => continue,
             Err(e) => return Err(e),
@@ -1187,6 +1232,76 @@ mod tests {
 
     #[test_id(tcvjlz5)]
     #[test]
+    fn every_table_a_write_statement_changes_is_one_the_writer_is_granted() {
+        let all: std::collections::BTreeSet<String> = ["issues", "labels", "comments", "events", "dependencies", "child_counters", "config", "leases", "local_metadata", "wisps"].iter().map(|t| t.to_string()).collect();
+        let granted = crate::admin_writer::written(&all).unwrap();
+        let mut seen = 0;
+        let mut check = |what: &str, sql: &str| {
+            let head = sql.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+            let writes = matches!(head.as_str(), "INSERT" | "REPLACE" | "UPDATE" | "DELETE");
+            match tables_written(sql) {
+                Some((_, t)) => {
+                    seen += 1;
+                    let table = t.rsplit('.').next().unwrap();
+                    assert!(granted.contains(&table), "{what} writes {t}, which admin-provision-writer does not grant: {sql}");
+                }
+                None => assert!(!writes, "{what}: tables_written cannot read the table of: {sql}"),
+            }
+        };
+        for (argv, body) in [
+            (&["create", "T", "--type", "task", "--labels", "repo:spira", "--silent"][..], None),
+            (&["create", "--parent", "sp-e", "--silent", "--title", "T"], None),
+            (&["create", "T", "--deps", "sp-b,discovered-from:sp-c"], None),
+            (&["update", "sp-a", "--status", "open", "--assignee", "x"], None),
+            (&["update", "sp-a", "--add-label", "x", "--priority", "1", "--set-metadata", "a=b"], None),
+            (&["update", "sp-a", "--body-file", "-"], Some("text")),
+            (&["note", "sp-a", "text"], None),
+            (&["comments", "add", "sp-a", "text"], None),
+            (&["label", "add", "sp-a", "l"], None),
+            (&["label", "remove", "sp-a", "l"], None),
+            (&["close", "sp-a", "--reason", "r"], None),
+            (&["dep", "add", "sp-a", "sp-b"], None),
+            (&["dep", "add", "sp-a", "sp-b", "--type", "discovered-from"], None),
+            (&["dep", "remove", "sp-a", "sp-b"], None),
+            (&["dep", "relate", "sp-a", "sp-b"], None),
+            (&["supersede", "sp-a", "--with", "sp-b"], None),
+            (&["duplicate", "sp-a", "--of", "sp-b"], None),
+            (&["gate", "resolve", "sp-a"], None),
+        ] {
+            let m = Mutation::of(&v(argv), body).unwrap();
+            for sql in m.script("`beads`") {
+                check(&verb_of(&m.argv), &sql);
+            }
+        }
+        for sql in verbs::tests::standalone_statements("`beads`") {
+            check("a standalone verb", &sql);
+        }
+        assert!(seen > 20, "the check read {seen} statements");
+        assert_eq!(tables_written("INSERT IGNORE INTO `d`.dependencies (a) VALUES (1)"), Some(("INSERT", "d.dependencies".to_string())));
+        assert_eq!(tables_written("REPLACE INTO d.local_metadata (k) VALUES (1)"), Some(("INSERT and DELETE", "d.local_metadata".to_string())));
+        assert_eq!(tables_written("SELECT 1"), None);
+    }
+
+    #[test_id(t9t2j2u)]
+    #[test]
+    fn a_denied_statement_names_the_verb_the_privilege_the_table_and_the_provisioning_verb() {
+        let s = script(&["dep", "add", "sp-a", "sp-b"], None);
+        let mut tx = Rec { sent: vec![], fail_at: Some((2, Fail::Denied("Error 1142 (42000): command denied".into()))), conflicts: 0 };
+        let e = apply("dep add", &s, &mut tx).unwrap_err();
+        for part in ["dep add was not applied", "lacks ", " on beads.", "spira-lc admin-provision-writer", "Error 1142"] {
+            assert!(e.contains(part), "{part}: {e}");
+        }
+        assert!(!tx.sent.iter().any(|q| q.starts_with("COMMIT")), "{:?}", tx.sent);
+    }
+
+    #[test_id(tht2n8h)]
+    #[test]
+    fn a_verb_is_named_by_its_door_words() {
+        assert_eq!([verb_of(&v(&["dep", "add", "a", "b"])), verb_of(&v(&["close", "a"])), verb_of(&v(&["kv", "set", "k", "v"]))], ["dep add", "close", "kv set"]);
+    }
+
+    #[test_id(ttklzic)]
+    #[test]
     fn a_verb_the_port_does_not_make_exactly_stays_bds() {
         for argv in [&["set-state", "sp-a", "branch="][..], &["set-state", "sp-a", "=x"], &["duplicate", "sp-a"], &["gate", "check"], &["gate", "discover", "--branch", "b", "--repo", "r"], &["kv", "set", "k"], &["remember", "--key"]] {
             assert!(Mutation::of(&v(argv), None).is_none(), "{argv:?}");
@@ -1402,7 +1517,7 @@ mod tests {
     fn a_failure_on_the_second_statement_sends_no_commit() {
         let s = script(&["label", "add", "sp-a", "x"], None);
         let mut tx = Rec { sent: vec![], fail_at: Some((2, Fail::Other("boom".into()))), conflicts: 0 };
-        assert_eq!(apply(&s, &mut tx), Err("boom".into()));
+        assert_eq!(apply("x", &s, &mut tx), Err("boom".into()));
         assert_eq!(tx.sent.len(), 2);
         assert!(!tx.sent.iter().any(|q| q == "COMMIT"));
     }
@@ -1423,10 +1538,10 @@ mod tests {
     fn a_conflict_retries_once_then_gives_up() {
         let s = script(&["label", "add", "sp-a", "x"], None);
         let mut tx = Rec { sent: vec![], fail_at: None, conflicts: 1 };
-        assert_eq!(apply(&s, &mut tx), Ok(()));
+        assert_eq!(apply("x", &s, &mut tx), Ok(()));
         assert_eq!(tx.sent.len(), s.len() * 2);
         let mut tx = Rec { sent: vec![], fail_at: None, conflicts: 2 };
-        assert!(apply(&s, &mut tx).is_err());
+        assert!(apply("x", &s, &mut tx).is_err());
         assert_eq!(tx.sent.len(), s.len() * 2);
     }
 }

@@ -24,14 +24,87 @@ fn statements(db: &str, user: &str, password: &str, tables: &[&str], readable: &
     sql
 }
 
-fn provision(admin: &dyn Dolt, db: &str, user: &str, password: &str) -> Result<String, String> {
-    let schema = db.trim_matches('`');
-    let rows = admin.rows(&format!("SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{schema}'"))?;
-    let present: BTreeSet<String> = rows.iter().filter_map(|r| r.get("name").and_then(|n| n.as_str()).map(str::to_string)).collect();
+/// The tables the writer needs write grants on in a store holding `present`.
+pub fn written(present: &BTreeSet<String>) -> Result<Vec<&'static str>, String> {
     if let Some(missing) = WRITTEN.iter().find(|t| !present.contains(**t)) {
         return Err(format!("the content database has no {missing} table: it is not a beads store"));
     }
-    let written: Vec<&str> = WRITTEN.iter().chain(WRITTEN_WHEN_PRESENT.iter().filter(|t| present.contains(**t))).copied().collect();
+    Ok(WRITTEN.iter().chain(WRITTEN_WHEN_PRESENT.iter().filter(|t| present.contains(**t))).copied().collect())
+}
+
+const TABLES_SQL: &str = "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ";
+
+fn names(rows: &[serde_json::Value]) -> BTreeSet<String> {
+    rows.iter().filter_map(|r| r.get("name").and_then(|n| n.as_str()).map(str::to_string)).collect()
+}
+
+const PRIVILEGES: [&str; 4] = ["SELECT", "INSERT", "UPDATE", "DELETE"];
+
+/// Each table the writer must write that no grant in `grants` (one `GRANT <privilege> ON <object> TO <user>` line per privilege held) covers with
+/// all of SELECT, INSERT, UPDATE and DELETE. Lines that name nothing on `db` are not a verdict.
+pub(crate) fn missing_writes(grants: &[String], db: &str, present: &BTreeSet<String>) -> Result<Vec<String>, String> {
+    let db = db.trim_matches('`');
+    let wanted = written(present)?;
+    let mut named = false;
+    let mut held: Vec<(String, BTreeSet<&'static str>)> = Vec::new();
+    for line in grants {
+        let Some(rest) = line.trim().strip_prefix("GRANT ") else { continue };
+        let Some((privileges, rest)) = rest.split_once(" ON ") else { continue };
+        let object = rest.split(" TO ").next().unwrap_or(rest).replace('`', "").replace("\\_", "_");
+        let Some((on_db, on_table)) = object.split_once('.') else { continue };
+        if on_db != "*" && on_db != db {
+            continue;
+        }
+        named = true;
+        let upper = privileges.to_ascii_uppercase();
+        let given: BTreeSet<&'static str> = if upper.trim() == "ALL" || upper.trim() == "ALL PRIVILEGES" {
+            PRIVILEGES.into_iter().collect()
+        } else {
+            PRIVILEGES.into_iter().filter(|p| upper.split(',').any(|g| g.trim() == *p)).collect()
+        };
+        held.push((on_table.to_string(), given));
+    }
+    if !named {
+        return Err(format!("cannot check: SHOW GRANTS named no grant on {db}"));
+    }
+    Ok(wanted
+        .into_iter()
+        .filter(|t| {
+            let have: BTreeSet<&str> = held.iter().filter(|(on, _)| on == "*" || on == t).flat_map(|(_, g)| g.iter().copied()).collect();
+            !PRIVILEGES.iter().all(|p| have.contains(p))
+        })
+        .map(str::to_string)
+        .collect())
+}
+
+/// The tables the code writes that the configured writer lacks grants on, read on the writer's
+/// own connection; `None` when no writer is configured. Reads only, from information_schema's privilege tables, which a user sees for itself where SHOW GRANTS needs `mysql` access.
+pub(crate) fn check_grants() -> Option<Result<Vec<String>, String>> {
+    let w = match crate::content_write::writer()? {
+        Ok(w) => w,
+        Err(e) => return Some(Err(e)),
+    };
+    let schema = w.conn.database.trim_matches('`').to_string();
+    let run = || -> Result<Vec<String>, String> {
+        let present = names(&w.conn.query(&format!("{TABLES_SQL}'{}'", crate::rows::escape(&schema))).map_err(|e| format!("{e:?}"))?);
+        let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let held = |sql: String, object: &dyn Fn(&serde_json::Value) -> String| -> Result<Vec<String>, String> {
+            let rows = w.conn.query(&sql).map_err(|e| format!("{e:?}"))?;
+            Ok(rows.iter().map(|r| format!("GRANT {} ON {} TO writer", text(r, "PRIVILEGE_TYPE"), object(r))).collect())
+        };
+        let lit = crate::rows::escape(&schema);
+        let mut grants = held(format!("SELECT PRIVILEGE_TYPE, TABLE_NAME FROM information_schema.TABLE_PRIVILEGES WHERE TABLE_SCHEMA = '{lit}'"), &|r| format!("`{schema}`.`{}`", text(r, "TABLE_NAME")))?;
+        grants.extend(held(format!("SELECT PRIVILEGE_TYPE FROM information_schema.SCHEMA_PRIVILEGES WHERE TABLE_SCHEMA = '{lit}'"), &|_| format!("`{schema}`.*"))?);
+        grants.extend(held("SELECT PRIVILEGE_TYPE FROM information_schema.USER_PRIVILEGES".to_string(), &|_| "*.*".to_string())?);
+        missing_writes(&grants, &schema, &present)
+    };
+    Some(run())
+}
+
+fn provision(admin: &dyn Dolt, db: &str, user: &str, password: &str) -> Result<String, String> {
+    let schema = db.trim_matches('`');
+    let present = names(&admin.rows(&format!("{TABLES_SQL}'{schema}'"))?);
+    let written = written(&present)?;
     // Dolt checks a write against the whole foreign-key graph around issues, so the writer reads every table.
     let referencing: Vec<String> = present.iter().filter(|t| !written.contains(&t.as_str())).cloned().collect();
     for sql in statements(db, user, password, &written, &referencing) {
@@ -122,6 +195,62 @@ mod tests {
         assert!(write.iter().all(|g| g.starts_with("GRANT SELECT, INSERT, UPDATE, DELETE ON `beadsdb`.`") && g.ends_with("TO 'wr'@'%'")), "{grants:?}");
         assert_eq!(read.iter().map(|g| g.as_str()).collect::<Vec<_>>(), ["GRANT SELECT ON `beadsdb`.`wisps` TO 'wr'@'%'"], "every other table is readable, not writable");
         assert!(!seen.iter().any(|q| q.contains(" ALL")), "no blanket grant");
+    }
+
+    fn present(tables: &[&str]) -> BTreeSet<String> {
+        tables.iter().map(|t| t.to_string()).collect()
+    }
+
+    const ALL: [&str; 9] = ["issues", "labels", "comments", "events", "dependencies", "child_counters", "config", "leases", "local_metadata"];
+    const FOUR: &str = "SELECT, INSERT, UPDATE, DELETE";
+
+    fn grants_on(db: &str, except: &[&str], privileges: &str) -> Vec<String> {
+        let mut g = vec![format!("GRANT SELECT ON `{db}`.`wisps` TO `wr`@`%`")];
+        g.extend(ALL.iter().filter(|t| !except.contains(t)).map(|t| format!("GRANT {privileges} ON `{db}`.`{t}` TO `wr`@`%`")));
+        g
+    }
+
+    #[test_id(twdt52q)]
+    #[test]
+    fn a_writer_holding_every_written_table_is_missing_none() {
+        assert_eq!(missing_writes(&grants_on("d", &[], FOUR), "`d`", &present(&ALL)), Ok(vec![]));
+    }
+
+    #[test_id(tkavs99)]
+    #[test]
+    fn a_writer_without_dependencies_is_missing_exactly_that() {
+        assert_eq!(missing_writes(&grants_on("d", &["dependencies"], FOUR), "d", &present(&ALL)), Ok(vec!["dependencies".to_string()]));
+    }
+
+    #[test_id(toyeydy)]
+    #[test]
+    fn select_alone_on_a_present_table_is_missing_it() {
+        let mut g = grants_on("d", &["leases"], FOUR);
+        g.push("GRANT SELECT ON `d`.`leases` TO `wr`@`%`".into());
+        assert_eq!(missing_writes(&g, "d", &present(&ALL)), Ok(vec!["leases".to_string()]));
+    }
+
+    #[test_id(two2xbi)]
+    #[test]
+    fn a_table_the_store_lacks_is_not_required() {
+        let some: Vec<&str> = ALL.iter().copied().filter(|t| *t != "local_metadata").collect();
+        assert_eq!(missing_writes(&grants_on("d", &["local_metadata"], FOUR), "d", &present(&some)), Ok(vec![]));
+    }
+
+    #[test_id(tz4b59l)]
+    #[test]
+    fn all_privileges_on_everything_covers_every_table() {
+        for line in ["GRANT ALL PRIVILEGES ON *.* TO `wr`@`%`", "GRANT ALL ON *.* TO `wr`@`%`", "GRANT ALL ON `d`.* TO `wr`@`%`"] {
+            assert_eq!(missing_writes(&[line.to_string()], "d", &present(&ALL)), Ok(vec![]), "{line}");
+        }
+    }
+
+    #[test_id(tur5bt5)]
+    #[test]
+    fn grants_naming_another_database_or_nothing_are_not_a_verdict() {
+        assert!(missing_writes(&grants_on("other", &[], FOUR), "d", &present(&ALL)).is_err());
+        assert!(missing_writes(&[], "d", &present(&ALL)).is_err());
+        assert!(missing_writes(&["not a grant".to_string()], "d", &present(&ALL)).is_err());
     }
 
     #[test_id(ttkkifw)]
