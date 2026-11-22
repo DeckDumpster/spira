@@ -196,6 +196,9 @@ pub trait Git {
     fn worktree_prune(&self, repo: &Path);
     fn worktree_add_detached(&self, repo: &Path, path: &Path, sha: &str) -> bool;
     fn worktree_remove(&self, repo: &Path, path: &Path);
+    /// Puts `wt` at `sha` in place (`reset --hard` + `clean -fd`), adding it only when it has
+    /// no `.git`; `Err` is git's own stderr, last lines.
+    fn worktree_reset(&self, repo: &Path, wt: &Path, sha: &str) -> Result<(), String>;
     /// `merge --no-edit --no-ff -F <msgfile> <tip>` as `git_name <git_email>`; false on
     /// conflict.
     fn merge_no_ff(
