@@ -13,7 +13,7 @@ pub use super::f::{cadence_ms, pinned, refuse, Transition};
 
 /// The real sources (S9) are `crate::sources`; their event shapes are this family's.
 pub use crate::sources;
-use super::Task;
+use super::{Reads, Task};
 
 pub mod cockpit_tier_5s;
 pub mod cockpit_tier_600s;
@@ -27,6 +27,7 @@ pub mod unit_ran;
 pub static TASKS: &[Task] = &[
     Task {
         name: cockpit_tier_5s::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: cockpit_tier_5s::CockpitTier5s::boot,
@@ -38,6 +39,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: cockpit_tier_60s::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: cockpit_tier_60s::CockpitTier60s::boot,
@@ -49,6 +51,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: cockpit_tier_600s::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: cockpit_tier_600s::CockpitTier600s::boot,

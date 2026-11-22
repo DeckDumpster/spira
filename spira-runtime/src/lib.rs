@@ -40,7 +40,17 @@ pub use settings::Settings;
 /// on its row's plane, with its row's signal effects and the shared ones let through a halt.
 /// `Settings::from_lookup` refuses a table that does not name every task exactly.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    modes::apply(tasks::all().map(|t| (t.build)(s).with_plane(t.plane).with_signal_effects(t.signal).with_signal_effects(tasks::SIGNAL_EFFECTS).with_effects(t.effects)).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
+    modes::apply(tasks::all().map(|t| waking(t, s, (t.build)(s).with_plane(t.plane).with_signal_effects(t.signal).with_signal_effects(tasks::SIGNAL_EFFECTS).with_effects(t.effects))).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
+}
+
+/// `reg` with the wake its row's reads call for: a row that reads only the store stops polling, one that also reads elsewhere keeps its cadence.
+fn waking(t: &tasks::Task, s: &Settings, reg: Registration) -> Registration {
+    let wake = |reads: &'static [&'static str], polls| runtime::Wake { reads: reads.to_vec(), min_gap_ms: (t.cadence_ms)(s), polls };
+    match t.reads {
+        tasks::Reads::Only(p) => reg.with_wake(wake(p, false)),
+        tasks::Reads::Polled(p) => reg.with_wake(wake(p, true)),
+        tasks::Reads::None | tasks::Reads::Undeclarable(_) => reg,
+    }
 }
 
 /// The control socket's submit: one `Submit` on the host's channel, answered once the host has

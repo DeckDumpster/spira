@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
-use super::Task;
+use super::{Reads, Task};
 use crate::watchers::{answers_observe, INBOX_APPEND};
 
 pub mod asks_ideas;
@@ -30,6 +30,7 @@ pub mod trigger_warden;
 pub static TASKS: &[Task] = &[
     Task {
         name: intake_gh::NAME,
+        reads: Reads::Polled(&["planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: intake_gh::IntakeGh::boot,
@@ -49,6 +50,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: intake_gh_closeout::NAME,
+        reads: Reads::Polled(&["gh-closeout/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: intake_gh_closeout::IntakeGhCloseout::boot,
@@ -60,6 +62,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: persona_ops::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: persona_ops::PersonaOps::boot,
@@ -78,6 +81,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: trigger_groom::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: trigger_groom::TriggerGroom::boot,
@@ -92,6 +96,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: trigger_warden::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: trigger_warden::TriggerWarden::boot,
@@ -106,6 +111,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: trigger_mimir::NAME,
+        reads: Reads::Polled(&["planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: trigger_mimir::TriggerMimir::boot,
@@ -120,6 +126,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: asks_ideas::NAME,
+        reads: Reads::Polled(&["lifecycle/"]),
         plane: runtime::Plane::Work,
         signal: &[asks_ideas::ASK],
         boot: asks_ideas::AsksIdeas::boot,
@@ -134,6 +141,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: intake_filings::NAME,
+        reads: Reads::Polled(&["lifecycle/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: intake_filings::IntakeFilings::boot,
@@ -150,6 +158,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: intake_kit_bump::NAME,
+        reads: Reads::Polled(&["lifecycle/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: intake_kit_bump::IntakeKitBump::boot,
@@ -165,6 +174,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: persona_archivist::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: persona_archivist::PersonaArchivist::boot,

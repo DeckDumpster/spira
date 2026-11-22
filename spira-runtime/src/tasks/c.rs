@@ -6,7 +6,7 @@
 //! row waits in [`PENDING`] until its keys and mode are registered; promoting a row is moving it
 //! into [`TASKS`].
 
-use super::Task;
+use super::{Reads, Task};
 use crate::tasks::b::kit::{build, cadence_ms};
 
 pub mod asks_moot;
@@ -40,6 +40,7 @@ use sweep_tsd::SweepTsd;
 pub static TASKS: &[Task] = &[
     Task {
         name: hel_sweep::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: HelSweep::boot,
@@ -61,6 +62,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: hel_reap_terminal::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: HelReapTerminal::boot,
@@ -77,6 +79,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: hel_reap_stale::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: HelReapStale::boot,
@@ -92,6 +95,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: roundvm_ami_prune::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: RoundvmAmiPrune::boot,
@@ -101,10 +105,11 @@ pub static TASKS: &[Task] = &[
         keys: &[roundvm_ami_prune::KEYS],
         build: build::<RoundvmAmiPrune>,
     },
-    Task { name: lc_ship::NAME, plane: runtime::Plane::Work, signal: &[], boot: LcShip::boot, cadence_ms: cadence_ms::<LcShip>, effects: lc_ship::EFFECTS, runners: &[(lc_ship::OBSERVE, |e, _, _| lc_ship::observe(&e.world.run_dir, &pinned(lc_ship::URL_KEY)?, &pinned(lc_ship::DIR_KEY)?)), (lc_ship::DRAIN, |_, _, s| lc_ship::drain(std::sync::Arc::new(runtime::ports::SysProc), &pinned(lc_ship::URL_KEY)?, &s.input))], keys: &[lc_ship::KEYS], build: build::<LcShip> },
-    Task { name: roundvm_drain::NAME, plane: runtime::Plane::Work, signal: &[], boot: RoundvmDrain::boot, cadence_ms: cadence_ms::<RoundvmDrain>, effects: roundvm_drain::EFFECTS, runners: &[(roundvm_drain::OBSERVE, |e, _, _| roundvm_drain::observe(&e.world.run_dir, &pinned("SPIRA_ROUND_VM_SPILL")?, &pinned("SPIRA_ROUND_VM_WARM_IDLE_SECS")?)), (roundvm_drain::RELEASE, |_, _, s| roundvm_drain::release(&s.input))], keys: &[roundvm_drain::KEYS], build: build::<RoundvmDrain> },
+    Task { name: lc_ship::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: LcShip::boot, cadence_ms: cadence_ms::<LcShip>, effects: lc_ship::EFFECTS, runners: &[(lc_ship::OBSERVE, |e, _, _| lc_ship::observe(&e.world.run_dir, &pinned(lc_ship::URL_KEY)?, &pinned(lc_ship::DIR_KEY)?)), (lc_ship::DRAIN, |_, _, s| lc_ship::drain(std::sync::Arc::new(runtime::ports::SysProc), &pinned(lc_ship::URL_KEY)?, &s.input))], keys: &[lc_ship::KEYS], build: build::<LcShip> },
+    Task { name: roundvm_drain::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: RoundvmDrain::boot, cadence_ms: cadence_ms::<RoundvmDrain>, effects: roundvm_drain::EFFECTS, runners: &[(roundvm_drain::OBSERVE, |e, _, _| roundvm_drain::observe(&e.world.run_dir, &pinned("SPIRA_ROUND_VM_SPILL")?, &pinned("SPIRA_ROUND_VM_WARM_IDLE_SECS")?)), (roundvm_drain::RELEASE, |_, _, s| roundvm_drain::release(&s.input))], keys: &[roundvm_drain::KEYS], build: build::<RoundvmDrain> },
     Task {
         name: sweep_reclaim::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: SweepReclaim::boot,
@@ -119,10 +124,11 @@ pub static TASKS: &[Task] = &[
         keys: &[sweep_reclaim::KEYS],
         build: build::<SweepReclaim>,
     },
-    Task { name: sweep_tsd::NAME, plane: runtime::Plane::Work, signal: &[], boot: SweepTsd::boot, cadence_ms: cadence_ms::<SweepTsd>, effects: sweep_tsd::EFFECTS, runners: &[(sweep_tsd::OBSERVE, |e, _, _| sweep_tsd::observe(&e.world.run_dir, &pinned(sweep_tsd::KEEP_DAYS_KEY)?, &pinned(sweep_tsd::BY_FAMILY_KEY)?)), (sweep_tsd::PRUNE, |e, _, s| sweep_tsd::prune(&e.world.run_dir, &s.input))], keys: &[sweep_tsd::KEYS], build: build::<SweepTsd> },
-    Task { name: mail_tidy::NAME, plane: runtime::Plane::Work, signal: &[], boot: MailTidy::boot, cadence_ms: cadence_ms::<MailTidy>, effects: mail_tidy::EFFECTS, runners: &[(mail_tidy::OBSERVE, |e, _, s| serde_json::to_string(&mail_tidy::observe(&crate::tasks::b::lc(e), &s.input, mail_tidy::wall_secs())).map_err(|e| e.to_string())), (mail_tidy::ARCHIVE, |_, _, s| mail_tidy::archive(&s.input))], keys: &[mail_tidy::KEYS], build: build::<MailTidy> },
+    Task { name: sweep_tsd::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: SweepTsd::boot, cadence_ms: cadence_ms::<SweepTsd>, effects: sweep_tsd::EFFECTS, runners: &[(sweep_tsd::OBSERVE, |e, _, _| sweep_tsd::observe(&e.world.run_dir, &pinned(sweep_tsd::KEEP_DAYS_KEY)?, &pinned(sweep_tsd::BY_FAMILY_KEY)?)), (sweep_tsd::PRUNE, |e, _, s| sweep_tsd::prune(&e.world.run_dir, &s.input))], keys: &[sweep_tsd::KEYS], build: build::<SweepTsd> },
+    Task { name: mail_tidy::NAME, reads: Reads::Polled(&["planning/"]), plane: runtime::Plane::Work, signal: &[], boot: MailTidy::boot, cadence_ms: cadence_ms::<MailTidy>, effects: mail_tidy::EFFECTS, runners: &[(mail_tidy::OBSERVE, |e, _, s| serde_json::to_string(&mail_tidy::observe(&crate::tasks::b::lc(e), &s.input, mail_tidy::wall_secs())).map_err(|e| e.to_string())), (mail_tidy::ARCHIVE, |_, _, s| mail_tidy::archive(&s.input))], keys: &[mail_tidy::KEYS], build: build::<MailTidy> },
     Task {
         name: asks_moot::NAME,
+        reads: Reads::Polled(&["planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: AsksMoot::boot,
@@ -134,6 +140,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sweep_archive::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: SweepArchive::boot,
@@ -149,6 +156,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sweep_export_beads::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: SweepExportBeads::boot,
@@ -167,6 +175,7 @@ pub static TASKS: &[Task] = &[
     // RETIRE-CANDIDATE
     Task {
         name: sweep_escape_census::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: SweepEscapeCensus::boot,
