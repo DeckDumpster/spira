@@ -1377,6 +1377,7 @@ mod tests {
         }
     }
 
+    #[test_id(tmcm3a3)]
     #[test]
     fn every_write_that_settles_blocked_scopes_its_updates_by_a_literal_id_list() {
         for args in [&["dep", "add", "sp-a", "sp-b", "--type", "blocks"][..], &["dep", "remove", "sp-a", "sp-b"], &["close", "sp-a"], &["update", "sp-a", "--status", "open"]] {
@@ -1386,11 +1387,13 @@ mod tests {
         assert_scoped_by_literals(&create_script("`beads`", &Env::default(), &c, "sp-n", &[], None, &["sp-n".to_string()]));
     }
 
+    #[test_id(tr5aur7)]
     #[test]
     fn an_empty_reach_emits_no_blocked_update() {
         assert!(settle_blocked("`d`", &[]).is_empty());
     }
 
+    #[test_id(tt1e8k6)]
     #[test]
     fn the_reach_query_selects_seeds_dependents_and_descendants() {
         let q = reach_query("`d`", &["sp-a", "sp-b"]);

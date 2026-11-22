@@ -610,6 +610,7 @@ fn a_blocking_edge_blocks_its_dependent_and_closing_the_blocker_unblocks_it_as_b
     assert!(!blocked().contains(&a), "bd reads {a} as unblocked once its blocker closed in SQL");
 }
 
+#[test_id(t6g45cq)]
 #[test]
 fn a_blocking_edge_on_a_parent_blocks_its_descendants_as_bd_blocks_them_and_starts_no_process() {
     let Some(store) = Store::up() else { return };
