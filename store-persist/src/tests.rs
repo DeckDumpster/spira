@@ -575,6 +575,50 @@ fn a_stop_time_pass_syncs_only_a_database_written_since_the_last_pass() {
     assert_eq!(fs::read_to_string(layout(&w).db("spira").join("payload")).unwrap(), "beads-v9");
 }
 
+fn online_syncs(w: &World, at: u64) -> Vec<String> {
+    w.clock.0.set(at);
+    w.dolt.syncs.borrow_mut().clear();
+    pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap();
+    let synced = w.dolt.syncs.borrow().iter().map(|s| s.1.clone()).collect();
+    synced
+}
+
+fn online_world() -> (World, u64) {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    online_syncs(&w, now + 60_000);
+    (w, now)
+}
+
+#[test_id(t9c2h0y)]
+#[test]
+fn an_online_pass_with_no_file_written_since_the_last_pass_syncs_nothing() {
+    let (w, now) = online_world();
+    assert!(online_syncs(&w, now + 120_000).is_empty());
+    assert_eq!(read_state(&layout(&w)).unwrap().start_ms, now + 120_000);
+}
+
+#[test_id(twn3fj4)]
+#[test]
+fn an_online_pass_syncs_exactly_the_database_written_since_the_last_pass() {
+    let (w, now) = online_world();
+    let p = w.cfg.data.join("spira_aux/.dolt/noms/payload");
+    put(&p, "aux-v9");
+    let later = std::time::UNIX_EPOCH + std::time::Duration::from_millis(now + 300_000);
+    fs::File::options().write(true).open(&p).unwrap().set_modified(later).unwrap();
+    assert_eq!(online_syncs(&w, now + 400_000), ["spira_aux"]);
+}
+
+#[test_id(t0al5ue)]
+#[test]
+fn an_online_pass_syncs_a_database_the_durable_copy_lacks_though_it_is_old() {
+    let (w, now) = online_world();
+    fs::remove_dir_all(layout(&w).db("spira_aux")).unwrap();
+    assert_eq!(online_syncs(&w, now + 120_000), ["spira_aux"]);
+}
+
 fn compactable() -> World {
     let w = seeded();
     restore(&w.cfg, &w.dolt).unwrap();
