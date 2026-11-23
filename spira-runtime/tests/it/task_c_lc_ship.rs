@@ -158,3 +158,42 @@ fn check_credentials_refuses_an_acting_s3_destination_without_the_key_and_names_
     };
     assert!(task::check_credentials(Mode::Act, "s3://b/p/", full).is_ok());
 }
+
+fn draining_rig(fail_first: bool) -> runtime::taskrig::TaskRig {
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    t::rig::<H>(1, SET, &serde_json::to_string(&queued(3)).unwrap()).double(task::DRAIN, move |_| {
+        let n = asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if fail_first && n < 5 { Err("403".into()) } else { Ok("3 object(s) uploaded".into()) }
+    })
+}
+
+#[test_id(tcm9k2d)]
+#[test]
+fn a_draining_cycle_commits_no_turn() {
+    let mut rig = draining_rig(true);
+    let after_boot = rig.journal.commits().len();
+    for _ in 0..20 {
+        rig.advance(2_000).unwrap();
+    }
+    assert_eq!(rig.journal.commits().len(), after_boot, "{:?}", rig.journal.commits());
+    let drains: Vec<_> = rig.requested().iter().filter(|q| q.name == task::DRAIN).collect();
+    assert!(drains.len() >= 5, "{}", drains.len());
+    assert!(drains.iter().all(|q| !q.journaled));
+}
+
+#[test_id(tr7w1xe)]
+#[test]
+fn a_restart_mid_drain_drains_again() {
+    let mut rig = draining_rig(false).hanging(task::DRAIN);
+    for _ in 0..3 {
+        rig.advance(2_000).unwrap();
+    }
+    assert!(rig.requested().iter().any(|q| q.name == task::DRAIN));
+    let before = rig.requested().iter().filter(|q| q.name == task::DRAIN).count();
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    assert!(rig.journal.state().is_empty(), "{:?}", rig.journal.state().keys());
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    rig.advance(2_000).unwrap();
+    assert!(rig.requested().iter().filter(|q| q.name == task::DRAIN).count() > before);
+}

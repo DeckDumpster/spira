@@ -182,7 +182,7 @@ pub mod cockpit {
     ];
 
     /// The per-dwarf suffixes of the same kind, spelled `SP_DWARF<i>_<suffix>`.
-    pub const CLOCK_ONLY_DWARF: &[&str] = &["MIN", "WALL", "FUSE", "LEASE"];
+    pub const CLOCK_ONLY_DWARF: &[&str] = &["MIN", "WALL", "FUSE", "LEASE", "QUIET"];
 
     fn clock_only(key: &str) -> bool {
         CLOCK_ONLY.contains(&key)
@@ -389,8 +389,8 @@ pub mod cockpit {
         #[test]
         fn the_digest_ignores_clock_only_keys_and_sees_every_other() {
             let kv = |extra: &[(&str, &str)]| -> Vec<(String, String)> { extra.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() };
-            let base = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "3"), ("SP_DWARF0_MIN", "4"), ("SP_DWARF12_LEASE", "9"), ("SP_MAIL_OLDEST_AGE", "5")]);
-            let aged = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "8"), ("SP_DWARF0_MIN", "9"), ("SP_DWARF12_LEASE", "2"), ("SP_MAIL_OLDEST_AGE", "50")]);
+            let base = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "3"), ("SP_DWARF0_MIN", "4"), ("SP_DWARF12_LEASE", "9"), ("SP_MAIL_OLDEST_AGE", "5"), ("SP_DWARF3_QUIET", "2")]);
+            let aged = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "8"), ("SP_DWARF0_MIN", "9"), ("SP_DWARF12_LEASE", "2"), ("SP_MAIL_OLDEST_AGE", "50"), ("SP_DWARF3_QUIET", "40")]);
             assert_eq!(digest(&base), digest(&aged));
             assert_ne!(digest(&base), digest(&kv(&[("SP_DWARVES", "2"), ("SP_SENTINEL_AGE", "3")])));
             assert!(!volatile("SP_DWARF_N") && !volatile("SP_DWARFX_MIN") && !volatile("SP_DWARF0_BEAD"));
