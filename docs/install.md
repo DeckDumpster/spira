@@ -132,10 +132,14 @@ would make the gate test the code already in force.
 **Repositories.** The registry is the pipe-delimited file named by `spira.repo_map` when it
 exists (`name | path | mode | base | format | gate | lanes`), else the `[repo.*]` tables.
 Register one with `spira-config repo add <name> --path P --queue local|forge [--remote URL]
-[--land-ref R] [--format CMD] [--gate CMD]` and audit with `spira-config repo check
-<name>|--all`. Change a field with `spira-config repo set <name> path|queue|land|format|gate|lanes
-<value>` (prints old and new; `queue` is the mode, `land` the landing ref) and unregister with
-`spira-config repo rm <name>`. A repository carries its own gate in the tree under test (`gate.steps`) and, for
+[--land-ref R] [--format CMD] [--gate CMD] [--publish <remote>|none [--publish-branch B]
+[--publish-mode pr|push]]` (`--publish` is required with `--queue local`, and refused with `forge`) and audit with `spira-config repo check
+<name>|--all`. Change a field with `spira-config repo set <name> path|queue|land|format|gate|lanes|publish-remote|publish-branch|publish-mode
+<value>` (prints old and new; `queue` is the mode, `land` the landing ref; an empty
+`publish-branch` or `publish-mode` clears it), read the publish target with `spira-config repo
+publish <name>|--all` (JSON, an unset key `null`) and unregister, publish table included, with
+`spira-config repo rm <name>`. `repo check` fails a repository whose landing ref carries
+`.github/workflows/deploy.yml` but whose publish remote is `none`. A repository carries its own gate in the tree under test (`gate.steps`) and, for
 repositories other than the harness, its test entry in `.spira/testenv.toml`.
 
 **Personas.** `spira/runes/<name>.rune` and `<name>.md` ([concepts](concepts.md)). The live model per

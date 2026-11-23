@@ -7,7 +7,7 @@ pub const TOOLS: &str = "repo-contract/tools.toml";
 const RUST_PIN: &str = "rust-toolchain.toml";
 const PYTHON_PIN: &str = ".python-version";
 const UV_LOCK: &str = "uv.lock";
-const DEPLOY_WORKFLOW: &str = ".github/workflows/deploy.yml";
+use spira_config::repo_admin::DEPLOY_WORKFLOW;
 const CHECKS_HEADER: &str = "# Rows `work checks` runs before a branch is submitted. Add a [[check]] with name, run, budget_ms.\n";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -3,8 +3,10 @@
 //! config writers; `check` stops at the first missing piece and names it.
 
 use crate::repos::{self, Registry};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub const DEPLOY_WORKFLOW: &str = ".github/workflows/deploy.yml";
 const TESTENV_DECL: &str = ".spira/testenv.toml";
 const HARNESS_IMAGE: &str = "spira/testenv/Containerfile";
 const UNITS_DECL: &str = ".spira/units";
@@ -51,6 +53,9 @@ pub struct AddArgs {
     pub land_ref: Option<String>,
     pub format: String,
     pub gate: String,
+    pub publish: Option<String>,
+    pub publish_branch: Option<String>,
+    pub publish_mode: Option<String>,
 }
 
 /// The files `add` writes: the repo-map when one is in force (it outranks `[repo.*]`), else
@@ -103,6 +108,94 @@ fn row_line(a: &AddArgs, land_ref: &str) -> String {
     )
 }
 
+const PUBLISH_FLAGS: &str = "--publish <remote>|none [--publish-branch <b>] [--publish-mode pr|push]";
+
+/// Refuses every publish mistake before the checkout, the repo-map or the toml is touched, and
+/// returns the `[publish.<name>]` keys that differ from what is stored.
+fn preflight_publish(a: &AddArgs, t: &Targets) -> Result<Vec<(String, String)>, String> {
+    let given = a.publish.is_some() || a.publish_branch.is_some() || a.publish_mode.is_some();
+    if a.queue == Queue::Forge {
+        return if given {
+            Err("repo add: --publish, --publish-branch and --publish-mode go with --queue local; queue.forge deploys from the forge".to_string())
+        } else {
+            Ok(Vec::new())
+        };
+    }
+    let Some(remote) = a.publish.as_deref().filter(|r| !r.is_empty()) else {
+        return Err(format!(
+            "repo add: --queue local needs the publish target: {PUBLISH_FLAGS}; `--publish none` registers a repository that publishes nowhere"
+        ));
+    };
+    if remote == repos::NO_PUBLISH && (a.publish_branch.is_some() || a.publish_mode.is_some()) {
+        return Err("repo add: --publish-branch and --publish-mode need a remote, not --publish none".to_string());
+    }
+    if let Some(m) = a.publish_mode.as_deref() {
+        if !matches!(m, "pr" | "push") {
+            return Err(format!("repo add: --publish-mode is pr or push, not {m:?}"));
+        }
+    }
+    if a.publish_branch.as_deref() == Some("") {
+        return Err("repo add: --publish-branch may not be empty".to_string());
+    }
+    if remote != repos::NO_PUBLISH {
+        let exists = a.path.join(".git").exists() && git_ok(&a.path, &["remote", "get-url", remote]);
+        if !exists && !(remote == "origin" && a.remote.is_some()) {
+            return Err(format!(
+                "repo add: --publish {remote}: the checkout at {} has no remote {remote}",
+                a.path.display()
+            ));
+        }
+    }
+    if let Some(url) = &a.remote {
+        if a.path.join(".git").exists() {
+            if let Ok(have) = git(&a.path, &["remote", "get-url", "origin"]) {
+                if &have != url {
+                    return Err(format!("repo add: origin is already {have}, not {url}"));
+                }
+            }
+        }
+    }
+    let toml = t
+        .toml
+        .as_ref()
+        .ok_or("repo add: no spira.toml located to carry [publish.<name>]")?;
+    let have = crate::load(toml).ok().and_then(|d| d.publish.get(&a.name).cloned());
+    let mut want: Vec<(&str, String, Option<String>)> = vec![(
+        "remote",
+        remote.to_string(),
+        have.as_ref().and_then(|p| p.remote.clone()),
+    )];
+    if let Some(b) = &a.publish_branch {
+        want.push(("branch", b.clone(), have.as_ref().and_then(|p| p.branch.clone())));
+    }
+    if let Some(m) = &a.publish_mode {
+        want.push((
+            "mode",
+            m.clone(),
+            have.as_ref().and_then(|p| p.mode).map(|m| match m {
+                crate::PublishMode::Pr => "pr".to_string(),
+                crate::PublishMode::Push => "push".to_string(),
+            }),
+        ));
+    }
+    let mut pairs = Vec::new();
+    for (key, value, stored) in want {
+        match stored {
+            Some(s) if s == value => {}
+            Some(s) => {
+                return Err(format!(
+                    "repo add: {} is already registered differently in {}: [publish.{}] {key} = {s:?}, not {value:?}",
+                    a.name,
+                    toml.display(),
+                    a.name
+                ))
+            }
+            None => pairs.push((format!("publish.{}.{key}", a.name), value)),
+        }
+    }
+    Ok(pairs)
+}
+
 pub fn add(a: &AddArgs, t: &Targets) -> Result<Vec<String>, String> {
     let mut did = Vec::new();
     if !valid_name(&a.name) {
@@ -134,6 +227,7 @@ pub fn add(a: &AddArgs, t: &Targets) -> Result<Vec<String>, String> {
         ));
     }
     let branch = repos::ref_branch(&land_ref);
+    let publish_pairs = preflight_publish(a, t)?;
 
     if !a.path.join(".git").exists() {
         std::fs::create_dir_all(&a.path).map_err(|e| format!("{}: {e}", a.path.display()))?;
@@ -187,23 +281,12 @@ pub fn add(a: &AddArgs, t: &Targets) -> Result<Vec<String>, String> {
 
     register(a, &land_ref, t, &mut did)?;
 
-    if a.queue == Queue::Local {
-        let remote = if a.remote.is_some() {
-            "origin"
-        } else {
-            repos::NO_PUBLISH
-        };
-        let toml = t
-            .toml
-            .as_ref()
-            .ok_or("repo add: no spira.toml located to carry [publish.<name>]")?;
-        let key = format!("publish.{}.remote", a.name);
-        let have = crate::load(toml)
-            .ok()
-            .and_then(|d| d.publish.get(&a.name).and_then(|p| p.remote.clone()));
-        if have.as_deref() != Some(remote) {
-            crate::set_paths_in_file(toml, &[(&key, remote)])?;
-            did.push(format!("wrote [publish.{}] remote = {remote:?}", a.name));
+    if !publish_pairs.is_empty() {
+        let toml = t.toml.as_ref().expect("preflight_publish required it");
+        let pairs: Vec<(&str, &str)> = publish_pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        crate::set_paths_in_file(toml, &pairs)?;
+        for (k, v) in &publish_pairs {
+            did.push(format!("wrote {k} = {v:?}"));
         }
     }
 
@@ -346,6 +429,9 @@ fn read_map(verb: &str, map: Option<&PathBuf>) -> Result<(PathBuf, String), Stri
 /// Changes one field of a registered repo's repo-map row and returns `(old, new)`. `queue`
 /// is the land-mode column and `land` the landing ref (`base`).
 pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String, String), String> {
+    if let Some(key) = field.strip_prefix("publish-") {
+        return set_publish(name, key, value, t);
+    }
     let (map, text) = read_map("set", t.map.as_ref())?;
     let (idx, mut row) = map_row_index(&text, name)
         .ok_or_else(|| format!("repo set: {name} is not registered in {}", map.display()))?;
@@ -399,13 +485,108 @@ pub fn set(name: &str, field: &str, value: &str, t: &Targets) -> Result<(String,
     Ok((old, value.to_string()))
 }
 
-/// Removes a repository's repo-map row, returning the row it removed.
+fn registered_anywhere(name: &str, t: &Targets) -> bool {
+    let in_map = t
+        .map
+        .as_ref()
+        .and_then(|m| std::fs::read_to_string(m).ok())
+        .is_some_and(|text| map_row_index(&text, name).is_some());
+    in_map
+        || t.toml
+            .as_ref()
+            .and_then(|f| crate::load(f).ok())
+            .is_some_and(|d| d.repo.contains_key(name))
+}
+
+fn stored_publish(name: &str, t: &Targets) -> crate::PublishSection {
+    t.toml
+        .as_ref()
+        .and_then(|f| crate::load(f).ok())
+        .and_then(|d| d.publish.get(name).cloned())
+        .unwrap_or_default()
+}
+
+fn mode_word(m: crate::PublishMode) -> &'static str {
+    match m {
+        crate::PublishMode::Pr => "pr",
+        crate::PublishMode::Push => "push",
+    }
+}
+
+/// `repo set <name> publish-remote|publish-branch|publish-mode`: `[publish.<name>]`, returning
+/// `(old, new)` with an unset key as the empty string.
+fn set_publish(name: &str, key: &str, value: &str, t: &Targets) -> Result<(String, String), String> {
+    if !matches!(key, "remote" | "branch" | "mode") {
+        return Err(format!(
+            "repo set: unknown field \"publish-{key}\" (publish-remote, publish-branch, publish-mode)"
+        ));
+    }
+    if !registered_anywhere(name, t) {
+        return Err(format!("repo set: {name} is not registered"));
+    }
+    let toml = t
+        .toml
+        .as_ref()
+        .ok_or("repo set: no spira.toml located to carry [publish.<name>]")?;
+    if key == "remote" && value.is_empty() {
+        return Err(format!(
+            "repo set: publish-remote may not be empty; use {:?} for a repository that publishes nowhere",
+            repos::NO_PUBLISH
+        ));
+    }
+    if key == "mode" && !value.is_empty() && !matches!(value, "pr" | "push") {
+        return Err(format!("repo set: publish-mode is pr or push, not {value:?}"));
+    }
+    let have = stored_publish(name, t);
+    let old = match key {
+        "remote" => have.remote,
+        "branch" => have.branch,
+        _ => have.mode.map(|m| mode_word(m).to_string()),
+    }
+    .unwrap_or_default();
+    let path = format!("publish.{name}.{key}");
+    if value.is_empty() {
+        crate::unset_paths_in_file(toml, &[&path])?;
+    } else {
+        crate::set_paths_in_file(toml, &[(&path, value)])?;
+    }
+    Ok((old, value.to_string()))
+}
+
+/// The stored publish target of a registered repository as a JSON object; an unset key is `null`.
+pub fn publish_target(name: &str, t: &Targets) -> Result<serde_json::Value, String> {
+    if !registered_anywhere(name, t) {
+        return Err(format!("repo publish: {name} is not registered"));
+    }
+    let p = stored_publish(name, t);
+    Ok(serde_json::json!({
+        "repo": name,
+        "remote": p.remote,
+        "branch": p.branch,
+        "mode": p.mode.map(mode_word),
+    }))
+}
+
+/// Removes a repository's repo-map row and its `[publish.<name>]` table, returning the row it
+/// removed. The toml is written first and restored if the repo-map write then fails.
 pub fn rm(name: &str, t: &Targets) -> Result<String, String> {
     let (map, text) = read_map("rm", t.map.as_ref())?;
     let (idx, _) = map_row_index(&text, name)
         .ok_or_else(|| format!("repo rm: {name} is not registered in {}", map.display()))?;
     let old = text.lines().nth(idx).unwrap_or_default().to_string();
-    write_map(&map, &rebuild(&text, idx, None))?;
+    let saved = match &t.toml {
+        Some(f) => {
+            let before = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+            crate::remove_named_table_in_file(f, "publish", name)?.then_some((f, before))
+        }
+        None => None,
+    };
+    if let Err(e) = write_map(&map, &rebuild(&text, idx, None)) {
+        if let Some((f, before)) = saved {
+            crate::write_atomic(f, &before).map_err(|re| format!("{e}; restoring {}: {re}", f.display()))?;
+        }
+        return Err(e);
+    }
     Ok(old)
 }
 
@@ -432,6 +613,21 @@ fn command_exists(cmd: &str) -> bool {
 
 fn in_tree(repo: &Path, land_ref: &str, rel: &str) -> bool {
     git_ok(repo, &["cat-file", "-e", &format!("{land_ref}:{rel}")])
+}
+
+fn publish_piece(reg: &Registry, name: &str, path: &Path, land: &str) -> Result<String, String> {
+    if !reg.publish_declared(name) {
+        return Err(format!("no [publish.{name}] block"));
+    }
+    if !repos::publishes_nowhere(reg, name, &BTreeMap::new()) {
+        return Ok(format!("[publish.{name}] declared"));
+    }
+    if in_tree(path, land, DEPLOY_WORKFLOW) {
+        return Err(format!(
+            "deploys from the forge ({DEPLOY_WORKFLOW} on {land}) but publishes nowhere ([publish.{name}] remote = \"none\") — set it with spira-config repo set {name} publish-remote <remote>"
+        ));
+    }
+    Ok("[publish] declared: publishes nowhere".to_string())
 }
 
 /// Every piece of plumbing, in order, stopping after the first that is missing.
@@ -525,14 +721,7 @@ pub fn check(reg: &Registry, name: &str) -> Vec<Piece> {
                     ))
                 }
             );
-            piece!(
-                "publish",
-                if reg.publish_declared(name) {
-                    Ok("[publish] declared".to_string())
-                } else {
-                    Err(format!("no [publish.{name}] block"))
-                }
-            );
+            piece!("publish", publish_piece(reg, name, &path, &land));
         }
         "queue" | "queue.forge" => {
             piece!(
@@ -673,7 +862,6 @@ pub fn cut_worktree_in(root: &Path, repo: &Path, land: &str) -> Result<Worktree,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
 
     struct Fx {
         _d: testkit::TempDir,
@@ -900,5 +1088,190 @@ mod tests {
         assert!(stat_state_is_gone("5 (sleep) X 1 2"));
         assert!(!stat_state_is_gone("5 (x Z) S 1 2"));
         assert!(!stat_state_is_gone("garbage"));
+    }
+
+    fn local_checkout(d: &Path, with_origin: bool) -> PathBuf {
+        let repo = repo_with_commit(d);
+        git(&repo, &["branch", "local/main"]).unwrap();
+        if with_origin {
+            git(&repo, &["remote", "add", "origin", "https://example.invalid/x.git"]).unwrap();
+        }
+        repo
+    }
+
+    fn add_args(repo: &Path, publish: Option<&str>) -> AddArgs {
+        AddArgs {
+            name: "fixture".into(),
+            path: repo.to_path_buf(),
+            queue: Queue::Local,
+            remote: None,
+            land_ref: None,
+            format: String::new(),
+            gate: String::new(),
+            publish: publish.map(str::to_string),
+            publish_branch: None,
+            publish_mode: None,
+        }
+    }
+
+    fn both(f: &Fx) -> Targets {
+        Targets { map: Some(f.map.clone()), toml: Some(f.toml.clone()) }
+    }
+
+    fn snapshot(f: &Fx, repo: &Path) -> (String, String, String) {
+        (
+            std::fs::read_to_string(&f.map).unwrap(),
+            std::fs::read_to_string(&f.toml).unwrap(),
+            git(repo, &["for-each-ref", "--format=%(refname) %(objectname)"]).unwrap()
+                + &git(repo, &["status", "--porcelain", "-uall"]).unwrap(),
+        )
+    }
+
+    fn stored(f: &Fx) -> crate::PublishSection {
+        crate::load(&f.toml).unwrap().publish.get("fixture").cloned().unwrap_or_default()
+    }
+
+    #[test_id(tl3p0aa)]
+    #[test]
+    fn add_for_a_local_checkout_with_origin_refuses_without_a_publish_flag_and_touches_nothing() {
+        let f = fx();
+        let repo = local_checkout(f._d.path(), true);
+        let before = snapshot(&f, &repo);
+        let e = add(&add_args(&repo, None), &both(&f)).unwrap_err();
+        assert!(e.contains("--publish") && e.contains("none"), "{e}");
+        assert_eq!(snapshot(&f, &repo), before);
+    }
+
+    #[test_id(tl3p0ab)]
+    #[test]
+    fn add_stores_the_three_publish_keys_and_a_rerun_changes_nothing() {
+        let f = fx();
+        let repo = local_checkout(f._d.path(), true);
+        let mut a = add_args(&repo, Some("origin"));
+        a.publish_branch = Some("main".into());
+        a.publish_mode = Some("push".into());
+        add(&a, &both(&f)).unwrap();
+        let p = stored(&f);
+        assert_eq!(p.remote.as_deref(), Some("origin"));
+        assert_eq!(p.branch.as_deref(), Some("main"));
+        assert_eq!(p.mode, Some(crate::PublishMode::Push));
+        let before = snapshot(&f, &repo);
+        assert_eq!(add(&a, &both(&f)).unwrap(), Vec::<String>::new());
+        assert_eq!(snapshot(&f, &repo), before);
+        git(&repo, &["remote", "add", "other", "https://example.invalid/o.git"]).unwrap();
+        let before = snapshot(&f, &repo);
+        let mut b = a.clone();
+        b.publish = Some("other".into());
+        let e = add(&b, &both(&f)).unwrap_err();
+        assert!(e.contains("already registered differently"), "{e}");
+        assert_eq!(snapshot(&f, &repo), before);
+    }
+
+    #[test_id(tl3p0ac)]
+    #[test]
+    fn a_second_add_without_remote_leaves_a_hand_set_publish_remote_alone() {
+        let f = fx();
+        let repo = local_checkout(f._d.path(), true);
+        add(&add_args(&repo, Some("origin")), &both(&f)).unwrap();
+        let e = add(&add_args(&repo, Some("none")), &both(&f)).unwrap_err();
+        assert!(e.contains("already registered differently"), "{e}");
+        assert_eq!(stored(&f).remote.as_deref(), Some("origin"));
+    }
+
+    #[test_id(tl3p0ad)]
+    #[test]
+    fn add_accepts_publish_none_and_refuses_a_missing_remote_and_forge_publish() {
+        let f = fx();
+        let repo = local_checkout(f._d.path(), false);
+        add(&add_args(&repo, Some("none")), &both(&f)).unwrap();
+        assert_eq!(stored(&f).remote.as_deref(), Some("none"));
+        let g = fx();
+        let repo = local_checkout(g._d.path(), false);
+        let e = add(&add_args(&repo, Some("nosuch")), &both(&g)).unwrap_err();
+        assert!(e.contains("nosuch"), "{e}");
+        let mut a = add_args(&repo, Some("origin"));
+        a.queue = Queue::Forge;
+        a.land_ref = Some("origin/main".into());
+        assert!(add(&a, &both(&g)).is_err());
+        let mut n = add_args(&repo, Some("none"));
+        n.publish_mode = Some("push".into());
+        assert!(add(&n, &both(&g)).is_err());
+    }
+
+    fn deploy_repo(d: &Path, with_workflow: bool) -> PathBuf {
+        let repo = local_checkout(d, false);
+        if with_workflow {
+            std::fs::create_dir_all(repo.join(".github/workflows")).unwrap();
+            std::fs::write(repo.join(DEPLOY_WORKFLOW), "on: push\n").unwrap();
+            git(&repo, &["add", "."]).unwrap();
+            git(&repo, &["commit", "-q", "-m", "deploy"]).unwrap();
+            git(&repo, &["branch", "-f", "local/main", "HEAD"]).unwrap();
+        }
+        repo
+    }
+
+    fn publish_detail(f: &Fx, repo: &Path, remote: &str) -> Result<String, String> {
+        crate::set_paths_in_file(&f.toml, &[("publish.fixture.remote", remote)]).unwrap();
+        std::fs::write(
+            &f.map,
+            format!("fixture | {} | queue.local | local/main | | | plan\n", repo.display()),
+        )
+        .unwrap();
+        publish_piece(&reg(f), "fixture", repo, "local/main")
+    }
+
+    #[test_id(tl3p0ae)]
+    #[test]
+    fn check_fails_publish_when_the_landing_ref_deploys_from_the_forge_and_remote_is_none() {
+        let f = fx();
+        let repo = deploy_repo(f._d.path(), true);
+        let e = publish_detail(&f, &repo, "none").unwrap_err();
+        assert!(
+            e.starts_with("deploys from the forge (.github/workflows/deploy.yml on local/main) but publishes nowhere ([publish.fixture] remote = \"none\")")
+                && e.ends_with("spira-config repo set fixture publish-remote <remote>"),
+            "{e}"
+        );
+        assert!(publish_detail(&f, &repo, "origin").is_ok());
+    }
+
+    #[test_id(tl3p0af)]
+    #[test]
+    fn check_passes_publish_none_without_a_deploy_workflow() {
+        let f = fx();
+        let repo = deploy_repo(f._d.path(), false);
+        assert!(publish_detail(&f, &repo, "none").is_ok());
+    }
+
+    #[test_id(tl3p0ag)]
+    #[test]
+    fn set_publish_fields_report_old_and_new_clear_and_refuse_bad_values() {
+        let f = fx();
+        let t = both(&f);
+        let t = { registered(&f, "g"); t };
+        assert_eq!(set("fixture", "publish-remote", "origin", &t).unwrap(), ("".into(), "origin".into()));
+        assert_eq!(set("fixture", "publish-mode", "push", &t).unwrap().1, "push");
+        assert_eq!(set("fixture", "publish-branch", "main", &t).unwrap().1, "main");
+        assert_eq!(set("fixture", "publish-mode", "", &t).unwrap().0, "push");
+        assert_eq!(stored(&f).mode, None);
+        assert!(set("fixture", "publish-remote", "", &t).unwrap_err().contains("none"));
+        assert!(set("fixture", "publish-mode", "merge", &t).is_err());
+        assert!(set("nope", "publish-remote", "origin", &t).is_err());
+    }
+
+    #[test_id(tl3p0ah)]
+    #[test]
+    fn rm_removes_the_publish_table_and_leaves_other_repositories_tables() {
+        let f = fx();
+        let t = both(&f);
+        registered(&f, "g");
+        crate::set_paths_in_file(
+            &f.toml,
+            &[("publish.fixture.remote", "origin"), ("publish.other.remote", "none")],
+        )
+        .unwrap();
+        rm("fixture", &t).unwrap();
+        let d = crate::load(&f.toml).unwrap();
+        assert!(!d.publish.contains_key("fixture"));
+        assert_eq!(d.publish["other"].remote.as_deref(), Some("none"));
     }
 }
