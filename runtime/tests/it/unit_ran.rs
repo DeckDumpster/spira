@@ -91,8 +91,8 @@ fn a_polled_source_does_not_run_under_virtual_time() {
 }
 
 #[test_id(tc3mu4c)]
-#[test]
-fn a_polled_source_on_its_own_thread_submits_each_end_once() {
+#[tokio::test]
+async fn a_polled_source_on_its_own_thread_submits_each_end_once() {
     let clock = VirtualClock::new(0);
     let c: Arc<dyn Clock> = Arc::new(clock.clone());
     let scripted = Arc::new(ScriptedUnits::new(c.clone()));
@@ -101,15 +101,17 @@ fn a_polled_source_on_its_own_thread_submits_each_end_once() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let mut sources = Sources::default();
     sources.register(Box::new(UnitRanSource::polled("unit-ran", scripted, c, std::time::Duration::from_millis(5)))).unwrap();
-    let handles = sources.start(tx).unwrap();
+    let handles = sources.start(tx);
     clock.advance_to(10);
-    let s = rx.blocking_recv().expect("the end arrives");
+    let s = rx.recv().await.expect("the end arrives");
     assert_eq!((s.id.as_str(), s.stream.as_str()), ("unit.ran/spira-run-alpha-k.service/10", UNITS_STREAM));
     assert_eq!(UnitRan::from_event_kind(&s.kind).and_then(|r| r.key_for("alpha")).as_deref(), Some("k"));
-    std::thread::sleep(std::time::Duration::from_millis(30)); // clock-safe: a second drain must find nothing new
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await; // clock-safe: a second drain must find nothing new
     assert!(rx.try_recv().is_err(), "an end is submitted once");
     drop(rx);
-    handles.into_iter().for_each(|h| h.join().unwrap());
+    for h in handles {
+        h.await.unwrap();
+    }
 }
 
 #[test_id(tw85p70)]

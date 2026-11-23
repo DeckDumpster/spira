@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use runtime::host::Submit;
 use runtime::ports::{Clock, WallClock};
-use runtime::sources::{Source, UnitRanSource};
+use runtime::sources::UnitRanSource;
 use runtime::units::UnitCompletions;
 use tokio::sync::mpsc;
 
@@ -46,7 +46,7 @@ pub fn run_dbus(tx: mpsc::Sender<Submit>) {
     }
     let clock: Arc<dyn Clock> = Arc::new(WallClock);
     match connect(clock.clone()) {
-        Ok(c) => Box::new(over(c, clock)).run(tx),
+        Ok(c) => over(c, clock).drain_until_closed(tx),
         Err(e) => eprintln!("spira-runtime: source {NAME}: {e}"),
     }
 }
@@ -65,11 +65,12 @@ fn connect(_clock: Arc<dyn Clock>) -> Result<Arc<dyn UnitCompletions>, String> {
 mod tests {
     use super::*;
     use runtime::ports::VirtualClock;
+    use runtime::sources::Source;
     use runtime::units::{Exit, ScriptedUnits, UnitHandle, UnitRan, Units, UnitSpec, UNIT_RAN};
 
     #[test_id(tnnols7)]
-    #[test]
-    fn a_run_the_manager_ends_is_submitted_once_on_its_tasks_stream_or_on_units() {
+    #[tokio::test]
+    async fn a_run_the_manager_ends_is_submitted_once_on_its_tasks_stream_or_on_units() {
         let task = crate::tasks::all().find(|t| t.name != "heartbeat").expect("a booted task");
         assert_eq!(stream_of(task.name).as_deref(), Some(task.stream()));
         assert_eq!(stream_of("planted.no_such_task"), None);
@@ -80,10 +81,10 @@ mod tests {
         clock.advance(2_000);
         let (tx, mut rx) = mpsc::channel(4);
         let source = over(units.clone(), clock.clone());
-        let h = std::thread::spawn(move || Box::new(source).run(tx));
-        let got = rx.blocking_recv().expect("the run's end");
+        let h = tokio::spawn(Box::new(source).run(tx));
+        let got = rx.recv().await.expect("the run's end");
         drop(rx);
-        h.join().unwrap();
+        h.await.unwrap();
         assert_eq!((got.stream.as_str(), got.kind.tag.as_str()), (runtime::sources::UNITS_STREAM, UNIT_RAN));
         let ran = UnitRan::from_event_kind(&got.kind).unwrap();
         assert_eq!(ran.handle, UnitHandle::of("planted.no_such_task", "r1").unwrap());

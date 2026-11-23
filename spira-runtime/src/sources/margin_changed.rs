@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use margin_client::{HttpMargin, Margin};
 use runtime::host::Submit;
-use runtime::sources::Source;
+use runtime::sources::{on_thread, Running, Source};
 use runtime::{EventKind, MARGIN_CHANGED, MARGIN_STREAM, MARGIN_UNREACHABLE};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -90,7 +90,13 @@ impl Source for MarginChanged {
         NAME
     }
 
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
+        on_thread(NAME, move || self.serve(tx))
+    }
+}
+
+impl MarginChanged {
+    fn serve(self, tx: mpsc::Sender<Submit>) {
         let Some(client) = &self.client else {
             while !tx.is_closed() {
                 std::thread::sleep(IDLE); // clock-safe: a dormant source's own thread, waiting for shutdown
@@ -183,7 +189,7 @@ mod tests {
 
     fn start(s: Box<MarginChanged>) -> mpsc::Receiver<Submit> {
         let (tx, rx) = mpsc::channel(8);
-        std::thread::spawn(move || s.run(tx));
+        std::thread::spawn(move || s.serve(tx));
         rx
     }
 

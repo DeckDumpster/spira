@@ -45,7 +45,7 @@ use std::path::PathBuf;
 
 use runtime::event::{EventKind, EventKindTag};
 use runtime::host::Submit;
-use runtime::sources::Source;
+use runtime::sources::{Running, Source};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -96,13 +96,17 @@ impl Source for MailArrived {
         NAME
     }
 
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
-        if tx.is_closed() {
-            return;
-        }
-        match super::sources::watch::platform() {
-            Ok(watch) => super::sources::mail::run(&self.mailboxes, watch, tx),
-            Err(e) => eprintln!("spira-runtime: source {NAME}: {e}"),
-        }
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
+        Box::pin(async move {
+            if tx.is_closed() {
+                return;
+            }
+            match super::sources::watch::platform() {
+                Ok(watch) => super::sources::mail::run(&self.mailboxes, watch, tx).await,
+                Err(e) => {
+                    let _ = runtime::sources::on_pool(NAME, std::sync::Arc::new(move || eprintln!("spira-runtime: source {NAME}: {e}"))).await;
+                }
+            }
+        })
     }
 }
