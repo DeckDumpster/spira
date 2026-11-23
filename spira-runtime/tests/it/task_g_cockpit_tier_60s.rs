@@ -202,3 +202,53 @@ fn a_boot_does_not_republish_a_snapshot_whose_digest_it_published() {
 fn a_boot_does_not_refresh_a_snapshot_no_newer_than_the_last_read() {
     boot_matches(|| rig(1, |_| with_clock(snap(0))));
 }
+
+fn aged(rows: &[(&str, &str)], at: u64) -> Snapshot {
+    let mut s = snap(0);
+    let f = s.fragments.get_mut("cockpit.reachable").unwrap();
+    f.at = at;
+    f.kv.extend(rows.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+    s
+}
+
+fn age_rows(minutes: &str, mail_age: &str) -> Vec<(&'static str, String)> {
+    vec![("SP_INFLOW0", format!("{minutes}   task a")), ("SP_EVENT0", format!("{minutes}   ev a")), ("SP_MAIL0", format!("'{mail_age}|READ|hi")), ("SP_INFLOW0_REPO", "r".into())]
+}
+
+fn second_pass(first: Vec<(&'static str, String)>, second: Vec<(&'static str, String)>) -> (TaskRig, usize, usize) {
+    let pick = |rows: &Vec<(&'static str, String)>, at| aged(&rows.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>(), at);
+    let (a, b) = (pick(&first, 10), pick(&second, 20));
+    let mut r = rig(1, move |n| if n == 0 { a.clone() } else { b.clone() });
+    let (turns, asked) = (r.trace().len(), r.requested().len());
+    let (_, stream, kind) = CockpitTier60s::boot();
+    r.tick(stream, kind).unwrap();
+    (r, turns, asked)
+}
+
+#[test_id(tmzn1ls)]
+#[test]
+fn a_pass_differing_only_in_row_ages_commits_no_turn_and_publishes_the_new_ages_off_the_journal() {
+    let (r, turns, asked) = second_pass(age_rows("4m", "20218"), age_rows("5m", "20278"));
+    assert_eq!(r.trace().len(), turns, "an age ticking over journaled a turn");
+    let new = &r.requested()[asked..];
+    let publish = new.iter().find(|q| q.name == PUBLISH).expect("the ages are published as a probe");
+    assert!(!publish.journaled, "{publish:?}");
+    assert!(publish.input.contains("SP_INFLOW0=5m") && publish.input.contains("SP_EVENT0=5m") && publish.input.contains("SP_MAIL0='20278|READ"), "{}", publish.input);
+}
+
+#[test_id(t9k2q4w)]
+#[test]
+fn a_changed_title_a_new_row_a_read_flip_or_a_repo_change_publishes_journalled() {
+    let base = || age_rows("4m", "20218");
+    let edit = |k: &str, v: &str| -> Vec<(&'static str, String)> { base().into_iter().map(|(rk, rv)| if rk == k { (rk, v.to_string()) } else { (rk, rv) }).collect() };
+    let mut added = base();
+    added.push(("SP_INFLOW1", "4m   task b".into()));
+    let cases = [edit("SP_INFLOW0", "4m   task Z"), edit("SP_EVENT0", "4m   ev Z"), edit("SP_MAIL0", "'20218|UNREAD|hi"), edit("SP_INFLOW0_REPO", "other"), added];
+    for second in cases {
+        let (r, turns, asked) = second_pass(base(), second.clone());
+        assert!(r.trace().len() > turns, "{second:?} committed no turn");
+        let published: Vec<_> = r.requested()[asked..].iter().filter(|q| q.name == PUBLISH).collect();
+        assert_eq!(published.len(), 1, "{second:?}");
+        assert!(published[0].journaled, "{second:?}");
+    }
+}

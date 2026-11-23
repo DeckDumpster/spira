@@ -227,9 +227,25 @@ pub mod cockpit {
         kv.iter().map(|(k, v)| format!("{k}={v}\n")).collect()
     }
 
+    fn indexed(key: &str, prefix: &str) -> bool {
+        key.strip_prefix(prefix).is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+    }
+
+    /// The part of a value that is not its leading age: past the first word of an
+    /// `SP_INFLOW<i>` or `SP_EVENT<i>` row, past the first `|` of an `SP_MAIL<i>` row.
+    pub fn stable_value<'a>(key: &str, value: &'a str) -> &'a str {
+        if indexed(key, "SP_INFLOW") || indexed(key, "SP_EVENT") {
+            value.split_once(char::is_whitespace).map_or("", |(_, rest)| rest.trim_start())
+        } else if indexed(key, "SP_MAIL") {
+            value.split_once('|').map_or("", |(_, rest)| rest)
+        } else {
+            value
+        }
+    }
+
     /// The digest of the keys that make a snapshot new.
     pub fn digest(kv: &[(String, String)]) -> String {
-        let stable: String = kv.iter().filter(|(k, _)| !volatile(k)).map(|(k, v)| format!("{k}={v}\n")).collect();
+        let stable: String = kv.iter().filter(|(k, _)| !volatile(k)).map(|(k, v)| format!("{k}={}\n", stable_value(k, v))).collect();
         let d = ring::digest::digest(&ring::digest::SHA256, stable.as_bytes());
         d.as_ref().iter().take(16).map(|b| format!("{b:02x}")).collect()
     }
@@ -257,8 +273,8 @@ pub mod cockpit {
 
     /// The tier decision: refuse naming `may_write` off the supervised instance; carry each
     /// fragment's status; publish the merged `Kv` as `publish` when its digest moved, or, with
-    /// the digest unchanged, refresh it when a newer pass carries the pane's clock (`SP_AT`) so
-    /// the snapshot never reads stale. [`answer`] runs a refresh as a probe, off the journal.
+    /// the digest unchanged, refresh it when a newer pass carries the pane's clock (`SP_AT`) or a
+    /// row with a leading age (`stable_value` differs from the value) so the snapshot never reads stale. [`answer`] runs a refresh as a probe, off the journal.
     pub fn decide_tier(carry: &Carry, snap: &Snapshot, publish: &str) -> Result<(Carry, Vec<EffectSpec>), String> {
         if !snap.supervised {
             return Err(format!("may_write: not the supervised instance; {WRITE_KEY} names the one writer"));
@@ -269,7 +285,7 @@ pub mod cockpit {
         let fresher = newest(&mut snap.fragments.values().map(|f| f.at)) > newest(&mut carry.fragments.values().map(|f| f.at));
         let next = Carry { fragments: carry_fragments(carry, snap), digest: Some(d.clone()) };
         let changed = carry.digest.as_deref() != Some(d.as_str());
-        let refresh = !changed && fresher && kv.iter().any(|(k, _)| k == "SP_AT");
+        let refresh = !changed && fresher && kv.iter().any(|(k, v)| k == "SP_AT" || stable_value(k, v) != v);
         let acts = if changed || refresh { vec![EffectSpec::keyed(publish, format!("{publish}/{d}"), render(&kv), 1_000)] } else { vec![] };
         Ok((next, acts))
     }
@@ -375,6 +391,18 @@ pub mod cockpit {
 
         fn snap(at: u64, round: &str) -> Snapshot {
             Snapshot { supervised: true, fragments: [("cockpit.now".to_string(), frag(FragmentState::Ok, at, &[("SP_AT", &at.to_string())])), ("cockpit.round".to_string(), frag(FragmentState::Ok, at, &[("SP_ROUND", round)]))].into() }
+        }
+
+        #[test_id(t0arhoy)]
+        #[test]
+        fn only_an_indexed_row_loses_its_leading_age_and_every_other_key_is_whole() {
+            assert_eq!(stable_value("SP_INFLOW0", "4m   task a"), "task a");
+            assert_eq!(stable_value("SP_EVENT12", "9m x y"), "x y");
+            assert_eq!(stable_value("SP_EVENT1", "10m  x y"), stable_value("SP_EVENT1", "9m   x y"));
+            assert_eq!(stable_value("SP_MAIL3", "20218|READ|hi"), "READ|hi");
+            for k in ["SP_MAIL_N", "SP_INFLOW", "SP_MAIL", "SP_EVENTX", "SP_INFLOW0_REPO", "SP_MAIL0_X"] {
+                assert_eq!(stable_value(k, "4m   a|b"), "4m   a|b", "{k}");
+            }
         }
 
         #[test_id(teop35r)]
