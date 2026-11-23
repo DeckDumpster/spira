@@ -123,19 +123,19 @@ fn queued(ms: u64) -> String {
 
 const WATCHD: &[&str] = &["x/bin/watchd", "next", "concierge-inbox"];
 
+// covers: UC-operator-channel-49
 #[test_id(t0vcpv0)]
 #[test]
 fn a_live_waiter_under_the_session_allows_idle_and_vanishing_siblings_are_silent() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     fx.waiter(WATCHD);
     assert_eq!(fx.stop(&[]), "");
 }
 
+// covers: UC-operator-channel-49
 #[test_id(tkvpwyi)]
 #[test]
 fn no_waiter_and_no_record_blocks_once_naming_the_waiter_and_the_override() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     let out = fx.stop(&[]);
     assert_eq!(out.matches("\"decision\": \"block\"").count(), 1, "{out}");
@@ -143,10 +143,10 @@ fn no_waiter_and_no_record_blocks_once_naming_the_waiter_and_the_override() {
     assert!(out.contains("SPIRA_CONCIERGE_ALLOW_IDLE"), "{out}");
 }
 
+// covers: UC-operator-channel-49
 #[test_id(ts7yep8)]
 #[test]
 fn the_retired_inbox_next_argv_and_a_watchd_on_another_watcher_do_not_satisfy_it() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     fx.waiter(&["bash", &fx.p("run/concierge-notes/inbox-next.sh").display().to_string()]);
     assert!(fx.stop_blocks());
@@ -154,19 +154,19 @@ fn the_retired_inbox_next_argv_and_a_watchd_on_another_watcher_do_not_satisfy_it
     assert!(fx.stop_blocks());
 }
 
+// covers: UC-operator-channel-49
 #[test_id(tbik4e8)]
 #[test]
 fn a_waiter_of_this_session_that_delivered_during_the_turn_allows_idle() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     fx.record(PROMPT_MS + 5000, 1, "[100, 1]");
     assert!(!fx.stop_blocks());
 }
 
+// covers: UC-operator-channel-49
 #[test_id(tzu3d1b)]
 #[test]
 fn a_delivery_before_the_last_prompt_or_queued_notice_blocks() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     fx.record(PROMPT_MS - 5000, 1, "[100, 1]");
     assert!(fx.stop_blocks());
@@ -175,10 +175,10 @@ fn a_delivery_before_the_last_prompt_or_queued_notice_blocks() {
     assert!(fx.stop_blocks());
 }
 
+// covers: UC-operator-channel-49
 #[test_id(t395lce)]
 #[test]
 fn another_sessions_delivery_or_a_record_of_zero_lines_blocks() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     fx.record(PROMPT_MS + 5000, 1, "[300, 1]");
     assert!(fx.stop_blocks());
@@ -186,10 +186,10 @@ fn another_sessions_delivery_or_a_record_of_zero_lines_blocks() {
     assert!(fx.stop_blocks());
 }
 
+// covers: UC-operator-channel-49
 #[test_id(tth1fyv)]
 #[test]
 fn a_missing_empty_or_unparseable_input_blocks() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     fx.record(PROMPT_MS + 5000, 1, "[100, 1]");
     std::fs::remove_file(fx.p("transcript.jsonl")).unwrap();
@@ -201,20 +201,20 @@ fn a_missing_empty_or_unparseable_input_blocks() {
     assert!(fx.stop_blocks(), "unparseable record");
 }
 
+// covers: UC-operator-channel-49
 #[test_id(trps0i7)]
 #[test]
 fn a_later_tool_result_does_not_move_the_turn_start() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     fx.transcript(&[user(PROMPT_MS), result(PROMPT_MS + 9000)]);
     fx.record(PROMPT_MS + 5000, 1, "[100, 1]");
     assert!(!fx.stop_blocks());
 }
 
+// covers: UC-operator-channel-49
 #[test_id(txeee2n)]
 #[test]
 fn the_override_allows_idle_and_outside_the_concierge_the_stop_hook_is_inert() {
-    // covers: UC-operator-channel-49
     let fx = Fx::new();
     assert_eq!(fx.stop(&[("SPIRA_CONCIERGE_ALLOW_IDLE", "1")]), "");
     assert_eq!(fx.stop(&[("SPIRA_CONCIERGE", "0")]), "");
@@ -239,20 +239,20 @@ fn exists(p: &Path) -> bool {
     p.exists()
 }
 
+// covers: UC-operator-channel-50
 #[test_id(trx5wq2)]
 #[test]
 fn outside_the_concierge_the_failed_turn_hook_prints_and_hands_back_nothing() {
-    // covers: UC-operator-channel-50
     let fx = Fx::new();
     fx.record(1, 1, "[100,1]");
     assert_eq!(failed(&fx, &[("SPIRA_CONCIERGE", "0")]), "");
     assert!(!exists(&fx.p("run/watchd/concierge-inbox.redeliver")) && !exists(&fx.p("calls")));
 }
 
+// covers: UC-operator-channel-50
 #[test_id(tfwtyot)]
 #[test]
 fn a_failed_turn_hands_this_sessions_delivery_back_for_the_next_waiter() {
-    // covers: UC-operator-channel-50
     let fx = Fx::new();
     fx.record(1, 1, "[100,1]");
     assert_eq!(failed(&fx, &[]), "");
@@ -260,20 +260,20 @@ fn a_failed_turn_hands_this_sessions_delivery_back_for_the_next_waiter() {
     assert_eq!(std::fs::read_to_string(fx.p("calls")).unwrap().trim(), "undeliver concierge-inbox --session 100");
 }
 
+// covers: UC-operator-channel-50
 #[test_id(tli4axi)]
 #[test]
 fn another_sessions_delivery_is_not_handed_back() {
-    // covers: UC-operator-channel-50
     let fx = Fx::new();
     fx.record(1, 1, "[300,1]");
     failed(&fx, &[]);
     assert!(!exists(&fx.p("run/watchd/concierge-inbox.redeliver")));
 }
 
+// covers: UC-operator-channel-50
 #[test_id(t9ysi1r)]
 #[test]
 fn with_no_claude_ancestor_the_failed_turn_hook_asks_nothing_and_exits_zero() {
-    // covers: UC-operator-channel-50
     let fx = Fx::new();
     fx.record(1, 1, "[100,1]");
     std::fs::remove_file(fx.p("proc/100/comm")).unwrap();
