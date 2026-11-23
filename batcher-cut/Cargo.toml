@@ -32,6 +32,7 @@ store-view = { path = "../store-view" }
 runtime = { path = "../runtime" }
 libc = "0.2"
 sha2 = "0.10"
+toml = "0.8"
 
 
 [[test]]

@@ -61,7 +61,7 @@ fn merged_delta(tree: &Path, base: &str) -> Result<(), String> {
     let merged = if git(&["merge-base", "--is-ancestor", base, "HEAD"])?.status.success() {
         "HEAD".to_string()
     } else {
-        let merge = git(&["merge-tree", "--write-tree", base, "HEAD"])?;
+        let merge = git(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, "HEAD"])?;
         match merge.status.code() {
             Some(0) => String::from_utf8_lossy(&merge.stdout).lines().next().unwrap_or("").trim().to_string(),
             // A textual conflict is the merge's own refusal, made where the branch is merged.
@@ -74,11 +74,21 @@ fn merged_delta(tree: &Path, base: &str) -> Result<(), String> {
             Some(rc) => return Err(format!("could not merge this tree with the landing ref {base} to read its config delta (git merge-tree exited {rc}): {}", String::from_utf8_lossy(&merge.stderr).trim())),
         }
     };
+    let fixture = git(&["show", &format!("{merged}:{FIXTURE}")])?;
+    if fixture.status.success() {
+        merged_fixture_parses(&String::from_utf8_lossy(&fixture.stdout), base)?;
+    }
     let shown = git(&["show", &format!("{merged}:{DELTA}")])?;
     if !shown.status.success() {
         return Ok(());
     }
     merged_delta_parses(&String::from_utf8_lossy(&shown.stdout), base)
+}
+
+fn merged_fixture_parses(text: &str, base: &str) -> Result<(), String> {
+    text.parse::<toml::Table>().map(drop).map_err(|e| {
+        format!("{FIXTURE} of this tree merged with the landing ref {base} does not parse: {} — rebase onto the landing ref and keep one definition of the key", e.message())
+    })
 }
 
 fn merged_delta_parses(text: &str, base: &str) -> Result<(), String> {
@@ -213,6 +223,29 @@ mod tests {
         git(&["checkout", "-q", "tip"]);
         let e = check(t.path(), Some("main")).unwrap_err();
         assert!(e.contains(DELTA) && e.contains("merged with the landing ref main") && e.contains("duplicate key"), "{e}");
+    }
+
+    #[test_id(ti8tblx)]
+    #[test]
+    fn a_merge_that_defines_a_fixture_key_twice_is_refused_naming_the_file_and_key() {
+        let t = copy_tree();
+        let f = t.path().join(FIXTURE);
+        std::fs::write(t.path().join(".gitattributes"), format!("{FIXTURE} merge=union\n")).unwrap();
+        let git = |args: &[&str]| testkit::git(t.path(), args);
+        let commit = |msg: &str| git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", msg]);
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "-A"]);
+        commit("base");
+        git(&["checkout", "-q", "-b", "tip"]);
+        let base = std::fs::read_to_string(&f).unwrap();
+        std::fs::write(&f, base.replacen("[spira]\n", "[spira]\nplanted_twice = \"1\"\n", 1)).unwrap();
+        commit("the tip defines the key");
+        git(&["checkout", "-q", "main"]);
+        std::fs::write(&f, base.replacen("task_modes = ", "planted_twice = \"2\"\ntask_modes = ", 1)).unwrap();
+        commit("the landing ref defines it too, far from the tip's line");
+        git(&["checkout", "-q", "tip"]);
+        let e = merged_delta(t.path(), "main").unwrap_err();
+        assert!(e.contains(FIXTURE) && e.contains("planted_twice"), "{e}");
     }
 
     #[test_id(te49bfy)]
