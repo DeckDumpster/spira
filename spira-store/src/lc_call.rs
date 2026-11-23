@@ -1380,6 +1380,8 @@ pub mod fake {
             let parent = flag(a, "--parent");
             let any: Option<Vec<&str>> = flag(a, "--label-any").map(|v| v.split(',').collect());
             let since = flag(a, "--updated-after");
+            let label = flag(a, "--label");
+            let closed_after = flag(a, "--closed-after");
             let kind = flag(a, "--type").or_else(|| flag(a, "-t"));
             let limit = flag(a, "--limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50);
             let rows: Vec<&Value> = self
@@ -1389,6 +1391,8 @@ pub mod fake {
                 .filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["id"].as_str().unwrap_or(""))))
                 .filter(|r| parent.is_none_or(|p| r["parent"].as_str() == Some(p)))
                 .filter(|r| any.as_ref().is_none_or(|any| labels(r).iter().any(|l| any.contains(l))))
+                .filter(|r| label.is_none_or(|l| labels(r).contains(&l)))
+                .filter(|r| closed_after.is_none_or(|d| r["closed_at"].as_str().is_some_and(|c| c >= d)))
                 .filter(|r| since.is_none_or(|d| r["updated_at"].as_str().is_some_and(|u| u >= d)))
                 .filter(|r| kind.is_none_or(|k| r["issue_type"].as_str() == Some(k)))
                 .take(if limit == 0 { usize::MAX } else { limit })

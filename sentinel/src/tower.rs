@@ -38,7 +38,7 @@ pub fn run(check: &str) -> Result<String, String> {
     match check {
         "throttle-check" => throttle_check(n, &run)?,
         "czar-outcome-check" => {
-            let cfg = czar_outcome::Cfg { outcome_mins: reg_i64("SPIRA_CZAR_OUTCOME_MINS")?, unclaimed_mins: reg_i64("SPIRA_CZAR_UNCLAIMED_MINS")?, label: reg("SPIRA_CZAR_LABEL")? };
+            let cfg = czar_outcome::Cfg { outcome_mins: reg_i64("SPIRA_CZAR_OUTCOME_MINS")?, unclaimed_mins: reg_i64("SPIRA_CZAR_UNCLAIMED_MINS")?, label: reg("SPIRA_CZAR_LABEL")?, lookback_hours: reg_i64("SPIRA_CZAR_OUTCOME_LOOKBACK_HOURS")? };
             czar_outcome::run(n, &client()?, &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &cfg);
         }
         "pr-stall-check" => {

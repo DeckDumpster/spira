@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=czar
+DOC=Hours of closed czar-trigger beads the outcome check reads back.
+SCHEMA=Positive integer (default 24).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CZAR_OUTCOME_LOOKBACK_HOURS:=24}"
+SPIRA_CONF_DEFAULT_EOF

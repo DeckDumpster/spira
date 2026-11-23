@@ -109,6 +109,7 @@ pub struct Cfg {
     pub outcome_mins: i64,
     pub unclaimed_mins: i64,
     pub label: String,
+    pub lookback_hours: i64,
 }
 
 impl Default for Cfg {
@@ -117,23 +118,18 @@ impl Default for Cfg {
             outcome_mins: 30,
             unclaimed_mins: 10,
             label: "czar-trigger".to_string(),
+            lookback_hours: 24,
         }
     }
 }
 
-/// The label's beads (`content list --label <label> --all --json --limit 0 --brief`) joined to
-/// their lifecycle states — a read failure yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
-pub fn query_beads(lc: &LcClient, label: &str) -> Vec<TriggerBead> {
-    let beads = query_bd(lc, label);
+/// The label's open beads and those closed within `lookback_hours`, joined to their lifecycle
+/// states. A read that fails is an `Err` carrying the store's text, never an empty list.
+pub fn query_beads(lc: &LcClient, label: &str, now: i64, lookback_hours: i64) -> Result<Vec<TriggerBead>, String> {
+    let beads = query_bd(lc, label, now, lookback_hours)?;
     let ids: Vec<String> = beads.iter().map(|b| b.id.clone()).collect();
-    match lc_state::list_ids_on(lc, &ids) {
-        Ok(rows) => join_states(beads, &lc_state::index(rows)),
-        Err(e) => {
-            // A state that cannot be read is not read: no finding this pass.
-            log(&format!("watchtower: czar-outcome-check cannot read lifecycle state ({e}) — skipped"));
-            Vec::new()
-        }
-    }
+    let rows = lc_state::list_ids_on(lc, &ids).map_err(|e| format!("cannot read lifecycle state ({e})"))?;
+    Ok(join_states(beads, &lc_state::index(rows)))
 }
 
 /// Each bead's lifecycle state, by id.
@@ -144,12 +140,25 @@ pub fn join_states(mut beads: Vec<TriggerBead>, lc: &HashMap<String, lc_state::R
     beads
 }
 
-/// The label's beads through the store's content door; no answer is an empty list, as the
-/// bash's `|| _co_raw=""` made it.
-fn query_bd(lc: &LcClient, label: &str) -> Vec<TriggerBead> {
-    crate::lc::content_list(lc, &["--label", label, "--all", "--json", "--limit", "0", "--brief"])
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+/// The label's open beads, and its beads closed since `now − lookback`, merged by id. The store
+/// refuses a label as a bound on the whole history, so the closed read carries a time window.
+fn query_bd(lc: &LcClient, label: &str, now: i64, lookback_hours: i64) -> Result<Vec<TriggerBead>, String> {
+    let since = crate::log::fmt_iso(now - lookback_hours * 3600);
+    let reads: [&[&str]; 2] = [
+        &["--label", label, "--limit", "0", "--json", "--brief"],
+        &["--label", label, "--all", "--limit", "0", "--closed-after", &since, "--json", "--brief"],
+    ];
+    let mut merged: Vec<TriggerBead> = Vec::new();
+    for args in reads {
+        let text = crate::lc::content_list_read(lc, args)?;
+        let rows: Vec<TriggerBead> = serde_json::from_str(&text).map_err(|e| format!("unreadable rows ({e})"))?;
+        for r in rows {
+            if !merged.iter().any(|m| m.id == r.id) {
+                merged.push(r);
+            }
+        }
+    }
+    Ok(merged)
 }
 
 pub fn run(now: i64, lc: &LcClient, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
@@ -167,7 +176,13 @@ pub fn run(now: i64, lc: &LcClient, db: &str, home_repo: &str, incident_sh: &str
 
 /// The check with its raise handed in: each finding the classifier returns, as the alarm it files.
 fn check(now: i64, lc: &LcClient, db: &str, home_repo: &str, cfg: &Cfg, raise: &mut dyn FnMut(&Finding)) {
-    let beads = query_beads(lc, &cfg.label);
+    let beads = match query_beads(lc, &cfg.label, now, cfg.lookback_hours) {
+        Ok(b) => b,
+        Err(e) => {
+            log(&format!("watchtower: czar-outcome-check cannot read the trigger beads ({e}) — skipped"));
+            return;
+        }
+    };
     for finding in classify(now, cfg.outcome_mins, cfg.unclaimed_mins, &beads) {
         match finding {
             Outcome::Unclaimed { id, external_ref } => {
@@ -218,14 +233,17 @@ mod tests {
     use super::*;
 
     // covers: UC-ops-detection-remediation-25
-    #[test_id(tcxjbyx)]
+    #[test_id(txrh30f)]
     #[test]
-    fn trigger_beads_are_read_through_the_content_door() {
+    fn trigger_beads_are_read_as_an_open_read_and_a_bounded_closed_read_merged_by_id() {
         let (t, lc) = crate::lc::scripted::scripted(0, r#"[{"id":"sp-a","external_ref":"czar:deadlock"}]"#);
-        let beads = query_bd(&lc, "czar-trigger");
-        assert_eq!(beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
-        assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "list", "--label", "czar-trigger", "--all", "--json", "--limit", "0", "--brief"]);
-        assert!(query_bd(&crate::lc::scripted::scripted(2, "cannot tell").1, "x").is_empty());
+        let beads = query_bd(&lc, "czar-trigger", NOW, 24).unwrap();
+        assert_eq!(beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"], "one bead read twice is one bead");
+        let seen = t.seen.lock().unwrap();
+        assert_eq!(seen[0], vec!["content", "list", "--label", "czar-trigger", "--limit", "0", "--json", "--brief"]);
+        let since = crate::log::fmt_iso(NOW - 24 * 3600);
+        assert_eq!(seen[1], vec!["content", "list", "--label", "czar-trigger", "--all", "--limit", "0", "--closed-after", &since, "--json", "--brief"]);
+        assert!(query_bd(&crate::lc::scripted::scripted(2, "cannot tell").1, "x", NOW, 24).is_err());
     }
 
     /// The fixtures name the old bd words; each stands for the lifecycle state it meant.
@@ -463,5 +481,59 @@ mod tests {
         let rows = format!(r#"[{{"id":"sp-czoc1","external_ref":"incident:queue-x","created_at":"{}"}}]"#, minsago(15));
         let (_, lc) = crate::lc::scripted::scripted_by(&[("content list", 0, &rows), ("list --ids", 2, "cannot tell")]);
         assert!(checked(&lc, 10).is_empty());
+    }
+
+    /// The store as it answers: `content list` from the fake (which refuses the whole history),
+    /// `list --ids` from the lifecycle rows given.
+    struct Store {
+        content: spira_store::lc_call::fake::Content,
+        states: String,
+    }
+
+    impl spira_store::lc_call::Transport for Store {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            if argv.get(..2) == Some(&["list".to_string(), "--ids".to_string()][..]) { // BDQ_READ_CONSIDERED="the lifecycle door, not a bd read"
+                return Ok(spira_store::lc_call::Reply { code: 0, out: self.states.clone(), err: String::new(), read_ended: false });
+            }
+            self.content.exchange(argv, stdin, d)
+        }
+    }
+
+    fn store(rows: Vec<serde_json::Value>, states: &str) -> (std::sync::Arc<Store>, LcClient) {
+        let s = std::sync::Arc::new(Store { content: spira_store::lc_call::fake::Content::new(rows), states: states.to_string() });
+        (s.clone(), LcClient::over(s, true))
+    }
+
+    fn trigger(id: &str, status: &str, reference: &str, created: &str, closed: &str) -> serde_json::Value {
+        serde_json::json!({"id": id, "status": status, "labels": ["czar-trigger"], "external_ref": reference, "created_at": created, "closed_at": closed})
+    }
+
+    // covers: UC-ops-detection-remediation-25
+    #[test_id(t7qk2dm)]
+    #[test]
+    fn against_a_store_that_refuses_the_whole_history_both_alarms_are_raised() {
+        let rows = vec![
+            trigger("sp-open", "open", "incident:queue-a", &minsago(15), ""),
+            trigger("sp-old", "closed", "incident:queue-b", &minsago(50), &minsago(45)),
+            trigger("sp-new", "closed", "incident:queue-b", &minsago(35), &minsago(15)),
+            serde_json::json!({"id": "sp-other", "status": "open", "labels": ["other"], "external_ref": "incident:queue-c", "created_at": minsago(90)}),
+            trigger("sp-ancient", "closed", "incident:queue-d", "2020-01-01T00:00:00Z", "2020-01-02T00:00:00Z"),
+        ];
+        let states = r#"[{"bead_id":"sp-open","state":"READY"},{"bead_id":"sp-old","state":"DONE"},{"bead_id":"sp-new","state":"DONE"}]"#;
+        let (s, lc) = store(rows, states);
+        let raised = checked(&lc, 10);
+        let refs: Vec<_> = raised.iter().map(|f| f.reference.clone().unwrap()).collect();
+        assert_eq!(refs, vec!["incident:czar-unclaimed-sp-open", "incident:czar-not-cleared-sp-old"]);
+        assert!(s.content.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", s.content.requests());
+    }
+
+    // covers: UC-ops-detection-remediation-25
+    #[test_id(tpw3n8c)]
+    #[test]
+    fn a_refused_read_is_logged_as_unread_and_raises_nothing() {
+        let (_, lc) = crate::lc::scripted::scripted_by(&[("content list", 3, "refused: whole bead history")]);
+        assert!(checked(&lc, 10).is_empty());
+        let err = query_beads(&lc, "czar-trigger", NOW, 24).unwrap_err();
+        assert!(err.contains("refused"), "the store's text is kept: {err}");
     }
 }

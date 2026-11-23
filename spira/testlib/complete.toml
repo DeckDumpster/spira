@@ -385,6 +385,7 @@ ctx_warn = "200000"
 cutover_round_label = "cutover-round"
 czar_label = "czar-trigger"
 czar_outcome_mins = 30
+czar_outcome_lookback_hours = 24
 czar_stage_attribution_failed = "shadow"
 czar_stage_base_red = "shadow"
 czar_stage_ci_red = "shadow"

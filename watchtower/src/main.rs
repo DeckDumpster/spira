@@ -153,6 +153,7 @@ fn main() {
                 outcome_mins: reg_i64("SPIRA_CZAR_OUTCOME_MINS"),
                 unclaimed_mins: reg_i64("SPIRA_CZAR_UNCLAIMED_MINS"),
                 label: reg("SPIRA_CZAR_LABEL"),
+                lookback_hours: reg_i64("SPIRA_CZAR_OUTCOME_LOOKBACK_HOURS"),
             };
             czar_outcome::run(
                 n,

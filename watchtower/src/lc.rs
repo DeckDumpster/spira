@@ -45,10 +45,15 @@ fn run_on(client: &LcClient, args: &[&str]) -> Option<String> {
 /// `content list <args>`'s JSON payload — bd's own rows, through the store's content door —
 /// any warning lines before it skipped; `None` when the store did not answer.
 pub fn content_list(client: &LcClient, args: &[&str]) -> Option<String> {
+    content_list_read(client, args).ok()
+}
+
+/// `content_list`, with the store's own text when it did not answer.
+pub fn content_list_read(client: &LcClient, args: &[&str]) -> Result<String, String> {
     let argv: Vec<&str> = ["content", "list"].iter().copied().chain(args.iter().copied()).collect();
-    let out = run_on(client, &argv)?;
-    let start = out.lines().position(|l| l.starts_with('[') || l.starts_with('{'))?;
-    Some(out.lines().skip(start).collect::<Vec<_>>().join("\n"))
+    let out = client.answer(&argv).map_err(|e| e.to_string())?;
+    let start = out.lines().position(|l| l.starts_with('[') || l.starts_with('{')).ok_or_else(|| format!("no rows in the answer: {}", out.trim()))?;
+    Ok(out.lines().skip(start).collect::<Vec<_>>().join("\n"))
 }
 
 /// The declared route: the service's socket, or `$SPIRA_LC_BIN`'s stand-in in a fixture.
