@@ -1280,7 +1280,7 @@ fn run_main() -> ExitCode {
     } else if nonempty_env("SPIRA_INSTALL_LC_STORE_CONSIDERED").is_some() {
         info("content reader NOT provisioned — SPIRA_INSTALL_LC_STORE_CONSIDERED is set; `spira-lc content` will not read until install runs without it");
     } else if opts.dry {
-        would("create the content reader and writer users, their credential files and grants (spira-lc admin-provision-reader, admin-provision-writer)");
+        would("create the content reader and writer users, their credential files and grants, and the window indexes (spira-lc admin-provision-reader, admin-provision-writer, admin-ensure-indexes)");
     } else {
         match content_reader_phase() {
             Ok(line) => {
@@ -2017,7 +2017,7 @@ fn control_store_phase() -> Result<(), String> {
 fn content_reader_phase() -> Result<String, String> {
     let lc = spira_store::lifecycle_row::lc_bin()?;
     let mut lines = Vec::new();
-    for verb in ["admin-provision-reader", "admin-provision-writer"] {
+    for verb in ["admin-provision-reader", "admin-provision-writer", "admin-ensure-indexes"] {
         // batch-job: one-time user and grants on the local Dolt server; bounded at 120 s by timeout(1).
         let o = Command::new("timeout").arg("120").arg(&lc).arg(verb).stdin(Stdio::null()).output().map_err(|e| format!("cannot run spira-lc: {e}"))?;
         let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
