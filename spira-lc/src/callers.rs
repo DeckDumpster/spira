@@ -635,7 +635,8 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         Delivery::PrMerged { merge_sha, .. } => {
             let repo = std::path::Path::new(&repo);
             let content_on_base = crate::git_evidence::content_on_base(repo, &branch, &merge_sha);
-            let in_force = if shown.get("delivery").is_some_and(Value::is_object) {
+            let live = !matches!(bead_field(&shown, "state").as_str(), "" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
+            let in_force = if !live || shown.get("delivery").is_some_and(Value::is_object) {
                 None
             } else if crate::git_evidence::change_in_force(repo, &branch, &merge_sha) {
                 Some(format!("merge-tree:{merge_sha}"))

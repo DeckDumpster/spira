@@ -183,7 +183,7 @@ mod deliveries {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use spira_runtime::tasks::a::landing::{deliver_by_content_on, deliver_pr_merged_on};
+    use spira_runtime::tasks::a::landing::{deliver_by_content_on, deliver_pr_closed_on, deliver_pr_merged_on};
     use spira_store::lc_call::{LcClient, Reply, Transport};
 
     /// The store as the real socket answers it: `deliver` is refused with usage, `show` and `event` are served.
@@ -291,5 +291,19 @@ mod deliveries {
         let (s, c) = client(row("null"));
         deliver_pr_merged_on(&c, &leg(d.path(), &sha)).unwrap();
         assert!(s.seen.lock().unwrap()[1].contains(&format!(r#""proof":"ancestry:{sha}""#)), "{:?}", s.seen.lock().unwrap());
+    }
+
+    #[test_id(t22z3fg)]
+    #[test]
+    fn deliver_pr_closed_returns_a_pr_open_row_and_deliver_by_content_leaves_another_delivery_state_alone() {
+        let d = testkit::TempDir::new("landing-deliver");
+        let sha = squash_merged(d.path());
+        let (s, c) = client(row(r#"{"state":"PR_OPEN","version":9}"#));
+        deliver_pr_closed_on(&c, &leg(d.path(), &sha)).unwrap();
+        let seen = s.seen.lock().unwrap().clone();
+        assert!(seen[1].starts_with("event delivery sp-a --expect PR_OPEN --version 9 --actor pr-pass-branch") && seen[1].contains("pr-closed-unmerged"), "{seen:?}");
+        let (s, c) = client(row(r#"{"state":"BATCHED","version":9}"#));
+        deliver_by_content_on(&c, &leg(d.path(), &sha)).unwrap();
+        assert_eq!(*s.seen.lock().unwrap(), vec!["show sp-a"]);
     }
 }
