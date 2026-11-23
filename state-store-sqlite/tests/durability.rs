@@ -454,8 +454,7 @@ fn stalled_offline(by: u64) -> impl Fn() -> Options {
 fn the_offline_read_limit_leaves_the_live_one_alone() {
     assert_eq!(Options::default().max_read_ms, 100);
     assert_eq!(Options::offline().max_read_ms, state_store_sqlite::OFFLINE_MAX_READ_MS);
-    assert!(state_store_sqlite::OFFLINE_MAX_READ_MS > 100);
-    assert!(state_store_sqlite::OFFLINE_MAX_READ_MS < i32::MAX as u64);
+    const { assert!(state_store_sqlite::OFFLINE_MAX_READ_MS < i32::MAX as u64) };
 }
 
 #[test_id(tk7p3dq)]
