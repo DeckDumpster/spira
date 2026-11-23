@@ -352,6 +352,7 @@ watchtower_probe_timeout_s
 watchtower_start_timeout_s
 cockpit_client_idle_secs
 czar_outcome_mins
+czar_outcome_lookback_hours
 czar_unclaimed_mins
 lc_live_check_secs
 lc_snapshot
