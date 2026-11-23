@@ -332,6 +332,7 @@ fn an_upload_refused_after_some_objects_went_records_how_many_and_why() {
     let err = task::drain(std::sync::Arc::new(runtime::ports::SysProc), &url, &dir.display().to_string(), |_| None, PART_BYTES).unwrap_err();
     let last = last_drain(&dir);
     assert_eq!((last.uploaded, last.error.as_deref()), (0, Some(err.as_str())));
+}
 
 #[test_id(td2ur11)]
 #[test]
