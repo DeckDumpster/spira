@@ -1499,6 +1499,53 @@ fn workflow_rerun_of_a_decided_run_is_refused_with_the_unchanged_inputs() {
     }
 }
 
+const LOST_RUNNER_JOBS: &str = r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Download binaries","conclusion":"cancelled"},{"name":"Suites","conclusion":"skipped"}]}]}"#;
+const PROVISION_JOBS: &str = r#"{"jobs":[{"name":"provision","id":98,"conclusion":"failure","steps":[{"name":"Provision","conclusion":"failure"}]},{"name":"suites","id":99,"conclusion":"skipped"}]}"#;
+const FAULT_LOG_JOBS: &str = r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Suites","conclusion":"failure"}]}]}"#;
+
+fn rerun_gh_with_log(jobs: &str, log: &str) -> FakeGh {
+    let gh = rerun_gh("failure", jobs);
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/99/logs"], 0, log);
+    gh.on(
+        &["run", "list", "--branch", "b", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        0,
+        r#"[{"databaseId":9,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh
+}
+
+#[test_id(tm4cl7q)]
+#[test]
+fn workflow_rerun_serves_a_run_that_never_tested_its_tree() {
+    let shapes = [
+        ("lost runner", LOST_RUNNER_JOBS, ""),
+        ("failed provision", PROVISION_JOBS, ""),
+        ("gate fault log", FAULT_LOG_JOBS, "gate: HARNESS FAULT (batch rc=2)\n"),
+    ];
+    for (name, jobs, log) in shapes {
+        let gh = rerun_gh_with_log(jobs, log);
+        assert_eq!(workflow_rerun(&gh, repo(), "9").code, 0, "{name}");
+        assert!(rerun_called(&gh), "{name}");
+    }
+}
+
+#[test_id(tr9wk2d)]
+#[test]
+fn check_status_and_workflow_rerun_agree_on_which_failed_runs_were_never_tested() {
+    let shapes = [
+        ("lost runner", LOST_RUNNER_JOBS, "", true),
+        ("failed provision", PROVISION_JOBS, "", true),
+        ("gate fault log", FAULT_LOG_JOBS, "gate: HARNESS FAULT (batch rc=2)\n", true),
+        ("real failed suite", FAULT_LOG_JOBS, "FAIL: some_test\n", false),
+    ];
+    for (name, jobs, log, untested) in shapes {
+        let gh = rerun_gh_with_log(jobs, log);
+        let status = check_status(&gh, &NoProc, repo(), "Gate", "b").lines[0].clone();
+        assert_eq!(status != "red", untested, "{name}: check_status said {status}");
+        assert_eq!(rerun_refusal(&gh, repo(), "9").is_none(), untested, "{name}");
+    }
+}
+
 #[test_id(t0ux8uz)]
 #[test]
 fn workflow_rerun_still_serves_a_fault_and_an_unreadable_run() {

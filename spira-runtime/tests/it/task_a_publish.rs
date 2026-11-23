@@ -482,3 +482,38 @@ fn wakes_inside_half_a_cadence_do_not_spend_a_deferral() {
     wake(&mut r);
     assert_eq!(carried(&r).repos["b"].deferred_ticks, 2);
 }
+
+fn rerun_world(code: i32, err: &str) -> (Result<(), String>, String, Option<String>) {
+    let q = testkit::TempDir::new("publish-rerun-q");
+    let run = testkit::TempDir::new("publish-rerun-run");
+    let p = Pub { repo: "spira".into(), pr: 42, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
+    let fresh = edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![] };
+    edge::write_record(q.path(), &p, Some(&fresh), 1).expect("the record is written");
+    let reply = |code: i32, out: &str, err: &str| Ok(forge::client::Reply { code, out: out.into(), err: err.into() });
+    let call = |verb: &str, _: &[&str]| match verb {
+        "run-id" => reply(0, "9\n", ""),
+        "check-status" => reply(0, "harness_fault\nrunner-lost: suites / Download binaries\nrunner-market: spot\n", ""),
+        _ => reply(code, "", err),
+    };
+    let rerun = Pub { record: [("rerun".to_string(), "1".to_string())].into(), ..p };
+    let out = edge::rerun_with(&call, q.path(), run.path(), &rerun);
+    let log = std::fs::read_to_string(run.path().join("landing.log")).unwrap_or_default();
+    let flag = queue::records::read_kv(&q.path().join("spira").join("publish")).unwrap().and_then(|kv| kv.get("rerun").map(str::to_string));
+    (out, log, flag)
+}
+
+#[test_id(tk7vb3n)]
+#[test]
+fn a_started_rerun_writes_its_line_and_marks_the_record() {
+    let (out, log, flag) = rerun_world(0, "");
+    assert!(out.is_ok() && flag.as_deref() == Some("1"), "{out:?} {flag:?}");
+    assert!(log.contains("QUEUE PUBLISH_RERUN ") && log.contains("repo=spira pr=42 run=9 cause=suites / Download binaries market=spot"), "{log}");
+}
+
+#[test_id(tw2ho8e)]
+#[test]
+fn a_refused_rerun_writes_its_line_and_leaves_the_record_unmarked() {
+    let (out, log, flag) = rerun_world(3, "no input changed\nmore");
+    assert!(out.is_err() && flag.is_none(), "{out:?} {flag:?}");
+    assert!(log.contains("QUEUE PUBLISH_RERUN_REFUSED ") && log.contains("run=9 why=code=3 no input changed") && !log.contains("more"), "{log}");
+}
