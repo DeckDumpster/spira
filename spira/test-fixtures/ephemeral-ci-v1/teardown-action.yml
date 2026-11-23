@@ -81,6 +81,18 @@ inputs:
       and the dump never runs.
     required: false
     default: ''
+  backend:
+    description: Where provision placed the runner (proxmox or ec2).
+    required: false
+    default: ''
+  instance-id:
+    description: The EC2 instance id from provision; empty on Proxmox.
+    required: false
+    default: ''
+  aws-role-to-assume:
+    description: Role the teardown assumes to read and terminate the EC2 instance.
+    required: false
+    default: ''
 
 runs:
   using: composite

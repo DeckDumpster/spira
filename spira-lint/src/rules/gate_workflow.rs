@@ -127,6 +127,22 @@ pub fn vm_token_wired(text: &str) -> bool {
             .is_some_and(|i| text[i + "vm-token:".len()..].contains("needs.provision.outputs.vm-token"))
 }
 
+/// The teardown inputs a spilling workflow must pass so the EC2 instance is read and
+/// terminated; empty when provision does not spill (or the spill is `off`).
+pub fn spill_teardown_missing(text: &str) -> Vec<&'static str> {
+    let spills = block(text, "provision").lines().any(|l| {
+        l.trim().strip_prefix("spill:").is_some_and(|v| !v.trim().is_empty() && v.trim() != "off")
+    });
+    if !spills {
+        return Vec::new();
+    }
+    let t = block(text, "teardown");
+    ["backend", "instance-id", "aws-role-to-assume"]
+        .into_iter()
+        .filter(|inp| !t.lines().any(|l| l.trim().starts_with(&format!("{inp}:"))))
+        .collect()
+}
+
 /// A job that runs on the provisioned runner must not bypass a failed provision: its `if:`
 /// either is absent, checks `needs.provision.result == 'success'`, or uses neither
 /// `always()` nor `cancelled()`.
@@ -460,6 +476,9 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
         if !vm_token_wired(text) {
             o.push((file, "provision must output vm-token and teardown must receive needs.provision.outputs.vm-token".to_string()));
         }
+        for inp in spill_teardown_missing(text) {
+            o.push((file, format!("provision spills, so teardown must pass {inp} (the EC2 instance is otherwise never read or terminated)")));
+        }
         let pb = block(text, "provision");
         if pb.is_empty() {
             o.push((file, "the provision job was located (positive control): not found".to_string()));
@@ -741,6 +760,22 @@ mod tests {
         w.gate = Some(join(&g.lines().filter(|l| !l.contains("vm-token")).collect::<Vec<_>>()));
         let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
         assert!(got.iter().any(|m| m.contains("teardown must receive needs.provision.outputs.vm-token")), "{got:?}");
+    }
+
+    #[test_id(t8qc2rf)]
+    #[test]
+    fn a_spilling_teardown_without_the_ec2_inputs_is_caught() {
+        for inp in ["backend", "instance-id", "aws-role-to-assume"] {
+            let mut w = shipped();
+            let g = w.gate.clone().unwrap();
+            let t = g.find("  teardown:").unwrap();
+            let (head, tail) = g.split_at(t);
+            let tail: String = tail.lines().filter(|l| !l.trim().starts_with(&format!("{inp}:"))).map(|l| format!("{l}\n")).collect();
+            w.gate = Some(format!("{head}{tail}"));
+            let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
+            assert!(got.iter().any(|m| m.contains(&format!("teardown must pass {inp}"))), "{inp}: {got:?}");
+        }
+        assert!(spill_teardown_missing("  provision:\n    steps:\n      spill: off\n  teardown:\n").is_empty());
     }
 
     #[test_id(tc3m9l6)]

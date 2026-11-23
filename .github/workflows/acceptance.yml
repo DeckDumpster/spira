@@ -136,6 +136,8 @@ jobs:
       # Can be empty even when the VM carries a token — see gate.yml's
       # provision job for why (sp-rtgbv, not fixable from this workflow).
       vm-token: ${{ steps.vm.outputs.vm-token }}
+      backend: ${{ steps.vm.outputs.backend }}
+      instance-id: ${{ steps.vm.outputs.instance-id }}
       label: ${{ steps.vm.outputs.label }}
     # provision.sh's guest-agent wait defaults to 120s, which sits inside the
     # normal boot range on a busy hypervisor (gate.yml's provision carries the
@@ -401,6 +403,9 @@ jobs:
     needs: [provision, acceptance, guard]
     if: always() && needs.guard.outputs.already-published != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: DeckDumpster/ephemeral-ci/teardown@v2
         with:
@@ -417,3 +422,7 @@ jobs:
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
           vm-token:           ${{ needs.provision.outputs.vm-token }}
+          backend:            ${{ needs.provision.outputs.backend }}
+          instance-id:        ${{ needs.provision.outputs.instance-id }}
+          aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
+          consumer-result:    ${{ needs.acceptance.result }}

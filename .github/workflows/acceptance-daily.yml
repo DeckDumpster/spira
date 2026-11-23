@@ -39,6 +39,8 @@ jobs:
       vmid:  ${{ steps.vm.outputs.vmid }}
       # Can be empty even when the VM carries a token — see gate.yml's provision job.
       vm-token: ${{ steps.vm.outputs.vm-token }}
+      backend: ${{ steps.vm.outputs.backend }}
+      instance-id: ${{ steps.vm.outputs.instance-id }}
       label: ${{ steps.vm.outputs.label }}
     # The guest-agent wait defaults to 120s, inside the normal boot range on a busy
     # hypervisor; unset, a slow healthy boot leaves the job queued on a label no runner holds.
@@ -261,6 +263,9 @@ jobs:
     needs: [provision, acceptance]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: DeckDumpster/ephemeral-ci/teardown@v2
         with:
@@ -277,6 +282,10 @@ jobs:
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
           vm-token:           ${{ needs.provision.outputs.vm-token }}
+          backend:            ${{ needs.provision.outputs.backend }}
+          instance-id:        ${{ needs.provision.outputs.instance-id }}
+          aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
+          consumer-result:    ${{ needs.acceptance.result }}
 
   stale-drafts:
     runs-on: ubuntu-latest
