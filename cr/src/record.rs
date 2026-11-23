@@ -2,7 +2,6 @@
 
 use crate::units::Unit;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,9 +51,6 @@ pub struct Review {
     pub collection: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
-    /// Path to the reader's document id and the version posted.
-    #[serde(default)]
-    pub documents: BTreeMap<String, (String, u64)>,
     pub unit: Unit,
     pub sealed_sha256: Option<String>,
     pub staged_at: u64,

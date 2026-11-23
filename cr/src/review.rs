@@ -16,7 +16,6 @@ use margin_client::{Anchor, Doc};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::path::Path;
 
 const DAY_MS: u64 = 86_400_000;
@@ -61,7 +60,6 @@ impl Sealed {
 struct Progress {
     collection: Option<String>,
     url: Option<String>,
-    documents: BTreeMap<String, (String, u64)>,
     posted: Vec<usize>,
     ledger_row: bool,
 }
@@ -143,7 +141,6 @@ pub fn open(a: &OpenArgs, ports: &Ports) -> Outcome {
             source_sha: ix.commit.clone(),
             collection: None,
             url: None,
-            documents: BTreeMap::new(),
             unit: unit.clone(),
             sealed_sha256: None,
             staged_at: now,
@@ -468,7 +465,6 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     }
     r.collection = p.collection.clone();
     r.url = Some(url.clone());
-    r.documents = p.documents.clone();
     if let Err(e) = record::save(run, &r).and_then(|()| record::set_state(run, number, State::Open, ports.clock.now_ms()).map(|_| ())) {
         return refuse(1, &e);
     }
@@ -487,7 +483,6 @@ fn post_review(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u
             .map(|(path, bytes)| String::from_utf8(bytes.clone()).map(|text| Doc { path: path.clone(), kind: "code".to_string(), text }).map_err(|_| format!("{path} is not UTF-8; the reader holds text, and a file is posted whole or not at all")))
             .collect::<Result<Vec<Doc>, String>>()?;
         let c = ports.margin.post_collection(&r.unit.title, body, &docs)?;
-        p.documents = c.documents.iter().map(|d| (d.path.clone(), (d.id.clone(), d.version))).collect();
         p.collection = Some(c.id);
         p.url = Some(c.url);
         save_progress(dir, p)?;
@@ -498,8 +493,7 @@ fn post_review(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u
         if p.posted.contains(&i) {
             continue;
         }
-        let (document, version) = p.documents.get(&c.path).ok_or_else(|| format!("the reader's collection holds no document for {}", c.path))?;
-        let anchor = Anchor { document: document.clone(), version: *version, first: c.line, last: c.line };
+        let anchor = Anchor { path: c.path.clone(), first: c.line, last: c.line };
         ports.margin.post_comment(&collection, &anchor, &format!("{label}{}", c.body), true, None)?;
         p.posted.push(i);
         save_progress(dir, p)?;

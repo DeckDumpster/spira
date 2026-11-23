@@ -18,18 +18,15 @@ fn refuse(code: i32, msg: &str) -> Outcome {
     Outcome { code, stdout: String::new(), stderr: format!("cr: {msg}\n") }
 }
 
-fn path_of(r: &Review, document: &str) -> Option<String> {
-    r.documents.iter().find(|(_, (id, _))| id == document).map(|(p, _)| p.clone())
-}
-
 /// Every comment by someone who is not an agent, over the collection's threads. A review with no collection has none.
 pub fn his_comments(ports: &Ports, r: &Review) -> Result<Vec<His>, String> {
     let Some(collection) = &r.collection else { return Ok(Vec::new()) };
     let mut out = Vec::new();
-    for id in ports.margin.collection(collection)?.threads {
-        let t = ports.margin.thread(&id)?;
-        let Some(path) = path_of(r, &t.anchor.document) else { continue };
-        out.extend(t.comments.iter().filter(|c| !c.by_agent()).map(|c| His { path: path.clone(), line: t.anchor.first, body: c.body.clone() }));
+    for t in ports.margin.threads(collection)? {
+        if !r.unit.files.iter().any(|f| f.path == t.anchor.path) {
+            continue;
+        }
+        out.extend(t.comments.iter().filter(|c| !c.by_agent()).map(|c| His { path: t.anchor.path.clone(), line: t.anchor.first, body: c.body.clone() }));
     }
     Ok(out)
 }
@@ -53,14 +50,18 @@ pub fn thread(number: u32, id: &str, ports: &Ports) -> Outcome {
         Ok(r) => r,
         Err(e) => return refuse(2, &e),
     };
-    let t = match ports.margin.thread(id) {
+    let Some(collection) = &r.collection else {
+        return refuse(2, &format!("review {number:03} has no collection; seal it first"));
+    };
+    let t = match ports.margin.thread(collection, id) {
         Ok(t) => t,
         Err(e) => return refuse(1, &e),
     };
     let (first, last) = (t.anchor.first, t.anchor.last.max(t.anchor.first));
-    let Some(path) = path_of(&r, &t.anchor.document) else {
+    let path = t.anchor.path.clone();
+    if !r.unit.files.iter().any(|f| f.path == path) {
         return refuse(2, &format!("thread {id} is not on a document of review {number:03}"));
-    };
+    }
     let mut out = format!("{path}:{first}-{last}\n");
     match code_block(&r, &path, first, last, ports) {
         Ok(code) => out.push_str(&code),
@@ -84,7 +85,7 @@ pub fn reply(number: u32, id: &str, ports: &Ports) -> Outcome {
     let Some(collection) = &r.collection else {
         return refuse(2, &format!("review {number:03} has no collection; seal it first"));
     };
-    let posted = ports.margin.thread(id).and_then(|t| ports.margin.post_comment(collection, &t.anchor, &ports.stdin, false, Some(id)));
+    let posted = ports.margin.thread(collection, id).and_then(|t| ports.margin.post_comment(collection, &t.anchor, &ports.stdin, false, Some(id)));
     match posted {
         Ok(c) => Outcome { code: 0, stdout: format!("{}\n", c.url), stderr: String::new() },
         Err(e) => refuse(1, &e),

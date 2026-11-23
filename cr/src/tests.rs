@@ -107,7 +107,6 @@ pub(crate) fn attach_collection(margin: &margin_client::FakeMargin, tree: &Fixtu
     let c = margin.post_collection(&r.unit.title, "cover", &docs).unwrap();
     r.collection = Some(c.id);
     r.url = Some(c.url);
-    r.documents = c.documents.iter().map(|d| (d.path.clone(), (d.id.clone(), d.version))).collect();
     crate::record::save(run, &r).unwrap();
     r
 }

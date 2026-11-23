@@ -74,8 +74,7 @@ impl World {
     /// A thread on `path` at `line`, started by `author`.
     fn thread(&self, path: &str, line: u32, author: &str, body: &str) {
         let r = record::load(self.run.path(), 1).unwrap();
-        let (document, version) = r.documents[path].clone();
-        self.margin.thread_by(r.collection.as_deref().unwrap(), Anchor { document, version, first: line, last: line }, author, body, 1);
+        self.margin.thread_by(r.collection.as_deref().unwrap(), Anchor { path: path.into(), first: line, last: line }, author, body, 1);
     }
     fn page(&self, name: &str) -> String {
         std::fs::read_to_string(self.out.path().join(name)).unwrap()
@@ -144,9 +143,9 @@ fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     let mut w = world();
     w.finding(&condemn(""));
     w.write("sealed.json", &format!(r#"{{"lens":[{{"path":"{SRC}","line":3,"body":"C-agreed"}},{{"path":"{SRC}","line":8,"body":"C-alone"}}],"fresh":[{{"path":"{SRC}","line":9,"body":"C-fresh"}}]}}"#));
-    w.thread(SRC, 5, "ryan", "H-agreed");
-    w.thread(SRC, 1, "ryan", "H-alone");
-    w.thread(SRC, 3, "agent:other", "B-bot");
+    w.thread(SRC, 5, "reader", "H-agreed");
+    w.thread(SRC, 1, "reader", "H-alone");
+    w.thread(SRC, 3, "other-agent", "B-bot");
     let o = w.cr(&["findings", "--review", "001"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let group = |name: &str| -> String {
@@ -172,8 +171,7 @@ fn post_makes_one_reader_comment_on_line_one_of_the_first_document_with_the_clos
     let posts = w.margin.comments_posted();
     assert_eq!(posts.len(), 1);
     let r = record::load(w.run.path(), 1).unwrap();
-    let (document, version) = r.documents[&r.unit.files[0].path].clone();
-    assert_eq!((posts[0].held, posts[0].anchor.clone(), posts[0].in_reply_to.clone()), (false, Anchor { document, version, first: 1, last: 1 }, None));
+    assert_eq!((posts[0].held, posts[0].anchor.clone(), posts[0].in_reply_to.clone()), (false, Anchor { path: r.unit.files[0].path.clone(), first: 1, last: 1 }, None));
     assert!(posts[0].body.contains("A lock is not held across a send."));
     assert!(o.stdout.contains("https://margin.invalid/c/col1#"), "{}", o.stdout);
 }
@@ -209,8 +207,7 @@ fn comments_on_a_large_modules_branch_lines_are_compared_as_source_lines() {
     put("sealed.json", r#"{"lens":[{"path":"demo/src/big.rs","line":80,"body":"C-near"},{"path":"demo/src/big.rs","line":20,"body":"C-far"}],"fresh":[]}"#);
     attach_collection(&w.margin, &fixture(), w.run.path(), 2);
     let r2 = record::load(w.run.path(), 2).unwrap();
-    let (document, version) = r2.documents["demo/src/big.rs"].clone();
-    w.margin.his_thread(r2.collection.as_deref().unwrap(), Anchor { document, version, first: 82, last: 82 }, "H-near", 1);
+    w.margin.his_thread(r2.collection.as_deref().unwrap(), Anchor { path: "demo/src/big.rs".into(), first: 82, last: 82 }, "H-near", 1);
     let o = w.cr(&["findings", "--review", "002"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let agreed = o.stdout.split("### Agreed").nth(1).unwrap().split("### Only you").next().unwrap();
@@ -298,7 +295,7 @@ fn the_closeout_scores_both_halves() {
     let mut w = world();
     seal_halves(&w);
     for l in [5, 20, 25] {
-        w.thread(SRC, l, "ryan", "H");
+        w.thread(SRC, l, "reader", "H");
     }
     for n in [1, 1, 3] {
         assert_eq!(w.finding(&endorsing(n)).code, 0);

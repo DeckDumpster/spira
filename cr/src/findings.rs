@@ -422,8 +422,8 @@ pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
     }
     let posted = (|| -> Result<String, String> {
         let collection = r.collection.as_deref().unwrap_or_default();
-        let (document, version) = r.unit.files.first().and_then(|f| r.documents.get(&f.path)).ok_or_else(|| format!("review {number:03} records no document for the unit's first file"))?;
-        let anchor = Anchor { document: document.clone(), version: *version, first: 1, last: 1 };
+        let first = r.unit.files.first().ok_or_else(|| format!("review {number:03}'s unit has no file to anchor the closeout on"))?;
+        let anchor = Anchor { path: first.path.clone(), first: 1, last: 1 };
         ports.margin.post_comment(collection, &anchor, &text, false, None).map(|c| c.url)
     })();
     match posted {
