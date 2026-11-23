@@ -227,9 +227,25 @@ pub mod cockpit {
         kv.iter().map(|(k, v)| format!("{k}={v}\n")).collect()
     }
 
+    fn indexed(key: &str, prefix: &str) -> bool {
+        key.strip_prefix(prefix).is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+    }
+
+    /// The part of a value that is not its leading age: past the first word of an
+    /// `SP_INFLOW<i>` or `SP_EVENT<i>` row, past the first `|` of an `SP_MAIL<i>` row.
+    pub fn stable_value<'a>(key: &str, value: &'a str) -> &'a str {
+        if indexed(key, "SP_INFLOW") || indexed(key, "SP_EVENT") {
+            value.split_once(char::is_whitespace).map_or("", |(_, rest)| rest)
+        } else if indexed(key, "SP_MAIL") {
+            value.split_once('|').map_or("", |(_, rest)| rest)
+        } else {
+            value
+        }
+    }
+
     /// The digest of the keys that make a snapshot new.
     pub fn digest(kv: &[(String, String)]) -> String {
-        let stable: String = kv.iter().filter(|(k, _)| !volatile(k)).map(|(k, v)| format!("{k}={v}\n")).collect();
+        let stable: String = kv.iter().filter(|(k, _)| !volatile(k)).map(|(k, v)| format!("{k}={}\n", stable_value(k, v))).collect();
         let d = ring::digest::digest(&ring::digest::SHA256, stable.as_bytes());
         d.as_ref().iter().take(16).map(|b| format!("{b:02x}")).collect()
     }
@@ -269,7 +285,7 @@ pub mod cockpit {
         let fresher = newest(&mut snap.fragments.values().map(|f| f.at)) > newest(&mut carry.fragments.values().map(|f| f.at));
         let next = Carry { fragments: carry_fragments(carry, snap), digest: Some(d.clone()) };
         let changed = carry.digest.as_deref() != Some(d.as_str());
-        let refresh = !changed && fresher && kv.iter().any(|(k, _)| k == "SP_AT");
+        let refresh = !changed && fresher && kv.iter().any(|(k, v)| k == "SP_AT" || stable_value(k, v) != v);
         let acts = if changed || refresh { vec![EffectSpec::keyed(publish, format!("{publish}/{d}"), render(&kv), 1_000)] } else { vec![] };
         Ok((next, acts))
     }
