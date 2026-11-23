@@ -1,4 +1,4 @@
-//! `tsd_keys` — the ops pane's flow headlines, read from `tsd-query.sh where` and `rework`.
+//! `tsd_keys` — the ops pane's flow headlines, read in-process through `tsd::query` (`where`, `rework`) and `tsd::testrun`.
 //! A query that fails, prints nothing parseable or names no known fields is `?`, never `0`.
 
 use super::{push, Kv};
@@ -53,7 +53,7 @@ fn thousands(n: i64) -> String {
     out
 }
 
-/// `10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s` from `tsd-read tests`. The count is
+/// `10,914 tests  +12/-3 on 2026-11-06  4 red  slowest a.sh::x 4.2s` from `tsd::testrun::inventory`. The count is
 /// the latest round's own; no suite count is ever added to it.
 fn tests_line(inv: &Value) -> Option<String> {
     let total = inv.get("total")?.as_i64().filter(|t| *t > 0)?;
@@ -183,12 +183,19 @@ mod tests {
         pusher
             .push("bead-stage", &ts, &fields(&[("machine", "bead".into()), ("applied", true.into()), ("key", "sp-a".into()), ("seq", 1.into()), ("to_state", "WORKING".into())]))
             .unwrap();
+        pusher
+            .push("bead-stage", &ts, &fields(&[("machine", "bead".into()), ("applied", true.into()), ("key", "sp-b".into()), ("seq", 1.into()), ("to_state", "LANDED".into())]))
+            .unwrap();
+        pusher
+            .push("bead-stage", &ts, &fields(&[("machine", "bead".into()), ("applied", true.into()), ("key", "sp-a".into()), ("seq", 2.into()), ("to_state", "REWORK".into()), ("reason", "gate".into())]))
+            .unwrap();
         let row = tsd::build_row(&ts, "h", tsd::testrun::FAMILY, &fields(&[("round", "r1".into()), ("test", "a.sh::x".into()), ("suite", "a.sh".into()), ("status", "pass".into()), ("seconds", 1.5.into())])).unwrap();
         std::fs::create_dir_all(root.path().join("tsd")).unwrap();
         std::fs::write(tsd::family_path(root.path(), tsd::testrun::FAMILY), format!("{row}\n")).unwrap();
 
         let kv = tsd_keys_in(root.path(), Some(store.addr()), now);
-        assert_eq!(get(&kv, "SP_TSD_WHERE"), "WORKING 1 (10m)");
+        assert_eq!(get(&kv, "SP_TSD_WHERE"), "REWORK 1 (10m)");
+        assert!(get(&kv, "SP_TSD_REWORK").contains("landed"), "{}", get(&kv, "SP_TSD_REWORK"));
         assert!(get(&kv, "SP_TSD_TESTS").starts_with("1 tests"), "{}", get(&kv, "SP_TSD_TESTS"));
         let unread = tsd_keys_in(root.path(), None, now);
         assert_eq!(get(&unread, "SP_TSD_WHERE"), "?", "a moved family with no store is unread, not empty");

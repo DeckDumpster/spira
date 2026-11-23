@@ -376,6 +376,17 @@ mod tests {
         assert_eq!(calls.iter().filter(|c| c.contains("--express")).count(), 1, "{calls:?}");
     }
 
+    #[test_id(tyil94g)]
+    #[test]
+    fn the_express_set_is_not_read_when_every_certified_bead_is_in_the_open_batch() {
+        let t = std::sync::Arc::new(Scripted { calls: Default::default() });
+        let lc = queue::real::RealLc { bin: None, client: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
+        let batch: HashSet<&str> = ["sp-b1"].into();
+        let (total, next) = next_items(&lc, &[std::path::PathBuf::from("alpha")], &|_| vec![("spira/sp-b1".into(), String::new())], &batch, &|_| None);
+        assert_eq!((total, next.len()), (0, 0));
+        assert_eq!(*t.calls.lock().unwrap(), ["list --state CERTIFIED"]);
+    }
+
     #[test_id(tql94gh)]
     #[test]
     fn next_items_draw_at_most_the_row_cap_and_count_every_certified_bead() {
