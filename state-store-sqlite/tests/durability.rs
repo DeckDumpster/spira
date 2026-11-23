@@ -975,6 +975,7 @@ fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resum
     let head = c.backend().head().unwrap();
     assert_eq!(t.snapshot, Some(head), "the snapshot taken out of cadence: {t:?}");
     assert_eq!(t.staged, None);
+    assert_eq!(std::fs::read_to_string(s.dir().join("staged")).unwrap(), head.to_string(), "the forced snapshot records staged");
     put(&c, "c", Object::new(json!(4)), "4");
     let t = tick(&mut s);
     assert_eq!(t.staged.map(|(from, _)| from), Some(head + 1), "{t:?}");
@@ -1311,6 +1312,7 @@ fn staging_a_run_leaves_the_staged_mark_alone() {
     let mut s = Shipper::open_staging(c.backend().clone(), paced_cfg(dir.path(), 0), Arc::new(clock.clone())).unwrap();
     tick(&mut s);
     let mark = s.dir().join("staged");
+    ship::write_durably(&mark, b"1").unwrap();
     let stat = || (std::fs::read(&mark).ok(), std::fs::metadata(&mark).and_then(|m| m.modified()).ok());
     let before = stat();
     put(&c, "a", Object::new(json!(1)), "1");
