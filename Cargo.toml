@@ -98,6 +98,7 @@ members = [
     "watchdog",
     "cr",
     "margin-client",
+    "design-review",
 ]
 resolver = "2"
 

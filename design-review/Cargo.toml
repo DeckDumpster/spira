@@ -1,0 +1,30 @@
+[package]
+name = "design-review"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+description = "design-review — posts a brain design page to the Margin reader for review, one version per revision, and answers his threads."
+
+[lib]
+name = "design_review"
+path = "src/lib.rs"
+
+[[bin]]
+name = "design-review"
+path = "src/main.rs"
+test = false
+
+[features]
+integration = ["spira-config/integration", "runtime/integration", "margin-client/integration", "testkit/integration", "spira-test-id/integration"]
+
+[dependencies]
+margin-client = { path = "../margin-client" }
+runtime = { path = "../runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
+testkit = { path = "../testkit" }

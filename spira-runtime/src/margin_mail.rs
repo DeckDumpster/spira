@@ -40,9 +40,12 @@ pub fn build(margin: &dyn Margin, base: &str, run_dir: &Path, collection: &str, 
     let text = margin.document_text(&doc.id, doc.version)?;
     let (first, last) = (t.anchor.first, t.anchor.last.max(t.anchor.first));
     let range = if last > first { format!("{first}-{last}") } else { first.to_string() };
-    let answer = match cr::record::all(run_dir)?.into_iter().find(|r| r.collection.as_deref() == Some(collection)) {
-        Some(r) => format!("Answer with: cr reply --review {:03} --thread {thread} < reply.txt", r.number),
-        None => format!("Answer in the reader: {base}/c/{collection}#{comment}"),
+    let review = cr::record::all(run_dir)?.into_iter().find(|r| r.collection.as_deref() == Some(collection));
+    let design = if review.is_none() { design_review::by_collection(run_dir, collection) } else { None };
+    let answer = match (&review, &design) {
+        (Some(r), _) => format!("Answer with: cr reply --review {:03} --thread {thread} < reply.txt", r.number),
+        (None, Some(d)) => format!("Answer with: design-review reply --page {} --thread {thread} < reply.txt", d.page),
+        (None, None) => format!("Answer in the reader: {base}/c/{collection}#{comment}"),
     };
     let his = &t.comments[at];
     let mut body = format!("{}\n\n{}:{range} (version {})\n\n{}\n", his.body.trim_end(), doc.path, doc.version, source_block(&text, first, last));
@@ -59,7 +62,7 @@ pub fn build(margin: &dyn Margin, base: &str, run_dir: &Path, collection: &str, 
         "From: Operator <operator@spira>\nTo: {MAILBOX}\nMessage-ID: {}\nDate: {}\nSubject: margin: {} — {}:{range}\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n{body}",
         message_id(comment),
         mail::rfc822::format_unix((his.created_at_ms / 1000) as i64),
-        header_text(&info.title),
+        design.as_ref().map_or_else(|| header_text(&info.title), |d| format!("design {}", header_text(&d.page))),
         header_text(&doc.path),
     ))
 }
@@ -71,4 +74,27 @@ pub fn deliver_once(d: &Delivery, raw: &str) -> Result<bool, String> {
         return Ok(false);
     }
     mail::sendmail::deliver(&d.run_dir, &d.home, &d.mail_root, d.mute, raw, Some(MAILBOX)).map(|_| true)
+}
+
+/// The one mail saying his pass on a design page is done, delivered once per collection and version.
+pub fn publish_design(margin: &dyn Margin, d: &design_review::Record, delivery: &Delivery) -> Result<bool, String> {
+    let info = margin.collection(&d.collection)?;
+    let mut his = 0;
+    for id in &info.threads {
+        let t = margin.thread(id)?;
+        if t.anchor.version == d.version && t.comments.first().is_some_and(|c| !c.by_agent()) {
+            his += 1;
+        }
+    }
+    let at = info.published_at_ms.unwrap_or(d.posted_at_ms);
+    let page = header_text(&d.page);
+    let raw = format!(
+        "From: Operator <operator@spira>\nTo: {MAILBOX}\nMessage-ID: <margin-publish-{}-{}@spira>\nDate: {}\nSubject: margin: design {page} — his pass is published\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\nHis pass on {page} is done.\n\n{}\n\nHis threads on version {}: {his}\n",
+        id_part(&d.collection),
+        d.version,
+        mail::rfc822::format_unix((at / 1000) as i64),
+        d.url,
+        d.version,
+    );
+    deliver_once(delivery, &raw)
 }
