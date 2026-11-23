@@ -754,21 +754,11 @@ mod tests {
     fn readiness_rig() -> (runtime::Engine, runtime::ports::VirtualClock) {
         use runtime::Executor;
         let s = crate::settings::fixture();
-        let regs: Vec<Registration> = crate::registrations(&s)
-            .into_iter()
-            .filter(|r| r.name == readiness_dependents::NAME)
-            .collect();
+        let regs: Vec<Registration> = crate::registrations(&s).into_iter().filter(|r| r.name == readiness_dependents::NAME).collect();
         let clock = runtime::ports::VirtualClock::new(0);
         let changes = std::sync::Arc::new(runtime::changes::ScriptedChanges::default());
         changes.set(1);
-        let mut e = runtime::Engine::open(
-            runtime::MemJournal::new(),
-            std::sync::Arc::new(clock.clone()),
-            regs,
-            1,
-        )
-        .unwrap()
-        .with_sweep(60_000, changes);
+        let mut e = runtime::Engine::open(runtime::MemJournal::new(), std::sync::Arc::new(clock.clone()), regs, 1).unwrap().with_sweep(60_000, changes);
         let (_, stream, kind) = readiness_dependents::ReadinessDependents::boot();
         e.start(stream, kind);
         e.run_until_idle().unwrap();
@@ -777,20 +767,12 @@ mod tests {
 
     fn asked(e: &runtime::Engine, name: &str) -> usize {
         use runtime::Executor;
-        e.pending_effects()
-            .iter()
-            .filter(|p| p.spec.name == name)
-            .count()
+        e.pending_effects().iter().filter(|p| p.spec.name == name).count()
     }
 
     fn answer(e: &mut runtime::Engine, name: &str, out: runtime::Outcome) {
         use runtime::Executor;
-        let key = e
-            .pending_effects()
-            .into_iter()
-            .find(|p| p.spec.name == name)
-            .unwrap_or_else(|| panic!("{name} not asked"))
-            .key;
+        let key = e.pending_effects().into_iter().find(|p| p.spec.name == name).unwrap_or_else(|| panic!("{name} not asked")).key;
         e.complete(&key, out).unwrap();
         e.run_until_idle().unwrap();
     }
@@ -799,42 +781,30 @@ mod tests {
     #[test]
     fn a_failed_readiness_run_is_looked_for_again_after_its_interval_and_before_any_sweep() {
         use runtime::Executor;
-        let (mut e, clock) = readiness_rig();
-        answer(
-            &mut e,
-            readiness_dependents::LOOK,
-            runtime::Outcome::Succeeded(r#"{"through":42,"keys":["sp-a"]}"#.into()),
-        );
-        answer(
-            &mut e,
-            readiness_dependents::RUN,
-            runtime::Outcome::Failed("store down".into()),
-        );
-        assert_eq!(asked(&e, readiness_dependents::LOOK), 0);
-        let interval = crate::settings::fixture().readiness_dependents.interval_ms;
-        assert!(interval < 60_000);
-        clock.advance(interval);
-        e.run_until_idle().unwrap();
-        assert_eq!(
-            asked(&e, readiness_dependents::LOOK),
-            1,
-            "asked again at its interval, not at the sweep"
-        );
+        for out in [runtime::Outcome::Failed("store down".into()), runtime::Outcome::TimedOut] {
+            let (mut e, clock) = readiness_rig();
+            answer(&mut e, readiness_dependents::LOOK, runtime::Outcome::Succeeded(r#"{"through":42,"keys":["sp-a"]}"#.into()));
+            answer(&mut e, readiness_dependents::RUN, out.clone());
+            assert_eq!(asked(&e, readiness_dependents::LOOK), 0);
+            let interval = crate::settings::fixture().readiness_dependents.interval_ms;
+            assert!(interval < 60_000);
+            clock.advance(interval);
+            e.run_until_idle().unwrap();
+            assert_eq!(asked(&e, readiness_dependents::LOOK), 1, "{out:?}: asked again at its interval, not at the sweep");
+        }
     }
 
     #[test_id(tj9x5hc)]
     #[test]
     fn a_failed_readiness_look_is_looked_for_again_after_its_interval_and_before_any_sweep() {
         use runtime::Executor;
-        let (mut e, clock) = readiness_rig();
-        answer(
-            &mut e,
-            readiness_dependents::LOOK,
-            runtime::Outcome::Failed("store down".into()),
-        );
-        clock.advance(crate::settings::fixture().readiness_dependents.interval_ms);
-        e.run_until_idle().unwrap();
-        assert_eq!(asked(&e, readiness_dependents::LOOK), 1);
+        for out in [runtime::Outcome::Failed("store down".into()), runtime::Outcome::TimedOut] {
+            let (mut e, clock) = readiness_rig();
+            answer(&mut e, readiness_dependents::LOOK, out.clone());
+            clock.advance(crate::settings::fixture().readiness_dependents.interval_ms);
+            e.run_until_idle().unwrap();
+            assert_eq!(asked(&e, readiness_dependents::LOOK), 1, "{out:?}");
+        }
     }
 
     #[test_id(tk1y6bo)]
@@ -843,18 +813,10 @@ mod tests {
         use runtime::event::{StoreChanged, STORE_STREAM};
         use runtime::Executor;
         let (mut e, clock) = readiness_rig();
-        answer(
-            &mut e,
-            readiness_dependents::LOOK,
-            runtime::Outcome::Succeeded(r#"{"through":41,"keys":[]}"#.into()),
-        );
+        answer(&mut e, readiness_dependents::LOOK, runtime::Outcome::Succeeded(r#"{"through":41,"keys":[]}"#.into()));
         assert_eq!(asked(&e, readiness_dependents::LOOK), 0);
         clock.advance(10_000);
-        let c = StoreChanged {
-            rev: 2,
-            keys: vec!["lifecycle/sp-a".into()],
-            reload: false,
-        };
+        let c = StoreChanged { rev: 2, keys: vec!["lifecycle/sp-a".into()], reload: false };
         e.submit("c1", STORE_STREAM, c.kind()).unwrap();
         e.run_until_idle().unwrap();
         assert_eq!(asked(&e, readiness_dependents::LOOK), 1);

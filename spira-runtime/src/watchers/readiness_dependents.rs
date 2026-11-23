@@ -62,9 +62,7 @@ pub fn decide(carry: &Carry, body: &str) -> Carry {
 impl ReadinessDependents {
     /// A failed pass is asked for again after the interval; the row's only wake is a change.
     fn retry(&self, ev: &Event) -> Command {
-        Command::Due {
-            at: ev.at + self.interval_ms,
-        }
+        Command::Due { at: ev.at + self.interval_ms }
     }
 }
 

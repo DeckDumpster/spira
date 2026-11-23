@@ -50,19 +50,9 @@ fn source_line(lost: &[&SweepFound]) -> String {
 fn reads_line(fresh: &[&SweepFound]) -> String {
     let rev = fresh.iter().map(|f| f.rev).max().unwrap_or(0);
     let tasks: Vec<_> = fresh.iter().map(|f| counted(f, true)).collect();
-    let changed: std::collections::BTreeSet<&str> = fresh
-        .iter()
-        .flat_map(|f| f.changed.iter().map(String::as_str))
-        .collect();
-    let changed = if changed.is_empty() {
-        "none heard".to_string()
-    } else {
-        changed.into_iter().collect::<Vec<_>>().join(", ")
-    };
-    format!(
-        "WAKE-MISSED reads: the store moved to rev {rev} and no declared read named the change; found on the one-minute sweep by {}; changed prefixes: {changed}. Fix those rows' reads in spira-runtime/src/tasks*.rs.",
-        tasks.join(", ")
-    )
+    let changed: std::collections::BTreeSet<&str> = fresh.iter().flat_map(|f| f.changed.iter().map(String::as_str)).collect();
+    let changed = if changed.is_empty() { "none heard".to_string() } else { changed.into_iter().collect::<Vec<_>>().join(", ") };
+    format!("WAKE-MISSED reads: the store moved to rev {rev} and no declared read named the change; found on the one-minute sweep by {}; changed prefixes: {changed}. Fix those rows' reads in spira-runtime/src/tasks*.rs.", tasks.join(", "))
 }
 
 impl WakeAudit {
@@ -126,14 +116,7 @@ mod tests {
     use runtime::taskrig::TaskRig;
 
     fn found(task: &str, count: u64, rev: u64, lost: bool) -> EventKind {
-        let f = SweepFound {
-            task: task.into(),
-            count,
-            rev,
-            reads: vec!["lifecycle/".into(), "readiness/".into()],
-            lost,
-            changed: vec![],
-        };
+        let f = SweepFound { task: task.into(), count, rev, reads: vec!["lifecycle/".into(), "readiness/".into()], lost, changed: vec![] };
         EventKind::new(WAKE_SWEEP_FOUND, &serde_json::to_string(&f).unwrap())
     }
 
@@ -197,25 +180,11 @@ mod tests {
     fn the_reads_line_names_the_prefixes_that_changed() {
         let mut rig = rig();
         let stream = WakeAudit::boot().1;
-        let f = SweepFound {
-            task: "a".into(),
-            count: 1,
-            rev: 8,
-            reads: vec!["lifecycle/".into()],
-            lost: false,
-            changed: vec!["edges/".into(), "planning/".into()],
-        };
-        rig.deliver(
-            stream,
-            EventKind::new(WAKE_SWEEP_FOUND, &serde_json::to_string(&f).unwrap()),
-        )
-        .unwrap();
+        let f = SweepFound { task: "a".into(), count: 1, rev: 8, reads: vec!["lifecycle/".into()], lost: false, changed: vec!["edges/".into(), "planning/".into()] };
+        rig.deliver(stream, EventKind::new(WAKE_SWEEP_FOUND, &serde_json::to_string(&f).unwrap())).unwrap();
         rig.advance(60_000).unwrap();
         let text = &rig.requested()[0].input;
-        assert!(
-            text.contains("changed prefixes: edges/, planning/."),
-            "{text}"
-        );
+        assert!(text.contains("changed prefixes: edges/, planning/."), "{text}");
     }
 
     #[test_id(t60s0qn)]
