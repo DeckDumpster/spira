@@ -25,7 +25,7 @@ pub fn ci_entry(tree: &Path) -> Option<CiEntry> {
     let doc: toml::Value = spira_config::parse_foreign(&text).ok()?;
     let text_of = |k: &str| doc.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     Some(CiEntry {
-        command: text_of("ci_entry")?,
+        command: spira_config::gate_source::ci_entry(&text).ok()??,
         image: text_of("image"),
         workdir: text_of("workdir").unwrap_or_else(|| system_paths::guest::WORK.into()),
     })

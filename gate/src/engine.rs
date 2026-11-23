@@ -1494,7 +1494,11 @@ impl<'w, W: World> Trial<'w, W> {
         }
         let spaced = |v: &[String]| v.join(" ");
         let attribution = if testenv.is_some() && base_testenv.is_none() {
-            Attribution::BranchRed(parse::red_units(&out, &tiers).into_iter().next().unwrap_or_else(|| "-".into()))
+            if matches!(base_def, Ok(Resolved::Column(_))) {
+                Attribution::BranchRed(parse::red_units(&out, &tiers).into_iter().next().unwrap_or_else(|| "-".into()))
+            } else {
+                Attribution::BaseUntestable
+            }
         } else {
             parse::attribute((&out, &tiers), base_ran, base_rc, (&base_out, &base_tiers), &absent)
         };
