@@ -46,7 +46,6 @@ impl FindingRecord {
         }
         Ok(r)
     }
-
 }
 
 impl std::fmt::Display for FindingRecord {
@@ -63,7 +62,12 @@ mod tests {
     #[test]
     fn a_record_displays_as_the_finding_it_came_from() {
         for line in [Some(7), None] {
-            let f = Finding { rule: "r", path: "a/b.rs".into(), line, message: "bad".into() };
+            let f = Finding {
+                rule: "r",
+                path: "a/b.rs".into(),
+                line,
+                message: "bad".into(),
+            };
             let rec = FindingRecord::of(&f, Some(("spira-lint/src/rules/r.rs", None)));
             assert_eq!(rec.to_string(), f.to_string());
             assert_eq!(FindingRecord::parse(&rec.to_line()).unwrap(), rec);

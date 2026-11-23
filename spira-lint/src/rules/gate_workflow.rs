@@ -136,11 +136,13 @@ pub fn spill_teardown_missing(text: &str) -> Vec<&'static str> {
     if !spills {
         return Vec::new();
     }
-    let t = block(text, "teardown");
-    ["backend", "instance-id", "aws-role-to-assume"]
-        .into_iter()
-        .filter(|inp| !t.lines().any(|l| l.trim().starts_with(&format!("{inp}:"))))
-        .collect()
+    let (p, t) = (block(text, "provision"), block(text, "teardown"));
+    let wired = |inp: &str| match inp {
+        "aws-role-to-assume" => t.lines().any(|l| l.trim().starts_with("aws-role-to-assume:") && l.contains("secrets.")),
+        _ => p.contains(&format!("{inp}: ${{{{ steps.vm.outputs.{inp} }}}}"))
+            && t.lines().any(|l| l.trim().starts_with(&format!("{inp}:")) && l.contains(&format!("needs.provision.outputs.{inp}"))),
+    };
+    ["backend", "instance-id", "aws-role-to-assume"].into_iter().filter(|i| !wired(i)).collect()
 }
 
 /// A job that runs on the provisioned runner must not bypass a failed provision: its `if:`
@@ -765,15 +767,22 @@ mod tests {
     #[test_id(t8qc2rf)]
     #[test]
     fn a_spilling_teardown_without_the_ec2_inputs_is_caught() {
-        for inp in ["backend", "instance-id", "aws-role-to-assume"] {
-            let mut w = shipped();
-            let g = w.gate.clone().unwrap();
-            let t = g.find("  teardown:").unwrap();
-            let (head, tail) = g.split_at(t);
-            let tail: String = tail.lines().filter(|l| !l.trim().starts_with(&format!("{inp}:"))).map(|l| format!("{l}\n")).collect();
-            w.gate = Some(format!("{head}{tail}"));
-            let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
-            assert!(got.iter().any(|m| m.contains(&format!("teardown must pass {inp}"))), "{inp}: {got:?}");
+        type Field = fn(&mut Workflows) -> &mut Option<String>;
+        for (field, file) in [(gate as Field, GATE), (acc as Field, ACCEPTANCE)] {
+            let text = field(&mut shipped()).clone().unwrap();
+            assert!(block(&text, "provision").contains("spill:"), "{file}: positive control");
+            assert!(spill_teardown_missing(&text).is_empty(), "{file}");
+            for inp in ["backend", "instance-id", "aws-role-to-assume"] {
+                let t = text.find("  teardown:").unwrap();
+                let (head, tail) = text.split_at(t);
+                let tail: String = tail.lines().filter(|l| !l.trim().starts_with(&format!("{inp}:"))).map(|l| format!("{l}\n")).collect();
+                let mut w = shipped();
+                *field(&mut w) = Some(format!("{head}{tail}"));
+                let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
+                assert!(got.iter().any(|m| m.contains(&format!("teardown must pass {inp}"))), "{file} {inp}: {got:?}");
+            }
+            let no_output = text.replacen("      backend: ${{ steps.vm.outputs.backend }}\n", "", 1);
+            assert_eq!(spill_teardown_missing(&no_output), vec!["backend"], "{file}");
         }
         assert!(spill_teardown_missing("  provision:\n    steps:\n      spill: off\n  teardown:\n").is_empty());
     }

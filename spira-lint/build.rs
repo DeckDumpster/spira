@@ -15,7 +15,12 @@ fn main() {
     let out = env::var("OUT_DIR").unwrap();
     let mods: String = names
         .iter()
-        .map(|n| format!("#[path = {:?}]\npub mod {n};\n", dir.join(format!("{n}.rs"))))
+        .map(|n| {
+            format!(
+                "#[path = {:?}]\npub mod {n};\n",
+                dir.join(format!("{n}.rs"))
+            )
+        })
         .collect();
     fs::write(Path::new(&out).join("rule_mods.rs"), mods).unwrap();
     let calls: String = names.iter().map(|n| format!("    all.extend(rules::{n}::rules().into_iter().map(|r| (\"spira-lint/src/rules/{n}.rs\", r)));\n")).collect();

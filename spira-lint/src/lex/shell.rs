@@ -37,7 +37,10 @@ impl Word {
 
     /// The word with quotes and backslashes removed — meaningful for a literal word only.
     pub fn unquoted(&self) -> String {
-        self.raw.chars().filter(|c| !matches!(c, '\'' | '"' | '\\')).collect()
+        self.raw
+            .chars()
+            .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+            .collect()
     }
 }
 
@@ -55,7 +58,9 @@ pub struct Command {
     pub redirects: Vec<Redirect>,
 }
 
-const RESERVED_HEAD: &[&str] = &["if", "then", "else", "elif", "do", "while", "until", "!", "{", "time"];
+const RESERVED_HEAD: &[&str] = &[
+    "if", "then", "else", "elif", "do", "while", "until", "!", "{", "time",
+];
 
 impl Command {
     /// The words after leading reserved words: `then python3 …` is a python3 command.
@@ -70,14 +75,23 @@ impl Command {
     /// Leading `NAME=value` words (the command's environment), and the rest (its argv).
     pub fn split_env(&self) -> (&[Word], &[Word]) {
         let body = self.body();
-        let n = body.iter().take_while(|w| w.assignment_name().is_some()).count();
+        let n = body
+            .iter()
+            .take_while(|w| w.assignment_name().is_some())
+            .count();
         body.split_at(n)
     }
 }
 
 /// Every simple command in `src`, nested ones included, in no particular order.
 pub fn parse(src: &[u8]) -> Vec<Command> {
-    let mut lx = Lexer { s: src, i: 0, line: 1, heredocs: Vec::new(), out: Vec::new() };
+    let mut lx = Lexer {
+        s: src,
+        i: 0,
+        line: 1,
+        heredocs: Vec::new(),
+        out: Vec::new(),
+    };
     lx.list(false);
     lx.out
 }
@@ -91,7 +105,10 @@ struct Lexer<'a> {
 }
 
 fn is_meta(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\r' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>')
+    matches!(
+        c,
+        b' ' | b'\t' | b'\r' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>'
+    )
 }
 
 impl<'a> Lexer<'a> {
@@ -225,9 +242,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn redirect(&mut self, cmd: &mut Command) {
-        const OPS: &[&str] = &["&>>", "&>", "<<<", "<<-", "<<", "<>", "<&", ">>", ">&", ">|", "<", ">"];
+        const OPS: &[&str] = &[
+            "&>>", "&>", "<<<", "<<-", "<<", "<>", "<&", ">>", ">&", ">|", "<", ">",
+        ];
         let rest = &self.s[self.i..];
-        let op = OPS.iter().find(|o| rest.starts_with(o.as_bytes())).copied().unwrap_or(">");
+        let op = OPS
+            .iter()
+            .find(|o| rest.starts_with(o.as_bytes()))
+            .copied()
+            .unwrap_or(">");
         self.i += op.len();
         let op = op.to_string();
         while matches!(self.peek(0), b' ' | b'\t') {
@@ -274,7 +297,11 @@ impl<'a> Lexer<'a> {
             }
         }
         let end = self.i.min(self.s.len());
-        Word { raw: String::from_utf8_lossy(&self.s[start..end]).into_owned(), line, vars }
+        Word {
+            raw: String::from_utf8_lossy(&self.s[start..end]).into_owned(),
+            line,
+            vars,
+        }
     }
 
     fn squote(&mut self) {
@@ -416,7 +443,13 @@ impl<'a> Lexer<'a> {
             self.i += 1;
         }
         self.i += 1;
-        let mut sub = Lexer { s: &inner, i: 0, line, heredocs: Vec::new(), out: Vec::new() };
+        let mut sub = Lexer {
+            s: &inner,
+            i: 0,
+            line,
+            heredocs: Vec::new(),
+            out: Vec::new(),
+        };
         sub.list(false);
         self.out.extend(sub.out);
     }
@@ -460,8 +493,14 @@ mod tests {
     #[test]
     fn command_substitution_is_its_own_command() {
         let cs = parse(b"x_json=\"$(FOO=1 python3 -c 'p' \"$b\")\"\n");
-        let outer = cs.iter().find(|c| c.words[0].raw.starts_with("x_json=")).unwrap();
-        assert!(outer.words[0].vars.is_empty(), "nested $b is not the outer word's");
+        let outer = cs
+            .iter()
+            .find(|c| c.words[0].raw.starts_with("x_json="))
+            .unwrap();
+        assert!(
+            outer.words[0].vars.is_empty(),
+            "nested $b is not the outer word's"
+        );
         let py = find(&cs, "python3");
         assert_eq!(py.split_env().0[0].assignment_name(), Some("FOO"));
         assert_eq!(py.words.last().unwrap().vars, vec!["b"]);
@@ -471,14 +510,24 @@ mod tests {
     #[test]
     fn escaped_brace_in_a_parameter_default_does_not_open_a_quote() {
         let cs = parse(b"a=\"${4:-{\\}}\"\n# `bd ready` note\nls\n");
-        assert_eq!(cs.iter().filter_map(|c| argv(c).first().cloned()).collect::<Vec<_>>(), vec!["ls"]);
+        assert_eq!(
+            cs.iter()
+                .filter_map(|c| argv(c).first().cloned())
+                .collect::<Vec<_>>(),
+            vec!["ls"]
+        );
     }
 
     #[test_id(tsq0wag)]
     #[test]
     fn an_array_literal_is_not_a_command() {
         let cs = parse(b"P=(podman\n   git curl)\nls\n");
-        assert_eq!(cs.iter().filter_map(|c| argv(c).first().cloned()).collect::<Vec<_>>(), vec!["ls"]);
+        assert_eq!(
+            cs.iter()
+                .filter_map(|c| argv(c).first().cloned())
+                .collect::<Vec<_>>(),
+            vec!["ls"]
+        );
     }
 
     #[test_id(t4huq39)]
@@ -486,7 +535,12 @@ mod tests {
     fn heredoc_bodies_are_skipped_and_lines_counted() {
         let src = b"cat <<'EOF' | python3 -c 'x'\nX_JSON=\"$a\" python3 -c 'p'\nEOF\njq . \"$z\"\n";
         let cs = parse(src);
-        assert_eq!(cs.iter().filter(|c| argv(c).first().map(String::as_str) == Some("python3")).count(), 1);
+        assert_eq!(
+            cs.iter()
+                .filter(|c| argv(c).first().map(String::as_str) == Some("python3"))
+                .count(),
+            1
+        );
         let jq = find(&cs, "jq");
         assert_eq!(jq.words[0].line, 4);
     }
@@ -508,7 +562,10 @@ mod tests {
         assert_eq!(argv(jq), vec!["jq", "."]);
         let ops: Vec<&str> = jq.redirects.iter().map(|r| r.op.as_str()).collect();
         assert_eq!(ops, vec!["<<<", ">&", ">>"]);
-        assert_eq!(jq.redirects[2].target.as_ref().unwrap().vars, vec!["SPIRA_TOML"]);
+        assert_eq!(
+            jq.redirects[2].target.as_ref().unwrap().vars,
+            vec!["SPIRA_TOML"]
+        );
     }
 
     #[test_id(tx05g6v)]
