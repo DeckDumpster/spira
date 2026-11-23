@@ -672,7 +672,8 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
             let ans = with_row(m, &id, actor, |_| Ok(kind.clone()));
             let how = if sub == "pr-merged" { "merged pull request" } else { "push" };
             let line = if ans.code == 0 {
-                format!("lc: {id} landed by {how} — LANDED (no delivery round; {actor}, {proof})")
+                let to = if sub == "pr-merged" { "LANDED" } else { "CERTIFIED -> LANDED" };
+                format!("lc: {id} landed by {how} — {to} (no delivery round; {actor}, {proof})")
             } else {
                 format!("lc: {id} landed by {how}, but the LANDED event was refused or unreachable ({actor}, exit {})", ans.code)
             };
