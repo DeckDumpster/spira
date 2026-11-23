@@ -298,15 +298,10 @@ fn line(s: &str) -> String {
 /// `$SPIRA_RUN/lifecycle-cert.log` in lifecycle-cert.sh's shape: `<epoch> <verb> bead=<id> <detail>`.
 /// `id` is the verb's first argument.
 pub fn write_cert_log(id: &str, ans: &Answer, run_dir: Result<std::path::PathBuf, String>, now: i64) -> Option<String> {
-    use std::io::Write;
     let (what, detail) = ans.cert_log.as_ref()?;
     match run_dir {
         Ok(dir) => {
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("lifecycle-cert.log"))
-                .and_then(|mut f| writeln!(f, "{now} {what} bead={id} {detail}"));
+            crate::disk::log_line(&dir.join("lifecycle-cert.log"), format!("{now} {what} bead={id} {detail}\n"));
             None
         }
         Err(e) => Some(format!("spira-lc: {e} — lifecycle-cert.log not written")),

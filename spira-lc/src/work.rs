@@ -2200,10 +2200,7 @@ fn log_forge_refusal(line: &str) {
 }
 
 fn append_refusal(run: &std::path::Path, line: &str) {
-    let path = run.join("broker.log");
-    if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes())) {
-        eprintln!("spira-lc work forge: {}: {e}", path.display());
-    }
+    crate::disk::log_line(&run.join("broker.log"), format!("{line}\n"));
 }
 
 /// `groom split-piece <original-id> "<title>" [flags]`: the tail reaches `bd create`, so it

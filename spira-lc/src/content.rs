@@ -495,9 +495,12 @@ pub fn purge_alerts(
     }
     let file = export_dir.join(format!("purge-alerts-{now}.jsonl"));
     let lines: String = items.iter().map(|r| format!("{r}\n")).collect();
-    let written = std::fs::create_dir_all(export_dir)
-        .and_then(|()| std::fs::OpenOptions::new().write(true).create_new(true).open(&file))
-        .and_then(|mut f| std::io::Write::write_all(&mut f, lines.as_bytes()).and_then(|()| f.sync_all()));
+    let fs = crate::disk::fs();
+    let written = fs.create_dir(export_dir).and_then(|()| match fs.metadata(&file) {
+        Ok(_) => Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "the export file exists")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }).and_then(|()| fs.write(&file, lines.as_bytes())).and_then(|()| fs.sync_file(&file));
     if let Err(e) = written {
         return cannot(format!("{}: {e} — nothing deleted", file.display()));
     }

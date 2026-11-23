@@ -6,7 +6,6 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -125,22 +124,22 @@ fn cmdline_caller(cmdline: &[u8]) -> Option<String> {
 }
 
 fn parent_pid(pid: i32) -> Option<i32> {
-    let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
+    let stat = crate::disk::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
     stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()
 }
 
 /// Who a served request is for. The peer is almost always the `spira-lc` client, which names
 /// nobody, so its `SPIRA_CALLER` or else its parent process stands in; any other peer is itself.
 pub fn caller_of_pid(pid: i32) -> String {
-    let comm = std::fs::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).map(|c| c.trim().to_string()).unwrap_or_default();
+    let comm = crate::disk::read_to_string(format!("{}/{pid}/comm", system_paths::PROC)).map(|c| c.trim().to_string()).unwrap_or_default();
     if comm != CLIENT {
         return clean(&comm);
     }
-    let named = std::fs::read(format!("{}/{pid}/environ", system_paths::PROC)).ok().and_then(|e| env_caller(&e));
+    let named = crate::disk::read(format!("{}/{pid}/environ", system_paths::PROC)).ok().and_then(|e| env_caller(&e));
     let parent = || {
         let mut at = parent_pid(pid)?;
         for _ in 0..MAX_ANCESTORS {
-            let cmdline = std::fs::read(format!("{}/{at}/cmdline", system_paths::PROC)).ok()?;
+            let cmdline = crate::disk::read(format!("{}/{at}/cmdline", system_paths::PROC)).ok()?;
             if !is_wrapper(&cmdline) {
                 return cmdline_caller(&cmdline);
             }
@@ -461,7 +460,7 @@ fn rss_anon_bytes_of(status: &str) -> Option<u64> {
 
 /// One log line: this process's RssAnon at `at`, or nothing where `/proc` does not say.
 pub fn rss_anon_line(at: &str) -> Option<String> {
-    let bytes = std::fs::read_to_string(format!("{}/status", system_paths::PROC_SELF)).ok().as_deref().and_then(rss_anon_bytes_of)?;
+    let bytes = crate::disk::read_to_string(format!("{}/status", system_paths::PROC_SELF)).ok().as_deref().and_then(rss_anon_bytes_of)?;
     Some(format!("spira-lc serve: rss-anon {at} {} MB", bytes / (1024 * 1024)))
 }
 
@@ -474,7 +473,7 @@ pub fn first_of_verb(verb: &str) -> bool {
 
 /// Pushes this process's resident memory as the gauge `spira_lc_rss_bytes`.
 pub fn push_rss(sink: &spira_otel::metrics::MetricsSink) {
-    let Some(bytes) = std::fs::read_to_string(format!("{}/status", system_paths::PROC_SELF)).ok().as_deref().and_then(rss_bytes_of) else { return };
+    let Some(bytes) = crate::disk::read_to_string(format!("{}/status", system_paths::PROC_SELF)).ok().as_deref().and_then(rss_bytes_of) else { return };
     sink.push(&[spira_otel::metrics::Point::Gauge { name: "spira_lc_rss_bytes", value: bytes as f64 }], &[]);
 }
 
@@ -595,9 +594,7 @@ fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
 
 fn write_line(l: &str) {
     let Some(path) = log_path() else { return };
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = f.write_all(l.as_bytes());
-    }
+    crate::disk::log_line(&path, l.to_string());
 }
 
 /// Shape of a request one of whose reads a forced WAL restart waited on until the limit cut it.
