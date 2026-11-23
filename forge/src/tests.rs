@@ -2134,3 +2134,26 @@ fn workflow_rerun_without_the_flag_asks_for_the_rerun_straight_after_the_cancel(
     let cancel = calls.iter().position(|c| c.get(1).map(String::as_str) == Some("cancel")).unwrap();
     assert!(is_rerun(&calls[cancel + 1]));
 }
+
+#[test_id(t1nbnzl)]
+#[test]
+fn pr_list_mine_lists_this_installations_open_prs_with_their_branches() {
+    let gh = FakeGh::default();
+    gh.on(LIST_MINE, 0, r#"[{"number":232,"headRefName":"spira/sp-a"},{"number":9,"headRefName":"spira/sp-b"}]"#);
+    let out = pr_list_mine(&gh, repo());
+    assert_eq!((out.code, out.lines), (0, vec!["232 spira/sp-a".to_string(), "9 spira/sp-b".to_string()]));
+}
+
+#[test_id(tu363rk)]
+#[test]
+fn pr_list_mine_says_none_by_success_and_unreadable_by_exit_one() {
+    let none = FakeGh::default();
+    none.on(LIST_MINE, 0, "[]");
+    assert_eq!((pr_list_mine(&none, repo()).code, pr_list_mine(&none, repo()).lines.len()), (0, 0));
+    let broken = FakeGh::default();
+    broken.on(LIST_MINE, 1, "");
+    assert_eq!(pr_list_mine(&broken, repo()).code, 1);
+    let garbled = FakeGh::default();
+    garbled.on(LIST_MINE, 0, "not json");
+    assert_eq!(pr_list_mine(&garbled, repo()).code, 1);
+}
