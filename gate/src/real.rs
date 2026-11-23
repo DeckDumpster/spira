@@ -438,6 +438,7 @@ impl World for Real {
             None => (None, None, String::new()),
         };
 
+        let land = reg.land(&repo_name);
         Ok(Ctx {
             repo_name,
             vars: kv,
@@ -446,6 +447,7 @@ impl World for Real {
             declared_base,
             gate_cmd,
             host_cores,
+            land,
         })
     }
 

@@ -6,6 +6,7 @@ use crate::def::{self, Resolved};
 use crate::fence;
 use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
+use crate::own;
 use spira_config::ejection;
 use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
@@ -162,6 +163,8 @@ struct State {
     replay_note: String,
     /// Seconds the tests have used of SPIRA_GATE_DEADLINE; builds are not charged to it.
     test_secs: u64,
+    /// What the trial judged by: `testenv:<tiers>`, `gate.steps`, `column`, `syntax`; `-` before it resolved.
+    ran: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -177,6 +180,7 @@ impl<'w, W: World> Trial<'w, W> {
             a,
             s: State {
                 suite: "-".into(),
+                ran: "-".into(),
                 ..State::default()
             },
         }
@@ -398,13 +402,33 @@ impl<'w, W: World> Trial<'w, W> {
         let column = ctx.gate_cmd.clone();
         let base_blob = w.show_blob(&repo, &base_rev, def::PATH);
         let tree_blob = w.show_blob(&repo, &rev, def::PATH);
-        let (cmd, tree_def) = match def::resolve(base_blob.as_deref(), tree_blob.as_deref(), &column) {
-            Resolved::Column(c) => (c, None),
+        let local = ctx.land == spira_config::gate_source::QUEUE_LOCAL;
+        let declaration = |at: &str| local.then(|| w.show_blob(&repo, at, own::DECL).map(|b| String::from_utf8_lossy(&b).into_owned())).flatten();
+        let (base_decl, tree_decl) = (declaration(&base_rev), declaration(&rev));
+        let has_image = |at: &str| local && w.ls_tree_has(&repo, at, own::HARNESS_IMAGE);
+        let base_side = def::Side { steps: base_blob.as_deref(), declaration: base_decl.as_deref(), containerfile: has_image(&base_rev) };
+        let tree_side = def::Side { steps: tree_blob.as_deref(), declaration: tree_decl.as_deref(), containerfile: has_image(&rev) };
+        let mut testenv: Option<(Vec<String>, bool)> = None;
+        let (cmd, tree_def) = match def::resolve(base_side, tree_side, &ctx.land, &column) {
+            Resolved::Column(c) => {
+                self.s.ran = if c.trim().is_empty() { "syntax" } else { "column" }.into();
+                (c, None)
+            }
             Resolved::Tree(d) => {
+                self.s.ran = "gate.steps".into();
                 if !column.trim().is_empty() {
                     w.eprint(&format!("gate: {name}'s repo-map gate column is ignored — the tree's {} is its gate (sp-quu2w); clear the column", def::PATH));
                 }
                 (d.command(), Some(d))
+            }
+            Resolved::Testenv { tiers, build_tier } => {
+                if !column.trim().is_empty() {
+                    w.eprint(&format!("gate: {name}'s repo-map gate column is ignored — the tree's {} declares its CI; clear the column", own::DECL));
+                }
+                let text = testenv_text(&tiers, build_tier);
+                self.s.ran = format!("testenv:{}", tiers.join(","));
+                testenv = Some((tiers, build_tier));
+                (text, None)
             }
             Resolved::Refused { branch: true, why } => {
                 return v(FAIL, "gate-definition", format!(
@@ -415,7 +439,7 @@ impl<'w, W: World> Trial<'w, W> {
                     "gate: {base}'s own gate definition does not read — this branch did not cause it.\ngate: {why}\ngate: fix {} on {base}.", def::PATH));
             }
         };
-        let base_def = def::resolve_base(base_blob.as_deref(), &column);
+        let base_def = def::resolve_base(base_side, &ctx.land, &column);
         if cmd.is_empty() {
             return v(PASS, "syntax-only", "");
         }
@@ -455,7 +479,7 @@ impl<'w, W: World> Trial<'w, W> {
         // re-entry suites still run (sp-p3srm), so a branch that may have any — the round
         // named suites against its bead, or it changes a suite — keeps the bin the re-entry
         // phase reads (the tree's own suite runner).
-        let fences_only = compose::fences_only(mode, &Forces { gate_all: ctx.var("SPIRA_GATE_ALL") == "1", ..Forces::default() });
+        let fences_only = testenv.is_none() && compose::fences_only(mode, &Forces { gate_all: ctx.var("SPIRA_GATE_ALL") == "1", ..Forces::default() });
         let may_reenter = !ejected.trim().is_empty()
             || files.lines().any(|p| p.trim().strip_prefix("spira/").is_some_and(compose::is_suite_name));
         let reentry_reads = if may_reenter { vec![compose::reentry_command(&[])] } else { Vec::new() };
@@ -482,6 +506,7 @@ impl<'w, W: World> Trial<'w, W> {
         // Suites mode hashes the command alone, so today's keys are unchanged.
         let cmd_text = tree_def.as_ref().map(def::Def::key_text).unwrap_or_else(|| cmd.clone());
         let key_cmd = match mode {
+            _ if testenv.is_some() => cmd_text,
             GateMode::Unit => format!("{cmd_text}\n# gate_mode=unit"),
             GateMode::Fences => format!("{cmd_text}\n# gate_mode=fences"),
             GateMode::Suites => cmd_text,
@@ -722,7 +747,11 @@ impl<'w, W: World> Trial<'w, W> {
         };
 
         // THE COMPOSITION: what the branch touches decides what runs.
-        let comp = self.composition(mode, &ctx, &repo, &base_rev, &rev, &tree);
+        let comp = if testenv.is_some() { Composition::Suites { why: "testenv".into() } } else { self.composition(mode, &ctx, &repo, &base_rev, &rev, &tree) };
+        let build_phase: Option<bool> = match &testenv {
+            Some((_, build_tier)) => Some(*build_tier),
+            None => (!comp.suites_off() && w.declares_build_tier(&tree)).then_some(true),
+        };
         // THE RE-ENTRY CHECK: the suites the round named, against the tree under test.
         let mut named = ejected.clone();
         if let Ok(changed) = w.diff_raw(&repo, &base_rev, &rev) {
@@ -875,7 +904,7 @@ impl<'w, W: World> Trial<'w, W> {
         // on tmpfs.
         let builds = tree_def.as_ref().is_some_and(|d| !d.bins.is_empty())
             || matches!(comp, Composition::Unit { .. })
-            || matches!(comp, Composition::Suites { ref why } if why == "mode") && w.exists(&tree.join("Cargo.toml")) && !w.declares_build_tier(&tree)
+            || matches!(comp, Composition::Suites { ref why } if why == "mode") && w.exists(&tree.join("Cargo.toml")) && build_phase.is_none()
             || self.a.release_bins;
         if builds {
             match self.prepare_build_tree(&ctx, &tree, matches!(comp, Composition::Unit { .. })) {
@@ -946,6 +975,7 @@ impl<'w, W: World> Trial<'w, W> {
                     &mut self.s.build_timing,
                     &mut self.s.unit_timings,
                     &mut self.s.nextest_unreported,
+                    build_phase,
                 )
             };
             let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp);
@@ -1003,7 +1033,7 @@ impl<'w, W: World> Trial<'w, W> {
         // trial that judged nothing is never a PASS.
         // A tree declaring [tier.build] runs its gate in testenv: the fences print into the
         // tier's log, and testenv's rc is their verdict.
-        let fences = if !comp.suites_off() && w.declares_build_tier(&tree) {
+        let fences = if build_phase.is_some() {
             Vec::new()
         } else {
             fence::expected(&compose::gate_string(&comp, &cmd).0)
@@ -1135,7 +1165,7 @@ impl<'w, W: World> Trial<'w, W> {
         // gate.steps, or its column when it never adopted one. A base definition that does
         // not read leaves the base untested — whose fault the red is stays unestablished.
         // Under fences mode the base runs the same mode: its definition without its suites step.
-        let base_gate = match &base_def {
+        let base_gate = if testenv.is_some() { None } else { match &base_def {
             Ok(Resolved::Tree(d)) if fences_only => {
                 let f = d.fences_only(&reentry_reads);
                 Some((f.command(), Some(f)))
@@ -1143,12 +1173,12 @@ impl<'w, W: World> Trial<'w, W> {
             Ok(Resolved::Tree(d)) => Some((d.command(), Some(d.clone()))),
             Ok(Resolved::Column(c)) if fences_only => Some((compose::without_suites(c), None)),
             Ok(Resolved::Column(c)) => Some((c.clone(), None)),
-            Ok(Resolved::Refused { .. }) => None,
+            Ok(Resolved::Refused { .. } | Resolved::Testenv { .. }) => None,
             Err(e) => {
                 w.eprint(&format!("gate: {base}'s own {} does not read — no base trial: {e}", def::PATH));
                 None
             }
-        };
+        } };
         // THE BASE'S TOOLS ARE THE BASE'S, PROVABLY (sp-g9f3t): after the checkout, the gate
         // tree must hold the base's tree id, and the tools the steps read are keyed by it —
         // never the branch trial's build left in target/debug, never another tree's. One that
@@ -1168,6 +1198,53 @@ impl<'w, W: World> Trial<'w, W> {
                 }
             }
         });
+        // A TESTENV-GATED TRIAL'S BASE is the landing ref's own default tiers, through testenv in
+        // the image its declaration names — never a host command. A landing ref that does not
+        // declare them leaves the red the branch's own.
+        let base_testenv = match (&testenv, &base_def) {
+            (Some(_), Ok(Resolved::Testenv { tiers, .. })) => Some(tiers.clone()),
+            _ => None,
+        };
+        if base_testenv.is_some() {
+            match self.gate_at(&repo, &tree, &base_rev, &base_rev) {
+                Err(e) => w.eprint(&e),
+                Ok(()) => {
+                    let base_comp = Composition::Suites { why: "testenv".into() };
+                    let (r, o, ph) = run_composed(
+                        w,
+                        &tree,
+                        &base_comp,
+                        &env(&base_rev, "base trial — confirming whether base is independently red", &base_comp),
+                        &timeout,
+                        &limits,
+                        &mut self.s.test_secs,
+                        &cmd,
+                        None,
+                        jobs,
+                        &[],
+                        None,
+                        "base-",
+                        None,
+                        &mut |_, _| {},
+                        &mut None,
+                        &mut None,
+                        &mut false,
+                        Some(false),
+                    );
+                    base_tiers = take_tiers(w, tiers_file.as_deref());
+                    self.s.phases.extend(ph);
+                    if stall::is_stall(r, &o) {
+                        return stall_verdict(&self.s.phases, &o);
+                    }
+                    if r == 124 && by_deadline && last_phase_charged(&self.s.phases) {
+                        return killed_verdict(&self.s.phases, budget, deadline, self.s.test_secs, &cmd, &o);
+                    }
+                    base_rc = r;
+                    base_out = o;
+                    base_ran = r != 124 && r != NOVERDICT;
+                }
+            }
+        }
         if let (Some((base_cmd, bdef)), Some(base_tools)) = (base_gate.as_ref(), base_tools.as_ref()) {
             // A branch red before its suites step ran (a fence, the selector) is judged on the
             // base's fences only: the base's suites answer no question this red asks, and they
@@ -1216,6 +1293,7 @@ impl<'w, W: World> Trial<'w, W> {
                 &mut None,
                 &mut None,
                 &mut false,
+                None,
             );
             base_tiers = take_tiers(w, tiers_file.as_deref());
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
@@ -1258,7 +1336,9 @@ impl<'w, W: World> Trial<'w, W> {
         // suites the cache could not answer. A full cache hit skips the rerun entirely: a
         // flip-suspect (green in the cache, red on the branch) re-runs nothing extra.
         let mut absent: Vec<String> = Vec::new();
-        if base_ran {
+        if let Some(declared) = &base_testenv {
+            absent = parse::red_units(&out, &tiers).into_iter().filter(|u| !declared.contains(u)).collect();
+        } else if base_ran {
             let base_ran_set = parse::ran_suites(&base_out, &base_tiers);
             let cacheable = matches!(comp, Composition::Suites { .. });
             let mut image_tag: Option<String> = None;
@@ -1413,11 +1493,16 @@ impl<'w, W: World> Trial<'w, W> {
                 parse::tail_bytes(&base_out, 4000)));
         }
         let spaced = |v: &[String]| v.join(" ");
-        let attribution = parse::attribute((&out, &tiers), base_ran, base_rc, (&base_out, &base_tiers), &absent);
+        let attribution = if testenv.is_some() && base_testenv.is_none() {
+            Attribution::BranchRed(parse::red_units(&out, &tiers).into_iter().next().unwrap_or_else(|| "-".into()))
+        } else {
+            parse::attribute((&out, &tiers), base_ran, base_rc, (&base_out, &base_tiers), &absent)
+        };
         if matches!(attribution, Attribution::BaseRed(_)) {
             let reds = parse::red_suites(&base_out, &base_tiers);
             let timeouts = parse::timed_out_suites(&base_out);
-            let retryable = !reds.is_empty()
+            let retryable = base_testenv.is_none()
+                && !reds.is_empty()
                 && reds.iter().all(|s| {
                     !timeouts.contains(s) && w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}"))
                 });
@@ -1499,7 +1584,7 @@ impl<'w, W: World> Trial<'w, W> {
                 v(NOVERDICT, "base-timeout", format!(
                     "gate: {name}'s base trial timed out on {t}— no verdict for {br}.\ngate: a killed suite cannot prove the base is broken; retry when the box is quieter."))
             }
-            Attribution::BaseRed(_) if !parse::red_units(&out, &tiers).is_empty() => {
+            Attribution::BaseRed(_) if testenv.is_none() && !parse::red_units(&out, &tiers).is_empty() => {
                 let reds = parse::red_units(&out, &tiers);
                 let green: Vec<String> = parse::ran_suites(&out, &tiers).into_iter().filter(|x| !reds.contains(x)).collect();
                 self.s.pass_suites = if green.is_empty() { "-".into() } else { green.join(",") };
@@ -1972,12 +2057,13 @@ impl<'w, W: World> Trial<'w, W> {
             &self.s.repo_name
         };
         w.eprint(&format!(
-            "gate: VERDICT={} reason={} branch={} repo={} suite={}",
+            "gate: VERDICT={} reason={} branch={} repo={} suite={} ran={}",
             outcome(vd.status),
             vd.reason,
             self.a.branch,
             repo_name,
-            self.s.suite
+            self.s.suite,
+            self.s.ran
         ));
         if !self.s.replayed && crate::redcache::recordable(vd.status, &vd.reason) {
             self.record_red(&vd);
@@ -2374,6 +2460,11 @@ fn testenv_cmd(suites: Option<&str>, share: Option<(&str, bool)>, deadline: Opti
     testenv_call(&format!("{suites}{deadline}{share}"))
 }
 
+/// What a testenv-gated trial names itself in its key, messages and VERDICT line.
+fn testenv_text(tiers: &[String], build_tier: bool) -> String {
+    format!("testenv:{}{}", tiers.join(","), if build_tier { "+build" } else { "" })
+}
+
 /// The call that merges a kept share into the warm cache; it runs no tier and judges nothing.
 fn testenv_publish_cmd(share_key: &str) -> String {
     testenv_call(&format!("--share-publish {share_key} "))
@@ -2562,6 +2653,7 @@ pub fn run_composed<W: World>(
     timing: &mut Option<(crate::buildtiming::Build, String)>,
     unit: &mut Option<spira_config::unit_tier::UnitTimings>,
     unreported: &mut bool,
+    build_phase: Option<bool>,
 ) -> (i32, String, Vec<(String, u64)>) {
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
@@ -2633,19 +2725,19 @@ pub fn run_composed<W: World>(
     let proved = fences
         .filter(|_| comp.suites_off())
         .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
-    let declared = !comp.suites_off() && w.declares_build_tier(tree);
+    let declared = build_phase.is_some();
     let share_key: String = tree
         .file_name()
         .map_or("gate".into(), |n| n.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect());
     let cmd = if declared {
         let repo = env.iter().find(|(k, _)| k == "SPIRA_GATE_REPO_NAME").map_or("the repository", |(_, v)| v.as_str());
-        w.eprint(&format!("gate: {repo} declares [tier.build] in .spira/testenv.toml: the gate phase runs testenv's default tiers, not the repo-map gate column"));
+        w.eprint(&format!("gate: {repo} declares its tiers in {}: the gate phase runs testenv's default tiers, not the repo-map gate column", own::DECL));
         testenv_cmd(None, prefix.is_empty().then_some((share_key.as_str(), true)), Some(limits.budget))
     } else {
         cmd
     };
     let cmd = cmd.as_str();
-    if prefix.is_empty() && declared {
+    if prefix.is_empty() && build_phase == Some(true) {
         let build_cmd = testenv_cmd(Some("build"), Some((&share_key, true)), None);
         let (rc, out, wall) = go("build", env, &build_cmd, test_secs);
         phases.push(("build".to_string(), wall));
@@ -2819,9 +2911,13 @@ pub fn definition<W: World>(w: &W, repo: Option<&str>) -> Result<String, String>
         .ok_or_else(|| format!("cannot resolve the ref '{name}' lands on"))?;
     let root = PathBuf::from(root);
     let blob = w.show_blob(&root, &base, def::PATH);
-    match def::resolve_base(blob.as_deref(), &ctx.gate_cmd)? {
+    let local = ctx.land == spira_config::gate_source::QUEUE_LOCAL;
+    let decl = local.then(|| w.show_blob(&root, &base, own::DECL).map(|b| String::from_utf8_lossy(&b).into_owned())).flatten();
+    let side = def::Side { steps: blob.as_deref(), declaration: decl.as_deref(), containerfile: local && w.ls_tree_has(&root, &base, own::HARNESS_IMAGE) };
+    match def::resolve_base(side, &ctx.land, &ctx.gate_cmd)? {
         Resolved::Tree(d) => Ok(d.command()),
         Resolved::Column(c) => Ok(c),
+        Resolved::Testenv { .. } => Ok(testenv_cmd(None, None, None)),
         Resolved::Refused { why, .. } => Err(why),
     }
 }
