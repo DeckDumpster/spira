@@ -79,13 +79,11 @@ pub fn deliver_once(d: &Delivery, raw: &str) -> Result<bool, String> {
 /// The one mail saying his pass on a design page is done, delivered once per collection and version.
 pub fn publish_design(margin: &dyn Margin, d: &design_review::Record, delivery: &Delivery) -> Result<bool, String> {
     let info = margin.collection(&d.collection)?;
-    let mut his = 0;
-    for id in &info.threads {
-        let t = margin.thread(id)?;
-        if t.anchor.version == d.version && t.comments.first().is_some_and(|c| !c.by_agent()) {
-            his += 1;
-        }
-    }
+    let his = margin
+        .threads(&d.collection)?
+        .iter()
+        .filter(|t| t.document.version == d.version && t.comments.first().is_some_and(|c| !c.by_agent()))
+        .count();
     let at = info.published_at_ms.unwrap_or(d.posted_at_ms);
     let page = header_text(&d.page);
     let raw = format!(

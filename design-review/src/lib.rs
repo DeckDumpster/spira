@@ -186,7 +186,11 @@ fn post(page: Option<&String>, ports: &Ports) -> Outcome {
                 Ok(c) => c,
                 Err(e) => return refuse(1, &e),
             };
-            let Some(d) = c.documents.first() else { return refuse(1, "the reader returned a collection with no document") };
+            let info = match ports.margin.collection(&c.id) {
+                Ok(i) => i,
+                Err(e) => return refuse(1, &e),
+            };
+            let Some(d) = info.documents.first() else { return refuse(1, "the reader returned a collection with no document") };
             let r = Record { page: page.clone(), collection: c.id, document: d.id.clone(), version: d.version, url: c.url, sha256: sha, state: "open".into(), posted_at_ms: ports.clock.now_ms() };
             match save(&ports.run_dir, &r) {
                 Ok(()) => out(format!("{}\n", r.url)),
@@ -214,11 +218,11 @@ fn reply(page: Option<&String>, thread: Option<&String>, ports: &Ports) -> Outco
         Ok(r) => r,
         Err(o) => return o,
     };
-    let t = match ports.margin.thread(thread) {
+    let t = match ports.margin.thread(&r.collection, thread) {
         Ok(t) => t,
         Err(e) => return refuse(1, &e),
     };
-    if t.anchor.document != r.document {
+    if t.document.id != r.document {
         return refuse(2, &format!("thread {thread} is not on {}", r.page));
     }
     match ports.margin.post_comment(&r.collection, &t.anchor, &ports.stdin, false, Some(thread)) {

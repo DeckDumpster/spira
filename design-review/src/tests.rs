@@ -83,7 +83,7 @@ fn a_page_outside_the_wiki_or_missing_exits_2_naming_the_path() {
 fn an_empty_reply_exits_2_and_a_reply_is_posted_unheld_in_the_thread() {
     let f = fx();
     go(&f, &["post", "--page", PAGE], "cover");
-    let a = margin_client::Anchor { document: "col1-d1".into(), version: 1, first: 1, last: 1 };
+    let a = margin_client::Anchor { path: PAGE.into(), first: 1, last: 1 };
     let t = f.fake.his_thread("col1", a, "q", 1);
     assert_eq!(go(&f, &["reply", "--page", PAGE, "--thread", &t], "").code, 2);
     assert!(f.fake.comments_posted().is_empty());
@@ -114,7 +114,11 @@ fn a_reply_names_a_thread_of_this_page_and_a_posted_page_and_help_lists_every_ve
     assert_eq!(go(&f, &["reply", "--page", PAGE], "a").code, 2, "no thread");
     assert_eq!(go(&f, &["reply", PAGE], "a").code, 2);
     assert_eq!(go(&f, &["close", PAGE], "").code, 2);
-    let other = f.fake.his_thread("col1", margin_client::Anchor { document: "elsewhere".into(), version: 1, first: 1, last: 1 }, "q", 1);
+    let docs = ["a", "b"].map(|n| Doc { path: format!("wiki/projects/p/designs/{n}.md"), kind: "prose".into(), text: n.into() });
+    f.fake.post_collection("two", "c", &docs).unwrap();
+    let r = Record { page: PAGE.into(), collection: "col2".into(), document: "col2-d2".into(), version: 1, url: "u".into(), sha256: "s".into(), state: "open".into(), posted_at_ms: 1 };
+    save(&f.dir.path().join("run"), &r).unwrap();
+    let other = f.fake.his_thread("col2", margin_client::Anchor { path: docs[0].path.clone(), first: 1, last: 1 }, "q", 1);
     let o = go(&f, &["reply", "--page", PAGE, "--thread", &other], "a");
     assert_eq!(o.code, 2, "{}", o.stderr);
     assert!(f.fake.comments_posted().is_empty());
