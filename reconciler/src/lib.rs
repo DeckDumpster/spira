@@ -3294,9 +3294,9 @@ mod tests {
         let (mut cfg, _host, _dir) = stranded_world("stranded-nohost", &[]);
         cfg.host = None;
         cfg.seams.forge = "false".into();
-        assert!(cfg.stranded_runners(Path::new("/r")).is_err());
+        assert!(cfg.stranded_runners(Path::new("r")).is_err());
         cfg.seams.forge = "echo".into();
-        assert_eq!(cfg.stranded_runners(Path::new("/r")).unwrap(), "stranded-runners /r\n");
+        assert_eq!(cfg.stranded_runners(Path::new("r")).unwrap(), "stranded-runners r\n");
     }
 
     #[test_id(ttz1ba1)]
