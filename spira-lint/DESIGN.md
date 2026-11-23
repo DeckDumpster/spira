@@ -644,11 +644,11 @@ every file, socket, process, lock or sleep it would make is dispatched through
 `runtime::offload` and the loop only awaits the result. One stalled call stops every turn,
 the watchdog kick included.
 
-**Scope.** `runtime/src/**/*.rs` and `spira-runtime/src/**/*.rs`, test code as `tmp-leak`
+**Scope.** `runtime/src/**/*.rs`, `spira-runtime/src/**/*.rs` and `spira-lc/src/serve_loop.rs`, test code as `tmp-leak`
 defines it skipped. Three regions are judged:
 - (a) the body of every `async fn` and every `async {}` / `async move {}` block;
 - (b) the loop modules, whole file: `runtime/src/host.rs`, `spira-runtime/src/notify.rs`,
-  `spira-runtime/src/main.rs`;
+  `spira-runtime/src/main.rs`, `spira-lc/src/serve_loop.rs`;
 - (c) the handler modules, whole file: `spira-runtime/src/watchers/**`,
   `runtime/src/heartbeat.rs`, `runtime/src/engine.rs`.
 

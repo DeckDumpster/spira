@@ -26,6 +26,8 @@ struct Server {
     socket: std::path::PathBuf,
     loop_socket: std::path::PathBuf,
     pid: u32,
+    toml: std::path::PathBuf,
+    home: std::path::PathBuf,
     _dir: testkit::TempDir,
 }
 
@@ -74,7 +76,7 @@ fn start_server() -> Server {
     }
     std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
     let pid = child.id();
-    Server { child, socket, loop_socket, pid, _dir: dir }
+    Server { child, socket, loop_socket, pid, toml, home, _dir: dir }
 }
 
 fn argv(words: &[&str]) -> Vec<String> {
@@ -148,4 +150,33 @@ fn fifty_concurrent_loop_clients_leave_the_thread_names_as_they_were_at_ready() 
     });
     let after = thread_names(server.pid);
     assert_eq!(after, at_ready, "the loop's clients changed the server's threads");
+}
+
+
+#[test_id(t1ct6bp)]
+#[test]
+fn serve_bench_reports_both_servers_answers_per_second_and_p99_as_json() {
+    let server = with_a_bead();
+    let out = Command::new(testkit::bin_exe("spira-lc"))
+        .args(["serve-bench", "--socket"])
+        .arg(&server.socket)
+        .arg("--loop-socket")
+        .arg(&server.loop_socket)
+        .args(["--clients", "2", "--secs", "1"])
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("SPIRA_TOML", &server.toml)
+        .env("SPIRA_HOME", &server.home)
+        .env("SPIRA_RELEASE", server._dir.join("release"))
+        .env("HOME", server._dir.join("home"))
+        .output()
+        .expect("serve-bench runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("one JSON document");
+    assert_eq!(report["beads"], 1);
+    for label in ["server", "loop"] {
+        assert!(report[label]["answers"].as_u64().unwrap() > 0, "{label}: {report}");
+        assert_eq!(report[label]["failures"], 0, "{label}: {report}");
+        assert!(report[label]["per_sec"].as_f64().unwrap() > 0.0 && report[label]["p99_ms"].as_f64().unwrap() > 0.0, "{label}: {report}");
+    }
 }

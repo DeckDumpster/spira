@@ -1083,6 +1083,88 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "serve-bench: answers per second, the main socket against the loop socket",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 113,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max(spira_lc_bench_server_answers_per_second)",
+          "legendFormat": "main socket",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max(spira_lc_bench_loop_answers_per_second)",
+          "legendFormat": "loop socket",
+          "refId": "B"
+        }
+      ]
+    },
+{
+      "id": 31,
+      "type": "timeseries",
+      "title": "serve-bench: p99 latency, the main socket against the loop socket",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 113,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max(spira_lc_bench_server_p99_seconds)",
+          "legendFormat": "main socket",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max(spira_lc_bench_loop_p99_seconds)",
+          "legendFormat": "loop socket",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }

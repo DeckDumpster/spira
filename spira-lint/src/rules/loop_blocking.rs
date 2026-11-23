@@ -23,7 +23,7 @@ pub struct LoopBlocking;
 const NAME: &str = "loop-blocking";
 const ALLOW_FILE: &str = "spira-lint/loop-blocking-allow";
 const OFFLOAD_FILE: &str = "runtime/src/offload.rs";
-const LOOP_MODULES: &[&str] = &["runtime/src/host.rs", "spira-runtime/src/notify.rs", "spira-runtime/src/main.rs"];
+const LOOP_MODULES: &[&str] = &["runtime/src/host.rs", "spira-runtime/src/notify.rs", "spira-runtime/src/main.rs", "spira-lc/src/serve_loop.rs"];
 const HANDLER_MODULES: &[&str] = &["spira-runtime/src/watchers/", "runtime/src/heartbeat.rs", "runtime/src/engine.rs"];
 
 fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
@@ -58,7 +58,7 @@ fn kind_of(path: &str) -> Kind {
 }
 
 fn in_scope(path: &str) -> bool {
-    (path.starts_with("runtime/src/") || path.starts_with("spira-runtime/src/")) && path.ends_with(".rs")
+    (path.starts_with("runtime/src/") || path.starts_with("spira-runtime/src/") || path == "spira-lc/src/serve_loop.rs") && path.ends_with(".rs")
 }
 
 /// The index of the bracket closing the one at `open`, over code-only bytes.
@@ -350,5 +350,15 @@ mod tests {
         assert_eq!(hits(planted), 1, "the matcher can find an offender");
         let pooled = "async fn a() { let _ = on_pool(\"w\", Arc::new(|| std::fs::read(\"x\"))).await; }";
         assert_eq!(hits(pooled), 0);
+    }
+
+    #[test_id(ta8nand)]
+    #[test]
+    fn the_lc_loop_server_is_judged_whole_file_as_a_loop_module() {
+        let offender = b"fn tick() {\n    let _ = std::fs::read(\"x\");\n}\n";
+        assert!(in_scope("spira-lc/src/serve_loop.rs"));
+        assert!(!in_scope("spira-lc/src/serve.rs"));
+        assert_eq!(scan("spira-lc/src/serve_loop.rs", offender, &|_| false).len(), 1);
+        assert!(scan("spira-lc/src/serve.rs", offender, &|_| false).is_empty());
     }
 }
