@@ -351,10 +351,10 @@ pub fn run(args: &[String]) -> i32 {
             let snapshotter = shipping.snapshotter.clone();
             let every = shipping.every;
             std::thread::spawn(move || loop {
-                std::thread::sleep(every);
                 if let Err(e) = snapshotter.step() {
                     eprintln!("spira-lc serve: snapshot: {e}");
                 }
+                std::thread::sleep(every);
             });
             std::thread::spawn(move || {
                 let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();

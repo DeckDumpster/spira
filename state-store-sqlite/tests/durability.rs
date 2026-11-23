@@ -1020,11 +1020,11 @@ fn a_forced_snapshot_during_a_scheduled_one_waits_and_then_stages_runs_after_its
         done_tx.send(()).unwrap();
         (s, t)
     });
-    assert!(done.recv_timeout(Duration::from_millis(300)).is_err(), "the forced snapshot waits for the scheduled copy");
-    // The forced copy enters the hook only after the scheduled one releases its lock.
+    assert!(entered.recv_timeout(Duration::from_millis(300)).is_err(), "the forced copy does not begin while the scheduled one is held");
     release.send(()).unwrap();
-    release.send(()).ok();
     let rev = stepper.join().unwrap().expect("the scheduled snapshot landed");
+    entered.recv_timeout(BOUND).expect("the forced copy began after the scheduled one finished");
+    release.send(()).unwrap();
     done.recv_timeout(BOUND).expect("the tick finished after the release");
     let (mut s, t) = ticker.join().unwrap();
     assert_eq!(t.snapshot, None, "the forced snapshot was at the scheduled one's revision: dropped");
