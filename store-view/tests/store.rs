@@ -199,9 +199,9 @@ fn a_view_refuses_before_its_first_load_and_once_its_revision_is_stale_until_the
         w.p.poll().unwrap();
         w.advance(Duration::from_millis(1400));
         assert_eq!(w.p.ready_counts().unwrap().rev, 4);
-        w.advance(Duration::from_millis(200));
+        w.advance(Duration::from_millis(30_200));
         for refusal in [w.p.batch_view("spira").err(), w.p.round_view("spira").err(), w.p.ready_counts().err()] {
-            assert!(matches!(&refusal, Some(LcError::Refused(m)) if m.starts_with("stale past 1500ms")), "{refusal:?}");
+            assert!(matches!(&refusal, Some(LcError::Refused(m)) if m.starts_with("stale past 31500ms")), "{refusal:?}");
         }
         assert!(w.p.poll().is_err(), "a watch with no answer");
         assert!(w.p.ready_counts().is_err(), "a failed poll confirms nothing");
