@@ -8,13 +8,15 @@
 //!
 //! ## Tick
 //!
-//! - `Timer` every 1 s; single-flight.
+//! - A tick runs when the store reports a request change, and at the time a running request goes
+//!   stale (`Due`); it does not poll. Single-flight.
 //!
 //! ## Observe
 //!
-//! `broker.exec.observe` returns `Snapshot { queued, stale }`: the queued requests, and the running
+//! `broker.exec.observe` returns `Snapshot { queued, stale, next_stale_at }`: the queued requests, and the running
 //! ones whose bound and a grace have passed with no answer recorded (the scheduler restarted while
 //! their runner was alive, or the runner was lost). Each entry carries its id and its verb's bound.
+//! `next_stale_at` is the earliest time a running request not yet stale becomes so.
 //!
 //! ## Decide
 //!
@@ -78,6 +80,7 @@ pub struct Entry {
 pub struct Snapshot {
     pub queued: Vec<Entry>,
     pub stale: Vec<Entry>,
+    pub next_stale_at: Option<u64>,
 }
 
 /// What `run` takes: one request, and whether it is a stale running one.
@@ -110,12 +113,11 @@ pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<Str
     let entry = |r: &serde_json::Value| Entry { id: r["id"].as_str().unwrap_or("").to_string(), bound_ms: r["bound_ms"].as_u64().unwrap_or(0) };
     let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
     let queued = listed("queued")?.iter().map(entry).collect();
-    let stale = listed("running")?
-        .iter()
-        .filter(|r| r["started_at"].as_u64().unwrap_or(0).saturating_mul(1000).saturating_add(r["bound_ms"].as_u64().unwrap_or(0)).saturating_add(STALE_GRACE_MS) < now_ms)
-        .map(entry)
-        .collect();
-    serde_json::to_string(&Snapshot { queued, stale }).map_err(|e| e.to_string())
+    let running = listed("running")?;
+    let stale_at = |r: &serde_json::Value| r["started_at"].as_u64().unwrap_or(0).saturating_mul(1000).saturating_add(r["bound_ms"].as_u64().unwrap_or(0)).saturating_add(STALE_GRACE_MS);
+    let stale = running.iter().filter(|r| stale_at(r) < now_ms).map(entry).collect();
+    let next_stale_at = running.iter().map(stale_at).filter(|at| *at >= now_ms).min();
+    serde_json::to_string(&Snapshot { queued, stale, next_stale_at }).map_err(|e| e.to_string())
 }
 
 /// Takes the request and runs its `work-exec`; see the contract.
@@ -189,7 +191,11 @@ impl Handler for BrokerExec {
         if ev.kind.tag == TICK {
             return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
-        pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &Ok::<(), String>(()), |_: &(), snap: &Snapshot, _, _: &()| ((), decide(snap)))
+        let mut cmds = pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &Ok::<(), String>(()), |_: &(), snap: &Snapshot, _, _: &()| ((), decide(snap)));
+        if let Some(at) = pattern::answer::<Snapshot>(view, ev, OBSERVE).and_then(|s| s.next_stale_at) {
+            cmds.push(Command::Due { at });
+        }
+        cmds
     }
 }
 
@@ -205,7 +211,7 @@ mod tests {
     #[test_id(t4d3gdy)]
     #[test]
     fn each_queued_request_is_one_effect_keyed_on_its_id_with_the_verbs_bound() {
-        let specs = decide(&Snapshot { queued: vec![entry("wr-1"), entry("wr-2")], stale: vec![] });
+        let specs = decide(&Snapshot { queued: vec![entry("wr-1"), entry("wr-2")], ..Snapshot::default() });
         assert_eq!(specs.iter().map(|s| s.key.as_str()).collect::<Vec<_>>(), ["broker.exec:wr-1", "broker.exec:wr-2"]);
         assert!(specs.iter().all(|s| s.name == RUN && s.deadline_ms == 300_000 + MARGIN_MS));
     }
@@ -213,7 +219,7 @@ mod tests {
     #[test_id(t6a17xw)]
     #[test]
     fn a_stale_running_request_gets_its_own_key_so_it_never_shares_the_queued_ones_ledger() {
-        let specs = decide(&Snapshot { queued: vec![], stale: vec![entry("wr-3")] });
+        let specs = decide(&Snapshot { stale: vec![entry("wr-3")], ..Snapshot::default() });
         assert_eq!(specs[0].key, "broker.exec:wr-3:stale");
         assert!(serde_json::from_str::<Job>(&specs[0].input).unwrap().stale);
     }
@@ -315,5 +321,26 @@ mod tests {
         run_job(&lc.client, &Job { stale: true, ..job() }, &|_, _| panic!("a stale request runs nothing")).unwrap();
         assert_eq!(finished(&lc).len(), 1);
         assert!(lc.seen.lock().unwrap().iter().all(|a| a.get(1).map(String::as_str) != Some("take")));
+    }
+
+    #[test_id(tppxw6l)]
+    #[test]
+    fn a_running_request_not_yet_stale_makes_the_tick_due_when_it_will_be() {
+        use runtime::ports::VirtualClock;
+        use runtime::{Engine, Executor, MemJournal, Outcome};
+        let clock = VirtualClock::new(0);
+        let reg = BrokerExec.registration().with_wake(Wake { reads: vec!["work-requests/"], min_gap_ms: CADENCE_MS, polls: false });
+        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![reg], 1).unwrap().with_sweep(60_000, std::sync::Arc::new(runtime::changes::ScriptedChanges::default()));
+        let (_, stream, kind) = BrokerExec::boot();
+        e.start(stream, kind);
+        e.run_until_idle().unwrap();
+        let probe = e.pending_effects().into_iter().find(|p| p.spec.name == OBSERVE).expect("the boot tick observes").key;
+        let snap = Snapshot { next_stale_at: Some(45_000), ..Snapshot::default() };
+        assert!(e.complete(&probe, Outcome::Succeeded(serde_json::to_string(&snap).unwrap())).unwrap());
+        e.run_until_idle().unwrap();
+        assert_eq!(e.next_timer_at(), Some(45_000), "the due time, ahead of the sweep at 60 s and with no 1 s poll");
+        clock.advance(45_000);
+        e.run_until_idle().unwrap();
+        assert!(e.pending_effects().iter().any(|p| p.spec.name == OBSERVE), "the tick ran at its due time and looked again");
     }
 }

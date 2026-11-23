@@ -160,6 +160,20 @@ pub enum Command {
     Probe(EffectSpec),
     /// One pending timer per (stream, tag): arming it again replaces the one waiting.
     Timer { at: u64, kind: EventKind },
+    /// Run this task's tick no later than `at`. The earliest per stream wins and it clears when
+    /// the stream's tick dispatches; without a sweep it is ignored.
+    Due { at: u64 },
+}
+
+/// What a store-reading task declares so the engine wakes it on a change rather than a poll.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Wake {
+    /// Key prefixes of the store the task reads; a `store.changed` naming one wakes it.
+    pub reads: Vec<&'static str>,
+    /// The shortest time between two of its ticks, wake or not.
+    pub min_gap_ms: u64,
+    /// `true` when the task also reads what no store change reports, so its own timer stands.
+    pub polls: bool,
 }
 
 /// What a handler may read besides the event: time and randomness, both pinned to the
@@ -333,6 +347,7 @@ pub struct Registration {
     /// How the task's carry is kept: one row per irreducible fact, rather than the whole carry
     /// under one key. `None` keeps the whole carry.
     pub rows: Option<RowCodec>,
+    pub wake: Option<Wake>,
 }
 
 /// A task's carry as keyed rows. `split` names the irreducible facts of a carry body, one row
@@ -352,7 +367,7 @@ impl Registration {
     /// In `Act` on the `Work` plane; a service takes the mode of every task from its configured
     /// table and the plane from its task row.
     pub fn new(name: &str, handler: impl Handler + 'static) -> Self {
-        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![], rows: None }
+        Registration { name: name.into(), handler: Box::new(handler), mode: Mode::Act, plane: Plane::Work, signal_effects: vec![], effects: vec![], rows: None, wake: None }
     }
 
     pub fn with_mode(mut self, mode: Mode) -> Self {
@@ -378,6 +393,11 @@ impl Registration {
     /// The effects the task declares, listed in `status` with their planes.
     pub fn with_effects(mut self, names: &[&'static str]) -> Self {
         self.effects = names.to_vec();
+        self
+    }
+
+    pub fn with_wake(mut self, wake: Wake) -> Self {
+        self.wake = Some(wake);
         self
     }
 

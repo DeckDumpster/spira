@@ -465,7 +465,7 @@ pub fn a_watch_on_a_quiet_prefix_returns_progress_rev<R: Rig>(rig: &R) {
     let c = open(rig.fresh(), &clock);
     let r = put(&c, "q/a", obj(json!(1)), "1");
     put(&c, "elsewhere", obj(json!(1)), "2");
-    let got = while_time_passes(&c, &clock, || c.watch("q/", r, 2_500));
+    let got = while_time_passes(&c, &clock, || c.watch("q/", r, 30_000));
     assert_eq!(
         got.unwrap(),
         Watched::Progress {
@@ -473,10 +473,10 @@ pub fn a_watch_on_a_quiet_prefix_returns_progress_rev<R: Rig>(rig: &R) {
         }
     );
     assert_eq!(
-        c.watch("q/", r, 2_501),
+        c.watch("q/", r, 30_001),
         Err(Error::WaitTooLong {
-            max_ms: 2_500,
-            got_ms: 2_501
+            max_ms: 30_000,
+            got_ms: 30_001
         })
     );
 }

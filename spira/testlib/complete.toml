@@ -136,6 +136,7 @@ runtime_design_asks_secs = 600
 runtime_supersede_duty_secs = 60
 runtime_claim_count_secs = 60
 claim_page_every = 4
+runtime_sweep_secs = 60
 runtime_bead_sweep_secs = 1800
 bead_sweep_hold_min = 120
 bead_sweep_rework_min = 20

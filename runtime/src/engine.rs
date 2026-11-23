@@ -14,6 +14,7 @@ use crate::event::*;
 use crate::journal::{is_outcome, EffectRow, Journal, Poison, ScheduleRow, StateRow, Turn, CARRY_KEY, HALTED_KEY, HELD_KEY, SCHEDULER_TASK};
 use crate::marker::{Mark, Marker, NullMarker};
 use crate::offload::Busy;
+use crate::changes::Changes;
 use crate::ports::Clock;
 use crate::scheduler::Scheduler;
 use crate::wide::{Fields, NullSink, TurnRss, Value, Wide, WideSink};
@@ -162,6 +163,8 @@ pub struct TaskStatus {
     pub in_flight: Vec<String>,
     /// Runs begun by an event of this wake, counting the events that started a run and not those it derived.
     pub runs_by_wake: BTreeMap<String, u64>,
+    /// Sweep-woken runs that went on to admit an act: the work a swallowed wake-up left behind.
+    pub sweep_found: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -206,6 +209,26 @@ struct Track {
     outcome: Option<LastOutcome>,
     commands: Option<FireCommands>,
     runs_by_wake: BTreeMap<String, u64>,
+    sweep_found: u64,
+}
+
+/// A task that declared its reads: what the engine knows of its tick, once the tick has run.
+struct Ticking {
+    wake: crate::event::Wake,
+    stream: Option<StreamKey>,
+    tag: String,
+    body: String,
+    last_tick_at: u64,
+    last_rev: Option<u64>,
+    signal_at: Option<u64>,
+    due_at: Option<u64>,
+}
+
+/// The in-process sweep: every `every_ms`, run the ticks of tasks whose reads moved unseen.
+struct Sweep {
+    every_ms: u64,
+    changes: Arc<dyn Changes>,
+    at: u64,
 }
 
 pub trait Executor {
@@ -293,6 +316,17 @@ pub struct Engine {
     wake_order: VecDeque<EventId>,
     /// The tick each stream was booted with: its later fires are sweeps.
     boot_tags: BTreeMap<String, String>,
+    ticking: BTreeMap<String, Ticking>,
+    sweep: Option<Sweep>,
+    /// The sweep-woken run each event belongs to, and the runs already counted as having found work.
+    sweep_run: BTreeMap<EventId, EventId>,
+    sweep_counted: BTreeSet<EventId>,
+}
+
+impl Ticking {
+    fn pending_at(&self) -> Option<u64> {
+        self.signal_at.into_iter().chain(self.due_at).min()
+    }
 }
 
 /// What a whole-carry row holds once its task is kept as rows: no events.
@@ -372,6 +406,7 @@ impl Engine {
     /// for an outcome and the schedule rows not yet fired. No event is replayed.
     pub fn open_with(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64, retry: BootRetry) -> Result<Self> {
         let codecs = regs.iter().filter_map(|r| r.rows.map(|c| (r.name.clone(), c))).collect();
+        let ticking = regs.iter().filter_map(|r| r.wake.clone().map(|wake| (r.name.clone(), Ticking { wake, stream: None, tag: String::new(), body: String::new(), last_tick_at: 0, last_rev: None, signal_at: None, due_at: None }))).collect();
         let mut e = Engine {
             journal,
             clock,
@@ -428,6 +463,10 @@ impl Engine {
             wakes: BTreeMap::new(),
             wake_order: VecDeque::new(),
             boot_tags: BTreeMap::new(),
+            ticking,
+            sweep: None,
+            sweep_run: BTreeMap::new(),
+            sweep_counted: BTreeSet::new(),
         };
         let boot = retry.read(e.clock.as_ref(), || e.journal.boot())?;
         let mut legacy: BTreeMap<String, StateRow> = BTreeMap::new();
@@ -521,6 +560,15 @@ impl Engine {
         self
     }
 
+    /// Turns on the wake mechanism: a task with a [`crate::event::Wake`] runs when a
+    /// `store.changed` names a key it reads, and every `every_ms` the engine runs, in memory,
+    /// the ones whose reads moved since their last tick. Without it every task runs as today.
+    pub fn with_sweep(mut self, every_ms: u64, changes: Arc<dyn Changes>) -> Self {
+        let at = self.clock.now_ms().saturating_add(every_ms);
+        self.sweep = Some(Sweep { every_ms, changes, at });
+        self
+    }
+
     /// Receives `status()` at the end of every `run_until_idle`.
     pub fn with_status_board(mut self, board: Arc<StatusBoard>) -> Self {
         self.board = Some(board);
@@ -556,11 +604,12 @@ impl Engine {
                     last_fired_at: t.and_then(|t| t.fired_at),
                     last_due_at: t.and_then(|t| t.due_at),
                     lag_ms: t.and_then(|t| Some(t.fired_at?.saturating_sub(t.due_at?))),
-                    next_due_at: rows.iter().filter(|row| interests.contains(&row.kind.tag.as_str())).map(|row| row.at).min(),
+                    next_due_at: rows.iter().filter(|row| interests.contains(&row.kind.tag.as_str())).map(|row| row.at).chain(self.ticking.get(&r.name).filter(|t| t.stream.is_some()).and_then(|t| t.pending_at())).chain(self.ticking.get(&r.name).filter(|t| !t.wake.polls).and_then(|_| self.sweep.as_ref().map(|w| w.at))).min(),
                     last_outcome: t.and_then(|t| t.outcome),
                     last_commands: t.and_then(|t| t.commands),
                     in_flight: self.pending.keys().filter(|k| self.owners.get(*k) == Some(&r.name)).cloned().collect(),
                     runs_by_wake: t.map(|t| t.runs_by_wake.clone()).unwrap_or_default(),
+                    sweep_found: t.map_or(0, |t| t.sweep_found),
                 }
             })
             .collect();
@@ -798,7 +847,8 @@ impl Engine {
 
     pub fn next_timer_at(&self) -> Option<u64> {
         let deadline = self.running_deadlines().map(|(d, _)| d).min();
-        let timer = self.timers.values().map(|r| r.at).min();
+        let wakes = self.sweep.as_ref().map(|w| w.at).into_iter().chain(self.ticking.values().filter(|t| t.stream.is_some()).flat_map(|t| t.signal_at.into_iter().chain(t.due_at)));
+        let timer = self.timers.values().map(|r| r.at).chain(wakes).min();
         match (self.scheduler.next_at().into_iter().chain(timer).min(), deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -816,11 +866,16 @@ impl Engine {
     }
 
     fn set_wake(&mut self, id: &EventId, wake: Wake, root: bool) {
+        if root && wake == Wake::Sweep {
+            self.sweep_run.insert(id.clone(), id.clone());
+        }
         if self.wakes.insert(id.clone(), (wake, root)).is_none() {
             self.wake_order.push_back(id.clone());
             if self.wake_order.len() > WAKES_KEEP {
                 if let Some(old) = self.wake_order.pop_front() {
                     self.wakes.remove(&old);
+                    self.sweep_run.remove(&old);
+                    self.sweep_counted.remove(&old);
                 }
             }
         }
@@ -829,6 +884,9 @@ impl Engine {
     fn inherit_wake(&mut self, id: &EventId, cause: &EventId) {
         let (wake, _) = self.wake_of(cause);
         self.set_wake(id, wake, false);
+        if let Some(run) = self.sweep_run.get(cause).cloned() {
+            self.sweep_run.insert(id.clone(), run);
+        }
     }
 
     /// An event the memory forgot is a signal that began no run of its own.
@@ -908,6 +966,7 @@ impl Engine {
                     let e = if mode == Mode::Act {
                         let e = self.append_derived(id, &stream, kind, ev, ev.at)?;
                         self.set_wake(&e.id, Wake::Signal, true);
+                        self.found_work(ev, handler);
                         e
                     } else {
                         let body = serde_json::to_string(&ShadowedEmit { stream, kind }).map_err(|e| RuntimeError::new(e.to_string()))?;
@@ -927,7 +986,10 @@ impl Engine {
                 }
                 Command::Effect(spec) if mode == Mode::Act => {
                     match self.request(handler, &ev.stream, id, spec, ev, ev.at)? {
-                        Some(req) => self.wrote(own, req, false),
+                        Some(req) => {
+                            self.found_work(ev, handler);
+                            self.wrote(own, req, false)
+                        }
                         None => *admitted -= 1,
                     }
                 }
@@ -935,6 +997,7 @@ impl Engine {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at, task: Some(handler.into()) }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let req = self.append_derived(id, &ev.stream, EventKind::new(EFFECT_SHADOWED, &body), ev, ev.at)?;
+                    self.found_work(ev, handler);
                     self.wrote(own, req, false);
                 }
                 Command::Schedule { at, kind } => {
@@ -942,6 +1005,7 @@ impl Engine {
                     self.turn.schedules.retain(|r| r.id != row.id);
                     self.turn.schedules.push(row.clone());
                     self.scheduler.insert(row);
+                    self.found_work(ev, handler);
                 }
                 Command::Note(kind) => {
                     self.carry(handler, &ev.stream, &kind);
@@ -960,12 +1024,112 @@ impl Engine {
                     self.track_effect(&req)?;
                 }
                 Command::Timer { at, kind } => {
+                    if self.sweep.is_some() {
+                        if let Some(t) = self.ticking.get_mut(handler).filter(|t| t.stream.as_ref() == Some(&ev.stream) && t.tag == kind.tag) {
+                            t.body = kind.body.clone();
+                            if !t.wake.polls {
+                                continue;
+                            }
+                        }
+                    }
                     let id = format!("{}/{}", ev.stream.0, kind.tag);
                     self.timers.insert(id.clone(), ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() });
+                }
+                Command::Due { at } => {
+                    if self.sweep.is_some() {
+                        if let Some(t) = self.ticking.get_mut(handler).filter(|t| t.stream.as_ref() == Some(&ev.stream)) {
+                            let at = at.max(self.clock.now_ms().saturating_add(1));
+                            t.due_at = Some(t.due_at.map_or(at, |d| d.min(at)));
+                        }
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Counts the run `ev` belongs to once, when the sweep began it and it has now admitted an act.
+    fn found_work(&mut self, ev: &Event, handler: &str) {
+        if let Some(run) = self.sweep_run.get(&ev.id).cloned() {
+            if self.sweep_counted.insert(run) {
+                self.tracks.entry(handler.into()).or_default().sweep_found += 1;
+            }
+        }
+    }
+
+    /// The tick of a task that declared its reads, when `ev` is it: what the engine remembers of the run.
+    fn note_tick(&mut self, name: &str, ev: &Event) {
+        if self.sweep.is_none() || self.boot_tags.get(&ev.stream.0) != Some(&ev.kind.tag) {
+            return;
+        }
+        let (now, rev) = (self.clock.now_ms(), self.sweep.as_ref().and_then(|w| w.changes.rev()));
+        if let Some(t) = self.ticking.get_mut(name) {
+            if t.stream.is_none() {
+                t.body = ev.kind.body.clone();
+            }
+            t.stream = Some(ev.stream.clone());
+            t.tag = ev.kind.tag.clone();
+            (t.last_tick_at, t.last_rev, t.signal_at, t.due_at) = (now, rev, None, None);
+        }
+    }
+
+    /// A `store.changed` arms the tick of each task that reads a key it names.
+    fn wake_on_change(&mut self, ev: &Event) {
+        if self.sweep.is_none() {
+            return;
+        }
+        let Some(change) = StoreChanged::parse(&ev.kind.body) else { return };
+        let now = self.clock.now_ms();
+        for t in self.ticking.values_mut() {
+            let hit = change.reload || change.keys.iter().any(|k| t.wake.reads.iter().any(|p| k.starts_with(p)));
+            if t.stream.is_some() && hit && t.signal_at.is_none() {
+                t.signal_at = Some(now.max(t.last_tick_at.saturating_add(t.wake.min_gap_ms)));
+            }
+        }
+    }
+
+    /// Queues the tick of `name` as a run begun by `wake`, at `at`.
+    fn wake_tick(&mut self, name: &str, wake: Wake, at: u64) {
+        let Some(t) = self.ticking.get_mut(name) else { return };
+        let Some(stream) = t.stream.clone() else { return };
+        let (tag, body) = (t.tag.clone(), t.body.clone());
+        (t.signal_at, t.due_at) = (None, None);
+        let id = format!("{}/{tag}", stream.0);
+        let correlation = CorrelationId(derive_id(format!("wake/{id}/{at}")));
+        let row = ScheduleRow { id, at, stream: stream.clone(), kind: EventKind::new(&tag, &body), cause: None, correlation: correlation.clone() };
+        let ev = Event { correlation, ..self.local_event(&stream, row.kind.clone(), at, None) };
+        self.set_wake(&ev.id, wake, true);
+        self.tick_of.insert(ev.id.clone(), row);
+        self.enqueue_local(ev);
+    }
+
+    /// Runs the tick of each declared task whose wake or due time has come, then the sweep.
+    fn fire_wakes(&mut self, now: u64) -> usize {
+        let mut fired = 0;
+        let names: Vec<String> = self.ticking.keys().cloned().collect();
+        if self.sweep.is_some() {
+            for name in &names {
+                let t = &self.ticking[name];
+                let (signal, due) = (t.signal_at.filter(|a| *a <= now), t.due_at.filter(|a| *a <= now));
+                if t.stream.is_some() && (signal.is_some() || due.is_some()) {
+                    let (wake, at) = if let Some(a) = signal { (Wake::Signal, a) } else { (Wake::Timer, due.unwrap_or(now)) };
+                    self.wake_tick(name, wake, at);
+                    fired += 1;
+                }
+            }
+        }
+        let Some(sweep) = self.sweep.as_mut().filter(|w| w.at <= now) else { return fired };
+        sweep.at = now.saturating_add(sweep.every_ms);
+        let rev = sweep.changes.rev();
+        for name in names {
+            let t = &self.ticking[&name];
+            let moved = rev.is_some() && rev != t.last_rev;
+            if !t.wake.polls && t.stream.is_some() && t.signal_at.is_none() && t.due_at.is_none() && moved && now >= t.last_tick_at.saturating_add(t.wake.min_gap_ms) {
+                self.wake_tick(&name, Wake::Sweep, now);
+                fired += 1;
+            }
+        }
+        fired
     }
 
     fn wrote(&mut self, own: bool, e: Event, local: bool) {
@@ -1005,6 +1169,9 @@ impl Engine {
         }
         if !local && ev.stream.0 == HALT_STREAM {
             self.gate(ev)?;
+        }
+        if ev.kind.tag == STORE_CHANGED {
+            self.wake_on_change(ev);
         }
         let offered = if self.is_poisoned(&ev.stream)? {
             self.park(ev);
@@ -1091,6 +1258,7 @@ impl Engine {
             }
             self.marker.set(&Mark { event: ev.id.clone(), handler: name.to_string(), stream: ev.stream.clone(), stalls })?;
             let now = self.clock.now_ms();
+            self.note_tick(name, ev);
             let (wake, began_run) = self.wake_of(&ev.id);
             let t = self.tracks.entry(name.to_string()).or_default();
             (t.fired_at, t.due_at) = (Some(now), Some(ev.at));
@@ -1361,6 +1529,9 @@ impl Engine {
         due.sort();
         for (_, id) in due {
             if let Some(row) = self.timers.remove(&id) {
+                if let Some(t) = self.ticking.values_mut().find(|t| t.stream.as_ref() == Some(&row.stream) && t.tag == row.kind.tag) {
+                    (t.signal_at, t.due_at) = (None, None);
+                }
                 let ev = Event { cause: row.cause.clone(), correlation: row.correlation.clone(), ..self.local_event(&row.stream, row.kind.clone(), row.at, None) };
                 let wake = if self.boot_tags.get(&row.stream.0) == Some(&row.kind.tag) { Wake::Sweep } else { Wake::Timer };
                 self.set_wake(&ev.id, wake, true);
@@ -1369,6 +1540,7 @@ impl Engine {
                 n += 1;
             }
         }
+        n += self.fire_wakes(now);
         let mut late: Vec<_> = self.running_deadlines().filter(|(d, _)| *d <= now).map(|(d, k)| (d, k.clone())).collect();
         late.sort();
         for (_, key) in late {
@@ -1565,5 +1737,197 @@ mod tests {
         e.run_until_idle().unwrap();
         assert_eq!(sweep("boot"), vec!["sweep", "sweep"], "the re-armed boot tick is a sweep");
         assert_eq!(runs(&e)["sweep"], 2);
+    }
+
+    /// A tick that re-arms itself every 30 s, and optionally asks a due time and an act.
+    struct Poller {
+        tag: &'static str,
+        act: bool,
+        dues: Vec<u64>,
+    }
+
+    impl Handler for Poller {
+        fn interests(&self) -> &[EventKindTag] {
+            std::slice::from_ref(&self.tag)
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            let mut cmds = vec![Command::Timer { at: ev.at + 30_000, kind: EventKind::new(self.tag, "again") }];
+            cmds.extend(self.dues.iter().filter(|_| ev.at == 0).map(|at| Command::Due { at: *at }));
+            if self.act && ev.at > 0 {
+                cmds.push(Command::Effect(EffectSpec::keyed("write", "w", "", 1_000)));
+            }
+            cmds
+        }
+    }
+
+    fn woken(name: &'static str, reads: &[&'static str], polls: bool, min_gap_ms: u64, dues: &[u64], act: bool) -> Registration {
+        Registration::new(name, Poller { tag: name, act, dues: dues.to_vec() }).with_wake(crate::event::Wake { reads: reads.to_vec(), min_gap_ms, polls })
+    }
+
+    fn started(regs: Vec<Registration>, clock: &VirtualClock, changes: &Arc<crate::changes::ScriptedChanges>) -> Engine {
+        let streams: Vec<String> = regs.iter().map(|r| r.name.clone()).collect();
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 1).unwrap().with_sweep(60_000, changes.clone());
+        for s in &streams {
+            e.start(s, EventKind::new(s, ""));
+        }
+        e.run_until_idle().unwrap();
+        e
+    }
+
+    fn changed(e: &mut Engine, id: &str, keys: &[&str], reload: bool) {
+        let c = StoreChanged { rev: 1, keys: keys.iter().map(|k| k.to_string()).collect(), reload };
+        e.submit(id, STORE_STREAM, c.kind()).unwrap();
+    }
+
+    fn runs(e: &Engine, task: &str) -> u64 {
+        e.status().tasks.iter().find(|t| t.name == task).unwrap().runs_by_wake.values().sum()
+    }
+
+    fn wake_runs(e: &Engine, task: &str, wake: &str) -> u64 {
+        e.status().tasks.iter().find(|t| t.name == task).unwrap().runs_by_wake.get(wake).copied().unwrap_or(0)
+    }
+
+    fn quiet() -> (VirtualClock, Arc<crate::changes::ScriptedChanges>) {
+        let changes = Arc::new(crate::changes::ScriptedChanges::default());
+        changes.set(1);
+        (VirtualClock::new(0), changes)
+    }
+
+    #[test_id(tsk31ni)]
+    #[test]
+    fn a_write_wakes_exactly_the_tasks_that_declare_it() {
+        let (clock, changes) = quiet();
+        let regs = vec![woken("a", &["a/"], false, 0, &[], false), woken("b", &["b/"], false, 0, &[], false), woken("c", &["a/x"], false, 0, &[], false)];
+        let mut e = started(regs, &clock, &changes);
+        changed(&mut e, "c1", &["a/x/1"], false);
+        e.run_until_idle().unwrap();
+        assert_eq!((wake_runs(&e, "a", "signal"), wake_runs(&e, "b", "signal"), wake_runs(&e, "c", "signal")), (1, 0, 1));
+    }
+
+    #[test_id(t71q1wh)]
+    #[test]
+    fn ten_writes_in_one_turn_wake_a_declaring_task_once() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[], false)], &clock, &changes);
+        for i in 0..10 {
+            changed(&mut e, &format!("c{i}"), &["a/x"], false);
+        }
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "signal"), 1);
+    }
+
+    #[test_id(tsdcvip)]
+    #[test]
+    fn a_reload_wakes_every_task_that_declared_reads_once() {
+        let (clock, changes) = quiet();
+        let regs = vec![woken("a", &["a/"], false, 0, &[], false), woken("b", &["b/"], true, 0, &[], false)];
+        let mut e = started(regs, &clock, &changes);
+        changed(&mut e, "r1", &[], true);
+        e.run_until_idle().unwrap();
+        assert_eq!((wake_runs(&e, "a", "signal"), wake_runs(&e, "b", "signal")), (1, 1));
+    }
+
+    #[test_id(txd3zav)]
+    #[test]
+    fn a_swallowed_wake_up_is_found_by_the_next_sweep_and_the_one_after_runs_nothing() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[], true)], &clock, &changes);
+        changes.set(7);
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "sweep"), 2, "the boot tick and the sweep's");
+        assert_eq!(e.status().tasks[0].sweep_found, 1);
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "sweep"), 2);
+        assert_eq!(e.status().tasks[0].sweep_found, 1);
+    }
+
+    #[test_id(te35jta)]
+    #[test]
+    fn an_idle_hour_with_the_sweep_on_dispatches_nothing_and_commits_nothing() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[], true)], &clock, &changes);
+        let before = (runs(&e, "a"), e.projection().total());
+        for _ in 0..60 {
+            clock.advance(60_000);
+            e.run_until_idle().unwrap();
+        }
+        assert_eq!((runs(&e, "a"), e.projection().total()), before);
+        assert_eq!(e.next_timer_at(), Some(clock.now_ms() + 60_000));
+        assert_eq!(e.status().tasks[0].next_due_at, e.next_timer_at());
+    }
+
+    #[test_id(tkutig1)]
+    #[test]
+    fn a_due_time_arms_the_tick_with_a_timer_wake_and_is_the_next_timer() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[45_000], false)], &clock, &changes);
+        assert_eq!(e.next_timer_at(), Some(45_000));
+        clock.advance(44_999);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 0);
+        clock.advance(1);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 1);
+    }
+
+    #[test_id(tohbnms)]
+    #[test]
+    fn a_wake_waits_out_the_min_gap_and_a_polling_task_keeps_its_own_timer() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], true, 30_000, &[], false)], &clock, &changes);
+        clock.advance(5_000);
+        changed(&mut e, "c1", &["a/x"], false);
+        e.run_until_idle().unwrap();
+        assert_eq!(runs(&e, "a"), 1, "not before the gap is out");
+        assert_eq!(e.next_timer_at(), Some(30_000));
+        clock.advance(25_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(runs(&e, "a"), 2, "one run at 30 s, not a second for the poll timer");
+        clock.advance(30_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(runs(&e, "a"), 3, "its own cadence goes on");
+    }
+
+    #[test_id(t4jaf3v)]
+    #[test]
+    fn without_a_sweep_the_wake_is_ignored_and_the_task_polls_as_before() {
+        let clock = VirtualClock::new(0);
+        let regs = vec![woken("a", &["a/"], false, 0, &[10], false)];
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 1).unwrap();
+        e.start("a", EventKind::new("a", ""));
+        e.run_until_idle().unwrap();
+        changed(&mut e, "c1", &["a/x"], false);
+        e.run_until_idle().unwrap();
+        assert_eq!(e.next_timer_at(), Some(30_000));
+        assert_eq!(runs(&e, "a"), 1);
+    }
+
+    #[test_id(tetkger)]
+    #[test]
+    fn the_earliest_due_of_a_stream_wins_and_is_gone_once_the_tick_has_run() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[50_000, 40_000], false)], &clock, &changes);
+        assert_eq!(e.next_timer_at(), Some(40_000));
+        clock.advance(40_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 1);
+        assert_eq!(e.next_timer_at(), Some(60_000), "the later due did not outlive the tick it was beaten by");
+        clock.advance(10_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 1);
+    }
+
+    #[test_id(tfyyyyw)]
+    #[test]
+    fn a_polling_task_given_a_due_time_runs_at_it_and_keeps_its_cadence_after() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], true, 30_000, &[10_000], false)], &clock, &changes);
+        assert_eq!(e.next_timer_at(), Some(10_000));
+        clock.advance(10_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 1);
+        assert_eq!(e.next_timer_at(), Some(40_000), "its own cadence re-armed from the due tick");
     }
 }

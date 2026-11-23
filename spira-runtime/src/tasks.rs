@@ -29,9 +29,34 @@ pub mod e;
 pub mod f;
 pub mod g;
 
+/// What a task reads from the store, so the engine can wake it on a change rather than poll.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reads {
+    /// No store read.
+    None,
+    /// The store keys under these prefixes are every input it decides from: woken by them, it
+    /// stops polling, and runs only at a due time it reports or when the in-process sweep finds the store moved.
+    Only(&'static [&'static str]),
+    /// These prefixes, and inputs no store change reports (files, git, the forge, units, a clock): woken
+    /// early by the prefixes, at most once per cadence, and its own cadence stands.
+    Polled(&'static [&'static str]),
+    /// It reads the store in a way no key prefix states; the reason is in the words.
+    Undeclarable(&'static str),
+}
+
+impl Reads {
+    pub fn prefixes(&self) -> &'static [&'static str] {
+        match self {
+            Reads::Only(p) | Reads::Polled(p) => p,
+            Reads::None | Reads::Undeclarable(_) => &[],
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Task {
     pub name: &'static str,
+    pub reads: Reads,
     /// `Signal` is shorthand for every effect of the task on the signal plane; `Work` leaves
     /// each effect on the plane `signal` gives it. A row says which, explicitly.
     pub plane: runtime::Plane,
@@ -68,25 +93,25 @@ impl Task {
 
 /// The service's own tasks: the heartbeat and the watchers under `watchers/`.
 pub static CORE: &[Task] = &[
-    Task { name: heartbeat::NAME, plane: runtime::Plane::Work, signal: &[], boot: Heartbeat::boot, cadence_ms: |s| s.heartbeat_secs * 1000, effects: &[heartbeat::PING], runners: &[(heartbeat::PING, |e, _, s| e.ping(s))], keys: &[&["SPIRA_RUNTIME_HEARTBEAT_URL", "SPIRA_RUNTIME_HEARTBEAT_SECS"]], build: |s| Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration() },
-    Task { name: round_duty::NAME, plane: runtime::Plane::Work, signal: &[], boot: round_duty::RoundDuty::boot, cadence_ms: |s| s.round_duty.interval_ms, effects: &[round_duty::OBSERVE, INBOX_APPEND], runners: &[(round_duty::OBSERVE, |e, _, s| e.world.round_snapshot(&s.input))], keys: &[&["SPIRA_RUNTIME_ROUND_DUTY_SECS", "SPIRA_ROUND_MIN", "SPIRA_ROUND_MAX_OPEN", "SPIRA_ROUND_DUE_REMIND", "SPIRA_ROUND_IDLE_CUT", "SPIRA_ROUND_LEASE_TTL_SECS", "SPIRA_HALT_PAGE_AFTER", "SPIRA_ACTIVATION_STORE_BOUND"]], build: |s| s.round_duty.clone().registration() },
-    Task { name: inbox_keeper::NAME, plane: runtime::Plane::Work, signal: &[CONCIERGE_WAKE], boot: inbox_keeper::InboxKeeper::boot, cadence_ms: |s| s.inbox_keeper.interval_ms, effects: &[inbox_keeper::OBSERVE, CONCIERGE_WAKE], runners: &[(inbox_keeper::OBSERVE, |e, _, s| e.world.keeper_snapshot(&s.input)), (CONCIERGE_WAKE, |_, _, s| wake::release_wake_for_process(&s.input, std::time::Duration::from_millis(inbox_keeper::WAKE_KILL_MS)))], keys: &[&["SPIRA_RUNTIME_INBOX_KEEPER_SECS", "SPIRA_CONCIERGE_INBOX_STALL", "SPIRA_CONCIERGE_INBOX_BACKOFF"]], build: |s| s.inbox_keeper.clone().registration() },
-    Task { name: pr_notify::NAME, plane: runtime::Plane::Work, signal: &[pr_notify::OPERATOR_NOTE], boot: pr_notify::PrNotify::boot, cadence_ms: |s| s.pr_notify.interval_ms, effects: &[pr_notify::OBSERVE, pr_notify::OPERATOR_NOTE, INBOX_APPEND], runners: &[(pr_notify::OBSERVE, |e, _, s| e.world.pr_snapshot(&e.forge, &s.input)), (pr_notify::OPERATOR_NOTE, |e, _, s| e.operator_note(&s.input))], keys: &[&["SPIRA_RUNTIME_PR_NOTIFY_SECS", "SPIRA_PR_DEPLOY_GIVEUP"]], build: |s| s.pr_notify.clone().registration() },
-    Task { name: cr_comments::NAME, plane: runtime::Plane::Work, signal: &[], boot: cr_comments::CrComments::boot, cadence_ms: |s| s.cr_comments.cold_ms, effects: &[cr_comments::OBSERVE, cr_comments::RECORD, INBOX_APPEND], runners: &[(cr_comments::OBSERVE, |e, _, s| e.world.cr_snapshot(&e.forge, &s.input)), (cr_comments::RECORD, |e, _, s| e.world.cr_record(&s.input))], keys: &[&["SPIRA_RUNTIME_CR_COMMENTS_HOT_SECS", "SPIRA_RUNTIME_CR_COMMENTS_COLD_SECS", "SPIRA_RUNTIME_CR_COMMENTS_WINDOW_SECS", "SPIRA_CR_REPO_OWNER", "SPIRA_CR_REPO_NAME"]], build: |s| s.cr_comments.clone().registration() },
-    Task { name: cr_cadence::NAME, plane: runtime::Plane::Work, signal: &[], boot: cr_cadence::CrCadence::boot, cadence_ms: |s| s.cr_cadence.interval_ms, effects: &[cr_cadence::OBSERVE, cr_cadence::OPEN, INBOX_APPEND], runners: &[(cr_cadence::OBSERVE, |e, _, s| e.world.cr_cadence_snapshot(&s.input)), (cr_cadence::OPEN, |e, _, _| e.world.cr_open())], keys: &[&["SPIRA_RUNTIME_CR_CADENCE_SECS", "SPIRA_CR_TZ", "SPIRA_CR_OPEN_HOUR", "SPIRA_CR_STALE_DAYS"]], build: |s| s.cr_cadence.clone().registration() },
-    Task { name: asks::NAME, plane: runtime::Plane::Work, signal: &[], boot: asks::Asks::boot, cadence_ms: |s| s.asks.interval_ms, effects: &[asks::OBSERVE, INBOX_APPEND], runners: &[(asks::OBSERVE, |e, _, s| e.world.asks_snapshot(&s.input))], keys: &[&["SPIRA_RUNTIME_ASKS_SECS"]], build: |s| s.asks.clone().registration() },
-    Task { name: design_asks::NAME, plane: runtime::Plane::Work, signal: &[], boot: design_asks::DesignAsks::boot, cadence_ms: |s| s.design_asks.interval_ms, effects: &[design_asks::OBSERVE, INBOX_APPEND], runners: &[(design_asks::OBSERVE, |e, _, _| e.world.design_asks_snapshot())], keys: &[&["SPIRA_RUNTIME_DESIGN_ASKS_SECS", "SPIRA_DESIGN_ASKS_REPEAT"]], build: |s| s.design_asks.clone().registration() },
-    Task { name: brain_dirty::NAME, plane: runtime::Plane::Work, signal: &[], boot: brain_dirty::BrainDirty::boot, cadence_ms: |s| s.brain_dirty.interval_ms, effects: &[brain_dirty::OBSERVE, INBOX_APPEND], runners: &[(brain_dirty::OBSERVE, |e, _, _| e.world.brain_dirty_snapshot())], keys: &[&["SPIRA_RUNTIME_BRAIN_DIRTY_SECS", "SPIRA_BRAIN_DIRTY_AGE"]], build: |s| s.brain_dirty.clone().registration() },
-    Task { name: writer_grants::NAME, plane: runtime::Plane::Work, signal: &[], boot: writer_grants::WriterGrants::boot, cadence_ms: |s| s.writer_grants.interval_ms, effects: &[writer_grants::OBSERVE, INBOX_APPEND], runners: &[(writer_grants::OBSERVE, |e, _, _| e.world.writer_grants_snapshot())], keys: &[&["SPIRA_RUNTIME_WRITER_GRANTS_SECS"]], build: |s| s.writer_grants.clone().registration() },
-    Task { name: supersede_duty::NAME, plane: runtime::Plane::Work, signal: &[], boot: supersede_duty::SupersedeDuty::boot, cadence_ms: |s| s.supersede_duty.interval_ms, effects: &[supersede_duty::OBSERVE, supersede_duty::ACT, INBOX_APPEND], runners: &[(supersede_duty::OBSERVE, |e, _, s| e.world.supersede_snapshot(&s.input)), (supersede_duty::ACT, |e, _, s| e.world.supersede_act(&s.input))], keys: &[&["SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS"]], build: |s| s.supersede_duty.clone().registration() },
-    Task { name: claim_count::NAME, plane: runtime::Plane::Work, signal: &[], boot: claim_count::ClaimCount::boot, cadence_ms: |s| s.claim_count.interval_ms, effects: &[claim_count::OBSERVE, INBOX_APPEND], runners: &[(claim_count::OBSERVE, |e, _, _| e.world.claim_count_snapshot())], keys: &[&["SPIRA_RUNTIME_CLAIM_COUNT_SECS", "SPIRA_CLAIM_PAGE_EVERY"]], build: |s| s.claim_count.clone().registration() },
-    Task { name: bead_sweep::NAME, plane: runtime::Plane::Work, signal: &[], boot: bead_sweep::BeadSweep::boot, cadence_ms: |s| s.bead_sweep.interval_ms, effects: &[bead_sweep::OBSERVE, bead_sweep::REPAIR, INBOX_APPEND], runners: &[(bead_sweep::OBSERVE, |e, _, _| e.world.sweep_snapshot()), (bead_sweep::REPAIR, |e, _, s| e.world.sweep_repair(&s.input))], keys: &[&["SPIRA_RUNTIME_BEAD_SWEEP_SECS", "SPIRA_BEAD_SWEEP_HOLD_MIN", "SPIRA_BEAD_SWEEP_REWORK_MIN", "SPIRA_BEAD_SWEEP_CERT_MIN", "SPIRA_BEAD_SWEEP_WAIT_MIN", "SPIRA_BEAD_SWEEP_BATCH_MIN", "SPIRA_SCOPED_STOP_REVIEW_SECS"]], build: |s| s.bead_sweep.clone().registration() },
-    Task { name: publish_backlog::NAME, plane: runtime::Plane::Work, signal: &[], boot: publish_backlog::PublishBacklog::boot, cadence_ms: |s| s.publish_backlog.interval_ms, effects: &[publish_backlog::OBSERVE, INBOX_APPEND], runners: &[(publish_backlog::OBSERVE, |e, _, _| e.world.publish_backlog_snapshot())], keys: &[&["SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS", "SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS", "SPIRA_LOCAL_BACKLOG_COUNT", "SPIRA_LOCAL_BACKLOG_AGE"]], build: |s| s.publish_backlog.clone().registration() },
-    Task { name: overrides::NAME, plane: runtime::Plane::Work, signal: &[], boot: overrides::Overrides::boot, cadence_ms: |s| s.overrides.interval_ms, effects: &[overrides::APPLY, INBOX_APPEND], runners: &[(overrides::APPLY, |e, _, _| e.world.overrides_apply())], keys: &[&["SPIRA_RUNTIME_OVERRIDES_SECS"]], build: |s| s.overrides.clone().registration() },
-    Task { name: readiness_dependents::NAME, plane: runtime::Plane::Work, signal: &[], boot: readiness_dependents::ReadinessDependents::boot, cadence_ms: |s| s.readiness_dependents.interval_ms, effects: &[readiness_dependents::LOOK, readiness_dependents::RUN], runners: &[(readiness_dependents::LOOK, |e, _, s| e.world.readiness_look(&s.input)), (readiness_dependents::RUN, |e, _, s| e.world.readiness_dependents(&s.input))], keys: &[&["SPIRA_RUNTIME_READINESS_DEPENDENTS_SECS"]], build: |s| s.readiness_dependents.clone().registration() },
-    Task { name: view::NAME, plane: runtime::Plane::Work, signal: &[], boot: view::View::boot, cadence_ms: |s| s.view.interval_ms, effects: &[view::OBSERVE, view::FLIP, view::FORGET], runners: &[(view::OBSERVE, |e, _, s| e.world.view_snapshot(&s.input)), (view::FLIP, |e, _, s| e.world.view_flip(&s.input)), (view::FORGET, |e, _, s| e.world.view_forget(&s.input))], keys: &[&["SPIRA_RUNTIME_VIEW_SECS", "SPIRA_VIEW"]], build: |s| s.view.clone().registration() },
-    Task { name: reconciler::NAME, plane: runtime::Plane::Work, signal: &[], boot: reconciler::Reconciler::boot, cadence_ms: |s| s.reconciler.interval_ms, effects: &[reconciler::OBSERVE, reconciler::RECORD, reconciler::REMEDY, reconciler::MAIL], runners: &[(reconciler::OBSERVE, |e, _, s| e.reconcile_observe(&s.input)), (reconciler::RECORD, |e, _, s| e.reconcile_record(&s.input)), (reconciler::REMEDY, |e, k, s| e.reconcile_remedy(k, &s.input)), (reconciler::MAIL, |e, k, s| e.reconcile_mail(k, &s.input))], keys: &[&["SPIRA_RUNTIME_RECONCILER_SECS", "SPIRA_RUNES", "SPIRA_STRANDED_RUNNER_MIN_AGE", "SPIRA_LC_PASSWORD_FILE"], ::reconciler::Config::KEYS], build: |s| s.reconciler.clone().registration() },
-    Task { name: reconciler_flow::NAME, plane: runtime::Plane::Work, signal: &[], boot: reconciler_flow::ReconcilerFlow::boot, cadence_ms: |s| s.reconciler_flow.interval_ms, effects: &[reconciler_flow::OBSERVE, reconciler_flow::STATUS, reconciler_flow::MAIL], runners: &[(reconciler_flow::OBSERVE, |e, _, s| e.world.flow_snapshot(&s.input)), (reconciler_flow::STATUS, |e, _, s| e.world.flow_status(&s.input)), (reconciler_flow::MAIL, |e, _, s| e.concierge_note(&s.input))], keys: &[&["SPIRA_RUNTIME_RECONCILER_FLOW_SECS", "SPIRA_FLOW_WINDOW_HOURS", "SPIRA_FLOW_BASELINE_HOURS", "SPIRA_FLOW_GRACE_SECS", "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS", "SPIRA_FLOW_REWORK_WINDOW_HOURS", "SPIRA_FLOW_SENTINEL_PERIOD_SECS", "SPIRA_RECONCILER_SHADOW_KINDS"]], build: |s| s.reconciler_flow.clone().registration() },
+    Task { name: heartbeat::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: Heartbeat::boot, cadence_ms: |s| s.heartbeat_secs * 1000, effects: &[heartbeat::PING], runners: &[(heartbeat::PING, |e, _, s| e.ping(s))], keys: &[&["SPIRA_RUNTIME_HEARTBEAT_URL", "SPIRA_RUNTIME_HEARTBEAT_SECS"]], build: |s| Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration() },
+    Task { name: round_duty::NAME, reads: Reads::Polled(&["lifecycle/", "readiness/", "batches/"]), plane: runtime::Plane::Work, signal: &[], boot: round_duty::RoundDuty::boot, cadence_ms: |s| s.round_duty.interval_ms, effects: &[round_duty::OBSERVE, INBOX_APPEND], runners: &[(round_duty::OBSERVE, |e, _, s| e.world.round_snapshot(&s.input))], keys: &[&["SPIRA_RUNTIME_ROUND_DUTY_SECS", "SPIRA_ROUND_MIN", "SPIRA_ROUND_MAX_OPEN", "SPIRA_ROUND_DUE_REMIND", "SPIRA_ROUND_IDLE_CUT", "SPIRA_ROUND_LEASE_TTL_SECS", "SPIRA_HALT_PAGE_AFTER", "SPIRA_ACTIVATION_STORE_BOUND"]], build: |s| s.round_duty.clone().registration() },
+    Task { name: inbox_keeper::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[CONCIERGE_WAKE], boot: inbox_keeper::InboxKeeper::boot, cadence_ms: |s| s.inbox_keeper.interval_ms, effects: &[inbox_keeper::OBSERVE, CONCIERGE_WAKE], runners: &[(inbox_keeper::OBSERVE, |e, _, s| e.world.keeper_snapshot(&s.input)), (CONCIERGE_WAKE, |_, _, s| wake::release_wake_for_process(&s.input, std::time::Duration::from_millis(inbox_keeper::WAKE_KILL_MS)))], keys: &[&["SPIRA_RUNTIME_INBOX_KEEPER_SECS", "SPIRA_CONCIERGE_INBOX_STALL", "SPIRA_CONCIERGE_INBOX_BACKOFF"]], build: |s| s.inbox_keeper.clone().registration() },
+    Task { name: pr_notify::NAME, reads: Reads::Polled(&["batches/"]), plane: runtime::Plane::Work, signal: &[pr_notify::OPERATOR_NOTE], boot: pr_notify::PrNotify::boot, cadence_ms: |s| s.pr_notify.interval_ms, effects: &[pr_notify::OBSERVE, pr_notify::OPERATOR_NOTE, INBOX_APPEND], runners: &[(pr_notify::OBSERVE, |e, _, s| e.world.pr_snapshot(&e.forge, &s.input)), (pr_notify::OPERATOR_NOTE, |e, _, s| e.operator_note(&s.input))], keys: &[&["SPIRA_RUNTIME_PR_NOTIFY_SECS", "SPIRA_PR_DEPLOY_GIVEUP"]], build: |s| s.pr_notify.clone().registration() },
+    Task { name: cr_comments::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: cr_comments::CrComments::boot, cadence_ms: |s| s.cr_comments.cold_ms, effects: &[cr_comments::OBSERVE, cr_comments::RECORD, INBOX_APPEND], runners: &[(cr_comments::OBSERVE, |e, _, s| e.world.cr_snapshot(&e.forge, &s.input)), (cr_comments::RECORD, |e, _, s| e.world.cr_record(&s.input))], keys: &[&["SPIRA_RUNTIME_CR_COMMENTS_HOT_SECS", "SPIRA_RUNTIME_CR_COMMENTS_COLD_SECS", "SPIRA_RUNTIME_CR_COMMENTS_WINDOW_SECS", "SPIRA_CR_REPO_OWNER", "SPIRA_CR_REPO_NAME"]], build: |s| s.cr_comments.clone().registration() },
+    Task { name: cr_cadence::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: cr_cadence::CrCadence::boot, cadence_ms: |s| s.cr_cadence.interval_ms, effects: &[cr_cadence::OBSERVE, cr_cadence::OPEN, INBOX_APPEND], runners: &[(cr_cadence::OBSERVE, |e, _, s| e.world.cr_cadence_snapshot(&s.input)), (cr_cadence::OPEN, |e, _, _| e.world.cr_open())], keys: &[&["SPIRA_RUNTIME_CR_CADENCE_SECS", "SPIRA_CR_TZ", "SPIRA_CR_OPEN_HOUR", "SPIRA_CR_STALE_DAYS"]], build: |s| s.cr_cadence.clone().registration() },
+    Task { name: asks::NAME, reads: Reads::Polled(&["planning/", "lifecycle/", "history/"]), plane: runtime::Plane::Work, signal: &[], boot: asks::Asks::boot, cadence_ms: |s| s.asks.interval_ms, effects: &[asks::OBSERVE, INBOX_APPEND], runners: &[(asks::OBSERVE, |e, _, s| e.world.asks_snapshot(&s.input))], keys: &[&["SPIRA_RUNTIME_ASKS_SECS"]], build: |s| s.asks.clone().registration() },
+    Task { name: design_asks::NAME, reads: Reads::Polled(&["planning/", "lifecycle/"]), plane: runtime::Plane::Work, signal: &[], boot: design_asks::DesignAsks::boot, cadence_ms: |s| s.design_asks.interval_ms, effects: &[design_asks::OBSERVE, INBOX_APPEND], runners: &[(design_asks::OBSERVE, |e, _, _| e.world.design_asks_snapshot())], keys: &[&["SPIRA_RUNTIME_DESIGN_ASKS_SECS", "SPIRA_DESIGN_ASKS_REPEAT"]], build: |s| s.design_asks.clone().registration() },
+    Task { name: brain_dirty::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: brain_dirty::BrainDirty::boot, cadence_ms: |s| s.brain_dirty.interval_ms, effects: &[brain_dirty::OBSERVE, INBOX_APPEND], runners: &[(brain_dirty::OBSERVE, |e, _, _| e.world.brain_dirty_snapshot())], keys: &[&["SPIRA_RUNTIME_BRAIN_DIRTY_SECS", "SPIRA_BRAIN_DIRTY_AGE"]], build: |s| s.brain_dirty.clone().registration() },
+    Task { name: writer_grants::NAME, reads: Reads::Undeclarable("the verdict is lc-serve's in-memory writer grants, read with no store call"), plane: runtime::Plane::Work, signal: &[], boot: writer_grants::WriterGrants::boot, cadence_ms: |s| s.writer_grants.interval_ms, effects: &[writer_grants::OBSERVE, INBOX_APPEND], runners: &[(writer_grants::OBSERVE, |e, _, _| e.world.writer_grants_snapshot())], keys: &[&["SPIRA_RUNTIME_WRITER_GRANTS_SECS"]], build: |s| s.writer_grants.clone().registration() },
+    Task { name: supersede_duty::NAME, reads: Reads::Only(&["lifecycle/", "readiness/"]), plane: runtime::Plane::Work, signal: &[], boot: supersede_duty::SupersedeDuty::boot, cadence_ms: |s| s.supersede_duty.interval_ms, effects: &[supersede_duty::OBSERVE, supersede_duty::ACT, INBOX_APPEND], runners: &[(supersede_duty::OBSERVE, |e, _, s| e.world.supersede_snapshot(&s.input)), (supersede_duty::ACT, |e, _, s| e.world.supersede_act(&s.input))], keys: &[&["SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS"]], build: |s| s.supersede_duty.clone().registration() },
+    Task { name: claim_count::NAME, reads: Reads::Only(&["lifecycle/", "readiness/"]), plane: runtime::Plane::Work, signal: &[], boot: claim_count::ClaimCount::boot, cadence_ms: |s| s.claim_count.interval_ms, effects: &[claim_count::OBSERVE, INBOX_APPEND], runners: &[(claim_count::OBSERVE, |e, _, _| e.world.claim_count_snapshot())], keys: &[&["SPIRA_RUNTIME_CLAIM_COUNT_SECS", "SPIRA_CLAIM_PAGE_EVERY"]], build: |s| s.claim_count.clone().registration() },
+    Task { name: bead_sweep::NAME, reads: Reads::Polled(&["lifecycle/", "readiness/", "planning/"]), plane: runtime::Plane::Work, signal: &[], boot: bead_sweep::BeadSweep::boot, cadence_ms: |s| s.bead_sweep.interval_ms, effects: &[bead_sweep::OBSERVE, bead_sweep::REPAIR, INBOX_APPEND], runners: &[(bead_sweep::OBSERVE, |e, _, _| e.world.sweep_snapshot()), (bead_sweep::REPAIR, |e, _, s| e.world.sweep_repair(&s.input))], keys: &[&["SPIRA_RUNTIME_BEAD_SWEEP_SECS", "SPIRA_BEAD_SWEEP_HOLD_MIN", "SPIRA_BEAD_SWEEP_REWORK_MIN", "SPIRA_BEAD_SWEEP_CERT_MIN", "SPIRA_BEAD_SWEEP_WAIT_MIN", "SPIRA_BEAD_SWEEP_BATCH_MIN", "SPIRA_SCOPED_STOP_REVIEW_SECS"]], build: |s| s.bead_sweep.clone().registration() },
+    Task { name: publish_backlog::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: publish_backlog::PublishBacklog::boot, cadence_ms: |s| s.publish_backlog.interval_ms, effects: &[publish_backlog::OBSERVE, INBOX_APPEND], runners: &[(publish_backlog::OBSERVE, |e, _, _| e.world.publish_backlog_snapshot())], keys: &[&["SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS", "SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS", "SPIRA_LOCAL_BACKLOG_COUNT", "SPIRA_LOCAL_BACKLOG_AGE"]], build: |s| s.publish_backlog.clone().registration() },
+    Task { name: overrides::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: overrides::Overrides::boot, cadence_ms: |s| s.overrides.interval_ms, effects: &[overrides::APPLY, INBOX_APPEND], runners: &[(overrides::APPLY, |e, _, _| e.world.overrides_apply())], keys: &[&["SPIRA_RUNTIME_OVERRIDES_SECS"]], build: |s| s.overrides.clone().registration() },
+    Task { name: readiness_dependents::NAME, reads: Reads::Only(&["events/"]), plane: runtime::Plane::Work, signal: &[], boot: readiness_dependents::ReadinessDependents::boot, cadence_ms: |s| s.readiness_dependents.interval_ms, effects: &[readiness_dependents::LOOK, readiness_dependents::RUN], runners: &[(readiness_dependents::LOOK, |e, _, s| e.world.readiness_look(&s.input)), (readiness_dependents::RUN, |e, _, s| e.world.readiness_dependents(&s.input))], keys: &[&["SPIRA_RUNTIME_READINESS_DEPENDENTS_SECS"]], build: |s| s.readiness_dependents.clone().registration() },
+    Task { name: view::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: view::View::boot, cadence_ms: |s| s.view.interval_ms, effects: &[view::OBSERVE, view::FLIP, view::FORGET], runners: &[(view::OBSERVE, |e, _, s| e.world.view_snapshot(&s.input)), (view::FLIP, |e, _, s| e.world.view_flip(&s.input)), (view::FORGET, |e, _, s| e.world.view_forget(&s.input))], keys: &[&["SPIRA_RUNTIME_VIEW_SECS", "SPIRA_VIEW"]], build: |s| s.view.clone().registration() },
+    Task { name: reconciler::NAME, reads: Reads::Polled(&["lifecycle/", "readiness/", "batches/", "planning/", "gates/"]), plane: runtime::Plane::Work, signal: &[], boot: reconciler::Reconciler::boot, cadence_ms: |s| s.reconciler.interval_ms, effects: &[reconciler::OBSERVE, reconciler::RECORD, reconciler::REMEDY, reconciler::MAIL], runners: &[(reconciler::OBSERVE, |e, _, s| e.reconcile_observe(&s.input)), (reconciler::RECORD, |e, _, s| e.reconcile_record(&s.input)), (reconciler::REMEDY, |e, k, s| e.reconcile_remedy(k, &s.input)), (reconciler::MAIL, |e, k, s| e.reconcile_mail(k, &s.input))], keys: &[&["SPIRA_RUNTIME_RECONCILER_SECS", "SPIRA_RUNES", "SPIRA_STRANDED_RUNNER_MIN_AGE", "SPIRA_LC_PASSWORD_FILE"], ::reconciler::Config::KEYS], build: |s| s.reconciler.clone().registration() },
+    Task { name: reconciler_flow::NAME, reads: Reads::Polled(&["events/", "lifecycle/", "planning/"]), plane: runtime::Plane::Work, signal: &[], boot: reconciler_flow::ReconcilerFlow::boot, cadence_ms: |s| s.reconciler_flow.interval_ms, effects: &[reconciler_flow::OBSERVE, reconciler_flow::STATUS, reconciler_flow::MAIL], runners: &[(reconciler_flow::OBSERVE, |e, _, s| e.world.flow_snapshot(&s.input)), (reconciler_flow::STATUS, |e, _, s| e.world.flow_status(&s.input)), (reconciler_flow::MAIL, |e, _, s| e.concierge_note(&s.input))], keys: &[&["SPIRA_RUNTIME_RECONCILER_FLOW_SECS", "SPIRA_FLOW_WINDOW_HOURS", "SPIRA_FLOW_BASELINE_HOURS", "SPIRA_FLOW_GRACE_SECS", "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS", "SPIRA_FLOW_REWORK_WINDOW_HOURS", "SPIRA_FLOW_SENTINEL_PERIOD_SECS", "SPIRA_RECONCILER_SHADOW_KINDS"]], build: |s| s.reconciler_flow.clone().registration() },
 ];
 
 /// Every family's slice, in boot order. A new family file under `tasks/` joins here.
@@ -104,6 +129,14 @@ pub static FAMILIES: &[&[Task]] = &[CORE, a::TASKS, b::TASKS, c::TASKS, d::TASKS
 /// Dropping the last row's use of a key also drops it from `UNDECLARABLE`, or
 /// `every_key_a_pending_row_declares_is_registered_and_the_fixture_resolves_it` calls it stale.
 pub static PENDING_FAMILIES: &[&[Task]] = &[a::PENDING, b::PENDING, c::PENDING, d::PENDING, e::PENDING, f::PENDING, g::PENDING];
+
+/// The prefixes every `Only` and `Polled` row declares, each once: what the store's projection must keep current.
+pub fn watched_prefixes() -> Vec<&'static str> {
+    let mut all: Vec<&'static str> = self::all().flat_map(|t| t.reads.prefixes().iter().copied()).collect();
+    all.sort_unstable();
+    all.dedup();
+    all
+}
 
 /// Every task in every family, in `FAMILIES` order.
 pub fn all() -> impl Iterator<Item = &'static Task> {
@@ -368,7 +401,7 @@ mod tests {
     #[test_id(tromiq7)]
     #[test]
     fn no_two_tasks_across_families_share_a_name_or_a_stream() {
-        static PLANTED: &[Task] = &[Task { name: heartbeat::NAME, plane: runtime::Plane::Work, signal: &[], boot: Heartbeat::boot, cadence_ms: |_| 1, effects: &[], runners: &[], keys: &[], build: |s| (CORE[0].build)(s) }];
+        static PLANTED: &[Task] = &[Task { name: heartbeat::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: Heartbeat::boot, cadence_ms: |_| 1, effects: &[], runners: &[], keys: &[], build: |s| (CORE[0].build)(s) }];
         let caught = clashes(&[CORE, PLANTED]);
         assert!(caught.iter().any(|c| c.starts_with("name ")) && caught.iter().any(|c| c.starts_with("stream ")), "a row planted in a second family must be caught: {caught:?}");
         assert_eq!(clashes(FAMILIES), Vec::<String>::new());
@@ -577,5 +610,127 @@ mod tests {
             acts += rig.requested().iter().filter(|r| r.journaled).count();
         }
         assert!(acts > 0, "no row asked for an act under timeout, so the check above proves nothing");
+    }
+
+    #[test_id(tfrxphk)]
+    #[test]
+    fn every_declared_prefix_names_a_whole_store_directory_the_projection_may_hold() {
+        let mut declared = 0;
+        for t in all() {
+            for p in t.reads.prefixes() {
+                declared += 1;
+                assert!(p.ends_with('/') && p.len() > 1, "{}: {p:?} is not a directory prefix", t.name);
+                assert!(!p.starts_with("runtime/"), "{}: {p:?} is the scheduler's own key space", t.name);
+                assert_ne!(*p, "telemetry/", "{}: the whole of telemetry/ changes every second", t.name);
+            }
+            if let Reads::Undeclarable(why) = t.reads {
+                assert!(!why.trim().is_empty(), "{} gives no reason", t.name);
+            }
+            if let Reads::Only(p) | Reads::Polled(p) = t.reads {
+                assert!(!p.is_empty(), "{} declares reads and names none", t.name);
+            }
+        }
+        assert!(declared > 0);
+    }
+
+    #[test_id(t8ickjl)]
+    #[test]
+    fn the_watched_prefixes_are_the_union_of_every_declared_one() {
+        let watched = watched_prefixes();
+        let mut want: Vec<&str> = all().flat_map(|t| t.reads.prefixes().iter().copied()).collect();
+        want.sort_unstable();
+        want.dedup();
+        assert_eq!(watched, want);
+        assert!(watched.contains(&"work-requests/") && watched.contains(&"lifecycle/"));
+        assert!(all().any(|t| matches!(t.reads, Reads::Undeclarable(_))), "the table has no row that cannot declare");
+    }
+
+    #[test_id(tgw04ey)]
+    #[test]
+    fn a_row_that_reads_only_the_store_stops_polling_and_one_that_reads_more_keeps_its_cadence() {
+        let s = crate::settings::fixture();
+        let regs = crate::registrations(&s);
+        let wake = |name: &str| regs.iter().find(|r| r.name == name).unwrap().wake.clone();
+        let cadence = |name: &str| (all().find(|t| t.name == name).unwrap().cadence_ms)(&s);
+        let only = wake(claim_count::NAME).expect("claim-count declares its reads");
+        assert_eq!((only.polls, only.min_gap_ms), (false, cadence(claim_count::NAME)));
+        let polled = wake(asks::NAME).expect("asks declares its reads");
+        assert_eq!((polled.polls, polled.min_gap_ms), (true, cadence(asks::NAME)));
+        assert_eq!(wake(writer_grants::NAME), None);
+        assert_eq!(wake(heartbeat::NAME), None);
+    }
+
+    /// Counts what reaches the journal: turns committed and poison reads.
+    struct Counting {
+        inner: std::sync::Arc<runtime::MemJournal>,
+        commits: std::sync::atomic::AtomicU64,
+        poison_reads: std::sync::atomic::AtomicU64,
+    }
+
+    impl runtime::Journal for Counting {
+        fn record(&self, ev: &runtime::Event) {
+            self.inner.record(ev)
+        }
+        fn boot(&self) -> runtime::Result<runtime::Boot> {
+            self.inner.boot()
+        }
+        fn commit(&self, turn: &runtime::Turn) -> runtime::Result<()> {
+            self.commits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.commit(turn)
+        }
+        fn poison(&self, p: &runtime::Poison) -> runtime::Result<()> {
+            self.inner.poison(p)
+        }
+        fn poisoned(&self, stream: &runtime::StreamKey) -> runtime::Result<Option<runtime::Poison>> {
+            self.poison_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.poisoned(stream)
+        }
+    }
+
+    fn answer_every_effect(e: &mut runtime::Engine, asked: &mut u64) {
+        use runtime::Executor;
+        for p in e.pending_effects() {
+            *asked += 1;
+            e.complete(&p.key, runtime::Outcome::Failed("scripted".into())).unwrap();
+        }
+        e.run_until_idle().unwrap();
+    }
+
+    #[test_id(t4l3har)]
+    #[test]
+    fn an_idle_hour_of_the_four_store_only_rows_runs_nothing_commits_nothing_and_reads_no_poison() {
+        use runtime::ports::Clock;
+        use runtime::Executor;
+        let s = crate::settings::fixture();
+        let only = [d::broker_exec::NAME, readiness_dependents::NAME, claim_count::NAME, supersede_duty::NAME];
+        let regs: Vec<Registration> = crate::registrations(&s).into_iter().filter(|r| only.contains(&r.name.as_str())).collect();
+        assert_eq!(regs.len(), 4);
+        let clock = runtime::ports::VirtualClock::new(0);
+        let changes = std::sync::Arc::new(runtime::changes::ScriptedChanges::default());
+        let journal = std::sync::Arc::new(Counting { inner: runtime::MemJournal::new(), commits: Default::default(), poison_reads: Default::default() });
+        let mut e = runtime::Engine::open(journal.clone(), std::sync::Arc::new(clock.clone()), regs, 1).unwrap().with_sweep(60_000, changes.clone());
+        changes.set(1);
+        for name in only {
+            let (_, stream, kind) = (all().find(|t| t.name == name).unwrap().boot)();
+            e.start(stream, kind);
+        }
+        let mut asked = 0;
+        e.run_until_idle().unwrap();
+        answer_every_effect(&mut e, &mut asked);
+        assert!(asked > 0, "the boot ticks asked for nothing, so the quiet below proves nothing");
+        let (commits, reads) = (journal.commits.load(std::sync::atomic::Ordering::SeqCst), journal.poison_reads.load(std::sync::atomic::Ordering::SeqCst));
+        asked = 0;
+        for _ in 0..61 {
+            clock.advance(60_000);
+            e.run_until_idle().unwrap();
+            answer_every_effect(&mut e, &mut asked);
+        }
+        assert_eq!(asked, 0, "an effect ran in an idle hour");
+        assert_eq!((journal.commits.load(std::sync::atomic::Ordering::SeqCst), journal.poison_reads.load(std::sync::atomic::Ordering::SeqCst)), (commits, reads));
+        let next = e.next_timer_at();
+        assert_eq!(next, Some(clock.now_ms() + 60_000));
+        for t in e.status().tasks {
+            assert_eq!(t.next_due_at, next, "{}", t.name);
+        }
     }
 }

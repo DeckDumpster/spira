@@ -13,7 +13,7 @@
 //! [`kit`] is the shape every family B and C stub shares: the tick, the observe probe, the
 //! carried state and the acceptance helpers T1–T6 are written against.
 
-use super::Task;
+use super::{Reads, Task};
 
 /// `Stub` and `Handler` for a stub module's handler struct `$ty`, which has fields `cadence`
 /// and `cfg`, beside the module's `SPEC`, `KEYS`, `CADENCE_KEY`, `TICK`, `Snapshot`, `Carry`,
@@ -96,9 +96,10 @@ use reconcile_heimdall::ReconcileHeimdall;
 use reconcile_section::ReconcileSection;
 
 pub static TASKS: &[Task] = &[
-    Task { name: reconcile_section::NAME, plane: runtime::Plane::Work, signal: &[], boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
+    Task { name: reconcile_section::NAME, reads: Reads::Polled(&["lifecycle/"]), plane: runtime::Plane::Work, signal: &[], boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
     Task {
         name: reconcile_content::NAME,
+        reads: Reads::Polled(&["events/", "planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: ReconcileContent::boot,
@@ -110,6 +111,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: reconcile_goodput::NAME,
+        reads: Reads::Polled(&["telemetry/sections/", "intents/", "knobs/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: ReconcileGoodput::boot,
@@ -129,6 +131,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: reconcile_heimdall::NAME,
+        reads: Reads::Undeclarable("it reads the control socket's scheduler status and the conditions it writes itself every pass"),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: ReconcileHeimdall::boot,
@@ -146,6 +149,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: mail_reconcile::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: MailReconcile::boot,
@@ -165,6 +169,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: asks_verify::NAME,
+        reads: Reads::Polled(&["planning/", "lifecycle/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: AsksVerify::boot,
@@ -182,6 +187,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: incident_settle::NAME,
+        reads: Reads::Polled(&["lifecycle/", "planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: IncidentSettle::boot,
@@ -199,6 +205,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: incident_alarms::NAME,
+        reads: Reads::Undeclarable("it reads the control socket and the tsd alarm records, which no store prefix covers"),
         plane: runtime::Plane::Work,
         signal: &[incident_alarms::PAGE, incident_alarms::NOTE, incident_alarms::FLOOR_ASK, incident_alarms::RETRY],
         boot: IncidentAlarms::boot,

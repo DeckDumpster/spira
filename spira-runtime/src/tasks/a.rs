@@ -10,7 +10,7 @@
 //! in `sim::doubles::TASK_EFFECTS` and its keys in the settings fixture. Until then its
 //! `tests/task_a_<task>.rs` T1 is red on exactly that.
 
-use super::Task;
+use super::{Reads, Task};
 
 pub mod kit;
 
@@ -31,6 +31,7 @@ pub mod sweep_target;
 pub static TASKS: &[Task] = &[
     Task {
         name: sentinel_call::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: sentinel_call::SentinelCall::boot,
@@ -42,6 +43,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sentinel_pass::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: sentinel_pass::SentinelPass::boot,
@@ -73,6 +75,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: czar::NAME,
+        reads: Reads::Polled(&["batches/", "lifecycle/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: czar::Czar::boot,
@@ -84,6 +87,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sift::NAME,
+        reads: Reads::Polled(&["lifecycle/", "planning/", "batches/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: sift::Sift::boot,
@@ -95,6 +99,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: batcher_local::NAME,
+        reads: Reads::Polled(&["lifecycle/", "planning/", "batches/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: batcher_local::BatcherLocal::boot,
@@ -109,6 +114,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: batcher_forge::NAME,
+        reads: Reads::Polled(&["lifecycle/", "planning/", "batches/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: batcher_forge::BatcherForge::boot,
@@ -123,6 +129,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: queue_step::NAME,
+        reads: Reads::Polled(&["batches/", "lifecycle/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: queue_step::QueueStep::boot,
@@ -137,6 +144,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: publish::NAME,
+        reads: Reads::Polled(&["batches/", "lifecycle/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: publish::Publish::boot,
@@ -151,6 +159,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: sweep_target::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: sweep_target::SweepTarget::boot,
@@ -162,6 +171,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: gate_worker::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: gate_worker::GateWorker::boot,
@@ -176,6 +186,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: gate_check::NAME,
+        reads: Reads::Polled(&["planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: gate_check::GateCheck::boot,
@@ -190,6 +201,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: landing::NAME,
+        reads: Reads::Polled(&["lifecycle/", "planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: landing::Landing::boot,
@@ -220,6 +232,7 @@ pub static TASKS: &[Task] = &[
     },
     Task {
         name: submission_provision::NAME,
+        reads: Reads::None,
         plane: runtime::Plane::Work,
         signal: &[],
         boot: submission_provision::SubmissionProvision::boot,

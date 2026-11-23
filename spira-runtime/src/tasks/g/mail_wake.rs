@@ -46,7 +46,7 @@ use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
 use super::mail_arrived::{self, Arrived};
-use crate::tasks::Task;
+use crate::tasks::{Reads, Task};
 
 pub const NAME: &str = "mail.wake";
 /// The task's own stream: its boot tick lands here; the work happens on `mail/<mailbox>`.
@@ -286,6 +286,7 @@ pub fn wake(proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, Stri
 /// The row that registers this task: `tasks::g::TASKS` lists it.
 pub const ROW: Task = Task {
     name: NAME,
+    reads: Reads::None,
     plane: runtime::Plane::Signal,
     signal: &[],
     boot: MailWake::boot,

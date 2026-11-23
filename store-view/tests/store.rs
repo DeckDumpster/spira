@@ -795,3 +795,28 @@ fn added_prefixes_join_the_watch_and_without_them_the_five_are_asked_as_before()
         assert_eq!(watch_argv(&w)[..8], ["watch", "batches/", "lifecycle/", "readiness/", "planning/", "history/", "work-requests/", "--from-rev"].map(String::from));
     });
 }
+
+#[test_id(tm31ksw)]
+#[test]
+fn a_view_with_a_longer_hold_sends_it_and_stays_current_through_that_much_quiet() {
+    within(|| {
+        let mut w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        let now = Arc::clone(&w.now);
+        w.p = Projection::new(LcClient::over(Arc::new(Double(Arc::clone(&w.script))), true), Duration::from_secs(10), Arc::new(move || *now.lock().unwrap())).with_watch_wait(30_000);
+        w.p.poll().unwrap();
+        w.watch(json!({ "progress_rev": 5 }));
+        w.p.poll().unwrap();
+        let sent = w.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
+        assert_eq!(sent[sent.iter().position(|a| a == "--wait-ms").unwrap() + 1], "30000");
+        w.advance(Duration::from_secs(35));
+        assert_eq!(w.p.ready_counts().unwrap().rev, 5, "35 s of quiet is inside the hold beyond the 10 s bound");
+        w.advance(Duration::from_secs(6));
+        assert!(matches!(w.p.ready_counts(), Err(LcError::Refused(m)) if m.starts_with("stale past 40000ms")));
+        let plain = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        plain.p.poll().unwrap();
+        plain.watch(json!({ "progress_rev": 5 }));
+        plain.p.poll().unwrap();
+        let sent = plain.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
+        assert_eq!(sent[sent.iter().position(|a| a == "--wait-ms").unwrap() + 1], "2000", "a view that does not ask keeps its hold");
+    });
+}

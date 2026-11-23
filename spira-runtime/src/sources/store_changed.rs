@@ -30,7 +30,7 @@ impl Source for StoreChanged {
         spira_store::lc_call::as_task("store-watch", || {
             views.run(&closed, &mut |polled| {
                 let (rev, body) = match polled {
-                    Polled::Quiet { rev } => return table.set(*rev),
+                    Polled::Quiet { rev } => return table.settle(*rev),
                     Polled::Applied { through, keys } => (*through, Body { rev: *through, keys: keys.clone(), reload: false }),
                     Polled::Reloaded { rev } => (*rev, Body { rev: *rev, keys: Vec::new(), reload: true }),
                 };
@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(Body::parse(&first.kind.body), Some(Body { rev: 9, keys: vec!["lifecycle/sp-a".into(), "readiness/sp-a".into()], reload: false }));
         assert_eq!(Body::parse(&second.kind.body), Some(Body { rev: 12, keys: vec![], reload: true }));
         assert!(rx.try_recv().is_err(), "a quiet answer submits nothing");
-        assert_eq!(table.rev(), Some(15));
+        assert_eq!(table.rev(), Some(12), "a quiet answer moves a table that holds a revision no further: any write anywhere moves the store's head");
     }
 
     #[test_id(trhwkl6)]
