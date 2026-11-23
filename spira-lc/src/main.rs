@@ -65,6 +65,7 @@ mod reconcile_content;
 mod wire;
 mod repo_config;
 mod rows;
+mod net;
 mod serve;
 mod serve_bench;
 mod serve_loop;

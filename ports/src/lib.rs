@@ -1,12 +1,14 @@
-//! The shared `Clock`, `Proc`, `Rng` and `Fs` ports (law-new-subsystems-are-simulation-ready).
+//! The shared `Clock`, `Proc`, `Rng`, `Fs` and `Net` ports (law-new-subsystems-are-simulation-ready).
 
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
 
 pub mod fs;
+pub mod net;
 
 pub use fs::{Fs, Meta, RealFs, SimFs, SimFaults};
+pub use net::{Listener, Net, Peer, SimClient, SimNet, Stream};
 
 use std::io::Write;
 use std::process::{Command, Stdio};
