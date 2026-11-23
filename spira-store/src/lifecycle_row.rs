@@ -251,18 +251,18 @@ pub fn plan_delivery(d: &Delivery, shown: &serde_json::Value) -> Step {
         };
         return Step::Delivery { expect: want, version, kind: d.kind() };
     }
-    let landed = |proof: String| Step::Bead { expect: state.clone(), version: version.clone(), kind: BeadEventKind::ContentOnBase { proof } };
+    let on_base = |proof: String| Step::Bead { expect: state.clone(), version: version.clone(), kind: BeadEventKind::ContentOnBase { proof } };
     match d {
         Delivery::PrMerged { in_force, .. } => {
             if matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE") {
                 return Step::Skip(NotRecorded::NotLive { state });
             }
             match in_force {
-                Some(proof) => landed(proof.clone()),
+                Some(proof) => on_base(proof.clone()),
                 None => Step::Skip(NotRecorded::ProofNotInForce),
             }
         }
-        Delivery::PushDelivered { sha } if state == "CERTIFIED" => landed(format!("ancestry:{sha}")),
+        Delivery::PushDelivered { sha } if state == "CERTIFIED" => on_base(format!("ancestry:{sha}")),
         Delivery::PushDelivered { .. } => Step::Skip(NotRecorded::NotCertified { state }),
         _ => Step::Skip(NotRecorded::NoDeliveryRow),
     }
