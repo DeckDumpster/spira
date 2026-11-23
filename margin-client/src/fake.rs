@@ -55,6 +55,9 @@ impl FakeMargin {
     pub fn go_down(&self) {
         self.0.borrow_mut().down = true;
     }
+    pub fn come_up(&self) {
+        self.0.borrow_mut().down = false;
+    }
     pub fn publish(&self, collection: &str, at_ms: u64) {
         self.0.borrow_mut().published_at.insert(collection.to_string(), at_ms);
     }

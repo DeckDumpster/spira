@@ -482,7 +482,10 @@ fn sealed_halves(run: &Path, number: u32) -> Sealed {
 /// Posts the collection, then each sealed comment held, recording each step so a rerun resumes.
 fn post_review(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u8>)], body: &str, sealed: &Sealed, ports: &Ports) -> Result<String, String> {
     if p.collection.is_none() {
-        let docs: Vec<Doc> = files.iter().map(|(path, bytes)| Doc { path: path.clone(), kind: "code".to_string(), text: String::from_utf8_lossy(bytes).into_owned() }).collect();
+        let docs = files
+            .iter()
+            .map(|(path, bytes)| String::from_utf8(bytes.clone()).map(|text| Doc { path: path.clone(), kind: "code".to_string(), text }).map_err(|_| format!("{path} is not UTF-8; the reader holds text, and a file is posted whole or not at all")))
+            .collect::<Result<Vec<Doc>, String>>()?;
         let c = ports.margin.post_collection(&r.unit.title, body, &docs)?;
         p.documents = c.documents.iter().map(|d| (d.path.clone(), (d.id.clone(), d.version))).collect();
         p.collection = Some(c.id);

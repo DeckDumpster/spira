@@ -896,3 +896,56 @@ fn a_record_written_before_the_reader_still_loads() {
     let r = record::load(w.run.path(), 1).unwrap();
     assert_eq!((r.collection, r.url, r.documents.len()), (None, None, 0));
 }
+
+#[test_id(thqwf0k)]
+#[test]
+fn close_with_the_reader_down_or_the_ledger_commit_failing_leaves_the_review_unclosed_and_a_rerun_finishes() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    w.margin.go_down();
+    let o = w.cr(&["close", "--review", "001"]);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("the reader at"), "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Open);
+    assert!(ledger_rows(&w.ports).iter().all(|r| r.closed_at.is_none()), "no close row was written");
+    w.margin.come_up();
+    w.commits.fail.set(true);
+    assert_eq!(w.cr(&["close", "--review", "001"]).code, 1);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Open);
+    assert_eq!(ledger_rows(&w.ports).len(), 2, "a failed commit leaves the ledger as it was");
+    w.commits.fail.set(false);
+    assert_eq!(w.cr(&["close", "--review", "001"]).code, 0);
+    assert_eq!(ledger_rows(&w.ports).iter().filter(|r| r.review == "001" && r.closed_at.is_some()).count(), 1);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Closed);
+}
+
+#[test_id(tiqle0c)]
+#[test]
+fn seal_against_a_dead_reader_address_names_the_address_and_route_and_leaves_the_review_staged() {
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", dead.local_addr().unwrap());
+    drop(dead);
+    let token = TempDir::new("cr-dead-token");
+    std::fs::write(token.path().join("t"), "tok").unwrap();
+    let mut w = world();
+    w.ports.margin = Box::new(margin_client::HttpMargin { base: base.clone(), token_file: token.path().join("t").to_str().unwrap().to_string(), timeout: std::time::Duration::from_secs(1) });
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains(&base) && o.stderr.contains("POST /api/collections") && !o.stderr.contains("tok\n"), "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+}
+
+#[test_id(t1grunh)]
+#[test]
+fn a_verb_that_never_reaches_the_reader_runs_with_the_reader_unconfigured() {
+    let mut w = world();
+    w.ports.margin = Box::new(margin_client::Unconfigured("SPIRA_MARGIN_URL is empty; name it in the config, it has no default".into()));
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    assert_eq!(w.cr(&["status"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("SPIRA_MARGIN_URL"), "{}", o.stderr);
+}

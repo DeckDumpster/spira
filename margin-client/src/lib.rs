@@ -105,3 +105,34 @@ pub trait Margin {
     fn close(&self, collection: &str) -> Result<(), String>;
     fn changes(&self, after: u64, hold_secs: u64) -> Result<Changes, String>;
 }
+
+/// Stands in for a reader whose config is missing: every call is refused with the config's own words,
+/// so a verb that never reaches the reader still runs.
+pub struct Unconfigured(pub String);
+
+impl Margin for Unconfigured {
+    fn post_collection(&self, _: &str, _: &str, _: &[Doc]) -> Result<Collection, String> {
+        Err(self.0.clone())
+    }
+    fn post_comment(&self, _: &str, _: &Anchor, _: &str, _: bool, _: Option<&str>) -> Result<CommentRef, String> {
+        Err(self.0.clone())
+    }
+    fn post_version(&self, _: &str, _: &str) -> Result<u64, String> {
+        Err(self.0.clone())
+    }
+    fn collection(&self, _: &str) -> Result<CollectionInfo, String> {
+        Err(self.0.clone())
+    }
+    fn thread(&self, _: &str) -> Result<Thread, String> {
+        Err(self.0.clone())
+    }
+    fn document_text(&self, _: &str, _: u64) -> Result<String, String> {
+        Err(self.0.clone())
+    }
+    fn close(&self, _: &str) -> Result<(), String> {
+        Err(self.0.clone())
+    }
+    fn changes(&self, _: u64, _: u64) -> Result<Changes, String> {
+        Err(self.0.clone())
+    }
+}

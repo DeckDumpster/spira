@@ -1940,6 +1940,17 @@ mod cr_cadence_tests {
         serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot(input).unwrap()).unwrap().due_at
     }
 
+    #[test_id(tftq9pf)]
+    #[test]
+    fn the_world_snapshot_names_the_staged_scheduled_review_as_the_blocker_and_none_once_it_closes() {
+        let t = testkit::TempDir::new("cr-cadence-blocker");
+        scheduled(t.path(), State::Staged, None);
+        let snap = |w: &World| serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot("").unwrap()).unwrap();
+        assert_eq!(snap(&world(t.path(), LA, "7")).blocker, Some((1, State::Staged)));
+        record::set_state(t.path(), 1, State::Closed, 5).unwrap();
+        assert_eq!(snap(&world(t.path(), LA, "7")).blocker, None);
+    }
+
     #[test_id(tilri32)]
     #[test]
     fn a_review_closed_at_half_past_eleven_local_is_due_the_next_days_open_hour() {

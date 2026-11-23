@@ -40,7 +40,10 @@ fn build_ports() -> Result<Ports, String> {
     };
     Ok(Ports {
         run_dir,
-        margin: Box::new(margin_client::HttpMargin::configured(spira_config::process::cfg)?),
+        margin: match margin_client::HttpMargin::configured(spira_config::process::cfg) {
+            Ok(m) => Box::new(m),
+            Err(e) => Box::new(margin_client::Unconfigured(e)),
+        },
         findings_dir: key(cr::findings::DIR_KEY),
         committer: Box::new(cr::ports::GitCommitter),
         source_repo: repo.clone(),
