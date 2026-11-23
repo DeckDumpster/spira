@@ -472,7 +472,7 @@ pub fn stack_plan(
             continue;
         }
         let ok = match lc.get(&bid) {
-            None => rec.is_some_and(rowless_blocker_done),
+            None => spira_config::edges::blocker_finished(None, rec.map(|r| (r.issue_type.as_deref(), r.status.as_deref()))),
             Some(row) => {
                 let is_parent = cand.parent.as_deref() == Some(bid.as_str());
                 let stackable = stack_max_depth > 0
@@ -491,7 +491,7 @@ pub fn stack_plan(
                     }
                     // SUPERSEDED / DROPPED: nothing more will happen to the blocker, so
                     // waiting on it would wait forever (the machine's word, not bd's).
-                    s => s.is_terminal(),
+                    s => spira_config::edges::blocker_finished(Some(s), None),
                 }
             }
         };
@@ -507,23 +507,6 @@ pub fn stack_plan(
         return Err(Verdict::StackUnchanged);
     }
     Ok((stack, depth))
-}
-
-/// A blocker with no lifecycle row (DESIGN.md §2, sp-mve9i). A container, decision, event,
-/// molecule or gate bead is not a work bead: the machine never holds it, and bd's status is
-/// its whole lifecycle, read through `spira_config::nonwork` naming the kind. A work bead
-/// with no row is not live work — every work bead gets its row at creation, and CHECK-ROWLESS
-/// backfills a READY row for a live one that missed it, at which point it blocks by its row —
-/// so it holds nothing back (the reading the sentinel's backlog and the claim witness give a
-/// rowless bead).
-fn rowless_blocker_done(r: &ReadyRow) -> bool {
-    use spira_config::nonwork::{self, Kind};
-    let kind = match r.issue_type.as_deref() {
-        Some("gate") => Kind::Hold,
-        Some("epic") | Some("decision") | Some("event") | Some("molecule") => Kind::Epic,
-        _ => return true,
-    };
-    nonwork::is_closed(kind, r.status.as_deref().unwrap_or(""))
 }
 
 /// The hard ceiling the spira-config schema enforces (stacked-dependents §1).

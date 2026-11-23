@@ -201,10 +201,10 @@ pub fn select_pool(rows: &[Value], outside: &[Value], branches: &BTreeMap<String
     drop_stacked_on_barred(members, barred).into_iter().map(|m| Candidate { id: m.id, tip: m.tip }).collect()
 }
 
-/// The prerequisites of `stack` not yet finished by `state` (LANDED, SUPERSEDED, DROPPED); an
-/// unread prerequisite is live, the safe side.
+/// The prerequisites of `stack` not yet finished by `state` (`spira_config::edges::blocker_finished`);
+/// an unread prerequisite is live, the safe side.
 pub fn live_prereqs(stack: &[String], state: &BTreeMap<String, String>) -> Vec<String> {
-    stack.iter().filter(|k| !matches!(state.get(*k).map(String::as_str), Some("LANDED" | "SUPERSEDED" | "DROPPED"))).cloned().collect()
+    stack.iter().filter(|k| !spira_config::edges::blocker_finished(state.get(*k).and_then(|s| lifecycle::bead::BeadState::from_str(s)), None)).cloned().collect()
 }
 
 /// The prerequisite ids a `show` answer's recorded stack names.
@@ -644,6 +644,14 @@ pub fn lc_note(lc: &LcClient, id: &str, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tfnlj4y)]
+    #[test]
+    fn a_done_prerequisite_is_dropped_and_a_working_or_unread_one_stays() {
+        let stack: Vec<String> = ["sp-done", "sp-working", "sp-unread", "sp-landed"].map(String::from).into();
+        let state = BTreeMap::from([("sp-done", "DONE"), ("sp-working", "WORKING"), ("sp-landed", "LANDED")].map(|(k, v)| (k.to_string(), v.to_string())));
+        assert_eq!(live_prereqs(&stack, &state), ["sp-working", "sp-unread"]);
+    }
 
     #[test_id(tnvtcuj)]
     #[test]

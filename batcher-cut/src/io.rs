@@ -366,32 +366,40 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
         Some(other) => other.clone(),
         None => return BTreeMap::new(),
     };
-    stack
+    let entries: Vec<(String, String)> = stack
         .as_object()
-        .map(|o| {
-            o.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .filter(|(k, _)| !prereq_is_finished(env, k))
-                .collect()
-        })
-        .unwrap_or_default()
+        .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .unwrap_or_default();
+    let ids: Vec<String> = entries.iter().map(|(k, _)| k.clone()).collect();
+    let finished = finished_blockers(env, &ids);
+    entries.into_iter().filter(|(k, _)| !finished.contains(k)).collect()
 }
 
-/// A prerequisite the machine records as LANDED, SUPERSEDED or DROPPED sequences nothing.
-/// An unreadable row is read as live: sequencing a member is the safe side.
-fn prereq_is_finished(env: &Env, id: &str) -> bool {
-    let Ok(out) = show_bead(env, id) else {
-        return false;
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else {
-        return false;
-    };
-    matches!(
-        v.get("bead")
-            .and_then(|b| b.get("state"))
-            .and_then(|s| s.as_str()),
-        Some("LANDED" | "SUPERSEDED" | "DROPPED")
-    )
+/// Of `ids`, those finished by the claim rule (`spira_config::edges::blocker_finished`): by their
+/// lifecycle row, or with none by their content. A failed read leaves the ids live.
+fn finished_blockers(env: &Env, ids: &[String]) -> std::collections::BTreeSet<String> {
+    let mut finished = std::collections::BTreeSet::new();
+    let Ok(rows) = lc_rows_of(env, ids) else { return finished };
+    let mut states: BTreeMap<&str, Option<lifecycle::bead::BeadState>> = BTreeMap::new();
+    for r in &rows {
+        let Some(id) = r.get("bead_id").and_then(|x| x.as_str()) else { continue };
+        let state = r.get("state").and_then(|x| x.as_str()).and_then(lifecycle::bead::BeadState::from_str);
+        states.insert(id, state);
+        if spira_config::edges::blocker_finished(state, None) {
+            finished.insert(id.to_string());
+        }
+    }
+    let rowless: Vec<String> = ids.iter().filter(|i| !states.contains_key(i.as_str())).cloned().collect();
+    if let Ok(serde_json::Value::Array(items)) = bd_show(env, &rowless) {
+        for it in &items {
+            let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
+            let text = |k: &str| it.get(k).and_then(|x| x.as_str());
+            if spira_config::edges::blocker_finished(None, Some((text("issue_type"), text("status")))) {
+                finished.insert(id.to_string());
+            }
+        }
+    }
+    finished
 }
 
 // ---------------------------------------------------------------------------------------
@@ -949,6 +957,14 @@ pub fn certified_pool_left_out(env: &Env, repo: &Repo) -> Result<(Vec<Member>, V
         by_id.insert(id.to_string(), (priority, title));
     }
     let fixes = base_fix_ids(env, repo, &texts);
+    let content_deps: Vec<String> = content_blockers
+        .values()
+        .flatten()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let finished = finished_blockers(env, &content_deps);
     let mut out = Vec::new();
     for (id, tip, epoch, express, mut blocked_by, provisional) in certified {
         let Some((priority, title)) = by_id.get(&id) else {
@@ -956,7 +972,7 @@ pub fn certified_pool_left_out(env: &Env, repo: &Repo) -> Result<(Vec<Member>, V
             continue;
         };
         for dep in content_blockers.get(&id).into_iter().flatten() {
-            if !blocked_by.contains(dep) && !prereq_is_finished(env, dep) {
+            if !blocked_by.contains(dep) && !finished.contains(dep) {
                 blocked_by.push(dep.clone());
             }
         }

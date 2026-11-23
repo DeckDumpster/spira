@@ -55,8 +55,8 @@ Read only for a blocker with no lifecycle record, or a CERTIFIED / IN_DELIVERY o
 
 | Input | Read by | Source today | Written by |
 |---|---|---|---|
-| blocker `issue_type` (a work type may stack; a non-work type waits on its status) | `spira-claim/src/rank.rs` `is_work`, `rowless_blocker_done` (`spira_config::nonwork::is_work_type`) | content | `bead.sh file --kind <kind>` (`bead/src/filing.rs` `create`) |
-| blocker `status` (rowless epic / decision / event / molecule / gate: closed or not) | `spira-claim/src/rank.rs` `rowless_blocker_done` (`spira_config::nonwork::is_closed`) | content | `spira-lc close` and `spira-lc close-epic`; `bd update --status` through `spira-lc/src/bd.rs` `write` |
+| blocker `issue_type` (a work type may stack; a non-work type waits on its status) | `spira-claim/src/rank.rs` `is_work`, `spira_config::edges::blocker_finished` (`spira_config::nonwork::is_work_type`) | content | `bead.sh file --kind <kind>` (`bead/src/filing.rs` `create`) |
+| blocker `status` (rowless epic / decision / event / molecule / gate: closed or not) | `spira-claim/src/rank.rs` `spira_config::edges::blocker_finished` (`spira_config::nonwork::is_closed`) | content | `spira-lc close` and `spira-lc close-epic`; `bd update --status` through `spira-lc/src/bd.rs` `write` |
 | blocker `repo:` label (the stackable check: same repo as the candidate) | `spira-claim/src/rank.rs` `stack_plan` | content | as the candidate's `repo:` label |
 
 ### Files under run or queue

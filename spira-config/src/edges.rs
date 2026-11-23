@@ -80,12 +80,54 @@ pub fn gate(state: BeadState, tip: Option<&str>) -> Gate {
     }
 }
 
+/// Whether a blocker is finished, for claiming and for the batcher's cut alike. A lifecycle row
+/// finishes it when terminal. With no row, `content` is the blocker's `(issue_type, status)`: a
+/// work bead with no row holds nothing back (CHECK-ROWLESS backfills a live one), a container,
+/// decision, event, molecule or gate waits on its closed status, and a blocker nothing could be
+/// read for stays live.
+pub fn blocker_finished(state: Option<BeadState>, content: Option<(Option<&str>, Option<&str>)>) -> bool {
+    use crate::nonwork::{self, Kind};
+    if let Some(state) = state {
+        return state.is_terminal();
+    }
+    let Some((issue_type, status)) = content else { return false };
+    let kind = match issue_type {
+        Some("gate") => Kind::Hold,
+        Some("epic" | "decision" | "event" | "molecule") => Kind::Epic,
+        _ => return true,
+    };
+    nonwork::is_closed(kind, status.unwrap_or(""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Every type `bd dep add --type` accepts, its two aliases, and the empty type a row may
     /// carry: only the blocking three block.
+    #[test_id(to9h29b)]
+    #[test]
+    fn a_blocker_is_finished_by_its_row_or_else_by_its_content() {
+        let all = [
+            BeadState::Open, BeadState::Ready, BeadState::Working, BeadState::Submitted, BeadState::Certified,
+            BeadState::InDelivery, BeadState::Rework, BeadState::Landed, BeadState::Superseded,
+            BeadState::Dropped, BeadState::Done,
+        ];
+        for st in all {
+            let want = matches!(st, BeadState::Landed | BeadState::Superseded | BeadState::Dropped | BeadState::Done);
+            assert_eq!(blocker_finished(Some(st), None), want, "{st:?}");
+            assert_eq!(blocker_finished(Some(st), Some((Some("epic"), Some("closed")))), want, "{st:?}: a row outranks content");
+        }
+        let content = |t: Option<&'static str>, s: Option<&'static str>| Some((t, s));
+        assert!(blocker_finished(None, content(Some("task"), Some("open"))), "rowless work holds nothing");
+        assert!(blocker_finished(None, content(None, None)));
+        assert!(!blocker_finished(None, content(Some("decision"), Some("open"))));
+        assert!(blocker_finished(None, content(Some("decision"), Some("closed"))));
+        assert!(!blocker_finished(None, content(Some("gate"), Some("open"))));
+        assert!(blocker_finished(None, content(Some("gate"), Some("closed"))));
+        assert!(!blocker_finished(None, None), "unread is live");
+    }
+
     #[test_id(tx9snxk)]
     #[test]
     fn blocks_counts_the_blocking_types_and_no_other_type_bd_emits() {
