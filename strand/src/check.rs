@@ -76,12 +76,18 @@ fn backing_off(run_dir: &Path, bead_id: &str, now: i64) -> bool {
     t.lines().nth(1).and_then(|n| n.parse::<i64>().ok()).is_some_and(|until| until > now)
 }
 
-/// SUBMITTED beads nothing will gate: no job queued, no backoff, and no hold.
-fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row], now: i64) -> std::collections::HashSet<String> {
+/// Beads of a repo that lands by pull request: nothing gates them, the landing task opens their pull request.
+fn pr_mode_beads(reg: &spira_config::repos::Registry, store: &Store) -> std::collections::HashSet<String> {
+    store.beads.iter().filter(|b| b.labels.iter().find_map(|l| l.strip_prefix("repo:")).is_some_and(|r| reg.land(r) == "pr")).map(|b| b.id.clone()).collect()
+}
+
+/// SUBMITTED beads nothing will gate: no job queued, no backoff, no hold, and not a pull-request repo's.
+fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row], pr_mode: &std::collections::HashSet<String>, now: i64) -> std::collections::HashSet<String> {
     let Some(queued) = gate_queued(run_dir) else { return Default::default() };
     rows.iter()
         .filter(|r| r.state == "SUBMITTED" && !queued.contains(&r.bead_id))
         .filter(|r| r.holds.is_empty())
+        .filter(|r| !pr_mode.contains(&r.bead_id))
         .filter(|r| !backing_off(run_dir, &r.bead_id, now))
         .map(|r| r.bead_id.clone())
         .collect()
@@ -172,7 +178,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let working = ids(&|r| r.working());
     let held_ask = ids(&|r| r.held("ask"));
     let held_poison = ids(&|r| r.held("poison"));
-    let ungated = ungated_submitted(&run_dir, &lc_rows, now);
+    let ungated = ungated_submitted(&run_dir, &lc_rows, &pr_mode_beads(&spira_config::repos::Registry::from_env(std::env::vars().collect(), &cfg.home.clone().unwrap_or_default()), &store), now);
     let stacked_on: std::collections::HashMap<String, Vec<String>> = lc_rows
         .iter()
         .filter(|r| !r.terminal() && !r.stack.is_empty())
@@ -901,8 +907,29 @@ mod ungated_submitted_tests {
         let held = spira_store::lc_state::Row { holds: vec!["wait".into()], ..row("sp-b") };
         let rows = [row("sp-a"), held];
         let unheld = [row("sp-a"), row("sp-b")];
-        assert_eq!(ungated_submitted(&run, &unheld, 1000).len(), 2, "the matcher must be able to find an ungated bead");
-        assert_eq!(ungated_submitted(&run, &rows, 1000), ["sp-a".to_string()].into_iter().collect());
+        assert_eq!(ungated_submitted(&run, &unheld, &Default::default(), 1000).len(), 2, "the matcher must be able to find an ungated bead");
+        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), 1000), ["sp-a".to_string()].into_iter().collect());
+    }
+
+    #[test_id(th6awlv)]
+    #[test]
+    fn a_submitted_bead_of_a_pull_request_repo_is_not_ungated() {
+        let run = testkit::TempDir::new("strand-pr-mode");
+        fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
+        let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
+        let rows = [row("sp-a"), row("sp-b")];
+        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), 1000).len(), 2, "the matcher must be able to find an ungated bead");
+        let pr_mode = ["sp-b".to_string()].into_iter().collect();
+        assert_eq!(ungated_submitted(&run, &rows, &pr_mode, 1000), ["sp-a".to_string()].into_iter().collect());
+    }
+
+    #[test_id(t8bbxy2)]
+    #[test]
+    fn pr_mode_beads_are_the_beads_labelled_with_a_repo_that_lands_by_pull_request() {
+        let reg = spira_config::repos::Registry::new(Some("prrepo|/x|pr\ngaterepo|/y|push\n"), &Default::default(), Path::new("nonexistent"));
+        let bead = |id: &str, repo: &str| crate::model::Bead { id: id.into(), labels: vec![format!("repo:{repo}")], ..Default::default() };
+        let store = Store::new(vec![bead("sp-a", "prrepo"), bead("sp-b", "gaterepo"), crate::model::Bead { id: "sp-c".into(), ..Default::default() }]);
+        assert_eq!(pr_mode_beads(&reg, &store), ["sp-a".to_string()].into_iter().collect());
     }
 
     #[test_id(tzevssy)]
@@ -914,11 +941,11 @@ mod ungated_submitted_tests {
         let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
         let rows = [row("sp-a"), row("sp-b")];
         let now = 1000;
-        assert_eq!(ungated_submitted(&run, &rows, now).len(), 2, "the matcher must be able to find an ungated bead");
+        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), now).len(), 2, "the matcher must be able to find an ungated bead");
         fs::write(run.join("gate-backoff/spira-sp-b"), format!("t1\n{}\n", now + 60)).unwrap();
-        assert_eq!(ungated_submitted(&run, &rows, now), ["sp-a".to_string()].into_iter().collect());
+        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), now), ["sp-a".to_string()].into_iter().collect());
         fs::write(run.join("gate-backoff/spira-sp-b"), format!("t1\n{}\n", now - 1)).unwrap();
-        assert_eq!(ungated_submitted(&run, &rows, now).len(), 2, "an ended backoff is a stranding again");
+        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), now).len(), 2, "an ended backoff is a stranding again");
     }
 
     #[test_id(tx1f0ud)]
