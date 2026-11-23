@@ -275,6 +275,13 @@ pub struct Branch {
     pub pr: Option<PrRead>,
 }
 
+/// An open pull request from this installation's identity: its number and its head branch.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenPr {
+    pub number: u64,
+    pub br: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repo {
     pub name: String,
@@ -283,6 +290,12 @@ pub struct Repo {
     pub base_fq: String,
     pub base_sha: String,
     pub branches: Vec<Branch>,
+    /// The repository's open pull requests as the forge lists them.
+    #[serde(default)]
+    pub open_prs: Vec<OpenPr>,
+    /// The listing could not be read: no branch is started on a guess that none is open.
+    #[serde(default)]
+    pub open_prs_unreadable: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,6 +305,10 @@ pub struct Snapshot {
     #[serde(default)]
     pub at: u64,
     pub repos: Vec<Repo>,
+    /// The branches this task has a step requested for and unanswered, or held by a halt; the
+    /// handler fills it. `None`: not known, a branch mid-machine is left to its step.
+    #[serde(default)]
+    pub in_flight: Option<std::collections::BTreeSet<String>>,
 }
 
 /// The per-branch machine of `pr_branch.rs`.
@@ -363,6 +380,15 @@ pub struct Carry {
     pub branches: BTreeMap<String, BranchCarry>,
     /// Bead id to its pull request, replaced each observe.
     pub prs: BTreeMap<String, PrRead>,
+    /// Bead id to the open pull request of another branch it waits behind, replaced each observe.
+    pub waits: BTreeMap<String, Waits>,
+}
+
+/// The open pull request a branch with none of its own waits behind.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Waits {
+    pub number: u64,
+    pub br: String,
 }
 
 fn word(state: State) -> String {
@@ -455,8 +481,12 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
             }
             let mut c = carry.branches.get(&b.br).cloned().unwrap_or_default();
             if !matches!(c.state, State::Start | State::Done) {
-                next.branches.insert(b.br.clone(), c);
-                continue;
+                let stepping = snap.in_flight.as_ref().is_none_or(|f| f.contains(&b.br));
+                if stepping {
+                    next.branches.insert(b.br.clone(), c);
+                    continue;
+                }
+                c.state = State::Start;
             }
             match b.pr_state {
                 PrState::Merged => {
@@ -467,10 +497,16 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
                     acts.push(act(DELIVER_PR_CLOSED, format!("{}/pr-closed", bead.id), &leg));
                     c.state = State::Done;
                 }
-                PrState::None => {
-                    acts.push(rebase(&leg));
-                    c.state = State::Rebasing;
-                }
+                PrState::None if r.open_prs_unreadable => {}
+                PrState::None => match r.open_prs.iter().filter(|p| p.br != b.br).min_by_key(|p| p.number) {
+                    Some(p) => {
+                        next.waits.insert(bead.id.clone(), Waits { number: p.number, br: p.br.clone() });
+                    }
+                    None => {
+                        acts.push(rebase(&leg));
+                        c.state = State::Rebasing;
+                    }
+                },
                 PrState::Open if b.behind && c.refreshes >= refresh_max => {
                     let subject = format!("{}: {} refreshed {} times", bead.id, b.br, c.refreshes);
                     acts.push(act(ASK, subject.clone(), &Leg { cause: subject, ..leg }));
@@ -659,9 +695,12 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
             let holder_alive = handed && hel::reap::holder_alive(&e.world.run_dir, &id);
             branches.push(Branch { br, tip, bead, lc_state: row.map(|r| r.state.clone()), pr_state, merge_sha: None, holder_alive, content_on_base, behind, pr: pr_read });
         }
-        repos.push(Repo { name, path, landref, base_fq, base_sha, branches });
+        let listed = forge("pr-list-mine", &path, &[], None);
+        let open_prs_unreadable = listed.code != 0;
+        let open_prs = listed.stdout().unwrap_or_default().lines().filter_map(|l| l.split_once(' ')).filter_map(|(n, b)| Some(OpenPr { number: n.trim().parse().ok()?, br: b.trim().to_string() })).collect();
+        repos.push(Repo { name, path, landref, base_fq, base_sha, branches, open_prs, open_prs_unreadable });
     }
-    serde_json::to_string(&Snapshot { forge_enabled, at, repos }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { forge_enabled, at, repos, in_flight: None }).map_err(|e| e.to_string())
 }
 
 /// The pull request of `br` as the forge reads it now; a closed one is none.
@@ -867,7 +906,18 @@ impl Landing {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "branches", drop: &[] }, runtime::rows::Part::Map { name: "prs", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "branches", drop: &[] }, runtime::rows::Part::Map { name: "prs", drop: &[] }, runtime::rows::Part::Map { name: "waits", drop: &[] }];
+
+/// The branches this task's steps are open or held for: requested and unanswered on its stream,
+/// or held on the halt stream and not yet released.
+fn in_flight(view: &Projection, stream: &runtime::event::StreamKey) -> std::collections::BTreeSet<String> {
+    let events = view.events(stream);
+    let answered: std::collections::BTreeSet<&EventId> = events.iter().filter(|e| [EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT].contains(&e.kind.tag.as_str())).filter_map(|e| e.cause.as_ref()).collect();
+    let released: std::collections::BTreeSet<&EventId> = events.iter().filter(|e| e.kind.tag == EFFECT_REQUESTED).filter_map(|e| e.cause.as_ref()).collect();
+    let requested = events.iter().filter(|e| e.kind.tag == EFFECT_REQUESTED && !answered.contains(&e.id)).filter_map(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok());
+    let held = view.events(&runtime::event::StreamKey(HALT_STREAM.into())).iter().filter(|e| e.kind.tag == EFFECT_HELD && !released.contains(&e.id)).filter_map(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).filter(|b| b["task"] == NAME && b["stream"] == STREAM);
+    requested.chain(held).filter_map(|b| serde_json::from_str::<Leg>(b["spec"]["input"].as_str()?).ok()).map(|leg| leg.br).collect()
+}
 
 impl Handler for Landing {
     fn interests(&self) -> &[EventKindTag] {
@@ -885,6 +935,7 @@ impl Handler for Landing {
         let Some(spec) = crate::watchers::answered_spec(view, ev) else { return vec![] };
         let (next, acts) = if spec.name == OBSERVE {
             let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
+            let snap = Snapshot { in_flight: Some(in_flight(view, &ev.stream)), ..snap };
             decide_with(&carry, &snap, self.pinned.get("SPIRA_PR_REFRESH_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(PR_REFRESH_MAX))
         } else {
             on_outcome(&carry, &spec.name, &spec.input, ev.kind.tag == EFFECT_SUCCEEDED, &ev.kind.body)

@@ -24,7 +24,7 @@ fn branch(id: &str, handed_on: bool) -> Branch {
 }
 
 fn with(branches: Vec<Branch>) -> Snapshot {
-    Snapshot { forge_enabled: true, at: 1_000, repos: vec![Repo { name: "pokedumpster".into(), path: "r/poke".into(), landref: "main".into(), base_fq: "origin/main".into(), base_sha: "b1".into(), branches }] }
+    Snapshot { forge_enabled: true, at: 1_000, repos: vec![Repo { name: "pokedumpster".into(), path: "r/poke".into(), landref: "main".into(), base_fq: "origin/main".into(), base_sha: "b1".into(), branches, ..Repo::default() }], in_flight: None }
 }
 
 /// The contract's idle fixture: forge enabled, one pr repo, two branches, neither handed on.
@@ -349,4 +349,169 @@ fn prs_round_trip_as_rows_keyed_by_bead() {
     let rows = kit::assert_kept_as_rows(&r, NAME);
     assert!(rows.iter().any(|k| k == "prs/pd-a"), "{rows:?}");
     kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
+}
+
+fn blocked_by(snap: &mut Snapshot, number: u64, br: &str) {
+    snap.repos[0].open_prs = vec![OpenPr { number, br: br.into() }];
+}
+
+#[test_id(tloo0g8)]
+#[test]
+fn a_branch_with_no_pull_request_waits_behind_the_one_open_and_starts_no_leg() {
+    let mut snap = with(vec![branch("pd-b", true)]);
+    blocked_by(&mut snap, 232, "spira/pd-a");
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    assert_eq!(acts, Vec::<Act>::new());
+    assert_eq!(carry.waits["pd-b"], Waits { number: 232, br: "spira/pd-a".into() });
+    assert_eq!(carry.branches, BTreeMap::new());
+}
+
+#[test_id(tp2th2b)]
+#[test]
+fn a_branch_waits_behind_the_lowest_numbered_of_several_open_pull_requests() {
+    let mut snap = with(vec![branch("pd-b", true)]);
+    snap.repos[0].open_prs = vec![OpenPr { number: 9, br: "spira/pd-c".into() }, OpenPr { number: 4, br: "spira/pd-a".into() }];
+    assert_eq!(decide(&Carry::default(), &snap).0.waits["pd-b"].number, 4);
+}
+
+#[test_id(t4adxwy)]
+#[test]
+fn a_branch_whose_own_pull_request_is_the_one_listed_is_not_waiting() {
+    let mut snap = with(vec![branch("pd-b", true)]);
+    blocked_by(&mut snap, 7, "spira/pd-b");
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    assert_eq!(effects(&acts), [REBASE]);
+    assert!(carry.waits.is_empty());
+}
+
+#[test_id(twlufso)]
+#[test]
+fn an_unreadable_listing_starts_no_leg_and_claims_no_wait() {
+    let mut snap = with(vec![branch("pd-b", true)]);
+    snap.repos[0].open_prs_unreadable = true;
+    let (carry, acts) = decide(&Carry::default(), &snap);
+    assert_eq!((acts, carry.waits), (vec![], BTreeMap::new()));
+}
+
+#[test_id(tnxtt6s)]
+#[test]
+fn a_wait_leaves_the_carry_when_the_blocker_is_gone() {
+    let mut snap = with(vec![branch("pd-b", true)]);
+    blocked_by(&mut snap, 232, "spira/pd-a");
+    let (carry, _) = decide(&Carry::default(), &snap);
+    snap.repos[0].open_prs.clear();
+    let (carry, acts) = decide(&carry, &snap);
+    assert_eq!((effects(&acts), carry.waits.len()), (vec![REBASE], 0));
+}
+
+#[test_id(trkmydt)]
+#[test]
+fn a_branch_mid_machine_with_no_step_in_flight_restarts_at_start() {
+    let (mut carry, _) = rebasing("pd-a");
+    let mut snap = with(vec![branch("pd-a", true)]);
+    snap.in_flight = Some(Default::default());
+    let (next, acts) = decide(&carry, &snap);
+    assert_eq!(effects(&acts), [REBASE]);
+    assert_eq!(next.branches["spira/pd-a"].state, State::Rebasing);
+    snap.in_flight = Some(["spira/pd-a".to_string()].into());
+    assert_eq!(decide(&carry, &snap).1, Vec::<Act>::new(), "an open step is not asked again");
+    snap.in_flight = None;
+    carry.branches.get_mut("spira/pd-a").unwrap().state = State::Pushing;
+    assert_eq!(decide(&carry, &snap).1, Vec::<Act>::new(), "a snapshot that does not say leaves the step its answer");
+}
+
+#[test_id(tagh5xs)]
+#[test]
+fn waits_are_kept_as_rows_keyed_by_bead() {
+    let mut snap = with(vec![branch("pd-b", true)]);
+    blocked_by(&mut snap, 232, "spira/pd-a");
+    let mut r = rig(1, snap);
+    r.advance(CADENCE_MS).unwrap();
+    let rows = kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "waits/pd-b"), "{rows:?}");
+    kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
+}
+
+mod restart {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    const STEPS: [&str; 4] = [REBASE, CONFINE, FORCE_PUSH, PR_CREATE];
+
+    fn armed(world: Arc<Mutex<Snapshot>>, hung: Option<&str>) -> TaskRig {
+        let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()));
+        for e in EFFECTS.iter().filter(|e| **e != OBSERVE) {
+            r = r.double(e, |_| Ok("{}".into()));
+        }
+        r = r.double(REBASE, |_| Ok(r#"{"outcome":"ok"}"#.into())).double(CONFINE, |_| Ok(r#"{"status":0,"detail":""}"#.into()));
+        if let Some(h) = hung {
+            r = r.hanging(h);
+        }
+        r
+    }
+
+    fn world_rig(world: Arc<Mutex<Snapshot>>, hung: Option<&str>) -> TaskRig {
+        let mut r = armed(world, hung);
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+        r
+    }
+
+    fn asked(r: &TaskRig, name: &str) -> usize {
+        r.requested().iter().filter(|q| q.name == name).count()
+    }
+
+    #[test_id(t3ykm0r)]
+    #[test]
+    fn the_item_behind_a_merged_pull_request_opens_its_own_on_the_next_pass() {
+        let mut first = with(vec![with_pr("pd-a", 5, PrStatus::Green), branch("pd-b", true)]);
+        blocked_by(&mut first, 5, "spira/pd-a");
+        let world = Arc::new(Mutex::new(first));
+        let mut r = world_rig(world.clone(), None);
+        r.advance(CADENCE_MS * 2).unwrap();
+        assert_eq!((asked(&r, REBASE), asked(&r, PR_CREATE)), (0, 0), "behind an open pull request nothing starts");
+        *world.lock().unwrap() = with(vec![Branch { pr_state: PrState::Merged, ..branch("pd-a", false) }, branch("pd-b", true)]);
+        r.advance(CADENCE_MS).unwrap();
+        assert_eq!(asked(&r, PR_CREATE), 1, "{:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
+    }
+
+    #[test_id(twccmxe)]
+    #[test]
+    fn a_step_lost_at_a_restart_is_started_again_and_the_item_opens_its_pull_request() {
+        for step in STEPS {
+            let world = Arc::new(Mutex::new(with(vec![branch("pd-b", true)])));
+            let mut r = world_rig(world, Some(step));
+            r.advance(30_000).unwrap();
+            assert_eq!(asked(&r, step), 1);
+            r.reopen(registration()).unwrap();
+            r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+            r.advance(CADENCE_MS * 2).unwrap();
+            kit::assert_unpoisoned(&r, STREAM);
+            assert!(asked(&r, PR_CREATE) >= 1, "{step}: lost at a restart, the item never opened its pull request: {:?}", r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>());
+        }
+    }
+
+    #[test_id(ta84swd)]
+    #[test]
+    fn a_step_still_open_at_the_next_pass_is_not_asked_again() {
+        let world = Arc::new(Mutex::new(with(vec![branch("pd-b", true)])));
+        let mut r = world_rig(world, Some(REBASE));
+        r.advance(CADENCE_MS).unwrap();
+        assert_eq!(asked(&r, REBASE), 1);
+    }
+
+    #[test_id(tkp5ri4)]
+    #[test]
+    fn a_step_held_by_a_halt_is_not_started_over_while_it_is_held() {
+        let behind = Branch { behind: true, ..with_pr("pd-b", 5, PrStatus::Green) };
+        let world = Arc::new(Mutex::new(with(vec![behind])));
+        let mut r = armed(world, None);
+        r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_HALTED, "test")).unwrap();
+        r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+        r.advance(CADENCE_MS * 3).unwrap();
+        let carry: Carry = r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap();
+        assert_eq!(carry.branches["spira/pd-b"].refreshes, 1, "{carry:?}");
+        r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_RESUMED, "")).unwrap();
+        assert_eq!(asked(&r, REBASE), 1);
+    }
 }
