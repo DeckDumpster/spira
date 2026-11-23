@@ -1217,12 +1217,16 @@ fn bind_deadline(received: Instant, limit: Duration) -> state_store::phases::Dea
 fn within<T: Send + 'static>(deadline: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let (tx, rx) = mpsc::channel();
     RUNNERS.run(Box::new(move || {
-        let _ = tx.send(f());
+        let answer = f();
+        Box::new(move || {
+            let _ = tx.send(answer);
+        })
     }));
     rx.recv_timeout(deadline).ok()
 }
 
-type Job = Box<dyn FnOnce() + Send + 'static>;
+/// Runs the work and returns the delivery of its answer, which the runner makes only once it is idle again.
+type Job = Box<dyn FnOnce() -> Box<dyn FnOnce()> + Send + 'static>;
 
 /// Process-wide threads that run request work: a job takes an idle runner, and a runner starts
 /// only when none is idle, so one still finishing abandoned work is never waited for.
@@ -1247,11 +1251,14 @@ impl Runners {
         let started = std::thread::Builder::new().name("lc-run".into()).spawn(move || {
             let mut next = job;
             loop {
-                {
+                let delivery = {
                     let _busy = Busy::enter();
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(next));
-                }
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(next))
+                };
                 idle.fetch_add(1, Ordering::SeqCst);
+                if let Ok(deliver) = delivery {
+                    deliver();
+                }
                 match inbox.lock().unwrap().recv() {
                     Ok(job) => next = job,
                     Err(_) => return,

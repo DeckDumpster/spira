@@ -101,7 +101,7 @@ fn start_server() -> Server {
     Server { child, socket, pid, _dir: dir }
 }
 
-const RECONNECT_RACE: u64 = 20;
+const WORKER_RACE: u64 = 10;
 
 #[test_id(tu38fgg)]
 #[test]
@@ -123,14 +123,16 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
             });
         }
     });
-    // Connection workers and request runners are reused and stay parked: one of each per concurrent client, and a few more where a client reconnects before its worker is counted idle, so bounded by concurrency, not by requests; a request past its
+    // Connection workers and request runners are reused and stay parked: one of each per concurrent client (a client that reconnects before its worker counts itself idle costs the workers a few more, WORKER_RACE), so bounded by concurrency, not by requests; a request past its
     // deadline is answered and its worker runs on: wait for the count to settle at that bound.
     let mut polls = 0;
-    while threads(pid) > threads_at_ready + 2 * CONNECTIONS as u64 + RECONNECT_RACE {
+    while threads(pid) > threads_at_ready + 2 * CONNECTIONS as u64 + WORKER_RACE {
         polls += 1;
         assert!(polls < 3_000, "threads still above the {threads_at_ready} at ready plus the parked workers: {}", thread_names(pid).join(", "));
         std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the server's thread count, the signal waited on
     }
+    let runners = thread_names(pid).iter().filter(|n| *n == "lc-run").count();
+    assert!(runners <= CONNECTIONS, "{runners} lc-run threads for {CONNECTIONS} concurrent clients");
     let after = rss_anon(pid);
     let _ = child.kill();
     let _ = child.wait();

@@ -181,3 +181,11 @@ fn work_outliving_its_deadline_holds_its_runner_and_the_next_call_runs_on_anothe
     assert_ne!(other.expect("answered in time"), held, "a runner still on abandoned work is not reused");
     drop(hold_tx);
 }
+
+#[test_id(tsttgjb)]
+#[test]
+fn work_that_panics_answers_none_and_leaves_its_runner_for_the_next_call() {
+    let _env = testkit::env_read();
+    assert!(super::within(Duration::from_secs(5), || -> u8 { panic!("work failed") }).is_none());
+    assert_eq!(super::within(Duration::from_secs(5), || 7), Some(7));
+}
