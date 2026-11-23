@@ -15,7 +15,7 @@ path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["install/integration", "bead/integration", "dwarf/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "store-view/integration", "strand/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration", "release/integration"]
+integration = ["install/integration", "bead/integration", "dwarf/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "store-view/integration", "strand/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration", "release/integration", "queue/integration"]
 [dependencies]
 dwarf = { path = "../dwarf" }
 bead = { path = "../bead" }
@@ -32,6 +32,7 @@ libc = "0.2"
 system-paths = { path = "../system-paths" }
 release = { path = "../release" }
 install = { path = "../install" }
+queue = { path = "../queue" }
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
