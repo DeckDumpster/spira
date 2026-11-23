@@ -60,7 +60,6 @@ spira/test-landing-pass.sh
 spira/test-landing-pr.sh
 spira/testlib/gate-fixture.sh
 spira/testlib.sh
-spira/test-ops-closing.sh
 spira/test-pr-notify.sh
 spira/test-spike.sh
 spira/tsd-ingest.sh

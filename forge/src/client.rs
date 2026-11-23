@@ -139,6 +139,7 @@ pub fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[St
         "pr-number" => pr_number(gh, repo, arg(args, 0)),
         "pr-list-queue" => pr_list_queue(gh, repo),
         "pr-list-open" => pr_list_open(gh, repo),
+        "pr-list-mine" => pr_list_mine(gh, repo),
         "pr-mergeability" => pr_mergeability(gh, repo, arg(args, 0)),
         "pr-state" => pr_state(gh, repo, arg(args, 0)),
         "pr-checks" => pr_checks(gh, repo, arg(args, 0)),

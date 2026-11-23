@@ -9,6 +9,7 @@ pub const OPERATIONS: &[&str] = &[
     "pr-number",
     "pr-list-queue",
     "pr-list-open",
+    "pr-list-mine",
     "pr-mergeability",
     "pr-state",
     "pr-checks",

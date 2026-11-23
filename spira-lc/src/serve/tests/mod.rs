@@ -8,6 +8,7 @@ mod filing;
 mod gc;
 mod holds;
 mod lifecycle_rows;
+mod loop_server;
 mod request_id;
 mod served;
 mod spans;

@@ -1,6 +1,6 @@
 //! `HttpMargin`: the reader over HTTP with a bearer token read from a file at each use.
 
-use crate::{Anchor, Changes, Collection, CollectionInfo, Comment, CommentRef, Doc, DocRef, Margin, Thread, TOKEN_FILE_KEY, URL_KEY};
+use crate::{Anchor, Changes, Collection, CollectionInfo, Comment, CommentRef, Doc, DocRef, Margin, Source, Thread, TOKEN_FILE_KEY, URL_KEY};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -178,8 +178,12 @@ impl HttpMargin {
 }
 
 impl Margin for HttpMargin {
-    fn post_collection(&self, title: &str, cover: &str, docs: &[Doc]) -> Result<Collection, String> {
-        let made: Created = self.quick("POST", &format!("{API}/collections"), Some(&json!({"title": title, "cover_note": cover, "documents": docs})))?;
+    fn post_collection(&self, title: &str, cover: &str, docs: &[Doc], source: Option<&Source>) -> Result<Collection, String> {
+        let mut body = json!({"title": title, "cover_note": cover, "documents": docs});
+        if let Some(s) = source {
+            body["source"] = json!(s);
+        }
+        let made: Created = self.quick("POST", &format!("{API}/collections"), Some(&body))?;
         Ok(Collection { id: made.id, url: made.url })
     }
 

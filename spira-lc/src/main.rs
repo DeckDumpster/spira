@@ -65,6 +65,8 @@ mod wire;
 mod repo_config;
 mod rows;
 mod serve;
+mod serve_bench;
+mod serve_loop;
 mod settle;
 mod skew;
 mod slow;
@@ -100,6 +102,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(|s| s.as_str()) == Some("check-config") {
         std::process::exit(spira_config::process::check_config_verb("spira-lc", &[]));
+    }
+    if args.first().map(|s| s.as_str()) == Some("serve-bench") {
+        std::process::exit(serve_bench::run(&args[1..]));
     }
     if args.first().map(|s| s.as_str()) == Some("serve") {
         if let Err(e) = spira_config::process::check_config(&[]) {

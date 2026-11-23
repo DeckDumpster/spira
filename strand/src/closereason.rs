@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-const MENTION_FILES: [&str; 2] = ["close-reason-flags", "test-ops-closing.sh"];
+const MENTION_FILES: [&str; 1] = ["close-reason-flags"];
 
 const FOLLOW_ON: [&str; 4] = ["builders should", "at scale", "the real fix", "follow-up"];
 

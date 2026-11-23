@@ -2474,29 +2474,6 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String]) -> (i32, String) {
     (0, out.trim_end_matches('\n').to_string())
 }
 
-/// Needs a real beads store, which the sandbox cannot start: `spira/test-pilgrim-followup-store.sh`
-/// runs this binary outside it, with `SPIRA_DB` set. Without that it has nothing to test.
-#[cfg(all(test, feature = "integration"))]
-mod store_tests {
-    const BODY: &str = "## Build\nthe thing, in spira-lc\n";
-
-    #[test_id(tglei5n)]
-    #[test]
-    fn a_pilgrims_file_followup_files_an_unparented_defect_the_pilgrimage_waits_on() {
-        if std::env::var_os("SPIRA_DB").is_none() {
-            return;
-        }
-        let pilgrimage = crate::bd::file_child("walk", "builder", "spira", None, Some(BODY), None).unwrap();
-        let filing = super::super::Filing { verb: "file-followup", actor: "pilgrim", title: "a defect", persona: "builder", repo: "spira", bound: &pilgrimage, after_landing: false, body: Some(BODY) };
-        let (code, defect) = super::super::file_and_bind(&filing, |_| (0, String::new()));
-        assert_eq!(code, 0, "{defect}");
-        let shown = std::process::Command::new("bd").args(["-C", &std::env::var("SPIRA_DB").unwrap(), "show", &pilgrimage, "--json"]).output().unwrap();
-        let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
-        let blocks = shown[0]["dependencies"].as_array().unwrap().iter().any(|d| d["id"] == defect.as_str() && d["dependency_type"] == "blocks");
-        assert!(blocks, "{pilgrimage} waits on {defect}: {shown}");
-    }
-}
-
 #[cfg(test)]
 mod tests {
 

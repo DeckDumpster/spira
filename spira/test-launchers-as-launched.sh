@@ -130,7 +130,7 @@ pane() {  # pane <name> <toml-for-the-server-or-empty> — `layout up` in a fres
     local cur="" prev="" polls=0 gathered=no verdict=""
     while [ "$polls" -lt 150 ]; do   # 150 x 0.2s: a cap well under the case deadline, not a budget
         cur="$($t capture-pane -p -t "$pid" 2>/dev/null)"; polls=$((polls + 1))
-        printf '%s\n' "$cur" | grep -qE '^SPIRA .* refresh [0-9]+ms' && gathered=yes || gathered=no
+        grep -qE '^SPIRA .* refresh [0-9]+ms' <<<"$cur" && gathered=yes || gathered=no
         [ "$gathered" = yes ] && [ "$cur" = "$prev" ] && break
         prev="$cur"; sleep 0.2
     done
@@ -150,9 +150,9 @@ PANEV="$(cat "$TMP/pane-verdict-good")"
 [ -z "$PANEV" ] && [ -n "$(printf '%s' "$OUT" | tr -d '[:space:]')" ] && ok "the ops pane rendered" || bad "the ops pane rendered" "${PANEV:-empty pane}; layout said: $(cat "$TMP/layout-good.out"); last capture: $OUT"
 PANESZ="$(grep -o 'pane good: size [0-9x]*' "$TMP/notes" | head -1)"
 for label in ROUND NOW STATES RECENT; do
-    printf '%s\n' "$OUT" | grep -qE "^ *([^ ]+ )? *${label}( |$)" && ok "the $label section rendered" || bad "the $label section rendered" "$PANESZ; $OUT"
+    grep -qE "^ *([^ ]+ )? *${label}( |$)" <<<"$OUT" && ok "the $label section rendered" || bad "the $label section rendered" "$PANESZ; $OUT"
 done
-printf '%s\n' "$OUT" | grep -qE "^ *([^ ]+ )? *NEXT( |$)" && bad "NEXT is folded into STATES > READY" "$OUT" || ok "NEXT is folded into STATES > READY"
+grep -qE "^ *([^ ]+ )? *NEXT( |$)" <<<"$OUT" && bad "NEXT is folded into STATES > READY" "$OUT" || ok "NEXT is folded into STATES > READY"
 nowant "no STOPPED banner" "STOPPED" "$OUT"
 nowant "no refusal line" "config unresolved" "$OUT"
 

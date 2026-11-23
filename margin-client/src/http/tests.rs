@@ -1,5 +1,5 @@
 use super::*;
-use crate::{scenario, Anchor, Comment, Doc, Margin, READER, TOKEN_FILE_KEY, URL_KEY};
+use crate::{scenario, Anchor, Comment, Doc, Margin, Source, READER, TOKEN_FILE_KEY, URL_KEY};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::{Read, Write};
@@ -96,8 +96,21 @@ fn posting_a_collection_sends_the_cover_as_cover_note_and_reads_only_id_and_url(
     let dir = TempDir::new("margin-collection");
     let (base, served) = replay(recording()[..1].to_vec());
     let docs = [Doc { path: "src/a.rs".into(), kind: "code".into(), text: scenario::FIRST.into() }, Doc { path: "src/b.rs".into(), kind: "code".into(), text: "fn b() {}\n".into() }];
-    let got = client(&dir, &base).post_collection("Scenario", "cover words", &docs).unwrap();
+    let got = client(&dir, &base).post_collection("Scenario", "cover words", &docs, None).unwrap();
     assert_eq!((got.id.as_str(), got.url.as_str()), ("dd7ca9c501e39498", "http://127.0.0.1:18931/c/dd7ca9c501e39498"));
+    assert_eq!(served.join().unwrap().0, Vec::<String>::new());
+}
+
+#[test_id(tsrcjsn)]
+#[test]
+fn a_source_reaches_the_request_json() {
+    let dir = TempDir::new("margin-source");
+    let src = Source { repository: "https://github.com/acme/demo".into(), commit: "c0ffee".into() };
+    let mut want = recording()[0].clone();
+    want.body["source"] = serde_json::json!({"repository": "https://github.com/acme/demo", "commit": "c0ffee"});
+    let (base, served) = replay(vec![want]);
+    let docs = [Doc { path: "src/a.rs".into(), kind: "code".into(), text: scenario::FIRST.into() }, Doc { path: "src/b.rs".into(), kind: "code".into(), text: "fn b() {}\n".into() }];
+    client(&dir, &base).post_collection("Scenario", "cover words", &docs, Some(&src)).unwrap();
     assert_eq!(served.join().unwrap().0, Vec::<String>::new());
 }
 

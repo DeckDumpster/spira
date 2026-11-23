@@ -46,6 +46,7 @@ terms). Body payloads that were `stdin` in bash (`pr-create`) stay stdin.
 | `pr-number` | `<head>` | the open PR number, or empty |
 | `pr-list-queue` | — | PR numbers with head `spira/queue/*`, one per line |
 | `pr-list-open` | — | **new**: `<number> <headRefName>` per open PR, one per line |
+| `pr-list-mine` | — | `<number> <headRefName>` per open PR from this installation's identity; exit 1 and no output when the listing cannot be read |
 | `pr-mergeability` | `<pr-number>` | `DIRTY \| CLEAN \| UNKNOWN` |
 | `pr-state` | `<pr-number-or-branch>` | `open \| merged \| closed \| unknown` |
 | `pr-merge-commit` | `<pr-number-or-branch>` | the merge commit sha; exit 1, no output, when none is readable |

@@ -51,6 +51,7 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
         findings_dir: findings.path().to_str().unwrap().to_string(),
         committer: Box::new(cr::ports::GitCommitter),
         source_repo: "k".into(),
+        source_url: Ok("https://github.com/acme/k".into()),
         stdin: String::new(),
         clock: Box::new(VirtualClock::new(1_700_000_000_000)),
         tree: Box::new(GitTree::new(p.to_str().unwrap(), "main").unwrap()),

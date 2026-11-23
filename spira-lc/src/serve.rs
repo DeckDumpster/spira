@@ -111,7 +111,7 @@ impl Drop for Settle {
     }
 }
 
-fn deadline_answer() -> Answer {
+pub(crate) fn deadline_answer() -> Answer {
     Answer::out(2, spira_store::lc_call::DEADLINE_ANSWER.to_string())
 }
 
@@ -165,13 +165,13 @@ impl Ledger {
     }
 }
 
-type Work = Arc<dyn Fn(Request) -> Answer + Send + Sync>;
+pub(crate) type Work = Arc<dyn Fn(Request) -> Answer + Send + Sync>;
 
 /// What a request is served with: the ledger, the work that answers it and the deadline it keeps.
-struct Door {
-    ledger: Ledger,
-    work: Work,
-    deadlines: Deadlines,
+pub(crate) struct Door {
+    pub(crate) ledger: Ledger,
+    pub(crate) work: Work,
+    pub(crate) deadlines: Deadlines,
 }
 
 fn live_work() -> Work {
@@ -220,7 +220,33 @@ fn return_freed_memory(idle: bool) {
     }
 }
 
+/// `args` without `--loop-socket <path>`, and the path.
+fn split_loop_socket(args: &[String]) -> Result<(Vec<String>, Option<String>), String> {
+    let mut rest = Vec::new();
+    let mut path = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a != "--loop-socket" {
+            rest.push(a.clone());
+            continue;
+        }
+        match it.next() {
+            Some(p) if path.is_none() && !p.is_empty() => path = Some(p.clone()),
+            _ => return Err("--loop-socket takes one path, once".to_string()),
+        }
+    }
+    Ok((rest, path))
+}
+
 pub fn run(args: &[String]) -> i32 {
+    let (args, loop_socket) = match split_loop_socket(args) {
+        Ok(split) => split,
+        Err(e) => {
+            eprintln!("spira-lc serve: {e}");
+            return 2;
+        }
+    };
+    let args = &args[..];
     // SAFETY: mallopt only sets a glibc tunable, before any thread exists.
     unsafe {
         libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS);
@@ -240,11 +266,15 @@ pub fn run(args: &[String]) -> i32 {
     };
 
     let mut startup = Startup::begin();
-    let spans = spira_config::process::cfg("SPIRA_RUN")
-        .and_then(|run| spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS").map(|keep| (run, keep)));
+    let spans = spira_config::process::cfg("SPIRA_RUN").and_then(|run| {
+        let keep = spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS")?;
+        let day_max_mb = spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_DAY_MAX_MB")?;
+        Ok((run, keep, day_max_mb))
+    });
     match spans {
-        Ok((run, keep)) => {
-            let _ = SPANS.set(spira_otel::Sink::new(spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep));
+        Ok((run, keep, day_max_mb)) => {
+            let sink = spira_otel::Sink::buffered(spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep, u64::from(day_max_mb) << 20);
+            let _ = SPANS.set(sink);
         }
         Err(e) => {
             eprintln!("spira-lc serve: {e}");
@@ -468,6 +498,15 @@ pub fn run(args: &[String]) -> i32 {
     };
     startup.mark("bind");
     eprintln!("spira-lc serve: listening on {socket_path}");
+    let loop_thread = match loop_socket.as_deref().map(start_loop) {
+        None => None,
+        Some(Ok(t)) => Some(t),
+        Some(Err(e)) => {
+            eprintln!("spira-lc serve: {e}");
+            let _ = std::fs::remove_file(&socket_path);
+            return 2;
+        }
+    };
     let flights = Arc::new(Flights::default());
     let (done, finished) = std::sync::mpsc::channel::<()>();
     let (running, accepting) = std::sync::mpsc::channel::<()>();
@@ -491,8 +530,58 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("spira-lc serve: {e}");
     }
     let (drained, answered) = drain(&flights, &STOPPING, &finished, DRAIN_BOUND);
+    if let Some(spans) = SPANS.get() {
+        spans.flush();
+    }
     eprintln!("spira-lc serve: stopped after draining {drained}, answered {answered} at the bound");
+    if let Some(t) = loop_thread {
+        match t.join() {
+            Ok(cut) => eprintln!("spira-lc serve: the loop stopped, answered {cut} at the bound"),
+            Err(_) => eprintln!("spira-lc serve: the loop thread panicked"),
+        }
+    }
     0
+}
+
+/// Binds the loop socket and starts the `lc-loop` thread, returning once it runs; the thread
+/// ends, with the connections it cut at the drain bound, after SIGTERM.
+fn start_loop(path: &str) -> Result<std::thread::JoinHandle<usize>, String> {
+    let listener = bind_socket(path).map_err(|e| format!("cannot bind {path}: {e}"))?;
+    listener.set_nonblocking(true).map_err(|e| format!("cannot bind {path}: {e}"))?;
+    let door = Door {
+        ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(),
+        work: live_work(),
+        deadlines: DEADLINES.get().expect("the deadlines are set before the socket is bound").clone(),
+    };
+    let pool = runtime::offload::Pool::new(crate::control::served::READERS, runtime::offload::QUEUE_DEPTH);
+    let shared = Arc::new(crate::serve_loop::Shared::new(Arc::new(door), pool, SPANS.get()));
+    let (running, started) = mpsc::channel::<()>();
+    let shown = path.to_string();
+    let path = shown.clone();
+    let thread = std::thread::Builder::new()
+        .name("lc-loop".into())
+        .spawn(move || {
+            let _ = running.send(());
+            let gone = path.clone();
+            run_loop(listener, shared, &STOPPING, DRAIN_BOUND, move || {
+                if let Err(e) = std::fs::remove_file(&gone) {
+                    eprintln!("spira-lc serve: cannot remove {gone}: {e}");
+                }
+            })
+        })
+        .map_err(|e| format!("cannot start the loop thread: {e}"))?;
+    let _ = started.recv();
+    eprintln!("spira-lc serve: loop listening on {shown}");
+    Ok(thread)
+}
+
+/// The loop server on this thread, current-thread tokio, until `stopping` and its drain.
+pub(crate) fn run_loop(listener: UnixListener, shared: Arc<crate::serve_loop::Shared>, stopping: &AtomicBool, drain_bound: Duration, on_stop: impl FnOnce()) -> usize {
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a current-thread runtime builds");
+    runtime.block_on(async {
+        let listener = tokio::net::UnixListener::from_std(listener).expect("the loop listener registers");
+        crate::serve_loop::serve(listener, shared, stopping, drain_bound, on_stop).await
+    })
 }
 
 /// Wall-clock milliseconds since the epoch, for a log line's timestamp.
@@ -586,7 +675,7 @@ impl Startup {
 /// Leaves 30 s of the unit's 90 s `TimeoutStopSec` to write the refusals and exit.
 pub const DRAIN_BOUND: Duration = Duration::from_secs(60);
 
-fn stopped_for_restart() -> String {
+pub(crate) fn stopped_for_restart() -> String {
     format!("cannot tell: spira-lc stopped for a restart before this request finished (drain bound {} s); it may have applied", DRAIN_BOUND.as_secs())
 }
 
@@ -894,7 +983,6 @@ fn handle(stream: UnixStream, accepted: Instant) {
 fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Instant, door: &Door) {
     let started = SystemTime::now();
     let received = Instant::now();
-    let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
     let read_at;
     let (req, size) = match read_request(&mut reader) {
@@ -905,50 +993,149 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         }
         Err((size, msg)) => {
             let _ = write_response(&stream, 2, &msg, "", false);
-            let none = state_store::phases::Snapshot::default();
-            let call = spira_otel::Call {
-                method: "-",
-                caller: "-",
-                request_size: size as u64,
-                response_size: msg.len() as u64,
-                exit_code: 2,
-                start: started,
-                end: SystemTime::now(),
-                queue_wait: Instant::now().saturating_duration_since(accepted),
-                before_work: Duration::ZERO,
-                answer_wait: Duration::ZERO,
-                after_answer: Duration::ZERO,
-                cut: false,
-                answered: None,
-                cut_at: None,
-                phases: &none.phases,
-                commits_us: &none.commits_us,
-                reads: none.reads,
-                read_max_us: none.read_max_us,
-                reads_ended: none.reads_ended,
-                reads_overran: none.reads_overran,
-                open_phase: none.open,
-                content_queries: none.content_queries,
-                content_query_max_us: none.content_query_max_us,
-                content_query_max_shape: &none.content_query_max_shape,
-                task: None,
-                children: none.children,
-                programs: &none.programs,
-                subverb: None,
-            };
-            record_span(spans, &call);
+            record_unread(spans, size, &msg, started, Instant::now().saturating_duration_since(accepted));
             return;
         }
     };
-    let caller = peer_pid(&stream).map(crate::slow::caller_of_pid).unwrap_or_else(|| "-".to_string());
+    let called = call_request(req, peer_of(&stream), door, received, accepted, Cut::Within);
+    if crate::slow::first_of_verb(&called.verb) {
+        log_rss(&format!("after-first-{}", called.verb));
+    }
+    let mut answered = Duration::ZERO;
+    reply_then_settle(
+        &stream,
+        &called.ans,
+        called.read_ended(),
+        || {
+            answered = read_at.elapsed();
+            count_answer(&called, answered);
+        },
+        &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason),
+    );
+    record_served(spans, &called, size, started, received, answered);
+}
+
+pub(crate) fn record_unread(spans: Option<&spira_otel::Sink>, size: usize, msg: &str, started: SystemTime, queue_wait: Duration) {
+    let none = state_store::phases::Snapshot::default();
+    let call = spira_otel::Call {
+        method: "-",
+        caller: "-",
+        request_size: size as u64,
+        response_size: msg.len() as u64,
+        exit_code: 2,
+        start: started,
+        end: SystemTime::now(),
+        queue_wait,
+        before_work: Duration::ZERO,
+        answer_wait: Duration::ZERO,
+        after_answer: Duration::ZERO,
+        cut: false,
+        answered: None,
+        cut_at: None,
+        phases: &none.phases,
+        commits_us: &none.commits_us,
+        reads: none.reads,
+        read_max_us: none.read_max_us,
+        reads_ended: none.reads_ended,
+        reads_overran: none.reads_overran,
+        open_phase: none.open,
+        content_queries: none.content_queries,
+        content_query_max_us: none.content_query_max_us,
+        content_query_max_shape: &none.content_query_max_shape,
+        task: None,
+        children: none.children,
+        programs: &none.programs,
+        subverb: None,
+    };
+    record_span(spans, &call);
+}
+
+/// The socket peer's process and user.
+#[derive(Clone, Copy)]
+pub(crate) struct Peer {
+    pub(crate) pid: Option<i32>,
+    pub(crate) uid: Option<u32>,
+}
+
+#[cfg(test)]
+pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    peer_of(stream).uid
+}
+
+#[cfg(test)]
+fn peer_pid(stream: &UnixStream) -> Option<i32> {
+    peer_of(stream).pid
+}
+
+pub(crate) fn peer_of(stream: &impl std::os::fd::AsRawFd) -> Peer {
+    let cred = peer_cred(stream);
+    Peer { pid: cred.as_ref().map(|c| c.pid), uid: cred.map(|c| c.uid) }
+}
+
+/// Where a request's deadline is kept: by `within`, on a runner thread of its own, or by the
+/// caller, which has already put the request on a thread it can stop waiting for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Cut {
+    Within,
+    ByCaller,
+}
+
+/// One request worked: the answer and what the counters and the span are made from.
+pub(crate) struct Called {
+    pub(crate) ans: Answer,
+    pub(crate) caller: String,
+    pub(crate) verb: String,
+    argv: Vec<String>,
+    task: Option<String>,
+    pub(crate) cut_at: Option<Duration>,
+    accepted: Instant,
+    worked: (Instant, Instant),
+    began: Arc<std::sync::Mutex<Option<Instant>>>,
+    recorder: Arc<state_store::phases::Recorder>,
+}
+
+impl Called {
+    /// A request answered without being worked: refused, or cut at `cut_at` while its work
+    /// was still running.
+    pub(crate) fn unworked(req: &Request, caller: String, ans: Answer, cut_at: Option<Duration>, accepted: Instant) -> Called {
+        let now = Instant::now();
+        Called {
+            ans,
+            caller,
+            verb: req.argv.first().cloned().unwrap_or_default(),
+            argv: req.argv.clone(),
+            task: req.task.clone(),
+            cut_at,
+            accepted,
+            worked: (now, now),
+            began: Default::default(),
+            recorder: Default::default(),
+        }
+    }
+
+    pub(crate) fn read_ended(&self) -> bool {
+        let ended = self.recorder.snapshot();
+        self.ans.code != 0 && self.cut_at.is_none() && ended.reads_ended + ended.reads_overran + ended.reads_ended_by_reset > 0
+    }
+
+    fn method(&self) -> String {
+        crate::slow::method_of(&self.argv)
+    }
+}
+
+/// `req` worked as the one function both servers call: who the caller is, the persona its
+/// uid is bound to, the request's deadline and store scopes, then the work.
+pub(crate) fn call_request(req: Request, peer: Peer, door: &Door, received: Instant, accepted: Instant, cut: Cut) -> Called {
+    let caller = peer.pid.map(crate::slow::caller_of_pid).unwrap_or_else(|| "-".to_string());
     let verb = req.argv.first().cloned().unwrap_or_default();
     let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
     let argv_seen = req.argv.clone();
     let task = req.task.clone();
     let recorder = Arc::new(state_store::phases::Recorder::default());
+    let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
     let mut cut_at = None;
     let worked;
-    let ans = match crate::work::bind_peer(&req.argv, peer_uid(&stream), &map) {
+    let ans = match crate::work::bind_peer(&req.argv, peer.uid, &map) {
         Ok(argv) => {
             let who = caller.clone();
             let holder_verb = verb.clone();
@@ -970,9 +1157,10 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
             };
             let wait = limit.saturating_sub(received.elapsed());
             let handed = Instant::now();
-            let in_time = match ledgered {
-                Some(id) => door.ledger.answer_in_time(&id, wait, run),
-                None => within(wait, run),
+            let in_time = match (ledgered, cut) {
+                (Some(id), _) => door.ledger.answer_in_time(&id, wait, run),
+                (None, Cut::Within) => within(wait, run),
+                (None, Cut::ByCaller) => Some(run()),
             };
             worked = (handed, Instant::now());
             in_time.unwrap_or_else(|| {
@@ -986,39 +1174,37 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
             Answer::out(code, out)
         }
     };
-    let method = crate::slow::method_of(&argv_seen);
-    if crate::slow::first_of_verb(&verb) {
-        log_rss(&format!("after-first-{verb}"));
-    }
-    let measured = if verb == "ops-view" { method.as_str() } else { verb.as_str() };
-    let mut answered = Duration::ZERO;
-    let ended = recorder.snapshot();
-    reply_then_settle(
-        &stream,
-        &ans,
-        ans.code != 0 && cut_at.is_none() && ended.reads_ended + ended.reads_overran + ended.reads_ended_by_reset > 0,
-        || {
-            answered = read_at.elapsed();
-            crate::slow::request_done(measured, &method, &caller, task.as_deref(), answered, ended.children);
-            crate::slow::sample(&method, &caller, answered);
-        },
-        &mut |id, reason| crate::reconcile_content::settle_owed(&mut crate::bd::LiveBd, id, reason),
-    );
-    let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
-    let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
-    let store = recorder.snapshot();
+    Called { ans, caller, verb, argv: argv_seen, task, cut_at, accepted, worked, began: started_work, recorder }
+}
+
+/// The slow-call counters for an answer that went out `answered` after its request was read.
+pub(crate) fn count_answer(called: &Called, answered: Duration) {
+    let method = called.method();
+    let measured = if called.verb == "ops-view" { method.as_str() } else { called.verb.as_str() };
+    crate::slow::request_done(measured, &method, &called.caller, called.task.as_deref(), answered, called.recorder.snapshot().children);
+    crate::slow::sample(&method, &called.caller, answered);
+}
+
+/// The reads and followups the answer's request made, and its span.
+pub(crate) fn record_served(spans: Option<&spira_otel::Sink>, called: &Called, size: usize, started: SystemTime, received: Instant, answered: Duration) {
+    let method = called.method();
+    let measured = if called.verb == "ops-view" { method.as_str() } else { called.verb.as_str() };
+    let (caller, ans) = (&called.caller, &called.ans);
+    let began = *called.began.lock().unwrap_or_else(|e| e.into_inner());
+    let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(called.accepted);
+    let store = called.recorder.snapshot();
     crate::slow::reads_done(measured, store.reads_ended, store.reads_overran, store.reads_ended_by_reset);
-    crate::slow::wal_pages(measured, &caller, answered, store.reads_reset_ended, state_store::phases::wal_over_line());
+    crate::slow::wal_pages(measured, caller, answered, store.reads_reset_ended, state_store::phases::wal_over_line());
     let gate_wait = store.phases.iter().find(|p| p.0 == "gate_wait");
     if let Some((_, us)) = gate_wait {
         crate::slow::gate_waited(measured, Duration::from_micros(*us));
     }
-    crate::followups::request_done(&caller, measured, store.reads_ended > 0 || store.reads_overran > 0 || store.reads_ended_by_reset > 0 || gate_wait.is_some(), ans.code);
-    let (handed, returned) = worked;
+    crate::followups::request_done(caller, measured, store.reads_ended > 0 || store.reads_overran > 0 || store.reads_ended_by_reset > 0 || gate_wait.is_some(), ans.code);
+    let (handed, returned) = called.worked;
     let before_span = Instant::now();
     let call = spira_otel::Call {
         method: measured,
-        caller: &caller,
+        caller,
         request_size: size as u64,
         response_size: (ans.stdout.len() + ans.stderr.len()) as u64,
         exit_code: ans.code,
@@ -1028,9 +1214,9 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         before_work: handed.saturating_duration_since(received),
         answer_wait: returned.saturating_duration_since(handed),
         after_answer: before_span.saturating_duration_since(returned),
-        cut: cut_at.is_some(),
+        cut: called.cut_at.is_some(),
         answered: Some(answered),
-        cut_at,
+        cut_at: called.cut_at,
         phases: &store.phases,
         commits_us: &store.commits_us,
         reads: store.reads,
@@ -1041,17 +1227,17 @@ fn serve_one(stream: UnixStream, spans: Option<&spira_otel::Sink>, accepted: Ins
         content_queries: store.content_queries,
         content_query_max_us: store.content_query_max_us,
         content_query_max_shape: &store.content_query_max_shape,
-        task: task.as_deref(),
+        task: called.task.as_deref(),
         children: store.children,
         programs: &store.programs,
-        subverb: subverb_of(&argv_seen),
+        subverb: subverb_of(&called.argv),
     };
     record_span(spans, &call);
 }
 
 /// One request: the argv `env::args().skip(1)` would have produced, and the bytes the CLI's
 /// stdin would have held, when the client sent any.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Request {
     pub argv: Vec<String>,
     pub stdin: Option<String>,
@@ -1067,15 +1253,26 @@ pub(crate) struct Request {
 /// Longest request body read: a readiness publication or a section spec, never a file transfer.
 const MAX_BODY: u64 = 16 << 20;
 
-/// The request on `reader`: a JSON argv array on one line, or `{"argv": [...], "len": N}` on
-/// one line followed by exactly `N` bytes of stdin; the object may also carry `caller`,
-/// `task` and `request_id`. `Ok(None)` when the client sent nothing;
-/// `Err((bytes read, refusal))` for a request that cannot be read.
-fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (usize, String)> {
-    let mut line = String::new();
-    if reader.read_line(&mut line).unwrap_or(0) == 0 {
-        return Ok(None);
-    }
+/// A request's first line, parsed: what follows it on the wire is `len` bytes of stdin.
+pub(crate) struct Head {
+    argv: Vec<String>,
+    pub(crate) len: Option<u64>,
+    caller: std::collections::BTreeMap<String, String>,
+    task: Option<String>,
+    request_id: Option<String>,
+    pub(crate) line_len: usize,
+}
+
+/// The refusal for a request that cannot be read, with the bytes read so far.
+pub(crate) type Unread = (usize, String);
+
+pub(crate) fn body_unread(line_len: usize, n: u64, why: &dyn std::fmt::Display) -> Unread {
+    (line_len, format!("bad request: the {n}-byte body: {why}"))
+}
+
+/// The pure half of reading a request: its first line, a JSON argv array or an
+/// `{"argv"[, "len"][, "caller"][, "task"][, "request_id"]}` object.
+pub(crate) fn parse_head(line: &str) -> Result<Head, Unread> {
     let bad = |e: &dyn std::fmt::Display| (line.len(), format!("bad request: {e}"));
     let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| bad(&e))?;
     let (argv, len, caller, task, request_id) = match head {
@@ -1105,16 +1302,37 @@ fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, (
         _ => return Err(bad(&"a request is an argv array or an {argv, len} object")),
     };
     let argv: Vec<String> = serde_json::from_value(argv).map_err(|e| bad(&e))?;
-    let stdin = match len {
+    Ok(Head { argv, len, caller, task, request_id, line_len: line.len() })
+}
+
+/// The pure half of reading a request's body: `head` and the `len` bytes that followed it.
+pub(crate) fn finish_request(head: Head, body: Option<Vec<u8>>) -> Result<(Request, usize), Unread> {
+    let Head { argv, caller, task, request_id, line_len, .. } = head;
+    let stdin = match body {
+        None => None,
+        Some(b) => Some(String::from_utf8(b).map_err(|e| (line_len, format!("bad request: {e}")))?),
+    };
+    let size = line_len + stdin.as_ref().map_or(0, String::len);
+    Ok((Request { argv, stdin, caller, task, request_id }, size))
+}
+
+/// The request on `reader`: one line (`parse_head`), then exactly `len` bytes of stdin when it
+/// names one. `Ok(None)` when the client sent nothing; `Err` for a request that cannot be read.
+fn read_request(reader: &mut impl BufRead) -> Result<Option<(Request, usize)>, Unread> {
+    let mut line = String::new();
+    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+        return Ok(None);
+    }
+    let head = parse_head(&line)?;
+    let body = match head.len {
         None => None,
         Some(n) => {
             let mut body = vec![0u8; n as usize];
-            std::io::Read::read_exact(reader, &mut body).map_err(|e| bad(&format!("the {n}-byte body: {e}")))?;
-            Some(String::from_utf8(body).map_err(|e| bad(&e))?)
+            std::io::Read::read_exact(reader, &mut body).map_err(|e| body_unread(head.line_len, n, &e))?;
+            Some(body)
         }
     };
-    let size = line.len() + stdin.as_ref().map_or(0, String::len);
-    Ok(Some((Request { argv, stdin, caller, task, request_id }, size)))
+    finish_request(head, body).map(Some)
 }
 
 /// The primitives, in this process: a composed verb's reads and events never go back out
@@ -1296,21 +1514,12 @@ extern "C" {
     fn getsockopt(fd: i32, level: i32, name: i32, val: *mut Ucred, len: *mut u32) -> i32;
 }
 
-fn peer_cred(stream: &UnixStream) -> Option<Ucred> {
-    use std::os::fd::AsRawFd;
+fn peer_cred(stream: &impl std::os::fd::AsRawFd) -> Option<Ucred> {
     const SOL_SOCKET: i32 = 1;
     const SO_PEERCRED: i32 = 17;
     let mut cred = Ucred { pid: 0, uid: 0, gid: 0 };
     let mut len = std::mem::size_of::<Ucred>() as u32;
     (unsafe { getsockopt(stream.as_raw_fd(), SOL_SOCKET, SO_PEERCRED, &mut cred, &mut len) } == 0).then_some(cred)
-}
-
-pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
-    peer_cred(stream).map(|c| c.uid)
-}
-
-fn peer_pid(stream: &UnixStream) -> Option<i32> {
-    peer_cred(stream).map(|c| c.pid)
 }
 
 /// A header line, then the stdout bytes; a non-empty stderr follows them, its length in the
@@ -1329,7 +1538,8 @@ fn write_response(stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &st
     }
 }
 
-fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, read_ended: bool) -> std::io::Result<()> {
+/// The bytes of one answer: the header line, then stdout, then stderr.
+pub(crate) fn encode_response(exit_code: i32, stdout: &str, stderr: &str, read_ended: bool) -> Vec<u8> {
     let mut buf = Vec::with_capacity(stdout.len() + stderr.len() + 64);
     let mut head = serde_json::json!({"exit_code": exit_code, "len": stdout.len()});
     if !stderr.is_empty() {
@@ -1338,10 +1548,14 @@ fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str
     if read_ended {
         head["read_ended"] = true.into();
     }
-    writeln!(buf, "{head}")?;
+    buf.extend_from_slice(format!("{head}\n").as_bytes());
     buf.extend_from_slice(stdout.as_bytes());
     buf.extend_from_slice(stderr.as_bytes());
-    stream.write_all(&buf)
+    buf
+}
+
+fn write_raw(mut stream: &UnixStream, exit_code: i32, stdout: &str, stderr: &str, read_ended: bool) -> std::io::Result<()> {
+    stream.write_all(&encode_response(exit_code, stdout, stderr, read_ended))
 }
 
 /// sd_notify `READY=1` to `$NOTIFY_SOCKET` (`@` prefix: abstract namespace); nothing when unset.
