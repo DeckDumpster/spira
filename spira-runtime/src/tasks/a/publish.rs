@@ -941,7 +941,7 @@ pub mod edge {
         };
         let run = match call("run-id", &[&p.branch]) {
             Ok(r) => r.stdout().map(|o| o.trim().to_string()).filter(|r| !r.is_empty()),
-            Err(e) => return refuse("none", e),
+            Err(e) => return refuse("none", e.lines().next().unwrap_or("").into()),
         };
         let Some(run) = run else { return refuse("none", format!("no run on {}", p.branch)) };
         let status = call("check-status", &[&p.branch]).ok().and_then(|r| r.stdout()).unwrap_or_default();
@@ -949,7 +949,7 @@ pub mod edge {
         let (cause, market) = (field("runner-lost: ").unwrap_or_else(|| "untested".into()), field("runner-market: ").unwrap_or_else(|| "unknown".into()));
         let r = match call("workflow-rerun", &[&run]) {
             Ok(r) => r,
-            Err(e) => return refuse(&run, e),
+            Err(e) => return refuse(&run, e.lines().next().unwrap_or("").into()),
         };
         if !r.ok() {
             let first = r.err.lines().next().unwrap_or("").trim();

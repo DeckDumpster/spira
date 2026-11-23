@@ -1335,7 +1335,11 @@ fn batch_ci_status_failed_run_list_fails() {
     );
     let out = batch_ci_status(&gh, &NoProc, repo(), "Gate", "b");
     assert_ne!(out.code, 0);
-    assert!(out.lines.iter().any(|l| l.contains("HTTP 403")), "{:?}", out.lines);
+    assert!(
+        out.lines.iter().any(|l| l.contains("HTTP 403")),
+        "{:?}",
+        out.lines
+    );
 }
 
 #[test_id(tivb4t9)]
@@ -1505,9 +1509,24 @@ const FAULT_LOG_JOBS: &str = r#"{"jobs":[{"name":"suites","id":99,"conclusion":"
 
 fn rerun_gh_with_log(jobs: &str, log: &str) -> FakeGh {
     let gh = rerun_gh("failure", jobs);
-    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/99/logs"], 0, log);
     gh.on(
-        &["run", "list", "--branch", "b", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        &["api", "repos/{owner}/{repo}/actions/jobs/99/logs"],
+        0,
+        log,
+    );
+    gh.on(
+        &[
+            "run",
+            "list",
+            "--branch",
+            "b",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
         0,
         r#"[{"databaseId":9,"status":"completed","conclusion":"failure"}]"#,
     );
@@ -1520,7 +1539,11 @@ fn workflow_rerun_serves_a_run_that_never_tested_its_tree() {
     let shapes = [
         ("lost runner", LOST_RUNNER_JOBS, ""),
         ("failed provision", PROVISION_JOBS, ""),
-        ("gate fault log", FAULT_LOG_JOBS, "gate: HARNESS FAULT (batch rc=2)\n"),
+        (
+            "gate fault log",
+            FAULT_LOG_JOBS,
+            "gate: HARNESS FAULT (batch rc=2)\n",
+        ),
     ];
     for (name, jobs, log) in shapes {
         let gh = rerun_gh_with_log(jobs, log);
@@ -1535,14 +1558,32 @@ fn check_status_and_workflow_rerun_agree_on_which_failed_runs_were_never_tested(
     let shapes = [
         ("lost runner", LOST_RUNNER_JOBS, "", true),
         ("failed provision", PROVISION_JOBS, "", true),
-        ("gate fault log", FAULT_LOG_JOBS, "gate: HARNESS FAULT (batch rc=2)\n", true),
-        ("real failed suite", FAULT_LOG_JOBS, "FAIL: some_test\n", false),
+        (
+            "gate fault log",
+            FAULT_LOG_JOBS,
+            "gate: HARNESS FAULT (batch rc=2)\n",
+            true,
+        ),
+        (
+            "real failed suite",
+            FAULT_LOG_JOBS,
+            "FAIL: some_test\n",
+            false,
+        ),
     ];
     for (name, jobs, log, untested) in shapes {
         let gh = rerun_gh_with_log(jobs, log);
         let status = check_status(&gh, &NoProc, repo(), "Gate", "b").lines[0].clone();
-        assert_eq!(status != "red", untested, "{name}: check_status said {status}");
-        assert_eq!(rerun_refusal(&gh, repo(), "9").is_none(), untested, "{name}");
+        assert_eq!(
+            status != "red",
+            untested,
+            "{name}: check_status said {status}"
+        );
+        assert_eq!(
+            rerun_refusal(&gh, repo(), "9").is_none(),
+            untested,
+            "{name}"
+        );
     }
 }
 
@@ -1951,7 +1992,10 @@ fn ami_log_is_the_tail_of_the_failed_steps_log() {
             "build\tBuild, image and tag\tthree".to_string()
         ]
     );
-    assert_eq!(ami_log(&FakeGh::default(), repo(), "9", 2).lines, vec!["?".to_string()]);
+    assert_eq!(
+        ami_log(&FakeGh::default(), repo(), "9", 2).lines,
+        vec!["?".to_string()]
+    );
 }
 
 // ── the library seam ─────────────────────────────────────────────────────────────────────
@@ -1962,7 +2006,10 @@ fn what_a_verb_says_on_stderr_reaches_the_in_process_caller() {
     let _ = crate::diag::take();
     let out = ami_dispatch(&FakeGh::default(), repo(), "");
     assert_eq!(out.code, 1);
-    assert_eq!(crate::diag::take(), vec!["forge: ami-dispatch: ref required".to_string()]);
+    assert_eq!(
+        crate::diag::take(),
+        vec!["forge: ami-dispatch: ref required".to_string()]
+    );
     assert!(crate::diag::take().is_empty(), "a take empties the buffer");
 }
 
@@ -1971,12 +2018,19 @@ fn what_a_verb_says_on_stderr_reaches_the_in_process_caller() {
 fn a_refused_rerun_names_its_reason_on_stderr() {
     let _ = crate::diag::take();
     let gh = FakeGh::default();
-    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/7"], 0, r#"{"status":"completed","conclusion":"success","head_sha":"abc","path":"gate.yml"}"#);
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/7"],
+        0,
+        r#"{"status":"completed","conclusion":"success","head_sha":"abc","path":"gate.yml"}"#,
+    );
     let out = workflow_rerun(&gh, repo(), "7");
     assert_eq!(out.code, 3);
     let err = crate::diag::take();
     assert_eq!(err.len(), 1, "{err:?}");
-    assert!(err[0].starts_with("forge: workflow-rerun refused: run 7 concluded success"), "{err:?}");
+    assert!(
+        err[0].starts_with("forge: workflow-rerun refused: run 7 concluded success"),
+        "{err:?}"
+    );
 }
 
 #[test_id(ti8ezub)]
@@ -1985,8 +2039,14 @@ fn only_the_default_name_runs_in_process_and_any_declared_path_is_a_stand_in() {
     use crate::client::{route_of, Route};
     assert_eq!(route_of(Path::new("forge")), Route::InProcess);
     assert_eq!(route_of(Path::new("")), Route::InProcess);
-    assert_eq!(route_of(Path::new("fx/forge-fake.sh")), Route::Program("fx/forge-fake.sh".into()));
-    assert_eq!(route_of(Path::new("fx/forge")), Route::Program("fx/forge".into()));
+    assert_eq!(
+        route_of(Path::new("fx/forge-fake.sh")),
+        Route::Program("fx/forge-fake.sh".into())
+    );
+    assert_eq!(
+        route_of(Path::new("fx/forge")),
+        Route::Program("fx/forge".into())
+    );
 }
 
 #[test_id(t4p3j2o)]
@@ -1994,8 +2054,24 @@ fn only_the_default_name_runs_in_process_and_any_declared_path_is_a_stand_in() {
 fn a_stand_in_answers_with_its_code_stdout_stderr_and_reads_the_input() {
     let dir = testkit::TempDir::new("forge-stand-in");
     let bin = dir.path().join("forge-fake.sh");
-    testkit::write_exe(&bin, "#!/bin/sh\necho \"$1 $2 $3\"\ncat\necho oops >&2\nexit 4\n");
-    let r = crate::client::run(&crate::client::Route::Program(bin), "pr-create", Path::new("r"), &["h"], Some(b"body\n"));
-    assert_eq!(r, crate::client::Reply { code: 4, out: "pr-create r h\nbody\n".into(), err: "oops\n".into() });
+    testkit::write_exe(
+        &bin,
+        "#!/bin/sh\necho \"$1 $2 $3\"\ncat\necho oops >&2\nexit 4\n",
+    );
+    let r = crate::client::run(
+        &crate::client::Route::Program(bin),
+        "pr-create",
+        Path::new("r"),
+        &["h"],
+        Some(b"body\n"),
+    );
+    assert_eq!(
+        r,
+        crate::client::Reply {
+            code: 4,
+            out: "pr-create r h\nbody\n".into(),
+            err: "oops\n".into()
+        }
+    );
     assert_eq!(r.stdout(), None);
 }

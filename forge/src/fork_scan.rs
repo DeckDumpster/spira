@@ -56,12 +56,20 @@ pub fn offenders(src: &str) -> Vec<(usize, String)> {
             continue;
         }
         let code = l.split("//").next().unwrap_or("");
-        let Some(at) = SPAWNS.iter().filter_map(|s| code.find(s).map(|p| p + s.len())).min() else { continue };
+        let Some(at) = SPAWNS
+            .iter()
+            .filter_map(|s| code.find(s).map(|p| p + s.len()))
+            .min()
+        else {
+            continue;
+        };
         let arg = code[at..].trim_start();
         if EXTERNAL.iter().any(|e| arg.starts_with(e)) {
             continue;
         }
-        let marked = lines[i.saturating_sub(REACH)..=i].iter().any(|m| MARKS.iter().any(|k| m.contains(k)));
+        let marked = lines[i.saturating_sub(REACH)..=i]
+            .iter()
+            .any(|m| MARKS.iter().any(|k| m.contains(k)));
         if !marked {
             out.push((i + 1, l.trim().to_string()));
         }
@@ -74,7 +82,9 @@ pub fn scan(dir: &Path) -> Vec<String> {
     let mut found = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -84,7 +94,11 @@ pub fn scan(dir: &Path) -> Vec<String> {
                 }
             } else if name.ends_with(".rs") && !name.contains("test") && name != "fork_scan.rs" {
                 let src = std::fs::read_to_string(&p).unwrap_or_default();
-                found.extend(offenders(&src).into_iter().map(|(n, l)| format!("{}:{n}: {l}", p.display())));
+                found.extend(
+                    offenders(&src)
+                        .into_iter()
+                        .map(|(n, l)| format!("{}:{n}: {l}", p.display())),
+                );
             }
         }
     }
@@ -99,9 +113,11 @@ mod tests {
     #[test_id(tghl71v)]
     #[test]
     fn a_planted_spira_child_is_caught() {
-        let planted = "fn f() {\n    let x = 1;\n    let _ = Command::new(\"spira-lc\").arg(\"list\");\n}\n";
+        let planted =
+            "fn f() {\n    let x = 1;\n    let _ = Command::new(\"spira-lc\").arg(\"list\");\n}\n";
         assert_eq!(offenders(planted).len(), 1);
-        let via_var = "fn f() {\n    let _ = spira_config::bounded::bounded(forge).arg(\"x\");\n}\n";
+        let via_var =
+            "fn f() {\n    let _ = spira_config::bounded::bounded(forge).arg(\"x\");\n}\n";
         assert_eq!(offenders(via_var).len(), 1);
     }
 
@@ -120,7 +136,10 @@ mod tests {
     #[test]
     fn a_spawn_after_a_test_item_mid_file_is_still_caught() {
         let src = "#[cfg(test)]\nmod t {\n    fn f() { Command::new(\"queue\"); }\n}\n\nfn g() {\n    Command::new(\"incident.sh\");\n}\n";
-        assert_eq!(offenders(src), vec![(7, "Command::new(\"incident.sh\");".to_string())]);
+        assert_eq!(
+            offenders(src),
+            vec![(7, "Command::new(\"incident.sh\");".to_string())]
+        );
         let attr_on_fn = "#[cfg(test)]\nfn h() {\n    Command::new(\"queue\");\n}\nfn k() { Command::new(\"bash\"); }\n";
         assert_eq!(offenders(attr_on_fn).len(), 1);
     }

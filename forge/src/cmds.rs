@@ -570,7 +570,6 @@ pub fn check_status(
     let mut step_lines: Vec<String> = Vec::new();
     let mut run_attributable = false;
     let mut capacity_line: Option<String> = None;
-    let mut step_declares_fault = false;
     let mut runner_lines: Vec<String> = Vec::new();
     if status == "green" || status == "red" {
         run_attributable = true;
@@ -626,9 +625,6 @@ pub fn check_status(
                             &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"),
                         ],
                     );
-                    if logs.text().contains(GATE_FAULT_MARKER) {
-                        step_declares_fault = true;
-                    }
                     step_lines.push(format!("failed-step: {job} / {step}"));
                     step_lines.extend(
                         step_log_tail(&logs.text(), STEP_LOG_TAIL)
@@ -649,7 +645,7 @@ pub fn check_status(
             }
         }
         if status == "red" {
-            if step_declares_fault || jv.as_ref().is_some_and(|v| never_tested(gh, repo, v)) {
+            if jv.as_ref().is_some_and(|v| never_tested(gh, repo, v)) {
                 status = "harness_fault".to_string();
             }
             if let Some(lost) = jv.as_ref().and_then(runner_lost) {
@@ -918,7 +914,10 @@ fn failure_excerpt(log: &str) -> Vec<String> {
     }
     let mut budget = EXCERPT_CONTEXT_BUDGET;
     for &i in &matches {
-        let (lo, hi) = (i.saturating_sub(EXCERPT_CONTEXT), (i + EXCERPT_CONTEXT + 1).min(lines.len()));
+        let (lo, hi) = (
+            i.saturating_sub(EXCERPT_CONTEXT),
+            (i + EXCERPT_CONTEXT + 1).min(lines.len()),
+        );
         for flag in &mut keep[lo..hi] {
             if !*flag && budget > 0 {
                 *flag = true;
@@ -1222,7 +1221,11 @@ pub fn batch_ci_status(
         ],
         None,
     );
-    let unread = |why: &str| fail(vec![format!("gh run list for {workflow} on {branch}: {why}")]);
+    let unread = |why: &str| {
+        fail(vec![format!(
+            "gh run list for {workflow} on {branch}: {why}"
+        )])
+    };
     if !run_list.ok() {
         return unread(run_list.text().trim());
     }
@@ -1979,7 +1982,10 @@ pub fn ami_log(gh: &dyn Gh, repo: &Path, run: &str, tail: usize) -> Out {
     }
     let text = r.text();
     let lines: Vec<&str> = text.lines().collect();
-    ok(lines[lines.len().saturating_sub(tail)..].iter().map(|l| l.to_string()).collect())
+    ok(lines[lines.len().saturating_sub(tail)..]
+        .iter()
+        .map(|l| l.to_string())
+        .collect())
 }
 
 fn passthrough(r: &GhOut) -> Vec<String> {
