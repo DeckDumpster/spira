@@ -160,7 +160,7 @@ pub const CADENCE_MS: u64 = 1_800_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 
 pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RETIRE, 30_000), (RERUN, 30_000), (RECORD, 60_000), (NOTIFY, 5_000), (SETTLE, 60_000), (START_CI, 30_000)];
-pub const EMITS: &[EventKindTag] = &[];
+pub const EMITS: &[EventKindTag] = &[crate::watchers::pr_notify::PR_RESULT];
 /// Hand-offs that wake it at once, besides its tick: queue.step wants a publish.
 pub const WAKES: &[EventKindTag] = &[PUBLISH_WANTED];
 pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RETIRE, RERUN, RECORD, NOTIFY, SETTLE, START_CI];
@@ -245,6 +245,9 @@ pub struct Repo {
     pub stopped: bool,
     pub publish_rec: Option<PublishRec>,
     pub pr: Pr,
+    /// The forge's `pr-state` word for the record's PR, as read; empty when it was not asked.
+    #[serde(default)]
+    pub pr_word: String,
     pub open_publish_prs: Vec<u64>,
     pub forge_sha: Option<String>,
     pub head_sha: String,
@@ -396,6 +399,9 @@ pub struct Pub {
     pub subject: String,
     #[serde(default)]
     pub body: String,
+    /// PR_CLOSE: the closed PR's own title, which its `head` (the new one) does not give.
+    #[serde(default)]
+    pub title: String,
 }
 
 impl Pub {
@@ -406,6 +412,11 @@ impl Pub {
     fn act(&self, effect: &str) -> Act {
         Act::new(effect, self.key.clone()).with_input(serde_json::to_string(self).unwrap_or_default())
     }
+}
+
+/// The title the publish PR for `head` carries on the forge.
+pub fn pr_title(head: &str, repo: &str) -> String {
+    format!("publish: {} for {repo}", &head[..head.len().min(12)])
 }
 
 /// What `pr_create` answers.
@@ -468,6 +479,16 @@ struct Machine<'a> {
 impl Machine<'_> {
     fn go(&mut self, on: Trigger) -> bool {
         step(self.rc.state, on).map(|to| self.rc.state = to).is_ok()
+    }
+
+    fn result(&mut self, pr: u64, result: &str, head: &str) {
+        let title = if head.is_empty() { format!("publish PR for {}", self.repo) } else { pr_title(head, self.repo) };
+        self.result_titled(pr, result, title);
+    }
+
+    fn result_titled(&mut self, pr: u64, result: &str, title: String) {
+        let body = crate::watchers::pr_notify::PrResult { repo: self.repo.to_string(), pr, result: result.into(), title, fail: String::new() };
+        self.acts.push(Act::new(crate::watchers::pr_notify::PR_RESULT, format!("{}/{pr}/{result}", self.repo)).with_input(serde_json::to_string(&body).unwrap_or_default()));
     }
 
     fn notify(&mut self, pr: u64, subject: String, body: String) {
@@ -570,6 +591,13 @@ impl Machine<'_> {
             }
             Settle::Retire => {
                 self.go(Trigger::SettleRetire);
+                if let Some(rec) = rec {
+                    match r.pr_word.as_str() {
+                        "MERGED" => self.result(pr, "merged", &rec.head),
+                        "CLOSED" => self.result(pr, "closed", &rec.head),
+                        _ => {}
+                    }
+                }
                 self.retire(pr, "Retire");
                 self.open(r);
             }
@@ -582,7 +610,8 @@ impl Machine<'_> {
                 }
                 let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
                 self.acts.push(Pub { pr, branch: branch.clone(), key: format!("{}/{branch}", self.repo), ..Pub::on(self.repo) }.act(CANCEL_RUNS));
-                self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
+                let title = rec.map(|rec| pr_title(&rec.head, self.repo)).unwrap_or_default();
+                self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), title, key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
             }
         }
     }
@@ -625,6 +654,9 @@ impl Machine<'_> {
     }
 
     fn outcome(&mut self, effect: &str, ok: bool, body: &str, p: &Pub) {
+        if ok && effect == PR_CLOSE && !p.title.is_empty() {
+            self.result_titled(p.pr, "closed", p.title.clone());
+        }
         match (self.rc.state, effect, ok) {
             (State::Adopting, RECORD, true) => {
                 // The adopted PR may already be green (PR #989 was, for 16 h): settle it now.
@@ -638,6 +670,8 @@ impl Machine<'_> {
                 self.go(if ok { Trigger::EffectSucceeded } else { Trigger::EffectFailed });
                 if !ok {
                     self.notify(p.pr, format!("publish PR {} for {} green but not merged", p.pr, self.repo), body.trim().to_string());
+                } else if serde_json::from_str::<edge::Settled>(body).is_ok_and(|s| s.settled) {
+                    self.result(p.pr, "merged", &p.head);
                 }
             }
             (State::Superseding, PR_CLOSE, true) => {
@@ -656,6 +690,7 @@ impl Machine<'_> {
             (State::Opening, PR_CREATE, true) => {
                 let c: Created = serde_json::from_str(body).unwrap_or_default();
                 self.go(Trigger::PrCreated);
+                self.result(c.pr, "opened", &p.head);
                 self.acts.push(Pub { pr: c.pr, key: format!("{}/{}", self.repo, c.pr), ..p.clone() }.act(RECORD));
                 // The opened PR's CI is queue.step's to settle.
                 self.go(Trigger::QueueStepSettled);
@@ -826,6 +861,7 @@ pub mod edge {
             let diverged = forge_sha.as_ref().map(|f| git(&dir, &["merge-base", "--is-ancestor", f, &head_sha], Duration::from_secs(10)).is_err());
             let kv = queue_kv(e, &name, "publish");
             let publish_rec = kv.as_ref().and_then(publish_rec);
+            let mut pr_word = String::new();
             let pr = match &publish_rec {
                 None => Pr::Unknown,
                 Some(rec) => {
@@ -836,7 +872,10 @@ pub mod edge {
                             let ci = ci_label(&status);
                             Pr::Open { ci: ci.into(), behind: rec.head != head_sha, tries: u32::from(rec.rerun) + u32::from(rec.alarmed) }
                         }
-                        Some(_) => Pr::Gone,
+                        Some(word) => {
+                            pr_word = word;
+                            Pr::Gone
+                        }
                         None => Pr::Unknown,
                     }
                 }
@@ -847,7 +886,7 @@ pub mod edge {
                 super::super::queue_step::edge::lc(e).answer(&["show", &bead]).ok().is_some_and(|o| super::fix_forward_live(&o))
             });
             let stopped = spira_config::scoped_stop::stop_for(&e.world.run_dir, &name, "publish").is_some();
-            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds, observed_at: spira_config::vtime::now_epoch() });
+            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, pr_word, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds, observed_at: spira_config::vtime::now_epoch() });
         }
         json(&snap)
     }
@@ -884,7 +923,7 @@ pub mod edge {
         let range = if p.base.is_empty() { p.head.clone() } else { format!("{}..{}", p.base, p.head) };
         let subjects = git(&dir, &["log", "--format=%s", &range], Duration::from_secs(10)).unwrap_or_default();
         let body = format!("Publish queue: {} landed on the local base since the last publish, for {}.\n\nThese commits already fast-forwarded the base locally; CI here is confirmation, not the gate. A red run files a fix-forward bead — it never rolls back production.\n\n{}", p.head, p.repo, subjects.lines().map(|s| format!("- {s}\n")).collect::<String>());
-        let title = format!("publish: {} for {}", &p.head[..p.head.len().min(12)], p.repo);
+        let title = super::pr_title(&p.head, &p.repo);
         let r = forge_call(&dir, "pr-create", &[&p.branch, &forge_branch, &title], Some(body.trim_end().as_bytes()))?;
         if !r.ok() {
             return Err(format!("pr-create {}: rc={}: {}", p.branch, r.code, r.err.trim()));

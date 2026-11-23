@@ -14,6 +14,8 @@ pub const STREAM: &str = "watch.pr-notify";
 pub const TICK: EventKindTag = "pr-notify.tick";
 pub const STATE: EventKindTag = "pr-notify.state";
 pub const OBSERVE: &str = "pr-notify.observe";
+/// A publish PR's opened, red, merged or closed, handed over by the task that saw it.
+pub const PR_RESULT: EventKindTag = "publish.pr_result";
 pub const OPERATOR_NOTE: &str = "operator.note";
 pub const NAME: &str = "pr-notify";
 
@@ -44,9 +46,31 @@ pub struct Deploy {
     pub beads: Vec<String>,
 }
 
+/// What one [`PR_RESULT`] carries: `result` is `opened`, `red`, `merged` or `closed`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrResult {
+    pub repo: String,
+    pub pr: u64,
+    pub result: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub fail: String,
+}
+
+/// What a hand-off already said of one PR, so the poll does not say it again.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Heard {
+    pub opened: bool,
+    pub red: u32,
+    pub terminal: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoCarry {
     pub prs: BTreeMap<u64, Tracked>,
+    #[serde(default)]
+    pub said: BTreeMap<u64, Heard>,
     pub deploys: Vec<Deploy>,
     pub strays: Vec<String>,
 }
@@ -155,18 +179,27 @@ fn merged(repo: &str, n: u64, title: &str, f: &Final, now: u64, rc: &mut RepoCar
 
 fn transitions(repo: &str, open: &[OpenPr], obs: &RepoObs, now: u64, rc: &mut RepoCarry, say: &mut Said) {
     let prev = std::mem::take(&mut rc.prs);
+    rc.said.retain(|n, _| prev.contains_key(n) || open.iter().any(|p| p.number == *n));
     let mut cur = BTreeMap::new();
     for p in open {
         let old = prev.get(&p.number);
-        if old.is_none() {
+        let heard = rc.said.entry(p.number).or_default();
+        if old.is_none() && !std::mem::take(&mut heard.opened) {
             say.lines.push(format!("OPENED #{} {} [{repo}]", p.number, p.title));
         }
         if old.is_none_or(|o| o.status != p.status) {
             match p.status.as_str() {
+                "red" if heard.red > 0 => heard.red -= 1,
                 "red" => say.lines.push(format!("FAIL RED #{} {} [{repo}]{}", p.number, p.title, if p.fail.is_empty() { String::new() } else { format!(": {}", p.fail) })),
                 "green" => say.lines.push(format!("GREEN #{} {} [{repo}]: lands automatically", p.number, p.title)),
                 _ => {}
             }
+            if p.status != "red" {
+                heard.red = 0;
+            }
+        }
+        if *heard == Heard::default() {
+            rc.said.remove(&p.number);
         }
         cur.insert(p.number, Tracked { status: p.status.clone(), title: p.title.clone() });
     }
@@ -174,18 +207,61 @@ fn transitions(repo: &str, open: &[OpenPr], obs: &RepoObs, now: u64, rc: &mut Re
         if open.iter().any(|p| p.number == *m) {
             continue;
         }
+        let heard = rc.said.entry(*m).or_default();
+        let told = std::mem::replace(&mut heard.terminal, true);
         match obs.finals.get(m) {
             Some(f) if f.state == "MERGED" => {
-                say.lines.push(format!("MERGED #{m} {} [{repo}]", t.title));
+                if !told {
+                    say.lines.push(format!("MERGED #{m} {} [{repo}]", t.title));
+                }
                 merged(repo, *m, &t.title, f, now, rc, say);
             }
-            Some(f) if f.state == "CLOSED" => say.lines.push(format!("CLOSED #{m} {} [{repo}]", t.title)),
+            Some(f) if f.state == "CLOSED" => {
+                if !told {
+                    say.lines.push(format!("CLOSED #{m} {} [{repo}]", t.title));
+                }
+            }
             _ => {
+                heard.terminal = told;
+                if *heard == Heard::default() {
+                    rc.said.remove(m);
+                }
                 cur.insert(*m, t.clone());
             }
         }
     }
     rc.prs = cur;
+}
+
+/// The line a hand-off calls for, unless the poll or an earlier hand-off already said it.
+fn hear(carry: &mut Carry, r: &PrResult) -> Option<String> {
+    let rc = carry.repos.entry(r.repo.clone()).or_default();
+    let held = rc.prs.get(&r.pr);
+    let title = held.map_or(r.title.as_str(), |t| t.title.as_str()).to_string();
+    let n = r.pr;
+    let repo = &r.repo;
+    let heard = rc.said.entry(n).or_default();
+    let line = match r.result.as_str() {
+        "opened" if held.is_none() && !heard.opened => {
+            heard.opened = true;
+            format!("OPENED #{n} {title} [{repo}]")
+        }
+        "red" if held.is_none_or(|t| t.status != "red") => {
+            heard.red += 1;
+            format!("FAIL RED #{n} {title} [{repo}]{}", if r.fail.is_empty() { String::new() } else { format!(": {}", r.fail) })
+        }
+        "merged" | "closed" if !heard.terminal => {
+            heard.terminal = true;
+            format!("{} #{n} {title} [{repo}]", r.result.to_uppercase())
+        }
+        _ => {
+            if *heard == Heard::default() {
+                rc.said.remove(&n);
+            }
+            return None;
+        }
+    };
+    Some(line)
 }
 
 fn deploys(repo: &str, obs: &RepoObs, now: u64, giveup: u64, rc: &mut RepoCarry, say: &mut Said) {
@@ -240,12 +316,25 @@ impl PrNotify {
 
 impl Handler for PrNotify {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[TICK, PR_RESULT, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.stream.0 != STREAM {
             return vec![];
+        }
+        if ev.kind.tag == PR_RESULT {
+            let Ok(r) = serde_json::from_str::<PrResult>(&ev.kind.body) else { return vec![] };
+            let carry = carried::<Carry>(view, &ev.stream, STATE);
+            let mut next = carry.clone();
+            let Some(m) = hear(&mut next, &r) else { return vec![] };
+            let now = ev.at / 1000;
+            let mut cmds = vec![];
+            if next != carry {
+                cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+            }
+            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
+            return cmds;
         }
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE)).unwrap_or_default();
@@ -393,5 +482,33 @@ mod tests {
         assert!(say.lines.is_empty());
         let gone = RepoObs { strays: Some(vec![]), ..open(vec![]) };
         assert!(decide(&cfg(), &c, &one(gone), 1180).0.repos["r"].strays.is_empty());
+    }
+
+    fn result(pr: u64, what: &str) -> PrResult {
+        PrResult { repo: "r".into(), pr, result: what.into(), title: "event".into(), fail: String::new() }
+    }
+
+    #[test_id(tduzaiq)]
+    #[test]
+    fn a_terminal_hand_off_is_dropped_at_the_first_answered_poll_that_has_no_such_pr() {
+        let mut c = Carry::default();
+        assert_eq!(hear(&mut c, &result(9, "merged")).as_deref(), Some("MERGED #9 event [r]"));
+        assert_eq!(hear(&mut c, &result(9, "closed")), None, "one terminal line per PR");
+        assert_eq!(c.repos["r"].said.len(), 1);
+        assert!(c.repos["r"].prs.is_empty(), "a hand-off adds no PR to ask about");
+        assert!(decide(&cfg(), &c, &one(RepoObs::default()), 1000).0.repos["r"].said.contains_key(&9), "an unanswered poll keeps it");
+        assert!(decide(&cfg(), &c, &one(open(vec![])), 1000).0.repos["r"].said.is_empty());
+    }
+
+    #[test_id(tc4gyc8)]
+    #[test]
+    fn a_red_said_by_hand_off_suppresses_one_poll_red_and_a_held_title_wins() {
+        let mut c = Carry::default();
+        assert_eq!(hear(&mut c, &result(7, "red")).as_deref(), Some("FAIL RED #7 event [r]"));
+        let (c, say) = decide(&cfg(), &c, &one(open(vec![pr(7, "red", "x")])), 1000);
+        assert_eq!(say.lines, ["OPENED #7 t7 [r]"], "the red was said already, the open was not");
+        let mut c = c;
+        assert_eq!(hear(&mut c, &result(7, "red")), None, "the poll holds it red");
+        assert_eq!(hear(&mut c, &result(7, "merged")).as_deref(), Some("MERGED #7 t7 [r]"));
     }
 }
