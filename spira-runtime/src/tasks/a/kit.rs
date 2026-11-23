@@ -102,6 +102,7 @@ pub fn targets(tag: &str) -> &'static [&'static str] {
         WORK_SUBMITTED | queue_step::CUT_WANTED => &[batcher_local::STREAM, batcher_forge::STREAM],
         queue_step::PUBLISH_WANTED => &[publish::STREAM],
         batcher_forge::SETTLE_WANTED => &[queue_step::STREAM],
+        crate::watchers::pr_notify::PR_RESULT => &[crate::watchers::pr_notify::STREAM],
         _ => &[],
     }
 }

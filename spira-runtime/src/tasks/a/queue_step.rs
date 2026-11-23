@@ -174,7 +174,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (NOTIFY, 5_000),
     (RECORD, 2_000),
 ];
-pub const EMITS: &[EventKindTag] = &[CUT_WANTED, PUBLISH_WANTED];
+pub const EMITS: &[EventKindTag] = &[CUT_WANTED, PUBLISH_WANTED, crate::watchers::pr_notify::PR_RESULT];
 /// Hand-offs that wake it at once, besides its tick: batcher.forge left a batch to settle.
 pub const WAKES: &[EventKindTag] = &[super::batcher_forge::SETTLE_WANTED];
 pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, PUSH, LAND, CLOSE_BEAD, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
@@ -268,6 +268,9 @@ pub struct Repo {
     pub open_batch: Option<OpenBatch>,
     pub publish_rec: Option<PublishRec>,
     pub publish_check: Check,
+    /// The failing suites of the record's check, as a CSV; empty unless it is red.
+    #[serde(default)]
+    pub publish_fail: String,
     pub pr_state: PrState,
     pub check: Check,
     pub base_sha: String,
@@ -376,6 +379,9 @@ pub struct RepoCarry {
     /// The repo's mode when the judgement started (`queue.local` cuts and publishes, a forge repo cuts).
     #[serde(default)]
     pub mode: String,
+    /// The publish PR whose red was handed to the inbox, while it stays red.
+    #[serde(default)]
+    pub red_said: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -458,6 +464,21 @@ struct Machine<'a> {
 impl Machine<'_> {
     fn go(&mut self, on: Trigger) -> bool {
         step(self.rc.state, on).map(|to| self.rc.state = to).is_ok()
+    }
+
+    /// The hand-off that tells the inbox a standing publish PR went red, once while it stays red.
+    fn publish_red(&mut self, repo: &Repo) -> Option<Act> {
+        let rec = repo.publish_rec.as_ref().filter(|_| repo.mode == "queue.local" && repo.publish_check == Check::Red);
+        let Some(rec) = rec else {
+            self.rc.red_said = None;
+            return None;
+        };
+        if self.rc.red_said == Some(rec.pr) {
+            return None;
+        }
+        self.rc.red_said = Some(rec.pr);
+        let body = crate::watchers::pr_notify::PrResult { repo: self.repo.to_string(), pr: rec.pr, result: "red".into(), title: super::publish::pr_title(&rec.head, self.repo), fail: repo.publish_fail.clone() };
+        Some(Act::new(crate::watchers::pr_notify::PR_RESULT, format!("{}/{}/red", self.repo, rec.pr)).with_input(serde_json::to_string(&body).unwrap_or_default()))
     }
 
     fn step_of(&self) -> Step {
@@ -647,6 +668,7 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64)
     for (name, repo) in snap.repos.iter().filter(|(_, r)| r.lc_ok) {
         let mut m = Machine { repo: name, mode: repo.mode.clone(), rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms };
         m.observe(policy, repo);
+        let red = m.publish_red(repo);
         let before = next.clone();
         store(&mut next, name, m.rc);
         if !carry.repos.contains_key(name) && !admits(&next) {
@@ -654,6 +676,7 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64)
             continue;
         }
         acts.extend(m.acts);
+        acts.extend(red);
         if let Some(rec) = repo.publish_rec.as_ref().filter(|_| repo.mode == "queue.local" && repo.publish_check == Check::Green) {
             let input = serde_json::json!({ "repo": name, "mode": repo.mode }).to_string();
             acts.push(Act::new(PUBLISH_WANTED, format!("{name}/publish/{}/{now_ms}", rec.pr)).with_input(input));
@@ -833,15 +856,17 @@ pub mod edge {
                 }
             }
             let publish_rec = queue_kv(e, &name, "publish").and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default() }));
-            let mut publish_check = Check::None;
+            let (mut publish_check, mut publish_fail) = (Check::None, String::new());
             if let Some(rec) = &publish_rec {
-                publish_check = Check::of(&forge_call(&dir, "check-status", &[&rec.pr.to_string(), &rec.branch], None)?.stdout().unwrap_or_default());
+                let status = forge_call(&dir, "check-status", &[&rec.pr.to_string(), &rec.branch], None)?.stdout().unwrap_or_default();
+                publish_check = Check::of(&status);
+                publish_fail = queue::ops::verdict::red_suites_csv(&status);
             }
             let landref = spira_config::repos::landref(&reg, &name).unwrap_or_default();
             let base_sha = spira_config::git_refs::sha_of(std::path::Path::new(&dir), &landref)
                 .unwrap_or_else(|| git(&dir, &["rev-parse", &landref], Duration::from_secs(10)).unwrap_or_default());
             let sealed_base = open_batch.as_ref().and_then(|_| queue_kv(e, &name, "batch")).and_then(|kv| kv.get("base").cloned());
-            snap.repos.insert(name, Repo { mode, lc_ok, open_batch, publish_rec, publish_check, pr_state, check, base_sha, sealed_base, ..Repo::default() });
+            snap.repos.insert(name, Repo { mode, lc_ok, open_batch, publish_rec, publish_check, publish_fail, pr_state, check, base_sha, sealed_base, ..Repo::default() });
         }
         json(&snap)
     }

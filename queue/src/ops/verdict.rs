@@ -214,7 +214,7 @@ fn tagged<'a>(out: &'a str, prefix: &str) -> Vec<&'a str> {
 }
 
 /// The red suites of a check-status answer, de-duplicated, as a CSV.
-fn red_suites_csv(out: &str) -> String {
+pub fn red_suites_csv(out: &str) -> String {
     let mut seen: Vec<&str> = Vec::new();
     for l in tagged(out, "red-suite: ") {
         for s in l.split_whitespace() {
