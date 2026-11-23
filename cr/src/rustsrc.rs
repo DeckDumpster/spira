@@ -293,8 +293,14 @@ enum Tok {
 }
 
 fn tokens(code: &str) -> Vec<Tok> {
+    lined_tokens(code).into_iter().map(|(t, _)| t).collect()
+}
+
+/// Each token with the 1-based line it starts on.
+fn lined_tokens(code: &str) -> Vec<(Tok, u32)> {
     let c: Vec<char> = code.chars().collect();
     let mut out = Vec::new();
+    let mut line = 1;
     let mut i = 0;
     while i < c.len() {
         let ch = c[i];
@@ -303,17 +309,19 @@ fn tokens(code: &str) -> Vec<Tok> {
             while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_') {
                 i += 1;
             }
-            out.push(Tok::Id(c[s..i].iter().collect()));
+            out.push((Tok::Id(c[s..i].iter().collect()), line));
         } else if ch.is_ascii_digit() {
             while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_') {
                 i += 1;
             }
         } else if ch == ':' && c.get(i + 1) == Some(&':') {
-            out.push(Tok::Sep);
+            out.push((Tok::Sep, line));
             i += 2;
         } else {
-            if !ch.is_whitespace() {
-                out.push(Tok::Ch(ch));
+            if ch == '\n' {
+                line += 1;
+            } else if !ch.is_whitespace() {
+                out.push((Tok::Ch(ch), line));
             }
             i += 1;
         }
@@ -321,20 +329,16 @@ fn tokens(code: &str) -> Vec<Tok> {
     out
 }
 
-/// Identifiers a file names, and every `a::b` pair (including `a::{b, c}`).
-pub fn refs(code_text: &str) -> Refs {
-    let toks = tokens(code_text);
-    let mut r = Refs::default();
+/// Every `a::b` pair (including `a::{b, c}`) with the index of `b`'s token.
+fn pair_hits(toks: &[Tok]) -> Vec<(String, String, usize)> {
+    let mut hits = Vec::new();
     for (k, t) in toks.iter().enumerate() {
         let Tok::Id(a) = t else { continue };
-        r.idents.insert(a.clone());
         if toks.get(k + 1) != Some(&Tok::Sep) {
             continue;
         }
         match toks.get(k + 2) {
-            Some(Tok::Id(b)) => {
-                r.pairs.insert((a.clone(), b.clone()));
-            }
+            Some(Tok::Id(b)) => hits.push((a.clone(), b.clone(), k + 2)),
             Some(Tok::Ch('{')) => {
                 let mut depth = 0;
                 let mut j = k + 2;
@@ -347,9 +351,7 @@ pub fn refs(code_text: &str) -> Refs {
                                 break;
                             }
                         }
-                        Tok::Id(b) if depth == 1 && matches!(toks[j - 1], Tok::Ch('{') | Tok::Ch(',')) => {
-                            r.pairs.insert((a.clone(), b.clone()));
-                        }
+                        Tok::Id(b) if depth == 1 && matches!(toks[j - 1], Tok::Ch('{') | Tok::Ch(',')) => hits.push((a.clone(), b.clone(), j)),
                         _ => {}
                     }
                     j += 1;
@@ -358,7 +360,29 @@ pub fn refs(code_text: &str) -> Refs {
             _ => {}
         }
     }
+    hits
+}
+
+/// Identifiers a file names, and every `a::b` pair (including `a::{b, c}`).
+pub fn refs(code_text: &str) -> Refs {
+    let toks = tokens(code_text);
+    let mut r = Refs::default();
+    for t in &toks {
+        if let Tok::Id(a) = t {
+            r.idents.insert(a.clone());
+        }
+    }
+    r.pairs = pair_hits(&toks).into_iter().map(|(a, b, _)| (a, b)).collect();
     r
+}
+
+/// The first line of `code_text` that names one of `pairs` as `a::b` or one of `idents`.
+pub fn first_line_naming(code_text: &str, pairs: &[(String, String)], idents: &[String]) -> Option<u32> {
+    let lined = lined_tokens(code_text);
+    let toks: Vec<Tok> = lined.iter().map(|(t, _)| t.clone()).collect();
+    let pair_line = pair_hits(&toks).into_iter().filter(|(a, b, _)| pairs.iter().any(|(pa, pb)| pa == a && pb == b)).map(|(_, _, at)| lined[at].1);
+    let ident_line = lined.iter().filter(|(t, _)| matches!(t, Tok::Id(x) if idents.contains(x))).map(|(_, l)| *l);
+    pair_line.chain(ident_line).min()
 }
 
 /// One name a `use` declaration brings in: `use a::{b as c, d::*}` is `a::b` as `c` and glob `a::d`.

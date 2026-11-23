@@ -39,8 +39,6 @@ pub trait SourceTree {
     fn blob(&self, path: &str) -> Option<String>;
     /// Commits touching `path` at or after `since_ms`, and the newest commit time overall.
     fn history(&self, path: &str, since_ms: u64) -> History;
-    /// The names that committed `path`, sorted and distinct.
-    fn authors(&self, path: &str) -> Vec<String>;
     /// Every commit touching `path`, all time, newest first.
     fn log(&self, path: &str) -> Vec<CommitInfo>;
     /// The author time of each line of `path` at this commit, in milliseconds.
@@ -244,7 +242,6 @@ pub struct FixtureTree {
     pub commit_id: String,
     files: BTreeMap<String, String>,
     commits: HashMap<String, Vec<u64>>,
-    authors: HashMap<String, Vec<String>>,
     logs: HashMap<String, Vec<CommitInfo>>,
     line_ages: HashMap<String, Vec<u64>>,
     removed: Vec<RemovedTest>,
@@ -259,11 +256,6 @@ impl FixtureTree {
 
     pub fn with_file(mut self, path: &str, text: &str) -> Self {
         self.files.insert(path.to_string(), text.to_string());
-        self
-    }
-
-    pub fn with_authors(mut self, path: &str, names: &[&str]) -> Self {
-        self.authors.insert(path.to_string(), names.iter().map(|n| n.to_string()).collect());
         self
     }
 
@@ -323,12 +315,6 @@ impl SourceTree for FixtureTree {
     fn history(&self, path: &str, since_ms: u64) -> History {
         let times = self.commits.get(path).map(Vec::as_slice).unwrap_or(&[]);
         History { commits: times.iter().filter(|t| **t >= since_ms).count() as u32, newest_ms: times.iter().copied().max(), oldest_ms: times.iter().copied().min() }
-    }
-    fn authors(&self, path: &str) -> Vec<String> {
-        let mut v = self.authors.get(path).cloned().unwrap_or_default();
-        v.sort();
-        v.dedup();
-        v
     }
     fn log(&self, path: &str) -> Vec<CommitInfo> {
         self.logs.get(path).cloned().unwrap_or_default()
@@ -529,13 +515,6 @@ impl SourceTree for GitTree {
         let log = self.log.borrow();
         let times = log.as_ref().and_then(|l| l.get(path)).map(Vec::as_slice).unwrap_or(&[]);
         History { commits: times.iter().filter(|t| **t >= since_ms).count() as u32, newest_ms: times.iter().copied().max(), oldest_ms: times.iter().copied().min() }
-    }
-    fn authors(&self, path: &str) -> Vec<String> {
-        let Ok(out) = git(&self.root, &["-c", "core.quotepath=off", "log", "--format=%an", &self.commit, "--", path]) else { return Vec::new() };
-        let mut names: Vec<String> = String::from_utf8_lossy(&out).lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
-        names.sort();
-        names.dedup();
-        names
     }
     fn log(&self, path: &str) -> Vec<CommitInfo> {
         self.load_full_log();

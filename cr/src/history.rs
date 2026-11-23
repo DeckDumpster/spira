@@ -19,9 +19,22 @@ pub fn bead_of(subject: &str) -> Option<String> {
     id_at(head).filter(|id| id.len() == head.len())
 }
 
-pub fn commits_line(paths: &[String], tree: &dyn SourceTree, beads: &dyn Beads) -> String {
+/// The distinct commits touching any of `paths`, newest first within each path's log.
+pub fn unit_commits(paths: &[String], tree: &dyn SourceTree) -> Vec<CommitInfo> {
     let mut seen = BTreeSet::new();
-    let commits: Vec<CommitInfo> = paths.iter().flat_map(|p| tree.log(p)).filter(|c| seen.insert(c.sha.clone())).collect();
+    paths.iter().flat_map(|p| tree.log(p)).filter(|c| seen.insert(c.sha.clone())).collect()
+}
+
+/// The first-commit and commit-count lines, every figure drawn from `commits`. The windowed count
+/// is omitted when the first commit is inside it, which would only repeat the total.
+pub fn commits_lines(commits: &[CommitInfo], beads: &dyn Beads, now_ms: u64, staged_at: u64, churn_days: u32) -> String {
+    let first = commits.iter().map(|c| c.at_ms).min();
+    let since = now_ms.saturating_sub(u64::from(churn_days) * DAY_MS);
+    let windowed = commits.iter().filter(|c| c.at_ms >= since).count();
+    let mut m = match first {
+        Some(t) => format!("- First commit: {} days before this review was staged\n", staged_at.saturating_sub(t) / DAY_MS),
+        None => "- First commit: unknown\n".to_string(),
+    };
     let reverts = commits.iter().filter(|c| c.reverts).count();
     let named: BTreeSet<String> = commits.iter().filter_map(|c| bead_of(&c.subject)).collect();
     let fixes = if named.is_empty() {
@@ -36,7 +49,9 @@ pub fn commits_line(paths: &[String], tree: &dyn SourceTree, beads: &dyn Beads) 
         Ok(n) => format!("{n} fixes"),
         Err(e) => format!("fixes: unknown ({e})"),
     };
-    format!("- Commits: {} ever, {reverts} reverts, {fixes}\n", commits.len())
+    let window = if first.is_some_and(|t| t >= since) { String::new() } else { format!(" ({windowed} in the last {churn_days} days)") };
+    m.push_str(&format!("- Commits: {} ever{window}, {reverts} reverts, {fixes}\n", commits.len()));
+    m
 }
 
 /// The body of the incidents section: each incident bead named by a commit touching `paths`, or why it is unknown.

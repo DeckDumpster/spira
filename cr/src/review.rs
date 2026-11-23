@@ -215,10 +215,6 @@ fn validate(half: &str, comments: &[Comment], files: &[(String, Vec<u8>)]) -> Re
     Ok(())
 }
 
-fn age_days(from_ms: u64, to_ms: u64) -> u64 {
-    to_ms.saturating_sub(from_ms) / DAY_MS
-}
-
 const SECTIONS: [&str; 7] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Incidents that touched it", "## Tests that exercise it"];
 
 pub(crate) fn missing_section(body: &str) -> Option<&'static str> {
@@ -298,35 +294,27 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
         m.push_str(&format!("- `{path}`: {lines} lines\n"));
     }
     m.push_str(&format!("- Total: {total} lines\n"));
-    let mut dependents = pick::dependent_files(ix, u);
-    dependents.sort();
-    dependents.dedup();
+    let callers = pick::callers(ix, u);
+    let dependents: Vec<String> = callers.iter().map(|(p, _)| p.clone()).collect();
     m.push_str(&format!("\n{}\n\n", SECTIONS[3]));
-    if dependents.is_empty() {
-        m.push_str("No dependents found.\n");
+    if callers.is_empty() {
+        m.push_str("None found by path or name; glob imports and method calls are not traced.\n");
     }
-    for d in &dependents {
-        m.push_str(&format!("- `{d}`\n"));
+    for (path, line) in &callers {
+        match line {
+            Some(l) => m.push_str(&format!("- `{path}:{l}`\n")),
+            None => m.push_str(&format!("- `{path}`\n")),
+        }
     }
-    let since = now.saturating_sub(u64::from(ports.config.churn_days) * DAY_MS);
-    let hist: Vec<_> = u.files.iter().map(|f| tree.history(&f.path, since)).collect();
-    let total_lines: u32 = u.files.iter().map(|f| ix.lines(&f.path)).sum();
-    let commits: u32 = hist.iter().map(|h| h.commits).sum();
-    let first = hist.iter().filter_map(|h| h.oldest_ms).min();
-    let mut authors: Vec<String> = u.files.iter().flat_map(|f| tree.authors(&f.path)).collect();
-    authors.sort();
-    authors.dedup();
-    m.push_str(&format!("\n{}\n\n", SECTIONS[4]));
-    m.push_str(&format!("- Lines: {total_lines}\n"));
-    match first {
-        Some(t) => m.push_str(&format!("- First commit: {} days before this review was staged\n", age_days(t, r.staged_at))),
-        None => m.push_str("- First commit: unknown\n"),
-    }
-    m.push_str(&format!("- Commits in the last {} days: {commits}\n", ports.config.churn_days));
     let paths: Vec<String> = u.files.iter().map(|f| f.path.clone()).collect();
-    m.push_str(&history::commits_line(&paths, tree, ports.beads.as_ref()));
-    m.push_str(&history::rewritten_line(&paths, tree, now, ports.config.rewrite_days));
-    m.push_str(&format!("- Authors: {}\n", if authors.is_empty() { "none recorded".to_string() } else { authors.join(", ") }));
+    let commits = history::unit_commits(&paths, tree);
+    m.push_str(&format!("\n{}\n\n", SECTIONS[4]));
+    m.push_str(&history::commits_lines(&commits, ports.beads.as_ref(), now, r.staged_at, ports.config.churn_days));
+    let first = commits.iter().map(|c| c.at_ms).min();
+    let rewrite_since = now.saturating_sub(u64::from(ports.config.rewrite_days) * DAY_MS);
+    if !first.is_some_and(|t| t >= rewrite_since) {
+        m.push_str(&history::rewritten_line(&paths, tree, now, ports.config.rewrite_days));
+    }
     m.push_str(&format!("\n{}\n\n", SECTIONS[5]));
     m.push_str(&history::incident_lines(&paths, tree, ports.beads.as_ref()));
     m.push_str(&format!("\n{}\n\n", SECTIONS[6]));

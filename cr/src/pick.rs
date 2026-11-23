@@ -59,34 +59,107 @@ pub struct Scored {
     pub weight: Weight,
 }
 
-pub fn dependent_files(ix: &Index, unit: &Unit) -> Vec<String> {
-    let inside: Vec<&str> = unit.files.iter().map(|f| f.path.as_str()).collect();
-    let outside = |files: &[String]| files.iter().filter(|f| !inside.contains(&f.as_str())).cloned().collect::<Vec<String>>();
-    match unit.kind {
-        Kind::Trait => {
-            let name = unit.id.rsplit("::").next().unwrap_or("");
-            outside(ix.files_naming(name))
+/// What a unit's dependents name: `a::b` pairs (`own` only inside the unit's crate, outside its
+/// bin roots), bare identifiers, or a command word in shell.
+#[derive(Default)]
+struct Search {
+    pairs: Vec<(String, String)>,
+    own: Vec<(String, String)>,
+    crate_dir: String,
+    bins: Vec<String>,
+    idents: Vec<String>,
+    word: Option<String>,
+}
+
+impl Search {
+    fn pairs_in(&self, path: &str) -> Vec<(String, String)> {
+        let mut v = self.pairs.clone();
+        if path.starts_with(&format!("{}/", self.crate_dir)) && !self.bins.iter().any(|b| b == path) {
+            v.extend(self.own.iter().cloned());
         }
+        v
+    }
+}
+
+fn search(ix: &Index, unit: &Unit) -> Search {
+    let mut s = Search::default();
+    match unit.kind {
+        Kind::Trait => s.idents.push(unit.id.rsplit("::").next().unwrap_or("").to_string()),
         Kind::Module | Kind::Boundary => {
             let target = if unit.kind == Kind::Module { &unit.files[0].path } else { &unit.files[1].path };
-            let Some(c) = ix.crate_of(target) else { return Vec::new() };
-            let stem = target.rsplit('/').next().unwrap_or("").trim_end_matches(".rs");
-            let stem = if stem == "mod" { target.rsplit('/').nth(1).unwrap_or("") } else { stem };
-            let mut n: Vec<String> = outside(ix.files_naming_pair(&c.lib, stem));
-            let own: Vec<String> = ix.files_naming_pair("crate", stem).iter().filter(|f| f.starts_with(&format!("{}/", c.dir))).cloned().collect();
-            n.extend(outside(&own));
-            n
+            let Some(c) = ix.crate_of(target) else { return s };
+            s.crate_dir = c.dir.clone();
+            s.bins = c.bins.iter().map(|b| b.path.clone()).collect();
+            let names = if *target == crate::index::join_norm(&c.dir, "src/lib.rs") { root_names(ix, target) } else { vec![file_stem(target).to_string()] };
+            for n in names {
+                s.pairs.push((c.lib.clone(), n.clone()));
+                s.own.push(("crate".to_string(), n));
+            }
         }
-        Kind::Script => {
-            let bin = unit.id.rsplit(':').next().unwrap_or("");
-            ix.text
-                .iter()
-                .filter(|(p, t)| ext(p) == "sh" && !inside.contains(&p.as_str()) && t.lines().flat_map(crate::units::command_words).any(|w| w == bin))
-                .map(|(p, _)| p.clone())
-                .collect()
-        }
-        Kind::Persona => Vec::new(),
+        Kind::Script => s.word = Some(unit.id.rsplit(':').next().unwrap_or("").to_string()),
+        Kind::Persona => {}
     }
+    s
+}
+
+fn file_stem(target: &str) -> &str {
+    let stem = target.rsplit('/').next().unwrap_or("").trim_end_matches(".rs");
+    if stem == "mod" {
+        target.rsplit('/').nth(1).unwrap_or("")
+    } else {
+        stem
+    }
+}
+
+/// A crate root's public names: its own items and what it re-exports.
+fn root_names(ix: &Index, root: &str) -> Vec<String> {
+    let Some(t) = ix.text.get(root) else { return Vec::new() };
+    let code = rustsrc::code_lines(t);
+    let raw: Vec<&str> = t.lines().collect();
+    let mut names = rustsrc::pub_names(&raw, &code);
+    names.extend(rustsrc::uses(&code.join("\n")).into_iter().filter(|u| u.public && !u.glob).map(|u| u.alias));
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn names_word(text: &str, bin: &str) -> bool {
+    text.lines().flat_map(crate::units::command_words).any(|w| w == bin)
+}
+
+pub fn dependent_files(ix: &Index, unit: &Unit) -> Vec<String> {
+    let inside: Vec<&str> = unit.files.iter().map(|f| f.path.as_str()).collect();
+    let s = search(ix, unit);
+    let mut out: Vec<String> = s.idents.iter().flat_map(|i| ix.files_naming(i).iter().cloned()).collect();
+    for (a, b) in &s.pairs {
+        out.extend(ix.files_naming_pair(a, b).iter().cloned());
+    }
+    for (a, b) in &s.own {
+        out.extend(ix.files_naming_pair(a, b).iter().filter(|f| s.pairs_in(f).contains(&(a.clone(), b.clone()))).cloned());
+    }
+    if let Some(bin) = &s.word {
+        out.extend(ix.text.iter().filter(|(p, t)| ext(p) == "sh" && names_word(t, bin)).map(|(p, _)| p.clone()));
+    }
+    out.retain(|f| !inside.contains(&f.as_str()));
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Each dependent file with the first line that names the unit, sorted by path.
+pub fn callers(ix: &Index, unit: &Unit) -> Vec<(String, Option<u32>)> {
+    let s = search(ix, unit);
+    dependent_files(ix, unit)
+        .into_iter()
+        .map(|f| {
+            let text = ix.text.get(&f).map_or("", String::as_str);
+            let line = match &s.word {
+                Some(bin) => text.lines().position(|l| crate::units::command_words(l).contains(bin)).map(|i| i as u32 + 1),
+                None => rustsrc::first_line_naming(&rustsrc::code_lines(text).join("\n"), &s.pairs_in(&f), &s.idents),
+            };
+            (f, line)
+        })
+        .collect()
 }
 
 pub fn dependents(ix: &Index, unit: &Unit) -> u32 {
