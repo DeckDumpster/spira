@@ -153,6 +153,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 spira-submission = { path = "../spira-submission" }
 gh-intake = { path = "../gh-intake" }
 cr = { path = "../cr" }
+margin-client = { path = "../margin-client" }
 dwarf = { path = "../dwarf" }
 archivist = { path = "../archivist" }
 incident = { path = "../incident" }

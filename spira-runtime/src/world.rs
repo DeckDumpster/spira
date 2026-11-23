@@ -426,6 +426,44 @@ impl World {
         Err(format!("cr exited {}: {}", out.status, err.trim()))
     }
 
+    /// Mails one comment of the operator's in the reader to the Concierge, read through the configured reader.
+    pub fn margin_deliver(&self, input: &str) -> Result<String, String> {
+        let cfg = &|k: &str| spira_config::process::cfg(k);
+        let margin = margin_client::HttpMargin::configured(cfg)?;
+        let delivery = crate::sources::smtp::Delivery::of(&mail::env::Env::load()?);
+        self.margin_deliver_with(&margin, &margin.base, &delivery, input)
+    }
+
+    /// [`Self::margin_deliver`] over `margin`, whose address `base` names in an answer that has no `cr` review to go to.
+    pub fn margin_deliver_with(&self, margin: &dyn margin_client::Margin, base: &str, delivery: &crate::sources::smtp::Delivery, input: &str) -> Result<String, String> {
+        use crate::watchers::margin_comments::Deliver;
+        let d: Deliver = serde_json::from_str(input).map_err(|e| format!("margin.deliver: bad input: {e}"))?;
+        let raw = crate::margin_mail::build(margin, base, &self.run_dir, &d.collection, &d.thread, &d.comment)?;
+        let delivered = crate::margin_mail::deliver_once(delivery, &raw)?;
+        crate::sources::margin_changed::record_done(&self.run_dir, d.seq, &d.batch, d.through)?;
+        Ok(format!("comment {} {}", d.comment, if delivered { "delivered" } else { "already delivered" }))
+    }
+
+    /// Runs `cr unseal` for the review holding the published collection; a collection no review holds is no business of `cr`'s.
+    pub fn margin_publish(&self, input: &str) -> Result<String, String> {
+        use crate::watchers::margin_comments::{Publish, PUBLISH_CALL_SECS};
+        let p: Publish = serde_json::from_str(input).map_err(|e| format!("margin.publish: bad input: {e}"))?;
+        let review = cr::record::all(&self.run_dir)?.into_iter().find(|r| r.collection.as_deref() == Some(p.collection.as_str()));
+        let note = match review {
+            None => "not a code review".to_string(),
+            Some(r) => {
+                let cr = spira_config::release_env::tool("cr")?;
+                let out = spira_config::bounded::bounded_for(cr, &PUBLISH_CALL_SECS.to_string()).args(["unseal", "--review", &format!("{:03}", r.number)]).output().map_err(|e| format!("cr: {e}"))?;
+                if !out.status.success() {
+                    return Err(format!("cr exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim()));
+                }
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            }
+        };
+        crate::sources::margin_changed::record_done(&self.run_dir, p.seq, &p.batch, p.through)?;
+        Ok(note)
+    }
+
     /// The PRs the harness opened and recorded, asked of the forge by number, with the PRs already
     /// tracked in `input`. No repository's PR list is read.
     pub fn pr_snapshot(&self, forge: &Forge, input: &str) -> Result<String, String> {
@@ -2069,5 +2107,97 @@ mod ask_mail_tests {
             w.mails_by_bead(&[id.clone()].into(), &counting);
         }
         assert_eq!(reads.get(), 900, "one call per bead, as the pre-fix mails_for was, rereads every file");
+    }
+}
+
+#[cfg(test)]
+mod margin_deliver_tests {
+    use super::*;
+    use crate::sources::smtp::Delivery;
+    use crate::watchers::margin_comments::Deliver;
+    use cr::record::{self, Kind, Review, State};
+    use margin_client::{Anchor, Doc, FakeMargin, Margin};
+
+    const BASE: &str = "http://reader.test";
+
+    struct Fixture {
+        dir: testkit::TempDir,
+        fake: FakeMargin,
+        input: String,
+    }
+
+    fn fixture(review: bool) -> Fixture {
+        let dir = testkit::TempDir::new("margin-deliver");
+        let fake = FakeMargin::default();
+        let text: String = (1..=12).map(|n| format!("line {n}\n")).collect();
+        let col = fake.post_collection("Review of a", "cover", &[Doc { path: "src/a.rs".into(), kind: "code".into(), text }]).unwrap();
+        let anchor = Anchor { document: col.documents[0].id.clone(), version: 1, first: 6, last: 7 };
+        let thread = fake.his_thread(&col.id, anchor, "why is this pair swapped?", 1_795_000_000_000);
+        if review {
+            let unit = cr::units::Unit { id: "u".into(), kind: cr::units::Kind::Module, files: vec![], title: "t".into() };
+            let n = record::allocate(dir.path()).unwrap();
+            let r = Review { number: n, kind: Kind::Scheduled, state: State::Open, source_repo: "s".into(), source_sha: "c".into(), collection: Some(col.id.clone()), url: None, documents: Default::default(), unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None };
+            record::save(dir.path(), &r).unwrap();
+        }
+        let input = serde_json::to_string(&Deliver { collection: col.id, comment: format!("{thread}-0"), thread, seq: 4, batch: vec![4], through: 4 }).unwrap();
+        Fixture { dir, fake, input }
+    }
+
+    fn deliver(f: &Fixture) -> Result<String, String> {
+        let mail_root = f.dir.path().join("mail");
+        let delivery = Delivery { run_dir: f.dir.path().into(), home: f.dir.path().into(), mail_root, mute: false };
+        World { run_dir: f.dir.path().into(), ..World::default() }.margin_deliver_with(&f.fake, BASE, &delivery, &f.input)
+    }
+
+    fn mailbox(f: &Fixture) -> Vec<String> {
+        let new = f.dir.path().join("mail/concierge/new");
+        let mut files: Vec<_> = fs::read_dir(new).into_iter().flatten().flatten().map(|e| fs::read_to_string(e.path()).unwrap()).collect();
+        files.sort();
+        files
+    }
+
+    #[test_id(t5j29kn)]
+    #[test]
+    fn a_comment_on_a_review_lands_once_in_the_concierge_mailbox_with_its_source_and_the_cr_reply_command() {
+        let f = fixture(true);
+        assert_eq!(deliver(&f).unwrap(), format!("comment {}-0 delivered", "col1-his0"));
+        let mail = mailbox(&f);
+        assert_eq!(mail.len(), 1);
+        let m = &mail[0];
+        assert!(m.contains("Subject: margin: Review of a — src/a.rs:6-7\n"), "{m}");
+        assert!(m.contains("Message-ID: <margin-comment-col1-his0-0@spira>\n") && m.contains("From: Operator <operator@spira>\n"), "{m}");
+        assert!(m.contains("why is this pair swapped?"), "{m}");
+        assert!(m.contains("     1  line 1\n") && m.contains(">    6  line 6\n") && m.contains(">    7  line 7\n") && m.contains("    12  line 12\n"), "{m}");
+        assert!(!m.contains(">    8  line 8"), "{m}");
+        assert!(m.contains("cr reply --review 001 --thread col1-his0 < reply.txt"), "{m}");
+        assert_eq!(deliver(&f).unwrap(), "comment col1-his0-0 already delivered");
+        assert_eq!(mailbox(&f).len(), 1, "a second run delivers nothing new");
+        assert_eq!(crate::sources::margin_changed::resume_point(f.dir.path()), 4);
+    }
+
+    #[test_id(t2j5z84)]
+    #[test]
+    fn the_thread_so_far_and_the_reader_url_stand_in_when_no_review_holds_the_collection() {
+        let f = fixture(false);
+        f.fake.reply_as("col1-his0", &FakeMargin::agent_author(), "it is deliberate", 1_795_000_100_000);
+        f.fake.reply_as("col1-his0", "ryan", "then say so in a comment", 1_795_000_200_000);
+        let d: Deliver = serde_json::from_str(&f.input).unwrap();
+        let input = serde_json::to_string(&Deliver { comment: "col1-his0-r2".into(), ..d }).unwrap();
+        let f = Fixture { input, ..f };
+        deliver(&f).unwrap();
+        let m = &mailbox(&f)[0];
+        assert!(m.contains("then say so in a comment"), "{m}");
+        assert!(m.contains("Thread so far:") && m.contains("agent:concierge at 2026-") && m.contains("it is deliberate"), "{m}");
+        assert!(m.contains(&format!("{BASE}/c/col1#col1-his0-r2")) && !m.contains("cr reply"), "{m}");
+    }
+
+    #[test_id(tkozu7k)]
+    #[test]
+    fn a_published_collection_no_review_holds_is_not_a_code_review() {
+        let t = testkit::TempDir::new("margin-publish");
+        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish { collection: "other".into(), seq: 2, batch: vec![2], through: 2 }).unwrap();
+        let w = World { run_dir: t.path().into(), ..World::default() };
+        assert_eq!(w.margin_publish(&input).unwrap(), "not a code review");
+        assert_eq!(crate::sources::margin_changed::resume_point(t.path()), 2);
     }
 }
