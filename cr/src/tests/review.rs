@@ -31,7 +31,7 @@ fn world() -> World {
     let run = TempDir::new("cr-review");
     let margin = FakeMargin::default();
     let commits = Rc::new(Recorder::default());
-    let mut ports = ports_with(fixture().with_authors("demo/src/store.rs", &["alpha", "beta", "alpha"]), vec![prior_row()], cfg());
+    let mut ports = ports_with(fixture(), vec![prior_row()], cfg());
     ports.run_dir = run.path().to_path_buf();
     ports.margin = Box::new(margin.clone());
     ports.committer = Box::new(SharedRecorder(commits.clone()));
@@ -186,11 +186,13 @@ fn a_unit_with_no_calling_test_says_none_found_by_call_path() {
 #[test]
 fn seal_cover_note_carries_facts_and_no_critique() {
     let mut w = world();
+    let old = CommitInfo { at_ms: NOW - 90 * DAY, ..commit("n3", "first", false) };
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("n1", "tidy", false), commit("n2", "tidy again", false), old]));
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
     let note = w.cover();
-    for want in ["alpha, beta", "demo/src/store/tests.rs", "demo/tests/it.rs", "Commits in the last 60 days: 2"] {
+    for want in ["demo/src/store/tests.rs", "demo/tests/it.rs", "Commits: 3 ever (2 in the last 60 days)"] {
         assert!(note.contains(want), "missing {want:?} in:\n{note}");
     }
     assert!(!note.contains("first look"), "the sealed review must not reach the cover note");
@@ -992,4 +994,94 @@ fn a_progress_file_and_a_record_that_still_carry_documents_load_and_the_seal_res
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert_eq!(w.margin.collections_posted(), 1);
     assert_eq!(w.margin.comments_posted().len(), 2);
+}
+
+#[test_id(tz1g7q3)]
+#[test]
+fn one_commit_touching_two_unit_files_counts_once_in_both_counts() {
+    let mut w = world();
+    let old = CommitInfo { at_ms: NOW - 90 * DAY, ..commit("old", "first", false) };
+    let tree = fixture()
+        .with_log("demo/src/store.rs", vec![commit("both", "touch both", false), old])
+        .with_log("demo/src/store/tests.rs", vec![commit("both", "touch both", false)])
+        .with_commits("demo/src/store.rs", &[NOW - DAY, NOW - 90 * DAY])
+        .with_commits("demo/src/store/tests.rs", &[NOW - DAY]);
+    w.ports.tree = Box::new(tree);
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- Commits: 2 ever (1 in the last 60 days), 0 reverts, 0 fixes"), "{body}");
+}
+
+#[test_id(t9m4w2k)]
+#[test]
+fn a_young_unit_states_no_windowed_count_no_rewritten_line_no_authors_and_no_repeated_lines() {
+    let mut w = world();
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("y1", "tidy", false), commit("y2", "more", false)]));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- Commits: 2 ever, 0 reverts, 0 fixes"), "{body}");
+    for gone in ["in the last", "Rewritten", "Authors", "- Lines:"] {
+        assert!(!body.contains(gone), "{gone:?} in:\n{body}");
+    }
+    assert!(body.contains("- Total: "), "{body}");
+}
+
+#[test_id(thc3r8e)]
+#[test]
+fn a_lib_root_lists_its_bin_and_integration_test_callers_by_line_and_not_a_bin_by_crate_path() {
+    let mut w = world();
+    let tree = fixture()
+        .with_file("Cargo.toml", "[workspace]\nmembers = [\"census\"]\n")
+        .with_file("census/Cargo.toml", "[package]\nname = \"census\"\n\n[[bin]]\nname = \"census\"\npath = \"src/main.rs\"\n\n[[bin]]\nname = \"side\"\npath = \"src/side.rs\"\n")
+        .with_file("census/src/lib.rs", "pub mod util;\n\npub fn run() {}\n")
+        .with_file("census/src/util.rs", "pub fn help() {\n    crate::run();\n}\n")
+        .with_file("census/src/main.rs", "fn main() {\n    census::run();\n}\n")
+        .with_file("census/src/side.rs", "fn main() {\n    crate::run();\n}\n")
+        .with_file("census/tests/it.rs", "use census::{\n    other,\n    run,\n};\n\n#[test]\nfn it() {\n    run();\n}\n")
+        .with_file("census/tests/other.rs", "fn helper() {\n    crate::run();\n}\n");
+    w.ports.tree = Box::new(tree);
+    assert_eq!(w.cr(&["open", "--aim", "census/src/lib.rs", "--seed", "1"]).code, 0);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 0);
+    let body = w.cover();
+    let at = body.find("## Who calls it").unwrap();
+    let section = &body[at..body.find("## How often").unwrap()];
+    let lines: Vec<&str> = section.lines().filter(|l| l.starts_with("- ")).collect();
+    assert_eq!(lines, ["- `census/src/main.rs:2`", "- `census/src/util.rs:2`", "- `census/tests/it.rs:3`"], "{section}");
+}
+
+#[test_id(tu5k1xd)]
+#[test]
+fn an_unknown_first_commit_omits_neither_the_windowed_count_nor_the_rewritten_line() {
+    let mut w = world();
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- First commit: unknown"), "{body}");
+    assert!(body.contains("- Commits: 0 ever (0 in the last 60 days)"), "{body}");
+    assert!(body.contains("- Rewritten in the last 45 days: unknown"), "{body}");
+}
+
+#[test_id(tr7b2ya)]
+#[test]
+fn a_first_commit_inside_the_churn_window_but_outside_the_rewrite_window_keeps_only_the_rewritten_line() {
+    let mut w = world();
+    let first = CommitInfo { at_ms: NOW - 50 * DAY, ..commit("f1", "first", false) };
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("f2", "later", false), first]));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- Commits: 2 ever, 0 reverts"), "{body}");
+    assert!(body.contains("- Rewritten in the last 45 days"), "{body}");
+}
+
+#[test_id(tq3d9ps)]
+#[test]
+fn a_lib_root_is_searched_by_the_names_it_publicly_reexports() {
+    let mut w = world();
+    let tree = fixture()
+        .with_file("Cargo.toml", "[workspace]\nmembers = [\"census\"]\n")
+        .with_file("census/Cargo.toml", "[package]\nname = \"census\"\n")
+        .with_file("census/src/lib.rs", "mod inner;\n\npub use inner::Tally;\n")
+        .with_file("census/src/inner.rs", "pub struct Tally;\n")
+        .with_file("census/tests/it.rs", "fn f() {\n    let _ = census::Tally;\n}\n");
+    w.ports.tree = Box::new(tree);
+    assert_eq!(w.cr(&["open", "--aim", "census/src/lib.rs", "--seed", "1"]).code, 0);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 0);
+    assert!(w.cover().contains("- `census/tests/it.rs:2`"), "{}", w.cover());
 }

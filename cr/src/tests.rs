@@ -620,9 +620,6 @@ impl SourceTree for Unreadable {
     fn history(&self, _: &str, _: u64) -> History {
         History::default()
     }
-    fn authors(&self, _: &str) -> Vec<String> {
-        Vec::new()
-    }
     fn log(&self, _: &str) -> Vec<crate::ports::CommitInfo> {
         Vec::new()
     }
