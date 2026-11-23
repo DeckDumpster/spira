@@ -1522,9 +1522,9 @@ fn confinement_is_asked_before_the_gate() {
     h.run();
     assert!(h.lib.has("reopen sp-a confine-fail Reopened by sentinel: spike touched src/x.rs\nmore"));
     assert!(h.logged("CHECK6 sp-b: spira/sp-b — confine.sh could not evaluate: library failed to load"));
-    assert!(h.tools.gate_calls.borrow().is_empty());
     assert_eq!(h.git.head.get(), 0, "a refused spike is never merged");
     assert!(h.git.deleted.borrow().is_empty(), "and its branch is kept as the evidence");
+    assert!(h.tools.gate_calls.borrow().is_empty());
 }
 
 #[test_id(twuu1k2)]

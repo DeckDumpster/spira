@@ -53,7 +53,6 @@ spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
 spira/test-gate-discover-branch.sh
 spira/test-gh-run-gate.sh
-spira/test-guards.sh
 spira/test-hold.sh
 spira/test-install-conf-seed.sh
 spira/test-landing-pass.sh
@@ -61,7 +60,6 @@ spira/test-landing-pr.sh
 spira/testlib/gate-fixture.sh
 spira/testlib.sh
 spira/test-pr-notify.sh
-spira/test-spike.sh
 spira/tsd-ingest.sh
 
 # NAMED EXCEPTION CLASS (not cutover debt): a test whose job is to police the spira-config

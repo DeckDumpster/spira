@@ -22,7 +22,7 @@
 # the last one was.
 #
 # SEPARATE FROM dwarf.sh SO IT CAN BE TESTED. Asserting this property through dwarf.sh would
-# mean calling a dwarf; test-ref-guard.sh calls this directly instead.
+# mean calling a dwarf; dwarf/tests/fences.rs calls this directly instead.
 #
 # Usage:
 #   worktree-hooks.sh install <worktree-path>

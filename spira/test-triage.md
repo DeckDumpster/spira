@@ -136,7 +136,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | --- | ---: | --- | --- | --- |
 | test-lifecycle-container.sh | 42 | real Dolt, real grants, and properties that need a second connection | keep | Real dependency. |
 | test-ops-read-model.sh | 33 | the ops_live/ops_round/ops_recent and where-stuck views over 12,000 beads and 100,000 events | keep | The scale is the point; seed once per run, not per row. |
-| test-spike.sh | 49 | the spike persona's partition is its own and its branch carries a document only | unit | A path allowlist. |
 
 ### J — gate internals
 

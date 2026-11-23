@@ -59,12 +59,12 @@ statement = "the `reference-transaction` hook refuses unsanctioned deletion of `
 [[use_case]]
 id = "UC-safety-fences-21"
 tier = "T2"
-statement = "`worktree-hooks.sh install` arms every canonical hook in a dwarf worktree; its composed `pre-commit` runs the canonical fences first then the dirty-path guard; an install failure in `dwarf.sh` is loud"
+statement = "`worktree-hooks.sh install` arms every canonical hook in a dwarf worktree; its composed `pre-commit` runs the canonical fences first then the dirty-path guard; a failed install in the dwarf runner is logged, naming the worktree and the reason"
 
 [[use_case]]
 id = "UC-safety-fences-22"
 tier = "T2"
-statement = "the tracked `hooks/pre-commit` runs `exclude.sh staged`, `scratch-fence.sh` and `branch-guard.sh staged` in a clone armed by `exclude.sh install`, and each can refuse through the hook"
+statement = "the tracked `hooks/pre-commit` runs `exclude.sh staged`, spira-lint's scratch-fence rule and `branch-guard.sh staged` in a clone armed by `exclude.sh install`, and each can refuse through the hook"
 
 [[use_case]]
 id = "UC-safety-fences-23"
@@ -144,7 +144,7 @@ statement = "the czar stage fence: each class defaults to shadow and refuses, na
 [[use_case]]
 id = "UC-safety-fences-32"
 tier = "T2"
-statement = "spike confinement: `confine.sh` refuses a spike branch touching files outside `SPIRA_SPIKE_PATHS` (matching by path prefix against the merge base, bound to the spike persona); an unreadable bead fails open; `landing.sh` reopens an unconfined spike without merging it and keeps the branch"
+statement = "spike confinement: `confine.sh` refuses a spike branch touching files outside `SPIRA_SPIKE_PATHS` (matching by path prefix against the merge base, bound to the spike persona); an unreadable bead fails open; the landing pass reopens an unconfined spike without merging it and keeps the branch"
 
 [[use_case]]
 id = "UC-safety-fences-33"

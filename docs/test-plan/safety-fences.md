@@ -38,8 +38,8 @@ Every refusal must name the rule, the correct path and the override. Every fence
 | UC-safety-fences-18 | `branch-guard.sh staged` refuses a dwarf-identity commit on the base branch, and a dwarf commit outside `SPIRA_WORK`, naming email/branch/both paths. Operator identity, non-base branches and sweeps (no `SPIRA_WORK`) pass. | C, O, CFG | T2 | batch |
 | UC-safety-fences-19 | `branch-guard.sh check` reports a dwarf commit at a base tip and a shared checkout ahead of its remote. It reports clean after an operator commit on top. | C, O | T2 | batch |
 | UC-safety-fences-20 | The `reference-transaction` hook refuses unsanctioned deletion of `refs/heads/spira/*` (including `spira/queue/*`), including from inside a dwarf worktree. `SPIRA_REF_SANCTIONED=1` allows it, non-spira refs are untouched, the committed phase exits 0, and large stdin is drained without SIGPIPE. | C, FC | T2 | batch |
-| UC-safety-fences-21 | `worktree-hooks.sh install` arms every canonical hook in a dwarf worktree. Its composed `pre-commit` runs the canonical fences first and then the dirty-path guard. An install failure in `dwarf.sh` is loud. | FC, K | T2 | batch |
-| UC-safety-fences-22 | The tracked `hooks/pre-commit` runs `exclude.sh staged`, `scratch-fence.sh` and `branch-guard.sh staged` in a clone armed by `exclude.sh install`, and each one can refuse through the hook. | K | T2 | batch |
+| UC-safety-fences-21 | `worktree-hooks.sh install` arms every canonical hook in a dwarf worktree. Its composed `pre-commit` runs the canonical fences first and then the dirty-path guard. A failed install in the dwarf runner is logged, naming the worktree and the reason. | FC, K | T2 | batch |
+| UC-safety-fences-22 | The tracked `hooks/pre-commit` runs `exclude.sh staged`, spira-lint's scratch-fence rule and `branch-guard.sh staged` in a clone armed by `exclude.sh install`, and each one can refuse through the hook. | K | T2 | batch |
 | UC-safety-fences-23 | `exclude.sh` keeps beads data (`.beads/`, `.dolt/`, JSONL exports) out of the harness tree and out of staged files. | C, FC | T1 (path list) + T2 (staged) | cert / batch |
 | UC-safety-fences-24 | `scratch-fence.sh` refuses tracked root `sp-*` / `*.fixed` files, ignores subdirectories, exits 3 on an empty index, and honours `SCRATCH_FENCE_OK`. | C, FC | T1 (file-list seam) | cert |
 | UC-safety-fences-25 | `inventory.sh` refuses absolute home-directory and workspace-container paths, `(per Name, date)` marks and real emails in tracked and untracked files. It exempts its own pattern files and example domains, exits 3 on an empty index, and supports `--scan` / `--patterns`. | C, FC | T1 (`--scan` table) + T2 (tree walk) | cert |
@@ -61,10 +61,10 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 
 | UC | Existing tests (file::case) | Now / cost | Verdict |
 |---|---|---|---|
-| 01 | test-dwarf-fence::A1–A5, E0–E3, I0–I4 | T1-ish, 10 s (shared with 02) | MERGE-INTO test-guards.sh (row table) |
+| 01 | `dwarf/tests/fences.rs` (dwarf-fence payload tables) | T1 | DONE (sp-dede1o) |
 | 01 (static half) | test-dwarf-fence::D0–D3 (grep archivist.md for prohibitions) | source grep | SOURCE-GREP → move to the UC-33 runes lint (T0) or delete; the prose is not the fence |
-| 02 | test-dwarf-fence::A6, A7, F0–F16, G0, G(8 brief cmds), H0/H1 | T1, (in 10 s) | MERGE-INTO test-guards.sh |
-| 03 | test-dwarf-fence-bd-create::positive control, A1, A2, A3, B1–B3, C1, D1 | T2 (real bd + testdb_up), 6 s | DEMOTE-TO-T1 + MERGE-INTO test-guards.sh. Drop A2 and the control (identical command to A1, run 3×). One row goes to the retired bd-contract suite |
+| 02 | `dwarf/tests/fences.rs` (prod, queue, config and pattern-kill tables) | T1 | DONE (sp-dede1o) |
+| 03 | `dwarf/tests/fences.rs` (bd refused in three tables, allowed prose and overrides in one) | T1 | DONE (sp-dede1o) |
 | 04 | test-bd-close-unacked-guard::guard blocks…, names id, names override, exits 2, ACK note, env/inline override, pre-claim, self-comment, fails-open baseline | T3-ish (real Dolt, 6× `sleep 2`), 39 s | DEMOTE-TO-T1 (stub bd with canned timestamps; removes 12 s of sleeps and the double `run_guard`) |
 | 05 | test-bd-close-unacked-guard::deliver outputs additionalContext…, second deliver empty, pre-claim/self not delivered | (in 39 s) | DEMOTE-TO-T1, kept as its own rows (PostToolUse, not PreToolUse) |
 | 06 | test-bd-delivers-label-guard::PC, A1–A3, B1–B2, D1 | T2 (testdb), 6 s | DEMOTE-TO-T1 + MERGE-INTO test-guards.sh. DELETE "label remains after blocked remove" (vacuous: the guard never runs the command) |
@@ -75,15 +75,15 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 11 | test-mail-fence::all | T1, 4 s | MERGE-INTO test-guards.sh (add exit-code column) |
 | 12 | test-testenv-batch-fence::all | T1, 3 s | MERGE-INTO test-guards.sh (add exit-code column) |
 | 13 | test-schema-migration-guard::all (secondary); bdq create schema-delete rows (Rust: `bead::bdq` and `spira-lc` content tests) | T1, 3 s + (in 4 s) | MERGE schema-migration-guard INTO test-guards.sh. The bdq rows live in the Rust tests (a different mechanism). Fix the vacuous `want(...,'')` / unconditional `ok` rows |
-| 15 | pass-through rows copied into all 10 guard suites (non-dwarf, non-Bash, `'prose'`, heredoc, env override, inline override) | ~60 rows across 93 s of suites | MERGE into one parameterised block in test-guards.sh that runs against every guard. Add a malformed-payload row and a uniform exit-protocol column |
+| 15 | `dwarf/tests/fences.rs` (one test: protocol, scope, prose, override, malformed payload) | T1 | DONE (sp-dede1o) |
 | 16 | none | — | GAP → new T1 rows in test-guards.sh (call `dwarf_settings` with a tmp `SPIRA_HOME`) |
-| 17 | test-dwarf-dirty-commit::all | T2 inside podman; NA in CI (never ran) | KEEP, but fix the harness: drop the podman re-exec, use `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1`, and drive the *composed* worktree hook (UC-21) instead of a hand-written one |
-| 18 | test-branch-guard::dwarf on base…/operator/non-base; test-dwarf-worktree-guard::all | T2, 4 s + 2 s | MERGE test-dwarf-worktree-guard INTO test-branch-guard (same script, same git fixture) |
-| 19 | test-branch-guard::check… | T2, (in 4 s) | KEEP |
-| 20 | test-ref-guard::cases 1–9 | T2, 1 s | KEEP (right level, strong controls) |
-| 21 | test-ref-guard::worktree keeps pre-commit (existence only) | partial | KEEP + extend: assert the composed hook runs exclude/scratch/branch-guard *and* pre-commit-guard |
-| 22 | test-scratch-fence::pre-commit hook calls scratch-fence (grep); test-branch-guard copies hooks/pre-commit but never runs it | source grep | SOURCE-GREP → one behaviour row: commit through `hooks/pre-commit` in an armed tmp clone, each fence seen to refuse |
-| 23 | none (exclude.sh, 336 lines, is gate fence #1 and pre-commit fence #1) | — | GAP |
+| 17 | `dwarf/tests/fences.rs` (through the composed worktree hook) | T2 | DONE (sp-dede1o) |
+| 18 | `dwarf/tests/fences.rs` (`branch-guard.sh staged`, base branch, SPIRA_WORK, local landing ref) | T2 | DONE (sp-dede1o) |
+| 19 | `dwarf/tests/fences.rs` (`branch-guard.sh check`) | T2 | DONE (sp-dede1o) |
+| 20 | `dwarf/tests/fences.rs` (`reference-transaction` in the main checkout and a dwarf worktree) | T2 | DONE (sp-dede1o) |
+| 21 | `dwarf/tests/fences.rs` (composed hook order) and `dwarf::worktree::tests` (install failure is reported) | T2 | DONE (sp-dede1o) |
+| 22 | `dwarf/tests/fences.rs` (the tracked `hooks/pre-commit` in a clone armed by `exclude.sh install`) | T2 | DONE (sp-dede1o) |
+| 23 | `dwarf/tests/fences.rs` (`filter` and `staged`) | T1 | DONE (sp-dede1o) |
 | 24 | test-scratch-fence::empty index … sp-* in subdirectory | T2, 3 s | KEEP. Replace the gate-spira grep row with the UC-22 / gate-fence-list behaviour row |
 | 25 | test-inventory::empty index … --patterns | T2, 3 s | KEEP. DELETE "every shipped file passes inventory" (re-runs the gate's own fence). SOURCE-GREP "gate-spira.sh names inventory.sh" → covered by the gate-fence-list row |
 | 26 | test-orphan-test::all | T2, 12 s | KEEP. DELETE "broken matcher does not refuse" and "real fence still refuses after restoration" (they swap in a stub script, a tautological control) |
@@ -92,7 +92,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 29 | test-set-state-writers::scanner controls + 2 static rows; ::set-state semantics rows | T2 (testdb), 8 s | Split: lint rows → T0 (keep as a lint); bd set-state rows → MERGE-INTO the retired bd-contract suite |
 | 30 | dwarf::persona_tools_tests | T1 | Rust (sp-706kgd): ops and czar runes through spira-config's rune parser. TI: `ops_allows` reimplements the CLI matcher (see Gaps) |
 | 31 | test-czar-shadow::all (secondary) | T1, 1 s | KEEP; fix the positive-control bug (below). Move the 11 conf/rune/brief grep rows to T0 lint |
-| 32 | test-spike::confine refuses/allows/plan bead/unreadable/adjacent/deep/merge-base; ::landing lands/refuses | T3, (part of 24 s) | KEEP confine as T2 (git + stub bead-label lookup). Keep the two landing rows as T3 on main only |
+| 32 | `dwarf/tests/fences.rs` (`confine.sh` path prefixes) and `landing_pass::tests::confinement_is_asked_before_the_gate` | T2 | DONE (sp-dede1o) |
 | 32 (partition rows) | test-spike::partition (9) | T3 | MERGE-INTO test-rune-predicates.sh (dispatch area) |
 | 33 | test-spike::placeholder, commands, rune parses, brief clauses, ops wall, spike.rune fields, reopen lint | T0 in a T3 suite | Move to a T0 `lint-runes.sh` stage (no DB) |
 | 34 | test-freshclone::all (secondary); test-spike::bash -n on rune/confine | T0, 3 s | MERGE the spike `bash -n` rows INTO test-freshclone (becomes the single syntax lint) |

@@ -259,7 +259,7 @@ fn allowed(c: impl Into<String>) -> Row {
 }
 
 // covers: UC-safety-fences-01
-#[test_id(tdes1re)]
+#[test_id(tlm1fyi)]
 #[test]
 fn a_dwarf_may_not_operate_the_queue_or_the_landing_but_may_name_them_as_arguments() {
     let f = Fence::new();
@@ -284,7 +284,7 @@ fn a_dwarf_may_not_operate_the_queue_or_the_landing_but_may_name_them_as_argumen
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tl2xxjz)]
+#[test_id(ttx1b0r)]
 #[test]
 fn a_dwarf_may_not_write_under_prod_or_the_queue() {
     let f = Fence::new();
@@ -313,7 +313,7 @@ fn a_dwarf_may_not_write_under_prod_or_the_queue() {
 }
 
 // covers: UC-safety-fences-02
-#[test_id(t8osmam)]
+#[test_id(tv7imkf)]
 #[test]
 fn a_dwarf_may_read_and_run_from_prod_and_name_its_paths_in_prose() {
     let f = Fence::new();
@@ -343,7 +343,7 @@ fn a_dwarf_may_read_and_run_from_prod_and_name_its_paths_in_prose() {
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tmljwau)]
+#[test_id(t2i8bgr)]
 #[test]
 fn a_dwarf_may_read_the_queue_and_name_its_path_in_prose() {
     let f = Fence::new();
@@ -406,7 +406,7 @@ fn store_rows_refused(range: std::ops::Range<usize>) {
 }
 
 // covers: UC-safety-fences-03
-#[test_id(tl9n901)]
+#[test_id(tj74jws)]
 #[test]
 fn a_dwarf_may_not_run_bd_or_bdq_by_a_path_and_is_told_the_work_verb() {
     store_rows_refused(0..9);
@@ -418,21 +418,21 @@ fn a_dwarf_may_not_run_bd_or_bdq_by_a_path_and_is_told_the_work_verb() {
 }
 
 // covers: UC-safety-fences-03
-#[test_id(tm6oj3h)]
+#[test_id(tihsyda)]
 #[test]
 fn a_dwarf_may_not_run_bd_through_a_wrapper_or_a_subshell() {
     store_rows_refused(9..17);
 }
 
 // covers: UC-safety-fences-03
-#[test_id(tus7yqi)]
+#[test_id(tm7bagq)]
 #[test]
 fn a_dwarf_may_not_run_bd_in_a_loop_or_set_a_beads_dir() {
     store_rows_refused(17..BD_REFUSED.len());
 }
 
 // covers: UC-safety-fences-03
-#[test_id(tv7ymv0)]
+#[test_id(t7jim02)]
 #[test]
 fn a_dwarf_may_name_bd_in_prose_and_the_override_and_a_non_dwarf_session_pass() {
     let f = Fence::new();
@@ -453,7 +453,7 @@ fn a_dwarf_may_name_bd_in_prose_and_the_override_and_a_non_dwarf_session_pass() 
 }
 
 // covers: UC-safety-fences-15
-#[test_id(t9jhwp9)]
+#[test_id(tdmx4v9)]
 #[test]
 fn the_fence_blocks_on_stdout_with_exit_zero_and_is_inert_outside_its_scope() {
     let f = Fence::new();
@@ -493,9 +493,9 @@ fn the_fence_blocks_on_stdout_with_exit_zero_and_is_inert_outside_its_scope() {
 
 // The tool-write, background and pattern-kill rows are no cell's; the suite this replaces asserted them and nothing else does.
 // covers: UC-safety-fences-02
-#[test_id(t1c0tx7)]
+#[test_id(toolbfi)]
 #[test]
-fn a_dwarf_may_not_write_prod_or_config_by_tool_or_shell_or_run_in_background() {
+fn a_dwarf_may_not_write_prod_or_config_by_tool() {
     let f = Fence::new();
     let write = |tool: &str, path: String, env: &[(&str, &str)]| {
         blocked(
@@ -526,7 +526,14 @@ fn a_dwarf_may_not_write_prod_or_config_by_tool_or_shell_or_run_in_background() 
         !write("Write", prod, &[DWARF, OVERRIDE])
             && !write("Edit", config.clone(), &[DWARF, OVERRIDE])
     );
+}
 
+// covers: UC-safety-fences-02
+#[test_id(tykhqmp)]
+#[test]
+fn a_dwarf_may_not_write_config_by_shell_or_run_in_background() {
+    let f = Fence::new();
+    let config = format!("{}/notes.conf", f.config());
     let c = &config;
     let rows = [
         refused(format!("echo x > {c}")),
@@ -581,21 +588,21 @@ fn kill_rows_refused(range: std::ops::Range<usize>) {
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tyn1bh4)]
+#[test_id(taqcz63)]
 #[test]
 fn a_dwarf_may_not_kill_by_pattern_by_name() {
     kill_rows_refused(0..8);
 }
 
 // covers: UC-safety-fences-02
-#[test_id(t52zezu)]
+#[test_id(tdnywzr)]
 #[test]
 fn a_dwarf_may_not_kill_by_pattern_through_a_pipe_or_a_wrapper() {
     kill_rows_refused(8..KILL_REFUSED.len());
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tzsq4ne)]
+#[test_id(tjuf7a7)]
 #[test]
 fn a_dwarf_may_kill_a_pid_and_stop_a_unit_and_the_override_and_a_non_dwarf_pass() {
     let f = Fence::new();
@@ -654,12 +661,8 @@ fn gitdir_of(dir: &Path) -> PathBuf {
     ))
 }
 
-// covers: UC-safety-fences-17
-#[test_id(t4vcg86)]
-#[test]
-fn a_commit_staging_a_path_dirty_before_the_session_is_refused_naming_it() {
-    let rig = Rig::new(&[]);
-    let wt = armed_worktree(&rig, &repo(&rig, "r"), "sp-test");
+fn dirty_worktree(rig: &Rig) -> PathBuf {
+    let wt = armed_worktree(rig, &repo(rig, "r"), "sp-test");
     std::fs::create_dir_all(wt.join("wiki/notes")).unwrap();
     std::fs::write(wt.join("wiki/notes/archivist.md"), "draft\n").unwrap();
     std::fs::write(
@@ -667,8 +670,16 @@ fn a_commit_staging_a_path_dirty_before_the_session_is_refused_naming_it() {
         "wiki/notes/archivist.md\n",
     )
     .unwrap();
-    std::fs::write(wt.join("own.txt"), "own\n").unwrap();
+    wt
+}
 
+// covers: UC-safety-fences-17
+#[test_id(ta9arzt)]
+#[test]
+fn a_commit_staging_a_path_dirty_before_the_session_is_refused_naming_it_and_an_own_path_commits() {
+    let rig = Rig::new(&[]);
+    let wt = dirty_worktree(&rig);
+    std::fs::write(wt.join("own.txt"), "own\n").unwrap();
     let o = commit_all(&rig, &wt, "op", "sp-test: add -A");
     assert!(
         !o.status.success() && text(&o).contains("wiki/notes/archivist.md"),
@@ -676,12 +687,21 @@ fn a_commit_staging_a_path_dirty_before_the_session_is_refused_naming_it() {
         text(&o)
     );
     git(&wt, &["reset", "-q"]);
-
     must(rig.git(&wt, "op", &["add", "--", "own.txt"]));
     must(rig.git(&wt, "op", &["commit", "-q", "-m", "sp-test: own path only"]));
-    let files = git(&wt, &["show", "--name-only", "--format=", "HEAD"]);
-    assert_eq!(files, "own.txt", "the dirty path is not in the commit");
+    assert_eq!(
+        git(&wt, &["show", "--name-only", "--format=", "HEAD"]),
+        "own.txt",
+        "the dirty path is not in the commit"
+    );
+}
 
+// covers: UC-safety-fences-17
+#[test_id(tzl135r)]
+#[test]
+fn a_dirty_path_staged_alone_is_refused_until_the_override_is_set() {
+    let rig = Rig::new(&[]);
+    let wt = dirty_worktree(&rig);
     must(rig.git(&wt, "op", &["add", "--", "wiki/notes/archivist.md"]));
     let o = rig
         .git(&wt, "op", &["commit", "-q", "-m", "sp-test: dirty alone"])
@@ -719,7 +739,7 @@ fn guard(rig: &Rig, root: &Path, email: &str, work: Option<&Path>) -> (i32, Stri
 }
 
 // covers: UC-safety-fences-18
-#[test_id(tnyorzp)]
+#[test_id(ttbnax9)]
 #[test]
 fn a_dwarf_may_not_commit_to_the_base_branch_or_outside_its_assigned_worktree() {
     let rig = Rig::new(&[]);
@@ -782,7 +802,7 @@ fn a_dwarf_may_not_commit_to_the_base_branch_or_outside_its_assigned_worktree() 
 }
 
 // covers: UC-safety-fences-18
-#[test_id(tiit6g0)]
+#[test_id(tglnkx3)]
 #[test]
 fn a_dwarf_in_a_worktree_may_not_commit_to_a_local_landing_ref() {
     let rig = Rig::new(&[]);
@@ -818,7 +838,7 @@ fn a_dwarf_in_a_worktree_may_not_commit_to_a_local_landing_ref() {
 }
 
 // covers: UC-safety-fences-19
-#[test_id(ta48vct)]
+#[test_id(th9bu9t)]
 #[test]
 fn the_audit_reports_a_dwarf_tip_and_a_checkout_ahead_then_clears_after_an_operator_commit() {
     let rig = Rig::new(&[]);
@@ -901,7 +921,7 @@ fn through_the_hook(rig: &Rig, r: &Path, who: &str, red: &str) -> (bool, String)
 }
 
 // covers: UC-safety-fences-22
-#[test_id(trx3a13)]
+#[test_id(tkacn00)]
 #[test]
 fn the_tracked_pre_commit_hook_refuses_beads_data_and_a_red_scratch_fence() {
     let rig = Rig::new(&[]);
@@ -930,10 +950,9 @@ fn the_tracked_pre_commit_hook_refuses_beads_data_and_a_red_scratch_fence() {
 }
 
 // covers: UC-safety-fences-22
-#[test_id(tim0ydj)]
+#[test_id(t9vd7yd)]
 #[test]
-fn the_tracked_pre_commit_hook_refuses_a_dwarf_on_base_and_a_missing_linter_and_passes_an_operator()
-{
+fn the_tracked_pre_commit_hook_refuses_a_dwarf_on_base_and_passes_an_operator() {
     let rig = Rig::new(&[]);
     let r = armed_clone(&rig);
     stage(&r, "lib.sh", "more\n");
@@ -942,6 +961,20 @@ fn the_tracked_pre_commit_hook_refuses_a_dwarf_on_base_and_a_missing_linter_and_
         !ok && out.contains("branch-guard.sh"),
         "branch-guard.sh refuses a dwarf on the base branch: {out}"
     );
+    let (ok, out) = through_the_hook(&rig, &r, "op", "");
+    assert!(
+        ok,
+        "an ordinary operator commit passes the same hook: {out}"
+    );
+}
+
+// covers: UC-safety-fences-22
+#[test_id(tg6ua2c)]
+#[test]
+fn the_tracked_pre_commit_hook_refuses_by_name_when_the_linter_is_missing() {
+    let rig = Rig::new(&[]);
+    let r = armed_clone(&rig);
+    stage(&r, "g.txt", "g\n");
     let o = rig
         .git(&r, "op", &["commit", "-q", "-m", "sp-test: no linter"])
         .env("PATH", "/usr/bin:/bin")
@@ -949,13 +982,8 @@ fn the_tracked_pre_commit_hook_refuses_a_dwarf_on_base_and_a_missing_linter_and_
         .unwrap();
     assert!(
         !o.status.success() && text(&o).contains("spira-lint is not on PATH"),
-        "a missing linter refuses by name: {}",
+        "{}",
         text(&o)
-    );
-    let (ok, out) = through_the_hook(&rig, &r, "op", "");
-    assert!(
-        ok,
-        "an ordinary operator commit passes the same hook: {out}"
     );
 }
 
@@ -995,7 +1023,7 @@ fn arm_reference_hook(rig: &Rig, repo: &Path) {
 }
 
 // covers: UC-safety-fences-20
-#[test_id(t2y9d6r)]
+#[test_id(tc9g870)]
 #[test]
 fn a_bead_branch_cannot_be_deleted_outside_the_chokepoint_and_nothing_else_is_refused() {
     let rig = Rig::new(&[]);
@@ -1082,7 +1110,7 @@ fn a_bead_branch_cannot_be_deleted_outside_the_chokepoint_and_nothing_else_is_re
 
 // covers: UC-safety-fences-20
 // covers: UC-safety-fences-21
-#[test_id(txmiaqn)]
+#[test_id(tyqcatu)]
 #[test]
 fn a_dwarf_worktree_is_armed_with_every_canonical_hook_and_cannot_delete_a_bead_branch() {
     let rig = Rig::new(&[]);
@@ -1144,22 +1172,33 @@ fn in_wt(rig: &Rig, wt: &Path, who: &str, msg: &str, env: &[(&str, &str)]) -> (b
     (o.status.success(), text(&o))
 }
 
-// covers: UC-safety-fences-21
-#[test_id(td32tja)]
-#[test]
-fn the_composed_worktree_pre_commit_runs_the_canonical_fences_before_the_dirty_path_guard() {
-    let rig = Rig::new(&[]);
-    let r = repo(&rig, "r");
-    let wt = armed_worktree(&rig, &r, "sp-comp");
+fn signed_worktree(rig: &Rig) -> (PathBuf, PathBuf) {
+    let r = repo(rig, "r");
+    let wt = armed_worktree(rig, &r, "sp-comp");
     for f in ["boundary", "gate.sh", "lib.sh"] {
         std::fs::write(wt.join(f), "").unwrap();
     }
-    assert!(
-        commit_all(&rig, &wt, "op", "test: seed the harness signature")
-            .status
-            .success()
-    );
+    git(&wt, &["add", "-A"]);
+    must(rig.git(
+        &wt,
+        "op",
+        &[
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            "test: seed the harness signature",
+        ],
+    ));
+    (r, wt)
+}
 
+// covers: UC-safety-fences-21
+#[test_id(tuj25na)]
+#[test]
+fn the_composed_worktree_pre_commit_runs_exclude_and_branch_guard() {
+    let rig = Rig::new(&[]);
+    let (r, wt) = signed_worktree(&rig);
     stage(&wt, "export.jsonl", "{}\n");
     let (ok, out) = in_wt(&rig, &wt, "op", "sp-test: stage beads export", &[]);
     assert!(
@@ -1170,24 +1209,28 @@ fn the_composed_worktree_pre_commit_runs_the_canonical_fences_before_the_dirty_p
 
     stage(&wt, "seed.txt", "more\n");
     let elsewhere = rig.dir.join("somewhere-else");
-    let (ok, out) = in_wt(
-        &rig,
-        &wt,
-        "dwarf-t",
-        "sp-test: wrong worktree",
-        &[
-            ("SPIRA_WORK", &elsewhere.display().to_string()),
-            ("STUB_ROOT", &r.display().to_string()),
-        ],
-    );
+    let env = [
+        ("SPIRA_WORK", elsewhere.to_str().unwrap()),
+        ("STUB_ROOT", r.to_str().unwrap()),
+    ];
+    let (ok, out) = in_wt(&rig, &wt, "dwarf-t", "sp-test: wrong worktree", &env);
     assert!(
         !ok && out.contains("branch-guard.sh"),
         "branch-guard.sh refuses a SPIRA_WORK mismatch: {out}"
     );
-    git(&wt, &["reset", "-q"]);
+}
 
-    let snapshot = gitdir_of(&wt).join("spira-dirty-before");
-    std::fs::write(&snapshot, "sp-both-guards.md\n").unwrap();
+// covers: UC-safety-fences-21
+#[test_id(tzsm7tt)]
+#[test]
+fn the_composed_worktree_pre_commit_runs_the_canonical_fences_before_the_dirty_path_guard() {
+    let rig = Rig::new(&[]);
+    let (_, wt) = signed_worktree(&rig);
+    std::fs::write(
+        gitdir_of(&wt).join("spira-dirty-before"),
+        "sp-both-guards.md\n",
+    )
+    .unwrap();
     stage(&wt, "sp-both-guards.md", "planted\n");
     let (ok, out) = in_wt(
         &rig,
@@ -1205,12 +1248,6 @@ fn the_composed_worktree_pre_commit_runs_the_canonical_fences_before_the_dirty_p
         !ok && out.contains("staged paths were dirty") && out.contains("sp-both-guards.md"),
         "with the fences silent the dirty-path guard still runs: {out}"
     );
-    unstage(&wt, "sp-both-guards.md");
-    std::fs::remove_file(snapshot).unwrap();
-
-    stage(&wt, "ordinary.txt", "ordinary\n");
-    let (ok, out) = in_wt(&rig, &wt, "op", "sp-test: ordinary commit", &[]);
-    assert!(ok, "a clean commit passes the composed hook: {out}");
 }
 
 /// What git does when `HEAD` is re-pointed: before 2.46 the reference-transaction hook is not asked.
@@ -1232,124 +1269,182 @@ fn git_reports_head_moves(rig: &Rig) -> bool {
     marker.exists()
 }
 
-// covers: UC-safety-fences-35
-#[test_id(tvvz9ux)]
-#[test]
-fn a_dwarf_may_not_check_out_or_write_the_landing_ref_but_may_do_its_own_work() {
-    let rig = Rig::new(&[]);
-    let lr = rig.dir.join("landrepo");
-    std::fs::create_dir(&lr).unwrap();
-    git(&lr, &["init", "-q", "-b", "main"]);
-    git(&lr, &["commit", "-q", "--allow-empty", "-m", "seed"]);
-    git(&lr, &["branch", "local/main"]);
-    git(&lr, &["commit", "-q", "--allow-empty", "-m", "second"]);
-    let (old, new) = (
-        git(&lr, &["rev-parse", "local/main"]),
-        git(&lr, &["rev-parse", "HEAD"]),
-    );
-    arm_reference_hook(&rig, &lr);
-    let wt = armed_worktree(&rig, &lr, "sp-mine");
-    let land = |env: &[(&str, &str)], dir: &Path, args: &[&str]| {
+struct Landing {
+    lr: PathBuf,
+    wt: PathBuf,
+    old: String,
+    new: String,
+}
+
+impl Landing {
+    fn new(rig: &Rig) -> Landing {
+        let lr = rig.dir.join("landrepo");
+        std::fs::create_dir(&lr).unwrap();
+        git(&lr, &["init", "-q", "-b", "main"]);
+        git(&lr, &["commit", "-q", "--allow-empty", "-m", "seed"]);
+        git(&lr, &["branch", "local/main"]);
+        git(&lr, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        let (old, new) = (
+            git(&lr, &["rev-parse", "local/main"]),
+            git(&lr, &["rev-parse", "HEAD"]),
+        );
+        arm_reference_hook(rig, &lr);
+        let wt = armed_worktree(rig, &lr, "sp-mine");
+        Landing { lr, wt, old, new }
+    }
+
+    fn run(&self, rig: &Rig, env: &[(&str, &str)], dir: &Path, args: &[&str]) -> (bool, String) {
         let o = rig
             .git(dir, "op", args)
             .env("STUB_LANDREF", "local/main")
-            .env("STUB_ROOT", &lr)
+            .env("STUB_ROOT", &self.lr)
             .envs(env.iter().copied())
             .output()
             .unwrap();
         (o.status.success(), text(&o))
-    };
-    let dwarf = [("SPIRA_DWARF", "fixture"), ("BEAD_ID", "sp-mine")];
-    let landref_at = || git(&lr, &["rev-parse", "refs/heads/local/main"]);
-
-    if git_reports_head_moves(&rig) {
-        let (ok, out) = land(&dwarf, &wt, &["checkout", "local/main"]);
-        assert!(
-            !ok,
-            "a dwarf's checkout of the landing ref is refused: {out}"
-        );
-        assert_eq!(
-            git(&wt, &["symbolic-ref", "--short", "HEAD"]),
-            "spira/sp-mine"
-        );
-        for want in [
-            "local/main",
-            "git merge local/main",
-            "SPIRA_DWARF",
-            "git switch spira/sp-mine",
-        ] {
-            assert!(out.contains(want), "the refusal names {want}: {out}");
-        }
-        assert!(
-            !out.contains("SPIRA_REF_SANCTIONED"),
-            "the refusal does not advertise the override: {out}"
-        );
-        let (ok, out) = land(&dwarf, &lr, &["checkout", "local/main"]);
-        assert!(
-            !ok && out.contains("git merge local/main"),
-            "git -C at the armed main checkout is refused too: {out}"
-        );
-        assert_eq!(git(&lr, &["symbolic-ref", "--short", "HEAD"]), "main");
     }
-    let (ok, out) = land(
-        &dwarf,
-        &wt,
-        &["update-ref", "refs/heads/local/main", &new, &old],
+
+    fn landref(&self) -> String {
+        git(&self.lr, &["rev-parse", "refs/heads/local/main"])
+    }
+}
+
+const DWARF_SESSION: [(&str, &str); 2] = [("SPIRA_DWARF", "fixture"), ("BEAD_ID", "sp-mine")];
+
+// covers: UC-safety-fences-35
+#[test_id(t53blol)]
+#[test]
+fn a_dwarf_may_not_check_out_the_landing_ref_from_its_worktree_or_the_main_checkout() {
+    let rig = Rig::new(&[]);
+    if !git_reports_head_moves(&rig) {
+        return;
+    }
+    let l = Landing::new(&rig);
+    let (ok, out) = l.run(&rig, &DWARF_SESSION, &l.wt, &["checkout", "local/main"]);
+    assert!(
+        !ok,
+        "a dwarf's checkout of the landing ref is refused: {out}"
+    );
+    assert_eq!(
+        git(&l.wt, &["symbolic-ref", "--short", "HEAD"]),
+        "spira/sp-mine"
+    );
+    for want in [
+        "local/main",
+        "git merge local/main",
+        "SPIRA_DWARF",
+        "git switch spira/sp-mine",
+    ] {
+        assert!(out.contains(want), "the refusal names {want}: {out}");
+    }
+    assert!(
+        !out.contains("SPIRA_REF_SANCTIONED"),
+        "the refusal does not advertise the override: {out}"
+    );
+    let (ok, out) = l.run(&rig, &DWARF_SESSION, &l.lr, &["checkout", "local/main"]);
+    assert!(
+        !ok && out.contains("git merge local/main"),
+        "git -C at the armed main checkout is refused too: {out}"
+    );
+    assert_eq!(git(&l.lr, &["symbolic-ref", "--short", "HEAD"]), "main");
+}
+
+// covers: UC-safety-fences-35
+#[test_id(t2olj64)]
+#[test]
+fn a_dwarf_may_not_write_the_landing_ref_and_an_unresolvable_one_fails_closed() {
+    let rig = Rig::new(&[]);
+    let l = Landing::new(&rig);
+    let (ok, out) = l.run(
+        &rig,
+        &DWARF_SESSION,
+        &l.wt,
+        &["update-ref", "refs/heads/local/main", &l.new, &l.old],
     );
     assert!(
         !ok && out.contains("git merge local/main"),
         "update-ref on the landing ref is refused: {out}"
     );
-    land(&dwarf, &wt, &["branch", "-f", "local/main", "HEAD"]);
-    assert_eq!(landref_at(), old, "the landing ref did not move");
+    l.run(
+        &rig,
+        &DWARF_SESSION,
+        &l.wt,
+        &["branch", "-f", "local/main", "HEAD"],
+    );
+    assert_eq!(l.landref(), l.old, "the landing ref did not move");
 
-    std::fs::write(wt.join("mine.rs"), "fn main() {}\n").unwrap();
-    git(&wt, &["add", "mine.rs"]);
-    assert!(
-        land(&dwarf, &wt, &["commit", "-q", "-m", "sp-test: own work"]).0,
-        "a commit on the bead branch passes"
-    );
-    assert!(
-        land(&dwarf, &wt, &["merge", "-q", "local/main"]).0,
-        "merging the landing ref into the bead branch passes"
-    );
-
-    assert!(
-        land(
-            &[],
-            &lr,
-            &["update-ref", "refs/heads/local/main", &new, &old]
-        )
-        .0 && landref_at() == new,
-        "an operator without SPIRA_DWARF may move it"
-    );
-    assert!(
-        land(
-            &[("SPIRA_REF_SANCTIONED", "1"), dwarf[0]],
-            &lr,
-            &["update-ref", "refs/heads/local/main", &old, &new]
-        )
-        .0 && landref_at() == old,
-        "the sanctioned writer may move it"
-    );
-
-    let unresolved = [dwarf[0], dwarf[1], ("STUB_LANDREF", "")];
+    let env = [DWARF_SESSION[0], DWARF_SESSION[1], ("STUB_LANDREF", "")];
     let o = rig
         .git(
-            &wt,
+            &l.wt,
             "op",
-            &["update-ref", "refs/heads/local/main", &new, &old],
+            &["update-ref", "refs/heads/local/main", &l.new, &l.old],
         )
-        .envs(unresolved)
-        .env("STUB_ROOT", &lr)
+        .envs(env)
+        .env("STUB_ROOT", &l.lr)
         .output()
         .unwrap();
     let out = text(&o);
     assert!(
         !o.status.success()
-            && out.contains(&lr.display().to_string())
+            && out.contains(&l.lr.display().to_string())
             && out.contains("spira-config repo landref"),
         "an unresolvable landing ref fails closed, naming the root: {out}"
+    );
+}
+
+// covers: UC-safety-fences-35
+#[test_id(tr0iaqj)]
+#[test]
+fn an_operator_and_the_sanctioned_writer_may_move_the_landing_ref_with_a_dwarf_session_set() {
+    let rig = Rig::new(&[]);
+    let l = Landing::new(&rig);
+    let mv = |env: &[(&str, &str)], from: &str, to: &str| {
+        l.run(
+            &rig,
+            env,
+            &l.lr,
+            &["update-ref", "refs/heads/local/main", to, from],
+        )
+        .0
+    };
+    assert!(
+        mv(&[], &l.old, &l.new) && l.landref() == l.new,
+        "an operator without SPIRA_DWARF may move it"
+    );
+    assert!(
+        mv(
+            &[DWARF_SESSION[0], ("SPIRA_REF_SANCTIONED", "1")],
+            &l.new,
+            &l.old
+        ) && l.landref() == l.old,
+        "the sanctioned writer may move it"
+    );
+    assert!(
+        !mv(&DWARF_SESSION, &l.old, &l.new) && l.landref() == l.old,
+        "a dwarf may not"
+    );
+}
+
+// covers: UC-safety-fences-35
+#[test_id(t3k5mwn)]
+#[test]
+fn a_dwarf_may_commit_on_its_bead_branch_and_merge_the_landing_ref_into_it() {
+    let rig = Rig::new(&[]);
+    let l = Landing::new(&rig);
+    std::fs::write(l.wt.join("mine.rs"), "fn main() {}\n").unwrap();
+    git(&l.wt, &["add", "mine.rs"]);
+    let (ok, out) = l.run(
+        &rig,
+        &DWARF_SESSION,
+        &l.wt,
+        &["commit", "-q", "-m", "sp-test: own work"],
+    );
+    assert!(ok, "a commit on the bead branch passes: {out}");
+    let (ok, out) = l.run(&rig, &DWARF_SESSION, &l.wt, &["merge", "-q", "local/main"]);
+    assert!(
+        ok,
+        "merging the landing ref into the bead branch passes: {out}"
     );
 }
 
@@ -1373,7 +1468,7 @@ fn exclude(rig: &Rig, args: &[&str], stdin: &str) -> (i32, String) {
 }
 
 // covers: UC-safety-fences-23
-#[test_id(t0bp3oe)]
+#[test_id(titx67o)]
 #[test]
 fn beads_data_is_filtered_by_shape_inside_the_harness_scope_and_refused_when_staged() {
     let rig = Rig::new(&[]);
@@ -1469,10 +1564,7 @@ fn beads_data_is_filtered_by_shape_inside_the_harness_scope_and_refused_when_sta
     );
 }
 
-// covers: UC-safety-fences-32
-#[test_id(t1t216d)]
-#[test]
-fn a_spike_branch_may_change_only_files_under_the_allowed_trees_by_path_prefix() {
+fn spike_rig() -> (Rig, PathBuf) {
     let rig = Rig::new(&[
         ("SPIRA_SPIKE_LABEL", "research"),
         ("SPIRA_SPIKE_DIR", "notes/spikes"),
@@ -1484,35 +1576,41 @@ fn a_spike_branch_may_change_only_files_under_the_allowed_trees_by_path_prefix()
     std::fs::write(r.join("src/lib.rs"), "base\n").unwrap();
     git(&r, &["add", "-A"]);
     git(&r, &["commit", "-q", "-m", "base"]);
-    let branch = |id: &str, files: &[&str]| {
-        git(
-            &r,
-            &["checkout", "-q", "-B", &format!("spira/{id}"), "main"],
-        );
-        for f in files {
-            std::fs::create_dir_all(r.join(f).parent().unwrap()).unwrap();
-            std::fs::write(r.join(f), id).unwrap();
-        }
-        git(&r, &["add", "-A"]);
-        git(&r, &["commit", "-q", "-m", id]);
-    };
-    let confine = |id: &str, labels: &str| {
-        let mut c = rig.cmd("bash");
-        c.env("SPIRA_SPIKE_LABEL", "research")
-            .arg(spira().join("confine.sh"))
-            .args([
-                id,
-                &format!("spira/{id}"),
-                &r.display().to_string(),
-                "main",
-                labels,
-            ]);
-        let o = c.output().unwrap();
-        (o.status.code().unwrap(), text(&o))
-    };
+    (rig, r)
+}
 
-    branch("sp-poc", &["notes/spikes/question.md", "src/poc.rs"]);
-    let (rc, out) = confine("sp-poc", "spira research");
+fn spike_branch(r: &Path, id: &str, files: &[&str]) {
+    git(r, &["checkout", "-q", "-B", &format!("spira/{id}"), "main"]);
+    for f in files {
+        std::fs::create_dir_all(r.join(f).parent().unwrap()).unwrap();
+        std::fs::write(r.join(f), id).unwrap();
+    }
+    git(r, &["add", "-A"]);
+    git(r, &["commit", "-q", "-m", id]);
+}
+
+fn confine(rig: &Rig, r: &Path, id: &str, labels: &str) -> (i32, String) {
+    let mut c = rig.cmd("bash");
+    c.env("SPIRA_SPIKE_LABEL", "research")
+        .arg(spira().join("confine.sh"))
+        .args([
+            id,
+            &format!("spira/{id}"),
+            &r.display().to_string(),
+            "main",
+            labels,
+        ]);
+    let o = c.output().unwrap();
+    (o.status.code().unwrap(), text(&o))
+}
+
+// covers: UC-safety-fences-32
+#[test_id(tgrywng)]
+#[test]
+fn a_spike_branch_touching_code_or_an_adjacent_directory_is_refused_naming_the_path() {
+    let (rig, r) = spike_rig();
+    spike_branch(&r, "sp-poc", &["notes/spikes/question.md", "src/poc.rs"]);
+    let (rc, out) = confine(&rig, &r, "sp-poc", "spira research");
     assert_eq!(rc, 1, "{out}");
     let outside = out.split("outside:").nth(1).unwrap_or_default();
     assert!(
@@ -1524,44 +1622,44 @@ fn a_spike_branch_may_change_only_files_under_the_allowed_trees_by_path_prefix()
         "it says what may land and the remedy: {out}"
     );
 
-    branch("sp-doc", &["notes/spikes/question.md"]);
-    assert_eq!(
-        confine("sp-doc", "spira research").0,
-        0,
-        "a document alone is allowed"
-    );
-    branch("sp-src", &["notes/spikes/q.md", "sources/fetched.md"]);
-    assert_eq!(
-        confine("sp-src", "spira research").0,
-        0,
-        "the second configured tree is allowed too"
-    );
-    branch("sp-deep", &["notes/spikes/sources/2026/a.jsonl"]);
-    assert_eq!(
-        confine("sp-deep", "spira research").0,
-        0,
-        "a deep path inside an allowed tree is allowed"
-    );
-    branch("sp-adj", &["notes/spikes-scratch/poc.rs"]);
-    let (rc, out) = confine("sp-adj", "spira research");
+    spike_branch(&r, "sp-adj", &["notes/spikes-scratch/poc.rs"]);
+    let (rc, out) = confine(&rig, &r, "sp-adj", "spira research");
     assert!(
         rc == 1 && out.contains("notes/spikes-scratch/poc.rs"),
         "an adjacent directory is a string prefix, not a path prefix: {out}"
     );
+}
 
-    branch("sp-build", &["src/feature.rs"]);
+// covers: UC-safety-fences-32
+#[test_id(t0xmdda)]
+#[test]
+fn a_spike_branch_inside_the_allowed_trees_passes_and_a_plan_branch_is_not_confined() {
+    let (rig, r) = spike_rig();
+    for (id, files) in [
+        ("sp-doc", &["notes/spikes/question.md"][..]),
+        ("sp-src", &["notes/spikes/q.md", "sources/fetched.md"][..]),
+        ("sp-deep", &["notes/spikes/sources/2026/a.jsonl"][..]),
+    ] {
+        spike_branch(&r, id, files);
+        assert_eq!(
+            confine(&rig, &r, id, "spira research").0,
+            0,
+            "{id} stays inside the allowed trees"
+        );
+    }
+    spike_branch(&r, "sp-build", &["src/feature.rs"]);
     assert_eq!(
-        confine("sp-build", "spira plan"),
+        confine(&rig, &r, "sp-build", "spira plan"),
         (0, String::new()),
         "the fence binds the spike persona, not the path"
     );
 
-    branch("sp-behind", &["notes/spikes/behind.md"]);
+    spike_branch(&r, "sp-behind", &["notes/spikes/behind.md"]);
     git(&r, &["checkout", "-q", "main"]);
     std::fs::write(r.join("src/unrelated.rs"), "moved\n").unwrap();
     git(&r, &["add", "-A"]);
     git(&r, &["commit", "-q", "-m", "main moves on"]);
-    let (rc, out) = confine("sp-behind", "spira research");
+    let (rc, out) = confine(&rig, &r, "sp-behind", "spira research");
     assert!(
         rc == 0 && !out.contains("unrelated.rs"),
         "a branch behind its base is judged on its own work: {out}"
