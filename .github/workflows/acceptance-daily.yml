@@ -41,6 +41,7 @@ jobs:
       vm-token: ${{ steps.vm.outputs.vm-token }}
       backend: ${{ steps.vm.outputs.backend }}
       instance-id: ${{ steps.vm.outputs.instance-id }}
+      run-record: ${{ steps.vm.outputs.run-record }}
       label: ${{ steps.vm.outputs.label }}
     # The guest-agent wait defaults to 120s, inside the normal boot range on a busy
     # hypervisor; unset, a slow healthy boot leaves the job queued on a label no runner holds.
@@ -284,6 +285,7 @@ jobs:
           vm-token:           ${{ needs.provision.outputs.vm-token }}
           backend:            ${{ needs.provision.outputs.backend }}
           instance-id:        ${{ needs.provision.outputs.instance-id }}
+          run-record:         ${{ needs.provision.outputs.run-record }}
           aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
           consumer-result:    ${{ needs.acceptance.result }}
 
