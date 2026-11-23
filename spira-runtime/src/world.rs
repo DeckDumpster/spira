@@ -2254,9 +2254,9 @@ mod margin_deliver_tests {
     #[test]
     fn a_design_publish_mails_the_concierge_once_with_the_count_of_his_threads() {
         let f = design_fixture();
-        let rec = design_review::by_collection(f.dir.path(), "col1").unwrap();
         let w = World { run_dir: f.dir.path().into(), ..World::default() };
-        let _ = rec;
+        let anchor = margin_client::Anchor { path: "src/a.rs".into(), first: 1, last: 1 };
+        f.fake.thread_by("col1", anchor, &FakeMargin::agent_author(), "mine", 2);
         let ports = || Ok((Box::new(f.fake.clone()) as Box<dyn Margin>, Delivery { run_dir: f.dir.path().into(), home: f.dir.path().into(), mail_root: f.dir.path().join("mail"), mute: false }));
         let input = serde_json::to_string(&crate::watchers::margin_comments::Publish { collection: "col1".into(), seq: 9, batch: vec![9], through: 9 }).unwrap();
         assert_eq!(w.margin_publish_with(&ports, &input).unwrap(), "design wiki/projects/p/designs/d.md publish mailed");
