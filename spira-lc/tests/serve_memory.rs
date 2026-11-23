@@ -101,6 +101,7 @@ fn start_server() -> Server {
     Server { child, socket, pid, _dir: dir }
 }
 
+/// Connection workers started by a client that reconnects before its worker counts itself idle.
 const WORKER_RACE: u64 = 10;
 
 #[test_id(tu38fgg)]
@@ -123,7 +124,7 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
             });
         }
     });
-    // Connection workers and request runners are reused and stay parked: one of each per concurrent client (a client that reconnects before its worker counts itself idle costs the workers a few more, WORKER_RACE), so bounded by concurrency, not by requests; a request past its
+    // Connection workers and request runners are reused and stay parked: one of each per concurrent client, so bounded by concurrency, not by requests; a request past its
     // deadline is answered and its worker runs on: wait for the count to settle at that bound.
     let mut polls = 0;
     while threads(pid) > threads_at_ready + 2 * CONNECTIONS as u64 + WORKER_RACE {
