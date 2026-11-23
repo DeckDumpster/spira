@@ -483,3 +483,61 @@ fn a_hand_land_clears_its_beads_registry_rows() {
     assert!(t.scripts.calls.borrow().iter().any(|c| c == "clear-landed sp-z"), "{:?}", t.scripts.calls.borrow());
     assert!(t.out().contains("landing cleared registry row(s) test:t0aaaaa"), "{}", t.out());
 }
+
+fn publish_after_hand_landing(t: &T) -> i32 {
+    t.git.set("refs/remotes/origin/main", "f0");
+    t.git.ancestor("f0", TIP);
+    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-z");
+    t.lc_row("sp-z", "LANDED", TIP, 200);
+    *t.git.log.borrow_mut() = vec![RangeCommit {
+        sha: TIP.into(),
+        parents: vec!["b0".into()],
+        subject: "sp-z: the fix".into(),
+    }];
+    t.run(&["publish"])
+}
+
+fn full_suite_recorded(t: &T) -> bool {
+    spira_config::local_pass::check(&t.s().run, spira_config::local_pass::Kind::FullSuite, TIP, None, "t", "0").is_ok()
+}
+
+#[test_id(tgw6ce9)]
+#[test]
+fn an_ungated_hand_landing_with_the_full_suite_flag_publishes_with_no_override() {
+    let t = uncertified_world();
+    assert_eq!(hand_land(&t, &["--round", "subvert", "--evidence-full-suite"]), 0, "{}", t.err());
+    assert!(full_suite_recorded(&t));
+    assert_eq!(publish_after_hand_landing(&t), 0, "{}", t.err());
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().contains(&format!("members=sp-z:{TIP}")));
+}
+
+#[test_id(tj700ey)]
+#[test]
+fn an_ungated_hand_landing_without_the_flag_records_nothing_and_publish_names_the_gap() {
+    let t = uncertified_world();
+    assert_eq!(hand_land(&t, &["--round", "subvert"]), 0, "{}", t.err());
+    assert!(!full_suite_recorded(&t));
+    assert!(t.out().contains("--evidence-full-suite"), "{}", t.out());
+    assert_ne!(publish_after_hand_landing(&t), 0);
+    assert!(t.err().contains("no full-suite local-pass record"), "{}", t.err());
+}
+
+#[test_id(tzj9300)]
+#[test]
+fn a_hand_landing_certified_by_a_round_records_the_pass_without_the_flag() {
+    let t = world();
+    assert_eq!(hand_land(&t, &["--round", "subvert"]), 0, "{}", t.err());
+    assert!(full_suite_recorded(&t));
+}
+
+#[test_id(ta9vu15)]
+#[test]
+fn a_refused_hand_landing_records_no_pass() {
+    let t = uncertified_world();
+    let rc = t.run(&[
+        "hand-land", "sp-z", "--tip", TIP, "--by", "nobody", "--reason", "r", "--evidence", "e",
+        "--evidence-tip", TIP, "--evidence-full-suite", "--round", "subvert",
+    ]);
+    assert_eq!(rc, 1, "{}", t.err());
+    assert!(!full_suite_recorded(&t));
+}

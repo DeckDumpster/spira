@@ -51,6 +51,7 @@ pub struct Args<'a> {
     pub reason: &'a Text,
     pub evidence: &'a Text,
     pub evidence_tip: &'a str,
+    pub evidence_full_suite: bool,
     pub round: Option<Policy>,
     pub dry_run: bool,
     pub worktree: Option<&'a Path>,
@@ -539,13 +540,38 @@ fn land_and_verify(
     let rollback = pending.as_ref().map(|p| p.rollback_plan());
     let outcome = pending.map(|p| p.activate(w));
     let verify = verify_release(w, a, &outcome, rollback.as_ref(), previous.as_deref());
+    let publishable = record_full_suite(w, c, path, a);
     log(w, c, a, policy, voided, &verify.line);
     w.out(format!("queue.sh {label}: {} landed at {} onto {base}; verify: {}", a.bead, a.tip, verify.line));
+    if !publishable {
+        w.out(format!("queue.sh {label}: no full-suite pass is recorded for {} — `queue publish` will refuse this head until one is; pass --evidence-full-suite when --evidence was the repository's whole suite green on --evidence-tip", a.tip));
+    }
     if verify.ok {
         return OK;
     }
     w.err(format!("queue.sh {label}: {base} stays at {} — revert the landing with: queue rollback-local {}", a.tip, c.r.name));
     DEPLOY_FAULT
+}
+
+/// Records the full-suite pass `publish` asks for: on the caller's word (`--evidence-full-suite`)
+/// or because a round was green for the tip's tree. Returns whether a pass is now on record.
+fn record_full_suite(w: &World, c: &Ctx, path: &Path, a: &Args) -> bool {
+    if !a.evidence_full_suite && !round_green(w, c, path, a.tip) {
+        return false;
+    }
+    match spira_config::local_pass::record(
+        &c.s.run,
+        spira_config::local_pass::Kind::FullSuite,
+        a.tip,
+        &format!("hand-land {} by {}", a.bead, a.by),
+        &w.clock.now().to_string(),
+    ) {
+        Ok(()) => true,
+        Err(e) => {
+            w.err(format!("queue.sh hand-land: WARNING — the full-suite local pass for {} was not recorded ({e}); publish will refuse this head until it is", a.tip));
+            true
+        }
+    }
 }
 
 fn did_not_land(w: &World, c: &Ctx, a: &Args, policy: Policy, voided: &str, base: &str, rc: i32) -> i32 {

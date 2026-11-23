@@ -38,33 +38,67 @@ pub fn land_id(subject: &str) -> Option<&str> {
     (!id.is_empty()).then_some(id)
 }
 
-/// Members, oldest land first, one per id (a re-landed id keeps its newest commit).
+/// The names to ask the store about: every land id, plus the text before the first `:` of each
+/// other subject when it is a well-formed bead id. A candidate is only a name; the store says
+/// whether the bead landed (law-landed-is-content).
+pub fn candidate_ids(commits: &[RangeCommit]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for c in commits {
+        let id = land_id(&c.subject).or_else(|| {
+            let (head, _) = c.subject.split_once(':')?;
+            crate::ident::check("bead id", head).ok().map(|_| head)
+        });
+        if let Some(id) = id {
+            if !out.iter().any(|o| o == id) {
+                out.push(id.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Members, oldest first, one per id (a re-landed id keeps its newest commit).
 ///
-/// `commits` is newest-first (git log's order). A member's tip is, in order of preference:
-/// its LANDED lifecycle-row tip when `tip_in_range` says that tip is in the range (the tip
-/// land-local delivered); else the land merge's second parent (the member branch it merged);
-/// else the land commit itself (a fast-forwarded single-commit round).
+/// `commits` is newest-first (git log's order). A land commit makes its id a member; its tip is,
+/// in order of preference: its LANDED row's tip when `tip_in_range` says it is in the range; else
+/// the land merge's second parent; else the land commit itself. A candidate with no land commit
+/// is a member only when its row is LANDED at a tip in the range (a hand-landing), and that tip
+/// is its tip.
 pub fn members(
     commits: &[RangeCommit],
     rows: &BTreeMap<String, LcBeadRow>,
     tip_in_range: &dyn Fn(&str) -> bool,
 ) -> Vec<Member> {
+    let row_tip = |id: &str| {
+        rows.get(id)
+            .filter(|r| r.state == "LANDED")
+            .and_then(|r| r.tip.clone())
+            .filter(|t| !t.is_empty() && t != "none" && tip_in_range(t))
+    };
+    let landed_by_commit: std::collections::BTreeSet<&str> =
+        commits.iter().filter_map(|c| land_id(&c.subject)).collect();
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for c in commits {
-        let Some(id) = land_id(&c.subject) else {
-            continue;
+        let (id, tip) = if let Some(id) = land_id(&c.subject) {
+            let tip = row_tip(id)
+                .unwrap_or_else(|| c.parents.get(1).cloned().unwrap_or_else(|| c.sha.clone()));
+            (id, tip)
+        } else {
+            let Some((id, _)) = c.subject.split_once(':') else {
+                continue;
+            };
+            if landed_by_commit.contains(id) {
+                continue;
+            }
+            let Some(tip) = row_tip(id) else {
+                continue;
+            };
+            (id, tip)
         };
         if !seen.insert(id.to_string()) {
             continue;
         }
-        let from_state = rows
-            .get(id)
-            .filter(|r| r.state == "LANDED")
-            .and_then(|r| r.tip.clone())
-            .filter(|t| !t.is_empty() && t != "none" && tip_in_range(t));
-        let tip = from_state
-            .unwrap_or_else(|| c.parents.get(1).cloned().unwrap_or_else(|| c.sha.clone()));
         out.push(Member {
             id: id.to_string(),
             tip,
@@ -158,6 +192,57 @@ mod tests {
         let ms = members(&commits, &BTreeMap::new(), &|_| true);
         assert_eq!(ms.len(), 1);
         assert_eq!(ms[0].tip, "n2");
+    }
+
+    fn landed(id: &str, tip: &str, state: &str) -> (String, LcBeadRow) {
+        (
+            id.to_string(),
+            LcBeadRow {
+                bead_id: id.into(),
+                state: state.into(),
+                tip: Some(tip.into()),
+                since: Some(1),
+                blocked_by: Vec::new(),
+                reason: None,
+                holds: Vec::new(),
+                stack: Default::default(),
+                ejected_red_tip: None,
+                holder: None,
+            },
+        )
+    }
+
+    fn hand_landed_range() -> Vec<RangeCommit> {
+        vec![
+            c("c3", &["c2"], "sp-b: x"),
+            c("c2", &["c1", "z"], "stacked base: merge sp-a (y)"),
+            c("c1", &["c0"], "sp-a: y"),
+        ]
+    }
+
+    #[test_id(t03v9yi)]
+    #[test]
+    fn hand_landed_beads_are_members_at_their_row_tips() {
+        let rows: BTreeMap<_, _> =
+            [landed("sp-a", "c1", "LANDED"), landed("sp-b", "c3", "LANDED")].into();
+        let ms = members(&hand_landed_range(), &rows, &|_| true);
+        let got: Vec<_> = ms.iter().map(|m| m.render()).collect();
+        assert_eq!(got, vec!["sp-a:c1", "sp-b:c3"]);
+        assert_eq!(
+            candidate_ids(&hand_landed_range()),
+            vec!["sp-b", "sp-a"]
+        );
+    }
+
+    #[test_id(tkpgolv)]
+    #[test]
+    fn a_candidate_not_landed_in_range_is_no_member() {
+        let commits = hand_landed_range();
+        let certified: BTreeMap<_, _> = [landed("sp-a", "c1", "CERTIFIED")].into();
+        assert!(members(&commits, &certified, &|_| true).is_empty());
+        let landed_out: BTreeMap<_, _> = [landed("sp-a", "c1", "LANDED")].into();
+        assert!(members(&commits, &landed_out, &|_| false).is_empty());
+        assert!(members(&commits, &BTreeMap::new(), &|_| true).is_empty());
     }
 
     #[test_id(ts083v9)]

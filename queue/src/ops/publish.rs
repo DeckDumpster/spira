@@ -188,7 +188,7 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         }
     };
     if members.is_empty() {
-        w.err(format!("queue.sh publish: {name} has new commits on {base} but no land commit (spira: land <id>) in range — refusing"));
+        w.err(format!("queue.sh publish: {name} has new commits on {base} but none landed a bead (no land commit, and no bead the store records LANDED at a tip in the range) — refusing"));
         return FAIL;
     }
 
@@ -395,7 +395,7 @@ fn open_publish_at(
         })
 }
 
-/// The members of forge..head: from the land commits, the lifecycle rows for tips only.
+/// The members of forge..head: land commits, and beads the store records LANDED at a tip in range.
 pub fn range_members(
     w: &World,
     path: &std::path::Path,
@@ -403,16 +403,20 @@ pub fn range_members(
     head: &str,
 ) -> Result<Vec<Member>, String> {
     let commits = w.git.log_range(path, &format!("{forge}..{head}"))?;
-    let ids: Vec<String> = commits
-        .iter()
-        .filter_map(|c| crate::publish_range::land_id(&c.subject).map(str::to_string))
-        .collect();
-    let states: BTreeMap<_, _> =
-        w.lc.bead_rows_of(&ids)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|r| (r.bead_id.clone(), r))
-            .collect();
+    let ids = crate::publish_range::candidate_ids(&commits);
+    let states: BTreeMap<_, _> = match w.lc.bead_rows_of(&ids) {
+        Ok(rows) => rows.into_iter().map(|r| (r.bead_id.clone(), r)).collect(),
+        Err(e) => {
+            let land: Vec<_> = commits
+                .iter()
+                .filter_map(|c| crate::publish_range::land_id(&c.subject))
+                .collect();
+            if ids.iter().any(|i| !land.contains(&i.as_str())) {
+                return Err(format!("the lifecycle store could not say which beads landed: {e}"));
+            }
+            BTreeMap::new()
+        }
+    };
     let in_range = |t: &str| {
         crate::ident::check("tip", t).is_ok()
             && w.git.commit_exists(path, t)

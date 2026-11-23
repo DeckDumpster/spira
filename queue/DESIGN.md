@@ -458,8 +458,13 @@ data, not the code; the refusal is the contract).
 - **D4 — publish members come from the land commits (sp-bauwt, option b).** Every
   `spira: land <id>[ — title]` commit in `forge..local` is a member; the tip is the LANDED
   landstate tip when that tip is in the range, else the land merge's second parent, else the
-  commit itself. A landing-pass prune can no longer empty a publish. A range with new
-  commits but no land commit still refuses (message now names land commits).
+  commit itself. A landing-pass prune can no longer empty a publish. A bead landed by
+  `queue hand-land` makes no land commit; it is a member too when its subject names it
+  (`<id>: …`) and the store records it LANDED at a tip in the range, that tip being its
+  own. A range that landed no bead still refuses. `hand-land` records the full-suite pass
+  publish checks for the landed tip when `--evidence-full-suite` says its evidence was the
+  whole suite green on that tip, or when a round was green for the tip's tree; otherwise it
+  records none and says so.
 - **D5 — transitions refuse while the repository has work in delivery**: an open batch
   record or a BATCHED landstate whose tip is a commit of this repository — and an IN_DELIVERY lifecycle row whose tip is (spira-lc unreachable =
   loud refusal). Checked under the lock, after the mode re-read, before the final publish. The lock itself already excludes a round in flight (batcher-cut holds it).
