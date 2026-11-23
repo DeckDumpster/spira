@@ -392,6 +392,53 @@ pub fn one_shot_words(profile: &str) -> String {
     format!("--config profile.{profile}.incremental=false")
 }
 
+/// The cargo settings a builder session compiles under: its jobs and test threads, from the
+/// harness's own sizes ([`crate::admission`]) rather than any host cargo config. Incremental is
+/// the manifest's, and whole-workspace passes opt out per call ([`one_shot`]).
+pub fn session_env() -> [(String, String); 2] {
+    [
+        ("CARGO_BUILD_JOBS".into(), crate::admission::RUN_CARGO_JOBS.to_string()),
+        ("RUST_TEST_THREADS".into(), crate::admission::RUN_TEST_THREADS.to_string()),
+    ]
+}
+
+/// The keys of a cargo config file's `[build]`, `[profile]` and `[env]` that the harness
+/// declares itself (`SCCACHE_*` and a wrapper other than the retired `spira-admit` serve
+/// interactive shells and are left alone), each as a dotted path; a parse failure is one entry.
+/// Pure: the caller reads the file and reports.
+pub fn host_drift(text: &str) -> Vec<String> {
+    let doc: toml::Table = match text.parse() {
+        Ok(d) => d,
+        Err(e) => return vec![format!("unparsable ({})", e.message())],
+    };
+    let mut out = Vec::new();
+    if let Some(toml::Value::Table(b)) = doc.get("build") {
+        flatten("build", b, &mut out);
+    }
+    if let Some(toml::Value::Table(p)) = doc.get("profile") {
+        flatten("profile", p, &mut out);
+    }
+    if let Some(toml::Value::Table(e)) = doc.get("env") {
+        out.extend(e.keys().filter(|k| !k.starts_with("SCCACHE_")).map(|k| format!("env.{k}")));
+    }
+    out.retain(|k| k != "build.rustc-wrapper");
+    if let Some(toml::Value::String(w)) = doc.get("build").and_then(|b| b.get("rustc-wrapper")) {
+        if Path::new(w).file_name().is_some_and(|n| n == crate::admission::BIN) {
+            out.insert(0, "build.rustc-wrapper".into());
+        }
+    }
+    out
+}
+
+fn flatten(prefix: &str, t: &toml::Table, out: &mut Vec<String>) {
+    for (k, v) in t {
+        match v {
+            toml::Value::Table(inner) => flatten(&format!("{prefix}.{k}"), inner, out),
+            _ => out.push(format!("{prefix}.{k}")),
+        }
+    }
+}
+
 pub const TF_PLUGIN_CACHE_ENV: &str = "TF_PLUGIN_CACHE_DIR";
 
 /// The one Terraform provider cache of the box, under the run directory and outside every
@@ -446,6 +493,64 @@ fn entries_size(p: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HOST_CONFIG: &str = r#"
+[build]
+rustc-wrapper = "/home/u/.cargo/bin/spira-admit"
+jobs = 6
+incremental = false
+[env]
+RUST_TEST_THREADS = "4"
+TMPDIR = "/srv/tmp"
+SCCACHE_DIR = "/srv/sccache"
+[profile.dev]
+codegen-units = 4
+[profile.test]
+codegen-units = 4
+"#;
+
+    #[test_id(tks7ex8)]
+    #[test]
+    fn host_drift_names_every_setting_the_harness_declares() {
+        let mut got = host_drift(HOST_CONFIG);
+        got.sort();
+        assert_eq!(
+            got,
+            ["build.incremental", "build.jobs", "build.rustc-wrapper", "env.RUST_TEST_THREADS", "env.TMPDIR", "profile.dev.codegen-units", "profile.test.codegen-units"]
+        );
+    }
+
+    #[test_id(twmux3s)]
+    #[test]
+    fn host_drift_leaves_sccache_settings_and_a_live_wrapper_alone() {
+        let text = "[build]\nrustc-wrapper = \"sccache\"\n[env]\nSCCACHE_DIR = \"x\"\nSCCACHE_CACHE_SIZE = \"9G\"\n";
+        assert!(host_drift(text).is_empty());
+        assert!(host_drift("").is_empty());
+    }
+
+    #[test_id(tke4xsw)]
+    #[test]
+    fn host_drift_reports_a_file_it_cannot_parse() {
+        let got = host_drift("[build\njobs = ");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].starts_with("unparsable"), "{got:?}");
+    }
+
+    #[test_id(tpkr2ex)]
+    #[test]
+    fn session_env_is_the_harness_jobs_and_test_threads() {
+        assert_eq!(
+            session_env(),
+            [("CARGO_BUILD_JOBS".to_string(), "6".to_string()), ("RUST_TEST_THREADS".to_string(), "4".to_string())]
+        );
+    }
+
+    #[test_id(trfsicp)]
+    #[test]
+    fn the_root_manifest_compiles_dev_incrementally() {
+        let m: toml::Table = include_str!("../../Cargo.toml").parse().unwrap();
+        assert_eq!(m["profile"]["dev"]["incremental"].as_bool(), Some(true));
+    }
 
     #[test_id(to4tvfa)]
     #[test]

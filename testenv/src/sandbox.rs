@@ -59,7 +59,7 @@ pub struct Profile {
     /// The `PATH` inside.
     pub path: String,
     /// `RUST_TEST_THREADS` inside.
-    pub test_threads: u32,
+    pub test_threads: u64,
     /// The compilation cache every branch's run shares; `None` compiles uncached.
     pub cache: Option<Cache>,
 }
@@ -93,7 +93,7 @@ impl Cache {
 impl Profile {
     /// The profile for `tree` with its target at `target`, from this process's home. `root` is
     /// the directory the targets live in, which also holds the shared compilation store.
-    pub fn for_run(tree: &Path, target: &Path, root: &Path, home: &Path, test_threads: u32) -> Profile {
+    pub fn for_run(tree: &Path, target: &Path, root: &Path, home: &Path, test_threads: u64) -> Profile {
         let under = |rel: &str| home.join(rel);
         let ro = [".rustup", ".cargo/bin", ".local/lib/spira-env"];
         let rw = [".cargo/registry", ".cargo/git"];

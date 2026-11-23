@@ -3061,7 +3061,7 @@ fn run_sandboxed(args: &RunArgs, deps: &Deps, s: &Settings, tree: &Path, volume:
     };
     let _ = fs::create_dir_all(&target);
     crate::sandbox::touch(&target);
-    let threads = (deps.env)("RUST_TEST_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(4);
+    let threads = (deps.env)("RUST_TEST_THREADS").and_then(|v| v.trim().parse().ok()).unwrap_or(spira_config::admission::RUN_TEST_THREADS);
     let root = s.sandbox_target_root.trim();
     let profile = crate::sandbox::Profile::for_run(tree, &target, Path::new(root), Path::new(&home), threads);
     let out = results.join(format!("{script}.out"));

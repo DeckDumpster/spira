@@ -69,7 +69,7 @@ fn profile_words(profile: Option<&str>, flag: &str) -> String {
         Some(p) => {
             format!("{flag} {p} --features integration --config profile.{p}.incremental=false")
         }
-        None => "--features integration".into(),
+        None => format!("--features integration {}", crate::build::one_shot_words("dev")),
     }
 }
 
@@ -399,16 +399,16 @@ mod tests {
         }
     }
 
-    #[test_id(tkv2b4i)]
+    #[test_id(ttooqj0)]
     #[test]
-    fn the_default_profile_names_no_profile_and_no_override() {
+    fn the_default_profile_names_no_profile_and_is_one_shot_under_dev() {
         for w in [
             build_words(None, "-p a"),
             unit_words("C", None, "-p a", LIB_BINS),
             integration_words(None, "-p a"),
         ] {
-            assert!(!w.contains("profile") && !w.contains("incremental"), "{w}");
-            assert!(w.contains("--features integration -p a"), "{w}");
+            assert!(!w.contains("--profile") && !w.contains("--cargo-profile"), "{w}");
+            assert!(w.contains("--features integration --config profile.dev.incremental=false -p a"), "{w}");
         }
     }
 

@@ -134,6 +134,9 @@ codegen-units = 16
 # units per crate instead of the default 256, so one rustc does not fan out across every core.
 [profile.dev]
 codegen-units = 4
+# A builder's own crate-level turns rebuild in place; whole-workspace passes opt out per call
+# (spira_config::build::one_shot). A host cargo config must not set it either way: doctor.
+incremental = true
 # Unit-test builds (spira/unit-tests.sh) use this profile, and each bead's target starts cold:
 # full debug info made each linked test binary up to 464 MB and one bead's deps 36 GB
 # (2026-11-07). Line tables keep panic file:line and backtraces; dependencies need none.

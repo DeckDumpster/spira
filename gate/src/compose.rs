@@ -1410,10 +1410,10 @@ mod tests {
     fn the_unit_build_and_test_name_only_the_changed_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4, &Default::default());
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
-        assert!(b.1.ends_with(" --features integration -p spira-runtime -p work -p spira-lc"), "{}", b.1);
+        assert!(b.1.ends_with(" --features integration --config profile.dev.incremental=false -p spira-runtime -p work -p spira-lc"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
         let [b, _] = unit_commands(&["spira-sim".into()], ALL, 4, &Default::default());
-        assert!(b.1.ends_with(" --features integration -p spira-sim"), "{}", b.1);
+        assert!(b.1.ends_with(" --features integration --config profile.dev.incremental=false -p spira-sim"), "{}", b.1);
     }
 
     #[test_id(tr9tlh8)]
@@ -1425,7 +1425,7 @@ mod tests {
         let sel = ["gate".to_string(), "queue".to_string()];
         let [unit, integ] = two(&unit_test_commands(&sel, ALL, &Default::default()));
         for tests in [&unit, &integ] {
-            assert!(tests.contains(" --features integration -p gate -p queue"), "{tests}");
+            assert!(tests.contains(" --features integration --config profile.dev.incremental=false -p gate -p queue"), "{tests}");
         }
         assert_eq!(build, format!("cargo {}", spira_config::unit_tier::build_words(None, "-p gate -p queue").replacen("--no-run", "--no-run --timings", 1)));
         let sel = ["batcher-cut".to_string()];
@@ -1578,10 +1578,10 @@ mod tests {
     fn unit_commands_build_then_test_each_crate() {
         let [b, t] = unit_commands(&["gate".into(), "queue".into()], ALL, 4, &Default::default());
         assert_eq!(b.0, "build");
-        assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration -p gate -p queue");
+        assert_eq!(b.1, "CARGO_BUILD_JOBS=4 cargo test --no-run --timings --features integration --config profile.dev.incremental=false -p gate -p queue");
         assert_eq!(t.0, "test");
-        assert!(t.1.contains("; _g_t=$SECONDS; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p gate -p queue --lib --bins; _g_r=$?; echo \"gate-substep unit secs=$((SECONDS-_g_t))\"; "), "{}", t.1);
-        assert!(t.1.contains("; _g_t=$SECONDS; cargo test --no-fail-fast --features integration -p gate -p queue --test '*'; _g_r=$?; echo \"gate-substep integration secs=$((SECONDS-_g_t))\"; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
+        assert!(t.1.contains("; _g_t=$SECONDS; tools/test-sandbox/runner --around cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration --config profile.dev.incremental=false -p gate -p queue --lib --bins; _g_r=$?; echo \"gate-substep unit secs=$((SECONDS-_g_t))\"; "), "{}", t.1);
+        assert!(t.1.contains("; _g_t=$SECONDS; cargo test --no-fail-fast --features integration --config profile.dev.incremental=false -p gate -p queue --test '*'; _g_r=$?; echo \"gate-substep integration secs=$((SECONDS-_g_t))\"; [ \"$_g_rc\" -ne 0 ] || _g_rc=$_g_r; exit $_g_rc"), "{}", t.1);
     }
 
     #[test_id(tsffy7m)]
@@ -1591,7 +1591,7 @@ mod tests {
         let line = reproduce_line(&env, "-p gate --lib");
         assert_eq!(
             line,
-            "env -i A='x y'\\''z' PATH='bin' cargo test --no-fail-fast --features integration -p gate --lib"
+            "env -i A='x y'\\''z' PATH='bin' cargo test --no-fail-fast --features integration --config profile.dev.incremental=false -p gate --lib"
         );
     }
 
@@ -1602,11 +1602,12 @@ mod tests {
         assert!(dev.contains("split-debuginfo = \"unpacked\""), "{dev}");
     }
 
-    #[test_id(thwh4yr)]
+    #[test_id(tr8mnh9)]
     #[test]
-    fn unit_commands_name_neither_a_profile_nor_an_incremental_override() {
+    fn unit_commands_name_no_profile_and_every_cargo_call_is_one_shot() {
         for (_, c) in unit_commands(&["gate".into()], ALL, 4, &Default::default()) {
-            assert!(!c.contains("--profile") && !c.contains("incremental=false"), "{c}");
+            assert!(!c.contains("--profile"), "{c}");
+            assert!(c.contains("--config profile.dev.incremental=false"), "{c}");
         }
     }
 

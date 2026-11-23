@@ -1019,6 +1019,7 @@ fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path:
     }
     let built = spira_config::bounded::bounded_for("cargo", &secs)
         .args(["build", "-p", package, "--bin", package])
+        .args(spira_config::build::one_shot("dev"))
         .envs(shell.into_iter().flat_map(|s| s.row_vars()))
         .env("PATH", work::trusted::join_path(dirs))
         .env("CARGO_TARGET_DIR", &target)

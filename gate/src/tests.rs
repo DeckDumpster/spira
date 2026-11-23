@@ -2775,7 +2775,7 @@ fn the_unit_cap_the_config_names_narrows_the_crates_the_gate_builds() {
     let f = unit_fake(&["spira-config/src/lib.rs"]);
     f.put_var("SPIRA_GATE_UNIT_MAX_CRATES", "1");
     assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert!(f.cmds.borrow()[1].ends_with("--features integration -p spira-config"), "{:?}", f.cmds.borrow());
+    assert!(f.cmds.borrow()[1].ends_with("--features integration --config profile.dev.incremental=false -p spira-config"), "{:?}", f.cmds.borrow());
 }
 
 #[test_id(t97gilr)]
@@ -2833,7 +2833,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "CARGO_BUILD_JOBS=8 cargo test --no-run --timings --features integration -p queue -p spira-config"
+        "CARGO_BUILD_JOBS=8 cargo test --no-run --timings --features integration --config profile.dev.incremental=false -p queue -p spira-config"
     );
     assert_eq!(cmds[2], crate::compose::unit_commands(&["queue".into(), "spira-config".into()], crate::compose::Targets { lib: true, bin: true, test: true }, 8, &Default::default())[1].1);
     assert!(!cmds[2].contains("--test-threads"), "{}", cmds[2]);
@@ -3244,7 +3244,7 @@ fn unit_mode_rust_only_returned_bead_runs_its_unit_gate_then_exactly_the_named_s
         "off",
         "the gate string selects nothing"
     );
-    assert!(cmds[1].contains("--features integration -p gate"));
+    assert!(cmds[1].contains("--features integration --config profile.dev.incremental=false -p gate"));
     assert!(
         cmds[3].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""),
         "{}",
@@ -3578,7 +3578,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     let err = f.stderr();
     let line = err.lines().find(|l| l.starts_with("gate: reproduce (from the workspace root): env -i ")).expect(&err);
     assert!(line.contains("PATH=") && line.contains("HOME="), "{line}");
-    assert!(line.ends_with(" cargo test --no-fail-fast --features integration -p gate --lib"), "{line}");
+    assert!(line.ends_with(" cargo test --no-fail-fast --features integration --config profile.dev.incremental=false -p gate --lib"), "{line}");
     assert!(!line.contains("--test-threads"), "{line}");
     assert_eq!(line.matches(" -p ").count(), 1, "{line}");
     let cmds = f.cmds.borrow().clone();
@@ -3622,7 +3622,7 @@ fn a_red_unit_test_without_a_rerun_line_reproduces_with_the_phases_crates() {
     assert_eq!(f.run(), FAIL);
     let err = f.stderr();
     let line = err.lines().find(|l| l.starts_with("gate: reproduce (from the workspace root): env -i ")).expect(&err);
-    assert!(line.contains(" --features integration -p gate"), "{line}");
+    assert!(line.contains(" --features integration --config profile.dev.incremental=false -p gate"), "{line}");
 }
 
 const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped";

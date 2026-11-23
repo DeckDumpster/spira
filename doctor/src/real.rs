@@ -235,6 +235,9 @@ impl World for Real {
     fn file_exists(&self, p: &Path) -> bool {
         p.is_file()
     }
+    fn read_file(&self, p: &Path) -> Option<String> {
+        std::fs::read_to_string(p).ok()
+    }
     fn bd_list(&self, timeout_secs: u64) -> Result<String, String> {
         let out = Command::new("timeout")
             .arg(timeout_secs.to_string())

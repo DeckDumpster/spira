@@ -58,6 +58,8 @@ pub trait World {
     // ---- store ----
     fn dir_exists(&self, p: &Path) -> bool;
     fn file_exists(&self, p: &Path) -> bool;
+    /// The text of a file, or None when it is absent or unreadable.
+    fn read_file(&self, p: &Path) -> Option<String>;
     /// `timeout 60 spira-lc content list --limit 1 --json` -> Ok(json) or Err(combined output).
     fn bd_list(&self, timeout_secs: u64) -> Result<String, String>;
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta>;

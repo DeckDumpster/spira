@@ -292,6 +292,51 @@ pub(crate) mod verdict_run {
         assert_eq!(envs[0].get("TMPDIR"), Some(&want));
     }
 
+    fn session_env_of(builds: bool) -> BTreeMap<String, String> {
+        let _otel = OTEL.lock().unwrap_or_else(|e| e.into_inner());
+        let work = testkit::TempDir::new("dwarf-cargo-env");
+        let w = work.path().to_path_buf();
+        let cap = Capture(Default::default());
+        let mut vars = super::complete_vars();
+        vars.insert("SPIRA_REPO".into(), "shared".into());
+        vars.insert("CARGO_INCREMENTAL".into(), "0".into());
+        vars.insert("CARGO_BUILD_INCREMENTAL".into(), "false".into());
+        let cwd = std::env::current_dir().unwrap();
+        let res = with_run_launching(vars, &NoBd, Dirty(vec![]), &Lc, &|| 0, &Seams(Default::default()), &Mute::default(), &cap, "", |r| {
+            r.s.logf = Some(w.join("log"));
+            r.rune.builds = builds;
+            if builds {
+                r.s.build_dir = Some(spira_config::build_dir::lease(&[w.join("builds")], "sp-x").unwrap());
+            }
+            let bin = w.join("model-bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            testkit::write_exe(bin.join("work"), "#!/bin/sh\n");
+            r.d.env.set(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV, &bin.display().to_string());
+            r.session(&w).map_err(|a| format!("{a:?}"))
+        });
+        std::env::set_current_dir(cwd).unwrap();
+        res.unwrap();
+        let envs = cap.0.lock().unwrap();
+        assert_eq!(envs.len(), 1);
+        envs[0].clone()
+    }
+
+    #[test_id(tjjyb9n)]
+    #[test]
+    fn a_building_session_compiles_under_the_harness_jobs_and_threads_and_never_one_shot() {
+        let env = session_env_of(true);
+        assert_eq!(env.get("CARGO_BUILD_JOBS").map(String::as_str), Some("6"));
+        assert_eq!(env.get("RUST_TEST_THREADS").map(String::as_str), Some("4"));
+        assert!(!env.contains_key("CARGO_INCREMENTAL") && !env.contains_key("CARGO_BUILD_INCREMENTAL"), "{env:?}");
+    }
+
+    #[test_id(t96x90m)]
+    #[test]
+    fn a_session_that_does_not_build_gets_no_jobs_or_threads() {
+        let env = session_env_of(false);
+        assert!(!env.contains_key("CARGO_BUILD_JOBS") && !env.contains_key("RUST_TEST_THREADS"), "{env:?}");
+    }
+
     struct WorldUp(&'static str);
     impl Exec for WorldUp {
         fn exec(&self, _: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {

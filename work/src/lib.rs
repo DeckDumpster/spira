@@ -862,7 +862,7 @@ mod tests {
     #[test]
     fn the_clippy_check_names_only_a_touched_leaf_and_its_dependents() {
         let scope = affected_scope(&raw(&["a/src/lib.rs"]), META).unwrap();
-        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()).unwrap(), v(&["cargo", "clippy", "-p", "a", "-p", "b", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
+        assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()).unwrap(), v(&["cargo", "clippy", "--config", "profile.dev.incremental=false", "-p", "a", "-p", "b", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
     }
 
     #[test_id(tpjst1m)]
@@ -871,7 +871,7 @@ mod tests {
         for input in ["Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"] {
             let scope = affected_scope(&raw(&["c/src/lib.rs", input]), META).unwrap();
             assert!(matches!(scope, Affected::Workspace(_)), "{input}");
-            assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()).unwrap(), v(&["cargo", "clippy", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
+            assert_eq!(check_argv(&repo_clippy_row(), &scope, "spira/sp-x", rec_path()).unwrap(), v(&["cargo", "clippy", "--config", "profile.dev.incremental=false", "--workspace", "--features", "integration", "--all-targets", "--", "-D", "warnings"]));
         }
     }
 
