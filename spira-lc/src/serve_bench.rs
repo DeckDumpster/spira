@@ -51,7 +51,7 @@ pub(crate) struct Tally {
 /// The request client `c` puts as its `n`th: `show` and `list --live`, alternating.
 fn request(ids: &[String], c: usize, n: u64) -> Vec<String> {
     match ids.get((c + n as usize) / 2 % ids.len().max(1)) {
-        Some(id) if (c as u64 + n) % 2 == 0 => vec!["show".to_string(), id.clone()],
+        Some(id) if (c as u64 + n).is_multiple_of(2) => vec!["show".to_string(), id.clone()],
         _ => vec!["list".to_string(), "--live".to_string()],
     }
 }

@@ -69,10 +69,18 @@ enum Post {
     Served { called: Box<Called>, size: usize },
 }
 
+/// A request read and not yet answered, and the clock it must be answered by.
+struct Held {
+    req: Request,
+    size: usize,
+    limit: Duration,
+    due: Pin<Box<Sleep>>,
+}
+
 enum Phase {
     Reading(Vec<u8>),
-    Deciding { req: Request, size: usize, limit: Duration, tried: Option<u64>, due: Pin<Box<Sleep>> },
-    Calling { req: Request, size: usize, limit: Duration, job: Offloaded<Called>, due: Pin<Box<Sleep>> },
+    Deciding { held: Held, tried: Option<u64> },
+    Calling { held: Held, job: Offloaded<Called> },
     Answering { out: Vec<u8>, sent: usize, post: Post },
     Closed,
 }
@@ -166,8 +174,8 @@ impl Conn {
         match phase {
             Phase::Closed => Step::Done,
             Phase::Reading(buf) => self.read(buf, cx, sh),
-            Phase::Deciding { req, size, limit, tried, due } => self.decide(req, size, limit, tried, due, cx, sh),
-            Phase::Calling { req, size, limit, job, due } => self.call(req, size, limit, job, due, cx),
+            Phase::Deciding { held, tried } => self.decide(held, tried, cx, sh),
+            Phase::Calling { held, job } => self.call(held, job, cx),
             Phase::Answering { out, sent, post } => self.answer(out, sent, post, cx, sh),
         }
     }
@@ -209,37 +217,40 @@ impl Conn {
 
     fn deciding(&self, req: Request, size: usize, sh: &Shared) -> Phase {
         let limit = crate::serve::request_deadline(&req.argv, &sh.door.deadlines);
-        let due = Box::pin(tokio::time::sleep(limit.saturating_sub(self.accepted.elapsed())));
-        Phase::Deciding { req, size, limit, tried: None, due }
+        let due = Box::pin(tokio::time::sleep(limit.saturating_sub(self.accepted.elapsed()))); // waits-on: the request's answer; cap its deadline
+        Phase::Deciding { held: Held { req, size, limit, due }, tried: None }
     }
 
-    fn cut(&self, req: &Request, size: usize, limit: Duration) -> Phase {
+    fn cut(&self, held: &Held) -> Phase {
+        let Held { req, size, limit, .. } = held;
+        let (size, limit) = (*size, *limit);
         let called = Called::unworked(req, "-".to_string(), crate::serve::deadline_answer(), Some(limit), self.accepted);
         answering(&called.ans.clone(), false, Post::Served { called: Box::new(called), size })
     }
 
-    fn decide(&mut self, req: Request, size: usize, limit: Duration, tried: Option<u64>, mut due: Pin<Box<Sleep>>, cx: &mut Context<'_>, sh: &Shared) -> Step {
-        if !serves(&req.argv) {
+    fn decide(&mut self, mut held: Held, tried: Option<u64>, cx: &mut Context<'_>, sh: &Shared) -> Step {
+        if !serves(&held.req.argv) {
             return Step::Next(answering(&Answer::out(2, REFUSED_VERB.to_string()), false, Post::Nothing));
         }
-        if due.as_mut().poll(cx).is_ready() {
-            return Step::Next(self.cut(&req, size, limit));
+        if held.due.as_mut().poll(cx).is_ready() {
+            return Step::Next(self.cut(&held));
         }
         let seen = sh.finished.count.load(Ordering::SeqCst);
         if tried == Some(seen) {
-            return Step::Wait(Phase::Deciding { req, size, limit, tried, due });
+            return Step::Wait(Phase::Deciding { held, tried });
         }
-        let (door, peer, accepted, signal, work) = (sh.door.clone(), self.peer, self.accepted, Signal(sh.finished.clone()), req.clone());
+        let (door, peer, accepted, signal, work) = (sh.door.clone(), self.peer, self.accepted, Signal(sh.finished.clone()), held.req.clone());
         match sh.pool.offload(WHAT, None, move || {
             let _signal = signal;
             crate::serve::call_request(work, peer, &door, accepted, accepted, Cut::ByCaller)
         }) {
-            Ok(job) => Step::Next(Phase::Calling { req, size, limit, job, due }),
-            Err(_) => Step::Wait(Phase::Deciding { req, size, limit, tried: Some(seen), due }),
+            Ok(job) => Step::Next(Phase::Calling { held, job }),
+            Err(_) => Step::Wait(Phase::Deciding { held, tried: Some(seen) }),
         }
     }
 
-    fn call(&mut self, req: Request, size: usize, limit: Duration, mut job: Offloaded<Called>, mut due: Pin<Box<Sleep>>, cx: &mut Context<'_>) -> Step {
+    fn call(&mut self, mut held: Held, mut job: Offloaded<Called>, cx: &mut Context<'_>) -> Step {
+        let size = held.size;
         match Pin::new(&mut job).poll(cx) {
             Poll::Ready(Ok(called)) => {
                 let read_ended = called.read_ended();
@@ -247,12 +258,12 @@ impl Conn {
                 Step::Next(answering(&ans, read_ended, Post::Served { called: Box::new(called), size }))
             }
             Poll::Ready(Err(e)) => {
-                let called = Called::unworked(&req, "-".to_string(), Answer::out(2, format!("cannot tell: {e}")), None, self.accepted);
+                let called = Called::unworked(&held.req, "-".to_string(), Answer::out(2, format!("cannot tell: {e}")), None, self.accepted);
                 let ans = called.ans.clone();
                 Step::Next(answering(&ans, false, Post::Served { called: Box::new(called), size }))
             }
-            Poll::Pending if due.as_mut().poll(cx).is_ready() => Step::Next(self.cut(&req, size, limit)),
-            Poll::Pending => Step::Wait(Phase::Calling { req, size, limit, job, due }),
+            Poll::Pending if held.due.as_mut().poll(cx).is_ready() => Step::Next(self.cut(&held)),
+            Poll::Pending => Step::Wait(Phase::Calling { held, job }),
         }
     }
 
@@ -309,11 +320,11 @@ pub(crate) async fn serve(listener: UnixListener, sh: Arc<Shared>, stopping: &At
     let mut conns: Vec<Conn> = Vec::new();
     let mut on_stop = Some(on_stop);
     let mut stopped_at: Option<Instant> = None;
-    let mut tick = Box::pin(tokio::time::sleep(TICK));
+    let mut tick = Box::pin(tokio::time::sleep(TICK)); // waits-on: the stop flag; cap TICK
     let mut woken = Box::pin(sh.finished.wake.notified());
     std::future::poll_fn(|cx| {
         while tick.as_mut().poll(cx).is_ready() {
-            tick.as_mut().reset(tokio::time::Instant::now() + TICK);
+            tick.as_mut().reset(tokio::time::Instant::now() + TICK); // waits-on: the stop flag; cap TICK
         }
         while woken.as_mut().poll(cx).is_ready() {
             woken.set(sh.finished.wake.notified());
@@ -325,11 +336,8 @@ pub(crate) async fn serve(listener: UnixListener, sh: Arc<Shared>, stopping: &At
             }
         }
         if let Some(l) = &listener {
-            loop {
-                match l.poll_accept(cx) {
-                    Poll::Ready(Ok((stream, _))) => conns.push(Conn::new(stream)),
-                    Poll::Ready(Err(_)) | Poll::Pending => break,
-                }
+            while let Poll::Ready(Ok((stream, _))) = l.poll_accept(cx) {
+                conns.push(Conn::new(stream));
             }
         }
         if stopped_at.is_some_and(|at| at.elapsed() >= TICK) {
