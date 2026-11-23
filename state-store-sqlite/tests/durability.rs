@@ -1232,3 +1232,43 @@ fn a_run_in_sent_whose_shipped_mark_was_lost_is_counted_shipped_by_an_open_and_a
     let reopened = Shipper::open_staging(c.backend().clone(), cfg(), Arc::new(clock.clone())).unwrap();
     assert_eq!(reopened.shipped_through().unwrap(), r);
 }
+
+#[test_id(tm33sam)]
+#[test]
+fn prune_sweeps_sent_revlog_only_when_its_point_moves() {
+    let dir = TempDir::new("ship-sweep-once");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), 0), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
+    for i in 0..3 {
+        put(&c, &format!("k{i}"), Object::new(json!(i)), &format!("p{i}"));
+        tick(&mut s);
+    }
+    tick(&mut s);
+    sent_revlog_made_a_file(&s);
+    let idle = s.tick().unwrap();
+    assert_eq!(idle.staged, None);
+}
+
+#[test_id(tnq605c)]
+#[test]
+fn a_relist_of_sent_revlog_happens_once_per_staged_value() {
+    let dir = TempDir::new("ship-relist-once");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    let mut lost = Shipper::open_staging(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), Arc::new(clock.clone())).unwrap();
+    put(&c, "late", Object::new(json!(9)), "late");
+    let t = lost.tick().unwrap();
+    assert!(t.staged.is_some());
+    let queued = lost.dir().join("queue").join(REVLOG);
+    for n in ship::names(&queued).unwrap() {
+        std::fs::remove_file(queued.join(n)).unwrap();
+    }
+    sent_revlog_made_a_file(&lost);
+    assert!(lost.tick().is_err(), "the first tick at a staged value lists sent/revlog once");
+    std::fs::remove_file(lost.sent(REVLOG)).unwrap();
+    std::fs::create_dir_all(lost.sent(REVLOG)).unwrap();
+    lost.tick().unwrap();
+    sent_revlog_made_a_file(&lost);
+    lost.tick().unwrap();
+}
