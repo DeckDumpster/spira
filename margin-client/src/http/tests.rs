@@ -38,7 +38,7 @@ fn client(dir: &TempDir, base: &str) -> HttpMargin {
     HttpMargin { base: base.to_string(), token_file: file.to_str().unwrap().to_string() }
 }
 
-#[test_id(tmrg001)]
+#[test_id(t5umxol)]
 #[test]
 fn post_collection_sends_the_token_file_text_as_a_bearer_and_parses_the_reply() {
     let dir = TempDir::new("margin-bearer");
@@ -52,7 +52,7 @@ fn post_collection_sends_the_token_file_text_as_a_bearer_and_parses_the_reply() 
     assert!(req.contains(r#""text":"fn a() {}\n""#), "{req}");
 }
 
-#[test_id(tmrg002)]
+#[test_id(tegpxm2)]
 #[test]
 fn an_empty_url_key_or_a_missing_token_file_is_refused_by_name_without_the_token() {
     let cfg = |url: &'static str, file: String| move |k: &str| Ok::<_, String>(if k == URL_KEY { url.to_string() } else { file.clone() });
@@ -70,7 +70,7 @@ fn an_empty_url_key_or_a_missing_token_file_is_refused_by_name_without_the_token
     assert!(!e.contains(TOKEN), "{e}");
 }
 
-#[test_id(tmrg003)]
+#[test_id(tt2eidx)]
 #[test]
 fn a_reader_that_accepts_and_never_answers_fails_post_comment_within_six_seconds_naming_url_and_route() {
     let dir = TempDir::new("margin-silent");
@@ -91,7 +91,7 @@ fn a_reader_that_accepts_and_never_answers_fails_post_comment_within_six_seconds
     hold.join().unwrap();
 }
 
-#[test_id(tmrg004)]
+#[test_id(tq4f576)]
 #[test]
 fn a_held_comment_is_sent_with_its_anchor_and_the_reply_parent() {
     let dir = TempDir::new("margin-comment");

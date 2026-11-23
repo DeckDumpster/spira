@@ -185,7 +185,11 @@ impl Committer for GitCommitter {
         // batch-job: local git log in the findings repository, no network
         let out = Command::new("git").arg("-C").arg(dir).args(["log", "--format=%H", "--", path]).output().map_err(|e| format!("git log: {e}"))?;
         if !out.status.success() {
-            return Err(format!("git log in {}: {}", dir.display(), String::from_utf8_lossy(&out.stderr).trim()));
+            let why = String::from_utf8_lossy(&out.stderr);
+            if why.contains("does not have any commits yet") {
+                return Ok(false);
+            }
+            return Err(format!("git log in {}: {}", dir.display(), why.trim()));
         }
         Ok(!String::from_utf8_lossy(&out.stdout).trim().is_empty())
     }

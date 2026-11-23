@@ -18,7 +18,6 @@ test = false
 integration = ["spira-store/integration", "test-registry/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 
 [dependencies]
-base64 = "0.22"
 regex = "1"
 margin-client = { path = "../margin-client" }
 runtime = { path = "../runtime" }

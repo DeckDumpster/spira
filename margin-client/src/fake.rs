@@ -65,12 +65,16 @@ impl FakeMargin {
         let id = format!("{thread}-r{}", t.comments.len());
         t.comments.push(Comment { id, author: author.to_string(), body: body.to_string(), created_at_ms: at_ms });
     }
-    /// A thread the operator started on a published review.
-    pub fn his_thread(&self, collection: &str, anchor: Anchor, body: &str, at_ms: u64) -> String {
+    /// A thread `author` started on `collection`, as the reader would hold it.
+    pub fn thread_by(&self, collection: &str, anchor: Anchor, author: &str, body: &str, at_ms: u64) -> String {
         let mut s = self.0.borrow_mut();
         let id = format!("{collection}-his{}", s.threads.len());
-        s.threads.insert(id.clone(), Thread { anchor, comments: vec![Comment { id: format!("{id}-0"), author: "ryan".into(), body: body.into(), created_at_ms: at_ms }] });
+        s.threads.insert(id.clone(), Thread { anchor, comments: vec![Comment { id: format!("{id}-0"), author: author.into(), body: body.into(), created_at_ms: at_ms }] });
         id
+    }
+    /// A thread the operator started.
+    pub fn his_thread(&self, collection: &str, anchor: Anchor, body: &str, at_ms: u64) -> String {
+        self.thread_by(collection, anchor, "ryan", body, at_ms)
     }
     pub fn agent_author() -> String {
         format!("{AGENT_PREFIX}concierge")
