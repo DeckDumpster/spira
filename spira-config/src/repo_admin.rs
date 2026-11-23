@@ -1071,7 +1071,28 @@ mod tests {
     fn a_declaration_that_does_not_parse_fails_the_gate_with_the_parse_error() {
         let (f, _) = gated_fx("queue.local", "", &[(".spira/testenv.toml", "ci_entry = [")]);
         let g = piece(&f, "gate");
-        assert!(!g.ok && !g.detail.is_empty(), "{g:?}");
+        assert!(!g.ok && g.detail.contains("does not parse: "), "{g:?}");
+    }
+
+    #[test_id(tpg1a07)]
+    #[test]
+    fn the_testenv_gate_names_a_build_tier_and_a_plain_queue_certifies_nothing() {
+        let with_build = format!("{DECL_OK}[tier.build]\nargv = [\"true\"]\n");
+        let (f, _) = gated_fx("queue.local", "", &[(".spira/testenv.toml", &with_build)]);
+        assert_eq!(piece(&f, "gate").detail, "testenv default tiers: gate, build tier");
+        let (f, _) = gated_fx("queue", "", &[("README", "x")]);
+        let g = piece(&f, "gate");
+        assert!(g.ok && g.detail.contains("certifies nothing"), "{g:?}");
+    }
+
+    #[test_id(tpg1a08)]
+    #[test]
+    fn a_harness_containerfile_stops_the_declaration_gating_and_a_present_column_passes() {
+        let (f, _) = gated_fx("queue.local", "", &[(".spira/testenv.toml", DECL_OK), (HARNESS_IMAGE, "FROM x\n")]);
+        assert_eq!(first_failure(&f), Some("gate"));
+        let (f, _) = gated_fx("queue.local", "git status", &[("README", "x")]);
+        let g = piece(&f, "gate");
+        assert!(g.ok && g.detail == "git status", "{g:?}");
     }
 
     #[test_id(tzam1ri)]
