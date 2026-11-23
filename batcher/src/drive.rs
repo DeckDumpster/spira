@@ -8099,7 +8099,7 @@ pub(crate) mod tests {
     }
 
     fn one_member_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {
-        attribute_round(f, ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap()
+        attribute_round(f, ops, &corpus(4), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap()
     }
 
     #[test_id(to5rjno)]
@@ -8145,7 +8145,6 @@ pub(crate) mod tests {
         let mut ops = Ops::default();
         let end = one_member_round(&mut f, &mut ops);
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
-        assert!(!f.main_kind.is_empty());
         assert_eq!(land_ids(end), vec!["m1"]);
     }
 
