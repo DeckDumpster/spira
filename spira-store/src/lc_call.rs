@@ -113,6 +113,16 @@ impl Reply {
         first(&self.err).or_else(|| first(&self.out)).unwrap_or_else(|| "no message".into())
     }
 
+    /// The stdout when the call applied (exit 0); a refusal (3) or anything else is an error.
+    pub fn into_answer(self) -> Result<String, LcError> {
+        match self.code {
+            0 => Ok(self.out),
+            REFUSED => Err(LcError::Refused(self.text())),
+            _ if self.read_ended => Err(LcError::ReadEnded(self.text())),
+            _ => Err(LcError::Fault(self.text())),
+        }
+    }
+
     /// Everything the call printed, trimmed, stdout first.
     pub fn text(&self) -> String {
         format!("{}{}", self.out.trim(), self.err.trim())
@@ -164,13 +174,22 @@ impl Transport for Socket {
 /// Connects to the store's socket. A refused or absent socket is the store not running and
 /// nothing was sent; any other failure is final.
 pub fn connect(path: &Path) -> Result<UnixStream, Fail> {
-    let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", path.display()));
-    let stream = UnixStream::connect(path).map_err(|e| match e.kind() {
-        ErrorKind::ConnectionRefused | ErrorKind::NotFound => Fail::NotRunning(format!("store not running: nothing was sent to {} ({e})", path.display())),
-        _ => down(&e),
-    })?;
-    stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| down(&e))?;
+    let stream = UnixStream::connect(path).map_err(|e| connect_failure(path, &e))?;
+    stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| unanswering(path, &e))?;
     Ok(stream)
+}
+
+fn unanswering(path: &Path, e: &dyn std::fmt::Display) -> Fail {
+    Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", path.display()))
+}
+
+/// What a failed connect to the store's socket means: a refused or absent socket is the store not
+/// running and nothing was sent; any other failure is final.
+pub fn connect_failure(path: &Path, e: &std::io::Error) -> Fail {
+    match e.kind() {
+        ErrorKind::ConnectionRefused | ErrorKind::NotFound => Fail::NotRunning(format!("store not running: nothing was sent to {} ({e})", path.display())),
+        _ => unanswering(path, e),
+    }
 }
 
 /// A recorded `unpublished` measurement read this many seconds ago is answered, and read, as stale.
@@ -392,26 +411,62 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
 /// Once a request is on the wire the service may apply it whatever happens to the reply, so a
 /// lost reply is "cannot tell", never a retry.
 pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, Fail> {
-    let dropped = |why: &str| Fail::Dropped(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
-    let lost = |why: &str| Fail::Final(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
-    let request = request_head(argv, stdin.map(str::len), &caller_of(argv), current_task().as_deref(), current_request_id().as_deref()).map_err(|_| lost("unserialisable request"))?;
-    let mut bytes = format!("{request}\n").into_bytes();
-    bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
+    let bytes = encode_request(argv, stdin, current_task().as_deref(), current_request_id().as_deref())?;
     (&stream).write_all(&bytes).map_err(|_| dropped("write"))?;
     let mut reader = BufReader::with_capacity(1 << 20, stream);
     let mut head = String::new();
     if !matches!(reader.read_line(&mut head), Ok(n) if n > 0) {
         return Err(dropped("no reply"));
     }
-    let head: serde_json::Value = serde_json::from_str(head.trim()).map_err(|_| lost("malformed reply"))?;
-    let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return Err(lost("malformed reply")) };
-    let err_len = head["err_len"].as_u64().unwrap_or(0);
-    let mut body = vec![0u8; (len + err_len) as usize];
+    let head = ReplyHead::parse(&head)?;
+    let mut body = vec![0u8; head.body_len()];
     reader.read_exact(&mut body).map_err(|_| lost("truncated reply"))?;
-    let err = body.split_off(len as usize);
-    let text = |b: Vec<u8>| String::from_utf8(b).map_err(|_| lost("non-utf8 reply"));
-    let read_ended = head["read_ended"].as_bool().unwrap_or(false);
-    Ok(Reply { code: code as i32, out: text(body)?, err: text(err)?, read_ended })
+    head.reply(body)
+}
+
+fn dropped(why: &str) -> Fail {
+    Fail::Dropped(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"))
+}
+
+fn lost(why: &str) -> Fail {
+    Fail::Final(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"))
+}
+
+/// The bytes of one request: its head line, then `stdin` when there is one, under `task` and
+/// `request_id` as the caller names them.
+pub fn encode_request(argv: &[String], stdin: Option<&str>, task: Option<&str>, request_id: Option<&str>) -> Result<Vec<u8>, Fail> {
+    let request = request_head(argv, stdin.map(str::len), &caller_of(argv), task, request_id).map_err(|_| lost("unserialisable request"))?;
+    let mut bytes = format!("{request}\n").into_bytes();
+    bytes.extend_from_slice(stdin.unwrap_or_default().as_bytes());
+    Ok(bytes)
+}
+
+/// A reply's first line: the exit code and the lengths of the stdout and stderr that follow.
+pub struct ReplyHead {
+    code: i64,
+    len: u64,
+    err_len: u64,
+    read_ended: bool,
+}
+
+impl ReplyHead {
+    pub fn parse(line: &str) -> Result<Self, Fail> {
+        let head: serde_json::Value = serde_json::from_str(line.trim()).map_err(|_| lost("malformed reply"))?;
+        let (Some(code), Some(len)) = (head["exit_code"].as_i64(), head["len"].as_u64()) else { return Err(lost("malformed reply")) };
+        Ok(ReplyHead { code, len, err_len: head["err_len"].as_u64().unwrap_or(0), read_ended: head["read_ended"].as_bool().unwrap_or(false) })
+    }
+
+    /// How many bytes follow the head line.
+    pub fn body_len(&self) -> usize {
+        (self.len + self.err_len) as usize
+    }
+
+    /// The reply, from the [`body_len`](Self::body_len) bytes that followed the head line.
+    pub fn reply(self, mut body: Vec<u8>) -> Result<Reply, Fail> {
+        let err = body.split_off(self.len as usize);
+        let text = |b: Vec<u8>| String::from_utf8(b).map_err(|_| lost("non-utf8 reply"));
+        Ok(Reply { code: self.code as i32, out: text(body)?, err: text(err)?, read_ended: self.read_ended })
+    }
 }
 
 /// [`exchange_once`] with the failure as its text: one attempt, never repeated.
@@ -576,13 +631,7 @@ impl LcClient {
 
     /// The answer's stdout when it applied (exit 0); a refusal (3) or anything else is an error.
     pub fn answer<S: AsRef<str>>(&self, argv: &[S]) -> Result<String, LcError> {
-        let r = self.call(argv)?;
-        match r.code {
-            0 => Ok(r.out),
-            REFUSED => Err(LcError::Refused(r.text())),
-            _ if r.read_ended => Err(LcError::ReadEnded(r.text())),
-            _ => Err(LcError::Fault(r.text())),
-        }
+        self.call(argv)?.into_answer()
     }
 }
 

@@ -187,8 +187,8 @@ impl Journal for Overheard {
     }
 }
 
-/// The installed store views and the table of the revision applied to them.
-pub type StoreViews = (Arc<store_view::Projection>, Arc<store::ChangeTable>);
+/// The installed store views, the table of the revision applied to them, and the store's socket.
+pub type StoreViews = (Arc<store_view::Projection>, Arc<store::ChangeTable>, std::path::PathBuf);
 
 /// Everything that must finish before the dispatch loop can start. The journal is asked for at
 /// most half of `deadline`, so a store that cannot tell is reported here with time left to print it.
@@ -200,9 +200,9 @@ pub fn start_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runt
     startup.enter("start_tasks");
     start_tasks(&mut engine);
     startup.enter("store::start");
-    let store = store::start(&s.lc_socket).inspect_err(|e| eprintln!("{}", stamped(&format!("spira-runtime: no store views, tasks read the store per tick: {e}")))).ok(); // loop-safe: runs on the startup offload thread
+    let store = store::start(&s.lc_socket).map(|(views, table)| (views, table, s.lc_socket.clone())).inspect_err(|e| eprintln!("{}", stamped(&format!("spira-runtime: no store views, tasks read the store per tick: {e}")))).ok(); // loop-safe: runs on the startup offload thread
     let engine = match &store {
-        Some((_, table)) => engine.with_sweep(s.sweep_secs * 1000, table.clone()),
+        Some((_, table, _)) => engine.with_sweep(s.sweep_secs * 1000, table.clone()),
         None => engine,
     };
     Ok((engine, store))
