@@ -75,6 +75,7 @@ Read only for a blocker with no lifecycle record, or a CERTIFIED / IN_DELIVERY o
 | `stack_max_depth` (clamped to `spira-claim/src/rank.rs` `STACK_CEILING`; 0 turns stacking off) | `spira-claim/src/cli.rs` `judge_rows`; `spira-claim/src/rank.rs` `stack_cap`, `stack_plan` | config `spira.stack_max_depth` | `spira-config set spira.stack_max_depth`; default in `spira/conf.d/SPIRA_STACK_MAX_DEPTH` |
 | `incident_label` | `spira-claim/src/rank.rs` `stack_cap` | config `spira.incident_label` | `spira-config set spira.incident_label`; default in `spira/conf.d/SPIRA_INCIDENT_LABEL` |
 | `pilgrim_label` | `spira-claim/src/rank.rs` `stack_cap`, `spira-lc/src/control/claimable.rs` `judge` | config `spira.pilgrim_label` | `spira-config set spira.pilgrim_label`; default in `spira/conf.d/SPIRA_PILGRIM_LABEL` |
+| `skuld_label` | `spira-claim/src/rank.rs` `stack_cap`, `spira-lc/src/control/claimable.rs` `judge` | config `spira.skuld_label` | `spira-config set spira.skuld_label`; default in `spira/conf.d/SPIRA_SKULD_LABEL` |
 | `scope_label` | `spira-claim/src/cli.rs` `scope_label` → `spira-claim/src/ready.rs` `in_scope` | config `spira.scope_label` | `spira-config set spira.scope_label`; default in `spira/conf.d/SPIRA_SCOPE_LABEL` |
 | `no_loop_label` | `spira-claim/src/cli.rs` `no_loop_label` → `spira-claim/src/ready.rs` `in_scope` | config `spira.no_loop_label` | `spira-config set spira.no_loop_label`; default in `spira/conf.d/SPIRA_NO_LOOP_LABEL` |
 | `run` (where the stack-conflict and scoped-stop files are) | `spira-claim/src/cli.rs` `judge_rows` | config `spira.run` | `spira-config set spira.run`; default in `spira/conf.d/SPIRA_RUN` |
@@ -107,7 +108,7 @@ edge set exists only in the content store's `dependencies` table. Item 2 must wr
 Beyond `repo:`; the claim rule does not read persona.
 
 - `split-child` (`spira_config::nonwork::SPLIT_LABEL`) — read by `spira-claim/src/rank.rs` `parent_exempt`: a split child is not held back by its parent. Relabelling it triggers `spira-lc/src/bd.rs` `mark_rejudge`.
-- The incident and pilgrim labels (config `incident_label`, `pilgrim_label`) — read by `spira-claim/src/rank.rs` `stack_cap` and `spira-lc/src/control/claimable.rs` `judge`: a candidate carrying either never stacks (depth cap 0).
+- The incident, pilgrim and Skuld labels (config `incident_label`, `pilgrim_label`, `skuld_label`) — read by `spira-claim/src/rank.rs` `stack_cap` and `spira-lc/src/control/claimable.rs` `judge`: a candidate carrying any of them never stacks (depth cap 0).
 - The scope label and the no-loop label (config `scope_label`, `no_loop_label`) — read by `spira-claim/src/ready.rs` `in_scope` through `labels_match`: the candidate must carry every scope label and no no-loop label. Both are comma-separated lists.
 - The rune predicate labels (`RUNE_LABELS` / `RUNE_EXCLUDE_LABELS` of each rune) and the queue-wait label — read by `spira-claim/src/ready.rs` `in_any_partition`. **Rune attribution only**; they never change a verdict.
 - `branch:` — read by `spira-claim/src/rank.rs` `top_tier`. **Ranking only**; it does not decide claimability.
