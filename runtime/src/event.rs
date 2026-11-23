@@ -74,6 +74,8 @@ pub struct SweepFound {
     pub count: u64,
     pub rev: u64,
     pub reads: Vec<String>,
+    /// The source lost a change: the table passed every revision the engine heard.
+    pub lost: bool,
 }
 
 /// The body of a [`STORE_CHANGED`] event, as JSON.
