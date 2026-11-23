@@ -371,8 +371,13 @@ mod tests {
         let w = world();
         let mut r = Reader::new();
         r.pass(&w.src, NOW).unwrap();
-        write(&w.sess, &turn("assistant", "m4", IN_WINDOW, [100, 0, 0, 0]));
+        let kept = turn("assistant", "m4", IN_WINDOW, [100, 0, 0, 0]);
+        let shorter = std::fs::File::options().write(true).open(&w.sess).unwrap();
+        shorter.set_len(kept.len() as u64).unwrap();
+        touch(&w.sess);
+        let before = r.bytes_read;
         let kv = r.pass(&w.src, NOW).unwrap();
+        assert_eq!(r.bytes_read, before + kept.len() as u64, "a shorter file is read from its start");
         assert_eq!(get(&kv, "SP_TOK_SESS_TURNS"), "2", "m5 stays counted: ids are the turns' identity, not the file's");
         let before = r.bytes_read;
         let longer = turn("assistant", "m7", IN_WINDOW, [3, 0, 0, 0]) + &turn("assistant", "m8", IN_WINDOW, [4, 0, 0, 0]) + &turn("assistant", "m4", IN_WINDOW, [100, 0, 0, 0]);
@@ -399,6 +404,23 @@ mod tests {
         let kv = r.pass(&w.src, NOW).unwrap();
         assert_eq!(get(&kv, "SP_TOK_SESS_TURNS"), "3");
         assert_eq!(get(&kv, "SP_TOK_SESS_OUT"), "77");
+    }
+
+    #[test_id(twqx3hg)]
+    #[test]
+    fn a_file_untouched_since_the_cutoff_is_not_opened() {
+        let w = world();
+        let stale = w.src.projects.join("-home-me").join("old.jsonl");
+        write(&stale, &turn("assistant", "m-stale", IN_WINDOW, [1, 1, 1, 1]));
+        let f = std::fs::File::options().write(true).open(&stale).unwrap();
+        f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(NOW as u64 - 6 * 3600)).unwrap();
+        let mut r = Reader::new();
+        r.pass(&w.src, NOW).unwrap();
+        let fresh_only = Reader::new().pass(&w.src, NOW).unwrap();
+        let mut with_stale_counted = Reader::new();
+        with_stale_counted.pass(&w.src, NOW - 3 * 3600).unwrap();
+        assert_eq!(get(&fresh_only, "SP_TOK_SESS_TURNS"), "2", "m-stale is in a file the window cannot touch");
+        assert!(with_stale_counted.bytes_read > r.bytes_read, "a cutoff before the file's mtime reads it");
     }
 
     #[test_id(tlcbx91)]
