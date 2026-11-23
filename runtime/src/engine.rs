@@ -20,7 +20,7 @@ use crate::scheduler::Scheduler;
 use crate::wide::{Fields, NullSink, TurnRss, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
-/// A stream's poison state is asked again after this long, or when events were dispatched.
+/// A stream found quarantined is asked again after this long, so a cleared row resumes it; a stream found healthy is not.
 const POISON_RECHECK_MS: u64 = 300_000;
 
 /// Memory-only events a stream keeps in the projection; older ones are dropped.
@@ -1437,7 +1437,7 @@ impl Engine {
         let mut n = 0;
         let now = self.clock.now_ms();
         if now.saturating_sub(self.poison_cleared_at) >= POISON_RECHECK_MS {
-            self.poison_seen.clear();
+            self.poison_seen.retain(|_, p| !*p);
             self.poison_cleared_at = now;
         }
         while let Some((ev, local)) = self.queue.pop_front() {
