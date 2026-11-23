@@ -23,8 +23,8 @@ statement = "SPIRA_MAIL_LINT_CONSIDERED bypasses lint and records X-Spira-Lint-O
 
 [[use_case]]
 id = "UC-operator-channel-05"
-tier = "T2"
-statement = "Every message a real harness sender emits (lib.sh, sentinel, watchd, reflect, strand, pilgrimage, skew, incident, archivist) passes lint."
+tier = "T1"
+statement = "Every message a real harness sender builds (watchd's notify escalations, skew's escalation, the landing-stall and landing-refresh asks, reflect's stall escalation, incident's FENRIR question, archivist's digest) passes mail's lint unmodified, in its own crate; an archivist note without --digest is refused."
 
 [[use_case]]
 id = "UC-operator-channel-06"

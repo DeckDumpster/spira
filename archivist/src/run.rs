@@ -967,6 +967,23 @@ mod tests {
         assert!(seam.digests_sent.borrow().is_empty());
     }
 
+    // covers: UC-operator-channel-05
+    #[test_id(tr8mxwv)]
+    #[test]
+    fn the_digest_clears_the_mail_lint_and_the_same_note_without_digest_is_refused() {
+        let dir = testkit::TempDir::new("archivist-run");
+        digest_record(&dir, "sp-1: filed a bead for the stuck gate").unwrap();
+        let seam = FakeSeam::new();
+        *seam.today_value.borrow_mut() = "2026-09-30".to_string();
+        digest_send(&seam, &dir, "UTC").unwrap();
+        let (subject, body) = seam.digests_sent.borrow()[0].clone();
+        let kinds = testkit::manifest_dir().join("../spira/mail/kinds");
+        let note = |digest| mail::lint::LintInput { from: crate::seam::DIGEST_FROM, subject: &subject, kind: "note", default: "", urgent: false, body: &body, digest };
+        mail::lint::lint_check(&note(true), &kinds, "sp").unwrap();
+        let refused = mail::lint::lint_check(&note(false), &kinds, "sp").unwrap_err();
+        assert!(refused.contains("archivist note refused"), "{refused}");
+    }
+
     #[test_id(t41fpb8)]
     #[test]
     fn digest_send_mails_once_and_then_holds_for_the_same_day() {
