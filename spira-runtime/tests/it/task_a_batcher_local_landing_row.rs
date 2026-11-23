@@ -181,3 +181,15 @@ fn a_landing_row_dropped_because_its_batch_is_abandoned_closes_no_reds() {
     let (ran, _) = tick_on_row_landed(&three_member_row(), BATCH, false);
     assert!(!ran.iter().any(|n| n == SUPERSEDE_REDS), "{ran:?}");
 }
+
+#[test_id(tjolxn6)]
+#[test]
+fn a_recovered_landing_wakes_publish_once() {
+    let rc: RepoCarry = serde_json::from_str(STORED).unwrap();
+    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let mut snap = waiting_pool(BATCH, NOW);
+    snap.repos.get_mut("spira").unwrap().landed = vec![BATCH.into()];
+    let (_, acts) = decide(&carry, &snap);
+    let woken = acts.iter().filter(|a| a.effect == spira_runtime::tasks::a::queue_step::PUBLISH_WANTED).count();
+    assert_eq!(woken, 1, "{acts:?}");
+}

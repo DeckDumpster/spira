@@ -423,3 +423,62 @@ fn t5_the_probe_reads_a_no_run_status_and_the_record_fields() {
     let rec = edge::publish_rec(&kv).expect("a record with a pr");
     assert_eq!((rec.opened, rec.ci_started, rec.no_run_paged), (900, 1200, true));
 }
+
+fn world_of(repos: [(&str, Repo); 2]) -> std::sync::Arc<std::sync::Mutex<Snapshot>> {
+    std::sync::Arc::new(std::sync::Mutex::new(Snapshot { repos: repos.into_iter().map(|(n, r)| (n.to_string(), r)).collect(), world_running: true }))
+}
+
+fn rig_over(world: &std::sync::Arc<std::sync::Mutex<Snapshot>>) -> TaskRig {
+    let w = world.clone();
+    rig_with(1, move |_| Ok(serde_json::to_string(&*w.lock().unwrap()).unwrap()))
+}
+
+fn wake(r: &mut TaskRig) {
+    r.tick(STREAM, EventKind::new(spira_runtime::tasks::a::queue_step::PUBLISH_WANTED, r#"{"repo":"a","mode":"queue.local"}"#)).unwrap();
+    kit::assert_unpoisoned(r, STREAM);
+}
+
+fn carried(r: &TaskRig) -> Carry {
+    let e = r.journaled().into_iter().rev().find(|e| e.kind.tag == STATE).expect("a carry was recorded");
+    serde_json::from_str(&e.kind.body).unwrap()
+}
+
+fn push_repo() -> Repo {
+    Repo { publish_mode: "push".into(), publish_rec: None, pr: Pr::Gone, open_publish_prs: vec![], round_holds_hypervisor: true, ..repo(Pr::Gone) }
+}
+
+fn pr_repo() -> Repo {
+    Repo { round_holds_hypervisor: true, ..repo(Pr::Gone) }
+}
+
+#[test_id(t6ire33)]
+#[test]
+fn a_publish_wake_pushes_a_push_repo_past_a_round_and_defers_a_pr_repo() {
+    let idle = Repo { stopped: true, ..push_repo() };
+    let world = world_of([("a", idle.clone()), ("b", Repo { stopped: true, ..pr_repo() })]);
+    let mut r = rig_over(&world);
+    let asked = r.requested().len();
+    *world.lock().unwrap() = Snapshot { repos: [("a".to_string(), push_repo()), ("b".to_string(), pr_repo())].into(), world_running: true };
+    wake(&mut r);
+    let acts: Vec<(String, String)> = r.requested()[asked..].iter().filter(|q| q.name != OBSERVE).map(|q| (q.name.clone(), q.input.clone())).collect();
+    assert_eq!(acts.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), [PUSH_FORGE], "{acts:?}");
+    assert!(acts[0].1.contains("\"a\""), "{acts:?}");
+    assert_eq!(carried(&r).repos["b"].state, State::Deferred);
+}
+
+#[test_id(ttdk8yo)]
+#[test]
+fn wakes_inside_half_a_cadence_do_not_spend_a_deferral() {
+    let held = |at: u64| Repo { observed_at: at, ..pr_repo() };
+    let world = world_of([("a", Repo { stopped: true, ..push_repo() }), ("b", held(1_000))]);
+    let mut r = rig_over(&world);
+    assert_eq!(carried(&r).repos["b"].deferred_ticks, 1);
+    for at in [1_100, 1_500, 1_000 + CADENCE_MS / 2000 - 1] {
+        world.lock().unwrap().repos.insert("b".into(), held(at));
+        wake(&mut r);
+        assert_eq!(carried(&r).repos["b"].deferred_ticks, 1, "a wake at +{}s", at - 1_000);
+    }
+    world.lock().unwrap().repos.insert("b".into(), held(1_000 + CADENCE_MS / 2000));
+    wake(&mut r);
+    assert_eq!(carried(&r).repos["b"].deferred_ticks, 2);
+}

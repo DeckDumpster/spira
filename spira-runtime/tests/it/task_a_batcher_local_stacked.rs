@@ -147,7 +147,7 @@ fn the_upper_round_lands_only_after_the_lower() {
 
     let landed = leg_of(&acts, LAND);
     let (carry, acts) = on_outcome(&carry, LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &landed, NOW + 130_000);
-    assert_eq!(names(&acts), [SUPERSEDE_REDS], "the landing asks only for the repo's local reds to be closed: {acts:?}");
+    assert_eq!(names(&acts), [SUPERSEDE_REDS, spira_runtime::tasks::a::queue_step::PUBLISH_WANTED], "the landing closes the repo's local reds and wakes publish: {acts:?}");
     let rc = &carry.repos["spira"];
     assert_eq!((rc.state, rc.batch.as_deref(), rc.above.len()), (State::Certified, Some("r2"), 0), "the upper is now the lowest round");
 
