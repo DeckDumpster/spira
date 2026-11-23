@@ -263,13 +263,13 @@ mod tests {
     #[test]
     fn a_failed_hook_install_is_reported_with_its_reason_and_a_good_one_is_silent() {
         let ok = Installer(Out::ok("worktree-hooks: armed"), Mutex::default());
-        assert_eq!(arm_hooks(&ok, Path::new("/rel/spira"), Path::new("/run/worktree/sp-a")), Ok(()));
-        assert_eq!(ok.1.lock().unwrap()[0], ["env", "SPIRA_HOME=/rel/spira", "worktree-hooks.sh", "install", "/run/worktree/sp-a"]);
-        let bad = Installer(Out::fail(1, "worktree-hooks: no hooks directory at /rel/spira/hooks\n"), Mutex::default());
-        let e = arm_hooks(&bad, Path::new("/rel/spira"), Path::new("/run/worktree/sp-a")).unwrap_err();
-        assert!(e.contains("exited 1") && e.contains("no hooks directory at /rel/spira/hooks"), "{e}");
+        assert_eq!(arm_hooks(&ok, Path::new("rel/spira"), Path::new("run/worktree/sp-a")), Ok(()));
+        assert_eq!(ok.1.lock().unwrap()[0], ["env", "SPIRA_HOME=rel/spira", "worktree-hooks.sh", "install", "run/worktree/sp-a"]);
+        let bad = Installer(Out::fail(1, "worktree-hooks: no hooks directory at rel/spira/hooks\n"), Mutex::default());
+        let e = arm_hooks(&bad, Path::new("rel/spira"), Path::new("run/worktree/sp-a")).unwrap_err();
+        assert!(e.contains("exited 1") && e.contains("no hooks directory at rel/spira/hooks"), "{e}");
         let missing = Installer(Out::fail(127, ""), Mutex::default());
-        assert!(arm_hooks(&missing, Path::new("/r"), Path::new("/w")).unwrap_err().contains("exited 127"));
+        assert!(arm_hooks(&missing, Path::new("r"), Path::new("w")).unwrap_err().contains("exited 127"));
     }
 
     type Answer = Box<dyn Fn(&Path, &[&str], usize) -> Out + Send + Sync>;

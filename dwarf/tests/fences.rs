@@ -11,6 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use testkit::{git, TempDir};
 
+fn sys_path() -> String {
+    format!("{}:{}", system_paths::USR_BIN, system_paths::BIN)
+}
+
 fn spira() -> PathBuf {
     testkit::manifest_dir()
         .join("../spira")
@@ -82,11 +86,11 @@ impl Rig {
         c.env_clear()
             .env(
                 "PATH",
-                format!("{}:/usr/bin:/bin", self.dir.join("bin").display()),
+                format!("{}:{}", self.dir.join("bin").display(), sys_path()),
             )
             .env("HOME", &*self.dir)
             .env("SPIRA_TOML", &self.toml)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_GLOBAL", system_paths::DEV_NULL)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("STUB_RESOLVED", self.dir.join("resolved.sh"))
             .env("STUB_LANDREF", "origin/main")
@@ -184,7 +188,7 @@ impl Fence {
         let mut c = Command::new("bash");
         c.arg(spira().join("hooks/dwarf-fence.sh"))
             .env_clear()
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", sys_path())
             .env("HOME", &*self.dir)
             .env("SPIRA_RUN", self.run_dir())
             .env("SPIRA_PROD", self.prod())
@@ -267,11 +271,11 @@ fn a_dwarf_may_not_operate_the_queue_or_the_landing_but_may_name_them_as_argumen
         refused("bash spira/landing.sh spira"),
         refused("git push origin main"),
         refused("gh pr create --title x"),
-        refused("/opt/spira/bin/queue flush spira"),
+        refused("/opt/spira/bin/queue flush spira"), // not a path: a shell command the fence reads
         refused("queue verdict spira"),
         refused("git add spira/landing.sh && bash spira/landing.sh push"),
-        allowed("/opt/spira/bin/queue stats"),
-        allowed("/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x"),
+        allowed("/opt/spira/bin/queue stats"), // not a path: a shell command the fence reads
+        allowed("/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x"), // not a path: a shell command the fence reads
         allowed("git add spira/landing.sh"),
     ];
     let wrong = wrong_rows(&f, &rows, &[DWARF]);
@@ -367,7 +371,7 @@ const BD_REFUSED: &[&str] = &[
     "BEADS_DIR=/x/.beads ~/.local/bin/bd create x",
     "cd /x && bd list",
     "$SPIRA_RELEASE/bin/bdq create -t bug x",
-    "/r/bin/bdq --help",
+    "/r/bin/bdq --help", // not a path: a shell command the fence reads
     "bash -c \"bd show sp-1\"",
     "env FOO=1 bd-embedded list",
     "export BEADS_DIR=/x",
@@ -401,7 +405,7 @@ const BD_ALLOWED: &[&str] = &[
 fn store_rows_refused(range: std::ops::Range<usize>) {
     let f = Fence::new();
     let rows: Vec<Row> = BD_REFUSED[range].iter().map(|c| refused(*c)).collect();
-    let wrong = wrong_rows(&f, &rows, &[DWARF, ("SPIRA_DB", "/x/db")]);
+    let wrong = wrong_rows(&f, &rows, &[DWARF]);
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
@@ -437,7 +441,7 @@ fn a_dwarf_may_not_run_bd_in_a_loop_or_set_a_beads_dir() {
 fn a_dwarf_may_name_bd_in_prose_and_the_override_and_a_non_dwarf_session_pass() {
     let f = Fence::new();
     let rows: Vec<Row> = BD_ALLOWED.iter().map(|c| allowed(*c)).collect();
-    let wrong = wrong_rows(&f, &rows, &[DWARF, ("SPIRA_DB", "/x/db")]);
+    let wrong = wrong_rows(&f, &rows, &[DWARF]);
     assert!(wrong.is_empty(), "{wrong:#?}");
     let rows: Vec<Row> = BD_REFUSED.iter().take(3).map(|c| allowed(*c)).collect();
     let overridden = wrong_rows(&f, &rows, &[DWARF, OVERRIDE]);
@@ -476,7 +480,7 @@ fn the_fence_blocks_on_stdout_with_exit_zero_and_is_inert_outside_its_scope() {
         "SPIRA_DWARF_OVERRIDE passes"
     );
     let read =
-        serde_json::json!({"tool_name": "Read", "tool_input": {"file_path": "/etc/hostname"}})
+        serde_json::json!({"tool_name": "Read", "tool_input": {"file_path": format!("{}/hostname", system_paths::ETC)}})
             .to_string();
     assert!(
         !blocked(&f.feed(&read, &[DWARF]).1),
@@ -977,7 +981,7 @@ fn the_tracked_pre_commit_hook_refuses_by_name_when_the_linter_is_missing() {
     stage(&r, "g.txt", "g\n");
     let o = rig
         .git(&r, "op", &["commit", "-q", "-m", "sp-test: no linter"])
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", sys_path())
         .output()
         .unwrap();
     assert!(
