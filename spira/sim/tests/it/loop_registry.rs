@@ -162,7 +162,7 @@ fn the_registrys_default_hold_is_seven_days() {
     assert_eq!(spira_sim::registryworld::DEFAULT_HOLD_SECS, 604_800);
 }
 
-const LIFTED: &str = "suite:test-pilgrim-world.sh";
+const LIFTED: &str = "suite:test-lifted-fixture.sh";
 
 /// An owner whose fix lands with another member while its test's row is in force; the round lifts
 /// the row, runs the test on the merged tree and decides what the landing may clear.

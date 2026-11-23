@@ -84,7 +84,6 @@ migration bead per family from this table.
 | test-dwarf-teardown-e2e-wired.sh | 88 | decision-blocked, own-closeout and ledger-segment rows | **migrated**: whole-run tests in `dwarf/src/tests.rs`; suite deleted | Shard; goes with parent. |
 | test-dwarf-teardown-e2e-exit.sh | 81 | yield-headless, exit-code and operator-wait rows | **partly migrated**: yield-headless and exit-code rows moved to `dwarf/src/tests.rs`; the operator-wait rows stay (real work broker and mail) | Shard; goes with parent. |
 | test-dwarf-lifecycle-cutover.sh | 65 | dwarf.sh on the semantic layer against a throwaway Dolt and real bd | sim (not migrated: the sim has no dwarf actor, and the property is dwarf against real bd) | The semantic layer has a sim; the Dolt-grant half belongs to family I. |
-| test-ops-closing.sh | 92 | close-time fences on a dwarf's finished session, through the real dwarf with a shim | **migrated**: dwarf runs are whole-run tests; the shell keeps only the pure phrase table | Fence = predicate over close evidence (unit) + wiring (scenario step); neither needs 92 s of dwarf. |
 | test-dwarf-gate-unfinished-attempts.sh | 31 | releasing a bead while its gate is still running leaves `attempts_of` unchanged | **migrated**: `dwarf/src/tests.rs` plus `spira-claim` events fold; suite deleted | An SQL net-zero rule over events; test the attempts query. |
 
 ### E — dwarf claim, resume and hygiene

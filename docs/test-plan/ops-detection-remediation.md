@@ -115,7 +115,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | D8 | `strand.sh check --from` + mail stub | strand-capacity, strand-pool-paused, strand-partition, strand-lock | **Open** (`sp-fhzib.4`) |
 | D9 | Halted-world skip + stable-ref pattern | watchtower.sh, watchtower-czar-outcome.sh, watchtower-queue.sh, czar-pass.sh | Partially resolved: watchtower-queue.sh is gone; the remaining three still each carry their own halt-guard assertion (`sp-fhzib.4`'s shared T1 table is `sp-fhzib.5`'s further scope, undone). |
 | D10 | Livelock categories + detector re-run | test-livelock.sh | Resolved (`sp-wj9o75.6`): suite deleted; `strand::detectors` tests carry cells 29-30. |
-| D11 | Close-reason phrase flags | test-livelock.sh, test-ops-closing.sh | Resolved for the detector (`sp-wj9o75.6`): `strand::detectors` tests carry cell 30. |
+| D11 | Close-reason phrase flags | test-livelock.sh, the retired ops-closing suite | Resolved for the detector (`sp-wj9o75.6`): `strand::detectors` tests carry cell 30. |
 | D12 | "Every snapshot section present" loop | test-watchtower.sh, test-watchtower-lapse.sh | Resolved (`sp-wj9o75.3`): both suites deleted; `render::tests` carries the one section check. |
 | D13 | Watermark prose greps of mimir.md | test-mimir.sh, test-mimir-sibling-blind.sh | Resolved (`sp-fhzib.3`, `sp-wj9o75.6`): `dwarf/src/mimir_brief_tests.rs` |
 | D14 | Trigger shape (dedup, threshold, lane guard) | the retired groom-trigger suite, test-mimir-trigger.sh | Resolved for Mimir (`sp-wj9o75.6`): `mimir-trigger/src/main.rs` tests. |

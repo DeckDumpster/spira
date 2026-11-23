@@ -9,7 +9,7 @@ Scope: everything that carries words between the harness, agents and Ryan. That 
 
 The bd-scanning answer watchers (`answers.py`, `cockpit/answered-since.sh`, `cockpit/unanswered.sh`, `cockpit/watch-answers.sh`) were retired (sp-xsl8i, per Ryan: "all of this should be coming via emails"). Every surface the operator answers from — a mail reply, or the cockpit pane's own close/comment on a decision — now mails the concierge directly (`mail sendmail`, `model.rs close_decision`/`comment`); UC-operator-channel-20..23 are marked `uncovered` for the same reason, not gaps to fill.
 
-Primary files: 31 bash suites, **436 CI suite-seconds** (main-push run 35947142904, all `ok`). Secondary: test-ops-closing.sh (102 s, owned by dwarf-execution), test-cockpit-watcher-owner.sh, test-mail-pane.sh, test-unit-restart-limits.sh, test-unmapped-repo-park.sh and the panel `model.rs`/`store.rs`/`main.rs` Rust tests. Their verdicts are noted here only where they overlap this area.
+Primary files: 31 bash suites, **436 CI suite-seconds** (main-push run 35947142904, all `ok`). Secondary: the retired ops-closing suite (102 s, owned by dwarf-execution), test-cockpit-watcher-owner.sh, test-mail-pane.sh, test-unit-restart-limits.sh, test-unmapped-repo-park.sh and the panel `model.rs`/`store.rs`/`main.rs` Rust tests. Their verdicts are noted here only where they overlap this area.
 
 ---
 
@@ -144,7 +144,7 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 | 42 | the retired render-memories suite (13) | T3 (testdb as key-value store), 7 s | **DEMOTE-TO-T1** (12 cases over a slug→body fixture); keep 1 real-bd read |
 | 43 | test-statute-projection.sh (12) | T3, 5 s | RESOLVED (sp-fe3ee): law-synth.sh now ships as spira/law-synth.sh, so the law-synth half no longer skips. KEEP at T2 |
 | 44 | test-sop-lint.sh (13); test-sop.sh::lint METRIC (4) | T3, 8 s + part of 24 s | **MERGE**: test-sop-lint.sh MERGE-INTO test-sop.sh as a T1 validator table. Keep 1 fail-closed read. The "gate calls sop.sh lint" grep → T0 |
-| 45 | test-sop.sh (≈110 asserts); test-ops-closing.sh (secondary, 102 s: SOP closing rule, which is now **off** for every shipped persona, sp-q27cp) | T3, 24 s | KEEP at T2 behind a shelf seam. **Stop invoking sop.sh twice per rc+output pair.** The ops.md brief-text check → T0 brief lint (**SOURCE-GREP**). test-ops-closing.sh's SOP half is flagged to its owning area as testing a mechanism no persona enables |
+| 45 | test-sop.sh (≈110 asserts); the retired ops-closing suite (secondary, 102 s: SOP closing rule, which is now **off** for every shipped persona, sp-q27cp) | T3, 24 s | KEEP at T2 behind a shelf seam. **Stop invoking sop.sh twice per rc+output pair.** The ops.md brief-text check → T0 brief lint (**SOURCE-GREP**). the retired ops-closing suite's SOP half is flagged to its owning area as testing a mechanism no persona enables |
 
 ---
 

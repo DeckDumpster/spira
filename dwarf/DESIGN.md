@@ -678,7 +678,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
-    `test-ops-closing.sh:82`, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
+    the retired ops-closing suite, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
     `test-submitted-lands.sh:105`, the retired thrash-teardown suite, the retired timeout suite,
     the retired world-drain-deadline suite. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
     stop copying it (the binary takes `--home`).
@@ -993,7 +993,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
-    `test-ops-closing.sh:82`, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
+    the retired ops-closing suite, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
     `test-submitted-lands.sh:105`, the retired thrash-teardown suite, the retired timeout suite,
     the retired world-drain-deadline suite. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
     stop copying it (the binary takes `--home`).
