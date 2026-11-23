@@ -182,6 +182,7 @@ sim = { path = "../sim" }
 testkit = { path = "../testkit" }
 release = { path = "../release" }
 lifecycle = { path = "../lifecycle" }
+state-store = { path = "../state-store" }
 
 [profile.release]
 opt-level = "z"
