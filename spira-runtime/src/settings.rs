@@ -92,15 +92,6 @@ fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Res
     raw.trim().parse::<T>().ok().filter(|v| *v > T::default()).ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
 }
 
-/// `owner/name` of the review repository, or empty while either half is unset.
-fn cr_repo(owner: &str, name: &str) -> String {
-    if owner.trim().is_empty() || name.trim().is_empty() {
-        String::new()
-    } else {
-        format!("{}/{}", owner.trim(), name.trim())
-    }
-}
-
 impl Settings {
     /// The keys the service reads for itself and for what its tasks share (the journal, the
     /// world, the forge). A task's own keys are on its row in `tasks::all()`.
@@ -294,7 +285,6 @@ impl Settings {
             run_dir: run_dir.clone(),
             cr_tz: get("SPIRA_CR_TZ")?,
             cr_open_hour: get("SPIRA_CR_OPEN_HOUR")?,
-            cr_repo: cr_repo(&get("SPIRA_CR_REPO_OWNER")?, &get("SPIRA_CR_REPO_NAME")?),
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             scope_label: get("SPIRA_SCOPE_LABEL")?,
             desired_dir: PathBuf::from(get("SPIRA_DESIRED_DIR")?),
