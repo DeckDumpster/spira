@@ -305,7 +305,7 @@ fn a_hundred_requests_close_the_span_file_for_writing_about_once_a_second() {
     let Server { mut child, .. } = server;
     let _ = child.kill();
     let _ = child.wait();
-    assert!(closes as u64 <= elapsed + 2, "{closes} close-for-write events in {elapsed} s");
+    assert!(closes as u64 <= elapsed + 2, "{closes} close-for-write events in {elapsed} s"); // clock-safe: measures the span-file closes per elapsed second the test itself spent; no wait depends on it
 }
 
 #[test_id(tkdm6hh)]
