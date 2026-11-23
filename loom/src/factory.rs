@@ -1093,6 +1093,7 @@ mod tests {
             working_min: 1,
             submit_bound_s: 3600,
             cut_bound_s: 600,
+            pr_bound_s: 900,
             gate_timeout_s: 2700,
             certify_par: 2,
             deliver_bound_s: 3600,
