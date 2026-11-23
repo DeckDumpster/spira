@@ -45,18 +45,18 @@ pub fn run(m: &HttpMargin) -> Result<Seen, String> {
     let held = m.post_comment(id, &anchor, "held note", true, None)?;
     let reply = m.post_comment(id, &anchor, "held answer", true, Some(&held.thread))?;
 
-    let read: Value = serde_json::from_str(&browser(&m.base, "GET", &format!("/api/collections/{id}"), None)?).map_err(|e| e.to_string())?;
+    let read: Value = serde_json::from_str(&browser(&m.base, "GET", &format!("/api/collections/{id}"), None)?).map_err(|e| e.to_string())?; // not a path: the reader's route
     let first_version = read["documents"].as_array().and_then(|d| d.iter().find(|d| d["path"] == "src/a.rs")).map(|d| d["version_id"].clone()).ok_or("the collection has no version_id")?;
     let agent_thread = m.thread(id, &held.thread)?;
     let second_version = m.post_version(&a, SECOND)?;
     let his = json!({"version_id": first_version, "first_line": 1, "last_line": 1, "body": "his note on the first version"});
-    browser(&m.base, "POST", &format!("/c/{id}/threads"), Some(&his))?;
+    browser(&m.base, "POST", &format!("/c/{id}/threads"), Some(&his))?; // not a path: the reader's route
     let all = m.threads(id)?;
     let his_on_first_version = all.iter().find(|t| t.comments.iter().any(|c| !c.by_agent())).map(|t| t.id.clone()).ok_or("his thread is not listed")?;
     let first_text = m.document_text(&a, 1)?;
     let second_text = m.document_text(&a, 2)?;
 
-    browser(&m.base, "POST", &format!("/c/{id}/publish"), Some(&json!({})))?;
+    browser(&m.base, "POST", &format!("/c/{id}/publish"), Some(&json!({})))?; // not a path: the reader's route
     let published = m.collection(id)?;
     let changes = m.changes(0, 0)?;
     m.close(id)?;

@@ -117,7 +117,7 @@ fn the_recorded_session_replays_request_for_request_and_parses_every_reply() {
     assert_eq!((t.document.path.as_str(), t.document.version), ("src/a.rs", 1));
     assert_eq!(t.comments.len(), 2);
     assert!(t.comments[0].by_agent() && t.comments[0].author == "concierge" && t.comments[0].author != READER, "{:?}", t.comments[0]);
-    assert!(t.comments[0].created_at_ms > 0 && t.comments[0].created_at_ms % 1000 == 0, "seconds become ms: {:?}", t.comments[0]);
+    assert!(t.comments[0].created_at_ms > 0 && t.comments[0].created_at_ms.is_multiple_of(1000), "seconds become ms: {:?}", t.comments[0]);
 
     assert_eq!(seen.second_version, 2);
     assert_eq!((seen.first_text.as_str(), seen.second_text.as_str()), (scenario::FIRST, scenario::SECOND));
@@ -131,7 +131,7 @@ fn the_recorded_session_replays_request_for_request_and_parses_every_reply() {
     assert_eq!(carried.comments.len(), 2, "the held reply is in the held thread");
 
     assert_eq!(seen.published.state, "published");
-    assert!(seen.published.published_at_ms.is_some_and(|ms| ms > 0 && ms % 1000 == 0));
+    assert!(seen.published.published_at_ms.is_some_and(|ms| ms > 0 && ms.is_multiple_of(1000)));
     assert!(seen.changes.through >= 3 && seen.changes.changes.len() as u64 >= 3, "{:?}", seen.changes);
     assert_eq!(seen.closed.state, "closed");
     assert_eq!(seen.closed.published_at_ms, None);
@@ -157,9 +157,9 @@ fn a_thread_listing_of_two_pages_is_followed_by_its_cursor_to_the_end() {
     let first = format!(r#"{{"items":[{}],"next":"5.t1"}}"#, thread_json("t1", 7));
     let second = format!(r#"{{"items":[{}],"next":null}}"#, thread_json("t2", 7));
     let (base, served) = replay(vec![
-        exchange("GET", "/api/collections/c1/threads", "limit=200", Value::Null, &first),
-        exchange("GET", "/api/collections/c1/threads", "limit=200&after=5.t1", Value::Null, &second),
-        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC),
+        exchange("GET", "/api/collections/c1/threads", "limit=200", Value::Null, &first), // not a path: the reader's route
+        exchange("GET", "/api/collections/c1/threads", "limit=200&after=5.t1", Value::Null, &second), // not a path: the reader's route
+        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC), // not a path: the reader's route
     ]);
     let got = client(&dir, &base).threads("c1").unwrap();
     assert_eq!(got.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["t1", "t2"]);
@@ -172,10 +172,10 @@ fn a_thread_on_a_version_past_the_first_page_of_versions_resolves() {
     let dir = TempDir::new("margin-old-version");
     let (v1, v2) = (r#"{"items":[{"id":1,"number":1,"created_at":1}],"next":"1"}"#, r#"{"items":[{"id":4,"number":2,"created_at":2}],"next":null}"#);
     let (base, served) = replay(vec![
-        exchange("GET", "/api/threads/t1", "", Value::Null, &thread_json("t1", 4)),
-        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC),
-        exchange("GET", "/api/documents/d1/versions", "limit=200", Value::Null, v1),
-        exchange("GET", "/api/documents/d1/versions", "limit=200&after=1", Value::Null, v2),
+        exchange("GET", "/api/threads/t1", "", Value::Null, &thread_json("t1", 4)), // not a path: the reader's route
+        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC), // not a path: the reader's route
+        exchange("GET", "/api/documents/d1/versions", "limit=200", Value::Null, v1), // not a path: the reader's route
+        exchange("GET", "/api/documents/d1/versions", "limit=200&after=1", Value::Null, v2), // not a path: the reader's route
     ]);
     let t = client(&dir, &base).thread("c1", "t1").unwrap();
     assert_eq!((t.document.id.as_str(), t.document.version, t.anchor.path.as_str()), ("d1", 2, "a.rs"));
@@ -187,9 +187,9 @@ fn a_thread_on_a_version_past_the_first_page_of_versions_resolves() {
 fn a_thread_whose_version_no_document_holds_is_an_error_not_a_guess() {
     let dir = TempDir::new("margin-unresolved");
     let (base, _served) = replay(vec![
-        exchange("GET", "/api/threads/t1", "", Value::Null, &thread_json("t1", 99)),
-        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC),
-        exchange("GET", "/api/documents/d1/versions", "limit=200", Value::Null, r#"{"items":[{"id":1,"number":1,"created_at":1}],"next":null}"#),
+        exchange("GET", "/api/threads/t1", "", Value::Null, &thread_json("t1", 99)), // not a path: the reader's route
+        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC), // not a path: the reader's route
+        exchange("GET", "/api/documents/d1/versions", "limit=200", Value::Null, r#"{"items":[{"id":1,"number":1,"created_at":1}],"next":null}"#), // not a path: the reader's route
     ]);
     let e = client(&dir, &base).thread("c1", "t1").unwrap_err();
     assert!(e.contains("99"), "{e}");
@@ -199,7 +199,7 @@ fn a_thread_whose_version_no_document_holds_is_an_error_not_a_guess() {
 #[test]
 fn a_feed_wait_longer_than_the_reader_allows_is_asked_for_at_thirty_seconds() {
     let dir = TempDir::new("margin-wait");
-    let (base, served) = replay(vec![exchange("GET", "/api/changes", "after=4&wait=30", Value::Null, r#"{"changes":[],"last_seq":4}"#)]);
+    let (base, served) = replay(vec![exchange("GET", "/api/changes", "after=4&wait=30", Value::Null, r#"{"changes":[],"last_seq":4}"#)]); // not a path: the reader's route
     let got = client(&dir, &base).changes(4, 90).unwrap();
     assert_eq!((got.through, got.changes.len()), (4, 0));
     assert_eq!(served.join().unwrap(), Vec::<String>::new());

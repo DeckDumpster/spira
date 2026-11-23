@@ -46,7 +46,7 @@ fn read_request(s: &mut TcpStream) -> Result<Request, String> {
 }
 
 fn forward(base: &str, r: &Request) -> (u16, String) {
-    let req = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build().request(&r.method, &format!("{base}{}", r.target));
+    let req = ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build().request(&r.method, &format!("{base}{}", r.target));
     let req = match &r.bearer {
         Some(b) => req.set("Authorization", &format!("Bearer {b}")),
         None => req,
@@ -76,7 +76,7 @@ fn main() -> Result<(), String> {
             let _ = write!(s, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len());
         }
     });
-    let reader = HttpMargin { base: local, token_file, timeout: Duration::from_secs(10) };
+    let reader = HttpMargin { base: local, token_file, timeout: Duration::from_secs(5) };
     scenario::run(&reader)?;
     let tape = log.lock().unwrap();
     std::fs::write(&out, serde_json::to_string_pretty(&*tape).map_err(|e| e.to_string())? + "\n").map_err(|e| format!("writing {out}: {e}"))?;
