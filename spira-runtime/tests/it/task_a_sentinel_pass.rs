@@ -476,6 +476,23 @@ mod landing_log_rotation {
         n
     }
 
+    #[test_id(tv0zaq3)]
+    #[test]
+    fn the_landing_leg_carries_the_pinned_log_cap_and_keep() {
+        let (_, acts) = decide(
+            &Carry::default(),
+            &Snapshot {
+                landing_active: false,
+                land_log_cap_mb: 7,
+                land_log_keep: 5,
+                ..submitted()
+            },
+        );
+        let start = acts.iter().find(|a| a.effect == LANDING_START).unwrap();
+        let w: Write = serde_json::from_str(&start.input).unwrap();
+        assert_eq!((w.log_cap_mb, w.log_keep), (7, 5));
+    }
+
     #[test_id(tvekfuc)]
     #[test]
     fn a_log_at_the_cap_becomes_dot_one_and_only_keep_files_remain() {

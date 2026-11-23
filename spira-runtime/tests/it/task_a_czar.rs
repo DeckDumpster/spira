@@ -371,3 +371,21 @@ fn a_rotation_before_the_new_live_file_exists_loses_nothing() {
     let (_, third) = pass(dir.path(), &carry);
     assert_eq!(events(&third).len(), 1, "{third:?}");
 }
+
+#[test_id(ty6iwfc)]
+#[test]
+fn a_mark_in_a_file_rotated_twice_is_followed_through_every_newer_file() {
+    use std::io::Write;
+    let dir = testkit::TempDir::new("czar-log-rotated-twice");
+    let log = dir.path().join("landing.log");
+    std::fs::write(&log, format!("{LOG_PASS}\n")).unwrap();
+    let (carry, _) = pass(dir.path(), &Carry::default());
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(format!("{}\n", stamped(100, LOG_SORT)).as_bytes()).unwrap();
+    std::fs::rename(&log, dir.path().join("landing.log.1")).unwrap();
+    std::fs::write(&log, format!("{}\n", stamped(200, LOG_SORT))).unwrap();
+    std::fs::rename(dir.path().join("landing.log.1"), dir.path().join("landing.log.2")).unwrap();
+    std::fs::rename(&log, dir.path().join("landing.log.1")).unwrap();
+    std::fs::write(&log, format!("{}\n", stamped(300, LOG_SORT))).unwrap();
+    let (_, second) = pass(dir.path(), &carry);
+    assert_eq!(events(&second).len(), 3, "{second:?}");
+}

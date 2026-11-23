@@ -4500,6 +4500,30 @@ fn landing_log_text_reads_kept_files_oldest_first_then_the_live_one() {
     );
 }
 
+#[test_id(tdx4oen)]
+#[test]
+fn rotation_keeps_the_live_file_in_the_count_and_ignores_names_that_are_not_numbers() {
+    let t = T::new(LandMode::Queue);
+    let run = t.s().run.clone();
+    let put = |n: &str, v: &str| fs::write(run.join(n), v).unwrap();
+    let read = |n: &str| fs::read_to_string(run.join(n)).ok();
+    put("landing.log", "live");
+    put("landing.log.1", "one");
+    put("landing.log.2", "two");
+    put("landing.log.bak", "bak");
+    assert!(!crate::ops::rotate_landing_log(&run, 100, 3).unwrap());
+    assert!(crate::ops::rotate_landing_log(&run, 1, 3).unwrap());
+    assert_eq!(read("landing.log.1").as_deref(), Some("live"));
+    assert_eq!(read("landing.log.2").as_deref(), Some("one"));
+    assert_eq!(read("landing.log.3"), None);
+    assert_eq!(read("landing.log"), None);
+    assert_eq!(read("landing.log.bak").as_deref(), Some("bak"));
+    put("landing.log", "again");
+    assert!(crate::ops::rotate_landing_log(&run, 1, 1).unwrap());
+    assert_eq!(read("landing.log.1"), None);
+    assert_eq!(read("landing.log.2"), None);
+}
+
 #[test_id(tho8ghw)]
 #[test]
 fn usage_errors_exit_two() {

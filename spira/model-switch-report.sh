@@ -161,21 +161,27 @@ LANDED_RE = re.compile(r'^(\S+) \S+: landed (?:\S+/)?([\w.-]+)$')
 
 landed_beads = {}  # bead_id → landing epoch
 
-try:
-    with open(landing_path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            m = LANDED_RE.match(line.strip())
-            if not m:
-                continue
-            ts = ep(m.group(1))
-            if ts is None:
-                continue
-            bead = m.group(2)
-            # keep the FIRST landing for each bead (they should only land once)
-            if bead not in landed_beads:
-                landed_beads[bead] = ts
-except FileNotFoundError:
-    pass
+import glob
+rotated = sorted(
+    (p for p in glob.glob(landing_path + ".*") if p[len(landing_path) + 1:].isdigit()),
+    key=lambda p: -int(p[len(landing_path) + 1:]),
+)
+for path in rotated + [landing_path]:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = LANDED_RE.match(line.strip())
+                if not m:
+                    continue
+                ts = ep(m.group(1))
+                if ts is None:
+                    continue
+                bead = m.group(2)
+                # keep the FIRST landing for each bead (they should only land once)
+                if bead not in landed_beads:
+                    landed_beads[bead] = ts
+    except FileNotFoundError:
+        pass
 
 # --------------------------------------------------------------------------
 # Read SOP ledger — one JSON object per line
