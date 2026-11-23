@@ -77,10 +77,8 @@ pub struct Cfg {
 impl Cfg {
     pub fn load() -> Result<Cfg, String> {
         use spira_config::process::{cfg, cfg_parse};
-        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let home = io::home_dir();
         Ok(Cfg {
-            instance: spira_config::resolve::resolve_instance(&env, &home)?,
+            instance: spira_config::process::instance()?,
             trace_lines: cfg_parse::<i64>("COCKPIT_TRACE_LINES")?,
             max_live_dwarves: cfg_parse::<i64>("SPIRA_MAX_LIVE_DWARVES")?,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
@@ -220,35 +218,53 @@ fn stamp_keys(start: i64) -> Kv {
     out
 }
 
+/// The `dwarf-*.pid` and `cockpit-dwarf-*.cache` paths in the run directory, from one listing.
+#[derive(Default)]
+struct DwarfFiles {
+    pids: Vec<PathBuf>,
+    caches: Vec<PathBuf>,
+}
+
+fn list_dwarf_files(run: &Path) -> DwarfFiles {
+    let mut found = DwarfFiles::default();
+    for e in std::fs::read_dir(run).into_iter().flatten().flatten() {
+        let name = e.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.starts_with("dwarf-") && name.ends_with(".pid") {
+            found.pids.push(e.path());
+        } else if name.starts_with("cockpit-dwarf-") && name.ends_with(".cache") {
+            found.caches.push(e.path());
+        }
+    }
+    found.pids.sort();
+    found
+}
+
 pub fn now_keys(cfg: &Cfg) -> Kv {
+    now_keys_with(cfg, &io::run_dir(), &list_dwarf_files)
+}
+
+fn now_keys_with(cfg: &Cfg, run: &Path, list: &dyn Fn(&Path) -> DwarfFiles) -> Kv {
     let start = io::now();
     let mut out = stamp_keys(start);
 
     let home = io::home_dir();
-    let run = io::run_dir();
+    let run = run.to_path_buf();
     let mut i = 0usize;
-    if let Ok(entries) = std::fs::read_dir(&run) {
-        let mut pidfiles: Vec<_> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with("dwarf-") && n.ends_with(".pid"))
-                    .unwrap_or(false)
-            })
-            .collect();
-        pidfiles.sort();
-        for pf in pidfiles {
-            if !dwarf_alive(&pf) {
+    let files = list(&run);
+    let mut live_dwarves = 0;
+    {
+        for pf in &files.pids {
+            if !dwarf_alive(pf) {
                 continue;
             }
+            live_dwarves += 1;
             let base = pf.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
             // base = dwarf-<rune>-<bead>
             let rest = base.strip_prefix("dwarf-").unwrap_or("");
             let (fay, bead) = rest.split_once('-').unwrap_or(("", rest));
-            let st = dwarf_static(&run, &home, bead, fay, &pf);
-            let pid = io::read_trim(&pf).and_then(|s| s.trim().parse::<i64>().ok());
+            let st = dwarf_static(&run, &home, bead, fay, pf);
+            let pid = io::read_trim(pf).and_then(|s| s.trim().parse::<i64>().ok());
             let secs = pid.and_then(io::proc_etimes).unwrap_or(0);
 
             push(&mut out, &format!("SP_DWARF{i}_PRI"), st.pri.clone());
@@ -308,7 +324,7 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
         }
     }
     push(&mut out, "SP_DWARF_N", i.to_string());
-    sweep_dwarf_static(&run, io::now());
+    sweep_dwarf_static(&files.caches, io::now());
 
     for (key, value) in loop_pulse(scheduler_status()) {
         push(&mut out, key, value);
@@ -345,16 +361,6 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_GATE_N", gate_n.to_string());
     push(&mut out, "SP_GATE_LIVE", gate_live.to_string());
 
-    let mut live_dwarves = 0;
-    if let Ok(entries) = std::fs::read_dir(&run) {
-        for e in entries.flatten() {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with("dwarf-") && name.ends_with(".pid") && dwarf_alive(&e.path()) {
-                live_dwarves += 1;
-            }
-        }
-    }
     push(&mut out, "SP_DWARVES", live_dwarves.to_string());
 
     let cap_now = io::now();
@@ -614,19 +620,13 @@ fn dwarf_static(run: &std::path::Path, home: &std::path::Path, bead: &str, fay: 
     st
 }
 
-fn sweep_dwarf_static(run: &std::path::Path, now: i64) {
-    let Ok(entries) = std::fs::read_dir(run) else { return };
-    for e in entries.flatten() {
-        let name = e.file_name();
-        let name = name.to_string_lossy();
-        if !(name.starts_with("cockpit-dwarf-") && name.ends_with(".cache")) {
-            continue;
-        }
-        let age = e.metadata().and_then(|m| m.modified()).ok()
+fn sweep_dwarf_static(caches: &[PathBuf], now: i64) {
+    for path in caches {
+        let age = std::fs::metadata(path).and_then(|m| m.modified()).ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| now - d.as_secs() as i64);
         if age.is_some_and(|a| a > 2 * DWARF_STATIC_TTL_S) {
-            let _ = std::fs::remove_file(e.path());
+            let _ = std::fs::remove_file(path);
         }
     }
 }
@@ -793,6 +793,55 @@ mod mail_tests {
         }
         let none = mail_keys(&Cfg { mail: "nonexistent/mail".into(), ..Cfg::default() });
         assert_eq!(none.iter().find(|(n, _)| n == "SP_MAIL_UNREAD").map(|(_, v)| v.as_str()), Some("?"), "an unreadable mailbox is unknown, not zero");
+    }
+}
+
+#[cfg(test)]
+mod now_listing_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn pid_file(run: &Path, rune: &str, bead: &str) -> PathBuf {
+        run.join(format!("dwarf-{rune}-{bead}.{}", "pid"))
+    }
+
+    fn live_pid(run: &Path, rune: &str, bead: &str) {
+        let pf = pid_file(run, rune, bead);
+        std::fs::write(&pf, "1").unwrap();
+        std::fs::write(pf.with_extension("lease"), (io::now() + 3600).to_string()).unwrap();
+    }
+
+    #[test_id(tdt9ga9)]
+    #[test]
+    fn one_now_pass_lists_the_run_directory_once() {
+        let dir = testkit::TempDir::new("cockpit-now-listing");
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let world = spira_config::process::fixture_world_env(dir.path(), &run, &["spira"]);
+        let edits: Vec<(&str, Option<&str>)> = world.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&edits);
+        live_pid(&run, "a", "sp-one");
+        live_pid(&run, "b", "sp-two");
+        std::fs::write(pid_file(&run, "c", "sp-dead"), "1").unwrap();
+        let expired = run.join("cockpit-dwarf-sp-old.cache");
+        let fresh = run.join("cockpit-dwarf-sp-new.cache");
+        std::fs::write(&expired, "{}").unwrap();
+        std::fs::write(&fresh, "{}").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * DWARF_STATIC_TTL_S as u64);
+        std::fs::File::options().write(true).open(&expired).unwrap().set_modified(old).unwrap();
+
+        let listings = Cell::new(0);
+        let kv = now_keys_with(&Cfg::default(), &run, &|r| {
+            listings.set(listings.get() + 1);
+            list_dwarf_files(r)
+        });
+        let get = |k: &str| kv.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+
+        assert_eq!(listings.get(), 1, "the run directory is listed once per pass");
+        assert_eq!(get("SP_DWARF_N").as_deref(), Some("2"), "only live pids are rows");
+        assert_eq!(get("SP_DWARVES").as_deref(), Some("2"), "only live pids are counted");
+        assert!(!expired.exists(), "the expired cache is removed");
+        assert!(fresh.exists(), "a fresh cache stays");
     }
 }
 

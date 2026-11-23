@@ -14,6 +14,11 @@ name = "no_fork_edges"
 path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "pinned_config"
+path = "tests/pinned_config.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["install/integration", "bead/integration", "dwarf/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "store-view/integration", "strand/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration", "release/integration", "queue/integration"]
 [dependencies]

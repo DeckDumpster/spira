@@ -176,8 +176,7 @@ pub fn max_dwarves() -> String {
 }
 
 pub fn try_run_dir() -> Result<PathBuf, String> {
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env, &try_home_dir()?).map_err(|e| format!("cockpit-collect: {e}"))
+    spira_config::process::run_dir().map_err(|e| format!("cockpit-collect: {e}"))
 }
 
 /// Panics when [`try_run_dir`] fails; `main` calls `try_run_dir` first and refuses, so only
