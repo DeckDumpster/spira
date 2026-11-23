@@ -228,7 +228,9 @@ impl Terminal {
 
 pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
-/// The in-memory views and the watch that keeps them current.
+/// The in-memory views and the watch that keeps them current. A read refuses once the last
+/// confirmation is older than the configured staleness, plus one watch hold ([`WATCH_HOLD_MS`])
+/// while that confirmation was a watch answer; a load, or a poll that failed, gets no extension.
 pub struct Projection {
     client: LcClient,
     stale_after: Duration,
@@ -532,17 +534,17 @@ impl Projection {
     /// Reads every view afresh: the batch records and the revision they were listed at, then
     /// the live lifecycle rows. A change after that revision is redelivered by the next watch.
     pub fn load(&self) -> Result<(), LcError> {
-        self.load_at().map(|_| ())
+        self.load_at(false).map(|_| ())
     }
 
-    fn load_at(&self) -> Result<u64, LcError> {
+    fn load_at(&self, watched: bool) -> Result<u64, LcError> {
         let (items, rev) = self.rc_list(BATCHES, &OPEN_STATES, OPEN_MAX)?;
         let beads = beads_of(&self.client.answer(&["list", "--live"])?)?;
         let batches = batches_of(items);
         let mut s = self.lock();
         self.end_held(ALL);
         self.terminal().forget(None);
-        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), watched: false, batches, beads: Some(beads.into_iter().collect()) };
+        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), watched, batches, beads: Some(beads.into_iter().collect()) };
         Ok(rev)
     }
 
@@ -563,7 +565,9 @@ impl Projection {
     /// revision. Nothing moves unless the whole answer applied.
     pub fn poll(&self) -> Result<Polled, LcError> {
         let polled = self.poll_once();
-        self.lock().watched = polled.is_ok();
+        if polled.is_err() {
+            self.lock().watched = false;
+        }
         *self.lost.lock().unwrap_or_else(|e| e.into_inner()) = polled.as_ref().err().map(ToString::to_string);
         polled
     }
@@ -573,7 +577,7 @@ impl Projection {
             let s = self.lock();
             s.rev.filter(|_| s.beads.is_some())
         };
-        let Some(from) = held else { return self.load_at().map(|rev| Polled::Reloaded { rev }) };
+        let Some(from) = held else { return self.load_at(true).map(|rev| Polled::Reloaded { rev }) };
         let (from_s, wait) = (from.to_string(), WATCH_HOLD_MS.to_string());
         // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
         // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
@@ -585,10 +589,11 @@ impl Projection {
             let mut s = self.lock();
             s.rev = Some(p.max(from));
             s.confirmed = Some((self.clock)());
+            s.watched = true;
             return Ok(Polled::Quiet { rev: p.max(from) });
         }
         if w.get("too_old").is_some() {
-            return self.load_at().map(|rev| Polled::Reloaded { rev });
+            return self.load_at(true).map(|rev| Polled::Reloaded { rev });
         }
         let (Some(events), Some(through)) = (w["events"].as_array(), w["through"].as_u64()) else {
             return Err(fault(format!("watch: unreadable answer {w}")));
@@ -644,10 +649,11 @@ impl Projection {
         }
         s.rev = Some(through.max(from));
         s.confirmed = Some((self.clock)());
+        s.watched = true;
         Ok(Polled::Applied { through: through.max(from), keys })
     }
 
-    /// Polls until `stop` is set, pausing after a poll the store did not answer; `observe` sees
+    /// Polls until `stop` is set, each poll one watch of [`WATCH_HOLD_MS`]; pausing after a poll the store did not answer; `observe` sees
     /// each poll that succeeded.
     pub fn run(&self, stop: &AtomicBool, observe: &mut dyn FnMut(&Polled)) {
         struct Clear<'a>(&'a AtomicBool);
