@@ -1070,7 +1070,7 @@ impl Engine {
     fn report_sweep_found(&mut self, ev: &Event, handler: &str, count: u64) {
         let (from, seen) = self.ticking.get(handler).map_or((None, None), |t| (t.sweep_from, t.sweep_at_rev));
         let rev = seen.or_else(|| self.sweep.as_ref().and_then(|w| w.changes.rev())).unwrap_or(0);
-        let lost = from.is_some() && self.heard_rev.map_or(true, |h| h < rev);
+        let lost = from.is_some() && self.heard_rev.is_none_or(|h| h < rev);
         let reads: Vec<String> = self.ticking.get(handler).map(|t| t.wake.reads.iter().map(|r| r.to_string()).collect()).unwrap_or_default();
         let wide = self.unit("wake.sweep_found", Some(ev));
         wide.set("task", handler);
