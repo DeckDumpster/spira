@@ -312,28 +312,8 @@ fn throughput_section(out: &mut Kv, cfg: &Cfg) {
     }
 }
 
-const TOKEN_KEYS: &[&str] = &[
-    "SP_TOK_WINDOW_H", "SP_TOK_DWARF_WIN", "SP_TOK_ARC_WIN", "SP_TOK_SESS_WIN", "SP_TOK_WIN",
-    "SP_TOK_DWARF_TURNS", "SP_TOK_ARC_TURNS", "SP_TOK_SESS_TURNS", "SP_TOK_DWARF_CTX",
-    "SP_TOK_ARC_CTX", "SP_TOK_SESS_CTX", "SP_TOK_DWARF_OUT", "SP_TOK_ARC_OUT", "SP_TOK_SESS_OUT",
-    "SP_TOK_DWARF_RECENT", "SP_TOK_ARC_RECENT", "SP_TOK_SESS_RECENT",
-];
-
 fn tokens_section(out: &mut Kv) {
-    match io::run_tool("tokens.sh", &["env"], None) {
-        Some(env) => {
-            for line in env.lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    push(out, k, v.to_string());
-                }
-            }
-        }
-        None => {
-            for k in TOKEN_KEYS {
-                push(out, k, "?");
-            }
-        }
-    }
+    super::tokens::section(out, super::tokens::Source::from_config(), crate::timeutil::now_secs());
 }
 
 #[cfg(test)]
@@ -375,5 +355,86 @@ mod tests {
             }
         }
         assert_eq!(defect, 2);
+    }
+
+    fn world_cfg(dir: &testkit::TempDir) -> (testkit::EnvGuard, Cfg) {
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let world = spira_config::process::fixture_world_env(dir.path(), &run, &["spira"]);
+        let mut edits: Vec<(&str, Option<&str>)> = world.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        edits.push(("SPIRA_BDJSON_FIXTURE", None));
+        (testkit::env(&edits), Cfg::default())
+    }
+
+    #[test_id(t517sx6)]
+    #[test]
+    fn the_fast_core_pass_answers_waiting_alone_and_the_slow_pass_carries_the_token_keys() {
+        let dir = testkit::TempDir::new("cockpit-core-split");
+        let (_env, cfg) = world_cfg(&dir);
+        let core = crate::probes::run("core", &cfg).unwrap();
+        assert_eq!(core.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["SP_WAITING"]);
+        let detail = crate::probes::run("core_detail", &cfg).unwrap();
+        for k in crate::probes::tokens::KEYS {
+            assert!(detail.iter().any(|(n, _)| n == k), "{k} is the slow pass's");
+        }
+        assert!(!detail.iter().any(|(n, _)| n == "SP_WAITING" || n.ends_with("_RECENT") && n.starts_with("SP_TOK")));
+    }
+
+    fn iso(secs: i64) -> String {
+        let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z.rem_euclid(146_097);
+        let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+        let y = yoe + era * 400 + i64::from(m <= 2);
+        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    }
+
+    fn token_env(dir: &testkit::TempDir, projects: &std::path::Path, window: &str, path: Option<&str>) -> testkit::EnvGuard {
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let (run_s, proj_s) = (run.display().to_string(), projects.display().to_string());
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_TOKEN_PROJECTS", &proj_s), ("SPIRA_TOKEN_WINDOW_H", window), ("SPIRA_WORKSPACES", &dir.path().display().to_string())]);
+        let home = spira_config::resolve::locate_home_for_process().unwrap();
+        testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str()), ("PATH", path)])
+    }
+
+    #[test_id(tm900o1)]
+    #[test]
+    fn the_section_reads_the_configured_transcripts_and_starts_no_tokens_sh() {
+        let dir = testkit::TempDir::new("cockpit-tokens-section");
+        let projects = dir.path().join("projects");
+        std::fs::create_dir_all(projects.join("-p")).unwrap();
+        let ts = iso(crate::timeutil::now_secs() - 60);
+        std::fs::write(projects.join("-p/s.jsonl"), format!("{{\"type\":\"assistant\",\"timestamp\":\"{ts}\",\"message\":{{\"id\":\"m\",\"usage\":{{\"input_tokens\":1,\"cache_creation_input_tokens\":2,\"cache_read_input_tokens\":3,\"output_tokens\":4}}}}}}\n")).unwrap();
+        let bin = dir.path().join("bin");
+        let marker = dir.path().join("started");
+        std::fs::create_dir_all(&bin).unwrap();
+        testkit::write_exe(bin.join("tokens.sh"), &format!("#!/bin/sh\necho started >> {}\nexit 1\n", marker.display()));
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+        let _env = token_env(&dir, &projects, "7", Some(&path));
+        for _ in 0..2 {
+            let mut out = Kv::new();
+            spira_config::process::with_fresh(|| tokens_section(&mut out)).unwrap();
+            let get = |k: &str| out.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+            assert_eq!((get("SP_TOK_WINDOW_H").as_deref(), get("SP_TOK_SESS_TURNS").as_deref(), get("SP_TOK_WIN").as_deref()), (Some("7"), Some("1"), Some("10")));
+        }
+        assert!(!marker.exists(), "tokens.sh was started");
+    }
+
+    #[test_id(tpvc2wp)]
+    #[test]
+    fn an_unreadable_transcript_directory_or_window_is_question_marks_in_the_section() {
+        let dir = testkit::TempDir::new("cockpit-tokens-unreadable");
+        for (projects, window) in [(dir.path().join("absent"), "7"), (dir.path().to_path_buf(), "not-a-number")] {
+            let _env = token_env(&dir, &projects, window, None);
+            let mut out = Kv::new();
+            spira_config::process::with_fresh(|| tokens_section(&mut out)).unwrap();
+            assert_eq!(out.len(), crate::probes::tokens::KEYS.len());
+            assert!(out.iter().all(|(_, v)| v == "?"), "{out:?}");
+        }
     }
 }

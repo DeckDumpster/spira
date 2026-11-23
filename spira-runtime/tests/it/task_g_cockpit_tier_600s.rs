@@ -173,3 +173,11 @@ fn a_boot_does_not_republish_a_snapshot_whose_digest_it_published() {
 fn a_boot_does_not_refresh_a_snapshot_no_newer_than_the_last_read() {
     boot_matches(|| rig(1, |_| with_clock(snap(""))));
 }
+
+#[test_id(tjgcnez)]
+#[test]
+fn the_tier_pins_the_keys_the_in_process_token_reader_reads() {
+    for key in ["SPIRA_RUN", "SPIRA_TOKEN_PROJECTS", "SPIRA_TOKEN_WINDOW_H"] {
+        assert!(KEYS.contains(&key), "{key} is read by core_detail's token section");
+    }
+}
