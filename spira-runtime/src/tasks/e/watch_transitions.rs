@@ -37,7 +37,8 @@
 //! record that cannot be read is `P0 BLIND`, paged once, and the period's table line says BLIND:
 //! never an all-clear (`law-absence-needs-a-positive-control`). An observe that fails or times
 //! out is BLIND the same way. Inside an activation's store-restart window
-//! (`SPIRA_ACTIVATION_STORE_BOUND`) an unreadable store is a non-paging `WAIT BLIND` line.
+//! (`SPIRA_ACTIVATION_STORE_BOUND`), judged at the observe's request or its outcome, an unreadable
+//! store, a failed observe and a timed-out one are a non-paging `WAIT BLIND` line.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1151,10 +1152,16 @@ impl Handler for WatchTransitions {
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
+        let requested_at = crate::watchers::answered_request_at(view, ev).unwrap_or(ev.at);
+        let restarting = || {
+            let window = |at: u64| crate::watchers::activation_window(&cfg.run, at / 1000, cfg.activation_bound_s);
+            Snapshot { maintenance: spira_world::freeze::read_maintenance(&cfg.run), activation: window(requested_at).or_else(|| window(ev.at)), ..Snapshot::default() }
+        };
+        let blind_with = |why: &str| Snapshot { maintenance: restarting().maintenance, activation: restarting().activation, ..blind(why) };
         let mut snap = match ev.kind.tag.as_str() {
-            EFFECT_SUCCEEDED => serde_json::from_str::<Snapshot>(&ev.kind.body).unwrap_or_else(|e| blind(&format!("the observe answer did not parse: {e}"))),
-            EFFECT_FAILED => blind(&format!("the observe failed: {}", ev.kind.body.chars().take(200).collect::<String>())),
-            EFFECT_TIMED_OUT => blind("the observe timed out"),
+            EFFECT_SUCCEEDED => serde_json::from_str::<Snapshot>(&ev.kind.body).unwrap_or_else(|e| blind_with(&format!("the observe answer did not parse: {e}"))),
+            EFFECT_FAILED => blind_with(&format!("the observe failed: {}", ev.kind.body.chars().take(200).collect::<String>())),
+            EFFECT_TIMED_OUT => blind_with("the observe timed out"),
             _ => return vec![],
         };
         mark_blocked(&mut snap, &dependency::batcher_blocks(view));

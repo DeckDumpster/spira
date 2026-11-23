@@ -1896,3 +1896,107 @@ fn mark_prs_marks_submitted_beads_of_pr_repos_and_fill_prs_gives_them_the_landin
     let marks: Vec<Option<PrWait>> = s.beads.iter().map(|b| b.pr).collect();
     assert_eq!(marks, vec![Some(PrWait { read: Some(read) }), None, None]);
 }
+
+const RELEASE_SHA: &str = "f72cbc540a1111111111111111111111111111aa";
+
+fn run_with_record(published_at: u64) -> testkit::TempDir {
+    let dir = testkit::TempDir::new("transitions-restart");
+    let event = |to, at| release::machine::ReleaseEvent { to, reason: "r".into(), at, restarted: vec![] };
+    release::machine::save(&dir.path().join("release"), &release::machine::Release { sha: RELEASE_SHA.into(), events: vec![event(release::machine::ReleaseState::Published, published_at)] }).unwrap();
+    dir
+}
+
+fn restart_config(dir: &testkit::TempDir) -> Config {
+    Config { run: dir.path().to_path_buf(), ..config() }
+}
+
+fn healthy_rig(cfg: Config) -> TaskRig {
+    TaskRig::new(1, WatchTransitions::new(cfg).registration()).unwrap().double(OBSERVE, |input| {
+        let now = serde_json::from_str::<serde_json::Value>(input).unwrap()["now"].as_u64().unwrap();
+        Ok(serde_json::to_string(&healthy(now)).unwrap())
+    })
+    .double(INBOX_APPEND, |_| Ok("appended".into()))
+    .double(LOG_APPEND, |_| Ok("appended".into()))
+}
+
+fn start(mut r: TaskRig) -> TaskRig {
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.advance(T0 * 1000).unwrap();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+fn timing_out_rig(cfg: Config) -> TaskRig {
+    TaskRig::new(1, WatchTransitions::new(cfg).registration()).unwrap().timing_out().double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into()))
+}
+
+fn blind_pages(r: &TaskRig) -> Vec<String> {
+    lines(r).into_iter().filter(|l| l.contains("P0 BLIND")).collect()
+}
+
+fn restart_waits(r: &TaskRig) -> Vec<String> {
+    lines(r).into_iter().filter(|l| l.contains("WAIT BLIND: store restarting")).collect()
+}
+
+#[test_id(tc0vbpa)]
+#[test]
+fn a_timed_out_observe_inside_an_activation_window_waits_and_the_next_period_past_the_bound_pages_once() {
+    let dir = run_with_record(T0 - 10);
+    let mut r = start(timing_out_rig(restart_config(&dir)));
+    assert!(blind_pages(&r).is_empty(), "{:?}", lines(&r));
+    let w = restart_waits(&r);
+    assert_eq!(w.len(), 1, "{:?}", lines(&r));
+    assert!(w[0].contains("f72cbc540a11") && w[0].contains("bound 75s"), "{w:?}");
+    r.advance(300_000).unwrap();
+    let p = blind_pages(&r);
+    assert_eq!(p.len(), 1, "{:?}", lines(&r));
+    assert!(p[0].contains("the observe timed out"), "{p:?}");
+}
+
+#[test_id(tskaato)]
+#[test]
+fn a_failed_observe_inside_an_activation_window_waits() {
+    let dir = run_with_record(T0 - 10);
+    let r = start(TaskRig::new(1, WatchTransitions::new(restart_config(&dir)).registration()).unwrap().double(OBSERVE, |_| Err("store unavailable".into())).double(INBOX_APPEND, |_| Ok("appended".into())).double(LOG_APPEND, |_| Ok("appended".into())));
+    assert!(blind_pages(&r).is_empty(), "{:?}", lines(&r));
+    assert_eq!(restart_waits(&r).len(), 1, "{:?}", lines(&r));
+}
+
+#[test_id(t0m6skv)]
+#[test]
+fn an_observe_overtaken_by_a_restart_and_reopened_inside_the_window_never_pages_and_the_table_returns() {
+    let dir = run_with_record(T0 - 10);
+    let cfg = restart_config(&dir);
+    let mut r = start(healthy_rig(cfg.clone()).hanging(OBSERVE));
+    r.advance(5_000).unwrap();
+    r.reopen(WatchTransitions::new(cfg).registration()).unwrap();
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.tick(stream, kind).unwrap();
+    r.advance(1_000).unwrap();
+    assert!(blind_pages(&r).is_empty(), "{:?}", lines(&r));
+    assert!(log_lines(&r).iter().any(|l| l.contains("READY")), "{:?}", log_lines(&r));
+}
+
+#[test_id(txg33jn)]
+#[test]
+fn a_timed_out_observe_under_a_live_maintenance_waits_without_a_page() {
+    let dir = run_with_record(T0 - 10_000);
+    let held = spira_world::freeze::Maintenance { owner: "operator".into(), why: "restoring the store".into(), since: T0 - 5, pid: std::process::id() };
+    std::fs::write(spira_world::freeze::maintenance_path(dir.path()), serde_json::to_string(&held).unwrap()).unwrap();
+    let r = start(timing_out_rig(restart_config(&dir)));
+    assert!(blind_pages(&r).is_empty(), "{:?}", lines(&r));
+    assert!(lines(&r).iter().any(|l| l.contains("WAIT BLIND: store stopped for maintenance")), "{:?}", lines(&r));
+}
+
+#[test_id(t8j2pfo)]
+#[test]
+fn a_request_inside_the_bound_with_its_outcome_past_it_waits_and_both_past_it_pages() {
+    let inside = run_with_record(T0 - 60);
+    let r = start(timing_out_rig(restart_config(&inside)));
+    assert!(blind_pages(&r).is_empty(), "{:?}", lines(&r));
+    assert_eq!(restart_waits(&r).len(), 1, "{:?}", lines(&r));
+    let past = run_with_record(T0 - 100);
+    let r = start(timing_out_rig(restart_config(&past)));
+    assert_eq!(blind_pages(&r).len(), 1, "{:?}", lines(&r));
+    assert!(restart_waits(&r).is_empty(), "{:?}", lines(&r));
+}
