@@ -14,6 +14,7 @@ pub const NAME: &str = "margin-comments";
 pub const STREAM: &str = "task.margin-comments";
 pub const BOOT: EventKindTag = "margin-comments.boot";
 pub const STATE_TAG: EventKindTag = "margin-comments.state";
+pub const OVERDUE: EventKindTag = "margin-comments.overdue";
 pub const DELIVER: &str = "margin.deliver";
 pub const PUBLISH: &str = "margin.publish";
 
@@ -22,6 +23,7 @@ pub const PUBLISH_CALL_SECS: u64 = 100;
 const PUBLISH_DEADLINE_MS: u64 = (PUBLISH_CALL_SECS + 20) * 1000;
 const INBOX_DEADLINE_MS: u64 = 10_000;
 pub const MAX_ATTEMPTS: u32 = 20;
+const UNREACHABLE_PAGE_MS: u64 = 180_000;
 
 /// The input of `margin.deliver`: one comment of the operator's, and where it sits in its answer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +56,12 @@ pub struct Failed {
 pub struct Carry {
     /// Epoch milliseconds the current run of unanswered feeds began; `None` while the feed answers.
     pub unreachable: Option<u64>,
+    /// Whether the current run has been said; a recovery is said only after it.
+    #[serde(default)]
+    pub paged: bool,
+    /// Counts state changes: the carry is written on whichever stream the event came from, and the newest is the highest.
+    #[serde(default)]
+    pub rev: u64,
     /// Acts that failed and wait for the next sweep, by key.
     pub failed: BTreeMap<String, Failed>,
 }
@@ -127,15 +135,29 @@ pub fn decide(carry: &Carry, ev: &Event, answered: Option<&EffectSpec>) -> (Carr
             }
         }
         MARGIN_CHANGED => {
+            if carry.paged {
+                if let Some(since) = carry.unreachable {
+                    cmds.push(say(ev.at, &format!("margin feed reachable again after {}s", ev.at.saturating_sub(since) / 1000)));
+                }
+            }
             next.unreachable = None;
+            next.paged = false;
             if let Ok(changes) = serde_json::from_str::<Changes>(&ev.kind.body) {
                 cmds.extend(actions(&changes));
             }
         }
         MARGIN_UNREACHABLE => {
-            if let (None, Ok(u)) = (carry.unreachable, serde_json::from_str::<Unreachable>(&ev.kind.body)) {
+            if let (false, Ok(u)) = (carry.paged, serde_json::from_str::<Unreachable>(&ev.kind.body)) {
                 next.unreachable = Some(u.since_ms);
-                cmds.push(say(ev.at, &format!("margin feed unreachable since {}: {}", iso8601(u.since_ms / 1000), u.error)));
+                cmds.push(Command::Timer { at: u.since_ms + UNREACHABLE_PAGE_MS, kind: EventKind::new(OVERDUE, &ev.kind.body) });
+            }
+        }
+        OVERDUE => {
+            if let (false, Ok(u)) = (carry.paged, serde_json::from_str::<Unreachable>(&ev.kind.body)) {
+                if carry.unreachable == Some(u.since_ms) {
+                    next.paged = true;
+                    cmds.push(say(ev.at, &format!("margin feed unreachable since {}: {}", iso8601(u.since_ms / 1000), u.error)));
+                }
             }
         }
         EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT => {
@@ -154,16 +176,17 @@ pub fn decide(carry: &Carry, ev: &Event, answered: Option<&EffectSpec>) -> (Carr
 
 impl Handler for MarginComments {
     fn interests(&self) -> &[EventKindTag] {
-        &[BOOT, MARGIN_CHANGED, MARGIN_UNREACHABLE, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[BOOT, OVERDUE, MARGIN_CHANGED, MARGIN_UNREACHABLE, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         let own = StreamKey(STREAM.into());
-        let carry = carried::<Carry>(view, &own, STATE_TAG);
+        let carry = [own, StreamKey(MARGIN_STREAM.into())].iter().map(|s| carried::<Carry>(view, s, STATE_TAG)).max_by_key(|c| c.rev).unwrap_or_default();
         let answered = answered_spec(view, ev);
-        let (next, mut cmds) = decide(&carry, ev, answered.as_ref());
+        let (mut next, mut cmds) = decide(&carry, ev, answered.as_ref());
         if next != carry {
-            cmds.push(Command::EmitTo { stream: own, kind: EventKind::new(STATE_TAG, &json(&next)) });
+            next.rev = carry.rev + 1;
+            cmds.push(Command::Emit(EventKind::new(STATE_TAG, &json(&next))));
         }
         if ev.kind.tag == BOOT {
             cmds.push(Command::Timer { at: ev.at + self.sweep_ms, kind: EventKind::new(BOOT, "") });
@@ -213,16 +236,23 @@ mod tests {
 
     #[test_id(tiszg4b)]
     #[test]
-    fn an_unreachable_feed_is_said_once_per_run_and_again_after_a_good_answer() {
-        let down = |since| event(MARGIN_UNREACHABLE, serde_json::to_string(&Unreachable { since_ms: since, error: "connection refused".into() }).unwrap());
-        let (c1, said1) = decide(&Carry::default(), &down(1_000), None);
-        let (c2, said2) = decide(&c1, &down(2_000), None);
-        assert_eq!((said1.len(), said2.len()), (1, 0));
+    fn an_unreachable_feed_is_said_once_it_is_overdue_and_again_after_a_good_answer() {
+        let body = |since| serde_json::to_string(&Unreachable { since_ms: since, error: "connection refused".into() }).unwrap();
+        let down = |since| event(MARGIN_UNREACHABLE, body(since));
+        let overdue = |since| Event { at: since + UNREACHABLE_PAGE_MS, ..event(OVERDUE, body(since)) };
+        let (c1, armed) = decide(&Carry::default(), &down(1_000), None);
+        assert!(matches!(&armed[..], [Command::Timer { at, .. }] if *at == 1_000 + UNREACHABLE_PAGE_MS), "{}", armed.len());
+        let (c2, said1) = decide(&c1, &overdue(1_000), None);
+        let (c3, said2) = decide(&c2, &overdue(1_000), None);
+        let (c4, again) = decide(&c3, &down(2_000), None);
+        assert_eq!((said1.len(), said2.len(), again.len()), (1, 0, 0));
         let Command::Effect(line) = &said1[0] else { unreachable!() };
         assert!(line.input.contains("margin feed unreachable since 1970-01-01T00:00:01Z: connection refused"), "{}", line.input);
-        let (c3, _) = decide(&c2, &changed(vec![]), None);
-        assert_eq!(c3.unreachable, None);
-        assert_eq!(decide(&c3, &down(3_000), None).1.len(), 1);
+        let (c5, back) = decide(&c4, &Event { at: 241_000, ..changed(vec![]) }, None);
+        assert_eq!((c5.unreachable, c5.paged), (None, false));
+        let Command::Effect(line) = &back[0] else { unreachable!() };
+        assert!(line.input.contains("margin feed reachable again after 240s"), "{}", line.input);
+        assert_eq!(decide(&c5, &down(3_000), None).1.len(), 1);
     }
 
     #[test_id(tuvprkw)]
