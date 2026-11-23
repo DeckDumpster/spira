@@ -762,11 +762,22 @@ cargo_test_reds() {
            if (match($0, /[^ ]*\/?tests\//)) { d = substr($0, RSTART, RLENGTH); sub(/\/?tests\/$/, "", d); if (d == "") d = "." } }
          d != "" && /^test .* \.\.\. FAILED/ { if (d == "." && t != "") print "FAIL test:" t, $2; else print "FAIL dir:" d, $2 }' "$1"
 }
+# "<test>\t<over secs>\t<passed|failed|unfinished>" per test the watcher flagged (a tabbed line of <hung>; a guard line has no tab).
+long_running() {
+    [ -s "$1" ] || return 0
+    awk 'FNR == NR { if (index($0, "\t") && !(substr($0, 1, index($0, "\t") - 1) in seen)) { t = substr($0, 1, index($0, "\t") - 1); seen[t] = 1; order[++n] = t } next }
+         /^test .* has been running for over [0-9]+ seconds$/ { s = substr($0, 6); v = s; sub(/ has been running for over .*$/, "", s); sub(/^.* over /, "", v); sub(/ seconds$/, "", v); over[s] = v + 0; next }
+         /^test .* \.\.\. (ok|FAILED)/ { s = substr($0, 6); e = (s ~ / \.\.\. ok/) ? "passed" : "failed"; sub(/ \.\.\. (ok|FAILED).*$/, "", s); end[s] = e }
+         END { for (i = 1; i <= n; i++) { t = order[i]; printf "%s\t%d\t%s\n", t, over[t], (t in end) ? end[t] : "unfinished" } }' "$1" "$2"
+}
+long_running_end() { if [ "$1" = unfinished ]; then echo "did not finish"; else echo "then $1"; fi; }
 # A red with no failing test, classified by what happened: "<KIND> binary=<name> [detail]" with
 # KIND SIGNAL (a test binary killed), TIMEOUT (the guard killed the phase) or BUILD (cargo could not
 # compile); empty when a test failed on its own.
 test_phase_class() {
-    local log="$1" hung="$2" b d
+    local log="$1" hung="$2" b d t o e
+    IFS=$'\t' read -r t o e < <(long_running "$hung" "$log")
+    if [ -n "${t:-}" ]; then echo "TIMEOUT test=$t ran over $o s, $(long_running_end "$e")"; return; fi
     if [ -s "$hung" ]; then echo "TIMEOUT binary=$(last_binary "$log" | sed -E 's/-[0-9a-f]{16}$//')"; return; fi
     d="$(nextest_reds "$log" | awk '$1 == "TIMEOUT" { print $2; exit }')"
     if [ -n "$d" ]; then echo "TIMEOUT test=$d"; return; fi
@@ -782,9 +793,9 @@ test_phase_class() {
 json_str() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037'; }
 # A red test phase's evidence: <out> (its cause, the failures and the log's tail) and <json>, the
 # verdict as a record the host judges the pass from, never an exit code:
-# {"stage","verdict":"red","ran_before_suites","cause","secs","last_binary","failed":[test names]}.
+# {"stage","verdict":"red","ran_before_suites","cause","secs","last_binary","long_running":[{test,over_secs,end}],"failed":[test names]}.
 test_phase_red() {
-    local stage="$1" log="$2" rc="$3" secs="$4" hung="$5" out="$6" json="$7" before="$8" cause last n first=1 class
+    local stage="$1" log="$2" rc="$3" secs="$4" hung="$5" out="$6" json="$7" before="$8" cause last n first=1 class t o e
     if [ "$rc" -gt 128 ]; then cause="killed by signal $(( rc - 128 ))"; else cause="exit status $rc"; fi
     [ ! -s "$hung" ] || cause="$cause, hung past its guard"
     last="$(last_binary "$log")"
@@ -795,20 +806,29 @@ test_phase_red() {
         nextest_reds "$log" | awk '{ print "test " $2 " ... FAILED" }'
         nextest_reds "$log" | awk '{ print $1, $3, $2 }'
         cargo_test_reds "$log"
+        long_running "$hung" "$log" | while IFS=$'\t' read -r t o e; do echo "FAIL $t ran over $o s, $(long_running_end "$e")"; done
         grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' "$log" | head -400
         echo "--- last output of the log ---"
         tail -100 "$log"
         [ ! -s "$hung" ] || { echo "round-vm: ${stage^^}: HUNG (test<TAB>binary):"; cat "$hung"; }
     } > "$out"
     {
-        printf '{"stage":"%s","verdict":"red","ran_before_suites":%s,"cause":"%s","secs":%s,"last_binary":"%s","failed":[' \
+        printf '{"stage":"%s","verdict":"red","ran_before_suites":%s,"cause":"%s","secs":%s,"last_binary":"%s","long_running":[' \
             "$stage" "$before" "$(json_str "$cause")" "$secs" "$(json_str "$last")"
+        while IFS=$'\t' read -r t o e; do
+            [ -n "$t" ] || continue
+            [ -n "$first" ] || printf ','
+            first=""
+            printf '{"test":"%s","over_secs":%s,"end":"%s"}' "$(json_str "$t")" "$o" "$e"
+        done < <(long_running "$hung" "$log")
+        printf '],"failed":['
+        first=1
         while IFS= read -r n; do
             [ -n "$n" ] || continue
             [ -n "$first" ] || printf ','
             first=""
             printf '"%s"' "$(json_str "$n")"
-        done < <({ grep -oE '^test [^ ]+ \.\.\. FAILED' "$log" | awk '{print $2}'; nextest_reds "$log" | awk '{print $2}'; } | sort -u | head -200)
+        done < <({ grep -oE '^test [^ ]+ \.\.\. FAILED' "$log" | awk '{print $2}'; nextest_reds "$log" | awk '{print $2}'; long_running "$hung" "$log" | cut -f1; } | sort -u | head -200)
         printf ']}\n'
     } > "$json"
 }
@@ -3697,9 +3717,11 @@ mod tests {
         std::fs::write(d.path().join("log"), log).unwrap();
         std::fs::write(d.path().join("hung"), hung).unwrap();
         let script = format!(
-            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
+            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
             script_fn("last_binary"),
             script_fn("nextest_reds"),
+            script_fn("long_running"),
+            script_fn("long_running_end"),
             script_fn("test_phase_class"),
             script_fn("json_str"),
             script_fn("test_phase_red")
@@ -3750,6 +3772,33 @@ mod tests {
         assert!(out.contains("failures=2"), "{out}");
         assert!(out.lines().any(|l| l == "FAIL fx t::bad") && out.lines().any(|l| l == "TIMEOUT fx t::sleeper"), "each red names its binary: {out}");
         assert!(json.contains(r#""failed":["t::bad","t::sleeper"]"#), "{json}");
+    }
+
+    fn long_running_log(end: &str) -> String {
+        format!("     Running tests/it.rs (target/unittest/deps/it-4f09aebfb8c24298)\ntest publish_notice::later_poll has been running for over 60 seconds\n{end}     Running tests/scratch_gate.rs (target/unittest/deps/scratch_gate-4cad7cd61100b222)\n")
+    }
+
+    const LONG_HUNG: &str = "round-vm: INTEGRATION-TESTS: HUNG guard=cap\npublish_notice::later_poll\ttarget/unittest/deps/it-4f09aebfb8c24298\n";
+
+    #[test_id(tz37ks9)]
+    #[test]
+    fn a_test_over_libtests_threshold_that_then_passed_is_the_named_cause() {
+        let (out, json) = red_phase_files(&long_running_log("test publish_notice::later_poll ... ok\n"), LONG_HUNG);
+        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT test=publish_notice::later_poll ran over 60 s, then passed", "{out}");
+        assert!(out.lines().any(|l| l == "FAIL publish_notice::later_poll ran over 60 s, then passed"), "{out}");
+        assert!(json.contains(r#""long_running":[{"test":"publish_notice::later_poll","over_secs":60,"end":"passed"}]"#), "{json}");
+        assert!(json.contains(r#""failed":["publish_notice::later_poll"]"#), "{json}");
+    }
+
+    #[test_id(tscj6uo)]
+    #[test]
+    fn a_test_over_libtests_threshold_that_failed_or_never_ended_says_so() {
+        let (out, json) = red_phase_files(&long_running_log("test publish_notice::later_poll ... FAILED\n"), LONG_HUNG);
+        assert!(out.lines().any(|l| l == "FAIL publish_notice::later_poll ran over 60 s, then failed"), "{out}");
+        assert!(json.contains(r#""end":"failed""#) && json.contains(r#""failed":["publish_notice::later_poll"]"#), "{json}");
+        let (out, json) = red_phase_files(&long_running_log(""), LONG_HUNG);
+        assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT test=publish_notice::later_poll ran over 60 s, did not finish", "{out}");
+        assert!(json.contains(r#""end":"unfinished""#), "{json}");
     }
 
     #[test_id(t41q1di)]

@@ -88,6 +88,8 @@ pub(super) struct PhaseRed {
     pub failed: Vec<String>,
     pub cause: String,
     pub secs: u64,
+    /// `<test> ran over <N> s, then passed|failed` / `did not finish`, per test libtest flagged slow.
+    pub long_running: Vec<String>,
 }
 
 impl PhaseRed {
@@ -131,6 +133,18 @@ pub(super) fn phase_reds(results: &std::path::Path) -> Vec<PhaseRed> {
                     .unwrap_or_default(),
                 cause: v["cause"].as_str().unwrap_or("").to_string(),
                 secs: v["secs"].as_u64().unwrap_or(0),
+                long_running: v["long_running"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|l| {
+                        let end = match l["end"].as_str()? {
+                            "unfinished" => "did not finish".to_string(),
+                            e => format!("then {e}"),
+                        };
+                        Some(format!("{} ran over {} s, {end}", l["test"].as_str()?, l["over_secs"].as_u64()?))
+                    })
+                    .collect(),
             })
         })
         .collect()
@@ -914,6 +928,9 @@ fn phase_evidence(results: &Path, suite: &str, excerpt: impl Fn(&str) -> String)
         .iter()
         .map(|p| {
             let mut part = String::new();
+            for l in &p.long_running {
+                part.push_str(&format!("{l}\n"));
+            }
             if !p.failed.is_empty() {
                 part.push_str(&format!("{} failed: {}\n", p.stage, p.failed.join(", ")));
             }
@@ -2840,7 +2857,12 @@ fn first_red_reason(results: &Path, reds: &[String], phases: &[PhaseRed]) -> Opt
         let stage = phase_names.iter().find(|s| test_phase_step(s) == first.as_str())?;
         suite_output(results, stage, 0)
     });
+    let phrase = phases
+        .iter()
+        .filter(|p| test_phase_step(&p.stage) == first.as_str())
+        .find_map(|p| p.long_running.first());
     let line = match out {
+        _ if phrase.is_some() => phrase?.clone(),
         Some(o) if early(first) => o.lines().find(|l| !l.trim().is_empty())?.to_string(),
         Some(o) => failure_excerpt(&o).lines().find(|l| !l.trim().is_empty())?.to_string(),
         None => phases
@@ -4418,6 +4440,13 @@ fn certify_pass(
         ];
         if let Some(ch) = &runner.changed {
             fields.push(("runner_changed", ch.clone()));
+        }
+        if let Some(p) = phase_reds(&rounds_dir(c).join(format!("{batch}.results")))
+            .iter()
+            .filter(|p| test_phase_step(&p.stage) == UNIT_RED)
+            .find_map(|p| p.long_running.first())
+        {
+            fields.push(("reason", one_line(p)));
         }
         round_event(&c.s.run, "red", &c.r.name, batch, by, w.clock.now(), &fields);
         let verdict = format!(
