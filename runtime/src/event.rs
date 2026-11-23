@@ -63,6 +63,17 @@ pub const SCHEDULER_RESUMED: EventKindTag = "scheduler.resumed";
 pub const STORE_CHANGED: EventKindTag = "store.changed";
 pub const STORE_STREAM: &str = "store.changed";
 
+/// The Margin reader's change feed: what its answers and its silences submit. Memory-only like
+/// [`STORE_CHANGED`]: the resume point on disk, not the journal, is what a restart reads.
+pub const MARGIN_STREAM: &str = "margin.changed";
+pub const MARGIN_CHANGED: EventKindTag = "margin.changed";
+pub const MARGIN_UNREACHABLE: EventKindTag = "margin.unreachable";
+
+/// Whether an event of this tag is memory-only: never journaled, and lost with the process.
+pub fn memory_only_tag(tag: &str) -> bool {
+    [STORE_CHANGED, MARGIN_CHANGED, MARGIN_UNREACHABLE].contains(&tag)
+}
+
 /// Where a run that found work on the sweep alone is reported, memory-only.
 pub const WAKE_AUDIT_STREAM: &str = "watch.wake-audit";
 pub const WAKE_SWEEP_FOUND: EventKindTag = "wake.sweep_found";

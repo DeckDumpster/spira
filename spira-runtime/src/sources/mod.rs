@@ -10,6 +10,7 @@
 //! | `unit.ran` | the unit manager's completions: systemd over D-Bus, or the host's `ProcessUnits` | [`units`] |
 //! | `submission` | `spira-submission`'s SMTP session, delivering through the `mail` crate | [`smtp`] |
 //! | `store.changed` | the store's `watch` feed, on the thread that keeps the in-process store views current | [`store_changed`] |
+//! | `margin.changed` | a long-poll held open on the Margin reader's change feed; dormant while `SPIRA_MARGIN_URL` is empty | [`margin_changed`] |
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use crate::tasks::g::mail_arrived::MailArrived;
 use crate::tasks::g::submission::Submission;
 
 pub mod mail;
+pub mod margin_changed;
 pub mod smtp;
 pub mod store_changed;
 pub mod units;
@@ -39,6 +41,9 @@ pub const KEYS: &[&str] = &[
     "SPIRA_SUBMISSION_USER",
     "SPIRA_SUBMISSION_FROM",
     "SPIRA_SUBMISSION_RCPT_DOMAIN",
+    "SPIRA_RUN",
+    "SPIRA_MARGIN_URL",
+    "SPIRA_MARGIN_TOKEN_FILE",
 ];
 
 /// The real sources, from pinned config read once here: the registered mailboxes
@@ -59,6 +64,7 @@ pub fn real(cfg: &dyn Fn(&str) -> Result<String, String>, completions: Arc<dyn U
     if let Some((views, table)) = store {
         s.register(Box::new(store_changed::StoreChanged { views, table })).map_err(|e| e.to_string())?;
     }
+    s.register(Box::new(margin_changed::MarginChanged::configured(cfg)?)).map_err(|e| e.to_string())?;
     Ok(s)
 }
 
@@ -70,7 +76,7 @@ mod tests {
 
     #[test_id(tfqz0sr)]
     #[test]
-    fn the_real_set_names_all_four_with_store_views_and_three_without_and_refuses_virtual_time() {
+    fn the_real_set_names_all_five_with_store_views_and_four_without_and_refuses_virtual_time() {
         let clock = Arc::new(VirtualClock::new(0));
         let cfg = |k: &str| -> Result<String, String> {
             Ok(match k {
@@ -81,12 +87,12 @@ mod tests {
         };
         let units = || Arc::new(ScriptedUnits::new(clock.clone()));
         let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), None).unwrap();
-        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission"]);
+        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "margin.changed"]);
         let views = Arc::new(store_view::Projection::new(spira_store::lc_call::LcClient::socket("no-such-socket"), std::time::Duration::from_secs(1), Arc::new(std::time::Instant::now)));
         let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), Some((views, Arc::new(crate::store::ChangeTable::default())))).unwrap();
-        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "store.changed"]);
+        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"]);
         let err = s.into_scripted().err().expect("real sources are refused under virtual time");
-        assert!(["mail.arrived", "unit.ran", "submission", "store.changed"].iter().all(|n| err.0.contains(n)), "{err}");
+        assert!(["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"].iter().all(|n| err.0.contains(n)), "{err}");
     }
 
     #[test_id(t9p33pf)]

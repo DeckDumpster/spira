@@ -11,6 +11,7 @@ pub mod broker_host;
 pub mod forge;
 pub mod classes;
 pub mod hunk;
+pub mod margin_mail;
 pub mod modes;
 pub mod notify;
 pub mod repin;
