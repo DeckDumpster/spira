@@ -210,8 +210,41 @@ fn an_outcome_turn_costs_one_store_call_however_many_handlers_consume_it() {
         assert!(turns.len() >= 700, "a virtual hour of 5 s ticks: {} outcome turns", turns.len());
         let worst = turns.iter().copied().max().unwrap();
         assert!(worst <= 2, "with {watchers} watchers an outcome turn made {worst} store calls (want <= 2: the turn's commit and a poison check); turns {:?}", &turns[..5]);
-        assert!(turns.iter().filter(|&&n| n == 2).count() <= 15, "the poison check is asked once per recheck window, not per turn: {:?}", &turns[..5]);
+        assert!(turns.iter().filter(|&&n| n == 2).count() <= 1, "a healthy stream's poison check is asked once, not per recheck window: {:?}", &turns[..5]);
     }
+}
+
+/// Hears `tick` and does nothing with it.
+struct Idle;
+impl Handler for Idle {
+    fn interests(&self) -> &[EventKindTag] {
+        &["tick"]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+        vec![]
+    }
+}
+
+#[test_id(tn43emt)]
+#[test]
+fn a_healthy_stream_costs_the_store_nothing_after_its_first_tick() {
+    let (store, path, _dir) = serve();
+    let clock = VirtualClock::new(0);
+    let (_logs, ship) = shipper();
+    let mut x = Engine::open(Arc::new(SocketJournal::new(&path, ship)), Arc::new(clock.clone()), vec![Registration::new("idle", Idle)], 1).unwrap();
+    for stream in ["task.a", "task.b"] {
+        x.submit(&format!("first-{stream}"), stream, EventKind::new("tick", "")).unwrap();
+    }
+    x.run_until_idle().unwrap();
+    let after_first = store.calls.load(Ordering::SeqCst);
+    while clock.now_ms() < 3_600_000 {
+        clock.advance_to(clock.now_ms() + 5_000);
+        for stream in ["task.a", "task.b"] {
+            x.submit(&format!("{}-{stream}", clock.now_ms()), stream, EventKind::new("tick", "")).unwrap();
+        }
+        x.run_until_idle().unwrap();
+    }
+    assert_eq!(store.calls.load(Ordering::SeqCst), after_first, "ticks that emit nothing must not reach the store");
 }
 
 #[test_id(tn94oqa)]
