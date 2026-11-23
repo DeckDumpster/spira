@@ -3,8 +3,6 @@
 use crate::{Anchor, Changes, Collection, CollectionInfo, CommentRef, Doc, HttpMargin, Margin, Thread};
 use serde_json::{json, Value};
 
-pub const FIXTURE: &str = "fixtures/scenario.json";
-
 /// What each step of the session returned.
 pub struct Seen {
     pub collection: Collection,

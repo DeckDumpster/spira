@@ -61,14 +61,16 @@ fn recording() -> Vec<Exchange> {
 }
 
 /// Serves `script` in order, one request each, and hands back every way a request differed from its recording.
-fn replay(script: Vec<Exchange>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+fn replay(script: Vec<Exchange>) -> (String, std::thread::JoinHandle<(Vec<String>, usize)>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", l.local_addr().unwrap());
     let h = std::thread::spawn(move || {
         let mut differed = Vec::new();
+        let mut bearers = 0;
         for want in script {
             let (mut s, _) = l.accept().unwrap();
             let raw = read_request(&mut s);
+            bearers += usize::from(raw.to_ascii_lowercase().contains(&format!("authorization: bearer {TOKEN}").to_ascii_lowercase()));
             let (head, body) = raw.split_once("\r\n\r\n").unwrap();
             let mut first = head.lines().next().unwrap().split(' ');
             let (method, target) = (first.next().unwrap(), first.next().unwrap());
@@ -79,7 +81,7 @@ fn replay(script: Vec<Exchange>) -> (String, std::thread::JoinHandle<Vec<String>
             }
             write!(s, "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", want.status, want.reply.len(), want.reply).unwrap();
         }
-        differed
+        (differed, bearers)
     });
     (base, h)
 }
@@ -96,7 +98,7 @@ fn posting_a_collection_sends_the_cover_as_cover_note_and_reads_only_id_and_url(
     let docs = [Doc { path: "src/a.rs".into(), kind: "code".into(), text: scenario::FIRST.into() }, Doc { path: "src/b.rs".into(), kind: "code".into(), text: "fn b() {}\n".into() }];
     let got = client(&dir, &base).post_collection("Scenario", "cover words", &docs).unwrap();
     assert_eq!((got.id.as_str(), got.url.as_str()), ("dd7ca9c501e39498", "http://127.0.0.1:18931/c/dd7ca9c501e39498"));
-    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+    assert_eq!(served.join().unwrap().0, Vec::<String>::new());
 }
 
 #[test_id(tz5vx4t)]
@@ -105,7 +107,10 @@ fn the_recorded_session_replays_request_for_request_and_parses_every_reply() {
     let dir = TempDir::new("margin-session");
     let (base, served) = replay(recording());
     let seen = scenario::run(&client(&dir, &base)).unwrap();
-    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+    let (differed, bearers) = served.join().unwrap();
+    assert_eq!(differed, Vec::<String>::new());
+    let browser_calls = 3;
+    assert_eq!(bearers, recording().len() - browser_calls, "every call the client makes carries the token file's bearer; the operator's browser calls carry none");
 
     assert_eq!(seen.open.state, "open");
     assert_eq!(seen.open.published_at_ms, None);
@@ -163,7 +168,7 @@ fn a_thread_listing_of_two_pages_is_followed_by_its_cursor_to_the_end() {
     ]);
     let got = client(&dir, &base).threads("c1").unwrap();
     assert_eq!(got.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["t1", "t2"]);
-    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+    assert_eq!(served.join().unwrap().0, Vec::<String>::new());
 }
 
 #[test_id(thrnbwf)]
@@ -179,7 +184,7 @@ fn a_thread_on_a_version_past_the_first_page_of_versions_resolves() {
     ]);
     let t = client(&dir, &base).thread("c1", "t1").unwrap();
     assert_eq!((t.document.id.as_str(), t.document.version, t.anchor.path.as_str()), ("d1", 2, "a.rs"));
-    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+    assert_eq!(served.join().unwrap().0, Vec::<String>::new());
 }
 
 #[test_id(tbj2fvn)]
@@ -202,7 +207,7 @@ fn a_feed_wait_longer_than_the_reader_allows_is_asked_for_at_thirty_seconds() {
     let (base, served) = replay(vec![exchange("GET", "/api/changes", "after=4&wait=30", Value::Null, r#"{"changes":[],"last_seq":4}"#)]); // not a path: the reader's route
     let got = client(&dir, &base).changes(4, 90).unwrap();
     assert_eq!((got.through, got.changes.len()), (4, 0));
-    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+    assert_eq!(served.join().unwrap().0, Vec::<String>::new());
 }
 
 #[test_id(tegpxm2)]
