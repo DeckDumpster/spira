@@ -19,7 +19,7 @@
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
 //! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead waiting for a cut has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` (a SUBMITTED bead whose gate is queued behind full gate slots, backed off by the landing pass, or running inside `SPIRA_GATE_TIMEOUT`, is not waiting, and a CERTIFIED bead the batcher refused for an unlanded `blocked_by` that is itself WORKING, SUBMITTED, CERTIFIED or IN_DELIVERY is waiting on it, not uncovered (the rule is `watchers::dependency`, shared with `watch.throughput`; an idle prerequisite does not excuse the wait)), fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
-//! - SUBMITTED→LANDED: a SUBMITTED bead of a repo whose land mode is `pr` is judged by its pull request (the landing task's read, `landing::PrRead`), not by a gate or a cut. Checks queued or running page nothing while the landing task is observing (inside `SPIRA_TRANSITIONS_TASK_BOUND`); red checks page at once; no pull request, an unread, green or merged one not recorded landed pages after `SPIRA_TRANSITIONS_PR_BOUND`, counted from the read's `since` (from submission without a read). Unowned, and not tested against Delivered.
+//! - SUBMITTED→LANDED: a SUBMITTED or CERTIFIED bead of a repo whose land mode is `pr` is judged by its pull request (the landing task's read, `landing::PrRead`), not by a gate or a cut. Checks queued or running page nothing while the landing task is observing (inside `SPIRA_TRANSITIONS_TASK_BOUND`); red checks page at once; no pull request, an unread, green or merged one not recorded landed pages after `SPIRA_TRANSITIONS_PR_BOUND`, counted from the read's `since` (from submission without a read). A bead the landing task holds behind another branch's open pull request pages nothing while the landing task is observing and that branch's bead is live; otherwise it pages after the same bound, naming the pull request. Unowned, and not tested against Delivered.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
@@ -46,7 +46,7 @@ use runtime::event::*;
 use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
-use crate::tasks::a::landing::{PrRead, PrStatus};
+use crate::tasks::a::landing::{PrRead, PrStatus, Waits};
 use crate::tasks::d::pattern;
 use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
@@ -249,10 +249,13 @@ pub struct Bead {
     pub pr: Option<PrWait>,
 }
 
-/// A pr-mode SUBMITTED bead's pull request as the landing pass last read it; `None` when it has none.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// A pr-mode SUBMITTED or CERTIFIED bead's pull request as the landing pass last read it, or the
+/// open pull request of another branch it waits behind.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrWait {
     pub read: Option<PrRead>,
+    #[serde(default)]
+    pub behind: Option<Waits>,
 }
 
 /// A SUBMITTED bead's gate, as the gate queue and the gate's admission lease show it.
@@ -510,7 +513,18 @@ pub fn table_line(snap: &Snapshot, now: u64, cfg: &Config) -> String {
         }
         repos.push(format!("{repo}: {}", parts.join(" ")));
     }
-    format!("WAIT {} || since last — {}{}", states.join(" | "), if repos.is_empty() { "no repo has work or events".into() } else { repos.join("; ") }, dependency_clause(snap, ALL).map_or(String::new(), |c| format!(" | {c}")))
+    format!("WAIT {} || since last — {}{}", states.join(" | "), if repos.is_empty() { "no repo has work or events".into() } else { repos.join("; ") }, dependency_clause(snap, ALL).into_iter().chain(pr_wait_clause(snap)).map(|c| format!(" | {c}")).collect::<String>())
+}
+
+/// `waits behind PR #N: sp-a sp-b` per open pull request some bead of the landing task waits behind.
+fn pr_wait_clause(snap: &Snapshot) -> Option<String> {
+    let mut by_pr: BTreeMap<u64, Vec<&str>> = BTreeMap::new();
+    for b in snap.beads.iter().filter(|b| b.awaits_cut()) {
+        if let Some(w) = b.pr.as_ref().and_then(|p| p.behind.as_ref()) {
+            by_pr.entry(w.number).or_default().push(&b.id);
+        }
+    }
+    (!by_pr.is_empty()).then(|| by_pr.iter().map(|(n, ids)| format!("waits behind PR #{n}: {}", ids.join(" "))).collect::<Vec<_>>().join("; "))
 }
 
 /// One stalled edge in one scope, with its evidence.
@@ -615,13 +629,16 @@ fn pr_waits(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> Vec<String>
         .filter(|b| (scope == ALL || b.repo == scope) && b.awaits_cut())
         .filter_map(|b| {
             let wait = b.pr.as_ref()?;
-            let (what, age) = match wait.read {
-                Some(r) => (format!("PR #{} {}", r.number, pr_status_word(r.status)), now.saturating_sub(r.since)),
-                None => ("no pull request".to_string(), now.saturating_sub(b.since)),
+            let (what, age) = match (&wait.read, &wait.behind) {
+                (Some(r), _) => (format!("PR #{} {}", r.number, pr_status_word(r.status)), now.saturating_sub(r.since)),
+                (None, Some(w)) => (format!("waits behind PR #{} ({})", w.number, w.br), now.saturating_sub(b.since)),
+                (None, None) => ("no pull request".to_string(), now.saturating_sub(b.since)),
             };
+            let head_live = wait.behind.as_ref().is_some_and(|w| snap.beads.iter().any(|h| Some(h.id.as_str()) == w.br.strip_prefix("spira/") && !h.held && !h.landed));
             let due = match wait.read.map(|r| r.status) {
                 Some(PrStatus::Red) => true,
                 Some(PrStatus::Running) if landing_observing => false,
+                None if head_live && landing_observing => false,
                 _ => age >= cfg.pr_bound_s,
             };
             due.then(|| format!("{}: {what} for {} (bound {})", b.id, dur(age), dur(cfg.pr_bound_s)))
@@ -800,17 +817,17 @@ pub fn mark_gated(snap: &mut Snapshot, gates: &BTreeMap<String, Gating>, backoff
     }
 }
 
-/// Marks each SUBMITTED bead whose repo `is_pr` says lands by pull request.
+/// Marks each SUBMITTED or CERTIFIED bead whose repo `is_pr` says lands by pull request.
 pub fn mark_prs(snap: &mut Snapshot, is_pr: &dyn Fn(&str) -> bool) {
-    for b in snap.beads.iter_mut().filter(|b| b.state == "SUBMITTED" && is_pr(&b.repo)) {
+    for b in snap.beads.iter_mut().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED") && is_pr(&b.repo)) {
         b.pr = Some(PrWait::default());
     }
 }
 
-/// Gives each marked bead the read the landing pass carries for it.
-pub fn fill_prs(snap: &mut Snapshot, reads: &BTreeMap<String, PrRead>) {
+/// Gives each marked bead the read, and the pull request it waits behind, that the landing pass carries for it.
+pub fn fill_prs(snap: &mut Snapshot, reads: &BTreeMap<String, PrRead>, waits: &BTreeMap<String, Waits>) {
     for b in snap.beads.iter_mut().filter(|b| b.pr.is_some()) {
-        b.pr = Some(PrWait { read: reads.get(&b.id).copied() });
+        b.pr = Some(PrWait { read: reads.get(&b.id).copied(), behind: waits.get(&b.id).cloned() });
     }
 }
 
@@ -1165,7 +1182,8 @@ impl Handler for WatchTransitions {
             _ => return vec![],
         };
         mark_blocked(&mut snap, &dependency::batcher_blocks(view));
-        fill_prs(&mut snap, &crate::tasks::a::kit::carry::<crate::tasks::a::landing::Carry>(&crate::tasks::a::landing::SHAPE, view).prs);
+        let landing = crate::tasks::a::kit::carry::<crate::tasks::a::landing::Carry>(&crate::tasks::a::landing::SHAPE, view);
+        fill_prs(&mut snap, &landing.prs, &landing.waits);
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, acts) = decide(&carry, &snap, ev.at, cfg);
         pattern::commands(STATE, &carry, &next, acts)
