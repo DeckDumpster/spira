@@ -662,6 +662,20 @@ mod tests {
         assert_eq!(wake(heartbeat::NAME), None);
     }
 
+    #[test_id(trbl2p7)]
+    #[test]
+    fn the_rows_that_decide_from_a_bead_transition_wake_on_its_lifecycle_key_and_not_on_the_audit_or_the_journal() {
+        let s = crate::settings::fixture();
+        let regs = crate::registrations(&s);
+        let (audit, journal) = (state_store::events_key(7), "runtime/state/t/k");
+        for name in [readiness_dependents::NAME, reconciler_flow::NAME, b::reconcile_content::NAME] {
+            let wake = regs.iter().find(|r| r.name == name).unwrap().wake.clone().unwrap_or_else(|| panic!("{name} declares its reads"));
+            let names = |key: &str| wake.reads.iter().any(|p| key.starts_with(p));
+            assert!(names("lifecycle/sp-x"), "{name} must wake on a bead transition");
+            assert!(!names(&audit) && !names(journal), "{name} wakes on a write that is no bead transition");
+        }
+    }
+
     /// Counts what reaches the journal: turns committed and poison reads.
     struct Counting {
         inner: std::sync::Arc<runtime::MemJournal>,

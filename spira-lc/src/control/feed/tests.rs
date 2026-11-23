@@ -742,9 +742,9 @@ fn a_watch_of_several_prefixes_delivers_each_and_nothing_else<B: Backend>(s: &St
 /// `events/` key: a watch that names the scheduler's prefixes without `events/` is not answered by it.
 fn a_journal_turn_does_not_answer_a_watch_that_leaves_out_events<B: Backend>(s: &Store<B>) {
     use crate::control::journal::{StateRow, Turn};
-    const SCHEDULER: [&str; 14] = [
+    const SCHEDULER: [&str; 13] = [
         "batches/", "lifecycle/", "readiness/", "planning/", "history/", "gates/", "gh-closeout/", "intents/", "knobs/", "mendings/",
-        "telemetry/sections/", "work-request-index/", "work-requests/", "nothing/",
+        "telemetry/sections/", "work-request-index/", "work-requests/",
     ];
     create(s, "sp-a");
     let from = s.contract().head().unwrap();
