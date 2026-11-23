@@ -149,6 +149,8 @@ incident_priority
 install_active_wait
 instance
 land_cpu_quota
+landing_log_cap_mb
+landing_log_keep
 land_gate_reserve
 landing_pass_bin
 land_maxsec

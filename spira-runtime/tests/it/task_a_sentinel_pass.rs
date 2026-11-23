@@ -531,13 +531,12 @@ mod landing_log_rotation {
     fn a_rotation_that_fails_does_not_stop_the_leg() {
         let (dir, e, _) = fixture("land-rotate-fails");
         std::fs::write(dir.path().join("landing.log"), vec![b'n'; MB]).unwrap();
-        let mut ro = std::fs::metadata(dir.path()).unwrap().permissions();
+        let original = std::fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = original.clone();
         ro.set_readonly(true);
         std::fs::set_permissions(dir.path(), ro).unwrap();
         let started = start(&e, 1, 3);
-        let mut rw = std::fs::metadata(dir.path()).unwrap().permissions();
-        rw.set_readonly(false);
-        std::fs::set_permissions(dir.path(), rw).unwrap();
+        std::fs::set_permissions(dir.path(), original).unwrap();
         assert!(reached_the_binary_lookup(&started), "{started:?}");
         assert_eq!(names(dir.path()), ["landing.log"]);
     }
