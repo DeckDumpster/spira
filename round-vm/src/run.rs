@@ -1899,7 +1899,7 @@ pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
 
 const LARGEST_ENTRIES: usize = 5;
 
-fn tree_bytes(p: &Path, dev: u64) -> u64 {
+pub(crate) fn tree_bytes(p: &Path, dev: u64) -> u64 {
     use std::os::unix::fs::MetadataExt;
     let Ok(m) = p.symlink_metadata() else { return 0 };
     if m.dev() != dev {
@@ -2591,7 +2591,10 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let keep = AtomicBool::new(false);
     if let (Some(_slot), Some(plan)) = (&host_slot, env.host_plan) {
         let henv = RunEnv { remote: plan.remote.as_ref(), ..*env };
-        return on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
+        crate::host::reclaim(&plan.home);
+        let code = on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
+        crate::host::reclaim(&plan.home);
+        return code;
     }
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
     if keep.load(Ordering::SeqCst) {
@@ -3797,7 +3800,7 @@ mod tests {
         let json = listing.replace("{T}", &d.path().join("round-work/target/unittest").to_string_lossy());
         std::fs::write(d.path().join("stub.json"), json).unwrap();
         let script = format!("set -euo pipefail\nunit_cargo() {{ [ \"$1\" = --message-format=json ] && cat \"$HOME/stub.json\"; }}\n{}\nprune_superseded_unit\n", script_fn("prune_superseded_unit"));
-        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", system_paths::LOGIN_PATH).output().unwrap();
         let mut left: Vec<String> = std::fs::read_dir(&deps).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
         (out, left)
@@ -3830,13 +3833,13 @@ mod tests {
         let old = format!("libfoo-{H1}.rlib");
         let (out, left) = prune_unit_fixture("{\"reason\":\"build-finished\",\"success\":true}\n", &[&old], &[]);
         assert!(out.status.success());
-        assert_eq!(left, [old.clone()]);
+        assert_eq!(left, std::slice::from_ref(&old));
         assert!(String::from_utf8_lossy(&out.stderr).contains("named no files"));
         let d = TempDir::new();
         std::fs::create_dir_all(d.path().join("round-work/target/unittest/deps")).unwrap();
         std::fs::write(d.path().join("round-work/target/unittest/deps").join(&old), "x").unwrap();
         let script = format!("set -euo pipefail\nunit_cargo() {{ return 101; }}\n{}\nprune_superseded_unit\n", script_fn("prune_superseded_unit"));
-        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", system_paths::LOGIN_PATH).output().unwrap();
         assert!(out.status.success(), "a failed listing does not change the verdict");
         assert!(d.path().join("round-work/target/unittest/deps").join(&old).exists());
         assert!(String::from_utf8_lossy(&out.stderr).contains("listing failed"));
@@ -5679,6 +5682,120 @@ mod tests {
 
     fn pinned(fx: &Fixture) -> RunArgs {
         RunArgs { pin_host: true, ..round_args(fx) }
+    }
+
+    /// A host remote over a real home: the round script's folders come into being when the batch runs, as the script makes them.
+    struct HomeProbe {
+        inner: FakeRemote,
+        home: PathBuf,
+        present_at_start: std::sync::Arc<Mutex<Vec<bool>>>,
+    }
+    impl Remote for HomeProbe {
+        fn reachable(&self, a: &str) -> bool { self.inner.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> {
+            let left = crate::host::RECLAIMED.iter().any(|n| self.home.join(n).exists());
+            self.present_at_start.lock().unwrap().push(left);
+            for n in crate::host::RECLAIMED {
+                fs::create_dir_all(self.home.join(n).join("sub")).unwrap();
+                fs::write(self.home.join(n).join("sub/f"), "x").unwrap();
+            }
+            self.inner.run_batch(a, j)
+        }
+        fn round_started(&self, a: &str) -> bool { self.inner.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.inner.boot_log_tail(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), PullError> { self.inner.pull(a, r, l) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.inner.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.inner.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.inner.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> { self.inner.clear_results(a) }
+    }
+
+    const KEPT: [&str; 3] = ["round-work/target/unittest", "round-resume", "round-releases"];
+
+    fn plant_home(home: &Path) {
+        for n in crate::host::RECLAIMED.iter().chain(KEPT.iter()) {
+            fs::create_dir_all(home.join(n).join("deep")).unwrap();
+            fs::write(home.join(n).join("deep/big"), "0123456789").unwrap();
+        }
+        let locked = home.join("round-scratch/deep");
+        fs::set_permissions(locked.join("big"), std::os::unix::fs::PermissionsExt::from_mode(0o444)).unwrap();
+        fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o555)).unwrap();
+    }
+
+    fn host_round_over_a_real_home(fx: &Fixture, inner: FakeRemote, a: &RunArgs) -> (i32, Vec<bool>, PathBuf) {
+        let home = fx.d.path().join("host-home");
+        plant_home(&home);
+        let seen = std::sync::Arc::new(Mutex::new(vec![]));
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.home = home.clone();
+        plan.remote = Box::new(HomeProbe { inner, home: home.clone(), present_at_start: seen.clone() });
+        let code = go_with_host(fx, &FakeRemote::green(), &plan, a);
+        let at_start = seen.lock().unwrap().clone();
+        (code, at_start, home)
+    }
+
+    fn assert_reclaimed(home: &Path) {
+        for n in crate::host::RECLAIMED {
+            assert!(!home.join(n).exists(), "{n} was left behind");
+        }
+        for n in KEPT {
+            assert!(home.join(n).join("deep/big").exists(), "{n} was removed");
+        }
+    }
+
+    
+    #[test_id(t2sisu7)]
+    #[test]
+    fn a_green_host_round_leaves_none_of_its_scratch_and_attribution_folders_and_finds_none_at_its_start() {
+        let fx = fixture();
+        let (code, at_start, home) = host_round_over_a_real_home(&fx, FakeRemote::green(), &round_args(&fx));
+        assert_ne!(code, 2);
+        assert_eq!(at_start, [false], "leftovers were still there when the pass started");
+        assert_reclaimed(&home);
+    }
+
+    
+    #[test_id(tg9ds1r)]
+    #[test]
+    fn a_red_host_round_leaves_none_of_its_scratch_and_attribution_folders() {
+        let fx = fixture();
+        let mut red = FakeRemote::green();
+        red.rc = Ok(1);
+        let (_, at_start, home) = host_round_over_a_real_home(&fx, red, &round_args(&fx));
+        assert_eq!(at_start, [false]);
+        assert_reclaimed(&home);
+    }
+
+    
+    #[test_id(t8dua6k)]
+    #[test]
+    fn an_attribution_only_host_round_leaves_none_of_its_scratch_and_attribution_folders() {
+        let fx = fixture();
+        let spool = fx.d.path().join("spool");
+        fs::create_dir_all(spool.join("req")).unwrap();
+        fs::write(spool.join("close"), "").unwrap();
+        let a = RunArgs { tree_dir: fx.d.path().join("tree"), attr_spool: Some(spool), no_corpus: true, pin_host: true, ..Default::default() };
+        let (code, _, home) = host_round_over_a_real_home(&fx, FakeRemote::green(), &a);
+        assert_eq!(code, 0);
+        assert!(!home.join("attr-target").exists() && !home.join("attr").exists() && !home.join("attr-results").exists() && !home.join("round-scratch").exists());
+        assert!(home.join("round-resume/deep/big").exists());
+    }
+
+    
+    #[test_id(t9beebd)]
+    #[test]
+    fn a_vm_round_does_not_reclaim_the_hosts_folders() {
+        let fx = fixture();
+        let home = fx.d.path().join("host-home");
+        plant_home(&home);
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.home = home.clone();
+        let _taken = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().expect("the slot was free");
+        go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
+        assert_eq!(fx.fp.count("clone"), 1, "the round went to a VM");
+        for n in crate::host::RECLAIMED {
+            assert!(home.join(n).join("deep/big").exists(), "{n} was reclaimed by a VM round");
+        }
     }
 
     #[test_id(ty2w5sk)]

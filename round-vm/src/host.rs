@@ -101,6 +101,29 @@ pub fn round_env(get: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static str, Str
     env
 }
 
+/// What a host round leaves under its home that nothing reads again: the testenv scratch and the
+/// attribution work trees, results and build. The warm build target, resume store and releases stay.
+pub const RECLAIMED: [&str; 4] = ["round-scratch", "attr", "attr-results", "attr-target"];
+
+/// Removes [`RECLAIMED`] from `home`, saying how many bytes each held and any it could not remove.
+/// The caller holds the host slot, so nothing else is running in the home.
+pub fn reclaim(home: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    for name in RECLAIMED {
+        let path = home.join(name);
+        let Ok(meta) = path.symlink_metadata() else { continue };
+        let bytes = crate::run::tree_bytes(&path, meta.dev());
+        let removed = fs::remove_dir_all(&path).or_else(|first| {
+            let made_writable = command("chmod").arg("-R").arg("u+rwX").arg(&path).status().is_ok_and(|s| s.success());
+            if made_writable { fs::remove_dir_all(&path) } else { Err(first) }
+        });
+        match removed {
+            Ok(()) => eprintln!("round-vm: reclaimed {} ({bytes} bytes)", path.display()),
+            Err(e) => eprintln!("round-vm: could not reclaim {}: {e}", path.display()),
+        }
+    }
+}
+
 /// [`Remote`] over this machine: the VM's `$HOME` is `home`, and no ssh or rsync is involved.
 pub struct LocalRemote {
     pub home: PathBuf,
