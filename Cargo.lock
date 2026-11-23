@@ -2294,6 +2294,7 @@ dependencies = [
  "gate",
  "groomer",
  "incident",
+ "inotify",
  "libc",
  "lifecycle",
  "opentelemetry-proto",

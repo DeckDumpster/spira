@@ -1,7 +1,8 @@
 //! One OTLP span per call, appended as one `ExportTraceServiceRequest` JSON line to
 //! `<dir>/<service>.<UTC date>.jsonl` — the Collector file-exporter format, so an
 //! `otlpjsonfile` receiver can ship the files unchanged. Emitting never fails or blocks the
-//! caller beyond one short append: an error is counted and dropped.
+//! caller beyond one short append: an error is counted and dropped. A `buffered` sink does not
+//! append on the caller: it queues, and one thread appends each second's queue.
 
 #[cfg(test)]
 #[macro_use]
@@ -20,6 +21,7 @@ use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -37,10 +39,38 @@ const LOCK_EX: i32 = 2;
 
 /// Writes spans for one service into one directory, keeping `keep_days` days of files.
 pub struct Sink {
+    inner: Arc<Inner>,
+    queue: Option<Arc<Queue>>,
+}
+
+struct Inner {
     dir: PathBuf,
     service: String,
     keep_days: u32,
+    day_max_bytes: u64,
+    dropped: AtomicU64,
+    warned_day: Mutex<String>,
 }
+
+/// Serialised spans waiting for the writer thread, each with its emit time.
+#[derive(Default)]
+struct Pending {
+    spans: Vec<(SystemTime, Vec<u8>)>,
+    bytes: usize,
+    busy: bool,
+    flush: bool,
+}
+
+#[derive(Default)]
+struct Queue {
+    pending: Mutex<Pending>,
+    wake: Condvar,
+    done: Condvar,
+}
+
+/// The most serialised span bytes a buffered sink holds before it drops.
+pub const QUEUE_MAX_BYTES: usize = 8 << 20;
+const APPEND_EVERY: Duration = Duration::from_secs(1);
 
 /// What one call looked like; the attribute set of the span built from it.
 pub struct Call<'a> {
@@ -97,27 +127,144 @@ pub fn dropped() -> u64 {
 
 impl Sink {
     pub fn new(dir: impl Into<PathBuf>, service: &str, keep_days: u32) -> Sink {
-        Sink { dir: dir.into(), service: service.to_string(), keep_days }
+        Sink { inner: Arc::new(Inner::new(dir.into(), service, keep_days, u64::MAX)), queue: None }
     }
 
-    /// Appends one span; a failure is counted, never returned.
+    /// A sink whose `emit` only queues: one thread appends the queue once a second, and a day
+    /// file at `day_max_bytes` takes no more.
+    pub fn buffered(dir: impl Into<PathBuf>, service: &str, keep_days: u32, day_max_bytes: u64) -> Sink {
+        let inner = Arc::new(Inner::new(dir.into(), service, keep_days, day_max_bytes));
+        let queue = Arc::new(Queue::default());
+        let (i, q) = (inner.clone(), queue.clone());
+        std::thread::Builder::new().name("otel-writer".into()).spawn(move || writer_loop(&i, &q)).expect("the span writer thread starts");
+        Sink { inner, queue: Some(queue) }
+    }
+
+    /// Spans this sink lost; `dropped()` counts the process.
+    pub fn dropped_here(&self) -> u64 {
+        self.inner.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Appends one span, or queues it on a buffered sink; a failure is counted, never returned.
     pub fn emit(&self, call: &Call) {
-        if self.write(call, SystemTime::now()).is_err() {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+        let Some(queue) = &self.queue else {
+            let _ = self.write(call, SystemTime::now());
+            return;
+        };
+        let Ok(line) = self.inner.line(call) else { return self.inner.drop_spans(1) };
+        let mut p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if p.bytes + line.len() > QUEUE_MAX_BYTES {
+            drop(p);
+            return self.inner.drop_spans(1);
         }
+        p.bytes += line.len();
+        p.spans.push((SystemTime::now(), line));
+        queue.wake.notify_one();
+    }
+
+    /// Blocks until everything queued so far has been appended or dropped.
+    pub fn flush(&self) {
+        let Some(queue) = &self.queue else { return };
+        let mut p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+        p.flush = true;
+        queue.wake.notify_one();
+        while !p.spans.is_empty() || p.busy {
+            p = queue.done.wait(p).unwrap_or_else(|e| e.into_inner());
+        }
+        p.flush = false;
     }
 
     pub fn write(&self, call: &Call, now: SystemTime) -> std::io::Result<()> {
+        let line = self.inner.line(call).inspect_err(|_| self.inner.drop_spans(1))?;
+        self.inner.append_day(&utc_date(now), &[&line])
+    }
+}
+
+fn writer_loop(inner: &Inner, queue: &Queue) {
+    let mut p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        while p.spans.is_empty() {
+            p = queue.wake.wait(p).unwrap_or_else(|e| e.into_inner());
+        }
+        let batch = std::mem::take(&mut p.spans);
+        p.bytes = 0;
+        p.busy = true;
+        drop(p);
+        inner.write_batch(&batch);
+        p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+        p.busy = false;
+        queue.done.notify_all();
+        p = queue.wake.wait_timeout_while(p, APPEND_EVERY, |p| !p.flush).unwrap_or_else(|e| e.into_inner()).0;
+    }
+}
+
+impl Inner {
+    fn new(dir: PathBuf, service: &str, keep_days: u32, day_max_bytes: u64) -> Inner {
+        Inner { dir, service: service.to_string(), keep_days, day_max_bytes, dropped: AtomicU64::new(0), warned_day: Mutex::new(String::new()) }
+    }
+
+    fn line(&self, call: &Call) -> std::io::Result<Vec<u8>> {
         let mut line = serde_json::to_vec(&self.request(call)).map_err(std::io::Error::other)?;
         line.push(b'\n');
+        Ok(line)
+    }
+
+    fn drop_spans(&self, n: u64) {
+        DROPPED.fetch_add(n, Ordering::Relaxed);
+        self.dropped.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// Appends a batch, one locked write per UTC day of emit time.
+    fn write_batch(&self, batch: &[(SystemTime, Vec<u8>)]) {
+        let mut i = 0;
+        while i < batch.len() {
+            let day = utc_date(batch[i].0);
+            let n = batch[i..].iter().take_while(|(t, _)| utc_date(*t) == day).count();
+            let lines: Vec<&[u8]> = batch[i..i + n].iter().map(|(_, l)| l.as_slice()).collect();
+            let _ = self.append_day(&day, &lines);
+            i += n;
+        }
+    }
+
+    /// Appends whole lines to `day`'s file under its lock while the file stays within the day
+    /// bound; the rest, or all of them on an error, are dropped and counted.
+    fn append_day(&self, day: &str, lines: &[&[u8]]) -> std::io::Result<()> {
+        let result = self.try_append_day(day, lines);
+        if result.is_err() {
+            self.drop_spans(lines.len() as u64);
+        }
+        result
+    }
+
+    fn try_append_day(&self, day: &str, lines: &[&[u8]]) -> std::io::Result<()> {
         fs::create_dir_all(&self.dir)?;
-        let day = utc_date(now);
-        let path = self.path(&day);
+        let path = self.path(day);
         let first_today = !path.exists();
         let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
-        append_locked(&mut f, &line)?;
+        lock(&f)?;
+        let mut size = f.metadata()?.len();
+        let mut out = Vec::new();
+        let mut kept = 0u64;
+        for l in lines {
+            if size + l.len() as u64 > self.day_max_bytes {
+                break;
+            }
+            size += l.len() as u64;
+            out.extend_from_slice(l);
+            kept += 1;
+        }
+        let lost = lines.len() as u64 - kept;
+        if lost > 0 {
+            self.drop_spans(lost);
+            let mut warned = self.warned_day.lock().unwrap_or_else(|e| e.into_inner());
+            if *warned != day {
+                *warned = day.to_string();
+                eprintln!("spira-otel: {} is at its {} byte day bound; further spans that day are dropped", path.display(), self.day_max_bytes);
+            }
+        }
+        f.write_all(&out)?;
         if first_today {
-            self.prune(&day);
+            self.prune(day);
         }
         Ok(())
     }
@@ -248,11 +395,16 @@ fn ids(n: usize) -> Vec<u8> {
     out
 }
 
-pub(crate) fn append_locked(f: &mut File, line: &[u8]) -> std::io::Result<()> {
+fn lock(f: &File) -> std::io::Result<()> {
     // SAFETY: the descriptor is open for the lifetime of `f`; the lock drops with the file.
     if unsafe { flock(f.as_raw_fd(), LOCK_EX) } != 0 {
         return Err(std::io::Error::last_os_error());
     }
+    Ok(())
+}
+
+pub(crate) fn append_locked(f: &mut File, line: &[u8]) -> std::io::Result<()> {
+    lock(f)?;
     f.write_all(line)
 }
 
@@ -451,9 +603,66 @@ mod tests {
         let file = dir.join("file");
         fs::write(&file, "x").unwrap();
         let sink = Sink::new(file.join("under-a-file"), "spira-lc", 14);
-        let before = dropped();
         sink.emit(&call(0));
-        assert_eq!(dropped(), before + 1);
+        assert_eq!(sink.dropped_here(), 1);
+        assert!(dropped() >= 1);
+    }
+
+    fn lines_in(path: &Path) -> usize {
+        fs::read_to_string(path).map(|t| t.lines().count()).unwrap_or(0)
+    }
+
+    #[test_id(tij1vrt)]
+    #[test]
+    fn spans_past_the_day_bound_are_dropped_and_counted() {
+        let dir = tmp("day-bound");
+        let one = Sink::new(dir.path(), "spira-lc", 14).inner.line(&call(0)).unwrap().len() as u64;
+        let sink = Sink::buffered(dir.path(), "spira-lc", 14, one * 3);
+        for _ in 0..5 {
+            sink.emit(&call(0));
+        }
+        sink.flush();
+        let file = dir.join(format!("spira-lc.{}.jsonl", utc_date(SystemTime::now())));
+        assert_eq!(lines_in(&file), 3);
+        assert_eq!(sink.dropped_here(), 2);
+    }
+
+    #[test_id(tzu0pck)]
+    #[test]
+    fn past_the_queue_bound_emit_drops_and_counts() {
+        let dir = tmp("emit-full");
+        let sink = Sink::buffered(dir.path(), "spira-lc", 14, u64::MAX);
+        {
+            let mut p = sink.queue.as_ref().unwrap().pending.lock().unwrap();
+            p.bytes = QUEUE_MAX_BYTES;
+        }
+        sink.emit(&call(0));
+        assert_eq!(sink.dropped_here(), 1);
+    }
+
+    #[test_id(tt0a5nt)]
+    #[test]
+    fn a_batch_spanning_utc_midnight_lands_in_both_days_files() {
+        let dir = tmp("midnight");
+        let sink = Sink::buffered(dir.path(), "spira-lc", 14, u64::MAX);
+        let midnight = UNIX_EPOCH + Duration::from_secs(1_700_006_400);
+        let line = sink.inner.line(&call(0)).unwrap();
+        sink.inner.write_batch(&[(midnight - Duration::from_secs(1), line.clone()), (midnight, line.clone()), (midnight + Duration::from_secs(1), line)]);
+        assert_eq!(lines_in(&dir.join("spira-lc.2023-11-14.jsonl")), 1);
+        assert_eq!(lines_in(&dir.join("spira-lc.2023-11-15.jsonl")), 2);
+    }
+
+    #[test_id(tt5n0n1)]
+    #[test]
+    fn a_buffered_sink_over_an_unwritable_directory_drops_and_counts() {
+        let dir = tmp("buffered-blocked");
+        let file = dir.join("file");
+        fs::write(&file, "x").unwrap();
+        let sink = Sink::buffered(file.join("under-a-file"), "spira-lc", 14, u64::MAX);
+        sink.emit(&call(0));
+        sink.emit(&call(0));
+        sink.flush();
+        assert_eq!(sink.dropped_here(), 2);
     }
 
     #[test_id(t91nkcq)]
