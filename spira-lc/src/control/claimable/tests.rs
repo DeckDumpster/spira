@@ -24,7 +24,7 @@ fn rows(recs: &[&LifecycleRecord]) -> BTreeMap<String, LifecycleRecord> {
 }
 
 fn ctx() -> Ctx {
-    Ctx { now: 1_000, stack_max: 4, incident_label: "incident".into(), pilgrim_label: "pilgrimage".into(), ..Ctx::default() }
+    Ctx { now: 1_000, stack_max: 4, incident_label: "incident".into(), pilgrim_label: "pilgrimage".into(), skuld_label: "draft".into(), ..Ctx::default() }
 }
 
 fn verdict(cand: &LifecycleRecord, others: &[&LifecycleRecord], ctx: &Ctx) -> Judgement {
@@ -88,6 +88,21 @@ fn a_pilgrimage_never_stacks_on_an_in_delivery_feature_but_claims_once_it_lands(
     let j = verdict(&plain, &[&rec("A", BeadState::InDelivery)], &ctx());
     assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 1), "an unlabelled bead still stacks");
     let j = verdict(&pilgrim, &[&rec("A", BeadState::Landed)], &ctx());
+    assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 0));
+}
+
+#[test_id(t8xdlai)]
+#[test]
+fn a_skuld_request_waits_for_its_blocker_to_land_and_never_stacks_on_it() {
+    let mut skuld = blocked_on("B", BeadState::Ready, "A");
+    skuld.claim.as_mut().unwrap().labels.push("draft".into());
+    for open in [BeadState::InDelivery, BeadState::Certified] {
+        assert_eq!(seen(&verdict(&skuld, &[&rec("A", open)], &ctx())), blocked("A"));
+    }
+    let plain = blocked_on("B", BeadState::Ready, "A");
+    let j = verdict(&plain, &[&rec("A", BeadState::InDelivery)], &ctx());
+    assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 1), "an unlabelled bead still stacks");
+    let j = verdict(&skuld, &[&rec("A", BeadState::Landed)], &ctx());
     assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 0));
 }
 

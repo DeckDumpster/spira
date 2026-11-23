@@ -573,6 +573,7 @@ impl crate::control::claimable::Inputs for Fixed {
             stack_max: 4,
             incident_label: "incident".into(),
             pilgrim_label: "pilgrimage".into(),
+            skuld_label: "draft".into(),
             scope_label: String::new(),
             no_loop_label: String::new(),
         })

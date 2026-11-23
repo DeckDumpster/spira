@@ -582,7 +582,7 @@ fn machine_filter(a: &Args, env: &mut Env, st: &Store, rows: &mut Vec<rank::Read
         Ok(r) => rank::index_rows(r),
         Err(e) => return Err(Outcome::cannot_tell(format!("{rune}: blocker records: {e}"))),
     };
-    rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, &env.config.pilgrim_label, stack_max)), Verdict::Claimable { .. }));
+    rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, &env.config.pilgrim_label, &env.config.skuld_label, stack_max)), Verdict::Claimable { .. }));
     retain_unstopped(rows, std::path::Path::new(&env.config.run));
     retain_unoccupied(rows, std::path::Path::new(system_paths::PROC), std::path::Path::new(&env.config.run));
     let fixture = a.get("--lifecycle").is_some();
@@ -613,6 +613,10 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
+    stack_over(a, env, &st, bead, stack_max)
+}
+
+fn stack_over(a: &Args, env: &mut Env, st: &Store, bead: String, stack_max: u32) -> Outcome {
     let cand = match st.items_by_ids(std::slice::from_ref(&bead)) {
         Ok(rows) => match rows.into_iter().find(|r| r.id == bead) {
             Some(r) => r,
@@ -654,7 +658,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         let v = serde_json::json!({"claimable": false, "reason": "Carried", "carrier": carrier});
         return Outcome { code: 3, out: format!("{v}\n"), err: String::new() };
     }
-    match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, &env.config.pilgrim_label, stack_max)) {
+    match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, &env.config.pilgrim_label, &env.config.skuld_label, stack_max)) {
         Ok((stack, depth)) => {
             let v = serde_json::json!({"claimable": true, "stack": stack, "stack_depth": depth, "stack_max_depth": stack_max});
             Outcome::ok(format!("{}\n", v))
@@ -1011,7 +1015,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, 
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
     let mut claimable = Vec::new();
     for r in rows {
-        let (kind, blocker) = match rank::claimable(&r, &lc, &bd, rank::stack_cap(&r, &env.config.incident_label, &env.config.pilgrim_label, stack_max)) {
+        let (kind, blocker) = match rank::claimable(&r, &lc, &bd, rank::stack_cap(&r, &env.config.incident_label, &env.config.pilgrim_label, &env.config.skuld_label, stack_max)) {
             Verdict::Claimable { .. } => {
                 claimable.push(r);
                 continue;

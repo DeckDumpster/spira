@@ -632,3 +632,93 @@ fn claim_retry_is_no_longer_a_verb() {
     assert_eq!(out.code, crate::cli::USAGE);
     assert!(out.err.contains("unknown verb claim-retry"), "{}", out.err);
 }
+
+// ---- a Skuld request waits for its blocker to land and never stacks on it ----------------
+
+mod skuld_waits {
+    use super::*;
+    use serde_json::{json, Value};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    const SKULD: &str = "skuld-x";
+
+    struct Blocker(&'static str);
+
+    fn item(id: &str, labels: &[&str], blocks: Option<&str>) -> Value {
+        let deps: Vec<Value> = blocks.iter().map(|b| json!({ "issue_id": id, "depends_on_id": b, "type": "blocks" })).collect();
+        json!({ "id": id, "title": id, "priority": 2, "issue_type": "task", "labels": labels, "dependencies": deps })
+    }
+
+    fn row(id: &str, state: &str) -> Value {
+        json!({ "bead_id": id, "state": state, "holds": [], "tip": "abc", "repo": "spira" })
+    }
+
+    impl Transport for Blocker {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+            let out = match words.as_slice() {
+                ["list", "--state", ..] => json!([row("sp-b", "READY")]).to_string(),
+                ["list", "--ids", ids] => json!([row("sp-b", "READY"), row("sp-a", self.0)].into_iter().filter(|r| ids.contains(r["bead_id"].as_str().unwrap())).collect::<Vec<_>>()).to_string(),
+                ["plan", "items", "--ids", ids] => {
+                    let all = [item("sp-b", &["repo:spira", SKULD], Some("sp-a")), item("sp-a", &["repo:spira"], None)];
+                    let items: Vec<Value> = all.into_iter().filter(|i| ids.contains(i["id"].as_str().unwrap())).collect();
+                    json!({ "watermark": 7, "items": items }).to_string()
+                }
+                ["plan", "watermark"] => r#"{"watermark":7}"#.into(),
+                _ => String::new(),
+            };
+            Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
+        }
+    }
+
+    fn config() -> Config {
+        Config { control_store: true, stack_max_depth: 4, skuld_label: SKULD.into(), run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() }
+    }
+
+    fn store(blocker_state: &'static str) -> Store {
+        Store { lc: LcClient::over(Arc::new(Blocker(blocker_state)), true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
+    }
+
+    fn judged(blocker_state: &'static str, config: Config) -> (Vec<String>, Vec<verdicts::Entry>) {
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let env = Env { stdin: &mut stdin, config, lookup: &none };
+        let (rows, entries) = judge_rows(&Args::parse(&[]).unwrap(), &env, &store(blocker_state), None, false).unwrap();
+        (rows.into_iter().map(|r| r.id).collect(), entries)
+    }
+
+    #[test_id(tf3w9kd)]
+    #[test]
+    fn judge_rows_blocks_a_skuld_bead_on_a_certified_or_in_delivery_blocker_and_claims_it_once_landed() {
+        for open in ["CERTIFIED", "IN_DELIVERY"] {
+            let (claimable, entries) = judged(open, config());
+            assert!(claimable.is_empty(), "{open}: {claimable:?}");
+            let e = entries.iter().find(|e| e.id == "sp-b").unwrap_or_else(|| panic!("{open}: no verdict for sp-b"));
+            assert_eq!((e.verdict, e.blocker.as_deref()), (verdicts::Kind::Blocked, Some("sp-a")), "{open}");
+        }
+        assert_eq!(judged("LANDED", config()).0, ["sp-b"]);
+    }
+
+    #[test_id(tn7q2xr)]
+    #[test]
+    fn a_bead_without_the_skuld_label_still_stacks_on_an_in_delivery_blocker() {
+        let (claimable, _) = judged("IN_DELIVERY", Config { skuld_label: String::new(), ..config() });
+        assert_eq!(claimable, ["sp-b"], "an empty label matches nothing");
+    }
+
+    #[test_id(tz5c8hm)]
+    #[test]
+    fn stack_refuses_a_skuld_bead_on_an_unlanded_blocker_with_exit_3_and_a_blocked_reason() {
+        for open in ["CERTIFIED", "IN_DELIVERY"] {
+            let mut stdin = std::io::empty();
+            let none = |_: &str| None;
+            let mut env = Env { stdin: &mut stdin, config: config(), lookup: &none };
+            let out = stack_over(&Args::parse(&[]).unwrap(), &mut env, &store(open), "sp-b".into(), 4);
+            let v: Value = serde_json::from_str(&out.out).unwrap();
+            assert_eq!(out.code, 3, "{open}: {}", out.out);
+            assert!(v["reason"].as_str().unwrap().starts_with("Blocked"), "{open}: {v}");
+        }
+    }
+}

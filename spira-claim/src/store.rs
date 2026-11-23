@@ -64,6 +64,8 @@ pub struct Config {
     pub incident_label: String,
     /// `SPIRA_PILGRIM_LABEL` — a pilgrimage never stacks on a fix that has not landed.
     pub pilgrim_label: String,
+    /// `SPIRA_SKULD_LABEL` — a Skuld session runs the release and never stacks on a blocker that has not landed.
+    pub skuld_label: String,
     /// `SPIRA_QUEUE_DIR` — where each repo's `integrations` record lives; a member it names is not claimable.
     pub queue_dir: String,
     /// `SPIRA_LC_STORE_PATH` is set: the control store is where readiness is published.
@@ -87,6 +89,7 @@ pub fn load_config() -> Result<Config, String> {
         runes: spira_config::process::cfg("SPIRA_RUNES")?,
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
         pilgrim_label: spira_config::process::cfg("SPIRA_PILGRIM_LABEL")?,
+        skuld_label: spira_config::process::cfg("SPIRA_SKULD_LABEL")?,
         queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?,
         control_store: !spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty(),
     })
