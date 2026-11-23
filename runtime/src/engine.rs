@@ -1877,6 +1877,7 @@ mod tests {
                 &[WAKE_SWEEP_FOUND]
             }
             fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+                assert_eq!(ev.stream.0, WAKE_AUDIT_STREAM);
                 self.0.lock().unwrap().push(serde_json::from_str(&ev.kind.body).unwrap());
                 vec![]
             }

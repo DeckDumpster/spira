@@ -164,4 +164,14 @@ mod tests {
         let ids: Vec<u64> = panels.iter().map(|p| p["id"].as_u64().unwrap()).collect();
         assert_eq!(ids.iter().collect::<std::collections::BTreeSet<_>>().len(), ids.len(), "panel ids are unique");
     }
+
+    #[test_id(thiyj3d)]
+    #[test]
+    fn a_sweep_found_record_reaches_the_log_file_outside_debug() {
+        let d = testkit::TempDir::new("sink-sweep-found");
+        let s = OtlpSink::new(LogSink::new(d.path(), "svc"), 8, false);
+        s.emit(&rec(&[("unit", SWEEP_FOUND_UNIT), ("task", "a")]));
+        s.close();
+        assert_eq!(spira_otel::logs::read_all(d.path(), "svc").len(), 1);
+    }
 }
