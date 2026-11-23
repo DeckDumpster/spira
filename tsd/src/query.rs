@@ -91,11 +91,11 @@ fn int(x: f64) -> i64 {
     x.round() as i64
 }
 
-fn since(now: u64, hours: u64) -> u64 {
+pub fn since(now: u64, hours: u64) -> u64 {
     now.saturating_sub(hours.saturating_mul(3600))
 }
 
-const STAGE: &str = "bead-stage";
+pub const STAGE: &str = "bead-stage";
 const LIVE_STATES: [&str; 6] = ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK"];
 
 fn applied_beads(rows: &[Value]) -> impl Iterator<Item = &Value> {
@@ -104,9 +104,13 @@ fn applied_beads(rows: &[Value]) -> impl Iterator<Item = &Value> {
 
 /// WIP and dwell per bead stage, now: each bead counts once, in the state its latest applied row put it in.
 pub fn wip(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
-    let rows = src.rows(STAGE, since(now, hours))?;
+    Ok(wip_of(&src.rows(STAGE, since(now, hours))?, now))
+}
+
+/// `wip` over `bead-stage` rows already fetched.
+pub fn wip_of(rows: &[Value], now: u64) -> Value {
     let mut latest: BTreeMap<&str, (f64, &Value)> = BTreeMap::new();
-    for r in applied_beads(&rows) {
+    for r in applied_beads(rows) {
         let (Some(key), Some(seq)) = (text(r, "key"), num(r, "seq")) else { continue };
         if latest.get(key).is_none_or(|(s, _)| seq > *s) {
             latest.insert(key, (seq, r));
@@ -119,7 +123,7 @@ pub fn wip(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
             by_state.entry(state).or_default().push(now as f64 - t as f64);
         }
     }
-    Ok(Value::Array(
+    Value::Array(
         LIVE_STATES
             .iter()
             .filter_map(|s| {
@@ -127,13 +131,17 @@ pub fn wip(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
                 Some(json!({"state": s, "wip": d.len(), "dwell_p50_s": int(quantile(d, 0.5)?), "dwell_max_s": int(d.iter().cloned().fold(f64::MIN, f64::max))}))
             })
             .collect(),
-    ))
+    )
 }
 
 /// Reopens (to REWORK) against beads landed, overall and by reason.
 pub fn rework(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
-    let rows = src.rows(STAGE, since(now, hours))?;
-    let win: Vec<&Value> = applied_beads(&rows).collect();
+    Ok(rework_of(&src.rows(STAGE, since(now, hours))?))
+}
+
+/// `rework` over `bead-stage` rows already fetched.
+pub fn rework_of(rows: &[Value]) -> Value {
+    let win: Vec<&Value> = applied_beads(rows).collect();
     let landed = win.iter().filter(|r| text(r, "to_state") == Some("LANDED")).filter_map(|r| text(r, "key")).collect::<BTreeSet<_>>().len();
     let mut reasons: BTreeMap<&str, usize> = BTreeMap::new();
     for r in win.iter().filter(|r| text(r, "to_state") == Some("REWORK")) {
@@ -144,7 +152,7 @@ pub fn rework(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
     by.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let mut out = vec![json!({"reason": "*", "reopens": total, "landed": landed, "ord": 0})];
     out.extend(by.into_iter().map(|(reason, n)| json!({"reason": reason, "reopens": n, "landed": landed, "ord": 1})));
-    Ok(Value::Array(out))
+    Value::Array(out)
 }
 
 /// Pass wall time (p50, p90) and the three phases that took longest.

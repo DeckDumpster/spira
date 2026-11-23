@@ -150,6 +150,7 @@ fn flatten(req: &ExportMetricsServiceRequest) -> Vec<Seen> {
 pub struct FakeStore {
     addr: String,
     samples: Arc<Mutex<Vec<Stored>>>,
+    exports: Arc<std::sync::atomic::AtomicUsize>,
     stop: Arc<AtomicBool>,
 }
 
@@ -170,7 +171,8 @@ impl FakeStore {
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap().to_string();
         let (samples, stop) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicBool::new(false)));
-        let (s2, st2) = (samples.clone(), stop.clone());
+        let exports = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (s2, st2, e2) = (samples.clone(), stop.clone(), exports.clone());
         std::thread::spawn(move || {
             while !st2.load(Ordering::Relaxed) {
                 let Ok((mut c, _)) = l.accept() else {
@@ -179,11 +181,11 @@ impl FakeStore {
                 };
                 c.set_nonblocking(false).unwrap();
                 c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-                let reply = serve_one(&mut c, &s2);
+                let reply = serve_one(&mut c, &s2, &e2);
                 let _ = c.write_all(&reply);
             }
         });
-        FakeStore { addr, samples, stop }
+        FakeStore { addr, samples, exports, stop }
     }
 
     pub fn addr(&self) -> &str {
@@ -197,6 +199,11 @@ impl FakeStore {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// How many export (read) requests it has answered.
+    pub fn export_requests(&self) -> usize {
+        self.exports.load(Ordering::SeqCst)
     }
 }
 
@@ -224,7 +231,7 @@ fn read_http(c: &mut std::net::TcpStream) -> Option<(String, Vec<u8>)> {
     }
 }
 
-fn serve_one(c: &mut std::net::TcpStream, samples: &Mutex<Vec<Stored>>) -> Vec<u8> {
+fn serve_one(c: &mut std::net::TcpStream, samples: &Mutex<Vec<Stored>>, exports: &std::sync::atomic::AtomicUsize) -> Vec<u8> {
     let Some((head, body)) = read_http(c) else { return b"HTTP/1.0 400 Bad Request\r\n\r\n".to_vec() };
     let line = head.lines().next().unwrap_or("");
     if line.starts_with("POST ") {
@@ -243,6 +250,7 @@ fn serve_one(c: &mut std::net::TcpStream, samples: &Mutex<Vec<Stored>>) -> Vec<u
     if path != "/api/v1/export" { // not a path: VictoriaMetrics export route
         return b"HTTP/1.0 404 Not Found\r\n\r\n".to_vec();
     }
+    exports.fetch_add(1, Ordering::SeqCst);
     let mut matchers = Vec::new();
     let mut start = 0i64;
     let mut end = i64::MAX / 1000;
