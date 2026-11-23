@@ -160,7 +160,7 @@ unilaterally.
 - **Unit**: every quoting/date/sanitize helper, the `reachable` BFS (seeds, stoppers, suspended partitions,
   scope), `strand_keys`' ghost/other classification, `dwarf_alive`'s cmdline match.
 - **Parity**: every rewritten `test-cockpit-*.sh` (and the handful of other suites that
-  called a probe by name — `test-law-synth.sh`, `test-statute-projection.sh`,
+  called a probe by name — `test-statute-projection.sh`,
   `test-closed-strand.sh`,
   `test-tsd-producers.sh`) is repointed to call the real compiled binary
   (`cockpit-collect probe <name>` / `once`) with the same
