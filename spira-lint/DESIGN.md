@@ -665,7 +665,7 @@ paths are not calls):
 - A bare `spawn_blocking(` anywhere in scope except `runtime/src/offload.rs`, so there is one
   mechanism.
 
-**Exits.** A match inside the argument list of an `offload(…)` call, or on a line marked
+**Exits.** A match inside the argument list of an `offload(…)` or `on_pool(…)` call, or on a line marked
 `// loop-safe: <why>` (or under an unbroken comment block that carries it), is exempt. The
 marker is read from comment bytes only and needs a reason. In a handler module (c) neither
 exit applies: handler I/O goes through the `Journal`/`Marker`/`WideSink` ports and effects.

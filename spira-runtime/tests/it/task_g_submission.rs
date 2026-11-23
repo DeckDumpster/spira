@@ -97,9 +97,9 @@ fn the_real_source_is_refused_under_virtual_time_naming_it() {
 }
 
 #[test_id(tszzwrl)]
-#[test]
-fn the_real_source_unconfigured_is_dormant_and_returns_once_its_channel_is_closed() {
+#[tokio::test]
+async fn the_real_source_unconfigured_is_dormant_and_returns_once_its_channel_is_closed() {
     let (tx, rx) = mpsc::channel(1);
     drop(rx);
-    Box::new(Submission { addr: String::new(), port: 0 }).run(tx);
+    Box::new(Submission { addr: String::new(), port: 0 }).run(tx).await;
 }

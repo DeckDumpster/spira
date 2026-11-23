@@ -72,28 +72,110 @@ fn the_real_source_is_refused_under_virtual_time_naming_it() {
 }
 
 #[test_id(tvwgq6x)]
-#[test]
-fn the_real_source_submits_one_catch_up_per_mailbox_with_mail_already_unread() {
+#[tokio::test]
+async fn the_real_source_submits_one_catch_up_per_mailbox_with_mail_already_unread() {
     let dir = testkit::TempDir::new("mail-arrived");
     let new = dir.path().join("concierge/new");
     std::fs::create_dir_all(&new).unwrap();
     std::fs::write(new.join("m1"), "X-Spira-Kind: note\n\nhello\n").unwrap();
     let (tx, mut rx) = mpsc::channel(4);
     let source = MailArrived { mailboxes: vec![("concierge".into(), dir.path().join("concierge"))] };
-    let h = std::thread::spawn(move || Box::new(source).run(tx));
-    let first = rx.blocking_recv();
+    let h = tokio::spawn(Box::new(source).run(tx));
+    let first = rx.recv().await;
     drop(rx);
-    if let Err(p) = h.join() {
-        std::panic::resume_unwind(p);
-    }
+    h.await.unwrap();
     let first = first.expect("the catch-up submit");
     assert_eq!((first.stream.as_str(), Arrived::from_event_kind(&first.kind).map(|a| a.mailbox)), ("mail/concierge", Some("concierge".to_string())));
 }
 
 #[test_id(t84wbnw)]
-#[test]
-fn the_real_source_returns_once_its_channel_is_closed() {
+#[tokio::test]
+async fn the_real_source_returns_once_its_channel_is_closed() {
     let (tx, rx) = mpsc::channel(1);
     drop(rx);
-    Box::new(MailArrived { mailboxes: vec![] }).run(tx);
+    Box::new(MailArrived { mailboxes: vec![] }).run(tx).await;
+}
+
+/// The ids of this process's threads named as the mail source's thread used to be.
+fn mail_source_threads() -> Vec<std::ffi::OsString> {
+    let tasks = std::fs::read_dir(format!("{}/task", system_paths::PROC_SELF)).unwrap().flatten();
+    tasks.filter(|t| std::fs::read_to_string(t.path().join("comm")).is_ok_and(|c| c.trim() == "source-mail.arr")).map(|t| t.file_name()).collect()
+}
+
+fn deliver(new: &std::path::Path, name: &str) {
+    let staged = new.parent().unwrap().join(format!("{name}.staged"));
+    std::fs::write(&staged, "X-Spira-Kind: note\n\nhi\n").unwrap();
+    std::fs::rename(&staged, new.join(name)).unwrap();
+}
+
+#[test_id(t82wj13)]
+#[tokio::test]
+async fn the_mail_source_waits_on_the_runtime_and_owns_no_thread() {
+    let (up_tx, up) = std::sync::mpsc::channel();
+    let planted = std::thread::Builder::new().name("source-mail.arrived".into()).spawn(move || {
+        up_tx.send(()).unwrap();
+        std::thread::park();
+    }).unwrap();
+    up.recv().unwrap();
+    let planted_ids = mail_source_threads();
+    assert_eq!(planted_ids.len(), 1, "a thread named like the old source thread is found");
+    planted.thread().unpark();
+    planted.join().unwrap();
+
+    let dir = testkit::TempDir::new("mail-arrived-nothread");
+    let new = dir.path().join("ops/new");
+    std::fs::create_dir_all(&new).unwrap();
+    deliver(&new, "before");
+    let (tx, mut rx) = mpsc::channel(4);
+    let mut sources = Sources::default();
+    sources.register(Box::new(MailArrived { mailboxes: vec![("ops".into(), dir.path().join("ops"))] })).unwrap();
+    let handles = sources.start(tx).unwrap();
+    assert_eq!(rx.recv().await.unwrap().id, "mail.arrived/ops/1", "the catch-up says the watch is in place");
+    deliver(&new, "after");
+    let got = rx.recv().await.unwrap();
+    assert_eq!(Arrived::from_event_kind(&got.kind).map(|a| a.mailbox), Some("ops".to_string()));
+    assert_eq!(mail_source_threads().into_iter().filter(|t| !planted_ids.contains(t)).count(), 0, "the source is a task on this runtime");
+    drop(rx);
+    for h in handles {
+        h.await.unwrap();
+    }
+}
+
+#[test_id(tpgqwyr)]
+#[tokio::test]
+async fn a_full_channel_holds_the_mail_source_and_nothing_else_on_the_runtime() {
+    let dir = testkit::TempDir::new("mail-arrived-pressure");
+    let new = dir.path().join("ops/new");
+    std::fs::create_dir_all(&new).unwrap();
+    let (tx, mut rx) = mpsc::channel(1);
+    let probe = tx.clone();
+    let mut sources = Sources::default();
+    sources.register(Box::new(MailArrived { mailboxes: vec![("ops".into(), dir.path().join("ops"))] })).unwrap();
+    let handles = sources.start(tx).unwrap();
+    let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let ticker = {
+        let ticks = ticks.clone();
+        tokio::spawn(async move {
+            loop {
+                ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::task::yield_now().await;
+            }
+        })
+    };
+    deliver(&new, "a");
+    while probe.capacity() > 0 {
+        tokio::task::yield_now().await;
+    }
+    deliver(&new, "b");
+    let before = ticks.load(std::sync::atomic::Ordering::SeqCst);
+    while ticks.load(std::sync::atomic::Ordering::SeqCst) < before + 20_000 {
+        tokio::task::yield_now().await;
+    }
+    let (first, second) = (rx.recv().await.unwrap(), rx.recv().await.unwrap());
+    assert_eq!((first.id.as_str(), second.id.as_str()), ("mail.arrived/ops/1", "mail.arrived/ops/2"), "both deliveries arrive once the channel is read");
+    ticker.abort();
+    drop((rx, probe));
+    for h in handles {
+        h.await.unwrap();
+    }
 }

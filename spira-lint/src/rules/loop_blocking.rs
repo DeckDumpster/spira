@@ -1,7 +1,7 @@
 //! `loop-blocking` — nothing that blocks runs on the runtime's event loop or in its handlers
 //! (law-an-event-loop-never-blocks). Contract and known limits: DESIGN.md.
 //!
-//! A match is exempt inside the arguments of an `offload(…)` call, or on a line marked
+//! A match is exempt inside the arguments of an `offload(…)` or `on_pool(…)` call, or on a line marked
 //! `// loop-safe: <why>` (or under an unbroken comment block that carries it). The marker is
 //! read from comment bytes only. A handler module takes neither exit.
 //!
@@ -96,10 +96,10 @@ fn async_ranges(code: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Byte ranges of the argument list of every `offload(…)` call.
+/// Byte ranges of the argument list of every `offload(…)` or `on_pool(…)` call.
 fn offload_ranges(code: &[u8]) -> Vec<(usize, usize)> {
     static R: OnceLock<Regex> = OnceLock::new();
-    re(&R, r"\boffload\s*\(").find_iter(code).map(|m| (m.end() - 1, close_of(code, m.end() - 1))).collect()
+    re(&R, r"\b(?:offload|on_pool)\s*\(").find_iter(code).map(|m| (m.end() - 1, close_of(code, m.end() - 1))).collect()
 }
 
 fn within(ranges: &[(usize, usize)], at: usize) -> bool {

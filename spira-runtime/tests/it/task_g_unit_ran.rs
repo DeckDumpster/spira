@@ -80,9 +80,9 @@ fn the_real_source_is_refused_under_virtual_time_naming_it() {
 }
 
 #[test_id(tmv46t9)]
-#[test]
-fn the_real_source_returns_once_its_channel_is_closed() {
+#[tokio::test]
+async fn the_real_source_returns_once_its_channel_is_closed() {
     let (tx, rx) = mpsc::channel(1);
     drop(rx);
-    Box::new(UnitRanDbus).run(tx);
+    Box::new(UnitRanDbus).run(tx).await;
 }

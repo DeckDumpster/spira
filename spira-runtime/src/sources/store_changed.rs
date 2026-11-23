@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use runtime::host::Submit;
-use runtime::sources::Source;
+use runtime::sources::{on_thread, Running, Source};
 use runtime::StoreChanged as Body;
 use store_view::{Polled, Projection};
 use tokio::sync::mpsc;
@@ -24,8 +24,9 @@ impl Source for StoreChanged {
         NAME
     }
 
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
         let (views, table) = (self.views, self.table);
+        on_thread(NAME, move || {
         let closed = AtomicBool::new(false);
         spira_store::lc_call::as_task("store-watch", || {
             views.run(&closed, &mut |polled| {
@@ -39,7 +40,8 @@ impl Source for StoreChanged {
                     closed.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             })
-        });
+        })
+        })
     }
 }
 
@@ -85,8 +87,8 @@ mod tests {
     }
 
     #[test_id(tky05vt)]
-    #[test]
-    fn the_source_submits_one_event_per_applied_answer_and_keeps_the_table_at_the_last_revision() {
+    #[tokio::test]
+    async fn the_source_submits_one_event_per_applied_answer_and_keeps_the_table_at_the_last_revision() {
         let (end_tx, end_rx) = std::sync::mpsc::channel();
         let double = Arc::new(Double { watches: AtomicUsize::new(0), lists: AtomicUsize::new(0), reached_end: Mutex::new(end_tx) });
         struct Shared(Arc<Double>);
@@ -102,9 +104,9 @@ mod tests {
         assert_eq!(table.rev(), None);
         let (tx, mut rx) = mpsc::channel(4);
         let source = Box::new(StoreChanged { views, table: table.clone() });
-        std::thread::spawn(move || source.run(tx));
-        let first = rx.blocking_recv().unwrap();
-        let second = rx.blocking_recv().unwrap();
+        tokio::spawn(source.run(tx));
+        let first = rx.recv().await.unwrap();
+        let second = rx.recv().await.unwrap();
         end_rx.recv().unwrap();
         assert_eq!((first.stream.as_str(), second.stream.as_str()), (STORE_STREAM, STORE_STREAM));
         assert_eq!(Body::parse(&first.kind.body), Some(Body { rev: 9, keys: vec!["lifecycle/sp-a".into(), "readiness/sp-a".into()], reload: false }));
@@ -114,8 +116,8 @@ mod tests {
     }
 
     #[test_id(trhwkl6)]
-    #[test]
-    fn the_source_ends_when_the_host_channel_closes() {
+    #[tokio::test]
+    async fn the_source_ends_when_the_host_channel_closes() {
         struct Applies;
         impl Transport for Applies {
             fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
@@ -132,6 +134,6 @@ mod tests {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
         let source = Box::new(StoreChanged { views, table: Arc::new(ChangeTable::default()) });
-        source.run(tx);
+        source.run(tx).await;
     }
 }
