@@ -10,7 +10,7 @@ use runtime::{EffectSpec, MemJournal, NullMarker, NullSink};
 use serde_json::{json, Value};
 use spira_runtime::tasks::a::{publish, queue_step};
 use spira_runtime::watchers::{pr_notify, INBOX_APPEND};
-use spira_runtime::{open_engine, start_tasks};
+use spira_runtime::{open_engine, tasks, BOOT_STAGGER_MS};
 
 const NOW: u64 = 1_794_294_300_000;
 const TWO_MIN: u64 = 120_000;
@@ -79,13 +79,23 @@ fn ran(asked: &[Ask], name: &str) -> bool {
     asked.iter().any(|a| a.name == name)
 }
 
+const BOOTED: [&str; 3] = ["publish/boot", "queue.step/boot", "pr-notify/boot"];
+
 fn run(script: Script, until: u64) -> Vec<Ask> {
     let clock = VirtualClock::new(NOW);
     let runner = Arc::new(Runner { clock: clock.clone(), asked: Mutex::new(vec![]), script });
     let mut settings = spira_runtime::settings::fixture();
     settings.pr_notify.interval_ms = 1_800_000;
     let mut engine = open_engine(&settings, MemJournal::new(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![], std::time::Duration::from_secs(10)).unwrap();
-    start_tasks(&mut engine);
+    let now = engine.now_ms();
+    let mut found = 0;
+    for (id, stream, kind) in tasks::boots() {
+        if BOOTED.contains(&id) {
+            engine.start_at(stream, kind, now + found * BOOT_STAGGER_MS);
+            found += 1;
+        }
+    }
+    assert_eq!(found, BOOTED.len() as u64, "every task these tests read has a boot tick");
     let mut d = VirtualDriver::new(engine, clock, runner.clone());
     d.run_until(NOW + until).unwrap();
     let asked = runner.asked.lock().unwrap().clone();
@@ -218,6 +228,13 @@ fn the_later_poll_repeats_no_line_still_mails_the_merge_and_asks_what_it_asked()
     let until = 70 * 60_000;
     let with = run(poll_script(true), until);
     let without = run(poll_script(false), until);
+
+    let owned: Vec<&str> = tasks::all().filter(|t| BOOTED.contains(&(t.boot)().0)).flat_map(|t| t.effects.iter().copied()).collect();
+    for asked in [&with, &without] {
+        let strangers: Vec<&str> = asked.iter().map(|a| a.name.as_str()).filter(|n| ![INBOX_APPEND, pr_notify::OPERATOR_NOTE].contains(n) && !owned.contains(n)).collect();
+        assert_eq!(strangers, Vec::<&str>::new(), "only the three tasks run");
+        assert!(asked.len() < 200, "{} asks", asked.len());
+    }
 
     let merged = lines(&with).into_iter().filter(|(l, _)| l.starts_with("MERGED #1304")).collect::<Vec<_>>();
     assert_eq!(merged.len(), 1, "{:?}", lines(&with));
