@@ -776,6 +776,43 @@ mod tests {
         let sent = store.0.lock().unwrap().clone();
         assert!(!sent[loaded..].iter().any(|a| a.starts_with("list --live")), "{sent:?}");
         assert_eq!(sent.iter().filter(|a| a.starts_with("list --batches")).count(), 1, "the rounds are asked once and held: {sent:?}");
+        assert!(sent.iter().any(|a| a.starts_with("watch ") && a.contains("--wait-ms 30000")), "{sent:?}");
+    }
+
+    #[test_id(tn3v7hx)]
+    #[test]
+    fn ages_advance_between_renders_while_the_watch_is_held() {
+        struct Blocked(Mutex<Vec<String>>, std::sync::mpsc::Sender<()>, Mutex<std::sync::mpsc::Receiver<()>>);
+        impl Transport for Blocked {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+                self.0.lock().unwrap().push(argv.join(" "));
+                let out = match argv[0].as_str() {
+                    "rc" => r#"{"ok":{"items":[],"list_rev":5}}"#.to_string(),
+                    "watch" => {
+                        let _ = self.1.send(());
+                        let _ = self.2.lock().unwrap().recv();
+                        r#"{"progress_rev":5}"#.to_string()
+                    }
+                    _ => "[]".to_string(),
+                };
+                Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
+            }
+        }
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (_release_tx, release_rx) = std::sync::mpsc::channel();
+        let store = Arc::new(Blocked(Mutex::new(Vec::new()), held_tx, Mutex::new(release_rx)));
+        let views = store_view::Projection::new(LcClient::over(store.clone(), true), Duration::from_secs(30), Arc::new(std::time::Instant::now));
+        views.load().unwrap();
+        let views = Arc::new(views);
+        let watcher = views.clone();
+        std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
+        held_rx.recv().unwrap();
+        let held = views.rows(&store_view::RowQuery { live: true, ..Default::default() }).unwrap().unwrap().value;
+        assert!(held.is_empty());
+        let published = super::super::Snapshot { now: 1_000, good_at: 1_000, ..Default::default() };
+        let at = |now| super::super::render(&super::super::view(&super::super::first_frame(Some(&published), now).unwrap()), 120).join("\n");
+        assert_ne!(at(1_000 + 400), at(1_000 + 460), "the age moves with the clock, not with a store event");
+        assert_eq!(store.0.lock().unwrap().iter().filter(|a| a.starts_with("watch ")).count(), 1);
     }
 
     #[test_id(ta6v4al)]

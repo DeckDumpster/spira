@@ -17,13 +17,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use spira_store::lc_call::{LcClient, LcError, Reply};
+use spira_store::lc_call::{LcClient, LcError, Reply, WATCH_HOLD_MS};
 use spira_store::lc_state::{self, BatchState, Row};
 
-/// How old a view's last confirmed revision may be before its reads refuse.
+/// How old a view's last confirmed revision may be before its reads refuse; a view the watch
+/// keeps current may also be quiet for one watch hold ([`WATCH_HOLD_MS`]) beyond it.
 pub const STALE_KEY: &str = "SPIRA_STORE_VIEW_STALE_MS";
-/// One long-poll's wait for a projection that does not ask for another.
-pub const WATCH_WAIT_MS: u64 = 2_000;
 /// The pause after a poll the store did not answer, so a down service is not spun on.
 const RETRY: Duration = Duration::from_secs(1);
 /// The most ids one `list --ids` re-read names.
@@ -162,6 +161,8 @@ pub const WINDOW_HOLD: Duration = Duration::from_secs(60);
 struct State {
     rev: Option<u64>,
     confirmed: Option<Instant>,
+    /// The last confirmation was a watch answer, so a quiet hold is not staleness.
+    watched: bool,
     batches: BTreeMap<String, Batch>,
     /// `None` after a batches-only refresh: no lifecycle row is held at the revision.
     beads: Option<BTreeMap<String, Bead>>,
@@ -227,7 +228,9 @@ impl Terminal {
 
 pub type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
-/// The in-memory views and the watch that keeps them current.
+/// The in-memory views and the watch that keeps them current. A read refuses once the last
+/// confirmation is older than the configured staleness, plus one watch hold ([`WATCH_HOLD_MS`])
+/// while that confirmation was a watch answer; a load, or a poll that failed, gets no extension.
 pub struct Projection {
     client: LcClient,
     stale_after: Duration,
@@ -240,8 +243,6 @@ pub struct Projection {
     lost: Mutex<Option<String>>,
     /// Prefixes watched beside the five this view applies; their events are only reported.
     extra: Vec<String>,
-    /// How long one watch holds, which a view may be quiet for and still be current.
-    watch_wait_ms: u64,
 }
 
 /// What one [`Projection::poll`] did.
@@ -454,15 +455,7 @@ fn beads_of(raw: &str) -> Result<Vec<(String, Bead)>, LcError> {
 
 impl Projection {
     pub fn new(client: LcClient, stale_after: Duration, clock: Clock) -> Self {
-        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), terminal: Mutex::new(Terminal::default()), watching: AtomicBool::new(false), lost: Mutex::new(None), extra: Vec::new(), watch_wait_ms: WATCH_WAIT_MS }
-    }
-
-    /// Holds each watch `ms`, and allows that much more quiet before a read refuses as stale: a
-    /// quiet store confirms the view once per hold, so the bound is the hold beyond [`STALE_KEY`].
-    pub fn with_watch_wait(mut self, ms: u64) -> Self {
-        self.watch_wait_ms = ms;
-        self.stale_after += Duration::from_millis(ms);
-        self
+        Projection { client, stale_after, clock, state: Mutex::new(State::default()), memo: Mutex::new(Memo::default()), terminal: Mutex::new(Terminal::default()), watching: AtomicBool::new(false), lost: Mutex::new(None), extra: Vec::new() }
     }
 
     /// Also watches `prefixes`: events under them are reported by [`poll`](Self::poll) and not applied.
@@ -541,17 +534,17 @@ impl Projection {
     /// Reads every view afresh: the batch records and the revision they were listed at, then
     /// the live lifecycle rows. A change after that revision is redelivered by the next watch.
     pub fn load(&self) -> Result<(), LcError> {
-        self.load_at().map(|_| ())
+        self.load_at(false).map(|_| ())
     }
 
-    fn load_at(&self) -> Result<u64, LcError> {
+    fn load_at(&self, watched: bool) -> Result<u64, LcError> {
         let (items, rev) = self.rc_list(BATCHES, &OPEN_STATES, OPEN_MAX)?;
         let beads = beads_of(&self.client.answer(&["list", "--live"])?)?;
         let batches = batches_of(items);
         let mut s = self.lock();
         self.end_held(ALL);
         self.terminal().forget(None);
-        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: Some(beads.into_iter().collect()) };
+        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), watched, batches, beads: Some(beads.into_iter().collect()) };
         Ok(rev)
     }
 
@@ -564,7 +557,7 @@ impl Projection {
         let mut s = self.lock();
         self.end_held(ALL);
         self.terminal().forget(None);
-        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), batches, beads: None };
+        *s = State { rev: Some(rev), confirmed: Some((self.clock)()), watched: false, batches, beads: None };
         Ok(())
     }
 
@@ -572,6 +565,9 @@ impl Projection {
     /// revision. Nothing moves unless the whole answer applied.
     pub fn poll(&self) -> Result<Polled, LcError> {
         let polled = self.poll_once();
+        if polled.is_err() {
+            self.lock().watched = false;
+        }
         *self.lost.lock().unwrap_or_else(|e| e.into_inner()) = polled.as_ref().err().map(ToString::to_string);
         polled
     }
@@ -581,8 +577,8 @@ impl Projection {
             let s = self.lock();
             s.rev.filter(|_| s.beads.is_some())
         };
-        let Some(from) = held else { return self.load_at().map(|rev| Polled::Reloaded { rev }) };
-        let (from_s, wait) = (from.to_string(), self.watch_wait_ms.to_string());
+        let Some(from) = held else { return self.load_at(true).map(|rev| Polled::Reloaded { rev }) };
+        let (from_s, wait) = (from.to_string(), WATCH_HOLD_MS.to_string());
         // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
         // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
         let mut argv = vec!["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY];
@@ -593,10 +589,11 @@ impl Projection {
             let mut s = self.lock();
             s.rev = Some(p.max(from));
             s.confirmed = Some((self.clock)());
+            s.watched = true;
             return Ok(Polled::Quiet { rev: p.max(from) });
         }
         if w.get("too_old").is_some() {
-            return self.load_at().map(|rev| Polled::Reloaded { rev });
+            return self.load_at(true).map(|rev| Polled::Reloaded { rev });
         }
         let (Some(events), Some(through)) = (w["events"].as_array(), w["through"].as_u64()) else {
             return Err(fault(format!("watch: unreadable answer {w}")));
@@ -652,10 +649,11 @@ impl Projection {
         }
         s.rev = Some(through.max(from));
         s.confirmed = Some((self.clock)());
+        s.watched = true;
         Ok(Polled::Applied { through: through.max(from), keys })
     }
 
-    /// Polls until `stop` is set, pausing after a poll the store did not answer; `observe` sees
+    /// Polls until `stop` is set, each poll one watch of [`WATCH_HOLD_MS`]; pausing after a poll the store did not answer; `observe` sees
     /// each poll that succeeded.
     pub fn run(&self, stop: &AtomicBool, observe: &mut dyn FnMut(&Polled)) {
         struct Clear<'a>(&'a AtomicBool);
@@ -680,11 +678,12 @@ impl Projection {
             return Err(LcError::Refused("the store views are not loaded yet".into()));
         };
         let age = (self.clock)().saturating_duration_since(at);
-        if age > self.stale_after {
+        let bound = if s.watched { self.stale_after + Duration::from_millis(WATCH_HOLD_MS) } else { self.stale_after };
+        if age > bound {
             let lost = self.lost.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|why| format!("; the watch is lost: {why}")).unwrap_or_default();
             return Err(LcError::Refused(format!(
                 "stale past {}ms: the views hold revision {rev}, last confirmed {}ms ago{lost}",
-                self.stale_after.as_millis(),
+                bound.as_millis(),
                 age.as_millis()
             )));
         }

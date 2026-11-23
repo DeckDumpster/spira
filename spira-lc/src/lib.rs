@@ -88,3 +88,12 @@ mod list_pages_tests {
         assert!(list_pages(&[], |_| (3, "refused".into())).is_err());
     }
 }
+
+#[cfg(test)]
+mod watch_hold_tests {
+    #[test_id(thug090)]
+    #[test]
+    fn the_clients_watch_hold_is_the_services_cap() {
+        assert_eq!(spira_store::lc_call::WATCH_HOLD_MS, state_store::MAX_WATCH_WAIT_MS);
+    }
+}

@@ -199,9 +199,9 @@ fn a_view_refuses_before_its_first_load_and_once_its_revision_is_stale_until_the
         w.p.poll().unwrap();
         w.advance(Duration::from_millis(1400));
         assert_eq!(w.p.ready_counts().unwrap().rev, 4);
-        w.advance(Duration::from_millis(200));
+        w.advance(Duration::from_millis(30_200));
         for refusal in [w.p.batch_view("spira").err(), w.p.round_view("spira").err(), w.p.ready_counts().err()] {
-            assert!(matches!(&refusal, Some(LcError::Refused(m)) if m.starts_with("stale past 1500ms")), "{refusal:?}");
+            assert!(matches!(&refusal, Some(LcError::Refused(m)) if m.starts_with("stale past 31500ms")), "{refusal:?}");
         }
         assert!(w.p.poll().is_err(), "a watch with no answer");
         assert!(w.p.ready_counts().is_err(), "a failed poll confirms nothing");
@@ -798,25 +798,54 @@ fn added_prefixes_join_the_watch_and_without_them_the_five_are_asked_as_before()
 
 #[test_id(tm31ksw)]
 #[test]
-fn a_view_with_a_longer_hold_sends_it_and_stays_current_through_that_much_quiet() {
+fn every_views_watch_sends_wait_ms_30000() {
     within(|| {
-        let mut w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
-        let now = Arc::clone(&w.now);
-        w.p = Projection::new(LcClient::over(Arc::new(Double(Arc::clone(&w.script))), true), Duration::from_secs(10), Arc::new(move || *now.lock().unwrap())).with_watch_wait(30_000);
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
         w.p.poll().unwrap();
         w.watch(json!({ "progress_rev": 5 }));
         w.p.poll().unwrap();
         let sent = w.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
         assert_eq!(sent[sent.iter().position(|a| a == "--wait-ms").unwrap() + 1], "30000");
+    });
+}
+
+#[test_id(tzq0k4n)]
+#[test]
+fn a_watched_view_stays_readable_through_a_quiet_hold() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.watch(json!({ "progress_rev": 5 }));
+        w.p.poll().unwrap();
         w.advance(Duration::from_secs(35));
         assert_eq!(w.p.ready_counts().unwrap().rev, 5, "35 s of quiet is inside the hold beyond the 10 s bound");
         w.advance(Duration::from_secs(6));
         assert!(matches!(w.p.ready_counts(), Err(LcError::Refused(m)) if m.starts_with("stale past 40000ms")));
-        let plain = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
-        plain.p.poll().unwrap();
-        plain.watch(json!({ "progress_rev": 5 }));
-        plain.p.poll().unwrap();
-        let sent = plain.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
-        assert_eq!(sent[sent.iter().position(|a| a == "--wait-ms").unwrap() + 1], "2000", "a view that does not ask keeps its hold");
+    });
+}
+
+#[test_id(tb8m2wd)]
+#[test]
+fn a_lost_watch_shrinks_the_bound_back_to_the_configured_staleness() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.watch(json!({ "progress_rev": 5 }));
+        w.p.poll().unwrap();
+        w.script.lock().unwrap().watches.push_back((1, String::new()));
+        assert!(w.p.poll().is_err(), "the watch was lost");
+        w.advance(Duration::from_secs(11));
+        assert!(matches!(w.p.ready_counts(), Err(LcError::Refused(m)) if m.contains("stale past 10000ms") && m.contains("the watch is lost")));
+    });
+}
+
+#[test_id(tj5c9ar)]
+#[test]
+fn an_unwatched_view_keeps_the_configured_staleness() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.refresh_batches().unwrap();
+        w.advance(Duration::from_secs(11));
+        assert!(matches!(w.p.batch_view("spira"), Err(LcError::Refused(m)) if m.contains("stale past 10000ms")));
     });
 }
