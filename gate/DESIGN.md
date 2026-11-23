@@ -198,7 +198,7 @@ judged, charge nothing, retry"; a new number would read as FAIL (`spira_gate_bla
 that acts on it, the landing pass, matches `reason=conflict` on the VERDICT line.
 
 Reasons: PASS `syntax-only | cached | pass`; FAIL `syntax | beads-data | foreign-harness |
-branch-red`; BASE_FAIL `base-red`; NO_VERDICT `no-repo-map-file | no-repo-map | no-base |
+branch-red`; BASE_FAIL `base-red`; NO_VERDICT `certifies-nothing | no-repo-map-file | no-repo-map | no-base |
 no-diff | conflict | merge-failed | missing-exclude | missing-skew | skew-init-fault |
 cmd-missing-file | admission-timeout | no-lockfile | lock-timeout | tree-unidentified |
 harness-fault | timeout | base-timeout | base-flake | base-untestable | lib-unavailable | died |
@@ -214,7 +214,7 @@ merge-failed messages, which are new.
 |---|---|---|
 | `$SPIRA_GATE_LOG` | `<UTC %Y-%m-%dT%H:%M:%SZ> <repo> <branch> waited=<n>s ran=<n>s rc=<status>[ <reason>][ compose=<label> phases=<phase>:<secs>,…][ waited_ms=<n>]\n`, appended | every verdict once the repository resolved; the composition fields once one was chosen |
 | `$SPIRA_VERDICTS/<key>` | `when=<UTC>\nat=<epoch>\nby=<caller>\nrepo=<name>\nbranch=<br>\nsuites=<csv or ->\ncompose=<label>\n`, written to `.<key>.<pid>` and renamed | PASS from a trial only |
-| `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`) once the merged tree `T` is known |
+| `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`; `syntax-only` only where no tier is declared) once the merged tree `T` is known |
 | `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` and no suites were named against the bead |
 | `$SPIRA_RUN/gate-admission/slot.<n>.holder` | `pid=<p> start=<starttime> who=<branch> since=<epoch> waited=0 last=<epoch>\n` (advisory; the flock is the lock; sp-f4ig1) | written when the slot is taken; read by `spira-admit status` and the waiting line |
 | `$SPIRA_RUN/worktree/.gate.<repo-basename>.<tree-key>` | the gate worktree (detached) | removed on every non-PASS verdict; kept on PASS for cargo's fingerprints |
@@ -252,7 +252,7 @@ repo map → repository → yield/meter armed → landing ref → changed files 
 **merge** → `bash -n` → beads data → foreign harness → **the definition** (the tree's
 `gate.steps`; else, for a `queue.local` repository whose `.spira/testenv.toml` has a `ci_entry`
 and no harness Containerfile, that declaration's default tiers; else the column; "The tree
-owns its gate") → empty gate string (PASS `syntax-only`, column only) → preflight (`bash <path>` words
+owns its gate") → empty gate string (PASS `syntax-only`, column only; NO_VERDICT `certifies-nothing` when the repository declares tiers in `.spira/testenv.toml` — declare `ci_entry` on a `queue.local` repository or add `gate.steps`) → preflight (`bash <path>` words
 exist on the base for a column, on the revision under test for a tree definition) → key →
 cache → admission →
 sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**

@@ -5,6 +5,8 @@ use crate::parse_foreign;
 
 pub const BUILD_TIER: &str = "build";
 pub const QUEUE_LOCAL: &str = "queue.local";
+/// The gate's NO_VERDICT reason for a repository that declares tiers its gate runs none of.
+pub const CERTIFIES_NOTHING: &str = "certifies-nothing";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateSource {

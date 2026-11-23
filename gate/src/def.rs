@@ -226,9 +226,8 @@ pub struct Side<'a> {
 }
 
 impl Side<'_> {
-    fn source(&self, land: &str, column: &str) -> Result<GateSource, String> {
-        let declaration = self.declaration.filter(|_| land == spira_config::gate_source::QUEUE_LOCAL);
-        gate_source::resolve(self.steps.is_some(), declaration, self.containerfile, land, column)
+    pub fn source(&self, land: &str, column: &str) -> Result<GateSource, String> {
+        gate_source::resolve(self.steps.is_some(), self.declaration, self.containerfile, land, column)
     }
 }
 

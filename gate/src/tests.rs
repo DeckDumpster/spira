@@ -6438,6 +6438,47 @@ fn a_column_beside_a_declaration_is_never_run_by_the_trial_or_its_base() {
 fn a_declaration_does_not_gate_a_forge_repository() {
     let f = testenv_gated(DECLARED_CI);
     f.ctx.borrow_mut().as_mut().unwrap().land = "queue".into();
-    assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert!(f.verdict_line().contains("reason=syntax-only") && f.full_verdict_line().ends_with(" ran=syntax"), "{}", f.verdict_line());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=certifies-nothing") && f.full_verdict_line().ends_with(" ran=syntax"), "{}", f.verdict_line());
+    assert!(testenv_calls(&f).is_empty());
+}
+
+// ------------------------------------------------------------ a declared test tier is not certified on syntax alone
+
+const DECLARED_NOT_RUN: &str = "default = [\"gate\"]\n[tier.gate]\ncmd = \"x\"\n";
+
+/// A `queue.forge` repository with an empty column whose landing ref and branch both declare tiers.
+fn forge_declaring() -> Fake {
+    let f = hex_fake();
+    {
+        let mut c = f.ctx.borrow_mut();
+        let c = c.as_mut().unwrap();
+        c.gate_cmd = String::new();
+        c.land = "queue.forge".into();
+    }
+    for rev in [BASE, MERGE_SHA] {
+        f.blobs.borrow_mut().insert(format!("{rev}:.spira/testenv.toml"), DECLARED_NOT_RUN.as_bytes().to_vec());
+    }
+    f
+}
+
+#[test_id(tlgsslq)]
+#[test]
+fn a_repository_that_declares_tiers_its_gate_does_not_run_is_not_certified_on_syntax() {
+    let f = forge_declaring();
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    let line = f.verdict_line();
+    assert!(line.contains(&format!("reason={}", spira_config::gate_source::CERTIFIES_NOTHING)), "{line}");
+    assert!(f.stderr().contains(".spira/testenv.toml") && f.stderr().contains("ci_entry") && f.stderr().contains("gate.steps"), "{}", f.stderr());
+    assert!(cert_written(&f).is_none());
+}
+
+#[test_id(tmw2obm)]
+#[test]
+fn a_declaring_repository_whose_changed_script_fails_bash_n_still_fails_on_syntax() {
+    let f = forge_declaring();
+    f.blobs.borrow_mut().insert(format!("{MERGE_SHA}:spira/x.sh"), b"if then".to_vec());
+    f.bash_n_bad.borrow_mut().insert(b"if then".to_vec());
+    assert_eq!(f.run(), FAIL);
+    assert!(f.verdict_line().contains("reason=syntax"), "{}", f.verdict_line());
 }

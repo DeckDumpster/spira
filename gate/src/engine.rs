@@ -403,7 +403,7 @@ impl<'w, W: World> Trial<'w, W> {
         let base_blob = w.show_blob(&repo, &base_rev, def::PATH);
         let tree_blob = w.show_blob(&repo, &rev, def::PATH);
         let local = ctx.land == spira_config::gate_source::QUEUE_LOCAL;
-        let declaration = |at: &str| local.then(|| w.show_blob(&repo, at, own::DECL).map(|b| String::from_utf8_lossy(&b).into_owned())).flatten();
+        let declaration = |at: &str| w.show_blob(&repo, at, own::DECL).map(|b| String::from_utf8_lossy(&b).into_owned());
         let (base_decl, tree_decl) = (declaration(&base_rev), declaration(&rev));
         let has_image = |at: &str| local && w.ls_tree_has(&repo, at, own::HARNESS_IMAGE);
         let base_side = def::Side { steps: base_blob.as_deref(), declaration: base_decl.as_deref(), containerfile: has_image(&base_rev) };
@@ -441,6 +441,10 @@ impl<'w, W: World> Trial<'w, W> {
         };
         let base_def = def::resolve_base(base_side, &ctx.land, &column);
         if cmd.is_empty() {
+            if matches!(tree_side.source(&ctx.land, &column), Ok(spira_config::gate_source::GateSource::Nothing { declares_tiers: true })) {
+                return v(NOVERDICT, spira_config::gate_source::CERTIFIES_NOTHING, format!(
+                    "gate: {name} declares test tiers in {} and its gate runs none of them; a syntax-only pass would certify nothing.\ngate: declare `ci_entry` on a queue.local repository, or add {} — until then {br} stays SUBMITTED.", own::DECL, def::PATH));
+            }
             return v(PASS, "syntax-only", "");
         }
         for p in parse::bash_paths(&cmd) {
