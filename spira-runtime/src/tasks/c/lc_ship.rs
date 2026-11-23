@@ -9,7 +9,8 @@
 //! - **Act:** `lc.ship.drain` runs `ship::drain` on the directory: oldest first, stopping at the
 //!   first refusal so a retry is the same object. A refusal is the task's error; the object
 //!   stays queued and the next tick sends it again.
-//! - **Credentials:** `S3Creds::from_env`, so this process's environment carries the backup key.
+//! - **Credentials:** the backup key in this process's environment, which the unit loads from the
+//!   backup's environment file; `check-config` refuses an `s3://` destination without it.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -98,10 +99,10 @@ pub fn observe(run: &Path, url: &str, dir: &str) -> Result<String, String> {
 }
 
 /// The runner of [`DRAIN`]: uploads what `dir` queues through `proc`, which starts the `curl`.
-pub fn drain(proc: Arc<dyn Proc>, url: &str, dir: &str) -> Result<String, String> {
+pub fn drain(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
     let dest = Dest::parse(url)?;
     let creds = match dest {
-        Dest::S3 { .. } => Some(S3Creds::from_env()?),
+        Dest::S3 { .. } => Some(S3Creds::from_vars(lookup)?.with_part_bytes(part_bytes)?),
         Dest::File(_) => None,
     };
     let put = Uploader { dest, creds, proc, deadline: PUT_DEADLINE };
@@ -109,6 +110,18 @@ pub fn drain(proc: Arc<dyn Proc>, url: &str, dir: &str) -> Result<String, String
     match sent.failed {
         Some(e) => Err(format!("{} object(s) uploaded, then: {e}", sent.uploaded.len())),
         None => Ok(format!("{} object(s) uploaded", sent.uploaded.len())),
+    }
+}
+
+/// Whether this process could sign the uploads `lc.ship` would make: `Ok` unless the task acts on
+/// an `s3://` destination and `lookup` lacks the key. No credential value is in the message.
+pub fn check_credentials(mode: runtime::Mode, url: &str, lookup: impl Fn(&str) -> Option<String>) -> Result<(), String> {
+    if mode != runtime::Mode::Act || url.is_empty() {
+        return Ok(());
+    }
+    match Dest::parse(url).map_err(|e| format!("{NAME}: {URL_KEY}: {e}"))? {
+        Dest::File(_) => Ok(()),
+        Dest::S3 { .. } => S3Creds::from_vars(lookup).map(|_| ()).map_err(|e| format!("{NAME}: {e}")),
     }
 }
 

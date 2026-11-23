@@ -48,6 +48,16 @@ fn rendered(instance: &str, manifest: &Manifest) -> Vec<(String, String, String)
     render_all(&ctx).unwrap()
 }
 
+#[test_id(tehq0eg)]
+#[test]
+fn the_scheduler_unit_loads_the_backup_key_and_the_store_unit_does_not() {
+    let out = rendered("beta", &build(&inputs("beta")).unwrap());
+    let text = |n: &str| out.iter().find(|(name, _, _)| name == n).unwrap_or_else(|| panic!("{n} not rendered")).2.clone();
+    let loads = |t: &str| t.lines().any(|l| l.starts_with("EnvironmentFile=") && l.contains("lc-backup.env"));
+    assert!(loads(&text("spira-runtime-beta.service")), "the scheduler's lc.ship signs with this key");
+    assert!(!loads(&text("lc-serve.service")), "lc-serve no longer uploads");
+}
+
 // covers: UC-instance-lifecycle-24
 #[test_id(ttxxoni)]
 #[test]
