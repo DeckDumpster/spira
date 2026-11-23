@@ -633,7 +633,39 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 # run below is the same command, which then compiles nothing. A scrubbed environment: the
 # launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
 "#, unit_env_fn!(), r#"unit_cargo() {
-    unit_env "#, spira_config::unit_tier_build!("unittest", "--workspace"), r#"
+    unit_env "#, spira_config::unit_tier_build!("unittest", "--workspace"), r#" "$@"
+}
+# Cargo never deletes a superseded artifact, so deps grows by a generation a round. Keep the files
+# the build just reported, their hashes' siblings (.d, .rmeta) and anything hard-linked to one
+# (a binary is named by its uplifted link); a failed or empty report deletes nothing.
+prune_superseded_unit() {
+    local d="$HOME/round-work/target/unittest/deps" rep="$HOME/round-unit-artifacts.json"
+    local -A keep_hash=() keep_ino=()
+    local f ino size path base n=0 bytes=0 named=0
+    if ! unit_cargo --message-format=json > "$rep" 2>/dev/null; then
+        rm -f "$rep"
+        echo "round-vm: unit prune skipped: the artifact listing failed" >&2
+        return 0
+    fi
+    while IFS= read -r f; do
+        [ -e "$f" ] || continue
+        named=$((named + 1))
+        keep_ino[$(stat -c %i "$f")]=1
+        base="${f##*/}"
+        if [[ $base =~ -([0-9a-f]{16})(\.|$) ]]; then keep_hash[${BASH_REMATCH[1]}]=1; fi
+    done < <(grep -o '"\(filenames\|executable\)":\(\[[^]]*\]\|"[^"]*"\)' "$rep" | grep -o '"/[^"]*"' | tr -d '"')
+    rm -f "$rep"
+    if [ "$named" -eq 0 ] || [ ! -d "$d" ]; then
+        echo "round-vm: unit prune skipped: the build named no files" >&2
+        return 0
+    fi
+    while read -r ino size path; do
+        base="${path##*/}"
+        [[ $base =~ -([0-9a-f]{16})(\.|$) ]] || continue
+        [ -z "${keep_hash[${BASH_REMATCH[1]}]:-}" ] && [ -z "${keep_ino[$ino]:-}" ] || continue
+        rm -f "$path" && { n=$((n + 1)); bytes=$((bytes + size)); }
+    done < <(find "$d" -maxdepth 1 -type f -printf '%i %s %p\n')
+    echo "round-vm: unit prune removed ${n} superseded files, ${bytes} bytes" >&2
 }
 write_unit_nextest_config() {
     printf '"#, spira_config::unit_tier_config_printf!(), r#"' "$1" "$2" > "$3"
@@ -656,6 +688,7 @@ echo built > "$unit_build_mark"
 unit_build_secs=$(( $(date +%s) - t_ut ))
 unit_total=$(grep -c '^ *Executable ' ~/round-unit-build.log)
 echo "round-vm: built ${unit_total} unit-test binaries in $(( $(date +%s) - t_ut ))s" >&2
+prune_superseded_unit
 # One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
 # lines on stdin: UNIT-TEST <binary> ok|FAILED (k/M). The totals are the --no-run listing's.
 # A nextest log (the unit tier) streams instead each red test by name, with nextest's own k/total.
@@ -1868,7 +1901,7 @@ pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
 
 const LARGEST_ENTRIES: usize = 5;
 
-fn tree_bytes(p: &Path, dev: u64) -> u64 {
+pub(crate) fn tree_bytes(p: &Path, dev: u64) -> u64 {
     use std::os::unix::fs::MetadataExt;
     let Ok(m) = p.symlink_metadata() else { return 0 };
     if m.dev() != dev {
@@ -2560,7 +2593,10 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let keep = AtomicBool::new(false);
     if let (Some(_slot), Some(plan)) = (&host_slot, env.host_plan) {
         let henv = RunEnv { remote: plan.remote.as_ref(), ..*env };
-        return on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
+        crate::host::reclaim(&plan.home);
+        let code = on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
+        crate::host::reclaim(&plan.home);
+        return code;
     }
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
     if keep.load(Ordering::SeqCst) {
@@ -3751,6 +3787,72 @@ mod tests {
         assert!(REMOTE_SCRIPT.find("release verify \"$rel_sha\"").unwrap() < prune, "pruned only once the release is verified");
         assert!(prune < REMOTE_SCRIPT.find("disk_report build").unwrap(), "the build report sees the pruned tree");
         assert!(prune < REMOTE_SCRIPT.find("testenv --mode parallel").unwrap());
+    }
+
+    fn prune_unit_fixture(listing: &str, files: &[&str], links: &[(&str, &str)]) -> (std::process::Output, Vec<String>) {
+        let d = TempDir::new();
+        let deps = d.path().join("round-work/target/unittest/deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        for f in files {
+            std::fs::write(deps.join(f), "0123456789").unwrap();
+        }
+        for (from, to) in links {
+            std::fs::hard_link(deps.join(from), d.path().join("round-work/target/unittest").join(to)).unwrap();
+        }
+        let json = listing.replace("{T}", &d.path().join("round-work/target/unittest").to_string_lossy());
+        std::fs::write(d.path().join("stub.json"), json).unwrap();
+        let script = format!("set -euo pipefail\nunit_cargo() {{ [ \"$1\" = --message-format=json ] && cat \"$HOME/stub.json\"; }}\n{}\nprune_superseded_unit\n", script_fn("prune_superseded_unit"));
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", system_paths::LOGIN_PATH).output().unwrap();
+        let mut left: Vec<String> = std::fs::read_dir(&deps).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        (out, left)
+    }
+
+    const H1: &str = "1111111111111111";
+    const H2: &str = "2222222222222222";
+
+    #[test_id(t2bb5ga)]
+    #[test]
+    fn pruning_the_superseded_unit_artifacts_keeps_the_named_library_its_dep_info_and_a_binary_known_by_hard_link() {
+        let lib = format!("libfoo-{H2}.rlib");
+        let old_lib = format!("libfoo-{H1}.rlib");
+        let bin = format!("tool-{H2}");
+        let old_bin = format!("tool-{H1}");
+        let listing = format!(
+            "{{\"reason\":\"compiler-artifact\",\"filenames\":[\"{{T}}/deps/{lib}\"],\"executable\":null}}\n{{\"reason\":\"compiler-artifact\",\"filenames\":[\"{{T}}/tool\"],\"executable\":\"{{T}}/tool\"}}\n{{\"reason\":\"build-finished\",\"success\":true}}\n"
+        );
+        let files = [lib.clone(), old_lib, format!("libfoo-{H2}.d"), format!("libfoo-{H1}.d"), bin.clone(), old_bin, "README".to_string()];
+        let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+        let (out, left) = prune_unit_fixture(&listing, &refs, &[(&bin, "tool")]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(left, ["README".to_string(), format!("libfoo-{H2}.d"), lib, bin]);
+        assert!(String::from_utf8_lossy(&out.stderr).contains("removed 3 superseded files, 30 bytes"), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test_id(t94rm6f)]
+    #[test]
+    fn pruning_the_superseded_unit_artifacts_deletes_nothing_when_the_list_is_empty_or_cargo_fails() {
+        let old = format!("libfoo-{H1}.rlib");
+        let (out, left) = prune_unit_fixture("{\"reason\":\"build-finished\",\"success\":true}\n", &[&old], &[]);
+        assert!(out.status.success());
+        assert_eq!(left, std::slice::from_ref(&old));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("named no files"));
+        let d = TempDir::new();
+        std::fs::create_dir_all(d.path().join("round-work/target/unittest/deps")).unwrap();
+        std::fs::write(d.path().join("round-work/target/unittest/deps").join(&old), "x").unwrap();
+        let script = format!("set -euo pipefail\nunit_cargo() {{ return 101; }}\n{}\nprune_superseded_unit\n", script_fn("prune_superseded_unit"));
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", system_paths::LOGIN_PATH).output().unwrap();
+        assert!(out.status.success(), "a failed listing does not change the verdict");
+        assert!(d.path().join("round-work/target/unittest/deps").join(&old).exists());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("listing failed"));
+    }
+
+    #[test_id(tu4goc7)]
+    #[test]
+    fn the_unit_prune_runs_after_the_build_and_outside_its_clock() {
+        let call = REMOTE_SCRIPT.find("\nprune_superseded_unit\n").unwrap();
+        assert!(REMOTE_SCRIPT.find("echo built > \"$unit_build_mark\"").unwrap() < call);
+        assert!(REMOTE_SCRIPT.find("unit_build_secs=$((").unwrap() < call);
     }
 
     #[test_id(tykuu6t)]
@@ -5582,6 +5684,131 @@ mod tests {
 
     fn pinned(fx: &Fixture) -> RunArgs {
         RunArgs { pin_host: true, ..round_args(fx) }
+    }
+
+    /// A host remote over a real home: the round script's folders come into being when the batch runs, as the script makes them.
+    struct HomeProbe {
+        inner: FakeRemote,
+        home: PathBuf,
+        present_at_start: std::sync::Arc<Mutex<Vec<bool>>>,
+    }
+    impl HomeProbe {
+        fn the_script_makes_its_folders(&self) {
+            let mut seen = self.present_at_start.lock().unwrap();
+            if seen.is_empty() {
+                seen.push(crate::host::RECLAIMED.iter().any(|n| self.home.join(n).exists()));
+            }
+            for n in crate::host::RECLAIMED {
+                fs::create_dir_all(self.home.join(n).join("sub")).unwrap();
+                fs::write(self.home.join(n).join("sub/f"), "x").unwrap();
+            }
+        }
+    }
+    impl Remote for HomeProbe {
+        fn reachable(&self, a: &str) -> bool { self.inner.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> {
+            self.the_script_makes_its_folders();
+            self.inner.run_batch(a, j)
+        }
+        fn round_started(&self, a: &str) -> bool { self.inner.round_started(a) }
+        fn boot_log_tail(&self, a: &str) -> Result<String, String> { self.inner.boot_log_tail(a) }
+        fn pull(&self, a: &str, r: &str, l: &Path) -> Result<(), PullError> { self.inner.pull(a, r, l) }
+        fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.inner.push(a, l, r) }
+        fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.inner.await_exit(a, w, s) }
+        fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.inner.run_attr(a, j) }
+        fn clear_results(&self, a: &str) -> Result<(), String> {
+            self.the_script_makes_its_folders();
+            self.inner.clear_results(a)
+        }
+    }
+
+    const KEPT: [&str; 3] = ["round-work/target/unittest", "round-resume", "round-releases"];
+
+    fn plant_home(home: &Path) {
+        for n in crate::host::RECLAIMED.iter().chain(KEPT.iter()) {
+            fs::create_dir_all(home.join(n).join("deep")).unwrap();
+            fs::write(home.join(n).join("deep/big"), "0123456789").unwrap();
+        }
+        let locked = home.join("round-scratch/deep");
+        fs::set_permissions(locked.join("big"), std::os::unix::fs::PermissionsExt::from_mode(0o444)).unwrap();
+        fs::set_permissions(&locked, std::os::unix::fs::PermissionsExt::from_mode(0o555)).unwrap();
+    }
+
+    fn host_round_over_a_real_home(fx: &Fixture, inner: FakeRemote, a: &RunArgs) -> (i32, Vec<bool>, PathBuf) {
+        let home = fx.d.path().join("host-home");
+        plant_home(&home);
+        let seen = std::sync::Arc::new(Mutex::new(vec![]));
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.home = home.clone();
+        plan.remote = Box::new(HomeProbe { inner, home: home.clone(), present_at_start: seen.clone() });
+        let code = go_with_host(fx, &FakeRemote::green(), &plan, a);
+        let at_start = seen.lock().unwrap().clone();
+        (code, at_start, home)
+    }
+
+    fn assert_reclaimed(home: &Path) {
+        for n in crate::host::RECLAIMED {
+            assert!(!home.join(n).exists(), "{n} was left behind");
+        }
+        for n in KEPT {
+            assert!(home.join(n).join("deep/big").exists(), "{n} was removed");
+        }
+    }
+
+    
+    #[test_id(t2sisu7)]
+    #[test]
+    fn a_green_host_round_leaves_none_of_its_scratch_and_attribution_folders_and_finds_none_at_its_start() {
+        let fx = fixture();
+        let (code, at_start, home) = host_round_over_a_real_home(&fx, FakeRemote::green(), &round_args(&fx));
+        assert_ne!(code, 2);
+        assert_eq!(at_start, [false], "leftovers were still there when the pass started");
+        assert_reclaimed(&home);
+    }
+
+    
+    #[test_id(tg9ds1r)]
+    #[test]
+    fn a_red_host_round_leaves_none_of_its_scratch_and_attribution_folders() {
+        let fx = fixture();
+        let mut red = FakeRemote::green();
+        red.rc = Ok(1);
+        let (_, at_start, home) = host_round_over_a_real_home(&fx, red, &round_args(&fx));
+        assert_eq!(at_start, [false]);
+        assert_reclaimed(&home);
+    }
+
+    
+    #[test_id(t8dua6k)]
+    #[test]
+    fn an_attribution_only_host_round_leaves_none_of_its_scratch_and_attribution_folders() {
+        let fx = fixture();
+        let spool = fx.d.path().join("spool");
+        fs::create_dir_all(spool.join("req")).unwrap();
+        fs::write(spool.join("close"), "").unwrap();
+        let a = RunArgs { tree_dir: fx.d.path().join("tree"), attr_spool: Some(spool), no_corpus: true, pin_host: true, ..Default::default() };
+        let (code, at_start, home) = host_round_over_a_real_home(&fx, FakeRemote::green(), &a);
+        assert_eq!(code, 0);
+        assert_eq!(at_start, [false], "leftovers were still there when the pass started");
+        assert!(!home.join("attr-target").exists() && !home.join("attr").exists() && !home.join("attr-results").exists() && !home.join("round-scratch").exists());
+        assert!(home.join("round-resume/deep/big").exists());
+    }
+
+    
+    #[test_id(t9beebd)]
+    #[test]
+    fn a_vm_round_does_not_reclaim_the_hosts_folders() {
+        let fx = fixture();
+        let home = fx.d.path().join("host-home");
+        plant_home(&home);
+        let mut plan = host_plan(FakeRemote::green(), CALM);
+        plan.home = home.clone();
+        let _taken = crate::host::HostSlot::try_take(&fx.cfg.state_dir).unwrap().expect("the slot was free");
+        go_with_host(&fx, &FakeRemote::green(), &plan, &round_args(&fx));
+        assert_eq!(fx.fp.count("clone"), 1, "the round went to a VM");
+        for n in crate::host::RECLAIMED {
+            assert!(home.join(n).join("deep/big").exists(), "{n} was reclaimed by a VM round");
+        }
     }
 
     #[test_id(ty2w5sk)]
