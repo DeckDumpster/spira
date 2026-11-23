@@ -3,10 +3,12 @@
 
 use crate::cli::Outcome;
 use crate::ports::Ports;
+use margin_client::Anchor;
 use crate::record::{self, Review};
 use crate::review::{self, Comment, Sealed};
+use crate::thread::{self, His};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -226,7 +228,7 @@ fn id_of(f: &Finding) -> &str {
 }
 
 fn page(r: &Review, rows: &[Finding]) -> String {
-    let mut s = format!("---\ntype: note\nreview: {:03}\nsource: {}\npr: {}\n---\n\n# Review {:03} findings\n", r.number, r.source_sha, r.pr_url.as_deref().unwrap_or(""), r.number);
+    let mut s = format!("---\ntype: note\nreview: {:03}\nsource: {}\nurl: {}\n---\n\n# Review {:03} findings\n", r.number, r.source_sha, r.url.as_deref().unwrap_or(""), r.number);
     for f in rows {
         s.push_str(&format!("\n## {}\n\n- words: {}\n- exemplar: {}:{} @ {}\n- kind: {}\n- rule: {}\n- scope: {}\n- became:\n", id_of(f), f.words, f.exemplar.path, f.exemplar.line, r.source_sha, f.kind.as_str(), f.rule, f.scope.as_str()));
         if let Some(c) = &f.comment_id {
@@ -288,22 +290,6 @@ fn catalogue(run: &Path) -> Result<String, String> {
     Ok(s)
 }
 
-#[derive(Deserialize)]
-struct Author {
-    #[serde(rename = "type")]
-    kind: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Theirs {
-    path: String,
-    #[serde(alias = "original_line")]
-    line: Option<u32>,
-    #[serde(default)]
-    body: String,
-    user: Option<Author>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Half {
     Lens,
@@ -334,15 +320,9 @@ pub struct Scores {
     pub fresh_points: usize,
 }
 
-fn agreement(run: &Path, r: &Review) -> Result<Agreement, String> {
-    let sealed = Sealed::load(run, r.number)?.unwrap_or(Sealed { lens: Vec::new(), fresh: Vec::new() });
-    let path = record::dir(run, r.number).join("comments.json");
-    let theirs: Vec<Theirs> = match std::fs::read(&path) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("{}: {e}", path.display()))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(format!("reading {}: {e}", path.display())),
-    };
-    let mut theirs: Vec<(Theirs, bool)> = theirs.into_iter().filter(|t| t.user.as_ref().and_then(|u| u.kind.as_deref()) != Some("Bot")).map(|t| (t, false)).collect();
+fn agreement(ports: &Ports, r: &Review) -> Result<Agreement, String> {
+    let sealed = Sealed::load(&ports.run_dir, r.number)?.unwrap_or(Sealed { lens: Vec::new(), fresh: Vec::new() });
+    let mut theirs: Vec<(His, bool)> = thread::his_comments(ports, r)?.into_iter().map(|t| (t, false)).collect();
     let mut out = Agreement { agreed: Vec::new(), only_you: Vec::new(), only_concierge: Vec::new(), his_comments: theirs.len() };
     let tagged = sealed.lens.into_iter().map(|c| (Half::Lens, c)).chain(sealed.fresh.into_iter().map(|c| (Half::Fresh, c)));
     for (half, c) in tagged {
@@ -350,8 +330,8 @@ fn agreement(run: &Path, r: &Review) -> Result<Agreement, String> {
         let hit = theirs
             .iter()
             .enumerate()
-            .filter(|(_, (t, used))| !used && t.path == c.path && t.line.is_some_and(|l| (i64::from(l) - here).abs() <= AGREE_WITHIN))
-            .min_by_key(|(_, (t, _))| (i64::from(t.line.unwrap_or(0)) - here).abs())
+            .filter(|(_, (t, used))| !used && t.path == c.path && (i64::from(t.line) - here).abs() <= AGREE_WITHIN)
+            .min_by_key(|(_, (t, _))| (i64::from(t.line) - here).abs())
             .map(|(i, _)| i);
         match hit {
             Some(i) => {
@@ -361,7 +341,7 @@ fn agreement(run: &Path, r: &Review) -> Result<Agreement, String> {
             None => out.only_concierge.push((half, c)),
         }
     }
-    out.only_you = theirs.into_iter().filter(|(_, used)| !used).map(|(t, _)| format!("{}:{} {}", t.path, t.line.unwrap_or(0), t.body)).collect();
+    out.only_you = theirs.into_iter().filter(|(_, used)| !used).map(|(t, _)| format!("{}:{} {}", t.path, t.line, t.body)).collect();
     Ok(out)
 }
 
@@ -375,7 +355,7 @@ fn score(a: &Agreement, fresh_points: usize, rows: &[Finding]) -> Scores {
 pub(crate) fn scores(r: &Review, ports: &Ports) -> Result<Scores, String> {
     let run = &ports.run_dir;
     let fresh = Sealed::load(run, r.number)?.map_or(0, |s| s.fresh.len());
-    Ok(score(&agreement(run, r)?, fresh, &load(run, r.number)?))
+    Ok(score(&agreement(ports, r)?, fresh, &load(run, r.number)?))
 }
 
 fn closeout(r: &Review, rows: &[Finding], a: &Agreement, sc: &Scores) -> String {
@@ -419,18 +399,15 @@ pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
         Err(e) => return refuse(2, &e),
     };
     if post {
-        if r.pr.is_none() {
-            return refuse(2, &format!("review {number:03} has no pull request to post on; seal it first"));
-        }
-        if let Some(o) = review::repo_refusal(ports) {
-            return o;
+        if r.collection.is_none() {
+            return refuse(2, &format!("review {number:03} has no collection to post on; seal it first"));
         }
     }
     let result = (|| -> Result<String, String> {
         let rows = load(run, number)?;
         let dir = Path::new(&ports.findings_dir);
         let review_name = format!("cr-{number:03}.md");
-        let a = agreement(run, &r)?;
+        let a = agreement(ports, &r)?;
         write_if_changed(&dir.join(&review_name), &page(&r, &rows))?;
         write_if_changed(&dir.join(CATALOGUE), &catalogue(run)?)?;
         let message = format!("cr findings: review {number:03}, {} finding(s)\n\nRegenerated {review_name} and {CATALOGUE} from the findings records.\n", rows.len());
@@ -445,12 +422,14 @@ pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
     if !post {
         return Outcome { code: 0, stdout: text, stderr: String::new() };
     }
-    let ep = format!("repos/{}/{}/issues/{}/comments", ports.repo_owner, ports.repo_name, r.pr.unwrap_or(0));
-    match review::gh(ports, "POST", &ep, Some(&json!({"body": text}))) {
-        Ok(v) => match v.get("html_url").and_then(Value::as_str) {
-            Some(url) => Outcome { code: 0, stdout: format!("{text}\n{url}\n"), stderr: String::new() },
-            None => refuse(1, "the forge's reply to the comment has no html_url"),
-        },
+    let posted = (|| -> Result<String, String> {
+        let collection = r.collection.as_deref().unwrap_or_default();
+        let (document, version) = r.unit.files.first().and_then(|f| r.documents.get(&f.path)).ok_or_else(|| format!("review {number:03} records no document for the unit's first file"))?;
+        let anchor = Anchor { document: document.clone(), version: *version, first: 1, last: 1 };
+        ports.margin.post_comment(collection, &anchor, &text, false, None).map(|c| c.url)
+    })();
+    match posted {
+        Ok(url) => Outcome { code: 0, stdout: format!("{text}\n{url}\n"), stderr: String::new() },
         Err(e) => refuse(1, &e),
     }
 }
