@@ -1,0 +1,5 @@
+removed = ["spira.cr_page_lines"]
+[spira]
+cr_size_unit_lines = 60
+[renamed]
+"spira.cr_page_lines" = "spira.cr_size_unit_lines"

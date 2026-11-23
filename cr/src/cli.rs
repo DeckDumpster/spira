@@ -300,7 +300,7 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         return fail(1, json, why, &[], Some(seed), Some(&commit));
     };
     let chosen = &scored[i];
-    let body = describe(chosen, &ix, &stratum, &aim_note, seed, &commit, ports.config.page_lines);
+    let body = describe(chosen, &ix, &stratum, &aim_note, seed, &commit, ports.config.size_unit_lines);
     if json {
         Outcome { code: 0, stdout: format!("{}\n", body.0), stderr: String::new() }
     } else {
@@ -345,7 +345,7 @@ fn run_count(a: CountArgs, json: bool, ports: &Ports) -> Outcome {
     Outcome { code: 0, stdout: t, stderr: String::new() }
 }
 
-fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static str, usize)>, seed: u64, commit: &str, page_lines: u32) -> (Value, String) {
+fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static str, usize)>, seed: u64, commit: &str, size_unit_lines: u32) -> (Value, String) {
     let w = &c.weight;
     let review = match w.days_since_reviewed {
         None => "never reviewed".to_string(),
@@ -371,7 +371,7 @@ fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static
             "dependents": w.dependents,
             "dependents_term": w.dependents_term(),
             "lines": w.lines,
-            "size_term": w.size_term(page_lines),
+            "size_term": w.size_term(size_unit_lines),
             "total": w.total,
         },
         "stratum": {"kind": st.kind.as_str(), "reason": stratum_reason, "skipped": st.skipped.iter().map(|k| k.as_str()).collect::<Vec<_>>()},
@@ -384,8 +384,8 @@ fn describe(c: &Scored, ix: &Index, st: &Stratum, aim: &Option<(String, &'static
         t.push_str(&format!("  {} ({} lines)\n", f.path, ix.lines(&f.path)));
     }
     t.push_str(&format!(
-        "weight: {:.3} = review {:.2} ({review}) x attention {:.3} ({} of his {} comments in {}) x changed {:.3} (1 + min({} changed lines / {} lines, 1)) x churn {:.0} (1 + {} commits) x dependents {:.3} (1 + ln(1 + {})) x size {:.3} (min({} lines / {page_lines}, 3))\n",
-        w.total, w.review_factor, w.attention_term(), w.area_comments, w.his_comments, w.area, w.changed_term(), w.changed_lines, w.lines.max(1), w.churn_term(), w.commits, w.dependents_term(), w.dependents, w.size_term(page_lines), w.lines
+        "weight: {:.3} = review {:.2} ({review}) x attention {:.3} ({} of his {} comments in {}) x changed {:.3} (1 + min({} changed lines / {} lines, 1)) x churn {:.0} (1 + {} commits) x dependents {:.3} (1 + ln(1 + {})) x size {:.3} (min({} lines / {size_unit_lines}, 3))\n",
+        w.total, w.review_factor, w.attention_term(), w.area_comments, w.his_comments, w.area, w.changed_term(), w.changed_lines, w.lines.max(1), w.churn_term(), w.commits, w.dependents_term(), w.dependents, w.size_term(size_unit_lines), w.lines
     ));
     t.push_str(&format!("stratum: {stratum_reason}\n"));
     match aim {

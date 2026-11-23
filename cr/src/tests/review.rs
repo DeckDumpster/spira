@@ -638,7 +638,7 @@ fn seal_sends_a_large_module_whole_and_byte_identical() {
     let (_, note, docs) = w.margin.collection_posted(0);
     assert_eq!(docs.iter().find(|d| d.path == "demo/src/big.rs").map(|d| d.text.as_str()), Some(source.as_str()));
     let lines = source.lines().count() as u32;
-    let want = format!("- `demo/src/big.rs`: {lines} lines (about {} pages)\n- Total: {lines} lines", lines.div_ceil(10));
+    let want = format!("- `demo/src/big.rs`: {lines} lines\n- Total: {lines} lines\n");
     assert!(note.contains(&want), "missing {want:?} in:\n{note}");
 }
 

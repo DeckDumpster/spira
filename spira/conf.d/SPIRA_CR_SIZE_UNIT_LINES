@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=cr
+DOC=Lines per unit of the size weight: a file's size term is its line count over this, capped at 3.
+SCHEMA=Lines per unit of the size weight: a file's size term is its line count over this, capped at 3.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CR_SIZE_UNIT_LINES:=60}"
+SPIRA_CONF_DEFAULT_EOF

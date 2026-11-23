@@ -14,7 +14,7 @@ const DAY: u64 = 86_400_000;
 pub(crate) const NOW: u64 = 100 * DAY;
 
 pub(crate) fn cfg() -> Config {
-    Config { page_lines: 10, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, rewrite_days: 45, count_limit: 7, status_limit: 10 }
+    Config { size_unit_lines: 10, exclude: ["**/fixtures/**", "**/*.generated.*", "**/vendor/**", "Cargo.lock"].map(String::from).to_vec(), churn_days: 60, rewrite_days: 45, count_limit: 7, status_limit: 10 }
 }
 
 fn big_source() -> String {

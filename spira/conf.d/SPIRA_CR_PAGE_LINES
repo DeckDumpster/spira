@@ -1,7 +1,0 @@
-TYPE=u32
-GROUP=cr
-DOC=Lines in one page of code: the guide for a review unit's size, and the unit of the size weight.
-SCHEMA=Lines in one page of code: the guide for a review unit's size, and the unit of the size weight.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_CR_PAGE_LINES:=60}"
-SPIRA_CONF_DEFAULT_EOF

@@ -57,7 +57,7 @@ pub trait SourceTree {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    pub page_lines: u32,
+    pub size_unit_lines: u32,
     pub exclude: Vec<String>,
     pub churn_days: u32,
     pub rewrite_days: u32,

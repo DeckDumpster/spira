@@ -48,8 +48,8 @@ impl Weight {
     pub fn changed_term(&self) -> f64 {
         1.0 + (f64::from(self.changed_lines) / f64::from(self.lines.max(1))).min(1.0)
     }
-    pub fn size_term(&self, page_lines: u32) -> f64 {
-        (f64::from(self.lines) / f64::from(page_lines.max(1))).min(3.0)
+    pub fn size_term(&self, size_unit_lines: u32) -> f64 {
+        (f64::from(self.lines) / f64::from(size_unit_lines.max(1))).min(3.0)
     }
 }
 
@@ -117,7 +117,7 @@ pub fn score_all(ix: &Index, tree: &dyn SourceTree, units: Vec<Unit>, cfg: &Conf
             w.total = if paths.iter().any(|p| glob::any(&cfg.exclude, p)) {
                 0.0
             } else {
-                review_factor * w.attention_term() * w.changed_term() * w.churn_term() * w.dependents_term() * w.size_term(cfg.page_lines)
+                review_factor * w.attention_term() * w.changed_term() * w.churn_term() * w.dependents_term() * w.size_term(cfg.size_unit_lines)
             };
             Some(Scored { unit, weight: w })
         })
