@@ -242,17 +242,9 @@ fn newest_to(dir: &Path) -> Result<Option<u64>, String> {
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, String> {
-    use std::io::Read as _;
     let mut file = fs::File::open(path).map_err(io(path))?;
     let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 1 << 20];
-    loop {
-        let n = file.read(&mut buf).map_err(io(path))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
+    std::io::copy(&mut file, &mut hasher).map_err(io(path))?;
     Ok(hasher
         .finalize()
         .iter()

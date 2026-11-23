@@ -1189,11 +1189,15 @@ fn a_snapshot_copy_of_five_hundred_day_file_rows_commits_in_a_bounded_number_of_
     let rows: i64 = day_file_rows(dir.path());
     assert!(rows >= 500, "{rows}");
     let dest = dir.path().join("snap.db");
-    c.backend().snapshot_to(&dest).unwrap();
+    let rev = c.backend().snapshot_to(&dest).unwrap();
     let header = std::fs::read(&dest).unwrap();
     assert_eq!((header[18], header[19]), (1, 1), "the copy stays in rollback mode");
     let counter = u32::from_be_bytes(header[24..28].try_into().unwrap());
     assert!(counter <= 20, "{counter} transactions for {rows} rows");
+    let copy = SqliteBackend::open(&dest, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() }).unwrap();
+    for i in [0, 250, 499] {
+        assert!(copy.get(&state_store::request_key(&format!("r{i}")), rev).unwrap().is_some(), "r{i}");
+    }
 }
 
 fn day_file_rows(dir: &Path) -> i64 {
