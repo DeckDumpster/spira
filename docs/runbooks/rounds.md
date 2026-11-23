@@ -65,6 +65,15 @@ round-recert --drive --batch "$BATCH" --repo "$REPO"   # exits 0, retried
 **If it fails:** `is not green: RED: <steps>` names the red steps; `LAND FAILED` prints the
 land verb's own refusal above it.
 
+## Publish after `queue hand-land`
+
+`queue publish` counts a bead landed by `queue hand-land` as a member when the store records it
+LANDED at a tip in the range, with no land commit. Publish also needs a full-suite pass on the
+head. Pass `--evidence-full-suite` to `hand-land` only when `--evidence` was the repository's
+whole suite, green on `--evidence-tip`; it records that pass. A landing a green round certified
+records it without the flag. Without either, the landing records none, its closing line says so,
+and publish refuses the head until one is recorded.
+
 ## Enter and leave cutover mode
 
 `world cutover-mode` holds a stopped world with scoped stops instead of the halt stamp: every

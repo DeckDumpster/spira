@@ -974,18 +974,41 @@ pub mod edge {
         Ok(())
     }
 
-    /// The members of base..head from its land commits, a LANDED row's tip taken when it is in
+    /// The members of base..head: land commits, and beads the store records LANDED at a tip in
     /// the range (queue's `range_members`).
     fn range_members(e: &Effects, dir: &std::path::Path, base: &str, head: &str) -> Result<Vec<queue::model::Member>, String> {
         use queue::ports::Lc as _;
         let range = if base.is_empty() { head.to_string() } else { format!("{base}..{head}") };
         let commits = queue::publish_range::parse_log(&git(dir, &["log", "-z", "--format=%H%x1f%P%x1f%s", &range], Duration::from_secs(10))?);
         let lc = queue::real::RealLc { bin: None, client: Some(super::super::queue_step::edge::lc(e)) };
-        let ids: Vec<String> = commits.iter().filter_map(|c| queue::publish_range::land_id(&c.subject).map(str::to_string)).collect();
-        let rows = lc.bead_rows_of(&ids)?.into_iter().map(|r| (r.bead_id.clone(), r)).collect();
         let ok = |args: &[&str]| git(dir, args, Duration::from_secs(10)).is_ok();
         let in_range = |t: &str| queue::ident::check("tip", t).is_ok() && ok(&["cat-file", "-e", &format!("{t}^{{commit}}")]) && ok(&["merge-base", "--is-ancestor", t, head]) && (base.is_empty() || !ok(&["merge-base", "--is-ancestor", t, base]));
-        Ok(queue::publish_range::members(&commits, &rows, &in_range))
+        members_of(&commits, |ids| lc.bead_rows_of(ids), &in_range)
+    }
+
+    fn members_of(
+        commits: &[queue::model::RangeCommit],
+        rows_of: impl Fn(&[String]) -> Result<Vec<queue::model::LcBeadRow>, String>,
+        in_range: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<queue::model::Member>, String> {
+        let rows = rows_of(&queue::publish_range::candidate_ids(commits))?.into_iter().map(|r| (r.bead_id.clone(), r)).collect();
+        Ok(queue::publish_range::members(commits, &rows, in_range))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test_id(tj1ei7q)]
+        #[test]
+        fn hand_landed_beads_are_members_of_the_range() {
+            let commit = |sha: &str, subject: &str| queue::model::RangeCommit { sha: sha.into(), parents: vec!["p".into()], subject: subject.into() };
+            let row = |id: &str, tip: &str| queue::model::LcBeadRow { bead_id: id.into(), state: "LANDED".into(), tip: Some(tip.into()), since: Some(1), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Default::default(), ejected_red_tip: None, holder: None };
+            let commits = [commit("c2", "sp-b: x"), commit("c1", "sp-a: y")];
+            let got = members_of(&commits, |_| Ok(vec![row("sp-a", "c1"), row("sp-b", "c2")]), &|_| true).unwrap();
+            let got: Vec<_> = got.iter().map(|m| m.render()).collect();
+            assert_eq!(got, vec!["sp-a:c1", "sp-b:c2"]);
+        }
     }
 
     /// What a new record carries beyond the act's input: where it publishes and who is in it.

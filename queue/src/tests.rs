@@ -5269,6 +5269,68 @@ fn publish_members_come_from_land_commits_even_when_lifecycle_rows_are_missing()
         .contains("queue.sh publish: PR 77 opened — 2 bead(s) since last publish"));
 }
 
+fn hand_landed(t: &T, subjects: &[(&str, &str)]) {
+    full_suite_passed(t, "m3");
+    t.git.set("refs/heads/local/main", "m3");
+    t.git.set("refs/remotes/origin/main", "f0");
+    t.git.ancestor("f0", "m3");
+    *t.git.log.borrow_mut() = subjects
+        .iter()
+        .map(|(sha, subject)| RangeCommit {
+            sha: sha.to_string(),
+            parents: vec!["p".into()],
+            subject: subject.to_string(),
+        })
+        .collect();
+}
+
+#[test_id(tyz78to)]
+#[test]
+fn publish_names_beads_hand_landed_with_no_land_commit() {
+    let t = T::new(LandMode::QueueLocal);
+    hand_landed(&t, &[("m3", "sp-b: x"), ("m2", "stacked base: merge sp-a (y)"), ("m1", "sp-a: y")]);
+    for (id, tip) in [("sp-a", "m1"), ("sp-b", "m3")] {
+        t.git.ancestor(tip, "m3");
+        t.lc_row(id, "LANDED", tip, 5);
+    }
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    let rec = fs::read_to_string(t.qfile("publish")).unwrap();
+    assert!(rec.contains("members=sp-a:m1 sp-b:m3"), "{rec}");
+}
+
+#[test_id(t8hsth7)]
+#[test]
+fn publish_names_a_land_commit_and_a_hand_landed_bead_together() {
+    let t = T::new(LandMode::QueueLocal);
+    hand_landed(&t, &[("m3", "sp-b: x"), ("m1", "spira: land sp-a")]);
+    t.git.ancestor("m3", "m3");
+    t.lc_row("sp-b", "LANDED", "m3", 5);
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    let rec = fs::read_to_string(t.qfile("publish")).unwrap();
+    assert!(rec.contains("members=sp-a:m1 sp-b:m3"), "{rec}");
+}
+
+#[test_id(tev89h3)]
+#[test]
+fn publish_refuses_when_the_store_cannot_say_which_hand_landed_bead_landed() {
+    let t = T::new(LandMode::QueueLocal);
+    hand_landed(&t, &[("m3", "sp-b: x"), ("m1", "spira: land sp-a")]);
+    *t.lc.rows.borrow_mut() = Err("dolt down".into());
+    assert_ne!(t.run(&["publish"]), 0);
+    assert!(t.err().contains("dolt down"), "{}", t.err());
+    assert!(!t.lib.has("push"));
+}
+
+#[test_id(twzunvn)]
+#[test]
+fn publish_still_refuses_a_range_that_landed_no_bead() {
+    let t = T::new(LandMode::QueueLocal);
+    hand_landed(&t, &[("m3", "sp-b: x")]);
+    t.lc_row("sp-b", "CERTIFIED", "m3", 5);
+    assert_ne!(t.run(&["publish"]), 0);
+    assert!(t.err().contains("none landed a bead"), "{}", t.err());
+}
+
 #[test_id(t8begho)]
 #[test]
 fn transitions_refuse_while_work_is_in_delivery() {
