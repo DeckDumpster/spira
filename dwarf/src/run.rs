@@ -1119,8 +1119,9 @@ impl<'a> Run<'a> {
             // with core.hooksPath naming hooks that run `<home>/hooks/pre-commit` by absolute
             // path, and those call spira-lint by name on the launcher's release PATH — so a
             // fresh worktree commits with no build of its own.
-            let hooks_home = self.home().display().to_string();
-            let _ = self.d.exec.exec("env", &s(&[&format!("SPIRA_HOME={hooks_home}"), "worktree-hooks.sh", "install", &wdisp]), None, None);
+            if let Err(e) = crate::worktree::arm_hooks(self.d.exec, &self.home(), &work) {
+                self.log(&format!("{}: {bead} HOOKS NOT ARMED in {wdisp} — this session has no ref guard and no pre-commit fences: {e}", self.f()));
+            }
         }
 
         // ---- one test fixture for the whole session ----

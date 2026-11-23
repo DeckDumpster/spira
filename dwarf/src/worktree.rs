@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::ports::Git;
+use crate::ports::{s, Exec, Git};
 
 /// Pids of live processes, other than `me`, whose working directory is `work` or inside it.
 pub fn live_occupants(proc_root: &Path, work: &Path, me: u32) -> Vec<u32> {
@@ -25,6 +25,17 @@ pub fn live_occupants(proc_root: &Path, work: &Path, me: u32) -> Vec<u32> {
         .collect();
     pids.sort_unstable();
     pids
+}
+
+/// Arms `work` with the release's git hooks. A worktree whose install failed has no ref guard
+/// and no pre-commit fences, so the failure is returned for the caller to say aloud.
+pub fn arm_hooks(exec: &dyn Exec, hooks_home: &Path, work: &Path) -> Result<(), String> {
+    let o = exec.exec("env", &s(&[&format!("SPIRA_HOME={}", hooks_home.display()), "worktree-hooks.sh", "install", &work.display().to_string()]), None, None);
+    if o.success() {
+        return Ok(());
+    }
+    let why = [&o.stderr, &o.stdout].into_iter().flat_map(|t| t.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output");
+    Err(format!("worktree-hooks.sh install exited {}: {why}", o.code))
 }
 
 /// `worktree_move_aside <work> <suffix>`: `git worktree move`, else a plain rename plus a
@@ -238,6 +249,28 @@ mod tests {
 
     use crate::util::Out;
     use std::sync::Mutex;
+
+    struct Installer(Out, Mutex<Vec<Vec<String>>>);
+    impl Exec for Installer {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            self.1.lock().unwrap().push(std::iter::once(prog.to_string()).chain(args.iter().cloned()).collect());
+            Out { code: self.0.code, stdout: self.0.stdout.clone(), stderr: self.0.stderr.clone() }
+        }
+    }
+
+    // covers: UC-safety-fences-21
+    #[test_id(tlsg8hl)]
+    #[test]
+    fn a_failed_hook_install_is_reported_with_its_reason_and_a_good_one_is_silent() {
+        let ok = Installer(Out::ok("worktree-hooks: armed"), Mutex::default());
+        assert_eq!(arm_hooks(&ok, Path::new("/rel/spira"), Path::new("/run/worktree/sp-a")), Ok(()));
+        assert_eq!(ok.1.lock().unwrap()[0], ["env", "SPIRA_HOME=/rel/spira", "worktree-hooks.sh", "install", "/run/worktree/sp-a"]);
+        let bad = Installer(Out::fail(1, "worktree-hooks: no hooks directory at /rel/spira/hooks\n"), Mutex::default());
+        let e = arm_hooks(&bad, Path::new("/rel/spira"), Path::new("/run/worktree/sp-a")).unwrap_err();
+        assert!(e.contains("exited 1") && e.contains("no hooks directory at /rel/spira/hooks"), "{e}");
+        let missing = Installer(Out::fail(127, ""), Mutex::default());
+        assert!(arm_hooks(&missing, Path::new("/r"), Path::new("/w")).unwrap_err().contains("exited 127"));
+    }
 
     type Answer = Box<dyn Fn(&Path, &[&str], usize) -> Out + Send + Sync>;
 

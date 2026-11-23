@@ -1509,6 +1509,7 @@ fn a_rebase_that_could_not_be_attempted_charges_nobody() {
     assert!(!h.lib.has("reopen") && !h.lib.has("bump_requeue"));
 }
 
+// covers: UC-safety-fences-32
 #[test_id(t2xbq0d)]
 #[test]
 fn confinement_is_asked_before_the_gate() {
@@ -1522,6 +1523,8 @@ fn confinement_is_asked_before_the_gate() {
     assert!(h.lib.has("reopen sp-a confine-fail Reopened by sentinel: spike touched src/x.rs\nmore"));
     assert!(h.logged("CHECK6 sp-b: spira/sp-b — confine.sh could not evaluate: library failed to load"));
     assert!(h.tools.gate_calls.borrow().is_empty());
+    assert_eq!(h.git.head.get(), 0, "a refused spike is never merged");
+    assert!(h.git.deleted.borrow().is_empty(), "and its branch is kept as the evidence");
 }
 
 #[test_id(twuu1k2)]
