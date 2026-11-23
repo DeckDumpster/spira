@@ -43,7 +43,7 @@ impl Gh for FakeGh {
             .push(args.iter().map(|s| s.to_string()).collect());
         for (pat, queue) in self.sequence.borrow_mut().iter_mut() {
             if pat.iter().map(String::as_str).eq(args.iter().copied()) {
-                if let Some(out) = queue.pop_front().or_else(|| None) {
+                if let Some(out) = queue.pop_front() {
                     return GhOut { code: 0, stdout: out.into_bytes() };
                 }
             }
