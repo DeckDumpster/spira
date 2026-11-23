@@ -226,3 +226,97 @@ fn the_ready_line_is_written_once_the_accept_thread_runs() {
     let _ = child.wait();
     assert!(names.iter().any(|n| n == "lc-accept"), "ready was said before the accept thread ran; threads: {}", names.join(", "));
 }
+
+fn otel_dir(server: &Server) -> std::path::PathBuf {
+    server._dir.join("run/otel")
+}
+
+fn ask(server: &Server) {
+    let stream = spira_store::lc_call::connect(&server.socket).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    spira_store::lc_call::exchange_once(stream, &["list".to_string(), "--live".to_string()], None).expect("an answer");
+}
+
+fn span_lines(dir: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        out.extend(std::fs::read_to_string(e.path()).unwrap_or_default().lines().map(str::to_string));
+    }
+    out
+}
+
+fn wait_for_spans(dir: &std::path::Path, want: usize) {
+    let mut polls = 0;
+    while span_lines(dir).len() < want {
+        polls += 1;
+        assert!(polls < 1_000, "{} of {want} spans written", span_lines(dir).len());
+        std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the span file, the signal waited on
+    }
+}
+
+#[test_id(tr71tg4)]
+#[test]
+fn a_span_file_held_locked_stalls_no_request_worker_and_loses_no_span() {
+    let server = start_server(false);
+    let dir = otel_dir(&server);
+    std::fs::create_dir_all(&dir).unwrap();
+    let today = dir.join(format!("spira-lc.{}.jsonl", spira_otel::utc_date(std::time::SystemTime::now())));
+    let held = std::fs::OpenOptions::new().create(true).append(true).open(&today).unwrap();
+    // SAFETY: the descriptor is open for as long as `held`.
+    assert_eq!(unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&held), libc::LOCK_EX) }, 0);
+    let before = thread_names(server.pid).len();
+    for _ in 0..30 {
+        ask(&server);
+    }
+    let grown = thread_names(server.pid).len().saturating_sub(before);
+    drop(held);
+    wait_for_spans(&dir, 30);
+    let Server { mut child, .. } = server;
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(grown <= 4, "threads grew by {grown} over 30 requests while the span file was locked");
+}
+
+#[test_id(tyigr7q)]
+#[test]
+fn a_hundred_requests_close_the_span_file_for_writing_about_once_a_second() {
+    use inotify::{Inotify, WatchMask};
+    let server = start_server(false);
+    let dir = otel_dir(&server);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut watch = Inotify::init().expect("inotify");
+    watch.watches().add(&dir, WatchMask::CLOSE_WRITE).expect("watch the otel directory");
+    // A reader that blocks: unread identical events coalesce, which would hide a close per span.
+    let closes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = closes.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(events) = watch.read_events_blocking(&mut buf) {
+            seen.fetch_add(events.count(), std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    let started = std::time::Instant::now();
+    for _ in 0..100 {
+        ask(&server);
+    }
+    let elapsed = started.elapsed().as_secs();
+    wait_for_spans(&dir, 100);
+    let closes = closes.load(std::sync::atomic::Ordering::Relaxed);
+    let Server { mut child, .. } = server;
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(closes as u64 <= elapsed + 2, "{closes} close-for-write events in {elapsed} s"); // clock-safe: measures the span-file closes per elapsed second the test itself spent; no wait depends on it
+}
+
+#[test_id(tkdm6hh)]
+#[test]
+fn a_request_answered_before_sigterm_has_its_span_in_the_file_when_the_server_exits() {
+    let server = start_server(false);
+    let dir = otel_dir(&server);
+    ask(&server);
+    // SAFETY: signals a child this test spawned.
+    assert_eq!(unsafe { libc::kill(server.pid as i32, libc::SIGTERM) }, 0);
+    let Server { mut child, .. } = server;
+    child.wait().expect("the server exits");
+    assert!(span_lines(&dir).iter().any(|l| l.contains("\"list\"")), "no span for the request in {:?}", span_lines(&dir).len());
+}
