@@ -28,6 +28,17 @@ pub const LOCAL_KEEP: usize = 64;
 
 pub const LOST_AT_RESTART: &str = "lost at restart";
 
+/// Bytes of an effect's failure text its wide event keeps.
+pub const EFFECT_DETAIL_MAX: usize = 512;
+
+fn clip(s: &str, max: usize) -> &str {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Hears whether a submitted event's turn was committed.
 pub type Reply = tokio::sync::oneshot::Sender<std::result::Result<(), String>>;
 
@@ -1650,6 +1661,9 @@ impl Executor for Engine {
         w.set("effect.idempotency_key", key);
         w.set("effect.deadline_at", p.deadline_at);
         w.set("effect.outcome", ev.kind.tag.trim_start_matches("effect."));
+        if matches!(outcome, Outcome::Failed(_) | Outcome::Lost) {
+            w.set("effect.detail", clip(&outcome.detail(), EFFECT_DETAIL_MAX));
+        }
         w.set("effect.attempt", self.attempts.remove(key).unwrap_or(1));
         w.set("duration_ms", ev.at.saturating_sub(p.requested_at));
         self.finish(&w);
@@ -1758,6 +1772,47 @@ mod tests {
         e.run_until_idle().unwrap();
         assert_eq!(sweep("boot"), vec!["sweep", "sweep"], "the re-armed boot tick is a sweep");
         assert_eq!(runs(&e)["sweep"], 2);
+    }
+
+    struct Asker;
+
+    impl Handler for Asker {
+        fn interests(&self) -> &[EventKindTag] {
+            &["boot"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            ["a", "b", "c", "d"].iter().map(|n| Command::Probe(EffectSpec::probe(*n, "", 10_000))).collect()
+        }
+    }
+
+    #[test_id(t7dho38)]
+    #[test]
+    fn a_failed_effect_names_why_on_its_wide_event() {
+        let sink = crate::wide::MemSink::new();
+        let regs = vec![Registration::new("asker", Asker)];
+        let mut e = Engine::open(MemJournal::new(), Arc::new(VirtualClock::new(0)), regs, 1).unwrap().with_sink(sink.clone());
+        e.start("s", EventKind::new("boot", ""));
+        e.run_until_idle().unwrap();
+        let key = |e: &Engine, n: &str| e.pending_effects().into_iter().find(|p| p.spec.name == n).expect("asked").key;
+        let why = "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not in the environment";
+        let long = format!("a{}", "é".repeat(2_500));
+        assert!(e.complete(&key(&e, "a"), Outcome::Failed(why.into())).unwrap());
+        assert!(e.complete(&key(&e, "b"), Outcome::Failed(long.clone())).unwrap());
+        assert!(e.complete(&key(&e, "c"), Outcome::Succeeded("fine".into())).unwrap());
+        assert!(e.complete(&key(&e, "d"), Outcome::Lost).unwrap());
+        let details: Vec<Option<Value>> = sink
+            .records()
+            .iter()
+            .filter(|r| r.get("unit") == Some(&"effect".into()))
+            .map(|r| r.get("effect.detail").cloned())
+            .collect();
+        assert_eq!(details.len(), 4);
+        assert_eq!(details[0], Some(why.into()));
+        let Some(Value::Str(clipped)) = &details[1] else { panic!("a long failure keeps a detail") };
+        assert_eq!(clipped.len(), EFFECT_DETAIL_MAX - 1, "the odd offset forces the boundary back-off");
+        assert!(long.starts_with(clipped.as_str()));
+        assert_eq!(details[2], None);
+        assert_eq!(details[3], Some(LOST_AT_RESTART.into()));
     }
 
     /// A tick that re-arms itself every 30 s, and optionally asks a due time and an act.
