@@ -1,5 +1,7 @@
 use super::*;
-use crate::{Anchor, Doc, Margin, TOKEN_FILE_KEY, URL_KEY};
+use crate::{scenario, Anchor, Comment, Doc, Margin, READER, TOKEN_FILE_KEY, URL_KEY};
+use serde::Deserialize;
+use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::Duration;
@@ -7,27 +9,31 @@ use testkit::TempDir;
 
 const TOKEN: &str = "s3cret-agent-token";
 
+fn read_request(s: &mut std::net::TcpStream) -> String {
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = s.read(&mut buf).unwrap();
+        seen.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&seen).to_string();
+        if let Some(at) = text.find("\r\n\r\n") {
+            let want: usize = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap_or(0);
+            if seen.len() >= at + 4 + want {
+                return text;
+            }
+        }
+    }
+}
+
 /// Serves one request with `reply` as its JSON body and hands back the raw request text.
 fn serve_once(reply: &'static str) -> (String, std::thread::JoinHandle<String>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", l.local_addr().unwrap());
     let h = std::thread::spawn(move || {
         let (mut s, _) = l.accept().unwrap();
-        let mut seen = Vec::new();
-        let mut buf = [0u8; 4096];
-        loop {
-            let n = s.read(&mut buf).unwrap();
-            seen.extend_from_slice(&buf[..n]);
-            let text = String::from_utf8_lossy(&seen).to_string();
-            if let Some(at) = text.find("\r\n\r\n") {
-                let want: usize = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap_or(0);
-                if seen.len() >= at + 4 + want {
-                    break;
-                }
-            }
-        }
+        let seen = read_request(&mut s);
         write!(s, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
-        String::from_utf8_lossy(&seen).to_string()
+        seen
     });
     (base, h)
 }
@@ -38,18 +44,165 @@ fn client(dir: &TempDir, base: &str) -> HttpMargin {
     HttpMargin { base: base.to_string(), token_file: file.to_str().unwrap().to_string(), timeout: Duration::from_secs(CALL_SECS) }
 }
 
-#[test_id(t5umxol)]
+const RECORDING: &str = include_str!("../../fixtures/scenario.json");
+
+#[derive(Deserialize, Clone)]
+struct Exchange {
+    method: String,
+    path: String,
+    query: String,
+    body: Value,
+    status: u16,
+    reply: String,
+}
+
+fn recording() -> Vec<Exchange> {
+    serde_json::from_str(RECORDING).unwrap()
+}
+
+/// Serves `script` in order, one request each, and hands back every way a request differed from its recording.
+fn replay(script: Vec<Exchange>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", l.local_addr().unwrap());
+    let h = std::thread::spawn(move || {
+        let mut differed = Vec::new();
+        for want in script {
+            let (mut s, _) = l.accept().unwrap();
+            let raw = read_request(&mut s);
+            let (head, body) = raw.split_once("\r\n\r\n").unwrap();
+            let mut first = head.lines().next().unwrap().split(' ');
+            let (method, target) = (first.next().unwrap(), first.next().unwrap());
+            let (path, query) = target.split_once('?').unwrap_or((target, ""));
+            let body: Value = if body.is_empty() { Value::Null } else { serde_json::from_str(body).unwrap() };
+            if (method, path, query, &body) != (want.method.as_str(), want.path.as_str(), want.query.as_str(), &want.body) {
+                differed.push(format!("sent {method} {path}?{query} {body}; the recording has {} {}?{} {}", want.method, want.path, want.query, want.body));
+            }
+            write!(s, "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", want.status, want.reply.len(), want.reply).unwrap();
+        }
+        differed
+    });
+    (base, h)
+}
+
+fn exchange(method: &str, path: &str, query: &str, body: Value, reply: &str) -> Exchange {
+    Exchange { method: method.into(), path: path.into(), query: query.into(), body, status: 200, reply: reply.into() }
+}
+
+#[test_id(t7odd0c)]
 #[test]
-fn post_collection_sends_the_token_file_text_as_a_bearer_and_parses_the_reply() {
-    let dir = TempDir::new("margin-bearer");
-    let (base, seen) = serve_once(r#"{"id":"c1","url":"http://r/c/c1","documents":[{"id":"d1","version":1,"path":"a.rs"}]}"#);
-    let docs = [Doc { path: "a.rs".into(), kind: "code".into(), text: "fn a() {}\n".into() }];
-    let got = client(&dir, &base).post_collection("T", "cover", &docs).unwrap();
-    assert_eq!((got.id.as_str(), got.url.as_str(), got.documents[0].path.as_str()), ("c1", "http://r/c/c1", "a.rs"));
-    let req = seen.join().unwrap();
-    assert!(req.starts_with("POST /api/collections "), "{req}");
-    assert!(req.to_ascii_lowercase().contains(&format!("authorization: bearer {TOKEN}").to_ascii_lowercase()), "{req}");
-    assert!(req.contains(r#""text":"fn a() {}\n""#), "{req}");
+fn posting_a_collection_sends_the_cover_as_cover_note_and_reads_only_id_and_url() {
+    let dir = TempDir::new("margin-collection");
+    let (base, served) = replay(recording()[..1].to_vec());
+    let docs = [Doc { path: "src/a.rs".into(), kind: "code".into(), text: scenario::FIRST.into() }, Doc { path: "src/b.rs".into(), kind: "code".into(), text: "fn b() {}\n".into() }];
+    let got = client(&dir, &base).post_collection("Scenario", "cover words", &docs).unwrap();
+    assert_eq!((got.id.as_str(), got.url.as_str()), ("dd7ca9c501e39498", "http://127.0.0.1:18931/c/dd7ca9c501e39498"));
+    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+}
+
+#[test_id(tz5vx4t)]
+#[test]
+fn the_recorded_session_replays_request_for_request_and_parses_every_reply() {
+    let dir = TempDir::new("margin-session");
+    let (base, served) = replay(recording());
+    let seen = scenario::run(&client(&dir, &base)).unwrap();
+    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+
+    assert_eq!(seen.open.state, "open");
+    assert_eq!(seen.open.published_at_ms, None);
+    assert_eq!(seen.held.url, format!("{base}/c/{}#thread-{}", seen.collection.id, seen.held.thread));
+    assert_eq!(seen.reply.thread, seen.held.thread, "a reply answers into the same thread");
+
+    let t = &seen.agent_thread;
+    assert_eq!((t.id.as_str(), t.anchor.path.as_str(), t.anchor.first, t.anchor.last), (seen.held.thread.as_str(), "src/a.rs", 2, 3));
+    assert_eq!((t.document.path.as_str(), t.document.version), ("src/a.rs", 1));
+    assert_eq!(t.comments.len(), 2);
+    assert!(t.comments[0].by_agent() && t.comments[0].author == "concierge" && t.comments[0].author != READER, "{:?}", t.comments[0]);
+    assert!(t.comments[0].created_at_ms > 0 && t.comments[0].created_at_ms % 1000 == 0, "seconds become ms: {:?}", t.comments[0]);
+
+    assert_eq!(seen.second_version, 2);
+    assert_eq!((seen.first_text.as_str(), seen.second_text.as_str()), (scenario::FIRST, scenario::SECOND));
+
+    assert_eq!(seen.all.len(), 2, "held and reader threads are both listed");
+    let his = seen.all.iter().find(|t| t.id == seen.his_on_first_version).unwrap();
+    assert_eq!((his.document.version, his.anchor.path.as_str()), (1, "src/a.rs"), "a thread on the older version resolves through the versions listing");
+    assert!(!his.comments[0].by_agent());
+    let carried = seen.all.iter().find(|t| t.id == seen.held.thread).unwrap();
+    assert_eq!(carried.document.version, 2);
+    assert_eq!(carried.comments.len(), 2, "the held reply is in the held thread");
+
+    assert_eq!(seen.published.state, "published");
+    assert!(seen.published.published_at_ms.is_some_and(|ms| ms > 0 && ms % 1000 == 0));
+    assert!(seen.changes.through >= 3 && seen.changes.changes.len() as u64 >= 3, "{:?}", seen.changes);
+    assert_eq!(seen.closed.state, "closed");
+    assert_eq!(seen.closed.published_at_ms, None);
+}
+
+#[test_id(tbsw3yp)]
+#[test]
+fn only_the_reader_is_not_an_agent() {
+    let by = |author: &str| Comment { id: "c".into(), author: author.into(), body: String::new(), created_at_ms: 0 }.by_agent();
+    assert_eq!((by("reader"), by("concierge"), by("agent:concierge"), by("ryan")), (false, true, true, true));
+}
+
+fn thread_json(id: &str, version_id: i64) -> String {
+    format!(r#"{{"id":"{id}","version_id":{version_id},"first_line":1,"last_line":1,"comments":[{{"id":"k{id}","author":"concierge","body":"b","visibility":"now","created_at":5}}]}}"#)
+}
+
+const ONE_DOC: &str = r#"{"title":"T","state":"open","updated_at":9,"documents":[{"id":"d1","version_id":7,"path":"a.rs","version":3}]}"#;
+
+#[test_id(tgb8mp0)]
+#[test]
+fn a_thread_listing_of_two_pages_is_followed_by_its_cursor_to_the_end() {
+    let dir = TempDir::new("margin-pages");
+    let first = format!(r#"{{"items":[{}],"next":"5.t1"}}"#, thread_json("t1", 7));
+    let second = format!(r#"{{"items":[{}],"next":null}}"#, thread_json("t2", 7));
+    let (base, served) = replay(vec![
+        exchange("GET", "/api/collections/c1/threads", "limit=200", Value::Null, &first),
+        exchange("GET", "/api/collections/c1/threads", "limit=200&after=5.t1", Value::Null, &second),
+        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC),
+    ]);
+    let got = client(&dir, &base).threads("c1").unwrap();
+    assert_eq!(got.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["t1", "t2"]);
+    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+}
+
+#[test_id(thrnbwf)]
+#[test]
+fn a_thread_on_a_version_past_the_first_page_of_versions_resolves() {
+    let dir = TempDir::new("margin-old-version");
+    let (v1, v2) = (r#"{"items":[{"id":1,"number":1,"created_at":1}],"next":"1"}"#, r#"{"items":[{"id":4,"number":2,"created_at":2}],"next":null}"#);
+    let (base, served) = replay(vec![
+        exchange("GET", "/api/threads/t1", "", Value::Null, &thread_json("t1", 4)),
+        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC),
+        exchange("GET", "/api/documents/d1/versions", "limit=200", Value::Null, v1),
+        exchange("GET", "/api/documents/d1/versions", "limit=200&after=1", Value::Null, v2),
+    ]);
+    let t = client(&dir, &base).thread("c1", "t1").unwrap();
+    assert_eq!((t.document.id.as_str(), t.document.version, t.anchor.path.as_str()), ("d1", 2, "a.rs"));
+    assert_eq!(served.join().unwrap(), Vec::<String>::new());
+}
+
+#[test_id(tbj2fvn)]
+#[test]
+fn a_thread_whose_version_no_document_holds_is_an_error_not_a_guess() {
+    let dir = TempDir::new("margin-unresolved");
+    let (base, _served) = replay(vec![
+        exchange("GET", "/api/threads/t1", "", Value::Null, &thread_json("t1", 99)),
+        exchange("GET", "/api/collections/c1", "", Value::Null, ONE_DOC),
+        exchange("GET", "/api/documents/d1/versions", "limit=200", Value::Null, r#"{"items":[{"id":1,"number":1,"created_at":1}],"next":null}"#),
+    ]);
+    let e = client(&dir, &base).thread("c1", "t1").unwrap_err();
+    assert!(e.contains("99"), "{e}");
+}
+
+#[test_id(tm2f5y9)]
+#[test]
+fn a_feed_wait_longer_than_the_reader_allows_is_asked_for_at_thirty_seconds() {
+    let dir = TempDir::new("margin-wait");
+    let (base, served) = replay(vec![exchange("GET", "/api/changes", "after=4&wait=30", Value::Null, r#"{"changes":[],"last_seq":4}"#)]);
+    let got = client(&dir, &base).changes(4, 90).unwrap();
+    assert_eq!((got.through, got.changes.len()), (4, 0));
+    assert_eq!(served.join().unwrap(), Vec::<String>::new());
 }
 
 #[test_id(tegpxm2)]
@@ -66,7 +219,7 @@ fn an_empty_url_key_or_a_missing_token_file_is_refused_by_name_without_the_token
     let e = HttpMargin::configured(cfg("http://r", String::new())).err().unwrap();
     assert!(e.contains(TOKEN_FILE_KEY), "{e}");
     let (base, _h) = serve_once("{}");
-    let e = client(&dir, &base).thread("t").unwrap_err();
+    let e = client(&dir, &base).thread("c", "t").unwrap_err();
     assert!(!e.contains(TOKEN), "{e}");
 }
 
@@ -82,27 +235,13 @@ fn a_reader_that_accepts_and_never_answers_fails_post_comment_naming_url_and_rou
         let _ = released.recv();
         drop(held);
     });
-    let a = Anchor { document: "d1".into(), version: 1, first: 1, last: 1 };
+    let a = Anchor { path: "a.rs".into(), first: 1, last: 1 };
     let mut m = client(&dir, &base);
     m.timeout = Duration::from_millis(300);
     let e = m.post_comment("c1", &a, "b", true, None).unwrap_err();
-    assert!(e.contains(&base) && e.contains("POST /api/collections/c1/comments") && !e.contains(TOKEN), "{e}");
+    assert!(e.contains(&base) && e.contains("POST /api/collections/c1/threads") && !e.contains(TOKEN), "{e}");
     release.send(()).unwrap();
     hold.join().unwrap();
-}
-
-#[test_id(tq4f576)]
-#[test]
-fn a_held_comment_is_sent_with_its_anchor_and_the_reply_parent() {
-    let dir = TempDir::new("margin-comment");
-    let (base, seen) = serve_once(r#"{"id":"k1","thread":"t1","url":"http://r/c/c1#k1"}"#);
-    let a = Anchor { document: "d1".into(), version: 2, first: 3, last: 5 };
-    let got = client(&dir, &base).post_comment("c1", &a, "body", true, Some("t0")).unwrap();
-    assert_eq!(got.thread, "t1");
-    let req = seen.join().unwrap();
-    for want in [r#""held":true"#, r#""first":3"#, r#""last":5"#, r#""version":2"#, r#""in_reply_to":"t0""#] {
-        assert!(req.contains(want), "{want} missing in {req}");
-    }
 }
 
 #[test_id(t2qs0mm)]

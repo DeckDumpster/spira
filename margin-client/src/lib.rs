@@ -6,6 +6,8 @@ extern crate spira_test_id;
 
 mod http;
 mod fake;
+#[cfg(any(test, feature = "record"))]
+pub mod scenario;
 
 pub use http::HttpMargin;
 pub use fake::FakeMargin;
@@ -34,20 +36,17 @@ pub struct DocRef {
 pub struct Collection {
     pub id: String,
     pub url: String,
-    pub documents: Vec<DocRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Anchor {
-    pub document: String,
-    pub version: u64,
+    pub path: String,
     pub first: u32,
     pub last: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommentRef {
-    pub id: String,
     pub thread: String,
     pub url: String,
 }
@@ -56,12 +55,10 @@ pub struct CommentRef {
 pub struct CollectionInfo {
     /// `open`, `published` or `closed`.
     pub state: String,
+    /// The reader's last change to the collection while it stands published; none otherwise.
     pub published_at_ms: Option<u64>,
     pub title: String,
     pub documents: Vec<DocRef>,
-    /// Every thread of the collection, held ones included.
-    #[serde(default)]
-    pub threads: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,17 +69,20 @@ pub struct Comment {
     pub created_at_ms: u64,
 }
 
-pub const AGENT_PREFIX: &str = "agent:";
+/// The author name the reader gives the operator; every agent has a bare name of its own.
+pub const READER: &str = "reader";
 
 impl Comment {
-    /// An author that is not an agent is the operator.
     pub fn by_agent(&self) -> bool {
-        self.author.starts_with(AGENT_PREFIX)
+        self.author != READER
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thread {
+    pub id: String,
+    /// The document version the thread stands on.
+    pub document: DocRef,
     pub anchor: Anchor,
     pub comments: Vec<Comment>,
 }
@@ -98,7 +98,9 @@ pub trait Margin {
     fn post_comment(&self, collection: &str, anchor: &Anchor, body: &str, held: bool, in_reply_to: Option<&str>) -> Result<CommentRef, String>;
     fn post_version(&self, document: &str, text: &str) -> Result<u64, String>;
     fn collection(&self, id: &str) -> Result<CollectionInfo, String>;
-    fn thread(&self, id: &str) -> Result<Thread, String>;
+    fn thread(&self, collection: &str, id: &str) -> Result<Thread, String>;
+    /// Every thread of the collection, held ones included.
+    fn threads(&self, collection: &str) -> Result<Vec<Thread>, String>;
     fn document_text(&self, document: &str, version: u64) -> Result<String, String>;
     fn close(&self, collection: &str) -> Result<(), String>;
     fn changes(&self, after: u64, hold_secs: u64) -> Result<Changes, String>;
@@ -121,7 +123,10 @@ impl Margin for Unconfigured {
     fn collection(&self, _: &str) -> Result<CollectionInfo, String> {
         Err(self.0.clone())
     }
-    fn thread(&self, _: &str) -> Result<Thread, String> {
+    fn thread(&self, _: &str, _: &str) -> Result<Thread, String> {
+        Err(self.0.clone())
+    }
+    fn threads(&self, _: &str) -> Result<Vec<Thread>, String> {
         Err(self.0.clone())
     }
     fn document_text(&self, _: &str, _: u64) -> Result<String, String> {
