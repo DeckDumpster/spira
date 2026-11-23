@@ -257,18 +257,18 @@ fn wait_for_spans(dir: &std::path::Path, want: usize) {
 #[test_id(tr71tg4)]
 #[test]
 fn a_span_file_held_locked_stalls_no_request_worker_and_loses_no_span() {
-    let server = start_server();
+    let server = start_server(false);
     let dir = otel_dir(&server);
     std::fs::create_dir_all(&dir).unwrap();
     let today = dir.join(format!("spira-lc.{}.jsonl", spira_otel::utc_date(std::time::SystemTime::now())));
     let held = std::fs::OpenOptions::new().create(true).append(true).open(&today).unwrap();
     // SAFETY: the descriptor is open for as long as `held`.
     assert_eq!(unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&held), libc::LOCK_EX) }, 0);
-    let before = threads(server.pid);
+    let before = thread_names(server.pid).len();
     for _ in 0..30 {
         ask(&server);
     }
-    let grown = threads(server.pid).saturating_sub(before);
+    let grown = thread_names(server.pid).len().saturating_sub(before);
     drop(held);
     wait_for_spans(&dir, 30);
     let Server { mut child, .. } = server;
@@ -281,7 +281,7 @@ fn a_span_file_held_locked_stalls_no_request_worker_and_loses_no_span() {
 #[test]
 fn a_hundred_requests_close_the_span_file_for_writing_about_once_a_second() {
     use inotify::{Inotify, WatchMask};
-    let server = start_server();
+    let server = start_server(false);
     let dir = otel_dir(&server);
     std::fs::create_dir_all(&dir).unwrap();
     let mut watch = Inotify::init().expect("inotify");
@@ -311,7 +311,7 @@ fn a_hundred_requests_close_the_span_file_for_writing_about_once_a_second() {
 #[test_id(tkdm6hh)]
 #[test]
 fn a_request_answered_before_sigterm_has_its_span_in_the_file_when_the_server_exits() {
-    let server = start_server();
+    let server = start_server(false);
     let dir = otel_dir(&server);
     ask(&server);
     // SAFETY: signals a child this test spawned.
