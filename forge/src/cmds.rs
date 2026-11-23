@@ -1423,6 +1423,13 @@ const GENERIC_LABELS: [&str; 9] = [
     "ubuntu-latest",
 ];
 
+/// A job in any other state is running or about to; a run holding one is not stranded.
+const NOT_RUNNING: [&str; 5] = ["queued", "waiting", "pending", "requested", "completed"];
+
+fn running(job_state: &str) -> bool {
+    !NOT_RUNNING.contains(&job_state)
+}
+
 fn vmid_of(name: &str) -> String {
     let mut best = String::new();
     let mut cur = String::new();
@@ -1446,60 +1453,55 @@ fn vmid_of(name: &str) -> String {
 }
 
 /// One `STRANDED` line per queued job older than `min_age` whose per-run label (any label
-/// outside the generic set) is carried by no online runner. A runner that registered and
-/// vanished is never replaced under that label, so the job would otherwise wait out GitHub's
-/// own 24h ceiling.
+/// outside the generic set) is carried by no online runner, in a run with no job in progress.
+/// A listing that fails or comes back cut short is an error with no lines: it cannot tell.
 pub fn stranded_runners(gh: &dyn Gh, repo: &Path, now: u64, min_age: u64) -> Out {
-    let runs = gh.call(
-        Some(repo),
-        &["api", "repos/{owner}/{repo}/actions/runs?per_page=50"],
-    );
-    let Some(d) = (if runs.ok() { parse(&runs.stdout) } else { None }) else {
-        return ok(vec![]);
+    let cannot = |why: String| {
+        warn!("forge stranded-runners: {why}");
+        fail(vec![])
     };
-    let ids: Vec<String> = d
-        .get("workflow_runs")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter(|r| jstr(r, "status").as_deref() != Some("completed"))
-                .filter_map(|r| r.get("id").map(|i| i.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let listing = |path: &str, rows: &str, whole: bool| -> Result<Vec<Value>, String> {
+        let out = gh.call(Some(repo), &["api", path]);
+        let v = if out.ok() { parse(&out.stdout) } else { None }.ok_or_else(|| format!("{path} did not answer"))?;
+        let list = v.get(rows).and_then(Value::as_array).cloned().ok_or_else(|| format!("{path} has no {rows}"))?;
+        if whole && v.get("total_count").and_then(Value::as_u64).is_some_and(|n| n > list.len() as u64) {
+            return Err(format!("{path} is cut short at {} of {} rows", list.len(), v["total_count"]));
+        }
+        Ok(list)
+    };
+    let runs = match listing("repos/{owner}/{repo}/actions/runs?per_page=50", "workflow_runs", false) {
+        Ok(r) => r,
+        Err(e) => return cannot(e),
+    };
+    let ids: Vec<String> = runs
+        .iter()
+        .filter(|r| jstr(r, "status").as_deref() != Some("completed"))
+        .filter_map(|r| r.get("id").map(|i| i.to_string()))
+        .collect();
     if ids.is_empty() {
         return ok(vec![]);
     }
-    let rr = gh.call(
-        Some(repo),
-        &["api", "repos/{owner}/{repo}/actions/runners?per_page=100"],
-    );
-    let runners: Vec<Value> = if rr.ok() {
-        parse(&rr.stdout)
-            .and_then(|v| v.get("runners").and_then(Value::as_array).cloned())
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
+    let mut runners = Vec::new();
+    for path in [
+        "repos/{owner}/{repo}/actions/runners?per_page=100",
+        "orgs/{owner}/actions/runners?per_page=100",
+    ] {
+        match listing(path, "runners", true) {
+            Ok(r) => runners.extend(r),
+            Err(e) => return cannot(e),
+        }
+    }
 
     let mut lines = Vec::new();
     for id in ids {
-        let jr = gh.call(
-            Some(repo),
-            &[
-                "api",
-                &format!("repos/{{owner}}/{{repo}}/actions/runs/{id}/jobs"),
-            ],
-        );
-        let Some(jv) = (if jr.ok() { parse(&jr.stdout) } else { None }) else {
-            continue;
+        let jobs = match listing(&format!("repos/{{owner}}/{{repo}}/actions/runs/{id}/jobs?per_page=100"), "jobs", true) {
+            Ok(j) => j,
+            Err(e) => return cannot(e),
         };
-        for j in jv
-            .get("jobs")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-        {
+        if jobs.iter().any(|j| running(&jstr(j, "status").unwrap_or_default())) {
+            continue;
+        }
+        for j in jobs {
             if jstr(&j, "status").as_deref() != Some("queued") {
                 continue;
             }

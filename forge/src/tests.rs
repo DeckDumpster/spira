@@ -1585,7 +1585,9 @@ fn workflow_rerun_serves_a_suites_job_killed_acquiring_the_image_not_a_failed_su
 const NOW: u64 = 1_790_640_000 + 3600;
 const RUNS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs?per_page=50"];
 const RUNNERS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runners?per_page=100"];
-const JOBS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs/9001/jobs"];
+const ORG_RUNNERS: &[&str] = &["api", "orgs/{owner}/actions/runners?per_page=100"];
+const JOBS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs/9001/jobs?per_page=100"];
+const JOBS_UNPAGED: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs/9001/jobs"];
 
 fn stranded_fixture(age: u64, labels: &str, runners: &str) -> FakeGh {
     let gh = FakeGh::default();
@@ -1604,10 +1606,21 @@ fn stranded_fixture(age: u64, labels: &str, runners: &str) -> FakeGh {
             d % 60
         )
     };
-    gh.on(JOBS, 0, &format!(r#"{{"jobs":[{{"name":"suites","status":"queued","created_at":"{ts}","labels":{labels}}}]}}"#));
+    let jobs = format!(r#"{{"jobs":[{{"name":"suites","status":"queued","created_at":"{ts}","labels":{labels}}}]}}"#);
+    gh.on(JOBS, 0, &jobs);
+    gh.on(JOBS_UNPAGED, 0, &jobs);
     gh.on(RUNNERS, 0, runners);
+    gh.on(ORG_RUNNERS, 0, r#"{"total_count":0,"runners":[]}"#);
     gh
 }
+
+fn stranded_jobs(gh: &FakeGh, jobs: &str) {
+    gh.answers.borrow_mut().retain(|(p, _, _)| p.iter().map(String::as_str).ne(JOBS.iter().copied()) && p.iter().map(String::as_str).ne(JOBS_UNPAGED.iter().copied()));
+    gh.on(JOBS, 0, jobs);
+    gh.on(JOBS_UNPAGED, 0, jobs);
+}
+
+const QUEUED_OLD: &str = r#"{"name":"suites","status":"queued","created_at":"2026-09-29T00:00:00Z","labels":["self-hosted","spira-run-9001"]}"#;
 
 #[test_id(tzhc040)]
 #[test]
@@ -1661,10 +1674,47 @@ fn stranded_is_silent_for_online_young_or_hosted_jobs() {
 
 #[test_id(txcjxky)]
 #[test]
-fn stranded_unreadable_runs_is_silent_not_a_guess() {
-    assert!(stranded_runners(&FakeGh::default(), repo(), NOW, 300)
-        .lines
-        .is_empty());
+fn stranded_unreadable_runs_is_an_error_not_a_guess() {
+    let out = stranded_runners(&FakeGh::default(), repo(), NOW, 300);
+    assert!(out.lines.is_empty() && out.code != 0);
+}
+
+#[test_id(tstr0a1)]
+#[test]
+fn stranded_run_with_a_job_in_progress_is_not_stranded() {
+    let gh = stranded_fixture(360, r#"["self-hosted","spira-run-9001"]"#, r#"{"runners":[]}"#);
+    stranded_jobs(&gh, &format!(r#"{{"jobs":[{QUEUED_OLD},{{"name":"build","status":"in_progress","created_at":"2026-09-29T00:00:00Z","labels":["self-hosted"]}}]}}"#));
+    let out = stranded_runners(&gh, repo(), NOW, 300);
+    assert!(out.code == 0 && out.lines.is_empty(), "{:?}", out.lines);
+}
+
+#[test_id(tstr0a2)]
+#[test]
+fn stranded_failed_repo_or_org_runner_listing_is_an_error() {
+    for failing in [RUNNERS, ORG_RUNNERS] {
+        let gh = stranded_fixture(360, r#"["self-hosted","spira-run-9001"]"#, r#"{"runners":[]}"#);
+        gh.answers.borrow_mut().retain(|(p, _, _)| p.iter().map(String::as_str).ne(failing.iter().copied()));
+        let out = stranded_runners(&gh, repo(), NOW, 300);
+        assert!(out.code != 0 && out.lines.is_empty(), "{failing:?}");
+    }
+}
+
+#[test_id(tstr0a3)]
+#[test]
+fn stranded_online_runner_only_in_the_org_listing_is_not_stranded() {
+    let gh = stranded_fixture(360, r#"["self-hosted","spira-run-9001"]"#, r#"{"runners":[]}"#);
+    gh.answers.borrow_mut().retain(|(p, _, _)| p.iter().map(String::as_str).ne(ORG_RUNNERS.iter().copied()));
+    gh.on(ORG_RUNNERS, 0, r#"{"total_count":1,"runners":[{"name":"eph-1","status":"online","labels":[{"name":"spira-run-9001"}]}]}"#);
+    let out = stranded_runners(&gh, repo(), NOW, 300);
+    assert!(out.code == 0 && out.lines.is_empty(), "{:?}", out.lines);
+}
+
+#[test_id(tstr0a4)]
+#[test]
+fn stranded_listing_cut_short_of_its_total_is_an_error() {
+    let gh = stranded_fixture(360, r#"["self-hosted","spira-run-9001"]"#, r#"{"total_count":150,"runners":[]}"#);
+    let out = stranded_runners(&gh, repo(), NOW, 300);
+    assert!(out.code != 0 && out.lines.is_empty());
 }
 
 // ── per-repo gate workflow ───────────────────────────────────────────────────────────────

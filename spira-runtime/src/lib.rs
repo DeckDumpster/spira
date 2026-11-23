@@ -353,8 +353,13 @@ impl Effects {
     fn reconcile_remedy(&self, key: &str, input: &str) -> Result<String, String> {
         let job: watchers::reconciler::RemedyJob = serde_json::from_str(input).map_err(|e| e.to_string())?;
         self.once(key, || {
+            let mut all_ok = true;
             for (program, args) in &job.steps {
-                reconciler::run_cmd_ok(program, &args.iter().map(String::as_str).collect::<Vec<_>>());
+                all_ok &= reconciler::run_cmd_ok(program, &args.iter().map(String::as_str).collect::<Vec<_>>());
+            }
+            if let Some(note) = &job.note {
+                let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                queue::ops::landing_log(&self.world.run_dir, &format!("QUEUE STRANDED_RERUN {at} {note} ok={all_ok}"));
             }
             Ok(format!("{}: {} step(s)", job.key, job.steps.len()))
         })
@@ -394,6 +399,30 @@ impl Effects {
 fn stamp_answered_probe(run_dir: &std::path::Path, effect: &str, answered: &Result<String, String>) {
     if let (Ok(_), Some(task)) = (answered, spira_config::ticked::task_of_probe(effect)) {
         spira_config::ticked::stamp(run_dir, task);
+    }
+}
+
+#[cfg(test)]
+mod remedy_note_tests {
+    use super::*;
+
+    fn landing_log_after(program: &str) -> String {
+        let dir = testkit::TempDir::new("remedy-note");
+        let fx = Effects { world: world::World { run_dir: dir.path().to_path_buf(), ..Default::default() }, ..Default::default() };
+        let job = watchers::reconciler::RemedyJob { key: "k".into(), steps: vec![(program.into(), vec![])], note: Some(r#"repo=r run=7 job="a b" label=ci-7-1 queued=400s runner=none"#.into()) };
+        fx.reconcile_remedy("k", &serde_json::to_string(&job).unwrap()).unwrap();
+        std::fs::read_to_string(dir.path().join("landing.log")).unwrap()
+    }
+
+    #[test_id(tnr0c01)]
+    #[test]
+    fn a_noted_remedy_leaves_its_landing_log_line_with_the_outcome_of_its_step() {
+        for (program, ok) in [("true", true), ("false", false)] {
+            let log = landing_log_after(program);
+            let line = log.trim_end();
+            assert!(line.starts_with("QUEUE STRANDED_RERUN "), "{line}");
+            assert!(line.ends_with(&format!(r#"repo=r run=7 job="a b" label=ci-7-1 queued=400s runner=none ok={ok}"#)), "{line}");
+        }
     }
 }
 

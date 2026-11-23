@@ -64,6 +64,8 @@ pub struct Record {
 pub struct RemedyJob {
     pub key: String,
     pub steps: Vec<(String, Vec<String>)>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// One mail, and what to forget if it does not go: the escalation, or the reminder.
@@ -125,7 +127,7 @@ impl Reconciler {
                 Act::Status(row) => record.status.push(row),
                 Act::Event(e) => record.events.push(e),
                 Act::Log(line) => record.log.push(line),
-                Act::Remedy { key, steps } => remedies.push(RemedyJob { key, steps }),
+                Act::Remedy { key, steps, note } => remedies.push(RemedyJob { key, steps, note }),
                 Act::CallWanted { .. } => cmds_wake.push(Command::EmitTo {
                     stream: StreamKey(sentinel_call::STREAM.into()),
                     kind: EventKind::new(sentinel_call::CALL_WANTED, r#"{"rune":"reconciler"}"#),

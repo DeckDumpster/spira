@@ -280,7 +280,8 @@ pub trait Host: Send + Sync {
     fn certified_list(&self, repo: &Path) -> String;
     /// `rune task|reactive|partitions|for-labels ...` and `repo landref <name>`.
     fn config(&self, argv: &[&str]) -> String;
-    fn stranded_runners(&self, repo: &Path) -> String;
+    /// `Err` when a listing it reads did not answer: nothing can be said of stranded runs.
+    fn stranded_runners(&self, repo: &Path) -> Result<String, String>;
     /// Whether the harness has forge CI in flight for `repo_name`: an open forge batch or an open publish record.
     fn forge_ci_in_flight(&self, _repo_name: &str) -> Result<bool, String> {
         Err("this host cannot tell".into())
@@ -569,10 +570,10 @@ impl Config {
         }
     }
 
-    fn stranded_runners(&self, repo: &Path) -> String {
+    fn stranded_runners(&self, repo: &Path) -> Result<String, String> {
         match &self.host {
             Some(h) => h.stranded_runners(repo),
-            None => run_cmd(&self.seams.forge, &["stranded-runners", &repo.to_string_lossy()]),
+            None => run_cmd_stdout(&self.seams.forge, &["stranded-runners", &repo.to_string_lossy()]),
         }
     }
 
@@ -651,6 +652,8 @@ pub enum Remedy {
     /// Asks the sentinel's call pass to run, for a gap that is a refill it has not yet made.
     CallWanted,
     Command { program: String, args: Vec<String> },
+    /// A command whose act the host records as `note` once it has run.
+    Noted { note: String, program: String, args: Vec<String> },
     /// Every step runs, in order, whether or not an earlier one succeeded.
     Sequence(Vec<(String, Vec<String>)>),
 }
@@ -659,11 +662,18 @@ impl Remedy {
     pub fn steps(&self) -> Vec<(&str, Vec<&str>)> {
         match self {
             Remedy::Escalate | Remedy::CallWanted => Vec::new(),
-            Remedy::Command { program, args } => vec![(program.as_str(), args.iter().map(String::as_str).collect())],
+            Remedy::Command { program, args } | Remedy::Noted { program, args, .. } => vec![(program.as_str(), args.iter().map(String::as_str).collect())],
             Remedy::Sequence(steps) => steps
                 .iter()
                 .map(|(p, a)| (p.as_str(), a.iter().map(String::as_str).collect()))
                 .collect(),
+        }
+    }
+
+    pub fn note(&self) -> Option<String> {
+        match self {
+            Remedy::Noted { note, .. } => Some(note.clone()),
+            _ => None,
         }
     }
 
@@ -690,6 +700,15 @@ pub fn run_cmd(program: &str, args: &[&str]) -> String {
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .unwrap_or_default()
+}
+
+/// Stdout when the program exited zero; the reason otherwise.
+pub fn run_cmd_stdout(program: &str, args: &[&str]) -> Result<String, String> {
+    let out = spira_config::bounded::bounded(program).args(args).stderr(Stdio::null()).output().map_err(|e| format!("{program}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{program} {} exited {}", args.join(" "), out.status));
+    }
+    String::from_utf8(out.stdout).map_err(|e| format!("{program}: {e}"))
 }
 
 pub fn run_cmd_ok(program: &str, args: &[&str]) -> bool {
@@ -1642,15 +1661,24 @@ fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
 
 const STRANDED_RUN_PREFIX: &str = "queue-stranded-run:";
 
-fn stranded_runs(out: &str) -> Vec<(String, String)> {
-    let mut runs: Vec<(String, String)> = Vec::new();
+struct StrandedRun {
+    run: String,
+    job: String,
+    label: String,
+    queued: String,
+    runner: String,
+}
+
+fn stranded_runs(out: &str) -> Vec<StrandedRun> {
+    let mut runs: Vec<StrandedRun> = Vec::new();
     for line in out.lines().filter(|l| l.starts_with("STRANDED ")) {
-        let field = |name: &str| line.split_whitespace().find_map(|w| w.strip_prefix(name)).map(str::to_string);
-        let Some(run) = field("run=") else { continue };
-        if runs.iter().any(|(r, _)| *r == run) {
+        let field = |name: &str| line.split_whitespace().find_map(|w| w.strip_prefix(name)).unwrap_or_default().to_string();
+        let run = field("run=");
+        if run.is_empty() || runs.iter().any(|r| r.run == run) {
             continue;
         }
-        runs.push((run, field("label=").unwrap_or_default()));
+        let job = line.split_once("job=\"").and_then(|(_, rest)| rest.split_once("\" label=")).map(|(j, _)| j.to_string()).unwrap_or_default();
+        runs.push(StrandedRun { run, job, label: field("label="), queued: field("queued="), runner: field("runner=") });
     }
     runs
 }
@@ -1686,8 +1714,18 @@ fn observe_queue_stranded_runs(cfg: &Config) -> Vec<Check> {
             },
         }
         let repo_str = repo_path.to_string_lossy().to_string();
-        let out = cfg.stranded_runners(&repo_path);
-        for (run, label) in stranded_runs(&out) {
+        let out = match cfg.stranded_runners(&repo_path) {
+            Ok(out) => out,
+            Err(reason) => {
+                checks.push(Check {
+                    key: format!("queue-stranded-runs:{repo_name}"),
+                    raw: RawStatus::Unobservable { reason: format!("cannot tell whether {repo_name} has stranded runs: {reason}") },
+                    remedy: Remedy::Escalate,
+                });
+                continue;
+            }
+        };
+        for StrandedRun { run, job, label, queued, runner } in stranded_runs(&out) {
             checks.push(Check {
                 key: format!("{STRANDED_RUN_PREFIX}{repo_name}:{run}"),
                 raw: RawStatus::Gap {
@@ -1695,7 +1733,11 @@ fn observe_queue_stranded_runs(cfg: &Config) -> Vec<Check> {
                     observed: format!("run {run} queued on {label}, runner gone"),
                     since_hint: None,
                 },
-                remedy: Remedy::Command { program: cfg.seams.forge.clone(), args: vec!["workflow-rerun".into(), repo_str.clone(), run] },
+                remedy: Remedy::Noted {
+                    note: format!("repo={repo_name} run={run} job=\"{job}\" label={label} queued={queued} runner={runner}"),
+                    program: cfg.seams.forge.clone(),
+                    args: vec!["workflow-rerun".into(), repo_str.clone(), run],
+                },
             });
         }
     }
@@ -2249,7 +2291,7 @@ pub enum Act {
     Status(StatusRecord),
     Event(EventRow),
     /// Every step runs, in order, whether or not an earlier one succeeded.
-    Remedy { key: String, steps: Vec<(String, Vec<String>)> },
+    Remedy { key: String, steps: Vec<(String, Vec<String>)>, note: Option<String> },
     /// The redrive of the sentinel's call pass; only the scheduler can send it.
     CallWanted { key: String },
     /// `unalert` is the escalation to forget when the mail does not go, so the next pass sends it again.
@@ -2334,7 +2376,7 @@ pub fn decide(rules: &Rules, state: &mut StateMap, pending: &mut PendingMap, ale
                             acts.push(Act::CallWanted { key: check.key.clone() });
                         } else {
                             let steps = remedy.steps().into_iter().map(|(p, a)| (p.to_string(), a.into_iter().map(String::from).collect())).collect();
-                            acts.push(Act::Remedy { key: check.key.clone(), steps });
+                            acts.push(Act::Remedy { key: check.key.clone(), steps, note: remedy.note() });
                         }
                         record_remedy(&mut next, rules.now_secs, &desc);
                         pending.insert(
@@ -2960,11 +3002,13 @@ mod tests {
     #[test_id(tjpgp8x)]
     #[test]
     fn stranded_runs_reads_one_entry_per_run_and_ignores_other_lines() {
-        let out = "STRANDED run=77 job=\"a\" label=ci-r-77-1 queued=700s runner=none vmid=?\n\
+        let out = "STRANDED run=77 job=\"a b\" label=ci-r-77-1 queued=700s runner=none vmid=?\n\
                    STRANDED run=77 job=\"b\" label=ci-r-77-1 queued=700s runner=none vmid=?\n\
                    STRANDED run=78 job=\"a\" label=ci-r-78-2 queued=900s runner=x vmid=3\n\
                    noise run=99\n";
-        assert_eq!(stranded_runs(out), vec![("77".to_string(), "ci-r-77-1".to_string()), ("78".to_string(), "ci-r-78-2".to_string())]);
+        let got: Vec<_> = stranded_runs(out).into_iter().map(|r| (r.run, r.job, r.label, r.queued, r.runner)).collect();
+        let want = |a: &str, b: &str, c: &str, d: &str, e: &str| (a.to_string(), b.to_string(), c.to_string(), d.to_string(), e.to_string());
+        assert_eq!(got, vec![want("77", "a b", "ci-r-77-1", "700s", "none"), want("78", "a", "ci-r-78-2", "900s", "x")]);
         assert!(stranded_runs("").is_empty());
     }
 
@@ -3081,7 +3125,7 @@ mod tests {
     fn a_served_lc_remedy_step_goes_over_the_client() {
         let (cfg, store) = served_config();
         let program = cfg.seams.spira_lc.clone();
-        perform(&cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { key: "k".into(), steps: vec![(program, vec!["show".into(), "sp-1".into()])] }]);
+        perform(&cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { note: None, key: "k".into(), steps: vec![(program, vec!["show".into(), "sp-1".into()])] }]);
         assert_eq!(store.0.lock().unwrap().as_slice(), &[vec!["show".to_string(), "sp-1".into()]]);
     }
 
@@ -3109,11 +3153,14 @@ mod tests {
         fn config(&self, _: &[&str]) -> String {
             String::new()
         }
-        fn stranded_runners(&self, repo: &Path) -> String {
+        fn stranded_runners(&self, repo: &Path) -> Result<String, String> {
             let name = repo.file_name().unwrap().to_string_lossy().to_string();
-            let line = format!("STRANDED run=77 job=1 label=ci-r-77-1 repo={name}\n");
-            self.asked.lock().unwrap().push(name);
-            line
+            let line = format!("STRANDED run=77 job=\"build and test\" label=ci-r-77-1 queued=400s runner=none vmid=? repo={name}\n");
+            self.asked.lock().unwrap().push(name.clone());
+            if name == "gamma" {
+                return Err("org runner listing did not answer".into());
+            }
+            Ok(line)
         }
         fn forge_ci_in_flight(&self, repo: &str) -> Result<bool, String> {
             self.in_flight.get(repo).cloned().unwrap_or(Ok(false))
@@ -3207,6 +3254,51 @@ mod tests {
         assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.contains("no store view")));
     }
 
+    #[test_id(tsr0b01)]
+    #[test]
+    fn a_host_that_cannot_list_the_runners_is_unobservable_and_asks_no_remedy() {
+        let (cfg, host, _dir) = stranded_world("stranded-err", &[("gamma", Ok(true))]);
+        let checks = observe_queue_stranded_runs(&cfg);
+        assert_eq!(asked(&host), ["gamma"]);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].key, "queue-stranded-runs:gamma");
+        assert!(matches!(&checks[0].raw, RawStatus::Unobservable { reason } if reason.contains("org runner listing")));
+        assert_eq!(checks[0].remedy, Remedy::Escalate);
+    }
+
+    #[test_id(tsr0b02)]
+    #[test]
+    fn a_stranded_run_is_rerun_with_a_note_naming_repo_run_job_and_label() {
+        let (cfg, _host, _dir) = stranded_world("stranded-note", &[("beta", Ok(true))]);
+        let checks = observe_queue_stranded_runs(&cfg);
+        assert_eq!(checks[0].remedy.note().as_deref(), Some(r#"repo=beta run=77 job="build and test" label=ci-r-77-1 queued=400s runner=none"#));
+    }
+
+    #[test_id(tsr0b03)]
+    #[test]
+    fn a_decided_noted_remedy_carries_its_note_onto_the_act() {
+        let (mut cfg, _host, _dir) = stranded_world("stranded-act", &[("beta", Ok(true))]);
+        cfg.grace_secs = 0;
+        let check = observe_queue_stranded_runs(&cfg).remove(0);
+        let acts = decide(&cfg.rules(), &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), check);
+        let noted = acts.iter().find_map(|a| match a {
+            Act::Remedy { note, .. } => Some(note.clone()),
+            _ => None,
+        });
+        assert_eq!(noted.flatten().as_deref(), Some(r#"repo=beta run=77 job="build and test" label=ci-r-77-1 queued=400s runner=none"#));
+    }
+
+    #[test_id(tsr0b04)]
+    #[test]
+    fn without_a_host_a_forge_that_exits_nonzero_is_unobservable_and_one_that_prints_is_read() {
+        let (mut cfg, _host, _dir) = stranded_world("stranded-nohost", &[]);
+        cfg.host = None;
+        cfg.seams.forge = "false".into();
+        assert!(cfg.stranded_runners(Path::new("r")).is_err());
+        cfg.seams.forge = "echo".into();
+        assert_eq!(cfg.stranded_runners(Path::new("r")).unwrap(), "stranded-runners r\n");
+    }
+
     #[test_id(ttz1ba1)]
     #[test]
     fn stranded_repos_come_from_the_repo_map_not_the_queue_directory() {
@@ -3242,8 +3334,8 @@ mod tests {
         fn config(&self, _: &[&str]) -> String {
             String::new()
         }
-        fn stranded_runners(&self, _: &Path) -> String {
-            String::new()
+        fn stranded_runners(&self, _: &Path) -> Result<String, String> {
+            Ok(String::new())
         }
         fn send_mail(&self, _: &Mail) -> Result<(), String> {
             Ok(())
@@ -3255,7 +3347,7 @@ mod tests {
 
     fn orphan_apply(cfg: &Config) {
         let program = cfg.seams.spira_lc.clone();
-        perform(cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { key: "k".into(), steps: vec![(program, vec!["requeue-orphans".into(), "--actor".into(), "reconciler".into(), "--apply".into()])] }]);
+        perform(cfg, &mut AlertedSinceMap::new(), vec![Act::Remedy { note: None, key: "k".into(), steps: vec![(program, vec!["requeue-orphans".into(), "--actor".into(), "reconciler".into(), "--apply".into()])] }]);
     }
 
     fn applied(store: &Store) -> Vec<String> {
@@ -3353,8 +3445,8 @@ mod tests {
                 _ => String::new(),
             }
         }
-        fn stranded_runners(&self, _: &Path) -> String {
-            String::new()
+        fn stranded_runners(&self, _: &Path) -> Result<String, String> {
+            Ok(String::new())
         }
         fn send_mail(&self, _: &Mail) -> Result<(), String> {
             Ok(())
@@ -3515,8 +3607,8 @@ mod tests {
         fn config(&self, _: &[&str]) -> String {
             String::new()
         }
-        fn stranded_runners(&self, _: &Path) -> String {
-            String::new()
+        fn stranded_runners(&self, _: &Path) -> Result<String, String> {
+            Ok(String::new())
         }
         fn send_mail(&self, _: &Mail) -> Result<(), String> {
             Ok(())
@@ -3683,8 +3775,8 @@ mod tests {
                 _ => String::new(),
             }
         }
-        fn stranded_runners(&self, _: &Path) -> String {
-            String::new()
+        fn stranded_runners(&self, _: &Path) -> Result<String, String> {
+            Ok(String::new())
         }
         fn send_mail(&self, _: &Mail) -> Result<(), String> {
             Ok(())
