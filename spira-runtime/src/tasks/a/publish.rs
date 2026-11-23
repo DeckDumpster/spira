@@ -57,7 +57,7 @@
 //! | Observing | head == forge / unpublished / stopped | Idle | — |
 //! | Observing | diverged or cannot check | Refused | `publish.notify` (`ops/helpers.rs:346`) |
 //! | Observing | red marker on same head, fix-forward live | Idle | — (wait, `:166-174`) |
-//! | Observing | act ∉ {Wait,Parked,Alarm} and round holds hypervisor, ticks < max | Deferred | carry `deferred_ticks+1` |
+//! | Observing | act ∉ {Wait,Parked,Alarm}, `publish_mode≠push`, round holds hypervisor, ticks < max | Deferred | carry `deferred_ticks+1` (at most once per half cadence; a push repo is never deferred) |
 //! | Observing | `Settle::Wait` / `Parked` | Open / Alarmed | — |
 //! | Observing | `Settle::Wait`, CI green | Merging | `publish.settle` (sp-hw3qio) |
 //! | Observing | `Settle::Rerun` | Rerun | `publish.rerun` (`:666`) |
@@ -358,6 +358,9 @@ pub struct RepoCarry {
     pub state: State,
     /// Today `queue/<repo>/publish-deferred`.
     pub deferred_ticks: u32,
+    /// `observed_at` of the deferral that last counted.
+    #[serde(default)]
+    pub deferred_at: u64,
     /// The head a refusal was last told about: one note per head.
     #[serde(default)]
     pub refused_head: Option<String>,
@@ -515,12 +518,18 @@ impl Machine<'_> {
         }
         let act = settle_with(policy, rec, r.observed_at, rec.map(|_| &r.pr));
         // `:506-527`: an act that writes is deferred while a round holds the hypervisor.
-        if !matches!(act, Settle::Wait | Settle::Parked | Settle::Alarm) && r.round_holds_hypervisor && self.rc.deferred_ticks < policy.defer_max {
+        if !matches!(act, Settle::Wait | Settle::Parked | Settle::Alarm) && r.round_holds_hypervisor && r.publish_mode != "push" && self.rc.deferred_ticks < policy.defer_max {
             self.go(Trigger::RoundHoldsHypervisor);
-            self.rc.deferred_ticks += 1;
+            // A wake observes every repo; only a deferral a cadence apart spends the budget.
+            let first = self.rc.deferred_ticks == 0;
+            if first || r.observed_at.saturating_sub(self.rc.deferred_at) >= CADENCE_MS / 2000 {
+                self.rc.deferred_ticks += 1;
+                self.rc.deferred_at = r.observed_at;
+            }
             return;
         }
         self.rc.deferred_ticks = 0;
+        self.rc.deferred_at = 0;
         let pr = rec.map_or(0, |rec| rec.pr);
         match act {
             Settle::Open => self.open(r),

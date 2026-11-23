@@ -93,6 +93,7 @@
 //! | `batcher.local.redrive` | unit | 60 s | batch | once per orphan (`io.rs:1772`) |
 //! | `batcher.local.file` (incident/judgement/flip) | store | 30 s | incident ref, e.g. `round-orphan:<repo>:<batch>` | duplicate ref (`io.rs:1780`, `:2066`, `:2129`, `:2178`) |
 //! | `batcher.local.supersede_reds` | store | 30 s | repo + landed head + members | none: the close and the registry clearing say their failure and never block the landing |
+//! | `queue.step.publish_wanted` (emitted, not an effect) | publish stream | — | repo + `queue.local` | a landing, fresh or recovered, wakes publish at once |
 //! | `batcher.local.clear_landed` | store | 30 s | the registry's LANDED beads | none: a failed clear is tried again on the next tick |
 //! | `batcher.local.pause` | store | 5 s | repo + lane | — (`pace.rs:248`) |
 //! | `batcher.local.pause_ask` | store | 15 s | `<repo>:pause:<since>` | open duplicate ask (`mail`) |
@@ -196,7 +197,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (KEEP_CERTIFY_OUTPUT, 5_000),
     (INBOX_APPEND, 10_000),
 ];
-pub const EMITS: &[EventKindTag] = &[];
+pub const EMITS: &[EventKindTag] = &[super::queue_step::PUBLISH_WANTED];
 /// Hand-offs that wake it at once, besides its tick: a submission sifted, a batch settled.
 pub const WAKES: &[EventKindTag] = &[kit::WORK_SUBMITTED, super::queue_step::CUT_WANTED];
 pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, runtime::units::UNIT_STOP, OBSERVE, FETCH, ASSEMBLE, ROUND_OPEN, CORPUS, STAGE, STAGE_TEST, NOTE_LEFT_OUT, EJECT, EJECT_GATE_RED, WITHDRAW, REBASE_STALE, CERTIFY, LC_CERTIFY, LAND, ABANDON, PROMOTE, REDRIVE, FILE, SUPERSEDE_REDS, CLEAR_LANDED, PAUSE, PAUSE_ASK, KEEP_CERTIFY_OUTPUT, INBOX_APPEND];
@@ -1554,6 +1555,13 @@ impl Machine<'_> {
         self.red_naming(why, Vec::new());
     }
 
+    /// A landing is publishable now: wake publish rather than leave it to its cadence.
+    fn wake_publish(&mut self) {
+        let input = serde_json::json!({ "repo": self.repo, "mode": "queue.local" }).to_string();
+        let key = format!("{}/landed/{}", self.repo, self.now_ms);
+        self.acts.push(Act::new(super::queue_step::PUBLISH_WANTED, key).with_input(input));
+    }
+
     fn red_naming(&mut self, why: &str, reds: Vec<String>) {
         self.abandon_naming(why, reds);
         self.finish(pace::Outcome::Red, why);
@@ -1567,6 +1575,7 @@ impl Machine<'_> {
             if batch.as_ref().is_some_and(|b| repo.landed.contains(b)) {
                 let batch = batch.clone().unwrap_or_default();
                 self.acts.push(Leg { key: format!("supersede:{batch}"), members: self.rc.members.clone(), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
+                self.wake_publish();
             }
             self.forget_round();
             self.rc.reconciled = batch;
@@ -2440,6 +2449,7 @@ impl Machine<'_> {
                     return;
                 }
                 self.acts.push(Leg { key: format!("supersede:{}", leg.batch), members: leg.members.clone(), ..Leg::on(self.repo) }.act(SUPERSEDE_REDS));
+                self.wake_publish();
                 match l.staged {
                     Some(staged) => {
                         self.go(Trigger::LandedStaged);

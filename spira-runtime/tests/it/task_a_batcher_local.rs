@@ -2412,3 +2412,23 @@ fn an_attribution_that_ejects_one_of_three_members_keeps_its_leg_and_certifies_t
     let certify = after.iter().find(|(e, _)| e == CERTIFY).unwrap_or_else(|| panic!("no certify: {after:?}"));
     assert_eq!(certify.1.head, "h1");
 }
+
+fn wakes(acts: &[Act]) -> Vec<&Act> {
+    acts.iter().filter(|a| a.effect == spira_runtime::tasks::a::queue_step::PUBLISH_WANTED).collect()
+}
+
+#[test_id(t7ftcp7)]
+#[test]
+fn a_landed_round_wakes_publish_and_a_base_moved_or_refused_land_does_not() {
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let (old, acts) = on_outcome(&landing(), LAND, true, &serde_json::to_string(&Landed::default()).unwrap(), &land, NOW);
+    assert_eq!(wakes(&acts).len(), 1, "{acts:?}");
+    let input: serde_json::Value = serde_json::from_str(&wakes(&acts)[0].input).unwrap();
+    assert_eq!(input, serde_json::json!({"repo": "spira", "mode": "queue.local"}));
+    let cmds = kit::commands(&SHAPE, ACTS, EMITS, &old, &old, acts);
+    let to: Vec<String> = cmds.iter().filter_map(|c| match c { runtime::event::Command::EmitTo { stream, kind } if kind.tag == spira_runtime::tasks::a::queue_step::PUBLISH_WANTED => Some(stream.0.clone()), _ => None }).collect();
+    assert_eq!(to, [spira_runtime::tasks::a::publish::STREAM]);
+    let moved = serde_json::to_string(&Landed { base_moved: Some("b2".into()), ..Landed::default() }).unwrap();
+    assert!(wakes(&on_outcome(&landing(), LAND, true, &moved, &land, NOW).1).is_empty());
+    assert!(wakes(&on_outcome(&landing(), LAND, false, "refused", &land, NOW).1).is_empty());
+}
