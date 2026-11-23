@@ -10,10 +10,8 @@
 //!   store with no `SPIRA_LC_BACKUP_URL` or an empty queue.
 //! - **Act:** `lc.ship.drain` runs `ship::drain_kind` on the runs, `lc.ship.drain_snapshot` on the
 //!   snapshots: oldest first, stopping at the first refusal so a retry is the same object. Any
-//!   outcome, success, refusal or timeout, returns its kind to idle; the object stays queued and
-//!   the next tick asks again; a refusal is reported by the effect's own failed event, not by
-//!   `decide`, whose error would keep the kind in flight. A request older than its deadline counts as idle, so a lost outcome
-//!   cannot wedge the task.
+//!   outcome returns its kind to idle, and a request past its deadline counts as idle, so a lost
+//!   outcome cannot wedge the task.
 //! - **Credentials:** the backup key in this process's environment, which the unit loads from the
 //!   backup's environment file; `check-config` refuses an `s3://` destination without it.
 
@@ -82,7 +80,7 @@ pub struct LcShip {
 }
 
 fn in_flight(asked: Option<u64>, now_ms: u64) -> Option<u64> {
-    asked.filter(|at| now_ms.saturating_sub(*at) < DRAIN_DEADLINE_MS)
+    asked.filter(|at| now_ms.checked_sub(*at).is_some_and(|age| age < DRAIN_DEADLINE_MS))
 }
 
 fn ask(kind: &str, effect: &str, dir: &str, q: &Queue, asked: Option<u64>, now_ms: u64) -> (Option<u64>, Option<Act>) {
