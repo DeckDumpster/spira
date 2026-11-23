@@ -93,9 +93,9 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 30 | dwarf::persona_tools_tests | T1 | Rust (sp-706kgd): ops and czar runes through spira-config's rune parser. TI: `ops_allows` reimplements the CLI matcher (see Gaps) |
 | 31 | test-czar-shadow::all (secondary) | T1, 1 s | KEEP; fix the positive-control bug (below). Move the 11 conf/rune/brief grep rows to T0 lint |
 | 32 | `dwarf/tests/fences.rs` (`confine.sh` path prefixes) and `landing_pass::tests::confinement_is_asked_before_the_gate` | T2 | DONE (sp-dede1o) |
-| 32 (partition rows) | test-spike::partition (9) | T3 | MERGE-INTO test-rune-predicates.sh (dispatch area) |
-| 33 | test-spike::placeholder, commands, rune parses, brief clauses, ops wall, spike.rune fields, reopen lint | T0 in a T3 suite | Move to a T0 `lint-runes.sh` stage (no DB) |
-| 34 | test-freshclone::all (secondary); test-spike::bash -n on rune/confine | T0, 3 s | MERGE the spike `bash -n` rows INTO test-freshclone (becomes the single syntax lint) |
+| 32 (partition rows) | none: the spike suite is retired | — | GAP: filed as sp-dede1o.1 |
+| 33 | none: the spike suite is retired | — | GAP: see UC-safety-fences-33 in the toml |
+| 34 | test-freshclone::all (secondary) | T0, 3 s | KEEP: the syntax sweep covers the runes and `confine.sh` |
 
 ---
 

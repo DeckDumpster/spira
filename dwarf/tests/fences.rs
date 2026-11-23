@@ -41,9 +41,9 @@ esac
 const SPIRA_LC: &str = "#!/bin/bash\ncat >/dev/null\n";
 
 const SPIRA_LINT: &str = r#"#!/bin/bash
-rule=""; root=""
+args="$*"; rule=""; root=""
 while [ $# -gt 0 ]; do case "$1" in --only) rule="$2"; shift ;; --root) root="$2"; shift ;; esac; shift; done
-printf '%s %s\n' "$rule" "$(ls -A "$root" | tr '\n' ' ')" >> "$STUB_LINT_LOG"
+printf '%s %s | %s\n' "$rule" "$(ls -A "$root" | tr '\n' ' ')" "$args" >> "$STUB_LINT_LOG"
 [ "$rule" != "${STUB_LINT_RED:-}" ] || { echo "spira-lint: $rule refused" >&2; exit 1; }
 "#;
 
@@ -227,6 +227,11 @@ fn blocked(out: &str) -> bool {
 
 /// Runs every row on its own thread as a dwarf session and returns the rows that went the wrong way.
 fn wrong_rows(fence: &Fence, rows: &[Row], env: &[(&str, &str)]) -> Vec<String> {
+    wrong_rows_naming(fence, rows, env, "")
+}
+
+/// As [`wrong_rows`], and every refusal must also name `exit` (the way out the fence points to).
+fn wrong_rows_naming(fence: &Fence, rows: &[Row], env: &[(&str, &str)], exit: &str) -> Vec<String> {
     std::thread::scope(|s| {
         let hs: Vec<_> = rows
             .iter()
@@ -237,7 +242,7 @@ fn wrong_rows(fence: &Fence, rows: &[Row], env: &[(&str, &str)]) -> Vec<String> 
                         Row::Allowed(c) => (c, false),
                     };
                     let (rc, out) = fence.bash(cmd, env);
-                    (rc == 0 && blocked(&out) == want)
+                    (rc == 0 && blocked(&out) == want && (!want || out.contains(exit)))
                         .then(String::new)
                         .unwrap_or_else(|| {
                             format!(
@@ -263,7 +268,7 @@ fn allowed(c: impl Into<String>) -> Row {
 }
 
 // covers: UC-safety-fences-01
-#[test_id(tlm1fyi)]
+#[test_id(tjxw7u3)]
 #[test]
 fn a_dwarf_may_not_operate_the_queue_or_the_landing_but_may_name_them_as_arguments() {
     let f = Fence::new();
@@ -288,7 +293,7 @@ fn a_dwarf_may_not_operate_the_queue_or_the_landing_but_may_name_them_as_argumen
 }
 
 // covers: UC-safety-fences-02
-#[test_id(ttx1b0r)]
+#[test_id(tuu0unk)]
 #[test]
 fn a_dwarf_may_not_write_under_prod_or_the_queue() {
     let f = Fence::new();
@@ -317,7 +322,7 @@ fn a_dwarf_may_not_write_under_prod_or_the_queue() {
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tv7imkf)]
+#[test_id(tfq33fy)]
 #[test]
 fn a_dwarf_may_read_and_run_from_prod_and_name_its_paths_in_prose() {
     let f = Fence::new();
@@ -347,7 +352,7 @@ fn a_dwarf_may_read_and_run_from_prod_and_name_its_paths_in_prose() {
 }
 
 // covers: UC-safety-fences-02
-#[test_id(t2i8bgr)]
+#[test_id(thp1a0j)]
 #[test]
 fn a_dwarf_may_read_the_queue_and_name_its_path_in_prose() {
     let f = Fence::new();
@@ -405,12 +410,12 @@ const BD_ALLOWED: &[&str] = &[
 fn store_rows_refused(range: std::ops::Range<usize>) {
     let f = Fence::new();
     let rows: Vec<Row> = BD_REFUSED[range].iter().map(|c| refused(*c)).collect();
-    let wrong = wrong_rows(&f, &rows, &[DWARF]);
+    let wrong = wrong_rows_naming(&f, &rows, &[DWARF], "work file");
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 // covers: UC-safety-fences-03
-#[test_id(tj74jws)]
+#[test_id(ttpezbp)]
 #[test]
 fn a_dwarf_may_not_run_bd_or_bdq_by_a_path_and_is_told_the_work_verb() {
     store_rows_refused(0..9);
@@ -422,21 +427,21 @@ fn a_dwarf_may_not_run_bd_or_bdq_by_a_path_and_is_told_the_work_verb() {
 }
 
 // covers: UC-safety-fences-03
-#[test_id(tihsyda)]
+#[test_id(tfv0vjh)]
 #[test]
 fn a_dwarf_may_not_run_bd_through_a_wrapper_or_a_subshell() {
     store_rows_refused(9..17);
 }
 
 // covers: UC-safety-fences-03
-#[test_id(tm7bagq)]
+#[test_id(tc68f99)]
 #[test]
 fn a_dwarf_may_not_run_bd_in_a_loop_or_set_a_beads_dir() {
     store_rows_refused(17..BD_REFUSED.len());
 }
 
 // covers: UC-safety-fences-03
-#[test_id(t7jim02)]
+#[test_id(t9l0cci)]
 #[test]
 fn a_dwarf_may_name_bd_in_prose_and_the_override_and_a_non_dwarf_session_pass() {
     let f = Fence::new();
@@ -457,7 +462,7 @@ fn a_dwarf_may_name_bd_in_prose_and_the_override_and_a_non_dwarf_session_pass() 
 }
 
 // covers: UC-safety-fences-15
-#[test_id(tdmx4v9)]
+#[test_id(txg2iyc)]
 #[test]
 fn the_fence_blocks_on_stdout_with_exit_zero_and_is_inert_outside_its_scope() {
     let f = Fence::new();
@@ -497,7 +502,7 @@ fn the_fence_blocks_on_stdout_with_exit_zero_and_is_inert_outside_its_scope() {
 
 // The tool-write, background and pattern-kill rows are no cell's; the suite this replaces asserted them and nothing else does.
 // covers: UC-safety-fences-02
-#[test_id(toolbfi)]
+#[test_id(tq11k1b)]
 #[test]
 fn a_dwarf_may_not_write_prod_or_config_by_tool() {
     let f = Fence::new();
@@ -533,7 +538,7 @@ fn a_dwarf_may_not_write_prod_or_config_by_tool() {
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tykhqmp)]
+#[test_id(tzma72p)]
 #[test]
 fn a_dwarf_may_not_write_config_by_shell_or_run_in_background() {
     let f = Fence::new();
@@ -582,31 +587,34 @@ const KILL_REFUSED: &[&str] = &[
     "kill \"$(pgrep -f it-)\"",
     "pgrep -f it- | while read p; do kill $p; done",
     "timeout 5 /usr/bin/pkill -f it-",
+    "pkill -f \"it-",
+    "kill $(ps aux | grep it- | awk \"{print \\$2}\")",
+    "ps aux | grep it- | awk \"{print \\$2}\" | xargs kill -9",
 ];
 
 fn kill_rows_refused(range: std::ops::Range<usize>) {
     let f = Fence::new();
     let rows: Vec<Row> = KILL_REFUSED[range].iter().map(|c| refused(*c)).collect();
-    let wrong = wrong_rows(&f, &rows, &[DWARF]);
+    let wrong = wrong_rows_naming(&f, &rows, &[DWARF], "systemctl --user stop");
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 // covers: UC-safety-fences-02
-#[test_id(taqcz63)]
+#[test_id(tx84mf5)]
 #[test]
 fn a_dwarf_may_not_kill_by_pattern_by_name() {
     kill_rows_refused(0..8);
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tdnywzr)]
+#[test_id(tq9jn4r)]
 #[test]
 fn a_dwarf_may_not_kill_by_pattern_through_a_pipe_or_a_wrapper() {
     kill_rows_refused(8..KILL_REFUSED.len());
 }
 
 // covers: UC-safety-fences-02
-#[test_id(tjuf7a7)]
+#[test_id(tzxunf3)]
 #[test]
 fn a_dwarf_may_kill_a_pid_and_stop_a_unit_and_the_override_and_a_non_dwarf_pass() {
     let f = Fence::new();
@@ -678,7 +686,7 @@ fn dirty_worktree(rig: &Rig) -> PathBuf {
 }
 
 // covers: UC-safety-fences-17
-#[test_id(ta9arzt)]
+#[test_id(tlzf6pp)]
 #[test]
 fn a_commit_staging_a_path_dirty_before_the_session_is_refused_naming_it_and_an_own_path_commits() {
     let rig = Rig::new(&[]);
@@ -701,7 +709,7 @@ fn a_commit_staging_a_path_dirty_before_the_session_is_refused_naming_it_and_an_
 }
 
 // covers: UC-safety-fences-17
-#[test_id(tzl135r)]
+#[test_id(tcto7mq)]
 #[test]
 fn a_dirty_path_staged_alone_is_refused_until_the_override_is_set() {
     let rig = Rig::new(&[]);
@@ -743,7 +751,7 @@ fn guard(rig: &Rig, root: &Path, email: &str, work: Option<&Path>) -> (i32, Stri
 }
 
 // covers: UC-safety-fences-18
-#[test_id(ttbnax9)]
+#[test_id(txeb6i4)]
 #[test]
 fn a_dwarf_may_not_commit_to_the_base_branch_or_outside_its_assigned_worktree() {
     let rig = Rig::new(&[]);
@@ -806,7 +814,7 @@ fn a_dwarf_may_not_commit_to_the_base_branch_or_outside_its_assigned_worktree() 
 }
 
 // covers: UC-safety-fences-18
-#[test_id(tglnkx3)]
+#[test_id(tgk0x0x)]
 #[test]
 fn a_dwarf_in_a_worktree_may_not_commit_to_a_local_landing_ref() {
     let rig = Rig::new(&[]);
@@ -842,7 +850,7 @@ fn a_dwarf_in_a_worktree_may_not_commit_to_a_local_landing_ref() {
 }
 
 // covers: UC-safety-fences-19
-#[test_id(th9bu9t)]
+#[test_id(t19jzs4)]
 #[test]
 fn the_audit_reports_a_dwarf_tip_and_a_checkout_ahead_then_clears_after_an_operator_commit() {
     let rig = Rig::new(&[]);
@@ -925,7 +933,7 @@ fn through_the_hook(rig: &Rig, r: &Path, who: &str, red: &str) -> (bool, String)
 }
 
 // covers: UC-safety-fences-22
-#[test_id(tkacn00)]
+#[test_id(thi5i80)]
 #[test]
 fn the_tracked_pre_commit_hook_refuses_beads_data_and_a_red_scratch_fence() {
     let rig = Rig::new(&[]);
@@ -954,7 +962,7 @@ fn the_tracked_pre_commit_hook_refuses_beads_data_and_a_red_scratch_fence() {
 }
 
 // covers: UC-safety-fences-22
-#[test_id(t9vd7yd)]
+#[test_id(tgge50l)]
 #[test]
 fn the_tracked_pre_commit_hook_refuses_a_dwarf_on_base_and_passes_an_operator() {
     let rig = Rig::new(&[]);
@@ -970,10 +978,16 @@ fn the_tracked_pre_commit_hook_refuses_a_dwarf_on_base_and_passes_an_operator() 
         ok,
         "an ordinary operator commit passes the same hook: {out}"
     );
+    let log = rig.lint_log();
+    assert!(
+        log.lines()
+            .any(|l| l.starts_with("tmp-leak ") && l.ends_with("--diff HEAD --only tmp-leak")),
+        "the linter judges the staged diff against HEAD, not a defect already in it: {log}"
+    );
 }
 
 // covers: UC-safety-fences-22
-#[test_id(tg6ua2c)]
+#[test_id(tc7ldsy)]
 #[test]
 fn the_tracked_pre_commit_hook_refuses_by_name_when_the_linter_is_missing() {
     let rig = Rig::new(&[]);
@@ -1027,7 +1041,7 @@ fn arm_reference_hook(rig: &Rig, repo: &Path) {
 }
 
 // covers: UC-safety-fences-20
-#[test_id(tc9g870)]
+#[test_id(td7yjnu)]
 #[test]
 fn a_bead_branch_cannot_be_deleted_outside_the_chokepoint_and_nothing_else_is_refused() {
     let rig = Rig::new(&[]);
@@ -1114,7 +1128,7 @@ fn a_bead_branch_cannot_be_deleted_outside_the_chokepoint_and_nothing_else_is_re
 
 // covers: UC-safety-fences-20
 // covers: UC-safety-fences-21
-#[test_id(tyqcatu)]
+#[test_id(ttwanwq)]
 #[test]
 fn a_dwarf_worktree_is_armed_with_every_canonical_hook_and_cannot_delete_a_bead_branch() {
     let rig = Rig::new(&[]);
@@ -1198,7 +1212,7 @@ fn signed_worktree(rig: &Rig) -> (PathBuf, PathBuf) {
 }
 
 // covers: UC-safety-fences-21
-#[test_id(tuj25na)]
+#[test_id(tx6nwda)]
 #[test]
 fn the_composed_worktree_pre_commit_runs_exclude_and_branch_guard() {
     let rig = Rig::new(&[]);
@@ -1225,7 +1239,7 @@ fn the_composed_worktree_pre_commit_runs_exclude_and_branch_guard() {
 }
 
 // covers: UC-safety-fences-21
-#[test_id(tzsm7tt)]
+#[test_id(tvyxn72)]
 #[test]
 fn the_composed_worktree_pre_commit_runs_the_canonical_fences_before_the_dirty_path_guard() {
     let rig = Rig::new(&[]);
@@ -1316,11 +1330,12 @@ impl Landing {
 const DWARF_SESSION: [(&str, &str); 2] = [("SPIRA_DWARF", "fixture"), ("BEAD_ID", "sp-mine")];
 
 // covers: UC-safety-fences-35
-#[test_id(t53blol)]
+#[test_id(tslihgu)]
 #[test]
 fn a_dwarf_may_not_check_out_the_landing_ref_from_its_worktree_or_the_main_checkout() {
     let rig = Rig::new(&[]);
     if !git_reports_head_moves(&rig) {
+        eprintln!("SKIPPED: this git does not report a HEAD move to reference-transaction, so a checkout cannot be seen");
         return;
     }
     let l = Landing::new(&rig);
@@ -1354,7 +1369,7 @@ fn a_dwarf_may_not_check_out_the_landing_ref_from_its_worktree_or_the_main_check
 }
 
 // covers: UC-safety-fences-35
-#[test_id(t2olj64)]
+#[test_id(tsfjzww)]
 #[test]
 fn a_dwarf_may_not_write_the_landing_ref_and_an_unresolvable_one_fails_closed() {
     let rig = Rig::new(&[]);
@@ -1398,7 +1413,7 @@ fn a_dwarf_may_not_write_the_landing_ref_and_an_unresolvable_one_fails_closed() 
 }
 
 // covers: UC-safety-fences-35
-#[test_id(tr0iaqj)]
+#[test_id(tr9go2t)]
 #[test]
 fn an_operator_and_the_sanctioned_writer_may_move_the_landing_ref_with_a_dwarf_session_set() {
     let rig = Rig::new(&[]);
@@ -1431,7 +1446,7 @@ fn an_operator_and_the_sanctioned_writer_may_move_the_landing_ref_with_a_dwarf_s
 }
 
 // covers: UC-safety-fences-35
-#[test_id(t3k5mwn)]
+#[test_id(tklzd2a)]
 #[test]
 fn a_dwarf_may_commit_on_its_bead_branch_and_merge_the_landing_ref_into_it() {
     let rig = Rig::new(&[]);
@@ -1472,7 +1487,7 @@ fn exclude(rig: &Rig, args: &[&str], stdin: &str) -> (i32, String) {
 }
 
 // covers: UC-safety-fences-23
-#[test_id(titx67o)]
+#[test_id(t4yv1wa)]
 #[test]
 fn beads_data_is_filtered_by_shape_inside_the_harness_scope_and_refused_when_staged() {
     let rig = Rig::new(&[]);
@@ -1609,7 +1624,7 @@ fn confine(rig: &Rig, r: &Path, id: &str, labels: &str) -> (i32, String) {
 }
 
 // covers: UC-safety-fences-32
-#[test_id(tgrywng)]
+#[test_id(tboka2l)]
 #[test]
 fn a_spike_branch_touching_code_or_an_adjacent_directory_is_refused_naming_the_path() {
     let (rig, r) = spike_rig();
@@ -1635,7 +1650,7 @@ fn a_spike_branch_touching_code_or_an_adjacent_directory_is_refused_naming_the_p
 }
 
 // covers: UC-safety-fences-32
-#[test_id(t0xmdda)]
+#[test_id(tbf67mj)]
 #[test]
 fn a_spike_branch_inside_the_allowed_trees_passes_and_a_plan_branch_is_not_confined() {
     let (rig, r) = spike_rig();
@@ -1656,6 +1671,13 @@ fn a_spike_branch_inside_the_allowed_trees_passes_and_a_plan_branch_is_not_confi
         confine(&rig, &r, "sp-build", "spira plan"),
         (0, String::new()),
         "the fence binds the spike persona, not the path"
+    );
+
+    spike_branch(&r, "sp-gone", &["src/anything.rs"]);
+    assert_eq!(
+        confine(&rig, &r, "sp-gone", "").0,
+        0,
+        "a bead nobody can read fails open"
     );
 
     spike_branch(&r, "sp-behind", &["notes/spikes/behind.md"]);
