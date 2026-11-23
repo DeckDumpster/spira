@@ -4474,6 +4474,32 @@ fn stats_reads_the_landing_log() {
     assert!(t.out().starts_with("caught:          1\n"));
 }
 
+#[test_id(t743cqi)]
+#[test]
+fn stats_reads_lines_that_exist_only_in_a_rotated_landing_log() {
+    let t = T::new(LandMode::Queue);
+    fs::write(t.s().run.join("landing.log.1"), "QUEUE CAUGHT 1 branch=x\n").unwrap();
+    fs::write(t.s().run.join("landing.log"), "QUEUE CAUGHT 2 branch=y\n").unwrap();
+    assert_eq!(t.run(&["stats"]), 0);
+    assert!(t.out().starts_with("caught:          2\n"), "{}", t.out());
+}
+
+#[test_id(tqxg7aa)]
+#[test]
+fn landing_log_text_reads_kept_files_oldest_first_then_the_live_one() {
+    let t = T::new(LandMode::Queue);
+    let run = t.s().run.clone();
+    assert_eq!(crate::ops::landing_log_text(&run), None);
+    fs::write(run.join("landing.log.2"), "a\n").unwrap();
+    fs::write(run.join("landing.log.10"), "0\n").unwrap();
+    fs::write(run.join("landing.log.1"), "b\n").unwrap();
+    fs::write(run.join("landing.log"), "c\n").unwrap();
+    assert_eq!(
+        crate::ops::landing_log_text(&run).as_deref(),
+        Some("0\na\nb\nc\n")
+    );
+}
+
 #[test_id(tho8ghw)]
 #[test]
 fn usage_errors_exit_two() {

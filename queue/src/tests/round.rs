@@ -235,6 +235,49 @@ fn a_land_that_waited_on_the_lock_while_another_lander_landed_the_round_answers_
     assert!(!t.lc.has(&format!("land {batch}")), "{:?}", t.lc.calls.borrow());
 }
 
+#[test_id(tftrst9)]
+#[test]
+fn a_land_that_waited_on_the_lock_finds_the_landing_in_a_rotated_log_file() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+
+    let held = std::rc::Rc::new(std::cell::RefCell::new(Some(t.hold_lock())));
+    let (h, log, b) = (held.clone(), t.s().run.join("landing.log.1"), batch.clone());
+    let git: *const FGit = &t.git;
+    *t.clock.on_sleep.borrow_mut() = Some(Box::new(move || {
+        let line = format!("QUEUE ROUND-LAND 1 repo=spira batch={b} by=other head=merged-tb members=sp-a:ta,sp-b:tb\n");
+        let mut all = fs::read_to_string(&log).unwrap_or_default();
+        all.push_str(&line);
+        fs::write(&log, all).unwrap();
+        // SAFETY: the world outlives the verb that sleeps.
+        let git = unsafe { &*git };
+        git.set("refs/heads/local/main", "merged-tb");
+        git.ancestor("merged-tb", "local/main");
+        h.borrow_mut().take();
+    }));
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert!(
+        t.out()
+            .contains(&format!("round {batch} already landed at merged-tb")),
+        "{}",
+        t.out()
+    );
+    assert!(
+        !t.lc.has(&format!("land {batch}")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
+}
+
 #[test_id(t2u2ai5)]
 #[test]
 fn land_with_the_batch_record_refused_prints_the_reason_and_exits_nonzero() {

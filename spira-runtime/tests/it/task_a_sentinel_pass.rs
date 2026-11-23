@@ -421,3 +421,124 @@ fn the_landing_log_tail_of_a_big_log_with_invalid_utf8_in_its_first_line_is_its_
     assert_eq!(lines[0], "line 9970");
     assert!(land_log_tail(&dir.path().join("none")).contains("no landing log"));
 }
+
+mod landing_log_rotation {
+    use super::*;
+    use runtime::event::EffectSpec;
+    use runtime::units::{ScriptedUnits, UnitFacts, UnitHandle, UnitState};
+    use std::sync::Arc;
+
+    const MB: usize = 1024 * 1024;
+
+    fn fixture(name: &str) -> (testkit::TempDir, spira_runtime::Effects, Arc<ScriptedUnits>) {
+        let dir = testkit::TempDir::new(name);
+        let units = Arc::new(ScriptedUnits::new(Arc::new(
+            runtime::ports::VirtualClock::new(0),
+        )));
+        units.script(NAME, 1_000, runtime::units::Exit::Code(0));
+        let mut e = spira_runtime::Effects::default();
+        e.world.run_dir = dir.path().to_path_buf();
+        e.units = Some(units.clone());
+        (dir, e, units)
+    }
+
+    /// The leg starts, or stops only for want of the `landing-pass` binary, which comes after
+    /// rotation: a rotation that stopped the leg would name itself.
+    fn reached_the_binary_lookup(r: &Result<String, String>) -> bool {
+        r.is_ok() || r.as_ref().is_err_and(|e| e.contains("landing-pass not found"))
+    }
+
+    fn start(e: &spira_runtime::Effects, cap_mb: u64, keep: u64) -> Result<String, String> {
+        let w = Write {
+            log_cap_mb: cap_mb,
+            log_keep: keep,
+            ..Write::default()
+        };
+        landing_start(
+            e,
+            &EffectSpec::keyed(
+                LANDING_START,
+                LANDING_UNIT,
+                serde_json::to_string(&w).unwrap(),
+                10_000,
+            ),
+        )
+    }
+
+    fn names(dir: &std::path::Path) -> Vec<String> {
+        let mut n: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("landing.log"))
+            .collect();
+        n.sort();
+        n
+    }
+
+    #[test_id(tvekfuc)]
+    #[test]
+    fn a_log_at_the_cap_becomes_dot_one_and_only_keep_files_remain() {
+        let (dir, e, _) = fixture("land-rotate-over");
+        std::fs::write(dir.path().join("landing.log"), vec![b'n'; MB]).unwrap();
+        std::fs::write(dir.path().join("landing.log.1"), "one").unwrap();
+        std::fs::write(dir.path().join("landing.log.2"), "two").unwrap();
+        std::fs::write(dir.path().join("landing.log.3"), "three").unwrap();
+        assert!(reached_the_binary_lookup(&start(&e, 1, 3)));
+        assert_eq!(names(dir.path()), ["landing.log.1", "landing.log.2"]);
+        assert_eq!(
+            std::fs::read(dir.path().join("landing.log.1"))
+                .unwrap()
+                .len(),
+            MB
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("landing.log.2")).unwrap(),
+            "one"
+        );
+    }
+
+    #[test_id(tm92wxr)]
+    #[test]
+    fn a_log_under_the_cap_is_left_alone() {
+        let (dir, e, _) = fixture("land-rotate-under");
+        std::fs::write(dir.path().join("landing.log"), "small").unwrap();
+        assert!(reached_the_binary_lookup(&start(&e, 1, 3)));
+        assert_eq!(names(dir.path()), ["landing.log"]);
+    }
+
+    #[test_id(t5i3emp)]
+    #[test]
+    fn a_leg_in_flight_is_left_unrotated() {
+        let (dir, e, units) = fixture("land-rotate-inflight");
+        std::fs::write(dir.path().join("landing.log"), vec![b'n'; MB]).unwrap();
+        let unit = UnitHandle::of(NAME, LANDING_KEY).unwrap();
+        units.install(
+            &unit.name,
+            UnitFacts {
+                state: UnitState::Active,
+                main_pid: None,
+                exit: None,
+                since_ms: Some(0),
+            },
+        );
+        assert!(start(&e, 1, 3).is_err());
+        assert_eq!(names(dir.path()), ["landing.log"]);
+    }
+
+    #[test_id(t78s9y6)]
+    #[test]
+    fn a_rotation_that_fails_does_not_stop_the_leg() {
+        let (dir, e, _) = fixture("land-rotate-fails");
+        std::fs::write(dir.path().join("landing.log"), vec![b'n'; MB]).unwrap();
+        let mut ro = std::fs::metadata(dir.path()).unwrap().permissions();
+        ro.set_readonly(true);
+        std::fs::set_permissions(dir.path(), ro).unwrap();
+        let started = start(&e, 1, 3);
+        let mut rw = std::fs::metadata(dir.path()).unwrap().permissions();
+        rw.set_readonly(false);
+        std::fs::set_permissions(dir.path(), rw).unwrap();
+        assert!(reached_the_binary_lookup(&started), "{started:?}");
+        assert_eq!(names(dir.path()), ["landing.log"]);
+    }
+}

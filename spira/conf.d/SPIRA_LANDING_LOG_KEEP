@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=land
+DOC=Files of run/landing.log kept, counting the live one.
+SCHEMA=Positive integer (default 8).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LANDING_LOG_KEEP:=8}"
+SPIRA_CONF_DEFAULT_EOF

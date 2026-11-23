@@ -5299,7 +5299,7 @@ fn landed_head(w: &World, c: &Ctx, path: &Path, batch: &str) -> Option<String> {
     if unrecorded_marker(c, batch).exists() {
         return None;
     }
-    let log = fs::read_to_string(c.s.run.join("landing.log")).ok()?;
+    let log = super::landing_log_text(&c.s.run)?;
     let (repo, id) = (format!(" repo={} ", c.r.name), format!(" batch={batch} "));
     let head = log
         .lines()

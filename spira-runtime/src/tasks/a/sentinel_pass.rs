@@ -219,6 +219,8 @@ pub const KEYS: &[&str] = &[
     "SPIRA_WORK_CLOSE_TYPES",
     "SPIRA_RECLAIM_GRACE_SECS",
     "SPIRA_LAND_MAXSEC",
+    "SPIRA_LANDING_LOG_CAP_MB",
+    "SPIRA_LANDING_LOG_KEEP",
     "SPIRA_LAND_STALE",
     "SPIRA_LAND_ESCALATE_EVERY",
     "SPIRA_REPO_MAP",
@@ -313,6 +315,9 @@ pub struct Snapshot {
     pub skip_reclaim: bool,
     /// `SPIRA_LAND_MAXSEC`, as pinned: the landing leg's `RuntimeMaxSec`.
     pub land_maxsec: u64,
+    /// `SPIRA_LANDING_LOG_CAP_MB` and `SPIRA_LANDING_LOG_KEEP`, as pinned: the landing log's rotation.
+    pub land_log_cap_mb: u64,
+    pub land_log_keep: u64,
     /// Seconds since the landing unit's last run ended; `None` when none is known to have.
     pub land_age_secs: Option<u64>,
     /// `SPIRA_LAND_STALE`, as pinned: the age past which a leg that is not running is an escalation.
@@ -450,6 +455,11 @@ pub struct Write {
     /// The landing leg's `RuntimeMaxSec`, in seconds.
     #[serde(default)]
     pub max_secs: u64,
+    /// The landing log's rotation: size cap in megabytes, and files kept counting the live one.
+    #[serde(default)]
+    pub log_cap_mb: u64,
+    #[serde(default)]
+    pub log_keep: u64,
     /// CHECK 1's notice and CHECK 2d's event title.
     #[serde(default)]
     pub subject: String,
@@ -661,7 +671,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     }
     // CHECK 6: the landing leg, unless one is in flight or this is not the current release.
     if snap.world_running && snap.skew.is_none() && !snap.landing_active && landable_work(snap) {
-        acts.push(act(LANDING_START, LANDING_UNIT, Write { max_secs: snap.land_maxsec, ..Write::default() }));
+        acts.push(act(LANDING_START, LANDING_UNIT, Write { max_secs: snap.land_maxsec, log_cap_mb: snap.land_log_cap_mb, log_keep: snap.land_log_keep, ..Write::default() }));
         landing = true;
     }
     land_escalate(carry, &mut next, snap, &mut acts);
@@ -861,6 +871,8 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         reclaim_grace_secs: pin("SPIRA_RECLAIM_GRACE_SECS").trim().parse().unwrap_or(10_800),
         skip_reclaim: env("SPIRA_SKIP_RECLAIM").as_deref() == Some("1"),
         land_maxsec: pin("SPIRA_LAND_MAXSEC").trim().parse().unwrap_or(0),
+        land_log_cap_mb: pin("SPIRA_LANDING_LOG_CAP_MB").trim().parse().unwrap_or(0),
+        land_log_keep: pin("SPIRA_LANDING_LOG_KEEP").trim().parse().unwrap_or(0),
         land_stale_secs: pin("SPIRA_LAND_STALE").trim().parse().unwrap_or(1_800),
         land_escalate_every_secs: pin("SPIRA_LAND_ESCALATE_EVERY").trim().parse().unwrap_or(3_600),
         land_log_tail: land_log_tail(&run),
@@ -1122,11 +1134,19 @@ pub fn landing_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     if matches!(units.facts(&landing_handle()?).map(|f| f.state), Ok(units::UnitState::Active | units::UnitState::Activating)) {
         return Err("a landing is already in flight".into());
     }
+    let w = write_of(&spec.input, LANDING_START)?;
+    if w.log_cap_mb > 0 {
+        if let Err(err) = queue::ops::rotate_landing_log(&e.world.run_dir, w.log_cap_mb.saturating_mul(1024 * 1024), w.log_keep as usize) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("sentinel-pass: landing.log rotation failed: {err}");
+            }
+        }
+    }
     let landing = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).map(|d| d.join("landing-pass")).find(|p| p.is_file()).ok_or("landing-pass not found on PATH")?;
     let pass_env = ["PATH", "SPIRA_RELEASE", "SPIRA_TOML", "HOME", "SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_REPO", "SPIRA_REPO_MAP"];
     let env = pass_env.iter().filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v))).collect();
     let unit = units::UnitSpec { task: NAME.into(), key: LANDING_KEY.into(), argv: vec![landing.to_string_lossy().into_owned(), "land".into()], env, cwd: None };
-    let props = landing_props(&write_of(&spec.input, LANDING_START)?, &e.world.run_dir);
+    let props = landing_props(&w, &e.world.run_dir);
     let input = serde_json::to_string(&units::StartSpec { unit, props }).map_err(|e| e.to_string())?;
     e.unit(&EffectSpec::keyed(units::UNIT_START, spec.key.clone(), input, spec.deadline_ms))
 }

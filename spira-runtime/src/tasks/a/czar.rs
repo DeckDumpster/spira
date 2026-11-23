@@ -743,43 +743,98 @@ fn now_ms() -> u64 {
 }
 
 /// The landing log's outcomes and last completed pass from the bytes past `mark`, and the mark
-/// they were read to. A file unchanged since the mark is stat'ed and not opened.
-fn landing_log(run: &std::path::Path, mark: &Mark) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>, Mark) {
-    use std::io::{BufRead, Seek, SeekFrom};
+/// they were read to. A file unchanged since the mark is stat'ed and not opened. When the marked
+/// file has been rotated, it is read from the mark to its end, then each newer file from 0.
+fn landing_log(
+    run: &std::path::Path,
+    mark: &Mark,
+) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>, Mark) {
     use std::os::unix::fs::MetadataExt;
-    let path = run.join("landing.log");
-    let unreadable = |e: std::io::Error| {
+    let live = run.join("landing.log");
+    let unreadable = |path: &std::path::Path, e: std::io::Error| {
         let why = format!("{}: {e}", path.display());
         (Read::Unobservable(why.clone()), Read::Unobservable(why), mark.clone())
     };
-    let meta = match std::fs::metadata(&path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Read::Observed(vec![]), Read::Observed(None), Mark::default()),
-        Err(e) => return unreadable(e),
+    let live_meta = match std::fs::metadata(&live) {
+        Ok(m) => Some(m),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return unreadable(&live, e),
     };
-    let same_file = meta.dev() == mark.dev && meta.ino() == mark.ino;
-    if same_file && meta.len() == mark.offset {
-        return (Read::Observed(vec![]), mark.last_pass.clone(), mark.clone());
+    if let Some(m) = &live_meta {
+        if m.dev() == mark.dev && m.ino() == mark.ino && m.len() == mark.offset {
+            return (Read::Observed(vec![]), mark.last_pass.clone(), mark.clone());
+        }
     }
-    let (start, mut last) = if same_file && meta.len() > mark.offset { (mark.offset, mark.last_pass.clone()) } else { (0, Read::Observed(None)) };
-    let mut reader = match std::fs::File::open(&path).and_then(|mut f| f.seek(SeekFrom::Start(start)).map(|_| std::io::BufReader::new(f))) {
-        Ok(r) => r,
-        Err(e) => return unreadable(e),
+    let mut chain: Vec<(std::path::PathBuf, std::fs::Metadata)> =
+        queue::ops::landing_log_rotated(run)
+            .into_iter()
+            .filter_map(|p| std::fs::metadata(&p).ok().map(|m| (p, m)))
+            .collect();
+    chain.extend(live_meta.map(|m| (live.clone(), m)));
+    let marked = chain
+        .iter()
+        .position(|(_, m)| m.dev() == mark.dev && m.ino() == mark.ino && m.len() >= mark.offset);
+    let (from, mut start, mut last) = match marked {
+        Some(i) => (i, mark.offset, mark.last_pass.clone()),
+        None => (chain.len().saturating_sub(1), 0, Read::Observed(None)),
     };
-    let at = |l: &str| l.get(..20).and_then(czar_pass::parse_iso_to_epoch).map(|s| s * 1000);
+    if chain.is_empty() {
+        return (
+            Read::Observed(vec![]),
+            Read::Observed(None),
+            Mark::default(),
+        );
+    }
+    if marked.is_none() && chain.last().is_some_and(|(p, _)| *p != live) {
+        return (
+            Read::Observed(vec![]),
+            Read::Observed(None),
+            Mark::default(),
+        );
+    }
+    let (mut events, mut next) = (vec![], mark.clone());
+    for (path, meta) in &chain[from..] {
+        let (found, offset, seen) = match scan_landing_log(path, start, last) {
+            Ok(r) => r,
+            Err(e) => return unreadable(path, e),
+        };
+        events.extend(found);
+        last = seen;
+        next = Mark {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            offset,
+            last_pass: last.clone(),
+        };
+        start = 0;
+    }
+    (Read::Observed(events), last, next)
+}
+
+/// The outcomes in `path` from byte `start` to its last whole line, the offset read to, and the
+/// last completed pass seen.
+fn scan_landing_log(
+    path: &std::path::Path,
+    start: u64,
+    mut last: Read<Option<u64>>,
+) -> std::io::Result<(Vec<LandingEvent>, u64, Read<Option<u64>>)> {
+    use std::io::{BufRead, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    f.seek(SeekFrom::Start(start))?;
+    let mut reader = std::io::BufReader::new(f);
+    let at = |l: &str| {
+        l.get(..20)
+            .and_then(czar_pass::parse_iso_to_epoch)
+            .map(|s| s * 1000)
+    };
     let (mut events, mut offset, mut buf) = (vec![], start, vec![]);
     loop {
         buf.clear();
-        match reader.read_until(b'\n', &mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                if buf.last() != Some(&b'\n') {
-                    break;
-                }
-                offset += n as u64;
-            }
-            Err(e) => return unreadable(e),
+        let n = reader.read_until(b'\n', &mut buf)?;
+        if n == 0 || buf.last() != Some(&b'\n') {
+            break;
         }
+        offset += n as u64;
         let line = String::from_utf8_lossy(&buf);
         let l = line.trim_end_matches(['\n', '\r']);
         if l.contains(czar_pass::PASS_COMPLETE_LINE) {
@@ -801,8 +856,7 @@ fn landing_log(run: &std::path::Path, mark: &Mark) -> (Read<Vec<LandingEvent>>, 
             events.push(LandingEvent { kind: kind.into(), repo: String::new(), at_ms });
         }
     }
-    let next = Mark { dev: meta.dev(), ino: meta.ino(), offset, last_pass: last.clone() };
-    (Read::Observed(events), last, next)
+    Ok((events, offset, last))
 }
 
 fn forge_status(forge: &str, repo_path: &str, branch: &str) -> Result<String, String> {

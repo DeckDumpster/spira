@@ -489,7 +489,7 @@ pub fn stats(w: &World) -> i32 {
     let Ok(c) = resolve(w, "stats", None) else {
         return FAIL;
     };
-    let log = fs::read_to_string(c.s.run.join("landing.log")).unwrap_or_default();
+    let log = super::landing_log_text(&c.s.run).unwrap_or_default();
     w.io.out(&crate::stats::render(&crate::stats::tally(&log)));
     OK
 }
