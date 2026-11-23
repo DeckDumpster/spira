@@ -559,6 +559,17 @@ pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Re
 mod tests {
     use super::*;
 
+    #[test_id(tpr073k)]
+    #[test]
+    fn names_leave_out_half_written_and_in_progress_upload_files() {
+        let tmp = testkit::TempDir::new("ship-names");
+        let dir = tmp.path();
+        for n in ["7", "7.tmp", "7.part", "7.complete"] {
+            std::fs::write(dir.join(n), "x").unwrap();
+        }
+        assert_eq!(names(dir).unwrap(), vec!["7".to_string()]);
+    }
+
     #[test_id(tycnva0)]
     #[test]
     fn the_alarm_speaks_on_each_crossing_and_is_silent_between() {

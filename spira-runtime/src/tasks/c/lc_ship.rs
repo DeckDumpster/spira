@@ -11,7 +11,8 @@
 //! - **Act:** `lc.ship.drain` runs `ship::drain_kind` on the runs, `lc.ship.drain_snapshot` on the
 //!   snapshots: oldest first, stopping at the first refusal so a retry is the same object. Any
 //!   outcome, success, refusal or timeout, returns its kind to idle; the object stays queued and
-//!   the next tick asks again. A request older than its deadline counts as idle, so a lost outcome
+//!   the next tick asks again; a refusal is reported by the effect's own failed event, not by
+//!   `decide`, whose error would keep the kind in flight. A request older than its deadline counts as idle, so a lost outcome
 //!   cannot wedge the task.
 //! - **Credentials:** the backup key in this process's environment, which the unit loads from the
 //!   backup's environment file; `check-config` refuses an `s3://` destination without it.
