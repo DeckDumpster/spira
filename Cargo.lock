@@ -2317,6 +2317,7 @@ dependencies = [
  "state-store-sqlite",
  "system-paths",
  "testkit",
+ "tokio",
  "tsd",
  "watchtower",
 ]
