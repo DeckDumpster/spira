@@ -23,8 +23,17 @@ use spira_store::lc_state::{self, BatchState, Row};
 /// How old a view's last confirmed revision may be before its reads refuse; a view the watch
 /// keeps current may also be quiet for one watch hold ([`WATCH_HOLD_MS`]) beyond it.
 pub const STALE_KEY: &str = "SPIRA_STORE_VIEW_STALE_MS";
+/// The mark [`Projection::hold_watching`] sets; dropping it clears the mark.
+pub struct Watching<'a>(&'a AtomicBool);
+
+impl Drop for Watching<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
 /// The pause after a poll the store did not answer, so a down service is not spun on.
-const RETRY: Duration = Duration::from_secs(1);
+pub const RETRY: Duration = Duration::from_secs(1);
 /// The most ids one `list --ids` re-read names.
 const IDS_PER_READ: usize = 200;
 
@@ -484,6 +493,12 @@ impl Projection {
         }
     }
 
+    /// Marks this projection as kept current by a watch until the guard drops.
+    pub fn hold_watching(&self) -> Watching<'_> {
+        self.watching.store(true, Ordering::Relaxed);
+        Watching(&self.watching)
+    }
+
     /// Whether a watch is keeping this projection current.
     pub fn watching(&self) -> bool {
         self.watching.load(Ordering::Relaxed)
@@ -571,7 +586,27 @@ impl Projection {
     /// One step of keeping current: a load when nothing is held, else one watch from the held
     /// revision. Nothing moves unless the whole answer applied.
     pub fn poll(&self) -> Result<Polled, LcError> {
-        let polled = self.poll_once();
+        let answer = self.watch_argv().map(|argv| self.client.answer(&argv));
+        self.apply_watch(answer)
+    }
+
+    /// The watch to send from the held revision; `None` when nothing is held and a load comes first.
+    pub fn watch_argv(&self) -> Option<Vec<String>> {
+        let from = {
+            let s = self.lock();
+            s.rev.filter(|_| s.beads.is_some())
+        }?;
+        let mut argv = vec!["watch".to_string()];
+        argv.extend(self.watch_prefixes().into_iter().map(String::from));
+        argv.extend(["--from-rev".into(), from.to_string(), "--wait-ms".into(), WATCH_HOLD_MS.to_string(), "--rows".into()]);
+        Some(argv)
+    }
+
+    /// Applies the answer to [`watch_argv`](Self::watch_argv)'s watch (`None`: it had none, so load).
+    /// A failed answer or apply marks the watch lost and moves nothing, so the next watch resumes
+    /// from the held revision.
+    pub fn apply_watch(&self, from: Option<Result<String, LcError>>) -> Result<Polled, LcError> {
+        let polled = self.apply_once(from);
         if polled.is_err() {
             self.lock().watched = false;
         }
@@ -586,19 +621,15 @@ impl Projection {
         all
     }
 
-    fn poll_once(&self) -> Result<Polled, LcError> {
-        let held = {
+    fn apply_once(&self, answer: Option<Result<String, LcError>>) -> Result<Polled, LcError> {
+        let Some(answer) = answer else { return self.load_at(true).map(|rev| Polled::Reloaded { rev }) };
+        let from = {
             let s = self.lock();
             s.rev.filter(|_| s.beads.is_some())
         };
-        let Some(from) = held else { return self.load_at(true).map(|rev| Polled::Reloaded { rev }) };
-        let (from_s, wait) = (from.to_string(), WATCH_HOLD_MS.to_string());
-        // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
-        // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
-        let mut argv = vec!["watch"];
-        argv.extend(self.watch_prefixes());
-        argv.extend(["--from-rev", &from_s, "--wait-ms", &wait, "--rows"]);
-        let w = json_of(&self.client.answer(&argv)?, "watch")?;
+        let answer = answer?;
+        let Some(from) = from else { return self.load_at(true).map(|rev| Polled::Reloaded { rev }) };
+        let w = json_of(&answer, "watch")?;
         if let Some(p) = w["progress_rev"].as_u64() {
             let mut s = self.lock();
             s.rev = Some(p.max(from));
@@ -670,14 +701,7 @@ impl Projection {
     /// Polls until `stop` is set, each poll one watch of [`WATCH_HOLD_MS`]; pausing after a poll the store did not answer; `observe` sees
     /// each poll that succeeded.
     pub fn run(&self, stop: &AtomicBool, observe: &mut dyn FnMut(&Polled)) {
-        struct Clear<'a>(&'a AtomicBool);
-        impl Drop for Clear<'_> {
-            fn drop(&mut self) {
-                self.0.store(false, Ordering::Relaxed);
-            }
-        }
-        self.watching.store(true, Ordering::Relaxed);
-        let _clear = Clear(&self.watching);
+        let _watching = self.hold_watching();
         while !stop.load(Ordering::Relaxed) {
             match self.poll() {
                 Ok(polled) => observe(&polled),

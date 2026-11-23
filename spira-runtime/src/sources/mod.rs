@@ -1,5 +1,5 @@
 //! The scheduler's real sources (design S9): what submits events to the host from outside it.
-//! Each runs on its own thread under `runtime::sources::Sources::start`, and each is refused under
+//! Each runs as a future under `runtime::sources::Sources::start`, and each is refused under
 //! virtual time, where a `ScriptedSource` stands in. The event shapes and contracts live beside
 //! the cockpit tiers in family G (`tasks::g`, which re-exports this module); the real reads
 //! live here.
@@ -9,7 +9,7 @@
 //! | `mail.arrived` | inotify on Linux, a directory listing elsewhere ([`watch`]) | [`mail`] |
 //! | `unit.ran` | the unit manager's completions: systemd over D-Bus, or the host's `ProcessUnits` | [`units`] |
 //! | `submission` | `spira-submission`'s SMTP session, delivering through the `mail` crate | [`smtp`] |
-//! | `store.changed` | the store's `watch` feed, on the thread that keeps the in-process store views current | [`store_changed`] |
+//! | `store.changed` | the store's `watch` feed, a socket on the scheduler's loop that keeps the in-process store views current | [`store_changed`] |
 //! | `margin.changed` | a long-poll held open on the Margin reader's change feed; dormant while `SPIRA_MARGIN_URL` is empty | [`margin_changed`] |
 
 use std::path::PathBuf;
@@ -61,8 +61,8 @@ pub fn real(cfg: &dyn Fn(&str) -> Result<String, String>, completions: Arc<dyn U
         None => (String::new(), 0),
     };
     s.register(Box::new(Submission { addr, port })).map_err(|e| e.to_string())?;
-    if let Some((views, table)) = store {
-        s.register(Box::new(store_changed::StoreChanged { views, table })).map_err(|e| e.to_string())?;
+    if let Some((views, table, socket)) = store {
+        s.register(Box::new(store_changed::StoreChanged { views, table, socket })).map_err(|e| e.to_string())?;
     }
     s.register(Box::new(margin_changed::MarginChanged::configured(cfg)?)).map_err(|e| e.to_string())?;
     Ok(s)
@@ -89,7 +89,7 @@ mod tests {
         let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), None).unwrap();
         assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "margin.changed"]);
         let views = Arc::new(store_view::Projection::new(spira_store::lc_call::LcClient::socket("no-such-socket"), std::time::Duration::from_secs(1), Arc::new(std::time::Instant::now)));
-        let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), Some((views, Arc::new(crate::store::ChangeTable::default())))).unwrap();
+        let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), Some((views, Arc::new(crate::store::ChangeTable::default()), "no-such-socket".into()))).unwrap();
         assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"]);
         let err = s.into_scripted().err().expect("real sources are refused under virtual time");
         assert!(["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"].iter().all(|n| err.0.contains(n)), "{err}");
