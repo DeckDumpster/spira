@@ -4,7 +4,9 @@
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const MAX_MESSAGE: usize = 16 * 1024 * 1024;
@@ -272,7 +274,7 @@ fn value(sig: &[u8], i: &mut usize, r: &mut Reader, depth: u32) -> Result<Val, S
 }
 
 /// Total length of the message starting at `buf[0]`, once its fixed header has arrived.
-fn message_len(buf: &[u8]) -> Result<Option<usize>, String> {
+pub fn message_len(buf: &[u8]) -> Result<Option<usize>, String> {
     if buf.len() < 16 {
         return Ok(None);
     }
@@ -337,6 +339,7 @@ pub struct Conn {
     buf: Vec<u8>,
     serial: u32,
     pending: VecDeque<Msg>,
+    on_pending: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// `x.service` -> `/org/freedesktop/systemd1/unit/x_2eservice`: systemd's object path for a unit,
@@ -373,7 +376,70 @@ fn uid() -> Result<u32, String> {
         .ok_or_else(|| "no Uid in /proc/self/status".to_string())
 }
 
+/// A SIGNAL carrying a marshalled body (see [`encode_call_with`]).
+pub fn encode_signal(serial: u32, path: &str, iface: &str, member: &str, sig: &str, body: &[u8]) -> Vec<u8> {
+    let mut fields = Vec::new();
+    put_field(&mut fields, 1, "o", path);
+    put_field(&mut fields, 2, "s", iface);
+    put_field(&mut fields, 3, "s", member);
+    if !sig.is_empty() {
+        align(&mut fields, 8);
+        fields.extend_from_slice(&[8, 1, b'g', 0, sig.len() as u8]);
+        fields.extend_from_slice(sig.as_bytes());
+        fields.push(0);
+    }
+    let mut m = vec![b'l', SIGNAL, 0, 1];
+    m.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    m.extend_from_slice(&serial.to_le_bytes());
+    m.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    m.extend_from_slice(&fields);
+    align(&mut m, 8);
+    m.extend_from_slice(body);
+    m
+}
+
+/// A METHOD_RETURN with no body, answering the call numbered `reply_serial`.
+pub fn encode_empty_return(serial: u32, reply_serial: u32) -> Vec<u8> {
+    let mut fields = Vec::new();
+    fields.extend_from_slice(&[5, 1, b'u', 0]);
+    fields.extend_from_slice(&reply_serial.to_le_bytes());
+    let mut m = vec![b'l', METHOD_RETURN, 0, 1];
+    m.extend_from_slice(&0u32.to_le_bytes());
+    m.extend_from_slice(&serial.to_le_bytes());
+    m.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    m.extend_from_slice(&fields);
+    align(&mut m, 8);
+    m
+}
+
 impl Conn {
+    /// A connection over a socket already past authentication.
+    pub fn over(sock: UnixStream) -> Conn {
+        Conn { sock, buf: Vec::new(), serial: 0, pending: VecDeque::new(), on_pending: None }
+    }
+
+    /// A duplicate of the socket's descriptor, readable exactly when the socket is: for waiting on
+    /// the bus, never for reading it.
+    pub fn try_clone_fd(&self) -> Result<OwnedFd, String> {
+        self.sock.try_clone().map(OwnedFd::from).map_err(|e| format!("bus fd: {e}"))
+    }
+
+    /// `f` is called each time a call queues a signal it read while waiting for its reply, and
+    /// when it returns with a whole message still buffered: the fd no longer announces those.
+    pub fn on_pending(&mut self, f: Arc<dyn Fn() + Send + Sync>) {
+        self.on_pending = Some(f);
+    }
+
+    fn announce(&self) {
+        if let Some(f) = &self.on_pending {
+            f();
+        }
+    }
+
+    fn buffered_message(&self) -> bool {
+        matches!(message_len(&self.buf), Ok(Some(total)) if self.buf.len() >= total)
+    }
+
     pub fn connect(path: &str) -> Result<Conn, String> {
         let mut sock = UnixStream::connect(path).map_err(|e| format!("{path}: {e}"))?;
         sock.set_read_timeout(Some(CALL_DEADLINE)).map_err(|e| e.to_string())?;
@@ -393,7 +459,7 @@ impl Conn {
             return Err(format!("auth refused: {}", String::from_utf8_lossy(&line).trim()));
         }
         sock.write_all(b"BEGIN\r\n").map_err(|e| e.to_string())?;
-        let mut c = Conn { sock, buf: Vec::new(), serial: 0, pending: VecDeque::new() };
+        let mut c = Conn::over(sock);
         c.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "Hello", None)?;
         Ok(c)
     }
@@ -415,6 +481,14 @@ impl Conn {
         self.serial += 1;
         let serial = self.serial;
         self.sock.write_all(&encode_call_with(serial, dest, path, iface, member, sig, body)).map_err(|e| format!("{member}: {e}"))?;
+        let reply = self.await_reply(member, serial);
+        if self.buffered_message() {
+            self.announce();
+        }
+        reply
+    }
+
+    fn await_reply(&mut self, member: &str, serial: u32) -> Result<Vec<Val>, String> {
         let deadline = Instant::now() + CALL_DEADLINE;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -422,7 +496,10 @@ impl Conn {
             match (m.kind, m.reply_serial) {
                 (METHOD_RETURN, Some(s)) if s == serial => return Ok(m.body),
                 (ERROR, Some(s)) if s == serial => return Err(format!("{member}: {}", m.error.unwrap_or_default())),
-                (SIGNAL, _) => self.pending.push_back(m),
+                (SIGNAL, _) => {
+                    self.pending.push_back(m);
+                    self.announce();
+                }
                 _ => {}
             }
         }
@@ -454,12 +531,17 @@ impl Conn {
                 }
             }
             let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Ok(None);
-            }
-            self.sock.set_read_timeout(Some(left)).map_err(|e| e.to_string())?;
             let mut chunk = [0u8; 8192];
-            match self.sock.read(&mut chunk) {
+            let read = if left.is_zero() {
+                self.sock.set_nonblocking(true).map_err(|e| e.to_string())?;
+                let r = self.sock.read(&mut chunk);
+                self.sock.set_nonblocking(false).map_err(|e| e.to_string())?;
+                r
+            } else {
+                self.sock.set_read_timeout(Some(left)).map_err(|e| e.to_string())?;
+                self.sock.read(&mut chunk)
+            };
+            match read {
                 Ok(0) => return Err("bus closed the connection".into()),
                 Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
                 Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => return Ok(None),
@@ -596,7 +678,7 @@ mod tests {
     #[test]
     fn call_body_sends_the_body_and_returns_the_matching_reply() {
         let (a, mut b) = UnixStream::pair().unwrap();
-        let mut c = Conn { sock: a, buf: Vec::new(), serial: 0, pending: VecDeque::new() };
+        let mut c = Conn::over(a);
         let peer = std::thread::spawn(move || {
             let mut head = [0u8; 16];
             b.read_exact(&mut head).unwrap();
@@ -629,5 +711,21 @@ mod tests {
         let sent = peer.join().unwrap();
         assert_eq!((sent.member.as_deref(), sent.body.clone()), (Some("Two"), vec![Val::S("a".into()), Val::S("b".into())]));
         assert!(c.call_body("d", "/p", "i", "Long", &"s".repeat(256), &[]).unwrap_err().contains("255"), "refused before anything is sent"); // not a path: a D-Bus object path
+    }
+
+    #[test_id(tlc5235)]
+    #[test]
+    fn a_signal_already_on_the_socket_is_returned_by_a_zero_wait() {
+        let (a, mut b) = UnixStream::pair().unwrap();
+        let mut c = Conn::over(a);
+        assert!(c.next_signal(Duration::ZERO).unwrap().is_none(), "an empty socket is none, not a wait");
+        b.write_all(&encode_signal(7, "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "JobRemoved", "", &[])).unwrap();
+        let m = c.next_signal(Duration::ZERO).unwrap().expect("the signal the socket holds");
+        assert_eq!(m.member.as_deref(), Some("JobRemoved"));
+        assert!(c.next_signal(Duration::ZERO).unwrap().is_none());
+        b.write_all(&[1]).unwrap();
+        assert!(c.next_signal(Duration::ZERO).unwrap().is_none(), "half a message is not one");
+        let probe = c.try_clone_fd().map(UnixStream::from).unwrap();
+        assert_eq!(probe.read_timeout().unwrap(), c.sock.read_timeout().unwrap(), "one description, so the zero wait restored blocking mode");
     }
 }

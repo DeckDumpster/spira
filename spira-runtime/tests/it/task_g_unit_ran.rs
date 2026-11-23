@@ -1,8 +1,7 @@
 //! Source `unit.ran` (`wiki/projects/spira/designs/tasks/source-unit-ran.md`) on the
 //! VirtualDriver: a `ScriptedSource` standing in submits the runtime's `unit.ran` shape and a stub
 //! P2 consumer recognises its own run by `UnitRan::key_for` and not another task's; the real
-//! D-Bus source is refused under virtual time. Red until the port lands: the real source's `run`
-//! is `unimplemented!`.
+//! source is refused under virtual time.
 
 use std::sync::Arc;
 
@@ -68,12 +67,17 @@ fn the_declared_event_reaches_the_task_that_started_the_unit_and_only_it() {
     assert_eq!(consumed, ["units|persona.ops:r1:Code(0)@100", "units|persona.archivist:r2-s1:Code(124)@200"]);
 }
 
+fn real_source() -> runtime::sources::UnitRanSource {
+    let clock: Arc<dyn Clock> = Arc::new(VirtualClock::new(0));
+    spira_runtime::sources::units::over(Arc::new(runtime::units::ScriptedUnits::new(clock.clone())), clock)
+}
+
 #[test_id(t2swyc6)]
 #[test]
 fn the_real_source_is_refused_under_virtual_time_naming_it() {
     let clock = VirtualClock::new(0);
     let mut s = scripted(&clock, vec![]);
-    s.register(Box::new(UnitRanDbus)).unwrap();
+    s.register(Box::new(real_source())).unwrap();
     let err = driver(&clock, MemJournal::new(), s).err().expect("a source that reads the world is refused");
     assert!(err.0.contains(NAME) && !err.0.contains("unit.ran.script"), "{err}");
     assert_eq!(BACKEND, "systemd-dbus");
@@ -84,5 +88,5 @@ fn the_real_source_is_refused_under_virtual_time_naming_it() {
 async fn the_real_source_returns_once_its_channel_is_closed() {
     let (tx, rx) = mpsc::channel(1);
     drop(rx);
-    Box::new(UnitRanDbus).run(tx).await;
+    Box::new(real_source()).run(tx).await;
 }

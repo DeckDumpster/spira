@@ -8,15 +8,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use runtime::host::Submit;
-use runtime::ports::{Clock, WallClock};
+use runtime::ports::Clock;
 use runtime::sources::UnitRanSource;
 use runtime::units::UnitCompletions;
-use tokio::sync::mpsc;
 
 use crate::tasks::g::unit_ran::NAME;
 
-/// How often the source drains the manager's ended runs.
+/// How often the source drains a backend that has no wake to wait on, and retries a failed drain.
 pub const DRAIN_EVERY: Duration = Duration::from_millis(500);
 
 /// The source over `completions`: the instance the host's `unit.*` effects run on, so a
@@ -37,35 +35,12 @@ pub fn stream_of(task: &str) -> Option<String> {
     crate::tasks::all().find(|t| t.name == task).map(|t| t.stream().to_string())
 }
 
-/// The standalone D-Bus source: its own connection to the user manager. Returns at once when
-/// `tx` is already closed, without connecting; a manager it cannot reach is said once and the
-/// source ends (the host's status shows it gone).
-pub fn run_dbus(tx: mpsc::Sender<Submit>) {
-    if tx.is_closed() {
-        return;
-    }
-    let clock: Arc<dyn Clock> = Arc::new(WallClock);
-    match connect(clock.clone()) {
-        Ok(c) => over(c, clock).drain_until_closed(tx),
-        Err(e) => eprintln!("spira-runtime: source {NAME}: {e}"),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn connect(clock: Arc<dyn Clock>) -> Result<Arc<dyn UnitCompletions>, String> {
-    Ok(Arc::new(runtime::units::SystemdUnits::connect(clock).map_err(|e| format!("user manager: {e}"))?))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn connect(_clock: Arc<dyn Clock>) -> Result<Arc<dyn UnitCompletions>, String> {
-    Err("no systemd here: register the source over the host's ProcessUnits with sources::units::over".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use runtime::ports::VirtualClock;
     use runtime::sources::Source;
+    use tokio::sync::mpsc;
     use runtime::units::{Exit, ScriptedUnits, UnitHandle, UnitRan, Units, UnitSpec, UNIT_RAN};
 
     #[test_id(tnnols7)]

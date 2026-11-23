@@ -21,4 +21,5 @@ mod status;
 mod sys_proc;
 mod turn_state;
 mod unit_ran;
+mod unit_ran_wake;
 mod virtual_driver;
