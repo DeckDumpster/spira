@@ -89,7 +89,10 @@ fn rounds(rows: &[Value]) -> Vec<Round<'_>> {
 /// One test over every round it ran in: runs, duration p50/p90, pass/red/skip/flip rates.
 /// A flip is a run whose outcome differs from the test's previous run.
 pub fn test_stats(rows: &[Value], test: &str) -> Value {
-    let mut runs: Vec<&Value> = rows.iter().filter(|r| text(r, "test") == Some(test)).collect();
+    stats_of(rows.iter().filter(|r| text(r, "test") == Some(test)).collect(), test)
+}
+
+fn stats_of(mut runs: Vec<&Value>, test: &str) -> Value {
     runs.sort_by_key(|r| ts_of(r));
     let n = runs.len();
     let status = |r: &Value| outcome(text(r, "status").unwrap_or(""));
@@ -116,8 +119,15 @@ pub fn test_stats(rows: &[Value], test: &str) -> Value {
 /// The live inventory: the latest round's test count, how many tests the last round of each
 /// day added and removed against the previous day's, and the slowest and flakiest tests.
 pub fn inventory(rows: &[Value], top: usize) -> Value {
+    inventory_visiting(rows, top).0
+}
+
+/// `inventory`, and how many rows it looked at: each row once to group it by test, then each
+/// test's own runs.
+fn inventory_visiting(rows: &[Value], top: usize) -> (Value, usize) {
+    let mut visited = 0;
     let rs = rounds(rows);
-    let Some(latest) = rs.last() else { return json!({"total": 0, "round": null, "days": [], "slowest": [], "flakiest": []}) };
+    let Some(latest) = rs.last() else { return (json!({"total": 0, "round": null, "days": [], "slowest": [], "flakiest": []}), 0) };
     let mut last_of_day: BTreeMap<u64, &Round> = BTreeMap::new();
     for r in &rs {
         last_of_day.insert(r.at / SECS_PER_DAY, r);
@@ -134,20 +144,30 @@ pub fn inventory(rows: &[Value], top: usize) -> Value {
     }
     let mut slow: Vec<(&str, f64)> = latest.tests.iter().map(|(t, r)| (*t, num(r, "seconds").unwrap_or(0.0))).collect();
     slow.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(b.0)));
+    let mut runs_of: std::collections::HashMap<&str, Vec<&Value>> = std::collections::HashMap::new();
+    for r in rows {
+        visited += 1;
+        if let Some(t) = text(r, "test") {
+            runs_of.entry(t).or_default().push(r);
+        }
+    }
     let mut flaky: Vec<(&str, f64)> = latest.tests.keys().filter_map(|t| {
-        let s = test_stats(rows, t);
+        let runs = runs_of.remove(t).unwrap_or_default();
+        visited += runs.len();
+        let s = stats_of(runs, t);
         Some((*t, s["flip_rate"].as_f64().filter(|f| *f > 0.0)?))
     }).collect();
     flaky.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(b.0)));
     let reds = latest.tests.values().filter(|r| outcome(text(r, "status").unwrap_or("")) == "fail").count();
-    json!({
+    let out = json!({
         "total": latest.tests.len(),
         "round": text(latest.tests.values().next().copied().unwrap_or(&Value::Null), "round"),
         "red": reds,
         "days": days,
         "slowest": slow.iter().take(top).map(|(t, s)| json!({"test": t, "seconds": s})).collect::<Vec<_>>(),
         "flakiest": flaky.iter().take(top).map(|(t, f)| json!({"test": t, "flip_rate": f})).collect::<Vec<_>>(),
-    })
+    });
+    (out, visited)
 }
 
 #[cfg(test)]
@@ -217,6 +237,30 @@ mod tests {
         let mut later = rows_of("r2", "2026-11-02T00:00:00Z", &[("a.sh", "x", "pass", 1.0)]);
         later.extend(rows);
         assert!(test_stats(&later, "a.sh::x").get("covered").is_none(), "an unmeasured latest run does not borrow an older run's lines");
+    }
+
+    #[test_id(tizerkn)]
+    #[test]
+    fn inventory_equals_the_per_test_stats_and_visits_each_row_a_constant_number_of_times() {
+        let mut rows = Vec::new();
+        for i in 0..12 {
+            let cases: Vec<(String, String, &str, f64)> =
+                (0..30).map(|t| ("a.sh".to_string(), format!("t{t}"), if (i + t) % (2 + t % 3) == 0 { "fail" } else { "pass" }, (t + i) as f64)).collect();
+            let refs: Vec<(&str, &str, &str, f64)> = cases.iter().map(|(s, c, st, d)| (s.as_str(), c.as_str(), *st, *d)).collect();
+            rows.extend(rows_of(&format!("r{i:02}"), &format!("2026-11-{:02}T00:00:00Z", i + 1), &refs));
+        }
+        let (inv, visited) = inventory_visiting(&rows, 1000);
+        let mut want: Vec<(String, f64)> = (0..30)
+            .filter_map(|t| {
+                let s = test_stats(&rows, &format!("a.sh::t{t}"));
+                Some((format!("a.sh::t{t}"), s["flip_rate"].as_f64().filter(|f| *f > 0.0)?))
+            })
+            .collect();
+        want.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+        let want: Vec<Value> = want.iter().map(|(t, f)| json!({"test": t, "flip_rate": f})).collect();
+        assert!(!want.is_empty());
+        assert_eq!(inv["flakiest"], Value::Array(want));
+        assert!(visited <= 2 * rows.len(), "{visited} visits for {} rows", rows.len());
     }
 
     #[test_id(tqmfyz9)]

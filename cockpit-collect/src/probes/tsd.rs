@@ -4,6 +4,7 @@
 use super::{push, Kv};
 use crate::io;
 use serde_json::Value;
+use std::sync::Mutex;
 
 pub fn tsd_keys() -> Kv {
     match io::try_run_dir() {
@@ -15,16 +16,61 @@ pub fn tsd_keys() -> Kv {
 /// The headlines from the run directory's family files and the metrics store at `endpoint`,
 /// read in-process the way `tsd-read` reads them.
 fn tsd_keys_in(root: &std::path::Path, endpoint: Option<&str>, now: i64) -> Kv {
+    static HELD: Mutex<TestsHeld> = Mutex::new(TestsHeld { entry: None, reads: 0 });
+    tsd_keys_held(&mut HELD.lock().unwrap_or_else(|e| e.into_inner()), root, endpoint, now)
+}
+
+/// The inventory text last computed, and what it was computed from.
+struct TestsHeld {
+    entry: Option<(TestsKey, String)>,
+    reads: usize,
+}
+
+/// A file's identity and extent, and the hour: the inventory changes only when one of them does.
+#[derive(PartialEq)]
+struct TestsKey {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime: (i64, i64),
+    hour: u64,
+}
+
+fn tests_key(path: &std::path::Path, now: u64) -> Option<TestsKey> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(path).ok()?;
+    Some(TestsKey { dev: m.dev(), ino: m.ino(), len: m.len(), mtime: (m.mtime(), m.mtime_nsec()), hour: now / 3600 })
+}
+
+fn tsd_keys_held(held: &mut TestsHeld, root: &std::path::Path, endpoint: Option<&str>, now: i64) -> Kv {
     let reader = tsd::store::Reader::new(endpoint).ok();
     let src = tsd::query::Source { reader: reader.as_ref(), root };
     let now = now.max(0) as u64;
+    let held = std::cell::RefCell::new(held);
+    let stage = std::cell::OnceCell::new();
+    let stage_rows = || stage.get_or_init(|| src.rows(tsd::query::STAGE, tsd::query::since(now, QUERY_HOURS)).ok()).as_ref();
     tsd_keys_with(|q| match q {
-        "where" => tsd::query::wip(&src, now, QUERY_HOURS).ok().map(|v| v.to_string()),
-        "rework" => tsd::query::rework(&src, now, QUERY_HOURS).ok().map(|v| v.to_string()),
+        "where" => stage_rows().map(|r| tsd::query::wip_of(r, now).to_string()),
+        "rework" => stage_rows().map(|r| tsd::query::rework_of(r).to_string()),
         _ => {
+            let path = tsd::family_path(root, tsd::testrun::FAMILY);
+            let mut held = held.borrow_mut();
+            let Some(key) = tests_key(&path, now) else {
+                held.entry = None;
+                return None;
+            };
+            if let Some((k, text)) = &held.entry {
+                if *k == key {
+                    return Some(text.clone());
+                }
+            }
+            held.entry = None;
+            held.reads += 1;
             let since = now.saturating_sub(TESTS_WINDOW_HOURS * 3600);
             let rows = src.rows(tsd::testrun::FAMILY, since).ok()?;
-            Some(tsd::testrun::inventory(&rows, 10).to_string())
+            let text = tsd::testrun::inventory(&rows, 10).to_string();
+            held.entry = Some((key, text.clone()));
+            Some(text)
         }
     })
 }
@@ -169,6 +215,50 @@ mod tests {
         let kv = tsd_keys_with(|_| Some("[]".to_string()));
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "nothing in flight");
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "?");
+    }
+
+    fn push_stage(store: &spira_otel::fixture::FakeStore, ts: &str) {
+        let pusher = tsd::store::Pusher::new(Some(store.addr().to_string()));
+        let fields = vec![("machine".to_string(), "bead".into()), ("applied".to_string(), true.into()), ("key".to_string(), "sp-a".into()), ("seq".to_string(), 1.into()), ("to_state".to_string(), "WORKING".into())];
+        pusher.push("bead-stage", ts, &fields).unwrap();
+    }
+
+    fn run_row(ts: &str, round: &str) -> String {
+        let f = |k: &str, v: Value| (k.to_string(), v);
+        tsd::build_row(ts, "h", tsd::testrun::FAMILY, &[f("round", round.into()), f("test", "a.sh::x".into()), f("suite", "a.sh".into()), f("status", "pass".into()), f("seconds", 1.5.into())]).unwrap()
+    }
+
+    #[test_id(tr0wcnt)]
+    #[test]
+    fn the_tests_file_is_reread_only_when_it_or_the_hour_changes_and_the_stage_is_fetched_once_a_pass() {
+        let root = testkit::TempDir::new("cockpit-collect-tsd-held");
+        let store = spira_otel::fixture::FakeStore::start();
+        let now = 1_700_000_000_i64;
+        let ts = tsd::iso_utc(now as u64 - 600);
+        push_stage(&store, &ts);
+        let path = tsd::family_path(root.path(), tsd::testrun::FAMILY);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut held = TestsHeld { entry: None, reads: 0 };
+        let pass = |held: &mut TestsHeld, now: i64| tsd_keys_held(held, root.path(), Some(store.addr()), now);
+
+        assert_eq!(get(&pass(&mut held, now), "SP_TSD_TESTS"), "?", "a missing file is unread");
+        std::fs::write(&path, format!("{}\n", run_row(&ts, "r1"))).unwrap();
+        let before = store.export_requests();
+        let first = pass(&mut held, now);
+        assert_eq!(store.export_requests() - before, 1, "one bead-stage request a pass");
+        let reads = held.reads;
+        let again = pass(&mut held, now + 60);
+        assert_eq!(held.reads, reads, "an unchanged file is not read again");
+        assert_eq!(get(&first, "SP_TSD_TESTS"), get(&again, "SP_TSD_TESTS"));
+
+        std::fs::write(&path, format!("{}\n{}\n", run_row(&ts, "r1"), run_row(&ts, "r2"))).unwrap();
+        pass(&mut held, now + 60);
+        assert_eq!(held.reads, reads + 1, "an appended row is read");
+        pass(&mut held, now + 3600 + 60);
+        assert_eq!(held.reads, reads + 2, "a later hour is read");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(get(&pass(&mut held, now + 3700), "SP_TSD_TESTS"), "?");
+        assert!(held.entry.is_none(), "a missing file is never held");
     }
 
     #[test_id(tfnxf1h)]
