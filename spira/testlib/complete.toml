@@ -6,6 +6,7 @@ landing_log_cap_mb = 32
 landing_log_keep = 8
 conditions_max_file = 5
 admit_stagger_secs = 30
+cr_page_lines = 60
 cr_size_unit_lines = 60
 cr_oversize_pages = 6
 cr_churn_days = 60
