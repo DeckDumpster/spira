@@ -34,10 +34,10 @@ fn source_block(text: &str, first: u32, last: u32) -> String {
 /// The message for `comment` of `thread` in `collection`, read through `margin`.
 pub fn build(margin: &dyn Margin, base: &str, run_dir: &Path, collection: &str, thread: &str, comment: &str) -> Result<String, String> {
     let info = margin.collection(collection)?;
-    let t = margin.thread(thread)?;
+    let t = margin.thread(collection, thread)?;
     let at = t.comments.iter().position(|c| c.id == comment).ok_or_else(|| format!("thread {thread} holds no comment {comment}"))?;
-    let doc = info.documents.iter().find(|d| d.id == t.anchor.document).ok_or_else(|| format!("collection {collection} holds no document {}", t.anchor.document))?;
-    let text = margin.document_text(&doc.id, t.anchor.version)?;
+    let doc = &t.document;
+    let text = margin.document_text(&doc.id, doc.version)?;
     let (first, last) = (t.anchor.first, t.anchor.last.max(t.anchor.first));
     let range = if last > first { format!("{first}-{last}") } else { first.to_string() };
     let answer = match cr::record::all(run_dir)?.into_iter().find(|r| r.collection.as_deref() == Some(collection)) {
@@ -45,7 +45,7 @@ pub fn build(margin: &dyn Margin, base: &str, run_dir: &Path, collection: &str, 
         None => format!("Answer in the reader: {base}/c/{collection}#{comment}"),
     };
     let his = &t.comments[at];
-    let mut body = format!("{}\n\n{}:{range} (version {})\n\n{}\n", his.body.trim_end(), doc.path, t.anchor.version, source_block(&text, first, last));
+    let mut body = format!("{}\n\n{}:{range} (version {})\n\n{}\n", his.body.trim_end(), doc.path, doc.version, source_block(&text, first, last));
     if at > 0 {
         body.push_str("Thread so far:\n");
         for c in &t.comments[..at] {

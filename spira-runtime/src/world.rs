@@ -2132,12 +2132,12 @@ mod margin_deliver_tests {
         let fake = FakeMargin::default();
         let text: String = (1..=12).map(|n| format!("line {n}\n")).collect();
         let col = fake.post_collection("Review of a", "cover", &[Doc { path: "src/a.rs".into(), kind: "code".into(), text }]).unwrap();
-        let anchor = Anchor { document: col.documents[0].id.clone(), version: 1, first: 6, last: 7 };
+        let anchor = Anchor { path: "src/a.rs".into(), first: 6, last: 7 };
         let thread = fake.his_thread(&col.id, anchor, "why is this pair swapped?", 1_795_000_000_000);
         if review {
             let unit = cr::units::Unit { id: "u".into(), kind: cr::units::Kind::Module, files: vec![], title: "t".into() };
             let n = record::allocate(dir.path()).unwrap();
-            let r = Review { number: n, kind: Kind::Scheduled, state: State::Open, source_repo: "s".into(), source_sha: "c".into(), collection: Some(col.id.clone()), url: None, documents: Default::default(), unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None };
+            let r = Review { number: n, kind: Kind::Scheduled, state: State::Open, source_repo: "s".into(), source_sha: "c".into(), collection: Some(col.id.clone()), url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None };
             record::save(dir.path(), &r).unwrap();
         }
         let input = serde_json::to_string(&Deliver { collection: col.id, comment: format!("{thread}-0"), thread, seq: 4, batch: vec![4], through: 4 }).unwrap();
@@ -2188,7 +2188,7 @@ mod margin_deliver_tests {
         deliver(&f).unwrap();
         let m = &mailbox(&f)[0];
         assert!(m.contains("then say so in a comment"), "{m}");
-        assert!(m.contains("Thread so far:") && m.contains("agent:concierge at 2026-") && m.contains("it is deliberate"), "{m}");
+        assert!(m.contains("Thread so far:") && m.contains("concierge at 2026-") && m.contains("it is deliberate"), "{m}");
         assert!(m.contains(&format!("{BASE}/c/col1#col1-his0-r2")) && !m.contains("cr reply"), "{m}");
     }
 
