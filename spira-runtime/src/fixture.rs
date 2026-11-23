@@ -100,9 +100,28 @@ fn fixture_modes() -> String {
 /// `key`'s value under `[spira]` in the complete fixture (`spira/testlib/complete.toml`), its
 /// quotes stripped: the fixture values of the keys pending rows declare live there, once.
 pub fn complete_fixture(key: &str) -> Option<String> {
-    let field = spira_config::registry::field_of(key);
+    static MEMO: std::sync::Mutex<Option<(String, std::sync::Arc<toml::Table>)>> = std::sync::Mutex::new(None);
     let text = spira_config::process::complete_fixture_text();
-    let doc: toml::Table = text.parse().expect("complete.toml parses");
+    let doc = {
+        let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+        parse_memo(&mut memo, text, |t| t.parse().expect("complete.toml parses"))
+    };
+    value_of(&doc, key)
+}
+
+fn parse_memo(memo: &mut Option<(String, std::sync::Arc<toml::Table>)>, text: String, parse: impl FnOnce(&str) -> toml::Table) -> std::sync::Arc<toml::Table> {
+    match memo {
+        Some((seen, doc)) if *seen == text => doc.clone(),
+        _ => {
+            let doc = std::sync::Arc::new(parse(&text));
+            *memo = Some((text, doc.clone()));
+            doc
+        }
+    }
+}
+
+fn value_of(doc: &toml::Table, key: &str) -> Option<String> {
+    let field = spira_config::registry::field_of(key);
     match doc.get("spira")?.get(field)? {
         toml::Value::String(s) => Some(s.clone()),
         other => Some(other.to_string()),
@@ -132,5 +151,27 @@ mod door_tests {
     #[test]
     fn the_config_door_is_open_for_a_test_that_never_asks_the_fixture() {
         spira_config::process::config().expect("the door resolved before this test ran");
+    }
+}
+
+#[cfg(test)]
+mod memo_tests {
+    use super::*;
+
+    #[test_id(tmemo01)]
+    #[test]
+    fn the_complete_fixture_parses_once_per_text_however_many_keys_ask() {
+        let parses = std::cell::Cell::new(0);
+        let parse = |t: &str| {
+            parses.set(parses.get() + 1);
+            t.parse::<toml::Table>().unwrap()
+        };
+        let mut memo = None;
+        let a = parse_memo(&mut memo, "[spira]\nx = \"1\"\ny = \"2\"\n".into(), parse);
+        let b = parse_memo(&mut memo, "[spira]\nx = \"1\"\ny = \"2\"\n".into(), parse);
+        assert_eq!((value_of(&a, "SPIRA_X"), value_of(&b, "SPIRA_Y")), (Some("1".into()), Some("2".into())));
+        assert_eq!(parses.get(), 1);
+        parse_memo(&mut memo, "[spira]\nx = \"3\"\n".into(), parse);
+        assert_eq!(parses.get(), 2);
     }
 }
