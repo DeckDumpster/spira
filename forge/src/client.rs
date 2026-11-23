@@ -176,7 +176,14 @@ pub fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[St
         "run-metadata" => run_metadata(gh, repo, arg(args, 0)),
         "run-cancel" => run_cancel(gh, repo, arg(args, 0)),
         "force-cancel" => force_cancel(gh, repo, arg(args, 0)),
-        "workflow-rerun" => workflow_rerun(gh, repo, arg(args, 0)),
+        "workflow-rerun" => {
+            let wait = args.iter().position(|a| a == "--wait-cancel").map(|i| arg(args, i + 1).parse::<u64>());
+            match wait {
+                Some(Err(_)) => refused("workflow-rerun: --wait-cancel takes whole seconds".into()),
+                Some(Ok(secs)) => workflow_rerun_after_cancel(gh, repo, arg(args, 0), Some(secs), &|s| std::thread::sleep(std::time::Duration::from_secs(s))),
+                None => workflow_rerun(gh, repo, arg(args, 0)),
+            }
+        }
         "pr-close" => pr_close(gh, repo, arg(args, 0)),
         "pr-comment" => pr_comment(gh, repo, arg(args, 0), arg(args, 1)),
         "dispatch" => crate::cmds::dispatch(gh, repo, workflow, arg(args, 0), arg(args, 1)),

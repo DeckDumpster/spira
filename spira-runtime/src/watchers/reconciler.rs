@@ -27,6 +27,8 @@ const ROW_PARTS: &[Part] = &[Part::Map { name: "state", drop: &[] }, Part::Map {
 /// A pass runs the fences of a whole checkout of the landing ref; the old unit allowed it five minutes.
 pub const OBSERVE_DEADLINE_MS: u64 = 280_000;
 const EFFECT_DEADLINE_MS: u64 = 30_000;
+/// The stranded-run step waits up to 150 s on a cancel; the effect outlives it.
+const REMEDY_DEADLINE_MS: u64 = 160_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reconciler {
@@ -148,7 +150,7 @@ impl Reconciler {
             cmds.push(Command::Probe(spec(RECORD, RECORD.into(), &rows, EFFECT_DEADLINE_MS)));
         }
         cmds.extend(cmds_wake);
-        cmds.extend(remedies.iter().map(|r| Command::Effect(spec(REMEDY, format!("{NAME}:remedy:{}", r.key), r, OBSERVE_DEADLINE_MS))));
+        cmds.extend(remedies.iter().map(|r| Command::Effect(spec(REMEDY, format!("{NAME}:remedy:{}", r.key), r, REMEDY_DEADLINE_MS))));
         cmds.extend(mails.iter().map(|m| Command::Effect(spec(MAIL, format!("{NAME}:mail:{}:{:016x}", ev.at, runtime::event::fnv1a(&m.what)), m, EFFECT_DEADLINE_MS))));
         cmds
     }

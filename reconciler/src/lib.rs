@@ -711,6 +711,32 @@ pub fn run_cmd_stdout(program: &str, args: &[&str]) -> Result<String, String> {
     String::from_utf8(out.stdout).map_err(|e| format!("{program}: {e}"))
 }
 
+const WAIT_CANCEL_FLAG: &str = "--wait-cancel";
+const WAIT_CANCEL_SECS: u64 = 120;
+const WAIT_CANCEL_STEP_SECS: &str = "150";
+
+/// A remedy step that waits on a cancel is given the wait plus the calls around it; every other
+/// step keeps the plain call deadline.
+fn remedy_step_deadline(args: &[&str]) -> &'static str {
+    if args.contains(&WAIT_CANCEL_FLAG) { WAIT_CANCEL_STEP_SECS } else { spira_config::bounded::CALL_TIMEOUT_SECS }
+}
+
+/// One remedy step, `Err` naming its program, args and how it failed.
+pub fn run_remedy_step(program: &str, args: &[&str]) -> Result<(), String> {
+    let said = |why: String| format!("reconciler: remedy step {program} {} failed: {why}", args.join(" "));
+    let status = spira_config::bounded::bounded_for(program, remedy_step_deadline(args))
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| said(e.to_string()))?;
+    match status.code() {
+        Some(0) => Ok(()),
+        Some(c) => Err(said(format!("exit {c}"))),
+        None => Err(said("killed by a signal".into())),
+    }
+}
+
 pub fn run_cmd_ok(program: &str, args: &[&str]) -> bool {
     spira_config::bounded::bounded(program)
         .args(args)
@@ -1736,7 +1762,7 @@ fn observe_queue_stranded_runs(cfg: &Config) -> Vec<Check> {
                 remedy: Remedy::Noted {
                     note: format!("repo={repo_name} run={run} job=\"{job}\" label={label} queued={queued} runner={runner}"),
                     program: cfg.seams.forge.clone(),
-                    args: vec!["workflow-rerun".into(), repo_str.clone(), run],
+                    args: vec!["workflow-rerun".into(), repo_str.clone(), run, WAIT_CANCEL_FLAG.into(), WAIT_CANCEL_SECS.to_string()],
                 },
             });
         }
@@ -2430,7 +2456,9 @@ pub fn perform(cfg: &Config, alerted: &mut AlertedSinceMap, acts: Vec<Act>) {
                         continue;
                     }
                     // FORK-EDGE: remedy program — declared remedies (systemctl enable/restart, forge, bead, queue) run as commands
-                    let _ = run_cmd_ok(program, &argv);
+                    if let Err(e) = run_remedy_step(program, &argv) {
+                        log_print(cfg, &e);
+                    }
                 }
             }
             Act::CallWanted { key } => log_print(cfg, &format!("reconciler: {key} → call.wanted needs the scheduler; not sent")),
@@ -3211,6 +3239,18 @@ mod tests {
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].key, "queue-stranded-run:beta:77");
         assert!(matches!(checks[0].raw, RawStatus::Gap { .. }));
+    }
+
+    #[test_id(t7hl8p7)]
+    #[test]
+    fn the_stranded_remedy_asks_the_rerun_to_wait_for_its_cancel() {
+        let (cfg, _host, _dir) = stranded_world("stranded-args", &[("beta", Ok(true))]);
+        let checks = observe_queue_stranded_runs(&cfg);
+        let Remedy::Noted { args, .. } = &checks[0].remedy else { panic!("not a noted remedy") };
+        assert_eq!(&args[2..], ["77", "--wait-cancel", "120"]);
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert_eq!(remedy_step_deadline(&argv), "150");
+        assert_eq!(remedy_step_deadline(&["workflow-rerun", "r", "7"]), spira_config::bounded::CALL_TIMEOUT_SECS);
     }
 
     #[test_id(tgi1l9l)]
