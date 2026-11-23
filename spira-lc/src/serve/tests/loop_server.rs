@@ -248,7 +248,7 @@ fn a_refused_span_job_is_counted_in_spilled_total() {
     assert_eq!(one_answer(send(&server.path, "not json")).0, 2, "a malformed line is answered without the pool");
     let until = Instant::now() + Duration::from_secs(10);
     while runtime::offload::spilled_total("lc-loop") == before {
-        assert!(Instant::now() < until, "the span job the full queue refused was not counted");
+        assert!(Instant::now() < until, "the span job the full queue refused was not counted"); // clock-safe: caps the wait for the refusal counter
         std::thread::yield_now();
     }
 }

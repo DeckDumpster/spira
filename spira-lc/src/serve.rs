@@ -1515,7 +1515,6 @@ extern "C" {
 }
 
 fn peer_cred(stream: &impl std::os::fd::AsRawFd) -> Option<Ucred> {
-    use std::os::fd::AsRawFd;
     const SOL_SOCKET: i32 = 1;
     const SO_PEERCRED: i32 = 17;
     let mut cred = Ucred { pid: 0, uid: 0, gid: 0 };
