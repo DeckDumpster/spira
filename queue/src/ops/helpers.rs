@@ -41,7 +41,15 @@ pub fn state_rows(
     branches: &[(String, String)],
     state: &str,
 ) -> Vec<(String, String, u64)> {
-    let rows = lc.polled_rows(state).unwrap_or_default();
+    rows_with_branch(&lc.polled_rows(state).unwrap_or_default(), branches)
+}
+
+/// The already-read `rows` whose bead has a `spira/<id>` branch among `branches`, as
+/// `(id, tip, since)`, in branch order.
+pub fn rows_with_branch(
+    rows: &[crate::model::LcBeadRow],
+    branches: &[(String, String)],
+) -> Vec<(String, String, u64)> {
     let mut out = Vec::new();
     for (branch, _) in branches {
         let Some(id) = branch.strip_prefix("spira/") else {

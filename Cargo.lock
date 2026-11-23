@@ -240,6 +240,7 @@ dependencies = [
  "dwarf",
  "install",
  "libc",
+ "queue",
  "release",
  "runtime",
  "serde_json",

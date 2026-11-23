@@ -6,9 +6,26 @@ use crate::io;
 use serde_json::Value;
 
 pub fn tsd_keys() -> Kv {
+    match io::try_run_dir() {
+        Ok(root) => tsd_keys_in(&root, spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), io::now()),
+        Err(_) => tsd_keys_with(|_| None),
+    }
+}
+
+/// The headlines from the run directory's family files and the metrics store at `endpoint`,
+/// read in-process the way `tsd-read` reads them.
+fn tsd_keys_in(root: &std::path::Path, endpoint: Option<&str>, now: i64) -> Kv {
+    let reader = tsd::store::Reader::new(endpoint).ok();
+    let src = tsd::query::Source { reader: reader.as_ref(), root };
+    let now = now.max(0) as u64;
     tsd_keys_with(|q| match q {
-        "tests" => io::run_tool("tsd-read", &["tests", TESTS_WINDOW_HOURS], None),
-        q => io::run_tool("tsd-query.sh", &[q], None),
+        "where" => tsd::query::wip(&src, now, QUERY_HOURS).ok().map(|v| v.to_string()),
+        "rework" => tsd::query::rework(&src, now, QUERY_HOURS).ok().map(|v| v.to_string()),
+        _ => {
+            let since = now.saturating_sub(TESTS_WINDOW_HOURS * 3600);
+            let rows = src.rows(tsd::testrun::FAMILY, since).ok()?;
+            Some(tsd::testrun::inventory(&rows, 10).to_string())
+        }
     })
 }
 
@@ -21,7 +38,8 @@ fn tsd_keys_with(run: impl Fn(&str) -> Option<String>) -> Kv {
     out
 }
 
-const TESTS_WINDOW_HOURS: &str = "72";
+const TESTS_WINDOW_HOURS: u64 = 72;
+const QUERY_HOURS: u64 = 720;
 
 fn thousands(n: i64) -> String {
     let d = n.to_string();
@@ -151,5 +169,28 @@ mod tests {
         let kv = tsd_keys_with(|_| Some("[]".to_string()));
         assert_eq!(get(&kv, "SP_TSD_WHERE"), "nothing in flight");
         assert_eq!(get(&kv, "SP_TSD_REWORK"), "?");
+    }
+
+    #[test_id(tfnxf1h)]
+    #[test]
+    fn the_headlines_are_read_in_process_from_the_store_and_the_family_files() {
+        let root = testkit::TempDir::new("cockpit-collect-tsd-keys");
+        let store = spira_otel::fixture::FakeStore::start();
+        let now = 1_700_000_000_i64;
+        let ts = tsd::iso_utc(now as u64 - 600);
+        let pusher = tsd::store::Pusher::new(Some(store.addr().to_string()));
+        let fields = |pairs: &[(&str, Value)]| pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect::<Vec<_>>();
+        pusher
+            .push("bead-stage", &ts, &fields(&[("machine", "bead".into()), ("applied", true.into()), ("key", "sp-a".into()), ("seq", 1.into()), ("to_state", "WORKING".into())]))
+            .unwrap();
+        let row = tsd::build_row(&ts, "h", tsd::testrun::FAMILY, &fields(&[("round", "r1".into()), ("test", "a.sh::x".into()), ("suite", "a.sh".into()), ("status", "pass".into()), ("seconds", 1.5.into())])).unwrap();
+        std::fs::create_dir_all(root.path().join("tsd")).unwrap();
+        std::fs::write(tsd::family_path(root.path(), tsd::testrun::FAMILY), format!("{row}\n")).unwrap();
+
+        let kv = tsd_keys_in(root.path(), Some(store.addr()), now);
+        assert_eq!(get(&kv, "SP_TSD_WHERE"), "WORKING 1 (10m)");
+        assert!(get(&kv, "SP_TSD_TESTS").starts_with("1 tests"), "{}", get(&kv, "SP_TSD_TESTS"));
+        let unread = tsd_keys_in(root.path(), None, now);
+        assert_eq!(get(&unread, "SP_TSD_WHERE"), "?", "a moved family with no store is unread, not empty");
     }
 }

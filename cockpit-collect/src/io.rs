@@ -442,22 +442,14 @@ pub fn json_rows(raw: Option<String>) -> Option<Vec<serde_json::Value>> {
     })
 }
 
-/// Generic bridge to a `lib.sh` function, the same seam `gate-run`'s `Real` uses for
-/// `repo_root`/`spira_landref` (its `REPO_CONTEXT`/`LANDREF_SNIPPET`), generalised: `lib.sh`
-/// (wave 4, `law-rust-rewrites-start-from-intent` proposes it last and explicitly "leave
-/// lib.sh alone" for now) stays the one place these helpers are defined; this crate calls
-/// them exactly as `spira/cockpit.sh` did, never re-derives their logic.
-pub fn lib_call(home: &Path, func: &str, args: &[&str]) -> Option<String> {
-    lib_call_with_stdin(home, func, args, None)
-}
-
 /// The lib.sh names whose bodies are one-line shims onto a library this crate links: the runes
-/// registry (`spira-config rune`), `dwarf dwarf-named` and `strand dwarves-live-*`. Answered
-/// here with what the shim printed; `None` for a name this does not answer.
-fn lib_inproc(home: &Path, func: &str, args: &[&str]) -> Option<Option<String>> {
+/// registry (`spira-config rune`), `dwarf dwarf-named` and `strand dwarves-live-*`, answered
+/// with what the shim printed. `None` for a name that is not one of them, or an answer that
+/// cannot be read.
+pub fn lib_call(home: &Path, func: &str, args: &[&str]) -> Option<String> {
     let arg = |i: usize| args.get(i).copied().unwrap_or("");
     let roster = || spira_config::process::cfg("SPIRA_RUNES").ok();
-    Some(match func {
+    match func {
         "spira_runes" => roster().map(|r| spira_config::runes::spira_runes(home, Some(&r))),
         "rune_get" => roster().map(|_| spira_config::runes::rune_get(home, arg(0), arg(1), arg(2))),
         "persona_model" => roster().map(|_| spira_config::runes::persona_model(arg(0), Some(arg(1)))),
@@ -466,60 +458,7 @@ fn lib_inproc(home: &Path, func: &str, args: &[&str]) -> Option<Option<String>> 
             let cfg = strand::config::Config::resolve(&strand::config::Live::load()).ok()?;
             Some(strand::probe::dwarves_live_total(&cfg).to_string())
         }
-        _ => return None,
-    })
-}
-
-pub fn lib_call_with_stdin(
-    home: &Path,
-    func: &str,
-    args: &[&str],
-    stdin: Option<&str>,
-) -> Option<String> {
-    // FORK-EDGE: queue_certified_list and queue_sort_rows are shims onto `queue-helpers`;
-    // needs a queue library entry for them. Every other lib.sh name is answered in-process
-    // by [`lib_inproc`] before this bridge is reached.
-    if let Some(answer) = lib_inproc(home, func, args) {
-        return answer;
-    }
-    const SNIPPET: &str = r#"set -uo pipefail
-. "$1/lib.sh" >/dev/null 2>&1 || exit 96
-f="$2"; shift 2
-"$f" "$@"
-"#;
-    // FORK-EDGE: the queue-helpers lib.sh bridge above; nothing else reaches it.
-    let mut cmd = spira_config::bounded::bounded("bash");
-    cmd.arg("-c")
-        .arg(SNIPPET)
-        .arg("cockpit-collect-lib-bridge")
-        .arg(home)
-        .arg(func)
-        .args(args)
-        .envs(spira_config::release_env::child_path_env_for_process().ok()?)
-        .stderr(Stdio::null());
-    if let Some(input) = stdin {
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
-        let mut child = cmd.spawn().ok()?;
-        use std::io::Write;
-        child
-            .stdin
-            .as_mut()?
-            .write_all(input.as_bytes())
-            .ok()?;
-        let out = child.wait_with_output().ok()?;
-        if out.status.success() {
-            Some(String::from_utf8_lossy(&out.stdout).into_owned())
-        } else {
-            None
-        }
-    } else {
-        cmd.stdin(Stdio::null());
-        let out = cmd.output().ok()?;
-        if out.status.success() {
-            Some(String::from_utf8_lossy(&out.stdout).into_owned())
-        } else {
-            None
-        }
+        _ => None,
     }
 }
 
@@ -717,15 +656,16 @@ mod tests {
         assert_eq!(row["capacity_paused"], "?");
     }
 
-    #[test_id(tfmosbg)]
+    #[test_id(t32u3wo)]
     #[test]
-    fn dwarf_named_is_answered_in_process_and_the_queue_shims_are_not() {
+    fn dwarf_named_is_answered_in_process_and_a_name_lib_sh_alone_defines_is_not_answered() {
         let dir = testkit::TempDir::new("cockpit-collect-dwarf-named");
         let pid = dir.path().join("dwarf-builder-1.pid");
         std::fs::write(dir.path().join("dwarf-builder-1.name"), "Brokk").unwrap();
-        assert_eq!(lib_inproc(dir.path(), "dwarf_named", &[pid.to_str().unwrap()]), Some(Some("Brokk".to_string())));
-        assert_eq!(lib_inproc(dir.path(), "dwarf_named", &["nonexistent/x.pid"]), Some(Some("?".to_string())));
-        assert_eq!(lib_inproc(dir.path(), "queue_certified_list", &["r"]), None);
+        assert_eq!(lib_call(dir.path(), "dwarf_named", &[pid.to_str().unwrap()]), Some("Brokk".to_string()));
+        assert_eq!(lib_call(dir.path(), "dwarf_named", &["nonexistent/x.pid"]), Some("?".to_string()));
+        std::fs::write(dir.path().join("lib.sh"), "queue_certified_list() { echo reached-lib-sh; }\n").unwrap();
+        assert_eq!(lib_call(dir.path(), "queue_certified_list", &["r"]), None);
     }
 
     #[test_id(tpnqg4d)]

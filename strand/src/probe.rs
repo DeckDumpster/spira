@@ -117,7 +117,7 @@ pub fn sql_safe(s: &str) -> bool {
 }
 
 // ------------------------------------------------------------------------------------------
-// The roster probe (DESIGN.md §2.5) — the one bash seam.
+// The roster probe (DESIGN.md §2.5).
 // ------------------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,24 +126,6 @@ pub struct PartitionSpec {
     pub exclude: String,
     pub runes: Vec<String>,
 }
-
-const ROSTER_SCRIPT: &str = r#"set -uo pipefail
-. "$STRAND_LIB" >/dev/null 2>&1 || { echo "cannot source $STRAND_LIB" >&2; exit 3; }
-emit() {
-    local l="$1" x="$2" fs
-    fs="$(runes_for_labels "$l" | tr '\n' ' ')"
-    [ -n "${fs// /}" ] || fs="$(spira_runes)"
-    printf '%s\t%s\t%s\n' "$l" "$x" "$fs"
-}
-if [ -n "${STRAND_WANT:-}" ]; then
-    emit "$STRAND_WANT" ""
-else
-    rune_partitions | while IFS=$'\t' read -r l x; do
-        [ -n "$l" ] || continue
-        emit "$l" "$x"
-    done
-fi
-"#;
 
 pub fn parse_roster(text: &str) -> Vec<PartitionSpec> {
     text.lines()
@@ -161,27 +143,26 @@ pub fn parse_roster(text: &str) -> Vec<PartitionSpec> {
 }
 
 /// Every partition this run covers, with the personas that work it. `want` narrows to one
-/// partition (SPIRA_LABELS). Err when the probe itself failed — never an empty roster.
+/// partition (SPIRA_LABELS). Err when the runes directory is missing — never an empty roster.
 pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, String> {
+    use spira_config::runes::{rune_partitions, runes_dir, runes_for_labels, spira_runes};
     let home = cfg.home.as_ref().ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
-    let lib = home.join("lib.sh");
-    if !lib.is_file() {
-        return Err(format!("{} is missing — cannot read the persona roster", lib.display()));
+    let dir = runes_dir(home);
+    if !dir.is_dir() {
+        return Err(format!("{} is missing — cannot read the persona roster", dir.display()));
     }
-    let lib_s = lib.to_string_lossy().into_owned();
-    let mut env: Vec<(&str, &str)> = vec![("STRAND_LIB", lib_s.as_str())];
-    if let Some(w) = want {
-        env.push(("STRAND_WANT", w));
-    }
-    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
-    // bin/+spira/ on the CHILD's PATH, never only inherited.
-    let extra = spira_config::release_env::child_path_env_for_process()?;
-    env.extend(extra.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-    let o = run("bash", &["-s"], Some(ROSTER_SCRIPT.as_bytes()), &env);
-    if !o.ok {
-        return Err(format!("roster probe failed: {}", o.stderr.trim()));
-    }
-    Ok(parse_roster(&o.stdout))
+    let over = cfg.runes_override.as_deref();
+    let spec = |labels: String, exclude: String| {
+        let mut runes = runes_for_labels(home, &labels);
+        if runes.is_empty() {
+            runes = spira_runes(home, over).split_whitespace().map(str::to_string).collect();
+        }
+        PartitionSpec { labels, exclude, runes }
+    };
+    Ok(match want.filter(|w| !w.is_empty()) {
+        Some(w) => vec![spec(w.to_string(), String::new())],
+        None => rune_partitions(home, over).into_iter().filter(|(l, _)| !l.is_empty()).map(|(l, x)| spec(l, x)).collect(),
+    })
 }
 
 // ------------------------------------------------------------------------------------------
@@ -711,5 +692,28 @@ mod tests {
         fs::write(&stamp, "no depth here\n").unwrap();
         assert_eq!(throttle_line(&throttle(&cfg)), "shut\tdepth ? >= release-at 8");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test_id(t4jyk7z)]
+    #[test]
+    fn the_roster_is_read_from_the_runes_directory_not_from_a_lib_sh_that_fails() {
+        let home = testkit::TempDir::new("strand-roster");
+        std::fs::write(home.join("lib.sh"), "exit 1\n").unwrap();
+        std::fs::create_dir(home.join("runes")).unwrap();
+        std::fs::write(home.join("runes/builder.rune"), "RUNE_LABELS=spira,plan\nRUNE_EXCLUDE_LABELS=poison\n").unwrap();
+        std::fs::write(home.join("runes/ops.rune"), "RUNE_LABELS=spira,incident\n").unwrap();
+        let cfg = Config { home: Some(home.path().to_path_buf()), runes_override: None, ..Config::test_fixture() };
+        let all = roster(&cfg, None).unwrap();
+        assert_eq!(
+            all,
+            vec![
+                PartitionSpec { labels: "spira,plan".into(), exclude: "poison".into(), runes: vec!["builder".into()] },
+                PartitionSpec { labels: "spira,incident".into(), exclude: String::new(), runes: vec!["ops".into()] },
+            ]
+        );
+        let one = roster(&cfg, Some("nobody")).unwrap();
+        assert_eq!(one[0].runes, vec!["builder", "ops"], "a partition no persona names falls back to the whole roster");
+        let gone = Config { home: Some(home.join("nowhere")), ..cfg };
+        assert!(roster(&gone, None).is_err(), "a missing runes directory is never an empty roster");
     }
 }

@@ -1,13 +1,11 @@
 //! `queue_keys` — lifecycle funnel depth/age, the active batch, the next-up CERTIFIED rows
-//! and the tests the registry holds out of runs. Ported from `spira/cockpit.sh` (DESIGN.md "Design"); the
-//! per-repository sort order (`queue_sort_rows`) and the certified listing
-//! (`queue_certified_list`) stay `lib.sh`'s own — this bead does not own or re-derive them
-//! (wave 4, not this one).
+//! and the tests the registry holds out of runs. Ported from `spira/cockpit.sh` (DESIGN.md "Design").
 
 use super::lc::LcRow;
 use super::{push, Cfg, Kv};
 use crate::io;
 use crate::quoting::epoch_to_age;
+use queue::ports::{Git, Lc};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -131,53 +129,26 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
     }
 
     // --- Next items: CERTIFIED entries not in the open batch, sorted by the batcher order ---
-    let home = io::home_dir();
-    let mut next_n = 0usize;
-    let mut next_total = 0usize;
     let next_max: i64 = cfg.queue_batch_max;
     let batch_set: HashSet<&str> = batch_member_ids.iter().map(String::as_str).collect();
-    {
+    let roots: Vec<std::path::PathBuf> = {
         let reg = io::repo_registry();
-        for rname in reg.all() {
-            let Some(rp) = reg.root(&rname) else { continue };
-            if reg.land(&rname) != "queue" {
-                continue;
-            }
-            // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
-            // spira_landref lib.sh seam.
-            let Some(rbase) = spira_config::repos::landref(&reg, &rname) else { continue };
-            let rbase_sha = io::git(std::path::Path::new(&rp), &["rev-parse", &rbase]).map(|s| s.trim().to_string());
-            let Some(rbase_sha) = rbase_sha else { continue };
-            let Some(cert) = io::lib_call(&home, "queue_certified_list", &[&rp]) else { continue };
-            if cert.trim().is_empty() {
-                continue;
-            }
-            let cert_lines: Vec<&str> = cert.lines().filter(|l| !l.trim().is_empty()).collect();
-            let filtered = unbatched(&cert_lines, &batch_set);
-            if filtered.is_empty() {
-                continue;
-            }
-            next_total += filtered.len();
-            let ids: Vec<&str> = filtered.iter().map(|l| l.split_whitespace().next().unwrap_or("")).collect();
-            let mut show_args = vec!["show"];
-            show_args.extend(ids.iter().copied());
-            let pj_raw = io::contentjson(&show_args).unwrap_or_else(|| "[]".to_string());
-            let stdin_rows = filtered.join("\n") + "\n";
-            let sorted = io::lib_call_with_stdin(
-                &home,
-                "queue_sort_rows",
-                &[&rp, &rbase_sha],
-                Some(&stdin_rows),
-            );
-            let Some(sorted) = sorted else { continue };
-            let rows = io::json_rows(Some(pj_raw)).unwrap_or_default();
-            for nid in next_row_ids(&sorted, next_n) {
-                let row = rows.iter().find(|r| r.get("id").and_then(Value::as_str) == Some(nid));
-                let (pri, title) = row.map(row_pri_title).unwrap_or(("?".to_string(), "-".to_string()));
-                push(&mut out, &format!("SP_QUEUE_NEXT{next_n}"), format!("P{pri} {nid} {title}"));
-                next_n += 1;
-            }
+        reg.all().into_iter().filter(|r| reg.land(r) == "queue").filter_map(|r| reg.root(&r)).map(Into::into).collect()
+    };
+    let (next_total, next) = match spira_store::lc_call::LcClient::configured() {
+        Ok(client) => {
+            let lc = queue::real::RealLc { bin: None, client: Some(client) };
+            let branches = |root: &std::path::Path| queue::real::RealGit.branches(root, "refs/heads/spira/");
+            next_items(&lc, &roots, &branches, &batch_set, &|ids| {
+                let mut args = vec!["show"];
+                args.extend(ids.iter().map(String::as_str));
+                io::contentjson(&args)
+            })
         }
+        Err(_) => (0, Vec::new()),
+    };
+    for (i, (nid, (pri, title))) in next.iter().enumerate() {
+        push(&mut out, &format!("SP_QUEUE_NEXT{i}"), format!("P{pri} {nid} {title}"));
     }
     push(&mut out, "SP_QUEUE_NEXT_N", next_total.to_string());
     push(&mut out, "SP_QUEUE_NEXT_MAX", next_max.to_string());
@@ -189,15 +160,44 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
 
 const NEXT_ROW_CAP: usize = 20;
 
-/// The bead ids of the sorted rows still to be drawn, at most [`NEXT_ROW_CAP`] rows in all;
-/// `SP_QUEUE_NEXT_N` counts every certified bead, not only these.
-fn next_row_ids(sorted: &str, drawn: usize) -> Vec<&str> {
-    sorted.lines().filter_map(|l| l.split_whitespace().nth(4)).take(NEXT_ROW_CAP.saturating_sub(drawn)).collect()
-}
+type Shown = (String, (String, String));
 
-/// The certified lines whose bead (first column) is not already in the open batch.
-fn unbatched<'a>(certified: &[&'a str], batch: &HashSet<&str>) -> Vec<&'a str> {
-    certified.iter().copied().filter(|l| !batch.contains(l.split_whitespace().next().unwrap_or(""))).collect()
+/// The certified beads not in the open batch, per repo in the batcher's order, read from one
+/// `polled_rows("CERTIFIED")`: how many there are in all, and the first [`NEXT_ROW_CAP`] with
+/// their priority and title. A store that cannot answer leaves none. The express set is read
+/// only once a row is left to rank.
+fn next_items(
+    lc: &dyn Lc,
+    roots: &[std::path::PathBuf],
+    branches: &dyn Fn(&std::path::Path) -> Vec<(String, String)>,
+    batch: &HashSet<&str>,
+    show: &dyn Fn(&[String]) -> Option<String>,
+) -> (usize, Vec<Shown>) {
+    let Ok(rows) = lc.polled_rows("CERTIFIED") else { return (0, Vec::new()) };
+    let mut express: Option<HashSet<String>> = None;
+    let mut total = 0;
+    let mut drawn: Vec<Shown> = Vec::new();
+    for root in roots {
+        let certified: Vec<(String, String, i64)> = queue::ops::helpers::rows_with_branch(&rows, &branches(root))
+            .into_iter()
+            .filter(|(id, _, _)| !batch.contains(id.as_str()))
+            .map(|(id, tip, since)| (id, tip, since as i64))
+            .collect();
+        if certified.is_empty() {
+            continue;
+        }
+        total += certified.len();
+        let ids: Vec<String> = certified.iter().map(|(id, _, _)| id.clone()).collect();
+        let prio_json = show(&ids).unwrap_or_else(|| "[]".to_string());
+        let express = express.get_or_insert_with(|| lc.express_ids().unwrap_or_default().into_iter().collect());
+        let (ranked, _) = queue::ops::helpers::sort_rows(&certified, &prio_json, express);
+        let shown = io::json_rows(Some(prio_json)).unwrap_or_default();
+        for r in ranked.iter().take(NEXT_ROW_CAP.saturating_sub(drawn.len())) {
+            let row = shown.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(r.id.as_str()));
+            drawn.push((r.id.clone(), row.map(row_pri_title).unwrap_or(("?".to_string(), "-".to_string()))));
+        }
+    }
+    (total, drawn)
 }
 
 const TESTREG_ROWS: usize = 10;
@@ -337,16 +337,74 @@ mod tests {
         assert_eq!(kv.len(), 12);
         assert!(kv.iter().all(|(_, v)| v == "?"));
     }
+    struct Scripted {
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl spira_store::lc_call::Transport for Scripted {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            self.calls.lock().unwrap().push(argv.join(" "));
+            let out = match argv.join(" ").as_str() {
+                "list --state CERTIFIED" => r#"[{"bead_id":"sp-b1","tip":"t1","since":100},{"bead_id":"sp-a1","tip":"t2","since":300},{"bead_id":"sp-a2","tip":"t3","since":200},{"bead_id":"sp-z9","tip":"t9","since":50}]"#,
+                "list --express --live" => r#"[{"bead_id":"sp-a1"}]"#,
+                other => panic!("unscripted call {other}"),
+            };
+            Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
+        }
+    }
+
     // covers: UC-cockpit-observability-11
-    #[test_id(ta7kyui)]
+    #[test_id(tidos72)]
     #[test]
-    fn next_rows_leave_out_the_open_batch() {
-        let batch: HashSet<&str> = ["sp-b1", "sp-bopen"].into();
-        let cert = ["sp-b1 tip1 100", "sp-c1 tip2 200", "sp-c2 tip3 300"];
-        assert_eq!(unbatched(&cert, &batch), ["sp-c1 tip2 200", "sp-c2 tip3 300"]);
-        let sorted: String = (0..32).map(|i| format!("0 1 2 3 sp-c{i}\n")).collect();
-        assert_eq!(next_row_ids(&sorted, 0).len(), NEXT_ROW_CAP, "32 certified draw at most the row cap");
-        assert_eq!(next_row_ids(&sorted, 15).len(), NEXT_ROW_CAP - 15, "a later repo only fills what is left");
+    fn next_items_read_certified_once_leave_out_the_open_batch_and_rank_by_the_batcher_order() {
+        let t = std::sync::Arc::new(Scripted { calls: Default::default() });
+        let lc = queue::real::RealLc { bin: None, client: Some(spira_store::lc_call::LcClient::over(t.clone(), true)) };
+        let roots = [std::path::PathBuf::from("alpha"), std::path::PathBuf::from("beta")];
+        let branches = |root: &std::path::Path| match root.to_str().unwrap() {
+            "alpha" => vec![("spira/sp-a1".to_string(), "x".to_string()), ("spira/sp-a2".to_string(), "x".to_string()), ("spira/sp-b1".to_string(), "x".to_string())],
+            _ => vec![("spira/sp-z9".to_string(), "x".to_string())],
+        };
+        let batch: HashSet<&str> = ["sp-b1"].into();
+        let show = |ids: &[String]| Some(ids.iter().map(|i| format!(r#"{{"id":"{i}","priority":2,"title":"t {i}"}}"#)).collect::<Vec<_>>().join(",")).map(|b| format!("[{b}]"));
+        let (total, next) = next_items(&lc, &roots, &branches, &batch, &show);
+        assert_eq!(total, 3);
+        let ids: Vec<&str> = next.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, ["sp-a1", "sp-a2", "sp-z9"], "express first, then age, repo by repo");
+        assert_eq!(next[1].1, ("2".to_string(), "t sp-a2".to_string()));
+        let calls = t.calls.lock().unwrap();
+        assert_eq!(calls.iter().filter(|c| *c == "list --state CERTIFIED").count(), 1, "{calls:?}");
+        assert_eq!(calls.iter().filter(|c| c.contains("--express")).count(), 1, "{calls:?}");
+    }
+
+    #[test_id(tql94gh)]
+    #[test]
+    fn next_items_draw_at_most_the_row_cap_and_count_every_certified_bead() {
+        let rows: Vec<String> = (0..32).map(|i| format!(r#"{{"bead_id":"sp-c{i}","tip":"t","since":{i}}}"#)).collect();
+        struct Fixed(String);
+        impl spira_store::lc_call::Transport for Fixed {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+                let out = if argv.iter().any(|a| a == "--express") { "[]".to_string() } else { self.0.clone() };
+                Ok(spira_store::lc_call::Reply { code: 0, out, err: String::new(), read_ended: false })
+            }
+        }
+        let lc = queue::real::RealLc { bin: None, client: Some(spira_store::lc_call::LcClient::over(std::sync::Arc::new(Fixed(format!("[{}]", rows.join(",")))), true)) };
+        let branches = |_: &std::path::Path| (0..32).map(|i| (format!("spira/sp-c{i}"), String::new())).collect();
+        let (total, next) = next_items(&lc, &[std::path::PathBuf::from("r")], &branches, &HashSet::new(), &|_| None);
+        assert_eq!((total, next.len()), (32, NEXT_ROW_CAP));
+    }
+
+    #[test_id(tjv8qnh)]
+    #[test]
+    fn next_items_of_an_unreadable_store_are_none() {
+        struct Down;
+        impl spira_store::lc_call::Transport for Down {
+            fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+                Err("gone".into())
+            }
+        }
+        let lc = queue::real::RealLc { bin: None, client: Some(spira_store::lc_call::LcClient::over(std::sync::Arc::new(Down), true)) };
+        let (total, next) = next_items(&lc, &[std::path::PathBuf::from("r")], &|_| vec![("spira/sp-a".into(), String::new())], &HashSet::new(), &|_| None);
+        assert_eq!((total, next.len()), (0, 0));
     }
 
     #[test_id(tcia3g7)]
