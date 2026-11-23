@@ -54,6 +54,7 @@ pub mod legacy_map;
 pub mod local_pass;
 pub mod escalation;
 pub mod gate_source;
+pub mod git_refs;
 pub mod locate;
 pub mod nonwork;
 pub mod process;

@@ -487,6 +487,9 @@ fn git_remotes(repo: &str) -> Vec<String> {
 /// `git rev-parse --verify -q <r>` — whether `r` resolves to an object in `repo`; the `Err` is
 /// git's own words: its stderr (empty under `-q`, so its exit status too), or the deadline (124).
 fn verify_ref_explained(git: &Path, repo: &str, r: &str) -> Result<(), String> {
+    if matches!(crate::git_refs::read_ref_in(Path::new(repo), r), crate::git_refs::Ref::Sha(_)) {
+        return Ok(());
+    }
     let out = crate::bounded::bounded(git).arg("-C").arg(repo).args(["rev-parse", "--verify", "-q", r]).output().map_err(|e| format!("git did not run: {e}"))?;
     if out.status.success() {
         return Ok(());

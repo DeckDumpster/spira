@@ -316,17 +316,7 @@ pub trait Host: Send + Sync {
     }
 }
 
-/// What reading a ref without git came to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Ref {
-    Sha(String),
-    /// No loose or packed ref by any spelling git would try.
-    Absent,
-    /// A loose ref naming an object that may be an annotated tag: peel it before trusting it.
-    Object(String),
-    /// Not tellable this way (a revision expression, an unreadable layout): ask git.
-    Unknown,
-}
+pub use spira_config::git_refs::Ref;
 
 /// Answers to git questions held at most this many; past it they are dropped and asked again.
 const MEMO_MAX: usize = 2048;

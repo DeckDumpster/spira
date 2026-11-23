@@ -155,6 +155,9 @@ fn read_pool(rows: &[Value]) -> Vec<(String, String)> {
 /// `refs/heads/spira/*` of the repository's own checkout, by bead id: what scopes the
 /// machine's pool to this repository, and the live tip a recorded tip must still be.
 fn branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
+    if let Some(tips) = spira_config::git_refs::spira_tips(&repo.path) {
+        return Ok(tips);
+    }
     let out = run(
         spira_config::bounded::bounded("git")
             .arg("-C")
@@ -792,5 +795,22 @@ mod tests {
             kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
             ["sp-a"]
         );
+    }
+
+    #[test_id(te4blqf)]
+    #[test]
+    fn branch_tips_are_read_from_ref_files_loose_packed_and_loose_over_packed() {
+        let d = testkit::TempDir::new("sifts-ref-files");
+        let sha = |c: char| c.to_string().repeat(40);
+        let g = d.join(".git");
+        std::fs::create_dir_all(g.join("refs/heads/spira")).unwrap();
+        std::fs::write(g.join("refs/heads/spira/sp-loose"), format!("{}\n", sha('1'))).unwrap();
+        std::fs::write(g.join("refs/heads/spira/sp-both"), format!("{}\n", sha('2'))).unwrap();
+        std::fs::write(g.join("packed-refs"), format!("# pack-refs\n{} refs/heads/spira/sp-packed\n{} refs/heads/spira/sp-both\n", sha('3'), sha('4'))).unwrap();
+        let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: "main".into(), local: true };
+        let want = BTreeMap::from([("sp-loose".to_string(), sha('1')), ("sp-both".to_string(), sha('2')), ("sp-packed".to_string(), sha('3'))]);
+        assert_eq!(branch_tips(&repo), Ok(want));
+        std::fs::write(g.join("refs/heads/spira/sp-loose"), format!("{}\n", sha('5'))).unwrap();
+        assert_eq!(branch_tips(&repo).unwrap()["sp-loose"], sha('5'), "nothing is cached between reads");
     }
 }

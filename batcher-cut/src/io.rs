@@ -857,6 +857,9 @@ fn plan_items(text: &str) -> Result<serde_json::Value, String> {
 /// certification is not this bead's member until it is re-certified at the new tip, whatever
 /// batch.sh did or did not do first.
 fn repo_branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
+    if let Some(tips) = spira_config::git_refs::spira_tips(&repo.path) {
+        return Ok(tips);
+    }
     let out = run(
         Command::new("git").arg("-C").arg(&repo.path).args([
             "for-each-ref",
@@ -1308,6 +1311,9 @@ pub fn base_moved_at(env: &Env, repo: &str, current_base_sha: &str) -> u64 {
 // ---------------------------------------------------------------------------------------
 
 pub fn resolve_base_sha(repo: &Repo) -> Result<String, String> {
+    if let spira_config::git_refs::Ref::Sha(sha) = spira_config::git_refs::read_ref_in(&repo.path, &repo.base) {
+        return Ok(sha);
+    }
     let out = run(
         Command::new("git")
             .arg("-C")
@@ -7155,5 +7161,54 @@ mod suites_in_tests {
         g(&["add", "-A"]);
         g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
         assert_eq!(suites_in(d.path(), "main").unwrap(), ["test-a.sh"]);
+    }
+}
+
+#[cfg(test)]
+mod ref_file_tests {
+    use super::*;
+
+    fn sha(c: char) -> String {
+        c.to_string().repeat(40)
+    }
+
+    /// A `.git` holding refs and no HEAD: git refuses it, so an answer here ran no git.
+    fn headless(branches: &[(&str, &str)], packed: &str, base: &str) -> (testkit::TempDir, Repo) {
+        let d = testkit::TempDir::new("io-ref-files");
+        for (name, sha) in branches {
+            let f = d.join(".git/refs/heads").join(name);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, format!("{sha}\n")).unwrap();
+        }
+        std::fs::create_dir_all(d.join(".git/refs/heads")).unwrap();
+        std::fs::write(d.join(".git/packed-refs"), packed).unwrap();
+        let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: base.into(), forge: PathBuf::new(), land: Land::Local };
+        (d, repo)
+    }
+
+    #[test_id(twzryts)]
+    #[test]
+    fn the_base_sha_is_read_from_a_loose_or_a_packed_ref() {
+        let packed = format!("# pack-refs\n{} refs/heads/local/packed\n", sha('b'));
+        let (_d, loose) = headless(&[("local/main", &sha('a'))], &packed, "local/main");
+        assert_eq!(resolve_base_sha(&loose), Ok(sha('a')));
+        let both = format!("{packed}{} refs/heads/local/main\n", sha('c'));
+        let (_d, over) = headless(&[("local/main", &sha('a'))], &both, "local/main");
+        assert_eq!(resolve_base_sha(&over), Ok(sha('a')), "a loose ref over a packed one");
+        let (_d, packed_base) = headless(&[], &packed, "local/packed");
+        assert_eq!(resolve_base_sha(&packed_base), Ok(sha('b')));
+        let (_d, absent) = headless(&[], &packed, "local/gone");
+        assert!(resolve_base_sha(&absent).is_err(), "an absent base is git's to refuse");
+    }
+
+    #[test_id(tjw0hvz)]
+    #[test]
+    fn branch_tips_are_read_loose_packed_and_loose_over_packed_by_bead_id() {
+        let packed = format!("# pack-refs\n{} refs/heads/spira/sp-packed\n{} refs/heads/spira/sp-both\n{} refs/heads/main\n", sha('1'), sha('2'), sha('3'));
+        let (d, repo) = headless(&[("spira/sp-loose", &sha('4')), ("spira/sp-both", &sha('5')), ("main", &sha('6'))], &packed, "main");
+        let want = BTreeMap::from([("sp-loose".to_string(), sha('4')), ("sp-both".to_string(), sha('5')), ("sp-packed".to_string(), sha('1'))]);
+        assert_eq!(repo_branch_tips(&repo), Ok(want));
+        std::fs::write(d.join(".git/refs/heads/spira/sp-loose"), format!("{}\n", sha('7'))).unwrap();
+        assert_eq!(repo_branch_tips(&repo).unwrap()["sp-loose"], sha('7'), "nothing is cached between reads");
     }
 }

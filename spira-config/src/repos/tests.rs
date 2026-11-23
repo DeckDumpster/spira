@@ -352,6 +352,21 @@ oldshape | h/old | pr | fmt-tool | gate --flag
         assert_eq!(landref(&reg, "r"), None);
     }
 
+    #[test_id(trqspm1)]
+    #[test]
+    fn a_declared_base_is_resolved_from_the_ref_files_when_git_would_refuse_the_directory() {
+        let d = testkit::TempDir::new("repos-landref-files");
+        std::fs::create_dir_all(d.join(".git/refs/heads/local")).unwrap();
+        std::fs::write(d.join(".git/refs/heads/local/main"), format!("{}\n", "a".repeat(40))).unwrap();
+        std::fs::write(d.join(".git/packed-refs"), format!("# pack-refs\n{} refs/heads/local/packed\n", "b".repeat(40))).unwrap();
+        let loose = registry_for(&format!("r|{}|queue.local|local/main||\n", d.display()), "r");
+        assert_eq!(landref_explained(&loose, "r"), Ok("local/main".to_string()), "a loose base");
+        let packed = registry_for(&format!("r|{}|queue.local|local/packed||\n", d.display()), "r");
+        assert_eq!(landref_explained(&packed, "r"), Ok("local/packed".to_string()), "a packed base");
+        let absent = registry_for(&format!("r|{}|queue.local|local/gone||\n", d.display()), "r");
+        assert!(landref_explained(&absent, "r").is_err(), "an absent base is still git's to refuse");
+    }
+
     #[test_id(tl8nuxk)]
     #[test]
     fn a_deadline_a_missing_ref_and_a_lock_read_differently() {
