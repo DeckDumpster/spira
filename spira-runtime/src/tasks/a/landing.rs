@@ -487,6 +487,9 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
                     continue;
                 }
                 c.state = State::Start;
+                if b.behind {
+                    c.refreshes = c.refreshes.saturating_sub(1);
+                }
             }
             match b.pr_state {
                 PrState::Merged => {

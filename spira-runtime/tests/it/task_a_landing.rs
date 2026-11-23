@@ -511,7 +511,19 @@ mod restart {
         r.advance(CADENCE_MS * 3).unwrap();
         let carry: Carry = r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap();
         assert_eq!(carry.branches["spira/pd-b"].refreshes, 1, "{carry:?}");
+        assert_eq!(asked(&r, REBASE), 0);
         r.deliver(runtime::event::HALT_STREAM, EventKind::new(runtime::event::SCHEDULER_RESUMED, "")).unwrap();
         assert_eq!(asked(&r, REBASE), 1);
     }
+}
+
+#[test_id(ttjbm90)]
+#[test]
+fn a_refresh_lost_at_a_restart_is_redone_without_spending_the_refresh_budget_twice() {
+    let (mut carry, _) = rebasing("pd-a");
+    carry.branches.get_mut("spira/pd-a").unwrap().refreshes = 1;
+    let mut snap = with(vec![Branch { behind: true, ..with_pr("pd-a", 5, PrStatus::Green) }]);
+    snap.in_flight = Some(Default::default());
+    let (next, acts) = decide(&carry, &snap);
+    assert_eq!((effects(&acts), next.branches["spira/pd-a"].refreshes), (vec![REBASE], 1));
 }
