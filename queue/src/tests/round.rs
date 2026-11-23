@@ -7212,12 +7212,14 @@ fn absolve_clears_a_red_only_the_gate_recorded() {
     assert!(!rec.exists());
 }
 
+const OWN_IMAGE: &str = "docker.io/library/rust:1.99.1-bookworm";
+
 fn declare_own_testenv(t: &T) {
     let wt = PathBuf::from(&kv_of(t, "round")["worktree"]);
     fs::create_dir_all(wt.join(".spira")).unwrap();
     fs::write(
         wt.join(".spira").join("testenv.toml"),
-        "ci_entry = \"deploy/ci.sh all\"\n",
+        format!("ci_entry = \"deploy/ci.sh all\"\nimage = \"{OWN_IMAGE}\"\n"),
     )
     .unwrap();
 }
@@ -7245,7 +7247,7 @@ fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
     assert!(
         calls.iter().any(|c| {
             c.starts_with("repo-round-vm ")
-                && c.contains("entry=deploy/ci.sh all round=")
+                && c.contains(&format!("entry=deploy/ci.sh all image={OWN_IMAGE} workdir=/work round="))
                 && c.ends_with("/spira wall=900")
         }),
         "{calls:?}"
@@ -7270,7 +7272,7 @@ fn prune_world(own_testenv: bool) -> (T, PathBuf) {
         let kv = crate::batches::batch(store, "spira", &batch).unwrap().unwrap().kv;
         let wt = PathBuf::from(kv.get("worktree").unwrap());
         fs::create_dir_all(wt.join(".spira")).unwrap();
-        fs::write(wt.join(".spira").join("testenv.toml"), "ci_entry = \"deploy/ci.sh all\"\n").unwrap();
+        fs::write(wt.join(".spira").join("testenv.toml"), format!("ci_entry = \"deploy/ci.sh all\"\nimage = \"{OWN_IMAGE}\"\n")).unwrap();
     }
     store.put_round("spira", "spira-open", "OPEN", &[("sp-c", "tc")], 10);
     let rounds = t.s().run.join("rounds");
@@ -7493,6 +7495,21 @@ fn an_own_testenv_repo_with_no_ci_entry_is_not_judged_and_runs_nothing() {
     fs::write(wt.join(".spira").join("testenv.toml"), "").unwrap();
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert!(t.err().contains("declares no ci_entry"), "{}", t.err());
+    let calls = t.scripts.calls.borrow().clone();
+    assert!(!calls.iter().any(|c| c.contains("round-vm")), "{calls:?}");
+}
+
+#[test_id(ti1q20z)]
+#[test]
+fn an_own_testenv_repo_with_a_ci_entry_and_no_image_is_not_judged_and_runs_nothing() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    fs::create_dir_all(wt.join(".spira")).unwrap();
+    fs::write(wt.join(".spira").join("testenv.toml"), "ci_entry = \"deploy/ci.sh all\"\n").unwrap();
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert!(t.err().contains("declares a ci_entry but no image"), "{}", t.err());
     let calls = t.scripts.calls.borrow().clone();
     assert!(!calls.iter().any(|c| c.contains("round-vm")), "{calls:?}");
 }

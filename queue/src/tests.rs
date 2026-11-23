@@ -763,14 +763,17 @@ impl Scripts for FScripts {
         &self,
         tree: &Path,
         results: &Path,
-        entry: &str,
+        entry: &gate::own::CiEntry,
         round: (&str, &str),
         wall_secs: u64,
         handle: &Path,
     ) -> RunOut {
         self.calls.borrow_mut().push(format!(
-            "repo-round-vm {} entry={entry} round={}/{} wall={wall_secs}",
+            "repo-round-vm {} entry={} image={} workdir={} round={}/{} wall={wall_secs}",
             tree.display(),
+            entry.command,
+            entry.image.as_deref().unwrap_or_default(),
+            entry.workdir,
             round.0,
             round.1
         ));

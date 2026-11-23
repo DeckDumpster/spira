@@ -4042,8 +4042,12 @@ fn certify_pass(
         let results = rounds_dir(c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
         let _ = fs::create_dir_all(&results);
-        let Some(entry) = gate::own::ci_entry(&wt) else {
-            let why = format!("{} declares no ci_entry — a round runs the repository's own CI entry point on a round VM", gate::own::DECL);
+        let declared = gate::own::ci_entry(&wt);
+        let Some(entry) = declared.clone().filter(|e| e.image.is_some()) else {
+            let why = match declared {
+                Some(_) => format!("{} declares a ci_entry but no image — a round runs the repository's CI entry point in its declared image", gate::own::DECL),
+                None => format!("{} declares no ci_entry — a round runs the repository's own CI entry point on a round VM", gate::own::DECL),
+            };
             warn_unrecorded(
                 w,
                 label,
