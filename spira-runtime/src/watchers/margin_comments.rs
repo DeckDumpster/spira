@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use margin_client::{Changes, AGENT_PREFIX};
+use margin_client::{Changes, READER};
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
@@ -83,37 +83,31 @@ fn json<T: Serialize>(v: &T) -> String {
     serde_json::to_string(v).unwrap_or_default()
 }
 
+/// The change kinds that carry a new comment: a thread's first comment is logged as the thread's creation.
+const NEW_COMMENT_KINDS: [&str; 2] = ["thread_created", "comment_created"];
+const PUBLISHED_KIND: &str = "published";
+
 fn actions(changes: &Changes) -> Vec<Command> {
-    let seq_of = |c: &serde_json::Value| c["seq"].as_u64();
     let field = |c: &serde_json::Value, k: &str| c[k].as_str().map(str::to_string);
-    let acts: Vec<(u64, &serde_json::Value)> = changes
-        .changes
-        .iter()
-        .filter(|c| match c["kind"].as_str() {
-            Some("comment") => c["author"].as_str().is_some_and(|a| !a.starts_with(AGENT_PREFIX)),
-            Some("publish") => true,
-            _ => false,
-        })
-        .filter_map(|c| seq_of(c).map(|s| (s, c)))
-        .collect();
+    let wanted = |c: &serde_json::Value| match c["kind"].as_str() {
+        Some(k) if NEW_COMMENT_KINDS.contains(&k) => c["author"].as_str() == Some(READER),
+        Some(PUBLISHED_KIND) => true,
+        _ => false,
+    };
+    let acts: Vec<(u64, &serde_json::Value)> = changes.changes.iter().filter(|c| wanted(c)).filter_map(|c| c["seq"].as_u64().map(|s| (s, c))).collect();
     let batch: Vec<u64> = acts.iter().map(|(s, _)| *s).collect();
+    let through = changes.through;
     let mut cmds = vec![];
     for (seq, c) in acts {
-        let through = changes.through;
-        let cmd = match c["kind"].as_str() {
-            Some("comment") => match (field(c, "collection"), field(c, "thread"), field(c, "comment")) {
-                (Some(collection), Some(thread), Some(comment)) => {
-                    let key = format!("{NAME}:comment:{comment}");
-                    EffectSpec::keyed(DELIVER, key, json(&Deliver { collection, thread, comment, seq, batch: batch.clone(), through }), DELIVER_DEADLINE_MS)
-                }
-                _ => continue,
-            },
-            _ => match field(c, "collection") {
-                Some(collection) => EffectSpec::keyed(PUBLISH, format!("{NAME}:publish:{collection}"), json(&Publish { collection, seq, batch: batch.clone(), through }), PUBLISH_DEADLINE_MS),
-                None => continue,
-            },
+        let spec = if c["kind"].as_str() == Some(PUBLISHED_KIND) {
+            field(c, "collection_id").map(|collection| EffectSpec::keyed(PUBLISH, format!("{NAME}:publish:{collection}"), json(&Publish { collection, seq, batch: batch.clone(), through }), PUBLISH_DEADLINE_MS))
+        } else {
+            match (field(c, "collection_id"), field(c, "thread_id"), field(c, "comment_id")) {
+                (Some(collection), Some(thread), Some(comment)) => Some(EffectSpec::keyed(DELIVER, format!("{NAME}:comment:{comment}"), json(&Deliver { collection, thread, comment, seq, batch: batch.clone(), through }), DELIVER_DEADLINE_MS)),
+                _ => None,
+            }
         };
-        cmds.push(Command::Effect(cmd));
+        cmds.extend(spec.map(Command::Effect));
     }
     cmds
 }
@@ -189,7 +183,7 @@ mod tests {
     }
 
     fn comment(seq: u64, id: &str, author: &str) -> serde_json::Value {
-        json!({"seq": seq, "kind": "comment", "collection": "col1", "thread": "t1", "comment": id, "author": author})
+        json!({"seq": seq, "kind": "comment_created", "collection_id": "col1", "thread_id": "t1", "comment_id": id, "author": author, "visibility": "now", "body": "x"})
     }
 
     fn changed(changes: Vec<serde_json::Value>) -> Event {
@@ -203,7 +197,7 @@ mod tests {
     #[test_id(ttu5nhc)]
     #[test]
     fn two_comments_by_the_operator_and_one_by_an_agent_are_two_deliveries_keyed_by_comment() {
-        let ev = changed(vec![comment(3, "c-1", "ryan"), comment(4, "c-2", "agent:concierge"), comment(5, "c-3", "ryan")]);
+        let ev = changed(vec![comment(3, "c-1", "reader"), comment(4, "c-2", "concierge"), comment(5, "c-3", "reader")]);
         let (_, cmds) = decide(&Carry::default(), &ev, None);
         assert_eq!(effects(&cmds), [(DELIVER.to_string(), "margin-comments:comment:c-1".to_string()), (DELIVER.to_string(), "margin-comments:comment:c-3".to_string())]);
         let Command::Effect(first) = &cmds[0] else { unreachable!() };
@@ -214,7 +208,7 @@ mod tests {
     #[test_id(tul4gty)]
     #[test]
     fn a_publish_change_is_one_publish_keyed_by_collection() {
-        let ev = changed(vec![json!({"seq": 7, "kind": "publish", "collection": "col1"}), json!({"seq": 8, "kind": "thread_resolved"})]);
+        let ev = changed(vec![json!({"seq": 7, "kind": "published", "collection_id": "col1"}), json!({"seq": 8, "kind": "collection_updated", "collection_id": "col1"})]);
         assert_eq!(effects(&decide(&Carry::default(), &ev, None).1), [(PUBLISH.to_string(), "margin-comments:publish:col1".to_string())]);
     }
 
@@ -235,7 +229,7 @@ mod tests {
     #[test_id(tuvprkw)]
     #[test]
     fn a_failed_delivery_is_asked_again_on_the_sweep_until_it_lands() {
-        let ev = changed(vec![comment(3, "c-1", "ryan")]);
+        let ev = changed(vec![comment(3, "c-1", "reader")]);
         let Command::Effect(spec) = decide(&Carry::default(), &ev, None).1.remove(0) else { unreachable!() };
         let (failed, _) = decide(&Carry::default(), &event(EFFECT_FAILED, "boom".into()), Some(&spec));
         assert_eq!(failed.failed[&spec.key].attempts, 1);

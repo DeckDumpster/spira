@@ -3,8 +3,7 @@
 //! asks again at once. A reader that does not answer is retried on a backoff and said once per
 //! run of failures. Nothing here is timed by a clock the loop reads.
 //!
-//! The feed's changes are JSON objects with a `seq` and a `kind`: a `comment` names its
-//! `collection`, `thread`, `comment` id and `author`; a `publish` names its `collection`.
+//! The feed is the reader's `GET /api/changes?after=&wait=`: its rows go to the task as they come.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -193,7 +192,7 @@ mod tests {
         let dir = testkit::TempDir::new("margin-source-two");
         std::fs::create_dir_all(super::dir(dir.path())).unwrap();
         std::fs::write(resume_file(dir.path()), "7\n").unwrap();
-        let (base, seen) = serve(vec![(200, r#"{"through":9,"changes":[{"seq":8,"kind":"publish","collection":"c1"}]}"#), (200, r#"{"through":12,"changes":[{"seq":12,"kind":"publish","collection":"c2"}]}"#)]);
+        let (base, seen) = serve(vec![(200, r#"{"last_seq":9,"changes":[{"seq":8,"kind":"published","collection_id":"c1"}]}"#), (200, r#"{"last_seq":12,"changes":[{"seq":12,"kind":"published","collection_id":"c2"}]}"#)]);
         let mut rx = start(source(&base, &dir));
         let (a, b) = (rx.blocking_recv().unwrap(), rx.blocking_recv().unwrap());
         assert_eq!((a.stream.as_str(), a.kind.tag.as_str(), b.kind.tag.as_str()), (MARGIN_STREAM, MARGIN_CHANGED, MARGIN_CHANGED));
@@ -207,7 +206,7 @@ mod tests {
     #[test]
     fn a_reader_that_refuses_is_said_once_and_asked_again_no_sooner_than_the_backoff() {
         let dir = testkit::TempDir::new("margin-source-down");
-        let (base, seen) = serve(vec![(500, "no"), (500, "no"), (500, "no"), (200, r#"{"through":4,"changes":[]}"#)]);
+        let (base, seen) = serve(vec![(500, "no"), (500, "no"), (500, "no"), (200, r#"{"last_seq":4,"changes":[]}"#)]);
         let mut rx = start(source(&base, &dir));
         let down = rx.blocking_recv().unwrap();
         let back = rx.blocking_recv().unwrap();
