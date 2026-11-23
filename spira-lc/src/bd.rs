@@ -364,20 +364,42 @@ pub fn add_blocker(id: &str, depends_on: &str) -> Result<(), String> {
     bead_sh(&["dep", "add", id, depends_on, "--type", "blocks"])
 }
 
-/// `bead.sh amend <id> --body-file <file> --replace`: the body becomes `body`.
-pub fn amend_replace(id: &str, body: &str) -> Result<(), String> {
-    let dir = std::env::temp_dir();
-    let path = dir.join(format!("amend-{id}-{}.md", std::process::id()));
-    std::fs::write(&path, body).map_err(|e| format!("writing {}: {e}", path.display()))?;
-    let shown = path.to_string_lossy().into_owned();
-    let res = bead_sh(&["amend", id, "--body-file", &shown, "--replace"]);
-    let _ = std::fs::remove_file(&path);
-    res
+/// One `content` write answered in this process, through the guards the served door applies.
+fn content_write(argv: &[&str], body: &str) -> Result<(), String> {
+    let argv: Vec<String> = std::iter::once("content").chain(argv.iter().copied()).map(str::to_string).collect();
+    let mut stdin = || Ok(body.to_string());
+    let run_dir = || Err("a content write has no run directory".to_string());
+    let ports = crate::composed::Ports {
+        m: &mut StoreMachine,
+        bd: &mut LiveBd,
+        content: &crate::composed::LiveContent,
+        stdin: &mut stdin,
+        run_dir: &run_dir,
+        now: crate::db::now_epoch(),
+        caller: &std::collections::BTreeMap::new(),
+    };
+    let ans = crate::composed::run(&argv, ports);
+    if ans.code != 0 {
+        let text = if ans.stderr.trim().is_empty() { &ans.stdout } else { &ans.stderr };
+        return Err(text.trim().to_string());
+    }
+    if !ans.stderr.trim().is_empty() {
+        eprintln!("{}", ans.stderr.trim_end());
+    }
+    Ok(())
 }
 
-/// `bead.sh amend <id> --note <text>`.
+/// The body of `id` becomes `body`; a claimed bead's description is not replaced.
+pub fn amend_replace(id: &str, body: &str) -> Result<(), String> {
+    content_write(&["update", id, "--body-file", "-"], body)
+}
+
+/// Notes `text` on `id` unless it is already there as a whole line.
 pub fn amend_note(id: &str, text: &str) -> Result<(), String> {
-    bead_sh(&["amend", id, "--note", text])
+    if show(id)?.lines().any(|l| l.trim() == text.trim()) {
+        return Ok(());
+    }
+    content_write(&["note", id, "--stdin"], text)
 }
 
 /// The open beads that wait on `id` through a `blocks` edge, each with its title.

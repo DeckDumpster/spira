@@ -130,6 +130,8 @@ impl Lc {
         std::fs::create_dir_all(&run).unwrap();
         std::fs::create_dir_all(dir.join("release/bin")).unwrap();
         let reader = dir.join("reader.credential");
+        let harness = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
+        let (runes, guards) = (harness.join("runes").display().to_string(), harness.join("statute-guards").display().to_string());
         let (d, r, ctl, sock) = (dir.display().to_string(), run.display().to_string(), dir.join("control.db").display().to_string(), dir.join("s").display().to_string());
         let (rf, db) = (reader.display().to_string(), store.db.clone());
         let toml = spira_config::process::fixture_toml(
@@ -147,6 +149,8 @@ impl Lc {
                 ("SPIRA_BEADS_SQL_USER", "spira_lc_ro"),
                 ("SPIRA_BEADS_SQL_PASSWORD_FILE", &rf),
                 ("SPIRA_BEADS_SQL_WRITER_PASSWORD_FILE", writer_file),
+                ("SPIRA_RUNES_DIR", &runes),
+                ("SPIRA_STATUTE_GUARDS", &guards),
             ],
         );
         let home = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
@@ -949,4 +953,102 @@ fn a_fully_provisioned_writer_says_nothing_and_pages_nobody_at_start() {
     assert_eq!(verdict["missing"], serde_json::json!([]));
     assert!(verdict["error"].is_null());
     assert_eq!(store.sql_said("SHOW GRANTS FOR 'spira_lc'@'%'"), before);
+}
+
+const DEP_TITLE: &str = "the follow-up a review rewrites";
+const OPEN_LINE: &str = "Open: should the follow-up wait for the migration?";
+
+struct Review {
+    request: String,
+    dependent: String,
+}
+
+/// A Skuld review request WORKING under persona skuld, holding a draft for the one follow-up that
+/// waits on it; `claim_dependent` puts a live claim on that follow-up.
+fn review_of(store: &Store, lc: &Lc, draft: &str, claim_dependent: bool) -> Review {
+    let request = store.bd(&["create", "review the follow-up", "--silent", "--labels", "draft"], None).trim().to_string();
+    let dependent = store.bd(&["create", DEP_TITLE, "--silent", "--description", "the follow-up as filed"], None).trim().to_string();
+    store.bd(&["dep", "add", &dependent, &request, "--type", "blocks"], None);
+    store.bd(&["note", &request, "--stdin"], Some(&format!("### Draft: {DEP_TITLE}\n\n{draft}\n")));
+    for id in [&request, &dependent] {
+        let (rc, out) = lc.run(&["create-bead", id, "--ready"], None);
+        assert_eq!(rc, 0, "create-bead {id}: {out}");
+    }
+    let claim = |who: &str, persona: &str| format!(r#"{{"Claim":{{"holder":"{who}","lease_until":4102444800,"persona":"{persona}"}}}}"#);
+    let event = |id: &str, kind: String| lc.run(&["event", "bead", id, "--expect", "READY", "--version", "0", "--actor", "test", "--kind", &kind], None);
+    let (rc, out) = event(&request, claim("skuld-1", "skuld"));
+    assert_eq!(rc, 0, "claiming the request: {out}");
+    if claim_dependent {
+        let (rc, out) = event(&dependent, claim("dwarf-1", "builder"));
+        assert_eq!(rc, 0, "claiming the follow-up: {out}");
+    }
+    Review { request, dependent }
+}
+
+fn done(lc: &Lc, review: &Review) -> (i32, String, i64) {
+    lc.refused_of("work", &["work", &review.request, "done", "--delivers", "x", "--actor", "skuld"], None)
+}
+
+fn description_of(lc: &Lc, id: &str) -> String {
+    let shown: serde_json::Value = serde_json::from_str(&lc.shows(id)).unwrap_or_else(|e| panic!("{id}: {e}"));
+    let one = shown.as_array().map_or(&shown, |a| &a[0]);
+    one["description"].as_str().unwrap_or_default().to_string()
+}
+
+fn state_of(lc: &Lc, id: &str) -> String {
+    lc.run(&["show", id], None).1.to_uppercase()
+}
+
+#[test_id(t9m3e3p)]
+#[test]
+fn work_done_on_a_review_replaces_the_followups_body_and_notes_its_open_line_in_process() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "rv1");
+    let r = review_of(&store, &lc, &format!("the drafted body\n\n{OPEN_LINE}"), false);
+    let (rc, out, children) = done(&lc, &r);
+    assert_eq!((rc, children), (0, 0), "{out}");
+    assert_eq!(description_of(&lc, &r.dependent).trim_end(), format!("Drafted by Skuld: {}\n\nthe drafted body", r.request));
+    assert_eq!(lc.shows(&r.dependent).matches(OPEN_LINE).count(), 1);
+    assert!(state_of(&lc, &r.request).contains("DONE"), "{}", state_of(&lc, &r.request));
+}
+
+#[test_id(tap1p35)]
+#[test]
+fn a_draft_the_statute_guard_refuses_leaves_the_followup_and_the_request_untouched() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "rv2");
+    let r = review_of(&store, &lc, "Run the test suite directly on the host.", false);
+    let (rc, out, _) = done(&lc, &r);
+    assert_ne!(rc, 0, "{out}");
+    assert!(out.starts_with("cannot tell:") && out.contains("law-tests-run-only-through-testenv"), "{out}");
+    assert_eq!(description_of(&lc, &r.dependent).trim(), "the follow-up as filed");
+    assert!(state_of(&lc, &r.request).contains("WORKING"));
+}
+
+#[test_id(t3pdn0c)]
+#[test]
+fn a_draft_for_a_claimed_followup_is_refused_naming_the_claim() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "rv3");
+    let r = review_of(&store, &lc, "the drafted body", true);
+    let (rc, out, _) = done(&lc, &r);
+    assert_ne!(rc, 0, "{out}");
+    assert!(out.contains("is claimed by"), "{out}");
+    assert_eq!(description_of(&lc, &r.dependent).trim(), "the follow-up as filed");
+    assert!(state_of(&lc, &r.request).contains("WORKING"));
+}
+
+#[test_id(t609ew0)]
+#[test]
+fn a_repeat_after_a_partial_application_closes_the_request_and_leaves_one_open_note() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "rv4");
+    let r = review_of(&store, &lc, &format!("the drafted body\n\n{OPEN_LINE}"), false);
+    let body = format!("Drafted by Skuld: {}\n\nthe drafted body", r.request);
+    lc.children_of("content", &["content", "update", &r.dependent, "--body-file", "-"], Some(&body));
+    lc.children_of("content", &["content", "note", &r.dependent, "--stdin"], Some(OPEN_LINE));
+    let (rc, out, children) = done(&lc, &r);
+    assert_eq!((rc, children), (0, 0), "{out}");
+    assert_eq!(lc.shows(&r.dependent).matches(OPEN_LINE).count(), 1);
+    assert!(state_of(&lc, &r.request).contains("DONE"));
 }
