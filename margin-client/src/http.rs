@@ -10,6 +10,7 @@ use std::time::Duration;
 pub const CALL_SECS: u64 = 5;
 const API: &str = "/api"; // not a path: the reader's route prefix
 
+#[derive(Clone, Debug)]
 pub struct HttpMargin {
     pub base: String,
     pub token_file: String,
@@ -228,9 +229,59 @@ impl Margin for HttpMargin {
     }
 
     fn changes(&self, after: u64, hold_secs: u64) -> Result<Changes, String> {
-        let wait = hold_secs.min(MAX_WAIT_SECS);
-        let got: WireChanges = self.call("GET", &format!("{API}/changes?after={after}&wait={wait}"), None, self.timeout + Duration::from_secs(wait))?;
+        let req = self.changes_request(after, hold_secs)?;
+        let sent = ureq::AgentBuilder::new().timeout(req.timeout).build().get(&req.url).set("Authorization", &format!("Bearer {}", req.token)).set("Accept", ACCEPT).call();
+        match sent {
+            Ok(r) => {
+                let status = r.status();
+                req.reply(status, &r.into_string().map_err(|e| e.to_string())?)
+            }
+            Err(ureq::Error::Status(code, r)) => req.reply(code, &r.into_string().unwrap_or_default()),
+            Err(e) => Err(req.silent(&e.to_string())),
+        }
+    }
+}
+
+const ACCEPT: &str = "application/json";
+
+/// One long-poll of the change feed, ready to send over any transport: where, as whom, and how long to wait.
+pub struct ChangesRequest {
+    pub base: String,
+    pub url: String,
+    pub token: String,
+    /// The whole exchange's deadline: the call timeout plus the hold.
+    pub timeout: Duration,
+}
+
+impl ChangesRequest {
+    pub const ACCEPT: &'static str = ACCEPT;
+
+    /// The answer's status and body as the changes it carries, or the refusal in today's words.
+    pub fn reply(&self, status: u16, body: &str) -> Result<Changes, String> {
+        let route = self.route();
+        if status >= 400 {
+            return Err(format!("the reader at {} refused GET {}: HTTP {status}: {}", self.base, route.split('?').next().unwrap_or(route), body.trim().chars().take(300).collect::<String>()));
+        }
+        let got: WireChanges = serde_json::from_str(body).map_err(|e| format!("the reader at {} answered GET {route} with a reply that is not the expected JSON: {e}", self.base))?;
         Ok(Changes { through: got.last_seq, changes: got.changes })
+    }
+
+    /// A transport failure, with the token redacted.
+    pub fn silent(&self, why: &str) -> String {
+        let route = self.route();
+        format!("the reader at {} did not answer GET {}: {}", self.base, route.split('?').next().unwrap_or(route), why.replace(&self.token, "<token>"))
+    }
+
+    fn route(&self) -> &str {
+        self.url.strip_prefix(self.base.as_str()).unwrap_or(&self.url)
+    }
+}
+
+impl HttpMargin {
+    /// The request for the changes after `after`, held up to `hold_secs`; reads the token file.
+    pub fn changes_request(&self, after: u64, hold_secs: u64) -> Result<ChangesRequest, String> {
+        let wait = hold_secs.min(MAX_WAIT_SECS);
+        Ok(ChangesRequest { base: self.base.clone(), url: format!("{}{API}/changes?after={after}&wait={wait}", self.base), token: self.token()?, timeout: self.timeout + Duration::from_secs(wait) })
     }
 }
 

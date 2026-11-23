@@ -9,7 +9,7 @@ mod fake;
 #[cfg(any(test, feature = "record"))]
 pub mod scenario;
 
-pub use http::HttpMargin;
+pub use http::{ChangesRequest, HttpMargin};
 pub use fake::FakeMargin;
 
 use serde::{Deserialize, Serialize};

@@ -155,6 +155,13 @@ serde_json = "1"
 toml = "0.8"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros", "net", "io-util"] }
 ureq = { version = "2", default-features = false, features = ["tls"] }
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "0.26"
 spira-submission = { path = "../spira-submission" }
 gh-intake = { path = "../gh-intake" }
 cr = { path = "../cr" }
@@ -184,6 +191,7 @@ state-store-sqlite = { path = "../state-store-sqlite" }
 inotify = { version = "0.11", default-features = false }
 
 [dev-dependencies]
+rustls-pemfile = "2"
 spira-test-id = { path = "../spira-test-id" }
 forge = { path = "../forge" }
 sim = { path = "../sim" }
