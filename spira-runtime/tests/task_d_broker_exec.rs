@@ -196,7 +196,7 @@ fn a_request_the_ledger_has_run_is_not_run_again_after_the_scheduler_restarts() 
     assert_eq!(code, 0);
     assert_eq!(marker(&w, "ran.count").lines().count(), 1);
     let id = ran.iter().find(|r| r.contains("ran, exit 0")).and_then(|r| r.split(':').next()).expect("it ran once").to_string();
-    let replayed = broker_exec::decide(&Snapshot { queued: vec![broker_exec::Entry { id: id.clone(), bound_ms: 300_000 }], stale: vec![] });
+    let replayed = broker_exec::decide(&Snapshot { queued: vec![broker_exec::Entry { id: id.clone(), bound_ms: 300_000 }], ..Snapshot::default() });
     let out = w.effects().run(&replayed[0].key, &replayed[0]).unwrap();
     assert!(out.contains("already ran"), "a restart replays the effect and the ledger answers: {out}");
     assert_eq!(marker(&w, "ran.count").lines().count(), 1, "the program did not run twice");
