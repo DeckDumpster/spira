@@ -201,14 +201,14 @@ mod tests {
     fn sim(cap: usize) -> (Arc<SimFs>, Arc<SimJobs>, LogWriter) {
         let clock = VirtualClock::new(0);
         let fs = SimFs::new(1, Default::default(), clock.clone());
-        fs.create_dir(Path::new("/run")).unwrap();
+        fs.create_dir(Path::new("run")).unwrap();
         let jobs = SimJobs::new(clock, fs.clone(), cap);
         let writer = LogWriter::new(fs.clone(), Pool::over(jobs.clone()));
         (fs, jobs, writer)
     }
 
     fn log() -> PathBuf {
-        PathBuf::from("/run/x.log")
+        PathBuf::from("run/x.log")
     }
 
     #[test_id(ts6g1pl)]
@@ -242,12 +242,12 @@ mod tests {
     fn flush_writes_the_lines_the_pool_never_took() {
         let (fs, _jobs, w) = sim(0);
         w.push(log(), "one\n".into());
-        w.push(PathBuf::from("/run/y.log"), "other\n".into());
+        w.push(PathBuf::from("run/y.log"), "other\n".into());
         w.push(log(), "two\n".into());
         assert!(fs.peek(&log()).is_none());
         w.flush(Duration::from_secs(1));
         assert_eq!(fs.peek(&log()).unwrap(), b"one\ntwo\n");
-        assert_eq!(fs.peek(Path::new("/run/y.log")).unwrap(), b"other\n");
+        assert_eq!(fs.peek(Path::new("run/y.log")).unwrap(), b"other\n");
     }
 
     #[test_id(tladi4c)]

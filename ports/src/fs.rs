@@ -549,7 +549,7 @@ mod sim_tests {
     #[test]
     fn sim_files_live_in_memory_and_follow_the_same_contract_as_the_disk() {
         let f = fs(1, SimFaults::default());
-        let d = Path::new("/run/x");
+        let d = Path::new("run/x");
         assert_eq!(f.append(&d.join("a"), b"1").unwrap_err().kind(), io::ErrorKind::NotFound);
         f.create_dir(d).unwrap();
         f.append(&d.join("a"), b"1").unwrap();
@@ -567,7 +567,7 @@ mod sim_tests {
     #[test]
     fn sim_crash_keeps_synced_bytes_only() {
         let f = fs(1, SimFaults::default());
-        let d = Path::new("/d");
+        let d = Path::new("d");
         f.create_dir(d).unwrap();
         let (kept, torn, unlisted) = (d.join("kept"), d.join("torn"), d.join("unlisted"));
         f.append(&kept, b"synced").unwrap();
@@ -592,7 +592,7 @@ mod sim_tests {
     #[test]
     fn sim_a_file_without_a_directory_sync_is_lost_to_a_crash_though_its_bytes_were_synced() {
         let f = fs(1, SimFaults::default());
-        let d = Path::new("/d");
+        let d = Path::new("d");
         f.create_dir(d).unwrap();
         f.write(&d.join("a.tmp"), b"v2").unwrap();
         f.sync_file(&d.join("a.tmp")).unwrap();
@@ -606,17 +606,17 @@ mod sim_tests {
     #[test]
     fn sim_release_completes_a_blocked_call() {
         let f = fs(1, SimFaults::default());
-        f.create_dir(Path::new("/d")).unwrap();
+        f.create_dir(Path::new("d")).unwrap();
         f.hold_next(1);
         let writer = {
             let f = f.clone();
-            std::thread::spawn(move || f.append(Path::new("/d/log"), b"line"))
+            std::thread::spawn(move || f.append(Path::new("d/log"), b"line"))
         };
         f.wait_blocked(1);
-        assert!(f.peek(Path::new("/d/log")).is_none(), "the call has not completed");
+        assert!(f.peek(Path::new("d/log")).is_none(), "the call has not completed");
         f.release();
         writer.join().unwrap().unwrap();
-        assert_eq!(f.peek(Path::new("/d/log")).unwrap(), b"line");
+        assert_eq!(f.peek(Path::new("d/log")).unwrap(), b"line");
         assert_eq!(f.blocked(), 0);
     }
 
@@ -624,14 +624,14 @@ mod sim_tests {
     #[test]
     fn sim_crash_after_fails_that_call_and_every_later_one_until_revived() {
         let f = fs(1, SimFaults::default());
-        f.create_dir(Path::new("/d")).unwrap();
+        f.create_dir(Path::new("d")).unwrap();
         f.crash_after(2);
-        f.write(Path::new("/d/a"), b"1").unwrap();
-        assert!(f.write(Path::new("/d/b"), b"2").is_err());
-        assert!(f.read(Path::new("/d/a")).is_err());
+        f.write(Path::new("d/a"), b"1").unwrap();
+        assert!(f.write(Path::new("d/b"), b"2").is_err());
+        assert!(f.read(Path::new("d/a")).is_err());
         f.revive();
-        assert!(f.peek(Path::new("/d/a")).is_none(), "nothing was synced");
-        f.write(Path::new("/d/b"), b"2").unwrap();
+        assert!(f.peek(Path::new("d/a")).is_none(), "nothing was synced");
+        f.write(Path::new("d/b"), b"2").unwrap();
     }
 
     #[test_id(t0o0aev)]
@@ -640,8 +640,8 @@ mod sim_tests {
         let faults = SimFaults { delay_ms: (1, 40), fail_per_mille: 300, block_per_mille: 0 };
         let run = |seed| {
             let f = fs(seed, faults.clone());
-            f.create_dir(Path::new("/d")).ok();
-            let ok: Vec<bool> = (0..30).map(|_| f.append(Path::new("/d/l"), b"x").is_ok()).collect();
+            f.create_dir(Path::new("d")).ok();
+            let ok: Vec<bool> = (0..30).map(|_| f.append(Path::new("d/l"), b"x").is_ok()).collect();
             (ok, f.accrued_ms())
         };
         assert_eq!(run(5), run(5));

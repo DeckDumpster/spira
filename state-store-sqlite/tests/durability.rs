@@ -1424,7 +1424,7 @@ fn unaccounted(fs: &runtime::ports::SimFs, ship_dir: &Path, c: &Contract<SqliteB
 #[test_id(tbszon5)]
 #[test]
 fn a_shipper_on_the_sim_disk_crashed_at_each_call_in_turn_then_reopened_loses_no_commit() {
-    let ship_path = Path::new("/lc-ship");
+    let ship_path = Path::new("lc-ship");
     let mut crashed_runs = 0;
     for k in 1.. {
         let dir = TempDir::new("ship-crash-sim");

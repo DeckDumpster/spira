@@ -706,12 +706,12 @@ mod tests {
     #[test]
     fn a_sink_over_the_sim_disk_writes_the_same_line_and_counts_a_failed_append() {
         let fs = ports::SimFs::new(1, Default::default(), ports::VirtualClock::new(0));
-        let sink = Sink::on(fs.clone(), "/otel", "spira-lc", 14);
+        let sink = Sink::on(fs.clone(), "otel", "spira-lc", 14);
         let real = tmp("sink-sim");
         let on_disk = Sink::new(real.path(), "spira-lc", 14);
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         sink.write(&call(0), now).unwrap();
-        let line = fs.peek(Path::new("/otel/spira-lc.2023-11-14.jsonl")).unwrap();
+        let line = fs.peek(Path::new("otel/spira-lc.2023-11-14.jsonl")).unwrap();
         assert!(line.ends_with(b"\n"));
         let parsed: serde_json::Value = serde_json::from_slice(&line).unwrap();
         assert_eq!(parsed["resourceSpans"][0]["resource"]["attributes"][0]["value"]["stringValue"], "spira-lc");

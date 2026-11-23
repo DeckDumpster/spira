@@ -300,7 +300,7 @@ mod tests {
     fn sim(seed: u64) -> (VirtualClock, Arc<SimFs>, Arc<SimJobs>, Arc<Pool>) {
         let clock = VirtualClock::new(0);
         let fs = SimFs::new(seed, ports::SimFaults { delay_ms: (1, 100), ..Default::default() }, clock.clone());
-        ports::Fs::create_dir(fs.as_ref(), std::path::Path::new("/d")).unwrap();
+        ports::Fs::create_dir(fs.as_ref(), std::path::Path::new("d")).unwrap();
         let jobs = SimJobs::new(clock.clone(), fs.clone(), 8);
         let pool = Pool::over(jobs.clone());
         (clock, fs, jobs, pool)
@@ -309,7 +309,7 @@ mod tests {
     fn append_job(pool: &Pool, fs: &Arc<SimFs>, what: &'static str) -> Offloaded<()> {
         let fs = fs.clone();
         pool.offload(what, None, move || {
-            ports::Fs::append(fs.as_ref(), std::path::Path::new("/d/log"), what.as_bytes()).unwrap();
+            ports::Fs::append(fs.as_ref(), std::path::Path::new("d/log"), what.as_bytes()).unwrap();
         })
         .unwrap()
     }
