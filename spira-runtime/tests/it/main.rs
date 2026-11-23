@@ -123,5 +123,6 @@ mod watcher_reconciler;
 mod watcher_reconciler_flow;
 mod watcher_round_duty;
 mod watcher_claim_count;
+mod watcher_margin_comments;
 mod watcher_supersede_duty;
 mod watcher_view;

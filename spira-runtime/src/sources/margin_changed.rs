@@ -99,19 +99,24 @@ impl Source for MarginChanged {
         };
         let mut after = resume_point(&self.run_dir);
         let mut failing: Option<Duration> = None;
+        let mut heard = false;
         loop {
             if tx.is_closed() {
                 return;
             }
-            match client.changes(after, self.hold_secs) {
+            let hold = if heard && failing.is_none() { self.hold_secs } else { 0 };
+            match client.changes(after, hold) {
                 Ok(answer) => {
-                    let recovered = failing.take().is_some();
+                    let said = !heard || failing.is_some();
+                    heard = true;
+                    failing = None;
                     after = after.max(answer.through);
-                    if answer.changes.is_empty() && !recovered {
+                    if answer.changes.is_empty() && !said {
                         continue;
                     }
                     let body = serde_json::to_string(&answer).unwrap_or_default();
-                    if tx.blocking_send(Submit::new(&format!("{MARGIN_CHANGED}/{}", answer.through), MARGIN_STREAM, EventKind::new(MARGIN_CHANGED, &body))).is_err() {
+                    let id = if answer.changes.is_empty() { format!("{MARGIN_CHANGED}/{}/{}", answer.through, wall_ms()) } else { format!("{MARGIN_CHANGED}/{}", answer.through) };
+                    if tx.blocking_send(Submit::new(&id, MARGIN_STREAM, EventKind::new(MARGIN_CHANGED, &body))).is_err() {
                         return;
                     }
                 }
@@ -212,6 +217,51 @@ mod tests {
         let times: Vec<Instant> = seen.lock().unwrap().iter().map(|(t, _)| *t).collect();
         let gaps: Vec<Duration> = times.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(gaps[0] >= FIRST && gaps[1] >= CAP && gaps[2] >= CAP, "{gaps:?}");
+    }
+
+    #[test_id(tvo7x8m)]
+    #[test]
+    fn two_outages_at_one_through_give_recoveries_with_distinct_ids() {
+        let dir = testkit::TempDir::new("margin-source-twice");
+        let (base, _) = serve(vec![(200, r#"{"last_seq":4,"changes":[]}"#), (500, "no"), (200, r#"{"last_seq":4,"changes":[]}"#), (500, "no"), (200, r#"{"last_seq":4,"changes":[]}"#)]);
+        let mut rx = start(source(&base, &dir));
+        let tags: Vec<(String, String)> = (0..5).map(|_| rx.blocking_recv().unwrap()).map(|s| (s.id.clone(), s.kind.tag.to_string())).collect();
+        let recoveries: Vec<&String> = tags.iter().filter(|(_, t)| t == MARGIN_CHANGED).map(|(i, _)| i).collect();
+        assert_eq!(recoveries.len(), 3, "{tags:?}");
+        assert!(recoveries[0] != recoveries[1] && recoveries[1] != recoveries[2] && recoveries[0] != recoveries[2], "{recoveries:?}");
+    }
+
+    #[test_id(t4mq567)]
+    #[test]
+    fn an_empty_first_answer_is_said_and_retries_ask_without_waiting_though_the_hold_is_set() {
+        let dir = testkit::TempDir::new("margin-source-first");
+        let (base, seen) = serve(vec![(200, r#"{"last_seq":4,"changes":[]}"#), (500, "no"), (200, r#"{"last_seq":4,"changes":[]}"#), (200, r#"{"last_seq":5,"changes":[{"seq":5,"kind":"published","collection_id":"c"}]}"#)]);
+        let mut s = source(&base, &dir);
+        s.hold_secs = 7;
+        let mut rx = start(s);
+        let first = rx.blocking_recv().unwrap();
+        assert_eq!(first.kind.tag.as_str(), MARGIN_CHANGED, "an empty first answer is the proof the feed is up");
+        assert_eq!(rx.blocking_recv().unwrap().kind.tag.as_str(), MARGIN_UNREACHABLE);
+        assert_eq!(rx.blocking_recv().unwrap().kind.tag.as_str(), MARGIN_CHANGED);
+        assert_eq!(rx.blocking_recv().unwrap().kind.tag.as_str(), MARGIN_CHANGED);
+        let asked: Vec<String> = seen.lock().unwrap().iter().map(|(_, l)| l.clone()).collect();
+        assert!(asked[0].contains("wait=0") && asked[1].contains("wait=0") && asked[2].contains("wait=0"), "{asked:?}");
+        assert!(asked[3].contains("wait=7"), "{asked:?}");
+    }
+
+    #[test_id(tmx57w7)]
+    #[test]
+    fn after_refusals_a_change_arrives_and_is_asked_with_the_same_after() {
+        let dir = testkit::TempDir::new("margin-source-same-after");
+        let (base, seen) = serve(vec![(500, "no"), (500, "no"), (200, r#"{"last_seq":3,"changes":[{"seq":3,"kind":"published","collection_id":"c"}]}"#)]);
+        let mut s = source(&base, &dir);
+        s.hold_secs = 7;
+        let mut rx = start(s);
+        let (down, back) = (rx.blocking_recv().unwrap(), rx.blocking_recv().unwrap());
+        assert_eq!((down.kind.tag.as_str(), back.kind.tag.as_str()), (MARGIN_UNREACHABLE, MARGIN_CHANGED));
+        assert!(back.kind.body.contains(r#""through":3"#), "{}", back.kind.body);
+        let asked: Vec<String> = seen.lock().unwrap().iter().map(|(_, l)| l.clone()).collect();
+        assert!(asked.iter().all(|l| l.contains("after=0")), "{asked:?}");
     }
 
     #[test_id(tqhabfo)]
