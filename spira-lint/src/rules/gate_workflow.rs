@@ -479,7 +479,12 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             o.push((file, "provision must output vm-token and teardown must receive needs.provision.outputs.vm-token".to_string()));
         }
         for inp in spill_teardown_missing(text) {
-            o.push((file, format!("provision spills, so teardown must pass {inp} (the EC2 instance is otherwise never read or terminated)")));
+            let why = if inp == "run-record" {
+                "the instance-end line otherwise lacks when the runner registered and whether it was online"
+            } else {
+                "the EC2 instance is otherwise never read or terminated"
+            };
+            o.push((file, format!("provision spills, so teardown must pass {inp} ({why})")));
         }
         let pb = block(text, "provision");
         if pb.is_empty() {

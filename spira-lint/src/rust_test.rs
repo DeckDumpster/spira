@@ -24,7 +24,10 @@ fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
 /// A file that is test code as a whole, by where it sits: an integration test
 /// (`<crate>/tests/…`) or a module file named `tests.rs`.
 pub fn test_by_path(path: &str) -> bool {
-    path.starts_with("tests/") || path.contains("/tests/") || path == "tests.rs" || path.ends_with("/tests.rs")
+    path.starts_with("tests/")
+        || path.contains("/tests/")
+        || path == "tests.rs"
+        || path.ends_with("/tests.rs")
 }
 
 /// The index just past the bracket that closes the one opening at `open`, over code-only
@@ -88,8 +91,14 @@ pub fn shape(src: &[u8]) -> Shape {
     let cl = rust::classify(src);
     let code = cl.code_only();
     let text = cl.without_comments();
-    let cfg_test = re(&CFG_TEST, r"^#\s*\[\s*cfg\s*\((?:[^\]]*[^A-Za-z0-9_])?test(?:[^A-Za-z0-9_]|$)");
-    let mod_decl = re(&MOD_DECL, r"^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;");
+    let cfg_test = re(
+        &CFG_TEST,
+        r"^#\s*\[\s*cfg\s*\((?:[^\]]*[^A-Za-z0-9_])?test(?:[^A-Za-z0-9_]|$)",
+    );
+    let mod_decl = re(
+        &MOD_DECL,
+        r"^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;",
+    );
     let path_attr = re(&PATH_ATTR, r#"^#\s*\[\s*path\s*=\s*"([^"]*)"\s*\]"#);
     static INNER: OnceLock<Regex> = OnceLock::new();
     let mut s = Shape {
@@ -99,7 +108,9 @@ pub fn shape(src: &[u8]) -> Shape {
     let mut paths: Vec<(String, String)> = Vec::new();
     let mut i = 0;
     while i < code.len() {
-        if code[i] != b'#' || (i > 0 && (code[i - 1].is_ascii_alphanumeric() || code[i - 1] == b'_')) {
+        if code[i] != b'#'
+            || (i > 0 && (code[i - 1].is_ascii_alphanumeric() || code[i - 1] == b'_'))
+        {
             i += 1;
             continue;
         }
@@ -177,11 +188,18 @@ pub fn shape(src: &[u8]) -> Shape {
     }
     // Every `mod name;`: one inside a test region, or in a test file, declares a test module.
     static ANY: OnceLock<Regex> = OnceLock::new();
-    let any = re(&ANY, r"(?:^|[^A-Za-z0-9_])mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;");
+    let any = re(
+        &ANY,
+        r"(?:^|[^A-Za-z0-9_])mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;",
+    );
     for c in any.captures_iter(&code) {
         let name = String::from_utf8_lossy(&c[1]).into_owned();
-        let path = paths.iter().find(|(n, _)| *n == name).map(|(_, p)| p.clone());
-        s.all_mods.push((c.get(1).map_or(0, |m| m.start()), name, path));
+        let path = paths
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, p)| p.clone());
+        s.all_mods
+            .push((c.get(1).map_or(0, |m| m.start()), name, path));
     }
     s
 }
@@ -189,7 +207,13 @@ pub fn shape(src: &[u8]) -> Shape {
 /// The file `mod name;` in `decl` loads.
 fn mod_file(decl: &str, name: &str, path: Option<&str>) -> Vec<String> {
     let dir = decl.rsplit_once('/').map_or("", |(d, _)| d);
-    let join = |d: &str, f: &str| if d.is_empty() { f.to_string() } else { format!("{d}/{f}") };
+    let join = |d: &str, f: &str| {
+        if d.is_empty() {
+            f.to_string()
+        } else {
+            format!("{d}/{f}")
+        }
+    };
     if let Some(p) = path {
         return vec![join(dir, p)];
     }
@@ -199,7 +223,10 @@ fn mod_file(decl: &str, name: &str, path: Option<&str>) -> Vec<String> {
     } else {
         join(dir, base.trim_end_matches(".rs"))
     };
-    vec![join(&home, &format!("{name}.rs")), join(&home, &format!("{name}/mod.rs"))]
+    vec![
+        join(&home, &format!("{name}.rs")),
+        join(&home, &format!("{name}/mod.rs")),
+    ]
 }
 
 /// The set of file paths that are test code as a whole: by path, by inner `#![cfg(test)]`,
@@ -207,14 +234,22 @@ fn mod_file(decl: &str, name: &str, path: Option<&str>) -> Vec<String> {
 /// test module's own test submodules count too. `shapes` is every `.rs` entry paired with
 /// its [`shape`].
 pub fn whole_test_files(tree: &Tree, shapes: &[(&Entry, Shape)]) -> BTreeSet<String> {
-    let mut whole: BTreeSet<String> =
-        shapes.iter().filter(|(e, s)| s.inner_test || test_by_path(&e.path)).map(|(e, _)| e.path.clone()).collect();
+    let mut whole: BTreeSet<String> = shapes
+        .iter()
+        .filter(|(e, s)| s.inner_test || test_by_path(&e.path))
+        .map(|(e, _)| e.path.clone())
+        .collect();
     loop {
         let before = whole.len();
         for (e, s) in shapes {
             let file_is_test = whole.contains(&e.path);
-            let decls = s.all_mods.iter().filter(|(at, _, _)| file_is_test || s.covers(*at));
-            let named = decls.map(|(_, n, p)| (n.clone(), p.clone())).chain(s.test_mods.iter().cloned());
+            let decls = s
+                .all_mods
+                .iter()
+                .filter(|(at, _, _)| file_is_test || s.covers(*at));
+            let named = decls
+                .map(|(_, n, p)| (n.clone(), p.clone()))
+                .chain(s.test_mods.iter().cloned());
             for (n, p) in named {
                 for f in mod_file(&e.path, &n, p.as_deref()) {
                     if tree.entry(&f).is_some() {
@@ -250,9 +285,18 @@ pub fn test_sites(src: &[u8]) -> Vec<TestSite> {
     static ITEM: OnceLock<Regex> = OnceLock::new();
     static MACRO: OnceLock<Regex> = OnceLock::new();
     let test_attr = re(&TEST_ATTR, r"^#\s*\[\s*(?:tokio\s*::\s*)?test\s*(?:\(|\])");
-    let id_attr = re(&ID_ATTR, r"^#\s*\[\s*(?:spira_test_id\s*::\s*)?test_id\s*\(\s*([^)\s]*)\s*\)\s*\]");
-    let item = re(&ITEM, r"^(?:pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(\$?[A-Za-z_][A-Za-z0-9_]*)");
-    let macro_rules = re(&MACRO, r"\bmacro_rules\s*!\s*[A-Za-z_][A-Za-z0-9_]*\s*[{(\[]");
+    let id_attr = re(
+        &ID_ATTR,
+        r"^#\s*\[\s*(?:spira_test_id\s*::\s*)?test_id\s*\(\s*([^)\s]*)\s*\)\s*\]",
+    );
+    let item = re(
+        &ITEM,
+        r"^(?:pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(\$?[A-Za-z_][A-Za-z0-9_]*)",
+    );
+    let macro_rules = re(
+        &MACRO,
+        r"\bmacro_rules\s*!\s*[A-Za-z_][A-Za-z0-9_]*\s*[{(\[]",
+    );
     let cl = rust::classify(src);
     let code = cl.code_only();
     let macro_bodies: Vec<(usize, usize)> = macro_rules
@@ -265,7 +309,9 @@ pub fn test_sites(src: &[u8]) -> Vec<TestSite> {
     let mut sites = Vec::new();
     let mut i = 0;
     while i < code.len() {
-        if code[i] != b'#' || (i > 0 && (code[i - 1].is_ascii_alphanumeric() || code[i - 1] == b'_')) {
+        if code[i] != b'#'
+            || (i > 0 && (code[i - 1].is_ascii_alphanumeric() || code[i - 1] == b'_'))
+        {
             i += 1;
             continue;
         }
@@ -301,7 +347,10 @@ pub fn test_sites(src: &[u8]) -> Vec<TestSite> {
             continue;
         }
         if let (Some(at), Some(c)) = (first_test, item.captures(&code[j.min(code.len())..])) {
-            let line_start = src[..at].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
+            let line_start = src[..at]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map_or(0, |p| p + 1);
             let indent: String = src[line_start..at]
                 .iter()
                 .take_while(|b| **b == b' ' || **b == b'\t')
@@ -324,9 +373,17 @@ pub fn test_sites(src: &[u8]) -> Vec<TestSite> {
 pub fn test_body(src: &[u8], site: &TestSite) -> Option<Vec<u8>> {
     let cl = rust::classify(src);
     let code = cl.code_only();
-    let from = src.split(|&b| b == b'\n').take(site.line.saturating_sub(1)).map(|l| l.len() + 1).sum::<usize>().min(code.len());
+    let from = src
+        .split(|&b| b == b'\n')
+        .take(site.line.saturating_sub(1))
+        .map(|l| l.len() + 1)
+        .sum::<usize>()
+        .min(code.len());
     let needle = format!("fn {}", site.fn_name);
-    let at = from + code[from..].windows(needle.len()).position(|w| w == needle.as_bytes())?;
+    let at = from
+        + code[from..]
+            .windows(needle.len())
+            .position(|w| w == needle.as_bytes())?;
     let open = at + code[at..].iter().position(|&b| b == b'{')?;
     let end = close_of(&code, open)?;
     Some(src[open..end].to_vec())
@@ -336,12 +393,20 @@ pub fn test_body(src: &[u8], site: &TestSite) -> Option<Vec<u8>> {
 /// test site's own and a macro invocation's argument alike. A `$` fragment is no literal.
 pub fn literal_test_ids(src: &[u8]) -> Vec<(usize, String)> {
     static LITERAL: OnceLock<Regex> = OnceLock::new();
-    let literal = re(&LITERAL, r"#\s*\[\s*(?:spira_test_id\s*::\s*)?test_id\s*\(\s*(t[0-9a-z]{6})\s*\)\s*\]");
+    let literal = re(
+        &LITERAL,
+        r"#\s*\[\s*(?:spira_test_id\s*::\s*)?test_id\s*\(\s*(t[0-9a-z]{6})\s*\)\s*\]",
+    );
     let cl = rust::classify(src);
     let code = cl.code_only();
     literal
         .captures_iter(&code)
-        .filter_map(|c| Some((cl.line_of(c.get(0)?.start()), String::from_utf8_lossy(&c[1]).into_owned())))
+        .filter_map(|c| {
+            Some((
+                cl.line_of(c.get(0)?.start()),
+                String::from_utf8_lossy(&c[1]).into_owned(),
+            ))
+        })
         .collect()
 }
 
@@ -367,8 +432,19 @@ mod test_sites_tests {
     fn a_stamped_and_an_unstamped_test_carry_some_and_none() {
         let s = sites("#[test_id(t7k3m9q)]\n#[test]\nfn a() {}\n\n    #[test]\n    fn b() {}\n");
         assert_eq!(s.len(), 2);
-        assert_eq!((s[0].id.as_deref(), s[0].fn_name.as_str(), s[0].line), (Some("t7k3m9q"), "a", 2));
-        assert_eq!((s[1].id.clone(), s[1].fn_name.as_str(), s[1].line, s[1].indent.as_str()), (None, "b", 5, "    "));
+        assert_eq!(
+            (s[0].id.as_deref(), s[0].fn_name.as_str(), s[0].line),
+            (Some("t7k3m9q"), "a", 2)
+        );
+        assert_eq!(
+            (
+                s[1].id.clone(),
+                s[1].fn_name.as_str(),
+                s[1].line,
+                s[1].indent.as_str()
+            ),
+            (None, "b", 5, "    ")
+        );
     }
 
     #[test_id(tim2whe)]
@@ -406,9 +482,16 @@ mod test_sites_tests {
     #[test_id(t8bd3qn)]
     #[test]
     fn a_tests_body_is_its_braces_and_not_a_neighbours_or_a_braces_in_a_string() {
-        let src = "#[test]\nfn a() { let s = \"}\"; }\n#[test]\nfn b() {\n    if true { x(); }\n}\n";
+        let src =
+            "#[test]\nfn a() { let s = \"}\"; }\n#[test]\nfn b() {\n    if true { x(); }\n}\n";
         let s = sites(src);
-        assert_eq!(crate::rust_test::test_body(src.as_bytes(), &s[0]).unwrap(), b"{ let s = \"}\"; }");
-        assert_eq!(crate::rust_test::test_body(src.as_bytes(), &s[1]).unwrap(), b"{\n    if true { x(); }\n}");
+        assert_eq!(
+            crate::rust_test::test_body(src.as_bytes(), &s[0]).unwrap(),
+            b"{ let s = \"}\"; }"
+        );
+        assert_eq!(
+            crate::rust_test::test_body(src.as_bytes(), &s[1]).unwrap(),
+            b"{\n    if true { x(); }\n}"
+        );
     }
 }

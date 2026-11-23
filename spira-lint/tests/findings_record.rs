@@ -7,9 +7,19 @@ use spira_lint::record::{FindingRecord, FINDINGS_SCHEMA};
 fn run_fixture(tmp: &testkit::TempDir) -> std::process::Output {
     let root = tmp.path().join("tree");
     std::fs::create_dir_all(root.join("app")).unwrap();
-    std::fs::write(root.join("app/a.rs"), "const U: &str = \"spira-widget.service\";\n").unwrap();
+    std::fs::write(
+        root.join("app/a.rs"),
+        "const U: &str = \"spira-widget.service\";\n",
+    )
+    .unwrap();
     let git = |args: &[&str]| {
-        let o = Command::new("git").arg("-C").arg(&root).args(args).env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     };
     git(&["init", "-q"]);
@@ -26,13 +36,17 @@ fn run_fixture(tmp: &testkit::TempDir) -> std::process::Output {
         .unwrap()
 }
 
-
 #[test_id(trp1tsq)]
 #[test]
 fn findings_flag_writes_one_record_naming_the_rules_source_and_allow_file() {
     let tmp = testkit::TempDir::new("lint-findings");
     let out = run_fixture(&tmp);
-    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = std::fs::read_to_string(tmp.path().join("findings.jsonl")).unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 1, "{text}");
@@ -41,11 +55,13 @@ fn findings_flag_writes_one_record_naming_the_rules_source_and_allow_file() {
     assert_eq!(r.rule, "bare-unit-name");
     assert_eq!(r.path, "app/a.rs");
     assert_eq!(r.rule_source, "spira-lint/src/rules/bare_unit_name.rs");
-    let rule = spira_lint::all_rules().into_iter().find(|x| x.name() == "bare-unit-name").unwrap();
+    let rule = spira_lint::all_rules()
+        .into_iter()
+        .find(|x| x.name() == "bare-unit-name")
+        .unwrap();
     assert_eq!(r.allow_file.as_deref(), rule.allow_file());
     assert!(r.allow_file.is_some());
 }
-
 
 #[test_id(t6nc2xs)]
 #[test]
@@ -54,7 +70,6 @@ fn a_record_with_an_extra_field_is_refused_naming_the_field() {
     let err = FindingRecord::parse(line).unwrap_err();
     assert!(err.contains("member"), "{err}");
 }
-
 
 #[test_id(tyv4k7o)]
 #[test]
