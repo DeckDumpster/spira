@@ -1035,7 +1035,8 @@ fn a_lib_root_lists_its_bin_and_integration_test_callers_by_line_and_not_a_bin_b
         .with_file("census/src/util.rs", "pub fn help() {\n    crate::run();\n}\n")
         .with_file("census/src/main.rs", "fn main() {\n    census::run();\n}\n")
         .with_file("census/src/side.rs", "fn main() {\n    crate::run();\n}\n")
-        .with_file("census/tests/it.rs", "use census::{\n    other,\n    run,\n};\n\n#[test]\nfn it() {\n    run();\n}\n");
+        .with_file("census/tests/it.rs", "use census::{\n    other,\n    run,\n};\n\n#[test]\nfn it() {\n    run();\n}\n")
+        .with_file("census/tests/other.rs", "fn helper() {\n    crate::run();\n}\n");
     w.ports.tree = Box::new(tree);
     assert_eq!(w.cr(&["open", "--aim", "census/src/lib.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
@@ -1045,4 +1046,42 @@ fn a_lib_root_lists_its_bin_and_integration_test_callers_by_line_and_not_a_bin_b
     let section = &body[at..body.find("## How often").unwrap()];
     let lines: Vec<&str> = section.lines().filter(|l| l.starts_with("- ")).collect();
     assert_eq!(lines, ["- `census/src/main.rs:2`", "- `census/src/util.rs:2`", "- `census/tests/it.rs:3`"], "{section}");
+}
+
+#[test_id(tu5k1xd)]
+#[test]
+fn an_unknown_first_commit_omits_neither_the_windowed_count_nor_the_rewritten_line() {
+    let mut w = world();
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- First commit: unknown"), "{body}");
+    assert!(body.contains("- Commits: 0 ever (0 in the last 60 days)"), "{body}");
+    assert!(body.contains("- Rewritten in the last 45 days: unknown"), "{body}");
+}
+
+#[test_id(tr7b2ya)]
+#[test]
+fn a_first_commit_inside_the_churn_window_but_outside_the_rewrite_window_keeps_only_the_rewritten_line() {
+    let mut w = world();
+    let first = CommitInfo { at_ms: NOW - 50 * DAY, ..commit("f1", "first", false) };
+    w.ports.tree = Box::new(fixture().with_log("demo/src/store.rs", vec![commit("f2", "later", false), first]));
+    let body = sealed_body(&mut w);
+    assert!(body.contains("- Commits: 2 ever, 0 reverts"), "{body}");
+    assert!(body.contains("- Rewritten in the last 45 days"), "{body}");
+}
+
+#[test_id(tq3d9ps)]
+#[test]
+fn a_lib_root_is_searched_by_the_names_it_publicly_reexports() {
+    let mut w = world();
+    let tree = fixture()
+        .with_file("Cargo.toml", "[workspace]\nmembers = [\"census\"]\n")
+        .with_file("census/Cargo.toml", "[package]\nname = \"census\"\n")
+        .with_file("census/src/lib.rs", "mod inner;\n\npub use inner::Tally;\n")
+        .with_file("census/src/inner.rs", "pub struct Tally;\n")
+        .with_file("census/tests/it.rs", "fn f() {\n    let _ = census::Tally;\n}\n");
+    w.ports.tree = Box::new(tree);
+    assert_eq!(w.cr(&["open", "--aim", "census/src/lib.rs", "--seed", "1"]).code, 0);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 0);
+    assert!(w.cover().contains("- `census/tests/it.rs:2`"), "{}", w.cover());
 }

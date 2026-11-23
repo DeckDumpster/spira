@@ -74,7 +74,7 @@ struct Search {
 impl Search {
     fn pairs_in(&self, path: &str) -> Vec<(String, String)> {
         let mut v = self.pairs.clone();
-        if path.starts_with(&format!("{}/", self.crate_dir)) && !self.bins.iter().any(|b| b == path) {
+        if path.starts_with(&format!("{}/src/", self.crate_dir)) && !self.bins.iter().any(|b| b == path) {
             v.extend(self.own.iter().cloned());
         }
         v
