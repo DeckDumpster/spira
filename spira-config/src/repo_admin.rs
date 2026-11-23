@@ -620,14 +620,20 @@ fn publish_piece(reg: &Registry, name: &str, path: &Path, land: &str) -> Result<
         return Err(format!("no [publish.{name}] block"));
     }
     if !repos::publishes_nowhere(reg, name, &BTreeMap::new()) {
-        return Ok(format!("[publish.{name}] declared"));
+        let p = reg.publish.get(name).cloned().unwrap_or_default();
+        let mode = p.mode.map(mode_word).unwrap_or("pr");
+        return Ok(format!(
+            "[publish.{name}] remote = {:?}, branch = {:?}, mode = {mode}",
+            p.remote.unwrap_or_default(),
+            p.branch.unwrap_or_default()
+        ));
     }
     if in_tree(path, land, DEPLOY_WORKFLOW) {
         return Err(format!(
             "deploys from the forge ({DEPLOY_WORKFLOW} on {land}) but publishes nowhere ([publish.{name}] remote = \"none\") — set it with spira-config repo set {name} publish-remote <remote>"
         ));
     }
-    Ok("[publish] declared: publishes nowhere".to_string())
+    Ok(format!("[publish.{name}] remote = \"none\": publishes nowhere"))
 }
 
 /// Every piece of plumbing, in order, stopping after the first that is missing.
