@@ -1244,11 +1244,8 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 None => runner.filter_green_in(&f.name, scope, m),
             })
         };
-        let control = if members.len() > 1 {
-            reproduced(&packages, runner, &mut probes)
-        } else {
-            Control::Red
-        };
+        let control = reproduced(&packages, runner, &mut probes);
+        let red_again = matches!(control, Control::Red);
         if let (Control::Green, Some((red_on, green_on))) = (&control, &moved) {
             return Ok(FilterEject::RunnerDifference {
                 tests: f.failed.clone(),
@@ -1295,6 +1292,22 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             }
             Control::Green => kind = "flipped",
             Control::Red => probes.smallest_red = None,
+        }
+        if let (true, [only]) = (red_again, members) {
+            let actions = vec![Action::Eject {
+                id: only.id.clone(),
+                line: format!(
+                    "{} red{tests} in a round whose only member is {}, red again on a rerun of the unchanged tree",
+                    f.name, only.id
+                ),
+            }];
+            let left = who_left(members, &leaving(members, &actions, &f.name));
+            return Ok(
+                match apply_build_actions(ops, members, &actions, &f.name, &f.failed)? {
+                    Some(next) => FilterEject::Survivors(next),
+                    None => FilterEject::Emptied(left),
+                },
+            );
         }
         if kind == "flipped" {
             cleared = NOT_IN_PROBE.to_string();
@@ -1541,7 +1554,7 @@ fn unconverged<O: RoundOps>(
     probes.end(red, members)
 }
 
-/// A round of one member has no one else to blame: a red nothing else names is that member's.
+/// A round of one member has no one else to blame: a red nothing else names, and that a rerun reproduced, is that member's.
 fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
     match members {
         [only] => vec![Action::Eject {
@@ -1552,7 +1565,7 @@ fn sole_member_culprit(red: &str, members: &[Member]) -> Vec<Action> {
     }
 }
 
-/// A one-member round red in the corpus pass ends by ejecting that member: no rerun, no probe.
+/// A one-member round red that a rerun reproduced (or red on a build) ends by ejecting that member.
 fn eject_sole_member<O: RoundOps>(
     ops: &mut O,
     members: &[Member],
@@ -2392,12 +2405,6 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             "batcher: {} red in the corpus pass — attributing it by its failing tests, without running the corpus again",
             f.name
         );
-        if let [_] = members[..] {
-            if f.unnamed.is_empty() {
-                let red = format!("{} red{}", f.name, noted_tests(&f.failed));
-                return eject_sole_member(ops, &members, &red, &f.name);
-            }
-        }
         match eject_filter_owners(runner, ops, &f, &members)? {
             FilterEject::Flipped(ids) => {
                 if let Err(e) = ops.disable_flips(&ids) {
@@ -2469,8 +2476,15 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             if eject.is_empty() {
                 return Ok(harness_fault(&faults));
             }
-            let red = format!("{} red in the corpus pass", eject.join(","));
-            return eject_sole_member_on_suites(ops, &members, &red, &eject);
+            let touched: Vec<String> = eject
+                .iter()
+                .filter(|s| !ops.touching(s, &[only.id.clone()]).is_empty())
+                .cloned()
+                .collect();
+            if !touched.is_empty() {
+                let red = format!("{} red in the corpus pass", touched.join(","));
+                return eject_sole_member_on_suites(ops, &members, &red, &touched);
+            }
         }
         if runner.confirmed() {
             return confirmed_attribution(runner, ops, &members, &prior_reds);
@@ -4652,7 +4666,7 @@ pub(crate) mod tests {
 
     #[test_id(tf77jv8)]
     #[test]
-    fn a_one_member_round_red_in_a_prior_filter_ejects_its_member_without_a_probe() {
+    fn a_one_member_round_red_in_a_prior_filter_runs_one_control_then_ejects_its_member() {
         let red = FilterRed {
             harness: vec![],
             name: "integration-tests".into(),
@@ -4660,6 +4674,10 @@ pub(crate) mod tests {
             failed: vec!["FAIL dir:testenv t".into()], ..Default::default() };
         let mut f = Fake::new(|_, _| false);
         f.bisects = true;
+        f.filter = Some(Box::new({
+            let red = red.clone();
+            move |_| Some(red.clone())
+        }));
         f.prior = Some(red);
         let mut ops = Ops::default();
         let end = attribute_round(
@@ -4679,7 +4697,7 @@ pub(crate) mod tests {
             vec![("m1".to_string(), vec!["integration-tests".to_string()])]
         );
         assert!(
-            f.scoped.is_empty() && f.main_kind.is_empty(),
+            f.scoped.len() == 1 && f.main_kind.is_empty(),
             "{:?} {:?}",
             f.scoped,
             f.main_kind
@@ -4687,7 +4705,7 @@ pub(crate) mod tests {
         assert!(
             ops.eject_evidence
                 .iter()
-                .any(|(id, line)| id == "m1" && line.contains("FAIL dir:testenv t")),
+                .any(|(id, line)| id == "m1" && line.contains("FAIL dir:testenv t") && line.contains("red again on a rerun")),
             "{:?}",
             ops.eject_evidence
         );
@@ -4695,11 +4713,17 @@ pub(crate) mod tests {
 
     fn fence_only_round(refusal: Option<&str>) -> (Fake, Ops) {
         let mut f = Fake::new(|_, _| false);
-        f.prior = Some(FilterRed {
+        let red = FilterRed {
             harness: vec![],
             name: "fence-round-image-preflight".into(),
             named: vec![],
-            failed: vec![], ..Default::default() });
+            failed: vec![], ..Default::default() };
+        f.bisects = true;
+        f.filter = Some(Box::new({
+            let red = red.clone();
+            move |_| Some(red.clone())
+        }));
+        f.prior = Some(red);
         let ops = Ops {
             refuse_eject: refusal.map(String::from),
             ..Ops::default()
@@ -4900,10 +4924,10 @@ pub(crate) mod tests {
 
     #[test_id(tt8x3f8)]
     #[test]
-    fn a_one_member_round_red_in_prior_suites_ejects_its_member_without_a_run() {
+    fn a_one_member_round_red_in_a_prior_suite_its_diff_touches_ejects_without_a_run() {
         let mut f = Fake::new(|_, _| false);
         f.prior_suites = vec!["test-03.sh".into()];
-        let mut ops = Ops::default();
+        let mut ops = touching_ops(&[("test-03.sh", &["m1"])]);
         let end = attribute_round(
             &mut f,
             &mut ops,
@@ -4925,10 +4949,10 @@ pub(crate) mod tests {
 
     #[test_id(t10q4mf)]
     #[test]
-    fn a_one_member_round_red_in_two_prior_suites_ejects_its_member_on_each_suite() {
+    fn a_one_member_round_red_in_two_prior_suites_its_diff_touches_ejects_on_each_suite() {
         let mut f = Fake::new(|_, _| false);
         f.prior_suites = vec!["test-01.sh".into(), "test-03.sh".into()];
-        let mut ops = Ops::default();
+        let mut ops = touching_ops(&[("test-01.sh", &["m1"]), ("test-03.sh", &["m1"])]);
         let end = attribute_round(
             &mut f,
             &mut ops,
@@ -4996,7 +5020,7 @@ pub(crate) mod tests {
         let mut f = Fake::new(|_, _| false);
         f.prior_suites = vec!["test-01.sh".into(), "test-spike.sh".into()];
         f.deadlines.insert("test-spike.sh".into(), spike_deadline());
-        let mut ops = touching_ops(&[]);
+        let mut ops = touching_ops(&[("test-01.sh", &["m1"])]);
         let end = run_sole(&mut f, &mut ops);
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
@@ -5004,10 +5028,10 @@ pub(crate) mod tests {
 
     #[test_id(t32bd4p)]
     #[test]
-    fn a_sole_member_non_deadline_red_on_an_untouched_suite_is_still_ejected() {
+    fn a_sole_member_non_deadline_red_on_a_suite_its_diff_touches_is_ejected() {
         let mut f = Fake::new(|_, _| false);
         f.prior_suites = vec!["test-01.sh".into()];
-        let mut ops = touching_ops(&[]);
+        let mut ops = touching_ops(&[("test-01.sh", &["m1"])]);
         let end = run_sole(&mut f, &mut ops);
         assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
         assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["test-01.sh".to_string()])]);
@@ -8074,6 +8098,57 @@ pub(crate) mod tests {
         assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
     }
 
+    fn one_member_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {
+        attribute_round(f, ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap()
+    }
+
+    #[test_id(to5rjno)]
+    #[test]
+    fn a_one_member_flip_red_in_the_prior_filter_is_disabled_and_the_member_lands() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior = Some(flip_red(&[FLIP_UNIT]));
+        f.bisects = true;
+        f.rerun_green = true;
+        let mut ops = Ops::default();
+        let end = one_member_round(&mut f, &mut ops);
+        assert_eq!(ops.disabled, vec![vec!["test:t0facta".to_string()]]);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert_eq!(land_ids(end), vec!["m1"]);
+    }
+
+    #[test_id(tpw6rbg)]
+    #[test]
+    fn a_one_member_prior_filter_red_that_stays_red_on_rerun_is_ejected_after_one_control() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior = Some(flip_red(&[FLIP_UNIT]));
+        f.bisects = true;
+        f.rerun_green = false;
+        f.filter = Some(Box::new(|_| Some(flip_red(&[FLIP_UNIT]))));
+        let mut ops = Ops::default();
+        let end = one_member_round(&mut f, &mut ops);
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(f.scoped.len(), 1, "{:?}", f.scoped);
+        assert!(ops.disabled.is_empty());
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["unit-tests".to_string()])]);
+        assert!(
+            ops.eject_evidence.iter().any(|(id, l)| id == "m1" && l.contains("red again on a rerun")),
+            "{:?}",
+            ops.eject_evidence
+        );
+    }
+
+    #[test_id(tomqknj)]
+    #[test]
+    fn a_one_member_round_red_in_a_prior_suite_its_diff_does_not_touch_is_rerun_not_ejected() {
+        let mut f = Fake::new(|_, _| false);
+        f.prior_suites = vec!["test-03.sh".into()];
+        let mut ops = Ops::default();
+        let end = one_member_round(&mut f, &mut ops);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(!f.main_kind.is_empty());
+        assert_eq!(land_ids(end), vec!["m1"]);
+    }
+
     #[test_id(t1ajsep)]
     #[test]
     fn a_filter_red_whose_full_membership_probe_is_green_ends_after_one_probe_as_flipped() {
@@ -8505,6 +8580,11 @@ pub(crate) mod tests {
             named: vec![],
             failed: vec!["FAIL dir:testenv t".into()], ..Default::default() };
         let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(Box::new({
+            let red = red.clone();
+            move |_| Some(red.clone())
+        }));
         f.prior = Some(red);
         let mut ops = Ops::default();
         let end = attribute_round(
@@ -8646,6 +8726,7 @@ pub(crate) mod tests {
     #[test]
     fn sp_evwve7_a_filter_red_naming_no_member_ejects_the_only_member_of_the_round() {
         let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
         f.filter = Some(Box::new(|_| {
             Some(FilterRed {
                 harness: vec![],
