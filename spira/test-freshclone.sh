@@ -61,8 +61,7 @@ fi
 echo
 echo "syntax check — every shipped shell script parses:"
 # ==========================================================================
-# Top-level and spira/ scripts, plus the runes's runes (D8: absorbs test-spike.sh's
-# redundant bash -n rows over the same files — confine.sh is already caught by the
+# Top-level and spira/ scripts, plus the runes's runes (confine.sh is caught by the
 # "$HERE"/*.sh glob below, so only the runes, which are not *.sh, needed adding).
 # A rune is a shell fragment SOURCED into the calling process; a syntax error in one is
 # not a persona that misbehaves, it is a harness that dies mid-call. Other subdirectories

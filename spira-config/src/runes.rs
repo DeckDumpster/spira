@@ -394,7 +394,7 @@ pub fn rune_predicate(home: &Path, rune: &str) -> Result<Predicate, Refusal> {
 /// that otherwise inherits this process's full environment — else that AMBIENT
 /// environment directly. In-process resolution is not the only source: a caller that
 /// sourced the real `conf.sh` already has the right value genuinely exported (every real
-/// suite; `test-spike.sh` pins `SPIRA_SPIKE_LABEL=research` by a bare `export`, under a
+/// suite; a spike suite once pinned `SPIRA_SPIKE_LABEL=research` by a bare `export`, under a
 /// fixture `SPIRA_HOME` with no `conf.d` at all, so [`rune_label_overlay`]'s own
 /// `resolve_for_process` call fails outright there — that failure must not be read as "the
 /// variable itself is unresolved" when the ambient shell plainly has it).
@@ -934,7 +934,7 @@ mod tests {
         assert!(err.to_string().contains("SPIRA_INCIDENT_LABEL"));
     }
 
-    /// test-spike.sh's own real shape: `SPIRA_HOME` is a scratch fixture with NO `conf.d`
+    /// A spike suite's real shape: `SPIRA_HOME` is a scratch fixture with NO `conf.d`
     /// at all (only a `runes/` and a stub `lib.sh`), so [`rune_label_overlay`]'s own
     /// `resolve_for_process` call fails OUTRIGHT there — but the suite pins
     /// `SPIRA_SPIKE_LABEL=research` by a bare `export`, genuinely present in this

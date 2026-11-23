@@ -110,7 +110,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | dwarf-base-ref-qualify | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-runes-overlay-mech | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-runes-overlay | no | - | 33 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
-| dwarf-dirty-commit | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-elastic-concurrency | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-eviction-race | no | - | 55 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | dwarf-fence-exec-ctx | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
@@ -160,7 +159,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | bin-manifest | no | - | 14 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | boundary | no | - | 2 | static, configuration or single-tool contract: no hand-off between loop actors |
 | branch-collision-park | partly | new:claim-order | 15 | a bead whose branch is held by another bead's worktree is parked |
-| branch-guard | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
 | branch-sweep | no | - | ? | single-tool or static contract: no hand-off between loop actors |
 | brief-mail-options | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | broker-allowlist-lint | no | - | 2 | static, configuration or single-tool contract: no hand-off between loop actors |
@@ -253,7 +251,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | epic-claim-order | partly | new:claim-order | ? | claim rank by epic priority; table rows stay bash |
 | escape-census-units | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | escape-classify | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| exclude | no | - | 1 | static, configuration or single-tool contract: no hand-off between loop actors |
 | express-lane | partly | new:claim-order | 20 | express label bypasses sentinel admission |
 | rune-project-instructions | no | - | 5 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | rune | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
@@ -294,7 +291,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | groomer-split-piece | no | - | 11 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | groomer-unpoison | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | groomer | no | - | 5 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| guards | no | - | 11 | static, configuration or single-tool contract: no hand-off between loop actors |
 | held | no | - | 15 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | hold-liveness | no | - | 2 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | hold | no | - | 12 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
@@ -418,7 +414,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | reconciler-alert | no | - | 29 | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | reconciler-flow | no | - | 34 | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | reconciler | no | - | 33 | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
-| ref-guard | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
 | release-workflow | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | release | partly | cut-in-bare-env, publish-then-cut | 8 | cut names the beads landed since the previous tag; show/format rows stay bash |
 | released-defects | no | - | 6 | cockpit/pane rendering and its probes: no loop actor changes state |
@@ -460,7 +455,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | slay | no | - | 67 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | sop-gate-wired | no | - | 22 | static, configuration or single-tool contract: no hand-off between loop actors |
 | sop | no | - | 32 | static, configuration or single-tool contract: no hand-off between loop actors |
-| spike | no | - | 33 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | spira-config-cutover | no | - | 31 | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | spira-config-only-door | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | statute-projection | no | - | 12 | static, configuration or single-tool contract: no hand-off between loop actors |

@@ -147,7 +147,7 @@ covers that the cargo suite cannot. The cockpit's ledger-reading SOP metrics are
   rendered to the Ops persona) becomes `"sop"`.
 - `spira/watchtower.sh`, `spira/incident.sh`, `spira/lib.sh`: comment-only mentions updated
   for accuracy.
-- `spira/test-guards.sh`, `spira/test-dwarf-wiki-dirty.sh`, the retired lint-runes suite,
+- the retired guards suite, `spira/test-dwarf-wiki-dirty.sh`, the retired lint-runes suite,
   the retired render-memories suite, the retired ops-closing suite: repointed to invoke `sop` by
   binary name rather than `$HERE/sop.sh`.
 

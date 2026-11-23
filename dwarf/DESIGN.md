@@ -678,7 +678,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
-    the retired ops-closing suite, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
+    the retired ops-closing suite, `test-persona-model.sh:183,233`, the retired spike suite,
     `test-submitted-lands.sh:105`, the retired thrash-teardown suite, the retired timeout suite,
     the retired world-drain-deadline suite. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
     stop copying it (the binary takes `--home`).
@@ -694,7 +694,7 @@ Kept, although they look wrong (flagged for the operator):
 14. **Stay as they are** (they test lib.sh functions, which stay): `test-dwarf-disposition.sh`,
     `test-dwarf-lease.sh`, `test-dwarf-world-stop.sh` (lib half), `test-dwarf-worktree-evict-foreign.sh`,
     `test-dwarf-base-ref-qualify.sh`, the dwarf-launch-grammar suite,
-    `test-dwarf-settings-guard-allowlist.sh`, `test-dwarf-dirty-commit.sh`,
+    `test-dwarf-settings-guard-allowlist.sh`, the retired dirty-commit suite,
     `test-dwarf-wiki-concurrent.sh`. When lib.sh's dwarf-only functions (`dwarf_disposition`,
     `world_stop_decide`, `hb_tick`, `hb_wait_outcome`, `sop_rule_verdict`,
     `render_*_brief`, `bound_bead_notes`, `system_prompt_split`, `dwarf_claude_argv`,
@@ -993,7 +993,7 @@ Kept, although they look wrong (flagged for the operator):
     `test-dwarf-teardown-e2e.sh:515`, the retired dwarf-sweep suite, the cross-repo suite (line 141),
     `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
     the holds suite (line 210), `test-lifecycle-enforce-gate.sh:93`,
-    the retired ops-closing suite, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
+    the retired ops-closing suite, `test-persona-model.sh:183,233`, the retired spike suite,
     `test-submitted-lands.sh:105`, the retired thrash-teardown suite, the retired timeout suite,
     the retired world-drain-deadline suite. Those that `cp "$HERE/dwarf.sh" "$SPIRA_HOME/"`
     stop copying it (the binary takes `--home`).
@@ -1009,7 +1009,7 @@ Kept, although they look wrong (flagged for the operator):
 14. **Stay as they are** (they test lib.sh functions, which stay): `test-dwarf-disposition.sh`,
     `test-dwarf-lease.sh`, `test-dwarf-world-stop.sh` (lib half), `test-dwarf-worktree-evict-foreign.sh`,
     `test-dwarf-base-ref-qualify.sh`, the dwarf-launch-grammar suite,
-    `test-dwarf-settings-guard-allowlist.sh`, `test-dwarf-dirty-commit.sh`,
+    `test-dwarf-settings-guard-allowlist.sh`, the retired dirty-commit suite,
     `test-dwarf-wiki-concurrent.sh`. When lib.sh's dwarf-only functions (`dwarf_disposition`,
     `world_stop_decide`, `hb_tick`, `hb_wait_outcome`, `sop_rule_verdict`,
     `render_*_brief`, `bound_bead_notes`, `system_prompt_split`, `dwarf_claude_argv`,

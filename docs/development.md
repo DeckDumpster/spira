@@ -122,7 +122,7 @@ Never run a `spira/test-*.sh` suite directly on the host.
 
 ```sh
 testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--report [N]] <branch> [<repo-name>]
-testenv --suites test-spike.sh,test-census.sh <branch>
+testenv --suites test-census.sh,test-cadence-tool.sh <branch>
 testenv status [--json] <results-dir>
 ```
 
