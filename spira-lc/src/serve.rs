@@ -608,7 +608,7 @@ thread_local! {
 }
 
 impl Flights {
-    fn serve(&self, stream: UnixStream, f: impl FnOnce(UnixStream)) {
+    fn serve(&self, stream: UnixStream, f: impl FnOnce(UnixStream)) -> Option<Arc<Slot>> {
         struct Leave<'a>(&'a Flights, u64);
         impl Drop for Leave<'_> {
             fn drop(&mut self) {
@@ -618,15 +618,16 @@ impl Flights {
         }
         let Ok(clone) = stream.try_clone() else {
             eprintln!("spira-lc serve: cannot register a connection for the drain; dropped unanswered");
-            return;
+            return None;
         };
         let slot = Arc::new(Slot { stream: clone, answered: std::sync::Mutex::new(false) });
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         self.open.lock().unwrap().push((id, slot.clone()));
-        CURRENT.with(|c| *c.borrow_mut() = Some(slot));
+        CURRENT.with(|c| *c.borrow_mut() = Some(slot.clone()));
         let _leave = Leave(self, id);
         let _busy = Busy::enter();
         f(stream);
+        Some(slot)
     }
 
     fn len(&self) -> usize {
@@ -695,22 +696,23 @@ fn stop_on_sigterm() {
 
 /// Hands each connection to an idle worker, and starts a worker only when none is idle, so a
 /// request that calls back into the socket always finds a thread to serve the callback.
-struct Workers<'scope, 'env, F> {
+struct Workers<'scope, 'env, F, R> {
     scope: &'scope std::thread::Scope<'scope, 'env>,
     serve: F,
     queue: std::sync::mpsc::Sender<UnixStream>,
     inbox: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<UnixStream>>>,
     idle: Arc<AtomicUsize>,
     started: usize,
+    kept: std::marker::PhantomData<fn() -> R>,
 }
 
-impl<'scope, 'env, F> Workers<'scope, 'env, F>
+impl<'scope, 'env, F, R> Workers<'scope, 'env, F, R>
 where
-    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+    F: Fn(UnixStream) -> R + Send + Sync + Clone + 'scope,
 {
     fn new(scope: &'scope std::thread::Scope<'scope, 'env>, serve: F, idle: Arc<AtomicUsize>) -> Self {
         let (queue, inbox) = std::sync::mpsc::channel();
-        Workers { scope, serve, queue, inbox: Arc::new(std::sync::Mutex::new(inbox)), idle, started: 0 }
+        Workers { scope, serve, queue, inbox: Arc::new(std::sync::Mutex::new(inbox)), idle, started: 0, kept: std::marker::PhantomData }
     }
 
     fn dispatch(&mut self, stream: UnixStream) {
@@ -721,17 +723,19 @@ where
         }
         self.started += 1;
         let (serve, inbox, idle) = (self.serve.clone(), self.inbox.clone(), self.idle.clone());
-        self.scope.spawn(move || {
+        let spawned = std::thread::Builder::new().name("lc-conn".into()).spawn_scoped(self.scope, move || {
             let mut next = stream;
             loop {
-                serve(next);
+                let held = serve(next);
                 idle.fetch_add(1, Ordering::SeqCst);
+                drop(held);
                 match inbox.lock().unwrap().recv() {
                     Ok(stream) => next = stream,
                     Err(_) => return,
                 }
             }
         });
+        spawned.expect("spawn lc-conn thread");
     }
 }
 
@@ -739,7 +743,7 @@ where
 /// returning how many threads that took. On the stop the path is removed first, so a new
 /// connect is refused at once; connections already queued are then accepted and served, and
 /// only afterwards does the listener drop and the workers end.
-fn accept_until_stopped<'scope, 'env, F>(
+fn accept_until_stopped<'scope, 'env, F, R>(
     listener: &UnixListener,
     socket_path: &str,
     scope: &'scope std::thread::Scope<'scope, 'env>,
@@ -747,14 +751,14 @@ fn accept_until_stopped<'scope, 'env, F>(
     serve: F,
 ) -> usize
 where
-    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+    F: Fn(UnixStream) -> R + Send + Sync + Clone + 'scope,
 {
     accept_counting_idle(listener, socket_path, scope, stopping, serve, Arc::default())
 }
 
 /// `accept_until_stopped` with the idle-worker count shared with the caller, which a test reads
 /// to know a worker has finished its reply's aftermath.
-fn accept_counting_idle<'scope, 'env, F>(
+fn accept_counting_idle<'scope, 'env, F, R>(
     listener: &UnixListener,
     socket_path: &str,
     scope: &'scope std::thread::Scope<'scope, 'env>,
@@ -763,7 +767,7 @@ fn accept_counting_idle<'scope, 'env, F>(
     idle: Arc<AtomicUsize>,
 ) -> usize
 where
-    F: Fn(UnixStream) + Send + Sync + Clone + 'scope,
+    F: Fn(UnixStream) -> R + Send + Sync + Clone + 'scope,
 {
     use std::os::unix::io::AsRawFd;
     let mut workers = Workers::new(scope, serve, idle);
