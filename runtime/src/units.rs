@@ -478,8 +478,21 @@ pub struct UnitProcess {
     pub comm: String,
 }
 
+/// What announces a backend's next end: its connection's descriptor, readable when the bus has
+/// bytes the backend has not read, and `pending`, notified when a call already pulled a signal
+/// the backend has not handed out. The descriptor is a duplicate, to wait on and never to read.
+pub struct Wake {
+    pub fd: std::os::fd::OwnedFd,
+    pub pending: Arc<tokio::sync::Notify>,
+}
+
 /// The completion source: every run that ended since the last call, once each.
 pub trait UnitCompletions: Send + Sync {
+    /// How to wait for the next end instead of polling; `None` for a backend with nothing to wait on.
+    fn wake(&self) -> Result<Option<Wake>> {
+        Ok(None)
+    }
+
     fn ran(&self) -> Result<Vec<UnitRan>>;
 
     /// `ran` with each run's captured output; a backend that captures nothing reports none.
@@ -1707,6 +1720,8 @@ mod systemd {
     pub trait Bus: Send {
         fn call(&mut self, dest: &str, path: &str, iface: &str, member: &str, args: &[Arg]) -> std::result::Result<Vec<Val>, String>;
         fn next_signal(&mut self, timeout: Duration) -> std::result::Result<Option<Msg>, String>;
+        fn try_clone_fd(&self) -> std::result::Result<std::os::fd::OwnedFd, String>;
+        fn on_pending(&mut self, f: Arc<dyn Fn() + Send + Sync>);
     }
 
     impl Bus for Conn {
@@ -1717,6 +1732,14 @@ mod systemd {
 
         fn next_signal(&mut self, timeout: Duration) -> std::result::Result<Option<Msg>, String> {
             Conn::next_signal(self, timeout)
+        }
+
+        fn try_clone_fd(&self) -> std::result::Result<std::os::fd::OwnedFd, String> {
+            Conn::try_clone_fd(self)
+        }
+
+        fn on_pending(&mut self, f: Arc<dyn Fn() + Send + Sync>) {
+            Conn::on_pending(self, f)
         }
     }
 
@@ -1737,6 +1760,7 @@ mod systemd {
         seen: Mutex<(BTreeSet<String>, VecDeque<String>)>,
         /// A scope run's capture files, by unit name.
         scopes: Mutex<BTreeMap<String, (PathBuf, PathBuf)>>,
+        pending: Arc<tokio::sync::Notify>,
     }
 
     fn fault(e: String) -> RuntimeError {
@@ -1787,7 +1811,7 @@ mod systemd {
             bus.call(MANAGER, ROOT, MANAGER_IFACE, "Subscribe", &[]).map_err(fault)?;
             let since_us = clock.now_ms().saturating_mul(1000);
             let capture_dir = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join("spira-units"));
-            Ok(SystemdUnits { bus: Mutex::new(bus), clock, tracker: Mutex::new(Tracker::new(since_us)), capture_dir, seen: Mutex::default(), scopes: Mutex::default() })
+            Ok(SystemdUnits { bus: Mutex::new(bus), clock, tracker: Mutex::new(Tracker::new(since_us)), capture_dir, seen: Mutex::default(), scopes: Mutex::default(), pending: Arc::default() })
         }
 
         /// Where a scope run's stdout and stderr files go; `$XDG_RUNTIME_DIR/spira-units` unless
@@ -2092,6 +2116,15 @@ mod systemd {
     }
 
     impl<B: Bus> UnitCompletions for SystemdUnits<B> {
+        fn wake(&self) -> Result<Option<Wake>> {
+            let mut bus = lock(&self.bus);
+            let fd = bus.try_clone_fd().map_err(fault)?;
+            let pending = self.pending.clone();
+            let notify = pending.clone();
+            bus.on_pending(Arc::new(move || notify.notify_one()));
+            Ok(Some(Wake { fd, pending }))
+        }
+
         fn ran(&self) -> Result<Vec<UnitRan>> {
             Ok(self.ended()?.into_iter().map(|(r, _)| r).collect())
         }
@@ -3027,6 +3060,8 @@ mod tests {
             assert_eq!(facts_from(&d(&[("LoadState", Val::S("not-found".into()))]), &[]).state, UnitState::Absent);
         }
 
+        type Callback = Arc<dyn Fn() + Send + Sync>;
+
         /// A call's member and its arguments.
         type Sent = (String, Vec<Arg>);
 
@@ -3038,6 +3073,8 @@ mod tests {
             sent: Arc<Mutex<Vec<Sent>>>,
             answers: Arc<Mutex<BTreeMap<String, Vec<Val>>>>,
             signals: Arc<Mutex<VecDeque<Msg>>>,
+            wire: Arc<std::sync::OnceLock<(std::os::unix::net::UnixStream, std::os::unix::net::UnixStream)>>,
+            on_pending: Arc<Mutex<Option<Callback>>>,
         }
 
         impl Fake {
@@ -3077,6 +3114,13 @@ mod tests {
             }
             fn next_signal(&mut self, _: Duration) -> std::result::Result<Option<Msg>, String> {
                 Ok(self.0.signals.lock().unwrap().pop_front())
+            }
+            fn try_clone_fd(&self) -> std::result::Result<std::os::fd::OwnedFd, String> {
+                let (bus_end, _) = self.0.wire.get_or_init(|| std::os::unix::net::UnixStream::pair().unwrap());
+                bus_end.try_clone().map(Into::into).map_err(|e| e.to_string())
+            }
+            fn on_pending(&mut self, f: Arc<dyn Fn() + Send + Sync>) {
+                *self.0.on_pending.lock().unwrap() = Some(f);
             }
         }
 
@@ -3352,6 +3396,21 @@ mod tests {
             assert_eq!(m.body[0].as_str(), Some("spira-run-czar_2dpass-r7.service"));
             assert_eq!(m.body[1].as_str(), Some("fail"));
             assert!(m.body[2].dict().iter().any(|(k, _)| k == "ExecStart"));
+        }
+
+        #[test_id(tdza18l)]
+        #[tokio::test]
+        async fn a_systemd_backends_wake_is_its_bus_descriptor_and_a_pending_notification() {
+            use std::io::Write;
+            let f = Fake::default();
+            let u = f.units();
+            let wake = u.wake().unwrap().expect("a bus backend has something to wait on");
+            let afd = tokio::io::unix::AsyncFd::with_interest(wake.fd, tokio::io::Interest::READABLE).unwrap();
+            f.wire.get().unwrap().1.try_clone().unwrap().write_all(b"x").unwrap();
+            afd.readable().await.unwrap().retain_ready();
+            let queued = f.on_pending.lock().unwrap().clone().expect("the backend asked to hear of queued signals");
+            queued();
+            wake.pending.notified().await;
         }
     }
 }

@@ -10,6 +10,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::io::unix::AsyncFd;
+use tokio::io::Interest;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::changes::ScriptedChanges;
@@ -17,7 +19,7 @@ use crate::event::StoreChanged;
 use crate::host::Submit;
 use crate::offload::{self, OffloadError};
 use crate::ports::Clock;
-use crate::units::{RanOutput, ScriptedUnits, UnitCompletions, UnitRan, UNIT_RAN};
+use crate::units::{RanOutput, ScriptedUnits, UnitCompletions, UnitRan, Wake, UNIT_RAN};
 use crate::{Result, RuntimeError};
 
 /// What a source is while it runs: a future on the scheduler's runtime.
@@ -191,7 +193,7 @@ pub const UNITS_STREAM: &str = "units";
 pub type StreamOf = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 enum Face {
-    /// A backend that reads the world: drained every `every` on a thread of the source's own.
+    /// A backend that reads the world: drained on its wake, or every `every` when it has none.
     Polled { every: Duration },
     /// The simulator's units: drained when the virtual clock reaches the next end.
     Scripted(Arc<ScriptedUnits>),
@@ -233,19 +235,55 @@ impl UnitRanSource {
         task.and_then(|t| self.stream_of.as_ref().and_then(|f| f(&t))).unwrap_or_else(|| UNITS_STREAM.to_string())
     }
 
-    /// Drains every `every` until `tx` closes; blocks, so it runs on a thread of its own.
-    pub fn drain_until_closed(&self, tx: mpsc::Sender<Submit>) {
-        let every = match self.face {
-            Face::Polled { every } => every,
-            Face::Scripted(_) => Duration::from_millis(WAIT_STEP_MS),
+    /// The real face: a drain at start, then one per wake (or per `every` for a backend with
+    /// nothing to wait on), each submission awaited so a full channel holds the rest in the
+    /// socket and the backend's pending signals.
+    async fn run_polled(self, every: Duration, tx: mpsc::Sender<Submit>) {
+        let wake = match self.completions.wake() {
+            Ok(w) => w,
+            Err(e) => {
+                let line = format!("runtime: source {}: no wake, draining every {every:?}: {e}", self.name);
+                let _ = on_pool("source", Arc::new(move || eprintln!("{line}"))).await;
+                None
+            }
         };
-        while !tx.is_closed() {
-            for s in self.drain() {
-                if tx.blocking_send(s).is_err() {
+        let (afd, pending) = match wake {
+            Some(Wake { fd, pending }) => match AsyncFd::with_interest(fd, Interest::READABLE) {
+                Ok(afd) => (Some(afd), Some(pending)),
+                Err(e) => {
+                    let line = format!("runtime: source {}: cannot wait on the bus, draining every {every:?}: {e}", self.name);
+                    let _ = on_pool("source", Arc::new(move || eprintln!("{line}"))).await;
+                    (None, None)
+                }
+            },
+            None => (None, None),
+        };
+        loop {
+            let done = self.completions.clone();
+            let drained = on_pool("unit.ran", Arc::new(move || done.ended())).await;
+            let now = self.clock.now_ms();
+            let healthy = matches!(drained, Ok(Ok(_)));
+            for (r, out) in drained.ok().and_then(|d| d.ok()).unwrap_or_default() {
+                if tx.send(self.submit_of(&r, &out, now)).await.is_err() {
                     return;
                 }
             }
-            std::thread::sleep(every); // clock-safe: paces the drain on the source's own thread; the backend stamps each run
+            let retry = tokio::time::sleep(every); // clock-safe: paces the retry and the poll of a backend with no wake on the source's own task
+            tokio::pin!(retry);
+            match (&afd, &pending) {
+                (Some(afd), Some(pending)) if healthy => tokio::select! {
+                    ready = afd.readable() => match ready {
+                        Ok(mut g) => g.clear_ready(),
+                        Err(_) => retry.as_mut().await,
+                    },
+                    _ = pending.notified() => {}
+                    _ = tx.closed() => return,
+                },
+                _ => tokio::select! {
+                    _ = &mut retry => {}
+                    _ = tx.closed() => return,
+                },
+            }
         }
     }
 
@@ -268,10 +306,7 @@ impl Source for UnitRanSource {
 
     fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
         match self.face {
-            Face::Polled { .. } => {
-                let name = self.name.clone();
-                on_thread(&name, move || self.drain_until_closed(tx))
-            }
+            Face::Polled { every } => Box::pin(self.run_polled(every, tx)),
             Face::Scripted(_) => Box::pin(async move {
                 while !tx.is_closed() {
                     for s in self.drain() {

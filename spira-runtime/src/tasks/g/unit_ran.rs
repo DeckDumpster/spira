@@ -3,8 +3,7 @@
 //! for every P2 task: each `unit.start` is finished by the `unit.ran` this source submits.
 //! Contract: `wiki/projects/spira/designs/tasks/source-unit-ran.md`. The real read is
 //! `tasks::g::sources::units`: the host registers `sources::units::over` on the same unit manager
-//! its `unit.*` effects run on; [`UnitRanDbus`] is the standalone form with its own D-Bus
-//! connection. Under virtual time a `ScriptedSource` (or `runtime::sources::UnitRanSource::scripted`)
+//! its `unit.*` effects run on; under virtual time a `ScriptedSource` (or `runtime::sources::UnitRanSource::scripted`)
 //! stands in, and this source is refused.
 //!
 //! # Tick
@@ -49,11 +48,8 @@
 //! Release rollback restores the unit; both can run at once during a parity check (dedupe on the
 //! invocation id).
 
-use runtime::host::Submit;
-use runtime::sources::{on_thread, Running, Source};
 pub use runtime::sources::UNITS_STREAM;
 pub use runtime::units::{UnitRan, UNIT_RAN};
-use tokio::sync::mpsc;
 
 /// The source's registered name.
 pub const NAME: &str = "unit.ran";
@@ -61,17 +57,3 @@ pub const NAME: &str = "unit.ran";
 pub const BACKEND: &str = "systemd-dbus";
 
 pub const KEYS: &[&str] = &["SPIRA_INSTANCE", "SPIRA_METRICS_ENDPOINT"];
-
-/// The real source: the user manager's D-Bus signals.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct UnitRanDbus;
-
-impl Source for UnitRanDbus {
-    fn name(&self) -> &str {
-        NAME
-    }
-
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
-        on_thread(NAME, move || super::sources::units::run_dbus(tx))
-    }
-}
