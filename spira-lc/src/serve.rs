@@ -841,7 +841,7 @@ fn store_sweep<B: state_store::Backend>(store: &crate::control::store::Store<B>,
 /// The widest window any caller of the audit index asks: the transitions task's, from the same
 /// bounds it reads, and the lifecycle section's two-day lookback.
 fn dwell_window_s() -> Result<u64, String> {
-    let keys = ["SPIRA_TRANSITIONS_SUBMIT_BOUND", "SPIRA_TRANSITIONS_CUT_BOUND", "SPIRA_TRANSITIONS_DELIVER_BOUND", "SPIRA_TRANSITIONS_ACTIVATE_BOUND"];
+    let keys = ["SPIRA_TRANSITIONS_SUBMIT_BOUND", "SPIRA_TRANSITIONS_CUT_BOUND", "SPIRA_TRANSITIONS_PR_BOUND", "SPIRA_TRANSITIONS_DELIVER_BOUND", "SPIRA_TRANSITIONS_ACTIVATE_BOUND"];
     let bounds = keys.iter().map(|k| spira_config::process::cfg_parse::<u64>(k)).collect::<Result<Vec<_>, _>>()?;
     let transitions = bounds.into_iter().max().unwrap_or(0) + 600;
     Ok(transitions.max(2 * spira_lc::goodput::DAY_SECS))

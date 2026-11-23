@@ -1332,6 +1332,12 @@ impl World {
             &landing_pass::records::gate_backoffs(&self.run_dir),
         );
         snap.gate_slots_free = p.certify_par.saturating_sub(pool.used());
+        if let Ok(map) = fs::read_to_string(&self.repo_map) {
+            let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), self.home_repo.clone())]);
+            let reg = spira_config::repos::Registry::new(Some(&map), &env, Path::new(""));
+            wt::mark_prs(&mut snap, &|repo| reg.land(repo) == "pr");
+        }
+        snap.landing_quiet_s = spira_config::ticked::quiet_secs(&self.run_dir, "landing");
         progress.lock().unwrap_or_else(|e| e.into_inner()).enter("done");
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }

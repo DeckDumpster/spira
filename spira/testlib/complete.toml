@@ -65,6 +65,7 @@ activation_store_bound = 90
 transitions_working_min = 2
 transitions_submit_bound = 5400
 transitions_cut_bound = 2700
+transitions_pr_bound = 900
 transitions_deliver_bound = 1500
 transitions_activate_bound = 900
 transitions_ask_bound = 3600

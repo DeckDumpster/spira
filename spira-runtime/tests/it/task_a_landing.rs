@@ -24,7 +24,7 @@ fn branch(id: &str, handed_on: bool) -> Branch {
 }
 
 fn with(branches: Vec<Branch>) -> Snapshot {
-    Snapshot { forge_enabled: true, repos: vec![Repo { name: "pokedumpster".into(), path: "r/poke".into(), landref: "main".into(), base_fq: "origin/main".into(), base_sha: "b1".into(), branches }] }
+    Snapshot { forge_enabled: true, at: 1_000, repos: vec![Repo { name: "pokedumpster".into(), path: "r/poke".into(), landref: "main".into(), base_fq: "origin/main".into(), base_sha: "b1".into(), branches }] }
 }
 
 /// The contract's idle fixture: forge enabled, one pr repo, two branches, neither handed on.
@@ -306,4 +306,47 @@ mod deliveries {
         deliver_by_content_on(&c, &leg(d.path(), &sha)).unwrap();
         assert_eq!(*s.seen.lock().unwrap(), vec!["show sp-a"]);
     }
+}
+
+fn with_pr(id: &str, number: u64, status: PrStatus) -> Branch {
+    Branch { pr_state: PrState::Open, pr: Some(PrRead { number, status, since: 1_000 }), ..branch(id, true) }
+}
+
+#[test_id(t2dhvq9)]
+#[test]
+fn check_lines_classify_running_green_red_and_unread() {
+    assert_eq!(checks_status(""), PrStatus::Unread);
+    assert_eq!(checks_status("COMPLETED SUCCESS a\nCOMPLETED NEUTRAL b\nCOMPLETED SKIPPED c"), PrStatus::Green);
+    assert_eq!(checks_status("COMPLETED SUCCESS a\nIN_PROGRESS - b"), PrStatus::Running);
+    assert_eq!(checks_status("QUEUED - a"), PrStatus::Running);
+    assert_eq!(checks_status("COMPLETED FAILURE a\nCOMPLETED SUCCESS b"), PrStatus::Red);
+    assert_eq!(checks_status("COMPLETED CANCELLED a"), PrStatus::Red);
+    assert_eq!(checks_status("COMPLETED FAILURE a\nIN_PROGRESS - b"), PrStatus::Running, "an unfinished check keeps the pull request running");
+}
+
+#[test_id(to23f7j)]
+#[test]
+fn since_is_kept_while_number_and_status_hold_and_reset_when_either_changes() {
+    let first = Snapshot { at: 1_000, ..with(vec![with_pr("pd-a", 5, PrStatus::Running)]) };
+    let (carry, _) = decide(&Carry::default(), &first);
+    assert_eq!(carry.prs["pd-a"], PrRead { number: 5, status: PrStatus::Running, since: 1_000 });
+    let later = Snapshot { at: 2_000, ..with(vec![with_pr("pd-a", 5, PrStatus::Running)]) };
+    let (kept, _) = decide(&carry, &later);
+    assert_eq!(kept.prs["pd-a"].since, 1_000);
+    let (red, _) = decide(&kept, &Snapshot { at: 3_000, ..with(vec![with_pr("pd-a", 5, PrStatus::Red)]) });
+    assert_eq!(red.prs["pd-a"], PrRead { number: 5, status: PrStatus::Red, since: 3_000 });
+    let (renumbered, _) = decide(&red, &Snapshot { at: 4_000, ..with(vec![with_pr("pd-a", 6, PrStatus::Red)]) });
+    assert_eq!(renumbered.prs["pd-a"].since, 4_000);
+    let (gone, _) = decide(&renumbered, &Snapshot { at: 5_000, ..with(vec![branch("pd-a", true)]) });
+    assert!(gone.prs.is_empty(), "a branch with no read leaves the carry");
+}
+
+#[test_id(t4reips)]
+#[test]
+fn prs_round_trip_as_rows_keyed_by_bead() {
+    let mut r = rig(1, with(vec![with_pr("pd-a", 5, PrStatus::Green)]));
+    r.advance(CADENCE_MS).unwrap();
+    let rows = kit::assert_kept_as_rows(&r, NAME);
+    assert!(rows.iter().any(|k| k == "prs/pd-a"), "{rows:?}");
+    kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
 }
