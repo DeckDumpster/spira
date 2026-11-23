@@ -22,12 +22,19 @@ macro_rules! hosted {
     ($ty:ident) => {
         $crate::tasks::b::hosted!($ty, catch_up = $crate::tasks::b::kit::no_catch_up);
     };
+    ($ty:ident, off_journal) => {
+        $crate::tasks::b::hosted!($ty, catch_up = $crate::tasks::b::kit::no_catch_up, off_journal = true);
+    };
     ($ty:ident, catch_up = $catch_up:path) => {
+        $crate::tasks::b::hosted!($ty, catch_up = $catch_up, off_journal = false);
+    };
+    ($ty:ident, catch_up = $catch_up:path, off_journal = $off:expr) => {
         impl $crate::tasks::b::kit::Stub for $ty {
             type Snapshot = Snapshot;
             type Carry = Carry;
             const SPEC: $crate::tasks::b::kit::Spec = SPEC;
             const ROWS: &'static [runtime::rows::Part] = ROW_PARTS;
+            const OFF_JOURNAL: bool = $off;
 
             fn from_cfg(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Self, String> {
                 let cfg = $crate::tasks::b::kit::configure(KEYS, get)?;
@@ -371,6 +378,8 @@ pub mod kit {
         const SPEC: Spec;
         /// What a restart keeps of the carry, as keyed rows.
         const ROWS: &'static [runtime::rows::Part];
+        /// The carry lives in memory only: a restart starts from `Carry::default()`.
+        const OFF_JOURNAL: bool = false;
 
         fn from_cfg(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Self, String>;
         fn cadence(&self) -> &Cadence;
@@ -487,7 +496,8 @@ pub mod kit {
             Ok((next, acts)) => {
                 let mut cmds = vec![];
                 if next != carry {
-                    cmds.push(Command::Emit(EventKind::new(T::SPEC.state, &serde_json::to_string(&next).unwrap_or_default())));
+                    let state = EventKind::new(T::SPEC.state, &serde_json::to_string(&next).unwrap_or_default());
+                    cmds.push(if T::OFF_JOURNAL { Command::Note(state) } else { Command::Emit(state) });
                 }
                 for a in acts {
                     let spec = EffectSpec::keyed(a.name, a.key, a.input, a.deadline_ms);

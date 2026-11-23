@@ -76,7 +76,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(_) if carry.phase == Phase::Draining => Ok((Carry::default(), vec![])),
         Input::Observed(s) if s.queued == 0 => Ok((carry.clone(), vec![])),
-        Input::Observed(s) => Ok((Carry { phase: Phase::Draining }, vec![Act { name: DRAIN.into(), key: format!("lc.ship/{}/{now_ms}", s.oldest), input: s.dir.clone(), deadline_ms: 3_600_000, probe: false }])),
+        Input::Observed(s) => Ok((Carry { phase: Phase::Draining }, vec![Act { name: DRAIN.into(), key: format!("lc.ship/{}/{now_ms}", s.oldest), input: s.dir.clone(), deadline_ms: 3_600_000, probe: true }])),
         Input::Outcome { effect, ok: true, .. } if effect == DRAIN => Ok((Carry::default(), vec![])),
         Input::Outcome { effect, ok: false, body } if effect == DRAIN => Err(format!("{NAME}: the upload was refused and stays queued: {body}")),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: an outcome of {effect} is not expected")),
@@ -125,6 +125,6 @@ pub fn check_credentials(mode: runtime::Mode, url: &str, lookup: impl Fn(&str) -
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase")];
+const ROW_PARTS: &[runtime::rows::Part] = &[];
 
-crate::tasks::b::hosted!(LcShip);
+crate::tasks::b::hosted!(LcShip, off_journal);
