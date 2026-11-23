@@ -242,7 +242,8 @@ impl UnitRanSource {
         let wake = match self.completions.wake() {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("runtime: source {}: no wake, draining every {every:?}: {e}", self.name);
+                let line = format!("runtime: source {}: no wake, draining every {every:?}: {e}", self.name);
+                let _ = on_pool("source", Arc::new(move || eprintln!("{line}"))).await;
                 None
             }
         };
@@ -250,7 +251,8 @@ impl UnitRanSource {
             Some(Wake { fd, pending }) => match AsyncFd::with_interest(fd, Interest::READABLE) {
                 Ok(afd) => (Some(afd), Some(pending)),
                 Err(e) => {
-                    eprintln!("runtime: source {}: cannot wait on the bus, draining every {every:?}: {e}", self.name);
+                    let line = format!("runtime: source {}: cannot wait on the bus, draining every {every:?}: {e}", self.name);
+                    let _ = on_pool("source", Arc::new(move || eprintln!("{line}"))).await;
                     (None, None)
                 }
             },
