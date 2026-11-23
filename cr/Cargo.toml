@@ -15,7 +15,7 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["margin-client/integration", "spira-store/integration", "test-registry/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["gh-intake/integration", "margin-client/integration", "spira-store/integration", "test-registry/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 
 [dependencies]
 regex = "1"

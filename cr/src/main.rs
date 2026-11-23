@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 fn source_url(root: &str) -> Result<String, String> {
     let remote = spira_config::process::cfg("SPIRA_PUBLISH_REMOTE").map_err(|e| format!("SPIRA_PUBLISH_REMOTE: {e}"))?;
-    let out = std::process::Command::new("git").args(["-C", root, "remote", "get-url", &remote]).output().map_err(|e| format!("git remote get-url {remote}: {e}"))?;
+    let out = spira_config::bounded::bounded("git").args(["-C", root, "remote", "get-url", &remote]).output().map_err(|e| format!("git remote get-url {remote}: {e}"))?;
     if !out.status.success() {
         return Err(format!("remote {remote:?} (SPIRA_PUBLISH_REMOTE) has no URL in {root}: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
