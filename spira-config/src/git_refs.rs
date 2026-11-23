@@ -110,6 +110,19 @@ pub fn branch_tips(repo: &Path, prefix: &str) -> Option<Vec<(String, String)>> {
     Some(out.into_iter().collect())
 }
 
+/// The `refs/heads/spira/*` tips by bead id (the name without `spira/`); `None` as [`branch_tips`].
+pub fn spira_tips(repo: &Path) -> Option<BTreeMap<String, String>> {
+    Some(branch_tips(repo, "refs/heads/spira/")?.into_iter().filter_map(|(name, sha)| Some((name.strip_prefix("spira/")?.to_string(), sha))).collect())
+}
+
+/// The commit a ref names when the ref files say so outright; `None` when git must be asked.
+pub fn sha_of(repo: &Path, name: &str) -> Option<String> {
+    match read_ref_in(repo, name) {
+        Ref::Sha(sha) => Some(sha),
+        _ => None,
+    }
+}
+
 fn walk(dir: &Path, stem: &str, want: &str, out: &mut BTreeMap<String, String>) -> Option<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -191,6 +204,23 @@ mod tests {
         fs::write(&f, format!("{}\n", sha('2'))).unwrap();
         assert_eq!(branch_tips(d.path(), "refs/heads/spira/").unwrap()[0].1, sha('2'));
         assert_eq!(read_ref_in(d.path(), "spira/sp-a"), Ref::Sha(sha('2')));
+    }
+
+    #[test_id(twl7wmn)]
+    #[test]
+    fn a_prefix_without_a_closing_slash_or_with_nested_directories_matches_by_name() {
+        let d = testkit::TempDir::new("refs-tips-prefix");
+        let common = d.join(".git");
+        fs::create_dir_all(common.join("refs/heads/a/b")).unwrap();
+        fs::create_dir_all(common.join("refs/heads/a/c")).unwrap();
+        fs::write(common.join("refs/heads/a/b/x"), format!("{}\n", sha('1'))).unwrap();
+        fs::write(common.join("refs/heads/a/c/y"), format!("{}\n", sha('2'))).unwrap();
+        fs::write(common.join("refs/heads/a/bz"), format!("{}\n", sha('3'))).unwrap();
+        fs::write(common.join("packed-refs"), format!("{} refs/heads/a/b/p\n", sha('4'))).unwrap();
+        let names = |p: &str| branch_tips(d.path(), p).unwrap().into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+        assert_eq!(names("refs/heads/a/b/"), ["a/b/p", "a/b/x"]);
+        assert_eq!(names("refs/heads/a/b"), ["a/b/p", "a/b/x", "a/bz"], "a prefix is by name, not by directory");
+        assert_eq!(names("refs/heads/"), ["a/b/p", "a/b/x", "a/bz", "a/c/y"]);
     }
 
     #[test_id(tc6clhu)]

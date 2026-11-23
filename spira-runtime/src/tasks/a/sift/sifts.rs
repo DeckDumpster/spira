@@ -155,8 +155,8 @@ fn read_pool(rows: &[Value]) -> Vec<(String, String)> {
 /// `refs/heads/spira/*` of the repository's own checkout, by bead id: what scopes the
 /// machine's pool to this repository, and the live tip a recorded tip must still be.
 fn branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
-    if let Some(tips) = spira_config::git_refs::branch_tips(&repo.path, "refs/heads/spira/") {
-        return Ok(tips.into_iter().filter_map(|(name, sha)| Some((name.strip_prefix("spira/")?.to_string(), sha))).collect());
+    if let Some(tips) = spira_config::git_refs::spira_tips(&repo.path) {
+        return Ok(tips);
     }
     let out = run(
         spira_config::bounded::bounded("git")

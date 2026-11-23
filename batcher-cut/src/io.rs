@@ -857,8 +857,8 @@ fn plan_items(text: &str) -> Result<serde_json::Value, String> {
 /// certification is not this bead's member until it is re-certified at the new tip, whatever
 /// batch.sh did or did not do first.
 fn repo_branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
-    if let Some(tips) = spira_config::git_refs::branch_tips(&repo.path, "refs/heads/spira/") {
-        return Ok(tips.into_iter().filter_map(|(name, sha)| Some((name.strip_prefix("spira/")?.to_string(), sha))).collect());
+    if let Some(tips) = spira_config::git_refs::spira_tips(&repo.path) {
+        return Ok(tips);
     }
     let out = run(
         Command::new("git").arg("-C").arg(&repo.path).args([
@@ -7192,6 +7192,9 @@ mod ref_file_tests {
         let packed = format!("# pack-refs\n{} refs/heads/local/packed\n", sha('b'));
         let (_d, loose) = headless(&[("local/main", &sha('a'))], &packed, "local/main");
         assert_eq!(resolve_base_sha(&loose), Ok(sha('a')));
+        let both = format!("{packed}{} refs/heads/local/main\n", sha('c'));
+        let (_d, over) = headless(&[("local/main", &sha('a'))], &both, "local/main");
+        assert_eq!(resolve_base_sha(&over), Ok(sha('a')), "a loose ref over a packed one");
         let (_d, packed_base) = headless(&[], &packed, "local/packed");
         assert_eq!(resolve_base_sha(&packed_base), Ok(sha('b')));
         let (_d, absent) = headless(&[], &packed, "local/gone");
