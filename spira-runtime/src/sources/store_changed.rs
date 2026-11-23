@@ -71,7 +71,7 @@ async fn exchange(socket: &Path, argv: &[String]) -> Result<String, LcError> {
     let wait = call_wait(argv);
     let fault = |f: spira_store::lc_call::Fail| LcError::Fault(f.into_text());
     let call = async {
-        let stream = UnixStream::connect(socket).await.map_err(|e| LcError::NotRunning(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", socket.display())))?;
+        let stream = UnixStream::connect(socket).await.map_err(|e| LcError::NotRunning(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", socket.display())))?; // loop-safe: tokio's non-blocking socket
         let request = encode_request(argv, None, Some(TASK), None).map_err(fault)?;
         let (read, mut write) = stream.into_split();
         let lost = |why: &str| LcError::Fault(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
@@ -263,7 +263,7 @@ mod tests {
     }
 
     fn comms() -> Vec<String> {
-        std::fs::read_dir("/proc/self/task").unwrap().flatten().filter_map(|t| std::fs::read_to_string(t.path().join("comm")).ok()).map(|c| c.trim().to_string()).collect()
+        std::fs::read_dir(std::path::Path::new(system_paths::PROC_SELF).join("task")).unwrap().flatten().filter_map(|t| std::fs::read_to_string(t.path().join("comm")).ok()).map(|c| c.trim().to_string()).collect()
     }
 
     #[cfg(target_os = "linux")]
