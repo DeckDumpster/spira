@@ -174,7 +174,7 @@ fn a_draining_cycle_commits_no_turn() {
         rig.advance(2_000).unwrap();
     }
     assert_eq!(rig.journal.commits().len(), after_boot, "{:?}", rig.journal.commits());
-    let drains: Vec<_> = rig.requested().into_iter().filter(|q| q.name == task::DRAIN).collect();
+    let drains: Vec<_> = rig.requested().iter().filter(|q| q.name == task::DRAIN).collect();
     assert!(drains.len() >= 5, "{}", drains.len());
     assert!(drains.iter().all(|q| !q.journaled));
 }
