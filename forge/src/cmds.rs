@@ -570,7 +570,6 @@ pub fn check_status(
     let mut step_lines: Vec<String> = Vec::new();
     let mut run_attributable = false;
     let mut capacity_line: Option<String> = None;
-    let mut step_declares_fault = false;
     let mut runner_lines: Vec<String> = Vec::new();
     if status == "green" || status == "red" {
         run_attributable = true;
@@ -626,9 +625,6 @@ pub fn check_status(
                             &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"),
                         ],
                     );
-                    if logs.text().contains(GATE_FAULT_MARKER) {
-                        step_declares_fault = true;
-                    }
                     step_lines.push(format!("failed-step: {job} / {step}"));
                     step_lines.extend(
                         step_log_tail(&logs.text(), STEP_LOG_TAIL)
@@ -649,12 +645,7 @@ pub fn check_status(
             }
         }
         if status == "red" {
-            if let Some(v) = &jv {
-                if suites_job_faulted(v) {
-                    status = "harness_fault".to_string();
-                }
-            }
-            if step_declares_fault {
+            if jv.as_ref().is_some_and(|v| never_tested(gh, repo, v)) {
                 status = "harness_fault".to_string();
             }
             if let Some(lost) = jv.as_ref().and_then(runner_lost) {
@@ -989,6 +980,25 @@ fn runner_lost(v: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// A failed run whose tree was never judged: the runner or provisioning went away, or the gate
+/// declared a harness fault. `check_status` calls it untested and `rerun_refusal` re-runs it.
+fn never_tested(gh: &dyn Gh, repo: &Path, jobs: &Value) -> bool {
+    suites_job_faulted(jobs)
+        || runner_lost(jobs).is_some()
+        || job_bad(jobs, "provision")
+        || failed_steps(jobs).into_iter().any(|(job_id, _, _)| {
+            gh.call(
+                Some(repo),
+                &[
+                    "api",
+                    &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"),
+                ],
+            )
+            .text()
+            .contains(GATE_FAULT_MARKER)
+        })
 }
 
 fn suites_job_faulted(v: &Value) -> bool {
@@ -1779,7 +1789,7 @@ pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
             )
             .stdout,
         )?;
-        if suites_job_faulted(&jobs) {
+        if never_tested(gh, repo, &jobs) {
             return None;
         }
     }

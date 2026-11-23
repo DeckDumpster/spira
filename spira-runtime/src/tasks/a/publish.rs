@@ -60,7 +60,7 @@
 //! | Observing | act ∉ {Wait,Parked,Alarm}, `publish_mode≠push`, round holds hypervisor, ticks < max | Deferred | carry `deferred_ticks+1` (at most once per half cadence; a push repo is never deferred) |
 //! | Observing | `Settle::Wait` / `Parked` | Open / Alarmed | — |
 //! | Observing | `Settle::Wait`, CI green | Merging | `publish.settle` (sp-hw3qio) |
-//! | Observing | `Settle::Rerun` | Rerun | `publish.rerun` (`:666`) |
+//! | Observing | `Settle::Rerun` | Rerun | `publish.rerun` (`:666`); `landing.log` gets `PUBLISH_RERUN` (run, cause, market) when started, `PUBLISH_RERUN_REFUSED` (run, why) when not; a refusal is `effect.failed` and leaves `rerun` unset |
 //! | Observing | `Settle::Alarm` | Alarmed | `publish.notify` + `publish.record` (`alarmed=`, `:675-695`) |
 //! | Observing | `Settle::Retire` (PR gone) | Observing, then as `Settle::Open` | `publish.retire`, then the open's acts |
 //! | Observing | `Settle::Supersede` | Superseding | `publish.cancel_runs`, `publish.pr_close` (`:544-549`) |
@@ -926,15 +926,39 @@ pub mod edge {
     }
 
     /// The publish branch's run, re-run once; the record then says `rerun=1`.
-    pub fn rerun(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
+    pub fn rerun(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let p = input(spec)?;
         let dir = root(&registry()?, &p.repo)?;
-        let run = forge_call(&dir, "run-id", &[&p.branch], None)?.stdout().map(|o| o.trim().to_string()).filter(|r| !r.is_empty()).ok_or_else(|| format!("no run on {}", p.branch))?;
-        let r = forge_call(&dir, "workflow-rerun", &[&run], None)?;
+        rerun_with(&|verb, args| forge_call(&dir, verb, args, None), &e.world.queue_dir, &e.world.run_dir, &p)?;
+        Ok("{}".into())
+    }
+
+    pub type ForgeCall<'a> = &'a dyn Fn(&str, &[&str]) -> Result<forge::client::Reply, String>;
+
+    /// `rerun` over any forge call: one `landing.log` line for the re-run started, or refused.
+    pub fn rerun_with(call: ForgeCall, queue_dir: &std::path::Path, run_dir: &std::path::Path, p: &Pub) -> Result<(), String> {
+        let refuse = |run: &str, why: String| {
+            queue::ops::landing_log(run_dir, &format!("QUEUE PUBLISH_RERUN_REFUSED {} repo={} pr={} run={run} why={why}", spira_config::vtime::now_epoch(), p.repo, p.pr));
+            Err(why)
+        };
+        let run = match call("run-id", &[&p.branch]) {
+            Ok(r) => r.stdout().map(|o| o.trim().to_string()).filter(|r| !r.is_empty()),
+            Err(e) => return refuse("none", e.lines().next().unwrap_or("").into()),
+        };
+        let Some(run) = run else { return refuse("none", format!("no run on {}", p.branch)) };
+        let status = call("check-status", &[&p.branch]).ok().and_then(|r| r.stdout()).unwrap_or_default();
+        let field = |key: &str| status.lines().find_map(|l| l.strip_prefix(key)).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let (cause, market) = (field("runner-lost: ").unwrap_or_else(|| "untested".into()), field("runner-market: ").unwrap_or_else(|| "unknown".into()));
+        let r = match call("workflow-rerun", &[&run]) {
+            Ok(r) => r,
+            Err(e) => return refuse(&run, e.lines().next().unwrap_or("").into()),
+        };
         if !r.ok() {
-            return Err(format!("workflow-rerun {run}: {}", r.err.trim()));
+            let first = r.err.lines().next().unwrap_or("").trim();
+            return refuse(&run, format!("code={} {first}", r.code));
         }
-        record(e, k, spec)
+        queue::ops::landing_log(run_dir, &format!("QUEUE PUBLISH_RERUN {} repo={} pr={} run={run} cause={cause} market={market}", spira_config::vtime::now_epoch(), p.repo, p.pr));
+        write_record(queue_dir, p, None, spira_config::vtime::now_epoch())
     }
 
     /// The publish branch's gate started by dispatch (every suite), once; the record then says `ci_started`.
