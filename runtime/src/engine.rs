@@ -174,7 +174,7 @@ pub struct TaskStatus {
     pub in_flight: Vec<String>,
     /// Runs begun by an event of this wake, counting the events that started a run and not those it derived.
     pub runs_by_wake: BTreeMap<String, u64>,
-    /// Sweep-woken runs that went on to admit an act: the work a swallowed wake-up left behind.
+    /// Runs the engine's sweep began, with no `store.changed` having named the row's reads, that went on to admit an act: the work a swallowed wake-up left behind.
     pub sweep_found: u64,
 }
 
@@ -233,6 +233,7 @@ struct Ticking {
     last_rev: Option<u64>,
     signal_at: Option<u64>,
     due_at: Option<u64>,
+    sweep_run: Option<EventId>,
 }
 
 /// The in-process sweep: every `every_ms`, run the ticks of tasks whose reads moved unseen.
@@ -417,7 +418,7 @@ impl Engine {
     /// for an outcome and the schedule rows not yet fired. No event is replayed.
     pub fn open_with(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64, retry: BootRetry) -> Result<Self> {
         let codecs = regs.iter().filter_map(|r| r.rows.map(|c| (r.name.clone(), c))).collect();
-        let ticking = regs.iter().filter_map(|r| r.wake.clone().map(|wake| (r.name.clone(), Ticking { wake, stream: None, tag: String::new(), body: String::new(), last_tick_at: 0, last_rev: None, signal_at: None, due_at: None }))).collect();
+        let ticking = regs.iter().filter_map(|r| r.wake.clone().map(|wake| (r.name.clone(), Ticking { wake, stream: None, tag: String::new(), body: String::new(), last_tick_at: 0, last_rev: None, signal_at: None, due_at: None, sweep_run: None }))).collect();
         let mut e = Engine {
             journal,
             clock,
@@ -877,9 +878,6 @@ impl Engine {
     }
 
     fn set_wake(&mut self, id: &EventId, wake: Wake, root: bool) {
-        if root && wake == Wake::Sweep {
-            self.sweep_run.insert(id.clone(), id.clone());
-        }
         if self.wakes.insert(id.clone(), (wake, root)).is_none() {
             self.wake_order.push_back(id.clone());
             if self.wake_order.len() > WAKES_KEEP {
@@ -1059,10 +1057,10 @@ impl Engine {
         Ok(())
     }
 
-    /// Counts the run `ev` belongs to once, when the sweep began it and it has now admitted an act.
+    /// Counts the run `ev` belongs to once, when the engine's sweep began it, no change woke its row since, and it has now admitted an act.
     fn found_work(&mut self, ev: &Event, handler: &str) {
         if let Some(run) = self.sweep_run.get(&ev.id).cloned() {
-            if self.sweep_counted.insert(run) {
+            if self.ticking.get(handler).is_some_and(|t| t.sweep_run.as_ref() == Some(&run)) && self.sweep_counted.insert(run) {
                 let count = {
                     let t = self.tracks.entry(handler.into()).or_default();
                     t.sweep_found += 1;
@@ -1114,6 +1112,9 @@ impl Engine {
         let now = self.clock.now_ms();
         for t in self.ticking.values_mut() {
             let hit = change.reload || change.keys.iter().any(|k| t.wake.reads.iter().any(|p| k.starts_with(p)));
+            if hit {
+                t.sweep_run = None;
+            }
             if t.stream.is_some() && hit && t.signal_at.is_none() {
                 t.signal_at = Some(now.max(t.last_tick_at.saturating_add(t.wake.min_gap_ms)));
             }
@@ -1126,11 +1127,18 @@ impl Engine {
         let Some(stream) = t.stream.clone() else { return };
         let (tag, body) = (t.tag.clone(), t.body.clone());
         (t.signal_at, t.due_at) = (None, None);
+        t.sweep_run = None;
         let id = format!("{}/{tag}", stream.0);
         let correlation = CorrelationId(derive_id(format!("wake/{id}/{at}")));
         let row = ScheduleRow { id, at, stream: stream.clone(), kind: EventKind::new(&tag, &body), cause: None, correlation: correlation.clone() };
         let ev = Event { correlation, ..self.local_event(&stream, row.kind.clone(), at, None) };
         self.set_wake(&ev.id, wake, true);
+        if wake == Wake::Sweep {
+            self.sweep_run.insert(ev.id.clone(), ev.id.clone());
+            if let Some(t) = self.ticking.get_mut(name) {
+                t.sweep_run = Some(ev.id.clone());
+            }
+        }
         self.tick_of.insert(ev.id.clone(), row);
         self.enqueue_local(ev);
     }
@@ -1563,6 +1571,7 @@ impl Engine {
             if let Some(row) = self.timers.remove(&id) {
                 if let Some(t) = self.ticking.values_mut().find(|t| t.stream.as_ref() == Some(&row.stream) && t.tag == row.kind.tag) {
                     (t.signal_at, t.due_at) = (None, None);
+                    t.sweep_run = None;
                 }
                 let ev = Event { cause: row.cause.clone(), correlation: row.correlation.clone(), ..self.local_event(&row.stream, row.kind.clone(), row.at, None) };
                 let wake = if self.boot_tags.get(&row.stream.0) == Some(&row.kind.tag) { Wake::Sweep } else { Wake::Timer };
@@ -2066,5 +2075,127 @@ mod tests {
         e.run_until_idle().unwrap();
         assert_eq!(wake_runs(&e, "a", "timer"), 1);
         assert_eq!(e.next_timer_at(), Some(40_000), "its own cadence re-armed from the due tick");
+    }
+
+    /// A tick that re-arms every 30 s and acts on every tick, the boot tick included; with `probe`, it acts on the probe's answer, twice.
+    struct Actor {
+        tags: [&'static str; 2],
+        tag: &'static str,
+        probe: bool,
+    }
+
+    impl Handler for Actor {
+        fn interests(&self) -> &[EventKindTag] {
+            &self.tags
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            let write = |k: &str| Command::Effect(EffectSpec::keyed("write", k, "", 1_000));
+            if ev.kind.tag == EFFECT_SUCCEEDED {
+                return vec![write("w1"), write("w2")];
+            }
+            let mut cmds = vec![Command::Timer { at: ev.at + 30_000, kind: EventKind::new(self.tag, "again") }];
+            if !self.probe {
+                cmds.push(write("w"));
+            } else if ev.at > 0 {
+                cmds.push(Command::Probe(EffectSpec::probe("look", "", 10_000)));
+            }
+            cmds
+        }
+    }
+
+    fn acting(name: &'static str, reads: &[&'static str], polls: bool, probe: bool) -> Registration {
+        Registration::new(name, Actor { tags: [name, EFFECT_SUCCEEDED], tag: name, probe }).with_wake(crate::event::Wake { reads: reads.to_vec(), min_gap_ms: 0, polls })
+    }
+
+    fn found(e: &Engine, sink: &Arc<crate::wide::MemSink>) -> (u64, usize) {
+        (e.status().tasks.iter().map(|t| t.sweep_found).sum(), sweep_found_records(sink).len())
+    }
+
+    fn booted(regs: Vec<Registration>, clock: &VirtualClock, changes: &Arc<crate::changes::ScriptedChanges>, at: Option<u64>) -> (Engine, Arc<crate::wide::MemSink>) {
+        let sink = crate::wide::MemSink::new();
+        let streams: Vec<String> = regs.iter().map(|r| r.name.clone()).collect();
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 1).unwrap().with_sweep(60_000, changes.clone()).with_sink(sink.clone());
+        for s in &streams {
+            match at {
+                Some(at) => e.start_at(s, EventKind::new(s, ""), at),
+                None => e.start(s, EventKind::new(s, "")),
+            }
+        }
+        clock.advance(at.unwrap_or(0));
+        e.run_until_idle().unwrap();
+        (e, sink)
+    }
+
+    #[test_id(to8fhp6)]
+    #[test]
+    fn a_boot_tick_is_never_found_on_the_sweep_however_it_was_handed_over() {
+        for at in [None, Some(5_000)] {
+            let (clock, changes) = quiet();
+            let regs = vec![acting("only", &["a/"], false, false), acting("polled", &["a/"], true, false), Registration::new("bare", Actor { tags: ["bare", EFFECT_SUCCEEDED], tag: "bare", probe: false })];
+            let (e, sink) = booted(regs, &clock, &changes, at);
+            assert!(e.status().tasks.iter().all(|t| t.runs_by_wake.get("sweep") == Some(&1)), "{at:?}: every row booted");
+            assert_eq!(found(&e, &sink), (0, 0), "{at:?}");
+        }
+    }
+
+    #[test_id(tzyg3wt)]
+    #[test]
+    fn a_rows_own_cadence_tick_is_never_found_on_the_sweep_when_the_store_moved() {
+        let (clock, changes) = quiet();
+        let regs = vec![Registration::new("bare", Actor { tags: ["bare", EFFECT_SUCCEEDED], tag: "bare", probe: false }), acting("polled", &["a/"], true, false)];
+        let (mut e, sink) = booted(regs, &clock, &changes, None);
+        changes.set(7);
+        for _ in 0..3 {
+            clock.advance(30_000);
+            e.run_until_idle().unwrap();
+        }
+        assert_eq!(wake_runs(&e, "polled", "sweep"), 4);
+        assert_eq!(found(&e, &sink), (0, 0));
+    }
+
+    #[test_id(ty76yxc)]
+    #[test]
+    fn a_polled_row_a_change_woke_between_cadence_ticks_is_not_found_on_the_sweep() {
+        let (clock, changes) = quiet();
+        let (mut e, sink) = booted(vec![acting("polled", &["a/"], true, false)], &clock, &changes, None);
+        changes.set(7);
+        clock.advance(10_000);
+        changed(&mut e, "c1", &["a/x"], false);
+        e.run_until_idle().unwrap();
+        clock.advance(20_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(found(&e, &sink), (0, 0));
+    }
+
+    #[test_id(tnegw96)]
+    #[test]
+    fn a_change_queued_when_the_sweep_falls_due_wakes_the_row_and_is_not_a_miss() {
+        let (clock, changes) = quiet();
+        let (mut e, sink) = booted(vec![woken("a", &["a/"], false, 0, &[], true)], &clock, &changes, None);
+        changes.set(7);
+        changed(&mut e, "c1", &["a/x"], false);
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
+        assert!(runs(&e, "a") >= 2, "the row ran");
+        assert_eq!(found(&e, &sink), (0, 0));
+    }
+
+    #[test_id(tlim41q)]
+    #[test]
+    fn a_change_naming_the_reads_before_the_probe_answers_clears_the_sweep_find() {
+        for (named, want) in [(true, (0, 0)), (false, (1, 1))] {
+            let (clock, changes) = quiet();
+            let (mut e, sink) = booted(vec![acting("only", &["a/"], false, true)], &clock, &changes, None);
+            changes.set(7);
+            clock.advance(60_000);
+            e.run_until_idle().unwrap();
+            let probe = e.pending_effects().into_iter().find(|p| p.spec.name == "look").expect("the sweep's tick probed").key;
+            if named {
+                changed(&mut e, "c1", &["a/x"], false);
+            }
+            assert!(e.complete(&probe, Outcome::Succeeded(String::new())).unwrap());
+            e.run_until_idle().unwrap();
+            assert_eq!(found(&e, &sink), want, "named: {named}; two effects admitted by the answer count once");
+        }
     }
 }
