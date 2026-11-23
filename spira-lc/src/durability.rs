@@ -46,18 +46,29 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
     Some((|| {
         let every = cfg_u64("SPIRA_LC_SHIP_SECS")?;
         let snapshot_secs = cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?;
-        staging(backend, ship_dir(run), &url, (every, snapshot_secs))
+        let max_age_secs = cfg_u64("SPIRA_LC_SHIP_MAX_AGE_SECS")?;
+        staging(backend, ship_dir(run), &url, (every, snapshot_secs, max_age_secs))
     })())
+}
+
+/// A run is staged at most once per quarter of the freshness bound, never more often than a tick.
+fn stage_every_ms(every_secs: u64, max_age_secs: u64) -> u64 {
+    every_secs.max(max_age_secs / 4).saturating_mul(1_000)
 }
 
 /// The shipper for a destination: it stages in `dir` and uploads nothing, because lc-serve
 /// starts no process; `ship::drain`, run by the scheduler's `lc.ship` task, uploads.
-fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_secs): (u64, u64)) -> Result<Shipping, String> {
+fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_secs, max_age_secs): (u64, u64, u64)) -> Result<Shipping, String> {
     if !(1..=5).contains(&every) {
         return Err(format!("SPIRA_LC_SHIP_SECS is {every}; it ships every 1 to 5 seconds"));
     }
     Dest::parse(url)?;
-    let cfg = ShipConfig { dir, max_mains: MAX_MAINS, snapshot_every_ms: snapshot_secs.saturating_mul(1_000) };
+    let cfg = ShipConfig {
+        dir,
+        max_mains: MAX_MAINS,
+        snapshot_every_ms: snapshot_secs.saturating_mul(1_000),
+        stage_every_ms: stage_every_ms(every, max_age_secs),
+    };
     let shipper = Shipper::open_staging(backend, cfg, Arc::new(WallClock))?;
     Ok(Shipping {
         snapshotter: shipper.snapshotter(),
@@ -253,7 +264,7 @@ mod tests {
         let b = SqliteBackend::open(&dir.join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let c = suite::open(b.clone(), clock);
         let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE });
-        let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX };
+        let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX, stage_every_ms: 0 };
         let mut sh = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
         sh.snapshotter().step().unwrap();
         sh.tick().unwrap();
@@ -272,7 +283,7 @@ mod tests {
         let clock = VirtualClock::new(1_000);
         let b = SqliteBackend::open(&dir.path().join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let c = suite::open(b.clone(), &clock);
-        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
+        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX, stage_every_ms: 0 };
         let mut sh = Shipper::open_staging(b, cfg, Arc::new(clock.clone())).unwrap();
         sh.snapshotter().step().unwrap();
         sh.tick().unwrap();
@@ -289,6 +300,13 @@ mod tests {
         assert_eq!(sh.tick().unwrap().shipped_through, 1, "the staging shipper reads what the drain recorded");
     }
 
+    #[test_id(t0osgsx)]
+    #[test]
+    fn staging_waits_a_quarter_of_the_freshness_bound_and_never_less_than_a_tick() {
+        assert_eq!(stage_every_ms(2, 60), 15_000);
+        assert_eq!(stage_every_ms(5, 8), 5_000);
+    }
+
     #[test_id(tbd0vxr)]
     #[test]
     fn the_served_shippers_tick_leaves_a_queued_segment_for_the_scheduler() {
@@ -298,7 +316,7 @@ mod tests {
         let c = suite::open(b.clone(), &clock);
         let off = dir.path().join("off");
         let url = format!("file://{}", off.display());
-        let mut s = staging(b, dir.path().join("lc-ship"), &url, (1, 3_600)).unwrap();
+        let mut s = staging(b, dir.path().join("lc-ship"), &url, (1, 3_600, 60)).unwrap();
         let metrics = MetricsSink::new(None, "spira-lc", Duration::from_millis(10));
         tick(&mut s, &metrics);
         let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
@@ -306,7 +324,7 @@ mod tests {
         tick(&mut s, &metrics);
         assert!(!ship::names(&s.shipper.dir().join("queue").join(REVLOG)).unwrap().is_empty());
         assert!(!off.exists(), "lc-serve uploads nothing");
-        assert!(matches!(staging(SqliteBackend::open(&dir.path().join("x.db"), Options::default()).unwrap(), dir.path().join("s2"), &url, (9, 1)), Err(e) if e.contains("1 to 5")));
+        assert!(matches!(staging(SqliteBackend::open(&dir.path().join("x.db"), Options::default()).unwrap(), dir.path().join("s2"), &url, (9, 1, 60)), Err(e) if e.contains("1 to 5")));
     }
 
     #[test_id(tsse27u)]
