@@ -19,7 +19,7 @@ use state_store_sqlite::durability::drill::{self, Exclusions, Mismatch};
 use state_store_sqlite::durability::put::{Dest, Put, S3Creds, Uploader};
 use state_store_sqlite::durability::restore;
 use state_store_sqlite::durability::revlog::{self, REVLOG, SNAPSHOT};
-use state_store_sqlite::durability::ship::{ShipConfig, Shipper};
+use state_store_sqlite::durability::ship::{self, ShipConfig, Shipper};
 use state_store_sqlite::{Options, SqliteBackend};
 use testkit::TempDir;
 
@@ -49,6 +49,14 @@ fn keys_at(b: &SqliteBackend, at: u64) -> Vec<(String, Vec<u8>)> {
         .into_iter()
         .map(|(k, v)| (k, v.value))
         .collect()
+}
+
+/// A tick as the served shipper runs it: the scheduled snapshot's step, then the tick.
+fn tick(s: &mut Shipper) -> ship::Tick {
+    let snap = s.snapshotter().step().unwrap();
+    let mut t = s.tick().unwrap();
+    t.snapshot = snap.or(t.snapshot);
+    t
 }
 
 fn ship_cfg(dir: &Path, snapshot_every_ms: u64) -> ShipConfig {
@@ -120,12 +128,12 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     )
     .unwrap();
     put(&c, "a", Object::new(json!(1)), "1");
-    let first = s.tick().unwrap();
+    let first = tick(&mut s);
     assert_eq!(first.uploaded.len(), 2, "{first:?}");
     put(&c, "b", Object::new(json!(2)), "2");
     put(&c, "a", Object::new(json!(3)), "3");
     *curl.refuse_next.lock().unwrap() = true;
-    let refused = s.tick().unwrap();
+    let refused = tick(&mut s);
     assert!(
         refused
             .failed
@@ -135,7 +143,7 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     );
     assert!(refused.uploaded.is_empty());
     clock.advance(4_000);
-    let held = s.tick().unwrap();
+    let held = tick(&mut s);
     assert_eq!(held.uploaded.len(), 1, "{held:?}");
 
     let runs = curl.runs.lock().unwrap().clone();
@@ -214,7 +222,7 @@ fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, 
         Arc::new(clock.clone()),
     )
     .unwrap();
-    assert!(s.tick().unwrap().snapshot.is_some());
+    assert!(tick(&mut s).snapshot.is_some());
     put(
         &c,
         "lifecycle/sp-1",
@@ -255,7 +263,7 @@ fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, 
         Object::new(json!({"by": "d2"})).with_ttl(3_600),
         "i2",
     );
-    assert!(s.tick().unwrap().failed.is_none());
+    assert!(tick(&mut s).failed.is_none());
     clock.advance(31_000);
     let swept = Controller::new(&c).tick(c.now_ms()).unwrap();
     assert_eq!(swept.expired, ["intents/claim/sp-2"]);
@@ -267,7 +275,7 @@ fn shipped_store(dir: &Path, clock: &VirtualClock) -> (Contract<SqliteBackend>, 
         Object::new(json!({"state": "WORKING"})),
         "r3",
     );
-    let t = s.tick().unwrap();
+    let t = tick(&mut s);
     assert!(
         t.failed.is_none() && t.shipped_through == c.backend().head().unwrap(),
         "{t:?}"
@@ -442,7 +450,7 @@ fn a_live_key_no_audited_write_produced_fails_the_drill_under_any_other_prefix()
         prev: None,
     };
     b.commit(head, &[raw]).unwrap();
-    assert!(s.tick().unwrap().failed.is_none());
+    assert!(tick(&mut s).failed.is_none());
     let (_, rep) =
         drill::drill(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT).unwrap();
     assert_eq!(
@@ -508,13 +516,11 @@ fn a_snapshot_of_a_store_larger_than_a_tick_copies_finishes_in_one_tick_and_hold
         Arc::new(clock.clone()),
     )
     .unwrap();
-    let rev = s
-        .tick()
-        .unwrap()
+    let rev = tick(&mut s)
         .snapshot
         .expect("the first tick finishes the snapshot");
     put(&c, "after", Object::new(json!(1)), "after");
-    s.tick().unwrap();
+    tick(&mut s);
     let snap = s.sent(SNAPSHOT).join(revlog::snapshot_name(rev));
     let copy = dir.path().join("copy.db");
     std::fs::copy(&snap, &copy).unwrap();
@@ -579,7 +585,7 @@ fn local_copies_keep_two_snapshots_and_the_runs_after_the_older_and_still_drill(
             Object::new(json!(i)),
             &format!("p{i}"),
         );
-        snaps.push(s.tick().unwrap().snapshot.unwrap());
+        snaps.push(tick(&mut s).snapshot.unwrap());
     }
     let kept: Vec<u64> = std::fs::read_dir(s.sent(SNAPSHOT))
         .unwrap()
@@ -643,9 +649,9 @@ fn an_idle_store_takes_no_second_snapshot_at_the_same_revision_and_another_histo
         Arc::new(clock.clone()),
     )
     .unwrap();
-    assert!(s.tick().unwrap().snapshot.is_some());
+    assert!(tick(&mut s).snapshot.is_some());
     clock.advance(1_000);
-    let idle = s.tick().unwrap();
+    let idle = tick(&mut s);
     assert_eq!((idle.snapshot, idle.uploaded.len()), (None, 0), "{idle:?}");
     assert_eq!(
         std::fs::read_dir(dir.path().join("off").join(SNAPSHOT))
@@ -654,7 +660,7 @@ fn an_idle_store_takes_no_second_snapshot_at_the_same_revision_and_another_histo
         1
     );
     put(&c, "k", Object::new(json!(2)), "2");
-    assert!(s.tick().unwrap().snapshot.is_some());
+    assert!(tick(&mut s).snapshot.is_some());
 
     let other = open(&dir.path().join("restored.db"));
     let err = Shipper::open(
@@ -725,7 +731,7 @@ fn commits_made_then_the_store_dropped_without_a_stop_hook_ship_every_revision_w
         let c = suite::open(open(&path), &clock);
         let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
         put(&c, "a", Object::new(json!(1)), "1");
-        let t = s.tick().unwrap();
+        let t = tick(&mut s);
         assert!(t.snapshot.is_some(), "the first tick takes the snapshot a restore starts from");
         put(&c, "a", Object::new(json!(2)), "2");
         put(&c, "b", Object::new(json!(3)), "3");
@@ -735,14 +741,14 @@ fn commits_made_then_the_store_dropped_without_a_stop_hook_ship_every_revision_w
     assert!(first > 3);
     let c = suite::open(open(&path), &clock);
     let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
-    let t = s.tick().unwrap();
+    let t = tick(&mut s);
     assert_eq!(t.snapshot, None, "no snapshot out of cadence: {t:?}");
     let head = c.backend().head().unwrap();
     assert!(head > first, "the open jumped the head");
     assert_eq!(t.shipped_through, head, "{t:?}");
     first = c.backend().head().unwrap();
     put(&c, "c", Object::new(json!(5)), "5");
-    s.tick().unwrap();
+    tick(&mut s);
     let (out, _, _) = restored_copy(dir.path(), &s);
     let restored = verify(&out);
     assert_eq!(restored.head().unwrap(), c.backend().head().unwrap());
@@ -776,16 +782,16 @@ fn shipped_entries_leave_the_outbox_and_unshipped_ones_stay() {
     let r1 = put(&c, "a", Object::new(json!(1)), "1");
     let r2 = put(&c, "a", Object::new(json!(2)), "2");
     assert_eq!(b.outbox_mains().unwrap(), [r1, r2]);
-    let t = s.tick().unwrap();
+    let t = tick(&mut s);
     assert_eq!(t.shipped_through, r2);
     assert!(b.outbox_mains().unwrap().is_empty(), "everything shipped is gone");
     let r3 = put(&c, "a", Object::new(json!(3)), "3");
     let r4 = put(&c, "a", Object::new(json!(4)), "4");
     *curl.refuse_next.lock().unwrap() = true;
-    let t = s.tick().unwrap();
+    let t = tick(&mut s);
     assert!(t.failed.is_some() && t.shipped_through == r2, "{t:?}");
     assert_eq!(b.outbox_mains().unwrap(), [r3, r4], "the unshipped entries remain");
-    let t = s.tick().unwrap();
+    let t = tick(&mut s);
     assert_eq!(t.shipped_through, r4);
     assert!(b.outbox_mains().unwrap().is_empty());
 }
@@ -822,7 +828,7 @@ fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resum
         let c = suite::open(open(&path), &clock);
         let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
         put(&c, "a", Object::new(json!(1)), "1");
-        s.tick().unwrap();
+        tick(&mut s);
         put(&c, "a", Object::new(json!(2)), "2");
         put(&c, "b", Object::new(json!(3)), "3");
     }
@@ -834,7 +840,7 @@ fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resum
     assert_eq!(t.snapshot, Some(head), "the snapshot taken out of cadence: {t:?}");
     assert_eq!(t.staged, None);
     put(&c, "c", Object::new(json!(4)), "4");
-    let t = s.tick().unwrap();
+    let t = tick(&mut s);
     assert_eq!(t.staged.map(|(from, _)| from), Some(head + 1), "{t:?}");
     let (out, _, _) = restored_copy(dir.path(), &s);
     assert_eq!(live(&verify(&out)), live(c.backend()));
@@ -876,13 +882,13 @@ fn a_jump_at_the_head_with_nothing_after_it_is_shipped() {
     let path = dir.path().join("live.db");
     {
         let (c, mut s) = shipped_store(dir.path(), &clock);
-        s.tick().unwrap();
+        tick(&mut s);
         drop((c, s));
     }
     let b = reopened(&path);
     let head = b.head().unwrap();
     let mut s = Shipper::open(b, ship_cfg(dir.path(), u64::MAX), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
-    s.tick().unwrap();
+    tick(&mut s);
     assert_eq!(s.shipped_through().unwrap(), head, "the jump ships, so the lag clears and compaction can follow");
 }
 
@@ -894,13 +900,13 @@ fn a_restore_across_a_jump_reproduces_the_head_the_contents_and_the_jump() {
     let path = dir.path().join("live.db");
     {
         let (c, mut s) = shipped_store(dir.path(), &clock);
-        s.tick().unwrap();
+        tick(&mut s);
         drop((c, s));
     }
     let c = suite::open(reopened(&path), &clock);
     put(&c, "lifecycle/sp-9", Object::new(json!({"state": "LANDED"})), "after-jump");
     let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
-    s.tick().unwrap();
+    tick(&mut s);
     let live = c.backend().clone();
     let head = live.head().unwrap();
     assert_eq!(s.shipped_through().unwrap(), head);
@@ -909,4 +915,120 @@ fn a_restore_across_a_jump_reproduces_the_head_the_contents_and_the_jump() {
     assert_eq!(r.head().unwrap(), head);
     assert_eq!(keys_at(&r, head), keys_at(&live, head));
     assert_eq!(r.jumps(0, head).unwrap(), live.jumps(0, head).unwrap());
+}
+
+// ---- sp-x73bzk: the scheduled snapshot runs beside the tick ---------------------------------
+
+/// Holds every snapshot copy until released; `entered` receives one message per copy begun.
+fn hold_copies(snap: &ship::Snapshotter) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (entered_tx, entered) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Mutex::new(release_rx);
+    snap.on_copy(move || {
+        entered_tx.send(()).unwrap();
+        let _ = release_rx.lock().unwrap().recv();
+    });
+    (entered, release)
+}
+
+const BOUND: Duration = Duration::from_secs(60);
+
+#[test_id(t3m9aon)]
+#[test]
+fn a_tick_stages_runs_and_reports_lag_while_a_scheduled_snapshot_is_held_in_its_copy() {
+    let dir = TempDir::new("ship-beside-copy");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    put(&c, "a", Object::new(json!(1)), "1");
+    let mut s = Shipper::open_staging(c.backend().clone(), ship_cfg(dir.path(), 0), Arc::new(clock.clone())).unwrap();
+    let snap = s.snapshotter();
+    let (entered, release) = hold_copies(&snap);
+    let stepper = std::thread::spawn({
+        let snap = snap.clone();
+        move || snap.step().unwrap()
+    });
+    entered.recv_timeout(BOUND).expect("the copy began");
+
+    put(&c, "b", Object::new(json!(2)), "2");
+    let (done_tx, done) = std::sync::mpsc::channel();
+    let ticker = std::thread::spawn(move || {
+        let t = s.tick().unwrap();
+        done_tx.send(()).unwrap();
+        (s, t)
+    });
+    done.recv_timeout(BOUND).expect("the tick returned while the copy was held");
+    release.send(()).unwrap();
+    let snap_rev = stepper.join().unwrap().expect("the snapshot landed");
+    let (s, t) = ticker.join().unwrap();
+
+    assert!(t.staged.is_some(), "{t:?}");
+    assert!(t.oldest_unshipped_ms.is_some(), "{t:?}");
+    assert!(!ship::names(&s.dir().join("queue").join(REVLOG)).unwrap().is_empty(), "the run waits in queue/");
+    let drained = ship::drain(s.dir(), file_put(&dir.path().join("off")).as_ref()).unwrap();
+    assert!(drained.failed.is_none(), "{drained:?}");
+    let (out, _, _) = restored_copy(dir.path(), &s);
+    assert!(snap_rev <= c.backend().head().unwrap());
+    assert_eq!(live(&verify(&out)), live(c.backend()));
+}
+
+#[test_id(twikg97)]
+#[test]
+fn a_due_snapshot_is_taken_once_per_cadence_and_one_at_an_unchanged_revision_is_dropped() {
+    let dir = TempDir::new("ship-cadence");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    put(&c, "a", Object::new(json!(1)), "1");
+    let s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), 10_000), file_put(&dir.path().join("off")), Arc::new(clock.clone())).unwrap();
+    let snap = s.snapshotter();
+    let first = snap.step().unwrap();
+    assert!(first.is_some());
+    assert_eq!(snap.step().unwrap(), None, "not due again within the cadence");
+    clock.advance(10_000);
+    assert_eq!(snap.step().unwrap(), None, "due, but the revision is unchanged: dropped");
+    put(&c, "b", Object::new(json!(2)), "2");
+    clock.advance(10_000);
+    assert!(snap.step().unwrap().is_some_and(|r| Some(r) > first));
+}
+
+#[test_id(t0ebl94)]
+#[test]
+fn a_forced_snapshot_during_a_scheduled_one_waits_and_then_stages_runs_after_its_revision() {
+    let dir = TempDir::new("ship-forced-waits");
+    let clock = VirtualClock::new(1_000);
+    let path = dir.path().join("live.db");
+    let off = dir.path().join("off");
+    {
+        let c = suite::open(open(&path), &clock);
+        let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+        put(&c, "a", Object::new(json!(1)), "1");
+        tick(&mut s);
+        put(&c, "a", Object::new(json!(2)), "2");
+    }
+    std::fs::remove_dir_all(state_store_sqlite::outbox_dir(&path)).unwrap();
+    let c = suite::open(open(&path), &clock);
+    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), 0), file_put(&off), Arc::new(clock.clone())).unwrap();
+    let snap = s.snapshotter();
+    let (entered, release) = hold_copies(&snap);
+    let stepper = std::thread::spawn({
+        let snap = snap.clone();
+        move || snap.step().unwrap()
+    });
+    entered.recv_timeout(BOUND).expect("the scheduled copy began");
+    let (done_tx, done) = std::sync::mpsc::channel();
+    let ticker = std::thread::spawn(move || {
+        let t = s.tick().unwrap();
+        done_tx.send(()).unwrap();
+        (s, t)
+    });
+    assert!(done.recv_timeout(Duration::from_millis(300)).is_err(), "the forced snapshot waits for the scheduled copy");
+    // The forced copy enters the hook only after the scheduled one releases its lock.
+    release.send(()).unwrap();
+    release.send(()).ok();
+    let rev = stepper.join().unwrap().expect("the scheduled snapshot landed");
+    done.recv_timeout(BOUND).expect("the tick finished after the release");
+    let (mut s, t) = ticker.join().unwrap();
+    assert_eq!(t.snapshot, None, "the forced snapshot was at the scheduled one's revision: dropped");
+    put(&c, "c", Object::new(json!(3)), "3");
+    let t = s.tick().unwrap();
+    assert_eq!(t.staged.map(|(from, _)| from), Some(rev + 1), "{t:?}");
 }
