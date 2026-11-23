@@ -372,6 +372,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-otel",
  "spira-test-id",
  "testkit",
 ]
