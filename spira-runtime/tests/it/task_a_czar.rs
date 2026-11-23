@@ -324,3 +324,68 @@ fn the_mark_is_kept_as_a_row_and_joins_back() {
     let back: Carry = serde_json::from_str(&runtime::rows::join(&rows, ROW_PARTS)).unwrap();
     assert_eq!(back.mark, mark);
 }
+
+#[test_id(tjl6w67)]
+#[test]
+fn an_event_before_rotation_is_reported_once_and_one_in_the_new_live_file_in_the_same_pass() {
+    use std::io::Write;
+    let dir = testkit::TempDir::new("czar-log-rotated");
+    let log = dir.path().join("landing.log");
+    std::fs::write(&log, format!("{LOG_PASS}\n")).unwrap();
+    let (carry, first) = pass(dir.path(), &Carry::default());
+    assert!(events(&first).is_empty());
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log)
+        .unwrap()
+        .write_all(format!("{}\n", stamped(100, LOG_SORT)).as_bytes())
+        .unwrap();
+    std::fs::rename(&log, dir.path().join("landing.log.1")).unwrap();
+    std::fs::write(&log, format!("{}\n", stamped(200, LOG_SORT))).unwrap();
+    let (carry, second) = pass(dir.path(), &carry);
+    let at: Vec<u64> = events(&second).iter().map(|e| e.at_ms).collect();
+    assert_eq!(at.len(), 2, "{second:?}");
+    assert!(at[0] < at[1], "{at:?}");
+    let (_, third) = pass(dir.path(), &carry);
+    assert!(events(&third).is_empty(), "{third:?}");
+}
+
+#[test_id(tj8b01j)]
+#[test]
+fn a_rotation_before_the_new_live_file_exists_loses_nothing() {
+    use std::io::Write;
+    let dir = testkit::TempDir::new("czar-log-rotated-gap");
+    let log = dir.path().join("landing.log");
+    std::fs::write(&log, format!("{LOG_PASS}\n")).unwrap();
+    let (carry, _) = pass(dir.path(), &Carry::default());
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&log)
+        .unwrap()
+        .write_all(format!("{}\n", stamped(100, LOG_SORT)).as_bytes())
+        .unwrap();
+    std::fs::rename(&log, dir.path().join("landing.log.1")).unwrap();
+    let (carry, second) = pass(dir.path(), &carry);
+    assert_eq!(events(&second).len(), 1, "{second:?}");
+    std::fs::write(&log, format!("{}\n", stamped(200, LOG_SORT))).unwrap();
+    let (_, third) = pass(dir.path(), &carry);
+    assert_eq!(events(&third).len(), 1, "{third:?}");
+}
+
+#[test_id(ty6iwfc)]
+#[test]
+fn a_mark_in_a_file_rotated_twice_is_followed_through_every_newer_file() {
+    use std::io::Write;
+    let dir = testkit::TempDir::new("czar-log-rotated-twice");
+    let log = dir.path().join("landing.log");
+    std::fs::write(&log, format!("{LOG_PASS}\n")).unwrap();
+    let (carry, _) = pass(dir.path(), &Carry::default());
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(format!("{}\n", stamped(100, LOG_SORT)).as_bytes()).unwrap();
+    std::fs::rename(&log, dir.path().join("landing.log.1")).unwrap();
+    std::fs::write(&log, format!("{}\n", stamped(200, LOG_SORT))).unwrap();
+    std::fs::rename(dir.path().join("landing.log.1"), dir.path().join("landing.log.2")).unwrap();
+    std::fs::rename(&log, dir.path().join("landing.log.1")).unwrap();
+    std::fs::write(&log, format!("{}\n", stamped(300, LOG_SORT))).unwrap();
+    let (_, second) = pass(dir.path(), &carry);
+    assert_eq!(events(&second).len(), 3, "{second:?}");
+}

@@ -4474,6 +4474,56 @@ fn stats_reads_the_landing_log() {
     assert!(t.out().starts_with("caught:          1\n"));
 }
 
+#[test_id(t743cqi)]
+#[test]
+fn stats_reads_lines_that_exist_only_in_a_rotated_landing_log() {
+    let t = T::new(LandMode::Queue);
+    fs::write(t.s().run.join("landing.log.1"), "QUEUE CAUGHT 1 branch=x\n").unwrap();
+    fs::write(t.s().run.join("landing.log"), "QUEUE CAUGHT 2 branch=y\n").unwrap();
+    assert_eq!(t.run(&["stats"]), 0);
+    assert!(t.out().starts_with("caught:          2\n"), "{}", t.out());
+}
+
+#[test_id(tqxg7aa)]
+#[test]
+fn landing_log_text_reads_kept_files_oldest_first_then_the_live_one() {
+    let t = T::new(LandMode::Queue);
+    let run = t.s().run.clone();
+    assert_eq!(crate::ops::landing_log_text(&run), None);
+    fs::write(run.join("landing.log.2"), "a\n").unwrap();
+    fs::write(run.join("landing.log.10"), "0\n").unwrap();
+    fs::write(run.join("landing.log.1"), "b\n").unwrap();
+    fs::write(run.join("landing.log"), "c\n").unwrap();
+    assert_eq!(
+        crate::ops::landing_log_text(&run).as_deref(),
+        Some("0\na\nb\nc\n")
+    );
+}
+
+#[test_id(tdx4oen)]
+#[test]
+fn rotation_keeps_the_live_file_in_the_count_and_ignores_names_that_are_not_numbers() {
+    let t = T::new(LandMode::Queue);
+    let run = t.s().run.clone();
+    let put = |n: &str, v: &str| fs::write(run.join(n), v).unwrap();
+    let read = |n: &str| fs::read_to_string(run.join(n)).ok();
+    put("landing.log", "live");
+    put("landing.log.1", "one");
+    put("landing.log.2", "two");
+    put("landing.log.bak", "bak");
+    assert!(!crate::ops::rotate_landing_log(&run, 100, 3).unwrap());
+    assert!(crate::ops::rotate_landing_log(&run, 1, 3).unwrap());
+    assert_eq!(read("landing.log.1").as_deref(), Some("live"));
+    assert_eq!(read("landing.log.2").as_deref(), Some("one"));
+    assert_eq!(read("landing.log.3"), None);
+    assert_eq!(read("landing.log"), None);
+    assert_eq!(read("landing.log.bak").as_deref(), Some("bak"));
+    put("landing.log", "again");
+    assert!(crate::ops::rotate_landing_log(&run, 1, 1).unwrap());
+    assert_eq!(read("landing.log.1"), None);
+    assert_eq!(read("landing.log.2"), None);
+}
+
 #[test_id(tho8ghw)]
 #[test]
 fn usage_errors_exit_two() {

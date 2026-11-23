@@ -351,6 +351,64 @@ pub fn landing_log(run: &Path, line: &str) {
     }
 }
 
+/// The rotated `landing.log.N` files under `run`, oldest first.
+pub fn landing_log_rotated(run: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<(u64, PathBuf)> = std::fs::read_dir(run)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let n = e
+                .file_name()
+                .to_str()?
+                .strip_prefix("landing.log.")?
+                .parse::<u64>()
+                .ok()?;
+            Some((n, e.path()))
+        })
+        .collect();
+    found.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
+/// Every kept landing log file, oldest first, then the live one; `None` when none can be read.
+pub fn landing_log_text(run: &Path) -> Option<String> {
+    let mut files = landing_log_rotated(run);
+    files.push(run.join("landing.log"));
+    let parts: Vec<String> = files
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok())
+        .collect();
+    (!parts.is_empty()).then(|| parts.concat())
+}
+
+/// Rename the live log to `.1` once it holds `cap_bytes`, shifting the older files up and deleting
+/// those past `keep` files in all (the live one counts). Whether it rotated.
+pub fn rotate_landing_log(run: &Path, cap_bytes: u64, keep: usize) -> std::io::Result<bool> {
+    let live = run.join("landing.log");
+    if std::fs::metadata(&live)?.len() < cap_bytes {
+        return Ok(false);
+    }
+    let numbered = |n: u64| run.join(format!("landing.log.{n}"));
+    let number = |p: &Path| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .and_then(|e| e.parse::<u64>().ok())
+    };
+    for old in landing_log_rotated(run).iter() {
+        if let Some(n) = number(old) {
+            std::fs::rename(old, numbered(n + 1))?;
+        }
+    }
+    std::fs::rename(&live, numbered(1))?;
+    for old in landing_log_rotated(run) {
+        if number(&old).is_some_and(|n| n as usize >= keep.max(1)) {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+    Ok(true)
+}
+
 /// One round event: its `QUEUE ROUND-<KIND>` line in landing.log and its OTLP record, both naming the actor.
 /// `fields` keep their order in the line, so the free-text `reason` goes last.
 pub fn round_event(
