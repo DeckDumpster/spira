@@ -695,13 +695,14 @@ fn cmd_repo_containment_check() -> ExitCode {
 }
 
 fn cmd_repo_add(args: &[String]) -> ExitCode {
-    const USAGE: &str = "usage: spira-config repo add <name> --path P --queue local|forge [--remote URL] [--land-ref R] [--format CMD] [--gate CMD]";
+    const USAGE: &str = "usage: spira-config repo add <name> --path P --queue local|forge [--remote URL] [--land-ref R] [--format CMD] [--gate CMD] [--publish <remote>|none [--publish-branch B] [--publish-mode pr|push]]  (--publish is required with --queue local)";
     let Some(name) = args.first().filter(|a| !a.starts_with("--")) else {
         eprintln!("{USAGE}");
         return ExitCode::FAILURE;
     };
     let (mut path, mut queue, mut remote, mut land_ref, mut format, mut gate) =
         (None, None, None, None, String::new(), String::new());
+    let (mut publish, mut publish_branch, mut publish_mode) = (None, None, None);
     let mut i = 1;
     while i < args.len() {
         let val = args.get(i + 1).cloned();
@@ -712,6 +713,9 @@ fn cmd_repo_add(args: &[String]) -> ExitCode {
             ("--land-ref", Some(v)) => land_ref = Some(v),
             ("--format", Some(v)) => format = v,
             ("--gate", Some(v)) => gate = v,
+            ("--publish", Some(v)) => publish = Some(v),
+            ("--publish-branch", Some(v)) => publish_branch = Some(v),
+            ("--publish-mode", Some(v)) => publish_mode = Some(v),
             _ => {
                 eprintln!("{USAGE}");
                 return ExitCode::FAILURE;
@@ -740,6 +744,9 @@ fn cmd_repo_add(args: &[String]) -> ExitCode {
         land_ref,
         format,
         gate,
+        publish,
+        publish_branch,
+        publish_mode,
     };
     match spira_config::repo_admin::add(&a, &targets) {
         Ok(did) => {
@@ -798,7 +805,7 @@ fn repo_targets() -> spira_config::repo_admin::Targets {
 
 fn cmd_repo_set(args: &[String]) -> ExitCode {
     let [name, field, value] = args else {
-        eprintln!("usage: spira-config repo set <name> <path|queue|land|format|gate|lanes> <value>");
+        eprintln!("usage: spira-config repo set <name> <path|queue|land|format|gate|lanes|publish-remote|publish-branch|publish-mode> <value>");
         return ExitCode::FAILURE;
     };
     match spira_config::repo_admin::set(name, field, value, &repo_targets()) {
@@ -811,6 +818,26 @@ fn cmd_repo_set(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn cmd_repo_publish(reg: &Registry, args: &[String]) -> ExitCode {
+    let json_err = |e: String| {
+        println!("{}", serde_json::json!({ "error": e }));
+        ExitCode::FAILURE
+    };
+    let names: Vec<String> = match args {
+        [a] if a == "--all" => reg.all(),
+        [n] if !n.starts_with("--") => vec![n.clone()],
+        _ => return json_err("usage: spira-config repo publish <name>|--all".to_string()),
+    };
+    let t = repo_targets();
+    for name in &names {
+        match spira_config::repo_admin::publish_target(name, &t) {
+            Ok(v) => println!("{v}"),
+            Err(e) => return json_err(e),
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 fn cmd_repo_rm(args: &[String]) -> ExitCode {
@@ -900,6 +927,7 @@ fn cmd_repo(args: &[String]) -> ExitCode {
         Some("add") => cmd_repo_add(&args[1..]),
         Some("set") => cmd_repo_set(&args[1..]),
         Some("rm") => cmd_repo_rm(&args[1..]),
+        Some("publish") => cmd_repo_publish(&reg, &args[1..]),
         Some("check") => cmd_repo_check(&reg, &args[1..]),
         Some("home-repo") => {
             println!("{}", reg.home_repo());

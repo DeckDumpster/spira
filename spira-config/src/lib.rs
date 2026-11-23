@@ -1742,6 +1742,43 @@ pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Resu
     write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
 }
 
+/// [`set_paths_in_file`]'s sibling for clearing: each dotted path's value is removed, siblings kept.
+pub fn unset_paths_in_file(file: &std::path::Path, paths: &[&str]) -> Result<(), String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let before = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    let mut doc = before.clone();
+    for path in paths {
+        doc = unset_path(&doc, path)?;
+    }
+    let out = edit_text(&text, &before, &doc).map_err(|e| format!("{}: {e}", file.display()))?;
+    validate(&out)?;
+    write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
+}
+
+/// Removes the whole `[<table>.<name>]` table (`publish.<name>`) from `file`; other tables stay
+/// as written. Returns whether one was there.
+pub fn remove_named_table_in_file(file: &std::path::Path, table: &str, name: &str) -> Result<bool, String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let before = validate(&text)?;
+    let mut json = serde_json::to_value(&before).map_err(|e| e.to_string())?;
+    let removed = json
+        .get_mut(table)
+        .and_then(|t| t.as_object_mut())
+        .map(|t| t.remove(name).is_some())
+        .unwrap_or(false);
+    if !removed {
+        return Ok(false);
+    }
+    let doc: SpiraToml = serde_json::from_value(json).map_err(|e| e.to_string())?;
+    let out = edit_text(&text, &before, &doc).map_err(|e| format!("{}: {e}", file.display()))?;
+    validate(&out)?;
+    write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(true)
+}
+
 /// The complete fixture `spira.toml` (`spira/testlib/complete.toml`: every key declared, with
 /// fixture paths) — what a test resolves against now that nothing is defaulted. `SPIRA_<KEY>`
 /// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.

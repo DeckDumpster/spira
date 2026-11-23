@@ -238,7 +238,7 @@ pub struct Registry {
     home: String,
     root_override: Option<String>,
     map_present: bool,
-    publish: BTreeMap<String, crate::PublishSection>,
+    pub(crate) publish: BTreeMap<String, crate::PublishSection>,
     git: Option<PathBuf>,
 }
 
