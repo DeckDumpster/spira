@@ -150,6 +150,28 @@ pub fn failing_lines(out: &str) -> Vec<String> {
     lines
 }
 
+/// What a red phase's output says about its failures: without the run's progress lines (`Running`
+/// and `Doc-tests` headers, passing and ignored tests) and, once a failing test is listed, the
+/// log tail after `--- last output of the log ---`, which shows binaries that passed.
+pub fn failure_evidence(out: &str) -> String {
+    const MARKER: &str = "--- last output of the log ---";
+    let cut_tail = !failing_lines(out.split(MARKER).next().unwrap_or("")).is_empty();
+    let mut kept: Vec<&str> = vec![];
+    for l in out.lines() {
+        if cut_tail && l.trim() == MARKER {
+            break;
+        }
+        let t = l.trim_start();
+        let progress = t.starts_with("Running ")
+            || t.starts_with("Doc-tests ")
+            || (t.starts_with("test ") && (t.ends_with(" ... ok") || t.ends_with(" ... ignored")));
+        if !progress {
+            kept.push(l);
+        }
+    }
+    kept.join("\n")
+}
+
 /// The `[status, binary, test]` words of a failing-test line, `None` for any other line.
 pub fn failing_words(line: &str) -> Option<[&str; 3]> {
     const STATUS: [&str; 5] = ["FAIL", "TIMEOUT", "LEAK-FAIL", "EXEC-FAIL", "SIGSEGV"];
