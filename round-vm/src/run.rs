@@ -4372,7 +4372,7 @@ mod tests {
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
             ci_image: Some("registry.example/rust:1".into()),
-            ci_workdir: Some("/work".into()),
+            ci_workdir: Some("work".into()),
             fences: String::new(), deny_list: String::new(),
             cancel: Default::default(),
         }
@@ -4382,7 +4382,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' '/work'", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work'", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -4390,8 +4390,8 @@ mod tests {
     #[test]
     fn a_ci_entry_needs_its_image_and_takes_a_workdir() {
         let a = |v: &[&str]| parse_run_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        let ok = a(&["t", "--ci-entry", "X", "--ci-image", "I", "--ci-workdir", "/w"]).unwrap();
-        assert_eq!((ok.ci_entry.as_deref(), ok.ci_image.as_deref(), ok.ci_workdir.as_deref()), (Some("X"), Some("I"), Some("/w")));
+        let ok = a(&["t", "--ci-entry", "X", "--ci-image", "I", "--ci-workdir", "w"]).unwrap();
+        assert_eq!((ok.ci_entry.as_deref(), ok.ci_image.as_deref(), ok.ci_workdir.as_deref()), (Some("X"), Some("I"), Some("w")));
         let err = a(&["t", "--ci-entry", "X"]).unwrap_err();
         assert!(err.contains("--ci-entry") && err.contains("--ci-image"), "{err}");
     }
@@ -4426,10 +4426,10 @@ mod tests {
         let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
         let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
         let cmd = remote_command(&job);
-        let tail = format!("'{}' '{}' '{}' 'registry.example/rust:1' '/work'", text, deny.config_filter_line(), deny.integration_skips());
+        let tail = format!("'{}' '{}' '{}' 'registry.example/rust:1' 'work'", text, deny.config_filter_line(), deny.integration_skips());
         assert!(cmd.ends_with(&tail), "{cmd}");
         job.deny_list = String::new();
-        assert!(remote_command(&job).ends_with(" '' '' '' 'registry.example/rust:1' '/work'"));
+        assert!(remote_command(&job).ends_with(" '' '' '' 'registry.example/rust:1' 'work'"));
     }
 
     #[test_id(t30t2bt)]

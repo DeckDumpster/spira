@@ -90,9 +90,9 @@ mod tests {
         let d = testkit::TempDir::new("gate-own-entry");
         fs::create_dir_all(d.join(DECL).parent().unwrap()).unwrap();
         fs::write(d.join(DECL), "ci_entry = \"bash gate.sh\"\nimage = \" img:1 \"\n").unwrap();
-        assert_eq!(ci_entry(&d), Some(CiEntry { command: "bash gate.sh".into(), image: Some("img:1".into()), workdir: "/work".into() }));
-        fs::write(d.join(DECL), "ci_entry = \"bash gate.sh\"\nworkdir = \"/w\"\n").unwrap();
-        assert_eq!(ci_entry(&d), Some(CiEntry { command: "bash gate.sh".into(), image: None, workdir: "/w".into() }));
+        assert_eq!(ci_entry(&d), Some(CiEntry { command: "bash gate.sh".into(), image: Some("img:1".into()), workdir: system_paths::guest::WORK.into() }));
+        fs::write(d.join(DECL), "ci_entry = \"bash gate.sh\"\nworkdir = \"w\"\n").unwrap();
+        assert_eq!(ci_entry(&d), Some(CiEntry { command: "bash gate.sh".into(), image: None, workdir: "w".into() }));
     }
 
     #[test_id(tictz8l)]
