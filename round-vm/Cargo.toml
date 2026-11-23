@@ -33,6 +33,11 @@ path = "tests/unit_deadline_real.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "unit_prune_real"
+path = "tests/unit_prune_real.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "deny_list_real"
 path = "tests/deny_list_real.rs"
 required-features = ["integration"]
