@@ -742,10 +742,10 @@ mod tests {
             let total = message_len(&head).unwrap().unwrap();
             b.read_exact(&mut vec![0u8; total - 16]).unwrap();
             let mut out = encode_empty_return(9, 1);
-            out.extend(encode_signal(8, "/p", "i", "Tail", "", &[]));
+            out.extend(encode_signal(8, "/p", "i", "Tail", "", &[])); // not a path: a D-Bus object path
             b.write_all(&out).unwrap();
         });
-        c.call_body("d", "/p", "i", "M", "", &[]).unwrap();
+        c.call_body("d", "/p", "i", "M", "", &[]).unwrap(); // not a path: a D-Bus object path
         peer.join().unwrap();
         assert!(heard.try_recv().is_ok(), "the socket no longer announces the trailing signal, so the call must");
         assert_eq!(c.next_signal(Duration::ZERO).unwrap().and_then(|m| m.member).as_deref(), Some("Tail"));
