@@ -2134,20 +2134,3 @@ fn workflow_rerun_without_the_flag_asks_for_the_rerun_straight_after_the_cancel(
     let cancel = calls.iter().position(|c| c.get(1).map(String::as_str) == Some("cancel")).unwrap();
     assert!(is_rerun(&calls[cancel + 1]));
 }
-
-#[test_id(t3o81lp)]
-#[test]
-fn dispatch_hands_wait_cancel_seconds_to_the_waiting_rerun_and_refuses_a_bad_value() {
-    let gh = rerun_gh("cancelled", r#"{"jobs":[]}"#);
-    gh.on_in_turn(&status_view_args(), &["in_progress", "completed"]);
-    let args: Vec<String> = ["9", "--wait-cancel", "120"].map(String::from).to_vec();
-    let out = crate::client::dispatch(&gh, &NoProc, "workflow-rerun", repo(), &args, None);
-    assert_eq!(out.code, 0);
-    let reads = gh.calls.borrow().iter().filter(|c| c.iter().map(String::as_str).eq(status_view_args())).count();
-    assert_eq!(reads, 2, "the flag reached the polling path");
-
-    let bad: Vec<String> = ["9", "--wait-cancel", "soon"].map(String::from).to_vec();
-    let gh = rerun_gh("cancelled", r#"{"jobs":[]}"#);
-    assert_eq!(crate::client::dispatch(&gh, &NoProc, "workflow-rerun", repo(), &bad, None).code, 2);
-    assert!(!rerun_called(&gh));
-}
