@@ -96,8 +96,9 @@ fn one_seed(seed: u64) {
         });
         assert_eq!(cut, 0, "seed {seed}: no connection was left to cut");
         for (n, (got, want)) in read.iter().zip(&expected).enumerate() {
-            if let Some(want) = want {
-                assert_eq!(got, want, "seed {seed} client {n}");
+            match want {
+                Some(want) => assert_eq!(got, want, "seed {seed} client {n}"),
+                None => assert!(!String::from_utf8_lossy(got).contains("ran "), "seed {seed} client {n} closed early and was served: {got:?}"),
             }
         }
     }
