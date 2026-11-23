@@ -240,11 +240,15 @@ pub fn run(args: &[String]) -> i32 {
     };
 
     let mut startup = Startup::begin();
-    let spans = spira_config::process::cfg("SPIRA_RUN")
-        .and_then(|run| spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS").map(|keep| (run, keep)));
+    let spans = spira_config::process::cfg("SPIRA_RUN").and_then(|run| {
+        let keep = spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS")?;
+        let day_max_mb = spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_DAY_MAX_MB")?;
+        Ok((run, keep, day_max_mb))
+    });
     match spans {
-        Ok((run, keep)) => {
-            let _ = SPANS.set(spira_otel::Sink::new(spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep));
+        Ok((run, keep, day_max_mb)) => {
+            let sink = spira_otel::Sink::buffered(spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep, u64::from(day_max_mb) << 20);
+            let _ = SPANS.set(sink);
         }
         Err(e) => {
             eprintln!("spira-lc serve: {e}");
@@ -491,6 +495,9 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("spira-lc serve: {e}");
     }
     let (drained, answered) = drain(&flights, &STOPPING, &finished, DRAIN_BOUND);
+    if let Some(spans) = SPANS.get() {
+        spans.flush();
+    }
     eprintln!("spira-lc serve: stopped after draining {drained}, answered {answered} at the bound");
     0
 }
