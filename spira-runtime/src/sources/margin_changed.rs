@@ -148,17 +148,20 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
         .clone()
 }
 
-/// One request on one connection of its own, the whole exchange inside the request's deadline.
+/// One request on one connection of its own, the whole exchange inside the request's timeout.
 async fn exchange(p: &Prepared) -> Result<(u16, String), String> {
     let t = &p.target;
-    let tcp = tokio::net::TcpStream::connect(t.addrs.as_slice()).await.map_err(|e| format!("connect: {e}"))?;
-    if t.tls {
-        let name = rustls::pki_types::ServerName::try_from(t.host.clone()).map_err(|e| format!("{}: not a name a certificate can carry: {e}", t.host))?;
-        let tls = tokio_rustls::TlsConnector::from(tls_config()).connect(name, tcp).await.map_err(|e| format!("tls: {e}"))?;
-        send(p, hyper_util::rt::TokioIo::new(tls)).await
-    } else {
-        send(p, hyper_util::rt::TokioIo::new(tcp)).await
-    }
+    let whole = async {
+        let tcp = tokio::net::TcpStream::connect(t.addrs.as_slice()).await.map_err(|e| format!("connect: {e}"))?;
+        if t.tls {
+            let name = rustls::pki_types::ServerName::try_from(t.host.clone()).map_err(|e| format!("{}: not a name a certificate can carry: {e}", t.host))?;
+            let tls = tokio_rustls::TlsConnector::from(tls_config()).connect(name, tcp).await.map_err(|e| format!("tls: {e}"))?;
+            send(p, hyper_util::rt::TokioIo::new(tls)).await
+        } else {
+            send(p, hyper_util::rt::TokioIo::new(tcp)).await
+        }
+    };
+    tokio::time::timeout(p.request.timeout, whole).await.unwrap_or_else(|_| Err("timed out".to_string()))
 }
 
 async fn send<I>(p: &Prepared, io: I) -> Result<(u16, String), String>
@@ -194,10 +197,9 @@ where
 async fn fetch(client: &HttpMargin, after: u64, hold: u64) -> Result<Changes, String> {
     let c = client.clone();
     let p = on_pool("margin request", Arc::new(move || prepare(&c, after, hold))).await.map_err(|e| e.to_string())??;
-    match tokio::time::timeout(p.request.timeout, exchange(&p)).await {
-        Ok(Ok((status, body))) => p.request.reply(status, &body),
-        Ok(Err(why)) => Err(p.request.silent(&why)),
-        Err(_) => Err(p.request.silent("timed out")),
+    match exchange(&p).await {
+        Ok((status, body)) => p.request.reply(status, &body),
+        Err(why) => Err(p.request.silent(&why)),
     }
 }
 
@@ -209,7 +211,7 @@ impl MarginChanged {
         };
         let dir = self.run_dir.clone();
         let Ok(mut after) = on_pool("margin resume", Arc::new(move || resume_point(&dir))).await else {
-            eprintln!("runtime: {NAME}: the resume point could not be read; the source ends");
+            let _ = on_pool("source", Arc::new(|| eprintln!("runtime: {NAME}: the resume point could not be read; the source ends"))).await;
             return;
         };
         let mut failing: Option<Duration> = None;
@@ -405,7 +407,7 @@ mod tests {
 
     /// The comm of every thread of this process, as the kernel names it (cut to 15 bytes).
     fn thread_comms() -> Vec<String> {
-        std::fs::read_dir("/proc/self/task").unwrap().filter_map(|t| std::fs::read_to_string(t.unwrap().path().join("comm")).ok()).map(|c| c.trim().to_string()).collect()
+        std::fs::read_dir(std::path::Path::new(system_paths::PROC_SELF).join("task")).unwrap().filter_map(|t| std::fs::read_to_string(t.unwrap().path().join("comm")).ok()).map(|c| c.trim().to_string()).collect()
     }
 
     const SOURCE_COMM: &str = "source-margin.c";
@@ -415,7 +417,9 @@ mod tests {
     async fn a_request_the_reader_holds_costs_no_source_thread_and_leaves_the_loop_running() {
         let planted = {
             let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
-            let t = std::thread::Builder::new().name("source-margin.changed".into()).spawn(move || drop(stop_rx.recv())).unwrap();
+            let t = std::thread::Builder::new().name("source-margin.changed".into()).spawn(move || {
+                let _ = stop_rx.recv();
+            }).unwrap();
             while !thread_comms().iter().any(|c| c == SOURCE_COMM) {
                 tokio::task::yield_now().await;
             }
@@ -451,8 +455,8 @@ mod tests {
     #[test_id(tr5c8zq)]
     #[tokio::test(flavor = "current_thread")]
     async fn an_https_reader_with_an_untrusted_certificate_is_said_once_naming_the_certificate_and_never_the_token() {
-        let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-submission/tests/fixtures");
-        let read = |f: &str| std::io::BufReader::new(std::fs::File::open(format!("{fixtures}/{f}")).unwrap());
+        let fixtures = testkit::manifest_dir().join("../spira-submission/tests/fixtures");
+        let read = |f: &str| std::io::BufReader::new(std::fs::File::open(fixtures.join(f)).unwrap());
         let certs = rustls_pemfile::certs(&mut read("test-cert.pem")).collect::<Result<Vec<_>, _>>().unwrap();
         let key = rustls_pemfile::private_key(&mut read("test-key.pem")).unwrap().unwrap();
         let provider = Arc::new(rustls::crypto::ring::default_provider());
