@@ -58,8 +58,8 @@ impl Fx {
             .env("SPIRA_HOME", d.join("home"))
             .env("SPIRA_REPO", d.join("brain"))
             .env("SPIRA_RUN", d.join("run"))
-            .env("SPIRA_COCKPIT", "/cockpit")
-            .env("SPIRA_DB", "/db")
+            .env("SPIRA_COCKPIT", "cockpit")
+            .env("SPIRA_DB", "db")
             .env("SPIRA_RELEASE", d.join("home"))
             .env("SPIRA_TOKEN_PROJECTS", d.join("projects"))
             .env("CONCIERGE_SOCKET", "fixture-socket")
@@ -168,7 +168,7 @@ fn holder(argv0: &str, transcript: &Path, detached: bool) -> Holder {
         }
     }
     let child = Holder(cmd.spawn().unwrap());
-    let cmdline = format!("/proc/{}/cmdline", child.id());
+    let cmdline = format!("{}/{}/cmdline", system_paths::PROC, child.id());
     while !std::fs::read(&cmdline).map(|c| c.starts_with(argv0.as_bytes())).unwrap_or(false) {
         std::thread::yield_now();
     }
@@ -211,7 +211,7 @@ fn start_exits_3_headless_when_a_live_holder_has_no_tmux_session_or_tty() {
     assert_eq!(o.code, Some(3), "{}", o.err);
     assert!(o.err.contains("HEADLESS") && o.err.contains("headless-sid"), "{}", o.err);
     assert!(!o.out.contains("STUB_CLAUDE_RAN"));
-    assert!(std::fs::metadata(format!("/proc/{}", claude.id())).is_ok(), "the holder was killed without recovery");
+    assert!(std::fs::metadata(format!("{}/{}", system_paths::PROC, claude.id())).is_ok(), "the holder was killed without recovery");
     drop(claude);
 
     let free = fx.concierge(&["start"], &[("CONCIERGE_RUNE", "no-such-persona")]);

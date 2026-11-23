@@ -121,7 +121,7 @@ fn queued(ms: u64) -> String {
     format!("{{\"type\":\"attachment\",\"attachment\":{{\"type\":\"queued_command\",\"prompt\":\"<task-notification>\"}},\"timestamp\":\"{}\"}}", iso(ms))
 }
 
-const WATCHD: &[&str] = &["/x/bin/watchd", "next", "concierge-inbox"];
+const WATCHD: &[&str] = &["x/bin/watchd", "next", "concierge-inbox"];
 
 #[test_id(t0vcpv0)]
 #[test]
@@ -150,7 +150,7 @@ fn the_retired_inbox_next_argv_and_a_watchd_on_another_watcher_do_not_satisfy_it
     let fx = Fx::new();
     fx.waiter(&["bash", &fx.p("run/concierge-notes/inbox-next.sh").display().to_string()]);
     assert!(fx.stop_blocks());
-    fx.waiter(&["/x/bin/watchd", "next", "other-watcher"]);
+    fx.waiter(&["x/bin/watchd", "next", "other-watcher"]);
     assert!(fx.stop_blocks());
 }
 
