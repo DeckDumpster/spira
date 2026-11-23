@@ -112,14 +112,16 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     git(&repo_dir, &["init", "-q", "-b", "main"]);
     git(&repo_dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"]);
     let tip = git(&repo_dir, &["rev-parse", "HEAD"]);
-    for id in ["sp-done", "sp-dec", "sp-live"] {
+    for id in ["sp-done", "sp-dec", "sp-live", "sp-weird"] {
         git(&repo_dir, &["branch", &format!("spira/sp-on-{id}")]);
     }
     let other = row("sp-other", "CERTIFIED", "t9", "{}");
     let other = Value::Object(other.as_object().unwrap().iter().map(|(k, v)| (k.clone(), if k == "repo" { json!("beta") } else { v.clone() })).collect());
     let store = Store {
         rows: vec![
-            row("sp-on-sp-done", "CERTIFIED", &tip, "{}"),
+            row("sp-on-sp-done", "CERTIFIED", &tip, "{\"sp-done\":\"t0\",\"sp-dec\":\"t0\"}"),
+            row("sp-on-sp-weird", "CERTIFIED", &tip, "{}"),
+            row("sp-weird", "UNHEARD-OF", "t0", "{}"),
             row("sp-on-sp-dec", "CERTIFIED", &tip, "{}"),
             row("sp-on-sp-live", "CERTIFIED", &tip, "{}"),
             row("sp-done", "DONE", "t0", "{}"),
@@ -129,6 +131,7 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
             item("sp-on-sp-done", "task", "open", Some("sp-done")),
             item("sp-on-sp-dec", "task", "open", Some("sp-dec")),
             item("sp-on-sp-live", "task", "open", Some("sp-other")),
+            item("sp-on-sp-weird", "task", "open", Some("sp-weird")),
             item("sp-dec", "decision", "closed", None),
         ],
     };
@@ -156,7 +159,9 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     let mut cut_ids: Vec<&str> = cut.iter().map(|m| m.id.as_str()).collect();
     cut_ids.sort();
     assert_eq!(cut_ids, ["sp-on-sp-dec", "sp-on-sp-done"], "a DONE blocker and a closed rowless decision release their dependents");
-    assert_eq!(refusals.len(), 1);
-    assert_eq!((refusals[0].id.as_str(), refusals[0].blocker.as_str()), ("sp-on-sp-live", "sp-other"));
+    assert!(cut.iter().all(|m| m.stack.is_empty()), "finished prerequisites sequence nothing: {cut:?}");
+    let mut refused: Vec<(&str, &str)> = refusals.iter().map(|r| (r.id.as_str(), r.blocker.as_str())).collect();
+    refused.sort();
+    assert_eq!(refused, [("sp-on-sp-live", "sp-other"), ("sp-on-sp-weird", "sp-weird")], "a state the machine does not know stays live");
     assert!(left.iter().any(|l| l.id == "sp-on-sp-live" && l.cause == io::Cause::Blocked { dep: "sp-other".into() }), "{left:?}");
 }

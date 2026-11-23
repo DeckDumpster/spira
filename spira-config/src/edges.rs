@@ -103,8 +103,6 @@ pub fn blocker_finished(state: Option<BeadState>, content: Option<(Option<&str>,
 mod tests {
     use super::*;
 
-    /// Every type `bd dep add --type` accepts, its two aliases, and the empty type a row may
-    /// carry: only the blocking three block.
     #[test_id(to9h29b)]
     #[test]
     fn a_blocker_is_finished_by_its_row_or_else_by_its_content() {
@@ -128,6 +126,8 @@ mod tests {
         assert!(!blocker_finished(None, None), "unread is live");
     }
 
+    /// Every type `bd dep add --type` accepts, its two aliases, and the empty type a row may
+    /// carry: only the blocking three block.
     #[test_id(tx9snxk)]
     #[test]
     fn blocks_counts_the_blocking_types_and_no_other_type_bd_emits() {
