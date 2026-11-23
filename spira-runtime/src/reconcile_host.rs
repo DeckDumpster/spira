@@ -272,11 +272,11 @@ impl Host for RuntimeHost {
         }
     }
 
-    fn stranded_runners(&self, repo: &Path) -> String {
-        let Some(slug) = slug(repo) else { return String::new() };
+    fn stranded_runners(&self, repo: &Path) -> Result<String, String> {
+        let Some(slug) = slug(repo) else { return Ok(String::new()) };
         let lines = self.forge.stranded_runners(&slug, self.now, self.stranded_min_age);
         self.forge.report_spend();
-        lines.into_iter().map(|l| format!("{l}\n")).collect()
+        Ok(lines?.into_iter().map(|l| format!("{l}\n")).collect())
     }
 
     fn forge_ci_in_flight(&self, repo_name: &str) -> Result<bool, String> {

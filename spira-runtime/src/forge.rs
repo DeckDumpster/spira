@@ -301,20 +301,34 @@ impl Forge {
     }
 
     /// One `STRANDED run=<id> job="<name>" label=<labels> queued=<n>s runner=<name> vmid=<id>` line per
-    /// queued job older than `min_age` whose per-run label no online runner carries; the lines
-    /// `forge stranded-runners` prints. A call that fails reads as nothing stranded, as it does there.
-    pub fn stranded_runners(&self, slug: &str, now: u64, min_age: u64) -> Vec<String> {
+    /// queued job older than `min_age` whose per-run label no online runner carries, in a run with
+    /// no job in progress; the lines `forge stranded-runners` prints. A listing that fails or is cut
+    /// short of its `total_count` is an error: it cannot tell.
+    pub fn stranded_runners(&self, slug: &str, now: u64, min_age: u64) -> Result<Vec<String>, String> {
         const GENERIC: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
-        let Some(runs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs?per_page=50")) else { return vec![] }; // not a path: GitHub API route or JSON pointer
-        let ids: Vec<String> = runs["workflow_runs"].as_array().map(|a| a.iter().filter(|r| r["status"] != "completed").filter_map(|r| r.get("id").map(|i| i.to_string())).collect()).unwrap_or_default();
+        let listing = |path: String, rows: &str, whole: bool| -> Result<Vec<Value>, String> {
+            let v = self.try_get("stranded_runners", &path)?;
+            let list = v[rows].as_array().cloned().ok_or_else(|| format!("{path} has no {rows}"))?;
+            match v["total_count"].as_u64() {
+                Some(n) if whole && n > list.len() as u64 => Err(format!("{path} is cut short at {} of {n} rows", list.len())),
+                _ => Ok(list),
+            }
+        };
+        let runs = listing(format!("/repos/{slug}/actions/runs?per_page=50"), "workflow_runs", false)?; // not a path: GitHub API route or JSON pointer
+        let ids: Vec<String> = runs.iter().filter(|r| r["status"] != "completed").filter_map(|r| r.get("id").map(|i| i.to_string())).collect();
         if ids.is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
-        let runners: Vec<Value> = self.get("stranded_runners", &format!("/repos/{slug}/actions/runners?per_page=100")).and_then(|v| v["runners"].as_array().cloned()).unwrap_or_default(); // not a path: GitHub API route or JSON pointer
+        let owner = slug.split('/').next().unwrap_or(slug);
+        let mut runners = listing(format!("/repos/{slug}/actions/runners?per_page=100"), "runners", true)?; // not a path: GitHub API route or JSON pointer
+        runners.extend(listing(format!("/orgs/{owner}/actions/runners?per_page=100"), "runners", true)?); // not a path: GitHub API route or JSON pointer
         let mut lines = vec![];
         for id in ids {
-            let Some(jobs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs/{id}/jobs")) else { continue }; // not a path: GitHub API route or JSON pointer
-            for j in jobs["jobs"].as_array().cloned().unwrap_or_default() {
+            let jobs = listing(format!("/repos/{slug}/actions/runs/{id}/jobs?per_page=100"), "jobs", true)?; // not a path: GitHub API route or JSON pointer
+            if jobs.iter().any(|j| j["status"] == "in_progress") {
+                continue;
+            }
+            for j in jobs {
                 if j["status"] != "queued" {
                     continue;
                 }
@@ -339,7 +353,7 @@ impl Forge {
                 lines.push(format!("STRANDED run={id} job=\"{}\" label={} queued={age}s runner={runner} vmid={vmid}", text(&j, "name"), labels.join(",")));
             }
         }
-        lines
+        Ok(lines)
     }
 
     /// `spira/*` branches ahead of `base` that none of `open_heads` is the head of.
@@ -497,6 +511,55 @@ pub(crate) mod tests {
 
     pub(crate) fn forge_at(api: String) -> Forge {
         Forge { api, token: "t".into(), ..Forge::default() }
+    }
+
+    fn runs_of(ids: &[u64]) -> String {
+        let rows: Vec<String> = ids.iter().map(|i| format!(r#"{{"id":{i},"status":"in_progress"}}"#)).collect();
+        format!(r#"{{"workflow_runs":[{}]}}"#, rows.join(","))
+    }
+
+    const QUEUED_OLD: &str = r#"{"name":"suites","status":"queued","created_at":"2026-01-01T00:00:00Z","labels":["self-hosted","ci-1-1"]}"#;
+    const NO_RUNNERS: &str = r#"{"total_count":0,"runners":[]}"#;
+    const LONG_AGO: u64 = 1_800_000_000;
+
+    fn stranded_with(answers: Vec<String>) -> Result<Vec<String>, String> {
+        let (api, seen) = stub(answers);
+        let got = forge_at(api).stranded_runners("o/r", LONG_AGO, 300);
+        seen.join().unwrap();
+        got
+    }
+
+    #[test_id(tsr0d01)]
+    #[test]
+    fn stranded_runners_names_a_queued_job_no_runner_carries_when_nothing_is_in_progress() {
+        let jobs = format!(r#"{{"total_count":1,"jobs":[{QUEUED_OLD}]}}"#);
+        let got = stranded_with(vec![answer("200 OK", "", &runs_of(&[1])), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", &jobs)]).unwrap();
+        assert_eq!(got.len(), 1);
+        assert!(got[0].starts_with(r#"STRANDED run=1 job="suites" label=ci-1-1 queued="#) && got[0].contains("runner=none"), "{got:?}");
+    }
+
+    #[test_id(tsr0d02)]
+    #[test]
+    fn stranded_runners_skips_a_run_with_a_job_in_progress_and_an_org_runner_that_is_online() {
+        let busy = format!(r#"{{"total_count":2,"jobs":[{QUEUED_OLD},{{"name":"build","status":"in_progress"}}]}}"#);
+        let got = stranded_with(vec![answer("200 OK", "", &runs_of(&[1])), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", &busy)]).unwrap();
+        assert!(got.is_empty(), "{got:?}");
+        let org = r#"{"total_count":1,"runners":[{"name":"e","status":"online","labels":[{"name":"ci-1-1"}]}]}"#;
+        let jobs = format!(r#"{{"total_count":1,"jobs":[{QUEUED_OLD}]}}"#);
+        let got = stranded_with(vec![answer("200 OK", "", &runs_of(&[1])), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", org), answer("200 OK", "", &jobs)]).unwrap();
+        assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test_id(tsr0d03)]
+    #[test]
+    fn stranded_runners_is_an_error_when_a_listing_fails_or_is_cut_short() {
+        let fail = || answer("500 Internal Server Error", "", "");
+        let ok = |b: &str| answer("200 OK", "", b);
+        assert!(stranded_with(vec![fail()]).is_err(), "runs");
+        assert!(stranded_with(vec![ok(&runs_of(&[1])), fail()]).is_err(), "repo runners");
+        assert!(stranded_with(vec![ok(&runs_of(&[1])), ok(NO_RUNNERS), fail()]).is_err(), "org runners");
+        assert!(stranded_with(vec![ok(&runs_of(&[1])), ok(NO_RUNNERS), ok(r#"{"total_count":150,"runners":[]}"#)]).is_err(), "cut short");
+        assert!(stranded_with(vec![ok(&runs_of(&[1])), ok(NO_RUNNERS), ok(NO_RUNNERS), fail()]).is_err(), "jobs");
     }
 
     #[test_id(ttff9s6)]
