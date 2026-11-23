@@ -74,7 +74,7 @@ pub type Served = SqliteBackend;
 /// measured waiting 1.7 to 2.5 s of a 3 s deadline for a reader (`spira.phase.reader_wait_us`)
 /// while the server ran ten or more request threads; a WAL reader costs a file handle and its
 /// page cache, so there is one for each thread that can ask.
-const READERS: usize = 16;
+pub(crate) const READERS: usize = 16;
 
 fn backend_at(path: &str, opts: Options) -> Result<Served, String> {
     // Opening creates a missing file, which would answer every read as an empty store.

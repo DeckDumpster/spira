@@ -65,6 +65,7 @@ mod wire;
 mod repo_config;
 mod rows;
 mod serve;
+mod serve_loop;
 mod settle;
 mod skew;
 mod slow;

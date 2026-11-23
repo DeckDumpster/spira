@@ -26,6 +26,11 @@ path = "tests/lc_backup_drill.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "serve_loop"
+path = "tests/serve_loop.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "serve_memory"
 path = "tests/serve_memory.rs"
 required-features = ["integration"]
@@ -61,6 +66,7 @@ state-store = { path = "../state-store" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 runtime = { path = "../runtime" }
 tsd = { path = "../tsd" }
+tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
 
 [[bin]]
 name = "spira-lc"
