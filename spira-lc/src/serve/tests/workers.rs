@@ -102,7 +102,7 @@ fn a_reused_worker_registers_each_connection_as_its_own_flight() {
                 let mut line = String::new();
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 let current = CURRENT.with(|c| c.borrow().clone()).expect("a connection's slot is set while it is served");
-                seen.lock().unwrap().push((Arc::as_ptr(&current) as usize, flights.len()));
+                seen.lock().unwrap().push((current, flights.len()));
                 reply(&stream, "ok");
             })
         }, idle.clone());
@@ -110,7 +110,7 @@ fn a_reused_worker_registers_each_connection_as_its_own_flight() {
     });
     let seen = seen.into_inner().unwrap();
     assert_eq!(seen.len(), 2);
-    assert_ne!(seen[0].0, seen[1].0, "the second connection has its own slot");
+    assert!(!Arc::ptr_eq(&seen[0].0, &seen[1].0), "the second connection has its own slot");
     assert_eq!(seen[1].1, 1, "the first connection left the drain's list");
     assert!(CURRENT.with(|c| c.borrow().is_none()));
 }
