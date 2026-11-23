@@ -62,6 +62,7 @@ pub struct TaskRig {
     timing_out: bool,
     hung: BTreeSet<String>,
     parked: BTreeSet<String>,
+    delivered: u64,
 }
 
 impl TaskRig {
@@ -69,7 +70,7 @@ impl TaskRig {
         let journal = MemJournal::new();
         let clock = VirtualClock::new(0);
         let engine = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![reg], seed)?;
-        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false, hung: BTreeSet::new(), parked: BTreeSet::new() })
+        Ok(TaskRig { journal, clock, engine, doubles: BTreeMap::new(), requested: vec![], refused: vec![], ticks: BTreeMap::new(), read_to: 0, journaled_requests: BTreeSet::new(), timing_out: false, hung: BTreeSet::new(), parked: BTreeSet::new(), delivered: 0 })
     }
 
     /// Stop the engine and open a new one on the same journal and clock: a runtime restart.
@@ -109,6 +110,14 @@ impl TaskRig {
     pub fn tick(&mut self, stream: &str, kind: EventKind) -> Result<()> {
         self.ticks.entry(stream.into()).or_insert_with(|| kind.clone());
         self.engine.start(stream, kind);
+        self.run_until_idle()
+    }
+
+    /// Hands `kind` to the handlers of `stream` as an event a producer submitted, not as a boot tick.
+    pub fn deliver(&mut self, stream: &str, kind: EventKind) -> Result<()> {
+        let id = format!("rig/{stream}/{}", self.delivered);
+        self.delivered += 1;
+        self.engine.submit(&id, stream, kind)?;
         self.run_until_idle()
     }
 

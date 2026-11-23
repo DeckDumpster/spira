@@ -204,7 +204,9 @@ pub fn assert_boot_matches_an_unstopped_run(make: impl Fn() -> TaskRig, registra
         }
         let mark = r.requested().len();
         r.tick(stream, tick.clone()).expect("first tick");
-        r.requested()[mark..].iter().map(|q| (q.name.clone(), q.input.clone())).collect::<Vec<_>>()
+        let mut asked = r.requested()[mark..].iter().map(|q| (q.name.clone(), q.input.clone())).collect::<Vec<_>>();
+        asked.sort();
+        asked
     };
     let (rebooted, unstopped) = (after(true), after(false));
     assert!(!unstopped.is_empty(), "the control tick asked for nothing: the scenario proves nothing");

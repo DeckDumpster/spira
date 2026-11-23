@@ -21,6 +21,7 @@ pub mod reconciler;
 pub mod round_duty;
 pub mod supersede_duty;
 pub mod view;
+pub mod wake_audit;
 pub mod writer_grants;
 
 use runtime::event::*;

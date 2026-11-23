@@ -1052,9 +1052,30 @@ impl Engine {
     fn found_work(&mut self, ev: &Event, handler: &str) {
         if let Some(run) = self.sweep_run.get(&ev.id).cloned() {
             if self.sweep_counted.insert(run) {
-                self.tracks.entry(handler.into()).or_default().sweep_found += 1;
+                let count = {
+                    let t = self.tracks.entry(handler.into()).or_default();
+                    t.sweep_found += 1;
+                    t.sweep_found
+                };
+                self.report_sweep_found(ev, handler, count);
             }
         }
+    }
+
+    /// A run found work on the sweep alone: a wide record for the metric, an event for the page.
+    fn report_sweep_found(&mut self, ev: &Event, handler: &str, count: u64) {
+        let rev = self.sweep.as_ref().and_then(|w| w.changes.rev()).unwrap_or(0);
+        let reads: Vec<String> = self.ticking.get(handler).map(|t| t.wake.reads.iter().map(|r| r.to_string()).collect()).unwrap_or_default();
+        let wide = self.unit("wake.sweep_found", Some(ev));
+        wide.set("task", handler);
+        wide.set("wake.sweep_found_total", count);
+        wide.set("store.rev", rev);
+        wide.set("wake.reads", reads.join(","));
+        self.finish(&wide);
+        let body = serde_json::to_string(&SweepFound { task: handler.into(), count, rev, reads }).unwrap_or_default();
+        let (stream, at) = (StreamKey(WAKE_AUDIT_STREAM.into()), self.clock.now_ms());
+        let audit = self.local_event(&stream, EventKind::new(WAKE_SWEEP_FOUND, &body), at, None);
+        self.enqueue_local(audit);
     }
 
     /// The tick of a task that declared its reads, when `ev` is it: what the engine remembers of the run.
@@ -1841,6 +1862,54 @@ mod tests {
         e.run_until_idle().unwrap();
         assert_eq!(wake_runs(&e, "a", "sweep"), 2);
         assert_eq!(e.status().tasks[0].sweep_found, 1);
+    }
+
+    fn sweep_found_records(sink: &crate::wide::MemSink) -> Vec<i64> {
+        sink.records().iter().filter(|r| r.get("unit") == Some(&"wake.sweep_found".into())).filter_map(|r| match r.get("wake.sweep_found_total") { Some(Value::Int(n)) => Some(*n), _ => None }).collect()
+    }
+
+    #[test_id(tzh6kfp)]
+    #[test]
+    fn a_swallowed_wake_up_emits_a_counted_record_and_a_wake_audit_event_each_time() {
+        struct Audit(std::sync::Mutex<Vec<SweepFound>>);
+        impl Handler for Audit {
+            fn interests(&self) -> &[EventKindTag] {
+                &[WAKE_SWEEP_FOUND]
+            }
+            fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+                assert_eq!(ev.stream.0, WAKE_AUDIT_STREAM);
+                self.0.lock().unwrap().push(serde_json::from_str(&ev.kind.body).unwrap());
+                vec![]
+            }
+        }
+        struct Shared(Arc<Audit>);
+        impl Handler for Shared {
+            fn interests(&self) -> &[EventKindTag] {
+                self.0.interests()
+            }
+            fn handle(&self, c: &Ctx, v: &Projection, ev: &Event) -> Vec<Command> {
+                self.0.handle(c, v, ev)
+            }
+        }
+        let (clock, changes) = quiet();
+        let sink = crate::wide::MemSink::new();
+        let audit = Arc::new(Audit(Default::default()));
+        let regs = vec![woken("a", &["a/"], false, 0, &[], true), Registration::new("audit", Shared(audit.clone()))];
+        let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 1).unwrap().with_sweep(60_000, changes.clone()).with_sink(sink.clone());
+        e.start("a", EventKind::new("a", ""));
+        e.run_until_idle().unwrap();
+        assert!(sweep_found_records(&sink).is_empty());
+        changes.set(7);
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(sweep_found_records(&sink), vec![1_i64]);
+        let first = audit.0.lock().unwrap().clone();
+        assert_eq!(first, vec![SweepFound { task: "a".into(), count: 1, rev: 7, reads: vec!["a/".into()] }]);
+        changes.set(9);
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(sweep_found_records(&sink), vec![1_i64, 2]);
+        assert_eq!(audit.0.lock().unwrap().len(), 2);
     }
 
     #[test_id(te35jta)]
