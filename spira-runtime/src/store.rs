@@ -22,6 +22,16 @@ impl ChangeTable {
     }
 }
 
+impl ChangeTable {
+    /// A confirmation with no event: it gives a table that holds nothing its first revision and
+    /// moves no other, so a write outside every watched prefix never reads as a change.
+    pub fn settle(&self, rev: u64) {
+        if self.0.rev().is_none() {
+            self.0.set(rev);
+        }
+    }
+}
+
 impl Changes for ChangeTable {
     fn rev(&self) -> Option<u64> {
         self.0.rev()
@@ -68,4 +78,21 @@ pub fn run(views: Projection) -> Result<Store, String> {
     let flag = stop.clone();
     std::thread::Builder::new().name("store-watch".into()).spawn(move || spira_store::lc_call::as_task("store-watch", || views.run(&flag, &mut |_| {}))).map_err(|e| format!("store watch thread: {e}"))?;
     Ok(Store { stop })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(t1tj0so)]
+    #[test]
+    fn a_quiet_confirmation_gives_an_empty_table_its_revision_and_moves_no_other() {
+        let t = ChangeTable::default();
+        t.settle(5);
+        assert_eq!(t.rev(), Some(5));
+        t.settle(9);
+        assert_eq!(t.rev(), Some(5), "a write outside every watched prefix is no change");
+        t.set(9);
+        assert_eq!(t.rev(), Some(9));
+    }
 }

@@ -58,6 +58,12 @@ pub fn call_wait(argv: &[String]) -> Duration {
     }
 }
 
+/// How long one call waits: [`call_wait`], cut to a shorter deadline the caller set.
+fn client_wait(argv: &[String], deadline: Duration) -> Duration {
+    let wait = call_wait(argv);
+    if deadline == DEADLINE { wait } else { wait.min(deadline) }
+}
+
 /// What a watch's client waits beyond the hold for the reply to arrive.
 const WATCH_ANSWER: Duration = Duration::from_secs(1);
 /// The hold the service gives a watch that names none: its longest.
@@ -132,8 +138,7 @@ pub struct Socket {
 impl Socket {
     fn call(&self, argv: &[String], stdin: Option<&str>, deadline: Duration, not_running_wait: Duration) -> Result<Reply, Fail> {
         let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display()));
-        let wait = call_wait(argv);
-        let wait = if deadline == DEADLINE { wait } else { wait.min(deadline) };
+        let wait = client_wait(argv, deadline);
         retrying_resent(argv, &self.path, wait, not_running_wait, |left| {
             let stream = connect(&self.path)?;
             let left = left.max(Duration::from_millis(1));
@@ -688,6 +693,9 @@ mod tests {
         assert!(call_wait(&argv(&["watch", "lifecycle/", "--from-rev", "7"])) >= Duration::from_secs(31), "a watch that names no hold gets the longest");
         assert_eq!(call_wait(&argv(&["list", "--live"])), DEADLINE);
         assert_eq!(call_wait(&argv(&["reconcile-asks"])), SWEEP_DEADLINE);
+        let watch = argv(&["watch", "lifecycle/", "--from-rev", "7", "--wait-ms", "30000"]);
+        assert!(client_wait(&watch, DEADLINE) >= Duration::from_secs(31), "the call a default client makes waits out the hold");
+        assert_eq!(client_wait(&watch, Duration::from_secs(2)), Duration::from_secs(2), "a caller's shorter deadline still binds");
     }
 
     #[test_id(tsmi0of)]

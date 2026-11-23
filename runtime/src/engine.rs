@@ -1743,7 +1743,7 @@ mod tests {
     struct Poller {
         tag: &'static str,
         act: bool,
-        due: Option<u64>,
+        dues: Vec<u64>,
     }
 
     impl Handler for Poller {
@@ -1752,7 +1752,7 @@ mod tests {
         }
         fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
             let mut cmds = vec![Command::Timer { at: ev.at + 30_000, kind: EventKind::new(self.tag, "again") }];
-            cmds.extend(self.due.filter(|d| *d > ev.at).map(|at| Command::Due { at }));
+            cmds.extend(self.dues.iter().filter(|_| ev.at == 0).map(|at| Command::Due { at: *at }));
             if self.act && ev.at > 0 {
                 cmds.push(Command::Effect(EffectSpec::keyed("write", "w", "", 1_000)));
             }
@@ -1760,8 +1760,8 @@ mod tests {
         }
     }
 
-    fn woken(name: &'static str, reads: &[&'static str], polls: bool, min_gap_ms: u64, due: Option<u64>, act: bool) -> Registration {
-        Registration::new(name, Poller { tag: name, act, due }).with_wake(crate::event::Wake { reads: reads.to_vec(), min_gap_ms, polls })
+    fn woken(name: &'static str, reads: &[&'static str], polls: bool, min_gap_ms: u64, dues: &[u64], act: bool) -> Registration {
+        Registration::new(name, Poller { tag: name, act, dues: dues.to_vec() }).with_wake(crate::event::Wake { reads: reads.to_vec(), min_gap_ms, polls })
     }
 
     fn started(regs: Vec<Registration>, clock: &VirtualClock, changes: &Arc<crate::changes::ScriptedChanges>) -> Engine {
@@ -1797,7 +1797,7 @@ mod tests {
     #[test]
     fn a_write_wakes_exactly_the_tasks_that_declare_it() {
         let (clock, changes) = quiet();
-        let regs = vec![woken("a", &["a/"], false, 0, None, false), woken("b", &["b/"], false, 0, None, false), woken("c", &["a/x"], false, 0, None, false)];
+        let regs = vec![woken("a", &["a/"], false, 0, &[], false), woken("b", &["b/"], false, 0, &[], false), woken("c", &["a/x"], false, 0, &[], false)];
         let mut e = started(regs, &clock, &changes);
         changed(&mut e, "c1", &["a/x/1"], false);
         e.run_until_idle().unwrap();
@@ -1808,7 +1808,7 @@ mod tests {
     #[test]
     fn ten_writes_in_one_turn_wake_a_declaring_task_once() {
         let (clock, changes) = quiet();
-        let mut e = started(vec![woken("a", &["a/"], false, 0, None, false)], &clock, &changes);
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[], false)], &clock, &changes);
         for i in 0..10 {
             changed(&mut e, &format!("c{i}"), &["a/x"], false);
         }
@@ -1820,7 +1820,7 @@ mod tests {
     #[test]
     fn a_reload_wakes_every_task_that_declared_reads_once() {
         let (clock, changes) = quiet();
-        let regs = vec![woken("a", &["a/"], false, 0, None, false), woken("b", &["b/"], true, 0, None, false)];
+        let regs = vec![woken("a", &["a/"], false, 0, &[], false), woken("b", &["b/"], true, 0, &[], false)];
         let mut e = started(regs, &clock, &changes);
         changed(&mut e, "r1", &[], true);
         e.run_until_idle().unwrap();
@@ -1831,7 +1831,7 @@ mod tests {
     #[test]
     fn a_swallowed_wake_up_is_found_by_the_next_sweep_and_the_one_after_runs_nothing() {
         let (clock, changes) = quiet();
-        let mut e = started(vec![woken("a", &["a/"], false, 0, None, true)], &clock, &changes);
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[], true)], &clock, &changes);
         changes.set(7);
         clock.advance(60_000);
         e.run_until_idle().unwrap();
@@ -1847,7 +1847,7 @@ mod tests {
     #[test]
     fn an_idle_hour_with_the_sweep_on_dispatches_nothing_and_commits_nothing() {
         let (clock, changes) = quiet();
-        let mut e = started(vec![woken("a", &["a/"], false, 0, None, true)], &clock, &changes);
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[], true)], &clock, &changes);
         let before = (runs(&e, "a"), e.projection().total());
         for _ in 0..60 {
             clock.advance(60_000);
@@ -1862,7 +1862,7 @@ mod tests {
     #[test]
     fn a_due_time_arms_the_tick_with_a_timer_wake_and_is_the_next_timer() {
         let (clock, changes) = quiet();
-        let mut e = started(vec![woken("a", &["a/"], false, 0, Some(45_000), false)], &clock, &changes);
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[45_000], false)], &clock, &changes);
         assert_eq!(e.next_timer_at(), Some(45_000));
         clock.advance(44_999);
         e.run_until_idle().unwrap();
@@ -1876,7 +1876,7 @@ mod tests {
     #[test]
     fn a_wake_waits_out_the_min_gap_and_a_polling_task_keeps_its_own_timer() {
         let (clock, changes) = quiet();
-        let mut e = started(vec![woken("a", &["a/"], true, 30_000, None, false)], &clock, &changes);
+        let mut e = started(vec![woken("a", &["a/"], true, 30_000, &[], false)], &clock, &changes);
         clock.advance(5_000);
         changed(&mut e, "c1", &["a/x"], false);
         e.run_until_idle().unwrap();
@@ -1894,7 +1894,7 @@ mod tests {
     #[test]
     fn without_a_sweep_the_wake_is_ignored_and_the_task_polls_as_before() {
         let clock = VirtualClock::new(0);
-        let regs = vec![woken("a", &["a/"], false, 0, Some(10), false)];
+        let regs = vec![woken("a", &["a/"], false, 0, &[10], false)];
         let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 1).unwrap();
         e.start("a", EventKind::new("a", ""));
         e.run_until_idle().unwrap();
@@ -1902,5 +1902,32 @@ mod tests {
         e.run_until_idle().unwrap();
         assert_eq!(e.next_timer_at(), Some(30_000));
         assert_eq!(runs(&e, "a"), 1);
+    }
+
+    #[test_id(tetkger)]
+    #[test]
+    fn the_earliest_due_of_a_stream_wins_and_is_gone_once_the_tick_has_run() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], false, 0, &[50_000, 40_000], false)], &clock, &changes);
+        assert_eq!(e.next_timer_at(), Some(40_000));
+        clock.advance(40_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 1);
+        assert_eq!(e.next_timer_at(), Some(60_000), "the later due did not outlive the tick it was beaten by");
+        clock.advance(10_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 1);
+    }
+
+    #[test_id(tfyyyyw)]
+    #[test]
+    fn a_polling_task_given_a_due_time_runs_at_it_and_keeps_its_cadence_after() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("a", &["a/"], true, 30_000, &[10_000], false)], &clock, &changes);
+        assert_eq!(e.next_timer_at(), Some(10_000));
+        clock.advance(10_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "a", "timer"), 1);
+        assert_eq!(e.next_timer_at(), Some(40_000), "its own cadence re-armed from the due tick");
     }
 }
