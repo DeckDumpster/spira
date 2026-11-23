@@ -6,7 +6,6 @@ autotests = false
 description = "margin-client — the one place that knows the Margin reader's routes: collections, held comments, threads and the change feed."
 
 [features]
-fake = []
 integration = ["spira-test-id/integration", "testkit/integration"]
 
 [dependencies]

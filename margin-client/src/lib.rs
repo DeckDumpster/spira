@@ -5,11 +5,9 @@
 extern crate spira_test_id;
 
 mod http;
-#[cfg(any(test, feature = "fake"))]
 mod fake;
 
 pub use http::HttpMargin;
-#[cfg(any(test, feature = "fake"))]
 pub use fake::FakeMargin;
 
 use serde::{Deserialize, Serialize};

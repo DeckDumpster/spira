@@ -31,7 +31,6 @@ test-registry = { path = "../test-registry" }
 toml = "0.8"
 
 [dev-dependencies]
-margin-client = { path = "../margin-client", features = ["fake"] }
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 
