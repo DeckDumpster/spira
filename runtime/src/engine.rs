@@ -1781,7 +1781,7 @@ mod tests {
             &["boot"]
         }
         fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
-            ["a", "b", "c"].iter().map(|n| Command::Probe(EffectSpec::probe(*n, "", 10_000))).collect()
+            ["a", "b", "c", "d"].iter().map(|n| Command::Probe(EffectSpec::probe(*n, "", 10_000))).collect()
         }
     }
 
@@ -1795,21 +1795,24 @@ mod tests {
         e.run_until_idle().unwrap();
         let key = |e: &Engine, n: &str| e.pending_effects().into_iter().find(|p| p.spec.name == n).expect("asked").key;
         let why = "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not in the environment";
-        let long = "é".repeat(2_500);
+        let long = format!("a{}", "é".repeat(2_500));
         assert!(e.complete(&key(&e, "a"), Outcome::Failed(why.into())).unwrap());
-        assert!(e.complete(&key(&e, "b"), Outcome::Failed(long)).unwrap());
+        assert!(e.complete(&key(&e, "b"), Outcome::Failed(long.clone())).unwrap());
         assert!(e.complete(&key(&e, "c"), Outcome::Succeeded("fine".into())).unwrap());
+        assert!(e.complete(&key(&e, "d"), Outcome::Lost).unwrap());
         let details: Vec<Option<Value>> = sink
             .records()
             .iter()
             .filter(|r| r.get("unit") == Some(&"effect".into()))
             .map(|r| r.get("effect.detail").cloned())
             .collect();
-        assert_eq!(details.len(), 3);
+        assert_eq!(details.len(), 4);
         assert_eq!(details[0], Some(why.into()));
         let Some(Value::Str(clipped)) = &details[1] else { panic!("a long failure keeps a detail") };
-        assert!(clipped.len() <= EFFECT_DETAIL_MAX && clipped.len() > EFFECT_DETAIL_MAX - 4);
+        assert_eq!(clipped.len(), EFFECT_DETAIL_MAX - 1, "the odd offset forces the boundary back-off");
+        assert!(long.starts_with(clipped.as_str()));
         assert_eq!(details[2], None);
+        assert_eq!(details[3], Some(LOST_AT_RESTART.into()));
     }
 
     /// A tick that re-arms itself every 30 s, and optionally asks a due time and an act.
