@@ -1587,6 +1587,7 @@ const RUNS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs?per_page=50"];
 const RUNNERS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runners?per_page=100"];
 const ORG_RUNNERS: &[&str] = &["api", "orgs/{owner}/actions/runners?per_page=100"];
 const JOBS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs/9001/jobs?per_page=100"];
+const JOBS_UNPAGED: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs/9001/jobs"];
 
 fn stranded_fixture(age: u64, labels: &str, runners: &str) -> FakeGh {
     let gh = FakeGh::default();
@@ -1605,15 +1606,18 @@ fn stranded_fixture(age: u64, labels: &str, runners: &str) -> FakeGh {
             d % 60
         )
     };
-    gh.on(JOBS, 0, &format!(r#"{{"jobs":[{{"name":"suites","status":"queued","created_at":"{ts}","labels":{labels}}}]}}"#));
+    let jobs = format!(r#"{{"jobs":[{{"name":"suites","status":"queued","created_at":"{ts}","labels":{labels}}}]}}"#);
+    gh.on(JOBS, 0, &jobs);
+    gh.on(JOBS_UNPAGED, 0, &jobs);
     gh.on(RUNNERS, 0, runners);
     gh.on(ORG_RUNNERS, 0, r#"{"total_count":0,"runners":[]}"#);
     gh
 }
 
 fn stranded_jobs(gh: &FakeGh, jobs: &str) {
-    gh.answers.borrow_mut().retain(|(p, _, _)| p.iter().map(String::as_str).ne(JOBS.iter().copied()));
+    gh.answers.borrow_mut().retain(|(p, _, _)| p.iter().map(String::as_str).ne(JOBS.iter().copied()) && p.iter().map(String::as_str).ne(JOBS_UNPAGED.iter().copied()));
     gh.on(JOBS, 0, jobs);
+    gh.on(JOBS_UNPAGED, 0, jobs);
 }
 
 const QUEUED_OLD: &str = r#"{"name":"suites","status":"queued","created_at":"2026-09-29T00:00:00Z","labels":["self-hosted","spira-run-9001"]}"#;
