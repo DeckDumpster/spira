@@ -192,30 +192,20 @@ pub struct RealPrTools<'a> {
 
 impl<'a> PrTools for RealPrTools<'a> {
     fn deliver_by_content(&self, repo: &std::path::Path, id: &str, merge_sha: &str) -> Result<(), String> {
+        use spira_store::lifecycle_row::{deliver_on, Delivered};
         let lc = crate::lifecycle::client(self.lc.as_ref(), self.s.lc_bin.as_deref())?;
-        let (rc, so, se) = crate::lifecycle::run(&lc, &["show", id]);
-        if rc != 0 {
-            return Err(format!("show exited {rc}: {}", se.lines().last().unwrap_or("").trim()));
+        let d = merged_delivery(repo, &format!("spira/{id}"), merge_sha);
+        if deliver_on(&lc, id, &d, d.actor())? == Delivered::Recorded {
+            eprintln!("landing-pass: {id}: delivered by content proof");
         }
-        let v: serde_json::Value = serde_json::from_str(&so).map_err(|e| format!("show: unparsed reply: {e}"))?;
-        // No delivery row, or one not in PR_OPEN: the ordinary, quiet case.
-        let Some((state, version)) = delivery_of(v.to_string().as_bytes()) else {
-            // No delivery row: spira-lc lands the bead itself, on content proof, or declines.
-            let repo = repo.to_string_lossy();
-            let (rc, _, _) = crate::lifecycle::run(&lc, &["deliver", "pr-merged", &repo, id, &format!("spira/{id}"), merge_sha]);
-            return if rc == 0 || rc == 1 { Ok(()) } else { Err(format!("deliver pr-merged exited {rc}")) };
-        };
-        if state != "PR_OPEN" {
-            return Ok(());
-        }
-        let kind = serde_json::json!({"Delivered": {"merge_sha": merge_sha, "proof": "merge-tree"}}).to_string();
-        let (rc, _, se) = crate::lifecycle::run(&lc, &["event", "delivery", id, "--expect", "PR_OPEN", "--version", &version, "--actor", "landing-pass", "--kind", &kind]);
-        if rc != 0 {
-            return Err(format!("event exited {rc}: {}", se.lines().last().unwrap_or("").trim()));
-        }
-        eprintln!("landing-pass: {id}: delivery PR_OPEN -> delivered by content proof");
         Ok(())
     }
+}
+
+/// The merged pull request's exit, with its proof read from `repo`.
+pub fn merged_delivery(repo: &std::path::Path, branch: &str, merge_sha: &str) -> spira_store::lifecycle_row::Delivery {
+    let git = hel::git::Git(repo);
+    spira_store::lifecycle_row::Delivery::PrMerged { merge_sha: merge_sha.to_string(), content_on_base: git.content_on_base(branch, merge_sha), in_force: git.merged_proof(branch, merge_sha) }
 }
 
 /// `spira-lc show`'s delivery row → (state, version); version may be a string or a number.
@@ -232,4 +222,51 @@ pub fn delivery_of(json: &[u8]) -> Option<(String, String)> {
         _ => return None,
     };
     Some((state, version))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+
+    struct Store(Mutex<Vec<String>>, &'static str);
+
+    impl Transport for Store {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv.join(" "));
+            let (code, out) = match argv[0].as_str() {
+                "deliver" => (2, "usage: spira-lc show <bead-id> | …".to_string()),
+                "show" => (0, self.1.to_string()),
+                _ => (0, String::new()),
+            };
+            Ok(Reply { code, out, err: String::new(), read_ended: false })
+        }
+    }
+
+    fn deliver(row: &'static str) -> Vec<String> {
+        let store = Arc::new(Store(Mutex::new(Vec::new()), row));
+        let t = testkit::TempDir::new("pr-deliver");
+        let s = Settings::for_run(t.path().to_path_buf());
+        let out = Reporter::capture(None);
+        let tools = RealPrTools { s: &s, out: &out, lc: Some(LcClient::over(store.clone(), true)) };
+        tools.deliver_by_content(t.path(), "sp-a", "abc").unwrap();
+        let seen = store.0.lock().unwrap().clone();
+        seen
+    }
+
+    #[test_id(ti4r3ma)]
+    #[test]
+    fn a_pr_open_delivery_is_delivered_by_an_event_never_the_deliver_verb() {
+        let seen = deliver(r#"{"bead":{"state":"SUBMITTED","version":4},"delivery":{"state":"PR_OPEN","version":6}}"#);
+        assert!(seen.iter().all(|l| !l.starts_with("deliver")), "{seen:?}");
+        assert!(seen.iter().any(|l| l.starts_with("event delivery sp-a --expect PR_OPEN --version 6 --actor pr-pass-branch")), "{seen:?}");
+    }
+
+    #[test_id(tb9zii5)]
+    #[test]
+    fn a_row_with_no_delivery_and_no_proof_in_force_sends_no_event() {
+        let seen = deliver(r#"{"bead":{"state":"SUBMITTED","version":4},"delivery":null}"#);
+        assert_eq!(seen, vec!["show sp-a"]);
+    }
 }

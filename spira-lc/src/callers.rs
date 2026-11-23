@@ -15,7 +15,6 @@
 use std::collections::BTreeMap;
 
 use lifecycle::bead::{DwarfPhase, BeadEventKind, BeadState, BreakGlass, DispositionStatus, HoldKind};
-use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
 use spira_store::lc_state;
@@ -575,13 +574,6 @@ fn hold(m: &mut dyn Machine, id: &str, kind: &str, cause: &str, actor: &str) -> 
 
 // ---- delivery exits (lc-delivery.sh) -------------------------------------------------
 
-fn deliver_actor(sub: &str) -> &'static str {
-    match sub {
-        "pr-merged" | "pr-closed" => "pr-pass-branch",
-        _ => "landing.sh",
-    }
-}
-
 /// lib.sh `log`: the line format every harness log reader already parses.
 pub fn log_line(msg: &str) -> String {
     format!("{} spira: {msg}\n", utc_now())
@@ -610,113 +602,86 @@ pub fn fmt_utc(t: i64) -> String {
 }
 
 fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
+    use spira_store::lifecycle_row::{plan_delivery, Delivery, NotRecorded, Step};
     let sub = args.first().map(String::as_str).unwrap_or("");
     let a = |i: usize| args.get(i).cloned().unwrap_or_default();
-    let (id, want, kind) = match sub {
+    let (id, repo, branch, delivery) = match sub {
         // The proof is a merge-tree comparison against the merge commit, never the branch's
         // own ancestry: a squash merge rewrites every SHA the branch carried.
         "pr-merged" if args.len() >= 5 => {
-            let (repo, id, br, sha) = (a(1), a(2), a(3), a(4));
-            let proof = if crate::git_evidence::content_on_base(std::path::Path::new(&repo), &br, &sha) { "merge-tree" } else { "gh-merged" };
-            (id, "PR_OPEN", DeliveryEventKind::Delivered { merge_sha: sha, proof: proof.into() })
+            let in_force = Delivery::PrMerged { merge_sha: a(4), content_on_base: false, in_force: None };
+            (a(2), a(1), a(3), in_force)
         }
-        "pr-closed" if args.len() >= 2 => (a(1), "PR_OPEN", DeliveryEventKind::Returned { reason: ReturnedReason::PrClosedUnmerged }),
-        // Push mode never rewrites the commit it landed: the proof is ancestry.
-        "push-delivered" if args.len() >= 3 => {
-            (a(1), "PUSHING", DeliveryEventKind::Delivered { merge_sha: a(2), proof: "ancestry".into() })
-        }
-        "push-requeued" if args.len() >= 3 => (a(1), "PUSHING", DeliveryEventKind::Requeued { tip: a(2) }),
-        "push-returned" if args.len() >= 2 => (a(1), "PUSHING", DeliveryEventKind::Returned { reason: ReturnedReason::PushRejected }),
+        "pr-closed" if args.len() >= 2 => (a(1), String::new(), String::new(), Delivery::PrClosed),
+        "push-delivered" if args.len() >= 3 => (a(1), String::new(), String::new(), Delivery::PushDelivered { sha: a(2) }),
+        "push-requeued" if args.len() >= 3 => (a(1), String::new(), String::new(), Delivery::PushRequeued { tip: a(2) }),
+        "push-returned" if args.len() >= 2 => (a(1), String::new(), String::new(), Delivery::PushReturned),
         _ => {
             return usage(
                 "deliver pr-merged <repo> <bead-id> <branch> <merge-sha> | pr-closed <bead-id> [reason] | push-delivered <bead-id> <sha> | push-requeued <bead-id> <tip> | push-returned <bead-id> [reason]",
             )
         }
     };
-    let actor = deliver_actor(sub);
-    // _lc_deliver: no row, or a row not in the state this exit applies to, is logged and
-    // skipped rather than forced.
+    let actor = delivery.actor();
     // One read decides: no bead row is no delivery row, but a read that could not tell is
     // "cannot tell" — never "no row, inert" (sp-cxfgj5).
     let shown = match show(m, &id) {
-        Ok(v) => Some(v),
-        Err(NO_ROW) => None,
+        Ok(v) => v,
+        Err(NO_ROW) => serde_json::json!({}),
         Err(rc) => return cannot_read(rc, "deliver", &id),
     };
-    let bead_state = shown.as_ref().map(|v| bead_field(v, "state")).unwrap_or_default();
-    let rec = shown.as_ref().and_then(|v| {
-        let d = v.get("delivery").filter(|d| !d.is_null())?.clone();
-        Some((s(&d, "state"), match d.get("version") {
-            Some(Value::Null) | None => "0".to_string(),
-            Some(_) => s(&d, "version"),
-        }))
-    });
-    let Some((state, version)) = rec else {
-        // PUSH MODE HAS NO DELIVERY ROUND (sp-51lgh). A CERTIFIED bead landed by push has no
-        // delivery row to carry the landing, and the hel sweep's ContentOnBase fires only
-        // for a branch still ahead of the base — never for a fast-forward — so the row stayed
-        // CERTIFIED with its commit on the base. Record the landing on the bead itself, with
-        // the ancestry proof; every other no-row case is unchanged.
-        if sub == "push-delivered" {
-            let certified = bead_state == "CERTIFIED";
-            if certified {
-                let proof = format!("ancestry:{}", a(2));
-                let ans = with_row(m, &id, actor, |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }));
-                let line = if ans.code == 0 {
-                    format!("lc: {id} landed by push — CERTIFIED -> LANDED (no delivery round; {actor}, {proof})")
-                } else {
-                    format!("lc: {id} landed by push, but the LANDED event was refused or unreachable ({actor}, exit {})", ans.code)
-                };
-                return Answer::out(ans.code, log_line(&line));
-            }
-        }
-        // A pr-mode bead has no delivery round either. A merged PR lands it from any live state (a lost
-        // write leaves READY) and only on content proof from the landing ref: a merge since
-        // reverted proves nothing.
-        if sub == "pr-merged" {
-            let waiting = !matches!(bead_state.as_str(), "" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
-            let repo_arg = a(1);
-            let repo = std::path::Path::new(&repo_arg);
-            // A deleted branch leaves no patch to test; the merge commit's place in the landing ref is the proof.
-            let proof = if !waiting {
+    // The git proof is read only for a row with no delivery round: a delivery row is decided by its own state.
+    let delivery = match delivery {
+        Delivery::PrMerged { merge_sha, .. } => {
+            let repo = std::path::Path::new(&repo);
+            let content_on_base = crate::git_evidence::content_on_base(repo, &branch, &merge_sha);
+            let live = !matches!(bead_field(&shown, "state").as_str(), "" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
+            let in_force = if !live || shown.get("delivery").is_some_and(Value::is_object) {
                 None
-            } else if crate::git_evidence::change_in_force(repo, &a(3), &a(4)) {
-                Some(format!("merge-tree:{}", a(4)))
-            } else if !crate::git_evidence::ref_resolves(repo, &a(3)) && crate::git_evidence::is_ancestor(repo, &a(4), "HEAD") {
-                Some(format!("ancestry:{}", a(4)))
+            } else if crate::git_evidence::change_in_force(repo, &branch, &merge_sha) {
+                Some(format!("merge-tree:{merge_sha}"))
+            } else if !crate::git_evidence::ref_resolves(repo, &branch) && crate::git_evidence::is_ancestor(repo, &merge_sha, "HEAD") {
+                Some(format!("ancestry:{merge_sha}"))
             } else {
                 None
             };
-            if let Some(proof) = proof {
-                let ans = with_row(m, &id, actor, |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }));
-                let line = if ans.code == 0 {
-                    format!("lc: {id} landed by merged pull request — LANDED (no delivery round; {actor}, {proof})")
-                } else {
-                    format!("lc: {id} merged pull request, but the LANDED event was refused or unreachable ({actor}, exit {})", ans.code)
-                };
-                return Answer::out(ans.code, log_line(&line));
-            }
+            Delivery::PrMerged { merge_sha, content_on_base, in_force }
         }
-        return Answer::out(
-            NO_ROW,
-            log_line(&format!("lc: no delivery row for {id} — not recording {actor}'s event (inert until the delivery round lands)")),
-        );
+        d => d,
     };
-    if state != want {
-        return Answer::out(NO_ROW, log_line(&format!("lc: {id} delivery is {state}, not {want} — not recording {actor}'s event")));
+    match plan_delivery(&delivery, &shown) {
+        Step::Delivery { expect, version, kind } => {
+            let (rc, out) = event(m, "delivery", &id, expect, &version, actor, &serde_json::to_string(&kind).unwrap_or_default());
+            let mut stdout = String::new();
+            if !out.is_empty() {
+                stdout.push_str(&out);
+                stdout.push('\n');
+            }
+            if rc == 0 {
+                stdout.push_str(&log_line(&format!("lc: {id} delivery {expect} -> applied ({actor})")));
+            } else {
+                stdout.push_str(&log_line(&format!("lc: {id} delivery event refused or unreachable ({actor}, exit {rc})")));
+            }
+            Answer::out(rc, stdout)
+        }
+        Step::Bead { kind, .. } => {
+            let proof = match &kind {
+                BeadEventKind::ContentOnBase { proof } => proof.clone(),
+                _ => String::new(),
+            };
+            let ans = with_row(m, &id, actor, |_| Ok(kind.clone()));
+            let how = if sub == "pr-merged" { "merged pull request" } else { "push" };
+            let line = if ans.code == 0 {
+                let to = if sub == "pr-merged" { "LANDED" } else { "CERTIFIED -> LANDED" };
+                format!("lc: {id} landed by {how} — {to} (no delivery round; {actor}, {proof})")
+            } else {
+                format!("lc: {id} landed by {how}, but the LANDED event was refused or unreachable ({actor}, exit {})", ans.code)
+            };
+            Answer::out(ans.code, log_line(&line))
+        }
+        Step::Skip(NotRecorded::DeliveryNotIn { state, want }) => Answer::out(NO_ROW, log_line(&format!("lc: {id} delivery is {state}, not {want} — not recording {actor}'s event"))),
+        Step::Skip(_) => Answer::out(NO_ROW, log_line(&format!("lc: no delivery row for {id} — not recording {actor}'s event (inert until the delivery round lands)"))),
     }
-    let (rc, out) = event(m, "delivery", &id, want, &version, actor, &serde_json::to_string(&kind).unwrap_or_default());
-    let mut stdout = String::new();
-    if !out.is_empty() {
-        stdout.push_str(&out);
-        stdout.push('\n');
-    }
-    if rc == 0 {
-        stdout.push_str(&log_line(&format!("lc: {id} delivery {want} -> applied ({actor})")));
-    } else {
-        stdout.push_str(&log_line(&format!("lc: {id} delivery event refused or unreachable ({actor}, exit {rc})")));
-    }
-    Answer::out(rc, stdout)
 }
 
 // ---- certification onto events (lifecycle-cert.sh) -----------------------------------
