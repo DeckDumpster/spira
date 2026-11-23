@@ -6,6 +6,7 @@
 extern crate spira_test_id;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
@@ -20,10 +21,6 @@ fn status_field(pid: u32, name: &str) -> u64 {
     let status = std::fs::read_to_string(std::path::Path::new(system_paths::PROC).join(pid.to_string()).join("status")).expect("the server is alive");
     let line = status.lines().find(|l| l.starts_with(name)).unwrap_or_else(|| panic!("{name}"));
     line.split_whitespace().nth(1).and_then(|n| n.parse().ok()).expect("a number")
-}
-
-fn threads(pid: u32) -> u64 {
-    status_field(pid, "Threads:")
 }
 
 fn thread_names(pid: u32) -> Vec<String> {
@@ -59,14 +56,25 @@ struct Server {
     child: std::process::Child,
     socket: std::path::PathBuf,
     pid: u32,
+    run_dir: std::path::PathBuf,
     _dir: testkit::TempDir,
 }
 
 /// Starts `spira-lc serve` over a seeded store and returns once it has said ready.
-fn start_server() -> Server {
+fn start_server(hold_spans: bool) -> Server {
     let dir = testkit::TempDir::new("spira-lc-serve-memory");
     let run_dir = dir.join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
+    if hold_spans {
+        let otel = spira_otel::dir_of(&run_dir);
+        std::fs::create_dir_all(&otel).unwrap();
+        let now = std::time::SystemTime::now();
+        for t in [now, now + Duration::from_secs(86_400)] {
+            let path = std::ffi::CString::new(otel.join(format!("spira-lc.{}.jsonl", spira_otel::utc_date(t))).into_os_string().into_encoded_bytes()).unwrap();
+            // SAFETY: a valid NUL-terminated path.
+            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0, "mkfifo");
+        }
+    }
     let store = dir.join("control.db");
     seed(&store);
     let socket = dir.join("lc.sock");
@@ -98,52 +106,121 @@ fn start_server() -> Server {
     }
     std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
     let pid = child.id();
-    Server { child, socket, pid, _dir: dir }
+    Server { child, socket, pid, run_dir, _dir: dir }
 }
-
-/// Connection workers started by a client that reconnects before its worker counts itself idle.
-const WORKER_RACE: u64 = 30;
 
 #[test_id(tu38fgg)]
 #[test]
 fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_where_it_was() {
-    let Server { mut child, socket, pid, _dir } = start_server();
-    let (at_ready, threads_at_ready) = (rss_anon(pid), threads(pid));
+    let Server {
+        mut child,
+        socket,
+        pid,
+        run_dir,
+        _dir,
+    } = start_server(true);
+    let at_ready = rss_anon(pid);
 
-    let per = REQUESTS / CONNECTIONS;
+    // Every span write blocks until a reader opens: each worker is held in its reply's aftermath
+    // until every client has its first reply, and a client that waits for the close is then
+    // served by a reused worker, whatever the disk's speed.
+    let first_replies = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let deadline_answers = std::sync::atomic::AtomicUsize::new(0);
+    let otel = spira_otel::dir_of(&run_dir);
+    let held: Vec<_> = std::fs::read_dir(&otel)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(held.len(), 2);
+    // Detached: these readers never see an end of file.
+    for path in held {
+        let first_replies = first_replies.clone();
+        std::thread::spawn(move || {
+            while first_replies.load(std::sync::atomic::Ordering::SeqCst) < CONNECTIONS {
+                std::thread::yield_now();
+            }
+            // Read-write, so the reader outlives each writer's close and no later write blocks.
+            if let Ok(mut fifo) = std::fs::File::options().read(true).write(true).open(path) {
+                let _ = std::io::copy(&mut fifo, &mut std::io::sink());
+            }
+        });
+    }
     std::thread::scope(|scope| {
+        let per = REQUESTS / CONNECTIONS;
         for c in 0..CONNECTIONS {
-            let socket = &socket;
+            let (socket, first_replies, deadline_answers) =
+                (&socket, &*first_replies, &deadline_answers);
             scope.spawn(move || {
                 for n in 0..per {
-                    let argv: Vec<String> = if (c + n) % 2 == 0 { vec!["ops-view".into(), "ops_dwell".into()] } else { vec!["list".into(), "--live".into()] };
-                    let stream = spira_store::lc_call::connect(socket).unwrap_or_else(|_| panic!("connect {c}/{n}"));
-                    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-                    spira_store::lc_call::exchange_once(stream, &argv, None).unwrap_or_else(|_| panic!("no answer to {argv:?}"));
+                    let argv: Vec<String> = if (c + n) % 2 == 0 {
+                        vec!["ops-view".into(), "ops_dwell".into()]
+                    } else {
+                        vec!["list".into(), "--live".into()]
+                    };
+                    let stream = spira_store::lc_call::connect(socket)
+                        .unwrap_or_else(|_| panic!("connect {c}/{n}"));
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(30)))
+                        .unwrap();
+                    let mut closed = stream.try_clone().unwrap();
+                    let reply = spira_store::lc_call::exchange_once(stream, &argv, None)
+                        .unwrap_or_else(|_| panic!("no answer to {argv:?}"));
+                    if reply.code != 0 && reply.text() == spira_store::lc_call::DEADLINE_ANSWER {
+                        deadline_answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    if n == 0 {
+                        first_replies.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    let mut rest = Vec::new();
+                    std::io::Read::read_to_end(&mut closed, &mut rest).unwrap_or_else(|e| {
+                        panic!(
+                            "the close of {c}/{n} after {:?}: {e}",
+                            (
+                                reply.code,
+                                reply.text().chars().take(60).collect::<String>()
+                            )
+                        )
+                    });
                 }
             });
         }
     });
-    // Connection workers and request runners are reused and stay parked: one of each per concurrent client, so bounded by concurrency, not by requests; a request past its
-    // deadline is answered and its worker runs on: wait for the count to settle at that bound.
-    let mut polls = 0;
-    while threads(pid) > threads_at_ready + 2 * CONNECTIONS as u64 + WORKER_RACE {
-        polls += 1;
-        assert!(polls < 3_000, "threads still above the {threads_at_ready} at ready plus the parked workers: {}", thread_names(pid).join(", "));
-        std::thread::sleep(Duration::from_millis(10)); // clock-safe: polls the server's thread count, the signal waited on
-    }
-    let runners = thread_names(pid).iter().filter(|n| *n == "lc-run").count();
-    assert!(runners <= CONNECTIONS, "{runners} lc-run threads for {CONNECTIONS} concurrent clients");
+    let names = thread_names(pid);
+    let count = |name: &str| names.iter().filter(|n| *n == name).count();
+    let deadline_answers = deadline_answers.into_inner();
+    assert_eq!(
+        count("lc-accept"),
+        1,
+        "connection workers are named lc-conn: {}",
+        names.join(", ")
+    );
+    assert!(
+        count("lc-conn") <= CONNECTIONS,
+        "{} lc-conn threads for {CONNECTIONS} concurrent clients: {}",
+        count("lc-conn"),
+        names.join(", ")
+    );
+    assert!(
+        count("lc-run") <= CONNECTIONS + deadline_answers,
+        "{} lc-run threads for {CONNECTIONS} clients and {deadline_answers} deadline answers",
+        count("lc-run")
+    );
     let after = rss_anon(pid);
     let _ = child.kill();
     let _ = child.wait();
-    assert!(after < at_ready + SLACK, "RssAnon was {at_ready} B at ready and {after} B after {} requests over {} connections", REQUESTS, CONNECTIONS);
+    assert!(
+        after < at_ready + SLACK,
+        "RssAnon was {at_ready} B at ready and {after} B after {} requests over {} connections",
+        REQUESTS,
+        CONNECTIONS
+    );
 }
 
 #[test_id(tovs682)]
 #[test]
 fn the_ready_line_is_written_once_the_accept_thread_runs() {
-    let Server { mut child, pid, .. } = start_server();
+    let Server { mut child, pid, .. } = start_server(false);
     let names = thread_names(pid);
     let _ = child.kill();
     let _ = child.wait();

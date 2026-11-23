@@ -177,3 +177,51 @@ fn request_work_reuses_runner_threads_beside_parked_watches() {
     let distinct = ran.lock().unwrap().len();
     assert!(distinct <= 3, "{distinct} distinct threads ran the work: 2 parked and 1 reused for the sequential requests");
 }
+
+#[test_id(txwl72b)]
+#[test]
+fn a_value_the_serve_closure_returns_is_dropped_only_after_its_worker_counts_itself_idle() {
+    struct Guard(Arc<AtomicUsize>, Arc<AtomicUsize>);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.1
+                .store(self.0.load(Ordering::SeqCst), Ordering::SeqCst);
+        }
+    }
+    let dir = testkit::TempDir::new("lc-workers-guard");
+    let path = dir.join("sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let stopping = AtomicBool::new(false);
+    let idle = Arc::new(AtomicUsize::new(0));
+    let at_drop = Arc::new(AtomicUsize::new(usize::MAX));
+    std::thread::scope(|scope| {
+        let (stopping, path, waiting, dropped) = (&stopping, &path, idle.clone(), at_drop.clone());
+        let client = scope.spawn(move || {
+            ask(path, "x");
+            while dropped.load(Ordering::SeqCst) == usize::MAX {
+                std::thread::yield_now();
+            }
+            assert!(waiting.load(Ordering::SeqCst) >= 1);
+            stopping.store(true, Ordering::SeqCst);
+        });
+        let (idle_seen, recorded) = (idle.clone(), at_drop.clone());
+        accept_counting_idle(
+            &listener,
+            path.to_str().unwrap(),
+            scope,
+            stopping,
+            move |stream| {
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                reply(&stream, "ok");
+                Guard(idle_seen.clone(), recorded.clone())
+            },
+            idle.clone(),
+        );
+        client.join().unwrap();
+    });
+    assert!(
+        at_drop.load(Ordering::SeqCst) >= 1,
+        "the guard dropped before its worker counted itself idle"
+    );
+}
