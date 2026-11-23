@@ -102,7 +102,7 @@ fn start_server() -> Server {
 }
 
 /// Connection workers started by a client that reconnects before its worker counts itself idle.
-const WORKER_RACE: u64 = 10;
+const WORKER_RACE: u64 = 30;
 
 #[test_id(tu38fgg)]
 #[test]
