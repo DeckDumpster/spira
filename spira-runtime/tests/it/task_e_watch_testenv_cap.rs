@@ -182,14 +182,11 @@ fn the_tick_asks_observe_to_read_the_ledgers_under_the_configured_run_dir() {
 #[test]
 fn observe_reads_the_ledger_under_the_run_dir_it_is_given() {
     let dir = testkit::TempDir::new("cap-observe-runner");
-    let exe = dir.path().join("testenv");
-    let sleep = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("sleep")).find(|p| p.exists()).expect("sleep on PATH");
-    std::fs::copy(sleep, &exe).unwrap();
-    let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
-    let me = testenv::cap::live().into_iter().find(|p| p.pid == child.id()).unwrap();
-    ledger(dir.path(), me.pid, &format!("{} 0 0", me.start_ticks));
-    let snap: Snapshot = serde_json::from_str(&observe(dir.path().to_str().unwrap()).unwrap()).unwrap();
-    child.kill().unwrap();
-    child.wait().unwrap();
-    assert_eq!(snap.procs.iter().filter(|p| p.pid == me.pid).map(|p| p.ledgered).collect::<Vec<_>>(), [true]);
+    ledger(dir.path(), 7, "77 0 0");
+    ledger(dir.path(), 8, "88 0 0");
+    ledger(dir.path(), 9, "99 0 0");
+    let procs = vec![live(7, 77, 10, SUITE), live(8, 89, 10, SUITE), live(9, 99, 10, &["sleep", "30"])];
+    let snap: Snapshot = serde_json::from_str(&observe_procs(dir.path(), procs).unwrap()).unwrap();
+    let ledgered = |pid| snap.procs.iter().filter(|p| p.pid == pid).map(|p| p.ledgered).collect::<Vec<_>>();
+    assert_eq!((ledgered(7), ledgered(8), ledgered(9)), (vec![true], vec![false], vec![]));
 }
