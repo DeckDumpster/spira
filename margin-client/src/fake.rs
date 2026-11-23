@@ -1,6 +1,6 @@
 //! An in-memory reader that records every post. Cloning shares the state, so a test keeps a handle.
 
-use crate::{Anchor, Changes, Collection, CollectionInfo, Comment, CommentRef, Doc, DocRef, Margin, Thread, AGENT_PREFIX};
+use crate::{Anchor, Changes, Collection, CollectionInfo, Comment, CommentRef, Doc, DocRef, Margin, Thread, READER};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -14,11 +14,18 @@ pub struct PostedComment {
     pub in_reply_to: Option<String>,
 }
 
+struct Stored {
+    id: String,
+    cover: String,
+    title: String,
+    docs: Vec<Doc>,
+}
+
 #[derive(Default)]
 struct State {
-    collections: Vec<(String, String, String, Vec<Doc>)>,
+    collections: Vec<Stored>,
     texts: BTreeMap<(String, u64), String>,
-    threads: BTreeMap<String, Thread>,
+    threads: Vec<(String, Thread)>,
     comments: Vec<PostedComment>,
     published_at: BTreeMap<String, u64>,
     closed: Vec<String>,
@@ -27,10 +34,32 @@ struct State {
     down: bool,
 }
 
+impl State {
+    fn doc_id(collection: &str, index: usize) -> String {
+        format!("{collection}-d{}", index + 1)
+    }
+
+    fn latest(&self, doc: &str) -> u64 {
+        self.texts.keys().filter(|(d, _)| d == doc).map(|(_, v)| *v).max().unwrap_or(1)
+    }
+
+    fn doc_at(&self, collection: &str, path: &str) -> Option<DocRef> {
+        let c = self.collections.iter().find(|c| c.id == collection)?;
+        let i = c.docs.iter().position(|d| d.path == path)?;
+        let id = Self::doc_id(collection, i);
+        Some(DocRef { version: self.latest(&id), id, path: path.to_string() })
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct FakeMargin(Rc<RefCell<State>>);
 
 pub const BASE: &str = "https://margin.invalid";
+pub const AGENT: &str = "concierge";
+
+fn not_found(route: &str, what: &str) -> String {
+    format!("the reader at {BASE} refused {route}: HTTP 404: {what}")
+}
 
 impl FakeMargin {
     pub fn collections_posted(&self) -> usize {
@@ -40,7 +69,7 @@ impl FakeMargin {
     pub fn collection_posted(&self, n: usize) -> (String, String, Vec<Doc>) {
         let s = self.0.borrow();
         let c = &s.collections[n];
-        (c.2.clone(), c.1.clone(), c.3.clone())
+        (c.title.clone(), c.cover.clone(), c.docs.clone())
     }
     pub fn comments_posted(&self) -> Vec<PostedComment> {
         self.0.borrow().comments.clone()
@@ -64,7 +93,7 @@ impl FakeMargin {
     /// A comment by `author` on the thread `thread`, as the reader would hold it.
     pub fn reply_as(&self, thread: &str, author: &str, body: &str, at_ms: u64) {
         let mut s = self.0.borrow_mut();
-        let t = s.threads.get_mut(thread).unwrap_or_else(|| panic!("no thread {thread}"));
+        let t = s.threads.iter_mut().find(|(_, t)| t.id == thread).map(|(_, t)| t).unwrap_or_else(|| panic!("no thread {thread}"));
         let id = format!("{thread}-r{}", t.comments.len());
         t.comments.push(Comment { id, author: author.to_string(), body: body.to_string(), created_at_ms: at_ms });
     }
@@ -72,15 +101,17 @@ impl FakeMargin {
     pub fn thread_by(&self, collection: &str, anchor: Anchor, author: &str, body: &str, at_ms: u64) -> String {
         let mut s = self.0.borrow_mut();
         let id = format!("{collection}-his{}", s.threads.len());
-        s.threads.insert(id.clone(), Thread { anchor, comments: vec![Comment { id: format!("{id}-0"), author: author.into(), body: body.into(), created_at_ms: at_ms }] });
+        let document = s.doc_at(collection, &anchor.path).unwrap_or_else(|| panic!("no document {} in {collection}", anchor.path));
+        let first = Comment { id: format!("{id}-0"), author: author.into(), body: body.into(), created_at_ms: at_ms };
+        s.threads.push((collection.to_string(), Thread { id: id.clone(), document, anchor, comments: vec![first] }));
         id
     }
     /// A thread the operator started.
     pub fn his_thread(&self, collection: &str, anchor: Anchor, body: &str, at_ms: u64) -> String {
-        self.thread_by(collection, anchor, "ryan", body, at_ms)
+        self.thread_by(collection, anchor, READER, body, at_ms)
     }
     pub fn agent_author() -> String {
-        format!("{AGENT_PREFIX}concierge")
+        AGENT.to_string()
     }
     fn gate(&self, route: &str) -> Result<(), String> {
         if self.0.borrow().down {
@@ -95,36 +126,49 @@ impl Margin for FakeMargin {
         self.gate("POST /api/collections")?;
         let mut s = self.0.borrow_mut();
         let id = format!("col{}", s.collections.len() + 1);
-        let mut refs = Vec::new();
         for (i, d) in docs.iter().enumerate() {
-            let doc_id = format!("{id}-d{}", i + 1);
-            s.texts.insert((doc_id.clone(), 1), d.text.clone());
-            refs.push(DocRef { id: doc_id, version: 1, path: d.path.clone() });
+            s.texts.insert((State::doc_id(&id, i), 1), d.text.clone());
         }
-        s.collections.push((id.clone(), cover.to_string(), title.to_string(), docs.to_vec()));
-        Ok(Collection { url: format!("{BASE}/c/{id}"), id, documents: refs })
+        s.collections.push(Stored { id: id.clone(), cover: cover.to_string(), title: title.to_string(), docs: docs.to_vec() });
+        Ok(Collection { url: format!("{BASE}/c/{id}"), id })
     }
 
     fn post_comment(&self, collection: &str, anchor: &Anchor, body: &str, held: bool, in_reply_to: Option<&str>) -> Result<CommentRef, String> {
-        self.gate("POST /api/collections/{id}/comments")?;
+        let route = match in_reply_to {
+            Some(_) => "POST /api/threads/{tid}/comments",
+            None => "POST /api/collections/{id}/threads",
+        };
+        self.gate(route)?;
         let mut s = self.0.borrow_mut();
         s.comment_attempts += 1;
         if s.fail_comment_number == Some(s.comment_attempts) {
-            return Err(format!("the reader at {BASE} did not answer POST /api/collections/{collection}/comments: timed out"));
+            return Err(format!("the reader at {BASE} did not answer {route}: timed out"));
         }
         let n = s.comments.len() + 1;
-        s.comments.push(PostedComment { collection: collection.to_string(), anchor: anchor.clone(), body: body.to_string(), held, in_reply_to: in_reply_to.map(str::to_string) });
-        let thread = in_reply_to.map_or_else(|| format!("{collection}-t{n}"), str::to_string);
-        let id = format!("{collection}-c{n}");
         let author = Self::agent_author();
-        s.threads.entry(thread.clone()).or_insert_with(|| Thread { anchor: anchor.clone(), comments: vec![] }).comments.push(Comment { id: id.clone(), author, body: body.to_string(), created_at_ms: 0 });
-        Ok(CommentRef { url: format!("{BASE}/c/{collection}#{id}"), id, thread })
+        let thread = match in_reply_to {
+            Some(tid) => {
+                let comment = Comment { id: format!("{collection}-c{n}"), author, body: body.to_string(), created_at_ms: 0 };
+                let t = s.threads.iter_mut().find(|(_, t)| t.id == tid).map(|(_, t)| t).ok_or_else(|| not_found(route, "not found"))?;
+                t.comments.push(comment);
+                tid.to_string()
+            }
+            None => {
+                let document = s.doc_at(collection, &anchor.path).ok_or_else(|| not_found(route, "not found"))?;
+                let id = format!("{collection}-t{n}");
+                let comment = Comment { id: format!("{collection}-c{n}"), author, body: body.to_string(), created_at_ms: 0 };
+                s.threads.push((collection.to_string(), Thread { id: id.clone(), document, anchor: anchor.clone(), comments: vec![comment] }));
+                id
+            }
+        };
+        s.comments.push(PostedComment { collection: collection.to_string(), anchor: anchor.clone(), body: body.to_string(), held, in_reply_to: in_reply_to.map(str::to_string) });
+        Ok(CommentRef { url: format!("{BASE}/c/{collection}#thread-{thread}"), thread })
     }
 
     fn post_version(&self, document: &str, text: &str) -> Result<u64, String> {
-        self.gate("POST /api/documents/{id}/versions")?;
+        self.gate("POST /api/documents/{doc_id}/versions")?;
         let mut s = self.0.borrow_mut();
-        let next = s.texts.keys().filter(|(d, _)| d == document).map(|(_, v)| *v).max().unwrap_or(0) + 1;
+        let next = s.latest(document) + 1;
         s.texts.insert((document.to_string(), next), text.to_string());
         Ok(next)
     }
@@ -132,26 +176,37 @@ impl Margin for FakeMargin {
     fn collection(&self, id: &str) -> Result<CollectionInfo, String> {
         self.gate("GET /api/collections/{id}")?;
         let s = self.0.borrow();
-        let Some((cid, _, title, docs)) = s.collections.iter().find(|c| c.0 == id) else { return Err(format!("the reader at {BASE} refused GET /api/collections/{{id}}: HTTP 404: no collection {id}")) };
+        let Some(c) = s.collections.iter().find(|c| c.id == id) else { return Err(not_found("GET /api/collections/{id}", "not found")) };
         let published = s.published_at.get(id).copied();
         let state = if s.closed.iter().any(|c| c == id) { "closed" } else if published.is_some() { "published" } else { "open" };
-        let documents = docs.iter().enumerate().map(|(i, d)| DocRef { id: format!("{cid}-d{}", i + 1), version: 1, path: d.path.clone() }).collect();
-        let threads = s.threads.keys().filter(|k| k.starts_with(&format!("{id}-"))).cloned().collect();
-        Ok(CollectionInfo { state: state.into(), published_at_ms: published, title: title.clone(), documents, threads })
+        let documents = c.docs.iter().enumerate().map(|(i, d)| {
+            let id = State::doc_id(&c.id, i);
+            DocRef { version: s.latest(&id), id, path: d.path.clone() }
+        });
+        Ok(CollectionInfo { state: state.into(), published_at_ms: if state == "published" { published } else { None }, title: c.title.clone(), documents: documents.collect() })
     }
 
-    fn thread(&self, id: &str) -> Result<Thread, String> {
-        self.gate("GET /api/threads/{id}")?;
-        self.0.borrow().threads.get(id).cloned().ok_or_else(|| format!("the reader at {BASE} refused GET /api/threads/{{id}}: HTTP 404: no thread {id}"))
+    fn thread(&self, collection: &str, id: &str) -> Result<Thread, String> {
+        self.gate("GET /api/threads/{tid}")?;
+        self.0.borrow().threads.iter().find(|(c, t)| c == collection && t.id == id).map(|(_, t)| t.clone()).ok_or_else(|| not_found("GET /api/threads/{tid}", "not found"))
+    }
+
+    fn threads(&self, collection: &str) -> Result<Vec<Thread>, String> {
+        self.gate("GET /api/collections/{id}/threads")?;
+        let s = self.0.borrow();
+        if !s.collections.iter().any(|c| c.id == collection) {
+            return Err(not_found("GET /api/collections/{id}/threads", "not found"));
+        }
+        Ok(s.threads.iter().filter(|(c, _)| c == collection).map(|(_, t)| t.clone()).collect())
     }
 
     fn document_text(&self, document: &str, version: u64) -> Result<String, String> {
-        self.gate("GET /api/documents/{id}/versions/{v}")?;
-        self.0.borrow().texts.get(&(document.to_string(), version)).cloned().ok_or_else(|| format!("no document {document} at version {version}"))
+        self.gate("GET /api/documents/{doc_id}/versions/{n}")?;
+        self.0.borrow().texts.get(&(document.to_string(), version)).cloned().ok_or_else(|| not_found("GET /api/documents/{doc_id}/versions/{n}", "not found"))
     }
 
     fn close(&self, collection: &str) -> Result<(), String> {
-        self.gate("POST /api/collections/{id}/close")?;
+        self.gate("PATCH /api/collections/{id}")?;
         self.0.borrow_mut().closed.push(collection.to_string());
         Ok(())
     }

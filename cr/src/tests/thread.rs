@@ -31,8 +31,7 @@ impl World {
         attach_collection(&self.margin, &fixture(), self.run.path(), 1)
     }
     fn thread_on(&self, r: &Review, path: &str, (first, last): (u32, u32), body: &str) -> String {
-        let (document, version) = r.documents[path].clone();
-        self.margin.thread_by(r.collection.as_deref().unwrap(), Anchor { document, version, first, last }, "ryan", body, 100)
+        self.margin.thread_by(r.collection.as_deref().unwrap(), Anchor { path: path.into(), first, last }, "reader", body, 100)
     }
 }
 
@@ -43,8 +42,8 @@ fn thread_prints_the_anchors_range_its_source_and_every_comment_in_order() {
     let r = w.opened("demo/src/store.rs");
     let t = w.thread_on(&r, "demo/src/store.rs", (6, 8), "why open here?");
     w.thread_on(&r, "demo/src/store.rs", (3, 3), "unrelated");
-    w.margin.reply_as(&t, "agent:concierge", "it is the only opener", 200);
-    w.margin.reply_as(&t, "ryan", "and the error path?", 300);
+    w.margin.reply_as(&t, "concierge", "it is the only opener", 200);
+    w.margin.reply_as(&t, "reader", "and the error path?", 300);
     let o = w.cr(&["thread", "--review", "001", "--thread", &t]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let out = o.stdout;

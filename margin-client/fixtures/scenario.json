@@ -1,0 +1,187 @@
+[
+  {
+    "body": {
+      "cover_note": "cover words",
+      "documents": [
+        {
+          "kind": "code",
+          "path": "src/a.rs",
+          "text": "fn one() {}\nfn two() {}\nfn three() {}\n"
+        },
+        {
+          "kind": "code",
+          "path": "src/b.rs",
+          "text": "fn b() {}\n"
+        }
+      ],
+      "title": "Scenario"
+    },
+    "method": "POST",
+    "path": "/api/collections",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"url\":\"http://127.0.0.1:18931/c/dd7ca9c501e39498\"}",
+    "status": 201
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/collections/dd7ca9c501e39498",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"title\":\"Scenario\",\"cover_note\":\"cover words\",\"state\":\"open\",\"created_by\":\"concierge\",\"created_at\":1795414767,\"updated_at\":1795414767,\"documents\":[{\"id\":\"563c6a5fbb096841\",\"version_id\":1,\"path\":\"src/a.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn one() {}\\nfn two() {}\\nfn three() {}\\n\"},{\"id\":\"ad51646f6e5f1dba\",\"version_id\":2,\"path\":\"src/b.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn b() {}\\n\"}]}",
+    "status": 200
+  },
+  {
+    "body": {
+      "body": "held note",
+      "first_line": 2,
+      "held": true,
+      "last_line": 3,
+      "path": "src/a.rs"
+    },
+    "method": "POST",
+    "path": "/api/collections/dd7ca9c501e39498/threads",
+    "query": "",
+    "reply": "{\"id\":\"a047e253e22205f6\",\"version_id\":1,\"first_line\":2,\"last_line\":3,\"start_col\":null,\"end_col\":null,\"carry_state\":\"placed\",\"created_at\":1795414767,\"comments\":[{\"id\":\"2cb37966412729bc\",\"author\":\"concierge\",\"body\":\"held note\",\"visibility\":\"held\",\"created_at\":1795414767,\"updated_at\":1795414767}]}",
+    "status": 201
+  },
+  {
+    "body": {
+      "body": "held answer",
+      "held": true
+    },
+    "method": "POST",
+    "path": "/api/threads/a047e253e22205f6/comments",
+    "query": "",
+    "reply": "{\"id\":\"a047e253e22205f6\",\"version_id\":1,\"first_line\":2,\"last_line\":3,\"start_col\":null,\"end_col\":null,\"carry_state\":\"placed\",\"created_at\":1795414767,\"comments\":[{\"id\":\"2cb37966412729bc\",\"author\":\"concierge\",\"body\":\"held note\",\"visibility\":\"held\",\"created_at\":1795414767,\"updated_at\":1795414767},{\"id\":\"6fde4f56a07ea29f\",\"author\":\"concierge\",\"body\":\"held answer\",\"visibility\":\"held\",\"created_at\":1795414768,\"updated_at\":1795414768}]}",
+    "status": 201
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/collections/dd7ca9c501e39498",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"title\":\"Scenario\",\"cover_note\":\"cover words\",\"state\":\"open\",\"created_by\":\"concierge\",\"created_at\":1795414767,\"updated_at\":1795414767,\"documents\":[{\"id\":\"563c6a5fbb096841\",\"version_id\":1,\"path\":\"src/a.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn one() {}\\nfn two() {}\\nfn three() {}\\n\"},{\"id\":\"ad51646f6e5f1dba\",\"version_id\":2,\"path\":\"src/b.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn b() {}\\n\"}]}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/threads/a047e253e22205f6",
+    "query": "",
+    "reply": "{\"id\":\"a047e253e22205f6\",\"version_id\":1,\"first_line\":2,\"last_line\":3,\"start_col\":null,\"end_col\":null,\"carry_state\":\"placed\",\"created_at\":1795414767,\"comments\":[{\"id\":\"2cb37966412729bc\",\"author\":\"concierge\",\"body\":\"held note\",\"visibility\":\"held\",\"created_at\":1795414767,\"updated_at\":1795414767},{\"id\":\"6fde4f56a07ea29f\",\"author\":\"concierge\",\"body\":\"held answer\",\"visibility\":\"held\",\"created_at\":1795414768,\"updated_at\":1795414768}]}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/collections/dd7ca9c501e39498",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"title\":\"Scenario\",\"cover_note\":\"cover words\",\"state\":\"open\",\"created_by\":\"concierge\",\"created_at\":1795414767,\"updated_at\":1795414767,\"documents\":[{\"id\":\"563c6a5fbb096841\",\"version_id\":1,\"path\":\"src/a.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn one() {}\\nfn two() {}\\nfn three() {}\\n\"},{\"id\":\"ad51646f6e5f1dba\",\"version_id\":2,\"path\":\"src/b.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn b() {}\\n\"}]}",
+    "status": 200
+  },
+  {
+    "body": {
+      "text": "fn zero() {}\nfn one() {}\nfn two() {}\nfn three() {}\n"
+    },
+    "method": "POST",
+    "path": "/api/documents/563c6a5fbb096841/versions",
+    "query": "",
+    "reply": "{\"id\":3,\"number\":2,\"created_at\":1795414768}",
+    "status": 201
+  },
+  {
+    "body": {
+      "body": "his note on the first version",
+      "first_line": 1,
+      "last_line": 1,
+      "version_id": 1
+    },
+    "method": "POST",
+    "path": "/c/dd7ca9c501e39498/threads",
+    "query": "",
+    "reply": "<div class=\"thread\" id=\"thread-ef7339d7762c690e\" data-thread=\"ef7339d7762c690e\" data-first=\"1\" data-last=\"1\">\n<div class=\"cm\" data-comment=\"dc61e8537f02a9ad\"><div class=\"who\">reader</div><div class=\"body\">his note on the first version</div><div class=\"acts\"><button type=\"button\" data-act=\"edit\">Edit</button><button type=\"button\" data-act=\"delete\">Delete</button></div></div>\n<form class=\"reply\"><textarea name=\"body\" rows=\"2\" aria-label=\"Reply\" placeholder=\"Reply\"></textarea><button type=\"submit\">Reply</button></form>\n</div>",
+    "status": 201
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/collections/dd7ca9c501e39498/threads",
+    "query": "limit=200",
+    "reply": "{\"items\":[{\"id\":\"a047e253e22205f6\",\"version_id\":3,\"first_line\":3,\"last_line\":4,\"start_col\":null,\"end_col\":null,\"carry_state\":\"placed\",\"created_at\":1795414767,\"comments\":[{\"id\":\"2cb37966412729bc\",\"author\":\"concierge\",\"body\":\"held note\",\"visibility\":\"held\",\"created_at\":1795414767,\"updated_at\":1795414767},{\"id\":\"6fde4f56a07ea29f\",\"author\":\"concierge\",\"body\":\"held answer\",\"visibility\":\"held\",\"created_at\":1795414768,\"updated_at\":1795414768}]},{\"id\":\"ef7339d7762c690e\",\"version_id\":1,\"first_line\":1,\"last_line\":1,\"start_col\":null,\"end_col\":null,\"carry_state\":\"placed\",\"created_at\":1795414768,\"comments\":[{\"id\":\"dc61e8537f02a9ad\",\"author\":\"reader\",\"body\":\"his note on the first version\",\"visibility\":\"now\",\"created_at\":1795414768,\"updated_at\":1795414768}]}],\"next\":null}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/collections/dd7ca9c501e39498",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"title\":\"Scenario\",\"cover_note\":\"cover words\",\"state\":\"open\",\"created_by\":\"concierge\",\"created_at\":1795414767,\"updated_at\":1795414767,\"documents\":[{\"id\":\"563c6a5fbb096841\",\"version_id\":3,\"path\":\"src/a.rs\",\"kind\":\"code\",\"version\":2,\"text\":\"fn zero() {}\\nfn one() {}\\nfn two() {}\\nfn three() {}\\n\"},{\"id\":\"ad51646f6e5f1dba\",\"version_id\":2,\"path\":\"src/b.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn b() {}\\n\"}]}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/documents/563c6a5fbb096841/versions",
+    "query": "limit=200",
+    "reply": "{\"items\":[{\"id\":1,\"number\":1,\"created_at\":1795414767},{\"id\":3,\"number\":2,\"created_at\":1795414768}],\"next\":null}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/documents/563c6a5fbb096841/versions/1",
+    "query": "",
+    "reply": "{\"id\":1,\"number\":1,\"created_at\":1795414767,\"text\":\"fn one() {}\\nfn two() {}\\nfn three() {}\\n\"}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/documents/563c6a5fbb096841/versions/2",
+    "query": "",
+    "reply": "{\"id\":3,\"number\":2,\"created_at\":1795414768,\"text\":\"fn zero() {}\\nfn one() {}\\nfn two() {}\\nfn three() {}\\n\"}",
+    "status": 200
+  },
+  {
+    "body": {},
+    "method": "POST",
+    "path": "/c/dd7ca9c501e39498/publish",
+    "query": "",
+    "reply": "{\"released\":2,\"state\":\"published\"}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/collections/dd7ca9c501e39498",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"title\":\"Scenario\",\"cover_note\":\"cover words\",\"state\":\"published\",\"created_by\":\"concierge\",\"created_at\":1795414767,\"updated_at\":1795414768,\"documents\":[{\"id\":\"563c6a5fbb096841\",\"version_id\":3,\"path\":\"src/a.rs\",\"kind\":\"code\",\"version\":2,\"text\":\"fn zero() {}\\nfn one() {}\\nfn two() {}\\nfn three() {}\\n\"},{\"id\":\"ad51646f6e5f1dba\",\"version_id\":2,\"path\":\"src/b.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn b() {}\\n\"}]}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/changes",
+    "query": "after=0&wait=0",
+    "reply": "{\"changes\":[{\"seq\":1,\"kind\":\"thread_created\",\"collection_id\":\"dd7ca9c501e39498\",\"thread_id\":\"a047e253e22205f6\",\"comment_id\":\"2cb37966412729bc\",\"author\":\"concierge\",\"visibility\":\"held\",\"body\":\"held note\"},{\"seq\":2,\"kind\":\"comment_created\",\"collection_id\":\"dd7ca9c501e39498\",\"thread_id\":\"a047e253e22205f6\",\"comment_id\":\"6fde4f56a07ea29f\",\"author\":\"concierge\",\"visibility\":\"held\",\"body\":\"held answer\"},{\"seq\":3,\"kind\":\"version_created\",\"collection_id\":\"dd7ca9c501e39498\",\"thread_id\":null,\"comment_id\":null,\"author\":null,\"visibility\":null},{\"seq\":4,\"kind\":\"thread_created\",\"collection_id\":\"dd7ca9c501e39498\",\"thread_id\":\"ef7339d7762c690e\",\"comment_id\":\"dc61e8537f02a9ad\",\"author\":\"reader\",\"visibility\":\"now\",\"body\":\"his note on the first version\"},{\"seq\":5,\"kind\":\"published\",\"collection_id\":\"dd7ca9c501e39498\",\"thread_id\":null,\"comment_id\":null,\"author\":null,\"visibility\":null}],\"last_seq\":5}",
+    "status": 200
+  },
+  {
+    "body": {
+      "state": "closed"
+    },
+    "method": "PATCH",
+    "path": "/api/collections/dd7ca9c501e39498",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"title\":\"Scenario\",\"cover_note\":\"cover words\",\"state\":\"closed\",\"created_by\":\"concierge\",\"created_at\":1795414767,\"updated_at\":1795414768,\"documents\":[{\"id\":\"563c6a5fbb096841\",\"version_id\":3,\"path\":\"src/a.rs\",\"kind\":\"code\",\"version\":2,\"text\":\"fn zero() {}\\nfn one() {}\\nfn two() {}\\nfn three() {}\\n\"},{\"id\":\"ad51646f6e5f1dba\",\"version_id\":2,\"path\":\"src/b.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn b() {}\\n\"}]}",
+    "status": 200
+  },
+  {
+    "body": null,
+    "method": "GET",
+    "path": "/api/collections/dd7ca9c501e39498",
+    "query": "",
+    "reply": "{\"id\":\"dd7ca9c501e39498\",\"title\":\"Scenario\",\"cover_note\":\"cover words\",\"state\":\"closed\",\"created_by\":\"concierge\",\"created_at\":1795414767,\"updated_at\":1795414768,\"documents\":[{\"id\":\"563c6a5fbb096841\",\"version_id\":3,\"path\":\"src/a.rs\",\"kind\":\"code\",\"version\":2,\"text\":\"fn zero() {}\\nfn one() {}\\nfn two() {}\\nfn three() {}\\n\"},{\"id\":\"ad51646f6e5f1dba\",\"version_id\":2,\"path\":\"src/b.rs\",\"kind\":\"code\",\"version\":1,\"text\":\"fn b() {}\\n\"}]}",
+    "status": 200
+  }
+]

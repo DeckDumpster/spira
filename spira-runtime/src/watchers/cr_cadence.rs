@@ -59,7 +59,7 @@ impl Snapshot {
         let unit = cr::units::Unit { id: String::new(), kind: cr::units::Kind::Module, files: vec![], title: String::new() };
         let records: Vec<cr::record::Review> = reviews
             .iter()
-            .map(|o| cr::record::Review { number: o.number, kind: o.kind, state: o.state, source_repo: String::new(), source_sha: String::new(), collection: None, url: None, documents: Default::default(), unit: unit.clone(), sealed_sha256: None, staged_at: o.staged_at, opened_at: None, published_at: None, closed_at: o.closed_at })
+            .map(|o| cr::record::Review { number: o.number, kind: o.kind, state: o.state, source_repo: String::new(), source_sha: String::new(), collection: None, url: None, unit: unit.clone(), sealed_sha256: None, staged_at: o.staged_at, opened_at: None, published_at: None, closed_at: o.closed_at })
             .collect();
         Snapshot::from_records(&records, due_at)
     }

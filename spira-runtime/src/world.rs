@@ -1939,7 +1939,7 @@ mod cr_cadence_tests {
     fn scheduled(run: &Path, state: State, closed_at: Option<u64>) {
         let unit = cr::units::Unit { id: "u".into(), kind: cr::units::Kind::Module, files: vec![], title: "t".into() };
         let n = record::allocate(run).unwrap();
-        let r = Review { number: n, kind: Kind::Scheduled, state, source_repo: "s".into(), source_sha: "c".into(), collection: None, url: None, documents: Default::default(), unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at };
+        let r = Review { number: n, kind: Kind::Scheduled, state, source_repo: "s".into(), source_sha: "c".into(), collection: None, url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at };
         record::save(run, &r).unwrap();
     }
 

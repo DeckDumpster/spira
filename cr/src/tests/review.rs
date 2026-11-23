@@ -70,8 +70,7 @@ impl World {
     }
     fn his(&self, n: u32, line: u32, body: &str) -> String {
         let r = record::load(self.run.path(), n).unwrap();
-        let (document, version) = r.documents[&r.unit.files[0].path].clone();
-        self.margin.his_thread(r.collection.as_deref().unwrap(), Anchor { document, version, first: line, last: line }, body, 7)
+        self.margin.his_thread(r.collection.as_deref().unwrap(), Anchor { path: r.unit.files[0].path.clone(), first: line, last: line }, body, 7)
     }
 }
 
@@ -581,8 +580,7 @@ fn seal_posts_one_collection_of_the_units_files_whole_then_the_held_labelled_com
     assert_eq!((title, docs), (r.unit.title.clone(), want));
     let posts = w.margin.comments_posted();
     let first = &r.unit.files[0].path;
-    let (doc, version) = r.documents[first].clone();
-    let at = |line| Anchor { document: doc.clone(), version, first: line, last: line };
+    let at = |line| Anchor { path: first.clone(), first: line, last: line };
     assert_eq!(posts.iter().map(|p| (p.body.as_str(), p.held, p.anchor.clone(), p.in_reply_to.clone())).collect::<Vec<_>>(), [("**His lens:** first look", true, at(1), None), ("**Fresh read:** fresh look", true, at(2), None)]);
     assert_eq!((r.state, r.collection.as_deref(), r.url.as_deref()), (State::Open, Some("col1"), Some(READER)));
     assert_eq!(o.stdout, format!("{READER}\n"));
@@ -865,7 +863,7 @@ fn status_shows_each_published_reviews_two_scores_in_order() {
 
 fn review_of(number: u32, kind: record::Kind, state: State) -> record::Review {
     let unit = crate::units::Unit { id: "u".into(), kind: crate::units::Kind::Module, files: vec![], title: "t".into() };
-    record::Review { number, kind, state, source_repo: "s".into(), source_sha: "c".into(), collection: None, url: None, documents: Default::default(), unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None }
+    record::Review { number, kind, state, source_repo: "s".into(), source_sha: "c".into(), collection: None, url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None }
 }
 
 #[test_id(tdoh0ml)]
@@ -889,12 +887,12 @@ fn a_record_written_before_the_reader_still_loads() {
     for (k, val) in [("branch", serde_json::json!("cr/001-x")), ("pr", serde_json::json!(7)), ("pr_url", serde_json::json!("https://forge.invalid/pull/7"))] {
         v[k] = val;
     }
-    for k in ["collection", "url", "documents"] {
+    for k in ["collection", "url"] {
         v.as_object_mut().unwrap().remove(k);
     }
     std::fs::write(&path, v.to_string()).unwrap();
     let r = record::load(w.run.path(), 1).unwrap();
-    assert_eq!((r.collection, r.url, r.documents.len()), (None, None, 0));
+    assert_eq!((r.collection, r.url), (None, None));
 }
 
 #[test_id(thqwf0k)]
@@ -948,4 +946,26 @@ fn a_verb_that_never_reaches_the_reader_runs_with_the_reader_unconfigured() {
     let o = w.seal_with("001", &c);
     assert_eq!(o.code, 1);
     assert!(o.stderr.contains("SPIRA_MARGIN_URL"), "{}", o.stderr);
+}
+
+#[test_id(t7pd1ov)]
+#[test]
+fn a_progress_file_and_a_record_that_still_carry_documents_load_and_the_seal_resumes_on_one_collection() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.margin.fail_comment_number(2);
+    let c = w.comments(1);
+    assert_eq!(w.seal_with("001", &c).code, 1);
+    let legacy = serde_json::json!({"demo/src/store.rs": ["doc-1", 1]});
+    for name in ["progress.json", "review.json"] {
+        let path = record::dir(w.run.path(), 1).join(name);
+        let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v["documents"] = legacy.clone();
+        std::fs::write(&path, v.to_string()).unwrap();
+    }
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert_eq!(w.margin.collections_posted(), 1);
+    assert_eq!(w.margin.comments_posted().len(), 2);
 }

@@ -6,6 +6,7 @@ autotests = false
 description = "margin-client — the one place that knows the Margin reader's routes: collections, held comments, threads and the change feed."
 
 [features]
+record = []
 integration = ["spira-test-id/integration", "testkit/integration"]
 
 [dependencies]
@@ -16,3 +17,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
+
+[[example]]
+name = "record_margin"
+required-features = ["record"]
