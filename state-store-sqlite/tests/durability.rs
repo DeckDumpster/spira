@@ -64,6 +64,7 @@ fn ship_cfg(dir: &Path, snapshot_every_ms: u64) -> ShipConfig {
         dir: dir.join("lc-ship"),
         max_mains: 1_000,
         snapshot_every_ms,
+        stage_every_ms: 0,
     }
 }
 
@@ -999,7 +1000,7 @@ fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resum
     let off = dir.path().join("off");
     {
         let c = suite::open(open(&path), &clock);
-        let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+        let mut s = Shipper::open(c.backend().clone(), paced_cfg(dir.path(), 15_000), file_put(&off), Arc::new(clock.clone())).unwrap();
         put(&c, "a", Object::new(json!(1)), "1");
         tick(&mut s);
         put(&c, "a", Object::new(json!(2)), "2");
@@ -1007,11 +1008,12 @@ fn a_shipper_whose_outbox_does_not_reach_back_takes_a_snapshot_at_once_and_resum
     }
     std::fs::remove_dir_all(state_store_sqlite::outbox_dir(&path)).unwrap();
     let c = suite::open(open(&path), &clock);
-    let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), file_put(&off), Arc::new(clock.clone())).unwrap();
+    let mut s = Shipper::open(c.backend().clone(), paced_cfg(dir.path(), 15_000), file_put(&off), Arc::new(clock.clone())).unwrap();
     let t = s.tick().unwrap();
     let head = c.backend().head().unwrap();
     assert_eq!(t.snapshot, Some(head), "the snapshot taken out of cadence: {t:?}");
     assert_eq!(t.staged, None);
+    assert_eq!(std::fs::read_to_string(s.dir().join("staged")).unwrap(), head.to_string(), "the forced snapshot records staged");
     put(&c, "c", Object::new(json!(4)), "4");
     let t = tick(&mut s);
     assert_eq!(t.staged.map(|(from, _)| from), Some(head + 1), "{t:?}");
@@ -1309,4 +1311,91 @@ fn a_relist_of_sent_revlog_happens_once_per_staged_value() {
     lost.tick().unwrap();
     sent_revlog_made_a_file(&lost);
     lost.tick().unwrap();
+}
+
+fn paced_cfg(dir: &Path, stage_every_ms: u64) -> ShipConfig {
+    ShipConfig { stage_every_ms, ..ship_cfg(dir, u64::MAX) }
+}
+
+#[test_id(toeszp2)]
+#[test]
+fn thirty_commits_two_seconds_apart_stage_at_most_six_runs_and_restore_whole() {
+    let dir = TempDir::new("ship-paced");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    let mut s = Shipper::open_staging(c.backend().clone(), paced_cfg(dir.path(), 15_000), Arc::new(clock.clone())).unwrap();
+    tick(&mut s);
+    for i in 0..30 {
+        put(&c, &format!("k{i}"), Object::new(json!(i)), &format!("p{i}"));
+        tick(&mut s);
+        clock.advance(2_000);
+    }
+    let runs = ship::names(&s.dir().join("queue").join(REVLOG)).unwrap();
+    assert!(runs.len() <= 6, "{runs:?}");
+    clock.advance(15_000);
+    assert!(tick(&mut s).staged.is_some(), "the tail the pace held back");
+    let drained = ship::drain(s.dir(), file_put(&dir.path().join("off")).as_ref()).unwrap();
+    assert!(drained.failed.is_none(), "{drained:?}");
+    tick(&mut s);
+    let (out, _, _) = restored_copy(dir.path(), &s);
+    assert_eq!(live(&verify(&out)), live(c.backend()));
+}
+
+#[test_id(tcopd80)]
+#[test]
+fn staging_a_run_leaves_the_staged_mark_alone() {
+    let dir = TempDir::new("ship-staged-untouched");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    let mut s = Shipper::open_staging(c.backend().clone(), paced_cfg(dir.path(), 0), Arc::new(clock.clone())).unwrap();
+    tick(&mut s);
+    let mark = s.dir().join("staged");
+    ship::write_durably(&mark, b"0").unwrap();
+    let stat = || (std::fs::read(&mark).ok(), std::fs::metadata(&mark).and_then(|m| m.modified()).ok());
+    let before = stat();
+    put(&c, "a", Object::new(json!(1)), "1");
+    assert!(tick(&mut s).staged.is_some());
+    assert_eq!(before, stat());
+}
+
+#[test_id(tkj4f4l)]
+#[test]
+fn a_reopen_stages_from_the_revision_after_a_run_in_queue_and_after_one_only_in_sent() {
+    let dir = TempDir::new("ship-reopen-floor");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    let cfg = || paced_cfg(dir.path(), 0);
+    let mut s = Shipper::open_staging(c.backend().clone(), cfg(), Arc::new(clock.clone())).unwrap();
+    tick(&mut s);
+    let r = put(&c, "a", Object::new(json!(1)), "1");
+    assert_eq!(tick(&mut s).staged.map(|(_, to)| to), Some(r));
+    let mut s = Shipper::open_staging(c.backend().clone(), cfg(), Arc::new(clock.clone())).unwrap();
+    let r2 = put(&c, "b", Object::new(json!(2)), "2");
+    assert_eq!(tick(&mut s).staged, Some((r + 1, r2)), "a run in queue/");
+    let queued = s.dir().join("queue").join(REVLOG);
+    std::fs::create_dir_all(s.sent(REVLOG)).unwrap();
+    for n in ship::names(&queued).unwrap() {
+        std::fs::rename(queued.join(&n), s.sent(REVLOG).join(&n)).unwrap();
+    }
+    let mut s = Shipper::open_staging(c.backend().clone(), cfg(), Arc::new(clock.clone())).unwrap();
+    let r3 = put(&c, "c", Object::new(json!(3)), "3");
+    assert_eq!(tick(&mut s).staged, Some((r2 + 1, r3)), "a run only in sent/");
+}
+
+#[test_id(tpz83rl)]
+#[test]
+fn a_paced_shipper_stages_a_full_run_s_successor_without_waiting() {
+    let dir = TempDir::new("ship-paced-full");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    let cfg = ShipConfig { max_mains: 2, ..paced_cfg(dir.path(), 60_000) };
+    let mut s = Shipper::open_staging(c.backend().clone(), cfg, Arc::new(clock.clone())).unwrap();
+    tick(&mut s);
+    for i in 0..5 {
+        put(&c, &format!("k{i}"), Object::new(json!(i)), &format!("p{i}"));
+    }
+    assert!(tick(&mut s).staged.is_some());
+    assert!(tick(&mut s).staged.is_some(), "the first run was full");
+    assert!(tick(&mut s).staged.is_some(), "the second run was full");
+    assert_eq!(tick(&mut s).staged, None, "the last run was short, and the pace holds");
 }

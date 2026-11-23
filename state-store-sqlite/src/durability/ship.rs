@@ -39,6 +39,8 @@ pub struct ShipConfig {
     /// The most txns one run carries.
     pub max_mains: usize,
     pub snapshot_every_ms: u64,
+    /// The least time between two staged runs, unless the last run was full; 0 stages every tick.
+    pub stage_every_ms: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -70,6 +72,8 @@ pub struct Shipper {
     /// process has learned since; the marks alone miss a crash between a file and its mark.
     staged_floor: u64,
     shipped_floor: u64,
+    /// When the last run was staged, and whether it carried `max_mains` txns.
+    last_run: Option<(u64, bool)>,
     /// The `staged` value `sent/revlog` was last relisted for.
     relisted_at: Option<u64>,
     /// The prune point `sent/revlog` was last swept for.
@@ -318,6 +322,7 @@ impl Shipper {
             forced: None,
             staged_floor: 0,
             shipped_floor: 0,
+            last_run: None,
             relisted_at: None,
             pruned_to: None,
         };
@@ -437,6 +442,12 @@ impl Shipper {
     }
 
     fn stage(&mut self) -> Result<Option<(u64, u64)>, String> {
+        let now = self.clock.now_ms();
+        if let Some((at, false)) = self.last_run {
+            if now.saturating_sub(at) < self.cfg.stage_every_ms {
+                return Ok(None);
+            }
+        }
         let from = self.staged_through()?;
         let head = self.backend.head().map_err(|e| e.to_string())?;
         if head <= from {
@@ -466,6 +477,7 @@ impl Shipper {
         if to == from {
             return Ok(None);
         }
+        let full = entries.len() >= self.cfg.max_mains;
         let run = Run {
             from: from + 1,
             to,
@@ -475,7 +487,7 @@ impl Shipper {
         let name = revlog::run_name(run.from, run.to);
         write_durably(&self.queue(REVLOG).join(&name), &revlog::encode(&run))?;
         self.staged_floor = self.staged_floor.max(run.to);
-        write_durably(&self.cfg.dir.join("staged"), run.to.to_string().as_bytes())?;
+        self.last_run = Some((now, full));
         Ok(Some((run.from, run.to)))
     }
 
