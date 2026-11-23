@@ -1,7 +1,7 @@
 //! Ports `cr` reads the world through. `Clock` and `Rng` are `runtime::ports`; `SourceTree`
 //! answers for one commit of the home repository.
 
-pub use forge::ports::Gh;
+pub use margin_client::Margin;
 pub use runtime::ports::{Clock, Rng, SeededRng, VirtualClock, WallClock};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -174,11 +174,25 @@ impl Registry for FixtureRegistry {
 /// Commits `paths` in the git repository at `dir`, and only those paths.
 pub trait Committer {
     fn commit(&self, dir: &Path, paths: &[&str], message: &str) -> Result<(), String>;
+    /// Whether any commit in the repository at `dir` ever touched `path`.
+    fn has_history(&self, dir: &Path, path: &str) -> Result<bool, String>;
 }
 
 pub struct GitCommitter;
 
 impl Committer for GitCommitter {
+    fn has_history(&self, dir: &Path, path: &str) -> Result<bool, String> {
+        // batch-job: local git log in the findings repository, no network
+        let out = Command::new("git").arg("-C").arg(dir).args(["log", "--format=%H", "--", path]).output().map_err(|e| format!("git log: {e}"))?;
+        if !out.status.success() {
+            let why = String::from_utf8_lossy(&out.stderr);
+            if why.contains("does not have any commits yet") {
+                return Ok(false);
+            }
+            return Err(format!("git log in {}: {}", dir.display(), why.trim()));
+        }
+        Ok(!String::from_utf8_lossy(&out.stdout).trim().is_empty())
+    }
     fn commit(&self, dir: &Path, paths: &[&str], message: &str) -> Result<(), String> {
         use std::io::Write;
         let git = |args: &[&str]| {
@@ -208,9 +222,7 @@ impl Committer for GitCommitter {
 
 pub struct Ports {
     pub run_dir: PathBuf,
-    pub gh: Box<dyn Gh>,
-    pub repo_owner: String,
-    pub repo_name: String,
+    pub margin: Box<dyn Margin>,
     pub findings_dir: String,
     pub committer: Box<dyn Committer>,
     pub source_repo: String,

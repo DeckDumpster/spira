@@ -1,7 +1,0 @@
-TYPE=u64
-GROUP=runtime
-DOC=While a review has had a comment within the window, seconds between polls of its pull request.
-SCHEMA=While a review has had a comment within the window, seconds between polls of its pull request. (unit: seconds; integer; default 30). Must be a positive integer.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_RUNTIME_CR_COMMENTS_HOT_SECS:=30}"
-SPIRA_CONF_DEFAULT_EOF

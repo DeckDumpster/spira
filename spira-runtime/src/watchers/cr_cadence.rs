@@ -43,6 +43,26 @@ pub struct ReviewObs {
 pub struct Snapshot {
     pub reviews: Vec<ReviewObs>,
     pub due_at: u64,
+    /// `cr`'s answer to whether a scheduled review is still live: its number and state.
+    pub blocker: Option<(u32, State)>,
+}
+
+impl Snapshot {
+    /// The snapshot of the review records, with the blocker as `cr` names it.
+    pub fn from_records(records: &[cr::record::Review], due_at: u64) -> Snapshot {
+        let reviews = records.iter().map(|r| ReviewObs { number: r.number, kind: r.kind, state: r.state, staged_at: r.staged_at, closed_at: r.closed_at }).collect();
+        Snapshot { reviews, due_at, blocker: cr::record::scheduled_blocker(records) }
+    }
+
+    /// The same, from observations: each is given a record with nothing but the fields they carry.
+    pub fn new(reviews: Vec<ReviewObs>, due_at: u64) -> Snapshot {
+        let unit = cr::units::Unit { id: String::new(), kind: cr::units::Kind::Module, files: vec![], title: String::new() };
+        let records: Vec<cr::record::Review> = reviews
+            .iter()
+            .map(|o| cr::record::Review { number: o.number, kind: o.kind, state: o.state, source_repo: String::new(), source_sha: String::new(), collection: None, url: None, documents: Default::default(), unit: unit.clone(), sealed_sha256: None, staged_at: o.staged_at, opened_at: None, published_at: None, closed_at: o.closed_at })
+            .collect();
+        Snapshot::from_records(&records, due_at)
+    }
 }
 
 /// Carried between ticks as the body of the latest state event, and sent to each observe: `anchor` is
@@ -62,8 +82,7 @@ fn live(r: &ReviewObs) -> bool {
 pub fn decide(cfg: &CrCadence, carry: &Carry, snap: &Snapshot, now: u64) -> (Carry, bool, Vec<String>) {
     let mut next = carry.clone();
     next.anchor.get_or_insert(now);
-    let scheduled_live = snap.reviews.iter().any(|r| r.kind == Kind::Scheduled && live(r));
-    let open = !scheduled_live && now >= snap.due_at && carry.requested != Some(snap.due_at);
+    let open = snap.blocker.is_none() && now >= snap.due_at && carry.requested != Some(snap.due_at);
     if open {
         next.requested = Some(snap.due_at);
     }
@@ -157,7 +176,7 @@ mod tests {
     }
 
     fn snap(reviews: Vec<ReviewObs>) -> Snapshot {
-        Snapshot { reviews, due_at: DUE }
+        Snapshot::new(reviews, DUE)
     }
 
     fn opens(carry: &Carry, s: &Snapshot, now: u64) -> bool {
@@ -174,6 +193,14 @@ mod tests {
         for st in [State::Staged, State::Published] {
             assert!(!opens(&Carry::default(), &snap(vec![rev(1, Kind::Scheduled, st)]), DUE));
         }
+    }
+
+    #[test_id(tbesfb6)]
+    #[test]
+    fn a_staged_scheduled_review_past_the_due_epoch_does_not_open_another_and_names_itself_as_the_blocker() {
+        let s = snap(vec![rev(1, Kind::Scheduled, State::Closed), rev(2, Kind::Scheduled, State::Staged)]);
+        assert_eq!(s.blocker, Some((2, State::Staged)));
+        assert!(!opens(&Carry::default(), &s, DUE + DAY));
     }
 
     #[test_id(tcx3t16)]

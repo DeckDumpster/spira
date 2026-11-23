@@ -1,127 +1,108 @@
-//! `cr thread` and `cr reply` through `cli::run`: a kept `comments.json`, an in-memory tree and a scripted forge.
+//! `cr thread` and `cr reply` through `cli::run`: an in-memory tree and reader.
 
-use super::gh::{FakeGh, Shared, NAME, OWNER};
-use super::{cfg, fixture, go, ports_with, seeded};
+use super::{attach_collection, fixture, go, ports_with, cfg};
 use crate::cli::Outcome;
 use crate::ports::Ports;
-use crate::record;
-use crate::thread::{comments_path, Comment};
-use std::rc::Rc;
+use crate::record::{self, Review};
+use margin_client::{Anchor, FakeMargin};
 use testkit::TempDir;
 
 struct World {
     run: TempDir,
-    gh: Rc<FakeGh>,
+    margin: FakeMargin,
     ports: Ports,
 }
 
 fn world() -> World {
     let run = TempDir::new("cr-thread");
-    let gh = Rc::new(seeded(&[]));
+    let margin = FakeMargin::default();
     let mut ports = ports_with(fixture(), vec![], cfg());
     ports.run_dir = run.path().to_path_buf();
-    ports.gh = Box::new(Shared(gh.clone()));
-    ports.repo_owner = OWNER.into();
-    ports.repo_name = NAME.into();
-    World { run, gh, ports }
+    ports.margin = Box::new(margin.clone());
+    World { run, margin, ports }
 }
 
 impl World {
     fn cr(&self, args: &[&str]) -> Outcome {
         go(&self.ports, args)
     }
-    fn opened(&self) {
-        assert_eq!(self.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-        let mut r = record::load(self.run.path(), 1).unwrap();
-        r.pr = Some(7);
-        record::save(self.run.path(), &r).unwrap();
+    fn opened(&self, aim: &str) -> Review {
+        assert_eq!(self.cr(&["open", "--aim", aim, "--seed", "3"]).code, 0);
+        attach_collection(&self.margin, &fixture(), self.run.path(), 1)
     }
-    fn keep(&self, comments: &[Comment]) {
-        std::fs::write(comments_path(self.run.path(), 1), serde_json::to_string(comments).unwrap()).unwrap();
+    fn thread_on(&self, r: &Review, path: &str, (first, last): (u32, u32), body: &str) -> String {
+        let (document, version) = r.documents[path].clone();
+        self.margin.thread_by(r.collection.as_deref().unwrap(), Anchor { document, version, first, last }, "ryan", body, 100)
     }
 }
 
-fn comment(id: u64, in_reply_to: Option<u64>, author: &str, line: Option<u64>, body: &str, at: u64) -> Comment {
-    Comment { id, in_reply_to, author: author.into(), bot: false, path: Some("demo/src/store.rs".into()), line, body: body.into(), created_at: at }
-}
-
-#[test_id(tq7oqac)]
+#[test_id(tjpkt42)]
 #[test]
-fn thread_prints_the_code_around_the_line_and_the_thread_in_order() {
+fn thread_prints_the_anchors_range_its_source_and_every_comment_in_order() {
     let w = world();
-    w.opened();
-    w.keep(&[
-        comment(30, Some(10), "reviewer", Some(6), "and the error path?", 300),
-        comment(10, None, "reviewer", Some(6), "why open here?", 100),
-        comment(99, None, "reviewer", Some(3), "unrelated", 150),
-        comment(20, Some(10), "concierge", Some(6), "it is the only opener", 200),
-    ]);
-    let o = w.cr(&["thread", "--review", "001", "--comment", "20"]);
+    let r = w.opened("demo/src/store.rs");
+    let t = w.thread_on(&r, "demo/src/store.rs", (6, 8), "why open here?");
+    w.thread_on(&r, "demo/src/store.rs", (3, 3), "unrelated");
+    w.margin.reply_as(&t, "agent:concierge", "it is the only opener", 200);
+    w.margin.reply_as(&t, "ryan", "and the error path?", 300);
+    let o = w.cr(&["thread", "--review", "001", "--thread", &t]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let out = o.stdout;
-    assert!(out.starts_with("demo/src/store.rs:6\n"), "{out}");
-    assert!(out.contains(">    6      pub fn open() -> Store {\n"), "{out}");
+    assert!(out.starts_with("demo/src/store.rs:6-8\n"), "{out}");
+    for n in [6, 7, 8] {
+        assert!(out.contains(&format!(">{n:>5}  ")), "line {n} is marked: {out}");
+    }
     assert!(out.contains("     1  //! The store.\n"), "the window reaches line 1: {out}");
     let at = |needle: &str| out.find(needle).unwrap_or_else(|| panic!("{needle:?} missing in {out}"));
-    assert!(at("[10]") < at("[20]") && at("[20]") < at("[30]"), "{out}");
+    assert!(at("why open here?") < at("it is the only opener") && at("it is the only opener") < at("and the error path?"), "{out}");
     assert!(!out.contains("unrelated"), "{out}");
 }
 
-#[test_id(tlpltd8)]
+#[test_id(tywukne)]
 #[test]
-fn thread_of_a_conversation_comment_has_no_code() {
+fn thread_of_a_thread_the_reader_does_not_have_exits_one_with_the_readers_words() {
     let w = world();
-    w.opened();
-    w.keep(&[Comment { path: None, line: None, ..comment(5, None, "reviewer", None, "publish it", 10) }]);
-    let o = w.cr(&["thread", "--review", "001", "--comment", "5"]);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    assert!(o.stdout.starts_with("conversation\n") && o.stdout.contains("publish it"), "{}", o.stdout);
+    w.opened("demo/src/store.rs");
+    let o = w.cr(&["thread", "--review", "001", "--thread", "nope"]);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("the reader at"), "{}", o.stderr);
 }
 
-#[test_id(tbfaadt)]
+#[test_id(t7ssrir)]
 #[test]
-fn thread_of_a_comment_the_watcher_never_kept_exits_two() {
+fn a_thread_on_line_n_of_a_large_module_shows_source_line_n() {
     let w = world();
-    w.opened();
-    w.keep(&[]);
-    assert_eq!(w.cr(&["thread", "--review", "001", "--comment", "1"]).code, 2);
-}
-
-#[test_id(ttdmz43)]
-#[test]
-fn a_comment_on_line_n_of_a_large_module_shows_source_line_n() {
-    let w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
-    let mut r = record::load(w.run.path(), 1).unwrap();
-    r.pr = Some(7);
-    record::save(w.run.path(), &r).unwrap();
-    w.keep(&[Comment { path: Some("demo/src/big.rs".into()), ..comment(1, None, "reviewer", Some(27), "which filler?", 100) }]);
-    let o = w.cr(&["thread", "--review", "001", "--comment", "1"]);
+    let r = w.opened("demo/src/big.rs");
+    let t = w.thread_on(&r, "demo/src/big.rs", (27, 27), "which filler?");
+    let o = w.cr(&["thread", "--review", "001", "--thread", &t]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     assert!(o.stdout.contains(">   27  fn filler_0() -> u32 {\n"), "{}", o.stdout);
 }
 
-#[test_id(tic7x4h)]
+#[test_id(t2wvwvw)]
 #[test]
-fn reply_with_an_empty_stdin_exits_two_and_calls_nothing() {
+fn reply_with_an_empty_stdin_exits_two_and_posts_nothing() {
     let mut w = world();
-    w.opened();
+    let r = w.opened("demo/src/store.rs");
+    let t = w.thread_on(&r, "demo/src/store.rs", (6, 6), "why?");
     w.ports.stdin = " \n".into();
-    assert_eq!(w.cr(&["reply", "--review", "001", "--comment", "10"]).code, 2);
-    assert_eq!(w.gh.count(), 0);
+    assert_eq!(w.cr(&["reply", "--review", "001", "--thread", &t]).code, 2);
+    assert!(w.margin.comments_posted().is_empty());
 }
 
-#[test_id(t8o8azd)]
+#[test_id(tj0x3ys)]
 #[test]
-fn reply_posts_stdin_in_the_comments_thread_and_prints_the_new_url() {
+fn reply_posts_stdin_in_the_thread_not_held_and_prints_the_new_url() {
     let mut w = world();
-    w.opened();
-    w.gh.answer("replies", r#"{"html_url":"https://forge.invalid/pull/7#r55"}"#);
+    let r = w.opened("demo/src/store.rs");
+    let t = w.thread_on(&r, "demo/src/store.rs", (6, 6), "why?");
     w.ports.stdin = "it is the only opener".into();
-    let o = w.cr(&["reply", "--review", "001", "--comment", "10"]);
-    assert_eq!((o.code, o.stdout.as_str()), (0, "https://forge.invalid/pull/7#r55\n"), "{}", o.stderr);
-    assert_eq!(w.gh.count(), 1);
-    let posts = w.gh.posted("pulls/7/comments/10/replies");
+    let o = w.cr(&["reply", "--review", "001", "--thread", &t]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert!(o.stdout.starts_with("https://margin.invalid/c/col1"), "{}", o.stdout);
+    let posts = w.margin.comments_posted();
     assert_eq!(posts.len(), 1);
-    assert_eq!(posts[0]["body"], "it is the only opener");
+    assert_eq!((posts[0].body.as_str(), posts[0].held, posts[0].in_reply_to.as_deref()), ("it is the only opener", false, Some(t.as_str())));
+    assert_eq!((posts[0].anchor.first, posts[0].anchor.last), (6, 6));
+    assert_eq!(record::load(w.run.path(), 1).unwrap().collection.as_deref(), Some("col1"));
 }

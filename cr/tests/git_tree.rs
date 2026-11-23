@@ -3,8 +3,6 @@
 #[macro_use]
 extern crate spira_test_id;
 
-#[path = "../src/tests/gh.rs"]
-mod gh;
 use cr::cli::run;
 use cr::ports::{Config, GitTree, Ports, SourceTree, VirtualClock};
 use std::path::Path;
@@ -59,8 +57,11 @@ fn git_tree_reads_the_resolved_commit_not_the_working_tree() {
 fn cr_pick_runs_over_a_real_git_tree() {
     let dir = repo();
     let tree = GitTree::new(dir.path().to_str().unwrap(), "main").unwrap();
+    let findings = testkit::TempDir::new("cr-git-findings");
+    let init = std::process::Command::new("git").arg("-C").arg(findings.path()).args(["init", "-q", "-b", "main"]).status().unwrap();
+    assert!(init.success());
     let config = Config { page_lines: 60, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50, status_limit: 10 };
-    let ports = Ports { run_dir: dir.path().join("unused-run"), gh: Box::new(gh::FakeGh::default().with_ledger_text("")), repo_owner: gh::OWNER.into(), repo_name: gh::NAME.into(), findings_dir: String::new(), committer: Box::new(cr::ports::GitCommitter), source_repo: "k".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), beads: Box::new(cr::ports::FixtureBeads::default()), registry: Box::new(cr::ports::FixtureRegistry::default()), config, env_seed: None };
+    let ports = Ports { run_dir: dir.path().join("unused-run"), margin: Box::new(margin_client::FakeMargin::default()), findings_dir: findings.path().to_str().unwrap().to_string(), committer: Box::new(cr::ports::GitCommitter), source_repo: "k".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), beads: Box::new(cr::ports::FixtureBeads::default()), registry: Box::new(cr::ports::FixtureRegistry::default()), config, env_seed: None };
     let o = run(&["pick".into(), "--seed".into(), "1".into(), "--json".into()], &ports);
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();

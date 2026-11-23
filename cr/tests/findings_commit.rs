@@ -31,3 +31,21 @@ fn commits_exactly_the_named_paths_with_the_message_and_makes_no_empty_commit() 
     GitCommitter.commit(p, &["cr-001.md", "patterns.md"], "again\n").unwrap();
     assert_eq!(git(p, &["rev-list", "--count", "HEAD"]).trim(), "2");
 }
+
+#[test_id(tgl4lyb)]
+#[test]
+fn has_history_is_false_for_a_never_committed_path_and_true_once_it_was_committed_then_deleted() {
+    let _env = testkit::env_read();
+    let d = testkit::TempDir::new("cr-history");
+    let p = d.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    assert!(!GitCommitter.has_history(p, "ledger.jsonl").unwrap(), "an unborn branch has no history");
+    git(p, &["-c", "user.name=a", "-c", "user.email=a@a", "commit", "-q", "--allow-empty", "-m", "root"]);
+    assert!(!GitCommitter.has_history(p, "ledger.jsonl").unwrap());
+    std::fs::write(p.join("ledger.jsonl"), "{}\n").unwrap();
+    git(p, &["add", "ledger.jsonl"]);
+    git(p, &["-c", "user.name=a", "-c", "user.email=a@a", "commit", "-q", "-m", "add"]);
+    git(p, &["rm", "-q", "ledger.jsonl"]);
+    git(p, &["-c", "user.name=a", "-c", "user.email=a@a", "commit", "-q", "-m", "gone"]);
+    assert!(GitCommitter.has_history(p, "ledger.jsonl").unwrap());
+}

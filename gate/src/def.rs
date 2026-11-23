@@ -23,6 +23,8 @@
 //! so everything downstream of it (the fences' expectations, the build-fence drop of a unit
 //! composition, the verdict key) reads the same kind of string it always has.
 
+use spira_config::gate_source::{self, GateSource};
+
 /// Where a gated tree keeps its definition, relative to the repository root.
 pub const PATH: &str = "gate.steps";
 
@@ -206,47 +208,83 @@ pub enum Resolved {
     /// The repository has not adopted a tree definition (its landing ref has none): the
     /// repository's configured gate column, as before sp-quu2w. Empty means syntax only.
     Column(String),
+    /// The repository declares a full CI in `.spira/testenv.toml`: the gate runs its default
+    /// tiers through testenv, `build` first when the declaration has a build tier.
+    Testenv { tiers: Vec<String>, build_tier: bool },
     /// The definition cannot be read. `branch` says whose fault: true when the base's own
     /// definition reads (the branch broke it), false when the base's is broken too.
     Refused { branch: bool, why: String },
 }
 
-/// Resolve the definition for the tree under test from the two blobs of [`PATH`]: the
-/// landing ref's (`base`) and the tree's own (`tree`). The column is used only when the
-/// base has never had a definition; once the base has one, a tree without a readable one
-/// is refused, never quietly gated by config.
-pub fn resolve(base: Option<&[u8]>, tree: Option<&[u8]>, column: &str) -> Resolved {
+/// What one revision carries of a repository's gate: its `gate.steps`, its testenv declaration,
+/// and whether it has the harness's own Containerfile (which makes the declaration the harness's).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Side<'a> {
+    pub steps: Option<&'a [u8]>,
+    pub declaration: Option<&'a str>,
+    pub containerfile: bool,
+}
+
+impl Side<'_> {
+    fn source(&self, land: &str, column: &str) -> Result<GateSource, String> {
+        let declaration = self.declaration.filter(|_| land == spira_config::gate_source::QUEUE_LOCAL);
+        gate_source::resolve(self.steps.is_some(), declaration, self.containerfile, land, column)
+    }
+}
+
+/// Resolve the definition for the tree under test from the landing ref's side (`base`) and the
+/// tree's own. The column is used only when the base has never had a definition; once the base
+/// has one, a tree without a readable one is refused, never quietly gated by config.
+pub fn resolve(base: Side, tree: Side, land: &str, column: &str) -> Resolved {
     let read = |b: &[u8]| -> Result<Def, String> {
         std::str::from_utf8(b)
             .map_err(|_| format!("{PATH} is not UTF-8"))
             .and_then(parse)
     };
-    match (base, tree) {
-        (None, None) => Resolved::Column(column.to_string()),
-        (Some(_), None) => Resolved::Refused {
+    let steps_refused = |t: Option<&[u8]>| match (base.steps, t) {
+        (Some(_), None) => Some(Resolved::Refused {
             branch: true,
             why: format!("the landing ref has {PATH} and the tree under test does not — deleting the gate definition is not a way through it"),
-        },
-        (b, Some(t)) => match read(t) {
+        }),
+        _ => None,
+    };
+    if let Some(r) = steps_refused(tree.steps) {
+        return r;
+    }
+    if let Some(t) = tree.steps {
+        return match read(t) {
             Ok(d) => Resolved::Tree(d),
             Err(e) => {
-                let base_ok = b.map(|b| read(b).is_ok()).unwrap_or(true);
+                let base_ok = base.steps.map(|b| read(b).is_ok()).unwrap_or(true);
                 Resolved::Refused { branch: base_ok, why: e }
             }
+        };
+    }
+    let base_source = base.source(land, column);
+    match tree.source(land, column) {
+        Err(why) => Resolved::Refused { branch: base_source.is_ok(), why },
+        Ok(GateSource::Testenv { tiers, build_tier }) => Resolved::Testenv { tiers, build_tier },
+        Ok(_) if matches!(base_source, Ok(GateSource::Testenv { .. })) => Resolved::Refused {
+            branch: true,
+            why: format!("the landing ref declares its CI in {} and the tree under test does not — deleting the declaration or its ci_entry is not a way through it", crate::own::DECL),
         },
+        Ok(_) => Resolved::Column(column.to_string()),
     }
 }
 
 /// The base trial's definition: the landing ref's own, or the column when it has none.
 /// Err when the base's definition does not read.
-pub fn resolve_base(base: Option<&[u8]>, column: &str) -> Result<Resolved, String> {
-    match base {
-        None => Ok(Resolved::Column(column.to_string())),
-        Some(b) => std::str::from_utf8(b)
+pub fn resolve_base(base: Side, land: &str, column: &str) -> Result<Resolved, String> {
+    if let Some(b) = base.steps {
+        return std::str::from_utf8(b)
             .map_err(|_| format!("{PATH} is not UTF-8"))
             .and_then(parse)
-            .map(Resolved::Tree),
+            .map(Resolved::Tree);
     }
+    Ok(match base.source(land, column)? {
+        GateSource::Testenv { tiers, build_tier } => Resolved::Testenv { tiers, build_tier },
+        _ => Resolved::Column(column.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -371,17 +409,56 @@ mod tests {
     fn resolution_falls_to_the_column_only_for_a_repository_that_never_adopted() {
         let good = b"step bash a.sh\n".as_slice();
         let bad = b"nonsense\n".as_slice();
-        assert_eq!(resolve(None, None, "col"), Resolved::Column("col".into()));
-        assert!(matches!(resolve(None, Some(good), "col"), Resolved::Tree(_)));
-        assert!(matches!(resolve(Some(good), Some(good), "col"), Resolved::Tree(_)));
+        let steps = |b: &'static [u8]| Side { steps: Some(b), ..Side::default() };
+        let none = Side::default();
+        let r = |base: Side, tree: Side| resolve(base, tree, "queue.local", "col");
+        assert_eq!(r(none, none), Resolved::Column("col".into()));
+        assert!(matches!(r(none, steps(good)), Resolved::Tree(_)));
+        assert!(matches!(r(steps(good), steps(good)), Resolved::Tree(_)));
         // The base has one and the tree dropped it: the branch's refusal, never the column.
-        assert!(matches!(resolve(Some(good), None, "col"), Resolved::Refused { branch: true, .. }));
+        assert!(matches!(r(steps(good), none), Resolved::Refused { branch: true, .. }));
         // An unreadable tree definition: the branch's when the base's reads, not otherwise.
-        assert!(matches!(resolve(Some(good), Some(bad), "col"), Resolved::Refused { branch: true, .. }));
-        assert!(matches!(resolve(Some(bad), Some(bad), "col"), Resolved::Refused { branch: false, .. }));
-        assert!(matches!(resolve(None, Some(bad), "col"), Resolved::Refused { branch: true, .. }));
-        assert_eq!(resolve_base(None, "col"), Ok(Resolved::Column("col".into())));
-        assert!(resolve_base(Some(bad), "col").is_err());
+        assert!(matches!(r(steps(good), steps(bad)), Resolved::Refused { branch: true, .. }));
+        assert!(matches!(r(steps(bad), steps(bad)), Resolved::Refused { branch: false, .. }));
+        assert!(matches!(r(none, steps(bad)), Resolved::Refused { branch: true, .. }));
+        assert_eq!(resolve_base(none, "queue.local", "col"), Ok(Resolved::Column("col".into())));
+        assert!(resolve_base(steps(bad), "queue.local", "col").is_err());
+    }
+
+    const DECL: &str = "ci_entry = \"bash gate.sh\"\ndefault = [\"gate\"]\n[tier.gate]\ncmd = \"x\"\n";
+
+    fn declared(text: &str) -> Side<'_> {
+        Side { declaration: Some(text), ..Side::default() }
+    }
+
+    #[test_id(t1bzu6p)]
+    #[test]
+    fn a_declaration_with_a_ci_entry_gates_a_queue_local_repository_whatever_its_column() {
+        let want = Resolved::Testenv { tiers: vec!["gate".into()], build_tier: false };
+        assert_eq!(resolve(Side::default(), declared(DECL), "queue.local", ""), want);
+        assert_eq!(resolve(declared(DECL), declared(DECL), "queue.local", "bash gate.sh"), want);
+        assert_eq!(resolve_base(declared(DECL), "queue.local", ""), Ok(want));
+        let forge = resolve(declared(DECL), declared(DECL), "queue", "col");
+        assert_eq!(forge, Resolved::Column("col".into()));
+    }
+
+    #[test_id(tu66ogy)]
+    #[test]
+    fn deleting_the_declaration_or_its_ci_entry_is_the_branchs_refusal() {
+        let gone = resolve(declared(DECL), Side::default(), "queue.local", "");
+        assert!(matches!(gone, Resolved::Refused { branch: true, .. }), "{gone:?}");
+        let no_entry = "default = [\"gate\"]\n[tier.gate]\ncmd = \"x\"\n";
+        let dropped = resolve(declared(DECL), declared(no_entry), "queue.local", "");
+        assert!(matches!(dropped, Resolved::Refused { branch: true, .. }), "{dropped:?}");
+    }
+
+    #[test_id(tsr96u0)]
+    #[test]
+    fn an_unreadable_declaration_is_refused_and_blames_the_branch_only_when_the_base_reads() {
+        let bad = "ci_entry = [";
+        assert!(matches!(resolve(declared(DECL), declared(bad), "queue.local", ""), Resolved::Refused { branch: true, .. }));
+        assert!(matches!(resolve(declared(bad), declared(bad), "queue.local", ""), Resolved::Refused { branch: false, .. }));
+        assert!(resolve_base(declared(bad), "queue.local", "").is_err());
     }
 
     /// Every `bash <path>` the tree's definition names is a file the tree carries, and every

@@ -425,6 +425,8 @@ claim_page_every = 4
 lc_max_read_ms = 100
 runtime_writer_grants_secs = 60
 lc_wal_line_bytes = 8388608
+runtime_sweep_secs = 60
+dolt_tmp_ttl = 86400
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

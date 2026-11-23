@@ -4,7 +4,6 @@
 
 pub mod asks;
 pub mod cr_cadence;
-pub mod cr_comments;
 pub mod design_asks;
 pub mod halt;
 pub mod brain_dirty;

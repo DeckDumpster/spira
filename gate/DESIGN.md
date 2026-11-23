@@ -250,8 +250,9 @@ tree and the key is what it was.
 
 repo map → repository → yield/meter armed → landing ref → changed files → ejected suites →
 **merge** → `bash -n` → beads data → foreign harness → **the definition** (the tree's
-`gate.steps`, or the column for a repository that never adopted one; "The tree owns its
-gate") → empty gate string (PASS `syntax-only`, column only) → preflight (`bash <path>` words
+`gate.steps`; else, for a `queue.local` repository whose `.spira/testenv.toml` has a `ci_entry`
+and no harness Containerfile, that declaration's default tiers; else the column; "The tree
+owns its gate") → empty gate string (PASS `syntax-only`, column only) → preflight (`bash <path>` words
 exist on the base for a column, on the revision under test for a tree definition) → key →
 cache → admission →
 sweep → tree lock → checkout the gate revision (proved by `rev-parse HEAD`) → **composition**
@@ -259,7 +260,11 @@ and **re-entry** → branch trial (its phases, then the re-entry phase) → the 
 PASS, or: harness-fault line / 124 / 75 → base trial on the pinned landing commit (the same
 composition, over the crates the base has, the landing ref's own definition and tools) →
 base re-run of the branch's red suites the base
-trial did not run → attribution.
+trial did not run → attribution. A testenv-gated trial composes as suites whatever `gate_mode` is;
+its base trial checks out the landing commit and runs its default tiers through testenv as phase
+`base-gate`, and there is no re-run: a red tier the landing ref's declaration lacks, or a
+landing ref that declares no CI, leaves the red the branch's own. Every VERDICT line ends
+` ran=<what>`: `testenv:<tiers>`, `gate.steps`, `column`, `syntax`, or `-` before resolution.
 
 The mode (`gate_mode`) is read just before the key, since it is part of it.
 
@@ -678,6 +683,14 @@ land with is what its gate runs.
   | no | yes | the tree's (the adopting branch is gated by what it adds) |
   | yes | yes | the tree's; a non-empty column is ignored with a warning |
   | yes | no | **FAIL `gate-definition`**: deleting the gate is not a way through it |
+
+  Without `gate.steps` on either side, a `queue.local` repository whose declaration carries a
+  non-empty `ci_entry` and no `spira/testenv/Containerfile` resolves to **testenv**
+  (`spira_config::gate_source`): the tree's default tiers run through testenv in the image the
+  declaration names, a non-empty column is ignored with a line, and a branch that deletes the
+  declaration or its `ci_entry` is FAIL `gate-definition`. A declaration that does not parse
+  is refused the same way as a `gate.steps` that does not. The gate runs the default tiers,
+  never the `ci_entry` string. `queue.forge` repositories are not resolved this way.
 
   A tree definition that does not parse, or names no step, is FAIL `gate-definition` when
   the landing ref's parses, BASE_FAIL `base-gate-definition` when it does not. Nothing falls
@@ -1272,7 +1285,8 @@ under `min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, the `gate` phase 
 at either is NO_VERDICT `deadline` (or `phase-cap`) naming the test phase. `gate.log` carries `test_clock=<s>`,
 the seconds charged, beside `ran=`.
 
-A repository that declares `[tier.build]` runs three phases: `build` (`testenv --suites build --share-keep K`),
+A repository that declares `[tier.build]`, or resolves to testenv (above), runs the phases below; without a
+build tier the `build` phase is absent and the compile is charged to the capped `gate` phase: `build` (`testenv --suites build --share-keep K`),
 `gate` (`--deadline <SPIRA_GATE_BUDGET> --share-keep K`, so testenv cuts its own run and names the suites it cut, ending at testenv's verdict) and then `publish`
 (`testenv --share-publish K`), which merges the warm build cache. `publish` is uncharged and uncapped, bounded only by
 `SPIRA_GATE_TIMEOUT` and the stall watch; its rc is ignored, its output goes to the gate log, never into the verdict's

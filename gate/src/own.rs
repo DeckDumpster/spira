@@ -25,29 +25,29 @@ pub fn ci_entry(tree: &Path) -> Option<CiEntry> {
     let doc: toml::Value = spira_config::parse_foreign(&text).ok()?;
     let text_of = |k: &str| doc.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     Some(CiEntry {
-        command: text_of("ci_entry")?,
+        command: spira_config::gate_source::ci_entry(&text).ok()??,
         image: text_of("image"),
         workdir: text_of("workdir").unwrap_or_else(|| system_paths::guest::WORK.into()),
     })
 }
 
-pub const BUILD_TIER: &str = "build";
+pub const BUILD_TIER: &str = spira_config::gate_source::BUILD_TIER;
+
+fn declaration(tree: &Path) -> Result<String, String> {
+    std::fs::read_to_string(tree.join(DECL)).map_err(|e| format!("{DECL}: {e}"))
+}
 
 /// Whether the declaration has a `[tier.build]`: the repository's compile, run by the gate as an
 /// uncharged `build` phase so the capped `gate` phase times only its tests.
 pub fn build_tier(tree: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(tree.join(DECL)) else { return false };
-    let Ok(doc) = spira_config::parse_foreign::<toml::Value>(&text) else { return false };
-    declares_own_testenv(tree) && doc.get("tier").and_then(|t| t.get(BUILD_TIER)).is_some()
+    declares_own_testenv(tree) && declaration(tree).ok().and_then(|t| spira_config::gate_source::has_build_tier(&t).ok()).unwrap_or(false)
 }
 
 /// The suite names testenv would accept for `tree`: a repository's declared tiers, else the
 /// files of the harness's own `spira/` directory. `Err` when the declaration cannot be read.
 pub fn known_suites(tree: &Path) -> Result<Vec<String>, String> {
     if declares_own_testenv(tree) {
-        let text = std::fs::read_to_string(tree.join(DECL)).map_err(|e| format!("{DECL}: {e}"))?;
-        let doc: toml::Value = spira_config::parse_foreign(&text).map_err(|e| format!("{DECL}: {e}"))?;
-        return Ok(doc.get("tier").and_then(|t| t.as_table()).map(|t| t.keys().filter(|k| *k != BUILD_TIER).cloned().collect()).unwrap_or_default());
+        return spira_config::gate_source::declared_tiers(&declaration(tree)?).map_err(|e| format!("{DECL}: {e}"));
     }
     let mut names: Vec<String> = std::fs::read_dir(tree.join("spira"))
         .map(|d| d.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.starts_with("test-") && n.ends_with(".sh")).collect())
@@ -56,16 +56,10 @@ pub fn known_suites(tree: &Path) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-/// The tiers a bare testenv run of `tree` runs: the declaration's non-empty `default`, else every
-/// declared tier but `build`. `Err` when the declaration cannot be read.
+/// The tiers a bare testenv run of `tree` runs. `Err` when the declaration cannot be read.
 pub fn default_tiers(tree: &Path) -> Result<Vec<String>, String> {
     if declares_own_testenv(tree) {
-        let text = std::fs::read_to_string(tree.join(DECL)).map_err(|e| format!("{DECL}: {e}"))?;
-        let doc: toml::Value = spira_config::parse_foreign(&text).map_err(|e| format!("{DECL}: {e}"))?;
-        let declared: Vec<String> = doc.get("default").and_then(|d| d.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
-        if !declared.is_empty() {
-            return Ok(declared);
-        }
+        return spira_config::gate_source::default_tiers(&declaration(tree)?).map_err(|e| format!("{DECL}: {e}"));
     }
     known_suites(tree)
 }

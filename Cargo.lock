@@ -292,8 +292,7 @@ dependencies = [
 name = "cr"
 version = "0.1.0"
 dependencies = [
- "base64",
- "forge",
+ "margin-client",
  "regex",
  "runtime",
  "serde",
@@ -1162,6 +1161,17 @@ dependencies = [
  "system-paths",
  "testkit",
  "tsd",
+]
+
+[[package]]
+name = "margin-client"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spira-test-id",
+ "testkit",
+ "ureq",
 ]
 
 [[package]]
