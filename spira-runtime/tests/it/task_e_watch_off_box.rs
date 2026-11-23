@@ -267,3 +267,18 @@ fn the_carry_is_kept_as_rows_and_a_boot_repeats_no_page() {
     assert_eq!(rows, ["blind_since_ms", "red", "snapshot_red", "waiting"]);
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(red, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
 }
+
+#[test_id(tyjr72g)]
+#[test]
+fn removing_the_destination_clears_both_open_pages() {
+    let stale = Ok(Snapshot::Seen { head: 9, shipped: 5, shipped_at_ms: 1, last_error: None, oldest_snapshot_ms: Some(0) });
+    let world: World = Arc::new(Mutex::new(stale));
+    let mut r = rig(&world);
+    run_for(&mut r, SNAPSHOT_S + 60);
+    assert_eq!(lines(&r).len(), 2, "{:?}", lines(&r));
+    *world.lock().unwrap() = Ok(Snapshot::NoDestination);
+    r.advance(CADENCE_MS).unwrap();
+    let said = lines(&r);
+    assert_eq!(said.len(), 4, "{said:?}");
+    assert!(said[2..].iter().all(|l| l.contains("CLEAR: ")) && said[2..].iter().any(|l| l.contains("snapshot")), "{said:?}");
+}

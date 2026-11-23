@@ -132,6 +132,9 @@ pub fn decide(carry: &Carry, seen: &Result<Snapshot, String>, now_ms: u64, cfg: 
     let overdue = |waiting: Option<(u64, u64)>| waiting.filter(|(_, since)| now_ms.saturating_sub(*since) > bound);
     let (red, current) = match seen {
         Ok(Snapshot::NoDestination) => {
+            if carry.snapshot_red {
+                say(&mut acts, "snapshot/", "CLEAR: no staged control-store snapshot is past its bound".into());
+            }
             next = Carry::default();
             (None, "no destination is configured".to_string())
         }
