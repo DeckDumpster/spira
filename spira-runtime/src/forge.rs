@@ -551,6 +551,18 @@ pub(crate) mod tests {
         assert!(got.is_empty(), "{got:?}");
     }
 
+    #[test_id(tsr0d04)]
+    #[test]
+    fn stranded_runners_still_names_a_job_whose_only_labelled_runner_is_offline_and_ignores_waiting_ones() {
+        let off = r#"{"total_count":1,"runners":[{"name":"eph-1337","status":"offline","labels":[{"name":"ci-1-1"}]}]}"#;
+        let jobs = format!(r#"{{"total_count":1,"jobs":[{QUEUED_OLD}]}}"#);
+        let got = stranded_with(vec![answer("200 OK", "", &runs_of(&[1])), answer("200 OK", "", off), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", &jobs)]).unwrap();
+        assert!(got.len() == 1 && got[0].contains("runner=eph-1337 vmid=1337"), "{got:?}");
+        let waiting = format!(r#"{{"total_count":2,"jobs":[{QUEUED_OLD},{{"name":"gate","status":"waiting"}}]}}"#);
+        let got = stranded_with(vec![answer("200 OK", "", &runs_of(&[1])), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", NO_RUNNERS), answer("200 OK", "", &waiting)]).unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+    }
+
     #[test_id(tsr0d03)]
     #[test]
     fn stranded_runners_is_an_error_when_a_listing_fails_or_is_cut_short() {

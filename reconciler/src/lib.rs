@@ -3274,6 +3274,31 @@ mod tests {
         assert_eq!(checks[0].remedy.note().as_deref(), Some(r#"repo=beta run=77 job="build and test" label=ci-r-77-1 queued=400s runner=none"#));
     }
 
+    #[test_id(tsr0b03)]
+    #[test]
+    fn a_decided_noted_remedy_carries_its_note_onto_the_act() {
+        let (mut cfg, _host, _dir) = stranded_world("stranded-act", &[("beta", Ok(true))]);
+        cfg.grace_secs = 0;
+        let check = observe_queue_stranded_runs(&cfg).remove(0);
+        let acts = decide(&cfg.rules(), &mut StateMap::new(), &mut PendingMap::new(), &mut AlertedSinceMap::new(), check);
+        let noted = acts.iter().find_map(|a| match a {
+            Act::Remedy { note, .. } => Some(note.clone()),
+            _ => None,
+        });
+        assert_eq!(noted.flatten().as_deref(), Some(r#"repo=beta run=77 job="build and test" label=ci-r-77-1 queued=400s runner=none"#));
+    }
+
+    #[test_id(tsr0b04)]
+    #[test]
+    fn without_a_host_a_forge_that_exits_nonzero_is_unobservable_and_one_that_prints_is_read() {
+        let (mut cfg, _host, _dir) = stranded_world("stranded-nohost", &[]);
+        cfg.host = None;
+        cfg.seams.forge = "false".into();
+        assert!(cfg.stranded_runners(Path::new("/r")).is_err());
+        cfg.seams.forge = "echo".into();
+        assert_eq!(cfg.stranded_runners(Path::new("/r")).unwrap(), "stranded-runners /r\n");
+    }
+
     #[test_id(ttz1ba1)]
     #[test]
     fn stranded_repos_come_from_the_repo_map_not_the_queue_directory() {
