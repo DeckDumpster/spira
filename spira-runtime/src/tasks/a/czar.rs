@@ -238,11 +238,23 @@ pub struct SpentBudget {
     pub top_spender: Option<(String, u64)>,
 }
 
+/// How far into which landing log file the czar has decided, and the last pass it saw there.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mark {
+    pub dev: u64,
+    pub ino: u64,
+    pub offset: u64,
+    pub last_pass: Read<Option<u64>>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     /// Landing outcomes since the carried cursor.
     pub landing_events: Read<Vec<LandingEvent>>,
     pub last_landing_pass_at_ms: Read<Option<u64>>,
+    /// The landing-log mark this snapshot was read to; `decide` carries it forward.
+    #[serde(default)]
+    pub mark: Mark,
     pub open_batch: BTreeMap<String, Read<Option<Batch>>>,
     pub certified: BTreeMap<String, Read<Vec<String>>>,
     /// Per repo, the open rounds the store's round record holds.
@@ -351,6 +363,7 @@ pub struct KeyState {
 pub struct Carry {
     pub keys: BTreeMap<String, KeyState>,
     pub cursor_ms: Option<u64>,
+    pub mark: Mark,
     /// Repos whose forge batch was open, with the epoch (ms) it was last seen: the base is read
     /// until a run completed after that epoch has a conclusion, or the entry is older than `BASE_PENDING_MAX_AGE_MS`.
     pub base_pending: BTreeMap<String, u64>,
@@ -491,6 +504,7 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
     let mut p = Pass { policy, now, iso: czar_pass::iso_of(now), next: carry.clone(), acts: vec![], labels: String::new() };
     // The probe reads the landing outcomes after the carried cursor; the cursor moves to the last.
     let cursor = carry.cursor_ms.unwrap_or(0);
+    p.next.mark = snap.mark.clone();
     let events: Result<Vec<LandingEvent>, String> = match &snap.landing_events {
         Read::Observed(e) => Ok(e.clone()),
         Read::Unobservable(why) => Err(why.clone()),
@@ -691,7 +705,7 @@ pub struct ObserveIn {
     pub pinned: BTreeMap<String, String>,
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Field("cursor_ms"), runtime::rows::Part::Map { name: "base_pending", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Field("cursor_ms"), runtime::rows::Part::Field("mark"), runtime::rows::Part::Map { name: "base_pending", drop: &[] }];
 
 impl Handler for Czar {
     fn interests(&self) -> &[EventKindTag] {
@@ -728,17 +742,52 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
-/// The landing log's outcomes, and its last completed pass, read in-process.
-fn landing_log(run: &std::path::Path) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>) {
+/// The landing log's outcomes and last completed pass from the bytes past `mark`, and the mark
+/// they were read to. A file unchanged since the mark is stat'ed and not opened.
+fn landing_log(run: &std::path::Path, mark: &Mark) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>, Mark) {
+    use std::io::{BufRead, Seek, SeekFrom};
+    use std::os::unix::fs::MetadataExt;
     let path = run.join("landing.log");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Read::Observed(vec![]), Read::Observed(None)),
-        Err(e) => return (Read::Unobservable(format!("{}: {e}", path.display())), Read::Unobservable(format!("{}: {e}", path.display()))),
+    let unreadable = |e: std::io::Error| {
+        let why = format!("{}: {e}", path.display());
+        (Read::Unobservable(why.clone()), Read::Unobservable(why), mark.clone())
+    };
+    let meta = match std::fs::metadata(&path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Read::Observed(vec![]), Read::Observed(None), Mark::default()),
+        Err(e) => return unreadable(e),
+    };
+    let same_file = meta.dev() == mark.dev && meta.ino() == mark.ino;
+    if same_file && meta.len() == mark.offset {
+        return (Read::Observed(vec![]), mark.last_pass.clone(), mark.clone());
+    }
+    let (start, mut last) = if same_file && meta.len() > mark.offset { (mark.offset, mark.last_pass.clone()) } else { (0, Read::Observed(None)) };
+    let mut reader = match std::fs::File::open(&path).and_then(|mut f| f.seek(SeekFrom::Start(start)).map(|_| std::io::BufReader::new(f))) {
+        Ok(r) => r,
+        Err(e) => return unreadable(e),
     };
     let at = |l: &str| l.get(..20).and_then(czar_pass::parse_iso_to_epoch).map(|s| s * 1000);
-    let mut events = vec![];
-    for l in text.lines() {
+    let (mut events, mut offset, mut buf) = (vec![], start, vec![]);
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if buf.last() != Some(&b'\n') {
+                    break;
+                }
+                offset += n as u64;
+            }
+            Err(e) => return unreadable(e),
+        }
+        let line = String::from_utf8_lossy(&buf);
+        let l = line.trim_end_matches(['\n', '\r']);
+        if l.contains(czar_pass::PASS_COMPLETE_LINE) {
+            last = match at(l) {
+                Some(ms) => Read::Observed(Some(ms)),
+                None => Read::Unobservable(format!("landing.log timestamp unparseable: {:?}", l.get(..20))),
+            };
+        }
         let kind = if l.contains(czar_pass::DEADLOCK_LINE) {
             DEADLOCK_EVENT
         } else if czar_pass::requeued_all(l) {
@@ -752,14 +801,8 @@ fn landing_log(run: &std::path::Path) -> (Read<Vec<LandingEvent>>, Read<Option<u
             events.push(LandingEvent { kind: kind.into(), repo: String::new(), at_ms });
         }
     }
-    let last = match text.lines().rfind(|l| l.contains(czar_pass::PASS_COMPLETE_LINE)) {
-        None => Read::Observed(None),
-        Some(l) => match at(l) {
-            Some(ms) => Read::Observed(Some(ms)),
-            None => Read::Unobservable(format!("landing.log timestamp unparseable: {:?}", l.get(..20))),
-        },
-    };
-    (Read::Observed(events), last)
+    let next = Mark { dev: meta.dev(), ino: meta.ino(), offset, last_pass: last.clone() };
+    (Read::Observed(events), last, next)
 }
 
 fn forge_status(forge: &str, repo_path: &str, branch: &str) -> Result<String, String> {
@@ -818,13 +861,13 @@ pub fn forge_reads(rows: &[RepoRow], batches: &BTreeMap<String, Read<Option<Batc
 pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
     let run = e.world.run_dir.clone();
-    let (landing_events, last_landing_pass_at_ms) = landing_log(&run);
+    let (landing_events, last_landing_pass_at_ms, mark) = landing_log(&run, &req.carry.mark);
     let cursor = req.carry.cursor_ms.unwrap_or(0);
     let landing_events = match landing_events {
         Read::Observed(e) => Read::Observed(e.into_iter().filter(|e| e.at_ms > cursor).collect()),
         other => other,
     };
-    let mut snap = Snapshot { landing_events, last_landing_pass_at_ms, now_ms: now_ms(), ..Snapshot::default() };
+    let mut snap = Snapshot { landing_events, last_landing_pass_at_ms, mark, now_ms: now_ms(), ..Snapshot::default() };
     let stamp = run.join("reconciler-pass.stamp");
     snap.reconciler_last_pass_ms = match std::fs::read_to_string(&stamp) {
         Ok(t) => match t.trim().parse::<u64>() {

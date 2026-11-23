@@ -821,9 +821,24 @@ fn landing_handle() -> Result<units::UnitHandle, String> {
 }
 
 pub fn land_log_tail(run: &std::path::Path) -> String {
-    match std::fs::read_to_string(run.join("landing.log")) {
-        Ok(t) => {
-            let lines: Vec<&str> = t.lines().collect();
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 64 * 1024;
+    let read = || -> std::io::Result<Vec<u8>> {
+        let mut f = std::fs::File::open(run.join("landing.log"))?;
+        let len = f.metadata()?.len();
+        let from = len.saturating_sub(WINDOW);
+        f.seek(SeekFrom::Start(from))?;
+        let mut bytes = Vec::with_capacity((len - from) as usize);
+        f.read_to_end(&mut bytes)?;
+        if from > 0 {
+            bytes.drain(..bytes.iter().position(|b| *b == b'\n').map_or(bytes.len(), |i| i + 1));
+        }
+        Ok(bytes)
+    };
+    match read() {
+        Ok(bytes) => {
+            let text = String::from_utf8_lossy(&bytes);
+            let lines: Vec<&str> = text.lines().collect();
             lines[lines.len().saturating_sub(30)..].join("\n")
         }
         Err(_) => "(no landing log — the worker has never written one)".into(),
