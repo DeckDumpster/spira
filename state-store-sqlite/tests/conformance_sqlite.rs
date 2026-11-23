@@ -1275,6 +1275,7 @@ mod relayout {
     use super::*;
     use rusqlite::{params, Connection};
     use state_store::{events_key, request_key};
+    use runtime::ports::RealFs;
     use state_store_sqlite::durability::ship::sha256_file;
     use state_store_sqlite::relayout::{relayout, relayout_probed};
 
@@ -1376,10 +1377,10 @@ mod relayout {
         let dir = TempDir::new("relayout");
         let (old, new) = (dir.path().join("old.db"), dir.path().join("new.db"));
         let rows = fixture(&old);
-        let sum = sha256_file(&old).unwrap();
+        let sum = sha256_file(&RealFs, &old).unwrap();
 
         let report = relayout(&old, &new, &VirtualClock::new(WALL)).unwrap();
-        assert_eq!(sha256_file(&old).unwrap(), sum, "the old file is never written");
+        assert_eq!(sha256_file(&RealFs, &old).unwrap(), sum, "the old file is never written");
         assert_eq!(count(&new, "PRAGMA auto_vacuum"), 2, "the --to file is incremental");
         assert_eq!((report.live.read, report.live.copied), (200, 200));
 

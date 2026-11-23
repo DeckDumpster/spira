@@ -17,12 +17,10 @@
 //! they are uploaded. When the outbox does not reach back to the last staged revision, the
 //! shipper takes a snapshot at once and resumes runs after it.
 
-use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use runtime::ports::Clock;
+use runtime::ports::{Clock, Fs, RealFs};
 use sha2::{Digest, Sha256};
 use state_store::Backend;
 
@@ -59,6 +57,7 @@ pub struct Tick {
 }
 
 pub struct Shipper {
+    fs: Arc<dyn Fs>,
     backend: SqliteBackend,
     cfg: ShipConfig,
     put: Option<Arc<dyn Put>>,
@@ -85,6 +84,7 @@ type CopyHook = Arc<dyn Fn() + Send + Sync>;
 /// The snapshot machinery both the shipper's forced snapshot and the [`Snapshotter`] use; `lock`
 /// serialises `snapshot.partial`, `last-snapshot` and `last-snapshot-rev`.
 struct SnapCore {
+    fs: Arc<dyn Fs>,
     backend: SqliteBackend,
     dir: PathBuf,
     clock: Arc<dyn Clock>,
@@ -121,22 +121,21 @@ impl SnapCore {
             .map_err(|e| format!("snapshot: {e}"))?;
         let last = self.dir.join("last-snapshot");
         let last_rev = self.dir.join("last-snapshot-rev");
-        if read_u64(&last_rev)? == Some(rev) {
-            fs::remove_file(&partial).map_err(io(&partial))?;
-            write_durably(&last, now.to_string().as_bytes())?;
+        let fs = self.fs.as_ref();
+        if read_u64(fs, &last_rev)? == Some(rev) {
+            fs.remove(&partial).map_err(io(&partial))?;
+            write_durably(fs, &last, now.to_string().as_bytes())?;
             return Ok((rev, false));
         }
         let name = revlog::snapshot_name(rev);
         let to = self.queue(SNAPSHOT).join(&name);
-        fs::create_dir_all(self.queue(SNAPSHOT)).map_err(io(&to))?;
-        fs::File::open(&partial)
-            .and_then(|f| f.sync_all())
-            .map_err(io(&partial))?;
-        write_durably(&sum_path(&self.dir, &name), sha256_file(&partial)?.as_bytes())?;
-        fs::rename(&partial, &to).map_err(io(&to))?;
-        sync_dir(&self.queue(SNAPSHOT))?;
-        write_durably(&last_rev, rev.to_string().as_bytes())?;
-        write_durably(&last, now.to_string().as_bytes())?;
+        fs.create_dir(&self.queue(SNAPSHOT)).map_err(io(&to))?;
+        fs.sync_file(&partial).map_err(io(&partial))?;
+        write_durably(fs, &sum_path(&self.dir, &name), sha256_file(fs, &partial)?.as_bytes())?;
+        fs.rename(&partial, &to).map_err(io(&to))?;
+        fs.sync_dir(&self.queue(SNAPSHOT)).map_err(io(&self.queue(SNAPSHOT)))?;
+        write_durably(fs, &last_rev, rev.to_string().as_bytes())?;
+        write_durably(fs, &last, now.to_string().as_bytes())?;
         Ok((rev, true))
     }
 }
@@ -156,7 +155,7 @@ impl Snapshotter {
             return Ok(None);
         };
         let now = self.core.clock.now_ms();
-        let last = read_u64(&self.core.dir.join("last-snapshot"))?;
+        let last = read_u64(self.core.fs.as_ref(), &self.core.dir.join("last-snapshot"))?;
         if !last.is_none_or(|l| now.saturating_sub(l) >= self.every_ms) {
             return Ok(None);
         }
@@ -177,27 +176,20 @@ fn io(p: &Path) -> impl Fn(std::io::Error) -> String + '_ {
 
 /// Written whole and renamed into place, then the directory synced, so a crash leaves the old
 /// file or the new one.
-pub fn write_durably(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub fn write_durably(fs: &dyn Fs, path: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = path.parent().ok_or("a path with no directory")?;
-    fs::create_dir_all(dir).map_err(io(dir))?;
+    fs.create_dir(dir).map_err(io(dir))?;
     let tmp = PathBuf::from(format!("{}.tmp", path.display()));
-    let mut f = fs::File::create(&tmp).map_err(io(&tmp))?;
-    f.write_all(bytes)
-        .and_then(|()| f.sync_all())
+    fs.write(&tmp, bytes)
+        .and_then(|()| fs.sync_file(&tmp))
         .map_err(io(&tmp))?;
-    fs::rename(&tmp, path).map_err(io(path))?;
-    sync_dir(dir)
+    fs.rename(&tmp, path).map_err(io(path))?;
+    fs.sync_dir(dir).map_err(io(dir))
 }
 
-fn sync_dir(dir: &Path) -> Result<(), String> {
-    fs::File::open(dir)
-        .and_then(|d| d.sync_all())
-        .map_err(io(dir))
-}
-
-fn read_u64(path: &Path) -> Result<Option<u64>, String> {
-    match fs::read_to_string(path) {
-        Ok(t) => t
+fn read_u64(fs: &dyn Fs, path: &Path) -> Result<Option<u64>, String> {
+    match fs.read(path) {
+        Ok(b) => String::from_utf8_lossy(&b)
             .trim()
             .parse()
             .map(Some)
@@ -216,39 +208,29 @@ pub fn dir_at(configured: Option<String>, run: &Path) -> PathBuf {
 
 /// The names in `dir`, sorted; a missing directory is empty. Half-written `.tmp` files and an
 /// upload's `.part` and `.complete` files are not objects.
-pub fn names(dir: &Path) -> Result<Vec<String>, String> {
-    let rd = match fs::read_dir(dir) {
-        Ok(rd) => rd,
+pub fn names(fs: &dyn Fs, dir: &Path) -> Result<Vec<String>, String> {
+    let mut out = match fs.list(dir) {
+        Ok(names) => names,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(io(dir)(e)),
     };
-    let mut out = Vec::new();
-    for e in rd {
-        let name = e
-            .map_err(io(dir))?
-            .file_name()
-            .to_string_lossy()
-            .into_owned();
-        if ![".tmp", ".part", ".complete"].iter().any(|x| name.ends_with(x)) {
-            out.push(name);
-        }
-    }
+    out.retain(|name| ![".tmp", ".part", ".complete"].iter().any(|x| name.ends_with(x)));
     out.sort();
     Ok(out)
 }
 
-fn newest_to(dir: &Path) -> Result<Option<u64>, String> {
-    Ok(names(dir)?
+fn newest_to(fs: &dyn Fs, dir: &Path) -> Result<Option<u64>, String> {
+    Ok(names(fs, dir)?
         .iter()
         .filter_map(|n| revlog::parse_run_name(n))
         .map(|(_, to)| to)
         .max())
 }
 
-pub fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path).map_err(io(path))?;
+pub fn sha256_file(fs: &dyn Fs, path: &Path) -> Result<String, String> {
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).map_err(io(path))?;
+    fs.read_chunks(path, &mut |chunk| hasher.update(chunk))
+        .map_err(io(path))?;
     Ok(hasher
         .finalize()
         .iter()
@@ -261,10 +243,8 @@ pub fn sum_path(dir: &Path, snapshot: &str) -> PathBuf {
     dir.join("sums").join(snapshot)
 }
 
-fn mtime_ms(path: &Path) -> Option<u64> {
-    let t = fs::metadata(path).and_then(|m| m.modified()).ok()?;
-    let d = t.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Some(d.as_millis() as u64)
+fn mtime_ms(fs: &dyn Fs, path: &Path) -> Option<u64> {
+    fs.metadata(path).ok()?.modified_ms
 }
 
 impl Shipper {
@@ -277,7 +257,18 @@ impl Shipper {
         put: Arc<dyn Put>,
         clock: Arc<dyn Clock>,
     ) -> Result<Shipper, String> {
-        Self::open_with(backend, cfg, Some(put), clock)
+        Self::open_on(Arc::new(RealFs), backend, cfg, put, clock)
+    }
+
+    /// [`Shipper::open`] with the directory on `fs`.
+    pub fn open_on(
+        fs: Arc<dyn Fs>,
+        backend: SqliteBackend,
+        cfg: ShipConfig,
+        put: Arc<dyn Put>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Shipper, String> {
+        Self::open_with(fs, backend, cfg, Some(put), clock)
     }
 
     /// A shipper that stages and never uploads: [`drain`], run by another process on the same
@@ -287,10 +278,21 @@ impl Shipper {
         cfg: ShipConfig,
         clock: Arc<dyn Clock>,
     ) -> Result<Shipper, String> {
-        Self::open_with(backend, cfg, None, clock)
+        Self::open_staging_on(Arc::new(RealFs), backend, cfg, clock)
+    }
+
+    /// [`Shipper::open_staging`] with the directory on `fs`.
+    pub fn open_staging_on(
+        fs: Arc<dyn Fs>,
+        backend: SqliteBackend,
+        cfg: ShipConfig,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Shipper, String> {
+        Self::open_with(fs, backend, cfg, None, clock)
     }
 
     fn open_with(
+        fs: Arc<dyn Fs>,
         backend: SqliteBackend,
         cfg: ShipConfig,
         put: Option<Arc<dyn Put>>,
@@ -298,14 +300,15 @@ impl Shipper {
     ) -> Result<Shipper, String> {
         let start = cfg.dir.join("start");
         let head = backend.head().map_err(|e| e.to_string())?;
-        if read_u64(&start)?.is_none() {
-            write_durably(&start, head.to_string().as_bytes())?;
+        if read_u64(fs.as_ref(), &start)?.is_none() {
+            write_durably(fs.as_ref(), &start, head.to_string().as_bytes())?;
         }
         let partial = cfg.dir.join("snapshot.partial");
-        if partial.exists() {
-            fs::remove_file(&partial).map_err(io(&partial))?;
+        if fs.metadata(&partial).is_ok() {
+            fs.remove(&partial).map_err(io(&partial))?;
         }
         let core = Arc::new(SnapCore {
+            fs: fs.clone(),
             backend: backend.clone(),
             dir: cfg.dir.clone(),
             clock: clock.clone(),
@@ -313,6 +316,7 @@ impl Shipper {
             hook: Mutex::new(None),
         });
         let mut s = Shipper {
+            fs,
             core,
             backend,
             cfg,
@@ -326,8 +330,8 @@ impl Shipper {
             relisted_at: None,
             pruned_to: None,
         };
-        s.shipped_floor = newest_to(&s.sent(REVLOG))?.unwrap_or(0);
-        s.staged_floor = newest_to(&s.queue(REVLOG))?
+        s.shipped_floor = newest_to(s.fs.as_ref(), &s.sent(REVLOG))?.unwrap_or(0);
+        s.staged_floor = newest_to(s.fs.as_ref(), &s.queue(REVLOG))?
             .unwrap_or(0)
             .max(s.shipped_floor);
         let staged = s.staged_through()?;
@@ -340,8 +344,8 @@ impl Shipper {
         let shipped = s.shipped_through()?;
         let mut queued = Vec::new();
         for kind in [REVLOG, SNAPSHOT] {
-            for n in names(&s.queue(kind))? {
-                queued.extend(mtime_ms(&s.queue(kind).join(n)));
+            for n in names(s.fs.as_ref(), &s.queue(kind))? {
+                queued.extend(mtime_ms(s.fs.as_ref(), &s.queue(kind).join(n)));
             }
         }
         s.oldest = queued.into_iter().min().map(|at| (shipped + 1, at));
@@ -361,7 +365,7 @@ impl Shipper {
     }
 
     fn mark(&self, name: &str) -> Result<u64, String> {
-        Ok(read_u64(&self.cfg.dir.join(name))?.unwrap_or(0))
+        Ok(read_u64(self.fs.as_ref(), &self.cfg.dir.join(name))?.unwrap_or(0))
     }
 
     fn queue(&self, kind: &str) -> PathBuf {
@@ -398,13 +402,13 @@ impl Shipper {
         let staged = self.staged_through()?;
         if self.shipped_through()? >= staged
             || self.relisted_at == Some(staged)
-            || !names(&self.queue(REVLOG))?.is_empty()
+            || !names(self.fs.as_ref(), &self.queue(REVLOG))?.is_empty()
         {
             return Ok(());
         }
         self.shipped_floor = self
             .shipped_floor
-            .max(newest_to(&self.sent(REVLOG))?.unwrap_or(0));
+            .max(newest_to(self.fs.as_ref(), &self.sent(REVLOG))?.unwrap_or(0));
         self.relisted_at = Some(staged);
         Ok(())
     }
@@ -458,7 +462,7 @@ impl Shipper {
             Err(state_store::Error::TooOld { .. }) => {
                 let (rev, taken) = self.core.take_forced(self.clock.now_ms())?;
                 self.forced = taken.then_some(rev);
-                write_durably(&self.cfg.dir.join("staged"), rev.to_string().as_bytes())?;
+                write_durably(self.fs.as_ref(), &self.cfg.dir.join("staged"), rev.to_string().as_bytes())?;
                 return Ok(None);
             }
             Err(e) => return Err(e.to_string()),
@@ -485,7 +489,7 @@ impl Shipper {
             jumps,
         };
         let name = revlog::run_name(run.from, run.to);
-        write_durably(&self.queue(REVLOG).join(&name), &revlog::encode(&run))?;
+        write_durably(self.fs.as_ref(), &self.queue(REVLOG).join(&name), &revlog::encode(&run))?;
         self.staged_floor = self.staged_floor.max(run.to);
         self.last_run = Some((now, full));
         Ok(Some((run.from, run.to)))
@@ -493,7 +497,7 @@ impl Shipper {
 
     fn upload(&self, t: &mut Tick) -> Result<(), String> {
         let Some(put) = &self.put else { return Ok(()) };
-        let sent = drain(&self.cfg.dir, put.as_ref())?;
+        let sent = drain(self.fs.as_ref(), &self.cfg.dir, put.as_ref())?;
         t.uploaded = sent.uploaded;
         t.failed = sent.failed;
         Ok(())
@@ -502,7 +506,7 @@ impl Shipper {
     /// Keeps the newest [`KEEP_SNAPSHOTS`] local snapshots and every run a restore from the
     /// oldest of them replays. Only the local copies: the bucket's retention is its own.
     fn prune(&mut self) -> Result<(), String> {
-        let snaps: Vec<(u64, String)> = names(&self.sent(SNAPSHOT))?
+        let snaps: Vec<(u64, String)> = names(self.fs.as_ref(), &self.sent(SNAPSHOT))?
             .into_iter()
             .filter_map(|n| revlog::parse_snapshot_name(&n).map(|r| (r, n)))
             .collect();
@@ -513,7 +517,7 @@ impl Shipper {
         let sweep = self.pruned_to != Some(keep_from);
         for (_, n) in &snaps[..snaps.len() - KEEP_SNAPSHOTS] {
             for p in [self.sent(SNAPSHOT).join(n), sum_path(&self.cfg.dir, n)] {
-                match fs::remove_file(&p) {
+                match self.fs.remove(&p) {
                     Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(io(&p)(e)),
                     _ => {}
                 }
@@ -522,10 +526,10 @@ impl Shipper {
         if !sweep {
             return Ok(());
         }
-        for n in names(&self.sent(REVLOG))? {
+        for n in names(self.fs.as_ref(), &self.sent(REVLOG))? {
             if revlog::parse_run_name(&n).is_some_and(|(_, to)| to <= keep_from) {
                 let p = self.sent(REVLOG).join(&n);
-                fs::remove_file(&p).map_err(io(&p))?;
+                self.fs.remove(&p).map_err(io(&p))?;
             }
         }
         self.pruned_to = Some(keep_from);
@@ -543,10 +547,10 @@ pub struct Drained {
 /// Uploads what `dir/queue/` holds, runs before snapshots and oldest first, stopping at the first
 /// refusal so a retry is the same object; each object moves to `sent/` and a run records
 /// `shipped`. It opens no store, so any process may run it on a shipper's directory.
-pub fn drain(dir: &Path, put: &dyn Put) -> Result<Drained, String> {
-    let mut out = drain_kind(dir, REVLOG, put)?;
+pub fn drain(fs: &dyn Fs, dir: &Path, put: &dyn Put) -> Result<Drained, String> {
+    let mut out = drain_kind(fs, dir, REVLOG, put)?;
     if out.failed.is_none() {
-        let snaps = drain_kind(dir, SNAPSHOT, put)?;
+        let snaps = drain_kind(fs, dir, SNAPSHOT, put)?;
         out.uploaded.extend(snaps.uploaded);
         out.failed = snaps.failed;
     }
@@ -554,21 +558,21 @@ pub fn drain(dir: &Path, put: &dyn Put) -> Result<Drained, String> {
 }
 
 /// [`drain`] for the one `kind` (`REVLOG` or `SNAPSHOT`) alone.
-pub fn drain_kind(dir: &Path, kind: &str, put: &dyn Put) -> Result<Drained, String> {
+pub fn drain_kind(fs: &dyn Fs, dir: &Path, kind: &str, put: &dyn Put) -> Result<Drained, String> {
     let queue = dir.join("queue").join(kind);
     let sent = dir.join("sent").join(kind);
     let mut out = Drained::default();
-    for n in names(&queue)? {
+    for n in names(fs, &queue)? {
         let (file, object) = (queue.join(&n), format!("{kind}/{n}"));
         if let Err(e) = put.put(&file, &object) {
             out.failed = Some(e);
             return Ok(out);
         }
-        fs::create_dir_all(&sent).map_err(io(&sent))?;
-        fs::rename(&file, sent.join(&n)).map_err(io(&sent))?;
-        sync_dir(&sent)?;
+        fs.create_dir(&sent).map_err(io(&sent))?;
+        fs.rename(&file, &sent.join(&n)).map_err(io(&sent))?;
+        fs.sync_dir(&sent).map_err(io(&sent))?;
         if let Some((_, to)) = revlog::parse_run_name(&n).filter(|_| kind == REVLOG) {
-            write_durably(&dir.join("shipped"), to.to_string().as_bytes())?;
+            write_durably(fs, &dir.join("shipped"), to.to_string().as_bytes())?;
         }
         out.uploaded.push(object);
     }
@@ -587,6 +591,6 @@ mod tests {
         for n in ["7", "7.tmp", "7.part", "7.complete"] {
             std::fs::write(dir.join(n), "x").unwrap();
         }
-        assert_eq!(names(dir).unwrap(), vec!["7".to_string()]);
+        assert_eq!(names(&RealFs, dir).unwrap(), vec!["7".to_string()]);
     }
 }

@@ -23,6 +23,7 @@ use state_store::{
 
 use super::restore::{self, Restored};
 use super::revlog::{self, Run, REVLOG, SNAPSHOT};
+use runtime::ports::RealFs;
 use super::ship::names;
 use crate::{Options, SqliteBackend};
 
@@ -305,7 +306,7 @@ pub const SKEW_PROCEDURE: &str = "after a restore: (0) move the shipper director
 /// The newest local snapshot in `ship_dir/sent/`, as `(rev, path)`.
 pub fn newest_snapshot(ship_dir: &Path) -> Result<(u64, std::path::PathBuf), String> {
     let dir = ship_dir.join("sent").join(SNAPSHOT);
-    names(&dir)?
+    names(&RealFs, &dir)?
         .into_iter()
         .filter_map(|n| revlog::parse_snapshot_name(&n).map(|r| (r, dir.join(n))))
         .max()
@@ -349,7 +350,7 @@ pub fn drill_with(
         enter("checksum");
         let staged = fs::read_to_string(super::ship::sum_path(ship_dir, &name))
             .map_err(|e| format!("snapshot {name} has no staged sha256: {e}"))?;
-        let now = super::ship::sha256_file(&snapshot)?;
+        let now = super::ship::sha256_file(&RealFs, &snapshot)?;
         if staged.trim() != now {
             return Err(format!(
                 "snapshot {name} changed since it was staged: sha256 {now}, staged {}",

@@ -291,10 +291,10 @@ mod tests {
         assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
         let staged = sh.tick().unwrap();
         assert_eq!((staged.uploaded.len(), staged.failed, staged.shipped_through), (0, None, 0));
-        assert!(!ship::names(&sh.dir().join("queue").join(REVLOG)).unwrap().is_empty(), "the run waits in queue/");
+        assert!(!ship::names(&runtime::ports::RealFs, &sh.dir().join("queue").join(REVLOG)).unwrap().is_empty(), "the run waits in queue/");
 
         let off = dir.path().join("off");
-        let drained = ship::drain(sh.dir(), &Uploader { dest: Dest::File(off.clone()), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE }).unwrap();
+        let drained = ship::drain(&runtime::ports::RealFs, sh.dir(), &Uploader { dest: Dest::File(off.clone()), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE }).unwrap();
         assert!(drained.failed.is_none() && drained.uploaded.len() == 2, "{drained:?}");
         assert!(off.join("revlog").is_dir());
         assert_eq!(sh.tick().unwrap().shipped_through, 1, "the staging shipper reads what the drain recorded");
@@ -322,7 +322,7 @@ mod tests {
         let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
         assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
         tick(&mut s, &metrics);
-        assert!(!ship::names(&s.shipper.dir().join("queue").join(REVLOG)).unwrap().is_empty());
+        assert!(!ship::names(&runtime::ports::RealFs, &s.shipper.dir().join("queue").join(REVLOG)).unwrap().is_empty());
         assert!(!off.exists(), "lc-serve uploads nothing");
         assert!(matches!(staging(SqliteBackend::open(&dir.path().join("x.db"), Options::default()).unwrap(), dir.path().join("s2"), &url, (9, 1, 60)), Err(e) if e.contains("1 to 5")));
     }

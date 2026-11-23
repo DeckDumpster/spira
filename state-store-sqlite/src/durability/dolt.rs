@@ -17,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::put::Put;
+use runtime::ports::RealFs;
 use super::ship::{names, write_durably};
 
 pub const FILES: &str = "files";
@@ -167,7 +168,7 @@ pub fn ship(
         shipped.bytes += len;
     }
     let pending = state.join(format!("{MANIFESTS}.pending"));
-    write_durably(&pending, &manifest)?;
+    write_durably(&RealFs, &pending, &manifest)?;
     let sent = put.put(&pending, &shipped.key);
     if let Err(e) = sent {
         let _ = fs::remove_file(&pending);
@@ -176,11 +177,11 @@ pub fn ship(
     shipped.bytes += manifest.len() as u64;
     ledger.extend(set);
     let lines: String = ledger.iter().map(|(f, b)| format!("{f} {b}\n")).collect();
-    write_durably(&state.join(LEDGER), lines.as_bytes())?;
+    write_durably(&RealFs, &state.join(LEDGER), lines.as_bytes())?;
     let local = state.join(MANIFESTS);
     fs::create_dir_all(&local).map_err(io(&local))?;
     fs::rename(&pending, local.join(&name)).map_err(io(&local))?;
-    let kept = names(&local)?;
+    let kept = names(&RealFs, &local)?;
     for old in kept.iter().take(kept.len().saturating_sub(KEEP_MANIFESTS)) {
         fs::remove_file(local.join(old)).map_err(io(&local.join(old)))?;
     }
@@ -190,7 +191,7 @@ pub fn ship(
 /// The newest local manifest copy, by name (`<stamp>-<head>` sorts by stamp).
 pub fn newest_manifest(state: &Path) -> Result<PathBuf, String> {
     let dir = state.join(MANIFESTS);
-    names(&dir)?.pop().map(|n| dir.join(n)).ok_or_else(|| {
+    names(&RealFs, &dir)?.pop().map(|n| dir.join(n)).ok_or_else(|| {
         format!(
             "no manifest in {}: nothing has been uploaded",
             dir.display()
@@ -275,7 +276,7 @@ mod tests {
         let mut out = Vec::new();
         for sub in [FILES, MANIFESTS] {
             out.extend(
-                names(&dir.join("d0").join(sub))
+                names(&RealFs, &dir.join("d0").join(sub))
                     .unwrap()
                     .into_iter()
                     .map(|n| format!("{sub}/{n}")),
@@ -373,7 +374,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(err, "killed");
         assert_eq!(
-            names(&dest.join("d0").join(MANIFESTS)).unwrap(),
+            names(&RealFs, &dest.join("d0").join(MANIFESTS)).unwrap(),
             ["20261102T010000000Z-h1"]
         );
         assert_eq!(
@@ -449,7 +450,7 @@ mod tests {
             )
             .unwrap();
         }
-        assert_eq!(names(&state.join(MANIFESTS)).unwrap().len(), KEEP_MANIFESTS);
+        assert_eq!(names(&RealFs, &state.join(MANIFESTS)).unwrap().len(), KEEP_MANIFESTS);
         let newest = newest_manifest(&state).unwrap();
         let out = t.path().join("drill/snap");
         let got = assemble(&newest, &sync, &out).unwrap();
@@ -462,7 +463,7 @@ mod tests {
             }
         );
         assert_eq!(
-            names(&out).unwrap(),
+            names(&RealFs, &out).unwrap(),
             ["bbbb.darc", "dddd.darc", "manifest"],
             "aaaa.darc is in the dir and not in the set"
         );
@@ -506,7 +507,7 @@ mod tests {
             );
         }
         assert_eq!(
-            names(&dest.join("d0").join(MANIFESTS)).unwrap(),
+            names(&RealFs, &dest.join("d0").join(MANIFESTS)).unwrap(),
             ["20261102T010000500Z-hb"]
         );
     }

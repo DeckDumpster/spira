@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use state_store::{Backend, Write};
 
 use super::revlog::{self, Run};
+use runtime::ports::RealFs;
 use super::ship::names;
 use crate::{Options, SqliteBackend};
 
@@ -24,7 +25,7 @@ pub struct Restored {
 /// revisions missing, when they leave a break.
 pub fn plan(dir: &Path, after: u64) -> Result<Vec<PathBuf>, String> {
     let mut runs = Vec::new();
-    for n in names(dir)? {
+    for n in names(&RealFs, dir)? {
         let (from, to) = revlog::parse_run_name(&n)
             .ok_or_else(|| format!("{}: not a revision run", dir.join(&n).display()))?;
         runs.push((from, to, dir.join(n)));
