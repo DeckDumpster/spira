@@ -110,6 +110,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("watch.mend", &["watch.mend.observe", "watch.mend.log_append", "watch.mend.lift_stop"]),
     ("broker.exec", &["broker.exec.observe", "broker.exec.run"]),
     ("lc.ship", &["lc.ship.observe", "lc.ship.drain", "lc.ship.drain_snapshot"]),
+    ("watch.off_box", &["watch.off_box.observe", "inbox.append"]),
     ("watch.sop_lint", &["watch.sop_lint.observe", "watch.sop_lint.file_incident"]),
     ("inbox.notify", &["inbox.notify.observe", "inbox.notify.ask", "inbox.notify.sop_match", "unit.start", "inbox.notify.sop_applied", "inbox.notify.concierge_note", "inbox.notify.mail_health"]),
     ("incident.probe", &["incident.probe.observe", "incident.probe.send"]),

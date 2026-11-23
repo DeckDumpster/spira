@@ -86,6 +86,7 @@
 #   brain-dirty, design-asks, claim-count,
 #   writer-grants  spira-runtime handlers (spira-runtime/src/watchers)
 #   lc-backup                          task watch.backup_age (lc-backup.timer still runs the backup)
+#   lc-ship                            task watch.off_box
 #   round-ami-stale                    task watch.ami_stale
 #   ci-spill-guard                     task watch.ci_spill
 #   pass-rate                          task watch.pass_rate
@@ -122,11 +123,6 @@ concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
 # pass without a call over it, and nothing else writes the log. Brokered tool verbs and
 # SPIRA_LC_WAITING_VERBS are exempt.
 lc-latency|log|@SPIRA_RUN@/lc-latency.log
-
-# LC-SHIP is the control store's off-box age alarm: lc-serve appends a RED line when the oldest
-# staged, not yet uploaded object has waited past SPIRA_LC_SHIP_MAX_AGE_SECS, and a CLEAR line
-# when it is back inside it. Nothing else writes the log.
-lc-ship|log|@SPIRA_RUN@/lc-ship.log
 
 # MEND-WATCH is the alarm for the mender bounds: the watch.mend task appends one line per
 # breach — a MENDING row past its deadline, or a bead mended more than twice in a day — and a

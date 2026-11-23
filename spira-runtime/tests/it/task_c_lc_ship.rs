@@ -293,3 +293,43 @@ fn each_kind_drains_alone_and_an_upload_in_progress_is_not_an_object() {
     assert!(!dir.join("queue/snapshot/7").exists() && off.join("snapshot/7").exists());
     assert!(!off.join("snapshot/7.part").exists() && !off.join("snapshot/7.complete").exists() && dir.join("queue/snapshot/7.part").exists());
 }
+
+fn last_drain(dir: &std::path::Path) -> task::LastDrain {
+    serde_json::from_str(&std::fs::read_to_string(dir.join(task::LAST_DRAIN)).unwrap()).unwrap()
+}
+
+#[test_id(tavd8ug)]
+#[test]
+fn a_refused_drain_leaves_last_drain_naming_the_refusal_and_a_good_one_clears_the_error() {
+    let run = TempDir::new("lc-ship-last-drain");
+    let (dir, off) = (run.path().join("ship"), run.path().join("off"));
+    std::fs::create_dir_all(dir.join("queue/revlog")).unwrap();
+    let name = state_store_sqlite::durability::revlog::run_name(1, 1);
+    std::fs::write(dir.join("queue/revlog").join(&name), "x").unwrap();
+    let d = dir.display().to_string();
+    let s3 = |lookup: fn(&str) -> Option<String>| task::drain(std::sync::Arc::new(RecordingCurl::default()), "s3://bucket/lc/", &d, lookup, PART_BYTES);
+
+    let refused = s3(|_| None).unwrap_err();
+    let last = last_drain(&dir);
+    assert_eq!((last.kind.as_str(), last.uploaded, last.error.as_deref()), ("revlog", 0, Some(refused.as_str())));
+    assert!(refused.contains("AWS_ACCESS_KEY_ID") && last.at_ms > 1_700_000_000_000, "{last:?}");
+
+    let url = format!("file://{}", off.display());
+    task::drain(std::sync::Arc::new(RecordingCurl::default()), &url, &d, |_| None, PART_BYTES).unwrap();
+    assert_eq!(last_drain(&dir), task::LastDrain { at_ms: last_drain(&dir).at_ms, kind: "revlog".into(), uploaded: 1, error: None });
+}
+
+#[test_id(tks9cpu)]
+#[test]
+fn an_upload_refused_after_some_objects_went_records_how_many_and_why() {
+    let run = TempDir::new("lc-ship-last-drain-partial");
+    let dir = run.path().join("ship");
+    std::fs::create_dir_all(dir.join("queue/revlog")).unwrap();
+    std::fs::write(dir.join("queue/revlog").join(state_store_sqlite::durability::revlog::run_name(1, 1)), "x").unwrap();
+    let blocked = run.path().join("blocked");
+    std::fs::write(&blocked, "").unwrap();
+    let url = format!("file://{}", blocked.display());
+    let err = task::drain(std::sync::Arc::new(runtime::ports::SysProc), &url, &dir.display().to_string(), |_| None, PART_BYTES).unwrap_err();
+    let last = last_drain(&dir);
+    assert_eq!((last.uploaded, last.error.as_deref()), (0, Some(err.as_str())));
+}

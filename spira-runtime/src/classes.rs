@@ -250,6 +250,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("roundvm.ami_prune.deregister", Host),
     ("roundvm.ami_prune.observe", Host),
     ("lc.ship.observe", Host),
+    ("watch.off_box.observe", Store),
     ("lc.ship.drain", Host),
     ("lc.ship.drain_snapshot", Host),
     ("roundvm.drain.observe", Host),

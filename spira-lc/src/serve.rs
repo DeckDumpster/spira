@@ -359,10 +359,9 @@ pub fn run(args: &[String]) -> i32 {
             std::thread::spawn(move || {
                 let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
                 let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-lc", Duration::from_millis(250));
-                let mut red = false;
                 loop {
                     std::thread::sleep(shipping.every);
-                    red = crate::durability::tick(&mut shipping, red, &metrics, &runtime::ports::WallClock);
+                    crate::durability::tick(&mut shipping, &metrics);
                 }
             });
         }

@@ -12,6 +12,7 @@
 //!   snapshots: oldest first, stopping at the first refusal so a retry is the same object. Any
 //!   outcome returns its kind to idle, and a request past its deadline counts as idle, so a lost
 //!   outcome cannot wedge the task.
+//! - **Record:** every pass, refused or not, leaves `last-drain.json` in the ship directory: when, which kind, how many objects went, and the refusal or none.
 //! - **Credentials:** the backup key in this process's environment, which the unit loads from the
 //!   backup's environment file; `check-config` refuses an `s3://` destination without it.
 
@@ -20,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use runtime::event::EventKindTag;
-use runtime::ports::Proc;
+use runtime::ports::{Clock as _, Proc};
 use serde::{Deserialize, Serialize};
 use state_store_sqlite::durability::put::{Dest, S3Creds, Uploader};
 use state_store_sqlite::durability::revlog::{REVLOG, SNAPSHOT};
@@ -70,6 +71,18 @@ pub struct Snapshot {
 pub struct Carry {
     pub revlog: Option<u64>,
     pub snapshot: Option<u64>,
+}
+
+/// The last pass of either kind: `ship-dir/last-drain.json`, read by `watch.off_box` for the error.
+pub const LAST_DRAIN: &str = "last-drain.json";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LastDrain {
+    pub at_ms: u64,
+    pub kind: String,
+    pub uploaded: u64,
+    pub error: Option<String>,
 }
 
 const DRAIN_DEADLINE_MS: u64 = 3_600_000;
@@ -132,16 +145,29 @@ pub fn drain_snapshot(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn
 }
 
 fn drain_of(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
-    let dest = Dest::parse(url)?;
+    let (uploaded, ran) = match upload(kind, proc, url, dir, lookup, part_bytes) {
+        Ok(n) => (n, Ok(format!("{n} object(s) uploaded"))),
+        Err((n, e)) => (n, Err(e)),
+    };
+    let last = LastDrain { at_ms: runtime::ports::WallClock.now_ms(), kind: kind.into(), uploaded, error: ran.as_ref().err().cloned() };
+    let recorded = serde_json::to_vec(&last).map_err(|e| e.to_string()).and_then(|b| ship::write_durably(&Path::new(dir).join(LAST_DRAIN), &b));
+    ran.and_then(|said| recorded.map(|()| said))
+}
+
+/// The objects uploaded, or the refusal and how many went first.
+fn upload(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<u64, (u64, String)> {
+    let early = |e: String| (0, e);
+    let dest = Dest::parse(url).map_err(early)?;
     let creds = match dest {
-        Dest::S3 { .. } => Some(S3Creds::from_vars(lookup)?.with_part_bytes(part_bytes)?),
+        Dest::S3 { .. } => Some(S3Creds::from_vars(lookup).and_then(|c| c.with_part_bytes(part_bytes)).map_err(early)?),
         Dest::File(_) => None,
     };
     let put = Uploader { dest, creds, proc, deadline: PUT_DEADLINE };
-    let sent = ship::drain_kind(Path::new(dir), kind, &put)?;
+    let sent = ship::drain_kind(Path::new(dir), kind, &put).map_err(early)?;
+    let n = sent.uploaded.len() as u64;
     match sent.failed {
-        Some(e) => Err(format!("{} object(s) uploaded, then: {e}", sent.uploaded.len())),
-        None => Ok(format!("{} object(s) uploaded", sent.uploaded.len())),
+        Some(e) => Err((n, format!("{n} object(s) uploaded, then: {e}"))),
+        None => Ok(n),
     }
 }
 

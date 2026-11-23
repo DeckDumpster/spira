@@ -83,6 +83,7 @@ mod task_e_inbox_notify;
 mod task_e_incident_probe;
 mod task_e_watch_ami_stale;
 mod task_e_watch_backup_age;
+mod task_e_watch_off_box;
 mod task_e_watch_ci_spill;
 mod task_e_watch_pass_rate;
 mod task_e_watch_testenv_cap;
