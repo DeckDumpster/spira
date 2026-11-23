@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use reconciler::{Host, Mail, Ref};
 use runtime::socket::lc_call;
+use spira_config::git_refs::{branch_tips, git_dirs, is_sha, read_ref_in};
 use spira_config::repos::Registry;
 use spira_config::runes;
 use unit_run::dbus::{bus_path, Conn, Val};
@@ -127,98 +128,6 @@ pub fn free_pct(path: &str) -> Option<i64> {
     (total > 0).then(|| (avail * 100 / total) as i64)
 }
 
-/// A checkout's git directory, and the common one its refs live in (a linked worktree's is its parent's).
-fn git_dirs(repo: &Path) -> Option<(PathBuf, PathBuf)> {
-    let dotgit = repo.join(".git");
-    let gitdir = if dotgit.is_file() {
-        let text = fs::read_to_string(&dotgit).ok()?;
-        let target = PathBuf::from(text.strip_prefix("gitdir:")?.trim());
-        if target.is_absolute() { target } else { repo.join(target) }
-    } else {
-        dotgit
-    };
-    let common = match fs::read_to_string(gitdir.join("commondir")) {
-        Ok(rel) => {
-            let rel = PathBuf::from(rel.trim());
-            if rel.is_absolute() { rel } else { gitdir.join(rel) }
-        }
-        Err(_) => gitdir.clone(),
-    };
-    Some((gitdir, common))
-}
-
-fn is_sha(s: &str) -> bool {
-    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// The commit a ref names, from its loose file or `packed-refs` (the peeled line when a tag has one).
-/// A symbolic ref is followed; a loose tag is an `Object`, since the file may name a tag object.
-fn read_ref(common: &Path, name: &str) -> Ref {
-    read_ref_at(common, name, 0)
-}
-
-const SYMREF_DEPTH: usize = 5;
-
-fn read_ref_at(common: &Path, name: &str, depth: usize) -> Ref {
-    let packed = fs::read_to_string(common.join("packed-refs")).unwrap_or_default();
-    let spellings = [format!("refs/{name}"), format!("refs/heads/{name}"), format!("refs/remotes/{name}"), format!("refs/tags/{name}")];
-    for candidate in spellings.iter().chain(std::iter::once(&name.to_string())) {
-        if candidate.starts_with("refs/") {
-            if let Ok(text) = fs::read_to_string(common.join(candidate)) {
-                let sha = text.trim();
-                if let Some(target) = sha.strip_prefix("ref:") {
-                    return if depth < SYMREF_DEPTH { read_ref_at(common, target.trim(), depth + 1) } else { Ref::Unknown };
-                }
-                return match (is_sha(sha), candidate.starts_with("refs/tags/")) {
-                    (true, false) => Ref::Sha(sha.to_string()),
-                    (true, true) => Ref::Object(sha.to_string()),
-                    _ => Ref::Unknown,
-                };
-            }
-        }
-        let mut lines = packed.lines().peekable();
-        while let Some(l) = lines.next() {
-            if let Some((sha, _)) = l.split_once(' ').filter(|(sha, r)| r == candidate && is_sha(sha)) {
-                let peeled = lines.peek().and_then(|n| n.strip_prefix('^')).filter(|p| is_sha(p));
-                return Ref::Sha(peeled.unwrap_or(sha).to_string());
-            }
-        }
-    }
-    if name.starts_with("refs/") || !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/')) {
-        return Ref::Unknown;
-    }
-    Ref::Absent
-}
-
-/// The `spira/*` branch names of a checkout, read from its ref files without running git; `None`
-/// when the checkout's layout is not one this reads.
-fn spira_branches(repo: &Path) -> Option<Vec<String>> {
-    let (_, common) = git_dirs(repo)?;
-    if !common.join("refs").is_dir() {
-        return None;
-    }
-    let mut out = std::collections::BTreeSet::new();
-    fn walk(dir: &Path, prefix: &str, out: &mut std::collections::BTreeSet<String>) {
-        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
-            let name = format!("{prefix}{}", e.file_name().to_string_lossy());
-            if e.path().is_dir() {
-                walk(&e.path(), &format!("{name}/"), out);
-            } else if !name.ends_with(".lock") {
-                out.insert(name);
-            }
-        }
-    }
-    walk(&common.join("refs/heads/spira"), "spira/", &mut out);
-    if let Ok(packed) = fs::read_to_string(common.join("packed-refs")) {
-        for l in packed.lines().filter(|l| !l.starts_with(['#', '^'])) {
-            if let Some(name) = l.split_once(' ').and_then(|(_, r)| r.strip_prefix("refs/heads/")).filter(|r| r.starts_with("spira/")) {
-                out.insert(name.to_string());
-            }
-        }
-    }
-    Some(out.into_iter().collect())
-}
-
 /// Dwarves of `rune` the unit snapshot shows live, as `strand dwarf-count` counts them from `list-units`.
 fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
     active
@@ -326,7 +235,7 @@ impl Host for RuntimeHost {
     }
 
     fn certified_list(&self, repo: &Path) -> String {
-        let Some(branches) = spira_branches(repo) else {
+        let Some(branches) = branch_tips(repo, "refs/heads/spira/") else {
             return match spira_config::release_env::tool("queue-helpers") {
                 Ok(t) => reconciler::run_cmd(&t, &["certified-list", &repo.to_string_lossy()]),
                 Err(e) => {
@@ -339,7 +248,7 @@ impl Host for RuntimeHost {
         let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&rows) else { return String::new() };
         branches
             .iter()
-            .filter_map(|b| b.strip_prefix("spira/"))
+            .filter_map(|(b, _)| b.strip_prefix("spira/"))
             .filter_map(|id| rows.iter().find(|r| r["bead_id"] == id))
             .map(|r| format!("{} {} {}\n", r["bead_id"].as_str().unwrap_or(""), r["tip"].as_str().unwrap_or(""), r["since"].as_f64().unwrap_or(0.0) as u64))
             .collect()
@@ -386,7 +295,7 @@ impl Host for RuntimeHost {
     }
 
     fn ref_sha(&self, repo: &Path, name: &str) -> Ref {
-        git_dirs(repo).filter(|(_, common)| common.join("refs").is_dir()).map_or(Ref::Unknown, |(_, common)| read_ref(&common, name))
+        read_ref_in(repo, name)
     }
 
     fn dwarf_count(&self, rune: &str) -> Option<i64> {
@@ -442,69 +351,6 @@ mod tests {
         host.bus = Some(d.join("no-such-bus").display().to_string());
         let listing = host.unit_listing().unwrap_err();
         assert_eq!(host.unit_state("is-enabled", "spira-x.timer").unwrap_err(), listing);
-    }
-
-    #[test_id(tq1e7rd)]
-    #[test]
-    fn spira_branches_are_read_from_loose_and_packed_refs_and_through_a_worktrees_gitdir() {
-        let d = testkit::TempDir::new("host-branches");
-        let common = d.join("main/.git");
-        fs::create_dir_all(common.join("refs/heads/spira")).unwrap();
-        fs::create_dir_all(common.join("refs/heads/other")).unwrap();
-        fs::write(common.join("refs/heads/spira/sp-loose"), "abc\n").unwrap();
-        fs::write(common.join("refs/heads/spira/sp-stale.lock"), "").unwrap();
-        fs::write(common.join("refs/heads/other/sp-not-ours"), "abc\n").unwrap();
-        fs::write(common.join("packed-refs"), "# pack-refs\nabc refs/heads/spira/sp-packed\n^def\nabc refs/heads/main\n").unwrap();
-        assert_eq!(spira_branches(&d.join("main")), Some(vec!["spira/sp-loose".to_string(), "spira/sp-packed".to_string()]));
-
-        let wt_git = common.join("worktrees/w");
-        fs::create_dir_all(&wt_git).unwrap();
-        fs::write(wt_git.join("commondir"), "../..\n").unwrap();
-        fs::create_dir_all(d.join("wt")).unwrap();
-        fs::write(d.join("wt/.git"), format!("gitdir: {}\n", wt_git.display())).unwrap();
-        assert_eq!(spira_branches(&d.join("wt")).map(|b| b.len()), Some(2), "a linked worktree reads the common refs");
-        assert_eq!(spira_branches(&d.join("absent")), None, "no checkout is not an empty one");
-    }
-
-    #[test_id(tc6clhu)]
-    #[test]
-    fn a_ref_is_its_loose_file_else_its_packed_line_and_a_loose_tag_is_not_trusted() {
-        let d = testkit::TempDir::new("host-refs");
-        let git = d.join(".git");
-        fs::create_dir_all(git.join("refs/heads/local")).unwrap();
-        fs::create_dir_all(git.join("refs/tags")).unwrap();
-        let (a, b, c) = ("a".repeat(40), "b".repeat(40), "c".repeat(40));
-        fs::write(git.join("refs/heads/local/main"), format!("{a}\n")).unwrap();
-        fs::write(git.join("refs/tags/loose"), format!("{b}\n")).unwrap();
-        fs::write(git.join("packed-refs"), format!("# pack-refs\n{b} refs/heads/packed\n{a} refs/tags/r-1\n^{c}\n")).unwrap();
-        let host = RuntimeHost::new(World::default(), Forge::default(), None, d.path().to_path_buf(), String::new(), 0, 0, String::new(), Default::default());
-        let sha = |n: &str| host.ref_sha(d.path(), n);
-        assert_eq!(sha("local/main"), Ref::Sha(a.clone()));
-        assert_eq!(sha("refs/heads/local/main"), Ref::Sha(a));
-        assert_eq!(sha("packed"), Ref::Sha(b.clone()));
-        assert_eq!(sha("r-1"), Ref::Sha(c), "a packed tag answers with the commit it peels to");
-        assert_eq!(sha("loose"), Ref::Object(b), "a loose tag may be the tag object, so it is peeled before it is trusted");
-        assert_eq!(sha("nonesuch"), Ref::Absent, "no spelling git would try names it");
-        assert_eq!(sha("HEAD~1"), Ref::Unknown, "a revision expression is git's to read");
-        assert_eq!(RuntimeHost::new(World::default(), Forge::default(), None, d.join("elsewhere"), String::new(), 0, 0, String::new(), Default::default()).ref_sha(&d.join("elsewhere"), "x"), Ref::Unknown);
-    }
-
-    #[test_id(tvvo0lj)]
-    #[test]
-    fn a_loose_tag_is_an_object_to_peel_and_a_symbolic_ref_is_followed() {
-        let d = testkit::TempDir::new("host-symref");
-        let git = d.join(".git");
-        fs::create_dir_all(git.join("refs/heads")).unwrap();
-        fs::create_dir_all(git.join("refs/remotes/origin")).unwrap();
-        fs::create_dir_all(git.join("refs/tags")).unwrap();
-        let a = "a".repeat(40);
-        fs::write(git.join("refs/heads/main"), format!("{a}\n")).unwrap();
-        fs::write(git.join("refs/remotes/origin/HEAD"), "ref: refs/heads/main\n").unwrap();
-        fs::write(git.join("refs/heads/loop"), "ref: refs/heads/loop\n").unwrap();
-        fs::write(git.join("refs/tags/loose"), format!("{a}\n")).unwrap();
-        assert_eq!(read_ref(&git, "origin/HEAD"), Ref::Sha(a.clone()));
-        assert_eq!(read_ref(&git, "loose"), Ref::Object(a));
-        assert_eq!(read_ref(&git, "loop"), Ref::Unknown, "a symbolic cycle is git's to name");
     }
 
     #[test_id(trn44bc)]

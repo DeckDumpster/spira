@@ -838,7 +838,10 @@ pub mod edge {
                 publish_check = Check::of(&forge_call(&dir, "check-status", &[&rec.pr.to_string(), &rec.branch], None)?.stdout().unwrap_or_default());
             }
             let landref = spira_config::repos::landref(&reg, &name).unwrap_or_default();
-            let base_sha = git(&dir, &["rev-parse", &landref], Duration::from_secs(10)).unwrap_or_default();
+            let base_sha = match spira_config::git_refs::read_ref_in(std::path::Path::new(&dir), &landref) {
+                spira_config::git_refs::Ref::Sha(sha) => sha,
+                _ => git(&dir, &["rev-parse", &landref], Duration::from_secs(10)).unwrap_or_default(),
+            };
             let sealed_base = open_batch.as_ref().and_then(|_| queue_kv(e, &name, "batch")).and_then(|kv| kv.get("base").cloned());
             snap.repos.insert(name, Repo { mode, lc_ok, open_batch, publish_rec, publish_check, pr_state, check, base_sha, sealed_base, ..Repo::default() });
         }

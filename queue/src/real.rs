@@ -290,6 +290,9 @@ impl Git for RealGit {
             .stderr(Stdio::null()))
     }
     fn branches(&self, repo: &Path, prefix: &str) -> Vec<(String, String)> {
+        if let Some(tips) = spira_config::git_refs::branch_tips(repo, prefix) {
+            return tips;
+        }
         stdout_of(git(repo).args([
             "for-each-ref",
             "--format=%(refname:short) %(objectname)",
@@ -3073,6 +3076,22 @@ mod vtime_tests {
     fn sys_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || SysClock.now());
         assert_eq!(got, 1_900_000_000);
+    }
+
+    #[test_id(t8dnjp6)]
+    #[test]
+    fn branches_under_a_refs_heads_prefix_are_read_from_loose_and_packed_ref_files() {
+        let d = testkit::TempDir::new("real-branches-files");
+        let sha = |c: char| c.to_string().repeat(40);
+        let g = d.join(".git");
+        fs::create_dir_all(g.join("refs/heads/spira")).unwrap();
+        fs::write(g.join("refs/heads/spira/sp-loose"), format!("{}\n", sha('1'))).unwrap();
+        fs::write(g.join("refs/heads/spira/sp-both"), format!("{}\n", sha('2'))).unwrap();
+        fs::write(g.join("packed-refs"), format!("# pack-refs\n{} refs/heads/spira/sp-packed\n{} refs/heads/spira/sp-both\n{} refs/heads/main\n", sha('3'), sha('4'), sha('5'))).unwrap();
+        let want = vec![("spira/sp-both".to_string(), sha('2')), ("spira/sp-loose".to_string(), sha('1')), ("spira/sp-packed".to_string(), sha('3'))];
+        assert_eq!(RealGit.branches(d.path(), "refs/heads/spira/"), want);
+        fs::write(g.join("refs/heads/spira/sp-loose"), format!("{}\n", sha('6'))).unwrap();
+        assert_eq!(RealGit.branches(d.path(), "refs/heads/spira/")[1].1, sha('6'), "nothing is cached between reads");
     }
 }
 

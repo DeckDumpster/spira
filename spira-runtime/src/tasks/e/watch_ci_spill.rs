@@ -272,7 +272,10 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
             repos.push(Repo { name, ..Repo::default() });
             continue;
         };
-        let sha = git(&root, &["rev-parse", &ref_]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let sha = match spira_config::git_refs::read_ref_in(std::path::Path::new(&root), &ref_) {
+            spira_config::git_refs::Ref::Sha(sha) => Some(sha),
+            _ => git(&root, &["rev-parse", &ref_]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        };
         let workflows = if sha.is_some() && sha.as_ref() == seen.get(&name) { None } else { workflows(&root, &ref_) };
         repos.push(Repo { name, ref_: Some(ref_), sha, workflows });
     }
