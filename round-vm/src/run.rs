@@ -643,6 +643,7 @@ prune_superseded_unit() {
     local -A keep_hash=() keep_ino=()
     local f ino size path base n=0 bytes=0 named=0
     if ! unit_cargo --message-format=json > "$rep" 2>/dev/null; then
+        rm -f "$rep"
         echo "round-vm: unit prune skipped: the artifact listing failed" >&2
         return 0
     fi
@@ -653,6 +654,7 @@ prune_superseded_unit() {
         base="${f##*/}"
         if [[ $base =~ -([0-9a-f]{16})(\.|$) ]]; then keep_hash[${BASH_REMATCH[1]}]=1; fi
     done < <(grep -o '"\(filenames\|executable\)":\(\[[^]]*\]\|"[^"]*"\)' "$rep" | grep -o '"/[^"]*"' | tr -d '"')
+    rm -f "$rep"
     if [ "$named" -eq 0 ] || [ ! -d "$d" ]; then
         echo "round-vm: unit prune skipped: the build named no files" >&2
         return 0
@@ -5690,15 +5692,22 @@ mod tests {
         home: PathBuf,
         present_at_start: std::sync::Arc<Mutex<Vec<bool>>>,
     }
-    impl Remote for HomeProbe {
-        fn reachable(&self, a: &str) -> bool { self.inner.reachable(a) }
-        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> {
-            let left = crate::host::RECLAIMED.iter().any(|n| self.home.join(n).exists());
-            self.present_at_start.lock().unwrap().push(left);
+    impl HomeProbe {
+        fn the_script_makes_its_folders(&self) {
+            let mut seen = self.present_at_start.lock().unwrap();
+            if seen.is_empty() {
+                seen.push(crate::host::RECLAIMED.iter().any(|n| self.home.join(n).exists()));
+            }
             for n in crate::host::RECLAIMED {
                 fs::create_dir_all(self.home.join(n).join("sub")).unwrap();
                 fs::write(self.home.join(n).join("sub/f"), "x").unwrap();
             }
+        }
+    }
+    impl Remote for HomeProbe {
+        fn reachable(&self, a: &str) -> bool { self.inner.reachable(a) }
+        fn run_batch(&self, a: &str, j: &BatchJob) -> Result<i32, String> {
+            self.the_script_makes_its_folders();
             self.inner.run_batch(a, j)
         }
         fn round_started(&self, a: &str) -> bool { self.inner.round_started(a) }
@@ -5707,7 +5716,10 @@ mod tests {
         fn push(&self, a: &str, l: &Path, r: &str) -> Result<(), String> { self.inner.push(a, l, r) }
         fn await_exit(&self, a: &str, w: Duration, s: &Path) -> Result<Option<i32>, String> { self.inner.await_exit(a, w, s) }
         fn run_attr(&self, a: &str, j: &crate::spool::AttrJob) -> Result<i32, String> { self.inner.run_attr(a, j) }
-        fn clear_results(&self, a: &str) -> Result<(), String> { self.inner.clear_results(a) }
+        fn clear_results(&self, a: &str) -> Result<(), String> {
+            self.the_script_makes_its_folders();
+            self.inner.clear_results(a)
+        }
     }
 
     const KEPT: [&str; 3] = ["round-work/target/unittest", "round-resume", "round-releases"];
@@ -5775,8 +5787,9 @@ mod tests {
         fs::create_dir_all(spool.join("req")).unwrap();
         fs::write(spool.join("close"), "").unwrap();
         let a = RunArgs { tree_dir: fx.d.path().join("tree"), attr_spool: Some(spool), no_corpus: true, pin_host: true, ..Default::default() };
-        let (code, _, home) = host_round_over_a_real_home(&fx, FakeRemote::green(), &a);
+        let (code, at_start, home) = host_round_over_a_real_home(&fx, FakeRemote::green(), &a);
         assert_eq!(code, 0);
+        assert_eq!(at_start, [false], "leftovers were still there when the pass started");
         assert!(!home.join("attr-target").exists() && !home.join("attr").exists() && !home.join("attr-results").exists() && !home.join("round-scratch").exists());
         assert!(home.join("round-resume/deep/big").exists());
     }
