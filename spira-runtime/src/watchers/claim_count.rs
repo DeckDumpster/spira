@@ -15,7 +15,13 @@ pub const TICK: EventKindTag = "claim-count.tick";
 pub const STATE: EventKindTag = "claim-count.state";
 pub const OBSERVE: &str = "claim-count.observe";
 pub const NAME: &str = "claim-count";
-const ROW_PARTS: &[Part] = &[Part::Field("seeded"), Part::Map { name: "paged", drop: &[] }];
+const ROW_PARTS: &[Part] = &[
+    Part::Field("seeded"),
+    Part::Map {
+        name: "paged",
+        drop: &[],
+    },
+];
 const OBSERVE_DEADLINE_MS: u64 = 30_000;
 const APPEND_DEADLINE_MS: u64 = 10_000;
 /// How many session ends a row keeps (`lifecycle::bead::SESSION_ENDS_KEPT`).
@@ -49,21 +55,45 @@ pub struct Carry {
 }
 
 fn end_text(e: &serde_json::Value) -> String {
-    let text = |k: &str| e[k].as_str().map(str::to_string).or_else(|| e[k].as_u64().map(|n| n.to_string()));
-    format!("#{} {} -> {}", text("claim").unwrap_or_else(|| "?".into()), text("left").unwrap_or_else(|| "?".into()), text("back").unwrap_or_else(|| "-".into()))
+    let text = |k: &str| {
+        e[k].as_str()
+            .map(str::to_string)
+            .or_else(|| e[k].as_u64().map(|n| n.to_string()))
+    };
+    format!(
+        "#{} {} -> {}",
+        text("claim").unwrap_or_else(|| "?".into()),
+        text("left").unwrap_or_else(|| "?".into()),
+        text("back").unwrap_or_else(|| "-".into())
+    )
 }
 
 fn line(c: &Claims) -> String {
     let ends: Vec<String> = c.ends.iter().map(end_text).collect();
-    let cut = if c.n.saturating_sub(1) > ENDS_KEPT { " (newest 8 kept)" } else { "" };
-    format!("CLAIMS {}: claimed by a builder {} times and not landed; earlier sessions: {}{cut}", c.id, c.n, ends.join("; "))
+    let cut = if c.n.saturating_sub(1) > ENDS_KEPT {
+        " (newest 8 kept)"
+    } else {
+        ""
+    };
+    format!(
+        "CLAIMS {}: claimed by a builder {} times and not landed; earlier sessions: {}{cut}",
+        c.id,
+        c.n,
+        ends.join("; ")
+    )
 }
 
 /// The lines a snapshot calls for, and the carry into the next tick.
 pub fn decide(carry: &Carry, snap: &Snapshot, every: u32) -> (Carry, Vec<Claims>) {
     let seen: BTreeMap<String, u32> = snap.rows.iter().map(|r| (r.id.clone(), r.n)).collect();
     if !carry.seeded {
-        return (Carry { seeded: true, paged: seen }, vec![]);
+        return (
+            Carry {
+                seeded: true,
+                paged: seen,
+            },
+            vec![],
+        );
     }
     let every = every.max(1);
     let mut paged = BTreeMap::new();
@@ -77,7 +107,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot, every: u32) -> (Carry, Vec<Claims>
             paged.insert(r.id.clone(), *b);
         }
     }
-    (Carry { seeded: true, paged }, out)
+    (
+        Carry {
+            seeded: true,
+            paged,
+        },
+        out,
+    )
 }
 
 impl ClaimCount {
@@ -90,7 +126,12 @@ impl ClaimCount {
     }
 
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
-        view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
+        view.events(stream)
+            .iter()
+            .rev()
+            .find(|e| e.kind.tag == STATE)
+            .and_then(|e| serde_json::from_str(&e.kind.body).ok())
+            .unwrap_or_default()
     }
 }
 
@@ -105,12 +146,24 @@ impl Handler for ClaimCount {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Probe(EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)),
-                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Probe(EffectSpec::probe(
+                    OBSERVE,
+                    String::new(),
+                    OBSERVE_DEADLINE_MS,
+                )),
+                Command::Timer {
+                    at: ev.at + self.interval_ms,
+                    kind: EventKind::new(TICK, ""),
+                },
             ];
         }
         let observed = ev.cause.as_ref().is_some_and(|cause| {
-            view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == OBSERVE)
+            view.events(&ev.stream)
+                .iter()
+                .rev()
+                .find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)
+                .and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok())
+                .is_some_and(|b| b["spec"]["name"] == OBSERVE)
         });
         if !observed {
             return vec![];
@@ -124,10 +177,18 @@ impl Handler for ClaimCount {
         let now = ev.at / 1000;
         let mut cmds = vec![];
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+            cmds.push(Command::Emit(EventKind::new(
+                STATE,
+                &serde_json::to_string(&next).unwrap_or_default(),
+            )));
         }
         cmds.extend(due.iter().map(|c| {
-            Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{}:{}", c.id, c.n), format!("{} [watch:{NAME}] {}", iso8601(now), line(c)), APPEND_DEADLINE_MS))
+            Command::Effect(EffectSpec::keyed(
+                INBOX_APPEND,
+                format!("{NAME}:{}:{}", c.id, c.n),
+                format!("{} [watch:{NAME}] {}", iso8601(now), line(c)),
+                APPEND_DEADLINE_MS,
+            ))
         }));
         cmds
     }
@@ -138,11 +199,17 @@ mod tests {
     use super::*;
 
     fn row(id: &str, n: u32) -> Claims {
-        Claims { id: id.into(), n, ends: vec![] }
+        Claims {
+            id: id.into(),
+            n,
+            ends: vec![],
+        }
     }
 
     fn snap(rows: &[(&str, u32)]) -> Snapshot {
-        Snapshot { rows: rows.iter().map(|(i, n)| row(i, *n)).collect() }
+        Snapshot {
+            rows: rows.iter().map(|(i, n)| row(i, *n)).collect(),
+        }
     }
 
     #[test_id(t0chog6)]
@@ -157,6 +224,9 @@ mod tests {
         let (c2, out) = decide(&c, &snap(&[("a", 12), ("b", 7)]), 4);
         assert!(out.is_empty() && c2 == c, "an idle tick changes nothing");
         let (c3, _) = decide(&c, &snap(&[("a", 13)]), 4);
-        assert!(!c3.paged.contains_key("b"), "an item that left the live list leaves the carry");
+        assert!(
+            !c3.paged.contains_key("b"),
+            "an item that left the live list leaves the carry"
+        );
     }
 }

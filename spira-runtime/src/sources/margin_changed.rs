@@ -39,7 +39,10 @@ fn done_dir(run_dir: &Path) -> PathBuf {
 
 /// The highest sequence whose deliveries all succeeded; zero before any.
 pub fn resume_point(run_dir: &Path) -> u64 {
-    std::fs::read_to_string(resume_file(run_dir)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)
+    std::fs::read_to_string(resume_file(run_dir))
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 /// Marks `seq` delivered and moves the resume point as far as `batch` (the actionable sequences of one
@@ -47,14 +50,20 @@ pub fn resume_point(run_dir: &Path) -> u64 {
 pub fn record_done(run_dir: &Path, seq: u64, batch: &[u64], through: u64) -> Result<(), String> {
     let done = done_dir(run_dir);
     std::fs::create_dir_all(&done).map_err(|e| format!("{}: {e}", done.display()))?;
-    std::fs::write(done.join(seq.to_string()), "").map_err(|e| format!("{}: {e}", done.display()))?;
+    std::fs::write(done.join(seq.to_string()), "")
+        .map_err(|e| format!("{}: {e}", done.display()))?;
     let at = resume_point(run_dir);
-    let floor = batch.iter().find(|s| **s > at && !done.join(s.to_string()).exists()).map_or(through, |first| first.saturating_sub(1));
+    let floor = batch
+        .iter()
+        .find(|s| **s > at && !done.join(s.to_string()).exists())
+        .map_or(through, |first| first.saturating_sub(1));
     if floor <= at {
         return Ok(());
     }
     let (tmp, to) = (dir(run_dir).join("through.tmp"), resume_file(run_dir));
-    std::fs::write(&tmp, floor.to_string()).and_then(|()| std::fs::rename(&tmp, &to)).map_err(|e| format!("{}: {e}", to.display()))?;
+    std::fs::write(&tmp, floor.to_string())
+        .and_then(|()| std::fs::rename(&tmp, &to))
+        .map_err(|e| format!("{}: {e}", to.display()))?;
     for s in batch.iter().filter(|s| **s <= floor) {
         let _ = std::fs::remove_file(done.join(s.to_string()));
     }
@@ -71,7 +80,9 @@ pub struct MarginChanged {
 }
 
 fn wall_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64) // clock-safe: stamps an event on a source thread, not the loop
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64) // clock-safe: stamps an event on a source thread, not the loop
 }
 
 impl MarginChanged {
@@ -81,7 +92,13 @@ impl MarginChanged {
             "" => None,
             _ => Some(HttpMargin::configured(cfg)?),
         };
-        Ok(MarginChanged { client, run_dir, hold_secs: HOLD_SECS, backoff_first: BACKOFF_FIRST, backoff_cap: BACKOFF_CAP })
+        Ok(MarginChanged {
+            client,
+            run_dir,
+            hold_secs: HOLD_SECS,
+            backoff_first: BACKOFF_FIRST,
+            backoff_cap: BACKOFF_CAP,
+        })
     }
 }
 
@@ -111,16 +128,34 @@ impl Source for MarginChanged {
                         continue;
                     }
                     let body = serde_json::to_string(&answer).unwrap_or_default();
-                    if tx.blocking_send(Submit::new(&format!("{MARGIN_CHANGED}/{}", answer.through), MARGIN_STREAM, EventKind::new(MARGIN_CHANGED, &body))).is_err() {
+                    if tx
+                        .blocking_send(Submit::new(
+                            &format!("{MARGIN_CHANGED}/{}", answer.through),
+                            MARGIN_STREAM,
+                            EventKind::new(MARGIN_CHANGED, &body),
+                        ))
+                        .is_err()
+                    {
                         return;
                     }
                 }
                 Err(error) => {
                     let wait = match failing {
                         None => {
-                            let body = serde_json::to_string(&Unreachable { since_ms: wall_ms(), error }).unwrap_or_default();
+                            let body = serde_json::to_string(&Unreachable {
+                                since_ms: wall_ms(),
+                                error,
+                            })
+                            .unwrap_or_default();
                             let id = format!("{MARGIN_UNREACHABLE}/{after}/{}", wall_ms());
-                            if tx.blocking_send(Submit::new(&id, MARGIN_STREAM, EventKind::new(MARGIN_UNREACHABLE, &body))).is_err() {
+                            if tx
+                                .blocking_send(Submit::new(
+                                    &id,
+                                    MARGIN_STREAM,
+                                    EventKind::new(MARGIN_UNREACHABLE, &body),
+                                ))
+                                .is_err()
+                            {
                                 return;
                             }
                             self.backoff_first
@@ -160,7 +195,11 @@ mod tests {
                 let (mut s, _) = l.accept().unwrap();
                 let mut buf = [0u8; 4096];
                 let n = s.read(&mut buf).unwrap();
-                let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or_default().to_string();
+                let line = String::from_utf8_lossy(&buf[..n])
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
                 log.lock().unwrap().push((Instant::now(), line));
                 write!(s, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
             }
@@ -172,8 +211,18 @@ mod tests {
     fn source(base: &str, dir: &testkit::TempDir) -> Box<MarginChanged> {
         let token = dir.path().join("token");
         std::fs::write(&token, "tok").unwrap();
-        let client = HttpMargin { base: base.into(), token_file: token.to_str().unwrap().into(), timeout: Duration::from_millis(400) };
-        Box::new(MarginChanged { client: Some(client), run_dir: dir.path().into(), hold_secs: 0, backoff_first: FIRST, backoff_cap: CAP })
+        let client = HttpMargin {
+            base: base.into(),
+            token_file: token.to_str().unwrap().into(),
+            timeout: Duration::from_millis(400),
+        };
+        Box::new(MarginChanged {
+            client: Some(client),
+            run_dir: dir.path().into(),
+            hold_secs: 0,
+            backoff_first: FIRST,
+            backoff_cap: CAP,
+        })
     }
 
     fn start(s: Box<MarginChanged>) -> mpsc::Receiver<Submit> {
@@ -184,16 +233,39 @@ mod tests {
 
     #[test_id(tk4pitq)]
     #[test]
-    fn two_answers_with_changes_submit_two_events_in_order_and_the_first_ask_resumes_from_the_recorded_point() {
+    fn two_answers_with_changes_submit_two_events_in_order_and_the_first_ask_resumes_from_the_recorded_point(
+    ) {
         let dir = testkit::TempDir::new("margin-source-two");
         std::fs::create_dir_all(super::dir(dir.path())).unwrap();
         std::fs::write(resume_file(dir.path()), "7\n").unwrap();
-        let (base, seen) = serve(vec![(200, r#"{"last_seq":9,"changes":[{"seq":8,"kind":"published","collection_id":"c1"}]}"#), (200, r#"{"last_seq":12,"changes":[{"seq":12,"kind":"published","collection_id":"c2"}]}"#)]);
+        let (base, seen) = serve(vec![
+            (
+                200,
+                r#"{"last_seq":9,"changes":[{"seq":8,"kind":"published","collection_id":"c1"}]}"#,
+            ),
+            (
+                200,
+                r#"{"last_seq":12,"changes":[{"seq":12,"kind":"published","collection_id":"c2"}]}"#,
+            ),
+        ]);
         let mut rx = start(source(&base, &dir));
         let (a, b) = (rx.blocking_recv().unwrap(), rx.blocking_recv().unwrap());
-        assert_eq!((a.stream.as_str(), a.kind.tag.as_str(), b.kind.tag.as_str()), (MARGIN_STREAM, MARGIN_CHANGED, MARGIN_CHANGED));
-        assert!(a.kind.body.contains(r#""through":9"#) && b.kind.body.contains(r#""through":12"#), "{} / {}", a.kind.body, b.kind.body);
-        let asked: Vec<String> = seen.lock().unwrap().iter().map(|(_, l)| l.clone()).collect();
+        assert_eq!(
+            (a.stream.as_str(), a.kind.tag.as_str(), b.kind.tag.as_str()),
+            (MARGIN_STREAM, MARGIN_CHANGED, MARGIN_CHANGED)
+        );
+        assert!(
+            a.kind.body.contains(r#""through":9"#) && b.kind.body.contains(r#""through":12"#),
+            "{} / {}",
+            a.kind.body,
+            b.kind.body
+        );
+        let asked: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect();
         assert!(asked[0].contains("after=7"), "{asked:?}");
         assert!(asked[1].contains("after=9"), "{asked:?}");
     }
@@ -202,7 +274,12 @@ mod tests {
     #[test]
     fn a_reader_that_refuses_is_said_once_and_asked_again_no_sooner_than_the_backoff() {
         let dir = testkit::TempDir::new("margin-source-down");
-        let (base, seen) = serve(vec![(500, "no"), (500, "no"), (500, "no"), (200, r#"{"last_seq":4,"changes":[]}"#)]);
+        let (base, seen) = serve(vec![
+            (500, "no"),
+            (500, "no"),
+            (500, "no"),
+            (200, r#"{"last_seq":4,"changes":[]}"#),
+        ]);
         let mut rx = start(source(&base, &dir));
         let down = rx.blocking_recv().unwrap();
         let back = rx.blocking_recv().unwrap();
@@ -211,7 +288,10 @@ mod tests {
         assert!(u.error.contains("HTTP 500") && u.since_ms > 0, "{u:?}");
         let times: Vec<Instant> = seen.lock().unwrap().iter().map(|(t, _)| *t).collect();
         let gaps: Vec<Duration> = times.windows(2).map(|w| w[1] - w[0]).collect();
-        assert!(gaps[0] >= FIRST && gaps[1] >= CAP && gaps[2] >= CAP, "{gaps:?}");
+        assert!(
+            gaps[0] >= FIRST && gaps[1] >= CAP && gaps[2] >= CAP,
+            "{gaps:?}"
+        );
     }
 
     #[test_id(tqhabfo)]
@@ -221,11 +301,18 @@ mod tests {
         assert_eq!(resume_point(dir.path()), 0);
         let batch = [3, 5, 8];
         record_done(dir.path(), 5, &batch, 9).unwrap();
-        assert_eq!(resume_point(dir.path()), 2, "everything under 3 is delivered or needs nothing; 3 is not delivered yet");
+        assert_eq!(
+            resume_point(dir.path()),
+            2,
+            "everything under 3 is delivered or needs nothing; 3 is not delivered yet"
+        );
         record_done(dir.path(), 3, &batch, 9).unwrap();
         assert_eq!(resume_point(dir.path()), 7, "8 is the first not delivered");
         record_done(dir.path(), 8, &batch, 9).unwrap();
         assert_eq!(resume_point(dir.path()), 9);
-        assert!(!done_dir(dir.path()).join("5").exists(), "a mark under the resume point is dropped");
+        assert!(
+            !done_dir(dir.path()).join("5").exists(),
+            "a mark under the resume point is dropped"
+        );
     }
 }

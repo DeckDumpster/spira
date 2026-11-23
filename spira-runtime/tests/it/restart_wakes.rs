@@ -7,9 +7,15 @@ use std::sync::{Arc, Mutex};
 use runtime::host::{EffectRunner, VirtualDriver};
 use runtime::journal::{Boot, Journal, Poison, Turn};
 use runtime::ports::{Clock, VirtualClock};
-use runtime::{Command, StreamKey, Ctx, EffectSpec, Event, EventKindTag, FaultyJournal, Handler, MemJournal, NullMarker, NullSink, Projection, Registration};
+use runtime::{
+    Command, Ctx, EffectSpec, Event, EventKindTag, FaultyJournal, Handler, MemJournal, NullMarker,
+    NullSink, Projection, Registration, StreamKey,
+};
 use spira_runtime::settings::fixture;
-use spira_runtime::tasks::a::batcher_local::{CADENCE_MS as BATCHER_CADENCE, OBSERVE as BATCHER_OBSERVE, STREAM as BATCHER_STREAM, TICK as BATCHER_TICK};
+use spira_runtime::tasks::a::batcher_local::{
+    CADENCE_MS as BATCHER_CADENCE, OBSERVE as BATCHER_OBSERVE, STREAM as BATCHER_STREAM,
+    TICK as BATCHER_TICK,
+};
 use spira_runtime::tasks::a::gate_worker::{CADENCE_MS as GATE_CADENCE, OBSERVE as GATE_OBSERVE};
 use spira_runtime::{open_engine, start_tasks};
 
@@ -66,13 +72,30 @@ impl Journal for Lifting {
         self.inner.poison(p)
     }
     fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
-        Ok(self.inner.poisoned(stream)?.filter(|_| !self.lifted.load(Ordering::SeqCst)))
+        Ok(self
+            .inner
+            .poisoned(stream)?
+            .filter(|_| !self.lifted.load(Ordering::SeqCst)))
     }
 }
 
-fn boot(journal: Arc<dyn Journal>, clock: &VirtualClock, seen: &Arc<Seen>, extra: Vec<Registration>) -> VirtualDriver {
+fn boot(
+    journal: Arc<dyn Journal>,
+    clock: &VirtualClock,
+    seen: &Arc<Seen>,
+    extra: Vec<Registration>,
+) -> VirtualDriver {
     let c: Arc<dyn Clock> = Arc::new(clock.clone());
-    let mut engine = open_engine(&fixture(), journal, c, Arc::new(NullMarker), Arc::new(NullSink), extra, std::time::Duration::from_secs(10)).unwrap();
+    let mut engine = open_engine(
+        &fixture(),
+        journal,
+        c,
+        Arc::new(NullMarker),
+        Arc::new(NullSink),
+        extra,
+        std::time::Duration::from_secs(10),
+    )
+    .unwrap();
     start_tasks(&mut engine);
     VirtualDriver::new(engine, clock.clone(), Arc::new(Recording(seen.clone())))
 }
@@ -86,7 +109,13 @@ const FAULT_STEP_MS: u64 = 5_000;
 const FAULT_STEPS: u64 = 40;
 
 fn armed(d: &VirtualDriver, task: &str) -> Option<u64> {
-    d.engine().status().tasks.into_iter().find(|t| t.name == task).unwrap_or_else(|| panic!("{task} is registered")).next_due_at
+    d.engine()
+        .status()
+        .tasks
+        .into_iter()
+        .find(|t| t.name == task)
+        .unwrap_or_else(|| panic!("{task} is registered"))
+        .next_due_at
 }
 
 fn run_for(d: &mut VirtualDriver, clock: &VirtualClock, ms: u64) {
@@ -106,18 +135,36 @@ fn batcher_and_gate_worker_stay_armed_and_observe_every_cadence_after_a_boot_of_
     let mut d = boot(j, &clock, &seen, vec![]);
     settle_boot(&mut d, &clock);
     for task in [BATCHER, GATE] {
-        assert!(armed(&d, task).is_some(), "{task} is armed after its boot tick");
+        assert!(
+            armed(&d, task).is_some(),
+            "{task} is armed after its boot tick"
+        );
     }
-    let before = (observes(&seen, BATCHER_OBSERVE), observes(&seen, GATE_OBSERVE));
-    assert!(before.0 >= 1 && before.1 >= 1, "each observes at boot: {before:?}");
+    let before = (
+        observes(&seen, BATCHER_OBSERVE),
+        observes(&seen, GATE_OBSERVE),
+    );
+    assert!(
+        before.0 >= 1 && before.1 >= 1,
+        "each observes at boot: {before:?}"
+    );
     for _ in 0..3 {
         run_for(&mut d, &clock, BATCHER_CADENCE.max(GATE_CADENCE));
         for task in [BATCHER, GATE] {
-            assert!(armed(&d, task).is_some(), "{task} is armed after each later tick");
+            assert!(
+                armed(&d, task).is_some(),
+                "{task} is armed after each later tick"
+            );
         }
     }
-    assert!(observes(&seen, BATCHER_OBSERVE) >= before.0 + 3, "batcher.local observes each cadence");
-    assert!(observes(&seen, GATE_OBSERVE) >= before.1 + 3, "gate.worker observes each cadence");
+    assert!(
+        observes(&seen, BATCHER_OBSERVE) >= before.0 + 3,
+        "batcher.local observes each cadence"
+    );
+    assert!(
+        observes(&seen, GATE_OBSERVE) >= before.1 + 3,
+        "gate.worker observes each cadence"
+    );
 }
 
 #[test_id(tluq2yl)]
@@ -128,16 +175,28 @@ fn a_restart_onto_the_same_journal_arms_and_observes_again_even_after_a_long_dow
     let mut first = boot(j.clone(), &clock, &seen, vec![]);
     settle_boot(&mut first, &clock);
     drop(first);
-    let before = (observes(&seen, BATCHER_OBSERVE), observes(&seen, GATE_OBSERVE));
+    let before = (
+        observes(&seen, BATCHER_OBSERVE),
+        observes(&seen, GATE_OBSERVE),
+    );
 
     clock.advance_to(clock.now_ms() + BATCHER_CADENCE.max(GATE_CADENCE) * 5);
     let mut second = boot(j, &clock, &seen, vec![]);
     settle_boot(&mut second, &clock);
     for task in [BATCHER, GATE] {
-        assert!(armed(&second, task).is_some(), "{task} is armed after the restart");
+        assert!(
+            armed(&second, task).is_some(),
+            "{task} is armed after the restart"
+        );
     }
-    assert!(observes(&seen, BATCHER_OBSERVE) > before.0, "batcher.local observes at the first boot after the gap");
-    assert!(observes(&seen, GATE_OBSERVE) > before.1, "gate.worker observes at the first boot after the gap");
+    assert!(
+        observes(&seen, BATCHER_OBSERVE) > before.0,
+        "batcher.local observes at the first boot after the gap"
+    );
+    assert!(
+        observes(&seen, GATE_OBSERVE) > before.1,
+        "gate.worker observes at the first boot after the gap"
+    );
 }
 
 /// A handler fails on the batcher's stream while the store refuses the poison row: the stream is
@@ -145,9 +204,18 @@ fn a_restart_onto_the_same_journal_arms_and_observes_again_even_after_a_long_dow
 #[test_id(t2ajb7h)]
 #[test]
 fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_again() {
-    let (faulty, clock) = (FaultyJournal::new(MemJournal::new()), VirtualClock::new(1_000));
+    let (faulty, clock) = (
+        FaultyJournal::new(MemJournal::new()),
+        VirtualClock::new(1_000),
+    );
     let seen = Arc::new(Seen::default());
-    let extra = Registration::new("planted", PanicsOnce { tags: vec![BATCHER_TICK], spent: AtomicBool::new(false) });
+    let extra = Registration::new(
+        "planted",
+        PanicsOnce {
+            tags: vec![BATCHER_TICK],
+            spent: AtomicBool::new(false),
+        },
+    );
     let mut d = boot(faulty.clone(), &clock, &seen, vec![extra]);
     faulty.fail_next("poison");
     // The failed write comes back as an error, as it does to the host, which goes on.
@@ -155,17 +223,32 @@ fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_aga
     for _ in 0..FAULT_STEPS {
         errors += usize::from(d.run_until(clock.now_ms() + FAULT_STEP_MS).is_err());
     }
-    assert_eq!(errors, 1, "the planted fault surfaces as exactly one run error");
+    assert_eq!(
+        errors, 1,
+        "the planted fault surfaces as exactly one run error"
+    );
     let after_fault = observes(&seen, BATCHER_OBSERVE);
     let gate_after_fault = observes(&seen, GATE_OBSERVE);
-    assert!(armed(&d, BATCHER).is_some(), "batcher.local keeps a tick armed");
+    assert!(
+        armed(&d, BATCHER).is_some(),
+        "batcher.local keeps a tick armed"
+    );
     for _ in 0..3 {
         run_for(&mut d, &clock, BATCHER_CADENCE.max(GATE_CADENCE));
         assert!(armed(&d, BATCHER).is_some(), "armed after each later tick");
-        assert!(armed(&d, GATE).is_some(), "gate.worker is untouched by the batcher's fault");
+        assert!(
+            armed(&d, GATE).is_some(),
+            "gate.worker is untouched by the batcher's fault"
+        );
     }
-    assert!(observes(&seen, GATE_OBSERVE) >= gate_after_fault + 3, "gate.worker observes each cadence");
-    assert!(observes(&seen, BATCHER_OBSERVE) >= after_fault + 3, "batcher.local observes each cadence after the fault");
+    assert!(
+        observes(&seen, GATE_OBSERVE) >= gate_after_fault + 3,
+        "gate.worker observes each cadence"
+    );
+    assert!(
+        observes(&seen, BATCHER_OBSERVE) >= after_fault + 3,
+        "batcher.local observes each cadence after the fault"
+    );
 }
 
 /// The stream is quarantined with a row; ticks that fall on it are not heard, and once the
@@ -173,15 +256,37 @@ fn a_tick_swallowed_by_a_stream_quarantine_that_could_not_be_stored_is_armed_aga
 #[test_id(tozxqli)]
 #[test]
 fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
-    let (store, clock) = (Arc::new(Lifting { inner: MemJournal::new(), lifted: AtomicBool::new(false) }), VirtualClock::new(1_000));
+    let (store, clock) = (
+        Arc::new(Lifting {
+            inner: MemJournal::new(),
+            lifted: AtomicBool::new(false),
+        }),
+        VirtualClock::new(1_000),
+    );
     let seen = Arc::new(Seen::default());
-    let extra = Registration::new("planted", PanicsOnce { tags: vec![BATCHER_TICK], spent: AtomicBool::new(false) });
+    let extra = Registration::new(
+        "planted",
+        PanicsOnce {
+            tags: vec![BATCHER_TICK],
+            spent: AtomicBool::new(false),
+        },
+    );
     let mut d = boot(store.clone(), &clock, &seen, vec![extra]);
     run_for(&mut d, &clock, 60_000);
-    assert!(store.inner.poisoned(&StreamKey(BATCHER_STREAM.into())).unwrap().is_some(), "the quarantine left its row in the store");
+    assert!(
+        store
+            .inner
+            .poisoned(&StreamKey(BATCHER_STREAM.into()))
+            .unwrap()
+            .is_some(),
+        "the quarantine left its row in the store"
+    );
     for _ in 0..3 {
         run_for(&mut d, &clock, 30_000);
-        assert!(armed(&d, BATCHER).is_some(), "batcher.local stays armed while its row stands");
+        assert!(
+            armed(&d, BATCHER).is_some(),
+            "batcher.local stays armed while its row stands"
+        );
     }
     store.lifted.store(true, Ordering::SeqCst);
     for _ in 0..FAULT_STEPS {
@@ -189,13 +294,25 @@ fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
     }
     let resumed = observes(&seen, BATCHER_OBSERVE);
     let gate_resumed = observes(&seen, GATE_OBSERVE);
-    assert!(armed(&d, BATCHER).is_some(), "batcher.local keeps a tick armed once the row is cleared");
+    assert!(
+        armed(&d, BATCHER).is_some(),
+        "batcher.local keeps a tick armed once the row is cleared"
+    );
     for _ in 0..3 {
         run_for(&mut d, &clock, BATCHER_CADENCE.max(GATE_CADENCE));
-        assert!(armed(&d, GATE).is_some(), "gate.worker stays armed beside the quarantined stream");
+        assert!(
+            armed(&d, GATE).is_some(),
+            "gate.worker stays armed beside the quarantined stream"
+        );
     }
-    assert!(observes(&seen, GATE_OBSERVE) >= gate_resumed + 3, "gate.worker observes each cadence");
-    assert!(observes(&seen, BATCHER_OBSERVE) >= resumed + 3, "batcher.local observes each cadence once the row is cleared");
+    assert!(
+        observes(&seen, GATE_OBSERVE) >= gate_resumed + 3,
+        "gate.worker observes each cadence"
+    );
+    assert!(
+        observes(&seen, BATCHER_OBSERVE) >= resumed + 3,
+        "batcher.local observes each cadence once the row is cleared"
+    );
 }
 
 /// A restart onto a stream whose poison row stands: the boot tick lands on it, is parked, and
@@ -203,15 +320,36 @@ fn a_quarantined_batcher_stream_ticks_again_once_its_row_is_cleared() {
 #[test_id(twlsdn7)]
 #[test]
 fn a_restart_onto_a_standing_poison_row_keeps_the_batcher_armed_and_resumes_when_it_is_cleared() {
-    let (store, clock) = (Arc::new(Lifting { inner: MemJournal::new(), lifted: AtomicBool::new(false) }), VirtualClock::new(1_000));
-    store.inner.poison(&Poison { stream: StreamKey(BATCHER_STREAM.into()), event: runtime::EventId("earlier".into()), handler: "planted".into(), message: "left by the run before the restart".into() }).unwrap();
+    let (store, clock) = (
+        Arc::new(Lifting {
+            inner: MemJournal::new(),
+            lifted: AtomicBool::new(false),
+        }),
+        VirtualClock::new(1_000),
+    );
+    store
+        .inner
+        .poison(&Poison {
+            stream: StreamKey(BATCHER_STREAM.into()),
+            event: runtime::EventId("earlier".into()),
+            handler: "planted".into(),
+            message: "left by the run before the restart".into(),
+        })
+        .unwrap();
     let seen = Arc::new(Seen::default());
     let mut d = boot(store.clone(), &clock, &seen, vec![]);
     for _ in 0..3 {
         run_for(&mut d, &clock, 60_000);
-        assert!(armed(&d, BATCHER).is_some(), "batcher.local stays armed while the inherited row stands");
+        assert!(
+            armed(&d, BATCHER).is_some(),
+            "batcher.local stays armed while the inherited row stands"
+        );
     }
-    assert_eq!(observes(&seen, BATCHER_OBSERVE), 0, "a stream under a standing row is not observed");
+    assert_eq!(
+        observes(&seen, BATCHER_OBSERVE),
+        0,
+        "a stream under a standing row is not observed"
+    );
     store.lifted.store(true, Ordering::SeqCst);
     for _ in 0..FAULT_STEPS {
         run_for(&mut d, &clock, 30_000);
@@ -219,7 +357,13 @@ fn a_restart_onto_a_standing_poison_row_keeps_the_batcher_armed_and_resumes_when
     let resumed = observes(&seen, BATCHER_OBSERVE);
     for _ in 0..3 {
         run_for(&mut d, &clock, BATCHER_CADENCE);
-        assert!(armed(&d, BATCHER).is_some(), "armed after each tick once the row is cleared");
+        assert!(
+            armed(&d, BATCHER).is_some(),
+            "armed after each tick once the row is cleared"
+        );
     }
-    assert!(observes(&seen, BATCHER_OBSERVE) >= resumed + 3, "batcher.local observes each cadence once the row is cleared");
+    assert!(
+        observes(&seen, BATCHER_OBSERVE) >= resumed + 3,
+        "batcher.local observes each cadence once the row is cleared"
+    );
 }

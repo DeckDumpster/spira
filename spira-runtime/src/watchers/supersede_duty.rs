@@ -20,7 +20,13 @@ pub const OBSERVE: &str = "supersede-duty.observe";
 pub const ACT: &str = "supersede-duty.act";
 pub const NAME: &str = "supersede-duty";
 pub const ACTOR: &str = "supersede-duty";
-const ROW_PARTS: &[Part] = &[Part::Map { name: "not_a_request", drop: &[] }, Part::Field("failed")];
+const ROW_PARTS: &[Part] = &[
+    Part::Map {
+        name: "not_a_request",
+        drop: &[],
+    },
+    Part::Field("failed"),
+];
 /// What an act effect answers when the bead became terminal under it: nothing to report.
 pub const SETTLED: &str = "terminal";
 /// What an act effect answers when the write took but the evidence note did not.
@@ -233,7 +239,10 @@ pub fn settle(carry: &Carry, act: &Act, outcome: Result<&str, ()>) -> (bool, Vec
 
 fn stored(body: &str) -> Option<Carry> {
     match serde_json::from_str(body).ok()? {
-        Stored::Bare(not_a_request) => Some(Carry { not_a_request, ..Carry::default() }),
+        Stored::Bare(not_a_request) => Some(Carry {
+            not_a_request,
+            ..Carry::default()
+        }),
         Stored::Whole(carry) => Some(carry),
     }
 }
@@ -246,14 +255,20 @@ mod stored_tests {
     #[test]
     fn a_state_row_written_as_a_bare_map_still_reads() {
         let carry = stored(r#"{"sp-old":"3"}"#).expect("bare map reads");
-        assert_eq!(carry.not_a_request.get("sp-old").map(String::as_str), Some("3"));
+        assert_eq!(
+            carry.not_a_request.get("sp-old").map(String::as_str),
+            Some("3")
+        );
         assert!(carry.failed.is_empty());
     }
 
     #[test_id(t4imqt1)]
     #[test]
     fn a_whole_state_row_reads_as_written() {
-        let whole = Carry { not_a_request: BTreeMap::from([("a".into(), "1".into())]), failed: BTreeSet::from(["b".into()]) };
+        let whole = Carry {
+            not_a_request: BTreeMap::from([("a".into(), "1".into())]),
+            failed: BTreeSet::from(["b".into()]),
+        };
         assert_eq!(stored(&serde_json::to_string(&whole).unwrap()), Some(whole));
     }
 }
@@ -269,13 +284,26 @@ impl SupersedeDuty {
 
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
         let events = view.events(stream);
-        let mut carry = events.iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| stored(&e.kind.body)).unwrap_or_default();
-        carry.failed.extend(events.iter().filter(|e| e.kind.tag == FAILED).map(|e| e.kind.body.clone()));
+        let mut carry = events
+            .iter()
+            .rev()
+            .find(|e| e.kind.tag == STATE)
+            .and_then(|e| stored(&e.kind.body))
+            .unwrap_or_default();
+        carry.failed.extend(
+            events
+                .iter()
+                .filter(|e| e.kind.tag == FAILED)
+                .map(|e| e.kind.body.clone()),
+        );
         carry
     }
 
     fn state(carry: &Carry) -> Command {
-        Command::Emit(EventKind::new(STATE, &serde_json::to_string(carry).unwrap_or_default()))
+        Command::Emit(EventKind::new(
+            STATE,
+            &serde_json::to_string(carry).unwrap_or_default(),
+        ))
     }
 
     /// The effect request an outcome event answers: its spec's name and input.
@@ -294,7 +322,12 @@ impl SupersedeDuty {
     }
 
     fn inbox(now: u64, m: &str) -> Command {
-        Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), ACT_DEADLINE_MS))
+        Command::Effect(EffectSpec::keyed(
+            INBOX_APPEND,
+            format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(m)),
+            format!("{} [watch:{NAME}] {m}", iso8601(now)),
+            ACT_DEADLINE_MS,
+        ))
     }
 }
 
@@ -339,7 +372,12 @@ impl Handler for SupersedeDuty {
                         Out::Say(m) => Self::inbox(now, &m),
                         Out::Act(a) => {
                             let input = serde_json::to_string(&a).unwrap_or_default();
-                            Command::Effect(EffectSpec::keyed(ACT, format!("{NAME}:act:{:016x}", runtime::event::fnv1a(&input)), input, ACT_DEADLINE_MS))
+                            Command::Effect(EffectSpec::keyed(
+                                ACT,
+                                format!("{NAME}:act:{:016x}", runtime::event::fnv1a(&input)),
+                                input,
+                                ACT_DEADLINE_MS,
+                            ))
                         }
                     });
                 }

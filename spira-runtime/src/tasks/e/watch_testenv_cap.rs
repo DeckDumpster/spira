@@ -80,7 +80,14 @@ pub const OBSERVE: &str = "watch.testenv_cap.observe";
 pub const KILL: &str = "watch.testenv_cap.kill";
 pub const METRIC: &str = "watch.testenv_cap.metric";
 pub const EFFECTS: &[&str] = &[OBSERVE, KILL, INBOX_APPEND, METRIC];
-pub const KEYS: &[&str] = &["SPIRA_TESTENV_SUITE_CAP", "SPIRA_TESTENV_GATE_CAP", "SPIRA_TESTENV_LOAD_WAIT", "SPIRA_TESTENV_SLOT_WAIT", "SPIRA_CONCIERGE_INBOX", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_TESTENV_SUITE_CAP",
+    "SPIRA_TESTENV_GATE_CAP",
+    "SPIRA_TESTENV_LOAD_WAIT",
+    "SPIRA_TESTENV_SLOT_WAIT",
+    "SPIRA_CONCIERGE_INBOX",
+    "SPIRA_RUN",
+];
 /// `--interval 15`.
 pub const CADENCE_MS: u64 = 15_000;
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
@@ -142,26 +149,65 @@ const ACT_DEADLINE_MS: u64 = 5_000;
 const INBOX_DEADLINE_MS: u64 = 10_000;
 
 fn to_cap(p: &Proc) -> testenv::cap::Proc {
-    testenv::cap::Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs, ledgered: p.ledgered }
+    testenv::cap::Proc {
+        pid: p.pid,
+        start_ticks: p.start_ticks,
+        argv: p.argv.clone(),
+        age_secs: p.age_secs,
+        ledgered: p.ledgered,
+    }
 }
 
 fn from_cap(p: &testenv::cap::Proc) -> Proc {
-    Proc { pid: p.pid, start_ticks: p.start_ticks, argv: p.argv.clone(), age_secs: p.age_secs, ledgered: p.ledgered }
+    Proc {
+        pid: p.pid,
+        start_ticks: p.start_ticks,
+        argv: p.argv.clone(),
+        age_secs: p.age_secs,
+        ledgered: p.ledgered,
+    }
 }
 
 /// `cap::breaches` over the runs: one `kill` per breach, and nothing else.
 pub fn decide(snap: &Snapshot, cfg: &Config) -> Vec<EffectSpec> {
     let procs: Vec<testenv::cap::Proc> = snap.procs.iter().map(to_cap).collect();
-    testenv::cap::breaches(&procs, cfg.suite_cap_s, cfg.gate_cap_s, cfg.load_wait_s, cfg.slot_wait_s, GRACE_S, None)
-        .into_iter()
-        .map(|b| Kill { proc: from_cap(&b.proc), tier: b.tier.into(), cap_s: b.cap })
-        .map(|k| EffectSpec::keyed(KILL, format!("testenv_cap/kill/{}/{}", k.proc.pid, k.proc.start_ticks), serde_json::to_string(&k).unwrap_or_default(), ACT_DEADLINE_MS))
-        .collect()
+    testenv::cap::breaches(
+        &procs,
+        cfg.suite_cap_s,
+        cfg.gate_cap_s,
+        cfg.load_wait_s,
+        cfg.slot_wait_s,
+        GRACE_S,
+        None,
+    )
+    .into_iter()
+    .map(|b| Kill {
+        proc: from_cap(&b.proc),
+        tier: b.tier.into(),
+        cap_s: b.cap,
+    })
+    .map(|k| {
+        EffectSpec::keyed(
+            KILL,
+            format!("testenv_cap/kill/{}/{}", k.proc.pid, k.proc.start_ticks),
+            serde_json::to_string(&k).unwrap_or_default(),
+            ACT_DEADLINE_MS,
+        )
+    })
+    .collect()
 }
 
 /// `report`'s line (`testenv/src/cap_main.rs:23-37`): no `[watch:…]` tag, as today.
 pub fn line(k: &Kill, now_ms: u64) -> String {
-    format!("{} testenv over-cap killed: pid {} tier={} wall={}s cap={}s cmd={}", iso8601(now_ms / 1000), k.proc.pid, k.tier, k.proc.age_secs, k.cap_s, k.proc.argv.join(" "))
+    format!(
+        "{} testenv over-cap killed: pid {} tier={} wall={}s cap={}s cmd={}",
+        iso8601(now_ms / 1000),
+        k.proc.pid,
+        k.tier,
+        k.proc.age_secs,
+        k.cap_s,
+        k.proc.argv.join(" ")
+    )
 }
 
 /// On a `kill` that answered `killed`: the inbox line and the metric; nothing for a refused kill.
@@ -169,9 +215,24 @@ pub fn killed(kill: &EffectSpec, outcome: &str, now_ms: u64, _cfg: &Config) -> V
     if outcome != KILLED {
         return vec![];
     }
-    let Ok(k) = serde_json::from_str::<Kill>(&kill.input) else { return vec![] };
+    let Ok(k) = serde_json::from_str::<Kill>(&kill.input) else {
+        return vec![];
+    };
     let id = format!("{}/{}", k.proc.pid, k.proc.start_ticks);
-    vec![EffectSpec::keyed(INBOX_APPEND, format!("testenv_cap/{id}"), line(&k, now_ms), INBOX_DEADLINE_MS), EffectSpec::keyed(METRIC, format!("testenv_cap/metric/{id}"), k.tier, ACT_DEADLINE_MS)]
+    vec![
+        EffectSpec::keyed(
+            INBOX_APPEND,
+            format!("testenv_cap/{id}"),
+            line(&k, now_ms),
+            INBOX_DEADLINE_MS,
+        ),
+        EffectSpec::keyed(
+            METRIC,
+            format!("testenv_cap/metric/{id}"),
+            k.tier,
+            ACT_DEADLINE_MS,
+        ),
+    ]
 }
 
 /// The runs procfs shows, filtered to `testenv` runs (`cap::live`, `cap::is_run`).
@@ -181,15 +242,26 @@ pub fn observe(input: &str) -> Result<String, String> {
 
 /// The runs among `live`, each aged by its worked time: less the slot waits its ledger under `run` publishes.
 pub fn observe_procs(run: &Path, live: Vec<testenv::cap::Proc>) -> Result<String, String> {
-    let runs = live.into_iter().filter(|p| testenv::cap::is_run(&p.argv)).collect();
-    let procs = testenv::cap::uncounted(run, runs).iter().map(from_cap).collect();
+    let runs = live
+        .into_iter()
+        .filter(|p| testenv::cap::is_run(&p.argv))
+        .collect();
+    let procs = testenv::cap::uncounted(run, runs)
+        .iter()
+        .map(from_cap)
+        .collect();
     serde_json::to_string(&Snapshot { procs }).map_err(|e| e.to_string())
 }
 
 /// Kills the judged run only when its argv and start ticks still match (`cap::kill_verified`).
 pub fn kill(input: &str) -> Result<String, String> {
     let k: Kill = serde_json::from_str(input).map_err(|e| format!("{KILL}: bad input: {e}"))?;
-    Ok(if testenv::cap::kill_verified(&to_cap(&k.proc)) { KILLED } else { REFUSED }.into())
+    Ok(if testenv::cap::kill_verified(&to_cap(&k.proc)) {
+        KILLED
+    } else {
+        REFUSED
+    }
+    .into())
 }
 
 /// `spira_testenv_over_cap_kills{tier}` +1, as `cap_main.rs:52` pushed it.
@@ -208,7 +280,9 @@ impl WatchTestenvCap {
     }
 
     pub fn pinned() -> Self {
-        WatchTestenvCap { config: Config::pinned() }
+        WatchTestenvCap {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -230,11 +304,34 @@ impl Handler for WatchTestenvCap {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, self.config.as_ref().map(|c| c.run.to_string_lossy().into_owned()).unwrap_or_default(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                self.config
+                    .as_ref()
+                    .map(|c| c.run.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
-        if let (Some(kill), Ok(config)) = (answered_spec(view, ev).filter(|s| s.name == KILL && ev.kind.tag == EFFECT_SUCCEEDED), &self.config) {
-            return killed(&kill, &ev.kind.body, ev.at, config).into_iter().map(Command::Effect).collect();
+        if let (Some(kill), Ok(config)) = (
+            answered_spec(view, ev).filter(|s| s.name == KILL && ev.kind.tag == EFFECT_SUCCEEDED),
+            &self.config,
+        ) {
+            return killed(&kill, &ev.kind.body, ev.at, config)
+                .into_iter()
+                .map(Command::Effect)
+                .collect();
         }
-        pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, |_: &(), snap: &Snapshot, _, config: &Config| ((), decide(snap, config)))
+        pattern::on_answer(
+            ctx,
+            view,
+            ev,
+            OBSERVE,
+            STATE,
+            &self.config,
+            |_: &(), snap: &Snapshot, _, config: &Config| ((), decide(snap, config)),
+        )
     }
 }

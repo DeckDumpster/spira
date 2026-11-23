@@ -72,9 +72,9 @@ use std::collections::BTreeSet;
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
-use spira_store::lc_call::LcClient;
 use spira_config::process::cfg;
 use spira_config::scoped_stop;
+use spira_store::lc_call::LcClient;
 
 use super::pattern;
 
@@ -100,7 +100,9 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { run: cfg("SPIRA_RUN")? })
+        Ok(Config {
+            run: cfg("SPIRA_RUN")?,
+        })
     }
 }
 
@@ -154,7 +156,12 @@ pub fn overdue_breach(o: &Overdue, now: u64) -> Breach {
 
 /// `mends_breach` (`mend_watch.rs:26-31`): more than [`MAX_MENDS_PER_DAY`] in a day is a loop.
 pub fn mends_breach(bead: &str, n: u64) -> Option<Breach> {
-    (n > MAX_MENDS_PER_DAY).then(|| Breach { key: format!("mends:{bead}"), line: format!("MEND-WATCH MENDS {bead} was mended {n} times in 24h (limit {MAX_MENDS_PER_DAY})") })
+    (n > MAX_MENDS_PER_DAY).then(|| Breach {
+        key: format!("mends:{bead}"),
+        line: format!(
+            "MEND-WATCH MENDS {bead} was mended {n} times in 24h (limit {MAX_MENDS_PER_DAY})"
+        ),
+    })
 }
 
 /// What the lift effect is handed: the stop's repo and when it was set, its idempotency.
@@ -167,12 +174,32 @@ pub struct Lift {
 /// Every breach and stop finding of `snap`, in the order today's two jobs printed them, each
 /// as `(seen key, line, lift)`.
 fn findings(snap: &Snapshot) -> Vec<(String, String, Option<Lift>)> {
-    let mut out: Vec<(String, String, Option<Lift>)> = snap.overdue.iter().map(|o| overdue_breach(o, snap.now)).chain(snap.mends.iter().filter_map(|(b, n)| mends_breach(b, *n))).map(|b| (b.key, b.line, None)).collect();
+    let mut out: Vec<(String, String, Option<Lift>)> = snap
+        .overdue
+        .iter()
+        .map(|o| overdue_breach(o, snap.now))
+        .chain(snap.mends.iter().filter_map(|(b, n)| mends_breach(b, *n)))
+        .map(|b| (b.key, b.line, None))
+        .collect();
     for s in &snap.stops {
         match &s.reached {
-            Ok(true) => out.push((format!("lift:{}:{}", s.repo, s.since), format!("pause-sweep: lifted the stop on {}: its bead condition was met", s.repo), Some(Lift { repo: s.repo.clone(), since: s.since }))),
+            Ok(true) => out.push((
+                format!("lift:{}:{}", s.repo, s.since),
+                format!(
+                    "pause-sweep: lifted the stop on {}: its bead condition was met",
+                    s.repo
+                ),
+                Some(Lift {
+                    repo: s.repo.clone(),
+                    since: s.since,
+                }),
+            )),
             Ok(false) => {}
-            Err(why) => out.push((format!("kept:{}:{}", s.repo, s.since), format!("pause-sweep: kept {}: {why}", s.repo), None)),
+            Err(why) => out.push((
+                format!("kept:{}:{}", s.repo, s.since),
+                format!("pause-sweep: kept {}: {why}", s.repo),
+                None,
+            )),
         }
     }
     out
@@ -181,18 +208,39 @@ fn findings(snap: &Snapshot) -> Vec<(String, String, Option<Lift>)> {
 /// `overdue_breach`, `mends_breach`, `fresh`, then `bead_condition` / `entered_state` per stop:
 /// a line for each finding not in `seen`, a lift for every stop reached, and `seen := ` this
 /// snapshot's keys. A lift repeats each tick until the stop is gone; its line does not.
-pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(
+    carry: &Carry,
+    snap: &Snapshot,
+    now_ms: u64,
+    _cfg: &Config,
+) -> (Carry, Vec<EffectSpec>) {
     let found = findings(snap);
     let mut acts = vec![];
     for (key, line, lift) in &found {
         if !carry.seen.contains(key) {
-            acts.push(EffectSpec::keyed(LOG_APPEND, format!("watch.mend:{key}:{now_ms}"), line.clone(), ACT_DEADLINE_MS));
+            acts.push(EffectSpec::keyed(
+                LOG_APPEND,
+                format!("watch.mend:{key}:{now_ms}"),
+                line.clone(),
+                ACT_DEADLINE_MS,
+            ));
         }
         if let Some(l) = lift {
-            acts.push(EffectSpec::keyed(LIFT_STOP, format!("watch.mend:lift:{}:{}", l.repo, l.since), serde_json::to_string(l).unwrap_or_default(), ACT_DEADLINE_MS));
+            acts.push(EffectSpec::keyed(
+                LIFT_STOP,
+                format!("watch.mend:lift:{}:{}", l.repo, l.since),
+                serde_json::to_string(l).unwrap_or_default(),
+                ACT_DEADLINE_MS,
+            ));
         }
     }
-    (Carry { seeded: true, seen: found.into_iter().map(|(k, _, _)| k).collect() }, acts)
+    (
+        Carry {
+            seeded: true,
+            seen: found.into_iter().map(|(k, _, _)| k).collect(),
+        },
+        acts,
+    )
 }
 
 const ACT_DEADLINE_MS: u64 = 5_000;
@@ -203,22 +251,43 @@ pub fn parse_breaches(out: &str, now: u64) -> (Vec<Overdue>, Vec<(String, u64)>)
     let (mut overdue, mut mends) = (vec![], vec![]);
     for line in out.lines() {
         if let Some(rest) = line.strip_prefix("MEND-WATCH OVERDUE ") {
-            let Some((id, tail)) = rest.split_once(" is MENDING ") else { continue };
-            let late: u64 = tail.split('s').next().and_then(|n| n.parse().ok()).unwrap_or(0);
+            let Some((id, tail)) = rest.split_once(" is MENDING ") else {
+                continue;
+            };
+            let late: u64 = tail
+                .split('s')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
             let mut parts = id.splitn(3, '#');
             if let (Some(b), Some(p), Some(su)) = (parts.next(), parts.next(), parts.next()) {
-                overdue.push(Overdue { batch: b.into(), pass: p.parse().unwrap_or(0), suite: su.into(), deadline: now.saturating_sub(late) });
+                overdue.push(Overdue {
+                    batch: b.into(),
+                    pass: p.parse().unwrap_or(0),
+                    suite: su.into(),
+                    deadline: now.saturating_sub(late),
+                });
             }
         } else if let Some(rest) = line.strip_prefix("MEND-WATCH MENDS ") {
-            let Some((bead, tail)) = rest.split_once(" was mended ") else { continue };
-            mends.push((bead.into(), tail.split(' ').next().and_then(|n| n.parse().ok()).unwrap_or(0)));
+            let Some((bead, tail)) = rest.split_once(" was mended ") else {
+                continue;
+            };
+            mends.push((
+                bead.into(),
+                tail.split(' ')
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(0),
+            ));
         }
     }
     (overdue, mends)
 }
 
 fn epoch_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// The probe: the store's `mend-watch` verb (no `--seen`; the carry is the seen set) and, per
@@ -226,26 +295,44 @@ fn epoch_now() -> u64 {
 pub fn observe(cfg: &Config) -> Result<Snapshot, String> {
     let lc = LcClient::configured()?;
     let now = epoch_now();
-    let out = lc.answer(&["mend-watch"]).map_err(|e| format!("cannot tell: {e}"))?;
+    let out = lc
+        .answer(&["mend-watch"])
+        .map_err(|e| format!("cannot tell: {e}"))?;
     let (overdue, mends) = parse_breaches(&out, now);
     let run = std::path::Path::new(&cfg.run);
     let mut stops = vec![];
     for s in scoped_stop::repo_stops(run) {
-        let Some(cond) = scoped_stop::bead_condition(&s.until) else { continue };
+        let Some(cond) = scoped_stop::bead_condition(&s.until) else {
+            continue;
+        };
         let (bead, state, reached) = match cond {
             Ok((bead, state)) => {
                 let reached = lc
                     .answer(&["history", bead.as_str(), "--machine", "bead"])
                     .map_err(|e| format!("cannot tell: {e}"))
-                    .and_then(|o| serde_json::from_str::<Vec<serde_json::Value>>(&o).map_err(|e| format!("cannot tell: history {bead}: {e}")))
+                    .and_then(|o| {
+                        serde_json::from_str::<Vec<serde_json::Value>>(&o)
+                            .map_err(|e| format!("cannot tell: history {bead}: {e}"))
+                    })
                     .map(|rows| scoped_stop::entered_state(&rows, &state, s.since));
                 (bead, state, reached)
             }
             Err(e) => (String::new(), String::new(), Err(e)),
         };
-        stops.push(Stop { repo: s.repo, bead, state, since: s.since, reached });
+        stops.push(Stop {
+            repo: s.repo,
+            bead,
+            state,
+            since: s.since,
+            reached,
+        });
     }
-    Ok(Snapshot { now, overdue, mends, stops })
+    Ok(Snapshot {
+        now,
+        overdue,
+        mends,
+        stops,
+    })
 }
 
 /// `run/mend-watch.log`, the `mend-watch|log` read contract: the line as is, no prefix.
@@ -255,7 +342,11 @@ pub fn log_append(cfg: &Config, line: &str) -> Result<String, String> {
         return Err("watch.mend: an empty log line is refused".into());
     }
     let path = std::path::Path::new(&cfg.run).join("mend-watch.log");
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     writeln!(f, "{line}").map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path.display().to_string())
 }
@@ -263,9 +354,13 @@ pub fn log_append(cfg: &Config, line: &str) -> Result<String, String> {
 /// `scoped_stop::unpause_repo` for the stop the decide found reached; a stop already gone or
 /// re-set since (a different `since`) is left alone.
 pub fn lift_stop(cfg: &Config, input: &str) -> Result<String, String> {
-    let lift: Lift = serde_json::from_str(input).map_err(|e| format!("watch.mend.lift_stop: {e}"))?;
+    let lift: Lift =
+        serde_json::from_str(input).map_err(|e| format!("watch.mend.lift_stop: {e}"))?;
     let run = std::path::Path::new(&cfg.run);
-    if !scoped_stop::repo_stops(run).iter().any(|s| s.repo == lift.repo && s.since == lift.since) {
+    if !scoped_stop::repo_stops(run)
+        .iter()
+        .any(|s| s.repo == lift.repo && s.since == lift.since)
+    {
         return Ok(format!("no stop on {} since {}", lift.repo, lift.since));
     }
     scoped_stop::unpause_repo(run, &lift.repo, &[]).map(|_| format!("lifted {}", lift.repo))
@@ -286,7 +381,9 @@ impl WatchMend {
     }
 
     pub fn pinned() -> Self {
-        WatchMend { config: Config::pinned() }
+        WatchMend {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -298,7 +395,10 @@ impl WatchMend {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("seeded"), runtime::rows::Part::Field("seen")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("seeded"),
+    runtime::rows::Part::Field("seen"),
+];
 
 impl Handler for WatchMend {
     fn interests(&self) -> &[EventKindTag] {
@@ -310,7 +410,13 @@ impl Handler for WatchMend {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
     }

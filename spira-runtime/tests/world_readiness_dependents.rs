@@ -20,7 +20,8 @@ struct Double {
 
 fn double(keys: &'static [&'static str]) -> Double {
     let dir = testkit::TempDir::new("world-readiness-dependents");
-    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_LC_STORE_PATH", "fixture/control.db")]);
+    let toml =
+        spira_config::process::fixture_toml(&dir, &[("SPIRA_LC_STORE_PATH", "fixture/control.db")]);
     let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
     let path = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&path).unwrap();
@@ -35,11 +36,24 @@ fn double(keys: &'static [&'static str]) -> Double {
             }
         })
     });
-    Double { _dir: dir, _env: env, world: World { lc_socket: path, ..World::default() }, sent }
+    Double {
+        _dir: dir,
+        _env: env,
+        world: World {
+            lc_socket: path,
+            ..World::default()
+        },
+        sent,
+    }
 }
 
 fn input(through: Option<u64>) -> String {
-    serde_json::to_string(&Pass { through, changed: 0, keys: vec![] }).unwrap()
+    serde_json::to_string(&Pass {
+        through,
+        changed: 0,
+        keys: vec![],
+    })
+    .unwrap()
 }
 
 #[test_id(txm0a0n)]
@@ -47,8 +61,18 @@ fn input(through: Option<u64>) -> String {
 fn the_first_pass_takes_the_head_as_its_baseline_and_judges_nothing() {
     let d = double(&[]);
     let out: Pass = serde_json::from_str(&d.world.readiness_look(&input(None)).unwrap()).unwrap();
-    assert_eq!(out, Pass { through: Some(90), changed: 0, keys: vec![] });
-    assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 18446744073709551615"]);
+    assert_eq!(
+        out,
+        Pass {
+            through: Some(90),
+            changed: 0,
+            keys: vec![]
+        }
+    );
+    assert_eq!(
+        *d.sent.lock().unwrap(),
+        ["event-seq --since 18446744073709551615"]
+    );
 }
 
 #[test_id(tjj56xr)]
@@ -63,8 +87,16 @@ fn a_later_pass_reads_since_the_carried_revision() {
 #[test]
 fn a_look_names_the_changed_keys_and_judges_nothing() {
     let d = double(&["sp-a", "sp-b"]);
-    let out: Pass = serde_json::from_str(&d.world.readiness_look(&input(Some(41))).unwrap()).unwrap();
-    assert_eq!(out, Pass { through: Some(90), changed: 0, keys: vec!["sp-a".into(), "sp-b".into()] });
+    let out: Pass =
+        serde_json::from_str(&d.world.readiness_look(&input(Some(41))).unwrap()).unwrap();
+    assert_eq!(
+        out,
+        Pass {
+            through: Some(90),
+            changed: 0,
+            keys: vec!["sp-a".into(), "sp-b".into()]
+        }
+    );
     assert_eq!(*d.sent.lock().unwrap(), ["event-seq --since 41"]);
 }
 
@@ -72,13 +104,24 @@ fn a_look_names_the_changed_keys_and_judges_nothing() {
 #[test]
 fn a_pass_with_keys_reads_no_event_seq_and_its_failed_judgement_fails_the_pass() {
     let d = double(&[]);
-    let keyed = serde_json::to_string(&Pass { through: Some(41), changed: 0, keys: vec!["sp-w".into()] }).unwrap();
+    let keyed = serde_json::to_string(&Pass {
+        through: Some(41),
+        changed: 0,
+        keys: vec!["sp-w".into()],
+    })
+    .unwrap();
     let err = d.world.readiness_dependents(&keyed).unwrap_err();
     assert!(err.contains("republish-dependents"), "{err}");
     assert!(d.sent.lock().unwrap().is_empty());
 }
 
-fn serve(replies: fn(&[String]) -> Option<String>) -> (testkit::TempDir, std::path::PathBuf, Arc<Mutex<Vec<String>>>) {
+fn serve(
+    replies: fn(&[String]) -> Option<String>,
+) -> (
+    testkit::TempDir,
+    std::path::PathBuf,
+    Arc<Mutex<Vec<String>>>,
+) {
     let dir = testkit::TempDir::new("event-seq-head");
     let path = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&path).unwrap();
@@ -117,9 +160,16 @@ fn reconcile_content_since_asks_the_store_from_the_cursor_and_reads_its_through_
         _ => None,
     });
     let lc = spira_store::lc_call::LcClient::socket(path);
-    let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "since:40").unwrap();
-    assert!(out.contains("\"through_seq\":52") && out.contains("\"pass\":\"since\""), "{out}");
-    assert_eq!(*sent.lock().unwrap(), ["reconcile-content --dry-run --since-seq 40"]);
+    let out =
+        spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "since:40").unwrap();
+    assert!(
+        out.contains("\"through_seq\":52") && out.contains("\"pass\":\"since\""),
+        "{out}"
+    );
+    assert_eq!(
+        *sent.lock().unwrap(),
+        ["reconcile-content --dry-run --since-seq 40"]
+    );
 }
 
 #[test_id(tm5t8t4)]
@@ -134,7 +184,10 @@ fn reconcile_content_full_reads_the_head_then_the_whole_dry_run() {
     let lc = spira_store::lc_call::LcClient::socket(path);
     let out = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "full").unwrap();
     assert!(out.contains("\"through_seq\":9"), "{out}");
-    assert_eq!(*sent.lock().unwrap(), ["event-seq --head", "reconcile-content --dry-run"]);
+    assert_eq!(
+        *sent.lock().unwrap(),
+        ["event-seq --head", "reconcile-content --dry-run"]
+    );
 }
 
 #[test_id(tvlwydr)]
@@ -143,7 +196,8 @@ fn reconcile_content_observe_names_an_unknown_input() {
     let _env = testkit::env_read();
     let (dir, path, _) = serve(|_| None);
     let lc = spira_store::lc_call::LcClient::socket(path);
-    let err = spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "weekly").unwrap_err();
+    let err =
+        spira_runtime::tasks::b::reconcile_content::observe(&lc, dir.path(), "weekly").unwrap_err();
     assert!(err.contains("weekly"), "{err}");
 }
 

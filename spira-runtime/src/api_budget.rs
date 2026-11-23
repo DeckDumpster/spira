@@ -57,7 +57,9 @@ pub fn rate(api: &str) -> Option<Rate> {
 
 /// The reset time (epoch seconds) when `api`'s budget is known to be spent and has not reset yet.
 pub fn exhausted_until(api: &str, now: u64) -> Option<u64> {
-    rate(api).filter(|r| r.remaining == 0 && r.reset > now).map(|r| r.reset)
+    rate(api)
+        .filter(|r| r.remaining == 0 && r.reset > now)
+        .map(|r| r.reset)
 }
 
 /// True the first time it is asked for this reset, so a spent budget is reported once per window.
@@ -80,7 +82,12 @@ pub fn keep(url: &str, etag: String, body: Value) {
 }
 
 pub fn calls(caller: &str, outcome: &'static str) -> u64 {
-    with(|l| l.calls.get(&(caller.to_string(), outcome)).copied().unwrap_or(0))
+    with(|l| {
+        l.calls
+            .get(&(caller.to_string(), outcome))
+            .copied()
+            .unwrap_or(0)
+    })
 }
 
 /// Pushes the calls counted since the last flush, by caller and outcome, and the budget last seen.
@@ -89,17 +96,42 @@ pub fn flush(endpoint: Option<&str>) {
 }
 
 fn flush_to(sink: &MetricsSink) {
-    let mut taken = with(|l| Ledger { calls: std::mem::take(&mut l.calls), rate: l.rate.clone(), ..Ledger::default() });
+    let mut taken = with(|l| Ledger {
+        calls: std::mem::take(&mut l.calls),
+        rate: l.rate.clone(),
+        ..Ledger::default()
+    });
     flush_ledger(&mut taken, sink);
 }
 
 fn flush_ledger(l: &mut Ledger, sink: &MetricsSink) {
-    let (calls, rates) = (std::mem::take(&mut l.calls), l.rate.values().copied().collect::<Vec<_>>());
+    let (calls, rates) = (
+        std::mem::take(&mut l.calls),
+        l.rate.values().copied().collect::<Vec<_>>(),
+    );
     for ((caller, outcome), n) in calls {
-        sink.push(&[Point::Count { name: CALLS, value: n }], &[("caller", &caller), ("outcome", outcome)]);
+        sink.push(
+            &[Point::Count {
+                name: CALLS,
+                value: n,
+            }],
+            &[("caller", &caller), ("outcome", outcome)],
+        );
     }
     if let Some(r) = rates.iter().min_by_key(|r| r.remaining) {
-        sink.push(&[Point::Gauge { name: REMAINING, value: r.remaining as f64 }, Point::Gauge { name: LIMIT, value: r.limit as f64 }], &[]);
+        sink.push(
+            &[
+                Point::Gauge {
+                    name: REMAINING,
+                    value: r.remaining as f64,
+                },
+                Point::Gauge {
+                    name: LIMIT,
+                    value: r.limit as f64,
+                },
+            ],
+            &[],
+        );
     }
 }
 
@@ -108,20 +140,31 @@ pub fn core_rate(json: &str) -> Option<Rate> {
     let v: Value = serde_json::from_str(json).ok()?;
     let core = v.get("resources")?.get("core")?;
     let n = |k: &str| core.get(k).and_then(Value::as_u64);
-    Some(Rate { limit: n("limit")?, remaining: n("remaining")?, reset: n("reset")? })
+    Some(Rate {
+        limit: n("limit")?,
+        remaining: n("remaining")?,
+        reset: n("reset")?,
+    })
 }
 
 /// The caller that spent most, and how much, among the exported `spira_gh_api_calls` series.
 pub fn top_spender(series: &[spira_otel::query::Exported]) -> Option<(String, u64)> {
     let mut by: BTreeMap<&str, f64> = BTreeMap::new();
     for s in series {
-        let Some(caller) = s.labels.get("caller") else { continue };
-        if !matches!(s.labels.get("outcome").map(String::as_str), Some(FRESH | FAILED)) {
+        let Some(caller) = s.labels.get("caller") else {
+            continue;
+        };
+        if !matches!(
+            s.labels.get("outcome").map(String::as_str),
+            Some(FRESH | FAILED)
+        ) {
             continue;
         }
         *by.entry(caller).or_default() += s.samples.iter().map(|(_, v)| v).sum::<f64>();
     }
-    by.into_iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(c, n)| (c.to_string(), n as u64))
+    by.into_iter()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(c, n)| (c.to_string(), n as u64))
 }
 
 pub fn clock_of(epoch: u64) -> String {
@@ -138,15 +181,36 @@ mod tests {
     #[test]
     fn a_flush_pushes_each_callers_count_by_outcome_and_the_lowest_budget_seen() {
         let mut l = Ledger::default();
-        l.rate.insert("flush-a".into(), Rate { limit: 5000, remaining: 4000, reset: 1 });
-        l.rate.insert("flush-b".into(), Rate { limit: 5000, remaining: 12, reset: 1 });
+        l.rate.insert(
+            "flush-a".into(),
+            Rate {
+                limit: 5000,
+                remaining: 4000,
+                reset: 1,
+            },
+        );
+        l.rate.insert(
+            "flush-b".into(),
+            Rate {
+                limit: 5000,
+                remaining: 12,
+                reset: 1,
+            },
+        );
         l.calls.insert(("flush-caller".into(), FRESH), 2);
         l.calls.insert(("flush-caller".into(), CACHED), 1);
         let (_, got) = fixture::capture(|sink| flush_ledger(&mut l, sink));
-        let calls: Vec<(u64, String)> = got.iter().filter(|s| s.name == CALLS && s.label("caller") == Some("flush-caller")).map(|s| (s.value as u64, s.label("outcome").unwrap().to_string())).collect();
+        let calls: Vec<(u64, String)> = got
+            .iter()
+            .filter(|s| s.name == CALLS && s.label("caller") == Some("flush-caller"))
+            .map(|s| (s.value as u64, s.label("outcome").unwrap().to_string()))
+            .collect();
         assert!(calls.iter().any(|c| c.0 == 2 && c.1 == FRESH), "{calls:?}");
         assert!(calls.iter().any(|c| c.0 == 1 && c.1 == CACHED), "{calls:?}");
-        let remaining = got.iter().find(|s| s.name == REMAINING).expect("remaining pushed");
+        let remaining = got
+            .iter()
+            .find(|s| s.name == REMAINING)
+            .expect("remaining pushed");
         assert_eq!(remaining.value, 12.0);
         assert!(got.iter().any(|s| s.name == LIMIT));
         assert!(l.calls.is_empty(), "a flush leaves nothing to count twice");
@@ -156,7 +220,14 @@ mod tests {
     #[test]
     fn the_core_budget_is_read_from_a_rate_limit_answer_and_nothing_else_is_taken_for_it() {
         let body = r#"{"resources":{"core":{"limit":5000,"remaining":0,"reset":1793003600},"graphql":{"limit":5000,"remaining":4999,"reset":1}}}"#;
-        assert_eq!(core_rate(body), Some(Rate { limit: 5000, remaining: 0, reset: 1_793_003_600 }));
+        assert_eq!(
+            core_rate(body),
+            Some(Rate {
+                limit: 5000,
+                remaining: 0,
+                reset: 1_793_003_600
+            })
+        );
         assert_eq!(core_rate(r#"{"message":"Bad credentials"}"#), None);
         assert_eq!(core_rate("not json"), None);
     }
@@ -165,16 +236,38 @@ mod tests {
     #[test]
     fn the_top_spender_is_the_caller_with_most_charged_calls() {
         let with = |caller: &str, outcome: &str, vals: &[f64]| spira_otel::query::Exported {
-            labels: [("caller".to_string(), caller.to_string()), ("outcome".to_string(), outcome.to_string())].into(),
-            samples: vals.iter().enumerate().map(|(i, v)| (i as i64, *v)).collect(),
+            labels: [
+                ("caller".to_string(), caller.to_string()),
+                ("outcome".to_string(), outcome.to_string()),
+            ]
+            .into(),
+            samples: vals
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i as i64, *v))
+                .collect(),
         };
         let series = |caller: &str, vals: &[f64]| with(caller, FRESH, vals);
-        let got = top_spender(&[series("a", &[3.0, 4.0]), series("b", &[20.0]), series("c", &[1.0])]);
+        let got = top_spender(&[
+            series("a", &[3.0, 4.0]),
+            series("b", &[20.0]),
+            series("c", &[1.0]),
+        ]);
         assert_eq!(got, Some(("b".to_string(), 20)));
-        let erroring = [with("e", FAILED, &[9.0]), with("e", CACHED, &[500.0]), series("a", &[5.0])];
+        let erroring = [
+            with("e", FAILED, &[9.0]),
+            with("e", CACHED, &[500.0]),
+            series("a", &[5.0]),
+        ];
         assert_eq!(top_spender(&erroring), Some(("e".to_string(), 9)));
-        let unlabelled = spira_otel::query::Exported { labels: Default::default(), samples: vec![(0, 99.0)] };
-        assert_eq!(top_spender(&[unlabelled, series("a", &[2.0])]), Some(("a".to_string(), 2)));
+        let unlabelled = spira_otel::query::Exported {
+            labels: Default::default(),
+            samples: vec![(0, 99.0)],
+        };
+        assert_eq!(
+            top_spender(&[unlabelled, series("a", &[2.0])]),
+            Some(("a".to_string(), 2))
+        );
         assert_eq!(top_spender(&[]), None);
     }
 }

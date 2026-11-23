@@ -30,7 +30,10 @@ impl World {
     }
 
     fn stub(&self, name: &str, body: &str) {
-        testkit::write_exe(self.release().join("bin").join(name), &format!("#!/bin/sh\n{body}\n"));
+        testkit::write_exe(
+            self.release().join("bin").join(name),
+            &format!("#!/bin/sh\n{body}\n"),
+        );
     }
 
     fn command(&self, bin: &str) -> Command {
@@ -38,28 +41,53 @@ impl World {
         c.env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default())
             .env("SPIRA_TOML", &self.toml)
-            .env("SPIRA_HOME", spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree"))
+            .env(
+                "SPIRA_HOME",
+                spira_config::resolve::locate_home_for_process()
+                    .expect("SPIRA_HOME names the harness tree"),
+            )
             .env("SPIRA_RELEASE", self.release())
             .env("HOME", self.dir.join("home"));
         c
     }
 
     fn effects(&self) -> Effects {
-        let world = spira_runtime::world::World { run_dir: self.dir.join("run"), lc_socket: self.socket.clone(), ..Default::default() };
-        Effects { world, ..Effects::default() }
+        let world = spira_runtime::world::World {
+            run_dir: self.dir.join("run"),
+            lc_socket: self.socket.clone(),
+            ..Default::default()
+        };
+        Effects {
+            world,
+            ..Effects::default()
+        }
     }
 
     /// One scheduler pass: observe, decide, run each effect it decided.
     fn tick(&self, e: &Effects) -> Vec<String> {
         let spec = runtime::EffectSpec::probe(broker_exec::OBSERVE, "", 10_000);
-        let snap: Snapshot = serde_json::from_str(&e.run(&spec.key, &spec).expect("the probe answers")).unwrap();
-        broker_exec::decide(&snap).iter().map(|s| e.run(&s.key, s).unwrap_or_else(|err| format!("failed: {err}"))).collect()
+        let snap: Snapshot =
+            serde_json::from_str(&e.run(&spec.key, &spec).expect("the probe answers")).unwrap();
+        broker_exec::decide(&snap)
+            .iter()
+            .map(|s| {
+                e.run(&s.key, s)
+                    .unwrap_or_else(|err| format!("failed: {err}"))
+            })
+            .collect()
     }
 
     /// Runs the `work` client with `args` while the scheduler ticks, and returns its exit code and output.
     fn work(&self, persona: &str, args: &[&str]) -> (i32, String, Vec<String>) {
         let e = self.effects();
-        let child = self.command("work").env("SPIRA_RUNE", persona).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("work runs");
+        let child = self
+            .command("work")
+            .env("SPIRA_RUNE", persona)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("work runs");
         let (tx, rx) = std::sync::mpsc::channel();
         let waiter = std::thread::spawn(move || {
             let out = child.wait_with_output().unwrap();
@@ -67,20 +95,38 @@ impl World {
             out
         });
         let mut ran = Vec::new();
-        while rx.recv_timeout(Duration::from_millis(50)).is_err() { // clock-safe: the scheduler's tick cadence; the client's exit is the signal waited on
+        while rx.recv_timeout(Duration::from_millis(50)).is_err() {
+            // clock-safe: the scheduler's tick cadence; the client's exit is the signal waited on
             ran.extend(self.tick(&e));
         }
         let out = waiter.join().unwrap();
-        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
         (out.status.code().unwrap_or(-1), text, ran)
     }
 
     fn spans(&self, name: &str) -> Vec<serde_json::Value> {
         let mut out = vec![];
-        for f in std::fs::read_dir(self.dir.join("run/otel")).into_iter().flatten().flatten() {
-            for line in std::fs::read_to_string(f.path()).unwrap_or_default().lines() {
+        for f in std::fs::read_dir(self.dir.join("run/otel"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            for line in std::fs::read_to_string(f.path())
+                .unwrap_or_default()
+                .lines()
+            {
                 let r: serde_json::Value = serde_json::from_str(line).unwrap();
-                for span in r["resourceSpans"].as_array().into_iter().flatten().flat_map(|r| r["scopeSpans"].as_array().into_iter().flatten()).flat_map(|s| s["spans"].as_array().into_iter().flatten()) {
+                for span in r["resourceSpans"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|r| r["scopeSpans"].as_array().into_iter().flatten())
+                    .flat_map(|s| s["spans"].as_array().into_iter().flatten())
+                {
                     if name.is_empty() || span["name"] == name {
                         out.push(span.clone());
                     }
@@ -105,16 +151,43 @@ fn world() -> World {
     std::fs::create_dir_all(dir.join("release/bin")).unwrap();
     std::fs::create_dir_all(dir.join("home")).unwrap();
     let store = dir.join("control.db");
-    drop(SqliteBackend::open(&store, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap());
+    drop(
+        SqliteBackend::open(
+            &store,
+            Options {
+                max_read_ms: testkit::LOADED_HOST_MAX_READ_MS,
+                ..Options::default()
+            },
+        )
+        .unwrap(),
+    );
     let socket = dir.join("lc.sock");
-    let (d, r, s, sock) = (dir.display().to_string(), run.display().to_string(), store.display().to_string(), socket.display().to_string());
-    let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_WORKSPACES", &d), ("SPIRA_RUN", &r), ("SPIRA_LC_STORE_PATH", &s), ("SPIRA_LC_SOCKET", &sock), ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9")]);
+    let (d, r, s, sock) = (
+        dir.display().to_string(),
+        run.display().to_string(),
+        store.display().to_string(),
+        socket.display().to_string(),
+    );
+    let toml = spira_config::process::fixture_toml(
+        &dir,
+        &[
+            ("SPIRA_WORKSPACES", &d),
+            ("SPIRA_RUN", &r),
+            ("SPIRA_LC_STORE_PATH", &s),
+            ("SPIRA_LC_SOCKET", &sock),
+            ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"),
+        ],
+    );
     let mut server = Command::new(testkit::bin_exe("spira-lc"))
         .arg("serve")
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("SPIRA_TOML", &toml)
-        .env("SPIRA_HOME", spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree"))
+        .env(
+            "SPIRA_HOME",
+            spira_config::resolve::locate_home_for_process()
+                .expect("SPIRA_HOME names the harness tree"),
+        )
         .env("SPIRA_RELEASE", dir.join("release"))
         .env("HOME", dir.join("home"))
         .stderr(Stdio::piped())
@@ -124,28 +197,58 @@ fn world() -> World {
     let (mut line, mut said) = (String::new(), String::new());
     while !line.contains(" ready after ") {
         line.clear();
-        assert!(stderr.read_line(&mut line).unwrap() > 0, "the server stopped before it said ready: {said}");
+        assert!(
+            stderr.read_line(&mut line).unwrap() > 0,
+            "the server stopped before it said ready: {said}"
+        );
         said.push_str(&line);
     }
     std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()));
     let env = testkit::env(&[
         ("SPIRA_TOML", Some(toml.to_str().unwrap())),
         ("SPIRA_RELEASE", Some(dir.join("release").to_str().unwrap())),
-        ("SPIRA_HOME", Some(spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree").to_str().unwrap())),
+        (
+            "SPIRA_HOME",
+            Some(
+                spira_config::resolve::locate_home_for_process()
+                    .expect("SPIRA_HOME names the harness tree")
+                    .to_str()
+                    .unwrap(),
+            ),
+        ),
         ("HOME", Some(dir.join("home").to_str().unwrap())),
     ]);
-    let w = World { _env: env, dir, toml, socket, server };
-    std::os::unix::fs::symlink(testkit::bin_exe("spira-lc"), w.release().join("bin/spira-lc")).unwrap();
+    let w = World {
+        _env: env,
+        dir,
+        toml,
+        socket,
+        server,
+    };
+    std::os::unix::fs::symlink(
+        testkit::bin_exe("spira-lc"),
+        w.release().join("bin/spira-lc"),
+    )
+    .unwrap();
     w
 }
 
 fn attr(span: &serde_json::Value, key: &str) -> Option<i64> {
-    let a = span["attributes"].as_array()?.iter().find(|a| a["key"] == key)?;
-    a["value"]["intValue"].as_i64().or_else(|| a["value"]["intValue"].as_str()?.parse().ok())
+    let a = span["attributes"]
+        .as_array()?
+        .iter()
+        .find(|a| a["key"] == key)?;
+    a["value"]["intValue"]
+        .as_i64()
+        .or_else(|| a["value"]["intValue"].as_str()?.parse().ok())
 }
 
 fn nanos(span: &serde_json::Value, key: &str) -> u64 {
-    span[key].as_str().and_then(|n| n.parse().ok()).or_else(|| span[key].as_u64()).unwrap_or(0)
+    span[key]
+        .as_str()
+        .and_then(|n| n.parse().ok())
+        .or_else(|| span[key].as_u64())
+        .unwrap_or(0)
 }
 
 fn marker(w: &World, name: &str) -> String {
@@ -168,23 +271,48 @@ fn a_tool_verb_is_recorded_by_the_service_and_run_by_the_scheduler_in_work_exec(
     let w = world();
     w.stub("groomer", &format!("sleep 1\n{}", who_ran_me(&w, "swept")));
     let (code, out, ran) = w.work("groomer", &["groom", "sweep"]);
-    assert_eq!((code, out.trim()), (0, "swept"), "the client prints the program's answer: {out}");
-    assert!(ran.iter().any(|r| r.contains("ran, exit 0")), "the scheduler ran the request: {ran:?}");
-    assert!(marker(&w, "ran-by").contains("work-exec"), "the program ran under work-exec, not the service: {}", marker(&w, "ran-by"));
+    assert_eq!(
+        (code, out.trim()),
+        (0, "swept"),
+        "the client prints the program's answer: {out}"
+    );
+    assert!(
+        ran.iter().any(|r| r.contains("ran, exit 0")),
+        "the scheduler ran the request: {ran:?}"
+    );
+    assert!(
+        marker(&w, "ran-by").contains("work-exec"),
+        "the program ran under work-exec, not the service: {}",
+        marker(&w, "ran-by")
+    );
     let spans = w.spans("work");
     assert_eq!(spans.len(), 1, "the service served the one verb: {spans:?}");
-    assert_eq!(attr(&spans[0], "spira.children"), None, "the service started no program for it: {:?}", spans[0]["attributes"]);
-    assert!(nanos(&spans[0], "endTimeUnixNano") - nanos(&spans[0], "startTimeUnixNano") < 900_000_000, "the service answered inside the program's second");
+    assert_eq!(
+        attr(&spans[0], "spira.children"),
+        None,
+        "the service started no program for it: {:?}",
+        spans[0]["attributes"]
+    );
+    assert!(
+        nanos(&spans[0], "endTimeUnixNano") - nanos(&spans[0], "startTimeUnixNano") < 900_000_000,
+        "the service answered inside the program's second"
+    );
 }
 
 #[test_id(tbheoky)]
 #[test]
 fn a_killed_runner_leaves_the_request_finished_124_and_the_client_prints_why() {
     let w = world();
-    w.stub("groomer", "ppid=$(awk '{print $4}' /proc/$PPID/stat)\nkill -9 $ppid\nsleep 1");
+    w.stub(
+        "groomer",
+        "ppid=$(awk '{print $4}' /proc/$PPID/stat)\nkill -9 $ppid\nsleep 1",
+    );
     let (code, out, _) = w.work("groomer", &["groom", "sweep"]);
     assert_eq!(code, 124, "{out}");
-    assert!(out.contains("before recording an answer") && out.contains("stage: running"), "the reason names how the runner ended: {out}");
+    assert!(
+        out.contains("before recording an answer") && out.contains("stage: running"),
+        "the reason names how the runner ended: {out}"
+    );
 }
 
 #[test_id(t5rmm18)]
@@ -195,20 +323,46 @@ fn a_request_the_ledger_has_run_is_not_run_again_after_the_scheduler_restarts() 
     let (code, _, ran) = w.work("groomer", &["groom", "sweep"]);
     assert_eq!(code, 0);
     assert_eq!(marker(&w, "ran.count").lines().count(), 1);
-    let id = ran.iter().find(|r| r.contains("ran, exit 0")).and_then(|r| r.split(':').next()).expect("it ran once").to_string();
-    let replayed = broker_exec::decide(&Snapshot { queued: vec![broker_exec::Entry { id: id.clone(), bound_ms: 300_000 }], ..Snapshot::default() });
+    let id = ran
+        .iter()
+        .find(|r| r.contains("ran, exit 0"))
+        .and_then(|r| r.split(':').next())
+        .expect("it ran once")
+        .to_string();
+    let replayed = broker_exec::decide(&Snapshot {
+        queued: vec![broker_exec::Entry {
+            id: id.clone(),
+            bound_ms: 300_000,
+        }],
+        ..Snapshot::default()
+    });
     let out = w.effects().run(&replayed[0].key, &replayed[0]).unwrap();
-    assert!(out.contains("already ran"), "a restart replays the effect and the ledger answers: {out}");
-    assert_eq!(marker(&w, "ran.count").lines().count(), 1, "the program did not run twice");
+    assert!(
+        out.contains("already ran"),
+        "a restart replays the effect and the ledger answers: {out}"
+    );
+    assert_eq!(
+        marker(&w, "ran.count").lines().count(),
+        1,
+        "the program did not run twice"
+    );
 }
 
 #[test_id(tmvlyfb)]
 #[test]
-fn a_restart_while_a_request_is_running_leaves_it_to_its_runner_and_the_client_gets_that_runners_answer() {
+fn a_restart_while_a_request_is_running_leaves_it_to_its_runner_and_the_client_gets_that_runners_answer(
+) {
     let w = world();
     w.stub("groomer", &who_ran_me(&w, "swept"));
     let e = w.effects();
-    let client = w.command("work").env("SPIRA_RUNE", "groomer").args(["groom", "sweep"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().expect("work runs");
+    let client = w
+        .command("work")
+        .env("SPIRA_RUNE", "groomer")
+        .args(["groom", "sweep"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("work runs");
     let spec = runtime::EffectSpec::probe(broker_exec::OBSERVE, "", 10_000);
     let snap = loop {
         let snap: Snapshot = serde_json::from_str(&e.run(&spec.key, &spec).unwrap()).unwrap();
@@ -219,13 +373,31 @@ fn a_restart_while_a_request_is_running_leaves_it_to_its_runner_and_the_client_g
     };
     let id = snap.queued[0].id.clone();
     let lc = spira_store::lc_call::LcClient::socket(&w.socket);
-    lc.answer(&["work-request", "take", &id]).expect("a runner of the old scheduler takes it");
+    lc.answer(&["work-request", "take", &id])
+        .expect("a runner of the old scheduler takes it");
     let restarted = w.effects();
     let again = broker_exec::decide(&snap);
     let out = restarted.run(&again[0].key, &again[0]).unwrap();
-    assert!(out.contains("not queued"), "the new scheduler finds it taken: {out}");
-    assert_eq!(marker(&w, "ran.count"), "", "the program has not run: the new scheduler did not run it a second time");
-    lc.call_stdin(&["work-request", "finish", &id, "--code", "0"], "from the old runner").unwrap();
+    assert!(
+        out.contains("not queued"),
+        "the new scheduler finds it taken: {out}"
+    );
+    assert_eq!(
+        marker(&w, "ran.count"),
+        "",
+        "the program has not run: the new scheduler did not run it a second time"
+    );
+    lc.call_stdin(
+        &["work-request", "finish", &id, "--code", "0"],
+        "from the old runner",
+    )
+    .unwrap();
     let out = client.wait_with_output().unwrap();
-    assert_eq!((out.status.code(), String::from_utf8_lossy(&out.stdout).trim()), (Some(0), "from the old runner"));
+    assert_eq!(
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).trim()
+        ),
+        (Some(0), "from the old runner")
+    );
 }

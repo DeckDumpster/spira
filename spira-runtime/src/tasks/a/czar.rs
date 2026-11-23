@@ -140,9 +140,24 @@ pub const OBSERVE_DEADLINE_MS: u64 = 10_000;
 /// A batch that closed without landing never produces the base run that settles it; the entry expires instead.
 pub const BASE_PENDING_MAX_AGE_MS: u64 = 6 * 3_600_000;
 
-pub const ACTS: &[(&str, u64)] = &[(FILE_INCIDENT, 30_000), (FILE_BASE_RED, 30_000), (RERUN_WORKFLOW, 60_000), (RESTART_LANDING, 10_000), (STATUS, 5_000), (INBOX_APPEND, 10_000)];
+pub const ACTS: &[(&str, u64)] = &[
+    (FILE_INCIDENT, 30_000),
+    (FILE_BASE_RED, 30_000),
+    (RERUN_WORKFLOW, 60_000),
+    (RESTART_LANDING, 10_000),
+    (STATUS, 5_000),
+    (INBOX_APPEND, 10_000),
+];
 pub const EMITS: &[EventKindTag] = &[CALL_REQUESTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, FILE_INCIDENT, FILE_BASE_RED, RERUN_WORKFLOW, RESTART_LANDING, STATUS, INBOX_APPEND];
+pub const EFFECTS: &[&str] = &[
+    OBSERVE,
+    FILE_INCIDENT,
+    FILE_BASE_RED,
+    RERUN_WORKFLOW,
+    RESTART_LANDING,
+    STATUS,
+    INBOX_APPEND,
+];
 pub const KEYS: &[&str] = &[
     "SPIRA_LOOP_STALL_SECS",
     "SPIRA_CI_QUEUED_MAX_SECS",
@@ -173,9 +188,26 @@ pub const UNREGISTERED: &[&str] = &[];
 
 /// The nine invariants with a detector; a per-repo class is keyed `<class>:<repo>`. `starved`
 /// is registered and has none.
-pub const CLASSES: &[&str] = &["deadlock", "attribution-failed", "sort-failed", "loop-stalled", "ci-stalled", "ci-red", "base-red", "pool-idle", "reconciler-stale"];
+pub const CLASSES: &[&str] = &[
+    "deadlock",
+    "attribution-failed",
+    "sort-failed",
+    "loop-stalled",
+    "ci-stalled",
+    "ci-red",
+    "base-red",
+    "pool-idle",
+    "reconciler-stale",
+];
 
-pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
+pub const SHAPE: Shape = Shape {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    observe: OBSERVE,
+    observe_deadline_ms: OBSERVE_DEADLINE_MS,
+};
 
 /// A field as the probe read it: unreadable is `Unobservable`, never satisfied (sp-pu7v6).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,14 +328,30 @@ pub struct Policy {
 impl Policy {
     /// The policy from the pinned keys; a threshold that does not parse refuses naming its key.
     pub fn from_pinned(pinned: &BTreeMap<String, String>) -> Result<Policy, String> {
-        let secs = |k: &str| -> Result<u64, String> { pinned.get(k).ok_or_else(|| format!("{k} is not pinned"))?.trim().parse().map_err(|_| format!("{k} must be a non-negative integer")) };
+        let secs = |k: &str| -> Result<u64, String> {
+            pinned
+                .get(k)
+                .ok_or_else(|| format!("{k} is not pinned"))?
+                .trim()
+                .parse()
+                .map_err(|_| format!("{k} must be a non-negative integer"))
+        };
         let stages = CLASSES
             .iter()
             .chain(&["starved"])
             .map(|c| {
                 let key = format!("SPIRA_CZAR_STAGE_{}", c.to_uppercase().replace('-', "_"));
-                let v = pinned.get(&key).ok_or_else(|| format!("{key} is not pinned"))?;
-                Ok((c.to_string(), if v.trim() == "act" { Stage::Act } else { Stage::Shadow }))
+                let v = pinned
+                    .get(&key)
+                    .ok_or_else(|| format!("{key} is not pinned"))?;
+                Ok((
+                    c.to_string(),
+                    if v.trim() == "act" {
+                        Stage::Act
+                    } else {
+                        Stage::Shadow
+                    },
+                ))
             })
             .collect::<Result<_, String>>()?;
         Ok(Policy {
@@ -406,13 +454,33 @@ impl Pass<'_> {
             if h == HysteresisState::default() {
                 self.next.keys.remove(key);
             } else {
-                self.next.keys.insert(key.into(), KeyState { phase: Phase::Satisfied, since_ms: v.since.unwrap_or(0) * 1000, hysteresis: h });
+                self.next.keys.insert(
+                    key.into(),
+                    KeyState {
+                        phase: Phase::Satisfied,
+                        since_ms: v.since.unwrap_or(0) * 1000,
+                        hysteresis: h,
+                    },
+                );
             }
             return (v, false);
         }
         let fresh = matches!(prev.phase, Phase::Satisfied) || v.remedy_failed;
-        let phase = if v.remedy_failed { Phase::RemedyFailed } else if prev.phase == Phase::Satisfied { Phase::Gap } else { prev.phase };
-        self.next.keys.insert(key.into(), KeyState { phase, since_ms: v.since.unwrap_or(self.now) * 1000, hysteresis: h });
+        let phase = if v.remedy_failed {
+            Phase::RemedyFailed
+        } else if prev.phase == Phase::Satisfied {
+            Phase::Gap
+        } else {
+            prev.phase
+        };
+        self.next.keys.insert(
+            key.into(),
+            KeyState {
+                phase,
+                since_ms: v.since.unwrap_or(self.now) * 1000,
+                hysteresis: h,
+            },
+        );
         (v, fresh)
     }
 
@@ -432,7 +500,11 @@ impl Pass<'_> {
             Remedy::Rerun(repo, run) => {
                 let desc = format!("workflow-rerun {run} ({repo})");
                 if act {
-                    self.acts.push(Act::new(RERUN_WORKFLOW, format!("{repo}:{run}")).with_input(serde_json::json!({"repo": repo, "run_id": run}).to_string()));
+                    self.acts.push(
+                        Act::new(RERUN_WORKFLOW, format!("{repo}:{run}")).with_input(
+                            serde_json::json!({"repo": repo, "run_id": run}).to_string(),
+                        ),
+                    );
                 } else {
                     self.would(class, "det", &desc);
                 }
@@ -444,9 +516,19 @@ impl Pass<'_> {
             Remedy::File(mut f) => {
                 f.labels = self.labels.clone();
                 if act {
-                    let effect = if f.cause == "base-red" { FILE_BASE_RED } else { FILE_INCIDENT };
-                    self.acts.push(Act::new(effect, f.reference.clone()).with_input(serde_json::to_string(&f).unwrap_or_default()));
-                    self.acts.push(Act::new(CALL_REQUESTED, "czar").with_input(serde_json::json!({"rune": "czar"}).to_string()));
+                    let effect = if f.cause == "base-red" {
+                        FILE_BASE_RED
+                    } else {
+                        FILE_INCIDENT
+                    };
+                    self.acts.push(
+                        Act::new(effect, f.reference.clone())
+                            .with_input(serde_json::to_string(&f).unwrap_or_default()),
+                    );
+                    self.acts.push(
+                        Act::new(CALL_REQUESTED, "czar")
+                            .with_input(serde_json::json!({"rune": "czar"}).to_string()),
+                    );
                 } else {
                     self.would(class, "inference", &f.subject);
                 }
@@ -457,7 +539,8 @@ impl Pass<'_> {
 
     fn would(&mut self, class: &str, kind: &str, desc: &str) {
         let line = czar_pass::would_line(&self.iso, class, kind, desc);
-        self.acts.push(Act::new(INBOX_APPEND, &line).with_input(line));
+        self.acts
+            .push(Act::new(INBOX_APPEND, &line).with_input(line));
     }
 
     fn status(&mut self, key: &str, v: &Verdict, before: Option<&KeyState>) {
@@ -469,12 +552,22 @@ impl Pass<'_> {
                 RawStatus::Unobservable { .. } => "unobservable",
                 RawStatus::Deliberate { .. } => "deliberate",
             };
-            self.acts.push(Act::new(STATUS, format!("{key}:{}", self.now)).with_input(serde_json::json!({"key": key, "status": word, "since": v.since}).to_string()));
+            self.acts
+                .push(Act::new(STATUS, format!("{key}:{}", self.now)).with_input(
+                    serde_json::json!({"key": key, "status": word, "since": v.since}).to_string(),
+                ));
         }
     }
 
     /// Judge `key`, remedy it on a fresh gap, and report its status when its phase moved.
-    fn run(&mut self, class: &str, key: &str, raw: RawStatus, grace: u64, remedy: impl FnOnce(&Verdict) -> Remedy) {
+    fn run(
+        &mut self,
+        class: &str,
+        key: &str,
+        raw: RawStatus,
+        grace: u64,
+        remedy: impl FnOnce(&Verdict) -> Remedy,
+    ) {
         let before = self.next.keys.get(key).cloned();
         let unobservable = matches!(raw, RawStatus::Unobservable { .. });
         let (v, fresh) = self.judge(key, raw, grace);
@@ -501,7 +594,14 @@ fn unobservable(why: impl Into<String>) -> RawStatus {
 /// The nine detectors over the snapshot, each key's hysteresis advanced once.
 pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let now = snap.now_ms / 1000;
-    let mut p = Pass { policy, now, iso: czar_pass::iso_of(now), next: carry.clone(), acts: vec![], labels: String::new() };
+    let mut p = Pass {
+        policy,
+        now,
+        iso: czar_pass::iso_of(now),
+        next: carry.clone(),
+        acts: vec![],
+        labels: String::new(),
+    };
     // The probe reads the landing outcomes after the carried cursor; the cursor moves to the last.
     let cursor = carry.cursor_ms.unwrap_or(0);
     p.next.mark = snap.mark.clone();
@@ -515,13 +615,22 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
         }
     }
     let seen = |kind: &str| events.as_ref().map(|e| e.iter().any(|x| x.kind == kind));
-    let line_class = |p: &mut Pass, class: &str, kind: &str, raw: fn(bool) -> RawStatus, filing: (&str, &str), body: &str| {
+    let line_class = |p: &mut Pass,
+                      class: &str,
+                      kind: &str,
+                      raw: fn(bool) -> RawStatus,
+                      filing: (&str, &str),
+                      body: &str| {
         let raw = match seen(kind) {
             Ok(s) => raw(s),
             Err(why) => unobservable(why),
         };
         let (reference, subject) = filing;
-        p.run(class, class, raw, 0, |_| Remedy::File(czar_pass::Filing::queue(class, reference, subject, body, "")));
+        p.run(class, class, raw, 0, |_| {
+            Remedy::File(czar_pass::Filing::queue(
+                class, reference, subject, body, "",
+            ))
+        });
     };
     // deadlock: a rerun of the open batch's run first, then an inference.
     {
@@ -529,28 +638,46 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
             Ok(s) => czar_pass::deadlock(s),
             Err(why) => unobservable(why),
         };
-        let rerun = snap.open_batch.iter().find_map(|(repo, b)| match (b, snap.ci.get(repo)) {
-            (Read::Observed(Some(_)), Some(Read::Observed(Ci { run_id: Some(r), .. }))) => Some((repo.clone(), r.clone())),
-            _ => None,
-        });
+        let rerun = snap
+            .open_batch
+            .iter()
+            .find_map(|(repo, b)| match (b, snap.ci.get(repo)) {
+                (
+                    Read::Observed(Some(_)),
+                    Some(Read::Observed(Ci {
+                        run_id: Some(r), ..
+                    })),
+                ) => Some((repo.clone(), r.clone())),
+                _ => None,
+            });
         let (reference, subject) = czar_pass::deadlock_filing();
         let body = "verdict left the batch PR open after a red with no attributable suite.\nThe queue cannot advance until the batch is closed or requeued by hand.\n";
         p.run("deadlock", "deadlock", raw, 0, |v| match rerun {
             Some((repo, run)) if !v.remedy_failed => Remedy::Rerun(repo, run),
-            _ => Remedy::File(czar_pass::Filing::queue("deadlock", reference, subject, body, "")),
+            _ => Remedy::File(czar_pass::Filing::queue(
+                "deadlock", reference, subject, body, "",
+            )),
         });
     }
     line_class(&mut p, "attribution-failed", REQUEUED_ALL_EVENT, czar_pass::attribution_failed, czar_pass::attribution_filing(), "Attribution found no branch to isolate the offender.\nThe entire batch was requeued with the failing member still in it; this loops.\n");
     line_class(&mut p, "sort-failed", SORT_FAILED_EVENT, czar_pass::sort_failed, czar_pass::sort_filing(), "The queue sorter failed and fell back to unranked order.\nPriority ordering is suspended until the sorter recovers.\n");
     {
         let raw = match &snap.last_landing_pass_at_ms {
-            Read::Observed(at) => czar_pass::loop_stalled(now, at.map(|ms| ms / 1000), policy.loop_stall_secs),
+            Read::Observed(at) => {
+                czar_pass::loop_stalled(now, at.map(|ms| ms / 1000), policy.loop_stall_secs)
+            }
             Read::Unobservable(why) => unobservable(why.clone()),
         };
         let stall = policy.loop_stall_secs;
         p.run("loop-stalled", "loop-stalled", raw, 0, |v| {
             let age = v.since.map_or(0, |s| now.saturating_sub(s));
-            Remedy::File(czar_pass::Filing::queue("loop-stalled", "loop-stalled", &format!("QUEUE: landing loop stalled — no pass for {age}s"), &format!("No landing pass completed in the last {age}s (threshold: {stall}s).\n"), ""))
+            Remedy::File(czar_pass::Filing::queue(
+                "loop-stalled",
+                "loop-stalled",
+                &format!("QUEUE: landing loop stalled — no pass for {age}s"),
+                &format!("No landing pass completed in the last {age}s (threshold: {stall}s).\n"),
+                "",
+            ))
         });
     }
     for (repo, batch) in &snap.open_batch {
@@ -561,12 +688,31 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
         let (cis_key, cir_key) = (format!("ci-stalled:{safe}"), format!("ci-red:{safe}"));
         let (cis, cir, run_id) = match (batch, snap.ci.get(repo)) {
             (Read::Observed(None), _) => continue,
-            (Read::Unobservable(why), _) => (unobservable(format!("{repo}: whether a batch is open: {why}")), unobservable(format!("{repo}: whether a batch is open: {why}")), None),
+            (Read::Unobservable(why), _) => (
+                unobservable(format!("{repo}: whether a batch is open: {why}")),
+                unobservable(format!("{repo}: whether a batch is open: {why}")),
+                None,
+            ),
             (Read::Observed(Some(_)), None) => continue,
-            (Read::Observed(Some(_)), Some(Read::Unobservable(why))) => (unobservable(format!("{repo}: batch-ci-status: {why}")), unobservable(format!("{repo}: batch-ci-status: {why}")), None),
+            (Read::Observed(Some(_)), Some(Read::Unobservable(why))) => (
+                unobservable(format!("{repo}: batch-ci-status: {why}")),
+                unobservable(format!("{repo}: batch-ci-status: {why}")),
+                None,
+            ),
             (Read::Observed(Some(_)), Some(Read::Observed(ci))) => (
-                czar_pass::ci_stalled(now, repo, ci.queued_since_ms.map(|ms| ms / 1000), policy.ci_queued_max_secs),
-                czar_pass::ci_red(now, repo, ci.conclusion.as_deref(), ci.completed_at_ms.map(|ms| ms / 1000), policy.ci_red_max_secs),
+                czar_pass::ci_stalled(
+                    now,
+                    repo,
+                    ci.queued_since_ms.map(|ms| ms / 1000),
+                    policy.ci_queued_max_secs,
+                ),
+                czar_pass::ci_red(
+                    now,
+                    repo,
+                    ci.conclusion.as_deref(),
+                    ci.completed_at_ms.map(|ms| ms / 1000),
+                    policy.ci_red_max_secs,
+                ),
                 ci.run_id.clone(),
             ),
         };
@@ -584,22 +730,53 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
         });
     }
     for (repo, since) in &carry.base_pending {
-        let in_flight = matches!(snap.open_batch.get(repo), Some(Read::Observed(Some(_)))) && snap.ci.contains_key(repo);
+        let in_flight = matches!(snap.open_batch.get(repo), Some(Read::Observed(Some(_))))
+            && snap.ci.contains_key(repo);
         let landed = matches!(snap.base_ci.get(repo), Some(Read::Observed(b)) if b.no_runs || (b.conclusion.is_some() && b.completed_at_ms.is_some_and(|at| at > *since)));
         let expired = snap.now_ms.saturating_sub(*since) > BASE_PENDING_MAX_AGE_MS;
         if !in_flight && (landed || expired) {
             p.next.base_pending.remove(repo);
         }
     }
-    let watched: Vec<String> = snap.base_ci.keys().chain(p.next.base_pending.keys()).map(|r| czar_pass::repo_safe(r)).collect();
-    p.next.keys.retain(|k, _| k.strip_prefix("base-red:").is_none_or(|r| r.starts_with("gh-budget") || watched.iter().any(|w| w == r)));
-    let unreadable = snap.base_ci.values().any(|b| !matches!(b, Read::Observed(_)));
+    let watched: Vec<String> = snap
+        .base_ci
+        .keys()
+        .chain(p.next.base_pending.keys())
+        .map(|r| czar_pass::repo_safe(r))
+        .collect();
+    p.next.keys.retain(|k, _| {
+        k.strip_prefix("base-red:")
+            .is_none_or(|r| r.starts_with("gh-budget") || watched.iter().any(|w| w == r))
+    });
+    let unreadable = snap
+        .base_ci
+        .values()
+        .any(|b| !matches!(b, Read::Observed(_)));
     if let (Some(spent), true) = (&snap.gh_budget, unreadable) {
         let until = crate::api_budget::clock_of(spent.reset);
-        let who = spent.top_spender.as_ref().map_or("no caller is named by the panel".to_string(), |(c, n)| format!("top spender in the last hour: {c} ({n} calls)"));
+        let who = spent
+            .top_spender
+            .as_ref()
+            .map_or("no caller is named by the panel".to_string(), |(c, n)| {
+                format!("top spender in the last hour: {c} ({n} calls)")
+            });
         let why = format!("the GitHub API budget is spent until {until}");
         let body = format!("Base CI status could not be read for the repositories whose read failed: {why} (epoch {}).\n{who}.\nA base whose status cannot be read is treated as failed, not green; it is read again after the reset.\n", spent.reset);
-        p.run("base-red", "base-red:gh-budget", unobservable(why), policy.base_ci_unreadable_grace_secs, |_| Remedy::File(czar_pass::Filing::base_red(&format!("gh-budget:{}", spent.reset), &format!("QUEUE: the GitHub API budget is spent until {until} — {who}"), &body, "", "")));
+        p.run(
+            "base-red",
+            "base-red:gh-budget",
+            unobservable(why),
+            policy.base_ci_unreadable_grace_secs,
+            |_| {
+                Remedy::File(czar_pass::Filing::base_red(
+                    &format!("gh-budget:{}", spent.reset),
+                    &format!("QUEUE: the GitHub API budget is spent until {until} — {who}"),
+                    &body,
+                    "",
+                    "",
+                ))
+            },
+        );
     }
     for (repo, base) in &snap.base_ci {
         if snap.gh_budget.is_some() && !matches!(base, Read::Observed(_)) {
@@ -615,7 +792,15 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
                 let raw = czar_pass::base_red(repo, "base", b.conclusion.as_deref());
                 let suites = czar_pass::suite_key(&b.red_suites);
                 let body = format!("{repo}'s own base gate run completed red.\n\nfailing suites   {suites}\nbase sha         {}\nrun url          {}\n", b.head_sha, b.run_url.as_deref().unwrap_or("(no run url)"));
-                p.run("base-red", &key, raw, 0, |_| Remedy::File(czar_pass::Filing::base_red(&format!("{repo}:{suites}"), &format!("QUEUE: {repo}'s base is red — {suites}"), &body, repo, "")));
+                p.run("base-red", &key, raw, 0, |_| {
+                    Remedy::File(czar_pass::Filing::base_red(
+                        &format!("{repo}:{suites}"),
+                        &format!("QUEUE: {repo}'s base is red — {suites}"),
+                        &body,
+                        repo,
+                        "",
+                    ))
+                });
             }
             other => {
                 let why = match other {
@@ -623,21 +808,44 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
                     _ => format!("{repo}'s base CI status returned no run information"),
                 };
                 let body = format!("{repo}'s base CI status could not be read: {why}.\nA base whose status cannot be read is treated as failed, not green.\n");
-                p.run("base-red", &key, unobservable(why), policy.base_ci_unreadable_grace_secs, |_| Remedy::File(czar_pass::Filing::base_red(&format!("{repo}:unreadable"), &format!("QUEUE: {repo}'s base CI status could not be read"), &body, repo, "")));
+                p.run(
+                    "base-red",
+                    &key,
+                    unobservable(why),
+                    policy.base_ci_unreadable_grace_secs,
+                    |_| {
+                        Remedy::File(czar_pass::Filing::base_red(
+                            &format!("{repo}:unreadable"),
+                            &format!("QUEUE: {repo}'s base CI status could not be read"),
+                            &body,
+                            repo,
+                            "",
+                        ))
+                    },
+                );
             }
         }
     }
     for (repo, certified) in &snap.certified {
         let safe = czar_pass::repo_safe(repo);
         let key = format!("pool-idle:{safe}");
-        let raw = match (read(snap.open_batch.get(repo)), certified, snap.open_rounds.get(repo)) {
+        let raw = match (
+            read(snap.open_batch.get(repo)),
+            certified,
+            snap.open_rounds.get(repo),
+        ) {
             (_, _, Some(Read::Observed(rounds))) if *rounds > 0 => RawStatus::Satisfied,
             _ if snap.batcher_held.contains_key(repo) => RawStatus::Satisfied,
             (Err(why), _, _) => unobservable(format!("{repo}: {why}")),
             (_, Read::Unobservable(why), _) => unobservable(format!("{repo}: {why}")),
             (_, _, Some(Read::Unobservable(why))) => unobservable(format!("{repo}: {why}")),
             (_, _, None) => unobservable(format!("{repo}: open rounds not read")),
-            (Ok(open), Read::Observed(c), Some(Read::Observed(_))) => czar_pass::pool_idle(repo, open.flatten().is_some(), c.len() as u64, policy.queue_round_min_n),
+            (Ok(open), Read::Observed(c), Some(Read::Observed(_))) => czar_pass::pool_idle(
+                repo,
+                open.flatten().is_some(),
+                c.len() as u64,
+                policy.queue_round_min_n,
+            ),
         };
         let min_n = policy.queue_round_min_n;
         p.run("pool-idle", &key, raw, policy.queue_round_stall_secs, |v| {
@@ -647,11 +855,23 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
     }
     {
         let raw = match &snap.reconciler_last_pass_ms {
-            Read::Observed(at) => czar_pass::reconciler_stale(now, at.map(|ms| ms / 1000), policy.reconciler_grace_secs),
+            Read::Observed(at) => czar_pass::reconciler_stale(
+                now,
+                at.map(|ms| ms / 1000),
+                policy.reconciler_grace_secs,
+            ),
             Read::Unobservable(why) => unobservable(why.clone()),
         };
         let grace = policy.reconciler_grace_secs;
-        p.run("reconciler-stale", "reconciler-stale", raw, grace, |_| Remedy::File(czar_pass::Filing::queue("reconciler-stale", "reconciler-stale", "RECONCILER: no pass completed — reconciler is not running", &format!("The reconciler has not completed a pass within {grace}s.\n"), "")));
+        p.run("reconciler-stale", "reconciler-stale", raw, grace, |_| {
+            Remedy::File(czar_pass::Filing::queue(
+                "reconciler-stale",
+                "reconciler-stale",
+                "RECONCILER: no pass completed — reconciler is not running",
+                &format!("The reconciler has not completed a pass within {grace}s.\n"),
+                "",
+            ))
+        });
     }
     let Pass { next, acts, .. } = p;
     (next, acts)
@@ -661,12 +881,21 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
 fn labels(pinned: &BTreeMap<String, String>) -> String {
     let get = |k: &str| pinned.get(k).cloned().unwrap_or_default();
     let (scope, czar) = (get("SPIRA_SCOPE_LABEL"), get("SPIRA_CZAR_LABEL"));
-    if scope.is_empty() { czar } else { format!("{scope},{czar}") }
+    if scope.is_empty() {
+        czar
+    } else {
+        format!("{scope},{czar}")
+    }
 }
 
 /// `snap` with each repo the batcher holds, and the reason it recorded; a hold with no reason is not one.
 pub fn with_batcher_holds(mut snap: Snapshot, batcher: &batcher_local::Carry) -> Snapshot {
-    snap.batcher_held = batcher.repos.iter().filter(|(_, rc)| rc.state == batcher_local::State::Held).filter_map(|(n, rc)| rc.skip_why.clone().map(|w| (n.clone(), w))).collect();
+    snap.batcher_held = batcher
+        .repos
+        .iter()
+        .filter(|(_, rc)| rc.state == batcher_local::State::Held)
+        .filter_map(|(n, rc)| rc.skip_why.clone().map(|w| (n.clone(), w)))
+        .collect();
     snap
 }
 
@@ -679,12 +908,22 @@ pub struct Czar {
 
 impl Czar {
     pub fn new(policy: Policy) -> Self {
-        Czar { cadence: Cadence::Every(CADENCE_MS), policy, pinned: BTreeMap::new() }
+        Czar {
+            cadence: Cadence::Every(CADENCE_MS),
+            policy,
+            pinned: BTreeMap::new(),
+        }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
         let pinned = kit::pin(settings, NAME, KEYS);
-        Czar { pinned: pinned.clone(), ..Self::new(Policy::from_pinned(&pinned).unwrap_or_else(|e| panic!("{NAME} refuses to build: {e}"))) }
+        Czar {
+            pinned: pinned.clone(),
+            ..Self::new(
+                Policy::from_pinned(&pinned)
+                    .unwrap_or_else(|e| panic!("{NAME} refuses to build: {e}")),
+            )
+        }
     }
 
     pub fn registration(self) -> Registration {
@@ -705,7 +944,18 @@ pub struct ObserveIn {
     pub pinned: BTreeMap<String, String>,
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "keys", drop: &[] }, runtime::rows::Part::Field("cursor_ms"), runtime::rows::Part::Field("mark"), runtime::rows::Part::Map { name: "base_pending", drop: &[] }];
+pub const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Map {
+        name: "keys",
+        drop: &[],
+    },
+    runtime::rows::Part::Field("cursor_ms"),
+    runtime::rows::Part::Field("mark"),
+    runtime::rows::Part::Map {
+        name: "base_pending",
+        drop: &[],
+    },
+];
 
 impl Handler for Czar {
     fn interests(&self) -> &[EventKindTag] {
@@ -718,16 +968,46 @@ impl Handler for Czar {
         }
         let carry: Carry = kit::carry(&SHAPE, view);
         if ev.kind.tag == TICK {
-            let input = ObserveIn { carry: carry.clone(), pinned: self.pinned.clone() };
-            return kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), self.cadence.next_after(ev.at));
+            let input = ObserveIn {
+                carry: carry.clone(),
+                pinned: self.pinned.clone(),
+            };
+            return kit::on_tick(
+                &SHAPE,
+                serde_json::to_string(&input).unwrap_or_default(),
+                self.cadence.next_after(ev.at),
+            );
         }
-        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
-        let snap = with_batcher_holds(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));
+        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else {
+            return vec![];
+        };
+        let snap = with_batcher_holds(
+            snap,
+            &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view),
+        );
         let (next, mut acts) = decide(&self.policy, &carry, &snap);
         let labels = labels(&self.pinned);
-        for a in acts.iter_mut().filter(|a| a.effect == FILE_INCIDENT || a.effect == FILE_BASE_RED) {
+        for a in acts
+            .iter_mut()
+            .filter(|a| a.effect == FILE_INCIDENT || a.effect == FILE_BASE_RED)
+        {
             if let Ok(mut f) = serde_json::from_str::<czar_pass::Filing>(&a.input) {
-                f.labels = if a.effect == FILE_BASE_RED { format!("{}plan", if self.pinned.get("SPIRA_SCOPE_LABEL").is_some_and(|s| !s.is_empty()) { format!("{},", self.pinned["SPIRA_SCOPE_LABEL"]) } else { String::new() }) } else { labels.clone() };
+                f.labels = if a.effect == FILE_BASE_RED {
+                    format!(
+                        "{}plan",
+                        if self
+                            .pinned
+                            .get("SPIRA_SCOPE_LABEL")
+                            .is_some_and(|s| !s.is_empty())
+                        {
+                            format!("{},", self.pinned["SPIRA_SCOPE_LABEL"])
+                        } else {
+                            String::new()
+                        }
+                    )
+                } else {
+                    labels.clone()
+                };
                 a.input = serde_json::to_string(&f).unwrap_or_default();
             }
         }
@@ -739,34 +1019,60 @@ impl Handler for Czar {
 // The runners.
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// The landing log's outcomes and last completed pass from the bytes past `mark`, and the mark
 /// they were read to. A file unchanged since the mark is stat'ed and not opened.
-fn landing_log(run: &std::path::Path, mark: &Mark) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>, Mark) {
+fn landing_log(
+    run: &std::path::Path,
+    mark: &Mark,
+) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>, Mark) {
     use std::io::{BufRead, Seek, SeekFrom};
     use std::os::unix::fs::MetadataExt;
     let path = run.join("landing.log");
     let unreadable = |e: std::io::Error| {
         let why = format!("{}: {e}", path.display());
-        (Read::Unobservable(why.clone()), Read::Unobservable(why), mark.clone())
+        (
+            Read::Unobservable(why.clone()),
+            Read::Unobservable(why),
+            mark.clone(),
+        )
     };
     let meta = match std::fs::metadata(&path) {
         Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Read::Observed(vec![]), Read::Observed(None), Mark::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (
+                Read::Observed(vec![]),
+                Read::Observed(None),
+                Mark::default(),
+            )
+        }
         Err(e) => return unreadable(e),
     };
     let same_file = meta.dev() == mark.dev && meta.ino() == mark.ino;
     if same_file && meta.len() == mark.offset {
         return (Read::Observed(vec![]), mark.last_pass.clone(), mark.clone());
     }
-    let (start, mut last) = if same_file && meta.len() > mark.offset { (mark.offset, mark.last_pass.clone()) } else { (0, Read::Observed(None)) };
-    let mut reader = match std::fs::File::open(&path).and_then(|mut f| f.seek(SeekFrom::Start(start)).map(|_| std::io::BufReader::new(f))) {
+    let (start, mut last) = if same_file && meta.len() > mark.offset {
+        (mark.offset, mark.last_pass.clone())
+    } else {
+        (0, Read::Observed(None))
+    };
+    let mut reader = match std::fs::File::open(&path).and_then(|mut f| {
+        f.seek(SeekFrom::Start(start))
+            .map(|_| std::io::BufReader::new(f))
+    }) {
         Ok(r) => r,
         Err(e) => return unreadable(e),
     };
-    let at = |l: &str| l.get(..20).and_then(czar_pass::parse_iso_to_epoch).map(|s| s * 1000);
+    let at = |l: &str| {
+        l.get(..20)
+            .and_then(czar_pass::parse_iso_to_epoch)
+            .map(|s| s * 1000)
+    };
     let (mut events, mut offset, mut buf) = (vec![], start, vec![]);
     loop {
         buf.clear();
@@ -785,7 +1091,10 @@ fn landing_log(run: &std::path::Path, mark: &Mark) -> (Read<Vec<LandingEvent>>, 
         if l.contains(czar_pass::PASS_COMPLETE_LINE) {
             last = match at(l) {
                 Some(ms) => Read::Observed(Some(ms)),
-                None => Read::Unobservable(format!("landing.log timestamp unparseable: {:?}", l.get(..20))),
+                None => Read::Unobservable(format!(
+                    "landing.log timestamp unparseable: {:?}",
+                    l.get(..20)
+                )),
             };
         }
         let kind = if l.contains(czar_pass::DEADLOCK_LINE) {
@@ -798,10 +1107,19 @@ fn landing_log(run: &std::path::Path, mark: &Mark) -> (Read<Vec<LandingEvent>>, 
             continue;
         };
         if let Some(at_ms) = at(l) {
-            events.push(LandingEvent { kind: kind.into(), repo: String::new(), at_ms });
+            events.push(LandingEvent {
+                kind: kind.into(),
+                repo: String::new(),
+                at_ms,
+            });
         }
     }
-    let next = Mark { dev: meta.dev(), ino: meta.ino(), offset, last_pass: last.clone() };
+    let next = Mark {
+        dev: meta.dev(),
+        ino: meta.ino(),
+        offset,
+        last_pass: last.clone(),
+    };
     (Read::Observed(events), last, next)
 }
 
@@ -819,17 +1137,33 @@ pub struct RepoRow {
 
 /// The forge's reads for the snapshot: each repo's batch CI and its base CI. `forge` is called
 /// with (checkout path, branch).
-pub fn forge_reads(rows: &[RepoRow], batches: &BTreeMap<String, Read<Option<Batch>>>, carry: &Carry, forge: &dyn Fn(&str, &str) -> Result<String, String>) -> (BTreeMap<String, Read<Ci>>, BTreeMap<String, Read<BaseCi>>) {
+pub fn forge_reads(
+    rows: &[RepoRow],
+    batches: &BTreeMap<String, Read<Option<Batch>>>,
+    carry: &Carry,
+    forge: &dyn Fn(&str, &str) -> Result<String, String>,
+) -> (BTreeMap<String, Read<Ci>>, BTreeMap<String, Read<BaseCi>>) {
     let (mut ci, mut base_ci) = (BTreeMap::new(), BTreeMap::new());
     for row in rows {
         let batch = batches.get(&row.name);
-        let in_flight = row.land == "queue" && matches!(batch, Some(Read::Observed(Some(b))) if b.pr.is_some() && !b.branch.is_empty());
-        let trailing = carry.base_pending.contains_key(&row.name) && matches!(batch, Some(Read::Observed(_)));
+        let in_flight = row.land == "queue"
+            && matches!(batch, Some(Read::Observed(Some(b))) if b.pr.is_some() && !b.branch.is_empty());
+        let trailing =
+            carry.base_pending.contains_key(&row.name) && matches!(batch, Some(Read::Observed(_)));
         if let (true, Some(Read::Observed(Some(b)))) = (in_flight, batch) {
             let read = match forge(&row.root, &b.branch) {
                 Ok(out) => {
-                    let num = |k: &str| czar_pass::parse_field(&out, k).and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000);
-                    Read::Observed(Ci { queued_since_ms: num("queued-since"), run_id: czar_pass::parse_field(&out, "run-id").filter(|r| !r.is_empty()), conclusion: czar_pass::parse_field(&out, "run-conclusion"), completed_at_ms: num("run-completed-at") })
+                    let num = |k: &str| {
+                        czar_pass::parse_field(&out, k)
+                            .and_then(|v| v.trim().parse::<u64>().ok())
+                            .map(|s| s * 1000)
+                    };
+                    Read::Observed(Ci {
+                        queued_since_ms: num("queued-since"),
+                        run_id: czar_pass::parse_field(&out, "run-id").filter(|r| !r.is_empty()),
+                        conclusion: czar_pass::parse_field(&out, "run-conclusion"),
+                        completed_at_ms: num("run-completed-at"),
+                    })
                 }
                 Err(err) => Read::Unobservable(err),
             };
@@ -838,15 +1172,28 @@ pub fn forge_reads(rows: &[RepoRow], batches: &BTreeMap<String, Read<Option<Batc
         if let (true, Some(base)) = ((in_flight || trailing), row.landref.as_deref()) {
             let branch = base.split_once('/').map_or(base, |(_, b)| b);
             let read = match forge(&row.root, branch) {
-                Ok(out) if czar_pass::parse_field(&out, "run-id").is_some() => Read::Observed(BaseCi {
-                    conclusion: czar_pass::parse_field(&out, "run-conclusion"),
-                    head_sha: czar_pass::parse_field(&out, "head-sha").unwrap_or_else(|| "unknown".into()),
-                    run_url: czar_pass::parse_field(&out, "run-url"),
-                    red_suites: out.lines().filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string)).collect(),
-                    completed_at_ms: czar_pass::parse_field(&out, "run-completed-at").and_then(|v| v.trim().parse::<u64>().ok()).map(|s| s * 1000),
-                    no_runs: false,
-                }),
-                Ok(out) if czar_pass::parse_field(&out, "runs").as_deref() == Some("0") => Read::Observed(BaseCi { no_runs: true, ..BaseCi::default() }),
+                Ok(out) if czar_pass::parse_field(&out, "run-id").is_some() => {
+                    Read::Observed(BaseCi {
+                        conclusion: czar_pass::parse_field(&out, "run-conclusion"),
+                        head_sha: czar_pass::parse_field(&out, "head-sha")
+                            .unwrap_or_else(|| "unknown".into()),
+                        run_url: czar_pass::parse_field(&out, "run-url"),
+                        red_suites: out
+                            .lines()
+                            .filter_map(|l| l.strip_prefix("red-suite: ").map(str::to_string))
+                            .collect(),
+                        completed_at_ms: czar_pass::parse_field(&out, "run-completed-at")
+                            .and_then(|v| v.trim().parse::<u64>().ok())
+                            .map(|s| s * 1000),
+                        no_runs: false,
+                    })
+                }
+                Ok(out) if czar_pass::parse_field(&out, "runs").as_deref() == Some("0") => {
+                    Read::Observed(BaseCi {
+                        no_runs: true,
+                        ..BaseCi::default()
+                    })
+                }
                 Ok(_) => Read::Observed(BaseCi::default()),
                 Err(err) => Read::Unobservable(err),
             };
@@ -867,7 +1214,13 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         Read::Observed(e) => Read::Observed(e.into_iter().filter(|e| e.at_ms > cursor).collect()),
         other => other,
     };
-    let mut snap = Snapshot { landing_events, last_landing_pass_at_ms, mark, now_ms: now_ms(), ..Snapshot::default() };
+    let mut snap = Snapshot {
+        landing_events,
+        last_landing_pass_at_ms,
+        mark,
+        now_ms: now_ms(),
+        ..Snapshot::default()
+    };
     let stamp = run.join("reconciler-pass.stamp");
     snap.reconciler_last_pass_ms = match std::fs::read_to_string(&stamp) {
         Ok(t) => match t.trim().parse::<u64>() {
@@ -876,25 +1229,48 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         },
         Err(_) => Read::Observed(None),
     };
-    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
+    let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket)
+        .within(std::time::Duration::from_secs(5));
     let views = store_view::Projection::hot(lc.clone());
-    let refreshed = views.as_ref().map_err(Clone::clone).and_then(|v| v.batches_current().map_err(String::from));
+    let refreshed = views
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|v| v.batches_current().map_err(String::from));
     let home = spira_config::resolve::locate_home_for_process()?;
-    let reg = spira_config::repos::Registry::from_env(std::env::vars().chain(req.pinned.clone()).collect(), &home);
+    let reg = spira_config::repos::Registry::from_env(
+        std::env::vars().chain(req.pinned.clone()).collect(),
+        &home,
+    );
     let gh_pinned = req.pinned.get("SPIRA_GH").cloned().unwrap_or_default();
     let metrics = req.pinned.get("SPIRA_METRICS_ENDPOINT").cloned();
-    let forge = req.pinned.get("SPIRA_FORGE").cloned().unwrap_or_else(|| "forge".into());
+    let forge = req
+        .pinned
+        .get("SPIRA_FORGE")
+        .cloned()
+        .unwrap_or_else(|| "forge".into());
     let mut rows = vec![];
     for name in reg.all() {
         let land = reg.land(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|b| !b.is_empty());
-        let Some(path) = reg.root(&name).filter(|p| !p.is_empty()) else { continue };
+        let Some(path) = reg.root(&name).filter(|p| !p.is_empty()) else {
+            continue;
+        };
         let batch = match (&views, &refreshed) {
             (Ok(v), Ok(())) => match v.batch_view(&name) {
                 Ok(view) => {
                     let shown = view.value.shown();
-                    let kv: BTreeMap<&str, &str> = shown.lines().filter_map(|l| l.split_once('=')).collect();
-                    Read::Observed((!shown.trim().is_empty()).then(|| Batch { pr: kv.get("pr").and_then(|p| p.trim().parse().ok()), branch: kv.get("branch").unwrap_or(&"").to_string(), members: kv.get("members").map(|m| m.split_whitespace().map(str::to_string).collect()).unwrap_or_default() }))
+                    let kv: BTreeMap<&str, &str> =
+                        shown.lines().filter_map(|l| l.split_once('=')).collect();
+                    Read::Observed((!shown.trim().is_empty()).then(|| {
+                        Batch {
+                            pr: kv.get("pr").and_then(|p| p.trim().parse().ok()),
+                            branch: kv.get("branch").unwrap_or(&"").to_string(),
+                            members: kv
+                                .get("members")
+                                .map(|m| m.split_whitespace().map(str::to_string).collect())
+                                .unwrap_or_default(),
+                        }
+                    }))
                 }
                 Err(err) => Read::Unobservable(format!("could not say: {err}")),
             },
@@ -908,15 +1284,28 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
                     Ok(view) => Read::Observed(view.value.rounds.len() as u64),
                     Err(err) => Read::Unobservable(format!("could not say: {err}")),
                 },
-                (Err(err), _) | (_, Err(err)) => Read::Unobservable(format!("could not say: {err}")),
+                (Err(err), _) | (_, Err(err)) => {
+                    Read::Unobservable(format!("could not say: {err}"))
+                }
             };
             snap.open_rounds.insert(name.clone(), rounds);
         }
-        rows.push(RepoRow { name: name.clone(), land, root: path, landref });
+        rows.push(RepoRow {
+            name: name.clone(),
+            land,
+            root: path,
+            landref,
+        });
         snap.open_batch.insert(name, batch);
     }
-    (snap.ci, snap.base_ci) = forge_reads(&rows, &snap.open_batch, &req.carry, &|path, branch| forge_status(&forge, path, branch));
-    if snap.base_ci.values().any(|b| matches!(b, Read::Unobservable(_))) {
+    (snap.ci, snap.base_ci) = forge_reads(&rows, &snap.open_batch, &req.carry, &|path, branch| {
+        forge_status(&forge, path, branch)
+    });
+    if snap
+        .base_ci
+        .values()
+        .any(|b| matches!(b, Read::Unobservable(_)))
+    {
         snap.gh_budget = spent_budget(&gh_pinned, metrics.as_deref(), snap.now_ms / 1000);
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
@@ -925,10 +1314,24 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
 /// Set when `gh api rate_limit` (not charged) says the core budget is zero until a future reset.
 fn spent_budget(gh: &str, metrics: Option<&str>, now: u64) -> Option<SpentBudget> {
     let gh = if gh.is_empty() { "gh" } else { gh };
-    let out = spira_config::bounded::bounded(gh).args(["api", "rate_limit"]).output().ok().filter(|o| o.status.success())?;
-    let rate = crate::api_budget::core_rate(&String::from_utf8_lossy(&out.stdout)).filter(|r| r.remaining == 0 && r.reset > now)?;
-    let top_spender = spira_otel::query::Store::new(metrics).ok().and_then(|s| s.export(crate::api_budget::CALLS, now.saturating_sub(3600)).ok()).and_then(|series| crate::api_budget::top_spender(&series));
-    Some(SpentBudget { reset: rate.reset, top_spender })
+    let out = spira_config::bounded::bounded(gh)
+        .args(["api", "rate_limit"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let rate = crate::api_budget::core_rate(&String::from_utf8_lossy(&out.stdout))
+        .filter(|r| r.remaining == 0 && r.reset > now)?;
+    let top_spender = spira_otel::query::Store::new(metrics)
+        .ok()
+        .and_then(|s| {
+            s.export(crate::api_budget::CALLS, now.saturating_sub(3600))
+                .ok()
+        })
+        .and_then(|series| crate::api_budget::top_spender(&series));
+    Some(SpentBudget {
+        reset: rate.reset,
+        top_spender,
+    })
 }
 
 /// The repo's unheld CERTIFIED beads: held rows when the process keeps the store's watch (a
@@ -961,11 +1364,15 @@ pub fn file(input: &str) -> Result<String, String> {
 
 /// `czar.rerun_workflow`: the forge library re-dispatches the run.
 pub fn rerun_workflow(input: &str) -> Result<String, String> {
-    let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{RERUN_WORKFLOW}: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(input).map_err(|e| format!("{RERUN_WORKFLOW}: {e}"))?;
     let repo = v["repo"].as_str().unwrap_or_default();
     let home = spira_config::resolve::locate_home_for_process()?;
     let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
-    let path = reg.root(repo).filter(|p| !p.is_empty()).ok_or_else(|| format!("{RERUN_WORKFLOW}: {repo} has no checkout registered"))?;
+    let path = reg
+        .root(repo)
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| format!("{RERUN_WORKFLOW}: {repo} has no checkout registered"))?;
     let forge = spira_config::process::cfg("SPIRA_FORGE").unwrap_or_else(|_| "forge".into());
     czar_pass::rerun_workflow(&forge, &path, v["run_id"].as_str().unwrap_or_default())
 }
@@ -985,8 +1392,13 @@ pub fn restart_landing(e: &Effects) -> Result<String, String> {
 /// `czar.status`: one key's status row in the metrics store.
 pub fn status(e: &Effects, input: &str) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{STATUS}: {e}"))?;
-    let fields: Vec<(String, serde_json::Value)> = ["key", "status", "since"].iter().map(|k| (k.to_string(), v[*k].clone())).collect();
-    tsd::store::Pusher::new(e.world.metrics_endpoint.clone()).push("czar-status", &tsd::now_iso(), &fields).map_err(|e| e.to_string())?;
+    let fields: Vec<(String, serde_json::Value)> = ["key", "status", "since"]
+        .iter()
+        .map(|k| (k.to_string(), v[*k].clone()))
+        .collect();
+    tsd::store::Pusher::new(e.world.metrics_endpoint.clone())
+        .push("czar-status", &tsd::now_iso(), &fields)
+        .map_err(|e| e.to_string())?;
     Ok(v["key"].as_str().unwrap_or_default().to_string())
 }
 
@@ -994,7 +1406,11 @@ pub fn status(e: &Effects, input: &str) -> Result<String, String> {
 /// [`spira_store::lc_state::Row`], which takes `holds` as an array or as the JSON-encoded string
 /// spira-lc may write. A held row is not pool: reading the string form as unheld miscounted it.
 pub fn unheld_ids(list_json: &str) -> Result<Vec<String>, String> {
-    Ok(spira_store::lc_state::parse_rows(list_json)?.into_iter().filter(|r| r.holds.is_empty()).map(|r| r.bead_id).collect())
+    Ok(spira_store::lc_state::parse_rows(list_json)?
+        .into_iter()
+        .filter(|r| r.holds.is_empty())
+        .map(|r| r.bead_id)
+        .collect())
 }
 
 #[cfg(test)]
@@ -1006,18 +1422,41 @@ mod tests {
     const NOW: u64 = 1_793_000_000_000;
 
     fn policy() -> Policy {
-        Policy { stages: CLASSES.iter().map(|c| (c.to_string(), Stage::Shadow)).collect(), loop_stall_secs: 900, ci_queued_max_secs: 1_800, ci_red_max_secs: 3_600, base_ci_unreadable_grace_secs: 600, reconciler_grace_secs: 600, queue_round_min_n: 2, queue_round_stall_secs: 1_800 }
+        Policy {
+            stages: CLASSES
+                .iter()
+                .map(|c| (c.to_string(), Stage::Shadow))
+                .collect(),
+            loop_stall_secs: 900,
+            ci_queued_max_secs: 1_800,
+            ci_red_max_secs: 3_600,
+            base_ci_unreadable_grace_secs: 600,
+            reconciler_grace_secs: 600,
+            queue_round_min_n: 2,
+            queue_round_stall_secs: 1_800,
+        }
     }
 
     fn row(name: &str, land: &str) -> RepoRow {
-        RepoRow { name: name.into(), land: land.into(), root: format!("r/{name}"), landref: Some("origin/main".into()) }
+        RepoRow {
+            name: name.into(),
+            land: land.into(),
+            root: format!("r/{name}"),
+            landref: Some("origin/main".into()),
+        }
     }
 
     fn open(pr: Option<u64>, branch: &str) -> Read<Option<Batch>> {
-        Read::Observed(Some(Batch { pr, branch: branch.into(), members: vec![] }))
+        Read::Observed(Some(Batch {
+            pr,
+            branch: branch.into(),
+            members: vec![],
+        }))
     }
 
-    fn counted(calls: &RefCell<Vec<(String, String)>>) -> impl Fn(&str, &str) -> Result<String, String> + '_ {
+    fn counted(
+        calls: &RefCell<Vec<(String, String)>>,
+    ) -> impl Fn(&str, &str) -> Result<String, String> + '_ {
         move |path, branch| {
             calls.borrow_mut().push((path.into(), branch.into()));
             Ok("run-id: 7\nrun-conclusion: success\n".into())
@@ -1027,8 +1466,19 @@ mod tests {
     #[test_id(twypigu)]
     #[test]
     fn an_idle_pass_asks_the_forge_nothing() {
-        let rows = [row("fa", "queue"), row("fb", "queue"), row("lo", "queue.local"), row("pr", "pr")];
-        let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Observed(None)), ("fb".to_string(), open(None, "spira/batch/b")), ("lo".to_string(), open(Some(3), "spira/round/1")), ("pr".to_string(), Read::Observed(None))].into();
+        let rows = [
+            row("fa", "queue"),
+            row("fb", "queue"),
+            row("lo", "queue.local"),
+            row("pr", "pr"),
+        ];
+        let batches: BTreeMap<_, _> = [
+            ("fa".to_string(), Read::Observed(None)),
+            ("fb".to_string(), open(None, "spira/batch/b")),
+            ("lo".to_string(), open(Some(3), "spira/round/1")),
+            ("pr".to_string(), Read::Observed(None)),
+        ]
+        .into();
         let calls = RefCell::new(vec![]);
         let (ci, base_ci) = forge_reads(&rows, &batches, &Carry::default(), &counted(&calls));
         assert_eq!(calls.borrow().len(), 0, "{:?}", calls.borrow());
@@ -1036,17 +1486,34 @@ mod tests {
     }
 
     fn base_run(completed_s: u64) -> Result<String, String> {
-        Ok(format!("run-id: 9\nrun-conclusion: success\nrun-completed-at: {completed_s}\n"))
+        Ok(format!(
+            "run-id: 9\nrun-conclusion: success\nrun-completed-at: {completed_s}\n"
+        ))
     }
 
     #[test_id(towglzx)]
     #[test]
     fn an_in_flight_forge_batch_reads_its_branch_and_the_base_only() {
-        let rows = [row("fa", "queue"), row("fb", "queue"), row("lo", "queue.local")];
-        let batches: BTreeMap<_, _> = [("fa".to_string(), open(Some(12), "spira/batch/x")), ("fb".to_string(), Read::Observed(None)), ("lo".to_string(), open(Some(3), "spira/round/1"))].into();
+        let rows = [
+            row("fa", "queue"),
+            row("fb", "queue"),
+            row("lo", "queue.local"),
+        ];
+        let batches: BTreeMap<_, _> = [
+            ("fa".to_string(), open(Some(12), "spira/batch/x")),
+            ("fb".to_string(), Read::Observed(None)),
+            ("lo".to_string(), open(Some(3), "spira/round/1")),
+        ]
+        .into();
         let calls = RefCell::new(vec![]);
         let (ci, base_ci) = forge_reads(&rows, &batches, &Carry::default(), &counted(&calls));
-        assert_eq!(*calls.borrow(), vec![("r/fa".to_string(), "spira/batch/x".to_string()), ("r/fa".to_string(), "main".to_string())]);
+        assert_eq!(
+            *calls.borrow(),
+            vec![
+                ("r/fa".to_string(), "spira/batch/x".to_string()),
+                ("r/fa".to_string(), "main".to_string())
+            ]
+        );
         assert_eq!(ci.keys().collect::<Vec<_>>(), ["fa"]);
         assert_eq!(base_ci.keys().collect::<Vec<_>>(), ["fa"]);
     }
@@ -1056,17 +1523,51 @@ mod tests {
     fn the_base_is_read_after_the_batch_closes_until_its_landing_run_completes() {
         let rows = [row("fa", "queue")];
         let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Observed(None))].into();
-        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let carry = Carry {
+            base_pending: [("fa".to_string(), NOW)].into(),
+            ..Carry::default()
+        };
         let calls = RefCell::new(vec![]);
         let (_, base_ci) = forge_reads(&rows, &batches, &carry, &counted(&calls));
-        assert_eq!(*calls.borrow(), vec![("r/fa".to_string(), "main".to_string())]);
+        assert_eq!(
+            *calls.borrow(),
+            vec![("r/fa".to_string(), "main".to_string())]
+        );
 
-        let snap = Snapshot { now_ms: NOW + 60_000, open_batch: batches.clone(), base_ci, ..Snapshot::default() };
-        let older = Snapshot { base_ci: [("fa".to_string(), forge_reads(&rows, &batches, &carry, &|_, _| base_run(NOW / 1000 - 5)).1.remove("fa").unwrap())].into(), ..snap.clone() };
+        let snap = Snapshot {
+            now_ms: NOW + 60_000,
+            open_batch: batches.clone(),
+            base_ci,
+            ..Snapshot::default()
+        };
+        let older = Snapshot {
+            base_ci: [(
+                "fa".to_string(),
+                forge_reads(&rows, &batches, &carry, &|_, _| base_run(NOW / 1000 - 5))
+                    .1
+                    .remove("fa")
+                    .unwrap(),
+            )]
+            .into(),
+            ..snap.clone()
+        };
         let (still, _) = decide(&policy(), &carry, &older);
-        assert!(still.base_pending.contains_key("fa"), "a run that finished before the batch was last seen does not settle it");
+        assert!(
+            still.base_pending.contains_key("fa"),
+            "a run that finished before the batch was last seen does not settle it"
+        );
 
-        let snap = Snapshot { base_ci: [("fa".to_string(), forge_reads(&rows, &batches, &carry, &|_, _| base_run(NOW / 1000 + 30)).1.remove("fa").unwrap())].into(), ..snap };
+        let snap = Snapshot {
+            base_ci: [(
+                "fa".to_string(),
+                forge_reads(&rows, &batches, &carry, &|_, _| base_run(NOW / 1000 + 30))
+                    .1
+                    .remove("fa")
+                    .unwrap(),
+            )]
+            .into(),
+            ..snap
+        };
         let (next, _) = decide(&policy(), &carry, &snap);
         assert!(next.base_pending.is_empty());
 
@@ -1078,23 +1579,45 @@ mod tests {
     #[test_id(tk98p4j)]
     #[test]
     fn a_batch_closed_without_landing_stops_being_read_once_its_pending_entry_expires() {
-        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
-        let at = |now_ms| Snapshot { now_ms, open_batch: [("fa".to_string(), Read::Observed(None))].into(), base_ci: [("fa".to_string(), Read::Observed(BaseCi::default()))].into(), ..Snapshot::default() };
+        let carry = Carry {
+            base_pending: [("fa".to_string(), NOW)].into(),
+            ..Carry::default()
+        };
+        let at = |now_ms| Snapshot {
+            now_ms,
+            open_batch: [("fa".to_string(), Read::Observed(None))].into(),
+            base_ci: [("fa".to_string(), Read::Observed(BaseCi::default()))].into(),
+            ..Snapshot::default()
+        };
         let (young, _) = decide(&policy(), &carry, &at(NOW + BASE_PENDING_MAX_AGE_MS));
         assert!(young.base_pending.contains_key("fa"));
         let (old, _) = decide(&policy(), &carry, &at(NOW + BASE_PENDING_MAX_AGE_MS + 1));
         assert!(old.base_pending.is_empty());
         let rows = [row("fa", "queue")];
         let calls = RefCell::new(vec![]);
-        forge_reads(&rows, &[("fa".to_string(), Read::Observed(None))].into(), &old, &counted(&calls));
+        forge_reads(
+            &rows,
+            &[("fa".to_string(), Read::Observed(None))].into(),
+            &old,
+            &counted(&calls),
+        );
         assert_eq!(calls.borrow().len(), 0);
     }
 
     #[test_id(thakiru)]
     #[test]
     fn decide_records_an_in_flight_batch_as_pending() {
-        let batch = Batch { pr: Some(12), branch: "spira/batch/x".into(), members: vec![] };
-        let snap = Snapshot { now_ms: NOW, open_batch: [("fa".to_string(), Read::Observed(Some(batch)))].into(), ci: [("fa".to_string(), Read::Observed(Ci::default()))].into(), ..Snapshot::default() };
+        let batch = Batch {
+            pr: Some(12),
+            branch: "spira/batch/x".into(),
+            members: vec![],
+        };
+        let snap = Snapshot {
+            now_ms: NOW,
+            open_batch: [("fa".to_string(), Read::Observed(Some(batch)))].into(),
+            ci: [("fa".to_string(), Read::Observed(Ci::default()))].into(),
+            ..Snapshot::default()
+        };
         let (next, _) = decide(&policy(), &Carry::default(), &snap);
         assert_eq!(next.base_pending.get("fa"), Some(&NOW));
     }
@@ -1103,28 +1626,63 @@ mod tests {
     #[test]
     fn an_unobservable_batch_view_makes_no_call_and_is_not_satisfied() {
         let rows = [row("fa", "queue")];
-        let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Unobservable("store down".to_string()))].into();
-        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let batches: BTreeMap<_, _> = [(
+            "fa".to_string(),
+            Read::Unobservable("store down".to_string()),
+        )]
+        .into();
+        let carry = Carry {
+            base_pending: [("fa".to_string(), NOW)].into(),
+            ..Carry::default()
+        };
         let calls = RefCell::new(vec![]);
         let (ci, base_ci) = forge_reads(&rows, &batches, &carry, &counted(&calls));
         assert_eq!(calls.borrow().len(), 0);
-        let snap = Snapshot { now_ms: NOW, open_batch: batches, ci, base_ci, ..Snapshot::default() };
+        let snap = Snapshot {
+            now_ms: NOW,
+            open_batch: batches,
+            ci,
+            base_ci,
+            ..Snapshot::default()
+        };
         let (next, _) = decide(&policy(), &carry, &snap);
         assert!(next.base_pending.contains_key("fa"));
         for key in ["ci-stalled:fa", "ci-red:fa"] {
             let reason = &next.keys[key].hysteresis;
-            assert!(*reason != HysteresisState::default() || next.keys[key].phase != Phase::Satisfied, "{key} is carried, not dropped as satisfied");
+            assert!(
+                *reason != HysteresisState::default() || next.keys[key].phase != Phase::Satisfied,
+                "{key} is carried, not dropped as satisfied"
+            );
         }
-        let (judged, _) = step(snap.now_ms / 1000, unobservable("x"), 0, HysteresisState::default());
+        let (judged, _) = step(
+            snap.now_ms / 1000,
+            unobservable("x"),
+            0,
+            HysteresisState::default(),
+        );
         assert!(matches!(judged.status, RawStatus::Unobservable { .. }));
     }
 
     #[test_id(tjck0vz)]
     #[test]
     fn a_red_landing_run_still_files_base_red() {
-        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
-        let red = BaseCi { conclusion: Some("failure".into()), head_sha: "abc".into(), red_suites: vec!["unit".into()], completed_at_ms: Some(NOW + 1_000), ..BaseCi::default() };
-        let snap = Snapshot { now_ms: NOW + 5_000, open_batch: [("fa".to_string(), Read::Observed(None))].into(), base_ci: [("fa".to_string(), Read::Observed(red))].into(), ..Snapshot::default() };
+        let carry = Carry {
+            base_pending: [("fa".to_string(), NOW)].into(),
+            ..Carry::default()
+        };
+        let red = BaseCi {
+            conclusion: Some("failure".into()),
+            head_sha: "abc".into(),
+            red_suites: vec!["unit".into()],
+            completed_at_ms: Some(NOW + 1_000),
+            ..BaseCi::default()
+        };
+        let snap = Snapshot {
+            now_ms: NOW + 5_000,
+            open_batch: [("fa".to_string(), Read::Observed(None))].into(),
+            base_ci: [("fa".to_string(), Read::Observed(red))].into(),
+            ..Snapshot::default()
+        };
         let mut pol = policy();
         pol.stages.insert("base-red".into(), Stage::Act);
         let (next, acts) = decide(&pol, &carry, &snap);
@@ -1135,15 +1693,35 @@ mod tests {
     fn base_read_decided(out: Result<String, String>) -> (BaseCi, Vec<Act>) {
         let rows = [row("fa", "queue")];
         let batches: BTreeMap<_, _> = [("fa".to_string(), Read::Observed(None))].into();
-        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let carry = Carry {
+            base_pending: [("fa".to_string(), NOW)].into(),
+            ..Carry::default()
+        };
         let mut pol = policy();
         pol.stages.insert("base-red".into(), Stage::Act);
-        let read = forge_reads(&rows, &batches, &carry, &|_, _| out.clone()).1.remove("fa").unwrap();
-        let first = Snapshot { now_ms: NOW + 1_000, open_batch: batches.clone(), base_ci: [("fa".to_string(), read.clone())].into(), ..Snapshot::default() };
+        let read = forge_reads(&rows, &batches, &carry, &|_, _| out.clone())
+            .1
+            .remove("fa")
+            .unwrap();
+        let first = Snapshot {
+            now_ms: NOW + 1_000,
+            open_batch: batches.clone(),
+            base_ci: [("fa".to_string(), read.clone())].into(),
+            ..Snapshot::default()
+        };
         let (c1, _) = decide(&pol, &carry, &first);
-        let late = Snapshot { now_ms: NOW + 1_000 + (pol.base_ci_unreadable_grace_secs + 60) * 1_000, ..first };
+        let late = Snapshot {
+            now_ms: NOW + 1_000 + (pol.base_ci_unreadable_grace_secs + 60) * 1_000,
+            ..first
+        };
         let (_, acts) = decide(&pol, &c1, &late);
-        (match read { Read::Observed(b) => b, Read::Unobservable(_) => BaseCi::default() }, acts)
+        (
+            match read {
+                Read::Observed(b) => b,
+                Read::Unobservable(_) => BaseCi::default(),
+            },
+            acts,
+        )
     }
 
     #[test_id(tkpt9de)]
@@ -1158,8 +1736,15 @@ mod tests {
     #[test]
     fn a_failed_base_read_still_files_unreadable_with_the_forge_error() {
         let (_, acts) = base_read_decided(Err("forge batch-ci-status exited 1: HTTP 403".into()));
-        let filed = acts.iter().find(|a| a.effect == FILE_BASE_RED).expect("files");
-        assert!(filed.input.contains("HTTP 403") && filed.input.contains("base CI status could not be read"), "{filed:?}");
+        let filed = acts
+            .iter()
+            .find(|a| a.effect == FILE_BASE_RED)
+            .expect("files");
+        assert!(
+            filed.input.contains("HTTP 403")
+                && filed.input.contains("base CI status could not be read"),
+            "{filed:?}"
+        );
     }
 
     #[test_id(trl7yvh)]
@@ -1167,34 +1752,79 @@ mod tests {
     fn a_settled_landing_forgets_its_base_red_streak_so_the_next_red_files_again() {
         let mut pol = policy();
         pol.stages.insert("base-red".into(), Stage::Act);
-        let red = |at| BaseCi { conclusion: Some("failure".into()), head_sha: "abc".into(), red_suites: vec!["unit".into()], completed_at_ms: Some(at), ..BaseCi::default() };
-        let snap = |now, at| Snapshot { now_ms: now, open_batch: [("fa".to_string(), Read::Observed(None))].into(), base_ci: [("fa".to_string(), Read::Observed(red(at)))].into(), ..Snapshot::default() };
-        let carry = Carry { base_pending: [("fa".to_string(), NOW)].into(), ..Carry::default() };
+        let red = |at| BaseCi {
+            conclusion: Some("failure".into()),
+            head_sha: "abc".into(),
+            red_suites: vec!["unit".into()],
+            completed_at_ms: Some(at),
+            ..BaseCi::default()
+        };
+        let snap = |now, at| Snapshot {
+            now_ms: now,
+            open_batch: [("fa".to_string(), Read::Observed(None))].into(),
+            base_ci: [("fa".to_string(), Read::Observed(red(at)))].into(),
+            ..Snapshot::default()
+        };
+        let carry = Carry {
+            base_pending: [("fa".to_string(), NOW)].into(),
+            ..Carry::default()
+        };
         let (c1, _) = decide(&pol, &carry, &snap(NOW + 5_000, NOW + 1_000));
         assert!(c1.keys.contains_key("base-red:fa") && c1.base_pending.is_empty());
-        let idle = Snapshot { now_ms: NOW + 40_000, open_batch: [("fa".to_string(), Read::Observed(None))].into(), ..Snapshot::default() };
+        let idle = Snapshot {
+            now_ms: NOW + 40_000,
+            open_batch: [("fa".to_string(), Read::Observed(None))].into(),
+            ..Snapshot::default()
+        };
         let (c2, _) = decide(&pol, &c1, &idle);
-        assert!(!c2.keys.contains_key("base-red:fa"), "an unwatched repo keeps no streak");
-        let again = Carry { base_pending: [("fa".to_string(), NOW + 100_000)].into(), ..c2 };
+        assert!(
+            !c2.keys.contains_key("base-red:fa"),
+            "an unwatched repo keeps no streak"
+        );
+        let again = Carry {
+            base_pending: [("fa".to_string(), NOW + 100_000)].into(),
+            ..c2
+        };
         let (_, acts) = decide(&pol, &again, &snap(NOW + 200_000, NOW + 150_000));
         assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED));
     }
 
     fn idle_pool(rounds: Read<u64>) -> Snapshot {
-        Snapshot { open_batch: [("fa".to_string(), Read::Observed(None))].into(), certified: [("fa".to_string(), Read::Observed(vec!["a".into(), "b".into(), "c".into()]))].into(), open_rounds: [("fa".to_string(), rounds)].into(), ..Snapshot::default() }
+        Snapshot {
+            open_batch: [("fa".to_string(), Read::Observed(None))].into(),
+            certified: [(
+                "fa".to_string(),
+                Read::Observed(vec!["a".into(), "b".into(), "c".into()]),
+            )]
+            .into(),
+            open_rounds: [("fa".to_string(), rounds)].into(),
+            ..Snapshot::default()
+        }
     }
 
     fn two_passes(snap: Snapshot) -> (Carry, Vec<Act>, Vec<Act>) {
         let mut pol = policy();
         pol.stages.insert("pool-idle".into(), Stage::Act);
-        let first = Snapshot { now_ms: NOW, ..snap.clone() };
+        let first = Snapshot {
+            now_ms: NOW,
+            ..snap.clone()
+        };
         let (c1, a1) = decide(&pol, &Carry::default(), &first);
-        let (c2, a2) = decide(&pol, &c1, &Snapshot { now_ms: NOW + (pol.queue_round_stall_secs + 1) * 1000, ..snap });
+        let (c2, a2) = decide(
+            &pol,
+            &c1,
+            &Snapshot {
+                now_ms: NOW + (pol.queue_round_stall_secs + 1) * 1000,
+                ..snap
+            },
+        );
         (c2, a1, a2)
     }
 
     fn pool_filings(acts: &[Act]) -> usize {
-        acts.iter().filter(|a| a.effect == FILE_INCIDENT && a.input.contains("pool-idle-fa")).count()
+        acts.iter()
+            .filter(|a| a.effect == FILE_INCIDENT && a.input.contains("pool-idle-fa"))
+            .count()
     }
 
     #[test_id(tkq6mqp)]
@@ -1202,14 +1832,29 @@ mod tests {
     fn an_open_round_is_not_a_pool_idle_stall() {
         let (next, a1, a2) = two_passes(idle_pool(Read::Observed(1)));
         assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
-        assert!(next.keys.get("pool-idle:fa").is_none_or(|k| k.phase != Phase::Gap), "{:?}", next.keys.get("pool-idle:fa"));
+        assert!(
+            next.keys
+                .get("pool-idle:fa")
+                .is_none_or(|k| k.phase != Phase::Gap),
+            "{:?}",
+            next.keys.get("pool-idle:fa")
+        );
     }
 
     #[test_id(t55zmcz)]
     #[test]
     fn a_batcher_hold_is_not_a_pool_idle_stall() {
-        let rc = batcher_local::RepoCarry { state: batcher_local::State::Held, skip_why: Some("the rounds lane is stopped (op: test)".into()), ..Default::default() };
-        let snap = with_batcher_holds(idle_pool(Read::Observed(0)), &batcher_local::Carry { repos: [("fa".to_string(), rc)].into() });
+        let rc = batcher_local::RepoCarry {
+            state: batcher_local::State::Held,
+            skip_why: Some("the rounds lane is stopped (op: test)".into()),
+            ..Default::default()
+        };
+        let snap = with_batcher_holds(
+            idle_pool(Read::Observed(0)),
+            &batcher_local::Carry {
+                repos: [("fa".to_string(), rc)].into(),
+            },
+        );
         let (_, a1, a2) = two_passes(snap);
         assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
     }
@@ -1217,8 +1862,17 @@ mod tests {
     #[test_id(trub7zd)]
     #[test]
     fn a_held_state_with_no_recorded_reason_still_pages() {
-        let rc = batcher_local::RepoCarry { state: batcher_local::State::Held, skip_why: None, ..Default::default() };
-        let snap = with_batcher_holds(idle_pool(Read::Observed(0)), &batcher_local::Carry { repos: [("fa".to_string(), rc)].into() });
+        let rc = batcher_local::RepoCarry {
+            state: batcher_local::State::Held,
+            skip_why: None,
+            ..Default::default()
+        };
+        let snap = with_batcher_holds(
+            idle_pool(Read::Observed(0)),
+            &batcher_local::Carry {
+                repos: [("fa".to_string(), rc)].into(),
+            },
+        );
         assert!(snap.batcher_held.is_empty());
     }
 
@@ -1233,9 +1887,20 @@ mod tests {
     #[test_id(t70fsih)]
     #[test]
     fn an_unreadable_round_record_is_unobservable_not_satisfied() {
-        let (next, a1, a2) = two_passes(idle_pool(Read::Unobservable("could not say: store down".into())));
+        let (next, a1, a2) = two_passes(idle_pool(Read::Unobservable(
+            "could not say: store down".into(),
+        )));
         assert_eq!(pool_filings(&a1) + pool_filings(&a2), 0);
-        let status = a1.iter().chain(&a2).filter(|a| a.effect == STATUS && a.input.contains("pool-idle:fa")).map(|a| a.input.clone()).collect::<Vec<_>>();
-        assert!(status.iter().any(|i| i.contains("\"unobservable\"")), "{status:?} {:?}", next.keys.get("pool-idle:fa"));
+        let status = a1
+            .iter()
+            .chain(&a2)
+            .filter(|a| a.effect == STATUS && a.input.contains("pool-idle:fa"))
+            .map(|a| a.input.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            status.iter().any(|i| i.contains("\"unobservable\"")),
+            "{status:?} {:?}",
+            next.keys.get("pool-idle:fa")
+        );
     }
 }

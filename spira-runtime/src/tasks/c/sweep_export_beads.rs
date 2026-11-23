@@ -104,7 +104,20 @@ pub const EFFECTS: &[&str] = &[OBSERVE, WRITE, COMMIT, PUBLISH, TOUCH];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_EXPORT_BEADS_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_WIKI", "SPIRA_EXPORT_GIT_RETRY_WAIT"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 300_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 300_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -133,7 +146,14 @@ pub enum Phase {
 }
 
 /// `state × event → state`. `publish` before `committed` is refused naming `written`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Rendered, "write:ok", Phase::Written), (Phase::Written, "commit:ok", Phase::Committed), (Phase::Committed, "publish:ok", Phase::Published), (Phase::Rendered, "refuse", Phase::Refused), (Phase::Published, "observed:changed", Phase::Rendered), (Phase::Refused, "observed:changed", Phase::Rendered)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
+    (Phase::Rendered, "write:ok", Phase::Written),
+    (Phase::Written, "commit:ok", Phase::Committed),
+    (Phase::Committed, "publish:ok", Phase::Published),
+    (Phase::Rendered, "refuse", Phase::Refused),
+    (Phase::Published, "observed:changed", Phase::Rendered),
+    (Phase::Refused, "observed:changed", Phase::Rendered),
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -160,8 +180,18 @@ pub const MANIFEST: &str = "raw/spira-beads/manifest.md";
 /// already mirrored.
 pub fn render(snap: &Snapshot) -> Result<String, &'static str> {
     use crate::tasks::c::sweep_archive::archive::py_json;
-    let id = |v: &serde_json::Value| v.get("id").and_then(|i| i.as_str()).map(str::to_string).unwrap_or_default();
-    let mut issues: Vec<serde_json::Value> = snap.content.iter().filter(|v| id(v).starts_with("sp-")).cloned().collect();
+    let id = |v: &serde_json::Value| {
+        v.get("id")
+            .and_then(|i| i.as_str())
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
+    let mut issues: Vec<serde_json::Value> = snap
+        .content
+        .iter()
+        .filter(|v| id(v).starts_with("sp-"))
+        .cloned()
+        .collect();
     if issues.is_empty() {
         return Err("no-sp");
     }
@@ -179,7 +209,11 @@ pub fn render(snap: &Snapshot) -> Result<String, &'static str> {
         out.push('\n');
     }
     for (k, v) in &snap.memories {
-        out.push_str(&py_json(&serde_json::json!({"_type": "memory", "key": k, "value": v}), ",", ":"));
+        out.push_str(&py_json(
+            &serde_json::json!({"_type": "memory", "key": k, "value": v}),
+            ",",
+            ":",
+        ));
         out.push('\n');
     }
     Ok(out)
@@ -187,7 +221,11 @@ pub fn render(snap: &Snapshot) -> Result<String, &'static str> {
 
 /// The sha256 of `text`, as lowercase hex: what the probe reports of the mirror's bytes.
 pub fn sha_hex(text: &[u8]) -> String {
-    ring::digest::digest(&ring::digest::SHA256, text).as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    ring::digest::digest(&ring::digest::SHA256, text)
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn phase_name(p: Phase) -> &'static str {
@@ -201,7 +239,13 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 fn act(name: &str, key: String, input: String, deadline_ms: u64) -> Act {
-    Act { name: name.into(), key, input, deadline_ms, probe: false }
+    Act {
+        name: name.into(),
+        key,
+        input,
+        deadline_ms,
+        probe: false,
+    }
 }
 
 /// `Unchanged | Write(jsonl, manifest) | Refuse(reason)`, sorted by id, refusing without an
@@ -212,42 +256,104 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) if s.disabled => Ok((carry.clone(), vec![])),
         Input::Observed(s) => match render(s) {
-            Err(why) => Ok((Carry { phase: Phase::Refused, sha: None, refused: Some(why.into()) }, vec![])),
+            Err(why) => Ok((
+                Carry {
+                    phase: Phase::Refused,
+                    sha: None,
+                    refused: Some(why.into()),
+                },
+                vec![],
+            )),
             Ok(text) => {
                 let sha = sha_hex(text.as_bytes());
                 if sha != s.mirror_bytes_sha {
-                    return Ok((Carry { phase: Phase::Rendered, sha: Some(sha.clone()), refused: None }, vec![act(WRITE, format!("export/{sha}"), text, 30_000)]));
+                    return Ok((
+                        Carry {
+                            phase: Phase::Rendered,
+                            sha: Some(sha.clone()),
+                            refused: None,
+                        },
+                        vec![act(WRITE, format!("export/{sha}"), text, 30_000)],
+                    ));
                 }
                 let pending = carry.sha.as_deref() == Some(sha.as_str());
                 match carry.phase {
-                    Phase::Written if pending => Ok((carry.clone(), vec![act(COMMIT, format!("export/commit/{sha}"), sha, 60_000)])),
-                    Phase::Committed if pending => Ok((carry.clone(), vec![act(PUBLISH, format!("export/push/{sha}"), sha, 150_000)])),
-                    _ => Ok((carry.clone(), vec![act(TOUCH, format!("export/touch/{now_ms}"), String::new(), 5_000)])),
+                    Phase::Written if pending => Ok((
+                        carry.clone(),
+                        vec![act(COMMIT, format!("export/commit/{sha}"), sha, 60_000)],
+                    )),
+                    Phase::Committed if pending => Ok((
+                        carry.clone(),
+                        vec![act(PUBLISH, format!("export/push/{sha}"), sha, 150_000)],
+                    )),
+                    _ => Ok((
+                        carry.clone(),
+                        vec![act(
+                            TOUCH,
+                            format!("export/touch/{now_ms}"),
+                            String::new(),
+                            5_000,
+                        )],
+                    )),
                 }
             }
         },
-        Input::Outcome { effect, ok, body } if [WRITE, COMMIT, PUBLISH].contains(&effect.as_str()) => {
+        Input::Outcome { effect, ok, body }
+            if [WRITE, COMMIT, PUBLISH].contains(&effect.as_str()) =>
+        {
             let (want, to, then) = match effect.as_str() {
                 WRITE => (Phase::Rendered, Phase::Written, Some((COMMIT, 60_000))),
                 COMMIT => (Phase::Written, Phase::Committed, Some((PUBLISH, 150_000))),
                 _ => (Phase::Committed, Phase::Published, None),
             };
             if carry.phase != want {
-                return Err(format!("{NAME}: in state {} a {effect} outcome is refused; it needs {}", phase_name(carry.phase), phase_name(want)));
+                return Err(format!(
+                    "{NAME}: in state {} a {effect} outcome is refused; it needs {}",
+                    phase_name(carry.phase),
+                    phase_name(want)
+                ));
             }
             if !*ok {
                 return Ok((carry.clone(), vec![]));
             }
             let sha = carry.sha.clone().unwrap_or_default();
             if body.trim() != sha {
-                return Err(format!("{NAME}: in state {} the {effect} answered {} for render {sha}", phase_name(carry.phase), body.trim()));
+                return Err(format!(
+                    "{NAME}: in state {} the {effect} answered {} for render {sha}",
+                    phase_name(carry.phase),
+                    body.trim()
+                ));
             }
-            let next = Carry { phase: to, ..carry.clone() };
-            Ok((next, then.map(|(n, d)| vec![act(n, format!("export/{}/{sha}", if n == COMMIT { "commit" } else { "push" }), sha, d)]).unwrap_or_default()))
+            let next = Carry {
+                phase: to,
+                ..carry.clone()
+            };
+            Ok((
+                next,
+                then.map(|(n, d)| {
+                    vec![act(
+                        n,
+                        format!(
+                            "export/{}/{sha}",
+                            if n == COMMIT { "commit" } else { "push" }
+                        ),
+                        sha,
+                        d,
+                    )]
+                })
+                .unwrap_or_default(),
+            ))
         }
         Input::Outcome { effect, .. } if effect == TOUCH => Ok((carry.clone(), vec![])),
-        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase_name(carry.phase))),
-        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+        Input::Outcome { effect, .. } => Err(format!(
+            "{NAME}: in state {} no outcome of {effect} is expected",
+            phase_name(carry.phase)
+        )),
+        Input::Ran(r) => Err(format!(
+            "{NAME}: in state {} no unit is expected, got {:?}",
+            phase_name(carry.phase),
+            r.handle
+        )),
     }
 }
 
@@ -262,19 +368,37 @@ pub const LIFECYCLE_PAGE: usize = 1_000;
 /// watermarks over the socket, and what is mirrored now.
 pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
     if wiki.trim().is_empty() {
-        return serde_json::to_string(&Snapshot { disabled: true, ..Snapshot::default() }).map_err(|e| e.to_string());
+        return serde_json::to_string(&Snapshot {
+            disabled: true,
+            ..Snapshot::default()
+        })
+        .map_err(|e| e.to_string());
     }
     let mut lifecycle: BTreeMap<String, String> = BTreeMap::new();
     let mut after: Option<String> = None;
     loop {
         let mut argv: Vec<String> = ["list", "--bare"].map(String::from).to_vec();
-        argv.extend(after.iter().flat_map(|a| ["--after".to_string(), a.clone()]));
+        argv.extend(
+            after
+                .iter()
+                .flat_map(|a| ["--after".to_string(), a.clone()]),
+        );
         argv.extend(["--limit".to_string(), LIFECYCLE_PAGE.to_string()]);
-        let page = lc.answer(&argv).map_err(|e| format!("lifecycle list failed: {e}"))?;
-        let rows: Vec<serde_json::Value> = serde_json::from_str(page.trim()).map_err(|e| format!("lifecycle list did not answer JSON rows: {e}"))?;
-        let last = rows.last().and_then(|r| r.get("bead_id")).and_then(|i| i.as_str()).map(str::to_string);
+        let page = lc
+            .answer(&argv)
+            .map_err(|e| format!("lifecycle list failed: {e}"))?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(page.trim())
+            .map_err(|e| format!("lifecycle list did not answer JSON rows: {e}"))?;
+        let last = rows
+            .last()
+            .and_then(|r| r.get("bead_id"))
+            .and_then(|i| i.as_str())
+            .map(str::to_string);
         for r in &rows {
-            if let (Some(id), Some(state)) = (r.get("bead_id").and_then(|i| i.as_str()), r.get("state").and_then(|i| i.as_str())) {
+            if let (Some(id), Some(state)) = (
+                r.get("bead_id").and_then(|i| i.as_str()),
+                r.get("state").and_then(|i| i.as_str()),
+            ) {
                 if id.starts_with("sp-") {
                     lifecycle.insert(id.to_string(), state.to_string());
                 }
@@ -289,8 +413,13 @@ pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
     let mut content: Vec<serde_json::Value> = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(CONTENT_CHUNK) {
         let ids = chunk.join(",");
-        let page = lc.answer(&["content", "list", "--id", &ids, "--all", "--limit", "0", "--json"]).map_err(|e| format!("content list failed: {e}"))?;
-        let rows: Vec<serde_json::Value> = serde_json::from_str(&page).map_err(|e| format!("content list did not answer JSON: {e}"))?;
+        let page = lc
+            .answer(&[
+                "content", "list", "--id", &ids, "--all", "--limit", "0", "--json",
+            ])
+            .map_err(|e| format!("content list failed: {e}"))?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&page)
+            .map_err(|e| format!("content list did not answer JSON: {e}"))?;
         content.extend(rows);
     }
     let memories = lc
@@ -299,7 +428,14 @@ pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
         .and_then(|t| serde_json::from_str::<BTreeMap<String, serde_json::Value>>(&t).ok())
         .unwrap_or_default()
         .into_iter()
-        .map(|(k, v)| (k, v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())))
+        .map(|(k, v)| {
+            (
+                k,
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string()),
+            )
+        })
         .collect();
     let watermarks = match lc.call(&["plane-watermarks", "--manifest"]) {
         Ok(r) if r.code == 0 => r.text(),
@@ -308,9 +444,29 @@ pub fn observe(lc: &LcClient, wiki: &str) -> Result<String, String> {
     };
     let mirror = std::fs::read(std::path::Path::new(wiki).join(REL)).unwrap_or_default();
     let text = String::from_utf8_lossy(&mirror);
-    let mirrored_count = text.lines().filter(|l| l.split("\"id\":").nth(1).is_some_and(|r| r.trim_start().starts_with("\"sp-"))).count();
-    let mirror_bytes_sha = if mirror.is_empty() { String::new() } else { sha_hex(&mirror) };
-    serde_json::to_string(&Snapshot { content, lifecycle, memories, watermarks, mirrored_count, mirror_bytes_sha, disabled: false }).map_err(|e| e.to_string())
+    let mirrored_count = text
+        .lines()
+        .filter(|l| {
+            l.split("\"id\":")
+                .nth(1)
+                .is_some_and(|r| r.trim_start().starts_with("\"sp-"))
+        })
+        .count();
+    let mirror_bytes_sha = if mirror.is_empty() {
+        String::new()
+    } else {
+        sha_hex(&mirror)
+    };
+    serde_json::to_string(&Snapshot {
+        content,
+        lifecycle,
+        memories,
+        watermarks,
+        mirrored_count,
+        mirror_bytes_sha,
+        disabled: false,
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn mirror_lines(text: &str) -> impl Iterator<Item = &str> {
@@ -331,7 +487,15 @@ pub fn write(lc: &LcClient, wiki: &str, text: &str, now_secs: u64) -> Result<Str
     std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, &out).map_err(|e| format!("{}: {e}", out.display()))?;
     let count = mirror_lines(text).count();
-    let newest = mirror_lines(text).filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter_map(|v| v.get("created_at").and_then(|c| c.as_str()).map(str::to_string)).max().unwrap_or_default();
+    let newest = mirror_lines(text)
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| {
+            v.get("created_at")
+                .and_then(|c| c.as_str())
+                .map(str::to_string)
+        })
+        .max()
+        .unwrap_or_default();
     let watermarks = match lc.call(&["plane-watermarks", "--manifest"]) {
         Ok(r) if r.code == 0 => r.text(),
         Ok(r) => format!("Planning watermarks: unreadable ({}).", r.text()),
@@ -351,8 +515,17 @@ pub fn write(lc: &LcClient, wiki: &str, text: &str, now_secs: u64) -> Result<Str
 fn git(proc: &dyn Proc, wiki: &str, args: &[&str], secs: u64) -> Result<String, String> {
     let mut argv = vec!["-C".to_string(), wiki.to_string()];
     argv.extend(args.iter().map(|a| a.to_string()));
-    let o = proc.run(&ProcSpec { prog: "git".into(), args: argv, stdin: vec![], deadline: Duration::from_secs(secs) })?;
-    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    let o = proc.run(&ProcSpec {
+        prog: "git".into(),
+        args: argv,
+        stdin: vec![],
+        deadline: Duration::from_secs(secs),
+    })?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
     if o.code == Some(0) {
         Ok(text)
     } else {
@@ -374,26 +547,50 @@ fn git_step(proc: &dyn Proc, wiki: &str, args: &[&str], wait: Duration) -> Resul
 
 /// The runner of [`COMMIT`]: the mirror and manifest staged and committed, when the wiki is a
 /// git checkout (otherwise nothing to do). Answers the sha.
-pub fn commit(proc: &dyn Proc, wiki: &str, retry_wait: &str, sha: &str, now_secs: u64) -> Result<String, String> {
+pub fn commit(
+    proc: &dyn Proc,
+    wiki: &str,
+    retry_wait: &str,
+    sha: &str,
+    now_secs: u64,
+) -> Result<String, String> {
     if git(proc, wiki, &["rev-parse", "--git-dir"], 10).is_err() {
         return Ok(sha.to_string());
     }
-    let wait = Duration::from_secs(retry_wait.trim().parse().map_err(|_| format!("SPIRA_EXPORT_GIT_RETRY_WAIT must be seconds, got {retry_wait:?}"))?);
-    let text = std::fs::read_to_string(std::path::Path::new(wiki).join(REL)).map_err(|e| format!("{REL}: {e}"))?;
+    let wait =
+        Duration::from_secs(retry_wait.trim().parse().map_err(|_| {
+            format!("SPIRA_EXPORT_GIT_RETRY_WAIT must be seconds, got {retry_wait:?}")
+        })?);
+    let text = std::fs::read_to_string(std::path::Path::new(wiki).join(REL))
+        .map_err(|e| format!("{REL}: {e}"))?;
     if sha_hex(text.as_bytes()) != sha {
-        return Err(format!("the mirror is no longer render {sha} — refusing to commit it"));
+        return Err(format!(
+            "the mirror is no longer render {sha} — refusing to commit it"
+        ));
     }
     let date = &crate::tasks::c::sweep_archive::archive::fmt_ts(now_secs as i64)[..10];
-    let msg = format!("chore: spira beads JSONL mirror {date} ({} beads)", mirror_lines(&text).count());
+    let msg = format!(
+        "chore: spira beads JSONL mirror {date} ({} beads)",
+        mirror_lines(&text).count()
+    );
     git_step(proc, wiki, &["add", "--", REL, MANIFEST], wait)?;
-    git_step(proc, wiki, &["commit", "-q", "-m", &msg, "--", REL, MANIFEST], wait)?;
+    git_step(
+        proc,
+        wiki,
+        &["commit", "-q", "-m", &msg, "--", REL, MANIFEST],
+        wait,
+    )?;
     Ok(sha.to_string())
 }
 
 /// The runner of [`PUBLISH`]: pull-rebase and push the brain remote, two attempts; a failed
 /// pull aborts its rebase. Nothing to do without a checkout or a remote. Answers the sha.
 pub fn publish(proc: &dyn Proc, wiki: &str, sha: &str) -> Result<String, String> {
-    if git(proc, wiki, &["rev-parse", "--git-dir"], 10).is_err() || git(proc, wiki, &["remote"], 10).map(|r| r.trim().is_empty()).unwrap_or(true) {
+    if git(proc, wiki, &["rev-parse", "--git-dir"], 10).is_err()
+        || git(proc, wiki, &["remote"], 10)
+            .map(|r| r.trim().is_empty())
+            .unwrap_or(true)
+    {
         return Ok(sha.to_string());
     }
     let mut last = String::new();
@@ -413,10 +610,18 @@ pub fn publish(proc: &dyn Proc, wiki: &str, sha: &str) -> Result<String, String>
 /// The runner of [`TOUCH`]: the mirror's mtime bumped, which heimdall's `mirror-stale` reads.
 pub fn touch(wiki: &str) -> Result<String, String> {
     let out = std::path::Path::new(wiki).join(REL);
-    std::fs::OpenOptions::new().append(true).open(&out).and_then(|f| f.set_modified(std::time::SystemTime::now())).map_err(|e| format!("{}: {e}", out.display()))?;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&out)
+        .and_then(|f| f.set_modified(std::time::SystemTime::now()))
+        .map_err(|e| format!("{}: {e}", out.display()))?;
     Ok("touched".into())
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("sha"), runtime::rows::Part::Field("refused")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("phase"),
+    runtime::rows::Part::Field("sha"),
+    runtime::rows::Part::Field("refused"),
+];
 
 crate::tasks::b::hosted!(SweepExportBeads);

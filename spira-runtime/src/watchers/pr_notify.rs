@@ -17,7 +17,10 @@ pub const OBSERVE: &str = "pr-notify.observe";
 pub const OPERATOR_NOTE: &str = "operator.note";
 pub const NAME: &str = "pr-notify";
 
-const ROW_PARTS: &[Part] = &[Part::Map { name: "repos", drop: &[] }];
+const ROW_PARTS: &[Part] = &[Part::Map {
+    name: "repos",
+    drop: &[],
+}];
 
 const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const DEADLINE_MS: u64 = 10_000;
@@ -114,13 +117,26 @@ pub struct Said {
 /// Status and failing check names from a PR's check runs, each `(name, STATUS, CONCLUSION)`. A PR
 /// with no checks is pending, and so is one with any check unfinished or not successful.
 pub fn classify(checks: &[(String, String, String)]) -> (&'static str, String) {
-    const BAD: [&str; 5] = ["FAILURE", "CANCELLED", "TIMED_OUT", "STALE", "ACTION_REQUIRED"];
-    let bad: Vec<&str> = checks.iter().filter(|(_, _, c)| BAD.contains(&c.as_str())).map(|(n, _, _)| n.as_str()).collect();
+    const BAD: [&str; 5] = [
+        "FAILURE",
+        "CANCELLED",
+        "TIMED_OUT",
+        "STALE",
+        "ACTION_REQUIRED",
+    ];
+    let bad: Vec<&str> = checks
+        .iter()
+        .filter(|(_, _, c)| BAD.contains(&c.as_str()))
+        .map(|(n, _, _)| n.as_str())
+        .collect();
     if checks.is_empty() {
         ("pending", String::new())
     } else if !bad.is_empty() {
         ("red", bad.join(","))
-    } else if checks.iter().all(|(_, s, c)| s == "COMPLETED" && c == "SUCCESS") {
+    } else if checks
+        .iter()
+        .all(|(_, s, c)| s == "COMPLETED" && c == "SUCCESS")
+    {
         ("green", String::new())
     } else {
         ("pending", String::new())
@@ -128,7 +144,11 @@ pub fn classify(checks: &[(String, String, String)]) -> (&'static str, String) {
 }
 
 fn bead_lines(beads: &[String]) -> String {
-    beads.iter().map(|l| l.replacen("- ", "- bead ", 1)).collect::<Vec<_>>().join("\n")
+    beads
+        .iter()
+        .map(|l| l.replacen("- ", "- bead ", 1))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn beads_block(beads: &str) -> String {
@@ -143,32 +163,90 @@ fn short(sha: &str) -> &str {
     sha.get(..9).unwrap_or(sha)
 }
 
-fn merged(repo: &str, n: u64, title: &str, f: &Final, now: u64, rc: &mut RepoCarry, say: &mut Said) {
+fn merged(
+    repo: &str,
+    n: u64,
+    title: &str,
+    f: &Final,
+    now: u64,
+    rc: &mut RepoCarry,
+    say: &mut Said,
+) {
     let beads = bead_lines(&f.beads);
-    let at = if f.sha.is_empty() { String::new() } else { format!(" at {}", f.sha) };
-    let tag = if f.sha.is_empty() { String::new() } else { format!(" {}", short(&f.sha)) };
-    say.notes.push(Note { subject: format!("MERGED #{n} [{repo}]{tag}"), body: format!("PR #{n} {title} [{repo}] merged{at}.\n{}", beads_block(&beads)) });
+    let at = if f.sha.is_empty() {
+        String::new()
+    } else {
+        format!(" at {}", f.sha)
+    };
+    let tag = if f.sha.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", short(&f.sha))
+    };
+    say.notes.push(Note {
+        subject: format!("MERGED #{n} [{repo}]{tag}"),
+        body: format!(
+            "PR #{n} {title} [{repo}] merged{at}.\n{}",
+            beads_block(&beads)
+        ),
+    });
     if !f.sha.is_empty() && !rc.deploys.iter().any(|d| d.sha == f.sha) {
-        rc.deploys.push(Deploy { sha: f.sha.clone(), n, at: now, title: title.replace('\t', " "), beads: f.beads.iter().map(|l| l.replacen("- ", "- bead ", 1)).collect() });
+        rc.deploys.push(Deploy {
+            sha: f.sha.clone(),
+            n,
+            at: now,
+            title: title.replace('\t', " "),
+            beads: f
+                .beads
+                .iter()
+                .map(|l| l.replacen("- ", "- bead ", 1))
+                .collect(),
+        });
     }
 }
 
-fn transitions(repo: &str, open: &[OpenPr], obs: &RepoObs, now: u64, rc: &mut RepoCarry, say: &mut Said) {
+fn transitions(
+    repo: &str,
+    open: &[OpenPr],
+    obs: &RepoObs,
+    now: u64,
+    rc: &mut RepoCarry,
+    say: &mut Said,
+) {
     let prev = std::mem::take(&mut rc.prs);
     let mut cur = BTreeMap::new();
     for p in open {
         let old = prev.get(&p.number);
         if old.is_none() {
-            say.lines.push(format!("OPENED #{} {} [{repo}]", p.number, p.title));
+            say.lines
+                .push(format!("OPENED #{} {} [{repo}]", p.number, p.title));
         }
         if old.is_none_or(|o| o.status != p.status) {
             match p.status.as_str() {
-                "red" => say.lines.push(format!("FAIL RED #{} {} [{repo}]{}", p.number, p.title, if p.fail.is_empty() { String::new() } else { format!(": {}", p.fail) })),
-                "green" => say.lines.push(format!("GREEN #{} {} [{repo}]: lands automatically", p.number, p.title)),
+                "red" => say.lines.push(format!(
+                    "FAIL RED #{} {} [{repo}]{}",
+                    p.number,
+                    p.title,
+                    if p.fail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", p.fail)
+                    }
+                )),
+                "green" => say.lines.push(format!(
+                    "GREEN #{} {} [{repo}]: lands automatically",
+                    p.number, p.title
+                )),
                 _ => {}
             }
         }
-        cur.insert(p.number, Tracked { status: p.status.clone(), title: p.title.clone() });
+        cur.insert(
+            p.number,
+            Tracked {
+                status: p.status.clone(),
+                title: p.title.clone(),
+            },
+        );
     }
     for (m, t) in &prev {
         if open.iter().any(|p| p.number == *m) {
@@ -179,7 +257,9 @@ fn transitions(repo: &str, open: &[OpenPr], obs: &RepoObs, now: u64, rc: &mut Re
                 say.lines.push(format!("MERGED #{m} {} [{repo}]", t.title));
                 merged(repo, *m, &t.title, f, now, rc, say);
             }
-            Some(f) if f.state == "CLOSED" => say.lines.push(format!("CLOSED #{m} {} [{repo}]", t.title)),
+            Some(f) if f.state == "CLOSED" => {
+                say.lines.push(format!("CLOSED #{m} {} [{repo}]", t.title))
+            }
             _ => {
                 cur.insert(*m, t.clone());
             }
@@ -197,13 +277,26 @@ fn deploys(repo: &str, obs: &RepoObs, now: u64, giveup: u64, rc: &mut RepoCarry,
             }
             continue;
         };
-        let verdict = if run.conclusion == "success" { "DEPLOYED" } else { "DEPLOY FAILED" };
+        let verdict = if run.conclusion == "success" {
+            "DEPLOYED"
+        } else {
+            "DEPLOY FAILED"
+        };
         let (n, title, sha, concl) = (d.n, &d.title, &d.sha, &run.conclusion);
         say.notes.push(Note {
             subject: format!("{verdict} #{n} [{repo}] {}", short(sha)),
-            body: format!("{verdict}: PR #{n} {title} [{repo}]\nMerge: {sha}\nRun: {concl} in {}m{}s\n{}\n{}", run.secs / 60, run.secs % 60, run.url, beads_block(&d.beads.join("\n"))),
+            body: format!(
+                "{verdict}: PR #{n} {title} [{repo}]\nMerge: {sha}\nRun: {concl} in {}m{}s\n{}\n{}",
+                run.secs / 60,
+                run.secs % 60,
+                run.url,
+                beads_block(&d.beads.join("\n"))
+            ),
         });
-        say.lines.push(format!("{verdict} #{n} {title} [{repo}]: {concl} in {}s {}", run.secs, run.url));
+        say.lines.push(format!(
+            "{verdict} #{n} {title} [{repo}]: {concl} in {}s {}",
+            run.secs, run.url
+        ));
     }
 }
 
@@ -248,30 +341,50 @@ impl Handler for PrNotify {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE)).unwrap_or_default();
+            let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE))
+                .unwrap_or_default();
             return vec![
                 Command::Probe(EffectSpec::probe(OBSERVE, input, OBSERVE_DEADLINE_MS)),
-                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Timer {
+                    at: ev.at + self.interval_ms,
+                    kind: EventKind::new(TICK, ""),
+                },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) || ev.kind.tag != EFFECT_SUCCEEDED {
             return vec![];
         }
-        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
+        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else {
+            return vec![];
+        };
         let now = ev.at / 1000;
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, say) = decide(self, &carry, &snap, now);
-        ctx.event().set("pr_notify.said", (say.lines.len() + say.notes.len()) as u64);
+        ctx.event()
+            .set("pr_notify.said", (say.lines.len() + say.notes.len()) as u64);
         let mut cmds = vec![];
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+            cmds.push(Command::Emit(EventKind::new(
+                STATE,
+                &serde_json::to_string(&next).unwrap_or_default(),
+            )));
         }
         for m in say.lines {
-            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
+            cmds.push(Command::Effect(EffectSpec::keyed(
+                INBOX_APPEND,
+                format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)),
+                format!("{} [watch:{NAME}] {m}", iso8601(now)),
+                DEADLINE_MS,
+            )));
         }
         for n in say.notes {
             let input = serde_json::to_string(&n).unwrap_or_default();
-            cmds.push(Command::Effect(EffectSpec::keyed(OPERATOR_NOTE, format!("{NAME}:note:{now}:{:016x}", runtime::event::fnv1a(&input)), input, DEADLINE_MS)));
+            cmds.push(Command::Effect(EffectSpec::keyed(
+                OPERATOR_NOTE,
+                format!("{NAME}:note:{now}:{:016x}", runtime::event::fnv1a(&input)),
+                input,
+                DEADLINE_MS,
+            )));
         }
         cmds
     }
@@ -282,19 +395,32 @@ mod tests {
     use super::*;
 
     fn cfg() -> PrNotify {
-        PrNotify { interval_ms: 90_000, deploy_giveup_secs: 100 }
+        PrNotify {
+            interval_ms: 90_000,
+            deploy_giveup_secs: 100,
+        }
     }
 
     fn pr(n: u64, status: &str, fail: &str) -> OpenPr {
-        OpenPr { number: n, status: status.into(), title: format!("t{n}"), fail: fail.into() }
+        OpenPr {
+            number: n,
+            status: status.into(),
+            title: format!("t{n}"),
+            fail: fail.into(),
+        }
     }
 
     fn one(obs: RepoObs) -> Snapshot {
-        Snapshot { repos: vec![("r".into(), obs)] }
+        Snapshot {
+            repos: vec![("r".into(), obs)],
+        }
     }
 
     fn open(prs: Vec<OpenPr>) -> RepoObs {
-        RepoObs { open: Some(prs), ..RepoObs::default() }
+        RepoObs {
+            open: Some(prs),
+            ..RepoObs::default()
+        }
     }
 
     fn check(n: &str, s: &str, c: &str) -> (String, String, String) {
@@ -305,34 +431,81 @@ mod tests {
     #[test]
     fn checks_classify_as_red_green_or_pending() {
         assert_eq!(classify(&[]), ("pending", String::new()));
-        assert_eq!(classify(&[check("a", "COMPLETED", "SUCCESS"), check("b", "COMPLETED", "FAILURE"), check("c", "COMPLETED", "TIMED_OUT")]), ("red", "b,c".into()));
-        assert_eq!(classify(&[check("a", "COMPLETED", "SUCCESS")]), ("green", String::new()));
-        assert_eq!(classify(&[check("a", "COMPLETED", "SUCCESS"), check("b", "IN_PROGRESS", "")]).0, "pending");
+        assert_eq!(
+            classify(&[
+                check("a", "COMPLETED", "SUCCESS"),
+                check("b", "COMPLETED", "FAILURE"),
+                check("c", "COMPLETED", "TIMED_OUT")
+            ]),
+            ("red", "b,c".into())
+        );
+        assert_eq!(
+            classify(&[check("a", "COMPLETED", "SUCCESS")]),
+            ("green", String::new())
+        );
+        assert_eq!(
+            classify(&[
+                check("a", "COMPLETED", "SUCCESS"),
+                check("b", "IN_PROGRESS", "")
+            ])
+            .0,
+            "pending"
+        );
         assert_eq!(classify(&[check("a", "COMPLETED", "NEUTRAL")]).0, "pending");
     }
 
     #[test_id(t73ul8g)]
     #[test]
     fn a_pr_is_reported_on_change_only() {
-        let (c, say) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(7, "pending", "")])), 1000);
+        let (c, say) = decide(
+            &cfg(),
+            &Carry::default(),
+            &one(open(vec![pr(7, "pending", "")])),
+            1000,
+        );
         assert_eq!(say.lines, ["OPENED #7 t7 [r]"]);
-        assert!(decide(&cfg(), &c, &one(open(vec![pr(7, "pending", "")])), 1090).1.lines.is_empty());
-        let (c, say) = decide(&cfg(), &c, &one(open(vec![pr(7, "red", "build,lint")])), 1180);
+        assert!(
+            decide(&cfg(), &c, &one(open(vec![pr(7, "pending", "")])), 1090)
+                .1
+                .lines
+                .is_empty()
+        );
+        let (c, say) = decide(
+            &cfg(),
+            &c,
+            &one(open(vec![pr(7, "red", "build,lint")])),
+            1180,
+        );
         assert_eq!(say.lines, ["FAIL RED #7 t7 [r]: build,lint"]);
-        assert_eq!(decide(&cfg(), &c, &one(open(vec![pr(7, "green", "")])), 1270).1.lines, ["GREEN #7 t7 [r]: lands automatically"]);
+        assert_eq!(
+            decide(&cfg(), &c, &one(open(vec![pr(7, "green", "")])), 1270)
+                .1
+                .lines,
+            ["GREEN #7 t7 [r]: lands automatically"]
+        );
     }
 
     #[test_id(tr89u3c)]
     #[test]
     fn a_pr_first_seen_resolved_gets_opened_and_its_verdict() {
-        let (_, say) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(1, "red", "x")])), 1000);
+        let (_, say) = decide(
+            &cfg(),
+            &Carry::default(),
+            &one(open(vec![pr(1, "red", "x")])),
+            1000,
+        );
         assert_eq!(say.lines, ["OPENED #1 t1 [r]", "FAIL RED #1 t1 [r]: x"]);
     }
 
     #[test_id(tk9oix7)]
     #[test]
     fn a_forge_that_did_not_answer_changes_nothing() {
-        let (c, _) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(7, "pending", "")])), 1000);
+        let (c, _) = decide(
+            &cfg(),
+            &Carry::default(),
+            &one(open(vec![pr(7, "pending", "")])),
+            1000,
+        );
         let (after, say) = decide(&cfg(), &c, &one(RepoObs::default()), 1090);
         assert_eq!((after, say), (c, Said::default()));
     }
@@ -340,22 +513,57 @@ mod tests {
     #[test_id(taz846a)]
     #[test]
     fn a_pr_that_left_the_open_list_is_tracked_until_the_forge_says_what_became_of_it() {
-        let (c, _) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(7, "pending", "")])), 1000);
+        let (c, _) = decide(
+            &cfg(),
+            &Carry::default(),
+            &one(open(vec![pr(7, "pending", "")])),
+            1000,
+        );
         let (c, say) = decide(&cfg(), &c, &one(open(vec![])), 1090);
         assert_eq!((c.repos["r"].prs.len(), say.lines.len()), (1, 0));
         let mut gone = open(vec![]);
-        gone.finals.insert(7, Final { state: "OPEN".into(), ..Final::default() });
-        assert_eq!(decide(&cfg(), &c, &one(gone), 1180).0.repos["r"].prs.len(), 1);
+        gone.finals.insert(
+            7,
+            Final {
+                state: "OPEN".into(),
+                ..Final::default()
+            },
+        );
+        assert_eq!(
+            decide(&cfg(), &c, &one(gone), 1180).0.repos["r"].prs.len(),
+            1
+        );
         let mut closed = open(vec![]);
-        closed.finals.insert(7, Final { state: "CLOSED".into(), ..Final::default() });
+        closed.finals.insert(
+            7,
+            Final {
+                state: "CLOSED".into(),
+                ..Final::default()
+            },
+        );
         let (c, say) = decide(&cfg(), &c, &one(closed), 1270);
-        assert_eq!((say.lines, c.repos["r"].prs.len()), (vec!["CLOSED #7 t7 [r]".to_string()], 0));
+        assert_eq!(
+            (say.lines, c.repos["r"].prs.len()),
+            (vec!["CLOSED #7 t7 [r]".to_string()], 0)
+        );
     }
 
     fn merged_carry() -> (Carry, Said) {
-        let (c, _) = decide(&cfg(), &Carry::default(), &one(open(vec![pr(7, "green", "")])), 1000);
+        let (c, _) = decide(
+            &cfg(),
+            &Carry::default(),
+            &one(open(vec![pr(7, "green", "")])),
+            1000,
+        );
         let mut gone = open(vec![]);
-        gone.finals.insert(7, Final { state: "MERGED".into(), sha: "0123456789abcdef".into(), beads: vec!["- sp-aaa — one".into()] });
+        gone.finals.insert(
+            7,
+            Final {
+                state: "MERGED".into(),
+                sha: "0123456789abcdef".into(),
+                beads: vec!["- sp-aaa — one".into()],
+            },
+        );
         decide(&cfg(), &c, &one(gone), 1090)
     }
 
@@ -365,7 +573,10 @@ mod tests {
         let (c, say) = merged_carry();
         assert_eq!(say.lines, ["MERGED #7 t7 [r]"]);
         assert_eq!(say.notes[0].subject, "MERGED #7 [r] 012345678");
-        assert_eq!(say.notes[0].body, "PR #7 t7 [r] merged at 0123456789abcdef.\n\nBeads:\n- bead sp-aaa — one\n");
+        assert_eq!(
+            say.notes[0].body,
+            "PR #7 t7 [r] merged at 0123456789abcdef.\n\nBeads:\n- bead sp-aaa — one\n"
+        );
         assert_eq!(c.repos["r"].deploys.len(), 1);
     }
 
@@ -374,24 +585,50 @@ mod tests {
     fn a_deploy_is_reported_when_its_run_completes_and_dropped_after_the_giveup() {
         let (c, _) = merged_carry();
         let mut done = open(vec![]);
-        done.runs.insert("0123456789abcdef".into(), Run { conclusion: "failure".into(), secs: 125, url: "http://u".into() });
+        done.runs.insert(
+            "0123456789abcdef".into(),
+            Run {
+                conclusion: "failure".into(),
+                secs: 125,
+                url: "http://u".into(),
+            },
+        );
         let (after, say) = decide(&cfg(), &c, &one(done), 1100);
-        assert_eq!(say.lines, ["DEPLOY FAILED #7 t7 [r]: failure in 125s http://u"]);
+        assert_eq!(
+            say.lines,
+            ["DEPLOY FAILED #7 t7 [r]: failure in 125s http://u"]
+        );
         assert_eq!(say.notes[0].body, "DEPLOY FAILED: PR #7 t7 [r]\nMerge: 0123456789abcdef\nRun: failure in 2m5s\nhttp://u\n\nBeads:\n- bead sp-aaa — one\n");
         assert!(after.repos["r"].deploys.is_empty());
-        assert_eq!(decide(&cfg(), &c, &one(open(vec![])), 1190).0.repos["r"].deploys.len(), 1, "waiting is not giving up");
-        assert!(decide(&cfg(), &c, &one(open(vec![])), 1191).0.repos["r"].deploys.is_empty());
+        assert_eq!(
+            decide(&cfg(), &c, &one(open(vec![])), 1190).0.repos["r"]
+                .deploys
+                .len(),
+            1,
+            "waiting is not giving up"
+        );
+        assert!(decide(&cfg(), &c, &one(open(vec![])), 1191).0.repos["r"]
+            .deploys
+            .is_empty());
     }
 
     #[test_id(tuoz8m2)]
     #[test]
     fn a_branch_without_a_pr_is_announced_once_while_it_stays() {
-        let obs = RepoObs { strays: Some(vec!["spira/x".into()]), ..open(vec![]) };
+        let obs = RepoObs {
+            strays: Some(vec!["spira/x".into()]),
+            ..open(vec![])
+        };
         let (c, say) = decide(&cfg(), &Carry::default(), &one(obs.clone()), 1000);
         assert_eq!(say.lines, ["⚠ BRANCH spira/x: no PR [r]"]);
         let (c, say) = decide(&cfg(), &c, &one(obs), 1090);
         assert!(say.lines.is_empty());
-        let gone = RepoObs { strays: Some(vec![]), ..open(vec![]) };
-        assert!(decide(&cfg(), &c, &one(gone), 1180).0.repos["r"].strays.is_empty());
+        let gone = RepoObs {
+            strays: Some(vec![]),
+            ..open(vec![])
+        };
+        assert!(decide(&cfg(), &c, &one(gone), 1180).0.repos["r"]
+            .strays
+            .is_empty());
     }
 }

@@ -77,7 +77,12 @@ pub fn run(views: Projection) -> Result<Store, String> {
     let (views, _) = install(views)?;
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
-    std::thread::Builder::new().name("store-watch".into()).spawn(move || spira_store::lc_call::as_task("store-watch", || views.run(&flag, &mut |_| {}))).map_err(|e| format!("store watch thread: {e}"))?;
+    std::thread::Builder::new()
+        .name("store-watch".into())
+        .spawn(move || {
+            spira_store::lc_call::as_task("store-watch", || views.run(&flag, &mut |_| {}))
+        })
+        .map_err(|e| format!("store watch thread: {e}"))?;
     Ok(Store { stop })
 }
 
@@ -92,7 +97,11 @@ mod tests {
         t.settle(5);
         assert_eq!(t.rev(), Some(5));
         t.settle(9);
-        assert_eq!(t.rev(), Some(5), "a write outside every watched prefix is no change");
+        assert_eq!(
+            t.rev(),
+            Some(5),
+            "a write outside every watched prefix is no change"
+        );
         t.set(9);
         assert_eq!(t.rev(), Some(9));
     }
@@ -102,17 +111,35 @@ mod tests {
     fn the_scheduler_watch_names_no_prefix_its_own_journal_turn_writes() {
         struct Silent;
         impl spira_store::lc_call::Transport for Silent {
-            fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+            fn exchange(
+                &self,
+                _: &[String],
+                _: Option<&str>,
+                _: std::time::Duration,
+            ) -> Result<spira_store::lc_call::Reply, String> {
                 Err("not called".into())
             }
         }
         let hit = |p: &Projection| {
             let (events, runtime) = (state_store::events_key(42), "runtime/state/t/k");
-            p.watch_prefixes().into_iter().filter(|w| events.starts_with(w) || runtime.starts_with(w)).map(String::from).collect::<Vec<_>>()
+            p.watch_prefixes()
+                .into_iter()
+                .filter(|w| events.starts_with(w) || runtime.starts_with(w))
+                .map(String::from)
+                .collect::<Vec<_>>()
         };
         let client = || LcClient::over(Arc::new(Silent), true);
-        assert_eq!(hit(&scheduler_projection(client()).unwrap()), Vec::<String>::new());
-        let planted = Projection::configured(client()).unwrap().with_prefixes(&["events/"]);
-        assert_eq!(hit(&planted), ["events/"], "the check must see a watch of events/");
+        assert_eq!(
+            hit(&scheduler_projection(client()).unwrap()),
+            Vec::<String>::new()
+        );
+        let planted = Projection::configured(client())
+            .unwrap()
+            .with_prefixes(&["events/"]);
+        assert_eq!(
+            hit(&planted),
+            ["events/"],
+            "the check must see a watch of events/"
+        );
     }
 }

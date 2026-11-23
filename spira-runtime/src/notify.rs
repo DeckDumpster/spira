@@ -25,7 +25,11 @@ impl Notifier {
         Notifier::with_clock(socket, watchdog_usec, Arc::new(Instant::now))
     }
 
-    pub fn with_clock(socket: Option<&str>, watchdog_usec: Option<u64>, clock: Clock) -> std::io::Result<Notifier> {
+    pub fn with_clock(
+        socket: Option<&str>,
+        watchdog_usec: Option<u64>,
+        clock: Clock,
+    ) -> std::io::Result<Notifier> {
         let dest = match socket.filter(|s| !s.is_empty()) {
             Some(s) => Some(match s.strip_prefix('@') {
                 Some(name) => SocketAddr::from_abstract_name(name.as_bytes())?,
@@ -33,14 +37,29 @@ impl Notifier {
             }),
             None => None,
         };
-        let every = watchdog_usec.filter(|u| *u > 0).map(|u| Duration::from_micros(u / 3));
+        let every = watchdog_usec
+            .filter(|u| *u > 0)
+            .map(|u| Duration::from_micros(u / 3));
         let sock = UnixDatagram::unbound()?;
         sock.set_nonblocking(true)?;
-        Ok(Notifier { dest, sock, every, base: clock(), clock, last: AtomicU64::new(0), dropped: AtomicU64::new(0) })
+        Ok(Notifier {
+            dest,
+            sock,
+            every,
+            base: clock(),
+            clock,
+            last: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
+        })
     }
 
     pub fn from_env() -> std::io::Result<Notifier> {
-        Notifier::new(std::env::var("NOTIFY_SOCKET").ok().as_deref(), std::env::var("WATCHDOG_USEC").ok().and_then(|v| v.parse().ok()))
+        Notifier::new(
+            std::env::var("NOTIFY_SOCKET").ok().as_deref(),
+            std::env::var("WATCHDOG_USEC")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+        )
     }
 
     /// Longest the loop may go without a turn: a third of the watchdog period.
@@ -50,7 +69,11 @@ impl Notifier {
 
     fn send(&self, msg: &str) {
         if let Some(d) = &self.dest {
-            if self.sock.send_to_addr(msg.as_bytes(), d).is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock) {
+            if self
+                .sock
+                .send_to_addr(msg.as_bytes(), d)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock)
+            {
                 self.dropped.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -68,7 +91,10 @@ impl Notifier {
     /// `WATCHDOG=1`, at most once per `max_sleep`; cheap enough to call after every event.
     pub fn kick(&self) {
         let Some(every) = self.every else { return };
-        let now = (self.clock)().saturating_duration_since(self.base).as_nanos() as u64 + 1;
+        let now = (self.clock)()
+            .saturating_duration_since(self.base)
+            .as_nanos() as u64
+            + 1;
         let last = self.last.load(Ordering::Relaxed);
         if last == 0 || now - last >= (every / 2).as_nanos() as u64 {
             self.last.store(now, Ordering::Relaxed);
@@ -90,7 +116,12 @@ mod tests {
         rx.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let now = Arc::new(std::sync::Mutex::new(Instant::now()));
         let clock = now.clone();
-        let n = Notifier::with_clock(path.to_str(), Some(3_000_000), Arc::new(move || *clock.lock().unwrap())).unwrap();
+        let n = Notifier::with_clock(
+            path.to_str(),
+            Some(3_000_000),
+            Arc::new(move || *clock.lock().unwrap()),
+        )
+        .unwrap();
         n.ready();
         n.kick();
         *now.lock().unwrap() += Duration::from_millis(499);
@@ -103,10 +134,17 @@ mod tests {
         assert_eq!(got(&rx, &mut buf), "READY=1");
         assert_eq!(got(&rx, &mut buf), "WATCHDOG=1");
         rx.set_nonblocking(true).unwrap();
-        assert!(rx.recv(&mut buf).is_err(), "the second kick inside the window is dropped");
+        assert!(
+            rx.recv(&mut buf).is_err(),
+            "the second kick inside the window is dropped"
+        );
         *now.lock().unwrap() += Duration::from_millis(1);
         n.kick();
-        assert_eq!(got(&rx, &mut buf), "WATCHDOG=1", "a kick at the window's edge is sent");
+        assert_eq!(
+            got(&rx, &mut buf),
+            "WATCHDOG=1",
+            "a kick at the window's edge is sent"
+        );
         assert_eq!(n.max_sleep(), Some(Duration::from_secs(1)));
     }
 

@@ -124,7 +124,17 @@ pub const ARCHIVE: &str = "hel.sweep.archive";
 pub const FREE_WORKTREE: &str = "hel.sweep.free_worktree";
 pub const ORPHAN_WORKTREE: &str = "hel.sweep.orphan_worktree";
 pub const PRUNE: &str = "hel.sweep.prune";
-pub const EFFECTS: &[&str] = &[OBSERVE, PR_TIP, SEND, CONTENT_ON_BASE, CLOSE_ON_LAND, ARCHIVE, FREE_WORKTREE, ORPHAN_WORKTREE, PRUNE];
+pub const EFFECTS: &[&str] = &[
+    OBSERVE,
+    PR_TIP,
+    SEND,
+    CONTENT_ON_BASE,
+    CLOSE_ON_LAND,
+    ARCHIVE,
+    FREE_WORKTREE,
+    ORPHAN_WORKTREE,
+    PRUNE,
+];
 
 /// `OnCalendar=*-*-* *:35:00`.
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_CALENDAR";
@@ -134,13 +144,38 @@ pub const JITTER_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_JITTER_SECS";
 pub const BUDGET_KEY: &str = "SPIRA_RUNTIME_HEL_SWEEP_BUDGET_SECS";
 /// Milliseconds of rest after each send leg starts.
 pub const PACE_KEY: &str = "SPIRA_HEL_PACE_MS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, BUDGET_KEY, "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_SUBMITTED_LABEL", "SPIRA_GH", "SPIRA_GH_TIMEOUT", "SPIRA_RELEASE", PACE_KEY];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    JITTER_KEY,
+    BUDGET_KEY,
+    "SPIRA_RUN",
+    "SPIRA_REAPLOG",
+    "SPIRA_SUBMITTED_LABEL",
+    "SPIRA_GH",
+    "SPIRA_GH_TIMEOUT",
+    "SPIRA_RELEASE",
+    PACE_KEY,
+];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: Some(JITTER_KEY) };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 120_000,
+    cadence_key: CADENCE_KEY,
+    calendar: true,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: Some(JITTER_KEY),
+};
 
 /// How long one observe may keep asking git for facts: half its deadline, so the snapshot is
 /// built and answered inside it. Branches not reached are judged first on the next observe.
-pub const OBSERVE_SLICE: std::time::Duration = std::time::Duration::from_millis(SPEC.probe_deadline_ms / 2);
+pub const OBSERVE_SLICE: std::time::Duration =
+    std::time::Duration::from_millis(SPEC.probe_deadline_ms / 2);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -324,8 +359,17 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 fn budget_ms(cfg: &Cfg) -> Result<u64, String> {
-    let raw = cfg.get(BUDGET_KEY).ok_or_else(|| format!("{BUDGET_KEY} is read but not declared"))?;
-    raw.trim().parse::<u64>().ok().filter(|s| *s > 0).map(|s| s * 1000).ok_or_else(|| format!("{BUDGET_KEY} must be a positive whole number of seconds, got {raw:?}"))
+    let raw = cfg
+        .get(BUDGET_KEY)
+        .ok_or_else(|| format!("{BUDGET_KEY} is read but not declared"))?;
+    raw.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|s| *s > 0)
+        .map(|s| s * 1000)
+        .ok_or_else(|| {
+            format!("{BUDGET_KEY} must be a positive whole number of seconds, got {raw:?}")
+        })
 }
 
 /// The snapshot's facts of one branch, as `hel::sweep::judge` reads them.
@@ -343,7 +387,10 @@ impl hel::sweep::Facts for Snap<'_> {
         self.s.beads.contains_key(&self.b.id) || self.s.rows.contains_key(&self.b.id)
     }
     fn superseded(&self) -> bool {
-        self.s.beads.get(&self.b.id).is_some_and(|b| !b.supersedes.is_empty())
+        self.s
+            .beads
+            .get(&self.b.id)
+            .is_some_and(|b| !b.supersedes.is_empty())
     }
     fn ahead(&self) -> Option<u64> {
         Some(u64::from(self.b.ahead))
@@ -352,10 +399,21 @@ impl hel::sweep::Facts for Snap<'_> {
         self.b.merges_clean
     }
     fn terminal(&self) -> bool {
-        self.s.rows.get(&self.b.id).is_some_and(|r| spira_store::lc_state::is_terminal(r))
+        self.s
+            .rows
+            .get(&self.b.id)
+            .is_some_and(|r| spira_store::lc_state::is_terminal(r))
     }
     fn submitted(&self) -> bool {
-        self.s.beads.get(&self.b.id).is_some_and(|b| b.labels.iter().any(|l| l == self.submitted_label)) || self.s.rows.get(&self.b.id).is_some_and(|r| spira_store::lc_state::past_builder(r))
+        self.s
+            .beads
+            .get(&self.b.id)
+            .is_some_and(|b| b.labels.iter().any(|l| l == self.submitted_label))
+            || self
+                .s
+                .rows
+                .get(&self.b.id)
+                .is_some_and(|r| spira_store::lc_state::past_builder(r))
     }
     fn tip(&self) -> Option<String> {
         Some(self.b.tip.clone()).filter(|t| !t.is_empty())
@@ -374,42 +432,123 @@ impl hel::sweep::Facts for Snap<'_> {
     }
 }
 
-fn effect(name: &str, key: String, input: &impl Serialize, deadline_ms: u64) -> Result<Act, String> {
-    Ok(Act { name: name.into(), key, input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe: false })
+fn effect(
+    name: &str,
+    key: String,
+    input: &impl Serialize,
+    deadline_ms: u64,
+) -> Result<Act, String> {
+    Ok(Act {
+        name: name.into(),
+        key,
+        input: serde_json::to_string(input).map_err(|e| e.to_string())?,
+        deadline_ms,
+        probe: false,
+    })
 }
 
 fn leg_key(repo: &str, br: &str, tip: &str) -> String {
     format!("{repo}:{br}:{tip}")
 }
 
-fn send_leg(jobs: &mut BTreeMap<String, Job>, s: &Snapshot, b: &Branch, caller: &str, proof: bool, close: bool) -> Result<Act, String> {
-    jobs.insert(leg_key(&s.repo, &b.br, &b.tip), Job { effect: SEND.into(), repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), close });
-    let why = if caller == "archived" { "archived".to_string() } else { format!("landed in {}", s.base.landref) };
-    effect(SEND, format!("{}:{}:{}", s.repo, b.br, b.tip), &Send { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), why, caller: caller.into(), proof }, 120_000)
+fn send_leg(
+    jobs: &mut BTreeMap<String, Job>,
+    s: &Snapshot,
+    b: &Branch,
+    caller: &str,
+    proof: bool,
+    close: bool,
+) -> Result<Act, String> {
+    jobs.insert(
+        leg_key(&s.repo, &b.br, &b.tip),
+        Job {
+            effect: SEND.into(),
+            repo: s.repo.clone(),
+            id: b.id.clone(),
+            br: b.br.clone(),
+            tip: b.tip.clone(),
+            close,
+        },
+    );
+    let why = if caller == "archived" {
+        "archived".to_string()
+    } else {
+        format!("landed in {}", s.base.landref)
+    };
+    effect(
+        SEND,
+        format!("{}:{}:{}", s.repo, b.br, b.tip),
+        &Send {
+            repo: s.repo.clone(),
+            id: b.id.clone(),
+            br: b.br.clone(),
+            tip: b.tip.clone(),
+            why,
+            caller: caller.into(),
+            proof,
+        },
+        120_000,
+    )
 }
 
 fn job(jobs: &mut BTreeMap<String, Job>, kind: &str, t: &Target) -> Result<Act, String> {
-    jobs.insert(format!("{kind}:{}:{}", t.repo, t.id), Job { effect: kind.into(), repo: t.repo.clone(), id: t.id.clone(), br: t.br.clone(), tip: t.tip.clone(), close: false });
-    effect(kind, format!("{}:{}:{}:{}:{}:{kind}", t.repo, t.id, t.br, t.tip, t.path), t, if kind == ARCHIVE { 30_000 } else { 120_000 })
+    jobs.insert(
+        format!("{kind}:{}:{}", t.repo, t.id),
+        Job {
+            effect: kind.into(),
+            repo: t.repo.clone(),
+            id: t.id.clone(),
+            br: t.br.clone(),
+            tip: t.tip.clone(),
+            close: false,
+        },
+    );
+    effect(
+        kind,
+        format!("{}:{}:{}:{}:{}:{kind}", t.repo, t.id, t.br, t.tip, t.path),
+        t,
+        if kind == ARCHIVE { 30_000 } else { 120_000 },
+    )
 }
 
 /// One repository's acts: `hel::sweep::judge` per branch (round branches and held beads
 /// skipped), then the orphaned worktrees.
 pub fn plan(cfg: &Cfg, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result<Vec<Act>, String> {
-    plan_labelled(cfg.get("SPIRA_SUBMITTED_LABEL").map_or("", String::as_str), s, jobs)
+    plan_labelled(
+        cfg.get("SPIRA_SUBMITTED_LABEL").map_or("", String::as_str),
+        s,
+        jobs,
+    )
 }
 
-fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) -> Result<Vec<Act>, String> {
+fn plan_labelled(
+    label: &str,
+    s: &Snapshot,
+    jobs: &mut BTreeMap<String, Job>,
+) -> Result<Vec<Act>, String> {
     use hel::sweep::Disp;
     let mut acts = vec![];
     for b in &s.branches {
         if b.id.starts_with("round-") || s.holders.contains_key(&b.id) {
             continue;
         }
-        let target = Target { repo: s.repo.clone(), id: b.id.clone(), br: b.br.clone(), tip: b.tip.clone(), path: b.worktree.clone().unwrap_or_default() };
-        let terminal = s.rows.get(&b.id).is_some_and(|r| spira_store::lc_state::is_terminal(r));
+        let target = Target {
+            repo: s.repo.clone(),
+            id: b.id.clone(),
+            br: b.br.clone(),
+            tip: b.tip.clone(),
+            path: b.worktree.clone().unwrap_or_default(),
+        };
+        let terminal = s
+            .rows
+            .get(&b.id)
+            .is_some_and(|r| spira_store::lc_state::is_terminal(r));
         let landed = s.rows.get(&b.id).is_some_and(|r| r == "LANDED");
-        match hel::sweep::judge(&Snap { s, b, submitted_label: label }) {
+        match hel::sweep::judge(&Snap {
+            s,
+            b,
+            submitted_label: label,
+        }) {
             Disp::KeepUnlanded => {}
             Disp::KeepSupersededUnsafe => {
                 if b.worktree.is_some() {
@@ -419,12 +558,21 @@ fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) ->
             Disp::OrphanNoBead | Disp::ArchiveTerminal => acts.push(job(jobs, ARCHIVE, &target)?),
             Disp::SendContentLanded => {
                 let ahead = u64::from(b.ahead);
-                if !landed && hel::sweep::needs_evidence(ahead, || b.has_own_commit, || b.only_stacked_base, || !b.base_names.is_empty()) {
+                if !landed
+                    && hel::sweep::needs_evidence(
+                        ahead,
+                        || b.has_own_commit,
+                        || b.only_stacked_base,
+                        || !b.base_names.is_empty(),
+                    )
+                {
                     continue;
                 }
                 acts.push(send_leg(jobs, s, b, "hel", ahead > 0 && !terminal, true)?);
             }
-            Disp::SendOtherPr | Disp::ReapSquashMerged => acts.push(send_leg(jobs, s, b, "hel", false, true)?),
+            Disp::SendOtherPr | Disp::ReapSquashMerged => {
+                acts.push(send_leg(jobs, s, b, "hel", false, true)?)
+            }
             Disp::ReapSupersededSafe => acts.push(send_leg(jobs, s, b, "hel", false, false)?),
         }
     }
@@ -432,13 +580,29 @@ fn plan_labelled(label: &str, s: &Snapshot, jobs: &mut BTreeMap<String, Job>) ->
         if s.holders.contains_key(&o.id) {
             continue;
         }
-        acts.push(job(jobs, ORPHAN_WORKTREE, &Target { repo: s.repo.clone(), id: o.id.clone(), br: o.br.clone(), tip: String::new(), path: o.path.clone() })?);
+        acts.push(job(
+            jobs,
+            ORPHAN_WORKTREE,
+            &Target {
+                repo: s.repo.clone(),
+                id: o.id.clone(),
+                br: o.br.clone(),
+                tip: String::new(),
+                path: o.path.clone(),
+            },
+        )?);
     }
     Ok(acts)
 }
 
 fn observe_next(repo: &str) -> Act {
-    Act { name: OBSERVE.into(), key: OBSERVE.into(), input: repo.into(), deadline_ms: SPEC.probe_deadline_ms, probe: true }
+    Act {
+        name: OBSERVE.into(),
+        key: OBSERVE.into(),
+        input: repo.into(),
+        deadline_ms: SPEC.probe_deadline_ms,
+        probe: true,
+    }
 }
 
 /// After an answer: while jobs remain, wait; once the repository's are all in, prune it and
@@ -448,7 +612,15 @@ fn settle(mut next: Carry, repo: &str, mut acts: Vec<Act>) -> Result<(Carry, Vec
         return Ok((next, acts));
     }
     if !repo.is_empty() {
-        acts.push(effect(PRUNE, format!("{repo}:prune"), &Target { repo: repo.into(), ..Target::default() }, 30_000)?);
+        acts.push(effect(
+            PRUNE,
+            format!("{repo}:prune"),
+            &Target {
+                repo: repo.into(),
+                ..Target::default()
+            },
+            30_000,
+        )?);
     }
     match next.pass.as_mut().filter(|p| !p.repos_left.is_empty()) {
         Some(p) => {
@@ -469,7 +641,18 @@ fn settle(mut next: Carry, repo: &str, mut acts: Vec<Act>) -> Result<(Carry, Vec
 /// The job an outcome answers: the one its body names, else the first of that effect.
 fn answered_job(carry: &Carry, effect: &str, body: &str) -> Option<String> {
     let body = body.trim();
-    carry.jobs.get(body).filter(|j| j.effect == effect).map(|_| body.to_string()).or_else(|| carry.jobs.iter().find(|(_, j)| j.effect == effect).map(|(k, _)| k.clone()))
+    carry
+        .jobs
+        .get(body)
+        .filter(|j| j.effect == effect)
+        .map(|_| body.to_string())
+        .or_else(|| {
+            carry
+                .jobs
+                .iter()
+                .find(|(_, j)| j.effect == effect)
+                .map(|(k, _)| k.clone())
+        })
 }
 
 /// `disposition` and `act` over the snapshot rather than `World`.
@@ -480,7 +663,20 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         let budget = budget_ms(cfg)?;
         if now_ms >= started + budget {
             // A pass far past its budget whose answers never came is forgotten, not waited on.
-            let next = if now_ms >= started + 2 * budget { Carry { last_fired: carry.last_fired, tally: carry.tally.clone(), ..Carry::default() } } else { Carry { phase: Phase::BudgetSpent, pass: None, jobs: BTreeMap::new(), ..carry.clone() } };
+            let next = if now_ms >= started + 2 * budget {
+                Carry {
+                    last_fired: carry.last_fired,
+                    tally: carry.tally.clone(),
+                    ..Carry::default()
+                }
+            } else {
+                Carry {
+                    phase: Phase::BudgetSpent,
+                    pass: None,
+                    jobs: BTreeMap::new(),
+                    ..carry.clone()
+                }
+            };
             if matches!(input, Input::Observed(_)) && next.phase == Phase::Idle {
                 return decide(cfg, &next, input, now_ms);
             }
@@ -488,8 +684,17 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         }
     }
     match input {
-        Input::Fire if carry.phase == Phase::Acting => Err(format!("{NAME}: a tick in state acting: {} act(s) of the pass have not answered", carry.jobs.len())),
-        Input::Fire => Ok((Carry { phase: Phase::Observing, ..carry.clone() }, vec![])),
+        Input::Fire if carry.phase == Phase::Acting => Err(format!(
+            "{NAME}: a tick in state acting: {} act(s) of the pass have not answered",
+            carry.jobs.len()
+        )),
+        Input::Fire => Ok((
+            Carry {
+                phase: Phase::Observing,
+                ..carry.clone()
+            },
+            vec![],
+        )),
         // Single-flight: the tick's observation while a pass acts changes nothing.
         Input::Observed(_) if carry.phase == Phase::Acting => Ok((carry.clone(), vec![])),
         Input::Observed(s) if s.halted => Ok((carry.clone(), vec![])),
@@ -507,12 +712,37 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 }
                 // Nothing here; the remaining repositories are observed in turn, unjournaled.
                 return Ok(match s.repos.first() {
-                    Some(r) => (if next.phase == Phase::Observing { Carry { phase: Phase::Idle, ..next } } else { next }, vec![observe_next(r)]),
-                    None => (if next.phase == Phase::Observing { Carry { phase: Phase::Idle, ..next } } else { next }, vec![]),
+                    Some(r) => (
+                        if next.phase == Phase::Observing {
+                            Carry {
+                                phase: Phase::Idle,
+                                ..next
+                            }
+                        } else {
+                            next
+                        },
+                        vec![observe_next(r)],
+                    ),
+                    None => (
+                        if next.phase == Phase::Observing {
+                            Carry {
+                                phase: Phase::Idle,
+                                ..next
+                            }
+                        } else {
+                            next
+                        },
+                        vec![],
+                    ),
                 });
             }
             if !continuing {
-                next.pass = Some(Pass { started: now_ms, repos_left: s.repos.clone(), cursor: 0, observing: s.repo.clone() });
+                next.pass = Some(Pass {
+                    started: now_ms,
+                    repos_left: s.repos.clone(),
+                    cursor: 0,
+                    observing: s.repo.clone(),
+                });
                 next.last_fired = Some(now_ms);
             }
             next.phase = Phase::Acting;
@@ -520,10 +750,14 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             Ok((next, acts))
         }
         Input::Ran(r) => {
-            let key = r.key_for(NAME).ok_or_else(|| format!("{NAME}: a unit that is not this task's: {:?}", r.handle))?;
+            let key = r
+                .key_for(NAME)
+                .ok_or_else(|| format!("{NAME}: a unit that is not this task's: {:?}", r.handle))?;
             let Some(j) = carry.jobs.get(&key).cloned() else {
                 return match carry.phase {
-                    Phase::Acting => Err(format!("{NAME}: in state acting no leg {key} is in flight")),
+                    Phase::Acting => {
+                        Err(format!("{NAME}: in state acting no leg {key} is in flight"))
+                    }
                     _ => Ok((carry.clone(), vec![])),
                 };
             };
@@ -534,7 +768,18 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 runtime::units::Exit::Code(0) => {
                     next.tally.sent += 1;
                     if j.close {
-                        acts.push(effect(CLOSE_ON_LAND, format!("{}:{}", j.id, j.tip), &Target { repo: j.repo.clone(), id: j.id.clone(), br: j.br.clone(), tip: j.tip.clone(), path: String::new() }, 5_000)?);
+                        acts.push(effect(
+                            CLOSE_ON_LAND,
+                            format!("{}:{}", j.id, j.tip),
+                            &Target {
+                                repo: j.repo.clone(),
+                                id: j.id.clone(),
+                                br: j.br.clone(),
+                                tip: j.tip.clone(),
+                                path: String::new(),
+                            },
+                            5_000,
+                        )?);
                     }
                 }
                 // Queued behind a certification: neither sent nor failed.
@@ -544,16 +789,35 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             settle(next, &j.repo, acts)
         }
         // A send's outcome is its leg starting; the leg answers by `unit.ran`.
-        Input::Outcome { effect: e, ok: true, .. } if e == SEND => Ok((carry.clone(), vec![])),
-        Input::Outcome { effect: e, ok: false, body } if e == SEND => {
-            let key = carry.jobs.iter().find(|(k, j)| j.effect == SEND && body.contains(k.as_str())).or_else(|| carry.jobs.iter().find(|(_, j)| j.effect == SEND)).map(|(k, _)| k.clone());
-            let Some(key) = key else { return Ok((carry.clone(), vec![])) };
+        Input::Outcome {
+            effect: e,
+            ok: true,
+            ..
+        } if e == SEND => Ok((carry.clone(), vec![])),
+        Input::Outcome {
+            effect: e,
+            ok: false,
+            body,
+        } if e == SEND => {
+            let key = carry
+                .jobs
+                .iter()
+                .find(|(k, j)| j.effect == SEND && body.contains(k.as_str()))
+                .or_else(|| carry.jobs.iter().find(|(_, j)| j.effect == SEND))
+                .map(|(k, _)| k.clone());
+            let Some(key) = key else {
+                return Ok((carry.clone(), vec![]));
+            };
             let mut next = carry.clone();
             let repo = next.jobs.remove(&key).map(|j| j.repo).unwrap_or_default();
             next.tally.failed += 1;
             settle(next, &repo, vec![])
         }
-        Input::Outcome { effect: e, ok, body } if [ARCHIVE, FREE_WORKTREE, ORPHAN_WORKTREE].contains(&e.as_str()) => {
+        Input::Outcome {
+            effect: e,
+            ok,
+            body,
+        } if [ARCHIVE, FREE_WORKTREE, ORPHAN_WORKTREE].contains(&e.as_str()) => {
             let Some(key) = answered_job(carry, e, body) else {
                 return match carry.phase {
                     Phase::Acting => Err(format!("{NAME}: in state acting no {e} is in flight")),
@@ -566,8 +830,16 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             match (*ok, e.as_str()) {
                 (true, ARCHIVE) => {
                     // Parked and read back: only now is the branch reaped.
-                    let b = Branch { id: j.id.clone(), br: j.br.clone(), tip: j.tip.clone(), ..Branch::default() };
-                    let s = Snapshot { repo: j.repo.clone(), ..Snapshot::default() };
+                    let b = Branch {
+                        id: j.id.clone(),
+                        br: j.br.clone(),
+                        tip: j.tip.clone(),
+                        ..Branch::default()
+                    };
+                    let s = Snapshot {
+                        repo: j.repo.clone(),
+                        ..Snapshot::default()
+                    };
                     acts.push(send_leg(&mut next.jobs, &s, &b, "archived", false, false)?);
                 }
                 (true, _) => next.tally.sent += 1,
@@ -575,8 +847,15 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             }
             settle(next, &j.repo, acts)
         }
-        Input::Outcome { effect: e, .. } if e == CLOSE_ON_LAND || e == PRUNE || e == CONTENT_ON_BASE || e == PR_TIP => Ok((carry.clone(), vec![])),
-        Input::Outcome { effect: e, .. } => Err(format!("{NAME}: in state {} an outcome of {e} is not expected", phase_name(carry.phase))),
+        Input::Outcome { effect: e, .. }
+            if e == CLOSE_ON_LAND || e == PRUNE || e == CONTENT_ON_BASE || e == PR_TIP =>
+        {
+            Ok((carry.clone(), vec![]))
+        }
+        Input::Outcome { effect: e, .. } => Err(format!(
+            "{NAME}: in state {} an outcome of {e} is not expected",
+            phase_name(carry.phase)
+        )),
     }
 }
 
@@ -586,7 +865,10 @@ pub fn catch_up(carry: &Carry, now_ms: u64, cadence: &Cadence) -> Option<String>
     if let (Phase::Observing, Some(p)) = (carry.phase, &carry.pass) {
         return Some(p.observing.clone());
     }
-    carry.last_fired.filter(|last| cadence.next(*last) <= now_ms).map(|_| String::new())
+    carry
+        .last_fired
+        .filter(|last| cadence.next(*last) <= now_ms)
+        .map(|_| String::new())
 }
 
 /// The failure of a pass whose repository's bead read the store did not answer.
@@ -604,25 +886,48 @@ pub struct Pinned {
 
 impl Pinned {
     pub fn read(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Pinned, String> {
-        Ok(Pinned { submitted_label: get("SPIRA_SUBMITTED_LABEL")?, gh: get("SPIRA_GH")?, gh_timeout: get("SPIRA_GH_TIMEOUT")?, pace: std::time::Duration::from_millis(get(PACE_KEY)?.trim().parse::<u64>().map_err(|e| format!("{PACE_KEY} must be a whole number of milliseconds: {e}"))?) })
+        Ok(Pinned {
+            submitted_label: get("SPIRA_SUBMITTED_LABEL")?,
+            gh: get("SPIRA_GH")?,
+            gh_timeout: get("SPIRA_GH_TIMEOUT")?,
+            pace: std::time::Duration::from_millis(
+                get(PACE_KEY)?.trim().parse::<u64>().map_err(|e| {
+                    format!("{PACE_KEY} must be a whole number of milliseconds: {e}")
+                })?,
+            ),
+        })
     }
 }
 
 /// A registered repository's checkout by name.
 fn root_of(real: &hel::real::Real, repo: &str) -> Result<std::path::PathBuf, String> {
-    real.repos().into_iter().find(|r| r.name == repo).and_then(|r| r.root).ok_or_else(|| format!("repository {repo:?} has no configured checkout — refusing"))
+    real.repos()
+        .into_iter()
+        .find(|r| r.name == repo)
+        .and_then(|r| r.root)
+        .ok_or_else(|| format!("repository {repo:?} has no configured checkout — refusing"))
 }
 
 /// The hel world `hel.sweep` reads and acts through: [`super::hel_reap_stale::world`] with the
 /// pinned forge program and timeout.
-pub fn world(run: &std::path::Path, release: &str, lc: &spira_store::lc_call::LcClient, p: &Pinned) -> Result<hel::real::Real, String> {
+pub fn world(
+    run: &std::path::Path,
+    release: &str,
+    lc: &spira_store::lc_call::LcClient,
+    p: &Pinned,
+) -> Result<hel::real::Real, String> {
     Ok(super::hel_reap_stale::world(run, release, lc)?.with_gh(&p.gh, &p.gh_timeout))
 }
 
 /// The runner of [`OBSERVE`]: one repository's reads (`hel::sweep::scan_repo`, git and the
 /// fetch in-process through hel; the store over the socket), the first registered one when
 /// `repo` is empty, and the names of the repositories after it.
-pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &Pinned, repo: &str) -> Result<String, String> {
+pub fn observe(
+    real: &hel::real::Real,
+    lc: &spira_store::lc_call::LcClient,
+    p: &Pinned,
+    repo: &str,
+) -> Result<String, String> {
     use hel::ports::World;
     let mut snap = Snapshot::default();
     if real.run().join("world.halted").exists() {
@@ -630,38 +935,90 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         return serde_json::to_string(&snap).map_err(|e| e.to_string());
     }
     let names: Vec<hel::ports::Repo> = real.repos();
-    let at = if repo.trim().is_empty() { 0 } else { names.iter().position(|r| r.name == repo.trim()).ok_or_else(|| format!("repository {repo:?} is not registered — refusing"))? };
-    let Some(r) = names.get(at) else { return serde_json::to_string(&snap).map_err(|e| e.to_string()) };
+    let at = if repo.trim().is_empty() {
+        0
+    } else {
+        names
+            .iter()
+            .position(|r| r.name == repo.trim())
+            .ok_or_else(|| format!("repository {repo:?} is not registered — refusing"))?
+    };
+    let Some(r) = names.get(at) else {
+        return serde_json::to_string(&snap).map_err(|e| e.to_string());
+    };
     snap.repo = r.name.clone();
     snap.repos = names.iter().skip(at + 1).map(|r| r.name.clone()).collect();
-    let Some(root) = r.root.as_deref() else { return serde_json::to_string(&snap).map_err(|e| e.to_string()) };
+    let Some(root) = r.root.as_deref() else {
+        return serde_json::to_string(&snap).map_err(|e| e.to_string());
+    };
     // A repository the pass cannot read is skipped, as today: its snapshot carries nothing.
     let cursor = real.resume_after(&r.name);
-    let hel::sweep::Scan { base, branches, orphans, cut } = match hel::sweep::scan_repo(real, root, &p.submitted_label, true, cursor.as_deref(), OBSERVE_SLICE) {
+    let hel::sweep::Scan {
+        base,
+        branches,
+        orphans,
+        cut,
+    } = match hel::sweep::scan_repo(
+        real,
+        root,
+        &p.submitted_label,
+        true,
+        cursor.as_deref(),
+        OBSERVE_SLICE,
+    ) {
         Ok(scan) => scan,
-        Err(hel::sweep::ScanError::Skip(_)) => return serde_json::to_string(&snap).map_err(|e| e.to_string()),
+        Err(hel::sweep::ScanError::Skip(_)) => {
+            return serde_json::to_string(&snap).map_err(|e| e.to_string())
+        }
         Err(hel::sweep::ScanError::Store(e)) => return Err(store_failure(&r.name, &e)),
     };
     park_cursor(real, &r.name, cut, branches.last().map(|b| b.br.as_str()));
-    snap.base = Base { landref: base.landref, landrefs: base.landrefs, remote: base.remote.unwrap_or_default() };
-    let ids: Vec<String> = branches.iter().map(|b| b.id.clone()).chain(orphans.iter().map(|o| o.id.clone())).collect();
-    snap.rows = spira_store::lc_state::list_ids_on(lc, &ids).map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect()).unwrap_or_default();
+    snap.base = Base {
+        landref: base.landref,
+        landrefs: base.landrefs,
+        remote: base.remote.unwrap_or_default(),
+    };
+    let ids: Vec<String> = branches
+        .iter()
+        .map(|b| b.id.clone())
+        .chain(orphans.iter().map(|o| o.id.clone()))
+        .collect();
+    snap.rows = spira_store::lc_state::list_ids_on(lc, &ids)
+        .map(|rs| rs.into_iter().map(|r| (r.bead_id, r.state)).collect())
+        .unwrap_or_default();
     for b in branches {
         if let Some(why) = &b.held {
             snap.holders.insert(b.id.clone(), why.clone());
         }
         if !b.labels.is_empty() || b.superseded {
-            snap.beads.insert(b.id.clone(), Bead { labels: b.labels.clone(), supersedes: if b.superseded { vec!["supersedes".into()] } else { vec![] } });
+            snap.beads.insert(
+                b.id.clone(),
+                Bead {
+                    labels: b.labels.clone(),
+                    supersedes: if b.superseded {
+                        vec!["supersedes".into()]
+                    } else {
+                        vec![]
+                    },
+                },
+            );
         }
         snap.branches.push(Branch {
-            ahead: b.ahead.unwrap_or(u64::from(u32::MAX)).min(u64::from(u32::MAX)) as u32,
+            ahead: b
+                .ahead
+                .unwrap_or(u64::from(u32::MAX))
+                .min(u64::from(u32::MAX)) as u32,
             content_on_base: b.content_on_base,
             merges_clean: b.merges_clean,
             cherry_unapplied: u32::from(b.cherry_unapplied),
             landed_by_subject: b.landed_by_subject,
             has_own_commit: b.has_own_commit,
             only_stacked_base: b.only_stacked_base,
-            base_names: if b.base_names { vec![b.id.clone()] } else { vec![] },
+            base_names: if b.base_names {
+                vec![b.id.clone()]
+            } else {
+                vec![]
+            },
             worktree: b.worktree.map(|w| w.display().to_string()),
             pr_merged_tip: b.pr_merged_tip,
             id: b.id,
@@ -673,7 +1030,11 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, p: &
         if let Some(why) = &o.held {
             snap.holders.insert(o.id.clone(), why.clone());
         }
-        snap.orphans.push(Orphan { id: o.id, path: o.path.display().to_string(), br: o.br });
+        snap.orphans.push(Orphan {
+            id: o.id,
+            path: o.path.display().to_string(),
+            br: o.br,
+        });
     }
     if cursor.is_some() && !cut {
         clear_cursor_when_idle(real, &p.submitted_label, &snap)?;
@@ -694,7 +1055,12 @@ pub fn park_cursor(real: &hel::real::Real, repo: &str, cut: bool, last_judged: O
 /// only a cut observe left unjudged (an observe that walked to the end has none to leave).
 pub fn clear_cursor_when_walked(real: &hel::real::Real, repo: &str, root: &std::path::Path) {
     use hel::ports::World;
-    let unwalked = real.resume_after(repo).is_some_and(|c| hel::git::Git(root).spira_branches().iter().any(|b| b.as_str() > c.as_str()));
+    let unwalked = real.resume_after(repo).is_some_and(|c| {
+        hel::git::Git(root)
+            .spira_branches()
+            .iter()
+            .any(|b| b.as_str() > c.as_str())
+    });
     if !unwalked {
         real.set_resume_after(repo, None);
     }
@@ -706,7 +1072,11 @@ pub fn past_cursor(br: &str, cursor: Option<&str>) -> bool {
 }
 
 /// A resumed repository with nothing left to act on will issue no prune, so the cursor is cleared here.
-pub fn clear_cursor_when_idle(real: &hel::real::Real, label: &str, snap: &Snapshot) -> Result<(), String> {
+pub fn clear_cursor_when_idle(
+    real: &hel::real::Real,
+    label: &str,
+    snap: &Snapshot,
+) -> Result<(), String> {
     use hel::ports::World;
     if plan_labelled(label, snap, &mut BTreeMap::new())?.is_empty() {
         real.set_resume_after(&snap.repo, None);
@@ -727,23 +1097,40 @@ pub fn mark_handled(real: &hel::real::Real, repo: &str, br: &str) {
 pub fn pr_tip(real: &hel::real::Real, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    Ok(real.pr_merged_tip(&root_of(real, &t.repo)?, &t.br).unwrap_or_default())
+    Ok(real
+        .pr_merged_tip(&root_of(real, &t.repo)?, &t.br)
+        .unwrap_or_default())
 }
 
 /// The runner of [`SEND`]: the witness re-checked, the content-on-base evidence recorded
 /// first when asked, then the leg (`hel reap-landed-branch`, the verified deletion) started
 /// as a transient unit named for `repo:br:tip`; it ends on that unit's `unit.ran`.
-pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: Option<&dyn runtime::units::Units>, p: &Pinned, release: &str, input: &str) -> Result<String, String> {
+pub fn send(
+    real: &hel::real::Real,
+    lc: &spira_store::lc_call::LcClient,
+    units: Option<&dyn runtime::units::Units>,
+    p: &Pinned,
+    release: &str,
+    input: &str,
+) -> Result<String, String> {
     use hel::ports::World;
     let units = units.ok_or("no unit manager configured")?;
     let s: Send = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &s.repo)?;
     if let Some(held) = real.witness(&s.id) {
-        return Err(format!("{}: {held} (mid-send) — {}", s.id, leg_key(&s.repo, &s.br, &s.tip)));
+        return Err(format!(
+            "{}: {held} (mid-send) — {}",
+            s.id,
+            leg_key(&s.repo, &s.br, &s.tip)
+        ));
     }
     if s.proof {
-        let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", s.repo))?;
-        let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or_default();
+        let base = real
+            .base(&root)
+            .ok_or_else(|| format!("{}: the land ref does not resolve", s.repo))?;
+        let sha = hel::git::Git(&root)
+            .rev_parse(&base.landref)
+            .unwrap_or_default();
         record_content_on_base(lc, &s.id, &sha)?;
     }
     let started = start_leg(units, release, &real.run(), &root, &s)?;
@@ -754,45 +1141,109 @@ pub fn send(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, units: 
 
 /// The leg's unit: `hel` is the release's own binary by absolute path (a transient unit has no
 /// `PATH` to find it on), under the environment `hel reap-landed-branch` resolves its world from.
-fn start_leg(units: &dyn runtime::units::Units, release: &str, run: &std::path::Path, root: &std::path::Path, s: &Send) -> Result<String, String> {
+fn start_leg(
+    units: &dyn runtime::units::Units,
+    release: &str,
+    run: &std::path::Path,
+    root: &std::path::Path,
+    s: &Send,
+) -> Result<String, String> {
     use std::os::unix::fs::PermissionsExt;
-    let hel = spira_config::release_env::release_root(Some(release))?.join("bin").join("hel");
-    if !hel.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0) {
-        return Err(format!("{}: {} is not an executable file — refusing to send", s.id, hel.display()));
+    let hel = spira_config::release_env::release_root(Some(release))?
+        .join("bin")
+        .join("hel");
+    if !hel
+        .metadata()
+        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    {
+        return Err(format!(
+            "{}: {} is not an executable file — refusing to send",
+            s.id,
+            hel.display()
+        ));
     }
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set — hel reads its pinned tool environment from it; there is no fallback".to_string())?;
-    let mut env = spira_config::release_env::child_path_env(Some(release), Some(&home), &spira_config::process::cfg("SPIRA_PATH")?)?;
-    env.extend([("SPIRA_RUN".to_string(), run.display().to_string()), ("HOME".to_string(), home)]);
+    let home = std::env::var("HOME").map_err(|_| {
+        "HOME is not set — hel reads its pinned tool environment from it; there is no fallback"
+            .to_string()
+    })?;
+    let mut env = spira_config::release_env::child_path_env(
+        Some(release),
+        Some(&home),
+        &spira_config::process::cfg("SPIRA_PATH")?,
+    )?;
+    env.extend([
+        ("SPIRA_RUN".to_string(), run.display().to_string()),
+        ("HOME".to_string(), home),
+    ]);
     if let Ok(spec) = spira_config::process::spec() {
         env.push((spira_config::process::TOML_ENV.to_string(), spec));
     }
-    let argv = vec![hel.display().to_string(), "reap-landed-branch".into(), s.id.clone(), s.br.clone(), root.display().to_string(), s.why.clone(), s.caller.clone()];
-    let unit = runtime::units::UnitSpec { task: NAME.into(), key: leg_key(&s.repo, &s.br, &s.tip), argv, env, cwd: Some(root.to_path_buf()) };
-    runtime::units::effect(units, runtime::units::UNIT_START, &serde_json::to_string(&unit).map_err(|e| e.to_string())?)
+    let argv = vec![
+        hel.display().to_string(),
+        "reap-landed-branch".into(),
+        s.id.clone(),
+        s.br.clone(),
+        root.display().to_string(),
+        s.why.clone(),
+        s.caller.clone(),
+    ];
+    let unit = runtime::units::UnitSpec {
+        task: NAME.into(),
+        key: leg_key(&s.repo, &s.br, &s.tip),
+        argv,
+        env,
+        cwd: Some(root.to_path_buf()),
+    };
+    runtime::units::effect(
+        units,
+        runtime::units::UNIT_START,
+        &serde_json::to_string(&unit).map_err(|e| e.to_string())?,
+    )
 }
 
 /// The runner of [`CONTENT_ON_BASE`]: the evidence verb on its own, for one branch.
-pub fn content_on_base(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn content_on_base(
+    real: &hel::real::Real,
+    lc: &spira_store::lc_call::LcClient,
+    input: &str,
+) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
-    let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", t.repo))?;
-    let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or_default();
+    let base = real
+        .base(&root)
+        .ok_or_else(|| format!("{}: the land ref does not resolve", t.repo))?;
+    let sha = hel::git::Git(&root)
+        .rev_parse(&base.landref)
+        .unwrap_or_default();
     record_content_on_base(lc, &t.id, &sha).map(|()| String::new())
 }
 
-fn record_content_on_base(lc: &spira_store::lc_call::LcClient, id: &str, land_sha: &str) -> Result<(), String> {
+fn record_content_on_base(
+    lc: &spira_store::lc_call::LcClient,
+    id: &str,
+    land_sha: &str,
+) -> Result<(), String> {
     spira_store::lifecycle_row::content_on_base_on(lc, id, &format!("merge-tree:{land_sha}"), "hel")
 }
 
 /// The runner of [`CLOSE_ON_LAND`]: close a submitted bead at the land ref's sha.
-pub fn close_on_land(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
+pub fn close_on_land(
+    real: &hel::real::Real,
+    lc: &spira_store::lc_call::LcClient,
+    input: &str,
+) -> Result<String, String> {
     use hel::ports::World;
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
-    let base = real.base(&root).ok_or_else(|| format!("{}: the land ref does not resolve", t.repo))?;
-    let sha = hel::git::Git(&root).rev_parse(&base.landref).unwrap_or(base.landref);
-    lc.answer(&["close-on-land", t.id.as_str(), sha.as_str()]).map_err(String::from)
+    let base = real
+        .base(&root)
+        .ok_or_else(|| format!("{}: the land ref does not resolve", t.repo))?;
+    let sha = hel::git::Git(&root)
+        .rev_parse(&base.landref)
+        .unwrap_or(base.landref);
+    lc.answer(&["close-on-land", t.id.as_str(), sha.as_str()])
+        .map_err(String::from)
 }
 
 /// The runner of [`ARCHIVE`]: park the tip at `refs/archive/<br>` and read it back; answers
@@ -810,16 +1261,28 @@ pub fn destroy_worktree(real: &hel::real::Real, kind: &str, input: &str) -> Resu
     let t: Target = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let root = root_of(real, &t.repo)?;
     if kind == ORPHAN_WORKTREE && hel::git::Git(&root).branch_exists(&t.br) {
-        return Err(format!("{}: branch {} exists again — not an orphan", t.id, t.br));
+        return Err(format!(
+            "{}: branch {} exists again — not an orphan",
+            t.id, t.br
+        ));
     }
-    let why = if kind == ORPHAN_WORKTREE { format!("orphan: branch {} is gone", t.br) } else { format!("branch {} kept as superseded; worktree freed", t.id) };
+    let why = if kind == ORPHAN_WORKTREE {
+        format!("orphan: branch {} is gone", t.br)
+    } else {
+        format!("branch {} kept as superseded; worktree freed", t.id)
+    };
     if real.destroy_worktree(&t.id, std::path::Path::new(&t.path), &root, &why) {
         if kind == FREE_WORKTREE {
             mark_handled(real, &t.repo, &t.br);
         }
         Ok(format!("{kind}:{}:{}", t.repo, t.id))
     } else {
-        Err(format!("{}: worktree {} was not removed — see {}", t.id, t.path, real.reaplog_path().display()))
+        Err(format!(
+            "{}: worktree {} was not removed — see {}",
+            t.id,
+            t.path,
+            real.reaplog_path().display()
+        ))
     }
 }
 
@@ -833,7 +1296,16 @@ pub fn prune(real: &hel::real::Real, input: &str) -> Result<String, String> {
     Ok(format!("pruned {}", t.repo))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("pass"), runtime::rows::Part::Field("tally"), runtime::rows::Part::Map { name: "jobs", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("phase"),
+    runtime::rows::Part::Field("last_fired"),
+    runtime::rows::Part::Field("pass"),
+    runtime::rows::Part::Field("tally"),
+    runtime::rows::Part::Map {
+        name: "jobs",
+        drop: &[],
+    },
+];
 
 crate::tasks::b::hosted!(HelSweep, catch_up = catch_up);
 
@@ -843,10 +1315,12 @@ mod tests {
 
     #[test_id(tqon8fj)]
     #[test]
-    fn a_cut_observe_parks_the_cursor_on_the_last_branch_it_judged_and_a_walk_to_the_end_moves_it_to_the_last_branch() {
+    fn a_cut_observe_parks_the_cursor_on_the_last_branch_it_judged_and_a_walk_to_the_end_moves_it_to_the_last_branch(
+    ) {
         use hel::ports::World;
         let dir = testkit::TempDir::new("hel-sweep-park");
-        let real = hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().to_path_buf(), None);
+        let real =
+            hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().to_path_buf(), None);
         park_cursor(&real, "spira", false, Some("spira/sp-b"));
         assert_eq!(real.resume_after("spira"), None);
         park_cursor(&real, "spira", true, Some("spira/sp-c"));
@@ -863,14 +1337,24 @@ mod tests {
         let root = dir.path().join("repo");
         std::fs::create_dir_all(&root).unwrap();
         let git = |args: &[&str]| {
-            let o = std::process::Command::new("git").arg("-C").arg(&root).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
+            let o = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap();
             assert!(o.status.success(), "{args:?}");
         };
         git(&["init", "-q", "-b", "main"]);
         git(&["commit", "-q", "--allow-empty", "-m", "x"]);
         git(&["branch", "spira/sp-a"]);
         git(&["branch", "spira/sp-c"]);
-        let real = hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().to_path_buf(), None);
+        let real =
+            hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().to_path_buf(), None);
         real.set_resume_after("spira", Some("spira/sp-a"));
         clear_cursor_when_walked(&real, "spira", &root);
         assert_eq!(real.resume_after("spira").as_deref(), Some("spira/sp-a"));
@@ -881,12 +1365,25 @@ mod tests {
 
     #[test_id(t35gqtj)]
     #[test]
-    fn a_landed_rows_branch_with_its_diff_on_the_base_and_no_naming_commit_is_planned_for_sending_and_a_live_rows_is_kept() {
-        let branch = |id: &str| Branch { id: id.into(), br: format!("spira/{id}"), tip: "t".into(), ahead: 2, content_on_base: true, merges_clean: true, ..Default::default() };
+    fn a_landed_rows_branch_with_its_diff_on_the_base_and_no_naming_commit_is_planned_for_sending_and_a_live_rows_is_kept(
+    ) {
+        let branch = |id: &str| Branch {
+            id: id.into(),
+            br: format!("spira/{id}"),
+            tip: "t".into(),
+            ahead: 2,
+            content_on_base: true,
+            merges_clean: true,
+            ..Default::default()
+        };
         let s = Snapshot {
             repo: "spira".into(),
             branches: vec![branch("sp-landed"), branch("sp-live")],
-            rows: [("sp-landed".to_string(), "LANDED".to_string()), ("sp-live".to_string(), "CERTIFIED".to_string())].into(),
+            rows: [
+                ("sp-landed".to_string(), "LANDED".to_string()),
+                ("sp-live".to_string(), "CERTIFIED".to_string()),
+            ]
+            .into(),
             ..Default::default()
         };
         let acts = plan_labelled("submitted", &s, &mut BTreeMap::new()).unwrap();
@@ -897,14 +1394,27 @@ mod tests {
     struct Store(std::sync::Mutex<Vec<String>>);
 
     impl spira_store::lc_call::Transport for Store {
-        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        fn exchange(
+            &self,
+            argv: &[String],
+            _stdin: Option<&str>,
+            _d: std::time::Duration,
+        ) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.join(" "));
             let (code, out) = match argv[0].as_str() {
                 "content-on-base" => (2, "usage: spira-lc show ...".to_string()),
-                "show" => (0, r#"{"bead":{"state":"SUBMITTED","version":3}}"#.to_string()),
+                "show" => (
+                    0,
+                    r#"{"bead":{"state":"SUBMITTED","version":3}}"#.to_string(),
+                ),
                 _ => (0, String::new()),
             };
-            Ok(spira_store::lc_call::Reply { code, out, err: String::new(), read_ended: false })
+            Ok(spira_store::lc_call::Reply {
+                code,
+                out,
+                err: String::new(),
+                read_ended: false,
+            })
         }
     }
 
@@ -912,7 +1422,10 @@ mod tests {
     struct Recorder(std::sync::Mutex<Vec<runtime::units::UnitSpec>>);
 
     impl runtime::units::Units for Recorder {
-        fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<runtime::units::UnitHandle> {
+        fn start(
+            &self,
+            spec: &runtime::units::UnitSpec,
+        ) -> runtime::Result<runtime::units::UnitHandle> {
             self.0.lock().unwrap().push(spec.clone());
             Ok(runtime::units::UnitHandle { name: "u".into() })
         }
@@ -922,13 +1435,27 @@ mod tests {
         fn restart(&self, _: &runtime::units::UnitHandle) -> runtime::Result<()> {
             Ok(())
         }
-        fn facts(&self, _: &runtime::units::UnitHandle) -> runtime::Result<runtime::units::UnitFacts> {
-            Err(runtime::RuntimeError("no facts".into(), runtime::Class::Fault))
+        fn facts(
+            &self,
+            _: &runtime::units::UnitHandle,
+        ) -> runtime::Result<runtime::units::UnitFacts> {
+            Err(runtime::RuntimeError(
+                "no facts".into(),
+                runtime::Class::Fault,
+            ))
         }
     }
 
     fn one() -> Send {
-        Send { repo: "spira".into(), id: "sp-a".into(), br: "spira/sp-a".into(), tip: "abc".into(), why: "landed".into(), caller: "hel.sweep".into(), proof: false }
+        Send {
+            repo: "spira".into(),
+            id: "sp-a".into(),
+            br: "spira/sp-a".into(),
+            tip: "abc".into(),
+            why: "landed".into(),
+            caller: "hel.sweep".into(),
+            proof: false,
+        }
     }
 
     #[test_id(t799xm9)]
@@ -940,7 +1467,14 @@ mod tests {
         testkit::write_exe(bin.join("hel"), "exit 0\n");
         let rec = Recorder::default();
         let rel = release.path().display().to_string();
-        start_leg(&rec, &rel, std::path::Path::new("run/x"), std::path::Path::new("repo"), &one()).unwrap();
+        start_leg(
+            &rec,
+            &rel,
+            std::path::Path::new("run/x"),
+            std::path::Path::new("repo"),
+            &one(),
+        )
+        .unwrap();
         let started = rec.0.lock().unwrap();
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].argv[0], bin.join("hel").display().to_string());
@@ -948,7 +1482,10 @@ mod tests {
         let has = |k: &str, v: &str| started[0].env.iter().any(|(a, b)| a == k && b == v);
         assert!(has("SPIRA_RELEASE", &rel));
         assert!(has("SPIRA_RUN", "run/x"));
-        assert!(started[0].env.iter().any(|(k, v)| k == "PATH" && v.starts_with(&format!("{rel}/bin:"))));
+        assert!(started[0]
+            .env
+            .iter()
+            .any(|(k, v)| k == "PATH" && v.starts_with(&format!("{rel}/bin:"))));
         assert!(started[0].env.iter().any(|(k, _)| k == "HOME"));
     }
 
@@ -958,8 +1495,18 @@ mod tests {
         let release = testkit::TempDir::new("hel-sweep-no-hel");
         let rec = Recorder::default();
         let rel = release.path().display().to_string();
-        let err = start_leg(&rec, &rel, std::path::Path::new("run/x"), std::path::Path::new("repo"), &one()).unwrap_err();
-        assert!(err.contains(&release.path().join("bin").join("hel").display().to_string()), "{err}");
+        let err = start_leg(
+            &rec,
+            &rel,
+            std::path::Path::new("run/x"),
+            std::path::Path::new("repo"),
+            &one(),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains(&release.path().join("bin").join("hel").display().to_string()),
+            "{err}"
+        );
         assert!(rec.0.lock().unwrap().is_empty());
     }
 

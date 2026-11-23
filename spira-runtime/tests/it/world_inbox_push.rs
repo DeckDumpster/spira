@@ -12,25 +12,48 @@ use spira_runtime::world::World;
 fn flusher(dir: &Path) -> (PathBuf, PathBuf) {
     let calls = dir.join("flusher.calls");
     let exe = dir.join("inbox-triage");
-    testkit::write_exe(&exe, &format!("#!/bin/sh\necho \"$@\" >> '{}'\n", calls.display()));
+    testkit::write_exe(
+        &exe,
+        &format!("#!/bin/sh\necho \"$@\" >> '{}'\n", calls.display()),
+    );
     (exe, calls)
 }
 
 fn world(dir: &Path, exe: PathBuf) -> World {
-    World { inbox: dir.join("inbox.log"), push_wake: "concierge.sh wake".into(), push_pattern: r"\bP0\b|RED on".into(), inbox_flusher: exe, ..World::default() }
+    World {
+        inbox: dir.join("inbox.log"),
+        push_wake: "concierge.sh wake".into(),
+        push_pattern: r"\bP0\b|RED on".into(),
+        inbox_flusher: exe,
+        ..World::default()
+    }
 }
 
 /// The throughput watcher's BLIND page, as the watcher itself builds the effect's input.
 fn blind_line() -> String {
-    let cfg = Config { stall_s: 7200, abandon_count: 3, abandon_window_s: 3600, ratio_min_pct: 50, ratio_min_runs: 6, passed_grace_s: 300, activation_bound_s: 90 };
-    let v = decide(&Carry::default(), &Snapshot::default(), 1_762_500_000_000, &cfg);
+    let cfg = Config {
+        stall_s: 7200,
+        abandon_count: 3,
+        abandon_window_s: 3600,
+        ratio_min_pct: 50,
+        ratio_min_runs: 6,
+        passed_grace_s: 300,
+        activation_bound_s: 90,
+    };
+    let v = decide(
+        &Carry::default(),
+        &Snapshot::default(),
+        1_762_500_000_000,
+        &cfg,
+    );
     v.acts.into_iter().next().expect("a blind page").input
 }
 
 /// The flusher runs detached, so its record is waited for: the marker file is the signal.
 fn wait_for(path: &Path) -> String {
     let end = Instant::now() + Duration::from_secs(30); // clock-safe: a cap on a wait for the flusher's marker file
-    while Instant::now() < end { // clock-safe: a cap on a wait for the flusher's marker file
+    while Instant::now() < end {
+        // clock-safe: a cap on a wait for the flusher's marker file
         if let Ok(t) = std::fs::read_to_string(path) {
             if !t.is_empty() {
                 return t;
@@ -48,11 +71,26 @@ fn a_watchers_p0_line_is_spooled_and_handed_to_the_flusher() {
     let (exe, calls) = flusher(d.path());
     let w = world(d.path(), exe);
     let line = blind_line();
-    assert!(line.contains("P0 BLIND"), "the fixture is the watcher's P0 page: {line}");
+    assert!(
+        line.contains("P0 BLIND"),
+        "the fixture is the watcher's P0 page: {line}"
+    );
     assert_eq!(w.inbox_append(&line).unwrap(), "appended, pushed");
-    assert_eq!(std::fs::read_to_string(d.join("inbox.log")).unwrap(), format!("{line}\n"), "the line is recorded");
-    assert_eq!(std::fs::read_to_string(d.join("inbox.log.push")).unwrap_or_default(), format!("{line}\n"), "the line is spooled for the push");
-    assert_eq!(wait_for(&calls).trim(), "flush", "the flusher is started once, with its flush verb");
+    assert_eq!(
+        std::fs::read_to_string(d.join("inbox.log")).unwrap(),
+        format!("{line}\n"),
+        "the line is recorded"
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.join("inbox.log.push")).unwrap_or_default(),
+        format!("{line}\n"),
+        "the line is spooled for the push"
+    );
+    assert_eq!(
+        wait_for(&calls).trim(),
+        "flush",
+        "the flusher is started once, with its flush verb"
+    );
 }
 
 #[test_id(tiof3pn)]
@@ -61,9 +99,17 @@ fn a_line_that_does_not_match_is_recorded_and_not_pushed() {
     let d = testkit::TempDir::new("world-inbox-nopush");
     let (exe, calls) = flusher(d.path());
     let w = world(d.path(), exe);
-    assert_eq!(w.inbox_append("2026-11-07T00:00:00Z [watch:asks] NEW ASK sp-abc12").unwrap(), "appended", "recorded, not pushed");
+    assert_eq!(
+        w.inbox_append("2026-11-07T00:00:00Z [watch:asks] NEW ASK sp-abc12")
+            .unwrap(),
+        "appended",
+        "recorded, not pushed"
+    );
     assert!(d.join("inbox.log").exists());
-    assert!(!d.join("inbox.log.push").exists(), "no spool for a plain line");
+    assert!(
+        !d.join("inbox.log.push").exists(),
+        "no spool for a plain line"
+    );
     assert!(!calls.exists(), "no flusher for a plain line");
 }
 
@@ -72,7 +118,10 @@ fn a_line_that_does_not_match_is_recorded_and_not_pushed() {
 fn with_no_wake_configured_nothing_is_pushed() {
     let d = testkit::TempDir::new("world-inbox-nowake");
     let (exe, _) = flusher(d.path());
-    let w = World { push_wake: String::new(), ..world(d.path(), exe) };
+    let w = World {
+        push_wake: String::new(),
+        ..world(d.path(), exe)
+    };
     assert_eq!(w.inbox_append(&blind_line()).unwrap(), "appended");
     assert!(!d.join("inbox.log.push").exists());
 }
@@ -85,5 +134,9 @@ fn several_lines_in_one_input_are_each_recorded_and_any_push_answers_pushed() {
     let w = world(d.path(), exe);
     let input = "2026-11-07T00:00:00Z [watch:x] plain\n2026-11-07T00:00:01Z [watch:x] P0 loud\n";
     assert_eq!(w.inbox_append(input).unwrap(), "appended, pushed");
-    assert_eq!(std::fs::read_to_string(d.join("inbox.log")).unwrap(), input, "both lines, one each");
+    assert_eq!(
+        std::fs::read_to_string(d.join("inbox.log")).unwrap(),
+        input,
+        "both lines, one each"
+    );
 }

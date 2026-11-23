@@ -113,9 +113,28 @@ pub const UNBEADED_IDLE_SECS: u64 = 4 * 3_600;
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_STALE_SECS";
 /// The idle window (48 h today, fixed); a new key.
 pub const IDLE_HOURS_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_STALE_IDLE_HOURS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, IDLE_HOURS_KEY, "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_RELEASE"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    IDLE_HOURS_KEY,
+    "SPIRA_RUN",
+    "SPIRA_REAPLOG",
+    "SPIRA_RELEASE",
+];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 120_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -158,7 +177,15 @@ pub enum Phase {
 }
 
 /// `state × event → state`. A tick while `reaping` is refused, naming `reaping`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "tick", Phase::Observing), (Phase::Observing, "observed:work", Phase::Reaping), (Phase::Observing, "observed:idle", Phase::Idle), (Phase::Observing, "halted", Phase::Halted), (Phase::Halted, "tick", Phase::Observing), (Phase::Reaping, "outcome", Phase::Reaping), (Phase::Reaping, "done", Phase::Idle)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
+    (Phase::Idle, "tick", Phase::Observing),
+    (Phase::Observing, "observed:work", Phase::Reaping),
+    (Phase::Observing, "observed:idle", Phase::Idle),
+    (Phase::Observing, "halted", Phase::Halted),
+    (Phase::Halted, "tick", Phase::Observing),
+    (Phase::Reaping, "outcome", Phase::Reaping),
+    (Phase::Reaping, "done", Phase::Idle),
+];
 
 /// None: the task is stateless between passes; `phase` is in-pass only.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,52 +227,136 @@ fn finished_as(state: &str) -> &str {
 }
 
 fn idle_secs(cfg: &Cfg) -> Result<u64, String> {
-    let raw = cfg.get(IDLE_HOURS_KEY).ok_or_else(|| format!("{IDLE_HOURS_KEY} is read but not declared"))?;
-    raw.trim().parse::<u64>().ok().filter(|h| *h > 0).map(|h| h * 3_600).ok_or_else(|| format!("{IDLE_HOURS_KEY} must be a positive whole number of hours, got {raw:?}"))
+    let raw = cfg
+        .get(IDLE_HOURS_KEY)
+        .ok_or_else(|| format!("{IDLE_HOURS_KEY} is read but not declared"))?;
+    raw.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|h| *h > 0)
+        .map(|h| h * 3_600)
+        .ok_or_else(|| {
+            format!("{IDLE_HOURS_KEY} must be a positive whole number of hours, got {raw:?}")
+        })
 }
 
 /// `hel::stale::decide` per worktree.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
     match input {
-        Input::Fire if carry.phase == Phase::Reaping => Err(format!("{NAME}: a tick in state reaping: the pass in flight has not ended")),
-        Input::Fire => Ok((Carry { phase: Phase::Observing }, vec![])),
+        Input::Fire if carry.phase == Phase::Reaping => Err(format!(
+            "{NAME}: a tick in state reaping: the pass in flight has not ended"
+        )),
+        Input::Fire => Ok((
+            Carry {
+                phase: Phase::Observing,
+            },
+            vec![],
+        )),
         // A pass whose outcomes never all came back ends here: the next tick decides afresh.
         Input::Observed(_) if carry.phase == Phase::Reaping => Ok((Carry::default(), vec![])),
-        Input::Observed(s) if s.halted => Ok((Carry { phase: Phase::Halted }, vec![])),
+        Input::Observed(s) if s.halted => Ok((
+            Carry {
+                phase: Phase::Halted,
+            },
+            vec![],
+        )),
         Input::Observed(s) => {
             let window = idle_secs(cfg)?;
             let mut acts = vec![];
             for r in &s.repos {
                 for t in &r.worktrees {
                     let state = t.bead_state.as_deref().map(finished_as);
-                    let Some(why) = hel::stale::reason(&hel::stale::verdict(state, t.merged_into.as_deref(), t.idle_secs, t.live_pid.is_some(), window)) else { continue };
-                    let d = Destroy { id: t.id.clone(), path: t.path.clone(), root: r.root.clone(), why: format!("reaper: {why}") };
-                    acts.push(Act { name: DESTROY_WORKTREE.into(), key: format!("{}:{}", t.id, t.path), input: serde_json::to_string(&d).map_err(|e| e.to_string())?, deadline_ms: 120_000, probe: false });
+                    let Some(why) = hel::stale::reason(&hel::stale::verdict(
+                        state,
+                        t.merged_into.as_deref(),
+                        t.idle_secs,
+                        t.live_pid.is_some(),
+                        window,
+                    )) else {
+                        continue;
+                    };
+                    let d = Destroy {
+                        id: t.id.clone(),
+                        path: t.path.clone(),
+                        root: r.root.clone(),
+                        why: format!("reaper: {why}"),
+                    };
+                    acts.push(Act {
+                        name: DESTROY_WORKTREE.into(),
+                        key: format!("{}:{}", t.id, t.path),
+                        input: serde_json::to_string(&d).map_err(|e| e.to_string())?,
+                        deadline_ms: 120_000,
+                        probe: false,
+                    });
                 }
             }
-            Ok((Carry { phase: if acts.is_empty() { Phase::Idle } else { Phase::Reaping } }, acts))
+            Ok((
+                Carry {
+                    phase: if acts.is_empty() {
+                        Phase::Idle
+                    } else {
+                        Phase::Reaping
+                    },
+                },
+                acts,
+            ))
         }
         // Prune only after a removal succeeded (today it runs every pass).
-        Input::Outcome { effect, ok: true, body } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![Act { name: PRUNE.into(), key: format!("prune:{body}"), input: body.clone(), deadline_ms: 30_000, probe: false }])),
-        Input::Outcome { effect, ok: false, .. } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![])),
+        Input::Outcome {
+            effect,
+            ok: true,
+            body,
+        } if effect == DESTROY_WORKTREE => Ok((
+            carry.clone(),
+            vec![Act {
+                name: PRUNE.into(),
+                key: format!("prune:{body}"),
+                input: body.clone(),
+                deadline_ms: 30_000,
+                probe: false,
+            }],
+        )),
+        Input::Outcome {
+            effect, ok: false, ..
+        } if effect == DESTROY_WORKTREE => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, .. } if effect == PRUNE => Ok((Carry::default(), vec![])),
-        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
-        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+        Input::Outcome { effect, .. } => Err(format!(
+            "{NAME}: in state {} an outcome of {effect} is not expected",
+            phase_name(carry.phase)
+        )),
+        Input::Ran(r) => Err(format!(
+            "{NAME}: in state {} no unit is expected, got {:?}",
+            phase_name(carry.phase),
+            r.handle
+        )),
     }
 }
 
 /// The hel world for this run, its store calls over `lc`.
-pub fn world(run: &std::path::Path, release: &str, lc: &spira_store::lc_call::LcClient) -> Result<hel::real::Real, String> {
-    let home = hel::locate_home(None, Some(release)).ok_or("SPIRA_RELEASE does not resolve to a release — refusing")?;
+pub fn world(
+    run: &std::path::Path,
+    release: &str,
+    lc: &spira_store::lc_call::LcClient,
+) -> Result<hel::real::Real, String> {
+    let home = hel::locate_home(None, Some(release))
+        .ok_or("SPIRA_RELEASE does not resolve to a release — refusing")?;
     Ok(hel::real::Real::minimal(home, run.to_path_buf(), None).with_lc(lc.clone()))
 }
 
 /// The runner of [`OBSERVE`]: `hel::stale::scan` in-process, with each tree's lifecycle row
 /// (the held projection's rows) as its state, and the world's halt stamp.
-pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc_root: &std::path::Path) -> Result<String, String> {
+pub fn observe(
+    real: &hel::real::Real,
+    lc: &spira_store::lc_call::LcClient,
+    proc_root: &std::path::Path,
+) -> Result<String, String> {
     let run = real.run();
     if run.join("world.halted").exists() {
-        return serde_json::to_string(&Snapshot { halted: true, repos: vec![] }).map_err(|e| e.to_string());
+        return serde_json::to_string(&Snapshot {
+            halted: true,
+            repos: vec![],
+        })
+        .map_err(|e| e.to_string());
     }
     let live = store_view::call_held(lc, &["list", "--live"])?;
     if live.code != 0 {
@@ -258,7 +369,9 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc
     let state_of = |id: &str| {
         if !memo.borrow().contains_key(id) && asked.borrow_mut().insert(id.to_string()) {
             match store_view::rows_by_ids(lc, &[id.to_string()]) {
-                Ok(found) => memo.borrow_mut().extend(spira_store::lc_state::index(found)),
+                Ok(found) => memo
+                    .borrow_mut()
+                    .extend(spira_store::lc_state::index(found)),
                 Err(e) => unread.set(Some(e)),
             }
         }
@@ -274,10 +387,26 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc
             name: r.name,
             root: r.root.display().to_string(),
             landrefs: r.landrefs,
-            worktrees: r.trees.into_iter().map(|t| Worktree { id: t.id, path: t.path.display().to_string(), branch: t.branch.unwrap_or_default(), live_pid: t.live_pid, bead_state: t.state, merged_into: t.merged_into, idle_secs: t.idle_secs }).collect(),
+            worktrees: r
+                .trees
+                .into_iter()
+                .map(|t| Worktree {
+                    id: t.id,
+                    path: t.path.display().to_string(),
+                    branch: t.branch.unwrap_or_default(),
+                    live_pid: t.live_pid,
+                    bead_state: t.state,
+                    merged_into: t.merged_into,
+                    idle_secs: t.idle_secs,
+                })
+                .collect(),
         })
         .collect();
-    serde_json::to_string(&Snapshot { halted: false, repos }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot {
+        halted: false,
+        repos,
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// The runner of [`DESTROY_WORKTREE`]: `reap::destroy_worktree` through the hel world (the
@@ -285,10 +414,19 @@ pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient, proc
 pub fn destroy(real: &hel::real::Real, input: &str) -> Result<String, String> {
     use hel::ports::World;
     let d: Destroy = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    if real.destroy_worktree(&d.id, std::path::Path::new(&d.path), std::path::Path::new(&d.root), &d.why) {
+    if real.destroy_worktree(
+        &d.id,
+        std::path::Path::new(&d.path),
+        std::path::Path::new(&d.root),
+        &d.why,
+    ) {
         Ok(d.id)
     } else {
-        Err(format!("{} not removed, see {}", d.id, real.reaplog_path().display()))
+        Err(format!(
+            "{} not removed, see {}",
+            d.id,
+            real.reaplog_path().display()
+        ))
     }
 }
 

@@ -92,7 +92,20 @@ pub const EFFECTS: &[&str] = &[PUBLISH];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_SECTION_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: PUBLISH, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: PUBLISH,
+    probe_deadline_ms: 5_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 /// The store's answer to `publish-section lifecycle`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,7 +124,11 @@ pub enum Phase {
 }
 
 /// `state × answer → state`: the only machine is the store's; the task records a publish.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "published:true", Phase::Published), (Phase::Published, "published:true", Phase::Published), (Phase::Published, "published:false", Phase::Published)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
+    (Phase::Idle, "published:true", Phase::Published),
+    (Phase::Published, "published:true", Phase::Published),
+    (Phase::Published, "published:false", Phase::Published),
+];
 
 /// None of its own beyond the last publish it recorded.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,7 +166,8 @@ fn phase_name(p: Phase) -> &'static str {
 /// The runner of [`PUBLISH`]: the store verb `publish-section lifecycle` over the socket; its
 /// answer is the snapshot.
 pub fn publish(lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
-    lc.answer(&["publish-section", "lifecycle"]).map_err(String::from)
+    lc.answer(&["publish-section", "lifecycle"])
+        .map_err(String::from)
 }
 
 const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase")];

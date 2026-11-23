@@ -96,7 +96,20 @@ pub const EFFECTS: &[&str] = &[OBSERVE, STORE, INDEX];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_ARCHIVE_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_ARCHIVE", "SPIRA_TOKEN_PROJECTS"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 60_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 60_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -145,8 +158,17 @@ pub enum Index {
 
 /// `state × event → state` per rel. An `index` while a `store` of the same pass is in flight
 /// is refused naming `storing`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Unseen, "store", Phase::Storing), (Phase::Changed, "store", Phase::Storing), (Phase::Storing, "store:ok", Phase::Stored), (Phase::Storing, "store:failed", Phase::Changed), (Phase::Stored, "changed", Phase::Changed)];
-pub const INDEX_TRANSITIONS: &[(Index, &str, Index)] = &[(Index::Current, "stored", Index::Stale), (Index::Stale, "index:ok", Index::Current)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
+    (Phase::Unseen, "store", Phase::Storing),
+    (Phase::Changed, "store", Phase::Storing),
+    (Phase::Storing, "store:ok", Phase::Stored),
+    (Phase::Storing, "store:failed", Phase::Changed),
+    (Phase::Stored, "changed", Phase::Changed),
+];
+pub const INDEX_TRANSITIONS: &[(Index, &str, Index)] = &[
+    (Index::Current, "stored", Index::Stale),
+    (Index::Stale, "index:ok", Index::Current),
+];
 
 /// No carry beyond the pass in flight.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,14 +194,25 @@ pub struct Store {
 }
 
 fn phase_name(p: Phase) -> String {
-    serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+    serde_json::to_value(p)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// The next queued store, marked storing; the queue is kept reversed so this pops the pass in order.
 fn next_store(c: &mut Carry) -> Result<Option<Act>, String> {
-    let Some(body) = c.queue.pop() else { return Ok(None) };
+    let Some(body) = c.queue.pop() else {
+        return Ok(None);
+    };
     c.rels.insert(body.rel.clone(), Phase::Storing);
-    Ok(Some(Act { name: STORE.into(), key: format!("archive/{}/{}/{}", body.rel, body.size, body.mtime), input: serde_json::to_string(&body).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false }))
+    Ok(Some(Act {
+        name: STORE.into(),
+        key: format!("archive/{}/{}/{}", body.rel, body.size, body.mtime),
+        input: serde_json::to_string(&body).map_err(|e| e.to_string())?,
+        deadline_ms: 300_000,
+        probe: false,
+    }))
 }
 
 /// The fast path: store a source with no index row, a size or mtime change, or no body.
@@ -192,17 +225,36 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
                 if s.projects_dir_configured {
                     return Err(format!("{NAME}: the configured transcript directory (SPIRA_TOKEN_PROJECTS) does not exist"));
                 }
-                return Ok((Carry { index: carry.index, ..Carry::default() }, vec![]));
+                return Ok((
+                    Carry {
+                        index: carry.index,
+                        ..Carry::default()
+                    },
+                    vec![],
+                ));
             }
             next.rels.clear();
             next.queue.clear();
             let mut named = 0;
-            for src in s.sources.iter().filter(|src| !s.index.get(&src.rel).is_some_and(|r| r.bytes == src.size && r.mtime == src.mtime && r.body_exists)).take(PASS_MAX) {
+            for src in s
+                .sources
+                .iter()
+                .filter(|src| {
+                    !s.index.get(&src.rel).is_some_and(|r| {
+                        r.bytes == src.size && r.mtime == src.mtime && r.body_exists
+                    })
+                })
+                .take(PASS_MAX)
+            {
                 named += src.rel.len() + 80;
                 if named > PASS_CARRY_BYTES && !next.queue.is_empty() {
                     break;
                 }
-                next.queue.push(Store { rel: src.rel.clone(), size: src.size, mtime: src.mtime });
+                next.queue.push(Store {
+                    rel: src.rel.clone(),
+                    size: src.size,
+                    mtime: src.mtime,
+                });
             }
             next.queue.reverse();
             let acts = next_store(&mut next)?.into_iter().collect();
@@ -210,17 +262,29 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
         }
         Input::Outcome { effect, ok, body } if effect == STORE => {
             // A failed store names its rel first (`<rel>: why`), so it goes back to changed.
-            let rel = if *ok { body.trim() } else { body.split(": ").next().unwrap_or_default() };
+            let rel = if *ok {
+                body.trim()
+            } else {
+                body.split(": ").next().unwrap_or_default()
+            };
             match carry.rels.get(rel) {
                 Some(Phase::Storing) => {}
-                Some(p) => return Err(format!("{NAME}: {rel} is in state {}, not storing", phase_name(*p))),
+                Some(p) => {
+                    return Err(format!(
+                        "{NAME}: {rel} is in state {}, not storing",
+                        phase_name(*p)
+                    ))
+                }
                 None if !*ok => {
                     let acts = next_store(&mut next)?.into_iter().collect();
                     return Ok((next, acts));
                 }
                 None => return Err(format!("{NAME}: {rel} has no store in flight")),
             }
-            next.rels.insert(rel.to_string(), if *ok { Phase::Stored } else { Phase::Changed });
+            next.rels.insert(
+                rel.to_string(),
+                if *ok { Phase::Stored } else { Phase::Changed },
+            );
             if *ok {
                 next.index = Index::Stale;
             }
@@ -229,13 +293,24 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) 
             }
             let in_flight = next.rels.values().any(|p| *p == Phase::Storing);
             if !in_flight && next.index == Index::Stale {
-                return Ok((next, vec![Act { name: INDEX.into(), key: "archive/index".into(), input: String::new(), deadline_ms: 60_000, probe: false }]));
+                return Ok((
+                    next,
+                    vec![Act {
+                        name: INDEX.into(),
+                        key: "archive/index".into(),
+                        input: String::new(),
+                        deadline_ms: 60_000,
+                        probe: false,
+                    }],
+                ));
             }
             Ok((next, vec![]))
         }
         Input::Outcome { effect, ok, .. } if effect == INDEX => {
             if let Some((rel, _)) = carry.rels.iter().find(|(_, p)| **p == Phase::Storing) {
-                return Err(format!("{NAME}: an index outcome while {rel} is storing is refused"));
+                return Err(format!(
+                    "{NAME}: an index outcome while {rel} is storing is refused"
+                ));
             }
             if *ok {
                 next.index = Index::Current;
@@ -285,8 +360,14 @@ pub mod archive {
     impl Lock {
         pub fn take(archive: &Path, wait: Duration) -> Result<Lock, String> {
             use std::os::fd::AsRawFd;
-            std::fs::create_dir_all(archive).map_err(|e| format!("cannot create {}: {e}", archive.display()))?;
-            let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(archive.join(".lock")).map_err(|e| format!("archive lock: {e}"))?;
+            std::fs::create_dir_all(archive)
+                .map_err(|e| format!("cannot create {}: {e}", archive.display()))?;
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(archive.join(".lock"))
+                .map_err(|e| format!("archive lock: {e}"))?;
             let start = std::time::Instant::now();
             loop {
                 // SAFETY: flock on a descriptor this process owns; released when `f` drops.
@@ -294,7 +375,10 @@ pub mod archive {
                     return Ok(Lock(f));
                 }
                 if start.elapsed() >= wait {
-                    return Err(format!("another sweep has held the archive lock for {}s — not starting a second", wait.as_secs()));
+                    return Err(format!(
+                        "another sweep has held the archive lock for {}s — not starting a second",
+                        wait.as_secs()
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -310,13 +394,18 @@ pub mod archive {
     }
 
     fn mtime_of(m: &std::fs::Metadata) -> u64 {
-        m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())
+        m.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs())
     }
 
     /// Every `*.jsonl` under `dir`, deepest included, sorted (`os.walk`, which does not descend
     /// a symlinked directory).
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             match e.file_type() {
@@ -329,8 +418,15 @@ pub mod archive {
 
     /// The index rows, each as its JSON object; unparseable lines are skipped.
     pub fn load_index(path: &Path) -> Vec<Map<String, Value>> {
-        let Ok(f) = std::fs::File::open(path) else { return vec![] };
-        std::io::BufReader::new(f).lines().map_while(Result::ok).filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok()).filter_map(|v| v.as_object().cloned()).collect()
+        let Ok(f) = std::fs::File::open(path) else {
+            return vec![];
+        };
+        std::io::BufReader::new(f)
+            .lines()
+            .map_while(Result::ok)
+            .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
+            .filter_map(|v| v.as_object().cloned())
+            .collect()
     }
 
     /// The probe: the transcripts stat'd, the index as the fast path reads it.
@@ -346,19 +442,42 @@ pub mod archive {
             .iter()
             .filter_map(|f| {
                 let m = std::fs::metadata(f).ok().filter(|m| m.is_file())?;
-                let rel = f.strip_prefix(&p.projects).ok()?.to_string_lossy().into_owned();
-                Some(Source { rel, size: m.len(), mtime: mtime_of(&m) })
+                let rel = f
+                    .strip_prefix(&p.projects)
+                    .ok()?
+                    .to_string_lossy()
+                    .into_owned();
+                Some(Source {
+                    rel,
+                    size: m.len(),
+                    mtime: mtime_of(&m),
+                })
             })
             .collect();
         let index = load_index(&p.index())
             .into_iter()
             .filter_map(|r| {
                 let rel = r.get("source")?.as_str()?.to_string();
-                let body = r.get("path").and_then(Value::as_str).map(|b| p.archive.join(b));
-                Some((rel, Row { bytes: r.get("bytes").and_then(Value::as_u64).unwrap_or(u64::MAX), mtime: r.get("mtime").and_then(Value::as_u64).unwrap_or(u64::MAX), body_exists: body.is_some_and(|b| b.exists()) }))
+                let body = r
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(|b| p.archive.join(b));
+                Some((
+                    rel,
+                    Row {
+                        bytes: r.get("bytes").and_then(Value::as_u64).unwrap_or(u64::MAX),
+                        mtime: r.get("mtime").and_then(Value::as_u64).unwrap_or(u64::MAX),
+                        body_exists: body.is_some_and(|b| b.exists()),
+                    },
+                ))
             })
             .collect::<BTreeMap<_, _>>();
-        Snapshot { sources, index, projects_dir_exists: exists, projects_dir_configured: configured }
+        Snapshot {
+            sources,
+            index,
+            projects_dir_exists: exists,
+            projects_dir_configured: configured,
+        }
     }
 
     fn is_space(b: u8) -> bool {
@@ -367,7 +486,12 @@ pub mod archive {
 
     /// Each value of `"key"\s*:\s*"<v>"` in `line` whose `v` holds no quote and is `min..=max`
     /// bytes long, in order (the worker's byte regexes).
-    fn values<'a>(line: &'a [u8], key: &str, min: usize, max: usize) -> impl Iterator<Item = &'a [u8]> + 'a {
+    fn values<'a>(
+        line: &'a [u8],
+        key: &str,
+        min: usize,
+        max: usize,
+    ) -> impl Iterator<Item = &'a [u8]> + 'a {
         let pat = format!("\"{key}\"").into_bytes();
         (0..line.len()).filter_map(move |i| {
             if !line[i..].starts_with(&pat) {
@@ -411,7 +535,8 @@ pub mod archive {
         let mut r = std::io::BufReader::new(f);
         let mut h = ring::digest::Context::new(&ring::digest::SHA256);
         let (mut first, mut last): (Option<Vec<u8>>, Option<Vec<u8>>) = (None, None);
-        let (mut turns, mut bridge, mut sess, mut parent) = (0u64, String::new(), String::new(), String::new());
+        let (mut turns, mut bridge, mut sess, mut parent) =
+            (0u64, String::new(), String::new(), String::new());
         let mut line = vec![];
         loop {
             line.clear();
@@ -430,7 +555,11 @@ pub mod archive {
                     last = Some(t.to_vec());
                 }
             }
-            for (key, slot) in [("bridgeSessionId", &mut bridge), ("sessionId", &mut sess), ("parentSessionId", &mut parent)] {
+            for (key, slot) in [
+                ("bridgeSessionId", &mut bridge),
+                ("sessionId", &mut sess),
+                ("parentSessionId", &mut parent),
+            ] {
                 if slot.is_empty() {
                     if let Some(v) = values(&line, key, 1, 120).next() {
                         *slot = String::from_utf8_lossy(v).into_owned();
@@ -438,9 +567,21 @@ pub mod archive {
                 }
             }
         }
-        let hex: String = h.finish().as_ref().iter().map(|b| format!("{b:02x}")).collect();
+        let hex: String = h
+            .finish()
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         let text = |v: Option<Vec<u8>>| v.map(|v| String::from_utf8_lossy(&v).into_owned());
-        Ok(Scan { sha256: hex, first_ts: text(first), last_ts: text(last), turns, bridge, session: if sess.is_empty() { parent } else { sess } })
+        Ok(Scan {
+            sha256: hex,
+            first_ts: text(first),
+            last_ts: text(last),
+            turns,
+            bridge,
+            session: if sess.is_empty() { parent } else { sess },
+        })
     }
 
     fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -455,14 +596,27 @@ pub mod archive {
     /// An ISO-8601 instant as epoch seconds (fractions dropped; no zone is UTC), or `None`.
     pub fn parse_ts(s: &str) -> Option<i64> {
         let s = s.trim();
-        let num = |t: &str| -> Option<i64> { t.bytes().all(|b| b.is_ascii_digit()).then(|| t.parse().ok()).flatten() };
+        let num = |t: &str| -> Option<i64> {
+            t.bytes()
+                .all(|b| b.is_ascii_digit())
+                .then(|| t.parse().ok())
+                .flatten()
+        };
         let (date, time) = match s.get(10..11) {
             Some("T" | "t" | " ") => (&s[..10], &s[11..]),
             None if s.len() == 10 => (s, ""),
             _ => return None,
         };
-        let (y, mo, d) = (num(date.get(0..4)?)?, num(date.get(5..7)?)?, num(date.get(8..10)?)?);
-        if date.as_bytes()[4] != b'-' || date.as_bytes()[7] != b'-' || !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        let (y, mo, d) = (
+            num(date.get(0..4)?)?,
+            num(date.get(5..7)?)?,
+            num(date.get(8..10)?)?,
+        );
+        if date.as_bytes()[4] != b'-'
+            || date.as_bytes()[7] != b'-'
+            || !(1..=12).contains(&mo)
+            || !(1..=31).contains(&d)
+        {
             return None;
         }
         let (clock, offset) = match time.find(['Z', 'z', '+', '-']) {
@@ -476,7 +630,11 @@ pub mod archive {
             if !(2..=3).contains(&parts.len()) || parts.iter().any(|p| p.len() != 2) {
                 return None;
             }
-            let (hh, mm, ss) = (num(parts[0])?, num(parts[1])?, if parts.len() == 3 { num(parts[2])? } else { 0 });
+            let (hh, mm, ss) = (
+                num(parts[0])?,
+                num(parts[1])?,
+                if parts.len() == 3 { num(parts[2])? } else { 0 },
+            );
             if hh > 23 || mm > 59 || ss > 59 {
                 return None;
             }
@@ -508,7 +666,12 @@ pub mod archive {
         let d = doy - (153 * mp + 2) / 5 + 1;
         let m = if mp < 10 { mp + 3 } else { mp - 9 };
         let y = yoe + era * 400 + i64::from(m <= 2);
-        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+        format!(
+            "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+            rem / 3600,
+            rem % 3600 / 60,
+            rem % 60
+        )
     }
 
     /// `json.dumps(row, sort_keys=True)`: Python's separators and `ensure_ascii`, so an index
@@ -520,8 +683,24 @@ pub mod archive {
     /// `json.dumps(v, sort_keys=True, separators=(item, key))` with `ensure_ascii`.
     pub fn py_json(v: &Value, item: &str, key: &str) -> String {
         match v {
-            Value::Object(m) => format!("{{{}}}", m.iter().map(|(k, v)| format!("{}{key}{}", py_json(&Value::String(k.clone()), item, key), py_json(v, item, key))).collect::<Vec<_>>().join(item)),
-            Value::Array(a) => format!("[{}]", a.iter().map(|v| py_json(v, item, key)).collect::<Vec<_>>().join(item)),
+            Value::Object(m) => format!(
+                "{{{}}}",
+                m.iter()
+                    .map(|(k, v)| format!(
+                        "{}{key}{}",
+                        py_json(&Value::String(k.clone()), item, key),
+                        py_json(v, item, key)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(item)
+            ),
+            Value::Array(a) => format!(
+                "[{}]",
+                a.iter()
+                    .map(|v| py_json(v, item, key))
+                    .collect::<Vec<_>>()
+                    .join(item)
+            ),
             Value::String(s) => {
                 let raw = serde_json::to_string(s).unwrap_or_default();
                 let mut out = String::with_capacity(raw.len());
@@ -544,8 +723,17 @@ pub mod archive {
     /// Sorted by `(first_ts, source)`, the bridge id inherited by session id, rewritten whole and
     /// replaced only when the bytes differ. Returns whether it was replaced.
     pub fn write_index(path: &Path, mut rows: Vec<Map<String, Value>>) -> Result<bool, String> {
-        let s = |r: &Map<String, Value>, k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
-        let bridge: BTreeMap<String, String> = rows.iter().filter(|r| !s(r, "bridge_session_id").is_empty()).map(|r| (s(r, "session_id"), s(r, "bridge_session_id"))).collect();
+        let s = |r: &Map<String, Value>, k: &str| {
+            r.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let bridge: BTreeMap<String, String> = rows
+            .iter()
+            .filter(|r| !s(r, "bridge_session_id").is_empty())
+            .map(|r| (s(r, "session_id"), s(r, "bridge_session_id")))
+            .collect();
         for r in rows.iter_mut() {
             if s(r, "bridge_session_id").is_empty() {
                 let b = bridge.get(&s(r, "session_id")).cloned().unwrap_or_default();
@@ -553,7 +741,10 @@ pub mod archive {
             }
         }
         rows.sort_by_key(|r| (s(r, "first_ts"), s(r, "source")));
-        let body: String = rows.into_iter().map(|r| py_dumps(&Value::Object(r)) + "\n").collect();
+        let body: String = rows
+            .into_iter()
+            .map(|r| py_dumps(&Value::Object(r)) + "\n")
+            .collect();
         if std::fs::read(path).ok().as_deref() == Some(body.as_bytes()) {
             return Ok(false);
         }
@@ -567,26 +758,49 @@ pub mod archive {
     /// other compressor wrote. `dest` is given without its extension; returns the extension.
     fn compress(proc: &dyn Proc, src: &Path, dest_stem: &Path) -> Result<&'static str, String> {
         let s = src.display().to_string();
-        let tries: [(&str, &'static str, Vec<String>); 2] = [("zstd", ".zst", vec!["-q".into(), "-c".into(), s.clone()]), ("gzip", ".gz", vec!["-n".into(), "-q".into(), "-c".into(), s])];
+        let tries: [(&str, &'static str, Vec<String>); 2] = [
+            ("zstd", ".zst", vec!["-q".into(), "-c".into(), s.clone()]),
+            (
+                "gzip",
+                ".gz",
+                vec!["-n".into(), "-q".into(), "-c".into(), s],
+            ),
+        ];
         let mut why = vec![];
         for (prog, ext, args) in tries {
             // batch-job: compresses a whole archived file; it runs as long as the file is large
-            match proc.run(&ProcSpec { prog: prog.into(), args, stdin: vec![], deadline: Duration::from_secs(240) }) {
+            match proc.run(&ProcSpec {
+                prog: prog.into(),
+                args,
+                stdin: vec![],
+                deadline: Duration::from_secs(240),
+            }) {
                 Ok(o) if o.code == Some(0) => {
                     let dest = PathBuf::from(format!("{}{ext}", dest_stem.display()));
                     let tmp = PathBuf::from(format!("{}.part", dest.display()));
-                    std::fs::File::create(&tmp).and_then(|mut f| f.write_all(&o.stdout)).map_err(|e| format!("{}: {e}", tmp.display()))?;
+                    std::fs::File::create(&tmp)
+                        .and_then(|mut f| f.write_all(&o.stdout))
+                        .map_err(|e| format!("{}: {e}", tmp.display()))?;
                     std::fs::rename(&tmp, &dest).map_err(|e| format!("{}: {e}", dest.display()))?;
                     for other in [".zst", ".gz"].into_iter().filter(|o| *o != ext) {
                         let _ = std::fs::remove_file(format!("{}{other}", dest_stem.display()));
                     }
                     return Ok(ext);
                 }
-                Ok(o) => return Err(format!("{prog} failed on {} (exit {:?})", src.display(), o.code)),
+                Ok(o) => {
+                    return Err(format!(
+                        "{prog} failed on {} (exit {:?})",
+                        src.display(),
+                        o.code
+                    ))
+                }
                 Err(e) => why.push(e),
             }
         }
-        Err(format!("neither zstd nor gzip ran — one of them stores the bodies: {}", why.join("; ")))
+        Err(format!(
+            "neither zstd nor gzip ran — one of them stores the bodies: {}",
+            why.join("; ")
+        ))
     }
 
     /// One transcript archived: its first `size` bytes snapshotted, scanned and hashed,
@@ -603,22 +817,50 @@ pub mod archive {
         let stem = p.archive.join("bodies").join(&job.rel);
         let snap = PathBuf::from(format!("{}.snap", stem.display()));
         let made = (|| -> Result<(Map<String, Value>, &'static str), String> {
-            std::fs::create_dir_all(snap.parent().unwrap_or(&p.archive)).map_err(|e| e.to_string())?;
-            let mut fi = std::fs::File::open(&src).map_err(|e| e.to_string())?.take(st.len());
+            std::fs::create_dir_all(snap.parent().unwrap_or(&p.archive))
+                .map_err(|e| e.to_string())?;
+            let mut fi = std::fs::File::open(&src)
+                .map_err(|e| e.to_string())?
+                .take(st.len());
             let mut fo = std::fs::File::create(&snap).map_err(|e| e.to_string())?;
             std::io::copy(&mut fi, &mut fo).map_err(|e| e.to_string())?;
             drop(fo);
-            let Scan { sha256: sha, first_ts: first, last_ts: last, turns, bridge, session: sess } = scan(&snap)?;
+            let Scan {
+                sha256: sha,
+                first_ts: first,
+                last_ts: last,
+                turns,
+                bridge,
+                session: sess,
+            } = scan(&snap)?;
             let mtime = mtime_of(&st) as i64;
-            let (f, l) = (first.as_deref().and_then(parse_ts), last.as_deref().and_then(parse_ts));
-            let kind = if f.is_some() && l.is_some() { "transcript" } else { "mtime" };
-            let bytes = std::fs::metadata(&snap).map(|m| m.len()).map_err(|e| e.to_string())?;
+            let (f, l) = (
+                first.as_deref().and_then(parse_ts),
+                last.as_deref().and_then(parse_ts),
+            );
+            let kind = if f.is_some() && l.is_some() {
+                "transcript"
+            } else {
+                "mtime"
+            };
+            let bytes = std::fs::metadata(&snap)
+                .map(|m| m.len())
+                .map_err(|e| e.to_string())?;
             let ext = compress(proc, &snap, &stem)?;
-            let stem_name = Path::new(&job.rel).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            let stem_name = Path::new(&job.rel)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let mut row = Map::new();
-            row.insert("session_id".into(), Value::String(if sess.is_empty() { stem_name } else { sess }));
+            row.insert(
+                "session_id".into(),
+                Value::String(if sess.is_empty() { stem_name } else { sess }),
+            );
             row.insert("bridge_session_id".into(), Value::String(bridge));
-            row.insert("cwd_slug".into(), Value::String(job.rel.split('/').next().unwrap_or_default().to_string()));
+            row.insert(
+                "cwd_slug".into(),
+                Value::String(job.rel.split('/').next().unwrap_or_default().to_string()),
+            );
             row.insert("first_ts".into(), Value::String(fmt_ts(f.unwrap_or(mtime))));
             row.insert("last_ts".into(), Value::String(fmt_ts(l.unwrap_or(mtime))));
             row.insert("ts_source".into(), Value::String(kind.into()));
@@ -627,14 +869,18 @@ pub mod archive {
             row.insert("mtime".into(), Value::from(mtime));
             row.insert("sha256".into(), Value::String(sha));
             row.insert("source".into(), Value::String(job.rel.clone()));
-            row.insert("path".into(), Value::String(format!("bodies/{}{ext}", job.rel)));
+            row.insert(
+                "path".into(),
+                Value::String(format!("bodies/{}{ext}", job.rel)),
+            );
             row.insert("archived_at".into(), Value::String(fmt_ts(now)));
             Ok((row, ext))
         })();
         let _ = std::fs::remove_file(&snap);
         let (row, _) = made.map_err(fail)?;
         let pending = p.pending().join(format!("{}.json", job.rel));
-        std::fs::create_dir_all(pending.parent().unwrap_or(&p.archive)).map_err(|e| fail(e.to_string()))?;
+        std::fs::create_dir_all(pending.parent().unwrap_or(&p.archive))
+            .map_err(|e| fail(e.to_string()))?;
         std::fs::write(&pending, py_dumps(&Value::Object(row))).map_err(|e| fail(e.to_string()))?;
         Ok(job.rel.clone())
     }
@@ -643,13 +889,28 @@ pub mod archive {
     /// vanished are kept), the index rewritten when its bytes differ, the merged rows cleared.
     pub fn index(p: &Paths) -> Result<String, String> {
         let _lock = Lock::take(&p.archive, Duration::from_secs(50))?;
-        let mut by_rel: BTreeMap<String, Map<String, Value>> = load_index(&p.index()).into_iter().filter_map(|r| Some((r.get("source")?.as_str()?.to_string(), r))).collect();
+        let mut by_rel: BTreeMap<String, Map<String, Value>> = load_index(&p.index())
+            .into_iter()
+            .filter_map(|r| Some((r.get("source")?.as_str()?.to_string(), r)))
+            .collect();
         let mut merged = vec![];
         let mut files = vec![];
         walk_json(&p.pending(), &mut files);
         for f in files {
-            let Some(row) = std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned()) else { continue };
-            let Some(rel) = row.get("source").and_then(Value::as_str).map(str::to_string) else { continue };
+            let Some(row) = std::fs::read_to_string(&f)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .and_then(|v| v.as_object().cloned())
+            else {
+                continue;
+            };
+            let Some(rel) = row
+                .get("source")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
             by_rel.insert(rel, row);
             merged.push(f);
         }
@@ -658,11 +919,21 @@ pub mod archive {
         for f in &merged {
             let _ = std::fs::remove_file(f);
         }
-        Ok(format!("{} row(s) merged, {n} in the index, {}", merged.len(), if changed { "index rewritten" } else { "index untouched" }))
+        Ok(format!(
+            "{} row(s) merged, {n} in the index, {}",
+            merged.len(),
+            if changed {
+                "index rewritten"
+            } else {
+                "index untouched"
+            }
+        ))
     }
 
     fn walk_json(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -675,8 +946,15 @@ pub mod archive {
 }
 
 /// The paths from the pinned config; `HOME` names the default projects dir the script exempts.
-pub fn paths(get: &dyn Fn(&str) -> Result<String, String>, home: &std::path::Path) -> Result<archive::Paths, String> {
-    Ok(archive::Paths { archive: get("SPIRA_ARCHIVE")?.into(), projects: get("SPIRA_TOKEN_PROJECTS")?.into(), default_projects: home.join(".claude").join("projects") })
+pub fn paths(
+    get: &dyn Fn(&str) -> Result<String, String>,
+    home: &std::path::Path,
+) -> Result<archive::Paths, String> {
+    Ok(archive::Paths {
+        archive: get("SPIRA_ARCHIVE")?.into(),
+        projects: get("SPIRA_TOKEN_PROJECTS")?.into(),
+        default_projects: home.join(".claude").join("projects"),
+    })
 }
 
 /// The runner of [`OBSERVE`].
@@ -685,12 +963,25 @@ pub fn observe(p: &archive::Paths) -> Result<String, String> {
 }
 
 /// The runner of [`STORE`].
-pub fn store(p: &archive::Paths, proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, String> {
+pub fn store(
+    p: &archive::Paths,
+    proc: &dyn runtime::ports::Proc,
+    input: &str,
+) -> Result<String, String> {
     let job: Store = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
     archive::store(p, proc, &job, now)
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "rels", drop: &[] }, runtime::rows::Part::Field("queue"), runtime::rows::Part::Field("index")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Map {
+        name: "rels",
+        drop: &[],
+    },
+    runtime::rows::Part::Field("queue"),
+    runtime::rows::Part::Field("index"),
+];
 
 crate::tasks::b::hosted!(SweepArchive);

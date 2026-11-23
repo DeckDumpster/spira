@@ -95,11 +95,33 @@ pub struct Job {
 /// One effect per queued request and per stale one, each keyed on the request id.
 pub fn decide(snap: &Snapshot) -> Vec<EffectSpec> {
     let job = |e: &Entry, stale: bool| {
-        let key = if stale { format!("{NAME}:{}:stale", e.id) } else { format!("{NAME}:{}", e.id) };
-        let input = serde_json::to_string(&Job { id: e.id.clone(), bound_ms: e.bound_ms, stale }).unwrap_or_default();
-        EffectSpec::keyed(RUN, key, input, if stale { MARGIN_MS } else { e.bound_ms + MARGIN_MS })
+        let key = if stale {
+            format!("{NAME}:{}:stale", e.id)
+        } else {
+            format!("{NAME}:{}", e.id)
+        };
+        let input = serde_json::to_string(&Job {
+            id: e.id.clone(),
+            bound_ms: e.bound_ms,
+            stale,
+        })
+        .unwrap_or_default();
+        EffectSpec::keyed(
+            RUN,
+            key,
+            input,
+            if stale {
+                MARGIN_MS
+            } else {
+                e.bound_ms + MARGIN_MS
+            },
+        )
     };
-    snap.queued.iter().map(|e| job(e, false)).chain(snap.stale.iter().map(|e| job(e, true))).collect()
+    snap.queued
+        .iter()
+        .map(|e| job(e, false))
+        .chain(snap.stale.iter().map(|e| job(e, true)))
+        .collect()
 }
 
 fn entries(raw: &str) -> Result<Vec<serde_json::Value>, String> {
@@ -109,22 +131,54 @@ fn entries(raw: &str) -> Result<Vec<serde_json::Value>, String> {
 /// The probe: the queued requests and the running ones past their bound.
 pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<String, String> {
     let lc = LcClient::socket(&e.world.lc_socket).within(STORE_WAIT);
-    let listed = |state: &str| lc.answer(&["work-request", "list", "--state", state]).map_err(|e| e.to_string()).and_then(|raw| entries(&raw));
-    let entry = |r: &serde_json::Value| Entry { id: r["id"].as_str().unwrap_or("").to_string(), bound_ms: r["bound_ms"].as_u64().unwrap_or(0) };
-    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let listed = |state: &str| {
+        lc.answer(&["work-request", "list", "--state", state])
+            .map_err(|e| e.to_string())
+            .and_then(|raw| entries(&raw))
+    };
+    let entry = |r: &serde_json::Value| Entry {
+        id: r["id"].as_str().unwrap_or("").to_string(),
+        bound_ms: r["bound_ms"].as_u64().unwrap_or(0),
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
     let queued = listed("queued")?.iter().map(entry).collect();
     let running = listed("running")?;
-    let stale_at = |r: &serde_json::Value| r["started_at"].as_u64().unwrap_or(0).saturating_mul(1000).saturating_add(r["bound_ms"].as_u64().unwrap_or(0)).saturating_add(STALE_GRACE_MS);
-    let stale = running.iter().filter(|r| stale_at(r) < now_ms).map(entry).collect();
-    let next_stale_at = running.iter().map(stale_at).filter(|at| *at >= now_ms).min();
-    serde_json::to_string(&Snapshot { queued, stale, next_stale_at }).map_err(|e| e.to_string())
+    let stale_at = |r: &serde_json::Value| {
+        r["started_at"]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_mul(1000)
+            .saturating_add(r["bound_ms"].as_u64().unwrap_or(0))
+            .saturating_add(STALE_GRACE_MS)
+    };
+    let stale = running
+        .iter()
+        .filter(|r| stale_at(r) < now_ms)
+        .map(entry)
+        .collect();
+    let next_stale_at = running
+        .iter()
+        .map(stale_at)
+        .filter(|at| *at >= now_ms)
+        .min();
+    serde_json::to_string(&Snapshot {
+        queued,
+        stale,
+        next_stale_at,
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Takes the request and runs its `work-exec`; see the contract.
 pub fn run(e: &crate::Effects, key: &str, spec: &EffectSpec) -> Result<String, String> {
-    let job: Job = serde_json::from_str(&spec.input).map_err(|e| format!("{RUN}: bad input: {e}"))?;
+    let job: Job =
+        serde_json::from_str(&spec.input).map_err(|e| format!("{RUN}: bad input: {e}"))?;
     let lc = LcClient::socket(&e.world.lc_socket).within(STORE_WAIT);
-    e.once(key, || run_job(&lc, &job, &crate::broker_host::exec_program))
+    e.once(key, || {
+        run_job(&lc, &job, &crate::broker_host::exec_program)
+    })
 }
 
 /// How the runner ended: its exit code and what it printed. 124 is the bound.
@@ -145,16 +199,37 @@ fn run_job(lc: &LcClient, job: &Job, exec: Exec) -> Result<String, String> {
     if recorded(lc, &job.id)? {
         return Ok(format!("{}: ran, exit {code}", job.id));
     }
-    let how = if code == 124 { "cut off at its bound".to_string() } else { format!("ended with exit {code} (a signal reads as 2) before recording an answer") };
-    let tail: String = said.chars().rev().take(REASON_TAIL).collect::<Vec<_>>().into_iter().rev().collect();
-    let reason = format!("work-exec {how} (stage: running); {}", if tail.trim().is_empty() { "it printed nothing".to_string() } else { format!("it printed:\n{}", tail.trim_end()) });
+    let how = if code == 124 {
+        "cut off at its bound".to_string()
+    } else {
+        format!("ended with exit {code} (a signal reads as 2) before recording an answer")
+    };
+    let tail: String = said
+        .chars()
+        .rev()
+        .take(REASON_TAIL)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let reason = format!(
+        "work-exec {how} (stage: running); {}",
+        if tail.trim().is_empty() {
+            "it printed nothing".to_string()
+        } else {
+            format!("it printed:\n{}", tail.trim_end())
+        }
+    );
     finish(lc, &job.id, &reason).map(|()| format!("{}: finished 124, runner {how}", job.id))
 }
 
 /// Whether the request has its answer: a runner that wrote it is never overwritten.
 fn recorded(lc: &LcClient, id: &str) -> Result<bool, String> {
-    let shown = lc.answer(&["work-request", "show", id]).map_err(|e| format!("{id}: show: {e}"))?;
-    let record: serde_json::Value = serde_json::from_str(&shown).map_err(|e| format!("{id}: show: {e}"))?;
+    let shown = lc
+        .answer(&["work-request", "show", id])
+        .map_err(|e| format!("{id}: show: {e}"))?;
+    let record: serde_json::Value =
+        serde_json::from_str(&shown).map_err(|e| format!("{id}: show: {e}"))?;
     Ok(record["state"] == "done")
 }
 
@@ -189,10 +264,26 @@ impl Handler for BrokerExec {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
-        let mut cmds = pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &Ok::<(), String>(()), |_: &(), snap: &Snapshot, _, _: &()| ((), decide(snap)));
-        if let Some(at) = pattern::answer::<Snapshot>(view, ev, OBSERVE).and_then(|s| s.next_stale_at) {
+        let mut cmds = pattern::on_answer(
+            ctx,
+            view,
+            ev,
+            OBSERVE,
+            STATE,
+            &Ok::<(), String>(()),
+            |_: &(), snap: &Snapshot, _, _: &()| ((), decide(snap)),
+        );
+        if let Some(at) =
+            pattern::answer::<Snapshot>(view, ev, OBSERVE).and_then(|s| s.next_stale_at)
+        {
             cmds.push(Command::Due { at });
         }
         cmds
@@ -205,21 +296,35 @@ mod tests {
     use std::cell::RefCell;
 
     fn entry(id: &str) -> Entry {
-        Entry { id: id.into(), bound_ms: 300_000 }
+        Entry {
+            id: id.into(),
+            bound_ms: 300_000,
+        }
     }
 
     #[test_id(t4d3gdy)]
     #[test]
     fn each_queued_request_is_one_effect_keyed_on_its_id_with_the_verbs_bound() {
-        let specs = decide(&Snapshot { queued: vec![entry("wr-1"), entry("wr-2")], ..Snapshot::default() });
-        assert_eq!(specs.iter().map(|s| s.key.as_str()).collect::<Vec<_>>(), ["broker.exec:wr-1", "broker.exec:wr-2"]);
-        assert!(specs.iter().all(|s| s.name == RUN && s.deadline_ms == 300_000 + MARGIN_MS));
+        let specs = decide(&Snapshot {
+            queued: vec![entry("wr-1"), entry("wr-2")],
+            ..Snapshot::default()
+        });
+        assert_eq!(
+            specs.iter().map(|s| s.key.as_str()).collect::<Vec<_>>(),
+            ["broker.exec:wr-1", "broker.exec:wr-2"]
+        );
+        assert!(specs
+            .iter()
+            .all(|s| s.name == RUN && s.deadline_ms == 300_000 + MARGIN_MS));
     }
 
     #[test_id(t6a17xw)]
     #[test]
     fn a_stale_running_request_gets_its_own_key_so_it_never_shares_the_queued_ones_ledger() {
-        let specs = decide(&Snapshot { stale: vec![entry("wr-3")], ..Snapshot::default() });
+        let specs = decide(&Snapshot {
+            stale: vec![entry("wr-3")],
+            ..Snapshot::default()
+        });
         assert_eq!(specs[0].key, "broker.exec:wr-3:stale");
         assert!(serde_json::from_str::<Job>(&specs[0].input).unwrap().stale);
     }
@@ -228,7 +333,10 @@ mod tests {
     #[test]
     fn nothing_queued_decides_nothing_and_a_quiet_answer_reads_as_nothing_queued() {
         assert!(decide(&Snapshot::default()).is_empty());
-        assert_eq!(serde_json::from_str::<Snapshot>("{}").unwrap(), Snapshot::default());
+        assert_eq!(
+            serde_json::from_str::<Snapshot>("{}").unwrap(),
+            Snapshot::default()
+        );
     }
 
     struct Lc {
@@ -251,7 +359,14 @@ mod tests {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
                 let value: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-                let mut argv: Vec<String> = value.get("argv").unwrap_or(&value).as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect();
+                let mut argv: Vec<String> = value
+                    .get("argv")
+                    .unwrap_or(&value)
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|a| a.as_str().unwrap().to_string())
+                    .collect();
                 if let Some(len) = value.get("len").and_then(|l| l.as_u64()) {
                     let mut body = vec![0u8; len as usize];
                     std::io::Read::read_exact(&mut reader, &mut body).unwrap();
@@ -267,15 +382,29 @@ mod tests {
                 let _ = write!(w, "{{\"exit_code\":{code},\"len\":{}}}\n{out}", out.len());
             }
         });
-        Lc { _dir: dir, client: LcClient::socket(path), seen }
+        Lc {
+            _dir: dir,
+            client: LcClient::socket(path),
+            seen,
+        }
     }
 
     fn finished(lc: &Lc) -> Vec<Vec<String>> {
-        lc.seen.lock().unwrap().iter().filter(|a| a.get(1).map(String::as_str) == Some("finish")).cloned().collect()
+        lc.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.get(1).map(String::as_str) == Some("finish"))
+            .cloned()
+            .collect()
     }
 
     fn job() -> Job {
-        Job { id: "wr-9".into(), bound_ms: 300_000, stale: false }
+        Job {
+            id: "wr-9".into(),
+            bound_ms: 300_000,
+            stale: false,
+        }
     }
 
     #[test_id(tzlbokm)]
@@ -294,14 +423,20 @@ mod tests {
     #[test_id(t6jui3n)]
     #[test]
     fn a_runner_that_died_or_hit_its_bound_leaves_the_request_finished_124_with_a_reason() {
-        for (code, said, want) in [(124, "", "cut off at its bound"), (137, "killed", "ended with exit 137")] {
+        for (code, said, want) in [
+            (124, "", "cut off at its bound"),
+            (137, "killed", "ended with exit 137"),
+        ] {
             let lc = lc("running", 0);
             run_job(&lc.client, &job(), &|_, _| (code, said.to_string())).unwrap();
             let f = finished(&lc);
             assert_eq!(f.len(), 1, "{code}: finished once");
             assert!(f[0].contains(&"124".to_string()), "{:?}", f[0]);
             let stdin = f[0].last().cloned().unwrap_or_default();
-            assert!(stdin.contains(want) && stdin.contains("stage: running"), "{stdin}");
+            assert!(
+                stdin.contains(want) && stdin.contains("stage: running"),
+                "{stdin}"
+            );
         }
     }
 
@@ -309,7 +444,10 @@ mod tests {
     #[test]
     fn a_request_another_runner_took_is_left_alone_and_never_run() {
         let lc = lc("running", 3);
-        let out = run_job(&lc.client, &job(), &|_, _| panic!("a refused take must not run the program")).unwrap();
+        let out = run_job(&lc.client, &job(), &|_, _| {
+            panic!("a refused take must not run the program")
+        })
+        .unwrap();
         assert!(out.contains("not queued"), "{out}");
         assert!(finished(&lc).is_empty());
     }
@@ -318,9 +456,22 @@ mod tests {
     #[test]
     fn a_stale_request_is_finished_without_taking_or_running_anything() {
         let lc = lc("running", 0);
-        run_job(&lc.client, &Job { stale: true, ..job() }, &|_, _| panic!("a stale request runs nothing")).unwrap();
+        run_job(
+            &lc.client,
+            &Job {
+                stale: true,
+                ..job()
+            },
+            &|_, _| panic!("a stale request runs nothing"),
+        )
+        .unwrap();
         assert_eq!(finished(&lc).len(), 1);
-        assert!(lc.seen.lock().unwrap().iter().all(|a| a.get(1).map(String::as_str) != Some("take")));
+        assert!(lc
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|a| a.get(1).map(String::as_str) != Some("take")));
     }
 
     #[test_id(tppxw6l)]
@@ -329,18 +480,52 @@ mod tests {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal, Outcome};
         let clock = VirtualClock::new(0);
-        let reg = BrokerExec.registration().with_wake(Wake { reads: vec!["work-requests/"], min_gap_ms: CADENCE_MS, polls: false });
-        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![reg], 1).unwrap().with_sweep(60_000, std::sync::Arc::new(runtime::changes::ScriptedChanges::default()));
+        let reg = BrokerExec.registration().with_wake(Wake {
+            reads: vec!["work-requests/"],
+            min_gap_ms: CADENCE_MS,
+            polls: false,
+        });
+        let mut e = Engine::open(
+            MemJournal::new(),
+            std::sync::Arc::new(clock.clone()),
+            vec![reg],
+            1,
+        )
+        .unwrap()
+        .with_sweep(
+            60_000,
+            std::sync::Arc::new(runtime::changes::ScriptedChanges::default()),
+        );
         let (_, stream, kind) = BrokerExec::boot();
         e.start(stream, kind);
         e.run_until_idle().unwrap();
-        let probe = e.pending_effects().into_iter().find(|p| p.spec.name == OBSERVE).expect("the boot tick observes").key;
-        let snap = Snapshot { next_stale_at: Some(45_000), ..Snapshot::default() };
-        assert!(e.complete(&probe, Outcome::Succeeded(serde_json::to_string(&snap).unwrap())).unwrap());
+        let probe = e
+            .pending_effects()
+            .into_iter()
+            .find(|p| p.spec.name == OBSERVE)
+            .expect("the boot tick observes")
+            .key;
+        let snap = Snapshot {
+            next_stale_at: Some(45_000),
+            ..Snapshot::default()
+        };
+        assert!(e
+            .complete(
+                &probe,
+                Outcome::Succeeded(serde_json::to_string(&snap).unwrap())
+            )
+            .unwrap());
         e.run_until_idle().unwrap();
-        assert_eq!(e.next_timer_at(), Some(45_000), "the due time, ahead of the sweep at 60 s and with no 1 s poll");
+        assert_eq!(
+            e.next_timer_at(),
+            Some(45_000),
+            "the due time, ahead of the sweep at 60 s and with no 1 s poll"
+        );
         clock.advance(45_000);
         e.run_until_idle().unwrap();
-        assert!(e.pending_effects().iter().any(|p| p.spec.name == OBSERVE), "the tick ran at its due time and looked again");
+        assert!(
+            e.pending_effects().iter().any(|p| p.spec.name == OBSERVE),
+            "the tick ran at its due time and looked again"
+        );
     }
 }

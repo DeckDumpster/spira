@@ -55,7 +55,9 @@ use serde::{Deserialize, Serialize};
 
 use spira_store::lc_call::LcClient;
 
-use super::trigger_groom::{config_input, config_of, dedup_labels, file_effect, guard, halted, run_file_with, walk};
+use super::trigger_groom::{
+    config_input, config_of, dedup_labels, file_effect, guard, halted, run_file_with, walk,
+};
 use super::{Bead, Cycle, Decision, Transition};
 
 pub const NAME: &str = "trigger.warden";
@@ -67,14 +69,24 @@ pub const FILE: &str = "trigger.warden.file";
 pub const EFFECTS: &[&str] = &[OBSERVE, FILE];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_TRIGGER_WARDEN_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_SCOPE_LABEL", "SPIRA_WARDEN_LABEL", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    "SPIRA_SCOPE_LABEL",
+    "SPIRA_WARDEN_LABEL",
+    "SPIRA_RUN",
+];
 
 pub const TITLE: &str = "Warden sweep — landed work in force, anomalies attributed";
 pub const DESCRIPTION: &str = "Scheduled sweep: the warden persona judges whether landed fixes are in force (filing a follow-up for any that are not) and attributes anomalies no probe could. See spira/runes/warden.md.";
 
 const OBSERVE_DEADLINE_MS: u64 = 30_000;
 const FILE_DEADLINE_MS: u64 = 600_000;
-const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
+const CYCLE: Cycle = Cycle {
+    stream: STREAM,
+    tick: TICK,
+    observe: OBSERVE,
+    deadline_ms: OBSERVE_DEADLINE_MS,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -85,9 +97,24 @@ pub struct Snapshot {
 pub use super::trigger_groom::Step;
 
 pub const TRANSITIONS: &[Transition<Step>] = &[
-    Transition { from: Step::Observe, on: "unreadable", to: Step::Skip, effects: &[] },
-    Transition { from: Step::Observe, on: "open", to: Step::Skip, effects: &[] },
-    Transition { from: Step::Observe, on: "file", to: Step::Filed, effects: &[FILE] },
+    Transition {
+        from: Step::Observe,
+        on: "unreadable",
+        to: Step::Skip,
+        effects: &[],
+    },
+    Transition {
+        from: Step::Observe,
+        on: "open",
+        to: Step::Skip,
+        effects: &[],
+    },
+    Transition {
+        from: Step::Observe,
+        on: "file",
+        to: Step::Filed,
+        effects: &[FILE],
+    },
 ];
 
 /// The tick's next step on `on`, or a refusal naming the step it is in.
@@ -110,9 +137,21 @@ pub fn decide(snap: &Snapshot, config: &BTreeMap<String, String>) -> Decision {
         Ok(n) if n > 0 => Decision::Skip("open".into()),
         Ok(_) => {
             let run = config.get("SPIRA_RUN").cloned().unwrap_or_default();
-            let mut labels: Vec<String> = dedup_labels(config, "SPIRA_WARDEN_LABEL").split(',').filter(|l| !l.is_empty()).map(str::to_string).collect();
+            let mut labels: Vec<String> = dedup_labels(config, "SPIRA_WARDEN_LABEL")
+                .split(',')
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect();
             labels.push(format!("delivers:note:{run}/warden.log"));
-            Decision::File(Bead { title: TITLE.into(), kind: "task".into(), priority: 3, labels, body: DESCRIPTION.into(), persona: None, repo: None })
+            Decision::File(Bead {
+                title: TITLE.into(),
+                kind: "task".into(),
+                priority: 3,
+                labels,
+                body: DESCRIPTION.into(),
+                persona: None,
+                repo: None,
+            })
         }
     }
 }
@@ -120,8 +159,15 @@ pub fn decide(snap: &Snapshot, config: &BTreeMap<String, String>) -> Decision {
 /// `trigger.warden.observe`: whether the world is halted and how many sweeps are open.
 pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let config = config_of(s)?;
-    let lc = LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_millis(OBSERVE_DEADLINE_MS));
-    let snap = Snapshot { halted: halted(e), open_sweeps: mimir_trigger::observe::open_trigger_count_on(&lc, &dedup_labels(&config, "SPIRA_WARDEN_LABEL")) };
+    let lc = LcClient::socket(&e.world.lc_socket)
+        .within(std::time::Duration::from_millis(OBSERVE_DEADLINE_MS));
+    let snap = Snapshot {
+        halted: halted(e),
+        open_sweeps: mimir_trigger::observe::open_trigger_count_on(
+            &lc,
+            &dedup_labels(&config, "SPIRA_WARDEN_LABEL"),
+        ),
+    };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
@@ -138,7 +184,10 @@ pub struct TriggerWarden {
 
 impl TriggerWarden {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(TriggerWarden { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
+        Ok(TriggerWarden {
+            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
+            config: super::pinned(settings, KEYS)?,
+        })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -156,15 +205,29 @@ impl Handler for TriggerWarden {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(self.interval_ms, view, ev, || config_input(&self.config), |body| {
-            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
-            match decide(&snap, &self.config) {
-                Decision::Skip(why) => {
-                    ctx.event().set("warden.skip", why.as_str());
-                    vec![]
+        CYCLE.handle(
+            self.interval_ms,
+            view,
+            ev,
+            || config_input(&self.config),
+            |body| {
+                let Ok(snap) = serde_json::from_str::<Snapshot>(body) else {
+                    return vec![];
+                };
+                match decide(&snap, &self.config) {
+                    Decision::Skip(why) => {
+                        ctx.event().set("warden.skip", why.as_str());
+                        vec![]
+                    }
+                    Decision::File(bead) => vec![file_effect(
+                        FILE,
+                        format!("warden-sweep/{}", ev.at / self.interval_ms.max(1)),
+                        bead,
+                        dedup_labels(&self.config, "SPIRA_WARDEN_LABEL"),
+                        FILE_DEADLINE_MS,
+                    )],
                 }
-                Decision::File(bead) => vec![file_effect(FILE, format!("warden-sweep/{}", ev.at / self.interval_ms.max(1)), bead, dedup_labels(&self.config, "SPIRA_WARDEN_LABEL"), FILE_DEADLINE_MS)],
-            }
-        })
+            },
+        )
     }
 }

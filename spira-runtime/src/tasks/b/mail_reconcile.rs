@@ -96,8 +96,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use runtime::event::EventKindTag;
-use spira_store::lc_call::LcError;
 use serde::{Deserialize, Serialize};
+use spira_store::lc_call::LcError;
 
 use super::kit::{Act, Cadence, Cfg, Decision, Input, Spec};
 
@@ -119,9 +119,28 @@ pub const EFFECTS: &[&str] = &[OBSERVE, NOTE, CLOSE, LIFT, ANSWER, INBOX, MARK];
 pub const MAX_ATTEMPTS: u32 = 30;
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_MAIL_RECONCILE_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_MAIL", "SPIRA_DB", "SPIRA_RUN", "SPIRA_BDQ_CONN_RETRIES"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    "SPIRA_MAIL",
+    "SPIRA_DB",
+    "SPIRA_RUN",
+    "SPIRA_BDQ_CONN_RETRIES",
+];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 10_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -210,12 +229,33 @@ pub struct Job {
 
 fn job(r: &Reply, step: &str, text: String, retries: u32) -> Job {
     let o = r.orig.clone().unwrap_or_default();
-    Job { key: r.key.clone(), step: step.into(), bead: o.bead, kind: o.kind, work_bead: o.work_bead, actor: r.actor.clone(), para: r.para.clone(), subject: o.subject, text, conn_retries: retries }
+    Job {
+        key: r.key.clone(),
+        step: step.into(),
+        bead: o.bead,
+        kind: o.kind,
+        work_bead: o.work_bead,
+        actor: r.actor.clone(),
+        para: r.para.clone(),
+        subject: o.subject,
+        text,
+        conn_retries: retries,
+    }
 }
 
 fn act(name: &str, j: &Job, deadline_ms: u64) -> Act {
-    let key = if name == MARK { format!("{}/mark/{}", j.key, j.step) } else { format!("{}/{}", j.key, j.step) };
-    Act { name: name.into(), key, input: serde_json::to_string(j).unwrap_or_default(), deadline_ms, probe: false }
+    let key = if name == MARK {
+        format!("{}/mark/{}", j.key, j.step)
+    } else {
+        format!("{}/{}", j.key, j.step)
+    };
+    Act {
+        name: name.into(),
+        key,
+        input: serde_json::to_string(j).unwrap_or_default(),
+        deadline_ms,
+        probe: false,
+    }
 }
 
 const STORE_MS: u64 = 15_000;
@@ -228,7 +268,11 @@ pub fn plan(r: &Reply, retries: u32) -> Vec<Act> {
     let Some(o) = &r.orig else { return vec![] };
     let mut acts = vec![];
     let mut abandoned: Vec<&str> = vec![];
-    let mut want = |name: &'static str, step: &'static str, text: String, deadline: u64, acts: &mut Vec<Act>| {
+    let mut want = |name: &'static str,
+                    step: &'static str,
+                    text: String,
+                    deadline: u64,
+                    acts: &mut Vec<Act>| {
         if r.done.contains(step) {
             return;
         }
@@ -241,7 +285,13 @@ pub fn plan(r: &Reply, retries: u32) -> Vec<Act> {
     let tracked = matches!(o.kind.as_str(), "question" | "decision" | "suit");
     let (actor, subject, para) = (&r.actor, &o.subject, &r.para);
     if !o.bead.is_empty() && !tracked {
-        want(NOTE, "note-orig", format!("Reply from {actor} to \"{subject}\": {para}"), STORE_MS, &mut acts);
+        want(
+            NOTE,
+            "note-orig",
+            format!("Reply from {actor} to \"{subject}\": {para}"),
+            STORE_MS,
+            &mut acts,
+        );
     } else if !o.bead.is_empty() && !r.done.contains("close") {
         if r.done.contains("close:refused") {
             if r.done.contains("refused-note") && r.done.contains("refused-inbox") {
@@ -260,7 +310,13 @@ pub fn plan(r: &Reply, retries: u32) -> Vec<Act> {
     }
     if !o.work_bead.is_empty() {
         if o.bead.is_empty() {
-            want(NOTE, "note-work", format!("Answer from {actor} to \"{subject}\": {para}"), STORE_MS, &mut acts);
+            want(
+                NOTE,
+                "note-work",
+                format!("Answer from {actor} to \"{subject}\": {para}"),
+                STORE_MS,
+                &mut acts,
+            );
         }
         want(LIFT, "lift", String::new(), STORE_MS, &mut acts);
     }
@@ -286,7 +342,10 @@ fn key_step(body: &str) -> Option<(String, String, String)> {
 /// ledger lacks; a step's outcome is marked in the ledger (`<step>`, `fail:<step>`, or
 /// `close:refused` for a lifecycle refusal). A reply already `complete` is refused.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -> Decision<Carry> {
-    let retries = cfg.get("SPIRA_BDQ_CONN_RETRIES").and_then(|v| v.trim().parse().ok()).unwrap_or(1);
+    let retries = cfg
+        .get("SPIRA_BDQ_CONN_RETRIES")
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(1);
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) => {
@@ -294,22 +353,42 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, _now_ms: u64) -
                 return Ok((carry.clone(), vec![]));
             }
             if let Some(r) = s.replies.iter().find(|r| r.done.contains("complete")) {
-                return Err(format!("{NAME}: reply {} is already in state complete; recording it again is refused", r.key));
+                return Err(format!(
+                    "{NAME}: reply {} is already in state complete; recording it again is refused",
+                    r.key
+                ));
             }
-            Ok((carry.clone(), s.replies.iter().flat_map(|r| plan(r, retries)).collect()))
+            Ok((
+                carry.clone(),
+                s.replies.iter().flat_map(|r| plan(r, retries)).collect(),
+            ))
         }
         Input::Outcome { effect, .. } if effect == MARK => Ok((carry.clone(), vec![])),
         Input::Outcome { effect, ok, body } if EFFECTS.contains(&effect.as_str()) => {
-            let Some((key, step, _)) = key_step(body) else { return Ok((carry.clone(), vec![])) };
-            let line = if *ok {
-                step
-            } else {
-                format!("fail:{step}")
+            let Some((key, step, _)) = key_step(body) else {
+                return Ok((carry.clone(), vec![]));
             };
-            Ok((carry.clone(), vec![act(MARK, &Job { key, step: line, conn_retries: retries, ..Job::default() }, MARK_MS)]))
+            let line = if *ok { step } else { format!("fail:{step}") };
+            Ok((
+                carry.clone(),
+                vec![act(
+                    MARK,
+                    &Job {
+                        key,
+                        step: line,
+                        conn_retries: retries,
+                        ..Job::default()
+                    },
+                    MARK_MS,
+                )],
+            ))
         }
-        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state pending no outcome of {effect} is expected")),
-        Input::Ran(r) => Err(format!("{NAME}: in state pending no unit is expected, got {r:?}")),
+        Input::Outcome { effect, .. } => Err(format!(
+            "{NAME}: in state pending no outcome of {effect} is expected"
+        )),
+        Input::Ran(r) => Err(format!(
+            "{NAME}: in state pending no unit is expected, got {r:?}"
+        )),
     }
 }
 
@@ -320,8 +399,13 @@ fn ledger(e: &crate::Effects) -> std::path::PathBuf {
 
 /// The observe: the maildir and the ledger, read in-process.
 pub fn observe(e: &crate::Effects) -> Result<String, String> {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    serde_json::to_string(&serde_json::json!({ "replies": mail::reconcile::pending(&e.world.mail, &ledger(e), now) })).map_err(|e| e.to_string())
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    serde_json::to_string(
+        &serde_json::json!({ "replies": mail::reconcile::pending(&e.world.mail, &ledger(e), now) }),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Every act's runner, by `spec.name`: the mail library's own steps. Success answers
@@ -332,31 +416,66 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     }
     let j: Job = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
     let tag = format!("{}/{}", j.key, j.step);
-    let bd = || -> Result<mail::bead::BdCli, String> { mail::bead::BdCli::configured(j.conn_retries.max(1)) };
+    let bd = || -> Result<mail::bead::BdCli, String> {
+        mail::bead::BdCli::configured(j.conn_retries.max(1))
+    };
     let client = super::lc(e);
-    let lc = mail::lc::Routed { client: Ok(&client), unserved: &mail::lc::LcProgram };
+    let lc = mail::lc::Routed {
+        client: Ok(&client),
+        unserved: &mail::lc::LcProgram,
+    };
     let mut refused = false;
     let out = match spec.name.as_str() {
         MARK => {
             mail::reconcile::mark(&ledger(e), &j.key, &j.step);
             Ok(())
         }
-        NOTE => bd().and_then(|bd| mail::bead::note(&bd, if j.step == "note-work" { &j.work_bead } else { &j.bead }, &j.text)),
-        CLOSE => bd().and_then(|bd| match mail::bead::sendmail_close_bead(&bd, true, &j.bead, &j.kind, &j.para) {
-            Ok(_) => Ok(()),
-            Err(_) if mail::bead::bead_status(&bd, true, &j.bead).as_deref() == Some("closed") => Ok(()),
-            Err(LcError::Refused(_)) => {
-                refused = true;
-                Ok(())
-            }
-            Err(e) => Err(e.to_string()),
+        NOTE => bd().and_then(|bd| {
+            mail::bead::note(
+                &bd,
+                if j.step == "note-work" {
+                    &j.work_bead
+                } else {
+                    &j.bead
+                },
+                &j.text,
+            )
         }),
-        LIFT => mail::lc::lift_ask(&lc, &j.work_bead, mail::lc::Lift::Reply { message_id: &j.key }, &j.actor).map_or(Ok(()), Err),
-        ANSWER => mail::lc::answer_ask(&lc, &j.bead, &j.para, &j.actor, "mail", &j.key).map_or(Ok(()), Err),
+        CLOSE => bd().and_then(|bd| {
+            match mail::bead::sendmail_close_bead(&bd, true, &j.bead, &j.kind, &j.para) {
+                Ok(_) => Ok(()),
+                Err(_)
+                    if mail::bead::bead_status(&bd, true, &j.bead).as_deref() == Some("closed") =>
+                {
+                    Ok(())
+                }
+                Err(LcError::Refused(_)) => {
+                    refused = true;
+                    Ok(())
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        }),
+        LIFT => mail::lc::lift_ask(
+            &lc,
+            &j.work_bead,
+            mail::lc::Lift::Reply { message_id: &j.key },
+            &j.actor,
+        )
+        .map_or(Ok(()), Err),
+        ANSWER => mail::lc::answer_ask(&lc, &j.bead, &j.para, &j.actor, "mail", &j.key)
+            .map_or(Ok(()), Err),
         INBOX => mail::reconcile::inbox_row(&e.world.mail, &j.subject, &j.text),
         other => Err(format!("{NAME}: no runner for {other}")),
     };
-    out.map(|_| if refused { format!("{}/close:refused", j.key) } else { tag.clone() }).map_err(|why| format!("{tag}: {why}"))
+    out.map(|_| {
+        if refused {
+            format!("{}/close:refused", j.key)
+        } else {
+            tag.clone()
+        }
+    })
+    .map_err(|why| format!("{tag}: {why}"))
 }
 
 const ROW_PARTS: &[runtime::rows::Part] = &[];

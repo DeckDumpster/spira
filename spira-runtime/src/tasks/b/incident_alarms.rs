@@ -130,16 +130,38 @@ pub const ATTEMPT: &str = "incident.alarms.attempt";
 pub const KNOB_INIT: &str = "incident.alarms.knob_init";
 pub const PUBLISH: &str = "incident.alarms.publish";
 pub const HEARTBEAT: &str = "incident.alarms.heartbeat";
-pub const EFFECTS: &[&str] = &[OBSERVE, PAGE, NOTE, FLOOR_ASK, RETRY, ATTEMPT, KNOB_INIT, PUBLISH, HEARTBEAT];
+pub const EFFECTS: &[&str] = &[
+    OBSERVE, PAGE, NOTE, FLOOR_ASK, RETRY, ATTEMPT, KNOB_INIT, PUBLISH, HEARTBEAT,
+];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_INCIDENT_ALARMS_SECS";
 pub const DEADMAN_KEY: &str = "SPIRA_RECONCILER_DEADMAN_SECS";
 pub const HEARTBEAT_URL_KEY: &str = "SPIRA_RECONCILER_HEARTBEAT_URL";
 /// The scheduler's control socket, where the observe reads the goodput task.
 pub const CONTROL_SOCKET_KEY: &str = "SPIRA_RUNTIME_SOCKET";
-pub const KEYS: &[&str] = &[CADENCE_KEY, DEADMAN_KEY, HEARTBEAT_URL_KEY, "SPIRA_RUN", "SPIRA_MAIL", CONTROL_SOCKET_KEY];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    DEADMAN_KEY,
+    HEARTBEAT_URL_KEY,
+    "SPIRA_RUN",
+    "SPIRA_MAIL",
+    CONTROL_SOCKET_KEY,
+];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 5_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(CONTROL_SOCKET_KEY), jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 5_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: Some(CONTROL_SOCKET_KEY),
+    jitter_key: None,
+};
 
 /// The goodput task as `scheduler status` (S13) reports it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,10 +216,26 @@ pub enum Floor {
     Cleared,
 }
 
-pub const DEADMAN: &[(Deadman, &str, Deadman)] = &[(Deadman::Waiting, "pass:fresh", Deadman::Fresh), (Deadman::Fresh, "pass:stale", Deadman::Stale), (Deadman::Stale, "pass:fresh", Deadman::Fresh), (Deadman::Fresh, "halted", Deadman::Waiting), (Deadman::Stale, "halted", Deadman::Waiting)];
-pub const PAGES: &[(Page, &str, Page)] = &[(Page::Absent, "send", Page::Sent), (Page::Sent, "note", Page::Noted), (Page::Noted, "quiet", Page::Quiet), (Page::Quiet, "window:expired", Page::Sent)];
+pub const DEADMAN: &[(Deadman, &str, Deadman)] = &[
+    (Deadman::Waiting, "pass:fresh", Deadman::Fresh),
+    (Deadman::Fresh, "pass:stale", Deadman::Stale),
+    (Deadman::Stale, "pass:fresh", Deadman::Fresh),
+    (Deadman::Fresh, "halted", Deadman::Waiting),
+    (Deadman::Stale, "halted", Deadman::Waiting),
+];
+pub const PAGES: &[(Page, &str, Page)] = &[
+    (Page::Absent, "send", Page::Sent),
+    (Page::Sent, "note", Page::Noted),
+    (Page::Noted, "quiet", Page::Quiet),
+    (Page::Quiet, "window:expired", Page::Sent),
+];
 /// A second floor ask for an asked binding is refused, naming `asked`.
-pub const FLOORS: &[(Floor, &str, Floor)] = &[(Floor::None, "below_floor", Floor::Asking), (Floor::Asking, "asked", Floor::Asked), (Floor::Asked, "cleared", Floor::Cleared), (Floor::Cleared, "below_floor", Floor::Asking)];
+pub const FLOORS: &[(Floor, &str, Floor)] = &[
+    (Floor::None, "below_floor", Floor::Asking),
+    (Floor::Asking, "asked", Floor::Asked),
+    (Floor::Asked, "cleared", Floor::Cleared),
+    (Floor::Cleared, "below_floor", Floor::Asking),
+];
 
 /// One page row, `incident::page::Row` carried: what was paged, under which identity and
 /// evidence, as which ask, and when.
@@ -214,11 +252,25 @@ pub struct PageRow {
 
 impl PageRow {
     fn of(r: &incident::page::Row) -> PageRow {
-        PageRow { section: r.section.clone(), condition: r.condition.clone(), identity: r.identity.clone(), evidence: r.evidence.clone(), ask: r.ask.clone(), sent: r.sent }
+        PageRow {
+            section: r.section.clone(),
+            condition: r.condition.clone(),
+            identity: r.identity.clone(),
+            evidence: r.evidence.clone(),
+            ask: r.ask.clone(),
+            sent: r.sent,
+        }
     }
 
     fn row(&self) -> incident::page::Row {
-        incident::page::Row { section: self.section.clone(), condition: self.condition.clone(), identity: self.identity.clone(), evidence: self.evidence.clone(), ask: self.ask.clone(), sent: self.sent }
+        incident::page::Row {
+            section: self.section.clone(),
+            condition: self.condition.clone(),
+            identity: self.identity.clone(),
+            evidence: self.evidence.clone(),
+            ask: self.ask.clone(),
+            sent: self.sent,
+        }
     }
 }
 
@@ -287,8 +339,20 @@ pub struct Publish {
 pub const STORE_DEADLINE_MS: u64 = 15_000;
 pub const SHORT_DEADLINE_MS: u64 = 5_000;
 
-fn act(name: &str, key: String, input: &impl Serialize, deadline_ms: u64, probe: bool) -> Result<Act, String> {
-    Ok(Act { name: name.into(), key, input: serde_json::to_string(input).map_err(|e| e.to_string())?, deadline_ms, probe })
+fn act(
+    name: &str,
+    key: String,
+    input: &impl Serialize,
+    deadline_ms: u64,
+    probe: bool,
+) -> Result<Act, String> {
+    Ok(Act {
+        name: name.into(),
+        key,
+        input: serde_json::to_string(input).map_err(|e| e.to_string())?,
+        deadline_ms,
+        probe,
+    })
 }
 
 /// The status without its clock fields (`pass_age_secs`, each condition's transition time),
@@ -298,7 +362,10 @@ fn status_key(status: &serde_json::Value) -> String {
     if let Some(o) = s.as_object_mut() {
         o.remove("pass_age_secs");
     }
-    if let Some(cs) = s.get_mut("conditions").and_then(serde_json::Value::as_array_mut) {
+    if let Some(cs) = s
+        .get_mut("conditions")
+        .and_then(serde_json::Value::as_array_mut)
+    {
         for c in cs.iter_mut().filter_map(serde_json::Value::as_object_mut) {
             c.remove("lastTransitionTime");
         }
@@ -327,33 +394,71 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Input::Outcome { effect, ok, body } => return outcome(carry, effect, *ok, body),
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
-    let deadman_secs = cfg.get(DEADMAN_KEY).and_then(|v| v.trim().parse::<u64>().ok()).filter(|v| *v > 0).ok_or_else(|| format!("{DEADMAN_KEY} must be a positive integer"))?;
-    let heartbeat_url = cfg.get(HEARTBEAT_URL_KEY).map(|u| u.trim().to_string()).unwrap_or_default();
+    let deadman_secs = cfg
+        .get(DEADMAN_KEY)
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .ok_or_else(|| format!("{DEADMAN_KEY} must be a positive integer"))?;
+    let heartbeat_url = cfg
+        .get(HEARTBEAT_URL_KEY)
+        .map(|u| u.trim().to_string())
+        .unwrap_or_default();
     let now = now_ms / 1000;
     let seen = ap::seen(&snap.section_snapshot);
-    let pass_raw = snap.section_snapshot.get("pass").cloned().unwrap_or(serde_json::Value::Null);
+    let pass_raw = snap
+        .section_snapshot
+        .get("pass")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let pass: Option<reconciler_engine::pass_record::PassRecord> = match &pass_raw {
         serde_json::Value::Null => None,
-        v => Some(serde_json::from_value(v.clone()).map_err(|e| format!("{NAME}: the pass record does not decode: {e}"))?),
+        v => Some(
+            serde_json::from_value(v.clone())
+                .map_err(|e| format!("{NAME}: the pass record does not decode: {e}"))?,
+        ),
     };
     let mut next = carry.clone();
     let mut acts = vec![];
     if !carry.knob_inited {
         next.knob_inited = true;
-        acts.push(act(KNOB_INIT, format!("{NAME}:knob-init"), &serde_json::json!({}), SHORT_DEADLINE_MS, false)?);
+        acts.push(act(
+            KNOB_INIT,
+            format!("{NAME}:knob-init"),
+            &serde_json::json!({}),
+            SHORT_DEADLINE_MS,
+            false,
+        )?);
     }
     let intents = ap::retry_intents(&snap.section_snapshot);
     next.retries = intents.iter().map(|(k, _)| k.clone()).collect();
-    for (key, target) in intents.into_iter().filter(|(k, _)| !carry.retries.contains(k)) {
-        acts.push(act(RETRY, format!("{NAME}:retry:{key}"), &Retry { key, target }, STORE_DEADLINE_MS, false)?);
+    for (key, target) in intents
+        .into_iter()
+        .filter(|(k, _)| !carry.retries.contains(k))
+    {
+        acts.push(act(
+            RETRY,
+            format!("{NAME}:retry:{key}"),
+            &Retry { key, target },
+            STORE_DEADLINE_MS,
+            false,
+        )?);
     }
-    let dm = ap::deadman_of(snap.observability_halted, snap.goodput.armed, snap.goodput.last_fired_ms.map(|ms| ms / 1000), now, deadman_secs);
+    let dm = ap::deadman_of(
+        snap.observability_halted,
+        snap.goodput.armed,
+        snap.goodput.last_fired_ms.map(|ms| ms / 1000),
+        now,
+        deadman_secs,
+    );
     next.deadman = match dm {
         ap::DeadMan::Waiting(_) => Deadman::Waiting,
         ap::DeadMan::Fresh { .. } => Deadman::Fresh,
         ap::DeadMan::Stale { .. } => Deadman::Stale,
     };
-    let mut cands = pass.as_ref().map(|r| ap::from_pass(r, &seen, now)).unwrap_or_default();
+    let mut cands = pass
+        .as_ref()
+        .map(|r| ap::from_pass(r, &seen, now))
+        .unwrap_or_default();
     cands.extend(ap::raised(&seen, now));
     if let ap::DeadMan::Stale { age_secs } = dm {
         cands.push(ap::deadman_candidate(pass.as_ref(), age_secs, deadman_secs));
@@ -365,20 +470,48 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             incident::page::Verdict::Quiet => {}
             incident::page::Verdict::Send => {
                 rows = incident::page::sent(&rows, c, "", now_i);
-                let mine = rows.iter().filter(|r| r.section == c.section && r.sent == now_i && r.ask.is_empty()).map(|r| (r.section.clone(), r.condition.clone())).collect();
-                acts.push(act(PAGE, format!("{NAME}:page:{}", c.reference()), &Send { reference: c.reference(), kind: ap::PAGE.into(), message: ap::message_of(c), rows: mine, binding: None }, STORE_DEADLINE_MS, false)?);
+                let mine = rows
+                    .iter()
+                    .filter(|r| r.section == c.section && r.sent == now_i && r.ask.is_empty())
+                    .map(|r| (r.section.clone(), r.condition.clone()))
+                    .collect();
+                acts.push(act(
+                    PAGE,
+                    format!("{NAME}:page:{}", c.reference()),
+                    &Send {
+                        reference: c.reference(),
+                        kind: ap::PAGE.into(),
+                        message: ap::message_of(c),
+                        rows: mine,
+                        binding: None,
+                    },
+                    STORE_DEADLINE_MS,
+                    false,
+                )?);
             }
             incident::page::Verdict::Note { ask } => {
                 rows = incident::page::noted(&rows, c, now_i);
                 if !ask.is_empty() {
-                    let text = format!("Changed inside the page window, not re-sent:\n{}", c.body());
-                    acts.push(act(NOTE, format!("{NAME}:note:{ask}:{:016x}", runtime::event::fnv1a(&text)), &Note { ask, text }, 10_000, false)?);
+                    let text =
+                        format!("Changed inside the page window, not re-sent:\n{}", c.body());
+                    acts.push(act(
+                        NOTE,
+                        format!("{NAME}:note:{ask}:{:016x}", runtime::event::fnv1a(&text)),
+                        &Note { ask, text },
+                        10_000,
+                        false,
+                    )?);
                 }
             }
         }
     }
     next.pages = rows.iter().map(PageRow::of).collect();
-    match ap::floor_ask(&seen, pass.as_ref(), &pass_raw, snap.floor_proposal.as_deref()) {
+    match ap::floor_ask(
+        &seen,
+        pass.as_ref(),
+        &pass_raw,
+        snap.floor_proposal.as_deref(),
+    ) {
         None => {
             next.floors.clear();
             next.floor_asks.clear();
@@ -387,24 +520,59 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Some((binding, message)) => {
             next.floors = BTreeMap::from([(binding.clone(), Floor::Asking)]);
             next.floor_asks.clear();
-            acts.push(act(FLOOR_ASK, format!("{NAME}:floor:{binding}"), &Send { reference: format!("floor:{binding}"), kind: ap::FLOOR.into(), message, rows: vec![], binding: Some(binding) }, STORE_DEADLINE_MS, false)?);
+            acts.push(act(
+                FLOOR_ASK,
+                format!("{NAME}:floor:{binding}"),
+                &Send {
+                    reference: format!("floor:{binding}"),
+                    kind: ap::FLOOR.into(),
+                    message,
+                    rows: vec![],
+                    binding: Some(binding),
+                },
+                STORE_DEADLINE_MS,
+                false,
+            )?);
         }
     }
     if matches!(dm, ap::DeadMan::Fresh { .. }) && !heartbeat_url.is_empty() {
-        acts.push(Act { name: HEARTBEAT.into(), key: format!("{NAME}:heartbeat:{now_ms}"), input: heartbeat_url, deadline_ms: SHORT_DEADLINE_MS, probe: true });
+        acts.push(Act {
+            name: HEARTBEAT.into(),
+            key: format!("{NAME}:heartbeat:{now_ms}"),
+            input: heartbeat_url,
+            deadline_ms: SHORT_DEADLINE_MS,
+            probe: true,
+        });
     }
     let prev = ap::previous(&seen);
     let (status, unchanged) = ap::status_of(prev, pass.as_ref(), &dm, &snap.attempts, None, now);
     if !unchanged {
         let key = status_key(&status);
-        let rev = prev.and_then(|s| s.metadata.resource_version.clone()).unwrap_or_else(|| "0".into());
-        let publish = Publish { body: ap::section_body(&status, now), rev };
+        let rev = prev
+            .and_then(|s| s.metadata.resource_version.clone())
+            .unwrap_or_else(|| "0".into());
+        let publish = Publish {
+            body: ap::section_body(&status, now),
+            rev,
+        };
         if key != carry.status {
             next.status = key;
             next.published_at = Some(now_ms);
-            acts.push(act(PUBLISH, format!("{NAME}:publish:{}", publish.rev), &publish, SHORT_DEADLINE_MS, false)?);
+            acts.push(act(
+                PUBLISH,
+                format!("{NAME}:publish:{}", publish.rev),
+                &publish,
+                SHORT_DEADLINE_MS,
+                false,
+            )?);
         } else {
-            acts.push(act(PUBLISH, format!("{NAME}:publish:{}", publish.rev), &publish, SHORT_DEADLINE_MS, true)?);
+            acts.push(act(
+                PUBLISH,
+                format!("{NAME}:publish:{}", publish.rev),
+                &publish,
+                SHORT_DEADLINE_MS,
+                true,
+            )?);
         }
     }
     Ok((next, acts))
@@ -413,9 +581,16 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
 fn outcome(carry: &Carry, effect: &str, ok: bool, body: &str) -> Decision<Carry> {
     match effect {
         PAGE if ok => {
-            let sent: Sent = serde_json::from_str(body).map_err(|e| format!("{NAME}: a page's outcome does not decode: {e}"))?;
+            let sent: Sent = serde_json::from_str(body)
+                .map_err(|e| format!("{NAME}: a page's outcome does not decode: {e}"))?;
             let mut next = carry.clone();
-            for r in next.pages.iter_mut().filter(|r| r.ask.is_empty() && sent.rows.iter().any(|(s, c)| *s == r.section && *c == r.condition)) {
+            for r in next.pages.iter_mut().filter(|r| {
+                r.ask.is_empty()
+                    && sent
+                        .rows
+                        .iter()
+                        .any(|(s, c)| *s == r.section && *c == r.condition)
+            }) {
                 r.ask = sent.ask.clone();
             }
             Ok((next, vec![]))
@@ -427,10 +602,16 @@ fn outcome(carry: &Carry, effect: &str, ok: bool, body: &str) -> Decision<Carry>
                 Some(Floor::Asking) => {
                     let mut next = carry.clone();
                     next.floors.insert(binding.to_string(), Floor::Asked);
-                    next.floor_asks.insert(binding.to_string(), if ok { ask.to_string() } else { String::new() });
+                    next.floor_asks.insert(
+                        binding.to_string(),
+                        if ok { ask.to_string() } else { String::new() },
+                    );
                     Ok((next, vec![]))
                 }
-                Some(f) if ok => Err(format!("{NAME}: the floor for {binding} is {}; it is asked once", floor_name(f))),
+                Some(f) if ok => Err(format!(
+                    "{NAME}: the floor for {binding} is {}; it is asked once",
+                    floor_name(f)
+                )),
                 _ if !ok => {
                     // A failed ask names no binding: the one in flight is asked, unanswered, as the
                     // pass's own row was written with an empty ask.
@@ -443,7 +624,9 @@ fn outcome(carry: &Carry, effect: &str, ok: bool, body: &str) -> Decision<Carry>
                 _ => Err(format!("{NAME}: no floor ask for {binding} is in flight")),
             }
         }
-        PAGE | NOTE | RETRY | KNOB_INIT | PUBLISH | HEARTBEAT | ATTEMPT => Ok((carry.clone(), vec![])),
+        PAGE | NOTE | RETRY | KNOB_INIT | PUBLISH | HEARTBEAT | ATTEMPT => {
+            Ok((carry.clone(), vec![]))
+        }
         other => Err(format!("{NAME}: no outcome of {other} is expected")),
     }
 }
@@ -465,16 +648,47 @@ pub const GOODPUT_TASK: &str = "reconcile.goodput";
 /// The runner of [`OBSERVE`]: the store's `section snapshot`, the observability halt stamp, the
 /// goodput task from `scheduler status`, the attempt record's reading and the floor proposal.
 pub fn observe(o: &Observed) -> Result<String, String> {
-    let section_snapshot: serde_json::Value = serde_json::from_str(o.lc.answer(&["section", "snapshot"]).map_err(String::from)?.trim()).map_err(|e| format!("section snapshot answered non-JSON: {e}"))?;
-    let status: Option<serde_json::Value> = runtime::socket::lc_call(o.control, &["scheduler", "status"]).ok().and_then(|t| serde_json::from_str(&t).ok());
-    let task = status.as_ref().and_then(|s| s["tasks"].as_array()?.iter().find(|t| t["name"] == GOODPUT_TASK).cloned());
+    let section_snapshot: serde_json::Value = serde_json::from_str(
+        o.lc.answer(&["section", "snapshot"])
+            .map_err(String::from)?
+            .trim(),
+    )
+    .map_err(|e| format!("section snapshot answered non-JSON: {e}"))?;
+    let status: Option<serde_json::Value> =
+        runtime::socket::lc_call(o.control, &["scheduler", "status"])
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok());
+    let task = status.as_ref().and_then(|s| {
+        s["tasks"]
+            .as_array()?
+            .iter()
+            .find(|t| t["name"] == GOODPUT_TASK)
+            .cloned()
+    });
     let goodput = match task {
-        Some(t) => GoodputStatus { armed: t["mode"] == "act" && !t["next_due_at"].is_null(), last_fired_ms: t["last_fired_at"].as_u64() },
+        Some(t) => GoodputStatus {
+            armed: t["mode"] == "act" && !t["next_due_at"].is_null(),
+            last_fired_ms: t["last_fired_at"].as_u64(),
+        },
         None => GoodputStatus::default(),
     };
-    let attempts = incident::alarms_pass::AttemptReading::of(&tsd::alarm::read(o.run_dir), o.now_ms / 1000);
-    let floor_proposal = o.causal_map.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| incident::alarms_pass::floor_proposal(&t));
-    let snap = Snapshot { section_snapshot, observability_halted: o.run_dir.join(incident::alarms_pass::OBSERVABILITY_HALT).exists(), goodput, attempts, floor_proposal };
+    let attempts =
+        incident::alarms_pass::AttemptReading::of(&tsd::alarm::read(o.run_dir), o.now_ms / 1000);
+    let floor_proposal = o
+        .causal_map
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| incident::alarms_pass::floor_proposal(&t));
+    let snap = Snapshot {
+        section_snapshot,
+        observability_halted: o
+            .run_dir
+            .join(incident::alarms_pass::OBSERVABILITY_HALT)
+            .exists(),
+        goodput,
+        attempts,
+        floor_proposal,
+    };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
@@ -506,24 +720,62 @@ impl incident::alarms_pass::Switch for NoSwitch {
 
 impl Delivery {
     /// The configured delivery: the process's mail environment, as `incident alarms-pass` built it.
-    pub fn configured(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path) -> Result<Delivery, String> {
+    pub fn configured(
+        lc: &spira_store::lc_call::LcClient,
+        run_dir: &std::path::Path,
+    ) -> Result<Delivery, String> {
         let env = mail::env::Env::load()?;
         let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
-        let fallback = incident::alarms_pass::MaildirFallback { mail_root: env.mail_root.clone(), mute: env.mute };
-        let cfg = incident::alarms_pass::Config { run_dir: run_dir.into(), host: incident::intake::hostname(), deadman_secs: 0, heartbeat_url: String::new(), fallback: true, floor_proposal: None };
-        Ok(Delivery { lc: reconciler_engine::goodput_pass::Socket(lc.clone()), primary: incident::alarms_pass::MailPrimary { env, bd }, fallback, cfg })
+        let fallback = incident::alarms_pass::MaildirFallback {
+            mail_root: env.mail_root.clone(),
+            mute: env.mute,
+        };
+        let cfg = incident::alarms_pass::Config {
+            run_dir: run_dir.into(),
+            host: incident::intake::hostname(),
+            deadman_secs: 0,
+            heartbeat_url: String::new(),
+            fallback: true,
+            floor_proposal: None,
+        };
+        Ok(Delivery {
+            lc: reconciler_engine::goodput_pass::Socket(lc.clone()),
+            primary: incident::alarms_pass::MailPrimary { env, bd },
+            fallback,
+            cfg,
+        })
     }
 
     fn with<R>(&self, f: impl FnOnce(&incident::alarms_pass::Ports) -> R) -> R {
-        let ports = incident::alarms_pass::Ports { lc: &self.lc, primary: &self.primary, fallback: &self.fallback, http: &NoHttp, switch: &NoSwitch, clock: &runtime::ports::WallClock };
+        let ports = incident::alarms_pass::Ports {
+            lc: &self.lc,
+            primary: &self.primary,
+            fallback: &self.fallback,
+            http: &NoHttp,
+            switch: &NoSwitch,
+            clock: &runtime::ports::WallClock,
+        };
         f(&ports)
     }
 }
 
 /// The observe runner over the process's run dir, socket and spira home.
-pub fn observe_with(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, control: &str, now_ms: u64) -> Result<String, String> {
-    let causal_map = incident::intake::spira_home_dir().ok().and_then(|h| h.parent().map(|r| r.join("reconciler/causal-map.toml")));
-    observe(&Observed { lc, run_dir, control: std::path::Path::new(control), causal_map, now_ms })
+pub fn observe_with(
+    lc: &spira_store::lc_call::LcClient,
+    run_dir: &std::path::Path,
+    control: &str,
+    now_ms: u64,
+) -> Result<String, String> {
+    let causal_map = incident::intake::spira_home_dir()
+        .ok()
+        .and_then(|h| h.parent().map(|r| r.join("reconciler/causal-map.toml")));
+    observe(&Observed {
+        lc,
+        run_dir,
+        control: std::path::Path::new(control),
+        causal_map,
+        now_ms,
+    })
 }
 
 /// The runner of [`PAGE`] and [`FLOOR_ASK`]: `deliver` (primary, then the fallback), which
@@ -531,7 +783,17 @@ pub fn observe_with(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Pa
 /// `<binding>\t<ask>`.
 pub fn send(d: &Delivery, input: &str) -> Result<String, String> {
     let s: Send = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    let ask = d.with(|p| incident::alarms_pass::deliver(p, &d.cfg, incident::alarms_pass::CALLER, &s.kind, &s.reference, &s.message, d.cfg.fallback))?;
+    let ask = d.with(|p| {
+        incident::alarms_pass::deliver(
+            p,
+            &d.cfg,
+            incident::alarms_pass::CALLER,
+            &s.kind,
+            &s.reference,
+            &s.message,
+            d.cfg.fallback,
+        )
+    })?;
     match s.binding {
         Some(b) => Ok(format!("{b}\t{ask}")),
         None => serde_json::to_string(&Sent { rows: s.rows, ask }).map_err(|e| e.to_string()),
@@ -553,18 +815,29 @@ pub fn retry(d: &Delivery, input: &str) -> Result<String, String> {
 
 /// The runner of [`KNOB_INIT`].
 pub fn knob_init(lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
-    incident::alarms_pass::knob_init(&reconciler_engine::goodput_pass::Socket(lc.clone())).map(|()| "initialised".into())
+    incident::alarms_pass::knob_init(&reconciler_engine::goodput_pass::Socket(lc.clone()))
+        .map(|()| "initialised".into())
 }
 
 /// The runner of [`PUBLISH`]: `section publish-status --expect-rev`.
 pub fn publish(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let p: Publish = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    incident::alarms_pass::publish_section(&reconciler_engine::goodput_pass::Socket(lc.clone()), &p.body, &p.rev).map(|()| "published".into())
+    incident::alarms_pass::publish_section(
+        &reconciler_engine::goodput_pass::Socket(lc.clone()),
+        &p.body,
+        &p.rev,
+    )
+    .map(|()| "published".into())
 }
 
 /// The runner of [`HEARTBEAT`]: one GET of the off-box heartbeat URL.
 pub fn heartbeat(url: &str) -> Result<String, String> {
-    let r = ureq::AgentBuilder::new().timeout(incident::alarms_pass::HEARTBEAT_DEADLINE).build().get(url).call().map_err(|e| e.to_string())?;
+    let r = ureq::AgentBuilder::new()
+        .timeout(incident::alarms_pass::HEARTBEAT_DEADLINE)
+        .build()
+        .get(url)
+        .call()
+        .map_err(|e| e.to_string())?;
     Ok(format!("status {}", r.status()))
 }
 
@@ -573,11 +846,39 @@ pub fn heartbeat(url: &str) -> Result<String, String> {
 pub fn attempt(run_dir: &std::path::Path, input: &str) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
-    let outcome = if v["delivered"].as_bool() == Some(true) { tsd::alarm::Outcome::Delivered { id: s("id") } } else { tsd::alarm::Outcome::Failed { reason: s("reason") } };
-    let a = tsd::alarm::Attempt { at: v["at"].as_u64().unwrap_or(0), caller: s("caller"), kind: s("kind"), reference: s("reference"), outcome, message: None };
-    a.write(run_dir, &incident::intake::hostname()).map(|_| "recorded".into()).map_err(|e| e.to_string())
+    let outcome = if v["delivered"].as_bool() == Some(true) {
+        tsd::alarm::Outcome::Delivered { id: s("id") }
+    } else {
+        tsd::alarm::Outcome::Failed {
+            reason: s("reason"),
+        }
+    };
+    let a = tsd::alarm::Attempt {
+        at: v["at"].as_u64().unwrap_or(0),
+        caller: s("caller"),
+        kind: s("kind"),
+        reference: s("reference"),
+        outcome,
+        message: None,
+    };
+    a.write(run_dir, &incident::intake::hostname())
+        .map(|_| "recorded".into())
+        .map_err(|e| e.to_string())
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("pages"), runtime::rows::Part::Map { name: "floors", drop: &[] }, runtime::rows::Part::Map { name: "floor_asks", drop: &[] }, runtime::rows::Part::Field("retries"), runtime::rows::Part::Field("knob_inited"), runtime::rows::Part::Field("status")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("pages"),
+    runtime::rows::Part::Map {
+        name: "floors",
+        drop: &[],
+    },
+    runtime::rows::Part::Map {
+        name: "floor_asks",
+        drop: &[],
+    },
+    runtime::rows::Part::Field("retries"),
+    runtime::rows::Part::Field("knob_inited"),
+    runtime::rows::Part::Field("status"),
+];
 
 super::hosted!(IncidentAlarms);

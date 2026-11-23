@@ -75,14 +75,19 @@ pub const SEND: &str = "incident.probe.send";
 pub const EFFECTS: &[&str] = &[OBSERVE, SEND];
 /// `alarms_config(env, false)` (`main.rs:677-688`), pinned once though the probe uses only
 /// `run_dir` and `host`.
-pub const KEYS: &[&str] = &["SPIRA_RECONCILER_DEADMAN_SECS", "SPIRA_RECONCILER_HEARTBEAT_URL", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_RECONCILER_DEADMAN_SECS",
+    "SPIRA_RECONCILER_HEARTBEAT_URL",
+    "SPIRA_RUN",
+];
 /// `--interval 3600`.
 pub const CADENCE_MS: u64 = 3_600_000;
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
 /// `PROBE_CALLER` (`alarms_pass.rs:34`).
 pub const MAILBOX: &str = "alarms-probe";
 pub const SUBJECT: &str = "alarms probe of the primary delivery path";
-pub const BODY: &str = "## Note\nThe alarms component's hourly probe: the primary path delivered this.\n";
+pub const BODY: &str =
+    "## Note\nThe alarms component's hourly probe: the primary path delivered this.\n";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -93,7 +98,11 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { deadman_secs: cfg_parse("SPIRA_RECONCILER_DEADMAN_SECS")?, heartbeat_url: cfg("SPIRA_RECONCILER_HEARTBEAT_URL")?, run: cfg("SPIRA_RUN")? })
+        Ok(Config {
+            deadman_secs: cfg_parse("SPIRA_RECONCILER_DEADMAN_SECS")?,
+            heartbeat_url: cfg("SPIRA_RECONCILER_HEARTBEAT_URL")?,
+            run: cfg("SPIRA_RUN")?,
+        })
     }
 }
 
@@ -127,21 +136,32 @@ pub struct Send {
 
 /// Every tick sends once, keyed by the tick that asked: `incident_probe/<tick event id>`.
 pub fn decide(_snap: &Snapshot, tick_id: &str, _cfg: &Config) -> Vec<EffectSpec> {
-    let send = Send { key: format!("incident_probe/{tick_id}"), mailbox: MAILBOX.into(), subject: SUBJECT.into(), body: BODY.into() };
-    vec![EffectSpec::keyed(SEND, send.key.clone(), serde_json::to_string(&send).unwrap_or_default(), SEND_DEADLINE_MS)]
+    let send = Send {
+        key: format!("incident_probe/{tick_id}"),
+        mailbox: MAILBOX.into(),
+        subject: SUBJECT.into(),
+        body: BODY.into(),
+    };
+    vec![EffectSpec::keyed(
+        SEND,
+        send.key.clone(),
+        serde_json::to_string(&send).unwrap_or_default(),
+        SEND_DEADLINE_MS,
+    )]
 }
 
 /// The latest probe attempt in the alarm-attempt family, the record `probe_health` reads.
 pub fn observe() -> Result<String, String> {
     let config = Config::pinned()?;
-    let last_probe = incident::alarms_pass::last_probe(std::path::Path::new(&config.run)).and_then(|a| {
-        let outcome = match a.outcome {
-            tsd::alarm::Outcome::Delivered { id } => Outcome::Delivered { id },
-            tsd::alarm::Outcome::Failed { reason } => Outcome::Failed { reason },
-            tsd::alarm::Outcome::DeliveredFallback => return None,
-        };
-        Some(Probe { at: a.at, outcome })
-    });
+    let last_probe =
+        incident::alarms_pass::last_probe(std::path::Path::new(&config.run)).and_then(|a| {
+            let outcome = match a.outcome {
+                tsd::alarm::Outcome::Delivered { id } => Outcome::Delivered { id },
+                tsd::alarm::Outcome::Failed { reason } => Outcome::Failed { reason },
+                tsd::alarm::Outcome::DeliveredFallback => return None,
+            };
+            Some(Probe { at: a.at, outcome })
+        });
     serde_json::to_string(&Snapshot { last_probe }).map_err(|e| e.to_string())
 }
 
@@ -151,14 +171,23 @@ pub fn observe() -> Result<String, String> {
 pub fn send(input: &str) -> Result<String, String> {
     let s: Send = serde_json::from_str(input).map_err(|e| format!("{SEND}: bad input: {e}"))?;
     if s.mailbox != MAILBOX {
-        return Err(format!("{SEND}: refused: mailbox {} is not {MAILBOX}", s.mailbox));
+        return Err(format!(
+            "{SEND}: refused: mailbox {} is not {MAILBOX}",
+            s.mailbox
+        ));
     }
     let config = Config::pinned()?;
     let env = mail::env::Env::load()?;
     let bd = mail::bead::BdCli::configured(env.bd_conn_retries)?;
     let primary = incident::alarms_pass::MailPrimary { env, bd };
     let host = incident::intake::hostname();
-    match incident::alarms_pass::probe_primary(&primary, &runtime::ports::WallClock, std::path::Path::new(&config.run), &host, &s.mailbox) {
+    match incident::alarms_pass::probe_primary(
+        &primary,
+        &runtime::ports::WallClock,
+        std::path::Path::new(&config.run),
+        &host,
+        &s.mailbox,
+    ) {
         Ok(id) => Ok(format!("probe delivered as {id}")),
         Err(e) => Err(format!("probe FAILED: {e}")),
     }
@@ -174,7 +203,9 @@ impl IncidentProbe {
     }
 
     pub fn pinned() -> Self {
-        IncidentProbe { config: Config::pinned() }
+        IncidentProbe {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -196,9 +227,17 @@ impl Handler for IncidentProbe {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
-        let Some(snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else { return vec![] };
+        let Some(snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else {
+            return vec![];
+        };
         let config = match &self.config {
             Ok(c) => c,
             Err(e) => {
@@ -207,6 +246,9 @@ impl Handler for IncidentProbe {
             }
         };
         let tick = ev.cause.as_ref().map(|c| c.0.as_str()).unwrap_or_default();
-        decide(&snap, tick, config).into_iter().map(Command::Effect).collect()
+        decide(&snap, tick, config)
+            .into_iter()
+            .map(Command::Effect)
+            .collect()
     }
 }

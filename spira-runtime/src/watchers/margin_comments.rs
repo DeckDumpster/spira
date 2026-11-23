@@ -75,7 +75,12 @@ impl MarginComments {
 
 fn say(at_ms: u64, m: &str) -> Command {
     let now = at_ms / 1000;
-    Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{now}:{:016x}", fnv1a(m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), INBOX_DEADLINE_MS))
+    Command::Effect(EffectSpec::keyed(
+        INBOX_APPEND,
+        format!("{NAME}:inbox:{now}:{:016x}", fnv1a(m)),
+        format!("{} [watch:{NAME}] {m}", iso8601(now)),
+        INBOX_DEADLINE_MS,
+    ))
 }
 
 fn json<T: Serialize>(v: &T) -> String {
@@ -93,16 +98,49 @@ fn actions(changes: &Changes) -> Vec<Command> {
         Some(PUBLISHED_KIND) => true,
         _ => false,
     };
-    let acts: Vec<(u64, &serde_json::Value)> = changes.changes.iter().filter(|c| wanted(c)).filter_map(|c| c["seq"].as_u64().map(|s| (s, c))).collect();
+    let acts: Vec<(u64, &serde_json::Value)> = changes
+        .changes
+        .iter()
+        .filter(|c| wanted(c))
+        .filter_map(|c| c["seq"].as_u64().map(|s| (s, c)))
+        .collect();
     let batch: Vec<u64> = acts.iter().map(|(s, _)| *s).collect();
     let through = changes.through;
     let mut cmds = vec![];
     for (seq, c) in acts {
         let spec = if c["kind"].as_str() == Some(PUBLISHED_KIND) {
-            field(c, "collection_id").map(|collection| EffectSpec::keyed(PUBLISH, format!("{NAME}:publish:{collection}"), json(&Publish { collection, seq, batch: batch.clone(), through }), PUBLISH_DEADLINE_MS))
+            field(c, "collection_id").map(|collection| {
+                EffectSpec::keyed(
+                    PUBLISH,
+                    format!("{NAME}:publish:{collection}"),
+                    json(&Publish {
+                        collection,
+                        seq,
+                        batch: batch.clone(),
+                        through,
+                    }),
+                    PUBLISH_DEADLINE_MS,
+                )
+            })
         } else {
-            match (field(c, "collection_id"), field(c, "thread_id"), field(c, "comment_id")) {
-                (Some(collection), Some(thread), Some(comment)) => Some(EffectSpec::keyed(DELIVER, format!("{NAME}:comment:{comment}"), json(&Deliver { collection, thread, comment, seq, batch: batch.clone(), through }), DELIVER_DEADLINE_MS)),
+            match (
+                field(c, "collection_id"),
+                field(c, "thread_id"),
+                field(c, "comment_id"),
+            ) {
+                (Some(collection), Some(thread), Some(comment)) => Some(EffectSpec::keyed(
+                    DELIVER,
+                    format!("{NAME}:comment:{comment}"),
+                    json(&Deliver {
+                        collection,
+                        thread,
+                        comment,
+                        seq,
+                        batch: batch.clone(),
+                        through,
+                    }),
+                    DELIVER_DEADLINE_MS,
+                )),
                 _ => None,
             }
         };
@@ -133,18 +171,36 @@ pub fn decide(carry: &Carry, ev: &Event, answered: Option<&EffectSpec>) -> (Carr
             }
         }
         MARGIN_UNREACHABLE => {
-            if let (None, Ok(u)) = (carry.unreachable, serde_json::from_str::<Unreachable>(&ev.kind.body)) {
+            if let (None, Ok(u)) = (
+                carry.unreachable,
+                serde_json::from_str::<Unreachable>(&ev.kind.body),
+            ) {
                 next.unreachable = Some(u.since_ms);
-                cmds.push(say(ev.at, &format!("margin feed unreachable since {}: {}", iso8601(u.since_ms / 1000), u.error)));
+                cmds.push(say(
+                    ev.at,
+                    &format!(
+                        "margin feed unreachable since {}: {}",
+                        iso8601(u.since_ms / 1000),
+                        u.error
+                    ),
+                ));
             }
         }
         EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT => {
-            let Some(spec) = answered.filter(|s| s.name == DELIVER || s.name == PUBLISH) else { return (next, cmds) };
+            let Some(spec) = answered.filter(|s| s.name == DELIVER || s.name == PUBLISH) else {
+                return (next, cmds);
+            };
             if ev.kind.tag == EFFECT_SUCCEEDED {
                 next.failed.remove(&spec.key);
             } else {
                 let attempts = carry.failed.get(&spec.key).map_or(0, |f| f.attempts) + 1;
-                next.failed.insert(spec.key.clone(), Failed { spec: spec.clone(), attempts });
+                next.failed.insert(
+                    spec.key.clone(),
+                    Failed {
+                        spec: spec.clone(),
+                        attempts,
+                    },
+                );
             }
         }
         _ => {}
@@ -154,7 +210,14 @@ pub fn decide(carry: &Carry, ev: &Event, answered: Option<&EffectSpec>) -> (Carr
 
 impl Handler for MarginComments {
     fn interests(&self) -> &[EventKindTag] {
-        &[BOOT, MARGIN_CHANGED, MARGIN_UNREACHABLE, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[
+            BOOT,
+            MARGIN_CHANGED,
+            MARGIN_UNREACHABLE,
+            EFFECT_SUCCEEDED,
+            EFFECT_FAILED,
+            EFFECT_TIMED_OUT,
+        ]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -163,10 +226,16 @@ impl Handler for MarginComments {
         let answered = answered_spec(view, ev);
         let (next, mut cmds) = decide(&carry, ev, answered.as_ref());
         if next != carry {
-            cmds.push(Command::EmitTo { stream: own, kind: EventKind::new(STATE_TAG, &json(&next)) });
+            cmds.push(Command::EmitTo {
+                stream: own,
+                kind: EventKind::new(STATE_TAG, &json(&next)),
+            });
         }
         if ev.kind.tag == BOOT {
-            cmds.push(Command::Timer { at: ev.at + self.sweep_ms, kind: EventKind::new(BOOT, "") });
+            cmds.push(Command::Timer {
+                at: ev.at + self.sweep_ms,
+                kind: EventKind::new(BOOT, ""),
+            });
         }
         cmds
     }
@@ -178,7 +247,14 @@ mod tests {
     use serde_json::json;
 
     fn event(tag: &str, body: String) -> Event {
-        Event { id: EventId("e".into()), stream: StreamKey(MARGIN_STREAM.into()), kind: EventKind::new(tag, &body), at: 1_000_000, cause: None, correlation: CorrelationId("c".into()) }
+        Event {
+            id: EventId("e".into()),
+            stream: StreamKey(MARGIN_STREAM.into()),
+            kind: EventKind::new(tag, &body),
+            at: 1_000_000,
+            cause: None,
+            correlation: CorrelationId("c".into()),
+        }
     }
 
     fn comment(seq: u64, id: &str, author: &str) -> serde_json::Value {
@@ -186,20 +262,53 @@ mod tests {
     }
 
     fn changed(changes: Vec<serde_json::Value>) -> Event {
-        event(MARGIN_CHANGED, serde_json::to_string(&Changes { through: 9, changes }).unwrap())
+        event(
+            MARGIN_CHANGED,
+            serde_json::to_string(&Changes {
+                through: 9,
+                changes,
+            })
+            .unwrap(),
+        )
     }
 
     fn effects(cmds: &[Command]) -> Vec<(String, String)> {
-        cmds.iter().filter_map(|c| if let Command::Effect(s) = c { Some((s.name.clone(), s.key.clone())) } else { None }).collect()
+        cmds.iter()
+            .filter_map(|c| {
+                if let Command::Effect(s) = c {
+                    Some((s.name.clone(), s.key.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     #[test_id(ttu5nhc)]
     #[test]
     fn two_comments_by_the_operator_and_one_by_an_agent_are_two_deliveries_keyed_by_comment() {
-        let ev = changed(vec![comment(3, "c-1", "reader"), comment(4, "c-2", "concierge"), comment(5, "c-3", "reader")]);
+        let ev = changed(vec![
+            comment(3, "c-1", "reader"),
+            comment(4, "c-2", "concierge"),
+            comment(5, "c-3", "reader"),
+        ]);
         let (_, cmds) = decide(&Carry::default(), &ev, None);
-        assert_eq!(effects(&cmds), [(DELIVER.to_string(), "margin-comments:comment:c-1".to_string()), (DELIVER.to_string(), "margin-comments:comment:c-3".to_string())]);
-        let Command::Effect(first) = &cmds[0] else { unreachable!() };
+        assert_eq!(
+            effects(&cmds),
+            [
+                (
+                    DELIVER.to_string(),
+                    "margin-comments:comment:c-1".to_string()
+                ),
+                (
+                    DELIVER.to_string(),
+                    "margin-comments:comment:c-3".to_string()
+                )
+            ]
+        );
+        let Command::Effect(first) = &cmds[0] else {
+            unreachable!()
+        };
         let d: Deliver = serde_json::from_str(&first.input).unwrap();
         assert_eq!((d.seq, d.batch, d.through), (3, vec![3, 5], 9));
     }
@@ -207,19 +316,44 @@ mod tests {
     #[test_id(tul4gty)]
     #[test]
     fn a_publish_change_is_one_publish_keyed_by_collection() {
-        let ev = changed(vec![json!({"seq": 7, "kind": "published", "collection_id": "col1"}), json!({"seq": 8, "kind": "collection_updated", "collection_id": "col1"})]);
-        assert_eq!(effects(&decide(&Carry::default(), &ev, None).1), [(PUBLISH.to_string(), "margin-comments:publish:col1".to_string())]);
+        let ev = changed(vec![
+            json!({"seq": 7, "kind": "published", "collection_id": "col1"}),
+            json!({"seq": 8, "kind": "collection_updated", "collection_id": "col1"}),
+        ]);
+        assert_eq!(
+            effects(&decide(&Carry::default(), &ev, None).1),
+            [(
+                PUBLISH.to_string(),
+                "margin-comments:publish:col1".to_string()
+            )]
+        );
     }
 
     #[test_id(tiszg4b)]
     #[test]
     fn an_unreachable_feed_is_said_once_per_run_and_again_after_a_good_answer() {
-        let down = |since| event(MARGIN_UNREACHABLE, serde_json::to_string(&Unreachable { since_ms: since, error: "connection refused".into() }).unwrap());
+        let down = |since| {
+            event(
+                MARGIN_UNREACHABLE,
+                serde_json::to_string(&Unreachable {
+                    since_ms: since,
+                    error: "connection refused".into(),
+                })
+                .unwrap(),
+            )
+        };
         let (c1, said1) = decide(&Carry::default(), &down(1_000), None);
         let (c2, said2) = decide(&c1, &down(2_000), None);
         assert_eq!((said1.len(), said2.len()), (1, 0));
-        let Command::Effect(line) = &said1[0] else { unreachable!() };
-        assert!(line.input.contains("margin feed unreachable since 1970-01-01T00:00:01Z: connection refused"), "{}", line.input);
+        let Command::Effect(line) = &said1[0] else {
+            unreachable!()
+        };
+        assert!(
+            line.input
+                .contains("margin feed unreachable since 1970-01-01T00:00:01Z: connection refused"),
+            "{}",
+            line.input
+        );
         let (c3, _) = decide(&c2, &changed(vec![]), None);
         assert_eq!(c3.unreachable, None);
         assert_eq!(decide(&c3, &down(3_000), None).1.len(), 1);
@@ -229,8 +363,14 @@ mod tests {
     #[test]
     fn a_failed_delivery_is_asked_again_on_the_sweep_until_it_lands() {
         let ev = changed(vec![comment(3, "c-1", "reader")]);
-        let Command::Effect(spec) = decide(&Carry::default(), &ev, None).1.remove(0) else { unreachable!() };
-        let (failed, _) = decide(&Carry::default(), &event(EFFECT_FAILED, "boom".into()), Some(&spec));
+        let Command::Effect(spec) = decide(&Carry::default(), &ev, None).1.remove(0) else {
+            unreachable!()
+        };
+        let (failed, _) = decide(
+            &Carry::default(),
+            &event(EFFECT_FAILED, "boom".into()),
+            Some(&spec),
+        );
         assert_eq!(failed.failed[&spec.key].attempts, 1);
         let (still, again) = decide(&failed, &event(BOOT, String::new()), None);
         assert_eq!(effects(&again), [(DELIVER.to_string(), spec.key.clone())]);

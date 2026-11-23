@@ -10,7 +10,10 @@ use runtime::host::{EffectRunner, Submit, VirtualDriver};
 use runtime::journal::Journal;
 use runtime::ports::{Clock, VirtualClock};
 use runtime::sources::{ScriptedSource, Source, Sources};
-use runtime::{Command, Ctx, EffectSpec, Engine, Event, EventKind, EventKindTag, Handler, MemJournal, Projection, Registration};
+use runtime::{
+    Command, Ctx, EffectSpec, Engine, Event, EventKind, EventKindTag, Handler, MemJournal,
+    Projection, Registration,
+};
 use spira_runtime::tasks::g::mail_arrived::*;
 use tokio::sync::mpsc;
 
@@ -22,7 +25,16 @@ impl Handler for Consumer {
     }
     fn handle(&self, ctx: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         match Arrived::from_event_kind(&ev.kind) {
-            Some(a) => vec![Command::Emit(EventKind::new("consumed", &format!("{}|{}|{}@{}", ev.stream.0, a.mailbox, a.kind_event, ctx.now())))],
+            Some(a) => vec![Command::Emit(EventKind::new(
+                "consumed",
+                &format!(
+                    "{}|{}|{}@{}",
+                    ev.stream.0,
+                    a.mailbox,
+                    a.kind_event,
+                    ctx.now()
+                ),
+            ))],
             None => vec![Command::Emit(EventKind::new("unparsed", &ev.kind.body))],
         }
     }
@@ -35,15 +47,25 @@ impl EffectRunner for NoEffects {
     }
 }
 
-fn driver(clock: &VirtualClock, j: Arc<dyn Journal>, sources: Sources) -> runtime::Result<VirtualDriver> {
+fn driver(
+    clock: &VirtualClock,
+    j: Arc<dyn Journal>,
+    sources: Sources,
+) -> runtime::Result<VirtualDriver> {
     let c: Arc<dyn Clock> = Arc::new(clock.clone());
-    let engine = Engine::open(j, c, vec![Registration::new("mail.wake.stub", Consumer)], 1).unwrap();
+    let engine =
+        Engine::open(j, c, vec![Registration::new("mail.wake.stub", Consumer)], 1).unwrap();
     VirtualDriver::new(engine, clock.clone(), Arc::new(NoEffects)).with_sources(sources)
 }
 
 fn scripted(clock: &VirtualClock, script: Vec<(u64, Submit)>) -> Sources {
     let mut s = Sources::default();
-    s.register(Box::new(ScriptedSource::new("mail.arrived.script", Arc::new(clock.clone()), script))).unwrap();
+    s.register(Box::new(ScriptedSource::new(
+        "mail.arrived.script",
+        Arc::new(clock.clone()),
+        script,
+    )))
+    .unwrap();
     s
 }
 
@@ -51,12 +73,33 @@ fn scripted(clock: &VirtualClock, script: Vec<(u64, Submit)>) -> Sources {
 #[test]
 fn the_declared_event_reaches_a_consumer_on_the_mailboxs_stream_at_its_virtual_time() {
     let (j, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
-    let reply = Arrived { mailbox: "concierge".into(), kind_event: false };
-    let event = Arrived { mailbox: "concierge".into(), kind_event: true };
-    let mut v = driver(&clock, j.clone(), scripted(&clock, vec![(100, reply.submit(1)), (200, event.submit(2))])).unwrap();
+    let reply = Arrived {
+        mailbox: "concierge".into(),
+        kind_event: false,
+    };
+    let event = Arrived {
+        mailbox: "concierge".into(),
+        kind_event: true,
+    };
+    let mut v = driver(
+        &clock,
+        j.clone(),
+        scripted(&clock, vec![(100, reply.submit(1)), (200, event.submit(2))]),
+    )
+    .unwrap();
     v.run_until(1_000).unwrap();
-    let consumed: Vec<String> = trace(&*j).into_iter().filter(|t| t.2 == "consumed" || t.2 == "unparsed").map(|t| t.3).collect();
-    assert_eq!(consumed, ["mail/concierge|concierge|false@100", "mail/concierge|concierge|true@200"]);
+    let consumed: Vec<String> = trace(&*j)
+        .into_iter()
+        .filter(|t| t.2 == "consumed" || t.2 == "unparsed")
+        .map(|t| t.3)
+        .collect();
+    assert_eq!(
+        consumed,
+        [
+            "mail/concierge|concierge|false@100",
+            "mail/concierge|concierge|true@200"
+        ]
+    );
     assert_eq!(stream("concierge"), "mail/concierge");
 }
 
@@ -65,9 +108,15 @@ fn the_declared_event_reaches_a_consumer_on_the_mailboxs_stream_at_its_virtual_t
 fn the_real_source_is_refused_under_virtual_time_naming_it() {
     let clock = VirtualClock::new(0);
     let mut s = scripted(&clock, vec![]);
-    s.register(Box::new(MailArrived { mailboxes: vec![] })).unwrap();
-    let err = driver(&clock, MemJournal::new(), s).err().expect("a source that reads the world is refused");
-    assert!(err.0.contains(NAME) && !err.0.contains("mail.arrived.script"), "{err}");
+    s.register(Box::new(MailArrived { mailboxes: vec![] }))
+        .unwrap();
+    let err = driver(&clock, MemJournal::new(), s)
+        .err()
+        .expect("a source that reads the world is refused");
+    assert!(
+        err.0.contains(NAME) && !err.0.contains("mail.arrived.script"),
+        "{err}"
+    );
     assert_eq!(BACKEND, "inotify");
 }
 
@@ -79,7 +128,9 @@ fn the_real_source_submits_one_catch_up_per_mailbox_with_mail_already_unread() {
     std::fs::create_dir_all(&new).unwrap();
     std::fs::write(new.join("m1"), "X-Spira-Kind: note\n\nhello\n").unwrap();
     let (tx, mut rx) = mpsc::channel(4);
-    let source = MailArrived { mailboxes: vec![("concierge".into(), dir.path().join("concierge"))] };
+    let source = MailArrived {
+        mailboxes: vec![("concierge".into(), dir.path().join("concierge"))],
+    };
     let h = std::thread::spawn(move || Box::new(source).run(tx));
     let first = rx.blocking_recv();
     drop(rx);
@@ -87,7 +138,13 @@ fn the_real_source_submits_one_catch_up_per_mailbox_with_mail_already_unread() {
         std::panic::resume_unwind(p);
     }
     let first = first.expect("the catch-up submit");
-    assert_eq!((first.stream.as_str(), Arrived::from_event_kind(&first.kind).map(|a| a.mailbox)), ("mail/concierge", Some("concierge".to_string())));
+    assert_eq!(
+        (
+            first.stream.as_str(),
+            Arrived::from_event_kind(&first.kind).map(|a| a.mailbox)
+        ),
+        ("mail/concierge", Some("concierge".to_string()))
+    );
 }
 
 #[test_id(t84wbnw)]

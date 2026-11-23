@@ -72,13 +72,32 @@ pub const EFFECTS: &[&str] = &[OBSERVE, FILE];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_TRIGGER_GROOM_SECS";
 pub const THRESHOLD_KEY: &str = "SPIRA_GROOM_THRESHOLD";
 /// The lane check expands every repo's lanes column, so it reads all six lane labels.
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_SCOPE_LABEL", "SPIRA_GROOMER_LABEL", THRESHOLD_KEY, "SPIRA_RUN", "SPIRA_DB", "SPIRA_HOME_REPO", "SPIRA_REPO_MAP", "SPIRA_PLAN_LABEL", "SPIRA_INCIDENT_LABEL", "SPIRA_MIMIR_LABEL", "SPIRA_SPIKE_LABEL", "SPIRA_CZAR_LABEL"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    "SPIRA_SCOPE_LABEL",
+    "SPIRA_GROOMER_LABEL",
+    THRESHOLD_KEY,
+    "SPIRA_RUN",
+    "SPIRA_DB",
+    "SPIRA_HOME_REPO",
+    "SPIRA_REPO_MAP",
+    "SPIRA_PLAN_LABEL",
+    "SPIRA_INCIDENT_LABEL",
+    "SPIRA_MIMIR_LABEL",
+    "SPIRA_SPIKE_LABEL",
+    "SPIRA_CZAR_LABEL",
+];
 
 pub const TITLE: &str = "Groomer pass — scheduled graph hygiene";
 pub const BODY: &str = "Scheduled trigger: the groomer persona will claim this bead, run a hygiene pass over the open bead graph (splitting unsplittable beads, merging duplicates, closing stale premises, correcting mislabelled lanes), and close this bead when finished. See spira/runes/groomer.md for the pass procedure.";
 
 const DEADLINE_MS: u64 = 60_000;
-const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: DEADLINE_MS };
+const CYCLE: Cycle = Cycle {
+    stream: STREAM,
+    tick: TICK,
+    observe: OBSERVE,
+    deadline_ms: DEADLINE_MS,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -100,17 +119,50 @@ pub enum Step {
 }
 
 pub const TRANSITIONS: &[Transition<Step>] = &[
-    Transition { from: Step::Observe, on: "unreadable", to: Step::Skip, effects: &[] },
-    Transition { from: Step::Observe, on: "open", to: Step::Skip, effects: &[] },
-    Transition { from: Step::Observe, on: "lane", to: Step::Skip, effects: &[] },
-    Transition { from: Step::Observe, on: "score", to: Step::Skip, effects: &[] },
-    Transition { from: Step::Observe, on: "file", to: Step::Filed, effects: &[FILE] },
+    Transition {
+        from: Step::Observe,
+        on: "unreadable",
+        to: Step::Skip,
+        effects: &[],
+    },
+    Transition {
+        from: Step::Observe,
+        on: "open",
+        to: Step::Skip,
+        effects: &[],
+    },
+    Transition {
+        from: Step::Observe,
+        on: "lane",
+        to: Step::Skip,
+        effects: &[],
+    },
+    Transition {
+        from: Step::Observe,
+        on: "score",
+        to: Step::Skip,
+        effects: &[],
+    },
+    Transition {
+        from: Step::Observe,
+        on: "file",
+        to: Step::Filed,
+        effects: &[FILE],
+    },
 ];
 
 /// The edge of `table` from `from` on `on`, or a refusal naming the state. Shared by the
 /// family's stateless triggers.
-pub fn walk<S: Copy + PartialEq + std::fmt::Debug>(table: &[Transition<S>], from: S, on: &str) -> Result<S, String> {
-    table.iter().find(|t| t.from == from && t.on == on).map(|t| t.to).ok_or_else(|| format!("no step on {on} from {from:?}"))
+pub fn walk<S: Copy + PartialEq + std::fmt::Debug>(
+    table: &[Transition<S>],
+    from: S,
+    on: &str,
+) -> Result<S, String> {
+    table
+        .iter()
+        .find(|t| t.from == from && t.on == on)
+        .map(|t| t.to)
+        .ok_or_else(|| format!("no step on {on} from {from:?}"))
 }
 
 /// The tick's next step on `on`, or a refusal naming the step it is in.
@@ -151,15 +203,35 @@ pub fn decide(snap: &Snapshot, config: &BTreeMap<String, String>) -> Decision {
     if !snap.lane_admitted {
         return Decision::Skip("lane".into());
     }
-    let Some(threshold) = config.get(THRESHOLD_KEY).and_then(|t| t.trim().parse::<u64>().ok()) else { return Decision::Skip("unreadable".into()) };
+    let Some(threshold) = config
+        .get(THRESHOLD_KEY)
+        .and_then(|t| t.trim().parse::<u64>().ok())
+    else {
+        return Decision::Skip("unreadable".into());
+    };
     let score = snap.live_owing.as_ref().copied().unwrap_or(0) + snap.landings_since_lastpass;
     if score < threshold {
         return Decision::Skip("score".into());
     }
     let run = config.get("SPIRA_RUN").cloned().unwrap_or_default();
-    let mut labels: Vec<String> = dedup_labels(config, "SPIRA_GROOMER_LABEL").split(',').filter(|l| !l.is_empty()).map(str::to_string).collect();
-    labels.extend([format!("delivers:note:{run}/groom.log"), "groom-trigger".into()]);
-    Decision::File(Bead { title: TITLE.into(), kind: "task".into(), priority: 3, labels, body: BODY.into(), persona: Some("groomer".into()), repo: Some(snap.home_repo.clone()).filter(|r| !r.is_empty()) })
+    let mut labels: Vec<String> = dedup_labels(config, "SPIRA_GROOMER_LABEL")
+        .split(',')
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    labels.extend([
+        format!("delivers:note:{run}/groom.log"),
+        "groom-trigger".into(),
+    ]);
+    Decision::File(Bead {
+        title: TITLE.into(),
+        kind: "task".into(),
+        priority: 3,
+        labels,
+        body: BODY.into(),
+        persona: Some("groomer".into()),
+        repo: Some(snap.home_repo.clone()).filter(|r| !r.is_empty()),
+    })
 }
 
 /// What a trigger's file effect is handed: the bead, and the labels its guard re-counts.
@@ -170,18 +242,44 @@ pub struct Filing {
 }
 
 /// The file effect a trigger asks for when `decide` files.
-pub fn file_effect(name: &str, key: String, bead: Bead, dedup: String, deadline_ms: u64) -> Command {
-    Command::Effect(EffectSpec::keyed(name, key, serde_json::to_string(&Filing { bead, dedup }).unwrap_or_default(), deadline_ms))
+pub fn file_effect(
+    name: &str,
+    key: String,
+    bead: Bead,
+    dedup: String,
+    deadline_ms: u64,
+) -> Command {
+    Command::Effect(EffectSpec::keyed(
+        name,
+        key,
+        serde_json::to_string(&Filing { bead, dedup }).unwrap_or_default(),
+        deadline_ms,
+    ))
 }
 
 /// The file runner every trigger shares: re-count the open triggers, refuse through `guard`
 /// unless none is open, then write the bead and its lifecycle row. Answers the new id.
-pub fn run_file_with(e: &crate::Effects, s: &EffectSpec, guard: fn(&Result<u64, String>) -> Result<(), String>) -> Result<String, String> {
+pub fn run_file_with(
+    e: &crate::Effects,
+    s: &EffectSpec,
+    guard: fn(&Result<u64, String>) -> Result<(), String>,
+) -> Result<String, String> {
     let f: Filing = serde_json::from_str(&s.input).map_err(|e| format!("file input: {e}"))?;
     let lc = LcClient::socket(&e.world.lc_socket);
     guard(&obs::open_trigger_count_on(&lc, &f.dedup))?;
     let b = &f.bead;
-    groomer::trigger::file(&lc, &groomer::trigger::Filing { title: &b.title, kind: &b.kind, priority: b.priority, labels: &b.labels, body: &b.body, persona: b.persona.as_deref(), repo: b.repo.as_deref() })
+    groomer::trigger::file(
+        &lc,
+        &groomer::trigger::Filing {
+            title: &b.title,
+            kind: &b.kind,
+            priority: b.priority,
+            labels: &b.labels,
+            body: &b.body,
+            persona: b.persona.as_deref(),
+            repo: b.repo.as_deref(),
+        },
+    )
 }
 
 /// Whether the world is halted: the one file `world guard` read.
@@ -209,12 +307,25 @@ pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<Str
     let run = std::path::PathBuf::from(obs::pinned(&config, "SPIRA_RUN")?);
     let lastpass = obs::read_epoch(&run.join("groom.lastpass"));
     let live_owing = store_view::call_held(&lc, &["list", "--live"])
-        .and_then(|r| if r.code == 0 { spira_store::lc_state::parse_rows(&r.out) } else { Err(r.why()) })
-        .map(|rows| rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "WORKING" | "REWORK")).count() as u64);
+        .and_then(|r| {
+            if r.code == 0 {
+                spira_store::lc_state::parse_rows(&r.out)
+            } else {
+                Err(r.why())
+            }
+        })
+        .map(|rows| {
+            rows.iter()
+                .filter(|r| matches!(r.state.as_str(), "READY" | "WORKING" | "REWORK"))
+                .count() as u64
+        });
     let home_repo = reg.home_repo().to_string();
     let snap = Snapshot {
         halted: halted(e),
-        open_triggers: obs::open_trigger_count_on(&lc, &dedup_labels(&config, "SPIRA_GROOMER_LABEL")),
+        open_triggers: obs::open_trigger_count_on(
+            &lc,
+            &dedup_labels(&config, "SPIRA_GROOMER_LABEL"),
+        ),
         lane_admitted: obs::lane_admitted(&reg, lane, &labels),
         lastpass,
         live_owing,
@@ -237,7 +348,10 @@ pub struct TriggerGroom {
 
 impl TriggerGroom {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(TriggerGroom { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
+        Ok(TriggerGroom {
+            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
+            config: super::pinned(settings, KEYS)?,
+        })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -255,16 +369,34 @@ impl Handler for TriggerGroom {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(self.interval_ms, view, ev, || config_input(&self.config), |body| {
-            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
-            ctx.event().set("groom.score", (snap.live_owing.as_ref().copied().unwrap_or(0) + snap.landings_since_lastpass) as i64);
-            match decide(&snap, &self.config) {
-                Decision::Skip(why) => {
-                    ctx.event().set("groom.skip", why.as_str());
-                    vec![]
+        CYCLE.handle(
+            self.interval_ms,
+            view,
+            ev,
+            || config_input(&self.config),
+            |body| {
+                let Ok(snap) = serde_json::from_str::<Snapshot>(body) else {
+                    return vec![];
+                };
+                ctx.event().set(
+                    "groom.score",
+                    (snap.live_owing.as_ref().copied().unwrap_or(0) + snap.landings_since_lastpass)
+                        as i64,
+                );
+                match decide(&snap, &self.config) {
+                    Decision::Skip(why) => {
+                        ctx.event().set("groom.skip", why.as_str());
+                        vec![]
+                    }
+                    Decision::File(bead) => vec![file_effect(
+                        FILE,
+                        format!("groom-trigger/{}", ev.at / self.interval_ms.max(1)),
+                        bead,
+                        dedup_labels(&self.config, "SPIRA_GROOMER_LABEL"),
+                        DEADLINE_MS,
+                    )],
                 }
-                Decision::File(bead) => vec![file_effect(FILE, format!("groom-trigger/{}", ev.at / self.interval_ms.max(1)), bead, dedup_labels(&self.config, "SPIRA_GROOMER_LABEL"), DEADLINE_MS)],
-            }
-        })
+            },
+        )
     }
 }

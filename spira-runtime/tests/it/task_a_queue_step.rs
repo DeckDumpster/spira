@@ -18,15 +18,32 @@ spira_runtime::family_a_acceptance! {
 }
 
 fn local() -> Repo {
-    Repo { mode: "queue.local".into(), lc_ok: true, base_sha: "b1".into(), ..Repo::default() }
+    Repo {
+        mode: "queue.local".into(),
+        lc_ok: true,
+        base_sha: "b1".into(),
+        ..Repo::default()
+    }
 }
 
 fn batch() -> OpenBatch {
-    OpenBatch { id: "batch-7".into(), version: 3, pr: Some(88), branch: "spira/batch-7".into(), sealed_head: "h7".into(), members: vec!["sp-a".into()], batcher_owned: true, owner: "batcher".into() }
+    OpenBatch {
+        id: "batch-7".into(),
+        version: 3,
+        pr: Some(88),
+        branch: "spira/batch-7".into(),
+        sealed_head: "h7".into(),
+        members: vec!["sp-a".into()],
+        batcher_owned: true,
+        owner: "batcher".into(),
+    }
 }
 
 fn with(repo: Repo) -> Snapshot {
-    Snapshot { repos: [("spira".to_string(), repo)].into(), world_running: true }
+    Snapshot {
+        repos: [("spira".to_string(), repo)].into(),
+        world_running: true,
+    }
 }
 
 /// The contract's idle fixture: one `queue.local` repo, no batch, no publish record, check unchanged.
@@ -36,7 +53,13 @@ fn idle() -> Snapshot {
 
 /// An open batch whose check is green at the sealed head, base unmoved.
 fn busy() -> Snapshot {
-    with(Repo { open_batch: Some(batch()), pr_state: PrState::Open, check: Check::Green, sealed_base: Some("b1".into()), ..local() })
+    with(Repo {
+        open_batch: Some(batch()),
+        pr_state: PrState::Open,
+        check: Check::Green,
+        sealed_base: Some("b1".into()),
+        ..local()
+    })
 }
 
 fn effects(acts: &[Act]) -> Vec<&str> {
@@ -60,7 +83,8 @@ fn t3_every_row_of_the_state_table_is_taken() {
 #[test_id(tj5fcuv)]
 #[test]
 fn t3_landing_x_unit_ran_is_refused_naming_landing() {
-    let refused = step(State::Landing, Trigger::UnitRan).expect_err("landing × unit.ran is illegal");
+    let refused =
+        step(State::Landing, Trigger::UnitRan).expect_err("landing × unit.ran is illegal");
     assert!(refused.contains("Landing"), "{refused}");
 }
 
@@ -86,7 +110,10 @@ fn t5_green_pushes_the_sealed_head() {
 #[test_id(tuzo6r4)]
 #[test]
 fn t5_red_goes_to_judgement() {
-    let red = with(Repo { check: Check::Red, ..busy().repos["spira"].clone() });
+    let red = with(Repo {
+        check: Check::Red,
+        ..busy().repos["spira"].clone()
+    });
     let (carry, acts) = decide(&Carry::default(), &red);
     assert!(effects(&acts).contains(&JUDGEMENT), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Judging);
@@ -96,16 +123,26 @@ fn t5_red_goes_to_judgement() {
 #[test_id(tjp6f18)]
 #[test]
 fn t5_a_harness_fault_reruns() {
-    let fault = with(Repo { check: Check::HarnessFault, ..busy().repos["spira"].clone() });
+    let fault = with(Repo {
+        check: Check::HarnessFault,
+        ..busy().repos["spira"].clone()
+    });
     let (_, acts) = decide(&Carry::default(), &fault);
-    assert!(effects(&acts).contains(&RERUN) || effects(&acts).contains(&NOTIFY), "{acts:?}");
+    assert!(
+        effects(&acts).contains(&RERUN) || effects(&acts).contains(&NOTIFY),
+        "{acts:?}"
+    );
 }
 
 /// `ops/reconcile.rs:22`: a closed or merged PR is reconciled.
 #[test_id(t68v4uw)]
 #[test]
 fn t5_a_closed_pr_is_reconciled() {
-    let closed = with(Repo { pr_state: PrState::Closed, check: Check::None, ..busy().repos["spira"].clone() });
+    let closed = with(Repo {
+        pr_state: PrState::Closed,
+        check: Check::None,
+        ..busy().repos["spira"].clone()
+    });
     let (_, acts) = decide(&Carry::default(), &closed);
     assert!(effects(&acts).contains(&RECONCILE), "{acts:?}");
 }
@@ -125,9 +162,17 @@ fn t5_an_idle_repo_settles_once_then_wants_nothing() {
 #[test_id(tk6dalr)]
 #[test]
 fn t5_a_pending_check_records_no_forge_state_file() {
-    let pending = with(Repo { check: Check::Pending, ..busy().repos["spira"].clone() });
+    let pending = with(Repo {
+        check: Check::Pending,
+        ..busy().repos["spira"].clone()
+    });
     let (carry, first) = decide(&Carry::default(), &pending);
-    assert!(first.iter().all(|a| !(a.effect == RECORD && a.input.contains(queue::ops::forge_batch::FORGE_STATE))), "{first:?}");
+    assert!(
+        first.iter().all(
+            |a| !(a.effect == RECORD && a.input.contains(queue::ops::forge_batch::FORGE_STATE))
+        ),
+        "{first:?}"
+    );
     let (_, again) = decide(&carry, &pending);
     assert!(!effects(&again).contains(&RECORD), "{again:?}");
 }
@@ -139,18 +184,51 @@ fn t5_a_pending_check_records_no_forge_state_file() {
 #[test]
 fn t3_the_judgement_unit_ran_moves_the_machine_at_once() {
     use runtime::units::{Exit, UnitHandle, UnitRan};
-    let rc = RepoCarry { state: State::Judging, leg: Some("spira.j1".into()), base: "b2".into(), mode: "queue.local".into(), batch: Some("b-1:3".into()), ..RepoCarry::default() };
-    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
-    let ran = |task: &str, key: &str, exit| UnitRan { handle: UnitHandle::of(task, key).unwrap(), exit, duration_ms: 5 };
-    let (next, acts) = on_ran(&carry, &ran(NAME, "spira.j1", Exit::Code(0)), 1).expect("its own leg");
+    let rc = RepoCarry {
+        state: State::Judging,
+        leg: Some("spira.j1".into()),
+        base: "b2".into(),
+        mode: "queue.local".into(),
+        batch: Some("b-1:3".into()),
+        ..RepoCarry::default()
+    };
+    let carry = Carry {
+        repos: [("spira".to_string(), rc)].into(),
+    };
+    let ran = |task: &str, key: &str, exit| UnitRan {
+        handle: UnitHandle::of(task, key).unwrap(),
+        exit,
+        duration_ms: 5,
+    };
+    let (next, acts) =
+        on_ran(&carry, &ran(NAME, "spira.j1", Exit::Code(0)), 1).expect("its own leg");
     let names: Vec<&str> = acts.iter().map(|a| a.effect.as_str()).collect();
-    assert!(names.contains(&RECORD) && names.contains(&CUT_WANTED) && names.contains(&PUBLISH_WANTED), "{names:?}");
-    assert!(acts.iter().any(|a| a.effect == PUBLISH_WANTED && a.key.ends_with("/b2")), "the cut is on the judged base: {acts:?}");
-    assert_ne!(next.repos.get("spira").map(|r| r.state), Some(State::Judging));
+    assert!(
+        names.contains(&RECORD) && names.contains(&CUT_WANTED) && names.contains(&PUBLISH_WANTED),
+        "{names:?}"
+    );
+    assert!(
+        acts.iter()
+            .any(|a| a.effect == PUBLISH_WANTED && a.key.ends_with("/b2")),
+        "the cut is on the judged base: {acts:?}"
+    );
+    assert_ne!(
+        next.repos.get("spira").map(|r| r.state),
+        Some(State::Judging)
+    );
     let (_, acts) = on_ran(&carry, &ran(NAME, "spira.j1", Exit::Code(1)), 1).expect("its own leg");
-    assert!(acts.iter().any(|a| a.effect == NOTIFY), "a failed judgement notifies: {acts:?}");
-    assert!(on_ran(&carry, &ran("batcher.local", "spira.j1", Exit::Code(0)), 1).is_none(), "another task's run");
-    assert!(on_ran(&carry, &ran(NAME, "spira.other", Exit::Code(0)), 1).is_none(), "a leg not being judged");
+    assert!(
+        acts.iter().any(|a| a.effect == NOTIFY),
+        "a failed judgement notifies: {acts:?}"
+    );
+    assert!(
+        on_ran(&carry, &ran("batcher.local", "spira.j1", Exit::Code(0)), 1).is_none(),
+        "another task's run"
+    );
+    assert!(
+        on_ran(&carry, &ran(NAME, "spira.other", Exit::Code(0)), 1).is_none(),
+        "a leg not being judged"
+    );
 }
 
 #[test_id(t6arui9)]
@@ -158,12 +236,22 @@ fn t3_the_judgement_unit_ran_moves_the_machine_at_once() {
 fn the_carry_stays_under_the_journal_column_for_the_longest_repo_names_and_the_rest_wait() {
     let one = busy().repos["spira"].clone();
     let name = |i: usize| format!("{i:04}-{}", "r".repeat(250));
-    let snap = Snapshot { repos: (0..600).map(|i| (name(i), one.clone())).collect(), world_running: true };
+    let snap = Snapshot {
+        repos: (0..600).map(|i| (name(i), one.clone())).collect(),
+        world_running: true,
+    };
     let (carry, _) = decide(&Carry::default(), &snap);
     let bytes = serde_json::to_string(&carry).unwrap().len();
-    assert!(bytes < 65_535 && !carry.repos.is_empty() && carry.repos.len() < 600, "{} repos, {bytes} bytes", carry.repos.len());
+    assert!(
+        bytes < 65_535 && !carry.repos.is_empty() && carry.repos.len() < 600,
+        "{} repos, {bytes} bytes",
+        carry.repos.len()
+    );
     let (again, _) = decide(&carry, &snap);
-    assert!(carry.repos.keys().all(|k| again.repos.contains_key(k)), "a carried repo keeps its entry");
+    assert!(
+        carry.repos.keys().all(|k| again.repos.contains_key(k)),
+        "a carried repo keeps its entry"
+    );
     assert!(serde_json::to_string(&again).unwrap().len() < 65_535);
 }
 
@@ -182,7 +270,12 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(t4r5kwh)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+    kit::assert_boot_matches_an_unstopped_run(
+        at_work,
+        registration,
+        STREAM,
+        EventKind::new(TICK, ""),
+    );
 }
 
 /// The judgement leg ended while the runtime was down, so its `unit.ran` was never heard: the
@@ -191,19 +284,54 @@ fn a_boot_repeats_no_side_effect_and_misses_none() {
 #[test]
 fn t3_a_judgement_whose_unit_ran_was_lost_is_read_through_unit_facts() {
     use runtime::units::{Exit, UnitFacts, UnitState, UNIT_FACTS};
-    let rc = RepoCarry { state: State::Judging, leg: Some("spira.j1".into()), base: "b2".into(), mode: "queue.local".into(), batch: Some("b-1:3".into()), ..RepoCarry::default() };
-    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
-    let facts = serde_json::to_string(&UnitFacts { state: UnitState::Inactive, main_pid: None, exit: Some(Exit::Code(0)), since_ms: Some(1) }).unwrap();
-    let mut r = TaskRig::new(1, QueueStep::new(BTreeMap::new()).registration()).unwrap().double(UNIT_FACTS, move |_| Ok(facts.clone()));
-    r.tick(STREAM, EventKind::new(STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
+    let rc = RepoCarry {
+        state: State::Judging,
+        leg: Some("spira.j1".into()),
+        base: "b2".into(),
+        mode: "queue.local".into(),
+        batch: Some("b-1:3".into()),
+        ..RepoCarry::default()
+    };
+    let carry = Carry {
+        repos: [("spira".to_string(), rc)].into(),
+    };
+    let facts = serde_json::to_string(&UnitFacts {
+        state: UnitState::Inactive,
+        main_pid: None,
+        exit: Some(Exit::Code(0)),
+        since_ms: Some(1),
+    })
+    .unwrap();
+    let mut r = TaskRig::new(1, QueueStep::new(BTreeMap::new()).registration())
+        .unwrap()
+        .double(UNIT_FACTS, move |_| Ok(facts.clone()));
+    r.tick(
+        STREAM,
+        EventKind::new(STATE, &serde_json::to_string(&carry).unwrap()),
+    )
+    .unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     let asked: Vec<&str> = r.requested().iter().map(|q| q.name.as_str()).collect();
-    assert!(asked.contains(&UNIT_FACTS), "the tick reads the in-flight leg: {asked:?}");
-    assert!(asked.contains(&RECORD), "the exit read from facts judged the leg: {asked:?}");
+    assert!(
+        asked.contains(&UNIT_FACTS),
+        "the tick reads the in-flight leg: {asked:?}"
+    );
+    assert!(
+        asked.contains(&RECORD),
+        "the exit read from facts judged the leg: {asked:?}"
+    );
 }
 
 fn green_publish() -> Repo {
-    Repo { publish_rec: Some(PublishRec { pr: 1123, head: "f89d".into(), branch: "spira/publish/1".into() }), publish_check: Check::Green, ..local() }
+    Repo {
+        publish_rec: Some(PublishRec {
+            pr: 1123,
+            head: "f89d".into(),
+            branch: "spira/publish/1".into(),
+        }),
+        publish_check: Check::Green,
+        ..local()
+    }
 }
 
 fn wakes(snap: Snapshot) -> usize {
@@ -221,23 +349,61 @@ fn a_green_standing_publish_record_wakes_publish_once() {
 #[test]
 fn a_publish_record_that_is_not_green_wakes_nothing() {
     for check in [Check::Pending, Check::None, Check::Red] {
-        assert_eq!(wakes(with(Repo { publish_check: check, ..green_publish() })), 0, "{check:?}");
+        assert_eq!(
+            wakes(with(Repo {
+                publish_check: check,
+                ..green_publish()
+            })),
+            0,
+            "{check:?}"
+        );
     }
 }
 
 #[test_id(tuak86d)]
 #[test]
 fn no_publish_record_a_queue_mode_repo_or_a_dead_lc_wakes_nothing() {
-    assert_eq!(wakes(with(Repo { publish_rec: None, ..green_publish() })), 0);
-    assert_eq!(wakes(with(Repo { mode: "queue".into(), ..green_publish() })), 0);
-    assert_eq!(wakes(with(Repo { lc_ok: false, ..green_publish() })), 0);
+    assert_eq!(
+        wakes(with(Repo {
+            publish_rec: None,
+            ..green_publish()
+        })),
+        0
+    );
+    assert_eq!(
+        wakes(with(Repo {
+            mode: "queue".into(),
+            ..green_publish()
+        })),
+        0
+    );
+    assert_eq!(
+        wakes(with(Repo {
+            lc_ok: false,
+            ..green_publish()
+        })),
+        0
+    );
 }
 
 #[test_id(tkjg7qf)]
 #[test]
 fn a_repo_judging_a_batch_still_wakes_publish_on_a_green_record() {
-    let rc = RepoCarry { state: State::Judging, leg: Some("spira.j1".into()), base: "b2".into(), mode: "queue.local".into(), batch: Some("b-1:3".into()), leg_at_ms: 5, ..RepoCarry::default() };
-    let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+    let rc = RepoCarry {
+        state: State::Judging,
+        leg: Some("spira.j1".into()),
+        base: "b2".into(),
+        mode: "queue.local".into(),
+        batch: Some("b-1:3".into()),
+        leg_at_ms: 5,
+        ..RepoCarry::default()
+    };
+    let carry = Carry {
+        repos: [("spira".to_string(), rc)].into(),
+    };
     let (_, acts) = decide_with(&Policy::default(), &carry, &with(green_publish()), 5);
-    assert_eq!(acts.iter().filter(|a| a.effect == PUBLISH_WANTED).count(), 1);
+    assert_eq!(
+        acts.iter().filter(|a| a.effect == PUBLISH_WANTED).count(),
+        1
+    );
 }

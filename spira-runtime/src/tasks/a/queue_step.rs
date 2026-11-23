@@ -177,7 +177,23 @@ pub const ACTS: &[(&str, u64)] = &[
 pub const EMITS: &[EventKindTag] = &[CUT_WANTED, PUBLISH_WANTED];
 /// Hand-offs that wake it at once, besides its tick: batcher.forge left a batch to settle.
 pub const WAKES: &[EventKindTag] = &[super::batcher_forge::SETTLE_WANTED];
-pub const EFFECTS: &[&str] = &[runtime::units::UNIT_FACTS, OBSERVE, PUSH, LAND, CLOSE_BEAD, PR_CLOSE, CANCEL_RUNS, RERUN, JUDGEMENT, EJECT, RECONCILE, SWEEP, FILE_BUG, NOTIFY, RECORD];
+pub const EFFECTS: &[&str] = &[
+    runtime::units::UNIT_FACTS,
+    OBSERVE,
+    PUSH,
+    LAND,
+    CLOSE_BEAD,
+    PR_CLOSE,
+    CANCEL_RUNS,
+    RERUN,
+    JUDGEMENT,
+    EJECT,
+    RECONCILE,
+    SWEEP,
+    FILE_BUG,
+    NOTIFY,
+    RECORD,
+];
 pub const KEYS: &[&str] = &[
     "SPIRA_QUEUE_CI_MAXSEC",
     "SPIRA_QUEUE_CI_IDLE_SEC",
@@ -201,7 +217,14 @@ pub const KEYS: &[&str] = &[
 /// with bd (the task's store writes ride `spira-lc`'s socket).
 pub const UNREGISTERED: &[&str] = &["SPIRA_REAP_TIMEOUT", "SPIRA_QUEUE_ACTOR"];
 
-pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
+pub const SHAPE: Shape = Shape {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    observe: OBSERVE,
+    observe_deadline_ms: OBSERVE_DEADLINE_MS,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenBatch {
@@ -328,10 +351,26 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Idle, Trigger::Tick, State::Observing),
     (State::Observing, Trigger::NoBatchNoPublish, State::Cutting),
     (State::Observing, Trigger::CheckPending, State::Waiting),
-    (State::Observing, Trigger::CheckGreenSealedBaseUnmoved, State::Pushing),
-    (State::Observing, Trigger::CheckGreenBaseMoved, State::Settling),
-    (State::Observing, Trigger::CheckRedBatcherOwned, State::Judging),
-    (State::Observing, Trigger::CheckHarnessFault, State::Settling),
+    (
+        State::Observing,
+        Trigger::CheckGreenSealedBaseUnmoved,
+        State::Pushing,
+    ),
+    (
+        State::Observing,
+        Trigger::CheckGreenBaseMoved,
+        State::Settling,
+    ),
+    (
+        State::Observing,
+        Trigger::CheckRedBatcherOwned,
+        State::Judging,
+    ),
+    (
+        State::Observing,
+        Trigger::CheckHarnessFault,
+        State::Settling,
+    ),
     (State::Observing, Trigger::PrClosedOrMerged, State::Settling),
     (State::Observing, Trigger::Nothing, State::Idle),
     (State::Pushing, Trigger::EffectSucceeded, State::Landing),
@@ -416,11 +455,16 @@ pub struct Step {
 
 impl Step {
     fn on(repo: &str, mode: &str) -> Step {
-        Step { repo: repo.into(), mode: mode.into(), ..Step::default() }
+        Step {
+            repo: repo.into(),
+            mode: mode.into(),
+            ..Step::default()
+        }
     }
 
     fn act(&self, effect: &str) -> Act {
-        Act::new(effect, self.key.clone()).with_input(serde_json::to_string(self).unwrap_or_default())
+        Act::new(effect, self.key.clone())
+            .with_input(serde_json::to_string(self).unwrap_or_default())
     }
 }
 
@@ -439,7 +483,12 @@ impl Default for Policy {
 
 impl Policy {
     pub fn pinned(pinned: &BTreeMap<String, String>) -> Policy {
-        Policy { infra_retries: pinned.get("SPIRA_QUEUE_INFRA_RETRIES").and_then(|v| v.trim().parse().ok()).unwrap_or(Policy::default().infra_retries) }
+        Policy {
+            infra_retries: pinned
+                .get("SPIRA_QUEUE_INFRA_RETRIES")
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(Policy::default().infra_retries),
+        }
     }
 }
 
@@ -461,21 +510,45 @@ impl Machine<'_> {
     }
 
     fn step_of(&self) -> Step {
-        let (batch, version) = self.rc.batch.as_deref().and_then(|b| b.rsplit_once(':')).map_or((String::new(), 0), |(b, v)| (b.to_string(), v.parse().unwrap_or(0)));
-        Step { batch, version, ..Step::on(self.repo, &self.mode) }
+        let (batch, version) = self
+            .rc
+            .batch
+            .as_deref()
+            .and_then(|b| b.rsplit_once(':'))
+            .map_or((String::new(), 0), |(b, v)| {
+                (b.to_string(), v.parse().unwrap_or(0))
+            });
+        Step {
+            batch,
+            version,
+            ..Step::on(self.repo, &self.mode)
+        }
     }
 
     fn notify(&mut self, subject: String, body: String, head: &str) {
-        self.acts.push(Step { key: format!("{}/{subject}/{head}", self.repo), subject, body, head: head.into(), ..self.step_of() }.act(NOTIFY));
+        self.acts.push(
+            Step {
+                key: format!("{}/{subject}/{head}", self.repo),
+                subject,
+                body,
+                head: head.into(),
+                ..self.step_of()
+            }
+            .act(NOTIFY),
+        );
     }
 
     /// `Cutting` and on: a cut is wanted, and a local repo's publish after it.
     fn cut(&mut self, base: &str) {
         let input = serde_json::json!({ "repo": self.repo, "mode": self.mode }).to_string();
-        self.acts.push(Act::new(CUT_WANTED, format!("{}/{}", self.repo, self.now_ms)).with_input(input.clone()));
+        self.acts.push(
+            Act::new(CUT_WANTED, format!("{}/{}", self.repo, self.now_ms))
+                .with_input(input.clone()),
+        );
         if self.mode == "queue.local" {
             self.go(Trigger::EmittedLocal);
-            self.acts.push(Act::new(PUBLISH_WANTED, format!("{}/{base}", self.repo)).with_input(input));
+            self.acts
+                .push(Act::new(PUBLISH_WANTED, format!("{}/{base}", self.repo)).with_input(input));
             self.go(Trigger::Emitted);
         } else {
             self.go(Trigger::EmittedForge);
@@ -487,7 +560,11 @@ impl Machine<'_> {
     fn judgement_failed(&mut self, why: &str) {
         self.go(Trigger::JudgementRanFailed);
         let b = self.step_of();
-        self.notify(format!("judgement for {} failed", b.batch), why.to_string(), &b.batch);
+        self.notify(
+            format!("judgement for {} failed", b.batch),
+            why.to_string(),
+            &b.batch,
+        );
         self.rc.settled = self.rc.batch.take();
         self.rc.leg = None;
         self.rc.base.clear();
@@ -500,12 +577,22 @@ impl Machine<'_> {
         if green(exit) {
             self.go(Trigger::JudgementRanOk);
             let leg = self.rc.leg.clone().unwrap_or_default();
-            self.acts.push(Step { subject: "judgement".into(), body: leg, key: format!("{}/judgement", self.repo), ..self.step_of() }.act(RECORD));
+            self.acts.push(
+                Step {
+                    subject: "judgement".into(),
+                    body: leg,
+                    key: format!("{}/judgement", self.repo),
+                    ..self.step_of()
+                }
+                .act(RECORD),
+            );
             let base = std::mem::take(&mut self.rc.base);
             self.rc.mode.clear();
             self.cut(&base);
         } else {
-            self.judgement_failed("the batcher's judgement of a red batch failed; the batch waits for a hand");
+            self.judgement_failed(
+                "the batcher's judgement of a red batch failed; the batch waits for a hand",
+            );
         }
     }
 
@@ -536,48 +623,114 @@ impl Machine<'_> {
         };
         let id = format!("{}:{}", b.id, b.version);
         // `owner_refused` (`ops/verdict.rs:1052`): a Concierge-owned batch refuses the pass.
-        if self.rc.settled.as_deref() == Some(id.as_str()) || (!b.batcher_owned && b.owner != "batcher") {
+        if self.rc.settled.as_deref() == Some(id.as_str())
+            || (!b.batcher_owned && b.owner != "batcher")
+        {
             self.go(Trigger::Nothing);
             return;
         }
         self.rc.batch = Some(id);
-        let at = Step { pr: b.pr, branch: b.branch.clone(), head: b.sealed_head.clone(), members: b.members.clone(), ..self.step_of() };
+        let at = Step {
+            pr: b.pr,
+            branch: b.branch.clone(),
+            head: b.sealed_head.clone(),
+            members: b.members.clone(),
+            ..self.step_of()
+        };
         if matches!(repo.pr_state, PrState::Closed | PrState::Merged) {
             self.go(Trigger::PrClosedOrMerged);
-            self.acts.push(Step { key: b.id.clone(), ..at }.act(RECONCILE));
+            self.acts.push(
+                Step {
+                    key: b.id.clone(),
+                    ..at
+                }
+                .act(RECONCILE),
+            );
             return;
         }
         match repo.check {
             Check::Pending => {
                 self.go(Trigger::CheckPending);
             }
-            Check::Green if repo.sealed_base.as_deref().is_none_or(|s| s == repo.base_sha) => {
+            Check::Green
+                if repo
+                    .sealed_base
+                    .as_deref()
+                    .is_none_or(|s| s == repo.base_sha) =>
+            {
                 self.go(Trigger::CheckGreenSealedBaseUnmoved);
-                self.acts.push(Step { key: format!("{}/{}/{}", self.repo, b.branch, b.sealed_head), ..at }.act(PUSH));
+                self.acts.push(
+                    Step {
+                        key: format!("{}/{}/{}", self.repo, b.branch, b.sealed_head),
+                        ..at
+                    }
+                    .act(PUSH),
+                );
             }
             Check::Green => {
                 // The base moved under a green batch: the queue's own pass rebuilds it on the new
                 // base (`base_moved`, `ops/verdict.rs:1692`); its sweep is that leg.
                 self.go(Trigger::CheckGreenBaseMoved);
-                self.acts.push(Step { key: format!("{}/{}", self.repo, self.now_ms), ..at }.act(SWEEP));
+                self.acts.push(
+                    Step {
+                        key: format!("{}/{}", self.repo, self.now_ms),
+                        ..at
+                    }
+                    .act(SWEEP),
+                );
             }
             Check::Red if b.batcher_owned => {
                 self.go(Trigger::CheckRedBatcherOwned);
-                let unit = unit_key(self.repo, &format!("{}/{}", b.id, b.sealed_head), "judgement", 1);
+                let unit = unit_key(
+                    self.repo,
+                    &format!("{}/{}", b.id, b.sealed_head),
+                    "judgement",
+                    1,
+                );
                 self.rc.leg = Some(unit.clone());
                 self.rc.leg_at_ms = self.now_ms;
                 self.rc.base = repo.base_sha.clone();
                 self.rc.mode = self.mode.clone();
-                self.acts.push(Step { key: unit.clone(), unit, ..at }.act(JUDGEMENT));
+                self.acts.push(
+                    Step {
+                        key: unit.clone(),
+                        unit,
+                        ..at
+                    }
+                    .act(JUDGEMENT),
+                );
             }
             Check::HarnessFault => {
                 self.go(Trigger::CheckHarnessFault);
-                if queue::ops::verdict::classify_fault_rerun(u64::from(self.rc.fault_retries), policy.infra_retries) {
+                if queue::ops::verdict::classify_fault_rerun(
+                    u64::from(self.rc.fault_retries),
+                    policy.infra_retries,
+                ) {
                     self.rc.fault_retries += 1;
-                    self.acts.push(Step { key: format!("{}/{}", self.repo, b.branch), ..at }.act(RERUN));
+                    self.acts.push(
+                        Step {
+                            key: format!("{}/{}", self.repo, b.branch),
+                            ..at
+                        }
+                        .act(RERUN),
+                    );
                 } else {
-                    let (subject, head) = (format!("batch {} harness fault — retries spent", b.id), b.sealed_head.clone());
-                    self.acts.push(Step { key: format!("{}/{subject}/{head}", self.repo), subject, body: format!("CI on {} never tested the head after {} re-runs", b.branch, self.rc.fault_retries), ..at }.act(NOTIFY));
+                    let (subject, head) = (
+                        format!("batch {} harness fault — retries spent", b.id),
+                        b.sealed_head.clone(),
+                    );
+                    self.acts.push(
+                        Step {
+                            key: format!("{}/{subject}/{head}", self.repo),
+                            subject,
+                            body: format!(
+                                "CI on {} never tested the head after {} re-runs",
+                                b.branch, self.rc.fault_retries
+                            ),
+                            ..at
+                        }
+                        .act(NOTIFY),
+                    );
                 }
             }
             _ => {
@@ -592,26 +745,52 @@ impl Machine<'_> {
         match (self.rc.state, effect) {
             (State::Pushing, PUSH) if ok => {
                 self.go(Trigger::EffectSucceeded);
-                self.acts.push(Step { key: format!("{}/{}", s.batch, s.version), ..s.clone() }.act(LAND));
+                self.acts.push(
+                    Step {
+                        key: format!("{}/{}", s.batch, s.version),
+                        ..s.clone()
+                    }
+                    .act(LAND),
+                );
             }
             (State::Pushing, PUSH) => {
                 self.go(Trigger::EffectFailed);
-                self.notify(format!("batch {} not landed — the fast-forward was refused", s.batch), body.trim().to_string(), &s.head);
+                self.notify(
+                    format!(
+                        "batch {} not landed — the fast-forward was refused",
+                        s.batch
+                    ),
+                    body.trim().to_string(),
+                    &s.head,
+                );
                 self.rc.batch = None;
             }
             (State::Landing, LAND) if ok => {
                 self.go(Trigger::EffectSucceeded);
                 for m in &s.members {
-                    self.acts.push(Step { bead: m.clone(), key: format!("{m}/{}", s.head), ..s.clone() }.act(CLOSE_BEAD));
+                    self.acts.push(
+                        Step {
+                            bead: m.clone(),
+                            key: format!("{m}/{}", s.head),
+                            ..s.clone()
+                        }
+                        .act(CLOSE_BEAD),
+                    );
                 }
                 self.cut(&s.head);
             }
             (State::Landing, LAND) => {
                 self.go(Trigger::EffectFailed);
-                self.notify(format!("batch {} pushed but not landed on the store", s.batch), body.trim().to_string(), &s.head);
+                self.notify(
+                    format!("batch {} pushed but not landed on the store", s.batch),
+                    body.trim().to_string(),
+                    &s.head,
+                );
                 self.rc.batch = None;
             }
-            (State::Judging, JUDGEMENT) if !ok => self.judgement_failed(&format!("the judgement did not start: {}", body.trim())),
+            (State::Judging, JUDGEMENT) if !ok => {
+                self.judgement_failed(&format!("the judgement did not start: {}", body.trim()))
+            }
             (State::Settling, RECONCILE | SWEEP | RERUN | NOTIFY) => {
                 self.go(Trigger::Outcome);
                 self.cut(&s.head);
@@ -639,13 +818,24 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 }
 
 /// `decide` with the pinned policy and the observe's time.
-pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64) -> (Carry, Vec<Act>) {
+pub fn decide_with(
+    policy: &Policy,
+    carry: &Carry,
+    snap: &Snapshot,
+    now_ms: u64,
+) -> (Carry, Vec<Act>) {
     let (mut next, mut acts) = (carry.clone(), vec![]);
     if !snap.world_running {
         return (next, acts);
     }
     for (name, repo) in snap.repos.iter().filter(|(_, r)| r.lc_ok) {
-        let mut m = Machine { repo: name, mode: repo.mode.clone(), rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![], now_ms };
+        let mut m = Machine {
+            repo: name,
+            mode: repo.mode.clone(),
+            rc: carry.repos.get(name).cloned().unwrap_or_default(),
+            acts: vec![],
+            now_ms,
+        };
         m.observe(policy, repo);
         let before = next.clone();
         store(&mut next, name, m.rc);
@@ -654,9 +844,19 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64)
             continue;
         }
         acts.extend(m.acts);
-        if let Some(rec) = repo.publish_rec.as_ref().filter(|_| repo.mode == "queue.local" && repo.publish_check == Check::Green) {
+        if let Some(rec) = repo
+            .publish_rec
+            .as_ref()
+            .filter(|_| repo.mode == "queue.local" && repo.publish_check == Check::Green)
+        {
             let input = serde_json::json!({ "repo": name, "mode": repo.mode }).to_string();
-            acts.push(Act::new(PUBLISH_WANTED, format!("{name}/publish/{}/{now_ms}", rec.pr)).with_input(input));
+            acts.push(
+                Act::new(
+                    PUBLISH_WANTED,
+                    format!("{name}/publish/{}/{now_ms}", rec.pr),
+                )
+                .with_input(input),
+            );
         }
     }
     (next, acts)
@@ -665,18 +865,40 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot, now_ms: u64)
 /// The judgement leg's end, delivered on this task's stream: the repo judging it moves at once.
 pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
-    let (repo, rc) = carry.repos.iter().find(|(_, rc)| rc.state == State::Judging && rc.leg.as_deref() == Some(key.as_str()))?;
+    let (repo, rc) = carry
+        .repos
+        .iter()
+        .find(|(_, rc)| rc.state == State::Judging && rc.leg.as_deref() == Some(key.as_str()))?;
     let mut next = carry.clone();
-    let mut m = Machine { repo, mode: rc.mode.clone(), rc: rc.clone(), acts: vec![], now_ms };
+    let mut m = Machine {
+        repo,
+        mode: rc.mode.clone(),
+        rc: rc.clone(),
+        acts: vec![],
+        now_ms,
+    };
     m.judged(ran.exit);
     let acts = m.acts;
     store(&mut next, repo, m.rc);
     Some((next, acts))
 }
 
-pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, s: &Step, now_ms: u64) -> (Carry, Vec<Act>) {
+pub fn on_outcome(
+    carry: &Carry,
+    effect: &str,
+    ok: bool,
+    body: &str,
+    s: &Step,
+    now_ms: u64,
+) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
-    let mut m = Machine { repo: &s.repo, mode: s.mode.clone(), rc: carry.repos.get(&s.repo).cloned().unwrap_or_default(), acts: vec![], now_ms };
+    let mut m = Machine {
+        repo: &s.repo,
+        mode: s.mode.clone(),
+        rc: carry.repos.get(&s.repo).cloned().unwrap_or_default(),
+        acts: vec![],
+        now_ms,
+    };
     m.outcome(effect, ok, body, s);
     let acts = m.acts;
     store(&mut next, &s.repo, m.rc);
@@ -693,7 +915,12 @@ pub struct QueueStep {
 
 impl QueueStep {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        QueueStep { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK, WAKES) }
+        QueueStep {
+            cadence: Cadence::Every(CADENCE_MS),
+            policy: Policy::pinned(&pinned),
+            pinned,
+            interests: interests(TICK, WAKES),
+        }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -709,7 +936,10 @@ impl QueueStep {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "repos", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map {
+    name: "repos",
+    drop: &[],
+}];
 
 impl Handler for QueueStep {
     fn interests(&self) -> &[EventKindTag] {
@@ -717,14 +947,44 @@ impl Handler for QueueStep {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap, ev.at));
-        let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Step>(input) {
-            Ok(s) => on_outcome(carry, effect, ok, body, &s, ev.at),
-            Err(_) => (carry.clone(), vec![]),
+        let observed = |carry: &Carry, body: &str| {
+            serde_json::from_str::<Snapshot>(body)
+                .ok()
+                .map(|snap| decide_with(&self.policy, carry, &snap, ev.at))
+        };
+        let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| {
+            match serde_json::from_str::<Step>(input) {
+                Ok(s) => on_outcome(carry, effect, ok, body, &s, ev.at),
+                Err(_) => (carry.clone(), vec![]),
+            }
         };
         let ran = |carry: &Carry, r: &UnitRan| on_ran(carry, r, ev.at);
-        let legs = |carry: &Carry| carry.repos.values().filter(|rc| rc.state == State::Judging).filter_map(|rc| rc.leg.clone()).collect();
-        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
+        let legs = |carry: &Carry| {
+            carry
+                .repos
+                .values()
+                .filter(|rc| rc.state == State::Judging)
+                .filter_map(|rc| rc.leg.clone())
+                .collect()
+        };
+        handle_p2(
+            &P2 {
+                shape: &SHAPE,
+                cadence: &self.cadence,
+                acts: ACTS,
+                emits: EMITS,
+                effects: EFFECTS,
+                wakes: WAKES,
+            },
+            view,
+            ev,
+            On {
+                observed,
+                outcome,
+                ran,
+                legs,
+            },
+        )
     }
 }
 
@@ -737,13 +997,13 @@ pub mod edge {
 
     use queue::ports::Lc as _;
     use runtime::ports::{Proc, ProcSpec, SysProc};
-    use spira_store::lc_call::LcClient;
     use spira_config::process::cfg;
     use spira_config::repos::Registry;
+    use spira_store::lc_call::LcClient;
 
     use super::super::batcher_local::edge::start_unit;
     use super::{Check, OpenBatch, PrState, PublishRec, Repo, Snapshot, Step};
-    use crate::{Effects, EffectSpec};
+    use crate::{EffectSpec, Effects};
 
     pub const ACTOR: &str = "queue.step";
 
@@ -757,7 +1017,9 @@ pub mod edge {
     }
 
     pub fn root(reg: &Registry, repo: &str) -> Result<PathBuf, String> {
-        reg.root(repo).map(PathBuf::from).ok_or_else(|| format!("{repo}: the registry has no row for it"))
+        reg.root(repo)
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("{repo}: the registry has no row for it"))
     }
 
     pub fn forge() -> Result<PathBuf, String> {
@@ -765,19 +1027,39 @@ pub mod edge {
     }
 
     /// One forge verb, in this process.
-    pub fn forge_call(repo: &Path, verb: &str, args: &[&str], input: Option<&[u8]>) -> Result<forge::client::Reply, String> {
-        Ok(forge::client::run(&forge::client::route_of(&forge()?), verb, repo, args, input))
+    pub fn forge_call(
+        repo: &Path,
+        verb: &str,
+        args: &[&str],
+        input: Option<&[u8]>,
+    ) -> Result<forge::client::Reply, String> {
+        Ok(forge::client::run(
+            &forge::client::route_of(&forge()?),
+            verb,
+            repo,
+            args,
+            input,
+        ))
     }
 
     /// One git command in `dir`, a child through the Proc port; its stdout, or why it failed.
     pub fn git(dir: &Path, args: &[&str], deadline: Duration) -> Result<String, String> {
         let mut all = vec!["-C".to_string(), dir.display().to_string()];
         all.extend(args.iter().map(|a| a.to_string()));
-        let out = SysProc.run(&ProcSpec { prog: "git".into(), args: all, stdin: vec![], deadline })?;
+        let out = SysProc.run(&ProcSpec {
+            prog: "git".into(),
+            args: all,
+            stdin: vec![],
+            deadline,
+        })?;
         if out.code == Some(0) {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         } else {
-            Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+            Err(format!(
+                "git {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         }
     }
 
@@ -790,9 +1072,18 @@ pub mod edge {
     }
 
     /// `queue/<repo>/<name>` as `key=value` lines.
-    pub fn queue_kv(e: &Effects, repo: &str, name: &str) -> Option<std::collections::BTreeMap<String, String>> {
+    pub fn queue_kv(
+        e: &Effects,
+        repo: &str,
+        name: &str,
+    ) -> Option<std::collections::BTreeMap<String, String>> {
         let text = std::fs::read_to_string(e.world.queue_dir.join(repo).join(name)).ok()?;
-        Some(text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect())
+        Some(
+            text.lines()
+                .filter_map(|l| l.split_once('='))
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                .collect(),
+        )
     }
 
     /// The probe: per `queue`/`queue.local` repo, the open batch from the store's batch view, its
@@ -803,45 +1094,113 @@ pub mod edge {
         let view = store_view::Projection::hot(lc.clone())?;
         view.batches_current().map_err(|e| e.to_string())?;
         let lc_ok = match store_view::shared() {
-            Some(held) => held.rows(&store_view::RowQuery { states: &["IN_DELIVERY"], ..Default::default() }).is_some_and(|r| r.is_ok()),
-            None => lc.call(&["list", "--state", "IN_DELIVERY"]).is_ok_and(|r| r.code == 0),
+            Some(held) => held
+                .rows(&store_view::RowQuery {
+                    states: &["IN_DELIVERY"],
+                    ..Default::default()
+                })
+                .is_some_and(|r| r.is_ok()),
+            None => lc
+                .call(&["list", "--state", "IN_DELIVERY"])
+                .is_ok_and(|r| r.code == 0),
         };
-        let mut snap = Snapshot { world_running: !e.world.run_dir.join("world.halted").exists(), ..Snapshot::default() };
+        let mut snap = Snapshot {
+            world_running: !e.world.run_dir.join("world.halted").exists(),
+            ..Snapshot::default()
+        };
         for name in reg.names().into_iter().filter(|n| reg.land_queued(n)) {
             let dir = root(&reg, &name)?;
             let mode = reg.land(&name);
-            let open_batch = view.batch_view(&name).map_err(|e| e.to_string())?.value.open.map(|r| OpenBatch {
-                version: r.get("version").and_then(|v| v.parse().ok()).unwrap_or_default(),
-                pr: r.get("pr").and_then(|v| v.trim_start_matches('#').parse().ok()),
-                branch: r.get("branch").unwrap_or_default().to_string(),
-                sealed_head: r.get("head").unwrap_or_default().to_string(),
-                members: r.get("members").unwrap_or_default().split([' ', ',']).filter(|m| !m.is_empty()).map(|m| m.split([':', '@']).next().unwrap_or(m).to_string()).collect(),
-                batcher_owned: r.get("owner") == Some("batcher"),
-                owner: r.get("owner").unwrap_or_default().to_string(),
-                id: r.id,
-            });
+            let open_batch = view
+                .batch_view(&name)
+                .map_err(|e| e.to_string())?
+                .value
+                .open
+                .map(|r| OpenBatch {
+                    version: r
+                        .get("version")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or_default(),
+                    pr: r
+                        .get("pr")
+                        .and_then(|v| v.trim_start_matches('#').parse().ok()),
+                    branch: r.get("branch").unwrap_or_default().to_string(),
+                    sealed_head: r.get("head").unwrap_or_default().to_string(),
+                    members: r
+                        .get("members")
+                        .unwrap_or_default()
+                        .split([' ', ','])
+                        .filter(|m| !m.is_empty())
+                        .map(|m| m.split([':', '@']).next().unwrap_or(m).to_string())
+                        .collect(),
+                    batcher_owned: r.get("owner") == Some("batcher"),
+                    owner: r.get("owner").unwrap_or_default().to_string(),
+                    id: r.id,
+                });
             let (mut pr_state, mut check) = (PrState::None, Check::None);
             if let Some(b) = &open_batch {
                 if let Some(pr) = b.pr.map(|p| p.to_string()) {
-                    pr_state = match forge_call(&dir, "pr-state", &[&pr], None)?.stdout().unwrap_or_default().trim() {
+                    pr_state = match forge_call(&dir, "pr-state", &[&pr], None)?
+                        .stdout()
+                        .unwrap_or_default()
+                        .trim()
+                    {
                         "OPEN" | "open" => PrState::Open,
                         "MERGED" | "merged" => PrState::Merged,
                         "CLOSED" | "closed" => PrState::Closed,
                         _ => PrState::None,
                     };
-                    check = Check::of(&forge_call(&dir, "check-status", &[&pr, &b.branch], None)?.stdout().unwrap_or_default());
+                    check = Check::of(
+                        &forge_call(&dir, "check-status", &[&pr, &b.branch], None)?
+                            .stdout()
+                            .unwrap_or_default(),
+                    );
                 }
             }
-            let publish_rec = queue_kv(e, &name, "publish").and_then(|kv| Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default() }));
+            let publish_rec = queue_kv(e, &name, "publish").and_then(|kv| {
+                Some(PublishRec {
+                    pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?,
+                    head: kv.get("head").cloned().unwrap_or_default(),
+                    branch: kv.get("branch").cloned().unwrap_or_default(),
+                })
+            });
             let mut publish_check = Check::None;
             if let Some(rec) = &publish_rec {
-                publish_check = Check::of(&forge_call(&dir, "check-status", &[&rec.pr.to_string(), &rec.branch], None)?.stdout().unwrap_or_default());
+                publish_check = Check::of(
+                    &forge_call(
+                        &dir,
+                        "check-status",
+                        &[&rec.pr.to_string(), &rec.branch],
+                        None,
+                    )?
+                    .stdout()
+                    .unwrap_or_default(),
+                );
             }
             let landref = spira_config::repos::landref(&reg, &name).unwrap_or_default();
             let base_sha = spira_config::git_refs::sha_of(std::path::Path::new(&dir), &landref)
-                .unwrap_or_else(|| git(&dir, &["rev-parse", &landref], Duration::from_secs(10)).unwrap_or_default());
-            let sealed_base = open_batch.as_ref().and_then(|_| queue_kv(e, &name, "batch")).and_then(|kv| kv.get("base").cloned());
-            snap.repos.insert(name, Repo { mode, lc_ok, open_batch, publish_rec, publish_check, pr_state, check, base_sha, sealed_base, ..Repo::default() });
+                .unwrap_or_else(|| {
+                    git(&dir, &["rev-parse", &landref], Duration::from_secs(10)).unwrap_or_default()
+                });
+            let sealed_base = open_batch
+                .as_ref()
+                .and_then(|_| queue_kv(e, &name, "batch"))
+                .and_then(|kv| kv.get("base").cloned());
+            snap.repos.insert(
+                name,
+                Repo {
+                    mode,
+                    lc_ok,
+                    open_batch,
+                    publish_rec,
+                    publish_check,
+                    pr_state,
+                    check,
+                    base_sha,
+                    sealed_base,
+                    ..Repo::default()
+                },
+            );
         }
         json(&snap)
     }
@@ -851,12 +1210,39 @@ pub mod edge {
         let s = step(spec)?;
         let reg = registry()?;
         let dir = root(&reg, &s.repo)?;
-        let landref = spira_config::repos::landref(&reg, &s.repo).ok_or_else(|| format!("{}: no land ref", s.repo))?;
+        let landref = spira_config::repos::landref(&reg, &s.repo)
+            .ok_or_else(|| format!("{}: no land ref", s.repo))?;
         match spira_config::repos::ref_remote(&landref, Some(&s.repo)) {
-            Some(remote) => git(&dir, &["push", &remote, &format!("{}:refs/heads/{}", s.head, spira_config::repos::ref_branch(&landref))], Duration::from_secs(55))?,
+            Some(remote) => git(
+                &dir,
+                &[
+                    "push",
+                    &remote,
+                    &format!(
+                        "{}:refs/heads/{}",
+                        s.head,
+                        spira_config::repos::ref_branch(&landref)
+                    ),
+                ],
+                Duration::from_secs(55),
+            )?,
             None => {
-                git(&dir, &["merge-base", "--is-ancestor", &landref, &s.head], Duration::from_secs(10)).map_err(|_| format!("{landref} is not an ancestor of {} — non-fast-forward, refused", s.head))?;
-                git(&dir, &["update-ref", &format!("refs/heads/{landref}"), &s.head], Duration::from_secs(10))?
+                git(
+                    &dir,
+                    &["merge-base", "--is-ancestor", &landref, &s.head],
+                    Duration::from_secs(10),
+                )
+                .map_err(|_| {
+                    format!(
+                        "{landref} is not an ancestor of {} — non-fast-forward, refused",
+                        s.head
+                    )
+                })?;
+                git(
+                    &dir,
+                    &["update-ref", &format!("refs/heads/{landref}"), &s.head],
+                    Duration::from_secs(10),
+                )?
             }
         };
         Ok("{}".into())
@@ -865,15 +1251,26 @@ pub mod edge {
     /// The batch's LANDED on the store, refused unless it is GREEN at that version.
     pub fn land(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        let lc = queue::real::RealLc { bin: None, client: Some(lc(e)) };
-        lc.land_batch(&s.batch, &s.version.to_string(), ACTOR, &s.head).map_err(|(rc, why)| format!("spira-lc land refused for {} (rc={rc}): {why}", s.batch))?;
+        let lc = queue::real::RealLc {
+            bin: None,
+            client: Some(lc(e)),
+        };
+        lc.land_batch(&s.batch, &s.version.to_string(), ACTOR, &s.head)
+            .map_err(|(rc, why)| {
+                format!("spira-lc land refused for {} (rc={rc}): {why}", s.batch)
+            })?;
         Ok("{}".into())
     }
 
     /// A landed member's bead, closed with the landing's reason (`land_close_reason`).
     pub fn close_bead(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        let r = lc(e).call_stdin(&["close", &s.bead, "--reason-file", "-", "--actor", ACTOR], &queue::ops::helpers::land_close_reason(&s.head)).map_err(|e| e.to_string())?;
+        let r = lc(e)
+            .call_stdin(
+                &["close", &s.bead, "--reason-file", "-", "--actor", ACTOR],
+                &queue::ops::helpers::land_close_reason(&s.head),
+            )
+            .map_err(|e| e.to_string())?;
         if r.code != 0 {
             return Err(format!("close {}: {}", s.bead, r.why()));
         }
@@ -885,22 +1282,32 @@ pub mod edge {
         let dir = root(&registry()?, &s.repo)?;
         let pr = s.pr.ok_or("no PR to close")?.to_string();
         let r = forge_call(&dir, "pr-close", &[&pr], None)?;
-        r.ok().then(|| "{}".to_string()).ok_or_else(|| format!("pr-close {pr}: {}", r.err.trim()))
+        r.ok()
+            .then(|| "{}".to_string())
+            .ok_or_else(|| format!("pr-close {pr}: {}", r.err.trim()))
     }
 
     pub fn cancel_runs(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
         let dir = root(&registry()?, &s.repo)?;
-        queue::ops::helpers::cancel_branch_runs(&forge()?, &dir, &s.branch, ACTOR).then(|| "{}".to_string()).ok_or_else(|| format!("{}: not every run on {} was cancelled", s.repo, s.branch))
+        queue::ops::helpers::cancel_branch_runs(&forge()?, &dir, &s.branch, ACTOR)
+            .then(|| "{}".to_string())
+            .ok_or_else(|| format!("{}: not every run on {} was cancelled", s.repo, s.branch))
     }
 
     /// The branch's last run, re-run once (`workflow-rerun`); the forge may decide against it.
     pub fn rerun(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
         let dir = root(&registry()?, &s.repo)?;
-        let run = forge_call(&dir, "run-id", &[&s.branch], None)?.stdout().map(|o| o.trim().to_string()).filter(|r| !r.is_empty()).ok_or_else(|| format!("no run on {}", s.branch))?;
+        let run = forge_call(&dir, "run-id", &[&s.branch], None)?
+            .stdout()
+            .map(|o| o.trim().to_string())
+            .filter(|r| !r.is_empty())
+            .ok_or_else(|| format!("no run on {}", s.branch))?;
         let r = forge_call(&dir, "workflow-rerun", &[&run], None)?;
-        r.ok().then(|| "{}".to_string()).ok_or_else(|| format!("workflow-rerun {run}: {}", r.err.trim()))
+        r.ok()
+            .then(|| "{}".to_string())
+            .ok_or_else(|| format!("workflow-rerun {run}: {}", r.err.trim()))
     }
 
     /// `batcher judgement-ci`, as a unit: the CI-only judgement of a batcher-owned red.
@@ -912,21 +1319,48 @@ pub mod edge {
         let dir = root(&registry()?, &s.repo)?;
         let pr = s.pr.map(|p| p.to_string()).unwrap_or_default();
         let status = forge_call(&dir, "check-status", &[&pr, &s.branch], None)?.out;
-        let suites = status.lines().filter_map(|l| l.strip_prefix("red-suite: ")).collect::<Vec<_>>().join(",");
+        let suites = status
+            .lines()
+            .filter_map(|l| l.strip_prefix("red-suite: "))
+            .collect::<Vec<_>>()
+            .join(",");
         let bin = spira_config::release_env::tool("batcher")?;
-        let argv = vec![bin, "judgement-ci".into(), s.repo.clone(), "--suites".into(), suites, "--members".into(), s.members.join(","), "--evidence".into(), format!("CI red on PR {pr} at {}", s.head)];
+        let argv = vec![
+            bin,
+            "judgement-ci".into(),
+            s.repo.clone(),
+            "--suites".into(),
+            suites,
+            "--members".into(),
+            s.members.join(","),
+            "--evidence".into(),
+            format!("CI red on PR {pr} at {}", s.head),
+        ];
         start_unit(e, super::NAME, &s.unit, argv, vec![], None)
     }
 
     /// `queue <args>`, as a unit: the queue's own verbs this task has no library entry for.
     fn queue_leg(e: &Effects, key: &str, args: &[&str]) -> Result<String, String> {
         let bin = spira_config::release_env::tool("queue")?;
-        start_unit(e, super::NAME, key, std::iter::once(bin).chain(args.iter().map(|a| a.to_string())).collect(), vec![], None)
+        start_unit(
+            e,
+            super::NAME,
+            key,
+            std::iter::once(bin)
+                .chain(args.iter().map(|a| a.to_string()))
+                .collect(),
+            vec![],
+            None,
+        )
     }
 
     pub fn eject(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        queue_leg(e, &format!("eject.{}.{}", s.batch, s.bead), &["eject", &s.bead, "--reason", &s.body, &s.repo])
+        queue_leg(
+            e,
+            &format!("eject.{}.{}", s.batch, s.bead),
+            &["eject", &s.bead, "--reason", &s.body, &s.repo],
+        )
     }
 
     /// A closed or merged batch PR: the queue's verdict pass reconciles it (`ops/reconcile.rs`).
@@ -941,13 +1375,39 @@ pub mod edge {
 
     pub fn sweep(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        queue_leg(e, &format!("sweep.{}.{}", s.repo, s.key.rsplit('/').next().unwrap_or("0")), &["batch", "sweep", "--repo", &s.repo])
+        queue_leg(
+            e,
+            &format!(
+                "sweep.{}.{}",
+                s.repo,
+                s.key.rsplit('/').next().unwrap_or("0")
+            ),
+            &["batch", "sweep", "--repo", &s.repo],
+        )
     }
 
     /// A bug for the repo's red head, filed over the store's work door.
     pub fn file_bug(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let s = step(spec)?;
-        let r = lc(e).call_stdin(&["work", "-", "file", &s.subject, "--for", "builder", "--repo", &s.repo, "--body-file", "-", "--actor", ACTOR], &s.body).map_err(|e| e.to_string())?;
+        let r = lc(e)
+            .call_stdin(
+                &[
+                    "work",
+                    "-",
+                    "file",
+                    &s.subject,
+                    "--for",
+                    "builder",
+                    "--repo",
+                    &s.repo,
+                    "--body-file",
+                    "-",
+                    "--actor",
+                    ACTOR,
+                ],
+                &s.body,
+            )
+            .map_err(|e| e.to_string())?;
         if r.code != 0 {
             return Err(format!("work file {:?}: {}", s.subject, r.why()));
         }
@@ -959,9 +1419,25 @@ pub mod edge {
         let s = step(spec)?;
         let env = e.mail.as_deref().ok_or("no mail environment configured")?;
         let mailbox = cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
-        let args = mail::cmds::SendArgs { mailbox: &mailbox, from: Some("queue <queue@spira>"), subject: &s.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
-        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
-        mail::cmds::send(&bd, env, &args, format!("## {}\n{}\n", s.repo, s.body)).map(|o| o.delivered_path.display().to_string())
+        let args = mail::cmds::SendArgs {
+            mailbox: &mailbox,
+            from: Some("queue <queue@spira>"),
+            subject: &s.subject,
+            kind: "note",
+            default: "",
+            class: "",
+            bead: "",
+            urgent: false,
+            digest: false,
+            dry_run: false,
+            requested_by: "",
+        };
+        let bd = mail::bead::BdCli {
+            bdq: String::new(),
+            conn_retries: 1,
+        };
+        mail::cmds::send(&bd, env, &args, format!("## {}\n{}\n", s.repo, s.body))
+            .map(|o| o.delivered_path.display().to_string())
     }
 
     /// `queue/<repo>/<subject>`, written whole.
@@ -972,8 +1448,13 @@ pub mod edge {
         }
         let dir = e.world.queue_dir.join(&s.repo);
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let (tmp, path) = (dir.join(format!(".{}.tmp", s.subject)), dir.join(&s.subject));
-        std::fs::write(&tmp, format!("{}\n", s.body)).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| format!("{}: {e}", path.display()))?;
+        let (tmp, path) = (
+            dir.join(format!(".{}.tmp", s.subject)),
+            dir.join(&s.subject),
+        );
+        std::fs::write(&tmp, format!("{}\n", s.body))
+            .and_then(|_| std::fs::rename(&tmp, &path))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         Ok("{}".into())
     }
 }

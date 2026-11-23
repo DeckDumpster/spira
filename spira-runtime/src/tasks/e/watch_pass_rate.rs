@@ -76,7 +76,11 @@ pub const MAIL: &str = "watch.pass_rate.mail";
 /// The mail route, kept for parity; the `inbox.append` alternative is Ryan's decision and is not
 /// declared until it is taken.
 pub const EFFECTS: &[&str] = &[OBSERVE, MAIL];
-pub const KEYS: &[&str] = &["SPIRA_BATCH_LEDGER", "SPIRA_PASS_RATE_WINDOW", "SPIRA_PASS_RATE_MAX_PCT"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_BATCH_LEDGER",
+    "SPIRA_PASS_RATE_WINDOW",
+    "SPIRA_PASS_RATE_MAX_PCT",
+];
 /// `--interval 900`.
 pub const CADENCE_MS: u64 = 900_000;
 const OBSERVE_DEADLINE_MS: u64 = 10_000;
@@ -94,7 +98,11 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { ledger: cfg("SPIRA_BATCH_LEDGER")?, window_s: cfg_parse("SPIRA_PASS_RATE_WINDOW")?, max_pct: cfg_parse("SPIRA_PASS_RATE_MAX_PCT")? })
+        Ok(Config {
+            ledger: cfg("SPIRA_BATCH_LEDGER")?,
+            window_s: cfg_parse("SPIRA_PASS_RATE_WINDOW")?,
+            max_pct: cfg_parse("SPIRA_PASS_RATE_MAX_PCT")?,
+        })
     }
 }
 
@@ -118,10 +126,26 @@ pub struct Snapshot {
 pub type Carry = Rate;
 
 /// OVER on the crossing, CLEAR on the way back, BLIND on every unreadable tick (no latch).
-pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    let say = |line: String| vec![Alert::of(MAILBOX, FROM, "pass-rate", "event", &line).effect(MAIL, format!("{NAME}:{now_ms}"), MAIL_DEADLINE_MS)];
+pub fn decide(
+    carry: &Carry,
+    snap: &Snapshot,
+    now_ms: u64,
+    cfg: &Config,
+) -> (Carry, Vec<EffectSpec>) {
+    let say = |line: String| {
+        vec![
+            Alert::of(MAILBOX, FROM, "pass-rate", "event", &line).effect(
+                MAIL,
+                format!("{NAME}:{now_ms}"),
+                MAIL_DEADLINE_MS,
+            ),
+        ]
+    };
     if !snap.readable {
-        return (*carry, say("BLIND: the pass-rate watcher cannot read the ledger window".into()));
+        return (
+            *carry,
+            say("BLIND: the pass-rate watcher cannot read the ledger window".into()),
+        );
     }
     let (p, g, m) = (snap.passes, snap.landed, cfg.max_pct);
     let acts = match (snap.state, carry) {
@@ -143,18 +167,40 @@ pub fn measure(ledger: &str, since: &str, max_pct: u64) -> Snapshot {
             landed += u64::from(cols.get(4) == Some(&"green"));
         }
     }
-    let pct = (passes * 100).checked_div(landed).unwrap_or(if passes == 0 { 0 } else { 999_999 });
-    Snapshot { readable: true, passes, landed, pct, state: if passes > 0 && pct > max_pct { Rate::Over } else { Rate::Ok } }
+    let pct = (passes * 100)
+        .checked_div(landed)
+        .unwrap_or(if passes == 0 { 0 } else { 999_999 });
+    Snapshot {
+        readable: true,
+        passes,
+        landed,
+        pct,
+        state: if passes > 0 && pct > max_pct {
+            Rate::Over
+        } else {
+            Rate::Ok
+        },
+    }
 }
 
 /// The observe runner: the ledger's window ending now; a missing ledger reads as no passes.
 pub fn observe() -> Result<String, String> {
     let cfg = Config::pinned()?;
-    let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let now_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     let snap = match std::fs::read(&cfg.ledger) {
-        Err(_) => Snapshot { readable: true, state: Rate::Ok, ..Snapshot::default() },
+        Err(_) => Snapshot {
+            readable: true,
+            state: Rate::Ok,
+            ..Snapshot::default()
+        },
         Ok(bytes) => match now_s.checked_sub(cfg.window_s) {
-            Some(since) => measure(&String::from_utf8_lossy(&bytes), &iso8601(since), cfg.max_pct),
+            Some(since) => measure(
+                &String::from_utf8_lossy(&bytes),
+                &iso8601(since),
+                cfg.max_pct,
+            ),
             None => Snapshot::default(),
         },
     };
@@ -171,7 +217,9 @@ impl WatchPassRate {
     }
 
     pub fn pinned() -> Self {
-        WatchPassRate { config: Config::pinned() }
+        WatchPassRate {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -179,7 +227,13 @@ impl WatchPassRate {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split: runtime::rows::split_whole, join: runtime::rows::join_whole })
+        Registration::new(NAME, self).with_rows(RowCodec {
+            stream: STREAM,
+            also: &[],
+            tag: STATE,
+            split: runtime::rows::split_whole,
+            join: runtime::rows::join_whole,
+        })
     }
 }
 
@@ -193,7 +247,13 @@ impl Handler for WatchPassRate {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
     }

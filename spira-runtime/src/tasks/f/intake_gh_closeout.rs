@@ -43,7 +43,12 @@ pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_MAIL_BIN"];
 
 const OBSERVE_DEADLINE_MS: u64 = 30_000;
 const DRAIN_DEADLINE_MS: u64 = 600_000;
-const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
+const CYCLE: Cycle = Cycle {
+    stream: STREAM,
+    tick: TICK,
+    observe: OBSERVE,
+    deadline_ms: OBSERVE_DEADLINE_MS,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -71,8 +76,14 @@ pub fn decide(snap: &Snapshot) -> Decision {
 
 /// `intake.gh_closeout.observe`: whether the world is halted and how many closeouts are pending.
 pub fn run_observe(e: &crate::Effects, _key: &str, _s: &EffectSpec) -> Result<String, String> {
-    let lc = LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_millis(OBSERVE_DEADLINE_MS));
-    let snap = Snapshot { halted: halted(e), pending: RealCloseouts::over(lc).pending().map(|rows| rows.len() as u64) };
+    let lc = LcClient::socket(&e.world.lc_socket)
+        .within(std::time::Duration::from_millis(OBSERVE_DEADLINE_MS));
+    let snap = Snapshot {
+        halted: halted(e),
+        pending: RealCloseouts::over(lc)
+            .pending()
+            .map(|rows| rows.len() as u64),
+    };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
@@ -80,13 +91,39 @@ pub fn run_observe(e: &crate::Effects, _key: &str, _s: &EffectSpec) -> Result<St
 pub fn run_drain(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let config = config_of(s)?;
     let home = spira_config::resolve::locate_home_for_process()?;
-    let (bd, gh) = (RealBd { lc: Some(LcClient::socket(&e.world.lc_socket)) }, RealGh);
-    let repo = RealRepo { spira_home: home.to_string_lossy().into_owned() };
-    let mail = RealMail::new(config.get("SPIRA_MAIL_BIN").cloned().filter(|m| !m.is_empty()));
+    let (bd, gh) = (
+        RealBd {
+            lc: Some(LcClient::socket(&e.world.lc_socket)),
+        },
+        RealGh,
+    );
+    let repo = RealRepo {
+        spira_home: home.to_string_lossy().into_owned(),
+    };
+    let mail = RealMail::new(
+        config
+            .get("SPIRA_MAIL_BIN")
+            .cloned()
+            .filter(|m| !m.is_empty()),
+    );
     let lc = RealLifecycle::over(LcClient::socket(&e.world.lc_socket));
     let co = RealCloseouts::over(LcClient::socket(&e.world.lc_socket));
-    let d = Deps { bd: &bd, gh: &gh, git: &RealGit, repo: &repo, mail: &mail, lc: &lc, co: &co };
-    Ok(closeout::drain(&d, &closeout::Ctx { run: e.world.run_dir.clone() }).join("\n"))
+    let d = Deps {
+        bd: &bd,
+        gh: &gh,
+        git: &RealGit,
+        repo: &repo,
+        mail: &mail,
+        lc: &lc,
+        co: &co,
+    };
+    Ok(closeout::drain(
+        &d,
+        &closeout::Ctx {
+            run: e.world.run_dir.clone(),
+        },
+    )
+    .join("\n"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,7 +134,10 @@ pub struct IntakeGhCloseout {
 
 impl IntakeGhCloseout {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(IntakeGhCloseout { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
+        Ok(IntakeGhCloseout {
+            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
+            config: super::pinned(settings, KEYS)?,
+        })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -116,13 +156,20 @@ impl Handler for IntakeGhCloseout {
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         CYCLE.handle(self.interval_ms, view, ev, String::new, |body| {
-            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
+            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else {
+                return vec![];
+            };
             match decide(&snap) {
                 Decision::Skip(why) => {
                     ctx.event().set("gh_closeout.skip", why.as_str());
                     vec![]
                 }
-                Decision::Drain => vec![Command::Effect(EffectSpec::keyed(DRAIN, format!("gh-closeout/{}", ev.at / self.interval_ms.max(1)), config_input(&self.config), DRAIN_DEADLINE_MS))],
+                Decision::Drain => vec![Command::Effect(EffectSpec::keyed(
+                    DRAIN,
+                    format!("gh-closeout/{}", ev.at / self.interval_ms.max(1)),
+                    config_input(&self.config),
+                    DRAIN_DEADLINE_MS,
+                ))],
             }
         })
     }

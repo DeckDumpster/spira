@@ -20,7 +20,12 @@ fn repo(pr: Pr) -> Repo {
     Repo {
         mode: "queue.local".into(),
         publish_mode: "pr".into(),
-        publish_rec: Some(PublishRec { pr: 31, head: "h1".into(), branch: "publish/h1".into(), ..PublishRec::default() }),
+        publish_rec: Some(PublishRec {
+            pr: 31,
+            head: "h1".into(),
+            branch: "publish/h1".into(),
+            ..PublishRec::default()
+        }),
         pr,
         open_publish_prs: vec![31],
         forge_sha: Some("f0".into()),
@@ -31,12 +36,19 @@ fn repo(pr: Pr) -> Repo {
 }
 
 fn with(repo: Repo) -> Snapshot {
-    Snapshot { repos: [("spira".to_string(), repo)].into(), world_running: true }
+    Snapshot {
+        repos: [("spira".to_string(), repo)].into(),
+        world_running: true,
+    }
 }
 
 /// The contract's idle fixture: a record open, CI pending, not behind.
 fn idle() -> Snapshot {
-    with(repo(Pr::Open { ci: "pending".into(), behind: false, tries: 0 }))
+    with(repo(Pr::Open {
+        ci: "pending".into(),
+        behind: false,
+        tries: 0,
+    }))
 }
 
 /// The publish PR is gone: retire it and open the next.
@@ -77,29 +89,92 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test]
 fn t5_the_settle_table() {
     assert_eq!(settle(Some(&Pr::Gone)), Settle::Retire);
-    assert_eq!(settle(Some(&Pr::Open { ci: "pending".into(), behind: false, tries: 0 })), Settle::Wait);
-    assert_eq!(settle(Some(&Pr::Open { ci: "red".into(), behind: true, tries: 0 })), Settle::Supersede);
-    assert_eq!(settle(Some(&Pr::Open { ci: "untested".into(), behind: false, tries: 0 })), Settle::Rerun);
-    assert_eq!(settle(Some(&Pr::Open { ci: "untested".into(), behind: false, tries: 1 })), Settle::Alarm);
+    assert_eq!(
+        settle(Some(&Pr::Open {
+            ci: "pending".into(),
+            behind: false,
+            tries: 0
+        })),
+        Settle::Wait
+    );
+    assert_eq!(
+        settle(Some(&Pr::Open {
+            ci: "red".into(),
+            behind: true,
+            tries: 0
+        })),
+        Settle::Supersede
+    );
+    assert_eq!(
+        settle(Some(&Pr::Open {
+            ci: "untested".into(),
+            behind: false,
+            tries: 0
+        })),
+        Settle::Rerun
+    );
+    assert_eq!(
+        settle(Some(&Pr::Open {
+            ci: "untested".into(),
+            behind: false,
+            tries: 1
+        })),
+        Settle::Alarm
+    );
     let no_run = |behind, opened, ci_started| {
-        let rec = PublishRec { pr: 31, opened, ci_started, ..PublishRec::default() };
-        settle_with(&Policy { no_run_secs: Some(600), ..Policy::default() }, Some(&rec), 10_000, Some(&Pr::Open { ci: "no_run".into(), behind, tries: 0 }))
+        let rec = PublishRec {
+            pr: 31,
+            opened,
+            ci_started,
+            ..PublishRec::default()
+        };
+        settle_with(
+            &Policy {
+                no_run_secs: Some(600),
+                ..Policy::default()
+            },
+            Some(&rec),
+            10_000,
+            Some(&Pr::Open {
+                ci: "no_run".into(),
+                behind,
+                tries: 0,
+            }),
+        )
     };
     assert_eq!(no_run(true, 1_000, 0), Settle::Supersede);
     assert_eq!(no_run(false, 1_000, 0), Settle::StartCi);
     assert_eq!(no_run(false, 9_999, 0), Settle::Wait);
     assert_eq!(no_run(false, 1_000, 9_999), Settle::Wait);
     assert_eq!(no_run(false, 1_000, 5_000), Settle::Parked);
-    assert_eq!(no_run(false, 0, 0), Settle::Wait, "no parseable opened is not past");
+    assert_eq!(
+        no_run(false, 0, 0),
+        Settle::Wait,
+        "no parseable opened is not past"
+    );
 }
 
 fn bound() -> Policy {
-    Policy { no_run_secs: Some(600), ..Policy::default() }
+    Policy {
+        no_run_secs: Some(600),
+        ..Policy::default()
+    }
 }
 
 fn no_run_repo(behind: bool, ci_started: u64) -> Snapshot {
-    let mut r = repo(Pr::Open { ci: "no_run".into(), behind, tries: 0 });
-    r.publish_rec = Some(PublishRec { pr: 31, head: "h1".into(), branch: "publish/h1".into(), opened: 1_000, ci_started, ..PublishRec::default() });
+    let mut r = repo(Pr::Open {
+        ci: "no_run".into(),
+        behind,
+        tries: 0,
+    });
+    r.publish_rec = Some(PublishRec {
+        pr: 31,
+        head: "h1".into(),
+        branch: "publish/h1".into(),
+        opened: 1_000,
+        ci_started,
+        ..PublishRec::default()
+    });
     r.observed_at = 10_000;
     with(r)
 }
@@ -120,17 +195,27 @@ fn t5_no_run_past_the_bound_starts_ci_once_then_parks() {
 #[test]
 fn t5_no_run_past_the_bound_and_behind_supersedes() {
     let (_, acts) = decide_with(&bound(), &Carry::default(), &no_run_repo(true, 0));
-    assert_eq!(effects(&acts), [NOTIFY, RECORD, CANCEL_RUNS, PR_CLOSE], "{acts:?}");
+    assert_eq!(
+        effects(&acts),
+        [NOTIFY, RECORD, CANCEL_RUNS, PR_CLOSE],
+        "{acts:?}"
+    );
     assert!(acts[1].input.contains("no_run_paged"), "{acts:?}");
 }
 
 #[test_id(tx4u2yu)]
 #[test]
 fn t5_no_run_with_an_unresolved_bound_waits_and_names_the_key() {
-    let policy = Policy { no_run_secs: None, ..Policy::default() };
+    let policy = Policy {
+        no_run_secs: None,
+        ..Policy::default()
+    };
     let (carry, acts) = decide_with(&policy, &Carry::default(), &no_run_repo(false, 0));
     assert_eq!(effects(&acts), [NOTIFY], "{acts:?}");
-    assert!(acts[0].input.contains("SPIRA_PUBLISH_NO_RUN_SECS"), "{acts:?}");
+    assert!(
+        acts[0].input.contains("SPIRA_PUBLISH_NO_RUN_SECS"),
+        "{acts:?}"
+    );
     let (carry, again) = decide_with(&policy, &carry, &no_run_repo(false, 0));
     assert!(again.is_empty(), "paged once per PR: {again:?}");
     assert_eq!(carry.repos["spira"].no_run_key_noted, Some(31));
@@ -144,7 +229,10 @@ fn t5_gone_retires_and_opens_on_one_tick() {
     assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
     let retire: Pub = serde_json::from_str(&acts[0].input).expect("a Pub");
     let push: Pub = serde_json::from_str(&acts[1].input).expect("a Pub");
-    assert_eq!((retire.pr, retire.subject.as_str(), push.head.as_str()), (31, "Retire", "h1"));
+    assert_eq!(
+        (retire.pr, retire.subject.as_str(), push.head.as_str()),
+        (31, "Retire", "h1")
+    );
 }
 
 #[test_id(top9ct8)]
@@ -153,7 +241,11 @@ fn a_gone_publish_pr_is_retired_and_pushed_by_the_engine_in_one_tick() {
     let mut r = rig(1, busy());
     r.advance(CADENCE_MS).unwrap();
     let names: Vec<String> = r.requested().iter().map(|q| q.name.clone()).collect();
-    assert!(names.iter().any(|n| n == "publish.retire") && names.iter().any(|n| n == "publish.push_branch"), "{names:?}");
+    assert!(
+        names.iter().any(|n| n == "publish.retire")
+            && names.iter().any(|n| n == "publish.push_branch"),
+        "{names:?}"
+    );
     assert!(!names.iter().any(|n| n == "publish.pr_close"), "{names:?}");
 }
 
@@ -161,8 +253,24 @@ fn a_gone_publish_pr_is_retired_and_pushed_by_the_engine_in_one_tick() {
 #[test_id(t8hg37g)]
 #[test]
 fn a_failed_open_after_a_close_does_not_wedge_the_stale_record() {
-    let superseding = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Superseding, ..RepoCarry::default() })].into() };
-    let p = Pub { repo: "spira".into(), pr: 31, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
+    let superseding = Carry {
+        repos: [(
+            "spira".to_string(),
+            RepoCarry {
+                state: State::Superseding,
+                ..RepoCarry::default()
+            },
+        )]
+        .into(),
+    };
+    let p = Pub {
+        repo: "spira".into(),
+        pr: 31,
+        head: "h1".into(),
+        base: "f0".into(),
+        branch: "publish/h1".into(),
+        ..Pub::default()
+    };
     let (opening, _) = on_outcome(&superseding, PR_CLOSE, true, "{}", &p);
     let (refused, _) = on_outcome(&opening, PR_CREATE, false, "boom", &p);
     assert_eq!(refused.repos["spira"].state, State::Refused);
@@ -173,27 +281,71 @@ fn a_failed_open_after_a_close_does_not_wedge_the_stale_record() {
 #[test_id(t0zp2df)]
 #[test]
 fn a_gone_pr_whose_forge_is_already_at_head_retires_and_pushes_nothing() {
-    let at_head = with(Repo { forge_sha: Some("h1".into()), ..busy().repos["spira"].clone() });
+    let at_head = with(Repo {
+        forge_sha: Some("h1".into()),
+        ..busy().repos["spira"].clone()
+    });
     let (carry, acts) = decide(&Carry::default(), &at_head);
     assert_eq!(effects(&acts), [RETIRE], "{acts:?}");
-    assert_eq!(carry.repos.get("spira").map(|c| c.state).unwrap_or_default(), State::Idle);
+    assert_eq!(
+        carry
+            .repos
+            .get("spira")
+            .map(|c| c.state)
+            .unwrap_or_default(),
+        State::Idle
+    );
 }
 
 #[test_id(tbqrbol)]
 #[test]
 fn a_failed_retire_is_noted_for_the_operator() {
-    let opening = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Opening, ..RepoCarry::default() })].into() };
-    let p = Pub { repo: "spira".into(), pr: 31, subject: "Retire".into(), ..Pub::default() };
+    let opening = Carry {
+        repos: [(
+            "spira".to_string(),
+            RepoCarry {
+                state: State::Opening,
+                ..RepoCarry::default()
+            },
+        )]
+        .into(),
+    };
+    let p = Pub {
+        repo: "spira".into(),
+        pr: 31,
+        subject: "Retire".into(),
+        ..Pub::default()
+    };
     let (after, acts) = on_outcome(&opening, RETIRE, false, "lock busy", &p);
     assert_eq!(effects(&acts), [NOTIFY], "{acts:?}");
-    assert_eq!(after.repos["spira"].state, State::Opening, "a failed retire does not disturb the open in flight");
+    assert_eq!(
+        after.repos["spira"].state,
+        State::Opening,
+        "a failed retire does not disturb the open in flight"
+    );
 }
 
 #[test_id(tzhyygz)]
 #[test]
 fn a_closed_supersede_retires_its_record_before_pushing() {
-    let superseding = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Superseding, ..RepoCarry::default() })].into() };
-    let p = Pub { repo: "spira".into(), pr: 31, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
+    let superseding = Carry {
+        repos: [(
+            "spira".to_string(),
+            RepoCarry {
+                state: State::Superseding,
+                ..RepoCarry::default()
+            },
+        )]
+        .into(),
+    };
+    let p = Pub {
+        repo: "spira".into(),
+        pr: 31,
+        head: "h1".into(),
+        base: "f0".into(),
+        branch: "publish/h1".into(),
+        ..Pub::default()
+    };
     let (_, acts) = on_outcome(&superseding, PR_CLOSE, true, "{}", &p);
     assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
     let retire: Pub = serde_json::from_str(&acts[0].input).expect("a Pub");
@@ -203,22 +355,60 @@ fn a_closed_supersede_retires_its_record_before_pushing() {
 #[test_id(tj4psn5)]
 #[test]
 fn a_saved_repo_carry_with_the_retired_pr_field_still_loads() {
-    let rc: RepoCarry = serde_json::from_str(r#"{"state":"Idle","deferred_ticks":0,"retired":1125}"#).expect("an old carry loads");
+    let rc: RepoCarry =
+        serde_json::from_str(r#"{"state":"Idle","deferred_ticks":0,"retired":1125}"#)
+            .expect("an old carry loads");
     assert_eq!(rc.state, State::Idle);
 }
 
-fn retire_world(dir: &testkit::TempDir, recorded: Option<u64>, retiring: u64) -> (bool, Result<String, String>) {
+fn retire_world(
+    dir: &testkit::TempDir,
+    recorded: Option<u64>,
+    retiring: u64,
+) -> (bool, Result<String, String>) {
     if let Some(pr) = recorded {
-        let p = Pub { repo: "spira".into(), pr, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
-        let fresh = edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![] };
+        let p = Pub {
+            repo: "spira".into(),
+            pr,
+            head: "h1".into(),
+            base: "f0".into(),
+            branch: "publish/h1".into(),
+            ..Pub::default()
+        };
+        let fresh = edge::Fresh {
+            remote: "origin".into(),
+            forge_branch: "main".into(),
+            members: vec![],
+        };
         edge::write_record(dir.path(), &p, Some(&fresh), 1).expect("the record is written");
     }
     let run = testkit::TempDir::new("publish-retire-run");
-    let e = spira_runtime::Effects { world: spira_runtime::world::World { queue_dir: dir.path().to_path_buf(), run_dir: run.path().to_path_buf(), ..Default::default() }, ..Default::default() };
-    let spec = runtime::event::EffectSpec::keyed(RETIRE, "k", serde_json::to_string(&Pub { repo: "spira".into(), pr: retiring, subject: "Retire".into(), ..Pub::default() }).unwrap(), 30_000);
+    let e = spira_runtime::Effects {
+        world: spira_runtime::world::World {
+            queue_dir: dir.path().to_path_buf(),
+            run_dir: run.path().to_path_buf(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let spec = runtime::event::EffectSpec::keyed(
+        RETIRE,
+        "k",
+        serde_json::to_string(&Pub {
+            repo: "spira".into(),
+            pr: retiring,
+            subject: "Retire".into(),
+            ..Pub::default()
+        })
+        .unwrap(),
+        30_000,
+    );
     let out = edge::retire(&e, "k", &spec);
     let log = std::fs::read_to_string(run.path().join("landing.log")).unwrap_or_default();
-    (dir.path().join("spira").join("publish").exists(), out.map(|_| log))
+    (
+        dir.path().join("spira").join("publish").exists(),
+        out.map(|_| log),
+    )
 }
 
 #[test_id(ttx3ps5)]
@@ -227,7 +417,12 @@ fn retire_removes_the_record_naming_its_pr() {
     let dir = testkit::TempDir::new("publish-retire");
     let (left, out) = retire_world(&dir, Some(42), 42);
     let log = out.expect("retire answers Ok");
-    assert!(!left && log.contains("QUEUE PUBLISH_SUPERSEDED") && log.contains("repo=spira pr=42 action=Retire"), "{left} {log}");
+    assert!(
+        !left
+            && log.contains("QUEUE PUBLISH_SUPERSEDED")
+            && log.contains("repo=spira pr=42 action=Retire"),
+        "{left} {log}"
+    );
 }
 
 #[test_id(tebyyvo)]
@@ -242,7 +437,10 @@ fn retire_leaves_a_record_naming_another_pr() {
 #[test]
 fn retire_with_the_queue_lock_held_is_an_error_and_keeps_the_record() {
     let dir = testkit::TempDir::new("publish-retire");
-    let _held = match queue::lock::try_lock_as(dir.path(), "spira", "other") { queue::lock::Acquire::Held(g) => g, _ => panic!("lock is free") };
+    let _held = match queue::lock::try_lock_as(dir.path(), "spira", "other") {
+        queue::lock::Acquire::Held(g) => g,
+        _ => panic!("lock is free"),
+    };
     let (left, out) = retire_world(&dir, Some(42), 42);
     assert!(left && out.is_err(), "{left} {out:?}");
 }
@@ -251,11 +449,46 @@ fn retire_with_the_queue_lock_held_is_an_error_and_keeps_the_record() {
 #[test]
 fn retire_logs_the_action_word_it_was_given() {
     let dir = testkit::TempDir::new("publish-retire");
-    let p = Pub { repo: "spira".into(), pr: 42, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
-    edge::write_record(dir.path(), &p, Some(&edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![] }), 1).unwrap();
+    let p = Pub {
+        repo: "spira".into(),
+        pr: 42,
+        head: "h1".into(),
+        base: "f0".into(),
+        branch: "publish/h1".into(),
+        ..Pub::default()
+    };
+    edge::write_record(
+        dir.path(),
+        &p,
+        Some(&edge::Fresh {
+            remote: "origin".into(),
+            forge_branch: "main".into(),
+            members: vec![],
+        }),
+        1,
+    )
+    .unwrap();
     let run = testkit::TempDir::new("publish-retire-run");
-    let e = spira_runtime::Effects { world: spira_runtime::world::World { queue_dir: dir.path().to_path_buf(), run_dir: run.path().to_path_buf(), ..Default::default() }, ..Default::default() };
-    let spec = runtime::event::EffectSpec::keyed(RETIRE, "k", serde_json::to_string(&Pub { repo: "spira".into(), pr: 42, subject: "Supersede".into(), ..Pub::default() }).unwrap(), 30_000);
+    let e = spira_runtime::Effects {
+        world: spira_runtime::world::World {
+            queue_dir: dir.path().to_path_buf(),
+            run_dir: run.path().to_path_buf(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let spec = runtime::event::EffectSpec::keyed(
+        RETIRE,
+        "k",
+        serde_json::to_string(&Pub {
+            repo: "spira".into(),
+            pr: 42,
+            subject: "Supersede".into(),
+            ..Pub::default()
+        })
+        .unwrap(),
+        30_000,
+    );
     edge::retire(&e, "k", &spec).expect("ok");
     let log = std::fs::read_to_string(run.path().join("landing.log")).unwrap();
     assert!(log.contains("repo=spira pr=42 action=Supersede"), "{log}");
@@ -273,7 +506,14 @@ fn retire_with_no_record_is_ok() {
 #[test_id(tl2q2mi)]
 #[test]
 fn t5_red_and_behind_supersedes() {
-    let (_, acts) = decide(&Carry::default(), &with(repo(Pr::Open { ci: "red".into(), behind: true, tries: 0 })));
+    let (_, acts) = decide(
+        &Carry::default(),
+        &with(repo(Pr::Open {
+            ci: "red".into(),
+            behind: true,
+            tries: 0,
+        })),
+    );
     assert_eq!(effects(&acts), [CANCEL_RUNS, PR_CLOSE], "{acts:?}");
 }
 
@@ -281,20 +521,46 @@ fn t5_red_and_behind_supersedes() {
 #[test_id(tq2sesl)]
 #[test]
 fn t5_untested_reruns_then_alarms() {
-    let (_, first) = decide(&Carry::default(), &with(repo(Pr::Open { ci: "untested".into(), behind: false, tries: 0 })));
+    let (_, first) = decide(
+        &Carry::default(),
+        &with(repo(Pr::Open {
+            ci: "untested".into(),
+            behind: false,
+            tries: 0,
+        })),
+    );
     assert_eq!(effects(&first), [RERUN], "{first:?}");
-    let (_, then) = decide(&Carry::default(), &with(repo(Pr::Open { ci: "untested".into(), behind: false, tries: 1 })));
-    assert!(effects(&then).contains(&NOTIFY) && effects(&then).contains(&RECORD), "{then:?}");
+    let (_, then) = decide(
+        &Carry::default(),
+        &with(repo(Pr::Open {
+            ci: "untested".into(),
+            behind: false,
+            tries: 1,
+        })),
+    );
+    assert!(
+        effects(&then).contains(&NOTIFY) && effects(&then).contains(&RECORD),
+        "{then:?}"
+    );
 }
 
 /// `:506-527`: a round holding the hypervisor defers the act and counts the tick.
 #[test_id(tjw6j9b)]
 #[test]
 fn t5_a_round_on_the_hypervisor_defers() {
-    let held = with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() });
+    let held = with(Repo {
+        round_holds_hypervisor: true,
+        ..busy().repos["spira"].clone()
+    });
     let (carry, acts) = decide(&Carry::default(), &held);
     assert!(acts.is_empty(), "{acts:?}");
-    assert_eq!((carry.repos["spira"].state, carry.repos["spira"].deferred_ticks), (State::Deferred, 1));
+    assert_eq!(
+        (
+            carry.repos["spira"].state,
+            carry.repos["spira"].deferred_ticks
+        ),
+        (State::Deferred, 1)
+    );
 }
 
 /// The record a PR's creation writes is the one queue's `settle_publish` reads: every field it
@@ -303,23 +569,100 @@ fn t5_a_round_on_the_hypervisor_defers() {
 #[test_id(tzyjyt1)]
 #[test]
 fn the_record_a_created_pr_writes_passes_settle_publish_and_names_its_members() {
-    let opening = Carry { repos: [("spira".to_string(), RepoCarry { state: State::Opening, ..RepoCarry::default() })].into() };
-    let pushed = Pub { repo: "spira".into(), head: "h1".into(), base: "f0".into(), branch: "spira/publish/1700000000".into(), ..Pub::default() };
+    let opening = Carry {
+        repos: [(
+            "spira".to_string(),
+            RepoCarry {
+                state: State::Opening,
+                ..RepoCarry::default()
+            },
+        )]
+        .into(),
+    };
+    let pushed = Pub {
+        repo: "spira".into(),
+        head: "h1".into(),
+        base: "f0".into(),
+        branch: "spira/publish/1700000000".into(),
+        ..Pub::default()
+    };
     let (_, acts) = on_outcome(&opening, PR_CREATE, true, r#"{"pr":42}"#, &pushed);
-    let act = acts.iter().find(|a| a.effect == RECORD).expect("a created PR is recorded");
+    let act = acts
+        .iter()
+        .find(|a| a.effect == RECORD)
+        .expect("a created PR is recorded");
     let p: Pub = serde_json::from_str(&act.input).expect("the record's input is a Pub");
     let dir = testkit::TempDir::new("publish-record");
-    let fresh = edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![queue::model::Member { id: "sp-a1".into(), tip: "t1".into() }, queue::model::Member { id: "sp-b2".into(), tip: "t2".into() }] };
+    let fresh = edge::Fresh {
+        remote: "origin".into(),
+        forge_branch: "main".into(),
+        members: vec![
+            queue::model::Member {
+                id: "sp-a1".into(),
+                tip: "t1".into(),
+            },
+            queue::model::Member {
+                id: "sp-b2".into(),
+                tip: "t2".into(),
+            },
+        ],
+    };
     edge::write_record(dir.path(), &p, Some(&fresh), 1_700_000_100).expect("the record is written");
-    let kv = queue::records::read_kv(&dir.path().join("spira").join("publish")).expect("readable").expect("the record exists");
-    assert_eq!(queue::ops::verdict::publish_record_missing(&kv), None, "settle_publish takes it: {kv:?}");
-    assert_eq!((kv.get("pr"), kv.get("head"), kv.get("base"), kv.get("remote"), kv.get("forge_branch")), (Some("42"), Some("h1"), Some("f0"), Some("origin"), Some("main")));
-    assert_eq!(kv.members().into_iter().map(|m| (m.id, m.tip)).collect::<Vec<_>>(), [("sp-a1".to_string(), "t1".to_string()), ("sp-b2".to_string(), "t2".to_string())], "the red path's members");
+    let kv = queue::records::read_kv(&dir.path().join("spira").join("publish"))
+        .expect("readable")
+        .expect("the record exists");
+    assert_eq!(
+        queue::ops::verdict::publish_record_missing(&kv),
+        None,
+        "settle_publish takes it: {kv:?}"
+    );
+    assert_eq!(
+        (
+            kv.get("pr"),
+            kv.get("head"),
+            kv.get("base"),
+            kv.get("remote"),
+            kv.get("forge_branch")
+        ),
+        (
+            Some("42"),
+            Some("h1"),
+            Some("f0"),
+            Some("origin"),
+            Some("main")
+        )
+    );
+    assert_eq!(
+        kv.members()
+            .into_iter()
+            .map(|m| (m.id, m.tip))
+            .collect::<Vec<_>>(),
+        [
+            ("sp-a1".to_string(), "t1".to_string()),
+            ("sp-b2".to_string(), "t2".to_string())
+        ],
+        "the red path's members"
+    );
     // A later rerun sets its field on the whole record and keeps the rest.
-    let rerun = Pub { repo: "spira".into(), pr: 42, record: [("rerun".to_string(), "1".to_string())].into(), ..Pub::default() };
+    let rerun = Pub {
+        repo: "spira".into(),
+        pr: 42,
+        record: [("rerun".to_string(), "1".to_string())].into(),
+        ..Pub::default()
+    };
     edge::write_record(dir.path(), &rerun, None, 1_700_000_200).expect("the rerun is recorded");
-    let kv = queue::records::read_kv(&dir.path().join("spira").join("publish")).expect("readable").expect("the record exists");
-    assert_eq!((queue::ops::verdict::publish_record_missing(&kv), kv.get("rerun"), kv.members().len()), (None, Some("1"), 2), "{kv:?}");
+    let kv = queue::records::read_kv(&dir.path().join("spira").join("publish"))
+        .expect("readable")
+        .expect("the record exists");
+    assert_eq!(
+        (
+            queue::ops::verdict::publish_record_missing(&kv),
+            kv.get("rerun"),
+            kv.members().len()
+        ),
+        (None, Some("1"), 2),
+        "{kv:?}"
+    );
 }
 
 /// law-lifecycle-state-is-not-text (sp-mijstw): the fix-forward bead is live only while its typed
@@ -328,14 +671,22 @@ fn the_record_a_created_pr_writes_passes_settle_publish_and_names_its_members() 
 #[test_id(tlto3je)]
 #[test]
 fn t7_a_terminal_fix_forward_is_not_live() {
-    let show = |state: &str| format!(r#"{{"bead":{{"bead_id":"sp-ff","state":"{state}"}},"delivery":null}}"#);
+    let show = |state: &str| {
+        format!(r#"{{"bead":{{"bead_id":"sp-ff","state":"{state}"}},"delivery":null}}"#)
+    };
     for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
-        assert!(!fix_forward_live(&show(state)), "{state} is terminal, not a live fix-forward");
+        assert!(
+            !fix_forward_live(&show(state)),
+            "{state} is terminal, not a live fix-forward"
+        );
     }
     for state in ["READY", "WORKING", "SUBMITTED", "IN_DELIVERY"] {
         assert!(fix_forward_live(&show(state)), "{state} is live");
     }
-    assert!(!fix_forward_live("cannot tell: deadline"), "no answer is not a live bead");
+    assert!(
+        !fix_forward_live("cannot tell: deadline"),
+        "no answer is not a live bead"
+    );
 }
 
 /// sp-hw3qio: publish PR #989 went green on its latest runs, while older runs at the same head
@@ -345,17 +696,31 @@ fn t7_a_terminal_fix_forward_is_not_live() {
 #[test_id(te8e9oh)]
 #[test]
 fn a_green_open_publish_pr_settles_in_one_pass() {
-    let green = with(repo(Pr::Open { ci: "green".into(), behind: false, tries: 0 }));
+    let green = with(repo(Pr::Open {
+        ci: "green".into(),
+        behind: false,
+        tries: 0,
+    }));
     let (carry, acts) = decide(&Carry::default(), &green);
     assert_eq!(effects(&acts), ["publish.settle"], "{acts:?}");
     let p: Pub = serde_json::from_str(&acts[0].input).expect("the settle's input is a Pub");
-    assert_eq!((p.pr, p.head.as_str(), p.branch.as_str()), (31, "h1", "publish/h1"));
+    assert_eq!(
+        (p.pr, p.head.as_str(), p.branch.as_str()),
+        (31, "h1", "publish/h1")
+    );
     let (after, more) = on_outcome(&carry, "publish.settle", true, "{}", &p);
     assert!(more.is_empty(), "{more:?}");
-    assert_eq!(after.repos.get("spira").map_or(State::Idle, |rc| rc.state), State::Idle);
+    assert_eq!(
+        after.repos.get("spira").map_or(State::Idle, |rc| rc.state),
+        State::Idle
+    );
     let mut r = rig(1, green);
     r.advance(CADENCE_MS).unwrap();
-    assert!(r.requested().iter().any(|q| q.name == "publish.settle"), "{:?}", r.requested());
+    assert!(
+        r.requested().iter().any(|q| q.name == "publish.settle"),
+        "{:?}",
+        r.requested()
+    );
 }
 
 /// The PR #989 path: no record, one publish PR open. Adopting it settles it in the same pass;
@@ -363,32 +728,72 @@ fn a_green_open_publish_pr_settles_in_one_pass() {
 #[test_id(tejgdjv)]
 #[test]
 fn an_adopted_publish_pr_settles_and_a_failed_adoption_is_retried() {
-    let orphan = with(Repo { publish_rec: None, pr: Pr::Unknown, open_publish_prs: vec![989], ..repo(Pr::Unknown) });
+    let orphan = with(Repo {
+        publish_rec: None,
+        pr: Pr::Unknown,
+        open_publish_prs: vec![989],
+        ..repo(Pr::Unknown)
+    });
     let (adopting, acts) = decide(&Carry::default(), &orphan);
-    assert_eq!((adopting.repos["spira"].state, effects(&acts)), (State::Adopting, vec![RECORD]));
+    assert_eq!(
+        (adopting.repos["spira"].state, effects(&acts)),
+        (State::Adopting, vec![RECORD])
+    );
     let p: Pub = serde_json::from_str(&acts[0].input).unwrap();
     let (_, chained) = on_outcome(&adopting, RECORD, true, "{}", &p);
-    assert_eq!(effects(&chained), ["publish.settle"], "an adoption settles at once: {chained:?}");
+    assert_eq!(
+        effects(&chained),
+        ["publish.settle"],
+        "an adoption settles at once: {chained:?}"
+    );
     let (failed, _) = on_outcome(&adopting, RECORD, false, "deadline", &p);
     let (_, retried) = decide(&failed, &orphan);
-    assert_eq!(effects(&retried), [RECORD], "a failed adoption is retried on the next tick");
+    assert_eq!(
+        effects(&retried),
+        [RECORD],
+        "a failed adoption is retried on the next tick"
+    );
     let (_, lost) = decide(&adopting, &orphan);
-    assert_eq!(effects(&lost), [RECORD], "an adoption whose outcome was lost is retried on the next tick");
-    let deadline = ACTS.iter().find(|(e, _)| *e == RECORD).map(|(_, d)| *d).unwrap_or_default();
-    assert!(deadline >= OBSERVE_DEADLINE_MS, "an adoption fetches and reads the range's members: {deadline} ms is too short");
+    assert_eq!(
+        effects(&lost),
+        [RECORD],
+        "an adoption whose outcome was lost is retried on the next tick"
+    );
+    let deadline = ACTS
+        .iter()
+        .find(|(e, _)| *e == RECORD)
+        .map(|(_, d)| *d)
+        .unwrap_or_default();
+    assert!(
+        deadline >= OBSERVE_DEADLINE_MS,
+        "an adoption fetches and reads the range's members: {deadline} ms is too short"
+    );
 }
 
 #[test_id(t0i9upv)]
 #[test]
 fn the_carry_stays_under_the_journal_column_for_the_longest_repo_names_and_the_rest_wait() {
-    let held = Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() };
+    let held = Repo {
+        round_holds_hypervisor: true,
+        ..busy().repos["spira"].clone()
+    };
     let name = |i: usize| format!("{i:04}-{}", "r".repeat(250));
-    let snap = Snapshot { repos: (0..600).map(|i| (name(i), held.clone())).collect(), world_running: true };
+    let snap = Snapshot {
+        repos: (0..600).map(|i| (name(i), held.clone())).collect(),
+        world_running: true,
+    };
     let (carry, _) = decide(&Carry::default(), &snap);
     let bytes = serde_json::to_string(&carry).unwrap().len();
-    assert!(bytes < 65_535 && !carry.repos.is_empty() && carry.repos.len() < 600, "{} repos, {bytes} bytes", carry.repos.len());
+    assert!(
+        bytes < 65_535 && !carry.repos.is_empty() && carry.repos.len() < 600,
+        "{} repos, {bytes} bytes",
+        carry.repos.len()
+    );
     let (again, _) = decide(&carry, &snap);
-    assert!(carry.repos.keys().all(|k| again.repos.contains_key(k)), "a carried repo keeps its entry");
+    assert!(
+        carry.repos.keys().all(|k| again.repos.contains_key(k)),
+        "a carried repo keeps its entry"
+    );
     assert!(serde_json::to_string(&again).unwrap().len() < 65_535);
 }
 
@@ -401,7 +806,13 @@ fn at_work() -> TaskRig {
 #[test_id(t8tv5os)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
-    let mut held = rig(1, with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() }));
+    let mut held = rig(
+        1,
+        with(Repo {
+            round_holds_hypervisor: true,
+            ..busy().repos["spira"].clone()
+        }),
+    );
     held.advance(CADENCE_MS).unwrap();
     let rows = kit::assert_kept_as_rows(&held, NAME);
     assert!(rows.iter().any(|k| k.starts_with("repos/")), "{rows:?}");
@@ -410,7 +821,12 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(t2kp827)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
+    kit::assert_boot_matches_an_unstopped_run(
+        at_work,
+        registration,
+        STREAM,
+        EventKind::new(TICK, ""),
+    );
 }
 
 #[test_id(ts0ami2)]
@@ -419,49 +835,110 @@ fn t5_the_probe_reads_a_no_run_status_and_the_record_fields() {
     assert_eq!(edge::ci_label("pending\nno-run: Gate\n"), "no_run");
     assert_eq!(edge::ci_label("pending\n"), "pending");
     assert_eq!(edge::ci_label("green\n"), "green");
-    let kv: std::collections::BTreeMap<String, String> = [("pr", "31"), ("opened", "900"), ("ci_started", "1200"), ("no_run_paged", "1")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let kv: std::collections::BTreeMap<String, String> = [
+        ("pr", "31"),
+        ("opened", "900"),
+        ("ci_started", "1200"),
+        ("no_run_paged", "1"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
     let rec = edge::publish_rec(&kv).expect("a record with a pr");
-    assert_eq!((rec.opened, rec.ci_started, rec.no_run_paged), (900, 1200, true));
+    assert_eq!(
+        (rec.opened, rec.ci_started, rec.no_run_paged),
+        (900, 1200, true)
+    );
 }
 
 fn world_of(repos: [(&str, Repo); 2]) -> std::sync::Arc<std::sync::Mutex<Snapshot>> {
-    std::sync::Arc::new(std::sync::Mutex::new(Snapshot { repos: repos.into_iter().map(|(n, r)| (n.to_string(), r)).collect(), world_running: true }))
+    std::sync::Arc::new(std::sync::Mutex::new(Snapshot {
+        repos: repos.into_iter().map(|(n, r)| (n.to_string(), r)).collect(),
+        world_running: true,
+    }))
 }
 
 fn rig_over(world: &std::sync::Arc<std::sync::Mutex<Snapshot>>) -> TaskRig {
     let w = world.clone();
-    rig_with(1, move |_| Ok(serde_json::to_string(&*w.lock().unwrap()).unwrap()))
+    rig_with(1, move |_| {
+        Ok(serde_json::to_string(&*w.lock().unwrap()).unwrap())
+    })
 }
 
 fn wake(r: &mut TaskRig) {
-    r.tick(STREAM, EventKind::new(spira_runtime::tasks::a::queue_step::PUBLISH_WANTED, r#"{"repo":"a","mode":"queue.local"}"#)).unwrap();
+    r.tick(
+        STREAM,
+        EventKind::new(
+            spira_runtime::tasks::a::queue_step::PUBLISH_WANTED,
+            r#"{"repo":"a","mode":"queue.local"}"#,
+        ),
+    )
+    .unwrap();
     kit::assert_unpoisoned(r, STREAM);
 }
 
 fn carried(r: &TaskRig) -> Carry {
-    let e = r.journaled().into_iter().rev().find(|e| e.kind.tag == STATE).expect("a carry was recorded");
+    let e = r
+        .journaled()
+        .into_iter()
+        .rev()
+        .find(|e| e.kind.tag == STATE)
+        .expect("a carry was recorded");
     serde_json::from_str(&e.kind.body).unwrap()
 }
 
 fn push_repo() -> Repo {
-    Repo { publish_mode: "push".into(), publish_rec: None, pr: Pr::Gone, open_publish_prs: vec![], round_holds_hypervisor: true, ..repo(Pr::Gone) }
+    Repo {
+        publish_mode: "push".into(),
+        publish_rec: None,
+        pr: Pr::Gone,
+        open_publish_prs: vec![],
+        round_holds_hypervisor: true,
+        ..repo(Pr::Gone)
+    }
 }
 
 fn pr_repo() -> Repo {
-    Repo { round_holds_hypervisor: true, ..repo(Pr::Gone) }
+    Repo {
+        round_holds_hypervisor: true,
+        ..repo(Pr::Gone)
+    }
 }
 
 #[test_id(t6ire33)]
 #[test]
 fn a_publish_wake_pushes_a_push_repo_past_a_round_and_defers_a_pr_repo() {
-    let idle = Repo { stopped: true, ..push_repo() };
-    let world = world_of([("a", idle.clone()), ("b", Repo { stopped: true, ..pr_repo() })]);
+    let idle = Repo {
+        stopped: true,
+        ..push_repo()
+    };
+    let world = world_of([
+        ("a", idle.clone()),
+        (
+            "b",
+            Repo {
+                stopped: true,
+                ..pr_repo()
+            },
+        ),
+    ]);
     let mut r = rig_over(&world);
     let asked = r.requested().len();
-    *world.lock().unwrap() = Snapshot { repos: [("a".to_string(), push_repo()), ("b".to_string(), pr_repo())].into(), world_running: true };
+    *world.lock().unwrap() = Snapshot {
+        repos: [("a".to_string(), push_repo()), ("b".to_string(), pr_repo())].into(),
+        world_running: true,
+    };
     wake(&mut r);
-    let acts: Vec<(String, String)> = r.requested()[asked..].iter().filter(|q| q.name != OBSERVE).map(|q| (q.name.clone(), q.input.clone())).collect();
-    assert_eq!(acts.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), [PUSH_FORGE], "{acts:?}");
+    let acts: Vec<(String, String)> = r.requested()[asked..]
+        .iter()
+        .filter(|q| q.name != OBSERVE)
+        .map(|q| (q.name.clone(), q.input.clone()))
+        .collect();
+    assert_eq!(
+        acts.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        [PUSH_FORGE],
+        "{acts:?}"
+    );
     assert!(acts[0].1.contains("\"a\""), "{acts:?}");
     assert_eq!(carried(&r).repos["b"].state, State::Deferred);
 }
@@ -469,16 +946,37 @@ fn a_publish_wake_pushes_a_push_repo_past_a_round_and_defers_a_pr_repo() {
 #[test_id(ttdk8yo)]
 #[test]
 fn wakes_inside_half_a_cadence_do_not_spend_a_deferral() {
-    let held = |at: u64| Repo { observed_at: at, ..pr_repo() };
-    let world = world_of([("a", Repo { stopped: true, ..push_repo() }), ("b", held(1_000))]);
+    let held = |at: u64| Repo {
+        observed_at: at,
+        ..pr_repo()
+    };
+    let world = world_of([
+        (
+            "a",
+            Repo {
+                stopped: true,
+                ..push_repo()
+            },
+        ),
+        ("b", held(1_000)),
+    ]);
     let mut r = rig_over(&world);
     assert_eq!(carried(&r).repos["b"].deferred_ticks, 1);
     for at in [1_100, 1_500, 1_000 + CADENCE_MS / 2000 - 1] {
         world.lock().unwrap().repos.insert("b".into(), held(at));
         wake(&mut r);
-        assert_eq!(carried(&r).repos["b"].deferred_ticks, 1, "a wake at +{}s", at - 1_000);
+        assert_eq!(
+            carried(&r).repos["b"].deferred_ticks,
+            1,
+            "a wake at +{}s",
+            at - 1_000
+        );
     }
-    world.lock().unwrap().repos.insert("b".into(), held(1_000 + CADENCE_MS / 2000));
+    world
+        .lock()
+        .unwrap()
+        .repos
+        .insert("b".into(), held(1_000 + CADENCE_MS / 2000));
     wake(&mut r);
     assert_eq!(carried(&r).repos["b"].deferred_ticks, 2);
 }
@@ -486,19 +984,45 @@ fn wakes_inside_half_a_cadence_do_not_spend_a_deferral() {
 fn rerun_world(code: i32, err: &str) -> (Result<(), String>, String, Option<String>) {
     let q = testkit::TempDir::new("publish-rerun-q");
     let run = testkit::TempDir::new("publish-rerun-run");
-    let p = Pub { repo: "spira".into(), pr: 42, head: "h1".into(), base: "f0".into(), branch: "publish/h1".into(), ..Pub::default() };
-    let fresh = edge::Fresh { remote: "origin".into(), forge_branch: "main".into(), members: vec![] };
+    let p = Pub {
+        repo: "spira".into(),
+        pr: 42,
+        head: "h1".into(),
+        base: "f0".into(),
+        branch: "publish/h1".into(),
+        ..Pub::default()
+    };
+    let fresh = edge::Fresh {
+        remote: "origin".into(),
+        forge_branch: "main".into(),
+        members: vec![],
+    };
     edge::write_record(q.path(), &p, Some(&fresh), 1).expect("the record is written");
-    let reply = |code: i32, out: &str, err: &str| Ok(forge::client::Reply { code, out: out.into(), err: err.into() });
+    let reply = |code: i32, out: &str, err: &str| {
+        Ok(forge::client::Reply {
+            code,
+            out: out.into(),
+            err: err.into(),
+        })
+    };
     let call = |verb: &str, _: &[&str]| match verb {
         "run-id" => reply(0, "9\n", ""),
-        "check-status" => reply(0, "harness_fault\nrunner-lost: suites / Download binaries\nrunner-market: spot\n", ""),
+        "check-status" => reply(
+            0,
+            "harness_fault\nrunner-lost: suites / Download binaries\nrunner-market: spot\n",
+            "",
+        ),
         _ => reply(code, "", err),
     };
-    let rerun = Pub { record: [("rerun".to_string(), "1".to_string())].into(), ..p };
+    let rerun = Pub {
+        record: [("rerun".to_string(), "1".to_string())].into(),
+        ..p
+    };
     let out = edge::rerun_with(&call, q.path(), run.path(), &rerun);
     let log = std::fs::read_to_string(run.path().join("landing.log")).unwrap_or_default();
-    let flag = queue::records::read_kv(&q.path().join("spira").join("publish")).unwrap().and_then(|kv| kv.get("rerun").map(str::to_string));
+    let flag = queue::records::read_kv(&q.path().join("spira").join("publish"))
+        .unwrap()
+        .and_then(|kv| kv.get("rerun").map(str::to_string));
     (out, log, flag)
 }
 
@@ -506,8 +1030,15 @@ fn rerun_world(code: i32, err: &str) -> (Result<(), String>, String, Option<Stri
 #[test]
 fn a_started_rerun_writes_its_line_and_marks_the_record() {
     let (out, log, flag) = rerun_world(0, "");
-    assert!(out.is_ok() && flag.as_deref() == Some("1"), "{out:?} {flag:?}");
-    assert!(log.contains("QUEUE PUBLISH_RERUN ") && log.contains("repo=spira pr=42 run=9 cause=suites / Download binaries market=spot"), "{log}");
+    assert!(
+        out.is_ok() && flag.as_deref() == Some("1"),
+        "{out:?} {flag:?}"
+    );
+    assert!(
+        log.contains("QUEUE PUBLISH_RERUN ")
+            && log.contains("repo=spira pr=42 run=9 cause=suites / Download binaries market=spot"),
+        "{log}"
+    );
 }
 
 #[test_id(tw2ho8e)]
@@ -515,5 +1046,10 @@ fn a_started_rerun_writes_its_line_and_marks_the_record() {
 fn a_refused_rerun_writes_its_line_and_leaves_the_record_unmarked() {
     let (out, log, flag) = rerun_world(3, "no input changed\nmore");
     assert!(out.is_err() && flag.is_none(), "{out:?} {flag:?}");
-    assert!(log.contains("QUEUE PUBLISH_RERUN_REFUSED ") && log.contains("run=9 why=code=3 no input changed") && !log.contains("more"), "{log}");
+    assert!(
+        log.contains("QUEUE PUBLISH_RERUN_REFUSED ")
+            && log.contains("run=9 why=code=3 no input changed")
+            && !log.contains("more"),
+        "{log}"
+    );
 }

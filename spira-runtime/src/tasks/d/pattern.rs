@@ -17,8 +17,20 @@ use serde::Serialize;
 use crate::watchers::{answers_observe, carried, iso8601};
 
 /// The tick's commands: the observe probe, then the next tick at `next_at`.
-pub fn tick(ev: &Event, observe: &str, input: String, deadline_ms: u64, next_at: u64) -> Vec<Command> {
-    vec![Command::Probe(EffectSpec::probe(observe, input, deadline_ms)), Command::Timer { at: next_at, kind: EventKind::new(&ev.kind.tag, "") }]
+pub fn tick(
+    ev: &Event,
+    observe: &str,
+    input: String,
+    deadline_ms: u64,
+    next_at: u64,
+) -> Vec<Command> {
+    vec![
+        Command::Probe(EffectSpec::probe(observe, input, deadline_ms)),
+        Command::Timer {
+            at: next_at,
+            kind: EventKind::new(&ev.kind.tag, ""),
+        },
+    ]
 }
 
 /// The snapshot `ev` carries when it is the succeeded answer to this stream's `observe` probe.
@@ -36,10 +48,18 @@ pub fn unit_ran(ev: &Event, task: &str) -> Option<(String, UnitRan)> {
 }
 
 /// One `Emit` of `after` under `tag` when it differs from `before`, then `acts` as effects.
-pub fn commands<C: Serialize + PartialEq>(tag: EventKindTag, before: &C, after: &C, acts: Vec<EffectSpec>) -> Vec<Command> {
+pub fn commands<C: Serialize + PartialEq>(
+    tag: EventKindTag,
+    before: &C,
+    after: &C,
+    acts: Vec<EffectSpec>,
+) -> Vec<Command> {
     let mut out = vec![];
     if before != after {
-        out.push(Command::Emit(EventKind::new(tag, &serde_json::to_string(after).unwrap_or_default())));
+        out.push(Command::Emit(EventKind::new(
+            tag,
+            &serde_json::to_string(after).unwrap_or_default(),
+        )));
     }
     out.extend(acts.into_iter().map(Command::Effect));
     out
@@ -48,12 +68,22 @@ pub fn commands<C: Serialize + PartialEq>(tag: EventKindTag, before: &C, after: 
 /// The P1 answer path: when `ev` answers `observe`, `decide` over the carry under `state` and the
 /// snapshot, with the pinned config; a config that did not resolve refuses, naming the key on the
 /// wide event, and acts on nothing.
-pub fn on_answer<S, C, K>(ctx: &Ctx, view: &Projection, ev: &Event, observe: &str, state: EventKindTag, config: &Result<K, String>, decide: impl FnOnce(&C, &S, u64, &K) -> (C, Vec<EffectSpec>)) -> Vec<Command>
+pub fn on_answer<S, C, K>(
+    ctx: &Ctx,
+    view: &Projection,
+    ev: &Event,
+    observe: &str,
+    state: EventKindTag,
+    config: &Result<K, String>,
+    decide: impl FnOnce(&C, &S, u64, &K) -> (C, Vec<EffectSpec>),
+) -> Vec<Command>
 where
     S: DeserializeOwned,
     C: DeserializeOwned + Serialize + Default + PartialEq,
 {
-    let Some(snap) = answer::<S>(view, ev, observe) else { return vec![] };
+    let Some(snap) = answer::<S>(view, ev, observe) else {
+        return vec![];
+    };
     let config = match config {
         Ok(c) => c,
         Err(e) => {
@@ -80,8 +110,17 @@ pub fn inbox_line(now_ms: u64, tag: &str, line: &str) -> String {
 pub type Table<P> = &'static [(P, &'static str, P)];
 
 /// `to` when `table` has the row `(from, on, to)`; otherwise a refusal naming the state.
-pub fn transition<P: Copy + PartialEq + std::fmt::Debug>(table: Table<P>, task: &str, from: P, on: &str) -> Result<P, String> {
-    table.iter().find(|(f, o, _)| *f == from && *o == on).map(|(_, _, to)| *to).ok_or_else(|| format!("{task}: {on} refused in state {from:?}"))
+pub fn transition<P: Copy + PartialEq + std::fmt::Debug>(
+    table: Table<P>,
+    task: &str,
+    from: P,
+    on: &str,
+) -> Result<P, String> {
+    table
+        .iter()
+        .find(|(f, o, _)| *f == from && *o == on)
+        .map(|(_, _, to)| *to)
+        .ok_or_else(|| format!("{task}: {on} refused in state {from:?}"))
 }
 
 #[cfg(test)]
@@ -97,21 +136,32 @@ mod tests {
     #[test_id(tvtzt59)]
     #[test]
     fn a_table_move_lands_and_a_move_off_the_table_is_refused_naming_the_state() {
-        static T: Table<P> = &[(P::Idle, "tick", P::Running), (P::Running, "unit.ran", P::Idle)];
+        static T: Table<P> = &[
+            (P::Idle, "tick", P::Running),
+            (P::Running, "unit.ran", P::Idle),
+        ];
         assert_eq!(transition(T, "t", P::Idle, "tick"), Ok(P::Running));
-        assert_eq!(transition(T, "t", P::Idle, "unit.ran"), Err("t: unit.ran refused in state Idle".into()));
+        assert_eq!(
+            transition(T, "t", P::Idle, "unit.ran"),
+            Err("t: unit.ran refused in state Idle".into())
+        );
     }
 
     #[test_id(touumvj)]
     #[test]
     fn the_carry_is_emitted_only_when_it_changed() {
         assert!(commands("s", &1, &1, vec![]).is_empty());
-        assert!(matches!(commands("s", &1, &2, vec![]).as_slice(), [Command::Emit(k)] if k.body == "2"));
+        assert!(
+            matches!(commands("s", &1, &2, vec![]).as_slice(), [Command::Emit(k)] if k.body == "2")
+        );
     }
 
     #[test_id(t8c4xhr)]
     #[test]
     fn the_inbox_line_is_the_house_format() {
-        assert_eq!(inbox_line(1_793_166_343_000, "warm-full", "x"), "2026-10-28T05:45:43Z [watch:warm-full] x");
+        assert_eq!(
+            inbox_line(1_793_166_343_000, "warm-full", "x"),
+            "2026-10-28T05:45:43Z [watch:warm-full] x"
+        );
     }
 }

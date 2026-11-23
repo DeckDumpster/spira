@@ -47,7 +47,20 @@ pub const KEYS: &[&str] = &[CADENCE_KEY, URL_KEY, DIR_KEY];
 // batch-job: one upload, bounded by the object's size, not a round trip
 const PUT_DEADLINE: Duration = Duration::from_secs(300);
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 10_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 /// What one kind's queue holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,17 +106,37 @@ pub struct LcShip {
 }
 
 fn in_flight(asked: Option<u64>, now_ms: u64) -> Option<u64> {
-    asked.filter(|at| now_ms.checked_sub(*at).is_some_and(|age| age < DRAIN_DEADLINE_MS))
+    asked.filter(|at| {
+        now_ms
+            .checked_sub(*at)
+            .is_some_and(|age| age < DRAIN_DEADLINE_MS)
+    })
 }
 
-fn ask(kind: &str, effect: &str, dir: &str, q: &Queue, asked: Option<u64>, now_ms: u64) -> (Option<u64>, Option<Act>) {
+fn ask(
+    kind: &str,
+    effect: &str,
+    dir: &str,
+    q: &Queue,
+    asked: Option<u64>,
+    now_ms: u64,
+) -> (Option<u64>, Option<Act>) {
     if let Some(at) = in_flight(asked, now_ms) {
         return (Some(at), None);
     }
     if q.queued == 0 {
         return (None, None);
     }
-    (Some(now_ms), Some(Act { name: effect.into(), key: format!("lc.ship/{kind}/{}/{now_ms}", q.oldest), input: dir.into(), deadline_ms: DRAIN_DEADLINE_MS, probe: true }))
+    (
+        Some(now_ms),
+        Some(Act {
+            name: effect.into(),
+            key: format!("lc.ship/{kind}/{}/{now_ms}", q.oldest),
+            input: dir.into(),
+            deadline_ms: DRAIN_DEADLINE_MS,
+            probe: true,
+        }),
+    )
 }
 
 pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
@@ -111,12 +144,36 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(s) => {
             let (revlog, runs) = ask(REVLOG, DRAIN, &s.dir, &s.revlog, carry.revlog, now_ms);
-            let (snapshot, snaps) = ask(SNAPSHOT, DRAIN_SNAPSHOT, &s.dir, &s.snapshot, carry.snapshot, now_ms);
-            Ok((Carry { revlog, snapshot }, runs.into_iter().chain(snaps).collect()))
+            let (snapshot, snaps) = ask(
+                SNAPSHOT,
+                DRAIN_SNAPSHOT,
+                &s.dir,
+                &s.snapshot,
+                carry.snapshot,
+                now_ms,
+            );
+            Ok((
+                Carry { revlog, snapshot },
+                runs.into_iter().chain(snaps).collect(),
+            ))
         }
-        Input::Outcome { effect, .. } if effect == DRAIN => Ok((Carry { revlog: None, ..carry.clone() }, vec![])),
-        Input::Outcome { effect, .. } if effect == DRAIN_SNAPSHOT => Ok((Carry { snapshot: None, ..carry.clone() }, vec![])),
-        Input::Outcome { effect, .. } => Err(format!("{NAME}: an outcome of {effect} is not expected")),
+        Input::Outcome { effect, .. } if effect == DRAIN => Ok((
+            Carry {
+                revlog: None,
+                ..carry.clone()
+            },
+            vec![],
+        )),
+        Input::Outcome { effect, .. } if effect == DRAIN_SNAPSHOT => Ok((
+            Carry {
+                snapshot: None,
+                ..carry.clone()
+            },
+            vec![],
+        )),
+        Input::Outcome { effect, .. } => {
+            Err(format!("{NAME}: an outcome of {effect} is not expected"))
+        }
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
 }
@@ -124,45 +181,93 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
 /// The runner of [`OBSERVE`]: what the staging directory holds, `queued: 0` with no destination.
 pub fn observe(run: &Path, url: &str, dir: &str) -> Result<String, String> {
     let dir = ship::dir_at(Some(dir.to_string()), run);
-    let mut snap = Snapshot { dir: dir.display().to_string(), ..Snapshot::default() };
+    let mut snap = Snapshot {
+        dir: dir.display().to_string(),
+        ..Snapshot::default()
+    };
     if !url.is_empty() {
         for (kind, q) in [(REVLOG, &mut snap.revlog), (SNAPSHOT, &mut snap.snapshot)] {
             let names = ship::names(&dir.join("queue").join(kind))?;
-            *q = Queue { queued: names.len() as u64, oldest: names.first().cloned().unwrap_or_default() };
+            *q = Queue {
+                queued: names.len() as u64,
+                oldest: names.first().cloned().unwrap_or_default(),
+            };
         }
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
 /// The runner of [`DRAIN`]: uploads the runs `dir` queues through `proc`, which starts the `curl`.
-pub fn drain(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+pub fn drain(
+    proc: Arc<dyn Proc>,
+    url: &str,
+    dir: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+    part_bytes: u64,
+) -> Result<String, String> {
     drain_of(REVLOG, proc, url, dir, lookup, part_bytes)
 }
 
 /// The runner of [`DRAIN_SNAPSHOT`]: the same for the snapshots.
-pub fn drain_snapshot(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+pub fn drain_snapshot(
+    proc: Arc<dyn Proc>,
+    url: &str,
+    dir: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+    part_bytes: u64,
+) -> Result<String, String> {
     drain_of(SNAPSHOT, proc, url, dir, lookup, part_bytes)
 }
 
-fn drain_of(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+fn drain_of(
+    kind: &str,
+    proc: Arc<dyn Proc>,
+    url: &str,
+    dir: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+    part_bytes: u64,
+) -> Result<String, String> {
     let (uploaded, ran) = match upload(kind, proc, url, dir, lookup, part_bytes) {
         Ok(n) => (n, Ok(format!("{n} object(s) uploaded"))),
         Err((n, e)) => (n, Err(e)),
     };
-    let last = LastDrain { at_ms: runtime::ports::WallClock.now_ms(), kind: kind.into(), uploaded, error: ran.as_ref().err().cloned() };
-    let recorded = serde_json::to_vec(&last).map_err(|e| e.to_string()).and_then(|b| ship::write_durably(&Path::new(dir).join(LAST_DRAIN), &b));
+    let last = LastDrain {
+        at_ms: runtime::ports::WallClock.now_ms(),
+        kind: kind.into(),
+        uploaded,
+        error: ran.as_ref().err().cloned(),
+    };
+    let recorded = serde_json::to_vec(&last)
+        .map_err(|e| e.to_string())
+        .and_then(|b| ship::write_durably(&Path::new(dir).join(LAST_DRAIN), &b));
     ran.and_then(|said| recorded.map(|()| said))
 }
 
 /// The objects uploaded, or the refusal and how many went first.
-fn upload(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<u64, (u64, String)> {
+fn upload(
+    kind: &str,
+    proc: Arc<dyn Proc>,
+    url: &str,
+    dir: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+    part_bytes: u64,
+) -> Result<u64, (u64, String)> {
     let early = |e: String| (0, e);
     let dest = Dest::parse(url).map_err(early)?;
     let creds = match dest {
-        Dest::S3 { .. } => Some(S3Creds::from_vars(lookup).and_then(|c| c.with_part_bytes(part_bytes)).map_err(early)?),
+        Dest::S3 { .. } => Some(
+            S3Creds::from_vars(lookup)
+                .and_then(|c| c.with_part_bytes(part_bytes))
+                .map_err(early)?,
+        ),
         Dest::File(_) => None,
     };
-    let put = Uploader { dest, creds, proc, deadline: PUT_DEADLINE };
+    let put = Uploader {
+        dest,
+        creds,
+        proc,
+        deadline: PUT_DEADLINE,
+    };
     let sent = ship::drain_kind(Path::new(dir), kind, &put).map_err(early)?;
     let n = sent.uploaded.len() as u64;
     match sent.failed {
@@ -173,13 +278,19 @@ fn upload(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn
 
 /// Whether this process could sign the uploads `lc.ship` would make: `Ok` unless the task acts on
 /// an `s3://` destination and `lookup` lacks the key. No credential value is in the message.
-pub fn check_credentials(mode: runtime::Mode, url: &str, lookup: impl Fn(&str) -> Option<String>) -> Result<(), String> {
+pub fn check_credentials(
+    mode: runtime::Mode,
+    url: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<(), String> {
     if mode != runtime::Mode::Act || url.is_empty() {
         return Ok(());
     }
     match Dest::parse(url).map_err(|e| format!("{NAME}: {URL_KEY}: {e}"))? {
         Dest::File(_) => Ok(()),
-        Dest::S3 { .. } => S3Creds::from_vars(lookup).map(|_| ()).map_err(|e| format!("{NAME}: {e}")),
+        Dest::S3 { .. } => S3Creds::from_vars(lookup)
+            .map(|_| ())
+            .map_err(|e| format!("{NAME}: {e}")),
     }
 }
 

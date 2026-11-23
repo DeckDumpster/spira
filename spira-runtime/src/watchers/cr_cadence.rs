@@ -50,16 +50,48 @@ pub struct Snapshot {
 impl Snapshot {
     /// The snapshot of the review records, with the blocker as `cr` names it.
     pub fn from_records(records: &[cr::record::Review], due_at: u64) -> Snapshot {
-        let reviews = records.iter().map(|r| ReviewObs { number: r.number, kind: r.kind, state: r.state, staged_at: r.staged_at, closed_at: r.closed_at }).collect();
-        Snapshot { reviews, due_at, blocker: cr::record::scheduled_blocker(records) }
+        let reviews = records
+            .iter()
+            .map(|r| ReviewObs {
+                number: r.number,
+                kind: r.kind,
+                state: r.state,
+                staged_at: r.staged_at,
+                closed_at: r.closed_at,
+            })
+            .collect();
+        Snapshot {
+            reviews,
+            due_at,
+            blocker: cr::record::scheduled_blocker(records),
+        }
     }
 
     /// The same, from observations: each is given a record with nothing but the fields they carry.
     pub fn new(reviews: Vec<ReviewObs>, due_at: u64) -> Snapshot {
-        let unit = cr::units::Unit { id: String::new(), kind: cr::units::Kind::Module, files: vec![], title: String::new() };
+        let unit = cr::units::Unit {
+            id: String::new(),
+            kind: cr::units::Kind::Module,
+            files: vec![],
+            title: String::new(),
+        };
         let records: Vec<cr::record::Review> = reviews
             .iter()
-            .map(|o| cr::record::Review { number: o.number, kind: o.kind, state: o.state, source_repo: String::new(), source_sha: String::new(), collection: None, url: None, unit: unit.clone(), sealed_sha256: None, staged_at: o.staged_at, opened_at: None, published_at: None, closed_at: o.closed_at })
+            .map(|o| cr::record::Review {
+                number: o.number,
+                kind: o.kind,
+                state: o.state,
+                source_repo: String::new(),
+                source_sha: String::new(),
+                collection: None,
+                url: None,
+                unit: unit.clone(),
+                sealed_sha256: None,
+                staged_at: o.staged_at,
+                opened_at: None,
+                published_at: None,
+                closed_at: o.closed_at,
+            })
             .collect();
         Snapshot::from_records(&records, due_at)
     }
@@ -79,7 +111,12 @@ fn live(r: &ReviewObs) -> bool {
 }
 
 /// The state to carry, whether to open the next scheduled review, and the inbox lines to say.
-pub fn decide(cfg: &CrCadence, carry: &Carry, snap: &Snapshot, now: u64) -> (Carry, bool, Vec<String>) {
+pub fn decide(
+    cfg: &CrCadence,
+    carry: &Carry,
+    snap: &Snapshot,
+    now: u64,
+) -> (Carry, bool, Vec<String>) {
     let mut next = carry.clone();
     next.anchor.get_or_insert(now);
     let open = snap.blocker.is_none() && now >= snap.due_at && carry.requested != Some(snap.due_at);
@@ -113,11 +150,19 @@ impl CrCadence {
 }
 
 fn say(now: u64, m: &str) -> Command {
-    Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{now}:{:016x}", runtime::event::fnv1a(m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS))
+    Command::Effect(EffectSpec::keyed(
+        INBOX_APPEND,
+        format!("{NAME}:inbox:{now}:{:016x}", runtime::event::fnv1a(m)),
+        format!("{} [watch:{NAME}] {m}", iso8601(now)),
+        DEADLINE_MS,
+    ))
 }
 
 fn state(c: &Carry) -> Command {
-    Command::Emit(EventKind::new(STATE_TAG, &serde_json::to_string(c).unwrap_or_default()))
+    Command::Emit(EventKind::new(
+        STATE_TAG,
+        &serde_json::to_string(c).unwrap_or_default(),
+    ))
 }
 
 impl Handler for CrCadence {
@@ -133,10 +178,21 @@ impl Handler for CrCadence {
         let carry = carried::<Carry>(view, &ev.stream, STATE_TAG);
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carry).unwrap_or_default();
-            return vec![Command::Probe(EffectSpec::probe(OBSERVE, input, OBSERVE_DEADLINE_MS)), Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") }];
+            return vec![
+                Command::Probe(EffectSpec::probe(OBSERVE, input, OBSERVE_DEADLINE_MS)),
+                Command::Timer {
+                    at: ev.at + self.interval_ms,
+                    kind: EventKind::new(TICK, ""),
+                },
+            ];
         }
         if answers_observe(view, ev, OBSERVE) {
-            let Some(snap) = (ev.kind.tag == EFFECT_SUCCEEDED).then(|| serde_json::from_str::<Snapshot>(&ev.kind.body).ok()).flatten() else { return vec![] };
+            let Some(snap) = (ev.kind.tag == EFFECT_SUCCEEDED)
+                .then(|| serde_json::from_str::<Snapshot>(&ev.kind.body).ok())
+                .flatten()
+            else {
+                return vec![];
+            };
             let (next, open, said) = decide(self, &carry, &snap, now);
             ctx.event().set("cr_cadence.said", said.len() as u64);
             let mut cmds = vec![];
@@ -144,7 +200,12 @@ impl Handler for CrCadence {
                 cmds.push(state(&next));
             }
             if open {
-                cmds.push(Command::Effect(EffectSpec::keyed(OPEN, format!("{NAME}:open:{}", snap.due_at), String::new(), OPEN_DEADLINE_MS)));
+                cmds.push(Command::Effect(EffectSpec::keyed(
+                    OPEN,
+                    format!("{NAME}:open:{}", snap.due_at),
+                    String::new(),
+                    OPEN_DEADLINE_MS,
+                )));
             }
             cmds.extend(said.iter().map(|m| say(now, m)));
             return cmds;
@@ -155,9 +216,19 @@ impl Handler for CrCadence {
         if ev.kind.tag == EFFECT_SUCCEEDED {
             return vec![say(now, &staged_line(&ev.kind.body))];
         }
-        let why = if ev.kind.tag == EFFECT_FAILED { ev.kind.body.trim() } else { "timed out" };
-        let retry = Carry { requested: None, ..carry };
-        vec![state(&retry), say(now, &format!("cr open --count 1 --scheduled failed: {why}"))]
+        let why = if ev.kind.tag == EFFECT_FAILED {
+            ev.kind.body.trim()
+        } else {
+            "timed out"
+        };
+        let retry = Carry {
+            requested: None,
+            ..carry
+        };
+        vec![
+            state(&retry),
+            say(now, &format!("cr open --count 1 --scheduled failed: {why}")),
+        ]
     }
 }
 
@@ -168,11 +239,20 @@ mod tests {
     const DUE: u64 = 10 * DAY;
 
     fn cfg() -> CrCadence {
-        CrCadence { interval_ms: 300_000, stale_days: 7 }
+        CrCadence {
+            interval_ms: 300_000,
+            stale_days: 7,
+        }
     }
 
     fn rev(number: u32, kind: Kind, state: State) -> ReviewObs {
-        ReviewObs { number, kind, state, staged_at: (DUE - DAY) * 1000, closed_at: (state == State::Closed).then_some((DUE - 3600) * 1000) }
+        ReviewObs {
+            number,
+            kind,
+            state,
+            staged_at: (DUE - DAY) * 1000,
+            closed_at: (state == State::Closed).then_some((DUE - 3600) * 1000),
+        }
     }
 
     fn snap(reviews: Vec<ReviewObs>) -> Snapshot {
@@ -191,14 +271,22 @@ mod tests {
             assert!(!opens(&Carry::default(), &s, now), "now={now}");
         }
         for st in [State::Staged, State::Published] {
-            assert!(!opens(&Carry::default(), &snap(vec![rev(1, Kind::Scheduled, st)]), DUE));
+            assert!(!opens(
+                &Carry::default(),
+                &snap(vec![rev(1, Kind::Scheduled, st)]),
+                DUE
+            ));
         }
     }
 
     #[test_id(tbesfb6)]
     #[test]
-    fn a_staged_scheduled_review_past_the_due_epoch_does_not_open_another_and_names_itself_as_the_blocker() {
-        let s = snap(vec![rev(1, Kind::Scheduled, State::Closed), rev(2, Kind::Scheduled, State::Staged)]);
+    fn a_staged_scheduled_review_past_the_due_epoch_does_not_open_another_and_names_itself_as_the_blocker(
+    ) {
+        let s = snap(vec![
+            rev(1, Kind::Scheduled, State::Closed),
+            rev(2, Kind::Scheduled, State::Staged),
+        ]);
         assert_eq!(s.blocker, Some((2, State::Staged)));
         assert!(!opens(&Carry::default(), &s, DUE + DAY));
     }
@@ -210,7 +298,10 @@ mod tests {
         assert!(!opens(&Carry::default(), &s, DUE - 1));
         let (carry, open, _) = decide(&cfg(), &Carry::default(), &s, DUE);
         assert!(open);
-        assert!(!opens(&carry, &s, DUE + 300), "the same snapshot at the next tick opens nothing");
+        assert!(
+            !opens(&carry, &s, DUE + 300),
+            "the same snapshot at the next tick opens nothing"
+        );
     }
 
     #[test_id(tc9ash9)]
@@ -218,7 +309,10 @@ mod tests {
     fn an_on_demand_review_neither_counts_toward_the_one_nor_delays_it() {
         let s = snap(vec![rev(1, Kind::OnDemand, State::Open)]);
         assert!(opens(&Carry::default(), &s, DUE));
-        let s = snap(vec![rev(1, Kind::Scheduled, State::Closed), rev(2, Kind::OnDemand, State::Open)]);
+        let s = snap(vec![
+            rev(1, Kind::Scheduled, State::Closed),
+            rev(2, Kind::OnDemand, State::Open),
+        ]);
         assert!(opens(&Carry::default(), &s, DUE));
     }
 
@@ -253,12 +347,22 @@ mod tests {
         old_closed.staged_at = 0;
         let mut young = rev(2, Kind::OnDemand, State::Open);
         young.staged_at = (100 * DAY - 7 * DAY) * 1000;
-        assert!(decide(&cfg(), &Carry::default(), &snap(vec![old_closed, young]), 100 * DAY).2.is_empty());
+        assert!(decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(vec![old_closed, young]),
+            100 * DAY
+        )
+        .2
+        .is_empty());
     }
 
     #[test_id(t337tcl)]
     #[test]
     fn the_staged_line_names_the_review_cr_printed() {
-        assert_eq!(staged_line("007 mod:cr\nseal with: cr seal --review 007 < comments.json\n"), "CR 007 staged (scheduled): seal with cr seal --review 007");
+        assert_eq!(
+            staged_line("007 mod:cr\nseal with: cr seal --review 007 < comments.json\n"),
+            "CR 007 staged (scheduled): seal with cr seal --review 007"
+        );
     }
 }

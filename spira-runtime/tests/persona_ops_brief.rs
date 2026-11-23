@@ -19,7 +19,11 @@ fn brief_with_spec(toml: Option<&std::path::Path>) -> Result<String, String> {
     std::fs::create_dir_all(home.join("runes")).unwrap();
     std::fs::write(home.join("runes").join("ops.rune"), "RUNE_NAME=ops\nRUNE_MEMORY_PREFIXES=\"law-,sop-\"\nRUNE_TOOLS=Read\nRUNE_SYSTEM_PROMPT=replace\n").unwrap();
     for registry in ["conf.d", "conf.toml.d"] {
-        std::os::unix::fs::symlink(testkit::manifest_dir().join("../spira").join(registry), home.join(registry)).unwrap();
+        std::os::unix::fs::symlink(
+            testkit::manifest_dir().join("../spira").join(registry),
+            home.join(registry),
+        )
+        .unwrap();
     }
     let cache = ws.join("memories.json");
     std::fs::write(&cache, r#"{"law-a":"be careful"}"#).unwrap();
@@ -32,10 +36,19 @@ fn brief_with_spec(toml: Option<&std::path::Path>) -> Result<String, String> {
     let _env = testkit::env(&[
         ("SPIRA_RELEASE", Some(&release.display().to_string())),
         ("SPIRA_HOME", Some(&home.display().to_string())),
-        ("SPIRA_RUNES_DIR", Some(&home.join("runes").display().to_string())),
+        (
+            "SPIRA_RUNES_DIR",
+            Some(&home.join("runes").display().to_string()),
+        ),
         ("SPIRA_TOML", toml.as_deref()),
     ]);
-    let e = spira_runtime::Effects { world: spira_runtime::world::World { run_dir: run, ..Default::default() }, ..Default::default() };
+    let e = spira_runtime::Effects {
+        world: spira_runtime::world::World {
+            run_dir: run,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     run_brief(&e, "k", &brief_spec(&cache))
 }
 
@@ -44,10 +57,15 @@ fn brief_with_spec(toml: Option<&std::path::Path>) -> Result<String, String> {
 fn the_brief_takes_the_persona_model_from_the_spec_the_runtime_was_started_with() {
     let dir = testkit::TempDir::new("persona-ops-spec");
     let toml = spira_config::process::fixture_toml(&dir, &[]);
-    spira_config::set_paths_in_file(&toml, &[("persona.ops.model", "m-test")]).expect("the scratch spec declares the model");
+    spira_config::set_paths_in_file(&toml, &[("persona.ops.model", "m-test")])
+        .expect("the scratch spec declares the model");
     let out = brief_with_spec(Some(&toml)).expect("the brief succeeds");
     let b: dwarf::ops_sweep::SweepBrief = serde_json::from_str(&out).expect("a SweepBrief");
-    let at = b.argv.iter().position(|a| a == "--model").expect("--model is in the argv");
+    let at = b
+        .argv
+        .iter()
+        .position(|a| a == "--model")
+        .expect("--model is in the argv");
     assert_eq!(b.argv[at + 1], "m-test", "{:?}", b.argv);
 }
 

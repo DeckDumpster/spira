@@ -17,7 +17,13 @@ pub const STATE: EventKindTag = "design-asks.state";
 pub const OBSERVE: &str = "design-asks.observe";
 pub const NAME: &str = "design-asks";
 
-const ROW_PARTS: &[Part] = &[Part::Map { name: "since", drop: &[] }, Part::Field("failed")];
+const ROW_PARTS: &[Part] = &[
+    Part::Map {
+        name: "since",
+        drop: &[],
+    },
+    Part::Field("failed"),
+];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -53,14 +59,28 @@ pub struct Carry {
 fn asked(page: &Page, asks: &str) -> bool {
     let slug = page.rel.rsplit('/').next().unwrap_or("");
     let slug = slug.strip_suffix(".md").unwrap_or(slug);
-    asks.contains(&page.rel) || asks.contains(slug) || page.urls.iter().any(|u| asks.contains(u.as_str()))
+    asks.contains(&page.rel)
+        || asks.contains(slug)
+        || page.urls.iter().any(|u| asks.contains(u.as_str()))
 }
 
 pub fn decide(cfg: &DesignAsks, carry: &Carry, snap: &Snapshot, now: u64) -> (Carry, Vec<String>) {
     if let Some(why) = &snap.failure {
         let said = carry.failed.as_ref() != Some(why);
-        let next = Carry { failed: Some(why.clone()), ..carry.clone() };
-        return (next, if said { vec![format!("DESIGN-ASKS FAILED: {why}; designs without an ask cannot be listed")] } else { vec![] });
+        let next = Carry {
+            failed: Some(why.clone()),
+            ..carry.clone()
+        };
+        return (
+            next,
+            if said {
+                vec![format!(
+                    "DESIGN-ASKS FAILED: {why}; designs without an ask cannot be listed"
+                )]
+            } else {
+                vec![]
+            },
+        );
     }
     let mut since = BTreeMap::new();
     let mut say = vec![];
@@ -70,13 +90,23 @@ pub fn decide(cfg: &DesignAsks, carry: &Carry, snap: &Snapshot, now: u64) -> (Ca
         }
         let (first, mut last) = carry.since.get(&p.rel).copied().unwrap_or((now, 0));
         if now.saturating_sub(last) >= cfg.repeat_secs {
-            let writer = if p.writer.is_empty() { "unknown" } else { p.writer.as_str() };
+            let writer = if p.writer.is_empty() {
+                "unknown"
+            } else {
+                p.writer.as_str()
+            };
             say.push(format!("DESIGN WITHOUT ASK: {} is {} and has had no open ask for {}h (written by {writer}); post one with work ask --class design", p.rel, p.status, now.saturating_sub(first) / 3600));
             last = now;
         }
         since.insert(p.rel.clone(), (first, last));
     }
-    (Carry { since, failed: None }, say)
+    (
+        Carry {
+            since,
+            failed: None,
+        },
+        say,
+    )
 }
 
 impl DesignAsks {
@@ -89,12 +119,22 @@ impl DesignAsks {
     }
 
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
-        view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
+        view.events(stream)
+            .iter()
+            .rev()
+            .find(|e| e.kind.tag == STATE)
+            .and_then(|e| serde_json::from_str(&e.kind.body).ok())
+            .unwrap_or_default()
     }
 
     fn answers_observe(view: &Projection, ev: &Event) -> bool {
         let Some(cause) = &ev.cause else { return false };
-        view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == OBSERVE)
+        view.events(&ev.stream)
+            .iter()
+            .rev()
+            .find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)
+            .and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok())
+            .is_some_and(|b| b["spec"]["name"] == OBSERVE)
     }
 }
 
@@ -110,23 +150,36 @@ impl Handler for DesignAsks {
         if ev.kind.tag == TICK {
             return vec![
                 Command::Probe(EffectSpec::probe(OBSERVE, String::new(), DEADLINE_MS)),
-                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Timer {
+                    at: ev.at + self.interval_ms,
+                    kind: EventKind::new(TICK, ""),
+                },
             ];
         }
         if ev.kind.tag != EFFECT_SUCCEEDED || !Self::answers_observe(view, ev) {
             return vec![];
         }
-        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
+        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else {
+            return vec![];
+        };
         let now = ev.at / 1000;
         let carry = Self::carry(view, &ev.stream);
         let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("design_asks.said", say.len() as u64);
         let mut cmds = vec![];
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+            cmds.push(Command::Emit(EventKind::new(
+                STATE,
+                &serde_json::to_string(&next).unwrap_or_default(),
+            )));
         }
         for m in say {
-            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
+            cmds.push(Command::Effect(EffectSpec::keyed(
+                INBOX_APPEND,
+                format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)),
+                format!("{} [watch:{NAME}] {m}", iso8601(now)),
+                DEADLINE_MS,
+            )));
         }
         cmds
     }
@@ -137,15 +190,27 @@ mod tests {
     use super::*;
 
     fn cfg() -> DesignAsks {
-        DesignAsks { interval_ms: 600_000, repeat_secs: 7200 }
+        DesignAsks {
+            interval_ms: 600_000,
+            repeat_secs: 7200,
+        }
     }
 
     fn page(rel: &str, status: &str) -> Page {
-        Page { rel: rel.into(), status: status.into(), writer: "sp-w".into(), urls: vec![] }
+        Page {
+            rel: rel.into(),
+            status: status.into(),
+            writer: "sp-w".into(),
+            urls: vec![],
+        }
     }
 
     fn snap(pages: Vec<Page>, asks: &str) -> Snapshot {
-        Snapshot { failure: None, asks: asks.into(), pages }
+        Snapshot {
+            failure: None,
+            asks: asks.into(),
+            pages,
+        }
     }
 
     const T0: u64 = 1_800_000_000;
@@ -167,38 +232,111 @@ mod tests {
     fn a_page_is_covered_by_path_slug_or_artifact_url_and_only_draft_or_review_counts() {
         let mut with_url = page(REL, "in-review");
         with_url.urls = vec!["https://claude.ai/artifact/AAAA".into()];
-        assert!(decide(&cfg(), &Carry::default(), &snap(vec![with_url.clone()], "see https://claude.ai/artifact/AAAA"), T0).1.is_empty());
-        assert_eq!(decide(&cfg(), &Carry::default(), &snap(vec![with_url], "https://claude.ai/artifact/BBBB"), T0).1.len(), 1);
-        assert!(decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "draft")], &format!("approve {REL}")), T0).1.is_empty());
-        assert!(decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "draft")], "approve alpha please"), T0).1.is_empty());
-        assert!(decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "approved")], ""), T0).1.is_empty());
+        assert!(decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(
+                vec![with_url.clone()],
+                "see https://claude.ai/artifact/AAAA"
+            ),
+            T0
+        )
+        .1
+        .is_empty());
+        assert_eq!(
+            decide(
+                &cfg(),
+                &Carry::default(),
+                &snap(vec![with_url], "https://claude.ai/artifact/BBBB"),
+                T0
+            )
+            .1
+            .len(),
+            1
+        );
+        assert!(decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(vec![page(REL, "draft")], &format!("approve {REL}")),
+            T0
+        )
+        .1
+        .is_empty());
+        assert!(decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(vec![page(REL, "draft")], "approve alpha please"),
+            T0
+        )
+        .1
+        .is_empty());
+        assert!(decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(vec![page(REL, "approved")], ""),
+            T0
+        )
+        .1
+        .is_empty());
     }
 
     #[test_id(tys1ppk)]
     #[test]
     fn a_page_that_gains_an_ask_loses_its_clock() {
-        let (c, _) = decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "draft")], ""), T0);
-        let (c, _) = decide(&cfg(), &c, &snap(vec![page(REL, "draft")], "alpha"), T0 + 1000);
+        let (c, _) = decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(vec![page(REL, "draft")], ""),
+            T0,
+        );
+        let (c, _) = decide(
+            &cfg(),
+            &c,
+            &snap(vec![page(REL, "draft")], "alpha"),
+            T0 + 1000,
+        );
         assert!(c.since.is_empty());
     }
 
     #[test_id(tzwjqun)]
     #[test]
     fn a_failure_is_said_once_and_never_read_as_no_designs() {
-        let bad = Snapshot { failure: Some("the brain is gone".into()), ..Snapshot::default() };
+        let bad = Snapshot {
+            failure: Some("the brain is gone".into()),
+            ..Snapshot::default()
+        };
         let (c, say) = decide(&cfg(), &Carry::default(), &bad, T0);
-        assert_eq!(say, ["DESIGN-ASKS FAILED: the brain is gone; designs without an ask cannot be listed"]);
+        assert_eq!(
+            say,
+            ["DESIGN-ASKS FAILED: the brain is gone; designs without an ask cannot be listed"]
+        );
         assert!(decide(&cfg(), &c, &bad, T0 + 1).1.is_empty());
         let (c, _) = decide(&cfg(), &c, &snap(vec![], ""), T0 + 2);
-        assert_eq!(decide(&cfg(), &c, &bad, T0 + 3).1.len(), 1, "a recovered watcher says its next failure");
+        assert_eq!(
+            decide(&cfg(), &c, &bad, T0 + 3).1.len(),
+            1,
+            "a recovered watcher says its next failure"
+        );
     }
 
     #[test_id(tkmwdjf)]
     #[test]
     fn a_failed_tick_keeps_the_clocks_of_pages_already_told() {
-        let (c, _) = decide(&cfg(), &Carry::default(), &snap(vec![page(REL, "draft")], ""), T0);
-        let bad = Snapshot { failure: Some("x".into()), ..Snapshot::default() };
+        let (c, _) = decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(vec![page(REL, "draft")], ""),
+            T0,
+        );
+        let bad = Snapshot {
+            failure: Some("x".into()),
+            ..Snapshot::default()
+        };
         let (c, _) = decide(&cfg(), &c, &bad, T0 + 100);
-        assert!(decide(&cfg(), &c, &snap(vec![page(REL, "draft")], ""), T0 + 200).1.is_empty());
+        assert!(
+            decide(&cfg(), &c, &snap(vec![page(REL, "draft")], ""), T0 + 200)
+                .1
+                .is_empty()
+        );
     }
 }

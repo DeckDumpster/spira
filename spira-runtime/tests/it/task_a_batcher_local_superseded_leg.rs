@@ -23,21 +23,49 @@ fn carried(head: &str, leg_head: &str) -> Carry {
         leg_head: leg_head.into(),
         ..RepoCarry::default()
     };
-    Carry { repos: [("spira".to_string(), rc)].into() }
+    Carry {
+        repos: [("spira".to_string(), rc)].into(),
+    }
 }
 
 fn snapshot(head: &str, phase: &str) -> Snapshot {
-    let round = Round { id: "r9".into(), members: vec!["sp-a".into()], head: head.into(), worktree: "w".into(), driven: true, phase: phase.into(), ..Round::default() };
-    let repo = Repo { open_round: Some(round), base_sha: "b1".into(), live_legs: Some(vec![]), ..Repo::default() };
-    Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: NOW, ..Default::default() }
+    let round = Round {
+        id: "r9".into(),
+        members: vec!["sp-a".into()],
+        head: head.into(),
+        worktree: "w".into(),
+        driven: true,
+        phase: phase.into(),
+        ..Round::default()
+    };
+    let repo = Repo {
+        open_round: Some(round),
+        base_sha: "b1".into(),
+        live_legs: Some(vec![]),
+        ..Repo::default()
+    };
+    Snapshot {
+        repos: [("spira".to_string(), repo)].into(),
+        now_ms: NOW,
+        ..Default::default()
+    }
 }
 
 fn ran() -> UnitRan {
-    UnitRan { handle: UnitHandle::of(NAME, STEP).unwrap(), exit: Exit::Code(1), duration_ms: 1 }
+    UnitRan {
+        handle: UnitHandle::of(NAME, STEP).unwrap(),
+        exit: Exit::Code(1),
+        duration_ms: 1,
+    }
 }
 
 fn fault() -> RanOutput {
-    RanOutput::captured(Attribution::Fault("harness fault — install failed".into()).line().as_bytes(), b"")
+    RanOutput::captured(
+        Attribution::Fault("harness fault — install failed".into())
+            .line()
+            .as_bytes(),
+        b"",
+    )
 }
 
 fn effects(acts: &[spira_runtime::tasks::a::kit::Act]) -> Vec<&str> {
@@ -53,7 +81,8 @@ fn a_step_result_for_another_head_than_the_rounds_current_one_changes_no_state()
 #[test_id(tm29e9m)]
 #[test]
 fn a_step_result_for_the_rounds_current_head_is_applied() {
-    let (next, acts) = on_ran_with(&carried("A", "A"), &ran(), &fault(), NOW).expect("its own step");
+    let (next, acts) =
+        on_ran_with(&carried("A", "A"), &ran(), &fault(), NOW).expect("its own step");
     assert_ne!(next, carried("A", "A"));
     assert!(effects(&acts).contains(&ABANDON), "{acts:?}");
 }
@@ -72,8 +101,14 @@ fn a_head_that_moved_while_its_pass_runs_orphans_the_step_without_ending_the_rou
     let (next, acts) = decide(&carried("A", "A"), &snapshot("B", "certifying"));
     assert!(acts.is_empty(), "{acts:?}");
     let rc = &next.repos["spira"];
-    assert_eq!((rc.state, rc.head.as_str(), rc.leg.clone()), (State::Attributing, "B", None));
-    assert!(on_ran_with(&next, &ran(), &fault(), NOW).is_none(), "the old step's end finds no leg of the round");
+    assert_eq!(
+        (rc.state, rc.head.as_str(), rc.leg.clone()),
+        (State::Attributing, "B", None)
+    );
+    assert!(
+        on_ran_with(&next, &ran(), &fault(), NOW).is_none(),
+        "the old step's end finds no leg of the round"
+    );
 }
 
 #[test_id(tp8bdwj)]
@@ -90,7 +125,10 @@ fn a_green_pass_on_the_current_head_lands_the_round_whatever_the_older_step_then
 fn a_green_round_on_the_attributions_own_head_lands_and_stops_the_leg() {
     let (landing, acts) = decide(&carried("A", "A"), &snapshot("A", "green"));
     assert!(effects(&acts).contains(&LAND), "{acts:?}");
-    let stop = acts.iter().find(|a| a.effect == runtime::units::UNIT_STOP).expect("the leg is stopped");
+    let stop = acts
+        .iter()
+        .find(|a| a.effect == runtime::units::UNIT_STOP)
+        .expect("the leg is stopped");
     let handle: UnitHandle = serde_json::from_str(&stop.input).unwrap();
     assert_eq!(handle, UnitHandle::of(NAME, STEP).unwrap());
     assert_eq!(landing.repos["spira"].state, State::Landing);
@@ -102,19 +140,45 @@ fn a_green_round_on_the_attributions_own_head_lands_and_stops_the_leg() {
 fn a_stacked_green_round_on_its_own_head_is_held_certified_and_its_leg_stopped() {
     let mut carry = carried("A", "A");
     let top = carry.repos["spira"].clone();
-    let low = RepoCarry { state: State::Certifying, batch: Some("r1".into()), round_key: Some("k1".into()), leg: Some("spira.r1.certify1".into()), ..top.clone() };
-    carry.repos.insert("spira".into(), RepoCarry { above: vec![top], ..low });
+    let low = RepoCarry {
+        state: State::Certifying,
+        batch: Some("r1".into()),
+        round_key: Some("k1".into()),
+        leg: Some("spira.r1.certify1".into()),
+        ..top.clone()
+    };
+    carry.repos.insert(
+        "spira".into(),
+        RepoCarry {
+            above: vec![top],
+            ..low
+        },
+    );
     let mut snap = snapshot("A", "green");
     let repo = snap.repos.get_mut("spira").unwrap();
     let above = repo.open_round.take().unwrap();
-    repo.open_round = Some(Round { id: "r1".into(), phase: "certifying".into(), head: "L".into(), ..above.clone() });
+    repo.open_round = Some(Round {
+        id: "r1".into(),
+        phase: "certifying".into(),
+        head: "L".into(),
+        ..above.clone()
+    });
     repo.open_above = vec![above];
     repo.live_legs = Some(vec!["spira.r1.certify1".into(), STEP.into()]);
     let (next, acts) = decide(&carry, &snap);
-    assert_eq!(next.repos["spira"].above[0].state, State::Certified, "{next:?}");
+    assert_eq!(
+        next.repos["spira"].above[0].state,
+        State::Certified,
+        "{next:?}"
+    );
     assert!(!effects(&acts).contains(&LAND), "{acts:?}");
     let step = UnitHandle::of(NAME, STEP).unwrap();
-    assert!(acts.iter().filter(|a| a.effect == runtime::units::UNIT_STOP).any(|a| serde_json::from_str::<UnitHandle>(&a.input).unwrap() == step), "the leg is stopped: {acts:?}");
+    assert!(
+        acts.iter()
+            .filter(|a| a.effect == runtime::units::UNIT_STOP)
+            .any(|a| serde_json::from_str::<UnitHandle>(&a.input).unwrap() == step),
+        "the leg is stopped: {acts:?}"
+    );
 }
 
 #[test_id(twgs2us)]
@@ -137,7 +201,10 @@ fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults(
     assert!(acts.is_empty(), "{acts:?}");
     let (carry, acts) = decide(&carry, &snapshot("B", "green"));
     assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "{acts:?}");
-    assert!(on_ran_with(&carry, &ran(), &fault(), NOW).is_none(), "the late fault changes nothing");
+    assert!(
+        on_ran_with(&carry, &ran(), &fault(), NOW).is_none(),
+        "the late fault changes nothing"
+    );
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }
 
@@ -146,14 +213,18 @@ fn a_round_that_went_green_on_the_new_head_lands_at_it_when_the_old_step_faults(
 fn a_step_result_whose_head_differs_from_the_head_read_at_apply_time_changes_no_state() {
     let carry = carried("A", "A");
     let moved = |_: &str, _: &str| Some("B".to_string());
-    assert!(on_ran_seeing(&carry, &ran(), &fault(), NOW, &moved).is_none(), "the carry still says A: only the read at apply time knows");
+    assert!(
+        on_ran_seeing(&carry, &ran(), &fault(), NOW, &moved).is_none(),
+        "the carry still says A: only the read at apply time knows"
+    );
 }
 
 #[test_id(tzc0epy)]
 #[test]
 fn a_step_result_whose_head_equals_the_head_read_at_apply_time_is_applied() {
     let same = |_: &str, _: &str| Some("A".to_string());
-    let (_, acts) = on_ran_seeing(&carried("A", "A"), &ran(), &fault(), NOW, &same).expect("its own step");
+    let (_, acts) =
+        on_ran_seeing(&carried("A", "A"), &ran(), &fault(), NOW, &same).expect("its own step");
     assert!(effects(&acts).contains(&ABANDON), "{acts:?}");
 }
 
@@ -164,11 +235,18 @@ fn a_step_result_whose_head_equals_the_head_read_at_apply_time_is_applied() {
 fn a_superseded_steps_fault_delivered_before_the_next_observation_does_not_abandon_the_round() {
     let (carry, _) = decide(&carried("", ""), &snapshot("A", "certifying"));
     let head_now_b = |_: &str, _: &str| Some("B".to_string());
-    assert!(on_ran_seeing(&carry, &ran(), &fault(), NOW, &head_now_b).is_none(), "the fault arrives first and is not applied");
+    assert!(
+        on_ran_seeing(&carry, &ran(), &fault(), NOW, &head_now_b).is_none(),
+        "the fault arrives first and is not applied"
+    );
     let (carry, acts) = decide(&carry, &snapshot("B", "certifying"));
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Attributing);
     let (carry, acts) = decide(&carry, &snapshot("B", "green"));
-    assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "the next pass decides the round: {acts:?}");
+    assert_eq!(
+        effects(&acts),
+        [LC_CERTIFY, LAND],
+        "the next pass decides the round: {acts:?}"
+    );
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }

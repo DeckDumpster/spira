@@ -10,21 +10,33 @@ type Answer = Arc<Mutex<Result<String, String>>>;
 type Lines = Arc<Mutex<Vec<String>>>;
 
 fn registration() -> runtime::Registration {
-    WriterGrants { interval_ms: 60_000 }.registration()
+    WriterGrants {
+        interval_ms: 60_000,
+    }
+    .registration()
 }
 
 fn answer(missing: &[&str], error: Option<&str>) -> Result<String, String> {
-    Ok(serde_json::to_string(&Snapshot { checked_at: Some(1), writer: true, missing: missing.iter().map(|t| t.to_string()).collect(), error: error.map(str::to_string) }).unwrap())
+    Ok(serde_json::to_string(&Snapshot {
+        checked_at: Some(1),
+        writer: true,
+        missing: missing.iter().map(|t| t.to_string()).collect(),
+        error: error.map(str::to_string),
+    })
+    .unwrap())
 }
 
 fn rig(first: Result<String, String>) -> (TaskRig, Answer, Lines) {
     let world: Answer = Arc::new(Mutex::new(first));
     let lines: Lines = Arc::new(Mutex::new(vec![]));
     let (seen, kept) = (world.clone(), lines.clone());
-    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| seen.lock().unwrap().clone()).double(INBOX_APPEND, move |l| {
-        kept.lock().unwrap().push(l.to_string());
-        Ok(l.into())
-    });
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, move |_| seen.lock().unwrap().clone())
+        .double(INBOX_APPEND, move |l| {
+            kept.lock().unwrap().push(l.to_string());
+            Ok(l.into())
+        });
     r.advance(2_000_000).unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     (r, world, lines)
@@ -40,7 +52,10 @@ fn a_missing_table_is_paged_once_naming_it_and_the_provisioning_verb() {
     let (_, _, lines) = rig(answer(&["dependencies"], None));
     let said = lines.lock().unwrap().clone();
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("dependencies") && said[0].contains("admin-provision-writer"), "{said:?}");
+    assert!(
+        said[0].contains("dependencies") && said[0].contains("admin-provision-writer"),
+        "{said:?}"
+    );
 }
 
 #[test_id(t2k9wzp)]
@@ -72,7 +87,10 @@ fn a_check_that_cannot_run_is_paged_apart_from_a_missing_table() {
     next_tick(&mut r);
     let said = lines.lock().unwrap().clone();
     assert_eq!(said.len(), 2, "{said:?}");
-    assert!(said[1].contains("cannot check") && said[1].contains("access denied"), "{said:?}");
+    assert!(
+        said[1].contains("cannot check") && said[1].contains("access denied"),
+        "{said:?}"
+    );
 }
 
 #[test_id(tw8c1yr)]
@@ -86,7 +104,11 @@ fn a_failed_observe_pages_nothing_and_forgets_nothing() {
     next_tick(&mut r);
     *world.lock().unwrap() = answer(&["dependencies"], None);
     next_tick(&mut r);
-    assert_eq!(lines.lock().unwrap().len(), 1, "an outage must not make the same failure page twice");
+    assert_eq!(
+        lines.lock().unwrap().len(),
+        1,
+        "an outage must not make the same failure page twice"
+    );
 }
 
 fn said_one_and_changed_the_answer() -> TaskRig {
@@ -106,9 +128,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(tj1pu5e)]
 #[test]
 fn a_boot_repeats_no_page_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(said_one_and_changed_the_answer, registration, STREAM, EventKind::new(TICK, ""));
+    kit::assert_boot_matches_an_unstopped_run(
+        said_one_and_changed_the_answer,
+        registration,
+        STREAM,
+        EventKind::new(TICK, ""),
+    );
 }
-
 
 #[test_id(t2exbft)]
 #[test]
@@ -117,19 +143,26 @@ fn an_answer_that_is_not_a_snapshot_pages_nothing() {
     next_tick(&mut r);
     *world.lock().unwrap() = Ok(String::new());
     next_tick(&mut r);
-    assert!(lines.lock().unwrap().is_empty(), "{:?}", lines.lock().unwrap());
+    assert!(
+        lines.lock().unwrap().is_empty(),
+        "{:?}",
+        lines.lock().unwrap()
+    );
 }
-
 
 #[test_id(tsa57nn)]
 #[test]
 fn a_timed_out_observe_pages_nothing() {
     let lines: Lines = Arc::new(Mutex::new(vec![]));
     let kept = lines.clone();
-    let mut r = TaskRig::new(1, registration()).unwrap().timing_out().double(OBSERVE, |_| answer(&["dependencies"], None)).double(INBOX_APPEND, move |l| {
-        kept.lock().unwrap().push(l.to_string());
-        Ok(l.into())
-    });
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .timing_out()
+        .double(OBSERVE, |_| answer(&["dependencies"], None))
+        .double(INBOX_APPEND, move |l| {
+            kept.lock().unwrap().push(l.to_string());
+            Ok(l.into())
+        });
     r.advance(2_000_000).unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     next_tick(&mut r);

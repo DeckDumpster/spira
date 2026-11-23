@@ -17,15 +17,35 @@ spira_runtime::family_a_acceptance! {
 
 /// The contract's idle fixture: no SUBMITTED or CERTIFIED rows in any repo.
 fn idle() -> Snapshot {
-    Snapshot { repos: [("spira".to_string(), Repo { fetched: true, identity_pages: Some(vec![]), ..Repo::default() })].into() }
+    Snapshot {
+        repos: [(
+            "spira".to_string(),
+            Repo {
+                fetched: true,
+                identity_pages: Some(vec![]),
+                ..Repo::default()
+            },
+        )]
+        .into(),
+    }
 }
 
 fn row(id: &str, tip: &str) -> PoolRow {
-    PoolRow { id: id.into(), state: "SUBMITTED".into(), version: 4, tip: tip.into(), ..PoolRow::default() }
+    PoolRow {
+        id: id.into(),
+        state: "SUBMITTED".into(),
+        version: 4,
+        tip: tip.into(),
+        ..PoolRow::default()
+    }
 }
 
 fn clean(patch: &str) -> Candidate {
-    Candidate { base: "b1".into(), patch_id: Some(patch.into()), ..Candidate::default() }
+    Candidate {
+        base: "b1".into(),
+        patch_id: Some(patch.into()),
+        ..Candidate::default()
+    }
 }
 
 /// One clean submission at its branch tip.
@@ -37,7 +57,9 @@ fn busy() -> Snapshot {
         items: [("sp-a".to_string(), "Outcome: x".to_string())].into(),
         ..idle().repos["spira"].clone()
     };
-    Snapshot { repos: [("spira".to_string(), repo)].into() }
+    Snapshot {
+        repos: [("spira".to_string(), repo)].into(),
+    }
 }
 
 #[test_id(t8qgbtc)]
@@ -51,10 +73,15 @@ fn t3_every_legal_move_of_the_sifted_machine_is_taken() {
 #[test_id(tkxwefz)]
 #[test]
 fn t3_capped_to_sent_back_and_a_skipped_count_are_refused_naming_the_state() {
-    let capped = record("sp-a", Sifted::Capped, Sifted::SentBack(1)).expect_err("capped never sends back");
+    let capped =
+        record("sp-a", Sifted::Capped, Sifted::SentBack(1)).expect_err("capped never sends back");
     assert!(capped.to_lowercase().contains("capped"), "{capped}");
-    let skipped = record("sp-a", Sifted::SentBack(1), Sifted::SentBack(3)).expect_err("a send-back counts one at a time");
-    assert!(skipped.to_lowercase().contains("sent_back") || skipped.to_lowercase().contains("sentback"), "{skipped}");
+    let skipped = record("sp-a", Sifted::SentBack(1), Sifted::SentBack(3))
+        .expect_err("a send-back counts one at a time");
+    assert!(
+        skipped.to_lowercase().contains("sent_back") || skipped.to_lowercase().contains("sentback"),
+        "{skipped}"
+    );
 }
 
 #[test_id(t0rk2rb)]
@@ -79,10 +106,19 @@ fn t5_an_empty_pool_fetches_nothing() {
 #[test]
 fn t5_a_clean_candidate_records_one_pass_at_its_tip() {
     let (_, acts) = decide(&Carry::default(), &busy());
-    assert_eq!(acts.iter().filter(|a| a.effect == RECORD_PASS).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["sp-a:t1:Sifted"]);
+    assert_eq!(
+        acts.iter()
+            .filter(|a| a.effect == RECORD_PASS)
+            .map(|a| a.key.as_str())
+            .collect::<Vec<_>>(),
+        ["sp-a:t1:Sifted"]
+    );
     let mut done = busy();
     done.repos.get_mut("spira").unwrap().rows[0].sifted_tip = Some("t1".into());
-    assert!(decide(&Carry::default(), &done).1.iter().all(|a| a.effect != RECORD_PASS));
+    assert!(decide(&Carry::default(), &done)
+        .1
+        .iter()
+        .all(|a| a.effect != RECORD_PASS));
 }
 
 /// `sl:158-170`: a duplicate patch-id supersedes, the keeper preferring the open-round member.
@@ -96,7 +132,11 @@ fn t5_a_duplicate_patch_is_superseded_by_the_open_round_member() {
     repo.candidates.insert("sp-b".into(), clean("p1"));
     repo.open_round = vec!["sp-b:t2".into()];
     let (_, acts) = decide(&Carry::default(), &s);
-    assert!(acts.iter().any(|a| a.effect == SUPERSEDE && a.key == "sp-a:superseded-by:sp-b"), "{acts:?}");
+    assert!(
+        acts.iter()
+            .any(|a| a.effect == SUPERSEDE && a.key == "sp-a:superseded-by:sp-b"),
+        "{acts:?}"
+    );
 }
 
 /// `sl:229-249`: a conflict sends back after its note and is never counted toward the cap.
@@ -104,17 +144,35 @@ fn t5_a_duplicate_patch_is_superseded_by_the_open_round_member() {
 #[test]
 fn t5_a_conflict_is_noted_then_sent_back_and_not_counted() {
     let mut s = busy();
-    s.repos.get_mut("spira").unwrap().candidates.get_mut("sp-a").unwrap().conflicts = vec!["src/lib.rs".into()];
+    s.repos
+        .get_mut("spira")
+        .unwrap()
+        .candidates
+        .get_mut("sp-a")
+        .unwrap()
+        .conflicts = vec!["src/lib.rs".into()];
     let (carry, acts) = decide(&Carry::default(), &s);
-    let order: Vec<&str> = acts.iter().filter(|a| a.effect == NOTE || a.effect == SEND_BACK).map(|a| a.effect.as_str()).collect();
+    let order: Vec<&str> = acts
+        .iter()
+        .filter(|a| a.effect == NOTE || a.effect == SEND_BACK)
+        .map(|a| a.effect.as_str())
+        .collect();
     assert_eq!(order, [NOTE, SEND_BACK], "the note precedes the send-back");
-    assert_ne!(carry.beads.get("sp-a").map(|b| b.0), Some(Sifted::SentBack(1)), "a conflict is never counted");
+    assert_ne!(
+        carry.beads.get("sp-a").map(|b| b.0),
+        Some(Sifted::SentBack(1)),
+        "a conflict is never counted"
+    );
 }
 
 /// A submission whose target names no outcome: sent back, and again at each tick until the cap.
 fn without_a_target() -> Snapshot {
     let mut s = busy();
-    s.repos.get_mut("spira").unwrap().items.insert("sp-a".into(), "Target: wall under 10 s".into());
+    s.repos
+        .get_mut("spira")
+        .unwrap()
+        .items
+        .insert("sp-a".into(), "Target: wall under 10 s".into());
     s
 }
 
@@ -122,7 +180,10 @@ fn without_a_target() -> Snapshot {
 fn sent_back_twice() -> TaskRig {
     let reads = std::sync::atomic::AtomicUsize::new(0);
     let mut r = rig_with(1, move |_| {
-        let tip = format!("t{}", reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+        let tip = format!(
+            "t{}",
+            reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
         let mut s = without_a_target();
         let repo = s.repos.get_mut("spira").unwrap();
         repo.rows[0].tip = tip.clone();
@@ -145,7 +206,12 @@ fn the_sifted_machines_and_the_waiting_notes_are_kept_a_row_each() {
 #[test_id(tz575z8)]
 #[test]
 fn a_boot_repeats_no_send_back_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(sent_back_twice, registration, STREAM, EventKind::new(TICK, ""));
+    kit::assert_boot_matches_an_unstopped_run(
+        sent_back_twice,
+        registration,
+        STREAM,
+        EventKind::new(TICK, ""),
+    );
 }
 
 #[test_id(trqpkfl)]
@@ -157,7 +223,11 @@ fn a_boot_does_not_start_the_send_back_count_again() {
         r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     }
     let sent = r.requested().iter().filter(|q| q.name == SEND_BACK).count();
-    assert_eq!(sent, sift::SEND_BACK_CAP as usize, "send-backs across a restart: {sent}");
+    assert_eq!(
+        sent,
+        sift::SEND_BACK_CAP as usize,
+        "send-backs across a restart: {sent}"
+    );
 }
 
 /// A CERTIFIED bead whose tip no longer merges onto the landing ref.
@@ -171,7 +241,12 @@ fn certified_conflict() -> Snapshot {
 
 fn sending(world: Snapshot, send_back: Result<String, String>) -> TaskRig {
     let world = std::sync::Arc::new(std::sync::Mutex::new(world));
-    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(SEND_BACK, move |_| send_back.clone());
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, move |_| {
+            Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())
+        })
+        .double(SEND_BACK, move |_| send_back.clone());
     for e in EFFECTS.iter().filter(|e| ![OBSERVE, SEND_BACK].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
@@ -180,40 +255,70 @@ fn sending(world: Snapshot, send_back: Result<String, String>) -> TaskRig {
 }
 
 fn asked(r: &TaskRig, effect: &str) -> Vec<String> {
-    r.requested().iter().filter(|q| q.name == effect).map(|q| q.input.clone()).collect()
+    r.requested()
+        .iter()
+        .filter(|q| q.name == effect)
+        .map(|q| q.input.clone())
+        .collect()
 }
 
 fn told(r: &TaskRig, what: &str) -> Vec<String> {
-    asked(r, INBOX_APPEND).into_iter().filter(|l| l.contains(what)).collect()
+    asked(r, INBOX_APPEND)
+        .into_iter()
+        .filter(|l| l.contains(what))
+        .collect()
 }
 
 #[test_id(t2jv87n)]
 #[test]
 fn a_certified_conflict_is_sent_back_once_and_told_after_the_store_applied_it() {
     let mut r = sending(certified_conflict(), Ok("sent sp-a back".into()));
-    let sends: Vec<_> = r.requested().iter().filter(|q| q.name == SEND_BACK).collect();
+    let sends: Vec<_> = r
+        .requested()
+        .iter()
+        .filter(|q| q.name == SEND_BACK)
+        .collect();
     assert_eq!(sends.len(), 1);
     assert_eq!(sends[0].key, "sp-a:t1:GateRed");
     assert!(sends[0].input.contains("no-rebase"), "{}", sends[0].input);
     assert_eq!(told(&r, "SIFT sent sp-a to REWORK").len(), 1);
     let order: Vec<String> = r.requested().iter().map(|q| q.name.clone()).collect();
-    let (sb, line) = (order.iter().position(|n| n == SEND_BACK).unwrap(), order.iter().position(|n| n == INBOX_APPEND).unwrap());
+    let (sb, line) = (
+        order.iter().position(|n| n == SEND_BACK).unwrap(),
+        order.iter().position(|n| n == INBOX_APPEND).unwrap(),
+    );
     assert!(sb < line, "the line follows the send-back: {order:?}");
     let before = r.requested().len();
     r.advance(CADENCE_MS).unwrap();
-    let later: Vec<String> = r.requested()[before..].iter().map(|q| q.name.clone()).filter(|n| [NOTE, SEND_BACK, INBOX_APPEND].contains(&n.as_str())).collect();
+    let later: Vec<String> = r.requested()[before..]
+        .iter()
+        .map(|q| q.name.clone())
+        .filter(|n| [NOTE, SEND_BACK, INBOX_APPEND].contains(&n.as_str()))
+        .collect();
     assert!(later.is_empty(), "{later:?}");
 }
 
 #[test_id(tpzkqgp)]
 #[test]
 fn a_send_back_the_store_refused_is_reported_once_and_never_as_sent() {
-    let mut r = sending(certified_conflict(), Err("sp-a moved since screening (state CERTIFIED)".into()));
+    let mut r = sending(
+        certified_conflict(),
+        Err("sp-a moved since screening (state CERTIFIED)".into()),
+    );
     r.advance(3 * CADENCE_MS).unwrap();
-    assert!(told(&r, "SIFT sent").is_empty(), "{:?}", asked(&r, INBOX_APPEND));
+    assert!(
+        told(&r, "SIFT sent").is_empty(),
+        "{:?}",
+        asked(&r, INBOX_APPEND)
+    );
     let said = told(&r, "could not send");
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("sp-a") && said[0].contains("t1") && said[0].contains("moved since screening"), "{said:?}");
+    assert!(
+        said[0].contains("sp-a")
+            && said[0].contains("t1")
+            && said[0].contains("moved since screening"),
+        "{said:?}"
+    );
     assert_eq!(asked(&r, SEND_BACK).len(), 1);
     assert_eq!(asked(&r, NOTE).len(), 1);
 }
@@ -222,7 +327,12 @@ fn a_send_back_the_store_refused_is_reported_once_and_never_as_sent() {
 #[test]
 fn a_failed_evidence_note_holds_the_send_back_and_says_so_once() {
     let world = std::sync::Arc::new(std::sync::Mutex::new(certified_conflict()));
-    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(NOTE, |_| Err("store down".into()));
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, move |_| {
+            Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())
+        })
+        .double(NOTE, |_| Err("store down".into()));
     for e in EFFECTS.iter().filter(|e| ![OBSERVE, NOTE].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
@@ -239,14 +349,28 @@ fn a_failed_evidence_note_holds_the_send_back_and_says_so_once() {
 fn a_moved_base_is_attempted_again_after_a_failed_send_back() {
     let world = std::sync::Arc::new(std::sync::Mutex::new(certified_conflict()));
     let w = world.clone();
-    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*w.lock().unwrap()).unwrap())).double(SEND_BACK, |_| Err("refused".into()));
+    let mut r = TaskRig::new(1, registration())
+        .unwrap()
+        .double(OBSERVE, move |_| {
+            Ok(serde_json::to_string(&*w.lock().unwrap()).unwrap())
+        })
+        .double(SEND_BACK, |_| Err("refused".into()));
     for e in EFFECTS.iter().filter(|e| ![OBSERVE, SEND_BACK].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     r.advance(CADENCE_MS).unwrap();
     assert_eq!((asked(&r, NOTE).len(), asked(&r, SEND_BACK).len()), (1, 1));
-    world.lock().unwrap().repos.get_mut("spira").unwrap().candidates.get_mut("sp-a").unwrap().base = "b2".into();
+    world
+        .lock()
+        .unwrap()
+        .repos
+        .get_mut("spira")
+        .unwrap()
+        .candidates
+        .get_mut("sp-a")
+        .unwrap()
+        .base = "b2".into();
     r.advance(CADENCE_MS).unwrap();
     assert_eq!((asked(&r, NOTE).len(), asked(&r, SEND_BACK).len()), (2, 2));
 }

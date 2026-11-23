@@ -5,19 +5,37 @@ use std::collections::BTreeMap;
 
 use runtime::taskrig::DAY_MS;
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
-use spira_runtime::tasks::c::sweep_tsd::{self as task, Carry, Family, Phase, Snapshot, SweepTsd as H};
+use spira_runtime::tasks::c::sweep_tsd::{
+    self as task, Carry, Family, Phase, Snapshot, SweepTsd as H,
+};
 
 const SPEC: &str = "*-*-* 04:20:00";
-const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, SPEC), (task::KEEP_DAYS_KEY, "30"), (task::BY_FAMILY_KEY, "")];
+const SET: &[(&str, &str)] = &[
+    (task::CADENCE_KEY, SPEC),
+    (task::KEEP_DAYS_KEY, "30"),
+    (task::BY_FAMILY_KEY, ""),
+];
 const AT_0420: u64 = (4 * 60 + 20) * 60_000;
 
 fn fam(name: &str, oldest_days_ago: u64, now: u64) -> Family {
-    Family { family: name.into(), bytes: 1_000, oldest_ts: Some(now - oldest_days_ago * DAY_MS) }
+    Family {
+        family: name.into(),
+        bytes: 1_000,
+        oldest_ts: Some(now - oldest_days_ago * DAY_MS),
+    }
 }
 
 /// Three families, all inside their bounds.
 fn within(now: u64) -> Snapshot {
-    Snapshot { families: vec![fam("cert-pass", 3, now), fam("escape", 10, now), fam("round-attribution", 20, now)], default_days: 30, overrides: BTreeMap::new() }
+    Snapshot {
+        families: vec![
+            fam("cert-pass", 3, now),
+            fam("escape", 10, now),
+            fam("round-attribution", 20, now),
+        ],
+        default_days: 30,
+        overrides: BTreeMap::new(),
+    }
 }
 
 fn json(s: &Snapshot) -> String {
@@ -41,12 +59,35 @@ fn t2_three_families_inside_their_bounds_journal_nothing() {
 fn t3_idle_prunes_and_returns_and_a_prune_outcome_while_idle_is_refused() {
     let h = t::handler::<H>(SET);
     let now = 40 * DAY_MS;
-    let old = Snapshot { families: vec![fam("cert-pass", 35, now)], ..within(now) };
+    let old = Snapshot {
+        families: vec![fam("cert-pass", 35, now)],
+        ..within(now)
+    };
     let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(old), now).unwrap();
     assert_eq!((c.phase, names(&acts)), (Phase::Pruning, vec![task::PRUNE]));
-    let (c, _) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::PRUNE.into(), ok: true, body: "kept 10, dropped 4".into() }, now).unwrap();
+    let (c, _) = task::decide(
+        &h.cfg,
+        &c,
+        &Input::Outcome {
+            effect: task::PRUNE.into(),
+            ok: true,
+            body: "kept 10, dropped 4".into(),
+        },
+        now,
+    )
+    .unwrap();
     assert_eq!(c.phase, Phase::Idle);
-    let refused = task::decide(&h.cfg, &Carry::default(), &Input::Outcome { effect: task::PRUNE.into(), ok: true, body: "kept 1, dropped 0".into() }, now).unwrap_err();
+    let refused = task::decide(
+        &h.cfg,
+        &Carry::default(),
+        &Input::Outcome {
+            effect: task::PRUNE.into(),
+            ok: true,
+            body: "kept 1, dropped 0".into(),
+        },
+        now,
+    )
+    .unwrap_err();
     assert!(refused.contains("idle"), "{refused}");
 }
 
@@ -54,7 +95,10 @@ fn t3_idle_prunes_and_returns_and_a_prune_outcome_while_idle_is_refused() {
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
     let sim = sim::doubles::service().names();
-    t::t4_runnable::<H>(include_str!("../../src/tasks/c/sweep_tsd.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
+    t::t4_runnable::<H>(
+        include_str!("../../src/tasks/c/sweep_tsd.rs"),
+        &sim.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
 }
 
 #[test_id(t9v1mr9)]
@@ -62,10 +106,21 @@ fn t4_its_effects_are_runnable_and_the_module_spawns_nothing() {
 fn t5_only_families_past_their_keep_days_are_pruned_as_dry_run_lists_them() {
     let h = t::handler::<H>(SET);
     let now = 400 * DAY_MS;
-    let snap = Snapshot { families: vec![fam("cert-pass", 31, now), fam("escape", 29, now), fam("custom", 8, now)], default_days: 30, overrides: BTreeMap::from([("custom".to_string(), 7)]) };
+    let snap = Snapshot {
+        families: vec![
+            fam("cert-pass", 31, now),
+            fam("escape", 29, now),
+            fam("custom", 8, now),
+        ],
+        default_days: 30,
+        overrides: BTreeMap::from([("custom".to_string(), 7)]),
+    };
     let (_, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap), now).unwrap();
     assert_eq!(names(&acts), [task::PRUNE, task::PRUNE]);
-    assert!(acts[0].input.contains("cert-pass") && acts[1].input.contains("custom"), "{acts:?}");
+    assert!(
+        acts[0].input.contains("cert-pass") && acts[1].input.contains("custom"),
+        "{acts:?}"
+    );
 }
 
 use runtime::taskrig::TaskRig;
@@ -75,12 +130,19 @@ use spira_runtime::tasks::b::kit::FIRE;
 /// One family past its keep days, pruned.
 fn after_a_prune() -> TaskRig {
     let now = 40 * DAY_MS;
-    let world = json(&Snapshot { families: vec![fam("cert-pass", 35, now)], ..within(now) });
-    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone())).double(task::PRUNE, |_| Ok("cert-pass: kept 10, dropped 4".into()));
+    let world = json(&Snapshot {
+        families: vec![fam("cert-pass", 35, now)],
+        ..within(now)
+    });
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
+        .unwrap()
+        .double(task::OBSERVE, move |_| Ok(world.clone()))
+        .double(task::PRUNE, |_| Ok("cert-pass: kept 10, dropped 4".into()));
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
     r.clock.advance_to(now);
-    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE)).unwrap();
+    r.tick(stream, runtime::event::EventKind::new(task::TICK, FIRE))
+        .unwrap();
     r
 }
 
@@ -96,5 +158,10 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(thchui9)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(after_a_prune, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
+    kit::assert_boot_matches_an_unstopped_run(
+        after_a_prune,
+        || t::handler::<H>(SET).registration(),
+        task::STREAM,
+        runtime::event::EventKind::new(task::TICK, FIRE),
+    );
 }

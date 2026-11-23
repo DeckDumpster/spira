@@ -93,9 +93,27 @@ pub const EFFECTS: &[&str] = &[OBSERVE, RELEASE];
 
 /// An interval of 5 min, not today's `*:0/5` calendar (Tick).
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_ROUNDVM_DRAIN_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_ROUND_VM_STATE_DIR", "SPIRA_ROUND_VM_WARM_IDLE_SECS", "SPIRA_ROUND_VM_SPILL"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    "SPIRA_ROUND_VM_STATE_DIR",
+    "SPIRA_ROUND_VM_WARM_IDLE_SECS",
+    "SPIRA_ROUND_VM_SPILL",
+];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 10_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -127,7 +145,10 @@ pub enum Phase {
 }
 
 /// `state × event → state`. A release of a leased VM is refused naming the lease.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "ready:aged", Phase::Releasing), (Phase::Releasing, "release:outcome", Phase::Idle)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
+    (Phase::Idle, "ready:aged", Phase::Releasing),
+    (Phase::Releasing, "release:outcome", Phase::Idle),
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -158,30 +179,73 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Observed(_) if carry.phase == Phase::Releasing => Ok((Carry::default(), vec![])),
         Input::Observed(s) if s.world_halted => Ok((carry.clone(), vec![])),
         Input::Observed(s) => {
-            let view = round_vm::pool::DrainView { ready: s.ready.as_ref().map(|r| (r.handle.clone(), r.ready_since / 1000)), leased: s.leased.clone(), refreshing_alive: s.refreshing_alive };
-            match round_vm::pool::drain_choice(&view, round_vm::pool::spill_only_ec2(&s.spill_mode), s.idle_bound_secs, now_ms / 1000) {
-                Some((handle, _why)) => Ok((Carry { phase: Phase::Releasing }, vec![Act { name: RELEASE.into(), key: format!("roundvm.drain/{handle}"), input: handle, deadline_ms: 600_000, probe: false }])),
+            let view = round_vm::pool::DrainView {
+                ready: s
+                    .ready
+                    .as_ref()
+                    .map(|r| (r.handle.clone(), r.ready_since / 1000)),
+                leased: s.leased.clone(),
+                refreshing_alive: s.refreshing_alive,
+            };
+            match round_vm::pool::drain_choice(
+                &view,
+                round_vm::pool::spill_only_ec2(&s.spill_mode),
+                s.idle_bound_secs,
+                now_ms / 1000,
+            ) {
+                Some((handle, _why)) => Ok((
+                    Carry {
+                        phase: Phase::Releasing,
+                    },
+                    vec![Act {
+                        name: RELEASE.into(),
+                        key: format!("roundvm.drain/{handle}"),
+                        input: handle,
+                        deadline_ms: 600_000,
+                        probe: false,
+                    }],
+                )),
                 None => Ok((carry.clone(), vec![])),
             }
         }
-        Input::Outcome { effect, ok: true, .. } if effect == RELEASE && carry.phase == Phase::Releasing => Ok((Carry::default(), vec![])),
-        Input::Outcome { effect, ok: false, body } if effect == RELEASE && carry.phase == Phase::Releasing => Err(format!("{NAME}: in state releasing the release was refused: {body}")),
+        Input::Outcome {
+            effect, ok: true, ..
+        } if effect == RELEASE && carry.phase == Phase::Releasing => Ok((Carry::default(), vec![])),
+        Input::Outcome {
+            effect,
+            ok: false,
+            body,
+        } if effect == RELEASE && carry.phase == Phase::Releasing => Err(format!(
+            "{NAME}: in state releasing the release was refused: {body}"
+        )),
         // A release that outlived its tick answers after the task went back to idle.
         Input::Outcome { effect, .. } if effect == RELEASE => Ok((carry.clone(), vec![])),
-        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
-        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
+        Input::Outcome { effect, .. } => Err(format!(
+            "{NAME}: in state {} an outcome of {effect} is not expected",
+            phase_name(carry.phase)
+        )),
+        Input::Ran(r) => Err(format!(
+            "{NAME}: in state {} no unit is expected, got {:?}",
+            phase_name(carry.phase),
+            r.handle
+        )),
     }
 }
 
 /// The runner of [`OBSERVE`]: the pool's own read under its lock, the world's halt stamp, and
 /// the pinned spill mode and idle bound.
 pub fn observe(run: &std::path::Path, spill_mode: &str, idle_secs: &str) -> Result<String, String> {
-    let idle_bound_secs: u64 = idle_secs.trim().parse().map_err(|_| format!("SPIRA_ROUND_VM_WARM_IDLE_SECS must be whole seconds, got {idle_secs:?}"))?;
+    let idle_bound_secs: u64 = idle_secs.trim().parse().map_err(|_| {
+        format!("SPIRA_ROUND_VM_WARM_IDLE_SECS must be whole seconds, got {idle_secs:?}")
+    })?;
     let pool = round_vm::cli::pool_for(&round_vm::config::Config::load()?);
     let v = pool.drain_view()?;
     let snap = Snapshot {
         world_halted: run.join("world.halted").exists(),
-        ready: v.ready.map(|(handle, since)| Ready { handle, ready_since: since * 1000 }),
+        ready: v.ready.map(|(handle, since)| Ready {
+            handle,
+            ready_since: since * 1000,
+        }),
         leased: v.leased,
         refreshing_alive: v.refreshing_alive,
         spill_mode: spill_mode.trim().to_string(),

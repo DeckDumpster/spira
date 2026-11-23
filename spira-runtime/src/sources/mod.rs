@@ -51,20 +51,33 @@ pub const KEYS: &[&str] = &[
 /// same instance the host's `unit.*` effects run on), and the submission listener (dormant when
 /// `SPIRA_SUBMISSION_ADDR` or its certificate settings are empty), and, when the store views
 /// were installed at boot, the watch that keeps them current (`store.changed`).
-pub fn real(cfg: &dyn Fn(&str) -> Result<String, String>, completions: Arc<dyn UnitCompletions>, clock: Arc<dyn Clock>, store: Option<crate::StoreViews>) -> Result<Sources, String> {
+pub fn real(
+    cfg: &dyn Fn(&str) -> Result<String, String>,
+    completions: Arc<dyn UnitCompletions>,
+    clock: Arc<dyn Clock>,
+    store: Option<crate::StoreViews>,
+) -> Result<Sources, String> {
     let mut s = Sources::default();
-    let mailboxes = mail::mailboxes(&cfg("SPIRA_MAIL_READERS")?, &PathBuf::from(cfg("SPIRA_MAIL")?));
-    s.register(Box::new(MailArrived { mailboxes })).map_err(|e| e.to_string())?;
-    s.register(Box::new(units::over(completions, clock))).map_err(|e| e.to_string())?;
+    let mailboxes = mail::mailboxes(
+        &cfg("SPIRA_MAIL_READERS")?,
+        &PathBuf::from(cfg("SPIRA_MAIL")?),
+    );
+    s.register(Box::new(MailArrived { mailboxes }))
+        .map_err(|e| e.to_string())?;
+    s.register(Box::new(units::over(completions, clock)))
+        .map_err(|e| e.to_string())?;
     let (addr, port) = match spira_submission::Config::from_values(cfg, vec![])? {
         Some(c) => (c.addr.to_string(), c.port),
         None => (String::new(), 0),
     };
-    s.register(Box::new(Submission { addr, port })).map_err(|e| e.to_string())?;
+    s.register(Box::new(Submission { addr, port }))
+        .map_err(|e| e.to_string())?;
     if let Some((views, table)) = store {
-        s.register(Box::new(store_changed::StoreChanged { views, table })).map_err(|e| e.to_string())?;
+        s.register(Box::new(store_changed::StoreChanged { views, table }))
+            .map_err(|e| e.to_string())?;
     }
-    s.register(Box::new(margin_changed::MarginChanged::configured(cfg)?)).map_err(|e| e.to_string())?;
+    s.register(Box::new(margin_changed::MarginChanged::configured(cfg)?))
+        .map_err(|e| e.to_string())?;
     Ok(s)
 }
 
@@ -87,19 +100,62 @@ mod tests {
         };
         let units = || Arc::new(ScriptedUnits::new(clock.clone()));
         let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), None).unwrap();
-        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "margin.changed"]);
-        let views = Arc::new(store_view::Projection::new(spira_store::lc_call::LcClient::socket("no-such-socket"), std::time::Duration::from_secs(1), Arc::new(std::time::Instant::now)));
-        let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), Some((views, Arc::new(crate::store::ChangeTable::default())))).unwrap();
-        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"]);
-        let err = s.into_scripted().err().expect("real sources are refused under virtual time");
-        assert!(["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"].iter().all(|n| err.0.contains(n)), "{err}");
+        assert_eq!(
+            s.names(),
+            ["mail.arrived", "unit.ran", "submission", "margin.changed"]
+        );
+        let views = Arc::new(store_view::Projection::new(
+            spira_store::lc_call::LcClient::socket("no-such-socket"),
+            std::time::Duration::from_secs(1),
+            Arc::new(std::time::Instant::now),
+        ));
+        let s = real(
+            &cfg,
+            units(),
+            Arc::new(runtime::ports::WallClock),
+            Some((views, Arc::new(crate::store::ChangeTable::default()))),
+        )
+        .unwrap();
+        assert_eq!(
+            s.names(),
+            [
+                "mail.arrived",
+                "unit.ran",
+                "submission",
+                "store.changed",
+                "margin.changed"
+            ]
+        );
+        let err = s
+            .into_scripted()
+            .err()
+            .expect("real sources are refused under virtual time");
+        assert!(
+            [
+                "mail.arrived",
+                "unit.ran",
+                "submission",
+                "store.changed",
+                "margin.changed"
+            ]
+            .iter()
+            .all(|n| err.0.contains(n)),
+            "{err}"
+        );
     }
 
     #[test_id(t9p33pf)]
     #[test]
     fn an_unresolvable_key_refuses_the_set_naming_it() {
         let cfg = |k: &str| -> Result<String, String> { Err(format!("{k} is not set")) };
-        let err = real(&cfg, Arc::new(ScriptedUnits::new(Arc::new(VirtualClock::new(0)))), Arc::new(runtime::ports::WallClock), None).err().unwrap();
+        let err = real(
+            &cfg,
+            Arc::new(ScriptedUnits::new(Arc::new(VirtualClock::new(0)))),
+            Arc::new(runtime::ports::WallClock),
+            None,
+        )
+        .err()
+        .unwrap();
         assert!(err.contains("SPIRA_MAIL_READERS"), "{err}");
     }
 }

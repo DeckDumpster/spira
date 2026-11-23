@@ -17,7 +17,10 @@ impl Handler for Ticker {
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         vec![
-            Command::Schedule { at: ev.at + 1000, kind: EventKind::new("tick", "") },
+            Command::Schedule {
+                at: ev.at + 1000,
+                kind: EventKind::new("tick", ""),
+            },
             Command::Emit(EventKind::new("ticked", "ok")),
             Command::Effect(EffectSpec::keyed("write", "write", String::new(), 5000)),
         ]
@@ -39,7 +42,12 @@ impl runtime::Handler for Silent {
     fn interests(&self) -> &[runtime::EventKindTag] {
         &[]
     }
-    fn handle(&self, _: &runtime::Ctx, _: &runtime::Projection, _: &runtime::Event) -> Vec<runtime::Command> {
+    fn handle(
+        &self,
+        _: &runtime::Ctx,
+        _: &runtime::Projection,
+        _: &runtime::Event,
+    ) -> Vec<runtime::Command> {
         vec![]
     }
 }
@@ -49,7 +57,19 @@ impl runtime::Handler for Silent {
 fn status_halt_and_resume_round_trip_over_the_socket() {
     let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
     let board = Arc::new(StatusBoard::default());
-    let mut e = Engine::open(j, Arc::new(clock.clone()), vec![Registration::new("ticker", Ticker).with_effects(&["work", "page"]).with_signal_effects(&["page"]), Registration::new("pager", Silent).with_plane(runtime::Plane::Signal)], 1).unwrap().with_status_board(board.clone());
+    let mut e = Engine::open(
+        j,
+        Arc::new(clock.clone()),
+        vec![
+            Registration::new("ticker", Ticker)
+                .with_effects(&["work", "page"])
+                .with_signal_effects(&["page"]),
+            Registration::new("pager", Silent).with_plane(runtime::Plane::Signal),
+        ],
+        1,
+    )
+    .unwrap()
+    .with_status_board(board.clone());
     let queue: Queue = Arc::default();
     let q = queue.clone();
     let submit: status::SubmitFn = Arc::new(move |id: &str, stream: &str, kind: EventKind| {
@@ -57,15 +77,22 @@ fn status_halt_and_resume_round_trip_over_the_socket() {
         Ok(())
     });
     let dir = testkit::TempDir::new("status-sock");
-    let path = serve(status::Control::new(board.clone(), submit, Arc::new(clock.clone())), &dir);
+    let path = serve(
+        status::Control::new(board.clone(), submit, Arc::new(clock.clone())),
+        &dir,
+    );
 
     let early = lc_call(&path, &["scheduler", "status"]).unwrap_err();
-    assert!(early.0.contains("no turn"), "before the first turn there is no picture: {early}");
+    assert!(
+        early.0.contains("no turn"),
+        "before the first turn there is no picture: {early}"
+    );
 
     e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
     clock.advance_to(40);
     e.run_until_idle().unwrap();
-    let doc: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "status"]).unwrap()).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&lc_call(&path, &["scheduler", "status"]).unwrap()).unwrap();
     assert_eq!(doc["schema"], status::SCHEMA);
     assert_eq!(doc["at"], 40);
     assert_eq!(doc["halted"], false);
@@ -73,38 +100,70 @@ fn status_halt_and_resume_round_trip_over_the_socket() {
     assert_eq!(t["name"], "ticker");
     assert_eq!(t["mode"], "act");
     assert_eq!(t["plane"], "work");
-    assert_eq!(t["effects"], serde_json::json!([{"name": "work", "plane": "work"}, {"name": "page", "plane": "signal"}]), "status names each effect's plane under its task");
-    assert_eq!((doc["tasks"][1]["name"].as_str(), doc["tasks"][1]["plane"].as_str()), (Some("pager"), Some("signal")), "status names each task's plane");
-    assert_eq!((t["last_due_at"].as_u64(), t["last_fired_at"].as_u64(), t["lag_ms"].as_u64()), (Some(0), Some(40), Some(40)));
+    assert_eq!(
+        t["effects"],
+        serde_json::json!([{"name": "work", "plane": "work"}, {"name": "page", "plane": "signal"}]),
+        "status names each effect's plane under its task"
+    );
+    assert_eq!(
+        (
+            doc["tasks"][1]["name"].as_str(),
+            doc["tasks"][1]["plane"].as_str()
+        ),
+        (Some("pager"), Some("signal")),
+        "status names each task's plane"
+    );
+    assert_eq!(
+        (
+            t["last_due_at"].as_u64(),
+            t["last_fired_at"].as_u64(),
+            t["lag_ms"].as_u64()
+        ),
+        (Some(0), Some(40), Some(40))
+    );
     assert_eq!(t["next_due_at"], 1000);
     assert_eq!(t["state"]["tag"], "ticked");
     assert_eq!(t["state"]["body_len"], 2);
     assert_eq!(t["in_flight"].as_array().unwrap().len(), 1);
     assert!(t["last_outcome"].is_null());
-    assert!(t["last_commands"]["returned"].is_u64() && t["last_commands"]["admitted"].is_u64(), "status carries what the last fire returned and the engine admitted: {t}");
-    assert_eq!(doc["classes"][0], serde_json::json!({"class": "host", "depth": 1, "refusals": 0}));
+    assert!(
+        t["last_commands"]["returned"].is_u64() && t["last_commands"]["admitted"].is_u64(),
+        "status carries what the last fire returned and the engine admitted: {t}"
+    );
+    assert_eq!(
+        doc["classes"][0],
+        serde_json::json!({"class": "host", "depth": 1, "refusals": 0})
+    );
 
     assert!(lc_call(&path, &["scheduler", "halt", "maintenance"]).is_ok());
     for (id, stream, kind) in queue.lock().unwrap().drain(..) {
         e.submit(&id, &stream, kind).unwrap();
     }
     e.run_until_idle().unwrap();
-    let doc: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "status"]).unwrap()).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&lc_call(&path, &["scheduler", "status"]).unwrap()).unwrap();
     assert_eq!(doc["halted"], true, "the halt verb journals a halt: {doc}");
 
     assert!(lc_call(&path, &["scheduler", "resume"]).is_ok());
     let ids: Vec<String> = queue.lock().unwrap().iter().map(|q| q.0.clone()).collect();
     for (id, stream, kind) in queue.lock().unwrap().drain(..) {
-        assert_eq!((stream.as_str(), kind.tag.as_str()), (HALT_STREAM, SCHEDULER_RESUMED));
+        assert_eq!(
+            (stream.as_str(), kind.tag.as_str()),
+            (HALT_STREAM, SCHEDULER_RESUMED)
+        );
         e.submit(&id, &stream, kind).unwrap();
     }
     e.run_until_idle().unwrap();
-    let doc: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "status"]).unwrap()).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&lc_call(&path, &["scheduler", "status"]).unwrap()).unwrap();
     assert_eq!(doc["halted"], false);
     assert_eq!(ids.len(), 1);
 
     let unknown = lc_call(&path, &["scheduler", "explode"]).unwrap_err();
-    assert!(unknown.is_refused(), "an unknown verb is refused: {unknown}");
+    assert!(
+        unknown.is_refused(),
+        "an unknown verb is refused: {unknown}"
+    );
 }
 
 struct Passed(&'static str);
@@ -120,24 +179,40 @@ impl Handler for Passed {
 fn bound_rig(body: &'static str) -> (Engine, std::path::PathBuf, testkit::TempDir, VirtualClock) {
     let clock = VirtualClock::new(0);
     let board = Arc::new(StatusBoard::default());
-    let e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("sentinel-call", Passed(body))], 1).unwrap().with_status_board(board.clone());
+    let e = Engine::open(
+        MemJournal::new(),
+        Arc::new(clock.clone()),
+        vec![Registration::new("sentinel-call", Passed(body))],
+        1,
+    )
+    .unwrap()
+    .with_status_board(board.clone());
     let submit: status::SubmitFn = Arc::new(|_: &str, _: &str, _: EventKind| Ok(()));
     let dir = testkit::TempDir::new("bound-sock");
-    let path = serve(status::Control::new(board, submit, Arc::new(clock.clone())), &dir);
+    let path = serve(
+        status::Control::new(board, submit, Arc::new(clock.clone())),
+        &dir,
+    );
     (e, path, dir, clock)
 }
 
 #[test_id(tb2sln6)]
 #[test]
 fn scheduler_bound_answers_the_carried_array_and_refuses_before_the_first_pass() {
-    let (mut e, path, _dir, clock) = bound_rig(r#"{"bound":[{"class":"build-disk","limit":7,"held":9,"waiting":3,"over":true}]}"#);
+    let (mut e, path, _dir, clock) = bound_rig(
+        r#"{"bound":[{"class":"build-disk","limit":7,"held":9,"waiting":3,"over":true}]}"#,
+    );
     let early = lc_call(&path, &["scheduler", "bound"]).unwrap_err();
     assert!(early.0.contains("no call pass has run yet"), "{early}");
     e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
     clock.advance_to(10);
     e.run_until_idle().unwrap();
-    let got: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "bound"]).unwrap()).unwrap();
-    assert_eq!(got, serde_json::json!([{"class": "build-disk", "limit": 7, "held": 9, "waiting": 3, "over": true}]));
+    let got: serde_json::Value =
+        serde_json::from_str(&lc_call(&path, &["scheduler", "bound"]).unwrap()).unwrap();
+    assert_eq!(
+        got,
+        serde_json::json!([{"class": "build-disk", "limit": 7, "held": 9, "waiting": 3, "over": true}])
+    );
 }
 
 #[test_id(t2bykgh)]
@@ -154,14 +229,19 @@ fn scheduler_bound_refuses_when_the_carry_holds_no_pass() {
 #[test_id(t4vt9dn)]
 #[test]
 fn scheduler_uncalled_refuses_before_the_first_pass_and_answers_the_carried_map() {
-    let (mut e, path, _dir, clock) = bound_rig(r#"{"uncalled":{"skuld":"yielding — urgent bead(s) unclaimed: sp-x"}}"#);
+    let (mut e, path, _dir, clock) =
+        bound_rig(r#"{"uncalled":{"skuld":"yielding — urgent bead(s) unclaimed: sp-x"}}"#);
     let early = lc_call(&path, &["scheduler", "uncalled"]).unwrap_err();
     assert!(early.0.contains("no call pass has run yet"), "{early}");
     e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
     clock.advance_to(10);
     e.run_until_idle().unwrap();
-    let got: serde_json::Value = serde_json::from_str(&lc_call(&path, &["scheduler", "uncalled"]).unwrap()).unwrap();
-    assert_eq!(got, serde_json::json!({"skuld": "yielding — urgent bead(s) unclaimed: sp-x"}));
+    let got: serde_json::Value =
+        serde_json::from_str(&lc_call(&path, &["scheduler", "uncalled"]).unwrap()).unwrap();
+    assert_eq!(
+        got,
+        serde_json::json!({"skuld": "yielding — urgent bead(s) unclaimed: sp-x"})
+    );
 }
 
 #[test_id(t47mitc)]
@@ -171,15 +251,41 @@ fn the_reconciler_host_reads_uncalled_from_the_carry_scheduler_uncalled_serves()
     let clock = VirtualClock::new(0);
     let board = Arc::new(StatusBoard::default());
     let body = r#"{"uncalled":{"mender":"yielding — urgent bead(s) unclaimed: sp-x"}}"#;
-    let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("sentinel-call", Passed(body))], 1).unwrap().with_status_board(board.clone());
-    let mut host = spira_runtime::reconcile_host::RuntimeHost::new(Default::default(), Default::default(), None, std::path::PathBuf::new(), String::new(), 0, 0, String::new(), Default::default());
-    assert!(host.uncalled().is_none(), "a host with no board cannot tell");
+    let mut e = Engine::open(
+        MemJournal::new(),
+        Arc::new(clock.clone()),
+        vec![Registration::new("sentinel-call", Passed(body))],
+        1,
+    )
+    .unwrap()
+    .with_status_board(board.clone());
+    let mut host = spira_runtime::reconcile_host::RuntimeHost::new(
+        Default::default(),
+        Default::default(),
+        None,
+        std::path::PathBuf::new(),
+        String::new(),
+        0,
+        0,
+        String::new(),
+        Default::default(),
+    );
+    assert!(
+        host.uncalled().is_none(),
+        "a host with no board cannot tell"
+    );
     host.board = Some(board);
-    assert_eq!(host.uncalled(), Some(Err("cannot tell: no call pass has run yet".into())));
+    assert_eq!(
+        host.uncalled(),
+        Some(Err("cannot tell: no call pass has run yet".into()))
+    );
     e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
     clock.advance_to(10);
     e.run_until_idle().unwrap();
-    let want = std::collections::BTreeMap::from([("mender".to_string(), "yielding — urgent bead(s) unclaimed: sp-x".to_string())]);
+    let want = std::collections::BTreeMap::from([(
+        "mender".to_string(),
+        "yielding — urgent bead(s) unclaimed: sp-x".to_string(),
+    )]);
     assert_eq!(host.uncalled(), Some(Ok(want)));
 }
 
@@ -189,8 +295,28 @@ fn the_reconciler_host_names_a_carry_it_cannot_decode() {
     use reconciler::Host;
     let clock = VirtualClock::new(0);
     let board = Arc::new(StatusBoard::default());
-    let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![Registration::new("sentinel-call", Passed(r#"{"uncalled":7}"#))], 1).unwrap().with_status_board(board.clone());
-    let mut host = spira_runtime::reconcile_host::RuntimeHost::new(Default::default(), Default::default(), None, std::path::PathBuf::new(), String::new(), 0, 0, String::new(), Default::default());
+    let mut e = Engine::open(
+        MemJournal::new(),
+        Arc::new(clock.clone()),
+        vec![Registration::new(
+            "sentinel-call",
+            Passed(r#"{"uncalled":7}"#),
+        )],
+        1,
+    )
+    .unwrap()
+    .with_status_board(board.clone());
+    let mut host = spira_runtime::reconcile_host::RuntimeHost::new(
+        Default::default(),
+        Default::default(),
+        None,
+        std::path::PathBuf::new(),
+        String::new(),
+        0,
+        0,
+        String::new(),
+        Default::default(),
+    );
     host.board = Some(board);
     e.submit("t1", "t", EventKind::new("tick", "")).unwrap();
     clock.advance_to(10);

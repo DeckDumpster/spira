@@ -38,21 +38,34 @@ fn read_units(bus: Option<&str>) -> Result<Units, String> {
     let mut conn = Conn::connect(&bus.map_or_else(bus_path, |b| Ok(b.to_string()))?)?;
     let mut active = BTreeMap::new();
     let listed = conn.call(SYSTEMD, MANAGER_PATH, MANAGER, "ListUnits", None)?;
-    let Some(Val::Arr(units)) = listed.first() else { return Err("ListUnits: unexpected reply".into()) };
+    let Some(Val::Arr(units)) = listed.first() else {
+        return Err("ListUnits: unexpected reply".into());
+    };
     for u in units {
         if let Val::Struct(f) = u {
-            if let (Some(name), Some(state)) = (f.first().and_then(Val::as_str), f.get(3).and_then(Val::as_str)) {
+            if let (Some(name), Some(state)) = (
+                f.first().and_then(Val::as_str),
+                f.get(3).and_then(Val::as_str),
+            ) {
                 active.insert(name.to_string(), state.to_string());
             }
         }
     }
     let mut files = BTreeMap::new();
     let listed = conn.call(SYSTEMD, MANAGER_PATH, MANAGER, "ListUnitFiles", None)?;
-    let Some(Val::Arr(entries)) = listed.first() else { return Err("ListUnitFiles: unexpected reply".into()) };
+    let Some(Val::Arr(entries)) = listed.first() else {
+        return Err("ListUnitFiles: unexpected reply".into());
+    };
     for e in entries {
         if let Val::Struct(f) = e {
-            if let (Some(path), Some(state)) = (f.first().and_then(Val::as_str), f.get(1).and_then(Val::as_str)) {
-                files.insert(path.rsplit('/').next().unwrap_or(path).to_string(), state.to_string());
+            if let (Some(path), Some(state)) = (
+                f.first().and_then(Val::as_str),
+                f.get(1).and_then(Val::as_str),
+            ) {
+                files.insert(
+                    path.rsplit('/').next().unwrap_or(path).to_string(),
+                    state.to_string(),
+                );
             }
         }
     }
@@ -88,12 +101,38 @@ pub struct RuntimeHost {
 
 impl RuntimeHost {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(world: World, forge: Forge, mail: Option<Arc<mail::env::Env>>, home: PathBuf, runes: String, stranded_min_age: u64, now: u64, enabled: String, landrefs: Arc<Landrefs>) -> RuntimeHost {
-        RuntimeHost { world, forge, mail, home, runes, stranded_min_age, now, enabled, landrefs, bus: None, board: None, units: OnceLock::new() }
+    pub fn new(
+        world: World,
+        forge: Forge,
+        mail: Option<Arc<mail::env::Env>>,
+        home: PathBuf,
+        runes: String,
+        stranded_min_age: u64,
+        now: u64,
+        enabled: String,
+        landrefs: Arc<Landrefs>,
+    ) -> RuntimeHost {
+        RuntimeHost {
+            world,
+            forge,
+            mail,
+            home,
+            runes,
+            stranded_min_age,
+            now,
+            enabled,
+            landrefs,
+            bus: None,
+            board: None,
+            units: OnceLock::new(),
+        }
     }
 
     fn units(&self) -> Result<&Units, String> {
-        self.units.get_or_init(|| read_units(self.bus.as_deref())).as_ref().map_err(Clone::clone)
+        self.units
+            .get_or_init(|| read_units(self.bus.as_deref()))
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
     /// The repository registry from the map and home repo this service pinned at start, not from a
@@ -109,7 +148,9 @@ impl RuntimeHost {
         if let Some((_, v)) = cache.get(name).filter(|(at, _)| at.elapsed() < LANDREF_TTL) {
             return v.clone();
         }
-        let value = spira_config::repos::landref(&self.registry(), name).map(|v| format!("{v}\n")).unwrap_or_default();
+        let value = spira_config::repos::landref(&self.registry(), name)
+            .map(|v| format!("{v}\n"))
+            .unwrap_or_default();
         cache.insert(name.to_string(), (Instant::now(), value.clone()));
         value
     }
@@ -133,7 +174,8 @@ fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
     active
         .iter()
         .filter(|(name, state)| {
-            runtime::units::is_live_dwarf(name, runtime::units::state_of_word(state)) && runtime::units::is_dwarf_of(name, rune, rune)
+            runtime::units::is_live_dwarf(name, runtime::units::state_of_word(state))
+                && runtime::units::is_dwarf_of(name, rune, rune)
         })
         .count() as i64
 }
@@ -143,15 +185,24 @@ fn live_dwarves(active: &BTreeMap<String, String>, rune: &str) -> i64 {
 /// socket is no harm: it is only an identity to hold a healthy answer under, and a held answer is
 /// only ever one tmux gave.
 fn tmux_server_identity() -> Option<String> {
-    let dir = std::env::var_os("TMUX_TMPDIR").filter(|d| !d.is_empty()).map_or_else(|| PathBuf::from(system_paths::TMP), PathBuf::from);
+    let dir = std::env::var_os("TMUX_TMPDIR")
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| PathBuf::from(system_paths::TMP), PathBuf::from);
     tmux_socket_identity(&dir.join(format!("tmux-{}", unsafe { libc::getuid() })))
 }
 
 fn tmux_socket_identity(socket_dir: &Path) -> Option<String> {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
     let socket = socket_dir.join("default");
-    let meta = fs::metadata(&socket).ok().filter(|m| m.file_type().is_socket())?;
-    Some(format!("{}:{}.{}", meta.ino(), meta.ctime(), meta.ctime_nsec()))
+    let meta = fs::metadata(&socket)
+        .ok()
+        .filter(|m| m.file_type().is_socket())?;
+    Some(format!(
+        "{}:{}.{}",
+        meta.ino(),
+        meta.ctime(),
+        meta.ctime_nsec()
+    ))
 }
 
 pub fn send_mail(env: Option<&mail::env::Env>, m: &Mail) -> Result<(), String> {
@@ -169,21 +220,35 @@ pub fn send_mail(env: Option<&mail::env::Env>, m: &Mail) -> Result<(), String> {
         dry_run: false,
         requested_by: "",
     };
-    let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+    let bd = mail::bead::BdCli {
+        bdq: String::new(),
+        conn_retries: 1,
+    };
     mail::cmds::send(&bd, env, &args, m.body.clone()).map(|_| ())
 }
 
 impl RuntimeHost {
     /// Starts per rune whose unit is not yet live: a live one is already in `dwarf_count`.
-    pub fn starts_not_yet_live(&self, in_flight: &BTreeMap<String, String>) -> BTreeMap<String, u64> {
-        not_yet_live(in_flight, &self.units().map(|u| u.active.clone()).unwrap_or_default())
+    pub fn starts_not_yet_live(
+        &self,
+        in_flight: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, u64> {
+        not_yet_live(
+            in_flight,
+            &self.units().map(|u| u.active.clone()).unwrap_or_default(),
+        )
     }
 }
 
-fn not_yet_live(in_flight: &BTreeMap<String, String>, active: &BTreeMap<String, String>) -> BTreeMap<String, u64> {
+fn not_yet_live(
+    in_flight: &BTreeMap<String, String>,
+    active: &BTreeMap<String, String>,
+) -> BTreeMap<String, u64> {
     let mut starting = BTreeMap::new();
     for (unit, rune) in in_flight {
-        let live = active.get(unit).is_some_and(|state| runtime::units::is_live_dwarf(unit, runtime::units::state_of_word(state)));
+        let live = active.get(unit).is_some_and(|state| {
+            runtime::units::is_live_dwarf(unit, runtime::units::state_of_word(state))
+        });
         if !live {
             *starting.entry(rune.clone()).or_insert(0) += 1;
         }
@@ -194,7 +259,11 @@ fn not_yet_live(in_flight: &BTreeMap<String, String>, active: &BTreeMap<String, 
 impl Host for RuntimeHost {
     fn uncalled(&self) -> Option<Result<BTreeMap<String, String>, String>> {
         let board = self.board.as_ref()?;
-        Some(crate::status::sentinel_carry(board).map_err(|e| e.to_string()).and_then(|c| c.uncalled.ok_or_else(|| crate::status::NO_PASS.to_string())))
+        Some(
+            crate::status::sentinel_carry(board)
+                .map_err(|e| e.to_string())
+                .and_then(|c| c.uncalled.ok_or_else(|| crate::status::NO_PASS.to_string())),
+        )
     }
 
     fn unit_listing(&self) -> Result<(), String> {
@@ -204,13 +273,32 @@ impl Host for RuntimeHost {
     fn unit_state(&self, verb: &str, unit: &str) -> Result<String, String> {
         let units = self.units()?;
         let word = match verb {
-            "is-active" => units.active.get(unit).cloned().unwrap_or_else(|| "inactive".into()),
+            "is-active" => units
+                .active
+                .get(unit)
+                .cloned()
+                .unwrap_or_else(|| "inactive".into()),
             "is-enabled" => match units.files.get(unit) {
                 Some(state) => state.clone(),
                 None => {
-                    let mut conn = Conn::connect(&self.bus.as_deref().map_or_else(bus_path, |b| Ok(b.to_string()))?)?;
-                    let reply = conn.call(SYSTEMD, MANAGER_PATH, MANAGER, "GetUnitFileState", Some(unit))?;
-                    reply.first().and_then(Val::as_str).map(str::to_string).ok_or_else(|| format!("GetUnitFileState {unit}: no state in reply"))?
+                    let mut conn = Conn::connect(
+                        &self
+                            .bus
+                            .as_deref()
+                            .map_or_else(bus_path, |b| Ok(b.to_string()))?,
+                    )?;
+                    let reply = conn.call(
+                        SYSTEMD,
+                        MANAGER_PATH,
+                        MANAGER,
+                        "GetUnitFileState",
+                        Some(unit),
+                    )?;
+                    reply
+                        .first()
+                        .and_then(Val::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("GetUnitFileState {unit}: no state in reply"))?
                 }
             },
             other => return Err(format!("no in-process read for systemctl {other}")),
@@ -218,7 +306,9 @@ impl Host for RuntimeHost {
         if reconciler::is_state_word(&word) {
             Ok(word)
         } else {
-            Err(format!("systemd {verb} {unit}: unrecognised state {word:?}"))
+            Err(format!(
+                "systemd {verb} {unit}: unrecognised state {word:?}"
+            ))
         }
     }
 
@@ -244,13 +334,24 @@ impl Host for RuntimeHost {
                 }
             };
         };
-        let Ok(rows) = self.lc(&["list", "--state", "CERTIFIED"]) else { return String::new() };
-        let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&rows) else { return String::new() };
+        let Ok(rows) = self.lc(&["list", "--state", "CERTIFIED"]) else {
+            return String::new();
+        };
+        let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&rows) else {
+            return String::new();
+        };
         branches
             .iter()
             .filter_map(|(b, _)| b.strip_prefix("spira/"))
             .filter_map(|id| rows.iter().find(|r| r["bead_id"] == id))
-            .map(|r| format!("{} {} {}\n", r["bead_id"].as_str().unwrap_or(""), r["tip"].as_str().unwrap_or(""), r["since"].as_f64().unwrap_or(0.0) as u64))
+            .map(|r| {
+                format!(
+                    "{} {} {}\n",
+                    r["bead_id"].as_str().unwrap_or(""),
+                    r["tip"].as_str().unwrap_or(""),
+                    r["since"].as_f64().unwrap_or(0.0) as u64
+                )
+            })
             .collect()
     }
 
@@ -259,8 +360,14 @@ impl Host for RuntimeHost {
         match argv {
             ["rune", "task"] => runes::spira_task_runes(&self.home, roster),
             ["rune", "reactive"] => runes::spira_reactive_runes(&self.home, roster),
-            ["rune", "partitions"] => runes::rune_partitions(&self.home, roster).into_iter().map(|(labels, exclude)| format!("{labels}\t{exclude}\n")).collect(),
-            ["rune", "for-labels", labels] => runes::runes_for_labels(&self.home, labels).into_iter().map(|f| format!("{f}\n")).collect(),
+            ["rune", "partitions"] => runes::rune_partitions(&self.home, roster)
+                .into_iter()
+                .map(|(labels, exclude)| format!("{labels}\t{exclude}\n"))
+                .collect(),
+            ["rune", "for-labels", labels] => runes::runes_for_labels(&self.home, labels)
+                .into_iter()
+                .map(|f| format!("{f}\n"))
+                .collect(),
             ["repo", "landref", name] => self.landref(name),
             other => match spira_config::release_env::tool("spira-config") {
                 Ok(t) => reconciler::run_cmd(&t, other),
@@ -273,20 +380,32 @@ impl Host for RuntimeHost {
     }
 
     fn stranded_runners(&self, repo: &Path) -> String {
-        let Some(slug) = slug(repo) else { return String::new() };
-        let lines = self.forge.stranded_runners(&slug, self.now, self.stranded_min_age);
+        let Some(slug) = slug(repo) else {
+            return String::new();
+        };
+        let lines = self
+            .forge
+            .stranded_runners(&slug, self.now, self.stranded_min_age);
         self.forge.report_spend();
         lines.into_iter().map(|l| format!("{l}\n")).collect()
     }
 
     fn forge_ci_in_flight(&self, repo_name: &str) -> Result<bool, String> {
         let views = store_view::shared().ok_or("no store view is loaded")?;
-        let shown = views.batch_view(repo_name).map_err(|e| format!("batch view of {repo_name}: {e}"))?.value.shown();
-        let batch_pr = shown.lines().filter_map(|l| l.split_once('=')).any(|(k, v)| k == "pr" && !v.trim().is_empty());
+        let shown = views
+            .batch_view(repo_name)
+            .map_err(|e| format!("batch view of {repo_name}: {e}"))?
+            .value
+            .shown();
+        let batch_pr = shown
+            .lines()
+            .filter_map(|l| l.split_once('='))
+            .any(|(k, v)| k == "pr" && !v.trim().is_empty());
         if batch_pr {
             return Ok(true);
         }
-        let record = queue::records::read_kv(&self.world.queue_dir.join(repo_name).join("publish"))?;
+        let record =
+            queue::records::read_kv(&self.world.queue_dir.join(repo_name).join("publish"))?;
         Ok(record.is_some_and(|kv| kv.get_first("pr").is_some_and(|v| !v.trim().is_empty())))
     }
 
@@ -303,8 +422,14 @@ impl Host for RuntimeHost {
     }
 
     fn ready_rows(&self, labels: &str, exclude: &str) -> Option<Vec<(String, String)>> {
-        let argv = ["ready-count".to_string(), labels.to_string(), exclude.to_string(), "--json".to_string()];
-        let out = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+        let argv = [
+            "ready-count".to_string(),
+            labels.to_string(),
+            exclude.to_string(),
+            "--json".to_string(),
+        ];
+        let out =
+            spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
         Some(reconciler::parse_ready_rows(&out.out))
     }
 
@@ -337,26 +462,57 @@ mod tests {
     #[test_id(tn4efjk)]
     #[test]
     fn a_start_already_live_is_not_counted_twice_as_a_start_in_flight() {
-        let unit = |rune: &str, n: u32| runtime::units::unit_name("sentinel-call", &format!("{rune}-1000-{n}")).unwrap();
-        let in_flight: BTreeMap<String, String> = [(unit("builder", 0), "builder".to_string()), (unit("builder", 1), "builder".to_string()), (unit("ops", 0), "ops".to_string())].into();
-        let active: BTreeMap<String, String> = [(unit("builder", 0), "active".to_string()), (unit("ops", 0), "inactive".to_string())].into();
-        assert_eq!(not_yet_live(&in_flight, &active), BTreeMap::from([("builder".to_string(), 1), ("ops".to_string(), 1)]));
+        let unit = |rune: &str, n: u32| {
+            runtime::units::unit_name("sentinel-call", &format!("{rune}-1000-{n}")).unwrap()
+        };
+        let in_flight: BTreeMap<String, String> = [
+            (unit("builder", 0), "builder".to_string()),
+            (unit("builder", 1), "builder".to_string()),
+            (unit("ops", 0), "ops".to_string()),
+        ]
+        .into();
+        let active: BTreeMap<String, String> = [
+            (unit("builder", 0), "active".to_string()),
+            (unit("ops", 0), "inactive".to_string()),
+        ]
+        .into();
+        assert_eq!(
+            not_yet_live(&in_flight, &active),
+            BTreeMap::from([("builder".to_string(), 1), ("ops".to_string(), 1)])
+        );
     }
 
     #[test_id(t8g45l8)]
     #[test]
     fn a_unit_listing_that_cannot_reach_the_bus_is_an_error_from_the_one_cached_read() {
         let d = testkit::TempDir::new("host-listing");
-        let mut host = RuntimeHost::new(World::default(), Forge::default(), None, d.path().to_path_buf(), String::new(), 0, 0, String::new(), Default::default());
+        let mut host = RuntimeHost::new(
+            World::default(),
+            Forge::default(),
+            None,
+            d.path().to_path_buf(),
+            String::new(),
+            0,
+            0,
+            String::new(),
+            Default::default(),
+        );
         host.bus = Some(d.join("no-such-bus").display().to_string());
         let listing = host.unit_listing().unwrap_err();
-        assert_eq!(host.unit_state("is-enabled", "spira-x.timer").unwrap_err(), listing);
+        assert_eq!(
+            host.unit_state("is-enabled", "spira-x.timer").unwrap_err(),
+            listing
+        );
     }
 
     #[test_id(trn44bc)]
     #[test]
     fn dwarves_of_a_rune_are_the_live_units_of_that_name_a_directed_one_included() {
-        let units = |l: &[(&str, &str)]| l.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect::<BTreeMap<_, _>>();
+        let units = |l: &[(&str, &str)]| {
+            l.iter()
+                .map(|(n, s)| (n.to_string(), s.to_string()))
+                .collect::<BTreeMap<_, _>>()
+        };
         let active = units(&[
             ("spira-dwarf-builder-1.service", "active"),
             ("spira-dwarf-builder-2.service", "activating"),
@@ -367,7 +523,11 @@ mod tests {
             ("spira-dwarf-other-7.service", "active"),
             ("unrelated.service", "active"),
         ]);
-        assert_eq!(live_dwarves(&active, "builder"), 3, "two pooled and the directed one");
+        assert_eq!(
+            live_dwarves(&active, "builder"),
+            3,
+            "two pooled and the directed one"
+        );
         assert_eq!(live_dwarves(&active, "other"), 1);
         assert_eq!(live_dwarves(&active, "nobody"), 0);
     }
@@ -376,10 +536,18 @@ mod tests {
     #[test]
     fn a_tmux_socket_has_an_identity_and_a_missing_or_plain_file_has_none() {
         let d = testkit::TempDir::new("host-tmux");
-        assert_eq!(tmux_socket_identity(&d.join("tmux-1")), None, "no directory, no server");
+        assert_eq!(
+            tmux_socket_identity(&d.join("tmux-1")),
+            None,
+            "no directory, no server"
+        );
         fs::create_dir_all(d.join("tmux-1")).unwrap();
         fs::write(d.join("tmux-1/default"), "").unwrap();
-        assert_eq!(tmux_socket_identity(&d.join("tmux-1")), None, "a plain file is not a server");
+        assert_eq!(
+            tmux_socket_identity(&d.join("tmux-1")),
+            None,
+            "a plain file is not a server"
+        );
         fs::remove_file(d.join("tmux-1/default")).unwrap();
         let _listener = std::os::unix::net::UnixListener::bind(d.join("tmux-1/default")).unwrap();
         assert!(tmux_socket_identity(&d.join("tmux-1")).is_some());
@@ -390,7 +558,17 @@ mod tests {
     fn head_names_its_branch_and_a_detached_head_is_head() {
         let d = testkit::TempDir::new("host-head");
         fs::create_dir_all(d.join(".git")).unwrap();
-        let host = RuntimeHost::new(World::default(), Forge::default(), None, d.path().to_path_buf(), String::new(), 0, 0, String::new(), Default::default());
+        let host = RuntimeHost::new(
+            World::default(),
+            Forge::default(),
+            None,
+            d.path().to_path_buf(),
+            String::new(),
+            0,
+            0,
+            String::new(),
+            Default::default(),
+        );
         fs::write(d.join(".git/HEAD"), "ref: refs/heads/feature/x\n").unwrap();
         assert_eq!(host.head_branch(d.path()).as_deref(), Some("feature/x"));
         fs::write(d.join(".git/HEAD"), format!("{}\n", "d".repeat(40))).unwrap();

@@ -45,27 +45,56 @@ pub fn decide(carry: &Carry, failure: Option<&str>) -> (Carry, Option<String>) {
     match failure {
         None => (Carry::default(), None),
         Some(f) if f == carry.said => (carry.clone(), None),
-        Some(f) => (Carry { said: f.to_string() }, Some(format!("overrides: apply pass failed: {f}"))),
+        Some(f) => (
+            Carry {
+                said: f.to_string(),
+            },
+            Some(format!("overrides: apply pass failed: {f}")),
+        ),
     }
 }
 
 impl Handler for Overrides {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, runtime::units::UNIT_RAN, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[
+            TICK,
+            runtime::units::UNIT_RAN,
+            EFFECT_SUCCEEDED,
+            EFFECT_FAILED,
+            EFFECT_TIMED_OUT,
+        ]
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == runtime::units::UNIT_RAN {
-            let landed = runtime::units::UnitRan::from_event_kind(&ev.kind).is_some_and(|r| r.handle.name == LANDING_UNIT);
-            return if landed { vec![Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:land:{}", ev.at), String::new(), DEADLINE_MS))] } else { vec![] };
+            let landed = runtime::units::UnitRan::from_event_kind(&ev.kind)
+                .is_some_and(|r| r.handle.name == LANDING_UNIT);
+            return if landed {
+                vec![Command::Effect(EffectSpec::keyed(
+                    APPLY,
+                    format!("{NAME}:land:{}", ev.at),
+                    String::new(),
+                    DEADLINE_MS,
+                ))]
+            } else {
+                vec![]
+            };
         }
         if ev.stream.0 != STREAM {
             return vec![];
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:apply:{}", ev.at), String::new(), DEADLINE_MS)),
-                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Effect(EffectSpec::keyed(
+                    APPLY,
+                    format!("{NAME}:apply:{}", ev.at),
+                    String::new(),
+                    DEADLINE_MS,
+                )),
+                Command::Timer {
+                    at: ev.at + self.interval_ms,
+                    kind: EventKind::new(TICK, ""),
+                },
             ];
         }
         if answered_effect(view, ev).as_deref() != Some(APPLY) {
@@ -80,13 +109,26 @@ impl Handler for Overrides {
         };
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, say) = decide(&carry, failure.as_deref());
-        ctx.event().set("overrides.failed", u64::from(failure.is_some()));
+        ctx.event()
+            .set("overrides.failed", u64::from(failure.is_some()));
         let mut cmds = vec![];
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+            cmds.push(Command::Emit(EventKind::new(
+                STATE,
+                &serde_json::to_string(&next).unwrap_or_default(),
+            )));
         }
         if let Some(m) = say {
-            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", ev.at / 1000, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(ev.at / 1000)), 10_000)));
+            cmds.push(Command::Effect(EffectSpec::keyed(
+                INBOX_APPEND,
+                format!(
+                    "{NAME}:inbox:{}:{:016x}",
+                    ev.at / 1000,
+                    runtime::event::fnv1a(&m)
+                ),
+                format!("{} [watch:{NAME}] {m}", iso8601(ev.at / 1000)),
+                10_000,
+            )));
         }
         cmds
     }
@@ -102,11 +144,18 @@ mod tests {
     fn a_failure_is_said_once_until_it_changes_or_clears() {
         let (c, say) = decide(&Carry::default(), Some("bead sp-x is not in the store"));
         assert!(say.is_some_and(|m| m.contains("sp-x")));
-        assert!(decide(&c, Some("bead sp-x is not in the store")).1.is_none());
+        assert!(decide(&c, Some("bead sp-x is not in the store"))
+            .1
+            .is_none());
         assert!(decide(&c, Some("another")).1.is_some());
         let (cleared, none) = decide(&c, None);
         assert_eq!((cleared.clone(), none), (Carry::default(), None));
-        assert!(decide(&cleared, Some("bead sp-x is not in the store")).1.is_some(), "a failure that returns after success is said again");
+        assert!(
+            decide(&cleared, Some("bead sp-x is not in the store"))
+                .1
+                .is_some(),
+            "a failure that returns after success is said again"
+        );
     }
 
     #[test_id(tdxxe8w)]
@@ -114,11 +163,23 @@ mod tests {
     fn every_tick_asks_for_a_pass_and_schedules_the_next() {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal};
-        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(VirtualClock::new(1_800_000_000_000)), vec![Overrides { interval_ms: 1000 }.registration()], 0).unwrap();
+        let mut e = Engine::open(
+            MemJournal::new(),
+            std::sync::Arc::new(VirtualClock::new(1_800_000_000_000)),
+            vec![Overrides { interval_ms: 1000 }.registration()],
+            0,
+        )
+        .unwrap();
         let (id, stream, kind) = Overrides::boot();
         e.submit(id, stream, kind).unwrap();
         e.run_until_idle().unwrap();
-        assert_eq!(e.pending_effects().iter().filter(|p| p.spec.name == APPLY).count(), 1);
+        assert_eq!(
+            e.pending_effects()
+                .iter()
+                .filter(|p| p.spec.name == APPLY)
+                .count(),
+            1
+        );
     }
 
     #[test_id(t472fvw)]
@@ -127,47 +188,89 @@ mod tests {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal, Outcome};
         let clock = VirtualClock::new(1_800_000_000_000);
-        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![Overrides { interval_ms: 1000 }.registration()], 0).unwrap();
+        let mut e = Engine::open(
+            MemJournal::new(),
+            std::sync::Arc::new(clock.clone()),
+            vec![Overrides { interval_ms: 1000 }.registration()],
+            0,
+        )
+        .unwrap();
         let (id, stream, kind) = Overrides::boot();
         e.submit(id, stream, kind).unwrap();
         e.run_until_idle().unwrap();
         for _ in 0..2 {
             clock.advance(1000);
             e.run_until_idle().unwrap();
-            let apply = e.pending_effects().into_iter().find(|p| p.spec.name == APPLY).unwrap();
-            e.complete(&apply.key, Outcome::Failed("overrides: ghost: bead sp-x is not in the store".into())).unwrap();
+            let apply = e
+                .pending_effects()
+                .into_iter()
+                .find(|p| p.spec.name == APPLY)
+                .unwrap();
+            e.complete(
+                &apply.key,
+                Outcome::Failed("overrides: ghost: bead sp-x is not in the store".into()),
+            )
+            .unwrap();
             e.run_until_idle().unwrap();
         }
-        let said: Vec<_> = e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).collect();
-        assert_eq!(said.len(), 1, "the same failure on the next pass is not said again");
+        let said: Vec<_> = e
+            .pending_effects()
+            .into_iter()
+            .filter(|p| p.spec.name == INBOX_APPEND)
+            .collect();
+        assert_eq!(
+            said.len(),
+            1,
+            "the same failure on the next pass is not said again"
+        );
         assert!(said[0].spec.input.contains("bead sp-x is not in the store"));
     }
 
     fn ran(unit: &str) -> EventKind {
         use runtime::units::{Exit, UnitHandle, UnitRan};
-        UnitRan { handle: UnitHandle::named(unit), exit: Exit::Code(0), duration_ms: 1 }.event_kind()
+        UnitRan {
+            handle: UnitHandle::named(unit),
+            exit: Exit::Code(0),
+            duration_ms: 1,
+        }
+        .event_kind()
     }
 
     fn engine(interval_ms: u64) -> (runtime::ports::VirtualClock, runtime::Engine) {
         use runtime::ports::VirtualClock;
         let clock = VirtualClock::new(1_800_000_000_000);
-        let e = runtime::Engine::open(runtime::MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![Overrides { interval_ms }.registration()], 0).unwrap();
+        let e = runtime::Engine::open(
+            runtime::MemJournal::new(),
+            std::sync::Arc::new(clock.clone()),
+            vec![Overrides { interval_ms }.registration()],
+            0,
+        )
+        .unwrap();
         (clock, e)
     }
 
     fn applies(e: &runtime::Engine) -> usize {
         use runtime::Executor;
-        e.pending_effects().iter().filter(|p| p.spec.name == APPLY).count()
+        e.pending_effects()
+            .iter()
+            .filter(|p| p.spec.name == APPLY)
+            .count()
     }
 
     #[test_id(tdgq78j)]
     #[test]
     fn the_land_leg_ending_asks_for_one_pass_and_another_unit_asks_for_none() {
         let (_c, mut e) = engine(3_600_000);
-        e.submit("t/ran-other", runtime::sources::UNITS_STREAM, ran("spira-batch-x")).unwrap();
+        e.submit(
+            "t/ran-other",
+            runtime::sources::UNITS_STREAM,
+            ran("spira-batch-x"),
+        )
+        .unwrap();
         e.run_until_idle().unwrap();
         assert_eq!(applies(&e), 0);
-        e.submit("t/ran", runtime::sources::UNITS_STREAM, ran(LANDING_UNIT)).unwrap();
+        e.submit("t/ran", runtime::sources::UNITS_STREAM, ran(LANDING_UNIT))
+            .unwrap();
         e.run_until_idle().unwrap();
         assert_eq!(applies(&e), 1);
     }
@@ -183,10 +286,19 @@ mod tests {
         clock.advance(60_000);
         e.run_until_idle().unwrap();
         assert_eq!(applies(&e), 1, "no second pass within a minute");
-        let first = e.pending_effects().into_iter().find(|p| p.spec.name == APPLY).unwrap();
-        e.complete(&first.key, runtime::Outcome::Succeeded(String::new())).unwrap();
+        let first = e
+            .pending_effects()
+            .into_iter()
+            .find(|p| p.spec.name == APPLY)
+            .unwrap();
+        e.complete(&first.key, runtime::Outcome::Succeeded(String::new()))
+            .unwrap();
         clock.advance(3_600_000);
         e.run_until_idle().unwrap();
-        assert_eq!(applies(&e), 1, "the backstop tick asks for a pass once the hour has elapsed");
+        assert_eq!(
+            applies(&e),
+            1,
+            "the backstop tick asks for a pass once the hour has elapsed"
+        );
     }
 }

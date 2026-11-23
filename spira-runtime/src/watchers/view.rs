@@ -19,7 +19,13 @@ pub const FLIP: &str = "view.flip";
 pub const FORGET: &str = "view.forget";
 pub const NAME: &str = "view";
 
-const ROW_PARTS: &[Part] = &[Part::Field("want"), Part::Map { name: "absent", drop: &[] }];
+const ROW_PARTS: &[Part] = &[
+    Part::Field("want"),
+    Part::Map {
+        name: "absent",
+        drop: &[],
+    },
+];
 
 pub const SEED: &str = "seed";
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
@@ -75,8 +81,19 @@ pub struct Decision {
 impl View {
     /// A dismissal is forgotten only once its session has been absent for `forget_secs` straight:
     /// a hunk daemon restart looks like an ended session until the TUI registers again.
-    pub fn decide(&self, carry: &Carry, live: Option<&[String]>, dismissed: &Dismissed, now: u64) -> Decision {
-        let Some(live) = live else { return Decision { carry: carry.clone(), ..Decision::default() } };
+    pub fn decide(
+        &self,
+        carry: &Carry,
+        live: Option<&[String]>,
+        dismissed: &Dismissed,
+        now: u64,
+    ) -> Decision {
+        let Some(live) = live else {
+            return Decision {
+                carry: carry.clone(),
+                ..Decision::default()
+            };
+        };
         let (kept, marks) = if dismissed.ids.is_empty() {
             (vec![], BTreeMap::new())
         } else {
@@ -88,7 +105,12 @@ impl View {
                     if live.contains(*id) {
                         return true;
                     }
-                    let since = carry.absent.get(*id).or_else(|| dismissed.absent.get(*id)).copied().unwrap_or(now);
+                    let since = carry
+                        .absent
+                        .get(*id)
+                        .or_else(|| dismissed.absent.get(*id))
+                        .copied()
+                        .unwrap_or(now);
                     let keep = now.saturating_sub(since) < self.forget_secs;
                     if keep {
                         marks.insert((*id).clone(), since);
@@ -100,10 +122,31 @@ impl View {
             (kept, marks)
         };
         let rewrite = !dismissed.ids.is_empty() && kept != dismissed.ids;
-        let forget = (rewrite || marks != dismissed.absent).then(|| Forget { rewrite, dismissed: Dismissed { ids: kept.clone(), absent: marks.clone() } });
-        let want = if live.iter().any(|id| !kept.contains(id)) { HUNK } else { BRAIN };
-        let flip = carry.want.as_deref().filter(|last| *last != want).map(|_| want.to_string());
-        Decision { carry: Carry { want: Some(want.to_string()), absent: marks }, flip, forget }
+        let forget = (rewrite || marks != dismissed.absent).then(|| Forget {
+            rewrite,
+            dismissed: Dismissed {
+                ids: kept.clone(),
+                absent: marks.clone(),
+            },
+        });
+        let want = if live.iter().any(|id| !kept.contains(id)) {
+            HUNK
+        } else {
+            BRAIN
+        };
+        let flip = carry
+            .want
+            .as_deref()
+            .filter(|last| *last != want)
+            .map(|_| want.to_string());
+        Decision {
+            carry: Carry {
+                want: Some(want.to_string()),
+                absent: marks,
+            },
+            flip,
+            forget,
+        }
     }
 
     pub fn registration(self) -> Registration {
@@ -126,31 +169,63 @@ impl Handler for View {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Probe(EffectSpec::probe(OBSERVE, ev.kind.body.clone(), OBSERVE_DEADLINE_MS)),
-                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Probe(EffectSpec::probe(
+                    OBSERVE,
+                    ev.kind.body.clone(),
+                    OBSERVE_DEADLINE_MS,
+                )),
+                Command::Timer {
+                    at: ev.at + self.interval_ms,
+                    kind: EventKind::new(TICK, ""),
+                },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
-        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
+        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else {
+            return vec![];
+        };
         if let Some(why) = &snap.error {
             ctx.event().set("view.hunk_error", why.as_str());
         }
         let stored = carried::<Carry>(view, &ev.stream, STATE);
-        let seen = Carry { want: stored.want.clone().filter(|_| !snap.seed), ..stored.clone() };
+        let seen = Carry {
+            want: stored.want.clone().filter(|_| !snap.seed),
+            ..stored.clone()
+        };
         let decision = self.decide(&seen, snap.live.as_deref(), &snap.dismissed, ev.at / 1000);
         let mut cmds = vec![];
         if decision.carry != stored {
-            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&decision.carry).unwrap_or_default())));
+            cmds.push(Command::Emit(EventKind::new(
+                STATE,
+                &serde_json::to_string(&decision.carry).unwrap_or_default(),
+            )));
         }
         if let Some(forget) = &decision.forget {
             let input = serde_json::to_string(forget).unwrap_or_default();
-            cmds.push(Command::Effect(EffectSpec::keyed(FORGET, format!("{NAME}:forget:{:016x}", runtime::event::fnv1a(&input)), input, ACT_DEADLINE_MS)));
+            cmds.push(Command::Effect(EffectSpec::keyed(
+                FORGET,
+                format!("{NAME}:forget:{:016x}", runtime::event::fnv1a(&input)),
+                input,
+                ACT_DEADLINE_MS,
+            )));
         }
         if let Some(to) = decision.flip {
-            ctx.event().set("view.flip", format!("{} -> {to}; live sessions: {}", seen.want.as_deref().unwrap_or(""), snap.live.as_deref().unwrap_or_default().join(" ")));
-            cmds.push(Command::Effect(EffectSpec::keyed(FLIP, format!("{NAME}:flip:{to}"), to, ACT_DEADLINE_MS)));
+            ctx.event().set(
+                "view.flip",
+                format!(
+                    "{} -> {to}; live sessions: {}",
+                    seen.want.as_deref().unwrap_or(""),
+                    snap.live.as_deref().unwrap_or_default().join(" ")
+                ),
+            );
+            cmds.push(Command::Effect(EffectSpec::keyed(
+                FLIP,
+                format!("{NAME}:flip:{to}"),
+                to,
+                ACT_DEADLINE_MS,
+            )));
         }
         cmds
     }
@@ -164,7 +239,11 @@ mod tests {
     const T0: u64 = 1_800_000_000;
 
     fn cfg() -> View {
-        View { interval_ms: 3000, forget_secs: DAY, enabled: true }
+        View {
+            interval_ms: 3000,
+            forget_secs: DAY,
+            enabled: true,
+        }
     }
 
     fn ids(v: &[&str]) -> Vec<String> {
@@ -172,19 +251,35 @@ mod tests {
     }
 
     fn dismissed(v: &[&str]) -> Dismissed {
-        Dismissed { ids: ids(v), absent: BTreeMap::new() }
+        Dismissed {
+            ids: ids(v),
+            absent: BTreeMap::new(),
+        }
     }
 
     fn after(want: &str) -> Carry {
-        Carry { want: Some(want.into()), absent: BTreeMap::new() }
+        Carry {
+            want: Some(want.into()),
+            absent: BTreeMap::new(),
+        }
     }
 
     #[test_id(ttssu61)]
     #[test]
     fn a_live_session_nobody_dismissed_wants_hunk_and_any_other_state_wants_brain() {
-        let want = |live: &[&str], d: &[&str]| cfg().decide(&Carry::default(), Some(&ids(live)), &dismissed(d), T0).carry.want.unwrap();
+        let want = |live: &[&str], d: &[&str]| {
+            cfg()
+                .decide(&Carry::default(), Some(&ids(live)), &dismissed(d), T0)
+                .carry
+                .want
+                .unwrap()
+        };
         assert_eq!(want(&["a"], &[]), HUNK);
-        assert_eq!(want(&["a", "b"], &["a"]), HUNK, "one undismissed session is a review");
+        assert_eq!(
+            want(&["a", "b"], &["a"]),
+            HUNK,
+            "one undismissed session is a review"
+        );
         assert_eq!(want(&["a"], &["a"]), BRAIN);
         assert_eq!(want(&[], &["a"]), BRAIN);
     }
@@ -193,7 +288,10 @@ mod tests {
     #[test]
     fn the_first_reading_seeds_and_a_change_after_it_flips_once() {
         let first = cfg().decide(&Carry::default(), Some(&ids(&["a"])), &dismissed(&[]), T0);
-        assert_eq!((first.flip, first.carry.want.as_deref()), (None, Some(HUNK)));
+        assert_eq!(
+            (first.flip, first.carry.want.as_deref()),
+            (None, Some(HUNK))
+        );
         let again = cfg().decide(&first.carry, Some(&ids(&["a"])), &dismissed(&[]), T0 + 3);
         assert_eq!(again.flip, None);
         let ended = cfg().decide(&again.carry, Some(&ids(&[])), &dismissed(&[]), T0 + 6);
@@ -203,7 +301,10 @@ mod tests {
     #[test_id(trsvygu)]
     #[test]
     fn a_hunk_that_did_not_answer_changes_nothing_and_forgets_nothing() {
-        let carry = Carry { want: Some(BRAIN.into()), absent: BTreeMap::from([("a".to_string(), T0 - DAY - 1)]) };
+        let carry = Carry {
+            want: Some(BRAIN.into()),
+            absent: BTreeMap::from([("a".to_string(), T0 - DAY - 1)]),
+        };
         let d = cfg().decide(&carry, None, &dismissed(&["a"]), T0);
         assert_eq!((d.carry, d.flip, d.forget), (carry, None, None));
     }
@@ -211,31 +312,75 @@ mod tests {
     #[test_id(t4hqo2r)]
     #[test]
     fn a_dismissal_is_forgotten_only_after_its_session_stays_absent_for_the_whole_window() {
-        let d0 = Dismissed { ids: ids(&["a"]), absent: BTreeMap::new() };
+        let d0 = Dismissed {
+            ids: ids(&["a"]),
+            absent: BTreeMap::new(),
+        };
         let first = cfg().decide(&after(BRAIN), Some(&[]), &d0, T0);
-        assert_eq!(first.forget, Some(Forget { rewrite: false, dismissed: Dismissed { ids: ids(&["a"]), absent: BTreeMap::from([("a".to_string(), T0)]) } }));
+        assert_eq!(
+            first.forget,
+            Some(Forget {
+                rewrite: false,
+                dismissed: Dismissed {
+                    ids: ids(&["a"]),
+                    absent: BTreeMap::from([("a".to_string(), T0)])
+                }
+            })
+        );
         let marked = first.forget.unwrap().dismissed;
         let near = cfg().decide(&first.carry, Some(&[]), &marked, T0 + DAY - 1);
-        assert_eq!(near.forget, None, "still inside the window, and nothing changed since the marks were written");
+        assert_eq!(
+            near.forget, None,
+            "still inside the window, and nothing changed since the marks were written"
+        );
         let past = cfg().decide(&near.carry, Some(&[]), &marked, T0 + DAY);
-        assert_eq!(past.forget, Some(Forget { rewrite: true, dismissed: Dismissed::default() }));
+        assert_eq!(
+            past.forget,
+            Some(Forget {
+                rewrite: true,
+                dismissed: Dismissed::default()
+            })
+        );
     }
 
     #[test_id(twov817)]
     #[test]
     fn a_session_that_comes_back_loses_its_absence_clock() {
-        let marked = Dismissed { ids: ids(&["a"]), absent: BTreeMap::from([("a".to_string(), T0)]) };
+        let marked = Dismissed {
+            ids: ids(&["a"]),
+            absent: BTreeMap::from([("a".to_string(), T0)]),
+        };
         let back = cfg().decide(&after(BRAIN), Some(&ids(&["a"])), &marked, T0 + 100);
-        assert_eq!(back.forget, Some(Forget { rewrite: false, dismissed: dismissed(&["a"]) }));
+        assert_eq!(
+            back.forget,
+            Some(Forget {
+                rewrite: false,
+                dismissed: dismissed(&["a"])
+            })
+        );
         assert!(back.carry.absent.is_empty());
     }
 
     #[test_id(t4hf34m)]
     #[test]
     fn with_nothing_dismissed_only_a_stale_absence_file_is_cleared() {
-        let stale = Dismissed { ids: vec![], absent: BTreeMap::from([("a".to_string(), T0)]) };
+        let stale = Dismissed {
+            ids: vec![],
+            absent: BTreeMap::from([("a".to_string(), T0)]),
+        };
         let d = cfg().decide(&after(BRAIN), Some(&[]), &stale, T0 + 1);
-        assert_eq!(d.forget, Some(Forget { rewrite: false, dismissed: Dismissed::default() }));
-        assert_eq!(cfg().decide(&after(BRAIN), Some(&[]), &Dismissed::default(), T0).forget, None);
+        assert_eq!(
+            d.forget,
+            Some(Forget {
+                rewrite: false,
+                dismissed: Dismissed::default()
+            })
+        );
+        assert_eq!(
+            cfg()
+                .decide(&after(BRAIN), Some(&[]), &Dismissed::default(), T0)
+                .forget,
+            None
+        );
     }
 }

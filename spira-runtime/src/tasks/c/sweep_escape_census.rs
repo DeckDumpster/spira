@@ -86,7 +86,20 @@ pub const CLASSES: [&str; 4] = ["mapping_gap", "gate_gap", "environment_gap", "f
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_ESCAPE_CENSUS_CALENDAR";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_RUN"];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 30_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 30_000,
+    cadence_key: CADENCE_KEY,
+    calendar: true,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 /// `tsd::query::count_by(src, "escape", "class", now, Some(168))`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +120,10 @@ pub enum Phase {
 
 /// `state × event → state`. A second report for a reported ISO week is refused naming
 /// `reported`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "observed", Phase::Reported), (Phase::Reported, "week:new", Phase::Idle)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
+    (Phase::Idle, "observed", Phase::Reported),
+    (Phase::Reported, "week:new", Phase::Idle),
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -131,15 +147,25 @@ pub fn iso_week(ms: u64) -> String {
     let days = (ms / 86_400_000) as i64;
     let weekday = (days + 3).rem_euclid(7); // Monday is 0; 1970-01-01 was a Thursday
     let thursday = days - weekday + 3;
-    let year_of = |d: i64| crate::tasks::c::sweep_archive::archive::fmt_ts(d * 86_400)[..4].parse::<i64>().unwrap_or(1970);
+    let year_of = |d: i64| {
+        crate::tasks::c::sweep_archive::archive::fmt_ts(d * 86_400)[..4]
+            .parse::<i64>()
+            .unwrap_or(1970)
+    };
     let year = year_of(thursday);
-    let jan1 = crate::tasks::c::sweep_archive::archive::parse_ts(&format!("{year:04}-01-01")).unwrap_or(0) / 86_400;
+    let jan1 = crate::tasks::c::sweep_archive::archive::parse_ts(&format!("{year:04}-01-01"))
+        .unwrap_or(0)
+        / 86_400;
     format!("{year:04}-W{:02}", (thursday - jan1) / 7 + 1)
 }
 
 /// The census line: each class in [`CLASSES`] order, an absent class counted 0.
 pub fn line(snap: &Snapshot) -> String {
-    CLASSES.iter().map(|c| format!("{} {c}", snap.counts.get(*c).copied().unwrap_or(0))).collect::<Vec<_>>().join(", ")
+    CLASSES
+        .iter()
+        .map(|c| format!("{} {c}", snap.counts.get(*c).copied().unwrap_or(0)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// `"<n> mapping_gap, <n> gate_gap, <n> environment_gap, <n> flake"`, absent class → 0.
@@ -150,37 +176,83 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
         Input::Observed(snap) => {
             let week = iso_week(now_ms);
             if carry.phase == Phase::Reported && carry.week.as_deref() == Some(week.as_str()) {
-                return Err(format!("{NAME}: {week} is already reported; a second census that week is refused"));
+                return Err(format!(
+                    "{NAME}: {week} is already reported; a second census that week is refused"
+                ));
             }
             let text = format!("{} {}", crate::watchers::iso8601(now_ms / 1000), line(snap));
-            Ok((Carry { phase: Phase::Reported, last_fired: Some(now_ms), week: Some(week.clone()) }, vec![Act { name: REPORT.into(), key: format!("escape-census/{week}"), input: text, deadline_ms: 5_000, probe: false }]))
+            Ok((
+                Carry {
+                    phase: Phase::Reported,
+                    last_fired: Some(now_ms),
+                    week: Some(week.clone()),
+                },
+                vec![Act {
+                    name: REPORT.into(),
+                    key: format!("escape-census/{week}"),
+                    input: text,
+                    deadline_ms: 5_000,
+                    probe: false,
+                }],
+            ))
         }
         Input::Outcome { effect, .. } if effect == REPORT => Ok((carry.clone(), vec![])),
-        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} no outcome of {effect} is expected", phase(carry.phase))),
-        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase(carry.phase), r.handle)),
+        Input::Outcome { effect, .. } => Err(format!(
+            "{NAME}: in state {} no outcome of {effect} is expected",
+            phase(carry.phase)
+        )),
+        Input::Ran(r) => Err(format!(
+            "{NAME}: in state {} no unit is expected, got {:?}",
+            phase(carry.phase),
+            r.handle
+        )),
     }
 }
 
 /// The runner of [`OBSERVE`]: `tsd::query::count_by` over the escape family, in-process. A
 /// family that cannot be read counts nothing, as the script's census printed zeros.
-pub fn observe(run_dir: &std::path::Path, metrics_endpoint: Option<&str>, now_secs: u64) -> Result<String, String> {
+pub fn observe(
+    run_dir: &std::path::Path,
+    metrics_endpoint: Option<&str>,
+    now_secs: u64,
+) -> Result<String, String> {
     let reader = tsd::store::Reader::new(metrics_endpoint).ok();
-    let src = tsd::query::Source { reader: reader.as_ref(), root: run_dir };
+    let src = tsd::query::Source {
+        reader: reader.as_ref(),
+        root: run_dir,
+    };
     let counts = tsd::query::count_by(&src, "escape", "class", now_secs, Some(HOURS))
-        .map(|tsv| tsv.lines().filter_map(|l| l.split_once('\t')).filter_map(|(c, n)| Some((c.to_string(), n.trim().parse().ok()?))).collect())
+        .map(|tsv| {
+            tsv.lines()
+                .filter_map(|l| l.split_once('\t'))
+                .filter_map(|(c, n)| Some((c.to_string(), n.trim().parse().ok()?)))
+                .collect()
+        })
         .unwrap_or_default();
-    serde_json::to_string(&Snapshot { counts, hours: HOURS }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot {
+        counts,
+        hours: HOURS,
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// The runner of [`REPORT`]: the line appended to `run/escape-census.log`, its read contract.
 pub fn report(run_dir: &std::path::Path, text: &str) -> Result<String, String> {
     use std::io::Write;
     let path = run_dir.join("escape-census.log");
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     writeln!(f, "{text}").map_err(|e| format!("{}: {e}", path.display()))?;
     Ok("appended".into())
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("week")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("phase"),
+    runtime::rows::Part::Field("last_fired"),
+    runtime::rows::Part::Field("week"),
+];
 
 crate::tasks::b::hosted!(SweepEscapeCensus);

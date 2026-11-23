@@ -112,7 +112,15 @@ pub const EFFECTS: &[&str] = &[OBSERVE, PROMPT, ALARM, DRAIN_CHECK, LOG];
 /// The toml keys the sweep reads (`main.rs:167-210`). The ~25 env-only `getenv` keys the contract
 /// lists (`SPIRA_WATCH_GATE_*`, `SPIRA_DISK_WARN_PCT`, …) are not registered and join when S10
 /// registers them.
-pub const KEYS: &[&str] = &["SPIRA_WATCHTOWER_START_TIMEOUT_S", "SPIRA_WATCHTOWER_PROBE_TIMEOUT_S", "SPIRA_DB", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_SNAP_STALE_S", "SPIRA_QUEUE_THROTTLE_OVERRIDE"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_WATCHTOWER_START_TIMEOUT_S",
+    "SPIRA_WATCHTOWER_PROBE_TIMEOUT_S",
+    "SPIRA_DB",
+    "SPIRA_HOME_REPO",
+    "SPIRA_ASK_LABEL",
+    "SPIRA_SNAP_STALE_S",
+    "SPIRA_QUEUE_THROTTLE_OVERRIDE",
+];
 /// `OnUnitActiveSec=30min`.
 pub const CADENCE_MS: u64 = 30 * 60_000;
 /// 6 min less 30 s (`main.rs:168-171`).
@@ -220,11 +228,24 @@ impl<'de> Deserialize<'de> for FailedRow {
         #[serde(untagged)]
         enum Wire {
             Old(u64),
-            New { first_seen: u64, #[serde(default)] invocation: String },
+            New {
+                first_seen: u64,
+                #[serde(default)]
+                invocation: String,
+            },
         }
         Ok(match Wire::deserialize(d)? {
-            Wire::Old(first_seen) => FailedRow { first_seen, invocation: String::new() },
-            Wire::New { first_seen, invocation } => FailedRow { first_seen, invocation },
+            Wire::Old(first_seen) => FailedRow {
+                first_seen,
+                invocation: String::new(),
+            },
+            Wire::New {
+                first_seen,
+                invocation,
+            } => FailedRow {
+                first_seen,
+                invocation,
+            },
         })
     }
 }
@@ -283,7 +304,12 @@ fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec 
 }
 
 /// `is_nominal`, `render`, the 13 escalation predicates and the halt guard.
-pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(
+    carry: &Carry,
+    snap: &Snapshot,
+    now_ms: u64,
+    cfg: &Config,
+) -> (Carry, Vec<EffectSpec>) {
     // A DELIBERATELY STOPPED WORLD MUST NOT FILE (`sweep/mod.rs:27-39`): nothing at all.
     if snap.halted {
         return (carry.clone(), vec![]);
@@ -293,44 +319,125 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
     let mut acts = vec![];
     if is_nominal(snap, cfg.snap_stale_s, cfg.noverdict_max) {
         let nv_worst = snap.noverdict.values().max().copied().unwrap_or(0);
-        let line = format!("SWEEP:NOMINAL lapsed={} snap_age={}s nv_worst={nv_worst}\n", snap.lapsed.len(), snap.snap_age_s.unwrap_or(0));
+        let line = format!(
+            "SWEEP:NOMINAL lapsed={} snap_age={}s nv_worst={nv_worst}\n",
+            snap.lapsed.len(),
+            snap.snap_age_s.unwrap_or(0)
+        );
         if carry.prompt.as_deref() != Some(line.as_str()) {
-            acts.push(spec(PROMPT, format!("watch.tower:prompt:{now_ms}"), serde_json::to_string(&Prompt { text: line.clone(), lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
+            acts.push(spec(
+                PROMPT,
+                format!("watch.tower:prompt:{now_ms}"),
+                serde_json::to_string(&Prompt {
+                    text: line.clone(),
+                    lapsed_now: snap.lapsed_now.clone(),
+                })
+                .unwrap_or_default(),
+                ACT_DEADLINE_MS,
+            ));
             next.prompt = Some(line);
         }
         next.failed_units.clear();
         next.escalated.clear();
-        next.alarmed.retain(|_, at| now.saturating_sub(*at) < REMIND_S);
+        next.alarmed
+            .retain(|_, at| now.saturating_sub(*at) < REMIND_S);
         return (next, acts);
     }
-    let text = snap.rendered.clone().unwrap_or_else(|| format!("## Spira pipeline\n(sweep not rendered: {} failed unit(s), {} lapsed)\n", snap.failed_units.as_ref().map_or(0, Vec::len), snap.lapsed.len()));
-    acts.push(spec(PROMPT, format!("watch.tower:prompt:{now_ms}"), serde_json::to_string(&Prompt { text, lapsed_now: snap.lapsed_now.clone() }).unwrap_or_default(), ACT_DEADLINE_MS));
+    let text = snap.rendered.clone().unwrap_or_else(|| {
+        format!(
+            "## Spira pipeline\n(sweep not rendered: {} failed unit(s), {} lapsed)\n",
+            snap.failed_units.as_ref().map_or(0, Vec::len),
+            snap.lapsed.len()
+        )
+    });
+    acts.push(spec(
+        PROMPT,
+        format!("watch.tower:prompt:{now_ms}"),
+        serde_json::to_string(&Prompt {
+            text,
+            lapsed_now: snap.lapsed_now.clone(),
+        })
+        .unwrap_or_default(),
+        ACT_DEADLINE_MS,
+    ));
     next.prompt = None;
-    let slow = if snap.slow_probes.is_empty() { String::new() } else { format!(" (timed out: {})", snap.slow_probes.join("; ")) };
-    acts.push(spec(LOG, format!("watch.tower:log:{now_ms}"), format!("watchtower: swept — {} lapsed, {} escalation(s){slow}", snap.lapsed.len(), snap.escalations.len()), ACT_DEADLINE_MS));
+    let slow = if snap.slow_probes.is_empty() {
+        String::new()
+    } else {
+        format!(" (timed out: {})", snap.slow_probes.join("; "))
+    };
+    acts.push(spec(
+        LOG,
+        format!("watch.tower:log:{now_ms}"),
+        format!(
+            "watchtower: swept — {} lapsed, {} escalation(s){slow}",
+            snap.lapsed.len(),
+            snap.escalations.len()
+        ),
+        ACT_DEADLINE_MS,
+    ));
     let mut raise = |next: &mut Carry, f: watchtower::incident::Finding| {
         let reference = f.reference.clone().unwrap_or_else(|| f.title.clone());
-        if next.alarmed.get(&reference).is_some_and(|at| now.saturating_sub(*at) < REMIND_S) {
+        if next
+            .alarmed
+            .get(&reference)
+            .is_some_and(|at| now.saturating_sub(*at) < REMIND_S)
+        {
             return;
         }
         let key = format!("watch.tower:{reference}:{}", now / REMIND_S);
         next.alarmed.insert(reference, now);
-        acts.push(spec(ALARM, key, serde_json::to_string(&f).unwrap_or_default(), STORE_DEADLINE_MS));
+        acts.push(spec(
+            ALARM,
+            key,
+            serde_json::to_string(&f).unwrap_or_default(),
+            STORE_DEADLINE_MS,
+        ));
     };
     // The failed-unit escalation (`escalate.rs:59-96`), its first-seen rows carried.
     if let Some(units) = &snap.failed_units {
         let (mut rows, mut escalated) = (BTreeMap::new(), std::collections::BTreeSet::new());
         for unit in units {
-            let prev = carry.failed_units.get(unit).map(|r| watchtower::failed_units::StateRow { unit: unit.clone(), first_seen: r.first_seen as i64, escalated: carry.escalated.contains(unit), invocation: r.invocation.clone() });
+            let prev = carry
+                .failed_units
+                .get(unit)
+                .map(|r| watchtower::failed_units::StateRow {
+                    unit: unit.clone(),
+                    first_seen: r.first_seen as i64,
+                    escalated: carry.escalated.contains(unit),
+                    invocation: r.invocation.clone(),
+                });
             let invocation = snap.failed_invocations.get(unit).map_or("", String::as_str);
-            let (row, decided) = watchtower::failed_units::decide(now as i64, unit, invocation, prev.as_ref(), FAILED_UNITS_WARN_MINS);
+            let (row, decided) = watchtower::failed_units::decide(
+                now as i64,
+                unit,
+                invocation,
+                prev.as_ref(),
+                FAILED_UNITS_WARN_MINS,
+            );
             if decided || (row.escalated && !snap.filed_incidents.contains_key(unit)) {
-                raise(&mut next, watchtower::sweep::escalate::failed_unit_finding(&cfg.db, &cfg.home_repo, unit, &row.invocation, row.first_seen, now as i64));
+                raise(
+                    &mut next,
+                    watchtower::sweep::escalate::failed_unit_finding(
+                        &cfg.db,
+                        &cfg.home_repo,
+                        unit,
+                        &row.invocation,
+                        row.first_seen,
+                        now as i64,
+                    ),
+                );
             }
             if row.escalated {
                 escalated.insert(unit.clone());
             }
-            rows.insert(unit.clone(), FailedRow { first_seen: u64::try_from(row.first_seen).unwrap_or(0), invocation: row.invocation });
+            rows.insert(
+                unit.clone(),
+                FailedRow {
+                    first_seen: u64::try_from(row.first_seen).unwrap_or(0),
+                    invocation: row.invocation,
+                },
+            );
         }
         next.failed_units = rows;
         next.escalated = escalated;
@@ -339,9 +446,15 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         raise(&mut next, f.clone());
     }
     if snap.draining {
-        acts.push(spec(DRAIN_CHECK, format!("watch.tower:drain-check:{now_ms}"), String::new(), STORE_DEADLINE_MS));
+        acts.push(spec(
+            DRAIN_CHECK,
+            format!("watch.tower:drain-check:{now_ms}"),
+            String::new(),
+            STORE_DEADLINE_MS,
+        ));
     }
-    next.alarmed.retain(|_, at| now.saturating_sub(*at) < REMIND_S);
+    next.alarmed
+        .retain(|_, at| now.saturating_sub(*at) < REMIND_S);
     (next, acts)
 }
 
@@ -350,7 +463,9 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
 pub fn observe() -> Result<String, String> {
     use watchtower::sweep::collect::Drain;
     let cfg = watchtower::process::sweep_cfg()?;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
     let d = watchtower::sweep::collect(now, &cfg);
     let mut escalations = vec![];
     watchtower::sweep::escalate::thresholds(&d, &cfg, &mut |f| {
@@ -358,7 +473,9 @@ pub fn observe() -> Result<String, String> {
         watchtower::incident::AlarmOutcome::Noted
     });
     let (lapsed, lapsed_unknown) = match d.lapsed.count {
-        watchtower::lapsed::Count::Known(n) => ((0..n).map(|i| format!("lapsed#{i}")).collect(), false),
+        watchtower::lapsed::Count::Known(n) => {
+            ((0..n).map(|i| format!("lapsed#{i}")).collect(), false)
+        }
         watchtower::lapsed::Count::Unknown => (vec![], true),
     };
     let pct = |s: &str| s.trim_end_matches('%').parse::<u8>().ok();
@@ -369,7 +486,12 @@ pub fn observe() -> Result<String, String> {
         failed_invocations: d.failed_invocations.clone(),
         gate_wait_s: d.gate_wait.oldest_wait.and_then(|w| u64::try_from(w).ok()),
         gate_slow: d.gate_slow.is_some(),
-        noverdict: d.nv_worst_key.clone().map(|k| (k, u64::try_from(d.nv_worst).unwrap_or(0))).into_iter().collect(),
+        noverdict: d
+            .nv_worst_key
+            .clone()
+            .map(|k| (k, u64::try_from(d.nv_worst).unwrap_or(0)))
+            .into_iter()
+            .collect(),
         disk_pct: pct(&d.disk.disk_disp),
         tmp_pct: pct(&d.tmp_pct),
         throttled: d.throttle.since.is_some(),
@@ -391,7 +513,9 @@ pub fn observe() -> Result<String, String> {
 
 fn atomic_write(path: &std::path::Path, body: &str) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::write(&tmp, body)
+        .and_then(|_| std::fs::rename(&tmp, path))
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// `run/ops-sweep-prompt.txt`, atomically (`persona.ops` reads it as its stdin), then the
@@ -402,7 +526,8 @@ pub fn prompt(input: &str) -> Result<String, String> {
     let path = cfg.prompt_file();
     atomic_write(&path, &p.text)?;
     if let Some(m) = &p.lapsed_now {
-        std::fs::write(cfg.lapsed_marker(), format!("{m}\n")).map_err(|e| format!("{}: {e}", cfg.lapsed_marker().display()))?;
+        std::fs::write(cfg.lapsed_marker(), format!("{m}\n"))
+            .map_err(|e| format!("{}: {e}", cfg.lapsed_marker().display()))?;
     }
     Ok(path.display().to_string())
 }
@@ -410,21 +535,33 @@ pub fn prompt(input: &str) -> Result<String, String> {
 /// One escalation as `incident alarm`: a deduplicated Concierge-inbox note, never a bead. A
 /// cause the control plane suspends is refused there.
 pub fn alarm(input: &str) -> Result<String, String> {
-    let f: watchtower::incident::Finding = serde_json::from_str(input).map_err(|e| format!("{ALARM}: {e}"))?;
+    let f: watchtower::incident::Finding =
+        serde_json::from_str(input).map_err(|e| format!("{ALARM}: {e}"))?;
     match watchtower::incident::alarm_outcome(&watchtower::process::resolved_incident_sh(), &f) {
         watchtower::incident::AlarmOutcome::Noted => Ok(format!("noted {}", f.title)),
         watchtower::incident::AlarmOutcome::Deduped => Ok(format!("deduped {}", f.title)),
-        watchtower::incident::AlarmOutcome::Failed => Err(format!("incident alarm failed for {}", f.title)),
+        watchtower::incident::AlarmOutcome::Failed => {
+            Err(format!("incident alarm failed for {}", f.title))
+        }
     }
 }
 
 /// `world drain-check`: the drain's own cap and owner checks.
 pub fn drain_check() -> Result<String, String> {
     use runtime::ports::Proc;
-    let spec = runtime::ports::ProcSpec { prog: "world".into(), args: vec!["drain-check".into()], stdin: vec![], deadline: std::time::Duration::from_millis(STORE_DEADLINE_MS) };
+    let spec = runtime::ports::ProcSpec {
+        prog: "world".into(),
+        args: vec!["drain-check".into()],
+        stdin: vec![],
+        deadline: std::time::Duration::from_millis(STORE_DEADLINE_MS),
+    };
     match runtime::ports::SysProc.run(&spec)? {
         o if o.code == Some(0) => Ok("drain checked".into()),
-        o => Err(format!("world drain-check exited {:?}: {}", o.code, String::from_utf8_lossy(&o.stderr).trim())),
+        o => Err(format!(
+            "world drain-check exited {:?}: {}",
+            o.code,
+            String::from_utf8_lossy(&o.stderr).trim()
+        )),
     }
 }
 
@@ -432,8 +569,13 @@ pub fn drain_check() -> Result<String, String> {
 pub fn log(input: &str) -> Result<String, String> {
     use std::io::Write;
     let path = std::path::Path::new(&cfg("SPIRA_RUN")?).join("watchtower.log");
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    writeln!(f, "{} spira: {input}", watchtower::log::now_iso()).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    writeln!(f, "{} spira: {input}", watchtower::log::now_iso())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path.display().to_string())
 }
 
@@ -447,7 +589,9 @@ impl WatchTower {
     }
 
     pub fn pinned() -> Self {
-        WatchTower { config: Config::pinned() }
+        WatchTower {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -459,7 +603,18 @@ impl WatchTower {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("prompt"), runtime::rows::Part::Map { name: "failed_units", drop: &[] }, runtime::rows::Part::Field("escalated"), runtime::rows::Part::Map { name: "alarmed", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("prompt"),
+    runtime::rows::Part::Map {
+        name: "failed_units",
+        drop: &[],
+    },
+    runtime::rows::Part::Field("escalated"),
+    runtime::rows::Part::Map {
+        name: "alarmed",
+        drop: &[],
+    },
+];
 
 impl Handler for WatchTower {
     fn interests(&self) -> &[EventKindTag] {
@@ -471,7 +626,13 @@ impl Handler for WatchTower {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
     }
@@ -482,7 +643,12 @@ mod tests {
     use super::*;
 
     fn nominal_with(streak: u64) -> Snapshot {
-        Snapshot { snap_age_s: Some(1), failed_units: Some(vec![]), noverdict: [("spira-sp-x".to_string(), streak)].into(), ..Snapshot::default() }
+        Snapshot {
+            snap_age_s: Some(1),
+            failed_units: Some(vec![]),
+            noverdict: [("spira-sp-x".to_string(), streak)].into(),
+            ..Snapshot::default()
+        }
     }
 
     #[test_id(tiqmzrp)]
@@ -490,6 +656,9 @@ mod tests {
     fn a_no_verdict_streak_below_the_escalation_bar_is_nominal_and_at_the_bar_is_not() {
         assert!(is_nominal(&nominal_with(2), 60, 3));
         assert!(!is_nominal(&nominal_with(3), 60, 3));
-        assert!(is_nominal(&nominal_with(4), 60, 5), "the bar is the configured one, not a literal 3");
+        assert!(
+            is_nominal(&nominal_with(4), 60, 5),
+            "the bar is the configured one, not a literal 3"
+        );
     }
 }

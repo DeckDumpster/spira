@@ -40,10 +40,15 @@ pub fn live_ids(runtime_dir: &Path) -> Result<Vec<String>, String> {
 
 /// Every daemon the descriptor files name, newest first.
 fn origins(runtime_dir: &Path) -> Result<Vec<String>, String> {
-    let entries = fs::read_dir(runtime_dir).map_err(|e| format!("{}: {e}", runtime_dir.display()))?;
+    let entries =
+        fs::read_dir(runtime_dir).map_err(|e| format!("{}: {e}", runtime_dir.display()))?;
     let mut found: Vec<(SystemTime, String)> = entries
         .flatten()
-        .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("daemon-") && n.ends_with(".json")))
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with("daemon-") && n.ends_with(".json"))
+        })
         .filter_map(|e| {
             let d: Value = serde_json::from_str(&fs::read_to_string(e.path()).ok()?).ok()?;
             let host = match d["host"].as_str()? {
@@ -51,12 +56,18 @@ fn origins(runtime_dir: &Path) -> Result<Vec<String>, String> {
                 "::1" => "[::1]".to_string(),
                 _ => return None,
             };
-            Some((e.metadata().ok()?.modified().ok()?, format!("http://{host}:{}", d["port"].as_u64()?)))
+            Some((
+                e.metadata().ok()?.modified().ok()?,
+                format!("http://{host}:{}", d["port"].as_u64()?),
+            ))
         })
         .collect();
     found.sort_by_key(|f| std::cmp::Reverse(f.0));
     if found.is_empty() {
-        return Err(format!("no loopback daemon descriptor in {}", runtime_dir.display()));
+        return Err(format!(
+            "no loopback daemon descriptor in {}",
+            runtime_dir.display()
+        ));
     }
     Ok(found.into_iter().map(|(_, o)| o).collect())
 }
@@ -69,7 +80,10 @@ struct Caller {
 
 impl Caller {
     fn read(path: &Path) -> Result<Caller, String> {
-        let v: Value = serde_json::from_str(&fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("{}: {e}", path.display()))?;
+        let v: Value = serde_json::from_str(
+            &fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?,
+        )
+        .map_err(|e| format!("{}: {e}", path.display()))?;
         let text = |v: &Value| v.as_str().map(str::to_string);
         let bad = || format!("{}: not a caller credential", path.display());
         let pkcs8 = b64url_decode(v["privateKey"].as_str().ok_or_else(bad)?).ok_or_else(bad)?;
@@ -87,18 +101,28 @@ impl Caller {
 
 fn random_id() -> Result<String, String> {
     let mut raw = [0u8; 24];
-    SystemRandom::new().fill(&mut raw).map_err(|_| "no randomness".to_string())?;
+    SystemRandom::new()
+        .fill(&mut raw)
+        .map_err(|_| "no randomness".to_string())?;
     Ok(format!("b_{}_0", b64url(&raw)))
 }
 
-fn post(agent: &ureq::Agent, url: &str, headers: &[(&str, &str)], body: &str) -> Result<Value, String> {
+fn post(
+    agent: &ureq::Agent,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> Result<Value, String> {
     let mut req = agent.post(url).set("content-type", "application/json");
     for (k, v) in headers {
         req = req.set(k, v);
     }
     let resp = req.send_string(body).map_err(|e| e.to_string())?;
     let mut text = String::new();
-    resp.into_reader().take(BODY_LIMIT).read_to_string(&mut text).map_err(|e| e.to_string())?;
+    resp.into_reader()
+        .take(BODY_LIMIT)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
@@ -110,8 +134,13 @@ fn list(origin: &str, caller: &Caller) -> Result<Vec<String>, String> {
         "keyId": caller.key_id, "grantId": caller.grant_id, "initiatorNonce": random_id()?,
         "proposal": {"brokerRevision": BROKER_REVISION, "appRevision": APP_REVISION, "features": []},
     });
-    let challenge = post(&agent, &endpoint, &[], &hello.to_string()).map_err(|e| format!("challenge: {e}"))?;
-    let field = |v: &Value, k: &str| v[k].as_str().map(str::to_string).ok_or_else(|| format!("answer lacks {k}"));
+    let challenge =
+        post(&agent, &endpoint, &[], &hello.to_string()).map_err(|e| format!("challenge: {e}"))?;
+    let field = |v: &Value, k: &str| {
+        v[k].as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("answer lacks {k}"))
+    };
     let generation = field(&challenge, "generation")?;
     let transcript = canonical(&json!({
         "appId": APP_ID, "domain": format!("{AUTH_DOMAIN}/caller-hello"), "endpoint": endpoint,
@@ -119,7 +148,13 @@ fn list(origin: &str, caller: &Caller) -> Result<Vec<String>, String> {
         "proposal": hello["proposal"], "responderNonce": field(&challenge, "responderNonce")?,
     }));
     let proof = json!({"challengeId": field(&challenge, "challengeId")?, "signature": caller.sign(&transcript)});
-    let session = post(&agent, &format!("{origin}{PROOF_PATH}"), &[], &proof.to_string()).map_err(|e| format!("proof: {e}"))?;
+    let session = post(
+        &agent,
+        &format!("{origin}{PROOF_PATH}"),
+        &[],
+        &proof.to_string(),
+    )
+    .map_err(|e| format!("proof: {e}"))?;
     let session_id = field(&session, "callerSessionId")?;
     let sequence = match &session["initialSequence"] {
         Value::String(s) => s.clone(),
@@ -134,27 +169,55 @@ fn list(origin: &str, caller: &Caller) -> Result<Vec<String>, String> {
         "helloTranscriptHash": b64url(digest(&SHA256, transcript.as_bytes()).as_ref()), "keyId": caller.key_id,
         "method": "POST", "requestId": request_id, "sequence": sequence, "target": API_PATH,
     }));
-    let headers = [("x-session-broker-caller-session", session_id.as_str()), ("x-session-broker-request-id", request_id.as_str()), ("x-session-broker-sequence", sequence.as_str()), ("x-session-broker-signature", &caller.sign(&signed))];
-    let answer = post(&agent, &format!("{origin}{API_PATH}"), &headers, &body).map_err(|e| format!("list: {e}"))?;
-    let sessions = answer["body"]["sessions"].as_array().ok_or("list answer has no sessions")?;
-    Ok(sessions.iter().filter_map(|s| s["sessionId"].as_str()).filter_map(uuid_prefix).map(str::to_string).collect())
+    let headers = [
+        ("x-session-broker-caller-session", session_id.as_str()),
+        ("x-session-broker-request-id", request_id.as_str()),
+        ("x-session-broker-sequence", sequence.as_str()),
+        ("x-session-broker-signature", &caller.sign(&signed)),
+    ];
+    let answer = post(&agent, &format!("{origin}{API_PATH}"), &headers, &body)
+        .map_err(|e| format!("list: {e}"))?;
+    let sessions = answer["body"]["sessions"]
+        .as_array()
+        .ok_or("list answer has no sessions")?;
+    Ok(sessions
+        .iter()
+        .filter_map(|s| s["sessionId"].as_str())
+        .filter_map(uuid_prefix)
+        .map(str::to_string)
+        .collect())
 }
 
 /// The leading UUID of `id`, which is all `hunk session list` output is scanned for.
 pub fn uuid_prefix(id: &str) -> Option<&str> {
     let head = id.get(..36)?;
-    let shaped = head.char_indices().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() });
+    let shaped = head.char_indices().all(|(i, c)| {
+        if matches!(i, 8 | 13 | 18 | 23) {
+            c == '-'
+        } else {
+            c.is_ascii_hexdigit()
+        }
+    });
     shaped.then_some(head)
 }
 
 /// JSON with object keys sorted and no whitespace: the bytes both ends sign.
 pub fn canonical(v: &Value) -> String {
     match v {
-        Value::Array(a) => format!("[{}]", a.iter().map(canonical).collect::<Vec<_>>().join(",")),
+        Value::Array(a) => format!(
+            "[{}]",
+            a.iter().map(canonical).collect::<Vec<_>>().join(",")
+        ),
         Value::Object(m) => {
             let mut keys: Vec<&String> = m.keys().collect();
             keys.sort();
-            format!("{{{}}}", keys.into_iter().map(|k| format!("{}:{}", Value::String(k.clone()), canonical(&m[k]))).collect::<Vec<_>>().join(","))
+            format!(
+                "{{{}}}",
+                keys.into_iter()
+                    .map(|k| format!("{}:{}", Value::String(k.clone()), canonical(&m[k])))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
         }
         other => other.to_string(),
     }
@@ -175,7 +238,10 @@ mod tests {
     #[test_id(t1plri0)]
     #[test]
     fn canonical_json_sorts_keys_at_every_depth() {
-        assert_eq!(canonical(&json!({"b": [1, {"y": 1, "x": "a"}], "a": null})), r#"{"a":null,"b":[1,{"x":"a","y":1}]}"#);
+        assert_eq!(
+            canonical(&json!({"b": [1, {"y": 1, "x": "a"}], "a": null})),
+            r#"{"a":null,"b":[1,{"x":"a","y":1}]}"#
+        );
     }
 
     #[test_id(tgwwqks)]
@@ -192,9 +258,17 @@ mod tests {
     #[test]
     fn a_descriptor_that_is_not_loopback_is_not_dialled() {
         let d = testkit::TempDir::new("hunk-origins");
-        fs::write(d.path().join("daemon-a.json"), r#"{"host":"10.0.0.9","port":1}"#).unwrap();
+        fs::write(
+            d.path().join("daemon-a.json"),
+            r#"{"host":"10.0.0.9","port":1}"#,
+        )
+        .unwrap();
         assert!(origins(d.path()).is_err());
-        fs::write(d.path().join("daemon-b.json"), r#"{"host":"127.0.0.1","port":47657}"#).unwrap();
+        fs::write(
+            d.path().join("daemon-b.json"),
+            r#"{"host":"127.0.0.1","port":47657}"#,
+        )
+        .unwrap();
         assert_eq!(origins(d.path()).unwrap(), ["http://127.0.0.1:47657"]);
     }
 }

@@ -66,11 +66,19 @@ impl WakeAudit {
     }
 
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
-        view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
+        view.events(stream)
+            .iter()
+            .rev()
+            .find(|e| e.kind.tag == STATE)
+            .and_then(|e| serde_json::from_str(&e.kind.body).ok())
+            .unwrap_or_default()
     }
 
     fn note(carry: &Carry) -> Command {
-        Command::Note(EventKind::new(STATE, &serde_json::to_string(carry).unwrap_or_default()))
+        Command::Note(EventKind::new(
+            STATE,
+            &serde_json::to_string(carry).unwrap_or_default(),
+        ))
     }
 }
 
@@ -85,21 +93,48 @@ impl Handler for WakeAudit {
         }
         let mut carry = Self::carry(view, &ev.stream);
         if ev.kind.tag == WAKE_SWEEP_FOUND {
-            let Ok(found) = serde_json::from_str::<SweepFound>(&ev.kind.body) else { return vec![] };
+            let Ok(found) = serde_json::from_str::<SweepFound>(&ev.kind.body) else {
+                return vec![];
+            };
             carry.found.insert(found.task.clone(), found);
             return vec![Self::note(&carry)];
         }
-        let mut out = vec![Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") }];
+        let mut out = vec![Command::Timer {
+            at: ev.at + self.interval_ms,
+            kind: EventKind::new(TICK, ""),
+        }];
         let stamp = iso8601(ev.at / 1000);
         let lost: Vec<&SweepFound> = carry.found.values().filter(|f| f.lost).collect();
-        let fresh: Vec<&SweepFound> = carry.found.values().filter(|f| !f.lost && !carry.named.contains(&f.task)).collect();
-        let (page_source, page_reads) = (!carry.source_paged && !lost.is_empty(), !fresh.is_empty());
+        let fresh: Vec<&SweepFound> = carry
+            .found
+            .values()
+            .filter(|f| !f.lost && !carry.named.contains(&f.task))
+            .collect();
+        let (page_source, page_reads) =
+            (!carry.source_paged && !lost.is_empty(), !fresh.is_empty());
         if page_source {
-            out.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:source"), format!("{stamp} [watch:{NAME}] {}", source_line(&lost)), APPEND_DEADLINE_MS)));
+            out.push(Command::Effect(EffectSpec::keyed(
+                INBOX_APPEND,
+                format!("{NAME}:source"),
+                format!("{stamp} [watch:{NAME}] {}", source_line(&lost)),
+                APPEND_DEADLINE_MS,
+            )));
         }
         if page_reads {
-            let key = format!("{NAME}:reads:{}", fresh.iter().map(|f| f.task.as_str()).collect::<Vec<_>>().join(","));
-            out.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, key, format!("{stamp} [watch:{NAME}] {}", reads_line(&fresh)), APPEND_DEADLINE_MS)));
+            let key = format!(
+                "{NAME}:reads:{}",
+                fresh
+                    .iter()
+                    .map(|f| f.task.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            out.push(Command::Effect(EffectSpec::keyed(
+                INBOX_APPEND,
+                key,
+                format!("{stamp} [watch:{NAME}] {}", reads_line(&fresh)),
+                APPEND_DEADLINE_MS,
+            )));
         }
         if page_source || page_reads {
             let named: Vec<String> = fresh.iter().map(|f| f.task.clone()).collect();
@@ -117,12 +152,25 @@ mod tests {
     use runtime::taskrig::TaskRig;
 
     fn found(task: &str, count: u64, rev: u64, lost: bool) -> EventKind {
-        let f = SweepFound { task: task.into(), count, rev, reads: vec!["lifecycle/".into(), "readiness/".into()], lost };
+        let f = SweepFound {
+            task: task.into(),
+            count,
+            rev,
+            reads: vec!["lifecycle/".into(), "readiness/".into()],
+            lost,
+        };
         EventKind::new(WAKE_SWEEP_FOUND, &serde_json::to_string(&f).unwrap())
     }
 
     fn rig() -> TaskRig {
-        let mut rig = TaskRig::new(1, WakeAudit { interval_ms: 60_000 }.registration()).unwrap();
+        let mut rig = TaskRig::new(
+            1,
+            WakeAudit {
+                interval_ms: 60_000,
+            }
+            .registration(),
+        )
+        .unwrap();
         let (_, stream, boot) = WakeAudit::boot();
         rig.tick(stream, boot).unwrap();
         rig
@@ -145,7 +193,12 @@ mod tests {
         rig.advance(60_000).unwrap();
         assert_eq!(keys(&rig), ["wake-audit:source"]);
         let text = &rig.requested()[0].input;
-        for part in ["WAKE-MISSED store.changed:", "up to rev 9", "a (2), b (1), c (4)", "store_changed.rs"] {
+        for part in [
+            "WAKE-MISSED store.changed:",
+            "up to rev 9",
+            "a (2), b (1), c (4)",
+            "store_changed.rs",
+        ] {
             assert!(text.contains(part), "{part} missing from {text}");
         }
         rig.deliver(stream, found("d", 1, 11, true)).unwrap();
@@ -163,7 +216,12 @@ mod tests {
         rig.advance(60_000).unwrap();
         assert_eq!(keys(&rig), ["wake-audit:reads:a,b"]);
         let text = &rig.requested()[0].input;
-        for part in ["WAKE-MISSED reads:", "rev 8", "a (1; reads lifecycle/, readiness/), b (2; reads lifecycle/, readiness/)", "tasks*.rs"] {
+        for part in [
+            "WAKE-MISSED reads:",
+            "rev 8",
+            "a (1; reads lifecycle/, readiness/), b (2; reads lifecycle/, readiness/)",
+            "tasks*.rs",
+        ] {
             assert!(text.contains(part), "{part} missing from {text}");
         }
         rig.deliver(stream, found("a", 2, 9, false)).unwrap();
@@ -196,7 +254,11 @@ mod tests {
         assert!(rig.requested().is_empty());
         rig.deliver(stream, found("a", 1, 5, true)).unwrap();
         rig.advance(60_000).unwrap();
-        assert_eq!(rig.requested().len(), 1, "the same tick pages when there is a finding");
+        assert_eq!(
+            rig.requested().len(),
+            1,
+            "the same tick pages when there is a finding"
+        );
     }
 
     #[test_id(tn3wq7a)]
@@ -207,7 +269,13 @@ mod tests {
         assert_eq!(rig.engine().next_timer_at(), Some(60_000));
         rig.deliver(stream, found("a", 1, 5, true)).unwrap();
         rig.advance(60_000).unwrap();
-        rig.reopen(WakeAudit { interval_ms: 60_000 }.registration()).unwrap();
+        rig.reopen(
+            WakeAudit {
+                interval_ms: 60_000,
+            }
+            .registration(),
+        )
+        .unwrap();
         rig.tick(stream, boot).unwrap();
         rig.deliver(stream, found("a", 2, 6, true)).unwrap();
         rig.advance(60_000).unwrap();

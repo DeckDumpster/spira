@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use runtime::RuntimeError;
 use spira_runtime::world::World;
 
-fn world(edges: Result<&'static str, &'static str>) -> (World, Arc<Mutex<Vec<String>>>, testkit::TempDir) {
+fn world(
+    edges: Result<&'static str, &'static str>,
+) -> (World, Arc<Mutex<Vec<String>>>, testkit::TempDir) {
     let dir = testkit::TempDir::new("world-sweep-repair");
     let path = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&path).unwrap();
@@ -28,28 +30,59 @@ fn world(edges: Result<&'static str, &'static str>) -> (World, Arc<Mutex<Vec<Str
             }
         })
     });
-    (World { lc_socket: path, run_dir: dir.path().join("run"), ..World::default() }, sent, dir)
+    (
+        World {
+            lc_socket: path,
+            run_dir: dir.path().join("run"),
+            ..World::default()
+        },
+        sent,
+        dir,
+    )
 }
 
 #[test_id(t0kk2m2)]
 #[test]
 fn a_rowless_bead_gets_an_open_row_then_its_blocks_edge_then_the_promote() {
     let (w, sent, _dir) = world(Ok(r#"[{"depends_on_id":"sp-blocker"}]"#));
-    let done: serde_json::Value = serde_json::from_str(&w.sweep_repair(r#"{"ids":["sp-new"]}"#).unwrap()).unwrap();
+    let done: serde_json::Value =
+        serde_json::from_str(&w.sweep_repair(r#"{"ids":["sp-new"]}"#).unwrap()).unwrap();
     assert_eq!(done["ids"], serde_json::json!(["sp-new"]));
     assert_eq!(done["edges"]["sp-new"], serde_json::json!(["sp-blocker"]));
     let sent = sent.lock().unwrap();
-    let writes: Vec<&str> = sent.iter().map(String::as_str).filter(|a| a.starts_with("create-bead") || a.starts_with("dep-add") || a.starts_with("promote-filed")).collect();
-    assert_eq!(writes, ["create-bead sp-new --repo spira", "dep-add sp-new sp-blocker --type blocks", "promote-filed sp-new"]);
+    let writes: Vec<&str> = sent
+        .iter()
+        .map(String::as_str)
+        .filter(|a| {
+            a.starts_with("create-bead")
+                || a.starts_with("dep-add")
+                || a.starts_with("promote-filed")
+        })
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            "create-bead sp-new --repo spira",
+            "dep-add sp-new sp-blocker --type blocks",
+            "promote-filed sp-new"
+        ]
+    );
 }
 
 #[test_id(tajm99d)]
 #[test]
 fn a_bead_whose_edges_cannot_be_read_keeps_its_open_row_and_is_not_promoted() {
     let (w, sent, _dir) = world(Err("store unreadable"));
-    let done: serde_json::Value = serde_json::from_str(&w.sweep_repair(r#"{"ids":["sp-new"]}"#).unwrap()).unwrap();
+    let done: serde_json::Value =
+        serde_json::from_str(&w.sweep_repair(r#"{"ids":["sp-new"]}"#).unwrap()).unwrap();
     assert_eq!(done["ids"], serde_json::json!([]));
     let sent = sent.lock().unwrap();
-    assert!(sent.iter().any(|a| a == "create-bead sp-new --repo spira"), "{sent:?}");
-    assert!(sent.iter().all(|a| !a.starts_with("promote-filed")), "{sent:?}");
+    assert!(
+        sent.iter().any(|a| a == "create-bead sp-new --repo spira"),
+        "{sent:?}"
+    );
+    assert!(
+        sent.iter().all(|a| !a.starts_with("promote-filed")),
+        "{sent:?}"
+    );
 }

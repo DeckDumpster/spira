@@ -123,9 +123,29 @@ pub const EFFECTS: &[&str] = &[OBSERVE, CLOSE, NOTE, LABEL, LOG];
 pub const FIRED_PREFIX: &str = "settle-fired:";
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_INCIDENT_SETTLE_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_DB", "SPIRA_INCIDENT_LABEL", "SPIRA_HOME_REPO", "SPIRA_INCIDENT_LOG", "SPIRA_RELEASE"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    "SPIRA_DB",
+    "SPIRA_INCIDENT_LABEL",
+    "SPIRA_HOME_REPO",
+    "SPIRA_INCIDENT_LOG",
+    "SPIRA_RELEASE",
+];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 10_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -232,14 +252,29 @@ impl incident::settle::Settler for Observed<'_> {
         Ok(vec![candidate(self.inc)])
     }
     fn fix_state(&self, fix: &str) -> Result<incident::settle::FixState, String> {
-        let find = |id: &str| self.inc.fixes.iter().find(|f| f.id == id || f.by.as_deref() == Some(id));
+        let find = |id: &str| {
+            self.inc
+                .fixes
+                .iter()
+                .find(|f| f.id == id || f.by.as_deref() == Some(id))
+        };
         let f = find(fix).ok_or_else(|| format!("{fix} was not observed"))?;
         match &f.by {
-            Some(by) if f.id == fix => return Ok(incident::settle::FixState::Superseded { by: by.clone() }),
-            _ if f.state == "SUPERSEDED" => return Ok(incident::settle::FixState::Superseded { by: fix.to_string() }),
+            Some(by) if f.id == fix => {
+                return Ok(incident::settle::FixState::Superseded { by: by.clone() })
+            }
+            _ if f.state == "SUPERSEDED" => {
+                return Ok(incident::settle::FixState::Superseded {
+                    by: fix.to_string(),
+                })
+            }
             _ => {}
         }
-        Ok(if matches!(f.state.as_str(), "LANDED" | "DONE") { incident::settle::FixState::Landed } else { incident::settle::FixState::Unlanded(f.state.clone()) })
+        Ok(if matches!(f.state.as_str(), "LANDED" | "DONE") {
+            incident::settle::FixState::Landed
+        } else {
+            incident::settle::FixState::Unlanded(f.state.clone())
+        })
     }
     fn landing_on_base(&self, fix: &str) -> Result<incident::settle::Landing, String> {
         match self.landing_of(fix)? {
@@ -255,7 +290,10 @@ impl incident::settle::Settler for Observed<'_> {
             Landing::Err(e) => Err(e),
         }
     }
-    fn detect(&self, _: &incident::settle::Candidate) -> Result<incident::settle::Detector, String> {
+    fn detect(
+        &self,
+        _: &incident::settle::Candidate,
+    ) -> Result<incident::settle::Detector, String> {
         match &self.inc.detector {
             Detector::Quiet => Ok(incident::settle::Detector::Quiet),
             Detector::Firing(d) => Ok(incident::settle::Detector::Firing(d.clone())),
@@ -278,12 +316,22 @@ impl incident::settle::Settler for Observed<'_> {
 
 impl Observed<'_> {
     fn landing_of(&self, fix: &str) -> Result<Landing, String> {
-        self.inc.fixes.iter().find(|f| f.id == fix || f.by.as_deref() == Some(fix)).map(|f| f.landing.clone()).ok_or_else(|| format!("{fix} was not observed"))
+        self.inc
+            .fixes
+            .iter()
+            .find(|f| f.id == fix || f.by.as_deref() == Some(fix))
+            .map(|f| f.landing.clone())
+            .ok_or_else(|| format!("{fix} was not observed"))
     }
 }
 
 fn candidate(inc: &Inc) -> incident::settle::Candidate {
-    incident::settle::Candidate { id: inc.id.clone(), external_ref: Some(inc.external_ref.clone()).filter(|r| !r.is_empty()), labels: inc.labels.clone(), fixes: inc.fixes.iter().map(|f| f.id.clone()).collect() }
+    incident::settle::Candidate {
+        id: inc.id.clone(),
+        external_ref: Some(inc.external_ref.clone()).filter(|r| !r.is_empty()),
+        labels: inc.labels.clone(),
+        fixes: inc.fixes.iter().map(|f| f.id.clone()).collect(),
+    }
 }
 
 fn phase_name(p: Phase) -> &'static str {
@@ -310,7 +358,13 @@ pub struct Job {
 }
 
 fn act(name: &str, key: String, j: Job, deadline_ms: u64) -> Act {
-    Act { name: name.into(), key, input: serde_json::to_string(&j).unwrap_or_default(), deadline_ms, probe: false }
+    Act {
+        name: name.into(),
+        key,
+        input: serde_json::to_string(&j).unwrap_or_default(),
+        deadline_ms,
+        probe: false,
+    }
 }
 
 /// `settle_one` with the port's reads answered from `Inc`: a close asks `close`, a persisting
@@ -318,7 +372,18 @@ fn act(name: &str, key: String, j: Job, deadline_ms: u64) -> Act {
 /// one `log`. A second persist while one is in flight is refused naming the fired label.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     let log = cfg.get("SPIRA_INCIDENT_LOG").cloned().unwrap_or_default();
-    let line = |text: String| act(LOG, format!("{NAME}:log:{now_ms}:{:016x}", fnv1a(&text)), Job { text, log: log.clone(), ..Job::default() }, 2_000);
+    let line = |text: String| {
+        act(
+            LOG,
+            format!("{NAME}:log:{now_ms}:{:016x}", fnv1a(&text)),
+            Job {
+                text,
+                log: log.clone(),
+                ..Job::default()
+            },
+            2_000,
+        )
+    };
     let mut next = carry.clone();
     let mut acts = vec![];
     match input {
@@ -327,19 +392,35 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             if cfg.get("SPIRA_DB").is_some_and(|d| d.trim().is_empty()) {
                 return Ok((next, acts));
             }
-            next.incidents.retain(|id, _| s.incidents.iter().any(|i| &i.id == id));
-            next.waiting.retain(|id, _| s.incidents.iter().any(|i| &i.id == id));
+            next.incidents
+                .retain(|id, _| s.incidents.iter().any(|i| &i.id == id));
+            next.waiting
+                .retain(|id, _| s.incidents.iter().any(|i| &i.id == id));
             for inc in &s.incidents {
                 let phase = carry.incidents.get(&inc.id).copied().unwrap_or_default();
                 if matches!(phase, Phase::Closing | Phase::Closed) {
                     continue;
                 }
-                let port = Observed { inc, now_iso: incident::run::iso_now_public((now_ms / 1000) as i64), closed: Default::default(), persisted: Default::default() };
+                let port = Observed {
+                    inc,
+                    now_iso: incident::run::iso_now_public((now_ms / 1000) as i64),
+                    closed: Default::default(),
+                    persisted: Default::default(),
+                };
                 match incident::settle::settle_one(&port, &candidate(inc)) {
                     incident::settle::Outcome::Closed { evidence, .. } => {
                         next.incidents.insert(inc.id.clone(), Phase::Closing);
                         next.waiting.remove(&inc.id);
-                        acts.push(act(CLOSE, format!("{}:close", inc.id), Job { id: inc.id.clone(), text: evidence, ..Job::default() }, 5_000));
+                        acts.push(act(
+                            CLOSE,
+                            format!("{}:close", inc.id),
+                            Job {
+                                id: inc.id.clone(),
+                                text: evidence,
+                                ..Job::default()
+                            },
+                            5_000,
+                        ));
                     }
                     incident::settle::Outcome::Persists { .. } => {
                         let (label, note) = port.persisted.borrow().clone().unwrap_or_default();
@@ -348,18 +429,40 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                         }
                         next.incidents.insert(inc.id.clone(), Phase::Persists);
                         next.waiting.remove(&inc.id);
-                        acts.push(act(NOTE, format!("{}:note:{label}", inc.id), Job { id: inc.id.clone(), text: note, label, ..Job::default() }, 10_000));
+                        acts.push(act(
+                            NOTE,
+                            format!("{}:note:{label}", inc.id),
+                            Job {
+                                id: inc.id.clone(),
+                                text: note,
+                                label,
+                                ..Job::default()
+                            },
+                            10_000,
+                        ));
                     }
-                    o @ (incident::settle::Outcome::Waiting { .. } | incident::settle::Outcome::Skipped { .. }) => {
+                    o @ (incident::settle::Outcome::Waiting { .. }
+                    | incident::settle::Outcome::Skipped { .. }) => {
                         let (skipped, why) = match o {
                             incident::settle::Outcome::Skipped { why, .. } => (true, why),
                             incident::settle::Outcome::Waiting { why, .. } => (false, why),
                             other => (true, format!("{other:?}")),
                         };
-                        next.incidents.insert(inc.id.clone(), if skipped { Phase::Skipped } else { Phase::Waiting });
+                        next.incidents.insert(
+                            inc.id.clone(),
+                            if skipped {
+                                Phase::Skipped
+                            } else {
+                                Phase::Waiting
+                            },
+                        );
                         let l = format!("{}\t{}", inc.id, why.replace('\n', " "));
                         if carry.waiting.get(&inc.id) != Some(&l) {
-                            acts.push(line(format!("settle: {} {}: {why}", if skipped { "skipped" } else { "waiting" }, inc.id)));
+                            acts.push(line(format!(
+                                "settle: {} {}: {why}",
+                                if skipped { "skipped" } else { "waiting" },
+                                inc.id
+                            )));
                         }
                         next.waiting.insert(inc.id.clone(), l);
                     }
@@ -367,21 +470,47 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             }
         }
         Input::Outcome { effect, ok, body } if [CLOSE, NOTE, LABEL].contains(&effect.as_str()) => {
-            let j: Job = serde_json::from_str(body).unwrap_or_else(|_| Job { id: body.split(": ").next().unwrap_or_default().into(), ..Job::default() });
+            let j: Job = serde_json::from_str(body).unwrap_or_else(|_| Job {
+                id: body.split(": ").next().unwrap_or_default().into(),
+                ..Job::default()
+            });
             let phase = carry.incidents.get(&j.id).copied().unwrap_or_default();
-            let want = if effect == CLOSE { Phase::Closing } else { Phase::Persists };
+            let want = if effect == CLOSE {
+                Phase::Closing
+            } else {
+                Phase::Persists
+            };
             if phase != want {
-                return Err(format!("{NAME}: {} is in state {}; an outcome of {effect} is refused", j.id, phase_name(phase)));
+                return Err(format!(
+                    "{NAME}: {} is in state {}; an outcome of {effect} is refused",
+                    j.id,
+                    phase_name(phase)
+                ));
             }
             match (effect.as_str(), ok) {
                 (CLOSE, true) => {
                     next.incidents.insert(j.id.clone(), Phase::Closed);
                     acts.push(line(format!("settle: closed {}: {}", j.id, j.text)));
                 }
-                (NOTE, true) => acts.push(act(LABEL, format!("{}:label:{}", j.id, j.label), Job { id: j.id, label: j.label, ..Job::default() }, 10_000)),
+                (NOTE, true) => acts.push(act(
+                    LABEL,
+                    format!("{}:label:{}", j.id, j.label),
+                    Job {
+                        id: j.id,
+                        label: j.label,
+                        ..Job::default()
+                    },
+                    10_000,
+                )),
                 (LABEL, true) => {
                     next.incidents.insert(j.id.clone(), Phase::Waiting);
-                    next.waiting.insert(j.id.clone(), format!("{}\tfix landed but the alarm persists; already with Ops", j.id));
+                    next.waiting.insert(
+                        j.id.clone(),
+                        format!(
+                            "{}\tfix landed but the alarm persists; already with Ops",
+                            j.id
+                        ),
+                    );
                     acts.push(line(format!("settle: persists {} ({})", j.id, j.label)));
                 }
                 _ => {
@@ -390,12 +519,17 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             }
         }
         Input::Outcome { effect, .. } if effect == LOG => {}
-        Input::Outcome { effect, .. } => return Err(format!("{NAME}: no outcome of {effect} is expected")),
+        Input::Outcome { effect, .. } => {
+            return Err(format!("{NAME}: no outcome of {effect} is expected"))
+        }
         Input::Ran(r) => {
             let id = r.key_for(NAME).unwrap_or_default();
             let phase = carry.incidents.get(&id).copied().unwrap_or_default();
             if phase != Phase::Closing {
-                return Err(format!("{NAME}: {id} is in state {}; its unit's end is refused", phase_name(phase)));
+                return Err(format!(
+                    "{NAME}: {id} is in state {}; its unit's end is refused",
+                    phase_name(phase)
+                ));
             }
             next.incidents.insert(id, Phase::Closed);
         }
@@ -407,7 +541,10 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
 struct Shared(std::sync::Arc<dyn runtime::units::Units>);
 
 impl runtime::units::Units for Shared {
-    fn start(&self, spec: &runtime::units::UnitSpec) -> runtime::Result<runtime::units::UnitHandle> {
+    fn start(
+        &self,
+        spec: &runtime::units::UnitSpec,
+    ) -> runtime::Result<runtime::units::UnitHandle> {
         self.0.start(spec)
     }
     fn stop(&self, h: &runtime::units::UnitHandle) -> runtime::Result<()> {
@@ -422,7 +559,9 @@ impl runtime::units::Units for Shared {
 }
 
 fn bd(e: &crate::Effects) -> Result<incident::real::RealBd, String> {
-    Ok(incident::real::RealBd { lc: Some(super::lc(e)) })
+    Ok(incident::real::RealBd {
+        lc: Some(super::lc(e)),
+    })
 }
 
 /// The observe: `RealSettler`'s reads (the content list, the blocks edges, each fix's state
@@ -431,7 +570,11 @@ fn bd(e: &crate::Effects) -> Result<incident::real::RealBd, String> {
 pub fn observe(e: &crate::Effects) -> Result<String, String> {
     use incident::settle::Settler;
     let cfg = spira_config::process::cfg;
-    let (label, home_repo, release) = (cfg("SPIRA_INCIDENT_LABEL")?, cfg("SPIRA_HOME_REPO")?, cfg("SPIRA_RELEASE")?);
+    let (label, home_repo, release) = (
+        cfg("SPIRA_INCIDENT_LABEL")?,
+        cfg("SPIRA_HOME_REPO")?,
+        cfg("SPIRA_RELEASE")?,
+    );
     let bd = bd(e)?;
     let home = spira_config::resolve::locate_home_for_process()?;
     let settler = incident::settle_real::RealSettler {
@@ -441,12 +584,22 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
         home_repo,
         registry: spira_config::repos::Registry::from_env(BTreeMap::new(), &home),
         release_sha: incident::settle_real::release_sha_of(&release),
-        units: e.units.clone().map(|u| Box::new(Shared(u)) as Box<dyn runtime::units::Units>).ok_or_else(|| "no unit manager configured".to_string()),
+        units: e
+            .units
+            .clone()
+            .map(|u| Box::new(Shared(u)) as Box<dyn runtime::units::Units>)
+            .ok_or_else(|| "no unit manager configured".to_string()),
         fixes: Default::default(),
     };
     let mut incidents = vec![];
     for c in settler.candidates()? {
-        let mut inc = Inc { id: c.id.clone(), external_ref: c.external_ref.clone().unwrap_or_default(), labels: c.labels.clone(), fixes: vec![], detector: Detector::NoProbe };
+        let mut inc = Inc {
+            id: c.id.clone(),
+            external_ref: c.external_ref.clone().unwrap_or_default(),
+            labels: c.labels.clone(),
+            fixes: vec![],
+            detector: Detector::NoProbe,
+        };
         let mut all_landed = true;
         for fix in c.fixes.clone() {
             let (mut target, mut by, mut hops) = (fix.clone(), None, 0);
@@ -457,7 +610,9 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
                         by = Some(next.clone());
                         target = next;
                     }
-                    Ok(incident::settle::FixState::Superseded { .. }) => break "SUPERSEDED".to_string(),
+                    Ok(incident::settle::FixState::Superseded { .. }) => {
+                        break "SUPERSEDED".to_string()
+                    }
                     Ok(incident::settle::FixState::Landed) => break "LANDED".to_string(),
                     Ok(incident::settle::FixState::Unlanded(s)) => break s,
                     Err(e) => break format!("unknown: {e}"),
@@ -468,12 +623,22 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
             } else {
                 match settler.landing_in_force(&target) {
                     Ok(Some(l)) => Landing::InForce(l.sha),
-                    Ok(None) => settler.landing_on_base(&target).map_or_else(Landing::Err, |l| Landing::OnBase(l.sha)),
-                    Err(e) => settler.landing_on_base(&target).map_or(Landing::Err(e), |l| Landing::OnBase(l.sha)),
+                    Ok(None) => settler
+                        .landing_on_base(&target)
+                        .map_or_else(Landing::Err, |l| Landing::OnBase(l.sha)),
+                    Err(e) => settler
+                        .landing_on_base(&target)
+                        .map_or(Landing::Err(e), |l| Landing::OnBase(l.sha)),
                 }
             };
-            let stop = state != "DROPPED" && !matches!(landing, Landing::InForce(_) | Landing::OnBase(_));
-            inc.fixes.push(Fix { id: fix, state, landing, by });
+            let stop =
+                state != "DROPPED" && !matches!(landing, Landing::InForce(_) | Landing::OnBase(_));
+            inc.fixes.push(Fix {
+                id: fix,
+                state,
+                landing,
+                by,
+            });
             if stop {
                 all_landed = false;
                 break;
@@ -499,7 +664,19 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     let done = || serde_json::to_string(&j).map_err(|e| e.to_string());
     match spec.name.as_str() {
         CLOSE => {
-            let r = super::lc(e).call_stdin(&["close", j.id.as_str(), "--reason-file", "-", "--actor", "incident"], &j.text).map_err(|why| format!("{}: {why}", j.id))?;
+            let r = super::lc(e)
+                .call_stdin(
+                    &[
+                        "close",
+                        j.id.as_str(),
+                        "--reason-file",
+                        "-",
+                        "--actor",
+                        "incident",
+                    ],
+                    &j.text,
+                )
+                .map_err(|why| format!("{}: {why}", j.id))?;
             if r.code != 0 {
                 return Err(format!("{}: close exited {}: {}", j.id, r.code, r.why()));
             }
@@ -519,8 +696,16 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
         }
         LOG => {
             use std::io::Write;
-            let path = if j.log.is_empty() { e.world.run_dir.join("incident.log") } else { std::path::PathBuf::from(&j.log) };
-            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+            let path = if j.log.is_empty() {
+                e.world.run_dir.join("incident.log")
+            } else {
+                std::path::PathBuf::from(&j.log)
+            };
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|err| format!("{}: {err}", path.display()))?;
             writeln!(f, "{}", j.text).map_err(|err| err.to_string())?;
             Ok("logged".into())
         }
@@ -528,6 +713,15 @@ pub fn run(e: &crate::Effects, spec: &runtime::EffectSpec) -> Result<String, Str
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "incidents", drop: &[] }, runtime::rows::Part::Map { name: "waiting", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Map {
+        name: "incidents",
+        drop: &[],
+    },
+    runtime::rows::Part::Map {
+        name: "waiting",
+        drop: &[],
+    },
+];
 
 super::hosted!(IncidentSettle);

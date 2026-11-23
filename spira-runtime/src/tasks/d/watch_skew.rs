@@ -107,7 +107,14 @@ pub const ESCALATE: &str = "watch.skew.escalate";
 pub const LOG: &str = "watch.skew.log";
 pub const REFRESH: &str = "watch.skew.refresh";
 pub const EFFECTS: &[&str] = &[OBSERVE, ESCALATE, LOG, REFRESH];
-pub const KEYS: &[&str] = &["SPIRA_RELEASES", "SPIRA_RELEASE_REPO", "SPIRA_GH_INTAKE_REPO", "SPIRA_GH", "SPIRA_RUN", "SPIRA_QUEUE_DIR"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_RELEASES",
+    "SPIRA_RELEASE_REPO",
+    "SPIRA_GH_INTAKE_REPO",
+    "SPIRA_GH",
+    "SPIRA_RUN",
+    "SPIRA_QUEUE_DIR",
+];
 /// `OnUnitActiveSec=1h`.
 pub const CADENCE_MS: u64 = 3_600_000;
 const OBSERVE_DEADLINE_MS: u64 = 60_000;
@@ -127,7 +134,14 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { releases: cfg("SPIRA_RELEASES")?, release_repo: cfg("SPIRA_RELEASE_REPO")?, gh_intake_repo: cfg("SPIRA_GH_INTAKE_REPO")?, gh: cfg("SPIRA_GH")?, run: cfg("SPIRA_RUN")?, queue_dir: cfg("SPIRA_QUEUE_DIR")? })
+        Ok(Config {
+            releases: cfg("SPIRA_RELEASES")?,
+            release_repo: cfg("SPIRA_RELEASE_REPO")?,
+            gh_intake_repo: cfg("SPIRA_GH_INTAKE_REPO")?,
+            gh: cfg("SPIRA_GH")?,
+            run: cfg("SPIRA_RUN")?,
+            queue_dir: cfg("SPIRA_QUEUE_DIR")?,
+        })
     }
 }
 
@@ -216,7 +230,9 @@ impl SnapWorld<'_> {
     }
 
     fn act(&self, name: &str, key: String, input: String, deadline_ms: u64) {
-        self.acts.borrow_mut().push(EffectSpec::keyed(name, key, input, deadline_ms));
+        self.acts
+            .borrow_mut()
+            .push(EffectSpec::keyed(name, key, input, deadline_ms));
     }
 }
 
@@ -280,7 +296,8 @@ impl World for SnapWorld<'_> {
         self.snap.tag_commits.get(tag).cloned()
     }
     fn rev_parse_short(&self, repo: &Path, rev: &str) -> Option<String> {
-        self.rev_parse(repo, rev, false).map(|s| s.chars().take(7).collect())
+        self.rev_parse(repo, rev, false)
+            .map(|s| s.chars().take(7).collect())
     }
     fn is_ancestor(&self, _: &Path, _: &str, _: &str) -> bool {
         self.snap.behind.is_some()
@@ -324,7 +341,13 @@ impl World for SnapWorld<'_> {
     fn release_status(&self) -> String {
         self.snap.hotfix_line.clone().unwrap_or_default()
     }
-    fn release_build_verify_activate(&self, _: &str, _: &Path, _: &str, _: &Path) -> Result<(), String> {
+    fn release_build_verify_activate(
+        &self,
+        _: &str,
+        _: &Path,
+        _: &str,
+        _: &Path,
+    ) -> Result<(), String> {
         Err("the snapshot world writes nothing".into())
     }
     fn overrides_apply(&self, _: &Path) {}
@@ -340,9 +363,24 @@ impl World for SnapWorld<'_> {
     fn gh_release_list(&self, _: &str) -> Result<String, String> {
         Err("the snapshot carries the release tags".into())
     }
-    fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String> {
-        let q = Question { from: FROM.into(), subject: subject.into(), body: body.into(), default: default_action.into() };
-        self.act(ESCALATE, format!("watch.skew:{:016x}", fnv1a(subject)), serde_json::to_string(&q).unwrap_or_default(), ESCALATE_DEADLINE_MS);
+    fn mail_send_question(
+        &self,
+        subject: &str,
+        body: &str,
+        default_action: &str,
+    ) -> Result<(), String> {
+        let q = Question {
+            from: FROM.into(),
+            subject: subject.into(),
+            body: body.into(),
+            default: default_action.into(),
+        };
+        self.act(
+            ESCALATE,
+            format!("watch.skew:{:016x}", fnv1a(subject)),
+            serde_json::to_string(&q).unwrap_or_default(),
+            ESCALATE_DEADLINE_MS,
+        );
         Ok(())
     }
     fn now_stamp(&self) -> String {
@@ -361,10 +399,14 @@ impl World for SnapWorld<'_> {
         })
     }
     fn is_symlink(&self, p: &Path) -> bool {
-        p == self.releases().join("current") && self.snap.activated.is_some() && self.snap.mode != Mode::Checkout
+        p == self.releases().join("current")
+            && self.snap.activated.is_some()
+            && self.snap.mode != Mode::Checkout
     }
     fn readlink(&self, p: &Path) -> Option<String> {
-        (p == self.releases().join("current")).then(|| self.snap.activated.clone()).flatten()
+        (p == self.releases().join("current"))
+            .then(|| self.snap.activated.clone())
+            .flatten()
     }
     fn exists(&self, _: &Path) -> bool {
         true
@@ -372,7 +414,11 @@ impl World for SnapWorld<'_> {
     fn read_to_string(&self, p: &Path) -> Option<String> {
         let name = self.snap.activated.as_deref()?;
         if p == self.releases().join(name).join("MANIFEST") {
-            return self.snap.manifest_commit.as_ref().map(|c| format!("commit {c}\n"));
+            return self
+                .snap
+                .manifest_commit
+                .as_ref()
+                .map(|c| format!("commit {c}\n"));
         }
         if p == self.releases().join(".tags").join(name) {
             return self.snap.tag_sidecar.clone();
@@ -410,7 +456,16 @@ impl World for SnapWorld<'_> {
     }
     fn run_log_append(&self, name: &str, line: &str) {
         if name == skew::REFRESH_ALARM_LOG {
-            self.act(LOG, format!("watch.skew:refresh-declined:{}:{:016x}", self.snap.repo, fnv1a(line)), line.into(), WRITE_DEADLINE_MS);
+            self.act(
+                LOG,
+                format!(
+                    "watch.skew:refresh-declined:{}:{:016x}",
+                    self.snap.repo,
+                    fnv1a(line)
+                ),
+                line.into(),
+                WRITE_DEADLINE_MS,
+            );
         }
     }
     fn index_lock_age_secs(&self, _: &Path) -> Option<u64> {
@@ -434,8 +489,18 @@ pub const FROM: &str = "Skew check <skew@spira>";
 /// `refresh`. Elsewhere a running commit behind its base is refreshed by `watch.skew.refresh`
 /// (skew's `refresh` on the host) unless the queue lock is held: a land is in flight, so the pass
 /// declines and the decline streak (skew's own, alarming at 3 and every 180 after) counts it.
-pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
-    let w = SnapWorld { snap, cfg, carry: std::cell::RefCell::new(carry.clone()), acts: std::cell::RefCell::new(vec![]) };
+pub fn decide(
+    carry: &Carry,
+    snap: &Snapshot,
+    _now_ms: u64,
+    cfg: &Config,
+) -> (Carry, Vec<EffectSpec>) {
+    let w = SnapWorld {
+        snap,
+        cfg,
+        carry: std::cell::RefCell::new(carry.clone()),
+        acts: std::cell::RefCell::new(vec![]),
+    };
     let repo = PathBuf::from(&snap.repo);
     match snap.mode {
         Mode::Local => {
@@ -444,9 +509,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Ca
         Mode::Release | Mode::Checkout => match (w.running(), snap.tip.as_ref()) {
             (Some(running), Some(tip)) if running != tip => {
                 if snap.queue_lock_held {
-                    skew::decline_streak_bump(&w, &repo, "the queue lock is held; a land is in flight");
+                    skew::decline_streak_bump(
+                        &w,
+                        &repo,
+                        "the queue lock is held; a land is in flight",
+                    );
                 } else {
-                    w.act(REFRESH, format!("watch.skew:refresh:{}:{tip}", snap.repo), snap.repo.clone(), REFRESH_DEADLINE_MS);
+                    w.act(
+                        REFRESH,
+                        format!("watch.skew:refresh:{}:{tip}", snap.repo),
+                        snap.repo.clone(),
+                        REFRESH_DEADLINE_MS,
+                    );
                 }
             }
             _ => skew::decline_streak_clear(&w, &repo),
@@ -458,13 +532,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot, _now_ms: u64, cfg: &Config) -> (Ca
 
 /// The host's skew world, under the declared harness home.
 fn real() -> Result<skew::real::Real, String> {
-    Ok(skew::real::Real::new(spira_config::resolve::locate_home_for_process()?))
+    Ok(skew::real::Real::new(
+        spira_config::resolve::locate_home_for_process()?,
+    ))
 }
 
 /// The snapshot from the host's skew world: the same reads `check` and `refresh` make there.
 pub fn snapshot(w: &dyn World, cfg: &Config) -> Snapshot {
     let home = w.home_repo();
-    let repo = w.repo_root(&home).filter(|p| w.is_git_repo(p)).unwrap_or_else(|| PathBuf::from(w.env("SPIRA_REPO").ok().flatten().unwrap_or_default()));
+    let repo = w
+        .repo_root(&home)
+        .filter(|p| w.is_git_repo(p))
+        .unwrap_or_else(|| PathBuf::from(w.env("SPIRA_REPO").ok().flatten().unwrap_or_default()));
     let releases = PathBuf::from(&cfg.releases);
     let current = releases.join("current");
     let linked = w.is_symlink(&current);
@@ -475,13 +554,25 @@ pub fn snapshot(w: &dyn World, cfg: &Config) -> Snapshot {
     };
     let activated = linked.then(|| w.readlink(&current)).flatten();
     let manifest_commit = match &activated {
-        Some(name) => w.read_to_string(&releases.join(name).join("MANIFEST")).and_then(|t| t.lines().find_map(|l| l.strip_prefix("commit ")).map(|c| c.trim().to_string())),
+        Some(name) => w
+            .read_to_string(&releases.join(name).join("MANIFEST"))
+            .and_then(|t| {
+                t.lines()
+                    .find_map(|l| l.strip_prefix("commit "))
+                    .map(|c| c.trim().to_string())
+            }),
         None => w.rev_parse(&repo, "HEAD", false),
     };
-    let base = if mode == Mode::Local { w.landref(Path::new(&home)) } else { w.landref(&repo) };
+    let base = if mode == Mode::Local {
+        w.landref(Path::new(&home))
+    } else {
+        w.landref(&repo)
+    };
     let tip = base.as_ref().and_then(|b| w.rev_parse(&repo, b, false));
     let behind = match (&manifest_commit, &tip) {
-        (Some(m), Some(t)) if m != t && w.is_ancestor(&repo, m, t) => w.rev_list_count(&repo, &format!("{m}..{t}")),
+        (Some(m), Some(t)) if m != t && w.is_ancestor(&repo, m, t) => {
+            w.rev_list_count(&repo, &format!("{m}..{t}"))
+        }
         _ => None,
     };
     let verify = match (&activated, mode) {
@@ -489,15 +580,27 @@ pub fn snapshot(w: &dyn World, cfg: &Config) -> Snapshot {
             let (ok, out) = w.release_verify_no_pre_activate(name, Some(&releases));
             Verify { ok, out }
         }
-        _ => Verify { ok: true, out: String::new() },
+        _ => Verify {
+            ok: true,
+            out: String::new(),
+        },
     };
-    let hotfix_line = w.release_status().lines().find(|l| l.starts_with("RUNNING UNLANDED ")).map(str::to_string);
-    let tag_sidecar = activated.as_ref().and_then(|n| w.read_to_string(&releases.join(".tags").join(n)));
+    let hotfix_line = w
+        .release_status()
+        .lines()
+        .find(|l| l.starts_with("RUNNING UNLANDED "))
+        .map(str::to_string);
+    let tag_sidecar = activated
+        .as_ref()
+        .and_then(|n| w.read_to_string(&releases.join(".tags").join(n)));
     let (mut tags, mut tag_commits) = (vec![], BTreeMap::new());
     if mode == Mode::Release {
         tags = w.tags_matching(&repo, "spira-release-*");
         tags.extend(w.tags_matching(&repo, "spira-[0-9]*.[0-9]*.[0-9]*"));
-        let dir = cfg.release_repo.strip_prefix("file://").unwrap_or(&cfg.release_repo);
+        let dir = cfg
+            .release_repo
+            .strip_prefix("file://")
+            .unwrap_or(&cfg.release_repo);
         if tags.is_empty() && dir.starts_with('/') {
             tags = w.local_tag_sidecars(Path::new(dir));
         }
@@ -508,7 +611,23 @@ pub fn snapshot(w: &dyn World, cfg: &Config) -> Snapshot {
         }
     }
     let queue_lock_held = w.queue_lock_held(&home);
-    Snapshot { repo: repo.display().to_string(), mode, activated, manifest_commit, base, tip, hotfix_line, verify, queue_lock_held, tags, tag_sidecar, decline_streak: 0, stamps: BTreeMap::new(), behind, tag_commits }
+    Snapshot {
+        repo: repo.display().to_string(),
+        mode,
+        activated,
+        manifest_commit,
+        base,
+        tip,
+        hotfix_line,
+        verify,
+        queue_lock_held,
+        tags,
+        tag_sidecar,
+        decline_streak: 0,
+        stamps: BTreeMap::new(),
+        behind,
+        tag_commits,
+    }
 }
 
 /// `watch.skew.observe`: the snapshot, from the host.
@@ -520,7 +639,9 @@ pub fn observe(_: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, St
 /// `watch.skew.escalate`: the operator question, through the mail library in-process.
 pub fn escalate(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
     let q: Question = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
-    real()?.mail_send_question(&q.subject, &q.body, &q.default).map(|_| q.subject)
+    real()?
+        .mail_send_question(&q.subject, &q.body, &q.default)
+        .map(|_| q.subject)
 }
 
 /// `watch.skew.log`: one line to `run/skew-refresh.log`, the refresh alarm log row.
@@ -548,7 +669,9 @@ impl WatchSkew {
     }
 
     pub fn pinned() -> Self {
-        WatchSkew { config: Config::pinned() }
+        WatchSkew {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -560,7 +683,16 @@ impl WatchSkew {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "escalated", drop: &[] }, runtime::rows::Part::Map { name: "declined", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Map {
+        name: "escalated",
+        drop: &[],
+    },
+    runtime::rows::Part::Map {
+        name: "declined",
+        drop: &[],
+    },
+];
 
 impl Handler for WatchSkew {
     fn interests(&self) -> &[EventKindTag] {
@@ -572,7 +704,13 @@ impl Handler for WatchSkew {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
     }

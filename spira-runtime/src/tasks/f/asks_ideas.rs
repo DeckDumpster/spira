@@ -73,11 +73,23 @@ pub const ASK: &str = "asks.ideas.ask";
 pub const EFFECTS: &[&str] = &[OBSERVE, ASK];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_ASKS_IDEAS_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_IDEAS_IDLE_SECS", "SPIRA_IDEAS_WAKE_FROM", "SPIRA_IDEAS_WAKE_UNTIL", "SPIRA_IDEAS_TZ", "SPIRA_IDEAS_MIN_GAP_SECS"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    "SPIRA_IDEAS_IDLE_SECS",
+    "SPIRA_IDEAS_WAKE_FROM",
+    "SPIRA_IDEAS_WAKE_UNTIL",
+    "SPIRA_IDEAS_TZ",
+    "SPIRA_IDEAS_MIN_GAP_SECS",
+];
 
 const DEADLINE_MS: u64 = 30_000;
 const ASK_DEADLINE_MS: u64 = 300_000;
-const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: DEADLINE_MS };
+const CYCLE: Cycle = Cycle {
+    stream: STREAM,
+    tick: TICK,
+    observe: OBSERVE,
+    deadline_ms: DEADLINE_MS,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Idea {
@@ -123,10 +135,30 @@ pub enum Spell {
 }
 
 pub const TRANSITIONS: &[Transition<Spell>] = &[
-    Transition { from: Spell::Busy, on: "idle", to: Spell::Idle, effects: &[] },
-    Transition { from: Spell::Idle, on: "busy", to: Spell::Busy, effects: &[] },
-    Transition { from: Spell::Idle, on: "prompt", to: Spell::Prompted, effects: &[ASK] },
-    Transition { from: Spell::Prompted, on: "busy", to: Spell::Busy, effects: &[] },
+    Transition {
+        from: Spell::Busy,
+        on: "idle",
+        to: Spell::Idle,
+        effects: &[],
+    },
+    Transition {
+        from: Spell::Idle,
+        on: "busy",
+        to: Spell::Busy,
+        effects: &[],
+    },
+    Transition {
+        from: Spell::Idle,
+        on: "prompt",
+        to: Spell::Prompted,
+        effects: &[ASK],
+    },
+    Transition {
+        from: Spell::Prompted,
+        on: "busy",
+        to: Spell::Busy,
+        effects: &[],
+    },
 ];
 
 /// The spell's next state on `on`, or a refusal naming the state it is in.
@@ -137,7 +169,12 @@ pub fn step(from: Spell, on: &str) -> Result<Spell, String> {
 /// `idea_prompt::pass`'s config from the pinned [`KEYS`]; `None` when one does not parse.
 fn prompt_config(config: &BTreeMap<String, String>) -> Option<idea_prompt::Config> {
     let n = |k: &str| config.get(k).and_then(|v| v.trim().parse::<u64>().ok());
-    Some(idea_prompt::Config { idle_secs: n("SPIRA_IDEAS_IDLE_SECS")?, wake_from: n("SPIRA_IDEAS_WAKE_FROM")? as u32, wake_until: n("SPIRA_IDEAS_WAKE_UNTIL")? as u32, min_gap_secs: n("SPIRA_IDEAS_MIN_GAP_SECS")? })
+    Some(idea_prompt::Config {
+        idle_secs: n("SPIRA_IDEAS_IDLE_SECS")?,
+        wake_from: n("SPIRA_IDEAS_WAKE_FROM")? as u32,
+        wake_until: n("SPIRA_IDEAS_WAKE_UNTIL")? as u32,
+        min_gap_secs: n("SPIRA_IDEAS_MIN_GAP_SECS")?,
+    })
 }
 
 /// The ask `asks.ideas.ask` sends: `mail send operator --kind question --class design`.
@@ -169,7 +206,14 @@ impl idea_prompt::Ports for Seen<'_> {
     }
 
     fn ideas(&self) -> Result<Vec<idea_prompt::Idea>, String> {
-        self.snap.ideas.clone().map(|v| v.into_iter().map(|i| idea_prompt::Idea { id: i.id, title: i.title }).collect())
+        self.snap.ideas.clone().map(|v| {
+            v.into_iter()
+                .map(|i| idea_prompt::Idea {
+                    id: i.id,
+                    title: i.title,
+                })
+                .collect()
+        })
     }
 
     fn send(&self, subject: &str, default: &str, body: &str) -> Result<(), String> {
@@ -194,20 +238,56 @@ fn outcome_of(o: idea_prompt::Outcome) -> Outcome {
 /// `idea_prompt::pass` runs over the snapshot with the carry as its state; the carry keeps
 /// `idle_since` (the old `last_busy`) only while idle, so a busy tick leaves it unchanged. A read
 /// the snapshot could not make, or a key that does not parse, prompts nothing and keeps the carry.
-pub fn decide(carry: &Carry, snap: &Snapshot, config: &BTreeMap<String, String>) -> (Carry, Outcome, Vec<EffectSpec>) {
-    let Some(cfg) = prompt_config(config) else { return (carry.clone(), Outcome::Busy, vec![]) };
-    let mut state = idea_prompt::State { last_busy: carry.idle_since.unwrap_or(0), last_prompt: carry.last_prompt.unwrap_or(0), prompted: carry.prompted };
-    let ports = Seen { snap, sent: std::cell::RefCell::new(None) };
-    let Ok(outcome) = idea_prompt::pass(&ports, &cfg, &mut state) else { return (carry.clone(), Outcome::Busy, vec![]) };
+pub fn decide(
+    carry: &Carry,
+    snap: &Snapshot,
+    config: &BTreeMap<String, String>,
+) -> (Carry, Outcome, Vec<EffectSpec>) {
+    let Some(cfg) = prompt_config(config) else {
+        return (carry.clone(), Outcome::Busy, vec![]);
+    };
+    let mut state = idea_prompt::State {
+        last_busy: carry.idle_since.unwrap_or(0),
+        last_prompt: carry.last_prompt.unwrap_or(0),
+        prompted: carry.prompted,
+    };
+    let ports = Seen {
+        snap,
+        sent: std::cell::RefCell::new(None),
+    };
+    let Ok(outcome) = idea_prompt::pass(&ports, &cfg, &mut state) else {
+        return (carry.clone(), Outcome::Busy, vec![]);
+    };
     let outcome = outcome_of(outcome);
     let next = match outcome {
-        Outcome::Busy => Carry { idle_since: None, last_prompt: carry.last_prompt, prompted: false },
-        _ => Carry { idle_since: Some(state.last_busy), last_prompt: (state.last_prompt != 0).then_some(state.last_prompt), prompted: state.prompted },
+        Outcome::Busy => Carry {
+            idle_since: None,
+            last_prompt: carry.last_prompt,
+            prompted: false,
+        },
+        _ => Carry {
+            idle_since: Some(state.last_busy),
+            last_prompt: (state.last_prompt != 0).then_some(state.last_prompt),
+            prompted: state.prompted,
+        },
     };
     let acts = ports
         .sent
         .into_inner()
-        .map(|(subject, default, body)| EffectSpec::keyed(ASK, format!("ideas/{}", carry.idle_since.unwrap_or(0)), serde_json::to_string(&Ask { subject, default, body, tz: config.get("SPIRA_IDEAS_TZ").cloned().unwrap_or_default() }).unwrap_or_default(), ASK_DEADLINE_MS))
+        .map(|(subject, default, body)| {
+            EffectSpec::keyed(
+                ASK,
+                format!("ideas/{}", carry.idle_since.unwrap_or(0)),
+                serde_json::to_string(&Ask {
+                    subject,
+                    default,
+                    body,
+                    tz: config.get("SPIRA_IDEAS_TZ").cloned().unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+                ASK_DEADLINE_MS,
+            )
+        })
         .into_iter()
         .collect();
     (next, outcome, acts)
@@ -225,25 +305,49 @@ pub struct ObserveInput {
 /// prompt is possible.
 pub fn run_observe(e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     use idea_prompt::Ports;
-    let input: ObserveInput = serde_json::from_str(&s.input).map_err(|e| format!("observe input: {e}"))?;
-    let tz = input.config.get("SPIRA_IDEAS_TZ").cloned().ok_or("SPIRA_IDEAS_TZ is not pinned")?;
+    let input: ObserveInput =
+        serde_json::from_str(&s.input).map_err(|e| format!("observe input: {e}"))?;
+    let tz = input
+        .config
+        .get("SPIRA_IDEAS_TZ")
+        .cloned()
+        .ok_or("SPIRA_IDEAS_TZ is not pinned")?;
     let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
-    let real = idea_prompt::real::Real::with(tz, Ok(lc), Box::new(|_, _| Err("the observe sends nothing".into())));
+    let real = idea_prompt::real::Real::with(
+        tz,
+        Ok(lc),
+        Box::new(|_, _| Err("the observe sends nothing".into())),
+    );
     let now = spira_config::vtime::now_epoch();
     let (local_hour, ideas) = if input.may_prompt {
-        let ideas = real.ideas().map(|v| v.into_iter().map(|i| Idea { id: i.id, title: i.title }).collect());
+        let ideas = real.ideas().map(|v| {
+            v.into_iter()
+                .map(|i| Idea {
+                    id: i.id,
+                    title: i.title,
+                })
+                .collect()
+        });
         (real.local_hour(now).unwrap_or(0), ideas)
     } else {
         (0, Ok(vec![]))
     };
-    serde_json::to_string(&Snapshot { now, local_hour, busy: real.busy(), ideas }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot {
+        now,
+        local_hour,
+        busy: real.busy(),
+        ideas,
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// `asks.ideas.ask`: the operator question, through the `mail` library.
 pub fn run_ask(_e: &crate::Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     use idea_prompt::Ports;
     let ask: Ask = serde_json::from_str(&s.input).map_err(|e| format!("ask input: {e}"))?;
-    idea_prompt::real::Real::new(ask.tz).send(&ask.subject, &ask.default, &ask.body).map(|()| ask.subject)
+    idea_prompt::real::Real::new(ask.tz)
+        .send(&ask.subject, &ask.default, &ask.body)
+        .map(|()| ask.subject)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,7 +358,10 @@ pub struct AsksIdeas {
 
 impl AsksIdeas {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(AsksIdeas { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
+        Ok(AsksIdeas {
+            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
+            config: super::pinned(settings, KEYS)?,
+        })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -266,7 +373,11 @@ impl AsksIdeas {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("idle_since"), runtime::rows::Part::Field("last_prompt"), runtime::rows::Part::Field("prompted")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("idle_since"),
+    runtime::rows::Part::Field("last_prompt"),
+    runtime::rows::Part::Field("prompted"),
+];
 
 impl Handler for AsksIdeas {
     fn interests(&self) -> &[EventKindTag] {
@@ -276,13 +387,20 @@ impl Handler for AsksIdeas {
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         let may_prompt = || {
             let c = carried::<Carry>(view, &ev.stream, STATE);
-            serde_json::to_string(&ObserveInput { config: self.config.clone(), may_prompt: c.idle_since.is_some() && !c.prompted }).unwrap_or_default()
+            serde_json::to_string(&ObserveInput {
+                config: self.config.clone(),
+                may_prompt: c.idle_since.is_some() && !c.prompted,
+            })
+            .unwrap_or_default()
         };
         CYCLE.handle(self.interval_ms, view, ev, may_prompt, |body| {
-            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
+            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else {
+                return vec![];
+            };
             let carry = carried::<Carry>(view, &ev.stream, STATE);
             let (next, outcome, acts) = decide(&carry, &snap, &self.config);
-            ctx.event().set("ideas.outcome", format!("{outcome:?}").as_str());
+            ctx.event()
+                .set("ideas.outcome", format!("{outcome:?}").as_str());
             commands(&carry, &next, STATE, acts)
         })
     }

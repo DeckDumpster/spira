@@ -88,7 +88,10 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { spill: cfg("SPIRA_ROUND_VM_SPILL")?, inbox: cfg("SPIRA_CONCIERGE_INBOX")? })
+        Ok(Config {
+            spill: cfg("SPIRA_ROUND_VM_SPILL")?,
+            inbox: cfg("SPIRA_CONCIERGE_INBOX")?,
+        })
     }
 }
 
@@ -96,8 +99,13 @@ impl Config {
 pub enum Verdict {
     #[default]
     Fresh,
-    Stale { line: String },
-    Unreadable { rc: i32, out: String },
+    Stale {
+        line: String,
+    },
+    Unreadable {
+        rc: i32,
+        out: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,20 +131,34 @@ pub fn line(v: &Verdict) -> Option<String> {
     match v {
         Verdict::Fresh => None,
         Verdict::Stale { line } => Some(line.clone()),
-        Verdict::Unreadable { rc, out } => Some(format!("round AMI check could not read the images: 'round-vm ami-check' exited {rc}: {out}")),
+        Verdict::Unreadable { rc, out } => Some(format!(
+            "round AMI check could not read the images: 'round-vm ami-check' exited {rc}: {out}"
+        )),
     }
 }
 
 /// `Fresh` clears; a stale or unreadable line other than `said` is said once.
-pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(
+    carry: &Carry,
+    snap: &Snapshot,
+    now_ms: u64,
+    _cfg: &Config,
+) -> (Carry, Vec<EffectSpec>) {
     if !EC2_SPILLS.contains(&snap.spill.as_str()) {
         return (carry.clone(), vec![]);
     }
-    let Some(l) = line(&snap.verdict) else { return (Carry { said: None }, vec![]) };
+    let Some(l) = line(&snap.verdict) else {
+        return (Carry { said: None }, vec![]);
+    };
     if carry.said.as_deref() == Some(l.as_str()) {
         return (carry.clone(), vec![]);
     }
-    let say = EffectSpec::keyed(INBOX_APPEND, format!("ami_stale/{:016x}/{now_ms}", fnv1a(&l)), pattern::inbox_line(now_ms, INBOX_TAG, &format!("{l}{SUFFIX}")), INBOX_DEADLINE_MS);
+    let say = EffectSpec::keyed(
+        INBOX_APPEND,
+        format!("ami_stale/{:016x}/{now_ms}", fnv1a(&l)),
+        pattern::inbox_line(now_ms, INBOX_TAG, &format!("{l}{SUFFIX}")),
+        INBOX_DEADLINE_MS,
+    );
     (Carry { said: Some(l) }, vec![say])
 }
 
@@ -146,17 +168,34 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Ca
 /// not on EC2, no AWS call.
 pub fn observe() -> Result<String, String> {
     let spill = cfg("SPIRA_ROUND_VM_SPILL")?;
-    let verdict = if EC2_SPILLS.contains(&spill.as_str()) { verdict(round_vm::cli::ami_check_answer()) } else { Verdict::Fresh };
+    let verdict = if EC2_SPILLS.contains(&spill.as_str()) {
+        verdict(round_vm::cli::ami_check_answer())
+    } else {
+        Verdict::Fresh
+    };
     serde_json::to_string(&Snapshot { spill, verdict }).map_err(|e| e.to_string())
 }
 
 /// `(rc, output)` of `ami-check` as the script read it.
 pub fn verdict((rc, out): (i32, String)) -> Verdict {
-    let last = out.lines().rfind(|l| !l.is_empty()).unwrap_or_default().to_string();
+    let last = out
+        .lines()
+        .rfind(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_string();
     match rc {
         0 => Verdict::Fresh,
         1 if !last.is_empty() => Verdict::Stale { line: last },
-        _ => Verdict::Unreadable { rc, out: out.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(400).collect() },
+        _ => Verdict::Unreadable {
+            rc,
+            out: out
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(400)
+                .collect(),
+        },
     }
 }
 
@@ -170,7 +209,9 @@ impl WatchAmiStale {
     }
 
     pub fn pinned() -> Self {
-        WatchAmiStale { config: Config::pinned() }
+        WatchAmiStale {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -194,7 +235,13 @@ impl Handler for WatchAmiStale {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
     }

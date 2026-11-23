@@ -11,9 +11,9 @@
 
 pub use super::f::{cadence_ms, pinned, refuse, Transition};
 
+use super::{Reads, Task};
 /// The real sources (S9) are `crate::sources`; their event shapes are this family's.
 pub use crate::sources;
-use super::{Reads, Task};
 
 pub mod cockpit_tier_5s;
 pub mod cockpit_tier_600s;
@@ -33,9 +33,18 @@ pub static TASKS: &[Task] = &[
         boot: cockpit_tier_5s::CockpitTier5s::boot,
         cadence_ms: |s| super::f::cadence(s, cockpit_tier_5s::CADENCE_KEY),
         effects: cockpit_tier_5s::EFFECTS,
-        runners: &[(cockpit_tier_5s::OBSERVE, cockpit::run_observe), (cockpit_tier_5s::PUBLISH, cockpit::run_publish)],
+        runners: &[
+            (cockpit_tier_5s::OBSERVE, cockpit::run_observe),
+            (cockpit_tier_5s::PUBLISH, cockpit::run_publish),
+        ],
         keys: &[cockpit_tier_5s::KEYS],
-        build: |s| refuse(cockpit_tier_5s::NAME, cockpit_tier_5s::CockpitTier5s::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                cockpit_tier_5s::NAME,
+                cockpit_tier_5s::CockpitTier5s::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: cockpit_tier_60s::NAME,
@@ -45,9 +54,19 @@ pub static TASKS: &[Task] = &[
         boot: cockpit_tier_60s::CockpitTier60s::boot,
         cadence_ms: |s| super::f::cadence(s, cockpit_tier_60s::CADENCE_KEY),
         effects: cockpit_tier_60s::EFFECTS,
-        runners: &[(cockpit_tier_60s::OBSERVE, cockpit::run_observe), (cockpit_tier_60s::PUBLISH, cockpit::run_publish), (cockpit_tier_60s::SLOTS_SAMPLE, cockpit::run_slots_sample)],
+        runners: &[
+            (cockpit_tier_60s::OBSERVE, cockpit::run_observe),
+            (cockpit_tier_60s::PUBLISH, cockpit::run_publish),
+            (cockpit_tier_60s::SLOTS_SAMPLE, cockpit::run_slots_sample),
+        ],
         keys: &[cockpit_tier_60s::KEYS],
-        build: |s| refuse(cockpit_tier_60s::NAME, cockpit_tier_60s::CockpitTier60s::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                cockpit_tier_60s::NAME,
+                cockpit_tier_60s::CockpitTier60s::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: cockpit_tier_600s::NAME,
@@ -57,9 +76,18 @@ pub static TASKS: &[Task] = &[
         boot: cockpit_tier_600s::CockpitTier600s::boot,
         cadence_ms: |s| super::f::cadence(s, cockpit_tier_600s::CADENCE_KEY),
         effects: cockpit_tier_600s::EFFECTS,
-        runners: &[(cockpit_tier_600s::OBSERVE, cockpit::run_observe), (cockpit_tier_600s::PUBLISH, cockpit::run_publish)],
+        runners: &[
+            (cockpit_tier_600s::OBSERVE, cockpit::run_observe),
+            (cockpit_tier_600s::PUBLISH, cockpit::run_publish),
+        ],
         keys: &[cockpit_tier_600s::KEYS],
-        build: |s| refuse(cockpit_tier_600s::NAME, cockpit_tier_600s::CockpitTier600s::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                cockpit_tier_600s::NAME,
+                cockpit_tier_600s::CockpitTier600s::from_settings(s),
+            )
+            .registration()
+        },
     },
     mail_wake::ROW,
 ];
@@ -104,7 +132,15 @@ pub mod cockpit {
         }
 
         pub fn of_word(w: &str) -> Option<FragmentState> {
-            [FragmentState::Never, FragmentState::Ok, FragmentState::Stale, FragmentState::Error, FragmentState::Timeout].into_iter().find(|s| s.word() == w)
+            [
+                FragmentState::Never,
+                FragmentState::Ok,
+                FragmentState::Stale,
+                FragmentState::Error,
+                FragmentState::Timeout,
+            ]
+            .into_iter()
+            .find(|s| s.word() == w)
         }
 
         /// Whether a fragment in this status contributes its values (the merge's rule).
@@ -114,21 +150,75 @@ pub mod cockpit {
     }
 
     pub const FRAGMENT_TRANSITIONS: &[Transition<FragmentState>] = &[
-        Transition { from: FragmentState::Never, on: "ok", to: FragmentState::Ok, effects: &[] },
-        Transition { from: FragmentState::Never, on: "error", to: FragmentState::Error, effects: &[] },
-        Transition { from: FragmentState::Never, on: "timeout", to: FragmentState::Timeout, effects: &[] },
-        Transition { from: FragmentState::Ok, on: "ok", to: FragmentState::Ok, effects: &[] },
-        Transition { from: FragmentState::Ok, on: "stale", to: FragmentState::Stale, effects: &[] },
-        Transition { from: FragmentState::Ok, on: "error", to: FragmentState::Error, effects: &[] },
-        Transition { from: FragmentState::Ok, on: "timeout", to: FragmentState::Timeout, effects: &[] },
-        Transition { from: FragmentState::Stale, on: "ok", to: FragmentState::Ok, effects: &[] },
-        Transition { from: FragmentState::Error, on: "ok", to: FragmentState::Ok, effects: &[] },
-        Transition { from: FragmentState::Timeout, on: "ok", to: FragmentState::Ok, effects: &[] },
+        Transition {
+            from: FragmentState::Never,
+            on: "ok",
+            to: FragmentState::Ok,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Never,
+            on: "error",
+            to: FragmentState::Error,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Never,
+            on: "timeout",
+            to: FragmentState::Timeout,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Ok,
+            on: "ok",
+            to: FragmentState::Ok,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Ok,
+            on: "stale",
+            to: FragmentState::Stale,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Ok,
+            on: "error",
+            to: FragmentState::Error,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Ok,
+            on: "timeout",
+            to: FragmentState::Timeout,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Stale,
+            on: "ok",
+            to: FragmentState::Ok,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Error,
+            on: "ok",
+            to: FragmentState::Ok,
+            effects: &[],
+        },
+        Transition {
+            from: FragmentState::Timeout,
+            on: "ok",
+            to: FragmentState::Ok,
+            effects: &[],
+        },
     ];
 
     /// A fragment's next status on `on`, or a refusal naming the status it is in.
     pub fn step(from: FragmentState, on: &str) -> Result<FragmentState, String> {
-        FRAGMENT_TRANSITIONS.iter().find(|t| t.from == from && t.on == on).map(|t| t.to).ok_or_else(|| format!("a fragment in {from:?} cannot take {on:?}"))
+        FRAGMENT_TRANSITIONS
+            .iter()
+            .find(|t| t.from == from && t.on == on)
+            .map(|t| t.to)
+            .ok_or_else(|| format!("a fragment in {from:?} cannot take {on:?}"))
     }
 
     /// One sub-probe's answer: its status, when it was read, whether it was killed, its keys.
@@ -165,7 +255,13 @@ pub mod cockpit {
     }
 
     /// What every tier keeps: the digest that stops a republish, and each fragment's time and status.
-    pub const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("digest"), runtime::rows::Part::Map { name: "fragments", drop: &[] }];
+    pub const ROW_PARTS: &[runtime::rows::Part] = &[
+        runtime::rows::Part::Field("digest"),
+        runtime::rows::Part::Map {
+            name: "fragments",
+            drop: &[],
+        },
+    ];
 
     pub type Decide = fn(&Carry, &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String>;
 
@@ -175,10 +271,25 @@ pub mod cockpit {
 
     /// Keys whose value moves with the clock alone: an age, a countdown, an elapsed time.
     pub const CLOCK_ONLY: &[&str] = &[
-        "SP_SENTINEL_AGE", "SP_OPS_AGE", "SP_HEIMDALL_AGE", "SP_LC_STALE_S", "SP_CAPACITY_LEFT",
-        "SP_AWAITING_AGE", "SP_QUEUE_BATCH_AGE", "SP_RATELIM_AGE", "SP_RATELIM_5H_MIN", "SP_RATELIM_7D_MIN",
-        "SP_FUNNEL_CERTIFY_AGE", "SP_FUNNEL_RED_AGE", "SP_FUNNEL_CERT_AGE", "SP_FUNNEL_DONE_AGE",
-        "SP_MAIL_OLDEST_AGE", "SP_SWEEP_AGE", "SP_SENT_FAILED_AGE_M", "SP_UNSENT_OLDEST_H", "SP_CLOSED_STRANDED_OLDEST_H",
+        "SP_SENTINEL_AGE",
+        "SP_OPS_AGE",
+        "SP_HEIMDALL_AGE",
+        "SP_LC_STALE_S",
+        "SP_CAPACITY_LEFT",
+        "SP_AWAITING_AGE",
+        "SP_QUEUE_BATCH_AGE",
+        "SP_RATELIM_AGE",
+        "SP_RATELIM_5H_MIN",
+        "SP_RATELIM_7D_MIN",
+        "SP_FUNNEL_CERTIFY_AGE",
+        "SP_FUNNEL_RED_AGE",
+        "SP_FUNNEL_CERT_AGE",
+        "SP_FUNNEL_DONE_AGE",
+        "SP_MAIL_OLDEST_AGE",
+        "SP_SWEEP_AGE",
+        "SP_SENT_FAILED_AGE_M",
+        "SP_UNSENT_OLDEST_H",
+        "SP_CLOSED_STRANDED_OLDEST_H",
     ];
 
     /// The per-dwarf suffixes of the same kind, spelled `SP_DWARF<i>_<suffix>`.
@@ -186,7 +297,14 @@ pub mod cockpit {
 
     fn clock_only(key: &str) -> bool {
         CLOCK_ONLY.contains(&key)
-            || key.strip_prefix("SP_DWARF").and_then(|r| r.split_once('_')).is_some_and(|(i, suffix)| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()) && CLOCK_ONLY_DWARF.contains(&suffix))
+            || key
+                .strip_prefix("SP_DWARF")
+                .and_then(|r| r.split_once('_'))
+                .is_some_and(|(i, suffix)| {
+                    !i.is_empty()
+                        && i.bytes().all(|b| b.is_ascii_digit())
+                        && CLOCK_ONLY_DWARF.contains(&suffix)
+                })
     }
 
     /// Keys that never make a snapshot new on their own: the pass's own time, each probe's read
@@ -209,13 +327,23 @@ pub mod cockpit {
             let n = registry_name(name);
             out.push((format!("_PROBE_AT_{n}"), f.at.to_string()));
             out.push((format!("_PROBE_STATUS_{n}"), f.status.word().to_string()));
-            out.push((format!("SP_PROBE_KILLED_{n}"), u8::from(f.killed).to_string()));
+            out.push((
+                format!("SP_PROBE_KILLED_{n}"),
+                u8::from(f.killed).to_string(),
+            ));
         }
         let mut seen = std::collections::BTreeSet::new();
         for f in snap.fragments.values() {
             for (k, v) in &f.kv {
                 if seen.insert(k.clone()) {
-                    out.push((k.clone(), if f.status.has_values() { v.clone() } else { "?".into() }));
+                    out.push((
+                        k.clone(),
+                        if f.status.has_values() {
+                            v.clone()
+                        } else {
+                            "?".into()
+                        },
+                    ));
                 }
             }
         }
@@ -228,14 +356,17 @@ pub mod cockpit {
     }
 
     fn indexed(key: &str, prefix: &str) -> bool {
-        key.strip_prefix(prefix).is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+        key.strip_prefix(prefix)
+            .is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
     }
 
     /// The part of a value that is not its leading age: past the first word of an
     /// `SP_INFLOW<i>` or `SP_EVENT<i>` row, past the first `|` of an `SP_MAIL<i>` row.
     pub fn stable_value<'a>(key: &str, value: &'a str) -> &'a str {
         if indexed(key, "SP_INFLOW") || indexed(key, "SP_EVENT") {
-            value.split_once(char::is_whitespace).map_or("", |(_, rest)| rest.trim_start())
+            value
+                .split_once(char::is_whitespace)
+                .map_or("", |(_, rest)| rest.trim_start())
         } else if indexed(key, "SP_MAIL") {
             value.split_once('|').map_or("", |(_, rest)| rest)
         } else {
@@ -245,9 +376,17 @@ pub mod cockpit {
 
     /// The digest of the keys that make a snapshot new.
     pub fn digest(kv: &[(String, String)]) -> String {
-        let stable: String = kv.iter().filter(|(k, _)| !volatile(k)).map(|(k, v)| format!("{k}={}\n", stable_value(k, v))).collect();
+        let stable: String = kv
+            .iter()
+            .filter(|(k, _)| !volatile(k))
+            .map(|(k, v)| format!("{k}={}\n", stable_value(k, v)))
+            .collect();
         let d = ring::digest::digest(&ring::digest::SHA256, stable.as_bytes());
-        d.as_ref().iter().take(16).map(|b| format!("{b:02x}")).collect()
+        d.as_ref()
+            .iter()
+            .take(16)
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     /// Each probe's carried status after this read. A status moves only along
@@ -259,10 +398,17 @@ pub mod cockpit {
             .map(|(name, f)| {
                 let was = carry.fragments.get(name).cloned().unwrap_or_default();
                 let next = if was.status == f.status {
-                    FragmentCarry { killed: f.killed, ..was }
+                    FragmentCarry {
+                        killed: f.killed,
+                        ..was
+                    }
                 } else {
                     match step(was.status, f.status.word()) {
-                        Ok(to) => FragmentCarry { at: f.at, status: to, killed: f.killed },
+                        Ok(to) => FragmentCarry {
+                            at: f.at,
+                            status: to,
+                            killed: f.killed,
+                        },
                         Err(_) => was,
                     }
                 };
@@ -275,18 +421,41 @@ pub mod cockpit {
     /// fragment's status; publish the merged `Kv` as `publish` when its digest moved, or, with
     /// the digest unchanged, refresh it when a newer pass carries the pane's clock (`SP_AT`) or a
     /// row with a leading age (`stable_value` differs from the value) so the snapshot never reads stale. [`answer`] runs a refresh as a probe, off the journal.
-    pub fn decide_tier(carry: &Carry, snap: &Snapshot, publish: &str) -> Result<(Carry, Vec<EffectSpec>), String> {
+    pub fn decide_tier(
+        carry: &Carry,
+        snap: &Snapshot,
+        publish: &str,
+    ) -> Result<(Carry, Vec<EffectSpec>), String> {
         if !snap.supervised {
-            return Err(format!("may_write: not the supervised instance; {WRITE_KEY} names the one writer"));
+            return Err(format!(
+                "may_write: not the supervised instance; {WRITE_KEY} names the one writer"
+            ));
         }
         let kv = merged(snap);
         let d = digest(&kv);
         let newest = |at: &mut dyn Iterator<Item = u64>| at.max().unwrap_or(0);
-        let fresher = newest(&mut snap.fragments.values().map(|f| f.at)) > newest(&mut carry.fragments.values().map(|f| f.at));
-        let next = Carry { fragments: carry_fragments(carry, snap), digest: Some(d.clone()) };
+        let fresher = newest(&mut snap.fragments.values().map(|f| f.at))
+            > newest(&mut carry.fragments.values().map(|f| f.at));
+        let next = Carry {
+            fragments: carry_fragments(carry, snap),
+            digest: Some(d.clone()),
+        };
         let changed = carry.digest.as_deref() != Some(d.as_str());
-        let refresh = !changed && fresher && kv.iter().any(|(k, v)| k == "SP_AT" || stable_value(k, v) != v);
-        let acts = if changed || refresh { vec![EffectSpec::keyed(publish, format!("{publish}/{d}"), render(&kv), 1_000)] } else { vec![] };
+        let refresh = !changed
+            && fresher
+            && kv
+                .iter()
+                .any(|(k, v)| k == "SP_AT" || stable_value(k, v) != v);
+        let acts = if changed || refresh {
+            vec![EffectSpec::keyed(
+                publish,
+                format!("{publish}/{d}"),
+                render(&kv),
+                1_000,
+            )]
+        } else {
+            vec![]
+        };
         Ok((next, acts))
     }
 
@@ -302,13 +471,23 @@ pub mod cockpit {
     }
 
     /// The observe's answer through `decide`: a refusal is a wide-event field, never a write.
-    pub fn answer(ctx: &Ctx, view: &Projection, ev: &Event, state: EventKindTag, body: &str, decide: Decide) -> Vec<Command> {
-        let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
+    pub fn answer(
+        ctx: &Ctx,
+        view: &Projection,
+        ev: &Event,
+        state: EventKindTag,
+        body: &str,
+        decide: Decide,
+    ) -> Vec<Command> {
+        let Ok(snap) = serde_json::from_str::<Snapshot>(body) else {
+            return vec![];
+        };
         let carry = carried::<Carry>(view, &ev.stream, state);
         match decide(&carry, &snap) {
             Ok((next, acts)) => {
                 let moved = carry.digest != next.digest;
-                let (probes, writes): (Vec<EffectSpec>, Vec<EffectSpec>) = acts.into_iter().partition(|a| is_probe(a, moved));
+                let (probes, writes): (Vec<EffectSpec>, Vec<EffectSpec>) =
+                    acts.into_iter().partition(|a| is_probe(a, moved));
                 let mut out = commands(&carry, &next, state, writes);
                 out.extend(probes.into_iter().map(Command::Probe));
                 out
@@ -336,16 +515,42 @@ pub mod cockpit {
     /// The observe runner: the tier's probes in-process through `cockpit_collect::tiers`, each
     /// under its own timeout, as a [`Snapshot`].
     pub fn run_observe(_: &crate::Effects, _: &str, s: &EffectSpec) -> Result<String, String> {
-        let input: ObserveInput = serde_json::from_str(&s.input).map_err(|e| format!("{}: input: {e}", s.name))?;
-        let probes: Vec<(String, std::time::Duration)> = input.probes.iter().map(|p| (registry_name(&p.name).to_string(), std::time::Duration::from_millis(p.timeout_ms))).collect();
+        let input: ObserveInput =
+            serde_json::from_str(&s.input).map_err(|e| format!("{}: input: {e}", s.name))?;
+        let probes: Vec<(String, std::time::Duration)> = input
+            .probes
+            .iter()
+            .map(|p| {
+                (
+                    registry_name(&p.name).to_string(),
+                    std::time::Duration::from_millis(p.timeout_ms),
+                )
+            })
+            .collect();
         let got = cockpit_collect::tiers::observe(&probes);
         let fragments = input
             .probes
             .iter()
             .zip(got)
-            .map(|(p, f)| (p.name.clone(), Fragment { status: FragmentState::of_word(f.status).unwrap_or(FragmentState::Error), at: f.at.max(0) as u64, killed: f.killed, kv: f.kv.into_iter().collect() }))
+            .map(|(p, f)| {
+                (
+                    p.name.clone(),
+                    Fragment {
+                        status: FragmentState::of_word(f.status).unwrap_or(FragmentState::Error),
+                        at: f.at.max(0) as u64,
+                        killed: f.killed,
+                        kv: f.kv.into_iter().collect(),
+                    },
+                )
+            })
             .collect();
-        let snap = Snapshot { supervised: input.config.get(WRITE_KEY).is_some_and(|v| matches!(v.as_str(), "1" | "true")), fragments };
+        let snap = Snapshot {
+            supervised: input
+                .config
+                .get(WRITE_KEY)
+                .is_some_and(|v| matches!(v.as_str(), "1" | "true")),
+            fragments,
+        };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
@@ -367,14 +572,25 @@ pub mod cockpit {
         if e.world.run_dir.as_os_str().is_empty() {
             return Err("no run dir configured".into());
         }
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
         let claim = cockpit_ops::lcview::read_fresh_claim(&e.world.run_dir, now);
-        cockpit_collect::tiers::slots_sample(&e.world.run_dir, &with_ready(&s.input, claim.as_ref()))
+        cockpit_collect::tiers::slots_sample(
+            &e.world.run_dir,
+            &with_ready(&s.input, claim.as_ref()),
+        )
     }
 
     /// `input` plus the `ready` field as the claim view counts it; no claim view leaves it unwritten, which the row reads as `?`.
     fn with_ready(input: &str, claim: Option<&cockpit_ops::lcview::Snapshot>) -> String {
-        let ready = claim.and_then(|c| cockpit_ops::lcview::claim_keys(c).into_iter().find(|(k, _)| k == "SP_READY")).map(|(_, v)| v);
+        let ready = claim
+            .and_then(|c| {
+                cockpit_ops::lcview::claim_keys(c)
+                    .into_iter()
+                    .find(|(k, _)| k == "SP_READY")
+            })
+            .map(|(_, v)| v);
         match ready {
             Some(n) => format!("{input}ready={n}\n"),
             None => input.to_string(),
@@ -386,11 +602,32 @@ pub mod cockpit {
         use super::*;
 
         fn frag(status: FragmentState, at: u64, kv: &[(&str, &str)]) -> Fragment {
-            Fragment { status, at, killed: false, kv: kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() }
+            Fragment {
+                status,
+                at,
+                killed: false,
+                kv: kv
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            }
         }
 
         fn snap(at: u64, round: &str) -> Snapshot {
-            Snapshot { supervised: true, fragments: [("cockpit.now".to_string(), frag(FragmentState::Ok, at, &[("SP_AT", &at.to_string())])), ("cockpit.round".to_string(), frag(FragmentState::Ok, at, &[("SP_ROUND", round)]))].into() }
+            Snapshot {
+                supervised: true,
+                fragments: [
+                    (
+                        "cockpit.now".to_string(),
+                        frag(FragmentState::Ok, at, &[("SP_AT", &at.to_string())]),
+                    ),
+                    (
+                        "cockpit.round".to_string(),
+                        frag(FragmentState::Ok, at, &[("SP_ROUND", round)]),
+                    ),
+                ]
+                .into(),
+            }
         }
 
         #[test_id(t0arhoy)]
@@ -398,9 +635,19 @@ pub mod cockpit {
         fn only_an_indexed_row_loses_its_leading_age_and_every_other_key_is_whole() {
             assert_eq!(stable_value("SP_INFLOW0", "4m   task a"), "task a");
             assert_eq!(stable_value("SP_EVENT12", "9m x y"), "x y");
-            assert_eq!(stable_value("SP_EVENT1", "10m  x y"), stable_value("SP_EVENT1", "9m   x y"));
+            assert_eq!(
+                stable_value("SP_EVENT1", "10m  x y"),
+                stable_value("SP_EVENT1", "9m   x y")
+            );
             assert_eq!(stable_value("SP_MAIL3", "20218|READ|hi"), "READ|hi");
-            for k in ["SP_MAIL_N", "SP_INFLOW", "SP_MAIL", "SP_EVENTX", "SP_INFLOW0_REPO", "SP_MAIL0_X"] {
+            for k in [
+                "SP_MAIL_N",
+                "SP_INFLOW",
+                "SP_MAIL",
+                "SP_EVENTX",
+                "SP_INFLOW0_REPO",
+                "SP_MAIL0_X",
+            ] {
                 assert_eq!(stable_value(k, "4m   a|b"), "4m   a|b", "{k}");
             }
         }
@@ -408,7 +655,23 @@ pub mod cockpit {
         #[test_id(teop35r)]
         #[test]
         fn the_slots_sample_counts_ready_from_the_claim_view_and_leaves_it_unknown_without_one() {
-            let claim = cockpit_ops::lcview::Snapshot { claimable: Some(vec!["sp-a".into(), "sp-b".into()]), rows: ["sp-a", "sp-b"].iter().map(|id| cockpit_ops::lcview::Row { id: id.to_string(), state: "READY".into(), claim: Some(cockpit_ops::lcview::ClaimView { verdict: cockpit_ops::lcview::Kind::Claimable, blocker: None, runes: vec!["builder".into()] }), ..Default::default() }).collect(), ..Default::default() };
+            let claim = cockpit_ops::lcview::Snapshot {
+                claimable: Some(vec!["sp-a".into(), "sp-b".into()]),
+                rows: ["sp-a", "sp-b"]
+                    .iter()
+                    .map(|id| cockpit_ops::lcview::Row {
+                        id: id.to_string(),
+                        state: "READY".into(),
+                        claim: Some(cockpit_ops::lcview::ClaimView {
+                            verdict: cockpit_ops::lcview::Kind::Claimable,
+                            blocker: None,
+                            runes: vec!["builder".into()],
+                        }),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            };
             assert_eq!(with_ready("live=1\n", Some(&claim)), "live=1\nready=2\n");
             assert_eq!(with_ready("live=1\n", None), "live=1\n");
         }
@@ -416,12 +679,38 @@ pub mod cockpit {
         #[test_id(tnx3py5)]
         #[test]
         fn the_digest_ignores_clock_only_keys_and_sees_every_other() {
-            let kv = |extra: &[(&str, &str)]| -> Vec<(String, String)> { extra.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() };
-            let base = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "3"), ("SP_DWARF0_MIN", "4"), ("SP_DWARF12_LEASE", "9"), ("SP_MAIL_OLDEST_AGE", "5"), ("SP_DWARF3_QUIET", "2")]);
-            let aged = kv(&[("SP_DWARVES", "1"), ("SP_SENTINEL_AGE", "8"), ("SP_DWARF0_MIN", "9"), ("SP_DWARF12_LEASE", "2"), ("SP_MAIL_OLDEST_AGE", "50"), ("SP_DWARF3_QUIET", "40")]);
+            let kv = |extra: &[(&str, &str)]| -> Vec<(String, String)> {
+                extra
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect()
+            };
+            let base = kv(&[
+                ("SP_DWARVES", "1"),
+                ("SP_SENTINEL_AGE", "3"),
+                ("SP_DWARF0_MIN", "4"),
+                ("SP_DWARF12_LEASE", "9"),
+                ("SP_MAIL_OLDEST_AGE", "5"),
+                ("SP_DWARF3_QUIET", "2"),
+            ]);
+            let aged = kv(&[
+                ("SP_DWARVES", "1"),
+                ("SP_SENTINEL_AGE", "8"),
+                ("SP_DWARF0_MIN", "9"),
+                ("SP_DWARF12_LEASE", "2"),
+                ("SP_MAIL_OLDEST_AGE", "50"),
+                ("SP_DWARF3_QUIET", "40"),
+            ]);
             assert_eq!(digest(&base), digest(&aged));
-            assert_ne!(digest(&base), digest(&kv(&[("SP_DWARVES", "2"), ("SP_SENTINEL_AGE", "3")])));
-            assert!(!volatile("SP_DWARF_N") && !volatile("SP_DWARFX_MIN") && !volatile("SP_DWARF0_BEAD"));
+            assert_ne!(
+                digest(&base),
+                digest(&kv(&[("SP_DWARVES", "2"), ("SP_SENTINEL_AGE", "3")]))
+            );
+            assert!(
+                !volatile("SP_DWARF_N")
+                    && !volatile("SP_DWARFX_MIN")
+                    && !volatile("SP_DWARF0_BEAD")
+            );
         }
 
         // covers: UC-cockpit-observability-01
@@ -438,7 +727,8 @@ pub mod cockpit {
         #[test_id(ttng1sv)]
         #[test]
         fn a_newer_pass_with_the_same_values_refreshes_off_the_journal_and_moves_no_carry() {
-            let (first, acts) = decide_tier(&Carry::default(), &snap(10, "r1"), "t.publish").unwrap();
+            let (first, acts) =
+                decide_tier(&Carry::default(), &snap(10, "r1"), "t.publish").unwrap();
             assert_eq!(acts.len(), 1);
             let (second, acts) = decide_tier(&first, &snap(15, "r1"), "t.publish").unwrap();
             assert_eq!(second, first, "an idle read carries nothing new");
@@ -446,26 +736,76 @@ pub mod cockpit {
             assert!(is_probe(&acts[0], false));
             let (third, acts) = decide_tier(&second, &snap(20, "r2"), "t.publish").unwrap();
             assert_ne!(third.digest, second.digest);
-            assert!(!is_probe(&acts[0], true), "a moved digest is a journaled publish");
+            assert!(
+                !is_probe(&acts[0], true),
+                "a moved digest is a journaled publish"
+            );
         }
 
         #[test_id(tdmjsl2)]
         #[test]
         fn a_status_moves_only_along_the_table_and_its_at_is_the_move() {
-            let c = Carry { fragments: [("p".to_string(), FragmentCarry { at: 5, status: FragmentState::Error, killed: true })].into(), digest: None };
-            let s = Snapshot { supervised: true, fragments: [("p".to_string(), frag(FragmentState::Timeout, 9, &[]))].into() };
-            assert_eq!(carry_fragments(&c, &s)["p"].status, FragmentState::Error, "error to timeout is not a move the table has");
-            let s = Snapshot { supervised: true, fragments: [("p".to_string(), frag(FragmentState::Ok, 9, &[]))].into() };
-            assert_eq!(carry_fragments(&c, &s)["p"], FragmentCarry { at: 9, status: FragmentState::Ok, killed: false });
-            assert_eq!(merged(&Snapshot { supervised: true, fragments: [("cockpit.x".to_string(), frag(FragmentState::Error, 0, &[("SP_X", "0")]))].into() }).last(), Some(&("SP_X".to_string(), "?".to_string())));
+            let c = Carry {
+                fragments: [(
+                    "p".to_string(),
+                    FragmentCarry {
+                        at: 5,
+                        status: FragmentState::Error,
+                        killed: true,
+                    },
+                )]
+                .into(),
+                digest: None,
+            };
+            let s = Snapshot {
+                supervised: true,
+                fragments: [("p".to_string(), frag(FragmentState::Timeout, 9, &[]))].into(),
+            };
+            assert_eq!(
+                carry_fragments(&c, &s)["p"].status,
+                FragmentState::Error,
+                "error to timeout is not a move the table has"
+            );
+            let s = Snapshot {
+                supervised: true,
+                fragments: [("p".to_string(), frag(FragmentState::Ok, 9, &[]))].into(),
+            };
+            assert_eq!(
+                carry_fragments(&c, &s)["p"],
+                FragmentCarry {
+                    at: 9,
+                    status: FragmentState::Ok,
+                    killed: false
+                }
+            );
+            assert_eq!(
+                merged(&Snapshot {
+                    supervised: true,
+                    fragments: [(
+                        "cockpit.x".to_string(),
+                        frag(FragmentState::Error, 0, &[("SP_X", "0")])
+                    )]
+                    .into()
+                })
+                .last(),
+                Some(&("SP_X".to_string(), "?".to_string()))
+            );
         }
 
         #[test_id(txfnl3s)]
         #[test]
         fn the_observe_input_names_every_probe_and_the_writer_key() {
             let cfg: BTreeMap<String, String> = [(WRITE_KEY.to_string(), "1".to_string())].into();
-            let input: ObserveInput = serde_json::from_str(&probe_input(&[("cockpit.now", 30_000)], &cfg)).unwrap();
-            assert_eq!((input.probes[0].name.as_str(), input.probes[0].timeout_ms, input.config[WRITE_KEY].as_str()), ("cockpit.now", 30_000, "1"));
+            let input: ObserveInput =
+                serde_json::from_str(&probe_input(&[("cockpit.now", 30_000)], &cfg)).unwrap();
+            assert_eq!(
+                (
+                    input.probes[0].name.as_str(),
+                    input.probes[0].timeout_ms,
+                    input.config[WRITE_KEY].as_str()
+                ),
+                ("cockpit.now", 30_000, "1")
+            );
             assert_eq!(tier_of("cockpit-tier-60s.slots_sample"), "cockpit-tier-60s");
         }
     }

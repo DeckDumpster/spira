@@ -71,7 +71,13 @@ pub const STATE: EventKindTag = "watch.backup_age.state";
 pub const OBSERVE: &str = "watch.backup_age.observe";
 pub const MAIL: &str = "watch.backup_age.mail";
 pub const EFFECTS: &[&str] = &[OBSERVE, MAIL];
-pub const KEYS: &[&str] = &["SPIRA_LC_BACKUP_URL", "SPIRA_LC_BACKUP_DB", "SPIRA_LC_BACKUP_MAX_AGE", "SPIRA_LC_STORE_PATH", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_LC_BACKUP_URL",
+    "SPIRA_LC_BACKUP_DB",
+    "SPIRA_LC_BACKUP_MAX_AGE",
+    "SPIRA_LC_STORE_PATH",
+    "SPIRA_RUN",
+];
 /// `--interval 900`.
 pub const CADENCE_MS: u64 = 900_000;
 const OBSERVE_DEADLINE_MS: u64 = 5_000;
@@ -92,7 +98,13 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { url: cfg("SPIRA_LC_BACKUP_URL")?, db: cfg("SPIRA_LC_BACKUP_DB")?, max_age_s: cfg_parse("SPIRA_LC_BACKUP_MAX_AGE")?, lc_store_path: cfg("SPIRA_LC_STORE_PATH")?, run: cfg("SPIRA_RUN")? })
+        Ok(Config {
+            url: cfg("SPIRA_LC_BACKUP_URL")?,
+            db: cfg("SPIRA_LC_BACKUP_DB")?,
+            max_age_s: cfg_parse("SPIRA_LC_BACKUP_MAX_AGE")?,
+            lc_store_path: cfg("SPIRA_LC_STORE_PATH")?,
+            run: cfg("SPIRA_RUN")?,
+        })
     }
 }
 
@@ -121,7 +133,12 @@ pub enum Carry {
 }
 
 /// `Ok` only when every store is; a crossing to `Red` mails RED, the way back mails CLEAR.
-pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(
+    carry: &Carry,
+    snap: &Snapshot,
+    now_ms: u64,
+    cfg: &Config,
+) -> (Carry, Vec<EffectSpec>) {
     let state = if all_ok(snap) { Carry::Ok } else { Carry::Red };
     let out = measured(snap);
     let drill_late = matches!(snap, Snapshot::Dbs(dbs) if dbs.iter().any(|(n, d)| n.starts_with("drill:") && !matches!(d, Db::Ok { .. })));
@@ -131,7 +148,16 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         (Carry::Ok, Carry::Red) => format!("CLEAR: every store has a fresh backup again ({out})"),
         _ => return (state, vec![]),
     };
-    (state, vec![Alert::of(MAILBOX, FROM, "lc-backup", "alert", &line).effect(MAIL, format!("{NAME}:{now_ms}"), MAIL_DEADLINE_MS)])
+    (
+        state,
+        vec![
+            Alert::of(MAILBOX, FROM, "lc-backup", "alert", &line).effect(
+                MAIL,
+                format!("{NAME}:{now_ms}"),
+                MAIL_DEADLINE_MS,
+            ),
+        ],
+    )
 }
 
 /// `_lcb_all_ok`: every store measured, and every one `ok`.
@@ -162,10 +188,17 @@ pub fn measured(snap: &Snapshot) -> String {
 /// `_lcb_measure_db`: the stamp's first field against `now_s`.
 pub fn measure_db(stamp: Option<&str>, now_s: u64, max_age_s: u64) -> Db {
     let Some(text) = stamp else { return Db::Never };
-    match text.split_whitespace().next().filter(|t| t.bytes().all(|b| b.is_ascii_digit())).and_then(|t| t.parse::<u64>().ok()) {
+    match text
+        .split_whitespace()
+        .next()
+        .filter(|t| t.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|t| t.parse::<u64>().ok())
+    {
         None => Db::Unreadable,
         Some(t) if now_s.saturating_sub(t) > max_age_s => Db::Stale { age: now_s - t },
-        Some(t) => Db::Ok { age: now_s.saturating_sub(t) },
+        Some(t) => Db::Ok {
+            age: now_s.saturating_sub(t),
+        },
     }
 }
 
@@ -180,7 +213,9 @@ pub fn measure_drill(stamp: Option<&str>, now_s: u64) -> Db {
 
 /// The observe runner: each configured store's `lc-backup.<db>.ok` stamp under the run dir.
 pub fn observe() -> Result<String, String> {
-    let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let now_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     serde_json::to_string(&observe_at(&Config::pinned()?, now_s)).map_err(|e| e.to_string())
 }
 
@@ -194,9 +229,28 @@ pub fn observe_at(cfg: &Config, now_s: u64) -> Snapshot {
         return Snapshot::NoDatabase;
     }
     let read = |rel: String| std::fs::read_to_string(std::path::Path::new(&cfg.run).join(rel)).ok();
-    let backups = dbs.iter().map(|db| (db.to_string(), measure_db(read(format!("lc-backup.{db}.ok")).as_deref(), now_s, cfg.max_age_s)));
-    let drills = dbs.iter().map(|db| (format!("drill:{db}"), measure_drill(read(format!("lc-backup/{db}/drill.ok")).as_deref(), now_s)));
-    let control = (!cfg.lc_store_path.is_empty()).then(|| ("drill:control".to_string(), measure_drill(read("lc-backup/control/drill.ok".into()).as_deref(), now_s)));
+    let backups = dbs.iter().map(|db| {
+        (
+            db.to_string(),
+            measure_db(
+                read(format!("lc-backup.{db}.ok")).as_deref(),
+                now_s,
+                cfg.max_age_s,
+            ),
+        )
+    });
+    let drills = dbs.iter().map(|db| {
+        (
+            format!("drill:{db}"),
+            measure_drill(read(format!("lc-backup/{db}/drill.ok")).as_deref(), now_s),
+        )
+    });
+    let control = (!cfg.lc_store_path.is_empty()).then(|| {
+        (
+            "drill:control".to_string(),
+            measure_drill(read("lc-backup/control/drill.ok".into()).as_deref(), now_s),
+        )
+    });
     Snapshot::Dbs(backups.chain(drills).chain(control).collect())
 }
 
@@ -210,7 +264,9 @@ impl WatchBackupAge {
     }
 
     pub fn pinned() -> Self {
-        WatchBackupAge { config: Config::pinned() }
+        WatchBackupAge {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -218,7 +274,13 @@ impl WatchBackupAge {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(RowCodec { stream: STREAM, also: &[], tag: STATE, split: runtime::rows::split_whole, join: runtime::rows::join_whole })
+        Registration::new(NAME, self).with_rows(RowCodec {
+            stream: STREAM,
+            also: &[],
+            tag: STATE,
+            split: runtime::rows::split_whole,
+            join: runtime::rows::join_whole,
+        })
     }
 }
 
@@ -232,7 +294,13 @@ impl Handler for WatchBackupAge {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
     }
@@ -249,9 +317,22 @@ mod tests {
     fn a_drill_is_fresh_to_eight_days_stale_past_it_and_never_without_a_stamp() {
         let now = 10_000_000;
         let at = |age: u64| format!("{}\n", now - age);
-        assert_eq!(measure_drill(Some(&at(7 * 24 * H + H)), now), Db::Ok { age: 7 * 24 * H + H });
-        assert_eq!(measure_drill(Some(&at(8 * 24 * H)), now), Db::Ok { age: 8 * 24 * H });
-        assert_eq!(measure_drill(Some(&at(8 * 24 * H + 1)), now), Db::Stale { age: 8 * 24 * H + 1 });
+        assert_eq!(
+            measure_drill(Some(&at(7 * 24 * H + H)), now),
+            Db::Ok {
+                age: 7 * 24 * H + H
+            }
+        );
+        assert_eq!(
+            measure_drill(Some(&at(8 * 24 * H)), now),
+            Db::Ok { age: 8 * 24 * H }
+        );
+        assert_eq!(
+            measure_drill(Some(&at(8 * 24 * H + 1)), now),
+            Db::Stale {
+                age: 8 * 24 * H + 1
+            }
+        );
         assert_eq!(measure_drill(None, now), Db::Never);
         assert_eq!(measure_drill(Some("junk"), now), Db::Unreadable);
     }
@@ -259,8 +340,17 @@ mod tests {
     #[test_id(tdi1wev)]
     #[test]
     fn a_stale_drill_turns_the_aggregate_red() {
-        let snap = Snapshot::Dbs(vec![("a".into(), Db::Ok { age: 1 }), ("drill:a".into(), Db::Stale { age: 50 * H })]);
-        let cfg = Config { url: "u".into(), db: "a".into(), max_age_s: 1, lc_store_path: String::new(), run: "r".into() };
+        let snap = Snapshot::Dbs(vec![
+            ("a".into(), Db::Ok { age: 1 }),
+            ("drill:a".into(), Db::Stale { age: 50 * H }),
+        ]);
+        let cfg = Config {
+            url: "u".into(),
+            db: "a".into(),
+            max_age_s: 1,
+            lc_store_path: String::new(),
+            run: "r".into(),
+        };
         let (carry, fx) = decide(&Carry::Ok, &snap, 0, &cfg);
         assert_eq!((carry, fx.len()), (Carry::Red, 1));
     }
@@ -272,7 +362,13 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, format!("{at}\n")).unwrap();
         }
-        let cfg = Config { url: "s3://b/lc".into(), db: "spira".into(), max_age_s: 50_400, lc_store_path: store.into(), run: dir.path().display().to_string() };
+        let cfg = Config {
+            url: "s3://b/lc".into(),
+            db: "spira".into(),
+            max_age_s: 50_400,
+            lc_store_path: store.into(),
+            run: dir.path().display().to_string(),
+        };
         match observe_at(&cfg, 10_000_000) {
             Snapshot::Dbs(v) => v,
             other => panic!("{other:?}"),
@@ -282,15 +378,31 @@ mod tests {
     #[test_id(tfdweq7)]
     #[test]
     fn observe_at_reports_the_control_drill_when_the_store_is_configured() {
-        let found = |v: &[(String, Db)]| v.iter().find(|(n, _)| n == "drill:control").map(|(_, d)| d.clone());
+        let found = |v: &[(String, Db)]| {
+            v.iter()
+                .find(|(n, _)| n == "drill:control")
+                .map(|(_, d)| d.clone())
+        };
         let fresh = 10_000_000 - 3600;
         let present = stamped(&[("lc-backup/control/drill.ok", fresh)], "store");
         assert_eq!(found(&present), Some(Db::Ok { age: 3600 }));
         assert_eq!(found(&stamped(&[], "store")), Some(Db::Never));
-        assert_eq!(found(&stamped(&[("lc-backup/control/drill.ok", fresh)], "")), None);
-        let stale = stamped(&[("lc-backup/control/drill.ok", 10_000_000 - 9 * 24 * H)], "store");
+        assert_eq!(
+            found(&stamped(&[("lc-backup/control/drill.ok", fresh)], "")),
+            None
+        );
+        let stale = stamped(
+            &[("lc-backup/control/drill.ok", 10_000_000 - 9 * 24 * H)],
+            "store",
+        );
         assert!(matches!(found(&stale), Some(Db::Stale { .. })));
-        let cfg = Config { url: "u".into(), db: "spira".into(), max_age_s: 1, lc_store_path: "store".into(), run: "r".into() };
+        let cfg = Config {
+            url: "u".into(),
+            db: "spira".into(),
+            max_age_s: 1,
+            lc_store_path: "store".into(),
+            run: "r".into(),
+        };
         let (carry, _) = decide(&Carry::Ok, &Snapshot::Dbs(stale), 0, &cfg);
         assert_eq!(carry, Carry::Red);
     }

@@ -24,15 +24,41 @@ impl EffectRunner for Runner {
     fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
         self.ran.lock().unwrap().push(spec.name.clone());
         if spec.name == OBSERVE {
-            let member = Member { id: "sp-olw42f".into(), state: "CERTIFIED".into(), version: 5, tip: "t1".into(), sifted_tip: Some("t1".into()), title: "work".into(), priority: 2, ..Member::default() };
-            let repo = Repo { branch_tips: [("sp-olw42f".to_string(), "t1".to_string())].into(), pool: vec![member], base_sha: "b2".into(), settled: vec![BATCH.into()], live_legs: Some(vec![]), ..Repo::default() };
-            return Ok(serde_json::to_string(&Snapshot { repos: [("spira".to_string(), repo)].into(), now_ms: self.clock.now_ms(), ..Default::default() }).unwrap());
+            let member = Member {
+                id: "sp-olw42f".into(),
+                state: "CERTIFIED".into(),
+                version: 5,
+                tip: "t1".into(),
+                sifted_tip: Some("t1".into()),
+                title: "work".into(),
+                priority: 2,
+                ..Member::default()
+            };
+            let repo = Repo {
+                branch_tips: [("sp-olw42f".to_string(), "t1".to_string())].into(),
+                pool: vec![member],
+                base_sha: "b2".into(),
+                settled: vec![BATCH.into()],
+                live_legs: Some(vec![]),
+                ..Repo::default()
+            };
+            return Ok(serde_json::to_string(&Snapshot {
+                repos: [("spira".to_string(), repo)].into(),
+                now_ms: self.clock.now_ms(),
+                ..Default::default()
+            })
+            .unwrap());
         }
         if spec.name == FETCH {
             return Ok("{}".into());
         }
         if spec.name == ASSEMBLE {
-            let merged = Assembled { merged: vec![("sp-olw42f".into(), "t1".into())], wt: "w".into(), base: "b2".into(), ..Assembled::default() };
+            let merged = Assembled {
+                merged: vec![("sp-olw42f".into(), "t1".into())],
+                wt: "w".into(),
+                base: "b2".into(),
+                ..Assembled::default()
+            };
             return Ok(serde_json::to_string(&merged).unwrap());
         }
         Err(format!("no double for {}", spec.name))
@@ -47,29 +73,83 @@ fn a_tick_on_the_stored_certifying_row_observes_and_cuts_the_waiting_member() {
 
 #[test_id(tpq49x4)]
 #[test]
-fn a_tick_on_the_stored_certifying_row_with_a_standing_refusal_poison_observes_and_cuts_the_waiting_member() {
+fn a_tick_on_the_stored_certifying_row_with_a_standing_refusal_poison_observes_and_cuts_the_waiting_member(
+) {
     tick_on_stored_row(true);
 }
 
 fn tick_on_stored_row(poisoned: bool) {
     let journal = MemJournal::new();
-    journal.commit(&Turn { state: vec![StateRow { task: "batcher.local".into(), skey: "repos/spira".into(), value: STORED.into(), at: NOW }], ..Turn::default() }).unwrap();
+    journal
+        .commit(&Turn {
+            state: vec![StateRow {
+                task: "batcher.local".into(),
+                skey: "repos/spira".into(),
+                value: STORED.into(),
+                at: NOW,
+            }],
+            ..Turn::default()
+        })
+        .unwrap();
     if poisoned {
         journal.poison(&Poison { stream: StreamKey(STREAM.into()), event: EventId("unit.ran/spira-run-batcher.local-spira.e14c63e58a6e.certify2.service/1794292447003".into()), handler: "scheduler".into(), message: "journal: effect key is 262 chars (max 255) or holds a NUL".into() }).unwrap();
     }
     let clock = VirtualClock::new(NOW);
-    let runner = Arc::new(Runner { clock: clock.clone(), ran: Mutex::new(vec![]) });
-    let mut engine = open_engine(&fixture(), journal.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![], std::time::Duration::from_secs(10)).unwrap();
+    let runner = Arc::new(Runner {
+        clock: clock.clone(),
+        ran: Mutex::new(vec![]),
+    });
+    let mut engine = open_engine(
+        &fixture(),
+        journal.clone(),
+        Arc::new(clock.clone()),
+        Arc::new(NullMarker),
+        Arc::new(NullSink),
+        vec![],
+        std::time::Duration::from_secs(10),
+    )
+    .unwrap();
     start_tasks(&mut engine);
     let mut d = VirtualDriver::new(engine, clock.clone(), runner.clone());
     d.run_until(NOW + 60_000).unwrap();
 
-    let ran: Vec<String> = runner.ran.lock().unwrap().iter().filter(|n| n.starts_with("batcher.local")).cloned().collect();
-    assert!(ran.iter().any(|n| n == OBSERVE), "an observe was launched: {ran:?}");
-    assert!(ran.iter().any(|n| n == ROUND_OPEN), "the settled round was dropped and the waiting member's round opened: {ran:?}");
-    let stored = journal.state().get(&("batcher.local".to_string(), "repos/spira".to_string())).cloned().unwrap_or_default();
-    assert!(!stored.contains(BATCH), "the Certifying row is gone: {stored}");
-    let task = d.engine().status().tasks.into_iter().find(|t| t.name == "batcher.local").unwrap();
-    let fired = task.last_commands.expect("the status says what the last fire returned");
-    assert_eq!(fired.returned, fired.admitted, "nothing the batcher asked for was refused: {fired:?}");
+    let ran: Vec<String> = runner
+        .ran
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|n| n.starts_with("batcher.local"))
+        .cloned()
+        .collect();
+    assert!(
+        ran.iter().any(|n| n == OBSERVE),
+        "an observe was launched: {ran:?}"
+    );
+    assert!(
+        ran.iter().any(|n| n == ROUND_OPEN),
+        "the settled round was dropped and the waiting member's round opened: {ran:?}"
+    );
+    let stored = journal
+        .state()
+        .get(&("batcher.local".to_string(), "repos/spira".to_string()))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !stored.contains(BATCH),
+        "the Certifying row is gone: {stored}"
+    );
+    let task = d
+        .engine()
+        .status()
+        .tasks
+        .into_iter()
+        .find(|t| t.name == "batcher.local")
+        .unwrap();
+    let fired = task
+        .last_commands
+        .expect("the status says what the last fire returned");
+    assert_eq!(
+        fired.returned, fired.admitted,
+        "nothing the batcher asked for was refused: {fired:?}"
+    );
 }

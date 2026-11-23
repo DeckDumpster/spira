@@ -1,32 +1,32 @@
 //! Where the watchers' snapshots come from: files under the run directory and the lifecycle
 //! store through spira-lc's socket. No process is launched here; the wiki's git is `wiki_git`.
 
-use std::sync::{Arc, Mutex};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use runtime::socket::lc_call;
-use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
+use spira_config::nonwork::{status_args, Kind, Which};
 
-use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
-use crate::watchers::cr_cadence;
-use crate::watchers::pr_notify::{self, RepoObs};
-use crate::watchers::asks;
-use crate::watchers::design_asks::{self, Page};
 use crate::hunk;
-use crate::watchers::view;
-use crate::wiki_git::{git, git_ok_with, exporter_run, overrides_apply, tmux};
+use crate::watchers::asks;
+use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
 use crate::watchers::brain_dirty;
 use crate::watchers::claim_count;
-use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
-use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
+use crate::watchers::cr_cadence;
+use crate::watchers::design_asks::{self, Page};
+use crate::watchers::halt::Halt;
+use crate::watchers::inbox_keeper;
+use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::publish_backlog::{self, Read};
 use crate::watchers::reconciler_flow::{FlowSnapshot, Params, Slots, Stage, Statuses};
-use crate::watchers::halt::Halt;
 use crate::watchers::round_duty::{RoundState, Snapshot};
+use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
+use crate::watchers::view;
+use crate::wiki_git::{exporter_run, git, git_ok_with, overrides_apply, tmux};
 
 const INBOX_WATCHER: &str = "concierge-inbox";
 const STORE_ATTEMPTS: u32 = 3;
@@ -89,19 +89,28 @@ fn pr_number(v: &str) -> Option<u64> {
 
 /// The PR the repo's publish record names; an unreadable record is an `Err`, an absent one `None`.
 fn publish_pr(queue_dir: &Path, repo: &str) -> Result<Option<u64>, String> {
-    queue::records::read_kv(&queue_dir.join(repo).join("publish")).map(|kv| kv.and_then(|kv| kv.get("pr").and_then(pr_number)))
+    queue::records::read_kv(&queue_dir.join(repo).join("publish"))
+        .map(|kv| kv.and_then(|kv| kv.get("pr").and_then(pr_number)))
 }
 
 /// The forge's word on each PR in `records` or already tracked in `carry`, asked by number.
 /// A repo's open set is `None` when its records or any answer is missing; strays are looked for
 /// only when a tracked PR left the open set.
-pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &Forge, carry: &pr_notify::Carry) -> Result<String, String> {
+pub fn pr_snapshot_from(
+    records: &RecordedPrs,
+    targets: &[PrTarget],
+    forge: &Forge,
+    carry: &pr_notify::Carry,
+) -> Result<String, String> {
     let mut repos = vec![];
     for t in targets {
         let prev = carry.repos.get(&t.name).cloned().unwrap_or_default();
         let mut obs = RepoObs::default();
         if let Ok(recorded) = records.get(&t.name).cloned().unwrap_or(Ok(vec![])) {
-            let asked: BTreeSet<u64> = recorded.into_iter().chain(prev.prs.keys().copied()).collect();
+            let asked: BTreeSet<u64> = recorded
+                .into_iter()
+                .chain(prev.prs.keys().copied())
+                .collect();
             let mut open = vec![];
             let mut left = vec![];
             let mut unanswered = false;
@@ -114,18 +123,27 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
             }
             if !unanswered {
                 for n in left.iter().filter(|n| prev.prs.contains_key(n)) {
-                    obs.finals.extend(forge.final_state(&t.slug, *n).map(|f| (*n, f)));
+                    obs.finals
+                        .extend(forge.final_state(&t.slug, *n).map(|f| (*n, f)));
                 }
                 if t.land == "pr" && left.iter().any(|n| prev.prs.contains_key(n)) {
                     let heads: Vec<String> = open.iter().map(|(_, h)| h.clone()).collect();
                     let base = t.base.strip_prefix("origin/").unwrap_or(&t.base);
-                    obs.strays = forge.stray_branches(&t.slug, if base.is_empty() { "main" } else { base }, &heads);
+                    obs.strays = forge.stray_branches(
+                        &t.slug,
+                        if base.is_empty() { "main" } else { base },
+                        &heads,
+                    );
                 }
                 obs.open = Some(open.into_iter().map(|(p, _)| p).collect());
             }
         }
         for d in &prev.deploys {
-            obs.runs.extend(forge.deploy_run(&t.slug, &d.sha).map(|run| (d.sha.clone(), run)));
+            obs.runs.extend(
+                forge
+                    .deploy_run(&t.slug, &d.sha)
+                    .map(|run| (d.sha.clone(), run)),
+            );
         }
         repos.push((t.name.clone(), obs));
     }
@@ -137,17 +155,33 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
 /// that follows reads local refs and answers from the cached tip when this fails.
 fn refresh_forge_tip(reg: &spira_config::repos::Registry, r: &MapRow) {
     use crate::tasks::a::queue_step::edge::git;
-    if let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) {
-        let _ = git(Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
+    if let Some((remote, branch)) =
+        spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new())
+    {
+        let _ = git(
+            Path::new(&r.path),
+            &["fetch", "--quiet", &remote, &branch],
+            REFRESH_FETCH,
+        );
     }
 }
 
 /// Refreshes every queue.local checkout at once, waits for all of them, then measures each.
 /// Nothing here reads the refresh outcome.
-fn publish_backlog_snapshot_from(rows: &[MapRow], refresh: &(dyn Fn(&MapRow) + Sync), measure: &dyn Fn(&str) -> Result<Option<Read>, String>) -> Result<String, String> {
-    let local = |r: &MapRow| !r.path.is_empty() && Path::new(&r.path).join(".git").is_dir() && r.land == "queue.local";
+fn publish_backlog_snapshot_from(
+    rows: &[MapRow],
+    refresh: &(dyn Fn(&MapRow) + Sync),
+    measure: &dyn Fn(&str) -> Result<Option<Read>, String>,
+) -> Result<String, String> {
+    let local = |r: &MapRow| {
+        !r.path.is_empty() && Path::new(&r.path).join(".git").is_dir() && r.land == "queue.local"
+    };
     std::thread::scope(|s| {
-        let handles: Vec<_> = rows.iter().filter(|r| local(r)).map(|r| s.spawn(move || refresh(r))).collect();
+        let handles: Vec<_> = rows
+            .iter()
+            .filter(|r| local(r))
+            .map(|r| s.spawn(move || refresh(r)))
+            .collect();
         for h in handles {
             let _ = h.join();
         }
@@ -155,7 +189,10 @@ fn publish_backlog_snapshot_from(rows: &[MapRow], refresh: &(dyn Fn(&MapRow) + S
     let mut repos = vec![];
     for r in rows {
         if r.path.is_empty() {
-            repos.push((r.name.clone(), Read::Blind("the repo map has no checkout for it".into())));
+            repos.push((
+                r.name.clone(),
+                Read::Blind("the repo map has no checkout for it".into()),
+            ));
             continue;
         }
         if !local(r) {
@@ -164,7 +201,12 @@ fn publish_backlog_snapshot_from(rows: &[MapRow], refresh: &(dyn Fn(&MapRow) + S
         match measure(&r.name) {
             Ok(None) => {}
             Ok(Some(read)) => repos.push((r.name.clone(), read)),
-            Err(why) => repos.push((r.name.clone(), Read::Blind(format!("the unpublished range could not be computed: {why}")))),
+            Err(why) => repos.push((
+                r.name.clone(),
+                Read::Blind(format!(
+                    "the unpublished range could not be computed: {why}"
+                )),
+            )),
         }
     }
     serde_json::to_string(&publish_backlog::Snapshot { repos }).map_err(|e| e.to_string())
@@ -182,7 +224,12 @@ fn map_rows(text: &str) -> Vec<MapRow> {
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
         .filter_map(|l| {
             let f: Vec<&str> = l.split('|').map(str::trim).collect();
-            (f.len() >= 3 && !f[0].is_empty()).then(|| MapRow { name: f[0].into(), path: f[1].into(), land: f[2].into(), base: f.get(3).copied().unwrap_or("").into() })
+            (f.len() >= 3 && !f[0].is_empty()).then(|| MapRow {
+                name: f[0].into(),
+                path: f[1].into(),
+                land: f[2].into(),
+                base: f.get(3).copied().unwrap_or("").into(),
+            })
         })
         .collect()
 }
@@ -192,16 +239,37 @@ fn map_rows(text: &str) -> Vec<MapRow> {
 pub fn read_halt(run_dir: &Path) -> Option<Halt> {
     let stamp = run_dir.join("world.halted");
     let meta = fs::metadata(&stamp).ok()?;
-    let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let since = meta.modified().ok().and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or_else(now, |d| d.as_secs());
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    };
+    let since = meta
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or_else(now, |d| d.as_secs());
     let text = fs::read_to_string(&stamp).unwrap_or_default();
-    let why = text.lines().find_map(|l| l.strip_prefix("why: ")).unwrap_or("unstated").to_string();
+    let why = text
+        .lines()
+        .find_map(|l| l.strip_prefix("why: "))
+        .unwrap_or("unstated")
+        .to_string();
     Some(Halt { since, why })
 }
 
 fn lane_stopped(run_dir: &Path, repo: &str, lane: &str) -> bool {
-    let Ok(text) = fs::read_to_string(run_dir.join("scoped-stops").join(format!("repo-{repo}.json"))) else { return false };
-    serde_json::from_str::<Value>(&text).ok().and_then(|v| v["lanes"].as_array().map(|a| a.iter().any(|l| l == lane))).unwrap_or(false)
+    let Ok(text) = fs::read_to_string(
+        run_dir
+            .join("scoped-stops")
+            .join(format!("repo-{repo}.json")),
+    ) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v["lanes"].as_array().map(|a| a.iter().any(|l| l == lane)))
+        .unwrap_or(false)
 }
 
 /// A top-level frontmatter value, unquoted; empty when the page has none.
@@ -212,7 +280,10 @@ fn frontmatter(text: &str, key: &str) -> String {
     }
     for l in lines.take_while(|l| *l != "---") {
         if let Some(v) = l.strip_prefix(key).and_then(|r| r.strip_prefix(':')) {
-            return v.trim_start_matches([' ', '\t', '"', '\'']).trim_end_matches([' ', '\t', '"', '\'', '\r']).to_string();
+            return v
+                .trim_start_matches([' ', '\t', '"', '\''])
+                .trim_end_matches([' ', '\t', '"', '\'', '\r'])
+                .to_string();
         }
     }
     String::new()
@@ -223,7 +294,10 @@ fn artifact_urls(text: &str) -> Vec<String> {
     text.match_indices(PREFIX)
         .map(|(i, _)| {
             let tail = &text[i + PREFIX.len()..];
-            let id: String = tail.chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')).collect();
+            let id: String = tail
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+                .collect();
             format!("{PREFIX}{id}")
         })
         .filter(|u| u.len() > PREFIX.len())
@@ -235,8 +309,16 @@ fn artifact_urls(text: &str) -> Vec<String> {
 fn last_hold(history_json: &str) -> Option<(String, String)> {
     let rows: Vec<Value> = serde_json::from_str(history_json).ok()?;
     let r = rows.iter().rfind(|r| r["event"] == "Hold")?;
-    let seq = r["seq"].as_str().map(str::to_string).unwrap_or_else(|| r["seq"].to_string());
-    let detail = r["evidence"]["Hold"]["detail"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    let seq = r["seq"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| r["seq"].to_string());
+    let detail = r["evidence"]["Hold"]["detail"]
+        .as_str()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     Some((seq, detail.chars().take(400).collect()))
 }
 
@@ -245,9 +327,15 @@ fn last_hold(history_json: &str) -> Option<(String, String)> {
 fn plan_items(out: &str) -> Option<Vec<Value>> {
     out.char_indices()
         .filter(|&(i, c)| c == '{' && (i == 0 || out.as_bytes()[i - 1] == b'\n'))
-        .find_map(|(i, _)| match serde_json::from_str::<Value>(&out[i..]).ok()?.get_mut("items")?.take() {
-            Value::Array(list) => Some(list),
-            _ => None,
+        .find_map(|(i, _)| {
+            match serde_json::from_str::<Value>(&out[i..])
+                .ok()?
+                .get_mut("items")?
+                .take()
+            {
+                Value::Array(list) => Some(list),
+                _ => None,
+            }
         })
 }
 
@@ -261,20 +349,36 @@ impl World {
 
     /// The home repo's checkout, from the repo map.
     pub fn home_path(&self) -> Result<PathBuf, String> {
-        let text = fs::read_to_string(&self.repo_map).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
-        map_rows(&text).into_iter().find(|r| r.name == self.home_repo).map(|r| PathBuf::from(r.path)).ok_or_else(|| format!("repo map has no row for {}", self.home_repo))
+        let text = fs::read_to_string(&self.repo_map)
+            .map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        map_rows(&text)
+            .into_iter()
+            .find(|r| r.name == self.home_repo)
+            .map(|r| PathBuf::from(r.path))
+            .ok_or_else(|| format!("repo map has no row for {}", self.home_repo))
     }
 
     /// Unheld beads of one repo in `state`; `Err` is the store's own refusal when it did not answer.
     fn unheld(&self, repo: &str, state: &str) -> Result<u64, String> {
         if let Some(views) = store_view::shared() {
-            return views.unheld(state, repo).map(|r| r.value.len() as u64).map_err(|e| e.to_string());
+            return views
+                .unheld(state, repo)
+                .map(|r| r.value.len() as u64)
+                .map_err(|e| e.to_string());
         }
-        let text = lc_call(&self.lc_socket, &["list", "--state", state, "--repo", repo]).map_err(|e| e.to_string())?;
-        let rows: Value = serde_json::from_str(&text).map_err(|e| format!("cannot tell: list --state {state} --repo {repo}: not JSON: {e}"))?;
+        let text = lc_call(&self.lc_socket, &["list", "--state", state, "--repo", repo])
+            .map_err(|e| e.to_string())?;
+        let rows: Value = serde_json::from_str(&text).map_err(|e| {
+            format!("cannot tell: list --state {state} --repo {repo}: not JSON: {e}")
+        })?;
         let held = |r: &Value| r["holds"].as_array().is_some_and(|h| !h.is_empty());
-        let rows = rows.as_array().ok_or_else(|| format!("cannot tell: list --state {state} --repo {repo}: not a list"))?;
-        Ok(rows.iter().filter(|r| r.get("bead_id").is_some() && !held(r)).count() as u64)
+        let rows = rows.as_array().ok_or_else(|| {
+            format!("cannot tell: list --state {state} --repo {repo}: not a list")
+        })?;
+        Ok(rows
+            .iter()
+            .filter(|r| r.get("bead_id").is_some() && !held(r))
+            .count() as u64)
     }
 
     /// The home repo's rounds the lifecycle has not ended, the source `queue round status` reads,
@@ -282,15 +386,31 @@ impl World {
     /// store's refusal: no answer is not "no round open".
     fn open_round_facts(&self) -> Result<(u64, Vec<(String, u64)>), String> {
         if let Some(views) = store_view::shared() {
-            let rounds: Vec<_> = views.round_view(&self.home_repo).map_err(|e| e.to_string())?.value.rounds.into_iter().filter(|r| round_unended(&r.record.state)).collect();
-            let unadvanced = rounds.iter().filter(|r| r.record.state == "OPEN").filter_map(|r| Some((r.record.id.clone(), r.record.get("opened")?.parse().ok()?))).collect();
+            let rounds: Vec<_> = views
+                .round_view(&self.home_repo)
+                .map_err(|e| e.to_string())?
+                .value
+                .rounds
+                .into_iter()
+                .filter(|r| round_unended(&r.record.state))
+                .collect();
+            let unadvanced = rounds
+                .iter()
+                .filter(|r| r.record.state == "OPEN")
+                .filter_map(|r| Some((r.record.id.clone(), r.record.get("opened")?.parse().ok()?)))
+                .collect();
             return Ok((rounds.len() as u64, unadvanced));
         }
         let batches = self.lc_json(&["list", "--batches", "--window", "1"])?;
         let mut live = 0;
         let mut unadvanced = vec![];
-        for b in batches.as_array().ok_or("cannot tell: list --batches: not a list")? {
-            let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else { continue };
+        for b in batches
+            .as_array()
+            .ok_or("cannot tell: list --batches: not a list")?
+        {
+            let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else {
+                continue;
+            };
             if repo != self.home_repo || !round_unended(state) {
                 continue;
             }
@@ -304,20 +424,41 @@ impl World {
     }
 
     fn open_rounds(&self) -> Option<BTreeMap<String, u64>> {
-        Some(open_rounds_by_repo(self.lc_json(&["list", "--batches"]).ok()?.as_array()?))
+        Some(open_rounds_by_repo(
+            self.lc_json(&["list", "--batches"]).ok()?.as_array()?,
+        ))
     }
 
-    fn results(&self, known: &BTreeMap<String, u64>) -> (BTreeMap<String, u64>, Vec<(String, String)>) {
+    fn results(
+        &self,
+        known: &BTreeMap<String, u64>,
+    ) -> (BTreeMap<String, u64>, Vec<(String, String)>) {
         let mut lines = BTreeMap::new();
         let mut fresh = vec![];
-        let mut files: Vec<PathBuf> = fs::read_dir(self.run_dir.join("rounds")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "result")).collect();
+        let mut files: Vec<PathBuf> = fs::read_dir(self.run_dir.join("rounds"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "result"))
+            .collect();
         files.sort();
         for f in files {
-            let Ok(text) = fs::read_to_string(&f) else { continue };
+            let Ok(text) = fs::read_to_string(&f) else {
+                continue;
+            };
             let all: Vec<&str> = text.lines().collect();
-            let name = f.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let name = f
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             if let Some(&seen) = known.get(&name) {
-                fresh.extend(all.iter().skip(seen as usize).map(|l| (name.clone(), l.to_string())));
+                fresh.extend(
+                    all.iter()
+                        .skip(seen as usize)
+                        .map(|l| (name.clone(), l.to_string())),
+                );
             }
             lines.insert(name, all.len() as u64);
         }
@@ -326,14 +467,20 @@ impl World {
 
     pub fn round_snapshot(&self, input: &str) -> Result<String, String> {
         let known: BTreeMap<String, u64> = serde_json::from_str(input).unwrap_or_default();
-        let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
-        let (mut certified, mut submitted, mut by_repo, mut submitted_by_repo, mut stopped) = (0, 0, vec![], vec![], vec![]);
+        let rows = fs::read_to_string(&self.repo_map)
+            .map(|t| map_rows(&t))
+            .map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        let (mut certified, mut submitted, mut by_repo, mut submitted_by_repo, mut stopped) =
+            (0, 0, vec![], vec![], vec![]);
         for r in rows.iter().filter(|r| r.land == "queue.local") {
             if lane_stopped(&self.run_dir, &r.name, "rounds") {
                 stopped.push(r.name.clone());
                 continue;
             }
-            let answer = |state| self.unheld(&r.name, state).map_err(|why| format!("lifecycle did not answer for {}: {why}", r.name));
+            let answer = |state| {
+                self.unheld(&r.name, state)
+                    .map_err(|why| format!("lifecycle did not answer for {}: {why}", r.name))
+            };
             let (n, m) = (answer("CERTIFIED")?, answer("SUBMITTED")?);
             if n > 0 {
                 certified += n;
@@ -379,18 +526,34 @@ impl World {
         let cursor = watchd::paths::cursorfile(&run, INBOX_WATCHER);
         let dir = lock.parent().unwrap_or(&self.run_dir);
         fs::metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let waiter_alive = watchd::lock::try_lock(&lock).map_err(|e| format!("{}: {e}", lock.display()))?.is_err();
+        let waiter_alive = watchd::lock::try_lock(&lock)
+            .map_err(|e| format!("{}: {e}", lock.display()))?
+            .is_err();
         let log = fs::read(&self.inbox).map_err(|e| format!("{}: {e}", self.inbox.display()))?;
         let total = log.iter().filter(|&&b| b == b'\n').count() as u64;
         let (pos, cursor_mtime) = match fs::read_to_string(&cursor) {
             Ok(text) => {
-                let mtime = fs::metadata(&cursor).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-                (watchd::cursor::clamp_pos(watchd::cursor::parse_cursor(&text), total), mtime)
+                let mtime = fs::metadata(&cursor)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs());
+                (
+                    watchd::cursor::clamp_pos(watchd::cursor::parse_cursor(&text), total),
+                    mtime,
+                )
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (0, 0),
             Err(e) => return Err(format!("{}: {e}", cursor.display())),
         };
-        inbox_keeper::observed(&carry, inbox_keeper::Snapshot { waiter_alive, unread: total - pos, cursor_mtime })
+        inbox_keeper::observed(
+            &carry,
+            inbox_keeper::Snapshot {
+                waiter_alive,
+                unread: total - pos,
+                cursor_mtime,
+            },
+        )
     }
 
     /// Every review and the epoch the next scheduled one is due. An unset or malformed zone or hour is an
@@ -401,24 +564,43 @@ impl World {
         if tz.is_empty() {
             return Err("SPIRA_CR_TZ is not set; the review cadence has no zone".into());
         }
-        let hour: u32 = hour.parse().ok().filter(|h| *h < 24).ok_or_else(|| format!("SPIRA_CR_OPEN_HOUR must be an hour 0 to 23, got {hour:?}"))?;
+        let hour: u32 =
+            hour.parse().ok().filter(|h| *h < 24).ok_or_else(|| {
+                format!("SPIRA_CR_OPEN_HOUR must be an hour 0 to 23, got {hour:?}")
+            })?;
         let reviews = cr::record::all(&self.run_dir)?;
-        let newest_closed = reviews.iter().filter(|r| r.kind == cr::record::Kind::Scheduled).max_by_key(|r| r.number).and_then(|r| r.closed_at);
+        let newest_closed = reviews
+            .iter()
+            .filter(|r| r.kind == cr::record::Kind::Scheduled)
+            .max_by_key(|r| r.number)
+            .and_then(|r| r.closed_at);
         let due_at = match newest_closed {
             Some(closed) => cr_open_epoch(tz, hour, closed / 1000, 1)?,
             None => {
-                let base = carry.anchor.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
+                let base = carry.anchor.unwrap_or_else(|| {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs())
+                });
                 let today = cr_open_epoch(tz, hour, base, 0)?;
-                if today > base { today } else { cr_open_epoch(tz, hour, base, 1)? }
+                if today > base {
+                    today
+                } else {
+                    cr_open_epoch(tz, hour, base, 1)?
+                }
             }
         };
-        serde_json::to_string(&cr_cadence::Snapshot::from_records(&reviews, due_at)).map_err(|e| e.to_string())
+        serde_json::to_string(&cr_cadence::Snapshot::from_records(&reviews, due_at))
+            .map_err(|e| e.to_string())
     }
 
     /// Stages the next scheduled review with `cr`; its stdout is the answer and its stderr the failure.
     pub fn cr_open(&self) -> Result<String, String> {
         let cr = spira_config::release_env::tool("cr")?;
-        let out = spira_config::bounded::bounded_for(cr, &cr_cadence::OPEN_CALL_SECS.to_string()).args(["open", "--count", "1", "--scheduled"]).output().map_err(|e| format!("cr: {e}"))?;
+        let out = spira_config::bounded::bounded_for(cr, &cr_cadence::OPEN_CALL_SECS.to_string())
+            .args(["open", "--count", "1", "--scheduled"])
+            .output()
+            .map_err(|e| format!("cr: {e}"))?;
         if out.status.success() {
             return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
         }
@@ -435,41 +617,102 @@ impl World {
     }
 
     /// [`Self::margin_deliver`] over `margin`, whose address `base` names in an answer that has no `cr` review to go to.
-    pub fn margin_deliver_with(&self, margin: &dyn margin_client::Margin, base: &str, delivery: &crate::sources::smtp::Delivery, input: &str) -> Result<String, String> {
+    pub fn margin_deliver_with(
+        &self,
+        margin: &dyn margin_client::Margin,
+        base: &str,
+        delivery: &crate::sources::smtp::Delivery,
+        input: &str,
+    ) -> Result<String, String> {
         use crate::watchers::margin_comments::Deliver;
-        let d: Deliver = serde_json::from_str(input).map_err(|e| format!("margin.deliver: bad input: {e}"))?;
-        let raw = crate::margin_mail::build(margin, base, &self.run_dir, &d.collection, &d.thread, &d.comment)?;
+        let d: Deliver =
+            serde_json::from_str(input).map_err(|e| format!("margin.deliver: bad input: {e}"))?;
+        let raw = crate::margin_mail::build(
+            margin,
+            base,
+            &self.run_dir,
+            &d.collection,
+            &d.thread,
+            &d.comment,
+        )?;
         let delivered = crate::margin_mail::deliver_once(delivery, &raw)?;
         crate::sources::margin_changed::record_done(&self.run_dir, d.seq, &d.batch, d.through)?;
-        Ok(format!("comment {} {}", d.comment, if delivered { "delivered" } else { "already delivered" }))
+        Ok(format!(
+            "comment {} {}",
+            d.comment,
+            if delivered {
+                "delivered"
+            } else {
+                "already delivered"
+            }
+        ))
     }
 
     /// Runs `cr unseal` for the open review holding the published collection; `cr` refuses any other state, so a replay skips it.
     pub fn margin_publish(&self, input: &str) -> Result<String, String> {
-        self.margin_publish_with(&|| {
-            let margin = margin_client::HttpMargin::configured(|k: &str| spira_config::process::cfg(k))?;
-            Ok((Box::new(margin), crate::sources::smtp::Delivery::of(&mail::env::Env::load()?)))
-        }, input)
+        self.margin_publish_with(
+            &|| {
+                let margin =
+                    margin_client::HttpMargin::configured(|k: &str| spira_config::process::cfg(k))?;
+                Ok((
+                    Box::new(margin),
+                    crate::sources::smtp::Delivery::of(&mail::env::Env::load()?),
+                ))
+            },
+            input,
+        )
     }
 
     /// [`Self::margin_publish`] with the reader and delivery a design collection needs, built only when one is.
-    pub fn margin_publish_with(&self, design_ports: &dyn Fn() -> Result<(Box<dyn margin_client::Margin>, crate::sources::smtp::Delivery), String>, input: &str) -> Result<String, String> {
+    pub fn margin_publish_with(
+        &self,
+        design_ports: &dyn Fn() -> Result<
+            (
+                Box<dyn margin_client::Margin>,
+                crate::sources::smtp::Delivery,
+            ),
+            String,
+        >,
+        input: &str,
+    ) -> Result<String, String> {
         use crate::watchers::margin_comments::{Publish, PUBLISH_CALL_SECS};
-        let p: Publish = serde_json::from_str(input).map_err(|e| format!("margin.publish: bad input: {e}"))?;
-        let review = cr::record::all(&self.run_dir)?.into_iter().find(|r| r.collection.as_deref() == Some(p.collection.as_str()));
-        let design = if review.is_none() { design_review::by_collection(&self.run_dir, &p.collection) } else { None };
+        let p: Publish =
+            serde_json::from_str(input).map_err(|e| format!("margin.publish: bad input: {e}"))?;
+        let review = cr::record::all(&self.run_dir)?
+            .into_iter()
+            .find(|r| r.collection.as_deref() == Some(p.collection.as_str()));
+        let design = if review.is_none() {
+            design_review::by_collection(&self.run_dir, &p.collection)
+        } else {
+            None
+        };
         let note = match review {
             None if design.is_some() => {
                 let (margin, delivery) = design_ports()?;
-                self.design_published(margin.as_ref(), &delivery, design.as_ref().expect("checked"))?
+                self.design_published(
+                    margin.as_ref(),
+                    &delivery,
+                    design.as_ref().expect("checked"),
+                )?
             }
             None => "not a code review".to_string(),
-            Some(r) if r.state != cr::record::State::Open => format!("review {:03} is {}; nothing to unseal", r.number, r.state.as_str()),
+            Some(r) if r.state != cr::record::State::Open => format!(
+                "review {:03} is {}; nothing to unseal",
+                r.number,
+                r.state.as_str()
+            ),
             Some(r) => {
                 let cr = spira_config::release_env::tool("cr")?;
-                let out = spira_config::bounded::bounded_for(cr, &PUBLISH_CALL_SECS.to_string()).args(["unseal", "--review", &format!("{:03}", r.number)]).output().map_err(|e| format!("cr: {e}"))?;
+                let out = spira_config::bounded::bounded_for(cr, &PUBLISH_CALL_SECS.to_string())
+                    .args(["unseal", "--review", &format!("{:03}", r.number)])
+                    .output()
+                    .map_err(|e| format!("cr: {e}"))?;
                 if !out.status.success() {
-                    return Err(format!("cr exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim()));
+                    return Err(format!(
+                        "cr exited {}: {}",
+                        out.status,
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ));
                 }
                 String::from_utf8_lossy(&out.stdout).trim().to_string()
             }
@@ -479,20 +722,42 @@ impl World {
     }
 
     /// Mails the Concierge that his pass on a design page is done, once.
-    pub fn design_published(&self, margin: &dyn margin_client::Margin, delivery: &crate::sources::smtp::Delivery, d: &design_review::Record) -> Result<String, String> {
+    pub fn design_published(
+        &self,
+        margin: &dyn margin_client::Margin,
+        delivery: &crate::sources::smtp::Delivery,
+        d: &design_review::Record,
+    ) -> Result<String, String> {
         let sent = crate::margin_mail::publish_design(margin, d, delivery)?;
-        Ok(format!("design {} {}", d.page, if sent { "publish mailed" } else { "publish already mailed" }))
+        Ok(format!(
+            "design {} {}",
+            d.page,
+            if sent {
+                "publish mailed"
+            } else {
+                "publish already mailed"
+            }
+        ))
     }
 
     /// The PRs the harness opened and recorded, asked of the forge by number, with the PRs already
     /// tracked in `input`. No repository's PR list is read.
     pub fn pr_snapshot(&self, forge: &Forge, input: &str) -> Result<String, String> {
         let carry: pr_notify::Carry = serde_json::from_str(input).unwrap_or_default();
-        let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        let rows = fs::read_to_string(&self.repo_map)
+            .map(|t| map_rows(&t))
+            .map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
         let targets: Vec<PrTarget> = rows
             .into_iter()
             .filter(|r| Path::new(&r.path).join(".git").is_dir())
-            .filter_map(|r| Some(PrTarget { slug: slug(Path::new(&r.path))?, name: r.name, land: r.land, base: r.base }))
+            .filter_map(|r| {
+                Some(PrTarget {
+                    slug: slug(Path::new(&r.path))?,
+                    name: r.name,
+                    land: r.land,
+                    base: r.base,
+                })
+            })
             .collect();
         let records = self.recorded_prs(&targets);
         pr_snapshot_from(&records, &targets, forge, &carry)
@@ -501,30 +766,59 @@ impl World {
     /// Per repo, the PR numbers its batch record and its publish record name; an `Err` where
     /// either could not be read, which is not "no PR".
     fn recorded_prs(&self, targets: &[PrTarget]) -> RecordedPrs {
-        let lc = spira_store::lc_call::LcClient::socket(&self.lc_socket).within(std::time::Duration::from_secs(5));
-        let views = store_view::Projection::hot(lc).and_then(|v| v.batches_current().map(|()| v).map_err(|e| e.to_string()));
+        let lc = spira_store::lc_call::LcClient::socket(&self.lc_socket)
+            .within(std::time::Duration::from_secs(5));
+        let views = store_view::Projection::hot(lc)
+            .and_then(|v| v.batches_current().map(|()| v).map_err(|e| e.to_string()));
         let mut out = RecordedPrs::new();
         for t in targets {
             let batch = match &views {
-                Ok(v) => v.batch_view(&t.name).map(|view| view.value.open.and_then(|r| r.get("pr").and_then(pr_number))).map_err(|e| e.to_string()),
+                Ok(v) => v
+                    .batch_view(&t.name)
+                    .map(|view| {
+                        view.value
+                            .open
+                            .and_then(|r| r.get("pr").and_then(pr_number))
+                    })
+                    .map_err(|e| e.to_string()),
                 Err(e) => Err(e.clone()),
             };
             let publish = publish_pr(&self.queue_dir, &t.name);
-            out.insert(t.name.clone(), batch.and_then(|b| publish.map(|p| b.into_iter().chain(p).collect())));
+            out.insert(
+                t.name.clone(),
+                batch.and_then(|b| publish.map(|p| b.into_iter().chain(p).collect())),
+            );
         }
         out
     }
 
     /// Per wanted bead, the mail files naming it as work bead, in mailbox order: every `new/` then
     /// every `cur/`. Each file is read once, however many beads are wanted.
-    fn mails_by_bead(&self, ids: &BTreeSet<String>, read: &dyn Fn(&Path) -> Option<String>) -> BTreeMap<String, Vec<String>> {
-        let mut boxes: Vec<PathBuf> = fs::read_dir(&self.mail).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    fn mails_by_bead(
+        &self,
+        ids: &BTreeSet<String>,
+        read: &dyn Fn(&Path) -> Option<String>,
+    ) -> BTreeMap<String, Vec<String>> {
+        let mut boxes: Vec<PathBuf> = fs::read_dir(&self.mail)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
         boxes.sort();
-        let wanted: Vec<(&String, String)> = ids.iter().map(|id| (id, format!("X-Spira-Work-Bead: {id}"))).collect();
+        let wanted: Vec<(&String, String)> = ids
+            .iter()
+            .map(|id| (id, format!("X-Spira-Work-Bead: {id}")))
+            .collect();
         let mut hits: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for sub in ["new", "cur"] {
             for b in &boxes {
-                let mut files: Vec<PathBuf> = fs::read_dir(b.join(sub)).into_iter().flatten().flatten().map(|e| e.path()).collect();
+                let mut files: Vec<PathBuf> = fs::read_dir(b.join(sub))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .collect();
                 files.sort();
                 for text in files.iter().filter_map(|f| read(f)) {
                     for (id, want) in &wanted {
@@ -544,12 +838,29 @@ impl World {
 
     fn hold_line(&self, id: &str, last_mail: Option<&String>) -> String {
         if let Some(text) = last_mail {
-            let header = |k: &str| text.lines().take_while(|l| !l.is_empty()).find_map(|l| l.strip_prefix(k)).unwrap_or("").to_string();
-            return format!("NEW ASK HOLD {id}: {} | default: {} | message-id: {}", header("Subject: "), header("X-Spira-Default: "), header("Message-ID: "));
+            let header = |k: &str| {
+                text.lines()
+                    .take_while(|l| !l.is_empty())
+                    .find_map(|l| l.strip_prefix(k))
+                    .unwrap_or("")
+                    .to_string()
+            };
+            return format!(
+                "NEW ASK HOLD {id}: {} | default: {} | message-id: {}",
+                header("Subject: "),
+                header("X-Spira-Default: "),
+                header("Message-ID: ")
+            );
         }
-        let last = self.lc(&["history", id, "--machine", "bead"]).and_then(|t| last_hold(&t));
+        let last = self
+            .lc(&["history", id, "--machine", "bead"])
+            .and_then(|t| last_hold(&t));
         let (seq, q) = last.unwrap_or(("?".into(), String::new()));
-        let q = if q.is_empty() { "<no text recorded>".to_string() } else { q };
+        let q = if q.is_empty() {
+            "<no text recorded>".to_string()
+        } else {
+            q
+        };
         format!("NEW ASK HOLD {id}: {q} | NO MAIL for the question; answer with spira-lc reply {id} seq:{seq}")
     }
 
@@ -557,7 +868,12 @@ impl World {
     /// names the command and what the store said.
     fn lc_named(&self, argv: &[&str]) -> Result<String, String> {
         if let Some((began, total)) = self.observe_bound {
-            return lc_bounded(&spira_store::lc_call::LcClient::socket(&self.lc_socket), total, began.elapsed(), argv);
+            return lc_bounded(
+                &spira_store::lc_call::LcClient::socket(&self.lc_socket),
+                total,
+                began.elapsed(),
+                argv,
+            );
         }
         let mut last = String::new();
         for attempt in 0..STORE_ATTEMPTS {
@@ -569,7 +885,11 @@ impl World {
                 Err(e) => last = e.to_string(),
             }
         }
-        Err(format!("spira-lc {} failed after {STORE_ATTEMPTS} attempts: {}", argv.join(" "), last.trim()))
+        Err(format!(
+            "spira-lc {} failed after {STORE_ATTEMPTS} attempts: {}",
+            argv.join(" "),
+            last.trim()
+        ))
     }
 
     /// A lifecycle `list` from the store view when this process keeps one (a stale view refuses, it
@@ -584,34 +904,77 @@ impl World {
     /// The beads the lifecycle holds on an ask, from the socket's `list` (the `list-held` caller verb is the CLI's composition of it).
     pub fn held_asks(&self) -> Result<Vec<String>, String> {
         let out = self.lc_listed(&["list", "--live", "--hold", "ask"])?;
-        let rows: Vec<Value> = serde_json::from_str(&out).map_err(|e| format!("held asks unparsed: {e}"))?;
-        Ok(rows.iter().filter_map(|r| r["bead_id"].as_str().map(str::to_string)).collect())
+        let rows: Vec<Value> =
+            serde_json::from_str(&out).map_err(|e| format!("held asks unparsed: {e}"))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r["bead_id"].as_str().map(str::to_string))
+            .collect())
     }
 
     /// The open asks as a JSON list; lines before the list (a notice the store printed) are skipped.
     fn open_asks_json(&self) -> Result<String, String> {
         let [flag, filter] = status_args(Kind::Ask, Which::Open);
-        let argv = ["plan", "items", "--label", &self.ask_label, &flag, &filter, "--full"];
+        let argv = [
+            "plan",
+            "items",
+            "--label",
+            &self.ask_label,
+            &flag,
+            &filter,
+            "--full",
+        ];
         let out = self.lc_named(&argv)?;
         match plan_items(&out) {
             Some(list) => Ok(Value::Array(list).to_string()),
-            None => Err(format!("spira-lc {} exited 0 but printed no item list: {:?}", argv.join(" "), out.chars().take(200).collect::<String>())),
+            None => Err(format!(
+                "spira-lc {} exited 0 but printed no item list: {:?}",
+                argv.join(" "),
+                out.chars().take(200).collect::<String>()
+            )),
         }
     }
 
     pub fn asks_snapshot(&self, input: &str) -> Result<String, String> {
         let seen: BTreeSet<String> = serde_json::from_str(input).unwrap_or_default();
         let listed = self.open_asks_json()?;
-        let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("ask list unparsed: {e}"))?;
-        let open = rows.iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r["title"].as_str()?.split_whitespace().collect::<Vec<_>>().join(" ")))).collect();
-        let unseen: Vec<String> = self.held_asks().unwrap_or_default().into_iter().filter(|id| !seen.contains(id)).collect();
+        let rows: Vec<Value> =
+            serde_json::from_str(&listed).map_err(|e| format!("ask list unparsed: {e}"))?;
+        let open = rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r["id"].as_str()?.to_string(),
+                    r["title"]
+                        .as_str()?
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ))
+            })
+            .collect();
+        let unseen: Vec<String> = self
+            .held_asks()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|id| !seen.contains(id))
+            .collect();
         let held = self.hold_lines(unseen, &Self::read_mail);
         serde_json::to_string(&asks::Snapshot { open, held }).map_err(|e| e.to_string())
     }
 
-    fn hold_lines(&self, ids: Vec<String>, read: &dyn Fn(&Path) -> Option<String>) -> Vec<(String, String)> {
+    fn hold_lines(
+        &self,
+        ids: Vec<String>,
+        read: &dyn Fn(&Path) -> Option<String>,
+    ) -> Vec<(String, String)> {
         let mails = self.mails_by_bead(&ids.iter().cloned().collect(), read);
-        ids.into_iter().map(|id| { let line = self.hold_line(&id, mails.get(&id).and_then(|m| m.last())); (id, line) }).collect()
+        ids.into_iter()
+            .map(|id| {
+                let line = self.hold_line(&id, mails.get(&id).and_then(|m| m.last()));
+                (id, line)
+            })
+            .collect()
     }
 
     /// Every open ask's JSON, then the mail of every held ask.
@@ -620,14 +983,30 @@ impl World {
         Ok(self.ask_text_from(listed, self.held_asks()?, &Self::read_mail))
     }
 
-    fn ask_text_from(&self, listed: String, held: Vec<String>, read: &dyn Fn(&Path) -> Option<String>) -> String {
+    fn ask_text_from(
+        &self,
+        listed: String,
+        held: Vec<String>,
+        read: &dyn Fn(&Path) -> Option<String>,
+    ) -> String {
         let mails = self.mails_by_bead(&held.iter().cloned().collect(), read);
-        let joined = held.iter().flat_map(|id| mails.get(id).cloned().unwrap_or_default());
-        std::iter::once(listed).chain(joined).collect::<Vec<_>>().join("\n")
+        let joined = held
+            .iter()
+            .flat_map(|id| mails.get(id).cloned().unwrap_or_default());
+        std::iter::once(listed)
+            .chain(joined)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn design_asks_snapshot(&self) -> Result<String, String> {
-        let failed = |why: String| serde_json::to_string(&design_asks::Snapshot { failure: Some(why), ..Default::default() }).map_err(|e| e.to_string());
+        let failed = |why: String| {
+            serde_json::to_string(&design_asks::Snapshot {
+                failure: Some(why),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
+        };
         if self.wiki.as_os_str().is_empty() {
             return failed("SPIRA_WIKI is not set".into());
         }
@@ -640,20 +1019,59 @@ impl World {
             Err(why) => return failed(format!("the ask store could not be read: {why}")),
         };
         let mut pages = vec![];
-        let mut projects: Vec<PathBuf> = fs::read_dir(&brain).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| !p.file_name().is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))).collect();
+        let mut projects: Vec<PathBuf> = fs::read_dir(&brain)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                !p.file_name()
+                    .is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))
+            })
+            .collect();
         projects.sort();
         for project in projects {
-            let mut files: Vec<PathBuf> = fs::read_dir(project.join("designs")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "md") && !p.file_name().is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))).collect();
+            let mut files: Vec<PathBuf> = fs::read_dir(project.join("designs"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && p.extension().is_some_and(|x| x == "md")
+                        && !p
+                            .file_name()
+                            .is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))
+                })
+                .collect();
             files.sort();
             for f in files {
-                let Ok(text) = fs::read_to_string(&f) else { continue };
-                let Ok(rel) = f.strip_prefix(&brain) else { continue };
-                let writer = ["bead", "session", "author"].iter().map(|k| frontmatter(&text, k)).find(|v| !v.is_empty()).unwrap_or_default();
+                let Ok(text) = fs::read_to_string(&f) else {
+                    continue;
+                };
+                let Ok(rel) = f.strip_prefix(&brain) else {
+                    continue;
+                };
+                let writer = ["bead", "session", "author"]
+                    .iter()
+                    .map(|k| frontmatter(&text, k))
+                    .find(|v| !v.is_empty())
+                    .unwrap_or_default();
                 let urls = artifact_urls(&text);
-                pages.push(Page { rel: format!("wiki/projects/{}", rel.display()), status: frontmatter(&text, "status"), writer, urls });
+                pages.push(Page {
+                    rel: format!("wiki/projects/{}", rel.display()),
+                    status: frontmatter(&text, "status"),
+                    writer,
+                    urls,
+                });
             }
         }
-        serde_json::to_string(&design_asks::Snapshot { failure: None, asks, pages }).map_err(|e| e.to_string())
+        serde_json::to_string(&design_asks::Snapshot {
+            failure: None,
+            asks,
+            pages,
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// The readiness look: the head revision and the records with an event since `input`'s
@@ -661,30 +1079,64 @@ impl World {
     pub fn readiness_look(&self, input: &str) -> Result<String, String> {
         use crate::watchers::readiness_dependents::Pass;
         const BASELINE: &str = "18446744073709551615";
-        let asked: Pass = serde_json::from_str(input).map_err(|e| format!("readiness-dependents input: {e}"))?;
+        let asked: Pass =
+            serde_json::from_str(input).map_err(|e| format!("readiness-dependents input: {e}"))?;
         if spira_config::process::cfg("SPIRA_LC_STORE_PATH")?.is_empty() {
-            return serde_json::to_string(&Pass { keys: vec![], ..asked }).map_err(|e| e.to_string());
+            return serde_json::to_string(&Pass {
+                keys: vec![],
+                ..asked
+            })
+            .map_err(|e| e.to_string());
         }
-        let since = asked.through.map_or(BASELINE.to_string(), |t| t.to_string());
+        let since = asked
+            .through
+            .map_or(BASELINE.to_string(), |t| t.to_string());
         let seen = self.lc_json(&["event-seq", "--since", &since])?;
         let through = seen["seq"].as_u64().ok_or("event-seq: no seq")?;
-        let keys = seen["keys"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
-        serde_json::to_string(&Pass { through: Some(through), changed: 0, keys }).map_err(|e| e.to_string())
+        let keys = seen["keys"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        serde_json::to_string(&Pass {
+            through: Some(through),
+            changed: 0,
+            keys,
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// One readiness-dependents pass: the dependents of `input`'s keys are judged again.
     pub fn readiness_dependents(&self, input: &str) -> Result<String, String> {
         use crate::watchers::readiness_dependents::Pass;
         const CHUNK: usize = 100;
-        let asked: Pass = serde_json::from_str(input).map_err(|e| format!("readiness-dependents input: {e}"))?;
+        let asked: Pass =
+            serde_json::from_str(input).map_err(|e| format!("readiness-dependents input: {e}"))?;
         for chunk in asked.keys.chunks(CHUNK) {
-            let argv = ["republish-dependents".to_string(), "--changed".into(), chunk.join(",")];
-            let out = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| std::env::var(k).ok());
+            let argv = [
+                "republish-dependents".to_string(),
+                "--changed".into(),
+                chunk.join(","),
+            ];
+            let out = spira_claim::cli::dispatch_in(&argv, &mut std::io::empty(), &|k| {
+                std::env::var(k).ok()
+            });
             if out.code != 0 {
-                return Err(format!("republish-dependents: exit {}: {}", out.code, out.err.lines().next().unwrap_or("no message")));
+                return Err(format!(
+                    "republish-dependents: exit {}: {}",
+                    out.code,
+                    out.err.lines().next().unwrap_or("no message")
+                ));
             }
         }
-        serde_json::to_string(&Pass { through: asked.through, changed: asked.keys.len() as u64, keys: vec![] }).map_err(|e| e.to_string())
+        serde_json::to_string(&Pass {
+            through: asked.through,
+            changed: asked.keys.len() as u64,
+            keys: vec![],
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// One `overrides.sh apply` pass; a failed override fails the pass, and its stdout and stderr say which.
@@ -700,8 +1152,11 @@ impl World {
     /// The control store's newest revision, as lc-serve's `ship-status` verb answers it.
     pub fn ship_head(&self) -> Result<u64, String> {
         let text = lc_call(&self.lc_socket, &["ship-status"]).map_err(|e| e.to_string())?;
-        let said: Value = serde_json::from_str(&text).map_err(|e| format!("ship-status: {e}: {text}"))?;
-        said["head"].as_u64().ok_or_else(|| format!("ship-status: no head in {text}"))
+        let said: Value =
+            serde_json::from_str(&text).map_err(|e| format!("ship-status: {e}: {text}"))?;
+        said["head"]
+            .as_u64()
+            .ok_or_else(|| format!("ship-status: no head in {text}"))
     }
 
     /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none
@@ -709,18 +1164,28 @@ impl World {
     pub fn brain_dirty_snapshot(&self) -> Result<String, String> {
         use std::os::unix::ffi::OsStrExt;
         let wiki = self.wiki.display().to_string();
-        let mut snap = brain_dirty::Snapshot { wiki, ..Default::default() };
+        let mut snap = brain_dirty::Snapshot {
+            wiki,
+            ..Default::default()
+        };
         if !self.wiki.as_os_str().is_empty() {
             let (code, _) = git(&self.wiki, &["rev-parse", "--git-dir"])?;
             if code == Some(0) {
-                let (code, raw) = git(&self.wiki, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
+                let (code, raw) = git(
+                    &self.wiki,
+                    &["status", "--porcelain", "-z", "--untracked-files=all"],
+                )?;
                 if code != Some(0) {
                     return Err(format!("git status exited {code:?}"));
                 }
                 for path in brain_dirty::porcelain_paths(&raw) {
-                    let mtime = fs::metadata(self.wiki.join(std::ffi::OsStr::from_bytes(&path))).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+                    let mtime = fs::metadata(self.wiki.join(std::ffi::OsStr::from_bytes(&path)))
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
                     if let Some(d) = mtime {
-                        snap.dirty.push((String::from_utf8_lossy(&path).into_owned(), d.as_secs()));
+                        snap.dirty
+                            .push((String::from_utf8_lossy(&path).into_owned(), d.as_secs()));
                     }
                 }
             } else {
@@ -731,15 +1196,25 @@ impl World {
     }
 
     fn state_of(&self, id: &str) -> String {
-        self.lc(&["state", id]).map(|s| s.trim().to_string()).unwrap_or_default()
+        self.lc(&["state", id])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
     }
 
     /// Every bead under a manual hold, read unless `input` says its version was already read as no request.
     pub fn supersede_snapshot(&self, input: &str) -> Result<String, String> {
         let known: BTreeMap<String, String> = serde_json::from_str(input).unwrap_or_default();
-        let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live", "--hold", "manual"])?;
-        let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("held list unparsed: {e}"))?;
-        let text = |v: &Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+        let listed = crate::reconcile_host::lc_read(
+            &self.lc_socket,
+            &["list", "--live", "--hold", "manual"],
+        )?;
+        let rows: Vec<Value> =
+            serde_json::from_str(&listed).map_err(|e| format!("held list unparsed: {e}"))?;
+        let text = |v: &Value| {
+            v.as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| v.to_string())
+        };
         let mut held = Vec::new();
         for r in rows.iter().filter(|r| !r["bead_id"].is_null()) {
             let (id, version) = (text(&r["bead_id"]), text(&r["version"]));
@@ -749,24 +1224,44 @@ impl World {
                 let raise = manual_hold_of(r).ok_or_else(|| format!("{id}: held manual but its record has no manual_hold; the store has not applied the manual_hold migration"))?;
                 match supersede_duty::request_of(raise) {
                     None => Reading::NotARequest,
-                    Some(succ) => Reading::Request { succ, own: r["state"].as_str().unwrap_or("").to_string(), succ_state: String::new() },
+                    Some(succ) => Reading::Request {
+                        succ,
+                        own: r["state"].as_str().unwrap_or("").to_string(),
+                        succ_state: String::new(),
+                    },
                 }
             };
-            held.push(Held { id, version, reading });
+            held.push(Held {
+                id,
+                version,
+                reading,
+            });
         }
         let successors: BTreeSet<String> = held
             .iter()
             .filter_map(|h| match &h.reading {
-                Reading::Request { succ, own, .. } if !own.is_empty() && !supersede_duty::terminal(own) => Some(succ.clone()),
+                Reading::Request { succ, own, .. }
+                    if !own.is_empty() && !supersede_duty::terminal(own) =>
+                {
+                    Some(succ.clone())
+                }
                 _ => None,
             })
             .collect();
         if !successors.is_empty() {
             let ids: Vec<String> = successors.into_iter().collect();
             let client = spira_store::lc_call::LcClient::socket(&self.lc_socket);
-            let states: BTreeMap<String, String> = store_view::rows_by_ids(&client, &ids)?.into_iter().map(|r| (r.bead_id, r.state)).collect();
+            let states: BTreeMap<String, String> = store_view::rows_by_ids(&client, &ids)?
+                .into_iter()
+                .map(|r| (r.bead_id, r.state))
+                .collect();
             for h in &mut held {
-                if let Reading::Request { succ, own, succ_state } = &mut h.reading {
+                if let Reading::Request {
+                    succ,
+                    own,
+                    succ_state,
+                } = &mut h.reading
+                {
                     if !own.is_empty() && !supersede_duty::terminal(own) {
                         *succ_state = states.get(succ.as_str()).cloned().unwrap_or_default();
                     }
@@ -779,18 +1274,34 @@ impl World {
     /// Every live item with a builder claim: its claim count and kept session ends, as the lifecycle row holds them.
     pub fn claim_count_snapshot(&self) -> Result<String, String> {
         let listed = crate::reconcile_host::lc_read(&self.lc_socket, &["list", "--live"])?; // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
-        let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("live list unparsed: {e}"))?;
+        let rows: Vec<Value> =
+            serde_json::from_str(&listed).map_err(|e| format!("live list unparsed: {e}"))?;
         let mut snap = claim_count::Snapshot::default();
         for r in &rows {
-            let id = r["bead_id"].as_str().ok_or_else(|| format!("live row without a bead_id: {r}"))?;
+            let id = r["bead_id"]
+                .as_str()
+                .ok_or_else(|| format!("live row without a bead_id: {r}"))?;
             let n: u32 = match &r["builder_claims"] {
-                Value::String(s) => s.trim().parse().map_err(|e| format!("{id}: builder_claims {s:?} unparsed: {e}"))?,
-                Value::Number(n) => n.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| format!("{id}: builder_claims {n} unparsed"))?,
+                Value::String(s) => s
+                    .trim()
+                    .parse()
+                    .map_err(|e| format!("{id}: builder_claims {s:?} unparsed: {e}"))?,
+                Value::Number(n) => n
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| format!("{id}: builder_claims {n} unparsed"))?,
                 other => return Err(format!("{id}: builder_claims is {other}, not a number")),
             };
-            let ends = r["session_ends"].as_array().ok_or_else(|| format!("{id}: session_ends is {}, not a list", r["session_ends"]))?.clone();
+            let ends = r["session_ends"]
+                .as_array()
+                .ok_or_else(|| format!("{id}: session_ends is {}, not a list", r["session_ends"]))?
+                .clone();
             if n >= 1 {
-                snap.rows.push(claim_count::Claims { id: id.to_string(), n, ends });
+                snap.rows.push(claim_count::Claims {
+                    id: id.to_string(),
+                    n,
+                    ends,
+                });
             }
         }
         serde_json::to_string(&snap).map_err(|e| e.to_string())
@@ -800,11 +1311,23 @@ impl World {
     pub fn supersede_act(&self, input: &str) -> Result<String, String> {
         let act: Act = serde_json::from_str(input).map_err(|e| e.to_string())?;
         let done = match act.verb {
-            Verb::Unhold => lc_call(&self.lc_socket, &["unhold", &act.id, "manual", supersede_duty::ACTOR]),
-            Verb::Supersede => lc_call(&self.lc_socket, &["supersede", &act.id, &act.succ, supersede_duty::ACTOR]),
+            Verb::Unhold => lc_call(
+                &self.lc_socket,
+                &["unhold", &act.id, "manual", supersede_duty::ACTOR],
+            ),
+            Verb::Supersede => lc_call(
+                &self.lc_socket,
+                &["supersede", &act.id, &act.succ, supersede_duty::ACTOR],
+            ),
         };
         if let Err(e) = done {
-            return if act.verb == Verb::Supersede && supersede_duty::terminal(&self.state_of(&act.id)) { Ok(supersede_duty::SETTLED.into()) } else { Err(e.to_string()) };
+            return if act.verb == Verb::Supersede
+                && supersede_duty::terminal(&self.state_of(&act.id))
+            {
+                Ok(supersede_duty::SETTLED.into())
+            } else {
+                Err(e.to_string())
+            };
         }
         let mut flags = vec![];
         if act.verb == Verb::Supersede && self.lc(&["bd-supersede", &act.id, &act.succ]).is_none() {
@@ -813,7 +1336,11 @@ impl World {
         if self.lc(&["bd-note", &act.id, &act.note]).is_none() {
             flags.push(supersede_duty::NOTE_FAILED);
         }
-        Ok(if flags.is_empty() { "done".into() } else { flags.join(" ") })
+        Ok(if flags.is_empty() {
+            "done".into()
+        } else {
+            flags.join(" ")
+        })
     }
 
     fn lc_json(&self, argv: &[&str]) -> Result<Value, String> {
@@ -839,33 +1366,68 @@ impl World {
     /// The label is not the repository: a bead filed for another repository carries the scope
     /// label too, and a live epic has a lifecycle row, so the content store decides both.
     fn flow_backlog(&self) -> Result<u64, String> {
-        let rows = spira_store::lc_state::parse_rows(&self.lc_listed(&["list", "--live"])?).map_err(|e| format!("lifecycle state unreadable: {e}"))?;
-        let live: Vec<&str> = rows.iter().filter(|r| !r.terminal()).map(|r| r.bead_id.as_str()).collect();
+        let rows = spira_store::lc_state::parse_rows(&self.lc_listed(&["list", "--live"])?)
+            .map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+        let live: Vec<&str> = rows
+            .iter()
+            .filter(|r| !r.terminal())
+            .map(|r| r.bead_id.as_str())
+            .collect();
         let mut ids = vec![];
         for chunk in live.chunks(FLOW_CONTENT_CHUNK) {
             let argv = ["plan", "items", "--ids", &chunk.join(",")];
             let out = self.lc_named(&argv)?;
-            let found = plan_items(&out).ok_or_else(|| format!("spira-lc plan items printed no item list: {:?}", out.chars().take(200).collect::<String>()))?;
-            ids.extend(found.iter().filter(|r| self.in_flow_backlog(r)).filter_map(|r| r["id"].as_str().map(str::to_string)));
+            let found = plan_items(&out).ok_or_else(|| {
+                format!(
+                    "spira-lc plan items printed no item list: {:?}",
+                    out.chars().take(200).collect::<String>()
+                )
+            })?;
+            ids.extend(
+                found
+                    .iter()
+                    .filter(|r| self.in_flow_backlog(r))
+                    .filter_map(|r| r["id"].as_str().map(str::to_string)),
+            );
         }
-        Ok(::reconciler_flow::io::backlog_of(&ids, &spira_store::lc_state::index(rows)))
+        Ok(::reconciler_flow::io::backlog_of(
+            &ids,
+            &spira_store::lc_state::index(rows),
+        ))
     }
 
     fn in_flow_backlog(&self, content: &Value) -> bool {
         let work = !matches!(content["issue_type"].as_str(), Some("epic" | "event"));
-        let scoped = self.scope_label.is_empty() || content["labels"].as_array().is_some_and(|l| l.iter().any(|x| x.as_str() == Some(self.scope_label.as_str())));
+        let scoped = self.scope_label.is_empty()
+            || content["labels"].as_array().is_some_and(|l| {
+                l.iter()
+                    .any(|x| x.as_str() == Some(self.scope_label.as_str()))
+            });
         work && scoped
     }
 
     /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead
     /// of it, then fails when the family still trails the log: a stalled export blinds the stage invariants.
     fn flow_export(&self) -> Result<(), String> {
-        let logged = self.lc_json(&["event-seq", "--head"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
-        let checkpoint = self.run_dir.join("tsd").join(".bead-stage-checkpoint-lifecycle.json");
-        let exported = fs::read_to_string(checkpoint).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["last_seq"].as_u64()).unwrap_or(0);
+        let logged = self.lc_json(&["event-seq", "--head"])?["seq"]
+            .as_u64()
+            .ok_or("event-seq: no seq")?;
+        let checkpoint = self
+            .run_dir
+            .join("tsd")
+            .join(".bead-stage-checkpoint-lifecycle.json");
+        let exported = fs::read_to_string(checkpoint)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v["last_seq"].as_u64())
+            .unwrap_or(0);
         let bin = self.export_bin.as_str();
         if bin.is_empty() {
-            return if logged <= exported { Ok(()) } else { Err("bead-stage is behind the lifecycle log and no exporter is configured".into()) };
+            return if logged <= exported {
+                Ok(())
+            } else {
+                Err("bead-stage is behind the lifecycle log and no exporter is configured".into())
+            };
         }
         if logged > exported {
             exporter_run(bin, "lifecycle")?;
@@ -875,7 +1437,8 @@ impl World {
 
     pub fn flow_snapshot(&self, input: &str) -> Result<String, String> {
         use ::reconciler_flow::io as flow;
-        let p: Params = serde_json::from_str(input).map_err(|e| format!("reconciler-flow params unparsed: {e}"))?;
+        let p: Params = serde_json::from_str(input)
+            .map_err(|e| format!("reconciler-flow params unparsed: {e}"))?;
         if self.run_dir.join("world.halted").exists() {
             return serde_json::to_string(&FlowSnapshot::halted(p.now)).map_err(|e| e.to_string());
         }
@@ -891,18 +1454,46 @@ impl World {
             waiting: flow::waiting_to_land(&rows),
             velocity: flow::velocity_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
             dwell: flow::dwell_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
-            round_health: flow::round_health_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            round_health: flow::round_health_metrics(
+                &rows,
+                p.now,
+                p.window_hours,
+                p.baseline_hours,
+            ),
             rework: flow::rework_metrics(&rows, p.now, p.rework_window_hours),
-            regression: flow::dwell_regression_metrics(&rows, p.now, p.window_hours, p.baseline_hours),
+            regression: flow::dwell_regression_metrics(
+                &rows,
+                p.now,
+                p.window_hours,
+                p.baseline_hours,
+            ),
         });
-        let slots = flow::slots_samples_in_process(&self.run_dir).map(|(prev, cur)| (Slots::from(prev), Slots::from(cur)));
-        let sentinel = flow::sentinel_pass_wall_seconds(endpoint, p.now, (p.sentinel_timer_secs * 3).max(3600));
-        serde_json::to_string(&FlowSnapshot { now: p.now, halted: false, export, velocity_floor, dwell_limit, backlog, baseline, stage, slots, sentinel }).map_err(|e| e.to_string())
+        let slots = flow::slots_samples_in_process(&self.run_dir)
+            .map(|(prev, cur)| (Slots::from(prev), Slots::from(cur)));
+        let sentinel = flow::sentinel_pass_wall_seconds(
+            endpoint,
+            p.now,
+            (p.sentinel_timer_secs * 3).max(3600),
+        );
+        serde_json::to_string(&FlowSnapshot {
+            now: p.now,
+            halted: false,
+            export,
+            velocity_floor,
+            dwell_limit,
+            backlog,
+            baseline,
+            stage,
+            slots,
+            sentinel,
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// Records each verdict as a `reconciler-status` row; a row the store refuses is dropped, as the pass always did.
     pub fn flow_status(&self, input: &str) -> Result<String, String> {
-        let s: Statuses = serde_json::from_str(input).map_err(|e| format!("reconciler-flow statuses unparsed: {e}"))?;
+        let s: Statuses = serde_json::from_str(input)
+            .map_err(|e| format!("reconciler-flow statuses unparsed: {e}"))?;
         let store = tsd::store::Pusher::new(self.metrics_endpoint.clone());
         for row in &s.rows {
             reconciler_engine::io::push(&store, reconciler_engine::io::STATUS_FAMILY, &s.ts, row);
@@ -914,33 +1505,73 @@ impl World {
         let list = |states: &str| self.lc_json(&["list", "--state", states]);
         let rows = list("READY,REWORK,SUBMITTED,CERTIFIED,WORKING,OPEN,IN_DELIVERY")?;
         let [flag, filter] = status_args(Kind::Ask, Which::Live);
-        let content = self.lc_json(&["content", "list", &flag, &filter, "--json", "--limit", "0"])?;
-        let beads: Vec<Bead> = content.as_array().ok_or("content list is not an array")?.iter().filter_map(sweep_bead).collect();
-        let labels_of: BTreeMap<&str, &Vec<String>> = beads.iter().map(|b| (b.id.as_str(), &b.labels)).collect();
+        let content =
+            self.lc_json(&["content", "list", &flag, &filter, "--json", "--limit", "0"])?;
+        let beads: Vec<Bead> = content
+            .as_array()
+            .ok_or("content list is not an array")?
+            .iter()
+            .filter_map(sweep_bead)
+            .collect();
+        let labels_of: BTreeMap<&str, &Vec<String>> =
+            beads.iter().map(|b| (b.id.as_str(), &b.labels)).collect();
         let mut rows_out: Vec<Row> = Vec::new();
         for raw in rows.as_array().ok_or("list is not an array")? {
-            let Some(mut r) = sweep_row(raw) else { continue };
-            let ours = r.holds.iter().any(|h| h == "manual") && !r.holds.iter().any(|h| h == "poison" || h == "ask") && !labels_of.get(r.id.as_str()).is_some_and(|l| l.contains(&self.ask_label));
+            let Some(mut r) = sweep_row(raw) else {
+                continue;
+            };
+            let ours = r.holds.iter().any(|h| h == "manual")
+                && !r.holds.iter().any(|h| h == "poison" || h == "ask")
+                && !labels_of
+                    .get(r.id.as_str())
+                    .is_some_and(|l| l.contains(&self.ask_label));
             if ours && bead_sweep::review(&r.reason).is_none() {
                 let raise = manual_hold_of(raw).ok_or_else(|| format!("{}: held manual but its record has no manual_hold; the store has not applied the manual_hold migration", r.id))?;
                 if let Some(at) = raise["at"].as_f64() {
                     r.held_at = Some(at);
-                    r.hold_review = raise["detail"].as_str().filter(|d| bead_sweep::review(d).is_some()).map(str::to_string);
+                    r.hold_review = raise["detail"]
+                        .as_str()
+                        .filter(|d| bead_sweep::review(d).is_some())
+                        .map(str::to_string);
                 }
             }
             rows_out.push(r);
         }
         let rows = rows_out;
-        let terminal = self.terminal_among(beads.iter().map(|b| b.id.as_str()).chain(rows.iter().flat_map(|r| r.blocked_by.iter().map(String::as_str))), &rows)?;
+        let terminal = self.terminal_among(
+            beads.iter().map(|b| b.id.as_str()).chain(
+                rows.iter()
+                    .flat_map(|r| r.blocked_by.iter().map(String::as_str)),
+            ),
+            &rows,
+        )?;
         let (stops, reserved) = self.scoped_stops();
-        let pr_repos = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).unwrap_or_default().into_iter().filter(|r| r.land == "pr").map(|r| r.name).collect();
-        let snap = bead_sweep::Snapshot { rows, content: beads, terminal, stops, reserved, carried: self.integrations(), pr_repos };
+        let pr_repos = fs::read_to_string(&self.repo_map)
+            .map(|t| map_rows(&t))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.land == "pr")
+            .map(|r| r.name)
+            .collect();
+        let snap = bead_sweep::Snapshot {
+            rows,
+            content: beads,
+            terminal,
+            stops,
+            reserved,
+            carried: self.integrations(),
+            pr_repos,
+        };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
     /// The terminal rows among the beads the sweep names that hold no live row. The projection holds
     /// live rows only, so these ask the store, by id, once.
-    fn terminal_among<'a>(&self, named: impl Iterator<Item = &'a str>, live: &[Row]) -> Result<Vec<(String, String)>, String> {
+    fn terminal_among<'a>(
+        &self,
+        named: impl Iterator<Item = &'a str>,
+        live: &[Row],
+    ) -> Result<Vec<(String, String)>, String> {
         let live: BTreeSet<&str> = live.iter().map(|r| r.id.as_str()).collect();
         let ids: BTreeSet<&str> = named.filter(|i| !live.contains(i)).collect();
         if ids.is_empty() {
@@ -949,32 +1580,75 @@ impl World {
         let ids: Vec<&str> = ids.into_iter().collect();
         let mut terminal = Vec::new();
         for chunk in ids.chunks(100) {
-            let out = lc_call(&self.lc_socket, &["list", "--ids", &chunk.join(",")]).map_err(|e| e.to_string())?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
-            let rows: Value = serde_json::from_str(&out).map_err(|e| format!("list unparsed: {e}"))?;
-            terminal.extend(rows.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).filter(|(_, st)| spira_store::lc_state::is_terminal(st)));
+            let out = lc_call(&self.lc_socket, &["list", "--ids", &chunk.join(",")])
+                .map_err(|e| e.to_string())?; // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+            let rows: Value =
+                serde_json::from_str(&out).map_err(|e| format!("list unparsed: {e}"))?;
+            terminal.extend(
+                rows.as_array()
+                    .ok_or("list is not an array")?
+                    .iter()
+                    .filter_map(|r| {
+                        Some((
+                            r["bead_id"].as_str()?.to_string(),
+                            r["state"].as_str()?.to_string(),
+                        ))
+                    })
+                    .filter(|(_, st)| spira_store::lc_state::is_terminal(st)),
+            );
         }
         Ok(terminal)
     }
 
     fn scoped_stops(&self) -> (Vec<Stop>, Vec<Reservation>) {
         let dir = self.run_dir.join("scoped-stops");
-        let mut files: Vec<PathBuf> = fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        let mut files: Vec<PathBuf> = fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
         files.sort();
         let (mut stops, mut reserved): (Vec<Stop>, Vec<Reservation>) = (vec![], vec![]);
         for f in files {
             let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let Some(v) = fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+            let Some(v) = fs::read_to_string(&f)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            else {
+                continue;
+            };
             let text = |k: &str| v[k].as_str().unwrap_or("").to_string();
             let since = v["since"].as_f64().unwrap_or(0.0);
             if name.starts_with("repo-") {
-                let lanes = v["lanes"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default();
-                let s = Stop { repo: text("repo"), lanes, owner: text("owner"), until: text("until"), since };
+                let lanes = v["lanes"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|l| l.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let s = Stop {
+                    repo: text("repo"),
+                    lanes,
+                    owner: text("owner"),
+                    until: text("until"),
+                    since,
+                };
                 match stops.iter().position(|o| o.repo == s.repo) {
                     Some(i) => stops[i] = s,
                     None => stops.push(s),
                 }
             } else if name.starts_with("reserve-") {
-                let r = Reservation { bead: text("bead"), owner: text("owner"), reason: text("reason"), until: text("until"), since };
+                let r = Reservation {
+                    bead: text("bead"),
+                    owner: text("owner"),
+                    reason: text("reason"),
+                    until: text("until"),
+                    since,
+                };
                 match reserved.iter().position(|o| o.bead == r.bead) {
                     Some(i) => reserved[i] = r,
                     None => reserved.push(r),
@@ -986,11 +1660,19 @@ impl World {
 
     /// Each repo's open integrations: a record line is the integration's id then its members.
     fn integrations(&self) -> Vec<(String, Vec<String>)> {
-        let mut dirs: Vec<PathBuf> = fs::read_dir(&self.queue_dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        let mut dirs: Vec<PathBuf> = fs::read_dir(&self.queue_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
         dirs.sort();
         let mut out: Vec<(String, Vec<String>)> = vec![];
         for d in dirs {
-            for line in fs::read_to_string(d.join("integrations")).unwrap_or_default().lines() {
+            for line in fs::read_to_string(d.join("integrations"))
+                .unwrap_or_default()
+                .lines()
+            {
                 let mut f = line.split_whitespace().map(str::to_string);
                 let Some(id) = f.next() else { continue };
                 let members: Vec<String> = f.collect();
@@ -1005,11 +1687,19 @@ impl World {
 
     /// Mirrors the `blocks` edges the content bead carries into the lifecycle store; the edges, or why not all of them were.
     fn mirror_blocks(&self, id: &str) -> Result<Vec<String>, String> {
-        let listed = lc_call(&self.lc_socket, &["content", "dep", "list", id, "--type", "blocks", "--json"]).map_err(|e| format!("edges unreadable: {e}"))?;
+        let listed = lc_call(
+            &self.lc_socket,
+            &["content", "dep", "list", id, "--type", "blocks", "--json"],
+        )
+        .map_err(|e| format!("edges unreadable: {e}"))?;
         let targets = bead::parse_blocks_targets(&listed);
         for t in &targets {
             let argv = bead::lc::dep_argv("dep-add", id, t, Some("blocks"));
-            lc_call(&self.lc_socket, &argv.iter().map(String::as_str).collect::<Vec<_>>()).map_err(|e| format!("edge {id} -> {t} not mirrored: {e}"))?;
+            lc_call(
+                &self.lc_socket,
+                &argv.iter().map(String::as_str).collect::<Vec<_>>(),
+            )
+            .map_err(|e| format!("edge {id} -> {t} not mirrored: {e}"))?;
         }
         Ok(targets)
     }
@@ -1018,13 +1708,18 @@ impl World {
     /// Nothing is created while `skew-check` refuses: after a restore bd can be hours behind the
     /// control plane, and its open beads may be ones the control plane already closed.
     pub fn sweep_repair(&self, input: &str) -> Result<String, String> {
-        let Repair { ids: asked, claims } = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let Repair { ids: asked, claims } =
+            serde_json::from_str(input).map_err(|e| e.to_string())?;
         if let Err(e) = lc_call(&self.lc_socket, &["skew-check"]) {
             eprintln!("bead-sweep: the rowless repair is refused: {e}");
             return serde_json::to_string(&Repaired::default()).map_err(|e| e.to_string());
         }
-        let snap: bead_sweep::Snapshot = serde_json::from_str(&self.sweep_snapshot()?).map_err(|e| e.to_string())?;
-        let todo: Vec<_> = bead_sweep::repairable(&self.ask_label, &snap).into_iter().filter(|r| asked.contains(&r.id)).collect();
+        let snap: bead_sweep::Snapshot =
+            serde_json::from_str(&self.sweep_snapshot()?).map_err(|e| e.to_string())?;
+        let todo: Vec<_> = bead_sweep::repairable(&self.ask_label, &snap)
+            .into_iter()
+            .filter(|r| asked.contains(&r.id))
+            .collect();
         let has_row: BTreeSet<&str> = snap.rows.iter().map(|r| r.id.as_str()).collect();
         let mut edges = BTreeMap::new();
         let mut ids = vec![];
@@ -1045,31 +1740,59 @@ impl World {
                         ids.push(r.id.clone());
                     }
                 }
-                Err(e) => eprintln!("bead-sweep: {} keeps its OPEN row, its edges are retried next pass: {e}", r.id),
+                Err(e) => eprintln!(
+                    "bead-sweep: {} keeps its OPEN row, its edges are retried next pass: {e}",
+                    r.id
+                ),
             }
         }
-        let todo_claims: Vec<String> = bead_sweep::claim_unset(&snap).into_iter().filter(|id| claims.contains(id)).collect();
+        let todo_claims: Vec<String> = bead_sweep::claim_unset(&snap)
+            .into_iter()
+            .filter(|id| claims.contains(id))
+            .collect();
         let claimed = todo_claims
             .into_iter()
-            .filter(|id| match lc_call(&self.lc_socket, &["sync-claim-inputs", "--only-if-unset", id]) {
-                Ok(out) => !out.contains(&format!("kept {id}:")),
-                Err(e) => {
-                    eprintln!("bead-sweep: claim inputs of {id} not written: {e}");
-                    false
+            .filter(|id| {
+                match lc_call(
+                    &self.lc_socket,
+                    &["sync-claim-inputs", "--only-if-unset", id],
+                ) {
+                    Ok(out) => !out.contains(&format!("kept {id}:")),
+                    Err(e) => {
+                        eprintln!("bead-sweep: claim inputs of {id} not written: {e}");
+                        false
+                    }
                 }
             })
             .collect();
-        serde_json::to_string(&Repaired { ids, edges, claimed }).map_err(|e| e.to_string())
+        serde_json::to_string(&Repaired {
+            ids,
+            edges,
+            claimed,
+        })
+        .map_err(|e| e.to_string())
     }
 
     /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.
     pub fn publish_backlog_snapshot(&self) -> Result<String, String> {
         let rows = match fs::read_to_string(&self.repo_map) {
             Ok(t) => map_rows(&t),
-            Err(e) => return serde_json::to_string(&publish_backlog::Snapshot { repos: vec![(publish_backlog::REPO_MAP_KEY.into(), Read::Blind(format!("the repo map is unreadable: {e}")))] }).map_err(|e| e.to_string()),
+            Err(e) => {
+                return serde_json::to_string(&publish_backlog::Snapshot {
+                    repos: vec![(
+                        publish_backlog::REPO_MAP_KEY.into(),
+                        Read::Blind(format!("the repo map is unreadable: {e}")),
+                    )],
+                })
+                .map_err(|e| e.to_string())
+            }
         };
         let reg = crate::tasks::a::queue_step::edge::registry().ok();
-        publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(reg, r)), &|name| self.unpublished(name))
+        publish_backlog_snapshot_from(
+            &rows,
+            &|r| reg.iter().for_each(|reg| refresh_forge_tip(reg, r)),
+            &|name| self.unpublished(name),
+        )
     }
 
     /// Measures the repo here and records the measurement for lc-serve; a record that cannot be
@@ -1077,14 +1800,31 @@ impl World {
     fn unpublished(&self, name: &str) -> Result<Option<Read>, String> {
         let now = spira_config::vtime::now_epoch() as u64;
         let measurement = crate::unpublished::measure(name, now)?;
-        if let Err(e) = lc_call(&self.lc_socket, &["git-fact", "put", "unpublished", "--json", &measurement.record(name)]) {
-            eprintln!("publish-backlog: the measurement of {name} was not recorded: {}", e.0);
+        if let Err(e) = lc_call(
+            &self.lc_socket,
+            &[
+                "git-fact",
+                "put",
+                "unpublished",
+                "--json",
+                &measurement.record(name),
+            ],
+        ) {
+            eprintln!(
+                "publish-backlog: the measurement of {name} was not recorded: {}",
+                e.0
+            );
         }
         Ok(match measurement {
             crate::unpublished::Measurement::Declared => None,
             crate::unpublished::Measurement::Measured(m) => {
                 let age = now.saturating_sub(m.read_at);
-                Some(Read::Measured { count: m.count, arrival: m.oldest_arrival, forge_tip_age_secs: (age >= spira_store::lc_call::UNPUBLISHED_STALE_AFTER_SECS).then_some(age) })
+                Some(Read::Measured {
+                    count: m.count,
+                    arrival: m.oldest_arrival,
+                    forge_tip_age_secs: (age >= spira_store::lc_call::UNPUBLISHED_STALE_AFTER_SECS)
+                        .then_some(age),
+                })
             }
         })
     }
@@ -1094,13 +1834,28 @@ impl World {
             Ok(live) => (Some(live), None),
             Err(e) => (None, Some(e)),
         };
-        let lines = |name: &str| fs::read_to_string(self.cockpit_state.join(name)).unwrap_or_default();
-        let ids = lines("dismissed").lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
-        let absent = lines("dismissed.absent").lines().filter_map(|l| l.split_once(' ')).filter_map(|(id, since)| Some((id.to_string(), since.parse().ok()?))).fold(BTreeMap::new(), |mut m, (id, since)| {
-            m.entry(id).or_insert(since);
-            m
-        });
-        serde_json::to_string(&view::Snapshot { seed: input == view::SEED, live, error, dismissed: view::Dismissed { ids, absent } }).map_err(|e| e.to_string())
+        let lines =
+            |name: &str| fs::read_to_string(self.cockpit_state.join(name)).unwrap_or_default();
+        let ids = lines("dismissed")
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        let absent = lines("dismissed.absent")
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .filter_map(|(id, since)| Some((id.to_string(), since.parse().ok()?)))
+            .fold(BTreeMap::new(), |mut m, (id, since)| {
+                m.entry(id).or_insert(since);
+                m
+            });
+        serde_json::to_string(&view::Snapshot {
+            seed: input == view::SEED,
+            live,
+            error,
+            dismissed: view::Dismissed { ids, absent },
+        })
+        .map_err(|e| e.to_string())
     }
 
     fn tmux(&self, args: &[&str]) -> Result<String, String> {
@@ -1113,9 +1868,29 @@ impl World {
             return Err(format!("no such view {to:?}"));
         }
         let cockpit = format!("={}", self.cockpit_session);
-        let id = self.tmux(&["display-message", "-p", "-t", &format!("={to}:0"), "#{window_id}"])?.trim().to_string();
-        let windows = self.tmux(&["list-windows", "-t", &cockpit, "-F", "#{window_index} #{window_id}"])?;
-        let idx = windows.lines().filter_map(|l| l.split_once(' ')).find(|(_, w)| !id.is_empty() && *w == id).map(|(i, _)| i.to_string()).ok_or_else(|| format!("no cockpit window shows {to}"))?;
+        let id = self
+            .tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                &format!("={to}:0"),
+                "#{window_id}",
+            ])?
+            .trim()
+            .to_string();
+        let windows = self.tmux(&[
+            "list-windows",
+            "-t",
+            &cockpit,
+            "-F",
+            "#{window_index} #{window_id}",
+        ])?;
+        let idx = windows
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .find(|(_, w)| !id.is_empty() && *w == id)
+            .map(|(i, _)| i.to_string())
+            .ok_or_else(|| format!("no cockpit window shows {to}"))?;
         self.tmux(&["select-window", "-t", &format!("{cockpit}:{idx}")])?;
         Ok(format!("showing {to}"))
     }
@@ -1124,45 +1899,82 @@ impl World {
         let forget: view::Forget = serde_json::from_str(input).map_err(|e| e.to_string())?;
         fs::create_dir_all(&self.cockpit_state).map_err(|e| e.to_string())?;
         let path = |name: &str| self.cockpit_state.join(name);
-        let marks: String = forget.dismissed.absent.iter().map(|(id, since)| format!("{id} {since}\n")).collect();
+        let marks: String = forget
+            .dismissed
+            .absent
+            .iter()
+            .map(|(id, since)| format!("{id} {since}\n"))
+            .collect();
         if marks.is_empty() {
             let _ = fs::remove_file(path("dismissed.absent"));
         } else {
             fs::write(path("dismissed.absent"), marks).map_err(|e| e.to_string())?;
         }
         if forget.rewrite {
-            let ids: String = forget.dismissed.ids.iter().map(|id| format!("{id}\n")).collect();
-            fs::write(path("dismissed.tmp"), ids).and_then(|()| fs::rename(path("dismissed.tmp"), path("dismissed"))).map_err(|e| e.to_string())?;
+            let ids: String = forget
+                .dismissed
+                .ids
+                .iter()
+                .map(|id| format!("{id}\n"))
+                .collect();
+            fs::write(path("dismissed.tmp"), ids)
+                .and_then(|()| fs::rename(path("dismissed.tmp"), path("dismissed")))
+                .map_err(|e| e.to_string())?;
         }
         Ok("forgot".into())
     }
 
     /// The rows waiting to land: SUBMITTED, CERTIFIED and IN_DELIVERY.
     pub fn waiting_rows(&self) -> Result<Value, String> {
-        Ok(Value::Array(self.live_rows()?.into_iter().filter(|r| r["state"] != "WORKING").collect()))
+        Ok(Value::Array(
+            self.live_rows()?
+                .into_iter()
+                .filter(|r| r["state"] != "WORKING")
+                .collect(),
+        ))
     }
 
     /// The rows in a live state (`dependency::LIVE`): one read for the waiting beads and the blockers' states.
     fn live_rows(&self) -> Result<Vec<Value>, String> {
-        let rows: Value = serde_json::from_str(&self.lc_listed(&["list", "--state", &crate::watchers::dependency::LIVE.join(",")])?).map_err(|e| e.to_string())?;
+        let rows: Value = serde_json::from_str(&self.lc_listed(&[
+            "list",
+            "--state",
+            &crate::watchers::dependency::LIVE.join(","),
+        ])?)
+        .map_err(|e| e.to_string())?;
         Ok(rows.as_array().cloned().unwrap_or_default())
     }
 
     /// The day's landings and rounds for `watch.throughput`: per repo, the beads landed on its
     /// landing ref by hour and the beads waiting to land, and every repo's rounds from the batch rows.
     pub fn throughput_snapshot(&self, input: &str) -> Result<String, String> {
-        let bounded = World { observe_bound: Some((std::time::Instant::now(), crate::tasks::e::watch_throughput::STORE_BOUND)), ..self.clone() };
+        let bounded = World {
+            observe_bound: Some((
+                std::time::Instant::now(),
+                crate::tasks::e::watch_throughput::STORE_BOUND,
+            )),
+            ..self.clone()
+        };
         bounded.throughput_observed(input)
     }
 
     fn throughput_observed(&self, input: &str) -> Result<String, String> {
-        let p: ThroughputParams = serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
+        let p: ThroughputParams =
+            serde_json::from_str(input).map_err(|e| format!("throughput params unparsed: {e}"))?;
         let day = 24 * 3600;
         let halt = read_halt(&self.run_dir);
         let activated_at = crate::watchers::last_activation(&self.run_dir);
         let activation = crate::watchers::current_activation(&self.run_dir);
         let maintenance = spira_world::freeze::read_maintenance(&self.run_dir);
-        let blind = |why: String| ThroughputSnapshot { readable: false, halt: halt.clone(), activated_at, activation: activation.clone(), maintenance: maintenance.clone(), why, ..Default::default() };
+        let blind = |why: String| ThroughputSnapshot {
+            readable: false,
+            halt: halt.clone(),
+            activated_at,
+            activation: activation.clone(),
+            maintenance: maintenance.clone(),
+            why,
+            ..Default::default()
+        };
         let prefix = match spira_config::process::cfg("SPIRA_ID_PREFIX") {
             Ok(p) => p,
             Err(e) => return to_json(&blind(format!("SPIRA_ID_PREFIX: {e}"))),
@@ -1175,21 +1987,51 @@ impl World {
             Ok(w) => w,
             Err(e) => return to_json(&blind(format!("waiting rows: {e}"))),
         };
-        let states: BTreeMap<String, String> = live.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).collect();
-        let waiting: Vec<Value> = live.into_iter().filter(|r| r["state"] != "WORKING").collect();
+        let states: BTreeMap<String, String> = live
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r["bead_id"].as_str()?.to_string(),
+                    r["state"].as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        let waiting: Vec<Value> = live
+            .into_iter()
+            .filter(|r| r["state"] != "WORKING")
+            .collect();
         let batches = match self.lc_json(&["list", "--batches", "--window", &day.to_string()]) {
             Ok(b) => b,
             Err(e) => return to_json(&blind(format!("batches: {e}"))),
         };
-        let Some(rows) = batches.as_array() else { return to_json(&blind("batches: not a list".into())) };
+        let Some(rows) = batches.as_array() else {
+            return to_json(&blind("batches: not a list".into()));
+        };
         stamp_landings(&mut landings, rows);
         stamp_waiting(&mut landings, &waiting);
         let batches = batches.as_array().map(Vec::as_slice).unwrap_or_default();
         let repos = round_counts(batches, p.now, p.abandon_window_s);
         let unlanded = unlanded_rounds(batches, p.now);
         let parts = self.round_record_partition();
-        let records = Records { clear: parts.clear.iter().map(|f| f.display().to_string()).collect(), held: parts.held };
-        to_json(&ThroughputSnapshot { readable: true, landings, repos, unlanded, records, halt, activated_at, states, ..Default::default() })
+        let records = Records {
+            clear: parts
+                .clear
+                .iter()
+                .map(|f| f.display().to_string())
+                .collect(),
+            held: parts.held,
+        };
+        to_json(&ThroughputSnapshot {
+            readable: true,
+            landings,
+            repos,
+            unlanded,
+            records,
+            halt,
+            activated_at,
+            states,
+            ..Default::default()
+        })
     }
 
     /// Every checkout of the repo map, as the registry resolves it. An unreadable map is one
@@ -1198,17 +2040,31 @@ impl World {
         use crate::tasks::c::sweep_reclaim::Repo;
         let map = match fs::read_to_string(&self.repo_map) {
             Ok(m) => m,
-            Err(e) => return vec![Repo { name: "repo map".into(), error: format!("{}: {e}", self.repo_map.display()), ..Repo::default() }],
+            Err(e) => {
+                return vec![Repo {
+                    name: "repo map".into(),
+                    error: format!("{}: {e}", self.repo_map.display()),
+                    ..Repo::default()
+                }]
+            }
         };
         let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), self.home_repo.clone())]);
         let reg = spira_config::repos::Registry::new(Some(&map), &env, Path::new(""));
-        reg.names().into_iter().map(|name| Repo { path: reg.root(&name).unwrap_or_default(), name, error: String::new() }).collect()
+        reg.names()
+            .into_iter()
+            .map(|name| Repo {
+                path: reg.root(&name).unwrap_or_default(),
+                name,
+                error: String::new(),
+            })
+            .collect()
     }
 
     /// A git re-read is spent only while less than half the observe bound is gone, so the store
     /// reads after it keep the time they need to answer inside the deadline.
     fn has_time_to_reread(&self) -> bool {
-        self.observe_bound.is_none_or(|(began, total)| began.elapsed() < total / 2)
+        self.observe_bound
+            .is_none_or(|(began, total)| began.elapsed() < total / 2)
     }
 
     /// The beads landed over the 24 h ending `now`, per registered repo, read from its landing ref
@@ -1217,7 +2073,8 @@ impl World {
     /// time of the last such commit. A repo whose ref cannot be resolved or read is an error.
     pub fn landed_on_refs(&self, now: u64, prefix: &str) -> Result<Vec<RepoLanding>, String> {
         let day = 24 * 3600;
-        let map = fs::read_to_string(&self.repo_map).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        let map = fs::read_to_string(&self.repo_map)
+            .map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
         let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), self.home_repo.clone())]);
         let mut reg = spira_config::repos::Registry::new(Some(&map), &env, Path::new(""));
         if let Some(git) = &self.git_bin {
@@ -1227,16 +2084,30 @@ impl World {
         let mut out = vec![];
         for row in map_rows(&map) {
             let land = spira_config::repos::landref_explained(&reg, &row.name)
-                .or_else(|e| if self.has_time_to_reread() { spira_config::repos::landref_explained(&reg, &row.name) } else { Err(e) })
+                .or_else(|e| {
+                    if self.has_time_to_reread() {
+                        spira_config::repos::landref_explained(&reg, &row.name)
+                    } else {
+                        Err(e)
+                    }
+                })
                 .map_err(|why| format!("{}: no landing ref resolves: {why}", row.name))?;
             let log_args = ["log", land.as_str(), &since, "--format=%ct %s"];
             let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
             let log = git_ok_with(git, Path::new(&row.path), &log_args)
-                .or_else(|e| if self.has_time_to_reread() { git_ok_with(git, Path::new(&row.path), &log_args) } else { Err(e) })
+                .or_else(|e| {
+                    if self.has_time_to_reread() {
+                        git_ok_with(git, Path::new(&row.path), &log_args)
+                    } else {
+                        Err(e)
+                    }
+                })
                 .map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
             let mut landed: BTreeMap<String, u64> = BTreeMap::new();
             for line in String::from_utf8_lossy(&log).lines() {
-                let Some((at, subject)) = line.split_once(' ') else { continue };
+                let Some((at, subject)) = line.split_once(' ') else {
+                    continue;
+                };
                 let Ok(at) = at.parse::<u64>() else { continue };
                 for id in bead_ids(subject, prefix) {
                     let t = landed.entry(id).or_insert(at);
@@ -1249,7 +2120,15 @@ impl World {
                     hourly[(23 - age / 3600) as usize] += 1;
                 }
             }
-            out.push(RepoLanding { repo: row.name, hourly, last_landing: landed.values().copied().max().unwrap_or(0), waiting: 0, oldest: None, undated: None, beads: vec![] });
+            out.push(RepoLanding {
+                repo: row.name,
+                hourly,
+                last_landing: landed.values().copied().max().unwrap_or(0),
+                waiting: 0,
+                oldest: None,
+                undated: None,
+                beads: vec![],
+            });
         }
         Ok(out)
     }
@@ -1258,7 +2137,13 @@ impl World {
     /// control store, and the newest activation among the release machine records. Anything
     /// unreadable, or no release ever recorded, answers BLIND rather than an empty table.
     pub fn transitions_snapshot(&self, input: &str) -> Result<String, String> {
-        let bounded = World { observe_bound: Some((std::time::Instant::now(), crate::tasks::e::watch_transitions::STORE_BOUND)), ..self.clone() };
+        let bounded = World {
+            observe_bound: Some((
+                std::time::Instant::now(),
+                crate::tasks::e::watch_transitions::STORE_BOUND,
+            )),
+            ..self.clone()
+        };
         bounded.transitions_observed(input)
     }
 
@@ -1268,13 +2153,20 @@ impl World {
 
     /// Every phase of the observe runs on a worker the caller waits for only what is left of the
     /// bound, so a phase that hangs is a BLIND snapshot naming it. `enter` is called as each phase begins.
-    fn transitions_phased(&self, input: &str, enter: Arc<dyn Fn(&str) + Send + Sync>) -> Result<String, String> {
+    fn transitions_phased(
+        &self,
+        input: &str,
+        enter: Arc<dyn Fn(&str) + Send + Sync>,
+    ) -> Result<String, String> {
         let progress: Arc<Mutex<Phases>> = Arc::default();
         let Some((began, total)) = self.observe_bound else {
             return self.transitions_phases(input, &progress, &*enter);
         };
         let (world, text, track) = (self.clone(), input.to_string(), Arc::clone(&progress));
-        let answered = run_within(total.saturating_sub(began.elapsed()) + PHASE_GRACE, move || world.transitions_phases(&text, &track, &*enter));
+        let answered = run_within(
+            total.saturating_sub(began.elapsed()) + PHASE_GRACE,
+            move || world.transitions_phases(&text, &track, &*enter),
+        );
         let phases = progress.lock().unwrap_or_else(|e| e.into_inner()).clone();
         self.push_phase_durations(&phases);
         answered.unwrap_or_else(|| {
@@ -1285,13 +2177,35 @@ impl World {
     }
 
     fn push_phase_durations(&self, phases: &Phases) {
-        let mut points: Vec<spira_otel::metrics::Point> = phases.done.iter().map(|(name, secs)| spira_otel::metrics::Point::Gauge { name, value: *secs }).collect();
-        points.push(spira_otel::metrics::Point::Gauge { name: "spira_observe_phase_seconds_open", value: phases.since.elapsed().as_secs_f64() });
-        let sink = spira_otel::metrics::MetricsSink::for_component(self.metrics_endpoint.as_deref(), "spira-runtime");
-        sink.push(&points, &[("component", "spira-runtime"), ("operation", "watch.transitions"), ("open_phase", phases.current)]);
+        let mut points: Vec<spira_otel::metrics::Point> = phases
+            .done
+            .iter()
+            .map(|(name, secs)| spira_otel::metrics::Point::Gauge { name, value: *secs })
+            .collect();
+        points.push(spira_otel::metrics::Point::Gauge {
+            name: "spira_observe_phase_seconds_open",
+            value: phases.since.elapsed().as_secs_f64(),
+        });
+        let sink = spira_otel::metrics::MetricsSink::for_component(
+            self.metrics_endpoint.as_deref(),
+            "spira-runtime",
+        );
+        sink.push(
+            &points,
+            &[
+                ("component", "spira-runtime"),
+                ("operation", "watch.transitions"),
+                ("open_phase", phases.current),
+            ],
+        );
     }
 
-    fn transitions_phases(&self, input: &str, progress: &Mutex<Phases>, enter: &dyn Fn(&str)) -> Result<String, String> {
+    fn transitions_phases(
+        &self,
+        input: &str,
+        progress: &Mutex<Phases>,
+        enter: &dyn Fn(&str),
+    ) -> Result<String, String> {
         use crate::tasks::e::watch_transitions as wt;
         #[derive(serde::Deserialize)]
         struct P {
@@ -1303,7 +2217,10 @@ impl World {
         let p: P =
             serde_json::from_str(input).map_err(|e| format!("transitions params unparsed: {e}"))?;
         let phase = |name: &'static str| {
-            progress.lock().unwrap_or_else(|e| e.into_inner()).enter(name);
+            progress
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .enter(name);
             enter(name);
         };
         let ancestor = wt::repo_ancestor(&self.repo_map, &p.release_repo);
@@ -1321,30 +2238,48 @@ impl World {
         snap.halt = read_halt(&self.run_dir);
         phase("mark_landed");
         wt::mark_landed(&mut snap, &|repo, tip| {
-            let root = wt::repo_root(&self.repo_map, repo).or_else(|_| wt::repo_root(&self.repo_map, &p.release_repo))?;
-            wt::ancestor_in(&root, tip, &crate::tasks::e::watch_transitions::landing_ref(&root))
+            let root = wt::repo_root(&self.repo_map, repo)
+                .or_else(|_| wt::repo_root(&self.repo_map, &p.release_repo))?;
+            wt::ancestor_in(
+                &root,
+                tip,
+                &crate::tasks::e::watch_transitions::landing_ref(&root),
+            )
         });
         phase("mark_gated");
         let pool = spira_config::admission::gate_occupancy(&self.run_dir, p.certify_par);
         wt::mark_gated(
             &mut snap,
-            &wt::gates_of(&landing_pass::gateq::GateQueue::new(&self.run_dir).pending(), &pool.holders),
+            &wt::gates_of(
+                &landing_pass::gateq::GateQueue::new(&self.run_dir).pending(),
+                &pool.holders,
+            ),
             &landing_pass::records::gate_backoffs(&self.run_dir),
         );
         snap.gate_slots_free = p.certify_par.saturating_sub(pool.used());
-        progress.lock().unwrap_or_else(|e| e.into_inner()).enter("done");
+        progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .enter("done");
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
     pub fn round_record_partition(&self) -> install::round_records::Partition {
         if !self.batches_on_store {
-            return install::round_records::Partition { clear: vec![], held: vec![] };
+            return install::round_records::Partition {
+                clear: vec![],
+                held: vec![],
+            };
         }
-        let (named, bare): (Vec<_>, Vec<_>) = install::round_records::round_files(&self.queue_dir).into_iter().partition(|f| !f.batch.is_empty() || !f.pr.is_empty());
-        let mut parts = install::round_records::partition(&named, |batch| match self.lc_json(&["show-batch", batch]) {
-            Ok(v) => Ok(v["state"].as_str().map(str::to_string)),
-            Err(e) if e.trim() == "{}" => Ok(None),
-            Err(e) => Err(e),
+        let (named, bare): (Vec<_>, Vec<_>) = install::round_records::round_files(&self.queue_dir)
+            .into_iter()
+            .partition(|f| !f.batch.is_empty() || !f.pr.is_empty());
+        let mut parts = install::round_records::partition(&named, |batch| {
+            match self.lc_json(&["show-batch", batch]) {
+                Ok(v) => Ok(v["state"].as_str().map(str::to_string)),
+                Err(e) if e.trim() == "{}" => Ok(None),
+                Err(e) => Err(e),
+            }
         });
         for f in &bare {
             if f.is_forge_state() {
@@ -1352,7 +2287,10 @@ impl World {
                     parts.held.push(why);
                 }
             } else {
-                parts.held.push(format!("{} names no round, so it cannot be told from a live record", f.path.display()));
+                parts.held.push(format!(
+                    "{} names no round, so it cannot be told from a live record",
+                    f.path.display()
+                ));
             }
         }
         parts
@@ -1360,26 +2298,47 @@ impl World {
 
     /// Why a bare `forge-state` file is refused: `None` while the store holds an open batch for its repo, the file's live record.
     fn forge_state_refusal(&self, path: &Path) -> Option<String> {
-        let repo = path.parent().and_then(Path::file_name).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let lc = queue::real::RealLc { bin: None, client: Some(spira_store::lc_call::LcClient::socket(&self.lc_socket)) };
+        let repo = path
+            .parent()
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let lc = queue::real::RealLc {
+            bin: None,
+            client: Some(spira_store::lc_call::LcClient::socket(&self.lc_socket)),
+        };
         match queue::batches::open_batches(&lc, &repo) {
             Ok(open) if !open.is_empty() => None,
-            Ok(_) => Some(format!("{} names no round and the store holds no open batch for {repo}", path.display())),
-            Err(e) => Some(format!("{} names no round and the store cannot tell whether {repo} has an open batch: {e}", path.display())),
+            Ok(_) => Some(format!(
+                "{} names no round and the store holds no open batch for {repo}",
+                path.display()
+            )),
+            Err(e) => Some(format!(
+                "{} names no round and the store cannot tell whether {repo} has an open batch: {e}",
+                path.display()
+            )),
         }
     }
 
     /// Removes the round record files in `input` (a JSON list of paths) that the store still says
     /// nothing live names, re-asked now: a file whose round opened since the observation stays.
     pub fn clear_round_records(&self, input: &str) -> Result<String, String> {
-        let asked: Vec<PathBuf> = serde_json::from_str::<Vec<String>>(input).map_err(|e| format!("round record paths unparsed: {e}"))?.into_iter().map(PathBuf::from).collect();
+        let asked: Vec<PathBuf> = serde_json::from_str::<Vec<String>>(input)
+            .map_err(|e| format!("round record paths unparsed: {e}"))?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
         let parts = self.round_record_partition();
         let mut cleared = 0;
         for path in parts.clear.iter().filter(|p| asked.contains(p)) {
             fs::remove_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
             cleared += 1;
         }
-        Ok(format!("cleared {cleared} of {}; {} refused", asked.len(), parts.held.len()))
+        Ok(format!(
+            "cleared {cleared} of {}; {} refused",
+            asked.len(),
+            parts.held.len()
+        ))
     }
 
     /// Records each non-empty line of `input` in the Concierge inbox through the inbox's one append-and-push leg (`inbox_rules::record`),
@@ -1391,9 +2350,20 @@ impl World {
         };
         let mut pushed = false;
         for line in input.lines().filter(|l| !l.is_empty()) {
-            pushed |= inbox_rules::record(&self.inbox, line, &self.push_wake, &self.push_pattern, flusher)?;
+            pushed |= inbox_rules::record(
+                &self.inbox,
+                line,
+                &self.push_wake,
+                &self.push_pattern,
+                flusher,
+            )?;
         }
-        Ok(if pushed { "appended, pushed" } else { "appended" }.into())
+        Ok(if pushed {
+            "appended, pushed"
+        } else {
+            "appended"
+        }
+        .into())
     }
 }
 
@@ -1413,7 +2383,11 @@ struct Phases {
 
 impl Default for Phases {
     fn default() -> Self {
-        Phases { current: "start", since: std::time::Instant::now(), done: vec![] }
+        Phases {
+            current: "start",
+            since: std::time::Instant::now(),
+            done: vec![],
+        }
     }
 }
 
@@ -1438,7 +2412,10 @@ impl Phases {
 const PHASE_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// `f` on a worker, abandoned when it has not answered within `left`: `None`.
-fn run_within<T: Send + 'static>(left: std::time::Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+fn run_within<T: Send + 'static>(
+    left: std::time::Duration,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     let (tx, rx) = std::sync::mpsc::channel();
     let task = spira_store::lc_call::current_task();
     std::thread::spawn(move || {
@@ -1449,11 +2426,20 @@ fn run_within<T: Send + 'static>(left: std::time::Duration, f: impl FnOnce() -> 
 
 /// One store call held to what is left of its observe's bound; an absent store, a silent one, or no time left,
 /// answers `store unavailable`, which an observe's snapshot carries as its `why`.
-fn lc_bounded(client: &spira_store::lc_call::LcClient, total: std::time::Duration, spent: std::time::Duration, argv: &[&str]) -> Result<String, String> {
+fn lc_bounded(
+    client: &spira_store::lc_call::LcClient,
+    total: std::time::Duration,
+    spent: std::time::Duration,
+    argv: &[&str],
+) -> Result<String, String> {
     use spira_store::lc_call::LcError;
     let left = total.saturating_sub(spent);
     if left.is_zero() {
-        return Err(format!("store unavailable: tried for {} s, the observe's bound, before spira-lc {}", total.as_secs(), argv.join(" ")));
+        return Err(format!(
+            "store unavailable: tried for {} s, the observe's bound, before spira-lc {}",
+            total.as_secs(),
+            argv.join(" ")
+        ));
     }
     client.within(left).answer(argv).map_err(|e| match e {
         LcError::NotRunning(m) | LcError::Fault(m) => format!("store unavailable: {m}"),
@@ -1462,7 +2448,9 @@ fn lc_bounded(client: &spira_store::lc_call::LcClient, total: std::time::Duratio
     })
 }
 
-use crate::tasks::e::watch_throughput::{RepoLanding, RepoRounds, Records, Snapshot as ThroughputSnapshot, Unlanded, Waiting};
+use crate::tasks::e::watch_throughput::{
+    Records, RepoLanding, RepoRounds, Snapshot as ThroughputSnapshot, Unlanded, Waiting,
+};
 
 fn to_json(s: &ThroughputSnapshot) -> Result<String, String> {
     serde_json::to_string(s).map_err(|e| e.to_string())
@@ -1473,7 +2461,13 @@ pub fn bead_ids(subjects: &str, prefix: &str) -> BTreeSet<String> {
     let lead = format!("{prefix}-");
     subjects
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.'))
-        .filter(|w| w.starts_with(&lead) && w.len() > lead.len() && w[lead.len()..].chars().all(|c| c.is_ascii_alphanumeric() || c == '.'))
+        .filter(|w| {
+            w.starts_with(&lead)
+                && w.len() > lead.len()
+                && w[lead.len()..]
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.')
+        })
         .map(|w| w.trim_end_matches('.').to_string())
         .collect()
 }
@@ -1486,7 +2480,9 @@ fn round_unended(state: &str) -> bool {
 pub fn open_rounds_by_repo(batches: &[Value]) -> BTreeMap<String, u64> {
     let mut by = BTreeMap::new();
     for b in batches {
-        let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else { continue };
+        let (Some(repo), Some(state)) = (b["repo"].as_str(), b["state"].as_str()) else {
+            continue;
+        };
         if round_unended(state) {
             *by.entry(repo.to_string()).or_default() += 1;
         }
@@ -1499,11 +2495,20 @@ pub fn open_rounds_by_repo(batches: &[Value]) -> BTreeMap<String, u64> {
 pub fn round_counts(batches: &[Value], now: u64, recent_s: u64) -> Vec<RepoRounds> {
     let mut by: BTreeMap<String, RepoRounds> = BTreeMap::new();
     for b in batches {
-        let Some(repo) = b["repo"].as_str() else { continue };
-        let r = by.entry(repo.to_string()).or_insert_with(|| RepoRounds { repo: repo.to_string(), ..Default::default() });
-        let recent = b["last_at"].as_i64().is_some_and(|t| now.saturating_sub(t.max(0) as u64) <= recent_s);
+        let Some(repo) = b["repo"].as_str() else {
+            continue;
+        };
+        let r = by.entry(repo.to_string()).or_insert_with(|| RepoRounds {
+            repo: repo.to_string(),
+            ..Default::default()
+        });
+        let recent = b["last_at"]
+            .as_i64()
+            .is_some_and(|t| now.saturating_sub(t.max(0) as u64) <= recent_s);
         r.cut += 1;
-        r.green_runs += b["passes"].as_array().map_or(0, |p| p.iter().filter(|p| p["verdict"] == "green").count() as u64);
+        r.green_runs += b["passes"].as_array().map_or(0, |p| {
+            p.iter().filter(|p| p["verdict"] == "green").count() as u64
+        });
         match b["state"].as_str() {
             Some("ABANDONED") => {
                 r.abandoned += 1;
@@ -1523,7 +2528,12 @@ pub fn round_counts(batches: &[Value], now: u64, recent_s: u64) -> Vec<RepoRound
 /// moved. A repo with no LANDED round in the window keeps the ref's commit time.
 pub fn stamp_landings(landings: &mut [RepoLanding], batches: &[Value]) {
     for l in landings {
-        let landed = batches.iter().filter(|b| b["repo"].as_str() == Some(l.repo.as_str()) && b["state"] == "LANDED").filter_map(|b| b["last_at"].as_i64()).map(|t| t.max(0) as u64).max();
+        let landed = batches
+            .iter()
+            .filter(|b| b["repo"].as_str() == Some(l.repo.as_str()) && b["state"] == "LANDED")
+            .filter_map(|b| b["last_at"].as_i64())
+            .map(|t| t.max(0) as u64)
+            .max();
         if let Some(t) = landed {
             l.last_landing = t;
         }
@@ -1533,11 +2543,24 @@ pub fn stamp_landings(landings: &mut [RepoLanding], batches: &[Value]) {
 /// Each repo's waiting count, its oldest dated waiting bead, and the first with a null `since`.
 pub fn stamp_waiting(landings: &mut [RepoLanding], rows: &[Value]) {
     for l in landings {
-        let mine: Vec<Waiting> = rows.iter().filter(|r| r["repo"].as_str() == Some(l.repo.as_str())).map(|r| Waiting { bead: r["bead_id"].as_str().unwrap_or_default().to_string(), since: as_u64(&r["since"]) }).collect();
+        let mine: Vec<Waiting> = rows
+            .iter()
+            .filter(|r| r["repo"].as_str() == Some(l.repo.as_str()))
+            .map(|r| Waiting {
+                bead: r["bead_id"].as_str().unwrap_or_default().to_string(),
+                since: as_u64(&r["since"]),
+            })
+            .collect();
         l.waiting = mine.len() as u64;
         l.beads = mine.iter().map(|w| w.bead.clone()).collect();
-        l.undated = mine.iter().find(|w| w.since.is_none()).map(|w| w.bead.clone());
-        l.oldest = mine.into_iter().filter(|w| w.since.is_some()).min_by_key(|w| w.since);
+        l.undated = mine
+            .iter()
+            .find(|w| w.since.is_none())
+            .map(|w| w.bead.clone());
+        l.oldest = mine
+            .into_iter()
+            .filter(|w| w.since.is_some())
+            .min_by_key(|w| w.since);
     }
 }
 
@@ -1546,25 +2569,46 @@ pub fn unlanded_rounds(batches: &[Value], now: u64) -> Vec<Unlanded> {
     batches
         .iter()
         .filter_map(|b| {
-            let state = b["state"].as_str().filter(|s| matches!(*s, "GREEN" | "LANDING"))?;
+            let state = b["state"]
+                .as_str()
+                .filter(|s| matches!(*s, "GREEN" | "LANDING"))?;
             let last = b["last_at"].as_i64()?.max(0) as u64;
-            Some(Unlanded { repo: b["repo"].as_str()?.to_string(), batch: b["batch_id"].as_str()?.to_string(), state: state.to_string(), age_s: now.saturating_sub(last) })
+            Some(Unlanded {
+                repo: b["repo"].as_str()?.to_string(),
+                batch: b["batch_id"].as_str()?.to_string(),
+                state: state.to_string(),
+                age_s: now.saturating_sub(last),
+            })
         })
         .collect()
 }
 
 fn as_u64(v: &Value) -> Option<u64> {
-    v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    v.as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
 /// A JSON number, or a string of digits, as a float; anything else is zero.
 fn as_num(v: &Value) -> f64 {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).unwrap_or(0.0)
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        .unwrap_or(0.0)
 }
 
 fn strings(v: &Value) -> Vec<String> {
-    let parsed = v.as_str().and_then(|s| serde_json::from_str::<Value>(s).ok());
-    parsed.as_ref().unwrap_or(v).as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+    let parsed = v
+        .as_str()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    parsed
+        .as_ref()
+        .unwrap_or(v)
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The raise of the manual hold a listed row stands under; `None` when its record has none.
@@ -1573,7 +2617,10 @@ fn manual_hold_of(r: &Value) -> Option<&Value> {
 }
 
 fn sweep_row(r: &Value) -> Option<Row> {
-    let since = [&r["since"], &r["updated_at"]].into_iter().map(as_num).find(|n| *n != 0.0);
+    let since = [&r["since"], &r["updated_at"]]
+        .into_iter()
+        .map(as_num)
+        .find(|n| *n != 0.0);
     Some(Row {
         id: r["bead_id"].as_str()?.to_string(),
         state: r["state"].as_str().unwrap_or("").to_string(),
@@ -1601,7 +2648,13 @@ fn claim_why(view: &Value) -> Option<String> {
     if missing.is_empty() {
         return view["error"].as_str().map(str::to_string);
     }
-    Some(missing.iter().map(|m| format!("no {m}")).collect::<Vec<_>>().join(", "))
+    Some(
+        missing
+            .iter()
+            .map(|m| format!("no {m}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 fn sweep_bead(b: &Value) -> Option<Bead> {
@@ -1622,7 +2675,12 @@ mod pr_snapshot_tests {
     use crate::watchers::pr_notify::{Carry, RepoCarry, Snapshot, Tracked};
 
     fn target(name: &str, land: &str) -> PrTarget {
-        PrTarget { name: name.into(), slug: "o/r".into(), land: land.into(), base: String::new() }
+        PrTarget {
+            name: name.into(),
+            slug: "o/r".into(),
+            land: land.into(),
+            base: String::new(),
+        }
     }
 
     fn snapshot(out: &str) -> Snapshot {
@@ -1630,30 +2688,65 @@ mod pr_snapshot_tests {
     }
 
     fn tracking(n: u64) -> Carry {
-        let rc = RepoCarry { prs: BTreeMap::from([(n, Tracked { status: "green".into(), title: "t".into() })]), ..Default::default() };
-        Carry { repos: BTreeMap::from([("r".to_string(), rc)]) }
+        let rc = RepoCarry {
+            prs: BTreeMap::from([(
+                n,
+                Tracked {
+                    status: "green".into(),
+                    title: "t".into(),
+                },
+            )]),
+            ..Default::default()
+        };
+        Carry {
+            repos: BTreeMap::from([("r".to_string(), rc)]),
+        }
     }
 
     #[test_id(th8nekc)]
     #[test]
     fn nothing_recorded_nothing_tracked_and_no_deploy_makes_no_forge_call() {
         let (api, seen) = stub(vec![]);
-        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("a", "queue"), target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
+        let out = pr_snapshot_from(
+            &RecordedPrs::new(),
+            &[target("a", "queue"), target("r", "pr")],
+            &forge_at(api),
+            &Carry::default(),
+        )
+        .unwrap();
         assert!(seen.join().unwrap().is_empty());
-        assert!(snapshot(&out).repos.iter().all(|(_, o)| o.open == Some(vec![])));
+        assert!(snapshot(&out)
+            .repos
+            .iter()
+            .all(|(_, o)| o.open == Some(vec![])));
     }
 
     #[test_id(t8r1wx7)]
     #[test]
     fn a_recorded_pr_is_asked_by_number_and_its_checks_read() {
-        let pr = r#"{"number":12,"state":"open","title":"batch","head":{"sha":"abc","ref":"spira/b"}}"#;
+        let pr =
+            r#"{"number":12,"state":"open","title":"batch","head":{"sha":"abc","ref":"spira/b"}}"#;
         let checks = r#"{"check_runs":[{"name":"gate","status":"completed","conclusion":"success","check_suite":{"id":1}}]}"#;
         let runs = r#"{"workflow_runs":[]}"#;
-        let (api, seen) = stub(vec![answer("200 OK", "", pr), answer("200 OK", "", checks), answer("200 OK", "", runs)]);
+        let (api, seen) = stub(vec![
+            answer("200 OK", "", pr),
+            answer("200 OK", "", checks),
+            answer("200 OK", "", runs),
+        ]);
         let records = RecordedPrs::from([("r".to_string(), Ok(vec![12]))]);
-        let out = pr_snapshot_from(&records, &[target("r", "queue")], &forge_at(api), &Carry::default()).unwrap();
+        let out = pr_snapshot_from(
+            &records,
+            &[target("r", "queue")],
+            &forge_at(api),
+            &Carry::default(),
+        )
+        .unwrap();
         let seen = seen.join().unwrap();
-        assert!(seen[0].starts_with("get /repos/o/r/pulls/12 "), "{}", seen[0]);
+        assert!(
+            seen[0].starts_with("get /repos/o/r/pulls/12 "),
+            "{}",
+            seen[0]
+        );
         assert!(seen[1].contains("/commits/abc/check-runs") && seen[2].contains("head_sha=abc")); // not a path: request URL path
         assert!(seen.iter().all(|r| !r.contains("state=open")));
         let open = snapshot(&out).repos[0].1.open.clone().unwrap();
@@ -1663,11 +2756,25 @@ mod pr_snapshot_tests {
     #[test_id(tfwsbcc)]
     #[test]
     fn a_tracked_pr_no_longer_recorded_that_closed_gets_its_final_state_and_no_check_read() {
-        let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
-        let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed)]);
-        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", "queue")], &forge_at(api), &tracking(12)).unwrap();
+        let closed =
+            r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
+        let (api, seen) = stub(vec![
+            answer("200 OK", "", closed),
+            answer("200 OK", "", closed),
+        ]);
+        let out = pr_snapshot_from(
+            &RecordedPrs::new(),
+            &[target("r", "queue")],
+            &forge_at(api),
+            &tracking(12),
+        )
+        .unwrap();
         let seen = seen.join().unwrap();
-        assert!(seen.iter().all(|r| r.starts_with("get /repos/o/r/pulls/12 ")), "{seen:?}");
+        assert!(
+            seen.iter()
+                .all(|r| r.starts_with("get /repos/o/r/pulls/12 ")),
+            "{seen:?}"
+        );
         let obs = snapshot(&out).repos[0].1.clone();
         assert_eq!(obs.finals[&12].state, "CLOSED");
         assert_eq!(obs.open, Some(vec![]));
@@ -1690,14 +2797,38 @@ mod pr_snapshot_tests {
     #[test]
     fn strays_are_listed_only_on_the_tick_a_tracked_pr_leaves_the_open_set() {
         let (api, seen) = stub(vec![]);
-        pr_snapshot_from(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &Carry::default()).unwrap();
-        assert!(seen.join().unwrap().is_empty(), "a quiet tick lists no branches");
+        pr_snapshot_from(
+            &RecordedPrs::new(),
+            &[target("r", "pr")],
+            &forge_at(api),
+            &Carry::default(),
+        )
+        .unwrap();
+        assert!(
+            seen.join().unwrap().is_empty(),
+            "a quiet tick lists no branches"
+        );
 
-        let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
-        let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed), answer("200 OK", "", "[]")]);
-        let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
+        let closed =
+            r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
+        let (api, seen) = stub(vec![
+            answer("200 OK", "", closed),
+            answer("200 OK", "", closed),
+            answer("200 OK", "", "[]"),
+        ]);
+        let out = pr_snapshot_from(
+            &RecordedPrs::new(),
+            &[target("r", "pr")],
+            &forge_at(api),
+            &tracking(12),
+        )
+        .unwrap();
         let seen = seen.join().unwrap();
-        assert!(seen[2].starts_with("get /repos/o/r/branches"), "{}", seen[2]);
+        assert!(
+            seen[2].starts_with("get /repos/o/r/branches"),
+            "{}",
+            seen[2]
+        );
         assert_eq!(snapshot(&out).repos[0].1.strays, Some(vec![]));
     }
 
@@ -1706,7 +2837,13 @@ mod pr_snapshot_tests {
     fn a_repo_whose_records_cannot_be_read_is_unobserved_and_makes_no_call() {
         let (api, seen) = stub(vec![]);
         let records = RecordedPrs::from([("r".to_string(), Err("store down".to_string()))]);
-        let out = pr_snapshot_from(&records, &[target("r", "pr")], &forge_at(api), &tracking(12)).unwrap();
+        let out = pr_snapshot_from(
+            &records,
+            &[target("r", "pr")],
+            &forge_at(api),
+            &tracking(12),
+        )
+        .unwrap();
         assert!(seen.join().unwrap().is_empty());
         assert_eq!(snapshot(&out).repos[0].1.open, None);
     }
@@ -1723,22 +2860,66 @@ mod sweep_row_tests {
         assert_eq!(r.claim.as_deref(), Some("claimable"));
         let bare = sweep_row(&serde_json::json!({"bead_id": "sp-r"})).unwrap();
         assert_eq!(bare.claim, None);
-        assert!(sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": null})).unwrap().claim_unset);
-        assert!(!sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": {"blocked_by": []}})).unwrap().claim_unset);
-        let why = |view: serde_json::Value| sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": {}, "claim_view": view})).unwrap().claim_why;
-        assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": ["repo"]})).as_deref(), Some("no repo"));
-        assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": ["claim", "repo"]})).as_deref(), Some("no claim, no repo"));
-        assert_eq!(why(serde_json::json!({"verdict": "cannot-tell", "missing": [], "error": "store down"})).as_deref(), Some("store down"));
-        assert_eq!(why(serde_json::json!({"verdict": "claimable", "missing": []})), None);
+        assert!(
+            sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": null}))
+                .unwrap()
+                .claim_unset
+        );
+        assert!(
+            !sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": {"blocked_by": []}}))
+                .unwrap()
+                .claim_unset
+        );
+        let why = |view: serde_json::Value| {
+            sweep_row(&serde_json::json!({"bead_id": "sp-r", "claim": {}, "claim_view": view}))
+                .unwrap()
+                .claim_why
+        };
+        assert_eq!(
+            why(serde_json::json!({"verdict": "cannot-tell", "missing": ["repo"]})).as_deref(),
+            Some("no repo")
+        );
+        assert_eq!(
+            why(serde_json::json!({"verdict": "cannot-tell", "missing": ["claim", "repo"]}))
+                .as_deref(),
+            Some("no claim, no repo")
+        );
+        assert_eq!(
+            why(
+                serde_json::json!({"verdict": "cannot-tell", "missing": [], "error": "store down"})
+            )
+            .as_deref(),
+            Some("store down")
+        );
+        assert_eq!(
+            why(serde_json::json!({"verdict": "claimable", "missing": []})),
+            None
+        );
     }
 
     #[test_id(t10vtx3)]
     #[test]
     fn a_list_rows_express_column_reads_as_a_flag() {
-        let express = |v: serde_json::Value| sweep_row(&serde_json::json!({"bead_id": "sp-r", "express": v})).unwrap().express;
-        assert!(express(serde_json::json!("1")) && express(serde_json::json!(true)) && express(serde_json::json!("true")));
-        assert!(!express(serde_json::json!("0")) && !express(serde_json::json!(false)) && !express(serde_json::Value::Null));
-        assert!(!sweep_row(&serde_json::json!({"bead_id": "sp-r"})).unwrap().express);
+        let express = |v: serde_json::Value| {
+            sweep_row(&serde_json::json!({"bead_id": "sp-r", "express": v}))
+                .unwrap()
+                .express
+        };
+        assert!(
+            express(serde_json::json!("1"))
+                && express(serde_json::json!(true))
+                && express(serde_json::json!("true"))
+        );
+        assert!(
+            !express(serde_json::json!("0"))
+                && !express(serde_json::json!(false))
+                && !express(serde_json::Value::Null)
+        );
+        assert!(
+            !sweep_row(&serde_json::json!({"bead_id": "sp-r"}))
+                .unwrap()
+                .express
+        );
     }
 }
 
@@ -1753,13 +2934,22 @@ mod last_hold_tests {
           {"seq":915000,"event":"Hold","evidence":{"Hold":{"kind":"Wait","cause":"c","detail":"older"}}},
           {"seq":916913,"event":"Hold","evidence":{"Hold":{"kind":"Ask","cause":"operator-question","detail":"4 claims ended without progress inside 180m; last: x"}}}
         ]"#;
-        assert_eq!(last_hold(h), Some(("916913".into(), "4 claims ended without progress inside 180m; last: x".into())));
+        assert_eq!(
+            last_hold(h),
+            Some((
+                "916913".into(),
+                "4 claims ended without progress inside 180m; last: x".into()
+            ))
+        );
     }
 
     #[test_id(tq7vzhm)]
     #[test]
     fn a_history_with_no_hold_has_no_last_hold() {
-        assert_eq!(last_hold(r#"[{"seq":1,"event":"Claim","evidence":{}}]"#), None);
+        assert_eq!(
+            last_hold(r#"[{"seq":1,"event":"Claim","evidence":{}}]"#),
+            None
+        );
     }
 }
 
@@ -1771,18 +2961,31 @@ mod publish_backlog_tests {
     fn row(dir: &Path, name: &str, land: &str) -> MapRow {
         let path = dir.join(name);
         fs::create_dir_all(path.join(".git")).unwrap();
-        MapRow { name: name.into(), path: path.to_string_lossy().into(), land: land.into(), base: String::new() }
+        MapRow {
+            name: name.into(),
+            path: path.to_string_lossy().into(),
+            land: land.into(),
+            base: String::new(),
+        }
     }
 
     fn measured(count: u64) -> Read {
-        Read::Measured { count, arrival: None, forge_tip_age_secs: None }
+        Read::Measured {
+            count,
+            arrival: None,
+            forge_tip_age_secs: None,
+        }
     }
 
     #[test_id(tqz6yv3)]
     #[test]
     fn the_backlog_snapshot_refreshes_every_queue_local_repo_before_measuring_it() {
         let tmp = testkit::TempDir::new("backlog");
-        let rows = vec![row(tmp.path(), "a", "queue.local"), row(tmp.path(), "b", "queue.local"), row(tmp.path(), "q", "queue")];
+        let rows = vec![
+            row(tmp.path(), "a", "queue.local"),
+            row(tmp.path(), "b", "queue.local"),
+            row(tmp.path(), "q", "queue"),
+        ];
         let calls = Mutex::new(vec![]);
         publish_backlog_snapshot_from(
             &rows,
@@ -1804,10 +3007,24 @@ mod publish_backlog_tests {
     #[test]
     fn a_refresh_that_hangs_or_fails_still_yields_a_measurement() {
         let tmp = testkit::TempDir::new("backlog");
-        let rows = vec![row(tmp.path(), "a", "queue.local"), row(tmp.path(), "b", "queue.local")];
-        let out = publish_backlog_snapshot_from(&rows, &|r| assert_ne!(r.name, "a", "refresh failed"), &|_| Ok(Some(measured(3)))).unwrap();
+        let rows = vec![
+            row(tmp.path(), "a", "queue.local"),
+            row(tmp.path(), "b", "queue.local"),
+        ];
+        let out = publish_backlog_snapshot_from(
+            &rows,
+            &|r| assert_ne!(r.name, "a", "refresh failed"),
+            &|_| Ok(Some(measured(3))),
+        )
+        .unwrap();
         let snap: publish_backlog::Snapshot = serde_json::from_str(&out).unwrap();
-        assert_eq!(snap.repos, vec![("a".to_string(), measured(3)), ("b".to_string(), measured(3))]);
+        assert_eq!(
+            snap.repos,
+            vec![
+                ("a".to_string(), measured(3)),
+                ("b".to_string(), measured(3))
+            ]
+        );
     }
 }
 
@@ -1824,9 +3041,18 @@ mod bounded_store_tests {
         fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             unreachable!("a socket client asks exchange_kind")
         }
-        fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, wait: Duration) -> Result<Reply, LcError> {
+        fn exchange_kind(
+            &self,
+            _: &[String],
+            _: Option<&str>,
+            _: Duration,
+            wait: Duration,
+        ) -> Result<Reply, LcError> {
             self.0.lock().unwrap().push(wait);
-            Err(LcError::NotRunning(format!("store not running: nothing was sent; waited {} s", wait.as_secs())))
+            Err(LcError::NotRunning(format!(
+                "store not running: nothing was sent; waited {} s",
+                wait.as_secs()
+            )))
         }
     }
 
@@ -1835,9 +3061,22 @@ mod bounded_store_tests {
     fn a_store_absent_past_the_bound_is_unavailable_within_what_was_left_of_the_observe() {
         let double = Arc::new(Absent(Mutex::default()));
         let client = LcClient::over(double.clone(), true);
-        let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(10), &["dwell"]).unwrap_err();
-        assert!(why.starts_with("store unavailable:") && why.contains("waited 15 s"), "{why}");
-        assert_eq!(*double.0.lock().unwrap(), [Duration::from_secs(15)], "the client was bounded by the time left");
+        let why = lc_bounded(
+            &client,
+            Duration::from_secs(25),
+            Duration::from_secs(10),
+            &["dwell"],
+        )
+        .unwrap_err();
+        assert!(
+            why.starts_with("store unavailable:") && why.contains("waited 15 s"),
+            "{why}"
+        );
+        assert_eq!(
+            *double.0.lock().unwrap(),
+            [Duration::from_secs(15)],
+            "the client was bounded by the time left"
+        );
     }
 
     struct Ended;
@@ -1846,8 +3085,19 @@ mod bounded_store_tests {
         fn exchange(&self, _: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
             unreachable!("a socket client asks exchange_kind")
         }
-        fn exchange_kind(&self, _: &[String], _: Option<&str>, _: Duration, _: Duration) -> Result<Reply, LcError> {
-            Ok(Reply { code: 2, out: "cannot tell: dwell".into(), err: String::new(), read_ended: true })
+        fn exchange_kind(
+            &self,
+            _: &[String],
+            _: Option<&str>,
+            _: Duration,
+            _: Duration,
+        ) -> Result<Reply, LcError> {
+            Ok(Reply {
+                code: 2,
+                out: "cannot tell: dwell".into(),
+                err: String::new(),
+                read_ended: true,
+            })
         }
     }
 
@@ -1855,8 +3105,12 @@ mod bounded_store_tests {
     #[test]
     fn a_read_the_store_ended_at_its_limit_is_reported_as_that_and_not_as_an_unavailable_store() {
         let client = LcClient::over(Arc::new(Ended), true);
-        let why = lc_bounded(&client, Duration::from_secs(25), Duration::ZERO, &["dwell"]).unwrap_err();
-        assert!(why.starts_with("read ended at the store's read limit"), "{why}");
+        let why =
+            lc_bounded(&client, Duration::from_secs(25), Duration::ZERO, &["dwell"]).unwrap_err();
+        assert!(
+            why.starts_with("read ended at the store's read limit"),
+            "{why}"
+        );
         assert!(!why.contains("store unavailable"), "{why}");
     }
 
@@ -1871,8 +3125,19 @@ mod bounded_store_tests {
         });
         let client = LcClient::socket(t.path().join("sock"));
         let (done, answered) = std::sync::mpsc::channel();
-        std::thread::spawn(move || done.send(lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(24), &["list"])).unwrap()); // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
-        let why = answered.recv_timeout(Duration::from_secs(3)).expect("the call returns inside what was left of the bound").unwrap_err(); // clock-safe: caps the wait for the call to return
+        std::thread::spawn(move || {
+            done.send(lc_bounded(
+                &client,
+                Duration::from_secs(25),
+                Duration::from_secs(24),
+                &["list"],
+            ))
+            .unwrap()
+        }); // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
+        let why = answered
+            .recv_timeout(Duration::from_secs(3))
+            .expect("the call returns inside what was left of the bound")
+            .unwrap_err(); // clock-safe: caps the wait for the call to return
         assert!(why.starts_with("store unavailable"), "{why}");
     }
 
@@ -1881,25 +3146,55 @@ mod bounded_store_tests {
     fn an_observe_with_no_time_left_is_unavailable_without_asking_the_store() {
         let double = Arc::new(Absent(Mutex::default()));
         let client = LcClient::over(double.clone(), true);
-        let why = lc_bounded(&client, Duration::from_secs(25), Duration::from_secs(26), &["dwell"]).unwrap_err();
-        assert!(why.contains("store unavailable") && why.contains("25 s"), "{why}");
+        let why = lc_bounded(
+            &client,
+            Duration::from_secs(25),
+            Duration::from_secs(26),
+            &["dwell"],
+        )
+        .unwrap_err();
+        assert!(
+            why.contains("store unavailable") && why.contains("25 s"),
+            "{why}"
+        );
         assert!(double.0.lock().unwrap().is_empty());
     }
 
     #[test_id(t4brhmz)]
     #[test]
-    fn an_observe_with_the_store_absent_past_its_bound_answers_unreadable_with_the_store_unavailable() {
+    fn an_observe_with_the_store_absent_past_its_bound_answers_unreadable_with_the_store_unavailable(
+    ) {
         let t = testkit::TempDir::new("observe-bound");
         let rel = t.path().join("releases");
         std::fs::create_dir_all(&rel).unwrap();
-        release::machine::enter(&t.path().join("release"), &"a".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
-        let world = super::super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("absent.sock"), observe_bound: Some((std::time::Instant::now(), Duration::from_millis(200))), ..Default::default() };
+        release::machine::enter(
+            &t.path().join("release"),
+            &"a".repeat(40),
+            release::machine::ReleaseState::Activated,
+            "current switched",
+        )
+        .unwrap();
+        let world = super::super::World {
+            run_dir: t.path().into(),
+            repo_map: t.path().join("map"),
+            lc_socket: t.path().join("absent.sock"),
+            observe_bound: Some((std::time::Instant::now(), Duration::from_millis(200))),
+            ..Default::default()
+        };
         let input = serde_json::json!({ "window_s": 3600, "certify_par": 2, "releases": rel, "release_repo": "spira" }).to_string();
-        let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_observed(&input).unwrap()).unwrap();
-        assert!(!snap.readable && snap.why.contains("store unavailable"), "{}", snap.why);
+        let snap: crate::tasks::e::watch_transitions::Snapshot =
+            serde_json::from_str(&world.transitions_observed(&input).unwrap()).unwrap();
+        assert!(
+            !snap.readable && snap.why.contains("store unavailable"),
+            "{}",
+            snap.why
+        );
     }
 
-    fn blocked_in(phase: &'static str, release: Arc<(Mutex<bool>, std::sync::Condvar)>) -> Arc<dyn Fn(&str) + Send + Sync> {
+    fn blocked_in(
+        phase: &'static str,
+        release: Arc<(Mutex<bool>, std::sync::Condvar)>,
+    ) -> Arc<dyn Fn(&str) + Send + Sync> {
         Arc::new(move |entered| {
             if entered == phase {
                 let (m, c) = &*release;
@@ -1912,16 +3207,34 @@ mod bounded_store_tests {
         let t = testkit::TempDir::new("observe-phase");
         let rel = t.path().join("releases");
         std::fs::create_dir_all(&rel).unwrap();
-        release::machine::enter(&t.path().join("release"), &"a".repeat(40), release::machine::ReleaseState::Activated, "current switched").unwrap();
+        release::machine::enter(
+            &t.path().join("release"),
+            &"a".repeat(40),
+            release::machine::ReleaseState::Activated,
+            "current switched",
+        )
+        .unwrap();
         let bound = Duration::from_millis(1500);
-        let listener = std::os::unix::net::UnixListener::bind(t.path().join("hangup.sock")).unwrap();
+        let listener =
+            std::os::unix::net::UnixListener::bind(t.path().join("hangup.sock")).unwrap();
         std::thread::spawn(move || listener.incoming().flatten().for_each(drop));
-        let world = super::World { run_dir: t.path().into(), repo_map: t.path().join("map"), lc_socket: t.path().join("hangup.sock"), observe_bound: Some((std::time::Instant::now(), bound)), ..Default::default() };
+        let world = super::World {
+            run_dir: t.path().into(),
+            repo_map: t.path().join("map"),
+            lc_socket: t.path().join("hangup.sock"),
+            observe_bound: Some((std::time::Instant::now(), bound)),
+            ..Default::default()
+        };
         let input = serde_json::json!({ "window_s": 3600, "certify_par": 2, "releases": rel, "release_repo": "spira" }).to_string();
         let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let hook = blocked_in(phase, release.clone());
-        let snap: crate::tasks::e::watch_transitions::Snapshot = serde_json::from_str(&world.transitions_phased(&input, hook).unwrap()).unwrap();
-        assert!(!snap.readable && snap.why.contains("store unavailable") && snap.why.contains(phase), "{}", snap.why);
+        let snap: crate::tasks::e::watch_transitions::Snapshot =
+            serde_json::from_str(&world.transitions_phased(&input, hook).unwrap()).unwrap();
+        assert!(
+            !snap.readable && snap.why.contains("store unavailable") && snap.why.contains(phase),
+            "{}",
+            snap.why
+        );
         *release.0.lock().unwrap() = true;
         release.1.notify_all();
     }
@@ -1953,7 +3266,10 @@ mod bounded_store_tests {
             let (m, c) = &*r2;
             drop(c.wait_while(m.lock().unwrap(), |open| !*open).unwrap());
         });
-        assert!(got.is_none(), "the worker is still blocked, so the call returned on its bound");
+        assert!(
+            got.is_none(),
+            "the worker is still blocked, so the call returned on its bound"
+        );
         *release.0.lock().unwrap() = true;
         release.1.notify_all();
     }
@@ -1961,7 +3277,9 @@ mod bounded_store_tests {
     #[test_id(tjv9adv)]
     #[test]
     fn a_worker_run_within_a_task_carries_that_task() {
-        let got = spira_store::lc_call::as_task("t", || super::super::run_within(Duration::from_secs(5), spira_store::lc_call::current_task));
+        let got = spira_store::lc_call::as_task("t", || {
+            super::super::run_within(Duration::from_secs(5), spira_store::lc_call::current_task)
+        });
         assert_eq!(got, Some(Some("t".to_string())));
     }
 }
@@ -1970,14 +3288,20 @@ mod bounded_store_tests {
 /// The zone conversion is the `date` program's, as in `idea-prompt`.
 pub fn cr_open_epoch(tz: &str, hour: u32, at: u64, days_after: u32) -> Result<u64, String> {
     let date = |args: &[&str]| -> Result<String, String> {
-        let out = spira_config::bounded::bounded("date").env("TZ", tz).args(args).output().map_err(|e| format!("date: {e}"))?;
+        let out = spira_config::bounded::bounded("date")
+            .env("TZ", tz)
+            .args(args)
+            .output()
+            .map_err(|e| format!("date: {e}"))?;
         if !out.status.success() {
             return Err(format!("date for TZ={tz} exited {}", out.status));
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
     let day = date(&["-d", &format!("@{at}"), "+%F"])?;
-    date(&["-d", &format!("{day} {hour:02}:00 {days_after} day"), "+%s"])?.parse().map_err(|_| format!("date gave no epoch for TZ={tz}"))
+    date(&["-d", &format!("{day} {hour:02}:00 {days_after} day"), "+%s"])?
+        .parse()
+        .map_err(|_| format!("date gave no epoch for TZ={tz}"))
 }
 
 #[cfg(test)]
@@ -1991,27 +3315,60 @@ mod cr_cadence_tests {
     const SMALL_HOURS: u64 = 1_795_086_000; // 2026-11-19 03:00 PST
 
     fn world(run: &Path, tz: &str, hour: &str) -> World {
-        World { run_dir: run.into(), cr_tz: tz.into(), cr_open_hour: hour.into(), ..World::default() }
+        World {
+            run_dir: run.into(),
+            cr_tz: tz.into(),
+            cr_open_hour: hour.into(),
+            ..World::default()
+        }
     }
 
     fn scheduled(run: &Path, state: State, closed_at: Option<u64>) {
-        let unit = cr::units::Unit { id: "u".into(), kind: cr::units::Kind::Module, files: vec![], title: "t".into() };
+        let unit = cr::units::Unit {
+            id: "u".into(),
+            kind: cr::units::Kind::Module,
+            files: vec![],
+            title: "t".into(),
+        };
         let n = record::allocate(run).unwrap();
-        let r = Review { number: n, kind: Kind::Scheduled, state, source_repo: "s".into(), source_sha: "c".into(), collection: None, url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at };
+        let r = Review {
+            number: n,
+            kind: Kind::Scheduled,
+            state,
+            source_repo: "s".into(),
+            source_sha: "c".into(),
+            collection: None,
+            url: None,
+            unit,
+            sealed_sha256: None,
+            staged_at: 0,
+            opened_at: None,
+            published_at: None,
+            closed_at,
+        };
         record::save(run, &r).unwrap();
     }
 
     fn due(w: &World, input: &str) -> u64 {
-        serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot(input).unwrap()).unwrap().due_at
+        serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot(input).unwrap())
+            .unwrap()
+            .due_at
     }
 
     #[test_id(tftq9pf)]
     #[test]
-    fn the_world_snapshot_names_the_staged_scheduled_review_as_the_blocker_and_none_once_it_closes() {
+    fn the_world_snapshot_names_the_staged_scheduled_review_as_the_blocker_and_none_once_it_closes()
+    {
         let t = testkit::TempDir::new("cr-cadence-blocker");
         scheduled(t.path(), State::Staged, None);
-        let snap = |w: &World| serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot("").unwrap()).unwrap();
-        assert_eq!(snap(&world(t.path(), LA, "7")).blocker, Some((1, State::Staged)));
+        let snap = |w: &World| {
+            serde_json::from_str::<cr_cadence::Snapshot>(&w.cr_cadence_snapshot("").unwrap())
+                .unwrap()
+        };
+        assert_eq!(
+            snap(&world(t.path(), LA, "7")).blocker,
+            Some((1, State::Staged))
+        );
         record::set_state(t.path(), 1, State::Closed, 5).unwrap();
         assert_eq!(snap(&world(t.path(), LA, "7")).blocker, None);
     }
@@ -2028,18 +3385,36 @@ mod cr_cadence_tests {
     #[test]
     fn with_no_scheduled_review_ever_the_first_is_due_the_next_open_hour_after_the_anchor() {
         let t = testkit::TempDir::new("cr-cadence-first");
-        let carry = |anchor| serde_json::to_string(&cr_cadence::Carry { anchor: Some(anchor), ..Default::default() }).unwrap();
+        let carry = |anchor| {
+            serde_json::to_string(&cr_cadence::Carry {
+                anchor: Some(anchor),
+                ..Default::default()
+            })
+            .unwrap()
+        };
         let w = world(t.path(), LA, "7");
-        assert_eq!((due(&w, &carry(LATE)), due(&w, &carry(SMALL_HOURS))), (SEVEN_NEXT_MORNING, SEVEN_NEXT_MORNING - 86_400));
+        assert_eq!(
+            (due(&w, &carry(LATE)), due(&w, &carry(SMALL_HOURS))),
+            (SEVEN_NEXT_MORNING, SEVEN_NEXT_MORNING - 86_400)
+        );
     }
 
     #[test_id(tax06qy)]
     #[test]
     fn an_unset_zone_or_a_bad_hour_fails_naming_its_key() {
         let t = testkit::TempDir::new("cr-cadence-unset");
-        assert!(world(t.path(), "", "7").cr_cadence_snapshot("").unwrap_err().contains("SPIRA_CR_TZ"));
+        assert!(world(t.path(), "", "7")
+            .cr_cadence_snapshot("")
+            .unwrap_err()
+            .contains("SPIRA_CR_TZ"));
         for hour in ["", "24", "seven"] {
-            assert!(world(t.path(), LA, hour).cr_cadence_snapshot("").unwrap_err().contains("SPIRA_CR_OPEN_HOUR"), "{hour}");
+            assert!(
+                world(t.path(), LA, hour)
+                    .cr_cadence_snapshot("")
+                    .unwrap_err()
+                    .contains("SPIRA_CR_OPEN_HOUR"),
+                "{hour}"
+            );
         }
     }
 }
@@ -2059,8 +3434,14 @@ mod ask_mail_tests {
                 fs::create_dir_all(root.join(b).join(sub)).unwrap();
             }
         }
-        let filler = |b: &str, sub: &str, n: usize| for i in 0..n {
-            fs::write(root.join(b).join(sub).join(format!("{i:03}")), "Subject: noise\n\nbody\n").unwrap();
+        let filler = |b: &str, sub: &str, n: usize| {
+            for i in 0..n {
+                fs::write(
+                    root.join(b).join(sub).join(format!("{i:03}")),
+                    "Subject: noise\n\nbody\n",
+                )
+                .unwrap();
+            }
         };
         filler("a", "new", 48);
         filler("a", "cur", 50);
@@ -2068,14 +3449,34 @@ mod ask_mail_tests {
         filler("b", "cur", 50);
         filler("c", "new", 51);
         filler("c", "cur", 47);
-        fs::write(root.join("a/cur/zz1"), mail("sp-one", "first", "d1", "<m1>")).unwrap();
-        fs::write(root.join("b/new/zz2"), mail("sp-one", "second", "d2", "<m2>")).unwrap();
-        fs::write(root.join("c/new/zz3"), mail("sp-two", "other", "d3", "<m3>")).unwrap();
-        fs::write(root.join("c/cur/zz4"), mail("sp-three", "third", "d4", "<m4>")).unwrap();
+        fs::write(
+            root.join("a/cur/zz1"),
+            mail("sp-one", "first", "d1", "<m1>"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("b/new/zz2"),
+            mail("sp-one", "second", "d2", "<m2>"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("c/new/zz3"),
+            mail("sp-two", "other", "d3", "<m3>"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("c/cur/zz4"),
+            mail("sp-three", "third", "d4", "<m4>"),
+        )
+        .unwrap();
     }
 
     fn world(root: &Path) -> World {
-        World { mail: root.into(), lc_socket: root.join("absent.sock"), ..World::default() }
+        World {
+            mail: root.into(),
+            lc_socket: root.join("absent.sock"),
+            ..World::default()
+        }
     }
 
     const PINNED: [&str; 4] = [
@@ -2091,8 +3492,14 @@ mod ask_mail_tests {
         let t = testkit::TempDir::new("ask-mail-lines");
         seed(t.path());
         let w = world(t.path());
-        let ids = ["sp-one", "sp-two", "sp-nomail", "sp-three"].map(String::from).to_vec();
-        let got: Vec<String> = w.hold_lines(ids, &World::read_mail).into_iter().map(|(_, l)| l).collect();
+        let ids = ["sp-one", "sp-two", "sp-nomail", "sp-three"]
+            .map(String::from)
+            .to_vec();
+        let got: Vec<String> = w
+            .hold_lines(ids, &World::read_mail)
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect();
         assert_eq!(got, PINNED);
     }
 
@@ -2102,8 +3509,17 @@ mod ask_mail_tests {
         let t = testkit::TempDir::new("ask-mail-text");
         seed(t.path());
         let w = world(t.path());
-        let got = w.ask_text_from("[]".into(), ["sp-three", "sp-one"].map(String::from).to_vec(), &World::read_mail);
-        let want = ["[]".to_string(), mail("sp-three", "third", "d4", "<m4>"), mail("sp-one", "second", "d2", "<m2>"), mail("sp-one", "first", "d1", "<m1>")];
+        let got = w.ask_text_from(
+            "[]".into(),
+            ["sp-three", "sp-one"].map(String::from).to_vec(),
+            &World::read_mail,
+        );
+        let want = [
+            "[]".to_string(),
+            mail("sp-three", "third", "d4", "<m4>"),
+            mail("sp-one", "second", "d2", "<m2>"),
+            mail("sp-one", "first", "d1", "<m1>"),
+        ];
         assert_eq!(got, want.join("\n"));
     }
 
@@ -2114,11 +3530,20 @@ mod ask_mail_tests {
         seed(t.path());
         let w = world(t.path());
         let reads = Cell::new(0usize);
-        let counting = |p: &Path| { reads.set(reads.get() + 1); fs::read_to_string(p).ok() };
+        let counting = |p: &Path| {
+            reads.set(reads.get() + 1);
+            fs::read_to_string(p).ok()
+        };
         let ids: BTreeSet<String> = ["sp-one", "sp-two", "sp-three"].map(String::from).into();
         let got = w.mails_by_bead(&ids, &counting);
         assert_eq!(reads.get(), 300);
-        assert_eq!(got["sp-one"], [mail("sp-one", "second", "d2", "<m2>"), mail("sp-one", "first", "d1", "<m1>")]);
+        assert_eq!(
+            got["sp-one"],
+            [
+                mail("sp-one", "second", "d2", "<m2>"),
+                mail("sp-one", "first", "d1", "<m1>")
+            ]
+        );
         assert_eq!(got["sp-two"], [mail("sp-two", "other", "d3", "<m3>")]);
         assert_eq!(got["sp-three"], [mail("sp-three", "third", "d4", "<m4>")]);
 
@@ -2126,7 +3551,11 @@ mod ask_mail_tests {
         for id in &ids {
             w.mails_by_bead(&[id.clone()].into(), &counting);
         }
-        assert_eq!(reads.get(), 900, "one call per bead, as the pre-fix mails_for was, rereads every file");
+        assert_eq!(
+            reads.get(),
+            900,
+            "one call per bead, as the pre-fix mails_for was, rereads every file"
+        );
     }
 }
 
@@ -2150,65 +3579,173 @@ mod margin_deliver_tests {
         let dir = testkit::TempDir::new("margin-deliver");
         let fake = FakeMargin::default();
         let text: String = (1..=12).map(|n| format!("line {n}\n")).collect();
-        let col = fake.post_collection("Review of a", "cover", &[Doc { path: "src/a.rs".into(), kind: "code".into(), text }]).unwrap();
-        let anchor = Anchor { path: "src/a.rs".into(), first: 6, last: 7 };
-        let thread = fake.his_thread(&col.id, anchor, "why is this pair swapped?", 1_795_000_000_000);
+        let col = fake
+            .post_collection(
+                "Review of a",
+                "cover",
+                &[Doc {
+                    path: "src/a.rs".into(),
+                    kind: "code".into(),
+                    text,
+                }],
+            )
+            .unwrap();
+        let anchor = Anchor {
+            path: "src/a.rs".into(),
+            first: 6,
+            last: 7,
+        };
+        let thread = fake.his_thread(
+            &col.id,
+            anchor,
+            "why is this pair swapped?",
+            1_795_000_000_000,
+        );
         if review {
-            let unit = cr::units::Unit { id: "u".into(), kind: cr::units::Kind::Module, files: vec![], title: "t".into() };
+            let unit = cr::units::Unit {
+                id: "u".into(),
+                kind: cr::units::Kind::Module,
+                files: vec![],
+                title: "t".into(),
+            };
             let n = record::allocate(dir.path()).unwrap();
-            let r = Review { number: n, kind: Kind::Scheduled, state: State::Open, source_repo: "s".into(), source_sha: "c".into(), collection: Some(col.id.clone()), url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None };
+            let r = Review {
+                number: n,
+                kind: Kind::Scheduled,
+                state: State::Open,
+                source_repo: "s".into(),
+                source_sha: "c".into(),
+                collection: Some(col.id.clone()),
+                url: None,
+                unit,
+                sealed_sha256: None,
+                staged_at: 0,
+                opened_at: None,
+                published_at: None,
+                closed_at: None,
+            };
             record::save(dir.path(), &r).unwrap();
         }
-        let input = serde_json::to_string(&Deliver { collection: col.id, comment: format!("{thread}-0"), thread, seq: 4, batch: vec![4], through: 4 }).unwrap();
+        let input = serde_json::to_string(&Deliver {
+            collection: col.id,
+            comment: format!("{thread}-0"),
+            thread,
+            seq: 4,
+            batch: vec![4],
+            through: 4,
+        })
+        .unwrap();
         Fixture { dir, fake, input }
     }
 
     fn deliver(f: &Fixture) -> Result<String, String> {
         let mail_root = f.dir.path().join("mail");
-        let delivery = Delivery { run_dir: f.dir.path().into(), home: f.dir.path().into(), mail_root, mute: false };
-        World { run_dir: f.dir.path().into(), ..World::default() }.margin_deliver_with(&f.fake, BASE, &delivery, &f.input)
+        let delivery = Delivery {
+            run_dir: f.dir.path().into(),
+            home: f.dir.path().into(),
+            mail_root,
+            mute: false,
+        };
+        World {
+            run_dir: f.dir.path().into(),
+            ..World::default()
+        }
+        .margin_deliver_with(&f.fake, BASE, &delivery, &f.input)
     }
 
     fn mailbox(f: &Fixture) -> Vec<String> {
         let new = f.dir.path().join("mail/concierge/new");
-        let mut files: Vec<_> = fs::read_dir(new).into_iter().flatten().flatten().map(|e| fs::read_to_string(e.path()).unwrap()).collect();
+        let mut files: Vec<_> = fs::read_dir(new)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| fs::read_to_string(e.path()).unwrap())
+            .collect();
         files.sort();
         files
     }
 
     #[test_id(t5j29kn)]
     #[test]
-    fn a_comment_on_a_review_lands_once_in_the_concierge_mailbox_with_its_source_and_the_cr_reply_command() {
+    fn a_comment_on_a_review_lands_once_in_the_concierge_mailbox_with_its_source_and_the_cr_reply_command(
+    ) {
         let f = fixture(true);
-        assert_eq!(deliver(&f).unwrap(), format!("comment {}-0 delivered", "col1-his0"));
+        assert_eq!(
+            deliver(&f).unwrap(),
+            format!("comment {}-0 delivered", "col1-his0")
+        );
         let mail = mailbox(&f);
         assert_eq!(mail.len(), 1);
         let m = &mail[0];
-        assert!(m.contains("Subject: margin: Review of a — src/a.rs:6-7\n"), "{m}");
-        assert!(m.contains("Message-ID: <margin-comment-col1-his0-0@spira>\n") && m.contains("From: Operator <operator@spira>\n"), "{m}");
+        assert!(
+            m.contains("Subject: margin: Review of a — src/a.rs:6-7\n"),
+            "{m}"
+        );
+        assert!(
+            m.contains("Message-ID: <margin-comment-col1-his0-0@spira>\n")
+                && m.contains("From: Operator <operator@spira>\n"),
+            "{m}"
+        );
         assert!(m.contains("why is this pair swapped?"), "{m}");
-        assert!(m.contains("     1  line 1\n") && m.contains(">    6  line 6\n") && m.contains(">    7  line 7\n") && m.contains("    12  line 12\n"), "{m}");
+        assert!(
+            m.contains("     1  line 1\n")
+                && m.contains(">    6  line 6\n")
+                && m.contains(">    7  line 7\n")
+                && m.contains("    12  line 12\n"),
+            "{m}"
+        );
         assert!(!m.contains(">    8  line 8"), "{m}");
-        assert!(m.contains("cr reply --review 001 --thread col1-his0 < reply.txt"), "{m}");
-        assert_eq!(deliver(&f).unwrap(), "comment col1-his0-0 already delivered");
+        assert!(
+            m.contains("cr reply --review 001 --thread col1-his0 < reply.txt"),
+            "{m}"
+        );
+        assert_eq!(
+            deliver(&f).unwrap(),
+            "comment col1-his0-0 already delivered"
+        );
         assert_eq!(mailbox(&f).len(), 1, "a second run delivers nothing new");
-        assert_eq!(crate::sources::margin_changed::resume_point(f.dir.path()), 4);
+        assert_eq!(
+            crate::sources::margin_changed::resume_point(f.dir.path()),
+            4
+        );
     }
 
     #[test_id(t2j5z84)]
     #[test]
     fn the_thread_so_far_and_the_reader_url_stand_in_when_no_review_holds_the_collection() {
         let f = fixture(false);
-        f.fake.reply_as("col1-his0", &FakeMargin::agent_author(), "it is deliberate", 1_795_000_100_000);
-        f.fake.reply_as("col1-his0", "ryan", "then say so in a comment", 1_795_000_200_000);
+        f.fake.reply_as(
+            "col1-his0",
+            &FakeMargin::agent_author(),
+            "it is deliberate",
+            1_795_000_100_000,
+        );
+        f.fake.reply_as(
+            "col1-his0",
+            "ryan",
+            "then say so in a comment",
+            1_795_000_200_000,
+        );
         let d: Deliver = serde_json::from_str(&f.input).unwrap();
-        let input = serde_json::to_string(&Deliver { comment: "col1-his0-r2".into(), ..d }).unwrap();
+        let input = serde_json::to_string(&Deliver {
+            comment: "col1-his0-r2".into(),
+            ..d
+        })
+        .unwrap();
         let f = Fixture { input, ..f };
         deliver(&f).unwrap();
         let m = &mailbox(&f)[0];
         assert!(m.contains("then say so in a comment"), "{m}");
-        assert!(m.contains("Thread so far:") && m.contains("concierge at 2026-") && m.contains("it is deliberate"), "{m}");
-        assert!(m.contains(&format!("{BASE}/c/col1#col1-his0-r2")) && !m.contains("cr reply"), "{m}");
+        assert!(
+            m.contains("Thread so far:")
+                && m.contains("concierge at 2026-")
+                && m.contains("it is deliberate"),
+            "{m}"
+        );
+        assert!(
+            m.contains(&format!("{BASE}/c/col1#col1-his0-r2")) && !m.contains("cr reply"),
+            "{m}"
+        );
     }
 
     #[test_id(tkozu7k)]
@@ -2216,24 +3753,54 @@ mod margin_deliver_tests {
     fn a_publish_replayed_for_a_review_that_is_no_longer_open_runs_no_cr() {
         let f = fixture(true);
         record::set_state(f.dir.path(), 1, State::Closed, 5).unwrap();
-        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish { collection: "col1".into(), seq: 2, batch: vec![2], through: 2 }).unwrap();
-        let w = World { run_dir: f.dir.path().into(), ..World::default() };
-        assert_eq!(w.margin_publish(&input).unwrap(), "review 001 is closed; nothing to unseal");
+        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish {
+            collection: "col1".into(),
+            seq: 2,
+            batch: vec![2],
+            through: 2,
+        })
+        .unwrap();
+        let w = World {
+            run_dir: f.dir.path().into(),
+            ..World::default()
+        };
+        assert_eq!(
+            w.margin_publish(&input).unwrap(),
+            "review 001 is closed; nothing to unseal"
+        );
     }
 
     #[test_id(t9q2xyo)]
     #[test]
     fn a_published_collection_no_review_holds_is_not_a_code_review() {
         let t = testkit::TempDir::new("margin-publish");
-        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish { collection: "other".into(), seq: 2, batch: vec![2], through: 2 }).unwrap();
-        let w = World { run_dir: t.path().into(), ..World::default() };
+        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish {
+            collection: "other".into(),
+            seq: 2,
+            batch: vec![2],
+            through: 2,
+        })
+        .unwrap();
+        let w = World {
+            run_dir: t.path().into(),
+            ..World::default()
+        };
         assert_eq!(w.margin_publish(&input).unwrap(), "not a code review");
         assert_eq!(crate::sources::margin_changed::resume_point(t.path()), 2);
     }
 
     fn design_fixture() -> Fixture {
         let f = fixture(false);
-        let rec = design_review::Record { page: "wiki/projects/p/designs/d.md".into(), collection: "col1".into(), document: "col1-d1".into(), version: 1, url: format!("{BASE}/c/col1"), sha256: "x".into(), state: "open".into(), posted_at_ms: 1_795_000_000_000 };
+        let rec = design_review::Record {
+            page: "wiki/projects/p/designs/d.md".into(),
+            collection: "col1".into(),
+            document: "col1-d1".into(),
+            version: 1,
+            url: format!("{BASE}/c/col1"),
+            sha256: "x".into(),
+            state: "open".into(),
+            posted_at_ms: 1_795_000_000_000,
+        };
         let path = f.dir.path().join("design-review");
         fs::create_dir_all(&path).unwrap();
         fs::write(path.join("p.json"), serde_json::to_string(&rec).unwrap()).unwrap();
@@ -2246,7 +3813,10 @@ mod margin_deliver_tests {
         let f = design_fixture();
         deliver(&f).unwrap();
         let m = &mailbox(&f)[0];
-        assert!(m.contains("Subject: margin: design wiki/projects/p/designs/d.md — src/a.rs:6-7\n"), "{m}");
+        assert!(
+            m.contains("Subject: margin: design wiki/projects/p/designs/d.md — src/a.rs:6-7\n"),
+            "{m}"
+        );
         assert!(m.contains("design-review reply --page wiki/projects/p/designs/d.md --thread col1-his0 < reply.txt"), "{m}");
     }
 
@@ -2254,18 +3824,54 @@ mod margin_deliver_tests {
     #[test]
     fn a_design_publish_mails_the_concierge_once_with_the_count_of_his_threads() {
         let f = design_fixture();
-        let w = World { run_dir: f.dir.path().into(), ..World::default() };
-        let anchor = margin_client::Anchor { path: "src/a.rs".into(), first: 1, last: 1 };
-        f.fake.thread_by("col1", anchor, &FakeMargin::agent_author(), "mine", 2);
-        let ports = || Ok((Box::new(f.fake.clone()) as Box<dyn Margin>, Delivery { run_dir: f.dir.path().into(), home: f.dir.path().into(), mail_root: f.dir.path().join("mail"), mute: false }));
-        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish { collection: "col1".into(), seq: 9, batch: vec![9], through: 9 }).unwrap();
-        assert_eq!(w.margin_publish_with(&ports, &input).unwrap(), "design wiki/projects/p/designs/d.md publish mailed");
-        assert_eq!(w.margin_publish_with(&ports, &input).unwrap(), "design wiki/projects/p/designs/d.md publish already mailed");
-        assert_eq!(crate::sources::margin_changed::resume_point(f.dir.path()), 9);
+        let w = World {
+            run_dir: f.dir.path().into(),
+            ..World::default()
+        };
+        let anchor = margin_client::Anchor {
+            path: "src/a.rs".into(),
+            first: 1,
+            last: 1,
+        };
+        f.fake
+            .thread_by("col1", anchor, &FakeMargin::agent_author(), "mine", 2);
+        let ports = || {
+            Ok((
+                Box::new(f.fake.clone()) as Box<dyn Margin>,
+                Delivery {
+                    run_dir: f.dir.path().into(),
+                    home: f.dir.path().into(),
+                    mail_root: f.dir.path().join("mail"),
+                    mute: false,
+                },
+            ))
+        };
+        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish {
+            collection: "col1".into(),
+            seq: 9,
+            batch: vec![9],
+            through: 9,
+        })
+        .unwrap();
+        assert_eq!(
+            w.margin_publish_with(&ports, &input).unwrap(),
+            "design wiki/projects/p/designs/d.md publish mailed"
+        );
+        assert_eq!(
+            w.margin_publish_with(&ports, &input).unwrap(),
+            "design wiki/projects/p/designs/d.md publish already mailed"
+        );
+        assert_eq!(
+            crate::sources::margin_changed::resume_point(f.dir.path()),
+            9
+        );
         let mail = mailbox(&f);
         assert_eq!(mail.len(), 1);
         let m = &mail[0];
         assert!(m.contains("Message-ID: <margin-publish-col1-1@spira>\n") && m.contains("Subject: margin: design wiki/projects/p/designs/d.md — his pass is published\n"), "{m}");
-        assert!(m.contains("His threads on version 1: 1\n") && m.contains("http://reader.test/c/col1"), "{m}");
+        assert!(
+            m.contains("His threads on version 1: 1\n") && m.contains("http://reader.test/c/col1"),
+            "{m}"
+        );
     }
 }

@@ -14,18 +14,37 @@ use spira_runtime::tasks::{self, f};
 const CADENCE_MS: u64 = 10 * 60_000;
 const BOGUS: &str = "intake.kit_bump.bogus";
 const MODULE: &str = include_str!("../../src/tasks/f/intake_kit_bump.rs");
-const LAUNCHERS: &[&str] = &["Command::new", "std::process", "process::Command", "libc::fork", "libc::exec", "posix_spawn", "nix::unistd"];
+const LAUNCHERS: &[&str] = &[
+    "Command::new",
+    "std::process",
+    "process::Command",
+    "libc::fork",
+    "libc::exec",
+    "posix_spawn",
+    "nix::unistd",
+];
 
 fn launcher(code: &str) -> Option<&'static str> {
     LAUNCHERS.iter().copied().find(|l| code.contains(l))
 }
 
 fn config() -> BTreeMap<String, String> {
-    [("SPIRA_KIT_REGISTRY", "http://registry"), ("SPIRA_KIT_CRATE", "kit"), ("SPIRA_KIT_SITES", "deck poke"), ("SPIRA_KIT_PERSONA", "builder")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    [
+        ("SPIRA_KIT_REGISTRY", "http://registry"),
+        ("SPIRA_KIT_CRATE", "kit"),
+        ("SPIRA_KIT_SITES", "deck poke"),
+        ("SPIRA_KIT_PERSONA", "builder"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
 }
 
 fn handler() -> IntakeKitBump {
-    IntakeKitBump { interval_ms: CADENCE_MS, config: config() }
+    IntakeKitBump {
+        interval_ms: CADENCE_MS,
+        config: config(),
+    }
 }
 
 fn running(r: &TaskRig) {
@@ -35,8 +54,17 @@ fn running(r: &TaskRig) {
 }
 
 fn snap(release: Option<&str>, locked: &str, requirement: &str) -> Snapshot {
-    let site = || Ok(Site { locked: locked.into(), requirement: requirement.into() });
-    Snapshot { release: Ok(release.map(str::to_string)), sites: [("deck".to_string(), site()), ("poke".to_string(), site())].into(), open: BTreeMap::new() }
+    let site = || {
+        Ok(Site {
+            locked: locked.into(),
+            requirement: requirement.into(),
+        })
+    };
+    Snapshot {
+        release: Ok(release.map(str::to_string)),
+        sites: [("deck".to_string(), site()), ("poke".to_string(), site())].into(),
+        open: BTreeMap::new(),
+    }
 }
 
 fn names(acts: &[runtime::EffectSpec]) -> Vec<&str> {
@@ -45,7 +73,13 @@ fn names(acts: &[runtime::EffectSpec]) -> Vec<&str> {
 
 fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> TaskRig {
     let calls = AtomicU64::new(0);
-    let mut r = TaskRig::new(seed, handler().registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())).double(FILE, |_| Ok("sp-k1".into())).double(AMEND, |i| Ok(i.into()));
+    let mut r = TaskRig::new(seed, handler().registration())
+        .unwrap()
+        .double(OBSERVE, move |_| {
+            Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())
+        })
+        .double(FILE, |_| Ok("sp-k1".into()))
+        .double(AMEND, |i| Ok(i.into()));
     let (_, stream, kind) = IntakeKitBump::boot();
     r.tick(stream, kind).unwrap();
     r
@@ -54,9 +88,17 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 #[test_id(tvejyo2)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| {
+        panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING")
+    });
     assert_eq!(row.stream(), STREAM);
-    assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
+    assert!(
+        row.keys
+            .iter()
+            .flat_map(|k| k.iter())
+            .any(|k| *k == CADENCE_KEY),
+        "the cadence is pinned config"
+    );
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
@@ -74,7 +116,8 @@ fn t2_every_site_locked_at_the_release_journals_nothing_and_asks_only_for_its_pr
 
 #[test_id(tv6nylh)]
 #[test]
-fn t3_current_open_retarget_current_is_legal_and_filing_over_an_open_bump_is_refused_naming_the_state() {
+fn t3_current_open_retarget_current_is_legal_and_filing_over_an_open_bump_is_refused_naming_the_state(
+) {
     for t in TRANSITIONS {
         assert_eq!(step(t.from, t.on), Ok(t.to), "{:?} on {}", t.from, t.on);
     }
@@ -85,11 +128,43 @@ fn t3_current_open_retarget_current_is_legal_and_filing_over_an_open_bump_is_ref
 #[test_id(tbs5fa8)]
 #[test]
 fn t3_an_open_bump_at_an_older_target_is_amended_and_the_carry_reads_back_as_recorded() {
-    let carry = Carry { bumps: [("deck".to_string(), ("sp-k1".to_string(), "1.3.0".to_string())), ("poke".to_string(), ("sp-k2".to_string(), "1.4.0".to_string()))].into() };
+    let carry = Carry {
+        bumps: [
+            (
+                "deck".to_string(),
+                ("sp-k1".to_string(), "1.3.0".to_string()),
+            ),
+            (
+                "poke".to_string(),
+                ("sp-k2".to_string(), "1.4.0".to_string()),
+            ),
+        ]
+        .into(),
+    };
     let mut s = snap(Some("1.4.0"), "1.2.0", "^1");
-    s.open = [("deck".to_string(), Ok(Some(Open { id: "sp-k1".into(), target: "1.3.0".into() }))), ("poke".to_string(), Ok(Some(Open { id: "sp-k2".into(), target: "1.4.0".into() })))].into();
+    s.open = [
+        (
+            "deck".to_string(),
+            Ok(Some(Open {
+                id: "sp-k1".into(),
+                target: "1.3.0".into(),
+            })),
+        ),
+        (
+            "poke".to_string(),
+            Ok(Some(Open {
+                id: "sp-k2".into(),
+                target: "1.4.0".into(),
+            })),
+        ),
+    ]
+    .into();
     let (next, acts) = decide(&carry, &s, &config());
-    assert_eq!(names(&acts), [AMEND], "deck moves to 1.4.0; poke is already there");
+    assert_eq!(
+        names(&acts),
+        [AMEND],
+        "deck moves to 1.4.0; poke is already there"
+    );
     assert_eq!(next.bumps["deck"].1, "1.4.0");
     let back: Carry = serde_json::from_str(&serde_json::to_string(&next).unwrap()).unwrap();
     assert_eq!(back, next);
@@ -98,12 +173,21 @@ fn t3_an_open_bump_at_an_older_target_is_amended_and_the_carry_reads_back_as_rec
 #[test_id(t7p8q9k)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
-    assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
+    let row = f::TASKS
+        .iter()
+        .find(|t| t.name == NAME)
+        .expect("the row is ported");
+    assert_eq!(
+        row.effects, EFFECTS,
+        "the row declares the module's effects"
+    );
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();
     let sim: Vec<&str> = doubles.iter().map(String::as_str).collect();
-    assert!(effects_runnable(&[BOGUS], &real, &sim).is_err(), "the planted {BOGUS} must be refused");
+    assert!(
+        effects_runnable(&[BOGUS], &real, &sim).is_err(),
+        "the planted {BOGUS} must be refused"
+    );
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
@@ -111,19 +195,40 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
-        assert_eq!(launcher(&format!("{l}(\"x\")")), Some(*l), "the scan must see {l}");
+        assert_eq!(
+            launcher(&format!("{l}(\"x\")")),
+            Some(*l),
+            "the scan must see {l}"
+        );
     }
     assert_eq!(launcher(MODULE), None);
 }
 
 #[test_id(t8thtyg)]
 #[test]
-fn t5_parity_a_release_the_requirement_admits_is_a_lockfile_update_and_one_it_does_not_is_breaking() {
-    let (_, acts) = decide(&Carry::default(), &snap(Some("1.3.0"), "1.2.0", "^1"), &config());
+fn t5_parity_a_release_the_requirement_admits_is_a_lockfile_update_and_one_it_does_not_is_breaking()
+{
+    let (_, acts) = decide(
+        &Carry::default(),
+        &snap(Some("1.3.0"), "1.2.0", "^1"),
+        &config(),
+    );
     assert_eq!(names(&acts), [FILE, FILE]);
-    assert!(acts.iter().any(|a| a.input.contains("update kit lockfile to 1.3.0 in deck")), "{acts:?}");
-    let (_, acts) = decide(&Carry::default(), &snap(Some("2.0.0"), "1.2.0", "^1"), &config());
-    assert!(acts.iter().any(|a| a.input.contains("upgrade kit to 2.0.0 (breaking) in poke")), "{acts:?}");
+    assert!(
+        acts.iter()
+            .any(|a| a.input.contains("update kit lockfile to 1.3.0 in deck")),
+        "{acts:?}"
+    );
+    let (_, acts) = decide(
+        &Carry::default(),
+        &snap(Some("2.0.0"), "1.2.0", "^1"),
+        &config(),
+    );
+    assert!(
+        acts.iter()
+            .any(|a| a.input.contains("upgrade kit to 2.0.0 (breaking) in poke")),
+        "{acts:?}"
+    );
 }
 
 #[test_id(tavf4mz)]
@@ -136,13 +241,20 @@ fn t5_parity_an_unpublished_crate_files_nothing() {
 
 /// Both sites bumped to 1.1.0 and recorded; the registry then moves to 1.2.0.
 fn bumped_then_released_again() -> TaskRig {
-    rig(1, |n| snap(Some(if n == 0 { "1.1.0" } else { "1.2.0" }), "1.0.0", "^1.0"))
+    rig(1, |n| {
+        snap(
+            Some(if n == 0 { "1.1.0" } else { "1.2.0" }),
+            "1.0.0",
+            "^1.0",
+        )
+    })
 }
 
 #[test_id(tzrca76)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
-    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&bumped_then_released_again(), NAME);
+    let rows =
+        spira_runtime::tasks::a::kit::assert_kept_as_rows(&bumped_then_released_again(), NAME);
     for k in ["bumps/deck", "bumps/poke"] {
         assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
     }
@@ -151,5 +263,10 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(tag3bn0)]
 #[test]
 fn a_boot_amends_the_open_bump_rather_than_filing_another() {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(bumped_then_released_again, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
+        bumped_then_released_again,
+        || handler().registration(),
+        STREAM,
+        runtime::event::EventKind::new(TICK, ""),
+    );
 }

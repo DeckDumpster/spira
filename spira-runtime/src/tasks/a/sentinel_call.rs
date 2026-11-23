@@ -140,17 +140,38 @@ pub const CALENDAR: &str = "*-*-* *:*:00";
 pub const OBSERVE_DEADLINE_MS: u64 = 5_000;
 
 /// The Act table: each effect and its deadline.
-pub const ACTS: &[(&str, u64)] = &[(UNIT_START, 10_000), (PREEMPT, 30_000), (PREEMPT_LOG, 1_000), (METRIC, 1_000)];
+pub const ACTS: &[(&str, u64)] = &[
+    (UNIT_START, 10_000),
+    (PREEMPT, 30_000),
+    (PREEMPT_LOG, 1_000),
+    (METRIC, 1_000),
+];
 /// Hand-offs decide returns as acts that are emitted, not run.
 pub const EMITS: &[EventKindTag] = &[];
 pub const EFFECTS: &[&str] = &[OBSERVE, UNIT_START, PREEMPT, PREEMPT_LOG, METRIC];
 /// The pinned keys registered in `spira/conf.d`.
-pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_RUNES", "SPIRA_MAX_DWARVES", "SPIRA_MAX_LIVE_DWARVES", "SPIRA_LIMIT_CPU", "SPIRA_LIMIT_MEMORY", "SPIRA_LIMIT_NETWORK", "SPIRA_QUEUE_THROTTLE_OVERRIDE"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_RUN",
+    "SPIRA_RUNES",
+    "SPIRA_MAX_DWARVES",
+    "SPIRA_MAX_LIVE_DWARVES",
+    "SPIRA_LIMIT_CPU",
+    "SPIRA_LIMIT_MEMORY",
+    "SPIRA_LIMIT_NETWORK",
+    "SPIRA_QUEUE_THROTTLE_OVERRIDE",
+];
 /// Keys the contract pins that `spira/conf.d` does not register: none. The five the contract
 /// listed are retired or are paths under `SPIRA_RUN` (the module doc, "The port").
 pub const UNREGISTERED: &[&str] = &[];
 
-pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
+pub const SHAPE: Shape = Shape {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    observe: OBSERVE,
+    observe_deadline_ms: OBSERVE_DEADLINE_MS,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -192,7 +213,12 @@ pub struct RuneCfg {
 impl Default for RuneCfg {
     /// `rune_get`'s own defaults: a task rune, not single-flight, not elastic.
     fn default() -> Self {
-        RuneCfg { single_flight: false, elastic: false, uses: vec![], reactive: false }
+        RuneCfg {
+            single_flight: false,
+            elastic: false,
+            uses: vec![],
+            reactive: false,
+        }
     }
 }
 
@@ -294,7 +320,11 @@ pub enum LegTrigger {
     UnitRan,
 }
 
-pub static LEG_TABLE: &[(Leg, LegTrigger, Leg)] = &[(Leg::Started, LegTrigger::StartOk, Leg::Running), (Leg::Started, LegTrigger::StartFailed, Leg::Ran), (Leg::Running, LegTrigger::UnitRan, Leg::Ran)];
+pub static LEG_TABLE: &[(Leg, LegTrigger, Leg)] = &[
+    (Leg::Started, LegTrigger::StartOk, Leg::Running),
+    (Leg::Started, LegTrigger::StartFailed, Leg::Ran),
+    (Leg::Running, LegTrigger::UnitRan, Leg::Ran),
+];
 
 /// Carried between ticks: the machine and every unit started with no
 /// `unit.ran` yet (unit name → rune); `refusal` is the last gate reason noted, so a refusal is
@@ -317,8 +347,16 @@ pub struct Carry {
     pub uncalled: Option<BTreeMap<String, String>>,
 }
 
-fn moved<S: Copy + PartialEq + std::fmt::Debug, E: Copy + PartialEq + std::fmt::Debug>(table: &[(S, E, S)], state: S, event: E) -> Result<S, String> {
-    table.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{NAME}: {event:?} is not a move from state {state:?}"))
+fn moved<S: Copy + PartialEq + std::fmt::Debug, E: Copy + PartialEq + std::fmt::Debug>(
+    table: &[(S, E, S)],
+    state: S,
+    event: E,
+) -> Result<S, String> {
+    table
+        .iter()
+        .find(|(s, e, _)| *s == state && *e == event)
+        .map(|(_, _, to)| *to)
+        .ok_or_else(|| format!("{NAME}: {event:?} is not a move from state {state:?}"))
 }
 
 /// The next state, or a refusal naming the state the event is illegal in.
@@ -332,13 +370,22 @@ pub fn step_leg(leg: Leg, event: LegTrigger) -> Result<Leg, String> {
 
 /// The world `sentinel::plan` reads, from the snapshot.
 pub fn call_world(snap: &Snapshot) -> plan::CallWorld {
-    let roster: Vec<String> = if snap.roster.is_empty() { snap.ready_by_rune.keys().cloned().collect() } else { snap.roster.clone() };
+    let roster: Vec<String> = if snap.roster.is_empty() {
+        snap.ready_by_rune.keys().cloned().collect()
+    } else {
+        snap.roster.clone()
+    };
     let (mut task, mut reactive) = (vec![], vec![]);
     for name in roster {
         let cfg = snap.runes.get(&name).cloned().unwrap_or_default();
         let rune = plan::Rune {
             live: i64::from(snap.live_by_rune.get(&name).copied().unwrap_or(0)),
-            ready: snap.ready_by_rune.get(&name).copied().flatten().map(i64::from),
+            ready: snap
+                .ready_by_rune
+                .get(&name)
+                .copied()
+                .flatten()
+                .map(i64::from),
             single_flight: cfg.single_flight,
             elastic: cfg.elastic,
             uses: cfg.uses,
@@ -366,12 +413,34 @@ pub fn call_world(snap: &Snapshot) -> plan::CallWorld {
         task,
         reactive,
         other_live: i64::from(snap.other_live),
-        limits: snap.max_dwarves.map(|n| (plan::BUILD_DISK.to_string(), n)).into_iter().chain(snap.class_limits.iter().map(|(c, n)| (c.clone(), *n))).map(|(c, n)| (c, i64::from(n))).collect(),
+        limits: snap
+            .max_dwarves
+            .map(|n| (plan::BUILD_DISK.to_string(), n))
+            .into_iter()
+            .chain(snap.class_limits.iter().map(|(c, n)| (c.clone(), *n)))
+            .map(|(c, n)| (c, i64::from(n)))
+            .collect(),
         max_live_dwarves: snap.max_live.map(i64::from),
         throttled: snap.throttle,
         express_ready: snap.express_ready.is_some_and(|n| n > 0),
-        urgent: snap.urgent.as_ref().map(|u| u.iter().map(|b| plan::Urgent { id: b.id.clone(), p0: b.p0, express: b.express }).collect()),
-        reactive_dwarves: snap.reactive_dwarves.iter().map(|d| plan::ReactiveDwarf { rune: d.rune.clone(), bead: d.bead.clone(), started_ms: d.started_ms }).collect(),
+        urgent: snap.urgent.as_ref().map(|u| {
+            u.iter()
+                .map(|b| plan::Urgent {
+                    id: b.id.clone(),
+                    p0: b.p0,
+                    express: b.express,
+                })
+                .collect()
+        }),
+        reactive_dwarves: snap
+            .reactive_dwarves
+            .iter()
+            .map(|d| plan::ReactiveDwarf {
+                rune: d.rune.clone(),
+                bead: d.bead.clone(),
+                started_ms: d.started_ms,
+            })
+            .collect(),
     }
 }
 
@@ -397,9 +466,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let p = plan::plan(&call_world(snap));
     let mut next = carry.clone();
     next.state = State::Idle;
-    next.in_flight.retain(|unit, _| snap.live_units.contains(unit));
+    next.in_flight
+        .retain(|unit, _| snap.live_units.contains(unit));
     next.refusal = p.refusal.clone();
-    next.room_since_ms = if p.task_room == Some(0) { None } else { carry.room_since_ms.or(Some(snap.now_ms)) };
+    next.room_since_ms = if p.task_room == Some(0) {
+        None
+    } else {
+        carry.room_since_ms.or(Some(snap.now_ms))
+    };
     next.room_at_ms = Some(snap.now_ms);
     next.bound = Some(p.bound.clone());
     next.task_limit = p.task_limit.clone();
@@ -407,16 +481,31 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let mut acts = vec![];
     if let Some(x) = &p.preempt {
         let key = format!("{}:{}", x.bead, x.express);
-        let input = serde_json::to_string(&Preempt { rune: x.rune.clone(), bead: x.bead.clone(), express: x.express.clone(), at_ms: snap.now_ms }).unwrap_or_default();
+        let input = serde_json::to_string(&Preempt {
+            rune: x.rune.clone(),
+            bead: x.bead.clone(),
+            express: x.express.clone(),
+            at_ms: snap.now_ms,
+        })
+        .unwrap_or_default();
         acts.push(Act::new(PREEMPT, &key).with_input(&input));
         acts.push(Act::new(PREEMPT_LOG, &key).with_input(input));
     }
     for (n, c) in p.calls.iter().enumerate() {
         let key = format!("{}-{}-{n}", c.rune, snap.now_ms);
-        let Ok(unit) = units::unit_name(NAME, &key) else { continue };
+        let Ok(unit) = units::unit_name(NAME, &key) else {
+            continue;
+        };
         next.in_flight.insert(unit.clone(), c.rune.clone());
-        let start = Start { rune: c.rune.clone(), key, require_express: c.require_express };
-        acts.push(Act::new(UNIT_START, unit).with_input(serde_json::to_string(&start).unwrap_or_default()));
+        let start = Start {
+            rune: c.rune.clone(),
+            key,
+            require_express: c.require_express,
+        };
+        acts.push(
+            Act::new(UNIT_START, unit)
+                .with_input(serde_json::to_string(&start).unwrap_or_default()),
+        );
     }
     (next, acts)
 }
@@ -439,7 +528,12 @@ pub struct SentinelCall {
 
 impl SentinelCall {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        SentinelCall { cadence: Cadence::Calendar(Calendar::parse(CALENDAR).expect("the minute calendar parses")), pinned }
+        SentinelCall {
+            cadence: Cadence::Calendar(
+                Calendar::parse(CALENDAR).expect("the minute calendar parses"),
+            ),
+            pinned,
+        }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -455,16 +549,46 @@ impl SentinelCall {
     }
 
     fn observe(&self, carry: &Carry, next_at: u64) -> Vec<Command> {
-        let input = ObserveIn { carry: carry.clone(), pinned: self.pinned.clone() };
-        kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), next_at)
+        let input = ObserveIn {
+            carry: carry.clone(),
+            pinned: self.pinned.clone(),
+        };
+        kit::on_tick(
+            &SHAPE,
+            serde_json::to_string(&input).unwrap_or_default(),
+            next_at,
+        )
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("refusal"), runtime::rows::Part::Field("room_since_ms"), runtime::rows::Part::Field("room_at_ms"), runtime::rows::Part::Field("bound"), runtime::rows::Part::Field("task_limit"), runtime::rows::Part::Map { name: "in_flight", drop: &[] }, runtime::rows::Part::Map { name: "uncalled", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("state"),
+    runtime::rows::Part::Field("refusal"),
+    runtime::rows::Part::Field("room_since_ms"),
+    runtime::rows::Part::Field("room_at_ms"),
+    runtime::rows::Part::Field("bound"),
+    runtime::rows::Part::Field("task_limit"),
+    runtime::rows::Part::Map {
+        name: "in_flight",
+        drop: &[],
+    },
+    runtime::rows::Part::Map {
+        name: "uncalled",
+        drop: &[],
+    },
+];
 
 impl Handler for SentinelCall {
     fn interests(&self) -> &[EventKindTag] {
-        &[TICK, CALL_WANTED, super::czar::CALL_REQUESTED, UNIT_RAN, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &[
+            TICK,
+            CALL_WANTED,
+            super::czar::CALL_REQUESTED,
+            UNIT_RAN,
+            EFFECT_SUCCEEDED,
+            EFFECT_FAILED,
+            EFFECT_TIMED_OUT,
+        ]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -474,7 +598,10 @@ impl Handler for SentinelCall {
             return vec![];
         }
         let carry: Carry = kit::carry(&SHAPE, view);
-        if ev.kind.tag == TICK || ev.kind.tag == CALL_WANTED || ev.kind.tag == super::czar::CALL_REQUESTED {
+        if ev.kind.tag == TICK
+            || ev.kind.tag == CALL_WANTED
+            || ev.kind.tag == super::czar::CALL_REQUESTED
+        {
             return self.observe(&carry, self.cadence.next_after(ev.at));
         }
         if let Some(ran) = UnitRan::from_event_kind(&ev.kind) {
@@ -487,8 +614,12 @@ impl Handler for SentinelCall {
             out.extend(self.observe(&next, self.cadence.next_after(ev.at)));
             return out;
         }
-        if let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == UNIT_START) {
-            let Ok(start) = serde_json::from_str::<Start>(&spec.input) else { return vec![] };
+        if let Some(spec) =
+            crate::watchers::answered_spec(view, ev).filter(|s| s.name == UNIT_START)
+        {
+            let Ok(start) = serde_json::from_str::<Start>(&spec.input) else {
+                return vec![];
+            };
             let ok = ev.kind.tag == EFFECT_SUCCEEDED;
             let mut next = carry.clone();
             if !ok {
@@ -496,16 +627,23 @@ impl Handler for SentinelCall {
                     next.in_flight.remove(&unit);
                 }
             }
-            let metric = Act::new(METRIC, &start.key).with_input(serde_json::json!({"rune": start.rune, "result": if ok { "ok" } else { "failed" }}).to_string());
+            let metric = Act::new(METRIC, &start.key).with_input(
+                serde_json::json!({"rune": start.rune, "result": if ok { "ok" } else { "failed" }})
+                    .to_string(),
+            );
             return kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, vec![metric])
                 .into_iter()
                 .map(|c| match c {
-                    Command::Effect(s) if s.name == METRIC => Command::Probe(EffectSpec::probe(s.name, s.input, s.deadline_ms)),
+                    Command::Effect(s) if s.name == METRIC => {
+                        Command::Probe(EffectSpec::probe(s.name, s.input, s.deadline_ms))
+                    }
                     c => c,
                 })
                 .collect();
         }
-        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
+        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else {
+            return vec![];
+        };
         let (next, acts) = decide(&carry, &snap);
         let mut out = kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts);
         if next.refusal != carry.refusal {
@@ -525,13 +663,23 @@ fn pinned_num(pinned: &BTreeMap<String, String>, key: &str) -> Option<u32> {
 }
 
 fn run_dir(e: &Effects, pinned: &BTreeMap<String, String>) -> PathBuf {
-    pinned.get("SPIRA_RUN").filter(|r| !r.is_empty()).map(PathBuf::from).unwrap_or_else(|| e.world.run_dir.clone())
+    pinned
+        .get("SPIRA_RUN")
+        .filter(|r| !r.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| e.world.run_dir.clone())
 }
 
 /// What a spira-claim verb reads from its environment: the pinned keys, then this process's
 /// config, then its environment.
 fn claim(pinned: &BTreeMap<String, String>, args: &[String]) -> sentinel::claim::Outcome {
-    let lookup = |k: &str| pinned.get(k).cloned().or_else(|| spira_config::process::cfg(k).ok()).or_else(|| std::env::var(k).ok());
+    let lookup = |k: &str| {
+        pinned
+            .get(k)
+            .cloned()
+            .or_else(|| spira_config::process::cfg(k).ok())
+            .or_else(|| std::env::var(k).ok())
+    };
     sentinel::claim::dispatch_in(args, &mut std::io::empty(), &lookup)
 }
 
@@ -546,7 +694,9 @@ fn world_of(run: &Path) -> World {
 }
 
 fn skew() -> Option<String> {
-    let own = std::env::var(spira_config::RELEASE_ENV).ok().filter(|r| !r.is_empty())?;
+    let own = std::env::var(spira_config::RELEASE_ENV)
+        .ok()
+        .filter(|r| !r.is_empty())?;
     spira_config::release_skew::skew(Path::new(&own)).map(|s| s.describe())
 }
 
@@ -564,7 +714,9 @@ fn rune_of_key(key: &str) -> Option<String> {
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// The live dwarf fleet as the fleet ceiling counts it.
@@ -590,7 +742,11 @@ impl Fleet {
 /// `runtime::units::{dwarf_globs, is_live_dwarf}`, the ones dwarves.sh counts by (sp-bpnmzg:
 /// listing `spira-run-sentinel-call-*` unescaped matched none of this task's own units, so
 /// the ceiling never bound on them).
-pub fn fleet(unitp: &dyn units::Units, roster: &[String], rune_name: &dyn Fn(&str) -> String) -> Result<Fleet, String> {
+pub fn fleet(
+    unitp: &dyn units::Units,
+    roster: &[String],
+    rune_name: &dyn Fn(&str) -> String,
+) -> Result<Fleet, String> {
     let mut fleet = Fleet::default();
     let mut seen = std::collections::BTreeSet::new();
     for glob in units::dwarf_globs() {
@@ -598,7 +754,11 @@ pub fn fleet(unitp: &dyn units::Units, roster: &[String], rune_name: &dyn Fn(&st
             if !units::is_live_dwarf(&d.name, d.state) || !seen.insert(d.name.clone()) {
                 continue;
             }
-            let ran = UnitRan { handle: units::UnitHandle::named(&d.name), exit: units::Exit::Unknown, duration_ms: 0 };
+            let ran = UnitRan {
+                handle: units::UnitHandle::named(&d.name),
+                exit: units::Exit::Unknown,
+                duration_ms: 0,
+            };
             let rune = match ran.key_for(NAME) {
                 Some(key) => {
                     fleet.live_units.push(d.name.clone());
@@ -606,7 +766,10 @@ pub fn fleet(unitp: &dyn units::Units, roster: &[String], rune_name: &dyn Fn(&st
                 }
                 None => {
                     let rest = d.name.trim_start_matches(DWARF_PREFIX);
-                    roster.iter().find(|f| rest.starts_with(&format!("{}-", rune_name(f)))).cloned()
+                    roster
+                        .iter()
+                        .find(|f| rest.starts_with(&format!("{}-", rune_name(f))))
+                        .cloned()
                 }
             };
             match rune {
@@ -625,7 +788,13 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let run = run_dir(e, pinned);
     let home = spira_config::resolve::locate_home_for_process()?;
     let unitp = e.units.as_deref().ok_or("no unit manager configured")?;
-    let roster_all = spira_config::runes::spira_runes(&home, pinned.get("SPIRA_RUNES").map(String::as_str).filter(|v| !v.is_empty()));
+    let roster_all = spira_config::runes::spira_runes(
+        &home,
+        pinned
+            .get("SPIRA_RUNES")
+            .map(String::as_str)
+            .filter(|v| !v.is_empty()),
+    );
     let get = |f: &str, k: &str, d: &str| spira_config::runes::rune_get(&home, f, k, d);
     let mut uses: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let roster: Vec<String> = roster_all
@@ -656,20 +825,37 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         })
         .collect();
     let snap_ms = now_ms();
-    let mut snap = Snapshot { world: world_of(&run), skew: skew(), capacity: capacity_of(&run, (snap_ms / 1000) as i64), roster: roster.clone(), runes, now_ms: snap_ms, ..Snapshot::default() };
+    let mut snap = Snapshot {
+        world: world_of(&run),
+        skew: skew(),
+        capacity: capacity_of(&run, (snap_ms / 1000) as i64),
+        roster: roster.clone(),
+        runes,
+        now_ms: snap_ms,
+        ..Snapshot::default()
+    };
     snap.max_dwarves = pinned_num(pinned, "SPIRA_MAX_DWARVES");
     snap.max_live = pinned_num(pinned, "SPIRA_MAX_LIVE_DWARVES");
-    for (class, key) in [("cpu", "SPIRA_LIMIT_CPU"), ("memory", "SPIRA_LIMIT_MEMORY"), ("network", "SPIRA_LIMIT_NETWORK")] {
+    for (class, key) in [
+        ("cpu", "SPIRA_LIMIT_CPU"),
+        ("memory", "SPIRA_LIMIT_MEMORY"),
+        ("network", "SPIRA_LIMIT_NETWORK"),
+    ] {
         if let Some(n) = pinned_num(pinned, key) {
             snap.class_limits.insert(class.to_string(), n);
         }
     }
     let rune_name = |f: &str| get(f, "RUNE_NAME", f);
     let fleet = fleet(unitp, &roster, &rune_name)?;
-    (snap.live_by_rune, snap.other_live, snap.live_units) = (fleet.live_by_rune, fleet.other_live, fleet.live_units);
+    (snap.live_by_rune, snap.other_live, snap.live_units) =
+        (fleet.live_by_rune, fleet.other_live, fleet.live_units);
     let _one_view = sentinel::claim::TickView::begin();
     let bulk = claim(pinned, &["bulk-ready-by-rune".into()]);
-    let counts: BTreeMap<String, usize> = if bulk.code == 0 { plan::parse_cache(&bulk.out).into_iter().collect() } else { BTreeMap::new() };
+    let counts: BTreeMap<String, usize> = if bulk.code == 0 {
+        plan::parse_cache(&bulk.out).into_iter().collect()
+    } else {
+        BTreeMap::new()
+    };
     for f in &roster {
         let n = match counts.get(f) {
             Some(n) => Some(*n as u32),
@@ -680,81 +866,177 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         };
         snap.ready_by_rune.insert(f.clone(), n);
     }
-    let task: Vec<String> = roster.iter().filter(|f| !snap.runes[*f].reactive).cloned().collect();
+    let task: Vec<String> = roster
+        .iter()
+        .filter(|f| !snap.runes[*f].reactive)
+        .cloned()
+        .collect();
     snap.urgent = if task.is_empty() {
         Some(vec![])
     } else {
-        let o = claim(pinned, &std::iter::once("urgent".to_string()).chain(task.iter().cloned()).collect::<Vec<_>>());
+        let o = claim(
+            pinned,
+            &std::iter::once("urgent".to_string())
+                .chain(task.iter().cloned())
+                .collect::<Vec<_>>(),
+        );
         (o.code == 0).then(|| {
             o.out
                 .lines()
                 .filter_map(|l| {
                     let f: Vec<&str> = l.split('\t').collect();
-                    let [id, prio, _, express] = f[..] else { return None };
-                    Some(UrgentBead { id: id.into(), p0: prio == "0", express: express == "1" })
+                    let [id, prio, _, express] = f[..] else {
+                        return None;
+                    };
+                    Some(UrgentBead {
+                        id: id.into(),
+                        p0: prio == "0",
+                        express: express == "1",
+                    })
                 })
                 .collect()
         })
     };
     let express = task.iter().any(|f| {
-        let Ok(p) = spira_config::runes::rune_predicate(&home, f) else { return false };
+        let Ok(p) = spira_config::runes::rune_predicate(&home, f) else {
+            return false;
+        };
         if p.labels.is_empty() {
             return false;
         }
-        let ex = claim(pinned, &["rune-exclude".into(), f.clone(), p.exclude_labels]);
-        let n = claim(pinned, &["ready-count".into(), p.labels, ex.out.trim().to_string(), "--express".into()]);
+        let ex = claim(
+            pinned,
+            &["rune-exclude".into(), f.clone(), p.exclude_labels],
+        );
+        let n = claim(
+            pinned,
+            &[
+                "ready-count".into(),
+                p.labels,
+                ex.out.trim().to_string(),
+                "--express".into(),
+            ],
+        );
         n.out.trim().parse::<i64>().unwrap_or(0) > 0
     });
     snap.express_ready = Some(u32::from(express));
-    snap.throttle = plan::ck7_throttled(run.join("queue-throttled").is_file(), pinned.get("SPIRA_QUEUE_THROTTLE_OVERRIDE").map_or("", String::as_str));
-    let reactive_names: Vec<(String, String)> = roster.iter().filter(|f| snap.runes[*f].reactive).map(|f| (f.clone(), get(f, "RUNE_NAME", f))).collect();
+    snap.throttle = plan::ck7_throttled(
+        run.join("queue-throttled").is_file(),
+        pinned
+            .get("SPIRA_QUEUE_THROTTLE_OVERRIDE")
+            .map_or("", String::as_str),
+    );
+    let reactive_names: Vec<(String, String)> = roster
+        .iter()
+        .filter(|f| snap.runes[*f].reactive)
+        .map(|f| (f.clone(), get(f, "RUNE_NAME", f)))
+        .collect();
     for entry in std::fs::read_dir(&run).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(stem) = name.strip_prefix("dwarf-").and_then(|n| n.strip_suffix(".pid")) else { continue };
-        let Some((rune, unit)) = reactive_names.iter().find(|(_, u)| stem.starts_with(&format!("{u}-"))) else { continue };
+        let Some(stem) = name
+            .strip_prefix("dwarf-")
+            .and_then(|n| n.strip_suffix(".pid"))
+        else {
+            continue;
+        };
+        let Some((rune, unit)) = reactive_names
+            .iter()
+            .find(|(_, u)| stem.starts_with(&format!("{u}-")))
+        else {
+            continue;
+        };
         let bead = stem[unit.len() + 1..].to_string();
         if bead.starts_with("sweep-") || !sentinel::dwarf_alive(&entry.path()) {
             continue;
         }
-        let started_ms = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
-        snap.reactive_dwarves.push(LiveUnit { unit: format!("dwarf-{stem}"), rune: rune.clone(), bead, started_ms });
+        let started_ms = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as u64);
+        snap.reactive_dwarves.push(LiveUnit {
+            unit: format!("dwarf-{stem}"),
+            rune: rune.clone(),
+            bead,
+            started_ms,
+        });
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
 /// `dwarf` on this process's PATH, strictly: a bare name is never handed to the unit manager.
 fn on_path(name: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(name)).find(|p| p.is_file())
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
 }
 
 /// `sentinel-call.unit_start`: the dwarf for one rune, as a unit under the naming rule. Each
 /// gate decide read is read again here, so a world that halted since the probe calls nobody.
 pub fn unit_start(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
-    let start: Start = serde_json::from_str(&spec.input).map_err(|e| format!("{UNIT_START}: {e}"))?;
+    let start: Start =
+        serde_json::from_str(&spec.input).map_err(|e| format!("{UNIT_START}: {e}"))?;
     let run = e.world.run_dir.clone();
     match world_of(&run) {
         World::Running => {}
-        w => return Err(format!("{UNIT_START} {}: the world is {w:?} — not calling", start.rune)),
+        w => {
+            return Err(format!(
+                "{UNIT_START} {}: the world is {w:?} — not calling",
+                start.rune
+            ))
+        }
     }
     if let Some(s) = skew() {
         return Err(format!("{UNIT_START} {}: RELEASE SKEW — {s}", start.rune));
     }
     if capacity_of(&run, (now_ms() / 1000) as i64) != Capacity::Clear {
-        return Err(format!("{UNIT_START} {}: the account's capacity is paused or unreadable — not calling", start.rune));
+        return Err(format!(
+            "{UNIT_START} {}: the account's capacity is paused or unreadable — not calling",
+            start.rune
+        ));
     }
     let home = spira_config::resolve::locate_home_for_process()?;
-    if !spira_config::runes::runes_dir(&home).join(format!("{}.rune", start.rune)).is_file() {
+    if !spira_config::runes::runes_dir(&home)
+        .join(format!("{}.rune", start.rune))
+        .is_file()
+    {
         return Err(format!("{UNIT_START} {}: no rune in the runes", start.rune));
     }
-    let dwarf = on_path("dwarf").ok_or_else(|| format!("{UNIT_START} {}: dwarf not found on PATH — not calling", start.rune))?;
+    let dwarf = on_path("dwarf").ok_or_else(|| {
+        format!(
+            "{UNIT_START} {}: dwarf not found on PATH — not calling",
+            start.rune
+        )
+    })?;
     let mut env = spira_config::release_env::dwarf_unit_env()?;
     if start.require_express {
         env.push(("SPIRA_REQUIRE_EXPRESS".into(), "1".into()));
     }
-    let unit = UnitSpec { task: NAME.into(), key: start.key.clone(), argv: vec![dwarf.to_string_lossy().into_owned(), "--home".into(), home.to_string_lossy().into_owned(), start.rune.clone()], env, cwd: None };
+    let unit = UnitSpec {
+        task: NAME.into(),
+        key: start.key.clone(),
+        argv: vec![
+            dwarf.to_string_lossy().into_owned(),
+            "--home".into(),
+            home.to_string_lossy().into_owned(),
+            start.rune.clone(),
+        ],
+        env,
+        cwd: None,
+    };
     let timeout = spira_config::runes::rune_get(&home, &start.rune, "RUNE_TIMEOUT_SECONDS", "3600");
-    let input = serde_json::to_string(&units::StartSpec { unit, props: units::dwarf_props(&timeout)? }).map_err(|e| e.to_string())?;
-    e.unit(&EffectSpec::keyed(units::UNIT_START, spec.key.clone(), input, spec.deadline_ms))
+    let input = serde_json::to_string(&units::StartSpec {
+        unit,
+        props: units::dwarf_props(&timeout)?,
+    })
+    .map_err(|e| e.to_string())?;
+    e.unit(&EffectSpec::keyed(
+        units::UNIT_START,
+        spec.key.clone(),
+        input,
+        spec.deadline_ms,
+    ))
 }
 
 /// `sentinel-call.preempt`: stop the unit the reactive dwarf on `bead` runs in, found by the pid
@@ -764,15 +1046,31 @@ pub fn preempt(e: &Effects, input: &str) -> Result<String, String> {
     let unitp = e.units.as_deref().ok_or("no unit manager configured")?;
     let home = spira_config::resolve::locate_home_for_process()?;
     let unit_name = spira_config::runes::rune_get(&home, &p.rune, "RUNE_NAME", &p.rune);
-    let pidfile = e.world.run_dir.join(format!("dwarf-{unit_name}-{}.pid", p.bead));
-    let pid: u32 = std::fs::read_to_string(&pidfile).map_err(|err| format!("{PREEMPT}: {}: {err}", pidfile.display()))?.split_whitespace().next().and_then(|s| s.parse().ok()).ok_or_else(|| format!("{PREEMPT}: {} names no pid", pidfile.display()))?;
+    let pidfile = e
+        .world
+        .run_dir
+        .join(format!("dwarf-{unit_name}-{}.pid", p.bead));
+    let pid: u32 = std::fs::read_to_string(&pidfile)
+        .map_err(|err| format!("{PREEMPT}: {}: {err}", pidfile.display()))?
+        .split_whitespace()
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("{PREEMPT}: {} names no pid", pidfile.display()))?;
     let mut found = vec![];
     for glob in units::dwarf_globs() {
         found.extend(unitp.list(&glob).map_err(|e| e.to_string())?);
     }
-    let unit = found.into_iter().find(|d| d.main_pid == Some(pid)).ok_or_else(|| format!("{PREEMPT}: no live unit runs pid {pid} for {}", p.bead))?;
-    unitp.stop(&units::UnitHandle::named(&unit.name)).map_err(|e| e.to_string())?;
-    Ok(format!("preempted a {} reactive dwarf on {} for P0 express {}", p.rune, p.bead, p.express))
+    let unit = found
+        .into_iter()
+        .find(|d| d.main_pid == Some(pid))
+        .ok_or_else(|| format!("{PREEMPT}: no live unit runs pid {pid} for {}", p.bead))?;
+    unitp
+        .stop(&units::UnitHandle::named(&unit.name))
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "preempted a {} reactive dwarf on {} for P0 express {}",
+        p.rune, p.bead, p.express
+    ))
 }
 
 /// `sentinel-call.preempt_log`: one line in `lane-preemptions`, as the binary wrote it.
@@ -780,15 +1078,32 @@ pub fn preempt_log(e: &Effects, input: &str) -> Result<String, String> {
     use std::io::Write;
     let p: Preempt = serde_json::from_str(input).map_err(|e| format!("{PREEMPT_LOG}: {e}"))?;
     let path = e.world.run_dir.join("lane-preemptions");
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|err| format!("{}: {err}", path.display()))?;
-    writeln!(f, "{}\t{}\t{}\t{}", p.at_ms / 1000, p.rune, p.bead, p.express).map_err(|err| err.to_string())?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    writeln!(
+        f,
+        "{}\t{}\t{}\t{}",
+        p.at_ms / 1000,
+        p.rune,
+        p.bead,
+        p.express
+    )
+    .map_err(|err| err.to_string())?;
     Ok(path.display().to_string())
 }
 
 /// `sentinel-call.metric`: the `call` row of the metrics store, in-process.
 pub fn metric(e: &Effects, input: &str) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{METRIC}: {e}"))?;
-    let fields: Vec<(String, serde_json::Value)> = ["rune", "result"].iter().map(|k| (k.to_string(), v[*k].clone())).collect();
-    tsd::store::Pusher::new(e.world.metrics_endpoint.clone()).push("call", &tsd::now_iso(), &fields).map_err(|e| e.to_string())?;
+    let fields: Vec<(String, serde_json::Value)> = ["rune", "result"]
+        .iter()
+        .map(|k| (k.to_string(), v[*k].clone()))
+        .collect();
+    tsd::store::Pusher::new(e.world.metrics_endpoint.clone())
+        .push("call", &tsd::now_iso(), &fields)
+        .map_err(|e| e.to_string())?;
     Ok("call".into())
 }

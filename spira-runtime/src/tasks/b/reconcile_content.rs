@@ -115,9 +115,28 @@ pub const EFFECTS: &[&str] = &[OBSERVE, SKEW_CHECK, CLOSE];
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_RECONCILE_CONTENT_SECS";
 /// The full pass that keeps the ask and epic sweeps (a new choice: 6 h).
 pub const FULL_PASS_KEY: &str = "SPIRA_RUNTIME_RECONCILE_CONTENT_FULL_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, FULL_PASS_KEY, "SPIRA_BD", "SPIRA_DB", "SPIRA_RUN"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    FULL_PASS_KEY,
+    "SPIRA_BD",
+    "SPIRA_DB",
+    "SPIRA_RUN",
+];
 
-pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 30_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
+pub const SPEC: Spec = Spec {
+    name: NAME,
+    stream: STREAM,
+    tick: TICK,
+    state: STATE,
+    probe: OBSERVE,
+    probe_deadline_ms: 30_000,
+    cadence_key: CADENCE_KEY,
+    calendar: false,
+    effects: EFFECTS,
+    keys: KEYS,
+    probe_input_key: None,
+    jitter_key: None,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -162,7 +181,12 @@ pub enum Phase {
 }
 
 /// `state × event → state` per bead (T3). A second close on a closed id is refused by name.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Open, "close", Phase::CloseRequested), (Phase::CloseRequested, "close:ok", Phase::Closed), (Phase::CloseRequested, "close:failed", Phase::Failed), (Phase::Failed, "close", Phase::CloseRequested)];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
+    (Phase::Open, "close", Phase::CloseRequested),
+    (Phase::CloseRequested, "close:ok", Phase::Closed),
+    (Phase::CloseRequested, "close:failed", Phase::Failed),
+    (Phase::Failed, "close", Phase::CloseRequested),
+];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -201,7 +225,12 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
         Input::Observed(snap) => {
-            let full_ms = cfg.get(FULL_PASS_KEY).and_then(|v| v.trim().parse::<u64>().ok()).filter(|v| *v > 0).ok_or_else(|| format!("{FULL_PASS_KEY} must be a positive integer"))? * 1000;
+            let full_ms = cfg
+                .get(FULL_PASS_KEY)
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|v| *v > 0)
+                .ok_or_else(|| format!("{FULL_PASS_KEY} must be a positive integer"))?
+                * 1000;
             if snap.world_halted || carry.skew_red_at.is_some_and(|at| now_ms < at + full_ms) {
                 return Ok((carry.clone(), vec![]));
             }
@@ -211,11 +240,22 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 }
                 let full_due = carry.through_seq.is_none() || now_ms >= carry.full_at + full_ms;
                 let input = match (full_due, carry.through_seq) {
-                    (false, Some(_)) if snap.through_seq == carry.through_seq => return Ok((carry.clone(), vec![])),
+                    (false, Some(_)) if snap.through_seq == carry.through_seq => {
+                        return Ok((carry.clone(), vec![]))
+                    }
                     (false, Some(seq)) => format!("since:{seq}"),
                     _ => "full".to_string(),
                 };
-                return Ok((carry.clone(), vec![Act { name: OBSERVE.into(), key: format!("{NAME}:scan"), input, deadline_ms: SPEC.probe_deadline_ms, probe: true }]));
+                return Ok((
+                    carry.clone(),
+                    vec![Act {
+                        name: OBSERVE.into(),
+                        key: format!("{NAME}:scan"),
+                        input,
+                        deadline_ms: SPEC.probe_deadline_ms,
+                        probe: true,
+                    }],
+                ));
             }
             let mut next = carry.clone();
             if snap.cannot_tell.is_none() {
@@ -224,30 +264,77 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                     next.full_at = now_ms;
                 }
             }
-            let listed: Vec<&Close> = snap.work.iter().chain(&snap.asks).chain(&snap.epics).collect();
-            let fresh: Vec<Close> = listed.iter().filter(|c| matches!(carry.beads.get(&c.id).copied().unwrap_or_default(), Phase::Open | Phase::Failed)).map(|c| (*c).clone()).collect();
+            let listed: Vec<&Close> = snap
+                .work
+                .iter()
+                .chain(&snap.asks)
+                .chain(&snap.epics)
+                .collect();
+            let fresh: Vec<Close> = listed
+                .iter()
+                .filter(|c| {
+                    matches!(
+                        carry.beads.get(&c.id).copied().unwrap_or_default(),
+                        Phase::Open | Phase::Failed
+                    )
+                })
+                .map(|c| (*c).clone())
+                .collect();
             if next.beads.len() > CLOSED_KEEP {
-                next.beads.retain(|id, p| *p != Phase::Closed || listed.iter().any(|c| &c.id == id));
+                next.beads
+                    .retain(|id, p| *p != Phase::Closed || listed.iter().any(|c| &c.id == id));
             }
             if fresh.is_empty() {
                 return Ok((next, vec![]));
             }
             next.pending = fresh;
-            Ok((next, vec![Act { name: SKEW_CHECK.into(), key: format!("{NAME}:skew-check:{now_ms}"), input: String::new(), deadline_ms: 5_000, probe: false }]))
+            Ok((
+                next,
+                vec![Act {
+                    name: SKEW_CHECK.into(),
+                    key: format!("{NAME}:skew-check:{now_ms}"),
+                    input: String::new(),
+                    deadline_ms: 5_000,
+                    probe: false,
+                }],
+            ))
         }
         Input::Outcome { effect, ok, .. } if effect == SKEW_CHECK => {
-            let mut next = Carry { pending: vec![], skew_red_at: None, ..carry.clone() };
+            let mut next = Carry {
+                pending: vec![],
+                skew_red_at: None,
+                ..carry.clone()
+            };
             if !ok {
-                return Ok((Carry { skew_red_at: Some(now_ms), full_at: 0, ..next }, vec![]));
+                return Ok((
+                    Carry {
+                        skew_red_at: Some(now_ms),
+                        full_at: 0,
+                        ..next
+                    },
+                    vec![],
+                ));
             }
             let mut acts = vec![];
             for c in &carry.pending {
                 match carry.beads.get(&c.id).copied().unwrap_or_default() {
                     Phase::Open | Phase::Failed => {}
-                    p => return Err(format!("{NAME}: {} is {}; a second close is refused", c.id, phase_name(p))),
+                    p => {
+                        return Err(format!(
+                            "{NAME}: {} is {}; a second close is refused",
+                            c.id,
+                            phase_name(p)
+                        ))
+                    }
                 }
                 next.beads.insert(c.id.clone(), Phase::CloseRequested);
-                acts.push(Act { name: CLOSE.into(), key: format!("content-close/{}", c.id), input: serde_json::to_string(c).map_err(|e| e.to_string())?, deadline_ms: CLOSE_DEADLINE_MS, probe: false });
+                acts.push(Act {
+                    name: CLOSE.into(),
+                    key: format!("content-close/{}", c.id),
+                    input: serde_json::to_string(c).map_err(|e| e.to_string())?,
+                    deadline_ms: CLOSE_DEADLINE_MS,
+                    probe: false,
+                });
             }
             Ok((next, acts))
         }
@@ -256,13 +343,19 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
             match carry.beads.get(id).copied().unwrap_or_default() {
                 Phase::CloseRequested => {
                     let mut next = carry.clone();
-                    next.beads.insert(id.to_string(), if *ok { Phase::Closed } else { Phase::Failed });
+                    next.beads.insert(
+                        id.to_string(),
+                        if *ok { Phase::Closed } else { Phase::Failed },
+                    );
                     if !*ok {
                         next.full_at = 0;
                     }
                     Ok((next, vec![]))
                 }
-                p => Err(format!("{NAME}: a close outcome for {id}, which is {}", phase_name(p))),
+                p => Err(format!(
+                    "{NAME}: a close outcome for {id}, which is {}",
+                    phase_name(p)
+                )),
             }
         }
         Input::Outcome { effect, .. } => Err(format!("{NAME}: no outcome of {effect} is expected")),
@@ -286,8 +379,16 @@ pub fn parse_dry_run(out: &str) -> Vec<Close> {
         .filter_map(|l| l.trim().strip_prefix("would close "))
         .map(|rest| {
             let (id, why) = rest.split_once(' ').unwrap_or((rest, ""));
-            let why = why.trim().trim_start_matches('(').trim_end_matches(')').to_string();
-            Close { id: id.to_string(), reason: why.clone(), why }
+            let why = why
+                .trim()
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .to_string();
+            Close {
+                id: id.to_string(),
+                reason: why.clone(),
+                why,
+            }
         })
         .collect()
 }
@@ -295,16 +396,31 @@ pub fn parse_dry_run(out: &str) -> Vec<Close> {
 /// The runner of [`OBSERVE`], by `input`: `""` reads the halt stamp and the event head;
 /// `since:<N>` is the store's incremental dry run; `full` is its whole dry run. A cannot-tell
 /// on the ask or epic half still lists the work closes, as the store's own pass does.
-pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, input: &str) -> Result<String, String> {
+pub fn observe(
+    lc: &spira_store::lc_call::LcClient,
+    run_dir: &std::path::Path,
+    input: &str,
+) -> Result<String, String> {
     let (pass, since) = match input {
         "" => {
             if run_dir.join("world.halted").exists() {
-                return serde_json::to_string(&Snapshot { world_halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
+                return serde_json::to_string(&Snapshot {
+                    world_halted: true,
+                    ..Snapshot::default()
+                })
+                .map_err(|e| e.to_string());
             }
-            return serde_json::to_string(&Snapshot { through_seq: head(lc)?, ..Snapshot::default() }).map_err(|e| e.to_string());
+            return serde_json::to_string(&Snapshot {
+                through_seq: head(lc)?,
+                ..Snapshot::default()
+            })
+            .map_err(|e| e.to_string());
         }
         "full" => (Pass::Full, None),
-        other => match other.strip_prefix("since:").and_then(|n| n.parse::<u64>().ok()) {
+        other => match other
+            .strip_prefix("since:")
+            .and_then(|n| n.parse::<u64>().ok())
+        {
             Some(n) => (Pass::Since, Some(n.to_string())),
             None => return Err(format!("{OBSERVE}: unknown input {other:?}")),
         },
@@ -314,21 +430,47 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, i
     if let Some(n) = &since {
         argv.extend(["--since-seq", n]);
     }
-    let r = lc.within(spira_store::lc_call::SWEEP_DEADLINE).call(&argv).map_err(String::from)?;
+    let r = lc
+        .within(spira_store::lc_call::SWEEP_DEADLINE)
+        .call(&argv)
+        .map_err(String::from)?;
     let cannot_tell = match r.code {
         0 => None,
-        spira_store::lc_call::CANNOT_TELL if r.out.contains("would close") || r.out.contains("reconcile-content: ") => Some(r.why()),
-        _ => return Err(format!("reconcile-content --dry-run: exit {}: {}", r.code, r.why())),
+        spira_store::lc_call::CANNOT_TELL
+            if r.out.contains("would close") || r.out.contains("reconcile-content: ") =>
+        {
+            Some(r.why())
+        }
+        _ => {
+            return Err(format!(
+                "reconcile-content --dry-run: exit {}: {}",
+                r.code,
+                r.why()
+            ))
+        }
     };
     if pass == Pass::Since {
-        through_seq = r.out.lines().find_map(|l| l.trim().strip_prefix("through-seq: ")).and_then(|n| n.trim().parse().ok());
+        through_seq = r
+            .out
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("through-seq: "))
+            .and_then(|n| n.trim().parse().ok());
     }
-    serde_json::to_string(&Snapshot { pass, through_seq, work: parse_dry_run(&r.out), cannot_tell, ..Snapshot::default() }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot {
+        pass,
+        through_seq,
+        work: parse_dry_run(&r.out),
+        cannot_tell,
+        ..Snapshot::default()
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn head(lc: &spira_store::lc_call::LcClient) -> Result<Option<u64>, String> {
     let seq = lc.answer(&["event-seq", "--head"]).map_err(String::from)?;
-    Ok(serde_json::from_str::<serde_json::Value>(seq.trim()).ok().and_then(|v| v["seq"].as_u64()))
+    Ok(serde_json::from_str::<serde_json::Value>(seq.trim())
+        .ok()
+        .and_then(|v| v["seq"].as_u64()))
 }
 
 /// The runner of [`SKEW_CHECK`]: the store's `skew-check`; exit 3 (the planes disagree) fails it.
@@ -344,13 +486,24 @@ pub fn close(lc: &spira_store::lc_call::LcClient, input: &str) -> Result<String,
     if c.id.is_empty() || c.id.starts_with('-') {
         return Err(format!("{}: not a bead id", c.id));
     }
-    let r = lc.within(spira_store::lc_call::SWEEP_DEADLINE).call(&["reconcile-content", "--apply", c.id.as_str()]).map_err(|e| format!("{}: {e}", c.id))?;
+    let r = lc
+        .within(spira_store::lc_call::SWEEP_DEADLINE)
+        .call(&["reconcile-content", "--apply", c.id.as_str()])
+        .map_err(|e| format!("{}: {e}", c.id))?;
     match r.code {
         0 => Ok(c.id),
         _ => Err(format!("{}: exit {}: {}", c.id, r.code, r.why())),
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("through_seq"), runtime::rows::Part::Field("full_at"), runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Field("skew_red_at")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("through_seq"),
+    runtime::rows::Part::Field("full_at"),
+    runtime::rows::Part::Map {
+        name: "beads",
+        drop: &[],
+    },
+    runtime::rows::Part::Field("skew_red_at"),
+];
 
 super::hosted!(ReconcileContent);

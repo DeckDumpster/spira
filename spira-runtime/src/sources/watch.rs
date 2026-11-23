@@ -29,7 +29,11 @@ pub struct ListingWatch {
 
 fn names(dir: &Path) -> Result<BTreeSet<String>, String> {
     let rd = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    Ok(rd.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().into_string().ok()).collect())
+    Ok(rd
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect())
 }
 
 impl ListingWatch {
@@ -79,7 +83,11 @@ pub struct InotifyWatch {
 #[cfg(target_os = "linux")]
 impl InotifyWatch {
     pub fn new() -> Result<Self, String> {
-        Ok(InotifyWatch { fd: inotify::Inotify::init().map_err(|e| format!("inotify: {e}"))?, dirs: BTreeMap::new(), buf: vec![0; 64 * 1024] })
+        Ok(InotifyWatch {
+            fd: inotify::Inotify::init().map_err(|e| format!("inotify: {e}"))?,
+            dirs: BTreeMap::new(),
+            buf: vec![0; 64 * 1024],
+        })
     }
 
     /// Every event already queued, by directory; `WouldBlock` is none.
@@ -94,8 +102,13 @@ impl InotifyWatch {
             let mut any = false;
             for ev in events {
                 any = true;
-                let Some(dir) = self.dirs.get(&ev.wd.get_watch_descriptor_id()) else { continue };
-                let name = ev.name.map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let Some(dir) = self.dirs.get(&ev.wd.get_watch_descriptor_id()) else {
+                    continue;
+                };
+                let name = ev
+                    .name
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 by_dir.entry(dir.clone()).or_default().push(name);
             }
             if !any {
@@ -112,8 +125,16 @@ impl Watch for InotifyWatch {
         if !dir.is_dir() {
             return Err(format!("{}: not a directory", dir.display()));
         }
-        let wd = self.fd.watches().add(dir, inotify::WatchMask::CLOSE_WRITE | inotify::WatchMask::MOVED_TO).map_err(|e| format!("inotify watch {}: {e}", dir.display()))?;
-        self.dirs.insert(wd.get_watch_descriptor_id(), dir.to_path_buf());
+        let wd = self
+            .fd
+            .watches()
+            .add(
+                dir,
+                inotify::WatchMask::CLOSE_WRITE | inotify::WatchMask::MOVED_TO,
+            )
+            .map_err(|e| format!("inotify watch {}: {e}", dir.display()))?;
+        self.dirs
+            .insert(wd.get_watch_descriptor_id(), dir.to_path_buf());
         Ok(())
     }
 
@@ -155,12 +176,23 @@ mod tests {
         std::fs::write(a.join("old"), "x").unwrap();
         w.add(&a).unwrap();
         w.add(&b).unwrap();
-        assert!(w.add(&dir.path().join("missing")).is_err(), "a missing directory is refused");
-        assert_eq!(w.wait(Duration::ZERO).unwrap(), vec![], "a file there before the watch is not news");
+        assert!(
+            w.add(&dir.path().join("missing")).is_err(),
+            "a missing directory is refused"
+        );
+        assert_eq!(
+            w.wait(Duration::ZERO).unwrap(),
+            vec![],
+            "a file there before the watch is not news"
+        );
         std::fs::write(b.join("m1"), "x").unwrap();
         let got = w.wait(Duration::from_secs(2)).unwrap();
         assert_eq!(got, vec![(b.clone(), vec!["m1".to_string()])]);
-        assert_eq!(w.wait(Duration::ZERO).unwrap(), vec![], "each arrival is reported once");
+        assert_eq!(
+            w.wait(Duration::ZERO).unwrap(),
+            vec![],
+            "each arrival is reported once"
+        );
     }
 
     #[test_id(t0x01hn)]

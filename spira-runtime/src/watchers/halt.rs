@@ -13,6 +13,11 @@ pub struct Halt {
 
 impl Halt {
     pub fn held_text(&self, now: u64) -> String {
-        format!("held by world halt since {} ({}s), why: {}", iso8601(self.since), now.saturating_sub(self.since), self.why)
+        format!(
+            "held by world halt since {} ({}s), why: {}",
+            iso8601(self.since),
+            now.saturating_sub(self.since),
+            self.why
+        )
     }
 }

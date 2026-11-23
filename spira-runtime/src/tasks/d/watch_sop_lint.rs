@@ -93,7 +93,9 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { db: cfg("SPIRA_DB")? })
+        Ok(Config {
+            db: cfg("SPIRA_DB")?,
+        })
     }
 }
 
@@ -139,7 +141,15 @@ impl sop::ports::Bd for Shelf<'_> {
 pub fn lint(snap: &Snapshot) -> (i32, String) {
     let cap = usize::try_from(snap.word_cap).unwrap_or(usize::MAX);
     let r = sop::logic::lint(&Shelf(snap.shelf.as_ref()), cap);
-    (r.code, r.out.iter().chain(&r.err).cloned().collect::<Vec<_>>().join("\n"))
+    (
+        r.code,
+        r.out
+            .iter()
+            .chain(&r.err)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 /// `sop::logic::lint` over the shelf: nothing, file(blind) or file(finding); nothing while halted.
@@ -156,8 +166,17 @@ pub fn decide(snap: &Snapshot, _cfg: &Config) -> Vec<EffectSpec> {
     } else {
         return vec![];
     };
-    let input = serde_json::to_string(&Filing { title: title.into(), body: out }).unwrap_or_default();
-    vec![EffectSpec::keyed(FILE_INCIDENT, format!("watch.sop_lint:incident:{title}"), input, FILE_DEADLINE_MS)]
+    let input = serde_json::to_string(&Filing {
+        title: title.into(),
+        body: out,
+    })
+    .unwrap_or_default();
+    vec![EffectSpec::keyed(
+        FILE_INCIDENT,
+        format!("watch.sop_lint:incident:{title}"),
+        input,
+        FILE_DEADLINE_MS,
+    )]
 }
 
 /// The sop word cap `sop lint` applies when `SOP_WORD_CAP` is unset (`sop/src/main.rs:47`); the
@@ -171,15 +190,24 @@ pub fn observe(e: &crate::Effects, _key: &str, _spec: &EffectSpec) -> Result<Str
     let shelf = if halted {
         None
     } else {
-        spira_store::lc_call::LcClient::socket(&e.world.lc_socket).answer(&["content", "memories", "--json"]).ok().and_then(|raw| sop::shelf::parse(&raw))
+        spira_store::lc_call::LcClient::socket(&e.world.lc_socket)
+            .answer(&["content", "memories", "--json"])
+            .ok()
+            .and_then(|raw| sop::shelf::parse(&raw))
     };
-    serde_json::to_string(&Snapshot { halted, shelf, word_cap: WORD_CAP }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot {
+        halted,
+        shelf,
+        word_cap: WORD_CAP,
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// The filing, in-process as `incident file <title> -` files it: deduplicated on the incident
 /// reference, spooled when the store is down.
 pub fn file_incident(_e: &crate::Effects, _key: &str, spec: &EffectSpec) -> Result<String, String> {
-    let f: Filing = serde_json::from_str(&spec.input).map_err(|e| format!("{FILE_INCIDENT}: bad input: {e}"))?;
+    let f: Filing = serde_json::from_str(&spec.input)
+        .map_err(|e| format!("{FILE_INCIDENT}: bad input: {e}"))?;
     incident::intake::file_payload(&f.title, f.body.as_bytes())?;
     Ok(format!("filed: {}", f.title))
 }
@@ -194,7 +222,9 @@ impl WatchSopLint {
     }
 
     pub fn pinned() -> Self {
-        WatchSopLint { config: Config::pinned() }
+        WatchSopLint {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -216,8 +246,22 @@ impl Handler for WatchSopLint {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
+            return pattern::tick(
+                ev,
+                OBSERVE,
+                String::new(),
+                OBSERVE_DEADLINE_MS,
+                ev.at + CADENCE_MS,
+            );
         }
-        pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, |_: &(), snap: &Snapshot, _, config: &Config| ((), decide(snap, config)))
+        pattern::on_answer(
+            ctx,
+            view,
+            ev,
+            OBSERVE,
+            STATE,
+            &self.config,
+            |_: &(), snap: &Snapshot, _, config: &Config| ((), decide(snap, config)),
+        )
     }
 }

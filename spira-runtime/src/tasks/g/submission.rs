@@ -125,7 +125,9 @@ pub const DORMANT_RECHECK: Duration = Duration::from_secs(60);
 /// Asks the running `source` to reload. Only this source reloads; any other name is refused.
 pub fn reload(source: &str) -> Result<String, String> {
     if source != NAME {
-        return Err(format!("no source {source:?} reloads here (only {NAME:?}) — refused"));
+        return Err(format!(
+            "no source {source:?} reloads here (only {NAME:?}) — refused"
+        ));
     }
     let n = RELOADS.fetch_add(1, Ordering::SeqCst) + 1;
     Ok(format!("reloaded source {NAME} (reload {n})"))
@@ -138,7 +140,11 @@ pub fn reloads() -> u64 {
 
 /// Serves until `closed`: each round reads the config anew (`fresh`) and serves it until the
 /// channel closes or a reload is asked (`serve` is handed that stop condition).
-pub fn serve_reloading<C>(mut fresh: impl FnMut() -> C, mut serve: impl FnMut(C, &dyn Fn() -> bool), closed: &dyn Fn() -> bool) {
+pub fn serve_reloading<C>(
+    mut fresh: impl FnMut() -> C,
+    mut serve: impl FnMut(C, &dyn Fn() -> bool),
+    closed: &dyn Fn() -> bool,
+) {
     while !closed() {
         let seen = reloads();
         let cfg = fresh();
@@ -163,15 +169,29 @@ impl Source for Submission {
     /// and password files themselves are read per connection. Dormant while unconfigured, reading
     /// its config again every [`DORMANT_RECHECK`].
     fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
-        let fresh = || spira_submission::Config::from_spira_fresh().unwrap_or_else(|e| {
-            eprintln!("spira-runtime: source {NAME}: {e}");
-            None
-        });
+        let fresh = || {
+            spira_submission::Config::from_spira_fresh().unwrap_or_else(|e| {
+                eprintln!("spira-runtime: source {NAME}: {e}");
+                None
+            })
+        };
         let serve = |cfg: Option<spira_submission::Config>, stop: &dyn Fn() -> bool| {
-            let usable = cfg.as_ref().is_some_and(|c| c.cert.is_file() && c.key.is_file());
-            let delivery = cfg.as_ref().filter(|_| usable).and_then(|_| mail::env::Env::load().inspect_err(|e| eprintln!("spira-runtime: source {NAME}: mail: {e}")).ok()).map(|e| super::sources::smtp::Delivery::of(&e));
+            let usable = cfg
+                .as_ref()
+                .is_some_and(|c| c.cert.is_file() && c.key.is_file());
+            let delivery = cfg
+                .as_ref()
+                .filter(|_| usable)
+                .and_then(|_| {
+                    mail::env::Env::load()
+                        .inspect_err(|e| eprintln!("spira-runtime: source {NAME}: mail: {e}"))
+                        .ok()
+                })
+                .map(|e| super::sources::smtp::Delivery::of(&e));
             let since = std::time::Instant::now(); // clock-safe: a real source's own thread; refused under virtual time
-            super::sources::smtp::run_until(cfg, delivery, &tx, &|| stop() || (!usable && since.elapsed() >= DORMANT_RECHECK))
+            super::sources::smtp::run_until(cfg, delivery, &tx, &|| {
+                stop() || (!usable && since.elapsed() >= DORMANT_RECHECK)
+            })
         };
         serve_reloading(fresh, serve, &|| tx.is_closed())
     }
@@ -227,7 +247,11 @@ mod tests {
             },
             &|| closed.get(),
         );
-        assert_eq!(*served.borrow(), vec![1, 2], "the second serve has the config read after the reload");
+        assert_eq!(
+            *served.borrow(),
+            vec![1, 2],
+            "the second serve has the config read after the reload"
+        );
     }
 
     #[test_id(tiv23by)]
@@ -235,8 +259,13 @@ mod tests {
     fn the_provision_tasks_restart_is_this_sources_reload_not_a_unit() {
         let _serial = serial();
         let before = reloads();
-        let r = crate::tasks::a::submission_provision::unit_restart(&crate::Effects::default(), NAME);
-        assert!(r.as_deref().is_ok_and(|m| m.contains("reloaded source submission")), "{r:?}");
+        let r =
+            crate::tasks::a::submission_provision::unit_restart(&crate::Effects::default(), NAME);
+        assert!(
+            r.as_deref()
+                .is_ok_and(|m| m.contains("reloaded source submission")),
+            "{r:?}"
+        );
         assert_eq!(reloads(), before + 1, "its own reload, and only that");
     }
 }

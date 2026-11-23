@@ -9,23 +9,37 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::journal::Journal;
-use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig, DAY_MS};
+use runtime::taskrig::{
+    assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig,
+    DAY_MS,
+};
 use runtime::StreamKey;
+use spira_runtime::tasks;
 use spira_runtime::tasks::g::cockpit::{Carry, Fragment, FragmentState, Snapshot};
 use spira_runtime::tasks::g::cockpit_tier_600s::*;
-use spira_runtime::tasks;
 
 const CADENCE_MS: u64 = 600_000;
 const BOGUS: &str = "cockpit-tier-600s.bogus";
 const MODULE: &str = include_str!("../../src/tasks/g/cockpit_tier_600s.rs");
-const LAUNCHERS: &[&str] = &["Command::new", "std::process", "process::Command", "libc::fork", "libc::exec", "posix_spawn", "nix::unistd"];
+const LAUNCHERS: &[&str] = &[
+    "Command::new",
+    "std::process",
+    "process::Command",
+    "libc::fork",
+    "libc::exec",
+    "posix_spawn",
+    "nix::unistd",
+];
 
 fn launcher(code: &str) -> Option<&'static str> {
     LAUNCHERS.iter().copied().find(|l| code.contains(l))
 }
 
 fn handler() -> CockpitTier600s {
-    CockpitTier600s { interval_ms: CADENCE_MS, config: BTreeMap::new() }
+    CockpitTier600s {
+        interval_ms: CADENCE_MS,
+        config: BTreeMap::new(),
+    }
 }
 
 fn running(r: &TaskRig) {
@@ -35,12 +49,30 @@ fn running(r: &TaskRig) {
 }
 
 fn snap(drift: &str) -> Snapshot {
-    let frag = |kv: &[(&str, &str)]| Fragment { status: FragmentState::Ok, at: 0, killed: false, kv: kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() };
+    let frag = |kv: &[(&str, &str)]| Fragment {
+        status: FragmentState::Ok,
+        at: 0,
+        killed: false,
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    };
     Snapshot {
         supervised: true,
         fragments: [
-            ("cockpit.livelock".to_string(), frag(&[("SP_LIVELOCK", "0"), ("SP_INVALID_CLOSED", "0"), ("SP_UNFILED_FOLLOW", "0")])),
-            ("cockpit.drift".to_string(), frag(&[("SP_CHECKOUT_DRIFT", drift), ("SP_UNIT_DRIFT", "clean")])),
+            (
+                "cockpit.livelock".to_string(),
+                frag(&[
+                    ("SP_LIVELOCK", "0"),
+                    ("SP_INVALID_CLOSED", "0"),
+                    ("SP_UNFILED_FOLLOW", "0"),
+                ]),
+            ),
+            (
+                "cockpit.drift".to_string(),
+                frag(&[("SP_CHECKOUT_DRIFT", drift), ("SP_UNIT_DRIFT", "clean")]),
+            ),
         ]
         .into(),
     }
@@ -48,7 +80,12 @@ fn snap(drift: &str) -> Snapshot {
 
 fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> TaskRig {
     let calls = AtomicU64::new(0);
-    let mut r = TaskRig::new(seed, handler().registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())).double(PUBLISH, |i| Ok(i.into()));
+    let mut r = TaskRig::new(seed, handler().registration())
+        .unwrap()
+        .double(OBSERVE, move |_| {
+            Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())
+        })
+        .double(PUBLISH, |i| Ok(i.into()));
     let (_, stream, kind) = CockpitTier600s::boot();
     r.tick(stream, kind).unwrap();
     r
@@ -57,10 +94,31 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 #[test_id(tdutsif)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_nine_probes() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| {
+        panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING")
+    });
     assert_eq!(row.stream(), STREAM);
-    assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
-    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.livelock", "cockpit.drift", "cockpit.core_detail", "cockpit.sops", "cockpit.dup_refs", "cockpit.unsent", "cockpit.statute", "cockpit.czar_triggers", "cockpit.hel"]);
+    assert!(
+        row.keys
+            .iter()
+            .flat_map(|k| k.iter())
+            .any(|k| *k == CADENCE_KEY),
+        "the cadence is pinned config"
+    );
+    assert_eq!(
+        PROBES.iter().map(|p| p.0).collect::<Vec<_>>(),
+        [
+            "cockpit.livelock",
+            "cockpit.drift",
+            "cockpit.core_detail",
+            "cockpit.sops",
+            "cockpit.dup_refs",
+            "cockpit.unsent",
+            "cockpit.statute",
+            "cockpit.czar_triggers",
+            "cockpit.hel"
+        ]
+    );
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
@@ -82,7 +140,8 @@ fn t3_fragment_states_move_as_the_5s_tier_and_stale_before_ok_is_refused_naming_
     for t in TRANSITIONS {
         assert_eq!(step(t.from, t.on), Ok(t.to), "{:?} on {}", t.from, t.on);
     }
-    let refused = step(FragmentState::Never, "stale").expect_err("a fragment never read cannot go stale");
+    let refused =
+        step(FragmentState::Never, "stale").expect_err("a fragment never read cannot go stale");
     assert!(refused.contains("Never"), "{refused}");
     let (next, _) = decide(&Carry::default(), &snap("clean")).unwrap();
     let back: Carry = serde_json::from_str(&serde_json::to_string(&next).unwrap()).unwrap();
@@ -92,12 +151,20 @@ fn t3_fragment_states_move_as_the_5s_tier_and_stale_before_ok_is_refused_naming_
 #[test_id(tj1cv1x)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = tasks::all().find(|t| t.name == NAME).expect("the row is ported");
-    assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
+    let row = tasks::all()
+        .find(|t| t.name == NAME)
+        .expect("the row is ported");
+    assert_eq!(
+        row.effects, EFFECTS,
+        "the row declares the module's effects"
+    );
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();
     let sim: Vec<&str> = doubles.iter().map(String::as_str).collect();
-    assert!(effects_runnable(&[BOGUS], &real, &sim).is_err(), "the planted {BOGUS} must be refused");
+    assert!(
+        effects_runnable(&[BOGUS], &real, &sim).is_err(),
+        "the planted {BOGUS} must be refused"
+    );
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
@@ -105,7 +172,11 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
-        assert_eq!(launcher(&format!("{l}(\"x\")")), Some(*l), "the scan must see {l}");
+        assert_eq!(
+            launcher(&format!("{l}(\"x\")")),
+            Some(*l),
+            "the scan must see {l}"
+        );
     }
     assert_eq!(launcher(MODULE), None);
 }
@@ -114,8 +185,17 @@ fn t4_the_module_launches_no_process() {
 #[test]
 fn t5_parity_the_drift_and_livelock_keys_reach_the_merged_kv() {
     let (_, acts) = decide(&Carry::default(), &snap("dirty:2")).unwrap();
-    assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [PUBLISH]);
-    for kv in ["SP_CHECKOUT_DRIFT=dirty:2", "SP_UNIT_DRIFT=clean", "SP_LIVELOCK=0", "SP_INVALID_CLOSED=0", "SP_UNFILED_FOLLOW=0"] {
+    assert_eq!(
+        acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+        [PUBLISH]
+    );
+    for kv in [
+        "SP_CHECKOUT_DRIFT=dirty:2",
+        "SP_UNIT_DRIFT=clean",
+        "SP_LIVELOCK=0",
+        "SP_INVALID_CLOSED=0",
+        "SP_UNFILED_FOLLOW=0",
+    ] {
         assert!(acts[0].input.contains(kv), "{kv}: {}", acts[0].input);
     }
 }
@@ -126,7 +206,10 @@ fn t5_parity_a_detector_that_answers_while_the_store_does_not_reads_unknown_not_
     let mut s = snap("clean");
     s.fragments.get_mut("cockpit.livelock").unwrap().status = FragmentState::Error;
     let (_, acts) = decide(&Carry::default(), &s).unwrap();
-    let publish = acts.iter().find(|a| a.name == PUBLISH).expect("a first snapshot is published");
+    let publish = acts
+        .iter()
+        .find(|a| a.name == PUBLISH)
+        .expect("a first snapshot is published");
     assert!(publish.input.contains("SP_LIVELOCK=?"), "{}", publish.input);
 }
 
@@ -134,7 +217,13 @@ fn t5_parity_a_detector_that_answers_while_the_store_does_not_reads_unknown_not_
 #[test]
 fn t6_a_dirty_file_on_day_two_publishes_once_then_and_two_days_are_deterministic() {
     let per_day = DAY_MS / CADENCE_MS;
-    let world = move |call: u64| snap(if call >= per_day + 10 { "dirty:1" } else { "clean" });
+    let world = move |call: u64| {
+        snap(if call >= per_day + 10 {
+            "dirty:1"
+        } else {
+            "clean"
+        })
+    };
     let a = assert_deterministic(|seed| rig(seed, world), 1, 2);
     running(&a);
     let publishes = a.requested().iter().filter(|q| q.name == PUBLISH).count();
@@ -150,13 +239,19 @@ fn with_clock(mut s: Snapshot) -> Snapshot {
 }
 
 fn boot_matches(make: impl Fn() -> TaskRig) {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
+        make,
+        || handler().registration(),
+        STREAM,
+        runtime::event::EventKind::new(TICK, ""),
+    );
 }
 
 #[test_id(trquho3)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
-    let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig(1, |_| with_clock(snap(""))), NAME);
+    let rows =
+        spira_runtime::tasks::a::kit::assert_kept_as_rows(&rig(1, |_| with_clock(snap(""))), NAME);
     for k in ["digest", "fragments/cockpit.livelock"] {
         assert!(rows.iter().any(|r| r == k), "{k} missing from {rows:?}");
     }

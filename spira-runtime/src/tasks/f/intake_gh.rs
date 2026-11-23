@@ -81,16 +81,40 @@ pub const NOTE_SEEN: &str = "intake.gh.note_seen";
 pub const CLOSE_PROMOTED: &str = "intake.gh.close_promoted";
 pub const DIGEST: &str = "intake.gh.digest";
 pub const UNVERIFIABLE: &str = "intake.gh.unverifiable";
-pub const EFFECTS: &[&str] = &[OBSERVE, FILE_WORK, FILE_UNTRUSTED, NOTE_SEEN, CLOSE_PROMOTED, DIGEST, UNVERIFIABLE, INBOX];
+pub const EFFECTS: &[&str] = &[
+    OBSERVE,
+    FILE_WORK,
+    FILE_UNTRUSTED,
+    NOTE_SEEN,
+    CLOSE_PROMOTED,
+    DIGEST,
+    UNVERIFIABLE,
+    INBOX,
+];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_INTAKE_GH_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_GH_INTAKE_REPO", "SPIRA_GH_INTAKE_BEAD_REPO", "SPIRA_GH_INTAKE_PRIORITY", "SPIRA_GH_INTAKE_API", "SPIRA_SCOPE_LABEL", "SPIRA_PLAN_LABEL", "SPIRA_MAIL_BIN", "SPIRA_METRICS_ENDPOINT"];
+pub const KEYS: &[&str] = &[
+    CADENCE_KEY,
+    "SPIRA_GH_INTAKE_REPO",
+    "SPIRA_GH_INTAKE_BEAD_REPO",
+    "SPIRA_GH_INTAKE_PRIORITY",
+    "SPIRA_GH_INTAKE_API",
+    "SPIRA_SCOPE_LABEL",
+    "SPIRA_PLAN_LABEL",
+    "SPIRA_MAIL_BIN",
+    "SPIRA_METRICS_ENDPOINT",
+];
 
 const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const STORE_DEADLINE_MS: u64 = 120_000;
 const NOTE_DEADLINE_MS: u64 = 30_000;
 const INBOX_DEADLINE_MS: u64 = 10_000;
-const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
+const CYCLE: Cycle = Cycle {
+    stream: STREAM,
+    tick: TICK,
+    observe: OBSERVE,
+    deadline_ms: OBSERVE_DEADLINE_MS,
+};
 const HOUR_S: u64 = 3_600;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,15 +191,39 @@ pub enum IssueState {
 }
 
 pub const TRANSITIONS: &[Transition<IssueState>] = &[
-    Transition { from: IssueState::Unseen, on: "baseline", to: IssueState::SeenBaseline, effects: &[] },
-    Transition { from: IssueState::Unseen, on: "trusted", to: IssueState::WorkFiled, effects: &[FILE_WORK] },
-    Transition { from: IssueState::Unseen, on: "untrusted", to: IssueState::UntrustedRecorded, effects: &[FILE_UNTRUSTED, DIGEST] },
-    Transition { from: IssueState::UntrustedRecorded, on: "accepted", to: IssueState::Promoted, effects: &[FILE_WORK, CLOSE_PROMOTED] },
+    Transition {
+        from: IssueState::Unseen,
+        on: "baseline",
+        to: IssueState::SeenBaseline,
+        effects: &[],
+    },
+    Transition {
+        from: IssueState::Unseen,
+        on: "trusted",
+        to: IssueState::WorkFiled,
+        effects: &[FILE_WORK],
+    },
+    Transition {
+        from: IssueState::Unseen,
+        on: "untrusted",
+        to: IssueState::UntrustedRecorded,
+        effects: &[FILE_UNTRUSTED, DIGEST],
+    },
+    Transition {
+        from: IssueState::UntrustedRecorded,
+        on: "accepted",
+        to: IssueState::Promoted,
+        effects: &[FILE_WORK, CLOSE_PROMOTED],
+    },
 ];
 
 /// The issue's next state on `on`, or a refusal naming the state it is in.
 pub fn step(from: IssueState, on: &str) -> Result<IssueState, String> {
-    TRANSITIONS.iter().find(|t| t.from == from && t.on == on).map(|t| t.to).ok_or_else(|| format!("{NAME}: an issue in {from:?} has no transition on {on}"))
+    TRANSITIONS
+        .iter()
+        .find(|t| t.from == from && t.on == on)
+        .map(|t| t.to)
+        .ok_or_else(|| format!("{NAME}: an issue in {from:?} has no transition on {on}"))
 }
 
 /// A bead `file_work` or `file_untrusted` writes. The labels and priority are the runner's,
@@ -215,11 +263,21 @@ pub struct Unverifiable {
 }
 
 fn act<T: Serialize>(name: &str, key: String, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::keyed(name, key, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
+    EffectSpec::keyed(
+        name,
+        key,
+        serde_json::to_string(body).unwrap_or_default(),
+        deadline_ms,
+    )
 }
 
 fn refusal(now: u64, msg: &str) -> EffectSpec {
-    EffectSpec::keyed(INBOX, format!("{now}/{:016x}", runtime::event::fnv1a(msg)), format!("{} [watch:{NAME}] gh-intake: {msg}", iso8601(now)), INBOX_DEADLINE_MS)
+    EffectSpec::keyed(
+        INBOX,
+        format!("{now}/{:016x}", runtime::event::fnv1a(msg)),
+        format!("{} [watch:{NAME}] gh-intake: {msg}", iso8601(now)),
+        INBOX_DEADLINE_MS,
+    )
 }
 
 fn find<'a>(store: &'a [KnownRef], ext_ref: &str) -> Option<&'a KnownRef> {
@@ -243,8 +301,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
         let msg = format!("repo:{r} does not resolve to a checkout through $SPIRA_REPO_MAP — every ingested bead would be parked on first claim; add {r} to that map, or set SPIRA_GH_INTAKE_BEAD_REPO to a name that resolves", r = t.bead_repo);
         return (next, vec![refusal(snap.now, &msg)]);
     }
-    let work: Vec<KnownRef> = snap.store.iter().filter(|k| k.ext_ref.starts_with("github:")).cloned().collect();
-    let untrusted: Vec<KnownRef> = snap.store.iter().filter(|k| k.ext_ref.starts_with("github-untrusted:")).cloned().collect();
+    let work: Vec<KnownRef> = snap
+        .store
+        .iter()
+        .filter(|k| k.ext_ref.starts_with("github:"))
+        .cloned()
+        .collect();
+    let untrusted: Vec<KnownRef> = snap
+        .store
+        .iter()
+        .filter(|k| k.ext_ref.starts_with("github-untrusted:"))
+        .cloned()
+        .collect();
     for t in &snap.targets {
         let issues = match snap.pages.get(&t.slug) {
             Some(Pages::Issues(list)) => list,
@@ -252,8 +320,14 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
                 let last = carry.last_ok_hour.map(|h| h * HOUR_S);
                 match last {
                     None => next.last_ok_hour = Some(snap.now / HOUR_S),
-                    Some(last) if snap.now.saturating_sub(last) > gh::RATE_LIMIT_ALARM_SECS as u64 => {
-                        let reset = if *reset == 0 { "unknown".to_string() } else { format!("{reset} (epoch seconds)") };
+                    Some(last)
+                        if snap.now.saturating_sub(last) > gh::RATE_LIMIT_ALARM_SECS as u64 =>
+                    {
+                        let reset = if *reset == 0 {
+                            "unknown".to_string()
+                        } else {
+                            format!("{reset} (epoch seconds)")
+                        };
                         acts.push(refusal(snap.now, &format!("GitHub's API rate limit has refused every poll since the last success at {last} (epoch seconds), {}s ago — reset {reset}", snap.now - last)));
                     }
                     Some(_) => {}
@@ -266,7 +340,8 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
         let mut open: Vec<&GhIssue> = issues.iter().filter(|i| !i.is_pr).collect();
         open.sort_by_key(|i| i.number);
         let Some(skip) = next.seen.get(&t.slug).cloned() else {
-            next.seen.insert(t.slug.clone(), open.iter().map(|i| i.number).collect());
+            next.seen
+                .insert(t.slug.clone(), open.iter().map(|i| i.number).collect());
             continue;
         };
         let mut handled = skip.clone();
@@ -275,7 +350,15 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
         let mut note_unverifiable = |login: &str, acts: &mut Vec<EffectSpec>| {
             if !unverifiable.iter().any(|l| l == login) {
                 unverifiable.push(login.to_string());
-                acts.push(act(UNVERIFIABLE, format!("{}/{login}", t.slug), &Unverifiable { slug: t.slug.clone(), login: login.into() }, NOTE_DEADLINE_MS));
+                acts.push(act(
+                    UNVERIFIABLE,
+                    format!("{}/{login}", t.slug),
+                    &Unverifiable {
+                        slug: t.slug.clone(),
+                        login: login.into(),
+                    },
+                    NOTE_DEADLINE_MS,
+                ));
             }
         };
         for issue in open.into_iter().filter(|i| !skip.contains(&i.number)) {
@@ -283,19 +366,48 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
             let ext_ref = format!("github:{}#{}", t.slug, issue.number);
             let uref = format!("github-untrusted:{}#{}", t.slug, issue.number);
             if let Some(existing) = find(&work, &ext_ref) {
-                acts.push(act(NOTE_SEEN, format!("{}/{ext_ref}", existing.id), &Note { id: existing.id.clone(), text: gh::seen_again_note(&ext_ref, issue.number) }, NOTE_DEADLINE_MS));
+                acts.push(act(
+                    NOTE_SEEN,
+                    format!("{}/{ext_ref}", existing.id),
+                    &Note {
+                        id: existing.id.clone(),
+                        text: gh::seen_again_note(&ext_ref, issue.number),
+                    },
+                    NOTE_DEADLINE_MS,
+                ));
                 continue;
             }
-            let accept = snap.accept.iter().find(|a| a.slug == t.slug && a.number == issue.number);
+            let accept = snap
+                .accept
+                .iter()
+                .find(|a| a.slug == t.slug && a.number == issue.number);
             let becomes_work = accept.is_some_and(|a| a.has_access);
             let actor = accept.and_then(|a| a.actor.clone()).unwrap_or_default();
             if becomes_work {
                 if let Some(u) = find(&untrusted, &uref) {
-                    acts.push(act(CLOSE_PROMOTED, u.id.clone(), &Close { id: u.id.clone(), reason: gh::promoted_reason(&actor) }, NOTE_DEADLINE_MS));
+                    acts.push(act(
+                        CLOSE_PROMOTED,
+                        u.id.clone(),
+                        &Close {
+                            id: u.id.clone(),
+                            reason: gh::promoted_reason(&actor),
+                        },
+                        NOTE_DEADLINE_MS,
+                    ));
                 }
                 let own_bot = actor.is_empty() && issue.author == "github-actions[bot]";
                 let body = gh::work_body(&ext_ref, &issue.author, own_bot, &issue.body);
-                acts.push(act(FILE_WORK, ext_ref.clone(), &Filing { title: issue.title.clone(), ext_ref, bead_repo: t.bead_repo.clone(), body }, STORE_DEADLINE_MS));
+                acts.push(act(
+                    FILE_WORK,
+                    ext_ref.clone(),
+                    &Filing {
+                        title: issue.title.clone(),
+                        ext_ref,
+                        bead_repo: t.bead_repo.clone(),
+                        body,
+                    },
+                    STORE_DEADLINE_MS,
+                ));
                 continue;
             }
             if accept.is_some_and(|a| a.hidden) && !actor.is_empty() {
@@ -304,15 +416,50 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
             if find(&untrusted, &uref).is_some() {
                 continue;
             }
-            if snap.contributor_hidden.iter().any(|(s, l, hidden)| *hidden && s == &t.slug && l == &issue.author) {
+            if snap
+                .contributor_hidden
+                .iter()
+                .any(|(s, l, hidden)| *hidden && s == &t.slug && l == &issue.author)
+            {
                 note_unverifiable(&issue.author, &mut acts);
             }
             let body = gh::untrusted_body(&uref, &issue.author, &issue.body);
-            acts.push(act(FILE_UNTRUSTED, uref.clone(), &Filing { title: issue.title.clone(), ext_ref: uref, bead_repo: t.bead_repo.clone(), body }, STORE_DEADLINE_MS));
-            new_untrusted.push((issue.number, issue.author.clone(), issue.title.clone(), issue.body.clone()));
+            acts.push(act(
+                FILE_UNTRUSTED,
+                uref.clone(),
+                &Filing {
+                    title: issue.title.clone(),
+                    ext_ref: uref,
+                    bead_repo: t.bead_repo.clone(),
+                    body,
+                },
+                STORE_DEADLINE_MS,
+            ));
+            new_untrusted.push((
+                issue.number,
+                issue.author.clone(),
+                issue.title.clone(),
+                issue.body.clone(),
+            ));
         }
         if !new_untrusted.is_empty() {
-            acts.push(act(DIGEST, format!("{}/{}", t.slug, new_untrusted.iter().map(|n| n.0.to_string()).collect::<Vec<_>>().join(",")), &Digest { slug: t.slug.clone(), items: new_untrusted }, NOTE_DEADLINE_MS));
+            acts.push(act(
+                DIGEST,
+                format!(
+                    "{}/{}",
+                    t.slug,
+                    new_untrusted
+                        .iter()
+                        .map(|n| n.0.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+                &Digest {
+                    slug: t.slug.clone(),
+                    items: new_untrusted,
+                },
+                NOTE_DEADLINE_MS,
+            ));
         }
         handled.sort_unstable();
         handled.dedup();
@@ -324,7 +471,11 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<EffectSpec>) {
 /// The post-check `logic::ingest_repo` ran after filing, run on the next tick's snapshot: every
 /// work bead that carries no `scope` label, which no rune can claim.
 pub fn unclaimable(snap: &Snapshot, scope: &str) -> Vec<String> {
-    snap.store.iter().filter(|k| k.ext_ref.starts_with("github:") && !k.labels.iter().any(|l| l == scope)).map(|k| format!("{} {}", k.id, k.ext_ref)).collect()
+    snap.store
+        .iter()
+        .filter(|k| k.ext_ref.starts_with("github:") && !k.labels.iter().any(|l| l == scope))
+        .map(|k| format!("{} {}", k.id, k.ext_ref))
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -335,7 +486,10 @@ pub struct IntakeGh {
 
 impl IntakeGh {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(IntakeGh { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
+        Ok(IntakeGh {
+            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
+            config: super::pinned(settings, KEYS)?,
+        })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -351,12 +505,22 @@ impl IntakeGh {
         if a.name == INBOX {
             return a;
         }
-        let act: serde_json::Value = serde_json::from_str(&a.input).unwrap_or(serde_json::Value::Null);
-        EffectSpec { input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(), ..a }
+        let act: serde_json::Value =
+            serde_json::from_str(&a.input).unwrap_or(serde_json::Value::Null);
+        EffectSpec {
+            input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(),
+            ..a
+        }
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "seen", drop: &[] }, runtime::rows::Part::Field("last_ok_hour")];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Map {
+        name: "seen",
+        drop: &[],
+    },
+    runtime::rows::Part::Field("last_ok_hour"),
+];
 
 impl Handler for IntakeGh {
     fn interests(&self) -> &[EventKindTag] {
@@ -367,14 +531,36 @@ impl Handler for IntakeGh {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let input = || serde_json::json!({ "cfg": self.config, "seen": carry.seen }).to_string();
         CYCLE.handle(self.interval_ms, view, ev, input, |body| {
-            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else { return vec![] };
+            let Ok(snap) = serde_json::from_str::<Snapshot>(body) else {
+                return vec![];
+            };
             let (next, mut acts) = decide(&carry, &snap);
-            let scope = self.config.get("SPIRA_SCOPE_LABEL").map(String::as_str).unwrap_or("");
-            let left = if scope.is_empty() || snap.halted { vec![] } else { unclaimable(&snap, scope) };
+            let scope = self
+                .config
+                .get("SPIRA_SCOPE_LABEL")
+                .map(String::as_str)
+                .unwrap_or("");
+            let left = if scope.is_empty() || snap.halted {
+                vec![]
+            } else {
+                unclaimable(&snap, scope)
+            };
             if !left.is_empty() {
-                acts.push(refusal(snap.now, &format!("{} work bead(s) carry no {scope} label and no rune can claim them: {}", left.len(), left.join(", "))));
+                acts.push(refusal(
+                    snap.now,
+                    &format!(
+                        "{} work bead(s) carry no {scope} label and no rune can claim them: {}",
+                        left.len(),
+                        left.join(", ")
+                    ),
+                ));
             }
-            commands(&carry, &next, STATE, acts.into_iter().map(|a| self.pinned(a)).collect())
+            commands(
+                &carry,
+                &next,
+                STATE,
+                acts.into_iter().map(|a| self.pinned(a)).collect(),
+            )
         })
     }
 }
@@ -401,11 +587,16 @@ fn bd() -> Result<gh_intake::real::RealBd, String> {
 }
 
 fn mail(cfg: &BTreeMap<String, String>) -> gh_intake::real::RealMail {
-    gh_intake::real::RealMail::new(Some(get(cfg, "SPIRA_MAIL_BIN").to_string()).filter(|m| !m.is_empty()))
+    gh_intake::real::RealMail::new(
+        Some(get(cfg, "SPIRA_MAIL_BIN").to_string()).filter(|m| !m.is_empty()),
+    )
 }
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) // clock-safe: the snapshot's stamp, read once per probe
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) // clock-safe: the snapshot's stamp, read once per probe
 }
 
 #[derive(Deserialize)]
@@ -419,26 +610,45 @@ struct ObserveInput {
 /// issue not yet handled, GitHub's trust answer.
 pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     use gh_intake::ports::Repo;
-    let input: ObserveInput = serde_json::from_str(&s.input).map_err(|e| format!("{NAME}: unreadable input: {e}"))?;
+    let input: ObserveInput =
+        serde_json::from_str(&s.input).map_err(|e| format!("{NAME}: unreadable input: {e}"))?;
     let cfg = &input.cfg;
     let now = now_secs();
     let halted = e.world.run_dir.join("world.halted").exists();
-    let empty = Snapshot { halted, targets: vec![], store: vec![], now, pages: BTreeMap::new(), accept: vec![], contributor_hidden: vec![] };
+    let empty = Snapshot {
+        halted,
+        targets: vec![],
+        store: vec![],
+        now,
+        pages: BTreeMap::new(),
+        accept: vec![],
+        contributor_hidden: vec![],
+    };
     if halted {
         return serde_json::to_string(&empty).map_err(|e| e.to_string());
     }
     let home = spira_config::resolve::locate_home_for_process()?;
-    let repo = gh_intake::real::RealRepo { spira_home: home.to_string_lossy().into_owned() };
+    let repo = gh_intake::real::RealRepo {
+        spira_home: home.to_string_lossy().into_owned(),
+    };
     let mut targets: Vec<Target> = vec![];
     let explicit = get(cfg, "SPIRA_GH_INTAKE_REPO");
     if !explicit.is_empty() {
         let bead_repo = get(cfg, "SPIRA_GH_INTAKE_BEAD_REPO").to_string();
-        targets.push(Target { slug: explicit.into(), root_ok: repo.root_with_git(&bead_repo).is_some(), bead_repo });
+        targets.push(Target {
+            slug: explicit.into(),
+            root_ok: repo.root_with_git(&bead_repo).is_some(),
+            bead_repo,
+        });
     }
     for name in repo.all_names() {
         if let Some(slug) = repo.forge_slug(&name) {
             if !targets.iter().any(|t| t.slug.eq_ignore_ascii_case(&slug)) {
-                targets.push(Target { slug, bead_repo: name, root_ok: true });
+                targets.push(Target {
+                    slug,
+                    bead_repo: name,
+                    root_ok: true,
+                });
             }
         }
     }
@@ -447,7 +657,10 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     }
     let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
     let mut store: Vec<KnownRef> = vec![];
-    let api = Some(get(cfg, "SPIRA_GH_INTAKE_API")).filter(|a| !a.is_empty()).unwrap_or(gh::GITHUB_API).to_string();
+    let api = Some(get(cfg, "SPIRA_GH_INTAKE_API"))
+        .filter(|a| !a.is_empty())
+        .unwrap_or(gh::GITHUB_API)
+        .to_string();
     let http = gh_intake::real::RealHttp::from_broker();
     let (mut pages, mut accept, mut hidden) = (BTreeMap::new(), Vec::<Accept>::new(), Vec::new());
     for t in &targets {
@@ -461,21 +674,49 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
                 pages.insert(t.slug.clone(), Pages::Error(err));
             }
             Ok(issues) => {
-                store.extend(known_for(&t.slug, &issues, input.seen.get(&t.slug), &|r| gh_intake::real::by_ref_on(&lc, r))?);
+                store.extend(known_for(
+                    &t.slug,
+                    &issues,
+                    input.seen.get(&t.slug),
+                    &|r| gh_intake::real::by_ref_on(&lc, r),
+                )?);
                 let (a, h) = trust_answers(&http, &api, &t.slug, &issues, input.seen.get(&t.slug));
                 accept.extend(a);
                 hidden.extend(h);
-                let list = issues.into_iter().map(|i| GhIssue { number: i.number, title: i.title, body: i.body, author: i.login, is_pr: false }).collect();
+                let list = issues
+                    .into_iter()
+                    .map(|i| GhIssue {
+                        number: i.number,
+                        title: i.title,
+                        body: i.body,
+                        author: i.login,
+                        is_pr: false,
+                    })
+                    .collect();
                 pages.insert(t.slug.clone(), Pages::Issues(list));
             }
         }
     }
-    serde_json::to_string(&Snapshot { halted, targets, store, now, pages, accept, contributor_hidden: hidden }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot {
+        halted,
+        targets,
+        store,
+        now,
+        pages,
+        accept,
+        contributor_hidden: hidden,
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// The store's beads for the refs `decide` will ask about: one point lookup per work and
 /// untrusted ref of each open issue not yet handled. A slug with no carried set baselines and asks nothing.
-pub fn known_for(slug: &str, issues: &[gh_intake::model::GhIssue], seen: Option<&Vec<u64>>, by_ref: &dyn Fn(&str) -> Result<Vec<gh_intake::store::KnownRef>, String>) -> Result<Vec<KnownRef>, String> {
+pub fn known_for(
+    slug: &str,
+    issues: &[gh_intake::model::GhIssue],
+    seen: Option<&Vec<u64>>,
+    by_ref: &dyn Fn(&str) -> Result<Vec<gh_intake::store::KnownRef>, String>,
+) -> Result<Vec<KnownRef>, String> {
     let Some(seen) = seen else { return Ok(vec![]) };
     let mut out: Vec<KnownRef> = vec![];
     for i in issues.iter().filter(|i| !seen.contains(&i.number)) {
@@ -483,7 +724,11 @@ pub fn known_for(slug: &str, issues: &[gh_intake::model::GhIssue], seen: Option<
             let ext_ref = format!("{prefix}:{slug}#{}", i.number);
             for k in by_ref(&ext_ref)? {
                 if k.ext_ref == ext_ref && !out.iter().any(|o| o.id == k.id) {
-                    out.push(KnownRef { id: k.id, ext_ref: k.ext_ref, labels: k.labels });
+                    out.push(KnownRef {
+                        id: k.id,
+                        ext_ref: k.ext_ref,
+                        labels: k.labels,
+                    });
                 }
             }
         }
@@ -492,11 +737,26 @@ pub fn known_for(slug: &str, issues: &[gh_intake::model::GhIssue], seen: Option<
 }
 
 /// Trust answers for the issues not seen before: who is admitted, and which CONTRIBUTOR authors are hidden members.
-pub fn trust_answers(http: &dyn gh_intake::ports::Http, api: &str, slug: &str, issues: &[gh_intake::model::GhIssue], seen: Option<&Vec<u64>>) -> (Vec<Accept>, Vec<(String, String, bool)>) {
+pub fn trust_answers(
+    http: &dyn gh_intake::ports::Http,
+    api: &str,
+    slug: &str,
+    issues: &[gh_intake::model::GhIssue],
+    seen: Option<&Vec<u64>>,
+) -> (Vec<Accept>, Vec<(String, String, bool)>) {
     let (mut accept, mut hidden) = (vec![], vec![]);
-    for i in issues.iter().filter(|i| seen.is_some_and(|s| !s.contains(&i.number))) {
+    for i in issues
+        .iter()
+        .filter(|i| seen.is_some_and(|s| !s.contains(&i.number)))
+    {
         if gh::author_has_access(http, api, slug, i) {
-            accept.push(Accept { slug: slug.to_string(), number: i.number, actor: None, has_access: true, hidden: false });
+            accept.push(Accept {
+                slug: slug.to_string(),
+                number: i.number,
+                actor: None,
+                has_access: true,
+                hidden: false,
+            });
             continue;
         }
         if gh_intake::model::has_accept_label(&i.labels) {
@@ -504,28 +764,57 @@ pub fn trust_answers(http: &dyn gh_intake::ports::Http, api: &str, slug: &str, i
             if !actor.is_empty() {
                 let has_access = gh::actor_has_access(http, api, slug, &actor);
                 let hidden = !has_access && gh::membership_hidden(http, api, slug, &actor);
-                accept.push(Accept { slug: slug.to_string(), number: i.number, actor: Some(actor), has_access, hidden });
+                accept.push(Accept {
+                    slug: slug.to_string(),
+                    number: i.number,
+                    actor: Some(actor),
+                    has_access,
+                    hidden,
+                });
                 if has_access {
                     continue;
                 }
             }
         }
         if i.association == "CONTRIBUTOR" {
-            hidden.push((slug.to_string(), i.login.clone(), gh::membership_hidden(http, api, slug, &i.login)));
+            hidden.push((
+                slug.to_string(),
+                i.login.clone(),
+                gh::membership_hidden(http, api, slug, &i.login),
+            ));
         }
     }
     (accept, hidden)
 }
 
-fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, &Filing) -> (String, String)) -> Result<String, String> {
+fn file(
+    e: &Effects,
+    s: &EffectSpec,
+    labels: impl Fn(&BTreeMap<String, String>, &Filing) -> (String, String),
+) -> Result<String, String> {
     use gh_intake::ports::Bd;
     let p: Pinned<Filing> = parse(&s.input)?;
-    let known = gh_intake::real::by_ref_on(&spira_store::lc_call::LcClient::socket(&e.world.lc_socket), &p.act.ext_ref)?;
+    let known = gh_intake::real::by_ref_on(
+        &spira_store::lc_call::LcClient::socket(&e.world.lc_socket),
+        &p.act.ext_ref,
+    )?;
     if gh_intake::store::find_ref(&known, &p.act.ext_ref).is_some() {
-        return Err(format!("{} is already in the store — refusing a second bead", p.act.ext_ref));
+        return Err(format!(
+            "{} is already in the store — refusing a second bead",
+            p.act.ext_ref
+        ));
     }
     let (labels, priority) = labels(&p.cfg, &p.act);
-    if bd()?.create(&p.act.title, &p.act.ext_ref, &labels, &priority, p.act.body.as_bytes()).is_some() {
+    if bd()?
+        .create(
+            &p.act.title,
+            &p.act.ext_ref,
+            &labels,
+            &priority,
+            p.act.body.as_bytes(),
+        )
+        .is_some()
+    {
         Ok(format!("filed {}", p.act.ext_ref))
     } else {
         Err(format!("could not create a bead for {}", p.act.ext_ref))
@@ -534,26 +823,44 @@ fn file(e: &Effects, s: &EffectSpec, labels: impl Fn(&BTreeMap<String, String>, 
 
 /// `intake.gh.file_work`: a work bead for a trusted issue, refused when its ref is already filed.
 pub fn run_file_work(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
-    file(e, s, |cfg, f| (format!("{},{},repo:{}", get(cfg, "SPIRA_SCOPE_LABEL"), get(cfg, "SPIRA_PLAN_LABEL"), f.bead_repo), get(cfg, "SPIRA_GH_INTAKE_PRIORITY").to_string()))
+    file(e, s, |cfg, f| {
+        (
+            format!(
+                "{},{},repo:{}",
+                get(cfg, "SPIRA_SCOPE_LABEL"),
+                get(cfg, "SPIRA_PLAN_LABEL"),
+                f.bead_repo
+            ),
+            get(cfg, "SPIRA_GH_INTAKE_PRIORITY").to_string(),
+        )
+    })
 }
 
 /// `intake.gh.file_untrusted`: the untrusted record, refused when it already exists.
 pub fn run_file_untrusted(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
-    file(e, s, |_, _| (gh::UNTRUSTED_LABEL.to_string(), "4".to_string()))
+    file(e, s, |_, _| {
+        (gh::UNTRUSTED_LABEL.to_string(), "4".to_string())
+    })
 }
 
 /// `intake.gh.note_seen`: the re-ingest note on the bead already tracking the ref.
 pub fn run_note_seen(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     use gh_intake::ports::Bd;
     let p: Pinned<Note> = parse(&s.input)?;
-    bd()?.note(&p.act.id, &p.act.text).then(|| format!("noted {}", p.act.id)).ok_or_else(|| format!("could not note {}", p.act.id))
+    bd()?
+        .note(&p.act.id, &p.act.text)
+        .then(|| format!("noted {}", p.act.id))
+        .ok_or_else(|| format!("could not note {}", p.act.id))
 }
 
 /// `intake.gh.close_promoted`: closes the untrusted record through the lifecycle machine.
 pub fn run_close_promoted(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     use gh_intake::ports::Bd;
     let p: Pinned<Close> = parse(&s.input)?;
-    bd()?.close(&p.act.id, &p.act.reason).then(|| format!("closed {}", p.act.id)).ok_or_else(|| format!("could not close {}", p.act.id))
+    bd()?
+        .close(&p.act.id, &p.act.reason)
+        .then(|| format!("closed {}", p.act.id))
+        .ok_or_else(|| format!("could not close {}", p.act.id))
 }
 
 /// `intake.gh.digest`: one operator note per slug listing its new untrusted issues.
@@ -564,7 +871,13 @@ pub fn run_digest(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Str
         return Err("an empty digest is not sent".into());
     }
     let subject = gh::digest_subject(p.act.items.len(), &p.act.slug);
-    mail(&p.cfg).send_operator_note(&subject, gh::render_digest(&p.act.items, &p.act.slug).as_bytes()).then(|| subject.clone()).ok_or_else(|| format!("could not send: {subject}"))
+    mail(&p.cfg)
+        .send_operator_note(
+            &subject,
+            gh::render_digest(&p.act.items, &p.act.slug).as_bytes(),
+        )
+        .then(|| subject.clone())
+        .ok_or_else(|| format!("could not send: {subject}"))
 }
 
 /// `intake.gh.unverifiable`: the operator note naming a login whose membership GitHub hides.
@@ -572,7 +885,10 @@ pub fn run_unverifiable(_: &Effects, _key: &str, s: &EffectSpec) -> Result<Strin
     use gh_intake::ports::Mail;
     let p: Pinned<Unverifiable> = parse(&s.input)?;
     let (subject, body) = gh::unverifiable_note(&p.act.login, &p.act.slug);
-    mail(&p.cfg).send_operator_note(&subject, body.as_bytes()).then(|| subject.clone()).ok_or_else(|| format!("could not send: {subject}"))
+    mail(&p.cfg)
+        .send_operator_note(&subject, body.as_bytes())
+        .then(|| subject.clone())
+        .ok_or_else(|| format!("could not send: {subject}"))
 }
 
 #[cfg(test)]
@@ -584,22 +900,37 @@ mod tests {
     struct Fake(HashMap<String, (u16, Vec<u8>)>);
     impl Http for Fake {
         fn get(&self, url: &str, _t: u64) -> Result<(u16, Vec<u8>), String> {
-            self.0.get(url).cloned().ok_or_else(|| format!("no fixture for {url}"))
+            self.0
+                .get(url)
+                .cloned()
+                .ok_or_else(|| format!("no fixture for {url}"))
         }
     }
 
     fn contributor(login: &str) -> gh_intake::model::GhIssue {
-        let page = format!(r#"[{{"number":348,"title":"t","body":"b","user":{{"login":"{login}","type":"User"}},"labels":[],"author_association":"CONTRIBUTOR"}}]"#);
-        gh_intake::model::parse_issues_page(page.as_bytes()).unwrap().remove(0)
+        let page = format!(
+            r#"[{{"number":348,"title":"t","body":"b","user":{{"login":"{login}","type":"User"}},"labels":[],"author_association":"CONTRIBUTOR"}}]"#
+        );
+        gh_intake::model::parse_issues_page(page.as_bytes())
+            .unwrap()
+            .remove(0)
     }
 
     fn issue(n: u64) -> gh_intake::model::GhIssue {
-        let page = format!(r#"[{{"number":{n},"title":"t","body":"b","user":{{"login":"a","type":"User"}},"labels":[],"author_association":"NONE"}}]"#);
-        gh_intake::model::parse_issues_page(page.as_bytes()).unwrap().remove(0)
+        let page = format!(
+            r#"[{{"number":{n},"title":"t","body":"b","user":{{"login":"a","type":"User"}},"labels":[],"author_association":"NONE"}}]"#
+        );
+        gh_intake::model::parse_issues_page(page.as_bytes())
+            .unwrap()
+            .remove(0)
     }
 
     fn row(id: &str, ext: &str) -> gh_intake::store::KnownRef {
-        gh_intake::store::KnownRef { id: id.into(), ext_ref: ext.into(), labels: vec![] }
+        gh_intake::store::KnownRef {
+            id: id.into(),
+            ext_ref: ext.into(),
+            labels: vec![],
+        }
     }
 
     #[test_id(tnj050b)]
@@ -608,43 +939,98 @@ mod tests {
         let asked = std::cell::RefCell::new(vec![]);
         let by_ref = |r: &str| {
             asked.borrow_mut().push(r.to_string());
-            Ok(if r == "github:acme/widgets#7" { vec![row("b-1", r), row("b-x", "github:acme/widgets#70")] } else { vec![] })
+            Ok(if r == "github:acme/widgets#7" {
+                vec![row("b-1", r), row("b-x", "github:acme/widgets#70")]
+            } else {
+                vec![]
+            })
         };
-        let got = known_for("acme/widgets", &[issue(3), issue(7)], Some(&vec![3]), &by_ref).unwrap();
-        assert_eq!(*asked.borrow(), ["github:acme/widgets#7", "github-untrusted:acme/widgets#7"]);
-        assert_eq!(got.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["b-1"]);
+        let got = known_for(
+            "acme/widgets",
+            &[issue(3), issue(7)],
+            Some(&vec![3]),
+            &by_ref,
+        )
+        .unwrap();
+        assert_eq!(
+            *asked.borrow(),
+            ["github:acme/widgets#7", "github-untrusted:acme/widgets#7"]
+        );
+        assert_eq!(
+            got.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(),
+            ["b-1"]
+        );
     }
 
     #[test_id(t89f2j6)]
     #[test]
     fn decide_over_known_for_notes_a_tracked_ref_and_refiles_no_untrusted_record() {
-        let by_ref = |r: &str| Ok(match r {
-            "github:acme/widgets#7" => vec![row("b-7", r)],
-            "github-untrusted:acme/widgets#8" => vec![row("u-8", r)],
-            _ => vec![],
-        });
+        let by_ref = |r: &str| {
+            Ok(match r {
+                "github:acme/widgets#7" => vec![row("b-7", r)],
+                "github-untrusted:acme/widgets#8" => vec![row("u-8", r)],
+                _ => vec![],
+            })
+        };
         let list = vec![issue(7), issue(8)];
         let store = known_for("acme/widgets", &list, Some(&vec![1]), &by_ref).unwrap();
-        let pages = BTreeMap::from([("acme/widgets".to_string(), Pages::Issues(list.into_iter().map(|i| GhIssue { number: i.number, title: i.title, body: i.body, author: i.login, is_pr: false }).collect()))]);
-        let targets = vec![Target { slug: "acme/widgets".into(), bead_repo: "r".into(), root_ok: true }];
-        let snap = Snapshot { halted: false, targets, store, now: 0, pages, accept: vec![], contributor_hidden: vec![] };
-        let carry = Carry { seen: BTreeMap::from([("acme/widgets".to_string(), vec![1])]), ..Carry::default() };
+        let pages = BTreeMap::from([(
+            "acme/widgets".to_string(),
+            Pages::Issues(
+                list.into_iter()
+                    .map(|i| GhIssue {
+                        number: i.number,
+                        title: i.title,
+                        body: i.body,
+                        author: i.login,
+                        is_pr: false,
+                    })
+                    .collect(),
+            ),
+        )]);
+        let targets = vec![Target {
+            slug: "acme/widgets".into(),
+            bead_repo: "r".into(),
+            root_ok: true,
+        }];
+        let snap = Snapshot {
+            halted: false,
+            targets,
+            store,
+            now: 0,
+            pages,
+            accept: vec![],
+            contributor_hidden: vec![],
+        };
+        let carry = Carry {
+            seen: BTreeMap::from([("acme/widgets".to_string(), vec![1])]),
+            ..Carry::default()
+        };
         let (_, acts) = decide(&carry, &snap);
-        assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [NOTE_SEEN]);
+        assert_eq!(
+            acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            [NOTE_SEEN]
+        );
     }
 
     #[test_id(tbmv4vd)]
     #[test]
     fn known_for_asks_nothing_on_a_slugs_first_read() {
-        let by_ref = |_: &str| -> Result<Vec<gh_intake::store::KnownRef>, String> { panic!("asked") };
-        assert!(known_for("acme/widgets", &[issue(1)], None, &by_ref).unwrap().is_empty());
+        let by_ref =
+            |_: &str| -> Result<Vec<gh_intake::store::KnownRef>, String> { panic!("asked") };
+        assert!(known_for("acme/widgets", &[issue(1)], None, &by_ref)
+            .unwrap()
+            .is_empty());
     }
 
     #[test_id(t0e15x4)]
     #[test]
     fn known_for_surfaces_a_failed_lookup() {
         let by_ref = |_: &str| Err("deadline".to_string());
-        assert_eq!(known_for("acme/widgets", &[issue(1)], Some(&vec![]), &by_ref).unwrap_err(), "deadline");
+        assert_eq!(
+            known_for("acme/widgets", &[issue(1)], Some(&vec![]), &by_ref).unwrap_err(),
+            "deadline"
+        );
     }
 
     #[test_id(tbikrn7)]
@@ -653,9 +1039,18 @@ mod tests {
         let api = "https://api.example";
         let http = Fake(HashMap::from([
             (format!("{api}/orgs/acme/members/rgantt"), (404, vec![])),
-            (format!("{api}/repos/acme/widgets/collaborators/rgantt/permission"), (200, br#"{"permission":"admin"}"#.to_vec())),
+            (
+                format!("{api}/repos/acme/widgets/collaborators/rgantt/permission"),
+                (200, br#"{"permission":"admin"}"#.to_vec()),
+            ),
         ]));
-        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
+        let (accept, hidden) = trust_answers(
+            &http,
+            api,
+            "acme/widgets",
+            &[contributor("rgantt")],
+            Some(&vec![]),
+        );
         assert_eq!(accept.len(), 1);
         assert!(accept[0].actor.is_none() && accept[0].has_access && !accept[0].hidden);
         assert!(hidden.is_empty());
@@ -665,8 +1060,17 @@ mod tests {
     #[test]
     fn a_contributor_without_access_stays_a_hidden_member_question() {
         let api = "https://api.example";
-        let http = Fake(HashMap::from([(format!("{api}/orgs/acme/members/rgantt"), (404, vec![]))]));
-        let (accept, hidden) = trust_answers(&http, api, "acme/widgets", &[contributor("rgantt")], Some(&vec![]));
+        let http = Fake(HashMap::from([(
+            format!("{api}/orgs/acme/members/rgantt"),
+            (404, vec![]),
+        )]));
+        let (accept, hidden) = trust_answers(
+            &http,
+            api,
+            "acme/widgets",
+            &[contributor("rgantt")],
+            Some(&vec![]),
+        );
         assert!(accept.is_empty());
         assert_eq!(hidden.len(), 1);
     }

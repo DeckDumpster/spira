@@ -36,8 +36,8 @@
 
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use spira_config::process::cfg_parse;
+use std::collections::BTreeMap;
 
 use crate::tasks::d::pattern;
 use crate::watchers::dependency;
@@ -52,7 +52,16 @@ pub const OBSERVE: &str = "watch.throughput.observe";
 pub const FILE: &str = "watch.throughput.file";
 pub const CLEAR: &str = "watch.throughput.clear";
 pub const EFFECTS: &[&str] = &[OBSERVE, FILE, CLEAR, INBOX_APPEND];
-pub const KEYS: &[&str] = &["SPIRA_THROUGHPUT_STALL_SECS", "SPIRA_THROUGHPUT_ABANDON_COUNT", "SPIRA_THROUGHPUT_ABANDON_WINDOW", "SPIRA_THROUGHPUT_RATIO_MIN_PCT", "SPIRA_THROUGHPUT_RATIO_MIN_RUNS", "SPIRA_THROUGHPUT_PASSED_GRACE", "SPIRA_ACTIVATION_STORE_BOUND", "SPIRA_ID_PREFIX"];
+pub const KEYS: &[&str] = &[
+    "SPIRA_THROUGHPUT_STALL_SECS",
+    "SPIRA_THROUGHPUT_ABANDON_COUNT",
+    "SPIRA_THROUGHPUT_ABANDON_WINDOW",
+    "SPIRA_THROUGHPUT_RATIO_MIN_PCT",
+    "SPIRA_THROUGHPUT_RATIO_MIN_RUNS",
+    "SPIRA_THROUGHPUT_PASSED_GRACE",
+    "SPIRA_ACTIVATION_STORE_BOUND",
+    "SPIRA_ID_PREFIX",
+];
 pub const CADENCE_MS: u64 = 60_000;
 const DEADLINE_MS: u64 = 60_000;
 
@@ -74,7 +83,15 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config { stall_s: cfg_parse("SPIRA_THROUGHPUT_STALL_SECS")?, abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?, abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?, ratio_min_pct: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_PCT")?, ratio_min_runs: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_RUNS")?, passed_grace_s: cfg_parse("SPIRA_THROUGHPUT_PASSED_GRACE")?, activation_bound_s: cfg_parse("SPIRA_ACTIVATION_STORE_BOUND")? })
+        Ok(Config {
+            stall_s: cfg_parse("SPIRA_THROUGHPUT_STALL_SECS")?,
+            abandon_count: cfg_parse("SPIRA_THROUGHPUT_ABANDON_COUNT")?,
+            abandon_window_s: cfg_parse("SPIRA_THROUGHPUT_ABANDON_WINDOW")?,
+            ratio_min_pct: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_PCT")?,
+            ratio_min_runs: cfg_parse("SPIRA_THROUGHPUT_RATIO_MIN_RUNS")?,
+            passed_grace_s: cfg_parse("SPIRA_THROUGHPUT_PASSED_GRACE")?,
+            activation_bound_s: cfg_parse("SPIRA_ACTIVATION_STORE_BOUND")?,
+        })
     }
 }
 
@@ -138,7 +155,10 @@ pub struct Waiting {
 }
 
 fn waited_s(l: &RepoLanding, now_ms: u64) -> Option<u64> {
-    l.oldest.as_ref().and_then(|o| o.since).map(|since| (now_ms / 1000).saturating_sub(since.max(l.last_landing)))
+    l.oldest
+        .as_ref()
+        .and_then(|o| o.since)
+        .map(|since| (now_ms / 1000).saturating_sub(since.max(l.last_landing)))
 }
 
 fn undated(l: &RepoLanding) -> bool {
@@ -188,7 +208,10 @@ impl Filing {
     /// The incident's dedup reference: one per repo and stall episode, an episode being the
     /// stretch since one landing.
     pub fn reference(&self) -> String {
-        format!("incident:throughput-stall:{}:{}", self.repo, self.last_landing)
+        format!(
+            "incident:throughput-stall:{}:{}",
+            self.repo, self.last_landing
+        )
     }
 }
 
@@ -220,18 +243,51 @@ pub struct Verdict {
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
-    EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
+    EffectSpec::keyed(
+        INBOX_APPEND,
+        format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)),
+        pattern::inbox_line(now_ms, TAG, line),
+        DEADLINE_MS,
+    )
 }
 
 fn stall_filing(l: &RepoLanding, rounds: Option<&RepoRounds>, now_ms: u64, cfg: &Config) -> Filing {
     let hourly: Vec<String> = l.hourly.iter().map(u64::to_string).collect();
-    let since = if l.last_landing == 0 { "no landing in the last 24h".to_string() } else { format!("last landing {} ({}s ago)", crate::watchers::iso8601(l.last_landing), (now_ms / 1000).saturating_sub(l.last_landing)) };
-    let rounds = rounds.map_or("none".to_string(), |r| format!("cut {} abandoned {} landed {}", r.cut, r.abandoned, r.landed));
-    let oldest = l.oldest.as_ref().map_or(String::new(), |o| format!("oldest {} waiting {}s", o.bead, waited_s(l, now_ms).unwrap_or(0)));
-    let title = format!("landing stalled on {}: {} beads waiting, {oldest}", l.repo, l.waiting);
+    let since = if l.last_landing == 0 {
+        "no landing in the last 24h".to_string()
+    } else {
+        format!(
+            "last landing {} ({}s ago)",
+            crate::watchers::iso8601(l.last_landing),
+            (now_ms / 1000).saturating_sub(l.last_landing)
+        )
+    };
+    let rounds = rounds.map_or("none".to_string(), |r| {
+        format!(
+            "cut {} abandoned {} landed {}",
+            r.cut, r.abandoned, r.landed
+        )
+    });
+    let oldest = l.oldest.as_ref().map_or(String::new(), |o| {
+        format!(
+            "oldest {} waiting {}s",
+            o.bead,
+            waited_s(l, now_ms).unwrap_or(0)
+        )
+    });
+    let title = format!(
+        "landing stalled on {}: {} beads waiting, {oldest}",
+        l.repo, l.waiting
+    );
     let body = format!("## Problem\nNo bead has landed on {} for at least {}s while {} sit SUBMITTED, CERTIFIED or IN_DELIVERY there.\n\n## Evidence\n- {oldest}\n- {since}\n- landings per hour over 24h, oldest first: {}\n- rounds over 24h: {rounds}\n\n## Ask\nRoot-cause why landing stopped and repair it. Nothing was halted.\n", l.repo, cfg.stall_s, l.waiting, hourly.join(" "));
     let line = format!("P0 {}: landing stalled — {} beads waiting, {oldest}, {since}; incident filed for the ops lane", l.repo, l.waiting);
-    Filing { repo: l.repo.clone(), last_landing: l.last_landing, title, body, line }
+    Filing {
+        repo: l.repo.clone(),
+        last_landing: l.last_landing,
+        title,
+        body,
+        line,
+    }
 }
 
 fn is_stalled(l: &RepoLanding, now_ms: u64, cfg: &Config) -> bool {
@@ -241,7 +297,14 @@ fn is_stalled(l: &RepoLanding, now_ms: u64, cfg: &Config) -> bool {
 /// The wait clause when every bead waiting on `l` is held by a live prerequisite.
 fn dependency_wait(l: &RepoLanding, snap: &Snapshot) -> Option<String> {
     let state_of = |id: &str| snap.states.get(id).cloned();
-    let waits: Option<Vec<(String, String, String)>> = l.beads.iter().map(|b| dependency::live_blocker(b, &snap.blocked, &state_of).map(|(dep, state)| (b.clone(), dep, state))).collect();
+    let waits: Option<Vec<(String, String, String)>> = l
+        .beads
+        .iter()
+        .map(|b| {
+            dependency::live_blocker(b, &snap.blocked, &state_of)
+                .map(|(dep, state)| (b.clone(), dep, state))
+        })
+        .collect();
     dependency::clause(&waits?)
 }
 
@@ -269,11 +332,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
             return Verdict { carry: next, acts };
         }
         if let Some(a) = &snap.activation {
-            acts.push(say(now_ms, &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why)));
+            acts.push(say(
+                now_ms,
+                &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why),
+            ));
             return Verdict { carry: next, acts };
         }
         if !carry.blind {
-            let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
+            let refusal = if snap.why.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", snap.why)
+            };
             acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal}, so landing stalls are not being checked")));
         }
         next.blind = true;
@@ -282,7 +352,11 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     next.blind = false;
 
     next.waiting_on.clear();
-    next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
+    next.stalled.retain(|repo, _| {
+        snap.landings
+            .iter()
+            .any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg))
+    });
     for l in snap.landings.iter().filter(|l| is_stalled(l, now_ms, cfg)) {
         if next.stalled.get(&l.repo) == Some(&l.last_landing) {
             continue;
@@ -292,13 +366,24 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
         }
         if let Some(clause) = dependency_wait(l, snap) {
             if carry.waiting_on.get(&l.repo) != Some(&clause) {
-                acts.push(say(now_ms, &format!("{}: landing waits on a dependency — {clause}; no incident filed", l.repo)));
+                acts.push(say(
+                    now_ms,
+                    &format!(
+                        "{}: landing waits on a dependency — {clause}; no incident filed",
+                        l.repo
+                    ),
+                ));
             }
             next.waiting_on.insert(l.repo.clone(), clause);
             continue;
         }
         let f = stall_filing(l, snap.repos.iter().find(|r| r.repo == l.repo), now_ms, cfg);
-        acts.push(EffectSpec::keyed(FILE, format!("{NAME}:file:{}:{}", f.repo, f.last_landing), serde_json::to_string(&f).unwrap_or_default(), FILE_DEADLINE_MS));
+        acts.push(EffectSpec::keyed(
+            FILE,
+            format!("{NAME}:file:{}:{}", f.repo, f.last_landing),
+            serde_json::to_string(&f).unwrap_or_default(),
+            FILE_DEADLINE_MS,
+        ));
     }
 
     for l in snap.landings.iter().filter(|l| undated(l)) {
@@ -307,9 +392,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
             acts.push(say(now_ms, &format!("P2 {}: data defect — waiting bead {bead} has a null `since` in its lifecycle row (spira-lc list --state SUBMITTED,CERTIFIED,IN_DELIVERY), so its wait is unknown and no stall is judged for it", l.repo)));
         }
     }
-    next.undated = snap.landings.iter().filter(|l| undated(l)).map(|l| l.repo.clone()).collect();
+    next.undated = snap
+        .landings
+        .iter()
+        .filter(|l| undated(l))
+        .map(|l| l.repo.clone())
+        .collect();
 
-    let starving: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.abandoned_recent >= cfg.abandon_count && r.landed_recent == 0).collect();
+    let starving: Vec<&RepoRounds> = snap
+        .repos
+        .iter()
+        .filter(|r| r.abandoned_recent >= cfg.abandon_count && r.landed_recent == 0)
+        .collect();
     for r in &starving {
         if !carry.starved.contains(&r.repo) {
             acts.push(say(now_ms, &format!("P0 {}: {} abandoned rounds and 0 landings in {}s — rounds are being cut and thrown away", r.repo, r.abandoned_recent, cfg.abandon_window_s)));
@@ -317,7 +411,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.starved = starving.iter().map(|r| r.repo.clone()).collect();
 
-    let diluted: Vec<&RepoRounds> = snap.repos.iter().filter(|r| r.green_runs >= cfg.ratio_min_runs && r.landed * 100 < r.green_runs * cfg.ratio_min_pct).collect();
+    let diluted: Vec<&RepoRounds> = snap
+        .repos
+        .iter()
+        .filter(|r| {
+            r.green_runs >= cfg.ratio_min_runs && r.landed * 100 < r.green_runs * cfg.ratio_min_pct
+        })
+        .collect();
     for r in &diluted {
         if !carry.diluted.contains(&r.repo) {
             acts.push(say(now_ms, &format!("P0 {}: {} landed against {} passing test runs in 24h, under {}% — rounds pass and do not land", r.repo, r.landed, r.green_runs, cfg.ratio_min_pct)));
@@ -325,20 +425,38 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     }
     next.diluted = diluted.iter().map(|r| r.repo.clone()).collect();
 
-    let stuck: Vec<&Unlanded> = snap.unlanded.iter().filter(|u| u.age_s >= cfg.passed_grace_s && past_halt(carry, now_ms, cfg.passed_grace_s)).collect();
+    let stuck: Vec<&Unlanded> = snap
+        .unlanded
+        .iter()
+        .filter(|u| u.age_s >= cfg.passed_grace_s && past_halt(carry, now_ms, cfg.passed_grace_s))
+        .collect();
     for u in &stuck {
         if !carry.unlanded.contains(&u.batch) {
-            acts.push(say(now_ms, &format!("P0 {}: round {} passed {}s ago and has not landed (still {})", u.repo, u.batch, u.age_s, u.state)));
+            acts.push(say(
+                now_ms,
+                &format!(
+                    "P0 {}: round {} passed {}s ago and has not landed (still {})",
+                    u.repo, u.batch, u.age_s, u.state
+                ),
+            ));
         }
     }
     next.unlanded = stuck.iter().map(|u| u.batch.clone()).collect();
 
     if !snap.records.clear.is_empty() {
-        acts.push(EffectSpec::keyed(CLEAR, format!("{NAME}:clear:{now_ms}"), serde_json::to_string(&snap.records.clear).unwrap_or_default(), DEADLINE_MS));
+        acts.push(EffectSpec::keyed(
+            CLEAR,
+            format!("{NAME}:clear:{now_ms}"),
+            serde_json::to_string(&snap.records.clear).unwrap_or_default(),
+            DEADLINE_MS,
+        ));
     }
     for h in &snap.records.held {
         if !carry.held.contains(h) {
-            acts.push(say(now_ms, &format!("P0 round record refused clearing: {h}")));
+            acts.push(say(
+                now_ms,
+                &format!("P0 round record refused clearing: {h}"),
+            ));
         }
     }
     next.held = snap.records.held.clone();
@@ -355,7 +473,9 @@ impl WatchThroughput {
     }
 
     pub fn pinned() -> Self {
-        WatchThroughput { config: Config::pinned() }
+        WatchThroughput {
+            config: Config::pinned(),
+        }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -367,7 +487,25 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[
+    runtime::rows::Part::Field("blind"),
+    runtime::rows::Part::Field("orphan_paged"),
+    runtime::rows::Part::Map {
+        name: "stalled",
+        drop: &[],
+    },
+    runtime::rows::Part::Field("starved"),
+    runtime::rows::Part::Field("diluted"),
+    runtime::rows::Part::Field("unlanded"),
+    runtime::rows::Part::Field("held"),
+    runtime::rows::Part::Field("undated"),
+    runtime::rows::Part::Field("halted"),
+    runtime::rows::Part::Field("resumed_at"),
+    runtime::rows::Part::Map {
+        name: "waiting_on",
+        drop: &[],
+    },
+];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {
@@ -385,13 +523,18 @@ impl Handler for WatchThroughput {
             };
             return pattern::tick(ev, OBSERVE, input, DEADLINE_MS, ev.at + CADENCE_MS);
         }
-        if let Some(f) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == FILE).and_then(|s| serde_json::from_str::<Filing>(&s.input).ok()) {
+        if let Some(f) = crate::watchers::answered_spec(view, ev)
+            .filter(|s| s.name == FILE)
+            .and_then(|s| serde_json::from_str::<Filing>(&s.input).ok())
+        {
             let carry = carried::<Carry>(view, &ev.stream, STATE);
             let mut next = carry.clone();
             next.stalled.insert(f.repo.clone(), f.last_landing);
             return pattern::commands(STATE, &carry, &next, vec![say(ev.at, &f.line)]);
         }
-        let Some(mut snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else { return vec![] };
+        let Some(mut snap) = pattern::answer::<Snapshot>(view, ev, OBSERVE) else {
+            return vec![];
+        };
         snap.blocked = dependency::batcher_blocks(view);
         let cfg = match &self.config {
             Ok(c) => c,
@@ -411,7 +554,8 @@ impl Handler for WatchThroughput {
 pub fn file(input: &str) -> Result<String, String> {
     let f: Filing = serde_json::from_str(input).map_err(|e| format!("{FILE}: {e}"))?;
     let reference = f.reference();
-    incident::intake::file_payload_with(&f.title, f.body.as_bytes(), |env| tune(env, reference)).map(|()| format!("filed {}", f.title))
+    incident::intake::file_payload_with(&f.title, f.body.as_bytes(), |env| tune(env, reference))
+        .map(|()| format!("filed {}", f.title))
 }
 
 fn tune(env: &mut incident::intake::Env, reference: String) {
@@ -439,6 +583,9 @@ mod tests {
         assert_eq!(env.repo.as_deref(), Some("home-x"));
         assert_eq!(env.priority, "0");
         assert!(env.express);
-        assert_eq!(env.reference.as_deref(), Some("incident:throughput-stall:alpha:7"));
+        assert_eq!(
+            env.reference.as_deref(),
+            Some("incident:throughput-stall:alpha:7")
+        );
     }
 }

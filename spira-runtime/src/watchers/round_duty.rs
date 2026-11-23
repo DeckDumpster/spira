@@ -19,7 +19,25 @@ pub const STATE: EventKindTag = "round-duty.state";
 pub const OBSERVE: &str = "round-duty.observe";
 pub const NAME: &str = "round-duty";
 
-const ROW_PARTS: &[Part] = &[Part::Field("last_due"), Part::Field("last_unknown"), Part::Field("last_c"), Part::Field("last_certified"), Part::Field("last_change"), Part::Field("last_stopped"), Part::Field("starved_since"), Part::Field("last_starved"), Part::Field("last_unadvanced"), Part::Field("held"), Part::Field("halt_paged"), Part::Field("waited_since"), Part::Field("orphan_paged"), Part::Map { name: "lines", drop: &[] }];
+const ROW_PARTS: &[Part] = &[
+    Part::Field("last_due"),
+    Part::Field("last_unknown"),
+    Part::Field("last_c"),
+    Part::Field("last_certified"),
+    Part::Field("last_change"),
+    Part::Field("last_stopped"),
+    Part::Field("starved_since"),
+    Part::Field("last_starved"),
+    Part::Field("last_unadvanced"),
+    Part::Field("held"),
+    Part::Field("halt_paged"),
+    Part::Field("waited_since"),
+    Part::Field("orphan_paged"),
+    Part::Map {
+        name: "lines",
+        drop: &[],
+    },
+];
 
 const DEADLINE_MS: u64 = 10_000;
 
@@ -102,14 +120,25 @@ pub struct Carry {
 
 fn verdictless(line: &str) -> bool {
     let l = line.to_lowercase();
-    ["no verdict", "no-verdict", "verdict-less", "verdictless"].iter().any(|k| l.contains(k))
+    ["no verdict", "no-verdict", "verdict-less", "verdictless"]
+        .iter()
+        .any(|k| l.contains(k))
 }
 
 /// `snap` with the members the batcher's latest pass would cut, summed over its repos.
 pub fn with_admissible(mut snap: Snapshot, batcher: &batcher_local::Carry) -> Snapshot {
-    let per: Vec<(&String, usize)> = batcher.repos.iter().map(|(n, rc)| (n, rc.admissible.len())).filter(|(_, n)| *n > 0).collect();
+    let per: Vec<(&String, usize)> = batcher
+        .repos
+        .iter()
+        .map(|(n, rc)| (n, rc.admissible.len()))
+        .filter(|(_, n)| *n > 0)
+        .collect();
     snap.admissible = per.iter().map(|(_, n)| *n as u64).sum();
-    snap.admissible_by_repo = per.iter().map(|(n, k)| format!("{n}={k}")).collect::<Vec<_>>().join(" ");
+    snap.admissible_by_repo = per
+        .iter()
+        .map(|(n, k)| format!("{n}={k}"))
+        .collect::<Vec<_>>()
+        .join(" ");
     snap
 }
 
@@ -128,7 +157,11 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
     let admissible = snap.admissible;
     c.last_certified = Some(certified);
     if snap.stopped != c.last_stopped {
-        let shown = if snap.stopped.is_empty() { "none" } else { snap.stopped.as_str() };
+        let shown = if snap.stopped.is_empty() {
+            "none"
+        } else {
+            snap.stopped.as_str()
+        };
         say.push(format!("ROUNDS STOPPED ON PURPOSE: {shown} (world.sh status names owner and release condition) — not counted as due"));
         c.last_stopped = snap.stopped.clone();
     }
@@ -152,7 +185,12 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         c.last_change = now;
     }
     let idle = now.saturating_sub(c.last_change);
-    let stale: Vec<String> = snap.unadvanced.iter().filter(|(_, at)| now.saturating_sub(*at) >= cfg.lease_ttl_secs).map(|(b, at)| format!("{b} (opened {}s ago)", now.saturating_sub(*at))).collect();
+    let stale: Vec<String> = snap
+        .unadvanced
+        .iter()
+        .filter(|(_, at)| now.saturating_sub(*at) >= cfg.lease_ttl_secs)
+        .map(|(b, at)| format!("{b} (opened {}s ago)", now.saturating_sub(*at)))
+        .collect();
     if stale.is_empty() {
         c.last_unadvanced = 0;
     } else if now.saturating_sub(c.last_unadvanced) >= cfg.remind_secs {
@@ -174,7 +212,11 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         }
         if let Some(a) = &snap.activation {
             if c.waited_since != Some(a.since) {
-                say.push(crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why));
+                say.push(crate::watchers::restart_wait(
+                    a,
+                    cfg.activation_bound_s,
+                    &snap.why,
+                ));
                 c.waited_since = Some(a.since);
             }
             return (c, say);
@@ -197,7 +239,8 @@ pub fn decide(cfg: &RoundDuty, carry: &Carry, snap: &Snapshot, now: u64) -> (Car
         c.starved_since = None;
         c.last_starved = 0;
     }
-    let may_cut = snap.state == RoundState::None || (snap.state == RoundState::Open && snap.open < cfg.max_open);
+    let may_cut = snap.state == RoundState::None
+        || (snap.state == RoundState::Open && snap.open < cfg.max_open);
     if may_cut && (admissible >= cfg.min || (admissible >= 1 && idle >= cfg.idle_cut_secs)) {
         if now.saturating_sub(c.last_due) >= cfg.remind_secs {
             say.push(format!("ROUND DUE: {admissible} certified waiting [{}] (idle {idle}s), {} of {} rounds open — cut the next round", snap.admissible_by_repo, snap.open, cfg.max_open));
@@ -233,7 +276,10 @@ impl Handler for RoundDuty {
             let input = serde_json::to_string(&known).unwrap_or_default();
             return vec![
                 Command::Probe(EffectSpec::probe(OBSERVE, input, DEADLINE_MS)),
-                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Timer {
+                    at: ev.at + self.interval_ms,
+                    kind: EventKind::new(TICK, ""),
+                },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) {
@@ -244,21 +290,55 @@ impl Handler for RoundDuty {
             return vec![];
         }
         let carry = carried::<Carry>(view, &ev.stream, STATE);
-        let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
+        let snap = match (
+            ev.kind.tag.as_str(),
+            serde_json::from_str::<Snapshot>(&ev.kind.body),
+        ) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
-            _ => Snapshot { certified: carry.last_certified.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), why: if ev.kind.tag == EFFECT_FAILED && !ev.kind.body.is_empty() { ev.kind.body.clone() } else { "the observe returned no usable snapshot".into() }, activation: crate::watchers::current_activation(&self.run_dir), maintenance: spira_world::freeze::read_maintenance(&self.run_dir), ..Snapshot::default() },
+            _ => Snapshot {
+                certified: carry.last_certified.unwrap_or(0),
+                lines: carry.lines.clone(),
+                stopped: carry.last_stopped.clone(),
+                why: if ev.kind.tag == EFFECT_FAILED && !ev.kind.body.is_empty() {
+                    ev.kind.body.clone()
+                } else {
+                    "the observe returned no usable snapshot".into()
+                },
+                activation: crate::watchers::current_activation(&self.run_dir),
+                maintenance: spira_world::freeze::read_maintenance(&self.run_dir),
+                ..Snapshot::default()
+            },
         };
         let now = ev.at / 1000;
-        let snap = with_admissible(snap, &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view));
+        let snap = with_admissible(
+            snap,
+            &kit::carry::<batcher_local::Carry>(&batcher_local::SHAPE, view),
+        );
         let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("round_duty.said", say.len() as u64);
         let mut cmds: Vec<Command> = vec![];
         if !say.is_empty() {
-            let input = say.iter().map(|m| format!("{} [watch:{NAME}] {m}", iso8601(now))).collect::<Vec<_>>().join("\n");
-            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&input)), input, DEADLINE_MS)));
+            let input = say
+                .iter()
+                .map(|m| format!("{} [watch:{NAME}] {m}", iso8601(now)))
+                .collect::<Vec<_>>()
+                .join("\n");
+            cmds.push(Command::Effect(EffectSpec::keyed(
+                INBOX_APPEND,
+                format!(
+                    "{NAME}:inbox:{}:{:016x}",
+                    now,
+                    runtime::event::fnv1a(&input)
+                ),
+                input,
+                DEADLINE_MS,
+            )));
         }
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+            cmds.push(Command::Emit(EventKind::new(
+                STATE,
+                &serde_json::to_string(&next).unwrap_or_default(),
+            )));
         }
         cmds
     }
@@ -269,23 +349,49 @@ mod tests {
     use super::*;
 
     fn cfg() -> RoundDuty {
-        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600, activation_bound_s: 90, run_dir: Default::default() }
+        RoundDuty {
+            interval_ms: 15_000,
+            min: 1,
+            max_open: 1,
+            remind_secs: 600,
+            idle_cut_secs: 900,
+            lease_ttl_secs: 300,
+            halt_page_secs: 3_600,
+            activation_bound_s: 90,
+            run_dir: Default::default(),
+        }
     }
 
     fn snap(state: RoundState, certified: u64) -> Snapshot {
-        Snapshot { certified, by_repo: "spira=1".into(), admissible: certified, admissible_by_repo: "spira=1".into(), state, ..Snapshot::default() }
+        Snapshot {
+            certified,
+            by_repo: "spira=1".into(),
+            admissible: certified,
+            admissible_by_repo: "spira=1".into(),
+            state,
+            ..Snapshot::default()
+        }
     }
 
     #[test_id(tin3x19)]
     #[test]
     fn a_certified_bead_the_batcher_would_not_cut_pages_no_round_due() {
         let cfg = cfg();
-        let unwanted = Snapshot { admissible: 0, admissible_by_repo: String::new(), ..snap(RoundState::None, 1) };
+        let unwanted = Snapshot {
+            admissible: 0,
+            admissible_by_repo: String::new(),
+            ..snap(RoundState::None, 1)
+        };
         let (c, say) = decide(&cfg, &Carry::default(), &unwanted, 1000);
         assert!(say.iter().all(|m| !m.starts_with("ROUND DUE")), "{say:?}");
         let (c, say) = decide(&cfg, &c, &unwanted, 1000 + cfg.idle_cut_secs);
         assert!(say.iter().all(|m| !m.starts_with("ROUND DUE")), "{say:?}");
-        let (_, say) = decide(&cfg, &c, &unwanted, 1000 + cfg.idle_cut_secs + cfg.remind_secs);
+        let (_, say) = decide(
+            &cfg,
+            &c,
+            &unwanted,
+            1000 + cfg.idle_cut_secs + cfg.remind_secs,
+        );
         assert!(say.iter().all(|m| !m.starts_with("ROUND DUE")), "{say:?}");
         let (_, say) = decide(&cfg, &Carry::default(), &snap(RoundState::None, 1), 1000);
         assert_eq!(say, ["ROUND DUE: 1 certified waiting [spira=1] (idle 0s), 0 of 1 rounds open — cut the next round"]);
@@ -294,7 +400,10 @@ mod tests {
     #[test_id(tan5ipc)]
     #[test]
     fn the_lifecycle_count_is_carried_apart_from_the_admissible_idle_clock() {
-        let s = Snapshot { admissible: 0, ..snap(RoundState::None, 3) };
+        let s = Snapshot {
+            admissible: 0,
+            ..snap(RoundState::None, 3)
+        };
         let (c, _) = decide(&cfg(), &Carry::default(), &s, 1000);
         assert_eq!((c.last_certified, c.last_c), (Some(3), Some(0)));
     }
@@ -303,10 +412,20 @@ mod tests {
     #[test]
     fn the_admissible_count_is_what_the_batcher_carries_per_repo() {
         let mut b = batcher_local::Carry::default();
-        b.repos.insert("spira".into(), batcher_local::RepoCarry { admissible: vec!["a".into(), "b".into()], ..Default::default() });
-        b.repos.insert("other".into(), batcher_local::RepoCarry::default());
+        b.repos.insert(
+            "spira".into(),
+            batcher_local::RepoCarry {
+                admissible: vec!["a".into(), "b".into()],
+                ..Default::default()
+            },
+        );
+        b.repos
+            .insert("other".into(), batcher_local::RepoCarry::default());
         let s = with_admissible(snap(RoundState::None, 5), &b);
-        assert_eq!((s.admissible, s.admissible_by_repo.as_str()), (2, "spira=2"));
+        assert_eq!(
+            (s.admissible, s.admissible_by_repo.as_str()),
+            (2, "spira=2")
+        );
     }
 
     fn outcome(tag: EventKindTag) -> Vec<String> {
@@ -317,30 +436,54 @@ mod tests {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal, Outcome};
         let clock = VirtualClock::new(1_800_000_000_000);
-        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+        let mut e = Engine::open(
+            MemJournal::new(),
+            std::sync::Arc::new(clock.clone()),
+            vec![cfg().registration()],
+            0,
+        )
+        .unwrap();
         let (id, stream, kind) = RoundDuty::boot();
         e.submit(id, stream, kind).unwrap();
         e.run_until_idle().unwrap();
         let observe = e.pending_effects().remove(0);
-        let out = if tag == EFFECT_TIMED_OUT { Outcome::TimedOut } else { Outcome::Failed(failure.into()) };
+        let out = if tag == EFFECT_TIMED_OUT {
+            Outcome::TimedOut
+        } else {
+            Outcome::Failed(failure.into())
+        };
         e.complete(&observe.key, out).unwrap();
         e.run_until_idle().unwrap();
-        e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).map(|p| p.spec.input).collect()
+        e.pending_effects()
+            .into_iter()
+            .filter(|p| p.spec.name == INBOX_APPEND)
+            .map(|p| p.spec.input)
+            .collect()
     }
 
     #[test_id(txudh78)]
     #[test]
     fn a_timed_out_observe_says_nothing_and_a_failed_one_is_unknown() {
-        assert_eq!(outcome(EFFECT_TIMED_OUT), Vec::<String>::new(), "a stale observe left over from a restart read nothing of the world");
+        assert_eq!(
+            outcome(EFFECT_TIMED_OUT),
+            Vec::<String>::new(),
+            "a stale observe left over from a restart read nothing of the world"
+        );
         let said = outcome(EFFECT_FAILED);
-        assert!(said.len() == 1 && said[0].contains("ROUND STATE UNKNOWN"), "{said:?}");
+        assert!(
+            said.len() == 1 && said[0].contains("ROUND STATE UNKNOWN"),
+            "{said:?}"
+        );
     }
 
     #[test_id(twa8d2d)]
     #[test]
     fn the_stores_refusal_text_ends_the_unknown_page() {
         let said = outcome_failing(EFFECT_FAILED, "lifecycle did not answer for spira: stale past 1500ms ... the watch is lost: cannot tell: deadline");
-        assert!(said.len() == 1 && said[0].contains("the watch is lost: cannot tell: deadline"), "{said:?}");
+        assert!(
+            said.len() == 1 && said[0].contains("the watch is lost: cannot tell: deadline"),
+            "{said:?}"
+        );
     }
 
     #[test_id(t1g2qv6)]
@@ -349,16 +492,36 @@ mod tests {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal, Outcome};
         let clock = VirtualClock::new(1_800_000_000_000);
-        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+        let mut e = Engine::open(
+            MemJournal::new(),
+            std::sync::Arc::new(clock.clone()),
+            vec![cfg().registration()],
+            0,
+        )
+        .unwrap();
         let (id, stream, kind) = RoundDuty::boot();
         e.submit(id, stream, kind).unwrap();
         let mut pages = 0;
         for _ in 0..3 {
             e.run_until_idle().unwrap();
-            let observe = e.pending_effects().into_iter().find(|p| p.spec.name == OBSERVE).expect("an observe is pending");
-            e.complete(&observe.key, Outcome::Failed("lifecycle did not answer for spira: refused".into())).unwrap();
+            let observe = e
+                .pending_effects()
+                .into_iter()
+                .find(|p| p.spec.name == OBSERVE)
+                .expect("an observe is pending");
+            e.complete(
+                &observe.key,
+                Outcome::Failed("lifecycle did not answer for spira: refused".into()),
+            )
+            .unwrap();
             e.run_until_idle().unwrap();
-            pages += e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND && p.spec.input.contains("ROUND STATE UNKNOWN")).count();
+            pages += e
+                .pending_effects()
+                .into_iter()
+                .filter(|p| {
+                    p.spec.name == INBOX_APPEND && p.spec.input.contains("ROUND STATE UNKNOWN")
+                })
+                .count();
             clock.advance(15_000);
         }
         assert_eq!(pages, 1, "one page per reminder window");
@@ -373,21 +536,48 @@ mod tests {
         let journal = MemJournal::new();
         let mut pages = 0;
         for _boot in 0..3 {
-            let mut e = Engine::open(journal.clone(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+            let mut e = Engine::open(
+                journal.clone(),
+                std::sync::Arc::new(clock.clone()),
+                vec![cfg().registration()],
+                0,
+            )
+            .unwrap();
             let (id, stream, kind) = RoundDuty::boot();
             e.submit(id, stream, kind).unwrap();
             e.run_until_idle().unwrap();
-            let observe = e.pending_effects().into_iter().find(|p| p.spec.name == OBSERVE).expect("an observe is pending");
-            e.complete(&observe.key, Outcome::Failed("lifecycle did not answer for spira: refused".into())).unwrap();
+            let observe = e
+                .pending_effects()
+                .into_iter()
+                .find(|p| p.spec.name == OBSERVE)
+                .expect("an observe is pending");
+            e.complete(
+                &observe.key,
+                Outcome::Failed("lifecycle did not answer for spira: refused".into()),
+            )
+            .unwrap();
             e.run_until_idle().unwrap();
-            pages += e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND && p.spec.input.contains("ROUND STATE UNKNOWN")).count();
+            pages += e
+                .pending_effects()
+                .into_iter()
+                .filter(|p| {
+                    p.spec.name == INBOX_APPEND && p.spec.input.contains("ROUND STATE UNKNOWN")
+                })
+                .count();
             clock.advance(15_000);
         }
         assert_eq!(pages, 1, "the carry survives a reboot");
     }
 
     fn restarting() -> Snapshot {
-        Snapshot { why: "stale past 1500ms: the watch is lost".into(), activation: Some(crate::watchers::Activation { sha: "bec37562f5aa11".into(), since: 900 }), ..snap(RoundState::Unknown, 0) }
+        Snapshot {
+            why: "stale past 1500ms: the watch is lost".into(),
+            activation: Some(crate::watchers::Activation {
+                sha: "bec37562f5aa11".into(),
+                since: 900,
+            }),
+            ..snap(RoundState::Unknown, 0)
+        }
     }
 
     #[test_id(tmscsyk)]
@@ -395,21 +585,49 @@ mod tests {
     fn an_unknown_round_state_inside_an_activation_window_waits_blind_once_and_never_pages() {
         let (c, say) = decide(&cfg(), &Carry::default(), &restarting(), 1000);
         assert_eq!(say.len(), 1, "{say:?}");
-        assert!(say[0].starts_with("WAIT BLIND: store restarting for activation of bec37562f5aa") && say[0].contains("bound 90s") && !say[0].contains("ROUND STATE UNKNOWN"), "{say:?}");
+        assert!(
+            say[0].starts_with("WAIT BLIND: store restarting for activation of bec37562f5aa")
+                && say[0].contains("bound 90s")
+                && !say[0].contains("ROUND STATE UNKNOWN"),
+            "{say:?}"
+        );
         assert_eq!(c.last_unknown, 0);
-        assert!(decide(&cfg(), &c, &restarting(), 1015).1.is_empty(), "said once per activation");
+        assert!(
+            decide(&cfg(), &c, &restarting(), 1015).1.is_empty(),
+            "said once per activation"
+        );
     }
 
     fn maintained(pid: u32) -> Snapshot {
-        Snapshot { why: "stale past 1500ms: the watch is lost".into(), maintenance: Some(spira_world::freeze::Maintenance { owner: "concierge".into(), why: "compact".into(), since: 900, pid }), ..snap(RoundState::Unknown, 0) }
+        Snapshot {
+            why: "stale past 1500ms: the watch is lost".into(),
+            maintenance: Some(spira_world::freeze::Maintenance {
+                owner: "concierge".into(),
+                why: "compact".into(),
+                since: 900,
+                pid,
+            }),
+            ..snap(RoundState::Unknown, 0)
+        }
     }
 
     #[test_id(tnxomes)]
     #[test]
     fn an_unreadable_store_under_live_maintenance_waits_and_does_not_page() {
-        let (_, say) = decide(&cfg(), &Carry::default(), &maintained(std::process::id()), 1000);
-        assert!(say.iter().all(|l| !l.contains("P0")) && !say.is_empty(), "{say:?}");
-        assert!(say[0].starts_with("WAIT BLIND: store stopped for maintenance by concierge since"), "{say:?}");
+        let (_, say) = decide(
+            &cfg(),
+            &Carry::default(),
+            &maintained(std::process::id()),
+            1000,
+        );
+        assert!(
+            say.iter().all(|l| !l.contains("P0")) && !say.is_empty(),
+            "{say:?}"
+        );
+        assert!(
+            say[0].starts_with("WAIT BLIND: store stopped for maintenance by concierge since"),
+            "{say:?}"
+        );
     }
 
     #[test_id(t4gy0qh)]
@@ -417,16 +635,31 @@ mod tests {
     fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store() {
         let (c, say) = decide(&cfg(), &Carry::default(), &maintained(u32::MAX), 1000);
         assert_eq!(say.len(), 1, "{say:?}");
-        assert!(say[0].starts_with("P0 BLIND: store maintenance by concierge since") && say[0].contains("world thaw-store"), "{say:?}");
-        assert!(decide(&cfg(), &c, &maintained(u32::MAX), 1015).1.is_empty(), "paged once");
+        assert!(
+            say[0].starts_with("P0 BLIND: store maintenance by concierge since")
+                && say[0].contains("world thaw-store"),
+            "{say:?}"
+        );
+        assert!(
+            decide(&cfg(), &c, &maintained(u32::MAX), 1015).1.is_empty(),
+            "paged once"
+        );
     }
 
     #[test_id(t7zbodw)]
     #[test]
     fn an_unknown_round_state_outside_any_window_pages_with_the_stores_reason() {
-        let s = Snapshot { why: "stale past 1500ms: refused".into(), ..snap(RoundState::Unknown, 0) };
+        let s = Snapshot {
+            why: "stale past 1500ms: refused".into(),
+            ..snap(RoundState::Unknown, 0)
+        };
         let (_, say) = decide(&cfg(), &Carry::default(), &s, 1000);
-        assert!(say.len() == 1 && say[0].starts_with("ROUND STATE UNKNOWN") && say[0].contains("stale past 1500ms: refused"), "{say:?}");
+        assert!(
+            say.len() == 1
+                && say[0].starts_with("ROUND STATE UNKNOWN")
+                && say[0].contains("stale past 1500ms: refused"),
+            "{say:?}"
+        );
     }
 
     #[test_id(t1xawmp)]
@@ -434,24 +667,47 @@ mod tests {
     fn a_free_slot_with_certified_work_is_due_once_per_reminder_window() {
         let (c, say) = decide(&cfg(), &Carry::default(), &snap(RoundState::None, 1), 1000);
         assert_eq!(say, ["ROUND DUE: 1 certified waiting [spira=1] (idle 0s), 0 of 1 rounds open — cut the next round"]);
-        assert!(decide(&cfg(), &c, &snap(RoundState::None, 1), 1100).1.is_empty());
-        assert_eq!(decide(&cfg(), &c, &snap(RoundState::None, 1), 1600).1.len(), 1);
+        assert!(decide(&cfg(), &c, &snap(RoundState::None, 1), 1100)
+            .1
+            .is_empty());
+        assert_eq!(
+            decide(&cfg(), &c, &snap(RoundState::None, 1), 1600).1.len(),
+            1
+        );
     }
 
     fn not_cutting(c: &Carry, s: &Snapshot, now: u64) -> (Carry, Vec<String>) {
         let (c, say) = decide(&cfg(), c, s, now);
-        (c, say.into_iter().filter(|m| m.starts_with("ROUND NOT CUTTING")).collect())
+        (
+            c,
+            say.into_iter()
+                .filter(|m| m.starts_with("ROUND NOT CUTTING"))
+                .collect(),
+        )
     }
 
     #[test_id(tqumwn6)]
     #[test]
-    fn cuttable_beads_with_no_round_open_raise_not_cutting_once_the_wait_passes_and_then_per_reminder() {
-        let s = Snapshot { admissible: 6, admissible_by_repo: "spira=6".into(), ..snap(RoundState::None, 6) };
+    fn cuttable_beads_with_no_round_open_raise_not_cutting_once_the_wait_passes_and_then_per_reminder(
+    ) {
+        let s = Snapshot {
+            admissible: 6,
+            admissible_by_repo: "spira=6".into(),
+            ..snap(RoundState::None, 6)
+        };
         let (c, say) = not_cutting(&Carry::default(), &s, 1000);
-        assert!(say.is_empty(), "a fresh submission is the batcher's next tick, not an outage: {say:?}");
+        assert!(
+            say.is_empty(),
+            "a fresh submission is the batcher's next tick, not an outage: {say:?}"
+        );
         let (c, say) = not_cutting(&c, &s, 1900);
         assert_eq!(say.len(), 1, "{say:?}");
-        assert!(say[0].starts_with("ROUND NOT CUTTING: 6 certified") && say[0].contains("spira=6") && say[0].contains("900s"), "{say:?}");
+        assert!(
+            say[0].starts_with("ROUND NOT CUTTING: 6 certified")
+                && say[0].contains("spira=6")
+                && say[0].contains("900s"),
+            "{say:?}"
+        );
         assert!(not_cutting(&c, &s, 2000).1.is_empty());
         assert_eq!(not_cutting(&c, &s, 2500).1.len(), 1);
     }
@@ -459,16 +715,26 @@ mod tests {
     #[test_id(tclj8j1)]
     #[test]
     fn submitted_beads_alone_never_raise_not_cutting() {
-        let s = Snapshot { submitted: 2, submitted_by_repo: "spira=2".into(), ..snap(RoundState::None, 0) };
+        let s = Snapshot {
+            submitted: 2,
+            submitted_by_repo: "spira=2".into(),
+            ..snap(RoundState::None, 0)
+        };
         let (c, _) = not_cutting(&Carry::default(), &s, 1000);
         let (_, say) = not_cutting(&c, &s, 2200);
-        assert!(say.iter().all(|m| !m.starts_with("ROUND NOT CUTTING")), "{say:?}");
+        assert!(
+            say.iter().all(|m| !m.starts_with("ROUND NOT CUTTING")),
+            "{say:?}"
+        );
     }
 
     #[test_id(tejcce6)]
     #[test]
     fn a_round_opening_or_the_pool_emptying_restarts_the_not_cutting_wait() {
-        let s = Snapshot { admissible: 1, ..snap(RoundState::None, 1) };
+        let s = Snapshot {
+            admissible: 1,
+            ..snap(RoundState::None, 1)
+        };
         let (c, _) = decide(&cfg(), &Carry::default(), &s, 1000);
         let (c, _) = decide(&cfg(), &c, &snap(RoundState::Open, 0), 1500);
         assert_eq!(c.starved_since, None);
@@ -478,11 +744,21 @@ mod tests {
     #[test_id(t3v8x2m)]
     #[test]
     fn a_round_left_at_opened_past_one_lease_ttl_raises_the_alarm_and_a_younger_one_does_not() {
-        let open = |at| Snapshot { open: 1, unadvanced: vec![("b-1".into(), at)], ..snap(RoundState::Open, 0) };
-        assert!(decide(&cfg(), &Carry::default(), &open(800), 1000).1.is_empty());
+        let open = |at| Snapshot {
+            open: 1,
+            unadvanced: vec![("b-1".into(), at)],
+            ..snap(RoundState::Open, 0)
+        };
+        assert!(decide(&cfg(), &Carry::default(), &open(800), 1000)
+            .1
+            .is_empty());
         let (c, say) = decide(&cfg(), &Carry::default(), &open(600), 1000);
         assert_eq!(say.len(), 1, "{say:?}");
-        assert!(say[0].starts_with("ROUND OPENED UNADVANCED: b-1 (opened 400s ago)") && say[0].contains("300s"), "{say:?}");
+        assert!(
+            say[0].starts_with("ROUND OPENED UNADVANCED: b-1 (opened 400s ago)")
+                && say[0].contains("300s"),
+            "{say:?}"
+        );
         assert!(decide(&cfg(), &c, &open(600), 1100).1.is_empty());
         assert_eq!(decide(&cfg(), &c, &open(600), 1700).1.len(), 1);
     }
@@ -490,7 +766,12 @@ mod tests {
     #[test_id(tokshrd)]
     #[test]
     fn an_unanswered_state_is_never_a_round_less_queue() {
-        let (_, say) = decide(&cfg(), &Carry::default(), &snap(RoundState::Unknown, 5), 1000);
+        let (_, say) = decide(
+            &cfg(),
+            &Carry::default(),
+            &snap(RoundState::Unknown, 5),
+            1000,
+        );
         assert_eq!(say.len(), 1);
         assert!(say[0].starts_with("ROUND STATE UNKNOWN"));
     }
@@ -498,20 +779,51 @@ mod tests {
     #[test_id(t91louy)]
     #[test]
     fn a_full_cap_suppresses_and_a_free_slot_counts_open_rounds() {
-        let open = |n| Snapshot { open: n, ..snap(RoundState::Open, 1) };
-        assert!(decide(&cfg(), &Carry::default(), &open(1), 1000).1.is_empty());
-        let wide = RoundDuty { max_open: 2, ..cfg() };
-        assert!(decide(&wide, &Carry::default(), &open(1), 1000).1[0].contains("1 of 2 rounds open"));
+        let open = |n| Snapshot {
+            open: n,
+            ..snap(RoundState::Open, 1)
+        };
+        assert!(decide(&cfg(), &Carry::default(), &open(1), 1000)
+            .1
+            .is_empty());
+        let wide = RoundDuty {
+            max_open: 2,
+            ..cfg()
+        };
+        assert!(
+            decide(&wide, &Carry::default(), &open(1), 1000).1[0].contains("1 of 2 rounds open")
+        );
     }
 
     #[test_id(tdpcri7)]
     #[test]
     fn a_verdictless_result_raises_its_own_line_and_a_stop_is_announced_on_change_only() {
-        let s = Snapshot { fresh: vec![("300".into(), "round 300: no verdict from any VM".into())], stopped: "spira".into(), ..snap(RoundState::None, 0) };
+        let s = Snapshot {
+            fresh: vec![("300".into(), "round 300: no verdict from any VM".into())],
+            stopped: "spira".into(),
+            ..snap(RoundState::None, 0)
+        };
         let (c, say) = decide(&cfg(), &Carry::default(), &s, 1000);
-        assert_eq!(say.iter().filter(|m| m.starts_with("ROUND NO VERDICTS 300")).count(), 1);
-        assert!(say.iter().any(|m| m.starts_with("ROUNDS STOPPED ON PURPOSE: spira ")));
-        assert!(decide(&cfg(), &c, &Snapshot { stopped: "spira".into(), ..snap(RoundState::None, 0) }, 1100).1.is_empty());
+        assert_eq!(
+            say.iter()
+                .filter(|m| m.starts_with("ROUND NO VERDICTS 300"))
+                .count(),
+            1
+        );
+        assert!(say
+            .iter()
+            .any(|m| m.starts_with("ROUNDS STOPPED ON PURPOSE: spira ")));
+        assert!(decide(
+            &cfg(),
+            &c,
+            &Snapshot {
+                stopped: "spira".into(),
+                ..snap(RoundState::None, 0)
+            },
+            1100
+        )
+        .1
+        .is_empty());
     }
 
     #[test_id(tjl3xyh)]
@@ -520,22 +832,56 @@ mod tests {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal, Outcome};
         let clock = VirtualClock::new(1_800_000_000_000);
-        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+        let mut e = Engine::open(
+            MemJournal::new(),
+            std::sync::Arc::new(clock.clone()),
+            vec![cfg().registration()],
+            0,
+        )
+        .unwrap();
         let (id, stream, kind) = RoundDuty::boot();
         e.submit(id, stream, kind).unwrap();
         e.run_until_idle().unwrap();
         let observe = e.pending_effects().remove(0);
-        let fresh = ["a", "b", "c"].iter().map(|r| (r.to_string(), format!("line {r}"))).collect();
-        let snap = Snapshot { fresh, ..snap(RoundState::None, 0) };
-        e.complete(&observe.key, Outcome::Succeeded(serde_json::to_string(&snap).unwrap())).unwrap();
+        let fresh = ["a", "b", "c"]
+            .iter()
+            .map(|r| (r.to_string(), format!("line {r}")))
+            .collect();
+        let snap = Snapshot {
+            fresh,
+            ..snap(RoundState::None, 0)
+        };
+        e.complete(
+            &observe.key,
+            Outcome::Succeeded(serde_json::to_string(&snap).unwrap()),
+        )
+        .unwrap();
         e.run_until_idle().unwrap();
-        let sent: Vec<String> = e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).map(|p| p.spec.input).collect();
+        let sent: Vec<String> = e
+            .pending_effects()
+            .into_iter()
+            .filter(|p| p.spec.name == INBOX_APPEND)
+            .map(|p| p.spec.input)
+            .collect();
         assert_eq!(sent.len(), 1, "{sent:?}");
-        assert_eq!(sent[0].lines().filter(|l| l.contains("[watch:round-duty] ROUND RESULT")).count(), 3, "{sent:?}");
+        assert_eq!(
+            sent[0]
+                .lines()
+                .filter(|l| l.contains("[watch:round-duty] ROUND RESULT"))
+                .count(),
+            3,
+            "{sent:?}"
+        );
     }
 
     fn halted(since: u64) -> Snapshot {
-        Snapshot { halt: Some(Halt { since, why: "operator order: freeze".into() }), ..snap(RoundState::None, 2) }
+        Snapshot {
+            halt: Some(Halt {
+                since,
+                why: "operator order: freeze".into(),
+            }),
+            ..snap(RoundState::None, 2)
+        }
     }
 
     #[test_id(tentjvp)]
@@ -543,9 +889,17 @@ mod tests {
     fn a_halted_plane_holds_round_due_and_not_cutting_and_the_row_names_the_halt() {
         let (c, say) = decide(&cfg(), &Carry::default(), &halted(400), 1000);
         assert!(say.is_empty(), "{say:?}");
-        assert!(c.held.contains("operator order: freeze") && c.held.contains("600s"), "{}", c.held);
+        assert!(
+            c.held.contains("operator order: freeze") && c.held.contains("600s"),
+            "{}",
+            c.held
+        );
         let (_, say) = decide(&cfg(), &c, &halted(400), 3000);
-        assert!(say.iter().all(|m| !m.starts_with("ROUND DUE") && !m.starts_with("ROUND NOT CUTTING")), "{say:?}");
+        assert!(
+            say.iter()
+                .all(|m| !m.starts_with("ROUND DUE") && !m.starts_with("ROUND NOT CUTTING")),
+            "{say:?}"
+        );
     }
 
     #[test_id(thh68pf)]
@@ -563,8 +917,15 @@ mod tests {
         assert!(say.is_empty(), "{say:?}");
         let (c, say) = decide(&cfg(), &c, &halted(1000), 1000 + 3_600);
         assert_eq!(say.len(), 1, "{say:?}");
-        assert!(say[0].starts_with("WORLD HALT OUTLASTS 3600s") && say[0].contains("operator order: freeze"), "{say:?}");
-        assert!(decide(&cfg(), &c, &halted(1000), 1000 + 9_000).1.is_empty(), "paged once per halt");
+        assert!(
+            say[0].starts_with("WORLD HALT OUTLASTS 3600s")
+                && say[0].contains("operator order: freeze"),
+            "{say:?}"
+        );
+        assert!(
+            decide(&cfg(), &c, &halted(1000), 1000 + 9_000).1.is_empty(),
+            "paged once per halt"
+        );
     }
 
     #[test_id(tfbjs6l)]
@@ -572,10 +933,27 @@ mod tests {
     fn after_a_halt_lifts_the_idle_clock_restarts() {
         let (c, _) = decide(&cfg(), &Carry::default(), &halted(0), 5000);
         let (c, say) = decide(&cfg(), &c, &snap(RoundState::None, 2), 5100);
-        assert!(say[0].starts_with("ROUND DUE"), "min certified is met, so due at once: {say:?}");
+        assert!(
+            say[0].starts_with("ROUND DUE"),
+            "min certified is met, so due at once: {say:?}"
+        );
         assert!(c.held.is_empty() && c.halt_paged.is_none());
-        let s = Snapshot { admissible: 1, ..snap(RoundState::None, 1) };
-        let (c, _) = decide(&cfg(), &Carry::default(), &Snapshot { halt: halted(0).halt, ..s.clone() }, 5000);
-        assert!(not_cutting(&c, &s, 5900).1.is_empty(), "the not-cutting wait starts at the resume");
+        let s = Snapshot {
+            admissible: 1,
+            ..snap(RoundState::None, 1)
+        };
+        let (c, _) = decide(
+            &cfg(),
+            &Carry::default(),
+            &Snapshot {
+                halt: halted(0).halt,
+                ..s.clone()
+            },
+            5000,
+        );
+        assert!(
+            not_cutting(&c, &s, 5900).1.is_empty(),
+            "the not-cutting wait starts at the resume"
+        );
     }
 }

@@ -56,9 +56,18 @@ pub static TASKS: &[Task] = &[
         boot: intake_gh_closeout::IntakeGhCloseout::boot,
         cadence_ms: |s| cadence(s, intake_gh_closeout::CADENCE_KEY),
         effects: intake_gh_closeout::EFFECTS,
-        runners: &[(intake_gh_closeout::OBSERVE, intake_gh_closeout::run_observe), (intake_gh_closeout::DRAIN, intake_gh_closeout::run_drain)],
+        runners: &[
+            (intake_gh_closeout::OBSERVE, intake_gh_closeout::run_observe),
+            (intake_gh_closeout::DRAIN, intake_gh_closeout::run_drain),
+        ],
         keys: &[intake_gh_closeout::KEYS],
-        build: |s| refuse(intake_gh_closeout::NAME, intake_gh_closeout::IntakeGhCloseout::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                intake_gh_closeout::NAME,
+                intake_gh_closeout::IntakeGhCloseout::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: persona_ops::NAME,
@@ -77,7 +86,9 @@ pub static TASKS: &[Task] = &[
             (persona_ops::CLEANUP, persona_ops::run_cleanup),
         ],
         keys: &[persona_ops::KEYS],
-        build: |s| refuse(persona_ops::NAME, persona_ops::PersonaOps::from_settings(s)).registration(),
+        build: |s| {
+            refuse(persona_ops::NAME, persona_ops::PersonaOps::from_settings(s)).registration()
+        },
     },
     Task {
         name: trigger_groom::NAME,
@@ -92,7 +103,13 @@ pub static TASKS: &[Task] = &[
             (trigger_groom::FILE, trigger_groom::run_file),
         ],
         keys: &[trigger_groom::KEYS],
-        build: |s| refuse(trigger_groom::NAME, trigger_groom::TriggerGroom::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                trigger_groom::NAME,
+                trigger_groom::TriggerGroom::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: trigger_warden::NAME,
@@ -107,7 +124,13 @@ pub static TASKS: &[Task] = &[
             (trigger_warden::FILE, trigger_warden::run_file),
         ],
         keys: &[trigger_warden::KEYS],
-        build: |s| refuse(trigger_warden::NAME, trigger_warden::TriggerWarden::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                trigger_warden::NAME,
+                trigger_warden::TriggerWarden::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: trigger_mimir::NAME,
@@ -122,7 +145,13 @@ pub static TASKS: &[Task] = &[
             (trigger_mimir::FILE, trigger_mimir::run_file),
         ],
         keys: &[trigger_mimir::KEYS],
-        build: |s| refuse(trigger_mimir::NAME, trigger_mimir::TriggerMimir::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                trigger_mimir::NAME,
+                trigger_mimir::TriggerMimir::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: asks_ideas::NAME,
@@ -154,7 +183,13 @@ pub static TASKS: &[Task] = &[
             (intake_filings::ACK, intake_filings::run_ack),
         ],
         keys: &[intake_filings::KEYS],
-        build: |s| refuse(intake_filings::NAME, intake_filings::IntakeFilings::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                intake_filings::NAME,
+                intake_filings::IntakeFilings::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: intake_kit_bump::NAME,
@@ -170,7 +205,13 @@ pub static TASKS: &[Task] = &[
             (intake_kit_bump::AMEND, intake_kit_bump::run_amend),
         ],
         keys: &[intake_kit_bump::KEYS],
-        build: |s| refuse(intake_kit_bump::NAME, intake_kit_bump::IntakeKitBump::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                intake_kit_bump::NAME,
+                intake_kit_bump::IntakeKitBump::from_settings(s),
+            )
+            .registration()
+        },
     },
     Task {
         name: persona_archivist::NAME,
@@ -185,12 +226,21 @@ pub static TASKS: &[Task] = &[
             (persona_archivist::BRIEF, persona_archivist::run_brief),
             (persona_archivist::COMMIT, persona_archivist::run_commit),
             (persona_archivist::SETTLE, persona_archivist::run_settle),
-            (persona_archivist::DIGEST_SEND, persona_archivist::run_digest_send),
+            (
+                persona_archivist::DIGEST_SEND,
+                persona_archivist::run_digest_send,
+            ),
             (persona_archivist::MARK, persona_archivist::run_mark),
             (persona_archivist::FORGET, persona_archivist::run_forget),
         ],
         keys: &[persona_archivist::KEYS],
-        build: |s| refuse(persona_archivist::NAME, persona_archivist::PersonaArchivist::from_settings(s)).registration(),
+        build: |s| {
+            refuse(
+                persona_archivist::NAME,
+                persona_archivist::PersonaArchivist::from_settings(s),
+            )
+            .registration()
+        },
     },
 ];
 
@@ -235,20 +285,31 @@ pub enum Decision {
 /// Every key in `keys`, each read from the `Settings` the row is built with (`task_config`, as
 /// `Settings::from_lookup` read it), never the process's own config door. The first key the
 /// settings do not hold refuses, naming it; there is no default.
-pub fn pinned(settings: &crate::Settings, keys: &[&str]) -> Result<BTreeMap<String, String>, String> {
-    keys.iter().map(|k| setting(settings, k).map(|v| (k.to_string(), v))).collect()
+pub fn pinned(
+    settings: &crate::Settings,
+    keys: &[&str],
+) -> Result<BTreeMap<String, String>, String> {
+    keys.iter()
+        .map(|k| setting(settings, k).map(|v| (k.to_string(), v)))
+        .collect()
 }
 
 fn setting(settings: &crate::Settings, key: &str) -> Result<String, String> {
-    settings.task_config.get(key).cloned().ok_or_else(|| format!("{key} is not in the settings (no row of tasks::all() declares it) — refusing"))
+    settings.task_config.get(key).cloned().ok_or_else(|| {
+        format!("{key} is not in the settings (no row of tasks::all() declares it) — refusing")
+    })
 }
 
 /// A cadence key in seconds, as milliseconds, read from `settings`. A value that is not a
 /// positive integer refuses, naming the key.
 pub fn cadence_ms(settings: &crate::Settings, key: &str) -> Result<u64, String> {
     let raw = setting(settings, key)?;
-    match raw.trim().parse::<u64>().map_err(|_| format!("{key} must be a positive number of seconds, got {raw:?} — refusing"))? {
-        0 => Err(format!("{key} must be a positive number of seconds — refusing")),
+    match raw.trim().parse::<u64>().map_err(|_| {
+        format!("{key} must be a positive number of seconds, got {raw:?} — refusing")
+    })? {
+        0 => Err(format!(
+            "{key} must be a positive number of seconds — refusing"
+        )),
         s => Ok(s * 1000),
     }
 }
@@ -278,12 +339,25 @@ impl Cycle {
     /// The P1 tick: on `tick`, the observe probe with `input` and the next tick `every_ms` on;
     /// on the probe's answer, `answer(body)`. Anything on another stream, and any other outcome,
     /// is ignored.
-    pub fn handle(&self, every_ms: u64, view: &Projection, ev: &Event, input: impl FnOnce() -> String, answer: impl FnOnce(&str) -> Vec<Command>) -> Vec<Command> {
+    pub fn handle(
+        &self,
+        every_ms: u64,
+        view: &Projection,
+        ev: &Event,
+        input: impl FnOnce() -> String,
+        answer: impl FnOnce(&str) -> Vec<Command>,
+    ) -> Vec<Command> {
         if ev.stream.0 != self.stream {
             return vec![];
         }
         if ev.kind.tag == self.tick {
-            return vec![Command::Probe(EffectSpec::probe(self.observe, input(), self.deadline_ms)), Command::Timer { at: ev.at + every_ms, kind: EventKind::new(self.tick, "") }];
+            return vec![
+                Command::Probe(EffectSpec::probe(self.observe, input(), self.deadline_ms)),
+                Command::Timer {
+                    at: ev.at + every_ms,
+                    kind: EventKind::new(self.tick, ""),
+                },
+            ];
         }
         if ev.kind.tag != EFFECT_SUCCEEDED || !answers_observe(view, ev, self.observe) {
             return vec![];
@@ -294,10 +368,18 @@ impl Cycle {
 
 /// The commands for one decision: an Emit of the carry under `tag` only when it changed, then
 /// each act as a journaled effect.
-pub fn commands<C: Serialize + PartialEq>(before: &C, after: &C, tag: EventKindTag, acts: Vec<EffectSpec>) -> Vec<Command> {
+pub fn commands<C: Serialize + PartialEq>(
+    before: &C,
+    after: &C,
+    tag: EventKindTag,
+    acts: Vec<EffectSpec>,
+) -> Vec<Command> {
     let mut out = vec![];
     if before != after {
-        out.push(Command::Emit(EventKind::new(tag, &serde_json::to_string(after).unwrap_or_default())));
+        out.push(Command::Emit(EventKind::new(
+            tag,
+            &serde_json::to_string(after).unwrap_or_default(),
+        )));
     }
     out.extend(acts.into_iter().map(Command::Effect));
     out
@@ -312,15 +394,30 @@ mod tests {
     #[test]
     fn the_helpers_read_the_settings_they_are_given_not_the_process_config() {
         let mut s = crate::settings::fixture();
-        s.task_config.insert(super::super::asks_ideas::CADENCE_KEY.into(), "42".into());
-        assert_eq!(super::super::cadence(&s, super::super::asks_ideas::CADENCE_KEY), 42_000);
-        assert_eq!(super::super::asks_ideas::AsksIdeas::from_settings(&s).map(|t| t.interval_ms), Ok(42_000), "the row pins what the settings hold");
-        for row in super::super::TASKS.iter().chain(super::super::super::g::TASKS) {
+        s.task_config
+            .insert(super::super::asks_ideas::CADENCE_KEY.into(), "42".into());
+        assert_eq!(
+            super::super::cadence(&s, super::super::asks_ideas::CADENCE_KEY),
+            42_000
+        );
+        assert_eq!(
+            super::super::asks_ideas::AsksIdeas::from_settings(&s).map(|t| t.interval_ms),
+            Ok(42_000),
+            "the row pins what the settings hold"
+        );
+        for row in super::super::TASKS
+            .iter()
+            .chain(super::super::super::g::TASKS)
+        {
             let _ = (row.build)(&s);
             let _ = (row.cadence_ms)(&s);
         }
-        assert!(super::super::pinned(&s, &["SPIRA_PLANTED_NOT_A_KEY"]).is_err(), "a key the settings lack refuses");
-        s.task_config.insert(super::super::asks_ideas::CADENCE_KEY.into(), "0".into());
+        assert!(
+            super::super::pinned(&s, &["SPIRA_PLANTED_NOT_A_KEY"]).is_err(),
+            "a key the settings lack refuses"
+        );
+        s.task_config
+            .insert(super::super::asks_ideas::CADENCE_KEY.into(), "0".into());
         assert!(super::super::cadence_ms(&s, super::super::asks_ideas::CADENCE_KEY).is_err());
     }
 }

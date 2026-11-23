@@ -12,11 +12,30 @@ use spira_runtime::tasks::e::inbox_notify::*;
 const MIN: u64 = 60_000;
 
 fn config() -> Config {
-    Config { actionable: "FAIL|DEGRADED".into(), health_timeout_s: 10, notify_age_s: 1800, instance: "prod".into(), run: "r".into(), watchers: "h/spira/watchers".into(), watchers_overlay: String::new(), mail_readers: "concierge".into(), mail_unread_age_s: 1800, mail: "m".into() }
+    Config {
+        actionable: "FAIL|DEGRADED".into(),
+        health_timeout_s: 10,
+        notify_age_s: 1800,
+        instance: "prod".into(),
+        run: "r".into(),
+        watchers: "h/spira/watchers".into(),
+        watchers_overlay: String::new(),
+        mail_readers: "concierge".into(),
+        mail_unread_age_s: 1800,
+        mail: "m".into(),
+    }
 }
 
 fn row(name: &str, lines: u64, cursor: u64, unread: &[&str]) -> RowView {
-    RowView { name: name.into(), kind: "log".into(), lines, cursor, unread: unread.iter().map(|s| s.to_string()).collect(), pending: None, unhealthy: None }
+    RowView {
+        name: name.into(),
+        kind: "log".into(),
+        lines,
+        cursor,
+        unread: unread.iter().map(|s| s.to_string()).collect(),
+        pending: None,
+        unhealthy: None,
+    }
 }
 
 /// Every cursor at its line count, the extern unit active and healthy.
@@ -25,7 +44,11 @@ fn caught_up() -> Snapshot {
         now: 0,
         halted: false,
         rows: vec![row("gate", 40, 40, &[]), row("mail-deliver", 3, 3, &[])],
-        units: [("spira-mail-deliver-prod.service".to_string(), ("active".to_string(), 0))].into(),
+        units: [(
+            "spira-mail-deliver-prod.service".to_string(),
+            ("active".to_string(), 0),
+        )]
+        .into(),
         health: [("mail-deliver".to_string(), Health::Ok)].into(),
         mail_health: Some(0),
     }
@@ -33,13 +56,21 @@ fn caught_up() -> Snapshot {
 
 fn stale() -> Snapshot {
     let mut s = caught_up();
-    s.rows[0] = row("gate", 41, 40, &["[2026-11-03T00:00:00Z] gate FAIL test-x.sh"]);
+    s.rows[0] = row(
+        "gate",
+        41,
+        40,
+        &["[2026-11-03T00:00:00Z] gate FAIL test-x.sh"],
+    );
     s
 }
 
 fn degraded() -> Snapshot {
     let mut s = caught_up();
-    s.health.insert("mail-deliver".into(), Health::Degraded("no delivery in 900s".into()));
+    s.health.insert(
+        "mail-deliver".into(),
+        Health::Degraded("no delivery in 900s".into()),
+    );
     s
 }
 
@@ -47,7 +78,9 @@ fn rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
     let (_, stream, kind) = InboxNotify::boot();
     let mut r = TaskRig::new(seed, InboxNotify::new(config()).registration())
         .unwrap()
-        .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
+        .double(OBSERVE, move |_| {
+            Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())
+        })
         .double(ASK, |_| Ok("msg-1".into()))
         .double(SOP_MATCH, |_| Ok("none".into()))
         .double(UNIT_START, |_| Ok("{}".into()))
@@ -60,26 +93,48 @@ fn rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
 }
 
 fn asks(r: &TaskRig) -> Vec<String> {
-    r.requested().iter().filter(|q| q.name == ASK).map(|q| q.input.clone()).collect()
+    r.requested()
+        .iter()
+        .filter(|q| q.name == ASK)
+        .map(|q| q.input.clone())
+        .collect()
 }
 
 fn carry(r: &TaskRig) -> Carry {
-    r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
+    r.journaled()
+        .iter()
+        .rev()
+        .find(|e| e.kind.tag == STATE)
+        .map(|e| serde_json::from_str(&e.kind.body).unwrap())
+        .unwrap_or_default()
 }
 
 #[test_id(t9jbbol)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_five_minute_tick() {
     let t = acc::row(NAME);
-    assert_eq!((t.stream(), t.effects, t.keys.concat()), (STREAM, EFFECTS, KEYS.to_vec()));
+    assert_eq!(
+        (t.stream(), t.effects, t.keys.concat()),
+        (STREAM, EFFECTS, KEYS.to_vec())
+    );
     let s = acc::pinned_settings(&[]).expect("settings from the complete fixture");
     assert_eq!((t.cadence_ms)(&s), CADENCE_MS);
-    assert_eq!(Config::pinned().map(|_| ()), Ok(()), "every key resolves through the config door");
+    assert_eq!(
+        Config::pinned().map(|_| ()),
+        Ok(()),
+        "every key resolves through the config door"
+    );
     let mut r = TaskRig::new(1, (t.build)(&s)).unwrap();
     let (_, stream, kind) = (t.boot)();
     r.tick(stream, kind).unwrap();
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
-    assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
+    assert_eq!(
+        r.requested()
+            .iter()
+            .map(|q| q.name.as_str())
+            .collect::<Vec<_>>(),
+        [OBSERVE]
+    );
 }
 
 #[test_id(tc2flz8)]
@@ -96,7 +151,10 @@ fn t3_the_pending_and_unhealthy_clocks_set_ask_once_and_clear_and_a_halted_world
     let w = Arc::new(Mutex::new(stale()));
     let mut r = rig(1, w.clone());
     assert!(carry(&r).pending.contains_key("gate"), "pending none → set");
-    assert!(asks(&r).is_empty(), "younger than SPIRA_NOTIFY_AGE asks nothing");
+    assert!(
+        asks(&r).is_empty(),
+        "younger than SPIRA_NOTIFY_AGE asks nothing"
+    );
     r.advance(35 * MIN).unwrap();
     assert_eq!(asks(&r).len(), 1, "stale past the age → one ask");
     assert!(carry(&r).stamp_backlog.is_some(), "stamp none → fp");
@@ -104,21 +162,36 @@ fn t3_the_pending_and_unhealthy_clocks_set_ask_once_and_clear_and_a_halted_world
     assert_eq!(asks(&r).len(), 1, "the same fingerprint is not asked again");
     *w.lock().unwrap() = caught_up();
     r.advance(CADENCE_MS).unwrap();
-    assert!(carry(&r).pending.is_empty() && carry(&r).stamp_backlog.is_none(), "pending and stamp cleared when nothing is stale");
+    assert!(
+        carry(&r).pending.is_empty() && carry(&r).stamp_backlog.is_none(),
+        "pending and stamp cleared when nothing is stale"
+    );
     *w.lock().unwrap() = degraded();
     r.advance(CADENCE_MS).unwrap();
-    assert!(carry(&r).unhealthy.contains_key("mail-deliver"), "unhealthy none → set");
-    *w.lock().unwrap() = Snapshot { halted: true, ..degraded() };
+    assert!(
+        carry(&r).unhealthy.contains_key("mail-deliver"),
+        "unhealthy none → set"
+    );
+    *w.lock().unwrap() = Snapshot {
+        halted: true,
+        ..degraded()
+    };
     r.advance(40 * MIN).unwrap();
     acc::assert_healthy(&r, STREAM);
     assert_eq!(asks(&r).len(), 1, "a health ask while halted is refused");
-    assert!(carry(&r).unhealthy.is_empty(), "a halted world clears the unhealthy clock");
+    assert!(
+        carry(&r).unhealthy.is_empty(),
+        "a halted world clears the unhealthy clock"
+    );
 }
 
 #[test_id(tl5voox)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
-    assert_eq!(acc::launcher(&acc::module_source("e/inbox_notify.rs")), None);
+    assert_eq!(
+        acc::launcher(&acc::module_source("e/inbox_notify.rs")),
+        None
+    );
     let real: Vec<&str> = spira_runtime::tasks::routes().keys().copied().collect();
     let names = sim::doubles::service().names();
     let sim: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -134,11 +207,23 @@ fn t5_the_asks_are_the_ones_watchd_notify_mailed() {
     r.advance(35 * MIN).unwrap();
     acc::assert_healthy(&r, STREAM);
     let a = asks(&r);
-    assert!(a.len() == 1 && a[0].contains(BACKLOG_SUBJECT) && a[0].contains("gate — 1 actionable event(s) with no reader, the oldest for") && a[0].contains("Watchd <watchd@spira>"), "{a:?}");
+    assert!(
+        a.len() == 1
+            && a[0].contains(BACKLOG_SUBJECT)
+            && a[0].contains("gate — 1 actionable event(s) with no reader, the oldest for")
+            && a[0].contains("Watchd <watchd@spira>"),
+        "{a:?}"
+    );
     let mut r = rig(1, Arc::new(Mutex::new(degraded())));
     r.advance(35 * MIN).unwrap();
     let a = asks(&r);
-    assert!(a.len() == 1 && a[0].contains(HEALTH_SUBJECT) && a[0].contains("mail-deliver — DEGRADED for") && a[0].contains("no delivery in 900s"), "{a:?}");
+    assert!(
+        a.len() == 1
+            && a[0].contains(HEALTH_SUBJECT)
+            && a[0].contains("mail-deliver — DEGRADED for")
+            && a[0].contains("no delivery in 900s"),
+        "{a:?}"
+    );
 }
 
 fn registration() -> runtime::event::Registration {
@@ -157,11 +242,19 @@ fn asked_once() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&asked_once(), NAME);
-    assert!(rows.iter().any(|k| k == "pending/gate") && rows.iter().any(|k| k == "stamp_backlog"), "{rows:?}");
+    assert!(
+        rows.iter().any(|k| k == "pending/gate") && rows.iter().any(|k| k == "stamp_backlog"),
+        "{rows:?}"
+    );
 }
 
 #[test_id(to6ce8f)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(asked_once, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
+        asked_once,
+        registration,
+        STREAM,
+        runtime::event::EventKind::new(TICK, ""),
+    );
 }
