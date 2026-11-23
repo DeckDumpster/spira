@@ -13,12 +13,7 @@ use spira_runtime::watchers::view::View;
 const FORGET: u64 = 99;
 const SECOND: u64 = 1000;
 fn engine(journal: Arc<MemJournal>, clock: &VirtualClock, enabled: bool) -> Engine {
-    let reg = View {
-        interval_ms: 3 * SECOND,
-        forget_secs: FORGET,
-        enabled,
-    }
-    .registration();
+    let reg = View { interval_ms: 3 * SECOND, forget_secs: FORGET, enabled }.registration();
     Engine::open(journal, Arc::new(clock.clone()), vec![reg], 0).unwrap()
 }
 
@@ -37,14 +32,6 @@ fn without_a_view_program_the_handler_schedules_nothing() {
 #[test]
 fn the_watchers_manifest_no_longer_carries_the_row() {
     let manifest = fs::read_to_string(testkit::manifest_dir().join("../spira/watchers")).unwrap();
-    assert!(
-        manifest.lines().any(|l| l.starts_with("perf-watch|")),
-        "the scan must be able to see a row"
-    );
-    assert!(
-        !manifest
-            .lines()
-            .any(|l| l.trim_start_matches('?').starts_with("view|")),
-        "spira-runtime hosts the view follower"
-    );
+    assert!(manifest.lines().any(|l| l.starts_with("perf-watch|")), "the scan must be able to see a row");
+    assert!(!manifest.lines().any(|l| l.trim_start_matches('?').starts_with("view|")), "spira-runtime hosts the view follower");
 }

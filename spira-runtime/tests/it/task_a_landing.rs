@@ -16,39 +16,15 @@ spira_runtime::family_a_acceptance! {
 }
 
 fn bead(id: &str, handed_on: bool) -> BeadRow {
-    BeadRow {
-        id: id.into(),
-        repo: "pokedumpster".into(),
-        handed_on,
-        priority: 2,
-        version: 4,
-        ..BeadRow::default()
-    }
+    BeadRow { id: id.into(), repo: "pokedumpster".into(), handed_on, priority: 2, version: 4, ..BeadRow::default() }
 }
 
 fn branch(id: &str, handed_on: bool) -> Branch {
-    Branch {
-        br: format!("spira/{id}"),
-        tip: format!("{id}-tip"),
-        bead: Some(bead(id, handed_on)),
-        lc_state: Some("PR_OPEN".into()),
-        pr_state: PrState::None,
-        ..Branch::default()
-    }
+    Branch { br: format!("spira/{id}"), tip: format!("{id}-tip"), bead: Some(bead(id, handed_on)), lc_state: Some("PR_OPEN".into()), pr_state: PrState::None, ..Branch::default() }
 }
 
 fn with(branches: Vec<Branch>) -> Snapshot {
-    Snapshot {
-        forge_enabled: true,
-        repos: vec![Repo {
-            name: "pokedumpster".into(),
-            path: "r/poke".into(),
-            landref: "main".into(),
-            base_fq: "origin/main".into(),
-            base_sha: "b1".into(),
-            branches,
-        }],
-    }
+    Snapshot { forge_enabled: true, repos: vec![Repo { name: "pokedumpster".into(), path: "r/poke".into(), landref: "main".into(), base_fq: "origin/main".into(), base_sha: "b1".into(), branches }] }
 }
 
 /// The contract's idle fixture: forge enabled, one pr repo, two branches, neither handed on.
@@ -79,8 +55,7 @@ fn t3_every_row_of_the_branch_machine_is_taken_and_keeps_its_exit_code() {
 #[test_id(tf35zpx)]
 #[test]
 fn t3_pushing_x_pr_merged_is_refused_naming_pushing() {
-    let refused =
-        step(State::Pushing, Trigger::PrMerged).expect_err("pushing × pr_state=merged is illegal");
+    let refused = step(State::Pushing, Trigger::PrMerged).expect_err("pushing × pr_state=merged is illegal");
     assert!(refused.to_lowercase().contains("pushing"), "{refused}");
 }
 
@@ -98,17 +73,8 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test]
 fn t5_a_handed_on_branch_is_rebased_and_the_rest_skipped() {
     let (carry, acts) = decide(&Carry::default(), &busy());
-    assert_eq!(
-        acts.iter()
-            .filter(|a| a.effect == REBASE)
-            .map(|a| a.key.as_str())
-            .collect::<Vec<_>>(),
-        ["spira/pd-a/b1"]
-    );
-    assert_eq!(
-        carry.branches.get("spira/pd-a").map(|b| b.state),
-        Some(State::Rebasing)
-    );
+    assert_eq!(acts.iter().filter(|a| a.effect == REBASE).map(|a| a.key.as_str()).collect::<Vec<_>>(), ["spira/pd-a/b1"]);
+    assert_eq!(carry.branches.get("spira/pd-a").map(|b| b.state), Some(State::Rebasing));
     assert!(!carry.branches.contains_key("spira/pd-b"));
 }
 
@@ -116,63 +82,33 @@ fn t5_a_handed_on_branch_is_rebased_and_the_rest_skipped() {
 #[test_id(tol2f0g)]
 #[test]
 fn t5_a_pr_merged_while_not_handed_on_is_delivered() {
-    let merged = Branch {
-        pr_state: PrState::Merged,
-        merge_sha: Some("m1".into()),
-        ..branch("pd-a", false)
-    };
+    let merged = Branch { pr_state: PrState::Merged, merge_sha: Some("m1".into()), ..branch("pd-a", false) };
     let (_, acts) = decide(&Carry::default(), &with(vec![merged]));
-    assert!(
-        acts.iter()
-            .any(|a| a.effect == DELIVER_PR_MERGED && a.key == "pd-a/m1"),
-        "{acts:?}"
-    );
+    assert!(acts.iter().any(|a| a.effect == DELIVER_PR_MERGED && a.key == "pd-a/m1"), "{acts:?}");
 }
 
 /// `pr.rs:181-213`: content already on base is delivered by content, not pushed.
 #[test_id(t2btbfe)]
 #[test]
 fn t5_content_already_on_base_is_delivered_by_content() {
-    let landed = Branch {
-        content_on_base: true,
-        ..branch("pd-a", true)
-    };
+    let landed = Branch { content_on_base: true, ..branch("pd-a", true) };
     let acts = decide(&Carry::default(), &with(vec![landed])).1;
-    assert!(
-        effects(&acts).contains(&DELIVER_BY_CONTENT) && !effects(&acts).contains(&REBASE),
-        "{acts:?}"
-    );
+    assert!(effects(&acts).contains(&DELIVER_BY_CONTENT) && !effects(&acts).contains(&REBASE), "{acts:?}");
 }
 
 /// A live holder defers the branch: nothing is done to it.
 #[test_id(t7gkgcw)]
 #[test]
 fn t5_a_live_holder_defers() {
-    let held = Branch {
-        holder_alive: true,
-        ..branch("pd-a", true)
-    };
-    assert_eq!(
-        decide(&Carry::default(), &with(vec![held])).1,
-        Vec::<Act>::new()
-    );
+    let held = Branch { holder_alive: true, ..branch("pd-a", true) };
+    assert_eq!(decide(&Carry::default(), &with(vec![held])).1, Vec::<Act>::new());
 }
 
 /// `pr.rs:56-59`: forge disabled is idle.
 #[test_id(tia17zt)]
 #[test]
 fn t5_forge_disabled_does_nothing() {
-    assert_eq!(
-        decide(
-            &Carry::default(),
-            &Snapshot {
-                forge_enabled: false,
-                ..busy()
-            }
-        )
-        .1,
-        Vec::<Act>::new()
-    );
+    assert_eq!(decide(&Carry::default(), &Snapshot { forge_enabled: false, ..busy() }).1, Vec::<Act>::new());
 }
 
 /// law-lifecycle-state-is-not-text (sp-mijstw): a rebase step's outcome is a typed body, never
@@ -182,13 +118,7 @@ fn t5_forge_disabled_does_nothing() {
 fn rebasing(id: &str) -> (Carry, String) {
     let leg = serde_json::json!({"repo": "pokedumpster", "path": "r/poke", "landref": "main", "base_fq": "origin/main", "base_sha": "b1", "br": format!("spira/{id}"), "id": id, "tip": format!("{id}-tip"), "pr_state": "none", "version": 4});
     let mut carry = Carry::default();
-    carry.branches.insert(
-        format!("spira/{id}"),
-        BranchCarry {
-            state: State::Rebasing,
-            ..BranchCarry::default()
-        },
-    );
+    carry.branches.insert(format!("spira/{id}"), BranchCarry { state: State::Rebasing, ..BranchCarry::default() });
     (carry, leg.to_string())
 }
 
@@ -196,17 +126,8 @@ fn rebasing(id: &str) -> (Carry, String) {
 #[test]
 fn t7_a_rebase_that_could_not_run_is_not_a_conflict() {
     let (carry, leg) = rebasing("pd-a");
-    let (next, acts) = on_outcome(
-        &carry,
-        REBASE,
-        &leg,
-        false,
-        "landing.rebase: rebase-stale timed out",
-    );
-    assert!(
-        !effects(&acts).contains(&REOPEN),
-        "an infra failure sent the bead to rework: {acts:?}"
-    );
+    let (next, acts) = on_outcome(&carry, REBASE, &leg, false, "landing.rebase: rebase-stale timed out");
+    assert!(!effects(&acts).contains(&REOPEN), "an infra failure sent the bead to rework: {acts:?}");
     assert_eq!(next.branches["spira/pd-a"].state, State::Done);
 }
 
@@ -217,19 +138,10 @@ fn t7_rebase_outcomes_are_read_from_the_typed_body() {
     let (next, acts) = on_outcome(&carry, REBASE, &leg, true, r#"{"outcome":"ok"}"#);
     assert_eq!(effects(&acts), vec![CONFINE], "ok rebases go on to confine");
     assert_eq!(next.branches["spira/pd-a"].state, State::Confining);
-    let (_, acts) = on_outcome(
-        &carry,
-        REBASE,
-        &leg,
-        true,
-        r#"{"outcome":"conflict","detail":"src/a.rs"}"#,
-    );
+    let (_, acts) = on_outcome(&carry, REBASE, &leg, true, r#"{"outcome":"conflict","detail":"src/a.rs"}"#);
     assert_eq!(effects(&acts), vec![REOPEN], "a reported conflict reopens");
     let (_, acts) = on_outcome(&carry, REBASE, &leg, true, "ok but not the body");
-    assert!(
-        !effects(&acts).contains(&REOPEN),
-        "an unreadable body is no verdict: {acts:?}"
-    );
+    assert!(!effects(&acts).contains(&REOPEN), "an unreadable body is no verdict: {acts:?}");
 }
 
 #[test_id(ta23g9q)]
@@ -240,21 +152,11 @@ fn t7_confine_outcomes_are_read_from_the_typed_body() {
     let (next, acts) = on_outcome(&carry, CONFINE, &leg, true, r#"{"status":0,"detail":""}"#);
     assert_eq!(effects(&acts), vec![FORCE_PUSH]);
     assert_eq!(next.branches["spira/pd-a"].state, State::Pushing);
-    let (_, acts) = on_outcome(
-        &carry,
-        CONFINE,
-        &leg,
-        true,
-        r#"{"status":2,"detail":"touches gate.steps"}"#,
-    );
+    let (_, acts) = on_outcome(&carry, CONFINE, &leg, true, r#"{"status":2,"detail":"touches gate.steps"}"#);
     assert_eq!(effects(&acts), vec![REOPEN]);
     let (next, acts) = on_outcome(&carry, CONFINE, &leg, true, "0 clean");
     assert!(acts.is_empty(), "{acts:?}");
-    assert_eq!(
-        next.branches["spira/pd-a"].state,
-        State::Done,
-        "an unreadable confine body is inconclusive"
-    );
+    assert_eq!(next.branches["spira/pd-a"].state, State::Done, "an unreadable confine body is inconclusive");
 }
 
 fn at_work() -> TaskRig {
@@ -273,12 +175,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(ttgmu4c)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(
-        at_work,
-        registration,
-        STREAM,
-        EventKind::new(TICK, ""),
-    );
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
 
 mod deliveries {
@@ -286,9 +183,7 @@ mod deliveries {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use spira_runtime::tasks::a::landing::{
-        deliver_by_content_on, deliver_pr_closed_on, deliver_pr_merged_on,
-    };
+    use spira_runtime::tasks::a::landing::{deliver_by_content_on, deliver_pr_closed_on, deliver_pr_merged_on};
     use spira_store::lc_call::{LcClient, Reply, Transport};
 
     /// The store as the real socket answers it: `deliver` is refused with usage, `show` and `event` are served.
@@ -298,24 +193,14 @@ mod deliveries {
     }
 
     impl Transport for Socket {
-        fn exchange(
-            &self,
-            argv: &[String],
-            _stdin: Option<&str>,
-            _d: Duration,
-        ) -> Result<Reply, String> {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
             self.seen.lock().unwrap().push(argv.join(" "));
             let (code, out) = match argv[0].as_str() {
                 "show" => (0, self.row.clone()),
                 "event" => (0, String::new()),
                 _ => (2, "usage: spira-lc show <bead-id> | …".into()),
             };
-            Ok(Reply {
-                code,
-                out,
-                err: String::new(),
-                read_ended: false,
-            })
+            Ok(Reply { code, out, err: String::new(), read_ended: false })
         }
     }
 
@@ -324,25 +209,8 @@ mod deliveries {
     }
 
     fn git(dir: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args([
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        let out = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
@@ -367,13 +235,11 @@ mod deliveries {
     }
 
     fn client(row: String) -> (Arc<Socket>, LcClient) {
-        let s = Arc::new(Socket {
-            row,
-            seen: Mutex::new(Vec::new()),
-        });
+        let s = Arc::new(Socket { row, seen: Mutex::new(Vec::new()) });
         (s.clone(), LcClient::over(s, true))
     }
 
+    
     #[test_id(tbbomd8)]
     #[test]
     fn deliver_by_content_lands_a_squash_merged_branch_with_no_delivery_row_by_an_event() {
@@ -381,12 +247,11 @@ mod deliveries {
         let sha = squash_merged(d.path());
         let (s, c) = client(row("null"));
         deliver_by_content_on(&c, &leg(d.path(), &sha)).unwrap();
-        let want = format!(
-            r#"event bead sp-a --expect SUBMITTED --version 12 --actor pr-pass-branch --kind {{"ContentOnBase":{{"proof":"merge-tree:{sha}"}}}}"#
-        );
+        let want = format!(r#"event bead sp-a --expect SUBMITTED --version 12 --actor pr-pass-branch --kind {{"ContentOnBase":{{"proof":"merge-tree:{sha}"}}}}"#);
         assert_eq!(*s.seen.lock().unwrap(), vec!["show sp-a".to_string(), want]);
     }
 
+    
     #[test_id(tri0n9e)]
     #[test]
     fn deliver_pr_merged_records_a_merged_branch_and_a_pr_open_row_gets_the_delivery_event() {
@@ -398,19 +263,11 @@ mod deliveries {
         let (s, c) = client(row(r#"{"state":"PR_OPEN","version":9}"#));
         deliver_pr_merged_on(&c, &leg(d.path(), &sha)).unwrap();
         let seen = s.seen.lock().unwrap().clone();
-        assert!(
-            seen[1].starts_with(
-                "event delivery sp-a --expect PR_OPEN --version 9 --actor pr-pass-branch"
-            ),
-            "{seen:?}"
-        );
-        assert!(
-            seen[1].contains(&format!(r#""merge_sha":"{sha}""#))
-                && seen[1].contains(r#""proof":"merge-tree""#),
-            "{seen:?}"
-        );
+        assert!(seen[1].starts_with("event delivery sp-a --expect PR_OPEN --version 9 --actor pr-pass-branch"), "{seen:?}");
+        assert!(seen[1].contains(&format!(r#""merge_sha":"{sha}""#)) && seen[1].contains(r#""proof":"merge-tree""#), "{seen:?}");
     }
 
+    
     #[test_id(tnqgrs8)]
     #[test]
     fn deliver_pr_merged_sends_no_event_for_a_change_reverted_on_the_base() {
@@ -420,15 +277,11 @@ mod deliveries {
         let reverted = git(d.path(), &["rev-parse", "HEAD"]);
         let (s, c) = client(row("null"));
         let e = deliver_pr_merged_on(&c, &leg(d.path(), &reverted)).unwrap_err();
-        assert!(
-            e.contains("sp-a")
-                && e.contains(&reverted)
-                && e.contains("its change is not in force on main"),
-            "{e}"
-        );
+        assert!(e.contains("sp-a") && e.contains(&reverted) && e.contains("its change is not in force on main"), "{e}");
         assert_eq!(*s.seen.lock().unwrap(), vec!["show sp-a"]);
     }
 
+    
     #[test_id(tkith7w)]
     #[test]
     fn deliver_pr_merged_records_a_deleted_branch_whose_merge_commit_is_on_head_by_ancestry() {
@@ -437,28 +290,18 @@ mod deliveries {
         git(d.path(), &["branch", "-D", "spira/sp-a"]);
         let (s, c) = client(row("null"));
         deliver_pr_merged_on(&c, &leg(d.path(), &sha)).unwrap();
-        assert!(
-            s.seen.lock().unwrap()[1].contains(&format!(r#""proof":"ancestry:{sha}""#)),
-            "{:?}",
-            s.seen.lock().unwrap()
-        );
+        assert!(s.seen.lock().unwrap()[1].contains(&format!(r#""proof":"ancestry:{sha}""#)), "{:?}", s.seen.lock().unwrap());
     }
 
     #[test_id(t22z3fg)]
     #[test]
-    fn deliver_pr_closed_returns_a_pr_open_row_and_deliver_by_content_leaves_another_delivery_state_alone(
-    ) {
+    fn deliver_pr_closed_returns_a_pr_open_row_and_deliver_by_content_leaves_another_delivery_state_alone() {
         let d = testkit::TempDir::new("landing-deliver");
         let sha = squash_merged(d.path());
         let (s, c) = client(row(r#"{"state":"PR_OPEN","version":9}"#));
         deliver_pr_closed_on(&c, &leg(d.path(), &sha)).unwrap();
         let seen = s.seen.lock().unwrap().clone();
-        assert!(
-            seen[1].starts_with(
-                "event delivery sp-a --expect PR_OPEN --version 9 --actor pr-pass-branch"
-            ) && seen[1].contains("pr-closed-unmerged"),
-            "{seen:?}"
-        );
+        assert!(seen[1].starts_with("event delivery sp-a --expect PR_OPEN --version 9 --actor pr-pass-branch") && seen[1].contains("pr-closed-unmerged"), "{seen:?}");
         let (s, c) = client(row(r#"{"state":"BATCHED","version":9}"#));
         deliver_by_content_on(&c, &leg(d.path(), &sha)).unwrap();
         assert_eq!(*s.seen.lock().unwrap(), vec!["show sp-a"]);

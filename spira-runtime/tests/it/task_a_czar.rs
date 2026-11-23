@@ -18,11 +18,7 @@ const NOW: u64 = 1_793_000_000_000;
 /// Test thresholds, none of them a shipped value; every class at `stage`.
 fn policy(stage: Stage) -> Policy {
     Policy {
-        stages: CLASSES
-            .iter()
-            .chain(&["starved"])
-            .map(|c| (c.to_string(), stage))
-            .collect(),
+        stages: CLASSES.iter().chain(&["starved"]).map(|c| (c.to_string(), stage)).collect(),
         loop_stall_secs: 900,
         ci_queued_max_secs: 1_800,
         ci_red_max_secs: 3_600,
@@ -43,15 +39,7 @@ fn idle() -> Snapshot {
         open_rounds: [("spira".to_string(), Read::Observed(0))].into(),
         batcher_held: Default::default(),
         ci: [("spira".to_string(), Read::Observed(Ci::default()))].into(),
-        base_ci: [(
-            "spira".to_string(),
-            Read::Observed(BaseCi {
-                conclusion: Some("success".into()),
-                head_sha: "b1".into(),
-                ..BaseCi::default()
-            }),
-        )]
-        .into(),
+        base_ci: [("spira".to_string(), Read::Observed(BaseCi { conclusion: Some("success".into()), head_sha: "b1".into(), ..BaseCi::default() }))].into(),
         reconciler_last_pass_ms: Read::Observed(Some(NOW - 30_000)),
         now_ms: NOW,
         gh_budget: None,
@@ -62,20 +50,8 @@ fn idle() -> Snapshot {
 /// `no suites identified; leaving batch open` with the batch still open: a deadlock.
 fn busy() -> Snapshot {
     Snapshot {
-        landing_events: Read::Observed(vec![LandingEvent {
-            kind: "verdict.deadlock".into(),
-            repo: "spira".into(),
-            at_ms: NOW - 10_000,
-        }]),
-        open_batch: [(
-            "spira".to_string(),
-            Read::Observed(Some(Batch {
-                pr: Some(41),
-                branch: "spira/batch-1".into(),
-                members: vec!["sp-a".into(), "sp-b".into()],
-            })),
-        )]
-        .into(),
+        landing_events: Read::Observed(vec![LandingEvent { kind: "verdict.deadlock".into(), repo: "spira".into(), at_ms: NOW - 10_000 }]),
+        open_batch: [("spira".to_string(), Read::Observed(Some(Batch { pr: Some(41), branch: "spira/batch-1".into(), members: vec!["sp-a".into(), "sp-b".into()] })))].into(),
         ..idle()
     }
 }
@@ -84,19 +60,14 @@ fn busy() -> Snapshot {
 #[test]
 fn t3_every_rung_of_the_ladder_is_taken() {
     for (from, to) in LADDER {
-        assert_eq!(
-            advance("deadlock", *from, *to),
-            Ok(*to),
-            "{from:?} → {to:?}"
-        );
+        assert_eq!(advance("deadlock", *from, *to), Ok(*to), "{from:?} → {to:?}");
     }
 }
 
 #[test_id(tx13oy0)]
 #[test]
 fn t3_inferred_without_a_gap_is_refused_naming_the_key() {
-    let refused = advance("ci-red:spira", Phase::Satisfied, Phase::Inferred)
-        .expect_err("inferred needs a gap first");
+    let refused = advance("ci-red:spira", Phase::Satisfied, Phase::Inferred).expect_err("inferred needs a gap first");
     assert!(refused.contains("ci-red:spira"), "{refused}");
 }
 
@@ -114,15 +85,8 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test]
 fn t5_a_shadow_deadlock_is_a_would_line_and_files_nothing() {
     let (carry, acts) = decide(&policy(Stage::Shadow), &Carry::default(), &busy());
-    assert_eq!(
-        carry.keys.get("deadlock").map(|k| k.phase),
-        Some(Phase::Gap)
-    );
-    assert!(
-        acts.iter()
-            .any(|a| a.effect == INBOX_APPEND && a.input.contains("CZAR-WOULD")),
-        "{acts:?}"
-    );
+    assert_eq!(carry.keys.get("deadlock").map(|k| k.phase), Some(Phase::Gap));
+    assert!(acts.iter().any(|a| a.effect == INBOX_APPEND && a.input.contains("CZAR-WOULD")), "{acts:?}");
     assert!(acts.iter().all(|a| a.effect != FILE_INCIDENT), "{acts:?}");
 }
 
@@ -133,56 +97,25 @@ fn t5_an_act_deadlock_files_one_incident_by_its_ref() {
     let (_, acts) = decide(&policy(Stage::Act), &Carry::default(), &busy());
     let filed: Vec<&Act> = acts.iter().filter(|a| a.effect == FILE_INCIDENT).collect();
     assert_eq!(filed.len(), 1, "{acts:?}");
-    assert!(
-        filed[0].key.starts_with("incident:queue-"),
-        "{:?}",
-        filed[0]
-    );
+    assert!(filed[0].key.starts_with("incident:queue-"), "{:?}", filed[0]);
 }
 
 /// `cp:369-395`: a red base files P0 against the red repo, keyed `incident:base-red:<repo>:<suites>`.
 #[test_id(tbge2hl)]
 #[test]
 fn t5_a_red_base_files_base_red_against_the_repo() {
-    let red = Snapshot {
-        base_ci: [(
-            "spira".to_string(),
-            Read::Observed(BaseCi {
-                conclusion: Some("failure".into()),
-                head_sha: "b2".into(),
-                run_url: Some("u".into()),
-                red_suites: vec!["lint".into()],
-                ..BaseCi::default()
-            }),
-        )]
-        .into(),
-        ..idle()
-    };
+    let red = Snapshot { base_ci: [("spira".to_string(), Read::Observed(BaseCi { conclusion: Some("failure".into()), head_sha: "b2".into(), run_url: Some("u".into()), red_suites: vec!["lint".into()], ..BaseCi::default() }))].into(), ..idle() };
     let (_, acts) = decide(&policy(Stage::Act), &Carry::default(), &red);
-    assert!(
-        acts.iter()
-            .any(|a| a.effect == FILE_BASE_RED && a.key == "incident:base-red:spira:lint"),
-        "{acts:?}"
-    );
+    assert!(acts.iter().any(|a| a.effect == FILE_BASE_RED && a.key == "incident:base-red:spira:lint"), "{acts:?}");
 }
 
 /// sp-pu7v6: an unreadable field is never satisfied.
 #[test_id(t8iccjd)]
 #[test]
 fn t5_an_unobservable_ci_is_not_satisfied() {
-    let blind = Snapshot {
-        ci: [(
-            "spira".to_string(),
-            Read::Unobservable("forge timed out".into()),
-        )]
-        .into(),
-        ..idle()
-    };
+    let blind = Snapshot { ci: [("spira".to_string(), Read::Unobservable("forge timed out".into()))].into(), ..idle() };
     let (carry, _) = decide(&policy(Stage::Shadow), &Carry::default(), &blind);
-    assert_ne!(
-        carry.keys.get("ci-stalled:spira").map(|k| k.phase),
-        Some(Phase::Satisfied)
-    );
+    assert_ne!(carry.keys.get("ci-stalled:spira").map(|k| k.phase), Some(Phase::Satisfied));
 }
 
 /// law-lifecycle-state-is-not-text (sp-mijstw): the certified pool counts only unheld rows, and a
@@ -191,10 +124,7 @@ fn t5_an_unobservable_ci_is_not_satisfied() {
 #[test]
 fn t7_a_hold_in_string_form_keeps_its_row_out_of_the_certified_pool() {
     let list = r#"[{"bead_id":"sp-a","state":"CERTIFIED","holds":[]},{"bead_id":"sp-b","state":"CERTIFIED","holds":"[\"poison\"]"},{"bead_id":"sp-c","state":"CERTIFIED","holds":["ask"]},{"bead_id":"sp-d","state":"CERTIFIED","holds":"[]"}]"#;
-    assert_eq!(
-        unheld_ids(list),
-        Ok(vec!["sp-a".to_string(), "sp-d".to_string()])
-    );
+    assert_eq!(unheld_ids(list), Ok(vec!["sp-a".to_string(), "sp-d".to_string()]));
     assert!(unheld_ids("cannot tell: deadline").is_err());
 }
 
@@ -208,89 +138,47 @@ fn at_work() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = kit::assert_kept_as_rows(&at_work(), NAME);
-    assert!(
-        rows.iter().any(|k| k.starts_with("keys/deadlock")),
-        "{rows:?}"
-    );
+    assert!(rows.iter().any(|k| k.starts_with("keys/deadlock")), "{rows:?}");
     assert!(rows.iter().any(|k| k == "cursor_ms"), "{rows:?}");
 }
 
 #[test_id(tgxe5sh)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(
-        at_work,
-        registration,
-        STREAM,
-        EventKind::new(TICK, ""),
-    );
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
 
 /// A spent GitHub budget is one page with its reset and the top spender, not one per repository.
 #[test_id(thh57vh)]
 #[test]
 fn a_spent_budget_files_one_page_naming_the_reset_and_the_top_spender() {
-    let blind = |repo: &str| {
-        (
-            repo.to_string(),
-            Read::Unobservable("forge exited 1".into()),
-        )
-    };
+    let blind = |repo: &str| (repo.to_string(), Read::Unobservable("forge exited 1".into()));
     let spent = Snapshot {
         base_ci: [blind("spira"), blind("other")].into(),
-        gh_budget: Some(SpentBudget {
-            reset: NOW / 1000 + 600,
-            top_spender: Some(("forge:pr-state".into(), 900)),
-        }),
+        gh_budget: Some(SpentBudget { reset: NOW / 1000 + 600, top_spender: Some(("forge:pr-state".into(), 900)) }),
         ..idle()
     };
-    let p = Policy {
-        base_ci_unreadable_grace_secs: 0,
-        ..policy(Stage::Act)
-    };
+    let p = Policy { base_ci_unreadable_grace_secs: 0, ..policy(Stage::Act) };
     let (_, acts) = decide(&p, &Carry::default(), &spent);
     let filed: Vec<&Act> = acts.iter().filter(|a| a.effect == FILE_BASE_RED).collect();
     assert_eq!(filed.len(), 1, "{acts:?}");
     let text = format!("{:?}", filed[0]);
-    assert!(
-        text.contains("forge:pr-state")
-            && text.contains(&spira_runtime::api_budget::clock_of(NOW / 1000 + 600)),
-        "{text}"
-    );
+    assert!(text.contains("forge:pr-state") && text.contains(&spira_runtime::api_budget::clock_of(NOW / 1000 + 600)), "{text}");
 }
 
 const LOG_PASS: &str = "2026-11-20T10:00:00Z landing: pass complete";
 const LOG_SORT: &str = "queue_sort_rows: ranking failed";
 
 fn stamped(secs_into_day: u32, text: &str) -> String {
-    format!(
-        "2026-11-21T{:02}:{:02}:{:02}Z {text}",
-        secs_into_day / 3600,
-        secs_into_day / 60 % 60,
-        secs_into_day % 60
-    )
+    format!("2026-11-21T{:02}:{:02}:{:02}Z {text}", secs_into_day / 3600, secs_into_day / 60 % 60, secs_into_day % 60)
 }
 
 /// One observe over `run`, fed through `decide` as the scheduler does; returns the next carry and what it saw.
 fn pass(run: &std::path::Path, carry: &Carry) -> (Carry, Snapshot) {
-    let e = spira_runtime::Effects {
-        world: spira_runtime::world::World {
-            run_dir: run.to_path_buf(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let input = serde_json::to_string(&ObserveIn {
-        carry: carry.clone(),
-        pinned: Default::default(),
-    })
-    .unwrap();
+    let e = spira_runtime::Effects { world: spira_runtime::world::World { run_dir: run.to_path_buf(), ..Default::default() }, ..Default::default() };
+    let input = serde_json::to_string(&ObserveIn { carry: carry.clone(), pinned: Default::default() }).unwrap();
     let snap: Snapshot = serde_json::from_str(&observe(&e, &input).unwrap()).unwrap();
-    let snap = Snapshot {
-        open_batch: idle().open_batch,
-        certified: idle().certified,
-        ..snap
-    };
+    let snap = Snapshot { open_batch: idle().open_batch, certified: idle().certified, ..snap };
     (decide(&policy(Stage::Shadow), carry, &snap).0, snap)
 }
 
@@ -316,10 +204,7 @@ fn an_unchanged_log_is_not_read_again_even_when_a_line_changed_in_place() {
     std::os::unix::fs::FileExt::write_all_at(&f, newer.as_bytes(), 0).unwrap();
     let (_, second) = pass(dir.path(), &carry);
     assert!(events(&second).is_empty(), "{second:?}");
-    assert_eq!(
-        second.last_landing_pass_at_ms,
-        first.last_landing_pass_at_ms
-    );
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
 }
 
 #[test_id(t261hfa)]
@@ -348,21 +233,14 @@ fn a_truncated_or_replaced_log_is_read_again_from_the_start() {
     let dir = testkit::TempDir::new("czar-log-rotate");
     let log = dir.path().join("landing.log");
     let filler = "x".repeat(200);
-    std::fs::write(
-        &log,
-        format!("{}\n{filler}\n{filler}\n", stamped(100, LOG_SORT)),
-    )
-    .unwrap();
+    std::fs::write(&log, format!("{}\n{filler}\n{filler}\n", stamped(100, LOG_SORT))).unwrap();
     let (carry, _) = pass(dir.path(), &Carry::default());
     std::fs::write(&log, format!("{}\n", stamped(200, LOG_SORT))).unwrap();
     let (carry, truncated) = pass(dir.path(), &carry);
     assert_eq!(events(&truncated).len(), 1, "{truncated:?}");
     let next = dir.path().join("landing.log.new");
     std::fs::write(&next, format!("{}\n", stamped(300, LOG_SORT))).unwrap();
-    assert!(
-        std::fs::metadata(&next).unwrap().len() <= std::fs::metadata(&log).unwrap().len(),
-        "only the inode may tell"
-    );
+    assert!(std::fs::metadata(&next).unwrap().len() <= std::fs::metadata(&log).unwrap().len(), "only the inode may tell");
     std::fs::rename(&next, &log).unwrap();
     let (_, replaced) = pass(dir.path(), &carry);
     let seen = events(&replaced);
@@ -380,15 +258,9 @@ fn with_no_mark_the_first_pass_finds_the_last_pass_anywhere_in_the_file() {
     }
     std::fs::write(dir.path().join("landing.log"), text).unwrap();
     let (carry, first) = pass(dir.path(), &Carry::default());
-    assert!(
-        matches!(first.last_landing_pass_at_ms, Read::Observed(Some(_))),
-        "{first:?}"
-    );
+    assert!(matches!(first.last_landing_pass_at_ms, Read::Observed(Some(_))), "{first:?}");
     let (_, second) = pass(dir.path(), &carry);
-    assert_eq!(
-        second.last_landing_pass_at_ms, first.last_landing_pass_at_ms,
-        "a pass with no new bytes keeps the carried reading"
-    );
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms, "a pass with no new bytes keeps the carried reading");
 }
 
 #[test_id(t5d9sle)]
@@ -398,72 +270,37 @@ fn a_carried_last_pass_that_ages_past_the_stall_still_pages() {
     std::fs::write(dir.path().join("landing.log"), format!("{LOG_PASS}\n")).unwrap();
     let (carry, first) = pass(dir.path(), &Carry::default());
     let (_, second) = pass(dir.path(), &carry);
-    assert_eq!(
-        second.last_landing_pass_at_ms,
-        first.last_landing_pass_at_ms
-    );
-    assert!(matches!(
-        second.last_landing_pass_at_ms,
-        Read::Observed(Some(_))
-    ));
-    let late = Snapshot {
-        now_ms: NOW + 100_000_000_000,
-        ..second
-    };
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
+    assert!(matches!(second.last_landing_pass_at_ms, Read::Observed(Some(_))));
+    let late = Snapshot { now_ms: NOW + 100_000_000_000, ..second };
     let (_, acts) = decide(&policy(Stage::Act), &Carry::default(), &late);
-    assert!(
-        acts.iter()
-            .any(|a| a.effect == FILE_INCIDENT && a.key.contains("loop-stalled")),
-        "{acts:?}"
-    );
+    assert!(acts.iter().any(|a| a.effect == FILE_INCIDENT && a.key.contains("loop-stalled")), "{acts:?}");
 }
 
-#[test_id(t9gxaud)]
+#[test_id(tnidode)]
 #[test]
 fn a_missing_log_is_no_events_no_last_pass_and_an_empty_mark() {
     let dir = testkit::TempDir::new("czar-log-missing");
-    let had = Carry {
-        mark: Mark {
-            dev: 1,
-            ino: 2,
-            offset: 9,
-            last_pass: Read::Observed(Some(5)),
-        },
-        ..Carry::default()
-    };
+    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9, last_pass: Read::Observed(Some(5)) }, ..Carry::default() };
     let (carry, snap) = pass(dir.path(), &had);
     assert!(events(&snap).is_empty());
     assert_eq!(snap.last_landing_pass_at_ms, Read::Observed(None));
     assert_eq!(carry.mark, Mark::default());
 }
 
-#[test_id(t8rqfa2)]
+#[test_id(txh570l)]
 #[test]
 fn an_unreadable_log_leaves_the_mark_and_reads_both_unobservable() {
     let dir = testkit::TempDir::new("czar-log-unreadable");
     std::fs::create_dir(dir.path().join("landing.log")).unwrap();
-    let had = Carry {
-        mark: Mark {
-            dev: 1,
-            ino: 2,
-            offset: 9,
-            last_pass: Read::Observed(Some(5)),
-        },
-        ..Carry::default()
-    };
+    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9, last_pass: Read::Observed(Some(5)) }, ..Carry::default() };
     let (carry, snap) = pass(dir.path(), &had);
-    assert!(
-        matches!(snap.landing_events, Read::Unobservable(_)),
-        "{snap:?}"
-    );
-    assert!(
-        matches!(snap.last_landing_pass_at_ms, Read::Unobservable(_)),
-        "{snap:?}"
-    );
+    assert!(matches!(snap.landing_events, Read::Unobservable(_)), "{snap:?}");
+    assert!(matches!(snap.last_landing_pass_at_ms, Read::Unobservable(_)), "{snap:?}");
     assert_eq!(carry.mark, had.mark);
 }
 
-#[test_id(txxqtbs)]
+#[test_id(tl01wid)]
 #[test]
 fn a_carried_unobservable_last_pass_survives_new_bytes_with_no_pass_line() {
     use std::io::Write;
@@ -471,37 +308,17 @@ fn a_carried_unobservable_last_pass_survives_new_bytes_with_no_pass_line() {
     let log = dir.path().join("landing.log");
     std::fs::write(&log, "short landing: pass complete\n").unwrap();
     let (carry, first) = pass(dir.path(), &Carry::default());
-    assert!(
-        matches!(first.last_landing_pass_at_ms, Read::Unobservable(_)),
-        "{first:?}"
-    );
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(&log)
-        .unwrap()
-        .write_all(b"noise\n")
-        .unwrap();
+    assert!(matches!(first.last_landing_pass_at_ms, Read::Unobservable(_)), "{first:?}");
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(b"noise\n").unwrap();
     let (_, second) = pass(dir.path(), &carry);
-    assert_eq!(
-        second.last_landing_pass_at_ms,
-        first.last_landing_pass_at_ms
-    );
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
 }
 
-#[test_id(tizquhw)]
+#[test_id(tl8zvx8)]
 #[test]
 fn the_mark_is_kept_as_a_row_and_joins_back() {
-    let mark = Mark {
-        dev: 3,
-        ino: 4,
-        offset: 5,
-        last_pass: Read::Observed(Some(6)),
-    };
-    let body = serde_json::to_string(&Carry {
-        mark: mark.clone(),
-        ..Carry::default()
-    })
-    .unwrap();
+    let mark = Mark { dev: 3, ino: 4, offset: 5, last_pass: Read::Observed(Some(6)) };
+    let body = serde_json::to_string(&Carry { mark: mark.clone(), ..Carry::default() }).unwrap();
     let rows = runtime::rows::split(&body, ROW_PARTS);
     assert!(rows.contains_key("mark"), "{rows:?}");
     let back: Carry = serde_json::from_str(&runtime::rows::join(&rows, ROW_PARTS)).unwrap();

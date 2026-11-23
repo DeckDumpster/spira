@@ -34,24 +34,12 @@ fn plan() -> Plan {
 
 /// The contract's idle fixture: tailscale up, cert 60 days, password ok, ufw open.
 fn idle() -> Snapshot {
-    Snapshot {
-        plan: plan(),
-        tailnet_ip: Some("100.64.0.7".into()),
-        dns_name: Some("mini.tail.ts.net".into()),
-        cert_days: Some(60),
-        password: Password::Ok,
-        iface: Some("tailscale0".into()),
-        firewall: Firewall::Open,
-        day: "2026-11-03".into(),
-    }
+    Snapshot { plan: plan(), tailnet_ip: Some("100.64.0.7".into()), dns_name: Some("mini.tail.ts.net".into()), cert_days: Some(60), password: Password::Ok, iface: Some("tailscale0".into()), firewall: Firewall::Open, day: "2026-11-03".into() }
 }
 
 /// The certificate is 10 days from expiry: renew, then restart.
 fn busy() -> Snapshot {
-    Snapshot {
-        cert_days: Some(10),
-        ..idle()
-    }
+    Snapshot { cert_days: Some(10), ..idle() }
 }
 
 fn effects(acts: &[Act]) -> Vec<&str> {
@@ -69,8 +57,7 @@ fn t3_every_row_of_the_state_table_is_taken() {
 #[test_id(ti28jx7)]
 #[test]
 fn t3_a_config_set_before_the_renewal_outcome_is_refused_naming_renewing() {
-    let refused =
-        step(State::Renewing, Trigger::ConfigSet).expect_err("config_set waits on cert_renew");
+    let refused = step(State::Renewing, Trigger::ConfigSet).expect_err("config_set waits on cert_renew");
     assert!(refused.to_lowercase().contains("renewing"), "{refused}");
 }
 
@@ -87,13 +74,7 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test_id(t01n9x9)]
 #[test]
 fn t5_no_tailnet_ip_is_a_note_only() {
-    let (_, acts) = decide(
-        &Carry::default(),
-        &Snapshot {
-            tailnet_ip: None,
-            ..idle()
-        },
-    );
+    let (_, acts) = decide(&Carry::default(), &Snapshot { tailnet_ip: None, ..idle() });
     assert_eq!(effects(&acts), [INBOX_APPEND], "{acts:?}");
 }
 
@@ -102,11 +83,7 @@ fn t5_no_tailnet_ip_is_a_note_only() {
 #[test]
 fn t5_a_cert_due_renews() {
     let (carry, acts) = decide(&Carry::default(), &busy());
-    assert!(
-        acts.iter()
-            .any(|a| a.effect == CERT_RENEW && a.key == "cert/mini.tail.ts.net/2026-11-03"),
-        "{acts:?}"
-    );
+    assert!(acts.iter().any(|a| a.effect == CERT_RENEW && a.key == "cert/mini.tail.ts.net/2026-11-03"), "{acts:?}");
     assert_eq!(carry.state, State::Renewing);
 }
 
@@ -114,90 +91,28 @@ fn t5_a_cert_due_renews() {
 #[test_id(tvyiqa7)]
 #[test]
 fn t5_after_renewal_only_the_empty_values_are_set() {
-    let snap = Snapshot {
-        plan: Plan {
-            cert: String::new(),
-            key: String::new(),
-            ..plan()
-        },
-        ..idle()
-    };
-    let (_, acts) = after_renewal(
-        &Carry {
-            state: State::Renewing,
-            last_note: None,
-        },
-        &snap,
-    );
-    let mut set: Vec<&str> = acts
-        .iter()
-        .filter(|a| a.effect == CONFIG_SET)
-        .map(|a| a.key.as_str())
-        .collect();
+    let snap = Snapshot { plan: Plan { cert: String::new(), key: String::new(), ..plan() }, ..idle() };
+    let (_, acts) = after_renewal(&Carry { state: State::Renewing, last_note: None }, &snap);
+    let mut set: Vec<&str> = acts.iter().filter(|a| a.effect == CONFIG_SET).map(|a| a.key.as_str()).collect();
     set.sort();
     assert_eq!(set.len(), 2, "{acts:?}");
-    assert!(
-        set.iter()
-            .all(|k| k.starts_with("spira.submission_cert=")
-                || k.starts_with("spira.submission_key=")),
-        "{set:?}"
-    );
+    assert!(set.iter().all(|k| k.starts_with("spira.submission_cert=") || k.starts_with("spira.submission_key=")), "{set:?}");
 }
 
 /// `provision.rs:339-345`: a closed firewall opens; an absent ufw is left.
 #[test_id(t81fkce)]
 #[test]
 fn t5_a_closed_firewall_opens_and_an_absent_one_is_left() {
-    assert!(effects(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                firewall: Firewall::Closed,
-                ..idle()
-            }
-        )
-        .1
-    )
-    .contains(&FIREWALL_OPEN));
-    assert!(!effects(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                firewall: Firewall::Absent,
-                ..idle()
-            }
-        )
-        .1
-    )
-    .contains(&FIREWALL_OPEN));
+    assert!(effects(&decide(&Carry::default(), &Snapshot { firewall: Firewall::Closed, ..idle() }).1).contains(&FIREWALL_OPEN));
+    assert!(!effects(&decide(&Carry::default(), &Snapshot { firewall: Firewall::Absent, ..idle() }).1).contains(&FIREWALL_OPEN));
 }
 
 /// `provision.rs:323-336`: a drifted password is rewritten; no users file is refused, not written.
 #[test_id(tz2fu38)]
 #[test]
 fn t5_a_drifted_password_is_rewritten() {
-    assert!(effects(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                password: Password::Drifted,
-                ..idle()
-            }
-        )
-        .1
-    )
-    .contains(&PASSWORD_WRITE));
-    assert!(!effects(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                password: Password::NoSource,
-                ..idle()
-            }
-        )
-        .1
-    )
-    .contains(&PASSWORD_WRITE));
+    assert!(effects(&decide(&Carry::default(), &Snapshot { password: Password::Drifted, ..idle() }).1).contains(&PASSWORD_WRITE));
+    assert!(!effects(&decide(&Carry::default(), &Snapshot { password: Password::NoSource, ..idle() }).1).contains(&PASSWORD_WRITE));
 }
 
 /// The contract's T6: thirty days, the certificate due on day 10 → one renewal and one restart.
@@ -210,10 +125,7 @@ fn t6_thirty_days_renew_once_and_restart_once() {
         .unwrap()
         .double(OBSERVE, move |_| {
             let mut d = seen.lock().unwrap();
-            let snap = Snapshot {
-                cert_days: Some(*d),
-                ..idle()
-            };
+            let snap = Snapshot { cert_days: Some(*d), ..idle() };
             *d = d.saturating_sub(1);
             Ok(serde_json::to_string(&snap).unwrap())
         })
@@ -221,10 +133,7 @@ fn t6_thirty_days_renew_once_and_restart_once() {
             *renewed.lock().unwrap() = 90;
             Ok("renewed".into())
         });
-    for e in EFFECTS
-        .iter()
-        .filter(|e| ![OBSERVE, CERT_RENEW].contains(e))
-    {
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, CERT_RENEW].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
     let (_, stream, kind) = SubmissionProvision::boot();
@@ -236,14 +145,7 @@ fn t6_thirty_days_renew_once_and_restart_once() {
 }
 
 fn at_work() -> TaskRig {
-    let mut r = rig(
-        1,
-        Snapshot {
-            password: Password::NoSource,
-            firewall: Firewall::Closed,
-            ..idle()
-        },
-    );
+    let mut r = rig(1, Snapshot { password: Password::NoSource, firewall: Firewall::Closed, ..idle() });
     r.advance(DAY_MS).unwrap();
     r
 }
@@ -258,10 +160,5 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(t719wb9)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(
-        at_work,
-        registration,
-        STREAM,
-        EventKind::new(TICK, ""),
-    );
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }

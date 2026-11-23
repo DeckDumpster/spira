@@ -6,16 +6,7 @@ use spira_runtime::tasks::d::acceptance::pinned_settings;
 #[test_id(t3etx59)]
 #[test]
 fn pinned_settings_leaves_the_process_config_door_as_it_found_it() {
-    let before = (
-        std::env::var_os("SPIRA_TOML"),
-        std::env::var_os("SPIRA_HOME"),
-    );
+    let before = (std::env::var_os("SPIRA_TOML"), std::env::var_os("SPIRA_HOME"));
     pinned_settings(&[]).expect("settings from the complete fixture");
-    assert_eq!(
-        (
-            std::env::var_os("SPIRA_TOML"),
-            std::env::var_os("SPIRA_HOME")
-        ),
-        before
-    );
+    assert_eq!((std::env::var_os("SPIRA_TOML"), std::env::var_os("SPIRA_HOME")), before);
 }

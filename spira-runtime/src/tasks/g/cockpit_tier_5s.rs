@@ -52,9 +52,7 @@ use std::collections::BTreeMap;
 
 use runtime::event::*;
 
-use super::cockpit::{
-    decide_tier, Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS, WRITE_KEY,
-};
+use super::cockpit::{decide_tier, Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS, WRITE_KEY};
 use super::Transition;
 use crate::tasks::f::Cycle;
 
@@ -68,29 +66,13 @@ pub const PUBLISH: &str = "cockpit-tier-5s.publish";
 pub const EFFECTS: &[&str] = &[OBSERVE, PUBLISH];
 
 /// The sub-probes [`OBSERVE`] runs, each with its own timeout.
-pub const PROBES: &[(&str, u64)] = &[
-    ("cockpit.now", 30_000),
-    ("cockpit.round", 60_000),
-    ("cockpit.inflight", 60_000),
-];
+pub const PROBES: &[(&str, u64)] = &[("cockpit.now", 30_000), ("cockpit.round", 60_000), ("cockpit.inflight", 60_000)];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_5S_SECS";
-pub const KEYS: &[&str] = &[
-    CADENCE_KEY,
-    WRITE_KEY,
-    "SPIRA_SNAP_STALE_S",
-    "SPIRA_PANE_READ_TTL",
-    "SPIRA_LC_TIMEOUT",
-    "SPIRA_TRACE_MARK",
-];
+pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_SNAP_STALE_S", "SPIRA_PANE_READ_TTL", "SPIRA_LC_TIMEOUT", "SPIRA_TRACE_MARK"];
 
 pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
-const CYCLE: Cycle = Cycle {
-    stream: STREAM,
-    tick: TICK,
-    observe: OBSERVE,
-    deadline_ms: OBSERVE_DEADLINE_MS,
-};
+const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
 
 pub const TRANSITIONS: &[Transition<FragmentState>] = FRAGMENT_TRANSITIONS;
 
@@ -113,10 +95,7 @@ pub struct CockpitTier5s {
 
 impl CockpitTier5s {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(CockpitTier5s {
-            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
-            config: super::pinned(settings, KEYS)?,
-        })
+        Ok(CockpitTier5s { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -124,11 +103,7 @@ impl CockpitTier5s {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(runtime::row_codec!(
-            STREAM,
-            STATE,
-            super::cockpit::ROW_PARTS
-        ))
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, super::cockpit::ROW_PARTS))
     }
 }
 
@@ -138,12 +113,6 @@ impl Handler for CockpitTier5s {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(
-            self.interval_ms,
-            view,
-            ev,
-            || super::cockpit::probe_input(PROBES, &self.config),
-            |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide),
-        )
+        CYCLE.handle(self.interval_ms, view, ev, || super::cockpit::probe_input(PROBES, &self.config), |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide))
     }
 }

@@ -76,9 +76,7 @@ use std::path::{Path, PathBuf};
 
 use runtime::event::*;
 use runtime::sources::UNITS_STREAM;
-use runtime::units::{
-    Exit, UnitHandle, UnitRan, UnitSpec, UnitState, UNIT_RAN, UNIT_START, UNIT_STOP,
-};
+use runtime::units::{Exit, UnitHandle, UnitRan, UnitSpec, UnitState, UNIT_RAN, UNIT_START, UNIT_STOP};
 use serde::{Deserialize, Serialize};
 
 use super::{commands, Transition};
@@ -98,17 +96,7 @@ pub const BRIEF: &str = "persona.ops.brief";
 pub const LEDGER: &str = "persona.ops.ledger";
 pub const CLEANUP: &str = "persona.ops.cleanup";
 pub const INBOX_APPEND: &str = crate::watchers::INBOX_APPEND;
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    INTAKE_INSTALL,
-    INCIDENT_DRAIN,
-    BRIEF,
-    UNIT_START,
-    UNIT_STOP,
-    LEDGER,
-    CLEANUP,
-    INBOX_APPEND,
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, INTAKE_INSTALL, INCIDENT_DRAIN, BRIEF, UNIT_START, UNIT_STOP, LEDGER, CLEANUP, INBOX_APPEND];
 
 /// Consecutive harness-reds with one failing line before the Concierge is asked.
 pub const RED_ASK_AT: u32 = 3;
@@ -116,19 +104,7 @@ pub const RED_ASK_AT: u32 = 3;
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_PERSONA_OPS_SECS";
 /// `BD_TIMEOUT` is dropped: no step of the sweep calls bd with a deadline any more (statutes
 /// come over the store's socket, the drain's bd calls carry their own).
-pub const KEYS: &[&str] = &[
-    CADENCE_KEY,
-    "SPIRA_AGENT",
-    "SPIRA_MEMORIES_CACHE",
-    "SPIRA_MEMORIES_CACHE_AGE",
-    "SPIRA_STATUTE_CORE",
-    "SPIRA_STATUTE_CORE_LOCAL",
-    "SPIRA_BDQ_CONN_RETRIES",
-    "SPIRA_ALERT_GLOB",
-    "SPIRA_RUN",
-    "SPIRA_OPS_SWEEP_KEEP_DAYS",
-    "SPIRA_RESULTS_PRUNE_MAX",
-];
+pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_AGENT", "SPIRA_MEMORIES_CACHE", "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_STATUTE_CORE", "SPIRA_STATUTE_CORE_LOCAL", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_ALERT_GLOB", "SPIRA_RUN", "SPIRA_OPS_SWEEP_KEEP_DAYS", "SPIRA_RESULTS_PRUNE_MAX"];
 
 /// The first line of a prompt that means there is nothing to sweep.
 pub const NOMINAL: &str = "SWEEP:NOMINAL";
@@ -200,116 +176,33 @@ pub struct Carry {
 pub enum Input {
     Tick,
     Observed(Snapshot),
-    Succeeded {
-        effect: String,
-        body: String,
-    },
-    Failed {
-        effect: String,
-        error: String,
-    },
-    UnitRan {
-        ran: UnitRan,
-        outcome: Option<String>,
-    },
+    Succeeded { effect: String, body: String },
+    Failed { effect: String, error: String },
+    UnitRan { ran: UnitRan, outcome: Option<String> },
     Deadline,
 }
 
 /// The Decide table of the contract, one row per legal (state, on) pair.
 pub const TRANSITIONS: &[Transition<State>] = &[
-    Transition {
-        from: State::Idle,
-        on: "tick",
-        to: State::Observing,
-        effects: &[OBSERVE],
-    },
-    Transition {
-        from: State::Observing,
-        on: "skip",
-        to: State::Idle,
-        effects: &[],
-    },
-    Transition {
-        from: State::Observing,
-        on: "busy",
-        to: State::Idle,
-        effects: &[LEDGER],
-    },
-    Transition {
-        from: State::Observing,
-        on: "go",
-        to: State::Preparing,
-        effects: &[INTAKE_INSTALL, INCIDENT_DRAIN],
-    },
-    Transition {
-        from: State::Preparing,
-        on: "prepared",
-        to: State::Briefing,
-        effects: &[BRIEF],
-    },
-    Transition {
-        from: State::Briefing,
-        on: "statute-missing",
-        to: State::Idle,
-        effects: &[LEDGER],
-    },
-    Transition {
-        from: State::Briefing,
-        on: "no-argv",
-        to: State::Recording,
-        effects: &[LEDGER, CLEANUP],
-    },
-    Transition {
-        from: State::Briefing,
-        on: "briefed",
-        to: State::Starting,
-        effects: &[UNIT_START],
-    },
-    Transition {
-        from: State::Starting,
-        on: "started",
-        to: State::Running,
-        effects: &[LEDGER],
-    },
-    Transition {
-        from: State::Starting,
-        on: "start-failed",
-        to: State::Recording,
-        effects: &[LEDGER, CLEANUP],
-    },
-    Transition {
-        from: State::Running,
-        on: "unit.ran",
-        to: State::Recording,
-        effects: &[LEDGER, CLEANUP],
-    },
-    Transition {
-        from: State::Running,
-        on: "deadline",
-        to: State::Stopping,
-        effects: &[UNIT_STOP],
-    },
-    Transition {
-        from: State::Stopping,
-        on: "unit.ran",
-        to: State::Recording,
-        effects: &[LEDGER, CLEANUP],
-    },
-    Transition {
-        from: State::Recording,
-        on: "recorded",
-        to: State::Idle,
-        effects: &[],
-    },
+    Transition { from: State::Idle, on: "tick", to: State::Observing, effects: &[OBSERVE] },
+    Transition { from: State::Observing, on: "skip", to: State::Idle, effects: &[] },
+    Transition { from: State::Observing, on: "busy", to: State::Idle, effects: &[LEDGER] },
+    Transition { from: State::Observing, on: "go", to: State::Preparing, effects: &[INTAKE_INSTALL, INCIDENT_DRAIN] },
+    Transition { from: State::Preparing, on: "prepared", to: State::Briefing, effects: &[BRIEF] },
+    Transition { from: State::Briefing, on: "statute-missing", to: State::Idle, effects: &[LEDGER] },
+    Transition { from: State::Briefing, on: "no-argv", to: State::Recording, effects: &[LEDGER, CLEANUP] },
+    Transition { from: State::Briefing, on: "briefed", to: State::Starting, effects: &[UNIT_START] },
+    Transition { from: State::Starting, on: "started", to: State::Running, effects: &[LEDGER] },
+    Transition { from: State::Starting, on: "start-failed", to: State::Recording, effects: &[LEDGER, CLEANUP] },
+    Transition { from: State::Running, on: "unit.ran", to: State::Recording, effects: &[LEDGER, CLEANUP] },
+    Transition { from: State::Running, on: "deadline", to: State::Stopping, effects: &[UNIT_STOP] },
+    Transition { from: State::Stopping, on: "unit.ran", to: State::Recording, effects: &[LEDGER, CLEANUP] },
+    Transition { from: State::Recording, on: "recorded", to: State::Idle, effects: &[] },
 ];
 
 /// The machine's next state on `on`, or a refusal naming the state it is in.
 pub fn step(from: State, on: &str) -> Result<State, String> {
-    TRANSITIONS
-        .iter()
-        .find(|t| t.from == from && t.on == on)
-        .map(|t| t.to)
-        .ok_or_else(|| format!("{NAME}: no transition from {from:?} on {on}"))
+    TRANSITIONS.iter().find(|t| t.from == from && t.on == on).map(|t| t.to).ok_or_else(|| format!("{NAME}: no transition from {from:?} on {on}"))
 }
 
 /// One `dwarf-ledger.log` line: `awake ops <detail>`, or `done ops sweep rc=<rc> status=<detail>`.
@@ -336,12 +229,7 @@ pub struct BriefAsk {
 }
 
 fn spec<T: Serialize>(name: &str, key: String, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::keyed(
-        name,
-        key,
-        serde_json::to_string(body).unwrap_or_default(),
-        deadline_ms,
-    )
+    EffectSpec::keyed(name, key, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
 }
 
 fn run_of(carry: &Carry) -> &str {
@@ -349,90 +237,31 @@ fn run_of(carry: &Carry) -> &str {
 }
 
 fn ledger(carry: &Carry, what: &str, detail: &str, rc: Option<i32>) -> EffectSpec {
-    spec(
-        LEDGER,
-        format!("ops/{}/{what}", run_of(carry)),
-        &LedgerLine {
-            what: what.into(),
-            detail: detail.into(),
-            rc,
-            run_id: carry.run_id.clone(),
-            why: None,
-            error: None,
-        },
-        HOST_DEADLINE_MS,
-    )
+    spec(LEDGER, format!("ops/{}/{what}", run_of(carry)), &LedgerLine { what: what.into(), detail: detail.into(), rc, run_id: carry.run_id.clone(), why: None, error: None }, HOST_DEADLINE_MS)
 }
 
 /// The carry of an attempt that ended without a session: the red count outlives it.
 fn fresh(carry: &Carry, state: State) -> Carry {
-    Carry {
-        state,
-        red: carry.red,
-        red_why: carry.red_why.clone(),
-        swept_head: carry.swept_head.clone(),
-        ..Carry::default()
-    }
+    Carry { state, red: carry.red, red_why: carry.red_why.clone(), swept_head: carry.swept_head.clone(), ..Carry::default() }
 }
 
 /// A sweep that failed before its session started: the ledger line carrying why, the brief
 /// files' removal, and one line to the Concierge when the same why has come `RED_ASK_AT` times running.
 fn harness_red(carry: &Carry, state: State, error: &str) -> (Carry, Vec<EffectSpec>) {
-    let why = error
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or(error)
-        .to_string();
-    let red = if carry.red_why.as_deref() == Some(why.as_str()) {
-        carry.red + 1
-    } else {
-        1
-    };
+    let why = error.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(error).to_string();
+    let red = if carry.red_why.as_deref() == Some(why.as_str()) { carry.red + 1 } else { 1 };
     let mut line = ledger(carry, "done", "harness-red", Some(1));
-    line.input = serde_json::to_string(&LedgerLine {
-        what: "done".into(),
-        detail: "harness-red".into(),
-        rc: Some(1),
-        run_id: carry.run_id.clone(),
-        why: Some(why.clone()),
-        error: Some(error.to_string()),
-    })
-    .unwrap_or_default();
-    let mut acts = vec![
-        line,
-        spec(
-            CLEANUP,
-            format!("ops/{}/cleanup", run_of(carry)),
-            &carry.run_id,
-            HOST_DEADLINE_MS,
-        ),
-    ];
+    line.input = serde_json::to_string(&LedgerLine { what: "done".into(), detail: "harness-red".into(), rc: Some(1), run_id: carry.run_id.clone(), why: Some(why.clone()), error: Some(error.to_string()) }).unwrap_or_default();
+    let mut acts = vec![line, spec(CLEANUP, format!("ops/{}/cleanup", run_of(carry)), &carry.run_id, HOST_DEADLINE_MS)];
     if red == RED_ASK_AT {
         let text = format!("[persona.ops] the ops sweep has failed to start {RED_ASK_AT} times running: {why} (run/ops.log, run/dwarf-ledger.log)");
-        acts.push(EffectSpec::keyed(
-            INBOX_APPEND,
-            format!("ops/harness-red/{:x}", runtime::event::fnv1a(&why)),
-            text,
-            HOST_DEADLINE_MS,
-        ));
+        acts.push(EffectSpec::keyed(INBOX_APPEND, format!("ops/harness-red/{:x}", runtime::event::fnv1a(&why)), text, HOST_DEADLINE_MS));
     }
-    (
-        Carry {
-            state,
-            red,
-            red_why: Some(why),
-            ..carry.clone()
-        },
-        acts,
-    )
+    (Carry { state, red, red_why: Some(why), ..carry.clone() }, acts)
 }
 
 fn with(carry: &Carry, state: State) -> Carry {
-    Carry {
-        state,
-        ..carry.clone()
-    }
+    Carry { state, ..carry.clone() }
 }
 
 /// The rc a finished session is recorded with: an unlanded or killed segment is 0
@@ -456,20 +285,9 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
     let s = carry.state;
     let go = |on: &str| step(s, on);
     let out = match input {
-        Input::Tick => (
-            with(carry, go("tick")?),
-            vec![EffectSpec::probe(
-                OBSERVE,
-                String::new(),
-                OBSERVE_DEADLINE_MS,
-            )],
-        ),
+        Input::Tick => (with(carry, go("tick")?), vec![EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)]),
         Input::Observed(snap) => {
-            if snap.halted
-                || !snap.rune_present
-                || snap.prompt_head.trim() == NOMINAL
-                || carry.swept_head.as_deref() == Some(snap.prompt_head.trim())
-            {
+            if snap.halted || !snap.rune_present || snap.prompt_head.trim() == NOMINAL || carry.swept_head.as_deref() == Some(snap.prompt_head.trim()) {
                 (fresh(carry, go("skip")?), vec![])
             } else if snap.live >= snap.max || snap.draining || snap.pause != Pause::Open {
                 let why = if snap.live >= snap.max {
@@ -479,156 +297,49 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
                 } else {
                     "paused"
                 };
-                (
-                    fresh(carry, go("busy")?),
-                    vec![ledger(carry, "awake", why, None)],
-                )
+                (fresh(carry, go("busy")?), vec![ledger(carry, "awake", why, None)])
             } else {
-                let next = Carry {
-                    head: Some(snap.prompt_head.trim().to_string()),
-                    ..with(carry, go("go")?)
-                };
-                (
-                    next,
-                    vec![
-                        EffectSpec::keyed(
-                            INTAKE_INSTALL,
-                            format!("ops/{}/intake", run_of(carry)),
-                            String::new(),
-                            PREPARE_DEADLINE_MS,
-                        ),
-                        EffectSpec::keyed(
-                            INCIDENT_DRAIN,
-                            format!("ops/{}/drain", run_of(carry)),
-                            String::new(),
-                            PREPARE_DEADLINE_MS,
-                        ),
-                    ],
-                )
+                let next = Carry { head: Some(snap.prompt_head.trim().to_string()), ..with(carry, go("go")?) };
+                (next, vec![EffectSpec::keyed(INTAKE_INSTALL, format!("ops/{}/intake", run_of(carry)), String::new(), PREPARE_DEADLINE_MS), EffectSpec::keyed(INCIDENT_DRAIN, format!("ops/{}/drain", run_of(carry)), String::new(), PREPARE_DEADLINE_MS)])
             }
         }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. }
-            if effect == LEDGER
-                || effect == INBOX_APPEND
-                || effect == INTAKE_INSTALL
-                || effect == UNIT_STOP =>
-        {
-            (carry.clone(), vec![])
-        }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. }
-            if effect == INCIDENT_DRAIN =>
-        {
-            let ask = BriefAsk {
-                prompt: String::new(),
-                run_id: carry.run_id.clone().unwrap_or_default(),
-            };
-            (
-                with(carry, go("prepared")?),
-                vec![spec(
-                    BRIEF,
-                    format!("ops/{}/brief", run_of(carry)),
-                    &ask,
-                    BRIEF_DEADLINE_MS,
-                )],
-            )
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == LEDGER || effect == INBOX_APPEND || effect == INTAKE_INSTALL || effect == UNIT_STOP => (carry.clone(), vec![]),
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == INCIDENT_DRAIN => {
+            let ask = BriefAsk { prompt: String::new(), run_id: carry.run_id.clone().unwrap_or_default() };
+            (with(carry, go("prepared")?), vec![spec(BRIEF, format!("ops/{}/brief", run_of(carry)), &ask, BRIEF_DEADLINE_MS)])
         }
         Input::Succeeded { effect, body } if effect == BRIEF => {
             let next = go("briefed")?;
-            let b: dwarf::ops_sweep::SweepBrief = serde_json::from_str(body)
-                .map_err(|e| format!("{NAME}: the brief's answer is unreadable: {e}"))?;
+            let b: dwarf::ops_sweep::SweepBrief = serde_json::from_str(body).map_err(|e| format!("{NAME}: the brief's answer is unreadable: {e}"))?;
             if b.argv.is_empty() {
-                return Ok(harness_red(
-                    carry,
-                    go("no-argv")?,
-                    "the brief returned no argv",
-                ));
+                return Ok(harness_red(carry, go("no-argv")?, "the brief returned no argv"));
             }
-            let key = carry
-                .run_id
-                .clone()
-                .ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
-            let unit = UnitSpec {
-                task: NAME.into(),
-                key,
-                argv: b.argv,
-                env: b.env,
-                cwd: b.sys_file.parent().map(Path::to_path_buf),
-            };
-            (
-                Carry {
-                    state: next,
-                    name: Some(b.name),
-                    ..carry.clone()
-                },
-                vec![spec(
-                    UNIT_START,
-                    format!("ops/{}", run_of(carry)),
-                    &unit,
-                    RUN_DEADLINE_MS,
-                )],
-            )
+            let key = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
+            let unit = UnitSpec { task: NAME.into(), key, argv: b.argv, env: b.env, cwd: b.sys_file.parent().map(Path::to_path_buf) };
+            (Carry { state: next, name: Some(b.name), ..carry.clone() }, vec![spec(UNIT_START, format!("ops/{}", run_of(carry)), &unit, RUN_DEADLINE_MS)])
         }
         Input::Failed { effect, error } if effect == BRIEF => {
             if error.contains(dwarf::ops_sweep::STATUTE_MISSING) {
-                (
-                    fresh(carry, go("statute-missing")?),
-                    vec![ledger(carry, "awake", "statute-core-missing", None)],
-                )
+                (fresh(carry, go("statute-missing")?), vec![ledger(carry, "awake", "statute-core-missing", None)])
             } else {
                 harness_red(carry, go("no-argv")?, error)
             }
         }
-        Input::Succeeded { effect, .. } if effect == UNIT_START => (
-            Carry {
-                red: 0,
-                red_why: None,
-                swept_head: carry.head.clone(),
-                ..with(carry, go("started")?)
-            },
-            vec![ledger(carry, "awake", "sweep", None)],
-        ),
-        Input::Failed { effect, error } if effect == UNIT_START => {
-            harness_red(carry, go("start-failed")?, error)
-        }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == CLEANUP => {
-            (fresh(carry, go("recorded")?), vec![])
-        }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } => {
-            return Err(format!("{NAME}: {s:?} expects no outcome of {effect}"))
-        }
+        Input::Succeeded { effect, .. } if effect == UNIT_START => (Carry { red: 0, red_why: None, swept_head: carry.head.clone(), ..with(carry, go("started")?) }, vec![ledger(carry, "awake", "sweep", None)]),
+        Input::Failed { effect, error } if effect == UNIT_START => harness_red(carry, go("start-failed")?, error),
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == CLEANUP => (fresh(carry, go("recorded")?), vec![]),
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } => return Err(format!("{NAME}: {s:?} expects no outcome of {effect}")),
         Input::UnitRan { ran, outcome } => {
             let stopped = s == State::Stopping;
             let next = go("unit.ran")?;
             let rc = rc_of(ran, outcome.as_deref(), stopped);
-            (
-                with(carry, next),
-                vec![
-                    ledger(carry, "done", "sweep", Some(rc)),
-                    spec(
-                        CLEANUP,
-                        format!("ops/{}/cleanup", run_of(carry)),
-                        &carry.run_id,
-                        HOST_DEADLINE_MS,
-                    ),
-                ],
-            )
+            (with(carry, next), vec![ledger(carry, "done", "sweep", Some(rc)), spec(CLEANUP, format!("ops/{}/cleanup", run_of(carry)), &carry.run_id, HOST_DEADLINE_MS)])
         }
         Input::Deadline => {
             let next = go("deadline")?;
-            let key = carry
-                .run_id
-                .clone()
-                .ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
+            let key = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
             let h = UnitHandle::of(NAME, &key).map_err(|e| e.to_string())?;
-            (
-                with(carry, next),
-                vec![spec(
-                    UNIT_STOP,
-                    format!("ops/{}/stop", run_of(carry)),
-                    &h,
-                    STOP_DEADLINE_MS,
-                )],
-            )
+            (with(carry, next), vec![spec(UNIT_STOP, format!("ops/{}/stop", run_of(carry)), &h, STOP_DEADLINE_MS)])
         }
     };
     Ok(out)
@@ -637,13 +348,7 @@ pub fn decide(carry: &Carry, input: &Input) -> Result<(Carry, Vec<EffectSpec>), 
 /// The latest `persona.ops.state` on the task's own stream or on `units`, where the commands a
 /// `unit.ran` yields are journaled.
 pub fn carry_of(view: &Projection) -> Carry {
-    let latest = |stream: &str| {
-        view.events(&StreamKey(stream.into()))
-            .iter()
-            .rev()
-            .find(|e| e.kind.tag == STATE)
-            .map(|e| (e.at, e.kind.body.clone()))
-    };
+    let latest = |stream: &str| view.events(&StreamKey(stream.into())).iter().rev().find(|e| e.kind.tag == STATE).map(|e| (e.at, e.kind.body.clone()));
     let (own, units) = (latest(STREAM), latest(UNITS_STREAM));
     let body = match (own, units) {
         (Some(o), Some(u)) => {
@@ -655,8 +360,7 @@ pub fn carry_of(view: &Projection) -> Carry {
         }
         (o, u) => o.or(u).map(|x| x.1),
     };
-    body.and_then(|b| serde_json::from_str(&b).ok())
-        .unwrap_or_default()
+    body.and_then(|b| serde_json::from_str(&b).ok()).unwrap_or_default()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -667,10 +371,7 @@ pub struct PersonaOps {
 
 impl PersonaOps {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(PersonaOps {
-            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
-            config: super::pinned(settings, KEYS)?,
-        })
+        Ok(PersonaOps { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -678,10 +379,7 @@ impl PersonaOps {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(runtime::event::RowCodec {
-            also: &[UNITS_STREAM],
-            ..runtime::row_codec!(STREAM, STATE, ROW_PARTS)
-        })
+        Registration::new(NAME, self).with_rows(runtime::event::RowCodec { also: &[UNITS_STREAM], ..runtime::row_codec!(STREAM, STATE, ROW_PARTS)})
     }
 
     fn ours(effect: &str) -> bool {
@@ -693,28 +391,12 @@ impl PersonaOps {
         match ev.kind.tag.as_str() {
             TICK if ev.stream.0 == STREAM => Some(Input::Tick),
             DEADLINE if ev.stream.0 == STREAM => Some(Input::Deadline),
-            UNIT_RAN => UnitRan::from_event_kind(&ev.kind)
-                .filter(|r| r.key_for(NAME).is_some())
-                .map(|ran| Input::UnitRan { ran, outcome: None }),
-            EFFECT_SUCCEEDED if here => {
-                match answered_effect(view, ev).filter(|n| Self::ours(n))? {
-                    n if n == OBSERVE => serde_json::from_str(&ev.kind.body)
-                        .ok()
-                        .map(Input::Observed),
-                    effect => Some(Input::Succeeded {
-                        effect,
-                        body: ev.kind.body.clone(),
-                    }),
-                }
-            }
-            EFFECT_FAILED if here => {
-                answered_effect(view, ev)
-                    .filter(|n| Self::ours(n))
-                    .map(|effect| Input::Failed {
-                        effect,
-                        error: ev.kind.body.clone(),
-                    })
-            }
+            UNIT_RAN => UnitRan::from_event_kind(&ev.kind).filter(|r| r.key_for(NAME).is_some()).map(|ran| Input::UnitRan { ran, outcome: None }),
+            EFFECT_SUCCEEDED if here => match answered_effect(view, ev).filter(|n| Self::ours(n))? {
+                n if n == OBSERVE => serde_json::from_str(&ev.kind.body).ok().map(Input::Observed),
+                effect => Some(Input::Succeeded { effect, body: ev.kind.body.clone() }),
+            },
+            EFFECT_FAILED if here => answered_effect(view, ev).filter(|n| Self::ours(n)).map(|effect| Input::Failed { effect, error: ev.kind.body.clone() }),
             _ => None,
         }
     }
@@ -724,25 +406,12 @@ impl PersonaOps {
         if a.name == UNIT_START || a.name == UNIT_STOP || a.name == INBOX_APPEND {
             return a;
         }
-        let act: serde_json::Value =
-            serde_json::from_str(&a.input).unwrap_or(serde_json::Value::String(a.input.clone()));
-        EffectSpec {
-            input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(),
-            ..a
-        }
+        let act: serde_json::Value = serde_json::from_str(&a.input).unwrap_or(serde_json::Value::String(a.input.clone()));
+        EffectSpec { input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(), ..a }
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("state"),
-    runtime::rows::Part::Field("run_id"),
-    runtime::rows::Part::Field("name"),
-    runtime::rows::Part::Field("started_at"),
-    runtime::rows::Part::Field("red"),
-    runtime::rows::Part::Field("red_why"),
-    runtime::rows::Part::Field("head"),
-    runtime::rows::Part::Field("swept_head"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("name"), runtime::rows::Part::Field("started_at"), runtime::rows::Part::Field("red"), runtime::rows::Part::Field("red_why"), runtime::rows::Part::Field("head"), runtime::rows::Part::Field("swept_head")];
 
 impl Handler for PersonaOps {
     fn interests(&self) -> &[EventKindTag] {
@@ -750,9 +419,7 @@ impl Handler for PersonaOps {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let Some(input) = Self::input(view, ev) else {
-            return vec![];
-        };
+        let Some(input) = Self::input(view, ev) else { return vec![] };
         let persisted = carry_of(view);
         // `Observing` is never journaled: the observe's answer is decided as if it were.
         let carry = match (&input, persisted.state) {
@@ -767,35 +434,13 @@ impl Handler for PersonaOps {
                 if next.state == State::Running && carry.state == State::Starting {
                     next.started_at = Some(ev.at);
                 }
-                let acts: Vec<EffectSpec> = acts
-                    .into_iter()
-                    .map(|a| self.with_run(a, &next))
-                    .map(|a| stamped(a, ev.at))
-                    .collect();
-                let (probes, writes): (Vec<EffectSpec>, Vec<EffectSpec>) =
-                    acts.into_iter().partition(|a| a.name == OBSERVE);
-                let recorded = if next.state == State::Observing {
-                    persisted.clone()
-                } else {
-                    next.clone()
-                };
-                let mut out = commands(
-                    &persisted,
-                    &recorded,
-                    STATE,
-                    writes.into_iter().map(|a| self.pinned(a)).collect(),
-                );
-                out.extend(probes.into_iter().map(|p| {
-                    Command::Probe(EffectSpec {
-                        input: serde_json::json!({ "cfg": self.config }).to_string(),
-                        ..p
-                    })
-                }));
+                let acts: Vec<EffectSpec> = acts.into_iter().map(|a| self.with_run(a, &next)).map(|a| stamped(a, ev.at)).collect();
+                let (probes, writes): (Vec<EffectSpec>, Vec<EffectSpec>) = acts.into_iter().partition(|a| a.name == OBSERVE);
+                let recorded = if next.state == State::Observing { persisted.clone() } else { next.clone() };
+                let mut out = commands(&persisted, &recorded, STATE, writes.into_iter().map(|a| self.pinned(a)).collect());
+                out.extend(probes.into_iter().map(|p| Command::Probe(EffectSpec { input: serde_json::json!({ "cfg": self.config }).to_string(), ..p })));
                 if next.state == State::Running && carry.state == State::Starting {
-                    out.push(Command::Timer {
-                        at: ev.at + RUN_DEADLINE_MS,
-                        kind: EventKind::new(DEADLINE, ""),
-                    });
+                    out.push(Command::Timer { at: ev.at + RUN_DEADLINE_MS, kind: EventKind::new(DEADLINE, "") });
                 }
                 out
             }
@@ -805,10 +450,7 @@ impl Handler for PersonaOps {
             }
         };
         if input == Input::Tick {
-            out.push(Command::Timer {
-                at: ev.at + self.interval_ms,
-                kind: EventKind::new(TICK, ""),
-            });
+            out.push(Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") });
         }
         out
     }
@@ -819,10 +461,7 @@ fn stamped(a: EffectSpec, at_ms: u64) -> EffectSpec {
     if a.name != INBOX_APPEND {
         return a;
     }
-    EffectSpec {
-        input: format!("{} {}", batcher_cut::io::utc_stamp(at_ms / 1000), a.input),
-        ..a
-    }
+    EffectSpec { input: format!("{} {}", batcher_cut::io::utc_stamp(at_ms / 1000), a.input), ..a }
 }
 
 impl PersonaOps {
@@ -831,35 +470,16 @@ impl PersonaOps {
         let Some(id) = &next.run_id else { return a };
         let a = match a.name.as_str() {
             BRIEF => match serde_json::from_str::<BriefAsk>(&a.input) {
-                Ok(ask) if ask.run_id.is_empty() => spec(
-                    BRIEF,
-                    a.key.clone(),
-                    &BriefAsk {
-                        run_id: id.clone(),
-                        ..ask
-                    },
-                    a.deadline_ms,
-                ),
+                Ok(ask) if ask.run_id.is_empty() => spec(BRIEF, a.key.clone(), &BriefAsk { run_id: id.clone(), ..ask }, a.deadline_ms),
                 _ => a,
             },
             LEDGER => match serde_json::from_str::<LedgerLine>(&a.input) {
-                Ok(l) if l.run_id.is_none() => spec(
-                    LEDGER,
-                    a.key.clone(),
-                    &LedgerLine {
-                        run_id: Some(id.clone()),
-                        ..l
-                    },
-                    a.deadline_ms,
-                ),
+                Ok(l) if l.run_id.is_none() => spec(LEDGER, a.key.clone(), &LedgerLine { run_id: Some(id.clone()), ..l }, a.deadline_ms),
                 _ => a,
             },
             _ => a,
         };
-        EffectSpec {
-            key: a.key.replacen("ops//", &format!("ops/{id}/"), 1),
-            ..a
-        }
+        EffectSpec { key: a.key.replacen("ops//", &format!("ops/{id}/"), 1), ..a }
     }
 }
 
@@ -880,26 +500,15 @@ fn get<'a>(cfg: &'a BTreeMap<String, String>, k: &str) -> &'a str {
 }
 
 fn run_dir(e: &Effects, cfg: &BTreeMap<String, String>) -> PathBuf {
-    Some(get(cfg, "SPIRA_RUN"))
-        .filter(|r| !r.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| e.world.run_dir.clone())
+    Some(get(cfg, "SPIRA_RUN")).filter(|r| !r.is_empty()).map(PathBuf::from).unwrap_or_else(|| e.world.run_dir.clone())
 }
 
 fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0) // clock-safe: a ledger stamp and a pause comparison, read once per effect
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) // clock-safe: a ledger stamp and a pause comparison, read once per effect
 }
 
 fn lookup(cfg: &BTreeMap<String, String>) -> impl Fn(&str) -> Option<String> + '_ {
-    move |k: &str| {
-        cfg.get(k)
-            .cloned()
-            .filter(|v| !v.is_empty())
-            .or_else(|| spira_config::process::cfg(k).ok().filter(|v| !v.is_empty()))
-    }
+    move |k: &str| cfg.get(k).cloned().filter(|v| !v.is_empty()).or_else(|| spira_config::process::cfg(k).ok().filter(|v| !v.is_empty()))
 }
 
 /// Every unit this task starts: its unit name with the key a glob.
@@ -915,9 +524,7 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     struct In {
         cfg: BTreeMap<String, String>,
     }
-    let cfg = serde_json::from_str::<In>(&s.input)
-        .map(|i| i.cfg)
-        .unwrap_or_default();
+    let cfg = serde_json::from_str::<In>(&s.input).map(|i| i.cfg).unwrap_or_default();
     let run = run_dir(e, &cfg);
     let home = spira_config::resolve::locate_home_for_process()?;
     let rune_file = home.join("runes").join(format!("{RUNE}.rune"));
@@ -927,21 +534,12 @@ pub fn run_observe(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
         .units
         .as_deref()
         .and_then(|u| u.list(&unit_glob()).ok())
-        .map(|l| {
-            l.iter()
-                .filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating))
-                .count() as u32
-        })
+        .map(|l| l.iter().filter(|d| matches!(d.state, UnitState::Active | UnitState::Activating)).count() as u32)
         .unwrap_or(0);
-    let pause_file = Some(get(&cfg, "SPIRA_CAPACITY_PAUSE"))
-        .filter(|p| !p.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| run.join("capacity-pause"));
+    let pause_file = Some(get(&cfg, "SPIRA_CAPACITY_PAUSE")).filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(|| run.join("capacity-pause"));
     let pause = match dwarf::capacity::pause_state(&pause_file, now_secs()) {
         dwarf::capacity::PauseState::Open => Pause::Open,
-        dwarf::capacity::PauseState::Paused { until, .. } => Pause::Paused {
-            left_s: (until - now_secs()) as u64,
-        },
+        dwarf::capacity::PauseState::Paused { until, .. } => Pause::Paused { left_s: (until - now_secs()) as u64 },
         dwarf::capacity::PauseState::Unknown => Pause::Unknown,
     };
     let snap = Snapshot {
@@ -966,34 +564,13 @@ pub fn run_intake_install(_: &Effects, _key: &str, s: &EffectSpec) -> Result<Str
         return Ok(release::intake::NO_GLOB.to_string());
     }
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let unit_dir = env("SPIRA_UNIT_DIR")
-        .map(PathBuf::from)
-        .or_else(|| env("XDG_CONFIG_HOME").map(|x| PathBuf::from(x).join("systemd/user")))
-        .or_else(|| env("HOME").map(|h| PathBuf::from(h).join(".config/systemd/user")))
-        .ok_or("no systemd unit directory: set SPIRA_UNIT_DIR, XDG_CONFIG_HOME or HOME")?;
+    let unit_dir = env("SPIRA_UNIT_DIR").map(PathBuf::from).or_else(|| env("XDG_CONFIG_HOME").map(|x| PathBuf::from(x).join("systemd/user"))).or_else(|| env("HOME").map(|h| PathBuf::from(h).join(".config/systemd/user"))).ok_or("no systemd unit directory: set SPIRA_UNIT_DIR, XDG_CONFIG_HOME or HOME")?;
     let home = spira_config::resolve::locate_home_for_process()?;
-    let o = release::intake::Opts {
-        unit_dir,
-        pattern,
-        incident: home.join("incident.sh"),
-        reload: true,
-    };
-    match release::intake::install(
-        &release::intake::RealTemplates,
-        &release::systemctl::RealSystemctl::from_env(),
-        &o,
-    )? {
+    let o = release::intake::Opts { unit_dir, pattern, incident: home.join("incident.sh"), reload: true };
+    match release::intake::install(&release::intake::RealTemplates, &release::systemctl::RealSystemctl::from_env(), &o)? {
         None => Ok(release::intake::NO_GLOB.to_string()),
-        Some(r) if r.unverified.is_empty() => {
-            Ok(format!("{} template(s), {} wired", r.total, r.wired.len()))
-        }
-        Some(r) => Err(format!(
-            "{} template(s), {} wired, {} unverified: {}",
-            r.total,
-            r.wired.len(),
-            r.unverified.len(),
-            r.unverified.join(" ")
-        )),
+        Some(r) if r.unverified.is_empty() => Ok(format!("{} template(s), {} wired", r.total, r.wired.len())),
+        Some(r) => Err(format!("{} template(s), {} wired, {} unverified: {}", r.total, r.wired.len(), r.unverified.len(), r.unverified.join(" "))),
     }
 }
 
@@ -1004,23 +581,11 @@ pub fn run_incident_drain(_: &Effects, _key: &str, _s: &EffectSpec) -> Result<St
         return Err("no SPIRA_DB: the incident spool cannot be drained".into());
     }
     let bd = incident::real::RealBd::from_env()?;
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&env.spool_dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().map(|e| e != "bad").unwrap_or(true))
-        .collect();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&env.spool_dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e != "bad").unwrap_or(true)).collect();
     paths.sort();
     let (mut n, mut stuck) = (0, 0);
     for p in paths {
-        match incident::intake::drain_one(
-            &env,
-            &bd,
-            &incident::real::RealMailer,
-            &incident::real::RealClock,
-            &p,
-        ) {
+        match incident::intake::drain_one(&env, &bd, &incident::real::RealMailer, &incident::real::RealClock, &p) {
             Ok(_) => n += 1,
             Err(()) => stuck += 1,
         }
@@ -1048,41 +613,16 @@ pub fn run_brief(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
         statute_core_local: get(cfg, "SPIRA_STATUTE_CORE_LOCAL").to_string(),
         // The home repo's checkout from the pinned repo map, not `SPIRA_REPO`: that is a
         // per-copy fact the config door never resolves, so declaring it refused the settings whole.
-        harness_repo: e
-            .world
-            .home_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
+        harness_repo: e.world.home_path().map(|p| p.display().to_string()).unwrap_or_default(),
         prod: get(cfg, "SPIRA_PROD").to_string(),
         toml: spira_config::process::spec()?,
     };
     let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket);
-    let memories = || {
-        lc.answer(&["content", "memories", "--json"])
-            .map_err(String::from)
-    };
-    let prompt = if p.act.prompt.is_empty() {
-        std::fs::read_to_string(run.join("ops-sweep-prompt.txt")).unwrap_or_default()
-    } else {
-        p.act.prompt.clone()
-    };
+    let memories = || lc.answer(&["content", "memories", "--json"]).map_err(String::from);
+    let prompt = if p.act.prompt.is_empty() { std::fs::read_to_string(run.join("ops-sweep-prompt.txt")).unwrap_or_default() } else { p.act.prompt.clone() };
     let mut base: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    base.insert(
-        "SPIRA_LC_SOCKET".to_string(),
-        e.world.lc_socket.display().to_string(),
-    );
-    let b = dwarf::ops_sweep::brief(
-        &home,
-        &run,
-        &rune,
-        prompt.trim_end_matches('\n'),
-        &p.act.run_id,
-        &bc,
-        now_secs(),
-        &base,
-        &dwarf::escape::is_executable,
-        &memories,
-    )?;
+    base.insert("SPIRA_LC_SOCKET".to_string(), e.world.lc_socket.display().to_string());
+    let b = dwarf::ops_sweep::brief(&home, &run, &rune, prompt.trim_end_matches('\n'), &p.act.run_id, &bc, now_secs(), &base, &dwarf::escape::is_executable, &memories)?;
     serde_json::to_string(&b).map_err(|e| e.to_string())
 }
 
@@ -1091,36 +631,14 @@ pub fn run_brief(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
 pub fn run_ledger(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, String> {
     let p: Pinned<LedgerLine> = parse(&s.input)?;
     let run = run_dir(e, &p.cfg);
-    let log = p
-        .act
-        .run_id
-        .as_ref()
-        .map(|id| run.join(format!("sweep-{RUNE}-{id}.log")));
-    let done = (p.act.what == "done")
-        .then(|| (p.act.rc.unwrap_or(1), p.act.detail.as_str(), log.as_deref()));
-    dwarf::ops_sweep::ledger_line(
-        &run,
-        now_secs(),
-        RUNE,
-        done,
-        &p.act.detail,
-        p.act.why.as_deref(),
-        TRACE_MARK,
-    );
+    let log = p.act.run_id.as_ref().map(|id| run.join(format!("sweep-{RUNE}-{id}.log")));
+    let done = (p.act.what == "done").then(|| (p.act.rc.unwrap_or(1), p.act.detail.as_str(), log.as_deref()));
+    dwarf::ops_sweep::ledger_line(&run, now_secs(), RUNE, done, &p.act.detail, p.act.why.as_deref(), TRACE_MARK);
     if let (Some(why), Some(id)) = (&p.act.why, &p.act.run_id) {
         use std::io::Write;
         let full = p.act.error.as_deref().unwrap_or(why);
-        let line = format!(
-            "{} spira: ops sweep {id} harness-red: {full}\n",
-            dwarf::util::iso_utc(now_secs())
-        );
-        return std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(run.join("ops.log"))
-            .and_then(|mut f| f.write_all(line.as_bytes()))
-            .map(|_| format!("{} {RUNE} {}", p.act.what, p.act.detail))
-            .map_err(|e| format!("{NAME}: ops.log: {e}"));
+        let line = format!("{} spira: ops sweep {id} harness-red: {full}\n", dwarf::util::iso_utc(now_secs()));
+        return std::fs::OpenOptions::new().create(true).append(true).open(run.join("ops.log")).and_then(|mut f| f.write_all(line.as_bytes())).map(|_| format!("{} {RUNE} {}", p.act.what, p.act.detail)).map_err(|e| format!("{NAME}: ops.log: {e}"));
     }
     Ok(format!("{} {RUNE} {}", p.act.what, p.act.detail))
 }
@@ -1133,18 +651,8 @@ pub fn run_cleanup(e: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     if !id.is_empty() {
         dwarf::ops_sweep::cleanup(&run, RUNE, id);
     }
-    let num = |k: &str| {
-        get(&p.cfg, k)
-            .parse::<u32>()
-            .map_err(|_| format!("{NAME}: {k} missing or not a number"))
-    };
-    let (days, max) = (
-        num("SPIRA_OPS_SWEEP_KEEP_DAYS")?,
-        num("SPIRA_RESULTS_PRUNE_MAX")?,
-    );
+    let num = |k: &str| get(&p.cfg, k).parse::<u32>().map_err(|_| format!("{NAME}: {k} missing or not a number"));
+    let (days, max) = (num("SPIRA_OPS_SWEEP_KEEP_DAYS")?, num("SPIRA_RESULTS_PRUNE_MAX")?);
     let gone = dwarf::ops_sweep::prune(&run, RUNE, id, days, max as usize, now_secs() as u64);
-    Ok(format!(
-        "cleaned; pruned {} ({} over-age left)",
-        gone.removed, gone.left
-    ))
+    Ok(format!("cleaned; pruned {} ({} over-age left)", gone.removed, gone.left))
 }

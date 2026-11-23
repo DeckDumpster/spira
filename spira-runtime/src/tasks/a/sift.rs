@@ -110,9 +110,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 mod sifts;
+pub use sifts::{observe_repo, Reads};
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
-pub use sifts::{observe_repo, Reads};
 use spira_store::lc_call::LcClient;
 
 use super::kit::{self, Act, Cadence, Shape};
@@ -137,48 +137,19 @@ pub const OBSERVE_DEADLINE_MS: u64 = 120_000;
 /// `SEND_BACK_CAP` (`sift/src/lib.rs:16`).
 pub const SEND_BACK_CAP: u8 = sift::SEND_BACK_CAP as u8;
 
-pub const ACTS: &[(&str, u64)] = &[
-    (FETCH_BASE, 60_000),
-    (NOTE, 10_000),
-    (SEND_BACK, 10_000),
-    (RECORD_PASS, 10_000),
-    (SUPERSEDE, 10_000),
-    (INBOX_APPEND, 10_000),
-];
+pub const ACTS: &[(&str, u64)] = &[(FETCH_BASE, 60_000), (NOTE, 10_000), (SEND_BACK, 10_000), (RECORD_PASS, 10_000), (SUPERSEDE, 10_000), (INBOX_APPEND, 10_000)];
 /// `work.submitted` goes to both batchers when a pass is recorded: the bead is cuttable now.
 pub const EMITS: &[EventKindTag] = &[RECORD, kit::WORK_SUBMITTED];
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    FETCH_BASE,
-    NOTE,
-    SEND_BACK,
-    RECORD_PASS,
-    SUPERSEDE,
-    INBOX_APPEND,
-];
-pub const KEYS: &[&str] = &[
-    "SPIRA_RUN",
-    "SPIRA_LC_TIMEOUT",
-    "SPIRA_WIKI",
-    "SPIRA_IDENTITY_PROJECTS",
-    "SPIRA_CONCIERGE_INBOX",
-    "SPIRA_REPO_MAP",
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, FETCH_BASE, NOTE, SEND_BACK, RECORD_PASS, SUPERSEDE, INBOX_APPEND];
+pub const KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_LC_TIMEOUT", "SPIRA_WIKI", "SPIRA_IDENTITY_PROJECTS", "SPIRA_CONCIERGE_INBOX", "SPIRA_REPO_MAP"];
 pub const UNREGISTERED: &[&str] = &[];
 
-pub const SHAPE: Shape = Shape {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    observe: OBSERVE,
-    observe_deadline_ms: OBSERVE_DEADLINE_MS,
-};
+pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
-/// The git facts of one candidate, computed in the probe so decide does no IO.
-pub use sifts::CandidateFacts as Candidate;
 /// One SUBMITTED or CERTIFIED row.
 pub use sifts::PoolRow;
+/// The git facts of one candidate, computed in the probe so decide does no IO.
+pub use sifts::CandidateFacts as Candidate;
 /// One repository's snapshot.
 pub use sifts::RepoFacts as Repo;
 
@@ -255,27 +226,12 @@ fn machine_at(id: &str, s: Sifted) -> sift::machine::Sifted {
     match s {
         Sifted::Unrecorded => {}
         Sifted::Screened => push(SiftEvent::Screened { tip }),
-        Sifted::SentBack(n) => (1..=u32::from(n)).for_each(|n| {
-            push(SiftEvent::SentBack {
-                n,
-                tip: tip.clone(),
-                reason: String::new(),
-            })
-        }),
+        Sifted::SentBack(n) => (1..=u32::from(n)).for_each(|n| push(SiftEvent::SentBack { n, tip: tip.clone(), reason: String::new() })),
         Sifted::Capped => {
-            (1..=sift::SEND_BACK_CAP).for_each(|n| {
-                push(SiftEvent::SentBack {
-                    n,
-                    tip: tip.clone(),
-                    reason: String::new(),
-                })
-            });
+            (1..=sift::SEND_BACK_CAP).for_each(|n| push(SiftEvent::SentBack { n, tip: tip.clone(), reason: String::new() }));
             push(SiftEvent::Capped { tip });
         }
-        Sifted::Mending => push(SiftEvent::Mending {
-            tip,
-            bead: String::new(),
-        }),
+        Sifted::Mending => push(SiftEvent::Mending { tip, bead: String::new() }),
     }
     m
 }
@@ -286,22 +242,11 @@ pub fn record(id: &str, from: Sifted, to: Sifted) -> Result<Sifted, String> {
     use sift::machine::SiftEvent;
     let tip = String::new();
     let event = match to {
-        Sifted::Unrecorded => {
-            return Err(format!(
-                "{id} is {from:?}; nothing moves a bead back to unrecorded"
-            ))
-        }
+        Sifted::Unrecorded => return Err(format!("{id} is {from:?}; nothing moves a bead back to unrecorded")),
         Sifted::Screened => SiftEvent::Screened { tip },
-        Sifted::SentBack(n) => SiftEvent::SentBack {
-            n: u32::from(n),
-            tip,
-            reason: String::new(),
-        },
+        Sifted::SentBack(n) => SiftEvent::SentBack { n: u32::from(n), tip, reason: String::new() },
         Sifted::Capped => SiftEvent::Capped { tip },
-        Sifted::Mending => SiftEvent::Mending {
-            tip,
-            bead: String::new(),
-        },
+        Sifted::Mending => SiftEvent::Mending { tip, bead: String::new() },
     };
     match machine_at(id, from).refusal(&event) {
         Some(why) => Err(why),
@@ -318,15 +263,8 @@ struct SnapProbe<'a> {
 
 impl SnapProbe<'_> {
     fn facts(&self, tip: &str) -> Result<&Candidate, String> {
-        let id = self
-            .by_tip
-            .get(tip)
-            .ok_or_else(|| format!("no facts for tip {tip}"))?;
-        let f = self
-            .repo
-            .candidates
-            .get(id)
-            .ok_or_else(|| format!("no facts for {id}"))?;
+        let id = self.by_tip.get(tip).ok_or_else(|| format!("no facts for tip {tip}"))?;
+        let f = self.repo.candidates.get(id).ok_or_else(|| format!("no facts for {id}"))?;
         match &f.error {
             Some(e) => Err(e.clone()),
             None => Ok(f),
@@ -336,28 +274,16 @@ impl SnapProbe<'_> {
 
 impl sift::Probe for SnapProbe<'_> {
     fn base(&self) -> Result<String, String> {
-        self.repo
-            .candidates
-            .values()
-            .map(|c| c.base.clone())
-            .find(|b| !b.is_empty())
-            .ok_or_else(|| "no base was read".to_string())
+        self.repo.candidates.values().map(|c| c.base.clone()).find(|b| !b.is_empty()).ok_or_else(|| "no base was read".to_string())
     }
 
     fn merge(&self, tip: &str) -> Result<sift::Merge, String> {
         let f = self.facts(tip)?;
-        Ok(if f.conflicts.is_empty() {
-            sift::Merge::Clean(f.base.clone())
-        } else {
-            sift::Merge::Conflict(f.conflicts.clone())
-        })
+        Ok(if f.conflicts.is_empty() { sift::Merge::Clean(f.base.clone()) } else { sift::Merge::Conflict(f.conflicts.clone()) })
     }
 
     fn patch_id(&self, tip: &str) -> Result<String, String> {
-        self.facts(tip)?
-            .patch_id
-            .clone()
-            .ok_or_else(|| format!("no patch-id for tip {tip}"))
+        self.facts(tip)?.patch_id.clone().ok_or_else(|| format!("no patch-id for tip {tip}"))
     }
 
     fn stacked_on(&self, _id: &str, tip: &str) -> Result<Vec<String>, String> {
@@ -365,36 +291,17 @@ impl sift::Probe for SnapProbe<'_> {
     }
 
     fn state(&self, id: &str) -> Result<String, String> {
-        let row = || {
-            self.repo
-                .rows
-                .iter()
-                .chain(&self.repo.outside)
-                .find(|r| r.id == id)
-                .map(|r| r.state.clone())
-        };
-        self.repo
-            .prereq_state
-            .get(id)
-            .cloned()
-            .or_else(row)
-            .ok_or_else(|| format!("no state read for {id}"))
+        let row = || self.repo.rows.iter().chain(&self.repo.outside).find(|r| r.id == id).map(|r| r.state.clone());
+        self.repo.prereq_state.get(id).cloned().or_else(row).ok_or_else(|| format!("no state read for {id}"))
     }
 
     fn target_gap(&self, id: &str) -> Result<Option<String>, String> {
-        self.repo
-            .items
-            .get(id)
-            .map(|text| spira_config::target::gap(text))
-            .ok_or_else(|| format!("no item row for {id}"))
+        self.repo.items.get(id).map(|text| spira_config::target::gap(text)).ok_or_else(|| format!("no item row for {id}"))
     }
 
     fn identity_gap(&self, tip: &str) -> Result<Option<String>, String> {
         if self.repo.identity_pages.is_none() {
-            return Err(format!(
-                "{}the identity pages could not be read",
-                sift::INFRA_FAULT
-            ));
+            return Err(format!("{}the identity pages could not be read", sift::INFRA_FAULT));
         }
         let f = self.facts(tip)?;
         match &f.identity_error {
@@ -412,11 +319,7 @@ struct CarryStore {
 
 impl CarryStore {
     fn state(&self, id: &str) -> Sifted {
-        self.carry
-            .borrow()
-            .beads
-            .get(id)
-            .map_or(Sifted::Unrecorded, |b| b.0)
+        self.carry.borrow().beads.get(id).map_or(Sifted::Unrecorded, |b| b.0)
     }
 
     fn set(&self, id: &str, to: Sifted, tip: &str) -> Result<(), String> {
@@ -425,10 +328,7 @@ impl CarryStore {
             return Ok(());
         }
         record(id, from, to)?;
-        self.carry
-            .borrow_mut()
-            .beads
-            .insert(id.to_string(), (to, tip.to_string()));
+        self.carry.borrow_mut().beads.insert(id.to_string(), (to, tip.to_string()));
         Ok(())
     }
 }
@@ -461,8 +361,7 @@ impl sift::Store for CarryStore {
     }
 
     fn first_cap_report(&self, id: &str, tip: &str) -> bool {
-        self.carry.borrow().beads.get(id) != Some(&(Sifted::Capped, tip.to_string()))
-            && self.set(id, Sifted::Capped, tip).is_ok()
+        self.carry.borrow().beads.get(id) != Some(&(Sifted::Capped, tip.to_string())) && self.set(id, Sifted::Capped, tip).is_ok()
     }
 }
 
@@ -490,51 +389,25 @@ pub struct Write {
 
 impl Recorded<'_> {
     fn push(&mut self, effect: &str, key: String, w: Write) {
-        self.acts
-            .push(Act::new(effect, key).with_input(serde_json::to_string(&w).unwrap_or_default()));
+        self.acts.push(Act::new(effect, key).with_input(serde_json::to_string(&w).unwrap_or_default()));
     }
 }
 
 impl sift::Acts for Recorded<'_> {
     fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
         let tip = self.tips.get(id).cloned().unwrap_or_default();
-        self.push(
-            NOTE,
-            format!("{id}:{tip}:note"),
-            Write {
-                id: id.into(),
-                tip,
-                text: text.into(),
-                ..Write::default()
-            },
-        );
+        self.push(NOTE, format!("{id}:{tip}:note"), Write { id: id.into(), tip, text: text.into(), ..Write::default() });
         Ok(())
     }
 
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String> {
-        self.push(
-            SEND_BACK,
-            format!("{id}:{tip}:GateRed"),
-            Write {
-                id: id.into(),
-                tip: tip.into(),
-                text: reason.into(),
-                ..Write::default()
-            },
-        );
+        self.push(SEND_BACK, format!("{id}:{tip}:GateRed"), Write { id: id.into(), tip: tip.into(), text: reason.into(), ..Write::default() });
         Ok(())
     }
 
     fn send_back(&mut self, id: &str, tip: &str, text: &str) -> Result<(), String> {
         let key = format!("{id}:{tip}:GateRed");
-        let Some(act) = self
-            .acts
-            .iter_mut()
-            .rev()
-            .find(|a| a.effect == SEND_BACK && a.key == key)
-        else {
-            return Ok(());
-        };
+        let Some(act) = self.acts.iter_mut().rev().find(|a| a.effect == SEND_BACK && a.key == key) else { return Ok(()) };
         let mut w: Write = serde_json::from_str(&act.input).map_err(|e| e.to_string())?;
         w.brief = text.into();
         act.input = serde_json::to_string(&w).map_err(|e| e.to_string())?;
@@ -542,29 +415,13 @@ impl sift::Acts for Recorded<'_> {
     }
 
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
-        self.push(
-            SUPERSEDE,
-            format!("{id}:superseded-by:{keeper}"),
-            Write {
-                id: id.into(),
-                keeper: keeper.into(),
-                ..Write::default()
-            },
-        );
+        self.push(SUPERSEDE, format!("{id}:superseded-by:{keeper}"), Write { id: id.into(), keeper: keeper.into(), ..Write::default() });
         Ok(())
     }
 
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
         if self.sifted.get(id).map(String::as_str) != Some(tip) {
-            self.push(
-                RECORD_PASS,
-                format!("{id}:{tip}:Sifted"),
-                Write {
-                    id: id.into(),
-                    tip: tip.into(),
-                    ..Write::default()
-                },
-            );
+            self.push(RECORD_PASS, format!("{id}:{tip}:Sifted"), Write { id: id.into(), tip: tip.into(), ..Write::default() });
         }
         Ok(())
     }
@@ -580,8 +437,7 @@ impl sift::Acts for Recorded<'_> {
                 }
             }
         }
-        self.acts
-            .push(Act::new(INBOX_APPEND, &line).with_input(line));
+        self.acts.push(Act::new(INBOX_APPEND, &line).with_input(line));
     }
 }
 
@@ -590,21 +446,14 @@ fn stamp(ms: u64) -> String {
     let secs = ms / 1000;
     let (y, m, d) = crate::watchers::civil((secs / 86_400) as i64);
     let t = secs % 86_400;
-    format!(
-        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
-        t / 3600,
-        t % 3600 / 60,
-        t % 60
-    )
+    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", t / 3600, t % 3600 / 60, t % 60)
 }
 
 /// `sift::screen` over the snapshot: supersede, send back, record a pass, or hold out. A repo
 /// whose pool is empty does nothing; one whose base was not fetched asks for the fetch and
 /// screens nothing ("an unrefreshed base is the wrong base").
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
-    let store = CarryStore {
-        carry: RefCell::new(carry.clone()),
-    };
+    let store = CarryStore { carry: RefCell::new(carry.clone()) };
     let mut acts = vec![];
     for (name, repo) in &snap.repos {
         let stamp = stamp(repo.read_at_ms);
@@ -613,51 +462,23 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
             continue;
         }
         if !repo.fetched {
-            acts.push(
-                Act::new(FETCH_BASE, format!("{name}:{}", repo.read_at_ms))
-                    .with_input(name.clone()),
-            );
+            acts.push(Act::new(FETCH_BASE, format!("{name}:{}", repo.read_at_ms)).with_input(name.clone()));
             continue;
         }
         let open = repo.open_members();
-        let by_tip = pool
-            .iter()
-            .chain(&open)
-            .map(|c| (c.tip.clone(), c.id.clone()))
-            .collect();
+        let by_tip = pool.iter().chain(&open).map(|c| (c.tip.clone(), c.id.clone())).collect();
         let probe = SnapProbe { repo, by_tip };
-        let sifted = repo
-            .rows
-            .iter()
-            .filter_map(|r| r.sifted_tip.clone().map(|t| (r.id.clone(), t)))
-            .collect();
-        let mut rec = Recorded {
-            acts: vec![],
-            tips: pool.iter().map(|c| (c.id.clone(), c.tip.clone())).collect(),
-            sifted,
-            stamp: &stamp,
-        };
+        let sifted = repo.rows.iter().filter_map(|r| r.sifted_tip.clone().map(|t| (r.id.clone(), t))).collect();
+        let mut rec = Recorded { acts: vec![], tips: pool.iter().map(|c| (c.id.clone(), c.tip.clone())).collect(), sifted, stamp: &stamp };
         let refused: BTreeMap<String, Option<(Sifted, String)>> = pool
             .iter()
-            .filter(|c| {
-                repo.candidates.get(&c.id).is_some_and(|f| {
-                    store
-                        .carry
-                        .borrow()
-                        .sent
-                        .get(&c.id)
-                        .is_some_and(|a| a.tip == c.tip && a.base == f.base)
-                })
-            })
+            .filter(|c| repo.candidates.get(&c.id).is_some_and(|f| store.carry.borrow().sent.get(&c.id).is_some_and(|a| a.tip == c.tip && a.base == f.base)))
             .map(|c| (c.id.clone(), store.carry.borrow().beads.get(&c.id).cloned()))
             .collect();
         sift::screen(&probe, &store, &mut rec, &pool, &open);
         let mut attempts = vec![];
         for a in rec.acts {
-            let Some(w) = serde_json::from_str::<Write>(&a.input)
-                .ok()
-                .filter(|_| a.effect == NOTE || a.effect == SEND_BACK)
-            else {
+            let Some(w) = serde_json::from_str::<Write>(&a.input).ok().filter(|_| a.effect == NOTE || a.effect == SEND_BACK) else {
                 acts.push(a);
                 continue;
             };
@@ -670,33 +491,15 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
                 continue;
             }
             if a.effect == SEND_BACK {
-                let base = repo
-                    .candidates
-                    .get(&w.id)
-                    .map(|f| f.base.clone())
-                    .unwrap_or_default();
-                attempts.push((
-                    w.id.clone(),
-                    Attempt {
-                        repo: name.clone(),
-                        tip: w.tip.clone(),
-                        base,
-                        outcome: Outcome::Pending,
-                    },
-                ));
+                let base = repo.candidates.get(&w.id).map(|f| f.base.clone()).unwrap_or_default();
+                attempts.push((w.id.clone(), Attempt { repo: name.clone(), tip: w.tip.clone(), base, outcome: Outcome::Pending }));
             }
             acts.push(a);
         }
         store.carry.borrow_mut().sent.extend(attempts);
     }
-    let live: BTreeMap<&str, &str> = snap
-        .repos
-        .iter()
-        .flat_map(|(n, r)| r.rows.iter().map(move |row| (row.id.as_str(), n.as_str())))
-        .collect();
-    store.carry.borrow_mut().sent.retain(|id, a| {
-        live.get(id.as_str()).is_some_and(|n| *n == a.repo) || !snap.repos.contains_key(&a.repo)
-    });
+    let live: BTreeMap<&str, &str> = snap.repos.iter().flat_map(|(n, r)| r.rows.iter().map(move |row| (row.id.as_str(), n.as_str()))).collect();
+    store.carry.borrow_mut().sent.retain(|id, a| live.get(id.as_str()).is_some_and(|n| *n == a.repo) || !snap.repos.contains_key(&a.repo));
     (store.carry.into_inner(), acts)
 }
 
@@ -717,10 +520,7 @@ pub struct Sift {
 
 impl Sift {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        Sift {
-            cadence: Cadence::Every(CADENCE_MS),
-            pinned,
-        }
+        Sift { cadence: Cadence::Every(CADENCE_MS), pinned }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -738,28 +538,10 @@ impl Sift {
 
 /// A send-back held until its note landed: the note's key is the send-back's, `:note` for `:GateRed`.
 fn note_key(send_back_key: &str) -> String {
-    format!(
-        "{}:note",
-        send_back_key
-            .strip_suffix(":GateRed")
-            .unwrap_or(send_back_key)
-    )
+    format!("{}:note", send_back_key.strip_suffix(":GateRed").unwrap_or(send_back_key))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Map {
-        name: "beads",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "pending",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "sent",
-        drop: &[],
-    },
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "beads", drop: &[] }, runtime::rows::Part::Map { name: "pending", drop: &[] }, runtime::rows::Part::Map { name: "sent", drop: &[] }];
 
 impl Handler for Sift {
     fn interests(&self) -> &[EventKindTag] {
@@ -772,43 +554,21 @@ impl Handler for Sift {
         }
         let carry: Carry = kit::carry(&SHAPE, view);
         if ev.kind.tag == TICK {
-            let input = ObserveIn {
-                carry: carry.clone(),
-                pinned: self.pinned.clone(),
-            };
-            return kit::on_tick(
-                &SHAPE,
-                serde_json::to_string(&input).unwrap_or_default(),
-                self.cadence.next_after(ev.at),
-            );
+            let input = ObserveIn { carry: carry.clone(), pinned: self.pinned.clone() };
+            return kit::on_tick(&SHAPE, serde_json::to_string(&input).unwrap_or_default(), self.cadence.next_after(ev.at));
         }
         // A recorded pass made a submission cuttable: the batchers are woken now, not at their tick.
-        if let Some(spec) = crate::watchers::answered_spec(view, ev)
-            .filter(|s| s.name == RECORD_PASS && ev.kind.tag == EFFECT_SUCCEEDED)
-        {
-            let Ok(w) = serde_json::from_str::<Write>(&spec.input) else {
-                return vec![];
-            };
-            let handoff = Act::new(kit::WORK_SUBMITTED, format!("{}:{}", w.id, w.tip))
-                .with_input(serde_json::json!({ "id": w.id, "tip": w.tip }).to_string());
+        if let Some(spec) = crate::watchers::answered_spec(view, ev).filter(|s| s.name == RECORD_PASS && ev.kind.tag == EFFECT_SUCCEEDED) {
+            let Ok(w) = serde_json::from_str::<Write>(&spec.input) else { return vec![] };
+            let handoff = Act::new(kit::WORK_SUBMITTED, format!("{}:{}", w.id, w.tip)).with_input(serde_json::json!({ "id": w.id, "tip": w.tip }).to_string());
             return kit::commands(&SHAPE, ACTS, EMITS, &carry, &carry, vec![handoff]);
         }
-        let answered = crate::watchers::answered_spec(view, ev)
-            .filter(|s| s.name == NOTE || s.name == SEND_BACK);
+        let answered = crate::watchers::answered_spec(view, ev).filter(|s| s.name == NOTE || s.name == SEND_BACK);
         if let Some(spec) = answered {
-            let Ok(w) = serde_json::from_str::<Write>(&spec.input) else {
-                return vec![];
-            };
+            let Ok(w) = serde_json::from_str::<Write>(&spec.input) else { return vec![] };
             let ok = ev.kind.tag == EFFECT_SUCCEEDED;
-            let why = if ev.kind.body.is_empty() {
-                format!("timed out after {} ms", spec.deadline_ms)
-            } else {
-                ev.kind.body.clone()
-            };
-            let line = |msg: String| {
-                Act::new(INBOX_APPEND, format!("{} {}", w.id, msg))
-                    .with_input(format!("{} [watch:sift] {msg}", stamp(ev.at)))
-            };
+            let why = if ev.kind.body.is_empty() { format!("timed out after {} ms", spec.deadline_ms) } else { ev.kind.body.clone() };
+            let line = |msg: String| Act::new(INBOX_APPEND, format!("{} {}", w.id, msg)).with_input(format!("{} [watch:sift] {msg}", stamp(ev.at)));
             let mut next = carry.clone();
             let settle = |next: &mut Carry, outcome: Outcome| {
                 if let Some(a) = next.sent.get_mut(&w.id).filter(|a| a.tip == w.tip) {
@@ -821,35 +581,22 @@ impl Handler for Sift {
                     (Some(act), true) => vec![act],
                     (Some(_), false) => {
                         settle(&mut next, Outcome::Failed(why.clone()));
-                        vec![line(format!(
-                            "SIFT held {} at {}: evidence note failed: {why}",
-                            w.id, w.tip
-                        ))]
+                        vec![line(format!("SIFT held {} at {}: evidence note failed: {why}", w.id, w.tip))]
                     }
                     (None, _) => vec![],
                 }
             } else if ok {
                 settle(&mut next, Outcome::Applied);
-                Some(w.told.clone())
-                    .filter(|t| !t.is_empty())
-                    .map(|t| Act::new(INBOX_APPEND, &t).with_input(t))
-                    .into_iter()
-                    .collect()
+                Some(w.told.clone()).filter(|t| !t.is_empty()).map(|t| Act::new(INBOX_APPEND, &t).with_input(t)).into_iter().collect()
             } else {
                 settle(&mut next, Outcome::Failed(why.clone()));
-                vec![line(format!(
-                    "SIFT could not send {} to REWORK at {}: {why}",
-                    w.id, w.tip
-                ))]
+                vec![line(format!("SIFT could not send {} to REWORK at {}: {why}", w.id, w.tip))]
             };
             return kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts);
         }
-        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else {
-            return vec![];
-        };
+        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
         let (mut next, acts) = decide(&carry, &snap);
-        let (sends, now): (Vec<Act>, Vec<Act>) =
-            acts.into_iter().partition(|a| a.effect == SEND_BACK);
+        let (sends, now): (Vec<Act>, Vec<Act>) = acts.into_iter().partition(|a| a.effect == SEND_BACK);
         for a in sends {
             next.pending.insert(note_key(&a.key), a);
         }
@@ -874,48 +621,28 @@ fn registry(pinned: &BTreeMap<String, String>) -> Result<spira_config::repos::Re
 /// out (its pass waits); when none can be, the probe fails.
 pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
-    let secs = req
-        .pinned
-        .get("SPIRA_LC_TIMEOUT")
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(5);
+    let secs = req.pinned.get("SPIRA_LC_TIMEOUT").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(5);
     let lc = client(e, secs * 1000);
     let views = store_view::Projection::hot(lc.clone())?;
     let reg = registry(&req.pinned)?;
-    let run = req
-        .pinned
-        .get("SPIRA_RUN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| e.world.run_dir.clone());
+    let run = req.pinned.get("SPIRA_RUN").map(std::path::PathBuf::from).unwrap_or_else(|| e.world.run_dir.clone());
     let pin = |k: &str| req.pinned.get(k).cloned().unwrap_or_default();
     let (wiki, projects) = (pin("SPIRA_WIKI"), pin("SPIRA_IDENTITY_PROJECTS"));
-    let reads = sifts::Reads {
-        lc: &lc,
-        views: &views,
-        reg: &reg,
-        wiki: &wiki,
-        identity_projects: &projects,
-        work: run.join("sift"),
-    };
+    let reads = sifts::Reads { lc: &lc, views: &views, reg: &reg, wiki: &wiki, identity_projects: &projects, work: run.join("sift") };
     let mut snap = Snapshot::default();
     let mut failed = vec![];
     let repos = sifts::screened_repos(&reg);
     for (name, local) in &repos {
         match sifts::observe_repo(&reads, name, *local) {
             Ok(mut f) => {
-                f.read_at_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_millis() as u64);
+                f.read_at_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
                 snap.repos.insert(name.clone(), f);
             }
             Err(err) => failed.push(format!("{name}: {err}")),
         }
     }
     if !repos.is_empty() && snap.repos.is_empty() {
-        return Err(format!(
-            "no repository could be read: {}",
-            failed.join("; ")
-        ));
+        return Err(format!("no repository could be read: {}", failed.join("; ")));
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
@@ -927,15 +654,9 @@ fn write_of(input: &str, what: &str) -> Result<Write, String> {
 /// `sift.fetch_base`: the repository's base remote, fetched so the next probe judges against it.
 pub fn fetch_base(input: &str) -> Result<String, String> {
     let reg = registry(&BTreeMap::new())?;
-    let local = sifts::screened_repos(&reg)
-        .into_iter()
-        .find(|(n, _)| n == input)
-        .map(|(_, l)| l)
-        .ok_or_else(|| format!("{FETCH_BASE}: {input} is not a screened repository"))?;
+    let local = sifts::screened_repos(&reg).into_iter().find(|(n, _)| n == input).map(|(_, l)| l).ok_or_else(|| format!("{FETCH_BASE}: {input} is not a screened repository"))?;
     if local {
-        return Err(format!(
-            "{FETCH_BASE}: {input} lands on a local ref and has no remote"
-        ));
+        return Err(format!("{FETCH_BASE}: {input} lands on a local ref and has no remote"));
     }
     sifts::fetch_repo_base(&reg, input, local).map(|()| format!("fetched {input}"))
 }
@@ -950,16 +671,9 @@ pub fn send_back(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let lc = client(e, spec.deadline_ms);
     sifts::keep_sift_logs(&lc, &e.world.run_dir, &w.id, &w.text);
     sifts::lc_gate_red(&lc, &w.id, &w.tip, &w.text)?;
-    let fact = if w.brief.is_empty() {
-        Ok(())
-    } else {
-        sifts::lc_send_back_fact(&lc, &w.id, &w.tip, &w.brief)
-    };
+    let fact = if w.brief.is_empty() { Ok(()) } else { sifts::lc_send_back_fact(&lc, &w.id, &w.tip, &w.brief) };
     if let Err(e) = fact {
-        eprintln!(
-            "{SEND_BACK}: {} is sent back; its send-back fact was not recorded: {e}",
-            w.id
-        );
+        eprintln!("{SEND_BACK}: {} is sent back; its send-back fact was not recorded: {e}", w.id);
     }
     Ok(format!("sent {} back", w.id))
 }
@@ -968,17 +682,10 @@ pub fn record_pass(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, RECORD_PASS)?;
     let mut said = Vec::new();
     sifts::lc_sifted(&client(e, spec.deadline_ms), &w.id, &w.tip, &mut said)?;
-    Ok(String::from_utf8_lossy(&said).trim().to_string()).map(|s| {
-        if s.is_empty() {
-            format!("sifted {} at {}", w.id, w.tip)
-        } else {
-            s
-        }
-    })
+    Ok(String::from_utf8_lossy(&said).trim().to_string()).map(|s| if s.is_empty() { format!("sifted {} at {}", w.id, w.tip) } else { s })
 }
 
 pub fn supersede(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, SUPERSEDE)?;
-    sifts::lc_supersede(&client(e, spec.deadline_ms), &w.id, &w.keeper)
-        .map(|()| format!("{} superseded by {}", w.id, w.keeper))
+    sifts::lc_supersede(&client(e, spec.deadline_ms), &w.id, &w.keeper).map(|()| format!("{} superseded by {}", w.id, w.keeper))
 }

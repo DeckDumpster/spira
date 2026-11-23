@@ -80,14 +80,7 @@ pub const LOG: &str = "watch.perf.log";
 pub const SLOW_SAMPLE: &str = "watch.perf.slow_sample";
 pub const METRICS: &str = "watch.perf.metrics";
 pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND, LOG, SLOW_SAMPLE, METRICS];
-pub const KEYS: &[&str] = &[
-    "SPIRA_READ_WATCH_BUDGET_MS",
-    "SPIRA_READ_WATCH_INTERVAL",
-    "SPIRA_READ_WATCH_REMIND",
-    "SPIRA_CONCIERGE_INBOX",
-    "SPIRA_METRICS_ENDPOINT",
-    "SPIRA_RUN",
-];
+pub const KEYS: &[&str] = &["SPIRA_READ_WATCH_BUDGET_MS", "SPIRA_READ_WATCH_INTERVAL", "SPIRA_READ_WATCH_REMIND", "SPIRA_CONCIERGE_INBOX", "SPIRA_METRICS_ENDPOINT", "SPIRA_RUN"];
 /// The tag `inbox_line` wrote (`perf-watch/src/lib.rs:226-239`).
 pub const INBOX_TAG: &str = "perf-watch";
 /// `OnUnitActiveSec=5min`.
@@ -164,14 +157,7 @@ fn health_of(carry: &Carry) -> perf_watch::Health {
 }
 
 fn to_lib(t: &Timing) -> perf_watch::Timing {
-    perf_watch::Timing {
-        name: t.name.clone(),
-        millis: t.millis,
-        micros: t.micros,
-        error: t.error.clone(),
-        phases: t.phases.clone(),
-        timed_out_ms: t.timed_out_ms,
-    }
+    perf_watch::Timing { name: t.name.clone(), millis: t.millis, micros: t.micros, error: t.error.clone(), phases: t.phases.clone(), timed_out_ms: t.timed_out_ms }
 }
 
 fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec {
@@ -181,67 +167,25 @@ fn spec(name: &str, key: String, input: String, deadline_ms: u64) -> EffectSpec 
 /// `run_pass` with the probing lifted out: the next carry and the writes, among them each
 /// `inbox.append` line as `<UTC ISO> [watch:perf-watch] <alarm>`. The library's `settle` is the
 /// decision; the metrics push is last, and the handler sends it as a memory-only probe.
-pub fn decide(
-    carry: &Carry,
-    snap: &Snapshot,
-    now_ms: u64,
-    cfg: &Config,
-) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let now = now_ms / 1000;
-    let settings = perf_watch::Settings {
-        budget_ms: cfg.budget_ms,
-        interval_secs: cfg.interval_secs,
-        remind_secs: cfg.remind_secs,
-    };
+    let settings = perf_watch::Settings { budget_ms: cfg.budget_ms, interval_secs: cfg.interval_secs, remind_secs: cfg.remind_secs };
     let prior = health_of(carry);
     if !perf_watch::due(&settings, &prior, now) {
         return (carry.clone(), vec![]);
     }
     let cur = (!snap.callers.is_empty()).then(|| snap.callers.clone());
-    let pass = perf_watch::settle(
-        &settings,
-        &prior,
-        now,
-        snap.timings.iter().map(to_lib).collect(),
-        cur,
-    );
-    let next = Carry {
-        last_pass: now,
-        alarms: pass.health.alarms,
-        sample_at: pass.health.sample_at.unwrap_or(0),
-        sample: pass.health.sample,
-        timed_out: pass.health.timed_out,
-        record: snap.timings.clone(),
-    };
+    let pass = perf_watch::settle(&settings, &prior, now, snap.timings.iter().map(to_lib).collect(), cur);
+    let next = Carry { last_pass: now, alarms: pass.health.alarms, sample_at: pass.health.sample_at.unwrap_or(0), sample: pass.health.sample, timed_out: pass.health.timed_out, record: snap.timings.clone() };
     let mut acts = vec![];
     for (i, l) in pass.lines.iter().enumerate() {
-        acts.push(spec(
-            INBOX_APPEND,
-            format!("watch.perf:{now}:{i}"),
-            perf_watch::inbox_line(now, l).trim_end().to_string(),
-            WRITE_DEADLINE_MS,
-        ));
-        acts.push(spec(
-            LOG,
-            format!("watch.perf:log:{now}:{i}"),
-            l.clone(),
-            WRITE_DEADLINE_MS,
-        ));
+        acts.push(spec(INBOX_APPEND, format!("watch.perf:{now}:{i}"), perf_watch::inbox_line(now, l).trim_end().to_string(), WRITE_DEADLINE_MS));
+        acts.push(spec(LOG, format!("watch.perf:log:{now}:{i}"), l.clone(), WRITE_DEADLINE_MS));
     }
     for (i, s) in pass.slow.iter().enumerate() {
-        acts.push(spec(
-            SLOW_SAMPLE,
-            format!("watch.perf:slow:{i}:{now}"),
-            s.trim_end().to_string(),
-            WRITE_DEADLINE_MS,
-        ));
+        acts.push(spec(SLOW_SAMPLE, format!("watch.perf:slow:{i}:{now}"), s.trim_end().to_string(), WRITE_DEADLINE_MS));
     }
-    acts.push(spec(
-        METRICS,
-        format!("watch.perf:metrics:{now}"),
-        serde_json::to_string(&snap.timings).unwrap_or_default(),
-        WRITE_DEADLINE_MS,
-    ));
+    acts.push(spec(METRICS, format!("watch.perf:metrics:{now}"), serde_json::to_string(&snap.timings).unwrap_or_default(), WRITE_DEADLINE_MS));
     (next, acts)
 }
 
@@ -252,29 +196,18 @@ const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 /// The probe file the unit was started with, `spira/perf-probes` in the release.
 fn probes() -> Result<Vec<perf_watch::Probe>, String> {
     let file = spira_config::resolve::locate_home_for_process()?.join("perf-probes");
-    std::fs::read_to_string(&file)
-        .map_err(|e| e.to_string())
-        .and_then(|t| perf_watch::parse_probes(&t))
-        .map_err(|e| format!("perf-watch: {}: {e}", file.display()))
+    std::fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|t| perf_watch::parse_probes(&t)).map_err(|e| format!("perf-watch: {}: {e}", file.display()))
 }
 
 /// The phases line a probe printed to stderr, if it timed itself.
 fn phases_of(stderr: &[u8]) -> Option<String> {
-    String::from_utf8_lossy(stderr)
-        .lines()
-        .rev()
-        .find_map(|l| l.strip_prefix(spira_otel::run::PHASES_PREFIX))
-        .map(str::to_string)
+    String::from_utf8_lossy(stderr).lines().rev().find_map(|l| l.strip_prefix(spira_otel::run::PHASES_PREFIX)).map(str::to_string)
 }
 
 /// The probe's phases with `exit` appended: the time from the probe stamping its end until
 /// `reaped_us`. No end stamp leaves them as they were.
 fn account(phases: Option<String>, stderr: &str, reaped_us: u64) -> Option<String> {
-    let end_us = stderr
-        .lines()
-        .rev()
-        .find_map(|l| l.strip_prefix(spira_otel::run::END_PREFIX))
-        .and_then(|v| v.trim().parse::<u64>().ok());
+    let end_us = stderr.lines().rev().find_map(|l| l.strip_prefix(spira_otel::run::END_PREFIX)).and_then(|v| v.trim().parse::<u64>().ok());
     match (phases, end_us) {
         (Some(p), Some(end)) => Some(format!("{p},exit={}", reaped_us.saturating_sub(end) / 1000)),
         (p, _) => p,
@@ -284,94 +217,43 @@ fn account(phases: Option<String>, stderr: &str, reaped_us: u64) -> Option<Strin
 /// One probe timed end to end: a `spira-lc` read goes over the in-process client (the path
 /// S7 left), any other probe is its program run through `proc` and cut at `deadline`. A call
 /// that failed after at least its deadline was cut, not refused; the clock says so.
-fn time_one(
-    lc: &Result<spira_store::lc_call::LcClient, String>,
-    argv: &[String],
-    proc: &dyn runtime::ports::Proc,
-    deadline: std::time::Duration,
-) -> Timing {
+fn time_one(lc: &Result<spira_store::lc_call::LcClient, String>, argv: &[String], proc: &dyn runtime::ports::Proc, deadline: std::time::Duration) -> Timing {
     let t0 = std::time::Instant::now();
     let mut phases = None;
     let mut bound = deadline;
     let r: Result<(), String> = match (argv[0].as_str(), lc) {
         ("spira-lc", Ok(lc)) => {
             bound = spira_store::lc_call::DEADLINE;
-            lc.call(&argv[1..])
-                .map(|_| ())
-                .map_err(|e| format!("{}: {e}", argv[0]))
+            lc.call(&argv[1..]).map(|_| ()).map_err(|e| format!("{}: {e}", argv[0]))
         }
         ("spira-lc", Err(e)) => Err(format!("{}: {e}", argv[0])),
         _ => {
             let phases_on = format!("{}=1", spira_otel::run::PHASES_ENV);
-            let t0_us = format!(
-                "{}={}",
-                spira_otel::run::T0_ENV,
-                spira_otel::run::epoch_micros()
-            );
-            let args = [phases_on, t0_us, argv[0].clone()]
-                .into_iter()
-                .chain(argv[1..].iter().cloned())
-                .collect();
-            let spec = runtime::ports::ProcSpec {
-                prog: "env".into(),
-                args,
-                stdin: vec![],
-                deadline,
-            };
-            proc.run(&spec)
-                .map_err(|e| format!("{}: {e}", argv[0]))
-                .map(|o| {
-                    phases = account(
-                        phases_of(&o.stderr),
-                        &String::from_utf8_lossy(&o.stderr),
-                        spira_otel::run::epoch_micros(),
-                    )
-                })
+            let t0_us = format!("{}={}", spira_otel::run::T0_ENV, spira_otel::run::epoch_micros());
+            let args = [phases_on, t0_us, argv[0].clone()].into_iter().chain(argv[1..].iter().cloned()).collect();
+            let spec = runtime::ports::ProcSpec { prog: "env".into(), args, stdin: vec![], deadline };
+            proc.run(&spec).map_err(|e| format!("{}: {e}", argv[0])).map(|o| phases = account(phases_of(&o.stderr), &String::from_utf8_lossy(&o.stderr), spira_otel::run::epoch_micros()))
         }
     };
     let elapsed = t0.elapsed();
     let micros = elapsed.as_micros() as u64;
-    let timed_out_ms = (r.is_err() && elapsed >= bound && !(argv[0] == "spira-lc" && lc.is_err()))
-        .then_some(bound.as_millis() as u64);
-    Timing {
-        name: String::new(),
-        micros,
-        millis: micros / 1000,
-        phases,
-        error: r.err(),
-        timed_out_ms,
-    }
+    let timed_out_ms = (r.is_err() && elapsed >= bound && !(argv[0] == "spira-lc" && lc.is_err())).then_some(bound.as_millis() as u64);
+    Timing { name: String::new(), micros, millis: micros / 1000, phases, error: r.err(), timed_out_ms }
 }
 
 /// `watch.perf.observe`: every probe timed, then the store's caller counts.
 pub fn observe(_: &crate::Effects, _: &str, _: &EffectSpec) -> Result<String, String> {
     let lc = spira_store::lc_call::LcClient::configured();
-    let timings = probes()?
-        .iter()
-        .map(|p| Timing {
-            name: p.name.clone(),
-            ..time_one(&lc, &p.argv, &runtime::ports::SysProc, PROBE_DEADLINE)
-        })
-        .collect();
-    let callers = lc
-        .as_ref()
-        .ok()
-        .and_then(|c| c.call(&["stats"]).ok())
-        .map(|r| perf_watch::caller_counts(&r.out))
-        .unwrap_or_default();
+    let timings = probes()?.iter().map(|p| Timing { name: p.name.clone(), ..time_one(&lc, &p.argv, &runtime::ports::SysProc, PROBE_DEADLINE) }).collect();
+    let callers = lc.as_ref().ok().and_then(|c| c.call(&["stats"]).ok()).map(|r| perf_watch::caller_counts(&r.out)).unwrap_or_default();
     serde_json::to_string(&Snapshot { timings, callers }).map_err(|e| e.to_string())
 }
 
 fn append(file: &str, line: &str) -> Result<String, String> {
     let run = Config::pinned()?.run;
     let path = std::path::Path::new(&run).join(file);
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes())
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path.display().to_string())
 }
 
@@ -388,10 +270,7 @@ pub fn slow_sample(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<Str
 /// `watch.perf.metrics`: every answered probe's time, pushed; a lost push is a gap.
 pub fn metrics(_: &crate::Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
     let timings: Vec<Timing> = serde_json::from_str(&spec.input).map_err(|e| e.to_string())?;
-    perf_watch::push_timings(
-        &spira_config::process::metrics_sink("perf-watch"),
-        &timings.iter().map(to_lib).collect::<Vec<_>>(),
-    );
+    perf_watch::push_timings(&spira_config::process::metrics_sink("perf-watch"), &timings.iter().map(to_lib).collect::<Vec<_>>());
     Ok(format!("{} probe(s)", timings.len()))
 }
 
@@ -405,9 +284,7 @@ impl WatchPerf {
     }
 
     pub fn pinned() -> Self {
-        WatchPerf {
-            config: Config::pinned(),
-        }
+        WatchPerf { config: Config::pinned() }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -419,19 +296,7 @@ impl WatchPerf {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("last_pass"),
-    runtime::rows::Part::Map {
-        name: "alarms",
-        drop: &[],
-    },
-    runtime::rows::Part::Field("sample_at"),
-    runtime::rows::Part::Map {
-        name: "sample",
-        drop: &[],
-    },
-    runtime::rows::Part::Field("timed_out"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_pass"), runtime::rows::Part::Map { name: "alarms", drop: &[] }, runtime::rows::Part::Field("sample_at"), runtime::rows::Part::Map { name: "sample", drop: &[] }, runtime::rows::Part::Field("timed_out")];
 
 impl Handler for WatchPerf {
     fn interests(&self) -> &[EventKindTag] {
@@ -443,13 +308,7 @@ impl Handler for WatchPerf {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(
-                ev,
-                OBSERVE,
-                String::new(),
-                OBSERVE_DEADLINE_MS,
-                ev.at + CADENCE_MS,
-            );
+            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         // The push rides as a memory-only probe: a lost one is a gap in the series, and journaling
         // it would cost two events a pass on top of the state the pass must carry.
@@ -476,10 +335,7 @@ mod tests {
 
     struct Records(std::sync::Mutex<Vec<runtime::ports::ProcSpec>>);
     impl runtime::ports::Proc for Records {
-        fn run(
-            &self,
-            spec: &runtime::ports::ProcSpec,
-        ) -> Result<runtime::ports::ProcOutput, String> {
+        fn run(&self, spec: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
             self.0.lock().unwrap().push(spec.clone());
             Err("recorded".to_string())
         }
@@ -489,22 +345,10 @@ mod tests {
     #[test]
     fn a_forked_probe_is_given_its_start_stamp() {
         let proc = Records(Default::default());
-        time_one(
-            &Err("no store".to_string()),
-            &["work", "list", "--json"].map(String::from),
-            &proc,
-            std::time::Duration::from_secs(1),
-        );
+        time_one(&Err("no store".to_string()), &["work", "list", "--json"].map(String::from), &proc, std::time::Duration::from_secs(1));
         let spec = proc.0.lock().unwrap().remove(0);
-        let stamp = spec
-            .args
-            .iter()
-            .find_map(|a| a.strip_prefix("PERFWATCH_T0_US="))
-            .expect("a T0 assignment");
-        assert!(
-            !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()),
-            "{stamp}"
-        );
+        let stamp = spec.args.iter().find_map(|a| a.strip_prefix("PERFWATCH_T0_US=")).expect("a T0 assignment");
+        assert!(!stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()), "{stamp}");
         assert!(spec.args.contains(&"PERFWATCH_PHASES=1".to_string()));
     }
 
@@ -512,35 +356,15 @@ mod tests {
     #[test]
     fn exit_is_the_time_from_the_probes_end_stamp_to_the_reap() {
         let phases = Some("spawn=100,load=400,config=100,reply=30,client=18,push=2".to_string());
-        let got = account(
-            phases.clone(),
-            "PERFWATCH_PHASES=x\nPERFWATCH_END_US=1650000\n",
-            1_700_000,
-        )
-        .unwrap();
-        assert_eq!(
-            got,
-            "spawn=100,load=400,config=100,reply=30,client=18,push=2,exit=50"
-        );
-        let t = perf_watch::Timing {
-            name: "work-list".into(),
-            millis: 700,
-            micros: 700_000,
-            phases: Some(got),
-            error: None,
-            timed_out_ms: None,
-        };
+        let got = account(phases.clone(), "PERFWATCH_PHASES=x\nPERFWATCH_END_US=1650000\n", 1_700_000).unwrap();
+        assert_eq!(got, "spawn=100,load=400,config=100,reply=30,client=18,push=2,exit=50");
+        let t = perf_watch::Timing { name: "work-list".into(), millis: 700, micros: 700_000, phases: Some(got), error: None, timed_out_ms: None };
         assert!(perf_watch::alarms(&[t], 500, &[])[0].contains("rest=0ms"));
         assert_eq!(account(phases.clone(), "no stamp\n", 1_700_000), phases);
     }
 
     fn probe(deadline: std::time::Duration) -> Timing {
-        time_one(
-            &Err("no store".to_string()),
-            &["claim-check".to_string()],
-            &Fails,
-            deadline,
-        )
+        time_one(&Err("no store".to_string()), &["claim-check".to_string()], &Fails, deadline)
     }
 
     #[test_id(tmy8m71)]
@@ -562,49 +386,20 @@ mod tests {
     #[test_id(tx36594)]
     #[test]
     fn timed_out_probes_survive_the_carry_rows() {
-        let carry = Carry {
-            last_pass: 5,
-            timed_out: ["claim-check".to_string()].into(),
-            ..Carry::default()
-        };
+        let carry = Carry { last_pass: 5, timed_out: ["claim-check".to_string()].into(), ..Carry::default() };
         let body = serde_json::to_string(&carry).unwrap();
         let back = runtime::rows::join(&runtime::rows::split(&body, ROW_PARTS), ROW_PARTS);
-        assert_eq!(
-            serde_json::from_str::<Carry>(&back).unwrap().timed_out,
-            carry.timed_out
-        );
+        assert_eq!(serde_json::from_str::<Carry>(&back).unwrap().timed_out, carry.timed_out);
     }
 
     #[test_id(tvmboo0)]
     #[test]
     fn decide_pages_a_timeout_on_the_second_pass_and_not_the_first() {
-        let cfg = Config {
-            budget_ms: 500,
-            interval_secs: 0,
-            remind_secs: 1800,
-            inbox: String::new(),
-            metrics_endpoint: String::new(),
-            run: String::new(),
-        };
-        let snap = Snapshot {
-            timings: vec![Timing {
-                name: "claim-check".into(),
-                micros: 5_000_000,
-                millis: 5000,
-                error: Some("x".into()),
-                timed_out_ms: Some(5000),
-                ..Timing::default()
-            }],
-            callers: BTreeMap::new(),
-        };
+        let cfg = Config { budget_ms: 500, interval_secs: 0, remind_secs: 1800, inbox: String::new(), metrics_endpoint: String::new(), run: String::new() };
+        let snap = Snapshot { timings: vec![Timing { name: "claim-check".into(), micros: 5_000_000, millis: 5000, error: Some("x".into()), timed_out_ms: Some(5000), ..Timing::default() }], callers: BTreeMap::new() };
         let (first, acts) = decide(&Carry::default(), &snap, 1_000_000, &cfg);
         assert!(acts.iter().all(|a| a.name != INBOX_APPEND), "{acts:?}");
         let (_, acts) = decide(&first, &snap, 1_300_000, &cfg);
-        assert!(
-            acts.iter().any(|a| a.name == INBOX_APPEND
-                && a.input
-                    .contains("PERF TIMEOUT claim-check timed out at 5000ms twice in a row")),
-            "{acts:?}"
-        );
+        assert!(acts.iter().any(|a| a.name == INBOX_APPEND && a.input.contains("PERF TIMEOUT claim-check timed out at 5000ms twice in a row")), "{acts:?}");
     }
 }

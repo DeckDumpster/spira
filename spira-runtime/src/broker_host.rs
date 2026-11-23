@@ -12,8 +12,6 @@ pub fn exec_program(id: &str, bound_ms: u64) -> (i32, String) {
     };
     let secs = bound_ms.div_ceil(1000).max(1);
     let mut cmd = std::process::Command::new("timeout");
-    cmd.args(["-k", &KILL_GRACE_SECS.to_string(), &secs.to_string()])
-        .arg(&bin)
-        .args(["work-exec", id]);
+    cmd.args(["-k", &KILL_GRACE_SECS.to_string(), &secs.to_string()]).arg(&bin).args(["work-exec", id]);
     spira_store::lc_call::run_bounded(cmd, Duration::from_secs(secs + KILL_GRACE_SECS + 5))
 }

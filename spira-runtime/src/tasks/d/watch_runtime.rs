@@ -115,12 +115,7 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config {
-            metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT")?,
-            run: cfg("SPIRA_RUN")?,
-            persona: PERSONA.into(),
-            max_files: MAX_FILES,
-        })
+        Ok(Config { metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT")?, run: cfg("SPIRA_RUN")?, persona: PERSONA.into(), max_files: MAX_FILES })
     }
 }
 
@@ -197,72 +192,36 @@ impl SnapWorld<'_> {
 
 impl runtime_watch::World for SnapWorld<'_> {
     fn repos(&self) -> Vec<runtime_watch::Repo> {
-        self.snap
-            .repos
-            .iter()
-            .map(|r| runtime_watch::Repo {
-                name: r.name.clone(),
-                path: r.path.clone(),
-                git_ref: r.ref_.clone(),
-            })
-            .collect()
+        self.snap.repos.iter().map(|r| runtime_watch::Repo { name: r.name.clone(), path: r.path.clone(), git_ref: r.ref_.clone() }).collect()
     }
 
     fn read(&self, repo: &runtime_watch::Repo, file: &str) -> Result<Option<String>, String> {
-        Ok(self
-            .repo(repo)
-            .and_then(|r| r.files.get(file).cloned().flatten()))
+        Ok(self.repo(repo).and_then(|r| r.files.get(file).cloned().flatten()))
     }
 
     fn naming(&self, repo: &runtime_watch::Repo, needle: &str) -> Vec<String> {
-        self.repo(repo)
-            .and_then(|r| r.naming.get(needle).cloned())
-            .unwrap_or_default()
+        self.repo(repo).and_then(|r| r.naming.get(needle).cloned()).unwrap_or_default()
     }
 
     fn rust(&self) -> Result<runtime_watch::RustSupport, String> {
-        self.snap
-            .rust
-            .clone()
-            .and_then(|t| runtime_watch::parse_rust_stable(&t))
-            .map(|stable| runtime_watch::RustSupport { stable })
+        self.snap.rust.clone().and_then(|t| runtime_watch::parse_rust_stable(&t)).map(|stable| runtime_watch::RustSupport { stable })
     }
 
     fn node(&self) -> Result<runtime_watch::EolSupport, String> {
-        let pair: NodeTexts = serde_json::from_str(self.snap.node.as_ref().map_err(String::clone)?)
-            .map_err(|e| format!("node answer: {e}"))?;
+        let pair: NodeTexts = serde_json::from_str(self.snap.node.as_ref().map_err(String::clone)?).map_err(|e| format!("node answer: {e}"))?;
         runtime_watch::parse_node(&pair.schedule, &pair.index, &self.snap.today)
     }
 
     fn python(&self) -> Result<runtime_watch::EolSupport, String> {
-        self.snap
-            .python
-            .clone()
-            .and_then(|t| runtime_watch::parse_python(&t, &self.snap.today))
+        self.snap.python.clone().and_then(|t| runtime_watch::parse_python(&t, &self.snap.today))
     }
 
-    fn open_bump(
-        &self,
-        repo: &runtime_watch::Repo,
-        rt: runtime_watch::Runtime,
-    ) -> Result<Option<String>, String> {
+    fn open_bump(&self, repo: &runtime_watch::Repo, rt: runtime_watch::Runtime) -> Result<Option<String>, String> {
         Ok(self.snap.open_bumps.get(&key(repo, rt)).cloned())
     }
 
-    fn file_bump(
-        &self,
-        repo: &runtime_watch::Repo,
-        rt: runtime_watch::Runtime,
-        title: &str,
-        body: &str,
-    ) -> Result<String, String> {
-        self.bumps.borrow_mut().push(Bump {
-            key: key(repo, rt),
-            repo: repo.name.clone(),
-            persona: self.persona.into(),
-            title: title.into(),
-            body: body.into(),
-        });
+    fn file_bump(&self, repo: &runtime_watch::Repo, rt: runtime_watch::Runtime, title: &str, body: &str) -> Result<String, String> {
+        self.bumps.borrow_mut().push(Bump { key: key(repo, rt), repo: repo.name.clone(), persona: self.persona.into(), title: title.into(), body: body.into() });
         Ok(String::new())
     }
 
@@ -279,48 +238,14 @@ pub struct NodeTexts {
 }
 
 /// Today's `pass` over the snapshot: the bumps to file, the metrics push, the `cannot check` lines.
-pub fn decide(
-    carry: &Carry,
-    snap: &Snapshot,
-    now_ms: u64,
-    cfg: &Config,
-) -> (Carry, Vec<EffectSpec>) {
-    let w = SnapWorld {
-        snap,
-        persona: &cfg.persona,
-        bumps: Default::default(),
-    };
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
+    let w = SnapWorld { snap, persona: &cfg.persona, bumps: Default::default() };
     let o = runtime_watch::pass(&w, cfg.max_files);
     let bumps = w.bumps.into_inner();
-    let mut acts: Vec<EffectSpec> = bumps
-        .iter()
-        .map(|b| {
-            EffectSpec::keyed(
-                FILE_BUMP,
-                format!("{NAME}:{}", b.key.replace('\t', ":")),
-                serde_json::to_string(b).unwrap_or_default(),
-                FILE_DEADLINE_MS,
-            )
-        })
-        .collect();
-    let m = Metrics {
-        cannot_check: o.cannot_check.len() as u64,
-        filed: bumps.len() as u64,
-    };
-    acts.push(EffectSpec::keyed(
-        METRICS,
-        format!("{NAME}:metrics:{now_ms}"),
-        serde_json::to_string(&m).unwrap_or_default(),
-        ACT_DEADLINE_MS,
-    ));
-    acts.extend(o.cannot_check.iter().enumerate().map(|(i, c)| {
-        EffectSpec::keyed(
-            LOG,
-            format!("{NAME}:log:{now_ms}:{i}"),
-            format!("{COMPONENT}: cannot check — {c}"),
-            ACT_DEADLINE_MS,
-        )
-    }));
+    let mut acts: Vec<EffectSpec> = bumps.iter().map(|b| EffectSpec::keyed(FILE_BUMP, format!("{NAME}:{}", b.key.replace('\t', ":")), serde_json::to_string(b).unwrap_or_default(), FILE_DEADLINE_MS)).collect();
+    let m = Metrics { cannot_check: o.cannot_check.len() as u64, filed: bumps.len() as u64 };
+    acts.push(EffectSpec::keyed(METRICS, format!("{NAME}:metrics:{now_ms}"), serde_json::to_string(&m).unwrap_or_default(), ACT_DEADLINE_MS));
+    acts.extend(o.cannot_check.iter().enumerate().map(|(i, c)| EffectSpec::keyed(LOG, format!("{NAME}:log:{now_ms}:{i}"), format!("{COMPONENT}: cannot check — {c}"), ACT_DEADLINE_MS)));
     (carry.clone(), acts)
 }
 
@@ -344,39 +269,17 @@ const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 /// One child: the git and curl class stay processes (W1), run through the `Proc` port.
 fn child(prog: &str, args: &[&str], deadline: std::time::Duration) -> Result<String, String> {
     use runtime::ports::Proc;
-    let spec = runtime::ports::ProcSpec {
-        prog: prog.into(),
-        args: args.iter().map(|a| a.to_string()).collect(),
-        stdin: vec![],
-        deadline,
-    };
+    let spec = runtime::ports::ProcSpec { prog: prog.into(), args: args.iter().map(|a| a.to_string()).collect(), stdin: vec![], deadline };
     let out = runtime::ports::SysProc.run(&spec)?;
     if out.code == Some(0) {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(format!(
-            "{prog} exited {:?}: {}",
-            out.code,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
+        Err(format!("{prog} exited {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim()))
     }
 }
 
 fn fetch(url: &str) -> Result<String, String> {
-    child(
-        "curl",
-        &[
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--max-time",
-            "25",
-            url,
-        ],
-        CURL_DEADLINE,
-    )
-    .map_err(|e| format!("cannot fetch {url}: {e}"))
+    child("curl", &["--fail", "--silent", "--show-error", "--location", "--max-time", "25", url], CURL_DEADLINE).map_err(|e| format!("cannot fetch {url}: {e}"))
 }
 
 fn git(path: &str, args: &[&str]) -> Result<String, String> {
@@ -385,45 +288,22 @@ fn git(path: &str, args: &[&str]) -> Result<String, String> {
 
 /// A live bump for `(repo, rt)`: the ledgered id when the store shows it live, else the first
 /// live bead of the repo whose title names a bump of `rt` (`runtime-watch/src/real.rs:144-226`).
-fn open_bump(
-    lc: &spira_store::lc_call::LcClient,
-    ledgered: Option<&String>,
-    live: &[serde_json::Value],
-    rt: runtime_watch::Runtime,
-) -> Result<Option<String>, String> {
+fn open_bump(lc: &spira_store::lc_call::LcClient, ledgered: Option<&String>, live: &[serde_json::Value], rt: runtime_watch::Runtime) -> Result<Option<String>, String> {
     if let Some(id) = ledgered {
-        let out = lc
-            .call(&["show", id.as_str()])
-            .map_err(|e| format!("cannot tell whether {id} is open: {e}"))?;
+        let out = lc.call(&["show", id.as_str()]).map_err(|e| format!("cannot tell whether {id} is open: {e}"))?;
         match out.code {
             1 => {}
             0 => {
-                let doc: serde_json::Value =
-                    serde_json::from_str(&out.out).map_err(|e| format!("{id}: not JSON: {e}"))?;
-                let state = doc["bead"]["state"]
-                    .as_str()
-                    .ok_or_else(|| format!("{id}: no state"))?;
+                let doc: serde_json::Value = serde_json::from_str(&out.out).map_err(|e| format!("{id}: not JSON: {e}"))?;
+                let state = doc["bead"]["state"].as_str().ok_or_else(|| format!("{id}: no state"))?;
                 if !TERMINAL.contains(&state) {
                     return Ok(Some(id.clone()));
                 }
             }
-            _ => {
-                return Err(format!(
-                    "cannot tell whether {id} is open: {}",
-                    out.out.trim()
-                ))
-            }
+            _ => return Err(format!("cannot tell whether {id} is open: {}", out.out.trim())),
         }
     }
-    Ok(live
-        .iter()
-        .filter(|b| b["state"].as_str().is_some_and(|s| !TERMINAL.contains(&s)))
-        .find(|b| {
-            b["title"]
-                .as_str()
-                .is_some_and(|t| runtime_watch::names_bump(t, rt))
-        })
-        .and_then(|b| b["bead_id"].as_str().map(str::to_string)))
+    Ok(live.iter().filter(|b| b["state"].as_str().is_some_and(|s| !TERMINAL.contains(&s))).find(|b| b["title"].as_str().is_some_and(|t| runtime_watch::names_bump(t, rt))).and_then(|b| b["bead_id"].as_str().map(str::to_string)))
 }
 
 /// The probe (`input` is the carried ledger): the registry's repos, each pin file at the base
@@ -437,70 +317,26 @@ pub fn observe(input: &str) -> Result<String, String> {
     let mut repos = vec![];
     let mut open_bumps = BTreeMap::new();
     for name in registry.all() {
-        let (Some(path), Some(ref_)) = (
-            registry.root(&name).filter(|p| !p.is_empty()),
-            registry
-                .field(&name, Column::Base)
-                .filter(|r| !r.is_empty()),
-        ) else {
-            continue;
-        };
+        let (Some(path), Some(ref_)) = (registry.root(&name).filter(|p| !p.is_empty()), registry.field(&name, Column::Base).filter(|r| !r.is_empty())) else { continue };
         let mut files = BTreeMap::new();
         for f in runtime_watch::PIN_FILES {
-            let present = !git(&path, &["ls-tree", "--name-only", &ref_, "--", f])?
-                .trim()
-                .is_empty();
-            files.insert(
-                f.to_string(),
-                if present {
-                    Some(git(&path, &["show", &format!("{ref_}:{f}")])?)
-                } else {
-                    None
-                },
-            );
+            let present = !git(&path, &["ls-tree", "--name-only", &ref_, "--", f])?.trim().is_empty();
+            files.insert(f.to_string(), if present { Some(git(&path, &["show", &format!("{ref_}:{f}")])?) } else { None });
         }
-        let mut repo = Repo {
-            name: name.clone(),
-            path: path.clone(),
-            ref_: ref_.clone(),
-            files,
-            naming: BTreeMap::new(),
-        };
-        let probe = Snapshot {
-            today: String::new(),
-            repos: vec![repo.clone()],
-            rust: Err(String::new()),
-            node: Err(String::new()),
-            python: Err(String::new()),
-            open_bumps: BTreeMap::new(),
-        };
-        let w = SnapWorld {
-            snap: &probe,
-            persona: "",
-            bumps: Default::default(),
-        };
+        let mut repo = Repo { name: name.clone(), path: path.clone(), ref_: ref_.clone(), files, naming: BTreeMap::new() };
+        let probe = Snapshot { today: String::new(), repos: vec![repo.clone()], rust: Err(String::new()), node: Err(String::new()), python: Err(String::new()), open_bumps: BTreeMap::new() };
+        let w = SnapWorld { snap: &probe, persona: "", bumps: Default::default() };
         let r = runtime_watch::World::repos(&w).remove(0);
-        let pins = [
-            runtime_watch::rust_pins(&w, &r),
-            runtime_watch::node_pins(&w, &r),
-            runtime_watch::python_pins(&w, &r),
-        ]
-        .into_iter()
-        .flat_map(Result::unwrap_or_default);
+        let pins = [runtime_watch::rust_pins(&w, &r), runtime_watch::node_pins(&w, &r), runtime_watch::python_pins(&w, &r)].into_iter().flat_map(Result::unwrap_or_default);
         let prefix = format!("{ref_}:");
         for p in pins {
-            let hits = git(&path, &["grep", "-l", "-F", "-e", &p.needle, &ref_])
-                .unwrap_or_default()
-                .lines()
-                .map(|l| l.strip_prefix(&prefix).unwrap_or(l).to_string())
-                .collect();
+            let hits = git(&path, &["grep", "-l", "-F", "-e", &p.needle, &ref_]).unwrap_or_default().lines().map(|l| l.strip_prefix(&prefix).unwrap_or(l).to_string()).collect();
             repo.naming.insert(p.needle, hits);
         }
-        let live: Vec<serde_json::Value> =
-            match store_view::call_held(&lc, &["list", "--live", "--repo", &name]) {
-                Ok(r) if r.code == 0 => serde_json::from_str(&r.out).unwrap_or_default(),
-                _ => vec![],
-            };
+        let live: Vec<serde_json::Value> = match store_view::call_held(&lc, &["list", "--live", "--repo", &name]) {
+            Ok(r) if r.code == 0 => serde_json::from_str(&r.out).unwrap_or_default(),
+            _ => vec![],
+        };
         for rt in runtime_watch::Runtime::ALL {
             let k = key(&r, rt);
             if let Some(id) = open_bump(&lc, ledger.get(&k), &live, rt)? {
@@ -509,23 +345,9 @@ pub fn observe(input: &str) -> Result<String, String> {
         }
         repos.push(repo);
     }
-    let node = fetch(runtime_watch::real::NODE_SCHEDULE_URL).and_then(|schedule| {
-        fetch(runtime_watch::real::NODE_INDEX_URL)
-            .map(|index| serde_json::to_string(&NodeTexts { schedule, index }).unwrap_or_default())
-    });
-    let today = runtime_watch::civil_date(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs() as i64),
-    );
-    let snap = Snapshot {
-        today,
-        repos,
-        rust: fetch(runtime_watch::real::RUST_URL),
-        node,
-        python: fetch(runtime_watch::real::PYTHON_URL),
-        open_bumps,
-    };
+    let node = fetch(runtime_watch::real::NODE_SCHEDULE_URL).and_then(|schedule| fetch(runtime_watch::real::NODE_INDEX_URL).map(|index| serde_json::to_string(&NodeTexts { schedule, index }).unwrap_or_default()));
+    let today = runtime_watch::civil_date(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
+    let snap = Snapshot { today, repos, rust: fetch(runtime_watch::real::RUST_URL), node, python: fetch(runtime_watch::real::PYTHON_URL), open_bumps };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
@@ -533,45 +355,13 @@ pub fn observe(input: &str) -> Result<String, String> {
 /// answer is the bead id, which the ledger records.
 pub fn file_bump(input: &str) -> Result<String, String> {
     let b: Bump = serde_json::from_str(input).map_err(|e| format!("{FILE_BUMP}: {e}"))?;
-    let lc = spira_store::lc_call::LcClient::configured()?
-        .within(std::time::Duration::from_millis(FILE_DEADLINE_MS));
-    let out = lc
-        .call_stdin(
-            &[
-                "work",
-                "-",
-                "file",
-                &b.title,
-                "--for",
-                &b.persona,
-                "--repo",
-                &b.repo,
-                "--body-file",
-                "-",
-                "--actor",
-                COMPONENT,
-            ],
-            &b.body,
-        )
-        .map_err(|e| format!("work file {:?}: {e}", b.title))?;
+    let lc = spira_store::lc_call::LcClient::configured()?.within(std::time::Duration::from_millis(FILE_DEADLINE_MS));
+    let out = lc.call_stdin(&["work", "-", "file", &b.title, "--for", &b.persona, "--repo", &b.repo, "--body-file", "-", "--actor", COMPONENT], &b.body).map_err(|e| format!("work file {:?}: {e}", b.title))?;
     if out.code != 0 {
         return Err(format!("work file {:?}: {}", b.title, out.why()));
     }
-    let id = out
-        .out
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .ok_or("work file printed no id")?
-        .to_string();
-    let _ = lc.call(&[
-        "content",
-        "update",
-        &id,
-        "--add-label",
-        runtime_watch::LABEL,
-    ]);
+    let id = out.out.lines().rev().map(str::trim).find(|l| !l.is_empty()).ok_or("work file printed no id")?.to_string();
+    let _ = lc.call(&["content", "update", &id, "--add-label", runtime_watch::LABEL]);
     Ok(id)
 }
 
@@ -581,35 +371,16 @@ pub fn metrics(cfg: &Config, input: &str) -> Result<String, String> {
     let m: Metrics = serde_json::from_str(input).map_err(|e| format!("{METRICS}: {e}"))?;
     let endpoint = Some(cfg.metrics_endpoint.as_str()).filter(|e| !e.trim().is_empty());
     let sink = MetricsSink::for_component(endpoint, COMPONENT);
-    sink.push(
-        &[Point::Gauge {
-            name: "spira_runtime_watch_cannot_check",
-            value: m.cannot_check as f64,
-        }],
-        &[],
-    );
-    sink.push(
-        &[Point::Count {
-            name: "spira_runtime_bumps_filed",
-            value: m.filed,
-        }],
-        &[],
-    );
-    Ok(format!(
-        "{} cannot check, {} filed",
-        m.cannot_check, m.filed
-    ))
+    sink.push(&[Point::Gauge { name: "spira_runtime_watch_cannot_check", value: m.cannot_check as f64 }], &[]);
+    sink.push(&[Point::Count { name: "spira_runtime_bumps_filed", value: m.filed }], &[]);
+    Ok(format!("{} cannot check, {} filed", m.cannot_check, m.filed))
 }
 
 /// A `cannot check` line appended to `run/runtime-watch.log`, the `runtime-watch|log` row.
 pub fn log(cfg: &Config, line: &str) -> Result<String, String> {
     use std::io::Write;
     let path = std::path::Path::new(&cfg.run).join("runtime-watch.log");
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     writeln!(f, "{line}").map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path.display().to_string())
 }
@@ -624,9 +395,7 @@ impl WatchRuntime {
     }
 
     pub fn pinned() -> Self {
-        WatchRuntime {
-            config: Config::pinned(),
-        }
+        WatchRuntime { config: Config::pinned() }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -638,10 +407,7 @@ impl WatchRuntime {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map {
-    name: "ledger",
-    drop: &[],
-}];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "ledger", drop: &[] }];
 
 impl Handler for WatchRuntime {
     fn interests(&self) -> &[EventKindTag] {
@@ -653,13 +419,10 @@ impl Handler for WatchRuntime {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let ledger = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE).ledger)
-                .unwrap_or_default();
+            let ledger = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE).ledger).unwrap_or_default();
             return pattern::tick(ev, OBSERVE, ledger, OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
-        if let Some(spec) = answered_spec(view, ev)
-            .filter(|s| s.name == FILE_BUMP && ev.kind.tag == EFFECT_SUCCEEDED)
-        {
+        if let Some(spec) = answered_spec(view, ev).filter(|s| s.name == FILE_BUMP && ev.kind.tag == EFFECT_SUCCEEDED) {
             let carry = carried::<Carry>(view, &ev.stream, STATE);
             return pattern::commands(STATE, &carry, &filed(&carry, &spec, &ev.kind.body), vec![]);
         }

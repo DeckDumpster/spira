@@ -5,24 +5,13 @@ use spira_runtime::watchers::overrides::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn registration() -> runtime::Registration {
-    Overrides {
-        interval_ms: 60_000,
-    }
-    .registration()
+    Overrides { interval_ms: 60_000 }.registration()
 }
 
 fn a_failed_pass_already_said() -> TaskRig {
-    let mut r = TaskRig::new(1, registration())
-        .unwrap()
-        .double(APPLY, |_| {
-            Err("overrides: ghost: bead sp-x is not in the store".into())
-        })
-        .double(INBOX_APPEND, |l| Ok(l.into()));
+    let mut r = TaskRig::new(1, registration()).unwrap().double(APPLY, |_| Err("overrides: ghost: bead sp-x is not in the store".into())).double(INBOX_APPEND, |l| Ok(l.into()));
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
-    assert!(
-        r.requested().iter().any(|q| q.name == INBOX_APPEND),
-        "the scenario must have said the failure"
-    );
+    assert!(r.requested().iter().any(|q| q.name == INBOX_APPEND), "the scenario must have said the failure");
     r.clock.advance(1);
     r
 }
@@ -37,10 +26,5 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(ts76zkb)]
 #[test]
 fn a_boot_does_not_say_the_same_failed_pass_again() {
-    kit::assert_boot_matches_an_unstopped_run(
-        a_failed_pass_already_said,
-        registration,
-        STREAM,
-        EventKind::new(TICK, ""),
-    );
+    kit::assert_boot_matches_an_unstopped_run(a_failed_pass_already_said, registration, STREAM, EventKind::new(TICK, ""));
 }

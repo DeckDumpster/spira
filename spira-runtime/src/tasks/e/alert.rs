@@ -23,22 +23,11 @@ impl Alert {
         if let Some(c) = heading.get_mut(0..1) {
             c.make_ascii_uppercase();
         }
-        Alert {
-            mailbox: mailbox.into(),
-            from: from.into(),
-            subject: format!("{prefix}: {line}"),
-            kind: kind.into(),
-            body: format!("## {heading}\n{line}\n"),
-        }
+        Alert { mailbox: mailbox.into(), from: from.into(), subject: format!("{prefix}: {line}"), kind: kind.into(), body: format!("## {heading}\n{line}\n") }
     }
 
     pub fn effect(&self, name: &str, key: String, deadline_ms: u64) -> EffectSpec {
-        EffectSpec::keyed(
-            name,
-            key,
-            serde_json::to_string(self).unwrap_or_default(),
-            deadline_ms,
-        )
+        EffectSpec::keyed(name, key, serde_json::to_string(self).unwrap_or_default(), deadline_ms)
     }
 }
 
@@ -48,27 +37,8 @@ pub fn send(e: &Effects, input: &str) -> Result<String, String> {
     if a.subject.trim().is_empty() || a.mailbox.is_empty() {
         return Err("alert: an empty subject or mailbox is refused".into());
     }
-    let env = e
-        .concierge_mail
-        .as_deref()
-        .ok_or("no mail environment configured")?;
-    let args = mail::cmds::SendArgs {
-        mailbox: &a.mailbox,
-        from: Some(&a.from),
-        subject: &a.subject,
-        kind: &a.kind,
-        default: "",
-        class: "",
-        bead: "",
-        urgent: false,
-        digest: false,
-        dry_run: false,
-        requested_by: "",
-    };
-    let bd = mail::bead::BdCli {
-        bdq: String::new(),
-        conn_retries: 1,
-    };
-    mail::cmds::send(&bd, env, &args, a.body.clone())
-        .map(|o| o.delivered_path.display().to_string())
+    let env = e.concierge_mail.as_deref().ok_or("no mail environment configured")?;
+    let args = mail::cmds::SendArgs { mailbox: &a.mailbox, from: Some(&a.from), subject: &a.subject, kind: &a.kind, default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+    let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+    mail::cmds::send(&bd, env, &args, a.body.clone()).map(|o| o.delivered_path.display().to_string())
 }

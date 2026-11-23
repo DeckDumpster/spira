@@ -101,25 +101,13 @@ impl Handler for BrainDirty {
         if ev.kind.tag == TICK {
             return vec![
                 Command::Probe(EffectSpec::probe(OBSERVE, String::new(), DEADLINE_MS)),
-                Command::Timer {
-                    at: ev.at + self.interval_ms,
-                    kind: EventKind::new(TICK, ""),
-                },
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
-        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body)
-            .map_err(drop)
-            .and_then(|s| {
-                if ev.kind.tag == EFFECT_SUCCEEDED {
-                    Ok(s)
-                } else {
-                    Err(())
-                }
-            })
-        else {
+        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body).map_err(drop).and_then(|s| if ev.kind.tag == EFFECT_SUCCEEDED { Ok(s) } else { Err(()) }) else {
             ctx.event().set("brain_dirty.skipped", ev.kind.tag.as_str());
             return vec![];
         };
@@ -127,22 +115,9 @@ impl Handler for BrainDirty {
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("brain_dirty.said", say.len() as u64);
-        let mut cmds: Vec<Command> = say
-            .into_iter()
-            .map(|m| {
-                Command::Effect(EffectSpec::keyed(
-                    INBOX_APPEND,
-                    format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)),
-                    format!("{} [watch:{NAME}] {m}", iso8601(now)),
-                    DEADLINE_MS,
-                ))
-            })
-            .collect();
+        let mut cmds: Vec<Command> = say.into_iter().map(|m| Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS))).collect();
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(
-                STATE,
-                &serde_json::to_string(&next).unwrap_or_default(),
-            )));
+            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         cmds
     }
@@ -153,28 +128,18 @@ mod tests {
     use super::*;
 
     fn cfg() -> BrainDirty {
-        BrainDirty {
-            interval_ms: 1000,
-            age_secs: 1800,
-        }
+        BrainDirty { interval_ms: 1000, age_secs: 1800 }
     }
 
     fn snap(dirty: &[(&str, u64)]) -> Snapshot {
-        Snapshot {
-            wiki: "w".into(),
-            not_repo: false,
-            dirty: dirty.iter().map(|(p, m)| (p.to_string(), *m)).collect(),
-        }
+        Snapshot { wiki: "w".into(), not_repo: false, dirty: dirty.iter().map(|(p, m)| (p.to_string(), *m)).collect() }
     }
 
     #[test_id(t142j5c)]
     #[test]
     fn porcelain_records_yield_paths_and_a_rename_origin_is_not_one() {
         let raw = b" M a b.md\0?? new.md\0R  to.md\0from.md\0C  cp.md\0orig.md\0A  last.md\0";
-        let got: Vec<String> = porcelain_paths(raw)
-            .into_iter()
-            .map(|p| String::from_utf8(p).unwrap())
-            .collect();
+        let got: Vec<String> = porcelain_paths(raw).into_iter().map(|p| String::from_utf8(p).unwrap()).collect();
         assert_eq!(got, ["a b.md", "new.md", "to.md", "cp.md", "last.md"]);
         assert!(porcelain_paths(b"").is_empty());
     }
@@ -182,39 +147,17 @@ mod tests {
     #[test_id(thzn6ix)]
     #[test]
     fn a_path_older_than_the_limit_is_said_once_per_mtime() {
-        let (c, say) = decide(
-            &cfg(),
-            &Carry::default(),
-            &snap(&[("old.md", 1000), ("fresh.md", 9000)]),
-            10_000,
-        );
+        let (c, say) = decide(&cfg(), &Carry::default(), &snap(&[("old.md", 1000), ("fresh.md", 9000)]), 10_000);
         assert_eq!(say, ["BRAIN DIRTY: old.md has been uncommitted for 150 min; commit it by explicit path (git -C w add -- old.md)"]);
-        assert!(decide(&cfg(), &c, &snap(&[("old.md", 1000)]), 10_100)
-            .1
-            .is_empty());
-        assert_eq!(
-            decide(&cfg(), &c, &snap(&[("old.md", 2000)]), 10_100)
-                .1
-                .len(),
-            1,
-            "an edit is a new offence"
-        );
+        assert!(decide(&cfg(), &c, &snap(&[("old.md", 1000)]), 10_100).1.is_empty());
+        assert_eq!(decide(&cfg(), &c, &snap(&[("old.md", 2000)]), 10_100).1.len(), 1, "an edit is a new offence");
     }
 
     #[test_id(tejyito)]
     #[test]
     fn a_path_exactly_at_the_limit_is_not_yet_stale() {
-        assert!(
-            decide(&cfg(), &Carry::default(), &snap(&[("p.md", 8200)]), 10_000)
-                .1
-                .is_empty()
-        );
-        assert_eq!(
-            decide(&cfg(), &Carry::default(), &snap(&[("p.md", 8199)]), 10_000)
-                .1
-                .len(),
-            1
-        );
+        assert!(decide(&cfg(), &Carry::default(), &snap(&[("p.md", 8200)]), 10_000).1.is_empty());
+        assert_eq!(decide(&cfg(), &Carry::default(), &snap(&[("p.md", 8199)]), 10_000).1.len(), 1);
     }
 
     #[test_id(tag4b8x)]
@@ -222,39 +165,22 @@ mod tests {
     fn a_failed_or_timed_out_observe_says_nothing_and_marks_nothing() {
         use runtime::ports::VirtualClock;
         use runtime::{Engine, Executor, MemJournal, Outcome};
-        for out in [
-            Outcome::Failed("git status exited Some(128)".into()),
-            Outcome::TimedOut,
-        ] {
-            let mut e = Engine::open(
-                MemJournal::new(),
-                std::sync::Arc::new(VirtualClock::new(1_800_000_000_000)),
-                vec![cfg().registration()],
-                0,
-            )
-            .unwrap();
+        for out in [Outcome::Failed("git status exited Some(128)".into()), Outcome::TimedOut] {
+            let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(VirtualClock::new(1_800_000_000_000)), vec![cfg().registration()], 0).unwrap();
             let (id, stream, kind) = BrainDirty::boot();
             e.submit(id, stream, kind).unwrap();
             e.run_until_idle().unwrap();
             let observe = e.pending_effects().remove(0);
             e.complete(&observe.key, out).unwrap();
             e.run_until_idle().unwrap();
-            assert!(
-                e.pending_effects()
-                    .iter()
-                    .all(|p| p.spec.name != INBOX_APPEND),
-                "an observe that read nothing must not speak"
-            );
+            assert!(e.pending_effects().iter().all(|p| p.spec.name != INBOX_APPEND), "an observe that read nothing must not speak");
         }
     }
 
     #[test_id(tshsxfd)]
     #[test]
     fn a_wiki_that_is_not_a_repository_is_said_once() {
-        let s = Snapshot {
-            not_repo: true,
-            ..snap(&[])
-        };
+        let s = Snapshot { not_repo: true, ..snap(&[]) };
         let (c, say) = decide(&cfg(), &Carry::default(), &s, 10_000);
         assert_eq!(say, ["BRAIN DIRTY: SPIRA_WIKI (w) is not a git repository; nothing it holds can be committed"]);
         assert!(decide(&cfg(), &c, &s, 10_600).1.is_empty());

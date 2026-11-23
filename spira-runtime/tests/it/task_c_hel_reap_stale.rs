@@ -2,41 +2,17 @@
 //! `wiki/projects/spira/designs/tasks/hel-reap-stale.md`. Red until the task is ported.
 
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
-use spira_runtime::tasks::c::hel_reap_stale::{
-    self as task, Carry, HelReapStale as H, Phase, Repo, Snapshot, Worktree,
-};
+use spira_runtime::tasks::c::hel_reap_stale::{self as task, Carry, HelReapStale as H, Phase, Repo, Snapshot, Worktree};
 
 const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "3600"), (task::IDLE_HOURS_KEY, "48")];
 const HOUR: u64 = 3_600_000;
 
-fn tree(
-    id: &str,
-    state: Option<&str>,
-    merged: bool,
-    idle_secs: u64,
-    live_pid: Option<u32>,
-) -> Worktree {
-    Worktree {
-        id: id.into(),
-        path: format!("r/worktree/{id}"),
-        branch: format!("spira/{id}"),
-        live_pid,
-        bead_state: state.map(str::to_string),
-        merged_into: merged.then(|| "local/main".to_string()),
-        idle_secs,
-    }
+fn tree(id: &str, state: Option<&str>, merged: bool, idle_secs: u64, live_pid: Option<u32>) -> Worktree {
+    Worktree { id: id.into(), path: format!("r/worktree/{id}"), branch: format!("spira/{id}"), live_pid, bead_state: state.map(str::to_string), merged_into: merged.then(|| "local/main".to_string()), idle_secs }
 }
 
 fn repo(trees: Vec<Worktree>) -> Snapshot {
-    Snapshot {
-        halted: false,
-        repos: vec![Repo {
-            name: "spira".into(),
-            root: "r/spira".into(),
-            landrefs: vec!["local/main".into()],
-            worktrees: trees,
-        }],
-    }
+    Snapshot { halted: false, repos: vec![Repo { name: "spira".into(), root: "r/spira".into(), landrefs: vec!["local/main".into()], worktrees: trees }] }
 }
 
 fn json(s: &Snapshot) -> String {
@@ -52,64 +28,21 @@ fn t1_registered_boots_and_arms_an_hourly_tick() {
 #[test_id(t2aa1eh)]
 #[test]
 fn t2_a_2h_old_open_unmerged_worktree_is_the_probe_alone() {
-    t::t2_silent::<H>(
-        SET,
-        &json(&repo(vec![tree(
-            "sp-a",
-            Some("WORKING"),
-            false,
-            7_200,
-            None,
-        )])),
-    );
+    t::t2_silent::<H>(SET, &json(&repo(vec![tree("sp-a", Some("WORKING"), false, 7_200, None)])));
 }
 
 #[test_id(tbabkns)]
 #[test]
 fn t3_a_pass_observes_reaps_and_ends_a_halt_idles_and_a_tick_while_reaping_is_refused() {
     let h = t::handler::<H>(SET);
-    let observing = Carry {
-        phase: Phase::Observing,
-    };
-    let (c, acts) = task::decide(
-        &h.cfg,
-        &observing,
-        &Input::Observed(repo(vec![tree("sp-a", Some("LANDED"), false, 60, None)])),
-        HOUR,
-    )
-    .unwrap();
-    assert_eq!(
-        (c.phase, names(&acts)),
-        (Phase::Reaping, vec![task::DESTROY_WORKTREE])
-    );
+    let observing = Carry { phase: Phase::Observing };
+    let (c, acts) = task::decide(&h.cfg, &observing, &Input::Observed(repo(vec![tree("sp-a", Some("LANDED"), false, 60, None)])), HOUR).unwrap();
+    assert_eq!((c.phase, names(&acts)), (Phase::Reaping, vec![task::DESTROY_WORKTREE]));
     let refused = task::decide(&h.cfg, &c, &Input::Fire, 2 * HOUR).unwrap_err();
     assert!(refused.contains("reaping"), "{refused}");
-    let (_, acts) = task::decide(
-        &h.cfg,
-        &c,
-        &Input::Outcome {
-            effect: task::DESTROY_WORKTREE.into(),
-            ok: true,
-            body: "sp-a".into(),
-        },
-        HOUR + 1_000,
-    )
-    .unwrap();
-    assert_eq!(
-        names(&acts),
-        [task::PRUNE],
-        "prune only after a removal succeeded"
-    );
-    let (c, acts) = task::decide(
-        &h.cfg,
-        &observing,
-        &Input::Observed(Snapshot {
-            halted: true,
-            repos: vec![],
-        }),
-        HOUR,
-    )
-    .unwrap();
+    let (_, acts) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::DESTROY_WORKTREE.into(), ok: true, body: "sp-a".into() }, HOUR + 1_000).unwrap();
+    assert_eq!(names(&acts), [task::PRUNE], "prune only after a removal succeeded");
+    let (c, acts) = task::decide(&h.cfg, &observing, &Input::Observed(Snapshot { halted: true, repos: vec![] }), HOUR).unwrap();
     assert_eq!((c.phase, acts.len()), (Phase::Halted, 0));
 }
 
@@ -117,19 +50,14 @@ fn t3_a_pass_observes_reaps_and_ends_a_halt_idles_and_a_tick_while_reaping_is_re
 #[test]
 fn t4_its_effects_are_runnable_and_the_module_spawns_neither_bash_nor_spira_lc() {
     let sim = sim::doubles::service().names();
-    t::t4_runnable::<H>(
-        include_str!("../../src/tasks/c/hel_reap_stale.rs"),
-        &sim.iter().map(String::as_str).collect::<Vec<_>>(),
-    );
+    t::t4_runnable::<H>(include_str!("../../src/tasks/c/hel_reap_stale.rs"), &sim.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
 #[test_id(tb70ck5)]
 #[test]
 fn t5_finished_merged_and_idle_trees_go_and_the_two_listed_divergences_hold() {
     let h = t::handler::<H>(SET);
-    let observing = Carry {
-        phase: Phase::Observing,
-    };
+    let observing = Carry { phase: Phase::Observing };
     let snap = repo(vec![
         tree("sp-landed", Some("LANDED"), false, 60, None),
         tree("sp-merged", Some("SUBMITTED"), true, 2 * 3_600, None),
@@ -138,22 +66,9 @@ fn t5_finished_merged_and_idle_trees_go_and_the_two_listed_divergences_hold() {
         tree("sp-bdclosed", Some("WORKING"), false, 60, None),
     ]);
     let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(snap), HOUR).unwrap();
-    assert_eq!(
-        names(&acts),
-        [task::DESTROY_WORKTREE; 3],
-        "landed, merged-and-idle-1h, idle-48h go; a live cwd and a live lifecycle row stay"
-    );
-    let (_, acts) = task::decide(
-        &h.cfg,
-        &observing,
-        &Input::Observed(repo(vec![tree("sp-a", Some("WORKING"), false, 60, None)])),
-        HOUR,
-    )
-    .unwrap();
-    assert!(
-        acts.is_empty(),
-        "no prune on an idle pass (divergence from today): {acts:?}"
-    );
+    assert_eq!(names(&acts), [task::DESTROY_WORKTREE; 3], "landed, merged-and-idle-1h, idle-48h go; a live cwd and a live lifecycle row stay");
+    let (_, acts) = task::decide(&h.cfg, &observing, &Input::Observed(repo(vec![tree("sp-a", Some("WORKING"), false, 60, None)])), HOUR).unwrap();
+    assert!(acts.is_empty(), "no prune on an idle pass (divergence from today): {acts:?}");
 }
 
 use runtime::taskrig::TaskRig;
@@ -163,9 +78,7 @@ use spira_runtime::tasks::b::kit::FIRE;
 /// A landed checkout whose removal was refused: the pass stays reaping.
 fn reaping_a_refused_removal() -> TaskRig {
     let world = json(&repo(vec![tree("sp-a", Some("LANDED"), false, 60, None)]));
-    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration())
-        .unwrap()
-        .double(task::OBSERVE, move |_| Ok(world.clone()));
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(world.clone()));
     let (_, stream, kind) = H::boot();
     r.tick(stream, kind).unwrap();
     r
@@ -181,10 +94,5 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(tbn9quu)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(
-        reaping_a_refused_removal,
-        || t::handler::<H>(SET).registration(),
-        task::STREAM,
-        runtime::event::EventKind::new(task::TICK, FIRE),
-    );
+    kit::assert_boot_matches_an_unstopped_run(reaping_a_refused_removal, || t::handler::<H>(SET).registration(), task::STREAM, runtime::event::EventKind::new(task::TICK, FIRE));
 }

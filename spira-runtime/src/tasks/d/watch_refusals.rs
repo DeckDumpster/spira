@@ -98,12 +98,7 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config {
-            window_secs: WINDOW_SECS,
-            baseline: BASELINE,
-            repeat_secs: REPEAT_SECS,
-            max_files: MAX_FILES,
-        })
+        Ok(Config { window_secs: WINDOW_SECS, baseline: BASELINE, repeat_secs: REPEAT_SECS, max_files: MAX_FILES })
     }
 }
 
@@ -144,12 +139,7 @@ pub struct Filing {
 }
 
 fn lib_config(cfg: &Config) -> refusal_watch::Config {
-    refusal_watch::Config {
-        window_secs: cfg.window_secs,
-        baseline: cfg.baseline,
-        repeat_secs: cfg.repeat_secs,
-        max_files: cfg.max_files,
-    }
+    refusal_watch::Config { window_secs: cfg.window_secs, baseline: cfg.baseline, repeat_secs: cfg.repeat_secs, max_files: cfg.max_files }
 }
 
 fn signed(n: u64) -> i64 {
@@ -158,81 +148,34 @@ fn signed(n: u64) -> i64 {
 
 impl Class {
     fn lib(&self) -> refusal_watch::Class {
-        refusal_watch::Class {
-            actor: self.actor.clone(),
-            event: self.event.clone(),
-            from_state: self.from_state.clone(),
-            refusal: self.refusal.clone(),
-            n: self.n,
-            first_at: signed(self.first_at),
-            last_at: signed(self.last_at),
-            examples: self
-                .examples
-                .iter()
-                .map(|(b, at)| (b.clone(), signed(*at)))
-                .collect(),
-        }
+        refusal_watch::Class { actor: self.actor.clone(), event: self.event.clone(), from_state: self.from_state.clone(), refusal: self.refusal.clone(), n: self.n, first_at: signed(self.first_at), last_at: signed(self.last_at), examples: self.examples.iter().map(|(b, at)| (b.clone(), signed(*at))).collect() }
     }
 
     fn of(c: refusal_watch::Class) -> Class {
         let at = |t: i64| u64::try_from(t).unwrap_or(0);
-        Class {
-            actor: c.actor,
-            event: c.event,
-            from_state: c.from_state,
-            refusal: c.refusal,
-            n: c.n,
-            first_at: at(c.first_at),
-            last_at: at(c.last_at),
-            examples: c.examples.into_iter().map(|(b, t)| (b, at(t))).collect(),
-        }
+        Class { actor: c.actor, event: c.event, from_state: c.from_state, refusal: c.refusal, n: c.n, first_at: at(c.first_at), last_at: at(c.last_at), examples: c.examples.into_iter().map(|(b, t)| (b, at(t))).collect() }
     }
 }
 
 /// The carry without keys older than 7 × repeat (`refusal-watch/src/lib.rs:310`).
 fn pruned(carry: &Carry, now: u64, cfg: &Config) -> Carry {
     let keep = cfg.repeat_secs.saturating_mul(7);
-    Carry {
-        filed: carry
-            .filed
-            .iter()
-            .filter(|(_, t)| now.saturating_sub(**t) < keep)
-            .map(|(k, t)| (k.clone(), *t))
-            .collect(),
-    }
+    Carry { filed: carry.filed.iter().filter(|(_, t)| now.saturating_sub(**t) < keep).map(|(k, t)| (k.clone(), *t)).collect() }
 }
 
 /// `due` plus the selection half of `pass`: the filings to request, worst first, at most
 /// `max_files`; the carry changes here only by pruning.
-pub fn decide(
-    carry: &Carry,
-    snap: &Snapshot,
-    now_ms: u64,
-    cfg: &Config,
-) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let now = now_ms / 1000;
     let lcfg = lib_config(cfg);
     let classes: Vec<refusal_watch::Class> = snap.classes.iter().map(Class::lib).collect();
-    let state = carry
-        .filed
-        .iter()
-        .map(|(k, t)| (k.clone(), signed(*t)))
-        .collect();
+    let state = carry.filed.iter().map(|(k, t)| (k.clone(), signed(*t))).collect();
     let acts = refusal_watch::due(&classes, &lcfg, &state, signed(now))
         .into_iter()
         .take(cfg.max_files)
         .map(|c| {
-            let f = Filing {
-                key: c.key(),
-                title: c.title(),
-                body: refusal_watch::body(c, &lcfg),
-            };
-            EffectSpec::keyed(
-                FILE,
-                format!("watch.refusals:{}:{}", f.key, now / cfg.repeat_secs.max(1)),
-                serde_json::to_string(&f).unwrap_or_default(),
-                FILE_DEADLINE_MS,
-            )
+            let f = Filing { key: c.key(), title: c.title(), body: refusal_watch::body(c, &lcfg) };
+            EffectSpec::keyed(FILE, format!("watch.refusals:{}:{}", f.key, now / cfg.repeat_secs.max(1)), serde_json::to_string(&f).unwrap_or_default(), FILE_DEADLINE_MS)
         })
         .collect();
     (pruned(carry, now, cfg), acts)
@@ -250,12 +193,8 @@ pub fn filed(carry: &Carry, spec: &EffectSpec, now_ms: u64) -> Carry {
 /// The probe: the store's `ops-refusals <window>` over `LcClient`, parsed by `refusal_watch::parse`.
 pub fn observe(cfg: &Config) -> Result<String, String> {
     let lc = spira_store::lc_call::LcClient::configured()?;
-    let (now, classes) = refusal_watch::read_refusals(&lc, cfg.window_secs)
-        .and_then(|j| refusal_watch::parse(&j))?;
-    let snap = Snapshot {
-        now: u64::try_from(now).unwrap_or(0),
-        classes: classes.into_iter().map(Class::of).collect(),
-    };
+    let (now, classes) = refusal_watch::read_refusals(&lc, cfg.window_secs).and_then(|j| refusal_watch::parse(&j))?;
+    let snap = Snapshot { now: u64::try_from(now).unwrap_or(0), classes: classes.into_iter().map(Class::of).collect() };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
@@ -275,9 +214,7 @@ impl WatchRefusals {
     }
 
     pub fn pinned() -> Self {
-        WatchRefusals {
-            config: Config::pinned(),
-        }
+        WatchRefusals { config: Config::pinned() }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -289,10 +226,7 @@ impl WatchRefusals {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map {
-    name: "filed",
-    drop: &[],
-}];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "filed", drop: &[] }];
 
 impl Handler for WatchRefusals {
     fn interests(&self) -> &[EventKindTag] {
@@ -305,24 +239,12 @@ impl Handler for WatchRefusals {
         }
         if ev.kind.tag == EFFECT_FAILED {
             // An unreadable answer is "could not check", journaled, never a green pass.
-            return if crate::watchers::answers_observe(view, ev, OBSERVE) {
-                vec![Command::Emit(EventKind::new(BLIND, &ev.kind.body))]
-            } else {
-                vec![]
-            };
+            return if crate::watchers::answers_observe(view, ev, OBSERVE) { vec![Command::Emit(EventKind::new(BLIND, &ev.kind.body))] } else { vec![] };
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(
-                ev,
-                OBSERVE,
-                String::new(),
-                OBSERVE_DEADLINE_MS,
-                ev.at + CADENCE_MS,
-            );
+            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
-        if let Some(spec) =
-            answered_spec(view, ev).filter(|s| s.name == FILE && ev.kind.tag == EFFECT_SUCCEEDED)
-        {
+        if let Some(spec) = answered_spec(view, ev).filter(|s| s.name == FILE && ev.kind.tag == EFFECT_SUCCEEDED) {
             let carry = carried::<Carry>(view, &ev.stream, STATE);
             return pattern::commands(STATE, &carry, &filed(&carry, &spec, ev.at), vec![]);
         }

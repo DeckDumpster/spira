@@ -21,12 +21,7 @@ fn idle() -> Snapshot {
 
 /// A gh:run gate escalated, blocking a bead.
 fn busy() -> Snapshot {
-    Snapshot {
-        gate_list: vec!["g1".into()],
-        gate_check_out: "ESCALATE g1 run 102 failed\n".into(),
-        gate_blocked: [("g1".to_string(), Some("sp-x".to_string()))].into(),
-        ..idle()
-    }
+    Snapshot { gate_list: vec!["g1".into()], gate_check_out: "ESCALATE g1 run 102 failed\n".into(), gate_blocked: [("g1".to_string(), Some("sp-x".to_string()))].into(), ..idle() }
 }
 
 fn effects(acts: &[Act]) -> Vec<&str> {
@@ -34,9 +29,7 @@ fn effects(acts: &[Act]) -> Vec<&str> {
 }
 
 fn ingested(ids: &[&str]) -> Carry {
-    Carry {
-        ingested: ids.iter().map(|s| s.to_string()).collect(),
-    }
+    Carry { ingested: ids.iter().map(|s| s.to_string()).collect() }
 }
 
 /// `main.rs:100-127`: an escalated gate blocking a bead is resolved and its bead gets `ci.failed`.
@@ -44,25 +37,15 @@ fn ingested(ids: &[&str]) -> Carry {
 #[test]
 fn t5_an_escalated_gate_is_resolved_and_its_bead_hears_ci_failed() {
     let (_, acts) = decide(&ingested(&["101"]), &busy());
-    assert!(
-        acts.iter().any(|a| a.effect == RESOLVE && a.key == "g1"),
-        "{acts:?}"
-    );
-    assert!(
-        acts.iter()
-            .any(|a| a.effect == CI_FAILED && a.key == "ci.failed/sp-x/g1"),
-        "{acts:?}"
-    );
+    assert!(acts.iter().any(|a| a.effect == RESOLVE && a.key == "g1"), "{acts:?}");
+    assert!(acts.iter().any(|a| a.effect == CI_FAILED && a.key == "ci.failed/sp-x/g1"), "{acts:?}");
 }
 
 /// `main.rs:112`: a gate with no blocked bead is not resolved.
 #[test_id(t0k3d3b)]
 #[test]
 fn t5_a_gate_blocking_nothing_is_left() {
-    let snap = Snapshot {
-        gate_blocked: [("g1".to_string(), None)].into(),
-        ..busy()
-    };
+    let snap = Snapshot { gate_blocked: [("g1".to_string(), None)].into(), ..busy() };
     assert!(!effects(&decide(&ingested(&["101"]), &snap).1).contains(&RESOLVE));
 }
 
@@ -75,10 +58,5 @@ fn after_baseline() -> TaskRig {
 #[test_id(tp9ehiy)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(
-        after_baseline,
-        registration,
-        STREAM,
-        EventKind::new(TICK, ""),
-    );
+    kit::assert_boot_matches_an_unstopped_run(after_baseline, registration, STREAM, EventKind::new(TICK, ""));
 }

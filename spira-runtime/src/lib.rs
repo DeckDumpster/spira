@@ -4,18 +4,18 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
-pub mod api_budget;
-pub mod broker_host;
-pub mod classes;
 #[cfg(any(test, feature = "integration"))]
 pub mod fixture;
+pub mod api_budget;
+pub mod broker_host;
 pub mod forge;
+pub mod classes;
 pub mod hunk;
 pub mod margin_mail;
 pub mod modes;
 pub mod notify;
-pub mod reconcile_host;
 pub mod repin;
+pub mod reconcile_host;
 pub mod settings;
 pub mod sink;
 pub mod sources;
@@ -33,7 +33,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use runtime::host::EffectRunner;
-use runtime::{EffectSpec, Engine, Journal, Marker, Registration, Value, WideSink};
+use runtime::{Engine, EffectSpec, Journal, Marker, Registration, Value, WideSink};
 
 pub use settings::Settings;
 
@@ -41,32 +41,12 @@ pub use settings::Settings;
 /// on its row's plane, with its row's signal effects and the shared ones let through a halt.
 /// `Settings::from_lookup` refuses a table that does not name every task exactly.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    modes::apply(
-        tasks::all()
-            .map(|t| {
-                waking(
-                    t,
-                    s,
-                    (t.build)(s)
-                        .with_plane(t.plane)
-                        .with_signal_effects(t.signal)
-                        .with_signal_effects(tasks::SIGNAL_EFFECTS)
-                        .with_effects(t.effects),
-                )
-            })
-            .collect(),
-        &s.task_modes,
-    )
-    .expect("Settings::from_lookup checked the task modes")
+    modes::apply(tasks::all().map(|t| waking(t, s, (t.build)(s).with_plane(t.plane).with_signal_effects(t.signal).with_signal_effects(tasks::SIGNAL_EFFECTS).with_effects(t.effects))).collect(), &s.task_modes).expect("Settings::from_lookup checked the task modes")
 }
 
 /// `reg` with the wake its row's reads call for: a row that reads only the store stops polling, one that also reads elsewhere keeps its cadence.
 fn waking(t: &tasks::Task, s: &Settings, reg: Registration) -> Registration {
-    let wake = |reads: &'static [&'static str], polls| runtime::Wake {
-        reads: reads.to_vec(),
-        min_gap_ms: (t.cadence_ms)(s),
-        polls,
-    };
+    let wake = |reads: &'static [&'static str], polls| runtime::Wake { reads: reads.to_vec(), min_gap_ms: (t.cadence_ms)(s), polls };
     match t.reads {
         tasks::Reads::Only(p) => reg.with_wake(wake(p, false)),
         tasks::Reads::Polled(p) => reg.with_wake(wake(p, true)),
@@ -79,26 +59,18 @@ fn waking(t: &tasks::Task, s: &Settings, reg: Registration) -> Registration {
 pub fn control_submit(tx: tokio::sync::mpsc::Sender<runtime::host::Submit>) -> status::SubmitFn {
     Arc::new(move |id: &str, stream: &str, kind: runtime::EventKind| {
         let (sub, reply) = runtime::host::Submit::with_reply(id, stream, kind);
-        tx.blocking_send(sub)
-            .map_err(|_| "the scheduler is not taking submissions".to_string())?;
-        reply
-            .blocking_recv()
-            .map_err(|_| "the scheduler dropped the submission".to_string())?
+        tx.blocking_send(sub).map_err(|_| "the scheduler is not taking submissions".to_string())?;
+        reply.blocking_recv().map_err(|_| "the scheduler dropped the submission".to_string())?
     })
 }
 
 /// Answers `scheduler status|halt|resume` on `path` from its own thread, replacing a socket a
 /// previous process left behind.
-pub fn spawn_control(
-    path: &std::path::Path,
-    control: status::Control,
-) -> Result<std::thread::JoinHandle<()>, String> {
+pub fn spawn_control(path: &std::path::Path, control: status::Control) -> Result<std::thread::JoinHandle<()>, String> {
     if path.exists() {
-        std::fs::remove_file(path)
-            .map_err(|e| format!("control socket {}: {e}", path.display()))?;
+        std::fs::remove_file(path).map_err(|e| format!("control socket {}: {e}", path.display()))?;
     }
-    let listener = std::os::unix::net::UnixListener::bind(path)
-        .map_err(|e| format!("control socket {}: {e}", path.display()))?;
+    let listener = std::os::unix::net::UnixListener::bind(path).map_err(|e| format!("control socket {}: {e}", path.display()))?;
     std::thread::Builder::new()
         .name("control".into())
         .spawn(move || {
@@ -131,10 +103,7 @@ pub const BOOT_RETRY_CEILING_MS: u64 = 1_000;
 
 /// `line` under the UTC stamp every line in the service's log carries.
 pub fn stamped(line: &str) -> String {
-    format!(
-        "{} {line}",
-        watchers::iso8601(runtime::ports::Clock::now_ms(&runtime::ports::WallClock) / 1000)
-    )
+    format!("{} {line}", watchers::iso8601(runtime::ports::Clock::now_ms(&runtime::ports::WallClock) / 1000))
 }
 
 fn boot_retry(s: &Settings, bound: Duration) -> runtime::engine::BootRetry {
@@ -149,15 +118,7 @@ fn boot_retry(s: &Settings, bound: Duration) -> runtime::engine::BootRetry {
 }
 
 /// `bound` is how long the journal may stay unanswered before the open gives up.
-pub fn open_engine(
-    s: &Settings,
-    journal: Arc<dyn Journal>,
-    clock: Arc<dyn runtime::ports::Clock>,
-    marker: Arc<dyn Marker>,
-    sink: Arc<dyn WideSink>,
-    extra: Vec<Registration>,
-    bound: Duration,
-) -> runtime::Result<Engine> {
+pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>, bound: Duration) -> runtime::Result<Engine> {
     let mut regs = registrations(s);
     regs.extend(extra);
     let mut engine = Engine::open_with(journal, clock, regs, 0, boot_retry(s, bound))?;
@@ -166,13 +127,7 @@ pub fn open_engine(
     }
     engine
         .with_sink(sink)
-        .with_baseline(vec![
-            (
-                "runtime.version".into(),
-                Value::from(env!("CARGO_PKG_VERSION")),
-            ),
-            ("config.hash".into(), Value::from(s.hash())),
-        ])
+        .with_baseline(vec![("runtime.version".into(), Value::from(env!("CARGO_PKG_VERSION"))), ("config.hash".into(), Value::from(s.hash()))])
         .with_stall_limit(s.stall_limit)
         .with_marker(marker)
 }
@@ -186,11 +141,7 @@ pub struct Startup {
 
 impl Startup {
     pub fn new(deadline: Duration) -> Self {
-        Startup {
-            deadline,
-            step: Default::default(),
-            last_answer: Default::default(),
-        }
+        Startup { deadline, step: Default::default(), last_answer: Default::default() }
     }
 
     fn enter(&self, step: &'static str) {
@@ -204,19 +155,9 @@ impl Startup {
     pub fn unfinished(&self) -> String {
         let deadline = self.deadline;
         let step = *self.step.lock().unwrap_or_else(|p| p.into_inner());
-        let answer = self
-            .last_answer
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
-        let heard = if answer.is_empty() {
-            "no journal answer yet".to_string()
-        } else {
-            format!("last journal answer: {answer}")
-        };
-        stamped(&format!(
-            "spira-runtime: startup did not finish within {deadline:?}: still in {step}; {heard}"
-        ))
+        let answer = self.last_answer.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let heard = if answer.is_empty() { "no journal answer yet".to_string() } else { format!("last journal answer: {answer}") };
+        stamped(&format!("spira-runtime: startup did not finish within {deadline:?}: still in {step}; {heard}"))
     }
 }
 
@@ -238,10 +179,7 @@ impl Journal for Overheard {
     fn poison(&self, p: &runtime::journal::Poison) -> runtime::Result<()> {
         self.inner.poison(p)
     }
-    fn poisoned(
-        &self,
-        stream: &runtime::StreamKey,
-    ) -> runtime::Result<Option<runtime::journal::Poison>> {
+    fn poisoned(&self, stream: &runtime::StreamKey) -> runtime::Result<Option<runtime::journal::Poison>> {
         self.inner.poisoned(stream)
     }
     fn shipped(&self) -> Option<spira_otel::vlogs::ShipCounts> {
@@ -254,44 +192,15 @@ pub type StoreViews = (Arc<store_view::Projection>, Arc<store::ChangeTable>);
 
 /// Everything that must finish before the dispatch loop can start. The journal is asked for at
 /// most half of `deadline`, so a store that cannot tell is reported here with time left to print it.
-pub fn start_engine(
-    s: &Settings,
-    journal: Arc<dyn Journal>,
-    clock: Arc<dyn runtime::ports::Clock>,
-    marker: Arc<dyn Marker>,
-    sink: Arc<dyn WideSink>,
-    board: Arc<runtime::engine::StatusBoard>,
-    startup: &Arc<Startup>,
-) -> Result<(Engine, Option<StoreViews>), String> {
+pub fn start_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, board: Arc<runtime::engine::StatusBoard>, startup: &Arc<Startup>) -> Result<(Engine, Option<StoreViews>), String> {
     startup.enter("journal boot");
-    let journal = Arc::new(Overheard {
-        inner: journal,
-        startup: startup.clone(),
-    });
-    let engine = open_engine(
-        s,
-        journal,
-        clock,
-        marker,
-        sink,
-        vec![],
-        startup.deadline / 2,
-    )
-    .map_err(|e| stamped(&format!("spira-runtime: startup, journal boot: {e}")))?;
+    let journal = Arc::new(Overheard { inner: journal, startup: startup.clone() });
+    let engine = open_engine(s, journal, clock, marker, sink, vec![], startup.deadline / 2).map_err(|e| stamped(&format!("spira-runtime: startup, journal boot: {e}")))?;
     let mut engine = engine.with_status_board(board);
     startup.enter("start_tasks");
     start_tasks(&mut engine);
     startup.enter("store::start");
-    let store = store::start(&s.lc_socket)
-        .inspect_err(|e| {
-            eprintln!(
-                "{}",
-                stamped(&format!(
-                    "spira-runtime: no store views, tasks read the store per tick: {e}"
-                ))
-            )
-        })
-        .ok(); // loop-safe: runs on the startup offload thread
+    let store = store::start(&s.lc_socket).inspect_err(|e| eprintln!("{}", stamped(&format!("spira-runtime: no store views, tasks read the store per tick: {e}")))).ok(); // loop-safe: runs on the startup offload thread
     let engine = match &store {
         Some((_, table)) => engine.with_sweep(s.sweep_secs * 1000, table.clone()),
         None => engine,
@@ -326,9 +235,7 @@ pub struct Effects {
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
 pub fn operator_mail(mut env: mail::env::Env) -> mail::env::Env {
     env.db.clear();
-    env.repeat_considered = Some(
-        "pr-notify deduplicates by merge sha; subjects differ only in PR number and sha".into(),
-    );
+    env.repeat_considered = Some("pr-notify deduplicates by merge sha; subjects differ only in PR number and sha".into());
     env
 }
 
@@ -340,66 +247,19 @@ pub fn concierge_mail(mut env: mail::env::Env) -> mail::env::Env {
 
 impl Effects {
     fn concierge_note(&self, input: &str) -> Result<String, String> {
-        let env = self
-            .concierge_mail
-            .as_deref()
-            .ok_or("no concierge mail environment configured")?;
-        let note: watchers::reconciler_flow::Mail =
-            serde_json::from_str(input).map_err(|e| e.to_string())?;
-        let args = mail::cmds::SendArgs {
-            mailbox: "concierge",
-            from: Some(reconciler_engine::mail::FROM),
-            subject: &note.subject,
-            kind: "note",
-            default: "",
-            class: "",
-            bead: "",
-            urgent: false,
-            digest: false,
-            dry_run: false,
-            requested_by: "",
-        };
-        let bd = mail::bead::BdCli {
-            bdq: String::new(),
-            conn_retries: 1,
-        };
-        mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body))
-            .map(|o| o.delivered_path.display().to_string())
-            .inspect_err(|_| {
-                eprintln!(
-                    "reconciler-flow: concierge alert failed for: {}",
-                    note.subject
-                )
-            })
+        let env = self.concierge_mail.as_deref().ok_or("no concierge mail environment configured")?;
+        let note: watchers::reconciler_flow::Mail = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let args = mail::cmds::SendArgs { mailbox: "concierge", from: Some(reconciler_engine::mail::FROM), subject: &note.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+        mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("reconciler-flow: concierge alert failed for: {}", note.subject))
     }
 
     fn operator_note(&self, input: &str) -> Result<String, String> {
-        let env = self
-            .mail
-            .as_deref()
-            .ok_or("no mail environment configured")?;
-        let note: watchers::pr_notify::Note =
-            serde_json::from_str(input).map_err(|e| e.to_string())?;
-        let args = mail::cmds::SendArgs {
-            mailbox: "operator",
-            from: Some("PR Notify <pr-notify@spira>"),
-            subject: &note.subject,
-            kind: "note",
-            default: "",
-            class: "",
-            bead: "",
-            urgent: false,
-            digest: true,
-            dry_run: false,
-            requested_by: "",
-        };
-        let bd = mail::bead::BdCli {
-            bdq: String::new(),
-            conn_retries: 1,
-        };
-        mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body))
-            .map(|o| o.delivered_path.display().to_string())
-            .inspect_err(|_| eprintln!("pr-notify: operator mail failed for: {}", note.subject))
+        let env = self.mail.as_deref().ok_or("no mail environment configured")?;
+        let note: watchers::pr_notify::Note = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let args = mail::cmds::SendArgs { mailbox: "operator", from: Some("PR Notify <pr-notify@spira>"), subject: &note.subject, kind: "note", default: "", class: "", bead: "", urgent: false, digest: true, dry_run: false, requested_by: "" };
+        let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
+        mail::cmds::send(&bd, env, &args, format!("## Note\n{}\n", note.body)).map(|o| o.delivered_path.display().to_string()).inspect_err(|_| eprintln!("pr-notify: operator mail failed for: {}", note.subject))
     }
 }
 
@@ -419,61 +279,25 @@ impl Effects {
     /// One structural pass: the reads, in this process, as a serialised `Observation`.
     fn reconcile_observe(&self, input: &str) -> Result<String, String> {
         let r = self.reconciler.as_ref().ok_or("no reconciler configured")?;
-        let input: watchers::reconciler::ObserveIn =
-            serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let input: watchers::reconciler::ObserveIn = serde_json::from_str(input).map_err(|e| e.to_string())?;
         if self.reconciling.swap(true, Ordering::SeqCst) {
             return Err("a reconciler pass is still running".into());
         }
         let _passing = Passing(&self.reconciling);
         let at = input.at / 1000;
         let run = self.world.run_dir.clone();
-        let pinned = |k: &str| {
-            input
-                .values
-                .get(k)
-                .cloned()
-                .ok_or_else(|| format!("{k} unknown"))
-        };
+        let pinned = |k: &str| input.values.get(k).cloned().ok_or_else(|| format!("{k} unknown"));
         let instance = pinned("SPIRA_INSTANCE")?;
-        let enabled = self
-            .enabled
-            .get_or_init(|| {
-                install::bootstrap::manifest_from_env(&instance)
-                    .map(|m| m.enable(&instance).join("\n"))
-                    .unwrap_or_default()
-            })
-            .clone();
-        let min_age = pinned("SPIRA_STRANDED_RUNNER_MIN_AGE")?
-            .trim()
-            .parse()
-            .unwrap_or(0);
-        let mut host = reconcile_host::RuntimeHost::new(
-            self.world.clone(),
-            self.forge.clone(),
-            self.mail.clone(),
-            r.home.clone().into(),
-            pinned("SPIRA_RUNES")?,
-            min_age,
-            at,
-            enabled,
-            self.landrefs.clone(),
-        );
+        let enabled = self.enabled.get_or_init(|| install::bootstrap::manifest_from_env(&instance).map(|m| m.enable(&instance).join("\n")).unwrap_or_default()).clone();
+        let min_age = pinned("SPIRA_STRANDED_RUNNER_MIN_AGE")?.trim().parse().unwrap_or(0);
+        let mut host = reconcile_host::RuntimeHost::new(self.world.clone(), self.forge.clone(), self.mail.clone(), r.home.clone().into(), pinned("SPIRA_RUNES")?, min_age, at, enabled, self.landrefs.clone());
         host.bus = self.bus.clone();
         let starting = host.starts_not_yet_live(&input.starting);
         host.board = self.board.clone();
-        let mut cfg = reconciler::Config::from_lookup(
-            &pinned,
-            match self.seams.clone() {
-                Some(s) => s,
-                None => reconciler::Seams::production()?,
-            },
-            run,
-            r.home.clone(),
-            at,
-            reconciler_engine::clock::iso_of(at),
-        )?
-        .with_desired_state()
-        .with_host(Arc::new(host));
+        let mut cfg = reconciler::Config::from_lookup(&pinned, match self.seams.clone() {
+            Some(s) => s,
+            None => reconciler::Seams::production()?,
+        }, run, r.home.clone(), at, reconciler_engine::clock::iso_of(at))?.with_desired_state().with_host(Arc::new(host));
         cfg = cfg.with_memo(self.memo.clone());
         cfg.skip_units = own_skip_units(&instance);
         cfg.starting = starting;
@@ -483,22 +307,9 @@ impl Effects {
 
     /// Runs `act` once per effect key: a restart re-issues an effect that has no outcome, and a
     /// remedy or a mail must not go twice for it.
-    fn once(
-        &self,
-        key: &str,
-        act: impl FnOnce() -> Result<String, String>,
-    ) -> Result<String, String> {
+    fn once(&self, key: &str, act: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
         let dir = self.world.run_dir.join("reconciler-effects.d");
-        let safe: String = key
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
+        let safe: String = key.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
         if dir.join(&safe).exists() {
             return Ok(format!("effect {key} already ran"));
         }
@@ -507,10 +318,7 @@ impl Effects {
         let _ = std::fs::write(dir.join(&safe), "");
         let old = std::time::SystemTime::now() - Duration::from_secs(LEDGER_KEEP_SECS);
         for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            if e.metadata()
-                .and_then(|m| m.modified())
-                .is_ok_and(|t| t < old)
-            {
+            if e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < old) {
                 let _ = std::fs::remove_file(e.path());
             }
         }
@@ -519,29 +327,16 @@ impl Effects {
 
     fn log_line(&self, line: &str) {
         use std::io::Write;
-        let stamp = reconciler_engine::clock::iso_of(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-        );
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.world.run_dir.join("reconciler.log"))
-        {
+        let stamp = reconciler_engine::clock::iso_of(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.world.run_dir.join("reconciler.log")) {
             let _ = writeln!(f, "{stamp} spira: {line}");
         }
     }
 
     fn reconcile_record(&self, input: &str) -> Result<String, String> {
         let r = self.reconciler.as_ref().ok_or("no reconciler configured")?;
-        let rec: watchers::reconciler::Record =
-            serde_json::from_str(input).map_err(|e| e.to_string())?;
-        let endpoint = r
-            .values
-            .get("SPIRA_METRICS_ENDPOINT")
-            .cloned()
-            .filter(|e| !e.trim().is_empty());
+        let rec: watchers::reconciler::Record = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let endpoint = r.values.get("SPIRA_METRICS_ENDPOINT").cloned().filter(|e| !e.trim().is_empty());
         let store = tsd::store::Pusher::new(endpoint);
         let now_iso = reconciler_engine::clock::iso_of(rec.at / 1000);
         let release = reconciler::release_of(&r.home);
@@ -549,49 +344,26 @@ impl Effects {
             reconciler_engine::io::push_status(&store, &now_iso, row);
         }
         for e in &rec.events {
-            reconciler_engine::effect::append_event(
-                &store,
-                &reconciler_engine::effect::RemedyEvent {
-                    ts: &now_iso,
-                    event: &e.event,
-                    kind: reconciler_engine::effect::kind_of(&e.key),
-                    key: &e.key,
-                    action: &e.action,
-                    metric: "gap",
-                    before: e.before,
-                    after: e.after,
-                    release: &release,
-                },
-            );
+            reconciler_engine::effect::append_event(&store, &reconciler_engine::effect::RemedyEvent { ts: &now_iso, event: &e.event, kind: reconciler_engine::effect::kind_of(&e.key), key: &e.key, action: &e.action, metric: "gap", before: e.before, after: e.after, release: &release });
         }
         rec.log.iter().for_each(|l| self.log_line(l));
-        Ok(format!(
-            "{} status, {} events",
-            rec.status.len(),
-            rec.events.len()
-        ))
+        Ok(format!("{} status, {} events", rec.status.len(), rec.events.len()))
     }
 
     fn reconcile_remedy(&self, key: &str, input: &str) -> Result<String, String> {
-        let job: watchers::reconciler::RemedyJob =
-            serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let job: watchers::reconciler::RemedyJob = serde_json::from_str(input).map_err(|e| e.to_string())?;
         self.once(key, || {
             for (program, args) in &job.steps {
-                reconciler::run_cmd_ok(
-                    program,
-                    &args.iter().map(String::as_str).collect::<Vec<_>>(),
-                );
+                reconciler::run_cmd_ok(program, &args.iter().map(String::as_str).collect::<Vec<_>>());
             }
             Ok(format!("{}: {} step(s)", job.key, job.steps.len()))
         })
     }
 
     fn reconcile_mail(&self, key: &str, input: &str) -> Result<String, String> {
-        let job: watchers::reconciler::MailJob =
-            serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let job: watchers::reconciler::MailJob = serde_json::from_str(input).map_err(|e| e.to_string())?;
         self.once(key, || {
-            reconcile_host::send_mail(self.mail.as_deref(), &job.mail)
-                .inspect_err(|e| self.log_line(&format!("reconciler: {} failed: {e}", job.what)))?;
+            reconcile_host::send_mail(self.mail.as_deref(), &job.mail).inspect_err(|e| self.log_line(&format!("reconciler: {} failed: {e}", job.what)))?;
             if job.remind.is_some() {
                 self.log_line(&format!("reconciler: {}", job.what));
             }
@@ -612,23 +384,14 @@ impl Effects {
         if self.heartbeat_url.is_empty() {
             return Ok("no heartbeat url configured".into());
         }
-        let r = ureq::AgentBuilder::new()
-            .timeout(Duration::from_millis(spec.deadline_ms))
-            .build()
-            .get(&self.heartbeat_url)
-            .call()
-            .map_err(|e| e.to_string())?;
+        let r = ureq::AgentBuilder::new().timeout(Duration::from_millis(spec.deadline_ms)).build().get(&self.heartbeat_url).call().map_err(|e| e.to_string())?;
         Ok(format!("status {}", r.status()))
     }
 }
 
 /// An observe that answered is a tick; one that failed is not, so a task whose observe errors
 /// every time goes quiet to whoever reads the stamp.
-fn stamp_answered_probe(
-    run_dir: &std::path::Path,
-    effect: &str,
-    answered: &Result<String, String>,
-) {
+fn stamp_answered_probe(run_dir: &std::path::Path, effect: &str, answered: &Result<String, String>) {
     if let (Ok(_), Some(task)) = (answered, spira_config::ticked::task_of_probe(effect)) {
         spira_config::ticked::stamp(run_dir, task);
     }
@@ -644,10 +407,7 @@ mod probe_stamp_tests {
         let run = testkit::TempDir::new("probe-stamp");
         stamp_answered_probe(&run, "batcher.local.observe", &Err("store down".into()));
         stamp_answered_probe(&run, "batcher.local.land", &Ok("{}".into()));
-        assert_eq!(
-            spira_config::ticked::quiet_secs(&run, "batcher.local"),
-            None
-        );
+        assert_eq!(spira_config::ticked::quiet_secs(&run, "batcher.local"), None);
         for task in ["batcher.local", "gate.worker"] {
             stamp_answered_probe(&run, &format!("{task}.observe"), &Ok("{}".into()));
             assert!(spira_config::ticked::path(&run, task).exists(), "{task}");
@@ -686,32 +446,22 @@ impl EffectRunner for Effects {
 
 /// The runtime's own unit, which its reconciler must not treat as a subject.
 fn own_skip_units(instance: &str) -> Vec<String> {
-    vec![spira_config::unit::unit_name(
-        "runtime", "service", instance,
-    )]
+    vec![spira_config::unit::unit_name("runtime", "service", instance)]
 }
 
 #[cfg(test)]
 mod own_unit_tests {
+    use std::time::Duration;
     use runtime::journal::MemJournal;
     use runtime::ports::VirtualClock;
-    use runtime::{
-        Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration,
-    };
+    use runtime::{Command, Ctx, EffectSpec, Event, EventKindTag, Handler, Projection, Registration};
     use std::sync::Arc;
-    use std::time::Duration;
 
     #[test_id(tm78dmb)]
     #[test]
     fn the_boot_retry_caps_its_backoff_below_the_bound_so_a_late_store_is_found_soon() {
         let r = super::super::boot_retry(&crate::settings::fixture(), Duration::from_secs(10));
-        assert_eq!(
-            (r.first_ms, r.ceiling_ms),
-            (
-                super::super::BOOT_RETRY_FIRST_MS,
-                super::super::BOOT_RETRY_CEILING_MS
-            )
-        );
+        assert_eq!((r.first_ms, r.ceiling_ms), (super::super::BOOT_RETRY_FIRST_MS, super::super::BOOT_RETRY_CEILING_MS));
         assert!(r.ceiling_ms < r.bound_ms);
     }
 
@@ -719,9 +469,7 @@ mod own_unit_tests {
     impl runtime::Journal for Silent {
         fn record(&self, _: &Event) {}
         fn boot(&self) -> runtime::Result<runtime::journal::Boot> {
-            Err(runtime::RuntimeError::cannot_tell(
-                "cannot tell: spira-lc took the journal request but its reply was lost",
-            ))
+            Err(runtime::RuntimeError::cannot_tell("cannot tell: spira-lc took the journal request but its reply was lost"))
         }
         fn commit(&self, _: &runtime::journal::Turn) -> runtime::Result<()> {
             Ok(())
@@ -729,44 +477,21 @@ mod own_unit_tests {
         fn poison(&self, _: &runtime::journal::Poison) -> runtime::Result<()> {
             Ok(())
         }
-        fn poisoned(
-            &self,
-            _: &runtime::StreamKey,
-        ) -> runtime::Result<Option<runtime::journal::Poison>> {
+        fn poisoned(&self, _: &runtime::StreamKey) -> runtime::Result<Option<runtime::journal::Poison>> {
             Ok(None)
         }
     }
 
     #[test_id(ts0avk9)]
     #[test]
-    fn a_startup_over_a_journal_that_cannot_tell_fails_inside_the_deadline_with_a_stamped_line_naming_the_step(
-    ) {
+    fn a_startup_over_a_journal_that_cannot_tell_fails_inside_the_deadline_with_a_stamped_line_naming_the_step() {
         let deadline = Duration::from_millis(800);
         let startup = Arc::new(super::super::Startup::new(deadline));
-        let err = super::super::start_engine(
-            &crate::settings::fixture(),
-            Arc::new(Silent),
-            Arc::new(VirtualClock::new(1_000)),
-            Arc::new(runtime::marker::NullMarker),
-            Arc::new(runtime::NullSink),
-            Arc::new(runtime::engine::StatusBoard::default()),
-            &startup,
-        )
-        .err()
-        .expect("must fail");
+        let err = super::super::start_engine(&crate::settings::fixture(), Arc::new(Silent), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), Arc::new(runtime::engine::StatusBoard::default()), &startup).err().expect("must fail");
         let stamp = err.split(' ').next().unwrap();
-        assert!(
-            stamp.len() == 20 && stamp.ends_with('Z') && stamp.as_bytes()[10] == b'T',
-            "{err}"
-        );
-        assert!(
-            err.contains("journal boot") && err.contains("reply was lost"),
-            "{err}"
-        );
-        assert!(
-            startup.unfinished().contains("reply was lost"),
-            "the timeout line carries the journal's last words too"
-        );
+        assert!(stamp.len() == 20 && stamp.ends_with('Z') && stamp.as_bytes()[10] == b'T', "{err}");
+        assert!(err.contains("journal boot") && err.contains("reply was lost"), "{err}");
+        assert!(startup.unfinished().contains("reply was lost"), "the timeout line carries the journal's last words too");
     }
 
     struct Writer;
@@ -775,12 +500,7 @@ mod own_unit_tests {
             &["start"]
         }
         fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
-            vec![Command::Effect(EffectSpec::keyed(
-                "write",
-                "write",
-                String::new(),
-                1000,
-            ))]
+            vec![Command::Effect(EffectSpec::keyed("write", "write", String::new(), 1000))]
         }
     }
 
@@ -789,30 +509,13 @@ mod own_unit_tests {
         let mut s = crate::settings::fixture();
         s.run_dir = dir.path().to_path_buf();
         if stamp {
-            std::fs::write(
-                dir.path().join("world.halted"),
-                "2000-01-01T00:00:00Z\nwhy: planted\n",
-            )
-            .unwrap();
+            std::fs::write(dir.path().join("world.halted"), "2000-01-01T00:00:00Z\nwhy: planted\n").unwrap();
         }
         let j = MemJournal::new();
-        let mut e = super::open_engine(
-            &s,
-            j.clone(),
-            Arc::new(VirtualClock::new(1_000)),
-            Arc::new(runtime::marker::NullMarker),
-            Arc::new(runtime::NullSink),
-            vec![Registration::new("probe", Writer)],
-            Duration::from_secs(10),
-        )
-        .unwrap();
+        let mut e = super::open_engine(&s, j.clone(), Arc::new(VirtualClock::new(1_000)), Arc::new(runtime::marker::NullMarker), Arc::new(runtime::NullSink), vec![Registration::new("probe", Writer)], Duration::from_secs(10)).unwrap();
         e.start("probe", runtime::EventKind::new("start", ""));
         runtime::Executor::run_until_idle(&mut e).unwrap();
-        let tags = runtime::conformance::trace(&*j)
-            .into_iter()
-            .map(|t| t.2.to_string())
-            .filter(|t| t.starts_with("effect."))
-            .collect();
+        let tags = runtime::conformance::trace(&*j).into_iter().map(|t| t.2.to_string()).filter(|t| t.starts_with("effect.")).collect();
         (tags, e.status())
     }
 
@@ -822,41 +525,26 @@ mod own_unit_tests {
         let status = boot_under(true).1;
         let doc = crate::status::document(&status).to_string();
         let parsed = spira_world::scheduler::parse_status(&doc).unwrap();
-        assert_eq!(
-            spira_world::scheduler::mismatch(true, &parsed),
-            None,
-            "{doc}"
-        );
+        assert_eq!(spira_world::scheduler::mismatch(true, &parsed), None, "{doc}");
     }
 
     #[test_id(t4tgqmz)]
     #[test]
     fn a_boot_under_the_halt_stamp_holds_its_first_work_effect() {
         let tags = boot_under(true).0;
-        assert!(
-            tags.iter().any(|t| t == runtime::EFFECT_HELD)
-                && !tags.iter().any(|t| t == runtime::EFFECT_REQUESTED),
-            "{tags:?}"
-        );
+        assert!(tags.iter().any(|t| t == runtime::EFFECT_HELD) && !tags.iter().any(|t| t == runtime::EFFECT_REQUESTED), "{tags:?}");
     }
 
     #[test_id(tygv5ry)]
     #[test]
     fn a_boot_without_the_halt_stamp_requests_its_first_work_effect() {
         let tags = boot_under(false).0;
-        assert!(
-            tags.iter().any(|t| t == runtime::EFFECT_REQUESTED)
-                && !tags.iter().any(|t| t == runtime::EFFECT_HELD),
-            "{tags:?}"
-        );
+        assert!(tags.iter().any(|t| t == runtime::EFFECT_REQUESTED) && !tags.iter().any(|t| t == runtime::EFFECT_HELD), "{tags:?}");
     }
 
     #[test_id(tixxf4a)]
     #[test]
     fn skip_list_holds_the_installed_runtime_service_name() {
-        assert_eq!(
-            super::super::own_skip_units("prod"),
-            vec!["spira-runtime-prod.service".to_string()]
-        );
+        assert_eq!(super::super::own_skip_units("prod"), vec!["spira-runtime-prod.service".to_string()]);
     }
 }

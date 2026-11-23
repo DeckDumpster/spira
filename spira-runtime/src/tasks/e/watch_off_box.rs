@@ -42,14 +42,7 @@ pub const OBSERVE: &str = "watch.off_box.observe";
 pub const EFFECTS: &[&str] = &[OBSERVE, INBOX_APPEND];
 pub const URL_KEY: &str = "SPIRA_LC_BACKUP_URL";
 pub const DIR_KEY: &str = "SPIRA_LC_SHIP_DIR";
-pub const KEYS: &[&str] = &[
-    URL_KEY,
-    DIR_KEY,
-    "SPIRA_LC_SHIP_MAX_AGE_SECS",
-    "SPIRA_LC_SHIP_SNAPSHOT_SECS",
-    "SPIRA_CONCIERGE_INBOX",
-    "SPIRA_RUN",
-];
+pub const KEYS: &[&str] = &[URL_KEY, DIR_KEY, "SPIRA_LC_SHIP_MAX_AGE_SECS", "SPIRA_LC_SHIP_SNAPSHOT_SECS", "SPIRA_CONCIERGE_INBOX", "SPIRA_RUN"];
 pub const INBOX_TAG: &str = "off-box";
 pub const CADENCE_MS: u64 = 15_000;
 const OBSERVE_DEADLINE_MS: u64 = 10_000;
@@ -63,10 +56,7 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config {
-            max_age_s: cfg_parse("SPIRA_LC_SHIP_MAX_AGE_SECS")?,
-            snapshot_s: cfg_parse("SPIRA_LC_SHIP_SNAPSHOT_SECS")?,
-        })
+        Ok(Config { max_age_s: cfg_parse("SPIRA_LC_SHIP_MAX_AGE_SECS")?, snapshot_s: cfg_parse("SPIRA_LC_SHIP_SNAPSHOT_SECS")? })
     }
 }
 
@@ -93,53 +83,28 @@ pub struct Carry {
 }
 
 fn mtime_ms(path: &Path) -> Result<u64, String> {
-    let t = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    t.duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .map_err(|e| format!("{}: {e}", path.display()))
+    let t = std::fs::metadata(path).and_then(|m| m.modified()).map_err(|e| format!("{}: {e}", path.display()))?;
+    t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// What `dir` and the store's `head` say; `Err` when either cannot be read.
-pub fn observe_dir(
-    url: &str,
-    dir: &Path,
-    head: impl FnOnce() -> Result<u64, String>,
-) -> Result<Snapshot, String> {
+pub fn observe_dir(url: &str, dir: &Path, head: impl FnOnce() -> Result<u64, String>) -> Result<Snapshot, String> {
     if url.is_empty() {
         return Ok(Snapshot::NoDestination);
     }
     let marker = dir.join("shipped");
-    let text =
-        std::fs::read_to_string(&marker).map_err(|e| format!("{}: {e}", marker.display()))?;
-    let shipped = text
-        .trim()
-        .parse::<u64>()
-        .map_err(|_| format!("{}: not a revision: {:?}", marker.display(), text.trim()))?;
+    let text = std::fs::read_to_string(&marker).map_err(|e| format!("{}: {e}", marker.display()))?;
+    let shipped = text.trim().parse::<u64>().map_err(|_| format!("{}: not a revision: {:?}", marker.display(), text.trim()))?;
     let shipped_at_ms = mtime_ms(&marker)?;
     let last = dir.join(LAST_DRAIN);
     let last_error = match std::fs::read_to_string(&last) {
-        Ok(t) => {
-            serde_json::from_str::<LastDrain>(&t)
-                .map_err(|e| format!("{}: {e}", last.display()))?
-                .error
-        }
+        Ok(t) => serde_json::from_str::<LastDrain>(&t).map_err(|e| format!("{}: {e}", last.display()))?.error,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("{}: {e}", last.display())),
     };
     let staged = dir.join("queue").join(SNAPSHOT);
-    let oldest_snapshot_ms = ship::names(&staged)?
-        .iter()
-        .filter_map(|n| mtime_ms(&staged.join(n)).ok())
-        .min();
-    Ok(Snapshot::Seen {
-        head: head()?,
-        shipped,
-        shipped_at_ms,
-        last_error,
-        oldest_snapshot_ms,
-    })
+    let oldest_snapshot_ms = ship::names(&staged)?.iter().filter_map(|n| mtime_ms(&staged.join(n)).ok()).min();
+    Ok(Snapshot::Seen { head: head()?, shipped, shipped_at_ms, last_error, oldest_snapshot_ms })
 }
 
 /// The runner of [`OBSERVE`].
@@ -159,45 +124,21 @@ fn short(why: &str) -> String {
 
 /// The crossings `seen` makes against `carry` at `now_ms`, as the carry that records them and one
 /// inbox line each.
-pub fn decide(
-    carry: &Carry,
-    seen: &Result<Snapshot, String>,
-    now_ms: u64,
-    cfg: &Config,
-) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, seen: &Result<Snapshot, String>, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let bound = cfg.max_age_s.saturating_mul(1_000);
     let mut next = carry.clone();
     let mut acts = vec![];
-    let say = |acts: &mut Vec<EffectSpec>, key: &str, line: String| {
-        acts.push(EffectSpec::keyed(
-            INBOX_APPEND,
-            format!("{NAME}/{key}{now_ms}"),
-            pattern::inbox_line(now_ms, INBOX_TAG, &line),
-            INBOX_DEADLINE_MS,
-        ))
-    };
-    let overdue = |waiting: Option<(u64, u64)>| {
-        waiting.filter(|(_, since)| now_ms.saturating_sub(*since) > bound)
-    };
+    let say = |acts: &mut Vec<EffectSpec>, key: &str, line: String| acts.push(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}/{key}{now_ms}"), pattern::inbox_line(now_ms, INBOX_TAG, &line), INBOX_DEADLINE_MS));
+    let overdue = |waiting: Option<(u64, u64)>| waiting.filter(|(_, since)| now_ms.saturating_sub(*since) > bound);
     let (red, current) = match seen {
         Ok(Snapshot::NoDestination) => {
             if carry.snapshot_red {
-                say(
-                    &mut acts,
-                    "snapshot/",
-                    "CLEAR: no staged control-store snapshot is past its bound".into(),
-                );
+                say(&mut acts, "snapshot/", "CLEAR: no staged control-store snapshot is past its bound".into());
             }
             next = Carry::default();
             (None, "no destination is configured".to_string())
         }
-        Ok(Snapshot::Seen {
-            head,
-            shipped,
-            shipped_at_ms,
-            last_error,
-            oldest_snapshot_ms,
-        }) => {
+        Ok(Snapshot::Seen { head, shipped, shipped_at_ms, last_error, oldest_snapshot_ms }) => {
             next.blind_since_ms = None;
             if next.waiting.is_some_and(|(rev, _)| shipped >= &rev) {
                 next.waiting = None;
@@ -225,29 +166,15 @@ pub fn decide(
             let since = *next.blind_since_ms.get_or_insert(now_ms);
             let blind = now_ms.saturating_sub(since);
             let red = (blind > bound || overdue(next.waiting).is_some()).then(|| {
-                let behind = overdue(next.waiting).map_or(String::new(), |(rev, at)| {
-                    format!(
-                        "; revisions up to {rev} have waited {}s without upload",
-                        secs(now_ms.saturating_sub(at))
-                    )
-                });
-                format!(
-                    "RED: the off-box copy cannot be measured, for {}s, past {}s: {}{behind}",
-                    secs(blind),
-                    cfg.max_age_s,
-                    short(e)
-                )
+                let behind = overdue(next.waiting).map_or(String::new(), |(rev, at)| format!("; revisions up to {rev} have waited {}s without upload", secs(now_ms.saturating_sub(at))));
+                format!("RED: the off-box copy cannot be measured, for {}s, past {}s: {}{behind}", secs(blind), cfg.max_age_s, short(e))
             });
             (red, "the off-box copy is measured again".to_string())
         }
     };
     match (&red, carry.red) {
         (Some(line), false) => say(&mut acts, "", line.clone()),
-        (None, true) => say(
-            &mut acts,
-            "",
-            format!("CLEAR: the off-box copy is current again: {current}"),
-        ),
+        (None, true) => say(&mut acts, "", format!("CLEAR: the off-box copy is current again: {current}")),
         _ => {}
     }
     next.red = red.is_some();
@@ -264,9 +191,7 @@ impl WatchOffBox {
     }
 
     pub fn pinned() -> Self {
-        WatchOffBox {
-            config: Config::pinned(),
-        }
+        WatchOffBox { config: Config::pinned() }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -278,12 +203,7 @@ impl WatchOffBox {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("waiting"),
-    runtime::rows::Part::Field("blind_since_ms"),
-    runtime::rows::Part::Field("red"),
-    runtime::rows::Part::Field("snapshot_red"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("waiting"), runtime::rows::Part::Field("blind_since_ms"), runtime::rows::Part::Field("red"), runtime::rows::Part::Field("snapshot_red")];
 
 impl Handler for WatchOffBox {
     fn interests(&self) -> &[EventKindTag] {
@@ -295,13 +215,7 @@ impl Handler for WatchOffBox {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(
-                ev,
-                OBSERVE,
-                String::new(),
-                OBSERVE_DEADLINE_MS,
-                ev.at + CADENCE_MS,
-            );
+            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
@@ -314,8 +228,7 @@ impl Handler for WatchOffBox {
             }
         };
         let seen = match ev.kind.tag.as_str() {
-            EFFECT_SUCCEEDED => serde_json::from_str::<Snapshot>(&ev.kind.body)
-                .map_err(|e| format!("the observe answer did not parse: {e}")),
+            EFFECT_SUCCEEDED => serde_json::from_str::<Snapshot>(&ev.kind.body).map_err(|e| format!("the observe answer did not parse: {e}")),
             EFFECT_FAILED => Err(ev.kind.body.clone()),
             _ => Err("the observe timed out".to_string()),
         };

@@ -23,28 +23,14 @@ const NOW: u64 = 1_793_000_000_000;
 fn idle() -> Snapshot {
     Snapshot {
         beads: Some(vec![]),
-        rows: Some(vec![Row {
-            id: "sp-a".into(),
-            state: "WORKING".into(),
-            version: 3,
-            holder: Some("dwarf-1".into()),
-            lease_until_ms: Some(NOW + 600_000),
-            ..Row::default()
-        }]),
+        rows: Some(vec![Row { id: "sp-a".into(), state: "WORKING".into(), version: 3, holder: Some("dwarf-1".into()), lease_until_ms: Some(NOW + 600_000), ..Row::default() }]),
         plan_ready: Some(0),
         holder_alive: [("sp-a".to_string(), true)].into(),
         landing_active: true,
         world_running: true,
         now_ms: NOW,
         // literal-ok: test fixture label
-        labels: Labels {
-            queue_wait: QUEUE_WAIT.into(),
-            ask: "needs-operator".into(),
-            open_children: "spira-open-children".into(),
-            red_tracker: "spira-red-tracker".into(),
-            epics: vec!["spira".into()],
-            ..Labels::default()
-        },
+        labels: Labels { queue_wait: QUEUE_WAIT.into(), ask: "needs-operator".into(), open_children: "spira-open-children".into(), red_tracker: "spira-red-tracker".into(), epics: vec!["spira".into()], ..Labels::default() },
         watchers: vec!["ryan".into()],
         inference_every_secs: 3_600,
         ..Snapshot::default()
@@ -56,17 +42,7 @@ const QUEUE_WAIT: &str = "spira-queue-waiting";
 
 /// A lease long past grace whose holder is still alive.
 fn busy() -> Snapshot {
-    Snapshot {
-        rows: Some(vec![Row {
-            id: "sp-a".into(),
-            state: "WORKING".into(),
-            version: 3,
-            holder: Some("dwarf-1".into()),
-            lease_until_ms: Some(NOW - 3_600_000),
-            ..Row::default()
-        }]),
-        ..idle()
-    }
+    Snapshot { rows: Some(vec![Row { id: "sp-a".into(), state: "WORKING".into(), version: 3, holder: Some("dwarf-1".into()), lease_until_ms: Some(NOW - 3_600_000), ..Row::default() }]), ..idle() }
 }
 
 #[test_id(tpfx617)]
@@ -80,10 +56,7 @@ fn t3_every_row_of_the_state_table_is_taken() {
 #[test_id(thh29x0)]
 #[test]
 fn t3_another_unit_while_awaiting_landing_is_ignored_and_acting_x_tick_is_refused_naming_acting() {
-    assert_eq!(
-        step(State::AwaitingLanding, Trigger::OtherUnitRan),
-        Ok(State::AwaitingLanding)
-    );
+    assert_eq!(step(State::AwaitingLanding, Trigger::OtherUnitRan), Ok(State::AwaitingLanding));
     let refused = step(State::Acting, Trigger::Tick).expect_err("acting × tick is illegal");
     assert!(refused.to_lowercase().contains("acting"), "{refused}");
 }
@@ -91,13 +64,7 @@ fn t3_another_unit_while_awaiting_landing_is_ignored_and_acting_x_tick_is_refuse
 #[test_id(t57wkc7)]
 #[test]
 fn t3_the_recorded_carry_is_the_carry_read() {
-    let mut r = rig(
-        1,
-        Snapshot {
-            plan_ready: Some(2),
-            ..busy()
-        },
-    );
+    let mut r = rig(1, Snapshot { plan_ready: Some(2), ..busy() });
     r.advance(CADENCE_MS).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
     kit::assert_read_equals_record::<Carry>(&r, STATE, OBSERVE);
@@ -109,16 +76,8 @@ fn t3_the_recorded_carry_is_the_carry_read() {
 #[test]
 fn t5_check2_stops_a_live_holder_before_reclaiming() {
     let (_, acts) = decide(&Carry::default(), &busy());
-    assert!(
-        acts.iter()
-            .any(|a| a.effect == STOP_HOLDER && a.key == "sp-a"),
-        "{acts:?}"
-    );
-    assert!(
-        acts.iter()
-            .all(|a| !(a.effect == LC_EVENT && a.key.starts_with("sp-a"))),
-        "a live holder is never reclaimed in the pass that stops it: {acts:?}"
-    );
+    assert!(acts.iter().any(|a| a.effect == STOP_HOLDER && a.key == "sp-a"), "{acts:?}");
+    assert!(acts.iter().all(|a| !(a.effect == LC_EVENT && a.key.starts_with("sp-a"))), "a live holder is never reclaimed in the pass that stops it: {acts:?}");
 }
 
 /// `tests.rs` `close_landed_queue_waiters_reads_the_label_not_bd_status`: a labeled waiter whose
@@ -129,55 +88,18 @@ fn t5_check2_stops_a_live_holder_before_reclaiming() {
 fn t5_check3b_releases_a_landed_queue_waiter_by_its_label() {
     let snap = Snapshot {
         beads: Some(vec![
-            Bead {
-                id: "sp-w".into(),
-                title: "waiter".into(),
-                labels: vec![QUEUE_WAIT.into()],
-                deps: vec!["sp-l".into()],
-                status: "open".into(),
-                ..Bead::default()
-            },
-            Bead {
-                id: "sp-x".into(),
-                title: "working".into(),
-                labels: vec![QUEUE_WAIT.into()],
-                deps: vec![],
-                status: "open".into(),
-                ..Bead::default()
-            },
+            Bead { id: "sp-w".into(), title: "waiter".into(), labels: vec![QUEUE_WAIT.into()], deps: vec!["sp-l".into()], status: "open".into(), ..Bead::default() },
+            Bead { id: "sp-x".into(), title: "working".into(), labels: vec![QUEUE_WAIT.into()], deps: vec![], status: "open".into(), ..Bead::default() },
         ]),
-        rows: Some(vec![
-            Row {
-                id: "sp-w".into(),
-                state: "LANDED".into(),
-                version: 9,
-                ..Row::default()
-            },
-            Row {
-                id: "sp-x".into(),
-                state: "WORKING".into(),
-                version: 2,
-                holder: Some("dwarf-2".into()),
-                lease_until_ms: Some(NOW + 600_000),
-                ..Row::default()
-            },
-        ]),
+        rows: Some(vec![Row { id: "sp-w".into(), state: "LANDED".into(), version: 9, ..Row::default() }, Row { id: "sp-x".into(), state: "WORKING".into(), version: 2, holder: Some("dwarf-2".into()), lease_until_ms: Some(NOW + 600_000), ..Row::default() }]),
         holder_alive: [("sp-x".to_string(), true)].into(),
         ..idle()
     };
     let (_, acts) = decide(&Carry::default(), &snap);
     for e in [CONTENT_LABEL, CONTENT_CLOSE, LC_UNHOLD] {
-        assert!(
-            acts.iter()
-                .any(|a| a.effect == e && a.key.starts_with("sp-w")),
-            "{e} for sp-w: {acts:?}"
-        );
+        assert!(acts.iter().any(|a| a.effect == e && a.key.starts_with("sp-w")), "{e} for sp-w: {acts:?}");
     }
-    assert!(
-        acts.iter()
-            .all(|a| a.effect != CONTENT_CLOSE || !a.key.starts_with("sp-x")),
-        "{acts:?}"
-    );
+    assert!(acts.iter().all(|a| a.effect != CONTENT_CLOSE || !a.key.starts_with("sp-x")), "{acts:?}");
 }
 
 /// `waiters.rs` `labeled_set_is_claimable_by_the_lifecycle_row`: the waiter set is the labeled
@@ -186,22 +108,9 @@ fn t5_check3b_releases_a_landed_queue_waiter_by_its_label() {
 #[test_id(tapbn54)]
 #[test]
 fn t5_check3b_leaves_a_waiter_with_no_lifecycle_row_alone() {
-    let snap = Snapshot {
-        beads: Some(vec![Bead {
-            id: "sp-n".into(),
-            title: "no row".into(),
-            labels: vec![QUEUE_WAIT.into()],
-            deps: vec![],
-            status: "open".into(),
-            ..Bead::default()
-        }]),
-        ..idle()
-    };
+    let snap = Snapshot { beads: Some(vec![Bead { id: "sp-n".into(), title: "no row".into(), labels: vec![QUEUE_WAIT.into()], deps: vec![], status: "open".into(), ..Bead::default() }]), ..idle() };
     let (_, acts) = decide(&Carry::default(), &snap);
-    assert!(
-        acts.iter().all(|a| !a.key.starts_with("sp-n")),
-        "a waiter with no row is not touched: {acts:?}"
-    );
+    assert!(acts.iter().all(|a| !a.key.starts_with("sp-n")), "a waiter with no row is not touched: {acts:?}");
 }
 
 /// The production spellings only: `WORKING` is the leased state (a `CLAIMED` row is not one),
@@ -209,41 +118,19 @@ fn t5_check3b_leaves_a_waiter_with_no_lifecycle_row_alone() {
 #[test_id(ts6zydl)]
 #[test]
 fn t5_the_checks_read_the_production_spellings_only() {
-    assert_eq!(
-        Labels::default().queue_wait,
-        "",
-        "no fixture default for the label"
-    );
-    let claimed = Snapshot {
-        rows: Some(vec![Row {
-            state: "CLAIMED".into(),
-            ..busy().rows.unwrap().remove(0)
-        }]),
-        ..busy()
-    };
+    assert_eq!(Labels::default().queue_wait, "", "no fixture default for the label");
+    let claimed = Snapshot { rows: Some(vec![Row { state: "CLAIMED".into(), ..busy().rows.unwrap().remove(0) }]), ..busy() };
     let (_, acts) = decide(&Carry::default(), &claimed);
-    assert!(
-        acts.iter().all(|a| a.effect != STOP_HOLDER),
-        "CLAIMED is not an alias of WORKING: {acts:?}"
-    );
+    assert!(acts.iter().all(|a| a.effect != STOP_HOLDER), "CLAIMED is not an alias of WORKING: {acts:?}");
     let (_, acts) = decide(&Carry::default(), &busy());
-    assert!(
-        acts.iter().any(|a| a.effect == STOP_HOLDER),
-        "WORKING is the leased state: {acts:?}"
-    );
+    assert!(acts.iter().any(|a| a.effect == STOP_HOLDER), "WORKING is the leased state: {acts:?}");
 }
 
 /// CHECK 7 (`pass.rs:520`): plan beads ready hand off to the call as `call.wanted`, never a fork.
 #[test_id(t9afhkw)]
 #[test]
 fn t5_check7_hands_off_to_the_call() {
-    let (_, acts) = decide(
-        &Carry::default(),
-        &Snapshot {
-            plan_ready: Some(3),
-            ..idle()
-        },
-    );
+    let (_, acts) = decide(&Carry::default(), &Snapshot { plan_ready: Some(3), ..idle() });
     assert!(acts.iter().any(|a| a.effect == CALL_WANTED), "{acts:?}");
 }
 
@@ -251,18 +138,8 @@ fn t5_check7_hands_off_to_the_call() {
 #[test_id(t87k3mw)]
 #[test]
 fn t5_unreadable_rows_decide_nothing_about_leases() {
-    let (_, acts) = decide(
-        &Carry::default(),
-        &Snapshot {
-            rows: None,
-            ..busy()
-        },
-    );
-    assert!(
-        acts.iter()
-            .all(|a| ![STOP_HOLDER, LC_EVENT, LC_FACT].contains(&a.effect.as_str())),
-        "{acts:?}"
-    );
+    let (_, acts) = decide(&Carry::default(), &Snapshot { rows: None, ..busy() });
+    assert!(acts.iter().all(|a| ![STOP_HOLDER, LC_EVENT, LC_FACT].contains(&a.effect.as_str())), "{acts:?}");
 }
 
 /// CHECK 7's hand-off lands on sentinel-call's own stream (`Command::EmitTo`), where its handler
@@ -270,25 +147,10 @@ fn t5_unreadable_rows_decide_nothing_about_leases() {
 #[test_id(tvom4fm)]
 #[test]
 fn t5_check7_call_wanted_is_delivered_to_the_call() {
-    let r = rig(
-        1,
-        Snapshot {
-            plan_ready: Some(3),
-            ..idle()
-        },
-    );
+    let r = rig(1, Snapshot { plan_ready: Some(3), ..idle() });
     kit::assert_unpoisoned(&r, STREAM);
-    let to: Vec<String> = r
-        .journaled()
-        .into_iter()
-        .filter(|e| e.kind.tag == CALL_WANTED)
-        .map(|e| e.stream.0)
-        .collect();
-    assert_eq!(
-        to,
-        [spira_runtime::tasks::a::sentinel_call::STREAM],
-        "call.wanted goes to sentinel-call's stream"
-    );
+    let to: Vec<String> = r.journaled().into_iter().filter(|e| e.kind.tag == CALL_WANTED).map(|e| e.stream.0).collect();
+    assert_eq!(to, [spira_runtime::tasks::a::sentinel_call::STREAM], "call.wanted goes to sentinel-call's stream");
 }
 
 /// CHECK 6's leg starts under the properties `systemd-run` gave it (`dispatch.rs`): the pinned
@@ -296,74 +158,37 @@ fn t5_check7_call_wanted_is_delivered_to_the_call() {
 #[test_id(t1ztxqn)]
 #[test]
 fn t5_check6_the_landing_leg_carries_its_runtime_bound_and_its_log() {
-    let (_, acts) = decide(
-        &Carry::default(),
-        &Snapshot {
-            landing_active: false,
-            land_maxsec: 900,
-            ..submitted()
-        },
-    );
-    let start = acts
-        .iter()
-        .find(|a| a.effect == LANDING_START)
-        .expect("the landing leg starts");
+    let (_, acts) = decide(&Carry::default(), &Snapshot { landing_active: false, land_maxsec: 900, ..submitted() });
+    let start = acts.iter().find(|a| a.effect == LANDING_START).expect("the landing leg starts");
     let w: Write = serde_json::from_str(&start.input).unwrap();
     let props = landing_props(&w, std::path::Path::new("run/spira"));
     assert_eq!(props.runtime_max_ms, Some(900_000));
-    assert_eq!(
-        props.output_append.as_deref(),
-        Some(std::path::Path::new("run/spira/landing.log"))
-    );
-    assert_eq!(
-        landing_props(&Write::default(), std::path::Path::new("r")).runtime_max_ms,
-        None,
-        "0 is no bound"
-    );
+    assert_eq!(props.output_append.as_deref(), Some(std::path::Path::new("run/spira/landing.log")));
+    assert_eq!(landing_props(&Write::default(), std::path::Path::new("r")).runtime_max_ms, None, "0 is no bound");
 }
 
 fn submitted() -> Snapshot {
     let mut snap = idle();
-    snap.rows.as_mut().unwrap().push(Row {
-        id: "sp-s".into(),
-        state: "SUBMITTED".into(),
-        version: 1,
-        ..Row::default()
-    });
+    snap.rows.as_mut().unwrap().push(Row { id: "sp-s".into(), state: "SUBMITTED".into(), version: 1, ..Row::default() });
     snap
 }
 
 #[test_id(tzghix6)]
 #[test]
 fn t5_check6_an_idle_snapshot_starts_no_landing_leg_and_a_submitted_row_starts_one() {
-    let idle_now = Snapshot {
-        landing_active: false,
-        ..idle()
-    };
+    let idle_now = Snapshot { landing_active: false, ..idle() };
     assert!(effects(&decide(&Carry::default(), &idle_now).1, LANDING_START).is_empty());
     for state in ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
         let mut snap = idle_now.clone();
-        snap.rows.as_mut().unwrap().push(Row {
-            id: "sp-s".into(),
-            state: state.into(),
-            version: 1,
-            ..Row::default()
-        });
-        assert_eq!(
-            effects(&decide(&Carry::default(), &snap).1, LANDING_START).len(),
-            1,
-            "{state}"
-        );
+        snap.rows.as_mut().unwrap().push(Row { id: "sp-s".into(), state: state.into(), version: 1, ..Row::default() });
+        assert_eq!(effects(&decide(&Carry::default(), &snap).1, LANDING_START).len(), 1, "{state}");
     }
 }
 
 #[test_id(t0zifc9)]
 #[test]
 fn t5_check6_an_idle_snapshot_does_not_escalate_for_the_age_of_the_leg() {
-    let idle_stale = Snapshot {
-        rows: idle().rows,
-        ..stale()
-    };
+    let idle_stale = Snapshot { rows: idle().rows, ..stale() };
     let (_, acts) = decide(&Carry::default(), &idle_stale);
     assert!(asks(&acts).is_empty() && effects(&acts, LANDING_START).is_empty());
 }
@@ -371,26 +196,12 @@ fn t5_check6_an_idle_snapshot_does_not_escalate_for_the_age_of_the_leg() {
 #[test_id(tx082tt)]
 #[test]
 fn t5_check6_unreadable_rows_still_start_the_landing_leg() {
-    let snap = Snapshot {
-        landing_active: false,
-        rows: None,
-        ..idle()
-    };
-    assert_eq!(
-        effects(&decide(&Carry::default(), &snap).1, LANDING_START).len(),
-        1
-    );
+    let snap = Snapshot { landing_active: false, rows: None, ..idle() };
+    assert_eq!(effects(&decide(&Carry::default(), &snap).1, LANDING_START).len(), 1);
 }
 
 fn stale() -> Snapshot {
-    Snapshot {
-        landing_active: false,
-        land_age_secs: Some(7_200),
-        land_stale_secs: 1_800,
-        land_escalate_every_secs: 3_600,
-        land_log_tail: "gate red".into(),
-        ..submitted()
-    }
+    Snapshot { landing_active: false, land_age_secs: Some(7_200), land_stale_secs: 1_800, land_escalate_every_secs: 3_600, land_log_tail: "gate red".into(), ..submitted() }
 }
 
 fn asks(acts: &[Act]) -> Vec<Act> {
@@ -404,18 +215,8 @@ fn t5_check6_a_leg_that_completed_nothing_within_the_stale_window_asks_the_conci
     let asked = asks(&acts);
     assert_eq!(asked.len(), 1);
     let w: Write = serde_json::from_str(&asked[0].input).unwrap();
-    assert!(
-        w.subject.starts_with("Spira is landing nothing"),
-        "{}",
-        w.subject
-    );
-    assert!(
-        w.text.contains("## Question")
-            && w.text.contains("## Default")
-            && w.text.contains("gate red"),
-        "{}",
-        w.text
-    );
+    assert!(w.subject.starts_with("Spira is landing nothing"), "{}", w.subject);
+    assert!(w.text.contains("## Question") && w.text.contains("## Default") && w.text.contains("gate red"), "{}", w.text);
     assert!(w.cause.contains("landing-pass land") && w.id.is_empty());
     assert_eq!(next.land_escalated_at_ms, Some(NOW));
 }
@@ -423,79 +224,28 @@ fn t5_check6_a_leg_that_completed_nothing_within_the_stale_window_asks_the_conci
 #[test_id(tmr8f04)]
 #[test]
 fn t5_check6_the_land_escalation_waits_out_its_cooldown() {
-    let carry = Carry {
-        land_escalated_at_ms: Some(NOW - 3_599_000),
-        ..Carry::default()
-    };
+    let carry = Carry { land_escalated_at_ms: Some(NOW - 3_599_000), ..Carry::default() };
     let (next, acts) = decide(&carry, &stale());
     assert!(asks(&acts).is_empty());
     assert_eq!(next.land_escalated_at_ms, carry.land_escalated_at_ms);
-    let carry = Carry {
-        land_escalated_at_ms: Some(NOW - 3_600_000),
-        ..Carry::default()
-    };
-    assert_eq!(
-        asks(&decide(&carry, &stale()).1).len(),
-        1,
-        "at the cooldown it asks again"
-    );
+    let carry = Carry { land_escalated_at_ms: Some(NOW - 3_600_000), ..Carry::default() };
+    assert_eq!(asks(&decide(&carry, &stale()).1).len(), 1, "at the cooldown it asks again");
 }
 
 #[test_id(t8u1ahi)]
 #[test]
 fn t5_check6_no_land_escalation_while_the_leg_runs_or_a_landing_is_fresh() {
-    assert!(asks(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                landing_active: true,
-                ..stale()
-            }
-        )
-        .1
-    )
-    .is_empty());
-    assert!(asks(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                land_age_secs: Some(1_800),
-                ..stale()
-            }
-        )
-        .1
-    )
-    .is_empty());
-    assert!(asks(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                land_age_secs: None,
-                ..stale()
-            }
-        )
-        .1
-    )
-    .is_empty());
+    assert!(asks(&decide(&Carry::default(), &Snapshot { landing_active: true, ..stale() }).1).is_empty());
+    assert!(asks(&decide(&Carry::default(), &Snapshot { land_age_secs: Some(1_800), ..stale() }).1).is_empty());
+    assert!(asks(&decide(&Carry::default(), &Snapshot { land_age_secs: None, ..stale() }).1).is_empty());
 }
 
 fn bead(id: &str, labels: &[&str], status: &str) -> Bead {
-    Bead {
-        id: id.into(),
-        title: format!("{id} title"),
-        labels: labels.iter().map(|l| l.to_string()).collect(),
-        status: status.into(),
-        ..Bead::default()
-    }
+    Bead { id: id.into(), title: format!("{id} title"), labels: labels.iter().map(|l| l.to_string()).collect(), status: status.into(), ..Bead::default() }
 }
 
 fn row(id: &str, state: &str) -> Row {
-    Row {
-        id: id.into(),
-        state: state.into(),
-        version: 1,
-        ..Row::default()
-    }
+    Row { id: id.into(), state: state.into(), version: 1, ..Row::default() }
 }
 
 fn effects(acts: &[Act], e: &str) -> Vec<Act> {
@@ -506,35 +256,12 @@ fn effects(acts: &[Act], e: &str) -> Vec<Act> {
 /// over when its lifecycle row is terminal, never by its bd status (038cf5ca2), so each child
 /// carries a LANDED row.
 fn pilgrimage_world() -> Snapshot {
-    let epic = Bead {
-        kind: "epic".into(),
-        ..bead("sp-e", &["spira"], "open")
-    };
-    let kids = [
-        Bead {
-            parents: vec!["sp-e".into()],
-            ..bead("sp-c1", &[], "closed")
-        },
-        Bead {
-            parents: vec!["sp-e".into()],
-            ..bead("sp-c2", &[], "closed")
-        },
-    ];
-    let other = Bead {
-        kind: "epic".into(),
-        ..bead("sp-o", &["gastown"], "open")
-    };
+    let epic = Bead { kind: "epic".into(), ..bead("sp-e", &["spira"], "open") };
+    let kids = [Bead { parents: vec!["sp-e".into()], ..bead("sp-c1", &[], "closed") }, Bead { parents: vec!["sp-e".into()], ..bead("sp-c2", &[], "closed") }];
+    let other = Bead { kind: "epic".into(), ..bead("sp-o", &["gastown"], "open") };
     let base = idle();
-    let rows = [
-        base.rows.clone().unwrap_or_default(),
-        vec![row("sp-c1", "LANDED"), row("sp-c2", "LANDED")],
-    ]
-    .concat();
-    Snapshot {
-        beads: Some([vec![epic, other], kids.to_vec()].concat()),
-        rows: Some(rows),
-        ..base
-    }
+    let rows = [base.rows.clone().unwrap_or_default(), vec![row("sp-c1", "LANDED"), row("sp-c2", "LANDED")]].concat();
+    Snapshot { beads: Some([vec![epic, other], kids.to_vec()].concat()), rows: Some(rows), ..base }
 }
 
 /// CHECK 1 (`pilgrimage.sh check`): a complete epic of the partition is announced once and
@@ -545,60 +272,25 @@ fn pilgrimage_world() -> Snapshot {
 fn t5_check1_a_complete_pilgrimage_is_announced_once_and_closed() {
     let (carry, acts) = decide(&Carry::default(), &pilgrimage_world());
     let close = effects(&acts, PILGRIMAGE_CLOSE);
-    assert_eq!(
-        close.iter().map(|a| a.key.as_str()).collect::<Vec<_>>(),
-        ["sp-e"],
-        "{acts:?}"
-    );
+    assert_eq!(close.iter().map(|a| a.key.as_str()).collect::<Vec<_>>(), ["sp-e"], "{acts:?}");
     let w: Write = serde_json::from_str(&close[0].input).unwrap();
-    assert_eq!(
-        (w.subject.as_str(), w.total, w.subscribers.clone()),
-        (
-            "PILGRIMAGE COMPLETE — sp-e: sp-e title",
-            2,
-            vec!["ryan".to_string()]
-        )
-    );
+    assert_eq!((w.subject.as_str(), w.total, w.subscribers.clone()), ("PILGRIMAGE COMPLETE — sp-e: sp-e title", 2, vec!["ryan".to_string()]));
     assert_eq!(carry.announced, ["sp-e"]);
-    assert!(
-        effects(&decide(&carry, &pilgrimage_world()).1, PILGRIMAGE_CLOSE).is_empty(),
-        "announced once"
-    );
-    let deferred = Snapshot {
-        unlanded: [("sp-e".to_string(), vec!["spira/sp-c1 in spira".to_string()])].into(),
-        ..pilgrimage_world()
-    };
-    assert!(
-        effects(&decide(&Carry::default(), &deferred).1, PILGRIMAGE_CLOSE).is_empty(),
-        "a live unlanded branch defers"
-    );
+    assert!(effects(&decide(&carry, &pilgrimage_world()).1, PILGRIMAGE_CLOSE).is_empty(), "announced once");
+    let deferred = Snapshot { unlanded: [("sp-e".to_string(), vec!["spira/sp-c1 in spira".to_string()])].into(), ..pilgrimage_world() };
+    assert!(effects(&decide(&Carry::default(), &deferred).1, PILGRIMAGE_CLOSE).is_empty(), "a live unlanded branch defers");
     let mut grown = pilgrimage_world();
-    grown.beads.as_mut().unwrap().push(Bead {
-        parents: vec!["sp-e".into()],
-        ..bead("sp-c3", &[], "open")
-    });
-    assert!(
-        decide(&carry, &grown).0.announced.is_empty(),
-        "a pilgrimage that grew again is reopened"
-    );
+    grown.beads.as_mut().unwrap().push(Bead { parents: vec!["sp-e".into()], ..bead("sp-c3", &[], "open") });
+    assert!(decide(&carry, &grown).0.announced.is_empty(), "a pilgrimage that grew again is reopened");
 }
 
 /// CHECK 2b: strand's classification names stranded work, so strand acts this pass.
 #[test_id(trtupls)]
 #[test]
 fn t5_check2b_stranded_work_runs_strand() {
-    assert!(
-        effects(&decide(&Carry::default(), &idle()).1, STRAND).is_empty(),
-        "nothing stranded, no act"
-    );
-    let snap = Snapshot {
-        strand: vec!["builder\tbead\tsp-s\tWORKING with no dwarf".into()],
-        ..idle()
-    };
-    assert_eq!(
-        effects(&decide(&Carry::default(), &snap).1, STRAND).len(),
-        1
-    );
+    assert!(effects(&decide(&Carry::default(), &idle()).1, STRAND).is_empty(), "nothing stranded, no act");
+    let snap = Snapshot { strand: vec!["builder\tbead\tsp-s\tWORKING with no dwarf".into()], ..idle() };
+    assert_eq!(effects(&decide(&Carry::default(), &snap).1, STRAND).len(), 1);
 }
 
 /// CHECK 2c (`lifecycle.rs` check2c): rows whose holder and state disagree are detected,
@@ -606,23 +298,10 @@ fn t5_check2b_stranded_work_runs_strand() {
 #[test_id(thzwuar)]
 #[test]
 fn t5_check2c_inconsistent_rows_are_recorded_not_acted_on() {
-    let snap = Snapshot {
-        rows: Some(vec![
-            row("sp-i", "WORKING"),
-            Row {
-                holder: Some("dwarf-9".into()),
-                ..row("sp-l", "LANDED")
-            },
-        ]),
-        ..idle()
-    };
+    let snap = Snapshot { rows: Some(vec![row("sp-i", "WORKING"), Row { holder: Some("dwarf-9".into()), ..row("sp-l", "LANDED") }]), ..idle() };
     let (carry, acts) = decide(&Carry::default(), &snap);
     assert_eq!(carry.inconsistent.len(), 2, "{:?}", carry.inconsistent);
-    assert!(
-        acts.iter()
-            .all(|a| !a.key.starts_with("sp-i") && !a.key.starts_with("sp-l")),
-        "{acts:?}"
-    );
+    assert!(acts.iter().all(|a| !a.key.starts_with("sp-i") && !a.key.starts_with("sp-l")), "{acts:?}");
 }
 
 /// CHECK 2d (`holds.rs`): an ask hold whose ask is gone is withdrawn after the grace; a held
@@ -630,108 +309,32 @@ fn t5_check2c_inconsistent_rows_are_recorded_not_acted_on() {
 #[test_id(tqzbhd7)]
 #[test]
 fn t5_check2d_stale_ask_holds_starvation_and_stack_conflicts() {
-    let held = |id: &str| Row {
-        holds: vec!["ask".into()],
-        updated_at_ms: Some(NOW - 20_000_000),
-        ..row(id, "READY")
-    };
-    let snap = Snapshot {
-        beads: Some(vec![bead("sp-h", &[], "open")]),
-        rows: Some(vec![held("sp-h")]),
-        reclaim_grace_secs: 10_800,
-        ..idle()
-    };
+    let held = |id: &str| Row { holds: vec!["ask".into()], updated_at_ms: Some(NOW - 20_000_000), ..row(id, "READY") };
+    let snap = Snapshot { beads: Some(vec![bead("sp-h", &[], "open")]), rows: Some(vec![held("sp-h")]), reclaim_grace_secs: 10_800, ..idle() };
     let acts = decide(&Carry::default(), &snap).1;
-    assert!(
-        acts.iter().any(|a| a.effect == LC_EVENT
-            && a.key.starts_with("sp-h")
-            && a.input.contains("AskWithdrawn")),
-        "{acts:?}"
-    );
-    let starved = Snapshot {
-        rows: Some((0..4).map(|i| held(&format!("sp-{i}"))).collect()),
-        reclaim_grace_secs: 999_999_999,
-        ..idle()
-    };
+    assert!(acts.iter().any(|a| a.effect == LC_EVENT && a.key.starts_with("sp-h") && a.input.contains("AskWithdrawn")), "{acts:?}");
+    let starved = Snapshot { rows: Some((0..4).map(|i| held(&format!("sp-{i}"))).collect()), reclaim_grace_secs: 999_999_999, ..idle() };
     let acts = decide(&Carry::default(), &starved).1;
-    assert!(
-        effects(&acts, INCIDENT_EVENT)
-            .iter()
-            .any(|a| a.input.contains("queue.starved") && a.input.contains("4 of 4 READY")),
-        "{acts:?}"
-    );
+    assert!(effects(&acts, INCIDENT_EVENT).iter().any(|a| a.input.contains("queue.starved") && a.input.contains("4 of 4 READY")), "{acts:?}");
     let mut p = row("sp-p", "IN_DELIVERY");
     p.tip = Some("t1".into());
-    let conflict = Snapshot {
-        beads: Some(vec![
-            bead("sp-p", &[], "open"),
-            Bead {
-                deps: vec!["sp-p".into()],
-                ..bead("sp-d", &[], "open")
-            },
-        ]),
-        rows: Some(vec![p, row("sp-d", "REWORK")]),
-        conflict_markers: [("sp-p".to_string(), ("t1".to_string(), 7_200))].into(),
-        ..idle()
-    };
+    let conflict = Snapshot { beads: Some(vec![bead("sp-p", &[], "open"), Bead { deps: vec!["sp-p".into()], ..bead("sp-d", &[], "open") }]), rows: Some(vec![p, row("sp-d", "REWORK")]), conflict_markers: [("sp-p".to_string(), ("t1".to_string(), 7_200))].into(), ..idle() };
     let acts = decide(&Carry::default(), &conflict).1;
-    assert!(
-        effects(&acts, INCIDENT_EVENT)
-            .iter()
-            .any(|a| a.input.contains("sp-d") && a.input.contains("stack-conflict")),
-        "{acts:?}"
-    );
+    assert!(effects(&acts, INCIDENT_EVENT).iter().any(|a| a.input.contains("sp-d") && a.input.contains("stack-conflict")), "{acts:?}");
 }
 
 /// A starved plan: open plan work, none ready, none running.
 fn starved_plan() -> Snapshot {
-    Snapshot {
-        beads: Some(vec![bead("sp-p1", &["plan"], "open")]),
-        rows: Some(vec![row("sp-p1", "READY")]),
-        plan_ready: Some(0),
-        ..idle()
-    }
+    Snapshot { beads: Some(vec![bead("sp-p1", &["plan"], "open")]), rows: Some(vec![row("sp-p1", "READY")]), plan_ready: Some(0), ..idle() }
 }
 
 /// CHECK 3: a starved plan recomputes the stale blocked flags; a moving one does not.
 #[test_id(tph3z1i)]
 #[test]
 fn t5_check3_a_starved_plan_recomputes_blocked() {
-    assert_eq!(
-        effects(
-            &decide(&Carry::default(), &starved_plan()).1,
-            RECOMPUTE_BLOCKED
-        )
-        .len(),
-        1
-    );
-    assert!(effects(
-        &decide(
-            &Carry::default(),
-            &Snapshot {
-                plan_ready: Some(2),
-                ..starved_plan()
-            }
-        )
-        .1,
-        RECOMPUTE_BLOCKED
-    )
-    .is_empty());
-    assert!(
-        effects(
-            &decide(
-                &Carry::default(),
-                &Snapshot {
-                    plan_ready: None,
-                    ..starved_plan()
-                }
-            )
-            .1,
-            RECOMPUTE_BLOCKED
-        )
-        .is_empty(),
-        "unknown is not starved"
-    );
+    assert_eq!(effects(&decide(&Carry::default(), &starved_plan()).1, RECOMPUTE_BLOCKED).len(), 1);
+    assert!(effects(&decide(&Carry::default(), &Snapshot { plan_ready: Some(2), ..starved_plan() }).1, RECOMPUTE_BLOCKED).is_empty());
+    assert!(effects(&decide(&Carry::default(), &Snapshot { plan_ready: None, ..starved_plan() }).1, RECOMPUTE_BLOCKED).is_empty(), "unknown is not starved");
 }
 
 /// CHECK 3c (`open_children.rs`, `red_trackers.rs`): a ready parent with an open child takes
@@ -740,41 +343,15 @@ fn t5_check3_a_starved_plan_recomputes_blocked() {
 #[test]
 fn t5_check3c_open_children_and_landed_red_trackers() {
     let snap = Snapshot {
-        beads: Some(vec![
-            bead("sp-par", &[], "open"),
-            Bead {
-                parents: vec!["sp-par".into()],
-                ..bead("sp-kid", &[], "open")
-            },
-            Bead {
-                deps: vec!["sp-fix".into()],
-                ..bead("sp-rt", &["spira-red-tracker"], "open")
-            },
-            bead("sp-fix", &[], "closed"),
-        ]),
-        rows: Some(vec![
-            row("sp-par", "READY"),
-            row("sp-kid", "WORKING"),
-            row("sp-rt", "READY"),
-            row("sp-fix", "LANDED"),
-        ]),
+        beads: Some(vec![bead("sp-par", &[], "open"), Bead { parents: vec!["sp-par".into()], ..bead("sp-kid", &[], "open") }, Bead { deps: vec!["sp-fix".into()], ..bead("sp-rt", &["spira-red-tracker"], "open") }, bead("sp-fix", &[], "closed")]),
+        rows: Some(vec![row("sp-par", "READY"), row("sp-kid", "WORKING"), row("sp-rt", "READY"), row("sp-fix", "LANDED")]),
         holder_alive: [("sp-kid".to_string(), true)].into(),
         ..idle()
     };
     let acts = decide(&Carry::default(), &snap).1;
-    assert!(
-        effects(&acts, CONTENT_LABEL)
-            .iter()
-            .any(|a| a.key == "sp-par:spira-open-children:add"),
-        "{acts:?}"
-    );
+    assert!(effects(&acts, CONTENT_LABEL).iter().any(|a| a.key == "sp-par:spira-open-children:add"), "{acts:?}");
     let close = effects(&acts, LC_CLOSE);
-    assert!(
-        close
-            .iter()
-            .any(|a| a.key == "sp-rt" && a.input.contains("sp-fix")),
-        "{acts:?}"
-    );
+    assert!(close.iter().any(|a| a.key == "sp-rt" && a.input.contains("sp-fix")), "{acts:?}");
 }
 
 /// CHECK 8 (`judge.rs`): a starved plan where nothing moved is judged once per cooldown, with
@@ -789,50 +366,23 @@ fn t5_check8_a_starved_plan_is_judged_once_per_cooldown() {
     assert_eq!(reflect.len(), 1, "{acts:?}");
     assert!(reflect[0].input.contains("sp-p1"));
     assert_eq!(carry.inference_last_ms, Some(NOW));
-    assert!(
-        effects(&decide(&carry, &snap).1, REFLECT).is_empty(),
-        "inside the cooldown"
-    );
-    let later = Snapshot {
-        now_ms: NOW + 3_600_001,
-        ..snap
-    };
-    assert_eq!(
-        effects(&decide(&carry, &later).1, REFLECT).len(),
-        1,
-        "after it"
-    );
+    assert!(effects(&decide(&carry, &snap).1, REFLECT).is_empty(), "inside the cooldown");
+    let later = Snapshot { now_ms: NOW + 3_600_001, ..snap };
+    assert_eq!(effects(&decide(&carry, &later).1, REFLECT).len(), 1, "after it");
 }
 
 /// T3: a pilgrimage close that failed drops its marker, so the next pass retries it.
 #[test_id(tap7n4v)]
 #[test]
 fn t3_a_failed_pilgrimage_close_is_retried() {
-    let mut r = TaskRig::new(1, registration())
-        .unwrap()
-        .double(OBSERVE, |_| {
-            Ok(serde_json::to_string(&pilgrimage_world()).unwrap())
-        })
-        .double(PILGRIMAGE_CLOSE, |_| {
-            Err("a subscriber could not be reached".into())
-        });
-    for e in EFFECTS
-        .iter()
-        .filter(|e| ![OBSERVE, PILGRIMAGE_CLOSE].contains(e))
-    {
+    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, |_| Ok(serde_json::to_string(&pilgrimage_world()).unwrap())).double(PILGRIMAGE_CLOSE, |_| Err("a subscriber could not be reached".into()));
+    for e in EFFECTS.iter().filter(|e| ![OBSERVE, PILGRIMAGE_CLOSE].contains(e)) {
         r = r.double(e, |_| Ok("{}".into()));
     }
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
     r.advance(CADENCE_MS).unwrap();
     kit::assert_unpoisoned(&r, STREAM);
-    assert_eq!(
-        r.requested()
-            .iter()
-            .filter(|q| q.name == PILGRIMAGE_CLOSE)
-            .count(),
-        2,
-        "retried on the next pass"
-    );
+    assert_eq!(r.requested().iter().filter(|q| q.name == PILGRIMAGE_CLOSE).count(), 2, "retried on the next pass");
 }
 
 fn at_work() -> TaskRig {
@@ -851,12 +401,7 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(tl3vdas)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    kit::assert_boot_matches_an_unstopped_run(
-        at_work,
-        registration,
-        STREAM,
-        EventKind::new(TICK, ""),
-    );
+    kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
 
 #[test_id(txh98t7)]

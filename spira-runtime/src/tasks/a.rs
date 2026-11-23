@@ -37,23 +37,7 @@ pub static TASKS: &[Task] = &[
         boot: sentinel_call::SentinelCall::boot,
         cadence_ms: |_| 60_000,
         effects: sentinel_call::EFFECTS,
-        runners: &[
-            (sentinel_call::OBSERVE, |e, _, s| {
-                sentinel_call::observe(e, &s.input)
-            }),
-            (sentinel_call::UNIT_START, |e, _, s| {
-                sentinel_call::unit_start(e, s)
-            }),
-            (sentinel_call::PREEMPT, |e, _, s| {
-                sentinel_call::preempt(e, &s.input)
-            }),
-            (sentinel_call::PREEMPT_LOG, |e, _, s| {
-                sentinel_call::preempt_log(e, &s.input)
-            }),
-            (sentinel_call::METRIC, |e, _, s| {
-                sentinel_call::metric(e, &s.input)
-            }),
-        ],
+        runners: &[(sentinel_call::OBSERVE, |e, _, s| sentinel_call::observe(e, &s.input)), (sentinel_call::UNIT_START, |e, _, s| sentinel_call::unit_start(e, s)), (sentinel_call::PREEMPT, |e, _, s| sentinel_call::preempt(e, &s.input)), (sentinel_call::PREEMPT_LOG, |e, _, s| sentinel_call::preempt_log(e, &s.input)), (sentinel_call::METRIC, |e, _, s| sentinel_call::metric(e, &s.input))],
         keys: &[sentinel_call::KEYS],
         build: |s| sentinel_call::SentinelCall::from_settings(s).registration(),
     },
@@ -66,59 +50,25 @@ pub static TASKS: &[Task] = &[
         cadence_ms: |_| sentinel_pass::CADENCE_MS,
         effects: sentinel_pass::EFFECTS,
         runners: &[
-            (sentinel_pass::OBSERVE, |e, _, s| {
-                sentinel_pass::observe(e, &s.input)
-            }),
-            (sentinel_pass::LC_EVENT, |e, _, s| {
-                sentinel_pass::lc_event(e, s)
-            }),
-            (sentinel_pass::LC_HOLD, |e, _, s| {
-                sentinel_pass::lc_hold(e, s)
-            }),
-            (sentinel_pass::LC_UNHOLD, |e, _, s| {
-                sentinel_pass::lc_unhold(e, s)
-            }),
-            (sentinel_pass::LC_FACT, |e, _, s| {
-                sentinel_pass::lc_fact(e, s)
-            }),
-            (sentinel_pass::LC_CLOSE, |e, _, s| {
-                sentinel_pass::lc_close(e, s)
-            }),
-            (sentinel_pass::CONTENT_LABEL, |e, _, s| {
-                sentinel_pass::content_label(e, s)
-            }),
-            (sentinel_pass::CONTENT_NOTE, |e, _, s| {
-                sentinel_pass::content_note(e, s)
-            }),
-            (sentinel_pass::CONTENT_CLOSE, |e, _, s| {
-                sentinel_pass::content_close(e, s)
-            }),
-            (sentinel_pass::RECOMPUTE_BLOCKED, |_, _, s| {
-                sentinel_pass::recompute_blocked(s)
-            }),
-            (sentinel_pass::STOP_HOLDER, |e, _, s| {
-                sentinel_pass::stop_holder(e, s)
-            }),
-            (sentinel_pass::LANDING_START, |e, _, s| {
-                sentinel_pass::landing_start(e, s)
-            }),
-            (sentinel_pass::WATCHTOWER, |_, _, s| {
-                sentinel_pass::watchtower(&s.input)
-            }),
+            (sentinel_pass::OBSERVE, |e, _, s| sentinel_pass::observe(e, &s.input)),
+            (sentinel_pass::LC_EVENT, |e, _, s| sentinel_pass::lc_event(e, s)),
+            (sentinel_pass::LC_HOLD, |e, _, s| sentinel_pass::lc_hold(e, s)),
+            (sentinel_pass::LC_UNHOLD, |e, _, s| sentinel_pass::lc_unhold(e, s)),
+            (sentinel_pass::LC_FACT, |e, _, s| sentinel_pass::lc_fact(e, s)),
+            (sentinel_pass::LC_CLOSE, |e, _, s| sentinel_pass::lc_close(e, s)),
+            (sentinel_pass::CONTENT_LABEL, |e, _, s| sentinel_pass::content_label(e, s)),
+            (sentinel_pass::CONTENT_NOTE, |e, _, s| sentinel_pass::content_note(e, s)),
+            (sentinel_pass::CONTENT_CLOSE, |e, _, s| sentinel_pass::content_close(e, s)),
+            (sentinel_pass::RECOMPUTE_BLOCKED, |_, _, s| sentinel_pass::recompute_blocked(s)),
+            (sentinel_pass::STOP_HOLDER, |e, _, s| sentinel_pass::stop_holder(e, s)),
+            (sentinel_pass::LANDING_START, |e, _, s| sentinel_pass::landing_start(e, s)),
+            (sentinel_pass::WATCHTOWER, |_, _, s| sentinel_pass::watchtower(&s.input)),
             (sentinel_pass::STRAND, |_, _, s| sentinel_pass::strand(s)),
-            (sentinel_pass::PILGRIMAGE_CLOSE, |e, _, s| {
-                sentinel_pass::pilgrimage_close(e, s)
-            }),
+            (sentinel_pass::PILGRIMAGE_CLOSE, |e, _, s| sentinel_pass::pilgrimage_close(e, s)),
             (sentinel_pass::ASK, |_, _, s| sentinel_pass::ask(s)),
-            (sentinel_pass::INCIDENT_EVENT, |_, _, s| {
-                sentinel_pass::incident_event(s)
-            }),
-            (sentinel_pass::REFLECT, |e, _, s| {
-                sentinel_pass::reflect(e, s)
-            }),
-            (sentinel_pass::PHASE_METRIC, |e, _, s| {
-                sentinel_pass::phase_metric(e, &s.input)
-            }),
+            (sentinel_pass::INCIDENT_EVENT, |_, _, s| sentinel_pass::incident_event(s)),
+            (sentinel_pass::REFLECT, |e, _, s| sentinel_pass::reflect(e, s)),
+            (sentinel_pass::PHASE_METRIC, |e, _, s| sentinel_pass::phase_metric(e, &s.input)),
         ],
         keys: &[sentinel_pass::KEYS],
         build: |s| sentinel_pass::SentinelPass::from_settings(s).registration(),
@@ -131,16 +81,7 @@ pub static TASKS: &[Task] = &[
         boot: czar::Czar::boot,
         cadence_ms: |_| czar::CADENCE_MS,
         effects: czar::EFFECTS,
-        runners: &[
-            (czar::OBSERVE, |e, _, s| czar::observe(e, &s.input)),
-            (czar::FILE_INCIDENT, |_, _, s| czar::file(&s.input)),
-            (czar::FILE_BASE_RED, |_, _, s| czar::file(&s.input)),
-            (czar::RERUN_WORKFLOW, |_, _, s| {
-                czar::rerun_workflow(&s.input)
-            }),
-            (czar::RESTART_LANDING, |e, _, _| czar::restart_landing(e)),
-            (czar::STATUS, |e, _, s| czar::status(e, &s.input)),
-        ],
+        runners: &[(czar::OBSERVE, |e, _, s| czar::observe(e, &s.input)), (czar::FILE_INCIDENT, |_, _, s| czar::file(&s.input)), (czar::FILE_BASE_RED, |_, _, s| czar::file(&s.input)), (czar::RERUN_WORKFLOW, |_, _, s| czar::rerun_workflow(&s.input)), (czar::RESTART_LANDING, |e, _, _| czar::restart_landing(e)), (czar::STATUS, |e, _, s| czar::status(e, &s.input))],
         keys: &[czar::KEYS],
         build: |s| czar::Czar::from_settings(s).registration(),
     },
@@ -152,14 +93,7 @@ pub static TASKS: &[Task] = &[
         boot: sift::Sift::boot,
         cadence_ms: |_| sift::CADENCE_MS,
         effects: sift::EFFECTS,
-        runners: &[
-            (sift::OBSERVE, |e, _, s| sift::observe(e, &s.input)),
-            (sift::FETCH_BASE, |_, _, s| sift::fetch_base(&s.input)),
-            (sift::NOTE, |e, _, s| sift::note(e, s)),
-            (sift::SEND_BACK, |e, _, s| sift::send_back(e, s)),
-            (sift::RECORD_PASS, |e, _, s| sift::record_pass(e, s)),
-            (sift::SUPERSEDE, |e, _, s| sift::supersede(e, s)),
-        ],
+        runners: &[(sift::OBSERVE, |e, _, s| sift::observe(e, &s.input)), (sift::FETCH_BASE, |_, _, s| sift::fetch_base(&s.input)), (sift::NOTE, |e, _, s| sift::note(e, s)), (sift::SEND_BACK, |e, _, s| sift::send_back(e, s)), (sift::RECORD_PASS, |e, _, s| sift::record_pass(e, s)), (sift::SUPERSEDE, |e, _, s| sift::supersede(e, s))],
         keys: &[sift::KEYS],
         build: |s| sift::Sift::from_settings(s).registration(),
     },
@@ -173,32 +107,7 @@ pub static TASKS: &[Task] = &[
         effects: batcher_local::EFFECTS,
         runners: {
             use batcher_local::{edge as x, *};
-            &[
-                (OBSERVE, x::observe),
-                (FETCH, x::fetch),
-                (ASSEMBLE, x::assemble),
-                (ROUND_OPEN, x::round_open),
-                (CORPUS, x::corpus),
-                (STAGE, x::stage),
-                (STAGE_TEST, x::stage_test),
-                (NOTE_LEFT_OUT, x::note_left_out),
-                (EJECT, x::eject),
-                (EJECT_GATE_RED, x::eject_gate_red),
-                (WITHDRAW, x::withdraw),
-                (REBASE_STALE, x::rebase_stale),
-                (CERTIFY, x::certify),
-                (LC_CERTIFY, x::lc_certify),
-                (LAND, x::land),
-                (ABANDON, x::abandon),
-                (PROMOTE, x::promote),
-                (REDRIVE, x::redrive),
-                (FILE, x::file),
-                (SUPERSEDE_REDS, x::supersede_reds),
-                (CLEAR_LANDED, x::clear_landed),
-                (PAUSE, x::pause),
-                (PAUSE_ASK, x::pause_ask),
-                (KEEP_CERTIFY_OUTPUT, x::keep_certify_output),
-            ]
+            &[(OBSERVE, x::observe), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (ROUND_OPEN, x::round_open), (CORPUS, x::corpus), (STAGE, x::stage), (STAGE_TEST, x::stage_test), (NOTE_LEFT_OUT, x::note_left_out), (EJECT, x::eject), (EJECT_GATE_RED, x::eject_gate_red), (WITHDRAW, x::withdraw), (REBASE_STALE, x::rebase_stale), (CERTIFY, x::certify), (LC_CERTIFY, x::lc_certify), (LAND, x::land), (ABANDON, x::abandon), (PROMOTE, x::promote), (REDRIVE, x::redrive), (FILE, x::file), (SUPERSEDE_REDS, x::supersede_reds), (CLEAR_LANDED, x::clear_landed), (PAUSE, x::pause), (PAUSE_ASK, x::pause_ask), (KEEP_CERTIFY_OUTPUT, x::keep_certify_output)]
         },
         keys: &[batcher_local::KEYS],
         build: |s| batcher_local::BatcherLocal::from_settings(s).registration(),
@@ -213,18 +122,7 @@ pub static TASKS: &[Task] = &[
         effects: batcher_forge::EFFECTS,
         runners: {
             use batcher_forge::{edge as x, *};
-            &[
-                (OBSERVE, x::observe),
-                (ARM, x::arm),
-                (FETCH, x::fetch),
-                (ASSEMBLE, x::assemble),
-                (CORPUS, x::corpus),
-                (WITHDRAW, x::withdraw),
-                (SHOTS, x::shots),
-                (BATCH_OPEN, x::batch_open),
-                (FILE, x::file),
-                (VERDICT_WRITE, x::verdict_write),
-            ]
+            &[(OBSERVE, x::observe), (ARM, x::arm), (FETCH, x::fetch), (ASSEMBLE, x::assemble), (CORPUS, x::corpus), (WITHDRAW, x::withdraw), (SHOTS, x::shots), (BATCH_OPEN, x::batch_open), (FILE, x::file), (VERDICT_WRITE, x::verdict_write)]
         },
         keys: &[batcher_forge::KEYS],
         build: |s| batcher_forge::BatcherForge::from_settings(s).registration(),
@@ -239,22 +137,7 @@ pub static TASKS: &[Task] = &[
         effects: queue_step::EFFECTS,
         runners: {
             use queue_step::{edge as x, *};
-            &[
-                (OBSERVE, x::observe),
-                (PUSH, x::push),
-                (LAND, x::land),
-                (CLOSE_BEAD, x::close_bead),
-                (PR_CLOSE, x::pr_close),
-                (CANCEL_RUNS, x::cancel_runs),
-                (RERUN, x::rerun),
-                (JUDGEMENT, x::judgement),
-                (EJECT, x::eject),
-                (RECONCILE, x::reconcile),
-                (SWEEP, x::sweep),
-                (FILE_BUG, x::file_bug),
-                (NOTIFY, x::notify),
-                (RECORD, x::record),
-            ]
+            &[(OBSERVE, x::observe), (PUSH, x::push), (LAND, x::land), (CLOSE_BEAD, x::close_bead), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RERUN, x::rerun), (JUDGEMENT, x::judgement), (EJECT, x::eject), (RECONCILE, x::reconcile), (SWEEP, x::sweep), (FILE_BUG, x::file_bug), (NOTIFY, x::notify), (RECORD, x::record)]
         },
         keys: &[queue_step::KEYS],
         build: |s| queue_step::QueueStep::from_settings(s).registration(),
@@ -269,20 +152,7 @@ pub static TASKS: &[Task] = &[
         effects: publish::EFFECTS,
         runners: {
             use publish::{edge as x, *};
-            &[
-                (OBSERVE, x::observe),
-                (PUSH_BRANCH, x::push_branch),
-                (PUSH_FORGE, x::push_forge),
-                (PR_CREATE, x::pr_create),
-                (PR_CLOSE, x::pr_close),
-                (CANCEL_RUNS, x::cancel_runs),
-                (RETIRE, x::retire),
-                (RERUN, x::rerun),
-                (RECORD, x::record),
-                (NOTIFY, x::notify),
-                (SETTLE, x::settle),
-                (START_CI, x::start_ci),
-            ]
+            &[(OBSERVE, x::observe), (PUSH_BRANCH, x::push_branch), (PUSH_FORGE, x::push_forge), (PR_CREATE, x::pr_create), (PR_CLOSE, x::pr_close), (CANCEL_RUNS, x::cancel_runs), (RETIRE, x::retire), (RERUN, x::rerun), (RECORD, x::record), (NOTIFY, x::notify), (SETTLE, x::settle), (START_CI, x::start_ci)]
         },
         keys: &[publish::KEYS],
         build: |s| publish::Publish::from_settings(s).registration(),
@@ -295,20 +165,7 @@ pub static TASKS: &[Task] = &[
         boot: sweep_target::SweepTarget::boot,
         cadence_ms: |_| sweep_target::CADENCE_MS,
         effects: sweep_target::EFFECTS,
-        runners: &[
-            (sweep_target::OBSERVE, |e, _, _| {
-                sweep_target::observe(&e.world.run_dir)
-            }),
-            (sweep_target::REMOVE_TARGET, |_, _, s| {
-                sweep_target::remove_target(&s.input)
-            }),
-            (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| {
-                sweep_target::remove_foreign_run(&s.input)
-            }),
-            (sweep_target::REMOVE_HAND_TARGET, |_, _, s| {
-                sweep_target::remove_hand_target(&s.input)
-            }),
-        ],
+        runners: &[(sweep_target::OBSERVE, |e, _, _| sweep_target::observe(&e.world.run_dir)), (sweep_target::REMOVE_TARGET, |_, _, s| sweep_target::remove_target(&s.input)), (sweep_target::REMOVE_FOREIGN_RUN, |_, _, s| sweep_target::remove_foreign_run(&s.input)), (sweep_target::REMOVE_HAND_TARGET, |_, _, s| sweep_target::remove_hand_target(&s.input))],
         keys: &[sweep_target::KEYS],
         build: |s| sweep_target::SweepTarget::from_settings(s).registration(),
     },
@@ -322,15 +179,7 @@ pub static TASKS: &[Task] = &[
         effects: gate_worker::EFFECTS,
         runners: {
             use gate_worker::*;
-            &[
-                (OBSERVE, |e, _, s| observe(e, &s.input)),
-                (TIP, |_, _, s| tip(&s.input)),
-                (CLAIM, |e, _, s| claim(e, &s.input)),
-                (DISCARD, |e, _, s| discard(e, &s.input)),
-                (RETAIN_OUTPUT, |e, _, s| retain_output(e, &s.input)),
-                (COMPLETE, |e, _, s| complete(e, &s.input)),
-                (RECOVER, |e, _, s| recover(e, &s.input)),
-            ]
+            &[(OBSERVE, |e, _, s| observe(e, &s.input)), (TIP, |_, _, s| tip(&s.input)), (CLAIM, |e, _, s| claim(e, &s.input)), (DISCARD, |e, _, s| discard(e, &s.input)), (RETAIN_OUTPUT, |e, _, s| retain_output(e, &s.input)), (COMPLETE, |e, _, s| complete(e, &s.input)), (RECOVER, |e, _, s| recover(e, &s.input))]
         },
         keys: &[gate_worker::KEYS],
         build: |s| gate_worker::GateWorker::from_settings(s).registration(),
@@ -345,12 +194,7 @@ pub static TASKS: &[Task] = &[
         effects: gate_check::EFFECTS,
         runners: {
             use gate_check::*;
-            &[
-                (OBSERVE, |e, _, _| observe(e)),
-                (DISCOVER, |e, k, s| discover(e, k, &s.input)),
-                (RESOLVE, |e, k, s| resolve(e, k, &s.input)),
-                (CI_FAILED, |e, _, s| ci_failed(e, &s.input)),
-            ]
+            &[(OBSERVE, |e, _, _| observe(e)), (DISCOVER, |e, k, s| discover(e, k, &s.input)), (RESOLVE, |e, k, s| resolve(e, k, &s.input)), (CI_FAILED, |e, _, s| ci_failed(e, &s.input))]
         },
         keys: &[gate_check::KEYS],
         build: |s| gate_check::GateCheck::from_settings(s).registration(),
@@ -398,14 +242,7 @@ pub static TASKS: &[Task] = &[
         effects: submission_provision::EFFECTS,
         runners: {
             use submission_provision::*;
-            &[
-                (OBSERVE, |_, _, _| observe()),
-                (CERT_RENEW, |_, _, s| cert_renew(&s.input)),
-                (CONFIG_SET, |_, _, s| config_set(&s.input)),
-                (PASSWORD_WRITE, |_, _, s| password_write(&s.input)),
-                (FIREWALL_OPEN, |_, _, s| firewall_open(&s.input)),
-                (UNIT_RESTART, |e, _, s| unit_restart(e, &s.input)),
-            ]
+            &[(OBSERVE, |_, _, _| observe()), (CERT_RENEW, |_, _, s| cert_renew(&s.input)), (CONFIG_SET, |_, _, s| config_set(&s.input)), (PASSWORD_WRITE, |_, _, s| password_write(&s.input)), (FIREWALL_OPEN, |_, _, s| firewall_open(&s.input)), (UNIT_RESTART, |e, _, s| unit_restart(e, &s.input))]
         },
         keys: &[submission_provision::KEYS],
         build: |s| submission_provision::SubmissionProvision::from_settings(s).registration(),
@@ -428,24 +265,11 @@ mod tests {
             let mut names = t.effects.to_vec();
             names.sort();
             names.dedup();
-            assert_eq!(
-                names.len(),
-                t.effects.len(),
-                "{}: an effect is declared twice",
-                t.name
-            );
+            assert_eq!(names.len(), t.effects.len(), "{}: an effect is declared twice", t.name);
             for e in t.effects.iter().filter(|e| !shared.contains(e)) {
-                assert!(
-                    t.runners.iter().any(|(n, _)| n == e),
-                    "{}: {e} has no runner",
-                    t.name
-                );
+                assert!(t.runners.iter().any(|(n, _)| n == e), "{}: {e} has no runner", t.name);
             }
-            assert!(
-                t.runners.iter().all(|(n, _)| t.effects.contains(n)),
-                "{}: a runner for an undeclared effect",
-                t.name
-            );
+            assert!(t.runners.iter().all(|(n, _)| t.effects.contains(n)), "{}: a runner for an undeclared effect", t.name);
         }
     }
 

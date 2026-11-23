@@ -34,9 +34,7 @@ pub fn scripted(units: Arc<runtime::units::ScriptedUnits>, clock: Arc<dyn Clock>
 /// The stream of the booted task named `task` (`tasks::all()`), where its `unit.ran` lands so
 /// the commands its handler answers with land on its own stream too.
 pub fn stream_of(task: &str) -> Option<String> {
-    crate::tasks::all()
-        .find(|t| t.name == task)
-        .map(|t| t.stream().to_string())
+    crate::tasks::all().find(|t| t.name == task).map(|t| t.stream().to_string())
 }
 
 /// The standalone D-Bus source: its own connection to the user manager. Returns at once when
@@ -55,9 +53,7 @@ pub fn run_dbus(tx: mpsc::Sender<Submit>) {
 
 #[cfg(target_os = "linux")]
 fn connect(clock: Arc<dyn Clock>) -> Result<Arc<dyn UnitCompletions>, String> {
-    Ok(Arc::new(
-        runtime::units::SystemdUnits::connect(clock).map_err(|e| format!("user manager: {e}"))?,
-    ))
+    Ok(Arc::new(runtime::units::SystemdUnits::connect(clock).map_err(|e| format!("user manager: {e}"))?))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -69,28 +65,18 @@ fn connect(_clock: Arc<dyn Clock>) -> Result<Arc<dyn UnitCompletions>, String> {
 mod tests {
     use super::*;
     use runtime::ports::VirtualClock;
-    use runtime::units::{Exit, ScriptedUnits, UnitHandle, UnitRan, UnitSpec, Units, UNIT_RAN};
+    use runtime::units::{Exit, ScriptedUnits, UnitHandle, UnitRan, Units, UnitSpec, UNIT_RAN};
 
     #[test_id(tnnols7)]
     #[test]
     fn a_run_the_manager_ends_is_submitted_once_on_its_tasks_stream_or_on_units() {
-        let task = crate::tasks::all()
-            .find(|t| t.name != "heartbeat")
-            .expect("a booted task");
+        let task = crate::tasks::all().find(|t| t.name != "heartbeat").expect("a booted task");
         assert_eq!(stream_of(task.name).as_deref(), Some(task.stream()));
         assert_eq!(stream_of("planted.no_such_task"), None);
         let clock = Arc::new(VirtualClock::new(0));
         let units = Arc::new(ScriptedUnits::new(clock.clone()));
         units.script("planted.no_such_task", 1_000, Exit::Code(0));
-        units
-            .start(&UnitSpec {
-                task: "planted.no_such_task".into(),
-                key: "r1".into(),
-                argv: vec!["true".into()],
-                env: vec![],
-                cwd: None,
-            })
-            .unwrap();
+        units.start(&UnitSpec { task: "planted.no_such_task".into(), key: "r1".into(), argv: vec!["true".into()], env: vec![], cwd: None }).unwrap();
         clock.advance(2_000);
         let (tx, mut rx) = mpsc::channel(4);
         let source = over(units.clone(), clock.clone());
@@ -98,15 +84,9 @@ mod tests {
         let got = rx.blocking_recv().expect("the run's end");
         drop(rx);
         h.join().unwrap();
-        assert_eq!(
-            (got.stream.as_str(), got.kind.tag.as_str()),
-            (runtime::sources::UNITS_STREAM, UNIT_RAN)
-        );
+        assert_eq!((got.stream.as_str(), got.kind.tag.as_str()), (runtime::sources::UNITS_STREAM, UNIT_RAN));
         let ran = UnitRan::from_event_kind(&got.kind).unwrap();
-        assert_eq!(
-            ran.handle,
-            UnitHandle::of("planted.no_such_task", "r1").unwrap()
-        );
+        assert_eq!(ran.handle, UnitHandle::of("planted.no_such_task", "r1").unwrap());
         assert_eq!(ran.key_for("planted.no_such_task").as_deref(), Some("r1"));
     }
 }

@@ -32,31 +32,18 @@ pub const NO_CREDENTIAL: &str = "no forge credential";
 
 impl fmt::Debug for Forge {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Forge")
-            .field("api", &self.api)
-            .field("token", &(!self.token.is_empty()))
-            .field("gh_config_dir", &self.gh_config_dir)
-            .finish()
+        f.debug_struct("Forge").field("api", &self.api).field("token", &(!self.token.is_empty())).field("gh_config_dir", &self.gh_config_dir).finish()
     }
 }
 
 fn remotes(repo_dir: &Path) -> Vec<(String, String)> {
-    let Ok(text) = fs::read_to_string(repo_dir.join(".git/config")) else {
-        return vec![];
-    };
+    let Ok(text) = fs::read_to_string(repo_dir.join(".git/config")) else { return vec![] };
     let mut remotes: Vec<(String, String)> = vec![];
     let mut current: Option<String> = None;
     for l in text.lines().map(str::trim) {
         if let Some(h) = l.strip_prefix('[') {
-            current = h
-                .strip_prefix("remote \"")
-                .and_then(|r| r.strip_suffix("\"]"))
-                .map(str::to_string);
-        } else if let (Some(name), Some(url)) = (
-            &current,
-            l.strip_prefix("url")
-                .map(|r| r.trim_start().trim_start_matches('=').trim()),
-        ) {
+            current = h.strip_prefix("remote \"").and_then(|r| r.strip_suffix("\"]")).map(str::to_string);
+        } else if let (Some(name), Some(url)) = (&current, l.strip_prefix("url").map(|r| r.trim_start().trim_start_matches('=').trim())) {
             remotes.push((name.clone(), url.to_string()));
         }
     }
@@ -64,12 +51,7 @@ fn remotes(repo_dir: &Path) -> Vec<(String, String)> {
 }
 
 fn slug_of(url: &str) -> Option<String> {
-    let path = url
-        .trim_end_matches('/')
-        .trim_end_matches(".git")
-        .rsplit(['/', ':'])
-        .take(2)
-        .collect::<Vec<_>>();
+    let path = url.trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).take(2).collect::<Vec<_>>();
     match path[..] {
         [repo, owner] if !repo.is_empty() && !owner.is_empty() => Some(format!("{owner}/{repo}")),
         _ => None,
@@ -79,20 +61,14 @@ fn slug_of(url: &str) -> Option<String> {
 /// `owner/repo` of a checkout's forge remote: `origin` when it has one, else the first remote.
 pub fn slug(repo_dir: &Path) -> Option<String> {
     let remotes = remotes(repo_dir);
-    let (_, url) = remotes
-        .iter()
-        .find(|(n, _)| n == "origin")
-        .or(remotes.first())?;
+    let (_, url) = remotes.iter().find(|(n, _)| n == "origin").or(remotes.first())?;
     slug_of(url)
 }
 
 /// `owner/repo` of the named remote, only when that remote is on github.com.
 pub fn github_slug(repo_dir: &Path, remote: &str) -> Option<String> {
     let url = remotes(repo_dir).into_iter().find(|(n, _)| n == remote)?.1;
-    host_of(&url)
-        .eq_ignore_ascii_case("github.com")
-        .then(|| slug_of(&url))
-        .flatten()
+    host_of(&url).eq_ignore_ascii_case("github.com").then(|| slug_of(&url)).flatten()
 }
 
 fn host_of(url: &str) -> &str {
@@ -100,13 +76,7 @@ fn host_of(url: &str) -> &str {
         Some((_, rest)) => rest.split('/').next().unwrap_or(""),
         None => url.split(':').next().unwrap_or(""),
     };
-    authority
-        .rsplit('@')
-        .next()
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("")
+    authority.rsplit('@').next().unwrap_or("").split(':').next().unwrap_or("")
 }
 
 fn text(v: &Value, key: &str) -> String {
@@ -129,9 +99,7 @@ pub(crate) fn epoch(stamp: &str) -> Option<u64> {
 
 /// The first run of two or more digits in a runner's name, else the name itself.
 fn vmid_of(name: &str) -> String {
-    let first = name
-        .split(|c: char| !c.is_ascii_digit())
-        .find(|run| run.len() >= 2);
+    let first = name.split(|c: char| !c.is_ascii_digit()).find(|run| run.len() >= 2);
     match first {
         Some(d) => d.to_string(),
         None if name.is_empty() => "?".into(),
@@ -145,29 +113,13 @@ fn vmid_of(name: &str) -> String {
 /// workflow runs; a cancelled run a newer run of its workflow replaced is pending or dropped, by
 /// that run's state, and a check a workflow run owns counts only when that run is the latest of its
 /// workflow on `branch`, and a check no workflow run owns (an app's own check) always counts.
-pub fn current_checks(
-    check_runs: &[Value],
-    runs: &[Value],
-    branch: &str,
-) -> Vec<(String, String, String)> {
+pub fn current_checks(check_runs: &[Value], runs: &[Value], branch: &str) -> Vec<(String, String, String)> {
     let suite = |v: &Value, key: &str| v.pointer(key).and_then(Value::as_u64);
-    let owned: BTreeSet<u64> = runs
-        .iter()
-        .filter_map(|r| suite(r, "/check_suite_id"))
-        .collect(); // not a path: GitHub API route or JSON pointer
-    let workflow_of = |r: &Value| {
-        r["workflow_id"]
-            .as_u64()
-            .map_or_else(|| text(r, "name"), |w| w.to_string())
-    };
+    let owned: BTreeSet<u64> = runs.iter().filter_map(|r| suite(r, "/check_suite_id")).collect(); // not a path: GitHub API route or JSON pointer
+    let workflow_of = |r: &Value| r["workflow_id"].as_u64().map_or_else(|| text(r, "name"), |w| w.to_string());
     let mut latest: BTreeMap<String, (u64, u64)> = BTreeMap::new();
-    for r in runs
-        .iter()
-        .filter(|r| r["head_branch"].as_str() == Some(branch))
-    {
-        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else {
-            continue;
-        }; // not a path: GitHub API route or JSON pointer
+    for r in runs.iter().filter(|r| r["head_branch"].as_str() == Some(branch)) {
+        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue }; // not a path: GitHub API route or JSON pointer
         let workflow = workflow_of(r);
         if latest.get(&workflow).is_none_or(|(newest, _)| id > *newest) {
             latest.insert(workflow, (id, s));
@@ -176,43 +128,20 @@ pub fn current_checks(
     let current: BTreeSet<u64> = latest.values().map(|(_, s)| *s).collect();
     // Cancelled checks of a run a newer run of the same workflow replaced, by that run's state.
     let mut replaced: BTreeMap<u64, bool> = BTreeMap::new();
-    for r in runs
-        .iter()
-        .filter(|r| r["conclusion"].as_str() == Some("cancelled"))
-    {
-        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else {
-            continue;
-        }; // not a path: GitHub API route or JSON pointer
-        let newer = runs
-            .iter()
-            .filter(|n| n["id"].as_u64() > Some(id) && workflow_of(n) == workflow_of(r));
-        let pending = newer
-            .clone()
-            .any(|n| n["status"].as_str() != Some("completed"));
-        if pending
-            || newer
-                .clone()
-                .any(|n| n["conclusion"].as_str() == Some("success"))
-        {
+    for r in runs.iter().filter(|r| r["conclusion"].as_str() == Some("cancelled")) {
+        let (Some(id), Some(s)) = (r["id"].as_u64(), suite(r, "/check_suite_id")) else { continue }; // not a path: GitHub API route or JSON pointer
+        let newer = runs.iter().filter(|n| n["id"].as_u64() > Some(id) && workflow_of(n) == workflow_of(r));
+        let pending = newer.clone().any(|n| n["status"].as_str() != Some("completed"));
+        if pending || newer.clone().any(|n| n["conclusion"].as_str() == Some("success")) {
             replaced.insert(s, pending);
         }
     }
     check_runs
         .iter()
-        .filter(|c| {
-            suite(c, "/check_suite/id").is_none_or(|s| !owned.contains(&s) || current.contains(&s))
-        }) // not a path: GitHub API route or JSON pointer
+        .filter(|c| suite(c, "/check_suite/id").is_none_or(|s| !owned.contains(&s) || current.contains(&s))) // not a path: GitHub API route or JSON pointer
         .filter_map(|c| {
-            let (name, status, conclusion) = (
-                text(c, "name"),
-                text(c, "status").to_uppercase(),
-                text(c, "conclusion").to_uppercase(),
-            );
-            match (conclusion == "CANCELLED")
-                .then(|| suite(c, "/check_suite/id").and_then(|s| replaced.get(&s)))
-                .flatten()
-            {
-                // not a path: GitHub API route or JSON pointer
+            let (name, status, conclusion) = (text(c, "name"), text(c, "status").to_uppercase(), text(c, "conclusion").to_uppercase());
+            match (conclusion == "CANCELLED").then(|| suite(c, "/check_suite/id").and_then(|s| replaced.get(&s))).flatten() { // not a path: GitHub API route or JSON pointer
                 Some(true) => Some((name, "IN_PROGRESS".into(), String::new())),
                 Some(false) => None,
                 None => Some((name, status, conclusion)),
@@ -237,29 +166,14 @@ struct Got {
 
 fn rate_of(r: &ureq::Response) -> Option<api_budget::Rate> {
     let num = |h: &str| r.header(h).and_then(|v| v.trim().parse::<u64>().ok());
-    Some(api_budget::Rate {
-        limit: num("x-ratelimit-limit")?,
-        remaining: num("x-ratelimit-remaining")?,
-        reset: num("x-ratelimit-reset")?,
-    })
+    Some(api_budget::Rate { limit: num("x-ratelimit-limit")?, remaining: num("x-ratelimit-remaining")?, reset: num("x-ratelimit-reset")? })
 }
 
 /// The decisions of one conditional GET, with the transport passed in. The outcome is returned,
 /// never counted, so a test reads it from the return value.
-fn conditional_get(
-    api: &str,
-    url: &str,
-    path: &str,
-    caller: &str,
-    now: u64,
-    kept: Option<(String, Value)>,
-    send: impl FnOnce(Option<&str>) -> Result<Reply, String>,
-) -> Result<Got, (String, &'static str)> {
+fn conditional_get(api: &str, url: &str, path: &str, caller: &str, now: u64, kept: Option<(String, Value)>, send: impl FnOnce(Option<&str>) -> Result<Reply, String>) -> Result<Got, (String, &'static str)> {
     if let Some(reset) = api_budget::exhausted_until(api, now) {
-        let why = format!(
-            "the GitHub API budget is spent until {} (epoch {reset}); {caller} made no request",
-            api_budget::clock_of(reset)
-        );
+        let why = format!("the GitHub API budget is spent until {} (epoch {reset}); {caller} made no request", api_budget::clock_of(reset));
         if api_budget::first_report_of(api, reset) {
             eprintln!("spira-runtime: {why}");
         }
@@ -274,18 +188,10 @@ fn conditional_get(
         return Err(failed(format!("{url}: status code {}", reply.status)));
     }
     if let (304, Some((_, body))) = (reply.status, kept) {
-        return Ok(Got {
-            value: body,
-            outcome: api_budget::CACHED,
-            etag: None,
-        });
+        return Ok(Got { value: body, outcome: api_budget::CACHED, etag: None });
     }
     let value = serde_json::from_str(&reply.body).map_err(|e| failed(format!("{path}: {e}")))?;
-    Ok(Got {
-        value,
-        outcome: api_budget::FRESH,
-        etag: reply.etag,
-    })
+    Ok(Got { value, outcome: api_budget::FRESH, etag: reply.etag })
 }
 
 impl Forge {
@@ -295,19 +201,12 @@ impl Forge {
         if !self.token.is_empty() {
             return Ok(self.token.clone());
         }
-        let (code, out) = gh_auth_token(
-            if self.gh.is_empty() { "gh" } else { &self.gh },
-            &self.gh_config_dir,
-            CALL_TIMEOUT,
-        )
-        .map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
+        let (code, out) = gh_auth_token(if self.gh.is_empty() { "gh" } else { &self.gh }, &self.gh_config_dir, CALL_TIMEOUT).map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
         let token = String::from_utf8_lossy(&out).trim().to_string();
         if code == Some(0) && !token.is_empty() {
             Ok(token)
         } else {
-            Err(format!(
-                "{NO_CREDENTIAL}: SPIRA_BROKER_GH_TOKEN is empty and gh has no login"
-            ))
+            Err(format!("{NO_CREDENTIAL}: SPIRA_BROKER_GH_TOKEN is empty and gh has no login"))
         }
     }
 
@@ -319,48 +218,23 @@ impl Forge {
     /// answer and is not charged against the budget. A spent budget is reported once per reset
     /// and no request is made until it passes.
     fn try_get(&self, caller: &str, path: &str) -> Result<Value, String> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let url = format!("{}{path}", self.api.trim_end_matches('/'));
         let kept = api_budget::etag(&url).zip(api_budget::body_for(&url));
         let send = |tag: Option<&str>| {
             let token = self.credential()?;
-            let mut req = ureq::AgentBuilder::new()
-                .timeout(CALL_TIMEOUT)
-                .build()
-                .get(&url)
-                .set("Accept", "application/vnd.github+json")
-                .set("User-Agent", "spira-runtime")
-                .set("Authorization", &format!("Bearer {token}"));
+            let mut req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&url).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime").set("Authorization", &format!("Bearer {token}"));
             if let Some(tag) = tag {
                 req = req.set("If-None-Match", tag);
             }
             match req.call() {
                 Ok(r) => {
-                    let (status, etag, rate) = (
-                        r.status(),
-                        r.header("ETag").map(str::to_string),
-                        rate_of(&r),
-                    );
+                    let (status, etag, rate) = (r.status(), r.header("ETag").map(str::to_string), rate_of(&r));
                     let mut body = String::new();
-                    r.into_reader()
-                        .take(16 << 20)
-                        .read_to_string(&mut body)
-                        .map_err(|e| e.to_string())?;
-                    Ok(Reply {
-                        status,
-                        etag,
-                        rate,
-                        body,
-                    })
+                    r.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
+                    Ok(Reply { status, etag, rate, body })
                 }
-                Err(ureq::Error::Status(status, r)) => Ok(Reply {
-                    status,
-                    etag: None,
-                    rate: rate_of(&r),
-                    body: String::new(),
-                }),
+                Err(ureq::Error::Status(status, r)) => Ok(Reply { status, etag: None, rate: rate_of(&r), body: String::new() }),
                 Err(e) => Err(e.to_string()),
             }
         };
@@ -386,10 +260,7 @@ impl Forge {
 
     /// A list the forge may have cut short at one page reads as not answered, never as the whole.
     fn listed(&self, caller: &str, path: &str) -> Option<Vec<Value>> {
-        self.get(caller, path)?
-            .as_array()
-            .filter(|a| a.len() < PAGE_SIZE)
-            .cloned()
+        self.get(caller, path)?.as_array().filter(|a| a.len() < PAGE_SIZE).cloned()
     }
 
     /// One PR by number with its checks classified: `Some(None)` once it is no longer open, `None`
@@ -400,33 +271,13 @@ impl Forge {
             return Some(None);
         }
         let sha = p["head"]["sha"].as_str()?;
-        let checks = self.get(
-            "open_prs",
-            &format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"),
-        )?; // not a path: GitHub API route or JSON pointer
-        let runs = self.get(
-            "open_prs",
-            &format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"),
-        )?; // not a path: GitHub API route or JSON pointer
-        let runs = runs["workflow_runs"]
-            .as_array()
-            .filter(|a| a.len() < PAGE_SIZE)?;
-        let checks = current_checks(
-            checks["check_runs"].as_array()?,
-            runs,
-            &text(&p["head"], "ref"),
-        );
+        let checks = self.get("open_prs", &format!("/repos/{slug}/commits/{sha}/check-runs?{PAGE}"))?; // not a path: GitHub API route or JSON pointer
+        let runs = self.get("open_prs", &format!("/repos/{slug}/actions/runs?head_sha={sha}&{PAGE}"))?; // not a path: GitHub API route or JSON pointer
+        let runs = runs["workflow_runs"].as_array().filter(|a| a.len() < PAGE_SIZE)?;
+        let checks = current_checks(checks["check_runs"].as_array()?, runs, &text(&p["head"], "ref"));
         let (status, fail) = classify(&checks);
         let title = text(&p, "title").replace(['\n', '\t'], " ");
-        Some(Some((
-            OpenPr {
-                number: n,
-                status: status.into(),
-                title,
-                fail,
-            },
-            text(&p["head"], "ref"),
-        )))
+        Some(Some((OpenPr { number: n, status: status.into(), title, fail }, text(&p["head"], "ref"))))
     }
 
     /// How a PR that left the open list ended; `None` when the forge could not say.
@@ -437,86 +288,32 @@ impl Forge {
             ("closed", false) => "CLOSED",
             _ => "OPEN",
         };
-        let beads = text(&p, "body")
-            .lines()
-            .filter(|l| l.starts_with("- "))
-            .map(str::to_string)
-            .collect();
-        Some(Final {
-            state: state.into(),
-            sha: text(&p, "merge_commit_sha"),
-            beads,
-        })
+        let beads = text(&p, "body").lines().filter(|l| l.starts_with("- ")).map(str::to_string).collect();
+        Some(Final { state: state.into(), sha: text(&p, "merge_commit_sha"), beads })
     }
 
     /// The first completed deploy run for a merge commit; `None` while there is none.
     pub fn deploy_run(&self, slug: &str, sha: &str) -> Option<Run> {
-        let runs = self.get(
-            "deploy_run",
-            &format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"),
-        )?; // not a path: GitHub API route or JSON pointer
-        let r = runs["workflow_runs"]
-            .as_array()?
-            .iter()
-            .find(|r| r["status"] == "completed")?;
-        let secs = epoch(r["updated_at"].as_str()?)
-            .zip(epoch(r["created_at"].as_str()?))
-            .map_or(0, |(u, c)| u.saturating_sub(c));
-        Some(Run {
-            conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(),
-            secs,
-            url: text(r, "html_url"),
-        })
+        let runs = self.get("deploy_run", &format!("/repos/{slug}/actions/workflows/deploy.yml/runs?head_sha={sha}&{PAGE}"))?; // not a path: GitHub API route or JSON pointer
+        let r = runs["workflow_runs"].as_array()?.iter().find(|r| r["status"] == "completed")?;
+        let secs = epoch(r["updated_at"].as_str()?).zip(epoch(r["created_at"].as_str()?)).map_or(0, |(u, c)| u.saturating_sub(c));
+        Some(Run { conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(), secs, url: text(r, "html_url") })
     }
 
     /// One `STRANDED run=<id> job="<name>" label=<labels> queued=<n>s runner=<name> vmid=<id>` line per
     /// queued job older than `min_age` whose per-run label no online runner carries; the lines
     /// `forge stranded-runners` prints. A call that fails reads as nothing stranded, as it does there.
     pub fn stranded_runners(&self, slug: &str, now: u64, min_age: u64) -> Vec<String> {
-        const GENERIC: [&str; 9] = [
-            "self-hosted",
-            "linux",
-            "macos",
-            "windows",
-            "x64",
-            "arm64",
-            "x86_64",
-            "arm",
-            "ubuntu-latest",
-        ];
-        let Some(runs) = self.get(
-            "stranded_runners",
-            &format!("/repos/{slug}/actions/runs?per_page=50"),
-        ) else {
-            return vec![];
-        }; // not a path: GitHub API route or JSON pointer
-        let ids: Vec<String> = runs["workflow_runs"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter(|r| r["status"] != "completed")
-                    .filter_map(|r| r.get("id").map(|i| i.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
+        const GENERIC: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
+        let Some(runs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs?per_page=50")) else { return vec![] }; // not a path: GitHub API route or JSON pointer
+        let ids: Vec<String> = runs["workflow_runs"].as_array().map(|a| a.iter().filter(|r| r["status"] != "completed").filter_map(|r| r.get("id").map(|i| i.to_string())).collect()).unwrap_or_default();
         if ids.is_empty() {
             return vec![];
         }
-        let runners: Vec<Value> = self
-            .get(
-                "stranded_runners",
-                &format!("/repos/{slug}/actions/runners?per_page=100"),
-            )
-            .and_then(|v| v["runners"].as_array().cloned())
-            .unwrap_or_default(); // not a path: GitHub API route or JSON pointer
+        let runners: Vec<Value> = self.get("stranded_runners", &format!("/repos/{slug}/actions/runners?per_page=100")).and_then(|v| v["runners"].as_array().cloned()).unwrap_or_default(); // not a path: GitHub API route or JSON pointer
         let mut lines = vec![];
         for id in ids {
-            let Some(jobs) = self.get(
-                "stranded_runners",
-                &format!("/repos/{slug}/actions/runs/{id}/jobs"),
-            ) else {
-                continue;
-            }; // not a path: GitHub API route or JSON pointer
+            let Some(jobs) = self.get("stranded_runners", &format!("/repos/{slug}/actions/runs/{id}/jobs")) else { continue }; // not a path: GitHub API route or JSON pointer
             for j in jobs["jobs"].as_array().cloned().unwrap_or_default() {
                 if j["status"] != "queued" {
                     continue;
@@ -526,41 +323,19 @@ impl Forge {
                 if created == 0 || age < min_age {
                     continue;
                 }
-                let labels: Vec<String> = j["labels"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|l| l.as_str().map(str::to_string))
-                            .filter(|l| !GENERIC.contains(&l.to_lowercase().as_str()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let labels: Vec<String> = j["labels"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).filter(|l| !GENERIC.contains(&l.to_lowercase().as_str())).collect()).unwrap_or_default();
                 if labels.is_empty() {
                     continue;
                 }
-                let carrying: Vec<&Value> = runners
-                    .iter()
-                    .filter(|r| {
-                        r["labels"].as_array().is_some_and(|ls| {
-                            ls.iter().any(|l| {
-                                l["name"]
-                                    .as_str()
-                                    .is_some_and(|n| labels.iter().any(|x| x == n))
-                            })
-                        })
-                    })
-                    .collect();
+                let carrying: Vec<&Value> = runners.iter().filter(|r| r["labels"].as_array().is_some_and(|ls| ls.iter().any(|l| l["name"].as_str().is_some_and(|n| labels.iter().any(|x| x == n))))).collect();
                 if carrying.iter().any(|r| r["status"] == "online") {
                     continue;
                 }
-                let (runner, vmid) =
-                    carrying
-                        .first()
-                        .map_or(("none".to_string(), "?".to_string()), |r| {
-                            let name = text(r, "name");
-                            let vmid = vmid_of(&name);
-                            (name, vmid)
-                        });
+                let (runner, vmid) = carrying.first().map_or(("none".to_string(), "?".to_string()), |r| {
+                    let name = text(r, "name");
+                    let vmid = vmid_of(&name);
+                    (name, vmid)
+                });
                 lines.push(format!("STRANDED run={id} job=\"{}\" label={} queued={age}s runner={runner} vmid={vmid}", text(&j, "name"), labels.join(",")));
             }
         }
@@ -568,24 +343,11 @@ impl Forge {
     }
 
     /// `spira/*` branches ahead of `base` that none of `open_heads` is the head of.
-    pub fn stray_branches(
-        &self,
-        slug: &str,
-        base: &str,
-        open_heads: &[String],
-    ) -> Option<Vec<String>> {
+    pub fn stray_branches(&self, slug: &str, base: &str, open_heads: &[String]) -> Option<Vec<String>> {
         let branches = self.listed("stray_branches", &format!("/repos/{slug}/branches?{PAGE}"))?; // not a path: GitHub API route or JSON pointer
         let mut out = vec![];
-        for b in branches
-            .iter()
-            .filter_map(|b| b["name"].as_str())
-            .filter(|b| b.starts_with("spira/"))
-        {
-            let ahead = self.get(
-                "stray_branches",
-                &format!("/repos/{slug}/compare/{base}...{b}"),
-            )?["ahead_by"]
-                .as_u64()?; // not a path: GitHub API route or JSON pointer
+        for b in branches.iter().filter_map(|b| b["name"].as_str()).filter(|b| b.starts_with("spira/")) {
+            let ahead = self.get("stray_branches", &format!("/repos/{slug}/compare/{base}...{b}"))?["ahead_by"].as_u64()?; // not a path: GitHub API route or JSON pointer
             if ahead > 0 && !open_heads.iter().any(|h| h == b) {
                 out.push(b.to_string());
             }
@@ -608,17 +370,8 @@ pub(crate) mod tests {
     #[test_id(tpfwmnm)]
     #[test]
     fn every_remote_spelling_names_owner_and_repo() {
-        for url in [
-            "https://github.com/acme/widgets.git",
-            "git@github.com:acme/widgets.git",
-            "ssh://git@host:22/acme/widgets",
-            "file:///x/acme/widgets/",
-        ] {
-            assert_eq!(
-                slug(checkout(url).path()).as_deref(),
-                Some("acme/widgets"),
-                "{url}"
-            );
+        for url in ["https://github.com/acme/widgets.git", "git@github.com:acme/widgets.git", "ssh://git@host:22/acme/widgets", "file:///x/acme/widgets/"] {
+            assert_eq!(slug(checkout(url).path()).as_deref(), Some("acme/widgets"), "{url}");
         }
         let root = testkit::TempDir::new("forge-slug-none");
         assert_eq!(slug(&root.join("nonexistent")), None);
@@ -629,7 +382,7 @@ pub(crate) mod tests {
     fn a_remote_is_github_by_its_host_however_it_is_spelled() {
         for (url, github) in [
             ("https://github.com/acme/widgets.git", true),
-            ("https://USERINFO/github.com/acme/widgets", true),
+                        ("https://USERINFO/github.com/acme/widgets", true),
             ("ssh://git@github.com:22/acme/widgets.git", true),
             ("git@github.com:acme/widgets.git", true),
             ("git@gitea.example:acme/widgets.git", false),
@@ -640,11 +393,7 @@ pub(crate) mod tests {
             let url = url.replace("USERINFO/", &format!("{}{}", "x:y", "@"));
             let url = url.as_str();
             fs::create_dir_all(d.path().join(".git")).unwrap();
-            fs::write(
-                d.path().join(".git/config"),
-                format!("[remote \"up\"]\n\turl = {url}\n"),
-            )
-            .unwrap();
+            fs::write(d.path().join(".git/config"), format!("[remote \"up\"]\n\turl = {url}\n")).unwrap();
             assert_eq!(github_slug(d.path(), "up").is_some(), github, "{url}");
             assert_eq!(github_slug(d.path(), "other"), None);
         }
@@ -655,25 +404,14 @@ pub(crate) mod tests {
     fn without_an_origin_the_first_remote_is_used() {
         let d = testkit::TempDir::new("forge-slug-first");
         fs::create_dir_all(d.path().join(".git")).unwrap();
-        fs::write(
-            d.path().join(".git/config"),
-            "[remote \"fork\"]\n\turl = git@h:o/r.git\n",
-        )
-        .unwrap();
+        fs::write(d.path().join(".git/config"), "[remote \"fork\"]\n\turl = git@h:o/r.git\n").unwrap();
         assert_eq!(slug(d.path()).as_deref(), Some("o/r"));
     }
 
     #[test_id(tr6eijy)]
     #[test]
     fn a_runner_is_known_by_the_first_run_of_two_digits_in_its_name_else_its_name() {
-        assert_eq!(
-            (
-                vmid_of("ci-vm-9001-a7").as_str(),
-                vmid_of("r1").as_str(),
-                vmid_of("").as_str()
-            ),
-            ("9001", "r1", "?")
-        );
+        assert_eq!((vmid_of("ci-vm-9001-a7").as_str(), vmid_of("r1").as_str(), vmid_of("").as_str()), ("9001", "r1", "?"));
     }
 
     /// sp-hw3qio: PR #989's head had also been published as PR #988, whose Gate runs failed at
@@ -691,56 +429,26 @@ pub(crate) mod tests {
             check("provision", "failure", 2), // PR 989's first Gate run, superseded
             check("provision", "success", 3), // PR 989's latest Gate run
             check("gate", "success", 3),
-            check("tag", "success", 4),      // PR 989's Test image run
+            check("tag", "success", 4), // PR 989's Test image run
             check("lint-app", "success", 9), // an app's check, no workflow run
         ];
-        let runs = [
-            run(10, "Gate", "spira/publish/20261107T001222Z", 1),
-            run(11, "Gate", "spira/publish/1794013814", 2),
-            run(12, "Gate", "spira/publish/1794013814", 3),
-            run(13, "Test image", "spira/publish/1794013814", 4),
-        ];
+        let runs = [run(10, "Gate", "spira/publish/20261107T001222Z", 1), run(11, "Gate", "spira/publish/1794013814", 2), run(12, "Gate", "spira/publish/1794013814", 3), run(13, "Test image", "spira/publish/1794013814", 4)];
         let judged = current_checks(&checks, &runs, "spira/publish/1794013814");
         assert_eq!(classify(&judged), ("green", String::new()), "{judged:?}");
         let names: Vec<&str> = judged.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(names, ["provision", "gate", "tag", "lint-app"]);
         // On PR 988's own branch the same commit is red.
-        assert_eq!(
-            classify(&current_checks(
-                &checks,
-                &runs,
-                "spira/publish/20261107T001222Z"
-            ))
-            .0,
-            "red"
-        );
+        assert_eq!(classify(&current_checks(&checks, &runs, "spira/publish/20261107T001222Z")).0, "red");
     }
 
     fn cancelled_then(later: Option<(&str, &str, &str)>) -> (&'static str, String) {
         let check = |name: &str, status: &str, conclusion: &str, suite: u64| serde_json::json!({"name": name, "status": status, "conclusion": conclusion, "check_suite": {"id": suite}});
         let run = |id: u64, branch: &str, suite: u64, status: &str, conclusion: &str| serde_json::json!({"id": id, "workflow_id": 7, "name": "Publish", "head_branch": branch, "check_suite_id": suite, "status": status, "conclusion": conclusion});
-        let mut checks = vec![
-            check("select", "completed", "success", 1),
-            check("gate", "completed", "cancelled", 1),
-            check("suites", "completed", "cancelled", 1),
-        ];
+        let mut checks = vec![check("select", "completed", "success", 1), check("gate", "completed", "cancelled", 1), check("suites", "completed", "cancelled", 1)];
         let mut runs = vec![run(1, "spira/publish/a", 1, "completed", "cancelled")];
         if let Some((branch, status, conclusion)) = later {
             checks.push(check("select", "completed", "success", 2));
-            checks.push(check(
-                "gate",
-                if status == "completed" {
-                    "completed"
-                } else {
-                    "queued"
-                },
-                if status == "completed" {
-                    conclusion
-                } else {
-                    ""
-                },
-                2,
-            ));
+            checks.push(check("gate", if status == "completed" { "completed" } else { "queued" }, if status == "completed" { conclusion } else { "" }, 2));
             runs.push(run(2, branch, 2, status, conclusion));
         }
         classify(&current_checks(&checks, &runs, "spira/publish/a"))
@@ -751,36 +459,18 @@ pub(crate) mod tests {
     #[test_id(teb6jdv)]
     #[test]
     fn a_cancelled_run_is_pending_while_a_newer_run_of_its_workflow_is_pending() {
-        assert_eq!(
-            cancelled_then(Some(("spira/publish/a", "queued", ""))).0,
-            "pending"
-        );
-        assert_eq!(
-            cancelled_then(Some(("spira/publish/b", "queued", ""))).0,
-            "pending"
-        );
-        assert_eq!(
-            cancelled_then(Some(("spira/publish/b", "in_progress", ""))).0,
-            "pending"
-        );
-        assert_eq!(
-            cancelled_then(Some(("spira/publish/b", "completed", "success"))).0,
-            "green"
-        );
+        assert_eq!(cancelled_then(Some(("spira/publish/a", "queued", ""))).0, "pending");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "queued", ""))).0, "pending");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "in_progress", ""))).0, "pending");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "completed", "success"))).0, "green");
     }
 
     #[test_id(tzqnds2)]
     #[test]
     fn a_cancelled_run_with_no_newer_run_is_red_and_a_real_failure_stays_red() {
         assert_eq!(cancelled_then(None), ("red", "gate,suites".into()));
-        assert_eq!(
-            cancelled_then(Some(("spira/publish/b", "completed", "cancelled"))).0,
-            "red"
-        );
-        assert_eq!(
-            cancelled_then(Some(("spira/publish/b", "completed", "failure"))).0,
-            "red"
-        );
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "completed", "cancelled"))).0, "red");
+        assert_eq!(cancelled_then(Some(("spira/publish/b", "completed", "failure"))).0, "red");
     }
 
     /// Serves `answers` in order, one connection each; returns the api base and the requests seen.
@@ -802,18 +492,11 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn answer(status: &str, headers: &str, body: &str) -> String {
-        format!(
-            "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        )
+        format!("HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
     }
 
     pub(crate) fn forge_at(api: String) -> Forge {
-        Forge {
-            api,
-            token: "t".into(),
-            ..Forge::default()
-        }
+        Forge { api, token: "t".into(), ..Forge::default() }
     }
 
     #[test_id(ttff9s6)]
@@ -822,11 +505,7 @@ pub(crate) mod tests {
         let pulls = r#"{"number":5,"state":"open","title":"publish","head":{"sha":"abc","ref":"spira/publish/a"}}"#;
         let checks = r#"{"check_runs":[{"name":"gate","status":"completed","conclusion":"cancelled","check_suite":{"id":1}},{"name":"gate","status":"queued","conclusion":null,"check_suite":{"id":2}}]}"#;
         let runs = r#"{"workflow_runs":[{"id":1,"workflow_id":7,"name":"Publish","head_branch":"spira/publish/a","check_suite_id":1,"status":"completed","conclusion":"cancelled"},{"id":2,"workflow_id":7,"name":"Publish","head_branch":"spira/publish/a","check_suite_id":2,"status":"queued","conclusion":null}]}"#;
-        let (api, seen) = stub(vec![
-            answer("200 OK", "", pulls),
-            answer("200 OK", "", checks),
-            answer("200 OK", "", runs),
-        ]);
+        let (api, seen) = stub(vec![answer("200 OK", "", pulls), answer("200 OK", "", checks), answer("200 OK", "", runs)]);
         let (pr, _) = forge_at(api).open_pr("o/r", 5).unwrap().unwrap();
         seen.join().unwrap();
         assert_eq!((pr.status.as_str(), pr.fail.as_str()), ("pending", ""));
@@ -835,19 +514,11 @@ pub(crate) mod tests {
     #[test_id(tsiqpkw)]
     #[test]
     fn open_pr_asks_for_the_one_pr_and_reads_no_checks_once_it_is_closed() {
-        let (api, seen) = stub(vec![answer(
-            "200 OK",
-            "",
-            r#"{"number":12,"state":"closed","head":{"sha":"abc","ref":"b"}}"#,
-        )]);
+        let (api, seen) = stub(vec![answer("200 OK", "", r#"{"number":12,"state":"closed","head":{"sha":"abc","ref":"b"}}"#)]);
         assert_eq!(forge_at(api).open_pr("o/r", 12), Some(None));
         let seen = seen.join().unwrap();
         assert_eq!(seen.len(), 1);
-        assert!(
-            seen[0].starts_with("get /repos/o/r/pulls/12 "),
-            "{}",
-            seen[0]
-        );
+        assert!(seen[0].starts_with("get /repos/o/r/pulls/12 "), "{}", seen[0]);
     }
 
     #[test_id(tt13d8x)]
@@ -858,18 +529,8 @@ pub(crate) mod tests {
         seen.join().unwrap();
     }
 
-    fn reply(
-        status: u16,
-        etag: Option<&str>,
-        rate: Option<api_budget::Rate>,
-        body: &str,
-    ) -> Result<Reply, String> {
-        Ok(Reply {
-            status,
-            etag: etag.map(str::to_string),
-            rate,
-            body: body.into(),
-        })
+    fn reply(status: u16, etag: Option<&str>, rate: Option<api_budget::Rate>, body: &str) -> Result<Reply, String> {
+        Ok(Reply { status, etag: etag.map(str::to_string), rate, body: body.into() })
     }
 
     #[test_id(tf0sr1w)]
@@ -877,32 +538,17 @@ pub(crate) mod tests {
     fn an_unchanged_poll_is_revalidated_by_etag_and_answered_from_the_kept_body() {
         let sent = std::cell::RefCell::new(vec![]);
         let get = |kept, answer: Result<Reply, String>| {
-            conditional_get(
-                "etag-api",
-                "http://etag-api/p",
-                "/p",
-                "etag-caller",
-                1_000,
-                kept,
-                |tag| {
-                    // not a path: API route
-                    sent.borrow_mut().push(tag.map(str::to_string));
-                    answer
-                },
-            )
+            conditional_get("etag-api", "http://etag-api/p", "/p", "etag-caller", 1_000, kept, |tag| { // not a path: API route
+                sent.borrow_mut().push(tag.map(str::to_string));
+                answer
+            })
         };
         let first = get(None, reply(200, Some("\"v1\""), None, r#"[{"n":1}]"#)).unwrap();
-        assert_eq!(
-            (first.value.clone(), first.outcome),
-            (serde_json::json!([{"n": 1}]), api_budget::FRESH)
-        );
+        assert_eq!((first.value.clone(), first.outcome), (serde_json::json!([{"n": 1}]), api_budget::FRESH));
         let kept = first.etag.map(|t| (t, first.value));
         assert_eq!(kept.as_ref().map(|k| k.0.as_str()), Some("\"v1\""));
         let second = get(kept, reply(304, None, None, "")).unwrap();
-        assert_eq!(
-            (second.value, second.outcome),
-            (serde_json::json!([{"n": 1}]), api_budget::CACHED)
-        );
+        assert_eq!((second.value, second.outcome), (serde_json::json!([{"n": 1}]), api_budget::CACHED));
         assert_eq!(*sent.borrow(), [None, Some("\"v1\"".to_string())]);
     }
 
@@ -910,43 +556,20 @@ pub(crate) mod tests {
     #[test]
     fn a_spent_budget_the_forge_reports_stops_requests_until_its_reset() {
         let (api, reset) = ("spend-api", 1_600);
-        let spent = api_budget::Rate {
-            limit: 5000,
-            remaining: 0,
-            reset,
-        };
+        let spent = api_budget::Rate { limit: 5000, remaining: 0, reset };
         let calls = std::cell::Cell::new(0);
         let get = |answer: Result<Reply, String>| {
-            conditional_get(
-                api,
-                "http://spend-api/p",
-                "/p",
-                "spend-caller",
-                1_000,
-                None,
-                |_| {
-                    // not a path: API route
-                    calls.set(calls.get() + 1);
-                    answer
-                },
-            )
+            conditional_get(api, "http://spend-api/p", "/p", "spend-caller", 1_000, None, |_| { // not a path: API route
+                calls.set(calls.get() + 1);
+                answer
+            })
         };
-        assert_eq!(
-            get(reply(200, None, Some(spent), "[]")).unwrap().outcome,
-            api_budget::FRESH
-        );
+        assert_eq!(get(reply(200, None, Some(spent), "[]")).unwrap().outcome, api_budget::FRESH);
         assert_eq!(api_budget::rate(api), Some(spent));
         let (why, outcome) = get(Err("must not be sent".into())).err().expect("refused");
         assert_eq!(outcome, api_budget::REFUSED);
-        assert!(
-            why.contains(&api_budget::clock_of(reset)) && why.contains("spend-caller"),
-            "{why}"
-        );
-        assert_eq!(
-            calls.get(),
-            1,
-            "no second request while the budget is spent"
-        );
+        assert!(why.contains(&api_budget::clock_of(reset)) && why.contains("spend-caller"), "{why}");
+        assert_eq!(calls.get(), 1, "no second request while the budget is spent");
     }
 
     #[test_id(tzf4mf3)]

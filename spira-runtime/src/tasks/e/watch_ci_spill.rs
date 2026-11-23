@@ -98,10 +98,7 @@ pub struct Config {
 
 impl Config {
     pub fn pinned() -> Result<Config, String> {
-        Ok(Config {
-            repo_map: cfg("SPIRA_REPO_MAP")?,
-            inbox: cfg("SPIRA_CONCIERGE_INBOX")?,
-        })
+        Ok(Config { repo_map: cfg("SPIRA_REPO_MAP")?, inbox: cfg("SPIRA_CONCIERGE_INBOX")? })
     }
 }
 
@@ -143,19 +140,14 @@ fn is_item(line: &str) -> bool {
 fn uses_provision(line: &str) -> bool {
     line.match_indices("uses:").any(|(i, _)| {
         let rest = line[i + 5..].trim_start_matches(' ');
-        rest.split([' ', '#'])
-            .next()
-            .is_some_and(|v| v.contains("/provision@"))
+        rest.split([' ', '#']).next().is_some_and(|v| v.contains("/provision@"))
     })
 }
 
 /// The value of a `spill:` line as the awk cleans it: the key, a trailing comment and one quote
 /// at either end removed.
 fn spill_value(line: &str) -> String {
-    let v = line
-        .trim_start_matches(' ')
-        .trim_start_matches("spill:")
-        .trim_start_matches(' ');
+    let v = line.trim_start_matches(' ').trim_start_matches("spill:").trim_start_matches(' ');
     // `sub(/[ ]+#.*$/, "")`: from the spaces before the first `#` that follows a space.
     let v = match v.match_indices(" #").next() {
         Some((i, _)) => v[..i].trim_end_matches(' '),
@@ -176,17 +168,8 @@ pub fn violations(path: &str, text: &str) -> Vec<String> {
     }
     fn flush(step: &mut Option<Step>, path: &str, out: &mut Vec<String>) {
         match step.take() {
-            Some(Step {
-                line, spill: None, ..
-            }) => out.push(format!(
-                "{path}:{line}: provision has no spill: input; override: spill: ec2-only"
-            )),
-            Some(Step {
-                spill: Some((at, v)),
-                ..
-            }) if v != "ec2-only" => out.push(format!(
-                "{path}:{at}: provision spill: {v}; override: spill: ec2-only"
-            )),
+            Some(Step { line, spill: None, .. }) => out.push(format!("{path}:{line}: provision has no spill: input; override: spill: ec2-only")),
+            Some(Step { spill: Some((at, v)), .. }) if v != "ec2-only" => out.push(format!("{path}:{at}: provision spill: {v}; override: spill: ec2-only")),
             _ => {}
         }
     }
@@ -204,11 +187,7 @@ pub fn violations(path: &str, text: &str) -> Vec<String> {
         }
         if uses_provision(line) {
             flush(&mut step, path, &mut out);
-            step = Some(Step {
-                line: n,
-                indent: cur,
-                spill: None,
-            });
+            step = Some(Step { line: n, indent: cur, spill: None });
             continue;
         }
         if let Some(s) = step.as_mut() {
@@ -224,49 +203,27 @@ pub fn violations(path: &str, text: &str) -> Vec<String> {
 /// The text `_csg_once` wrote after the stamp, and the key it marked said.
 fn said(carry: &mut Carry, acts: &mut Vec<EffectSpec>, now_ms: u64, key: String, message: String) {
     if carry.said.insert(key.clone()) {
-        acts.push(EffectSpec::keyed(
-            INBOX_APPEND,
-            format!("ci_spill/{key}"),
-            pattern::inbox_line(now_ms, INBOX_TAG, &message),
-            INBOX_DEADLINE_MS,
-        ));
+        acts.push(EffectSpec::keyed(INBOX_APPEND, format!("ci_spill/{key}"), pattern::inbox_line(now_ms, INBOX_TAG, &message), INBOX_DEADLINE_MS));
     }
 }
 
 /// For each repo with a new sha, every violation not yet said as one inbox line; then `seen`.
 /// A repo whose workflows were not read (the archive failed) keeps its old `seen`, as the
 /// script's stamp did.
-pub fn decide(
-    carry: &Carry,
-    snap: &Snapshot,
-    now_ms: u64,
-    _cfg: &Config,
-) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, _cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let (mut next, mut acts) = (carry.clone(), vec![]);
     for repo in &snap.repos {
         let Some(ref_) = &repo.ref_ else {
-            said(
-                &mut next,
-                &mut acts,
-                now_ms,
-                format!("noref-{}", repo.name),
-                format!(
-                    "CI SPILL: {} has no resolvable landing ref; its workflows are unchecked",
-                    repo.name
-                ),
-            );
+            said(&mut next, &mut acts, now_ms, format!("noref-{}", repo.name), format!("CI SPILL: {} has no resolvable landing ref; its workflows are unchecked", repo.name));
             continue;
         };
         if repo.sha.is_some() && repo.sha.as_ref() == carry.seen.get(&repo.name) {
             continue;
         }
-        let Some(workflows) = &repo.workflows else {
-            continue;
-        };
+        let Some(workflows) = &repo.workflows else { continue };
         for (path, text) in workflows {
             for v in violations(&format!("{}:{path}", repo.name), text) {
-                let message =
-                    format!("CI SPILL: law-buy-capacity-rather-than-wait: {v} (at {ref_})");
+                let message = format!("CI SPILL: law-buy-capacity-rather-than-wait: {v} (at {ref_})");
                 said(&mut next, &mut acts, now_ms, v, message);
             }
         }
@@ -281,33 +238,20 @@ pub fn decide(
 fn git(root: &str, args: &[&str]) -> Option<String> {
     let mut argv = vec!["-C".to_string(), root.to_string()];
     argv.extend(args.iter().map(|a| a.to_string()));
-    let out = SysProc
-        .run(&ProcSpec {
-            prog: "git".into(),
-            args: argv,
-            stdin: vec![],
-            deadline: Duration::from_millis(GIT_DEADLINE_MS),
-        })
-        .ok()?;
+    let out = SysProc.run(&ProcSpec { prog: "git".into(), args: argv, stdin: vec![], deadline: Duration::from_millis(GIT_DEADLINE_MS) }).ok()?;
     (out.code == Some(0)).then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// The `.github/workflows/*.yml` then `*.yaml` blobs at `ref_`, each glob sorted as bash expands
 /// it; `None` when the tree could not be read.
 fn workflows(root: &str, ref_: &str) -> Option<Vec<(String, String)>> {
-    let listing = git(
-        root,
-        &["ls-tree", "--name-only", ref_, ".github/workflows/"],
-    )?;
+    let listing = git(root, &["ls-tree", "--name-only", ref_, ".github/workflows/"])?;
     let mut names: Vec<&str> = listing.lines().filter(|l| !l.is_empty()).collect();
     names.sort();
     let mut out = vec![];
     for ext in [".yml", ".yaml"] {
         for path in names.iter().filter(|p| p.ends_with(ext)) {
-            out.push((
-                path.to_string(),
-                git(root, &["show", &format!("{ref_}:{path}")])?,
-            ));
+            out.push((path.to_string(), git(root, &["show", &format!("{ref_}:{path}")])?));
         }
     }
     Some(out)
@@ -323,33 +267,15 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let reg = Registry::new(map.as_deref(), &env, &home);
     let mut repos = vec![];
     for name in reg.names() {
-        let Some(root) = reg.root(&name).filter(|r| std::path::Path::new(r).exists()) else {
-            continue;
-        };
+        let Some(root) = reg.root(&name).filter(|r| std::path::Path::new(r).exists()) else { continue };
         let Some(ref_) = spira_config::repos::landref(&reg, &name) else {
-            repos.push(Repo {
-                name,
-                ..Repo::default()
-            });
+            repos.push(Repo { name, ..Repo::default() });
             continue;
         };
-        let sha =
-            spira_config::git_refs::sha_of(std::path::Path::new(&root), &ref_).or_else(|| {
-                git(&root, &["rev-parse", &ref_])
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            });
-        let workflows = if sha.is_some() && sha.as_ref() == seen.get(&name) {
-            None
-        } else {
-            workflows(&root, &ref_)
-        };
-        repos.push(Repo {
-            name,
-            ref_: Some(ref_),
-            sha,
-            workflows,
-        });
+        let sha = spira_config::git_refs::sha_of(std::path::Path::new(&root), &ref_)
+            .or_else(|| git(&root, &["rev-parse", &ref_]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+        let workflows = if sha.is_some() && sha.as_ref() == seen.get(&name) { None } else { workflows(&root, &ref_) };
+        repos.push(Repo { name, ref_: Some(ref_), sha, workflows });
     }
     serde_json::to_string(&Snapshot { repos }).map_err(|e| e.to_string())
 }
@@ -364,9 +290,7 @@ impl WatchCiSpill {
     }
 
     pub fn pinned() -> Self {
-        WatchCiSpill {
-            config: Config::pinned(),
-        }
+        WatchCiSpill { config: Config::pinned() }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -378,13 +302,7 @@ impl WatchCiSpill {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("said"),
-    runtime::rows::Part::Map {
-        name: "seen",
-        drop: &[],
-    },
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("said"), runtime::rows::Part::Map { name: "seen", drop: &[] }];
 
 impl Handler for WatchCiSpill {
     fn interests(&self) -> &[EventKindTag] {
@@ -396,8 +314,7 @@ impl Handler for WatchCiSpill {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let seen = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE).seen)
-                .unwrap_or_default();
+            let seen = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE).seen).unwrap_or_default();
             return pattern::tick(ev, OBSERVE, seen, OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         pattern::on_answer(ctx, view, ev, OBSERVE, STATE, &self.config, decide)
@@ -414,57 +331,23 @@ mod tests {
     #[test]
     fn the_scan_reads_each_provision_step_as_the_awk_did() {
         let ok = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\n        with:\n          spill: ec2-only # pinned\n";
-        assert!(
-            violations(W, ok).is_empty(),
-            "a trailing comment is not part of the value"
-        );
+        assert!(violations(W, ok).is_empty(), "a trailing comment is not part of the value");
         let quoted = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\n        with:\n          spill: \"ec2-only\"\n";
         assert!(violations(W, quoted).is_empty(), "quotes are stripped");
         let wrong = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\n        with:\n          spill: ec2\n";
-        assert_eq!(
-            violations(W, wrong),
-            [format!(
-                "{W}:6: provision spill: ec2; override: spill: ec2-only"
-            )]
-        );
+        assert_eq!(violations(W, wrong), [format!("{W}:6: provision spill: ec2; override: spill: ec2-only")]);
         let named = "jobs:\n  a:\n    steps:\n      - name: boot\n        uses: o/a/provision@v1\n      - name: next\n        with:\n          spill: ec2-only\n";
-        assert_eq!(
-            violations(W, named),
-            [format!(
-                "{W}:5: provision has no spill: input; override: spill: ec2-only"
-            )],
-            "a sibling step's spill: does not count"
-        );
+        assert_eq!(violations(W, named), [format!("{W}:5: provision has no spill: input; override: spill: ec2-only")], "a sibling step's spill: does not count");
         let two = "jobs:\n  a:\n    steps:\n      - uses: o/a/provision@v1\njobs2:\n  - uses: o/a/provision@v2\n";
         assert_eq!(violations(W, two).len(), 2, "a top-level key ends the step");
-        assert!(violations(
-            W,
-            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n"
-        )
-        .is_empty());
+        assert!(violations(W, "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n").is_empty());
     }
 
     #[test_id(txpnbj7)]
     #[test]
     fn an_unreadable_tree_keeps_its_old_seen_and_a_missing_ref_is_said_once() {
-        let cfg = Config {
-            repo_map: String::new(),
-            inbox: String::new(),
-        };
-        let snap = Snapshot {
-            repos: vec![
-                Repo {
-                    name: "r".into(),
-                    ref_: Some("main".into()),
-                    sha: Some("b".into()),
-                    workflows: None,
-                },
-                Repo {
-                    name: "d".into(),
-                    ..Repo::default()
-                },
-            ],
-        };
+        let cfg = Config { repo_map: String::new(), inbox: String::new() };
+        let snap = Snapshot { repos: vec![Repo { name: "r".into(), ref_: Some("main".into()), sha: Some("b".into()), workflows: None }, Repo { name: "d".into(), ..Repo::default() }] };
         let (next, acts) = decide(&Carry::default(), &snap, 0, &cfg);
         assert!(next.seen.is_empty());
         assert_eq!(acts.len(), 1);

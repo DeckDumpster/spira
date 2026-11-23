@@ -42,11 +42,7 @@ pub fn document(s: &SchedulerStatus) -> serde_json::Value {
             })
         })
         .collect();
-    let classes: Vec<_> = s
-        .classes
-        .iter()
-        .map(|c| serde_json::json!({ "class": c.class, "depth": c.depth, "refusals": c.refusals }))
-        .collect();
+    let classes: Vec<_> = s.classes.iter().map(|c| serde_json::json!({ "class": c.class, "depth": c.depth, "refusals": c.refusals })).collect();
     serde_json::json!({ "schema": SCHEMA, "at": s.at, "halted": s.halted, "held": s.held, "tasks": tasks, "classes": classes })
 }
 
@@ -61,13 +57,7 @@ pub struct Control {
 
 impl Control {
     pub fn new(board: Arc<StatusBoard>, submit: SubmitFn, clock: Arc<dyn Clock>) -> Self {
-        Control {
-            board,
-            submit,
-            clock,
-            repin: None,
-            seq: AtomicU64::new(0),
-        }
+        Control { board, submit, clock, repin: None, seq: AtomicU64::new(0) }
     }
 
     pub fn with_repin(mut self, repin: Arc<crate::repin::Repin>) -> Self {
@@ -118,29 +108,18 @@ impl Control {
     }
 
     fn gate(&self, tag: &str, reason: &str) -> runtime::Result<String> {
-        let id = format!(
-            "{tag}/{}/{}",
-            self.clock.now_ms(),
-            self.seq.fetch_add(1, Ordering::SeqCst)
-        );
+        let id = format!("{tag}/{}/{}", self.clock.now_ms(), self.seq.fetch_add(1, Ordering::SeqCst));
         (self.submit)(&id, HALT_STREAM, EventKind::new(tag, reason)).map_err(RuntimeError::new)?;
         Ok(format!("{tag} {id}"))
     }
 }
 
 /// The sentinel_call carry as the status board last saw it; the one read `scheduler bound|uncalled` and the reconciler's fleet check share.
-pub fn sentinel_carry(
-    board: &runtime::engine::StatusBoard,
-) -> runtime::Result<crate::tasks::a::sentinel_call::Carry> {
+pub fn sentinel_carry(board: &runtime::engine::StatusBoard) -> runtime::Result<crate::tasks::a::sentinel_call::Carry> {
     let s = board.get().ok_or_else(|| RuntimeError::new(NO_PASS))?;
-    let carried = s
-        .tasks
-        .iter()
-        .find(|t| t.name == crate::tasks::a::sentinel_call::NAME)
-        .and_then(|t| t.state.as_ref());
+    let carried = s.tasks.iter().find(|t| t.name == crate::tasks::a::sentinel_call::NAME).and_then(|t| t.state.as_ref());
     match carried {
-        Some(c) => serde_json::from_str(&c.body)
-            .map_err(|e| RuntimeError::new(format!("the carried call state does not decode: {e}"))),
+        Some(c) => serde_json::from_str(&c.body).map_err(|e| RuntimeError::new(format!("the carried call state does not decode: {e}"))),
         None => Ok(Default::default()),
     }
 }

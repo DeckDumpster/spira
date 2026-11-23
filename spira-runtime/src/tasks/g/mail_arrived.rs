@@ -76,18 +76,12 @@ impl Arrived {
     }
 
     pub fn from_event_kind(k: &EventKind) -> Option<Arrived> {
-        (k.tag == ARRIVED)
-            .then(|| serde_json::from_str(&k.body).ok())
-            .flatten()
+        (k.tag == ARRIVED).then(|| serde_json::from_str(&k.body).ok()).flatten()
     }
 
     /// The submission of this arrival, the `seq`th on its mailbox.
     pub fn submit(&self, seq: u64) -> Submit {
-        Submit::new(
-            &format!("{ARRIVED}/{}/{seq}", self.mailbox),
-            &stream(&self.mailbox),
-            self.event_kind(),
-        )
+        Submit::new(&format!("{ARRIVED}/{}/{seq}", self.mailbox), &stream(&self.mailbox), self.event_kind())
     }
 }
 

@@ -29,14 +29,7 @@ pub const KEYS: &[&str] = &[];
 /// `SPIRA_HOME` is the process's own home, not a `conf.d` key.
 pub const UNREGISTERED: &[&str] = &["SPIRA_HOME"];
 
-pub const SHAPE: Shape = Shape {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    observe: OBSERVE,
-    observe_deadline_ms: OBSERVE_DEADLINE_MS,
-};
+pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
 /// A pr-mode repository and its branches, for bd-gate discovery.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,45 +72,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     // STEP 1: discover, pr-mode repositories only.
     for repo in &snap.pr_repos {
         for branch in &repo.branches {
-            acts.push(
-                Act::new(DISCOVER, format!("{}/{branch}", repo.name)).with_input(
-                    serde_json::json!({"repo": repo.name, "branch": branch}).to_string(),
-                ),
-            );
+            acts.push(Act::new(DISCOVER, format!("{}/{branch}", repo.name)).with_input(serde_json::json!({"repo": repo.name, "branch": branch}).to_string()));
         }
     }
     // STEP 2b: each ESCALATE line's gate, when it blocks a bead.
     for esc in engine::escalate_lines(&snap.gate_check_out) {
         // The id as `gate_id_in` reads it, else a gate the snapshot knows named as a word in it.
-        let named = || {
-            snap.gate_blocked
-                .keys()
-                .find(|g| {
-                    esc.split(|c: char| c.is_whitespace() || c == ':')
-                        .any(|w| w == g.as_str())
-                })
-                .cloned()
-        };
-        let Some(gate) = engine::gate_id_in(esc)
-            .filter(|g| snap.gate_blocked.contains_key(g))
-            .or_else(named)
-        else {
-            continue;
-        };
-        let Some(Some(blocked)) = snap.gate_blocked.get(&gate) else {
-            continue;
-        };
+        let named = || snap.gate_blocked.keys().find(|g| esc.split(|c: char| c.is_whitespace() || c == ':').any(|w| w == g.as_str())).cloned();
+        let Some(gate) = engine::gate_id_in(esc).filter(|g| snap.gate_blocked.contains_key(g)).or_else(named) else { continue };
+        let Some(Some(blocked)) = snap.gate_blocked.get(&gate) else { continue };
         acts.push(Act::new(RESOLVE, gate.clone()).with_input(gate.clone()));
-        let event = CiFailed {
-            blocked: blocked.clone(),
-            gate: gate.clone(),
-            title: format!("CI red — {blocked} returned to queue"),
-            detail: esc.to_string(),
-        };
-        acts.push(
-            Act::new(CI_FAILED, format!("ci.failed/{blocked}/{gate}"))
-                .with_input(serde_json::to_string(&event).unwrap_or_default()),
-        );
+        let event = CiFailed { blocked: blocked.clone(), gate: gate.clone(), title: format!("CI red — {blocked} returned to queue"), detail: esc.to_string() };
+        acts.push(Act::new(CI_FAILED, format!("ci.failed/{blocked}/{gate}")).with_input(serde_json::to_string(&event).unwrap_or_default()));
     }
     (carry.clone(), acts)
 }
@@ -129,57 +95,28 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 
 /// The store's 5 s door (S7a).
 pub fn store(e: &crate::Effects) -> spira_store::lc_call::LcClient {
-    spira_store::lc_call::LcClient::socket(&e.world.lc_socket)
-        .within(std::time::Duration::from_secs(5))
+    spira_store::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5))
 }
 
 /// One `git -C <repo>` call through the process port: stdout when it exited 0.
 pub fn git(repo: &std::path::Path, args: &[&str], deadline_secs: u64) -> Option<String> {
-    git_out(repo, args, deadline_secs)
-        .ok()
-        .filter(|(code, _, _)| *code == Some(0))
-        .map(|(_, out, _)| out)
+    git_out(repo, args, deadline_secs).ok().filter(|(code, _, _)| *code == Some(0)).map(|(_, out, _)| out)
 }
 
 /// One `git -C <repo>` call: (exit code, stdout, stderr), or why it could not run.
-pub fn git_out(
-    repo: &std::path::Path,
-    args: &[&str],
-    deadline_secs: u64,
-) -> Result<(Option<i32>, String, String), String> {
+pub fn git_out(repo: &std::path::Path, args: &[&str], deadline_secs: u64) -> Result<(Option<i32>, String, String), String> {
     use runtime::ports::Proc;
     let mut all = vec!["-C".to_string(), repo.display().to_string()];
     all.extend(args.iter().map(|a| a.to_string()));
-    let out = runtime::ports::SysProc.run(&runtime::ports::ProcSpec {
-        prog: "git".into(),
-        args: all,
-        stdin: vec![],
-        deadline: std::time::Duration::from_secs(deadline_secs),
-    })?;
-    Ok((
-        out.code,
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    ))
+    let out = runtime::ports::SysProc.run(&runtime::ports::ProcSpec { prog: "git".into(), args: all, stdin: vec![], deadline: std::time::Duration::from_secs(deadline_secs) })?;
+    Ok((out.code, String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned()))
 }
 
 /// A leg the store has no in-process verb for yet: the tool the old unit ran, started as a
 /// transient unit named for `(task, key)` so a re-issued effect names the same unit.
-pub fn unit_leg(
-    e: &crate::Effects,
-    task: &str,
-    key: &str,
-    argv: Vec<String>,
-    cwd: Option<std::path::PathBuf>,
-) -> Result<String, String> {
+pub fn unit_leg(e: &crate::Effects, task: &str, key: &str, argv: Vec<String>, cwd: Option<std::path::PathBuf>) -> Result<String, String> {
     let units = e.units.as_deref().ok_or("no unit manager configured")?;
-    let spec = runtime::units::UnitSpec {
-        task: task.into(),
-        key: key.into(),
-        argv,
-        env: vec![],
-        cwd,
-    };
+    let spec = runtime::units::UnitSpec { task: task.into(), key: key.into(), argv, env: vec![], cwd };
     let h = units.start(&spec).map_err(|e| e.0)?;
     serde_json::to_string(&h).map_err(|e| e.to_string())
 }
@@ -192,85 +129,42 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
     let lc = store(e);
     let home = spira_config::resolve::locate_home_for_process()?;
     let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
-    let gate_json = lc
-        .answer(&["content", "gate", "list", "--json"])
-        .unwrap_or_default();
+    let gate_json = lc.answer(&["content", "gate", "list", "--json"]).unwrap_or_default();
     let branches = engine::discover_branches(&gate_json);
     let mut pr_repos = vec![];
     if !branches.is_empty() {
         for name in reg.names() {
-            if reg.land(&name) == "pr"
-                && reg
-                    .root(&name)
-                    .is_some_and(|r| std::path::Path::new(&r).join(".git").exists())
-            {
-                pr_repos.push(PrRepo {
-                    name,
-                    branches: branches.clone(),
-                });
+            if reg.land(&name) == "pr" && reg.root(&name).is_some_and(|r| std::path::Path::new(&r).join(".git").exists()) {
+                pr_repos.push(PrRepo { name, branches: branches.clone() });
             }
         }
     }
-    serde_json::to_string(&Snapshot {
-        gate_list: branches,
-        pr_repos,
-        ..Snapshot::default()
-    })
-    .map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { gate_list: branches, pr_repos, ..Snapshot::default() }).map_err(|e| e.to_string())
 }
 
 /// `ci.failed`: `spira_event`, now `bead::event::emit` in this process, at bead's own default
 /// cooldown of an hour per (kind, target).
 pub fn ci_failed(e: &crate::Effects, input: &str) -> Result<String, String> {
-    let ev: CiFailed =
-        serde_json::from_str(input).map_err(|e| format!("{CI_FAILED}: bad input: {e}"))?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    bead::event::emit(
-        &e.world.run_dir,
-        3_600,
-        now,
-        "ci.failed",
-        &ev.blocked,
-        &ev.title,
-        &ev.detail,
-    )
-    .map_err(|_| {
-        format!(
-            "{CI_FAILED}: the event for {} could not be written",
-            ev.blocked
-        )
-    })?;
+    let ev: CiFailed = serde_json::from_str(input).map_err(|e| format!("{CI_FAILED}: bad input: {e}"))?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    bead::event::emit(&e.world.run_dir, 3_600, now, "ci.failed", &ev.blocked, &ev.title, &ev.detail).map_err(|_| format!("{CI_FAILED}: the event for {} could not be written", ev.blocked))?;
     Ok(format!("ci.failed {}", ev.blocked))
 }
 
 fn discover_argv(repo: &str, branch: &str) -> Vec<String> {
-    [
-        "spira-lc", "content", "gate", "discover", "--branch", branch, "--repo", repo,
-    ]
-    .map(String::from)
-    .to_vec()
+    ["spira-lc", "content", "gate", "discover", "--branch", branch, "--repo", repo].map(String::from).to_vec()
 }
 
 fn resolve_argv(gate: &str) -> Vec<String> {
-    ["spira-lc", "content", "gate", "resolve", gate]
-        .map(String::from)
-        .to_vec()
+    ["spira-lc", "content", "gate", "resolve", gate].map(String::from).to_vec()
 }
 
 /// `discover`: `spira-lc content gate discover` for the repository, as a unit leg.
 pub fn discover(e: &crate::Effects, key: &str, input: &str) -> Result<String, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(input).map_err(|e| format!("{DISCOVER}: bad input: {e}"))?;
-    let (repo, branch) = (
-        v["repo"].as_str().unwrap_or(""),
-        v["branch"].as_str().unwrap_or(""),
-    );
+    let v: serde_json::Value = serde_json::from_str(input).map_err(|e| format!("{DISCOVER}: bad input: {e}"))?;
+    let (repo, branch) = (v["repo"].as_str().unwrap_or(""), v["branch"].as_str().unwrap_or(""));
     let home = spira_config::resolve::locate_home_for_process()?;
-    spira_config::repos::Registry::from_env(std::env::vars().collect(), &home)
-        .root(repo)
-        .ok_or_else(|| format!("{DISCOVER}: {repo} has no checkout — refused"))?;
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), &home).root(repo).ok_or_else(|| format!("{DISCOVER}: {repo} has no checkout — refused"))?;
     unit_leg(e, NAME, key, discover_argv(repo, branch), None)
 }
 
@@ -287,10 +181,7 @@ pub struct GateCheck {
 
 impl GateCheck {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        GateCheck {
-            cadence: Cadence::Every(CADENCE_MS),
-            pinned,
-        }
+        GateCheck { cadence: Cadence::Every(CADENCE_MS), pinned }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -319,15 +210,9 @@ impl Handler for GateCheck {
         }
         let carry: Carry = kit::carry(&SHAPE, view);
         if ev.kind.tag == TICK {
-            return kit::on_tick(
-                &SHAPE,
-                serde_json::to_string(&carry).unwrap_or_default(),
-                self.cadence.next_after(ev.at),
-            );
+            return kit::on_tick(&SHAPE, serde_json::to_string(&carry).unwrap_or_default(), self.cadence.next_after(ev.at));
         }
-        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else {
-            return vec![];
-        };
+        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
         let (next, acts) = decide(&carry, &snap);
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
     }
@@ -352,20 +237,10 @@ mod no_gh_tests {
             }
         }))
         .unwrap();
-        let (carry, acts) = decide(
-            &Carry {
-                ingested: ["1".to_string()].into(),
-            },
-            &snap,
-        );
+        let (carry, acts) = decide(&Carry { ingested: ["1".to_string()].into() }, &snap);
         assert!(acts.is_empty(), "{acts:?}");
         assert_eq!(carry.ingested.len(), 1);
-        for gone in [
-            "gate.check.file_bead",
-            "gate.check.raise_priority",
-            "gate.check.note",
-            "gate.check.tsd_ingest",
-        ] {
+        for gone in ["gate.check.file_bead", "gate.check.raise_priority", "gate.check.note", "gate.check.tsd_ingest"] {
             assert!(!EFFECTS.contains(&gone), "{gone} survives");
         }
     }
@@ -376,13 +251,7 @@ mod leg_argv_tests {
     #[test_id(tlf5wrf)]
     #[test]
     fn the_gate_legs_go_to_the_content_door_not_bdq() {
-        assert_eq!(
-            super::super::discover_argv("spira", "b").join(" "),
-            "spira-lc content gate discover --branch b --repo spira"
-        );
-        assert_eq!(
-            super::super::resolve_argv("sp-g").join(" "),
-            "spira-lc content gate resolve sp-g"
-        );
+        assert_eq!(super::super::discover_argv("spira", "b").join(" "), "spira-lc content gate discover --branch b --repo spira");
+        assert_eq!(super::super::resolve_argv("sp-g").join(" "), "spira-lc content gate resolve sp-g");
     }
 }

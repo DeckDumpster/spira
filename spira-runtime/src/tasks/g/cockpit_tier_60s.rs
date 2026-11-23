@@ -57,9 +57,7 @@ use std::collections::BTreeMap;
 
 use runtime::event::*;
 
-use super::cockpit::{
-    decide_tier, Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS, WRITE_KEY,
-};
+use super::cockpit::{decide_tier, Carry, FragmentState, Snapshot, FRAGMENT_TRANSITIONS, WRITE_KEY};
 use super::Transition;
 use crate::tasks::f::Cycle;
 
@@ -90,20 +88,10 @@ pub const PROBES: &[(&str, u64)] = &[
 ];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS";
-pub const KEYS: &[&str] = &[
-    CADENCE_KEY,
-    WRITE_KEY,
-    "SPIRA_LC_TIMEOUT",
-    "SPIRA_BDQ_CONN_RETRIES",
-];
+pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_LC_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES"];
 
 pub const OBSERVE_DEADLINE_MS: u64 = 120_000;
-const CYCLE: Cycle = Cycle {
-    stream: STREAM,
-    tick: TICK,
-    observe: OBSERVE,
-    deadline_ms: OBSERVE_DEADLINE_MS,
-};
+const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };
 
 pub const TRANSITIONS: &[Transition<FragmentState>] = FRAGMENT_TRANSITIONS;
 
@@ -121,11 +109,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>)
 
 /// The `slots` tsd fields an ok `slots` fragment carries, by the field names `tsd-write`
 /// wrote; `ready` is not among them, the sample runner reads it from the claim view.
-const SAMPLED: &[(&str, &str)] = &[
-    ("live", "SP_SLOTS_LIVE"),
-    ("ceiling", "SP_SLOTS_CEILING"),
-    ("capacity_paused", "SP_SLOTS_CAPACITY_PAUSED"),
-];
+const SAMPLED: &[(&str, &str)] = &[("live", "SP_SLOTS_LIVE"), ("ceiling", "SP_SLOTS_CEILING"), ("capacity_paused", "SP_SLOTS_CAPACITY_PAUSED")];
 
 /// The tier decision plus the supervisor's `slots` tsd sample after an ok `slots` read that moved
 /// the snapshot (an idle tick asks for nothing beyond its observe), run by `cockpit::answer` as a
@@ -133,26 +117,9 @@ const SAMPLED: &[(&str, &str)] = &[
 fn decide_with_sample(carry: &Carry, snap: &Snapshot) -> Result<(Carry, Vec<EffectSpec>), String> {
     let (next, mut acts) = decide_tier(carry, snap, PUBLISH)?;
     let moved = carry.digest != next.digest;
-    if let Some(slots) = snap
-        .fragments
-        .get("cockpit.slots")
-        .filter(|f| moved && f.status == FragmentState::Ok)
-    {
-        let input: String = SAMPLED
-            .iter()
-            .map(|(field, key)| {
-                format!(
-                    "{field}={}\n",
-                    slots.kv.get(*key).map_or("?", String::as_str)
-                )
-            })
-            .collect();
-        acts.push(EffectSpec::keyed(
-            SLOTS_SAMPLE,
-            format!("slots/{}", slots.at),
-            input,
-            5_000,
-        ));
+    if let Some(slots) = snap.fragments.get("cockpit.slots").filter(|f| moved && f.status == FragmentState::Ok) {
+        let input: String = SAMPLED.iter().map(|(field, key)| format!("{field}={}\n", slots.kv.get(*key).map_or("?", String::as_str))).collect();
+        acts.push(EffectSpec::keyed(SLOTS_SAMPLE, format!("slots/{}", slots.at), input, 5_000));
     }
     Ok((next, acts))
 }
@@ -165,10 +132,7 @@ pub struct CockpitTier60s {
 
 impl CockpitTier60s {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(CockpitTier60s {
-            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
-            config: super::pinned(settings, KEYS)?,
-        })
+        Ok(CockpitTier60s { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -176,11 +140,7 @@ impl CockpitTier60s {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(runtime::row_codec!(
-            STREAM,
-            STATE,
-            super::cockpit::ROW_PARTS
-        ))
+        Registration::new(NAME, self).with_rows(runtime::row_codec!(STREAM, STATE, super::cockpit::ROW_PARTS))
     }
 }
 
@@ -190,12 +150,6 @@ impl Handler for CockpitTier60s {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        CYCLE.handle(
-            self.interval_ms,
-            view,
-            ev,
-            || super::cockpit::probe_input(PROBES, &self.config),
-            |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide),
-        )
+        CYCLE.handle(self.interval_ms, view, ev, || super::cockpit::probe_input(PROBES, &self.config), |body| super::cockpit::answer(ctx, view, ev, STATE, body, decide))
     }
 }

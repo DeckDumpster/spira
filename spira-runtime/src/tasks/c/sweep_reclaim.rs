@@ -83,12 +83,7 @@ pub const MAINTAIN: &str = "sweep.reclaim.maintain";
 pub const REMOVE_TMP: &str = "sweep.reclaim.remove_tmp";
 pub const EFFECTS: &[&str] = &[OBSERVE, TRIM_CACHE, MAINTAIN, REMOVE_TMP];
 /// The only git maintenance tasks ever run: both lossless, neither prunes reachable history.
-pub const MAINTAIN_ARGS: &[&str] = &[
-    "maintenance",
-    "run",
-    "--task=loose-objects",
-    "--task=incremental-repack",
-];
+pub const MAINTAIN_ARGS: &[&str] = &["maintenance", "run", "--task=loose-objects", "--task=incremental-repack"];
 const MAINTAIN_DEADLINE_MS: u64 = 600_000;
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_SWEEP_RECLAIM_SECS";
@@ -97,30 +92,9 @@ pub const STORE_ROOT_KEY: &str = "SPIRA_SCCACHE_DAV_ROOT";
 pub const CACHE_CAP_KEY: &str = "SPIRA_RECLAIM_CACHE_CAP_GIB";
 pub const TMP_ROOT_KEY: &str = "SPIRA_TMP_PROBE_PATH";
 pub const TMP_IDLE_KEY: &str = "SPIRA_RECLAIM_TMP_IDLE_HOURS";
-pub const KEYS: &[&str] = &[
-    CADENCE_KEY,
-    CACHE_DIR_KEY,
-    STORE_ROOT_KEY,
-    "SPIRA_RUN",
-    CACHE_CAP_KEY,
-    TMP_ROOT_KEY,
-    TMP_IDLE_KEY,
-];
+pub const KEYS: &[&str] = &[CADENCE_KEY, CACHE_DIR_KEY, STORE_ROOT_KEY, "SPIRA_RUN", CACHE_CAP_KEY, TMP_ROOT_KEY, TMP_IDLE_KEY];
 
-pub const SPEC: Spec = Spec {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    probe: OBSERVE,
-    probe_deadline_ms: 120_000,
-    cadence_key: CADENCE_KEY,
-    calendar: false,
-    effects: EFFECTS,
-    keys: KEYS,
-    probe_input_key: None,
-    jitter_key: None,
-};
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 /// `Reclaim`, or why a candidate is skipped (`judge`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,13 +156,7 @@ pub enum Phase {
 }
 
 /// `state × event → state`. A tick while `reclaiming` is refused, naming `reclaiming`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
-    (Phase::Idle, "tick", Phase::Observing),
-    (Phase::Observing, "observed:low", Phase::Reclaiming),
-    (Phase::Observing, "observed:idle", Phase::Idle),
-    (Phase::Reclaiming, "outcome", Phase::Reclaiming),
-    (Phase::Reclaiming, "done", Phase::Idle),
-];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "tick", Phase::Observing), (Phase::Observing, "observed:low", Phase::Reclaiming), (Phase::Observing, "observed:idle", Phase::Idle), (Phase::Reclaiming, "outcome", Phase::Reclaiming), (Phase::Reclaiming, "done", Phase::Idle)];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -214,22 +182,12 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 fn gib(cfg: &Cfg, key: &str) -> Result<u64, String> {
-    let raw = cfg
-        .get(key)
-        .ok_or_else(|| format!("{key} is read but not declared"))?;
-    raw.trim()
-        .parse::<u64>()
-        .map_err(|_| format!("{key} must be a whole number of GiB, got {raw:?}"))
+    let raw = cfg.get(key).ok_or_else(|| format!("{key} is read but not declared"))?;
+    raw.trim().parse::<u64>().map_err(|_| format!("{key} must be a whole number of GiB, got {raw:?}"))
 }
 
 fn act(name: &str, key: String, input: String, deadline_ms: u64) -> Act {
-    Act {
-        name: name.into(),
-        key,
-        input,
-        deadline_ms,
-        probe: false,
-    }
+    Act { name: name.into(), key, input, deadline_ms, probe: false }
 }
 
 /// The acts a snapshot calls for: the tmp, maintain and cache legs, the cache chosen by
@@ -238,34 +196,15 @@ pub fn plan(cfg: &Cfg, snap: &Snapshot) -> Result<Vec<Act>, String> {
     let cache_cap = gib(cfg, CACHE_CAP_KEY)? * GIB;
     let mut acts = vec![];
     for c in snap.tmp.iter().filter(|c| c.verdict == Verdict::Reclaim) {
-        acts.push(act(
-            REMOVE_TMP,
-            format!("{}:{}", c.path, c.age),
-            c.path.clone(),
-            300_000,
-        ));
+        acts.push(act(REMOVE_TMP, format!("{}:{}", c.path, c.age), c.path.clone(), 300_000));
     }
     for r in &snap.repos {
-        acts.push(act(
-            MAINTAIN,
-            format!("maintain:{}", r.name),
-            serde_json::to_string(r).map_err(|e| e.to_string())?,
-            MAINTAIN_DEADLINE_MS,
-        ));
+        acts.push(act(MAINTAIN, format!("maintain:{}", r.name), serde_json::to_string(r).map_err(|e| e.to_string())?, MAINTAIN_DEADLINE_MS));
     }
-    let files: Vec<(u64, u64, String)> = snap
-        .cache
-        .iter()
-        .map(|f| (f.mtime, f.bytes, f.path.clone()))
-        .collect();
+    let files: Vec<(u64, u64, String)> = snap.cache.iter().map(|f| (f.mtime, f.bytes, f.path.clone())).collect();
     let trim = reclaim::trim_selection(&files, cache_cap);
     if !trim.is_empty() {
-        acts.push(act(
-            TRIM_CACHE,
-            "cache".into(),
-            serde_json::to_string(&trim).map_err(|e| e.to_string())?,
-            120_000,
-        ));
+        acts.push(act(TRIM_CACHE, "cache".into(), serde_json::to_string(&trim).map_err(|e| e.to_string())?, 120_000));
     }
     Ok(acts)
 }
@@ -299,20 +238,14 @@ pub struct Pinned {
     pub tmp_idle_secs: u64,
 }
 
-fn cache_dir(
-    get: &dyn Fn(&str) -> Result<String, String>,
-) -> Result<Option<std::path::PathBuf>, String> {
+fn cache_dir(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<std::path::PathBuf>, String> {
     for k in [CACHE_DIR_KEY, STORE_ROOT_KEY] {
         let v = get(k)?;
         let v = v.trim();
         if v.is_empty() {
             continue;
         }
-        return if std::path::Path::new(v).is_absolute() {
-            Ok(Some(v.into()))
-        } else {
-            Err(format!("{k} must be an absolute path, got {v:?}"))
-        };
+        return if std::path::Path::new(v).is_absolute() { Ok(Some(v.into())) } else { Err(format!("{k} must be an absolute path, got {v:?}")) };
     }
     let run = get("SPIRA_RUN")?;
     Ok(Some(std::path::Path::new(run.trim()).join("sccache-dav")).filter(|d| d.is_absolute()))
@@ -320,32 +253,14 @@ fn cache_dir(
 
 impl Pinned {
     pub fn read(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Pinned, String> {
-        let dir = |k: &str| {
-            get(k).map(|v| {
-                Some(v.trim().to_string())
-                    .filter(|v| !v.is_empty())
-                    .map(std::path::PathBuf::from)
-            })
-        };
-        let num = |k: &str| {
-            get(k).and_then(|v| {
-                v.trim()
-                    .parse::<u64>()
-                    .map_err(|_| format!("{k} must be a whole number, got {v:?}"))
-            })
-        };
-        Ok(Pinned {
-            cache_dir: cache_dir(get)?,
-            tmp_root: dir(TMP_ROOT_KEY)?,
-            tmp_idle_secs: num(TMP_IDLE_KEY)? * 3_600,
-        })
+        let dir = |k: &str| get(k).map(|v| Some(v.trim().to_string()).filter(|v| !v.is_empty()).map(std::path::PathBuf::from));
+        let num = |k: &str| get(k).and_then(|v| v.trim().parse::<u64>().map_err(|_| format!("{k} must be a whole number, got {v:?}")));
+        Ok(Pinned { cache_dir: cache_dir(get)?, tmp_root: dir(TMP_ROOT_KEY)?, tmp_idle_secs: num(TMP_IDLE_KEY)? * 3_600 })
     }
 }
 
 fn epoch_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 fn to_candidates(planned: Vec<reclaim::Candidate>) -> Vec<Candidate> {
@@ -359,9 +274,7 @@ fn to_candidates(planned: Vec<reclaim::Candidate>) -> Vec<Candidate> {
                 reclaim::Verdict::Reclaim => Verdict::Reclaim,
                 reclaim::Verdict::Skip(why) if why == "symlink" => Verdict::Symlink,
                 reclaim::Verdict::Skip(why) if why.starts_with("held") => Verdict::Held,
-                reclaim::Verdict::Skip(why) if why.starts_with("holds a socket") => {
-                    Verdict::Special
-                }
+                reclaim::Verdict::Skip(why) if why.starts_with("holds a socket") => Verdict::Special,
                 reclaim::Verdict::Skip(_) => Verdict::Fresh,
             },
         })
@@ -369,92 +282,33 @@ fn to_candidates(planned: Vec<reclaim::Candidate>) -> Vec<Candidate> {
 }
 
 /// The runner of [`OBSERVE`]: the host's facts, read in this process.
-pub fn observe(
-    p: &Pinned,
-    proc_root: &std::path::Path,
-    repos: Vec<Repo>,
-) -> Result<String, String> {
+pub fn observe(p: &Pinned, proc_root: &std::path::Path, repos: Vec<Repo>) -> Result<String, String> {
     let now = epoch_now();
     let held = reclaim::held_paths(proc_root);
-    let tmp = p
-        .tmp_root
-        .as_deref()
-        .map(|r| {
-            to_candidates(reclaim::tmp_plan(
-                r,
-                reclaim::own_uid(),
-                now,
-                p.tmp_idle_secs,
-                &held,
-            ))
-        })
-        .unwrap_or_default();
-    let cache = p
-        .cache_dir
-        .as_deref()
-        .map(|d| reclaim::cache_files(d, now))
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(mtime, bytes, path)| CacheFile {
-            mtime,
-            bytes,
-            path: path.display().to_string(),
-        })
-        .collect();
+    let tmp = p.tmp_root.as_deref().map(|r| to_candidates(reclaim::tmp_plan(r, reclaim::own_uid(), now, p.tmp_idle_secs, &held))).unwrap_or_default();
+    let cache = p.cache_dir.as_deref().map(|d| reclaim::cache_files(d, now)).unwrap_or_default().into_iter().map(|(mtime, bytes, path)| CacheFile { mtime, bytes, path: path.display().to_string() }).collect();
     serde_json::to_string(&Snapshot { repos, cache, tmp }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`REMOVE_TMP`]: re-plans the tmp root at act time and removes `path` only when
 /// it is still a top-level directory there and still reclaimable.
 pub fn remove_tmp(p: &Pinned, proc_root: &std::path::Path, path: &str) -> Result<String, String> {
-    let root = p
-        .tmp_root
-        .as_deref()
-        .ok_or("no tmp root is configured — refusing")?;
+    let root = p.tmp_root.as_deref().ok_or("no tmp root is configured — refusing")?;
     let path = std::path::Path::new(path);
-    let c = reclaim::tmp_plan(
-        root,
-        reclaim::own_uid(),
-        epoch_now(),
-        p.tmp_idle_secs,
-        &reclaim::held_paths(proc_root),
-    )
-    .into_iter()
-    .find(|c| c.path == path)
-    .ok_or_else(|| {
-        format!(
-            "{} is not a directory of {} this process owns — refusing",
-            path.display(),
-            root.display()
-        )
-    })?;
+    let c = reclaim::tmp_plan(root, reclaim::own_uid(), epoch_now(), p.tmp_idle_secs, &reclaim::held_paths(proc_root)).into_iter().find(|c| c.path == path).ok_or_else(|| format!("{} is not a directory of {} this process owns — refusing", path.display(), root.display()))?;
     if let reclaim::Verdict::Skip(why) = c.verdict {
-        return Err(format!(
-            "{} is not reclaimable at act time ({why}) — refusing",
-            path.display()
-        ));
+        return Err(format!("{} is not reclaimable at act time ({why}) — refusing", path.display()));
     }
     std::fs::remove_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(format!(
-        "reclaimed {} {} MiB age {}s",
-        path.display(),
-        c.bytes >> 20,
-        c.age
-    ))
+    Ok(format!("reclaimed {} {} MiB age {}s", path.display(), c.bytes >> 20, c.age))
 }
 
 /// The runner of [`TRIM_CACHE`]: removes the chosen files, each still under the cache dir and
 /// not a `.tmp` younger than an hour.
 pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
-    let dir = p
-        .cache_dir
-        .as_deref()
-        .ok_or("no cache store root resolves — refusing")?;
+    let dir = p.cache_dir.as_deref().ok_or("no cache store root resolves — refusing")?;
     let chosen: Vec<String> = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    let live: std::collections::BTreeMap<String, u64> = reclaim::cache_files(dir, epoch_now())
-        .into_iter()
-        .map(|(_, b, path)| (path.display().to_string(), b))
-        .collect();
+    let live: std::collections::BTreeMap<String, u64> = reclaim::cache_files(dir, epoch_now()).into_iter().map(|(_, b, path)| (path.display().to_string(), b)).collect();
     let (mut n, mut freed) = (0u64, 0u64);
     for f in chosen.iter().filter_map(|f| live.get(f).map(|b| (f, *b))) {
         if std::fs::remove_file(f.0).is_ok() {
@@ -462,77 +316,33 @@ pub fn trim_cache(p: &Pinned, input: &str) -> Result<String, String> {
             freed += f.1;
         }
     }
-    Ok(format!(
-        "cache {}: trimmed {n} file(s), {} MiB",
-        dir.display(),
-        freed >> 20
-    ))
+    Ok(format!("cache {}: trimmed {n} file(s), {} MiB", dir.display(), freed >> 20))
 }
 
 /// `count:` of `git count-objects -v`: the loose objects.
 fn loose_count(proc: &dyn runtime::ports::Proc, path: &str) -> Result<u64, String> {
     // batch-job: counting loose objects walks the whole object store, cold
-    let spec = runtime::ports::ProcSpec {
-        prog: "git".into(),
-        args: ["-C", path, "count-objects", "-v"]
-            .map(String::from)
-            .to_vec(),
-        stdin: vec![],
-        deadline: std::time::Duration::from_secs(120),
-    };
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", path, "count-objects", "-v"].map(String::from).to_vec(), stdin: vec![], deadline: std::time::Duration::from_secs(120) };
     let out = proc.run(&spec)?;
     if out.code != Some(0) {
-        return Err(format!(
-            "git count-objects -v exit {:?}: {}",
-            out.code,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        return Err(format!("git count-objects -v exit {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));
     }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .find_map(|l| l.strip_prefix("count: ")?.trim().parse().ok())
-        .ok_or_else(|| "git count-objects -v printed no count".into())
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.strip_prefix("count: ")?.trim().parse().ok()).ok_or_else(|| "git count-objects -v printed no count".into())
 }
 
 /// A held `objects/maintenance.lock` makes `git maintenance run` exit 0 having done nothing. One older
 /// than twice the effect's deadline has no live holder and is removed; a younger one is an error.
 fn clear_stale_lock(proc: &dyn runtime::ports::Proc, path: &str) -> Result<bool, String> {
-    let spec = runtime::ports::ProcSpec {
-        prog: "git".into(),
-        args: [
-            "-C",
-            path,
-            "rev-parse",
-            "--git-path",
-            "objects/maintenance.lock",
-        ]
-        .map(String::from)
-        .to_vec(),
-        stdin: vec![],
-        deadline: std::time::Duration::from_secs(5),
-    };
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", path, "rev-parse", "--git-path", "objects/maintenance.lock"].map(String::from).to_vec(), stdin: vec![], deadline: std::time::Duration::from_secs(5) };
     let out = proc.run(&spec)?;
     if out.code != Some(0) {
-        return Err(format!(
-            "git rev-parse exit {:?}: {}",
-            out.code,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        return Err(format!("git rev-parse exit {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim()));
     }
     let lock = std::path::Path::new(path).join(String::from_utf8_lossy(&out.stdout).trim());
-    let Ok(meta) = std::fs::metadata(&lock) else {
-        return Ok(false);
-    };
-    let age = meta
-        .modified()
-        .ok()
-        .and_then(|m| m.elapsed().ok())
-        .map_or(0, |a| a.as_secs());
+    let Ok(meta) = std::fs::metadata(&lock) else { return Ok(false) };
+    let age = meta.modified().ok().and_then(|m| m.elapsed().ok()).map_or(0, |a| a.as_secs());
     if age <= 2 * MAINTAIN_DEADLINE_MS / 1000 {
-        return Err(format!(
-            "{} is held (age {age}s), so maintenance would do nothing",
-            lock.display()
-        ));
+        return Err(format!("{} is held (age {age}s), so maintenance would do nothing", lock.display()));
     }
     std::fs::remove_file(&lock).map_err(|e| format!("{}: {e}", lock.display()))?;
     Ok(true)
@@ -552,38 +362,16 @@ pub fn maintain(proc: &dyn runtime::ports::Proc, input: &str) -> Result<String, 
     for tasks in [MAINTAIN_ARGS, &MAINTAIN_ARGS[..3]] {
         let mut args = vec!["-C".to_string(), repo.path.clone()];
         args.extend(tasks.iter().map(|a| a.to_string()));
-        let out = proc
-            .run(&runtime::ports::ProcSpec {
-                prog: "git".into(),
-                args,
-                stdin: vec![],
-                deadline: std::time::Duration::from_millis(MAINTAIN_DEADLINE_MS),
-            })
-            .map_err(fail)?;
+        let out = proc.run(&runtime::ports::ProcSpec { prog: "git".into(), args, stdin: vec![], deadline: std::time::Duration::from_millis(MAINTAIN_DEADLINE_MS) }).map_err(fail)?;
         if out.code != Some(0) {
-            return Err(fail(format!(
-                "git maintenance exit {:?}: {}",
-                out.code,
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
+            return Err(fail(format!("git maintenance exit {:?}: {}", out.code, String::from_utf8_lossy(&out.stderr).trim())));
         }
     }
     let after = loose_count(proc, &repo.path).map_err(fail)?;
-    Ok(format!(
-        "{}: loose objects {before} before, {after} after{}",
-        repo.name,
-        if cleared {
-            " (removed a stale maintenance.lock)"
-        } else {
-            ""
-        }
-    ))
+    Ok(format!("{}: loose objects {before} before, {after} after{}", repo.name, if cleared { " (removed a stale maintenance.lock)" } else { "" }))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("phase"),
-    runtime::rows::Part::Field("pending"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("pending")];
 
 crate::tasks::b::hosted!(SweepReclaim);
 
@@ -592,21 +380,8 @@ mod tests {
     use super::*;
 
     fn read(pairs: &[(&str, String)]) -> Pinned {
-        let get = move |k: &str| {
-            Ok(pairs
-                .iter()
-                .find(|(n, _)| *n == k)
-                .map_or("", |p| p.1.as_str())
-                .to_string())
-        };
-        Pinned::read(&|k| {
-            if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") {
-                Ok("1".into())
-            } else {
-                get(k)
-            }
-        })
-        .unwrap()
+        let get = move |k: &str| Ok(pairs.iter().find(|(n, _)| *n == k).map_or("", |p| p.1.as_str()).to_string());
+        Pinned::read(&|k| if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") { Ok("1".into()) } else { get(k) }).unwrap()
     }
 
     #[test_id(tm1twfc)]
@@ -614,10 +389,7 @@ mod tests {
     fn the_cache_cap_follows_the_stores_configured_root() {
         let root = testkit::TempDir::new("sweep-reclaim-store-root");
         let store = format!("{}/mnt/other/store", root.display());
-        let p = read(&[
-            ("SPIRA_SCCACHE_DAV_ROOT", store.clone()),
-            ("SPIRA_RUN", format!("{}/r", root.display())),
-        ]);
+        let p = read(&[("SPIRA_SCCACHE_DAV_ROOT", store.clone()), ("SPIRA_RUN", format!("{}/r", root.display()))]);
         assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&store)));
     }
 
@@ -626,27 +398,15 @@ mod tests {
     fn an_empty_store_root_means_the_run_dirs_sccache_dav() {
         let root = testkit::TempDir::new("sweep-reclaim-run-dir");
         let p = read(&[("SPIRA_RUN", format!("{}/r", root.display()))]);
-        assert_eq!(
-            p.cache_dir.as_deref(),
-            Some(std::path::Path::new(&format!(
-                "{}/r/sccache-dav",
-                root.display()
-            )))
-        );
+        assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&format!("{}/r/sccache-dav", root.display()))));
     }
 
     #[test_id(ta9slcb)]
     #[test]
     fn an_explicit_reclaim_cache_dir_still_wins() {
         let root = testkit::TempDir::new("sweep-reclaim-explicit");
-        let (x, y) = (
-            format!("{}/x", root.display()),
-            format!("{}/y", root.display()),
-        );
-        let p = read(&[
-            ("SPIRA_RECLAIM_CACHE_DIR", x.clone()),
-            ("SPIRA_SCCACHE_DAV_ROOT", y),
-        ]);
+        let (x, y) = (format!("{}/x", root.display()), format!("{}/y", root.display()));
+        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", x.clone()), ("SPIRA_SCCACHE_DAV_ROOT", y)]);
         assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&x)));
     }
 
@@ -654,32 +414,15 @@ mod tests {
     #[test]
     fn explicit_dir_wins_over_root_and_run_when_all_three_are_set() {
         let root = testkit::TempDir::new("sweep-reclaim-all-three");
-        let (x, y) = (
-            format!("{}/x", root.display()),
-            format!("{}/y", root.display()),
-        );
-        let p = read(&[
-            ("SPIRA_RECLAIM_CACHE_DIR", x.clone()),
-            ("SPIRA_SCCACHE_DAV_ROOT", y),
-            ("SPIRA_RUN", format!("{}/r", root.display())),
-        ]);
+        let (x, y) = (format!("{}/x", root.display()), format!("{}/y", root.display()));
+        let p = read(&[("SPIRA_RECLAIM_CACHE_DIR", x.clone()), ("SPIRA_SCCACHE_DAV_ROOT", y), ("SPIRA_RUN", format!("{}/r", root.display()))]);
         assert_eq!(p.cache_dir.as_deref(), Some(std::path::Path::new(&x)));
     }
 
     #[test_id(tx58dpb)]
     #[test]
     fn a_relative_store_root_is_refused_not_silently_untrimmed() {
-        let err = Pinned::read(&|k| {
-            Ok(match k {
-                "SPIRA_SCCACHE_DAV_ROOT" => "store".into(),
-                k if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") => {
-                    "1".into()
-                }
-                _ => String::new(),
-            })
-        })
-        .err()
-        .unwrap();
+        let err = Pinned::read(&|k| Ok(match k { "SPIRA_SCCACHE_DAV_ROOT" => "store".into(), k if k.ends_with("_GIB") || k.ends_with("_DAYS") || k.ends_with("_HOURS") => "1".into(), _ => String::new() })).err().unwrap();
         assert!(err.contains("SPIRA_SCCACHE_DAV_ROOT"), "{err}");
     }
 
@@ -690,11 +433,7 @@ mod tests {
     }
 
     fn tmp_pinned(root: &std::path::Path) -> Pinned {
-        Pinned {
-            cache_dir: None,
-            tmp_root: Some(root.join("tmp")),
-            tmp_idle_secs: 3_600,
-        }
+        Pinned { cache_dir: None, tmp_root: Some(root.join("tmp")), tmp_idle_secs: 3_600 }
     }
 
     fn aged_dir(root: &std::path::Path, name: &str, secs: u64) -> std::path::PathBuf {
@@ -710,13 +449,9 @@ mod tests {
 
     #[test_id(thcxpb1)]
     #[test]
-    fn observe_reports_tmp_dirs_with_a_socket_dir_as_special_and_remove_tmp_refuses_what_is_not_reclaimable(
-    ) {
+    fn observe_reports_tmp_dirs_with_a_socket_dir_as_special_and_remove_tmp_refuses_what_is_not_reclaimable() {
         let t = testkit::TempDir::new("sweep-reclaim-tmp");
-        let (idle, sock) = (
-            aged_dir(t.path(), "tmp.idle", 86_400),
-            aged_dir(t.path(), "tmp-1000", 86_400),
-        );
+        let (idle, sock) = (aged_dir(t.path(), "tmp.idle", 86_400), aged_dir(t.path(), "tmp-1000", 86_400));
         let _l = std::os::unix::net::UnixListener::bind(sock.join("default")).unwrap();
         let young = aged_dir(t.path(), "tmp.young", 5);
         let outside = t.path().join("outside");
@@ -724,32 +459,14 @@ mod tests {
         let p = tmp_pinned(t.path());
         let proc_root = t.path().join("proc");
         std::fs::create_dir(&proc_root).unwrap();
-        let snap: Snapshot =
-            serde_json::from_str(&observe(&p, &proc_root, vec![]).unwrap()).unwrap();
-        let verdict = |d: &std::path::Path| {
-            snap.tmp
-                .iter()
-                .find(|c| c.path == d.display().to_string())
-                .map(|c| c.verdict)
-        };
-        assert_eq!(
-            (verdict(&idle), verdict(&sock), verdict(&young)),
-            (
-                Some(Verdict::Reclaim),
-                Some(Verdict::Special),
-                Some(Verdict::Fresh)
-            )
-        );
+        let snap: Snapshot = serde_json::from_str(&observe(&p, &proc_root, vec![]).unwrap()).unwrap();
+        let verdict = |d: &std::path::Path| snap.tmp.iter().find(|c| c.path == d.display().to_string()).map(|c| c.verdict);
+        assert_eq!((verdict(&idle), verdict(&sock), verdict(&young)), (Some(Verdict::Reclaim), Some(Verdict::Special), Some(Verdict::Fresh)));
         for refused in [&sock, &young, &outside] {
-            assert!(
-                remove_tmp(&p, &proc_root, &refused.display().to_string()).is_err(),
-                "{refused:?}"
-            );
+            assert!(remove_tmp(&p, &proc_root, &refused.display().to_string()).is_err(), "{refused:?}");
             assert!(refused.exists());
         }
-        assert!(remove_tmp(&p, &proc_root, &idle.display().to_string())
-            .unwrap()
-            .starts_with("reclaimed"));
+        assert!(remove_tmp(&p, &proc_root, &idle.display().to_string()).unwrap().starts_with("reclaimed"));
         assert!(!idle.exists());
     }
 }

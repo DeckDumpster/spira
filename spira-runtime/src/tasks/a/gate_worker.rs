@@ -138,43 +138,14 @@ pub const UNIT_START_DEADLINE_MS: u64 = 10_000;
 pub const NO_VERDICT: &str = "NO_VERDICT";
 pub const STUCK_MS: u64 = 120_000;
 
-pub const ACTS: &[(&str, u64)] = &[
-    (TIP, 5_000),
-    (CLAIM, 5_000),
-    (DISCARD, 5_000),
-    (UNIT_START, UNIT_START_DEADLINE_MS),
-    (RETAIN_OUTPUT, 5_000),
-    (COMPLETE, 5_000),
-    (RECOVER, 5_000),
-];
+pub const ACTS: &[(&str, u64)] = &[(TIP, 5_000), (CLAIM, 5_000), (DISCARD, 5_000), (UNIT_START, UNIT_START_DEADLINE_MS), (RETAIN_OUTPUT, 5_000), (COMPLETE, 5_000), (RECOVER, 5_000)];
 pub const EMITS: &[EventKindTag] = &[];
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    TIP,
-    CLAIM,
-    DISCARD,
-    RETAIN_OUTPUT,
-    COMPLETE,
-    RECOVER,
-    UNIT_START,
-];
-pub const KEYS: &[&str] = &[
-    "SPIRA_CERTIFY_PAR",
-    "SPIRA_GATE_TIMEOUT",
-    "SPIRA_GATE_LOCK_WAIT",
-    "SPIRA_RUN",
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, TIP, CLAIM, DISCARD, RETAIN_OUTPUT, COMPLETE, RECOVER, UNIT_START];
+pub const KEYS: &[&str] = &["SPIRA_CERTIFY_PAR", "SPIRA_GATE_TIMEOUT", "SPIRA_GATE_LOCK_WAIT", "SPIRA_RUN"];
 /// `SPIRA_HOME` is the process's own home, not a `conf.d` key.
 pub const UNREGISTERED: &[&str] = &["SPIRA_HOME"];
 
-pub const SHAPE: Shape = Shape {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    observe: OBSERVE,
-    observe_deadline_ms: OBSERVE_DEADLINE_MS,
-};
+pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
 /// One gate job (`gateq.rs`): keyed `repo.branch.tip`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -329,25 +300,9 @@ struct WrittenCarry {
 
 /// One row per slot in use (`slot/0003`) and the pool's width.
 fn split_slots(body: &str) -> BTreeMap<String, String> {
-    let Ok(written) = serde_json::from_str::<WrittenCarry>(body) else {
-        return BTreeMap::new();
-    };
-    let width = written
-        .width
-        .unwrap_or(written.slots.len())
-        .max(written.slots.len());
-    let mut rows: BTreeMap<String, String> = written
-        .slots
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| **s != Slot::default())
-        .map(|(i, s)| {
-            (
-                format!("slot/{i:04}"),
-                serde_json::to_string(s).unwrap_or_default(),
-            )
-        })
-        .collect();
+    let Ok(written) = serde_json::from_str::<WrittenCarry>(body) else { return BTreeMap::new() };
+    let width = written.width.unwrap_or(written.slots.len()).max(written.slots.len());
+    let mut rows: BTreeMap<String, String> = written.slots.iter().enumerate().filter(|(_, s)| **s != Slot::default()).map(|(i, s)| (format!("slot/{i:04}"), serde_json::to_string(s).unwrap_or_default())).collect();
     rows.insert("width".into(), width.to_string());
     rows
 }
@@ -356,12 +311,8 @@ fn join_slots(rows: &BTreeMap<String, String>) -> String {
     let width: usize = rows.get("width").and_then(|w| w.parse().ok()).unwrap_or(0);
     let mut slots = vec![];
     for (k, v) in rows.iter().filter(|(k, _)| k.starts_with("slot/")) {
-        let Some(i) = k["slot/".len()..].parse::<usize>().ok() else {
-            continue;
-        };
-        let Ok(slot) = serde_json::from_str::<Slot>(v) else {
-            continue;
-        };
+        let Some(i) = k["slot/".len()..].parse::<usize>().ok() else { continue };
+        let Ok(slot) = serde_json::from_str::<Slot>(v) else { continue };
         if slots.len() <= i {
             slots.resize(i + 1, Slot::default());
         }
@@ -383,16 +334,8 @@ impl From<Carry> for WrittenCarry {
     fn from(c: Carry) -> Self {
         let width = c.slots.len();
         let mut slots = c.slots;
-        slots.truncate(
-            slots
-                .iter()
-                .rposition(|s| *s != Slot::default())
-                .map_or(0, |i| i + 1),
-        );
-        WrittenCarry {
-            width: (slots.len() < width).then_some(width),
-            slots,
-        }
+        slots.truncate(slots.iter().rposition(|s| *s != Slot::default()).map_or(0, |i| i + 1));
+        WrittenCarry { width: (slots.len() < width).then_some(width), slots }
     }
 }
 
@@ -405,18 +348,11 @@ impl From<WrittenCarry> for Carry {
 }
 
 fn word(state: State) -> String {
-    serde_json::to_string(&state)
-        .unwrap_or_default()
-        .trim_matches('"')
-        .to_string()
+    serde_json::to_string(&state).unwrap_or_default().trim_matches('"').to_string()
 }
 
 pub fn step(state: State, event: Trigger) -> Result<State, String> {
-    TABLE
-        .iter()
-        .find(|(s, e, _)| *s == state && *e == event)
-        .map(|(_, _, to)| *to)
-        .ok_or_else(|| format!("{NAME}: {event:?} is not legal in state {}", word(state)))
+    TABLE.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{NAME}: {event:?} is not legal in state {}", word(state)))
 }
 
 /// `pick_key`'s order (`landing_pass::gateq::order_key`): fix branches first, then express,
@@ -424,18 +360,7 @@ pub fn step(state: State, event: Trigger) -> Result<State, String> {
 /// one order, so `slot` does not change the answer.
 pub fn pick(snap: &Snapshot, _slot: usize) -> Option<Job> {
     let running = |repo: &str| snap.running_by_repo.get(repo).copied().unwrap_or(0) as usize;
-    snap.inbox
-        .iter()
-        .min_by_key(|j| {
-            landing_pass::gateq::order_key(
-                j.fix,
-                j.express,
-                i64::from(j.priority),
-                running(&j.repo),
-                u128::from(j.enqueued_ms),
-            )
-        })
-        .cloned()
+    snap.inbox.iter().min_by_key(|j| landing_pass::gateq::order_key(j.fix, j.express, i64::from(j.priority), running(&j.repo), u128::from(j.enqueued_ms))).cloned()
 }
 
 pub fn check_tip(job: &Job, tip: Option<&str>) -> TipCheck {
@@ -450,10 +375,7 @@ pub fn check_tip(job: &Job, tip: Option<&str>) -> TipCheck {
 /// `gate_worker::classify` itself, read back as the verdict word and its reason.
 pub fn classify(rc: i32, out: &str) -> GateRun {
     let run = gate_worker::classify(rc, out.to_string());
-    GateRun {
-        verdict: run.outcome.word().to_string(),
-        reason: run.reason,
-    }
+    GateRun { verdict: run.outcome.word().to_string(), reason: run.reason }
 }
 
 /// A slot's act input: the slot and its job.
@@ -482,10 +404,7 @@ const NOT_STARTED: i32 = -1;
 
 /// Where slot `slot`'s `leg` for `job` writes its output and its status.
 pub fn leg_paths(run_dir: &str, slot: usize, leg: &str, job: &Job) -> (String, String) {
-    let base = format!(
-        "{run_dir}/gate-worker/legs/{slot}/{leg}-{:016x}",
-        runtime::event::fnv1a(&job.key())
-    );
+    let base = format!("{run_dir}/gate-worker/legs/{slot}/{leg}-{:016x}", runtime::event::fnv1a(&job.key()));
     (format!("{base}.out"), format!("{base}.rc"))
 }
 
@@ -504,35 +423,16 @@ fn slot_of_leg(key: &str) -> Option<usize> {
 fn leg_act(snap: &Snapshot, slot: usize, leg: &str, job: &Job) -> Act {
     let (out, rc) = leg_paths(&snap.run_dir, slot, leg, job);
     let script = r#"out=$1 rc=$2; shift 2; mkdir -p "$(dirname "$out")"; rm -f "$rc"; "$@" > "$out" 2>&1; echo $? > "$rc.tmp" && mv "$rc.tmp" "$rc""#;
-    let mut argv: Vec<String> = ["sh", "-c", script, "leg", &out, &rc]
-        .map(String::from)
-        .to_vec();
+    let mut argv: Vec<String> = ["sh", "-c", script, "leg", &out, &rc].map(String::from).to_vec();
     argv.extend(["gate.sh", &job.branch, &job.repo].map(String::from));
-    let env = vec![
-        (
-            "SPIRA_GATE_LOCK_WAIT".to_string(),
-            snap.lock_wait.to_string(),
-        ),
-        ("SPIRA_GATE_BEAD".to_string(), job.bead.clone()),
-    ];
+    let env = vec![("SPIRA_GATE_LOCK_WAIT".to_string(), snap.lock_wait.to_string()), ("SPIRA_GATE_BEAD".to_string(), job.bead.clone())];
     let env = super::batcher_local::edge::with_defaults(env, &snap.base_env);
-    let spec = runtime::units::UnitSpec {
-        task: NAME.into(),
-        key: leg_key(slot, leg, job),
-        argv,
-        env,
-        cwd: None,
-    };
-    Act::new(UNIT_START, spec.key.clone())
-        .with_input(serde_json::to_string(&spec).unwrap_or_default())
+    let spec = runtime::units::UnitSpec { task: NAME.into(), key: leg_key(slot, leg, job), argv, env, cwd: None };
+    Act::new(UNIT_START, spec.key.clone()).with_input(serde_json::to_string(&spec).unwrap_or_default())
 }
 
 fn slot_input(slot: usize, job: &Job) -> String {
-    serde_json::to_string(&SlotJob {
-        slot,
-        job: job.clone(),
-    })
-    .unwrap_or_default()
+    serde_json::to_string(&SlotJob { slot, job: job.clone() }).unwrap_or_default()
 }
 
 /// A slot waiting on an effect outcome or a leg-start answer resolves in seconds; one that has not
@@ -550,11 +450,7 @@ fn watchdog(slot: &mut Slot, now_ms: u64) -> bool {
     let since = match slot.stall {
         Some(s) if s.state == slot.state && s.leg_started == slot.leg_started => s.since_ms,
         _ => {
-            slot.stall = Some(Stall {
-                state: slot.state,
-                leg_started: slot.leg_started,
-                since_ms: now_ms,
-            });
+            slot.stall = Some(Stall { state: slot.state, leg_started: slot.leg_started, since_ms: now_ms });
             return false;
         }
     };
@@ -567,21 +463,9 @@ fn watchdog(slot: &mut Slot, now_ms: u64) -> bool {
 pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
     let mut acts = vec![];
-    let held: Vec<String> = carry
-        .slots
-        .iter()
-        .filter_map(|s| s.job.as_ref().map(Job::key))
-        .collect();
+    let held: Vec<String> = carry.slots.iter().filter_map(|s| s.job.as_ref().map(Job::key)).collect();
     let mut free = snap.free_slots;
-    let mut queue = Snapshot {
-        inbox: snap
-            .inbox
-            .iter()
-            .filter(|j| !held.contains(&j.key()))
-            .cloned()
-            .collect(),
-        ..snap.clone()
-    };
+    let mut queue = Snapshot { inbox: snap.inbox.iter().filter(|j| !held.contains(&j.key())).cloned().collect(), ..snap.clone() };
     for (i, slot) in next.slots.iter_mut().enumerate() {
         if watchdog(slot, snap.now_ms) {
             acts.push(Act::new(RECOVER, i.to_string()).with_input(i.to_string()));
@@ -594,40 +478,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
                 *queue.running_by_repo.entry(job.repo.clone()).or_default() += 1;
                 free -= 1;
                 acts.push(Act::new(CLAIM, job.key()).with_input(slot_input(i, &job)));
-                *slot = Slot {
-                    state: State::Claimed,
-                    job: Some(job),
-                    started_ms: Some(snap.now_ms),
-                    leg_started: false,
-                    stall: None,
-                };
+                *slot = Slot { state: State::Claimed, job: Some(job), started_ms: Some(snap.now_ms), leg_started: false, stall: None };
             }
             (State::Gating, Some(job)) if slot.leg_started => {
-                let Some(leg) = snap.legs.get(&i).filter(|l| !l.running) else {
-                    continue;
-                };
+                let Some(leg) = snap.legs.get(&i).filter(|l| !l.running) else { continue };
                 let (out_path, _) = leg_paths(&snap.run_dir, i, "gate", &job);
-                let filing = Filing {
-                    slot: i,
-                    job: job.clone(),
-                    rc: leg.rc,
-                    out_path,
-                    started_ms: slot.started_ms.unwrap_or(snap.now_ms),
-                    finished_ms: snap.now_ms,
-                };
+                let filing = Filing { slot: i, job: job.clone(), rc: leg.rc, out_path, started_ms: slot.started_ms.unwrap_or(snap.now_ms), finished_ms: snap.now_ms };
                 let input = serde_json::to_string(&filing).unwrap_or_default();
                 if leg.verdict.as_deref() != Some("PASS") {
-                    acts.push(
-                        Act::new(RETAIN_OUTPUT, format!("{}.out", job.key()))
-                            .with_input(input.clone()),
-                    );
+                    acts.push(Act::new(RETAIN_OUTPUT, format!("{}.out", job.key())).with_input(input.clone()));
                 }
                 acts.push(Act::new(COMPLETE, format!("done/{}", job.key())).with_input(input));
-                *slot = Slot {
-                    state: State::Filing,
-                    leg_started: false,
-                    ..slot.clone()
-                };
+                *slot = Slot { state: State::Filing, leg_started: false, ..slot.clone() };
             }
             _ => {}
         }
@@ -637,44 +499,21 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 
 /// A slot's step on one of its own effects' outcomes: CLAIM → TIP; TIP → gate leg, or drop;
 /// a leg's start recorded; DISCARD → idle; COMPLETE → idle (the drain goes on at once).
-pub fn on_outcome(
-    carry: &Carry,
-    effect: &str,
-    input: &str,
-    ok: bool,
-    body: &str,
-    pins: &Snapshot,
-) -> (Carry, Vec<Act>) {
+pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str, pins: &Snapshot) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
     let mut acts = vec![];
     if effect == UNIT_START {
-        let Ok(spec) = serde_json::from_str::<runtime::units::UnitSpec>(input) else {
-            return (next, acts);
-        };
-        let Some(i) = slot_of_leg(&spec.key) else {
-            return (next, acts);
-        };
-        let Some(slot) = next.slots.get_mut(i) else {
-            return (next, acts);
-        };
+        let Ok(spec) = serde_json::from_str::<runtime::units::UnitSpec>(input) else { return (next, acts) };
+        let Some(i) = slot_of_leg(&spec.key) else { return (next, acts) };
+        let Some(slot) = next.slots.get_mut(i) else { return (next, acts) };
         match (slot.state, ok) {
             (State::Gating, true) => slot.leg_started = true,
             (State::Gating, false) => {
                 if let Some(job) = slot.job.clone() {
                     let (out_path, _) = leg_paths(&pins.run_dir, i, "gate", &job);
-                    let f = Filing {
-                        slot: i,
-                        job: job.clone(),
-                        rc: Some(NOT_STARTED),
-                        out_path,
-                        started_ms: slot.started_ms.unwrap_or(0),
-                        finished_ms: slot.started_ms.unwrap_or(0),
-                    };
+                    let f = Filing { slot: i, job: job.clone(), rc: Some(NOT_STARTED), out_path, started_ms: slot.started_ms.unwrap_or(0), finished_ms: slot.started_ms.unwrap_or(0) };
                     let input = serde_json::to_string(&f).unwrap_or_default();
-                    acts.push(
-                        Act::new(RETAIN_OUTPUT, format!("{}.out", job.key()))
-                            .with_input(input.clone()),
-                    );
+                    acts.push(Act::new(RETAIN_OUTPUT, format!("{}.out", job.key())).with_input(input.clone()));
                     acts.push(Act::new(COMPLETE, format!("done/{}", job.key())).with_input(input));
                     slot.state = State::Filing;
                 }
@@ -683,35 +522,24 @@ pub fn on_outcome(
         }
         return (next, acts);
     }
-    let Ok(sj) = serde_json::from_str::<SlotJob>(input) else {
-        return (next, acts);
-    };
-    let Some(slot) = next.slots.get_mut(sj.slot) else {
-        return (next, acts);
-    };
+    let Ok(sj) = serde_json::from_str::<SlotJob>(input) else { return (next, acts) };
+    let Some(slot) = next.slots.get_mut(sj.slot) else { return (next, acts) };
     if slot.job.as_ref() != Some(&sj.job) {
         return (next, acts);
     }
     match (slot.state, effect, ok) {
-        (State::Claimed, CLAIM, true) => {
-            acts.push(Act::new(TIP, sj.job.key()).with_input(input.to_string()))
-        }
+        (State::Claimed, CLAIM, true) => acts.push(Act::new(TIP, sj.job.key()).with_input(input.to_string())),
         (State::Claimed, CLAIM, false) => *slot = Slot::default(),
-        (State::Claimed, TIP, true) => {
-            match check_tip(&sj.job, Some(body.trim()).filter(|t| !t.is_empty())) {
-                TipCheck::Proceed => {
-                    acts.push(leg_act(pins, sj.slot, "gate", &sj.job));
-                    slot.state = State::Gating;
-                }
-                TipCheck::Gone | TipCheck::Moved => {
-                    acts.push(
-                        Act::new(DISCARD, format!("{}/{}", sj.slot, sj.job.key()))
-                            .with_input(input.to_string()),
-                    );
-                    slot.state = State::Dropped;
-                }
+        (State::Claimed, TIP, true) => match check_tip(&sj.job, Some(body.trim()).filter(|t| !t.is_empty())) {
+            TipCheck::Proceed => {
+                acts.push(leg_act(pins, sj.slot, "gate", &sj.job));
+                slot.state = State::Gating;
             }
-        }
+            TipCheck::Gone | TipCheck::Moved => {
+                acts.push(Act::new(DISCARD, format!("{}/{}", sj.slot, sj.job.key())).with_input(input.to_string()));
+                slot.state = State::Dropped;
+            }
+        },
         (State::Dropped, DISCARD, _) => *slot = Slot::default(),
         (State::Filing, COMPLETE, true) => *slot = Slot::default(),
         _ => {}
@@ -723,27 +551,10 @@ pub fn on_outcome(
 /// `SPIRA_GATE_LOCK_WAIT` folded by `gate_worker::lock_wait` to at least twice the timeout.
 pub fn pins(pinned: &BTreeMap<String, String>) -> Snapshot {
     let timeout = pinned.get("SPIRA_GATE_TIMEOUT").map(String::as_str);
-    let gate_timeout = timeout
-        .and_then(|t| t.trim().parse().ok())
-        .filter(|t| *t > 0)
-        .unwrap_or(2_700);
-    let lock_wait = gate_worker::lock_wait(
-        timeout,
-        pinned
-            .get("SPIRA_GATE_LOCK_WAIT")
-            .map(String::as_str)
-            .filter(|v| !v.trim().is_empty()),
-    );
-    let base_env = spira_config::process::spec()
-        .map(|toml| super::batcher_local::edge::base_env(vec![], &toml))
-        .unwrap_or_default();
-    Snapshot {
-        run_dir: pinned.get("SPIRA_RUN").cloned().unwrap_or_default(),
-        gate_timeout,
-        lock_wait,
-        base_env,
-        ..Snapshot::default()
-    }
+    let gate_timeout = timeout.and_then(|t| t.trim().parse().ok()).filter(|t| *t > 0).unwrap_or(2_700);
+    let lock_wait = gate_worker::lock_wait(timeout, pinned.get("SPIRA_GATE_LOCK_WAIT").map(String::as_str).filter(|v| !v.trim().is_empty()));
+    let base_env = spira_config::process::spec().map(|toml| super::batcher_local::edge::base_env(vec![], &toml)).unwrap_or_default();
+    Snapshot { run_dir: pinned.get("SPIRA_RUN").cloned().unwrap_or_default(), gate_timeout, lock_wait, base_env, ..Snapshot::default() }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -756,34 +567,17 @@ pub struct GateWorker {
 
 impl GateWorker {
     pub fn new(slots: usize, pinned: BTreeMap<String, String>) -> Self {
-        GateWorker {
-            cadence: Cadence::Every(CADENCE_MS),
-            slots,
-            pinned,
-        }
+        GateWorker { cadence: Cadence::Every(CADENCE_MS), slots, pinned }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
         let pinned = kit::pin(settings, NAME, KEYS);
-        let slots = pinned["SPIRA_CERTIFY_PAR"]
-            .trim()
-            .parse()
-            .ok()
-            .filter(|n| *n > 0)
-            .unwrap_or_else(|| {
-                panic!("{NAME} refuses to build: SPIRA_CERTIFY_PAR must be a positive integer")
-            });
+        let slots = pinned["SPIRA_CERTIFY_PAR"].trim().parse().ok().filter(|n| *n > 0).unwrap_or_else(|| panic!("{NAME} refuses to build: SPIRA_CERTIFY_PAR must be a positive integer"));
         Self::new(slots, pinned)
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(runtime::event::RowCodec {
-            stream: STREAM,
-            also: &[],
-            tag: STATE,
-            split: split_slots,
-            join: join_slots,
-        })
+        Registration::new(NAME, self).with_rows(runtime::event::RowCodec { stream: STREAM, also: &[], tag: STATE, split: split_slots, join: join_slots })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -793,14 +587,7 @@ impl GateWorker {
 
 impl Handler for GateWorker {
     fn interests(&self) -> &[EventKindTag] {
-        &[
-            TICK,
-            GATE_QUEUED,
-            EFFECT_SUCCEEDED,
-            EFFECT_FAILED,
-            EFFECT_TIMED_OUT,
-            runtime::units::UNIT_RAN,
-        ]
+        &[TICK, GATE_QUEUED, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT, runtime::units::UNIT_RAN]
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
@@ -810,59 +597,33 @@ impl Handler for GateWorker {
         // N slots, each single-flight; a carry recorded under a smaller N grows, never shrinks
         // past a slot still holding a job.
         let mut carry: Carry = kit::carry(&SHAPE, view);
-        let keep = carry
-            .slots
-            .iter()
-            .rposition(|s| s.job.is_some())
-            .map_or(0, |i| i + 1);
+        let keep = carry.slots.iter().rposition(|s| s.job.is_some()).map_or(0, |i| i + 1);
         carry.slots.resize(self.slots.max(keep), Slot::default());
         // One of its own legs ended (its `unit.ran`, routed to this stream by unit name): the
         // slot's status is read now, so the slot moves on at once rather than at the next tick.
-        let own_leg_ran = runtime::units::UnitRan::from_event_kind(&ev.kind)
-            .is_some_and(|r| r.key_for(NAME).is_some());
+        let own_leg_ran = runtime::units::UnitRan::from_event_kind(&ev.kind).is_some_and(|r| r.key_for(NAME).is_some());
         if ev.kind.tag == runtime::units::UNIT_RAN && !own_leg_ran {
             return vec![];
         }
         if ev.kind.tag == TICK || ev.kind.tag == GATE_QUEUED || own_leg_ran {
-            let mut out = vec![Command::Probe(EffectSpec::probe(
-                OBSERVE,
-                serde_json::to_string(&carry).unwrap_or_default(),
-                OBSERVE_DEADLINE_MS,
-            ))];
+            let mut out = vec![Command::Probe(EffectSpec::probe(OBSERVE, serde_json::to_string(&carry).unwrap_or_default(), OBSERVE_DEADLINE_MS))];
             if ev.kind.tag == TICK {
-                out.push(Command::Timer {
-                    at: self.cadence.next_after(ev.at),
-                    kind: EventKind::new(TICK, ""),
-                });
+                out.push(Command::Timer { at: self.cadence.next_after(ev.at), kind: EventKind::new(TICK, "") });
             }
             return out;
         }
-        let Some(spec) = crate::watchers::answered_spec(view, ev) else {
-            return vec![];
-        };
+        let Some(spec) = crate::watchers::answered_spec(view, ev) else { return vec![] };
         if spec.name == OBSERVE {
-            let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else {
-                return vec![];
-            };
+            let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
             let (next, acts) = decide(&carry, &snap);
             return kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts);
         }
         let ok = ev.kind.tag == EFFECT_SUCCEEDED;
-        let (next, acts) = on_outcome(
-            &carry,
-            &spec.name,
-            &spec.input,
-            ok,
-            &ev.kind.body,
-            &pins(&self.pinned),
-        );
+        let (next, acts) = on_outcome(&carry, &spec.name, &spec.input, ok, &ev.kind.body, &pins(&self.pinned));
         let mut out = kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts);
         // A filed verdict frees its slot: the drain goes on at once rather than a tick later.
         if spec.name == COMPLETE && ok {
-            out.push(Command::Timer {
-                at: ev.at,
-                kind: EventKind::new(TICK, ""),
-            });
+            out.push(Command::Timer { at: ev.at, kind: EventKind::new(TICK, "") });
         }
         out
     }
@@ -877,16 +638,7 @@ fn queue(e: &crate::Effects) -> landing_pass::gateq::GateQueue {
 }
 
 fn task_job(j: &landing_pass::gateq::Job) -> Job {
-    Job {
-        repo: j.repo.clone(),
-        branch: j.branch.clone(),
-        tip: j.tip.clone(),
-        bead: j.bead.clone(),
-        fix: j.fix,
-        express: j.express,
-        priority: j.priority.clamp(0, i64::from(u8::MAX)) as u8,
-        enqueued_ms: (j.queued / 1_000_000) as u64,
-    }
+    Job { repo: j.repo.clone(), branch: j.branch.clone(), tip: j.tip.clone(), bead: j.bead.clone(), fix: j.fix, express: j.express, priority: j.priority.clamp(0, i64::from(u8::MAX)) as u8, enqueued_ms: (j.queued / 1_000_000) as u64 }
 }
 
 fn slot_job(input: &str, effect: &str) -> Result<SlotJob, String> {
@@ -894,9 +646,7 @@ fn slot_job(input: &str, effect: &str) -> Result<SlotJob, String> {
 }
 
 fn read_leg(rc_path: &str, out_path: &str) -> (Option<i32>, String) {
-    let rc = std::fs::read_to_string(rc_path)
-        .ok()
-        .and_then(|t| t.trim().parse().ok());
+    let rc = std::fs::read_to_string(rc_path).ok().and_then(|t| t.trim().parse().ok());
     (rc, std::fs::read_to_string(out_path).unwrap_or_default())
 }
 
@@ -908,61 +658,29 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
     for k in KEYS {
         pinned.insert(k.to_string(), spira_config::process::cfg(k)?);
     }
-    let par: usize = pinned["SPIRA_CERTIFY_PAR"]
-        .trim()
-        .parse()
-        .map_err(|_| "SPIRA_CERTIFY_PAR must be a positive integer".to_string())?;
+    let par: usize = pinned["SPIRA_CERTIFY_PAR"].trim().parse().map_err(|_| "SPIRA_CERTIFY_PAR must be a positive integer".to_string())?;
     let q = queue(e);
     spira_config::process::spec()?;
     let mut snap = pins(&pinned);
     snap.run_dir = e.world.run_dir.display().to_string();
     snap.inbox = q.queued().iter().map(task_job).collect();
-    snap.claimed = q
-        .claimed_slots()
-        .into_iter()
-        .map(|s| (s, q.claimed(s).iter().map(task_job).collect()))
-        .collect();
-    snap.running_by_repo = q
-        .running_by_repo()
-        .into_iter()
-        .map(|(r, n)| (r, n as u32))
-        .collect();
-    snap.free_slots =
-        landing_pass::real::admission_free(&e.world.run_dir.join("gate-admission"), par) as u32;
-    snap.now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64);
+    snap.claimed = q.claimed_slots().into_iter().map(|s| (s, q.claimed(s).iter().map(task_job).collect())).collect();
+    snap.running_by_repo = q.running_by_repo().into_iter().map(|(r, n)| (r, n as u32)).collect();
+    snap.free_slots = landing_pass::real::admission_free(&e.world.run_dir.join("gate-admission"), par) as u32;
+    snap.now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
     for (i, slot) in carry.slots.iter().enumerate() {
-        let (Some(job), true) = (&slot.job, slot.leg_started) else {
-            continue;
-        };
+        let (Some(job), true) = (&slot.job, slot.leg_started) else { continue };
         let leg = match slot.state {
             State::Gating => "gate",
             _ => continue,
         };
         let (out_path, rc_path) = leg_paths(&snap.run_dir, i, leg, job);
         // Ask the unit before reading the files, so a leg ending in between is seen with its files.
-        let unit_present = e
-            .units
-            .as_deref()
-            .ok_or("no unit manager configured")?
-            .facts(&runtime::units::UnitHandle::of(NAME, &leg_key(i, leg, job)).map_err(|e| e.0)?)
-            .map_err(|e| e.0)?
-            .state
-            != runtime::units::UnitState::Absent;
+        let unit_present = e.units.as_deref().ok_or("no unit manager configured")?.facts(&runtime::units::UnitHandle::of(NAME, &leg_key(i, leg, job)).map_err(|e| e.0)?).map_err(|e| e.0)?.state != runtime::units::UnitState::Absent;
         let (rc, out) = read_leg(&rc_path, &out_path);
         let running = rc.is_none() && unit_present;
-        let run = (!running && leg == "gate" && has_trace(rc, &out))
-            .then(|| classify(rc.unwrap_or(KILLED), &out));
-        snap.legs.insert(
-            i,
-            Leg {
-                running,
-                rc,
-                verdict: run.as_ref().map(|r| r.verdict.clone()),
-                reason: run.and_then(|r| r.reason),
-            },
-        );
+        let run = (!running && leg == "gate" && has_trace(rc, &out)).then(|| classify(rc.unwrap_or(KILLED), &out));
+        snap.legs.insert(i, Leg { running, rc, verdict: run.as_ref().map(|r| r.verdict.clone()), reason: run.and_then(|r| r.reason) });
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
@@ -971,48 +689,21 @@ pub fn observe(e: &crate::Effects, input: &str) -> Result<String, String> {
 pub fn tip(input: &str) -> Result<String, String> {
     let sj = slot_job(input, TIP)?;
     let home = spira_config::resolve::locate_home_for_process()?;
-    let Some(root) = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home)
-        .root(&sj.job.repo)
-    else {
-        return Ok(String::new());
-    };
-    Ok(super::gate_check::git(
-        std::path::Path::new(&root),
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{}", sj.job.branch),
-        ],
-        5,
-    )
-    .unwrap_or_default()
-    .trim()
-    .to_string())
+    let Some(root) = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home).root(&sj.job.repo) else { return Ok(String::new()) };
+    Ok(super::gate_check::git(std::path::Path::new(&root), &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{}", sj.job.branch)], 5).unwrap_or_default().trim().to_string())
 }
 
 /// Claim the chosen job for the slot: one rename, refused when it is already claimed.
 pub fn claim(e: &crate::Effects, input: &str) -> Result<String, String> {
     let sj = slot_job(input, CLAIM)?;
-    queue(e)
-        .claim_job(sj.slot, &sj.job.repo, &sj.job.branch, &sj.job.tip)
-        .map(|_| format!("slot {} claimed {}", sj.slot, sj.job.key()))
-        .ok_or_else(|| format!("{CLAIM}: {} is no longer queued — refused", sj.job.key()))
+    queue(e).claim_job(sj.slot, &sj.job.repo, &sj.job.branch, &sj.job.tip).map(|_| format!("slot {} claimed {}", sj.slot, sj.job.key())).ok_or_else(|| format!("{CLAIM}: {} is no longer queued — refused", sj.job.key()))
 }
 
 /// Drop the slot's claim on a job whose branch is gone or moved.
 pub fn discard(e: &crate::Effects, input: &str) -> Result<String, String> {
     let sj = slot_job(input, DISCARD)?;
     let q = queue(e);
-    let job = q
-        .claimed_job(sj.slot, &sj.job.repo, &sj.job.branch, &sj.job.tip)
-        .ok_or_else(|| {
-            format!(
-                "{DISCARD}: slot {} does not hold {} — refused",
-                sj.slot,
-                sj.job.key()
-            )
-        })?;
+    let job = q.claimed_job(sj.slot, &sj.job.repo, &sj.job.branch, &sj.job.tip).ok_or_else(|| format!("{DISCARD}: slot {} does not hold {} — refused", sj.slot, sj.job.key()))?;
     q.discard(sj.slot, &job);
     Ok(format!("slot {} dropped {}", sj.slot, sj.job.key()))
 }
@@ -1024,10 +715,7 @@ fn filing(input: &str, effect: &str) -> Result<Filing, String> {
 fn gate_run(f: &Filing) -> Result<landing_pass::model::GateRun, String> {
     let out = std::fs::read_to_string(&f.out_path).unwrap_or_default();
     if !has_trace(f.rc, &out) {
-        return Err(format!(
-            "{} ended with no status and no output",
-            f.job.key()
-        ));
+        return Err(format!("{} ended with no status and no output", f.job.key()));
     }
     Ok(gate_worker::classify(f.rc.unwrap_or(KILLED), out))
 }
@@ -1041,79 +729,32 @@ pub fn retain_output(e: &crate::Effects, input: &str) -> Result<String, String> 
     let f = filing(input, RETAIN_OUTPUT)?;
     let run = gate_run(&f).map_err(|why| format!("{RETAIN_OUTPUT}: {why} — refused"))?;
     let q = queue(e);
-    let job = q
-        .claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip)
-        .unwrap_or_else(|| {
-            landing_pass::gateq::Job::new(
-                &f.job.repo,
-                &f.job.branch,
-                &f.job.bead,
-                &f.job.tip,
-                f.job.fix,
-            )
-        });
-    q.retain_output(&job, &run.out)
-        .map(|p| p.display().to_string())
-        .map_err(|e| format!("{RETAIN_OUTPUT}: {e}"))
+    let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).unwrap_or_else(|| landing_pass::gateq::Job::new(&f.job.repo, &f.job.branch, &f.job.bead, &f.job.tip, f.job.fix));
+    q.retain_output(&job, &run.out).map(|p| p.display().to_string()).map_err(|e| format!("{RETAIN_OUTPUT}: {e}"))
 }
 
 /// File the verdict for the pass and free the slot's claim; the leg's files go with it.
 pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
     let f = filing(input, COMPLETE)?;
-    let run = gate_run(&f).map_err(|why| {
-        format!("{COMPLETE}: {why} — refused, the claim is recovered and the tip gated again")
-    })?;
+    let run = gate_run(&f).map_err(|why| format!("{COMPLETE}: {why} — refused, the claim is recovered and the tip gated again"))?;
     let q = queue(e);
-    let job = q
-        .claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip)
-        .ok_or_else(|| {
-            format!(
-                "{COMPLETE}: slot {} does not hold {} — refused",
-                f.slot,
-                f.job.key()
-            )
-        })?;
+    let job = q.claimed_job(f.slot, &f.job.repo, &f.job.branch, &f.job.tip).ok_or_else(|| format!("{COMPLETE}: slot {} does not hold {} — refused", f.slot, f.job.key()))?;
     let word = run.outcome.word();
-    let settled = q
-        .settle(
-            f.slot,
-            &landing_pass::gateq::Done {
-                job,
-                run,
-                started_ms: f.started_ms,
-                finished_ms: f.finished_ms,
-                gate: String::new(),
-            },
-        )
-        .map_err(|e| format!("{COMPLETE}: {e}"))?;
+    let settled = q.settle(f.slot, &landing_pass::gateq::Done { job, run, started_ms: f.started_ms, finished_ms: f.finished_ms, gate: String::new() }).map_err(|e| format!("{COMPLETE}: {e}"))?;
     let mut word = match &settled {
-        landing_pass::gateq::Settled::Requeued => {
-            "ended without a verdict, queued again".to_string()
-        }
+        landing_pass::gateq::Settled::Requeued => "ended without a verdict, queued again".to_string(),
         _ => word.to_string(),
     };
     if let landing_pass::gateq::Settled::Held(h) = &settled {
-        let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket)
-            .within(std::time::Duration::from_secs(5));
+        let lc = spira_store::lc_call::LcClient::socket(&e.world.lc_socket).within(std::time::Duration::from_secs(5));
         let hold = |bead: &str, why: &str| {
             lc.call(&["hold", bead, "wait", why, NAME])
                 .map_err(|e| e.to_string())
-                .and_then(|r| {
-                    if r.code == 0 {
-                        Ok(())
-                    } else {
-                        Err(format!("spira-lc hold exited {}: {}", r.code, r.why()))
-                    }
-                })
+                .and_then(|r| if r.code == 0 { Ok(()) } else { Err(format!("spira-lc hold exited {}: {}", r.code, r.why())) })
         };
         word = hold_verdictless(h, hold, |line| e.world.inbox_append(line));
     }
-    let (out, rc) = leg_paths(
-        &e.world.run_dir.display().to_string(),
-        f.slot,
-        "gate",
-        &f.job,
-    );
+    let (out, rc) = leg_paths(&e.world.run_dir.display().to_string(), f.slot, "gate", &f.job);
     let _ = std::fs::remove_file(out);
     let _ = std::fs::remove_file(rc);
     Ok(format!("{} → {word}", f.job.key()))
@@ -1121,29 +762,19 @@ pub fn complete(e: &crate::Effects, input: &str) -> Result<String, String> {
 
 /// Hold the bead and say so in the inbox, once. A hold that could not be placed is named in
 /// the same line: the filed verdict is already in, so the failure is reported, never retried.
-fn hold_verdictless(
-    h: &landing_pass::gateq::Hold,
-    hold: impl FnOnce(&str, &str) -> Result<(), String>,
-    say: impl FnOnce(&str) -> Result<String, String>,
-) -> String {
+fn hold_verdictless(h: &landing_pass::gateq::Hold, hold: impl FnOnce(&str, &str) -> Result<(), String>, say: impl FnOnce(&str) -> Result<String, String>) -> String {
     let placed = hold(&h.bead, &h.reason);
     let line = match &placed {
         Ok(()) => h.line.clone(),
         Err(why) => format!("{} — the hold was NOT placed: {why}", h.line),
     };
     let said = say(&line).unwrap_or_else(|e| format!("inbox line not written: {e}"));
-    format!(
-        "held ({}; {said})",
-        placed.err().unwrap_or_else(|| "hold placed".into())
-    )
+    format!("held ({}; {said})", placed.err().unwrap_or_else(|| "hold placed".into()))
 }
 
 /// A slot's claims go back to the inbox.
 pub fn recover(e: &crate::Effects, input: &str) -> Result<String, String> {
-    let slot: usize = input
-        .trim()
-        .parse()
-        .map_err(|_| format!("{RECOVER}: bad slot {input:?}"))?;
+    let slot: usize = input.trim().parse().map_err(|_| format!("{RECOVER}: bad slot {input:?}"))?;
     queue(e).recover(slot);
     Ok(format!("slot {slot} recovered"))
 }
@@ -1153,32 +784,16 @@ mod slot_row_tests {
     use super::*;
 
     fn busy(ms: u64) -> Slot {
-        Slot {
-            started_ms: Some(ms),
-            ..Slot::default()
-        }
+        Slot { started_ms: Some(ms), ..Slot::default() }
     }
 
     #[test_id(tttxe90)]
     #[test]
     fn a_carry_with_a_gap_and_idle_tail_comes_back_from_its_rows_at_the_same_width() {
-        let carry = Carry {
-            slots: vec![
-                Slot::default(),
-                busy(7),
-                Slot::default(),
-                busy(9),
-                Slot::default(),
-                Slot::default(),
-            ],
-        };
+        let carry = Carry { slots: vec![Slot::default(), busy(7), Slot::default(), busy(9), Slot::default(), Slot::default()] };
         let body = serde_json::to_string(&carry).unwrap();
         let rows = split_slots(&body);
-        assert_eq!(
-            rows.keys().cloned().collect::<Vec<_>>(),
-            ["slot/0001", "slot/0003", "width"],
-            "idle slots are not stored"
-        );
+        assert_eq!(rows.keys().cloned().collect::<Vec<_>>(), ["slot/0001", "slot/0003", "width"], "idle slots are not stored");
         let back: Carry = serde_json::from_str(&join_slots(&rows)).unwrap();
         assert_eq!(back, carry);
     }
@@ -1186,9 +801,7 @@ mod slot_row_tests {
     #[test_id(tqaubbd)]
     #[test]
     fn dropping_the_width_row_loses_the_idle_tail() {
-        let carry = Carry {
-            slots: vec![busy(1), Slot::default(), Slot::default()],
-        };
+        let carry = Carry { slots: vec![busy(1), Slot::default(), Slot::default()] };
         let mut rows = split_slots(&serde_json::to_string(&carry).unwrap());
         rows.remove("width");
         let back: Carry = serde_json::from_str(&join_slots(&rows)).unwrap();
@@ -1202,11 +815,7 @@ mod hold_tests {
     use std::cell::RefCell;
 
     fn held() -> landing_pass::gateq::Hold {
-        landing_pass::gateq::Hold {
-            bead: "sp-a".into(),
-            reason: "gate: no verdict twice on t1 (build-stall)".into(),
-            line: "gate: sp-a ended without a verdict twice on t1".into(),
-        }
+        landing_pass::gateq::Hold { bead: "sp-a".into(), reason: "gate: no verdict twice on t1 (build-stall)".into(), line: "gate: sp-a ended without a verdict twice on t1".into() }
     }
 
     #[test_id(tt91yvt)]
@@ -1214,28 +823,9 @@ mod hold_tests {
     fn a_second_verdictless_run_places_the_wait_hold_and_writes_one_inbox_line() {
         let holds = RefCell::new(Vec::new());
         let lines = RefCell::new(Vec::new());
-        let word = hold_verdictless(
-            &held(),
-            |b, w| {
-                holds.borrow_mut().push((b.to_string(), w.to_string()));
-                Ok(())
-            },
-            |l| {
-                lines.borrow_mut().push(l.to_string());
-                Ok("appended".into())
-            },
-        );
-        assert_eq!(
-            *holds.borrow(),
-            [(
-                "sp-a".to_string(),
-                "gate: no verdict twice on t1 (build-stall)".to_string()
-            )]
-        );
-        assert_eq!(
-            *lines.borrow(),
-            ["gate: sp-a ended without a verdict twice on t1"]
-        );
+        let word = hold_verdictless(&held(), |b, w| { holds.borrow_mut().push((b.to_string(), w.to_string())); Ok(()) }, |l| { lines.borrow_mut().push(l.to_string()); Ok("appended".into()) });
+        assert_eq!(*holds.borrow(), [("sp-a".to_string(), "gate: no verdict twice on t1 (build-stall)".to_string())]);
+        assert_eq!(*lines.borrow(), ["gate: sp-a ended without a verdict twice on t1"]);
         assert!(word.contains("hold placed"), "{word}");
     }
 
@@ -1243,20 +833,9 @@ mod hold_tests {
     #[test]
     fn a_hold_that_could_not_be_placed_is_named_in_the_inbox_line() {
         let lines = RefCell::new(Vec::new());
-        let word = hold_verdictless(
-            &held(),
-            |_, _| Err("socket gone".into()),
-            |l| {
-                lines.borrow_mut().push(l.to_string());
-                Ok("appended".into())
-            },
-        );
+        let word = hold_verdictless(&held(), |_, _| Err("socket gone".into()), |l| { lines.borrow_mut().push(l.to_string()); Ok("appended".into()) });
         assert_eq!(lines.borrow().len(), 1);
-        assert!(
-            lines.borrow()[0].contains("NOT placed: socket gone"),
-            "{:?}",
-            lines.borrow()
-        );
+        assert!(lines.borrow()[0].contains("NOT placed: socket gone"), "{:?}", lines.borrow());
         assert!(word.contains("socket gone"), "{word}");
     }
 }
@@ -1266,14 +845,7 @@ mod pick_order_tests {
     use super::*;
 
     fn job(bead: &str, repo: &str, express: bool, priority: u8) -> Job {
-        Job {
-            repo: repo.into(),
-            branch: format!("spira/{bead}"),
-            bead: bead.into(),
-            express,
-            priority,
-            ..Job::default()
-        }
+        Job { repo: repo.into(), branch: format!("spira/{bead}"), bead: bead.into(), express, priority, ..Job::default() }
     }
 
     #[test_id(ti4mrat)]
@@ -1281,11 +853,7 @@ mod pick_order_tests {
     fn pick_takes_express_before_a_lower_priority_number_and_priority_before_repo_fairness() {
         let mut snap = Snapshot::default();
         snap.running_by_repo.insert("A".into(), 1);
-        snap.inbox = vec![
-            job("p0", "A", false, 0),
-            job("p2-idle", "B", false, 2),
-            job("x", "A", true, 1),
-        ];
+        snap.inbox = vec![job("p0", "A", false, 0), job("p2-idle", "B", false, 2), job("x", "A", true, 1)];
         assert_eq!(pick(&snap, 0).unwrap().bead, "x");
         snap.inbox.retain(|j| j.bead != "x");
         assert_eq!(pick(&snap, 0).unwrap().bead, "p0");

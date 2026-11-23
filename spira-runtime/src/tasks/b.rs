@@ -23,11 +23,7 @@ macro_rules! hosted {
         $crate::tasks::b::hosted!($ty, catch_up = $crate::tasks::b::kit::no_catch_up);
     };
     ($ty:ident, off_journal) => {
-        $crate::tasks::b::hosted!(
-            $ty,
-            catch_up = $crate::tasks::b::kit::no_catch_up,
-            off_journal = true
-        );
+        $crate::tasks::b::hosted!($ty, catch_up = $crate::tasks::b::kit::no_catch_up, off_journal = true);
     };
     ($ty:ident, catch_up = $catch_up:path) => {
         $crate::tasks::b::hosted!($ty, catch_up = $catch_up, off_journal = false);
@@ -42,15 +38,7 @@ macro_rules! hosted {
 
             fn from_cfg(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Self, String> {
                 let cfg = $crate::tasks::b::kit::configure(KEYS, get)?;
-                Ok($ty {
-                    cadence: $crate::tasks::b::kit::cadence(
-                        &cfg,
-                        CADENCE_KEY,
-                        SPEC.calendar,
-                        SPEC.jitter_key,
-                    )?,
-                    cfg,
-                })
+                Ok($ty { cadence: $crate::tasks::b::kit::cadence(&cfg, CADENCE_KEY, SPEC.calendar, SPEC.jitter_key)?, cfg })
             }
 
             fn cadence(&self) -> &$crate::tasks::b::kit::Cadence {
@@ -61,20 +49,11 @@ macro_rules! hosted {
                 &self.cfg
             }
 
-            fn decide(
-                cfg: &$crate::tasks::b::kit::Cfg,
-                carry: &Carry,
-                input: &$crate::tasks::b::kit::Input<Snapshot>,
-                now_ms: u64,
-            ) -> $crate::tasks::b::kit::Decision<Carry> {
+            fn decide(cfg: &$crate::tasks::b::kit::Cfg, carry: &Carry, input: &$crate::tasks::b::kit::Input<Snapshot>, now_ms: u64) -> $crate::tasks::b::kit::Decision<Carry> {
                 decide(cfg, carry, input, now_ms)
             }
 
-            fn catch_up(
-                carry: &Carry,
-                now_ms: u64,
-                cadence: &$crate::tasks::b::kit::Cadence,
-            ) -> Option<String> {
+            fn catch_up(carry: &Carry, now_ms: u64, cadence: &$crate::tasks::b::kit::Cadence) -> Option<String> {
                 $catch_up(carry, now_ms, cadence)
             }
         }
@@ -92,17 +71,11 @@ macro_rules! hosted {
 
         impl runtime::event::Handler for $ty {
             fn interests(&self) -> &[runtime::event::EventKindTag] {
-                static INTERESTS: [runtime::event::EventKindTag; 5] =
-                    $crate::tasks::b::kit::interests(TICK);
+                static INTERESTS: [runtime::event::EventKindTag; 5] = $crate::tasks::b::kit::interests(TICK);
                 &INTERESTS
             }
 
-            fn handle(
-                &self,
-                ctx: &runtime::event::Ctx,
-                view: &runtime::event::Projection,
-                ev: &runtime::event::Event,
-            ) -> Vec<runtime::event::Command> {
+            fn handle(&self, ctx: &runtime::event::Ctx, view: &runtime::event::Projection, ev: &runtime::event::Event) -> Vec<runtime::event::Command> {
                 $crate::tasks::b::kit::handle(self, ctx, view, ev)
             }
         }
@@ -263,9 +236,7 @@ pub static TASKS: &[Task] = &[
 
 /// Wall time in ms, for a runner whose reading is an age (the effect itself runs on the host).
 pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
 /// The store client every family B runner reaches lc-serve through: the world's socket, with the
@@ -275,7 +246,8 @@ pub fn lc(e: &crate::Effects) -> spira_store::lc_call::LcClient {
 }
 
 /// The family's rows, complete but not yet in `TASKS` (see the module doc).
-pub static PENDING: &[Task] = &[];
+pub static PENDING: &[Task] = &[
+];
 
 /// The shape every family B and C stub shares. A task supplies its [`kit::Spec`], its types
 /// and its `decide`; the tick, the observe probe and the carried state are driven here.
@@ -303,13 +275,7 @@ pub mod kit {
     /// The interests every stub registers: its tick, the outcomes of what it asked for, and
     /// the completions of the units it started.
     pub const fn interests(tick: EventKindTag) -> [EventKindTag; 5] {
-        [
-            tick,
-            EFFECT_SUCCEEDED,
-            EFFECT_FAILED,
-            EFFECT_TIMED_OUT,
-            UNIT_RAN,
-        ]
+        [tick, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT, UNIT_RAN]
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -349,9 +315,7 @@ pub mod kit {
         /// When a tick armed after `now_ms` fires: [`Cadence::next`] plus a seeded draw below the jitter bound.
         pub fn fire_at(&self, now_ms: u64, ctx: &Ctx) -> u64 {
             match self {
-                Cadence::Calendar(_, bound) if *bound > 0 => {
-                    self.next(now_ms) + ctx.rand_u64() % bound
-                }
+                Cadence::Calendar(_, bound) if *bound > 0 => self.next(now_ms) + ctx.rand_u64() % bound,
                 _ => self.next(now_ms),
             }
         }
@@ -389,11 +353,7 @@ pub mod kit {
         /// The observe probe's answer.
         Observed(S),
         /// The outcome of one of the task's own effects.
-        Outcome {
-            effect: String,
-            ok: bool,
-            body: String,
-        },
+        Outcome { effect: String, ok: bool, body: String },
         /// A unit the task started has ended (P2 long legs, S6).
         Ran(UnitRan),
     }
@@ -424,83 +384,43 @@ pub mod kit {
         fn from_cfg(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Self, String>;
         fn cadence(&self) -> &Cadence;
         fn cfg(&self) -> &Cfg;
-        fn decide(
-            cfg: &Cfg,
-            carry: &Self::Carry,
-            input: &Input<Self::Snapshot>,
-            now_ms: u64,
-        ) -> Decision<Self::Carry>;
+        fn decide(cfg: &Cfg, carry: &Self::Carry, input: &Input<Self::Snapshot>, now_ms: u64) -> Decision<Self::Carry>;
         /// A calendar task's boot tick: the probe input to observe at once because a restart
         /// lost a slot or a pass, or `None`. The timer that held the slot lives in memory only.
         /// A resumed pass is stamped by `Input::Fire`, as a slot's is.
         fn catch_up(carry: &Self::Carry, now_ms: u64, cadence: &Cadence) -> Option<String>;
 
         fn registration(self) -> Registration {
-            Registration::new(Self::SPEC.name, self).with_rows(runtime::row_codec!(
-                Self::SPEC.stream,
-                Self::SPEC.state,
-                Self::ROWS
-            ))
+            Registration::new(Self::SPEC.name, self).with_rows(runtime::row_codec!(Self::SPEC.stream, Self::SPEC.state, Self::ROWS))
         }
     }
 
     /// Every key in `keys`, each read once through `get`, or the first that does not resolve.
-    pub fn configure(
-        keys: &[&str],
-        get: &dyn Fn(&str) -> Result<String, String>,
-    ) -> Result<Cfg, String> {
-        keys.iter()
-            .map(|k| get(k).map(|v| (k.to_string(), v)))
-            .collect()
+    pub fn configure(keys: &[&str], get: &dyn Fn(&str) -> Result<String, String>) -> Result<Cfg, String> {
+        keys.iter().map(|k| get(k).map(|v| (k.to_string(), v))).collect()
     }
 
     /// The cadence from `cfg[key]`: positive seconds, or an `OnCalendar` spec.
-    pub fn cadence(
-        cfg: &Cfg,
-        key: &str,
-        calendar: bool,
-        jitter_key: Option<&str>,
-    ) -> Result<Cadence, String> {
-        let raw = cfg
-            .get(key)
-            .ok_or_else(|| format!("{key} is read but not declared"))?;
+    pub fn cadence(cfg: &Cfg, key: &str, calendar: bool, jitter_key: Option<&str>) -> Result<Cadence, String> {
+        let raw = cfg.get(key).ok_or_else(|| format!("{key} is read but not declared"))?;
         if calendar {
             let jitter_ms = match jitter_key {
                 None => 0,
                 Some(j) => {
-                    let v = cfg
-                        .get(j)
-                        .ok_or_else(|| format!("{j} is read but not declared"))?;
-                    v.trim()
-                        .parse::<u64>()
-                        .ok()
-                        .and_then(|s| s.checked_mul(1000))
-                        .ok_or_else(|| {
-                            format!("{j} must be a non-negative integer of seconds, got {v:?}")
-                        })?
+                    let v = cfg.get(j).ok_or_else(|| format!("{j} is read but not declared"))?;
+                    v.trim().parse::<u64>().ok().and_then(|s| s.checked_mul(1000)).ok_or_else(|| format!("{j} must be a non-negative integer of seconds, got {v:?}"))?
                 }
             };
-            return Calendar::parse(raw)
-                .map(|c| Cadence::Calendar(c, jitter_ms))
-                .map_err(|e| format!("{key}: {e}"));
+            return Calendar::parse(raw).map(|c| Cadence::Calendar(c, jitter_ms)).map_err(|e| format!("{key}: {e}"));
         }
-        raw.trim()
-            .parse::<u64>()
-            .ok()
-            .filter(|s| *s > 0)
-            .map(|s| Cadence::Every(s * 1000))
-            .ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
+        raw.trim().parse::<u64>().ok().filter(|s| *s > 0).map(|s| Cadence::Every(s * 1000)).ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
     }
 
     /// `T` from the `Settings` its row is built with: each key as `Settings::from_lookup` read
     /// it into `task_config`, never the process's own config door. A key the settings lack (no
     /// row of `tasks::all()` declares it) is a broken table, and refuses the build naming it.
     pub fn built<T: Stub>(settings: &Settings) -> T {
-        let get = |k: &str| {
-            settings.task_config.get(k).cloned().ok_or_else(|| {
-                format!("{k} is not in the settings (no row of tasks::all() declares it)")
-            })
-        };
+        let get = |k: &str| settings.task_config.get(k).cloned().ok_or_else(|| format!("{k} is not in the settings (no row of tasks::all() declares it)"));
         T::from_cfg(&get).unwrap_or_else(|e| panic!("{}: {e}", T::SPEC.name))
     }
 
@@ -513,11 +433,7 @@ pub mod kit {
     }
 
     pub fn boot<T: Stub>() -> (&'static str, &'static str, EventKind) {
-        (
-            T::SPEC.name,
-            T::SPEC.stream,
-            EventKind::new(T::SPEC.tick, if T::SPEC.calendar { BOOT } else { FIRE }),
-        )
+        (T::SPEC.name, T::SPEC.stream, EventKind::new(T::SPEC.tick, if T::SPEC.calendar { BOOT } else { FIRE }))
     }
 
     /// [`Stub::catch_up`] for a task whose boot tick only arms the next slot.
@@ -535,9 +451,7 @@ pub mod kit {
         let spec = &T::SPEC;
         let stream = StreamKey(spec.stream.into());
         if ev.kind.tag == UNIT_RAN {
-            return match UnitRan::from_event_kind(&ev.kind)
-                .filter(|r| r.key_for(spec.name).is_some())
-            {
+            return match UnitRan::from_event_kind(&ev.kind).filter(|r| r.key_for(spec.name).is_some()) {
                 Some(ran) => run(t, ctx, view, &stream, Input::Ran(ran), ev.at),
                 None => vec![],
             };
@@ -548,108 +462,51 @@ pub mod kit {
         if ev.kind.tag == spec.tick {
             let mut cmds = vec![];
             let booting = t.cadence().is_calendar() && ev.kind.body == BOOT;
-            let resumed = if booting {
-                T::catch_up(
-                    &carried::<T::Carry>(view, &stream, spec.state),
-                    ev.at,
-                    t.cadence(),
-                )
-            } else {
-                None
-            };
+            let resumed = if booting { T::catch_up(&carried::<T::Carry>(view, &stream, spec.state), ev.at, t.cadence()) } else { None };
             if t.cadence().is_calendar() && (!booting || resumed.is_some()) {
                 cmds.extend(run(t, ctx, view, &stream, Input::Fire, ev.at));
             }
             if !booting {
-                let input = spec
-                    .probe_input_key
-                    .and_then(|k| t.cfg().get(k))
-                    .cloned()
-                    .unwrap_or_default();
-                cmds.push(Command::Probe(EffectSpec::probe(
-                    spec.probe,
-                    input,
-                    spec.probe_deadline_ms,
-                )));
+                let input = spec.probe_input_key.and_then(|k| t.cfg().get(k)).cloned().unwrap_or_default();
+                cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
             } else if let Some(input) = resumed {
-                cmds.push(Command::Probe(EffectSpec::probe(
-                    spec.probe,
-                    input,
-                    spec.probe_deadline_ms,
-                )));
+                cmds.push(Command::Probe(EffectSpec::probe(spec.probe, input, spec.probe_deadline_ms)));
             }
-            cmds.push(Command::Timer {
-                at: t.cadence().fire_at(ev.at, ctx),
-                kind: EventKind::new(spec.tick, FIRE),
-            });
+            cmds.push(Command::Timer { at: t.cadence().fire_at(ev.at, ctx), kind: EventKind::new(spec.tick, FIRE) });
             return cmds;
         }
-        let Some(asked) = answered_effect(view, ev) else {
-            return vec![];
-        };
+        let Some(asked) = answered_effect(view, ev) else { return vec![] };
         if asked == spec.probe {
             if ev.kind.tag != EFFECT_SUCCEEDED {
                 return vec![];
             }
-            let Ok(snap) = serde_json::from_str::<T::Snapshot>(&ev.kind.body) else {
-                return vec![];
-            };
+            let Ok(snap) = serde_json::from_str::<T::Snapshot>(&ev.kind.body) else { return vec![] };
             return run(t, ctx, view, &stream, Input::Observed(snap), ev.at);
         }
         if !spec.effects.contains(&asked.as_str()) {
             return vec![];
         }
         let ok = ev.kind.tag == EFFECT_SUCCEEDED;
-        run(
-            t,
-            ctx,
-            view,
-            &stream,
-            Input::Outcome {
-                effect: asked,
-                ok,
-                body: ev.kind.body.clone(),
-            },
-            ev.at,
-        )
+        run(t, ctx, view, &stream, Input::Outcome { effect: asked, ok, body: ev.kind.body.clone() }, ev.at)
     }
 
-    fn run<T: Stub>(
-        t: &T,
-        ctx: &Ctx,
-        view: &Projection,
-        stream: &StreamKey,
-        input: Input<T::Snapshot>,
-        now: u64,
-    ) -> Vec<Command> {
+    fn run<T: Stub>(t: &T, ctx: &Ctx, view: &Projection, stream: &StreamKey, input: Input<T::Snapshot>, now: u64) -> Vec<Command> {
         let carry = carried::<T::Carry>(view, stream, T::SPEC.state);
         match T::decide(t.cfg(), &carry, &input, now) {
             Ok((next, acts)) => {
                 let mut cmds = vec![];
                 if next != carry {
-                    let state = EventKind::new(
-                        T::SPEC.state,
-                        &serde_json::to_string(&next).unwrap_or_default(),
-                    );
-                    cmds.push(if T::OFF_JOURNAL {
-                        Command::Note(state)
-                    } else {
-                        Command::Emit(state)
-                    });
+                    let state = EventKind::new(T::SPEC.state, &serde_json::to_string(&next).unwrap_or_default());
+                    cmds.push(if T::OFF_JOURNAL { Command::Note(state) } else { Command::Emit(state) });
                 }
                 for a in acts {
                     let spec = EffectSpec::keyed(a.name, a.key, a.input, a.deadline_ms);
-                    cmds.push(if a.probe {
-                        Command::Probe(spec)
-                    } else {
-                        Command::Effect(spec)
-                    });
+                    cmds.push(if a.probe { Command::Probe(spec) } else { Command::Effect(spec) });
                 }
                 cmds
             }
             Err(why) => {
-                ctx.event()
-                    .set(&format!("{}.refused", T::SPEC.name), why.as_str());
+                ctx.event().set(&format!("{}.refused", T::SPEC.name), why.as_str());
                 vec![]
             }
         }
@@ -667,30 +524,16 @@ pub mod kit {
         use runtime::taskrig::{assert_silent_tick, effects_runnable, TaskRig, PLANTED_UNKNOWN};
 
         /// The launchers `tests/it/no_spawn.rs` scans for, each split so this file does not name one.
-        pub const LAUNCHERS: &[&str] = &[
-            concat!("Command", "::new"),
-            concat!("std", "::process"),
-            concat!("process", "::Command"),
-            concat!("libc", "::fork"),
-            concat!("libc", "::exec"),
-            concat!("posix", "_spawn"),
-            concat!("nix", "::unistd"),
-        ];
+        pub const LAUNCHERS: &[&str] = &[concat!("Command", "::new"), concat!("std", "::process"), concat!("process", "::Command"), concat!("libc", "::fork"), concat!("libc", "::exec"), concat!("posix", "_spawn"), concat!("nix", "::unistd")];
 
         /// A config door that answers exactly `T`'s declared keys, `set` first and `"fixture"`
         /// otherwise, and refuses any other key: building through it proves every key read is
         /// declared on the row.
         pub fn lookup<T: Stub>(set: &[(&str, &str)]) -> impl Fn(&str) -> Result<String, String> {
-            let set: BTreeMap<String, String> = set
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
+            let set: BTreeMap<String, String> = set.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
             move |k: &str| {
                 if !T::SPEC.keys.contains(&k) {
-                    return Err(format!(
-                        "{k} is read but {} does not declare it",
-                        T::SPEC.name
-                    ));
+                    return Err(format!("{k} is read but {} does not declare it", T::SPEC.name));
                 }
                 Ok(set.get(k).cloned().unwrap_or_else(|| "fixture".into()))
             }
@@ -706,21 +549,10 @@ pub mod kit {
         }
 
         /// A rig on `T` whose observe probe answers `answers` in turn, round and round, booted.
-        pub fn rig_cycle<T: Stub>(
-            seed: u64,
-            set: &[(&str, &str)],
-            answers: Vec<String>,
-        ) -> TaskRig {
+        pub fn rig_cycle<T: Stub>(seed: u64, set: &[(&str, &str)], answers: Vec<String>) -> TaskRig {
             let asked = std::sync::atomic::AtomicUsize::new(0);
-            let answer =
-                move |_: &str| {
-                    Ok(answers
-                        [asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) % answers.len()]
-                    .clone())
-                };
-            let mut r = TaskRig::new(seed, handler::<T>(set).registration())
-                .unwrap()
-                .double(T::SPEC.probe, answer);
+            let answer = move |_: &str| Ok(answers[asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) % answers.len()].clone());
+            let mut r = TaskRig::new(seed, handler::<T>(set).registration()).unwrap().double(T::SPEC.probe, answer);
             let (_, stream, kind) = boot::<T>();
             r.tick(stream, kind).unwrap();
             r
@@ -729,68 +561,41 @@ pub mod kit {
         /// Panics with the handler's own panic when the stream was quarantined, so a stub's
         /// `unimplemented!` is the failure a test reports rather than a silent poisoned stream.
         pub fn assert_ported(rig: &TaskRig, stream: &str) {
-            if let Some(p) = rig
-                .journal
-                .poisoned(&StreamKey(stream.into()))
-                .expect("read poison")
-            {
+            if let Some(p) = rig.journal.poisoned(&StreamKey(stream.into())).expect("read poison") {
                 panic!("{}", p.message);
             }
         }
 
         /// The last carried state `rig` journaled on `T`'s stream.
         pub fn recorded<T: Stub>(rig: &TaskRig) -> Option<T::Carry> {
-            rig.journaled()
-                .into_iter()
-                .rev()
-                .find(|e| e.stream.0 == T::SPEC.stream && e.kind.tag == T::SPEC.state)
-                .and_then(|e| serde_json::from_str(&e.kind.body).ok())
+            rig.journaled().into_iter().rev().find(|e| e.stream.0 == T::SPEC.stream && e.kind.tag == T::SPEC.state).and_then(|e| serde_json::from_str(&e.kind.body).ok())
         }
 
         /// T1: `T` builds from its declared keys alone, its boot tick arms the first tick at
         /// `first_ms`, and it is a row of `tasks::all()` with its declared keys and effects.
         pub fn t1_registered_and_boots<T: Stub>(set: &[(&str, &str)], first_ms: u64) {
             let h = handler::<T>(set);
-            assert_eq!(
-                h.cadence().first_ms(),
-                first_ms,
-                "{}: cadence",
-                T::SPEC.name
-            );
+            assert_eq!(h.cadence().first_ms(), first_ms, "{}: cadence", T::SPEC.name);
             let h_jitter_ms = h.cadence().jitter_ms();
             let mut rig = TaskRig::new(1, h.registration()).unwrap();
             let (_, stream, kind) = boot::<T>();
             assert_eq!(stream, T::SPEC.stream);
             rig.tick(stream, kind).unwrap();
-            let armed = rig.engine().next_timer_at().unwrap_or_else(|| {
-                panic!("{}: the boot tick must arm the first tick", T::SPEC.name)
-            });
+            let armed = rig.engine().next_timer_at().unwrap_or_else(|| panic!("{}: the boot tick must arm the first tick", T::SPEC.name));
             assert!((first_ms..=first_ms + h_jitter_ms.saturating_sub(1)).contains(&armed), "{}: the boot tick must arm the first tick in [{first_ms}, {first_ms} + {h_jitter_ms} ms), got {armed}", T::SPEC.name);
             for q in rig.requested() {
-                assert!(
-                    T::SPEC.effects.contains(&q.name.as_str()),
-                    "{} asked for undeclared {}",
-                    T::SPEC.name,
-                    q.name
-                );
+                assert!(T::SPEC.effects.contains(&q.name.as_str()), "{} asked for undeclared {}", T::SPEC.name, q.name);
             }
             let row = crate::tasks::all().find(|t| t.name == T::SPEC.name).unwrap_or_else(|| panic!("{} is not a row of tasks::all(): it waits in PENDING until its keys and mode are registered", T::SPEC.name));
             assert_eq!(row.effects, T::SPEC.effects);
-            assert_eq!(
-                row.keys
-                    .iter()
-                    .flat_map(|k| k.iter().copied())
-                    .collect::<Vec<_>>(),
-                T::SPEC.keys
-            );
+            assert_eq!(row.keys.iter().flat_map(|k| k.iter().copied()).collect::<Vec<_>>(), T::SPEC.keys);
             assert_eq!(row.stream(), T::SPEC.stream);
         }
 
         /// T2: on `idle`, a tick journals nothing and asks for nothing beyond its probe.
         pub fn t2_silent<T: Stub>(set: &[(&str, &str)], idle: &str) {
             let mut r = rig::<T>(1, set, idle);
-            r.tick(T::SPEC.stream, EventKind::new(T::SPEC.tick, FIRE))
-                .unwrap();
+            r.tick(T::SPEC.stream, EventKind::new(T::SPEC.tick, FIRE)).unwrap();
             assert_ported(&r, T::SPEC.stream);
             assert_silent_tick(&mut r, T::SPEC.stream);
             assert_ported(&r, T::SPEC.stream);
@@ -800,19 +605,11 @@ pub mod kit {
         /// `sim`, the simulator's names (the matcher refuses a planted name first), and `src`,
         /// the module's text, launches no process.
         pub fn t4_runnable<T: Stub>(src: &str, sim: &[&str]) {
-            assert!(
-                launcher(concat!("fn f() { Command", "::new(\"x\"); }")).is_some(),
-                "the spawn scan must see a planted launcher"
-            );
+            assert!(launcher(concat!("fn f() { Command", "::new(\"x\"); }")).is_some(), "the spawn scan must see a planted launcher");
             assert_eq!(launcher(src), None, "{} launches a process", T::SPEC.name);
             let real: Vec<&str> = crate::tasks::routes().keys().copied().collect();
             assert!(!real.contains(&PLANTED_UNKNOWN) && !sim.contains(&PLANTED_UNKNOWN));
-            assert_eq!(
-                effects_runnable(T::SPEC.effects, &real, sim),
-                Ok(()),
-                "{}",
-                T::SPEC.name
-            );
+            assert_eq!(effects_runnable(T::SPEC.effects, &real, sim), Ok(()), "{}", T::SPEC.name);
         }
 
         /// The first launcher `text` names before its `#[cfg(test)]` tail.
@@ -823,31 +620,18 @@ pub mod kit {
 
         /// A rig on `T`, driven by `drive` to a carry worth keeping, restarted on its journal: the
         /// first tick then asks for what the same tick asks of a process that never stopped.
-        pub fn assert_boot_matches_an_unstopped_run<T: Stub>(
-            set: &'static [(&'static str, &'static str)],
-            answers: Vec<String>,
-            drive: impl Fn(&mut TaskRig) + Copy,
-        ) {
+        pub fn assert_boot_matches_an_unstopped_run<T: Stub>(set: &'static [(&'static str, &'static str)], answers: Vec<String>, drive: impl Fn(&mut TaskRig) + Copy) {
             let make = || {
                 let mut r = rig_cycle::<T>(1, set, answers.clone());
                 drive(&mut r);
                 r
             };
-            crate::tasks::a::kit::assert_boot_matches_an_unstopped_run(
-                make,
-                || handler::<T>(set).registration(),
-                T::SPEC.stream,
-                EventKind::new(T::SPEC.tick, FIRE),
-            );
+            crate::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler::<T>(set).registration(), T::SPEC.stream, EventKind::new(T::SPEC.tick, FIRE));
         }
 
         /// The times `T`'s probe was asked, in order.
         pub fn fired_at<T: Stub>(rig: &TaskRig) -> Vec<u64> {
-            rig.requested()
-                .iter()
-                .filter(|q| q.name == T::SPEC.probe)
-                .map(|q| q.at)
-                .collect()
+            rig.requested().iter().filter(|q| q.name == T::SPEC.probe).map(|q| q.at).collect()
         }
     }
 
@@ -865,21 +649,14 @@ pub mod kit {
             let mut s = crate::settings::fixture();
             s.task_config.insert(CADENCE_KEY.into(), "4242".into());
             let t = built::<ReconcileSection>(&s);
-            assert_eq!(
-                t.cfg()[CADENCE_KEY],
-                "4242",
-                "the row pins what the settings hold"
-            );
+            assert_eq!(t.cfg()[CADENCE_KEY], "4242", "the row pins what the settings hold");
             assert_eq!(cadence_ms::<ReconcileSection>(&s), 4_242_000);
             for row in crate::tasks::b::TASKS.iter().chain(crate::tasks::c::TASKS) {
                 let _ = (row.build)(&s);
                 let _ = (row.cadence_ms)(&s);
             }
             s.task_config.remove(CADENCE_KEY);
-            assert!(
-                std::panic::catch_unwind(|| built::<ReconcileSection>(&s)).is_err(),
-                "a key the settings lack refuses"
-            );
+            assert!(std::panic::catch_unwind(|| built::<ReconcileSection>(&s)).is_err(), "a key the settings lack refuses");
         }
     }
 }

@@ -99,27 +99,9 @@ pub const EFFECTS: &[&str] = &[OBSERVE, CHECK, RESOLVE, WITHDRAW];
 pub const TIMED_OUT_RC: i32 = 124;
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_ASKS_MOOT_SECS";
-pub const KEYS: &[&str] = &[
-    CADENCE_KEY,
-    "SPIRA_DB",
-    "SPIRA_ASK_LABEL",
-    "SPIRA_MOOT_TIMEOUT",
-];
+pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_DB", "SPIRA_ASK_LABEL", "SPIRA_MOOT_TIMEOUT"];
 
-pub const SPEC: Spec = Spec {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    probe: OBSERVE,
-    probe_deadline_ms: 15_000,
-    cadence_key: CADENCE_KEY,
-    calendar: false,
-    effects: EFFECTS,
-    keys: KEYS,
-    probe_input_key: None,
-    jitter_key: None,
-};
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 15_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -218,20 +200,11 @@ pub const EVIDENCE_BYTES: usize = 300;
 pub const ACTOR: &str = "claude";
 
 fn phase_name(p: Phase) -> String {
-    serde_json::to_value(p)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_default()
+    serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
 fn act(name: &str, key: String, body: &impl Serialize, deadline_ms: u64) -> Result<Act, String> {
-    Ok(Act {
-        name: name.into(),
-        key,
-        input: serde_json::to_string(body).map_err(|e| e.to_string())?,
-        deadline_ms,
-        probe: false,
-    })
+    Ok(Act { name: name.into(), key, input: serde_json::to_string(body).map_err(|e| e.to_string())?, deadline_ms, probe: false })
 }
 
 /// `bytes` cut to at most `n`, on a char boundary.
@@ -249,67 +222,34 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
     match input {
         Input::Fire => Ok((next, vec![])),
         Input::Observed(s) => {
-            let timeout_s: u64 = cfg
-                .get("SPIRA_MOOT_TIMEOUT")
-                .and_then(|v| v.trim().parse().ok())
-                .filter(|t| *t > 0)
-                .ok_or("SPIRA_MOOT_TIMEOUT must be a positive number of seconds")?;
+            let timeout_s: u64 = cfg.get("SPIRA_MOOT_TIMEOUT").and_then(|v| v.trim().parse().ok()).filter(|t| *t > 0).ok_or("SPIRA_MOOT_TIMEOUT must be a positive number of seconds")?;
             // An ask still resolving keeps its place; every other one the store no longer
             // lists as open with a predicate is done with.
-            next.asks.retain(|id, p| {
-                matches!(p, Phase::Cleared | Phase::Resolved) && !s.asks.iter().any(|a| &a.id == id)
-            });
+            next.asks.retain(|id, p| matches!(p, Phase::Cleared | Phase::Resolved) && !s.asks.iter().any(|a| &a.id == id));
             next.held.retain(|id, _| next.asks.contains_key(id));
-            next.timeouts
-                .retain(|id, _| s.asks.iter().any(|a| &a.id == id));
+            next.timeouts.retain(|id, _| s.asks.iter().any(|a| &a.id == id));
             let mut acts = vec![];
             for a in s.asks.iter().filter(|a| !a.pred.trim().is_empty()) {
                 next.asks.insert(a.id.clone(), Phase::Checking);
                 next.held.insert(a.id.clone(), a.clone());
-                acts.push(act(
-                    CHECK,
-                    format!("{}/{:016x}/{now_ms}", a.id, runtime::event::fnv1a(&a.pred)),
-                    &Check {
-                        id: a.id.clone(),
-                        pred: a.pred.clone(),
-                        timeout_s,
-                    },
-                    timeout_s * 1000 + 5_000,
-                )?);
+                acts.push(act(CHECK, format!("{}/{:016x}/{now_ms}", a.id, runtime::event::fnv1a(&a.pred)), &Check { id: a.id.clone(), pred: a.pred.clone(), timeout_s }, timeout_s * 1000 + 5_000)?);
             }
             Ok((next, acts))
         }
         Input::Outcome { ok: false, .. } => Ok((next, vec![])),
         Input::Outcome { effect, body, .. } if effect == CHECK => {
-            let out: CheckOutcome = serde_json::from_str(body)
-                .map_err(|e| format!("{NAME}: a check outcome that does not parse: {e}"))?;
+            let out: CheckOutcome = serde_json::from_str(body).map_err(|e| format!("{NAME}: a check outcome that does not parse: {e}"))?;
             let phase = carry.asks.get(&out.id).copied();
             if phase != Some(Phase::Checking) {
-                return Err(format!(
-                    "{NAME}: {} is in state {}, not checking; its check outcome is refused",
-                    out.id,
-                    phase.map_or("unknown".into(), phase_name)
-                ));
+                return Err(format!("{NAME}: {} is in state {}, not checking; its check outcome is refused", out.id, phase.map_or("unknown".into(), phase_name)));
             }
             match out.rc {
                 0 => {
                     next.timeouts.remove(&out.id);
                     next.asks.insert(out.id.clone(), Phase::Cleared);
-                    let pred = carry
-                        .held
-                        .get(&out.id)
-                        .map(|a| a.pred.as_str())
-                        .unwrap_or_default();
+                    let pred = carry.held.get(&out.id).map(|a| a.pred.as_str()).unwrap_or_default();
                     let reason = format!("auto-resolved: MOOT-WHEN predicate cleared — {pred} → exit 0. Evidence: {}", head(&out.output, EVIDENCE_BYTES));
-                    Ok((
-                        next,
-                        vec![act(
-                            RESOLVE,
-                            format!("{}/resolve", out.id),
-                            &Resolve { id: out.id, reason },
-                            15_000,
-                        )?],
-                    ))
+                    Ok((next, vec![act(RESOLVE, format!("{}/resolve", out.id), &Resolve { id: out.id, reason }, 15_000)?]))
                 }
                 TIMED_OUT_RC => {
                     *next.timeouts.entry(out.id.clone()).or_default() += 1;
@@ -325,38 +265,15 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         }
         Input::Outcome { effect, body, .. } if effect == RESOLVE || effect == WITHDRAW => {
             let id = body.trim();
-            let (want, to) = if effect == RESOLVE {
-                (Phase::Cleared, Phase::Resolved)
-            } else {
-                (Phase::Resolved, Phase::Withdrawn)
-            };
+            let (want, to) = if effect == RESOLVE { (Phase::Cleared, Phase::Resolved) } else { (Phase::Resolved, Phase::Withdrawn) };
             let phase = carry.asks.get(id).copied();
             if phase != Some(want) {
-                return Err(format!(
-                    "{NAME}: {id} is in state {}; a {effect} outcome needs {}",
-                    phase.map_or("unknown".into(), phase_name),
-                    phase_name(want)
-                ));
+                return Err(format!("{NAME}: {id} is in state {}; a {effect} outcome needs {}", phase.map_or("unknown".into(), phase_name), phase_name(want)));
             }
             next.asks.insert(id.to_string(), to);
-            let works = carry
-                .held
-                .get(id)
-                .map(|a| a.works.clone())
-                .unwrap_or_default();
+            let works = carry.held.get(id).map(|a| a.works.clone()).unwrap_or_default();
             if to == Phase::Resolved && !works.is_empty() {
-                return Ok((
-                    next,
-                    vec![act(
-                        WITHDRAW,
-                        format!("{id}/withdraw"),
-                        &Withdraw {
-                            ask: id.to_string(),
-                            works,
-                        },
-                        15_000,
-                    )?],
-                ));
+                return Ok((next, vec![act(WITHDRAW, format!("{id}/withdraw"), &Withdraw { ask: id.to_string(), works }, 15_000)?]));
             }
             Ok((next, vec![]))
         }
@@ -369,67 +286,28 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
 /// exactly `open`, carrying a `MOOT-WHEN:` line (moot-sweep.sh's filter). An ask without one
 /// never enters the snapshot (invariant 1).
 pub fn moot_asks(list_json: &str, ask_label: &str) -> Result<Vec<Ask>, String> {
-    let doc: serde_json::Value = serde_json::from_str(list_json)
-        .map_err(|e| format!("content list did not answer JSON: {e}"))?;
+    let doc: serde_json::Value = serde_json::from_str(list_json).map_err(|e| format!("content list did not answer JSON: {e}"))?;
     let rows = match &doc {
         serde_json::Value::Array(a) => a.clone(),
-        other => other
-            .get("issues")
-            .and_then(|i| i.as_array())
-            .cloned()
-            .unwrap_or_default(),
+        other => other.get("issues").and_then(|i| i.as_array()).cloned().unwrap_or_default(),
     };
     let mut out = vec![];
     for r in rows {
-        let labels: Vec<&str> = r
-            .get("labels")
-            .and_then(|l| l.as_array())
-            .map(|l| l.iter().filter_map(|x| x.as_str()).collect())
-            .unwrap_or_default();
-        if !labels.contains(&ask_label)
-            || !spira_config::nonwork::is_open(
-                spira_config::nonwork::Kind::Ask,
-                spira_config::nonwork::status_of(spira_config::nonwork::Kind::Ask, &r),
-            )
-        {
+        let labels: Vec<&str> = r.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+        if !labels.contains(&ask_label) || !spira_config::nonwork::is_open(spira_config::nonwork::Kind::Ask, spira_config::nonwork::status_of(spira_config::nonwork::Kind::Ask, &r)) {
             continue;
         }
-        let desc = r
-            .get("description")
-            .and_then(|d| d.as_str())
-            .unwrap_or_default();
-        let Some(pred) = desc.lines().find_map(|l| {
-            l.trim_start()
-                .strip_prefix("MOOT-WHEN:")
-                .map(str::trim)
-                .filter(|p| !p.is_empty())
-        }) else {
-            continue;
-        };
-        let works = labels
-            .iter()
-            .filter_map(|l| l.strip_prefix("work-bead:"))
-            .map(str::to_string)
-            .collect();
-        out.push(Ask {
-            id: r
-                .get("id")
-                .and_then(|i| i.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            pred: pred.to_string(),
-            works,
-        });
+        let desc = r.get("description").and_then(|d| d.as_str()).unwrap_or_default();
+        let Some(pred) = desc.lines().find_map(|l| l.trim_start().strip_prefix("MOOT-WHEN:").map(str::trim).filter(|p| !p.is_empty())) else { continue };
+        let works = labels.iter().filter_map(|l| l.strip_prefix("work-bead:")).map(str::to_string).collect();
+        out.push(Ask { id: r.get("id").and_then(|i| i.as_str()).unwrap_or_default().to_string(), pred: pred.to_string(), works });
     }
     Ok(out)
 }
 
 /// The runner of [`OBSERVE`]: the attention beads over the store's `content` door, filtered.
 pub fn observe(lc: &LcClient) -> Result<String, String> {
-    let (db, label) = (
-        spira_config::process::cfg("SPIRA_DB")?,
-        spira_config::process::cfg("SPIRA_ASK_LABEL")?,
-    );
+    let (db, label) = (spira_config::process::cfg("SPIRA_DB")?, spira_config::process::cfg("SPIRA_ASK_LABEL")?);
     if db.trim().is_empty() {
         return Err("no beads database (SPIRA_DB) — checked nothing".into());
     }
@@ -439,21 +317,8 @@ pub fn observe(lc: &LcClient) -> Result<String, String> {
 /// The open attention beads: a closed ask has nothing left to moot.
 pub fn observe_on(lc: &LcClient, label: &str) -> Result<String, String> {
     let labels = format!("insight,{label},overseer");
-    let rows = lc
-        .answer(&[
-            "content",
-            "list",
-            "--limit",
-            "0",
-            "--label-any",
-            &labels,
-            "--json",
-        ])
-        .map_err(|e| format!("the beads database is not reachable — checked nothing: {e}"))?;
-    serde_json::to_string(&Snapshot {
-        asks: moot_asks(&rows, label)?,
-    })
-    .map_err(|e| e.to_string())
+    let rows = lc.answer(&["content", "list", "--limit", "0", "--label-any", &labels, "--json"]).map_err(|e| format!("the beads database is not reachable — checked nothing: {e}"))?;
+    serde_json::to_string(&Snapshot { asks: moot_asks(&rows, label)? }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`CHECK`]: `bash -c <pred>` through `proc`, bounded at its timeout; a deadline
@@ -463,30 +328,13 @@ pub fn check(proc: &dyn Proc, input: &str) -> Result<String, String> {
     if c.pred.trim().is_empty() {
         return Err(format!("{}: an empty predicate is refused", c.id));
     }
-    let spec = ProcSpec {
-        prog: "bash".into(),
-        args: vec!["-c".into(), c.pred.clone()],
-        stdin: vec![],
-        deadline: std::time::Duration::from_secs(c.timeout_s),
-    };
+    let spec = ProcSpec { prog: "bash".into(), args: vec!["-c".into(), c.pred.clone()], stdin: vec![], deadline: std::time::Duration::from_secs(c.timeout_s) };
     let (rc, output) = match proc.run(&spec) {
-        Ok(o) => (
-            o.code.unwrap_or(1),
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            ),
-        ),
+        Ok(o) => (o.code.unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
         Err(e) if e.contains("deadline") => (TIMED_OUT_RC, e),
         Err(e) => (127, e),
     };
-    serde_json::to_string(&CheckOutcome {
-        id: c.id,
-        rc,
-        output: head(&output, EVIDENCE_BYTES).to_string(),
-    })
-    .map_err(|e| e.to_string())
+    serde_json::to_string(&CheckOutcome { id: c.id, rc, output: head(&output, EVIDENCE_BYTES).to_string() }).map_err(|e| e.to_string())
 }
 
 /// `cockpit_ops::resolve::run`'s store, over the socket. The per-work-bead withdraw is left to
@@ -495,28 +343,14 @@ struct Store<'a>(&'a LcClient);
 
 impl cockpit_ops::resolve::Closer for Store<'_> {
     fn close(&self, _: &std::path::Path, id: &str, reason: &str) -> cockpit_ops::resolve::BdResult {
-        match self.0.call_stdin(
-            &["close", id, "--reason-file", "-", "--actor", ACTOR],
-            reason,
-        ) {
-            Ok(r) if r.code == 0 => cockpit_ops::resolve::BdResult {
-                success: true,
-                combined: String::new(),
-            },
-            Ok(r) => cockpit_ops::resolve::BdResult {
-                success: false,
-                combined: format!("spira-lc close exit {}: {}", r.code, r.why()),
-            },
-            Err(e) => cockpit_ops::resolve::BdResult {
-                success: false,
-                combined: e.to_string(),
-            },
+        match self.0.call_stdin(&["close", id, "--reason-file", "-", "--actor", ACTOR], reason) {
+            Ok(r) if r.code == 0 => cockpit_ops::resolve::BdResult { success: true, combined: String::new() },
+            Ok(r) => cockpit_ops::resolve::BdResult { success: false, combined: format!("spira-lc close exit {}: {}", r.code, r.why()) },
+            Err(e) => cockpit_ops::resolve::BdResult { success: false, combined: e.to_string() },
         }
     }
     fn show_json(&self, _: &std::path::Path, id: &str) -> Result<String, String> {
-        self.0
-            .answer(&["content", "show", id, "--json"])
-            .map_err(|e| format!("content show {id}: {e}"))
+        self.0.answer(&["content", "show", id, "--json"]).map_err(|e| format!("content show {id}: {e}"))
     }
     fn withdraw_ask(&self, _: &str) -> (i32, String) {
         (1, "withdrawn by asks.moot.withdraw".into())
@@ -528,16 +362,7 @@ impl cockpit_ops::resolve::Closer for Store<'_> {
         codes(self.0, &["show-ask", id])
     }
     fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String) {
-        match self.0.call(&[
-            "close-ask",
-            id,
-            "--exit",
-            "withdrawn",
-            "--quote",
-            reason,
-            "--actor",
-            ACTOR,
-        ]) {
+        match self.0.call(&["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", ACTOR]) {
             Ok(r) => (r.code, r.text()),
             Err(e) => (spira_store::lc_call::CANNOT_TELL, e.to_string()),
         }
@@ -579,27 +404,11 @@ pub fn withdraw(lc: &LcClient, input: &str) -> Result<String, String> {
     if failed.is_empty() {
         Ok(w.ask)
     } else {
-        Err(format!(
-            "the ask hold was not lifted on {}",
-            failed.join("; ")
-        ))
+        Err(format!("the ask hold was not lifted on {}", failed.join("; ")))
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Map {
-        name: "asks",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "timeouts",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "held",
-        drop: &[],
-    },
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "asks", drop: &[] }, runtime::rows::Part::Map { name: "timeouts", drop: &[] }, runtime::rows::Part::Map { name: "held", drop: &[] }];
 
 crate::tasks::b::hosted!(AsksMoot);
 
@@ -616,25 +425,9 @@ mod tests {
     #[test_id(tsags72)]
     #[test]
     fn the_observe_mootness_candidates_are_the_open_asks_and_no_history_is_read() {
-        let store = Arc::new(fake::Content::new(vec![
-            ask("sp-open", "open"),
-            ask("sp-done", "closed"),
-        ]));
-        let snap: Snapshot = serde_json::from_str(
-            &observe_on(&LcClient::over(store.clone(), true), "needs-x").unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            snap.asks.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
-            ["sp-open"]
-        );
-        assert!(
-            store
-                .requests()
-                .iter()
-                .all(|r| !spira_store::lc_call::reads_whole_history(r)),
-            "{:?}",
-            store.requests()
-        );
+        let store = Arc::new(fake::Content::new(vec![ask("sp-open", "open"), ask("sp-done", "closed")]));
+        let snap: Snapshot = serde_json::from_str(&observe_on(&LcClient::over(store.clone(), true), "needs-x").unwrap()).unwrap();
+        assert_eq!(snap.asks.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["sp-open"]);
+        assert!(store.requests().iter().all(|r| !spira_store::lc_call::reads_whole_history(r)), "{:?}", store.requests());
     }
 }

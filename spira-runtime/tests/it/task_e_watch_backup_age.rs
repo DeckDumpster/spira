@@ -9,13 +9,7 @@ use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_backup_age::*;
 
 fn config() -> Config {
-    Config {
-        url: "s3://b/lc".into(),
-        db: "spira_aux".into(),
-        max_age_s: 25_200,
-        lc_store_path: String::new(),
-        run: "r".into(),
-    }
+    Config { url: "s3://b/lc".into(), db: "spira_aux".into(), max_age_s: 25_200, lc_store_path: String::new(), run: "r".into() }
 }
 
 fn dbs(state: Db) -> Snapshot {
@@ -24,60 +18,33 @@ fn dbs(state: Db) -> Snapshot {
 
 fn rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
     let (_, stream, kind) = WatchBackupAge::boot();
-    let mut r = TaskRig::new(seed, WatchBackupAge::new(config()).registration())
-        .unwrap()
-        .double(OBSERVE, move |_| {
-            Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())
-        })
-        .double(MAIL, |_| Ok("msg-1".into()));
+    let mut r = TaskRig::new(seed, WatchBackupAge::new(config()).registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())).double(MAIL, |_| Ok("msg-1".into()));
     r.tick(stream, kind).unwrap();
     acc::assert_healthy(&r, STREAM);
     r
 }
 
 fn mails(r: &TaskRig) -> Vec<String> {
-    r.requested()
-        .iter()
-        .filter(|q| q.name == MAIL)
-        .map(|q| q.input.clone())
-        .collect()
+    r.requested().iter().filter(|q| q.name == MAIL).map(|q| q.input.clone()).collect()
 }
 
 fn carry(r: &TaskRig) -> Carry {
-    r.journaled()
-        .iter()
-        .rev()
-        .find(|e| e.kind.tag == STATE)
-        .map(|e| serde_json::from_str(&e.kind.body).unwrap())
-        .unwrap_or_default()
+    r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
 #[test_id(t0i1n3k)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_fifteen_minute_tick() {
     let t = acc::row(NAME);
-    assert_eq!(
-        (t.stream(), t.effects, t.keys.concat()),
-        (STREAM, EFFECTS, KEYS.to_vec())
-    );
+    assert_eq!((t.stream(), t.effects, t.keys.concat()), (STREAM, EFFECTS, KEYS.to_vec()));
     let s = acc::pinned_settings(&[]).expect("settings from the complete fixture");
     assert_eq!((t.cadence_ms)(&s), CADENCE_MS);
-    assert_eq!(
-        Config::pinned().map(|_| ()),
-        Ok(()),
-        "every key resolves through the config door"
-    );
+    assert_eq!(Config::pinned().map(|_| ()), Ok(()), "every key resolves through the config door");
     let mut r = TaskRig::new(1, (t.build)(&s)).unwrap();
     let (_, stream, kind) = (t.boot)();
     r.tick(stream, kind).unwrap();
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
-    assert_eq!(
-        r.requested()
-            .iter()
-            .map(|q| q.name.as_str())
-            .collect::<Vec<_>>(),
-        [OBSERVE]
-    );
+    assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
 #[test_id(tayj7x7)]
@@ -103,12 +70,7 @@ fn t3_ok_to_red_mails_red_red_to_ok_mails_clear_and_a_standing_state_records_not
     r.advance(2 * CADENCE_MS).unwrap();
     acc::assert_healthy(&r, STREAM);
     assert_eq!(r.journaled().len(), before, "Ok → Ok records nothing");
-    for red in [
-        Snapshot::NoDestination,
-        Snapshot::NoDatabase,
-        dbs(Db::Never),
-        dbs(Db::Unreadable),
-    ] {
+    for red in [Snapshot::NoDestination, Snapshot::NoDatabase, dbs(Db::Never), dbs(Db::Unreadable)] {
         assert_eq!(carry(&rig(1, Arc::new(Mutex::new(red)))), Carry::Red);
     }
 }
@@ -116,10 +78,7 @@ fn t3_ok_to_red_mails_red_red_to_ok_mails_clear_and_a_standing_state_records_not
 #[test_id(t77kmuj)]
 #[test]
 fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
-    assert_eq!(
-        acc::launcher(&acc::module_source("e/watch_backup_age.rs")),
-        None
-    );
+    assert_eq!(acc::launcher(&acc::module_source("e/watch_backup_age.rs")), None);
     let real: Vec<&str> = spira_runtime::tasks::routes().keys().copied().collect();
     let names = sim::doubles::service().names();
     let sim: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -139,17 +98,8 @@ fn t5_the_alerts_are_the_ones_lc_backup_mailed() {
     let m = mails(&r);
     assert_eq!(m.len(), 2);
     let red = "RED: a store has no good backup within 25200s (spira_aux: stale 30000) — losing its disk now loses its data and history";
-    assert!(
-        m[0].contains(&format!("lc-backup: {red}"))
-            && m[0].contains("## Alert")
-            && m[0].matches(red).count() >= 2
-            && m[0].contains(FROM),
-        "{m:?}"
-    );
-    assert!(
-        m[1].contains("CLEAR: every store has a fresh backup again (spira_aux: ok 60)"),
-        "{m:?}"
-    );
+    assert!(m[0].contains(&format!("lc-backup: {red}")) && m[0].contains("## Alert") && m[0].matches(red).count() >= 2 && m[0].contains(FROM), "{m:?}");
+    assert!(m[1].contains("CLEAR: every store has a fresh backup again (spira_aux: ok 60)"), "{m:?}");
 }
 
 fn registration() -> runtime::event::Registration {
@@ -170,21 +120,13 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(ti7kc3e)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
-        red,
-        registration,
-        STREAM,
-        runtime::event::EventKind::new(TICK, ""),
-    );
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(red, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
 fn timer_calendar(unit: &str) -> runtime::calendar::Calendar {
     let root = spira_config::resolve::checkout_root_for_process().unwrap();
     let text = std::fs::read_to_string(root.join("systemd").join(unit)).unwrap();
-    let spec = text
-        .lines()
-        .find_map(|l| l.strip_prefix("OnCalendar="))
-        .expect("an OnCalendar line");
+    let spec = text.lines().find_map(|l| l.strip_prefix("OnCalendar=")).expect("an OnCalendar line");
     runtime::calendar::Calendar::parse(spec).unwrap()
 }
 
@@ -202,54 +144,22 @@ fn gaps(cal: &runtime::calendar::Calendar, elapses: usize) -> Vec<u64> {
 #[test_id(tmullq1)]
 #[test]
 fn the_backup_timer_fires_every_twelve_hours_and_the_age_alarm_fits_it() {
-    assert!(gaps(&timer_calendar("lc-backup.timer"), 4)
-        .iter()
-        .all(|g| *g == 43_200));
-    let home = spira_config::resolve::checkout_root_for_process()
-        .unwrap()
-        .join("spira");
+    assert!(gaps(&timer_calendar("lc-backup.timer"), 4).iter().all(|g| *g == 43_200));
+    let home = spira_config::resolve::checkout_root_for_process().unwrap().join("spira");
     let registry = spira_config::registry::Registry::from_dirs(&home).unwrap();
-    let default: u64 = registry
-        .get("SPIRA_LC_BACKUP_MAX_AGE")
-        .unwrap()
-        .default_expr()
-        .unwrap()
-        .parse()
-        .unwrap();
-    assert!(
-        default > 43_200 + 5_400 && default < 2 * 43_200,
-        "{default}"
-    );
+    let default: u64 = registry.get("SPIRA_LC_BACKUP_MAX_AGE").unwrap().default_expr().unwrap().parse().unwrap();
+    assert!(default > 43_200 + 5_400 && default < 2 * 43_200, "{default}");
     let (now, h) = (10_000_000, 3600);
-    assert!(matches!(
-        measure_db(Some(&format!("{}\n", now - 13 * h)), now, default),
-        Db::Ok { .. }
-    ));
-    assert!(matches!(
-        measure_db(Some(&format!("{}\n", now - 14 * h - 1)), now, default),
-        Db::Stale { .. }
-    ));
+    assert!(matches!(measure_db(Some(&format!("{}\n", now - 13 * h)), now, default), Db::Ok { .. }));
+    assert!(matches!(measure_db(Some(&format!("{}\n", now - 14 * h - 1)), now, default), Db::Stale { .. }));
 }
 
 #[test_id(tvo7o0u)]
 #[test]
 fn the_drill_timer_fires_weekly_and_its_alarm_tolerates_one_slot() {
-    assert!(gaps(&timer_calendar("lc-backup-drill.timer"), 4)
-        .iter()
-        .all(|g| *g == 604_800));
+    assert!(gaps(&timer_calendar("lc-backup-drill.timer"), 4).iter().all(|g| *g == 604_800));
     let root = spira_config::resolve::checkout_root_for_process().unwrap();
     let service = std::fs::read_to_string(root.join("systemd/lc-backup-drill.service")).unwrap();
-    let hours: u64 = service
-        .lines()
-        .find_map(|l| {
-            l.strip_prefix("TimeoutStartSec=")?
-                .strip_suffix('h')?
-                .parse()
-                .ok()
-        })
-        .expect("TimeoutStartSec in hours");
-    assert!(
-        DRILL_STALE_S > 604_800 + hours * 3600 && DRILL_STALE_S < 2 * 604_800,
-        "{DRILL_STALE_S}"
-    );
+    let hours: u64 = service.lines().find_map(|l| l.strip_prefix("TimeoutStartSec=")?.strip_suffix('h')?.parse().ok()).expect("TimeoutStartSec in hours");
+    assert!(DRILL_STALE_S > 604_800 + hours * 3600 && DRILL_STALE_S < 2 * 604_800, "{DRILL_STALE_S}");
 }

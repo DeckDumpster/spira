@@ -15,22 +15,12 @@ fn check_config_without(declare: &[(&str, &str)], unset: &[&str]) -> (bool, Stri
     let toml = spira_config::process::fixture_toml(&dir, &[SERVICE, declare].concat());
     let home = spira_config::resolve::locate_home_for_process().unwrap();
     let mut cmd = Command::new(testkit::bin_exe("spira-runtime"));
-    cmd.arg("check-config")
-        .env("SPIRA_TOML", &toml)
-        .env("SPIRA_HOME", &home)
-        .env("HOME", dir.path());
+    cmd.arg("check-config").env("SPIRA_TOML", &toml).env("SPIRA_HOME", &home).env("HOME", dir.path());
     for k in unset {
         cmd.env_remove(k);
     }
     let out = cmd.output().expect("spira-runtime runs");
-    (
-        out.status.success(),
-        format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        ),
-    )
+    (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
 }
 
 #[test_id(tif6ezg)]
@@ -50,15 +40,7 @@ fn a_pool_cap_the_service_refuses_fails_check_config_naming_the_key() {
 #[test_id(txfwvgu)]
 #[test]
 fn an_s3_backup_destination_without_the_key_in_the_environment_fails_check_config_naming_it() {
-    let aws = [
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_DEFAULT_REGION",
-        "AWS_REGION",
-    ];
+    let aws = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "AWS_REGION"];
     let (ok, out) = check_config_without(&[("SPIRA_LC_BACKUP_URL", "s3://b/p/")], &aws);
-    assert!(
-        !ok && out.contains("AWS_ACCESS_KEY_ID") && !out.starts_with("ok "),
-        "{out}"
-    );
+    assert!(!ok && out.contains("AWS_ACCESS_KEY_ID") && !out.starts_with("ok "), "{out}");
 }

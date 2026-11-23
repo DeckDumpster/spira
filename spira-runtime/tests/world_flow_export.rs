@@ -28,29 +28,13 @@ fn the_flow_export_asks_for_the_event_head_and_not_the_whole_log() {
     });
     let run = dir.path().join("run");
     std::fs::create_dir_all(run.join("tsd")).unwrap();
-    std::fs::write(
-        run.join("tsd/.bead-stage-checkpoint-lifecycle.json"),
-        r#"{"last_seq":7}"#,
-    )
-    .unwrap();
-    let w = World {
-        lc_socket: sock,
-        run_dir: run,
-        ..World::default()
-    };
+    std::fs::write(run.join("tsd/.bead-stage-checkpoint-lifecycle.json"), r#"{"last_seq":7}"#).unwrap();
+    let w = World { lc_socket: sock, run_dir: run, ..World::default() };
     let snap: serde_json::Value = serde_json::from_str(&w.flow_snapshot(r#"{"now":1700000000,"window_hours":24.0,"baseline_hours":168.0,"rework_window_hours":24.0,"sentinel_timer_secs":300}"#).unwrap_or_else(|e| panic!("{e}"))).unwrap();
     assert_eq!(snap["export"], serde_json::json!({"Ok": null}), "{snap}");
     let asked = asked.lock().unwrap();
-    assert!(
-        asked.iter().any(|a| a == &["event-seq", "--head"]),
-        "{asked:?}"
-    );
-    assert!(
-        asked
-            .iter()
-            .all(|a| a[0] != "event-seq" || a.contains(&"--head".to_string())),
-        "{asked:?}"
-    );
+    assert!(asked.iter().any(|a| a == &["event-seq", "--head"]), "{asked:?}");
+    assert!(asked.iter().all(|a| a[0] != "event-seq" || a.contains(&"--head".to_string())), "{asked:?}");
 }
 
 const PARAMS: &str = r#"{"now":1700000000,"window_hours":24.0,"baseline_hours":168.0,"rework_window_hours":24.0,"sentinel_timer_secs":300}"#;
@@ -62,33 +46,19 @@ fn pass_with_failing_check(exported: u64) -> (serde_json::Value, String) {
     let sock = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&sock).unwrap();
     std::thread::spawn(move || {
-        runtime::socket::answer(&listener, &|argv| match argv
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()[..]
-        {
+        runtime::socket::answer(&listener, &|argv| match argv.iter().map(String::as_str).collect::<Vec<_>>()[..] {
             ["event-seq", "--head"] => Ok(r#"{"seq":7}"#.into()),
             _ => Err(RuntimeError::new("the double has no such verb")),
         })
     });
     let run = dir.path().join("run");
     std::fs::create_dir_all(run.join("tsd")).unwrap();
-    std::fs::write(
-        run.join("tsd/.bead-stage-checkpoint-lifecycle.json"),
-        format!(r#"{{"last_seq":{exported}}}"#),
-    )
-    .unwrap();
+    std::fs::write(run.join("tsd/.bead-stage-checkpoint-lifecycle.json"), format!(r#"{{"last_seq":{exported}}}"#)).unwrap();
     let ran = dir.path().join("ran");
     let bin = dir.path().join("fake-export");
     testkit::write_exe(&bin, &format!("#!/bin/sh\necho \"$1\" >> {}\n[ \"$1\" = check ] && {{ echo 'trails the log' >&2; exit 1; }}\nexit 0\n", ran.display()));
-    let w = World {
-        lc_socket: sock,
-        run_dir: run,
-        export_bin: bin.display().to_string(),
-        ..World::default()
-    };
-    let snap: serde_json::Value =
-        serde_json::from_str(&w.flow_snapshot(PARAMS).unwrap_or_else(|e| panic!("{e}"))).unwrap();
+    let w = World { lc_socket: sock, run_dir: run, export_bin: bin.display().to_string(), ..World::default() };
+    let snap: serde_json::Value = serde_json::from_str(&w.flow_snapshot(PARAMS).unwrap_or_else(|e| panic!("{e}"))).unwrap();
     (snap, std::fs::read_to_string(ran).unwrap_or_default())
 }
 
@@ -96,16 +66,8 @@ fn pass_with_failing_check(exported: u64) -> (serde_json::Value, String) {
 #[test]
 fn a_current_checkpoint_still_runs_the_check_and_a_failed_check_blinds_the_pass() {
     let (snap, ran) = pass_with_failing_check(7);
-    assert_eq!(
-        ran, "check\n",
-        "the exporter is not launched when the log is not ahead of it"
-    );
-    assert!(
-        snap["export"]["Err"]
-            .as_str()
-            .is_some_and(|e| e.contains("check: exit 1") && e.contains("trails the log")),
-        "{snap}"
-    );
+    assert_eq!(ran, "check\n", "the exporter is not launched when the log is not ahead of it");
+    assert!(snap["export"]["Err"].as_str().is_some_and(|e| e.contains("check: exit 1") && e.contains("trails the log")), "{snap}");
 }
 
 #[test_id(t8cvgpz)]

@@ -127,35 +127,13 @@ pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 /// `STALE_RUN_AGE` (`foreign.rs:236`).
 pub const STALE_RUN_AGE_SECS: u64 = 3_600;
 
-pub const ACTS: &[(&str, u64)] = &[
-    (REMOVE_TARGET, 120_000),
-    (REMOVE_FOREIGN_RUN, 300_000),
-    (REMOVE_HAND_TARGET, 300_000),
-];
+pub const ACTS: &[(&str, u64)] = &[(REMOVE_TARGET, 120_000), (REMOVE_FOREIGN_RUN, 300_000), (REMOVE_HAND_TARGET, 300_000)];
 pub const EMITS: &[EventKindTag] = &[];
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    REMOVE_TARGET,
-    REMOVE_FOREIGN_RUN,
-    REMOVE_HAND_TARGET,
-];
-pub const KEYS: &[&str] = &[
-    "SPIRA_REAP_DISK_FLOOR_GIB",
-    "SPIRA_REAP_IDLE_SECS",
-    "SPIRA_RUN",
-    "SPIRA_HAND_TARGET_ROOTS",
-    "SPIRA_HAND_TARGET_IDLE_SECS",
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, REMOVE_TARGET, REMOVE_FOREIGN_RUN, REMOVE_HAND_TARGET];
+pub const KEYS: &[&str] = &["SPIRA_REAP_DISK_FLOOR_GIB", "SPIRA_REAP_IDLE_SECS", "SPIRA_RUN", "SPIRA_HAND_TARGET_ROOTS", "SPIRA_HAND_TARGET_IDLE_SECS"];
 pub const UNREGISTERED: &[&str] = &[];
 
-pub const SHAPE: Shape = Shape {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    observe: OBSERVE,
-    observe_deadline_ms: OBSERVE_DEADLINE_MS,
-};
+pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
 /// One worktree's build output.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,49 +191,18 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     let mut acts: Vec<Act> = snap
         .foreign_stale
         .iter()
-        .filter(|r| {
-            testenv::foreign::is_stale(
-                Some(std::time::Duration::from_secs(r.age_secs)),
-                stale_age,
-                r.busy,
-            )
-        })
-        .map(|r| {
-            Act::new(REMOVE_FOREIGN_RUN, r.path.clone())
-                .with_input(serde_json::to_string(r).unwrap_or_default())
-        })
+        .filter(|r| testenv::foreign::is_stale(Some(std::time::Duration::from_secs(r.age_secs)), stale_age, r.busy))
+        .map(|r| Act::new(REMOVE_FOREIGN_RUN, r.path.clone()).with_input(serde_json::to_string(r).unwrap_or_default()))
         .collect();
-    acts.extend(snap.hand_stale.iter().filter(|h| !h.busy).map(|h| {
-        Act::new(REMOVE_HAND_TARGET, format!("{}@{}", h.path, h.written_at))
-            .with_input(serde_json::to_string(h).unwrap_or_default())
-    }));
-    let Some(free) = snap.free_bytes else {
-        return (carry.clone(), acts);
-    };
+    acts.extend(snap.hand_stale.iter().filter(|h| !h.busy).map(|h| Act::new(REMOVE_HAND_TARGET, format!("{}@{}", h.path, h.written_at)).with_input(serde_json::to_string(h).unwrap_or_default())));
+    let Some(free) = snap.free_bytes else { return (carry.clone(), acts) };
     if free >= snap.floor_bytes {
         return (carry.clone(), acts);
     }
-    let items: Vec<testenv::reap::IdleTarget> = snap
-        .candidates
-        .iter()
-        .map(|c| testenv::reap::IdleTarget {
-            id: c.id.clone(),
-            idle_secs: c.idle_secs,
-            busy: c.busy,
-            bytes: c.bytes,
-        })
-        .collect();
+    let items: Vec<testenv::reap::IdleTarget> = snap.candidates.iter().map(|c| testenv::reap::IdleTarget { id: c.id.clone(), idle_secs: c.idle_secs, busy: c.busy, bytes: c.bytes }).collect();
     for i in testenv::reap::pick_idle(&items, snap.idle_secs_min, Some(snap.floor_bytes - free)) {
         let c = &snap.candidates[i];
-        acts.push(
-            Act::new(REMOVE_TARGET, c.target.clone()).with_input(
-                serde_json::to_string(&Removal {
-                    candidate: c.clone(),
-                    idle_secs_min: snap.idle_secs_min,
-                })
-                .unwrap_or_default(),
-            ),
-        );
+        acts.push(Act::new(REMOVE_TARGET, c.target.clone()).with_input(serde_json::to_string(&Removal { candidate: c.clone(), idle_secs_min: snap.idle_secs_min }).unwrap_or_default()));
     }
     (carry.clone(), acts)
 }
@@ -274,9 +221,7 @@ const GIB: u64 = 1 << 30;
 
 fn pinned_u64(key: &str) -> Result<u64, String> {
     let v = spira_config::process::cfg(key)?;
-    v.trim()
-        .parse()
-        .map_err(|_| format!("{key} must be a non-negative integer, got {v:?}"))
+    v.trim().parse().map_err(|_| format!("{key} must be a non-negative integer, got {v:?}"))
 }
 
 /// The snapshot: free space under `$SPIRA_RUN/worktree` by `statvfs`, and, only when it is
@@ -290,69 +235,33 @@ pub fn observe(run: &std::path::Path) -> Result<String, String> {
     let mut candidates = vec![];
     if free_bytes.is_some_and(|f| f < floor_bytes) {
         for (id, dir, t) in testenv::reap::candidates(&worktrees) {
-            let Some(idle_secs) = testenv::reap::idle_age_secs(&dir) else {
-                continue;
-            };
+            let Some(idle_secs) = testenv::reap::idle_age_secs(&dir) else { continue };
             let busy = idle_secs >= idle_secs_min && testenv::busy::worktree_busy(&dir);
-            candidates.push(Candidate {
-                id,
-                target: t.display().to_string(),
-                idle_secs,
-                busy,
-                bytes: testenv::reap::size_of(&t),
-            });
+            candidates.push(Candidate { id, target: t.display().to_string(), idle_secs, busy, bytes: testenv::reap::size_of(&t) });
         }
     }
     let stale_age = std::time::Duration::from_secs(STALE_RUN_AGE_SECS);
     let foreign_stale = testenv::foreign::run_dirs(&run.join("foreign-cache"))
         .into_iter()
         .filter(|(_, age)| testenv::foreign::is_stale(*age, stale_age, false))
-        .map(|(path, age)| ForeignRun {
-            busy: testenv::busy::worktree_busy(&path),
-            bytes: testenv::reap::size_of(&path),
-            age_secs: age.map_or(0, |a| a.as_secs()),
-            path: path.display().to_string(),
-        })
+        .map(|(path, age)| ForeignRun { busy: testenv::busy::worktree_busy(&path), bytes: testenv::reap::size_of(&path), age_secs: age.map_or(0, |a| a.as_secs()), path: path.display().to_string() })
         .collect();
-    let hand_stale = observe_hand(
-        &hand_roots()?,
-        std::time::SystemTime::now(),
-        pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?,
-    );
-    serde_json::to_string(&Snapshot {
-        free_bytes,
-        floor_bytes,
-        idle_secs_min,
-        candidates,
-        foreign_stale,
-        hand_stale,
-    })
-    .map_err(|e| e.to_string())
+    let hand_stale = observe_hand(&hand_roots()?, std::time::SystemTime::now(), pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?);
+    serde_json::to_string(&Snapshot { free_bytes, floor_bytes, idle_secs_min, candidates, foreign_stale, hand_stale }).map_err(|e| e.to_string())
 }
 
 /// Remove one idle target, re-checking at run time that it is neither busy nor younger than
 /// the threshold. Answers the bytes freed.
 pub fn remove_target(input: &str) -> Result<String, String> {
-    let r: Removal =
-        serde_json::from_str(input).map_err(|e| format!("{REMOVE_TARGET}: bad input: {e}"))?;
+    let r: Removal = serde_json::from_str(input).map_err(|e| format!("{REMOVE_TARGET}: bad input: {e}"))?;
     let t = std::path::Path::new(&r.candidate.target);
-    let dir = t
-        .parent()
-        .ok_or_else(|| format!("{REMOVE_TARGET}: {} has no worktree", t.display()))?;
+    let dir = t.parent().ok_or_else(|| format!("{REMOVE_TARGET}: {} has no worktree", t.display()))?;
     match testenv::reap::idle_age_secs(dir) {
         Some(a) if a >= r.idle_secs_min => {}
-        _ => {
-            return Err(format!(
-                "{REMOVE_TARGET}: {} is no longer idle — refused",
-                dir.display()
-            ))
-        }
+        _ => return Err(format!("{REMOVE_TARGET}: {} is no longer idle — refused", dir.display())),
     }
     if testenv::busy::worktree_busy(dir) {
-        return Err(format!(
-            "{REMOVE_TARGET}: {} is busy — refused",
-            dir.display()
-        ));
+        return Err(format!("{REMOVE_TARGET}: {} is busy — refused", dir.display()));
     }
     testenv::reap::remove_target(t).map(|n| n.to_string())
 }
@@ -360,68 +269,37 @@ pub fn remove_target(input: &str) -> Result<String, String> {
 /// Remove one stale foreign run, re-checking that it is still stale and unbusy. Answers the
 /// bytes freed.
 pub fn remove_foreign_run(input: &str) -> Result<String, String> {
-    let r: ForeignRun =
-        serde_json::from_str(input).map_err(|e| format!("{REMOVE_FOREIGN_RUN}: bad input: {e}"))?;
+    let r: ForeignRun = serde_json::from_str(input).map_err(|e| format!("{REMOVE_FOREIGN_RUN}: bad input: {e}"))?;
     let path = std::path::Path::new(&r.path);
     if !path.exists() {
         return Ok("0".into());
     }
-    let age = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.elapsed().ok());
-    if !testenv::foreign::is_stale(
-        age,
-        std::time::Duration::from_secs(STALE_RUN_AGE_SECS),
-        testenv::busy::worktree_busy(path),
-    ) {
-        return Err(format!(
-            "{REMOVE_FOREIGN_RUN}: {} is busy or young — refused",
-            path.display()
-        ));
+    let age = std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+    if !testenv::foreign::is_stale(age, std::time::Duration::from_secs(STALE_RUN_AGE_SECS), testenv::busy::worktree_busy(path)) {
+        return Err(format!("{REMOVE_FOREIGN_RUN}: {} is busy or young — refused", path.display()));
     }
     let bytes = testenv::reap::size_of(path);
     if testenv::foreign::remove_run_dir(path) {
         Ok(bytes.to_string())
     } else {
-        Err(format!(
-            "{REMOVE_FOREIGN_RUN}: {} could not be removed",
-            path.display()
-        ))
+        Err(format!("{REMOVE_FOREIGN_RUN}: {} could not be removed", path.display()))
     }
 }
 
 fn hand_roots() -> Result<Vec<std::path::PathBuf>, String> {
-    Ok(spira_config::process::cfg("SPIRA_HAND_TARGET_ROOTS")?
-        .split_whitespace()
-        .map(std::path::PathBuf::from)
-        .collect())
+    Ok(spira_config::process::cfg("SPIRA_HAND_TARGET_ROOTS")?.split_whitespace().map(std::path::PathBuf::from).collect())
 }
 
 /// Every target under `roots` unwritten for `idle_secs`. A held one is reported without its size:
 /// it is not removed, and sizing it again every tick is the cost this snapshot must not pay.
-pub fn observe_hand(
-    roots: &[std::path::PathBuf],
-    now: std::time::SystemTime,
-    idle_secs: u64,
-) -> Vec<HandTarget> {
+pub fn observe_hand(roots: &[std::path::PathBuf], now: std::time::SystemTime, idle_secs: u64) -> Vec<HandTarget> {
     testenv::hand::candidates(roots)
         .into_iter()
         .filter_map(|t| {
             let written_at = testenv::hand::stale_written_at(&t.path, now, idle_secs)?;
             let busy = testenv::hand::held(&t);
-            let bytes = if busy {
-                0
-            } else {
-                testenv::reap::size_of(&t.path)
-            };
-            Some(HandTarget {
-                busy,
-                bytes,
-                path: t.path.display().to_string(),
-                guard: t.guard.display().to_string(),
-                written_at,
-            })
+            let bytes = if busy { 0 } else { testenv::reap::size_of(&t.path) };
+            Some(HandTarget { busy, bytes, path: t.path.display().to_string(), guard: t.guard.display().to_string(), written_at })
         })
         .collect()
 }
@@ -429,42 +307,17 @@ pub fn observe_hand(
 /// Remove one hand-built target, re-checking at run time that it is still unwritten past the
 /// threshold, under a configured root, and held by no process. Answers the bytes freed.
 pub fn remove_hand_target(input: &str) -> Result<String, String> {
-    remove_hand(
-        input,
-        &hand_roots()?,
-        std::time::SystemTime::now(),
-        pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?,
-    )
+    remove_hand(input, &hand_roots()?, std::time::SystemTime::now(), pinned_u64("SPIRA_HAND_TARGET_IDLE_SECS")?)
 }
 
-pub fn remove_hand(
-    input: &str,
-    roots: &[std::path::PathBuf],
-    now: std::time::SystemTime,
-    idle_secs: u64,
-) -> Result<String, String> {
-    let h: HandTarget =
-        serde_json::from_str(input).map_err(|e| format!("{REMOVE_HAND_TARGET}: bad input: {e}"))?;
-    let t = testenv::hand::candidates(roots)
-        .into_iter()
-        .find(|t| t.path.as_os_str() == h.path.as_str())
-        .ok_or_else(|| {
-            format!(
-                "{REMOVE_HAND_TARGET}: {} is under no configured root — refused",
-                h.path
-            )
-        })?;
+pub fn remove_hand(input: &str, roots: &[std::path::PathBuf], now: std::time::SystemTime, idle_secs: u64) -> Result<String, String> {
+    let h: HandTarget = serde_json::from_str(input).map_err(|e| format!("{REMOVE_HAND_TARGET}: bad input: {e}"))?;
+    let t = testenv::hand::candidates(roots).into_iter().find(|t| t.path.as_os_str() == h.path.as_str()).ok_or_else(|| format!("{REMOVE_HAND_TARGET}: {} is under no configured root — refused", h.path))?;
     if testenv::hand::stale_written_at(&t.path, now, idle_secs).is_none() {
-        return Err(format!(
-            "{REMOVE_HAND_TARGET}: {} was written within the threshold — refused",
-            h.path
-        ));
+        return Err(format!("{REMOVE_HAND_TARGET}: {} was written within the threshold — refused", h.path));
     }
     if testenv::hand::held(&t) {
-        return Err(format!(
-            "{REMOVE_HAND_TARGET}: {} is held by a process — refused",
-            h.path
-        ));
+        return Err(format!("{REMOVE_HAND_TARGET}: {} is held by a process — refused", h.path));
     }
     testenv::reap::remove_target(&t.path).map(|n| n.to_string())
 }
@@ -477,10 +330,7 @@ pub struct SweepTarget {
 
 impl SweepTarget {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        SweepTarget {
-            cadence: Cadence::Every(CADENCE_MS),
-            pinned,
-        }
+        SweepTarget { cadence: Cadence::Every(CADENCE_MS), pinned }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -509,9 +359,7 @@ impl Handler for SweepTarget {
         if ev.kind.tag == TICK {
             return kit::on_tick(&SHAPE, String::new(), self.cadence.next_after(ev.at));
         }
-        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else {
-            return vec![];
-        };
+        let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
         let (next, acts) = decide(&carry, &snap);
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
     }
@@ -549,22 +397,8 @@ mod tests {
 
     fn removed(t: &Path, snap: &[HandTarget], held: &[&str]) -> Vec<String> {
         let roots = roots_of(t);
-        let _held: Vec<_> = held
-            .iter()
-            .map(|p| std::fs::File::open(t.join(p)).unwrap())
-            .collect();
-        snap.iter()
-            .filter_map(|h| {
-                remove_hand(
-                    &serde_json::to_string(h).unwrap(),
-                    &roots,
-                    later(10),
-                    2 * DAY,
-                )
-                .ok()
-                .map(|_| h.path.clone())
-            })
-            .collect()
+        let _held: Vec<_> = held.iter().map(|p| std::fs::File::open(t.join(p)).unwrap()).collect();
+        snap.iter().filter_map(|h| remove_hand(&serde_json::to_string(h).unwrap(), &roots, later(10), 2 * DAY).ok().map(|_| h.path.clone())).collect()
     }
 
     fn roots_of(t: &Path) -> Vec<PathBuf> {
@@ -579,31 +413,14 @@ mod tests {
         let snap = observe_hand(&roots, later(10), 2 * DAY);
         assert_eq!(snap.len(), 2, "{snap:?}");
         assert!(snap.iter().all(|h| !h.busy && h.bytes > 0));
-        let acts = decide(
-            &Carry::default(),
-            &Snapshot {
-                hand_stale: snap.clone(),
-                ..Default::default()
-            },
-        )
-        .1;
-        assert_eq!(
-            acts.iter()
-                .filter(|a| a.effect == REMOVE_HAND_TARGET)
-                .count(),
-            2
-        );
+        let acts = decide(&Carry::default(), &Snapshot { hand_stale: snap.clone(), ..Default::default() }).1;
+        assert_eq!(acts.iter().filter(|a| a.effect == REMOVE_HAND_TARGET).count(), 2);
         for a in acts.iter().filter(|a| a.effect == REMOVE_HAND_TARGET) {
             remove_hand(&a.input, &roots, later(10), 2 * DAY).unwrap();
         }
         assert!(!t.path().join("scratch/proj/target").exists());
         assert!(!t.path().join("direct/old-target").exists());
-        for kept in [
-            "scratch/proj/logs/build.log",
-            "scratch/proj/src/main.rs",
-            "direct/notes.txt",
-            "direct/sp-abc123/target/debug/live.o",
-        ] {
+        for kept in ["scratch/proj/logs/build.log", "scratch/proj/src/main.rs", "direct/notes.txt", "direct/sp-abc123/target/debug/live.o"] {
             assert!(t.path().join(kept).exists(), "{kept} was removed");
         }
     }
@@ -615,30 +432,10 @@ mod tests {
         let roots = roots(t.path());
         let held_file = std::fs::File::open(t.path().join("direct/old-target/debug/b.o")).unwrap();
         let snap = observe_hand(&roots, later(10), 2 * DAY);
-        let h = snap
-            .iter()
-            .find(|h| h.path.ends_with("old-target"))
-            .unwrap();
+        let h = snap.iter().find(|h| h.path.ends_with("old-target")).unwrap();
         assert!(h.busy);
-        assert_eq!(
-            decide(
-                &Carry::default(),
-                &Snapshot {
-                    hand_stale: vec![h.clone()],
-                    floor_bytes: 0,
-                    ..Default::default()
-                }
-            )
-            .1,
-            vec![]
-        );
-        let e = remove_hand(
-            &serde_json::to_string(h).unwrap(),
-            &roots,
-            later(10),
-            2 * DAY,
-        )
-        .unwrap_err();
+        assert_eq!(decide(&Carry::default(), &Snapshot { hand_stale: vec![h.clone()], floor_bytes: 0, ..Default::default() }).1, vec![]);
+        let e = remove_hand(&serde_json::to_string(h).unwrap(), &roots, later(10), 2 * DAY).unwrap_err();
         assert!(e.contains("held by a process"), "{e}");
         assert!(t.path().join("direct/old-target/debug/b.o").exists());
         drop(held_file);
@@ -651,29 +448,9 @@ mod tests {
         let t = testkit::TempDir::new("sweep-hand-refuse");
         let roots = roots(t.path());
         let snap = observe_hand(&roots, later(10), 2 * DAY);
-        let outside = HandTarget {
-            path: t.path().join("scratch/proj/logs").display().to_string(),
-            ..snap[0].clone()
-        };
-        assert!(remove_hand(
-            &serde_json::to_string(&outside).unwrap(),
-            &roots,
-            later(10),
-            2 * DAY
-        )
-        .unwrap_err()
-        .contains("under no configured root"));
-        assert!(remove_hand(
-            &serde_json::to_string(&snap[0]).unwrap(),
-            &roots,
-            later(1),
-            2 * DAY
-        )
-        .unwrap_err()
-        .contains("within the threshold"));
-        assert!(
-            t.path().join("scratch/proj/logs/build.log").exists()
-                && Path::new(&snap[0].path).exists()
-        );
+        let outside = HandTarget { path: t.path().join("scratch/proj/logs").display().to_string(), ..snap[0].clone() };
+        assert!(remove_hand(&serde_json::to_string(&outside).unwrap(), &roots, later(10), 2 * DAY).unwrap_err().contains("under no configured root"));
+        assert!(remove_hand(&serde_json::to_string(&snap[0]).unwrap(), &roots, later(1), 2 * DAY).unwrap_err().contains("within the threshold"));
+        assert!(t.path().join("scratch/proj/logs/build.log").exists() && Path::new(&snap[0].path).exists());
     }
 }

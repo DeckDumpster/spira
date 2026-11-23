@@ -37,12 +37,7 @@ pub struct Repin {
 impl Repin {
     /// `fresh` reads named keys from the files again; `lookup` is the pin the process started with.
     pub fn new(base: Settings, fresh: Fresh, lookup: Lookup) -> Self {
-        Repin {
-            base,
-            fresh,
-            lookup,
-            state: Mutex::default(),
-        }
+        Repin { base, fresh, lookup, state: Mutex::default() }
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
@@ -59,14 +54,10 @@ impl Repin {
     pub fn request(&self, key: &str) -> Result<serde_json::Value, String> {
         let Some(held) = self.held(key) else {
             let held = (self.lookup)(key)?;
-            let wanted = (self.fresh)(&[key.to_string()])?
-                .remove(key)
-                .unwrap_or_default();
+            let wanted = (self.fresh)(&[key.to_string()])?.remove(key).unwrap_or_default();
             return Ok(serde_json::json!({ "state": "restart", "held": held, "wanted": wanted }));
         };
-        let wanted = (self.fresh)(&[key.to_string()])?
-            .remove(key)
-            .unwrap_or_default();
+        let wanted = (self.fresh)(&[key.to_string()])?.remove(key).unwrap_or_default();
         let mut st = self.state();
         if wanted == held {
             st.wanted.remove(key);
@@ -82,10 +73,7 @@ impl Repin {
             let st = self.state();
             (st.wanted.clone(), st.waits.clone())
         };
-        let pending: BTreeMap<&String, serde_json::Value> = wanted
-            .iter()
-            .map(|(k, w)| (k, serde_json::json!({ "held": self.held(k), "wanted": w })))
-            .collect();
+        let pending: BTreeMap<&String, serde_json::Value> = wanted.iter().map(|(k, w)| (k, serde_json::json!({ "held": self.held(k), "wanted": w }))).collect();
         serde_json::json!({ "pending": pending, "waits": waits })
     }
 
@@ -95,31 +83,17 @@ impl Repin {
         if wanted.is_empty() {
             return;
         }
-        let driving = engine
-            .carry_body(batcher_local::NAME, batcher_local::STATE)
-            .is_some_and(|b| batcher_local::driving(&b));
+        let driving = engine.carry_body(batcher_local::NAME, batcher_local::STATE).is_some_and(|b| batcher_local::driving(&b));
         let status = engine.status();
-        let busy: BTreeSet<&str> = status
-            .tasks
-            .iter()
-            .filter(|t| !t.in_flight.is_empty())
-            .map(|t| t.name.as_str())
-            .collect();
+        let busy: BTreeSet<&str> = status.tasks.iter().filter(|t| !t.in_flight.is_empty()).map(|t| t.name.as_str()).collect();
         let mut take = BTreeMap::new();
         let mut held = vec![];
         for (key, value) in &wanted {
-            let blocked = crate::tasks::all().find(|t| {
-                busy.contains(t.name) && t.keys.iter().flat_map(|ks| ks.iter()).any(|k| k == key)
-            });
+            let blocked = crate::tasks::all().find(|t| busy.contains(t.name) && t.keys.iter().flat_map(|ks| ks.iter()).any(|k| k == key));
             if driving && batcher_local::KEYS.contains(&key.as_str()) {
-                held.push(format!(
-                    "{key}: the batcher to finish the round it is driving"
-                ));
+                held.push(format!("{key}: the batcher to finish the round it is driving"));
             } else if let Some(t) = blocked {
-                held.push(format!(
-                    "{key}: {} to finish the effect it has in flight",
-                    t.name
-                ));
+                held.push(format!("{key}: {} to finish the effect it has in flight", t.name));
             } else {
                 take.insert(key.clone(), value.clone());
             }
@@ -132,13 +106,11 @@ impl Repin {
         let mut pinned = self.state().pinned.clone();
         pinned.extend(take.clone());
         let lookup = self.lookup.clone();
-        let next = Settings::from_lookup(&|k| pinned.get(k).cloned().map_or_else(|| lookup(k), Ok))
-            .and_then(|s| {
-                let mut s =
-                    s.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
-                s.reconciler.home = self.base.reconciler.home.clone();
-                Ok(s)
-            });
+        let next = Settings::from_lookup(&|k| pinned.get(k).cloned().map_or_else(|| lookup(k), Ok)).and_then(|s| {
+            let mut s = s.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
+            s.reconciler.home = self.base.reconciler.home.clone();
+            Ok(s)
+        });
         let next = match next {
             Ok(s) => s,
             Err(e) => {
@@ -147,12 +119,7 @@ impl Repin {
             }
         };
         let mut lines = vec![];
-        for t in crate::tasks::all().filter(|t| {
-            t.keys
-                .iter()
-                .flat_map(|ks| ks.iter())
-                .any(|k| take.contains_key(*k))
-        }) {
+        for t in crate::tasks::all().filter(|t| t.keys.iter().flat_map(|ks| ks.iter()).any(|k| take.contains_key(*k))) {
             engine.rebind(t.name, (t.build)(&next).handler);
         }
         for (key, value) in &take {

@@ -382,15 +382,7 @@ mod tests {
 
     /// Every effect name a booted task can ask for or route, and the shared ones.
     fn registered() -> Vec<&'static str> {
-        let mut out: Vec<&str> = crate::tasks::all()
-            .flat_map(|t| {
-                t.effects
-                    .iter()
-                    .copied()
-                    .chain(t.runners.iter().map(|(n, _)| *n))
-            })
-            .chain(crate::tasks::SHARED.iter().map(|(n, _)| *n))
-            .collect();
+        let mut out: Vec<&str> = crate::tasks::all().flat_map(|t| t.effects.iter().copied().chain(t.runners.iter().map(|(n, _)| *n))).chain(crate::tasks::SHARED.iter().map(|(n, _)| *n)).collect();
         out.sort();
         out.dedup();
         out
@@ -417,10 +409,7 @@ mod tests {
             let src = std::fs::read_to_string(&p).unwrap();
             let mut on = false;
             for line in src.lines() {
-                if line
-                    .to_ascii_lowercase()
-                    .starts_with("//! | effect | class |")
-                {
+                if line.to_ascii_lowercase().starts_with("//! | effect | class |") {
                     on = true;
                     continue;
                 }
@@ -435,21 +424,10 @@ mod tests {
                     continue;
                 }
                 let cells: Vec<&str> = row.split(" | ").collect();
-                let (Some(effect), Some(class)) = (cells.first(), cells.get(1)) else {
-                    continue;
-                };
-                let Some(name) = effect.split('`').nth(1) else {
-                    continue;
-                };
-                let word: String = class
-                    .trim()
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphabetic())
-                    .collect();
-                out.insert(
-                    name.to_string(),
-                    (word, p.file_name().unwrap().to_string_lossy().into_owned()),
-                );
+                let (Some(effect), Some(class)) = (cells.first(), cells.get(1)) else { continue };
+                let Some(name) = effect.split('`').nth(1) else { continue };
+                let word: String = class.trim().chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+                out.insert(name.to_string(), (word, p.file_name().unwrap().to_string_lossy().into_owned()));
             }
         }
         out
@@ -475,37 +453,23 @@ mod tests {
             .into_iter()
             .filter(|n| class_of(n).is_none())
             .map(|n| {
-                let guess = tables
-                    .get(n)
-                    .and_then(|(w, _)| EffectClass::parse(w))
-                    .map_or("/* no Act table row */ Host", name);
+                let guess = tables.get(n).and_then(|(w, _)| EffectClass::parse(w)).map_or("/* no Act table row */ Host", name);
                 format!("    ({n:?}, {guess}),")
             })
             .collect();
-        assert!(
-            missing.is_empty(),
-            "effects with no class row; add them to CLASSES:\n{}",
-            missing.join("\n")
-        );
+        assert!(missing.is_empty(), "effects with no class row; add them to CLASSES:\n{}", missing.join("\n"));
     }
 
     #[test_id(tit1sov)]
     #[test]
     fn every_act_table_row_agrees_with_the_class_table() {
         let tables = act_tables();
-        assert!(
-            tables.len() >= 100,
-            "the source scan must find the Act tables: {}",
-            tables.len()
-        );
+        assert!(tables.len() >= 100, "the source scan must find the Act tables: {}", tables.len());
         let mut wrong = vec![];
         for (n, c) in CLASSES {
             if let Some((word, file)) = tables.get(*n) {
                 if EffectClass::parse(word) != Some(*c) {
-                    wrong.push(format!(
-                        "{n}: CLASSES says {}, {file}'s Act table says {word:?}",
-                        c.name()
-                    ));
+                    wrong.push(format!("{n}: CLASSES says {}, {file}'s Act table says {word:?}", c.name()));
                 }
             }
         }
@@ -519,10 +483,7 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         for (n, _) in CLASSES {
             assert!(seen.insert(*n), "{n} appears twice");
-            assert!(
-                reg.contains(n),
-                "{n} is in CLASSES but no booted task registers it"
-            );
+            assert!(reg.contains(n), "{n} is in CLASSES but no booted task registers it");
         }
     }
 
@@ -543,28 +504,10 @@ mod tests {
         use runtime::host::EffectRunner;
         use runtime::pools::{ClassPools, PoolCaps};
         let effects = crate::Effects::default();
-        let class = |name: &str| {
-            effects.class(&runtime::EffectSpec::keyed(
-                name,
-                name,
-                String::new(),
-                5_000,
-            ))
-        };
-        let pools = ClassPools::new(PoolCaps {
-            host: 1,
-            ..PoolCaps::default()
-        });
-        let _held = pools
-            .try_take(class(METRIC))
-            .expect("the metric takes the only host permit");
-        assert!(
-            pools.try_take(class(METRIC)).is_err(),
-            "the host class is full"
-        );
-        assert!(
-            pools.try_take(class(UNIT_START)).is_ok(),
-            "a unit start runs under the unit class, not the full host one"
-        );
+        let class = |name: &str| effects.class(&runtime::EffectSpec::keyed(name, name, String::new(), 5_000));
+        let pools = ClassPools::new(PoolCaps { host: 1, ..PoolCaps::default() });
+        let _held = pools.try_take(class(METRIC)).expect("the metric takes the only host permit");
+        assert!(pools.try_take(class(METRIC)).is_err(), "the host class is full");
+        assert!(pools.try_take(class(UNIT_START)).is_ok(), "a unit start runs under the unit class, not the full host one");
     }
 }

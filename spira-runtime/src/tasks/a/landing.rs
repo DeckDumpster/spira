@@ -184,42 +184,12 @@ pub const ACTS: &[(&str, u64)] = &[
     (PR_AUTOMERGE, 30_000),
 ];
 pub const EMITS: &[EventKindTag] = &[];
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    FETCH,
-    DELIVER_PR_MERGED,
-    DELIVER_PR_CLOSED,
-    DELIVER_BY_CONTENT,
-    REOPEN,
-    EVENT,
-    NOTE,
-    BUMP_REQUEUE,
-    ASK,
-    REBASE,
-    CONFINE,
-    FORCE_PUSH,
-    PR_CREATE,
-    PR_AUTOMERGE,
-];
-pub const KEYS: &[&str] = &[
-    "SPIRA_BATCHER_FORGE_ENABLE",
-    "SPIRA_ASK_LABEL",
-    "SPIRA_GIT_NAME",
-    "SPIRA_GIT_EMAIL",
-    "SPIRA_REPO_MAP",
-    "SPIRA_PR_REFRESH_MAX",
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, FETCH, DELIVER_PR_MERGED, DELIVER_PR_CLOSED, DELIVER_BY_CONTENT, REOPEN, EVENT, NOTE, BUMP_REQUEUE, ASK, REBASE, CONFINE, FORCE_PUSH, PR_CREATE, PR_AUTOMERGE];
+pub const KEYS: &[&str] = &["SPIRA_BATCHER_FORGE_ENABLE", "SPIRA_ASK_LABEL", "SPIRA_GIT_NAME", "SPIRA_GIT_EMAIL", "SPIRA_REPO_MAP", "SPIRA_PR_REFRESH_MAX"];
 /// `BD_TIMEOUT` is gone: every store read is `LcClient` under its own deadline.
 pub const UNREGISTERED: &[&str] = &[];
 
-pub const SHAPE: Shape = Shape {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    observe: OBSERVE,
-    observe_deadline_ms: OBSERVE_DEADLINE_MS,
-};
+pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
 /// A branch's bead, as the content store and the lifecycle row report it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,25 +315,16 @@ pub struct Carry {
 }
 
 fn word(state: State) -> String {
-    serde_json::to_string(&state)
-        .unwrap_or_default()
-        .trim_matches('"')
-        .to_string()
+    serde_json::to_string(&state).unwrap_or_default().trim_matches('"').to_string()
 }
 
 pub fn step(state: State, event: Trigger) -> Result<State, String> {
-    TABLE
-        .iter()
-        .find(|(s, e, _)| *s == state && *e == event)
-        .map(|(_, _, to)| *to)
-        .ok_or_else(|| format!("{NAME}: {event:?} is not legal in state {}", word(state)))
+    TABLE.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, to)| *to).ok_or_else(|| format!("{NAME}: {event:?} is not legal in state {}", word(state)))
 }
 
 /// The exit code a transition into `done` carries.
 pub fn exit_code(state: State, event: Trigger) -> Option<u8> {
-    EXIT.iter()
-        .find(|(s, e, _)| *s == state && *e == event)
-        .map(|(_, _, c)| *c)
+    EXIT.iter().find(|(s, e, _)| *s == state && *e == event).map(|(_, _, c)| *c)
 }
 
 /// Everything a branch's steps need, carried in each step's input so its outcome can take the
@@ -406,46 +367,21 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 
 /// [`decide`] under the pinned `SPIRA_PR_REFRESH_MAX`.
 pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, Vec<Act>) {
-    let mut next = Carry {
-        branches: BTreeMap::new(),
-    };
+    let mut next = Carry { branches: BTreeMap::new() };
     let mut acts = vec![];
     if !snap.forge_enabled {
         return (carry.clone(), acts);
     }
     for r in &snap.repos {
         let mut branches: Vec<&Branch> = r.branches.iter().collect();
-        branches.sort_by_key(|b| {
-            b.bead.as_ref().map_or((u8::MAX, u64::MAX), |x| {
-                (x.priority, x.closed_at_ms.unwrap_or(u64::MAX))
-            })
-        });
+        branches.sort_by_key(|b| b.bead.as_ref().map_or((u8::MAX, u64::MAX), |x| (x.priority, x.closed_at_ms.unwrap_or(u64::MAX))));
         for b in branches {
             let Some(bead) = &b.bead else { continue };
-            let leg = Leg {
-                repo: r.name.clone(),
-                path: r.path.clone(),
-                landref: r.landref.clone(),
-                base_fq: r.base_fq.clone(),
-                base_sha: r.base_sha.clone(),
-                br: b.br.clone(),
-                id: bead.id.clone(),
-                tip: b.tip.clone(),
-                pr_state: b.pr_state,
-                version: bead.version,
-                cause: String::new(),
-            };
+            let leg = Leg { repo: r.name.clone(), path: r.path.clone(), landref: r.landref.clone(), base_fq: r.base_fq.clone(), base_sha: r.base_sha.clone(), br: b.br.clone(), id: bead.id.clone(), tip: b.tip.clone(), pr_state: b.pr_state, version: bead.version, cause: String::new() };
             let merge_sha = || b.merge_sha.clone().unwrap_or_else(|| r.base_sha.clone());
             if !bead.handed_on {
                 if b.pr_state == PrState::Merged {
-                    acts.push(act(
-                        DELIVER_PR_MERGED,
-                        format!("{}/{}", bead.id, merge_sha()),
-                        &Leg {
-                            tip: merge_sha(),
-                            ..leg
-                        },
-                    ));
+                    acts.push(act(DELIVER_PR_MERGED, format!("{}/{}", bead.id, merge_sha()), &Leg { tip: merge_sha(), ..leg }));
                 }
                 continue;
             }
@@ -453,11 +389,7 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
                 continue;
             }
             if b.content_on_base {
-                acts.push(act(
-                    DELIVER_BY_CONTENT,
-                    format!("{}/{}", bead.id, bead.version),
-                    &leg,
-                ));
+                acts.push(act(DELIVER_BY_CONTENT, format!("{}/{}", bead.id, bead.version), &leg));
                 continue;
             }
             if b.holder_alive {
@@ -473,22 +405,11 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
             }
             match b.pr_state {
                 PrState::Merged => {
-                    acts.push(act(
-                        DELIVER_PR_MERGED,
-                        format!("{}/{}", bead.id, merge_sha()),
-                        &Leg {
-                            tip: merge_sha(),
-                            ..leg
-                        },
-                    ));
+                    acts.push(act(DELIVER_PR_MERGED, format!("{}/{}", bead.id, merge_sha()), &Leg { tip: merge_sha(), ..leg }));
                     c.state = State::Done;
                 }
                 PrState::Closed => {
-                    acts.push(act(
-                        DELIVER_PR_CLOSED,
-                        format!("{}/pr-closed", bead.id),
-                        &leg,
-                    ));
+                    acts.push(act(DELIVER_PR_CLOSED, format!("{}/pr-closed", bead.id), &leg));
                     c.state = State::Done;
                 }
                 PrState::None => {
@@ -497,14 +418,7 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
                 }
                 PrState::Open if b.behind && c.refreshes >= refresh_max => {
                     let subject = format!("{}: {} refreshed {} times", bead.id, b.br, c.refreshes);
-                    acts.push(act(
-                        ASK,
-                        subject.clone(),
-                        &Leg {
-                            cause: subject,
-                            ..leg
-                        },
-                    ));
+                    acts.push(act(ASK, subject.clone(), &Leg { cause: subject, ..leg }));
                     c.state = State::Done;
                 }
                 PrState::Open if b.behind => {
@@ -543,21 +457,11 @@ pub struct ConfineOutcome {
 /// A branch's next step on its current step's outcome: rebase → confine → force-push → the
 /// pull request created (when absent) and armed → done; a conflict, a violation or a refused
 /// push ends the machine, a conflict and a violation sending the bead back to rework.
-pub fn on_outcome(
-    carry: &Carry,
-    effect: &str,
-    input: &str,
-    ok: bool,
-    body: &str,
-) -> (Carry, Vec<Act>) {
+pub fn on_outcome(carry: &Carry, effect: &str, input: &str, ok: bool, body: &str) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
     let mut acts = vec![];
-    let Ok(leg) = serde_json::from_str::<Leg>(input) else {
-        return (next, acts);
-    };
-    let Some(c) = next.branches.get_mut(&leg.br) else {
-        return (next, acts);
-    };
+    let Ok(leg) = serde_json::from_str::<Leg>(input) else { return (next, acts) };
+    let Some(c) = next.branches.get_mut(&leg.br) else { return (next, acts) };
     let trigger = match (c.state, effect, ok) {
         (State::Rebasing, REBASE, true) => match serde_json::from_str::<RebaseOutcome>(body) {
             Ok(RebaseOutcome::Ok) => Trigger::RebaseOk,
@@ -593,9 +497,7 @@ pub fn on_outcome(
         (State::PrOpen, PR_AUTOMERGE, _) => Trigger::PrArmed,
         _ => return (next, acts),
     };
-    let Ok(to) = step(c.state, trigger) else {
-        return (next, acts);
-    };
+    let Ok(to) = step(c.state, trigger) else { return (next, acts) };
     match trigger {
         Trigger::RebaseOk => acts.push(act(CONFINE, format!("{}/{}", leg.id, leg.tip), &leg)),
         Trigger::Conflict => {
@@ -603,32 +505,14 @@ pub fn on_outcome(
                 Ok(RebaseOutcome::Conflict { detail }) => detail,
                 _ => String::new(),
             };
-            acts.push(act(
-                REOPEN,
-                format!("{}/rebase-conflict", leg.id),
-                &Leg {
-                    cause: format!("rebase-conflict: conflict: {detail}"),
-                    ..leg.clone()
-                },
-            ))
+            acts.push(act(REOPEN, format!("{}/rebase-conflict", leg.id), &Leg { cause: format!("rebase-conflict: conflict: {detail}"), ..leg.clone() }))
         }
         Trigger::Violation => {
-            let detail = serde_json::from_str::<ConfineOutcome>(body)
-                .map(|o| o.detail)
-                .unwrap_or_default();
-            acts.push(act(
-                REOPEN,
-                format!("{}/confine-violation", leg.id),
-                &Leg {
-                    cause: format!("confine-violation: 2 {detail}"),
-                    ..leg.clone()
-                },
-            ))
+            let detail = serde_json::from_str::<ConfineOutcome>(body).map(|o| o.detail).unwrap_or_default();
+            acts.push(act(REOPEN, format!("{}/confine-violation", leg.id), &Leg { cause: format!("confine-violation: 2 {detail}"), ..leg.clone() }))
         }
         Trigger::ConfineOk => acts.push(act(FORCE_PUSH, format!("{}/{}", leg.br, leg.tip), &leg)),
-        Trigger::PushOk if leg.pr_state == PrState::None => {
-            acts.push(act(PR_CREATE, format!("{}/{}", leg.repo, leg.br), &leg))
-        }
+        Trigger::PushOk if leg.pr_state == PrState::None => acts.push(act(PR_CREATE, format!("{}/{}", leg.repo, leg.br), &leg)),
         Trigger::PushOk => acts.push(act(PR_AUTOMERGE, format!("{}/{}", leg.repo, leg.br), &leg)),
         _ => {}
     }
@@ -646,10 +530,7 @@ fn lc() -> Result<spira_store::lc_call::LcClient, String> {
 
 fn registry() -> Result<spira_config::repos::Registry, String> {
     let home = spira_config::resolve::locate_home_for_process()?;
-    Ok(spira_config::repos::Registry::from_env(
-        std::env::vars().collect(),
-        &home,
-    ))
+    Ok(spira_config::repos::Registry::from_env(std::env::vars().collect(), &home))
 }
 
 fn git(path: &str, args: &[&str], secs: u64) -> Option<String> {
@@ -677,87 +558,38 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
     let lc = lc()?;
     let mut repos = vec![];
     for name in reg.names().into_iter().filter(|n| reg.land(n) == "pr") {
-        let Some(path) = reg
-            .root(&name)
-            .filter(|p| std::path::Path::new(p).join(".git").exists())
-        else {
-            continue;
-        };
-        let Some(landref) = spira_config::repos::landref(&reg, &path) else {
-            continue;
-        };
+        let Some(path) = reg.root(&name).filter(|p| std::path::Path::new(p).join(".git").exists()) else { continue };
+        let Some(landref) = spira_config::repos::landref(&reg, &path) else { continue };
         let base_fq = spira_config::repos::qualify_base_ref(&landref, &path);
         // `landing.fetch` (`pr.rs:91-93`) runs inside this probe, so an idle tick stays probes only.
-        let _ = fetch(
-            &serde_json::to_string(&Leg {
-                path: path.clone(),
-                landref: landref.clone(),
-                ..Leg::default()
-            })
-            .unwrap_or_default(),
-        );
-        let base_sha =
-            git(&path, &["rev-parse", "--verify", "--quiet", &base_fq], 10).unwrap_or_default();
-        let refs = git(
-            &path,
-            &[
-                "for-each-ref",
-                "--format=%(refname:short) %(objectname)",
-                "refs/heads/spira/",
-            ],
-            10,
-        )
-        .unwrap_or_default();
-        let refs: Vec<(String, String)> = refs
-            .lines()
-            .filter_map(|l| {
-                l.split_once(' ')
-                    .map(|(b, t)| (b.to_string(), t.to_string()))
-            })
-            .collect();
+        let _ = fetch(&serde_json::to_string(&Leg { path: path.clone(), landref: landref.clone(), ..Leg::default() }).unwrap_or_default());
+        let base_sha = git(&path, &["rev-parse", "--verify", "--quiet", &base_fq], 10).unwrap_or_default();
+        let refs = git(&path, &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/"], 10).unwrap_or_default();
+        let refs: Vec<(String, String)> = refs.lines().filter_map(|l| l.split_once(' ').map(|(b, t)| (b.to_string(), t.to_string()))).collect();
         if refs.is_empty() {
             continue;
         }
-        let ids: Vec<String> = refs
-            .iter()
-            .map(|(b, _)| b.trim_start_matches("spira/").to_string())
-            .collect();
+        let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
         let rows = spira_store::lc_state::index(store_view::rows_by_ids(&lc, &ids)?);
         let mut argv = vec!["content".to_string(), "show".to_string()];
         argv.extend(ids.iter().cloned());
         argv.push("--json".into());
         let shown = lc.answer(&argv).unwrap_or_default();
-        let items: Vec<serde_json::Value> = match serde_json::from_str::<serde_json::Value>(
-            shown.find(['[', '{']).map_or("[]", |i| &shown[i..]),
-        ) {
+        let items: Vec<serde_json::Value> = match serde_json::from_str::<serde_json::Value>(shown.find(['[', '{']).map_or("[]", |i| &shown[i..])) {
             Ok(serde_json::Value::Array(a)) => a,
             Ok(o @ serde_json::Value::Object(_)) => vec![o],
             _ => vec![],
         };
-        let beads: BTreeMap<String, landing_pass::model::BeadRow> = items
-            .iter()
-            .filter_map(|i| landing_pass::model::BeadRow::from_json(i, reg.home_repo()))
-            .map(|b| (b.id.clone(), b))
-            .collect();
+        let beads: BTreeMap<String, landing_pass::model::BeadRow> = items.iter().filter_map(|i| landing_pass::model::BeadRow::from_json(i, reg.home_repo())).map(|b| (b.id.clone(), b)).collect();
         let mut branches = vec![];
         for (br, tip) in refs {
             let id = br.trim_start_matches("spira/").to_string();
             let row = rows.get(&id);
             let bead = beads.get(&id).map(|b| {
                 let state = row.map_or("-".to_string(), |r| r.state.clone());
-                BeadRow {
-                    id: id.clone(),
-                    repo: b.repo.clone(),
-                    handed_on: landing_pass::model::handed_on(&state),
-                    superseded: b.superseded,
-                    priority: b.priority.clamp(0, i64::from(u8::MAX)) as u8,
-                    closed_at_ms: None,
-                    version: 0,
-                }
+                BeadRow { id: id.clone(), repo: b.repo.clone(), handed_on: landing_pass::model::handed_on(&state), superseded: b.superseded, priority: b.priority.clamp(0, i64::from(u8::MAX)) as u8, closed_at_ms: None, version: 0 }
             });
-            let pr = forge("pr-state", &path, &[&br], None)
-                .stdout()
-                .map(|s| s.trim().to_string());
+            let pr = forge("pr-state", &path, &[&br], None).stdout().map(|s| s.trim().to_string());
             let pr_state = match pr.as_deref() {
                 Some("open") => PrState::Open,
                 Some("merged") => PrState::Merged,
@@ -765,61 +597,24 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
                 _ => PrState::None,
             };
             let handed = bead.as_ref().is_some_and(|b| b.handed_on);
-            let content_on_base = handed
-                && git(&path, &["cherry", &base_fq, &br], 10)
-                    .is_some_and(|o| !o.lines().any(|l| l.starts_with('+')));
-            let behind = pr_state == PrState::Open
-                && super::gate_check::git_out(
-                    std::path::Path::new(&path),
-                    &["merge-base", "--is-ancestor", &base_fq, &br],
-                    10,
-                )
-                .is_ok_and(|(c, _, _)| c == Some(1));
+            let content_on_base = handed && git(&path, &["cherry", &base_fq, &br], 10).is_some_and(|o| !o.lines().any(|l| l.starts_with('+')));
+            let behind = pr_state == PrState::Open && super::gate_check::git_out(std::path::Path::new(&path), &["merge-base", "--is-ancestor", &base_fq, &br], 10).is_ok_and(|(c, _, _)| c == Some(1));
             let holder_alive = handed && hel::reap::holder_alive(&e.world.run_dir, &id);
-            branches.push(Branch {
-                br,
-                tip,
-                bead,
-                lc_state: row.map(|r| r.state.clone()),
-                pr_state,
-                merge_sha: None,
-                holder_alive,
-                content_on_base,
-                behind,
-            });
+            branches.push(Branch { br, tip, bead, lc_state: row.map(|r| r.state.clone()), pr_state, merge_sha: None, holder_alive, content_on_base, behind });
         }
-        repos.push(Repo {
-            name,
-            path,
-            landref,
-            base_fq,
-            base_sha,
-            branches,
-        });
+        repos.push(Repo { name, path, landref, base_fq, base_sha, branches });
     }
-    serde_json::to_string(&Snapshot {
-        forge_enabled,
-        repos,
-    })
-    .map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { forge_enabled, repos }).map_err(|e| e.to_string())
 }
 
 /// `git fetch <remote>` in the repository.
 pub fn fetch(input: &str) -> Result<String, String> {
     let leg = leg_of(input, FETCH)?;
-    let remote = spira_config::repos::ref_remote(&leg.landref, Some(&leg.path))
-        .unwrap_or_else(|| "origin".into());
-    git(&leg.path, &["fetch", "--quiet", &remote], 55)
-        .map(|_| format!("fetched {remote}"))
-        .ok_or_else(|| format!("{FETCH}: git fetch {remote} failed in {}", leg.path))
+    let remote = spira_config::repos::ref_remote(&leg.landref, Some(&leg.path)).unwrap_or_else(|| "origin".into());
+    git(&leg.path, &["fetch", "--quiet", &remote], 55).map(|_| format!("fetched {remote}")).ok_or_else(|| format!("{FETCH}: git fetch {remote} failed in {}", leg.path))
 }
 
-fn delivered(
-    effect: &str,
-    id: &str,
-    what: &str,
-    done: Result<spira_store::lifecycle_row::Delivered, String>,
-) -> Result<String, String> {
+fn delivered(effect: &str, id: &str, what: &str, done: Result<spira_store::lifecycle_row::Delivered, String>) -> Result<String, String> {
     use spira_store::lifecycle_row::Delivered;
     match done.map_err(|e| format!("{effect}: {e}"))? {
         Delivered::Recorded => Ok(format!("{id}: {what} recorded")),
@@ -829,24 +624,12 @@ fn delivered(
 
 /// The merged pull request's exit: its proof is the branch's change in force on the merge
 /// commit, or the merge commit on `HEAD` once the branch is deleted.
-fn pr_merged(
-    effect: &str,
-    c: &spira_store::lc_call::LcClient,
-    leg: &Leg,
-    merge_sha: &str,
-) -> Result<String, String> {
+fn pr_merged(effect: &str, c: &spira_store::lc_call::LcClient, leg: &Leg, merge_sha: &str) -> Result<String, String> {
     use spira_store::lifecycle_row::{deliver_on, Delivered, Delivery, NotRecorded};
     let git = hel::git::Git(std::path::Path::new(&leg.path));
-    let d = Delivery::PrMerged {
-        merge_sha: merge_sha.to_string(),
-        content_on_base: git.content_on_base(&leg.br, merge_sha),
-        in_force: git.merged_proof(&leg.br, merge_sha),
-    };
+    let d = Delivery::PrMerged { merge_sha: merge_sha.to_string(), content_on_base: git.content_on_base(&leg.br, merge_sha), in_force: git.merged_proof(&leg.br, merge_sha) };
     match deliver_on(c, &leg.id, &d, d.actor()).map_err(|e| format!("{effect}: {e}"))? {
-        Delivered::NotRecorded(NotRecorded::ProofNotInForce) => Err(format!(
-            "{effect}: {}: the merge {merge_sha}: its change is not in force on {}",
-            leg.id, leg.base_fq
-        )),
+        Delivered::NotRecorded(NotRecorded::ProofNotInForce) => Err(format!("{effect}: {}: the merge {merge_sha}: its change is not in force on {}", leg.id, leg.base_fq)),
         done => delivered(effect, &leg.id, "pull request merged", Ok(done)),
     }
 }
@@ -857,10 +640,7 @@ pub fn deliver_pr_merged(input: &str) -> Result<String, String> {
     deliver_pr_merged_on(&lc()?, input)
 }
 
-pub fn deliver_pr_merged_on(
-    c: &spira_store::lc_call::LcClient,
-    input: &str,
-) -> Result<String, String> {
+pub fn deliver_pr_merged_on(c: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let leg = leg_of(input, DELIVER_PR_MERGED)?;
     pr_merged(DELIVER_PR_MERGED, c, &leg, &leg.tip)
 }
@@ -870,19 +650,11 @@ pub fn deliver_pr_closed(input: &str) -> Result<String, String> {
     deliver_pr_closed_on(&lc()?, input)
 }
 
-pub fn deliver_pr_closed_on(
-    c: &spira_store::lc_call::LcClient,
-    input: &str,
-) -> Result<String, String> {
+pub fn deliver_pr_closed_on(c: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     use spira_store::lifecycle_row::{deliver_on, Delivery};
     let leg = leg_of(input, DELIVER_PR_CLOSED)?;
     let d = Delivery::PrClosed;
-    delivered(
-        DELIVER_PR_CLOSED,
-        &leg.id,
-        "pull request closed",
-        deliver_on(c, &leg.id, &d, d.actor()),
-    )
+    delivered(DELIVER_PR_CLOSED, &leg.id, "pull request closed", deliver_on(c, &leg.id, &d, d.actor()))
 }
 
 /// A pull request whose content is already on the base: a PR_OPEN delivery row is delivered, a
@@ -891,10 +663,7 @@ pub fn deliver_by_content(input: &str) -> Result<String, String> {
     deliver_by_content_on(&lc()?, input)
 }
 
-pub fn deliver_by_content_on(
-    c: &spira_store::lc_call::LcClient,
-    input: &str,
-) -> Result<String, String> {
+pub fn deliver_by_content_on(c: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
     let leg = leg_of(input, DELIVER_BY_CONTENT)?;
     pr_merged(DELIVER_BY_CONTENT, c, &leg, &leg.base_sha)
 }
@@ -903,74 +672,36 @@ pub fn deliver_by_content_on(
 // FORK-EDGE: spira-claim reopen, rebase-stale rebase-branch, confine.sh and queue-helpers
 // git-push are Spira programs; each needs its crate's library (spira-claim, rebase-stale,
 // confine, queue-helpers) to become an in-process call.
-fn tool(
-    effect: &str,
-    prog: &str,
-    args: &[&str],
-    secs: u64,
-) -> Result<(Option<i32>, String), String> {
+fn tool(effect: &str, prog: &str, args: &[&str], secs: u64) -> Result<(Option<i32>, String), String> {
     use runtime::ports::Proc;
-    let spec = runtime::ports::ProcSpec {
-        prog: prog.into(),
-        args: args.iter().map(|a| a.to_string()).collect(),
-        stdin: vec![],
-        deadline: std::time::Duration::from_secs(secs),
-    };
-    let out = runtime::ports::SysProc
-        .run(&spec)
-        .map_err(|e| format!("{effect}: {e}"))?;
-    Ok((
-        out.code,
-        format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        ),
-    ))
+    let spec = runtime::ports::ProcSpec { prog: prog.into(), args: args.iter().map(|a| a.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(secs) };
+    let out = runtime::ports::SysProc.run(&spec).map_err(|e| format!("{effect}: {e}"))?;
+    Ok((out.code, format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
 }
 
 /// `bead_reopen <id> <cause> <note>` (`spira-claim reopen`).
 pub fn reopen(input: &str) -> Result<String, String> {
     let leg = leg_of(input, REOPEN)?;
-    let (cause, note) = leg
-        .cause
-        .split_once(": ")
-        .unwrap_or((leg.cause.as_str(), ""));
+    let (cause, note) = leg.cause.split_once(": ").unwrap_or((leg.cause.as_str(), ""));
     let note = format!("{}: {note}", leg.br);
     match tool(REOPEN, "spira-claim", &["reopen", &leg.id, cause, &note], 5)? {
         (Some(0), out) => Ok(out),
-        (code, out) => Err(format!(
-            "{REOPEN}: spira-claim reopen exited {code:?}: {}",
-            out.trim()
-        )),
+        (code, out) => Err(format!("{REOPEN}: spira-claim reopen exited {code:?}: {}", out.trim())),
     }
 }
 
 /// `spira_event <kind> <id> <title> <detail>`: `bead::event::emit`, in this process.
 pub fn event(e: &crate::Effects, input: &str) -> Result<String, String> {
     let leg = leg_of(input, EVENT)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    bead::event::emit(
-        &e.world.run_dir,
-        3_600,
-        now,
-        &leg.cause,
-        &leg.id,
-        &format!("{} {}", leg.br, leg.tip),
-        "",
-    )
-    .map_err(|_| format!("{EVENT}: not written"))?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    bead::event::emit(&e.world.run_dir, 3_600, now, &leg.cause, &leg.id, &format!("{} {}", leg.br, leg.tip), "").map_err(|_| format!("{EVENT}: not written"))?;
     Ok(leg.cause)
 }
 
 /// `bd-note <id> <text>` over the store.
 pub fn note(input: &str) -> Result<String, String> {
     let leg = leg_of(input, NOTE)?;
-    lc()?
-        .answer(&["bd-note", &leg.id, &leg.cause])
-        .map_err(|e| format!("{NOTE}: {e}"))
+    lc()?.answer(&["bd-note", &leg.id, &leg.cause]).map_err(|e| format!("{NOTE}: {e}"))
 }
 
 /// `bump_requeue` has no port outside lib.sh yet; the branch's requeue count is the carry's.
@@ -984,28 +715,9 @@ const ROUND_LOSER_DEFAULT: &str = "rebase it by hand and land it";
 /// The refresh-loop ask to the Concierge, through mail's question kind.
 pub fn ask(e: &crate::Effects, input: &str) -> Result<String, String> {
     let leg = leg_of(input, ASK)?;
-    let env = e
-        .concierge_mail
-        .as_deref()
-        .or(e.mail.as_deref())
-        .ok_or("no mail environment configured")?;
-    let args = mail::cmds::SendArgs {
-        mailbox: "concierge",
-        from: Some("landing <landing@spira>"),
-        subject: &leg.cause,
-        kind: "question",
-        default: ROUND_LOSER_DEFAULT,
-        class: "",
-        bead: &leg.id,
-        urgent: false,
-        digest: false,
-        dry_run: false,
-        requested_by: "",
-    };
-    let bd = mail::bead::BdCli {
-        bdq: String::new(),
-        conn_retries: 1,
-    };
+    let env = e.concierge_mail.as_deref().or(e.mail.as_deref()).ok_or("no mail environment configured")?;
+    let args = mail::cmds::SendArgs { mailbox: "concierge", from: Some("landing <landing@spira>"), subject: &leg.cause, kind: "question", default: ROUND_LOSER_DEFAULT, class: "", bead: &leg.id, urgent: false, digest: false, dry_run: false, requested_by: "" };
+    let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
     let body = format!("## Question\n{}. Its pull request keeps falling behind {} without landing. Rebase it by hand, or let it go?\n\n## Default\n{ROUND_LOSER_DEFAULT}\n", leg.cause, leg.base_fq);
     mail::cmds::send(&bd, env, &args, body).map(|o| o.delivered_path.display().to_string())
 }
@@ -1015,29 +727,10 @@ pub fn ask(e: &crate::Effects, input: &str) -> Result<String, String> {
 pub fn rebase_branch(input: &str) -> Result<String, String> {
     let leg = leg_of(input, REBASE)?;
     let fmt = registry()?.format(&leg.repo).unwrap_or_default();
-    let outcome = match tool(
-        REBASE,
-        "rebase-stale",
-        &[
-            "rebase-branch",
-            &leg.br,
-            &leg.base_fq,
-            &leg.path,
-            &leg.repo,
-            &fmt,
-        ],
-        115,
-    )? {
+    let outcome = match tool(REBASE, "rebase-stale", &["rebase-branch", &leg.br, &leg.base_fq, &leg.path, &leg.repo, &fmt], 115)? {
         (Some(0), _) => RebaseOutcome::Ok,
-        (Some(1), out) => RebaseOutcome::Conflict {
-            detail: out.lines().last().unwrap_or("").trim().to_string(),
-        },
-        (code, out) => {
-            return Err(format!(
-                "{REBASE}: rebase-stale rebase-branch exited {code:?}: {}",
-                out.trim()
-            ))
-        }
+        (Some(1), out) => RebaseOutcome::Conflict { detail: out.lines().last().unwrap_or("").trim().to_string() },
+        (code, out) => return Err(format!("{REBASE}: rebase-stale rebase-branch exited {code:?}: {}", out.trim())),
     };
     serde_json::to_string(&outcome).map_err(|e| format!("{REBASE}: {e}"))
 }
@@ -1046,38 +739,16 @@ pub fn rebase_branch(input: &str) -> Result<String, String> {
 /// `2` a violation, `5` inconclusive.
 pub fn confine(input: &str) -> Result<String, String> {
     let leg = leg_of(input, CONFINE)?;
-    let (code, out) = tool(
-        CONFINE,
-        "confine.sh",
-        &[&leg.id, &leg.br, &leg.path, &leg.base_fq, ""],
-        55,
-    )?;
-    let outcome = ConfineOutcome {
-        status: code.unwrap_or(5),
-        detail: out.lines().last().unwrap_or("").trim().to_string(),
-    };
+    let (code, out) = tool(CONFINE, "confine.sh", &[&leg.id, &leg.br, &leg.path, &leg.base_fq, ""], 55)?;
+    let outcome = ConfineOutcome { status: code.unwrap_or(5), detail: out.lines().last().unwrap_or("").trim().to_string() };
     serde_json::to_string(&outcome).map_err(|e| format!("{CONFINE}: {e}"))
 }
 
 /// `spira_git_push --force-with-lease -u <remote> <br>` (`queue-helpers git-push`).
 pub fn force_push(input: &str) -> Result<String, String> {
     let leg = leg_of(input, FORCE_PUSH)?;
-    let remote = spira_config::repos::ref_remote(&leg.landref, Some(&leg.path))
-        .unwrap_or_else(|| "origin".into());
-    match tool(
-        FORCE_PUSH,
-        "queue-helpers",
-        &[
-            "git-push",
-            &leg.path,
-            "-q",
-            "--force-with-lease",
-            "-u",
-            &remote,
-            &leg.br,
-        ],
-        55,
-    )? {
+    let remote = spira_config::repos::ref_remote(&leg.landref, Some(&leg.path)).unwrap_or_else(|| "origin".into());
+    match tool(FORCE_PUSH, "queue-helpers", &["git-push", &leg.path, "-q", "--force-with-lease", "-u", &remote, &leg.br], 55)? {
         (Some(0), _) => Ok(format!("pushed {}", leg.br)),
         (_, out) => Err(format!("{FORCE_PUSH}: {}", out.trim())),
     }
@@ -1086,39 +757,20 @@ pub fn force_push(input: &str) -> Result<String, String> {
 /// `forge pr-create <repo> <head> <base> <title>`, refused when the head already has an open PR.
 pub fn pr_create(input: &str) -> Result<String, String> {
     let leg = leg_of(input, PR_CREATE)?;
-    if forge("pr-list-open", &leg.path, &[], None)
-        .stdout()
-        .is_some_and(|o| {
-            o.lines()
-                .any(|l| l.split_once(' ').is_some_and(|(_, b)| b.trim() == leg.br))
-        })
-    {
-        return Err(format!(
-            "{PR_CREATE}: {} already has an open pull request — refused",
-            leg.br
-        ));
+    if forge("pr-list-open", &leg.path, &[], None).stdout().is_some_and(|o| o.lines().any(|l| l.split_once(' ').is_some_and(|(_, b)| b.trim() == leg.br))) {
+        return Err(format!("{PR_CREATE}: {} already has an open pull request — refused", leg.br));
     }
     let base = spira_config::repos::ref_branch(&leg.landref);
-    let title = format!(
-        "{}: {}",
-        leg.id,
-        if leg.cause.is_empty() {
-            "Spira"
-        } else {
-            leg.cause.as_str()
-        }
-    );
+    let title = format!("{}: {}", leg.id, if leg.cause.is_empty() { "Spira" } else { leg.cause.as_str() });
     let r = forge("pr-create", &leg.path, &[&leg.br, &base, &title], Some(b""));
-    r.stdout()
-        .ok_or_else(|| format!("{PR_CREATE}: {}", r.err.trim()))
+    r.stdout().ok_or_else(|| format!("{PR_CREATE}: {}", r.err.trim()))
 }
 
 /// `forge pr-automerge <repo> <head> <method>`.
 pub fn pr_automerge(input: &str) -> Result<String, String> {
     let leg = leg_of(input, PR_AUTOMERGE)?;
     let r = forge("pr-automerge", &leg.path, &[&leg.br, ""], None);
-    r.stdout()
-        .ok_or_else(|| format!("{PR_AUTOMERGE}: {}", r.err.trim()))
+    r.stdout().ok_or_else(|| format!("{PR_AUTOMERGE}: {}", r.err.trim()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1129,10 +781,7 @@ pub struct Landing {
 
 impl Landing {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        Landing {
-            cadence: Cadence::Every(CADENCE_MS),
-            pinned,
-        }
+        Landing { cadence: Cadence::Every(CADENCE_MS), pinned }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -1148,10 +797,7 @@ impl Landing {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map {
-    name: "branches",
-    drop: &[],
-}];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "branches", drop: &[] }];
 
 impl Handler for Landing {
     fn interests(&self) -> &[EventKindTag] {
@@ -1164,35 +810,14 @@ impl Handler for Landing {
         }
         let carry: Carry = kit::carry(&SHAPE, view);
         if ev.kind.tag == TICK {
-            return kit::on_tick(
-                &SHAPE,
-                serde_json::to_string(&carry).unwrap_or_default(),
-                self.cadence.next_after(ev.at),
-            );
+            return kit::on_tick(&SHAPE, serde_json::to_string(&carry).unwrap_or_default(), self.cadence.next_after(ev.at));
         }
-        let Some(spec) = crate::watchers::answered_spec(view, ev) else {
-            return vec![];
-        };
+        let Some(spec) = crate::watchers::answered_spec(view, ev) else { return vec![] };
         let (next, acts) = if spec.name == OBSERVE {
-            let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else {
-                return vec![];
-            };
-            decide_with(
-                &carry,
-                &snap,
-                self.pinned
-                    .get("SPIRA_PR_REFRESH_MAX")
-                    .and_then(|v| v.trim().parse().ok())
-                    .unwrap_or(PR_REFRESH_MAX),
-            )
+            let Some(snap) = kit::observed::<Snapshot>(&SHAPE, view, ev) else { return vec![] };
+            decide_with(&carry, &snap, self.pinned.get("SPIRA_PR_REFRESH_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(PR_REFRESH_MAX))
         } else {
-            on_outcome(
-                &carry,
-                &spec.name,
-                &spec.input,
-                ev.kind.tag == EFFECT_SUCCEEDED,
-                &ev.kind.body,
-            )
+            on_outcome(&carry, &spec.name, &spec.input, ev.kind.tag == EFFECT_SUCCEEDED, &ev.kind.body)
         };
         kit::commands(&SHAPE, ACTS, EMITS, &carry, &next, acts)
     }
@@ -1234,23 +859,10 @@ mod tests {
             lock_timeout_ms: 1000,
             condition: None,
         };
-        let e = crate::Effects {
-            concierge_mail: Some(std::sync::Arc::new(env)),
-            ..crate::Effects::default()
-        };
-        let leg = Leg {
-            id: "sp-x".into(),
-            cause: "The PR for sp-x keeps falling behind".into(),
-            base_fq: "local/main".into(),
-            ..Leg::default()
-        };
+        let e = crate::Effects { concierge_mail: Some(std::sync::Arc::new(env)), ..crate::Effects::default() };
+        let leg = Leg { id: "sp-x".into(), cause: "The PR for sp-x keeps falling behind".into(), base_fq: "local/main".into(), ..Leg::default() };
         ask(&e, &serde_json::to_string(&leg).unwrap()).unwrap();
-        assert_eq!(
-            std::fs::read_dir(root.join("mail/concierge/new"))
-                .unwrap()
-                .count(),
-            1
-        );
+        assert_eq!(std::fs::read_dir(root.join("mail/concierge/new")).unwrap().count(), 1);
         assert!(!root.join("mail/operator/new").exists());
     }
 }

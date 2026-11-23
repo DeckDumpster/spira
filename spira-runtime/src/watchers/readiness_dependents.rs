@@ -47,20 +47,14 @@ impl ReadinessDependents {
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
-        (
-            "readiness-dependents/boot",
-            STREAM,
-            EventKind::new(TICK, ""),
-        )
+        ("readiness-dependents/boot", STREAM, EventKind::new(TICK, ""))
     }
 }
 
 /// The carry after a pass answered `body`; a body that is not a pass leaves it as it was.
 pub fn decide(carry: &Carry, body: &str) -> Carry {
     match serde_json::from_str::<Pass>(body) {
-        Ok(Pass {
-            through: Some(t), ..
-        }) if Some(t) >= carry.through => Carry { through: Some(t) },
+        Ok(Pass { through: Some(t), .. }) if Some(t) >= carry.through => Carry { through: Some(t) },
         _ => carry.clone(),
     }
 }
@@ -76,67 +70,41 @@ impl Handler for ReadinessDependents {
         }
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         if ev.kind.tag == TICK {
-            let input = serde_json::to_string(&Pass {
-                through: carry.through,
-                ..Pass::default()
-            })
-            .unwrap_or_default();
+            let input = serde_json::to_string(&Pass { through: carry.through, ..Pass::default() }).unwrap_or_default();
             return vec![
                 Command::Probe(EffectSpec::probe(LOOK, input, DEADLINE_MS)),
-                Command::Timer {
-                    at: ev.at + self.interval_ms,
-                    kind: EventKind::new(TICK, ""),
-                },
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if answers_observe(view, ev, LOOK) {
             if ev.kind.tag != EFFECT_SUCCEEDED {
                 return vec![];
             }
-            let Ok(seen) = serde_json::from_str::<Pass>(&ev.kind.body) else {
-                return vec![];
-            };
+            let Ok(seen) = serde_json::from_str::<Pass>(&ev.kind.body) else { return vec![] };
             if !seen.keys.is_empty() {
                 let through = seen.through.map_or(String::new(), |t| t.to_string());
                 let input = serde_json::to_string(&seen).unwrap_or_default();
-                return vec![Command::Effect(EffectSpec::keyed(
-                    RUN,
-                    format!("{NAME}:run:{through}"),
-                    input,
-                    DEADLINE_MS,
-                ))];
+                return vec![Command::Effect(EffectSpec::keyed(RUN, format!("{NAME}:run:{through}"), input, DEADLINE_MS))];
             }
             let next = decide(&carry, &ev.kind.body);
             if next == carry {
                 return vec![];
             }
-            return vec![Command::Emit(EventKind::new(
-                STATE,
-                &serde_json::to_string(&next).unwrap_or_default(),
-            ))];
+            return vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
         }
         if answered_effect(view, ev).as_deref() != Some(RUN) {
             return vec![];
         }
-        ctx.event().set(
-            "readiness-dependents.failed",
-            u64::from(ev.kind.tag != EFFECT_SUCCEEDED),
-        );
+        ctx.event().set("readiness-dependents.failed", u64::from(ev.kind.tag != EFFECT_SUCCEEDED));
         if ev.kind.tag != EFFECT_SUCCEEDED {
             return vec![];
         }
         let next = decide(&carry, &ev.kind.body);
-        ctx.event().set(
-            "readiness-dependents.changed",
-            serde_json::from_str::<Pass>(&ev.kind.body).map_or(0, |p| p.changed),
-        );
+        ctx.event().set("readiness-dependents.changed", serde_json::from_str::<Pass>(&ev.kind.body).map_or(0, |p| p.changed));
         if next == carry {
             return vec![];
         }
-        vec![Command::Emit(EventKind::new(
-            STATE,
-            &serde_json::to_string(&next).unwrap_or_default(),
-        ))]
+        vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))]
     }
 }
 
@@ -148,13 +116,7 @@ mod tests {
 
     fn engine() -> (Engine, VirtualClock) {
         let clock = VirtualClock::new(1_800_000_000_000);
-        let mut e = Engine::open(
-            MemJournal::new(),
-            std::sync::Arc::new(clock.clone()),
-            vec![ReadinessDependents { interval_ms: 1000 }.registration()],
-            0,
-        )
-        .unwrap();
+        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![ReadinessDependents { interval_ms: 1000 }.registration()], 0).unwrap();
         let (id, stream, kind) = ReadinessDependents::boot();
         e.submit(id, stream, kind).unwrap();
         e.run_until_idle().unwrap();
@@ -162,30 +124,17 @@ mod tests {
     }
 
     fn looks(e: &Engine) -> Vec<Pass> {
-        e.pending_effects()
-            .iter()
-            .filter(|p| p.spec.name == LOOK)
-            .map(|p| serde_json::from_str(&p.spec.input).unwrap())
-            .collect()
+        e.pending_effects().iter().filter(|p| p.spec.name == LOOK).map(|p| serde_json::from_str(&p.spec.input).unwrap()).collect()
     }
 
     fn look(e: &mut Engine, body: &str) {
-        let probe = e
-            .pending_effects()
-            .into_iter()
-            .rfind(|p| p.spec.name == LOOK)
-            .unwrap();
-        e.complete(&probe.key, Outcome::Succeeded(body.into()))
-            .unwrap();
+        let probe = e.pending_effects().into_iter().rfind(|p| p.spec.name == LOOK).unwrap();
+        e.complete(&probe.key, Outcome::Succeeded(body.into())).unwrap();
         e.run_until_idle().unwrap();
     }
 
     fn run(e: &mut Engine, out: Outcome) {
-        let run = e
-            .pending_effects()
-            .into_iter()
-            .find(|p| p.spec.name == RUN)
-            .unwrap();
+        let run = e.pending_effects().into_iter().find(|p| p.spec.name == RUN).unwrap();
         e.complete(&run.key, out).unwrap();
         e.run_until_idle().unwrap();
     }
@@ -201,18 +150,9 @@ mod tests {
         let (mut e, clock) = engine();
         assert_eq!(looks(&e), [Pass::default()]);
         look(&mut e, r#"{"through":41,"keys":["sp-a"]}"#);
-        run(
-            &mut e,
-            Outcome::Succeeded(r#"{"through":41,"changed":1}"#.into()),
-        );
+        run(&mut e, Outcome::Succeeded(r#"{"through":41,"changed":1}"#.into()));
         tick(&mut e, &clock);
-        assert_eq!(
-            looks(&e).last(),
-            Some(&Pass {
-                through: Some(41),
-                ..Pass::default()
-            })
-        );
+        assert_eq!(looks(&e).last(), Some(&Pass { through: Some(41), ..Pass::default() }));
     }
 
     #[test_id(tmigjs2)]
@@ -224,18 +164,9 @@ mod tests {
         look(&mut e, r#"{"through":42,"keys":["sp-a"]}"#);
         run(&mut e, Outcome::Failed("store down".into()));
         tick(&mut e, &clock);
-        assert_eq!(
-            looks(&e).last(),
-            Some(&Pass {
-                through: Some(41),
-                ..Pass::default()
-            })
-        );
+        assert_eq!(looks(&e).last(), Some(&Pass { through: Some(41), ..Pass::default() }));
         look(&mut e, r#"{"through":42,"keys":["sp-a"]}"#);
-        assert!(
-            e.pending_effects().iter().any(|p| p.spec.name == RUN),
-            "the failed run is asked for again"
-        );
+        assert!(e.pending_effects().iter().any(|p| p.spec.name == RUN), "the failed run is asked for again");
     }
 
     #[test_id(t6b5o4l)]
@@ -244,10 +175,7 @@ mod tests {
         let (mut e, _clock) = engine();
         look(&mut e, r#"{"through":41,"keys":[]}"#);
         assert!(!e.pending_effects().iter().any(|p| p.spec.name == RUN));
-        assert_eq!(
-            carried::<Carry>(e.projection(), &StreamKey(STREAM.into()), STATE),
-            Carry { through: Some(41) }
-        );
+        assert_eq!(carried::<Carry>(e.projection(), &StreamKey(STREAM.into()), STATE), Carry { through: Some(41) });
     }
 
     #[test_id(tntq209)]
@@ -256,9 +184,6 @@ mod tests {
         let carry = Carry { through: Some(50) };
         assert_eq!(decide(&carry, r#"{"through":41,"changed":1}"#), carry);
         assert_eq!(decide(&carry, "not json"), carry);
-        assert_eq!(
-            decide(&Carry::default(), r#"{"through":7,"changed":0}"#),
-            Carry { through: Some(7) }
-        );
+        assert_eq!(decide(&Carry::default(), r#"{"through":7,"changed":0}"#), Carry { through: Some(7) });
     }
 }

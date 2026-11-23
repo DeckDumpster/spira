@@ -5,62 +5,21 @@ use spira_runtime::watchers::round_duty::*;
 use spira_runtime::watchers::INBOX_APPEND;
 
 fn registration() -> runtime::Registration {
-    RoundDuty {
-        interval_ms: 15_000,
-        min: 1,
-        max_open: 1,
-        remind_secs: 600,
-        idle_cut_secs: 900,
-        lease_ttl_secs: 300,
-        halt_page_secs: 3_600,
-        activation_bound_s: 90,
-        run_dir: Default::default(),
-    }
-    .registration()
+    RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900, lease_ttl_secs: 300, halt_page_secs: 3_600, activation_bound_s: 90, run_dir: Default::default() }.registration()
 }
 
 fn certified_work_and_no_round() -> Snapshot {
-    Snapshot {
-        certified: 1,
-        by_repo: "spira=1".into(),
-        state: RoundState::None,
-        lines: [("300".to_string(), 5)].into(),
-        ..Snapshot::default()
-    }
+    Snapshot { certified: 1, by_repo: "spira=1".into(), state: RoundState::None, lines: [("300".to_string(), 5)].into(), ..Snapshot::default() }
 }
 
 fn round_due_said() -> TaskRig {
     let world = serde_json::to_string(&certified_work_and_no_round()).unwrap();
-    let mut r = TaskRig::new(1, registration())
-        .unwrap()
-        .double(OBSERVE, move |_| Ok(world.clone()))
-        .double(INBOX_APPEND, |l| Ok(l.into()));
-    let carry = batcher_local::Carry {
-        repos: [(
-            "spira".to_string(),
-            batcher_local::RepoCarry {
-                admissible: vec!["sp-a".into()],
-                ..Default::default()
-            },
-        )]
-        .into(),
-    };
-    r.tick(
-        batcher_local::STREAM,
-        EventKind::new(
-            batcher_local::STATE,
-            &serde_json::to_string(&carry).unwrap(),
-        ),
-    )
-    .unwrap();
+    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(world.clone())).double(INBOX_APPEND, |l| Ok(l.into()));
+    let carry = batcher_local::Carry { repos: [("spira".to_string(), batcher_local::RepoCarry { admissible: vec!["sp-a".into()], ..Default::default() })].into() };
+    r.tick(batcher_local::STREAM, EventKind::new(batcher_local::STATE, &serde_json::to_string(&carry).unwrap())).unwrap();
     r.advance(1_000_000).unwrap();
     r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
-    assert!(
-        r.requested()
-            .iter()
-            .any(|q| q.name == INBOX_APPEND && q.input.contains("ROUND DUE")),
-        "the scenario must have said ROUND DUE"
-    );
+    assert!(r.requested().iter().any(|q| q.name == INBOX_APPEND && q.input.contains("ROUND DUE")), "the scenario must have said ROUND DUE");
     r.clock.advance(1);
     r
 }
@@ -77,10 +36,5 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(tdhpaz7)]
 #[test]
 fn a_boot_does_not_call_a_round_due_again_inside_the_reminder_window() {
-    kit::assert_boot_matches_an_unstopped_run(
-        round_due_said,
-        registration,
-        STREAM,
-        EventKind::new(TICK, ""),
-    );
+    kit::assert_boot_matches_an_unstopped_run(round_due_said, registration, STREAM, EventKind::new(TICK, ""));
 }

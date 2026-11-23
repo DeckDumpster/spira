@@ -103,29 +103,9 @@ pub const EFFECTS: &[&str] = &[OBSERVE, DESTROY_WORKTREE, REMOVE_SCRATCH, PRUNE]
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_TERMINAL_CALENDAR";
 /// `RandomizedDelaySec=120`.
 pub const JITTER_KEY: &str = "SPIRA_RUNTIME_HEL_REAP_TERMINAL_JITTER_SECS";
-pub const KEYS: &[&str] = &[
-    CADENCE_KEY,
-    JITTER_KEY,
-    "SPIRA_SCRATCH_MAX_AGE_HOURS",
-    "SPIRA_RUN",
-    "SPIRA_REAPLOG",
-    "SPIRA_RELEASE",
-];
+pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, "SPIRA_SCRATCH_MAX_AGE_HOURS", "SPIRA_RUN", "SPIRA_REAPLOG", "SPIRA_RELEASE"];
 
-pub const SPEC: Spec = Spec {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    probe: OBSERVE,
-    probe_deadline_ms: 120_000,
-    cadence_key: CADENCE_KEY,
-    calendar: true,
-    effects: EFFECTS,
-    keys: KEYS,
-    probe_input_key: None,
-    jitter_key: Some(JITTER_KEY),
-};
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: Some(JITTER_KEY) };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -170,15 +150,7 @@ pub enum Phase {
 }
 
 /// `state × event → state`. A tick while `reaping` is refused, naming `reaping`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
-    (Phase::Idle, "tick", Phase::Observing),
-    (Phase::Observing, "observed:work", Phase::Reaping),
-    (Phase::Observing, "observed:idle", Phase::Idle),
-    (Phase::Observing, "rows:empty", Phase::Refused),
-    (Phase::Refused, "tick", Phase::Observing),
-    (Phase::Reaping, "outcome", Phase::Reaping),
-    (Phase::Reaping, "done", Phase::Idle),
-];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "tick", Phase::Observing), (Phase::Observing, "observed:work", Phase::Reaping), (Phase::Observing, "observed:idle", Phase::Idle), (Phase::Observing, "rows:empty", Phase::Refused), (Phase::Refused, "tick", Phase::Observing), (Phase::Reaping, "outcome", Phase::Reaping), (Phase::Reaping, "done", Phase::Idle)];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -209,13 +181,8 @@ fn phase_name(p: Phase) -> &'static str {
 
 fn max_age(cfg: &Cfg) -> Result<std::time::Duration, String> {
     let k = "SPIRA_SCRATCH_MAX_AGE_HOURS";
-    let raw = cfg
-        .get(k)
-        .ok_or_else(|| format!("{k} is read but not declared"))?;
-    raw.trim()
-        .parse::<u64>()
-        .map(|h| std::time::Duration::from_secs(h * 3_600))
-        .map_err(|_| format!("{k} must be a whole number of hours, got {raw:?}"))
+    let raw = cfg.get(k).ok_or_else(|| format!("{k} is read but not declared"))?;
+    raw.trim().parse::<u64>().map(|h| std::time::Duration::from_secs(h * 3_600)).map_err(|_| format!("{k} must be a whole number of hours, got {raw:?}"))
 }
 
 fn unsaved_of(u: Unsaved) -> hel::terminal::Unsaved {
@@ -227,25 +194,14 @@ fn unsaved_of(u: Unsaved) -> hel::terminal::Unsaved {
 }
 
 fn act(name: &str, key: String, input: String, deadline_ms: u64) -> Act {
-    Act {
-        name: name.into(),
-        key,
-        input,
-        deadline_ms,
-        probe: false,
-    }
+    Act { name: name.into(), key, input, deadline_ms, probe: false }
 }
 
 /// One answered removal: the entry leaves `open`; a checkout that went marks its repository
 /// for the pass's prune; the last answer ends the pass and prunes.
 fn answered(carry: &Carry, body: &str, ok: bool) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
-    let name = next
-        .open
-        .iter()
-        .position(|n| n == body.trim())
-        .or(if next.open.is_empty() { None } else { Some(0) })
-        .map(|i| next.open.remove(i));
+    let name = next.open.iter().position(|n| n == body.trim()).or(if next.open.is_empty() { None } else { Some(0) }).map(|i| next.open.remove(i));
     if let Some(root) = name.and_then(|n| next.roots.remove(&n)) {
         if ok && !next.prune.contains(&root) {
             next.prune.push(root);
@@ -254,95 +210,32 @@ fn answered(carry: &Carry, body: &str, ok: bool) -> (Carry, Vec<Act>) {
     if !next.open.is_empty() {
         return (next, vec![]);
     }
-    let acts = next
-        .prune
-        .iter()
-        .map(|r| act(PRUNE, format!("prune:{r}"), r.clone(), 30_000))
-        .collect();
-    (
-        Carry {
-            last_fired: next.last_fired,
-            ..Carry::default()
-        },
-        acts,
-    )
+    let acts = next.prune.iter().map(|r| act(PRUNE, format!("prune:{r}"), r.clone(), 30_000)).collect();
+    (Carry { last_fired: next.last_fired, ..Carry::default() }, acts)
 }
 
 /// `hel::terminal::decide` per entry, reused as is.
 pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
-        Input::Fire if carry.phase == Phase::Reaping => Err(format!(
-            "{NAME}: a tick in state reaping: {} removal(s) have not answered",
-            carry.open.len()
-        )),
-        Input::Fire => Ok((
-            Carry {
-                phase: Phase::Observing,
-                ..carry.clone()
-            },
-            vec![],
-        )),
+        Input::Fire if carry.phase == Phase::Reaping => Err(format!("{NAME}: a tick in state reaping: {} removal(s) have not answered", carry.open.len())),
+        Input::Fire => Ok((Carry { phase: Phase::Observing, ..carry.clone() }, vec![])),
         // A pass whose removals never all answered ends here: the next tick decides afresh.
-        Input::Observed(_) if carry.phase == Phase::Reaping => Ok((
-            Carry {
-                last_fired: carry.last_fired,
-                ..Carry::default()
-            },
-            vec![],
-        )),
+        Input::Observed(_) if carry.phase == Phase::Reaping => Ok((Carry { last_fired: carry.last_fired, ..Carry::default() }, vec![])),
         Input::Observed(s) if s.halted => Ok((carry.clone(), vec![])),
-        Input::Observed(s) if !s.rows_ok => Ok((
-            Carry {
-                phase: Phase::Refused,
-                last_fired: carry.last_fired,
-                ..Carry::default()
-            },
-            vec![],
-        )),
+        Input::Observed(s) if !s.rows_ok => Ok((Carry { phase: Phase::Refused, last_fired: carry.last_fired, ..Carry::default() }, vec![])),
         Input::Observed(s) => {
             let max_age = max_age(cfg)?;
-            let mut next = Carry {
-                last_fired: carry.last_fired,
-                ..Carry::default()
-            };
+            let mut next = Carry { last_fired: carry.last_fired, ..Carry::default() };
             let mut acts = vec![];
             for e in &s.entries {
                 let held = e.held.as_ref().map(|_| "held");
-                let d = hel::terminal::decide(
-                    &e.name,
-                    s.rows.get(&e.name).map(String::as_str),
-                    e.is_git,
-                    if e.is_git {
-                        unsaved_of(e.unsaved)
-                    } else {
-                        hel::terminal::Unsaved::No
-                    },
-                    std::time::Duration::from_secs(e.age_secs),
-                    max_age,
-                    held,
-                );
-                let hel::terminal::Decision::Remove(why) = d else {
-                    continue;
-                };
-                let tag = if why == hel::terminal::Why::Terminal {
-                    "terminal"
-                } else {
-                    "scratch"
-                };
+                let d = hel::terminal::decide(&e.name, s.rows.get(&e.name).map(String::as_str), e.is_git, if e.is_git { unsaved_of(e.unsaved) } else { hel::terminal::Unsaved::No }, std::time::Duration::from_secs(e.age_secs), max_age, held);
+                let hel::terminal::Decision::Remove(why) = d else { continue };
+                let tag = if why == hel::terminal::Why::Terminal { "terminal" } else { "scratch" };
                 match &e.repo {
                     Some(root) => {
-                        let d = super::hel_reap_stale::Destroy {
-                            id: e.name.clone(),
-                            path: String::new(),
-                            root: root.clone(),
-                            why: format!("reap-terminal: {tag}"),
-                        };
-                        acts.push(act(
-                            DESTROY_WORKTREE,
-                            format!("{}:destroy", e.name),
-                            serde_json::to_string(&d).map_err(|e| e.to_string())?,
-                            120_000,
-                        ));
+                        let d = super::hel_reap_stale::Destroy { id: e.name.clone(), path: String::new(), root: root.clone(), why: format!("reap-terminal: {tag}") };
+                        acts.push(act(DESTROY_WORKTREE, format!("{}:destroy", e.name), serde_json::to_string(&d).map_err(|e| e.to_string())?, 120_000));
                         next.roots.insert(e.name.clone(), root.clone());
                     }
                     // A checkout whose repository does not resolve cannot go through the chokepoint.
@@ -352,67 +245,31 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
                 next.open.push(e.name.clone());
             }
             if acts.is_empty() {
-                return Ok((
-                    Carry {
-                        phase: Phase::Idle,
-                        ..next
-                    },
-                    vec![],
-                ));
+                return Ok((Carry { phase: Phase::Idle, ..next }, vec![]));
             }
             next.phase = Phase::Reaping;
             next.last_fired = Some(now_ms);
             Ok((next, acts))
         }
-        Input::Outcome { effect, ok, body }
-            if (effect == DESTROY_WORKTREE || effect == REMOVE_SCRATCH)
-                && carry.phase == Phase::Reaping =>
-        {
-            Ok(answered(carry, body, *ok))
-        }
+        Input::Outcome { effect, ok, body } if (effect == DESTROY_WORKTREE || effect == REMOVE_SCRATCH) && carry.phase == Phase::Reaping => Ok(answered(carry, body, *ok)),
         // A prune answers after its pass ended, as does a removal that outlived its pass.
-        Input::Outcome { effect, .. }
-            if effect == PRUNE || effect == DESTROY_WORKTREE || effect == REMOVE_SCRATCH =>
-        {
-            Ok((carry.clone(), vec![]))
-        }
-        Input::Outcome { effect, .. } => Err(format!(
-            "{NAME}: in state {} an outcome of {effect} is not expected",
-            phase_name(carry.phase)
-        )),
-        Input::Ran(r) => Err(format!(
-            "{NAME}: in state {} no unit is expected, got {:?}",
-            phase_name(carry.phase),
-            r.handle
-        )),
+        Input::Outcome { effect, .. } if effect == PRUNE || effect == DESTROY_WORKTREE || effect == REMOVE_SCRATCH => Ok((carry.clone(), vec![])),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }
 
 /// The runner of [`OBSERVE`]: one lifecycle `list` over the socket (an empty or failed list
 /// refuses the pass), `hel::terminal::entries` in-process, and the world's halt stamp.
-pub fn observe(
-    real: &hel::real::Real,
-    lc: &spira_store::lc_call::LcClient,
-) -> Result<String, String> {
+pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
     if real.run().join("world.halted").exists() {
-        return serde_json::to_string(&Snapshot {
-            halted: true,
-            ..Snapshot::default()
-        })
-        .map_err(|e| e.to_string());
+        return serde_json::to_string(&Snapshot { halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
     }
     let listed = hel::terminal::entries(real)?;
     let names: Vec<String> = listed.iter().map(|e| e.name.clone()).collect();
     let alive = spira_store::lc_state::list_live_on(lc).is_ok_and(|r| !r.is_empty());
-    let Some(read) = alive
-        .then(|| spira_store::lc_state::list_ids_on(lc, &names).ok())
-        .flatten()
-    else {
-        return serde_json::to_string(&Snapshot {
-            rows_ok: false,
-            ..Snapshot::default()
-        })
-        .map_err(|e| e.to_string());
+    let Some(read) = alive.then(|| spira_store::lc_state::list_ids_on(lc, &names).ok()).flatten() else {
+        return serde_json::to_string(&Snapshot { rows_ok: false, ..Snapshot::default() }).map_err(|e| e.to_string());
     };
     let rows: BTreeMap<String, String> = read.into_iter().map(|r| (r.bead_id, r.state)).collect();
     let entries = listed
@@ -431,20 +288,13 @@ pub fn observe(
             held: e.held.map(str::to_string),
         })
         .collect();
-    serde_json::to_string(&Snapshot {
-        halted: false,
-        rows_ok: true,
-        rows,
-        entries,
-    })
-    .map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { halted: false, rows_ok: true, rows, entries }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`DESTROY_WORKTREE`]: `reap::destroy_worktree` on `<run>/worktree/<name>`.
 pub fn destroy(real: &hel::real::Real, input: &str) -> Result<String, String> {
     use hel::ports::World;
-    let mut d: super::hel_reap_stale::Destroy =
-        serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let mut d: super::hel_reap_stale::Destroy = serde_json::from_str(input).map_err(|e| e.to_string())?;
     if d.id.is_empty() || d.id.contains('/') || d.id.starts_with('.') {
         return Err(format!("{:?} is not an entry name — refusing", d.id));
     }
@@ -462,9 +312,7 @@ pub fn remove_scratch(real: &hel::real::Real, name: &str) -> Result<String, Stri
     let root = real.worktrees();
     let path = root.join(name);
     if path.join(".git").exists() {
-        return Err(format!(
-            "{name} is a git checkout — refusing to remove it as scratch"
-        ));
+        return Err(format!("{name} is a git checkout — refusing to remove it as scratch"));
     }
     if hel::terminal::remove_scratch(&root, &path) {
         Ok(name.to_string())
@@ -480,15 +328,6 @@ pub fn prune(real: &hel::real::Real, root: &str) -> Result<String, String> {
     Ok(format!("pruned {root}"))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("phase"),
-    runtime::rows::Part::Field("last_fired"),
-    runtime::rows::Part::Field("open"),
-    runtime::rows::Part::Map {
-        name: "roots",
-        drop: &[],
-    },
-    runtime::rows::Part::Field("prune"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("open"), runtime::rows::Part::Map { name: "roots", drop: &[] }, runtime::rows::Part::Field("prune")];
 
 crate::tasks::b::hosted!(HelReapTerminal);

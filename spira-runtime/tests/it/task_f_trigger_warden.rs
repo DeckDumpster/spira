@@ -17,36 +17,18 @@ use spira_runtime::tasks::{self, f};
 const CADENCE_MS: u64 = 2 * 3_600_000;
 const BOGUS: &str = "trigger.warden.bogus";
 const MODULE: &str = include_str!("../../src/tasks/f/trigger_warden.rs");
-const LAUNCHERS: &[&str] = &[
-    "Command::new",
-    "std::process",
-    "process::Command",
-    "libc::fork",
-    "libc::exec",
-    "posix_spawn",
-    "nix::unistd",
-];
+const LAUNCHERS: &[&str] = &["Command::new", "std::process", "process::Command", "libc::fork", "libc::exec", "posix_spawn", "nix::unistd"];
 
 fn launcher(code: &str) -> Option<&'static str> {
     LAUNCHERS.iter().copied().find(|l| code.contains(l))
 }
 
 fn config() -> BTreeMap<String, String> {
-    [
-        ("SPIRA_SCOPE_LABEL", "spira"),
-        ("SPIRA_WARDEN_LABEL", "warden-sweep"),
-        ("SPIRA_RUN", "run"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+    [("SPIRA_SCOPE_LABEL", "spira"), ("SPIRA_WARDEN_LABEL", "warden-sweep"), ("SPIRA_RUN", "run")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
 fn handler() -> TriggerWarden {
-    TriggerWarden {
-        interval_ms: CADENCE_MS,
-        config: config(),
-    }
+    TriggerWarden { interval_ms: CADENCE_MS, config: config() }
 }
 
 fn running(r: &TaskRig) {
@@ -56,20 +38,12 @@ fn running(r: &TaskRig) {
 }
 
 fn snap(open: Result<u64, String>) -> Snapshot {
-    Snapshot {
-        halted: false,
-        open_sweeps: open,
-    }
+    Snapshot { halted: false, open_sweeps: open }
 }
 
 fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> TaskRig {
     let calls = AtomicU64::new(0);
-    let mut r = TaskRig::new(seed, handler().registration())
-        .unwrap()
-        .double(OBSERVE, move |_| {
-            Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())
-        })
-        .double(FILE, |i| Ok(i.into()));
+    let mut r = TaskRig::new(seed, handler().registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())).double(FILE, |i| Ok(i.into()));
     let (_, stream, kind) = TriggerWarden::boot();
     r.tick(stream, kind).unwrap();
     r
@@ -85,17 +59,9 @@ fn skipped(d: &Decision) -> Option<&str> {
 #[test_id(tprvvdn)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| {
-        panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING")
-    });
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
     assert_eq!(row.stream(), STREAM);
-    assert!(
-        row.keys
-            .iter()
-            .flat_map(|k| k.iter())
-            .any(|k| *k == CADENCE_KEY),
-        "the cadence is pinned config"
-    );
+    assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
@@ -126,21 +92,12 @@ fn t3_every_legal_step_is_taken_and_filing_over_an_open_sweep_is_refused() {
 #[test_id(tip1oax)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::TASKS
-        .iter()
-        .find(|t| t.name == NAME)
-        .expect("the row is ported");
-    assert_eq!(
-        row.effects, EFFECTS,
-        "the row declares the module's effects"
-    );
+    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
+    assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();
     let sim: Vec<&str> = doubles.iter().map(String::as_str).collect();
-    assert!(
-        effects_runnable(&[BOGUS], &real, &sim).is_err(),
-        "the planted {BOGUS} must be refused"
-    );
+    assert!(effects_runnable(&[BOGUS], &real, &sim).is_err(), "the planted {BOGUS} must be refused");
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
@@ -148,11 +105,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
-        assert_eq!(
-            launcher(&format!("{l}(\"x\")")),
-            Some(*l),
-            "the scan must see {l}"
-        );
+        assert_eq!(launcher(&format!("{l}(\"x\")")), Some(*l), "the scan must see {l}");
     }
     assert_eq!(launcher(MODULE), None);
 }
@@ -160,26 +113,18 @@ fn t4_the_module_launches_no_process() {
 #[test_id(tuo0rgc)]
 #[test]
 fn t5_parity_the_scripts_skip_exits() {
-    assert_eq!(
-        skipped(&decide(&snap(Err("count timed out".into())), &config())),
-        Some("unreadable")
-    );
+    assert_eq!(skipped(&decide(&snap(Err("count timed out".into())), &config())), Some("unreadable"));
     assert_eq!(skipped(&decide(&snap(Ok(1)), &config())), Some("open"));
 }
 
 #[test_id(t6542ru)]
 #[test]
 fn t5_parity_the_filed_sweep_is_byte_equal() {
-    let Decision::File(bead) = decide(&snap(Ok(0)), &config()) else {
-        panic!("no sweep open files one")
-    };
+    let Decision::File(bead) = decide(&snap(Ok(0)), &config()) else { panic!("no sweep open files one") };
     assert_eq!(bead.title, TITLE);
     assert_eq!(bead.body, DESCRIPTION);
     assert_eq!((bead.kind.as_str(), bead.priority), ("task", 3));
-    assert_eq!(
-        bead.labels,
-        ["spira", "warden-sweep", "delivers:note:run/warden.log"]
-    );
+    assert_eq!(bead.labels, ["spira", "warden-sweep", "delivers:note:run/warden.log"]);
 }
 
 fn filed() -> TaskRig {
@@ -190,26 +135,13 @@ fn filed() -> TaskRig {
 #[test]
 fn the_task_keeps_no_carry_row_because_it_has_no_carry() {
     let r = filed();
-    assert!(
-        r.requested().iter().any(|q| q.name == FILE),
-        "the scenario must file"
-    );
-    let rows: Vec<_> = r
-        .journal
-        .state()
-        .into_iter()
-        .filter(|((t, _), _)| t == NAME)
-        .collect();
+    assert!(r.requested().iter().any(|q| q.name == FILE), "the scenario must file");
+    let rows: Vec<_> = r.journal.state().into_iter().filter(|((t, _), _)| t == NAME).collect();
     assert!(rows.is_empty(), "{rows:?}");
 }
 
 #[test_id(tpwl9ro)]
 #[test]
 fn a_boot_asks_what_a_process_that_never_stopped_asks() {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
-        filed,
-        || handler().registration(),
-        STREAM,
-        runtime::event::EventKind::new(TICK, ""),
-    );
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(filed, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }

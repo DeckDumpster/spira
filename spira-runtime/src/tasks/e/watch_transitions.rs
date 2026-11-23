@@ -84,23 +84,9 @@ const DEADLINE_MS: u64 = 30_000;
 pub const STORE_BOUND: std::time::Duration = std::time::Duration::from_millis(DEADLINE_MS - 5_000);
 const TAG: &str = "transitions";
 /// The states tabled, in flow order; `ASK` is the ask-held row, orthogonal to state.
-pub const ROWS: [&str; 7] = [
-    "READY",
-    "WORKING",
-    "SUBMITTED",
-    "CERTIFIED",
-    "IN_DELIVERY",
-    "REWORK",
-    "ASK",
-];
+pub const ROWS: [&str; 7] = ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK", "ASK"];
 /// The edges judged, in the order `stalls` judges them.
-pub const EDGES: [&str; 5] = [
-    "WORKING→SUBMITTED",
-    CUT_EDGE,
-    DELIVERY_EDGE,
-    "LANDED→ACTIVATED",
-    ASK_EDGE,
-];
+pub const EDGES: [&str; 5] = ["WORKING→SUBMITTED", CUT_EDGE, DELIVERY_EDGE, "LANDED→ACTIVATED", ASK_EDGE];
 pub const ASK_EDGE: &str = "ASK→ANSWERED";
 /// All repos together, as a scope.
 pub const ALL: &str = "*";
@@ -161,15 +147,10 @@ impl Config {
         for edge in EDGES {
             let bound = self.bound(edge).unwrap_or(0);
             if bound > MAX_BOUND_S {
-                return Err(format!(
-                    "the {edge} bound {bound}s exceeds the {MAX_BOUND_S}s ceiling"
-                ));
+                return Err(format!("the {edge} bound {bound}s exceeds the {MAX_BOUND_S}s ceiling"));
             }
             if task_owner_of(edge).is_some() && bound <= self.task_bound_s {
-                return Err(format!(
-                    "the {edge} bound {bound}s must exceed SPIRA_TRANSITIONS_TASK_BOUND {}s",
-                    self.task_bound_s
-                ));
+                return Err(format!("the {edge} bound {bound}s must exceed SPIRA_TRANSITIONS_TASK_BOUND {}s", self.task_bound_s));
             }
         }
         Ok(())
@@ -179,13 +160,7 @@ impl Config {
     /// minutes more. An exit not seen inside it is known to be older than the horizon, which is
     /// all a bound needs.
     pub fn window_s(&self) -> u64 {
-        EDGES
-            .iter()
-            .filter(|e| **e != ASK_EDGE)
-            .filter_map(|e| self.bound(e))
-            .max()
-            .unwrap_or(0)
-            + 600
+        EDGES.iter().filter(|e| **e != ASK_EDGE).filter_map(|e| self.bound(e)).max().unwrap_or(0) + 600
     }
 
     /// The wait `edge` tolerates before it stalls; `None` for a name that is no edge. The one
@@ -208,35 +183,17 @@ impl Config {
 
 fn git(repo: &str, args: &[&str]) -> Result<String, String> {
     use runtime::ports::Proc;
-    let spec = runtime::ports::ProcSpec {
-        prog: "git".into(),
-        args: ["-C", repo]
-            .iter()
-            .chain(args)
-            .map(|s| s.to_string())
-            .collect(),
-        stdin: vec![],
-        deadline: std::time::Duration::from_secs(5),
-    };
+    let spec = runtime::ports::ProcSpec { prog: "git".into(), args: ["-C", repo].iter().chain(args).map(|s| s.to_string()).collect(), stdin: vec![], deadline: std::time::Duration::from_secs(5) };
     let out = runtime::ports::SysProc.run(&spec)?;
     if out.code != Some(0) {
-        return Err(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// The ref a landed tip is looked for on: `local/main` when the repo has it, else the repo map's land ref.
 pub fn landing_ref(repo: &str) -> String {
-    if git(
-        repo,
-        &["rev-parse", "--verify", "-q", "local/main^{commit}"],
-    )
-    .is_ok()
-    {
+    if git(repo, &["rev-parse", "--verify", "-q", "local/main^{commit}"]).is_ok() {
         return "local/main".into();
     }
     let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
@@ -284,13 +241,9 @@ pub struct Bead {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Gating {
     Queued,
-    Running {
-        since: u64,
-    },
+    Running { since: u64 },
     /// The landing pass declined to queue this tip again until `until`.
-    BackingOff {
-        until: u64,
-    },
+    BackingOff { until: u64 },
 }
 
 impl Bead {
@@ -371,14 +324,8 @@ pub const DELIVERY_EDGE: &str = "IN_DELIVERY→LANDED";
 pub fn round_owner(progress: &str) -> Option<Owner> {
     let v: serde_json::Value = serde_json::from_str(progress).ok()?;
     let beat = v["updated_at"].as_u64()?;
-    let failed = v["detail"]
-        .as_str()
-        .filter(|d| d.starts_with("stalled:"))
-        .map(str::to_string);
-    Some(Owner {
-        beat: Some(beat),
-        failed,
-    })
+    let failed = v["detail"].as_str().filter(|d| d.starts_with("stalled:")).map(str::to_string);
+    Some(Owner { beat: Some(beat), failed })
 }
 
 /// The longest an edge may wait before it pages: two hours.
@@ -387,26 +334,16 @@ pub const MAX_BOUND_S: u64 = 7_200;
 /// The runtime task whose pulse (`spira_config::ticked`) is the heartbeat of an edge's owner, and
 /// the action it takes when the bound expires: the asks watcher keeps the ask in front of the
 /// operator, the sentinel pass reclaims a silent dwarf's bead, the batcher activates what it lands.
-pub const TASK_OWNERS: [(&str, &str); 3] = [
-    ("ASK→ANSWERED", "asks"),
-    ("WORKING→SUBMITTED", "sentinel-pass"),
-    ("LANDED→ACTIVATED", "batcher.local"),
-];
+pub const TASK_OWNERS: [(&str, &str); 3] = [("ASK→ANSWERED", "asks"), ("WORKING→SUBMITTED", "sentinel-pass"), ("LANDED→ACTIVATED", "batcher.local")];
 
 pub fn task_owner_of(edge: &str) -> Option<&'static str> {
-    TASK_OWNERS
-        .iter()
-        .find(|(e, _)| *e == edge)
-        .map(|(_, t)| *t)
+    TASK_OWNERS.iter().find(|(e, _)| *e == edge).map(|(_, t)| *t)
 }
 
 /// The owner a task's pulse makes: it beat `quiet_s` seconds before `now`; a task that never
 /// stamped has not beaten.
 pub fn task_owner(quiet_s: Option<u64>, now: u64) -> Owner {
-    Owner {
-        beat: quiet_s.map(|q| now.saturating_sub(q)),
-        failed: None,
-    }
+    Owner { beat: quiet_s.map(|q| now.saturating_sub(q)), failed: None }
 }
 
 /// The edge a repo's batcher pass owns: a cut is the batcher's to make, repo by repo.
@@ -419,38 +356,19 @@ pub fn cut_owner_key(repo: &str) -> String {
 /// The owner a repo's rounds-pace files make: the batcher beats at the mtime of `state`, which
 /// every cut pass rewrites, and a standing `pause` is its action failing. No `state` is no beat.
 pub fn pace_owner(state_mtime: Option<u64>, pause: Option<&str>) -> Owner {
-    Owner {
-        beat: state_mtime,
-        failed: pause.map(|p| format!("paused: {}", p.trim())),
-    }
+    Owner { beat: state_mtime, failed: pause.map(|p| format!("paused: {}", p.trim())) }
 }
 
 /// Whether the owner of `edge` in `scope` (its own record first, else the edge's) beat inside
 /// the bound and has no failed action: an edge with no owner record is unowned, so never acting.
 fn owner_acting(snap: &Snapshot, edge: &str, scope: &str, now: u64, cfg: &Config) -> bool {
-    let window = if task_owner_of(edge).is_some() {
-        cfg.task_bound_s
-    } else {
-        cfg.heartbeat_bound_s
-    };
-    let beating =
-        |o: &Owner| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < window);
+    let window = if task_owner_of(edge).is_some() { cfg.task_bound_s } else { cfg.heartbeat_bound_s };
+    let beating = |o: &Owner| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < window);
     if scope == ALL && edge == CUT_EDGE {
-        let waiting: BTreeSet<&str> = snap
-            .beads
-            .iter()
-            .filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED"))
-            .map(|b| b.repo.as_str())
-            .collect();
-        return !waiting.is_empty()
-            && waiting
-                .iter()
-                .all(|r| snap.owners.get(&cut_owner_key(r)).is_some_and(beating));
+        let waiting: BTreeSet<&str> = snap.beads.iter().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")).map(|b| b.repo.as_str()).collect();
+        return !waiting.is_empty() && waiting.iter().all(|r| snap.owners.get(&cut_owner_key(r)).is_some_and(beating));
     }
-    snap.owners
-        .get(&format!("{edge} {scope}"))
-        .or_else(|| snap.owners.get(edge))
-        .is_some_and(beating)
+    snap.owners.get(&format!("{edge} {scope}")).or_else(|| snap.owners.get(edge)).is_some_and(beating)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -499,41 +417,21 @@ fn rank(sorted: &[u64], pct: usize) -> u64 {
 
 fn row_of(mut ages: Vec<u64>) -> Row {
     ages.sort_unstable();
-    Row {
-        count: ages.len(),
-        oldest: ages.last().copied().unwrap_or(0),
-        p50: rank(&ages, 50),
-        p90: rank(&ages, 90),
-    }
+    Row { count: ages.len(), oldest: ages.last().copied().unwrap_or(0), p50: rank(&ages, 50), p90: rank(&ages, 90) }
 }
 
 /// The ages of the beads in `scope` under table row `name`, as of `now`.
 fn ages(snap: &Snapshot, scope: &str, name: &str, now: u64) -> Vec<u64> {
     let in_scope = |b: &&Bead| scope == ALL || b.repo == scope;
     if name == "ASK" {
-        return snap
-            .beads
-            .iter()
-            .filter(in_scope)
-            .filter(|b| b.ask_held)
-            .map(|b| now.saturating_sub(b.ask_since.unwrap_or(b.since)))
-            .collect();
+        return snap.beads.iter().filter(in_scope).filter(|b| b.ask_held).map(|b| now.saturating_sub(b.ask_since.unwrap_or(b.since))).collect();
     }
-    let waiting = |b: &&Bead| {
-        b.state == name && (!matches!(name, "SUBMITTED" | "CERTIFIED") || b.awaits_cut())
-    };
-    snap.beads
-        .iter()
-        .filter(in_scope)
-        .filter(waiting)
-        .map(|b| now.saturating_sub(b.since))
-        .collect()
+    let waiting = |b: &&Bead| b.state == name && (!matches!(name, "SUBMITTED" | "CERTIFIED") || b.awaits_cut());
+    snap.beads.iter().filter(in_scope).filter(waiting).map(|b| now.saturating_sub(b.since)).collect()
 }
 
 pub fn table(snap: &Snapshot, scope: &str, now: u64) -> BTreeMap<&'static str, Row> {
-    ROWS.iter()
-        .map(|n| (*n, row_of(ages(snap, scope, n, now))))
-        .collect()
+    ROWS.iter().map(|n| (*n, row_of(ages(snap, scope, n, now)))).collect()
 }
 
 /// `45s`, `12m`, `3h05m`, `2d04h`.
@@ -548,15 +446,7 @@ pub fn dur(s: u64) -> String {
 
 /// Seconds since the newest `kind` in `scope`, or `None` when none is inside the horizon.
 fn since_last(snap: &Snapshot, scope: &str, kind: &str, now: u64) -> Option<u64> {
-    let newest = if scope == ALL {
-        snap.last
-            .values()
-            .filter_map(|k| k.get(kind))
-            .max()
-            .copied()
-    } else {
-        snap.last.get(scope).and_then(|k| k.get(kind)).copied()
-    };
+    let newest = if scope == ALL { snap.last.values().filter_map(|k| k.get(kind)).max().copied() } else { snap.last.get(scope).and_then(|k| k.get(kind)).copied() };
     newest.map(|t| now.saturating_sub(t))
 }
 
@@ -584,13 +474,7 @@ pub fn row_text(name: &str, r: &Row) -> String {
     if r.count == 0 {
         return format!("{name} 0");
     }
-    format!(
-        "{name} {} oldest {} p50 {} p90 {}",
-        r.count,
-        dur(r.oldest),
-        dur(r.p50),
-        dur(r.p90)
-    )
+    format!("{name} {} oldest {} p50 {} p90 {}", r.count, dur(r.oldest), dur(r.p50), dur(r.p90))
 }
 
 /// The period's one table line.
@@ -599,35 +483,13 @@ pub fn table_line(snap: &Snapshot, now: u64, cfg: &Config) -> String {
     let states: Vec<String> = ROWS.iter().map(|n| row_text(n, &t[n])).collect();
     let mut repos = vec![];
     for repo in scopes(snap).into_iter().filter(|s| s != ALL) {
-        let mut parts: Vec<String> = ["Claim", "Submit", "Cut", "Delivered"]
-            .iter()
-            .map(|k| {
-                format!(
-                    "{} {}",
-                    k.to_lowercase(),
-                    ago(since_last(snap, &repo, k, now), snap, now)
-                )
-            })
-            .collect();
+        let mut parts: Vec<String> = ["Claim", "Submit", "Cut", "Delivered"].iter().map(|k| format!("{} {}", k.to_lowercase(), ago(since_last(snap, &repo, k, now), snap, now))).collect();
         if repo == cfg.release_repo {
-            parts.push(format!(
-                "activated {}",
-                snap.activated_at
-                    .map_or("never".into(), |a| dur(now.saturating_sub(a)))
-            ));
+            parts.push(format!("activated {}", snap.activated_at.map_or("never".into(), |a| dur(now.saturating_sub(a)))));
         }
         repos.push(format!("{repo}: {}", parts.join(" ")));
     }
-    format!(
-        "WAIT {} || since last — {}{}",
-        states.join(" | "),
-        if repos.is_empty() {
-            "no repo has work or events".into()
-        } else {
-            repos.join("; ")
-        },
-        dependency_clause(snap, ALL).map_or(String::new(), |c| format!(" | {c}"))
-    )
+    format!("WAIT {} || since last — {}{}", states.join(" | "), if repos.is_empty() { "no repo has work or events".into() } else { repos.join("; ") }, dependency_clause(snap, ALL).map_or(String::new(), |c| format!(" | {c}")))
 }
 
 /// One stalled edge in one scope, with its evidence.
@@ -645,15 +507,7 @@ impl Stall {
 }
 
 fn last_at(snap: &Snapshot, scope: &str, kind: &str) -> String {
-    let newest = if scope == ALL {
-        snap.last
-            .values()
-            .filter_map(|k| k.get(kind))
-            .max()
-            .copied()
-    } else {
-        snap.last.get(scope).and_then(|k| k.get(kind)).copied()
-    };
+    let newest = if scope == ALL { snap.last.values().filter_map(|k| k.get(kind)).max().copied() } else { snap.last.get(scope).and_then(|k| k.get(kind)).copied() };
     newest.map_or_else(|| format!("none since {}", iso8601(snap.horizon)), iso8601)
 }
 
@@ -664,50 +518,24 @@ fn dependency_clause(snap: &Snapshot, scope: &str) -> Option<String> {
         .filter(|b| scope == ALL || b.repo == scope)
         .filter_map(|b| {
             let dep = b.waits_on.as_ref()?;
-            let state = snap
-                .beads
-                .iter()
-                .find(|d| d.id == *dep)
-                .map_or_else(String::new, |d| d.state.clone());
+            let state = snap.beads.iter().find(|d| d.id == *dep).map_or_else(String::new, |d| d.state.clone());
             Some((b.id.clone(), dep.clone(), state))
         })
         .collect();
     dependency::clause(&waits)
 }
 
-fn evidence(
-    snap: &Snapshot,
-    scope: &str,
-    now: u64,
-    held: &[&str],
-    exit: &str,
-    bound: u64,
-) -> String {
+fn evidence(snap: &Snapshot, scope: &str, now: u64, held: &[&str], exit: &str, bound: u64) -> String {
     let t = table(snap, scope, now);
     let held: Vec<String> = held.iter().map(|n| row_text(n, &t[n])).collect();
-    let lasts: Vec<String> = ["Claim", "Submit", "Cut", "Delivered"]
-        .iter()
-        .map(|k| format!("{k} {}", last_at(snap, scope, k)))
-        .collect();
-    format!(
-        "{}; no {exit} for {} (bound {}); last: {}",
-        held.join(", "),
-        ago(since_last(snap, scope, exit, now), snap, now),
-        dur(bound),
-        lasts.join(", ")
-    )
+    let lasts: Vec<String> = ["Claim", "Submit", "Cut", "Delivered"].iter().map(|k| format!("{k} {}", last_at(snap, scope, k))).collect();
+    format!("{}; no {exit} for {} (bound {}); last: {}", held.join(", "), ago(since_last(snap, scope, exit, now), snap, now), dur(bound), lasts.join(", "))
 }
 
 fn cut_evidence(snap: &Snapshot, scope: &str, now: u64, cfg: &Config, bound: u64) -> String {
     let t = table(snap, scope, now);
-    let held: Vec<String> = ["SUBMITTED", "CERTIFIED"]
-        .iter()
-        .map(|n| row_text(n, &t[n]))
-        .collect();
-    let lasts: Vec<String> = ["Claim", "Submit", "Cut", "Delivered"]
-        .iter()
-        .map(|k| format!("{k} {}", last_at(snap, scope, k)))
-        .collect();
+    let held: Vec<String> = ["SUBMITTED", "CERTIFIED"].iter().map(|n| row_text(n, &t[n])).collect();
+    let lasts: Vec<String> = ["Claim", "Submit", "Cut", "Delivered"].iter().map(|k| format!("{k} {}", last_at(snap, scope, k))).collect();
     let deps = dependency_clause(snap, scope).map_or(String::new(), |c| format!("; {c}"));
     format!(
         "{}{deps}; oldest uncovered waited {} (bound {}); no Delivered for {}; last: {}",
@@ -726,13 +554,7 @@ const UNATTRIBUTED: &str = "-";
 /// no recorded repo waits behind any repo's full set of rounds, as it cannot be told apart.
 fn round_slots_full(snap: &Snapshot, repo: &str, cfg: &Config) -> bool {
     let full = |n: &u64| *n > 0 && *n >= cfg.round_max_open;
-    snap.open_rounds.as_ref().is_some_and(|open| {
-        if repo == UNATTRIBUTED {
-            open.values().any(full)
-        } else {
-            open.get(repo).is_some_and(full)
-        }
-    })
+    snap.open_rounds.as_ref().is_some_and(|open| if repo == UNATTRIBUTED { open.values().any(full) } else { open.get(repo).is_some_and(full) })
 }
 
 /// The oldest wait for a cut in `scope` among repos with a free round slot; the `*` scope counts
@@ -747,42 +569,20 @@ fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> u64 {
 }
 
 fn uncovered(snap: &Snapshot, b: &Bead, scope: &str, now: u64, cfg: &Config) -> bool {
-    (scope == ALL || b.repo == scope)
-        && b.awaits_cut()
-        && b.waits_on.is_none()
-        && !round_slots_full(snap, &b.repo, cfg)
-        && !(b.state == "SUBMITTED" && b.gate_live(now, cfg.gate_timeout_s, snap.gate_slots_free))
+    (scope == ALL || b.repo == scope) && b.awaits_cut() && b.waits_on.is_none() && !round_slots_full(snap, &b.repo, cfg) && !(b.state == "SUBMITTED" && b.gate_live(now, cfg.gate_timeout_s, snap.gate_slots_free))
 }
 
 /// The oldest uncovered bead in `scope`, and what holds it back.
 fn oldest_uncovered(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> String {
-    let Some(b) = snap
-        .beads
-        .iter()
-        .filter(|b| uncovered(snap, b, scope, now, cfg))
-        .min_by_key(|b| b.wait_start())
-    else {
-        return String::new();
-    };
+    let Some(b) = snap.beads.iter().filter(|b| uncovered(snap, b, scope, now, cfg)).min_by_key(|b| b.wait_start()) else { return String::new() };
     let why = match (b.state.as_str(), &b.gate) {
         ("CERTIFIED", _) => "certified, not cut".to_string(),
-        (_, Some(Gating::Running { since })) => format!(
-            "gate running {}, past SPIRA_GATE_TIMEOUT {}",
-            dur(now.saturating_sub(*since)),
-            dur(cfg.gate_timeout_s)
-        ),
+        (_, Some(Gating::Running { since })) => format!("gate running {}, past SPIRA_GATE_TIMEOUT {}", dur(now.saturating_sub(*since)), dur(cfg.gate_timeout_s)),
         (_, Some(Gating::Queued)) => "queued, a gate slot free".to_string(),
-        (_, Some(Gating::BackingOff { until })) => {
-            format!("gate backed off until {}", iso8601(*until))
-        }
+        (_, Some(Gating::BackingOff { until })) => format!("gate backed off until {}", iso8601(*until)),
         _ => "no gate queued or running".to_string(),
     };
-    format!(
-        "; oldest uncovered: {} {} {} ({why})",
-        b.id,
-        b.state,
-        dur(now.saturating_sub(b.wait_start()))
-    )
+    format!("; oldest uncovered: {} {} {} ({why})", b.id, b.state, dur(now.saturating_sub(b.wait_start())))
 }
 
 /// Every edge stalled in every scope of `snap`. The `*` scope stands only for an edge no single
@@ -814,19 +614,11 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
                 _ => None,
             };
             if let Some(evidence) = found.filter(|_| !owner_acting(snap, edge, &scope, now, cfg)) {
-                out.push(Stall {
-                    edge,
-                    scope: scope.clone(),
-                    evidence,
-                });
+                out.push(Stall { edge, scope: scope.clone(), evidence });
             }
         }
     }
-    let by_repo: BTreeSet<&str> = out
-        .iter()
-        .filter(|s| s.scope != ALL)
-        .map(|s| s.edge)
-        .collect();
+    let by_repo: BTreeSet<&str> = out.iter().filter(|s| s.scope != ALL).map(|s| s.edge).collect();
     out.retain(|s| s.scope != ALL || !by_repo.contains(s.edge));
     out
 }
@@ -839,18 +631,10 @@ pub fn snapshot_of(
     landed_after: BTreeMap<String, u64>,
 ) -> Result<Snapshot, String> {
     let n = |v: &serde_json::Value| v.as_i64().map(|t| t.max(0) as u64);
-    let beads: Vec<Bead> = dwell["beads"]
-        .as_array()
-        .ok_or("dwell answered no beads list")?
-        .iter()
-        .map(|b| serde_json::from_value(b.clone()).map_err(|e| format!("dwell bead unparsed: {e}")))
-        .collect::<Result<_, _>>()?;
+    let beads: Vec<Bead> = dwell["beads"].as_array().ok_or("dwell answered no beads list")?.iter().map(|b| serde_json::from_value(b.clone()).map_err(|e| format!("dwell bead unparsed: {e}"))).collect::<Result<_, _>>()?;
     let horizon = n(&dwell["horizon"]).ok_or("dwell answered no horizon")?;
     let mut last = BTreeMap::new();
-    for (repo, kinds) in dwell["last"]
-        .as_object()
-        .ok_or("dwell answered no last map")?
-    {
+    for (repo, kinds) in dwell["last"].as_object().ok_or("dwell answered no last map")? {
         let mut by: BTreeMap<String, u64> = BTreeMap::new();
         for (k, t) in kinds.as_object().into_iter().flatten() {
             let name = if k == "Deliver" { "Cut" } else { k.as_str() };
@@ -887,19 +671,11 @@ fn in_effect_commit(releases_dir: &std::path::Path) -> Option<String> {
 
 /// The commits that count as in force: the one `current` names, and the newest the release
 /// machine records activated. Either may lag the other, so a landing either contains is live.
-fn releases_in_effect(
-    releases: &[release::machine::Release],
-    releases_dir: &std::path::Path,
-) -> Vec<String> {
+fn releases_in_effect(releases: &[release::machine::Release], releases_dir: &std::path::Path) -> Vec<String> {
     let newest_activated = releases
         .iter()
         .filter_map(|r| {
-            let at = r
-                .events
-                .iter()
-                .filter(|e| e.to == release::machine::ReleaseState::Activated)
-                .map(|e| e.at)
-                .max()?;
+            let at = r.events.iter().filter(|e| e.to == release::machine::ReleaseState::Activated).map(|e| e.at).max()?;
             Some((at, r.sha.clone()))
         })
         .max()
@@ -915,92 +691,55 @@ pub type Ancestor<'a> = &'a dyn Fn(&str, &str) -> Result<bool, String>;
 
 /// The checkout `repo` has in the repo map.
 pub fn repo_root(repo_map: &std::path::Path, repo: &str) -> Result<String, String> {
-    let text =
-        std::fs::read_to_string(repo_map).map_err(|e| format!("{}: {e}", repo_map.display()))?;
+    let text = std::fs::read_to_string(repo_map).map_err(|e| format!("{}: {e}", repo_map.display()))?;
     let env = BTreeMap::from([("SPIRA_HOME_REPO".to_string(), repo.to_string())]);
     let registry = spira_config::repos::Registry::new(Some(&text), &env, std::path::Path::new("/"));
-    registry
-        .root(repo)
-        .map(|r| r.to_string())
-        .ok_or_else(|| format!("repo map has no checkout for {repo}"))
+    registry.root(repo).map(|r| r.to_string()).ok_or_else(|| format!("repo map has no checkout for {repo}"))
 }
 
 /// The ancestry test against the checkout `repo` has in the repo map. A commit the checkout
 /// does not know is an error, not "not contained".
-pub fn repo_ancestor<'a>(
-    repo_map: &'a std::path::Path,
-    repo: &'a str,
-) -> impl Fn(&str, &str) -> Result<bool, String> + 'a {
+pub fn repo_ancestor<'a>(repo_map: &'a std::path::Path, repo: &'a str) -> impl Fn(&str, &str) -> Result<bool, String> + 'a {
     move |commit, release| ancestor_in(&repo_root(repo_map, repo)?, commit, release)
 }
 
 /// `git merge-base --is-ancestor commit of` in the checkout at `root`.
 pub fn ancestor_in(root: &str, commit: &str, of: &str) -> Result<bool, String> {
-    match crate::wiki_git::git(
-        std::path::Path::new(root),
-        &["merge-base", "--is-ancestor", commit, of],
-    )? {
+    match crate::wiki_git::git(std::path::Path::new(root), &["merge-base", "--is-ancestor", commit, of])? {
         (Some(0), _) => Ok(true),
         (Some(1), _) => Ok(false),
-        (code, _) => Err(format!(
-            "git merge-base --is-ancestor {commit} {of} exited {code:?}"
-        )),
+        (code, _) => Err(format!("git merge-base --is-ancestor {commit} {of} exited {code:?}")),
     }
 }
 
 /// Marks each bead waiting for a cut whose tip `on_landing_ref(repo, tip)` says is landed. A tip
 /// that cannot be tested stays waiting: the page errs toward speaking.
-pub fn mark_landed(
-    snap: &mut Snapshot,
-    on_landing_ref: &dyn Fn(&str, &str) -> Result<bool, String>,
-) {
-    for b in snap
-        .beads
-        .iter_mut()
-        .filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED"))
-    {
-        b.landed = b
-            .tip
-            .as_deref()
-            .is_some_and(|tip| on_landing_ref(&b.repo, tip) == Ok(true));
+pub fn mark_landed(snap: &mut Snapshot, on_landing_ref: &dyn Fn(&str, &str) -> Result<bool, String>) {
+    for b in snap.beads.iter_mut().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")) {
+        b.landed = b.tip.as_deref().is_some_and(|tip| on_landing_ref(&b.repo, tip) == Ok(true));
     }
 }
 
 /// The gate each SUBMITTED bead is in, from the queued and claimed jobs and the gate's admission
 /// leases (`who` is the job's branch). A claimed job with no lease is still waiting for a slot.
-pub fn gates_of(
-    jobs: &[(landing_pass::gateq::Where, landing_pass::gateq::Job)],
-    holders: &[spira_config::admission::Lease],
-) -> BTreeMap<String, Gating> {
+pub fn gates_of(jobs: &[(landing_pass::gateq::Where, landing_pass::gateq::Job)], holders: &[spira_config::admission::Lease]) -> BTreeMap<String, Gating> {
     use landing_pass::gateq::Where;
     jobs.iter()
         .filter(|(w, _)| matches!(w, Where::Inbox | Where::Claimed))
         .map(|(w, j)| {
-            let lease = (*w == Where::Claimed)
-                .then(|| holders.iter().find(|l| l.who == j.branch))
-                .flatten();
-            (
-                j.bead.clone(),
-                lease.map_or(Gating::Queued, |l| Gating::Running { since: l.since }),
-            )
+            let lease = (*w == Where::Claimed).then(|| holders.iter().find(|l| l.who == j.branch)).flatten();
+            (j.bead.clone(), lease.map_or(Gating::Queued, |l| Gating::Running { since: l.since }))
         })
         .collect()
 }
 
 /// Sets `gate` on each SUBMITTED bead the gate worker has, or whose tip the landing pass has
 /// backed off (`backoffs` are (tip, until)). A bead it cannot place keeps none: the page errs toward speaking.
-pub fn mark_gated(
-    snap: &mut Snapshot,
-    gates: &BTreeMap<String, Gating>,
-    backoffs: &[(String, u64)],
-) {
+pub fn mark_gated(snap: &mut Snapshot, gates: &BTreeMap<String, Gating>, backoffs: &[(String, u64)]) {
     for b in snap.beads.iter_mut().filter(|b| b.state == "SUBMITTED") {
         b.gate = gates.get(&b.id).cloned().or_else(|| {
             let tip = b.tip.as_deref()?;
-            backoffs
-                .iter()
-                .find(|(t, _)| t == tip)
-                .map(|(_, until)| Gating::BackingOff { until: *until })
+            backoffs.iter().find(|(t, _)| t == tip).map(|(_, until)| Gating::BackingOff { until: *until })
         });
     }
 }
@@ -1008,11 +747,7 @@ pub fn mark_gated(
 /// Sets `waits_on` on each CERTIFIED bead the batcher refused for an unlanded prerequisite;
 /// SUBMITTED beads stay judged by their gate.
 pub fn mark_blocked(snap: &mut Snapshot, blocked: &BTreeMap<String, String>) {
-    let states: BTreeMap<String, String> = snap
-        .beads
-        .iter()
-        .map(|b| (b.id.clone(), b.state.clone()))
-        .collect();
+    let states: BTreeMap<String, String> = snap.beads.iter().map(|b| (b.id.clone(), b.state.clone())).collect();
     let state_of = |id: &str| states.get(id).cloned();
     for b in snap.beads.iter_mut().filter(|b| b.state == "CERTIFIED") {
         b.waits_on = dependency::live_blocker(&b.id, blocked, &state_of).map(|(dep, _)| dep);
@@ -1039,11 +774,7 @@ fn oldest_unreleased(
         .collect();
     landings.sort_unstable();
     // Landings are one line of history: a release containing the newest contains the rest.
-    let contained = |commit: &str| {
-        in_effect
-            .iter()
-            .any(|release| ancestor(commit, release) == Ok(true))
-    };
+    let contained = |commit: &str| in_effect.iter().any(|release| ancestor(commit, release) == Ok(true));
     if let Some((_, newest)) = landings.last() {
         if landings.len() > 1 && landings.iter().all(|(_, c)| !c.is_empty()) && contained(newest) {
             return None;
@@ -1094,12 +825,7 @@ pub fn observe(
     let activated = crate::watchers::last_activation(run_dir);
     let activation = crate::watchers::current_activation(run_dir);
     let maintenance = spira_world::freeze::read_maintenance(run_dir);
-    let blind = |why: &str| Snapshot {
-        activated_at: activated,
-        activation: activation.clone(),
-        maintenance: maintenance.clone(),
-        ..blind(why)
-    };
+    let blind = |why: &str| Snapshot { activated_at: activated, activation: activation.clone(), maintenance: maintenance.clone(), ..blind(why) };
     let in_effect = releases_in_effect(&releases, releases_dir);
     let window = window_s.to_string();
     let after = if current.is_some() {
@@ -1134,25 +860,13 @@ pub fn observe(
     snap.owners
         .extend(progress.map(|o| (DELIVERY_EDGE.to_string(), o)));
     snap.owners.extend(pace_owners(run_dir));
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    snap.owners.extend(TASK_OWNERS.iter().map(|(edge, task)| {
-        (
-            edge.to_string(),
-            task_owner(spira_config::ticked::quiet_secs(run_dir, task), now),
-        )
-    }));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    snap.owners.extend(TASK_OWNERS.iter().map(|(edge, task)| (edge.to_string(), task_owner(spira_config::ticked::quiet_secs(run_dir, task), now))));
     snap
 }
 
 fn log_line(now_ms: u64, line: &str) -> EffectSpec {
-    EffectSpec::keyed(
-        LOG_APPEND,
-        format!("{NAME}:log:{now_ms}:{:016x}", fnv1a(line)),
-        pattern::inbox_line(now_ms, TAG, line),
-        DEADLINE_MS,
-    )
+    EffectSpec::keyed(LOG_APPEND, format!("{NAME}:log:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
 }
 
 const LOG_TRIM_OVER: usize = 4_000;
@@ -1167,11 +881,7 @@ pub fn log_append(cfg: &Config, line: &str) -> Result<String, String> {
     }
     let path = cfg.run.join("transitions.log");
     let err = |e: std::io::Error| format!("{}: {e}", path.display());
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(err)?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(err)?;
     writeln!(f, "{line}").map_err(err)?;
     drop(f);
     let text = std::fs::read_to_string(&path).map_err(err)?;
@@ -1186,59 +896,34 @@ pub fn log_append(cfg: &Config, line: &str) -> Result<String, String> {
 }
 
 fn say(now_ms: u64, line: &str) -> EffectSpec {
-    EffectSpec::keyed(
-        INBOX_APPEND,
-        format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)),
-        pattern::inbox_line(now_ms, TAG, line),
-        DEADLINE_MS,
-    )
+    EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:{now_ms}:{:016x}", fnv1a(line)), pattern::inbox_line(now_ms, TAG, line), DEADLINE_MS)
 }
 
 /// Each repo's cut owner under `<run_dir>/rounds-pace/<repo>/`; a repo with no `state` has none.
 pub fn pace_owners(run_dir: &std::path::Path) -> Vec<(String, Owner)> {
-    let mtime = |p: std::path::PathBuf| {
-        std::fs::metadata(p)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-    };
-    let Ok(repos) = std::fs::read_dir(run_dir.join("rounds-pace")) else {
-        return vec![];
-    };
+    let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let Ok(repos) = std::fs::read_dir(run_dir.join("rounds-pace")) else { return vec![] };
     repos
         .flatten()
         .filter_map(|e| {
             let dir = e.path();
             let state = mtime(dir.join("state"))?;
             let pause = std::fs::read_to_string(dir.join("pause")).ok();
-            Some((
-                cut_owner_key(&e.file_name().to_string_lossy()),
-                pace_owner(Some(state), pause.as_deref()),
-            ))
+            Some((cut_owner_key(&e.file_name().to_string_lossy()), pace_owner(Some(state), pause.as_deref())))
         })
         .collect()
 }
 
 /// A snapshot that is not there: the store or the release records could not be read.
 pub fn blind(why: &str) -> Snapshot {
-    Snapshot {
-        readable: false,
-        why: why.into(),
-        ..Default::default()
-    }
+    Snapshot { readable: false, why: why.into(), ..Default::default() }
 }
 
 /// `snap` with each repo's Delivered time no older than `seen`: a landing the audit read missed.
 fn with_delivered(snap: &Snapshot, seen: &BTreeMap<String, u64>) -> Snapshot {
     let mut out = snap.clone();
     for (repo, at) in seen {
-        let slot = out
-            .last
-            .entry(repo.clone())
-            .or_default()
-            .entry("Delivered".into())
-            .or_insert(*at);
+        let slot = out.last.entry(repo.clone()).or_default().entry("Delivered".into()).or_insert(*at);
         *slot = (*slot).max(*at);
     }
     out
@@ -1255,28 +940,15 @@ fn over_rows(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<(&'static str, u64,
         ("IN_DELIVERY", t["IN_DELIVERY"].oldest, DELIVERY_EDGE),
         ("ASK", t["ASK"].oldest, ASK_EDGE),
     ];
-    judged
-        .into_iter()
-        .filter_map(|(row, age, edge)| {
-            Some((row, age, cfg.bound(edge)?)).filter(|(_, age, bound)| *age > 0 && age >= bound)
-        })
-        .collect()
+    judged.into_iter().filter_map(|(row, age, edge)| Some((row, age, cfg.bound(edge)?)).filter(|(_, age, bound)| *age > 0 && age >= bound)).collect()
 }
 
 /// The rows over their bound, scope `ALL`.
 pub fn over(snap: &Snapshot, now: u64, cfg: &Config) -> BTreeSet<&'static str> {
-    over_rows(snap, now, cfg)
-        .into_iter()
-        .map(|(row, _, _)| row)
-        .collect()
+    over_rows(snap, now, cfg).into_iter().map(|(row, _, _)| row).collect()
 }
 
-pub fn decide(
-    carry: &Carry,
-    snap: &Snapshot,
-    now_ms: u64,
-    cfg: &Config,
-) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let now = now_ms / 1000;
     let mut next = carry.clone();
     let mut acts = vec![];
@@ -1312,30 +984,16 @@ pub fn decide(
         return (next, acts);
     }
     next.blind = false;
-    next.delivered = carry
-        .delivered
-        .iter()
-        .filter(|(_, at)| **at >= snap.horizon)
-        .map(|(r, at)| (r.clone(), *at))
-        .collect();
+    next.delivered = carry.delivered.iter().filter(|(_, at)| **at >= snap.horizon).map(|(r, at)| (r.clone(), *at)).collect();
     for (id, repo) in &carry.in_delivery {
         if !snap.beads.iter().any(|b| &b.id == id) {
             next.delivered.insert(repo.clone(), now);
         }
     }
-    next.in_delivery = snap
-        .beads
-        .iter()
-        .filter(|b| b.state == "IN_DELIVERY")
-        .map(|b| (b.id.clone(), b.repo.clone()))
-        .collect();
+    next.in_delivery = snap.beads.iter().filter(|b| b.state == "IN_DELIVERY").map(|b| (b.id.clone(), b.repo.clone())).collect();
     let mut amended = with_delivered(snap, &next.delivered);
     next.unexplained = BTreeMap::new();
-    for b in amended
-        .beads
-        .iter_mut()
-        .filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED"))
-    {
+    for b in amended.beads.iter_mut().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")) {
         let entry = if uncovered(snap, b, ALL, now, cfg) {
             match carry.unexplained.get(&b.id) {
                 Some(None) => Some(now),
@@ -1353,48 +1011,18 @@ pub fn decide(
     acts.push(log_line(now_ms, &table));
     let rows = over_rows(snap, now, cfg);
     next.over = rows.iter().map(|(row, _, _)| row.to_string()).collect();
-    let fresh: Vec<String> = rows
-        .iter()
-        .filter(|(row, _, _)| !carry.over.contains(*row))
-        .map(|(row, age, bound)| {
-            format!(
-                "OVER {row} {} (bound {}){}",
-                dur(*age),
-                dur(*bound),
-                if *row == "SUBMITTED" {
-                    oldest_uncovered(snap, ALL, now, cfg)
-                } else {
-                    String::new()
-                }
-            )
-        })
-        .collect();
+    let fresh: Vec<String> = rows.iter().filter(|(row, _, _)| !carry.over.contains(*row)).map(|(row, age, bound)| format!("OVER {row} {} (bound {}){}", dur(*age), dur(*bound), if *row == "SUBMITTED" { oldest_uncovered(snap, ALL, now, cfg) } else { String::new() })).collect();
     if !fresh.is_empty() {
         acts.push(say(now_ms, &format!("{} — {table}", fresh.join(", "))));
     } else if carry.blind {
         acts.push(say(now_ms, &table));
     }
-    let found: Vec<Stall> = stalls(snap, now, cfg)
-        .into_iter()
-        .filter(|s| {
-            carry.stalled.contains(&s.key())
-                || cfg
-                    .bound(s.edge)
-                    .is_none_or(|b| now.saturating_sub(carry.resumed_at) >= b)
-        })
-        .collect();
+    let found: Vec<Stall> = stalls(snap, now, cfg).into_iter().filter(|s| carry.stalled.contains(&s.key()) || cfg.bound(s.edge).is_none_or(|b| now.saturating_sub(carry.resumed_at) >= b)).collect();
     let keys: BTreeSet<String> = found.iter().map(Stall::key).collect();
     for s in &found {
         if !carry.stalled.contains(&s.key()) {
-            let scope = if s.scope == ALL {
-                "all repos".to_string()
-            } else {
-                s.scope.clone()
-            };
-            acts.push(say(
-                now_ms,
-                &format!("P0 STALL {} ({scope}): {}", s.edge, s.evidence),
-            ));
+            let scope = if s.scope == ALL { "all repos".to_string() } else { s.scope.clone() };
+            acts.push(say(now_ms, &format!("P0 STALL {} ({scope}): {}", s.edge, s.evidence)));
         }
     }
     for k in carry.stalled.difference(&keys) {
@@ -1414,9 +1042,7 @@ impl WatchTransitions {
     }
 
     pub fn pinned() -> Self {
-        WatchTransitions {
-            config: Config::pinned(),
-        }
+        WatchTransitions { config: Config::pinned() }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -1428,26 +1054,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("blind"),
-    runtime::rows::Part::Field("orphan_paged"),
-    runtime::rows::Part::Field("stalled"),
-    runtime::rows::Part::Map {
-        name: "in_delivery",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "delivered",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "unexplained",
-        drop: &[],
-    },
-    runtime::rows::Part::Field("halted"),
-    runtime::rows::Part::Field("resumed_at"),
-    runtime::rows::Part::Field("over"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Map { name: "unexplained", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over")];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {
@@ -1463,10 +1070,7 @@ impl Handler for WatchTransitions {
             Err(e) => {
                 ctx.event().set("config.refused", e.as_str());
                 if ev.kind.tag == TICK {
-                    return vec![Command::Timer {
-                        at: ev.at + DEFAULT_PERIOD_MS,
-                        kind: EventKind::new(TICK, ""),
-                    }];
+                    return vec![Command::Timer { at: ev.at + DEFAULT_PERIOD_MS, kind: EventKind::new(TICK, "") }];
                 }
                 return vec![];
             }
@@ -1479,12 +1083,8 @@ impl Handler for WatchTransitions {
             return vec![];
         }
         let mut snap = match ev.kind.tag.as_str() {
-            EFFECT_SUCCEEDED => serde_json::from_str::<Snapshot>(&ev.kind.body)
-                .unwrap_or_else(|e| blind(&format!("the observe answer did not parse: {e}"))),
-            EFFECT_FAILED => blind(&format!(
-                "the observe failed: {}",
-                ev.kind.body.chars().take(200).collect::<String>()
-            )),
+            EFFECT_SUCCEEDED => serde_json::from_str::<Snapshot>(&ev.kind.body).unwrap_or_else(|e| blind(&format!("the observe answer did not parse: {e}"))),
+            EFFECT_FAILED => blind(&format!("the observe failed: {}", ev.kind.body.chars().take(200).collect::<String>())),
             EFFECT_TIMED_OUT => blind("the observe timed out"),
             _ => return vec![],
         };
@@ -1503,25 +1103,7 @@ mod tests {
     #[test]
     fn the_log_is_cut_to_its_last_2000_lines_past_4000() {
         let dir = testkit::TempDir::new("transitions-log");
-        let mut cfg = Config {
-            period_s: 300,
-            working_min: 1,
-            submit_bound_s: 1,
-            cut_bound_s: 1,
-            gate_timeout_s: 1,
-            certify_par: 1,
-            deliver_bound_s: 1,
-            activate_bound_s: 1,
-            ask_bound_s: 1,
-            release_repo: "r".into(),
-            heartbeat_bound_s: 1,
-            task_bound_s: 1,
-            round_max_open: 1,
-            releases: "".into(),
-            repo_map: "".into(),
-            activation_bound_s: 1,
-            run: dir.path().to_path_buf(),
-        };
+        let mut cfg = Config { period_s: 300, working_min: 1, submit_bound_s: 1, cut_bound_s: 1, gate_timeout_s: 1, certify_par: 1, deliver_bound_s: 1, activate_bound_s: 1, ask_bound_s: 1, release_repo: "r".into(), heartbeat_bound_s: 1, task_bound_s: 1, round_max_open: 1, releases: "".into(), repo_map: "".into(), activation_bound_s: 1, run: dir.path().to_path_buf() };
         assert!(log_append(&cfg, "").is_err());
         for i in 0..4_001 {
             log_append(&cfg, &format!("line {i}")).unwrap();
@@ -1529,11 +1111,7 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join("transitions.log")).unwrap();
         assert_eq!(text.lines().count(), 2_000);
         assert_eq!(text.lines().last(), Some("line 4000"));
-        assert_eq!(
-            std::fs::read_dir(dir.path()).unwrap().count(),
-            1,
-            "no temp file is left behind"
-        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temp file is left behind");
         cfg.run = dir.path().join("missing");
         assert!(log_append(&cfg, "x").is_err());
     }

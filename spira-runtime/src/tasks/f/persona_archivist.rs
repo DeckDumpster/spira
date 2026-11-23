@@ -94,17 +94,7 @@ pub const SETTLE: &str = "persona.archivist.settle";
 pub const DIGEST_SEND: &str = "persona.archivist.digest_send";
 pub const MARK: &str = "persona.archivist.mark";
 pub const FORGET: &str = "persona.archivist.forget";
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    BRIEF,
-    UNIT_START,
-    UNIT_STOP,
-    COMMIT,
-    SETTLE,
-    DIGEST_SEND,
-    MARK,
-    FORGET,
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, BRIEF, UNIT_START, UNIT_STOP, COMMIT, SETTLE, DIGEST_SEND, MARK, FORGET];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_PERSONA_ARCHIVIST_SECS";
 pub const KEYS: &[&str] = &[
@@ -206,147 +196,33 @@ pub enum Input {
 /// deadline passes and `unit.stop` runs". `start-failed` is this port's: a unit that would not
 /// start settles as a failure.
 pub const TRANSITIONS: &[Transition<State>] = &[
-    Transition {
-        from: State::Idle,
-        on: "tick",
-        to: State::Observing,
-        effects: &[OBSERVE],
-    },
-    Transition {
-        from: State::Observing,
-        on: "paused",
-        to: State::Idle,
-        effects: &[MARK],
-    },
-    Transition {
-        from: State::Observing,
-        on: "nothing",
-        to: State::Idle,
-        effects: &[],
-    },
-    Transition {
-        from: State::Observing,
-        on: "stale-only",
-        to: State::Forgetting,
-        effects: &[FORGET],
-    },
-    Transition {
-        from: State::Observing,
-        on: "candidates",
-        to: State::Briefing,
-        effects: &[BRIEF],
-    },
-    Transition {
-        from: State::Briefing,
-        on: "skip-next",
-        to: State::Briefing,
-        effects: &[BRIEF],
-    },
-    Transition {
-        from: State::Briefing,
-        on: "skip-last",
-        to: State::Forgetting,
-        effects: &[FORGET],
-    },
-    Transition {
-        from: State::Briefing,
-        on: "briefed",
-        to: State::Starting,
-        effects: &[UNIT_START],
-    },
-    Transition {
-        from: State::Starting,
-        on: "started",
-        to: State::Running,
-        effects: &[],
-    },
-    Transition {
-        from: State::Starting,
-        on: "start-failed",
-        to: State::Settling,
-        effects: &[SETTLE],
-    },
-    Transition {
-        from: State::Running,
-        on: "ran-ok-wiki",
-        to: State::Committing,
-        effects: &[COMMIT],
-    },
-    Transition {
-        from: State::Running,
-        on: "ran-ok",
-        to: State::Settling,
-        effects: &[SETTLE],
-    },
-    Transition {
-        from: State::Running,
-        on: "deadline",
-        to: State::Running,
-        effects: &[UNIT_STOP],
-    },
-    Transition {
-        from: State::Running,
-        on: "timeout",
-        to: State::Settling,
-        effects: &[SETTLE],
-    },
-    Transition {
-        from: State::Running,
-        on: "capacity",
-        to: State::Forgetting,
-        effects: &[SETTLE],
-    },
-    Transition {
-        from: State::Running,
-        on: "ran-failed",
-        to: State::Settling,
-        effects: &[SETTLE],
-    },
-    Transition {
-        from: State::Committing,
-        on: "committed",
-        to: State::Settling,
-        effects: &[SETTLE, DIGEST_SEND],
-    },
-    Transition {
-        from: State::Committing,
-        on: "dirty",
-        to: State::Settling,
-        effects: &[SETTLE],
-    },
-    Transition {
-        from: State::Committing,
-        on: "commit-failed",
-        to: State::Settling,
-        effects: &[SETTLE],
-    },
-    Transition {
-        from: State::Settling,
-        on: "next",
-        to: State::Briefing,
-        effects: &[BRIEF],
-    },
-    Transition {
-        from: State::Settling,
-        on: "done",
-        to: State::Forgetting,
-        effects: &[FORGET],
-    },
-    Transition {
-        from: State::Forgetting,
-        on: "forgotten",
-        to: State::Idle,
-        effects: &[],
-    },
+    Transition { from: State::Idle, on: "tick", to: State::Observing, effects: &[OBSERVE] },
+    Transition { from: State::Observing, on: "paused", to: State::Idle, effects: &[MARK] },
+    Transition { from: State::Observing, on: "nothing", to: State::Idle, effects: &[] },
+    Transition { from: State::Observing, on: "stale-only", to: State::Forgetting, effects: &[FORGET] },
+    Transition { from: State::Observing, on: "candidates", to: State::Briefing, effects: &[BRIEF] },
+    Transition { from: State::Briefing, on: "skip-next", to: State::Briefing, effects: &[BRIEF] },
+    Transition { from: State::Briefing, on: "skip-last", to: State::Forgetting, effects: &[FORGET] },
+    Transition { from: State::Briefing, on: "briefed", to: State::Starting, effects: &[UNIT_START] },
+    Transition { from: State::Starting, on: "started", to: State::Running, effects: &[] },
+    Transition { from: State::Starting, on: "start-failed", to: State::Settling, effects: &[SETTLE] },
+    Transition { from: State::Running, on: "ran-ok-wiki", to: State::Committing, effects: &[COMMIT] },
+    Transition { from: State::Running, on: "ran-ok", to: State::Settling, effects: &[SETTLE] },
+    Transition { from: State::Running, on: "deadline", to: State::Running, effects: &[UNIT_STOP] },
+    Transition { from: State::Running, on: "timeout", to: State::Settling, effects: &[SETTLE] },
+    Transition { from: State::Running, on: "capacity", to: State::Forgetting, effects: &[SETTLE] },
+    Transition { from: State::Running, on: "ran-failed", to: State::Settling, effects: &[SETTLE] },
+    Transition { from: State::Committing, on: "committed", to: State::Settling, effects: &[SETTLE, DIGEST_SEND] },
+    Transition { from: State::Committing, on: "dirty", to: State::Settling, effects: &[SETTLE] },
+    Transition { from: State::Committing, on: "commit-failed", to: State::Settling, effects: &[SETTLE] },
+    Transition { from: State::Settling, on: "next", to: State::Briefing, effects: &[BRIEF] },
+    Transition { from: State::Settling, on: "done", to: State::Forgetting, effects: &[FORGET] },
+    Transition { from: State::Forgetting, on: "forgotten", to: State::Idle, effects: &[] },
 ];
 
 /// The machine's next state on `on`, or a refusal naming the state it is in.
 pub fn step(from: State, on: &str) -> Result<State, String> {
-    TRANSITIONS
-        .iter()
-        .find(|t| t.from == from && t.on == on)
-        .map(|t| t.to)
-        .ok_or_else(|| format!("{NAME}: no transition from {from:?} on {on}"))
+    TRANSITIONS.iter().find(|t| t.from == from && t.on == on).map(|t| t.to).ok_or_else(|| format!("{NAME}: no transition from {from:?} on {on}"))
 }
 
 /// `persona.archivist.brief`'s input: the session, and what the observe read of it (absent
@@ -394,12 +270,7 @@ pub struct Settle {
 }
 
 fn spec<T: Serialize>(name: &str, key: String, body: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::keyed(
-        name,
-        key,
-        serde_json::to_string(body).unwrap_or_default(),
-        deadline_ms,
-    )
+    EffectSpec::keyed(name, key, serde_json::to_string(body).unwrap_or_default(), deadline_ms)
 }
 
 fn run_of(carry: &Carry) -> &str {
@@ -407,364 +278,100 @@ fn run_of(carry: &Carry) -> &str {
 }
 
 fn brief(carry: &Carry, ask: BriefAsk) -> EffectSpec {
-    spec(
-        BRIEF,
-        format!("archivist/{}/{}/brief", run_of(carry), ask.sid),
-        &ask,
-        BRIEF_DEADLINE_MS,
-    )
+    spec(BRIEF, format!("archivist/{}/{}/brief", run_of(carry), ask.sid), &ask, BRIEF_DEADLINE_MS)
 }
 
 fn forget(carry: &Carry) -> EffectSpec {
-    spec(
-        FORGET,
-        format!("archivist/forget/{}", run_of(carry)),
-        &serde_json::json!({}),
-        FORGET_DEADLINE_MS,
-    )
+    spec(FORGET, format!("archivist/forget/{}", run_of(carry)), &serde_json::json!({}), FORGET_DEADLINE_MS)
 }
 
 fn settle(carry: &Carry, outcome: &str, rc: Option<i32>) -> EffectSpec {
-    let c = carry.current.clone().unwrap_or(Current {
-        sid: String::new(),
-        at: 0,
-        tc: 0,
-    });
-    spec(
-        SETTLE,
-        format!("archivist/{}/{}/settle", c.sid, c.at),
-        &Settle {
-            sid: c.sid,
-            at: c.at,
-            outcome: outcome.into(),
-            rc,
-        },
-        HOST_DEADLINE_MS,
-    )
+    let c = carry.current.clone().unwrap_or(Current { sid: String::new(), at: 0, tc: 0 });
+    spec(SETTLE, format!("archivist/{}/{}/settle", c.sid, c.at), &Settle { sid: c.sid, at: c.at, outcome: outcome.into(), rc }, HOST_DEADLINE_MS)
 }
 
 fn num(config: &BTreeMap<String, String>, k: &str, default: u64) -> u64 {
-    config
-        .get(k)
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(default)
+    config.get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(default)
 }
 
 /// The next session from the queue, or the end of the pass.
-fn next_or_done(
-    carry: &Carry,
-    archived: u32,
-    config: &BTreeMap<String, String>,
-    on_next: &str,
-    on_done: &str,
-) -> Result<(Carry, Vec<EffectSpec>), String> {
+fn next_or_done(carry: &Carry, archived: u32, config: &BTreeMap<String, String>, on_next: &str, on_done: &str) -> Result<(Carry, Vec<EffectSpec>), String> {
     let per_pass = num(config, "SPIRA_ARCHIVIST_PER_PASS", 1) as u32;
     let s = carry.state;
     match carry.queue.split_first() {
         Some((sid, rest)) if archived < per_pass => {
-            let next = Carry {
-                state: step(s, on_next)?,
-                queue: rest.to_vec(),
-                current: Some(Current {
-                    sid: sid.clone(),
-                    at: 0,
-                    tc: 0,
-                }),
-                archived,
-                ..carry.clone()
-            };
-            Ok((
-                next,
-                vec![brief(
-                    carry,
-                    BriefAsk {
-                        sid: sid.clone(),
-                        ..BriefAsk::default()
-                    },
-                )],
-            ))
+            let next = Carry { state: step(s, on_next)?, queue: rest.to_vec(), current: Some(Current { sid: sid.clone(), at: 0, tc: 0 }), archived, ..carry.clone() };
+            Ok((next, vec![brief(carry, BriefAsk { sid: sid.clone(), ..BriefAsk::default() })]))
         }
-        _ => Ok((
-            Carry {
-                state: step(s, on_done)?,
-                queue: vec![],
-                current: None,
-                archived,
-                ..carry.clone()
-            },
-            vec![forget(carry)],
-        )),
+        _ => Ok((Carry { state: step(s, on_done)?, queue: vec![], current: None, archived, ..carry.clone() }, vec![forget(carry)])),
     }
 }
 
 /// The pure decision, with `config` the pinned [`KEYS`] (`SPIRA_WIKI` empty means no wiki): the
 /// next carry and the acts, or a refusal naming the state.
-pub fn decide(
-    carry: &Carry,
-    input: &Input,
-    config: &BTreeMap<String, String>,
-) -> Result<(Carry, Vec<EffectSpec>), String> {
+pub fn decide(carry: &Carry, input: &Input, config: &BTreeMap<String, String>) -> Result<(Carry, Vec<EffectSpec>), String> {
     let s = carry.state;
     let go = |on: &str| step(s, on);
-    let wiki = config
-        .get("SPIRA_WIKI")
-        .is_some_and(|w| !w.trim().is_empty());
+    let wiki = config.get("SPIRA_WIKI").is_some_and(|w| !w.trim().is_empty());
     let unexpected = |effect: &str| Err(format!("{NAME}: {s:?} expects no outcome of {effect}"));
     match input {
-        Input::Tick => Ok((
-            Carry {
-                state: go("tick")?,
-                ..carry.clone()
-            },
-            vec![EffectSpec::probe(
-                OBSERVE,
-                String::new(),
-                OBSERVE_DEADLINE_MS,
-            )],
-        )),
+        Input::Tick => Ok((Carry { state: go("tick")?, ..carry.clone() }, vec![EffectSpec::probe(OBSERVE, String::new(), OBSERVE_DEADLINE_MS)])),
         Input::Observed(snap) => {
             if snap.paused {
-                return Ok((
-                    Carry {
-                        state: go("paused")?,
-                        ..Carry::default()
-                    },
-                    vec![spec(
-                        MARK,
-                        format!("archivist/{}/mark", run_of(carry)),
-                        &serde_json::json!({}),
-                        HOST_DEADLINE_MS,
-                    )],
-                ));
+                return Ok((Carry { state: go("paused")?, ..Carry::default() }, vec![spec(MARK, format!("archivist/{}/mark", run_of(carry)), &serde_json::json!({}), HOST_DEADLINE_MS)]));
             }
             let every = num(config, "SPIRA_ARCHIVIST_EVERY", 40);
-            let mut due: Vec<&Candidate> = snap
-                .candidates
-                .iter()
-                .filter(|c| {
-                    archivist::candidates::would_archive(c.drift as i64, every, None, None, 0)
-                })
-                .collect();
+            let mut due: Vec<&Candidate> = snap.candidates.iter().filter(|c| archivist::candidates::would_archive(c.drift as i64, every, None, None, 0)).collect();
             due.sort_by_key(|c| std::cmp::Reverse(c.drift));
             match due.split_first() {
-                None if snap.stale.is_empty() => Ok((
-                    Carry {
-                        state: go("nothing")?,
-                        ..Carry::default()
-                    },
-                    vec![],
-                )),
-                None => Ok((
-                    Carry {
-                        state: go("stale-only")?,
-                        ..Carry::default()
-                    },
-                    vec![forget(carry)],
-                )),
+                None if snap.stale.is_empty() => Ok((Carry { state: go("nothing")?, ..Carry::default() }, vec![])),
+                None => Ok((Carry { state: go("stale-only")?, ..Carry::default() }, vec![forget(carry)])),
                 Some((first, rest)) => {
-                    let next = Carry {
-                        state: go("candidates")?,
-                        run_id: carry.run_id.clone(),
-                        queue: rest.iter().map(|c| c.sid.clone()).collect(),
-                        current: Some(Current {
-                            sid: first.sid.clone(),
-                            at: first.turns,
-                            tc: 0,
-                        }),
-                        archived: 0,
-                    };
-                    Ok((
-                        next,
-                        vec![brief(
-                            carry,
-                            BriefAsk {
-                                sid: first.sid.clone(),
-                                tp: Some(first.tp.clone()),
-                                at: Some(first.turns),
-                                ctx: Some(first.ctx),
-                                drift: Some(first.drift),
-                            },
-                        )],
-                    ))
+                    let next = Carry { state: go("candidates")?, run_id: carry.run_id.clone(), queue: rest.iter().map(|c| c.sid.clone()).collect(), current: Some(Current { sid: first.sid.clone(), at: first.turns, tc: 0 }), archived: 0 };
+                    Ok((next, vec![brief(carry, BriefAsk { sid: first.sid.clone(), tp: Some(first.tp.clone()), at: Some(first.turns), ctx: Some(first.ctx), drift: Some(first.drift) })]))
                 }
             }
         }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. }
-            if effect == MARK || effect == DIGEST_SEND || effect == UNIT_STOP =>
-        {
-            Ok((carry.clone(), vec![]))
-        }
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == MARK || effect == DIGEST_SEND || effect == UNIT_STOP => Ok((carry.clone(), vec![])),
         Input::Succeeded { effect, body } if effect == BRIEF => {
             let state = go("briefed")?;
-            let b: Briefed = serde_json::from_str(body)
-                .map_err(|e| format!("{NAME}: the brief's answer is unreadable: {e}"))?;
-            let mut current = carry
-                .current
-                .clone()
-                .ok_or_else(|| format!("{NAME}: {s:?} has no session"))?;
+            let b: Briefed = serde_json::from_str(body).map_err(|e| format!("{NAME}: the brief's answer is unreadable: {e}"))?;
+            let mut current = carry.current.clone().ok_or_else(|| format!("{NAME}: {s:?} has no session"))?;
             current.at = b.at.unwrap_or(current.at);
             current.tc = b.tc.unwrap_or(current.tc);
-            let run = carry
-                .run_id
-                .clone()
-                .ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
-            let unit = UnitSpec {
-                task: NAME.into(),
-                key: format!("{run}-{}", current.sid),
-                argv: b.argv,
-                env: b.env,
-                cwd: b.cwd,
-            };
-            Ok((
-                Carry {
-                    state,
-                    current: Some(current),
-                    ..carry.clone()
-                },
-                vec![spec(
-                    UNIT_START,
-                    format!(
-                        "archivist/{run}/{}",
-                        carry
-                            .current
-                            .as_ref()
-                            .map(|c| c.sid.as_str())
-                            .unwrap_or_default()
-                    ),
-                    &unit,
-                    START_DEADLINE_MS,
-                )],
-            ))
+            let run = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
+            let unit = UnitSpec { task: NAME.into(), key: format!("{run}-{}", current.sid), argv: b.argv, env: b.env, cwd: b.cwd };
+            Ok((Carry { state, current: Some(current), ..carry.clone() }, vec![spec(UNIT_START, format!("archivist/{run}/{}", carry.current.as_ref().map(|c| c.sid.as_str()).unwrap_or_default()), &unit, START_DEADLINE_MS)]))
         }
-        Input::Failed { effect, .. } if effect == BRIEF => {
-            next_or_done(carry, carry.archived, config, "skip-next", "skip-last")
-        }
-        Input::Succeeded { effect, .. } if effect == UNIT_START => Ok((
-            Carry {
-                state: go("started")?,
-                ..carry.clone()
-            },
-            vec![],
-        )),
-        Input::Failed { effect, .. } if effect == UNIT_START => Ok((
-            Carry {
-                state: go("start-failed")?,
-                ..carry.clone()
-            },
-            vec![settle(carry, "failed", Some(1))],
-        )),
+        Input::Failed { effect, .. } if effect == BRIEF => next_or_done(carry, carry.archived, config, "skip-next", "skip-last"),
+        Input::Succeeded { effect, .. } if effect == UNIT_START => Ok((Carry { state: go("started")?, ..carry.clone() }, vec![])),
+        Input::Failed { effect, .. } if effect == UNIT_START => Ok((Carry { state: go("start-failed")?, ..carry.clone() }, vec![settle(carry, "failed", Some(1))])),
         Input::UnitRan(ran) => match ran.exit {
             Exit::Code(0) if wiki => {
-                let sid = carry
-                    .current
-                    .as_ref()
-                    .map(|c| c.sid.clone())
-                    .unwrap_or_default();
-                Ok((
-                    Carry {
-                        state: go("ran-ok-wiki")?,
-                        ..carry.clone()
-                    },
-                    vec![spec(
-                        COMMIT,
-                        format!(
-                            "archivist/{sid}/{}/commit",
-                            carry.current.as_ref().map_or(0, |c| c.at)
-                        ),
-                        &serde_json::json!({ "sid": sid }),
-                        COMMIT_DEADLINE_MS,
-                    )],
-                ))
+                let sid = carry.current.as_ref().map(|c| c.sid.clone()).unwrap_or_default();
+                Ok((Carry { state: go("ran-ok-wiki")?, ..carry.clone() }, vec![spec(COMMIT, format!("archivist/{sid}/{}/commit", carry.current.as_ref().map_or(0, |c| c.at)), &serde_json::json!({ "sid": sid }), COMMIT_DEADLINE_MS)]))
             }
-            Exit::Code(0) => Ok((
-                Carry {
-                    state: go("ran-ok")?,
-                    ..carry.clone()
-                },
-                vec![settle(carry, "safe", Some(0))],
-            )),
-            Exit::Code(124) | Exit::Signal(_) => Ok((
-                Carry {
-                    state: go("timeout")?,
-                    ..carry.clone()
-                },
-                vec![settle(carry, "timeout", Some(124))],
-            )),
-            Exit::Code(rc) => Ok((
-                Carry {
-                    state: go("ran-failed")?,
-                    ..carry.clone()
-                },
-                vec![settle(carry, "failed", Some(rc))],
-            )),
-            Exit::Unknown => Ok((
-                Carry {
-                    state: go("ran-failed")?,
-                    ..carry.clone()
-                },
-                vec![settle(carry, "failed", Some(1))],
-            )),
+            Exit::Code(0) => Ok((Carry { state: go("ran-ok")?, ..carry.clone() }, vec![settle(carry, "safe", Some(0))])),
+            Exit::Code(124) | Exit::Signal(_) => Ok((Carry { state: go("timeout")?, ..carry.clone() }, vec![settle(carry, "timeout", Some(124))])),
+            Exit::Code(rc) => Ok((Carry { state: go("ran-failed")?, ..carry.clone() }, vec![settle(carry, "failed", Some(rc))])),
+            Exit::Unknown => Ok((Carry { state: go("ran-failed")?, ..carry.clone() }, vec![settle(carry, "failed", Some(1))])),
         },
         Input::Deadline => {
             let state = go("deadline")?;
-            let run = carry
-                .run_id
-                .clone()
-                .ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
-            let sid = carry
-                .current
-                .as_ref()
-                .map(|c| c.sid.clone())
-                .unwrap_or_default();
+            let run = carry.run_id.clone().ok_or_else(|| format!("{NAME}: {s:?} has no run id"))?;
+            let sid = carry.current.as_ref().map(|c| c.sid.clone()).unwrap_or_default();
             let h = UnitHandle::of(NAME, &format!("{run}-{sid}")).map_err(|e| e.to_string())?;
-            Ok((
-                Carry {
-                    state,
-                    ..carry.clone()
-                },
-                vec![spec(
-                    UNIT_STOP,
-                    format!("archivist/{run}/{sid}/stop"),
-                    &h,
-                    STOP_DEADLINE_MS,
-                )],
-            ))
+            Ok((Carry { state, ..carry.clone() }, vec![spec(UNIT_STOP, format!("archivist/{run}/{sid}/stop"), &h, STOP_DEADLINE_MS)]))
         }
         Input::Succeeded { effect, .. } if effect == COMMIT => {
             let state = go("committed")?;
-            Ok((
-                Carry {
-                    state,
-                    ..carry.clone()
-                },
-                vec![
-                    settle(carry, "safe", Some(0)),
-                    spec(
-                        DIGEST_SEND,
-                        format!("archivist/digest/{}", run_of(carry)),
-                        &serde_json::json!({}),
-                        DIGEST_DEADLINE_MS,
-                    ),
-                ],
-            ))
+            Ok((Carry { state, ..carry.clone() }, vec![settle(carry, "safe", Some(0)), spec(DIGEST_SEND, format!("archivist/digest/{}", run_of(carry)), &serde_json::json!({}), DIGEST_DEADLINE_MS)]))
         }
         Input::Failed { effect, error } if effect == COMMIT => {
             if archivist::brain::is_dirty_checkout_refusal(error) || error.contains("dirty") {
-                Ok((
-                    Carry {
-                        state: go("dirty")?,
-                        ..carry.clone()
-                    },
-                    vec![settle(carry, "retry", Some(0))],
-                ))
+                Ok((Carry { state: go("dirty")?, ..carry.clone() }, vec![settle(carry, "retry", Some(0))]))
             } else {
-                Ok((
-                    Carry {
-                        state: go("commit-failed")?,
-                        ..carry.clone()
-                    },
-                    vec![settle(carry, "commit-failed", Some(0))],
-                ))
+                Ok((Carry { state: go("commit-failed")?, ..carry.clone() }, vec![settle(carry, "commit-failed", Some(0))]))
             }
         }
         Input::Succeeded { effect, body } if effect == SETTLE => {
@@ -772,48 +379,25 @@ pub fn decide(
                 return unexpected(effect);
             }
             if body.trim() == "capacity" {
-                return Ok((
-                    Carry {
-                        state: go("done")?,
-                        queue: vec![],
-                        current: None,
-                        ..carry.clone()
-                    },
-                    vec![forget(carry)],
-                ));
+                return Ok((Carry { state: go("done")?, queue: vec![], current: None, ..carry.clone() }, vec![forget(carry)]));
             }
             let archived = carry.archived + u32::from(body.trim() == "safe");
             next_or_done(carry, archived, config, "next", "done")
         }
-        Input::Failed { effect, .. } if effect == SETTLE => {
-            next_or_done(carry, carry.archived, config, "next", "done")
-        }
-        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == FORGET => Ok((
-            Carry {
-                state: go("forgotten")?,
-                ..Carry::default()
-            },
-            vec![],
-        )),
+        Input::Failed { effect, .. } if effect == SETTLE => next_or_done(carry, carry.archived, config, "next", "done"),
+        Input::Succeeded { effect, .. } | Input::Failed { effect, .. } if effect == FORGET => Ok((Carry { state: go("forgotten")?, ..Carry::default() }, vec![])),
         Input::Succeeded { effect, .. } | Input::Failed { effect, .. } => unexpected(effect),
     }
 }
 
 /// The latest `persona.archivist.state` on the task's own stream or on `units`.
 pub fn carry_of(view: &Projection) -> Carry {
-    let latest = |stream: &str| {
-        view.events(&StreamKey(stream.into()))
-            .iter()
-            .rev()
-            .find(|e| e.kind.tag == STATE)
-            .map(|e| (e.at, e.kind.body.clone()))
-    };
+    let latest = |stream: &str| view.events(&StreamKey(stream.into())).iter().rev().find(|e| e.kind.tag == STATE).map(|e| (e.at, e.kind.body.clone()));
     let body = match (latest(STREAM), latest(UNITS_STREAM)) {
         (Some(o), Some(u)) => Some(if u.0 > o.0 { u.1 } else { o.1 }),
         (o, u) => o.or(u).map(|x| x.1),
     };
-    body.and_then(|b| serde_json::from_str(&b).ok())
-        .unwrap_or_default()
+    body.and_then(|b| serde_json::from_str(&b).ok()).unwrap_or_default()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -824,10 +408,7 @@ pub struct PersonaArchivist {
 
 impl PersonaArchivist {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(PersonaArchivist {
-            interval_ms: super::cadence_ms(settings, CADENCE_KEY)?,
-            config: super::pinned(settings, KEYS)?,
-        })
+        Ok(PersonaArchivist { interval_ms: super::cadence_ms(settings, CADENCE_KEY)?, config: super::pinned(settings, KEYS)? })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -835,10 +416,7 @@ impl PersonaArchivist {
     }
 
     pub fn registration(self) -> Registration {
-        Registration::new(NAME, self).with_rows(runtime::event::RowCodec {
-            also: &[runtime::sources::UNITS_STREAM],
-            ..runtime::row_codec!(STREAM, STATE, ROW_PARTS)
-        })
+        Registration::new(NAME, self).with_rows(runtime::event::RowCodec { also: &[runtime::sources::UNITS_STREAM], ..runtime::row_codec!(STREAM, STATE, ROW_PARTS)})
     }
 
     fn ours(effect: &str) -> bool {
@@ -850,28 +428,12 @@ impl PersonaArchivist {
         match ev.kind.tag.as_str() {
             TICK if ev.stream.0 == STREAM => Some(Input::Tick),
             DEADLINE if ev.stream.0 == STREAM => Some(Input::Deadline),
-            UNIT_RAN => UnitRan::from_event_kind(&ev.kind)
-                .filter(|r| r.key_for(NAME).is_some())
-                .map(Input::UnitRan),
-            EFFECT_SUCCEEDED if here => {
-                match answered_effect(view, ev).filter(|n| Self::ours(n))? {
-                    n if n == OBSERVE => serde_json::from_str(&ev.kind.body)
-                        .ok()
-                        .map(Input::Observed),
-                    effect => Some(Input::Succeeded {
-                        effect,
-                        body: ev.kind.body.clone(),
-                    }),
-                }
-            }
-            EFFECT_FAILED if here => {
-                answered_effect(view, ev)
-                    .filter(|n| Self::ours(n))
-                    .map(|effect| Input::Failed {
-                        effect,
-                        error: ev.kind.body.clone(),
-                    })
-            }
+            UNIT_RAN => UnitRan::from_event_kind(&ev.kind).filter(|r| r.key_for(NAME).is_some()).map(Input::UnitRan),
+            EFFECT_SUCCEEDED if here => match answered_effect(view, ev).filter(|n| Self::ours(n))? {
+                n if n == OBSERVE => serde_json::from_str(&ev.kind.body).ok().map(Input::Observed),
+                effect => Some(Input::Succeeded { effect, body: ev.kind.body.clone() }),
+            },
+            EFFECT_FAILED if here => answered_effect(view, ev).filter(|n| Self::ours(n)).map(|effect| Input::Failed { effect, error: ev.kind.body.clone() }),
             _ => None,
         }
     }
@@ -881,21 +443,12 @@ impl PersonaArchivist {
         if a.name == UNIT_START || a.name == UNIT_STOP {
             return a;
         }
-        let act: serde_json::Value =
-            serde_json::from_str(&a.input).unwrap_or(serde_json::Value::String(a.input.clone()));
-        EffectSpec {
-            input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(),
-            ..a
-        }
+        let act: serde_json::Value = serde_json::from_str(&a.input).unwrap_or(serde_json::Value::String(a.input.clone()));
+        EffectSpec { input: serde_json::json!({ "cfg": self.config, "act": act }).to_string(), ..a }
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("state"),
-    runtime::rows::Part::Field("run_id"),
-    runtime::rows::Part::Field("current"),
-    runtime::rows::Part::Field("archived"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("state"), runtime::rows::Part::Field("run_id"), runtime::rows::Part::Field("current"), runtime::rows::Part::Field("archived")];
 
 impl Handler for PersonaArchivist {
     fn interests(&self) -> &[EventKindTag] {
@@ -903,16 +456,11 @@ impl Handler for PersonaArchivist {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let Some(input) = Self::input(view, ev) else {
-            return vec![];
-        };
+        let Some(input) = Self::input(view, ev) else { return vec![] };
         let persisted = carry_of(view);
         // `Observing` is never journaled: the observe's answer is decided as if it were.
         let carry = match (&input, persisted.state) {
-            (Input::Observed(_), State::Idle) => Carry {
-                state: State::Observing,
-                ..persisted.clone()
-            },
+            (Input::Observed(_), State::Idle) => Carry { state: State::Observing, ..persisted.clone() },
             _ => persisted.clone(),
         };
         let mut out = match decide(&carry, &input, &self.config) {
@@ -920,33 +468,14 @@ impl Handler for PersonaArchivist {
                 if carry.state == State::Observing && next.state == State::Briefing {
                     next.run_id = Some(format!("r{}", ev.at));
                 }
-                let recorded = if next.state == State::Observing {
-                    persisted.clone()
-                } else {
-                    next.clone()
-                };
-                let (probes, writes): (Vec<EffectSpec>, Vec<EffectSpec>) =
-                    acts.into_iter().partition(|a| a.name == OBSERVE);
-                let mut out = commands(
-                    &persisted,
-                    &recorded,
-                    STATE,
-                    writes.into_iter().map(|a| self.pinned(a)).collect(),
-                );
-                out.extend(probes.into_iter().map(|p| {
-                    Command::Probe(EffectSpec {
-                        input: serde_json::json!({ "cfg": self.config }).to_string(),
-                        ..p
-                    })
-                }));
+                let recorded = if next.state == State::Observing { persisted.clone() } else { next.clone() };
+                let (probes, writes): (Vec<EffectSpec>, Vec<EffectSpec>) = acts.into_iter().partition(|a| a.name == OBSERVE);
+                let mut out = commands(&persisted, &recorded, STATE, writes.into_iter().map(|a| self.pinned(a)).collect());
+                out.extend(probes.into_iter().map(|p| Command::Probe(EffectSpec { input: serde_json::json!({ "cfg": self.config }).to_string(), ..p })));
                 if carry.state == State::Starting && next.state == State::Running {
                     let tc = next.current.as_ref().map_or(0, |c| c.tc) as u64;
-                    let bound_s =
-                        num(&self.config, "SPIRA_ARCHIVIST_TIMEOUT", 900) * (tc + 1) + STOP_GRACE_S;
-                    out.push(Command::Timer {
-                        at: ev.at + bound_s * 1000,
-                        kind: EventKind::new(DEADLINE, ""),
-                    });
+                    let bound_s = num(&self.config, "SPIRA_ARCHIVIST_TIMEOUT", 900) * (tc + 1) + STOP_GRACE_S;
+                    out.push(Command::Timer { at: ev.at + bound_s * 1000, kind: EventKind::new(DEADLINE, "") });
                 }
                 out
             }
@@ -956,10 +485,7 @@ impl Handler for PersonaArchivist {
             }
         };
         if input == Input::Tick {
-            out.push(Command::Timer {
-                at: ev.at + self.interval_ms,
-                kind: EventKind::new(TICK, ""),
-            });
+            out.push(Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") });
         }
         out
     }
@@ -978,23 +504,11 @@ fn parse<T: serde::de::DeserializeOwned>(input: &str) -> Result<Pinned<T>, Strin
 }
 
 /// The archivist's config from the pinned map, its state directory and its seam.
-fn setup(
-    cfg: &BTreeMap<String, String>,
-) -> Result<(archivist::config::Env, PathBuf, archivist::seam::RealSeam), String> {
-    let env = archivist::config::from_lookup(&|k| {
-        cfg.get(k)
-            .cloned()
-            .ok_or_else(|| format!("{k} is not pinned"))
-    })?;
+fn setup(cfg: &BTreeMap<String, String>) -> Result<(archivist::config::Env, PathBuf, archivist::seam::RealSeam), String> {
+    let env = archivist::config::from_lookup(&|k| cfg.get(k).cloned().ok_or_else(|| format!("{k} is not pinned")))?;
     let arc = Path::new(&env.run).join("archivist");
     let home = spira_config::resolve::locate_home_for_process()?;
-    Ok((
-        env,
-        arc,
-        archivist::seam::RealSeam {
-            lib_sh: home.join("lib.sh"),
-        },
-    ))
+    Ok((env, arc, archivist::seam::RealSeam { lib_sh: home.join("lib.sh") }))
 }
 
 fn now_secs() -> i64 {
@@ -1009,25 +523,15 @@ pub fn run_observe(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
     struct In {
         cfg: BTreeMap<String, String>,
     }
-    let cfg = serde_json::from_str::<In>(&s.input)
-        .map_err(|e| format!("{NAME}: unreadable input: {e}"))?
-        .cfg;
+    let cfg = serde_json::from_str::<In>(&s.input).map_err(|e| format!("{NAME}: unreadable input: {e}"))?.cfg;
     let (env, arc, seam) = setup(&cfg)?;
     let paused = seam.capacity_paused().is_some();
     let now = now_secs();
     let candidates = archivist::run::build_candidates(&seam, &env, &arc, now)
         .into_iter()
         .filter_map(|c| {
-            let retry_at: Option<i64> = archivist::state::read_state_key(&arc, &c.sid, "retry_at")
-                .and_then(|t| t.parse().ok());
-            archivist::candidates::would_archive(
-                i64::MAX,
-                0,
-                c.prev_state.as_deref(),
-                retry_at,
-                now,
-            )
-            .then(|| Candidate {
+            let retry_at: Option<i64> = archivist::state::read_state_key(&arc, &c.sid, "retry_at").and_then(|t| t.parse().ok());
+            archivist::candidates::would_archive(i64::MAX, 0, c.prev_state.as_deref(), retry_at, now).then(|| Candidate {
                 sid: c.sid,
                 tp: c.tp,
                 ctx: c.ctx.parse().unwrap_or(0),
@@ -1040,12 +544,7 @@ pub fn run_observe(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, St
         })
         .collect();
     let stale = archivist::run::stale_sessions(&env, &arc);
-    serde_json::to_string(&Snapshot {
-        paused,
-        candidates,
-        stale,
-    })
-    .map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { paused, candidates, stale }).map_err(|e| e.to_string())
 }
 
 fn before_file(arc: &Path, sid: &str) -> PathBuf {
@@ -1063,31 +562,12 @@ pub fn run_brief(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
     let (tp, at, ctx, drift) = match (&ask.tp, ask.at) {
         (Some(tp), Some(at)) => (tp.clone(), at, ask.ctx.unwrap_or(0), ask.drift.unwrap_or(0)),
         _ => {
-            let c = archivist::run::build_candidates(&seam, &env, &arc, now_secs())
-                .into_iter()
-                .find(|c| c.sid == ask.sid)
-                .ok_or_else(|| format!("{}: its transcript is no longer live", ask.sid))?;
-            (
-                c.tp.clone(),
-                c.turns,
-                c.ctx.parse().unwrap_or(0),
-                c.drift.max(0) as u64,
-            )
+            let c = archivist::run::build_candidates(&seam, &env, &arc, now_secs()).into_iter().find(|c| c.sid == ask.sid).ok_or_else(|| format!("{}: its transcript is no longer live", ask.sid))?;
+            (c.tp.clone(), c.turns, c.ctx.parse().unwrap_or(0), c.drift.max(0) as u64)
         }
     };
     let why = format!("turns since last sweep ({drift}) >= {}", env.every);
-    let prepared = archivist::run::prepare(
-        &seam,
-        &env,
-        &arc,
-        &ask.sid,
-        Path::new(&tp),
-        at,
-        &ctx.to_string(),
-        &why,
-        false,
-    )
-    .map_err(|rc| format!("{}: the brief was refused (rc {rc})", ask.sid))?;
+    let prepared = archivist::run::prepare(&seam, &env, &arc, &ask.sid, Path::new(&tp), at, &ctx.to_string(), &why, false).map_err(|rc| format!("{}: the brief was refused (rc {rc})", ask.sid))?;
     let before = match &prepared.before {
         Some(Ok(snap)) => serde_json::to_string(snap).map_err(|e| e.to_string())?,
         Some(Err(e)) => serde_json::json!({ "error": e }).to_string(),
@@ -1097,33 +577,16 @@ pub fn run_brief(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Stri
     if before.is_empty() {
         let _ = std::fs::remove_file(&wiki_before);
     } else {
-        std::fs::write(&wiki_before, before)
-            .map_err(|e| format!("{}: {e}", wiki_before.display()))?;
+        std::fs::write(&wiki_before, before).map_err(|e| format!("{}: {e}", wiki_before.display()))?;
     }
     let mut argv = vec![system_paths::BIN_SH.to_string(), "-c".to_string(), "exec timeout \"$SPIRA_ARCHIVIST_SECS\" \"$0\" \"$@\" <\"$SPIRA_ARCHIVIST_TASK\" >\"$SPIRA_ARCHIVIST_LOG\" 2>&1".to_string(), env.agent.clone()];
-    argv.extend(archivist::run::agent_args(
-        &prepared.sysfile,
-        &env.model,
-        env.wiki.as_deref(),
-    ));
+    argv.extend(archivist::run::agent_args(&prepared.sysfile, &env.model, env.wiki.as_deref()));
     let mut unit_env = vec![
-        (
-            "SPIRA_MAIL_FROM".to_string(),
-            archivist::run::MAIL_FROM.to_string(),
-        ),
+        ("SPIRA_MAIL_FROM".to_string(), archivist::run::MAIL_FROM.to_string()),
         ("SPIRA_WORK_ACTOR".to_string(), "archivist".to_string()),
-        (
-            "SPIRA_ARCHIVIST_SECS".to_string(),
-            prepared.timeout_secs.to_string(),
-        ),
-        (
-            "SPIRA_ARCHIVIST_TASK".to_string(),
-            prepared.taskfile.display().to_string(),
-        ),
-        (
-            "SPIRA_ARCHIVIST_LOG".to_string(),
-            prepared.logf.display().to_string(),
-        ),
+        ("SPIRA_ARCHIVIST_SECS".to_string(), prepared.timeout_secs.to_string()),
+        ("SPIRA_ARCHIVIST_TASK".to_string(), prepared.taskfile.display().to_string()),
+        ("SPIRA_ARCHIVIST_LOG".to_string(), prepared.logf.display().to_string()),
     ];
     if let Some(w) = env.wiki.as_deref() {
         unit_env.push(("SPIRA_WIKI".to_string(), w.to_string()));
@@ -1150,16 +613,12 @@ pub fn run_commit(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Str
     let p: Pinned<Ask> = parse(&s.input)?;
     let (env, arc, _) = setup(&p.cfg)?;
     let file = before_file(&arc, &p.act.sid);
-    let text = std::fs::read_to_string(&file)
-        .map_err(|e| format!("{}: no wiki snapshot from the brief: {e}", file.display()))?;
-    let before: Result<archivist::brain::Snapshot, String> =
-        match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(v) if v.get("error").is_some() => {
-                Err(v["error"].as_str().unwrap_or_default().to_string())
-            }
-            Ok(v) => serde_json::from_value(v).map_err(|e| e.to_string()),
-            Err(e) => Err(e.to_string()),
-        };
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: no wiki snapshot from the brief: {e}", file.display()))?;
+    let before: Result<archivist::brain::Snapshot, String> = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) if v.get("error").is_some() => Err(v["error"].as_str().unwrap_or_default().to_string()),
+        Ok(v) => serde_json::from_value(v).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
     let committed = archivist::run::commit_after(&env, &p.act.sid, Some(before));
     let _ = std::fs::remove_file(&file);
     match committed {

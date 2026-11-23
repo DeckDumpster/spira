@@ -63,17 +63,9 @@ pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_DWARF_USAGE_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_METRICS_ENDPOINT"];
 const DEADLINE_MS: u64 = 30_000;
 
-pub use runtime::usage::metric::{
-    BUILD_DIR_BYTES, CPU_SECONDS, IO_READ_BYTES, IO_WRITE_BYTES, MEMORY_BYTES, MEMORY_PEAK_BYTES,
-    WALL_SECONDS, WORKTREE_BYTES,
-};
+pub use runtime::usage::metric::{BUILD_DIR_BYTES, CPU_SECONDS, IO_READ_BYTES, IO_WRITE_BYTES, MEMORY_BYTES, MEMORY_PEAK_BYTES, WALL_SECONDS, WORKTREE_BYTES};
 
-const CYCLE: Cycle = Cycle {
-    stream: STREAM,
-    tick: TICK,
-    observe: SAMPLE,
-    deadline_ms: DEADLINE_MS,
-};
+const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: SAMPLE, deadline_ms: DEADLINE_MS };
 
 /// Where the samples go: the metrics store in production, a recorder in a test.
 pub trait Exporter {
@@ -82,8 +74,7 @@ pub trait Exporter {
 
 impl Exporter for MetricsSink {
     fn export(&self, series: &[Series]) -> Result<(), String> {
-        self.try_push_series(series)
-            .map_err(|e| format!("metrics push: {e}"))
+        self.try_push_series(series).map_err(|e| format!("metrics push: {e}"))
     }
 }
 
@@ -91,34 +82,15 @@ impl Exporter for MetricsSink {
 pub fn series(samples: &[Sample], at: SystemTime) -> Vec<Series> {
     let mut out = vec![];
     for s in samples {
-        let base: Vec<(String, String)> = [
-            ("kind", s.kind.word()),
-            ("rune", &s.rune),
-            ("name", &s.name),
-            ("bead", &s.bead),
-            ("repo", &s.repo),
-            ("unit", &s.unit),
-        ]
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+        let base: Vec<(String, String)> = [("kind", s.kind.word()), ("rune", &s.rune), ("name", &s.name), ("bead", &s.bead), ("repo", &s.repo), ("unit", &s.unit)].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let mut one = |name: &str, value: f64, extra: &[(&str, &str)]| {
             let mut labels = base.clone();
             labels.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-            out.push(Series {
-                name: name.into(),
-                value,
-                labels,
-                at,
-            });
+            out.push(Series { name: name.into(), value, labels, at });
         };
         one(CPU_SECONDS, s.cpu_seconds(), &[]);
         for io in &s.io {
-            let disk = [
-                ("device", io.device.as_str()),
-                ("mount", io.mount.as_str()),
-                ("role", io.role.as_str()),
-            ];
+            let disk = [("device", io.device.as_str()), ("mount", io.mount.as_str()), ("role", io.role.as_str())];
             one(IO_READ_BYTES, io.read_bytes as f64, &disk);
             one(IO_WRITE_BYTES, io.write_bytes as f64, &disk);
         }
@@ -131,14 +103,8 @@ pub fn series(samples: &[Sample], at: SystemTime) -> Vec<Series> {
             one(BUILD_DIR_BYTES, b as f64, &[]);
         }
         if let Some(started) = s.started_ms {
-            let now = at
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
-            one(
-                WALL_SECONDS,
-                now.saturating_sub(started) as f64 / 1000.0,
-                &[],
-            );
+            let now = at.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            one(WALL_SECONDS, now.saturating_sub(started) as f64 / 1000.0, &[]);
         }
     }
     out
@@ -153,26 +119,14 @@ pub fn push(samples: &[Sample], exporter: &dyn Exporter, at: SystemTime) -> Resu
     exporter.export(&s)?;
     let count = |k| samples.iter().filter(|s| s.kind == k).count();
     let (hands, containers) = (count(usage::Kind::Hand), count(usage::Kind::Container));
-    let more = if containers > 0 {
-        format!(" and {containers} container(s)")
-    } else {
-        String::new()
-    };
-    Ok(format!(
-        "{} dwarf(s) and {hands} hand scope(s){more}: {} series pushed",
-        samples.len() - hands - containers,
-        s.len()
-    ))
+    let more = if containers > 0 { format!(" and {containers} container(s)") } else { String::new() };
+    Ok(format!("{} dwarf(s) and {hands} hand scope(s){more}: {} series pushed", samples.len() - hands - containers, s.len()))
 }
 
 /// `watch.dwarf_usage.sample`: the live host, pushed to the configured store.
 pub fn run_sample(e: &crate::Effects, _key: &str, _s: &EffectSpec) -> Result<String, String> {
     let sink = MetricsSink::for_component(e.world.metrics_endpoint.as_deref(), "spira-runtime");
-    push(
-        &usage::sample(&usage::Roots::live(&e.world.run_dir)),
-        &sink,
-        SystemTime::now(),
-    )
+    push(&usage::sample(&usage::Roots::live(&e.world.run_dir)), &sink, SystemTime::now())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,9 +136,7 @@ pub struct WatchDwarfUsage {
 
 impl WatchDwarfUsage {
     pub fn from_settings(settings: &crate::Settings) -> Result<Self, String> {
-        Ok(WatchDwarfUsage {
-            interval_ms: cadence_ms(settings, CADENCE_KEY)?,
-        })
+        Ok(WatchDwarfUsage { interval_ms: cadence_ms(settings, CADENCE_KEY)? })
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {

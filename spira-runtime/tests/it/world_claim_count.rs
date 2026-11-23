@@ -26,14 +26,7 @@ fn double(answer: Result<String, &'static str>) -> Double {
             answer.clone().map_err(RuntimeError::refused)
         })
     });
-    Double {
-        _dir: dir,
-        world: World {
-            lc_socket: path,
-            ..World::default()
-        },
-        sent,
-    }
+    Double { _dir: dir, world: World { lc_socket: path, ..World::default() }, sent }
 }
 
 fn live() -> String {
@@ -44,37 +37,24 @@ fn live() -> String {
     .to_string()
 }
 
+
 #[test_id(tuixqmp)]
 #[test]
 fn the_snapshot_reads_the_live_list_alone_and_keeps_rows_with_a_builder_claim() {
     let d = double(Ok(live()));
     let snap: Snapshot = serde_json::from_str(&d.world.claim_count_snapshot().unwrap()).unwrap();
     assert_eq!(snap.rows.len(), 1, "{snap:?}");
-    assert_eq!(
-        (
-            snap.rows[0].id.as_str(),
-            snap.rows[0].n,
-            snap.rows[0].ends.len()
-        ),
-        ("sp-a", 5, 1)
-    );
+    assert_eq!((snap.rows[0].id.as_str(), snap.rows[0].n, snap.rows[0].ends.len()), ("sp-a", 5, 1));
     assert_eq!(*d.sent.lock().unwrap(), ["list --live"]);
 }
+
 
 #[test_id(t7gmdvd)]
 #[test]
 fn a_refused_or_unparsable_list_is_an_error_and_not_an_empty_snapshot() {
-    assert!(double(Err("list refused"))
-        .world
-        .claim_count_snapshot()
-        .is_err());
-    assert!(double(Ok("not json".into()))
-        .world
-        .claim_count_snapshot()
-        .is_err());
-    let bad =
-        serde_json::json!([{ "bead_id": "sp-a", "builder_claims": "many", "session_ends": [] }])
-            .to_string();
+    assert!(double(Err("list refused")).world.claim_count_snapshot().is_err());
+    assert!(double(Ok("not json".into())).world.claim_count_snapshot().is_err());
+    let bad = serde_json::json!([{ "bead_id": "sp-a", "builder_claims": "many", "session_ends": [] }]).to_string();
     let err = double(Ok(bad)).world.claim_count_snapshot().unwrap_err();
     assert!(err.contains("sp-a"), "{err}");
 }

@@ -4,22 +4,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::taskrig::{
-    assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig,
-    DAY_MS,
-};
+use runtime::taskrig::{assert_deterministic, assert_journal_budget, assert_silent_tick, effects_runnable, TaskRig, DAY_MS};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::d::watch_skew::*;
 
 fn config() -> Config {
-    Config {
-        releases: "rel".into(),
-        release_repo: "o/spira".into(),
-        gh_intake_repo: "o/spira".into(),
-        gh: "gh".into(),
-        run: "r".into(),
-        queue_dir: "q".into(),
-    }
+    Config { releases: "rel".into(), release_repo: "o/spira".into(), gh_intake_repo: "o/spira".into(), gh: "gh".into(), run: "r".into(), queue_dir: "q".into() }
 }
 
 /// `queue.local`, running the tip that landed, verify ok, no stamps.
@@ -31,28 +21,17 @@ fn in_effect() -> Snapshot {
         manifest_commit: Some("a".repeat(40)),
         base: Some("local/main".into()),
         tip: Some("a".repeat(40)),
-        verify: Verify {
-            ok: true,
-            out: String::new(),
-        },
+        verify: Verify { ok: true, out: String::new() },
         ..Snapshot::default()
     }
 }
 
 fn behind() -> Snapshot {
-    Snapshot {
-        tip: Some("b".repeat(40)),
-        ..in_effect()
-    }
+    Snapshot { tip: Some("b".repeat(40)), ..in_effect() }
 }
 
 fn declined() -> Snapshot {
-    Snapshot {
-        mode: Mode::Checkout,
-        tip: Some("b".repeat(40)),
-        queue_lock_held: true,
-        ..in_effect()
-    }
+    Snapshot { mode: Mode::Checkout, tip: Some("b".repeat(40)), queue_lock_held: true, ..in_effect() }
 }
 
 type World = Arc<Mutex<Snapshot>>;
@@ -61,9 +40,7 @@ fn rig(seed: u64, world: World) -> TaskRig {
     let (_, stream, kind) = WatchSkew::boot();
     let mut r = TaskRig::new(seed, WatchSkew::new(config()).registration())
         .unwrap()
-        .double(OBSERVE, move |_| {
-            Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())
-        })
+        .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
         .double(ESCALATE, |_| Ok("{}".into()))
         .double(LOG, |l| Ok(l.into()))
         .double(REFRESH, |_| Ok("{}".into()));
@@ -73,48 +50,26 @@ fn rig(seed: u64, world: World) -> TaskRig {
 }
 
 fn asked(r: &TaskRig, name: &str) -> Vec<String> {
-    r.requested()
-        .iter()
-        .filter(|q| q.name == name)
-        .map(|q| q.input.clone())
-        .collect()
+    r.requested().iter().filter(|q| q.name == name).map(|q| q.input.clone()).collect()
 }
 
 fn carry(r: &TaskRig) -> Carry {
-    r.journaled()
-        .iter()
-        .rev()
-        .find(|e| e.kind.tag == STATE)
-        .map(|e| serde_json::from_str(&e.kind.body).unwrap())
-        .unwrap_or_default()
+    r.journaled().iter().rev().find(|e| e.kind.tag == STATE).map(|e| serde_json::from_str(&e.kind.body).unwrap()).unwrap_or_default()
 }
 
 #[test_id(tka3k9b)]
 #[test]
 fn t1_the_row_is_registered_and_its_boot_arms_the_hourly_tick() {
     let row = acc::row(NAME);
-    assert_eq!(
-        (row.stream(), row.effects, row.keys.concat()),
-        (STREAM, EFFECTS, KEYS.to_vec())
-    );
+    assert_eq!((row.stream(), row.effects, row.keys.concat()), (STREAM, EFFECTS, KEYS.to_vec()));
     let s = acc::pinned_settings(&[]).expect("settings from the complete fixture");
     assert_eq!((row.cadence_ms)(&s), CADENCE_MS);
-    assert_eq!(
-        Config::pinned().map(|_| ()),
-        Ok(()),
-        "every key resolves through the config door"
-    );
+    assert_eq!(Config::pinned().map(|_| ()), Ok(()), "every key resolves through the config door");
     let mut r = TaskRig::new(1, (row.build)(&s)).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
     assert_eq!(r.engine().next_timer_at(), Some(CADENCE_MS));
-    assert_eq!(
-        r.requested()
-            .iter()
-            .map(|q| q.name.as_str())
-            .collect::<Vec<_>>(),
-        [OBSERVE]
-    );
+    assert_eq!(r.requested().iter().map(|q| q.name.as_str()).collect::<Vec<_>>(), [OBSERVE]);
 }
 
 #[test_id(tj89yki)]
@@ -133,11 +88,7 @@ fn t3_a_condition_escalates_once_and_a_decline_streak_alarms_at_three() {
     assert_eq!(asked(&r, ESCALATE).len(), 1, "clear → escalated(key)");
     assert_eq!(carry(&r).escalated.len(), 1);
     r.advance(CADENCE_MS).unwrap();
-    assert_eq!(
-        asked(&r, ESCALATE).len(),
-        1,
-        "escalated → the same key is a no-op"
-    );
+    assert_eq!(asked(&r, ESCALATE).len(), 1, "escalated → the same key is a no-op");
     *world.lock().unwrap() = declined();
     r.advance(2 * CADENCE_MS).unwrap();
     assert!(asked(&r, LOG).is_empty(), "streaks 1 and 2 say nothing");
@@ -164,21 +115,12 @@ fn t4_every_effect_has_a_runner_and_a_double_and_the_module_spawns_nothing() {
 fn t5_the_question_and_the_log_line_are_the_ones_skew_wrote() {
     let r = rig(1, Arc::new(Mutex::new(behind())));
     let q = asked(&r, ESCALATE);
-    assert!(
-        q.len() == 1
-            && q[0].contains("The Spira copy in force is not the code that landed")
-            && q[0].contains("Skew check <skew@spira>"),
-        "{q:?}"
-    );
+    assert!(q.len() == 1 && q[0].contains("The Spira copy in force is not the code that landed") && q[0].contains("Skew check <skew@spira>"), "{q:?}");
     let mut r = rig(1, Arc::new(Mutex::new(declined())));
     r.advance(2 * CADENCE_MS).unwrap();
     acc::assert_healthy(&r, STREAM);
     let logged = asked(&r, LOG);
-    assert!(
-        logged.len() == 1
-            && logged[0].starts_with("skew: refresh of h/spira has declined 3 consecutive passes"),
-        "{logged:?}"
-    );
+    assert!(logged.len() == 1 && logged[0].starts_with("skew: refresh of h/spira has declined 3 consecutive passes"), "{logged:?}");
 }
 
 #[test_id(to5kkb5)]
@@ -196,10 +138,7 @@ fn t6_seven_days_with_a_tip_advance_replay_identically_inside_the_budget() {
         4,
     );
     acc::assert_healthy(&r, STREAM);
-    assert_eq!(
-        r.requested().iter().filter(|q| q.name == ESCALATE).count(),
-        1
-    );
+    assert_eq!(r.requested().iter().filter(|q| q.name == ESCALATE).count(), 1);
     assert_journal_budget(&r, 2);
 }
 
@@ -225,21 +164,11 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test_id(tmp4lxt)]
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
-        escalated_condition,
-        || WatchSkew::new(config()).registration(),
-        STREAM,
-        WatchSkew::boot().2,
-    );
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(escalated_condition, || WatchSkew::new(config()).registration(), STREAM, WatchSkew::boot().2);
 }
 
 #[test_id(teo5azd)]
 #[test]
 fn a_boot_keeps_the_decline_streak_that_the_next_pass_alarms_on() {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
-        two_declined_passes,
-        || WatchSkew::new(config()).registration(),
-        STREAM,
-        WatchSkew::boot().2,
-    );
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(two_declined_passes, || WatchSkew::new(config()).registration(), STREAM, WatchSkew::boot().2);
 }

@@ -27,11 +27,7 @@ pub struct Act {
 
 impl Act {
     pub fn new(effect: &str, key: impl Into<String>) -> Self {
-        Act {
-            effect: effect.into(),
-            key: key.into(),
-            input: String::new(),
-        }
+        Act { effect: effect.into(), key: key.into(), input: String::new() }
     }
 
     pub fn with_input(mut self, input: impl Into<String>) -> Self {
@@ -70,24 +66,14 @@ impl Cadence {
 /// The P1 tick: one memory-only observe probe carrying `input`, and the next tick armed.
 pub fn on_tick(shape: &Shape, input: String, next_at: u64) -> Vec<Command> {
     vec![
-        Command::Probe(EffectSpec::probe(
-            shape.observe,
-            input,
-            shape.observe_deadline_ms,
-        )),
-        Command::Timer {
-            at: next_at,
-            kind: EventKind::new(shape.tick, ""),
-        },
+        Command::Probe(EffectSpec::probe(shape.observe, input, shape.observe_deadline_ms)),
+        Command::Timer { at: next_at, kind: EventKind::new(shape.tick, "") },
     ]
 }
 
 /// The snapshot `ev` carries when it is the success of this task's observe probe.
 pub fn observed<S: DeserializeOwned>(shape: &Shape, view: &Projection, ev: &Event) -> Option<S> {
-    if ev.stream.0 != shape.stream
-        || ev.kind.tag != EFFECT_SUCCEEDED
-        || !answers_observe(view, ev, shape.observe)
-    {
+    if ev.stream.0 != shape.stream || ev.kind.tag != EFFECT_SUCCEEDED || !answers_observe(view, ev, shape.observe) {
         return None;
     }
     serde_json::from_str(&ev.kind.body).ok()
@@ -125,68 +111,36 @@ pub fn targets(tag: &str) -> &'static [&'static str] {
 /// [`targets`], and every other act as a journaled effect under the deadline its Act table row
 /// gives. An act the table does not name is a bug in `decide`, so it panics naming it rather
 /// than running under a made-up deadline.
-pub fn commands<C: Serialize + PartialEq>(
-    shape: &Shape,
-    table: &[(&str, u64)],
-    emits: &[EventKindTag],
-    old: &C,
-    new: &C,
-    acts: Vec<Act>,
-) -> Vec<Command> {
+pub fn commands<C: Serialize + PartialEq>(shape: &Shape, table: &[(&str, u64)], emits: &[EventKindTag], old: &C, new: &C, acts: Vec<Act>) -> Vec<Command> {
     let mut out = vec![];
     if old != new {
-        out.push(Command::Emit(EventKind::new(
-            shape.state,
-            &serde_json::to_string(new).unwrap_or_default(),
-        )));
+        out.push(Command::Emit(EventKind::new(shape.state, &serde_json::to_string(new).unwrap_or_default())));
     }
     for a in acts {
         if emits.contains(&a.effect.as_str()) {
             let kind = EventKind::new(&a.effect, &a.input);
             match targets(&a.effect) {
                 [] => out.push(Command::Emit(kind)),
-                to => out.extend(to.iter().map(|s| Command::EmitTo {
-                    stream: StreamKey(s.to_string()),
-                    kind: kind.clone(),
-                })),
+                to => out.extend(to.iter().map(|s| Command::EmitTo { stream: StreamKey(s.to_string()), kind: kind.clone() })),
             }
             continue;
         }
-        let deadline_ms = deadline(table, &a.effect).unwrap_or_else(|| {
-            panic!(
-                "{}: decide asked for {}, which its Act table does not name",
-                shape.name, a.effect
-            )
-        });
-        out.push(Command::Effect(EffectSpec {
-            name: a.effect,
-            input: a.input,
-            deadline_ms,
-            key: a.key,
-        }));
+        let deadline_ms = deadline(table, &a.effect).unwrap_or_else(|| panic!("{}: decide asked for {}, which its Act table does not name", shape.name, a.effect));
+        out.push(Command::Effect(EffectSpec { name: a.effect, input: a.input, deadline_ms, key: a.key }));
     }
     out
 }
 
 /// Every key in `keys` read through `get`, refusing on the first that does not resolve.
-pub fn pinned(
-    keys: &[&str],
-    get: &dyn Fn(&str) -> Result<String, String>,
-) -> Result<BTreeMap<String, String>, String> {
-    keys.iter()
-        .map(|k| get(k).map(|v| (k.to_string(), v)))
-        .collect()
+pub fn pinned(keys: &[&str], get: &dyn Fn(&str) -> Result<String, String>) -> Result<BTreeMap<String, String>, String> {
+    keys.iter().map(|k| get(k).map(|v| (k.to_string(), v))).collect()
 }
 
 /// The keys of `task`, pinned at boot from the `Settings` its row's `build` is handed (each row
 /// key, as `Settings::from_lookup` read it). A key the settings do not hold refuses the build
 /// naming it: there is no default, and no read of the process's own config.
 pub fn pin(settings: &crate::Settings, task: &str, keys: &[&str]) -> BTreeMap<String, String> {
-    let get = |k: &str| {
-        settings.task_config.get(k).cloned().ok_or_else(|| {
-            format!("{k} is not in the settings (no row of tasks::all() declares it)")
-        })
-    };
+    let get = |k: &str| settings.task_config.get(k).cloned().ok_or_else(|| format!("{k} is not in the settings (no row of tasks::all() declares it)"));
     pinned(keys, &get).unwrap_or_else(|e| panic!("{task} refuses to build: {e}"))
 }
 
@@ -209,78 +163,40 @@ pub fn registered(name: &str) -> Option<&'static super::super::Task> {
 /// The row named `name` in family A: in `PENDING` until its port lands, in `TASKS` after, so
 /// the contract checks on the row hold across the move.
 pub fn pending(name: &str) -> &'static super::super::Task {
-    super::PENDING
-        .iter()
-        .chain(super::TASKS)
-        .find(|t| t.name == name)
-        .unwrap_or_else(|| panic!("{name} has no row in tasks::a::PENDING or tasks::a::TASKS"))
+    super::PENDING.iter().chain(super::TASKS).find(|t| t.name == name).unwrap_or_else(|| panic!("{name} has no row in tasks::a::PENDING or tasks::a::TASKS"))
 }
 
 /// Panics with the quarantine message when a handler on `stream` panicked or was refused. A
 /// poisoned stream stops handling, so without this check a stub that panics on its first
 /// answer would pass every silence and determinism check by doing nothing.
 pub fn assert_unpoisoned(rig: &TaskRig, stream: &str) {
-    if let Some(p) = rig
-        .journal
-        .poisoned(&StreamKey(stream.into()))
-        .expect("read poison")
-    {
+    if let Some(p) = rig.journal.poisoned(&StreamKey(stream.into())).expect("read poison") {
         panic!("{stream} was quarantined by {}: {}", p.handler, p.message);
     }
 }
 
 /// T3's read-back: the carry last recorded under `state` is the carry the next observe probe was
 /// handed. Panics when nothing was recorded, so a task that never records fails it.
-pub fn assert_read_equals_record<C: DeserializeOwned + PartialEq + std::fmt::Debug>(
-    rig: &TaskRig,
-    state: &str,
-    observe: &str,
-) {
-    let recorded = rig
-        .journaled()
-        .into_iter()
-        .rev()
-        .find(|e| e.kind.tag == state)
-        .unwrap_or_else(|| panic!("nothing was recorded under {state}"));
-    let recorded: C = serde_json::from_str(&recorded.kind.body)
-        .unwrap_or_else(|e| panic!("{state} does not read back: {e}"));
-    let read = rig
-        .requested()
-        .iter()
-        .rev()
-        .find(|q| q.name == observe)
-        .unwrap_or_else(|| panic!("{observe} was never asked"));
-    let read: C = serde_json::from_str(&read.input)
-        .unwrap_or_else(|e| panic!("{observe} input does not read back: {e}"));
+pub fn assert_read_equals_record<C: DeserializeOwned + PartialEq + std::fmt::Debug>(rig: &TaskRig, state: &str, observe: &str) {
+    let recorded = rig.journaled().into_iter().rev().find(|e| e.kind.tag == state).unwrap_or_else(|| panic!("nothing was recorded under {state}"));
+    let recorded: C = serde_json::from_str(&recorded.kind.body).unwrap_or_else(|e| panic!("{state} does not read back: {e}"));
+    let read = rig.requested().iter().rev().find(|q| q.name == observe).unwrap_or_else(|| panic!("{observe} was never asked"));
+    let read: C = serde_json::from_str(&read.input).unwrap_or_else(|e| panic!("{observe} input does not read back: {e}"));
     assert_eq!(read, recorded, "the carry read is not the carry recorded");
 }
 
 /// The rows `task` holds after `rig` ran: keyed, and none under the whole-carry key.
 pub fn assert_kept_as_rows(rig: &TaskRig, task: &str) -> Vec<String> {
-    let rows: Vec<String> = rig
-        .journal
-        .state()
-        .into_iter()
-        .filter(|((t, _), v)| t == task && !v.is_empty())
-        .map(|((_, k), _)| k)
-        .collect();
+    let rows: Vec<String> = rig.journal.state().into_iter().filter(|((t, _), v)| t == task && !v.is_empty()).map(|((_, k), _)| k).collect();
     assert!(!rows.is_empty(), "{task} kept no rows");
-    assert!(
-        !rows.iter().any(|k| k == runtime::journal::CARRY_KEY),
-        "{task} kept its whole carry under one key: {rows:?}"
-    );
+    assert!(!rows.iter().any(|k| k == runtime::journal::CARRY_KEY), "{task} kept its whole carry under one key: {rows:?}");
     rows
 }
 
 /// A boot repeats no side effect and misses nothing: the first tick after a restart on the same
 /// store asks for exactly what the same tick asks of a process that never stopped. `make` builds a
 /// rig and drives it to a carry worth keeping, the same way each time.
-pub fn assert_boot_matches_an_unstopped_run(
-    make: impl Fn() -> TaskRig,
-    registration: impl Fn() -> runtime::event::Registration,
-    stream: &str,
-    tick: EventKind,
-) {
+pub fn assert_boot_matches_an_unstopped_run(make: impl Fn() -> TaskRig, registration: impl Fn() -> runtime::event::Registration, stream: &str, tick: EventKind) {
     let after = |restart: bool| {
         let mut r = make();
         if restart {
@@ -288,30 +204,18 @@ pub fn assert_boot_matches_an_unstopped_run(
         }
         let mark = r.requested().len();
         r.tick(stream, tick.clone()).expect("first tick");
-        let mut asked = r.requested()[mark..]
-            .iter()
-            .map(|q| (q.name.clone(), q.input.clone()))
-            .collect::<Vec<_>>();
+        let mut asked = r.requested()[mark..].iter().map(|q| (q.name.clone(), q.input.clone())).collect::<Vec<_>>();
         asked.sort();
         asked
     };
     let (rebooted, unstopped) = (after(true), after(false));
-    assert!(
-        !unstopped.is_empty(),
-        "the control tick asked for nothing: the scenario proves nothing"
-    );
-    assert_eq!(
-        rebooted, unstopped,
-        "the first tick after a restart is not the tick of a process that never stopped"
-    );
+    assert!(!unstopped.is_empty(), "the control tick asked for nothing: the scenario proves nothing");
+    assert_eq!(rebooted, unstopped, "the first tick after a restart is not the tick of a process that never stopped");
 }
 
 /// An observe double answering each of `worlds` in turn for `every` answers, round and round:
 /// a world that changes on a fixed beat, the same on every run.
-pub fn cycling<S: Serialize + Send + Sync + 'static>(
-    worlds: Vec<S>,
-    every: usize,
-) -> impl Fn(&str) -> Result<String, String> + Send + Sync + 'static {
+pub fn cycling<S: Serialize + Send + Sync + 'static>(worlds: Vec<S>, every: usize) -> impl Fn(&str) -> Result<String, String> + Send + Sync + 'static {
     let answered = std::sync::atomic::AtomicUsize::new(0);
     move |_| {
         let n = answered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -322,37 +226,22 @@ pub fn cycling<S: Serialize + Send + Sync + 'static>(
 /// The lines of `src` that start a process or reach for one: the T4 static scan.
 pub fn spawns(src: &str) -> Vec<String> {
     // Spelled in pieces so this module does not name a launcher itself (`tests/it/no_spawn.rs`).
-    const MARKS: [&str; 4] = [
-        concat!("Command", "::new"),
-        concat!("std::", "process"),
-        concat!("process::", "Command"),
-        concat!("posix", "_spawn"),
-    ];
-    src.lines()
-        .filter(|l| MARKS.iter().any(|m| l.contains(m)))
-        .map(|l| l.trim().to_string())
-        .collect()
+    const MARKS: [&str; 4] = [concat!("Command", "::new"), concat!("std::", "process"), concat!("process::", "Command"), concat!("posix", "_spawn")];
+    src.lines().filter(|l| MARKS.iter().any(|m| l.contains(m))).map(|l| l.trim().to_string()).collect()
 }
 
 /// The source of the family-A task module `file` (a stem under `src/tasks/a/`).
 #[cfg(any(test, feature = "integration"))]
 pub fn module_source(file: &str) -> String {
-    let path = testkit::manifest_dir()
-        .join("src/tasks/a")
-        .join(format!("{file}.rs"));
+    let path = testkit::manifest_dir().join("src/tasks/a").join(format!("{file}.rs"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 /// Each of `keys` that has no registration under `spira/conf.d` in this tree.
 #[cfg(any(test, feature = "integration"))]
 pub fn unregistered(keys: &[&str]) -> Vec<String> {
-    let dir = spira_config::resolve::locate_home_for_process()
-        .unwrap()
-        .join("conf.d");
-    keys.iter()
-        .filter(|k| !dir.join(k).exists())
-        .map(|k| k.to_string())
-        .collect()
+    let dir = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
+    keys.iter().filter(|k| !dir.join(k).exists()).map(|k| k.to_string()).collect()
 }
 
 /// Every effect name the service routes to a runner: the real half of T4.
@@ -464,32 +353,20 @@ mod tests {
     #[test_id(tlygunb)]
     #[test]
     fn the_spawn_scan_sees_a_planted_command_and_passes_a_clean_line() {
-        assert_eq!(
-            spawns("let x = 1;\nstd::process::Command::new(\"git\")"),
-            ["std::process::Command::new(\"git\")"]
-        );
+        assert_eq!(spawns("let x = 1;\nstd::process::Command::new(\"git\")"), ["std::process::Command::new(\"git\")"]);
         assert!(spawns("let x = 1;").is_empty());
     }
 
     #[test_id(t8pofqw)]
     #[test]
     fn the_registration_scan_finds_a_registered_key_and_refuses_a_planted_one() {
-        assert_eq!(
-            unregistered(&["SPIRA_RUN", "SPIRA_PLANTED_NOT_A_KEY"]),
-            ["SPIRA_PLANTED_NOT_A_KEY"]
-        );
+        assert_eq!(unregistered(&["SPIRA_RUN", "SPIRA_PLANTED_NOT_A_KEY"]), ["SPIRA_PLANTED_NOT_A_KEY"]);
     }
 
     #[test_id(tfybcxt)]
     #[test]
     fn pinned_refuses_naming_the_first_key_that_does_not_resolve() {
-        let get = |k: &str| {
-            if k == "A" {
-                Ok("1".to_string())
-            } else {
-                Err(format!("{k} unknown"))
-            }
-        };
+        let get = |k: &str| if k == "A" { Ok("1".to_string()) } else { Err(format!("{k} unknown")) };
         assert_eq!(pinned(&["A"], &get).unwrap()["A"], "1");
         assert_eq!(pinned(&["A", "B"], &get), Err("B unknown".into()));
     }
@@ -500,24 +377,14 @@ mod tests {
     #[test]
     fn pin_reads_the_settings_it_is_given_not_the_process_config() {
         let mut s = crate::settings::fixture();
-        s.task_config
-            .insert("SPIRA_RECLAIM_GRACE_SECS".into(), "4242".into());
-        assert_eq!(
-            pin(&s, "t", &["SPIRA_RECLAIM_GRACE_SECS"])["SPIRA_RECLAIM_GRACE_SECS"],
-            "4242"
-        );
+        s.task_config.insert("SPIRA_RECLAIM_GRACE_SECS".into(), "4242".into());
+        assert_eq!(pin(&s, "t", &["SPIRA_RECLAIM_GRACE_SECS"])["SPIRA_RECLAIM_GRACE_SECS"], "4242");
         let built = super::super::super::sentinel_pass::SentinelPass::from_settings(&s);
-        assert_eq!(
-            built.pinned["SPIRA_RECLAIM_GRACE_SECS"], "4242",
-            "the row pins what the settings hold"
-        );
+        assert_eq!(built.pinned["SPIRA_RECLAIM_GRACE_SECS"], "4242", "the row pins what the settings hold");
         for t in super::super::super::TASKS {
             let _ = (t.build)(&s);
         }
-        assert!(
-            std::panic::catch_unwind(|| pin(&s, "t", &["SPIRA_PLANTED_NOT_A_KEY"])).is_err(),
-            "a key the settings lack refuses"
-        );
+        assert!(std::panic::catch_unwind(|| pin(&s, "t", &["SPIRA_PLANTED_NOT_A_KEY"])).is_err(), "a key the settings lack refuses");
     }
 
     /// A hand-off lands on each target's own stream; one with no target stays on the emitter's.
@@ -525,14 +392,7 @@ mod tests {
     #[test]
     fn a_hand_off_is_delivered_to_the_streams_it_wakes() {
         use super::super::super::{batcher_forge, batcher_local, czar, queue_step, sentinel_call};
-        let shape = Shape {
-            name: "t",
-            stream: "s",
-            tick: "t.tick",
-            state: "t.state",
-            observe: "t.observe",
-            observe_deadline_ms: 1,
-        };
+        let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
         let to = |tag: &'static str| -> Vec<String> {
             commands(&shape, &[], &[tag], &0, &0, vec![Act::new(tag, "k")])
                 .into_iter()
@@ -545,33 +405,12 @@ mod tests {
         };
         assert_eq!(to(sentinel_call::CALL_WANTED), [sentinel_call::STREAM]);
         assert_eq!(to(czar::CALL_REQUESTED), [sentinel_call::STREAM]);
-        assert_eq!(
-            to(WORK_SUBMITTED),
-            [batcher_local::STREAM, batcher_forge::STREAM]
-        );
-        assert_eq!(
-            to(queue_step::CUT_WANTED),
-            [batcher_local::STREAM, batcher_forge::STREAM]
-        );
+        assert_eq!(to(WORK_SUBMITTED), [batcher_local::STREAM, batcher_forge::STREAM]);
+        assert_eq!(to(queue_step::CUT_WANTED), [batcher_local::STREAM, batcher_forge::STREAM]);
         assert_eq!(to(batcher_forge::SETTLE_WANTED), [queue_step::STREAM]);
-        assert_eq!(
-            to("t.planted_local"),
-            ["<own>"],
-            "a hand-off with no target stays on the emitter's stream"
-        );
-        for (tag, wakes) in [
-            (WORK_SUBMITTED, batcher_local::WAKES),
-            (WORK_SUBMITTED, batcher_forge::WAKES),
-            (batcher_forge::SETTLE_WANTED, queue_step::WAKES),
-            (
-                queue_step::PUBLISH_WANTED,
-                super::super::super::publish::WAKES,
-            ),
-        ] {
-            assert!(
-                wakes.contains(&tag),
-                "{tag} is delivered where nobody listens"
-            );
+        assert_eq!(to("t.planted_local"), ["<own>"], "a hand-off with no target stays on the emitter's stream");
+        for (tag, wakes) in [(WORK_SUBMITTED, batcher_local::WAKES), (WORK_SUBMITTED, batcher_forge::WAKES), (batcher_forge::SETTLE_WANTED, queue_step::WAKES), (queue_step::PUBLISH_WANTED, super::super::super::publish::WAKES)] {
+            assert!(wakes.contains(&tag), "{tag} is delivered where nobody listens");
         }
     }
 
@@ -579,60 +418,19 @@ mod tests {
     #[test_id(tq06e9j)]
     #[test]
     fn commands_passes_an_acts_key_through_to_its_effect() {
-        let shape = Shape {
-            name: "t",
-            stream: "s",
-            tick: "t.tick",
-            state: "t.state",
-            observe: "t.observe",
-            observe_deadline_ms: 1,
-        };
-        let out = commands(
-            &shape,
-            &[("t.do", 5)],
-            &[],
-            &0,
-            &0,
-            vec![Act::new("t.do", "t.do/sp-a").with_input("x")],
-        );
-        let [Command::Effect(e)] = &out[..] else {
-            panic!("one effect, and nothing else, was expected")
-        };
+        let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
+        let out = commands(&shape, &[("t.do", 5)], &[], &0, &0, vec![Act::new("t.do", "t.do/sp-a").with_input("x")]);
+        let [Command::Effect(e)] = &out[..] else { panic!("one effect, and nothing else, was expected") };
         assert_eq!(e.key, "t.do/sp-a", "the act's key is the effect's");
     }
 
     #[test_id(t3wtplm)]
     #[test]
     fn an_act_outside_the_table_is_a_decide_bug_not_a_default_deadline() {
-        let shape = Shape {
-            name: "t",
-            stream: "s",
-            tick: "t.tick",
-            state: "t.state",
-            observe: "t.observe",
-            observe_deadline_ms: 1,
-        };
-        let ok = commands(
-            &shape,
-            &[("t.do", 5)],
-            &[],
-            &0,
-            &1,
-            vec![Act::new("t.do", "k")],
-        );
+        let shape = Shape { name: "t", stream: "s", tick: "t.tick", state: "t.state", observe: "t.observe", observe_deadline_ms: 1 };
+        let ok = commands(&shape, &[("t.do", 5)], &[], &0, &1, vec![Act::new("t.do", "k")]);
         assert!(matches!(&ok[..], [Command::Emit(_), Command::Effect(e)] if e.deadline_ms == 5));
-        assert!(
-            commands(&shape, &[], &[], &0, &0, vec![]).is_empty(),
-            "an unchanged carry emits nothing"
-        );
-        assert!(std::panic::catch_unwind(|| commands(
-            &shape,
-            &[],
-            &[],
-            &0,
-            &0,
-            vec![Act::new("t.bogus", "k")]
-        ))
-        .is_err());
+        assert!(commands(&shape, &[], &[], &0, &0, vec![]).is_empty(), "an unchanged carry emits nothing");
+        assert!(std::panic::catch_unwind(|| commands(&shape, &[], &[], &0, &0, vec![Act::new("t.bogus", "k")])).is_err());
     }
 }

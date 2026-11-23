@@ -14,15 +14,7 @@ use spira_runtime::tasks::{self, f};
 const CADENCE_MS: u64 = 5 * 60_000;
 const BOGUS: &str = "asks.ideas.bogus";
 const MODULE: &str = include_str!("../../src/tasks/f/asks_ideas.rs");
-const LAUNCHERS: &[&str] = &[
-    "Command::new",
-    "std::process",
-    "process::Command",
-    "libc::fork",
-    "libc::exec",
-    "posix_spawn",
-    "nix::unistd",
-];
+const LAUNCHERS: &[&str] = &["Command::new", "std::process", "process::Command", "libc::fork", "libc::exec", "posix_spawn", "nix::unistd"];
 const NOW: u64 = 1_800_000_000;
 
 fn launcher(code: &str) -> Option<&'static str> {
@@ -30,23 +22,11 @@ fn launcher(code: &str) -> Option<&'static str> {
 }
 
 fn config() -> BTreeMap<String, String> {
-    [
-        ("SPIRA_IDEAS_IDLE_SECS", "1800"),
-        ("SPIRA_IDEAS_WAKE_FROM", "7"),
-        ("SPIRA_IDEAS_WAKE_UNTIL", "22"),
-        ("SPIRA_IDEAS_TZ", "America/Los_Angeles"),
-        ("SPIRA_IDEAS_MIN_GAP_SECS", "86400"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+    [("SPIRA_IDEAS_IDLE_SECS", "1800"), ("SPIRA_IDEAS_WAKE_FROM", "7"), ("SPIRA_IDEAS_WAKE_UNTIL", "22"), ("SPIRA_IDEAS_TZ", "America/Los_Angeles"), ("SPIRA_IDEAS_MIN_GAP_SECS", "86400")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
 fn handler() -> AsksIdeas {
-    AsksIdeas {
-        interval_ms: CADENCE_MS,
-        config: config(),
-    }
+    AsksIdeas { interval_ms: CADENCE_MS, config: config() }
 }
 
 fn running(r: &TaskRig) {
@@ -56,25 +36,12 @@ fn running(r: &TaskRig) {
 }
 
 fn snap(now: u64, hour: u32, busy: bool) -> Snapshot {
-    Snapshot {
-        now,
-        local_hour: hour,
-        busy: Ok(busy),
-        ideas: Ok(vec![Idea {
-            id: "sp-i1".into(),
-            title: "an idea".into(),
-        }]),
-    }
+    Snapshot { now, local_hour: hour, busy: Ok(busy), ideas: Ok(vec![Idea { id: "sp-i1".into(), title: "an idea".into() }]) }
 }
 
 fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> TaskRig {
     let calls = AtomicU64::new(0);
-    let mut r = TaskRig::new(seed, handler().registration())
-        .unwrap()
-        .double(OBSERVE, move |_| {
-            Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())
-        })
-        .double(ASK, |i| Ok(i.into()));
+    let mut r = TaskRig::new(seed, handler().registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&world(calls.fetch_add(1, Ordering::SeqCst))).unwrap())).double(ASK, |i| Ok(i.into()));
     let (_, stream, kind) = AsksIdeas::boot();
     r.tick(stream, kind).unwrap();
     r
@@ -83,17 +50,9 @@ fn rig(seed: u64, world: impl Fn(u64) -> Snapshot + Send + Sync + 'static) -> Ta
 #[test_id(t9bdl0b)]
 #[test]
 fn t1_the_task_is_registered_boots_and_arms_its_cadence() {
-    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| {
-        panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING")
-    });
+    let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::f::PENDING"));
     assert_eq!(row.stream(), STREAM);
-    assert!(
-        row.keys
-            .iter()
-            .flat_map(|k| k.iter())
-            .any(|k| *k == CADENCE_KEY),
-        "the cadence is pinned config"
-    );
+    assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
@@ -123,11 +82,7 @@ fn t3_busy_idle_prompted_busy_is_legal_and_a_second_prompt_is_refused_naming_the
 #[test]
 fn t3_the_carry_changes_only_on_an_edge_and_reads_back_as_recorded() {
     let (idle, _, _) = decide(&Carry::default(), &snap(NOW, 10, false), &config());
-    assert_eq!(
-        idle.idle_since,
-        Some(NOW),
-        "the first idle tick opens the spell"
-    );
+    assert_eq!(idle.idle_since, Some(NOW), "the first idle tick opens the spell");
     let (again, _, _) = decide(&idle, &snap(NOW + 300, 10, false), &config());
     assert_eq!(again, idle, "a tick inside the spell changes nothing");
     let back: Carry = serde_json::from_str(&serde_json::to_string(&idle).unwrap()).unwrap();
@@ -137,21 +92,12 @@ fn t3_the_carry_changes_only_on_an_edge_and_reads_back_as_recorded() {
 #[test_id(tgpzyh2)]
 #[test]
 fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
-    let row = f::TASKS
-        .iter()
-        .find(|t| t.name == NAME)
-        .expect("the row is ported");
-    assert_eq!(
-        row.effects, EFFECTS,
-        "the row declares the module's effects"
-    );
+    let row = f::TASKS.iter().find(|t| t.name == NAME).expect("the row is ported");
+    assert_eq!(row.effects, EFFECTS, "the row declares the module's effects");
     let real: Vec<&str> = tasks::routes().keys().copied().collect();
     let doubles = sim::doubles::service().names();
     let sim: Vec<&str> = doubles.iter().map(String::as_str).collect();
-    assert!(
-        effects_runnable(&[BOGUS], &real, &sim).is_err(),
-        "the planted {BOGUS} must be refused"
-    );
+    assert!(effects_runnable(&[BOGUS], &real, &sim).is_err(), "the planted {BOGUS} must be refused");
     assert_eq!(effects_runnable(EFFECTS, &real, &sim), Ok(()));
 }
 
@@ -159,11 +105,7 @@ fn t4_every_effect_has_a_real_runner_and_a_sim_double() {
 #[test]
 fn t4_the_module_launches_no_process() {
     for l in LAUNCHERS {
-        assert_eq!(
-            launcher(&format!("{l}(\"x\")")),
-            Some(*l),
-            "the scan must see {l}"
-        );
+        assert_eq!(launcher(&format!("{l}(\"x\")")), Some(*l), "the scan must see {l}");
     }
     assert_eq!(launcher(MODULE), None);
 }
@@ -171,22 +113,11 @@ fn t4_the_module_launches_no_process() {
 #[test_id(ts9lcan)]
 #[test]
 fn t5_parity_thirty_idle_minutes_in_waking_hours_prompt_once() {
-    let spell = Carry {
-        idle_since: Some(NOW - 1_800),
-        last_prompt: None,
-        prompted: false,
-    };
+    let spell = Carry { idle_since: Some(NOW - 1_800), last_prompt: None, prompted: false };
     let (next, outcome, acts) = decide(&spell, &snap(NOW, 10, false), &config());
     assert_eq!(outcome, Outcome::Prompted(1));
-    assert_eq!(
-        acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
-        [ASK]
-    );
-    assert!(
-        acts[0].input.contains("1 parked idea(s) — start any?"),
-        "{}",
-        acts[0].input
-    );
+    assert_eq!(acts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), [ASK]);
+    assert!(acts[0].input.contains("1 parked idea(s) — start any?"), "{}", acts[0].input);
     assert!(next.prompted);
     let (_, outcome, acts) = decide(&next, &snap(NOW + 300, 10, false), &config());
     assert_eq!((outcome, acts.len()), (Outcome::AlreadyPrompted, 0));
@@ -195,17 +126,10 @@ fn t5_parity_thirty_idle_minutes_in_waking_hours_prompt_once() {
 #[test_id(ttlr3h6)]
 #[test]
 fn t5_parity_outside_waking_hours_and_no_ideas_ask_nothing() {
-    let spell = Carry {
-        idle_since: Some(NOW - 1_800),
-        last_prompt: None,
-        prompted: false,
-    };
+    let spell = Carry { idle_since: Some(NOW - 1_800), last_prompt: None, prompted: false };
     let (_, outcome, acts) = decide(&spell, &snap(NOW, 23, false), &config());
     assert_eq!((outcome, acts.len()), (Outcome::OutsideWakingHours, 0));
-    let none = Snapshot {
-        ideas: Ok(vec![]),
-        ..snap(NOW, 10, false)
-    };
+    let none = Snapshot { ideas: Ok(vec![]), ..snap(NOW, 10, false) };
     let (_, outcome, acts) = decide(&spell, &none, &config());
     assert_eq!((outcome, acts.len()), (Outcome::NoIdeas, 0));
 }
@@ -215,12 +139,7 @@ fn idle_for(secs: u64) -> Snapshot {
 }
 
 fn boot_matches(make: impl Fn() -> TaskRig) {
-    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(
-        make,
-        || handler().registration(),
-        STREAM,
-        runtime::event::EventKind::new(TICK, ""),
-    );
+    spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(make, || handler().registration(), STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
 fn idle_spell_opened() -> TaskRig {

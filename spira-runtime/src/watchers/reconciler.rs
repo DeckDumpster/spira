@@ -6,13 +6,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::tasks::a::{kit, sentinel_call};
-use reconciler::{
-    checks_of, decide, judge_holds, prune, Act, Book, EventRow, Mail, Observation, Rules,
-};
+use reconciler::{checks_of, decide, judge_holds, prune, Act, Book, EventRow, Mail, Observation, Rules};
 use reconciler_engine::io::StatusRecord;
 use runtime::event::*;
 use runtime::rows::Part;
+use crate::tasks::a::{kit, sentinel_call};
 use serde::{Deserialize, Serialize};
 
 pub const STREAM: &str = "watch.reconciler";
@@ -24,21 +22,7 @@ pub const REMEDY: &str = "reconciler.remedy";
 pub const MAIL: &str = "reconciler.mail";
 pub const NAME: &str = "reconciler";
 
-const ROW_PARTS: &[Part] = &[
-    Part::Map {
-        name: "state",
-        drop: &[],
-    },
-    Part::Map {
-        name: "pending",
-        drop: &[],
-    },
-    Part::Map {
-        name: "alerted",
-        drop: &[],
-    },
-    Part::Field("reminded"),
-];
+const ROW_PARTS: &[Part] = &[Part::Map { name: "state", drop: &[] }, Part::Map { name: "pending", drop: &[] }, Part::Map { name: "alerted", drop: &[] }, Part::Field("reminded")];
 
 /// A pass runs the fences of a whole checkout of the landing ref; the old unit allowed it five minutes.
 pub const OBSERVE_DEADLINE_MS: u64 = 280_000;
@@ -92,12 +76,7 @@ pub struct MailJob {
 }
 
 fn spec<T: Serialize>(name: &str, key: String, input: &T, deadline_ms: u64) -> EffectSpec {
-    EffectSpec::keyed(
-        name,
-        key,
-        serde_json::to_string(input).unwrap_or_default(),
-        deadline_ms,
-    )
+    EffectSpec::keyed(name, key, serde_json::to_string(input).unwrap_or_default(), deadline_ms)
 }
 
 impl Reconciler {
@@ -114,10 +93,7 @@ impl Reconciler {
     }
 
     fn state(book: &Book) -> Command {
-        Command::Emit(EventKind::new(
-            STATE,
-            &serde_json::to_string(book).unwrap_or_default(),
-        ))
+        Command::Emit(EventKind::new(STATE, &serde_json::to_string(book).unwrap_or_default()))
     }
 
     fn apply(&self, ctx: &Ctx, view: &Projection, ev: &Event, obs: Observation) -> Vec<Command> {
@@ -126,43 +102,21 @@ impl Reconciler {
         }
         let carried = Self::book(view, &ev.stream);
         let mut book = carried.clone();
-        let rules = Rules {
-            now_secs: obs.now_secs,
-            ..self.rules.clone()
-        };
+        let rules = Rules { now_secs: obs.now_secs, ..self.rules.clone() };
         prune(&mut book.state, &obs.groups);
         let checks = checks_of(obs.groups);
         ctx.event().set("reconciler.checks", checks.len() as u64);
-        let mut acts: Vec<Act> = checks
-            .into_iter()
-            .flat_map(|c| {
-                decide(
-                    &rules,
-                    &mut book.state,
-                    &mut book.pending,
-                    &mut book.alerted,
-                    c,
-                )
-            })
-            .collect();
+        let mut acts: Vec<Act> = checks.into_iter().flat_map(|c| decide(&rules, &mut book.state, &mut book.pending, &mut book.alerted, c)).collect();
         acts.extend(judge_holds(&rules, &mut book.pending, &obs.holds));
 
         book.reminded.retain(|m| obs.reminders.live.contains(m));
         let mut mails: Vec<MailJob> = vec![];
         for r in obs.reminders.due {
             book.reminded.insert(r.marker.clone());
-            mails.push(MailJob {
-                mail: r.mail,
-                unalert: None,
-                remind: Some(r.marker),
-                what: format!("reminded — {}: {}", r.subject, r.why),
-            });
+            mails.push(MailJob { mail: r.mail, unalert: None, remind: Some(r.marker), what: format!("reminded — {}: {}", r.subject, r.why) });
         }
 
-        let mut record = Record {
-            at: ev.at,
-            ..Record::default()
-        };
+        let mut record = Record { at: ev.at, ..Record::default() };
         let mut cmds = vec![];
         let mut remedies = vec![];
         let mut cmds_wake = vec![];
@@ -176,79 +130,30 @@ impl Reconciler {
                     stream: StreamKey(sentinel_call::STREAM.into()),
                     kind: EventKind::new(sentinel_call::CALL_WANTED, r#"{"rune":"reconciler"}"#),
                 }),
-                Act::Mail {
-                    mail,
-                    unalert,
-                    what,
-                } => mails.push(MailJob {
-                    mail,
-                    unalert,
-                    remind: None,
-                    what,
-                }),
+                Act::Mail { mail, unalert, what } => mails.push(MailJob { mail, unalert, remind: None, what }),
             }
         }
         if book != carried {
             cmds.push(Self::state(&book));
         }
-        ctx.event()
-            .set("reconciler.acted", (remedies.len() + mails.len()) as u64);
+        ctx.event().set("reconciler.acted", (remedies.len() + mails.len()) as u64);
         if !record.events.is_empty() || !record.log.is_empty() {
-            let journaled = Record {
-                status: vec![],
-                ..record.clone()
-            };
-            cmds.push(Command::Effect(spec(
-                RECORD,
-                format!("{NAME}:record:{}", ev.at),
-                &journaled,
-                EFFECT_DEADLINE_MS,
-            )));
+            let journaled = Record { status: vec![], ..record.clone() };
+            cmds.push(Command::Effect(spec(RECORD, format!("{NAME}:record:{}", ev.at), &journaled, EFFECT_DEADLINE_MS)));
         }
         if !record.status.is_empty() {
-            let rows = Record {
-                events: vec![],
-                log: vec![],
-                ..record
-            };
-            cmds.push(Command::Probe(spec(
-                RECORD,
-                RECORD.into(),
-                &rows,
-                EFFECT_DEADLINE_MS,
-            )));
+            let rows = Record { events: vec![], log: vec![], ..record };
+            cmds.push(Command::Probe(spec(RECORD, RECORD.into(), &rows, EFFECT_DEADLINE_MS)));
         }
         cmds.extend(cmds_wake);
-        cmds.extend(remedies.iter().map(|r| {
-            Command::Effect(spec(
-                REMEDY,
-                format!("{NAME}:remedy:{}", r.key),
-                r,
-                OBSERVE_DEADLINE_MS,
-            ))
-        }));
-        cmds.extend(mails.iter().map(|m| {
-            Command::Effect(spec(
-                MAIL,
-                format!(
-                    "{NAME}:mail:{}:{:016x}",
-                    ev.at,
-                    runtime::event::fnv1a(&m.what)
-                ),
-                m,
-                EFFECT_DEADLINE_MS,
-            ))
-        }));
+        cmds.extend(remedies.iter().map(|r| Command::Effect(spec(REMEDY, format!("{NAME}:remedy:{}", r.key), r, OBSERVE_DEADLINE_MS))));
+        cmds.extend(mails.iter().map(|m| Command::Effect(spec(MAIL, format!("{NAME}:mail:{}:{:016x}", ev.at, runtime::event::fnv1a(&m.what)), m, EFFECT_DEADLINE_MS))));
         cmds
     }
 
     /// A mail that did not go: forget that it was sent, so the next pass sends it again.
     fn unsent(&self, view: &Projection, ev: &Event) -> Vec<Command> {
-        let Some(job) = super::answered_spec(view, ev)
-            .and_then(|s| serde_json::from_str::<MailJob>(&s.input).ok())
-        else {
-            return vec![];
-        };
+        let Some(job) = super::answered_spec(view, ev).and_then(|s| serde_json::from_str::<MailJob>(&s.input).ok()) else { return vec![] };
         let carried = Self::book(view, &ev.stream);
         let mut book = carried.clone();
         if let Some(key) = &job.unalert {
@@ -257,11 +162,7 @@ impl Reconciler {
         if let Some(marker) = &job.remind {
             book.reminded.remove(marker);
         }
-        if book == carried {
-            vec![]
-        } else {
-            vec![Self::state(&book)]
-        }
+        if book == carried { vec![] } else { vec![Self::state(&book)] }
     }
 }
 
@@ -275,32 +176,18 @@ impl Handler for Reconciler {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let starting =
-                kit::carry::<sentinel_call::Carry>(&sentinel_call::SHAPE, view).in_flight;
-            let input = ObserveIn {
-                at: ev.at,
-                reminded: Self::book(view, &ev.stream).reminded,
-                values: self.values.clone(),
-                starting,
-            };
+            let starting = kit::carry::<sentinel_call::Carry>(&sentinel_call::SHAPE, view).in_flight;
+            let input = ObserveIn { at: ev.at, reminded: Self::book(view, &ev.stream).reminded, values: self.values.clone(), starting };
             return vec![
                 Command::Probe(spec(OBSERVE, OBSERVE.into(), &input, OBSERVE_DEADLINE_MS)),
-                Command::Timer {
-                    at: ev.at + self.interval_ms,
-                    kind: EventKind::new(TICK, ""),
-                },
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
-        match (
-            super::answered_effect(view, ev).as_deref(),
-            ev.kind.tag.as_str(),
-        ) {
-            (Some(OBSERVE), EFFECT_SUCCEEDED) => {
-                match serde_json::from_str::<Observation>(&ev.kind.body) {
-                    Ok(obs) => self.apply(ctx, view, ev, obs),
-                    Err(_) => vec![],
-                }
-            }
+        match (super::answered_effect(view, ev).as_deref(), ev.kind.tag.as_str()) {
+            (Some(OBSERVE), EFFECT_SUCCEEDED) => match serde_json::from_str::<Observation>(&ev.kind.body) {
+                Ok(obs) => self.apply(ctx, view, ev, obs),
+                Err(_) => vec![],
+            },
             (Some(MAIL), EFFECT_FAILED | EFFECT_TIMED_OUT) => self.unsent(view, ev),
             _ => vec![],
         }

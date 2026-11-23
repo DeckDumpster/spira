@@ -15,18 +15,7 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-const BANNED: &[&str] = &[
-    "spira-lc",
-    "bd",
-    "bdq",
-    "bash",
-    "systemctl",
-    "systemd-run",
-    "tsd-write",
-    "mail",
-    "queue",
-    "pgrep",
-];
+const BANNED: &[&str] = &["spira-lc", "bd", "bdq", "bash", "systemctl", "systemd-run", "tsd-write", "mail", "queue", "pgrep"];
 const SPAWNERS: &[&str] = &["Command::new(\"", "bounded(\"", "bounded_for(\""];
 
 /// Every `file:line` that spawns a banned program without a `FORK-EDGE:` mark.
@@ -57,9 +46,7 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
                 rest = after;
             }
         }
-        let marked = lines[i.saturating_sub(2)..=i]
-            .iter()
-            .any(|l| l.contains("FORK-EDGE:"));
+        let marked = lines[i.saturating_sub(2)..=i].iter().any(|l| l.contains("FORK-EDGE:"));
         if hit && !marked {
             found.push(format!("{name}:{}: {}", i + 1, line.trim()));
         }
@@ -72,10 +59,7 @@ fn unmarked(name: &str, text: &str) -> Vec<String> {
 fn no_unmarked_fork_edge_remains() {
     let mut found = Vec::new();
     let src = testkit::manifest_dir().join("src");
-    let mut files: Vec<PathBuf> = ["world.rs", "wake.rs", "wiki_git.rs", "reconcile_host.rs"]
-        .iter()
-        .map(|f| src.join(f))
-        .collect();
+    let mut files: Vec<PathBuf> = ["world.rs", "wake.rs", "wiki_git.rs", "reconcile_host.rs"].iter().map(|f| src.join(f)).collect();
     let before = files.len();
     rs_files(&src.join("tasks"), &mut files);
     assert!(files.len() > before, "the scan read no task module");
@@ -83,25 +67,19 @@ fn no_unmarked_fork_edge_remains() {
         let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
         found.extend(unmarked(&p.display().to_string(), &text));
     }
-    assert!(
-        found.is_empty(),
-        "unmarked fork edges:\n{}",
-        found.join("\n")
-    );
+    assert!(found.is_empty(), "unmarked fork edges:\n{}", found.join("\n"));
 }
 
 #[test_id(t8v20dl)]
 #[test]
 fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
-    let planted =
-        "fn f() {\n    let _ = std::process::Command::new(\"spira-lc\").arg(\"show\");\n}\n";
+    let planted = "fn f() {\n    let _ = std::process::Command::new(\"spira-lc\").arg(\"show\");\n}\n";
     assert_eq!(unmarked("planted.rs", planted).len(), 1);
     let via_timeout = "fn f() {\n    let _ = Command::new(\"timeout\")\n        .arg(\"5\")\n        .arg(\"bdq\");\n}\n";
     assert_eq!(unmarked("planted.rs", via_timeout).len(), 1);
     let bounded = "let _ = spira_config::bounded::bounded(\"pgrep\").arg(\"-f\");\n";
     assert_eq!(unmarked("planted.rs", bounded).len(), 1);
-    let marked =
-        "// FORK-EDGE: unserved verb hold\nlet _ = Command::new(\"spira-lc\").arg(\"hold\");\n";
+    let marked = "// FORK-EDGE: unserved verb hold\nlet _ = Command::new(\"spira-lc\").arg(\"hold\");\n";
     assert!(unmarked("planted.rs", marked).is_empty());
     let other = "let _ = Command::new(\"git\").arg(\"status\");\n";
     assert!(unmarked("planted.rs", other).is_empty());

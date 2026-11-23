@@ -45,13 +45,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
     let mut say = vec![];
     for (id, title) in &snap.open {
         if c.seen.insert(id.clone()) && c.seeded {
-            say.push(format!(
-                "NEW ASK {id}: {}",
-                title
-                    .chars()
-                    .take(169usize.saturating_sub(id.chars().count()))
-                    .collect::<String>()
-            ));
+            say.push(format!("NEW ASK {id}: {}", title.chars().take(169usize.saturating_sub(id.chars().count())).collect::<String>()));
         }
     }
     for (id, line) in &snap.held {
@@ -83,40 +77,26 @@ impl Handler for Asks {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE).seen)
-                .unwrap_or_default();
+            let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE).seen).unwrap_or_default();
             return vec![
                 Command::Probe(EffectSpec::probe(OBSERVE, input, DEADLINE_MS)),
-                Command::Timer {
-                    at: ev.at + self.interval_ms,
-                    kind: EventKind::new(TICK, ""),
-                },
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
-        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else {
-            return vec![];
-        };
+        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, say) = decide(&carry, &snap);
         ctx.event().set("asks.said", say.len() as u64);
         let now = ev.at / 1000;
         let mut cmds = vec![];
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(
-                STATE,
-                &serde_json::to_string(&next).unwrap_or_default(),
-            )));
+            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         for m in say {
-            cmds.push(Command::Effect(EffectSpec::keyed(
-                INBOX_APPEND,
-                format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)),
-                format!("{} [watch:{NAME}] {m}", iso8601(now)),
-                DEADLINE_MS,
-            )));
+            cmds.push(Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS)));
         }
         cmds
     }
@@ -127,13 +107,7 @@ mod tests {
     use super::*;
 
     fn open(ids: &[(&str, &str)]) -> Snapshot {
-        Snapshot {
-            open: ids
-                .iter()
-                .map(|(i, t)| (i.to_string(), t.to_string()))
-                .collect(),
-            held: vec![],
-        }
+        Snapshot { open: ids.iter().map(|(i, t)| (i.to_string(), t.to_string())).collect(), held: vec![] }
     }
 
     #[test_id(tccxq97)]
@@ -141,10 +115,7 @@ mod tests {
     fn the_first_answer_is_the_baseline_and_a_later_ask_is_announced_once() {
         let (c, say) = decide(&Carry::default(), &open(&[("sp-old", "already open")]));
         assert!(say.is_empty());
-        let (c, say) = decide(
-            &c,
-            &open(&[("sp-old", "already open"), ("sp-new", "decide X")]),
-        );
+        let (c, say) = decide(&c, &open(&[("sp-old", "already open"), ("sp-new", "decide X")]));
         assert_eq!(say, ["NEW ASK sp-new: decide X"]);
         assert!(decide(&c, &open(&[("sp-new", "decide X")])).1.is_empty());
     }
@@ -153,17 +124,8 @@ mod tests {
     #[test]
     fn a_hold_is_announced_by_the_line_the_world_composed_and_not_twice_when_also_open() {
         let (c, _) = decide(&Carry::default(), &open(&[]));
-        let snap = Snapshot {
-            open: vec![("sp-a".into(), "t".into())],
-            held: vec![
-                ("sp-a".into(), "NEW ASK HOLD sp-a".into()),
-                ("sp-h".into(), "NEW ASK HOLD sp-h".into()),
-            ],
-        };
-        assert_eq!(
-            decide(&c, &snap).1,
-            ["NEW ASK sp-a: t", "NEW ASK HOLD sp-h"]
-        );
+        let snap = Snapshot { open: vec![("sp-a".into(), "t".into())], held: vec![("sp-a".into(), "NEW ASK HOLD sp-a".into()), ("sp-h".into(), "NEW ASK HOLD sp-h".into())] };
+        assert_eq!(decide(&c, &snap).1, ["NEW ASK sp-a: t", "NEW ASK HOLD sp-h"]);
     }
 
     #[test_id(tg7fpv0)]
@@ -172,10 +134,7 @@ mod tests {
         let (c, _) = decide(&Carry::default(), &open(&[]));
         let long = "é".repeat(200);
         let say = decide(&c, &open(&[("sp-a", &long)])).1;
-        assert_eq!(
-            say[0].chars().count(),
-            "NEW ASK sp-a: ".len() + 170 - "sp-a\t".len()
-        );
+        assert_eq!(say[0].chars().count(), "NEW ASK sp-a: ".len() + 170 - "sp-a\t".len());
     }
 
     mod on_the_rig {
@@ -185,18 +144,10 @@ mod tests {
 
         fn rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
             let (_, stream, kind) = Asks::boot();
-            let mut r = TaskRig::new(
-                seed,
-                Asks {
-                    interval_ms: 60_000,
-                }
-                .registration(),
-            )
-            .unwrap()
-            .double(OBSERVE, move |_| {
-                Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap())
-            })
-            .double(INBOX_APPEND, |line| Ok(line.into()));
+            let mut r = TaskRig::new(seed, Asks { interval_ms: 60_000 }.registration())
+                .unwrap()
+                .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
+                .double(INBOX_APPEND, |line| Ok(line.into()));
             r.tick(stream, kind).unwrap();
             r
         }
@@ -215,29 +166,16 @@ mod tests {
             let mut r = rig(1, world.clone());
             *world.lock().unwrap() = open(&[("sp-old", "t"), ("sp-new", "decide X")]);
             r.advance(5 * 60_000).unwrap();
-            let said: Vec<_> = r
-                .requested()
-                .iter()
-                .filter(|q| q.name == INBOX_APPEND)
-                .collect();
+            let said: Vec<_> = r.requested().iter().filter(|q| q.name == INBOX_APPEND).collect();
             assert_eq!(said.len(), 1);
-            assert!(
-                said[0].journaled
-                    && said[0]
-                        .input
-                        .ends_with("[watch:asks] NEW ASK sp-new: decide X")
-            );
+            assert!(said[0].journaled && said[0].input.ends_with("[watch:asks] NEW ASK sp-new: decide X"));
             assert!(r.refused().is_empty());
         }
 
         #[test_id(twgz7uv)]
         #[test]
         fn a_day_is_deterministic() {
-            assert_deterministic(
-                |seed| rig(seed, Arc::new(Mutex::new(open(&[("sp-a", "t")])))),
-                1,
-                1,
-            );
+            assert_deterministic(|seed| rig(seed, Arc::new(Mutex::new(open(&[("sp-a", "t")])))), 1, 1);
         }
     }
 }

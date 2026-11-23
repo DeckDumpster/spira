@@ -104,20 +104,7 @@ pub const KEEP_DAYS_KEY: &str = "SPIRA_TSD_KEEP_DAYS";
 pub const BY_FAMILY_KEY: &str = "SPIRA_TSD_KEEP_DAYS_BY_FAMILY";
 pub const KEYS: &[&str] = &[CADENCE_KEY, "SPIRA_RUN", KEEP_DAYS_KEY, BY_FAMILY_KEY];
 
-pub const SPEC: Spec = Spec {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    probe: OBSERVE,
-    probe_deadline_ms: 10_000,
-    cadence_key: CADENCE_KEY,
-    calendar: true,
-    effects: EFFECTS,
-    keys: KEYS,
-    probe_input_key: None,
-    jitter_key: None,
-};
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -146,12 +133,7 @@ pub enum Phase {
 }
 
 /// `state × event → state`. A `prune` outcome while `idle` is refused naming `idle`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
-    (Phase::Idle, "observed:old", Phase::Pruning),
-    (Phase::Idle, "observed:idle", Phase::Idle),
-    (Phase::Pruning, "prune:outcome", Phase::Pruning),
-    (Phase::Pruning, "done", Phase::Idle),
-];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Idle, "observed:old", Phase::Pruning), (Phase::Idle, "observed:idle", Phase::Idle), (Phase::Pruning, "prune:outcome", Phase::Pruning), (Phase::Pruning, "done", Phase::Idle)];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -200,39 +182,19 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                 let days = tsd::prune::keep_days(&f.family, snap.default_days, &snap.overrides);
                 let cutoff = now.saturating_sub(u64::from(days) * DAY_SECS);
                 if f.oldest_ts.is_some_and(|ts| ts / 1000 < cutoff) {
-                    let p = Prune {
-                        family: f.family.clone(),
-                        keep_days: days,
-                        cutoff,
-                    };
-                    acts.push(Act {
-                        name: PRUNE.into(),
-                        key: format!("sweep.tsd/{}/{}", p.family, p.cutoff),
-                        input: serde_json::to_string(&p).map_err(|e| e.to_string())?,
-                        deadline_ms: 300_000,
-                        probe: false,
-                    });
+                    let p = Prune { family: f.family.clone(), keep_days: days, cutoff };
+                    acts.push(Act { name: PRUNE.into(), key: format!("sweep.tsd/{}/{}", p.family, p.cutoff), input: serde_json::to_string(&p).map_err(|e| e.to_string())?, deadline_ms: 300_000, probe: false });
                     in_flight.push(f.family.clone());
                 }
             }
             if acts.is_empty() {
                 return Ok((carry.clone(), vec![]));
             }
-            Ok((
-                Carry {
-                    phase: Phase::Pruning,
-                    last_fired: Some(now_ms),
-                    in_flight,
-                },
-                acts,
-            ))
+            Ok((Carry { phase: Phase::Pruning, last_fired: Some(now_ms), in_flight }, acts))
         }
         Input::Outcome { effect, body, .. } if effect == PRUNE && carry.phase == Phase::Pruning => {
             let mut next = carry.clone();
-            let named = body
-                .split_once(':')
-                .map(|(f, _)| f.trim().to_string())
-                .filter(|f| next.in_flight.contains(f));
+            let named = body.split_once(':').map(|(f, _)| f.trim().to_string()).filter(|f| next.in_flight.contains(f));
             match named {
                 Some(f) => next.in_flight.retain(|x| *x != f),
                 None if !next.in_flight.is_empty() => {
@@ -245,48 +207,21 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
             }
             Ok((next, vec![]))
         }
-        Input::Outcome { effect, .. } => Err(format!(
-            "{NAME}: in state {} an outcome of {effect} is not expected",
-            phase_name(carry.phase)
-        )),
-        Input::Ran(r) => Err(format!(
-            "{NAME}: in state {} no unit is expected, got {:?}",
-            phase_name(carry.phase),
-            r.handle
-        )),
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: in state {} an outcome of {effect} is not expected", phase_name(carry.phase))),
+        Input::Ran(r) => Err(format!("{NAME}: in state {} no unit is expected, got {:?}", phase_name(carry.phase), r.handle)),
     }
 }
 
 /// The runner of [`OBSERVE`]: every family under `<run>/tsd/` with its oldest row, and the
 /// retention bounds from the pinned config.
-pub fn observe(
-    run: &std::path::Path,
-    default_days: &str,
-    by_family: &str,
-) -> Result<String, String> {
+pub fn observe(run: &std::path::Path, default_days: &str, by_family: &str) -> Result<String, String> {
     if run.as_os_str().is_empty() {
         return Err("SPIRA_RUN is empty — refusing".into());
     }
-    let default_days: u32 = default_days
-        .trim()
-        .parse()
-        .map_err(|_| format!("{KEEP_DAYS_KEY} must be a whole number, got {default_days:?}"))?;
-    let overrides =
-        tsd::prune::parse_overrides(by_family).map_err(|e| format!("{BY_FAMILY_KEY}: {e}"))?;
-    let families = tsd::prune::families(run)
-        .into_iter()
-        .map(|(family, bytes)| Family {
-            oldest_ts: tsd::prune::oldest_ts(&tsd::family_path(run, &family)).map(|t| t * 1000),
-            family,
-            bytes,
-        })
-        .collect();
-    serde_json::to_string(&Snapshot {
-        families,
-        default_days,
-        overrides,
-    })
-    .map_err(|e| e.to_string())
+    let default_days: u32 = default_days.trim().parse().map_err(|_| format!("{KEEP_DAYS_KEY} must be a whole number, got {default_days:?}"))?;
+    let overrides = tsd::prune::parse_overrides(by_family).map_err(|e| format!("{BY_FAMILY_KEY}: {e}"))?;
+    let families = tsd::prune::families(run).into_iter().map(|(family, bytes)| Family { oldest_ts: tsd::prune::oldest_ts(&tsd::family_path(run, &family)).map(|t| t * 1000), family, bytes }).collect();
+    serde_json::to_string(&Snapshot { families, default_days, overrides }).map_err(|e| e.to_string())
 }
 
 /// The runner of [`PRUNE`]: `tsd::prune::prune_file` on one family's file.
@@ -299,16 +234,9 @@ pub fn prune(run: &std::path::Path, input: &str) -> Result<String, String> {
         return Err(format!("{:?} is not a family name — refusing", p.family));
     }
     let done = tsd::prune::prune_file(&tsd::family_path(run, &p.family), p.cutoff)?;
-    Ok(format!(
-        "{}: kept {}, dropped {}",
-        p.family, done.kept, done.dropped
-    ))
+    Ok(format!("{}: kept {}, dropped {}", p.family, done.kept, done.dropped))
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("phase"),
-    runtime::rows::Part::Field("last_fired"),
-    runtime::rows::Part::Field("in_flight"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("phase"), runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Field("in_flight")];
 
 crate::tasks::b::hosted!(SweepTsd);

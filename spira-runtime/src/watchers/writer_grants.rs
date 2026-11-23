@@ -47,17 +47,10 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<String>) {
     }
     let mut lines: Vec<(String, String)> = snap.missing.iter().map(|t| (format!("missing:{t}"), format!("WRITER GRANTS: the content writer lacks write grants on {t}: run spira-lc admin-provision-writer"))).collect();
     if let Some(e) = &snap.error {
-        lines.push((
-            CANNOT.into(),
-            format!("WRITER GRANTS: lc-serve cannot check the content writer's grants: {e}"),
-        ));
+        lines.push((CANNOT.into(), format!("WRITER GRANTS: lc-serve cannot check the content writer's grants: {e}")));
     }
     let said = lines.iter().map(|(k, _)| k.clone()).collect();
-    let say = lines
-        .into_iter()
-        .filter(|(k, _)| !carry.said.contains(k))
-        .map(|(_, m)| m)
-        .collect();
+    let say = lines.into_iter().filter(|(k, _)| !carry.said.contains(k)).map(|(_, m)| m).collect();
     (Carry { said }, say)
 }
 
@@ -83,49 +76,23 @@ impl Handler for WriterGrants {
         if ev.kind.tag == TICK {
             return vec![
                 Command::Probe(EffectSpec::probe(OBSERVE, String::new(), DEADLINE_MS)),
-                Command::Timer {
-                    at: ev.at + self.interval_ms,
-                    kind: EventKind::new(TICK, ""),
-                },
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
-        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body)
-            .map_err(drop)
-            .and_then(|s| {
-                if ev.kind.tag == EFFECT_SUCCEEDED {
-                    Ok(s)
-                } else {
-                    Err(())
-                }
-            })
-        else {
-            ctx.event()
-                .set("writer_grants.skipped", ev.kind.tag.as_str());
+        let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body).map_err(drop).and_then(|s| if ev.kind.tag == EFFECT_SUCCEEDED { Ok(s) } else { Err(()) }) else {
+            ctx.event().set("writer_grants.skipped", ev.kind.tag.as_str());
             return vec![];
         };
         let now = ev.at / 1000;
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, say) = decide(&carry, &snap);
         ctx.event().set("writer_grants.said", say.len() as u64);
-        let mut cmds: Vec<Command> = say
-            .into_iter()
-            .map(|m| {
-                Command::Effect(EffectSpec::keyed(
-                    INBOX_APPEND,
-                    format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)),
-                    format!("{} [watch:{NAME}] {m}", iso8601(now)),
-                    DEADLINE_MS,
-                ))
-            })
-            .collect();
+        let mut cmds: Vec<Command> = say.into_iter().map(|m| Command::Effect(EffectSpec::keyed(INBOX_APPEND, format!("{NAME}:inbox:{}:{:016x}", now, runtime::event::fnv1a(&m)), format!("{} [watch:{NAME}] {m}", iso8601(now)), DEADLINE_MS))).collect();
         if next != carry {
-            cmds.push(Command::Emit(EventKind::new(
-                STATE,
-                &serde_json::to_string(&next).unwrap_or_default(),
-            )));
+            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         cmds
     }

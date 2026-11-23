@@ -5,24 +5,24 @@ use std::path::PathBuf;
 
 use spira_config::process::cfg;
 
+use crate::watchers::inbox_keeper::InboxKeeper;
 use crate::forge::Forge;
+use crate::watchers::cr_cadence::CrCadence;
+use crate::watchers::pr_notify::PrNotify;
 use crate::watchers::asks::Asks;
-use crate::watchers::bead_sweep::BeadSweep;
+use crate::watchers::design_asks::DesignAsks;
 use crate::watchers::brain_dirty::BrainDirty;
 use crate::watchers::claim_count::ClaimCount;
-use crate::watchers::cr_cadence::CrCadence;
-use crate::watchers::design_asks::DesignAsks;
-use crate::watchers::inbox_keeper::InboxKeeper;
-use crate::watchers::overrides::Overrides;
-use crate::watchers::pr_notify::PrNotify;
-use crate::watchers::publish_backlog::PublishBacklog;
-use crate::watchers::readiness_dependents::ReadinessDependents;
-use crate::watchers::reconciler::Reconciler;
-use crate::watchers::reconciler_flow::ReconcilerFlow;
-use crate::watchers::round_duty::RoundDuty;
-use crate::watchers::supersede_duty::SupersedeDuty;
-use crate::watchers::view::View;
 use crate::watchers::writer_grants::WriterGrants;
+use crate::watchers::supersede_duty::SupersedeDuty;
+use crate::watchers::bead_sweep::BeadSweep;
+use crate::watchers::publish_backlog::PublishBacklog;
+use crate::watchers::overrides::Overrides;
+use crate::watchers::readiness_dependents::ReadinessDependents;
+use crate::watchers::reconciler_flow::ReconcilerFlow;
+use crate::watchers::reconciler::Reconciler;
+use crate::watchers::round_duty::RoundDuty;
+use crate::watchers::view::View;
 use crate::world::World;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,9 +68,7 @@ pub struct Settings {
 
 /// Every class's cap, each a positive integer; a container cap over the host run ceiling refuses
 /// rather than being clamped, so the configured number is the one in force.
-fn pool_caps(
-    get: &dyn Fn(&str) -> Result<String, String>,
-) -> Result<runtime::pools::PoolCaps, String> {
+fn pool_caps(get: &dyn Fn(&str) -> Result<String, String>) -> Result<runtime::pools::PoolCaps, String> {
     use runtime::pools::HOST_RUN_CEILING;
     let cap = |key: &str| -> Result<usize, String> { num::<usize>(key, &get(key)?) };
     let caps = runtime::pools::PoolCaps {
@@ -91,11 +89,7 @@ fn pool_caps(
 const DEFAULT_FORGET_SECS: u64 = 86_400;
 
 fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Result<T, String> {
-    raw.trim()
-        .parse::<T>()
-        .ok()
-        .filter(|v| *v > T::default())
-        .ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
+    raw.trim().parse::<T>().ok().filter(|v| *v > T::default()).ok_or_else(|| format!("{key} must be a positive integer, got {raw:?}"))
 }
 
 impl Settings {
@@ -141,11 +135,7 @@ impl Settings {
     /// registered in spira/conf.d.
     pub fn keys() -> Vec<&'static str> {
         let mut out: Vec<&'static str> = vec![];
-        for k in Self::SERVICE_KEYS
-            .iter()
-            .chain(crate::sources::KEYS)
-            .chain(crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter())))
-        {
+        for k in Self::SERVICE_KEYS.iter().chain(crate::sources::KEYS).chain(crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))) {
             if !out.contains(k) {
                 out.push(k);
             }
@@ -174,27 +164,17 @@ impl Settings {
     pub const UNDECLARABLE: &'static [&'static str] = &[];
 
     pub fn load() -> Result<Settings, String> {
-        let mut settings = Self::from_lookup(&cfg)?
-            .with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
-        settings.reconciler.home = spira_config::resolve::locate_home_for_process()?
-            .to_string_lossy()
-            .into_owned();
+        let mut settings = Self::from_lookup(&cfg)?.with_environment(&|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
+        settings.reconciler.home = spira_config::resolve::locate_home_for_process()?.to_string_lossy().into_owned();
         Ok(settings)
     }
 
     /// The cockpit's own state and hunk's runtime directory are where those programs put them,
     /// which only the service's environment says.
-    pub fn with_environment(
-        mut self,
-        env: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<Settings, String> {
+    pub fn with_environment(mut self, env: &dyn Fn(&str) -> Option<String>) -> Result<Settings, String> {
         let path = |k: &str| env(k).map(PathBuf::from);
-        self.world.hunk_dir = path("XDG_RUNTIME_DIR")
-            .map(|d| d.join("hunk-mcp"))
-            .unwrap_or_default();
-        self.world.cockpit_state = path("COCKPIT_STATE")
-            .or_else(|| path("HOME").map(|h| h.join(".local/state/cockpit")))
-            .unwrap_or_default();
+        self.world.hunk_dir = path("XDG_RUNTIME_DIR").map(|d| d.join("hunk-mcp")).unwrap_or_default();
+        self.world.cockpit_state = path("COCKPIT_STATE").or_else(|| path("HOME").map(|h| h.join(".local/state/cockpit"))).unwrap_or_default();
         if let Some(secs) = env("COCKPIT_FORGET_SECS") {
             self.view.forget_secs = num("COCKPIT_FORGET_SECS", &secs)?;
         }
@@ -203,25 +183,12 @@ impl Settings {
 
     /// Reads only the keys `keys()` names: one read of any other is refused, so a key cannot be
     /// read without `check-config` checking it.
-    pub fn from_lookup(
-        lookup: &dyn Fn(&str) -> Result<String, String>,
-    ) -> Result<Settings, String> {
+    pub fn from_lookup(lookup: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
         let known = Self::keys();
-        let get = |k: &str| {
-            if known.contains(&k) {
-                lookup(k)
-            } else {
-                Err(format!(
-                    "{k} is read but neither the service nor any task declares it"
-                ))
-            }
-        };
+        let get = |k: &str| if known.contains(&k) { lookup(k) } else { Err(format!("{k} is read but neither the service nor any task declares it")) };
         let unresolved: Vec<&str> = known.iter().copied().filter(|k| get(k).is_err()).collect();
         if !unresolved.is_empty() {
-            return Err(format!(
-                "unregistered or unresolved config keys: {} — refusing",
-                unresolved.join(", ")
-            ));
+            return Err(format!("unregistered or unresolved config keys: {} — refusing", unresolved.join(", ")));
         }
         let socket = get("SPIRA_LC_SOCKET")?;
         if socket.is_empty() {
@@ -246,52 +213,22 @@ impl Settings {
         };
         let home_repo = get("SPIRA_HOME_REPO")?;
         if home_repo.is_empty() {
-            return Err(
-                "SPIRA_HOME_REPO is empty — round-duty cannot tell which repo's rounds are its own"
-                    .into(),
-            );
+            return Err("SPIRA_HOME_REPO is empty — round-duty cannot tell which repo's rounds are its own".into());
         }
         let inbox_keeper = InboxKeeper {
             interval_ms: secs("SPIRA_RUNTIME_INBOX_KEEPER_SECS")? * 1000,
             stall_secs: secs("SPIRA_CONCIERGE_INBOX_STALL")?,
             backoff_secs: secs("SPIRA_CONCIERGE_INBOX_BACKOFF")?,
         };
-        let pr_notify = PrNotify {
-            interval_ms: secs("SPIRA_RUNTIME_PR_NOTIFY_SECS")? * 1000,
-            deploy_giveup_secs: secs("SPIRA_PR_DEPLOY_GIVEUP")?,
-        };
-        let cr_cadence = CrCadence {
-            interval_ms: secs("SPIRA_RUNTIME_CR_CADENCE_SECS")? * 1000,
-            stale_days: secs("SPIRA_CR_STALE_DAYS")?,
-        };
-        let forge = Forge {
-            api: get("SPIRA_GH_API")?,
-            token: get("SPIRA_BROKER_GH_TOKEN")?,
-            gh_config_dir: get("SPIRA_BROKER_GH_CONFIG_DIR")?,
-            gh: get("SPIRA_GH")?,
-            metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
-        };
-        let asks = Asks {
-            interval_ms: secs("SPIRA_RUNTIME_ASKS_SECS")? * 1000,
-        };
-        let design_asks = DesignAsks {
-            interval_ms: secs("SPIRA_RUNTIME_DESIGN_ASKS_SECS")? * 1000,
-            repeat_secs: secs("SPIRA_DESIGN_ASKS_REPEAT")?,
-        };
-        let brain_dirty = BrainDirty {
-            interval_ms: secs("SPIRA_RUNTIME_BRAIN_DIRTY_SECS")? * 1000,
-            age_secs: secs("SPIRA_BRAIN_DIRTY_AGE")?,
-        };
-        let writer_grants = WriterGrants {
-            interval_ms: secs("SPIRA_RUNTIME_WRITER_GRANTS_SECS")? * 1000,
-        };
-        let supersede_duty = SupersedeDuty {
-            interval_ms: secs("SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS")? * 1000,
-        };
-        let claim_count = ClaimCount {
-            interval_ms: secs("SPIRA_RUNTIME_CLAIM_COUNT_SECS")? * 1000,
-            every: num("SPIRA_CLAIM_PAGE_EVERY", &get("SPIRA_CLAIM_PAGE_EVERY")?)?,
-        };
+        let pr_notify = PrNotify { interval_ms: secs("SPIRA_RUNTIME_PR_NOTIFY_SECS")? * 1000, deploy_giveup_secs: secs("SPIRA_PR_DEPLOY_GIVEUP")? };
+        let cr_cadence = CrCadence { interval_ms: secs("SPIRA_RUNTIME_CR_CADENCE_SECS")? * 1000, stale_days: secs("SPIRA_CR_STALE_DAYS")? };
+        let forge = Forge { api: get("SPIRA_GH_API")?, token: get("SPIRA_BROKER_GH_TOKEN")?, gh_config_dir: get("SPIRA_BROKER_GH_CONFIG_DIR")?, gh: get("SPIRA_GH")?, metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()) };
+        let asks = Asks { interval_ms: secs("SPIRA_RUNTIME_ASKS_SECS")? * 1000 };
+        let design_asks = DesignAsks { interval_ms: secs("SPIRA_RUNTIME_DESIGN_ASKS_SECS")? * 1000, repeat_secs: secs("SPIRA_DESIGN_ASKS_REPEAT")? };
+        let brain_dirty = BrainDirty { interval_ms: secs("SPIRA_RUNTIME_BRAIN_DIRTY_SECS")? * 1000, age_secs: secs("SPIRA_BRAIN_DIRTY_AGE")? };
+        let writer_grants = WriterGrants { interval_ms: secs("SPIRA_RUNTIME_WRITER_GRANTS_SECS")? * 1000 };
+        let supersede_duty = SupersedeDuty { interval_ms: secs("SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS")? * 1000 };
+        let claim_count = ClaimCount { interval_ms: secs("SPIRA_RUNTIME_CLAIM_COUNT_SECS")? * 1000, every: num("SPIRA_CLAIM_PAGE_EVERY", &get("SPIRA_CLAIM_PAGE_EVERY")?)? };
         let bead_sweep = BeadSweep {
             interval_ms: secs("SPIRA_RUNTIME_BEAD_SWEEP_SECS")? * 1000,
             ask_label: get("SPIRA_ASK_LABEL")?,
@@ -306,89 +243,31 @@ impl Settings {
         let publish_backlog = PublishBacklog {
             interval_ms: secs("SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS")? * 1000,
             recheck_ms: secs("SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS")? * 1000,
-            max_count: get("SPIRA_LOCAL_BACKLOG_COUNT")?
-                .trim()
-                .parse()
-                .map_err(|_| {
-                    "SPIRA_LOCAL_BACKLOG_COUNT must be a non-negative integer".to_string()
-                })?,
-            max_age_secs: get("SPIRA_LOCAL_BACKLOG_AGE")?
-                .trim()
-                .parse()
-                .map_err(|_| {
-                    "SPIRA_LOCAL_BACKLOG_AGE must be a non-negative integer".to_string()
-                })?,
+            max_count: get("SPIRA_LOCAL_BACKLOG_COUNT")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_COUNT must be a non-negative integer".to_string())?,
+            max_age_secs: get("SPIRA_LOCAL_BACKLOG_AGE")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_AGE must be a non-negative integer".to_string())?,
         };
-        let hours = |key: &str| -> Result<f64, String> {
-            get(key)?
-                .trim()
-                .parse::<f64>()
-                .ok()
-                .filter(|h| h.is_finite() && *h > 0.0)
-                .ok_or_else(|| format!("{key} must be a positive number of hours"))
-        };
+        let hours = |key: &str| -> Result<f64, String> { get(key)?.trim().parse::<f64>().ok().filter(|h| h.is_finite() && *h > 0.0).ok_or_else(|| format!("{key} must be a positive number of hours")) };
         let reconciler_flow = ReconcilerFlow {
             interval_ms: secs("SPIRA_RUNTIME_RECONCILER_FLOW_SECS")? * 1000,
             window_hours: hours("SPIRA_FLOW_WINDOW_HOURS")?,
             baseline_hours: hours("SPIRA_FLOW_BASELINE_HOURS")?,
-            grace_secs: get("SPIRA_FLOW_GRACE_SECS")?
-                .trim()
-                .parse()
-                .map_err(|_| "SPIRA_FLOW_GRACE_SECS must be a non-negative integer".to_string())?,
-            unobservable_grace_secs: get("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")?
-                .trim()
-                .parse()
-                .map_err(|_| {
-                    "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS must be a non-negative integer".to_string()
-                })?,
+            grace_secs: get("SPIRA_FLOW_GRACE_SECS")?.trim().parse().map_err(|_| "SPIRA_FLOW_GRACE_SECS must be a non-negative integer".to_string())?,
+            unobservable_grace_secs: get("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")?.trim().parse().map_err(|_| "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS must be a non-negative integer".to_string())?,
             rework_window_hours: hours("SPIRA_FLOW_REWORK_WINDOW_HOURS")?,
             sentinel_timer_secs: secs("SPIRA_FLOW_SENTINEL_PERIOD_SECS")?,
-            shadow_kinds: get("SPIRA_RECONCILER_SHADOW_KINDS")?
-                .split_whitespace()
-                .map(String::from)
-                .collect(),
+            shadow_kinds: get("SPIRA_RECONCILER_SHADOW_KINDS")?.split_whitespace().map(String::from).collect(),
         };
         let view_program = get("SPIRA_VIEW")?;
         let view_session = get("SPIRA_VIEW_SESSION")?;
         if !view_program.trim().is_empty() && view_session.trim().is_empty() {
-            return Err(
-                "SPIRA_VIEW_SESSION is empty — the view follower has no session to steer".into(),
-            );
+            return Err("SPIRA_VIEW_SESSION is empty — the view follower has no session to steer".into());
         }
-        let view = View {
-            interval_ms: secs("SPIRA_RUNTIME_VIEW_SECS")? * 1000,
-            forget_secs: DEFAULT_FORGET_SECS,
-            enabled: !view_program.trim().is_empty(),
-        };
-        let values: std::collections::BTreeMap<String, String> = reconciler::Config::KEYS
-            .iter()
-            .chain(&[
-                "SPIRA_RUNES",
-                "SPIRA_STRANDED_RUNNER_MIN_AGE",
-                "SPIRA_LC_PASSWORD_FILE",
-            ])
-            .map(|k| Ok((k.to_string(), get(k)?)))
-            .collect::<Result<_, String>>()?;
-        let reads = reconciler::Config::from_lookup(
-            &|k| values.get(k).cloned().ok_or_else(|| format!("{k} unknown")),
-            reconciler::Seams::bare(),
-            run_dir.clone(),
-            String::new(),
-            0,
-            String::new(),
-        )?;
-        let reconciler = Reconciler {
-            interval_ms: secs("SPIRA_RUNTIME_RECONCILER_SECS")? * 1000,
-            rules: reads.rules(),
-            values,
-            home: String::new(),
-        };
-        let overrides = Overrides {
-            interval_ms: secs("SPIRA_RUNTIME_OVERRIDES_SECS")? * 1000,
-        };
-        let readiness_dependents = ReadinessDependents {
-            interval_ms: secs("SPIRA_RUNTIME_READINESS_DEPENDENTS_SECS")? * 1000,
-        };
+        let view = View { interval_ms: secs("SPIRA_RUNTIME_VIEW_SECS")? * 1000, forget_secs: DEFAULT_FORGET_SECS, enabled: !view_program.trim().is_empty() };
+        let values: std::collections::BTreeMap<String, String> = reconciler::Config::KEYS.iter().chain(&["SPIRA_RUNES", "SPIRA_STRANDED_RUNNER_MIN_AGE", "SPIRA_LC_PASSWORD_FILE"]).map(|k| Ok((k.to_string(), get(k)?))).collect::<Result<_, String>>()?;
+        let reads = reconciler::Config::from_lookup(&|k| values.get(k).cloned().ok_or_else(|| format!("{k} unknown")), reconciler::Seams::bare(), run_dir.clone(), String::new(), 0, String::new())?;
+        let reconciler = Reconciler { interval_ms: secs("SPIRA_RUNTIME_RECONCILER_SECS")? * 1000, rules: reads.rules(), values, home: String::new() };
+        let overrides = Overrides { interval_ms: secs("SPIRA_RUNTIME_OVERRIDES_SECS")? * 1000 };
+        let readiness_dependents = ReadinessDependents { interval_ms: secs("SPIRA_RUNTIME_READINESS_DEPENDENTS_SECS")? * 1000 };
         let world = World {
             cockpit_session: view_session,
             tmux: PathBuf::from("tmux"),
@@ -419,14 +298,9 @@ impl Settings {
         };
         let control_socket = get("SPIRA_RUNTIME_SOCKET")?;
         if control_socket.trim().is_empty() {
-            return Err(
-                "SPIRA_RUNTIME_SOCKET is empty — scheduler status|halt|resume has no door".into(),
-            );
+            return Err("SPIRA_RUNTIME_SOCKET is empty — scheduler status|halt|resume has no door".into());
         }
-        let task_config = crate::tasks::all()
-            .flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter()))
-            .map(|k| Ok((k.to_string(), get(k)?)))
-            .collect::<Result<_, String>>()?;
+        let task_config = crate::tasks::all().flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter())).map(|k| Ok((k.to_string(), get(k)?))).collect::<Result<_, String>>()?;
         let settings = Settings {
             task_config,
             pool_caps: pool_caps(&get)?,
@@ -452,24 +326,15 @@ impl Settings {
             reconciler,
             world,
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
-            heartbeat_secs: num(
-                "SPIRA_RUNTIME_HEARTBEAT_SECS",
-                &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?,
-            )?,
-            stall_limit: num(
-                "SPIRA_RUNTIME_STALL_LIMIT",
-                &get("SPIRA_RUNTIME_STALL_LIMIT")?,
-            )?,
+            heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
+            stall_limit: num("SPIRA_RUNTIME_STALL_LIMIT", &get("SPIRA_RUNTIME_STALL_LIMIT")?)?,
             sweep_secs: secs("SPIRA_RUNTIME_SWEEP_SECS")?,
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             run_dir,
             lc_socket: PathBuf::from(socket),
             victorialogs_url,
         };
-        crate::modes::apply(
-            crate::tasks::all().map(|t| (t.build)(&settings)).collect(),
-            &settings.task_modes,
-        )?;
+        crate::modes::apply(crate::tasks::all().map(|t| (t.build)(&settings)).collect(), &settings.task_modes)?;
         Ok(settings)
     }
 
@@ -489,9 +354,7 @@ impl Settings {
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
         let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}\n{:?}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.writer_grants, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_cadence, self.claim_count, self.sweep_secs);
-        let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
-            (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
-        });
+        let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
 }
@@ -507,39 +370,16 @@ mod tests {
     #[test_id(tgsa4qc)]
     #[test]
     fn every_key_a_pending_row_declares_is_registered_and_the_fixture_resolves_it() {
-        assert_eq!(
-            complete_fixture("SPIRA_POOL_CAP_CONTAINER").as_deref(),
-            Some("2"),
-            "the fixture reader must find a known key"
-        );
+        assert_eq!(complete_fixture("SPIRA_POOL_CAP_CONTAINER").as_deref(), Some("2"), "the fixture reader must find a known key");
         assert_eq!(complete_fixture("SPIRA_PLANTED_NOT_A_KEY"), None);
         let pending = Settings::pending_keys();
-        let conf_d = spira_config::resolve::locate_home_for_process()
-            .unwrap()
-            .join("conf.d");
-        let unregistered: Vec<&str> = pending
-            .iter()
-            .copied()
-            .filter(|k| !conf_d.join(k).is_file() && !Settings::UNDECLARABLE.contains(k))
-            .collect();
-        assert!(
-            unregistered.is_empty(),
-            "keys pending rows declare that spira/conf.d does not register: {unregistered:?}"
-        );
-        let stale: Vec<&&str> = Settings::UNDECLARABLE
-            .iter()
-            .filter(|k| conf_d.join(k).is_file() || !pending.contains(k))
-            .collect();
-        assert!(
-            stale.is_empty(),
-            "an undeclarable key is now registered or no longer declared: {stale:?}"
-        );
+        let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
+        let unregistered: Vec<&str> = pending.iter().copied().filter(|k| !conf_d.join(k).is_file() && !Settings::UNDECLARABLE.contains(k)).collect();
+        assert!(unregistered.is_empty(), "keys pending rows declare that spira/conf.d does not register: {unregistered:?}");
+        let stale: Vec<&&str> = Settings::UNDECLARABLE.iter().filter(|k| conf_d.join(k).is_file() || !pending.contains(k)).collect();
+        assert!(stale.is_empty(), "an undeclarable key is now registered or no longer declared: {stale:?}");
         let get = lookup("7");
-        let unresolved: Vec<&str> = Settings::keys()
-            .into_iter()
-            .chain(pending)
-            .filter(|k| get(k).is_err())
-            .collect();
+        let unresolved: Vec<&str> = Settings::keys().into_iter().chain(pending).filter(|k| get(k).is_err()).collect();
         assert!(unresolved.is_empty(), "keys of CORE and the pending rows the settings fixture does not resolve: {unresolved:?}");
     }
 
@@ -547,14 +387,8 @@ mod tests {
     #[test]
     fn every_key_a_ported_or_pending_row_declares_resolves_in_the_fixture() {
         let get = lookup("7");
-        let rows: Vec<&str> = crate::tasks::all()
-            .chain(crate::tasks::pending())
-            .flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter().copied()))
-            .collect();
-        assert!(
-            rows.len() > Settings::pending_keys().len(),
-            "the scan must see the ported rows' keys as well as the pending ones"
-        );
+        let rows: Vec<&str> = crate::tasks::all().chain(crate::tasks::pending()).flat_map(|t| t.keys.iter().flat_map(|ks| ks.iter().copied())).collect();
+        assert!(rows.len() > Settings::pending_keys().len(), "the scan must see the ported rows' keys as well as the pending ones");
         let unresolved: Vec<&str> = rows.into_iter().filter(|k| get(k).is_err()).collect();
         assert!(unresolved.is_empty(), "keys of rows in tasks::all() or tasks::pending() the settings fixture does not resolve: {unresolved:?}");
     }
@@ -563,49 +397,26 @@ mod tests {
     #[test]
     fn the_reconciler_pins_the_keys_its_observers_read_and_its_own_cadence() {
         let s = Settings::from_lookup(&lookup("7")).unwrap().reconciler;
-        assert_eq!(
-            (s.interval_ms, s.rules.grace_secs, s.rules.effect_passes),
-            (7000, 13, 3)
-        );
-        assert_eq!(
-            s.values.get("SPIRA_DISK_FLOOR_PCT").map(String::as_str),
-            Some("11")
-        );
+        assert_eq!((s.interval_ms, s.rules.grace_secs, s.rules.effect_passes), (7000, 13, 3));
+        assert_eq!(s.values.get("SPIRA_DISK_FLOOR_PCT").map(String::as_str), Some("11"));
         for k in reconciler::Config::KEYS {
-            assert!(
-                Settings::keys().contains(k),
-                "{k} is read by the reconciler but not checked at start"
-            );
+            assert!(Settings::keys().contains(k), "{k} is read by the reconciler but not checked at start");
         }
     }
 
     #[test_id(tkjhw17)]
     #[test]
     fn every_key_read_is_registered_in_conf_d() {
-        let conf_d = spira_config::resolve::locate_home_for_process()
-            .unwrap()
-            .join("conf.d");
-        let missing: Vec<&str> = Settings::keys()
-            .into_iter()
-            .filter(|k| !conf_d.join(k).is_file())
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "keys the runtime reads but spira/conf.d does not register: {missing:?}"
-        );
+        let conf_d = spira_config::resolve::locate_home_for_process().unwrap().join("conf.d");
+        let missing: Vec<&str> = Settings::keys().into_iter().filter(|k| !conf_d.join(k).is_file()).collect();
+        assert!(missing.is_empty(), "keys the runtime reads but spira/conf.d does not register: {missing:?}");
     }
 
     #[test_id(ti3ulti)]
     #[test]
     fn the_gh_binary_key_reaches_the_forge() {
         let base = lookup("7");
-        let gh = move |k: &str| {
-            if k == "SPIRA_GH" {
-                Ok("opt/gh".to_string())
-            } else {
-                base(k)
-            }
-        };
+        let gh = move |k: &str| if k == "SPIRA_GH" { Ok("opt/gh".to_string()) } else { base(k) };
         assert_eq!(Settings::from_lookup(&gh).unwrap().forge.gh, "opt/gh");
     }
 
@@ -613,17 +424,8 @@ mod tests {
     #[test]
     fn the_gh_config_dir_key_reaches_the_forge() {
         let base = lookup("7");
-        let dir = move |k: &str| {
-            if k == "SPIRA_BROKER_GH_CONFIG_DIR" {
-                Ok("gh/conf".to_string())
-            } else {
-                base(k)
-            }
-        };
-        assert_eq!(
-            Settings::from_lookup(&dir).unwrap().forge.gh_config_dir,
-            "gh/conf"
-        );
+        let dir = move |k: &str| if k == "SPIRA_BROKER_GH_CONFIG_DIR" { Ok("gh/conf".to_string()) } else { base(k) };
+        assert_eq!(Settings::from_lookup(&dir).unwrap().forge.gh_config_dir, "gh/conf");
     }
 
     #[test_id(tfekkkx)]
@@ -631,32 +433,11 @@ mod tests {
     fn each_bead_sweep_key_reaches_its_own_field() {
         let base = lookup("7");
         let distinct = move |k: &str| {
-            let n = [
-                "SPIRA_RUNTIME_BEAD_SWEEP_SECS",
-                "SPIRA_BEAD_SWEEP_HOLD_MIN",
-                "SPIRA_BEAD_SWEEP_REWORK_MIN",
-                "SPIRA_BEAD_SWEEP_CERT_MIN",
-                "SPIRA_BEAD_SWEEP_WAIT_MIN",
-                "SPIRA_BEAD_SWEEP_BATCH_MIN",
-                "SPIRA_SCOPED_STOP_REVIEW_SECS",
-            ]
-            .iter()
-            .position(|x| *x == k);
+            let n = ["SPIRA_RUNTIME_BEAD_SWEEP_SECS", "SPIRA_BEAD_SWEEP_HOLD_MIN", "SPIRA_BEAD_SWEEP_REWORK_MIN", "SPIRA_BEAD_SWEEP_CERT_MIN", "SPIRA_BEAD_SWEEP_WAIT_MIN", "SPIRA_BEAD_SWEEP_BATCH_MIN", "SPIRA_SCOPED_STOP_REVIEW_SECS"].iter().position(|x| *x == k);
             n.map_or_else(|| base(k), |i| Ok((11 + i).to_string()))
         };
         let b = Settings::from_lookup(&distinct).unwrap().bead_sweep;
-        assert_eq!(
-            (
-                b.interval_ms,
-                b.hold_min,
-                b.rework_min,
-                b.cert_min,
-                b.wait_min,
-                b.batch_min,
-                b.stop_review_secs
-            ),
-            (11_000, 12, 13, 14, 15, 16, 17)
-        );
+        assert_eq!((b.interval_ms, b.hold_min, b.rework_min, b.cert_min, b.wait_min, b.batch_min, b.stop_review_secs), (11_000, 12, 13, 14, 15, 16, 17));
         assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("q", "spira"));
     }
 
@@ -664,57 +445,14 @@ mod tests {
     #[test]
     fn the_view_follower_finds_hunk_and_the_cockpit_state_where_the_environment_puts_them() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
-        assert_eq!(
-            (
-                s.view.enabled,
-                s.view.interval_ms,
-                s.view.forget_secs,
-                s.world.cockpit_session.as_str()
-            ),
-            (true, 5000, 86_400, "pit")
-        );
-        let env = |pairs: &'static [(&'static str, &'static str)]| {
-            move |k: &str| {
-                pairs
-                    .iter()
-                    .find(|(n, _)| *n == k)
-                    .map(|(_, v)| v.to_string())
-            }
-        };
-        let full = s
-            .clone()
-            .with_environment(&env(&[
-                ("XDG_RUNTIME_DIR", "run/u1"),
-                ("COCKPIT_STATE", "st"),
-                ("HOME", "h"),
-                ("COCKPIT_FORGET_SECS", "77"),
-            ]))
-            .unwrap();
-        assert_eq!(
-            (
-                full.world.hunk_dir.as_path(),
-                full.world.cockpit_state.as_path(),
-                full.view.forget_secs
-            ),
-            (
-                std::path::Path::new("run/u1/hunk-mcp"),
-                std::path::Path::new("st"),
-                77
-            )
-        );
+        assert_eq!((s.view.enabled, s.view.interval_ms, s.view.forget_secs, s.world.cockpit_session.as_str()), (true, 5000, 86_400, "pit"));
+        let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+        let full = s.clone().with_environment(&env(&[("XDG_RUNTIME_DIR", "run/u1"), ("COCKPIT_STATE", "st"), ("HOME", "h"), ("COCKPIT_FORGET_SECS", "77")])).unwrap();
+        assert_eq!((full.world.hunk_dir.as_path(), full.world.cockpit_state.as_path(), full.view.forget_secs), (std::path::Path::new("run/u1/hunk-mcp"), std::path::Path::new("st"), 77));
         let home = s.clone().with_environment(&env(&[("HOME", "h")])).unwrap();
-        assert_eq!(
-            home.world.cockpit_state,
-            PathBuf::from("h/.local/state/cockpit")
-        );
-        assert!(
-            home.world.hunk_dir.as_os_str().is_empty(),
-            "no runtime dir is no daemon, not a guessed one"
-        );
-        assert!(s
-            .with_environment(&env(&[("COCKPIT_FORGET_SECS", "0")]))
-            .unwrap_err()
-            .contains("positive"));
+        assert_eq!(home.world.cockpit_state, PathBuf::from("h/.local/state/cockpit"));
+        assert!(home.world.hunk_dir.as_os_str().is_empty(), "no runtime dir is no daemon, not a guessed one");
+        assert!(s.with_environment(&env(&[("COCKPIT_FORGET_SECS", "0")])).unwrap_err().contains("positive"));
     }
 
     #[test_id(thnyk79)]
@@ -722,23 +460,10 @@ mod tests {
     fn a_view_follower_that_is_on_needs_a_session_and_an_empty_program_turns_it_off() {
         let with = |key: &'static str, val: &'static str| {
             let base = lookup("7");
-            move |k: &str| {
-                if k == key {
-                    Ok(val.to_string())
-                } else {
-                    base(k)
-                }
-            }
+            move |k: &str| if k == key { Ok(val.to_string()) } else { base(k) }
         };
-        assert!(Settings::from_lookup(&with("SPIRA_VIEW_SESSION", " "))
-            .unwrap_err()
-            .contains("SPIRA_VIEW_SESSION"));
-        assert!(
-            !Settings::from_lookup(&with("SPIRA_VIEW", ""))
-                .unwrap()
-                .view
-                .enabled
-        );
+        assert!(Settings::from_lookup(&with("SPIRA_VIEW_SESSION", " ")).unwrap_err().contains("SPIRA_VIEW_SESSION"));
+        assert!(!Settings::from_lookup(&with("SPIRA_VIEW", "")).unwrap().view.enabled);
     }
 
     #[test_id(tok4d9p)]
@@ -753,265 +478,99 @@ mod tests {
             _ => base(k),
         };
         let s = Settings::from_lookup(&distinct).unwrap();
-        assert_eq!(
-            (
-                s.publish_backlog.interval_ms,
-                s.publish_backlog.recheck_ms,
-                s.publish_backlog.max_count,
-                s.publish_backlog.max_age_secs
-            ),
-            (21_000, 24_000, 22, 23)
-        );
+        assert_eq!((s.publish_backlog.interval_ms, s.publish_backlog.recheck_ms, s.publish_backlog.max_count, s.publish_backlog.max_age_secs), (21_000, 24_000, 22, 23));
     }
 
     #[test_id(tczn6nb)]
     #[test]
     fn each_reconciler_flow_key_reaches_its_own_field() {
         let base = lookup("7");
-        let keys = [
-            "SPIRA_RUNTIME_RECONCILER_FLOW_SECS",
-            "SPIRA_FLOW_WINDOW_HOURS",
-            "SPIRA_FLOW_BASELINE_HOURS",
-            "SPIRA_FLOW_GRACE_SECS",
-            "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS",
-            "SPIRA_FLOW_REWORK_WINDOW_HOURS",
-            "SPIRA_FLOW_SENTINEL_PERIOD_SECS",
-            "SPIRA_SCOPE_LABEL",
-            "SPIRA_DESIRED_DIR",
-        ];
-        let distinct = move |k: &str| {
-            keys.iter().position(|x| *x == k).map_or_else(
-                || base(k),
-                |i| {
-                    Ok(if i >= 7 {
-                        format!("v{i}")
-                    } else {
-                        (31 + i).to_string()
-                    })
-                },
-            )
-        };
+        let keys = ["SPIRA_RUNTIME_RECONCILER_FLOW_SECS", "SPIRA_FLOW_WINDOW_HOURS", "SPIRA_FLOW_BASELINE_HOURS", "SPIRA_FLOW_GRACE_SECS", "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS", "SPIRA_FLOW_REWORK_WINDOW_HOURS", "SPIRA_FLOW_SENTINEL_PERIOD_SECS", "SPIRA_SCOPE_LABEL", "SPIRA_DESIRED_DIR"];
+        let distinct = move |k: &str| keys.iter().position(|x| *x == k).map_or_else(|| base(k), |i| Ok(if i >= 7 { format!("v{i}") } else { (31 + i).to_string() }));
         let s = Settings::from_lookup(&distinct).unwrap();
         let f = &s.reconciler_flow;
-        assert_eq!(
-            (
-                f.interval_ms,
-                f.window_hours,
-                f.baseline_hours,
-                f.grace_secs,
-                f.unobservable_grace_secs,
-                f.rework_window_hours,
-                f.sentinel_timer_secs
-            ),
-            (31_000, 32.0, 33.0, 34, 35, 36.0, 37)
-        );
-        assert_eq!(
-            (
-                s.world.scope_label.as_str(),
-                s.world.desired_dir.to_str(),
-                s.world.export_bin.as_str()
-            ),
-            ("v7", Some("v8"), "tsd-lifecycle-export")
-        );
+        assert_eq!((f.interval_ms, f.window_hours, f.baseline_hours, f.grace_secs, f.unobservable_grace_secs, f.rework_window_hours, f.sentinel_timer_secs), (31_000, 32.0, 33.0, 34, 35, 36.0, 37));
+        assert_eq!((s.world.scope_label.as_str(), s.world.desired_dir.to_str(), s.world.export_bin.as_str()), ("v7", Some("v8"), "tsd-lifecycle-export"));
     }
 
     #[test_id(t37yx8u)]
     #[test]
     fn a_window_that_is_not_a_positive_number_of_hours_is_refused() {
         let base = lookup("7");
-        let zero = move |k: &str| {
-            if k == "SPIRA_FLOW_WINDOW_HOURS" {
-                Ok("0".to_string())
-            } else {
-                base(k)
-            }
-        };
-        assert!(Settings::from_lookup(&zero)
-            .unwrap_err()
-            .contains("SPIRA_FLOW_WINDOW_HOURS"));
+        let zero = move |k: &str| if k == "SPIRA_FLOW_WINDOW_HOURS" { Ok("0".to_string()) } else { base(k) };
+        assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_FLOW_WINDOW_HOURS"));
     }
 
     #[test_id(tyad1im)]
     #[test]
     fn the_writer_grants_interval_is_read_in_seconds_and_a_zero_is_refused() {
         let base = lookup("7");
-        let pinned = move |k: &str| {
-            if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" {
-                Ok("42".to_string())
-            } else {
-                base(k)
-            }
-        };
-        assert_eq!(
-            Settings::from_lookup(&pinned)
-                .unwrap()
-                .writer_grants
-                .interval_ms,
-            42_000
-        );
+        let pinned = move |k: &str| if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" { Ok("42".to_string()) } else { base(k) };
+        assert_eq!(Settings::from_lookup(&pinned).unwrap().writer_grants.interval_ms, 42_000);
         let base = lookup("7");
-        let zero = move |k: &str| {
-            if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" {
-                Ok("0".to_string())
-            } else {
-                base(k)
-            }
-        };
-        assert!(Settings::from_lookup(&zero)
-            .unwrap_err()
-            .contains("SPIRA_RUNTIME_WRITER_GRANTS_SECS"));
+        let zero = move |k: &str| if k == "SPIRA_RUNTIME_WRITER_GRANTS_SECS" { Ok("0".to_string()) } else { base(k) };
+        assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_RUNTIME_WRITER_GRANTS_SECS"));
     }
 
     #[test_id(tr53nnj)]
     #[test]
     fn each_task_takes_the_mode_the_table_gives_it_and_a_task_left_out_refuses_the_load() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
-        let modes: Vec<(String, runtime::Mode)> = crate::registrations(&s)
-            .into_iter()
-            .map(|r| (r.name, r.mode))
-            .filter(|(_, m)| *m == runtime::Mode::Observe)
-            .collect();
-        assert_eq!(
-            modes,
-            [
-                ("asks".to_string(), runtime::Mode::Observe),
-                ("view".to_string(), runtime::Mode::Observe)
-            ]
-        );
+        let modes: Vec<(String, runtime::Mode)> = crate::registrations(&s).into_iter().map(|r| (r.name, r.mode)).filter(|(_, m)| *m == runtime::Mode::Observe).collect();
+        assert_eq!(modes, [("asks".to_string(), runtime::Mode::Observe), ("view".to_string(), runtime::Mode::Observe)]);
         assert_eq!(s.control_socket, PathBuf::from("d/control.sock"));
         let base = lookup("7");
-        let short = move |k: &str| {
-            if k == crate::modes::KEY {
-                Ok("heartbeat=act".to_string())
-            } else {
-                base(k)
-            }
-        };
+        let short = move |k: &str| if k == crate::modes::KEY { Ok("heartbeat=act".to_string()) } else { base(k) };
         let e = Settings::from_lookup(&short).unwrap_err();
-        assert!(
-            e.contains(crate::modes::KEY) && e.contains("round-duty"),
-            "{e}"
-        );
+        assert!(e.contains(crate::modes::KEY) && e.contains("round-duty"), "{e}");
     }
 
     #[test_id(ttlktrm)]
     #[test]
     fn each_pool_cap_reaches_its_class_and_a_container_cap_over_the_ceiling_is_refused() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
-        assert_eq!(
-            s.pool_caps,
-            runtime::pools::PoolCaps {
-                store: 41,
-                unit: 42,
-                git: 43,
-                forge: 44,
-                host: 45,
-                container: 2,
-                broker: 46
-            }
-        );
+        assert_eq!(s.pool_caps, runtime::pools::PoolCaps { store: 41, unit: 42, git: 43, forge: 44, host: 45, container: 2, broker: 46 });
         let with = |key: &'static str, val: &'static str| {
             let base = lookup("7");
-            move |k: &str| {
-                if k == key {
-                    Ok(val.to_string())
-                } else {
-                    base(k)
-                }
-            }
+            move |k: &str| if k == key { Ok(val.to_string()) } else { base(k) }
         };
         let over = Settings::from_lookup(&with("SPIRA_POOL_CAP_CONTAINER", "3")).unwrap_err();
-        assert!(
-            over.contains("SPIRA_POOL_CAP_CONTAINER") && over.contains('2'),
-            "{over}"
-        );
+        assert!(over.contains("SPIRA_POOL_CAP_CONTAINER") && over.contains('2'), "{over}");
         let zero = Settings::from_lookup(&with("SPIRA_POOL_CAP_GIT", "0")).unwrap_err();
-        assert!(
-            zero.contains("SPIRA_POOL_CAP_GIT"),
-            "a class capped at nothing would wedge: {zero}"
-        );
-        assert_ne!(
-            s.hash(),
-            Settings::from_lookup(&with("SPIRA_POOL_CAP_HOST", "9"))
-                .unwrap()
-                .hash(),
-            "the caps are part of the pinned configuration"
-        );
+        assert!(zero.contains("SPIRA_POOL_CAP_GIT"), "a class capped at nothing would wedge: {zero}");
+        assert_ne!(s.hash(), Settings::from_lookup(&with("SPIRA_POOL_CAP_HOST", "9")).unwrap().hash(), "the caps are part of the pinned configuration");
     }
 
     #[test_id(t2cgtis)]
     #[test]
     fn every_unresolved_key_is_named_at_once() {
         let base = lookup("7");
-        let refusing = move |k: &str| {
-            if k == "SPIRA_HOME_REPO" || k == "SPIRA_QUEUE_DIR" {
-                Err(format!("{k} refused"))
-            } else {
-                base(k)
-            }
-        };
+        let refusing = move |k: &str| if k == "SPIRA_HOME_REPO" || k == "SPIRA_QUEUE_DIR" { Err(format!("{k} refused")) } else { base(k) };
         let e = Settings::from_lookup(&refusing).unwrap_err();
-        assert!(
-            e.contains("SPIRA_HOME_REPO") && e.contains("SPIRA_QUEUE_DIR"),
-            "{e}"
-        );
+        assert!(e.contains("SPIRA_HOME_REPO") && e.contains("SPIRA_QUEUE_DIR"), "{e}");
     }
 
     #[test_id(tme91uc)]
     #[test]
     fn a_runtime_with_no_victorialogs_url_refuses_to_start() {
         for empty in ["", "  "] {
-            let err = Settings::from_lookup(&|k| {
-                if k == "SPIRA_VICTORIALOGS_URL" {
-                    Ok(empty.to_string())
-                } else {
-                    lookup("7")(k)
-                }
-            })
-            .unwrap_err();
-            assert!(
-                err.contains("SPIRA_VICTORIALOGS_URL") && err.contains("no fallback"),
-                "{err}"
-            );
+            let err = Settings::from_lookup(&|k| if k == "SPIRA_VICTORIALOGS_URL" { Ok(empty.to_string()) } else { lookup("7")(k) }).unwrap_err();
+            assert!(err.contains("SPIRA_VICTORIALOGS_URL") && err.contains("no fallback"), "{err}");
         }
         let s = fixture();
-        assert_eq!(
-            s.victorialogs_url, "http://127.0.0.1:19428",
-            "the configured value, not the shipped default"
-        );
+        assert_eq!(s.victorialogs_url, "http://127.0.0.1:19428", "the configured value, not the shipped default");
     }
 
     #[test_id(ta6h4rp)]
     #[test]
     fn every_value_comes_from_the_lookup_and_a_bad_number_is_refused() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
-        assert_eq!(
-            (s.heartbeat_secs, s.stall_limit, s.heartbeat_url.as_str()),
-            (7, 3, "http://127.0.0.1:9/ping")
-        );
+        assert_eq!((s.heartbeat_secs, s.stall_limit, s.heartbeat_url.as_str()), (7, 3, "http://127.0.0.1:9/ping"));
         assert_eq!(s.lc_socket, PathBuf::from("d/sock"));
         assert_eq!(s.metrics_endpoint.as_deref(), Some("127.0.0.1:9"));
-        let unset = |k: &str| {
-            if k == "SPIRA_METRICS_ENDPOINT" {
-                Ok("  ".to_string())
-            } else {
-                lookup("7")(k)
-            }
-        };
-        assert_eq!(
-            Settings::from_lookup(&unset).unwrap().metrics_endpoint,
-            None,
-            "a blank endpoint disables the push"
-        );
-        assert!(
-            Settings::from_lookup(&lookup("0"))
-                .unwrap_err()
-                .contains("positive"),
-            "zero seconds would spin the schedule"
-        );
-        assert_ne!(
-            s.hash(),
-            Settings::from_lookup(&lookup("8")).unwrap().hash()
-        );
+        let unset = |k: &str| if k == "SPIRA_METRICS_ENDPOINT" { Ok("  ".to_string()) } else { lookup("7")(k) };
+        assert_eq!(Settings::from_lookup(&unset).unwrap().metrics_endpoint, None, "a blank endpoint disables the push");
+        assert!(Settings::from_lookup(&lookup("0")).unwrap_err().contains("positive"), "zero seconds would spin the schedule");
+        assert_ne!(s.hash(), Settings::from_lookup(&lookup("8")).unwrap().hash());
     }
 }

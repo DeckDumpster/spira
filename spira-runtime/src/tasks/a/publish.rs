@@ -159,56 +159,15 @@ pub const START_CI: &str = "publish.start_ci";
 pub const CADENCE_MS: u64 = 1_800_000;
 pub const OBSERVE_DEADLINE_MS: u64 = 60_000;
 
-pub const ACTS: &[(&str, u64)] = &[
-    (PUSH_BRANCH, 60_000),
-    (PUSH_FORGE, 60_000),
-    (PR_CREATE, 60_000),
-    (PR_CLOSE, 30_000),
-    (CANCEL_RUNS, 30_000),
-    (RETIRE, 30_000),
-    (RERUN, 30_000),
-    (RECORD, 60_000),
-    (NOTIFY, 5_000),
-    (SETTLE, 60_000),
-    (START_CI, 30_000),
-];
+pub const ACTS: &[(&str, u64)] = &[(PUSH_BRANCH, 60_000), (PUSH_FORGE, 60_000), (PR_CREATE, 60_000), (PR_CLOSE, 30_000), (CANCEL_RUNS, 30_000), (RETIRE, 30_000), (RERUN, 30_000), (RECORD, 60_000), (NOTIFY, 5_000), (SETTLE, 60_000), (START_CI, 30_000)];
 pub const EMITS: &[EventKindTag] = &[];
 /// Hand-offs that wake it at once, besides its tick: queue.step wants a publish.
 pub const WAKES: &[EventKindTag] = &[PUBLISH_WANTED];
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    PUSH_BRANCH,
-    PUSH_FORGE,
-    PR_CREATE,
-    PR_CLOSE,
-    CANCEL_RUNS,
-    RETIRE,
-    RERUN,
-    RECORD,
-    NOTIFY,
-    SETTLE,
-    START_CI,
-];
-pub const KEYS: &[&str] = &[
-    "SPIRA_PUBLISH_SETTLE_DEFER_MAX",
-    "SPIRA_PUBLISH_NO_RUN_SECS",
-    "SPIRA_FORGE",
-    "SPIRA_QUEUE_DIR",
-    "SPIRA_RUN",
-    "SPIRA_MAIL_SESSION_MAILBOX",
-    "SPIRA_QUEUE_LOCK_WAIT",
-    "SPIRA_REPO_MAP",
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, PUSH_BRANCH, PUSH_FORGE, PR_CREATE, PR_CLOSE, CANCEL_RUNS, RETIRE, RERUN, RECORD, NOTIFY, SETTLE, START_CI];
+pub const KEYS: &[&str] = &["SPIRA_PUBLISH_SETTLE_DEFER_MAX", "SPIRA_PUBLISH_NO_RUN_SECS", "SPIRA_FORGE", "SPIRA_QUEUE_DIR", "SPIRA_RUN", "SPIRA_MAIL_SESSION_MAILBOX", "SPIRA_QUEUE_LOCK_WAIT", "SPIRA_REPO_MAP"];
 pub const UNREGISTERED: &[&str] = &[];
 
-pub const SHAPE: Shape = Shape {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    observe: OBSERVE,
-    observe_deadline_ms: OBSERVE_DEADLINE_MS,
-};
+pub const SHAPE: Shape = Shape { name: NAME, stream: STREAM, tick: TICK, state: STATE, observe: OBSERVE, observe_deadline_ms: OBSERVE_DEADLINE_MS };
 
 /// The publish PR as the forge reports it (`ops/publish.rs:746-785`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,38 +186,19 @@ pub enum Pr {
 
 impl Pr {
     /// The queue's own reading of this PR.
-    fn core(
-        &self,
-        rec: Option<&PublishRec>,
-        observed_at: u64,
-        no_run_secs: Option<u64>,
-    ) -> core::Pr {
+    fn core(&self, rec: Option<&PublishRec>, observed_at: u64, no_run_secs: Option<u64>) -> core::Pr {
         match self {
             Pr::Open { ci, behind, tries } => {
                 let ci = match ci.as_str() {
                     "untested" => core::Ci::Untested,
                     "no_run" => {
                         let rec = rec.cloned().unwrap_or_default();
-                        let since = if rec.ci_started > 0 {
-                            rec.ci_started
-                        } else {
-                            rec.opened
-                        };
-                        core::Ci::NoRun {
-                            past: since > 0
-                                && no_run_secs.is_some_and(|bound| {
-                                    observed_at.saturating_sub(since) >= bound
-                                }),
-                            started: rec.ci_started > 0,
-                        }
+                        let since = if rec.ci_started > 0 { rec.ci_started } else { rec.opened };
+                        core::Ci::NoRun { past: since > 0 && no_run_secs.is_some_and(|bound| observed_at.saturating_sub(since) >= bound), started: rec.ci_started > 0 }
                     }
                     other => core::ci_of(other),
                 };
-                core::Pr::Open {
-                    ci,
-                    behind: *behind,
-                    tries: u8::try_from(*tries).unwrap_or(u8::MAX),
-                }
+                core::Pr::Open { ci, behind: *behind, tries: u8::try_from(*tries).unwrap_or(u8::MAX) }
             }
             Pr::Gone => core::Pr::Gone,
             Pr::Unknown => core::Pr::Unknown,
@@ -376,28 +316,16 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Observing, Trigger::OpenAncestor, State::Opening),
     (State::Observing, Trigger::OpenPush, State::Opening),
     (State::Observing, Trigger::NothingToDo, State::Idle),
-    (
-        State::Observing,
-        Trigger::DivergedOrUnchecked,
-        State::Refused,
-    ),
+    (State::Observing, Trigger::DivergedOrUnchecked, State::Refused),
     (State::Observing, Trigger::RedFixForwardLive, State::Idle),
-    (
-        State::Observing,
-        Trigger::RoundHoldsHypervisor,
-        State::Deferred,
-    ),
+    (State::Observing, Trigger::RoundHoldsHypervisor, State::Deferred),
     (State::Observing, Trigger::SettleWait, State::Open),
     (State::Observing, Trigger::SettleParked, State::Alarmed),
     (State::Observing, Trigger::SettleRerun, State::Rerun),
     (State::Observing, Trigger::SettleAlarm, State::Alarmed),
     (State::Observing, Trigger::SettleStartCi, State::Open),
     (State::Observing, Trigger::SettleRetire, State::Observing),
-    (
-        State::Observing,
-        Trigger::SettleSupersede,
-        State::Superseding,
-    ),
+    (State::Observing, Trigger::SettleSupersede, State::Superseding),
     (State::Superseding, Trigger::EffectSucceeded, State::Opening),
     (State::Opening, Trigger::PushSucceeded, State::Opening),
     (State::Opening, Trigger::PrCreated, State::Open),
@@ -472,15 +400,11 @@ pub struct Pub {
 
 impl Pub {
     fn on(repo: &str) -> Pub {
-        Pub {
-            repo: repo.into(),
-            ..Pub::default()
-        }
+        Pub { repo: repo.into(), ..Pub::default() }
     }
 
     fn act(&self, effect: &str) -> Act {
-        Act::new(effect, self.key.clone())
-            .with_input(serde_json::to_string(self).unwrap_or_default())
+        Act::new(effect, self.key.clone()).with_input(serde_json::to_string(self).unwrap_or_default())
     }
 }
 
@@ -502,24 +426,13 @@ pub struct Policy {
 impl Default for Policy {
     /// The registered default (`spira/conf.d/SPIRA_PUBLISH_SETTLE_DEFER_MAX`).
     fn default() -> Self {
-        Policy {
-            defer_max: 3,
-            no_run_secs: None,
-        }
+        Policy { defer_max: 3, no_run_secs: None }
     }
 }
 
 impl Policy {
     pub fn pinned(pinned: &BTreeMap<String, String>) -> Policy {
-        Policy {
-            defer_max: pinned
-                .get("SPIRA_PUBLISH_SETTLE_DEFER_MAX")
-                .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(Policy::default().defer_max),
-            no_run_secs: pinned
-                .get("SPIRA_PUBLISH_NO_RUN_SECS")
-                .and_then(|v| v.trim().parse().ok()),
-        }
+        Policy { defer_max: pinned.get("SPIRA_PUBLISH_SETTLE_DEFER_MAX").and_then(|v| v.trim().parse().ok()).unwrap_or(Policy::default().defer_max), no_run_secs: pinned.get("SPIRA_PUBLISH_NO_RUN_SECS").and_then(|v| v.trim().parse().ok()) }
     }
 }
 
@@ -533,12 +446,7 @@ pub fn settle(pr: Option<&Pr>) -> Settle {
 }
 
 /// `settle` for a PR whose record and probe clock say how long it has gone without a run.
-pub fn settle_with(
-    policy: &Policy,
-    rec: Option<&PublishRec>,
-    observed_at: u64,
-    pr: Option<&Pr>,
-) -> Settle {
+pub fn settle_with(policy: &Policy, rec: Option<&PublishRec>, observed_at: u64, pr: Option<&Pr>) -> Settle {
     match core::decide(pr.map(|pr| pr.core(rec, observed_at, policy.no_run_secs))) {
         core::Settle::Open => Settle::Open,
         core::Settle::Wait => Settle::Wait,
@@ -563,16 +471,7 @@ impl Machine<'_> {
     }
 
     fn notify(&mut self, pr: u64, subject: String, body: String) {
-        self.acts.push(
-            Pub {
-                key: format!("{}/{pr}/{subject}", self.repo),
-                pr,
-                subject,
-                body,
-                ..Pub::on(self.repo)
-            }
-            .act(NOTIFY),
-        );
+        self.acts.push(Pub { key: format!("{}/{pr}/{subject}", self.repo), pr, subject, body, ..Pub::on(self.repo) }.act(NOTIFY));
     }
 
     /// Pages Ops once per PR that it has no CI run, and sets `no_run_paged` on the record.
@@ -581,38 +480,14 @@ impl Machine<'_> {
             return;
         }
         let pr = rec.pr;
-        self.notify(
-            pr,
-            format!("publish PR {pr} for {} has no CI run", self.repo),
-            format!(
-                "PR {pr} ({}) has had no gate run for {idle}s. Action: {act}.",
-                rec.branch
-            ),
-        );
-        self.acts.push(
-            Pub {
-                pr,
-                key: format!("{}/{pr}/no-run-paged", self.repo),
-                record: [("no_run_paged".to_string(), "1".to_string())].into(),
-                ..Pub::on(self.repo)
-            }
-            .act(RECORD),
-        );
+        self.notify(pr, format!("publish PR {pr} for {} has no CI run", self.repo), format!("PR {pr} ({}) has had no gate run for {idle}s. Action: {act}.", rec.branch));
+        self.acts.push(Pub { pr, key: format!("{}/{pr}/no-run-paged", self.repo), record: [("no_run_paged".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
     }
 
     fn observe(&mut self, policy: &Policy, r: &Repo) {
         // Adopting and Merging too: both acts are idempotent, and one whose outcome was lost
         // (a restart, a deadline) must not hold the repo forever (sp-hw3qio).
-        if !matches!(
-            self.rc.state,
-            State::Idle
-                | State::Deferred
-                | State::Refused
-                | State::Rerun
-                | State::Alarmed
-                | State::Adopting
-                | State::Merging
-        ) {
+        if !matches!(self.rc.state, State::Idle | State::Deferred | State::Refused | State::Rerun | State::Alarmed | State::Adopting | State::Merging) {
             return;
         }
         self.go(Trigger::Tick);
@@ -626,24 +501,9 @@ impl Machine<'_> {
         if rec.is_none() && !r.open_publish_prs.is_empty() {
             self.go(Trigger::AdoptOne);
             let newest = r.open_publish_prs.iter().copied().max().unwrap_or_default();
-            self.acts.push(
-                Pub {
-                    pr: newest,
-                    key: format!("{}/{newest}", self.repo),
-                    record: [("adopt".to_string(), newest.to_string())].into(),
-                    ..Pub::on(self.repo)
-                }
-                .act(RECORD),
-            );
+            self.acts.push(Pub { pr: newest, key: format!("{}/{newest}", self.repo), record: [("adopt".to_string(), newest.to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
             for older in r.open_publish_prs.iter().copied().filter(|p| *p != newest) {
-                self.acts.push(
-                    Pub {
-                        pr: older,
-                        key: format!("{}/{older}", self.repo),
-                        ..Pub::on(self.repo)
-                    }
-                    .act(PR_CLOSE),
-                );
+                self.acts.push(Pub { pr: older, key: format!("{}/{older}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
             }
             return;
         }
@@ -658,11 +518,7 @@ impl Machine<'_> {
         }
         let act = settle_with(policy, rec, r.observed_at, rec.map(|_| &r.pr));
         // `:506-527`: an act that writes is deferred while a round holds the hypervisor.
-        if !matches!(act, Settle::Wait | Settle::Parked | Settle::Alarm)
-            && r.round_holds_hypervisor
-            && r.publish_mode != "push"
-            && self.rc.deferred_ticks < policy.defer_max
-        {
+        if !matches!(act, Settle::Wait | Settle::Parked | Settle::Alarm) && r.round_holds_hypervisor && r.publish_mode != "push" && self.rc.deferred_ticks < policy.defer_max {
             self.go(Trigger::RoundHoldsHypervisor);
             // A wake observes every repo; only a deferral a cadence apart spends the budget.
             let first = self.rc.deferred_ticks == 0;
@@ -684,20 +540,9 @@ impl Machine<'_> {
                 self.settle(rec.pr, &rec.head, &rec.branch);
             }
             Settle::Wait => {
-                if policy.no_run_secs.is_none()
-                    && matches!(&r.pr, Pr::Open { ci, .. } if ci == "no_run")
-                    && self.rc.no_run_key_noted != Some(pr)
-                {
+                if policy.no_run_secs.is_none() && matches!(&r.pr, Pr::Open { ci, .. } if ci == "no_run") && self.rc.no_run_key_noted != Some(pr) {
                     self.rc.no_run_key_noted = Some(pr);
-                    self.notify(
-                        pr,
-                        format!(
-                            "publish PR {pr} for {} cannot be checked for a missing CI run",
-                            self.repo
-                        ),
-                        "SPIRA_PUBLISH_NO_RUN_SECS does not resolve; the PR is left waiting."
-                            .to_string(),
-                    );
+                    self.notify(pr, format!("publish PR {pr} for {} cannot be checked for a missing CI run", self.repo), "SPIRA_PUBLISH_NO_RUN_SECS does not resolve; the PR is left waiting.".to_string());
                 }
                 // Pending, or red: the verdict pass files a red's fix-forward.
                 self.go(Trigger::SettleWait);
@@ -709,43 +554,17 @@ impl Machine<'_> {
             Settle::Rerun => {
                 self.go(Trigger::SettleRerun);
                 let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
-                self.acts.push(
-                    Pub {
-                        pr,
-                        branch,
-                        key: format!("{}/{pr}", self.repo),
-                        record: [("rerun".to_string(), "1".to_string())].into(),
-                        ..Pub::on(self.repo)
-                    }
-                    .act(RERUN),
-                );
+                self.acts.push(Pub { pr, branch, key: format!("{}/{pr}", self.repo), record: [("rerun".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RERUN));
             }
             Settle::Alarm => {
                 self.go(Trigger::SettleAlarm);
                 self.notify(pr, format!("publish PR {pr} for {} untested twice", self.repo), format!("CI never tested {} after one re-run; the record is parked until a hand moves it.", r.head_sha));
-                self.acts.push(
-                    Pub {
-                        pr,
-                        key: format!("{}/{pr}", self.repo),
-                        record: [("alarmed".to_string(), "1".to_string())].into(),
-                        ..Pub::on(self.repo)
-                    }
-                    .act(RECORD),
-                );
+                self.acts.push(Pub { pr, key: format!("{}/{pr}", self.repo), record: [("alarmed".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
             }
             Settle::StartCi => {
                 self.go(Trigger::SettleStartCi);
                 let rec = rec.cloned().unwrap_or_default();
-                self.acts.push(
-                    Pub {
-                        pr,
-                        branch: rec.branch.clone(),
-                        key: format!("{}/{pr}", self.repo),
-                        record: [("ci_started".to_string(), r.observed_at.to_string())].into(),
-                        ..Pub::on(self.repo)
-                    }
-                    .act(START_CI),
-                );
+                self.acts.push(Pub { pr, branch: rec.branch.clone(), key: format!("{}/{pr}", self.repo), record: [("ci_started".to_string(), r.observed_at.to_string())].into(), ..Pub::on(self.repo) }.act(START_CI));
                 let idle = r.observed_at.saturating_sub(rec.opened);
                 self.page_no_run(&rec, idle, "CI started by dispatch");
             }
@@ -758,64 +577,25 @@ impl Machine<'_> {
                 self.go(Trigger::SettleSupersede);
                 if let (Some(rec), Pr::Open { ci, .. }) = (rec, &r.pr) {
                     if ci == "no_run" {
-                        self.page_no_run(
-                            rec,
-                            r.observed_at.saturating_sub(rec.opened),
-                            &format!("superseded for {}", r.head_sha),
-                        );
+                        self.page_no_run(rec, r.observed_at.saturating_sub(rec.opened), &format!("superseded for {}", r.head_sha));
                     }
                 }
                 let branch = rec.map(|r| r.branch.clone()).unwrap_or_default();
-                self.acts.push(
-                    Pub {
-                        pr,
-                        branch: branch.clone(),
-                        key: format!("{}/{branch}", self.repo),
-                        ..Pub::on(self.repo)
-                    }
-                    .act(CANCEL_RUNS),
-                );
-                self.acts.push(
-                    Pub {
-                        pr,
-                        branch,
-                        head: r.head_sha.clone(),
-                        base: r.forge_sha.clone().unwrap_or_default(),
-                        key: format!("{}/{pr}", self.repo),
-                        ..Pub::on(self.repo)
-                    }
-                    .act(PR_CLOSE),
-                );
+                self.acts.push(Pub { pr, branch: branch.clone(), key: format!("{}/{branch}", self.repo), ..Pub::on(self.repo) }.act(CANCEL_RUNS));
+                self.acts.push(Pub { pr, branch, head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), key: format!("{}/{pr}", self.repo), ..Pub::on(self.repo) }.act(PR_CLOSE));
             }
         }
     }
 
     /// `publish.retire` for PR `pr`; `action` is the word the landing log carries.
     fn retire(&mut self, pr: u64, action: &str) {
-        self.acts.push(
-            Pub {
-                pr,
-                subject: action.into(),
-                key: format!("{}/{pr}/retire", self.repo),
-                ..Pub::on(self.repo)
-            }
-            .act(RETIRE),
-        );
+        self.acts.push(Pub { pr, subject: action.into(), key: format!("{}/{pr}/retire", self.repo), ..Pub::on(self.repo) }.act(RETIRE));
     }
 
     /// `publish.settle` for PR `pr` at `head`: the act reads the PR's state and CI again, so it
     /// merges only a PR that is green when it runs.
     fn settle(&mut self, pr: u64, head: &str, branch: &str) {
-        self.acts.push(
-            Pub {
-                pr,
-                head: head.into(),
-                branch: branch.into(),
-                key: format!("{}/{pr}/{head}", self.repo),
-                ..Pub::on(self.repo)
-            }
-            .act(SETTLE),
-        );
+        self.acts.push(Pub { pr, head: head.into(), branch: branch.into(), key: format!("{}/{pr}/{head}", self.repo), ..Pub::on(self.repo) }.act(SETTLE));
     }
 
     /// `Settle::Open`: guard the push (`:116-138`), then publish by PR or by fast-forward.
@@ -828,47 +608,19 @@ impl Machine<'_> {
             self.go(Trigger::DivergedOrUnchecked);
             if self.rc.refused_head.as_deref() != Some(r.head_sha.as_str()) {
                 self.rc.refused_head = Some(r.head_sha.clone());
-                let why = if r.diverged.is_none() {
-                    "divergence could not be checked"
-                } else {
-                    "the forge branch is not an ancestor of the local head"
-                };
-                self.notify(
-                    0,
-                    format!("publish refused for {}", self.repo),
-                    format!(
-                        "{why} ({} vs {}); nothing was pushed.",
-                        r.forge_sha.clone().unwrap_or_default(),
-                        r.head_sha
-                    ),
-                );
+                let why = if r.diverged.is_none() { "divergence could not be checked" } else { "the forge branch is not an ancestor of the local head" };
+                self.notify(0, format!("publish refused for {}", self.repo), format!("{why} ({} vs {}); nothing was pushed.", r.forge_sha.clone().unwrap_or_default(), r.head_sha));
             }
             return;
         }
         self.rc.refused_head = None;
-        let at = Pub {
-            head: r.head_sha.clone(),
-            base: r.forge_sha.clone().unwrap_or_default(),
-            ..Pub::on(self.repo)
-        };
+        let at = Pub { head: r.head_sha.clone(), base: r.forge_sha.clone().unwrap_or_default(), ..Pub::on(self.repo) };
         if r.publish_mode == "push" {
             self.go(Trigger::OpenPush);
-            self.acts.push(
-                Pub {
-                    key: format!("{}/forge/{}", self.repo, r.head_sha),
-                    ..at
-                }
-                .act(PUSH_FORGE),
-            );
+            self.acts.push(Pub { key: format!("{}/forge/{}", self.repo, r.head_sha), ..at }.act(PUSH_FORGE));
         } else {
             self.go(Trigger::OpenAncestor);
-            self.acts.push(
-                Pub {
-                    key: format!("{}/branch/{}", self.repo, r.head_sha),
-                    ..at
-                }
-                .act(PUSH_BRANCH),
-            );
+            self.acts.push(Pub { key: format!("{}/branch/{}", self.repo, r.head_sha), ..at }.act(PUSH_BRANCH));
         }
     }
 
@@ -883,29 +635,15 @@ impl Machine<'_> {
                 self.go(Trigger::EffectFailed);
             }
             (State::Merging, SETTLE, ok) => {
-                self.go(if ok {
-                    Trigger::EffectSucceeded
-                } else {
-                    Trigger::EffectFailed
-                });
+                self.go(if ok { Trigger::EffectSucceeded } else { Trigger::EffectFailed });
                 if !ok {
-                    self.notify(
-                        p.pr,
-                        format!("publish PR {} for {} green but not merged", p.pr, self.repo),
-                        body.trim().to_string(),
-                    );
+                    self.notify(p.pr, format!("publish PR {} for {} green but not merged", p.pr, self.repo), body.trim().to_string());
                 }
             }
             (State::Superseding, PR_CLOSE, true) => {
                 self.go(Trigger::EffectSucceeded);
                 self.retire(p.pr, "Supersede");
-                self.acts.push(
-                    Pub {
-                        key: format!("{}/branch/{}", self.repo, p.head),
-                        ..p.clone()
-                    }
-                    .act(PUSH_BRANCH),
-                );
+                self.acts.push(Pub { key: format!("{}/branch/{}", self.repo, p.head), ..p.clone() }.act(PUSH_BRANCH));
             }
             (State::Superseding, PR_CLOSE, false) => {
                 self.go(Trigger::EffectFailed);
@@ -913,26 +651,12 @@ impl Machine<'_> {
             (State::Opening, PUSH_BRANCH, true) => {
                 self.go(Trigger::PushSucceeded);
                 let branch: Pub = serde_json::from_str(body).unwrap_or_default();
-                self.acts.push(
-                    Pub {
-                        branch: branch.branch,
-                        key: format!("{}/{}", self.repo, p.head),
-                        ..p.clone()
-                    }
-                    .act(PR_CREATE),
-                );
+                self.acts.push(Pub { branch: branch.branch, key: format!("{}/{}", self.repo, p.head), ..p.clone() }.act(PR_CREATE));
             }
             (State::Opening, PR_CREATE, true) => {
                 let c: Created = serde_json::from_str(body).unwrap_or_default();
                 self.go(Trigger::PrCreated);
-                self.acts.push(
-                    Pub {
-                        pr: c.pr,
-                        key: format!("{}/{}", self.repo, c.pr),
-                        ..p.clone()
-                    }
-                    .act(RECORD),
-                );
+                self.acts.push(Pub { pr: c.pr, key: format!("{}/{}", self.repo, c.pr), ..p.clone() }.act(RECORD));
                 // The opened PR's CI is queue.step's to settle.
                 self.go(Trigger::QueueStepSettled);
             }
@@ -940,23 +664,11 @@ impl Machine<'_> {
                 self.go(Trigger::EffectSucceeded);
             }
             (_, RETIRE, false) => {
-                self.notify(
-                    p.pr,
-                    format!("publish PR {} for {} not retired", p.pr, self.repo),
-                    body.trim().to_string(),
-                );
+                self.notify(p.pr, format!("publish PR {} for {} not retired", p.pr, self.repo), body.trim().to_string());
             }
             (State::Opening, PUSH_BRANCH | PUSH_FORGE | PR_CREATE, false) => {
                 self.go(Trigger::EffectFailed);
-                self.notify(
-                    p.pr,
-                    format!(
-                        "publish {} failed for {}",
-                        effect.trim_start_matches("publish."),
-                        self.repo
-                    ),
-                    body.trim().to_string(),
-                );
+                self.notify(p.pr, format!("publish {} failed for {}", effect.trim_start_matches("publish."), self.repo), body.trim().to_string());
             }
             _ => {}
         }
@@ -982,11 +694,7 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, V
         return (next, acts);
     }
     for (name, repo) in &snap.repos {
-        let mut m = Machine {
-            repo: name,
-            rc: carry.repos.get(name).cloned().unwrap_or_default(),
-            acts: vec![],
-        };
+        let mut m = Machine { repo: name, rc: carry.repos.get(name).cloned().unwrap_or_default(), acts: vec![] };
         m.observe(policy, repo);
         let before = next.clone();
         store(&mut next, name, m.rc);
@@ -1001,11 +709,7 @@ pub fn decide_with(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, V
 
 pub fn on_outcome(carry: &Carry, effect: &str, ok: bool, body: &str, p: &Pub) -> (Carry, Vec<Act>) {
     let mut next = carry.clone();
-    let mut m = Machine {
-        repo: &p.repo,
-        rc: carry.repos.get(&p.repo).cloned().unwrap_or_default(),
-        acts: vec![],
-    };
+    let mut m = Machine { repo: &p.repo, rc: carry.repos.get(&p.repo).cloned().unwrap_or_default(), acts: vec![] };
     m.outcome(effect, ok, body, p);
     let acts = m.acts;
     store(&mut next, &p.repo, m.rc);
@@ -1022,12 +726,7 @@ pub struct Publish {
 
 impl Publish {
     pub fn new(pinned: BTreeMap<String, String>) -> Self {
-        Publish {
-            cadence: Cadence::Every(CADENCE_MS),
-            policy: Policy::pinned(&pinned),
-            pinned,
-            interests: interests(TICK, WAKES),
-        }
+        Publish { cadence: Cadence::Every(CADENCE_MS), policy: Policy::pinned(&pinned), pinned, interests: interests(TICK, WAKES) }
     }
 
     pub fn from_settings(settings: &crate::Settings) -> Self {
@@ -1043,10 +742,7 @@ impl Publish {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map {
-    name: "repos",
-    drop: &[],
-}];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "repos", drop: &[] }];
 
 impl Handler for Publish {
     fn interests(&self) -> &[EventKindTag] {
@@ -1054,37 +750,14 @@ impl Handler for Publish {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| {
-            serde_json::from_str::<Snapshot>(body)
-                .ok()
-                .map(|snap| decide_with(&self.policy, carry, &snap))
-        };
-        let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| {
-            match serde_json::from_str::<Pub>(input) {
-                Ok(p) => on_outcome(carry, effect, ok, body, &p),
-                Err(_) => (carry.clone(), vec![]),
-            }
+        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap));
+        let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Pub>(input) {
+            Ok(p) => on_outcome(carry, effect, ok, body, &p),
+            Err(_) => (carry.clone(), vec![]),
         };
         // Publish starts no unit leg, so no `unit.ran` is its own.
         let ran = |_: &Carry, _: &runtime::units::UnitRan| None;
-        handle_p2(
-            &P2 {
-                shape: &SHAPE,
-                cadence: &self.cadence,
-                acts: ACTS,
-                emits: EMITS,
-                effects: EFFECTS,
-                wakes: WAKES,
-            },
-            view,
-            ev,
-            On {
-                observed,
-                outcome,
-                ran,
-                legs: |_: &Carry| vec![],
-            },
-        )
+        handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs: |_: &Carry| vec![] })
     }
 }
 
@@ -1096,7 +769,7 @@ pub mod edge {
 
     use super::super::queue_step::edge::{forge, forge_call, git, queue_kv, registry, root};
     use super::{Created, Pr, Pub, PublishRec, Repo, Snapshot};
-    use crate::{EffectSpec, Effects};
+    use crate::{Effects, EffectSpec};
 
     fn input(spec: &EffectSpec) -> Result<Pub, String> {
         serde_json::from_str(&spec.input).map_err(|e| format!("{}: bad input: {e}", spec.name))
@@ -1108,23 +781,13 @@ pub mod edge {
 
     /// The remote and branch a repo publishes to (`spira_publish_forge`), or why it does not.
     fn target(reg: &spira_config::repos::Registry, repo: &str) -> Result<(String, String), String> {
-        spira_config::repos::publish_forge(reg, repo, &BTreeMap::new())
-            .ok_or_else(|| format!("{repo} publishes nowhere"))
+        spira_config::repos::publish_forge(reg, repo, &BTreeMap::new()).ok_or_else(|| format!("{repo} publishes nowhere"))
     }
 
     /// A record's fields as the probe reads them; `None` for one without a PR number.
     pub fn publish_rec(kv: &BTreeMap<String, String>) -> Option<PublishRec> {
         let n = |k: &str| kv.get(k).and_then(|v| v.parse().ok()).unwrap_or(0);
-        Some(PublishRec {
-            pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?,
-            head: kv.get("head").cloned().unwrap_or_default(),
-            branch: kv.get("branch").cloned().unwrap_or_default(),
-            rerun: kv.get("rerun").is_some_and(|v| v == "1"),
-            alarmed: kv.get("alarmed").is_some_and(|v| v == "1"),
-            opened: n("opened"),
-            ci_started: n("ci_started"),
-            no_run_paged: kv.get("no_run_paged").is_some(),
-        })
+        Some(PublishRec { pr: kv.get("pr")?.trim_start_matches('#').parse().ok()?, head: kv.get("head").cloned().unwrap_or_default(), branch: kv.get("branch").cloned().unwrap_or_default(), rerun: kv.get("rerun").is_some_and(|v| v == "1"), alarmed: kv.get("alarmed").is_some_and(|v| v == "1"), opened: n("opened"), ci_started: n("ci_started"), no_run_paged: kv.get("no_run_paged").is_some() })
     }
 
     /// The probe's word for a `check-status` answer.
@@ -1144,20 +807,9 @@ pub mod edge {
         let reg = registry()?;
         let rounds = store_view::Projection::hot(super::super::queue_step::edge::lc(e))?;
         rounds.batches_current().map_err(|e| e.to_string())?;
-        let mut snap = Snapshot {
-            world_running: !e.world.run_dir.join("world.halted").exists(),
-            ..Snapshot::default()
-        };
-        let local: Vec<String> = reg
-            .names()
-            .into_iter()
-            .filter(|n| reg.land(n) == "queue.local")
-            .collect();
-        let holds = local.iter().any(|n| {
-            rounds
-                .round_view(n)
-                .is_ok_and(|v| !v.value.rounds.is_empty())
-        });
+        let mut snap = Snapshot { world_running: !e.world.run_dir.join("world.halted").exists(), ..Snapshot::default() };
+        let local: Vec<String> = reg.names().into_iter().filter(|n| reg.land(n) == "queue.local").collect();
+        let holds = local.iter().any(|n| rounds.round_view(n).is_ok_and(|v| !v.value.rounds.is_empty()));
         for name in local {
             let dir = root(&reg, &name)?;
             let landref = spira_config::repos::landref(&reg, &name).unwrap_or_default();
@@ -1168,93 +820,34 @@ pub mod edge {
                 _ => "pr",
             };
             let forge_sha = target.as_ref().and_then(|(remote, branch)| {
-                git(
-                    &dir,
-                    &["fetch", "--quiet", remote, branch],
-                    Duration::from_secs(30),
-                )
-                .ok()?;
-                git(
-                    &dir,
-                    &["rev-parse", &format!("{remote}/{branch}")],
-                    Duration::from_secs(10),
-                )
-                .ok()
+                git(&dir, &["fetch", "--quiet", remote, branch], Duration::from_secs(30)).ok()?;
+                git(&dir, &["rev-parse", &format!("{remote}/{branch}")], Duration::from_secs(10)).ok()
             });
-            let diverged = forge_sha.as_ref().map(|f| {
-                git(
-                    &dir,
-                    &["merge-base", "--is-ancestor", f, &head_sha],
-                    Duration::from_secs(10),
-                )
-                .is_err()
-            });
+            let diverged = forge_sha.as_ref().map(|f| git(&dir, &["merge-base", "--is-ancestor", f, &head_sha], Duration::from_secs(10)).is_err());
             let kv = queue_kv(e, &name, "publish");
             let publish_rec = kv.as_ref().and_then(publish_rec);
             let pr = match &publish_rec {
                 None => Pr::Unknown,
                 Some(rec) => {
                     let n = rec.pr.to_string();
-                    match forge_call(&dir, "pr-state", &[&n], None)?
-                        .stdout()
-                        .map(|s| s.trim().to_ascii_uppercase())
-                    {
+                    match forge_call(&dir, "pr-state", &[&n], None)?.stdout().map(|s| s.trim().to_ascii_uppercase()) {
                         Some(s) if s == "OPEN" => {
-                            let status =
-                                forge_call(&dir, "check-status", &[&n, &rec.branch], None)?
-                                    .stdout()
-                                    .unwrap_or_default();
+                            let status = forge_call(&dir, "check-status", &[&n, &rec.branch], None)?.stdout().unwrap_or_default();
                             let ci = ci_label(&status);
-                            Pr::Open {
-                                ci: ci.into(),
-                                behind: rec.head != head_sha,
-                                tries: u32::from(rec.rerun) + u32::from(rec.alarmed),
-                            }
+                            Pr::Open { ci: ci.into(), behind: rec.head != head_sha, tries: u32::from(rec.rerun) + u32::from(rec.alarmed) }
                         }
                         Some(_) => Pr::Gone,
                         None => Pr::Unknown,
                     }
                 }
             };
-            let open_publish_prs = forge_call(&dir, "pr-list-open", &[], None)?
-                .stdout()
-                .unwrap_or_default()
-                .lines()
-                .filter_map(|l| l.split_once(' '))
-                .filter(|(_, b)| b.starts_with("spira/publish/"))
-                .filter_map(|(n, _)| n.trim_start_matches('#').parse().ok())
-                .collect();
-            let red_marker =
-                queue_kv(e, &name, "publish-red").and_then(|kv| kv.get("head").cloned());
-            let fix_forward_live = queue_kv(e, &name, "publish-red")
-                .and_then(|kv| kv.get("bead").cloned())
-                .is_some_and(|bead| {
-                    super::super::queue_step::edge::lc(e)
-                        .answer(&["show", &bead])
-                        .ok()
-                        .is_some_and(|o| super::fix_forward_live(&o))
-                });
-            let stopped =
-                spira_config::scoped_stop::stop_for(&e.world.run_dir, &name, "publish").is_some();
-            snap.repos.insert(
-                name.clone(),
-                Repo {
-                    mode: "queue.local".into(),
-                    publish_mode: publish_mode.into(),
-                    unpublished: target.is_none(),
-                    stopped,
-                    publish_rec,
-                    pr,
-                    open_publish_prs,
-                    forge_sha,
-                    head_sha,
-                    diverged,
-                    red_marker,
-                    fix_forward_live,
-                    round_holds_hypervisor: holds,
-                    observed_at: spira_config::vtime::now_epoch(),
-                },
-            );
+            let open_publish_prs = forge_call(&dir, "pr-list-open", &[], None)?.stdout().unwrap_or_default().lines().filter_map(|l| l.split_once(' ')).filter(|(_, b)| b.starts_with("spira/publish/")).filter_map(|(n, _)| n.trim_start_matches('#').parse().ok()).collect();
+            let red_marker = queue_kv(e, &name, "publish-red").and_then(|kv| kv.get("head").cloned());
+            let fix_forward_live = queue_kv(e, &name, "publish-red").and_then(|kv| kv.get("bead").cloned()).is_some_and(|bead| {
+                super::super::queue_step::edge::lc(e).answer(&["show", &bead]).ok().is_some_and(|o| super::fix_forward_live(&o))
+            });
+            let stopped = spira_config::scoped_stop::stop_for(&e.world.run_dir, &name, "publish").is_some();
+            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds, observed_at: spira_config::vtime::now_epoch() });
         }
         json(&snap)
     }
@@ -1265,11 +858,7 @@ pub mod edge {
         let reg = registry()?;
         let (remote, _) = target(&reg, &p.repo)?;
         let branch = format!("spira/publish/{}", spira_config::vtime::now_epoch());
-        git(
-            &root(&reg, &p.repo)?,
-            &["push", &remote, &format!("{}:refs/heads/{branch}", p.head)],
-            Duration::from_secs(55),
-        )?;
+        git(&root(&reg, &p.repo)?, &["push", &remote, &format!("{}:refs/heads/{branch}", p.head)], Duration::from_secs(55))?;
         json(&Pub { branch, ..p })
     }
 
@@ -1278,11 +867,7 @@ pub mod edge {
         let p = input(spec)?;
         let reg = registry()?;
         let (remote, branch) = target(&reg, &p.repo)?;
-        git(
-            &root(&reg, &p.repo)?,
-            &["push", &remote, &format!("{}:refs/heads/{branch}", p.head)],
-            Duration::from_secs(55),
-        )?;
+        git(&root(&reg, &p.repo)?, &["push", &remote, &format!("{}:refs/heads/{branch}", p.head)], Duration::from_secs(55))?;
         Ok("{}".into())
     }
 
@@ -1296,57 +881,22 @@ pub mod edge {
         if !pre.ok() {
             return Err(format!("pr-preflight {}: {}", p.branch, pre.err.trim()));
         }
-        let range = if p.base.is_empty() {
-            p.head.clone()
-        } else {
-            format!("{}..{}", p.base, p.head)
-        };
-        let subjects = git(
-            &dir,
-            &["log", "--format=%s", &range],
-            Duration::from_secs(10),
-        )
-        .unwrap_or_default();
+        let range = if p.base.is_empty() { p.head.clone() } else { format!("{}..{}", p.base, p.head) };
+        let subjects = git(&dir, &["log", "--format=%s", &range], Duration::from_secs(10)).unwrap_or_default();
         let body = format!("Publish queue: {} landed on the local base since the last publish, for {}.\n\nThese commits already fast-forwarded the base locally; CI here is confirmation, not the gate. A red run files a fix-forward bead — it never rolls back production.\n\n{}", p.head, p.repo, subjects.lines().map(|s| format!("- {s}\n")).collect::<String>());
-        let title = format!(
-            "publish: {} for {}",
-            &p.head[..p.head.len().min(12)],
-            p.repo
-        );
-        let r = forge_call(
-            &dir,
-            "pr-create",
-            &[&p.branch, &forge_branch, &title],
-            Some(body.trim_end().as_bytes()),
-        )?;
+        let title = format!("publish: {} for {}", &p.head[..p.head.len().min(12)], p.repo);
+        let r = forge_call(&dir, "pr-create", &[&p.branch, &forge_branch, &title], Some(body.trim_end().as_bytes()))?;
         if !r.ok() {
-            return Err(format!(
-                "pr-create {}: rc={}: {}",
-                p.branch,
-                r.code,
-                r.err.trim()
-            ));
+            return Err(format!("pr-create {}: rc={}: {}", p.branch, r.code, r.err.trim()));
         }
-        let pr = r
-            .out
-            .trim()
-            .trim_start_matches('#')
-            .parse()
-            .map_err(|_| format!("forge returned no PR number for {}", p.branch))?;
+        let pr = r.out.trim().trim_start_matches('#').parse().map_err(|_| format!("forge returned no PR number for {}", p.branch))?;
         json(&Created { pr })
     }
 
     pub fn pr_close(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let p = input(spec)?;
-        let r = forge_call(
-            &root(&registry()?, &p.repo)?,
-            "pr-close",
-            &[&p.pr.to_string()],
-            None,
-        )?;
-        r.ok()
-            .then(|| "{}".to_string())
-            .ok_or_else(|| format!("pr-close {}: {}", p.pr, r.err.trim()))
+        let r = forge_call(&root(&registry()?, &p.repo)?, "pr-close", &[&p.pr.to_string()], None)?;
+        r.ok().then(|| "{}".to_string()).ok_or_else(|| format!("pr-close {}: {}", p.pr, r.err.trim()))
     }
 
     /// Removes the record only while it still names `p.pr`, under the queue lock: a missing record
@@ -1356,103 +906,49 @@ pub mod edge {
         let p = input(spec)?;
         let _held = match queue::lock::try_lock_as(&e.world.queue_dir, &p.repo, "publish.retire") {
             Acquire::Held(g) => g,
-            Acquire::Busy => {
-                return Err(format!(
-                    "{}: another queue operation holds the lock",
-                    p.repo
-                ))
-            }
+            Acquire::Busy => return Err(format!("{}: another queue operation holds the lock", p.repo)),
             Acquire::Unopenable => return Err(format!("{}: cannot open the queue lock", p.repo)),
         };
         let path = e.world.queue_dir.join(&p.repo).join("publish");
-        let Some(kv) = queue::records::read_kv(&path)? else {
-            return Ok("{}".into());
-        };
+        let Some(kv) = queue::records::read_kv(&path)? else { return Ok("{}".into()) };
         if kv.get("pr").map(|v| v.trim_start_matches('#')) != Some(p.pr.to_string().as_str()) {
             return Ok("{}".into());
         }
-        std::fs::remove_file(&path)
-            .map_err(|e| format!("{}: cannot remove the publish record: {e}", p.repo))?;
-        queue::ops::landing_log(
-            &e.world.run_dir,
-            &format!(
-                "QUEUE PUBLISH_SUPERSEDED {} repo={} pr={} action={}",
-                spira_config::vtime::now_epoch(),
-                p.repo,
-                p.pr,
-                p.subject
-            ),
-        );
+        std::fs::remove_file(&path).map_err(|e| format!("{}: cannot remove the publish record: {e}", p.repo))?;
+        queue::ops::landing_log(&e.world.run_dir, &format!("QUEUE PUBLISH_SUPERSEDED {} repo={} pr={} action={}", spira_config::vtime::now_epoch(), p.repo, p.pr, p.subject));
         Ok("{}".into())
     }
 
     pub fn cancel_runs(_: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let p = input(spec)?;
         let dir = root(&registry()?, &p.repo)?;
-        queue::ops::helpers::cancel_branch_runs(&forge()?, &dir, &p.branch, "publish")
-            .then(|| "{}".to_string())
-            .ok_or_else(|| format!("{}: not every run on {} was cancelled", p.repo, p.branch))
+        queue::ops::helpers::cancel_branch_runs(&forge()?, &dir, &p.branch, "publish").then(|| "{}".to_string()).ok_or_else(|| format!("{}: not every run on {} was cancelled", p.repo, p.branch))
     }
 
     /// The publish branch's run, re-run once; the record then says `rerun=1`.
     pub fn rerun(e: &Effects, _: &str, spec: &EffectSpec) -> Result<String, String> {
         let p = input(spec)?;
         let dir = root(&registry()?, &p.repo)?;
-        rerun_with(
-            &|verb, args| forge_call(&dir, verb, args, None),
-            &e.world.queue_dir,
-            &e.world.run_dir,
-            &p,
-        )?;
+        rerun_with(&|verb, args| forge_call(&dir, verb, args, None), &e.world.queue_dir, &e.world.run_dir, &p)?;
         Ok("{}".into())
     }
 
     pub type ForgeCall<'a> = &'a dyn Fn(&str, &[&str]) -> Result<forge::client::Reply, String>;
 
     /// `rerun` over any forge call: one `landing.log` line for the re-run started, or refused.
-    pub fn rerun_with(
-        call: ForgeCall,
-        queue_dir: &std::path::Path,
-        run_dir: &std::path::Path,
-        p: &Pub,
-    ) -> Result<(), String> {
+    pub fn rerun_with(call: ForgeCall, queue_dir: &std::path::Path, run_dir: &std::path::Path, p: &Pub) -> Result<(), String> {
         let refuse = |run: &str, why: String| {
-            queue::ops::landing_log(
-                run_dir,
-                &format!(
-                    "QUEUE PUBLISH_RERUN_REFUSED {} repo={} pr={} run={run} why={why}",
-                    spira_config::vtime::now_epoch(),
-                    p.repo,
-                    p.pr
-                ),
-            );
+            queue::ops::landing_log(run_dir, &format!("QUEUE PUBLISH_RERUN_REFUSED {} repo={} pr={} run={run} why={why}", spira_config::vtime::now_epoch(), p.repo, p.pr));
             Err(why)
         };
         let run = match call("run-id", &[&p.branch]) {
-            Ok(r) => r
-                .stdout()
-                .map(|o| o.trim().to_string())
-                .filter(|r| !r.is_empty()),
+            Ok(r) => r.stdout().map(|o| o.trim().to_string()).filter(|r| !r.is_empty()),
             Err(e) => return refuse("none", e.lines().next().unwrap_or("").into()),
         };
-        let Some(run) = run else {
-            return refuse("none", format!("no run on {}", p.branch));
-        };
-        let status = call("check-status", &[&p.branch])
-            .ok()
-            .and_then(|r| r.stdout())
-            .unwrap_or_default();
-        let field = |key: &str| {
-            status
-                .lines()
-                .find_map(|l| l.strip_prefix(key))
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        };
-        let (cause, market) = (
-            field("runner-lost: ").unwrap_or_else(|| "untested".into()),
-            field("runner-market: ").unwrap_or_else(|| "unknown".into()),
-        );
+        let Some(run) = run else { return refuse("none", format!("no run on {}", p.branch)) };
+        let status = call("check-status", &[&p.branch]).ok().and_then(|r| r.stdout()).unwrap_or_default();
+        let field = |key: &str| status.lines().find_map(|l| l.strip_prefix(key)).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let (cause, market) = (field("runner-lost: ").unwrap_or_else(|| "untested".into()), field("runner-market: ").unwrap_or_else(|| "unknown".into()));
         let r = match call("workflow-rerun", &[&run]) {
             Ok(r) => r,
             Err(e) => return refuse(&run, e.lines().next().unwrap_or("").into()),
@@ -1461,15 +957,7 @@ pub mod edge {
             let first = r.err.lines().next().unwrap_or("").trim();
             return refuse(&run, format!("code={} {first}", r.code));
         }
-        queue::ops::landing_log(
-            run_dir,
-            &format!(
-                "QUEUE PUBLISH_RERUN {} repo={} pr={} run={run} cause={cause} market={market}",
-                spira_config::vtime::now_epoch(),
-                p.repo,
-                p.pr
-            ),
-        );
+        queue::ops::landing_log(run_dir, &format!("QUEUE PUBLISH_RERUN {} repo={} pr={} run={run} cause={cause} market={market}", spira_config::vtime::now_epoch(), p.repo, p.pr));
         write_record(queue_dir, p, None, spira_config::vtime::now_epoch())
     }
 
@@ -1498,93 +986,36 @@ pub mod edge {
                 adopted(&dir, &remote, &forge_branch, &mut p)?;
             }
             let members = range_members(e, &dir, &p.base, &p.head)?;
-            Some(Fresh {
-                remote,
-                forge_branch,
-                members,
-            })
+            Some(Fresh { remote, forge_branch, members })
         } else {
             None
         };
-        write_record(
-            &e.world.queue_dir,
-            &p,
-            fresh.as_ref(),
-            spira_config::vtime::now_epoch(),
-        )?;
+        write_record(&e.world.queue_dir, &p, fresh.as_ref(), spira_config::vtime::now_epoch())?;
         Ok("{}".into())
     }
 
     /// The adopted PR's branch from the forge's open list, and its head and base as the remote
     /// holds them (`adopt_forge_publish`).
-    fn adopted(
-        dir: &std::path::Path,
-        remote: &str,
-        forge_branch: &str,
-        p: &mut Pub,
-    ) -> Result<(), String> {
-        let listed = forge_call(dir, "pr-list-open", &[], None)?
-            .stdout()
-            .unwrap_or_default();
-        p.branch = listed
-            .lines()
-            .filter_map(|l| l.split_once(' '))
-            .find(|(n, _)| n.trim_start_matches('#').parse::<u64>() == Ok(p.pr))
-            .map(|(_, b)| b.trim().to_string())
-            .ok_or_else(|| format!("{}: PR {} is not among the forge's open PRs", p.repo, p.pr))?;
+    fn adopted(dir: &std::path::Path, remote: &str, forge_branch: &str, p: &mut Pub) -> Result<(), String> {
+        let listed = forge_call(dir, "pr-list-open", &[], None)?.stdout().unwrap_or_default();
+        p.branch = listed.lines().filter_map(|l| l.split_once(' ')).find(|(n, _)| n.trim_start_matches('#').parse::<u64>() == Ok(p.pr)).map(|(_, b)| b.trim().to_string()).ok_or_else(|| format!("{}: PR {} is not among the forge's open PRs", p.repo, p.pr))?;
         for b in [p.branch.as_str(), forge_branch] {
-            git(
-                dir,
-                &["fetch", "--quiet", remote, b],
-                Duration::from_secs(30),
-            )?;
+            git(dir, &["fetch", "--quiet", remote, b], Duration::from_secs(30))?;
         }
-        p.head = git(
-            dir,
-            &["rev-parse", &format!("refs/remotes/{remote}/{}", p.branch)],
-            Duration::from_secs(10),
-        )?;
-        p.base = git(
-            dir,
-            &[
-                "rev-parse",
-                &format!("refs/remotes/{remote}/{forge_branch}"),
-            ],
-            Duration::from_secs(10),
-        )?;
+        p.head = git(dir, &["rev-parse", &format!("refs/remotes/{remote}/{}", p.branch)], Duration::from_secs(10))?;
+        p.base = git(dir, &["rev-parse", &format!("refs/remotes/{remote}/{forge_branch}")], Duration::from_secs(10))?;
         Ok(())
     }
 
     /// The members of base..head: land commits, and beads the store records LANDED at a tip in
     /// the range (queue's `range_members`).
-    fn range_members(
-        e: &Effects,
-        dir: &std::path::Path,
-        base: &str,
-        head: &str,
-    ) -> Result<Vec<queue::model::Member>, String> {
+    fn range_members(e: &Effects, dir: &std::path::Path, base: &str, head: &str) -> Result<Vec<queue::model::Member>, String> {
         use queue::ports::Lc as _;
-        let range = if base.is_empty() {
-            head.to_string()
-        } else {
-            format!("{base}..{head}")
-        };
-        let commits = queue::publish_range::parse_log(&git(
-            dir,
-            &["log", "-z", "--format=%H%x1f%P%x1f%s", &range],
-            Duration::from_secs(10),
-        )?);
-        let lc = queue::real::RealLc {
-            bin: None,
-            client: Some(super::super::queue_step::edge::lc(e)),
-        };
+        let range = if base.is_empty() { head.to_string() } else { format!("{base}..{head}") };
+        let commits = queue::publish_range::parse_log(&git(dir, &["log", "-z", "--format=%H%x1f%P%x1f%s", &range], Duration::from_secs(10))?);
+        let lc = queue::real::RealLc { bin: None, client: Some(super::super::queue_step::edge::lc(e)) };
         let ok = |args: &[&str]| git(dir, args, Duration::from_secs(10)).is_ok();
-        let in_range = |t: &str| {
-            queue::ident::check("tip", t).is_ok()
-                && ok(&["cat-file", "-e", &format!("{t}^{{commit}}")])
-                && ok(&["merge-base", "--is-ancestor", t, head])
-                && (base.is_empty() || !ok(&["merge-base", "--is-ancestor", t, base]))
-        };
+        let in_range = |t: &str| queue::ident::check("tip", t).is_ok() && ok(&["cat-file", "-e", &format!("{t}^{{commit}}")]) && ok(&["merge-base", "--is-ancestor", t, head]) && (base.is_empty() || !ok(&["merge-base", "--is-ancestor", t, base]));
         members_of(&commits, |ids| lc.bead_rows_of(ids), &in_range)
     }
 
@@ -1593,10 +1024,7 @@ pub mod edge {
         rows_of: impl Fn(&[String]) -> Result<Vec<queue::model::LcBeadRow>, String>,
         in_range: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<queue::model::Member>, String> {
-        let rows = rows_of(&queue::publish_range::candidate_ids(commits))?
-            .into_iter()
-            .map(|r| (r.bead_id.clone(), r))
-            .collect();
+        let rows = rows_of(&queue::publish_range::candidate_ids(commits))?.into_iter().map(|r| (r.bead_id.clone(), r)).collect();
         Ok(queue::publish_range::members(commits, &rows, in_range))
     }
 
@@ -1607,30 +1035,10 @@ pub mod edge {
         #[test_id(tj1ei7q)]
         #[test]
         fn hand_landed_beads_are_members_of_the_range() {
-            let commit = |sha: &str, subject: &str| queue::model::RangeCommit {
-                sha: sha.into(),
-                parents: vec!["p".into()],
-                subject: subject.into(),
-            };
-            let row = |id: &str, tip: &str| queue::model::LcBeadRow {
-                bead_id: id.into(),
-                state: "LANDED".into(),
-                tip: Some(tip.into()),
-                since: Some(1),
-                blocked_by: Vec::new(),
-                reason: None,
-                holds: Vec::new(),
-                stack: Default::default(),
-                ejected_red_tip: None,
-                holder: None,
-            };
+            let commit = |sha: &str, subject: &str| queue::model::RangeCommit { sha: sha.into(), parents: vec!["p".into()], subject: subject.into() };
+            let row = |id: &str, tip: &str| queue::model::LcBeadRow { bead_id: id.into(), state: "LANDED".into(), tip: Some(tip.into()), since: Some(1), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Default::default(), ejected_red_tip: None, holder: None };
             let commits = [commit("c2", "sp-b: x"), commit("c1", "sp-a: y")];
-            let got = members_of(
-                &commits,
-                |_| Ok(vec![row("sp-a", "c1"), row("sp-b", "c2")]),
-                &|_| true,
-            )
-            .unwrap();
+            let got = members_of(&commits, |_| Ok(vec![row("sp-a", "c1"), row("sp-b", "c2")]), &|_| true).unwrap();
             let got: Vec<_> = got.iter().map(|m| m.render()).collect();
             assert_eq!(got, vec!["sp-a:c1", "sp-b:c2"]);
         }
@@ -1647,31 +1055,12 @@ pub mod edge {
     /// The record written under `queue_dir/<repo>/publish`: whole when `p.record` is empty (a
     /// new PR) or names an adoption, from `fresh`; else `p.record`'s fields set on the record
     /// there, the rest kept.
-    pub fn write_record(
-        queue_dir: &std::path::Path,
-        p: &Pub,
-        fresh: Option<&Fresh>,
-        opened: u64,
-    ) -> Result<(), String> {
+    pub fn write_record(queue_dir: &std::path::Path, p: &Pub, fresh: Option<&Fresh>, opened: u64) -> Result<(), String> {
         let path = queue_dir.join(&p.repo).join("publish");
         let rec = if p.record.is_empty() || p.record.contains_key("adopt") {
-            let f = fresh.ok_or_else(|| {
-                format!(
-                    "{}: a new publish record needs its remote, forge branch and members",
-                    p.repo
-                )
-            })?;
+            let f = fresh.ok_or_else(|| format!("{}: a new publish record needs its remote, forge branch and members", p.repo))?;
             let mut rec = queue::records::Kv::default();
-            for (k, v) in [
-                ("pr", p.pr.to_string()),
-                ("head", p.head.clone()),
-                ("base", p.base.clone()),
-                ("members", queue::model::render_members(&f.members)),
-                ("opened", opened.to_string()),
-                ("branch", p.branch.clone()),
-                ("remote", f.remote.clone()),
-                ("forge_branch", f.forge_branch.clone()),
-            ] {
+            for (k, v) in [("pr", p.pr.to_string()), ("head", p.head.clone()), ("base", p.base.clone()), ("members", queue::model::render_members(&f.members)), ("opened", opened.to_string()), ("branch", p.branch.clone()), ("remote", f.remote.clone()), ("forge_branch", f.forge_branch.clone())] {
                 rec.push(k, &v);
             }
             rec
@@ -1697,10 +1086,7 @@ pub mod edge {
     }
 
     fn waits(why: impl Into<String>) -> Result<String, String> {
-        json(&Settled {
-            settled: false,
-            why: why.into(),
-        })
+        json(&Settled { settled: false, why: why.into() })
     }
 
     /// queue's `settle_publish`, green half, under the queue lock: the record's PR open and its CI
@@ -1716,38 +1102,22 @@ pub mod edge {
             Acquire::Unopenable => return Err(format!("{}: cannot open the queue lock", p.repo)),
         };
         let qdir = e.world.queue_dir.join(&p.repo);
-        let Some(kv) = queue::records::read_kv(&qdir.join("publish"))? else {
-            return waits("no publish record");
-        };
+        let Some(kv) = queue::records::read_kv(&qdir.join("publish"))? else { return waits("no publish record") };
         if let Some(f) = queue::ops::verdict::publish_record_missing(&kv) {
-            return Err(format!(
-                "{}: the publish record has no {f} — left for a hand look",
-                p.repo
-            ));
+            return Err(format!("{}: the publish record has no {f} — left for a hand look", p.repo));
         }
         let field = |k: &str| kv.get(k).unwrap_or_default().to_string();
-        let (pr, head, branch, remote, forge_branch) = (
-            field("pr"),
-            field("head"),
-            field("branch"),
-            field("remote"),
-            field("forge_branch"),
-        );
+        let (pr, head, branch, remote, forge_branch) = (field("pr"), field("head"), field("branch"), field("remote"), field("forge_branch"));
         if pr.trim_start_matches('#') != p.pr.to_string() {
             return waits(format!("the record names PR {pr}, not {}", p.pr));
         }
         let dir = root(&registry()?, &p.repo)?;
-        let state = forge_call(&dir, "pr-state", &[&pr], None)?
-            .stdout()
-            .unwrap_or_default();
+        let state = forge_call(&dir, "pr-state", &[&pr], None)?.stdout().unwrap_or_default();
         if !state.trim().eq_ignore_ascii_case("open") {
             return waits(format!("PR {pr} is {}", state.trim()));
         }
-        let status = forge_call(&dir, "check-status", &[&pr, &branch], None)?
-            .stdout()
-            .unwrap_or_default();
-        let ci = queue::ops::verdict::normalize_status(status.lines().next().unwrap_or("").trim())
-            .to_string();
+        let status = forge_call(&dir, "check-status", &[&pr, &branch], None)?.stdout().unwrap_or_default();
+        let ci = queue::ops::verdict::normalize_status(status.lines().next().unwrap_or("").trim()).to_string();
         if ci != "green" {
             return waits(format!("PR {pr} CI is {ci}"));
         }
@@ -1756,38 +1126,14 @@ pub mod edge {
         for f in ["publish", "publish-red-streak", "publish-fault-retries"] {
             let _ = std::fs::remove_file(qdir.join(f));
         }
-        queue::ops::landing_log(
-            &e.world.run_dir,
-            &format!(
-                "QUEUE PUBLISH_GREEN {} repo={} pr={pr} head={head}",
-                spira_config::vtime::now_epoch(),
-                p.repo
-            ),
-        );
-        json(&Settled {
-            settled: true,
-            why: if closed.ok() {
-                String::new()
-            } else {
-                format!("merged; pr-close {pr}: {}", closed.err.trim())
-            },
-        })
+        queue::ops::landing_log(&e.world.run_dir, &format!("QUEUE PUBLISH_GREEN {} repo={} pr={pr} head={head}", spira_config::vtime::now_epoch(), p.repo));
+        json(&Settled { settled: true, why: if closed.ok() { String::new() } else { format!("merged; pr-close {pr}: {}", closed.err.trim()) } })
     }
 
     pub fn notify(e: &Effects, k: &str, spec: &EffectSpec) -> Result<String, String> {
         let p = input(spec)?;
-        let s = super::super::queue_step::Step {
-            repo: p.repo,
-            subject: p.subject,
-            body: p.body,
-            ..Default::default()
-        };
-        let spec = EffectSpec::keyed(
-            spec.name.clone(),
-            spec.key.clone(),
-            serde_json::to_string(&s).map_err(|e| e.to_string())?,
-            spec.deadline_ms,
-        );
+        let s = super::super::queue_step::Step { repo: p.repo, subject: p.subject, body: p.body, ..Default::default() };
+        let spec = EffectSpec::keyed(spec.name.clone(), spec.key.clone(), serde_json::to_string(&s).map_err(|e| e.to_string())?, spec.deadline_ms);
         super::super::queue_step::edge::notify(e, k, &spec)
     }
 }
@@ -1796,8 +1142,5 @@ pub mod edge {
 /// row in any terminal state (LANDED, SUPERSEDED, DROPPED, DONE) is not, so the red is filed
 /// again; an unreadable answer or no row is not live either.
 pub fn fix_forward_live(show_json: &str) -> bool {
-    spira_store::lc_state::parse_show(show_json)
-        .ok()
-        .flatten()
-        .is_some_and(|r| !r.terminal())
+    spira_store::lc_state::parse_show(show_json).ok().flatten().is_some_and(|r| !r.terminal())
 }

@@ -7,14 +7,12 @@
 use std::collections::BTreeMap;
 
 use reconciler_engine::alert::{compose_alert, should_alert};
-use reconciler_engine::core::{step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::effect::is_shadowed;
+use reconciler_engine::core::{step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{status_record, AlertedSinceMap, StateMap};
 use reconciler_flow::core::{
-    backlog_trend_raw, dwell_raw, dwell_regression_raw, idle_capacity_raw, rework_raw,
-    round_health_raw, sentinel_overrun_raw, velocity_raw, BacklogObserved, BindingLimit,
-    DwellObserved, DwellRegressionObserved, ReworkObserved, RoundHealthObserved, SlotsSample,
-    VelocityObserved, DWELL_REGRESSION_STATES,
+    backlog_trend_raw, dwell_raw, dwell_regression_raw, idle_capacity_raw, BindingLimit, round_health_raw, rework_raw, sentinel_overrun_raw, velocity_raw, BacklogObserved, DwellObserved, DwellRegressionObserved,
+    ReworkObserved, RoundHealthObserved, SlotsSample, VelocityObserved, DWELL_REGRESSION_STATES,
 };
 use runtime::event::*;
 use runtime::rows::Part;
@@ -32,16 +30,7 @@ pub const MAIL: &str = "reconciler-flow.mail";
 pub const STATUS: &str = "reconciler-flow.status";
 pub const NAME: &str = "reconciler-flow";
 
-const ROW_PARTS: &[Part] = &[
-    Part::Map {
-        name: "state",
-        drop: &[],
-    },
-    Part::Map {
-        name: "alerted",
-        drop: &[],
-    },
-];
+const ROW_PARTS: &[Part] = &[Part::Map { name: "state", drop: &[] }, Part::Map { name: "alerted", drop: &[] }];
 
 const OBSERVE_DEADLINE_MS: u64 = 120_000;
 const ACT_DEADLINE_MS: u64 = 30_000;
@@ -78,23 +67,13 @@ pub struct Slots {
 
 impl From<SlotsSample> for Slots {
     fn from(s: SlotsSample) -> Slots {
-        Slots {
-            live: s.live,
-            ceiling: s.ceiling,
-            ready: s.ready,
-            capacity_paused: s.capacity_paused,
-        }
+        Slots { live: s.live, ceiling: s.ceiling, ready: s.ready, capacity_paused: s.capacity_paused }
     }
 }
 
 impl From<Slots> for SlotsSample {
     fn from(s: Slots) -> SlotsSample {
-        SlotsSample {
-            live: s.live,
-            ceiling: s.ceiling,
-            ready: s.ready,
-            capacity_paused: s.capacity_paused,
-        }
+        SlotsSample { live: s.live, ceiling: s.ceiling, ready: s.ready, capacity_paused: s.capacity_paused }
     }
 }
 
@@ -129,18 +108,7 @@ pub struct FlowSnapshot {
 impl FlowSnapshot {
     pub fn halted(now: u64) -> FlowSnapshot {
         let halted = || "world is halted".to_string();
-        FlowSnapshot {
-            now,
-            halted: true,
-            export: Err(halted()),
-            velocity_floor: None,
-            dwell_limit: None,
-            backlog: Err(halted()),
-            baseline: Err(halted()),
-            stage: Err(halted()),
-            slots: Err(halted()),
-            sentinel: Err(halted()),
-        }
+        FlowSnapshot { now, halted: true, export: Err(halted()), velocity_floor: None, dwell_limit: None, backlog: Err(halted()), baseline: Err(halted()), stage: Err(halted()), slots: Err(halted()), sentinel: Err(halted()) }
     }
 }
 
@@ -212,16 +180,11 @@ impl Judging<'_> {
         if next != HysteresisState::default() {
             self.pass.carry.state.insert(key.to_string(), next);
         }
-        self.pass
-            .statuses
-            .push(serde_json::to_value(status_record(key, &verdict)).unwrap_or_default());
+        self.pass.statuses.push(serde_json::to_value(status_record(key, &verdict)).unwrap_or_default());
         if alert {
             self.alert(key, &verdict);
         }
-        self.pass
-            .carry
-            .words
-            .insert(key.to_string(), status_word(&verdict).to_string());
+        self.pass.carry.words.insert(key.to_string(), status_word(&verdict).to_string());
     }
 
     fn alert(&mut self, key: &str, verdict: &Verdict) {
@@ -250,111 +213,40 @@ impl Judging<'_> {
 }
 
 /// The verdicts, mails and carried state one snapshot calls for.
-pub fn judge(
-    cfg: &ReconcilerFlow,
-    now: u64,
-    carry: &Carry,
-    snap: &FlowSnapshot,
-    limit: Option<&TaskLimit>,
-) -> Pass {
-    let mut j = Judging {
-        cfg,
-        now,
-        pass: Pass {
-            carry: Carry {
-                words: BTreeMap::new(),
-                ..carry.clone()
-            },
-            statuses: vec![],
-            mails: vec![],
-            held: vec![],
-        },
-    };
+pub fn judge(cfg: &ReconcilerFlow, now: u64, carry: &Carry, snap: &FlowSnapshot, limit: Option<&TaskLimit>) -> Pass {
+    let mut j = Judging { cfg, now, pass: Pass { carry: Carry { words: BTreeMap::new(), ..carry.clone() }, statuses: vec![], mails: vec![], held: vec![] } };
 
     let backlog_raw = match (&snap.backlog, &snap.baseline) {
-        (Ok(cur), Ok(base)) => backlog_trend_raw(&BacklogObserved {
-            current: *cur,
-            baseline: *base,
-        }),
+        (Ok(cur), Ok(base)) => backlog_trend_raw(&BacklogObserved { current: *cur, baseline: *base }),
         (Err(e), _) | (_, Err(e)) => unobservable(e.clone()),
     };
     j.evaluate("flow:backlog", backlog_raw, true);
 
     let velocity_raw_status = match &snap.stage {
-        Ok(s) => velocity_raw(
-            &VelocityObserved {
-                current_per_hour: s.velocity.0,
-                baseline_per_hour: s.velocity.1,
-                waiting: s.waiting,
-            },
-            snap.velocity_floor,
-        ),
+        Ok(s) => velocity_raw(&VelocityObserved { current_per_hour: s.velocity.0, baseline_per_hour: s.velocity.1, waiting: s.waiting }, snap.velocity_floor),
         Err(e) => unobservable(e.clone()),
     };
-    j.evaluate(
-        "flow:velocity:queue",
-        fresh(&snap.export, velocity_raw_status),
-        true,
-    );
+    j.evaluate("flow:velocity:queue", fresh(&snap.export, velocity_raw_status), true);
 
     let dwell_raw_status = match &snap.stage {
-        Ok(Stage {
-            dwell: (cur_p95, cur_n, base_p95, base_n),
-            ..
-        }) => dwell_raw(
-            &DwellObserved {
-                p95_seconds: *cur_p95,
-                n: *cur_n,
-            },
-            snap.dwell_limit,
-            if *base_n > 0 { Some(*base_p95) } else { None },
-        ),
+        Ok(Stage { dwell: (cur_p95, cur_n, base_p95, base_n), .. }) => dwell_raw(&DwellObserved { p95_seconds: *cur_p95, n: *cur_n }, snap.dwell_limit, if *base_n > 0 { Some(*base_p95) } else { None }),
         Err(e) => unobservable(e.clone()),
     };
-    j.evaluate(
-        "flow:dwell:review",
-        fresh(&snap.export, dwell_raw_status),
-        true,
-    );
+    j.evaluate("flow:dwell:review", fresh(&snap.export, dwell_raw_status), true);
 
     let round_health_raw_status = match &snap.stage {
-        Ok(Stage {
-            round_health: (cur_flips, cur_transitions, base_flips, base_transitions),
-            ..
-        }) => {
-            let baseline_flip_rate = if *base_transitions > 0 {
-                *base_flips as f64 / *base_transitions as f64
-            } else {
-                0.0
-            };
-            round_health_raw(&RoundHealthObserved {
-                flips: *cur_flips,
-                transitions: *cur_transitions,
-                baseline_flip_rate,
-            })
+        Ok(Stage { round_health: (cur_flips, cur_transitions, base_flips, base_transitions), .. }) => {
+            let baseline_flip_rate = if *base_transitions > 0 { *base_flips as f64 / *base_transitions as f64 } else { 0.0 };
+            round_health_raw(&RoundHealthObserved { flips: *cur_flips, transitions: *cur_transitions, baseline_flip_rate })
         }
         Err(e) => unobservable(e.clone()),
     };
-    j.evaluate(
-        "flow:round-health",
-        fresh(&snap.export, round_health_raw_status),
-        true,
-    );
+    j.evaluate("flow:round-health", fresh(&snap.export, round_health_raw_status), true);
 
     let idle_raw_status = match (&snap.slots, limit) {
         (Err(e), _) => unobservable(e.clone()),
-        (Ok(_), None) => {
-            unobservable("the scheduler has not judged its task limit yet".to_string())
-        }
-        (Ok((prev, cur)), Some(t)) => idle_capacity_raw(
-            &(*prev).into(),
-            &(*cur).into(),
-            &BindingLimit {
-                name: t.name.clone(),
-                limit: t.limit.max(0) as u64,
-                held: t.held.max(0) as u64,
-            },
-        ),
+        (Ok(_), None) => unobservable("the scheduler has not judged its task limit yet".to_string()),
+        (Ok((prev, cur)), Some(t)) => idle_capacity_raw(&(*prev).into(), &(*cur).into(), &BindingLimit { name: t.name.clone(), limit: t.limit.max(0) as u64, held: t.held.max(0) as u64 }),
     };
     j.evaluate("flow:idle-capacity", idle_raw_status, true);
 
@@ -365,17 +257,8 @@ pub fn judge(
     j.evaluate("flow:sentinel-overrun", sentinel_raw_status, true);
 
     match &snap.stage {
-        Ok(Stage {
-            rework: (reopens, landed, history_hours),
-            ..
-        }) => {
-            let raw = fresh(
-                &snap.export,
-                rework_raw(&ReworkObserved {
-                    reopens: *reopens,
-                    landed: *landed,
-                }),
-            );
+        Ok(Stage { rework: (reopens, landed, history_hours), .. }) => {
+            let raw = fresh(&snap.export, rework_raw(&ReworkObserved { reopens: *reopens, landed: *landed }));
             j.evaluate("flow:rework", raw, *history_hours >= cfg.baseline_hours);
         }
         Err(e) => j.evaluate("flow:rework", unobservable(e.clone()), true),
@@ -386,18 +269,8 @@ pub fn judge(
         let raw = match &snap.stage {
             Ok(s) => {
                 let observed = match s.regression.iter().find(|(name, ..)| name == state_name) {
-                    Some((_, p90, n, base_p90, base_n)) => DwellRegressionObserved {
-                        p90_seconds: *p90,
-                        n: *n,
-                        baseline_p90_seconds: *base_p90,
-                        baseline_n: *base_n,
-                    },
-                    None => DwellRegressionObserved {
-                        p90_seconds: 0.0,
-                        n: 0,
-                        baseline_p90_seconds: 0.0,
-                        baseline_n: 0,
-                    },
+                    Some((_, p90, n, base_p90, base_n)) => DwellRegressionObserved { p90_seconds: *p90, n: *n, baseline_p90_seconds: *base_p90, baseline_n: *base_n },
+                    None => DwellRegressionObserved { p90_seconds: 0.0, n: 0, baseline_p90_seconds: 0.0, baseline_n: 0 },
                 };
                 fresh(&snap.export, dwell_regression_raw(&observed))
             }
@@ -418,13 +291,7 @@ impl ReconcilerFlow {
     }
 
     fn params(&self, now: u64) -> Params {
-        Params {
-            now,
-            window_hours: self.window_hours,
-            baseline_hours: self.baseline_hours,
-            rework_window_hours: self.rework_window_hours,
-            sentinel_timer_secs: self.sentinel_timer_secs,
-        }
+        Params { now, window_hours: self.window_hours, baseline_hours: self.baseline_hours, rework_window_hours: self.rework_window_hours, sentinel_timer_secs: self.sentinel_timer_secs }
     }
 }
 
@@ -440,15 +307,8 @@ impl Handler for ReconcilerFlow {
         if ev.kind.tag == TICK {
             let now = ev.at / 1000;
             return vec![
-                Command::Probe(EffectSpec::probe(
-                    OBSERVE,
-                    serde_json::to_string(&self.params(now)).unwrap_or_default(),
-                    OBSERVE_DEADLINE_MS,
-                )),
-                Command::Timer {
-                    at: ev.at + self.interval_ms,
-                    kind: EventKind::new(TICK, ""),
-                },
+                Command::Probe(EffectSpec::probe(OBSERVE, serde_json::to_string(&self.params(now)).unwrap_or_default(), OBSERVE_DEADLINE_MS)),
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) {
@@ -462,38 +322,20 @@ impl Handler for ReconcilerFlow {
         }
         let now = snap.now;
         let carry: Carry = super::carried(view, &ev.stream, STATE);
-        let called: crate::tasks::a::sentinel_call::Carry =
-            crate::tasks::a::kit::carry(&crate::tasks::a::sentinel_call::SHAPE, view);
+        let called: crate::tasks::a::sentinel_call::Carry = crate::tasks::a::kit::carry(&crate::tasks::a::sentinel_call::SHAPE, view);
         let pass = judge(self, now, &carry, &snap, called.task_limit.as_ref());
-        ctx.event()
-            .set("reconciler_flow.mails", pass.mails.len() as u64);
-        ctx.event()
-            .set("reconciler_flow.held", pass.held.len() as u64);
+        ctx.event().set("reconciler_flow.mails", pass.mails.len() as u64);
+        ctx.event().set("reconciler_flow.held", pass.held.len() as u64);
         let mut cmds = vec![];
         if pass.carry != carry {
-            cmds.push(Command::Emit(EventKind::new(
-                STATE,
-                &serde_json::to_string(&pass.carry).unwrap_or_default(),
-            )));
+            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&pass.carry).unwrap_or_default())));
         }
         for m in &pass.mails {
             let input = serde_json::to_string(m).unwrap_or_default();
-            cmds.push(Command::Effect(EffectSpec::keyed(
-                MAIL,
-                format!("{NAME}:mail:{now}:{:016x}", runtime::event::fnv1a(&input)),
-                input,
-                ACT_DEADLINE_MS,
-            )));
+            cmds.push(Command::Effect(EffectSpec::keyed(MAIL, format!("{NAME}:mail:{now}:{:016x}", runtime::event::fnv1a(&input)), input, ACT_DEADLINE_MS)));
         }
-        let statuses = Statuses {
-            ts: super::iso8601(now),
-            rows: pass.statuses,
-        };
-        cmds.push(Command::Probe(EffectSpec::probe(
-            STATUS,
-            serde_json::to_string(&statuses).unwrap_or_default(),
-            ACT_DEADLINE_MS,
-        )));
+        let statuses = Statuses { ts: super::iso8601(now), rows: pass.statuses };
+        cmds.push(Command::Probe(EffectSpec::probe(STATUS, serde_json::to_string(&statuses).unwrap_or_default(), ACT_DEADLINE_MS)));
         cmds
     }
 }
@@ -503,16 +345,7 @@ mod tests {
     use super::*;
 
     fn cfg() -> ReconcilerFlow {
-        ReconcilerFlow {
-            interval_ms: 1_800_000,
-            window_hours: 0.5,
-            baseline_hours: 24.0,
-            grace_secs: 1800,
-            unobservable_grace_secs: 3600,
-            rework_window_hours: 6.0,
-            sentinel_timer_secs: 900,
-            shadow_kinds: vec![],
-        }
+        ReconcilerFlow { interval_ms: 1_800_000, window_hours: 0.5, baseline_hours: 24.0, grace_secs: 1800, unobservable_grace_secs: 3600, rework_window_hours: 6.0, sentinel_timer_secs: 900, shadow_kinds: vec![] }
     }
 
     fn quiet() -> FlowSnapshot {
@@ -524,28 +357,8 @@ mod tests {
             dwell_limit: None,
             backlog: Ok(10),
             baseline: Ok(10.0),
-            stage: Ok(Stage {
-                waiting: 0,
-                velocity: (1.0, 1.0),
-                dwell: (10.0, 5, 10.0, 50),
-                round_health: (0, 4, 0, 40),
-                rework: (0, 5, 30.0),
-                regression: vec![],
-            }),
-            slots: Ok((
-                Slots {
-                    live: 3,
-                    ceiling: 3,
-                    ready: 0,
-                    capacity_paused: false,
-                },
-                Slots {
-                    live: 3,
-                    ceiling: 3,
-                    ready: 0,
-                    capacity_paused: false,
-                },
-            )),
+            stage: Ok(Stage { waiting: 0, velocity: (1.0, 1.0), dwell: (10.0, 5, 10.0, 50), round_health: (0, 4, 0, 40), rework: (0, 5, 30.0), regression: vec![] }),
+            slots: Ok((Slots { live: 3, ceiling: 3, ready: 0, capacity_paused: false }, Slots { live: 3, ceiling: 3, ready: 0, capacity_paused: false })),
             sentinel: Ok(10),
         }
     }
@@ -557,56 +370,31 @@ mod tests {
         assert!(first.mails.is_empty());
         assert_eq!(first.statuses.len(), 12);
         let second = judge(&cfg(), 2_800, &first.carry, &quiet(), None);
-        assert_eq!(
-            second.carry, first.carry,
-            "a pass whose verdicts did not change carries the same state"
-        );
+        assert_eq!(second.carry, first.carry, "a pass whose verdicts did not change carries the same state");
     }
 
     fn stalled() -> FlowSnapshot {
         let mut snap = quiet();
         snap.velocity_floor = Some(5.0);
-        snap.stage = Ok(Stage {
-            waiting: 3,
-            velocity: (1.0, 1.0),
-            round_health: (10, 20, 0, 40),
-            ..match quiet().stage {
-                Ok(s) => s,
-                Err(_) => unreachable!(),
-            }
-        });
+        snap.stage = Ok(Stage { waiting: 3, velocity: (1.0, 1.0), round_health: (10, 20, 0, 40), ..match quiet().stage { Ok(s) => s, Err(_) => unreachable!() } });
         snap
     }
 
     #[test_id(tqzurvl)]
     #[test]
-    fn a_shadowed_velocity_or_round_health_gap_is_held_not_mailed_and_an_unshadowed_one_is_mailed()
-    {
+    fn a_shadowed_velocity_or_round_health_gap_is_held_not_mailed_and_an_unshadowed_one_is_mailed() {
         let subjects = |m: &[Mail]| m.iter().map(|m| m.subject.clone()).collect::<Vec<_>>();
-        let both = vec![
-            "RECONCILER: flow gap — flow:velocity:queue".to_string(),
-            "RECONCILER: flow gap — flow:round-health".to_string(),
-        ];
-        let live = ReconcilerFlow {
-            grace_secs: 0,
-            ..cfg()
-        };
+        let both = vec!["RECONCILER: flow gap — flow:velocity:queue".to_string(), "RECONCILER: flow gap — flow:round-health".to_string()];
+        let live = ReconcilerFlow { grace_secs: 0, ..cfg() };
         let sent = judge(&live, 1_000, &Carry::default(), &stalled(), None);
         assert_eq!(subjects(&sent.mails), both);
         assert!(sent.held.is_empty());
-        let shadowed = ReconcilerFlow {
-            shadow_kinds: vec!["flow:velocity:queue".into(), "flow:round-health".into()],
-            ..live
-        };
+        let shadowed = ReconcilerFlow { shadow_kinds: vec!["flow:velocity:queue".into(), "flow:round-health".into()], ..live };
         let held = judge(&shadowed, 1_000, &Carry::default(), &stalled(), None);
         assert!(held.mails.is_empty(), "a shadowed key sends nothing");
         assert_eq!(subjects(&held.held), both);
         let after = judge(&live, 2_000, &held.carry, &stalled(), None);
-        assert_eq!(
-            subjects(&after.mails),
-            both,
-            "a page held while shadowed is sent once the key is unshadowed"
-        );
+        assert_eq!(subjects(&after.mails), both, "a page held while shadowed is sent once the key is unshadowed");
     }
 
     #[test_id(tk3b04c)]
@@ -618,10 +406,7 @@ mod tests {
         assert!(seen.mails.is_empty(), "inside grace");
         let confirmed = judge(&cfg(), 2_900, &seen.carry, &snap, Some(&pool(6)));
         assert_eq!(confirmed.mails.len(), 1);
-        assert_eq!(
-            confirmed.mails[0].subject,
-            "RECONCILER: flow gap — flow:backlog"
-        );
+        assert_eq!(confirmed.mails[0].subject, "RECONCILER: flow gap — flow:backlog");
         let after = judge(&cfg(), 4_700, &confirmed.carry, &snap, Some(&pool(6)));
         assert!(after.mails.is_empty(), "one alert per gap streak");
     }
@@ -642,13 +427,7 @@ mod tests {
         let mut snap = quiet();
         snap.export = Err("exit 1".into());
         let p = judge(&cfg(), 1_000, &Carry::default(), &snap, None);
-        for key in [
-            "flow:velocity:queue",
-            "flow:dwell:review",
-            "flow:round-health",
-            "flow:rework",
-            "flow:dwell-regression:working",
-        ] {
+        for key in ["flow:velocity:queue", "flow:dwell:review", "flow:round-health", "flow:rework", "flow:dwell-regression:working"] {
             assert_eq!(p.carry.words[key], "unobservable", "{key}");
         }
         assert_eq!(p.carry.words["flow:backlog"], "satisfied");
@@ -658,96 +437,50 @@ mod tests {
     #[test]
     fn rework_is_report_only_until_the_history_covers_the_baseline() {
         let mut snap = quiet();
-        snap.stage = Ok(Stage {
-            rework: (50, 5, 2.0),
-            ..match quiet().stage {
-                Ok(s) => s,
-                Err(_) => unreachable!(),
-            }
-        });
-        let cfg = ReconcilerFlow {
-            grace_secs: 0,
-            ..cfg()
-        };
+        snap.stage = Ok(Stage { rework: (50, 5, 2.0), ..match quiet().stage { Ok(s) => s, Err(_) => unreachable!() } });
+        let cfg = ReconcilerFlow { grace_secs: 0, ..cfg() };
         let p = judge(&cfg, 1_000, &Carry::default(), &snap, None);
         assert_eq!(p.carry.words["flow:rework"], "gap");
         assert!(p.mails.is_empty(), "report-only while 2h of 24h exist");
     }
 
     fn waiting_on_the_pool() -> FlowSnapshot {
-        let slots = Slots {
-            live: 6,
-            ceiling: 40,
-            ready: 2,
-            capacity_paused: false,
-        };
-        FlowSnapshot {
-            slots: Ok((slots, slots)),
-            ..quiet()
-        }
+        let slots = Slots { live: 6, ceiling: 40, ready: 2, capacity_paused: false };
+        FlowSnapshot { slots: Ok((slots, slots)), ..quiet() }
     }
 
     fn pool(held: i64) -> TaskLimit {
-        TaskLimit {
-            name: "pool".into(),
-            limit: 6,
-            held,
-        }
+        TaskLimit { name: "pool".into(), limit: 6, held }
     }
 
     #[test_id(tmquww1)]
     #[test]
     fn a_full_pool_under_a_roomy_ceiling_is_not_idle() {
-        let cfg = ReconcilerFlow {
-            grace_secs: 0,
-            ..cfg()
-        };
+        let cfg = ReconcilerFlow { grace_secs: 0, ..cfg() };
         let (snap, full) = (waiting_on_the_pool(), pool(6));
         let first = judge(&cfg, 1_000, &Carry::default(), &snap, Some(&full));
         let second = judge(&cfg, 2_000, &first.carry, &snap, Some(&full));
         assert_eq!(second.carry.words["flow:idle-capacity"], "satisfied");
-        assert!(
-            first.mails.is_empty() && second.mails.is_empty(),
-            "{:?}",
-            second.mails
-        );
+        assert!(first.mails.is_empty() && second.mails.is_empty(), "{:?}", second.mails);
     }
 
     #[test_id(tvm3o78)]
     #[test]
     fn room_under_the_pool_with_work_waiting_mails_the_limit_it_compared() {
-        let cfg = ReconcilerFlow {
-            grace_secs: 0,
-            ..cfg()
-        };
+        let cfg = ReconcilerFlow { grace_secs: 0, ..cfg() };
         let (snap, room) = (waiting_on_the_pool(), pool(4));
         let first = judge(&cfg, 1_000, &Carry::default(), &snap, Some(&room));
         let second = judge(&cfg, 2_000, &first.carry, &snap, Some(&room));
-        let mails: Vec<_> = first
-            .mails
-            .iter()
-            .chain(&second.mails)
-            .filter(|m| m.subject.contains("flow:idle-capacity"))
-            .collect();
+        let mails: Vec<_> = first.mails.iter().chain(&second.mails).filter(|m| m.subject.contains("flow:idle-capacity")).collect();
         assert_eq!(mails.len(), 1, "{mails:?}");
-        assert!(
-            mails[0].body.contains("pool 6") && mails[0].body.contains("live 4"),
-            "{}",
-            mails[0].body
-        );
+        assert!(mails[0].body.contains("pool 6") && mails[0].body.contains("live 4"), "{}", mails[0].body);
         assert!(!mails[0].body.contains("ceiling"), "{}", mails[0].body);
     }
 
     #[test_id(tywfz3t)]
     #[test]
     fn idle_capacity_is_unobservable_until_the_scheduler_has_judged_its_limit() {
-        let p = judge(
-            &cfg(),
-            1_000,
-            &Carry::default(),
-            &waiting_on_the_pool(),
-            None,
-        );
+        let p = judge(&cfg(), 1_000, &Carry::default(), &waiting_on_the_pool(), None);
         assert_eq!(p.carry.words["flow:idle-capacity"], "unobservable");
     }
 }

@@ -16,9 +16,9 @@ use std::time::Duration;
 
 use batcher_cut::io::{self, Env, Hypervisor, Land, Repo};
 use serde_json::{json, Value};
+use spira_store::lc_call::{LcClient, Reply, Transport};
 use spira_runtime::tasks::a::sentinel_pass::beads_on;
 use spira_runtime::world::World;
-use spira_store::lc_call::{LcClient, Reply, Transport};
 use store_view::Projection;
 
 struct Store {
@@ -28,19 +28,8 @@ struct Store {
 
 impl Transport for Store {
     fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-        let ok = |out: String| {
-            Ok(Reply {
-                code: 0,
-                out,
-                err: String::new(),
-                read_ended: false,
-            })
-        };
-        let named = |flag: &str| {
-            argv.iter()
-                .position(|a| a == flag)
-                .map(|i| argv[i + 1].clone())
-        };
+        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
+        let named = |flag: &str| argv.iter().position(|a| a == flag).map(|i| argv[i + 1].clone());
         match argv[0].as_str() {
             "rc" => ok(json!({ "ok": { "items": [], "list_rev": 5 } }).to_string()),
             "list" if argv.iter().any(|a| a == "--batches") => {
@@ -48,28 +37,16 @@ impl Transport for Store {
                 ok("[]".into())
             }
             "list" => {
-                let terminal = |r: &Value| {
-                    matches!(
-                        r["state"].as_str(),
-                        Some("LANDED" | "SUPERSEDED" | "DROPPED" | "DONE")
-                    )
-                };
+                let terminal = |r: &Value| matches!(r["state"].as_str(), Some("LANDED" | "SUPERSEDED" | "DROPPED" | "DONE"));
                 let ids = named("--ids");
                 let live = argv.iter().any(|a| a == "--live");
                 if ids.is_some() {
-                    self.asked
-                        .lock()
-                        .unwrap()
-                        .push(format!("list --ids {}", ids.clone().unwrap_or_default()));
+                    self.asked.lock().unwrap().push(format!("list --ids {}", ids.clone().unwrap_or_default()));
                 }
                 let rows: Vec<&Value> = self
                     .rows
                     .iter()
-                    .filter(|r| {
-                        ids.as_ref().is_none_or(|ids| {
-                            ids.split(',').any(|i| Some(i) == r["bead_id"].as_str())
-                        })
-                    })
+                    .filter(|r| ids.as_ref().is_none_or(|ids| ids.split(',').any(|i| Some(i) == r["bead_id"].as_str())))
                     .filter(|r| !live || !terminal(r))
                     .collect();
                 ok(serde_json::to_string(&rows).unwrap())
@@ -88,10 +65,7 @@ impl Transport for Store {
                 ok(json!({ "pass": 1 }).to_string())
             }
             "plan" => {
-                self.asked
-                    .lock()
-                    .unwrap()
-                    .push(format!("plan {}", argv[1..].join(" ")));
+                self.asked.lock().unwrap().push(format!("plan {}", argv[1..].join(" ")));
                 if argv.get(1).map(String::as_str) == Some("edges") {
                     return ok(json!({ "edges": [] }).to_string());
                 }
@@ -104,17 +78,8 @@ impl Transport for Store {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -137,11 +102,7 @@ fn env(dir: &Path) -> Env {
         gate_bin: "gate".into(),
         test_registry_bin: None,
         round_slots: None,
-        hypervisor: Hypervisor {
-            host_mib: 0,
-            round_vm_mib: 0,
-            runner_mib: 0,
-        },
+        hypervisor: Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
         poll: Duration::from_secs(1),
         maxpar: 1,
         wall_secs: 1,
@@ -156,10 +117,7 @@ fn env(dir: &Path) -> Env {
         orphan_redrive_after: 1,
         pause_lift_after: 1,
         land_unpause: None,
-        results_retention: spira_config::results_retention::Retention {
-            keep_days: 7,
-            max: 50,
-        },
+        results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
     }
 }
 
@@ -180,48 +138,19 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
     let repo_dir = dir.path().join("alpha");
     std::fs::create_dir(&repo_dir).unwrap();
     git(&repo_dir, &["init", "-q", "-b", "main"]);
-    git(
-        &repo_dir,
-        &[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "base",
-        ],
-    );
+    git(&repo_dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base"]);
     let tip = git(&repo_dir, &["rev-parse", "HEAD"]);
     git(&repo_dir, &["branch", "spira/sp-a"]);
 
-    let store = Arc::new(Store {
-        rows: vec![
-            row("sp-a", "CERTIFIED", &tip, "{\"sp-p\":\"t0\"}"),
-            row("sp-p", "WORKING", "t0", "{}"),
-            row("sp-gone", "DONE", "t9", "{}"),
-        ],
-        asked: Mutex::new(vec![]),
-    });
+    let store = Arc::new(Store { rows: vec![row("sp-a", "CERTIFIED", &tip, "{\"sp-p\":\"t0\"}"), row("sp-p", "WORKING", "t0", "{}"), row("sp-gone", "DONE", "t9", "{}")], asked: Mutex::new(vec![]) });
     struct Shared(Arc<Store>);
     impl Transport for Shared {
-        fn exchange(
-            &self,
-            argv: &[String],
-            stdin: Option<&str>,
-            d: Duration,
-        ) -> Result<Reply, String> {
+        fn exchange(&self, argv: &[String], stdin: Option<&str>, d: Duration) -> Result<Reply, String> {
             self.0.exchange(argv, stdin, d)
         }
     }
     let frozen = Arc::new(Mutex::new(std::time::Instant::now()));
-    let views = Projection::new(
-        LcClient::over(Arc::new(Shared(store.clone())), true),
-        Duration::from_secs(30),
-        Arc::new(move || *frozen.lock().unwrap()),
-    );
+    let views = Projection::new(LcClient::over(Arc::new(Shared(store.clone())), true), Duration::from_secs(30), Arc::new(move || *frozen.lock().unwrap()));
     let _watch = spira_runtime::store::run(views).expect("the first install stands");
     let installed = store_view::shared().unwrap();
     // clock-safe: a cap on the wait for the watch thread to start
@@ -236,224 +165,58 @@ fn a_quiet_tick_of_each_task_that_read_the_store_every_tick_never_reaches_its_so
 
     let lc = LcClient::socket(&sock);
     let env = env(dir.path());
-    let repo = Repo {
-        name: "alpha".into(),
-        path: repo_dir.clone(),
-        base: "main".into(),
-        forge: "forge".into(),
-        land: Land::Local,
-    };
+    let repo = Repo { name: "alpha".into(), path: repo_dir.clone(), base: "main".into(), forge: "forge".into(), land: Land::Local };
     let map = format!("alpha|{}|queue.local|main\n", repo_dir.display());
     let reg = spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), dir.path());
-    let reads = spira_runtime::tasks::a::sift::Reads {
-        lc: &lc,
-        views: &installed,
-        reg: &reg,
-        wiki: "",
-        identity_projects: "",
-        work: dir.path().join("sift"),
-    };
+    let reads = spira_runtime::tasks::a::sift::Reads { lc: &lc, views: &installed, reg: &reg, wiki: "", identity_projects: "", work: dir.path().join("sift") };
 
     let map = dir.path().join("repos");
     std::fs::write(&map, "alpha|/x|queue.local|main\n").unwrap();
-    let world = World {
-        lc_socket: sock.clone(),
-        repo_map: map,
-        run_dir: dir.path().join("run"),
-        home_repo: "alpha".into(),
-        ..World::default()
-    };
+    let world = World { lc_socket: sock.clone(), repo_map: map, run_dir: dir.path().join("run"), home_repo: "alpha".into(), ..World::default() };
 
     let tick = || {
-        assert!(
-            beads_on(&lc, &[], &[]).is_some(),
-            "sentinel.pass reads its content rows"
-        );
+        assert!(beads_on(&lc, &[], &[]).is_some(), "sentinel.pass reads its content rows");
         let pool = io::certified_pool(&env, &repo).expect("batcher reads its pool");
-        assert_eq!(
-            pool.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            ["sp-a"]
-        );
-        assert_eq!(
-            io::lcq_held(&env, &["show-batch", "b-1"]).unwrap(),
-            json!({ "pass": 1 }).to_string(),
-            "batcher reads a round's pass"
-        );
-        spira_runtime::tasks::a::sift::observe_repo(&reads, "alpha", true)
-            .expect("sift reads its repo");
-        assert_eq!(
-            world.supersede_snapshot("{}").unwrap(),
-            json!({ "held": [] }).to_string(),
-            "supersede-duty lists the manual holds"
-        );
-        assert_eq!(
-            world.held_asks().unwrap(),
-            Vec::<String>::new(),
-            "the asks task lists the ask holds"
-        );
-        assert_eq!(
-            world.waiting_rows().unwrap().as_array().map(Vec::len),
-            Some(1),
-            "watch.throughput counts the waiting rows, a certified bead among them"
-        );
-        assert!(
-            world.sweep_snapshot().is_ok(),
-            "bead-sweep reads the live rows and the content"
-        );
-        assert!(
-            spira_runtime::reconcile_host::lc_read(
-                &sock,
-                &["list", "--batches", "--window", "86400"]
-            )
-            .is_ok(),
-            "watch.throughput reads the day's rounds"
-        );
-        assert!(
-            spira_runtime::reconcile_host::lc_read(&sock, &["list", "--batches", "--window", "1"])
-                .unwrap()
-                .contains("[]"),
-            "the reconciler reads the landed rounds"
-        );
-        assert!(
-            spira_runtime::reconcile_host::lc_read(
-                &sock,
-                &["plan", "items", "--type", "epic", "--open"]
-            )
-            .unwrap()
-            .contains("items"),
-            "the reconciler reads the open epics"
-        );
-        assert!(
-            store_view::call_held(&lc, &["list", "--live"])
-                .unwrap()
-                .out
-                .contains("sp-a"),
-            "trigger-groom counts the live rows"
-        );
-        assert!(
-            store_view::call_held(&lc, &["list", "--live", "--repo", "alpha"])
-                .unwrap()
-                .out
-                .contains("sp-a"),
-            "watch-runtime reads its repo's live rows"
-        );
-        assert_eq!(
-            store_view::rows_by_ids(&lc, &["sp-a".to_string(), "sp-p".to_string()])
-                .unwrap()
-                .len(),
-            2,
-            "landing reads its in-flight branches' rows"
-        );
-        assert!(
-            spira_runtime::reconcile_host::lc_read(&sock, &["list", "--state", "CERTIFIED"])
-                .unwrap()
-                .contains("sp-a"),
-            "the reconciler lists CERTIFIED"
-        );
-        assert!(
-            cockpit_collect::probes::lc::state_index_of(&["sp-a".to_string()])
-                .unwrap()
-                .contains_key("sp-a"),
-            "the cockpit reads its ids"
-        );
-        assert!(
-            cockpit_collect::probes::lc::held_rows("manual")
-                .unwrap()
-                .is_empty(),
-            "the cockpit lists the manual holds"
-        );
-        assert_eq!(
-            cockpit_collect::probes::round::list_batches_live().as_deref(),
-            Some("[]"),
-            "the cockpit reads the round history"
-        );
+        assert_eq!(pool.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-a"]);
+        assert_eq!(io::lcq_held(&env, &["show-batch", "b-1"]).unwrap(), json!({ "pass": 1 }).to_string(), "batcher reads a round's pass");
+        spira_runtime::tasks::a::sift::observe_repo(&reads, "alpha", true).expect("sift reads its repo");
+        assert_eq!(world.supersede_snapshot("{}").unwrap(), json!({ "held": [] }).to_string(), "supersede-duty lists the manual holds");
+        assert_eq!(world.held_asks().unwrap(), Vec::<String>::new(), "the asks task lists the ask holds");
+        assert_eq!(world.waiting_rows().unwrap().as_array().map(Vec::len), Some(1), "watch.throughput counts the waiting rows, a certified bead among them");
+        assert!(world.sweep_snapshot().is_ok(), "bead-sweep reads the live rows and the content");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--batches", "--window", "86400"]).is_ok(), "watch.throughput reads the day's rounds");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--batches", "--window", "1"]).unwrap().contains("[]"), "the reconciler reads the landed rounds");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["plan", "items", "--type", "epic", "--open"]).unwrap().contains("items"), "the reconciler reads the open epics");
+        assert!(store_view::call_held(&lc, &["list", "--live"]).unwrap().out.contains("sp-a"), "trigger-groom counts the live rows");
+        assert!(store_view::call_held(&lc, &["list", "--live", "--repo", "alpha"]).unwrap().out.contains("sp-a"), "watch-runtime reads its repo's live rows");
+        assert_eq!(store_view::rows_by_ids(&lc, &["sp-a".to_string(), "sp-p".to_string()]).unwrap().len(), 2, "landing reads its in-flight branches' rows");
+        assert!(spira_runtime::reconcile_host::lc_read(&sock, &["list", "--state", "CERTIFIED"]).unwrap().contains("sp-a"), "the reconciler lists CERTIFIED");
+        assert!(cockpit_collect::probes::lc::state_index_of(&["sp-a".to_string()]).unwrap().contains_key("sp-a"), "the cockpit reads its ids");
+        assert!(cockpit_collect::probes::lc::held_rows("manual").unwrap().is_empty(), "the cockpit lists the manual holds");
+        assert_eq!(cockpit_collect::probes::round::list_batches_live().as_deref(), Some("[]"), "the cockpit reads the round history");
         // The argv each task of the store-call budget sends in production, with a closed bead among its ids.
-        let live = store_view::RowQuery {
-            live: true,
-            ..Default::default()
-        };
+        let live = store_view::RowQuery { live: true, ..Default::default() };
         let closed = ["sp-gone".to_string()];
-        let by_id = store_view::RowQuery {
-            ids: Some(&closed),
-            ..Default::default()
-        };
+        let by_id = store_view::RowQuery { ids: Some(&closed), ..Default::default() };
         let rows = spira_runtime::tasks::a::sentinel_pass::rows_answer;
-        assert!(
-            rows(&lc, &live, &["list", "--live"])
-                .unwrap()
-                .contains("sp-a"),
-            "sentinel-pass reads the live rows"
-        );
-        assert!(
-            rows(&lc, &by_id, &["list", "--ids", "sp-gone"])
-                .unwrap()
-                .contains("sp-gone"),
-            "sentinel-pass reads the closed blockers' rows"
-        );
-        assert_eq!(
-            store_view::rows_by_ids(&lc, &closed).unwrap().len(),
-            1,
-            "hel.reap_stale asks the state of a closed bead's worktree"
-        );
-        let claim = spira_claim::store::Store {
-            lc: lc.clone(),
-            lc_bin: String::new(),
-            timeout: Duration::from_secs(1),
-            views: store_view::shared(),
-        };
-        assert_eq!(
-            claim.lifecycle_of(&closed).unwrap().len(),
-            1,
-            "sentinel-call and readiness-dependents read a closed blocker's row"
-        );
-        assert!(
-            claim
-                .lifecycle_in_states(&["READY", "REWORK"])
-                .unwrap()
-                .is_empty(),
-            "readiness-dependents reads the ready rows"
-        );
-        assert!(
-            claim
-                .dependents_of(&["sp-a".to_string()])
-                .unwrap()
-                .is_empty(),
-            "readiness-dependents reads the edges into the changed beads"
-        );
-        assert_eq!(
-            claim.items_by_ids(&["sp-a".to_string()]).unwrap().len(),
-            1,
-            "readiness-dependents reads the plan rows of the beads it judges"
-        );
+        assert!(rows(&lc, &live, &["list", "--live"]).unwrap().contains("sp-a"), "sentinel-pass reads the live rows");
+        assert!(rows(&lc, &by_id, &["list", "--ids", "sp-gone"]).unwrap().contains("sp-gone"), "sentinel-pass reads the closed blockers' rows");
+        assert_eq!(store_view::rows_by_ids(&lc, &closed).unwrap().len(), 1, "hel.reap_stale asks the state of a closed bead's worktree");
+        let claim = spira_claim::store::Store { lc: lc.clone(), lc_bin: String::new(), timeout: Duration::from_secs(1), views: store_view::shared() };
+        assert_eq!(claim.lifecycle_of(&closed).unwrap().len(), 1, "sentinel-call and readiness-dependents read a closed blocker's row");
+        assert!(claim.lifecycle_in_states(&["READY", "REWORK"]).unwrap().is_empty(), "readiness-dependents reads the ready rows");
+        assert!(claim.dependents_of(&["sp-a".to_string()]).unwrap().is_empty(), "readiness-dependents reads the edges into the changed beads");
+        assert_eq!(claim.items_by_ids(&["sp-a".to_string()]).unwrap().len(), 1, "readiness-dependents reads the plan rows of the beads it judges");
         let real = hel::real::Real::minimal(dir.path().to_path_buf(), dir.path().join("run"), None);
-        spira_runtime::tasks::c::hel_reap_stale::observe(&real, &lc, dir.path())
-            .expect("hel.reap_stale observes from the held rows");
+        spira_runtime::tasks::c::hel_reap_stale::observe(&real, &lc, dir.path()).expect("hel.reap_stale observes from the held rows");
     };
     tick();
     let first = store.asked.lock().unwrap().clone();
     tick();
     tick();
-    assert_eq!(
-        *store.asked.lock().unwrap(),
-        first,
-        "a quiet store is asked each question once, however many ticks follow"
-    );
-    for verb in [
-        "content",
-        "plan items",
-        "plan edges",
-        "show-batch",
-        "list --batches",
-        "list --ids sp-gone",
-    ] {
-        assert!(
-            first.iter().any(|a| a.starts_with(verb)),
-            "the tick never read {verb} through the views: {first:?}"
-        );
+    assert_eq!(*store.asked.lock().unwrap(), first, "a quiet store is asked each question once, however many ticks follow");
+    for verb in ["content", "plan items", "plan edges", "show-batch", "list --batches", "list --ids sp-gone"] {
+        assert!(first.iter().any(|a| a.starts_with(verb)), "the tick never read {verb} through the views: {first:?}");
     }
-    assert_eq!(
-        reached.load(Ordering::SeqCst),
-        0,
-        "no task reached the store's socket on a quiet tick"
-    );
+    assert_eq!(reached.load(Ordering::SeqCst), 0, "no task reached the store's socket on a quiet tick");
 }

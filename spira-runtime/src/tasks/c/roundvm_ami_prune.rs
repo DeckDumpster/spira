@@ -95,28 +95,9 @@ pub const KEEP_IMAGES: usize = 2;
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_ROUNDVM_AMI_PRUNE_CALENDAR";
 /// `RandomizedDelaySec=10min`.
 pub const JITTER_KEY: &str = "SPIRA_RUNTIME_ROUNDVM_AMI_PRUNE_JITTER_SECS";
-pub const KEYS: &[&str] = &[
-    CADENCE_KEY,
-    JITTER_KEY,
-    "SPIRA_ROUND_VM_STATE_DIR",
-    "SPIRA_ROUND_VM_EC2_REGION",
-    "SPIRA_ROUND_VM_EC2_PROFILE",
-];
+pub const KEYS: &[&str] = &[CADENCE_KEY, JITTER_KEY, "SPIRA_ROUND_VM_STATE_DIR", "SPIRA_ROUND_VM_EC2_REGION", "SPIRA_ROUND_VM_EC2_PROFILE"];
 
-pub const SPEC: Spec = Spec {
-    name: NAME,
-    stream: STREAM,
-    tick: TICK,
-    state: STATE,
-    probe: OBSERVE,
-    probe_deadline_ms: 120_000,
-    cadence_key: CADENCE_KEY,
-    calendar: true,
-    effects: EFFECTS,
-    keys: KEYS,
-    probe_input_key: None,
-    jitter_key: Some(JITTER_KEY),
-};
+pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 120_000, cadence_key: CADENCE_KEY, calendar: true, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: Some(JITTER_KEY) };
 
 /// `ec2::ImageStore`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,14 +132,7 @@ pub enum Phase {
 
 /// `state × event → state` per image. `delete_snapshot` before `deregistered` is refused
 /// naming `planned`.
-pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[
-    (Phase::Planned, "deregister:ok", Phase::Deregistered),
-    (
-        Phase::Deregistered,
-        "delete_snapshot:ok",
-        Phase::SnapshotsDeleted,
-    ),
-];
+pub const TRANSITIONS: &[(Phase, &str, Phase)] = &[(Phase::Planned, "deregister:ok", Phase::Deregistered), (Phase::Deregistered, "delete_snapshot:ok", Phase::SnapshotsDeleted)];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -192,63 +166,23 @@ fn phase_name(p: Phase) -> &'static str {
 }
 
 fn to_ec2(s: &ImageStore) -> round_vm::ec2::ImageStore {
-    round_vm::ec2::ImageStore {
-        image: round_vm::ec2::Image {
-            id: s.image_id.clone(),
-            recipe_sha: s.recipe.clone(),
-            created: s.created.clone(),
-        },
-        name: s.name.clone(),
-        snapshots: s.snapshots.clone(),
-        gib: s.gib,
-    }
+    round_vm::ec2::ImageStore { image: round_vm::ec2::Image { id: s.image_id.clone(), recipe_sha: s.recipe.clone(), created: s.created.clone() }, name: s.name.clone(), snapshots: s.snapshots.clone(), gib: s.gib }
 }
 
 fn from_ec2(s: &round_vm::ec2::ImageStore) -> ImageStore {
-    ImageStore {
-        image_id: s.image.id.clone(),
-        name: s.name.clone(),
-        created: s.image.created.clone(),
-        recipe: s.image.recipe_sha.clone(),
-        snapshots: s.snapshots.clone(),
-        gib: s.gib,
-    }
+    ImageStore { image_id: s.image.id.clone(), name: s.name.clone(), created: s.image.created.clone(), recipe: s.image.recipe_sha.clone(), snapshots: s.snapshots.clone(), gib: s.gib }
 }
 
 fn delete_act(image_id: &str, carry: &Carry) -> Result<Act, String> {
-    let d = Delete {
-        image_id: image_id.into(),
-        snapshots: carry.snapshots.get(image_id).cloned().unwrap_or_default(),
-    };
-    Ok(Act {
-        name: DELETE_SNAPSHOT.into(),
-        key: format!("snap/{image_id}"),
-        input: serde_json::to_string(&d).map_err(|e| e.to_string())?,
-        deadline_ms: 60_000,
-        probe: false,
-    })
+    let d = Delete { image_id: image_id.into(), snapshots: carry.snapshots.get(image_id).cloned().unwrap_or_default() };
+    Ok(Act { name: DELETE_SNAPSHOT.into(), key: format!("snap/{image_id}"), input: serde_json::to_string(&d).map_err(|e| e.to_string())?, deadline_ms: 60_000, probe: false })
 }
 
 /// The image an outcome body names: one whose snapshots include it, else the one whose id it
 /// is or ends with (the runners answer with the image id).
 fn named<'a>(carry: &'a Carry, body: &str) -> Option<&'a String> {
     let body = body.trim();
-    carry
-        .images
-        .keys()
-        .find(|id| {
-            carry
-                .snapshots
-                .get(*id)
-                .is_some_and(|s| s.iter().any(|x| x == body))
-        })
-        .or_else(|| {
-            carry.images.keys().find(|id| {
-                body == id.as_str()
-                    || body.ends_with(&format!("-{id}"))
-                    || body.ends_with(&format!(" {id}"))
-            })
-        })
+    carry.images.keys().find(|id| carry.snapshots.get(*id).is_some_and(|s| s.iter().any(|x| x == body))).or_else(|| carry.images.keys().find(|id| body == id.as_str() || body.ends_with(&format!("-{id}")) || body.ends_with(&format!(" {id}"))))
 }
 
 /// `ec2::prune_plan(stores, in_use, current_recipe)`.
@@ -265,31 +199,17 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
             next.images.retain(|_, p| *p != Phase::SnapshotsDeleted);
             next.snapshots.retain(|id, _| next.images.contains_key(id));
             let mut acts = vec![];
-            for (id, _) in next
-                .images
-                .iter()
-                .filter(|(_, p)| **p == Phase::Deregistered)
-            {
+            for (id, _) in next.images.iter().filter(|(_, p)| **p == Phase::Deregistered) {
                 acts.push(delete_act(id, &next)?);
             }
             let stores: Vec<round_vm::ec2::ImageStore> = s.stores.iter().map(to_ec2).collect();
-            for p in round_vm::ec2::prune_plan(&stores, &s.in_use, &s.current_recipe)
-                .iter()
-                .map(from_ec2)
-            {
+            for p in round_vm::ec2::prune_plan(&stores, &s.in_use, &s.current_recipe).iter().map(from_ec2) {
                 if next.images.contains_key(&p.image_id) {
                     continue;
                 }
                 next.images.insert(p.image_id.clone(), Phase::Planned);
-                next.snapshots
-                    .insert(p.image_id.clone(), p.snapshots.clone());
-                acts.push(Act {
-                    name: DEREGISTER.into(),
-                    key: format!("ami/{}", p.image_id),
-                    input: p.image_id.clone(),
-                    deadline_ms: 60_000,
-                    probe: false,
-                });
+                next.snapshots.insert(p.image_id.clone(), p.snapshots.clone());
+                acts.push(Act { name: DEREGISTER.into(), key: format!("ami/{}", p.image_id), input: p.image_id.clone(), deadline_ms: 60_000, probe: false });
             }
             if !acts.is_empty() {
                 next.last_fired = Some(now_ms);
@@ -297,9 +217,7 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
             Ok((next, acts))
         }
         Input::Outcome { effect, ok, body } if effect == DEREGISTER => {
-            let id = named(carry, body).cloned().ok_or_else(|| {
-                format!("{NAME}: a deregister of {body:?}, which no image in the plan names")
-            })?;
+            let id = named(carry, body).cloned().ok_or_else(|| format!("{NAME}: a deregister of {body:?}, which no image in the plan names"))?;
             match carry.images.get(&id).copied().unwrap_or_default() {
                 Phase::Planned => {
                     let mut next = carry.clone();
@@ -314,16 +232,11 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                         Ok((next, vec![]))
                     }
                 }
-                p => Err(format!(
-                    "{NAME}: {id} is {}, so a deregister outcome is not expected",
-                    phase_name(p)
-                )),
+                p => Err(format!("{NAME}: {id} is {}, so a deregister outcome is not expected", phase_name(p))),
             }
         }
         Input::Outcome { effect, ok, body } if effect == DELETE_SNAPSHOT => {
-            let id = named(carry, body).cloned().ok_or_else(|| {
-                format!("{NAME}: a snapshot delete of {body:?}, which no image in the plan names")
-            })?;
+            let id = named(carry, body).cloned().ok_or_else(|| format!("{NAME}: a snapshot delete of {body:?}, which no image in the plan names"))?;
             match carry.images.get(&id).copied().unwrap_or_default() {
                 Phase::Deregistered if *ok => {
                     let mut next = carry.clone();
@@ -332,15 +245,10 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
                 }
                 // Left deregistered: the next observation asks again.
                 Phase::Deregistered => Ok((carry.clone(), vec![])),
-                p => Err(format!(
-                    "{NAME}: {id} is {}, not deregistered, so its snapshots are not deleted",
-                    phase_name(p)
-                )),
+                p => Err(format!("{NAME}: {id} is {}, not deregistered, so its snapshots are not deleted", phase_name(p))),
             }
         }
-        Input::Outcome { effect, .. } => {
-            Err(format!("{NAME}: an outcome of {effect} is not expected"))
-        }
+        Input::Outcome { effect, .. } => Err(format!("{NAME}: an outcome of {effect} is not expected")),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
 }
@@ -350,24 +258,13 @@ pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -
 pub fn observe(run: &std::path::Path) -> Result<String, String> {
     use round_vm::ec2::Ec2Api;
     let (api, _) = round_vm::cli::ec2_api()?;
-    let snap = Snapshot {
-        world_halted: run.join("world.halted").exists(),
-        stores: api.image_stores()?.iter().map(from_ec2).collect(),
-        in_use: api.images_in_use()?,
-        current_recipe: round_vm::recipe::sha(),
-    };
+    let snap = Snapshot { world_halted: run.join("world.halted").exists(), stores: api.image_stores()?.iter().map(from_ec2).collect(), in_use: api.images_in_use()?, current_recipe: round_vm::recipe::sha() };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
 /// An AWS answer that the thing is already gone, which a repeated act treats as done.
 fn already_gone(e: &str) -> bool {
-    [
-        "InvalidAMIID.Unavailable",
-        "InvalidAMIID.NotFound",
-        "InvalidSnapshot.NotFound",
-    ]
-    .iter()
-    .any(|c| e.contains(c))
+    ["InvalidAMIID.Unavailable", "InvalidAMIID.NotFound", "InvalidSnapshot.NotFound"].iter().any(|c| e.contains(c))
 }
 
 /// The runner of [`DEREGISTER`]: `aws ec2 deregister-image`; answers with the image id.
@@ -395,27 +292,12 @@ pub fn delete_snapshots(input: &str) -> Result<String, String> {
         match api.delete_snapshot(snap) {
             Ok(()) => {}
             Err(e) if already_gone(&e) => {}
-            Err(e) => {
-                return Err(format!(
-                    "{} deregistered but snapshot {snap}: {e}",
-                    d.image_id
-                ))
-            }
+            Err(e) => return Err(format!("{} deregistered but snapshot {snap}: {e}", d.image_id)),
         }
     }
     Ok(d.image_id)
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Field("last_fired"),
-    runtime::rows::Part::Map {
-        name: "images",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "snapshots",
-        drop: &[],
-    },
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("last_fired"), runtime::rows::Part::Map { name: "images", drop: &[] }, runtime::rows::Part::Map { name: "snapshots", drop: &[] }];
 
 crate::tasks::b::hosted!(RoundvmAmiPrune);

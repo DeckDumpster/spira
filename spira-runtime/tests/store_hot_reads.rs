@@ -5,17 +5,17 @@
 
 #[macro_use]
 extern crate spira_test_id;
-use std::collections::VecDeque;
 use std::os::unix::net::UnixListener;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use spira_store::lc_call::{LcClient, Reply, Transport};
 use spira_runtime::tasks::a::czar::{certified_pool, Read};
 use spira_runtime::watchers::round_duty::{RoundState, Snapshot};
 use spira_runtime::world::World;
-use spira_store::lc_call::{LcClient, Reply, Transport};
 use store_view::Projection;
 
 struct Store {
@@ -42,38 +42,17 @@ fn open_round() -> Value {
 
 impl Transport for Double {
     fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-        let ok = |out: String| {
-            Ok(Reply {
-                code: 0,
-                out,
-                err: String::new(),
-                read_ended: false,
-            })
-        };
+        let ok = |out: String| Ok(Reply { code: 0, out, err: String::new(), read_ended: false });
         match argv[0].as_str() {
             "rc" => ok(json!({ "ok": { "items": [open_round()], "list_rev": 5 } }).to_string()),
             "list" => {
                 let rows = self.store.lock().unwrap().rows.clone();
-                let ids: Option<Vec<&str>> = argv
-                    .iter()
-                    .position(|a| a == "--ids")
-                    .map(|i| argv[i + 1].split(',').collect());
-                let kept: Vec<Value> = rows
-                    .into_iter()
-                    .filter(|r| {
-                        ids.as_ref()
-                            .is_none_or(|ids| ids.contains(&r["bead_id"].as_str().unwrap()))
-                    })
-                    .collect();
+                let ids: Option<Vec<&str>> = argv.iter().position(|a| a == "--ids").map(|i| argv[i + 1].split(',').collect());
+                let kept: Vec<Value> = rows.into_iter().filter(|r| ids.as_ref().is_none_or(|ids| ids.contains(&r["bead_id"].as_str().unwrap()))).collect();
                 ok(Value::Array(kept).to_string())
             }
             "watch" if self.cut.load(Ordering::SeqCst) => Err("the watch is cut".into()),
-            "watch" => ok(self
-                .deliveries
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| json!({ "progress_rev": 5 }).to_string())),
+            "watch" => ok(self.deliveries.lock().unwrap().pop_front().unwrap_or_else(|| json!({ "progress_rev": 5 }).to_string())),
             other => Err(format!("unscripted {other}")),
         }
     }
@@ -94,51 +73,20 @@ fn hot_reads_follow_the_watch_refuse_when_it_is_cut_and_never_ask_the_store() {
     });
     let map = dir.path().join("repos");
     std::fs::write(&map, "alpha|/x|queue.local|main\n").unwrap();
-    let world = World {
-        lc_socket: sock.clone(),
-        repo_map: map,
-        run_dir: dir.path().join("run"),
-        home_repo: "alpha".into(),
-        ..World::default()
-    };
-    let snapshot = || {
-        world
-            .round_snapshot("{}")
-            .map(|s| serde_json::from_str::<Snapshot>(&s).unwrap())
-    };
+    let world = World { lc_socket: sock.clone(), repo_map: map, run_dir: dir.path().join("run"), home_repo: "alpha".into(), ..World::default() };
+    let snapshot = || world.round_snapshot("{}").map(|s| serde_json::from_str::<Snapshot>(&s).unwrap());
 
-    let store = Arc::new(Mutex::new(Store {
-        rows: vec![
-            bead("a-1", "SUBMITTED", "[]"),
-            bead("a-2", "SUBMITTED", "[]"),
-            bead("a-3", "SUBMITTED", "[\"ask\"]"),
-            bead("a-9", "CERTIFIED", "[]"),
-        ],
-    }));
+    let store = Arc::new(Mutex::new(Store { rows: vec![bead("a-1", "SUBMITTED", "[]"), bead("a-2", "SUBMITTED", "[]"), bead("a-3", "SUBMITTED", "[\"ask\"]"), bead("a-9", "CERTIFIED", "[]")] }));
     let cut = Arc::new(AtomicBool::new(false));
-    let double = Arc::new(Double {
-        store: store.clone(),
-        deliveries: Mutex::default(),
-        cut: cut.clone(),
-    });
+    let double = Arc::new(Double { store: store.clone(), deliveries: Mutex::default(), cut: cut.clone() });
     let now = Arc::new(Mutex::new(Instant::now()));
     let clock = now.clone();
-    let views = Arc::new(Projection::new(
-        LcClient::over(double.clone(), true),
-        Duration::from_millis(400),
-        Arc::new(move || *clock.lock().unwrap()),
-    ));
-    assert!(
-        Arc::ptr_eq(&store_view::install(views.clone()), &views),
-        "the first install stands"
-    );
+    let views = Arc::new(Projection::new(LcClient::over(double.clone(), true), Duration::from_millis(400), Arc::new(move || *clock.lock().unwrap())));
+    assert!(Arc::ptr_eq(&store_view::install(views.clone()), &views), "the first install stands");
     views.load().unwrap();
 
     let snap = snapshot().unwrap();
-    assert_eq!(
-        (snap.submitted, snap.certified, snap.state, snap.open),
-        (2, 1, RoundState::Open, 1)
-    );
+    assert_eq!((snap.submitted, snap.certified, snap.state, snap.open), (2, 1, RoundState::Open, 1));
     assert_eq!(snap.unadvanced, [("b-open".to_string(), 1_700_000_000)]);
 
     store.lock().unwrap().rows[0] = bead("a-1", "CERTIFIED", "[]");
@@ -147,41 +95,15 @@ fn hot_reads_follow_the_watch_refuse_when_it_is_cut_and_never_ask_the_store() {
     let moved = snapshot().unwrap();
     assert_eq!((moved.certified, moved.submitted), (2, 1));
     let lc = LcClient::socket(&sock);
-    assert_eq!(
-        certified_pool(&lc, "alpha"),
-        Read::Observed(vec!["a-1".to_string(), "a-9".to_string()])
-    );
+    assert_eq!(certified_pool(&lc, "alpha"), Read::Observed(vec!["a-1".to_string(), "a-9".to_string()]));
 
-    let second = Arc::new(Projection::new(
-        LcClient::over(
-            Arc::new(Double {
-                store,
-                deliveries: Mutex::default(),
-                cut: cut.clone(),
-            }),
-            true,
-        ),
-        Duration::from_secs(1),
-        Arc::new(Instant::now),
-    ));
-    assert!(
-        !Arc::ptr_eq(&store_view::install(second.clone()), &second),
-        "a second projection never replaces the one readers hold"
-    );
+    let second = Arc::new(Projection::new(LcClient::over(Arc::new(Double { store, deliveries: Mutex::default(), cut: cut.clone() }), true), Duration::from_secs(1), Arc::new(Instant::now)));
+    assert!(!Arc::ptr_eq(&store_view::install(second.clone()), &second), "a second projection never replaces the one readers hold");
 
     cut.store(true, Ordering::SeqCst);
     assert!(views.poll().is_err(), "the cut watch refused");
     *now.lock().unwrap() += Duration::from_secs(1);
-    assert!(
-        snapshot().is_err(),
-        "a round snapshot read from a cut watch refuses"
-    );
-    assert!(
-        matches!(certified_pool(&lc, "alpha"), Read::Unobservable(why) if why.contains("the watch is lost"))
-    );
-    assert_eq!(
-        asked.load(Ordering::SeqCst),
-        0,
-        "no hot read reached the store's socket, cut or not"
-    );
+    assert!(snapshot().is_err(), "a round snapshot read from a cut watch refuses");
+    assert!(matches!(certified_pool(&lc, "alpha"), Read::Unobservable(why) if why.contains("the watch is lost")));
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "no hot read reached the store's socket, cut or not");
 }

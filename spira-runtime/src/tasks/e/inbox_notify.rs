@@ -108,28 +108,9 @@ pub const SOP_MATCH: &str = "inbox.notify.sop_match";
 pub const SOP_APPLIED: &str = "inbox.notify.sop_applied";
 pub const CONCIERGE_NOTE: &str = "inbox.notify.concierge_note";
 pub const MAIL_HEALTH: &str = "inbox.notify.mail_health";
-pub const EFFECTS: &[&str] = &[
-    OBSERVE,
-    ASK,
-    SOP_MATCH,
-    UNIT_START,
-    SOP_APPLIED,
-    CONCIERGE_NOTE,
-    MAIL_HEALTH,
-];
+pub const EFFECTS: &[&str] = &[OBSERVE, ASK, SOP_MATCH, UNIT_START, SOP_APPLIED, CONCIERGE_NOTE, MAIL_HEALTH];
 /// `SPIRA_SYSTEMCTL` and `SPIRA_SYSTEMD_RUN` are test seams and are dropped.
-pub const KEYS: &[&str] = &[
-    "SPIRA_ACTIONABLE",
-    "SPIRA_HEALTH_TIMEOUT",
-    "SPIRA_NOTIFY_AGE",
-    "SPIRA_INSTANCE",
-    "SPIRA_RUN",
-    "SPIRA_WATCHERS",
-    "SPIRA_WATCHERS_OVERLAY",
-    "SPIRA_MAIL_READERS",
-    "SPIRA_MAIL_UNREAD_AGE",
-    "SPIRA_MAIL",
-];
+pub const KEYS: &[&str] = &["SPIRA_ACTIONABLE", "SPIRA_HEALTH_TIMEOUT", "SPIRA_NOTIFY_AGE", "SPIRA_INSTANCE", "SPIRA_RUN", "SPIRA_WATCHERS", "SPIRA_WATCHERS_OVERLAY", "SPIRA_MAIL_READERS", "SPIRA_MAIL_UNREAD_AGE", "SPIRA_MAIL"];
 /// The timer's 300 s.
 pub const CADENCE_MS: u64 = 300_000;
 const OBSERVE_DEADLINE_MS: u64 = 60_000;
@@ -261,27 +242,13 @@ pub struct Ask {
 /// The oldest `[ts]` prefix among `lines`, when it is not in the future: a stamp ahead of the
 /// clock is no evidence of age, so the row falls back to its pending clock.
 fn stamp_age(lines: &[&String], now: i64) -> Option<i64> {
-    lines
-        .iter()
-        .filter_map(|l| {
-            l.strip_prefix('[')
-                .and_then(|r| r.split_once(']'))
-                .map(|(ts, _)| ts)
-        })
-        .filter_map(watchd::iso8601::parse_utc)
-        .min()
-        .map(|oldest| now - oldest)
-        .filter(|a| *a >= 0)
+    lines.iter().filter_map(|l| l.strip_prefix('[').and_then(|r| r.split_once(']')).map(|(ts, _)| ts)).filter_map(watchd::iso8601::parse_utc).min().map(|oldest| now - oldest).filter(|a| *a >= 0)
 }
 
 /// The unit a row's health is read from, as the snapshot names it: the watch unit of a daemon
 /// row, the `spira-<target>` unit of an extern row.
 fn unit_of<'a>(snap: &'a Snapshot, row: &str) -> Option<(&'a String, &'a (String, u64))> {
-    snap.units.iter().find(|(u, _)| {
-        u.starts_with(&format!("spira-watch-{row}-"))
-            || u.starts_with(&format!("spira-{row}-"))
-            || u.as_str() == format!("spira-{row}.service")
-    })
+    snap.units.iter().find(|(u, _)| u.starts_with(&format!("spira-watch-{row}-")) || u.starts_with(&format!("spira-{row}-")) || u.as_str() == format!("spira-{row}.service"))
 }
 
 /// `cmd_notify` and `notify_health` split pure: the backlog half, the health half, the ask.
@@ -290,30 +257,17 @@ fn unit_of<'a>(snap: &'a Snapshot, row: &str) -> Option<(&'a String, &'a (String
 /// The stale and degraded rows are not asked here; they go to `sop_match` as one offer, and
 /// the asks are composed from its verdicts ([`asks`]). A pass with nothing stale clears that
 /// half's stamp, as removing `notify.escalated` did.
-pub fn decide(
-    carry: &Carry,
-    snap: &Snapshot,
-    now_ms: u64,
-    cfg: &Config,
-) -> (Carry, Vec<EffectSpec>) {
+pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Carry, Vec<EffectSpec>) {
     let now = (now_ms / 1000) as i64;
     let age_limit = cfg.notify_age_s as i64;
     let mut next = carry.clone();
     let mut candidates = vec![];
     let filter = watchd::filter::Filter::compile(&cfg.actionable).ok();
 
-    next.pending
-        .retain(|name, _| snap.rows.iter().any(|r| &r.name == name));
+    next.pending.retain(|name, _| snap.rows.iter().any(|r| &r.name == name));
     for r in snap.rows.iter().filter(|r| r.kind != "off") {
-        let shown: Vec<&String> = r
-            .unread
-            .iter()
-            .filter(|l| filter.as_ref().is_some_and(|f| f.matches(l)))
-            .collect();
-        let first = r
-            .unread
-            .iter()
-            .position(|l| filter.as_ref().is_some_and(|f| f.matches(l)));
+        let shown: Vec<&String> = r.unread.iter().filter(|l| filter.as_ref().is_some_and(|f| f.matches(l))).collect();
+        let first = r.unread.iter().position(|l| filter.as_ref().is_some_and(|f| f.matches(l)));
         let (true, Some(first_idx)) = (r.lines > r.cursor, first) else {
             next.pending.remove(&r.name);
             continue;
@@ -322,47 +276,26 @@ pub fn decide(
         let stamp = stamp_age(&shown, now);
         let prev = carry.pending.get(&r.name).copied();
         if prev.map(|(p, _)| p) != Some(apos) {
-            next.pending
-                .insert(r.name.clone(), (apos, now.max(0) as u64));
+            next.pending.insert(r.name.clone(), (apos, now.max(0) as u64));
             if stamp.is_none() {
                 continue;
             }
         }
-        let age = stamp
-            .unwrap_or_else(|| now - prev.map_or(now, |(_, at)| at as i64))
-            .max(0);
+        let age = stamp.unwrap_or_else(|| now - prev.map_or(now, |(_, at)| at as i64)).max(0);
         if age < age_limit {
             continue;
         }
         let k = shown.len();
-        let mut evidence = format!(
-            "\n{} — {k} actionable event(s) with no reader, the oldest for {}\n",
-            r.name,
-            watchd::cursor::format_age(age)
-        );
+        let mut evidence = format!("\n{} — {k} actionable event(s) with no reader, the oldest for {}\n", r.name, watchd::cursor::format_age(age));
         for l in shown.iter().take(NOTIFY_MAX) {
             evidence.push_str(&format!("    {l}\n"));
         }
         if k > NOTIFY_MAX {
-            evidence.push_str(&format!(
-                "    ... and {} more — all of them: watchd drain {}\n",
-                k - NOTIFY_MAX,
-                r.name
-            ));
+            evidence.push_str(&format!("    ... and {} more — all of them: watchd drain {}\n", k - NOTIFY_MAX, r.name));
         }
         let key = format!("{}|{}|{}\n", r.name, apos, r.unread[first_idx]);
-        let payload = shown
-            .iter()
-            .map(|l| l.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        candidates.push(Candidate {
-            kind: AskKind::Backlog,
-            row: r.name.clone(),
-            key,
-            payload,
-            evidence,
-        });
+        let payload = shown.iter().map(|l| l.as_str()).collect::<Vec<_>>().join("\n");
+        candidates.push(Candidate { kind: AskKind::Backlog, row: r.name.clone(), key, payload, evidence });
     }
 
     if snap.halted {
@@ -381,29 +314,16 @@ pub fn decide(
             if age < age_limit {
                 continue;
             }
-            let mut evidence = format!(
-                "\n{row} — DEGRADED for {}: {why}\n",
-                watchd::cursor::format_age(age)
-            );
+            let mut evidence = format!("\n{row} — DEGRADED for {}: {why}\n", watchd::cursor::format_age(age));
             let unit = unit_of(snap, row);
             if let Some((u, (_, restarts))) = unit {
                 evidence.push_str(&format!("  {u}, restarted {restarts} time(s) by systemd\n"));
             }
             let state = unit.map_or("unknown", |(_, (s, _))| s.as_str());
-            let payload = format!(
-                "{row} — DEGRADED: {why}\nunit {} is {state}",
-                unit.map_or("?", |(u, _)| u.as_str())
-            );
-            candidates.push(Candidate {
-                kind: AskKind::Health,
-                row: row.clone(),
-                key: format!("{row}|{why}\n"),
-                payload,
-                evidence,
-            });
+            let payload = format!("{row} — DEGRADED: {why}\nunit {} is {state}", unit.map_or("?", |(u, _)| u.as_str()));
+            candidates.push(Candidate { kind: AskKind::Health, row: row.clone(), key: format!("{row}|{why}\n"), payload, evidence });
         }
-        next.unhealthy
-            .retain(|row, _| snap.health.contains_key(row));
+        next.unhealthy.retain(|row, _| snap.health.contains_key(row));
     }
 
     if !candidates.iter().any(|c| c.kind == AskKind::Backlog) {
@@ -414,20 +334,10 @@ pub fn decide(
     }
     let mut acts = vec![];
     if !candidates.is_empty() {
-        acts.push(EffectSpec::keyed(
-            SOP_MATCH,
-            format!("inbox.notify:match:{now}"),
-            serde_json::to_string(&Offer { candidates }).unwrap_or_default(),
-            ACT_DEADLINE_MS,
-        ));
+        acts.push(EffectSpec::keyed(SOP_MATCH, format!("inbox.notify:match:{now}"), serde_json::to_string(&Offer { candidates }).unwrap_or_default(), ACT_DEADLINE_MS));
     }
     if snap.mail_health.is_none() {
-        acts.push(EffectSpec::keyed(
-            MAIL_HEALTH,
-            format!("inbox.notify:mailhealth:{now}"),
-            format!("inbox.notify:mailhealth:{now}"),
-            LONG_DEADLINE_MS,
-        ));
+        acts.push(EffectSpec::keyed(MAIL_HEALTH, format!("inbox.notify:mailhealth:{now}"), format!("inbox.notify:mailhealth:{now}"), LONG_DEADLINE_MS));
     }
     (next, acts)
 }
@@ -436,43 +346,14 @@ pub fn decide(
 /// question, unless its fingerprint equals the carried stamp. An answer that is not a verdict
 /// list (no SOP could be asked) escalates every candidate, as `Verdict::Escalate(None)`.
 pub fn asks(carry: &Carry, offer: &Offer, outcome: &str) -> Vec<EffectSpec> {
-    let tried: Vec<Tried> = serde_json::from_str(outcome)
-        .ok()
-        .filter(|t: &Vec<Tried>| t.len() == offer.candidates.len())
-        .unwrap_or_else(|| {
-            offer
-                .candidates
-                .iter()
-                .map(|_| Tried {
-                    handled: false,
-                    note: None,
-                })
-                .collect()
-        });
+    let tried: Vec<Tried> = serde_json::from_str(outcome).ok().filter(|t: &Vec<Tried>| t.len() == offer.candidates.len()).unwrap_or_else(|| offer.candidates.iter().map(|_| Tried { handled: false, note: None }).collect());
     let mut out = vec![];
     for (kind, stamp, subject, default, why) in [
-        (
-            AskKind::Backlog,
-            &carry.stamp_backlog,
-            watchd::notify::BACKLOG_SUBJECT,
-            watchd::notify::BACKLOG_DEFAULT,
-            watchd::notify::BACKLOG_WHY,
-        ),
-        (
-            AskKind::Health,
-            &carry.stamp_health,
-            watchd::notify::HEALTH_SUBJECT,
-            watchd::notify::HEALTH_DEFAULT,
-            watchd::notify::HEALTH_WHY,
-        ),
+        (AskKind::Backlog, &carry.stamp_backlog, watchd::notify::BACKLOG_SUBJECT, watchd::notify::BACKLOG_DEFAULT, watchd::notify::BACKLOG_WHY),
+        (AskKind::Health, &carry.stamp_health, watchd::notify::HEALTH_SUBJECT, watchd::notify::HEALTH_DEFAULT, watchd::notify::HEALTH_WHY),
     ] {
         let (mut key, mut report) = (String::new(), String::new());
-        for (c, t) in offer
-            .candidates
-            .iter()
-            .zip(&tried)
-            .filter(|(c, t)| c.kind == kind && !t.handled)
-        {
+        for (c, t) in offer.candidates.iter().zip(&tried).filter(|(c, t)| c.kind == kind && !t.handled) {
             key.push_str(&c.key);
             report.push_str(&c.evidence);
             if let Some(n) = &t.note {
@@ -487,24 +368,9 @@ pub fn asks(carry: &Carry, offer: &Offer, outcome: &str) -> Vec<EffectSpec> {
             continue;
         }
         let body = format!("## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{report}\n");
-        let akey = format!(
-            "inbox.notify:{}:{fingerprint}",
-            format!("{kind:?}").to_lowercase()
-        );
-        let ask = Ask {
-            kind,
-            fingerprint,
-            from: watchd::send::FROM.into(),
-            subject: subject.into(),
-            default: default.into(),
-            body,
-        };
-        out.push(EffectSpec::keyed(
-            ASK,
-            akey,
-            serde_json::to_string(&ask).unwrap_or_default(),
-            ACT_DEADLINE_MS,
-        ));
+        let akey = format!("inbox.notify:{}:{fingerprint}", format!("{kind:?}").to_lowercase());
+        let ask = Ask { kind, fingerprint, from: watchd::send::FROM.into(), subject: subject.into(), default: default.into(), body };
+        out.push(EffectSpec::keyed(ASK, akey, serde_json::to_string(&ask).unwrap_or_default(), ACT_DEADLINE_MS));
     }
     out
 }
@@ -530,13 +396,8 @@ fn context() -> Result<watchd::context::Context, String> {
 pub fn observe(units: Option<&dyn runtime::units::Units>) -> Result<String, String> {
     use watchd::manifest::Kind;
     let ctx = context()?;
-    let rows = watchd::commands::load_rows_or_report(&ctx)
-        .map_err(|code| format!("{OBSERVE}: the manifest could not be read (exit {code})"))?;
-    let mut snap = Snapshot {
-        now: ctx.now.max(0) as u64,
-        halted: std::path::Path::new(&ctx.run).join("world.halted").exists(),
-        ..Snapshot::default()
-    };
+    let rows = watchd::commands::load_rows_or_report(&ctx).map_err(|code| format!("{OBSERVE}: the manifest could not be read (exit {code})"))?;
+    let mut snap = Snapshot { now: ctx.now.max(0) as u64, halted: std::path::Path::new(&ctx.run).join("world.halted").exists(), ..Snapshot::default() };
     for r in &rows {
         let kind = match r.kind {
             Kind::Daemon => "daemon",
@@ -544,15 +405,10 @@ pub fn observe(units: Option<&dyn runtime::units::Units>) -> Result<String, Stri
             Kind::Extern => "extern",
             Kind::Off => continue,
         };
-        let mut view = RowView {
-            name: r.name.clone(),
-            kind: kind.into(),
-            ..RowView::default()
-        };
+        let mut view = RowView { name: r.name.clone(), kind: kind.into(), ..RowView::default() };
         if let Some(lf) = watchd::paths::logfile(&ctx.run, &r.name, r.kind, &r.target) {
             view.lines = watchd::fs_ops::total_lines(&lf);
-            view.cursor =
-                watchd::fs_ops::read_pos(&watchd::paths::cursorfile(&ctx.run, &r.name), view.lines);
+            view.cursor = watchd::fs_ops::read_pos(&watchd::paths::cursorfile(&ctx.run, &r.name), view.lines);
             if view.lines > view.cursor {
                 view.unread = watchd::fs_ops::read_range(&lf, view.cursor, view.lines);
             }
@@ -565,9 +421,7 @@ pub fn observe(units: Option<&dyn runtime::units::Units>) -> Result<String, Stri
             _ => continue,
         };
         let Some(units) = units else { continue };
-        let facts = units
-            .facts(&runtime::units::UnitHandle::named(&unit))
-            .map_err(|e| e.0)?;
+        let facts = units.facts(&runtime::units::UnitHandle::named(&unit)).map_err(|e| e.0)?;
         if facts.state == runtime::units::UnitState::Absent {
             continue;
         }
@@ -595,25 +449,16 @@ pub fn ask(input: &str) -> Result<String, String> {
 
 /// Each candidate offered to a SOP through `sop_run::attempt`: the verdicts in offer order.
 pub fn sop_match(input: &str) -> Result<String, String> {
-    let offer: Offer =
-        serde_json::from_str(input).map_err(|e| format!("{SOP_MATCH}: bad input: {e}"))?;
+    let offer: Offer = serde_json::from_str(input).map_err(|e| format!("{SOP_MATCH}: bad input: {e}"))?;
     let ctx = context()?;
     let ops = watchd::ops::Real::new(ctx.systemctl.clone(), ctx.systemctl_override.as_deref());
     let tried: Vec<Tried> = offer
         .candidates
         .iter()
-        .map(
-            |c| match watchd::sop_run::attempt(&ops, &ctx, &c.row, &c.key, &c.payload) {
-                watchd::sop_run::Verdict::Handled => Tried {
-                    handled: true,
-                    note: None,
-                },
-                watchd::sop_run::Verdict::Escalate(note) => Tried {
-                    handled: false,
-                    note,
-                },
-            },
-        )
+        .map(|c| match watchd::sop_run::attempt(&ops, &ctx, &c.row, &c.key, &c.payload) {
+            watchd::sop_run::Verdict::Handled => Tried { handled: true, note: None },
+            watchd::sop_run::Verdict::Escalate(note) => Tried { handled: false, note },
+        })
         .collect();
     serde_json::to_string(&tried).map_err(|e| e.to_string())
 }
@@ -630,15 +475,13 @@ pub struct Applied {
 
 pub fn sop_applied(input: &str) -> Result<String, String> {
     use watchd::ops::Ops;
-    let a: Applied =
-        serde_json::from_str(input).map_err(|e| format!("{SOP_APPLIED}: bad input: {e}"))?;
+    let a: Applied = serde_json::from_str(input).map_err(|e| format!("{SOP_APPLIED}: bad input: {e}"))?;
     let target = match (a.bead, a.pass) {
         (Some(b), _) => watchd::ops::Target::Bead(b),
         (None, Some(p)) => watchd::ops::Target::Pass(p),
         (None, None) => return Err(format!("{SOP_APPLIED}: refused: no bead or pass named")),
     };
-    watchd::ops::Real::new(context()?.systemctl, None)
-        .sop_applied(&a.slug, &target, &a.check, &a.why)?;
+    watchd::ops::Real::new(context()?.systemctl, None).sop_applied(&a.slug, &target, &a.check, &a.why)?;
     Ok(format!("{} recorded {}", a.slug, a.check))
 }
 
@@ -651,15 +494,8 @@ pub struct Note {
 }
 
 pub fn concierge_note(input: &str) -> Result<String, String> {
-    let n: Note =
-        serde_json::from_str(input).map_err(|e| format!("{CONCIERGE_NOTE}: bad input: {e}"))?;
-    watchd::send::send_configured(&watchd::send::Letter {
-        mailbox: "concierge",
-        subject: &n.subject,
-        kind: &n.kind,
-        default: "",
-        body: &n.body,
-    })?;
+    let n: Note = serde_json::from_str(input).map_err(|e| format!("{CONCIERGE_NOTE}: bad input: {e}"))?;
+    watchd::send::send_configured(&watchd::send::Letter { mailbox: "concierge", subject: &n.subject, kind: &n.kind, default: "", body: &n.body })?;
     Ok(format!("noted {}", n.subject))
 }
 
@@ -682,9 +518,7 @@ impl InboxNotify {
     }
 
     pub fn pinned() -> Self {
-        InboxNotify {
-            config: Config::pinned(),
-        }
+        InboxNotify { config: Config::pinned() }
     }
 
     pub fn boot() -> (&'static str, &'static str, EventKind) {
@@ -696,18 +530,7 @@ impl InboxNotify {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[
-    runtime::rows::Part::Map {
-        name: "pending",
-        drop: &[],
-    },
-    runtime::rows::Part::Map {
-        name: "unhealthy",
-        drop: &[],
-    },
-    runtime::rows::Part::Field("stamp_backlog"),
-    runtime::rows::Part::Field("stamp_health"),
-];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "pending", drop: &[] }, runtime::rows::Part::Map { name: "unhealthy", drop: &[] }, runtime::rows::Part::Field("stamp_backlog"), runtime::rows::Part::Field("stamp_health")];
 
 impl Handler for InboxNotify {
     fn interests(&self) -> &[EventKindTag] {
@@ -719,33 +542,16 @@ impl Handler for InboxNotify {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            return pattern::tick(
-                ev,
-                OBSERVE,
-                String::new(),
-                OBSERVE_DEADLINE_MS,
-                ev.at + CADENCE_MS,
-            );
+            return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         if ev.kind.tag == EFFECT_SUCCEEDED {
             match answered_spec(view, ev) {
                 Some(s) if s.name == SOP_MATCH => {
-                    let Ok(offer) = serde_json::from_str::<Offer>(&s.input) else {
-                        return vec![];
-                    };
-                    return asks(
-                        &carried::<Carry>(view, &ev.stream, STATE),
-                        &offer,
-                        &ev.kind.body,
-                    )
-                    .into_iter()
-                    .map(Command::Effect)
-                    .collect();
+                    let Ok(offer) = serde_json::from_str::<Offer>(&s.input) else { return vec![] };
+                    return asks(&carried::<Carry>(view, &ev.stream, STATE), &offer, &ev.kind.body).into_iter().map(Command::Effect).collect();
                 }
                 Some(s) if s.name == ASK => {
-                    let Ok(a) = serde_json::from_str::<Ask>(&s.input) else {
-                        return vec![];
-                    };
+                    let Ok(a) = serde_json::from_str::<Ask>(&s.input) else { return vec![] };
                     let carry = carried::<Carry>(view, &ev.stream, STATE);
                     return pattern::commands(STATE, &carry, &stamped(&carry, &a), vec![]);
                 }
