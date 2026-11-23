@@ -135,6 +135,9 @@ fn the_runtime_units_environment_files_let_the_drain_sign_an_s3_upload() {
     let urls = curl.0.lock().unwrap().clone();
     assert!(urls.iter().any(|u| u.starts_with("http://s3.test/bucket/lc/revlog/")), "{urls:?}");
     assert!(dir.join("sent/revlog").join(&name).exists() && !dir.join("queue/revlog").join(&name).exists());
+
+    let refused = task::drain(curl, "s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), 1).unwrap_err();
+    assert!(refused.contains("SPIRA_LC_BACKUP_PART_BYTES"), "{refused}");
 }
 
 #[test_id(ti9vbp7)]
