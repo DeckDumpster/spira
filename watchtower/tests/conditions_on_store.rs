@@ -161,6 +161,7 @@ fn a_standing_condition_is_raised_once_when_the_store_holds_no_item_for_it_and_n
     assert!(!watchtower::sweep::escalate::tracked_by_open_bead(&client, "lifecycle-content-drift.service"), "no item holds the unit");
     reconcile(1, &ctx(), "content-drift", Reading::Standing(vec![standing(REF)]));
     assert_eq!(calls.get(), 1, "no open item: the alarm is raised once");
+    assert!(!run.join("conditions/unread/content-drift/drift").exists(), "the store answered, so no read failed");
 
     name_self("conditions_on_st");
     let body = "what the item says\n";

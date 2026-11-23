@@ -159,9 +159,6 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
     for k in names(&pending_dir).difference(&standing) {
         let _ = std::fs::remove_file(pending_dir.join(k));
     }
-    for k in names(&unread_dir).difference(&standing) {
-        let _ = std::fs::remove_file(unread_dir.join(k));
-    }
     for k in names(&filed_dir).difference(&standing) {
         let marker = filed_dir.join(k);
         let Ok(reference) = std::fs::read_to_string(&marker) else { continue };
@@ -178,6 +175,10 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
             let _ = std::fs::remove_file(unread_dir.join(k));
             log(&format!("watchtower: conditions: cleared {} ({probe})", reference.trim()));
         }
+    }
+    let still_filed = names(&filed_dir);
+    for k in names(&unread_dir).difference(&standing).filter(|k| !still_filed.contains(*k)) {
+        let _ = std::fs::remove_file(unread_dir.join(k));
     }
 }
 
@@ -270,6 +271,40 @@ mod tests {
         let next = Ctx { alarm: &rec, ..Ctx::new(d.path(), "db", "spira", &inc, &lc, "bin", 5) };
         reconcile(200, &next, "two", Reading::Standing(conds[3..].to_vec()));
         assert_eq!(raised(d.path()).last().map(String::as_str), Some("incident:c6"));
+    }
+
+    #[test_id(tgcwb3y)]
+    #[test]
+    fn a_cleared_condition_whose_read_keeps_failing_logs_its_error_once() {
+        let d = testkit::TempDir::new("wt-cond-clear-unread");
+        let inc = recording_incident(d.path());
+        let rec = record(d.path());
+        let up = scripted(0, "[]").1;
+        let ctx = Ctx { alarm: &rec, ..Ctx::new(d.path(), "db", "spira", &inc, &up, "bin", 5) };
+        reconcile(100, &ctx, "p", Reading::Standing(vec![stand("a")]));
+        assert!(d.join("conditions/filed/p/a").exists());
+        let down = scripted(2, "cannot tell").1;
+        let ctx = Ctx::new(d.path(), "db", "spira", &inc, &down, "bin", 5);
+        reconcile(200, &ctx, "p", Reading::Standing(vec![]));
+        let unread = d.join("conditions/unread/p/a");
+        assert_eq!(std::fs::read_to_string(&unread).unwrap(), "cannot tell");
+        let seen = std::fs::metadata(&unread).unwrap().modified().unwrap();
+        reconcile(300, &ctx, "p", Reading::Standing(vec![]));
+        assert_eq!(std::fs::metadata(&unread).unwrap().modified().unwrap(), seen, "the same error is not logged, nor rewritten, again");
+    }
+
+    #[test_id(tbw2x7g)]
+    #[test]
+    fn a_deduped_alarm_marks_the_condition_filed_without_using_the_pass_cap() {
+        let d = testkit::TempDir::new("wt-cond-deduped");
+        let lc = scripted(0, "[]").1;
+        let inc = recording_incident(d.path());
+        let deduped = |_: &str, _: &Finding| incident::AlarmOutcome::Deduped;
+        let ctx = Ctx { alarm: &deduped, ..Ctx::new(d.path(), "db", "spira", &inc, &lc, "bin", 1) };
+        reconcile(100, &ctx, "p", Reading::Standing(vec![stand("a"), stand("b")]));
+        assert!(d.join("conditions/filed/p/a").exists() && d.join("conditions/filed/p/b").exists());
+        assert_eq!(ctx.filed.get(), 0);
+        assert!(ctx.deferred.borrow().is_empty());
     }
 
     #[test_id(t6xw4ba)]
