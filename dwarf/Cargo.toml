@@ -38,3 +38,8 @@ spira-claim = { path = "../spira-claim" }
 name = "session_tmp_ignored"
 path = "tests/session_tmp_ignored.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "fences"
+path = "tests/fences.rs"
+required-features = ["integration"]
