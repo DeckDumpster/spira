@@ -98,10 +98,11 @@ pub fn retire_task(root: &Path, name: &str, bead: &str) -> Result<Report, String
     let at = reg
         .match_indices(&format!("{name}="))
         .map(|(i, _)| i)
-        .find(|&i| i > 0 && matches!(reg.as_bytes()[i - 1], b' ' | b'='))
+        .find(|&i| i > 0 && matches!(reg.as_bytes()[i - 1], b' ' | b'\n' | b'='))
         .ok_or_else(|| format!("{TASK_MODES} registers no task {name:?}"))?;
-    let after = reg[at..].find([' ', '}']).map_or(reg.len(), |n| at + n);
+    let after = reg[at..].find([' ', '\n', '}']).map_or(reg.len(), |n| at + n);
     let (from, to) = match (reg.as_bytes().get(after), reg.as_bytes()[at - 1]) {
+        (Some(b' ' | b'\n'), b'\n') => (at, after + 1),
         (Some(b' '), _) => (at, after + 1),
         (_, b' ') => (at - 1, after),
         _ => (at, after),

@@ -143,6 +143,7 @@ dependencies = [
  "system-paths",
  "testenv",
  "testkit",
+ "toml",
  "tsd",
 ]
 
@@ -2400,6 +2401,7 @@ dependencies = [
  "testenv",
  "testkit",
  "tokio",
+ "toml",
  "tsd",
  "unit-run",
  "ureq",

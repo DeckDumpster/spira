@@ -115,7 +115,8 @@ mod tests {
         let conf = std::fs::read_to_string(spira_config::resolve::locate_home_for_process().unwrap().join("conf.d").join(KEY)).unwrap();
         let default = conf.split(&format!("${{{KEY}:=")).nth(1).and_then(|r| r.split("}\"").next()).expect("conf.d default").to_string();
         let toml = spira_config::process::complete_fixture_text();
-        let fixture = toml.lines().find_map(|l| l.trim().strip_prefix("task_modes = \"")).and_then(|v| v.strip_suffix('"')).expect("complete.toml task_modes").to_string();
+        let doc: toml::Table = toml.parse().expect("complete.toml parses");
+        let fixture = doc["spira"]["task_modes"].as_str().expect("complete.toml task_modes").to_string();
         vec![("spira/conf.d", default), ("spira/testlib/complete.toml", fixture)]
     }
 

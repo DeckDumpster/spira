@@ -102,18 +102,11 @@ fn fixture_modes() -> String {
 pub fn complete_fixture(key: &str) -> Option<String> {
     let field = spira_config::registry::field_of(key);
     let text = spira_config::process::complete_fixture_text();
-    let mut in_spira = false;
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            in_spira = line == "[spira]";
-        } else if let Some((k, v)) = line.split_once('=').filter(|_| in_spira) {
-            if k.trim() == field {
-                let v = v.trim();
-                return Some(v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(v).to_string());
-            }
-        }
+    let doc: toml::Table = text.parse().expect("complete.toml parses");
+    match doc.get("spira")?.get(field)? {
+        toml::Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
     }
-    None
 }
 
 /// Values for the keys the reconciler reads; none is the shipped default.

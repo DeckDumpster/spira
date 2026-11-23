@@ -1934,11 +1934,8 @@ const CONF_REGISTRY: &str = "spira/conf.d/";
 const FIXTURE_CONFIG: &str = "spira/testlib/complete.toml";
 
 fn fixture_keys(text: &str) -> std::collections::BTreeSet<String> {
-    text.lines()
-        .filter_map(|l| l.split_once('=').map(|(k, _)| k.trim()))
-        .filter(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-        .map(str::to_string)
-        .collect()
+    let Ok(doc) = text.parse::<toml::Table>() else { return Default::default() };
+    doc.get("spira").and_then(|s| s.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default()
 }
 
 /// The config keys `tip` adds and retires since it forked from `base_sha`: the registry files
@@ -6920,6 +6917,21 @@ mod config_key_tests {
         let (added, retired) = config_key_changes(&repo, &base, &tip);
         assert_eq!((added, retired), (vec!["NEW_SECS".to_string(), "new_secs".to_string()], vec!["retired_secs".to_string()]));
         assert_eq!(config_key_changes(&repo, &base, &by), (vec![], vec![]));
+    }
+
+    #[test_id(tila3fx)]
+    #[test]
+    fn a_tip_that_adds_a_scheduler_task_to_the_fixture_reports_no_config_key() {
+        let root = testkit::TempDir::new("config-keys-task");
+        let d = root.path();
+        testkit::git(d, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(d.join("spira/testlib")).unwrap();
+        std::fs::write(d.join("spira/testlib/complete.toml"), "[spira]\nkeep = 1\ntask_modes = \"\"\"\nalpha=act\n\"\"\"\n").unwrap();
+        let base = commit(d, "base");
+        std::fs::write(d.join("spira/testlib/complete.toml"), "[spira]\nkeep = 1\ntask_modes = \"\"\"\nalpha=act\nbeta=act\n\"\"\"\n").unwrap();
+        let tip = commit(d, "tip");
+        let repo = Repo { name: "alpha".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
+        assert_eq!(config_key_changes(&repo, &base, &tip), (vec![], vec![]));
     }
 
     #[test_id(t3tb7o2)]

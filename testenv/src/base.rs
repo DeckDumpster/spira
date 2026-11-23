@@ -51,7 +51,7 @@ pub fn onto(repo: &Path, landref: &str, tip: &str) -> Result<Basis, String> {
         Some(1) => {}
         _ => return Err(format!("merge-base {base} {tip}: {}", err(&anc))),
     }
-    let m = git(repo, &["merge-tree", "--write-tree", "--name-only", "--no-messages", &base, tip], &[]).map_err(|e| format!("git: {e}"))?;
+    let m = git(repo, &["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", "--name-only", "--no-messages", &base, tip], &[]).map_err(|e| format!("git: {e}"))?;
     let text = out(&m);
     let mut lines = text.lines();
     let tree = lines.next().unwrap_or("").trim().to_string();
@@ -77,4 +77,20 @@ pub fn onto(repo: &Path, landref: &str, tip: &str) -> Result<Basis, String> {
         return Err(format!("commit-tree {tree}: {}", err(&c)));
     }
     Ok(Basis::Merged { commit: out(&c), tree, base })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(t13wir1)]
+    #[test]
+    fn a_branch_merges_onto_the_landing_ref_by_the_attributes_the_landing_ref_declares() {
+        let d = testkit::union_repo("testenv-onto-union");
+        let tip = testkit::git(d.path(), &["rev-parse", "b"]);
+        match onto(d.path(), "main", &tip).unwrap() {
+            Basis::Merged { .. } => {}
+            other => panic!("expected a clean merge, got {other:?}"),
+        }
+    }
 }

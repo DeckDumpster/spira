@@ -133,6 +133,62 @@ fn two_branches_each_retiring_a_key_merge_clean_and_the_delta_lists_both() {
     assert!(removed.contains(&"spira.old_knob".to_string()) && removed.contains(&"spira.kept".to_string()), "{removed:?}");
 }
 
+#[test_id(tpockbx)]
+#[test]
+fn retiring_a_first_middle_and_last_task_of_a_multi_line_list_removes_just_that_line() {
+    for (task, left) in [("a=act", "\nb=act\nc=act\n"), ("b=act", "\na=act\nc=act\n"), ("c=act", "\na=act\nb=act\n")] {
+        let t = tree();
+        let list = "\na=act\nb=act\nc=act\n";
+        let file = t.path().join("spira/conf.d/SPIRA_TASK_MODES");
+        std::fs::write(&file, TASKS.replace("alpha=act old.task=act omega=act", list)).unwrap();
+        let out = retire(t.path(), &["--task", task.trim_end_matches("=act")]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let reg = read(t.path(), "spira/conf.d/SPIRA_TASK_MODES");
+        assert!(reg.contains(&format!("${{SPIRA_TASK_MODES:={left}}}")), "{task}: {reg}");
+    }
+}
+
+#[test_id(tjsr0rv)]
+#[test]
+fn two_branches_each_adding_a_task_in_the_same_gap_merge_clean_and_both_files_keep_both_tasks_once() {
+    let t = testkit::TempDir::new("retire-add-task");
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    let w = |rel: &str, body: &str| {
+        let p = t.path().join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    };
+    let real = |rel: &str| std::fs::read_to_string(root.join(rel)).unwrap();
+    w(".gitattributes", &real(".gitattributes"));
+    w("spira/conf.d/SPIRA_TASK_MODES", &real("spira/conf.d/SPIRA_TASK_MODES"));
+    w("spira/testlib/complete.toml", &real("spira/testlib/complete.toml"));
+    let id = ["-c", "user.name=t", "-c", "user.email=t@t"];
+    let git = |args: &[&str]| testkit::git(t.path(), &[&id[..], args].concat());
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "base"]);
+    for (branch, task) in [("a", "asks.new_a"), ("b", "asks.new_b")] {
+        git(&["checkout", "-q", "-b", branch, "main"]);
+        for f in ["spira/conf.d/SPIRA_TASK_MODES", "spira/testlib/complete.toml"] {
+            let body = read(t.path(), f).replacen("asks.moot=act\n", &format!("{task}=act\nasks.moot=act\n"), 1);
+            w(f, &body);
+        }
+        let toml = read(t.path(), "spira/testlib/complete.toml").replacen("seed = ", &format!("new_{branch} = \"x\"\nseed = "), 1);
+        w("spira/testlib/complete.toml", &toml);
+        git(&["commit", "-qam", branch]);
+    }
+    git(&["checkout", "-q", "a"]);
+    git(&["merge", "-q", "--no-edit", "b"]);
+    for f in ["spira/conf.d/SPIRA_TASK_MODES", "spira/testlib/complete.toml"] {
+        let body = read(t.path(), f);
+        for task in ["asks.new_a=act", "asks.new_b=act"] {
+            assert_eq!(body.matches(task).count(), 1, "{f} {task}");
+        }
+    }
+    let doc: toml::Table = read(t.path(), "spira/testlib/complete.toml").parse().expect("the merged fixture parses");
+    assert!(doc["spira"].as_table().unwrap().contains_key("new_a") && doc["spira"].as_table().unwrap().contains_key("new_b"));
+}
+
 #[test_id(tbv6flj)]
 #[test]
 fn a_bead_that_is_not_an_id_is_refused_and_writes_nothing() {
