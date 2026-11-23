@@ -722,3 +722,94 @@ mod skuld_waits {
         }
     }
 }
+
+mod provisional_blocker {
+    use super::*;
+    use serde_json::json;
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct Rows {
+        blocker_state: &'static str,
+        blocker_reason: Option<&'static str>,
+    }
+
+    impl Transport for Rows {
+        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
+            let words: Vec<&str> = argv.iter().map(String::as_str).collect();
+            let cand = json!({"bead_id": "sp-c", "state": "READY", "holds": []});
+            let blocker = json!({"bead_id": "sp-b", "state": self.blocker_state, "holds": [], "tip": "tipb", "reason": self.blocker_reason});
+            let item = |id: &str, deps: serde_json::Value| {
+                json!({"id": id, "title": id, "priority": 2, "issue_type": "task", "labels": ["repo:spira"], "dependencies": deps})
+            };
+            let dep = json!([{"issue_id": "sp-c", "depends_on_id": "sp-b", "type": "blocks"}]);
+            let out = match words.as_slice() {
+                ["list", "--state", ..] => json!([cand]),
+                ["list", "--ids", ids] if ids.contains("sp-c") => json!([cand, blocker]),
+                ["list", "--ids", _] => json!([blocker]),
+                ["plan", "items", "--ids", ids] => {
+                    let mut items = Vec::new();
+                    if ids.contains("sp-c") {
+                        items.push(item("sp-c", dep));
+                    }
+                    if ids.contains("sp-b") {
+                        items.push(item("sp-b", json!([])));
+                    }
+                    json!({"watermark": 1, "items": items})
+                }
+                _ => json!([]),
+            };
+            Ok(Reply { code: 0, out: out.to_string(), err: String::new(), read_ended: false })
+        }
+    }
+
+    fn over(blocker_state: &'static str, blocker_reason: Option<&'static str>) -> Store {
+        let svc = Arc::new(Rows { blocker_state, blocker_reason });
+        Store { lc: LcClient::over(svc, true), lc_bin: "nonexistent/spira-lc".into(), timeout: Duration::from_secs(1), views: None }
+    }
+
+    fn env<R>(f: impl FnOnce(&mut Env) -> R) -> R {
+        let mut stdin = std::io::empty();
+        let none = |_: &str| None;
+        let config = Config { control_store: true, stack_max_depth: 4, run: "nonexistent/run".into(), queue_dir: "nonexistent/queue".into(), ..Config::default() };
+        f(&mut Env { stdin: &mut stdin, config, lookup: &none })
+    }
+
+    fn verdict_of_c(st: &Store) -> (verdicts::Kind, Option<String>) {
+        let a = Args::parse(&[]).unwrap();
+        let (_, entries) = env(|e| judge_rows(&a, e, st, None, false)).unwrap();
+        let e = entries.into_iter().find(|e| e.id == "sp-c").expect("sp-c judged");
+        (e.verdict, e.blocker)
+    }
+
+    fn stack_of_c(st: &Store) -> Outcome {
+        let a = Args::parse(&["sp-c".to_string()]).unwrap();
+        env(|e| stack_over(&a, e, st, "sp-c".to_string(), 4))
+    }
+
+    #[test_id(tqwulcc)]
+    #[test]
+    fn a_blocker_delivered_from_submitted_blocks_the_dependent_through_judge_rows() {
+        let st = over("IN_DELIVERY", Some("delivered-from-submitted"));
+        assert_eq!(verdict_of_c(&st), (verdicts::Kind::Blocked, Some("sp-b".to_string())));
+    }
+
+    #[test_id(t7i9dhb)]
+    #[test]
+    fn a_blocker_delivered_from_certified_or_landed_leaves_the_dependent_claimable() {
+        assert_eq!(verdict_of_c(&over("IN_DELIVERY", None)).0, verdicts::Kind::Claimable);
+        assert_eq!(verdict_of_c(&over("LANDED", Some("delivered-from-submitted"))).0, verdicts::Kind::Claimable);
+    }
+
+    #[test_id(t4yccvs)]
+    #[test]
+    fn stack_refuses_a_dependent_of_a_blocker_delivered_from_submitted_and_names_blocked() {
+        let o = stack_of_c(&over("IN_DELIVERY", Some("delivered-from-submitted")));
+        assert_eq!(o.code, 3);
+        let v: serde_json::Value = serde_json::from_str(o.out.trim()).unwrap();
+        assert!(v["reason"].as_str().unwrap().starts_with("Blocked"), "{v}");
+        let ok = stack_of_c(&over("IN_DELIVERY", None));
+        assert_eq!(ok.code, 0, "{}", ok.out);
+    }
+}

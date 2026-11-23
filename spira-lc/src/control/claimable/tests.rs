@@ -415,3 +415,28 @@ mod pinned {
         assert_eq!(parts.load(Ordering::SeqCst), 2, "the failure was retried, then the success kept");
     }
 }
+
+fn delivered(id: &str, reason: Option<&str>) -> LifecycleRecord {
+    let mut r = rec(id, BeadState::InDelivery);
+    r.row.reason = reason.map(str::to_string);
+    r
+}
+
+#[test_id(t9vkk8d)]
+#[test]
+fn a_blocker_delivered_from_submitted_blocks_the_dependent_until_it_lands() {
+    let dependent = blocked_on("B", BeadState::Ready, "A");
+    let provisional = delivered("A", Some("delivered-from-submitted"));
+    assert_eq!(seen(&verdict(&dependent, &[&provisional], &ctx())), blocked("A"));
+    let mut landed = provisional.clone();
+    landed.row.state = BeadState::Landed;
+    assert_eq!(verdict(&dependent, &[&landed], &ctx()).verdict, Verdict::Claimable);
+}
+
+#[test_id(tyq5psz)]
+#[test]
+fn a_blocker_delivered_from_certified_still_carries_a_stack() {
+    let dependent = blocked_on("B", BeadState::Ready, "A");
+    let j = verdict(&dependent, &[&delivered("A", None)], &ctx());
+    assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 1));
+}

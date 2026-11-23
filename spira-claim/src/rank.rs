@@ -477,6 +477,7 @@ pub fn stack_plan(
                 let is_parent = cand.parent.as_deref() == Some(bid.as_str());
                 let stackable = stack_max_depth > 0
                     && !is_parent
+                    && !lifecycle::bead::provisional(row.state, row.reason.as_deref())
                     && rec.is_some_and(|r| is_work(r) && r.label_value("repo:") == own_repo && own_repo.is_some());
                 match row.state {
                     BeadState::Landed | BeadState::Done => true,

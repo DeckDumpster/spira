@@ -289,6 +289,12 @@ impl LifecycleRow {
 /// Recorded in `reason` when a SUBMITTED bead enters delivery, so a requeue returns it to
 /// SUBMITTED and never promotes it to CERTIFIED.
 pub const FROM_SUBMITTED: &str = "delivered-from-submitted";
+
+/// An IN_DELIVERY row that was never certified: a round member taken straight from SUBMITTED,
+/// whose tip a red gate withdraws, so nothing may build on it.
+pub fn provisional(state: BeadState, reason: Option<&str>) -> bool {
+    state == BeadState::InDelivery && reason == Some(FROM_SUBMITTED)
+}
 /// Prefix of the reason an IN_DELIVERY row carries once a red gate verdict at its tip arrived.
 pub const GATE_RED_MARK: &str = "gate-red: ";
 
