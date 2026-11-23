@@ -48,7 +48,10 @@ fn a_changed_page_posts_one_new_version_and_no_new_collection_and_an_unchanged_o
     assert!(o.stdout.trim_end().ends_with("version 2"), "{}", o.stdout);
     assert_eq!(f.fake.collections_posted(), 1);
     assert_eq!(f.fake.document_text("col1-d1", 2).unwrap(), "# The Design\n\nnew body\n");
+    let r = by_collection(&f.dir.path().join("run"), "col1").unwrap();
+    assert_eq!(r.version, 2);
     let again = go(&f, &["post", "--page", PAGE], "");
+    assert_eq!(by_collection(&f.dir.path().join("run"), "col1").unwrap(), r);
     assert!(!again.stdout.contains("version"));
     assert!(f.fake.document_text("col1-d1", 3).is_err(), "an unchanged page posts no version");
 }
@@ -100,4 +103,21 @@ fn a_closed_page_posted_again_opens_a_new_collection_and_a_bare_positional_is_re
     go(&f, &["post", "--page", PAGE], "again");
     assert_eq!(f.fake.collections_posted(), 2);
     assert_eq!(go(&f, &["post", PAGE], "cover").code, 2);
+}
+
+#[test_id(tdr0007)]
+#[test]
+fn a_reply_names_a_thread_of_this_page_and_a_posted_page_and_help_lists_every_verb() {
+    let f = fx();
+    assert_eq!(go(&f, &["reply", "--page", PAGE, "--thread", "t"], "a").code, 2, "not posted yet");
+    go(&f, &["post", "--page", PAGE], "cover");
+    assert_eq!(go(&f, &["reply", "--page", PAGE], "a").code, 2, "no thread");
+    assert_eq!(go(&f, &["reply", PAGE], "a").code, 2);
+    assert_eq!(go(&f, &["close", PAGE], "").code, 2);
+    let other = f.fake.his_thread("col1", margin_client::Anchor { document: "elsewhere".into(), version: 1, first: 1, last: 1 }, "q", 1);
+    let o = go(&f, &["reply", "--page", PAGE, "--thread", &other], "a");
+    assert_eq!(o.code, 2, "{}", o.stderr);
+    assert!(f.fake.comments_posted().is_empty());
+    let help = go(&f, &["-h"], "").stdout;
+    assert!(["post", "reply", "close", "status"].iter().all(|v| help.contains(v)), "{help}");
 }

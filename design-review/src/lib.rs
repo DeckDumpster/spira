@@ -214,7 +214,14 @@ fn reply(page: Option<&String>, thread: Option<&String>, ports: &Ports) -> Outco
         Ok(r) => r,
         Err(o) => return o,
     };
-    match ports.margin.thread(thread).and_then(|t| ports.margin.post_comment(&r.collection, &t.anchor, &ports.stdin, false, Some(thread))) {
+    let t = match ports.margin.thread(thread) {
+        Ok(t) => t,
+        Err(e) => return refuse(1, &e),
+    };
+    if t.anchor.document != r.document {
+        return refuse(2, &format!("thread {thread} is not on {}", r.page));
+    }
+    match ports.margin.post_comment(&r.collection, &t.anchor, &ports.stdin, false, Some(thread)) {
         Ok(c) => out(format!("{}\n", c.url)),
         Err(e) => refuse(1, &e),
     }

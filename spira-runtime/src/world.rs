@@ -446,15 +446,22 @@ impl World {
 
     /// Runs `cr unseal` for the open review holding the published collection; `cr` refuses any other state, so a replay skips it.
     pub fn margin_publish(&self, input: &str) -> Result<String, String> {
+        self.margin_publish_with(&|| {
+            let margin = margin_client::HttpMargin::configured(|k: &str| spira_config::process::cfg(k))?;
+            Ok((Box::new(margin), crate::sources::smtp::Delivery::of(&mail::env::Env::load()?)))
+        }, input)
+    }
+
+    /// [`Self::margin_publish`] with the reader and delivery a design collection needs, built only when one is.
+    pub fn margin_publish_with(&self, design_ports: &dyn Fn() -> Result<(Box<dyn margin_client::Margin>, crate::sources::smtp::Delivery), String>, input: &str) -> Result<String, String> {
         use crate::watchers::margin_comments::{Publish, PUBLISH_CALL_SECS};
         let p: Publish = serde_json::from_str(input).map_err(|e| format!("margin.publish: bad input: {e}"))?;
         let review = cr::record::all(&self.run_dir)?.into_iter().find(|r| r.collection.as_deref() == Some(p.collection.as_str()));
         let design = if review.is_none() { design_review::by_collection(&self.run_dir, &p.collection) } else { None };
         let note = match review {
             None if design.is_some() => {
-                let margin = margin_client::HttpMargin::configured(|k: &str| spira_config::process::cfg(k))?;
-                let delivery = crate::sources::smtp::Delivery::of(&mail::env::Env::load()?);
-                self.design_published(&margin, &delivery, design.as_ref().expect("checked"))?
+                let (margin, delivery) = design_ports()?;
+                self.design_published(margin.as_ref(), &delivery, design.as_ref().expect("checked"))?
             }
             None => "not a code review".to_string(),
             Some(r) if r.state != cr::record::State::Open => format!("review {:03} is {}; nothing to unseal", r.number, r.state.as_str()),
@@ -2248,10 +2255,13 @@ mod margin_deliver_tests {
     fn a_design_publish_mails_the_concierge_once_with_the_count_of_his_threads() {
         let f = design_fixture();
         let rec = design_review::by_collection(f.dir.path(), "col1").unwrap();
-        let delivery = Delivery { run_dir: f.dir.path().into(), home: f.dir.path().into(), mail_root: f.dir.path().join("mail"), mute: false };
         let w = World { run_dir: f.dir.path().into(), ..World::default() };
-        assert_eq!(w.design_published(&f.fake, &delivery, &rec).unwrap(), "design wiki/projects/p/designs/d.md publish mailed");
-        assert_eq!(w.design_published(&f.fake, &delivery, &rec).unwrap(), "design wiki/projects/p/designs/d.md publish already mailed");
+        let _ = rec;
+        let ports = || Ok((Box::new(f.fake.clone()) as Box<dyn Margin>, Delivery { run_dir: f.dir.path().into(), home: f.dir.path().into(), mail_root: f.dir.path().join("mail"), mute: false }));
+        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish { collection: "col1".into(), seq: 9, batch: vec![9], through: 9 }).unwrap();
+        assert_eq!(w.margin_publish_with(&ports, &input).unwrap(), "design wiki/projects/p/designs/d.md publish mailed");
+        assert_eq!(w.margin_publish_with(&ports, &input).unwrap(), "design wiki/projects/p/designs/d.md publish already mailed");
+        assert_eq!(crate::sources::margin_changed::resume_point(f.dir.path()), 9);
         let mail = mailbox(&f);
         assert_eq!(mail.len(), 1);
         let m = &mail[0];
