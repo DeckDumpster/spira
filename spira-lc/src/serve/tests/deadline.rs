@@ -164,3 +164,28 @@ fn a_test_started_serve_runs_under_the_ceiling_the_complete_fixture_carries() {
     let got = super::deadlines_from(|k| read.get(k).cloned().ok_or_else(|| format!("{k} missing"))).unwrap();
     assert_eq!(got.default, Duration::from_millis(super::MAX_CONFIGURED_MS));
 }
+
+#[test_id(tsf6mti)]
+#[test]
+fn work_outliving_its_deadline_holds_its_runner_and_the_next_call_runs_on_another_thread() {
+    let _env = testkit::env_read();
+    let (hold_tx, hold_rx) = std::sync::mpsc::channel::<()>();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let out = super::within(Duration::from_millis(20), move || {
+        started_tx.send(std::thread::current().id()).unwrap();
+        let _ = hold_rx.recv();
+    });
+    assert!(out.is_none());
+    let held = started_rx.recv().unwrap();
+    let other = super::within(Duration::from_secs(5), || std::thread::current().id());
+    assert_ne!(other.expect("answered in time"), held, "a runner still on abandoned work is not reused");
+    drop(hold_tx);
+}
+
+#[test_id(tsttgjb)]
+#[test]
+fn work_that_panics_answers_none_and_the_pool_still_answers() {
+    let _env = testkit::env_read();
+    assert!(super::within(Duration::from_secs(5), || -> u8 { panic!("work failed") }).is_none());
+    assert_eq!(super::within(Duration::from_secs(5), || 7), Some(7));
+}
