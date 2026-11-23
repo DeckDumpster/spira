@@ -1934,7 +1934,13 @@ const CONF_REGISTRY: &str = "spira/conf.d/";
 const FIXTURE_CONFIG: &str = "spira/testlib/complete.toml";
 
 fn fixture_keys(text: &str) -> std::collections::BTreeSet<String> {
-    let Ok(doc) = text.parse::<toml::Table>() else { return Default::default() };
+    let doc = match text.parse::<toml::Table>() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("batcher: {FIXTURE_CONFIG} does not parse, its keys are not compared: {}", e.message());
+            return Default::default();
+        }
+    };
     doc.get("spira").and_then(|s| s.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default()
 }
 
