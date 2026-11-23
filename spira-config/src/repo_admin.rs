@@ -636,8 +636,47 @@ fn publish_piece(reg: &Registry, name: &str, path: &Path, land: &str) -> Result<
     Ok(format!("[publish.{name}] remote = \"none\": publishes nowhere"))
 }
 
+fn show(repo: &Path, land_ref: &str, rel: &str) -> Option<String> {
+    git(repo, &["show", &format!("{land_ref}:{rel}")]).ok()
+}
+
+fn gate_detail(reg: &Registry, name: &str, path: &Path, land: &str) -> Result<String, String> {
+    use crate::gate_source::{resolve, GateSource};
+    let declaration = show(path, land, TESTENV_DECL);
+    let mode = reg.land(name);
+    let column = reg.gate(name).unwrap_or_default();
+    let source = resolve(
+        in_tree(path, land, "gate.steps"),
+        declaration.as_deref(),
+        in_tree(path, land, HARNESS_IMAGE),
+        &mode,
+        &column,
+    )
+    .map_err(|e| format!("{TESTENV_DECL} on {land} does not parse: {e}"))?;
+    match source {
+        GateSource::Steps => Ok(format!("gate.steps on {land}")),
+        GateSource::Testenv { tiers, build_tier } => Ok(format!(
+            "testenv default tiers: {}{}",
+            tiers.join(", "),
+            if build_tier { ", build tier" } else { "" }
+        )),
+        GateSource::Column(c) if command_exists(&c) => Ok(c),
+        GateSource::Column(c) => Err(format!("command not found: {c}")),
+        GateSource::Nothing { .. } if matches!(mode.as_str(), "queue" | "queue.forge") => {
+            Ok("certifies nothing; the round's pull request CI judges".to_string())
+        }
+        GateSource::Nothing { .. } => Err(format!(
+            "certifies nothing: {land} has no gate.steps and no ci_entry in {TESTENV_DECL}"
+        )),
+    }
+}
+
 /// Every piece of plumbing, in order, stopping after the first that is missing.
 pub fn check(reg: &Registry, name: &str) -> Vec<Piece> {
+    check_cutting_in(reg, name, &worktree_root)
+}
+
+fn check_cutting_in(reg: &Registry, name: &str, tree_root: &dyn Fn() -> Result<PathBuf, String>) -> Vec<Piece> {
     let mut out: Vec<Piece> = Vec::new();
     macro_rules! piece {
         ($n:expr, $r:expr) => {{
@@ -680,13 +719,11 @@ pub fn check(reg: &Registry, name: &str) -> Vec<Piece> {
             .ok_or_else(|| "the landing ref does not resolve".to_string())
     );
     let land = land.expect("checked");
-    piece!("worktree", cut_worktree(&path, &land).map(|_| format!("cut from {land}")));
-    for (n, v) in [
-        ("format", reg.format(name).unwrap_or_default()),
-        ("gate", reg.gate(name).unwrap_or_default()),
-    ] {
+    piece!("worktree", tree_root().and_then(|r| cut_worktree_in(&r, &path, &land)).map(|_| format!("cut from {land}")));
+    {
+        let v = reg.format(name).unwrap_or_default();
         piece!(
-            n,
+            "format",
             if v.is_empty() {
                 Ok("none declared".to_string())
             } else if command_exists(&v) {
@@ -696,6 +733,7 @@ pub fn check(reg: &Registry, name: &str) -> Vec<Piece> {
             }
         );
     }
+    piece!("gate", gate_detail(reg, name, &path, &land));
     piece!(
         "test-entry",
         if in_tree(&path, &land, TESTENV_DECL) || in_tree(&path, &land, HARNESS_IMAGE) {
@@ -896,7 +934,7 @@ mod tests {
     }
 
     fn first_failure(f: &Fx) -> Option<&'static str> {
-        check(&reg(f), "fixture")
+        check_cutting_in(&reg(f), "fixture", &|| Ok(f._d.path().join("wt")))
             .into_iter()
             .find(|p| !p.ok)
             .map(|p| p.name)
@@ -957,6 +995,83 @@ mod tests {
         assert!(set("fixture", "lanes", "plan,b@d", &t).is_err());
         set("fixture", "land", "main", &t).unwrap();
         assert!(set("fixture", "queue", "forge", &t).is_err());
+    }
+
+    fn gated_fx(land: &str, column: &str, files: &[(&str, &str)]) -> (Fx, PathBuf) {
+        let f = fx();
+        let repo = f._d.path().join("gated");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "local/main"]).unwrap();
+        for (rel, body) in files {
+            let p = repo.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        git(&repo, &["add", "-A"]).unwrap();
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "c"]).unwrap();
+        std::fs::write(
+            &f.map,
+            format!("# rows\nfixture | {} | {land} | local/main | | {column} | plan\n", repo.display()),
+        )
+        .unwrap();
+        (f, repo)
+    }
+
+    fn piece(f: &Fx, name: &str) -> Piece {
+        { let all = check_cutting_in(&reg(f), "fixture", &|| Ok(f._d.path().join("wt"))); all.iter().find(|p| p.name == name).cloned().unwrap_or_else(|| panic!("{all:?}")) }
+    }
+
+    const DECL_OK: &str = "ci_entry = \"bash gate.sh\"\ndefault = [\"gate\"]\n[tier.gate]\nargv = [\"true\"]\n";
+    const DECL_NO_ENTRY: &str = "default = [\"gate\"]\n[tier.gate]\nargv = [\"true\"]\n";
+
+    #[test_id(tpg1a01)]
+    #[test]
+    fn a_queue_local_declaration_with_a_ci_entry_names_its_default_tiers_as_the_gate() {
+        let (f, _) = gated_fx("queue.local", "", &[(".spira/testenv.toml", DECL_OK)]);
+        let g = piece(&f, "gate");
+        assert!(g.ok, "{g:?}");
+        assert_eq!(g.detail, "testenv default tiers: gate");
+    }
+
+    #[test_id(tpg1a02)]
+    #[test]
+    fn a_queue_local_repository_whose_gate_runs_nothing_fails_at_gate() {
+        let (f, _) = gated_fx("queue.local", "", &[(".spira/testenv.toml", DECL_NO_ENTRY)]);
+        assert_eq!(first_failure(&f), Some("gate"));
+        let (f, _) = gated_fx("queue.local", "", &[("README", "x")]);
+        assert_eq!(first_failure(&f), Some("gate"));
+    }
+
+    #[test_id(tpg1a03)]
+    #[test]
+    fn a_queue_forge_repository_certifies_nothing_and_says_the_pull_request_judges() {
+        let (f, _) = gated_fx("queue.forge", "", &[(".spira/testenv.toml", DECL_OK)]);
+        let g = piece(&f, "gate");
+        assert!(g.ok && g.detail.contains("certifies nothing"), "{g:?}");
+    }
+
+    #[test_id(tpg1a04)]
+    #[test]
+    fn gate_steps_on_the_landing_ref_is_named_as_the_gate() {
+        let (f, _) = gated_fx("queue.local", "", &[("gate.steps", "step bash x.sh\n")]);
+        let g = piece(&f, "gate");
+        assert!(g.ok && g.detail.contains("gate.steps"), "{g:?}");
+    }
+
+    #[test_id(tpg1a05)]
+    #[test]
+    fn a_column_naming_a_missing_command_still_fails_the_gate() {
+        let (f, _) = gated_fx("queue.local", "no-such-cmd-xyz run", &[("README", "x")]);
+        let g = piece(&f, "gate");
+        assert!(!g.ok && g.detail.contains("command not found"), "{g:?}");
+    }
+
+    #[test_id(tpg1a06)]
+    #[test]
+    fn a_declaration_that_does_not_parse_fails_the_gate_with_the_parse_error() {
+        let (f, _) = gated_fx("queue.local", "", &[(".spira/testenv.toml", "ci_entry = [")]);
+        let g = piece(&f, "gate");
+        assert!(!g.ok && !g.detail.is_empty(), "{g:?}");
     }
 
     #[test_id(tzam1ri)]
