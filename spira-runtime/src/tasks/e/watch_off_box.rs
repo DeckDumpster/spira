@@ -103,7 +103,7 @@ pub fn observe_dir(url: &str, dir: &Path, head: impl FnOnce() -> Result<u64, Str
         Err(e) => return Err(format!("{}: {e}", last.display())),
     };
     let staged = dir.join("queue").join(SNAPSHOT);
-    let oldest_snapshot_ms = ship::names(&staged)?.iter().filter_map(|n| mtime_ms(&staged.join(n)).ok()).min();
+    let oldest_snapshot_ms = ship::names(&runtime::ports::RealFs, &staged)?.iter().filter_map(|n| mtime_ms(&staged.join(n)).ok()).min();
     Ok(Snapshot::Seen { head: head()?, shipped, shipped_at_ms, last_error, oldest_snapshot_ms })
 }
 

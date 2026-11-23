@@ -1421,6 +1421,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "ports"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "spira-test-id",
+ "testkit",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1827,6 +1836,7 @@ name = "runtime"
 version = "0.1.0"
 dependencies = [
  "lifecycle",
+ "ports",
  "serde",
  "serde_json",
  "socket2",
@@ -2299,6 +2309,7 @@ dependencies = [
  "libc",
  "lifecycle",
  "opentelemetry-proto",
+ "ports",
  "reconciler-engine",
  "round-vm",
  "runtime",
@@ -2346,6 +2357,7 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "opentelemetry-proto",
+ "ports",
  "prost",
  "serde",
  "serde_json",

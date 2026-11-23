@@ -46,7 +46,7 @@ path = "tests/verbs_on_store.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["system-paths/integration", "bead/integration", "watchtower/integration", "incident/integration", "lifecycle/integration", "gate/integration", "forge/integration", "groomer/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
+integration = ["system-paths/integration", "bead/integration", "watchtower/integration", "incident/integration", "lifecycle/integration", "gate/integration", "forge/integration", "groomer/integration", "reconciler-engine/integration", "runtime/integration", "round-vm/integration", "sentinel/integration", "spira-config/integration", "spira-store/integration", "spira-desired-state/integration", "spira-otel/integration", "state-store/integration", "state-store-sqlite/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration", "ports/integration"]
 
 [dependencies]
 system-paths = { path = "../system-paths" }
@@ -65,6 +65,7 @@ libc = "0.2"
 state-store = { path = "../state-store" }
 state-store-sqlite = { path = "../state-store-sqlite" }
 runtime = { path = "../runtime" }
+ports = { path = "../ports" }
 tsd = { path = "../tsd" }
 tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
 

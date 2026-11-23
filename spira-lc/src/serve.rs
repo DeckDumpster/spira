@@ -265,6 +265,7 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
+    crate::disk::install(crate::disk::LogWriter::new(std::sync::Arc::new(ports::RealFs), runtime::offload::Pool::global()));
     let mut startup = Startup::begin();
     let spans = spira_config::process::cfg("SPIRA_RUN").and_then(|run| {
         let keep = spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS")?;
@@ -273,7 +274,7 @@ pub fn run(args: &[String]) -> i32 {
     });
     match spans {
         Ok((run, keep, day_max_mb)) => {
-            let sink = spira_otel::Sink::buffered(spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep, u64::from(day_max_mb) << 20);
+            let sink = spira_otel::Sink::buffered_on(crate::disk::fs(), spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep, u64::from(day_max_mb) << 20);
             let _ = SPANS.set(sink);
         }
         Err(e) => {
@@ -402,12 +403,14 @@ pub fn run(args: &[String]) -> i32 {
             let mut pushed_reads = Default::default();
             let mut pushed_followups = Default::default();
             let mut pushed_children = 0;
+            let mut pushed_overflow = 0;
             loop {
                 std::thread::sleep(crate::slow::METRICS_EVERY);
                 crate::slow::push_counts(&metrics, &mut pushed);
                 crate::slow::push_reads(&metrics, &mut pushed_reads);
                 crate::slow::push_gate_waits(&metrics);
                 crate::slow::push_children_started(&metrics, &mut pushed_children);
+                crate::disk::push_overflow(&metrics, &mut pushed_overflow);
                 crate::followups::push(&metrics, &mut pushed_followups);
                 if let Some(Ok(store)) = crate::control::served::configured() {
                     match crate::store_gauges::file_series(store.contract().backend(), SystemTime::now()) {
@@ -533,6 +536,7 @@ pub fn run(args: &[String]) -> i32 {
     if let Some(spans) = SPANS.get() {
         spans.flush();
     }
+    crate::disk::flush();
     eprintln!("spira-lc serve: stopped after draining {drained}, answered {answered} at the bound");
     if let Some(t) = loop_thread {
         match t.join() {
@@ -955,14 +959,12 @@ fn alarm_tick() {
         return;
     };
     let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-    if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(text.as_bytes())) {
-        eprintln!("spira-lc serve: {}: {e}", path.display());
-    }
+    crate::disk::log_line(&path, text);
 }
 
 fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
     if std::path::Path::new(socket_path).exists() {
-        let _ = std::fs::remove_file(socket_path);
+        let _ = crate::disk::fs().remove(std::path::Path::new(socket_path));
     }
     let listener = UnixListener::bind(socket_path)?;
     // Group-readable/writable only: the operator's group (spira) can reach the socket, the
@@ -1128,7 +1130,7 @@ impl Called {
 pub(crate) fn call_request(req: Request, peer: Peer, door: &Door, received: Instant, accepted: Instant, cut: Cut) -> Called {
     let caller = peer.pid.map(crate::slow::caller_of_pid).unwrap_or_else(|| "-".to_string());
     let verb = req.argv.first().cloned().unwrap_or_default();
-    let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
+    let map = crate::disk::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
     let argv_seen = req.argv.clone();
     let task = req.task.clone();
     let recorder = Arc::new(state_store::phases::Recorder::default());

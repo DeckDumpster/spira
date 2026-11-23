@@ -2,7 +2,7 @@
 //! `<dir>/<service>.logs.<UTC date>.jsonl` beside the span files, so the same `otlpjsonfile`
 //! receiver ships it. The attributes are an open set the caller supplies; nothing here names a key.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
@@ -153,8 +153,7 @@ impl LogSink {
         if let Some(cap) = self.cap {
             self.rotate(&path, cap)?;
         }
-        let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-        crate::append_locked(&mut f, &line)
+        ports::Fs::append(&ports::RealFs, &path, &line)
     }
 
     pub fn request(&self, body: &str, attrs: &[(String, Attr)], now: SystemTime) -> ExportLogsServiceRequest {

@@ -127,7 +127,7 @@ pub fn observe(run: &Path, url: &str, dir: &str) -> Result<String, String> {
     let mut snap = Snapshot { dir: dir.display().to_string(), ..Snapshot::default() };
     if !url.is_empty() {
         for (kind, q) in [(REVLOG, &mut snap.revlog), (SNAPSHOT, &mut snap.snapshot)] {
-            let names = ship::names(&dir.join("queue").join(kind))?;
+            let names = ship::names(&runtime::ports::RealFs, &dir.join("queue").join(kind))?;
             *q = Queue { queued: names.len() as u64, oldest: names.first().cloned().unwrap_or_default() };
         }
     }
@@ -150,7 +150,7 @@ fn drain_of(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl 
         Err((n, e)) => (n, Err(e)),
     };
     let last = LastDrain { at_ms: runtime::ports::WallClock.now_ms(), kind: kind.into(), uploaded, error: ran.as_ref().err().cloned() };
-    let recorded = serde_json::to_vec(&last).map_err(|e| e.to_string()).and_then(|b| ship::write_durably(&Path::new(dir).join(LAST_DRAIN), &b));
+    let recorded = serde_json::to_vec(&last).map_err(|e| e.to_string()).and_then(|b| ship::write_durably(&runtime::ports::RealFs, &Path::new(dir).join(LAST_DRAIN), &b));
     ran.and_then(|said| recorded.map(|()| said))
 }
 
@@ -163,7 +163,7 @@ fn upload(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn
         Dest::File(_) => None,
     };
     let put = Uploader { dest, creds, proc, deadline: PUT_DEADLINE };
-    let sent = ship::drain_kind(Path::new(dir), kind, &put).map_err(early)?;
+    let sent = ship::drain_kind(&runtime::ports::RealFs, Path::new(dir), kind, &put).map_err(early)?;
     let n = sent.uploaded.len() as u64;
     match sent.failed {
         Some(e) => Err((n, format!("{n} object(s) uploaded, then: {e}"))),

@@ -43,6 +43,7 @@ mod close_on_land;
 mod cutover;
 mod db;
 mod deadline;
+mod disk;
 mod admin_drop;
 mod admin_store;
 mod admin_reader;

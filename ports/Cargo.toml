@@ -1,0 +1,16 @@
+[package]
+name = "ports"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "ports — the Clock, Proc, Rng and Fs ports, each with its real and its simulated implementation."
+
+[features]
+integration = ["spira-test-id/integration", "testkit/integration"]
+
+[dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
+testkit = { path = "../testkit" }

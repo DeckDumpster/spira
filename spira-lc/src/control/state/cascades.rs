@@ -365,29 +365,28 @@ fn log_abandons(
     stale_secs: i64,
     now: i64,
 ) -> Option<String> {
-    use std::io::Write;
     if abandoned.is_empty() {
         return None;
     }
-    let file = run.clone().and_then(|dir| {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("landing.log"))
+    let reason = format!("requeue-orphans: opened and never began, no driver in {stale_secs}s");
+    let text: String = abandoned
+        .iter()
+        .map(|id| {
+            let repo = repos.get(id).map_or("unknown", String::as_str);
+            format!("QUEUE ROUND-ABANDON {now} repo={repo} batch={id} by={BY} reason={reason}\n")
+        })
+        .collect();
+    let written = run.clone().and_then(|dir| {
+        crate::disk::fs()
+            .append(&dir.join("landing.log"), text.as_bytes())
             .map_err(|e| e.to_string())
     });
     let run_dir = run;
-    match file {
-        Ok(mut f) => {
-            for id in abandoned {
-                let repo = repos.get(id).map_or("unknown", String::as_str);
-                let reason =
-                    format!("requeue-orphans: opened and never began, no driver in {stale_secs}s");
-                let _ = writeln!(
-                    f,
-                    "QUEUE ROUND-ABANDON {now} repo={repo} batch={id} by={BY} reason={reason}"
-                );
-                if let Ok(dir) = &run_dir {
+    match written {
+        Ok(()) => {
+            if let Ok(dir) = &run_dir {
+                for id in abandoned {
+                    let repo = repos.get(id).map_or("unknown", String::as_str);
                     let at = std::time::UNIX_EPOCH
                         + std::time::Duration::from_secs(u64::try_from(now).unwrap_or(0));
                     spira_otel::rounds::emit(
@@ -397,7 +396,7 @@ fn log_abandons(
                         repo,
                         id,
                         BY,
-                        &[("reason", reason)],
+                        &[("reason", reason.clone())],
                         at,
                     );
                 }

@@ -1,5 +1,6 @@
 use super::*;
 
+mod cert_log;
 mod closes;
 mod content_writes;
 mod deadline;

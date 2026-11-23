@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use runtime::ports::{Proc, ProcOutput, ProcSpec, VirtualClock};
+use runtime::ports::{Proc, ProcOutput, ProcSpec, RealFs, VirtualClock};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use state_store::conformance as suite;
@@ -704,7 +704,7 @@ fn sha256_of_a_file_longer_than_the_read_buffer_equals_the_digest_of_its_bytes()
     let path = dir.path().join("big");
     std::fs::write(&path, &bytes).unwrap();
     let want: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(ship::sha256_file(&path).unwrap(), want);
+    assert_eq!(ship::sha256_file(&RealFs, &path).unwrap(), want);
 }
 
 #[test_id(tbv8sav)]
@@ -1138,8 +1138,8 @@ fn a_tick_stages_runs_and_reports_lag_while_a_scheduled_snapshot_is_held_in_its_
 
     assert!(t.staged.is_some(), "{t:?}");
     assert!(t.oldest_unshipped_ms.is_some(), "{t:?}");
-    assert!(!ship::names(&s.dir().join("queue").join(REVLOG)).unwrap().is_empty(), "the run waits in queue/");
-    let drained = ship::drain(s.dir(), file_put(&dir.path().join("off")).as_ref()).unwrap();
+    assert!(!ship::names(&RealFs, &s.dir().join("queue").join(REVLOG)).unwrap().is_empty(), "the run waits in queue/");
+    let drained = ship::drain(&RealFs, s.dir(), file_put(&dir.path().join("off")).as_ref()).unwrap();
     assert!(drained.failed.is_none(), "{drained:?}");
     let (out, _, _) = restored_copy(dir.path(), &s);
     assert!(snap_rev <= c.backend().head().unwrap());
@@ -1264,7 +1264,7 @@ fn a_run_in_sent_whose_shipped_mark_was_lost_is_counted_shipped_by_an_open_and_a
     let queued = s.dir().join("queue").join(REVLOG);
     let sent = s.sent(REVLOG);
     std::fs::create_dir_all(&sent).unwrap();
-    for n in ship::names(&queued).unwrap() {
+    for n in ship::names(&RealFs, &queued).unwrap() {
         std::fs::rename(queued.join(&n), sent.join(&n)).unwrap();
     }
     let t = tick(&mut s);
@@ -1301,7 +1301,7 @@ fn a_relist_of_sent_revlog_happens_once_per_staged_value() {
     let t = lost.tick().unwrap();
     assert!(t.staged.is_some());
     let queued = lost.dir().join("queue").join(REVLOG);
-    for n in ship::names(&queued).unwrap() {
+    for n in ship::names(&RealFs, &queued).unwrap() {
         std::fs::remove_file(queued.join(n)).unwrap();
     }
     sent_revlog_made_a_file(&lost);
@@ -1330,11 +1330,11 @@ fn thirty_commits_two_seconds_apart_stage_at_most_six_runs_and_restore_whole() {
         tick(&mut s);
         clock.advance(2_000);
     }
-    let runs = ship::names(&s.dir().join("queue").join(REVLOG)).unwrap();
+    let runs = ship::names(&RealFs, &s.dir().join("queue").join(REVLOG)).unwrap();
     assert!(runs.len() <= 6, "{runs:?}");
     clock.advance(15_000);
     assert!(tick(&mut s).staged.is_some(), "the tail the pace held back");
-    let drained = ship::drain(s.dir(), file_put(&dir.path().join("off")).as_ref()).unwrap();
+    let drained = ship::drain(&RealFs, s.dir(), file_put(&dir.path().join("off")).as_ref()).unwrap();
     assert!(drained.failed.is_none(), "{drained:?}");
     tick(&mut s);
     let (out, _, _) = restored_copy(dir.path(), &s);
@@ -1350,7 +1350,7 @@ fn staging_a_run_leaves_the_staged_mark_alone() {
     let mut s = Shipper::open_staging(c.backend().clone(), paced_cfg(dir.path(), 0), Arc::new(clock.clone())).unwrap();
     tick(&mut s);
     let mark = s.dir().join("staged");
-    ship::write_durably(&mark, b"0").unwrap();
+    ship::write_durably(&RealFs, &mark, b"0").unwrap();
     let stat = || (std::fs::read(&mark).ok(), std::fs::metadata(&mark).and_then(|m| m.modified()).ok());
     let before = stat();
     put(&c, "a", Object::new(json!(1)), "1");
@@ -1374,7 +1374,7 @@ fn a_reopen_stages_from_the_revision_after_a_run_in_queue_and_after_one_only_in_
     assert_eq!(tick(&mut s).staged, Some((r + 1, r2)), "a run in queue/");
     let queued = s.dir().join("queue").join(REVLOG);
     std::fs::create_dir_all(s.sent(REVLOG)).unwrap();
-    for n in ship::names(&queued).unwrap() {
+    for n in ship::names(&RealFs, &queued).unwrap() {
         std::fs::rename(queued.join(&n), s.sent(REVLOG).join(&n)).unwrap();
     }
     let mut s = Shipper::open_staging(c.backend().clone(), cfg(), Arc::new(clock.clone())).unwrap();
@@ -1398,4 +1398,60 @@ fn a_paced_shipper_stages_a_full_run_s_successor_without_waiting() {
     assert!(tick(&mut s).staged.is_some(), "the first run was full");
     assert!(tick(&mut s).staged.is_some(), "the second run was full");
     assert_eq!(tick(&mut s).staged, None, "the last run was short, and the pace holds");
+}
+
+struct Accepts;
+
+impl Put for Accepts {
+    fn put(&self, _file: &Path, _name: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Every commit in `revs` is in a staged or sent run, or still in the outbox.
+fn unaccounted(fs: &runtime::ports::SimFs, ship_dir: &Path, c: &Contract<SqliteBackend>, revs: &[u64]) -> Vec<u64> {
+    let mut runs = Vec::new();
+    for dir in [ship_dir.join("queue").join(REVLOG), ship_dir.join("sent").join(REVLOG)] {
+        runs.extend(ship::names(fs, &dir).unwrap().iter().filter_map(|n| revlog::parse_run_name(n)));
+    }
+    revs.iter()
+        .copied()
+        .filter(|r| !runs.iter().any(|(from, to)| (from..=to).contains(&r)))
+        .filter(|r| !c.backend().outbox_log(r - 1, 1).is_ok_and(|e| e.first().is_some_and(|e| e.rev.main == *r)))
+        .collect()
+}
+
+#[test_id(tbszon5)]
+#[test]
+fn a_shipper_on_the_sim_disk_crashed_at_each_call_in_turn_then_reopened_loses_no_commit() {
+    let ship_path = Path::new("lc-ship");
+    let mut crashed_runs = 0;
+    for k in 1.. {
+        let dir = TempDir::new("ship-crash-sim");
+        let clock = VirtualClock::new(1_000);
+        let c = suite::open(open(&dir.path().join("live.db")), &clock);
+        let fs = runtime::ports::SimFs::new(7, Default::default(), clock.clone());
+        let cfg = ShipConfig { dir: ship_path.to_path_buf(), max_mains: 1_000, snapshot_every_ms: u64::MAX, stage_every_ms: 0 };
+        fs.crash_after(k);
+        let mut revs = Vec::new();
+        let finished = (|| -> Result<(), String> {
+            let mut s = Shipper::open_on(fs.clone(), c.backend().clone(), cfg.clone(), Arc::new(Accepts), Arc::new(clock.clone()))?;
+            for i in 0..3 {
+                revs.push(put(&c, &format!("k{i}"), Object::new(json!(i)), &format!("p{i}")));
+                s.tick()?;
+            }
+            Ok(())
+        })()
+        .is_ok();
+        fs.revive();
+        let mut s = Shipper::open_on(fs.clone(), c.backend().clone(), cfg, Arc::new(Accepts), Arc::new(clock.clone())).unwrap();
+        s.tick().unwrap();
+        s.tick().unwrap();
+        assert_eq!(unaccounted(&fs, ship_path, &c, &revs), Vec::<u64>::new(), "crash at call {k}: commits in neither a run nor the outbox");
+        if finished {
+            break;
+        }
+        crashed_runs += 1;
+    }
+    assert!(crashed_runs > 10, "the workload made more calls than that: {crashed_runs}");
 }
