@@ -403,3 +403,21 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+#[test_id(txh98t7)]
+#[test]
+fn the_landing_log_tail_of_a_big_log_with_invalid_utf8_in_its_first_line_is_its_last_30_lines() {
+    let dir = testkit::TempDir::new("sentinel-land-tail");
+    let mut bytes = vec![0xff, 0xfe, b'\n'];
+    for i in 0..10_000 {
+        bytes.extend_from_slice(format!("line {i}\n").as_bytes());
+    }
+    assert!(bytes.len() > 64 * 1024);
+    std::fs::write(dir.path().join("landing.log"), bytes).unwrap();
+    let tail = land_log_tail(dir.path());
+    let lines: Vec<&str> = tail.lines().collect();
+    assert_eq!(lines.len(), 30, "{tail}");
+    assert_eq!(lines[29], "line 9999");
+    assert_eq!(lines[0], "line 9970");
+    assert!(land_log_tail(&dir.path().join("none")).contains("no landing log"));
+}

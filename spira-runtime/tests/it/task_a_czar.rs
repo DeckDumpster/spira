@@ -43,6 +43,7 @@ fn idle() -> Snapshot {
         reconciler_last_pass_ms: Read::Observed(Some(NOW - 30_000)),
         now_ms: NOW,
         gh_budget: None,
+        mark: Mark::default(),
     }
 }
 
@@ -163,4 +164,163 @@ fn a_spent_budget_files_one_page_naming_the_reset_and_the_top_spender() {
     assert_eq!(filed.len(), 1, "{acts:?}");
     let text = format!("{:?}", filed[0]);
     assert!(text.contains("forge:pr-state") && text.contains(&spira_runtime::api_budget::clock_of(NOW / 1000 + 600)), "{text}");
+}
+
+const LOG_PASS: &str = "2026-11-20T10:00:00Z landing: pass complete";
+const LOG_SORT: &str = "queue_sort_rows: ranking failed";
+
+fn stamped(secs_into_day: u32, text: &str) -> String {
+    format!("2026-11-21T{:02}:{:02}:{:02}Z {text}", secs_into_day / 3600, secs_into_day / 60 % 60, secs_into_day % 60)
+}
+
+/// One observe over `run`, fed through `decide` as the scheduler does; returns the next carry and what it saw.
+fn pass(run: &std::path::Path, carry: &Carry) -> (Carry, Snapshot) {
+    let e = spira_runtime::Effects { world: spira_runtime::world::World { run_dir: run.to_path_buf(), ..Default::default() }, ..Default::default() };
+    let input = serde_json::to_string(&ObserveIn { carry: carry.clone(), pinned: Default::default() }).unwrap();
+    let snap: Snapshot = serde_json::from_str(&observe(&e, &input).unwrap()).unwrap();
+    let snap = Snapshot { open_batch: idle().open_batch, certified: idle().certified, ..snap };
+    (decide(&policy(Stage::Shadow), carry, &snap).0, snap)
+}
+
+fn events(s: &Snapshot) -> Vec<LandingEvent> {
+    match &s.landing_events {
+        Read::Observed(e) => e.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test_id(tvmfuis)]
+#[test]
+fn an_unchanged_log_is_not_read_again_even_when_a_line_changed_in_place() {
+    let dir = testkit::TempDir::new("czar-log-unchanged");
+    let log = dir.path().join("landing.log");
+    let old = stamped(100, LOG_SORT);
+    std::fs::write(&log, format!("{old}\n{LOG_PASS}\n")).unwrap();
+    let (carry, first) = pass(dir.path(), &Carry::default());
+    assert_eq!(events(&first).len(), 1);
+    let newer = stamped(200, LOG_SORT);
+    assert_eq!(newer.len(), old.len());
+    let f = std::fs::OpenOptions::new().write(true).open(&log).unwrap();
+    std::os::unix::fs::FileExt::write_all_at(&f, newer.as_bytes(), 0).unwrap();
+    let (_, second) = pass(dir.path(), &carry);
+    assert!(events(&second).is_empty(), "{second:?}");
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
+}
+
+#[test_id(t261hfa)]
+#[test]
+fn an_appended_event_is_reported_once_and_an_unterminated_one_only_when_completed() {
+    use std::io::Write;
+    let dir = testkit::TempDir::new("czar-log-append");
+    let log = dir.path().join("landing.log");
+    std::fs::write(&log, format!("{LOG_PASS}\n")).unwrap();
+    let (carry, _) = pass(dir.path(), &Carry::default());
+    let line = stamped(300, LOG_SORT);
+    let mut f = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+    f.write_all(line.as_bytes()).unwrap();
+    let (carry, partial) = pass(dir.path(), &carry);
+    assert!(events(&partial).is_empty(), "{partial:?}");
+    f.write_all(b"\n").unwrap();
+    let (carry, done) = pass(dir.path(), &carry);
+    assert_eq!(events(&done).len(), 1, "{done:?}");
+    let (_, again) = pass(dir.path(), &carry);
+    assert!(events(&again).is_empty(), "{again:?}");
+}
+
+#[test_id(t8p276x)]
+#[test]
+fn a_truncated_or_replaced_log_is_read_again_from_the_start() {
+    let dir = testkit::TempDir::new("czar-log-rotate");
+    let log = dir.path().join("landing.log");
+    let filler = "x".repeat(200);
+    std::fs::write(&log, format!("{}\n{filler}\n{filler}\n", stamped(100, LOG_SORT))).unwrap();
+    let (carry, _) = pass(dir.path(), &Carry::default());
+    std::fs::write(&log, format!("{}\n", stamped(200, LOG_SORT))).unwrap();
+    let (carry, truncated) = pass(dir.path(), &carry);
+    assert_eq!(events(&truncated).len(), 1, "{truncated:?}");
+    let next = dir.path().join("landing.log.new");
+    std::fs::write(&next, format!("{}\n", stamped(300, LOG_SORT))).unwrap();
+    assert!(std::fs::metadata(&next).unwrap().len() <= std::fs::metadata(&log).unwrap().len(), "only the inode may tell");
+    std::fs::rename(&next, &log).unwrap();
+    let (_, replaced) = pass(dir.path(), &carry);
+    let seen = events(&replaced);
+    assert_eq!(seen.len(), 1, "{replaced:?}");
+    assert!(seen[0].at_ms > events(&truncated)[0].at_ms);
+}
+
+#[test_id(tkvrt22)]
+#[test]
+fn with_no_mark_the_first_pass_finds_the_last_pass_anywhere_in_the_file() {
+    let dir = testkit::TempDir::new("czar-log-first");
+    let mut text = format!("{LOG_PASS}\n");
+    for _ in 0..50 {
+        text.push_str("noise\n");
+    }
+    std::fs::write(dir.path().join("landing.log"), text).unwrap();
+    let (carry, first) = pass(dir.path(), &Carry::default());
+    assert!(matches!(first.last_landing_pass_at_ms, Read::Observed(Some(_))), "{first:?}");
+    let (_, second) = pass(dir.path(), &carry);
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms, "a pass with no new bytes keeps the carried reading");
+}
+
+#[test_id(t5d9sle)]
+#[test]
+fn a_carried_last_pass_that_ages_past_the_stall_still_pages() {
+    let dir = testkit::TempDir::new("czar-log-stall");
+    std::fs::write(dir.path().join("landing.log"), format!("{LOG_PASS}\n")).unwrap();
+    let (carry, first) = pass(dir.path(), &Carry::default());
+    let (_, second) = pass(dir.path(), &carry);
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
+    assert!(matches!(second.last_landing_pass_at_ms, Read::Observed(Some(_))));
+    let late = Snapshot { now_ms: NOW + 100_000_000_000, ..second };
+    let (_, acts) = decide(&policy(Stage::Act), &Carry::default(), &late);
+    assert!(acts.iter().any(|a| a.effect == FILE_INCIDENT && a.key.contains("loop-stalled")), "{acts:?}");
+}
+
+#[test_id(tnidode)]
+#[test]
+fn a_missing_log_is_no_events_no_last_pass_and_an_empty_mark() {
+    let dir = testkit::TempDir::new("czar-log-missing");
+    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9, last_pass: Read::Observed(Some(5)) }, ..Carry::default() };
+    let (carry, snap) = pass(dir.path(), &had);
+    assert!(events(&snap).is_empty());
+    assert_eq!(snap.last_landing_pass_at_ms, Read::Observed(None));
+    assert_eq!(carry.mark, Mark::default());
+}
+
+#[test_id(txh570l)]
+#[test]
+fn an_unreadable_log_leaves_the_mark_and_reads_both_unobservable() {
+    let dir = testkit::TempDir::new("czar-log-unreadable");
+    std::fs::create_dir(dir.path().join("landing.log")).unwrap();
+    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9, last_pass: Read::Observed(Some(5)) }, ..Carry::default() };
+    let (carry, snap) = pass(dir.path(), &had);
+    assert!(matches!(snap.landing_events, Read::Unobservable(_)), "{snap:?}");
+    assert!(matches!(snap.last_landing_pass_at_ms, Read::Unobservable(_)), "{snap:?}");
+    assert_eq!(carry.mark, had.mark);
+}
+
+#[test_id(tl01wid)]
+#[test]
+fn a_carried_unobservable_last_pass_survives_new_bytes_with_no_pass_line() {
+    use std::io::Write;
+    let dir = testkit::TempDir::new("czar-log-carried-unobservable");
+    let log = dir.path().join("landing.log");
+    std::fs::write(&log, "short landing: pass complete\n").unwrap();
+    let (carry, first) = pass(dir.path(), &Carry::default());
+    assert!(matches!(first.last_landing_pass_at_ms, Read::Unobservable(_)), "{first:?}");
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(b"noise\n").unwrap();
+    let (_, second) = pass(dir.path(), &carry);
+    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
+}
+
+#[test_id(tl8zvx8)]
+#[test]
+fn the_mark_is_kept_as_a_row_and_joins_back() {
+    let mark = Mark { dev: 3, ino: 4, offset: 5, last_pass: Read::Observed(Some(6)) };
+    let body = serde_json::to_string(&Carry { mark: mark.clone(), ..Carry::default() }).unwrap();
+    let rows = runtime::rows::split(&body, ROW_PARTS);
+    assert!(rows.contains_key("mark"), "{rows:?}");
+    let back: Carry = serde_json::from_str(&runtime::rows::join(&rows, ROW_PARTS)).unwrap();
+    assert_eq!(back.mark, mark);
 }
