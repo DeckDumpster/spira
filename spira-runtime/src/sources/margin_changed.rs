@@ -245,8 +245,7 @@ mod tests {
         assert_eq!(rx.blocking_recv().unwrap().kind.tag.as_str(), MARGIN_CHANGED);
         assert_eq!(rx.blocking_recv().unwrap().kind.tag.as_str(), MARGIN_CHANGED);
         let asked: Vec<String> = seen.lock().unwrap().iter().map(|(_, l)| l.clone()).collect();
-        assert!(asked[0].contains("wait=0") && asked[1].contains("wait=0") && asked[2].contains("wait=0"), "{asked:?}");
-        assert!(asked[3].contains("wait=7"), "{asked:?}");
+        assert!(asked[0].contains("wait=0") && asked[1].contains("wait=7") && asked[2].contains("wait=0") && asked[3].contains("wait=7"), "{asked:?}");
     }
 
     #[test_id(tmx57w7)]

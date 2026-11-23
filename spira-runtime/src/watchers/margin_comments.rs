@@ -59,6 +59,9 @@ pub struct Carry {
     /// Whether the current run has been said; a recovery is said only after it.
     #[serde(default)]
     pub paged: bool,
+    /// Counts state changes: the carry is written on whichever stream the event came from, and the newest is the highest.
+    #[serde(default)]
+    pub rev: u64,
     /// Acts that failed and wait for the next sweep, by key.
     pub failed: BTreeMap<String, Failed>,
 }
@@ -178,11 +181,12 @@ impl Handler for MarginComments {
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         let own = StreamKey(STREAM.into());
-        let carry = carried::<Carry>(view, &own, STATE_TAG);
+        let carry = [own, StreamKey(MARGIN_STREAM.into())].iter().map(|s| carried::<Carry>(view, s, STATE_TAG)).max_by_key(|c| c.rev).unwrap_or_default();
         let answered = answered_spec(view, ev);
-        let (next, mut cmds) = decide(&carry, ev, answered.as_ref());
+        let (mut next, mut cmds) = decide(&carry, ev, answered.as_ref());
         if next != carry {
-            cmds.push(Command::EmitTo { stream: own, kind: EventKind::new(STATE_TAG, &json(&next)) });
+            next.rev = carry.rev + 1;
+            cmds.push(Command::Emit(EventKind::new(STATE_TAG, &json(&next))));
         }
         if ev.kind.tag == BOOT {
             cmds.push(Command::Timer { at: ev.at + self.sweep_ms, kind: EventKind::new(BOOT, "") });
@@ -237,7 +241,7 @@ mod tests {
         let down = |since| event(MARGIN_UNREACHABLE, body(since));
         let overdue = |since| Event { at: since + UNREACHABLE_PAGE_MS, ..event(OVERDUE, body(since)) };
         let (c1, armed) = decide(&Carry::default(), &down(1_000), None);
-        assert!(matches!(&armed[..], [Command::Timer { at, .. }] if *at == 1_000 + UNREACHABLE_PAGE_MS), "{armed:?}");
+        assert!(matches!(&armed[..], [Command::Timer { at, .. }] if *at == 1_000 + UNREACHABLE_PAGE_MS), "{}", armed.len());
         let (c2, said1) = decide(&c1, &overdue(1_000), None);
         let (c3, said2) = decide(&c2, &overdue(1_000), None);
         let (c4, again) = decide(&c3, &down(2_000), None);
