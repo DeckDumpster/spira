@@ -3060,6 +3060,8 @@ mod tests {
             assert_eq!(facts_from(&d(&[("LoadState", Val::S("not-found".into()))]), &[]).state, UnitState::Absent);
         }
 
+        type Callback = Arc<dyn Fn() + Send + Sync>;
+
         /// A call's member and its arguments.
         type Sent = (String, Vec<Arg>);
 
@@ -3072,7 +3074,7 @@ mod tests {
             answers: Arc<Mutex<BTreeMap<String, Vec<Val>>>>,
             signals: Arc<Mutex<VecDeque<Msg>>>,
             wire: Arc<std::sync::OnceLock<(std::os::unix::net::UnixStream, std::os::unix::net::UnixStream)>>,
-            on_pending: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+            on_pending: Arc<Mutex<Option<Callback>>>,
         }
 
         impl Fake {
