@@ -328,7 +328,7 @@ fn main() {
             let inc = resolved_incident_sh();
             let lc_bin = required(spira_store::lifecycle_row::lc_bin());
             let lc = required_client();
-            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, lc: &lc, lc_bin: &lc_bin };
+            let ctx = conditions::Ctx::new(&run, &db, &home_repo, &inc, &lc, &lc_bin, reg_i64("SPIRA_CONDITIONS_MAX_FILE").max(1) as usize);
             conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
             conditions::reconcile(n, &ctx, "oom-restarts", probes::oom_restarts(&cfg, n, &run));
@@ -351,6 +351,7 @@ fn main() {
                 state: run.join("conditions").join("content-drift.state"),
             };
             conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift_cfg));
+            ctx.end_pass();
             match host_real::cfg_of(&run, getenv("SPIRA_TMP_PROBE_PATH"), getenv("SPIRA_PSI_DIR")).and_then(|c| host_real::pass(n as u64, &c, &run)) {
                 Ok(m) => log::log(&m),
                 Err(e) => log::log(&format!("watchtower: host section refused — {e}")),

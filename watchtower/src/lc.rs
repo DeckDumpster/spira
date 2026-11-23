@@ -2,7 +2,7 @@
 //! `None`, never an empty list: "cannot tell" must not read as "nothing queued".
 
 use serde_json::Value;
-use spira_store::lc_call::LcClient;
+use spira_store::lc_call::{LcClient, LcError};
 
 const HARNESS_ACTOR: &str = "harness";
 
@@ -54,6 +54,14 @@ pub fn content_list_read(client: &LcClient, args: &[&str]) -> Result<String, Str
     let out = client.answer(&argv).map_err(|e| e.to_string())?;
     let start = out.lines().position(|l| l.starts_with('[') || l.starts_with('{')).ok_or_else(|| format!("no rows in the answer: {}", out.trim()))?;
     Ok(out.lines().skip(start).collect::<Vec<_>>().join("\n"))
+}
+
+/// The ids of the beads carrying exactly `reference`, through the store's `content ref` verb:
+/// a read bounded by its argument, so no caller is refused it. Err is the store's own text.
+pub fn by_ref(client: &LcClient, reference: &str) -> Result<Vec<String>, LcError> {
+    let out = client.answer(&["content", "ref", reference, "--json"])?;
+    let rows: Vec<Value> = serde_json::from_str(&out).map_err(|e| LcError::Fault(format!("content ref: unparsed reply: {e}")))?;
+    Ok(rows.iter().filter_map(|r| r.get("id").and_then(Value::as_str).map(String::from)).collect())
 }
 
 /// The declared route: the service's socket, or `$SPIRA_LC_BIN`'s stand-in in a fixture.
@@ -194,6 +202,16 @@ mod tests {
         assert_eq!(seen[0][4], "--window");
         assert_eq!(last_landed_on(&scripted_by(&[("audits", 0, r#"{"newest_at":null}"#)]).1), None);
         assert_eq!(last_landed_on(&scripted_by(&[("audits", 3, "refused")]).1), None);
+    }
+
+    #[test_id(tza655a)]
+    #[test]
+    fn by_ref_is_one_content_ref_read_and_a_refusal_is_an_error_not_none() {
+        let (t, c) = scripted(0, r#"[{"id":"sp-a","external_ref":"incident:x"}]"#);
+        assert_eq!(by_ref(&c, "incident:x"), Ok(vec!["sp-a".to_string()]));
+        assert_eq!(t.seen.lock().unwrap()[0], vec!["content", "ref", "incident:x", "--json"]);
+        assert!(matches!(by_ref(&scripted(3, "refused").1, "incident:x"), Err(LcError::Refused(_))));
+        assert!(by_ref(&scripted(0, "not json").1, "incident:x").is_err());
     }
 
     #[test_id(t6a2i93)]

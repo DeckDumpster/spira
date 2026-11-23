@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Standing conditions watchtower files in one conditions pass, across all probes; the rest wait for the next pass.
+SCHEMA=Positive integer (default 5).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CONDITIONS_MAX_FILE:=5}"
+SPIRA_CONF_DEFAULT_EOF
