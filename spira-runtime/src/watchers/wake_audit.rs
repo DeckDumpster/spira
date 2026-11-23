@@ -29,7 +29,7 @@ fn line(f: &SweepFound) -> String {
         f.task,
         f.count,
         f.rev,
-        f.reads.join(", ")
+        if f.reads.is_empty() { "none".into() } else { f.reads.join(", ") }
     )
 }
 
@@ -98,5 +98,27 @@ mod tests {
         for part in ["WAKE-MISSED a:", "(1 so far)", "rev 42", "lifecycle/, readiness/"] {
             assert!(text.contains(part), "{part} missing from {text}");
         }
+    }
+
+    #[test_id(tn3wq7a)]
+    #[test]
+    fn a_restart_pages_a_task_again_and_the_boot_tick_arms_the_next_tick() {
+        let mut rig = TaskRig::new(1, WakeAudit { interval_ms: 60_000 }.registration()).unwrap();
+        let (_, stream, boot) = WakeAudit::boot();
+        rig.tick(stream, boot.clone()).unwrap();
+        assert_eq!(rig.engine().next_timer_at(), Some(60_000));
+        rig.deliver(stream, found("a", 1)).unwrap();
+        rig.reopen(WakeAudit { interval_ms: 60_000 }.registration()).unwrap();
+        rig.tick(stream, boot).unwrap();
+        rig.deliver(stream, found("a", 2)).unwrap();
+        let keys: Vec<_> = rig.requested().iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, ["wake-audit:a", "wake-audit:a"]);
+    }
+
+    #[test_id(tr8kc2m)]
+    #[test]
+    fn a_task_with_no_declared_reads_is_named_as_having_none() {
+        let f = SweepFound { task: "a".into(), count: 1, rev: 3, reads: vec![] };
+        assert!(line(&f).contains("Declared reads: none."), "{}", line(&f));
     }
 }
