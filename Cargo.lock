@@ -294,6 +294,7 @@ dependencies = [
 name = "cr"
 version = "0.1.0"
 dependencies = [
+ "gh-intake",
  "margin-client",
  "regex",
  "runtime",

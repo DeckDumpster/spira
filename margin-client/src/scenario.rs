@@ -35,7 +35,7 @@ fn browser(base: &str, method: &str, route: &str, body: Option<&Value>) -> Resul
 
 pub fn run(m: &HttpMargin) -> Result<Seen, String> {
     let docs = [Doc { path: "src/a.rs".into(), kind: "code".into(), text: FIRST.into() }, Doc { path: "src/b.rs".into(), kind: "code".into(), text: "fn b() {}\n".into() }];
-    let collection = m.post_collection("Scenario", "cover words", &docs)?;
+    let collection = m.post_collection("Scenario", "cover words", &docs, None)?;
     let id = collection.id.as_str();
     let open = m.collection(id)?;
     let a = open.documents.iter().find(|d| d.path == "src/a.rs").ok_or("no src/a.rs")?.id.clone();

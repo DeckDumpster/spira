@@ -12,7 +12,7 @@ use crate::record::{self, Kind, Review, State};
 use crate::rustsrc;
 use crate::units;
 use serde::{Deserialize, Serialize};
-use margin_client::{Anchor, Doc};
+use margin_client::{Anchor, Doc, Source};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use sha2::{Digest, Sha256};
@@ -285,8 +285,8 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     let now = ports.clock.now_ms();
     let u = &r.unit;
     let mut m = format!(
-        "Source repository: {}\nSource commit: {}\nsealed-sha256: {}\n\nThe Concierge's review of this unit is sealed and hashed above; it is held in this collection and revealed when the operator publishes his.\n\n",
-        r.source_repo, r.source_sha, sealed_sha
+        "The Concierge's review of this unit is sealed and hashed below; it is held in this collection and revealed when the operator publishes his.\n\nsealed-sha256: {}\n\n",
+        sealed_sha
     );
     m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[0], cover.does));
     m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[1], cover.look_first));
@@ -364,6 +364,9 @@ pub fn seal(number: u32, ports: &Ports) -> Outcome {
     };
     if r.state != State::Staged {
         return refuse(2, &format!("review {number:03} is {}, not staged; only a staged review can be sealed", r.state.as_str()));
+    }
+    if let Err(e) = &ports.source_url {
+        return refuse(1, e);
     }
     let dir = record::dir(run, number);
     let source = match ports.tree.at(&r.source_sha) {
@@ -482,7 +485,8 @@ fn post_review(p: &mut Progress, dir: &Path, r: &Review, files: &[(String, Vec<u
             .iter()
             .map(|(path, bytes)| String::from_utf8(bytes.clone()).map(|text| Doc { path: path.clone(), kind: "code".to_string(), text }).map_err(|_| format!("{path} is not UTF-8; the reader holds text, and a file is posted whole or not at all")))
             .collect::<Result<Vec<Doc>, String>>()?;
-        let c = ports.margin.post_collection(&r.unit.title, body, &docs)?;
+        let source = Source { repository: ports.source_url.clone()?, commit: r.source_sha.clone() };
+        let c = ports.margin.post_collection(&r.unit.title, body, &docs, Some(&source))?;
         p.collection = Some(c.id);
         p.url = Some(c.url);
         save_progress(dir, p)?;

@@ -9,6 +9,7 @@ mod findings;
 mod review;
 mod thread;
 
+pub(crate) const SOURCE_URL: &str = "https://github.com/acme/demo";
 const DAY: u64 = 86_400_000;
 pub(crate) const NOW: u64 = 100 * DAY;
 
@@ -104,7 +105,7 @@ pub(crate) fn attach_collection(margin: &margin_client::FakeMargin, tree: &Fixtu
     use margin_client::Margin;
     let mut r = crate::record::load(run, number).unwrap();
     let docs: Vec<margin_client::Doc> = r.unit.files.iter().map(|f| margin_client::Doc { path: f.path.clone(), kind: "code".into(), text: String::from_utf8(tree.read(&f.path).unwrap()).unwrap() }).collect();
-    let c = margin.post_collection(&r.unit.title, "cover", &docs).unwrap();
+    let c = margin.post_collection(&r.unit.title, "cover", &docs, None).unwrap();
     r.collection = Some(c.id);
     r.url = Some(c.url);
     crate::record::save(run, &r).unwrap();
@@ -116,7 +117,7 @@ fn ports_with(tree: FixtureTree, ledger: Vec<Row>, config: Config) -> Ports {
 }
 
 fn ports_with_tree(tree: Box<dyn SourceTree>) -> Ports {
-    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), margin: Box::new(margin_client::FakeMargin::default()), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), config: cfg(), env_seed: None }
+    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), margin: Box::new(margin_client::FakeMargin::default()), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), source_url: Ok(SOURCE_URL.into()), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), config: cfg(), env_seed: None }
 }
 
 fn ports() -> Ports {

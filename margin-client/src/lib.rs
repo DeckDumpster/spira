@@ -25,6 +25,13 @@ pub struct Doc {
     pub text: String,
 }
 
+/// Where a collection's documents came from: a repository's web URL and the commit read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    pub repository: String,
+    pub commit: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocRef {
     pub id: String,
@@ -94,7 +101,7 @@ pub struct Changes {
 }
 
 pub trait Margin {
-    fn post_collection(&self, title: &str, cover: &str, docs: &[Doc]) -> Result<Collection, String>;
+    fn post_collection(&self, title: &str, cover: &str, docs: &[Doc], source: Option<&Source>) -> Result<Collection, String>;
     fn post_comment(&self, collection: &str, anchor: &Anchor, body: &str, held: bool, in_reply_to: Option<&str>) -> Result<CommentRef, String>;
     fn post_version(&self, document: &str, text: &str) -> Result<u64, String>;
     fn collection(&self, id: &str) -> Result<CollectionInfo, String>;
@@ -111,7 +118,7 @@ pub trait Margin {
 pub struct Unconfigured(pub String);
 
 impl Margin for Unconfigured {
-    fn post_collection(&self, _: &str, _: &str, _: &[Doc]) -> Result<Collection, String> {
+    fn post_collection(&self, _: &str, _: &str, _: &[Doc], _: Option<&Source>) -> Result<Collection, String> {
         Err(self.0.clone())
     }
     fn post_comment(&self, _: &str, _: &Anchor, _: &str, _: bool, _: Option<&str>) -> Result<CommentRef, String> {
