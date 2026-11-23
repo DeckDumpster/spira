@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use runtime::taskrig::{assert_deterministic, effects_runnable, TaskRig};
 use runtime::event::EventKind;
+use spira_runtime::tasks::a::landing::{PrRead, PrStatus};
 use spira_runtime::tasks::a::{batcher_forge, batcher_local};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_transitions::*;
@@ -26,6 +27,7 @@ fn config() -> Config {
         working_min: 2,
         submit_bound_s: 90 * MIN,
         cut_bound_s: 45 * MIN,
+        pr_bound_s: 15 * MIN,
         gate_timeout_s: 45 * MIN,
         certify_par: 2,
         deliver_bound_s: 60 * MIN,
@@ -43,7 +45,7 @@ fn config() -> Config {
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
-    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None, waits_on: None, wait_from: None }
+    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None, waits_on: None, wait_from: None, pr: None }
 }
 
 fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -66,6 +68,7 @@ fn healthy(now: u64) -> Snapshot {
         open_rounds: Some(BTreeMap::new()),
         owners: BTreeMap::new(),
         halt: None,
+        landing_quiet_s: None,
     }
 }
 
@@ -1309,9 +1312,9 @@ fn a_scoped_delivery_owner_outranks_the_edges_and_the_edges_covers_a_repo_withou
 #[test_id(t9q41k6)]
 #[test]
 fn every_edge_reads_its_bound_from_the_config_and_an_unknown_edge_has_none() {
-    let cfg = Config { submit_bound_s: 11, cut_bound_s: 22, deliver_bound_s: 33, activate_bound_s: 44, ask_bound_s: 55, ..config() };
+    let cfg = Config { submit_bound_s: 11, cut_bound_s: 22, pr_bound_s: 40, deliver_bound_s: 33, activate_bound_s: 44, ask_bound_s: 55, ..config() };
     let bounds: Vec<Option<u64>> = EDGES.iter().map(|e| cfg.bound(e)).collect();
-    assert_eq!(bounds, [Some(11), Some(22), Some(33), Some(44), Some(55)]);
+    assert_eq!(bounds, [Some(11), Some(22), Some(40), Some(33), Some(44), Some(55)]);
     assert_eq!(cfg.bound("NOT→AN_EDGE"), None);
     assert_eq!(cfg.window_s(), 44 + 600, "the audit window covers the audit-read edges, not the ask bound");
     let asks_longest = Config { ask_bound_s: 9_999, ..cfg };
@@ -1788,4 +1791,108 @@ fn a_wait_explained_again_after_a_gap_is_counted_afresh_and_a_departed_bead_is_f
     gone.beads.clear();
     let (c5, _) = decide(&c4, &gone, (T0 + 10 * MIN) * 1000, &cfg);
     assert!(c5.unexplained.is_empty(), "{:?}", c5.unexplained);
+}
+
+fn pr_bead(id: &str, repo: &str, since: u64, read: Option<(PrStatus, u64)>) -> Bead {
+    let read = read.map(|(status, read_since)| PrRead { number: 232, status, since: read_since });
+    Bead { pr: Some(PrWait { read }), ..bead(id, repo, "SUBMITTED", since) }
+}
+
+fn pr_snap(beads: Vec<Bead>, landing_quiet_s: Option<u64>) -> Snapshot {
+    let mut s = healthy(T0);
+    s.beads = beads;
+    s.last = last("spira", &[("Delivered", T0 - 3 * MIN)]);
+    s.landing_quiet_s = landing_quiet_s;
+    s
+}
+
+fn pr_stalls(s: &Snapshot, now: u64) -> Vec<Stall> {
+    let cfg = Config { cut_bound_s: 5 * MIN, ..config() };
+    spira_runtime::tasks::e::watch_transitions::stalls(s, now, &cfg).into_iter().filter(|x| x.edge == PR_EDGE).collect()
+}
+
+#[test_id(tk7rhml)]
+#[test]
+fn a_pr_submission_with_running_checks_pages_nothing_past_the_cut_bound() {
+    let s = pr_snap(vec![pr_bead("sp-p1", "spira", T0 - 7 * MIN, Some((PrStatus::Running, T0 - 7 * MIN)))], Some(90));
+    let cfg = Config { cut_bound_s: 5 * MIN, ..config() };
+    assert!(spira_runtime::tasks::e::watch_transitions::stalls(&s, T0, &cfg).is_empty());
+}
+
+#[test_id(ttfwpae)]
+#[test]
+fn a_pr_submission_whose_checks_are_red_pages_at_once_naming_the_pull_request_and_the_bound() {
+    let s = pr_snap(vec![pr_bead("sp-p1", "spira", T0 - 10, Some((PrStatus::Red, T0 - 10)))], Some(90));
+    let found = pr_stalls(&s, T0);
+    assert_eq!(found.iter().map(Stall::key).collect::<Vec<_>>(), ["SUBMITTED→LANDED spira"]);
+    assert!(found[0].evidence.contains("sp-p1") && found[0].evidence.contains("PR #232 red") && found[0].evidence.contains("bound 15m"), "{}", found[0].evidence);
+}
+
+#[test_id(tj1170f)]
+#[test]
+fn a_pr_wait_with_no_pull_request_unread_green_or_merged_pages_at_the_bound_and_not_a_second_before() {
+    let waits = [("unread", Some(PrStatus::Unread)), ("green", Some(PrStatus::Green)), ("merged", Some(PrStatus::Merged))];
+    for (what, status) in waits {
+        let at = |age: u64| pr_snap(vec![pr_bead("sp-p1", "spira", T0 - 2 * HOUR, status.map(|st| (st, T0 - age)))], Some(90));
+        assert_eq!(pr_stalls(&at(899), T0).len(), 0, "{what} at 899s");
+        let found = pr_stalls(&at(900), T0);
+        assert_eq!(found.len(), 1, "{what} at 900s");
+        assert!(found[0].evidence.contains(what), "{what}: {}", found[0].evidence);
+    }
+    let no_pr = |age: u64| pr_snap(vec![pr_bead("sp-p1", "spira", T0 - age, None)], Some(90));
+    assert_eq!(pr_stalls(&no_pr(899), T0).len(), 0);
+    let found = pr_stalls(&no_pr(900), T0);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].evidence.contains("no pull request"), "{}", found[0].evidence);
+}
+
+#[test_id(tc9nqhb)]
+#[test]
+fn running_checks_page_at_the_bound_when_the_landing_task_has_gone_silent() {
+    let at = |age: u64, quiet: Option<u64>| pr_snap(vec![pr_bead("sp-p1", "spira", T0 - 2 * HOUR, Some((PrStatus::Running, T0 - age)))], quiet);
+    assert_eq!(pr_stalls(&at(899, Some(601)), T0).len(), 0);
+    assert_eq!(pr_stalls(&at(900, Some(601)), T0).len(), 1);
+    assert_eq!(pr_stalls(&at(900, None), T0).len(), 1, "a landing task that never stamped is silent");
+    assert_eq!(pr_stalls(&at(3 * HOUR, Some(599)), T0).len(), 0);
+}
+
+#[test_id(t8i47ff)]
+#[test]
+fn a_held_or_landed_pr_submission_does_not_page() {
+    let old = Some((PrStatus::Red, T0 - HOUR));
+    let held = Bead { held: true, ..pr_bead("sp-p1", "spira", T0 - 2 * HOUR, old) };
+    let landed = Bead { landed: true, ..pr_bead("sp-p2", "spira", T0 - 2 * HOUR, old) };
+    assert_eq!(pr_stalls(&pr_snap(vec![held, landed], Some(90)), T0).len(), 0);
+}
+
+#[test_id(tonlg15)]
+#[test]
+fn a_covered_pr_submission_beside_an_owned_gate_mode_wait_pages_nothing_on_all_repos() {
+    let now = T0;
+    let mut s = pr_snap(vec![pr_bead("sp-p1", "other", now - 7 * MIN, Some((PrStatus::Running, now - 7 * MIN))), bead("sp-g1", "spira", "SUBMITTED", now - 30 * MIN)], Some(90));
+    s.last = last("spira", &[("Delivered", now - 3 * MIN)]);
+    s.owners.insert(cut_owner_key("spira"), Owner { beat: Some(now - 10), failed: None });
+    let cfg = Config { cut_bound_s: 5 * MIN, ..config() };
+    assert!(spira_runtime::tasks::e::watch_transitions::stalls(&s, now, &cfg).is_empty());
+}
+
+#[test_id(tg1x0vn)]
+#[test]
+fn a_pr_page_goes_out_once_through_decide_and_names_the_edge() {
+    let s = pr_snap(vec![pr_bead("sp-p1", "spira", T0 - 10, Some((PrStatus::Red, T0 - 10)))], Some(90));
+    let (carry, acts) = decide(&Carry::default(), &s, T0 * 1000, &config());
+    assert!(acts.iter().any(|a| a.input.contains("P0 STALL SUBMITTED→LANDED (spira)") && a.input.contains("sp-p1")), "{acts:?}");
+    let (_, again) = decide(&carry, &s, T0 * 1000 + 1000, &config());
+    assert!(!again.iter().any(|a| a.input.contains("P0 STALL")), "{again:?}");
+}
+
+#[test_id(t02y1zq)]
+#[test]
+fn mark_prs_marks_submitted_beads_of_pr_repos_and_fill_prs_gives_them_the_landing_read() {
+    let mut s = pr_snap(vec![bead("sp-a", "prrepo", "SUBMITTED", T0), bead("sp-b", "gaterepo", "SUBMITTED", T0), bead("sp-c", "prrepo", "WORKING", T0)], None);
+    mark_prs(&mut s, &|repo| repo == "prrepo");
+    let read = PrRead { number: 7, status: PrStatus::Green, since: 5 };
+    fill_prs(&mut s, &BTreeMap::from([("sp-a".to_string(), read), ("sp-b".to_string(), read), ("sp-c".to_string(), read)]));
+    let marks: Vec<Option<PrWait>> = s.beads.iter().map(|b| b.pr).collect();
+    assert_eq!(marks, vec![Some(PrWait { read: Some(read) }), None, None]);
 }

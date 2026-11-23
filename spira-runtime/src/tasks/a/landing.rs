@@ -213,6 +213,49 @@ pub enum PrState {
     Closed,
 }
 
+/// What the checks on a branch's pull request say.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrStatus {
+    #[default]
+    Unread,
+    Running,
+    Green,
+    Red,
+    Merged,
+}
+
+/// A branch's pull request as last read: its number, its status, and the read time since which
+/// that number and status have held.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrRead {
+    pub number: u64,
+    pub status: PrStatus,
+    pub since: u64,
+}
+
+/// `pr-checks` lines (`<STATUS> <CONCLUSION> <name>`) as one status: any check not COMPLETED is
+/// running, all COMPLETED with SUCCESS, NEUTRAL or SKIPPED is green, any other conclusion is red,
+/// no lines is unread.
+pub fn checks_status(lines: &str) -> PrStatus {
+    let checks: Vec<(&str, &str)> = lines
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            Some((f.next()?, f.next().unwrap_or("")))
+        })
+        .collect();
+    if checks.is_empty() {
+        PrStatus::Unread
+    } else if checks.iter().any(|(status, _)| *status != "COMPLETED") {
+        PrStatus::Running
+    } else if checks.iter().all(|(_, conclusion)| matches!(*conclusion, "SUCCESS" | "NEUTRAL" | "SKIPPED")) {
+        PrStatus::Green
+    } else {
+        PrStatus::Red
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Branch {
     pub br: String,
@@ -227,6 +270,9 @@ pub struct Branch {
     /// An open pull request whose branch no longer contains the base: it is refreshed.
     #[serde(default)]
     pub behind: bool,
+    /// The pull request of a handed-on branch, as read this pass; `since` is the read time until `decide` carries it.
+    #[serde(default)]
+    pub pr: Option<PrRead>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,6 +288,9 @@ pub struct Repo {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub forge_enabled: bool,
+    /// Epoch seconds the snapshot was read.
+    #[serde(default)]
+    pub at: u64,
     pub repos: Vec<Repo>,
 }
 
@@ -312,6 +361,8 @@ pub struct BranchCarry {
 #[serde(default)]
 pub struct Carry {
     pub branches: BTreeMap<String, BranchCarry>,
+    /// Bead id to its pull request, replaced each observe.
+    pub prs: BTreeMap<String, PrRead>,
 }
 
 fn word(state: State) -> String {
@@ -367,7 +418,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
 
 /// [`decide`] under the pinned `SPIRA_PR_REFRESH_MAX`.
 pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, Vec<Act>) {
-    let mut next = Carry { branches: BTreeMap::new() };
+    let mut next = Carry::default();
     let mut acts = vec![];
     if !snap.forge_enabled {
         return (carry.clone(), acts);
@@ -377,6 +428,10 @@ pub fn decide_with(carry: &Carry, snap: &Snapshot, refresh_max: u32) -> (Carry, 
         branches.sort_by_key(|b| b.bead.as_ref().map_or((u8::MAX, u64::MAX), |x| (x.priority, x.closed_at_ms.unwrap_or(u64::MAX))));
         for b in branches {
             let Some(bead) = &b.bead else { continue };
+            if let Some(read) = b.pr {
+                let since = carry.prs.get(&bead.id).filter(|k| k.number == read.number && k.status == read.status).map_or(snap.at, |k| k.since);
+                next.prs.insert(bead.id.clone(), PrRead { since, ..read });
+            }
             let leg = Leg { repo: r.name.clone(), path: r.path.clone(), landref: r.landref.clone(), base_fq: r.base_fq.clone(), base_sha: r.base_sha.clone(), br: b.br.clone(), id: bead.id.clone(), tip: b.tip.clone(), pr_state: b.pr_state, version: bead.version, cause: String::new() };
             let merge_sha = || b.merge_sha.clone().unwrap_or_else(|| r.base_sha.clone());
             if !bead.handed_on {
@@ -556,6 +611,7 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
     }
     let reg = registry()?;
     let lc = lc()?;
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let mut repos = vec![];
     for name in reg.names().into_iter().filter(|n| reg.land(n) == "pr") {
         let Some(path) = reg.root(&name).filter(|p| std::path::Path::new(p).join(".git").exists()) else { continue };
@@ -597,14 +653,28 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
                 _ => PrState::None,
             };
             let handed = bead.as_ref().is_some_and(|b| b.handed_on);
+            let pr_read = if handed { pr_read(&path, &br, pr_state, at) } else { None };
             let content_on_base = handed && git(&path, &["cherry", &base_fq, &br], 10).is_some_and(|o| !o.lines().any(|l| l.starts_with('+')));
             let behind = pr_state == PrState::Open && super::gate_check::git_out(std::path::Path::new(&path), &["merge-base", "--is-ancestor", &base_fq, &br], 10).is_ok_and(|(c, _, _)| c == Some(1));
             let holder_alive = handed && hel::reap::holder_alive(&e.world.run_dir, &id);
-            branches.push(Branch { br, tip, bead, lc_state: row.map(|r| r.state.clone()), pr_state, merge_sha: None, holder_alive, content_on_base, behind });
+            branches.push(Branch { br, tip, bead, lc_state: row.map(|r| r.state.clone()), pr_state, merge_sha: None, holder_alive, content_on_base, behind, pr: pr_read });
         }
         repos.push(Repo { name, path, landref, base_fq, base_sha, branches });
     }
-    serde_json::to_string(&Snapshot { forge_enabled, repos }).map_err(|e| e.to_string())
+    serde_json::to_string(&Snapshot { forge_enabled, at, repos }).map_err(|e| e.to_string())
+}
+
+/// The pull request of `br` as the forge reads it now; a closed one is none.
+fn pr_read(path: &str, br: &str, pr_state: PrState, at: u64) -> Option<PrRead> {
+    if matches!(pr_state, PrState::None | PrState::Closed) {
+        return None;
+    }
+    let number: u64 = forge("pr-number", path, &[br], None).stdout()?.trim().parse().ok()?;
+    let status = match pr_state {
+        PrState::Merged => PrStatus::Merged,
+        _ => checks_status(&forge("pr-checks", path, &[&number.to_string()], None).stdout().unwrap_or_default()),
+    };
+    Some(PrRead { number, status, since: at })
 }
 
 /// `git fetch <remote>` in the repository.
@@ -797,7 +867,7 @@ impl Landing {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "branches", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Map { name: "branches", drop: &[] }, runtime::rows::Part::Map { name: "prs", drop: &[] }];
 
 impl Handler for Landing {
     fn interests(&self) -> &[EventKindTag] {

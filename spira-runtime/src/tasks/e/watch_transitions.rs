@@ -19,6 +19,7 @@
 //! - WORKING→SUBMITTED: WORKING ≥ `SPIRA_TRANSITIONS_WORKING_MIN` and no Submit inside
 //!   `SPIRA_TRANSITIONS_SUBMIT_BOUND` seconds.
 //! - SUBMITTED→IN_DELIVERY: the oldest SUBMITTED or CERTIFIED bead waiting for a cut has itself waited `SPIRA_TRANSITIONS_CUT_BOUND` (a SUBMITTED bead whose gate is queued behind full gate slots, backed off by the landing pass, or running inside `SPIRA_GATE_TIMEOUT`, is not waiting, and a CERTIFIED bead the batcher refused for an unlanded `blocked_by` that is itself WORKING, SUBMITTED, CERTIFIED or IN_DELIVERY is waiting on it, not uncovered (the rule is `watchers::dependency`, shared with `watch.throughput`; an idle prerequisite does not excuse the wait)), fewer rounds are open on the repo than `SPIRA_ROUND_MAX_OPEN`, and no Delivered inside the bound. A bead waiting behind a full set of open rounds is queued, not stalled, and the round that just closed has not been closed that long. A held bead, and one whose tip is already on the landing ref, is not waiting and is left out of the SUBMITTED and CERTIFIED rows.
+//! - SUBMITTED→LANDED: a SUBMITTED bead of a repo whose land mode is `pr` is judged by its pull request (the landing task's read, `landing::PrRead`), not by a gate or a cut. Checks queued or running page nothing while the landing task is observing (inside `SPIRA_TRANSITIONS_TASK_BOUND`); red checks page at once; no pull request, an unread, green or merged one not recorded landed pages after `SPIRA_TRANSITIONS_PR_BOUND`, counted from the read's `since` (from submission without a read). Unowned, and not tested against Delivered.
 //! - IN_DELIVERY→LANDED: the oldest IN_DELIVERY work older than `SPIRA_TRANSITIONS_DELIVER_BOUND` and no Delivered inside it;
 //!   a bead seen to leave IN_DELIVERY for good counts as Delivered.
 //! - LANDED→ACTIVATED: the release repo (`SPIRA_TRANSITIONS_RELEASE_REPO`) landed a commit the
@@ -44,6 +45,7 @@ use runtime::event::*;
 use serde::{Deserialize, Serialize};
 use spira_config::process::{cfg, cfg_parse};
 
+use crate::tasks::a::landing::{PrRead, PrStatus};
 use crate::tasks::d::pattern;
 use crate::watchers::dependency;
 use crate::watchers::halt::Halt;
@@ -61,6 +63,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TRANSITIONS_WORKING_MIN",
     "SPIRA_TRANSITIONS_SUBMIT_BOUND",
     "SPIRA_TRANSITIONS_CUT_BOUND",
+    "SPIRA_TRANSITIONS_PR_BOUND",
     "SPIRA_GATE_TIMEOUT",
     "SPIRA_CERTIFY_PAR",
     "SPIRA_TRANSITIONS_DELIVER_BOUND",
@@ -86,8 +89,10 @@ const TAG: &str = "transitions";
 /// The states tabled, in flow order; `ASK` is the ask-held row, orthogonal to state.
 pub const ROWS: [&str; 7] = ["READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK", "ASK"];
 /// The edges judged, in the order `stalls` judges them.
-pub const EDGES: [&str; 5] = ["WORKING→SUBMITTED", CUT_EDGE, DELIVERY_EDGE, "LANDED→ACTIVATED", ASK_EDGE];
+pub const EDGES: [&str; 6] = ["WORKING→SUBMITTED", CUT_EDGE, PR_EDGE, DELIVERY_EDGE, "LANDED→ACTIVATED", ASK_EDGE];
 pub const ASK_EDGE: &str = "ASK→ANSWERED";
+/// A pr-mode submission's wait for its pull request to land.
+pub const PR_EDGE: &str = "SUBMITTED→LANDED";
 /// All repos together, as a scope.
 pub const ALL: &str = "*";
 
@@ -97,6 +102,7 @@ pub struct Config {
     pub working_min: u64,
     pub submit_bound_s: u64,
     pub cut_bound_s: u64,
+    pub pr_bound_s: u64,
     pub gate_timeout_s: u64,
     pub certify_par: u64,
     pub deliver_bound_s: u64,
@@ -123,6 +129,7 @@ impl Config {
             working_min: cfg_parse("SPIRA_TRANSITIONS_WORKING_MIN")?,
             submit_bound_s: cfg_parse("SPIRA_TRANSITIONS_SUBMIT_BOUND")?,
             cut_bound_s: cfg_parse("SPIRA_TRANSITIONS_CUT_BOUND")?,
+            pr_bound_s: cfg_parse("SPIRA_TRANSITIONS_PR_BOUND")?,
             gate_timeout_s: cfg_parse("SPIRA_GATE_TIMEOUT")?,
             certify_par: cfg_parse("SPIRA_CERTIFY_PAR")?,
             deliver_bound_s: cfg_parse("SPIRA_TRANSITIONS_DELIVER_BOUND")?,
@@ -169,6 +176,7 @@ impl Config {
         match edge {
             "WORKING→SUBMITTED" => Some(self.submit_bound_s),
             CUT_EDGE => Some(self.cut_bound_s),
+            PR_EDGE => Some(self.pr_bound_s),
             DELIVERY_EDGE => Some(self.deliver_bound_s),
             "LANDED→ACTIVATED" => Some(self.activate_bound_s),
             ASK_EDGE => Some(self.ask_bound_s),
@@ -235,6 +243,15 @@ pub struct Bead {
     /// The first pass on which nothing explained this bead's wait, after a pass on which something did.
     #[serde(default)]
     pub wait_from: Option<u64>,
+    /// Set on a SUBMITTED bead of a pr-mode repo: its pull request is what it waits on, not a gate or a cut.
+    #[serde(default)]
+    pub pr: Option<PrWait>,
+}
+
+/// A pr-mode SUBMITTED bead's pull request as the landing pass last read it; `None` when it has none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrWait {
+    pub read: Option<PrRead>,
 }
 
 /// A SUBMITTED bead's gate, as the gate queue and the gate's admission lease show it.
@@ -305,6 +322,9 @@ pub struct Snapshot {
     pub owners: BTreeMap<String, Owner>,
     #[serde(default)]
     pub halt: Option<Halt>,
+    /// Seconds since the landing task last observed; `None` when it never has.
+    #[serde(default)]
+    pub landing_quiet_s: Option<u64>,
 }
 
 /// An edge owner's last sign of life, epoch seconds, and the action of its that failed, if one did.
@@ -365,7 +385,7 @@ fn owner_acting(snap: &Snapshot, edge: &str, scope: &str, now: u64, cfg: &Config
     let window = if task_owner_of(edge).is_some() { cfg.task_bound_s } else { cfg.heartbeat_bound_s };
     let beating = |o: &Owner| o.failed.is_none() && o.beat.is_some_and(|b| now.saturating_sub(b) < window);
     if scope == ALL && edge == CUT_EDGE {
-        let waiting: BTreeSet<&str> = snap.beads.iter().filter(|b| matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")).map(|b| b.repo.as_str()).collect();
+        let waiting: BTreeSet<&str> = snap.beads.iter().filter(|b| b.pr.is_none() && matches!(b.state.as_str(), "SUBMITTED" | "CERTIFIED")).map(|b| b.repo.as_str()).collect();
         return !waiting.is_empty() && waiting.iter().all(|r| snap.owners.get(&cut_owner_key(r)).is_some_and(beating));
     }
     snap.owners.get(&format!("{edge} {scope}")).or_else(|| snap.owners.get(edge)).is_some_and(beating)
@@ -569,7 +589,7 @@ fn uncovered_wait(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> u64 {
 }
 
 fn uncovered(snap: &Snapshot, b: &Bead, scope: &str, now: u64, cfg: &Config) -> bool {
-    (scope == ALL || b.repo == scope) && b.awaits_cut() && b.waits_on.is_none() && !round_slots_full(snap, &b.repo, cfg) && !(b.state == "SUBMITTED" && b.gate_live(now, cfg.gate_timeout_s, snap.gate_slots_free))
+    (scope == ALL || b.repo == scope) && b.awaits_cut() && b.pr.is_none() && b.waits_on.is_none() && !round_slots_full(snap, &b.repo, cfg) && !(b.state == "SUBMITTED" && b.gate_live(now, cfg.gate_timeout_s, snap.gate_slots_free))
 }
 
 /// The oldest uncovered bead in `scope`, and what holds it back.
@@ -585,6 +605,39 @@ fn oldest_uncovered(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> Str
     format!("; oldest uncovered: {} {} {} ({why})", b.id, b.state, dur(now.saturating_sub(b.wait_start())))
 }
 
+/// The pr-mode beads in `scope` whose pull request has waited out its bound, as evidence: running
+/// checks are not waiting while the landing task is observing, red ones wait for nothing.
+fn pr_waits(snap: &Snapshot, scope: &str, now: u64, cfg: &Config) -> Vec<String> {
+    let landing_observing = snap.landing_quiet_s.is_some_and(|q| q < cfg.task_bound_s);
+    snap.beads
+        .iter()
+        .filter(|b| (scope == ALL || b.repo == scope) && b.awaits_cut())
+        .filter_map(|b| {
+            let wait = b.pr.as_ref()?;
+            let (what, age) = match wait.read {
+                Some(r) => (format!("PR #{} {}", r.number, pr_status_word(r.status)), now.saturating_sub(r.since)),
+                None => ("no pull request".to_string(), now.saturating_sub(b.since)),
+            };
+            let due = match wait.read.map(|r| r.status) {
+                Some(PrStatus::Red) => true,
+                Some(PrStatus::Running) if landing_observing => false,
+                _ => age >= cfg.pr_bound_s,
+            };
+            due.then(|| format!("{}: {what} for {} (bound {})", b.id, dur(age), dur(cfg.pr_bound_s)))
+        })
+        .collect()
+}
+
+fn pr_status_word(s: PrStatus) -> &'static str {
+    match s {
+        PrStatus::Unread => "unread",
+        PrStatus::Running => "running",
+        PrStatus::Green => "green",
+        PrStatus::Red => "red",
+        PrStatus::Merged => "merged",
+    }
+}
+
 /// Every edge stalled in every scope of `snap`. The `*` scope stands only for an edge no single
 /// repo is stalled on: work spread thinly across repos that, together, has stopped moving.
 pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
@@ -598,6 +651,7 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
                 CUT_EDGE => {
                     (quiet(snap, &scope, "Delivered", now, bound) && uncovered_wait(snap, &scope, now, cfg) >= bound).then(|| cut_evidence(snap, &scope, now, cfg, bound) + &oldest_uncovered(snap, &scope, now, cfg))
                 }
+                PR_EDGE => Some(pr_waits(snap, &scope, now, cfg)).filter(|w| !w.is_empty()).map(|w| format!("{} submitted pull request(s) not landed: {}", w.len(), w.join(", "))),
                 DELIVERY_EDGE => (t["IN_DELIVERY"].oldest >= bound && quiet(snap, &scope, "Delivered", now, bound)).then(|| evidence(snap, &scope, now, &["IN_DELIVERY"], "Delivered", bound)),
                 "LANDED→ACTIVATED" if scope == cfg.release_repo => snap.landed_after.get(&scope).copied().filter(|l| now.saturating_sub(*l) >= bound).map(|landed| {
                     let act = snap.activated_at.map_or("never".into(), iso8601);
@@ -658,6 +712,7 @@ pub fn snapshot_of(
         open_rounds: None,
         owners: BTreeMap::new(),
         halt: None,
+        landing_quiet_s: None,
     })
 }
 
@@ -741,6 +796,20 @@ pub fn mark_gated(snap: &mut Snapshot, gates: &BTreeMap<String, Gating>, backoff
             let tip = b.tip.as_deref()?;
             backoffs.iter().find(|(t, _)| t == tip).map(|(_, until)| Gating::BackingOff { until: *until })
         });
+    }
+}
+
+/// Marks each SUBMITTED bead whose repo `is_pr` says lands by pull request.
+pub fn mark_prs(snap: &mut Snapshot, is_pr: &dyn Fn(&str) -> bool) {
+    for b in snap.beads.iter_mut().filter(|b| b.state == "SUBMITTED" && is_pr(&b.repo)) {
+        b.pr = Some(PrWait::default());
+    }
+}
+
+/// Gives each marked bead the read the landing pass carries for it.
+pub fn fill_prs(snap: &mut Snapshot, reads: &BTreeMap<String, PrRead>) {
+    for b in snap.beads.iter_mut().filter(|b| b.pr.is_some()) {
+        b.pr = Some(PrWait { read: reads.get(&b.id).copied() });
     }
 }
 
@@ -1089,6 +1158,7 @@ impl Handler for WatchTransitions {
             _ => return vec![],
         };
         mark_blocked(&mut snap, &dependency::batcher_blocks(view));
+        fill_prs(&mut snap, &crate::tasks::a::kit::carry::<crate::tasks::a::landing::Carry>(&crate::tasks::a::landing::SHAPE, view).prs);
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, acts) = decide(&carry, &snap, ev.at, cfg);
         pattern::commands(STATE, &carry, &next, acts)
@@ -1103,7 +1173,7 @@ mod tests {
     #[test]
     fn the_log_is_cut_to_its_last_2000_lines_past_4000() {
         let dir = testkit::TempDir::new("transitions-log");
-        let mut cfg = Config { period_s: 300, working_min: 1, submit_bound_s: 1, cut_bound_s: 1, gate_timeout_s: 1, certify_par: 1, deliver_bound_s: 1, activate_bound_s: 1, ask_bound_s: 1, release_repo: "r".into(), heartbeat_bound_s: 1, task_bound_s: 1, round_max_open: 1, releases: "".into(), repo_map: "".into(), activation_bound_s: 1, run: dir.path().to_path_buf() };
+        let mut cfg = Config { period_s: 300, working_min: 1, submit_bound_s: 1, cut_bound_s: 1, pr_bound_s: 1, gate_timeout_s: 1, certify_par: 1, deliver_bound_s: 1, activate_bound_s: 1, ask_bound_s: 1, release_repo: "r".into(), heartbeat_bound_s: 1, task_bound_s: 1, round_max_open: 1, releases: "".into(), repo_map: "".into(), activation_bound_s: 1, run: dir.path().to_path_buf() };
         assert!(log_append(&cfg, "").is_err());
         for i in 0..4_001 {
             log_append(&cfg, &format!("line {i}")).unwrap();

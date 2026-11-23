@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=runtime
+DOC=Seconds a SUBMITTED bead of a pr-mode repo may have no pull request, or a green, merged or unread one not recorded landed, before watch.transitions pages a SUBMITTED→LANDED STALL; red checks page at once, queued or running ones not while the landing task observes.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TRANSITIONS_PR_BOUND:=900}"
+SPIRA_CONF_DEFAULT_EOF

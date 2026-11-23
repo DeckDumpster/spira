@@ -712,6 +712,7 @@ transitions_period
 transitions_working_min
 transitions_submit_bound
 transitions_cut_bound
+transitions_pr_bound
 transitions_deliver_bound
 transitions_activate_bound
 transitions_ask_bound
