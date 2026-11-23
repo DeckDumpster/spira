@@ -167,7 +167,7 @@ suites are retired, their coverage moved here:
 
 `UC-operator-channel-25` is carried by this crate's `escalate` unit tests (the question's
 sections, a refusing mailer reported, a read-only check mailing nobody); that the real mail
-library accepts skew's question is `test-mail-real-senders.sh`'s. `UC-instance-lifecycle-34` is
+library accepts skew's question is `real::send_tests`'. `UC-instance-lifecycle-34` is
 carried by a Rust test in `install::cells`.
 
 Both `gate` (`which("skew.sh")` → `which("skew")`, `skew_foreign`'s subprocess no longer

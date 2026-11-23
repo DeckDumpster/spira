@@ -361,7 +361,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | mail-health | no | - | 8 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-mailbox-arg | no | - | ? | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-pane | no | - | 5 | cockpit/pane rendering and its probes: no loop actor changes state |
-| mail-real-senders | no | - | 3 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-sh-compat | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | mail-tidy-units | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | mail-tidy | no | - | 15 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |

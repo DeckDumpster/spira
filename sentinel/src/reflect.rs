@@ -283,6 +283,7 @@ mod tests {
         }
     }
 
+    // covers: UC-operator-channel-05
     #[test_id(tpm5y2p)]
     #[test]
     fn a_stall_escalation_is_delivered_to_the_concierge_and_never_the_operator() {

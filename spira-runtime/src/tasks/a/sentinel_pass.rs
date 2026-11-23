@@ -1083,7 +1083,11 @@ pub fn pilgrimage_close(e: &Effects, spec: &EffectSpec) -> Result<String, String
 /// `subject`, `text` (the body), `cause` (the default) and `id` (the bead it is about).
 pub fn ask(spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, ASK)?;
-    sentinel::ask::send(&sentinel::ask::Mail { mailbox: "concierge", from: "Sentinel <sentinel@spira>", subject: &w.subject, kind: "question", default: &w.cause, body: &w.text, bead: &w.id, own_dedup: true }).map(|()| w.subject.clone())
+    sentinel::ask::send(&concierge_question(&w)).map(|()| w.subject.clone())
+}
+
+fn concierge_question(w: &Write) -> sentinel::ask::Mail<'_> {
+    sentinel::ask::Mail { mailbox: "concierge", from: "Sentinel <sentinel@spira>", subject: &w.subject, kind: "question", default: &w.cause, body: &w.text, bead: &w.id, own_dedup: true }
 }
 
 /// `sentinel-pass.incident_event`: lib.sh `spira_event`, in-process.
@@ -1228,5 +1232,68 @@ mod beads_on_tests {
         let store = store();
         let beads = beads_on(&LcClient::over(store, true), &["spira".to_string()], &["sp-held".to_string()]).unwrap();
         assert!(beads.iter().any(|b| b.id == "sp-held"));
+    }
+}
+
+#[cfg(test)]
+mod land_ask_tests {
+    use super::*;
+    use mail::bead::{Bd, BdOut};
+
+    struct NoStore;
+
+    impl Bd for NoStore {
+        fn run(&self, _args: &[String], _stdin: Option<&str>) -> BdOut {
+            BdOut::ok("")
+        }
+        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_store::lc_call::LcError> {
+            Ok(())
+        }
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    // covers: UC-operator-channel-05
+    #[test_id(tyn5dba)]
+    #[test]
+    fn the_land_escalation_clears_the_mail_lint_unmodified() {
+        let tmp = testkit::TempDir::new("land-escalate");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let env = mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: root.clone(),
+            mail_from: None,
+            lint_considered: None,
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        };
+        let w = land_escalation(7200, "landing gate keeps failing\n");
+        sentinel::ask::send_with(&NoStore, env, &concierge_question(&w)).unwrap();
+        let files: Vec<_> = std::fs::read_dir(root.join("mail/concierge/new")).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+        let text = std::fs::read_to_string(files[0].path()).unwrap();
+        for need in ["nothing has completed a landing pass in 7200s", "## Default", "landing gate keeps failing"] {
+            assert!(text.contains(need), "{need}: {text}");
+        }
     }
 }

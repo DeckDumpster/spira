@@ -61,6 +61,8 @@ pub trait Seam {
     fn today(&self, tz: &str) -> String;
 }
 
+pub const DIGEST_FROM: &str = "Archivist <archivist@spira>";
+
 pub struct RealSeam {
     pub lib_sh: PathBuf,
 }
@@ -207,7 +209,7 @@ impl Seam for RealSeam {
 
     fn mail_send_digest(&self, subject: &str, body: &str) -> Result<bool, String> {
         let mut child = spira_config::bounded::bounded("mail")
-            .args(["send", "operator", "--from", "Archivist <archivist@spira>", "--subject", subject, "--kind", "note", "--digest"])
+            .args(["send", "operator", "--from", DIGEST_FROM, "--subject", subject, "--kind", "note", "--digest"])
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| format!("mail: {e}"))?;

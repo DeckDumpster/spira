@@ -951,6 +951,7 @@ impl Handler for Landing {
 mod tests {
     use super::*;
 
+    // covers: UC-operator-channel-05
     #[test_id(tgwxgyr)]
     #[test]
     fn the_refresh_loop_ask_reaches_the_concierge_and_passes_the_question_lint() {
