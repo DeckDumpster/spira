@@ -1,12 +1,12 @@
-//! `cr open | seal | unseal | status` through `cli::run`: an in-memory tree, a scripted
-//! review repository and a temp run directory.
+//! `cr open | seal | unseal | close | status` through `cli::run`: an in-memory tree and reader, a
+//! findings directory holding the ledger, a recording committer and a temp run directory.
 
-use super::gh::{unbase64, FakeGh, Shared, NAME, OWNER};
-use super::{cfg, fixture, go, ledger_rows, ports_with, seeded, DAY, NOW};
-use crate::ledger::{ClosedAs, LedgerFile, Row};
+use super::{cfg, fixture, go, ledger_rows, ports_with, Recorder, SharedRecorder, DAY, NOW};
 use crate::cli::Outcome;
-use crate::ports::{CommitInfo, FixtureBeads, FixtureRegistry, Ports};
+use crate::ledger::{ClosedAs, LedgerFile, Row};
+use crate::ports::{CommitInfo, FixtureBeads, FixtureRegistry, Ports, SourceTree};
 use crate::record::{self, State};
+use margin_client::{Anchor, Doc, FakeMargin};
 use sha2::{Digest, Sha256};
 use std::rc::Rc;
 use testkit::TempDir;
@@ -14,10 +14,12 @@ use testkit::TempDir;
 const DOES: &str = "Opens the store and hands back a handle.";
 const LOOK: &str = "Start with how open builds the handle.";
 const HEADINGS: [&str; 7] = ["## What it does", "## What to look at first", "## Files", "## Who calls it", "## How often it changed", "## Incidents that touched it", "## Tests that exercise it"];
+const READER: &str = "https://margin.invalid/c/col1";
 
 struct World {
     run: TempDir,
-    gh: Rc<FakeGh>,
+    margin: FakeMargin,
+    commits: Rc<Recorder>,
     ports: Ports,
 }
 
@@ -27,13 +29,13 @@ fn prior_row() -> Row {
 
 fn world() -> World {
     let run = TempDir::new("cr-review");
-    let gh = Rc::new(seeded(&[prior_row()]));
-    let mut ports = ports_with(fixture().with_authors("demo/src/store.rs", &["alpha", "beta", "alpha"]), vec![], cfg());
+    let margin = FakeMargin::default();
+    let commits = Rc::new(Recorder::default());
+    let mut ports = ports_with(fixture().with_authors("demo/src/store.rs", &["alpha", "beta", "alpha"]), vec![prior_row()], cfg());
     ports.run_dir = run.path().to_path_buf();
-    ports.gh = Box::new(Shared(gh.clone()));
-    ports.repo_owner = OWNER.into();
-    ports.repo_name = NAME.into();
-    World { run, gh, ports }
+    ports.margin = Box::new(margin.clone());
+    ports.committer = Box::new(SharedRecorder(commits.clone()));
+    World { run, margin, commits, ports }
 }
 
 impl World {
@@ -57,6 +59,20 @@ impl World {
         let c = self.comments(1);
         self.seal_with("001", &c)
     }
+    fn cover(&self) -> String {
+        self.margin.collection_posted(0).1
+    }
+    fn review_json(&self, n: u32) -> String {
+        std::fs::read_to_string(record::dir(self.run.path(), n).join("review.json")).unwrap()
+    }
+    fn ledger_file(&self) -> std::path::PathBuf {
+        std::path::Path::new(&self.ports.findings_dir).join(crate::ledger::FILE)
+    }
+    fn his(&self, n: u32, line: u32, body: &str) -> String {
+        let r = record::load(self.run.path(), n).unwrap();
+        let (document, version) = r.documents[&r.unit.files[0].path].clone();
+        self.margin.his_thread(r.collection.as_deref().unwrap(), Anchor { document, version, first: line, last: line }, body, 7)
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -65,7 +81,7 @@ fn sha256(bytes: &[u8]) -> String {
 
 #[test_id(tsduo7o)]
 #[test]
-fn open_count_two_stages_two_distinct_reviews_and_no_ledger_row_and_no_forge_write() {
+fn open_count_two_stages_two_distinct_reviews_and_no_ledger_row_and_no_reader_post() {
     let w = world();
     let o = w.cr(&["open", "--count", "2", "--seed", "5"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
@@ -73,8 +89,8 @@ fn open_count_two_stages_two_distinct_reviews_and_no_ledger_row_and_no_forge_wri
     assert_eq!(all.iter().map(|r| r.number).collect::<Vec<_>>(), [1, 2]);
     assert!(all.iter().all(|r| r.state == State::Staged && r.kind == record::Kind::OnDemand));
     assert_ne!(all[0].unit.id, all[1].unit.id);
-    assert!(w.gh.put("contents/ledger.jsonl").is_empty() && w.gh.posted("git/blobs").is_empty());
-    assert_eq!(ledger_rows(&w.gh), vec![prior_row()]);
+    assert_eq!(w.margin.collections_posted(), 0);
+    assert_eq!(ledger_rows(&w.ports), vec![prior_row()]);
     for n in ["001", "002"] {
         assert!(o.stdout.contains(&format!("seal with: cr seal --review {n} < seal.json")), "{}", o.stdout);
     }
@@ -107,52 +123,6 @@ fn open_never_hands_two_reviews_one_number() {
     assert_eq!((a, b), (1, 2));
 }
 
-#[test_id(thrwfqk)]
-#[test]
-fn seal_stores_the_unit_bytes_in_blobs_tree_and_pull_request() {
-    let mut w = world();
-    let o = w.open_and_seal();
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let r = record::load(w.run.path(), 1).unwrap();
-    let tree = fixture();
-    let blobs = w.gh.posted("git/blobs");
-    let mut got: Vec<Vec<u8>> = blobs.iter().map(|b| unbase64(b["content"].as_str().unwrap())).collect();
-    let mut want: Vec<Vec<u8>> = r.unit.files.iter().map(|f| crate::ports::SourceTree::read(&tree, &f.path).unwrap()).collect();
-    got.sort();
-    want.sort();
-    assert_eq!(got, want);
-    assert!(blobs.iter().all(|b| b["encoding"] == "base64"));
-    assert_eq!(w.gh.posted("git/trees")[0]["base_tree"], "base-tree");
-    assert_eq!(w.gh.posted("git/commits")[0]["parents"][0], "base-head");
-    assert_eq!(w.gh.posted("git/refs")[0]["ref"], format!("refs/heads/{}", r.branch));
-    assert_eq!(w.gh.posted("pulls")[0]["title"], r.unit.title);
-    assert_eq!((r.state, r.pr), (State::Open, Some(7)));
-    assert!(o.stdout.contains("pull/7"), "{}", o.stdout);
-}
-
-#[test_id(tq95bnr)]
-#[test]
-fn seal_puts_the_cover_note_in_the_pull_request_description_and_only_unit_files_on_the_branch() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    let r = record::load(w.run.path(), 1).unwrap();
-    let trees = w.gh.posted("git/trees");
-    assert_eq!(trees.len(), 1);
-    let mut paths: Vec<String> = trees[0]["tree"].as_array().unwrap().iter().map(|e| e["path"].as_str().unwrap().to_string()).collect();
-    paths.sort();
-    let mut expect: Vec<String> = r.unit.files.iter().map(|f| f.path.clone()).collect();
-    expect.sort();
-    assert_eq!(paths, expect);
-    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
-    for h in HEADINGS {
-        assert!(body.contains(h), "missing {h:?} in:\n{body}");
-    }
-    let sealed = std::fs::read(w.sealed_path(1)).unwrap();
-    for want in [DOES, LOOK, "c0ffee", "Add single comment", &format!("sealed-sha256: {}", sha256(&sealed))] {
-        assert!(body.contains(want), "missing {want:?} in:\n{body}");
-    }
-}
-
 #[test_id(txut26b)]
 #[test]
 fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
@@ -169,7 +139,7 @@ fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
         assert_eq!(o.code, 2, "{bad}: {}", o.stderr);
         assert!(o.stderr.contains(field), "{}", o.stderr);
     }
-    assert_eq!(w.gh.count(), 0);
+    assert_eq!(w.margin.collections_posted(), 0);
     assert!(!w.sealed_path(1).exists());
 }
 
@@ -182,7 +152,7 @@ fn the_cover_lists_tests_by_call_path_not_by_name() {
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
-    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    let body = w.cover();
     assert!(body.contains("`demo/src/store/tests.rs::opens` calls `Store::open`"), "{body}");
     assert!(body.contains("`demo/tests/it.rs::it` calls `Store::open`"), "{body}");
     let tests_section = body.split("## Tests that exercise it").nth(1).unwrap();
@@ -198,7 +168,7 @@ fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
     assert_eq!(w.cr(&["open", "--aim", "other/src/util.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
-    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    let body = w.cover();
     assert!(body.contains("`other/src/util.rs::doubles` calls `twice`"), "{body}");
 }
 
@@ -209,7 +179,7 @@ fn a_unit_with_no_calling_test_says_none_found_by_call_path() {
     assert_eq!(w.cr(&["open", "--aim", "demo/src/sink.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
-    let body = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    let body = w.cover();
     assert!(body.contains("None found by call path."), "{body}");
 }
 
@@ -220,32 +190,11 @@ fn seal_cover_note_carries_facts_and_no_critique() {
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
-    let note = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
+    let note = w.cover();
     for want in ["alpha, beta", "demo/src/store/tests.rs", "demo/tests/it.rs", "Commits in the last 60 days: 2", "c0ffee"] {
         assert!(note.contains(want), "missing {want:?} in:\n{note}");
     }
     assert!(!note.contains("first look"), "the sealed review must not reach the cover note");
-}
-
-#[test_id(te27c55)]
-#[test]
-fn seal_sends_a_large_module_whole_and_byte_identical() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
-    let c = w.comments(1);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let source = crate::ports::SourceTree::read(&fixture(), "demo/src/big.rs").unwrap();
-    let blobs = w.gh.posted("git/blobs");
-    assert!(!blobs.is_empty());
-    for b in &blobs {
-        assert!(!String::from_utf8_lossy(&unbase64(b["content"].as_str().unwrap())).contains("[cr: source lines"));
-    }
-    assert!(blobs.iter().any(|b| unbase64(b["content"].as_str().unwrap()) == source), "no posted blob equals the source");
-    let lines = String::from_utf8_lossy(&source).lines().count() as u32;
-    let note = w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string();
-    let want = format!("- `demo/src/big.rs`: {lines} lines (about {} pages)\n- Total: {lines} lines", lines.div_ceil(10));
-    assert!(note.contains(&want), "missing {want:?} in:\n{note}");
 }
 
 #[test_id(tmseqna)]
@@ -265,111 +214,9 @@ fn seal_refuses_an_empty_array_a_foreign_path_and_a_line_past_the_end_before_any
         let o = w.seal_with("001", &bad);
         assert_eq!(o.code, 2, "{bad}: {}", o.stderr);
     }
-    assert_eq!(w.gh.count(), 0);
+    assert_eq!(w.margin.collections_posted(), 0);
     assert!(!w.sealed_path(1).exists());
     assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
-}
-
-#[test_id(tkpqfx1)]
-#[test]
-fn seal_that_fails_at_the_pull_request_stays_staged_and_a_rerun_makes_only_the_pull_request() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
-    w.gh.fail("pulls");
-    let c = w.comments(1);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 1);
-    assert!(o.stderr.contains("pulls"), "{}", o.stderr);
-    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
-    let blobs = w.gh.posted("git/blobs").len();
-    w.gh.heal();
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    assert_eq!(w.gh.posted("git/blobs").len(), blobs);
-    assert_eq!(w.gh.posted("git/refs").len(), 1);
-    assert_eq!(w.gh.posted("git/trees").len(), 1);
-    assert_eq!(w.gh.posted("pulls").len(), 2, "the failed attempt and the retry");
-    let r = record::load(w.run.path(), 1).unwrap();
-    assert_eq!((r.state, r.pr), (State::Open, Some(7)));
-}
-
-#[test_id(tnktnk5)]
-#[test]
-fn seal_with_an_empty_owner_exits_two_naming_the_key() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
-    w.ports.repo_owner = String::new();
-    let c = w.comments(1);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 2);
-    assert!(o.stderr.contains("SPIRA_CR_REPO_OWNER"), "{}", o.stderr);
-    assert_eq!(w.gh.count(), 0);
-    w.ports.repo_owner = OWNER.into();
-    w.ports.repo_name = String::new();
-    assert!(w.seal_with("001", &c).stderr.contains("SPIRA_CR_REPO_NAME"));
-}
-
-#[test_id(to8uspa)]
-#[test]
-fn unseal_on_an_open_review_exits_two_and_posts_nothing() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    let before = w.gh.count();
-    let o = w.cr(&["unseal", "--review", "001"]);
-    assert_eq!(o.code, 2);
-    assert_eq!(w.gh.count(), before);
-}
-
-#[test_id(tqgs9qi)]
-#[test]
-fn unseal_on_a_published_review_posts_the_sealed_comments_as_one_review_once() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    record::set_state(w.run.path(), 1, State::Published, NOW).unwrap();
-    let o = w.cr(&["unseal", "--review", "001"]);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let posts = w.gh.posted("pulls/7/reviews");
-    assert_eq!(posts.len(), 1);
-    assert_eq!(posts[0]["event"], "COMMENT");
-    let sealed: serde_json::Value = serde_json::from_slice(&std::fs::read(w.sealed_path(1)).unwrap()).unwrap();
-    let want: Vec<serde_json::Value> = sealed["lens"].as_array().unwrap().iter().chain(sealed["fresh"].as_array().unwrap()).map(|c| serde_json::json!({"path": c["path"], "line": c["line"], "side": "RIGHT", "body": format!("{}{}", if sealed["lens"].as_array().unwrap().contains(c) { "**His lens:** " } else { "**Fresh read:** " }, c["body"].as_str().unwrap())})).collect();
-    assert_eq!(posts[0]["comments"].as_array().unwrap(), &want);
-    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 2);
-    assert_eq!(w.gh.posted("pulls/7/reviews").len(), 1);
-}
-
-#[test_id(tyngqsy)]
-#[test]
-fn unseal_refuses_a_sealed_file_altered_after_sealing() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    record::set_state(w.run.path(), 1, State::Published, NOW).unwrap();
-    let mut text = std::fs::read_to_string(w.sealed_path(1)).unwrap();
-    text.push(' ');
-    std::fs::write(w.sealed_path(1), text).unwrap();
-    let o = w.cr(&["unseal", "--review", "001"]);
-    assert_eq!(o.code, 2);
-    assert!(w.gh.posted("reviews").is_empty());
-}
-
-#[test_id(tgebm5a)]
-#[test]
-fn unseal_said_publishes_only_for_a_person_commenting_on_this_pull_request() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    let issue = format!("https://forge.invalid/repos/{OWNER}/{NAME}/issues/7");
-    w.gh.answer("issues/comments/55", &format!(r#"{{"user":{{"type":"Bot"}},"issue_url":"{issue}"}}"#));
-    assert_eq!(w.cr(&["unseal", "--review", "001", "--said", "55"]).code, 2);
-    w.gh.answer("issues/comments/56", &format!(r#"{{"user":{{"type":"User"}},"issue_url":"{issue}-other/issues/8"}}"#));
-    assert_eq!(w.cr(&["unseal", "--review", "001", "--said", "56"]).code, 2);
-    assert!(w.gh.posted("reviews").is_empty());
-    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Open);
-    w.gh.answer("issues/comments/57", &format!(r#"{{"user":{{"type":"User"}},"issue_url":"{issue}"}}"#));
-    let o = w.cr(&["unseal", "--review", "001", "--said", "57"]);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let r = record::load(w.run.path(), 1).unwrap();
-    assert!(r.state == State::Published && r.published_at.is_some());
-    assert_eq!(w.gh.posted("reviews").len(), 1);
 }
 
 #[test_id(tny0eju)]
@@ -384,7 +231,7 @@ fn status_lists_every_review_with_state_age_url_and_title() {
     let (reviews, _) = o.stdout.split_once("coverage at ").expect("a coverage section");
     let lines: Vec<&str> = reviews.lines().collect();
     assert_eq!(lines[0], "open reviews", "{}", o.stdout);
-    assert!(lines[1].starts_with("001 on-demand open 0h https://forge.invalid/"), "{}", lines[1]);
+    assert!(lines[1].starts_with("001 on-demand open 0h https://margin.invalid/c/col1 "), "{}", lines[1]);
     assert!(lines[2].starts_with("002 on-demand staged 0h - "), "{}", lines[2]);
     let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
     assert_eq!(j["reviews"].as_array().unwrap().len(), 2);
@@ -505,10 +352,9 @@ fn a_set_state_stamps_the_matching_time_and_keeps_the_rest() {
 fn seal_rerun_with_different_comments_is_refused_not_silently_dropped() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
-    w.gh.fail("pulls");
+    w.margin.fail_comment_number(1);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 1);
-    w.gh.heal();
     let other = c.replace("first look", "second thoughts");
     let o = w.seal_with("001", &other);
     assert_eq!(o.code, 2, "{}", o.stderr);
@@ -520,10 +366,9 @@ fn seal_rerun_with_different_comments_is_refused_not_silently_dropped() {
 fn seal_rerun_with_a_different_fresh_read_is_refused() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
-    w.gh.fail("pulls");
+    w.margin.fail_comment_number(1);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 1);
-    w.gh.heal();
     let o = w.seal_with("001", &c.replace("fresh look", "another fresh look"));
     assert_eq!(o.code, 2, "{}", o.stderr);
     assert!(o.stderr.contains("different comments"), "{}", o.stderr);
@@ -534,43 +379,12 @@ fn seal_rerun_with_a_different_fresh_read_is_refused() {
 fn seal_rerun_with_a_different_cover_is_refused() {
     let mut w = world();
     assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
-    w.gh.fail("pulls");
+    w.margin.fail_comment_number(1);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 1);
-    w.gh.heal();
     let o = w.seal_with("001", &c.replace(DOES, "Something else entirely."));
     assert_eq!(o.code, 2, "{}", o.stderr);
     assert!(o.stderr.contains("different cover"), "{}", o.stderr);
-}
-
-#[test_id(txv2u9e)]
-#[test]
-fn seal_rerun_after_a_lost_progress_file_adopts_the_ref_already_on_the_forge() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
-    w.gh.fail("pulls");
-    let c = w.comments(1);
-    assert_eq!(w.seal_with("001", &c).code, 1);
-    std::fs::remove_file(record::dir(w.run.path(), 1).join("progress.json")).unwrap();
-    w.gh.heal();
-    w.gh.fail("git/refs");
-    let branch = record::load(w.run.path(), 1).unwrap().branch;
-    w.gh.answer(&format!("git/ref/heads/{branch}"), r#"{"object":{"sha":"new-commit"}}"#);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    assert_eq!(w.gh.posted("pulls").len(), 2);
-}
-
-#[test_id(t1ie2xo)]
-#[test]
-fn unseal_with_a_failing_review_post_leaves_it_retryable() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    record::set_state(w.run.path(), 1, State::Published, NOW).unwrap();
-    w.gh.fail("pulls/7/reviews");
-    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 1);
-    w.gh.heal();
-    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
 }
 
 #[test_id(tsuv27m)]
@@ -592,9 +406,8 @@ fn seal_refuses_a_prose_field_carrying_a_heading_line_and_a_bare_array_on_a_reru
     let o = w.seal_with("001", &c.replace(DOES, "x\\n## Files\\ny"));
     assert_eq!(o.code, 2, "{}", o.stderr);
     assert!(o.stderr.contains("does"), "{}", o.stderr);
-    w.gh.fail("pulls");
+    w.margin.fail_comment_number(1);
     assert_eq!(w.seal_with("001", &c).code, 1);
-    w.gh.heal();
     let o = w.seal_with("001", r#"[{"path":"x","line":1,"body":"y"}]"#);
     assert_eq!(o.code, 2, "{}", o.stderr);
 }
@@ -608,7 +421,7 @@ fn sealed_body(w: &mut World) -> String {
     let c = w.comments(1);
     let o = w.seal_with("001", &c);
     assert_eq!(o.code, 0, "{}", o.stderr);
-    w.gh.posted("pulls")[0]["body"].as_str().unwrap().to_string()
+    w.cover()
 }
 
 #[test_id(te469fb)]
@@ -667,44 +480,6 @@ fn an_unreadable_bead_store_or_registry_says_unknown_not_zero() {
     assert!(!body.contains("0 fixes") && !body.contains("Disabled as flaky: 0"), "{body}");
 }
 
-fn put_rows(body: &serde_json::Value) -> Vec<Row> {
-    crate::ledger::Ledger::parse(&String::from_utf8(unbase64(body["content"].as_str().unwrap())).unwrap()).unwrap().rows
-}
-
-#[test_id(tzyzbjx)]
-#[test]
-fn seal_appends_one_open_row_to_the_review_repositorys_ledger() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    w.gh.fail_ledger_puts();
-    let c = w.comments(1);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 1, "{}", o.stderr);
-    assert!(o.stderr.contains("ledger write refused"), "{}", o.stderr);
-    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged, "a failed append leaves the review staged");
-    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 1, "an unmoved sha is not retried");
-    w.gh.heal_puts();
-    w.ports.clock = Box::new(crate::ports::VirtualClock::new(NOW + 5_000));
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let puts = w.gh.put("contents/ledger.jsonl");
-    assert_eq!(puts.len(), 2, "one failed write, then the rerun's");
-    let rows = put_rows(&puts[1]);
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0], prior_row());
-    let r = &rows[1];
-    let store = fixture();
-    assert_eq!((r.review.as_str(), r.unit_id.as_str(), r.opened_at, r.closed_at, r.closed_as), ("001", "module:demo/src/store.rs", NOW + 5_000, None, None));
-    assert_eq!(r.commit, store.commit_id);
-    let want: Vec<(String, String)> = record::load(w.run.path(), 1).unwrap().unit.files.iter().map(|f| (f.path.clone(), crate::ports::SourceTree::blob(&store, &f.path).unwrap())).collect();
-    assert_eq!(r.files.iter().map(|f| (f.path.clone(), f.blob.clone())).collect::<Vec<_>>(), want);
-    assert_eq!(puts[1]["branch"], "main");
-    assert_eq!(put_rows(&puts[1]), ledger_rows(&w.gh));
-    let again = w.cr(&["seal", "--review", "001"]);
-    assert_eq!(again.code, 2, "{}", again.stderr);
-    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 2);
-}
-
 #[test_id(tdux8bk)]
 #[test]
 fn a_staged_review_holds_its_unit_back_from_the_next_open() {
@@ -712,88 +487,6 @@ fn a_staged_review_holds_its_unit_back_from_the_next_open() {
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
     let o = w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]);
     assert_eq!(o.code, 1, "{}", o.stderr);
-}
-
-#[test_id(totrgvj)]
-#[test]
-fn ledger_close_writes_once_with_how_it_closed() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    record::set_state(w.run.path(), 1, State::Published, NOW + 1).unwrap();
-    let puts = w.gh.put("contents/ledger.jsonl").len();
-    let o = w.cr(&["ledger-close", "--review", "001", "--at", "777"]);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let rows = ledger_rows(&w.gh);
-    let last = rows.last().unwrap();
-    assert_eq!((last.review.as_str(), last.closed_at, last.closed_as), ("001", Some(777), Some(ClosedAs::Published)));
-    assert_eq!(rows.iter().filter(|r| r.review == "001").count(), 2);
-    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), puts + 1);
-    let o = w.cr(&["ledger-close", "--review", "001", "--at", "999"]);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), puts + 1, "a second close makes no PUT");
-}
-
-#[test_id(tfv5b6z)]
-#[test]
-fn ledger_close_of_an_unpublished_review_says_unpublished() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    assert_eq!(w.cr(&["ledger-close", "--review", "001", "--at", "5"]).code, 0);
-    assert_eq!(ledger_rows(&w.gh).last().unwrap().closed_as, Some(ClosedAs::Unpublished));
-}
-
-#[test_id(trakb3h)]
-#[test]
-fn a_missing_ledger_file_is_refused_naming_the_step() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    w.gh = Rc::new(FakeGh::default());
-    w.ports.gh = Box::new(Shared(w.gh.clone()));
-    let c = w.comments(1);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 1);
-    assert!(o.stderr.contains("ledger.jsonl") && o.stderr.contains("create it empty"), "{}", o.stderr);
-    assert!(w.gh.put("contents/ledger.jsonl").is_empty());
-}
-
-#[test_id(tcsl3jp)]
-#[test]
-fn a_ledger_put_conflict_rereads_and_retries() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    let other = Row { review: "901".into(), ..prior_row() };
-    w.gh.conflict_next_ledger_put(&serde_json::to_string(&other).unwrap());
-    let c = w.comments(1);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let puts = w.gh.put("contents/ledger.jsonl");
-    assert_eq!(puts.len(), 2);
-    assert_ne!(puts[0]["sha"], puts[1]["sha"]);
-    let rows = put_rows(&puts[1]);
-    assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "901", "001"]);
-}
-
-#[test_id(t1ntz02)]
-#[test]
-fn a_ledger_that_moves_under_every_write_gives_up_after_three_puts() {
-    let mut w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    w.gh.conflict_every_ledger_put();
-    let c = w.comments(1);
-    let o = w.seal_with("001", &c);
-    assert_eq!(o.code, 1);
-    assert!(o.stderr.contains("moved under 3 writes"), "{}", o.stderr);
-    assert_eq!(w.gh.put("contents/ledger.jsonl").len(), 3);
-}
-
-#[test_id(twbl49v)]
-#[test]
-fn closing_a_review_that_was_never_sealed_writes_nothing_and_succeeds() {
-    let w = world();
-    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
-    let o = w.cr(&["ledger-close", "--review", "001", "--at", "5"]);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    assert!(w.gh.put("contents/ledger.jsonl").is_empty());
 }
 
 #[test_id(tgwcdxf)]
@@ -813,45 +506,8 @@ fn seal_refuses_a_sealed_review_missing_either_half_before_any_forge_call() {
         assert_eq!(o.code, 2, "{bad}: {}", o.stderr);
         assert!(o.stderr.contains(half), "{}", o.stderr);
     }
-    assert_eq!(w.gh.count(), 0);
+    assert_eq!(w.margin.collections_posted(), 0);
     assert!(!w.sealed_path(1).exists());
-}
-
-#[test_id(tgg5vlf)]
-#[test]
-fn unseal_labels_each_comment_with_its_half() {
-    let mut w = world();
-    assert_eq!(w.open_and_seal().code, 0);
-    record::set_state(w.run.path(), 1, State::Published, NOW).unwrap();
-    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
-    let posts = w.gh.posted("pulls/7/reviews");
-    let bodies: Vec<&str> = posts[0]["comments"].as_array().unwrap().iter().map(|c| c["body"].as_str().unwrap()).collect();
-    assert_eq!(bodies, ["**His lens:** first look", "**Fresh read:** fresh look"]);
-}
-
-#[test_id(t8d0y6f)]
-#[test]
-fn status_shows_each_published_reviews_two_scores_in_order() {
-    let mut w = world();
-    for (n, seed) in [("001", "3"), ("002", "4"), ("003", "5")] {
-        assert_eq!(w.cr(&["open", "--seed", seed]).code, 0);
-        let c = w.comments(n.parse().unwrap());
-        assert_eq!(w.seal_with(n, &c).code, 0);
-    }
-    let path = record::load(w.run.path(), 1).unwrap().unit.files[0].path.clone();
-    let dir = record::dir(w.run.path(), 1);
-    std::fs::write(dir.join("comments.json"), format!(r#"[{{"path":"{path}","line":1,"body":"h","user":{{"type":"User"}}}},{{"path":"{path}","line":40,"body":"h2","user":{{"type":"User"}}}}]"#)).unwrap();
-    let finding = format!(r#"{{"id":"001-1","words":"w","exemplar":{{"path":"{path}","line":1}},"kind":"question","rule":"r","scope":"unit","endorses":1}}"#);
-    std::fs::write(dir.join("findings.jsonl"), format!("{finding}\n")).unwrap();
-    record::set_state(w.run.path(), 3, State::Published, NOW).unwrap();
-    record::set_state(w.run.path(), 1, State::Closed, NOW).unwrap();
-    let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
-    let rows: Vec<(&str, u64, u64, u64, u64)> = j["scores"].as_array().unwrap().iter().map(|r| (r["review"].as_str().unwrap(), r["lens_predicted"].as_u64().unwrap(), r["his_comments"].as_u64().unwrap(), r["fresh_endorsed"].as_u64().unwrap(), r["fresh_points"].as_u64().unwrap())).collect();
-    assert_eq!(rows, [("001", 1, 2, 1, 1), ("003", 0, 0, 0, 1)], "002 is still open and has no score row");
-    let text = w.cr(&["status"]).stdout;
-    let at = text.find("scores\n").expect("a scores section");
-    let lines: Vec<&str> = text[at..].lines().skip(1).take(2).collect();
-    assert_eq!(lines, ["  001 lens 1/2 fresh 1/1", "  003 lens 0/0 fresh 0/1"]);
 }
 
 #[test_id(ts2dkhu)]
@@ -865,77 +521,6 @@ fn a_review_sealed_as_one_undivided_array_scores_all_lens_and_no_fresh() {
     let j: serde_json::Value = serde_json::from_str(&w.cr(&["status", "--json"]).stdout).unwrap();
     assert_eq!(j["scores"][0]["fresh_points"], 0);
     assert_eq!(j["scores"][0]["lens_predicted"], 0);
-}
-
-fn close_with(w: &mut World, comments: &str, findings: &str, publish: bool) -> Row {
-    assert_eq!(w.open_and_seal().code, 0);
-    if publish {
-        record::set_state(w.run.path(), 1, State::Published, NOW + 1).unwrap();
-    }
-    let dir = record::dir(w.run.path(), 1);
-    std::fs::write(dir.join("comments.json"), comments).unwrap();
-    std::fs::write(dir.join("findings.jsonl"), findings).unwrap();
-    assert_eq!(
-        w.cr(&["ledger-close", "--review", "001", "--at", "777"])
-            .code,
-        0
-    );
-    ledger_rows(&w.gh).pop().unwrap()
-}
-
-fn comment(id: u64, bot: bool, path: Option<&str>) -> String {
-    let path = path.map_or("null".to_string(), |p| format!("\"{p}\""));
-    format!(
-        r#"{{"id":{id},"in_reply_to":null,"author":"x","bot":{bot},"path":{path},"line":1,"body":"b","created_at":1}}"#
-    )
-}
-
-#[test_id(tgcdjig)]
-#[test]
-fn ledger_close_records_his_comments_by_path_and_findings_by_kind() {
-    let mut w = world();
-    let comments = format!(
-        "[{},{},{},{}]",
-        comment(1, false, Some("demo/src/store.rs")),
-        comment(2, false, Some("demo/src/store.rs")),
-        comment(3, true, Some("demo/src/store.rs")),
-        comment(4, false, None)
-    );
-    let finding = r#"{"words":"w","exemplar":{"path":"demo/src/store.rs","line":3},"kind":"refactor","rule":"r","scope":"unit"}"#;
-    let last = close_with(&mut w, &comments, &format!("{finding}\n"), true);
-    let a = last.attention.expect("a published close records attention");
-    assert_eq!(
-        serde_json::to_value(&a.comments_by_path).unwrap(),
-        serde_json::json!({"demo/src/store.rs": 2})
-    );
-    assert_eq!(
-        serde_json::to_value(&a.finding_kinds).unwrap(),
-        serde_json::json!({"refactor": 1})
-    );
-}
-
-#[test_id(t2htgym)]
-#[test]
-fn a_review_closed_unpublished_records_no_attention() {
-    let mut w = world();
-    let comments = format!("[{}]", comment(1, false, Some("demo/src/store.rs")));
-    let last = close_with(&mut w, &comments, "", false);
-    assert_eq!(
-        (last.closed_as, last.attention),
-        (Some(ClosedAs::Unpublished), None)
-    );
-}
-
-#[test_id(ti87ur8)]
-#[test]
-fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
-    let mut w = world();
-    let comments = format!("[{}]", comment(1, false, Some("demo/src/store.rs")));
-    close_with(&mut w, &comments, "", true);
-    let o = w.cr(&["pick", "--aim", "demo/src/net.rs", "--json"]);
-    assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
-    let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
-    assert!(v["weight"]["attention_share"].as_f64().unwrap() > 0.0, "{v}");
 }
 
 #[test_id(t7sobt0)]
@@ -982,231 +567,385 @@ fn a_unit_whose_commits_name_no_bead_says_none_found_without_asking_the_store() 
     assert!(section.contains("None found.") && !body.contains("Incidents: unknown"), "{body}");
 }
 
-// ───────────────────────────── adopt ─────────────────────────────
-
-const PR9: &str = r#"{"state":"open","html_url":"https://forge.invalid/fixture-owner/fixture-reviews/pull/9","head":{"ref":"hand/sink"}}"#;
-const PR9_URL: &str = "https://forge.invalid/fixture-owner/fixture-reviews/pull/9";
-const SINK: &str = "demo/src/sink.rs";
-const FILE_SINK: &str = "demo/src/file_sink.rs";
-const SINK_UNIT: &str = "trait:demo/src/sink.rs::Sink";
-
-fn blob(path: &str) -> String {
-    crate::ports::blob_of(&crate::ports::SourceTree::read(&fixture(), path).unwrap())
-}
-
-fn pr_files(entries: &[(&str, &str)]) -> String {
-    format!("[{}]", entries.iter().map(|(f, s)| format!(r#"{{"filename":"{f}","sha":"{s}"}}"#)).collect::<Vec<_>>().join(","))
-}
-
-fn comments_on(path: &str) -> String {
-    format!(r#"[{{"path":"{path}","line":1,"body":"hand-made look"}}]"#)
-}
-
-impl World {
-    fn hand_pr(&self, state_json: &str, files: &[(&str, &str)]) {
-        self.gh.answer("pulls/9", state_json);
-        self.gh.answer("pulls/9/files?per_page=100&page=1", &pr_files(files));
-    }
-    fn adopt(&mut self, stdin: &str, sha: &str, args: &[&str]) -> Outcome {
-        self.ports.stdin = stdin.to_string();
-        let mut a = vec!["adopt"];
-        a.extend_from_slice(args);
-        a.extend_from_slice(&["--pr", "9", "--sha256", sha]);
-        self.cr(&a)
-    }
-    fn good_pr(&self) {
-        self.hand_pr(PR9, &[(FILE_SINK, &blob(FILE_SINK)), (SINK, &blob(SINK))]);
-    }
-    fn review_json(&self, n: u32) -> String {
-        std::fs::read_to_string(record::dir(self.run.path(), n).join("review.json")).unwrap()
-    }
-}
-
-fn staged_sink_world() -> (World, String, String) {
-    let w = world();
-    assert_eq!(w.cr(&["open", "--aim", "Sink", "--seed", "3"]).code, 0);
-    w.good_pr();
-    let stdin = comments_on(SINK);
-    let sha = sha256(stdin.as_bytes());
-    (w, stdin, sha)
-}
-
-#[test_id(t9vyos3)]
+#[test_id(tfbsgr3)]
 #[test]
-fn adopt_records_a_staged_review_as_open_on_the_pull_request_with_its_forge_files() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    let o = w.adopt(&stdin, &sha, &["--review", "001"]);
-    assert_eq!((o.code, o.stdout.as_str()), (0, format!("{PR9_URL}\n").as_str()), "{}", o.stderr);
-    let r = record::load(w.run.path(), 1).unwrap();
-    assert_eq!((r.state, r.pr, r.branch.as_str(), r.pr_url.as_deref()), (State::Open, Some(9), "hand/sink", Some(PR9_URL)));
-    assert_eq!(r.sealed_sha256.as_deref(), Some(sha.as_str()));
-    assert_eq!(r.unit.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), [SINK, FILE_SINK]);
-    assert_eq!(std::fs::read(w.sealed_path(1)).unwrap(), stdin.as_bytes());
-    let status = w.cr(&["status"]).stdout;
-    assert!(status.lines().any(|l| l.starts_with("001 on-demand open ") && l.contains(PR9_URL)), "{status}");
-    let rows: Vec<Row> = ledger_rows(&w.gh).into_iter().filter(|r| r.review == "001").collect();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].files, vec![LedgerFile { path: SINK.into(), blob: blob(SINK) }, LedgerFile { path: FILE_SINK.into(), blob: blob(FILE_SINK) }]);
-    assert!(w.gh.posted("").is_empty());
-}
-
-#[test_id(tyjqd3o)]
-#[test]
-fn an_adopted_review_unseals_and_takes_findings_only_on_the_pull_requests_files() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
-    let issue = format!("https://forge.invalid/repos/{OWNER}/{NAME}/issues/9");
-    w.gh.answer("issues/comments/60", &format!(r#"{{"user":{{"type":"User"}},"issue_url":"{issue}"}}"#));
-    let o = w.cr(&["unseal", "--review", "001", "--said", "60"]);
-    assert_eq!(o.code, 0, "{}", o.stderr);
-    let posted = w.gh.posted("pulls/9/reviews");
-    assert_eq!(posted.len(), 1);
-    assert_eq!(posted[0]["comments"][0]["path"], SINK);
-    let finding = |path: &str| format!(r#"{{"words":"w","exemplar":{{"path":"{path}","line":1}},"kind":"question","rule":"r","scope":"unit"}}"#);
-    w.ports.stdin = finding(FILE_SINK);
-    w.ports.findings_dir = TempDir::new("cr-adopt-find").path().to_str().unwrap().to_string();
-    assert_eq!(w.cr(&["finding", "--review", "001"]).code, 0);
-    w.ports.stdin = finding("demo/src/router.rs");
-    assert_eq!(w.cr(&["finding", "--review", "001"]).code, 2);
-}
-
-#[test_id(t877atq)]
-#[test]
-fn adopt_with_a_unit_and_commit_allocates_an_on_demand_review() {
+fn seal_posts_one_collection_of_the_units_files_whole_then_the_held_labelled_comments() {
     let mut w = world();
-    w.good_pr();
-    let (stdin, sha) = (comments_on(SINK), sha256(comments_on(SINK).as_bytes()));
-    let o = w.adopt(&stdin, &sha, &["--unit", "trait:nope", "--commit", "c0ffee"]);
-    assert_eq!(o.code, 2, "{}", o.stderr);
-    assert!(record::all(w.run.path()).unwrap().is_empty());
-    let o = w.adopt(&stdin, &sha, &["--unit", SINK_UNIT, "--commit", "c0ffee"]);
+    let o = w.open_and_seal();
     assert_eq!(o.code, 0, "{}", o.stderr);
     let r = record::load(w.run.path(), 1).unwrap();
-    assert_eq!((r.kind, r.state, r.pr, r.source_sha.as_str(), r.unit.id.as_str()), (record::Kind::OnDemand, State::Open, Some(9), "c0ffee", SINK_UNIT));
-    let again = w.adopt(&stdin, &sha, &["--unit", SINK_UNIT, "--commit", "c0ffee"]);
-    assert_eq!(again.code, 0, "{}", again.stderr);
-    assert_eq!(record::all(w.run.path()).unwrap().len(), 1);
+    assert_eq!(w.margin.collections_posted(), 1);
+    let (title, _, docs) = w.margin.collection_posted(0);
+    let tree = fixture();
+    let want: Vec<Doc> = r.unit.files.iter().map(|f| Doc { path: f.path.clone(), kind: "code".into(), text: String::from_utf8(tree.read(&f.path).unwrap()).unwrap() }).collect();
+    assert_eq!((title, docs), (r.unit.title.clone(), want));
+    let posts = w.margin.comments_posted();
+    let first = &r.unit.files[0].path;
+    let (doc, version) = r.documents[first].clone();
+    let at = |line| Anchor { document: doc.clone(), version, first: line, last: line };
+    assert_eq!(posts.iter().map(|p| (p.body.as_str(), p.held, p.anchor.clone(), p.in_reply_to.clone())).collect::<Vec<_>>(), [("**His lens:** first look", true, at(1), None), ("**Fresh read:** fresh look", true, at(2), None)]);
+    assert_eq!((r.state, r.collection.as_deref(), r.url.as_deref()), (State::Open, Some("col1"), Some(READER)));
+    assert_eq!(o.stdout, format!("{READER}\n"));
 }
 
-#[test_id(twlsjog)]
+#[test_id(t87pbnr)]
 #[test]
-fn adopt_refusals_exit_two_and_write_nothing() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    let before_record = w.review_json(1);
-    let before_ledger = w.gh.ledger_text();
-    let check = |w: &mut World, label: &str, stdin: &str, sha: &str, args: &[&str]| {
-        let o = w.adopt(stdin, sha, args);
-        assert_eq!(o.code, 2, "{label}: {}", o.stderr);
-        assert_eq!(w.review_json(1), before_record, "{label}");
-        assert_eq!(w.gh.ledger_text(), before_ledger, "{label}");
-        assert!(!w.sealed_path(1).exists(), "{label}");
-    };
-    check(&mut w, "hash", &stdin, &sha256(b"other"), &["--review", "001"]);
-    w.hand_pr(PR9, &[(SINK, "0000000000000000"), (FILE_SINK, &blob(FILE_SINK))]);
-    check(&mut w, "blob", &stdin, &sha, &["--review", "001"]);
-    w.hand_pr(&PR9.replace("open", "closed"), &[(SINK, &blob(SINK))]);
-    check(&mut w, "closed", &stdin, &sha, &["--review", "001"]);
-    w.hand_pr(PR9, &[(FILE_SINK, &blob(FILE_SINK))]);
-    check(&mut w, "primary", &stdin, &sha, &["--review", "001"]);
-    w.good_pr();
-    let outside = comments_on("demo/src/router.rs");
-    check(&mut w, "comment", &outside, &sha256(outside.as_bytes()), &["--review", "001"]);
-    let mut r = record::load(w.run.path(), 1).unwrap();
-    r.state = State::Closed;
-    record::save(w.run.path(), &r).unwrap();
-    let closed_record = w.review_json(1);
-    let o = w.adopt(&stdin, &sha, &["--review", "001"]);
-    assert_eq!(o.code, 2, "{}", o.stderr);
-    assert_eq!((w.review_json(1), w.gh.ledger_text()), (closed_record, before_ledger));
-    r.state = State::Staged;
-    record::save(w.run.path(), &r).unwrap();
-    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
-}
-
-#[test_id(txgnqlh)]
-#[test]
-fn adopt_again_is_a_no_op_and_another_pull_request_is_refused() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
-    let (record_after, ledger_after) = (w.review_json(1), w.gh.ledger_text());
-    let o = w.adopt(&stdin, &sha, &["--review", "001"]);
-    assert_eq!((o.code, o.stdout.as_str()), (0, format!("{PR9_URL}\n").as_str()), "{}", o.stderr);
-    assert_eq!((w.review_json(1), w.gh.ledger_text()), (record_after.clone(), ledger_after.clone()));
-    w.ports.stdin = stdin.clone();
-    let o = w.cr(&["adopt", "--review", "001", "--pr", "8", "--sha256", &sha]);
-    assert_eq!(o.code, 2, "{}", o.stderr);
-    assert_eq!((w.review_json(1), w.gh.ledger_text()), (record_after, ledger_after));
-}
-
-#[test_id(tuobndy)]
-#[test]
-fn adopt_rejects_review_with_unit_and_an_incomplete_form_before_anything_runs() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    for args in [vec!["--review", "001", "--unit", SINK_UNIT], vec!["--review", "001", "--commit", "c0ffee"], vec!["--unit", SINK_UNIT], vec!["--commit", "c0ffee"], vec![]] {
-        let o = w.adopt(&stdin, &sha, &args);
-        assert_eq!(o.code, 2, "{args:?}: {}", o.stderr);
+fn seal_puts_the_cover_note_in_the_collection_and_no_pull_request_wording() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    let body = w.cover();
+    for h in HEADINGS {
+        assert!(body.contains(h), "missing {h:?} in:\n{body}");
     }
+    let sealed = std::fs::read(w.sealed_path(1)).unwrap();
+    for want in [DOES, LOOK, "c0ffee", &format!("sealed-sha256: {}", sha256(&sealed))] {
+        assert!(body.contains(want), "missing {want:?} in:\n{body}");
+    }
+    assert!(!body.contains("Add single comment") && !body.contains("pull request"), "{body}");
+}
+
+#[test_id(tnz1lbs)]
+#[test]
+fn seal_sends_a_large_module_whole_and_byte_identical() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let source = String::from_utf8(fixture().read("demo/src/big.rs").unwrap()).unwrap();
+    let (_, note, docs) = w.margin.collection_posted(0);
+    assert_eq!(docs.iter().find(|d| d.path == "demo/src/big.rs").map(|d| d.text.as_str()), Some(source.as_str()));
+    let lines = source.lines().count() as u32;
+    let want = format!("- `demo/src/big.rs`: {lines} lines (about {} pages)\n- Total: {lines} lines", lines.div_ceil(10));
+    assert!(note.contains(&want), "missing {want:?} in:\n{note}");
+}
+
+#[test_id(tmjnknl)]
+#[test]
+fn seal_failing_at_the_second_held_comment_stays_staged_and_a_rerun_posts_only_the_rest() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.margin.fail_comment_number(2);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("did not answer"), "{}", o.stderr);
     assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
-    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
+    assert_eq!(w.margin.comments_posted().len(), 1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert_eq!(w.margin.collections_posted(), 1);
+    let bodies: Vec<String> = w.margin.comments_posted().into_iter().map(|p| p.body).collect();
+    assert_eq!(bodies, ["**His lens:** first look", "**Fresh read:** fresh look"]);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Open);
 }
 
-#[test_id(tffjfyq)]
+#[test_id(tmrri4b)]
 #[test]
-fn adopt_replaces_the_reviews_ledger_rows_with_one_and_keeps_the_others() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    let old = |opened_at| Row { review: "001".into(), kind: "persona".into(), unit_id: "old".into(), commit: "older".into(), files: vec![LedgerFile { path: "old.md".into(), blob: "x".into() }], opened_at, closed_at: None, closed_as: None, attention: None };
-    crate::ledger::append(&w.ports, &[old(1), old(2)]).unwrap();
-    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
-    let rows = ledger_rows(&w.gh);
-    assert_eq!(rows.iter().map(|r| r.review.as_str()).collect::<Vec<_>>(), ["900", "001"]);
-    assert_eq!(rows[0], prior_row());
-    assert_eq!(rows[1].files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), [SINK, FILE_SINK]);
+fn seal_with_the_reader_down_names_the_reader_and_leaves_the_review_staged() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.margin.go_down();
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("the reader at") && o.stderr.contains("did not answer POST /api/collections"), "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+    assert_eq!(ledger_rows(&w.ports), vec![prior_row()]);
 }
 
-#[test_id(t7bx34k)]
+#[test_id(tqvhqif)]
 #[test]
-fn adopt_reads_every_page_of_the_pull_requests_files() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    let full: Vec<(&str, String)> = (0..100).map(|_| (SINK, blob(SINK))).collect();
-    let full: Vec<(&str, &str)> = full.iter().map(|(p, b)| (*p, b.as_str())).collect();
-    w.gh.answer("pulls/9/files?per_page=100&page=1", &pr_files(&full));
-    w.gh.answer("pulls/9/files?per_page=100&page=2", &pr_files(&[(FILE_SINK, &blob(FILE_SINK))]));
-    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
-    let files: Vec<String> = record::load(w.run.path(), 1).unwrap().unit.files.into_iter().map(|f| f.path).collect();
-    assert_eq!(files, [SINK, FILE_SINK]);
-}
-
-#[test_id(tf6vwkw)]
-#[test]
-fn adopt_names_a_pull_request_file_that_is_not_at_the_source_commit() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    w.hand_pr(PR9, &[(SINK, &blob(SINK)), ("demo/src/ghost.rs", "0000000000000000")]);
-    let o = w.adopt(&stdin, &sha, &["--review", "001"]);
+fn unseal_on_an_open_review_the_reader_has_not_published_exits_two_and_changes_nothing() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    let (before, posted) = (w.review_json(1), w.margin.comments_posted().len());
+    let o = w.cr(&["unseal", "--review", "001"]);
     assert_eq!(o.code, 2);
-    assert!(o.stderr.contains("demo/src/ghost.rs"), "{}", o.stderr);
-    assert!(!w.sealed_path(1).exists());
+    assert!(o.stderr.contains("review 001 is not published in the reader; it waits on his Publish"), "{}", o.stderr);
+    assert_eq!((w.review_json(1), w.margin.comments_posted().len()), (before, posted));
 }
 
-#[test_id(trwz2rx)]
+#[test_id(t3qdrx2)]
 #[test]
-fn adopt_refuses_an_empty_sealed_review() {
-    let (mut w, stdin, sha) = staged_sink_world();
-    let o = w.adopt("[]", &sha256(b"[]"), &["--review", "001"]);
-    assert_eq!(o.code, 2, "{}", o.stderr);
-    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
-    assert_eq!(w.adopt(&stdin, &sha, &["--review", "001"]).code, 0);
-}
-
-#[test_id(t27jczs)]
-#[test]
-fn adopt_again_by_unit_changes_no_file() {
+fn unseal_once_the_reader_shows_publish_records_the_time_and_posts_nothing() {
     let mut w = world();
-    w.good_pr();
-    let (stdin, sha) = (comments_on(SINK), sha256(comments_on(SINK).as_bytes()));
-    let args = ["--unit", SINK_UNIT, "--commit", "c0ffee"];
-    assert_eq!(w.adopt(&stdin, &sha, &args).code, 0);
-    let (rec, led, sealed) = (w.review_json(1), w.gh.ledger_text(), std::fs::read(w.sealed_path(1)).unwrap());
-    assert_eq!(w.adopt(&stdin, &sha, &args).code, 0);
-    assert_eq!((w.review_json(1), w.gh.ledger_text(), std::fs::read(w.sealed_path(1)).unwrap()), (rec, led, sealed));
+    assert_eq!(w.open_and_seal().code, 0);
+    w.margin.publish("col1", NOW + 123);
+    let posted = w.margin.comments_posted().len();
+    let o = w.cr(&["unseal", "--review", "001"]);
+    assert_eq!((o.code, o.stdout.as_str()), (0, "review 001 published\n"), "{}", o.stderr);
+    let r = record::load(w.run.path(), 1).unwrap();
+    assert_eq!((r.state, r.published_at), (State::Published, Some(NOW + 123)));
+    assert_eq!((w.margin.comments_posted().len(), w.margin.collections_posted()), (posted, 1));
+    let again = w.cr(&["unseal", "--review", "001"]);
+    assert_eq!((again.code, again.stdout.as_str()), (0, "review 001 published\n"));
+}
+
+#[test_id(ti67dio)]
+#[test]
+fn unseal_of_a_staged_review_exits_two_and_has_no_said_flag() {
+    let w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 2);
+    let o = w.cr(&["unseal", "--review", "001", "--said", "5"]);
+    assert_eq!(o.code, 2);
+    assert!(o.stderr.contains("--said"), "{}", o.stderr);
+}
+
+#[test_id(t1poskd)]
+#[test]
+fn open_scheduled_with_a_scheduled_review_not_closed_exits_one_naming_close_and_stages_nothing() {
+    let w = world();
+    assert_eq!(w.cr(&["open", "--scheduled", "--seed", "1"]).code, 0);
+    let o = w.cr(&["open", "--scheduled", "--seed", "2"]);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("scheduled review 001 is staged; it must close first (cr close --review 001)"), "{}", o.stderr);
     assert!(!record::dir(w.run.path(), 2).exists());
+    assert_eq!(w.cr(&["open", "--seed", "4"]).code, 0, "an on-demand open is unaffected");
+    assert!(record::dir(w.run.path(), 2).exists());
+    assert_eq!(w.cr(&["close", "--review", "001"]).code, 0);
+    assert_eq!(w.cr(&["open", "--scheduled", "--seed", "5"]).code, 0, "closing frees the next scheduled open");
+}
+
+#[test_id(t19ep42)]
+#[test]
+fn close_writes_one_close_row_commits_it_and_closes_the_collection_once() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    let o = w.cr(&["close", "--review", "001"]);
+    assert_eq!((o.code, o.stdout.as_str()), (0, "review 001 closed\n"), "{}", o.stderr);
+    let rows: Vec<Row> = ledger_rows(&w.ports).into_iter().filter(|r| r.review == "001").collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[1].closed_at, rows[1].closed_as, rows[1].attention.clone()), (Some(NOW), Some(ClosedAs::Unpublished), None));
+    let log = w.commits.log.borrow().clone();
+    assert_eq!(log.last().unwrap(), &(vec!["ledger.jsonl".to_string()], "ledger: 001 closed".to_string()));
+    assert_eq!(w.margin.closed(), ["col1"]);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Closed);
+    let again = w.cr(&["close", "--review", "001"]);
+    assert_eq!((again.code, again.stdout.as_str()), (0, "review 001 already closed\n"));
+    assert_eq!((ledger_rows(&w.ports).len(), w.commits.log.borrow().len(), w.margin.closed().len()), (3, log.len(), 1));
+}
+
+fn close_published(w: &mut World, his: &[(u32, &str)]) -> Row {
+    assert_eq!(w.open_and_seal().code, 0);
+    w.margin.publish("col1", NOW + 1);
+    assert_eq!(w.cr(&["unseal", "--review", "001"]).code, 0);
+    for (line, body) in his {
+        w.his(1, *line, body);
+    }
+    let finding = r#"{"words":"w","exemplar":{"path":"demo/src/store.rs","line":3},"kind":"refactor","rule":"r","scope":"unit"}"#;
+    std::fs::write(record::dir(w.run.path(), 1).join("findings.jsonl"), format!("{finding}\n")).unwrap();
+    let o = w.cr(&["close", "--review", "001"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    ledger_rows(&w.ports).pop().unwrap()
+}
+
+#[test_id(tcljrl5)]
+#[test]
+fn a_published_reviews_close_row_counts_his_comments_by_path_from_the_threads_and_not_the_agents() {
+    let mut w = world();
+    let last = close_published(&mut w, &[(1, "h1"), (3, "h2")]);
+    assert_eq!(last.closed_as, Some(ClosedAs::Published));
+    let a = last.attention.expect("a published close records attention");
+    assert_eq!(serde_json::to_value(&a.comments_by_path).unwrap(), serde_json::json!({"demo/src/store.rs": 2}));
+    assert_eq!(serde_json::to_value(&a.finding_kinds).unwrap(), serde_json::json!({"refactor": 1}));
+}
+
+#[test_id(tl6hk4a)]
+#[test]
+fn comments_recorded_at_close_weigh_the_next_pick_in_their_area() {
+    let mut w = world();
+    close_published(&mut w, &[(1, "h1")]);
+    let o = w.cr(&["pick", "--aim", "demo/src/net.rs", "--json"]);
+    assert_eq!(o.code, 0, "{} {}", o.stdout, o.stderr);
+    let v: serde_json::Value = serde_json::from_str(&o.stdout).unwrap();
+    assert!(v["weight"]["attention_share"].as_f64().unwrap() > 0.0, "{v}");
+}
+
+#[test_id(tp2umop)]
+#[test]
+fn closing_a_review_never_sealed_writes_no_ledger_row_and_closes_it() {
+    let w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let o = w.cr(&["close", "--review", "001"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert!(w.commits.log.borrow().is_empty() && w.margin.closed().is_empty());
+    assert_eq!(ledger_rows(&w.ports), vec![prior_row()]);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Closed);
+}
+
+#[test_id(t64hsfy)]
+#[test]
+fn close_of_a_review_the_reader_published_but_unseal_never_saw_closes_it_as_published() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    w.margin.publish("col1", NOW + 9);
+    assert_eq!(w.cr(&["close", "--review", "001"]).code, 0);
+    let r = record::load(w.run.path(), 1).unwrap();
+    assert_eq!((r.state, r.published_at), (State::Closed, Some(NOW + 9)));
+    assert_eq!(ledger_rows(&w.ports).pop().unwrap().closed_as, Some(ClosedAs::Published));
+}
+
+#[test_id(t8tc6rt)]
+#[test]
+fn seal_appends_one_open_row_to_the_ledger_and_commits_that_file_alone() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.commits.fail.set(true);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    assert!(o.stderr.contains("git commit failed"), "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged, "a failed append leaves the review staged");
+    assert_eq!(ledger_rows(&w.ports), vec![prior_row()], "a failed commit leaves the file as it was");
+    w.commits.fail.set(false);
+    w.ports.clock = Box::new(crate::ports::VirtualClock::new(NOW + 5_000));
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    assert_eq!(w.margin.collections_posted(), 1, "the rerun makes no second collection");
+    let rows = ledger_rows(&w.ports);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0], prior_row());
+    let r = &rows[1];
+    let store = fixture();
+    assert_eq!((r.review.as_str(), r.unit_id.as_str(), r.opened_at, r.closed_at, r.closed_as), ("001", "module:demo/src/store.rs", NOW + 5_000, None, None));
+    let want: Vec<(String, String)> = record::load(w.run.path(), 1).unwrap().unit.files.iter().map(|f| (f.path.clone(), store.blob(&f.path).unwrap())).collect();
+    assert_eq!(r.files.iter().map(|f| (f.path.clone(), f.blob.clone())).collect::<Vec<_>>(), want);
+    assert_eq!(w.commits.log.borrow().last().unwrap(), &(vec!["ledger.jsonl".to_string()], "ledger: 001 opened".to_string()));
+    assert_eq!(w.cr(&["seal", "--review", "001"]).code, 2);
+    assert_eq!(ledger_rows(&w.ports).len(), 2);
+}
+
+#[test_id(t13iwtf)]
+#[test]
+fn with_no_ledger_file_and_no_history_status_exits_zero_with_zero_coverage() {
+    let w = world();
+    std::fs::remove_file(w.ledger_file()).unwrap();
+    let j = status_json(&w.ports);
+    assert_eq!(j["coverage"]["files"]["reviewed"], 0);
+}
+
+#[test_id(tin6b8t)]
+#[test]
+fn a_ledger_deleted_after_it_was_committed_makes_status_exit_one_naming_the_restore() {
+    let w = world();
+    std::fs::remove_file(w.ledger_file()).unwrap();
+    w.commits.history.set(true);
+    let o = w.cr(&["status"]);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("ledger.jsonl was deleted from") && o.stderr.contains("restore it from git"), "{}", o.stderr);
+}
+
+#[test_id(tjh21c8)]
+#[test]
+fn status_shows_each_published_reviews_two_scores_in_order() {
+    let mut w = world();
+    for (n, seed) in [("001", "3"), ("002", "4"), ("003", "5")] {
+        assert_eq!(w.cr(&["open", "--seed", seed]).code, 0);
+        let c = w.comments(n.parse().unwrap());
+        assert_eq!(w.seal_with(n, &c).code, 0);
+    }
+    let path = record::load(w.run.path(), 1).unwrap().unit.files[0].path.clone();
+    w.his(1, 1, "h");
+    w.his(1, 40, "h2");
+    let dir = record::dir(w.run.path(), 1);
+    let finding = format!(r#"{{"id":"001-1","words":"w","exemplar":{{"path":"{path}","line":1}},"kind":"question","rule":"r","scope":"unit","endorses":1}}"#);
+    std::fs::write(dir.join("findings.jsonl"), format!("{finding}\n")).unwrap();
+    record::set_state(w.run.path(), 3, State::Published, NOW).unwrap();
+    record::set_state(w.run.path(), 1, State::Closed, NOW).unwrap();
+    let j = status_json(&w.ports);
+    let rows: Vec<(&str, u64, u64, u64, u64)> = j["scores"].as_array().unwrap().iter().map(|r| (r["review"].as_str().unwrap(), r["lens_predicted"].as_u64().unwrap(), r["his_comments"].as_u64().unwrap(), r["fresh_endorsed"].as_u64().unwrap(), r["fresh_points"].as_u64().unwrap())).collect();
+    assert_eq!(rows, [("001", 1, 2, 1, 1), ("003", 0, 0, 0, 1)], "002 is still open and has no score row");
+    let text = w.cr(&["status"]).stdout;
+    let at = text.find("scores\n").expect("a scores section");
+    let lines: Vec<&str> = text[at..].lines().skip(1).take(2).collect();
+    assert_eq!(lines, ["  001 lens 1/2 fresh 1/1", "  003 lens 0/0 fresh 0/1"]);
+}
+
+fn review_of(number: u32, kind: record::Kind, state: State) -> record::Review {
+    let unit = crate::units::Unit { id: "u".into(), kind: crate::units::Kind::Module, files: vec![], title: "t".into() };
+    record::Review { number, kind, state, source_repo: "s".into(), source_sha: "c".into(), collection: None, url: None, documents: Default::default(), unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at: None }
+}
+
+#[test_id(tdoh0ml)]
+#[test]
+fn a_scheduled_review_not_closed_blocks_and_a_closed_or_on_demand_one_does_not() {
+    use record::Kind::{OnDemand, Scheduled};
+    for state in [State::Staged, State::Open, State::Published] {
+        assert_eq!(record::scheduled_blocker(&[review_of(1, Scheduled, State::Closed), review_of(2, Scheduled, state)]), Some((2, state)));
+    }
+    assert_eq!(record::scheduled_blocker(&[review_of(1, Scheduled, State::Closed), review_of(2, OnDemand, State::Open)]), None);
+    assert_eq!(record::scheduled_blocker(&[]), None);
+}
+
+#[test_id(ttw4958)]
+#[test]
+fn a_record_written_before_the_reader_still_loads() {
+    let w = world();
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    let path = record::dir(w.run.path(), 1).join("review.json");
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for (k, val) in [("branch", serde_json::json!("cr/001-x")), ("pr", serde_json::json!(7)), ("pr_url", serde_json::json!("https://forge.invalid/pull/7"))] {
+        v[k] = val;
+    }
+    for k in ["collection", "url", "documents"] {
+        v.as_object_mut().unwrap().remove(k);
+    }
+    std::fs::write(&path, v.to_string()).unwrap();
+    let r = record::load(w.run.path(), 1).unwrap();
+    assert_eq!((r.collection, r.url, r.documents.len()), (None, None, 0));
+}
+
+#[test_id(thqwf0k)]
+#[test]
+fn close_with_the_reader_down_or_the_ledger_commit_failing_leaves_the_review_unclosed_and_a_rerun_finishes() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    w.margin.go_down();
+    let o = w.cr(&["close", "--review", "001"]);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("the reader at"), "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Open);
+    assert!(ledger_rows(&w.ports).iter().all(|r| r.closed_at.is_none()), "no close row was written");
+    w.margin.come_up();
+    w.commits.fail.set(true);
+    assert_eq!(w.cr(&["close", "--review", "001"]).code, 1);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Open);
+    assert_eq!(ledger_rows(&w.ports).len(), 2, "a failed commit leaves the ledger as it was");
+    w.commits.fail.set(false);
+    assert_eq!(w.cr(&["close", "--review", "001"]).code, 0);
+    assert_eq!(ledger_rows(&w.ports).iter().filter(|r| r.review == "001" && r.closed_at.is_some()).count(), 1);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Closed);
+}
+
+#[test_id(tiqle0c)]
+#[test]
+fn seal_against_a_dead_reader_address_names_the_address_and_route_and_leaves_the_review_staged() {
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", dead.local_addr().unwrap());
+    drop(dead);
+    let token = TempDir::new("cr-dead-token");
+    std::fs::write(token.path().join("t"), "tok").unwrap();
+    let mut w = world();
+    w.ports.margin = Box::new(margin_client::HttpMargin { base: base.clone(), token_file: token.path().join("t").to_str().unwrap().to_string(), timeout: std::time::Duration::from_secs(1) });
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains(&base) && o.stderr.contains("POST /api/collections") && !o.stderr.contains("tok\n"), "{}", o.stderr);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+}
+
+#[test_id(t1grunh)]
+#[test]
+fn a_verb_that_never_reaches_the_reader_runs_with_the_reader_unconfigured() {
+    let mut w = world();
+    w.ports.margin = Box::new(margin_client::Unconfigured("SPIRA_MARGIN_URL is empty; name it in the config, it has no default".into()));
+    assert_eq!(w.cr(&["open", "--seed", "3"]).code, 0);
+    assert_eq!(w.cr(&["status"]).code, 0);
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("SPIRA_MARGIN_URL"), "{}", o.stderr);
 }

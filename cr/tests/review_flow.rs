@@ -1,18 +1,15 @@
-//! `cr open` then `cr seal` over a real git repository: the staged files are the source
-//! commit's bytes, even after the landing ref has moved on.
+//! `cr open` then `cr seal` over a real git repository: the posted files are the source
+//! commit's bytes, even after the landing ref has moved on, and the ledger row is committed.
 
 #[macro_use]
 extern crate spira_test_id;
-#[path = "../src/tests/gh.rs"]
-mod gh;
 
 use cr::cli::run;
 use cr::ports::{Config, GitTree, Ports, VirtualClock};
 use cr::record;
-use gh::{unbase64, FakeGh, Shared, NAME, OWNER};
+use margin_client::FakeMargin;
 use std::path::Path;
 use std::process::Command;
-use std::rc::Rc;
 
 fn git(dir: &Path, args: &[&str]) -> Vec<u8> {
     let out = Command::new("git")
@@ -43,13 +40,15 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
     git(p, &["commit", "-q", "-m", "one"]);
     let sha = String::from_utf8(git(p, &["rev-parse", "HEAD"])).unwrap().trim().to_string();
 
-    let gh = Rc::new(FakeGh::default().with_ledger_text(""));
+    let findings = testkit::TempDir::new("cr-flow-findings");
+    git(findings.path(), &["init", "-q", "-b", "main"]);
+    git(findings.path(), &["commit", "-q", "--allow-empty", "-m", "root"]);
+    let margin = FakeMargin::default();
+    let _env = testkit::env(&[("GIT_AUTHOR_NAME", Some("a")), ("GIT_AUTHOR_EMAIL", Some("a@a")), ("GIT_COMMITTER_NAME", Some("a")), ("GIT_COMMITTER_EMAIL", Some("a@a"))]);
     let ports = Ports {
         run_dir: run_dir.path().to_path_buf(),
-        gh: Box::new(Shared(gh.clone())),
-        repo_owner: OWNER.into(),
-        repo_name: NAME.into(),
-        findings_dir: String::new(),
+        margin: Box::new(margin.clone()),
+        findings_dir: findings.path().to_str().unwrap().to_string(),
         committer: Box::new(cr::ports::GitCommitter),
         source_repo: "k".into(),
         stdin: String::new(),
@@ -76,10 +75,13 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
     let o = run(&args(&["seal", "--review", "001"]), &sealing);
     assert_eq!(o.code, 0, "{}", o.stderr);
 
-    let blobs = gh.posted("git/blobs");
-    assert_eq!(blobs.len(), r.unit.files.len());
-    for (f, b) in r.unit.files.iter().zip(&blobs) {
+    let (_, _, docs) = margin.collection_posted(0);
+    assert_eq!(docs.len(), r.unit.files.len());
+    for (f, d) in r.unit.files.iter().zip(&docs) {
         let want = git(p, &["show", &format!("{sha}:{}", f.path)]);
-        assert_eq!(unbase64(b["content"].as_str().unwrap()), want, "{}", f.path);
+        assert_eq!(d.text.as_bytes(), want.as_slice(), "{}", f.path);
     }
+    let ledger = std::fs::read_to_string(findings.path().join("ledger.jsonl")).unwrap();
+    assert_eq!(ledger.lines().count(), 1);
+    assert!(git(findings.path(), &["log", "--format=%s", "--", "ledger.jsonl"]).starts_with(b"ledger: 001 opened"));
 }

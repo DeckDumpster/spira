@@ -1,6 +1,6 @@
 TYPE=string
 GROUP=cr
-DOC=The directory, a git repository, cr findings writes cr-<NNN>.md and patterns.md to and commits in. An empty value is refused.
+DOC=The directory, a git repository, cr findings writes cr-<NNN>.md and patterns.md to, and cr keeps ledger.jsonl in, committing each. An empty value is refused.
 SCHEMA=REQUIRED: The git directory cr findings writes its findings page and pattern catalogue to. Nothing defaults it.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.

@@ -54,7 +54,6 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("inbox-keeper", &["inbox-keeper.observe", "concierge.wake"]),
     ("pr-notify", &["pr-notify.observe", "operator.note", "inbox.append"]),
     ("cr-cadence", &["cr-cadence.observe", "cr-cadence.open", "inbox.append"]),
-    ("cr-comments", &["cr-comments.observe", "cr-comments.record", "inbox.append"]),
     ("asks", &["asks.observe", "inbox.append"]),
     ("design-asks", &["design-asks.observe", "inbox.append"]),
     ("brain-dirty", &["brain-dirty.observe", "inbox.append"]),

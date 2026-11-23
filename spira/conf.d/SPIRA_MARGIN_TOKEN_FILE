@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=margin
+DOC=The path of a mode-0600 file holding the Concierge's agent token for the Margin reader, read at each use and never put on argv or in output. Write it with `install -m600 /dev/stdin <path>`, typing the token with no echo. An empty value or an unreadable file is refused.
+SCHEMA=REQUIRED: The path of the file holding the Concierge's Margin agent token. Nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

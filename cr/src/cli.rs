@@ -25,14 +25,12 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   cr count --regex <re> [--path <glob>]... [--limit <n>] [--json]
   cr open [--count <N>] [--aim <X>] [--seed <n>] [--scheduled]
   cr seal --review <NNN> < seal.json
-  cr adopt --review <NNN> --pr <n> --sha256 <hex> < sealed.json
-  cr adopt --unit <id> --commit <sha> --pr <n> --sha256 <hex> < sealed.json
   cr finding --review <NNN> < finding.json
   cr findings --review <NNN> [--post]
-  cr unseal --review <NNN> [--said <comment-id>]
-  cr ledger-close --review <NNN> --at <ms>
-  cr thread --review <NNN> --comment <id>
-  cr reply --review <NNN> --comment <id> < reply.txt
+  cr unseal --review <NNN>
+  cr close --review <NNN>
+  cr thread --review <NNN> --thread <id>
+  cr reply --review <NNN> --thread <id> < reply.txt
   cr status [--json]
 
   finding records one verdict of a review (JSON: {id?, words, comment_id?, exemplar: {path, line},
@@ -40,19 +38,18 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   replaced. kind is question|fix|refactor|condemn|replicate|style|other; fix is for this unit
   only (scope unit, no statute or catalogue), other names one only with generalised_by. findings
   regenerates the review's page and the pattern catalogue in SPIRA_CR_FINDINGS_DIR, commits those
-  two files, and prints the closeout comment; --post posts it on the review's pull request.
+  two files, and prints the closeout comment; --post posts it in the reader, on line 1 of the unit's first document.
 
-  open stages N units (default 1) as reviews and makes no forge call. seal reads the
+  open stages N units (default 1) as reviews and makes no reader call. With --scheduled it refuses
+  while another scheduled review is not closed, and names the cr close that ends it. seal reads the
   Concierge's own review as one JSON object
-  {does, look_first, lens: [{path, line, body}], fresh: [{path, line, body}]}, stores both halves hashed, and opens the
-  pull request in the review repository with does and look_first in its description. unseal posts it once the operator has published.
+  {does, look_first, lens: [{path, line, body}], fresh: [{path, line, body}]}, stores both halves hashed, posts
+  a collection to the Margin reader (the cover note, the unit's files whole at the source commit, and both
+  halves as held comments) and prints its URL. unseal records the review as published once the reader
+  shows the operator's Publish, and posts nothing; before that it exits 2.
 
-  adopt records a pull request already open in the review repository, with the sealed review on
-  stdin (a JSON array of {path, line, body}) whose sha256 is --sha256. The review is a staged one
-  (--review) or a new on-demand one for --unit at --commit. It reads the forge only: the pull
-  request must be open and every file it carries must match the source commit blob for blob, and
-  include the unit's first file. The review is then open on that pull request, its files those
-  the pull request carries, and the ledger names them. Run again, it prints the URL and changes nothing.
+  close closes the review's collection, appends its close row to the ledger once, as published if the
+  operator published and as unpublished if not, and marks the review closed; a rerun prints `already closed`.
 
   status prints the open reviews, then coverage at the landing-ref commit: the share of files a
   published review has reached, by area (first path component) and by unit kind, the oldest
@@ -62,21 +59,16 @@ cr — draw one related unit of code to review, weighted, rotated through kinds,
   predicted, the fresh read by how many of its points he endorsed. --json prints
   {reviews, scores, coverage}. Coverage is reported, never a target.
 
-  The coverage ledger is ledger.jsonl on the review repository's default branch; seal appends a
-  review's open row. ledger-close appends its close row once, as published if the operator
-  published and as unpublished if not; only a published review counts a file as reviewed.
+  The coverage ledger is ledger.jsonl in SPIRA_CR_FINDINGS_DIR, committed by cr; seal appends a
+  review's open row and close its close row. Only a published review counts a file as reviewed.
 
   --aim <X>   aim the draw: a path, a workspace crate, a struct/enum/trait/type name, or words
               (every word must appear in a unit's paths or module docs, case-folded)
   --seed <n>  the draw's seed; default SPIRA_SEED, else the clock's milliseconds; always printed
   --count <N> how many units open stages
   --scheduled mark the reviews as scheduled rather than on demand
-  --review <NNN>  the review to seal, unseal or adopt
-  --pr <n>    (adopt) the open pull request
-  --sha256 <hex>  (adopt) the hash of the sealed review on stdin
-  --unit <id> --commit <sha>  (adopt) a new on-demand review of this unit at this commit, instead of --review
-  --comment <id>  (thread, reply) a review comment of the pull request
-  --said <id> the operator's conversation comment on the pull request, standing for publishing
+  --review <NNN>  the review to seal, unseal or close
+  --thread <id>   (thread, reply) a thread of the review's collection in the reader
   --json      print one JSON object on every path, errors included
   --regex <re>   (count) the pattern; matched per line against code in .rs .sh .toml .py files
   --path <glob>  (count) search only paths matching the glob; repeatable
@@ -87,9 +79,9 @@ count reads the home repository at its landing ref and prints the total of match
 the files matched and the files searched. Comment lines (// in .rs, # in .sh .toml .py) and
 SPIRA_CR_EXCLUDE paths are not counted. Sites are path:line: text, sorted, then `… <k> more`.
 
-thread prints the comment's file and line, the source around it, and the whole thread from the
-comments the Concierge's watcher kept. reply posts stdin as a reply in that comment's thread and
-prints the new comment's URL; an empty reply is refused.
+thread prints the thread's file and line range, the source around it, and every comment, read from the
+reader. reply posts stdin as a reply in that thread, not held, and prints the new comment's URL; an
+empty reply is refused.
 
 Arguments are named; a bare positional is refused.
 
@@ -116,29 +108,26 @@ enum Cmd {
     Count(CountArgs),
     Open(review::OpenArgs),
     Seal(u32),
-    Adopt(review::AdoptArgs),
-    Unseal { number: u32, said: Option<String> },
-    LedgerClose { number: u32, at: u64 },
-  
+    Unseal(u32),
+    Close(u32),
     Finding(u32),
     Findings { number: u32, post: bool },
-    Thread { number: u32, comment: u64 },
-    Reply { number: u32, comment: u64 },
+    Thread { number: u32, thread: String },
+    Reply { number: u32, thread: String },
     Status { json: bool },
 }
 
-const VERBS: [(&str, &[&str], &[&str]); 12] = [
+const VERBS: [(&str, &[&str], &[&str]); 11] = [
     ("pick", &["--aim", "--seed"], &["--json"]),
     ("count", &["--regex", "--path", "--limit"], &["--json"]),
     ("open", &["--count", "--aim", "--seed"], &["--scheduled"]),
     ("seal", &["--review"], &[]),
-    ("adopt", &["--review", "--pr", "--sha256", "--unit", "--commit"], &[]),
-    ("unseal", &["--review", "--said"], &[]),
-    ("ledger-close", &["--review", "--at"], &[]),
+    ("unseal", &["--review"], &[]),
+    ("close", &["--review"], &[]),
     ("finding", &["--review"], &[]),
     ("findings", &["--review"], &["--post"]),
-    ("thread", &["--review", "--comment"], &[]),
-    ("reply", &["--review", "--comment"], &[]),
+    ("thread", &["--review", "--thread"], &[]),
+    ("reply", &["--review", "--thread"], &[]),
     ("status", &[], &["--json"]),
 ];
 
@@ -210,13 +199,16 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
         Some(v) => Some(v.parse().map_err(|_| format!("--limit {v:?} is not a non-negative integer"))?),
         None => None,
     };
-    let comment = || -> Result<u64, String> {
-        let v = values.get("--comment").ok_or("--comment <id> is required")?;
-        v.parse().map_err(|_| format!("--comment {v:?} is not a comment id"))
+    let thread = || -> Result<String, String> {
+        let v = values.get("--thread").ok_or("--thread <id> is required")?;
+        if v.trim().is_empty() {
+            return Err("--thread is empty; give a thread id".to_string());
+        }
+        Ok(v.clone())
     };
     Ok(match verb {
-        "thread" => Cmd::Thread { number: review()?, comment: comment()? },
-        "reply" => Cmd::Reply { number: review()?, comment: comment()? },
+        "thread" => Cmd::Thread { number: review()?, thread: thread()? },
+        "reply" => Cmd::Reply { number: review()?, thread: thread()? },
         "count" => Cmd::Count(CountArgs { regex: values.get("--regex").cloned(), paths, limit }),
         "pick" => Cmd::Pick(Args { aim: values.get("--aim").cloned(), seed }),
         "open" => {
@@ -227,23 +219,8 @@ fn parse_verb(argv: &[String], first: Option<&str>) -> Result<Cmd, String> {
             Cmd::Open(review::OpenArgs { count, aim: values.get("--aim").cloned(), seed, scheduled: set.contains(&"--scheduled") })
         }
         "seal" => Cmd::Seal(review()?),
-        "adopt" => {
-            let target = match (values.get("--review"), values.get("--unit"), values.get("--commit")) {
-                (Some(_), None, None) => review::AdoptTarget::Review(review()?),
-                (None, Some(unit), Some(commit)) => review::AdoptTarget::OnDemand { unit: unit.clone(), commit: commit.clone() },
-                (Some(_), _, _) => return Err("--review cannot be given with --unit or --commit".to_string()),
-                _ => return Err("adopt needs --review <NNN>, or --unit <id> with --commit <sha>".to_string()),
-            };
-            let pr = values.get("--pr").ok_or("--pr <n> is required")?;
-            let pr = pr.parse().map_err(|_| format!("--pr {pr:?} is not a pull request number"))?;
-            let sha256 = values.get("--sha256").ok_or("--sha256 <hex> is required")?.clone();
-            Cmd::Adopt(review::AdoptArgs { target, pr, sha256 })
-        }
-        "ledger-close" => {
-            let v = values.get("--at").ok_or("--at <ms> is required")?;
-            Cmd::LedgerClose { number: review()?, at: v.parse().map_err(|_| format!("--at {v:?} is not a millisecond time"))? }
-        }
-        "unseal" => Cmd::Unseal { number: review()?, said: values.get("--said").cloned() },
+        "unseal" => Cmd::Unseal(review()?),
+        "close" => Cmd::Close(review()?),
         "finding" => Cmd::Finding(review()?),
         "findings" => Cmd::Findings { number: review()?, post: set.contains(&"--post") },
         _ => Cmd::Status { json: set.contains(&"--json") },
@@ -283,13 +260,12 @@ pub fn run(argv: &[String], ports: &Ports) -> Outcome {
         Ok(Cmd::Pick(a)) => a,
         Ok(Cmd::Open(a)) => return review::open(&a, ports),
         Ok(Cmd::Seal(n)) => return review::seal(n, ports),
-        Ok(Cmd::Adopt(a)) => return review::adopt(&a, ports),
-        Ok(Cmd::Unseal { number, said }) => return review::unseal(number, said.as_deref(), ports),
-        Ok(Cmd::LedgerClose { number, at }) => return crate::ledger::close(number, at, ports),
+        Ok(Cmd::Unseal(n)) => return review::unseal(n, ports),
+        Ok(Cmd::Close(n)) => return review::close(n, ports),
         Ok(Cmd::Finding(n)) => return findings::record_finding(n, ports),
         Ok(Cmd::Findings { number, post }) => return findings::findings(number, post, ports),
-        Ok(Cmd::Thread { number, comment }) => return thread::thread(number, comment, ports),
-        Ok(Cmd::Reply { number, comment }) => return thread::reply(number, comment, ports),
+        Ok(Cmd::Thread { number, thread }) => return thread::thread(number, &thread, ports),
+        Ok(Cmd::Reply { number, thread }) => return thread::reply(number, &thread, ports),
         Ok(Cmd::Status { json }) => return review::status(json, ports),
         Err(e) => return fail(2, json, &e, &[], None, None),
     };

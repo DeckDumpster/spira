@@ -5,7 +5,6 @@ use crate::ledger::{Attention, ClosedAs, Ledger, LedgerFile, Row};
 use crate::ports::{blob_of, Config, FixtureTree, History, Ports, SourceTree, VirtualClock};
 use serde_json::Value;
 
-mod gh;
 mod findings;
 mod review;
 mod thread;
@@ -53,20 +52,72 @@ pub(crate) fn fixture() -> FixtureTree {
         .with_commits("demo/src/store.rs", &[NOW - DAY, NOW - 2 * DAY, NOW - 90 * DAY])
 }
 
-pub(crate) fn seeded(rows: &[Row]) -> gh::FakeGh {
-    gh::FakeGh::default().with_ledger_text(&rows.iter().map(|r| format!("{}\n", serde_json::to_string(r).unwrap())).collect::<String>())
+thread_local! {
+    static FINDINGS_DIRS: std::cell::RefCell<Vec<testkit::TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-pub(crate) fn ledger_rows(g: &gh::FakeGh) -> Vec<Row> {
-    Ledger::parse(&g.ledger_text()).unwrap().rows
+/// A findings directory holding `rows` as its ledger, kept for the life of the test's thread.
+pub(crate) fn ledger_dir(rows: &[Row]) -> String {
+    let dir = testkit::TempDir::new("cr-ledger");
+    let text: String = rows.iter().map(|r| format!("{}\n", serde_json::to_string(r).unwrap())).collect();
+    std::fs::write(dir.path().join(crate::ledger::FILE), text).unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+    FINDINGS_DIRS.with(|d| d.borrow_mut().push(dir));
+    path
+}
+
+pub(crate) fn ledger_rows(p: &Ports) -> Vec<Row> {
+    Ledger::parse(&std::fs::read_to_string(std::path::Path::new(&p.findings_dir).join(crate::ledger::FILE)).unwrap()).unwrap().rows
+}
+
+/// A committer that records what it was asked to commit; `fail` makes the next commits fail and
+/// `history` answers whether the ledger was ever committed.
+#[derive(Default)]
+pub(crate) struct Recorder {
+    pub log: std::cell::RefCell<Vec<(Vec<String>, String)>>,
+    pub last: std::cell::RefCell<Vec<String>>,
+    pub fail: std::cell::Cell<bool>,
+    pub history: std::cell::Cell<bool>,
+}
+
+pub(crate) struct SharedRecorder(pub std::rc::Rc<Recorder>);
+
+impl crate::ports::Committer for SharedRecorder {
+    fn commit(&self, dir: &std::path::Path, paths: &[&str], message: &str) -> Result<(), String> {
+        if self.0.fail.get() {
+            return Err("git commit failed".into());
+        }
+        let now: Vec<String> = paths.iter().map(|p| std::fs::read_to_string(dir.join(p)).unwrap()).collect();
+        if *self.0.last.borrow() != now {
+            *self.0.last.borrow_mut() = now;
+            self.0.log.borrow_mut().push((paths.iter().map(|s| s.to_string()).collect(), message.to_string()));
+        }
+        Ok(())
+    }
+    fn has_history(&self, _: &std::path::Path, _: &str) -> Result<bool, String> {
+        Ok(self.0.history.get())
+    }
+}
+
+/// Posts the unit's files as a collection and records it on review `number`, as a seal would.
+pub(crate) fn attach_collection(margin: &margin_client::FakeMargin, tree: &FixtureTree, run: &std::path::Path, number: u32) -> crate::record::Review {
+    use margin_client::Margin;
+    let mut r = crate::record::load(run, number).unwrap();
+    let docs: Vec<margin_client::Doc> = r.unit.files.iter().map(|f| margin_client::Doc { path: f.path.clone(), kind: "code".into(), text: String::from_utf8(tree.read(&f.path).unwrap()).unwrap() }).collect();
+    let c = margin.post_collection(&r.unit.title, "cover", &docs).unwrap();
+    r.collection = Some(c.id);
+    r.url = Some(c.url);
+    r.documents = c.documents.iter().map(|d| (d.path.clone(), (d.id.clone(), d.version))).collect();
+    crate::record::save(run, &r).unwrap();
+    r
 }
 
 fn ports_with(tree: FixtureTree, ledger: Vec<Row>, config: Config) -> Ports {
-    Ports { tree: Box::new(tree), gh: Box::new(seeded(&ledger)), repo_owner: gh::OWNER.into(), repo_name: gh::NAME.into(), config, ..ports_with_tree(Box::new(Unreadable)) }
+    Ports { tree: Box::new(tree), findings_dir: ledger_dir(&ledger), config, ..ports_with_tree(Box::new(Unreadable)) }
 }
 
 fn ports_with_tree(tree: Box<dyn SourceTree>) -> Ports {
-    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), gh: Box::new(gh::FakeGh::default()), repo_owner: String::new(), repo_name: String::new(), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), config: cfg(), env_seed: None }
+    Ports { run_dir: std::path::PathBuf::from("run-dir-unused"), margin: Box::new(margin_client::FakeMargin::default()), findings_dir: String::new(), committer: Box::new(NoCommit), source_repo: "src".into(), stdin: String::new(), clock: Box::new(VirtualClock::new(NOW)), tree, beads: Box::new(crate::ports::FixtureBeads::default()), registry: Box::new(crate::ports::FixtureRegistry::default()), config: cfg(), env_seed: None }
 }
 
 fn ports() -> Ports {
@@ -378,19 +429,24 @@ fn a_renamed_file_keeps_its_review() {
     assert_eq!(code, 0, "without the rename the new path is unreviewed: {v}");
 }
 
-#[test_id(tg1y3x0)]
+#[test_id(t39gry8)]
 #[test]
-fn pick_refuses_when_the_ledger_file_is_missing_or_the_repository_unnamed() {
+fn pick_refuses_when_the_ledger_was_deleted_after_being_committed_or_the_findings_dir_is_unnamed() {
     let mut p = ports();
-    p.gh = Box::new(gh::FakeGh::default());
+    std::fs::remove_file(std::path::Path::new(&p.findings_dir).join(crate::ledger::FILE)).unwrap();
+    let (code, v) = json(&p, &["pick"]);
+    assert_eq!(code, 0, "no ledger and no history is the empty ledger: {v}");
+    let rec = std::rc::Rc::new(Recorder::default());
+    rec.history.set(true);
+    p.committer = Box::new(SharedRecorder(rec));
     let (code, v) = json(&p, &["pick"]);
     assert_eq!(code, 1);
-    assert!(v["error"].as_str().unwrap().contains("create it empty"), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("restore it from git"), "{v}");
     let mut p = ports();
-    p.repo_owner = String::new();
+    p.findings_dir = String::new();
     let (code, v) = json(&p, &["pick"]);
     assert_eq!(code, 1);
-    assert!(v["error"].as_str().unwrap().contains("SPIRA_CR_REPO_OWNER"), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("SPIRA_CR_FINDINGS_DIR"), "{v}");
 }
 
 #[test_id(t3orwqe)]
@@ -464,8 +520,11 @@ fn a_bare_positional_exits_two_naming_aim() {
 fn help_documents_every_flag_and_the_exit_codes() {
     let o = go(&ports(), &["-h"]);
     assert_eq!(o.code, 0);
-    for want in ["--aim", "--seed", "--json", "--pr", "--sha256", "--unit", "--commit", "cr adopt", "Exit codes", "  0 ", "  1 ", "  2 "] {
+    for want in ["--aim", "--seed", "--json", "--review", "--thread", "cr close", "Exit codes", "  0 ", "  1 ", "  2 "] {
         assert!(o.stdout.contains(want), "{want}");
+    }
+    for gone in ["adopt", "--said", "ledger-close", "--comment", "--sha256", "pull request"] {
+        assert!(!o.stdout.contains(gone), "{gone}");
     }
 }
 
@@ -538,6 +597,9 @@ pub(crate) struct NoCommit;
 impl crate::ports::Committer for NoCommit {
     fn commit(&self, _: &std::path::Path, _: &[&str], _: &str) -> Result<(), String> {
         Ok(())
+    }
+    fn has_history(&self, _: &std::path::Path, _: &str) -> Result<bool, String> {
+        Ok(false)
     }
 }
 

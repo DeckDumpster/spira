@@ -1,7 +1,0 @@
-TYPE=string
-GROUP=cr
-DOC=The owner of the private GitHub repository cr opens its review pull requests in. Holds the review pull requests and the coverage ledger; used by cr pick, open, seal, unseal and ledger-close; an empty value is refused.
-SCHEMA=REQUIRED: The owner of the private review repository cr pick, open, seal, unseal and ledger-close call. Nothing defaults it.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
-SPIRA_CONF_DEFAULT_EOF

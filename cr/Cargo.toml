@@ -15,12 +15,11 @@ path = "src/main.rs"
 test = false
 
 [features]
-integration = ["spira-store/integration", "test-registry/integration", "forge/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
+integration = ["margin-client/integration", "spira-store/integration", "test-registry/integration", "spira-config/integration", "runtime/integration", "spira-otel/integration", "testkit/integration", "spira-test-id/integration"]
 
 [dependencies]
-base64 = "0.22"
 regex = "1"
-forge = { path = "../forge" }
+margin-client = { path = "../margin-client" }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

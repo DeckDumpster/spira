@@ -2,6 +2,7 @@
 
 use crate::units::Unit;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,16 +47,25 @@ pub struct Review {
     pub state: State,
     pub source_repo: String,
     pub source_sha: String,
-    pub branch: String,
-    pub pr: Option<u64>,
+    /// The reader's collection once sealed.
     #[serde(default)]
-    pub pr_url: Option<String>,
+    pub collection: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Path to the reader's document id and the version posted.
+    #[serde(default)]
+    pub documents: BTreeMap<String, (String, u64)>,
     pub unit: Unit,
     pub sealed_sha256: Option<String>,
     pub staged_at: u64,
     pub opened_at: Option<u64>,
     pub published_at: Option<u64>,
     pub closed_at: Option<u64>,
+}
+
+/// The first scheduled review that is not closed, with its state: while one stands, no other opens.
+pub fn scheduled_blocker(reviews: &[Review]) -> Option<(u32, State)> {
+    reviews.iter().find(|r| r.kind == Kind::Scheduled && r.state != State::Closed).map(|r| (r.number, r.state))
 }
 
 pub fn root(run: &Path) -> PathBuf {

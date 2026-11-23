@@ -1,11 +1,11 @@
 //! `cr finding` and `cr findings` through `cli::run`: a temp run and findings directory, a
-//! scripted review repository, and a committer that records instead of running git.
+//! in-memory reader, and a committer that records instead of running git.
 
-use super::gh::{FakeGh, Shared, NAME, OWNER};
-use super::{cfg, fixture, go, ports_with, seeded};
+use super::{attach_collection, cfg, fixture, go, ports_with};
 use crate::cli::Outcome;
 use crate::ports::{Committer, Ports};
 use crate::record;
+use margin_client::{Anchor, FakeMargin};
 use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
@@ -34,12 +34,15 @@ impl Committer for SharedCommits {
         }
         Ok(())
     }
+    fn has_history(&self, _: &Path, _: &str) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 struct World {
     run: TempDir,
     out: TempDir,
-    gh: Rc<FakeGh>,
+    margin: FakeMargin,
     commits: Rc<Commits>,
     ports: Ports,
 }
@@ -47,21 +50,16 @@ struct World {
 fn world() -> World {
     let run = TempDir::new("cr-find-run");
     let out = TempDir::new("cr-find-out");
-    let gh = Rc::new(seeded(&[]));
+    let margin = FakeMargin::default();
     let commits = Rc::new(Commits::default());
     let mut ports = ports_with(fixture(), vec![], cfg());
     ports.run_dir = run.path().to_path_buf();
-    ports.gh = Box::new(Shared(gh.clone()));
-    ports.repo_owner = OWNER.into();
-    ports.repo_name = NAME.into();
+    ports.margin = Box::new(margin.clone());
     ports.findings_dir = out.path().to_str().unwrap().to_string();
     ports.committer = Box::new(SharedCommits(commits.clone()));
-    let w = World { run, out, gh, commits, ports };
+    let w = World { run, out, margin, commits, ports };
     assert_eq!(w.cr(&["open", "--aim", SRC, "--seed", "3"]).code, 0);
-    let mut r = record::load(w.run.path(), 1).unwrap();
-    r.pr = Some(7);
-    r.pr_url = Some("https://forge.invalid/o/r/pull/7".into());
-    record::save(w.run.path(), &r).unwrap();
+    attach_collection(&w.margin, &fixture(), w.run.path(), 1);
     w
 }
 
@@ -72,6 +70,12 @@ impl World {
     fn finding(&mut self, json: &str) -> Outcome {
         self.ports.stdin = json.to_string();
         self.cr(&["finding", "--review", "001"])
+    }
+    /// A thread on `path` at `line`, started by `author`.
+    fn thread(&self, path: &str, line: u32, author: &str, body: &str) {
+        let r = record::load(self.run.path(), 1).unwrap();
+        let (document, version) = r.documents[path].clone();
+        self.margin.thread_by(r.collection.as_deref().unwrap(), Anchor { document, version, first: line, last: line }, author, body, 1);
     }
     fn page(&self, name: &str) -> String {
         std::fs::read_to_string(self.out.path().join(name)).unwrap()
@@ -97,7 +101,7 @@ fn recorded_findings_get_ids_and_land_on_the_page_and_only_a_pattern_in_the_cata
     let o = w.cr(&["findings", "--review", "001"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let page = w.page("cr-001.md");
-    for want in ["type: note", "review: 001", "source: c0ffee", "pr: https://forge.invalid/o/r/pull/7", "## 001-1", "## 001-2", "never hold the lock across a send", "demo/src/store.rs:6 @ c0ffee", "kind: question", "scope: rust", "law-no-lock-across-send", "Open states its failure."] {
+    for want in ["type: note", "review: 001", "source: c0ffee", "url: https://margin.invalid/c/col1", "## 001-1", "## 001-2", "never hold the lock across a send", "demo/src/store.rs:6 @ c0ffee", "kind: question", "scope: rust", "law-no-lock-across-send", "Open states its failure."] {
         assert!(page.contains(want), "missing {want:?} in:\n{page}");
     }
     let cat = w.page("patterns.md");
@@ -140,10 +144,9 @@ fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     let mut w = world();
     w.finding(&condemn(""));
     w.write("sealed.json", &format!(r#"{{"lens":[{{"path":"{SRC}","line":3,"body":"C-agreed"}},{{"path":"{SRC}","line":8,"body":"C-alone"}}],"fresh":[{{"path":"{SRC}","line":9,"body":"C-fresh"}}]}}"#));
-    w.write(
-        "comments.json",
-        &format!(r#"[{{"path":"{SRC}","line":5,"body":"H-agreed","user":{{"type":"User"}}}},{{"path":"{SRC}","line":1,"body":"H-alone","user":{{"type":"User"}}}},{{"path":"{SRC}","line":3,"body":"B-bot","user":{{"type":"Bot"}}}}]"#),
-    );
+    w.thread(SRC, 5, "ryan", "H-agreed");
+    w.thread(SRC, 1, "ryan", "H-alone");
+    w.thread(SRC, 3, "agent:other", "B-bot");
     let o = w.cr(&["findings", "--review", "001"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let group = |name: &str| -> String {
@@ -159,19 +162,20 @@ fn the_closeout_sorts_comments_into_agreed_only_you_and_only_the_concierge() {
     assert!(o.stdout.contains("001-1 [condemn] A lock is not held across a send. → statute law-no-lock-across-send"), "{}", o.stdout);
 }
 
-#[test_id(thyywem)]
+#[test_id(tbf9dvm)]
 #[test]
-fn post_makes_one_forge_call_to_the_pull_requests_comments_with_the_closeout() {
+fn post_makes_one_reader_comment_on_line_one_of_the_first_document_with_the_closeout() {
     let mut w = world();
     w.finding(&condemn(""));
-    w.gh.answer("issues/7/comments", r#"{"html_url":"https://forge.invalid/o/r/pull/7#c1"}"#);
     let o = w.cr(&["findings", "--review", "001", "--post"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
-    assert_eq!(w.gh.count(), 1);
-    let posted = w.gh.posted(&format!("repos/{OWNER}/{NAME}/issues/7/comments"));
-    assert_eq!(posted.len(), 1);
-    assert!(posted[0]["body"].as_str().unwrap().contains("A lock is not held across a send."));
-    assert!(o.stdout.contains("https://forge.invalid/o/r/pull/7#c1"));
+    let posts = w.margin.comments_posted();
+    assert_eq!(posts.len(), 1);
+    let r = record::load(w.run.path(), 1).unwrap();
+    let (document, version) = r.documents[&r.unit.files[0].path].clone();
+    assert_eq!((posts[0].held, posts[0].anchor.clone(), posts[0].in_reply_to.clone()), (false, Anchor { document, version, first: 1, last: 1 }, None));
+    assert!(posts[0].body.contains("A lock is not held across a send."));
+    assert!(o.stdout.contains("https://margin.invalid/c/col1#"), "{}", o.stdout);
 }
 
 #[test_id(ta0qbg1)]
@@ -203,7 +207,10 @@ fn comments_on_a_large_modules_branch_lines_are_compared_as_source_lines() {
     assert_eq!(w.cr(&["open", "--aim", "demo/src/big.rs", "--seed", "2"]).code, 0);
     let put = |n: &str, text: &str| std::fs::write(record::dir(w.run.path(), 2).join(n), text).unwrap();
     put("sealed.json", r#"{"lens":[{"path":"demo/src/big.rs","line":80,"body":"C-near"},{"path":"demo/src/big.rs","line":20,"body":"C-far"}],"fresh":[]}"#);
-    put("comments.json", r#"[{"path":"demo/src/big.rs","line":82,"body":"H-near","user":{"type":"User"}}]"#);
+    attach_collection(&w.margin, &fixture(), w.run.path(), 2);
+    let r2 = record::load(w.run.path(), 2).unwrap();
+    let (document, version) = r2.documents["demo/src/big.rs"].clone();
+    w.margin.his_thread(r2.collection.as_deref().unwrap(), Anchor { document, version, first: 82, last: 82 }, "H-near", 1);
     let o = w.cr(&["findings", "--review", "002"]);
     assert_eq!(o.code, 0, "{}", o.stderr);
     let agreed = o.stdout.split("### Agreed").nth(1).unwrap().split("### Only you").next().unwrap();
@@ -290,8 +297,9 @@ fn endorsing(n: u32) -> String {
 fn the_closeout_scores_both_halves() {
     let mut w = world();
     seal_halves(&w);
-    let his = |l: u32| format!(r#"{{"path":"{SRC}","line":{l},"body":"H","user":{{"type":"User"}}}}"#);
-    w.write("comments.json", &format!("[{},{},{}]", his(5), his(20), his(25)));
+    for l in [5, 20, 25] {
+        w.thread(SRC, l, "ryan", "H");
+    }
     for n in [1, 1, 3] {
         assert_eq!(w.finding(&endorsing(n)).code, 0);
     }

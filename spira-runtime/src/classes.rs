@@ -104,8 +104,6 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("broker.exec.run", Broker),
     ("cr-cadence.observe", Host),
     ("cr-cadence.open", Host),
-    ("cr-comments.observe", Forge),
-    ("cr-comments.record", Host),
     ("hel.sweep.observe", Store),
     ("hel.sweep.orphan_worktree", Git),
     ("hel.sweep.pr_tip", Forge),

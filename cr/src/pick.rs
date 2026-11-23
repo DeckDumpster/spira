@@ -127,7 +127,7 @@ pub fn score_all(ix: &Index, tree: &dyn SourceTree, units: Vec<Unit>, cfg: &Conf
 /// The forge's ledger at today's paths, and the scored units that are neither in flight nor
 /// already staged here.
 pub fn candidates(ports: &Ports, ix: &Index, pool: Vec<Unit>, now_ms: u64) -> Result<(Vec<Scored>, Ledger), String> {
-    let (ledger, _) = ledger::load(ports)?;
+    let ledger = ledger::load(ports)?;
     let ledger = ledger.at_tree(ports.tree.as_ref())?;
     let staged: Vec<String> = record::all(&ports.run_dir)?.into_iter().filter(|r| r.state == State::Staged).map(|r| r.unit.id).collect();
     let mut scored = score_all(ix, ports.tree.as_ref(), pool, &ports.config, &ledger, now_ms);

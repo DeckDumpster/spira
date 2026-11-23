@@ -822,3 +822,5 @@ claim_page_every
 runtime_writer_grants_secs
 dolt_tmp_ttl
 runtime_sweep_secs
+margin_url
+margin_token_file

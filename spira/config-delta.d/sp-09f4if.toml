@@ -1,0 +1,6 @@
+removed = ["spira.cr_repo_owner", "spira.cr_repo_name", "spira.runtime_cr_comments_hot_secs", "spira.runtime_cr_comments_cold_secs", "spira.runtime_cr_comments_window_secs"]
+removed_tasks = ["cr-comments"]
+
+[spira]
+margin_url = ""
+margin_token_file = ""
