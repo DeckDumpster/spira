@@ -1912,7 +1912,11 @@ impl SqliteBackend {
             Error::Backend(format!("{}: not a UTF-8 path", dest.display()))
         })?;
         exec(&src, "VACUUM INTO ?1", [into])?;
-        let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(db)?;
+        let mut copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(db)?;
+        // A failed copy is removed whole and `take` syncs the finished file once, so no commit
+        // needs its own journal or sync.
+        copy.pragma_update(None, "journal_mode", "OFF").map_err(db)?;
+        copy.pragma_update(None, "synchronous", "OFF").map_err(db)?;
         let mode: i64 = copy.pragma_query_value(None, "auto_vacuum", |r| r.get(0)).map_err(db)?;
         if mode != 2 {
             // The copy is private to this call, so converting it holds no lock on the live store.
@@ -1924,9 +1928,10 @@ impl SqliteBackend {
             let mut cursor = Vec::new();
             loop {
                 let page = f.range(&dated::ReadAs::AUX, &cursor, None, 2_000, rev, None)?;
+                let tx = copy.transaction().map_err(db)?;
                 for (key, v) in &page {
                     exec(
-                        &copy,
+                        &tx,
                         "INSERT OR IGNORE INTO latest (key, main, sub, value, create_main, create_sub, version)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
                         params![
@@ -1939,6 +1944,7 @@ impl SqliteBackend {
                         ],
                     )?;
                 }
+                tx.commit().map_err(db)?;
                 match page.last() {
                     Some((k, _)) if page.len() == 2_000 => {
                         cursor = k.as_bytes().to_vec();
