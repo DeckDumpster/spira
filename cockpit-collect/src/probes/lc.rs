@@ -157,7 +157,7 @@ pub fn verb_read(args: &[&str]) -> Result<String, Gone> {
 /// falls back), else `client`'s.
 fn verb_read_on(client: &spira_store::lc_call::LcClient, args: &[&str]) -> Result<String, Gone> {
     match store_view::shared().filter(|p| p.watching()).and_then(|_| store_view::held_read(args)) {
-        Some(held) => held.map_err(|_| Gone::Failed),
+        Some(held) => held.map_err(|e| if matches!(e, spira_store::lc_call::LcError::NotRunning(_)) { Gone::NotRunning } else { Gone::Failed }),
         None => crate::store::answer_kind(client, args),
     }
 }
