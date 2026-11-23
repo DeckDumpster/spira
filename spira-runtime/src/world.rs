@@ -639,6 +639,13 @@ impl World {
         lc_call(&self.lc_socket, &["writer-grants"]).map_err(|e| e.to_string())
     }
 
+    /// The control store's newest revision, as lc-serve's `ship-status` verb answers it.
+    pub fn ship_head(&self) -> Result<u64, String> {
+        let text = lc_call(&self.lc_socket, &["ship-status"]).map_err(|e| e.to_string())?;
+        let said: Value = serde_json::from_str(&text).map_err(|e| format!("ship-status: {e}: {text}"))?;
+        said["head"].as_u64().ok_or_else(|| format!("ship-status: no head in {text}"))
+    }
+
     /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none
     /// and is left out; an unset wiki observes nothing.
     pub fn brain_dirty_snapshot(&self) -> Result<String, String> {

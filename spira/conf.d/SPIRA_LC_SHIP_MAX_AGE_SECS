@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=lc
-DOC=Seconds the oldest staged, not yet uploaded control-store object may wait before lc-serve writes a RED line to SPIRA_RUN/lc-ship.log, which the lc-ship watchd row delivers.
+DOC=Seconds control-store revisions lc-serve has committed may wait without being uploaded before the watch.off_box task puts one RED line in the Concierge inbox, and one CLEAR when the off-box copy is current again.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_LC_SHIP_MAX_AGE_SECS:=60}"
 SPIRA_CONF_DEFAULT_EOF

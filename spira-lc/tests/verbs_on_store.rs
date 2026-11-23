@@ -104,3 +104,16 @@ fn the_ported_verbs_answer_from_the_control_store() {
 
     ok(&["mend-watch"]);
 }
+
+#[test_id(ttepkjc)]
+#[test]
+fn ship_status_answers_the_stores_head_after_a_commit_with_no_shipper_running() {
+    let w = World::new();
+    let (rc, out) = w.run(&["ship-status"]);
+    assert_ne!(rc, 0, "no control store: {out}");
+    w.ok(&["admin-create-store"]);
+    let head = |w: &World| w.json(&["ship-status"])["head"].as_u64().expect("head is a number");
+    let before = head(&w);
+    w.ok(&["create-bead", "sp-a", "--ready", "--repo", "harness"]);
+    assert!(head(&w) > before, "a commit moves the head the verb answers");
+}

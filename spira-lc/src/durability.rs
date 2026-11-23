@@ -2,12 +2,11 @@
 //! operator's `admin-restore` and `admin-drill`, which read local files only; and lc-backup's
 //! put-only upload of a dolt store, `admin-dolt-ship`, with `admin-dolt-assemble` for its restore.
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use runtime::ports::{Clock, WallClock};
+use runtime::ports::WallClock;
 use spira_otel::metrics::{MetricsSink, Point};
 use state_store_sqlite::durability::dolt;
 use state_store_sqlite::durability::drill::{self, Exclusions};
@@ -19,16 +18,12 @@ use state_store_sqlite::SqliteBackend;
 use crate::{CANNOT_TELL, REFUSED};
 
 pub const GAUGE: &str = "spira_lc_ship_oldest_unshipped_seconds";
-/// The watchd `log` row's file, under `SPIRA_RUN`.
-pub const ALARM_LOG: &str = "lc-ship.log";
 const MAX_MAINS: usize = 10_000;
 
 pub struct Shipping {
     pub shipper: Shipper,
     pub snapshotter: Snapshotter,
     pub every: Duration,
-    pub max_age_ms: u64,
-    pub alarm_log: PathBuf,
 }
 
 /// `SPIRA_LC_SHIP_DIR`, or `SPIRA_RUN/lc-ship` while it is unset.
@@ -51,14 +46,13 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
     Some((|| {
         let every = cfg_u64("SPIRA_LC_SHIP_SECS")?;
         let snapshot_secs = cfg_u64("SPIRA_LC_SHIP_SNAPSHOT_SECS")?;
-        let max_age_secs = cfg_u64("SPIRA_LC_SHIP_MAX_AGE_SECS")?;
-        staging(backend, ship_dir(run), &url, (every, snapshot_secs, max_age_secs), run)
+        staging(backend, ship_dir(run), &url, (every, snapshot_secs))
     })())
 }
 
 /// The shipper for a destination: it stages in `dir` and uploads nothing, because lc-serve
 /// starts no process; `ship::drain`, run by the scheduler's `lc.ship` task, uploads.
-fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_secs, max_age_secs): (u64, u64, u64), run: &Path) -> Result<Shipping, String> {
+fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_secs): (u64, u64)) -> Result<Shipping, String> {
     if !(1..=5).contains(&every) {
         return Err(format!("SPIRA_LC_SHIP_SECS is {every}; it ships every 1 to 5 seconds"));
     }
@@ -69,14 +63,12 @@ fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_sec
         snapshotter: shipper.snapshotter(),
         shipper,
         every: Duration::from_secs(every),
-        max_age_ms: max_age_secs.saturating_mul(1_000),
-        alarm_log: run.join(ALARM_LOG),
     })
 }
 
-/// One shipper tick as lc-serve runs it: the age gauge every tick, and a line in the alarm
-/// log on each crossing of `SPIRA_LC_SHIP_MAX_AGE_SECS`. Returns whether the alarm is red.
-pub fn tick(s: &mut Shipping, was_red: bool, metrics: &MetricsSink, clock: &dyn Clock) -> bool {
+/// One shipper tick as lc-serve runs it: the age gauge, which the `watch.off_box` task does not
+/// read; it measures what was uploaded.
+pub fn tick(s: &mut Shipping, metrics: &MetricsSink) {
     let oldest = match s.shipper.tick() {
         Ok(t) => {
             if let Some(f) = &t.failed {
@@ -94,19 +86,6 @@ pub fn tick(s: &mut Shipping, was_red: bool, metrics: &MetricsSink, clock: &dyn 
     };
     let age = oldest.unwrap_or(0) as f64 / 1_000.0;
     metrics.push(&[Point::Gauge { name: GAUGE, value: age }], &[]);
-    let (red, line) = ship::alarm(was_red, oldest, s.max_age_ms, s.shipper.newest_shipped_snapshot_age_ms());
-    if let Some(line) = line {
-        let stamped = format!("{} lc-ship: {line}\n", clock.now_ms() / 1_000);
-        let wrote = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&s.alarm_log)
-            .and_then(|mut f| f.write_all(stamped.as_bytes()));
-        if let Err(e) = wrote {
-            eprintln!("spira-lc serve: {}: {e}", s.alarm_log.display());
-        }
-    }
-    red
 }
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -319,15 +298,15 @@ mod tests {
         let c = suite::open(b.clone(), &clock);
         let off = dir.path().join("off");
         let url = format!("file://{}", off.display());
-        let mut s = staging(b, dir.path().join("lc-ship"), &url, (1, 3_600, 600), dir.path()).unwrap();
+        let mut s = staging(b, dir.path().join("lc-ship"), &url, (1, 3_600)).unwrap();
         let metrics = MetricsSink::new(None, "spira-lc", Duration::from_millis(10));
-        tick(&mut s, false, &metrics, &clock);
+        tick(&mut s, &metrics);
         let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
         assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
-        tick(&mut s, false, &metrics, &clock);
+        tick(&mut s, &metrics);
         assert!(!ship::names(&s.shipper.dir().join("queue").join(REVLOG)).unwrap().is_empty());
         assert!(!off.exists(), "lc-serve uploads nothing");
-        assert!(matches!(staging(SqliteBackend::open(&dir.path().join("x.db"), Options::default()).unwrap(), dir.path().join("s2"), &url, (9, 1, 1), dir.path()), Err(e) if e.contains("1 to 5")));
+        assert!(matches!(staging(SqliteBackend::open(&dir.path().join("x.db"), Options::default()).unwrap(), dir.path().join("s2"), &url, (9, 1)), Err(e) if e.contains("1 to 5")));
     }
 
     #[test_id(tsse27u)]
@@ -438,38 +417,5 @@ mod tests {
         assert_eq!(rc, CANNOT_TELL, "{out}");
         assert!(out.contains("SPIRA_LC_BACKUP_URL is empty"), "{out}");
         assert_eq!(admin_archive_put(&s(&["--file", &small]), &url).0, CANNOT_TELL);
-    }
-
-    #[test_id(tyfx0r4)]
-    #[test]
-    fn the_ship_tick_writes_one_alarm_line_per_crossing() {
-        let dir = TempDir::new("lc-ship-alarm");
-        let clock = VirtualClock::new(1_000);
-        let b = SqliteBackend::open(&dir.path().join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
-        let c = suite::open(b.clone(), &clock);
-        let blocked = dir.path().join("blocked");
-        std::fs::write(&blocked, "").unwrap();
-        let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(blocked), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE });
-        let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
-        let shipper = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
-        let mut s = Shipping {
-            snapshotter: shipper.snapshotter(),
-            shipper,
-            every: Duration::from_secs(1),
-            max_age_ms: 10_000,
-            alarm_log: dir.path().join(ALARM_LOG),
-        };
-        let t = Txn::new().put("k", Object::new(json!(1)));
-        assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
-        let metrics = MetricsSink::new(None, "spira-lc", Duration::from_millis(10));
-        let mut red = tick(&mut s, false, &metrics, &clock);
-        assert!(!red);
-        clock.advance(11_000);
-        red = tick(&mut s, red, &metrics, &clock);
-        red = tick(&mut s, red, &metrics, &clock);
-        assert!(red);
-        let log = std::fs::read_to_string(dir.path().join(ALARM_LOG)).unwrap();
-        assert_eq!(log.lines().count(), 1, "{log}");
-        assert!(log.contains("lc-ship: RED: the oldest unshipped control-store revision has waited 11s, past 10s"), "{log}");
     }
 }
