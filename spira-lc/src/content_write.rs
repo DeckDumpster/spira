@@ -410,14 +410,32 @@ fn dep_remove_sql(db: &str, from: &str, to: &str, reach: &[String]) -> Vec<Strin
 }
 
 /// The ids `seeds` reach: the seeds, their dependents, and those beads' parent-child
-/// descendants two levels down.
-fn reach_query(db: &str, seeds: &[&str]) -> String {
-    let literals = seeds.iter().map(|s| format!("'{}'", escape(s))).collect::<Vec<_>>();
-    let list = literals.join(", ");
-    let named = literals.iter().map(|l| format!("SELECT {l} AS id")).collect::<Vec<_>>().join(" UNION ");
-    let level0 = format!("{named} UNION SELECT issue_id AS id FROM {db}.dependencies WHERE depends_on_issue_id IN ({list})");
-    let below = |level: &str| format!("{level} UNION SELECT issue_id AS id FROM {db}.dependencies WHERE type = 'parent-child' AND depends_on_issue_id IN ({level})");
-    below(&below(&level0))
+/// descendants two levels down. One flat lookup per level, so each is an index seek on
+/// `depends_on_issue_id`; a level with nothing new issues no statement.
+fn reach_with(db: &str, seeds: &[&str], mut query: impl FnMut(&str) -> Result<Vec<String>, String>) -> Result<Vec<String>, String> {
+    let mut reached: Vec<String> = Vec::new();
+    for s in seeds {
+        if !reached.iter().any(|r| r == s) {
+            reached.push((*s).to_string());
+        }
+    }
+    let mut frontier = reached.clone();
+    for level in 0..3 {
+        if frontier.is_empty() {
+            break;
+        }
+        let list = in_list(&frontier.iter().map(String::as_str).collect::<Vec<_>>());
+        let only = if level == 0 { "" } else { "type = 'parent-child' AND " };
+        let found = query(&format!("SELECT DISTINCT issue_id AS id FROM {db}.dependencies WHERE {only}depends_on_issue_id IN ({list})"))?;
+        frontier = Vec::new();
+        for id in found {
+            if !reached.contains(&id) {
+                reached.push(id.clone());
+                frontier.push(id);
+            }
+        }
+    }
+    Ok(reached)
 }
 
 /// Resolves the beads `seeds` reach, on the writer's session, for `settle_blocked`.
@@ -425,7 +443,7 @@ fn reach_of(w: &Writer, seeds: &[&str]) -> Result<Vec<String>, String> {
     if seeds.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(rows(w, &reach_query(&w.db, seeds))?.iter().map(|r| cell(r, "id")).collect())
+    reach_with(&w.db, seeds, |sql| Ok(rows(w, sql)?.iter().map(|r| cell(r, "id")).collect()))
 }
 
 /// bd's `is_blocked` maintenance for the beads a change reaches, already resolved to `reach`.
@@ -1396,12 +1414,50 @@ mod tests {
         assert!(settle_blocked("`d`", &[]).is_empty());
     }
 
-    #[test_id(tt1e8k6)]
+    fn fake_graph(edges: &'static [(&'static str, &'static str, &'static str)]) -> impl FnMut(&str) -> Result<Vec<String>, String> {
+        move |sql| {
+            let parents_only = sql.contains("type = 'parent-child'");
+            let list = sql.split("depends_on_issue_id IN (").nth(1).unwrap().trim_end_matches(')');
+            Ok(edges.iter().filter(|(_, on, ty)| list.contains(&format!("'{on}'")) && (!parents_only || *ty == "parent-child")).map(|(from, _, _)| from.to_string()).collect())
+        }
+    }
+
+    const REACH_EDGES: &[(&str, &str, &str)] = &[("dep", "sp-a", "blocks"), ("child", "dep", "parent-child"), ("grand", "child", "parent-child"), ("great", "grand", "parent-child"), ("other", "elsewhere", "blocks")];
+
+    #[test_id(ty6cgtx)]
     #[test]
-    fn the_reach_query_selects_seeds_dependents_and_descendants() {
-        let q = reach_query("`d`", &["sp-a", "sp-b"]);
-        assert!(q.starts_with("SELECT 'sp-a' AS id UNION SELECT 'sp-b' AS id UNION SELECT issue_id AS id FROM `d`.dependencies"), "{q}");
-        assert!(q.contains("type = 'parent-child'"), "{q}");
+    fn the_reach_issues_flat_literal_lookups_only() {
+        let mut sent = Vec::new();
+        reach_with("`d`", &["sp-a", "sp-b"], |sql| {
+            sent.push(sql.to_string());
+            fake_graph(REACH_EDGES)(sql)
+        })
+        .unwrap();
+        assert!(sent.len() <= 3, "{sent:?}");
+        for q in &sent {
+            assert!(q.contains("depends_on_issue_id IN ('"), "{q}");
+            assert!(!q.contains("IN (SELECT"), "{q}");
+        }
+    }
+
+    #[test_id(ths8b5c)]
+    #[test]
+    fn the_reach_is_seeds_dependents_and_two_levels_of_descendants() {
+        let mut got = reach_with("`d`", &["sp-a", "sp-b"], fake_graph(REACH_EDGES)).unwrap();
+        got.sort();
+        assert_eq!(got, ["child", "dep", "grand", "sp-a", "sp-b"]);
+    }
+
+    #[test_id(t4o8tzy)]
+    #[test]
+    fn a_reach_with_nothing_new_issues_no_further_statement() {
+        let mut n = 0;
+        let got = reach_with("`d`", &["sp-z"], |sql| {
+            n += 1;
+            fake_graph(REACH_EDGES)(sql)
+        })
+        .unwrap();
+        assert_eq!((n, got), (1, vec!["sp-z".to_string()]));
     }
 
     #[test_id(tebprls)]
