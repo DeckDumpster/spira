@@ -340,12 +340,20 @@ pub struct GateRun {
     pub reason: Option<String>,
     /// `… suite=S …` — the last one; "-" when none.
     pub suite: String,
+    /// `… ran=W` — what the trial judged by (`testenv:<tiers>`, `gate.steps`, `column`, `syntax`); `-` when none, and for a done file written before the gate printed it.
+    #[serde(default = "dash")]
+    pub ran: String,
+}
+
+fn dash() -> String {
+    "-".into()
 }
 
 impl GateRun {
     pub fn parse(rc: i32, out: String) -> GateRun {
         let mut reason = None;
         let mut suite = None;
+        let mut ran = None;
         for line in out.split('\n') {
             if let Some(rest) = line.strip_prefix("gate: VERDICT=") {
                 // reason: VERDICT=[A-Z_]* immediately followed by " reason=".
@@ -359,6 +367,9 @@ impl GateRun {
                     let v: String = rest[i + 7..].chars().take_while(|c| *c != ' ').collect();
                     suite = Some(v);
                 }
+                if let Some(i) = rest.rfind(" ran=") {
+                    ran = Some(rest[i + 5..].chars().take_while(|c| *c != ' ').collect::<String>());
+                }
             }
         }
         let suite = suite.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".to_string());
@@ -366,7 +377,7 @@ impl GateRun {
         if outcome == GateOutcome::Fail && reason.as_deref() == Some("over-cap") {
             outcome = GateOutcome::NoVerdict;
         }
-        GateRun { rc, outcome, out, reason, suite }
+        GateRun { rc, outcome, out, reason, suite, ran: ran.filter(|r| !r.is_empty()).unwrap_or_else(dash) }
     }
     /// The gate ended at its cap or was killed before any verdict: a host fault, not the branch's.
     pub fn cap_death(&self) -> bool {
@@ -523,5 +534,28 @@ mod gate_run_tests {
     fn a_branch_red_stays_red() {
         let g = GateRun::parse(1, "gate: VERDICT=FAIL reason=branch-red branch=b repo=r suite=s\n".into());
         assert_eq!(g.outcome, GateOutcome::Fail);
+    }
+}
+
+#[cfg(test)]
+mod ran_tests {
+    use super::GateRun;
+
+    #[test_id(tfzq719)]
+    #[test]
+    fn the_verdict_line_names_what_the_gate_ran() {
+        let g = GateRun::parse(0, "noise\ngate: VERDICT=PASS reason=pass branch=spira/x repo=margin suite=- ran=testenv:gate,ci\n".into());
+        assert_eq!(g.ran, "testenv:gate,ci");
+        assert_eq!(GateRun::parse(0, "gate: VERDICT=PASS reason=pass branch=b repo=r suite=-".into()).ran, "-");
+    }
+
+    #[test_id(tgrntk2)]
+    #[test]
+    fn a_done_file_written_before_ran_existed_still_reads() {
+        let g = GateRun::parse(0, "gate: VERDICT=PASS reason=pass branch=b repo=r suite=- ran=column".into());
+        let mut v = serde_json::to_value(&g).unwrap();
+        v.as_object_mut().unwrap().remove("ran");
+        let back: GateRun = serde_json::from_value(v).unwrap();
+        assert_eq!(back.ran, "-");
     }
 }

@@ -20,6 +20,8 @@ pub struct Ctx {
     /// `repo_gate <name>`.
     pub gate_cmd: String,
     pub host_cores: String,
+    /// `repo_land <name>`: how the repository's work lands (`queue.local`, `queue`, `push`, …).
+    pub land: String,
 }
 
 impl Ctx {

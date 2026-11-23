@@ -235,6 +235,7 @@ fn ctx() -> Ctx {
         declared_base: String::new(),
         gate_cmd: "bash spira/fence.sh && run-suites".into(),
         host_cores: "8".into(),
+        land: "push".into(),
     }
 }
 
@@ -545,7 +546,12 @@ impl Fake {
     fn stderr(&self) -> String {
         self.err.borrow().join("\n")
     }
+    /// The VERDICT line as it read before `ran=` ended it.
     fn verdict_line(&self) -> String {
+        let l = self.full_verdict_line();
+        l.rsplit_once(" ran=").map_or(l.clone(), |(head, _)| head.to_string())
+    }
+    fn full_verdict_line(&self) -> String {
         self.err.borrow().last().cloned().unwrap_or_default()
     }
     fn env_of(&self, i: usize, k: &str) -> String {
@@ -6254,4 +6260,184 @@ fn the_lint_step_refuses_when_the_gate_handed_no_deny_list() {
         let (ok, out) = run_lint_step_with_deny(&t, &bin, "report", deny);
         assert!(!ok && out.contains("--deny-list"), "{deny:?}: {out}");
     }
+}
+
+// ------------------------------------------------------------ a declared CI gates a queue.local repository (sp-euuj38)
+
+const DECLARED_CI: &str = "ci_entry = \"bash gate.sh\"\ndefault = [\"gate\"]\n[tier.gate]\ncmd = \"x\"\n";
+
+/// A `queue.local` repository with an empty column whose landing ref and branch both declare a CI.
+fn testenv_gated(decl: &str) -> Fake {
+    let f = Fake::new();
+    {
+        let mut c = f.ctx.borrow_mut();
+        let c = c.as_mut().unwrap();
+        c.gate_cmd = String::new();
+        c.land = "queue.local".into();
+    }
+    for rev in [BASE, MERGE_SHA] {
+        f.blobs.borrow_mut().insert(format!("{rev}:.spira/testenv.toml"), decl.as_bytes().to_vec());
+        f.gone.borrow_mut().insert(format!("{rev}:spira/testenv/Containerfile"));
+    }
+    f
+}
+
+fn testenv_calls(f: &Fake) -> Vec<String> {
+    f.cmds.borrow().iter().filter(|c| c.contains("testenv")).cloned().collect()
+}
+
+#[test_id(tp3mdys)]
+#[test]
+fn an_empty_column_with_a_declared_ci_runs_its_default_tiers_not_syntax_only() {
+    let f = testenv_gated(DECLARED_CI);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let line = f.full_verdict_line();
+    assert!(line.contains("reason=pass") && line.ends_with(" ran=testenv:gate"), "{line}");
+    let calls = testenv_calls(&f);
+    assert_eq!(calls.len(), 2, "the gate phase, then the uncharged publish: {calls:?}");
+    assert!(!calls[0].contains("--suites") && calls[0].contains("--deadline 300 "), "{}", calls[0]);
+    assert!(meter(&f).contains(" phases=gate:7,publish:0"), "{}", meter(&f));
+}
+
+#[test_id(tf6qwhn)]
+#[test]
+fn a_declared_build_tier_runs_first_and_the_verdict_line_names_the_tiers_only() {
+    let f = testenv_gated(&format!("{DECLARED_CI}[tier.build]\ncmd = \"y\"\n"));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(testenv_calls(&f)[0].contains("--suites build"), "{:?}", testenv_calls(&f));
+    assert!(f.full_verdict_line().ends_with(" ran=testenv:gate"), "{}", f.verdict_line());
+}
+
+#[test_id(tk7vcxe)]
+#[test]
+fn a_red_tier_green_on_the_base_is_the_branchs_and_the_base_runs_testenv() {
+    let f = testenv_gated(DECLARED_CI);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, String::new()));
+    f.tier_events.borrow_mut().insert(MERGE_SHA.into(), "1 suite gate RED\n".into());
+    f.tier_events.borrow_mut().insert(BASE.into(), "1 suite gate ok\n".into());
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    let calls = testenv_calls(&f);
+    let base = calls.last().unwrap();
+    assert!(base.contains("--deadline 300 ") && !base.contains("--suites") && !base.contains("--share"), "{base}");
+    assert_eq!(f.checkouts.borrow().last().map(String::as_str), Some(BASE));
+    assert!(meter(&f).contains(",base-gate:"), "{}", meter(&f));
+}
+
+#[test_id(tn2yzub)]
+#[test]
+fn a_tier_red_on_the_base_too_is_base_fail() {
+    let f = testenv_gated(DECLARED_CI);
+    for rev in [MERGE_SHA, BASE] {
+        f.runs.borrow_mut().insert(rev.into(), (1, String::new()));
+        f.tier_events.borrow_mut().insert(rev.into(), "1 suite gate RED\n".into());
+    }
+    assert_eq!(f.run(), BASEFAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=base-red"), "{}", f.verdict_line());
+    assert!(testenv_calls(&f).last().unwrap().contains("testenv"));
+}
+
+#[test_id(tz9kxra)]
+#[test]
+fn a_red_where_the_landing_ref_declares_no_ci_is_the_branchs_own() {
+    let f = testenv_gated(DECLARED_CI);
+    f.blobs.borrow_mut().remove(&format!("{BASE}:.spira/testenv.toml"));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, String::new()));
+    f.tier_events.borrow_mut().insert(MERGE_SHA.into(), "1 suite gate RED\n".into());
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert_eq!(testenv_calls(&f).len(), 1, "no base trial: {:?}", testenv_calls(&f));
+}
+
+#[test_id(tx5ldcv)]
+#[test]
+fn a_tier_killed_at_the_cap_is_no_verdict_and_certifies_nothing() {
+    let f = testenv_gated(DECLARED_CI);
+    f.put_var("SPIRA_GATE_DEADLINE", "900");
+    f.phase_secs.set(300);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, String::new()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=phase-cap"), "{}", f.verdict_line());
+    assert!(f.written.borrow().iter().all(|(_, c)| !c.contains("compose=")), "{:?}", f.written.borrow());
+    let green = testenv_gated(DECLARED_CI);
+    assert_eq!(green.run(), PASS);
+    assert!(green.written.borrow().iter().any(|(_, c)| c.contains("compose=")), "a PASS writes the verdict entry this test looks for");
+}
+
+#[test_id(tza89fu)]
+#[test]
+fn a_base_whose_declaration_does_not_read_leaves_the_red_unjudged() {
+    let f = testenv_gated(DECLARED_CI);
+    f.blobs.borrow_mut().insert(format!("{BASE}:.spira/testenv.toml"), b"ci_entry = [".to_vec());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, String::new()));
+    f.tier_events.borrow_mut().insert(MERGE_SHA.into(), "1 suite gate RED\n".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=base-untestable"), "{}", f.verdict_line());
+}
+
+#[test_id(tqup6qx)]
+#[test]
+fn a_red_tier_the_landing_refs_declaration_lacks_is_the_branchs_own() {
+    let f = testenv_gated(DECLARED_CI);
+    let widened = "ci_entry = \"bash gate.sh\"\ndefault = [\"gate\", \"extra\"]\n[tier.gate]\ncmd = \"x\"\n[tier.extra]\ncmd = \"y\"\n";
+    f.blobs.borrow_mut().insert(format!("{MERGE_SHA}:.spira/testenv.toml"), widened.as_bytes().to_vec());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, String::new()));
+    f.tier_events.borrow_mut().insert(MERGE_SHA.into(), "1 suite gate ok\n2 suite extra RED\n".into());
+    f.runs.borrow_mut().insert(BASE.into(), (1, String::new()));
+    f.tier_events.borrow_mut().insert(BASE.into(), "1 suite gate RED\n".into());
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().ends_with("suite=extra"), "{}", f.verdict_line());
+}
+
+#[test_id(tx4xvs0)]
+#[test]
+fn a_harness_containerfile_keeps_a_queue_local_repository_on_its_column() {
+    let f = testenv_gated(DECLARED_CI);
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/fence.sh".into();
+    f.gone.borrow_mut().clear();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.full_verdict_line().ends_with(" ran=column"), "{}", f.full_verdict_line());
+    assert!(testenv_calls(&f).is_empty(), "{:?}", f.cmds.borrow());
+}
+
+#[test_id(t9xinkj)]
+#[test]
+fn the_definition_of_a_declared_repository_is_the_testenv_call() {
+    let f = testenv_gated(DECLARED_CI);
+    let d = crate::engine::definition(&f, Some("spira")).unwrap();
+    assert!(d.contains("testenv") && !d.contains("--suites") && !d.contains("bash gate.sh"), "{d}");
+}
+
+#[test_id(ts4hbwm)]
+#[test]
+fn a_branch_removing_the_declaration_or_its_ci_entry_fails_the_definition() {
+    let f = testenv_gated(DECLARED_CI);
+    f.blobs.borrow_mut().remove(&format!("{MERGE_SHA}:.spira/testenv.toml"));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=gate-definition"), "{}", f.verdict_line());
+    let g = testenv_gated(DECLARED_CI);
+    g.blobs.borrow_mut().insert(format!("{MERGE_SHA}:.spira/testenv.toml"), b"default = [\"gate\"]\n[tier.gate]\ncmd = \"x\"\n".to_vec());
+    assert_eq!(g.run(), FAIL, "{}", g.stderr());
+    assert!(g.verdict_line().contains("reason=gate-definition"), "{}", g.verdict_line());
+    assert!(testenv_calls(&g).is_empty());
+}
+
+#[test_id(tg1ujpe)]
+#[test]
+fn a_column_beside_a_declaration_is_never_run_by_the_trial_or_its_base() {
+    let f = testenv_gated(DECLARED_CI);
+    f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash gate.sh".into();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, String::new()));
+    f.tier_events.borrow_mut().insert(MERGE_SHA.into(), "1 suite gate RED\n".into());
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.cmds.borrow().iter().all(|c| !c.contains("bash gate.sh")), "{:?}", f.cmds.borrow());
+    assert!(f.cmds.borrow().len() >= 2, "the base ran too: {:?}", f.cmds.borrow());
+}
+
+#[test_id(tr8wnaq)]
+#[test]
+fn a_declaration_does_not_gate_a_forge_repository() {
+    let f = testenv_gated(DECLARED_CI);
+    f.ctx.borrow_mut().as_mut().unwrap().land = "queue".into();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=syntax-only") && f.full_verdict_line().ends_with(" ran=syntax"), "{}", f.verdict_line());
 }
