@@ -752,15 +752,17 @@ checked <use cases> use-cases (<n> suites here, <m> at the base)`.
 **Intent.** Shell tests are not allowed: a test is written in Rust, and a shell suite that
 exists is ported or deleted, never grown. Nothing refused a new `spira/test-*.sh`, so one landed.
 
-**Checks**, against [`--base`]: every `spira/test-*.sh` (a direct child of `spira/`) present in
-the work tree, tracked or untracked, that the merge-base's tree does not have is a finding
-naming the file and the exit (write the test in Rust). A suite at the base is never a finding,
+**Checks**, against [`--base`]: every shell test present in the work tree, tracked or
+untracked, that the merge-base's tree does not have is a finding naming the file and the exit
+(write it as a Rust test in the crate it exercises, with a `// covers: UC-<area>-NN` line naming
+its cell). A shell test is a basename `test-*.sh` anywhere, or any `*.sh`, `*.bash` or `*.bats`
+under a `test`, `tests` or `testlib` directory; a path with a `fixtures` component is data. A suite at the base is never a finding,
 whatever its content; a deleted one is absent from the walk; a rename is a new path. "New" is
-read from one `git ls-tree` of the base, so no list is kept and there is no allow file. The
+read from one `git ls-tree -r` of the base, so no list is kept and there is no allow file. The
 rule is `BASE_RELATIVE`, so `--diff` leaves its findings whole.
 
 **Refuses** (exit 3): no base; a base that does not resolve; a failing `ls-tree`.
-**Positive control:** `fence: no-new-shell-suite checked <n> suites (<m> at the base)`.
+**Positive control:** `fence: no-new-shell-suite checked <n> shell tests (<m> at the base)`.
 
 ## Rule `plan-lint`
 
