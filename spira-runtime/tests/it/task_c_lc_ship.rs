@@ -1,14 +1,35 @@
 //! `lc.ship`: the scheduler uploads what lc-serve stages, so lc-serve starts no `curl`.
 
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
-use spira_runtime::tasks::c::lc_ship::{self as task, Carry, LcShip as H, Phase, Snapshot};
+use runtime::taskrig::TaskRig;
+use spira_runtime::tasks::c::lc_ship::{self as task, Carry, LcShip as H, Queue, Snapshot};
 use testkit::TempDir;
 
 const SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "2"), (task::URL_KEY, "s3://off-box/lc/"), (task::DIR_KEY, "")];
 const NOW: u64 = 1_793_664_000_000;
 
+fn queue(n: u64) -> Queue {
+    Queue { queued: n, oldest: "1-1".into() }
+}
+
 fn queued(n: u64) -> Snapshot {
-    Snapshot { dir: "ship".into(), queued: n, oldest: "1-1".into() }
+    Snapshot { dir: "ship".into(), revlog: queue(n), snapshot: Queue::default() }
+}
+
+fn both() -> Snapshot {
+    Snapshot { dir: "ship".into(), revlog: queue(1), snapshot: queue(1) }
+}
+
+fn stuck(effect: &str, snap: &Snapshot) -> TaskRig {
+    let seen = serde_json::to_string(snap).unwrap();
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(seen.clone())).hanging(effect);
+    let (_, stream, kind) = spira_runtime::tasks::b::kit::boot::<H>();
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+fn asked(r: &TaskRig, effect: &str) -> usize {
+    r.requested().iter().filter(|q| q.name == effect).count()
 }
 
 #[test_id(tphqn4u)]
@@ -25,17 +46,64 @@ fn t2_an_empty_queue_is_the_probe_alone() {
 
 #[test_id(t2qwnmb)]
 #[test]
-fn t3_a_queued_object_is_drained_and_a_refusal_keeps_it_queued_and_says_so() {
+fn t3_a_drain_in_flight_is_left_alone_and_any_outcome_frees_its_kind() {
     let h = t::handler::<H>(SET);
     let (c, acts) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(queued(2)), NOW).unwrap();
-    assert_eq!((c.phase, names(&acts)), (Phase::Draining, vec![task::DRAIN]));
+    assert_eq!((c.revlog, names(&acts)), (Some(NOW), vec![task::DRAIN]));
     assert_eq!(acts[0].input, "ship");
-    let (c, _) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::DRAIN.into(), ok: true, body: String::new() }, NOW).unwrap();
-    assert_eq!(c.phase, Phase::Idle);
-    let (again, none) = task::decide(&h.cfg, &Carry { phase: Phase::Draining }, &Input::Observed(queued(2)), NOW).unwrap();
-    assert_eq!((again.phase, none.len()), (Phase::Idle, 0), "a tick that finds the drain unanswered asks for nothing");
-    let refused = task::decide(&h.cfg, &Carry { phase: Phase::Draining }, &Input::Outcome { effect: task::DRAIN.into(), ok: false, body: "403".into() }, NOW).unwrap_err();
-    assert!(refused.contains("stays queued") && refused.contains("403"), "{refused}");
+    let (again, none) = task::decide(&h.cfg, &c, &Input::Observed(queued(2)), NOW + 4_000).unwrap();
+    assert_eq!((again, none.len()), (c.clone(), 0), "a tick that finds the drain unanswered asks for nothing");
+    for (ok, body) in [(true, ""), (false, "403")] {
+        let (idle, _) = task::decide(&h.cfg, &c, &Input::Outcome { effect: task::DRAIN.into(), ok, body: body.into() }, NOW + 1).unwrap();
+        assert_eq!(idle, Carry::default(), "ok={ok}");
+        let (_, next) = task::decide(&h.cfg, &idle, &Input::Observed(queued(2)), NOW + 4_000).unwrap();
+        assert_eq!(names(&next), vec![task::DRAIN], "ok={ok}: the next tick asks again");
+    }
+}
+
+#[test_id(t8ye48m)]
+#[test]
+fn a_request_past_its_deadline_with_no_outcome_is_asked_again() {
+    let h = t::handler::<H>(SET);
+    let late = Carry { revlog: Some(NOW), snapshot: None };
+    let (_, held) = task::decide(&h.cfg, &late, &Input::Observed(queued(1)), NOW + 3_599_999).unwrap();
+    assert!(held.is_empty());
+    let (c, again) = task::decide(&h.cfg, &late, &Input::Observed(queued(1)), NOW + 3_600_000).unwrap();
+    assert_eq!((names(&again), c.revlog), (vec![task::DRAIN], Some(NOW + 3_600_000)));
+}
+
+#[test_id(tev1p3z)]
+#[test]
+fn ten_ticks_with_the_runs_drain_unanswered_request_it_once() {
+    let mut r = stuck(task::DRAIN, &queued(1));
+    r.advance(10 * 2_000).unwrap();
+    assert_eq!(asked(&r, task::DRAIN), 1);
+}
+
+#[test_id(tinlnid)]
+#[test]
+fn a_snapshot_drain_unanswered_does_not_hold_back_a_new_run() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(serde_json::to_string(&Snapshot { dir: "ship".into(), revlog: Queue::default(), snapshot: queue(1) }).unwrap()));
+    let door = seen.clone();
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(door.lock().unwrap().clone())).hanging(task::DRAIN_SNAPSHOT);
+    let (_, stream, kind) = spira_runtime::tasks::b::kit::boot::<H>();
+    r.tick(stream, kind).unwrap();
+    r.advance(2_000).unwrap();
+    assert_eq!((asked(&r, task::DRAIN_SNAPSHOT), asked(&r, task::DRAIN)), (1, 0));
+    *seen.lock().unwrap() = serde_json::to_string(&both()).unwrap();
+    r.advance(2_000).unwrap();
+    assert_eq!((asked(&r, task::DRAIN_SNAPSHOT), asked(&r, task::DRAIN)), (1, 1), "the run has its own drain; the snapshot's is not asked twice");
+}
+
+#[test_id(t529grr)]
+#[test]
+fn a_refused_drain_is_asked_again_at_the_next_tick() {
+    let seen = serde_json::to_string(&queued(1)).unwrap();
+    let mut r = TaskRig::new(1, t::handler::<H>(SET).registration()).unwrap().double(task::OBSERVE, move |_| Ok(seen.clone())).double(task::DRAIN, |_| Err("403".into()));
+    let (_, stream, kind) = spira_runtime::tasks::b::kit::boot::<H>();
+    r.tick(stream, kind).unwrap();
+    r.advance(3 * 2_000).unwrap();
+    assert_eq!(asked(&r, task::DRAIN), 4);
 }
 
 #[test_id(tsuscur)]
@@ -55,9 +123,9 @@ fn the_probe_counts_the_queue_and_sees_nothing_without_a_destination() {
     std::fs::write(q.join("1-1"), "x").unwrap();
     std::fs::write(q.join("4-4.tmp"), "x").unwrap();
     let seen: Snapshot = serde_json::from_str(&task::observe(run.path(), "s3://b/p/", "").unwrap()).unwrap();
-    assert_eq!((seen.queued, seen.oldest.as_str()), (2, "1-1"));
+    assert_eq!((seen.revlog.queued, seen.revlog.oldest.as_str(), seen.snapshot.queued), (2, "1-1", 0));
     let none: Snapshot = serde_json::from_str(&task::observe(run.path(), "", "").unwrap()).unwrap();
-    assert_eq!(none.queued, 0);
+    assert_eq!((none.revlog.queued, none.snapshot.queued), (0, 0));
 }
 
 #[test_id(tayo7sv)]
@@ -196,4 +264,32 @@ fn a_restart_mid_drain_drains_again() {
     rig.tick(stream, kind).unwrap();
     rig.advance(2_000).unwrap();
     assert!(rig.requested().iter().filter(|q| q.name == task::DRAIN).count() > before);
+}
+
+#[test_id(tuvfnxm)]
+#[test]
+fn each_kind_drains_alone_and_an_upload_in_progress_is_not_an_object() {
+    struct Refusing;
+    impl runtime::ports::Proc for Refusing {
+        fn run(&self, _: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
+            Err("no process".into())
+        }
+    }
+    let run = TempDir::new("lc-ship-kinds");
+    let (dir, off) = (run.path().join("ship"), run.path().join("off"));
+    for k in ["revlog", "snapshot"] {
+        std::fs::create_dir_all(dir.join("queue").join(k)).unwrap();
+    }
+    let name = state_store_sqlite::durability::revlog::run_name(1, 1);
+    std::fs::write(dir.join("queue/revlog").join(&name), "x").unwrap();
+    std::fs::write(dir.join("queue/snapshot/7"), "x").unwrap();
+    std::fs::write(dir.join("queue/snapshot/7.part"), "x").unwrap();
+    std::fs::write(dir.join("queue/snapshot/7.complete"), "x").unwrap();
+    let (url, d) = (format!("file://{}", off.display()), dir.display().to_string());
+    let proc = || std::sync::Arc::new(Refusing);
+    assert_eq!(task::drain(proc(), &url, &d, |_| None, PART_BYTES).unwrap(), "1 object(s) uploaded");
+    assert!(dir.join("queue/snapshot/7").exists() && !off.join("snapshot").exists(), "the runs drain leaves the snapshot queued");
+    assert_eq!(task::drain_snapshot(proc(), &url, &d, |_| None, PART_BYTES).unwrap(), "1 object(s) uploaded");
+    assert!(!dir.join("queue/snapshot/7").exists() && off.join("snapshot/7").exists());
+    assert!(!off.join("snapshot/7.part").exists() && !off.join("snapshot/7.complete").exists() && dir.join("queue/snapshot/7.part").exists());
 }

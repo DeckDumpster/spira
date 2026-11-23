@@ -251,6 +251,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("roundvm.ami_prune.observe", Host),
     ("lc.ship.observe", Host),
     ("lc.ship.drain", Host),
+    ("lc.ship.drain_snapshot", Host),
     ("roundvm.drain.observe", Host),
     ("roundvm.drain.release", Host),
     ("sentinel-call.metric", Host),
