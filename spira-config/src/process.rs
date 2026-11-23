@@ -37,6 +37,17 @@ pub fn config() -> Result<&'static Resolved, String> {
     Ok(CONFIG.get_or_init(|| resolved))
 }
 
+/// `spira.run` from this process's pinned config, judged against the instance's confinement as
+/// [`crate::resolve::resolve_run_dir`] judges it; a refusal is returned and, as in [`config`], never kept.
+pub fn run_dir() -> Result<std::path::PathBuf, String> {
+    crate::resolve::run_dir_of(config().map_err(|e| format!("cannot resolve spira.run: {e}"))?)
+}
+
+/// `spira.instance` from this process's pinned config; empty is a refusal.
+pub fn instance() -> Result<String, String> {
+    crate::resolve::instance_of(config().map_err(|e| format!("cannot resolve spira.instance: {e}"))?)
+}
+
 fn resolve_now() -> Result<Resolved, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let home = crate::resolve::locate_home_for_process()?;

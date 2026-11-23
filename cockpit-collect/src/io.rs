@@ -58,8 +58,8 @@ pub fn try_home_dir() -> Result<PathBuf, String> {
     spira_config::resolve::locate_home_for_process().map_err(|e| format!("cockpit-collect: {e}"))
 }
 
-/// Panics when [`try_home_dir`] fails; `main` calls [`try_run_dir`], which resolves the home,
-/// first and refuses, so only a caller that skipped that check reaches the panic.
+/// Panics when [`try_home_dir`] fails; `main` calls [`try_home_dir`] first and refuses, so only
+/// a caller that skipped that check reaches the panic.
 pub fn home_dir() -> PathBuf {
     try_home_dir().unwrap_or_else(|e| panic!("{e}"))
 }
@@ -176,8 +176,7 @@ pub fn max_dwarves() -> String {
 }
 
 pub fn try_run_dir() -> Result<PathBuf, String> {
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env, &try_home_dir()?).map_err(|e| format!("cockpit-collect: {e}"))
+    spira_config::process::run_dir().map_err(|e| format!("cockpit-collect: {e}"))
 }
 
 /// Panics when [`try_run_dir`] fails; `main` calls `try_run_dir` first and refuses, so only
