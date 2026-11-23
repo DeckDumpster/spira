@@ -4043,8 +4043,8 @@ fn certify_pass(
         let _ = fs::remove_dir_all(&results);
         let _ = fs::create_dir_all(&results);
         let declared = gate::own::ci_entry(&wt);
-        let Some(entry) = declared.filter(|e| e.image.is_some()) else {
-            let why = match gate::own::ci_entry(&wt) {
+        let Some(entry) = declared.clone().filter(|e| e.image.is_some()) else {
+            let why = match declared {
                 Some(_) => format!("{} declares a ci_entry but no image — a round runs the repository's CI entry point in its declared image", gate::own::DECL),
                 None => format!("{} declares no ci_entry — a round runs the repository's own CI entry point on a round VM", gate::own::DECL),
             };
