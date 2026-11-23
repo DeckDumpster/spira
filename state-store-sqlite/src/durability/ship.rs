@@ -66,6 +66,14 @@ pub struct Shipper {
     oldest: Option<(u64, u64)>,
     /// The snapshot `stage` took because the outbox no longer reached back, reported by the tick.
     forced: Option<u64>,
+    /// The newest revision the directories showed staged, and uploaded, as of open and as this
+    /// process has learned since; the marks alone miss a crash between a file and its mark.
+    staged_floor: u64,
+    shipped_floor: u64,
+    /// The `staged` value `sent/revlog` was last relisted for.
+    relisted_at: Option<u64>,
+    /// The prune point `sent/revlog` was last swept for.
+    pruned_to: Option<u64>,
 }
 
 type CopyHook = Arc<dyn Fn() + Send + Sync>;
@@ -305,7 +313,15 @@ impl Shipper {
             clock,
             oldest: None,
             forced: None,
+            staged_floor: 0,
+            shipped_floor: 0,
+            relisted_at: None,
+            pruned_to: None,
         };
+        s.shipped_floor = newest_to(&s.sent(REVLOG))?.unwrap_or(0);
+        s.staged_floor = newest_to(&s.queue(REVLOG))?
+            .unwrap_or(0)
+            .max(s.shipped_floor);
         let staged = s.staged_through()?;
         if head < staged {
             return Err(format!(
@@ -351,12 +367,11 @@ impl Shipper {
     /// The newest revision any staged run holds. The marks are kept durably, and the
     /// directories cover a crash between writing a run and its mark.
     fn staged_through(&self) -> Result<u64, String> {
-        let dirs = newest_to(&self.queue(REVLOG))?.max(newest_to(&self.sent(REVLOG))?);
         Ok(self
             .mark("start")?
             .max(self.mark("staged")?)
             .max(self.mark("shipped")?)
-            .max(dirs.unwrap_or(0)))
+            .max(self.staged_floor))
     }
 
     /// The newest uploaded revision. Uploads go oldest first and stop at a refusal, so every
@@ -365,7 +380,25 @@ impl Shipper {
         Ok(self
             .mark("start")?
             .max(self.mark("shipped")?)
-            .max(newest_to(&self.sent(REVLOG))?.unwrap_or(0)))
+            .max(self.shipped_floor))
+    }
+
+    /// `drain_kind` renames a run into `sent/` before it writes `shipped`, so a process that
+    /// died between leaves the run uncounted. With nothing queued and `shipped` behind `staged`,
+    /// `sent/revlog` is listed once per `staged` value.
+    fn reconcile_shipped(&mut self) -> Result<(), String> {
+        let staged = self.staged_through()?;
+        if self.shipped_through()? >= staged
+            || self.relisted_at == Some(staged)
+            || !names(&self.queue(REVLOG))?.is_empty()
+        {
+            return Ok(());
+        }
+        self.shipped_floor = self
+            .shipped_floor
+            .max(newest_to(&self.sent(REVLOG))?.unwrap_or(0));
+        self.relisted_at = Some(staged);
+        Ok(())
     }
 
     /// How long the oldest revision not yet off-box has waited, as of now: a revision is first
@@ -390,6 +423,7 @@ impl Shipper {
             ..Tick::default()
         };
         self.upload(&mut t)?;
+        self.reconcile_shipped()?;
         t.shipped_through = self.shipped_through()?;
         self.backend
             .outbox_release(t.shipped_through)
@@ -437,6 +471,7 @@ impl Shipper {
         };
         let name = revlog::run_name(run.from, run.to);
         write_durably(&self.queue(REVLOG).join(&name), &revlog::encode(&run))?;
+        self.staged_floor = self.staged_floor.max(run.to);
         write_durably(&self.cfg.dir.join("staged"), run.to.to_string().as_bytes())?;
         Ok(Some((run.from, run.to)))
     }
@@ -451,7 +486,7 @@ impl Shipper {
 
     /// Keeps the newest [`KEEP_SNAPSHOTS`] local snapshots and every run a restore from the
     /// oldest of them replays. Only the local copies: the bucket's retention is its own.
-    fn prune(&self) -> Result<(), String> {
+    fn prune(&mut self) -> Result<(), String> {
         let snaps: Vec<(u64, String)> = names(&self.sent(SNAPSHOT))?
             .into_iter()
             .filter_map(|n| revlog::parse_snapshot_name(&n).map(|r| (r, n)))
@@ -460,6 +495,7 @@ impl Shipper {
             return Ok(());
         }
         let keep_from = snaps[snaps.len() - KEEP_SNAPSHOTS].0;
+        let sweep = self.pruned_to != Some(keep_from);
         for (_, n) in &snaps[..snaps.len() - KEEP_SNAPSHOTS] {
             for p in [self.sent(SNAPSHOT).join(n), sum_path(&self.cfg.dir, n)] {
                 match fs::remove_file(&p) {
@@ -468,12 +504,16 @@ impl Shipper {
                 }
             }
         }
+        if !sweep {
+            return Ok(());
+        }
         for n in names(&self.sent(REVLOG))? {
             if revlog::parse_run_name(&n).is_some_and(|(_, to)| to <= keep_from) {
                 let p = self.sent(REVLOG).join(&n);
                 fs::remove_file(&p).map_err(io(&p))?;
             }
         }
+        self.pruned_to = Some(keep_from);
         Ok(())
     }
 }
