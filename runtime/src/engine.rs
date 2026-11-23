@@ -540,7 +540,8 @@ impl Engine {
     }
 
     /// A task kept as rows is rebuilt from its rows alone; the whole-carry row of an older
-    /// store is read only while no row of the task exists.
+    /// store is read only while no row of the task exists. A task whose codec keeps none of its
+    /// rows has them deleted by the first turn, whichever task it is.
     fn restore_keyed(&mut self, mut legacy: BTreeMap<String, StateRow>, mut keyed: BTreeMap<String, BTreeMap<String, String>>) -> Result<()> {
         for task in self.codecs.keys().cloned().collect::<Vec<_>>() {
             let codec = self.codecs[&task];
@@ -552,6 +553,10 @@ impl Engine {
                 }
                 continue;
             };
+            if (codec.split)(&(codec.join)(&rows)).is_empty() {
+                self.turn.cleared.extend(rows.into_keys().map(|skey| (task.clone(), skey)));
+                continue;
+            }
             let id = derive_id(format!("boot/{task}/{}/{}", codec.stream, codec.tag));
             let kind = EventKind::new(codec.tag, &(codec.join)(&rows));
             let ev = Event { id: EventId(id.clone()), stream: StreamKey(codec.stream.into()), kind, at: self.clock.now_ms(), cause: None, correlation: CorrelationId(id) };

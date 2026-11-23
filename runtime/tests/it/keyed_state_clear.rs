@@ -96,3 +96,45 @@ fn rows_left_empty_by_an_earlier_release_are_deleted_by_the_first_turn_after_boo
     look(&mut e, "l2", 50..53);
     assert_eq!(j.commits().len(), before, "the restored carry is the same, so nothing more is written");
 }
+
+fn seeded(j: &Arc<MemJournal>) {
+    use runtime::journal::Journal;
+    let state = (0..2).map(|i| StateRow { task: "task".into(), skey: format!("k{i}"), value: format!("v{i}"), at: 1 }).collect();
+    j.commit(&Turn { state, ..Turn::default() }).unwrap();
+}
+
+#[test_id(tn8ph2w)]
+#[test]
+fn rows_a_codec_keeps_none_of_are_deleted_by_the_first_turn_and_restore_nothing() {
+    struct Silent;
+    impl Handler for Silent {
+        fn interests(&self) -> &[EventKindTag] {
+            &["look"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![]
+        }
+    }
+    let none = || RowCodec { stream: "s", also: &[], tag: "state", split: |b| runtime::rows::split(b, &[]), join: |r| runtime::rows::join(r, &[]) };
+    let open_none = |j: &Arc<MemJournal>| Engine::open(j.clone(), Arc::new(VirtualClock::new(0)), vec![Registration::new("task", Silent).with_rows(none())], 1).unwrap();
+    let j = MemJournal::new();
+    seeded(&j);
+    let mut e = open_none(&j);
+    assert_eq!(restored(&e), restored(&open_none(&MemJournal::new())));
+    e.run_until_idle().unwrap();
+    assert!(task_keys(&j).is_empty(), "{:?}", task_keys(&j));
+    let cleared: Vec<_> = j.commits().iter().flat_map(|c| c.cleared.clone()).collect();
+    assert_eq!(cleared.len(), 2);
+}
+
+#[test_id(t1p5u21)]
+#[test]
+fn rows_a_codec_names_are_kept_when_nothing_happens() {
+    let j = MemJournal::new();
+    seeded(&j);
+    let before = j.commits().len();
+    let mut e = open(&j);
+    e.run_until_idle().unwrap();
+    assert_eq!(j.commits().len(), before);
+    assert_eq!(task_keys(&j).len(), 2);
+}

@@ -333,3 +333,23 @@ fn an_upload_refused_after_some_objects_went_records_how_many_and_why() {
     let last = last_drain(&dir);
     assert_eq!((last.uploaded, last.error.as_deref()), (0, Some(err.as_str())));
 }
+
+#[test_id(td2ur11)]
+#[test]
+fn a_phase_row_an_older_release_left_is_deleted_by_the_first_boot_and_not_written_again() {
+    use runtime::journal::{Journal, StateRow, Turn};
+    let mut rig = t::rig::<H>(1, SET, &serde_json::to_string(&queued(0)).unwrap());
+    let row = StateRow { task: "lc.ship".into(), skey: "phase".into(), value: "\"draining\"".into(), at: 1 };
+    rig.journal.commit(&Turn { state: vec![row], ..Turn::default() }).unwrap();
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    assert!(rig.journal.state().keys().all(|(t, _)| t != "lc.ship"), "{:?}", rig.journal.state().keys());
+    let cleared: Vec<_> = rig.journal.commits().iter().filter(|c| !c.cleared.is_empty()).map(|c| c.cleared.clone()).collect();
+    assert_eq!(cleared, vec![vec![("lc.ship".to_string(), "phase".to_string())]]);
+    let commits = rig.journal.commits().len();
+    rig.reopen(t::handler::<H>(SET).registration()).unwrap();
+    let (_, stream, kind) = H::boot();
+    rig.tick(stream, kind).unwrap();
+    assert_eq!(rig.journal.commits().len(), commits);
+}
