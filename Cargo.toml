@@ -97,6 +97,7 @@ members = [
     "state-store-sqlite",
     "watchdog",
     "cr",
+    "margin-client",
 ]
 resolver = "2"
 

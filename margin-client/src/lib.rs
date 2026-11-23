@@ -1,0 +1,107 @@
+//! The Margin reader's client: the only code in Spira that knows the reader's routes.
+
+#[cfg(test)]
+#[macro_use]
+extern crate spira_test_id;
+
+mod http;
+#[cfg(any(test, feature = "fake"))]
+mod fake;
+
+pub use http::HttpMargin;
+#[cfg(any(test, feature = "fake"))]
+pub use fake::FakeMargin;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub const URL_KEY: &str = "SPIRA_MARGIN_URL";
+pub const TOKEN_FILE_KEY: &str = "SPIRA_MARGIN_TOKEN_FILE";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Doc {
+    pub path: String,
+    pub kind: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocRef {
+    pub id: String,
+    pub version: u64,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Collection {
+    pub id: String,
+    pub url: String,
+    pub documents: Vec<DocRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Anchor {
+    pub document: String,
+    pub version: u64,
+    pub first: u32,
+    pub last: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentRef {
+    pub id: String,
+    pub thread: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionInfo {
+    /// `open`, `published` or `closed`.
+    pub state: String,
+    pub published_at_ms: Option<u64>,
+    pub title: String,
+    pub documents: Vec<DocRef>,
+    /// Every thread of the collection, held ones included.
+    #[serde(default)]
+    pub threads: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Comment {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at_ms: u64,
+}
+
+pub const AGENT_PREFIX: &str = "agent:";
+
+impl Comment {
+    /// An author that is not an agent is the operator.
+    pub fn by_agent(&self) -> bool {
+        self.author.starts_with(AGENT_PREFIX)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Thread {
+    pub anchor: Anchor,
+    pub comments: Vec<Comment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Changes {
+    pub through: u64,
+    pub changes: Vec<Value>,
+}
+
+pub trait Margin {
+    fn post_collection(&self, title: &str, cover: &str, docs: &[Doc]) -> Result<Collection, String>;
+    fn post_comment(&self, collection: &str, anchor: &Anchor, body: &str, held: bool, in_reply_to: Option<&str>) -> Result<CommentRef, String>;
+    fn post_version(&self, document: &str, text: &str) -> Result<u64, String>;
+    fn collection(&self, id: &str) -> Result<CollectionInfo, String>;
+    fn thread(&self, id: &str) -> Result<Thread, String>;
+    fn document_text(&self, document: &str, version: u64) -> Result<String, String>;
+    fn close(&self, collection: &str) -> Result<(), String>;
+    fn changes(&self, after: u64, hold_secs: u64) -> Result<Changes, String>;
+}

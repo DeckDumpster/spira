@@ -1,0 +1,19 @@
+[package]
+name = "margin-client"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+description = "margin-client — the one place that knows the Margin reader's routes: collections, held comments, threads and the change feed."
+
+[features]
+fake = []
+integration = ["spira-test-id/integration", "testkit/integration"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
+testkit = { path = "../testkit" }
