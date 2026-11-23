@@ -731,6 +731,11 @@ impl<'a> Pass<'a> {
         let repo = w.repo;
         let name = &repo.name;
         let tip = tip.to_string();
+        if g.outcome == GateOutcome::NoVerdict && g.reason_or("unspecified") == spira_config::gate_source::CERTIFIES_NOTHING {
+            self.log(&format!("CHECK6 {id}: {br} in {name} at {tip} certifies nothing — its repository declares tests its gate does not run; the bead stays SUBMITTED"));
+            self.files.back_off(br, &tip, self.clock.now() + self.s.noverdict_class_window.max(0) as u64);
+            return Flow::Next;
+        }
         if g.outcome != GateOutcome::Pass {
             let reason = g.reason_or("unspecified");
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));

@@ -2580,6 +2580,31 @@ fn past_the_bound_an_unjudged_tip_is_not_held_and_not_gated_again_and_one_incide
     assert_eq!(q.queued()[0].tip, "t1");
 }
 
+#[test_id(txw98c9)]
+#[test]
+fn a_certifies_nothing_verdict_records_nothing_and_is_not_gated_again_inside_the_window() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    let word = spira_config::gate_source::CERTIFIES_NOTHING;
+    for _ in 0..=h.s.noverdict_max {
+        file_verdict(&h, "sp-a", "t1", 75, &format!("gate: VERDICT=NO_VERDICT reason={word} branch=b repo=spira suite=- (x)\n"));
+        h.run();
+        assert!(q.queued().is_empty(), "{:?}", h.out.lines());
+        h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    }
+    assert!(!h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") || c.starts_with("noverdict")), "{:?}", h.lib.calls.borrow());
+    assert!(h.lc.holds.borrow().is_empty(), "{:?}", h.lc.holds.borrow());
+    assert!(h.lc.certified.borrow().is_empty(), "{:?}", h.lc.certified.borrow());
+    h.run();
+    assert!(q.queued().is_empty(), "{:?}", h.out.lines());
+
+    h.git.refs.borrow_mut().retain(|(b, _)| b != "spira/sp-a");
+    h.git.add("spira/sp-a", "t9");
+    h.run();
+    assert!(q.queued().iter().any(|j| j.tip == "t9"));
+}
+
 #[test_id(tqfvhys)]
 #[test]
 fn a_new_tip_lifts_the_unjudged_stop_inside_the_window() {
