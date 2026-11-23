@@ -1312,7 +1312,7 @@ fn staging_a_run_leaves_the_staged_mark_alone() {
     let mut s = Shipper::open_staging(c.backend().clone(), paced_cfg(dir.path(), 0), Arc::new(clock.clone())).unwrap();
     tick(&mut s);
     let mark = s.dir().join("staged");
-    ship::write_durably(&mark, b"1").unwrap();
+    ship::write_durably(&mark, b"0").unwrap();
     let stat = || (std::fs::read(&mark).ok(), std::fs::metadata(&mark).and_then(|m| m.modified()).ok());
     let before = stat();
     put(&c, "a", Object::new(json!(1)), "1");
