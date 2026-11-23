@@ -141,7 +141,10 @@ pub fn judge(
         let ok = match rec {
             None => rowless.get(&bid).is_some_and(|(ty, status)| rowless_done(ty, status)),
             Some(b) => {
-                let stackable = stack_max > 0 && !is_parent && b.repo.as_ref() == Some(own_repo);
+                let stackable = stack_max > 0
+                    && !is_parent
+                    && !lifecycle::bead::provisional(b.row.state, b.row.reason.as_deref())
+                    && b.repo.as_ref() == Some(own_repo);
                 let conflict = b.row.tip.as_ref().is_some_and(|t| ctx.conflicts.contains(&(bid.clone(), t.clone())));
                 match b.row.state {
                     BeadState::Landed | BeadState::Done => true,
