@@ -16,13 +16,12 @@ pub mod rounds;
 pub mod run;
 pub mod vlogs;
 
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use ports::{Fs, RealFs};
 
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value::Value, AnyValue, ArrayValue, InstrumentationScope, KeyValue};
@@ -32,11 +31,6 @@ use opentelemetry_proto::tonic::trace::v1::{span::SpanKind, status::StatusCode, 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-extern "C" {
-    fn flock(fd: i32, op: i32) -> i32;
-}
-const LOCK_EX: i32 = 2;
-
 /// Writes spans for one service into one directory, keeping `keep_days` days of files.
 pub struct Sink {
     inner: Arc<Inner>,
@@ -44,6 +38,7 @@ pub struct Sink {
 }
 
 struct Inner {
+    fs: Arc<dyn Fs>,
     dir: PathBuf,
     service: String,
     keep_days: u32,
@@ -128,13 +123,23 @@ pub fn dropped() -> u64 {
 
 impl Sink {
     pub fn new(dir: impl Into<PathBuf>, service: &str, keep_days: u32) -> Sink {
-        Sink { inner: Arc::new(Inner::new(dir.into(), service, keep_days, u64::MAX)), queue: None }
+        Self::on(Arc::new(RealFs), dir, service, keep_days)
+    }
+
+    /// As `new`, over `fs`.
+    pub fn on(fs: Arc<dyn Fs>, dir: impl Into<PathBuf>, service: &str, keep_days: u32) -> Sink {
+        Sink { inner: Arc::new(Inner::new(fs, dir.into(), service, keep_days, u64::MAX)), queue: None }
     }
 
     /// A sink whose `emit` only queues: one thread appends the queue once a second, and a day
     /// file at `day_max_bytes` takes no more.
     pub fn buffered(dir: impl Into<PathBuf>, service: &str, keep_days: u32, day_max_bytes: u64) -> Sink {
-        let inner = Arc::new(Inner::new(dir.into(), service, keep_days, day_max_bytes));
+        Self::buffered_on(Arc::new(RealFs), dir, service, keep_days, day_max_bytes)
+    }
+
+    /// As `buffered`, over `fs`.
+    pub fn buffered_on(fs: Arc<dyn Fs>, dir: impl Into<PathBuf>, service: &str, keep_days: u32, day_max_bytes: u64) -> Sink {
+        let inner = Arc::new(Inner::new(fs, dir.into(), service, keep_days, day_max_bytes));
         let queue = Arc::new(Queue::default());
         let (i, q) = (inner.clone(), queue.clone());
         std::thread::Builder::new().name("otel-writer".into()).spawn(move || writer_loop(&i, &q)).expect("the span writer thread starts");
@@ -199,8 +204,8 @@ fn writer_loop(inner: &Inner, queue: &Queue) {
 }
 
 impl Inner {
-    fn new(dir: PathBuf, service: &str, keep_days: u32, day_max_bytes: u64) -> Inner {
-        Inner { dir, service: service.to_string(), keep_days, day_max_bytes, dropped: AtomicU64::new(0), warned_days: Mutex::new(Vec::new()) }
+    fn new(fs: Arc<dyn Fs>, dir: PathBuf, service: &str, keep_days: u32, day_max_bytes: u64) -> Inner {
+        Inner { fs, dir, service: service.to_string(), keep_days, day_max_bytes, dropped: AtomicU64::new(0), warned_days: Mutex::new(Vec::new()) }
     }
 
     fn line(&self, call: &Call) -> std::io::Result<Vec<u8>> {
@@ -226,20 +231,18 @@ impl Inner {
         }
     }
 
-    /// Appends whole lines to `day`'s file under its lock while the file stays within the day
-    /// bound; the rest, or all of them on an error, are dropped and counted.
+    /// Appends whole lines to `day`'s file while the file stays within the day bound; the rest,
+    /// or all of them on an error, are dropped and counted.
     fn append_day(&self, day: &str, lines: &[&[u8]]) -> std::io::Result<()> {
-        let opened = self.open_locked(day);
-        let Ok((mut f, path, first_today)) = opened else {
+        let path = self.path(day);
+        let sized = self.fs.create_dir(&self.dir).and_then(|()| match self.fs.metadata(&path) {
+            Ok(m) => Ok((m.len, false)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((0, true)),
+            Err(e) => Err(e),
+        });
+        let Ok((mut size, first_today)) = sized else {
             self.drop_spans(lines.len() as u64);
-            return opened.map(|_| ());
-        };
-        let mut size = match f.metadata() {
-            Ok(m) => m.len(),
-            Err(e) => {
-                self.drop_spans(lines.len() as u64);
-                return Err(e);
-            }
+            return sized.map(|_| ());
         };
         let mut out = Vec::new();
         let mut kept = 0u64;
@@ -260,20 +263,11 @@ impl Inner {
                 eprintln!("spira-otel: {} is at its {} byte day bound; further spans that day are dropped", path.display(), self.day_max_bytes);
             }
         }
-        f.write_all(&out).inspect_err(|_| self.drop_spans(kept))?;
+        self.fs.append(&path, &out).inspect_err(|_| self.drop_spans(kept))?;
         if first_today {
             self.prune(day);
         }
         Ok(())
-    }
-
-    fn open_locked(&self, day: &str) -> std::io::Result<(File, PathBuf, bool)> {
-        fs::create_dir_all(&self.dir)?;
-        let path = self.path(day);
-        let first_today = !path.exists();
-        let f = OpenOptions::new().create(true).append(true).open(&path)?;
-        lock(&f)?;
-        Ok((f, path, first_today))
     }
 
     fn path(&self, day: &str) -> PathBuf {
@@ -283,12 +277,11 @@ impl Inner {
     fn prune(&self, today: &str) {
         let Some(oldest) = day_number(today).map(|d| d - i64::from(self.keep_days) + 1) else { return };
         let prefix = format!("{}.", self.service);
-        let Ok(entries) = fs::read_dir(&self.dir) else { return };
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
+        let Ok(names) = self.fs.list(&self.dir) else { return };
+        for name in names {
             let Some(day) = name.strip_prefix(&prefix).and_then(|r| r.strip_suffix(".jsonl")) else { continue };
             if day_number(day).is_some_and(|d| d < oldest) {
-                let _ = fs::remove_file(e.path());
+                let _ = self.fs.remove(&self.dir.join(&name));
             }
         }
     }
@@ -402,19 +395,6 @@ fn ids(n: usize) -> Vec<u8> {
     out
 }
 
-fn lock(f: &File) -> std::io::Result<()> {
-    // SAFETY: the descriptor is open for the lifetime of `f`; the lock drops with the file.
-    if unsafe { flock(f.as_raw_fd(), LOCK_EX) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-pub(crate) fn append_locked(f: &mut File, line: &[u8]) -> std::io::Result<()> {
-    lock(f)?;
-    f.write_all(line)
-}
-
 /// `YYYY-MM-DD` of a UTC instant.
 pub fn utc_date(t: SystemTime) -> String {
     let days = t.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs() / 86_400;
@@ -455,6 +435,7 @@ pub fn dir_of(run: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::Duration;
 
     fn call(code: i32) -> Call<'static> {
@@ -719,6 +700,27 @@ mod tests {
             let d = utc_date(UNIX_EPOCH + Duration::from_secs(t));
             assert_eq!(day_number(&d), Some((t / 86_400) as i64), "{d}");
         }
+    }
+
+    #[test_id(txx8imc)]
+    #[test]
+    fn a_sink_over_the_sim_disk_writes_the_same_line_and_counts_a_failed_append() {
+        let fs = ports::SimFs::new(1, Default::default(), ports::VirtualClock::new(0));
+        let sink = Sink::on(fs.clone(), "/otel", "spira-lc", 14);
+        let real = tmp("sink-sim");
+        let on_disk = Sink::new(real.path(), "spira-lc", 14);
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        sink.write(&call(0), now).unwrap();
+        let line = fs.peek(Path::new("/otel/spira-lc.2023-11-14.jsonl")).unwrap();
+        assert!(line.ends_with(b"\n"));
+        let parsed: serde_json::Value = serde_json::from_slice(&line).unwrap();
+        assert_eq!(parsed["resourceSpans"][0]["resource"]["attributes"][0]["value"]["stringValue"], "spira-lc");
+        on_disk.write(&call(0), now).unwrap();
+        let real_line = fs::read(real.path().join("spira-lc.2023-11-14.jsonl")).unwrap();
+        assert_eq!(real_line.len(), line.len(), "the line format is the disk's");
+        fs.crash_after(1);
+        assert!(sink.write(&call(0), now).is_err());
+        assert_eq!(sink.dropped_here(), 1);
     }
 }
 

@@ -2354,6 +2354,7 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "opentelemetry-proto",
+ "ports",
  "prost",
  "serde",
  "serde_json",
