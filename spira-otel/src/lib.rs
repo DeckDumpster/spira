@@ -634,6 +634,19 @@ mod tests {
         assert_eq!(sink.dropped_here(), 2);
     }
 
+    #[test_id(tg8rnrs)]
+    #[test]
+    fn a_day_at_its_bound_warns_once_however_many_spans_it_drops() {
+        let dir = tmp("warn-once");
+        let sink = Sink::buffered(dir.path(), "spira-lc", 14, 0);
+        for _ in 0..3 {
+            sink.emit(&call(0));
+            sink.flush();
+        }
+        assert_eq!(sink.dropped_here(), 3);
+        assert_eq!(sink.inner.warned_days.lock().unwrap().len(), 1);
+    }
+
     #[test_id(tzu0pck)]
     #[test]
     fn past_the_queue_bound_emit_drops_and_counts() {
