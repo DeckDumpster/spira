@@ -363,6 +363,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "design-review"
+version = "0.1.0"
+dependencies = [
+ "margin-client",
+ "runtime",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spira-config",
+ "spira-otel",
+ "spira-test-id",
+ "testkit",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2348,6 +2363,7 @@ dependencies = [
  "cockpit-ops",
  "cr",
  "czar-pass",
+ "design-review",
  "dwarf",
  "filings-collect",
  "forge",
