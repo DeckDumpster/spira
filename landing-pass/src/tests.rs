@@ -2590,6 +2590,7 @@ fn a_certifies_nothing_verdict_records_nothing_and_is_not_gated_again_inside_the
     for _ in 0..=h.s.noverdict_max {
         file_verdict(&h, "sp-a", "t1", 75, &format!("gate: VERDICT=NO_VERDICT reason={word} branch=b repo=spira suite=- (x)\n"));
         h.run();
+        assert!(q.queued().is_empty(), "{:?}", h.out.lines());
         h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
     }
     assert!(!h.lib.calls.borrow().iter().any(|c| c.starts_with("incident ") || c.starts_with("noverdict")), "{:?}", h.lib.calls.borrow());

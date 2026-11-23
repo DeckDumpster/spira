@@ -6482,3 +6482,13 @@ fn a_declaring_repository_whose_changed_script_fails_bash_n_still_fails_on_synta
     assert_eq!(f.run(), FAIL);
     assert!(f.verdict_line().contains("reason=syntax"), "{}", f.verdict_line());
 }
+
+#[test_id(t3ucmpf)]
+#[test]
+fn a_branch_that_deletes_the_declaration_the_landing_ref_has_is_not_certified_on_syntax() {
+    let f = forge_declaring();
+    f.blobs.borrow_mut().remove(&format!("{MERGE_SHA}:.spira/testenv.toml"));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=certifies-nothing"), "{}", f.verdict_line());
+    assert!(cert_written(&f).is_none());
+}

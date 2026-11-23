@@ -441,7 +441,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
         let base_def = def::resolve_base(base_side, &ctx.land, &column);
         if cmd.is_empty() {
-            if matches!(tree_side.source(&ctx.land, &column), Ok(spira_config::gate_source::GateSource::Nothing { declares_tiers: true })) {
+            if [&tree_side, &base_side].iter().any(|side| matches!(side.source(&ctx.land, &column), Ok(spira_config::gate_source::GateSource::Nothing { declares_tiers: true }))) {
                 return v(NOVERDICT, spira_config::gate_source::CERTIFIES_NOTHING, format!(
                     "gate: {name} declares test tiers in {} and its gate runs none of them; a syntax-only pass would certify nothing.\ngate: declare `ci_entry` on a queue.local repository, or add {} — until then {br} stays SUBMITTED.", own::DECL, def::PATH));
             }
