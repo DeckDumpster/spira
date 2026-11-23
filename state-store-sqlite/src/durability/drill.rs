@@ -112,7 +112,9 @@ fn paged(
                 size /= 2;
                 continue;
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                return Err(format!("page of {size} after {}: {e}", after.as_deref().unwrap_or("start")))
+            }
         };
         let was = size;
         size = (size * 2).min(PAGE);
@@ -171,6 +173,16 @@ pub fn fold_compare(
     restored: &SqliteBackend,
     ex: Exclusions,
 ) -> Result<Report, String> {
+    fold_compare_steps(base, runs, restored, ex, &mut |_| {})
+}
+
+fn fold_compare_steps(
+    base: &SqliteBackend,
+    runs: &[Run],
+    restored: &SqliteBackend,
+    ex: Exclusions,
+    enter: &mut dyn FnMut(&'static str),
+) -> Result<Report, String> {
     let s = base.head().map_err(|e| e.to_string())?;
     let r = restored.head().map_err(|e| e.to_string())?;
     let mut rep = Report {
@@ -181,6 +193,7 @@ pub fn fold_compare(
     let excluded = |k: &str| ex.telemetry && k.starts_with(TELEMETRY_PREFIX);
     let mut fold: BTreeMap<String, Held> = BTreeMap::new();
     let mut expired: BTreeSet<String> = BTreeSet::new();
+    enter("snapshot scan");
     for (k, v) in all_keys(base, s)? {
         if bookkeeping(&k) {
             continue;
@@ -191,6 +204,7 @@ pub fn fold_compare(
         }
         fold.insert(k, held(&v));
     }
+    enter("fold");
     for run in runs {
         for (main, entries) in revlog::mains(run) {
             if main <= s || main > r {
@@ -204,7 +218,7 @@ pub fn fold_compare(
             }
             let Some(ev) = restored
                 .get(&events_key(main), r)
-                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("read of {}: {e}", events_key(main)))?
             else {
                 expired.extend(
                     writes
@@ -252,6 +266,7 @@ pub fn fold_compare(
             }
         }
     }
+    enter("restored scan");
     let mut live: BTreeMap<String, Held> = BTreeMap::new();
     for (k, v) in all_keys(restored, r)? {
         if bookkeeping(&k) {
@@ -304,29 +319,65 @@ pub fn drill(
     scratch: &Path,
     ex: Exclusions,
 ) -> Result<(Restored, Report), String> {
+    drill_with(ship_dir, scratch, ex, &Options::offline)
+}
+
+/// [`drill`] with the options its scratch copies are opened under. The five steps are timed on
+/// the clock of one `options()` value, and a failure after the snapshot is found names its step
+/// and lists the seconds each step run so far took.
+pub fn drill_with(
+    ship_dir: &Path,
+    scratch: &Path,
+    ex: Exclusions,
+    options: &dyn Fn() -> Options,
+) -> Result<(Restored, Report), String> {
     let (rev, snapshot) = newest_snapshot(ship_dir)?;
-    let name = revlog::snapshot_name(rev);
-    let staged = fs::read_to_string(super::ship::sum_path(ship_dir, &name))
-        .map_err(|e| format!("snapshot {name} has no staged sha256: {e}"))?;
-    let now = super::ship::sha256_file(&snapshot)?;
-    if staged.trim() != now {
-        return Err(format!(
-            "snapshot {name} changed since it was staged: sha256 {now}, staged {}",
-            staged.trim()
-        ));
-    }
-    fs::create_dir_all(scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
-    let (out, base_path) = (scratch.join("control.db"), scratch.join("base.db"));
-    let restored = restore::restore(&snapshot, &ship_dir.join("sent").join(REVLOG), &out)?;
-    if base_path.exists() {
-        return Err(format!("{} exists", base_path.display()));
-    }
-    fs::copy(&snapshot, &base_path).map_err(|e| format!("{}: {e}", base_path.display()))?;
-    let open = |p: &Path| {
-        SqliteBackend::open(p, Options { jump_on_open: false, outbox: false, day_receipts: false, ..Options::default() }).map_err(|e| format!("{}: {e}", p.display()))
+    let clock = options().clock;
+    let log: std::cell::RefCell<Vec<(&'static str, u64)>> = Default::default();
+    let current: std::cell::Cell<Option<(&'static str, u64)>> = Default::default();
+    let close = || {
+        if let Some((name, began)) = current.take() {
+            log.borrow_mut().push((name, clock.now_ms().saturating_sub(began) / 1000));
+        }
     };
-    let report = fold_compare(&open(&base_path)?, &restored.runs, &open(&out)?, ex)?;
-    Ok((restored, report))
+    let enter = |name: &'static str| {
+        close();
+        current.set(Some((name, clock.now_ms())));
+    };
+    let result = (|| {
+        let name = revlog::snapshot_name(rev);
+        enter("checksum");
+        let staged = fs::read_to_string(super::ship::sum_path(ship_dir, &name))
+            .map_err(|e| format!("snapshot {name} has no staged sha256: {e}"))?;
+        let now = super::ship::sha256_file(&snapshot)?;
+        if staged.trim() != now {
+            return Err(format!(
+                "snapshot {name} changed since it was staged: sha256 {now}, staged {}",
+                staged.trim()
+            ));
+        }
+        fs::create_dir_all(scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
+        let (out, base_path) = (scratch.join("control.db"), scratch.join("base.db"));
+        enter("restore");
+        let restored =
+            restore::restore_with(&snapshot, &ship_dir.join("sent").join(REVLOG), &out, options)?;
+        if base_path.exists() {
+            return Err(format!("{} exists", base_path.display()));
+        }
+        fs::copy(&snapshot, &base_path).map_err(|e| format!("{}: {e}", base_path.display()))?;
+        let open = |p: &Path| SqliteBackend::open(p, options()).map_err(|e| format!("{}: {e}", p.display()));
+        let report = fold_compare_steps(&open(&base_path)?, &restored.runs, &open(&out)?, ex, &mut |n| enter(n))?;
+        close();
+        Ok((restored, report))
+    })();
+    result.map_err(|cause| {
+        let failed = current.get().map(|(name, began)| (name, clock.now_ms().saturating_sub(began) / 1000));
+        let mut steps: Vec<(&str, u64)> = log.borrow().clone();
+        let name = failed.map_or("checksum", |(n, _)| n);
+        steps.extend(failed);
+        let steps: Vec<String> = steps.iter().map(|(n, s)| format!("{n} {s}s")).collect();
+        format!("{name}: {cause}; steps: {}", steps.join(", "))
+    })
 }
 
 /// The drill's output: the counts, each exclusion by key, each mismatch, and the procedure.
