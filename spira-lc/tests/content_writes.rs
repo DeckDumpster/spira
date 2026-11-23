@@ -131,7 +131,9 @@ impl Lc {
         std::fs::create_dir_all(dir.join("release/bin")).unwrap();
         let reader = dir.join("reader.credential");
         let harness = spira_config::resolve::locate_home_for_process().expect("SPIRA_HOME names the harness tree");
-        let (runes, guards) = (harness.join("runes").display().to_string(), harness.join("statute-guards").display().to_string());
+        let guards = dir.join("statute-guards");
+        std::fs::write(&guards, "law-fixture-forbids-the-phrase | refuse | forbidden phrase\n").unwrap();
+        let (runes, guards) = (harness.join("runes").display().to_string(), guards.display().to_string());
         let (d, r, ctl, sock) = (dir.display().to_string(), run.display().to_string(), dir.join("control.db").display().to_string(), dir.join("s").display().to_string());
         let (rf, db) = (reader.display().to_string(), store.db.clone());
         let toml = spira_config::process::fixture_toml(
@@ -1017,10 +1019,10 @@ fn work_done_on_a_review_replaces_the_followups_body_and_notes_its_open_line_in_
 fn a_draft_the_statute_guard_refuses_leaves_the_followup_and_the_request_untouched() {
     let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "rv2");
-    let r = review_of(&store, &lc, "Run the test suite directly on the host.", false);
+    let r = review_of(&store, &lc, "a plan that uses the forbidden phrase", false);
     let (rc, out, _) = done(&lc, &r);
     assert_ne!(rc, 0, "{out}");
-    assert!(out.starts_with("cannot tell:") && out.contains("law-tests-run-only-through-testenv"), "{out}");
+    assert!(out.starts_with("cannot tell:") && out.contains("law-fixture-forbids-the-phrase"), "{out}");
     assert_eq!(description_of(&lc, &r.dependent).trim(), "the follow-up as filed");
     assert!(state_of(&lc, &r.request).contains("WORKING"));
 }
