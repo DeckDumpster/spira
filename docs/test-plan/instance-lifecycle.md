@@ -124,7 +124,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 |---|---|---|---|
 | 01 | test-build.sh::absent cargo, normal run, second run, --skip-build | T1-ish, 4 | KEEP. Make the idempotence case assert on the cargo call log, not on the names printed. |
 | 02, 04 | the retired build-tarball suite::build/name/MANIFEST/verify/wrong commit/--name | T2, 4 | KEEP |
-| 03 | test-tarball-bins.sh::1–5; the retired build-tarball suite::bins present | T2, 1 + dup | test-tarball-bins: MERGE-INTO the retired build-tarball suite (the `--supervise-bin` refusal) and MERGE-INTO the unit-lint T0 (the ExecStart token scan, deriving OPTIONAL from `units.sh` instead of a hand-copied list). Delete release.yml grep (belongs in test-release-workflow). |
+| 03 | the retired tarball-bins suite::1–5; the retired build-tarball suite::bins present | T2, 1 + dup | the retired tarball-bins suite: MERGE-INTO the retired build-tarball suite (the `--supervise-bin` refusal) and MERGE-INTO the unit-lint T0 (the ExecStart token scan, deriving OPTIONAL from `units.sh` instead of a hand-copied list). Delete release.yml grep (belongs in test-release-workflow). |
 | 05 | the retired build-bd-release suite::all | T2, 6 | KEEP |
 | 06 | the retired release suite::1–7 | T2, 6 | KEEP. Drop case 8 (a trivially-true self-check). |
 | 08 | test-activate.sh::basic, dry-run; test-rollback.sh::activate-A/B; test-loop-readonly.sh::activate/ro; test-artifact-install.sh::activate | T2, 2 (+4 +12 +152 dup legs) | KEEP test-activate.sh. Delete the activate legs elsewhere. |
@@ -205,11 +205,11 @@ The cost column is ci_secs from the main-push run; NA means not run there.
    - **Keep:** one table in test-install-loom-broker.sh.
 
 8. **Timer and unit-file lint.**
-   - Files: test-timer-templates, test-verdict-timer (UNITS/_ENABLE_TMPL/periodic, identical awk), test-install-unit-directive render half, test-unit-restart-limits, test-cockpit-unit-notify, test-tarball-bins token scan.
+   - Files: test-timer-templates, test-verdict-timer (UNITS/_ENABLE_TMPL/periodic, identical awk), test-install-unit-directive render half, test-unit-restart-limits, test-cockpit-unit-notify, the retired tarball-bins suite token scan.
    - **Keep:** one T0 lint hosted by test-timer-templates.sh.
 
 9. **Tarball has `bin/spira-supervise` executable.**
-   - Files: test-tarball-bins case 3, test-build-tarball (identical assertion text).
+   - Files: the retired tarball-bins suite case 3, test-build-tarball (identical assertion text).
    - **Keep:** the retired build-tarball suite.
 
 10. **Watcher unit-name formula.**

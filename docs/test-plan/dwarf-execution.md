@@ -100,7 +100,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 14 | test-dwarf-eviction-race.sh (7 runs) | T3 / 43 | DEMOTE-TO-T1 (`eviction_reopen <landstate> <tip> <recent>` table, 7 rows + cap row) + 1 e2e row |
 | 15 | test-dwarf-gate-close-silent.sh (3 runs) | T3 / 16 | DEMOTE-TO-T1 (rc→note switch; rows in the disposition table) |
 | 16a | test-dwarf-prod-dirty.sh (4 runs, 4 repos) | T3 / 33 | RETIRED: unit tests of `own_dirty` / `own_dirty_note` in `dwarf/src/verdict.rs` (own-dirty refused, override stands, shared checkout never read) |
-| 16b,c | test-ops-closing.sh (15 runs) | T3 / 102 | DEMOTE-TO-T1: the close-reason fence becomes a direct unit of `strand close-reason`; the SOP rule becomes a predicate over a fake ledger. SOURCE-GREP: the 3 static greps go to T0. **The SOP mechanism is OFF for every shipped persona (sp-q27cp).** It needs a keep-or-retire decision (see Gaps). |
+| 16b,c | the retired ops-closing suite (15 runs) | T3 / 102 | DEMOTE-TO-T1: the close-reason fence becomes a direct unit of `strand close-reason`; the SOP rule becomes a predicate over a fake ledger. SOURCE-GREP: the 3 static greps go to T0. **The SOP mechanism is OFF for every shipped persona (sp-q27cp).** It needs a keep-or-retire decision (see Gaps). |
 | 16d | test-groom-escalation-check.sh (5 runs) | T3 / 36 | DEMOTE-TO-T1 (claims × ask-bead JSON × session epoch) + the conf-key greps to T0 |
 | 17 | test-dwarf-wiki-dirty.sh (4 runs, 6 repos); test-dwarf-wiki-concurrent.sh | T3 / 28; T2 / 1 | DEMOTE-TO-T1 (snapshot set difference minus tasks.md) + 1 e2e row (author, message). KEEP wiki-concurrent (T2) but force an interleave: today it can pass without the lock. |
 | 18 | test-dwarf-exit.sh (5 runs); test-dwarf-ledger.sh (8 runs, ~46 asserts) | T3 / 16; T3 / 36 | DEMOTE-TO-T1: the exit-code mapping, and the spend parser on fixture traces (40 of 46 asserts). The segment-boundary case → e2e (second run on the same bead). |
@@ -131,7 +131,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | D11 | Liveness classification | test-dwarf-heartbeat.sh (model_idle, superseded by the lease per sp-9ix, dwarf.sh:975-985) vs test-dwarf-lease.sh | test-dwarf-lease.sh (calling real code) |
 | D12 | Ledger `status=` field | test-dwarf-ledger.sh, test-dwarf-presession-death.sh, test-dwarf-yield-headless.sh, test-dwarf-exit.sh::ledger records closed | Disposition table (the status column) |
 | D13 | Rendered prompt text | the retired dwarf-resume suite, test-dwarf-verdict.sh (DEADLINE/ALREADY_DONE), test-dwarf-prompt-layers.sh | One T1 brief-render suite |
-| D14 | Rune knob declarations grep | test-dwarf-prompt-layers.sh (RUNE_SYSTEM_PROMPT ×6), the retired rune-project-instructions suite (×6), test-ops-closing.sh (RUNE_SOP_REQUIRED), test-groom-escalation-check.sh (conf keys) | One T0 rune-schema lint |
+| D14 | Rune knob declarations grep | test-dwarf-prompt-layers.sh (RUNE_SYSTEM_PROMPT ×6), the retired rune-project-instructions suite (×6), the retired ops-closing suite (RUNE_SOP_REQUIRED), test-groom-escalation-check.sh (conf keys) | One T0 rune-schema lint |
 | D15 | Full-dwarf fixture pattern | 20 suites each build a fresh bd store, a bare origin, a clone and a claude shim per case (r1 note: "17 of the dwarf suites"). test-dwarf-verdict.sh, test-dwarf-eviction-race.sh and the cross-repo suite each copy every non-test `*.sh` into SPIRA_HOME. | One shared fixture library + one e2e suite |
 
 ## 5. Unit-extractable logic
@@ -153,7 +153,7 @@ Every seam below turns a full `dwarf.sh` or `sentinel.sh` run on a real Dolt sto
 | World-stop fence | dwarf.sh 448-504 | test-dwarf-world-stop.sh (4 runs, a `sleep 300` fake dwarf) | `world_stop_decide <labels> <live-dwarf-list> <skip>` |
 | Read-after-claim poison | dwarf.sh 430-446 | grep only | `bead_has_label <json> spira-poison` |
 | Wiki commit selection | dwarf.sh wiki section (~1304, ~1819) | test-dwarf-wiki-dirty.sh (4 runs, 6 repos) | `wiki_new_since <snapshot> <porcelain>` minus tasks.md |
-| Close guards (SOP, groom, close-reason, prod-dirty override) | dwarf.sh post-session; `strand close-reason` | test-ops-closing.sh (15 runs), test-groom-escalation-check.sh (5 runs) | `strand close-reason` is already standalone, so unit it directly; `sop_rule_verdict <ledger> <bead> <epoch>`; `groom_claims_verified <log> <ask-json> <epoch>` |
+| Close guards (SOP, groom, close-reason, prod-dirty override) | dwarf.sh post-session; `strand close-reason` | the retired ops-closing suite (15 runs), test-groom-escalation-check.sh (5 runs) | `strand close-reason` is already standalone, so unit it directly; `sop_rule_verdict <ledger> <bead> <epoch>`; `groom_claims_verified <log> <ask-json> <epoch>` |
 | Timeout ask loop | lib.sh `spira_ask_timeout_loop` | the retired timeout suite on server-mode Dolt (156 s) | already a function; stub mail, no bd |
 | slay argument parsing | slay.sh | real testdb per case | parse before `testdb`/bd is touched; unit with no store |
 
@@ -177,7 +177,7 @@ Every seam below turns a full `dwarf.sh` or `sentinel.sh` run on a real Dolt sto
 | G14 | CHECK 4 performance: "no per-bead queries" (sp-f1m7f motive) is claimed but never asserted | test-check4-batch.sh. Add a T1 row: `check4` loop with `attempts_of` stubbed to fail if called. |
 | G15 | `unjudged-<cause>` requeue for killed, refused and unknown outcomes (note "Not judged", no charge) is asserted only by grep | dwarf.sh 916-921; test-attempts.sh::not-judged branch grep |
 | G16 | Test integrity: test-attempts.sh's exit-77 skip can fire after earlier failures and hide them, and wiki-concurrent can pass without the lock (no forced interleave) | mapper notes. Fix within the suites. |
-| G17 | **Resolved by retirement (sp-loycl):** the SOP closing rule (`RUNE_SOP_REQUIRED`) and its dwarf runs in test-ops-closing.sh are gone; a rune still carrying the key is ignored with a warning. | test-ops-closing.sh; runes/ops.rune |
+| G17 | **Resolved by retirement (sp-loycl):** the SOP closing rule (`RUNE_SOP_REQUIRED`) and its dwarf runs in the retired ops-closing suite are gone; a rune still carrying the key is ignored with a warning. | the retired ops-closing suite; runes/ops.rune |
 
 ## 7. Cost
 
@@ -257,7 +257,7 @@ because they need the testlib/plan-lint dependencies actually present in `origin
   `spira/testlib.sh` to exist for the AC's "suites all use testlib" requirement.
 - The gap tests in §6, fail-closed rows first (G1, G4-G7, G9-G11, G13-G14), and G17's decision
   for Ryan (the SOP mechanism is off for every shipped rune but its tests still hold most of
-  test-ops-closing.sh's runs).
+  the retired ops-closing suite's runs).
 
 Verified: `bash spira/testenv-batch.sh --suites test-gate-verdict.sh
 spira/sp-eq8a4` in testenv (the two gate suites that scan the whole tree for exactly this kind
@@ -365,7 +365,7 @@ bead's own dependencies (sp-eq8a4.2.1-.2.5) build — `dwarf_disposition`, `hb_t
 `close_verdict`/`delivers_verdict`, `check4_decide`, the brief-render and rune-schema seams —
 and each of the five files those commits touch (`test-attempts.sh`, `test-check4-events.sh`,
 the retired timeout suite, `test-dwarf-prompt-layers.sh`, the retired rune-project-instructions suite,
-`test-ops-closing.sh`, `test-groom-escalation-check.sh`, `spira/lib.sh` itself) is also
+`the retired ops-closing suite`, `test-groom-escalation-check.sh`, `spira/lib.sh` itself) is also
 touched by one of those branches. All five beads show closed via `bd show`, but closed is
 not landed: `git merge-base --is-ancestor <branch-tip> origin/main` says no for all five branch
 tips as of 2026-09-25, and each closed with "no gate ran or finished for this branch." Doing
@@ -440,7 +440,7 @@ slices actually left behind, rather than the pre-seam tree sp-eq8a4.2.6 saw:
   substitution wired through a live rune), which the T1 table cannot stand in for — the
   T1/e2e split this test plan asks for elsewhere, not a leftover copy. Likewise D14: the
   four files named (test-dwarf-prompt-layers.sh, the retired rune-project-instructions suite,
-  test-ops-closing.sh, test-groom-escalation-check.sh) each assert a *different* RUNE_*
+  the retired ops-closing suite, test-groom-escalation-check.sh) each assert a *different* RUNE_*
   knob using a similar grep idiom, not the same fact twice; there was no duplicate assertion
   left to collapse into a lint. Building one anyway would be an abstraction with no
   coverage gain.

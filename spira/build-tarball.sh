@@ -242,7 +242,7 @@ for pkg in meta['packages']:
     #
     # CONDITIONAL ON THE FILE EXISTING, same reasoning as conf-gen.sh above: a tree with no
     # spira/build-aerc.sh (test-workspace-dist.sh's synthetic Rust-workspace fixtures,
-    # test-tarball-bins.sh's and test-mail-sh-compat.sh's minimal spira/ fixtures, or any
+    # test-mail-sh-compat.sh's minimal spira/ fixtures, or any
     # repository this harness never ships from) packages with no vendor/ at all. Install's
     # own fail-closed refusal (install_aerc, sp-41so3) is what then catches a caller who
     # runs such a tree's spira-install for real.

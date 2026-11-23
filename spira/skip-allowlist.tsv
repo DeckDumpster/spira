@@ -18,6 +18,3 @@
 test-attribute.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-cadence-tool.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-install-rehearsal-stray.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
-test-repo-contract-scaffold.sh	skip:SPIRA_NIX_PROFILE_BIN_names_no_nix	the host nix profile is outside the test container; the suite runs on the bare lane
-test-work-checks-flake-shell.sh	skip:no_nix_at_/nix/var/nix/profiles/default/bin	the host's nix store and daemon are not in testenv's container; the suite runs bare-host where nix is installed
-test-repo-contract-scaffold.sh	skip:SCAFFOLD_REPOS_names_no_registered_repository	the host registry, not testenv, says which repositories are registered; the suite runs on the bare lane

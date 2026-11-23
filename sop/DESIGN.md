@@ -148,7 +148,7 @@ covers that the cargo suite cannot. The cockpit's ledger-reading SOP metrics are
 - `spira/watchtower.sh`, `spira/incident.sh`, `spira/lib.sh`: comment-only mentions updated
   for accuracy.
 - `spira/test-guards.sh`, `spira/test-dwarf-wiki-dirty.sh`, the retired lint-runes suite,
-  the retired render-memories suite, `spira/test-ops-closing.sh`: repointed to invoke `sop` by
+  the retired render-memories suite, the retired ops-closing suite: repointed to invoke `sop` by
   binary name rather than `$HERE/sop.sh`.
 
 ## RUN: the tool a watcher may run
