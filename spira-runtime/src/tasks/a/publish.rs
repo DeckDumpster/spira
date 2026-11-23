@@ -933,8 +933,10 @@ pub mod edge {
         Ok("{}".into())
     }
 
+    pub type ForgeCall<'a> = &'a dyn Fn(&str, &[&str]) -> Result<forge::client::Reply, String>;
+
     /// `rerun` over any forge call: one `landing.log` line for the re-run started, or refused.
-    pub fn rerun_with(call: &dyn Fn(&str, &[&str]) -> Result<forge::client::Reply, String>, queue_dir: &std::path::Path, run_dir: &std::path::Path, p: &Pub) -> Result<(), String> {
+    pub fn rerun_with(call: ForgeCall, queue_dir: &std::path::Path, run_dir: &std::path::Path, p: &Pub) -> Result<(), String> {
         let refuse = |run: &str, why: String| {
             queue::ops::landing_log(run_dir, &format!("QUEUE PUBLISH_RERUN_REFUSED {} repo={} pr={} run={run} why={why}", spira_config::vtime::now_epoch(), p.repo, p.pr));
             Err(why)

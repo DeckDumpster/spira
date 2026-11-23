@@ -32,11 +32,7 @@ impl Reply {
     }
 
     fn of(out: Out, err: Vec<String>) -> Reply {
-        Reply {
-            code: out.code,
-            out: out.lines.iter().map(|l| format!("{l}\n")).collect(),
-            err: err.iter().map(|l| format!("{l}\n")).collect(),
-        }
+        Reply { code: out.code, out: out.lines.iter().map(|l| format!("{l}\n")).collect(), err: err.iter().map(|l| format!("{l}\n")).collect() }
     }
 }
 
@@ -69,9 +65,7 @@ pub struct Configured {
 
 impl Configured {
     pub fn of(configured: &Path) -> Self {
-        Configured {
-            route: route_of(configured),
-        }
+        Configured { route: route_of(configured) }
     }
 }
 
@@ -107,37 +101,17 @@ pub fn call(cmd: &str, repo: &Path, args: &[&str], input: Option<&[u8]>) -> Repl
 fn program(bin: &Path, cmd: &str, repo: &Path, args: &[&str], input: Option<&[u8]>) -> Reply {
     let mut c = Command::new(bin);
     c.arg(cmd).arg(repo).args(args);
-    c.stdin(if input.is_some() {
-        Stdio::piped()
-    } else {
-        Stdio::null()
-    })
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+    c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match c.spawn() {
         Ok(c) => c,
-        Err(e) => {
-            return Reply {
-                code: 127,
-                out: String::new(),
-                err: format!("could not run the forge {}: {e}\n", bin.display()),
-            }
-        }
+        Err(e) => return Reply { code: 127, out: String::new(), err: format!("could not run the forge {}: {e}\n", bin.display()) },
     };
     if let (Some(bytes), Some(mut si)) = (input, child.stdin.take()) {
         let _ = si.write_all(bytes);
     }
     match child.wait_with_output() {
-        Ok(o) => Reply {
-            code: o.status.code().unwrap_or(-1),
-            out: String::from_utf8_lossy(&o.stdout).into_owned(),
-            err: String::from_utf8_lossy(&o.stderr).into_owned(),
-        },
-        Err(e) => Reply {
-            code: -1,
-            out: String::new(),
-            err: format!("forge wait failed: {e}\n"),
-        },
+        Ok(o) => Reply { code: o.status.code().unwrap_or(-1), out: String::from_utf8_lossy(&o.stdout).into_owned(), err: String::from_utf8_lossy(&o.stderr).into_owned() },
+        Err(e) => Reply { code: -1, out: String::new(), err: format!("forge wait failed: {e}\n") },
     }
 }
 
@@ -147,21 +121,11 @@ fn arg(args: &[String], i: usize) -> &str {
 
 fn refused(e: String) -> Out {
     warn!("forge: {e}");
-    Out {
-        code: 2,
-        lines: vec![],
-    }
+    Out { code: 2, lines: vec![] }
 }
 
 /// The verb table: `forge <cmd> <repo> [args...]`, with `input` as the verb's stdin.
-pub fn dispatch(
-    gh: &dyn Gh,
-    proc: &dyn Proc,
-    cmd: &str,
-    repo: &Path,
-    args: &[String],
-    input: Option<&[u8]>,
-) -> Out {
+pub fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String], input: Option<&[u8]>) -> Out {
     use crate::cmds::*;
     let workflow = match workflow_of(repo) {
         Ok(w) => w,
@@ -170,15 +134,7 @@ pub fn dispatch(
     let workflow = workflow.as_str();
     let second_pr = std::env::var("QUEUE_SECOND_PR_CONSIDERED").unwrap_or_default();
     match cmd {
-        "pr-create" => pr_create(
-            gh,
-            repo,
-            arg(args, 0),
-            arg(args, 1),
-            arg(args, 2),
-            input.unwrap_or_default(),
-            &second_pr,
-        ),
+        "pr-create" => pr_create(gh, repo, arg(args, 0), arg(args, 1), arg(args, 2), input.unwrap_or_default(), &second_pr),
         "pr-preflight" => pr_preflight(gh, repo, arg(args, 0), &second_pr),
         "pr-number" => pr_number(gh, repo, arg(args, 0)),
         "pr-list-queue" => pr_list_queue(gh, repo),
@@ -202,11 +158,10 @@ pub fn dispatch(
             // one source of config, through `spira_config::process::cfg_parse`, never a
             // competing environment override or a crate-local default (per Ryan
             // 2026-10-05).
-            let mut min_age: u64 =
-                match spira_config::process::cfg_parse("SPIRA_STRANDED_RUNNER_MIN_AGE") {
-                    Ok(v) => v,
-                    Err(e) => return refused(e),
-                };
+            let mut min_age: u64 = match spira_config::process::cfg_parse("SPIRA_STRANDED_RUNNER_MIN_AGE") {
+                Ok(v) => v,
+                Err(e) => return refused(e),
+            };
             let mut it = args.iter();
             while let Some(a) = it.next() {
                 if a == "--min-age" {
@@ -215,10 +170,7 @@ pub fn dispatch(
                     }
                 }
             }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             stranded_runners(gh, repo, now, min_age)
         }
         "run-metadata" => run_metadata(gh, repo, arg(args, 0)),
@@ -245,10 +197,7 @@ pub fn dispatch(
         "branch-protection-status" => branch_protection_status(gh, repo, arg(args, 0)),
         other => {
             warn!("forge: unknown command: {other}");
-            Out {
-                code: 1,
-                lines: vec![],
-            }
+            Out { code: 1, lines: vec![] }
         }
     }
 }
