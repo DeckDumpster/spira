@@ -157,6 +157,8 @@ fn check_credentials_refuses_an_acting_s3_destination_without_the_key_and_names_
         _ => None,
     };
     assert!(task::check_credentials(Mode::Act, "s3://b/p/", full).is_ok());
+}
+
 fn draining_rig(fail_first: bool) -> runtime::taskrig::TaskRig {
     let asked = std::sync::atomic::AtomicUsize::new(0);
     t::rig::<H>(1, SET, &serde_json::to_string(&queued(3)).unwrap()).double(task::DRAIN, move |_| {
