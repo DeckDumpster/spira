@@ -75,8 +75,86 @@ fn the_drain_uploads_through_the_given_process_port_only() {
     let name = state_store_sqlite::durability::revlog::run_name(1, 1);
     std::fs::write(dir.join("queue/revlog").join(&name), "x").unwrap();
     let url = format!("file://{}", off.display());
-    let said = task::drain(std::sync::Arc::new(Refusing), &url, &dir.display().to_string()).unwrap();
+    let said = task::drain(std::sync::Arc::new(Refusing), &url, &dir.display().to_string(), |_| None, PART_BYTES).unwrap();
     assert_eq!(said, "1 object(s) uploaded");
     assert!(off.join("revlog").join(&name).exists() && dir.join("sent/revlog").join(&name).exists() && !dir.join("queue/revlog").join(&name).exists());
     assert_eq!(std::fs::read_to_string(dir.join("shipped")).unwrap(), "1");
+}
+
+/// A fake curl that records the URL of every PUT and accepts it. No process is started.
+#[derive(Default)]
+struct RecordingCurl(std::sync::Mutex<Vec<String>>);
+
+impl runtime::ports::Proc for RecordingCurl {
+    fn run(&self, spec: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
+        assert_eq!(spec.prog, "curl");
+        self.0.lock().unwrap().push(spec.args.last().cloned().unwrap_or_default());
+        Ok(runtime::ports::ProcOutput { code: Some(0), stdout: Vec::new(), stderr: Vec::new() })
+    }
+}
+
+/// systemd's `EnvironmentFile=` grammar as far as a credentials file uses it.
+fn read_env_file(p: &std::path::Path) -> std::collections::HashMap<String, String> {
+    std::fs::read_to_string(p)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().trim_matches('"').to_string()))
+        .collect()
+}
+
+const PART_BYTES: u64 = 8 << 20;
+
+#[test_id(t4okypm)]
+#[test]
+fn the_runtime_units_environment_files_let_the_drain_sign_an_s3_upload() {
+    let run = TempDir::new("lc-ship-unit-env");
+    let home = run.path().join("home");
+    std::fs::create_dir_all(home.join(".config")).unwrap();
+    std::fs::write(
+        home.join(".config/lc-backup.env"),
+        "# the backup's write-only key\nAWS_ACCESS_KEY_ID=AKFAKE\nAWS_SECRET_ACCESS_KEY=\"fake\"\nAWS_DEFAULT_REGION=us-test-1\nAWS_ENDPOINT_URL_S3=http://s3.test\n",
+    )
+    .unwrap();
+    let files: Vec<std::path::PathBuf> = include_str!("../../../systemd/spira-runtime.service")
+        .lines()
+        .filter_map(|l| l.strip_prefix("EnvironmentFile="))
+        .map(|f| std::path::PathBuf::from(f.trim_start_matches('-').replace("%h", &home.display().to_string())))
+        .collect();
+    assert!(!files.is_empty(), "spira-runtime.service loads no EnvironmentFile");
+    let env: std::collections::HashMap<String, String> = files.iter().flat_map(|f| read_env_file(f)).collect();
+
+    let (dir, name) = (run.path().join("ship"), state_store_sqlite::durability::revlog::run_name(1, 1));
+    std::fs::create_dir_all(dir.join("queue/revlog")).unwrap();
+    std::fs::write(dir.join("queue/revlog").join(&name), "x").unwrap();
+    let curl = std::sync::Arc::new(RecordingCurl::default());
+    let said = task::drain(curl.clone(), "s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), PART_BYTES).unwrap();
+    assert_eq!(said, "1 object(s) uploaded");
+    let urls = curl.0.lock().unwrap().clone();
+    assert!(urls.iter().any(|u| u.starts_with("http://s3.test/bucket/lc/revlog/")), "{urls:?}");
+    assert!(dir.join("sent/revlog").join(&name).exists() && !dir.join("queue/revlog").join(&name).exists());
+
+    let refused = task::drain(curl, "s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), 1).unwrap_err();
+    assert!(refused.contains("SPIRA_LC_BACKUP_PART_BYTES"), "{refused}");
+}
+
+#[test_id(ti9vbp7)]
+#[test]
+fn check_credentials_refuses_an_acting_s3_destination_without_the_key_and_names_it() {
+    use runtime::Mode;
+    let none = |_: &str| None::<String>;
+    let err = task::check_credentials(Mode::Act, "s3://b/p/", none).unwrap_err();
+    assert!(err.starts_with("lc.ship: ") && err.contains("AWS_ACCESS_KEY_ID"), "{err}");
+    assert!(task::check_credentials(Mode::Observe, "s3://b/p/", none).is_ok());
+    assert!(task::check_credentials(Mode::Act, "", none).is_ok());
+    assert!(task::check_credentials(Mode::Act, "file:///tmp/off", none).is_ok());
+    assert!(task::check_credentials(Mode::Act, "ftp://x", none).is_err());
+    let full = |k: &str| match k {
+        "AWS_ACCESS_KEY_ID" | "AWS_SECRET_ACCESS_KEY" => Some("v".to_string()),
+        "AWS_DEFAULT_REGION" => Some("r".to_string()),
+        _ => None,
+    };
+    assert!(task::check_credentials(Mode::Act, "s3://b/p/", full).is_ok());
 }

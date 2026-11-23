@@ -75,6 +75,8 @@ fn run(check_only: bool) -> Result<(), Stamped> {
     check()?;
     let settings = Settings::load()?;
     if check_only {
+        let mode = settings.task_modes.get(spira_runtime::tasks::c::lc_ship::NAME).copied().unwrap_or(runtime::Mode::Observe);
+        spira_runtime::tasks::c::lc_ship::check_credentials(mode, &spira_config::process::cfg(spira_runtime::tasks::c::lc_ship::URL_KEY)?, |k| std::env::var(k).ok())?;
         println!("ok {}", settings.hash());
         return Ok(());
     }
