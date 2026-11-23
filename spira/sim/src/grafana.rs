@@ -62,13 +62,17 @@ fn json(r: &Reply, what: &str, field: &str) -> Result<serde_json::Value, String>
         .ok_or_else(|| format!("grafana {what}: no {field} in the answer"))
 }
 
+fn encode(text: &str) -> String {
+    text.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
 fn already_exists(r: &Reply) -> bool {
     r.status == 400 && serde_json::from_str::<serde_json::Value>(&r.body).ok().is_some_and(|v| v.get("messageId").and_then(|m| m.as_str()) == Some("serviceaccounts.ErrAlreadyExists"))
 }
 
 /// Deletes the account a dead world of this name left, found by exact name among the search hits.
 fn delete_leftover(http: &dyn Http, base: &str, admin: &str, name: &str) -> Result<(), String> {
-    let found = http.call("GET", &format!("{base}/api/serviceaccounts/search?query={name}"), Some(admin), None, None)?;
+    let found = http.call("GET", &format!("{base}/api/serviceaccounts/search?query={}", encode(name)), Some(admin), None, None)?;
     let list = json(&found, "search accounts", "serviceAccounts")?;
     let id = list
         .as_array()
@@ -371,5 +375,29 @@ mod tests {
         let err = provision(&refusing, &world(&t, "w"), "http://g", "admin:pw").unwrap_err();
         assert!(err.contains("nope"), "{err}");
         assert_eq!(g.accounts.borrow().len(), 1);
+    }
+
+    #[test_id(tp7wgh3)]
+    #[test]
+    fn a_leftover_that_cannot_be_replaced_is_the_error() {
+        const EXISTS: (u16, &str) = (400, r#"{"messageId":"serviceaccounts.ErrAlreadyExists","message":"service account already exists"}"#);
+        let t = testkit::TempDir::new("pilgrim-grafana-stuck");
+        let g = FakeGrafana::default();
+        g.call("POST", "http://g/api/serviceaccounts", Some("admin:pw"), None, Some(r#"{"name":"pilgrim-w"}"#)).unwrap();
+        let unfound = Refusing { inner: &g, method: "GET", suffix: "query=pilgrim-w", answer: (200, r#"{"serviceAccounts":[{"id":1,"name":"pilgrim-w-extra"}]}"#) };
+        assert!(provision(&unfound, &world(&t, "w"), "http://g", "admin:pw").is_err());
+        let search = Refusing { inner: &g, method: "GET", suffix: "query=pilgrim-w", answer: (500, "search down") };
+        assert!(provision(&search, &world(&t, "w"), "http://g", "admin:pw").unwrap_err().contains("search down"));
+        let delete = Refusing { inner: &g, method: "DELETE", suffix: "/1", answer: (403, r#"{"message":"no delete"}"#) }; // not a path: an API route
+        assert!(provision(&delete, &world(&t, "w"), "http://g", "admin:pw").unwrap_err().contains("no delete"));
+        assert_eq!(g.accounts.borrow().len(), 1, "nothing was deleted");
+        let again = Refusing { inner: &g, method: "POST", suffix: "/api/serviceaccounts", answer: EXISTS }; // not a path: an API route
+        assert!(provision(&again, &world(&t, "w"), "http://g", "admin:pw").unwrap_err().contains("already exists"));
+    }
+
+    #[test_id(ta8fjj0)]
+    #[test]
+    fn an_account_name_is_percent_encoded_into_the_search_query() {
+        assert_eq!(encode("pilgrim-a b&c#d+e.f_g~h"), "pilgrim-a%20b%26c%23d%2Be.f_g~h");
     }
 }
