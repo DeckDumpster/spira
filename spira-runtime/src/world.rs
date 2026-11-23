@@ -2156,7 +2156,7 @@ mod margin_deliver_tests {
         let dir = testkit::TempDir::new("margin-deliver");
         let fake = FakeMargin::default();
         let text: String = (1..=12).map(|n| format!("line {n}\n")).collect();
-        let col = fake.post_collection("Review of a", "cover", &[Doc { path: "src/a.rs".into(), kind: "code".into(), text }]).unwrap();
+        let col = fake.post_collection("Review of a", "cover", &[Doc { path: "src/a.rs".into(), kind: "code".into(), text }], None).unwrap();
         let anchor = Anchor { path: "src/a.rs".into(), first: 6, last: 7 };
         let thread = fake.his_thread(&col.id, anchor, "why is this pair swapped?", 1_795_000_000_000);
         if review {

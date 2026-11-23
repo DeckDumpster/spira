@@ -6,6 +6,17 @@ use spira_config::process::cfg_parse;
 use spira_config::repos::{Column, Registry};
 use std::collections::BTreeMap;
 
+fn source_url(root: &str) -> Result<String, String> {
+    let remote = spira_config::process::cfg("SPIRA_PUBLISH_REMOTE").map_err(|e| format!("SPIRA_PUBLISH_REMOTE: {e}"))?;
+    let out = std::process::Command::new("git").args(["-C", root, "remote", "get-url", &remote]).output().map_err(|e| format!("git remote get-url {remote}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("remote {remote:?} (SPIRA_PUBLISH_REMOTE) has no URL in {root}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let url = String::from_utf8_lossy(&out.stdout);
+    let slug = gh_intake::model::github_slug(&url).ok_or_else(|| format!("remote {remote:?} (SPIRA_PUBLISH_REMOTE) is not a github.com URL: {}", url.trim()))?;
+    Ok(format!("https://github.com/{slug}"))
+}
+
 fn build_ports() -> Result<Ports, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let home = spira_config::resolve::locate_home_for_process()?;
@@ -46,6 +57,7 @@ fn build_ports() -> Result<Ports, String> {
         },
         findings_dir: key(cr::findings::DIR_KEY),
         committer: Box::new(cr::ports::GitCommitter),
+        source_url: source_url(&root),
         source_repo: repo.clone(),
         stdin,
         clock, tree: Box::new(tree), beads: Box::new(cr::ports::LcBeads { incident_label: key("SPIRA_INCIDENT_LABEL") }), registry: Box::new(cr::ports::SqliteRegistry { path: registry_path }), config,

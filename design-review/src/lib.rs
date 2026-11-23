@@ -182,7 +182,7 @@ fn post(page: Option<&String>, ports: &Ports) -> Outcome {
                 return refuse(2, "the cover note is empty; give it on stdin");
             }
             let doc = Doc { path: page.clone(), kind: "prose".into(), text };
-            let c = match ports.margin.post_collection(&title_of(page, &doc.text), &ports.stdin, &[doc]) {
+            let c = match ports.margin.post_collection(&title_of(page, &doc.text), &ports.stdin, &[doc], None) {
                 Ok(c) => c,
                 Err(e) => return refuse(1, &e),
             };

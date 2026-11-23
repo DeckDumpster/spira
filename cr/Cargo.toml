@@ -19,6 +19,7 @@ integration = ["margin-client/integration", "spira-store/integration", "test-reg
 
 [dependencies]
 regex = "1"
+gh-intake = { path = "../gh-intake" }
 margin-client = { path = "../margin-client" }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }

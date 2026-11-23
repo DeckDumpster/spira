@@ -115,7 +115,7 @@ fn a_reply_names_a_thread_of_this_page_and_a_posted_page_and_help_lists_every_ve
     assert_eq!(go(&f, &["reply", PAGE], "a").code, 2);
     assert_eq!(go(&f, &["close", PAGE], "").code, 2);
     let docs = ["a", "b"].map(|n| Doc { path: format!("wiki/projects/p/designs/{n}.md"), kind: "prose".into(), text: n.into() });
-    f.fake.post_collection("two", "c", &docs).unwrap();
+    f.fake.post_collection("two", "c", &docs, None).unwrap();
     let r = Record { page: PAGE.into(), collection: "col2".into(), document: "col2-d2".into(), version: 1, url: "u".into(), sha256: "s".into(), state: "open".into(), posted_at_ms: 1 };
     save(&f.dir.path().join("run"), &r).unwrap();
     let other = f.fake.his_thread("col2", margin_client::Anchor { path: docs[0].path.clone(), first: 1, last: 1 }, "q", 1);

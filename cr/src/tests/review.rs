@@ -190,7 +190,7 @@ fn seal_cover_note_carries_facts_and_no_critique() {
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
     let note = w.cover();
-    for want in ["alpha, beta", "demo/src/store/tests.rs", "demo/tests/it.rs", "Commits in the last 60 days: 2", "c0ffee"] {
+    for want in ["alpha, beta", "demo/src/store/tests.rs", "demo/tests/it.rs", "Commits in the last 60 days: 2"] {
         assert!(note.contains(want), "missing {want:?} in:\n{note}");
     }
     assert!(!note.contains("first look"), "the sealed review must not reach the cover note");
@@ -596,10 +596,34 @@ fn seal_puts_the_cover_note_in_the_collection_and_no_pull_request_wording() {
         assert!(body.contains(h), "missing {h:?} in:\n{body}");
     }
     let sealed = std::fs::read(w.sealed_path(1)).unwrap();
-    for want in [DOES, LOOK, "c0ffee", &format!("sealed-sha256: {}", sha256(&sealed))] {
+    for want in [DOES, LOOK, &format!("sealed-sha256: {}", sha256(&sealed))] {
         assert!(body.contains(want), "missing {want:?} in:\n{body}");
     }
+    assert!(!body.contains("Source "), "{body}");
     assert!(!body.contains("Add single comment") && !body.contains("pull request"), "{body}");
+}
+
+#[test_id(tsrcpst)]
+#[test]
+fn seal_posts_the_source_url_and_commit_with_the_collection() {
+    let mut w = world();
+    assert_eq!(w.open_and_seal().code, 0);
+    assert_eq!(w.margin.source_posted(0), Some(margin_client::Source { repository: crate::tests::SOURCE_URL.into(), commit: "c0ffee".into() }));
+}
+
+#[test_id(tsrcerr)]
+#[test]
+fn seal_without_a_source_url_exits_one_with_its_text_posts_nothing_and_stays_staged() {
+    let mut w = world();
+    assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "3"]).code, 0);
+    w.ports.source_url = Err("remote \"gone\" (SPIRA_PUBLISH_REMOTE) has no URL".into());
+    let c = w.comments(1);
+    let o = w.seal_with("001", &c);
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("remote \"gone\" (SPIRA_PUBLISH_REMOTE)"), "{}", o.stderr);
+    assert_eq!(w.margin.collections_posted(), 0);
+    assert_eq!(record::load(w.run.path(), 1).unwrap().state, State::Staged);
+    assert!(!w.sealed_path(1).exists());
 }
 
 #[test_id(tnz1lbs)]

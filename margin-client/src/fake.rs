@@ -1,6 +1,6 @@
 //! An in-memory reader that records every post. Cloning shares the state, so a test keeps a handle.
 
-use crate::{Anchor, Changes, Collection, CollectionInfo, Comment, CommentRef, Doc, DocRef, Margin, Thread, READER};
+use crate::{Anchor, Changes, Collection, CollectionInfo, Comment, CommentRef, Doc, DocRef, Margin, Source, Thread, READER};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -19,6 +19,7 @@ struct Stored {
     cover: String,
     title: String,
     docs: Vec<Doc>,
+    source: Option<Source>,
 }
 
 #[derive(Default)]
@@ -71,6 +72,10 @@ impl FakeMargin {
         let c = &s.collections[n];
         (c.title.clone(), c.cover.clone(), c.docs.clone())
     }
+    /// The source the collection posted `n`th carried, if any.
+    pub fn source_posted(&self, n: usize) -> Option<Source> {
+        self.0.borrow().collections[n].source.clone()
+    }
     pub fn comments_posted(&self) -> Vec<PostedComment> {
         self.0.borrow().comments.clone()
     }
@@ -122,14 +127,14 @@ impl FakeMargin {
 }
 
 impl Margin for FakeMargin {
-    fn post_collection(&self, title: &str, cover: &str, docs: &[Doc]) -> Result<Collection, String> {
+    fn post_collection(&self, title: &str, cover: &str, docs: &[Doc], source: Option<&Source>) -> Result<Collection, String> {
         self.gate("POST /api/collections")?;
         let mut s = self.0.borrow_mut();
         let id = format!("col{}", s.collections.len() + 1);
         for (i, d) in docs.iter().enumerate() {
             s.texts.insert((State::doc_id(&id, i), 1), d.text.clone());
         }
-        s.collections.push(Stored { id: id.clone(), cover: cover.to_string(), title: title.to_string(), docs: docs.to_vec() });
+        s.collections.push(Stored { id: id.clone(), cover: cover.to_string(), title: title.to_string(), docs: docs.to_vec(), source: source.cloned() });
         Ok(Collection { url: format!("{BASE}/c/{id}"), id })
     }
 

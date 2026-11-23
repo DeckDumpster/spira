@@ -226,6 +226,8 @@ pub struct Ports {
     pub findings_dir: String,
     pub committer: Box<dyn Committer>,
     pub source_repo: String,
+    /// The home repository's web URL, or why none could be found; `seal` refuses on the error.
+    pub source_url: Result<String, String>,
     /// Standard input, read by `main` for the verb that takes it.
     pub stdin: String,
     pub clock: Box<dyn Clock>,
