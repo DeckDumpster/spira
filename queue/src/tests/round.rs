@@ -10638,6 +10638,72 @@ fn an_integration_red_hands_the_mender_the_integration_output_and_the_failed_tes
     assert!(out.contains(&format!("FAIL {test}")) && out.contains(&format!("integration-tests failed: {test}")), "{out}");
 }
 
+fn long_running_integration_red(t: &T, batch: &str) -> std::path::PathBuf {
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    fs::create_dir_all(&results).unwrap();
+    fs::write(results.join("integration-tests.out"), "INTEGRATION-TESTS-RED: TIMEOUT binary=scratch_gate\nrunning\nFAIL later_poll ran over 60 s, then passed\n").unwrap();
+    fs::write(
+        results.join("integration.json"),
+        r#"{"stage":"integration-tests","verdict":"red","failed":["later_poll"],"long_running":[{"test":"later_poll","over_secs":60,"end":"passed"}],"cause":"x","secs":3}"#,
+    )
+    .unwrap();
+    results
+}
+
+#[test_id(tb75qhf)]
+#[test]
+fn a_round_red_by_a_long_running_test_logs_the_test_how_long_it_ran_and_how_it_ended() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![
+        ("integration-tests.out".into(), "INTEGRATION-TESTS-RED: TIMEOUT binary=scratch_gate\nFAIL later_poll ran over 60 s, then passed\n".into()),
+        (
+            "integration.json".into(),
+            r#"{"stage":"integration-tests","verdict":"red","ran_before_suites":false,"failed":["later_poll"],"long_running":[{"test":"later_poll","over_secs":60,"end":"passed"}],"cause":"x","secs":3}"#.into(),
+        ),
+    ];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
+    let log = t.landing_log();
+    let red = log.lines().find(|l| l.starts_with("QUEUE ROUND-RED ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(red.ends_with("reason=later_poll ran over 60 s, then passed"), "{red}");
+    assert!(t.out().contains("unit-tests: later_poll ran over 60 s, then passed"), "{}", t.out());
+}
+
+#[test_id(tnzdc2b)]
+#[test]
+fn a_mend_item_for_a_long_running_test_names_it_first_and_is_not_a_no_failure_found() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    let results = long_running_integration_red(&t, &batch);
+    fs::write(results.join("integration-tests.out"), "running\nnothing matched\n").unwrap();
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "unit-tests"]), 0, "{}", t.err());
+    let spec = fs::read_dir(t.lib.s.run.join("rounds")).unwrap().flatten().find(|e| e.file_name().to_string_lossy().contains(".spec-1-unit-tests.json")).expect("a failure spec");
+    let spec: serde_json::Value = serde_json::from_str(&fs::read_to_string(spec.path()).unwrap()).unwrap();
+    let out = spec["output"].as_str().unwrap();
+    assert!(out.starts_with("later_poll ran over 60 s, then passed"), "{out}");
+    assert!(!out.contains("NO_FAILURE_FOUND"), "{out}");
+}
+
+#[test_id(t12f194)]
+#[test]
+fn a_kept_unit_tests_evidence_names_the_long_running_test_and_how_it_ended() {
+    let t = round_world();
+    t.env.resolved.borrow_mut().insert("SPIRA_SENDBACK_KEEP_DAYS".into(), "7".into());
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let results = long_running_integration_red(&t, &batch);
+    let ev = kept_evidence_after_eject(&t, &batch, "unit-tests");
+    fs::remove_dir_all(&results).ok();
+    assert!(fs::read_to_string(&ev).unwrap().contains("later_poll ran over 60 s, then passed"));
+}
+
 #[test_id(tfpoukr)]
 #[test]
 fn an_ejects_red_evidence_is_kept_where_the_next_pass_start_does_not_wipe_it() {

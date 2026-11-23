@@ -2744,6 +2744,13 @@ pub fn red_test_phases(results: &Path) -> Vec<String> {
 fn test_phase_evidence(results: &Path) -> Vec<String> {
     let mut lines = Vec::new();
     for (stage, v) in red_test_results(results) {
+        for l in v["long_running"].as_array().into_iter().flatten() {
+            let end = match l["end"].as_str() {
+                Some("unfinished") => "did not finish".to_string(),
+                e => format!("then {}", e.unwrap_or("?")),
+            };
+            lines.push(format!("{} ran over {} s, {end}", l["test"].as_str().unwrap_or("?"), l["over_secs"]));
+        }
         let names: Vec<&str> = v["failed"].as_array().into_iter().flatten().filter_map(|n| n.as_str()).collect();
         if !names.is_empty() {
             lines.push(format!("{stage} failed: {}", names.join(", ")));
@@ -5774,6 +5781,21 @@ mod fail_line_tests {
             );
             assert!(!text.contains("later"), "{text}");
         }
+    }
+
+    #[test_id(tpwujbg)]
+    #[test]
+    fn a_red_unit_phase_with_a_long_running_test_keeps_how_long_it_ran_and_how_it_ended() {
+        let run = testkit::TempDir::new("batcher-cut-long-running");
+        let results = run.path().join("rounds").join("b1.results");
+        fs::create_dir_all(&results).unwrap();
+        fs::write(
+            results.join("integration.json"),
+            r#"{"stage":"integration-tests","verdict":"red","failed":["a::slow"],"long_running":[{"test":"a::slow","over_secs":60,"end":"passed"},{"test":"a::lost","over_secs":120,"end":"unfinished"}]}"#,
+        )
+        .unwrap();
+        let why = keep_red_evidence(run.path(), "b1", "red", &["unit-tests".to_string()], Ok(7));
+        assert!(why.contains("a::slow ran over 60 s, then passed") && why.contains("a::lost ran over 120 s, did not finish"), "{why}");
     }
 
     #[test_id(tbucgnt)]
