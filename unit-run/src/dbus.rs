@@ -728,4 +728,26 @@ mod tests {
         let probe = c.try_clone_fd().map(UnixStream::from).unwrap();
         assert_eq!(probe.read_timeout().unwrap(), c.sock.read_timeout().unwrap(), "one description, so the zero wait restored blocking mode");
     }
+
+    #[test_id(tzkj9lu)]
+    #[test]
+    fn a_signal_trailing_a_reply_in_one_read_is_announced_and_kept() {
+        let (a, mut b) = UnixStream::pair().unwrap();
+        let mut c = Conn::over(a);
+        let (announced, heard) = std::sync::mpsc::channel();
+        c.on_pending(Arc::new(move || announced.send(()).unwrap()));
+        let peer = std::thread::spawn(move || {
+            let mut head = [0u8; 16];
+            b.read_exact(&mut head).unwrap();
+            let total = message_len(&head).unwrap().unwrap();
+            b.read_exact(&mut vec![0u8; total - 16]).unwrap();
+            let mut out = encode_empty_return(9, 1);
+            out.extend(encode_signal(8, "/p", "i", "Tail", "", &[]));
+            b.write_all(&out).unwrap();
+        });
+        c.call_body("d", "/p", "i", "M", "", &[]).unwrap();
+        peer.join().unwrap();
+        assert!(heard.try_recv().is_ok(), "the socket no longer announces the trailing signal, so the call must");
+        assert_eq!(c.next_signal(Duration::ZERO).unwrap().and_then(|m| m.member).as_deref(), Some("Tail"));
+    }
 }

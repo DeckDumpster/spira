@@ -119,3 +119,59 @@ async fn the_source_runs_on_the_scheduler_and_no_thread_carries_its_name() {
         h.await.unwrap();
     }
 }
+
+/// A backend with no wake whose first drain fails and whose later ones report one end.
+struct Flaky {
+    calls: std::sync::atomic::AtomicUsize,
+    wake_errors: bool,
+}
+
+impl runtime::units::UnitCompletions for Flaky {
+    fn ran(&self) -> runtime::Result<Vec<UnitRan>> {
+        Ok(vec![])
+    }
+
+    fn ended(&self) -> runtime::Result<Vec<(UnitRan, runtime::units::RanOutput)>> {
+        match self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => Err(runtime::RuntimeError::new("planted fault")),
+            1 => Ok(vec![(UnitRan { handle: UnitHandle::named("after.service"), exit: runtime::units::Exit::Code(0), duration_ms: 0 }, Default::default())]),
+            _ => Ok(vec![]),
+        }
+    }
+
+    fn wake(&self) -> runtime::Result<Option<runtime::units::Wake>> {
+        if self.wake_errors {
+            Err(runtime::RuntimeError::new("planted: no wake"))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+async fn failed_drain_is_retried_and_each_end_arrives_once(wake_errors: bool) {
+    let clock: Arc<dyn Clock> = Arc::new(VirtualClock::new(0));
+    let backend = Arc::new(Flaky { calls: Default::default(), wake_errors });
+    let (tx, mut rx) = mpsc::channel(8);
+    let mut sources = Sources::default();
+    sources.register(Box::new(UnitRanSource::polled("unit.ran", backend, clock, Duration::from_millis(5)))).unwrap();
+    let handles = sources.start(tx);
+    assert_eq!(next(&mut rx).await.handle, UnitHandle::named("after.service"));
+    drop(rx);
+    for h in handles {
+        h.await.unwrap();
+    }
+}
+
+
+#[test_id(ta6voxj)]
+#[tokio::test]
+async fn a_backend_with_no_wake_is_drained_every_interval_and_a_failed_drain_is_retried() {
+    failed_drain_is_retried_and_each_end_arrives_once(false).await;
+}
+
+
+#[test_id(tcrwlrk)]
+#[tokio::test]
+async fn a_wake_that_cannot_be_had_falls_back_to_draining_every_interval() {
+    failed_drain_is_retried_and_each_end_arrives_once(true).await;
+}
