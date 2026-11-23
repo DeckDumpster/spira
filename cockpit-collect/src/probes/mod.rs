@@ -1471,6 +1471,11 @@ pub fn statute_keys(cfg: &Cfg) -> Kv {
     let page_n: Option<usize> = io::git(Path::new(&wiki), &["show", "HEAD:wiki/notes/common-law.md"])
         .map(|s| s.lines().filter(|l| l.starts_with("### ")).count());
 
+    statute_skew_keys(db_n, page_n)
+}
+
+fn statute_skew_keys(db_n: Option<usize>, page_n: Option<usize>) -> Kv {
+    let mut out = Kv::new();
     push(&mut out, "SP_STATUTE_DB_N", db_n.map(|n| n.to_string()).unwrap_or_else(|| "?".to_string()));
     push(&mut out, "SP_STATUTE_PAGE_N", page_n.map(|n| n.to_string()).unwrap_or_else(|| "?".to_string()));
 
@@ -1937,6 +1942,31 @@ mod tests {
         let pf = dir.join("x.pid");
         std::fs::write(&pf, "999999999").unwrap();
         assert!(!dwarf_alive(&pf), "a pid that does not exist is never alive");
+    }
+
+    fn skew_of(kv: &Kv) -> (&str, &str, &str) {
+        let get = |k: &str| kv.iter().find(|(key, _)| *key == k).unwrap().1.as_str();
+        (get("SP_STATUTE_DB_N"), get("SP_STATUTE_PAGE_N"), get("SP_STATUTE_SKEW"))
+    }
+
+    // covers: UC-cockpit-observability-18
+    #[test_id(tyy787w)]
+    #[test]
+    fn statute_keys_report_unknown_without_a_wiki() {
+        let kv = statute_keys(&Cfg { wiki: String::new(), ..Cfg::default() });
+        assert_eq!(skew_of(&kv), ("?", "?", "?"));
+    }
+
+    // covers: UC-cockpit-observability-18
+    #[test_id(tywr6va)]
+    #[test]
+    fn statute_skew_is_a_mismatch_when_the_book_is_under_half_the_page_and_ok_otherwise() {
+        assert_eq!(skew_of(&statute_skew_keys(Some(3), Some(10))), ("3", "10", "MISMATCH:DB=3,PAGE=10"));
+        assert_eq!(skew_of(&statute_skew_keys(Some(0), Some(10))).2, "MISMATCH:DB=0,PAGE=10");
+        assert_eq!(skew_of(&statute_skew_keys(Some(5), Some(10))).2, "OK");
+        assert_eq!(skew_of(&statute_skew_keys(Some(11), Some(10))), ("11", "10", "OK"));
+        assert_eq!(skew_of(&statute_skew_keys(None, Some(10))).2, "?");
+        assert_eq!(skew_of(&statute_skew_keys(Some(4), None)), ("4", "?", "?"));
     }
 }
 

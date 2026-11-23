@@ -514,6 +514,20 @@ pub(crate) mod tests {
         Forge { api, token: "t".into(), ..Forge::default() }
     }
 
+    // covers: UC-operator-channel-38
+    #[test_id(tj88cmg)]
+    #[test]
+    fn a_branch_is_a_stray_only_when_it_is_a_spira_branch_ahead_of_base_with_no_open_pr() {
+        let branches = r#"[{"name":"main"},{"name":"spira/stray"},{"name":"spira/merged"},{"name":"spira/wip"},{"name":"feature/x"}]"#;
+        let ahead = |n: u64| answer("200 OK", "", &format!(r#"{{"ahead_by":{n}}}"#));
+        let (api, seen) = stub(vec![answer("200 OK", "", branches), ahead(2), ahead(0), ahead(1)]);
+        let out = forge_at(api).stray_branches("o/r", "main", &["spira/wip".to_string()]);
+        assert_eq!(out, Some(vec!["spira/stray".to_string()]));
+        let seen = seen.join().unwrap();
+        assert!(seen[1].contains("/compare/main...spira/stray"), "{}", seen[1]); // not a path: request URL path
+        assert_eq!(seen.len(), 4, "only spira/* branches are compared");
+    }
+
     fn runs_of(ids: &[u64]) -> String {
         let rows: Vec<String> = ids.iter().map(|i| format!(r#"{{"id":{i},"status":"in_progress"}}"#)).collect();
         format!(r#"{{"workflow_runs":[{}]}}"#, rows.join(","))

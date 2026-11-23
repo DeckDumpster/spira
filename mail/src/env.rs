@@ -114,8 +114,7 @@ impl Env {
 /// location is the equivalent). Sp-ooh1k's own regression: `SPIRA_MAIL_KINDS` (and the
 /// runes-persona check in `sendmail::reply_mailbox`) silently resolved relative to `.`
 /// instead, so `--kind question`/`event`/etc. refused as "unknown kind" the moment a caller
-/// did not also happen to export `SPIRA_HOME` — found by `test-pr-notify.sh`'s `env -i`
-/// fixture, the one case that does not.
+/// did not also happen to export `SPIRA_HOME` — found by a caller running under `env -i`.
 pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
     if let Some(h) = env_home.filter(|h| !h.is_empty()) {
         return Some(PathBuf::from(h));

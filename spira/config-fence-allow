@@ -58,7 +58,6 @@ spira/test-landing-pass.sh
 spira/test-landing-pr.sh
 spira/testlib/gate-fixture.sh
 spira/testlib.sh
-spira/test-pr-notify.sh
 spira/tsd-ingest.sh
 
 # NAMED EXCEPTION CLASS (not cutover debt): a test whose job is to police the spira-config
