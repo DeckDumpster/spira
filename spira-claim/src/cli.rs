@@ -650,7 +650,7 @@ fn stack_over(a: &Args, env: &mut Env, st: &Store, bead: String, stack_max: u32)
         Err(e) => return Outcome::cannot_tell(format!("{bead}: blocker records: {e}")),
     };
     let mut one = vec![cand.clone()];
-    let carried = match retain_uncarried(&mut one, &mut lc, a.get("--lifecycle").is_none().then_some(&st), &env.config.queue_dir) {
+    let carried = match retain_uncarried(&mut one, &mut lc, a.get("--lifecycle").is_none().then_some(st), &env.config.queue_dir) {
         Ok(d) => d,
         Err(e) => return Outcome::cannot_tell(format!("{bead}: integrations: {e}")),
     };
