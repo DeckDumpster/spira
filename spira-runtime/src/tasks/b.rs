@@ -99,7 +99,7 @@ pub static TASKS: &[Task] = &[
     Task { name: reconcile_section::NAME, reads: Reads::Polled(&["lifecycle/"]), plane: runtime::Plane::Work, signal: &[], boot: ReconcileSection::boot, cadence_ms: cadence_ms::<ReconcileSection>, effects: reconcile_section::EFFECTS, runners: &[(reconcile_section::PUBLISH, |e, _, _| reconcile_section::publish(&lc(e)))], keys: &[reconcile_section::KEYS], build: build::<ReconcileSection> },
     Task {
         name: reconcile_content::NAME,
-        reads: Reads::Polled(&["events/", "planning/"]),
+        reads: Reads::Polled(&["lifecycle/", "planning/"]),
         plane: runtime::Plane::Work,
         signal: &[],
         boot: ReconcileContent::boot,

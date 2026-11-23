@@ -1825,6 +1825,19 @@ mod tests {
         assert_eq!((wake_runs(&e, "a", "signal"), wake_runs(&e, "b", "signal"), wake_runs(&e, "c", "signal")), (1, 0, 1));
     }
 
+    #[test_id(th6rul1)]
+    #[test]
+    fn a_lifecycle_write_wakes_a_row_that_reads_only_lifecycle_and_an_audit_key_does_not() {
+        let (clock, changes) = quiet();
+        let mut e = started(vec![woken("only", &["lifecycle/"], false, 0, &[], false)], &clock, &changes);
+        changed(&mut e, "c1", &["events/00000000000000000042", "runtime/state/t/k"], false);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "only", "signal"), 0);
+        changed(&mut e, "c2", &["lifecycle/sp-x"], false);
+        e.run_until_idle().unwrap();
+        assert_eq!(wake_runs(&e, "only", "signal"), 1);
+    }
+
     #[test_id(t71q1wh)]
     #[test]
     fn ten_writes_in_one_turn_wake_a_declaring_task_once() {

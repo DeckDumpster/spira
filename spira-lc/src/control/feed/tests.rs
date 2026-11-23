@@ -738,6 +738,37 @@ fn a_watch_of_several_prefixes_delivers_each_and_nothing_else<B: Backend>(s: &St
     assert!(neither["progress_rev"].is_u64(), "no event under either prefix: {neither}");
 }
 
+/// The scheduler's `journal turn` writes `runtime/` keys, and every audited txn appends an
+/// `events/` key: a watch that names the scheduler's prefixes without `events/` is not answered by it.
+fn a_journal_turn_does_not_answer_a_watch_that_leaves_out_events<B: Backend>(s: &Store<B>) {
+    use crate::control::journal::{StateRow, Turn};
+    const SCHEDULER: [&str; 13] = [
+        "batches/", "lifecycle/", "readiness/", "planning/", "history/", "gates/", "gh-closeout/", "intents/", "knobs/", "mendings/",
+        "telemetry/sections/", "work-request-index/", "work-requests/",
+    ];
+    create(s, "sp-a");
+    let from = s.contract().head().unwrap();
+    let state = vec![StateRow { task: "t".into(), skey: "k".into(), value: "v".into(), at: 9 }];
+    s.journal_turn(&Turn { state, ..Default::default() }, "runtime").unwrap();
+    let head = s.contract().head().unwrap();
+    assert!(head > from);
+    let quiet = watch_rows(s, &SCHEDULER, from);
+    assert_eq!(quiet["progress_rev"].as_u64(), Some(head), "{quiet}");
+    assert!(quiet.get("events").is_none_or(|e| e.as_array().is_some_and(Vec::is_empty)), "{quiet}");
+    let mut with_events = SCHEDULER.to_vec();
+    with_events.push("events/");
+    let loud = watch_rows(s, &with_events, from);
+    let seen: Vec<&str> = loud["events"].as_array().unwrap().iter().map(|e| e["key"].as_str().unwrap()).collect();
+    assert_eq!(seen, [state_store::events_key(head)], "{loud}");
+}
+
+#[test_id(tlsq9zt)]
+#[test]
+fn a_journal_turn_does_not_answer_the_schedulers_watch_on_either_backend() {
+    on_mem(a_journal_turn_does_not_answer_a_watch_that_leaves_out_events);
+    on_sqlite(a_journal_turn_does_not_answer_a_watch_that_leaves_out_events);
+}
+
 fn store_usage_of_a_backend_that_keeps_no_history_still_pages_by_prefix<B: Backend>(s: &Store<B>) {
     create(s, "sp-a");
     let (code, out) = verbs::run(s, &["store-usage".to_string()]);

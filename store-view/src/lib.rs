@@ -572,6 +572,13 @@ impl Projection {
         polled
     }
 
+    /// The prefixes the watch names: the fixed five, then those added by [`Self::with_prefixes`].
+    pub fn watch_prefixes(&self) -> Vec<&str> {
+        let mut all = vec![BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY];
+        all.extend(self.extra.iter().map(String::as_str));
+        all
+    }
+
     fn poll_once(&self) -> Result<Polled, LcError> {
         let held = {
             let s = self.lock();
@@ -581,8 +588,8 @@ impl Projection {
         let (from_s, wait) = (from.to_string(), WATCH_HOLD_MS.to_string());
         // The prefixes this view applies or holds answers under, as one watch (over-broad-scopes #10):
         // a watch of `""` woke every holder on every event, telemetry and lock write it then discarded.
-        let mut argv = vec!["watch", BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY];
-        argv.extend(self.extra.iter().map(String::as_str));
+        let mut argv = vec!["watch"];
+        argv.extend(self.watch_prefixes());
         argv.extend(["--from-rev", &from_s, "--wait-ms", &wait, "--rows"]);
         let w = json_of(&self.client.answer(&argv)?, "watch")?;
         if let Some(p) = w["progress_rev"].as_u64() {

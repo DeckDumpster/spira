@@ -42,7 +42,11 @@ impl Changes for ChangeTable {
 /// here so the first tick reads; a store that does not answer yet is the watch's to load once it
 /// does, and readers refuse until then. The watch itself is the `store.changed` source's.
 pub fn start(lc_socket: &Path) -> Result<(Arc<Projection>, Arc<ChangeTable>), String> {
-    install(Projection::configured(LcClient::socket(lc_socket))?.with_prefixes(&crate::tasks::watched_prefixes()))
+    install(scheduler_projection(LcClient::socket(lc_socket))?)
+}
+
+fn scheduler_projection(client: LcClient) -> Result<Projection, String> {
+    Ok(Projection::configured(client)?.with_prefixes(&crate::tasks::watched_prefixes()))
 }
 
 fn install(views: Projection) -> Result<(Arc<Projection>, Arc<ChangeTable>), String> {
@@ -91,5 +95,24 @@ mod tests {
         assert_eq!(t.rev(), Some(5), "a write outside every watched prefix is no change");
         t.set(9);
         assert_eq!(t.rev(), Some(9));
+    }
+
+    #[test_id(tjxi8ob)]
+    #[test]
+    fn the_scheduler_watch_names_no_prefix_its_own_journal_turn_writes() {
+        struct Silent;
+        impl spira_store::lc_call::Transport for Silent {
+            fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+                Err("not called".into())
+            }
+        }
+        let hit = |p: &Projection| {
+            let (events, runtime) = (state_store::events_key(42), "runtime/state/t/k");
+            p.watch_prefixes().into_iter().filter(|w| events.starts_with(w) || runtime.starts_with(w)).map(String::from).collect::<Vec<_>>()
+        };
+        let client = || LcClient::over(Arc::new(Silent), true);
+        assert_eq!(hit(&scheduler_projection(client()).unwrap()), Vec::<String>::new());
+        let planted = Projection::configured(client()).unwrap().with_prefixes(&["events/"]);
+        assert_eq!(hit(&planted), ["events/"], "the check must see a watch of events/");
     }
 }

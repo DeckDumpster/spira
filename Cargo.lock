@@ -2383,6 +2383,7 @@ dependencies = [
  "spira-submission",
  "spira-test-id",
  "spira-world",
+ "state-store",
  "state-store-sqlite",
  "store-view",
  "system-paths",
