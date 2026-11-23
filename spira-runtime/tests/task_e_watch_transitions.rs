@@ -1967,12 +1967,15 @@ fn a_failed_observe_inside_an_activation_window_waits() {
 fn an_observe_overtaken_by_a_restart_and_reopened_inside_the_window_never_pages_and_the_table_returns() {
     let dir = run_with_record(T0 - 10);
     let cfg = restart_config(&dir);
-    let mut r = start(healthy_rig(cfg.clone()).hanging(OBSERVE));
-    r.advance(5_000).unwrap();
+    let mut r = healthy_rig(cfg.clone()).hanging(OBSERVE);
+    r.advance(T0 * 1000).unwrap();
+    let (_, stream, kind) = WatchTransitions::boot();
+    r.deliver(stream, kind).unwrap();
+    r.advance(35_000).unwrap();
     r.reopen(WatchTransitions::new(cfg).registration()).unwrap();
     let (_, stream, kind) = WatchTransitions::boot();
     r.tick(stream, kind).unwrap();
-    r.advance(1_000).unwrap();
+    r.advance(40_000).unwrap();
     assert!(blind_pages(&r).is_empty(), "{:?}", lines(&r));
     assert!(log_lines(&r).iter().any(|l| l.contains("READY")), "{:?}", log_lines(&r));
 }
