@@ -175,8 +175,11 @@ fn overflow_series(total: u64, pushed: u64, at: std::time::SystemTime) -> spira_
 /// from a missing one; `pushed` advances only when the push succeeds.
 pub fn push_overflow(sink: &spira_otel::metrics::MetricsSink, pushed: &mut u64) {
     let Some(w) = WRITER.get() else { return };
-    let total = w.overflow();
-    if sink.try_push_series(&[overflow_series(total, *pushed, std::time::SystemTime::now())]).is_ok() {
+    push_overflow_count(w.overflow(), pushed, |series| sink.try_push_series(series));
+}
+
+fn push_overflow_count(total: u64, pushed: &mut u64, push: impl Fn(&[spira_otel::metrics::Series]) -> std::io::Result<()>) {
+    if push(&[overflow_series(total, *pushed, std::time::SystemTime::now())]).is_ok() {
         *pushed = total;
     }
 }
@@ -248,6 +251,23 @@ mod tests {
         w.flush(Duration::from_secs(1));
         assert_eq!(fs.peek(&log()).unwrap(), b"one\ntwo\n");
         assert_eq!(fs.peek(Path::new("run/y.log")).unwrap(), b"other\n");
+    }
+
+    #[test_id(t713arc)]
+    #[test]
+    fn the_overflow_metric_carries_what_was_dropped_since_the_last_push_and_advances_only_when_pushed() {
+        let seen = Mutex::new(Vec::new());
+        let ok = |s: &[spira_otel::metrics::Series]| {
+            seen.lock().unwrap().push((s[0].name.clone(), s[0].value));
+            Ok(())
+        };
+        let mut pushed = 0;
+        push_overflow_count(3, &mut pushed, ok);
+        push_overflow_count(3, &mut pushed, ok);
+        push_overflow_count(5, &mut pushed, |_| Err(std::io::Error::other("endpoint down")));
+        assert_eq!(pushed, 3, "a refused push is not counted as pushed");
+        push_overflow_count(5, &mut pushed, ok);
+        assert_eq!(*seen.lock().unwrap(), [(LOG_OVERFLOW.to_string(), 3.0), (LOG_OVERFLOW.to_string(), 0.0), (LOG_OVERFLOW.to_string(), 2.0)]);
     }
 
     #[test_id(tladi4c)]

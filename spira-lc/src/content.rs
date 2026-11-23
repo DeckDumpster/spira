@@ -496,11 +496,7 @@ pub fn purge_alerts(
     let file = export_dir.join(format!("purge-alerts-{now}.jsonl"));
     let lines: String = items.iter().map(|r| format!("{r}\n")).collect();
     let fs = crate::disk::fs();
-    let written = fs.create_dir(export_dir).and_then(|()| match fs.metadata(&file) {
-        Ok(_) => Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "the export file exists")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }).and_then(|()| fs.write(&file, lines.as_bytes())).and_then(|()| fs.sync_file(&file));
+    let written = fs.create_dir(export_dir).and_then(|()| fs.create_new(&file, lines.as_bytes())).and_then(|()| fs.sync_file(&file));
     if let Err(e) = written {
         return cannot(format!("{}: {e} — nothing deleted", file.display()));
     }
@@ -599,6 +595,18 @@ mod tests {
         let again = purge_alerts(&v(&["--apply"]), &|a| bd.list(a), &|_| panic!("nothing left to delete"), dir.path(), 8);
         assert!(again.stdout.contains("0 bd alert item(s)"), "{again:?}");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "a second run writes nothing");
+    }
+
+    #[test_id(t5fkjs8)]
+    #[test]
+    fn purge_alerts_deletes_nothing_when_its_export_file_already_exists() {
+        let dir = testkit::TempDir::new("purge-alerts-exists");
+        std::fs::write(dir.join("purge-alerts-7.jsonl"), "earlier export\n").unwrap();
+        let bd = Bd::new(&[("sp-a1", "alert")]);
+        let a = purge_alerts(&v(&["--apply"]), &|a| bd.list(a), &|_| panic!("must not delete"), dir.path(), 7);
+        assert_eq!(a.code, CANNOT_TELL, "{a:?}");
+        assert!(a.stderr.contains("nothing deleted") || a.stdout.contains("nothing deleted"), "{a:?}");
+        assert_eq!(std::fs::read_to_string(dir.join("purge-alerts-7.jsonl")).unwrap(), "earlier export\n", "the earlier export is not overwritten");
     }
 
     #[test_id(tsnm452)]

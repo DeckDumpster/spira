@@ -304,8 +304,10 @@ impl Shipper {
             write_durably(fs.as_ref(), &start, head.to_string().as_bytes())?;
         }
         let partial = cfg.dir.join("snapshot.partial");
-        if fs.metadata(&partial).is_ok() {
-            fs.remove(&partial).map_err(io(&partial))?;
+        match fs.metadata(&partial) {
+            Ok(_) => fs.remove(&partial).map_err(io(&partial))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io(&partial)(e)),
         }
         let core = Arc::new(SnapCore {
             fs: fs.clone(),
@@ -582,6 +584,17 @@ pub fn drain_kind(fs: &dyn Fs, dir: &Path, kind: &str, put: &dyn Put) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tj3vflm)]
+    #[test]
+    fn a_durably_written_file_survives_a_crash_only_because_its_directory_was_synced() {
+        let clock = runtime::ports::VirtualClock::new(0);
+        let fs = runtime::ports::SimFs::new(1, Default::default(), clock);
+        write_durably(fs.as_ref(), Path::new("ship/mark"), b"7").unwrap();
+        fs.crash();
+        assert_eq!(fs.peek(Path::new("ship/mark")).as_deref(), Some(&b"7"[..]));
+        assert!(fs.peek(Path::new("ship/mark.tmp")).is_none());
+    }
 
     #[test_id(tpr073k)]
     #[test]

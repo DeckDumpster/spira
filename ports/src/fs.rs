@@ -30,6 +30,8 @@ pub trait Fs: Send + Sync {
     }
     fn append(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
     fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
+    /// `write`, refused with `ErrorKind::AlreadyExists` where the file is there.
+    fn create_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
     fn remove(&self, path: &Path) -> io::Result<()>;
     /// The names directly under `dir`, sorted.
@@ -74,6 +76,10 @@ impl Fs for RealFs {
 
     fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::write(path, bytes)
+    }
+
+    fn create_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        std::fs::OpenOptions::new().write(true).create_new(true).open(path)?.write_all(bytes)
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
@@ -335,6 +341,16 @@ impl Fs for SimFs {
         Ok(())
     }
 
+    fn create_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        let mut s = self.enter()?;
+        if s.live.contains_key(path) {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{}: exists (sim)", path.display())));
+        }
+        let i = self.create(&mut s, path)?;
+        s.inodes[i].data = bytes.to_vec();
+        Ok(())
+    }
+
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         let mut s = self.enter()?;
         if !Self::dir_exists(&s, parent_of(to)) {
@@ -463,6 +479,16 @@ mod real_tests {
         assert_eq!(std::fs::read(&p).unwrap(), b"short");
     }
 
+    #[test_id(t4fvp0r)]
+    #[test]
+    fn real_create_new_writes_a_new_file_and_refuses_one_that_exists() {
+        let t = dir("fs-create-new");
+        let p = t.path().join("n");
+        RealFs.create_new(&p, b"first").unwrap();
+        assert_eq!(RealFs.create_new(&p, b"second").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&p).unwrap(), b"first");
+    }
+
     #[test_id(ti9s09a)]
     #[test]
     fn real_rename_moves_the_file() {
@@ -561,6 +587,16 @@ mod sim_tests {
         assert_eq!(f.metadata(&d.join("c")).unwrap().len, 1);
         f.remove(&d.join("c")).unwrap();
         assert_eq!(f.read(&d.join("c")).unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test_id(trywqb7)]
+    #[test]
+    fn sim_create_new_refuses_a_file_that_exists() {
+        let f = fs(1, SimFaults::default());
+        f.create_dir(Path::new("d")).unwrap();
+        f.create_new(Path::new("d/n"), b"first").unwrap();
+        assert_eq!(f.create_new(Path::new("d/n"), b"second").unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(f.peek(Path::new("d/n")).unwrap(), b"first");
     }
 
     #[test_id(tjsdwdz)]

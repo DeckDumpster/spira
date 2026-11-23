@@ -112,7 +112,7 @@ pub fn run(args: &[String]) -> (i32, String) {
         return (0, breaches.iter().map(|b| b.line.as_str()).collect::<Vec<_>>().join("\n"));
     };
     let fs = crate::disk::fs();
-    let seen: BTreeSet<String> = fs.read(std::path::Path::new(&path)).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default().lines().map(String::from).collect();
+    let seen: BTreeSet<String> = crate::disk::read_to_string(&path).unwrap_or_default().lines().map(String::from).collect();
     let out = fresh(&breaches, &seen).iter().map(|b| b.line.as_str()).collect::<Vec<_>>().join("\n");
     let now_seen: Vec<&str> = breaches.iter().map(|b| b.key.as_str()).collect();
     if let Err(e) = fs.write(std::path::Path::new(&path), now_seen.iter().map(|k| format!("{k}\n")).collect::<String>().as_bytes()) {
