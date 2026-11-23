@@ -58,8 +58,8 @@ pub fn try_home_dir() -> Result<PathBuf, String> {
     spira_config::resolve::locate_home_for_process().map_err(|e| format!("cockpit-collect: {e}"))
 }
 
-/// Panics when [`try_home_dir`] fails; `main` calls [`try_run_dir`], which resolves the home,
-/// first and refuses, so only a caller that skipped that check reaches the panic.
+/// Panics when [`try_home_dir`] fails; `main` calls [`try_home_dir`] first and refuses, so only
+/// a caller that skipped that check reaches the panic.
 pub fn home_dir() -> PathBuf {
     try_home_dir().unwrap_or_else(|e| panic!("{e}"))
 }

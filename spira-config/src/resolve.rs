@@ -208,6 +208,11 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
     // override and no fallback home (per Ryan 2026-10-05: one source of config).
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.run: {e}"))?;
+    run_dir_of(&resolved)
+}
+
+/// The run directory a resolution declares: non-empty and inside the instance's confinement.
+pub(crate) fn run_dir_of(resolved: &Resolved) -> Result<PathBuf, String> {
     let run = resolved.get("SPIRA_RUN");
     if run.is_empty() {
         return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
@@ -269,6 +274,11 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     // `resolve` runs unconditionally, over repos this key never touches.
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.instance: {e}"))?;
+    instance_of(&resolved)
+}
+
+/// The instance a resolution declares; empty is a refusal.
+pub(crate) fn instance_of(resolved: &Resolved) -> Result<String, String> {
     let instance = resolved.get("SPIRA_INSTANCE");
     if instance.is_empty() {
         return Err("spira.instance resolved empty — refusing to guess".to_string());

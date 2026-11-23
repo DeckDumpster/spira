@@ -40,22 +40,12 @@ pub fn config() -> Result<&'static Resolved, String> {
 /// `spira.run` from this process's pinned config, judged against the instance's confinement as
 /// [`crate::resolve::resolve_run_dir`] judges it; a refusal is returned and, as in [`config`], never kept.
 pub fn run_dir() -> Result<std::path::PathBuf, String> {
-    let resolved = config().map_err(|e| format!("cannot resolve spira.run: {e}"))?;
-    let run = resolved.get("SPIRA_RUN");
-    if run.is_empty() {
-        return Err("spira.run is empty in spira.toml — refusing to guess a run directory".to_string());
-    }
-    crate::containment::check_path(resolved.get("SPIRA_INSTANCE"), resolved.get("SPIRA_WORKSPACES"), "SPIRA_RUN", run)?;
-    Ok(std::path::PathBuf::from(run))
+    crate::resolve::run_dir_of(config().map_err(|e| format!("cannot resolve spira.run: {e}"))?)
 }
 
 /// `spira.instance` from this process's pinned config; empty is a refusal.
 pub fn instance() -> Result<String, String> {
-    let instance = config().map_err(|e| format!("cannot resolve spira.instance: {e}"))?.get("SPIRA_INSTANCE");
-    if instance.is_empty() {
-        return Err("spira.instance resolved empty — refusing to guess".to_string());
-    }
-    Ok(instance.to_string())
+    crate::resolve::instance_of(config().map_err(|e| format!("cannot resolve spira.instance: {e}"))?)
 }
 
 fn resolve_now() -> Result<Resolved, String> {
