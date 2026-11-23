@@ -11,6 +11,7 @@ pub mod claim_count;
 pub mod dependency;
 pub mod bead_sweep;
 pub mod inbox_keeper;
+pub mod margin_comments;
 pub mod overrides;
 pub mod pr_notify;
 pub mod publish_backlog;

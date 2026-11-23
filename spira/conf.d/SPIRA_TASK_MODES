@@ -40,6 +40,7 @@ lc.ship=act
 mail.reconcile=act
 mail.tidy=act
 mail.wake=act
+margin-comments=act
 overrides=act
 persona.archivist=act
 persona.ops=act

@@ -255,3 +255,14 @@ fn a_configured_client_waits_at_most_five_seconds_for_an_answer() {
     let m = HttpMargin::configured(|k: &str| Ok::<_, String>(if k == URL_KEY { "http://r".to_string() } else { "token".to_string() })).unwrap();
     assert!(m.timeout <= Duration::from_secs(5), "{:?}", m.timeout);
 }
+
+#[test_id(te282j9)]
+#[test]
+fn the_change_feed_is_asked_with_after_and_wait_and_its_last_seq_is_the_point_to_ask_on_from() {
+    let dir = TempDir::new("margin-feed");
+    let (base, seen) = serve_once(r#"{"changes":[{"seq":4,"kind":"published","collection_id":"c1","thread_id":null,"comment_id":null,"author":null,"visibility":null}],"last_seq":4}"#);
+    let got = client(&dir, &base).changes(3, 0).unwrap();
+    assert_eq!((got.through, got.changes.len(), got.changes[0]["kind"].as_str()), (4, 1, Some("published")));
+    let req = seen.join().unwrap();
+    assert!(req.starts_with("GET /api/changes?after=3&wait=0 "), "{req}");
+}

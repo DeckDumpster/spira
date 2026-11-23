@@ -110,6 +110,8 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("hel.sweep.prune", Git),
     ("hel.sweep.send", Git),
     ("inbox.append", Host),
+    ("margin.deliver", Host),
+    ("margin.publish", Host),
     ("inbox-keeper.observe", Host),
     ("inbox.notify.ask", Store),
     ("inbox.notify.concierge_note", Store),
