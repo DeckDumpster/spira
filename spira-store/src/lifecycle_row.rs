@@ -2,6 +2,8 @@
 //! lifecycle row can never be claimed.
 
 use lifecycle::bead::BeadEventKind;
+use lifecycle::delivery::DeliveryEventKind;
+use lifecycle::reason::ReturnedReason;
 
 use crate::lc_call::{LcClient, LcError, Reply, CANNOT_TELL, LC_TIMEOUT, REFUSED};
 
@@ -138,6 +140,161 @@ pub fn bead_event_on(c: &LcClient, id: &str, kind: &BeadEventKind, actor: &str) 
 
 pub fn content_on_base_on(c: &LcClient, id: &str, proof: &str, actor: &str) -> Result<(), String> {
     bead_event_on(c, id, &BeadEventKind::ContentOnBase { proof: proof.into() }, actor)
+}
+
+/// One exit of the delivery round, with the git proof its caller already computed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Delivery {
+    /// `content_on_base`: the branch's content is in the base (`merge-tree` proof, else `gh-merged`);
+    /// `in_force`: the proof string (`merge-tree:<sha>` or `ancestry:<sha>`) when the change is in
+    /// force on the base, which is all a row with no delivery round is landed on.
+    PrMerged { merge_sha: String, content_on_base: bool, in_force: Option<String> },
+    PrClosed,
+    PushDelivered { sha: String },
+    PushRequeued { tip: String },
+    PushReturned,
+}
+
+impl Delivery {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Delivery::PrMerged { .. } => "pr-merged",
+            Delivery::PrClosed => "pr-closed",
+            Delivery::PushDelivered { .. } => "push-delivered",
+            Delivery::PushRequeued { .. } => "push-requeued",
+            Delivery::PushReturned => "push-returned",
+        }
+    }
+
+    pub fn actor(&self) -> &'static str {
+        match self {
+            Delivery::PrMerged { .. } | Delivery::PrClosed => "pr-pass-branch",
+            _ => "landing.sh",
+        }
+    }
+
+    fn wanted(&self) -> &'static str {
+        match self {
+            Delivery::PrMerged { .. } | Delivery::PrClosed => "PR_OPEN",
+            _ => "PUSHING",
+        }
+    }
+
+    fn kind(&self) -> DeliveryEventKind {
+        match self {
+            Delivery::PrMerged { merge_sha, content_on_base, .. } => DeliveryEventKind::Delivered { merge_sha: merge_sha.clone(), proof: if *content_on_base { "merge-tree" } else { "gh-merged" }.into() },
+            Delivery::PrClosed => DeliveryEventKind::Returned { reason: ReturnedReason::PrClosedUnmerged },
+            Delivery::PushDelivered { sha } => DeliveryEventKind::Delivered { merge_sha: sha.clone(), proof: "ancestry".into() },
+            Delivery::PushRequeued { tip } => DeliveryEventKind::Requeued { tip: tip.clone() },
+            Delivery::PushReturned => DeliveryEventKind::Returned { reason: ReturnedReason::PushRejected },
+        }
+    }
+}
+
+/// Why a delivery exit wrote nothing: the row is not where the exit applies, which is not a failed store call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotRecorded {
+    NoRow,
+    NoDeliveryRow,
+    DeliveryNotIn { state: String, want: &'static str },
+    NotLive { state: String },
+    NotCertified { state: String },
+    ProofNotInForce,
+}
+
+impl std::fmt::Display for NotRecorded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotRecorded::NoRow => write!(f, "no lifecycle row"),
+            NotRecorded::NoDeliveryRow => write!(f, "no delivery row"),
+            NotRecorded::DeliveryNotIn { state, want } => write!(f, "delivery is {state}, not {want}"),
+            NotRecorded::NotLive { state } => write!(f, "the row is {state}, not a live one"),
+            NotRecorded::NotCertified { state } => write!(f, "the row is {state}, not CERTIFIED"),
+            NotRecorded::ProofNotInForce => write!(f, "its change is not in force on the landing ref"),
+        }
+    }
+}
+
+/// The one primitive event a delivery exit sends, or why it sends none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    Delivery { expect: &'static str, version: String, kind: DeliveryEventKind },
+    Bead { expect: String, version: String, kind: BeadEventKind },
+    Skip(NotRecorded),
+}
+
+fn json_field(v: &serde_json::Value, k: &str) -> String {
+    match &v[k] {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The rules of `deliver`, over the JSON `show` answers; the CLI verb and the socket client both apply them.
+pub fn plan_delivery(d: &Delivery, shown: &serde_json::Value) -> Step {
+    let bead = &shown["bead"];
+    let (state, version) = (json_field(bead, "state"), json_field(bead, "version"));
+    if state.is_empty() || version.is_empty() {
+        return Step::Skip(NotRecorded::NoRow);
+    }
+    let row = &shown["delivery"];
+    if row.is_object() {
+        let want = d.wanted();
+        let at = json_field(row, "state");
+        if at != want {
+            return Step::Skip(NotRecorded::DeliveryNotIn { state: at, want });
+        }
+        let version = match &row["version"] {
+            serde_json::Value::Null => "0".to_string(),
+            _ => json_field(row, "version"),
+        };
+        return Step::Delivery { expect: want, version, kind: d.kind() };
+    }
+    let landed = |proof: String| Step::Bead { expect: state.clone(), version: version.clone(), kind: BeadEventKind::ContentOnBase { proof } };
+    match d {
+        Delivery::PrMerged { in_force, .. } => {
+            if matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE") {
+                return Step::Skip(NotRecorded::NotLive { state });
+            }
+            match in_force {
+                Some(proof) => landed(proof.clone()),
+                None => Step::Skip(NotRecorded::ProofNotInForce),
+            }
+        }
+        Delivery::PushDelivered { sha } if state == "CERTIFIED" => landed(format!("ancestry:{sha}")),
+        Delivery::PushDelivered { .. } => Step::Skip(NotRecorded::NotCertified { state }),
+        _ => Step::Skip(NotRecorded::NoDeliveryRow),
+    }
+}
+
+const NO_ROW: i32 = 1;
+
+/// What `deliver_on` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Delivered {
+    Recorded,
+    NotRecorded(NotRecorded),
+}
+
+/// A delivery exit over the socket, which serves no `deliver` verb: read the row, then send the
+/// primitive event the verb's rules give. A refused or unreachable event is an error.
+pub fn deliver_on(c: &LcClient, id: &str, d: &Delivery, actor: &str) -> Result<Delivered, String> {
+    let shown = c.call(&["show", id])?;
+    match shown.code {
+        0 => {}
+        NO_ROW => return Ok(Delivered::NotRecorded(NotRecorded::NoRow)),
+        _ => return Err(format!("{id}: show exited {}: {}", shown.code, shown.why())),
+    }
+    let v: serde_json::Value = serde_json::from_str(shown.out.trim()).map_err(|e| format!("{id}: show is not JSON: {e}"))?;
+    let send = |machine: &str, expect: &str, version: &str, kind: String| {
+        status_on(c, &["event", machine, id, "--expect", expect, "--version", version, "--actor", actor, "--kind", &kind]).map(|()| Delivered::Recorded)
+    };
+    match plan_delivery(d, &v) {
+        Step::Delivery { expect, version, kind } => send("delivery", expect, &version, serde_json::to_string(&kind).map_err(|e| e.to_string())?),
+        Step::Bead { expect, version, kind } => send("bead", &expect, &version, serde_json::to_string(&kind).map_err(|e| e.to_string())?),
+        Step::Skip(why) => Ok(Delivered::NotRecorded(why)),
+    }
 }
 
 /// The id `bd create` printed: `--silent` prints the bare id, `--json` an object (or a
@@ -631,6 +788,100 @@ mod tests {
         assert_eq!(sent(&t), 3);
     }
 
+
+    /// The store as the real socket answers it: `deliver` is refused with usage, `show` is the row.
+    struct Socket {
+        row: String,
+        event: i32,
+        seen: Mutex<Vec<String>>,
+    }
+
+    impl Transport for Socket {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.seen.lock().unwrap().push(argv.join(" "));
+            let (code, out) = match argv[0].as_str() {
+                "show" if self.row.is_empty() => (1, String::new()),
+                "show" => (0, self.row.clone()),
+                "event" => (self.event, if self.event == 0 { String::new() } else { "refused".into() }),
+                _ => (2, "usage: spira-lc show <bead-id> | …".into()),
+            };
+            Ok(Reply { code, out, err: String::new(), read_ended: false })
+        }
+    }
+
+    fn row(bead: &str, delivery: Option<&str>) -> String {
+        let d = delivery.map_or("null".to_string(), |s| format!(r#"{{"state":"{s}","version":5}}"#));
+        format!(r#"{{"bead":{{"state":"{bead}","version":12}},"delivery":{d}}}"#)
+    }
+
+    fn delivered_via(row: String, event: i32, d: &Delivery) -> (Result<Delivered, String>, Vec<String>) {
+        let t = Arc::new(Socket { row, event, seen: Mutex::new(Vec::new()) });
+        let r = deliver_on(&LcClient::over(t.clone(), true), "sp-a", d, d.actor());
+        let seen = t.seen.lock().unwrap().clone();
+        (r, seen)
+    }
+
+    fn merged(in_force: Option<&str>) -> Delivery {
+        Delivery::PrMerged { merge_sha: "m1".into(), content_on_base: true, in_force: in_force.map(String::from) }
+    }
+
+    
+    #[test_id(tqsnxxz)]
+    #[test]
+    fn each_delivery_exit_sends_its_event_on_a_delivery_row_in_its_wanted_state() {
+        let exits = [
+            (merged(None), "PR_OPEN", "pr-pass-branch", r#"{"Delivered":{"merge_sha":"m1","proof":"merge-tree"}}"#),
+            (Delivery::PrClosed, "PR_OPEN", "pr-pass-branch", r#"{"Returned":{"reason":"pr-closed-unmerged"}}"#),
+            (Delivery::PushDelivered { sha: "s1".into() }, "PUSHING", "landing.sh", r#"{"Delivered":{"merge_sha":"s1","proof":"ancestry"}}"#),
+            (Delivery::PushRequeued { tip: "t1".into() }, "PUSHING", "landing.sh", r#"{"Requeued":{"tip":"t1"}}"#),
+            (Delivery::PushReturned, "PUSHING", "landing.sh", r#"{"Returned":{"reason":"push-rejected"}}"#),
+        ];
+        for (d, want, actor, kind) in exits {
+            let (r, seen) = delivered_via(row("SUBMITTED", Some(want)), 0, &d);
+            assert_eq!(r, Ok(Delivered::Recorded), "{d:?}");
+            assert_eq!(seen[1], format!("event delivery sp-a --expect {want} --version 5 --actor {actor} --kind {kind}"), "{d:?}");
+            assert!(seen.iter().all(|l| !l.starts_with("deliver")));
+        }
+    }
+
+    
+    #[test_id(tyiqjov)]
+    #[test]
+    fn a_pr_with_no_delivery_row_lands_the_bead_on_proof_and_a_push_only_when_certified() {
+        let (r, seen) = delivered_via(row("SUBMITTED", None), 0, &merged(Some("merge-tree:m1")));
+        assert_eq!(r, Ok(Delivered::Recorded));
+        assert_eq!(seen[1], r#"event bead sp-a --expect SUBMITTED --version 12 --actor pr-pass-branch --kind {"ContentOnBase":{"proof":"merge-tree:m1"}}"#);
+        let (r, seen) = delivered_via(row("CERTIFIED", None), 0, &Delivery::PushDelivered { sha: "s1".into() });
+        assert_eq!(r, Ok(Delivered::Recorded));
+        assert_eq!(seen[1], r#"event bead sp-a --expect CERTIFIED --version 12 --actor landing.sh --kind {"ContentOnBase":{"proof":"ancestry:s1"}}"#);
+    }
+
+    
+    #[test_id(taj0vey)]
+    #[test]
+    fn a_terminal_row_an_unproved_change_and_the_ordinary_no_row_case_send_no_event() {
+        let cases = [
+            (row("LANDED", None), merged(Some("merge-tree:m1")), NotRecorded::NotLive { state: "LANDED".into() }),
+            (row("SUBMITTED", None), merged(None), NotRecorded::ProofNotInForce),
+            (row("SUBMITTED", None), Delivery::PushDelivered { sha: "s".into() }, NotRecorded::NotCertified { state: "SUBMITTED".into() }),
+            (row("SUBMITTED", None), Delivery::PrClosed, NotRecorded::NoDeliveryRow),
+            (row("SUBMITTED", Some("QUEUED")), Delivery::PrClosed, NotRecorded::DeliveryNotIn { state: "QUEUED".into(), want: "PR_OPEN" }),
+            (String::new(), Delivery::PrClosed, NotRecorded::NoRow),
+        ];
+        for (shown, d, why) in cases {
+            let (r, seen) = delivered_via(shown, 0, &d);
+            assert_eq!(r, Ok(Delivered::NotRecorded(why)), "{d:?}");
+            assert_eq!(seen, vec!["show sp-a"], "{d:?}");
+        }
+    }
+
+    
+    #[test_id(tpa643h)]
+    #[test]
+    fn a_refused_event_is_an_error_not_a_quiet_miss() {
+        let (r, _) = delivered_via(row("SUBMITTED", Some("PR_OPEN")), 3, &Delivery::PrClosed);
+        assert!(r.unwrap_err().contains("refused"));
+    }
 
     #[test_id(tu4p3nx)]
     #[test]

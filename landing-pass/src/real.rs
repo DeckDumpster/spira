@@ -12,6 +12,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use spira_store::lifecycle_row::Delivery;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // The lib.sh seam
@@ -216,26 +217,27 @@ impl<'a> RealLib<'a> {
         self.beads.lc()
     }
 
-    /// `deliver <verb> <values…>` on the store. A refused delivery event is a loud line,
-    /// never a swallowed status.
-    fn deliver_checked(&self, values: &[&str], verb: &str, id: &str) -> bool {
-        let rc = match self.lc() {
-            Ok(c) => {
-                let mut argv = vec!["deliver", verb];
-                argv.extend_from_slice(values);
-                crate::lifecycle::run(&c, &argv).0
-            }
+    /// A delivery exit on the store, as the events it is. A refused delivery event, or an exit
+    /// that records nothing, is a loud line, never a swallowed status.
+    fn deliver_checked(&self, d: &Delivery, id: &str) -> bool {
+        use spira_store::lifecycle_row::{deliver_on, Delivered};
+        let verb = d.name();
+        let done = match self.lc() {
+            Ok(c) => deliver_on(&c, id, d, d.actor()).map_err(|e| e.trim().to_string()),
             Err(e) => {
                 self.seam.out.log(&format!("landing-pass: {id}: the lifecycle store: {e}"));
-                spira_store::lc_call::CANNOT_TELL
+                Err("the store could not be reached".to_string())
             }
         };
-        if rc != 0 {
-            let line = format!("landing-pass: {id}: LIFECYCLE: spira-lc deliver {verb} did not happen (exit {rc})");
-            self.seam.out.log(&line);
-            eprintln!("{line}");
-        }
-        rc == 0
+        let why = match done {
+            Ok(Delivered::Recorded) => return true,
+            Ok(Delivered::NotRecorded(why)) => why.to_string(),
+            Err(e) => e,
+        };
+        let line = format!("landing-pass: {id}: LIFECYCLE: spira-lc deliver {verb} did not happen ({why})");
+        self.seam.out.log(&line);
+        eprintln!("{line}");
+        false
     }
     fn content_on_base_checked(&self, id: &str, proof: &str) -> bool {
         let done = self.lc().and_then(|c| spira_store::lifecycle_row::content_on_base_on(&c, id, proof, "landing-pass"));
@@ -533,13 +535,13 @@ impl<'a> Lib for RealLib<'a> {
         crate::land_verify::land_subject(id, &title)
     }
     fn deliver_delivered(&self, id: &str, sha: &str) {
-        self.deliver_checked(&[id, sha], "push-delivered", id);
+        self.deliver_checked(&Delivery::PushDelivered { sha: sha.to_string() }, id);
     }
     fn deliver_requeued(&self, id: &str, tip: &str) {
-        self.deliver_checked(&[id, tip], "push-requeued", id);
+        self.deliver_checked(&Delivery::PushRequeued { tip: tip.to_string() }, id);
     }
-    fn deliver_returned(&self, id: &str, reason: &str) {
-        self.deliver_checked(&[id, reason], "push-returned", id);
+    fn deliver_returned(&self, id: &str, _reason: &str) {
+        self.deliver_checked(&Delivery::PushReturned, id);
     }
     /// The bash close-on-land — ported natively (sp-81t4d, "wave 4.17": family R; was
     /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
@@ -568,10 +570,10 @@ impl<'a> Lib for RealLib<'a> {
         self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
     fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) -> bool {
-        self.deliver_checked(&[&p(repo), id, branch, merge_sha], "pr-merged", id)
+        self.deliver_checked(&crate::pr::merged_delivery(repo, branch, merge_sha), id)
     }
-    fn deliver_pr_closed(&self, id: &str, reason: &str) {
-        self.deliver_checked(&[id, reason], "pr-closed", id);
+    fn deliver_pr_closed(&self, id: &str, _reason: &str) {
+        self.deliver_checked(&Delivery::PrClosed, id);
     }
     fn force_push(&self, repo: &Path, remote: &str, branch: &str) -> Result<(), String> {
         let (rc, err) = self.seam.call(Op::ForcePush, &[&p(repo), remote, branch]);
@@ -1468,7 +1470,14 @@ mod store_tests {
     #[test_id(tvwjyx6)]
     #[test]
     fn a_delivery_goes_to_the_store_and_a_refusal_is_reported_not_swallowed() {
-        let (s, c) = store(|a| if a[1] == "push-delivered" { (0, String::new()) } else { (3, "refused: not in delivery".into()) });
+        let (s, c) = store(|a| match (a[0].as_str(), a.get(1).map(String::as_str)) {
+            ("deliver", _) => (2, "usage: spira-lc show <bead-id> | …".into()),
+            ("show", Some("sp-a")) => (0, r#"{"bead":{"bead_id":"sp-a","state":"CERTIFIED","version":3},"delivery":{"state":"PUSHING","version":5}}"#.into()),
+            ("show", _) => (0, r#"{"bead":{"bead_id":"sp-b","state":"SUBMITTED","version":4},"delivery":{"state":"PR_OPEN","version":6}}"#.into()),
+            ("event", Some("sp-a")) => (0, String::new()),
+            ("event", _) => (3, "refused: not in delivery".into()),
+            _ => (0, String::new()),
+        });
         let t = testkit::TempDir::new("landing-pass-deliver");
         let out = Reporter::capture(None);
         let st = Settings::for_run(t.path().to_path_buf());
@@ -1476,8 +1485,11 @@ mod store_tests {
         lib.deliver_delivered("sp-a", "abc");
         assert!(!lib.deliver_pr_merged(Path::new("r"), "sp-b", "spira/sp-b", "def"));
         lib.note("sp-a", "a note");
-        assert_eq!(*s.seen.lock().unwrap(), vec!["deliver push-delivered sp-a abc", "deliver pr-merged r sp-b spira/sp-b def", "bd-note sp-a a note"]);
-        assert!(out.lines().iter().any(|l| l.contains("sp-b: LIFECYCLE: spira-lc deliver pr-merged did not happen (exit 3)")), "{:?}", out.lines());
+        let seen = s.seen.lock().unwrap().clone();
+        assert!(seen.iter().all(|l| !l.starts_with("deliver")), "{seen:?}");
+        assert_eq!(seen.iter().filter(|l| l.starts_with("event delivery sp-a --expect PUSHING --version 5 --actor landing.sh")).count(), 1, "{seen:?}");
+        assert_eq!(seen.iter().filter(|l| l.starts_with("event delivery sp-b --expect PR_OPEN --version 6 --actor pr-pass-branch")).count(), 1, "{seen:?}");
+        assert!(out.lines().iter().any(|l| l.contains("sp-b: LIFECYCLE: spira-lc deliver pr-merged did not happen")), "{:?}", out.lines());
     }
 
     #[test_id(tr6lr9s)]

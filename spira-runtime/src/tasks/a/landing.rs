@@ -95,9 +95,9 @@
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
 //! | `landing.fetch` (`pr.rs:92`) | git | 60 s | `repo/remote` per tick | none |
-//! | `landing.deliver_pr_merged` (lib.sh `spira-lc deliver pr-merged`, `real.rs:578-579`) | store | 5 s | `id/merge_sha` | a bead whose content is not on base. spira-lc declines with rc 1 |
-//! | `landing.deliver_pr_closed` (`real.rs:581-582`) | store | 5 s | `id/pr-closed` | none |
-//! | `landing.deliver_by_content` (`spira-lc show`, then `event delivery --expect PR_OPEN --version`, `pr.rs:181-213`) | store | 5 s | `id/version` | a version mismatch, or a row not PR_OPEN (quiet) |
+//! | `landing.deliver_pr_merged` (`show`, then `event delivery` on a PR_OPEN row or `event bead` ContentOnBase) | store | 5 s | `id/merge_sha` | a bead whose change is not in force on base: an effect error |
+//! | `landing.deliver_pr_closed` (`show`, then `event delivery` Returned on a PR_OPEN row) | store | 5 s | `id/pr-closed` | none |
+//! | `landing.deliver_by_content` (`show`, then `event delivery --expect PR_OPEN --version` or `event bead` ContentOnBase) | store | 5 s | `id/version` | a version mismatch, or a row not PR_OPEN (quiet) |
 //! | `landing.reopen` (`real.rs:319-320`) | store | 5 s | `id/cause` | none |
 //! | `landing.event` (`real.rs:322-323`) | store | 5 s | `kind/id/tip` | none |
 //! | `landing.note` (`real.rs:515-516`) | store | 5 s | `id/hash(text)` | none |
@@ -614,38 +614,58 @@ pub fn fetch(input: &str) -> Result<String, String> {
     git(&leg.path, &["fetch", "--quiet", &remote], 55).map(|_| format!("fetched {remote}")).ok_or_else(|| format!("{FETCH}: git fetch {remote} failed in {}", leg.path))
 }
 
-fn deliver(effect: &str, argv: &[&str]) -> Result<String, String> {
-    let mut all = vec!["deliver"];
-    all.extend_from_slice(argv);
-    lc()?.answer(&all).map_err(|e| format!("{effect}: {e}"))
-}
-
-/// `spira-lc deliver pr-merged <repo> <id> <br> <merge-sha>`; a decline is the store's answer.
-pub fn deliver_pr_merged(input: &str) -> Result<String, String> {
-    let leg = leg_of(input, DELIVER_PR_MERGED)?;
-    deliver(DELIVER_PR_MERGED, &["pr-merged", &leg.path, &leg.id, &leg.br, &leg.tip])
-}
-
-/// `spira-lc deliver pr-closed <id> <reason>`.
-pub fn deliver_pr_closed(input: &str) -> Result<String, String> {
-    let leg = leg_of(input, DELIVER_PR_CLOSED)?;
-    deliver(DELIVER_PR_CLOSED, &["pr-closed", &leg.id, "pull request closed unmerged"])
-}
-
-/// `pr.rs:181-213`: the Delivered event on a PR_OPEN delivery row, at its version; no row is
-/// `deliver pr-merged` on content proof; a row in any other state is the quiet case.
-pub fn deliver_by_content(input: &str) -> Result<String, String> {
-    let leg = leg_of(input, DELIVER_BY_CONTENT)?;
-    let lc = lc()?;
-    let shown = lc.answer(&["show", &leg.id]).map_err(|e| format!("{DELIVER_BY_CONTENT}: show: {e}"))?;
-    let Some((state, version)) = landing_pass::pr::delivery_of(shown.as_bytes()) else {
-        return deliver(DELIVER_BY_CONTENT, &["pr-merged", &leg.path, &leg.id, &leg.br, &leg.base_sha]);
-    };
-    if state != "PR_OPEN" {
-        return Ok(format!("{}: delivery is {state} — nothing to record", leg.id));
+fn delivered(effect: &str, id: &str, what: &str, done: Result<spira_store::lifecycle_row::Delivered, String>) -> Result<String, String> {
+    use spira_store::lifecycle_row::Delivered;
+    match done.map_err(|e| format!("{effect}: {e}"))? {
+        Delivered::Recorded => Ok(format!("{id}: {what} recorded")),
+        Delivered::NotRecorded(why) => Ok(format!("{id}: {what} not recorded: {why}")),
     }
-    let kind = serde_json::json!({"Delivered": {"merge_sha": leg.base_sha, "proof": "merge-tree"}}).to_string();
-    lc.answer(&["event", "delivery", &leg.id, "--expect", "PR_OPEN", "--version", &version, "--actor", "landing-pass", "--kind", &kind]).map_err(|e| format!("{DELIVER_BY_CONTENT}: {e}"))
+}
+
+/// The merged pull request's exit: its proof is the branch's change in force on the merge
+/// commit, or the merge commit on `HEAD` once the branch is deleted.
+fn pr_merged(effect: &str, c: &spira_store::lc_call::LcClient, leg: &Leg, merge_sha: &str) -> Result<String, String> {
+    use spira_store::lifecycle_row::{deliver_on, Delivered, Delivery, NotRecorded};
+    let git = hel::git::Git(std::path::Path::new(&leg.path));
+    let d = Delivery::PrMerged { merge_sha: merge_sha.to_string(), content_on_base: git.content_on_base(&leg.br, merge_sha), in_force: git.merged_proof(&leg.br, merge_sha) };
+    match deliver_on(c, &leg.id, &d, d.actor()).map_err(|e| format!("{effect}: {e}"))? {
+        Delivered::NotRecorded(NotRecorded::ProofNotInForce) => Err(format!("{effect}: {}: the merge {merge_sha}: its change is not in force on {}", leg.id, leg.base_fq)),
+        done => delivered(effect, &leg.id, "pull request merged", Ok(done)),
+    }
+}
+
+/// `spira-lc deliver pr-merged`'s rules, sent as events: a PR_OPEN delivery row is delivered,
+/// a row with none is landed on content proof, and a change not in force is an error.
+pub fn deliver_pr_merged(input: &str) -> Result<String, String> {
+    deliver_pr_merged_on(&lc()?, input)
+}
+
+pub fn deliver_pr_merged_on(c: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let leg = leg_of(input, DELIVER_PR_MERGED)?;
+    pr_merged(DELIVER_PR_MERGED, c, &leg, &leg.tip)
+}
+
+/// `spira-lc deliver pr-closed`'s rules: a PR_OPEN delivery row is returned.
+pub fn deliver_pr_closed(input: &str) -> Result<String, String> {
+    deliver_pr_closed_on(&lc()?, input)
+}
+
+pub fn deliver_pr_closed_on(c: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
+    use spira_store::lifecycle_row::{deliver_on, Delivery};
+    let leg = leg_of(input, DELIVER_PR_CLOSED)?;
+    let d = Delivery::PrClosed;
+    delivered(DELIVER_PR_CLOSED, &leg.id, "pull request closed", deliver_on(c, &leg.id, &d, d.actor()))
+}
+
+/// A pull request whose content is already on the base: a PR_OPEN delivery row is delivered, a
+/// row with none is landed on content proof, a row in any other delivery state is the quiet case.
+pub fn deliver_by_content(input: &str) -> Result<String, String> {
+    deliver_by_content_on(&lc()?, input)
+}
+
+pub fn deliver_by_content_on(c: &spira_store::lc_call::LcClient, input: &str) -> Result<String, String> {
+    let leg = leg_of(input, DELIVER_BY_CONTENT)?;
+    pr_merged(DELIVER_BY_CONTENT, c, &leg, &leg.base_sha)
 }
 
 /// A Spira tool the store has no verb for yet, run as this effect's child.

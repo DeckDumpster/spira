@@ -88,6 +88,67 @@ impl Git<'_> {
         !merged.is_empty() && self.rev_parse(&format!("{base}^{{tree}}")).is_some_and(|t| t == merged)
     }
 
+    /// [`Git::content_on_base`] that also asks whether the change is still in `base`'s tree: a
+    /// branch that reached `base` and was later reverted is an ancestor, or merges clean, yet its
+    /// change is gone, so its own patch must reverse-apply to `base`'s tree.
+    pub fn change_in_force(&self, br: &str, base: &str) -> bool {
+        if !self.content_on_base(br, base) {
+            return false;
+        }
+        let fork = if self.is_ancestor(br, base) { self.fork_of_merged(br, base) } else { self.out(&["merge-base", br, base]).map(|s| s.trim().to_string()) };
+        let Some(fork) = fork.filter(|f| !f.is_empty()) else { return false };
+        let Some(patch) = self.out(&["diff", "--binary", &fork, br]) else { return false };
+        if patch.trim().is_empty() {
+            return true;
+        }
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let index = std::env::temp_dir().join(format!("hel-in-force-{}-{}", std::process::id(), SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let ok = self.cmd(&["read-tree", base]).env("GIT_INDEX_FILE", &index).status().is_ok_and(|s| s.success())
+            && self
+                .cmd(&["apply", "-R", "--check", "--cached"])
+                .env("GIT_INDEX_FILE", &index)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .spawn()
+                .and_then(|mut ch| {
+                    use std::io::Write;
+                    if let Some(mut si) = ch.stdin.take() {
+                        let _ = si.write_all(patch.as_bytes());
+                    }
+                    ch.wait()
+                })
+                .is_ok_and(|s| s.success());
+        let _ = std::fs::remove_file(&index);
+        ok
+    }
+
+    /// Where an already-merged `br` forked: the merge-base of the merge commit that took it and
+    /// that merge's first parent; a fast-forward or rebase merge has no such commit, so its tip's parent.
+    fn fork_of_merged(&self, br: &str, base: &str) -> Option<String> {
+        let merges = self.out(&["rev-list", "--merges", "--reverse", "--ancestry-path", &format!("{br}..{base}")])?;
+        for m in merges.lines() {
+            let parents = self.out(&["rev-list", "--parents", "-n1", m])?;
+            let p: Vec<&str> = parents.split_whitespace().collect();
+            if p.len() >= 3 && self.is_ancestor(br, p[2]) {
+                return self.out(&["merge-base", p[1], br]).map(|s| s.trim().to_string());
+            }
+        }
+        self.out(&["rev-parse", &format!("{br}^")]).map(|s| s.trim().to_string())
+    }
+
+    /// The proof that a merged pull request's change is on the landing ref, for a row with no
+    /// delivery round: `merge-tree:<sha>` while its change is in force on the merge commit, or
+    /// `ancestry:<sha>` when its branch is gone and the merge commit is an ancestor of `HEAD`.
+    pub fn merged_proof(&self, br: &str, merge_sha: &str) -> Option<String> {
+        if self.change_in_force(br, merge_sha) {
+            Some(format!("merge-tree:{merge_sha}"))
+        } else if self.verify(&format!("{br}^{{commit}}")).is_none() && self.is_ancestor(merge_sha, "HEAD") {
+            Some(format!("ancestry:{merge_sha}"))
+        } else {
+            None
+        }
+    }
+
     /// A commit in `base..br` whose subject names <id>: the branch did work for the bead.
     /// Without one an empty diff proves nothing — any branch's diff against the base can be
     /// empty.

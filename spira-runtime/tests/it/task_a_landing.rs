@@ -177,3 +177,119 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     kit::assert_boot_matches_an_unstopped_run(at_work, registration, STREAM, EventKind::new(TICK, ""));
 }
+
+mod deliveries {
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use spira_runtime::tasks::a::landing::{deliver_by_content_on, deliver_pr_merged_on};
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+
+    /// The store as the real socket answers it: `deliver` is refused with usage, `show` and `event` are served.
+    struct Socket {
+        row: String,
+        seen: Mutex<Vec<String>>,
+    }
+
+    impl Transport for Socket {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.seen.lock().unwrap().push(argv.join(" "));
+            let (code, out) = match argv[0].as_str() {
+                "show" => (0, self.row.clone()),
+                "event" => (0, String::new()),
+                _ => (2, "usage: spira-lc show <bead-id> | …".into()),
+            };
+            Ok(Reply { code, out, err: String::new(), read_ended: false })
+        }
+    }
+
+    fn row(delivery: &str) -> String {
+        format!(r#"{{"bead":{{"state":"SUBMITTED","version":12}},"delivery":{delivery}}}"#)
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// `main` with a base commit; `spira/sp-a` adds `f`, and main takes it as one squash commit.
+    fn squash_merged(d: &Path) -> String {
+        git(d, &["init", "-q", "-b", "main"]);
+        std::fs::write(d.join("base"), "base\n").unwrap();
+        git(d, &["add", "."]);
+        git(d, &["commit", "-qm", "base"]);
+        git(d, &["checkout", "-qb", "spira/sp-a"]);
+        std::fs::write(d.join("f"), "change\n").unwrap();
+        git(d, &["add", "."]);
+        git(d, &["commit", "-qm", "sp-a: the change"]);
+        git(d, &["checkout", "-q", "main"]);
+        git(d, &["merge", "--squash", "spira/sp-a"]);
+        git(d, &["commit", "-qm", "sp-a: the change (#1)"]);
+        git(d, &["rev-parse", "HEAD"])
+    }
+
+    fn leg(d: &Path, tip: &str) -> String {
+        serde_json::json!({"repo": "r", "path": d.display().to_string(), "landref": "main", "base_fq": "main", "base_sha": tip, "br": "spira/sp-a", "id": "sp-a", "tip": tip, "pr_state": "merged", "version": 4}).to_string()
+    }
+
+    fn client(row: String) -> (Arc<Socket>, LcClient) {
+        let s = Arc::new(Socket { row, seen: Mutex::new(Vec::new()) });
+        (s.clone(), LcClient::over(s, true))
+    }
+
+    
+    #[test_id(tbbomd8)]
+    #[test]
+    fn deliver_by_content_lands_a_squash_merged_branch_with_no_delivery_row_by_an_event() {
+        let d = testkit::TempDir::new("landing-deliver");
+        let sha = squash_merged(d.path());
+        let (s, c) = client(row("null"));
+        deliver_by_content_on(&c, &leg(d.path(), &sha)).unwrap();
+        let want = format!(r#"event bead sp-a --expect SUBMITTED --version 12 --actor pr-pass-branch --kind {{"ContentOnBase":{{"proof":"merge-tree:{sha}"}}}}"#);
+        assert_eq!(*s.seen.lock().unwrap(), vec!["show sp-a".to_string(), want]);
+    }
+
+    
+    #[test_id(tri0n9e)]
+    #[test]
+    fn deliver_pr_merged_records_a_merged_branch_and_a_pr_open_row_gets_the_delivery_event() {
+        let d = testkit::TempDir::new("landing-deliver");
+        let sha = squash_merged(d.path());
+        let (s, c) = client(row("null"));
+        deliver_pr_merged_on(&c, &leg(d.path(), &sha)).unwrap();
+        assert!(s.seen.lock().unwrap()[1].contains(&format!("merge-tree:{sha}")));
+        let (s, c) = client(row(r#"{"state":"PR_OPEN","version":9}"#));
+        deliver_pr_merged_on(&c, &leg(d.path(), &sha)).unwrap();
+        let seen = s.seen.lock().unwrap().clone();
+        assert!(seen[1].starts_with("event delivery sp-a --expect PR_OPEN --version 9 --actor pr-pass-branch"), "{seen:?}");
+        assert!(seen[1].contains(&format!(r#""merge_sha":"{sha}""#)) && seen[1].contains(r#""proof":"merge-tree""#), "{seen:?}");
+    }
+
+    
+    #[test_id(tnqgrs8)]
+    #[test]
+    fn deliver_pr_merged_sends_no_event_for_a_change_reverted_on_the_base() {
+        let d = testkit::TempDir::new("landing-deliver");
+        squash_merged(d.path());
+        git(d.path(), &["revert", "--no-edit", "HEAD"]);
+        let reverted = git(d.path(), &["rev-parse", "HEAD"]);
+        let (s, c) = client(row("null"));
+        let e = deliver_pr_merged_on(&c, &leg(d.path(), &reverted)).unwrap_err();
+        assert!(e.contains("sp-a") && e.contains(&reverted) && e.contains("its change is not in force on main"), "{e}");
+        assert_eq!(*s.seen.lock().unwrap(), vec!["show sp-a"]);
+    }
+
+    
+    #[test_id(tkith7w)]
+    #[test]
+    fn deliver_pr_merged_records_a_deleted_branch_whose_merge_commit_is_on_head_by_ancestry() {
+        let d = testkit::TempDir::new("landing-deliver");
+        let sha = squash_merged(d.path());
+        git(d.path(), &["branch", "-D", "spira/sp-a"]);
+        let (s, c) = client(row("null"));
+        deliver_pr_merged_on(&c, &leg(d.path(), &sha)).unwrap();
+        assert!(s.seen.lock().unwrap()[1].contains(&format!(r#""proof":"ancestry:{sha}""#)), "{:?}", s.seen.lock().unwrap());
+    }
+}
