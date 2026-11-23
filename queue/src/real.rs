@@ -1351,7 +1351,7 @@ impl Scripts for RealScripts {
         run_round_vm(
             tree,
             results,
-            ["--base", base],
+            &["--base", base],
             round,
             wall_secs,
             handle,
@@ -1442,7 +1442,7 @@ impl Scripts for RealScripts {
         &self,
         tree: &Path,
         results: &Path,
-        entry: &str,
+        entry: &gate::own::CiEntry,
         round: (&str, &str),
         wall_secs: u64,
         handle: &Path,
@@ -1450,7 +1450,14 @@ impl Scripts for RealScripts {
         run_round_vm(
             tree,
             results,
-            ["--ci-entry", entry],
+            &[
+                "--ci-entry",
+                entry.command.as_str(),
+                "--ci-image",
+                entry.image.as_deref().unwrap_or_default(),
+                "--ci-workdir",
+                entry.workdir.as_str(),
+            ],
             round,
             wall_secs,
             handle,
@@ -1566,7 +1573,7 @@ impl Scripts for RealScripts {
 fn run_round_vm(
     tree: &Path,
     results: &Path,
-    judged_by: [&str; 2],
+    judged_by: &[&str],
     round: (&str, &str),
     wall_secs: u64,
     handle: &Path,

@@ -407,14 +407,14 @@ pub trait Scripts {
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String>;
     /// `round-vm ami-for <recipe-sha>`: the newest round image built from that recipe.
     fn ami_for(&self, sha: &str) -> AmiLookup;
-    /// `round-vm run <tree> --ci-entry <entry> --results-dir <results> --round-batch <batch> --round-repo <repo>` under `timeout`: a repository
+    /// `round-vm run <tree> --ci-entry <command> --ci-image <image> --ci-workdir <dir> --results-dir <results> --round-batch <batch> --round-repo <repo>` under `timeout`: a repository
     /// that is not the harness judged by its own full CI entry point on a round VM. Exit 0 GREEN, 1 RED
     /// (`ci.result` in `results`), anything else a fault. `handle` receives the pid exactly as `round_vm`'s does.
     fn repo_round_vm(
         &self,
         tree: &Path,
         results: &Path,
-        entry: &str,
+        entry: &gate::own::CiEntry,
         round: (&str, &str),
         wall_secs: u64,
         handle: &Path,

@@ -10,12 +10,25 @@ pub fn declares_own_testenv(tree: &Path) -> bool {
     tree.join(DECL).is_file() && !tree.join(HARNESS_IMAGE).exists()
 }
 
-/// The command a registered repository declares as its own full CI entry point (`ci_entry` in
-/// the declaration): what a round VM runs so the round covers what CI covers.
-pub fn ci_entry(tree: &Path) -> Option<String> {
+/// A repository's own full CI entry point as a round runs it: the command, and the image and
+/// workdir it runs in. `image` is `None` when the declaration names none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiEntry {
+    pub command: String,
+    pub image: Option<String>,
+    pub workdir: String,
+}
+
+/// The round entry a registered repository declares (`ci_entry`, `image`, `workdir`).
+pub fn ci_entry(tree: &Path) -> Option<CiEntry> {
     let text = std::fs::read_to_string(tree.join(DECL)).ok()?;
     let doc: toml::Value = spira_config::parse_foreign(&text).ok()?;
-    doc.get("ci_entry")?.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from)
+    let text_of = |k: &str| doc.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    Some(CiEntry {
+        command: text_of("ci_entry")?,
+        image: text_of("image"),
+        workdir: text_of("workdir").unwrap_or_else(|| system_paths::guest::WORK.into()),
+    })
 }
 
 pub const BUILD_TIER: &str = "build";
@@ -69,6 +82,17 @@ mod tests {
             fs::write(d.join(f), "").unwrap();
         }
         d
+    }
+
+    #[test_id(tqmfcj6)]
+    #[test]
+    fn a_round_entry_reads_its_image_and_defaults_the_workdir() {
+        let d = testkit::TempDir::new("gate-own-entry");
+        fs::create_dir_all(d.join(DECL).parent().unwrap()).unwrap();
+        fs::write(d.join(DECL), "ci_entry = \"bash gate.sh\"\nimage = \" img:1 \"\n").unwrap();
+        assert_eq!(ci_entry(&d), Some(CiEntry { command: "bash gate.sh".into(), image: Some("img:1".into()), workdir: "/work".into() }));
+        fs::write(d.join(DECL), "ci_entry = \"bash gate.sh\"\nworkdir = \"/w\"\n").unwrap();
+        assert_eq!(ci_entry(&d), Some(CiEntry { command: "bash gate.sh".into(), image: None, workdir: "/w".into() }));
     }
 
     #[test_id(tictz8l)]

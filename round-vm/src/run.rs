@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>] [--deny-list <file>] [--candidate-recipe <sha>] [--place host]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  --place host: run on this host only, never spill; wait for the host slot within the run's wall, then refuse naming the slot holder\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command> --ci-image <image> [--ci-workdir <dir>]] [--deny-list <file>] [--candidate-recipe <sha>] [--place host]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  --place host: run on this host only, never spill; wait for the host slot within the run's wall, then refuse naming the slot holder\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -45,6 +45,9 @@ pub struct RunArgs {
     /// A foreign repository's own full CI entry point: the VM clones the tree and runs this
     /// command instead of the harness corpus, and its exit status is the round's one verdict.
     pub ci_entry: Option<String>,
+    /// The image `ci_entry` runs in, and where the tree is mounted in it; required with `--ci-entry`.
+    pub ci_image: Option<String>,
+    pub ci_workdir: Option<String>,
     /// A recipe whose image is still baking. Only an EC2 placement reads it; with no image yet, the pass exits `IMAGE_PENDING_EXIT`.
     pub candidate_recipe: Option<String>,
     /// The tree's fences (`gate fences`, `name<TAB>command` lines), listed on the host before the
@@ -88,6 +91,8 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
                 r.deny_list = Some(text);
             }
             "--ci-entry" => r.ci_entry = Some(val()?).filter(|v| !v.trim().is_empty()),
+            "--ci-image" => r.ci_image = Some(val()?).filter(|v| !v.trim().is_empty()),
+            "--ci-workdir" => r.ci_workdir = Some(val()?).filter(|v| !v.trim().is_empty()),
             "--place" => match val()?.as_str() {
                 "host" => r.pin_host = true,
                 other => return Err(format!("round-vm run: --place takes `host`, not {other:?}")),
@@ -101,6 +106,9 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             }
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
+    }
+    if r.ci_entry.is_some() && r.ci_image.is_none() {
+        return Err("round-vm run: --ci-entry needs --ci-image: a round runs the repository's CI entry point in its declared image".into());
     }
     if r.no_corpus && r.attr_spool.is_none() {
         return Err("round-vm run: --no-corpus is valid only with --attr-spool".into());
@@ -183,6 +191,8 @@ pub struct BatchJob {
     pub round_sha: String,
     /// Set: the VM runs [`FOREIGN_SCRIPT`] with this command rather than the harness round.
     pub ci_entry: Option<String>,
+    pub ci_image: Option<String>,
+    pub ci_workdir: Option<String>,
     /// The tree's fences, `name<TAB>command` lines, run after the lint when `lint` is set.
     pub fences: String,
     /// `test-registry deny-list` text; empty composes no filter anywhere.
@@ -256,11 +266,11 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// The VM side of a round for a registered repository that is not the harness: clone the round's
-/// tree and run the repository's own CI entry point (`${15}`). Its exit status is the one verdict,
+/// tree and run the repository's own CI entry point (`${15}`) in its declared image (`${23}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction.
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" toolchain="$5" round_ref="${13}" round_sha="${14}" entry="${15}"
-export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+host_addr="$1" port="$2" round_ref="${13}" round_sha="${14}" entry="${15}" image="${23}" workdir="${24}"
+export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
 exec 2> >(tee ~/round-setup.log >&2)
 exec 1>&2
@@ -275,24 +285,15 @@ if [ "$got" != "$round_sha" ]; then
     exit 2
 fi
 cd ~/round-work
-unset RUSTC RUSTDOC CARGO_BUILD_RUSTC CARGO_BUILD_RUSTDOC RUSTUP_TOOLCHAIN
-rustup_bin="$(command -v rustup || true)"
-if [ -n "$rustup_bin" ]; then
-    if [ -n "$toolchain" ]; then
-        echo "round-vm: round toolchain $toolchain (the tree's pin)" >&2
-        rustup toolchain install "$toolchain" --profile minimal -c clippy -c rustfmt --no-self-update >&2
-        export RUSTUP_TOOLCHAIN="$toolchain"
-    fi
-    mkdir -p ~/round-shims
-    for t in cargo rustc rustdoc rustfmt cargo-fmt clippy-driver cargo-clippy; do ln -sf "$rustup_bin" ~/round-shims/$t; done
-    export PATH="$HOME/round-shims:$PATH"
+if ! podman pull --quiet "$image" >&2; then
+    echo "round-vm: podman pull $image failed" >&2
+    exit 3
 fi
-rustc -vV >&2 || echo "round-vm: no rustc on PATH" >&2
 mkdir -p "$res"
 printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" > "$res/batch.meta"
 t0=$(date +%s)
 rc=0
-bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
+podman run --rm -v "$HOME/round-work:$workdir" -w "$workdir" "$image" bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
 if [ "$rc" -eq 0 ]; then status=ok; else status=red; fi
 printf 'round-vm: ci_entry exited %s\n' "$rc" | tee -a "$res/ci.out"
 printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res/ci.result"
@@ -1302,6 +1303,8 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.deny_list.clone());
     args.push(deny.config_filter_line());
     args.push(deny.integration_skips());
+    args.push(job.ci_image.clone().unwrap_or_default());
+    args.push(job.ci_workdir.clone().unwrap_or_default());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
@@ -2818,6 +2821,8 @@ fn on_vm_run(
         round_sha: commit_sha.to_string(),
         ssh_log: results_dir.join(SSH_LOG_FILE),
         ci_entry: args.ci_entry.clone(),
+        ci_image: args.ci_image.clone(),
+        ci_workdir: args.ci_workdir.clone(),
         resume_url: resume_url_for(&vm.handle, args.ci_entry.is_none(), cfg.resume_url.as_deref(), env.host_plan.map(|p| p.home.as_path())),
         fences: args.fences.clone().unwrap_or_default(),
         deny_list: args.deny_list.clone().unwrap_or_default(),
@@ -4366,6 +4371,8 @@ mod tests {
             round_ref: "refs/rounds/7-abc".into(),
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
+            ci_image: Some("registry.example/rust:1".into()),
+            ci_workdir: Some("/work".into()),
             fences: String::new(), deny_list: String::new(),
             cancel: Default::default(),
         }
@@ -4375,8 +4382,26 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' '/work'", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test_id(to0fk8c)]
+    #[test]
+    fn a_ci_entry_needs_its_image_and_takes_a_workdir() {
+        let a = |v: &[&str]| parse_run_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let ok = a(&["t", "--ci-entry", "X", "--ci-image", "I", "--ci-workdir", "/w"]).unwrap();
+        assert_eq!((ok.ci_entry.as_deref(), ok.ci_image.as_deref(), ok.ci_workdir.as_deref()), (Some("X"), Some("I"), Some("/w")));
+        let err = a(&["t", "--ci-entry", "X"]).unwrap_err();
+        assert!(err.contains("--ci-entry") && err.contains("--ci-image"), "{err}");
+    }
+
+    #[test_id(t536igw)]
+    #[test]
+    fn the_foreign_script_runs_the_entry_only_inside_the_declared_image() {
+        assert!(FOREIGN_SCRIPT.contains(r#"podman run --rm -v "$HOME/round-work:$workdir" -w "$workdir" "$image" bash -c "$entry" 2>&1"#));
+        assert!(!FOREIGN_SCRIPT.lines().any(|l| l.starts_with(r#"bash -c "$entry" 2>&1"#)));
+        assert!(FOREIGN_SCRIPT.contains("round-vm: podman pull $image failed"));
     }
 
     #[test_id(t0p6ycb)]
@@ -4401,10 +4426,10 @@ mod tests {
         let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
         let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
         let cmd = remote_command(&job);
-        let tail = format!("'{}' '{}' '{}'", text, deny.config_filter_line(), deny.integration_skips());
+        let tail = format!("'{}' '{}' '{}' 'registry.example/rust:1' '/work'", text, deny.config_filter_line(), deny.integration_skips());
         assert!(cmd.ends_with(&tail), "{cmd}");
         job.deny_list = String::new();
-        assert!(remote_command(&job).ends_with(" '' '' ''"));
+        assert!(remote_command(&job).ends_with(" '' '' '' 'registry.example/rust:1' '/work'"));
     }
 
     #[test_id(t30t2bt)]
@@ -4595,9 +4620,9 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false, image_tag: None,
-            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, fences: String::new(), deny_list: String::new(), cancel: Default::default(),
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("creds"));
