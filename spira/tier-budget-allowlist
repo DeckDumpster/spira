@@ -81,7 +81,6 @@ test-cockpit-queue.sh	T1	15.5
 test-cockpit-rebuild.sh	T1	24.0
 test-cockpit-unadopted-queue.sh	T1	15.5
 test-cockpit-unit-notify.sh	T1	2.0
-test-concierge.sh	T1	28.0
 test-content-landed-no-reopen.sh	T1	29.5
 test-dependents.sh	T1	18.0
 test-deploy.sh	T1	17.5

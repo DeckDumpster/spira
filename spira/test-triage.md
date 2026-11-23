@@ -106,7 +106,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-dwarf-runes-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::runes_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
 | test-dwarf-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the rune knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `dwarf::tests::a_replace_rune_…`, `an_append_rune_…` and `brief::tests::the_shipped_groomer_splits_…`. |
 | test-persona-model.sh | 42 | one resolver for a persona's launch model | deleted. Resolver was `conf::tests::persona_model_reads_…`; added `dwarf::tests::the_launch_model_is_the_toml_persona_model_…` and `conf::tests::no_launcher_scrapes_a_model_…` (the source greps). |
-| test-concierge.sh | 32 | Concierge brief composition, resume/headless handling, historic ways in broke | kept. `concierge.sh` is the shell program under test (statute-book brief, tmux, `/proc` holder scan, wake delivery); there is no Rust owner to move it to, and a unit test of a shell function is the same shell test. |
 
 ### G — install, deploy, units
 
