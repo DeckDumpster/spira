@@ -21,7 +21,7 @@ name = "landing-ref"
 what = "The branch every landed change is merged onto; a round certifies a tree against it."
 writes_only = true
 door = "queue hand-land"
-usage = "queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> --round <wait|subvert> [--worktree <dir>] [--dry-run]"
+usage = "queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> [--evidence-full-suite] --round <wait|subvert> [--worktree <dir>] [--dry-run]"
 usage_in = "queue/src/cli.rs"
 why = "Moving it while a round is open voids the round."
 [resource.touched_by]
@@ -33,7 +33,7 @@ name = "active-release"
 what = "The link naming the release the loop runs."
 writes_only = true
 door = "queue hand-land"
-usage = "queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> --round <wait|subvert> [--worktree <dir>] [--dry-run]"
+usage = "queue.sh hand-land <id> [<repo>] --tip <40-hex> --by <actor> --reason <why> --evidence <checks> --evidence-tip <tip> [--evidence-full-suite] --round <wait|subvert> [--worktree <dir>] [--dry-run]"
 usage_in = "queue/src/cli.rs"
 why = "Activating a release by hand skips the step that lands and activates together."
 [resource.touched_by]
