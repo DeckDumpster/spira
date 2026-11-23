@@ -668,6 +668,44 @@ fn a_snapshot_of_a_store_larger_than_a_tick_copies_finishes_in_one_tick_and_hold
     assert_eq!(keys_at(&copy, rev), keys_at(c.backend(), rev));
 }
 
+#[test_id(tz1h3ex)]
+#[test]
+fn a_queued_snapshot_of_five_hundred_requests_commits_in_a_bounded_number_of_transactions() {
+    let dir = TempDir::new("ship-batched");
+    let clock = VirtualClock::new(1_000);
+    let c = suite::open(open(&dir.path().join("live.db")), &clock);
+    for i in 0..500 {
+        put(&c, &format!("b/{i:03}"), Object::new(json!(i)), &format!("seed{i}"));
+    }
+    let mut s = Shipper::open(
+        c.backend().clone(),
+        ship_cfg(dir.path(), u64::MAX),
+        file_put(&dir.path().join("off")),
+        Arc::new(clock.clone()),
+    )
+    .unwrap();
+    let rev = tick(&mut s).snapshot.expect("the first tick finishes the snapshot");
+    let snap = s.sent(SNAPSHOT).join(revlog::snapshot_name(rev));
+    let header = std::fs::read(&snap).unwrap();
+    assert_eq!((header[18], header[19]), (1, 1), "the copy stays in rollback mode");
+    let counter = u32::from_be_bytes(header[24..28].try_into().unwrap());
+    assert!(counter <= 20, "{counter} transactions for 500 requests");
+    let copy = dir.path().join("copy.db");
+    std::fs::copy(&snap, &copy).unwrap();
+    assert_eq!(keys_at(&verify(&copy), rev), keys_at(c.backend(), rev));
+}
+
+#[test_id(tpxjqfj)]
+#[test]
+fn sha256_of_a_file_longer_than_the_read_buffer_equals_the_digest_of_its_bytes() {
+    let dir = TempDir::new("ship-sha");
+    let bytes: Vec<u8> = (0..3_500_000u32).map(|i| (i % 251) as u8).collect();
+    let path = dir.path().join("big");
+    std::fs::write(&path, &bytes).unwrap();
+    let want: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(ship::sha256_file(&path).unwrap(), want);
+}
+
 #[test_id(tbv8sav)]
 #[test]
 fn an_audit_record_that_does_not_describe_its_txn_fails_the_drill_naming_it() {

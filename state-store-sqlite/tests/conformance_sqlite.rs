@@ -1176,6 +1176,34 @@ fn a_snapshot_copy_carries_the_receipts_up_to_its_revision_in_one_file() {
     assert!(copy.range_in_state("requests/", "none", None, 10, rev).unwrap().is_empty());
 }
 
+#[test_id(ty7mgyj)]
+#[test]
+fn a_snapshot_copy_of_five_hundred_day_file_rows_commits_in_a_bounded_number_of_transactions() {
+    let dir = TempDir::new("sqlite-snapshot-batched");
+    let wall = VirtualClock::new(D0);
+    let c = contract(SqliteBackend::open(&dir.path().join("s.db"), day_opts(&wall)).unwrap(), &wall);
+    for i in 0..500 {
+        let r = c.txn(&Txn::new().put(&format!("k{i}"), Object::new(json!(i))), &req(&format!("r{i}"))).unwrap();
+        assert!(r.succeeded);
+    }
+    let rows: i64 = day_file_rows(dir.path());
+    assert!(rows >= 500, "{rows}");
+    let dest = dir.path().join("snap.db");
+    let rev = c.backend().snapshot_to(&dest).unwrap();
+    let header = std::fs::read(&dest).unwrap();
+    assert_eq!((header[18], header[19]), (1, 1), "the copy stays in rollback mode");
+    let counter = u32::from_be_bytes(header[24..28].try_into().unwrap());
+    assert!(counter <= 20, "{counter} transactions for {rows} rows");
+    let copy = SqliteBackend::open(&dest, Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, jump_on_open: false, ..Options::default() }).unwrap();
+    for i in [0, 250, 499] {
+        assert!(copy.get(&state_store::request_key(&format!("r{i}")), rev).unwrap().is_some(), "r{i}");
+    }
+}
+
+fn day_file_rows(dir: &Path) -> i64 {
+    receipt_files(dir).iter().map(|n| count(&dir.join(n), "SELECT count(*) FROM rows")).sum()
+}
+
 #[test_id(trdx3d6)]
 #[test]
 fn a_day_file_behind_the_mark_is_retired_when_the_store_opens() {
