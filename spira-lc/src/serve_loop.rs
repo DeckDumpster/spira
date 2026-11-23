@@ -92,7 +92,7 @@ struct Conn {
     phase: Phase,
 }
 
-enum Parsed {
+pub(crate) enum Parsed {
     Need,
     Nothing,
     Ready(Request, usize),
@@ -101,7 +101,7 @@ enum Parsed {
 
 /// The request in `buf`, if it is all there: `parse_head` of its first line, then the `len`
 /// bytes it names. At `eof` what is there is all there will be.
-fn parse(buf: &[u8], eof: bool) -> Parsed {
+pub(crate) fn parse(buf: &[u8], eof: bool) -> Parsed {
     let end = match buf.iter().position(|b| *b == b'\n') {
         Some(n) => n + 1,
         None if eof => buf.len(),
@@ -332,12 +332,12 @@ pub(crate) async fn serve(listener: UnixListener, sh: Arc<Shared>, stopping: &At
                 }
             }
         }
-        if stopped_at.is_some() {
+        if stopped_at.is_some_and(|at| at.elapsed() >= TICK) {
             listener = None;
         }
         conns.retain_mut(|c| !c.drive(cx, &sh));
         match stopped_at {
-            Some(_) if conns.is_empty() => Poll::Ready(0),
+            Some(_) if listener.is_none() && conns.is_empty() => Poll::Ready(0),
             Some(at) if at.elapsed() >= drain_bound => Poll::Ready(conns.iter().filter(|c| c.refuse_for_restart()).count()),
             _ => Poll::Pending,
         }
