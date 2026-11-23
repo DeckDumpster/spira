@@ -150,7 +150,16 @@ pub fn verb(args: &[&str]) -> Option<String> {
 
 /// [`verb`] with the failure's kind kept.
 pub fn verb_read(args: &[&str]) -> Result<String, Gone> {
-    crate::store::answer_kind(&crate::store::client().ok_or(Gone::Failed)?, args)
+    verb_read_on(&crate::store::client().ok_or(Gone::Failed)?, args)
+}
+
+/// A watching projection's held answer when this process keeps one (a stale view refuses, never
+/// falls back), else `client`'s.
+fn verb_read_on(client: &spira_store::lc_call::LcClient, args: &[&str]) -> Result<String, Gone> {
+    match store_view::shared().filter(|p| p.watching()).and_then(|_| store_view::held_read(args)) {
+        Some(held) => held.map_err(|_| Gone::Failed),
+        None => crate::store::answer_kind(client, args),
+    }
 }
 
 /// Ids per `list --ids` read: keeps each answer far under the 64 KiB a probe may draw.
@@ -221,6 +230,65 @@ pub fn held_rows(kind: &str) -> Option<HashMap<String, Row>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spira_store::lc_call::{LcClient, Reply, Transport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    struct Counting(Arc<Mutex<Vec<String>>>);
+
+    impl Transport for Counting {
+        fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: Duration) -> Result<Reply, String> {
+            self.0.lock().unwrap().push(argv[0].clone());
+            let out = match argv[0].as_str() {
+                "rc" => r#"{"ok":{"items":[],"list_rev":4}}"#.to_string(),
+                "list" => "[]".to_string(),
+                "watch" => {
+                    // clock-safe: the double's long-poll, ending after a pause
+                    std::thread::sleep(Duration::from_millis(5));
+                    r#"{"progress_rev":5}"#.to_string()
+                }
+                _ => "no conditions".to_string(),
+            };
+            Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
+        }
+    }
+
+    fn counting() -> (LcClient, Arc<Mutex<Vec<String>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        (LcClient::over(Arc::new(Counting(Arc::clone(&seen))), true), seen)
+    }
+
+    fn asked(seen: &Mutex<Vec<String>>, verb: &str) -> usize {
+        seen.lock().unwrap().iter().filter(|v| *v == verb).count()
+    }
+
+    #[test_id(t0qp6d0)]
+    #[test]
+    fn the_condition_list_is_asked_of_the_store_each_time_until_a_watch_holds_it_and_then_once() {
+        let (fallback, fallback_seen) = counting();
+        let (views, views_seen) = counting();
+        let p = store_view::install(Arc::new(store_view::Projection::new(views, Duration::from_secs(10), Arc::new(std::time::Instant::now))));
+        p.poll().unwrap();
+        let args = ["condition", "list", "--owner", "heimdall"];
+        verb_read_on(&fallback, &args).unwrap();
+        verb_read_on(&fallback, &args).unwrap();
+        assert_eq!(asked(&fallback_seen, "condition"), 2, "with no watch each call asks the store");
+
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| p.run(&stop, &mut |_| {}));
+            // clock-safe: a cap on the wait for the watch to start
+            while !p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            verb_read_on(&fallback, &args).unwrap();
+            verb_read_on(&fallback, &args).unwrap();
+            assert_eq!(asked(&views_seen, "condition"), 1, "a watching view asks the store once");
+            assert_eq!(asked(&fallback_seen, "condition"), 2, "and the fallback client no more");
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
 
     #[test_id(tcqzon1)]
     #[test]
