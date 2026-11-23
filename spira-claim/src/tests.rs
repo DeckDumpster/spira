@@ -785,7 +785,7 @@ mod provisional_blocker {
 
     fn stack_of_c(st: &Store) -> Outcome {
         let a = Args::parse(&["sp-c".to_string()]).unwrap();
-        env(|e| stack_over(&a, e, st, "sp-c", 4))
+        env(|e| stack_over(&a, e, st, "sp-c".to_string(), 4))
     }
 
     #[test_id(tqwulcc)]
