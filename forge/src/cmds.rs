@@ -1423,6 +1423,13 @@ const GENERIC_LABELS: [&str; 9] = [
     "ubuntu-latest",
 ];
 
+/// A job in any other state is running or about to; a run holding one is not stranded.
+const NOT_RUNNING: [&str; 5] = ["queued", "waiting", "pending", "requested", "completed"];
+
+fn running(job_state: &str) -> bool {
+    !NOT_RUNNING.contains(&job_state)
+}
+
 fn vmid_of(name: &str) -> String {
     let mut best = String::new();
     let mut cur = String::new();
@@ -1491,7 +1498,7 @@ pub fn stranded_runners(gh: &dyn Gh, repo: &Path, now: u64, min_age: u64) -> Out
             Ok(j) => j,
             Err(e) => return cannot(e),
         };
-        if jobs.iter().any(|j| jstr(j, "status").as_deref() == Some("in_progress")) {
+        if jobs.iter().any(|j| running(&jstr(j, "status").unwrap_or_default())) {
             continue;
         }
         for j in jobs {

@@ -305,6 +305,7 @@ impl Forge {
     /// no job in progress; the lines `forge stranded-runners` prints. A listing that fails or is cut
     /// short of its `total_count` is an error: it cannot tell.
     pub fn stranded_runners(&self, slug: &str, now: u64, min_age: u64) -> Result<Vec<String>, String> {
+        let running = |job_state: &str| !["queued", "waiting", "pending", "requested", "completed"].contains(&job_state);
         const GENERIC: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
         let listing = |path: String, rows: &str, whole: bool| -> Result<Vec<Value>, String> {
             let v = self.try_get("stranded_runners", &path)?;
@@ -325,7 +326,7 @@ impl Forge {
         let mut lines = vec![];
         for id in ids {
             let jobs = listing(format!("/repos/{slug}/actions/runs/{id}/jobs?per_page=100"), "jobs", true)?; // not a path: GitHub API route or JSON pointer
-            if jobs.iter().any(|j| j["status"] == "in_progress") {
+            if jobs.iter().any(|j| running(j["status"].as_str().unwrap_or_default())) {
                 continue;
             }
             for j in jobs {
