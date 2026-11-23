@@ -2,7 +2,7 @@ use super::*;
 use crate::{Anchor, Doc, Margin, TOKEN_FILE_KEY, URL_KEY};
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use testkit::TempDir;
 
 const TOKEN: &str = "s3cret-agent-token";
@@ -35,7 +35,7 @@ fn serve_once(reply: &'static str) -> (String, std::thread::JoinHandle<String>) 
 fn client(dir: &TempDir, base: &str) -> HttpMargin {
     let file = dir.path().join("token");
     std::fs::write(&file, TOKEN).unwrap();
-    HttpMargin { base: base.to_string(), token_file: file.to_str().unwrap().to_string() }
+    HttpMargin { base: base.to_string(), token_file: file.to_str().unwrap().to_string(), timeout: Duration::from_secs(CALL_SECS) }
 }
 
 #[test_id(t5umxol)]
@@ -56,7 +56,7 @@ fn post_collection_sends_the_token_file_text_as_a_bearer_and_parses_the_reply() 
 #[test]
 fn an_empty_url_key_or_a_missing_token_file_is_refused_by_name_without_the_token() {
     let cfg = |url: &'static str, file: String| move |k: &str| Ok::<_, String>(if k == URL_KEY { url.to_string() } else { file.clone() });
-    let e = HttpMargin::configured(cfg("", "/x".into())).err().unwrap();
+    let e = HttpMargin::configured(cfg("", "token".into())).err().unwrap();
     assert!(e.contains(URL_KEY), "{e}");
     let dir = TempDir::new("margin-missing");
     let missing = dir.path().join("absent").to_str().unwrap().to_string();
@@ -72,7 +72,7 @@ fn an_empty_url_key_or_a_missing_token_file_is_refused_by_name_without_the_token
 
 #[test_id(tt2eidx)]
 #[test]
-fn a_reader_that_accepts_and_never_answers_fails_post_comment_within_six_seconds_naming_url_and_route() {
+fn a_reader_that_accepts_and_never_answers_fails_post_comment_naming_url_and_route() {
     let dir = TempDir::new("margin-silent");
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", l.local_addr().unwrap());
@@ -82,10 +82,10 @@ fn a_reader_that_accepts_and_never_answers_fails_post_comment_within_six_seconds
         let _ = released.recv();
         drop(held);
     });
-    let started = Instant::now();
     let a = Anchor { document: "d1".into(), version: 1, first: 1, last: 1 };
-    let e = client(&dir, &base).post_comment("c1", &a, "b", true, None).unwrap_err();
-    assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
+    let mut m = client(&dir, &base);
+    m.timeout = Duration::from_millis(300);
+    let e = m.post_comment("c1", &a, "b", true, None).unwrap_err();
     assert!(e.contains(&base) && e.contains("POST /api/collections/c1/comments") && !e.contains(TOKEN), "{e}");
     release.send(()).unwrap();
     hold.join().unwrap();
@@ -103,4 +103,11 @@ fn a_held_comment_is_sent_with_its_anchor_and_the_reply_parent() {
     for want in [r#""held":true"#, r#""first":3"#, r#""last":5"#, r#""version":2"#, r#""in_reply_to":"t0""#] {
         assert!(req.contains(want), "{want} missing in {req}");
     }
+}
+
+#[test_id(t2qs0mm)]
+#[test]
+fn a_configured_client_waits_at_most_five_seconds_for_an_answer() {
+    let m = HttpMargin::configured(|k: &str| Ok::<_, String>(if k == URL_KEY { "http://r".to_string() } else { "token".to_string() })).unwrap();
+    assert!(m.timeout <= Duration::from_secs(5), "{:?}", m.timeout);
 }

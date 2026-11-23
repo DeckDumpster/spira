@@ -6,10 +6,13 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 pub const CALL_SECS: u64 = 5;
+const API: &str = "/api"; // not a path: the reader's route prefix
 
 pub struct HttpMargin {
     pub base: String,
     pub token_file: String,
+    /// What a request/response call waits for the reader's answer.
+    pub timeout: Duration,
 }
 
 impl HttpMargin {
@@ -22,7 +25,7 @@ impl HttpMargin {
             }
             Ok(v.trim().to_string())
         };
-        Ok(HttpMargin { base: get(URL_KEY)?.trim_end_matches('/').to_string(), token_file: get(TOKEN_FILE_KEY)? })
+        Ok(HttpMargin { base: get(URL_KEY)?.trim_end_matches('/').to_string(), token_file: get(TOKEN_FILE_KEY)?, timeout: Duration::from_secs(CALL_SECS) })
     }
 
     fn token(&self) -> Result<String, String> {
@@ -54,44 +57,44 @@ impl HttpMargin {
     }
 
     fn quick<T: DeserializeOwned>(&self, method: &str, route: &str, body: Option<&Value>) -> Result<T, String> {
-        self.call(method, route, body, Duration::from_secs(CALL_SECS))
+        self.call(method, route, body, self.timeout)
     }
 }
 
 impl Margin for HttpMargin {
     fn post_collection(&self, title: &str, cover: &str, docs: &[Doc]) -> Result<Collection, String> {
-        self.quick("POST", "/api/collections", Some(&json!({"title": title, "cover": cover, "documents": docs})))
+        self.quick("POST", &format!("{API}/collections"), Some(&json!({"title": title, "cover": cover, "documents": docs})))
     }
 
     fn post_comment(&self, collection: &str, anchor: &Anchor, body: &str, held: bool, in_reply_to: Option<&str>) -> Result<CommentRef, String> {
         let payload = json!({"document": anchor.document, "version": anchor.version, "first": anchor.first, "last": anchor.last, "body": body, "held": held, "in_reply_to": in_reply_to});
-        self.quick("POST", &format!("/api/collections/{collection}/comments"), Some(&payload))
+        self.quick("POST", &format!("{API}/collections/{collection}/comments"), Some(&payload))
     }
 
     fn post_version(&self, document: &str, text: &str) -> Result<u64, String> {
-        let v: Value = self.quick("POST", &format!("/api/documents/{document}/versions"), Some(&json!({"text": text})))?;
+        let v: Value = self.quick("POST", &format!("{API}/documents/{document}/versions"), Some(&json!({"text": text})))?;
         v.get("version").and_then(Value::as_u64).ok_or_else(|| "the reader's reply to a new version has no `version`".to_string())
     }
 
     fn collection(&self, id: &str) -> Result<CollectionInfo, String> {
-        self.quick("GET", &format!("/api/collections/{id}"), None)
+        self.quick("GET", &format!("{API}/collections/{id}"), None)
     }
 
     fn thread(&self, id: &str) -> Result<Thread, String> {
-        self.quick("GET", &format!("/api/threads/{id}"), None)
+        self.quick("GET", &format!("{API}/threads/{id}"), None)
     }
 
     fn document_text(&self, document: &str, version: u64) -> Result<String, String> {
-        let v: Value = self.quick("GET", &format!("/api/documents/{document}/versions/{version}"), None)?;
+        let v: Value = self.quick("GET", &format!("{API}/documents/{document}/versions/{version}"), None)?;
         v.get("text").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "the reader's reply to a document read has no `text`".to_string())
     }
 
     fn close(&self, collection: &str) -> Result<(), String> {
-        self.quick::<Value>("POST", &format!("/api/collections/{collection}/close"), Some(&json!({}))).map(|_| ())
+        self.quick::<Value>("POST", &format!("{API}/collections/{collection}/close"), Some(&json!({}))).map(|_| ())
     }
 
     fn changes(&self, after: u64, hold_secs: u64) -> Result<Changes, String> {
-        self.call("GET", &format!("/api/changes?after={after}&hold={hold_secs}"), None, Duration::from_secs(hold_secs + CALL_SECS))
+        self.call("GET", &format!("{API}/changes?after={after}&hold={hold_secs}"), None, self.timeout + Duration::from_secs(hold_secs))
     }
 }
 

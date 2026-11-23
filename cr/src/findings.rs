@@ -398,10 +398,8 @@ pub fn findings(number: u32, post: bool, ports: &Ports) -> Outcome {
         Ok(r) => r,
         Err(e) => return refuse(2, &e),
     };
-    if post {
-        if r.collection.is_none() {
-            return refuse(2, &format!("review {number:03} has no collection to post on; seal it first"));
-        }
+    if post && r.collection.is_none() {
+        return refuse(2, &format!("review {number:03} has no collection to post on; seal it first"));
     }
     let result = (|| -> Result<String, String> {
         let rows = load(run, number)?;
