@@ -355,7 +355,10 @@ impl Effects {
         self.once(key, || {
             let mut all_ok = true;
             for (program, args) in &job.steps {
-                all_ok &= reconciler::run_cmd_ok(program, &args.iter().map(String::as_str).collect::<Vec<_>>());
+                if let Err(e) = reconciler::run_remedy_step(program, &args.iter().map(String::as_str).collect::<Vec<_>>()) {
+                    self.log_line(&e);
+                    all_ok = false;
+                }
             }
             if let Some(note) = &job.note {
                 let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -423,6 +426,19 @@ mod remedy_note_tests {
             assert!(line.starts_with("QUEUE STRANDED_RERUN "), "{line}");
             assert!(line.ends_with(&format!(r#"repo=r run=7 job="a b" label=ci-7-1 queued=400s runner=none ok={ok}"#)), "{line}");
         }
+    }
+
+    #[test_id(tqx3gs8)]
+    #[test]
+    fn a_failing_remedy_step_is_logged_with_its_program_and_args() {
+        let dir = testkit::TempDir::new("remedy-step-log");
+        let fx = Effects { world: world::World { run_dir: dir.path().to_path_buf(), ..Default::default() }, ..Default::default() };
+        let job = watchers::reconciler::RemedyJob { key: "k".into(), steps: vec![("false".into(), vec!["a".into(), "--wait-cancel".into(), "1".into()])], note: Some("repo=r run=7".into()) };
+        fx.reconcile_remedy("k", &serde_json::to_string(&job).unwrap()).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("reconciler.log")).unwrap();
+        assert!(log.contains("remedy step false a --wait-cancel 1 failed: exit 1"), "{log}");
+        let landing = std::fs::read_to_string(dir.path().join("landing.log")).unwrap();
+        assert!(landing.trim_end().ends_with("repo=r run=7 ok=false"), "{landing}");
     }
 }
 

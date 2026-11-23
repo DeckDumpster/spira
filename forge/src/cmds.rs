@@ -1800,7 +1800,15 @@ pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
     Some(format!("run {run_id} concluded {concl} on tree {sha}, workflow {wf}, same harness: no input changed, a rerun can only repeat the verdict"))
 }
 
+pub const CANCEL_POLL_SECS: u64 = 2;
+
 pub fn workflow_rerun(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
+    workflow_rerun_after_cancel(gh, repo, run_id, None, &|_| {})
+}
+
+/// With `wait_cancel`, a run this call cancelled is polled until it is `completed` before the
+/// rerun is asked for: the forge refuses a rerun of a run that has not completed.
+pub fn workflow_rerun_after_cancel(gh: &dyn Gh, repo: &Path, run_id: &str, wait_cancel: Option<u64>, sleep: &dyn Fn(u64)) -> Out {
     if let Some(why) = rerun_refusal(gh, repo, run_id) {
         warn!("forge: workflow-rerun refused: {why}");
         return Out {
@@ -1808,13 +1816,28 @@ pub fn workflow_rerun(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
             lines: vec![],
         };
     }
-    let st = gh.call(
-        Some(repo),
-        &["run", "view", run_id, "--json", "status", "-q", ".status"],
-    );
-    let status = st.text().trim().to_string();
+    let read_status = || {
+        gh.call(Some(repo), &["run", "view", run_id, "--json", "status", "-q", ".status"])
+            .text()
+            .trim()
+            .to_string()
+    };
+    let status = read_status();
     if status == "in_progress" || status == "queued" {
         let _ = gh.call(Some(repo), &["run", "cancel", run_id]);
+        if let Some(limit) = wait_cancel {
+            let mut waited = 0;
+            let mut now = read_status();
+            while now != "completed" {
+                if waited >= limit {
+                    warn!("forge: workflow-rerun: run {run_id} still {now} {limit}s after cancel");
+                    return Out { code: 4, lines: vec![] };
+                }
+                sleep(CANCEL_POLL_SECS);
+                waited += CANCEL_POLL_SECS;
+                now = read_status();
+            }
+        }
     }
     let r = gh.call(Some(repo), &["run", "rerun", run_id]);
     Out {

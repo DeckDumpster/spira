@@ -15,9 +15,18 @@ type Canned = (Vec<String>, i32, Vec<u8>);
 struct FakeGh {
     answers: RefCell<Vec<Canned>>,
     calls: RefCell<Vec<Vec<String>>>,
+    /// Answers consumed in order for one argv, ahead of `answers`.
+    sequence: RefCell<Vec<(Vec<String>, std::collections::VecDeque<String>)>>,
 }
 
 impl FakeGh {
+    fn on_in_turn(&self, args: &[&str], stdouts: &[&str]) {
+        self.sequence.borrow_mut().push((
+            args.iter().map(|s| s.to_string()).collect(),
+            stdouts.iter().map(|s| s.to_string()).collect(),
+        ));
+    }
+
     fn on(&self, args: &[&str], code: i32, stdout: &str) {
         self.answers.borrow_mut().push((
             args.iter().map(|s| s.to_string()).collect(),
@@ -32,6 +41,13 @@ impl Gh for FakeGh {
         self.calls
             .borrow_mut()
             .push(args.iter().map(|s| s.to_string()).collect());
+        for (pat, queue) in self.sequence.borrow_mut().iter_mut() {
+            if pat.iter().map(String::as_str).eq(args.iter().copied()) {
+                if let Some(out) = queue.pop_front() {
+                    return GhOut { code: 0, stdout: out.into_bytes() };
+                }
+            }
+        }
         for (pat, code, out) in self.answers.borrow().iter() {
             if pat.iter().map(String::as_str).eq(args.iter().copied()) {
                 return GhOut {
@@ -1481,6 +1497,22 @@ fn rerun_called(gh: &FakeGh) -> bool {
     })
 }
 
+const STATUS_VIEW: [&str; 6] = ["run", "view", "9", "--json", "status", "-q"];
+
+fn status_view_args() -> Vec<&'static str> {
+    let mut a = STATUS_VIEW.to_vec();
+    a.push(".status");
+    a
+}
+
+fn index_of(gh: &FakeGh, pred: impl Fn(&[String]) -> bool) -> Option<usize> {
+    gh.calls.borrow().iter().position(|c| pred(c))
+}
+
+fn is_rerun(c: &[String]) -> bool {
+    c.get(1).map(String::as_str) == Some("rerun")
+}
+
 #[test_id(tqsyoqs)]
 #[test]
 fn workflow_rerun_of_a_decided_run_is_refused_with_the_unchanged_inputs() {
@@ -2048,4 +2080,57 @@ fn a_stand_in_answers_with_its_code_stdout_stderr_and_reads_the_input() {
     let r = crate::client::run(&crate::client::Route::Program(bin), "pr-create", Path::new("r"), &["h"], Some(b"body\n"));
     assert_eq!(r, crate::client::Reply { code: 4, out: "pr-create r h\nbody\n".into(), err: "oops\n".into() });
     assert_eq!(r.stdout(), None);
+}
+
+#[test_id(tevcju8)]
+#[test]
+fn workflow_rerun_waits_for_the_cancelled_run_to_complete_before_the_rerun() {
+    let gh = rerun_gh("cancelled", r#"{"jobs":[]}"#);
+    gh.on_in_turn(&status_view_args(), &["in_progress", "in_progress", "in_progress", "completed"]);
+    let slept = RefCell::new(Vec::new());
+    let out = workflow_rerun_after_cancel(&gh, repo(), "9", Some(120), &|s| slept.borrow_mut().push(s));
+    assert_eq!(out.code, 0);
+    assert_eq!(*slept.borrow(), [2, 2]);
+    let reads: Vec<usize> = gh.calls.borrow().iter().enumerate().filter(|(_, c)| c.iter().map(String::as_str).eq(status_view_args())).map(|(i, _)| i).collect();
+    assert_eq!(reads.len(), 4, "the first read, then the polls");
+    let rerun = index_of(&gh, is_rerun).expect("rerun asked for");
+    assert!(rerun > reads[3], "the rerun comes after the completed read");
+    let cancel = index_of(&gh, |c| c.get(1).map(String::as_str) == Some("cancel")).unwrap();
+    assert!(cancel < reads[1]);
+}
+
+#[test_id(tenwtff)]
+#[test]
+fn workflow_rerun_that_never_sees_the_run_complete_exits_4_and_does_not_rerun() {
+    let gh = rerun_gh("cancelled", r#"{"jobs":[]}"#);
+    gh.on_in_turn(&status_view_args(), &["queued", "in_progress", "in_progress", "in_progress", "in_progress"]);
+    let _ = crate::diag::take();
+    let slept = RefCell::new(0u64);
+    let out = workflow_rerun_after_cancel(&gh, repo(), "9", Some(4), &|s| *slept.borrow_mut() += s);
+    assert_eq!(out.code, 4);
+    assert!(!rerun_called(&gh));
+    assert_eq!(*slept.borrow(), 4);
+    assert_eq!(crate::diag::take(), vec!["forge: workflow-rerun: run 9 still in_progress 4s after cancel".to_string()]);
+}
+
+#[test_id(t8gmv9x)]
+#[test]
+fn workflow_rerun_of_a_completed_run_never_polls_even_when_told_to_wait() {
+    let gh = rerun_gh("cancelled", r#"{"jobs":[]}"#);
+    let out = workflow_rerun_after_cancel(&gh, repo(), "9", Some(120), &|_| panic!("slept"));
+    assert_eq!(out.code, 0);
+    let reads = gh.calls.borrow().iter().filter(|c| c.iter().map(String::as_str).eq(status_view_args())).count();
+    assert_eq!(reads, 1);
+    assert!(rerun_called(&gh));
+}
+
+#[test_id(t4idy4n)]
+#[test]
+fn workflow_rerun_without_the_flag_asks_for_the_rerun_straight_after_the_cancel() {
+    let gh = rerun_gh("cancelled", r#"{"jobs":[]}"#);
+    gh.on_in_turn(&status_view_args(), &["in_progress"]);
+    assert_eq!(workflow_rerun(&gh, repo(), "9").code, 0);
+    let calls = gh.calls.borrow();
+    let cancel = calls.iter().position(|c| c.get(1).map(String::as_str) == Some("cancel")).unwrap();
+    assert!(is_rerun(&calls[cancel + 1]));
 }
