@@ -49,7 +49,7 @@ struct Inner {
     keep_days: u32,
     day_max_bytes: u64,
     dropped: AtomicU64,
-    warned_day: Mutex<String>,
+    warned_days: Mutex<Vec<String>>,
 }
 
 /// Serialised spans waiting for the writer thread, each with its emit time.
@@ -58,7 +58,7 @@ struct Pending {
     spans: Vec<(SystemTime, Vec<u8>)>,
     bytes: usize,
     busy: bool,
-    flush: bool,
+    flushers: usize,
 }
 
 #[derive(Default)]
@@ -71,6 +71,7 @@ struct Queue {
 /// The most serialised span bytes a buffered sink holds before it drops.
 pub const QUEUE_MAX_BYTES: usize = 8 << 20;
 const APPEND_EVERY: Duration = Duration::from_secs(1);
+const FLUSH_BOUND: Duration = Duration::from_secs(5);
 
 /// What one call looked like; the attribute set of the span built from it.
 pub struct Call<'a> {
@@ -162,16 +163,15 @@ impl Sink {
         queue.wake.notify_one();
     }
 
-    /// Blocks until everything queued so far has been appended or dropped.
+    /// Blocks until everything queued so far has been appended or dropped, or `FLUSH_BOUND`
+    /// passes: a day file held locked elsewhere must not hold a stopping process.
     pub fn flush(&self) {
         let Some(queue) = &self.queue else { return };
         let mut p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
-        p.flush = true;
+        p.flushers += 1;
         queue.wake.notify_one();
-        while !p.spans.is_empty() || p.busy {
-            p = queue.done.wait(p).unwrap_or_else(|e| e.into_inner());
-        }
-        p.flush = false;
+        let (mut p, _) = queue.done.wait_timeout_while(p, FLUSH_BOUND, |p| !p.spans.is_empty() || p.busy).unwrap_or_else(|e| e.into_inner());
+        p.flushers -= 1;
     }
 
     pub fn write(&self, call: &Call, now: SystemTime) -> std::io::Result<()> {
@@ -194,13 +194,13 @@ fn writer_loop(inner: &Inner, queue: &Queue) {
         p = queue.pending.lock().unwrap_or_else(|e| e.into_inner());
         p.busy = false;
         queue.done.notify_all();
-        p = queue.wake.wait_timeout_while(p, APPEND_EVERY, |p| !p.flush).unwrap_or_else(|e| e.into_inner()).0;
+        p = queue.wake.wait_timeout_while(p, APPEND_EVERY, |p| p.flushers == 0).unwrap_or_else(|e| e.into_inner()).0;
     }
 }
 
 impl Inner {
     fn new(dir: PathBuf, service: &str, keep_days: u32, day_max_bytes: u64) -> Inner {
-        Inner { dir, service: service.to_string(), keep_days, day_max_bytes, dropped: AtomicU64::new(0), warned_day: Mutex::new(String::new()) }
+        Inner { dir, service: service.to_string(), keep_days, day_max_bytes, dropped: AtomicU64::new(0), warned_days: Mutex::new(Vec::new()) }
     }
 
     fn line(&self, call: &Call) -> std::io::Result<Vec<u8>> {
@@ -229,20 +229,18 @@ impl Inner {
     /// Appends whole lines to `day`'s file under its lock while the file stays within the day
     /// bound; the rest, or all of them on an error, are dropped and counted.
     fn append_day(&self, day: &str, lines: &[&[u8]]) -> std::io::Result<()> {
-        let result = self.try_append_day(day, lines);
-        if result.is_err() {
+        let opened = self.open_locked(day);
+        let Ok((mut f, path, first_today)) = opened else {
             self.drop_spans(lines.len() as u64);
-        }
-        result
-    }
-
-    fn try_append_day(&self, day: &str, lines: &[&[u8]]) -> std::io::Result<()> {
-        fs::create_dir_all(&self.dir)?;
-        let path = self.path(day);
-        let first_today = !path.exists();
-        let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
-        lock(&f)?;
-        let mut size = f.metadata()?.len();
+            return opened.map(|_| ());
+        };
+        let mut size = match f.metadata() {
+            Ok(m) => m.len(),
+            Err(e) => {
+                self.drop_spans(lines.len() as u64);
+                return Err(e);
+            }
+        };
         let mut out = Vec::new();
         let mut kept = 0u64;
         for l in lines {
@@ -256,17 +254,26 @@ impl Inner {
         let lost = lines.len() as u64 - kept;
         if lost > 0 {
             self.drop_spans(lost);
-            let mut warned = self.warned_day.lock().unwrap_or_else(|e| e.into_inner());
-            if *warned != day {
-                *warned = day.to_string();
+            let mut warned = self.warned_days.lock().unwrap_or_else(|e| e.into_inner());
+            if !warned.iter().any(|d| d == day) {
+                warned.push(day.to_string());
                 eprintln!("spira-otel: {} is at its {} byte day bound; further spans that day are dropped", path.display(), self.day_max_bytes);
             }
         }
-        f.write_all(&out)?;
+        f.write_all(&out).inspect_err(|_| self.drop_spans(kept))?;
         if first_today {
             self.prune(day);
         }
         Ok(())
+    }
+
+    fn open_locked(&self, day: &str) -> std::io::Result<(File, PathBuf, bool)> {
+        fs::create_dir_all(&self.dir)?;
+        let path = self.path(day);
+        let first_today = !path.exists();
+        let f = OpenOptions::new().create(true).append(true).open(&path)?;
+        lock(&f)?;
+        Ok((f, path, first_today))
     }
 
     fn path(&self, day: &str) -> PathBuf {
