@@ -60,7 +60,7 @@ fn cr_pick_runs_over_a_real_git_tree() {
     let findings = testkit::TempDir::new("cr-git-findings");
     let init = std::process::Command::new("git").arg("-C").arg(findings.path()).args(["init", "-q", "-b", "main"]).status().unwrap();
     assert!(init.success());
-    let config = Config { page_lines: 60, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50, status_limit: 10 };
+    let config = Config { size_unit_lines: 60, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50, status_limit: 10 };
     let ports = Ports { run_dir: dir.path().join("unused-run"), margin: Box::new(margin_client::FakeMargin::default()), findings_dir: findings.path().to_str().unwrap().to_string(), committer: Box::new(cr::ports::GitCommitter), source_repo: "k".into(), source_url: Ok("https://github.com/acme/k".into()), stdin: String::new(), clock: Box::new(VirtualClock::new(1_700_000_000_000)), tree: Box::new(tree), beads: Box::new(cr::ports::FixtureBeads::default()), registry: Box::new(cr::ports::FixtureRegistry::default()), config, env_seed: None };
     let o = run(&["pick".into(), "--seed".into(), "1".into(), "--json".into()], &ports);
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);

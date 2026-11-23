@@ -27,7 +27,7 @@ fn build_ports() -> Result<Ports, String> {
     let tree = GitTree::new(&root, &base)?;
     let exclude: String = cfg_parse("SPIRA_CR_EXCLUDE")?;
     let config = Config {
-        page_lines: cfg_parse("SPIRA_CR_PAGE_LINES")?,
+        size_unit_lines: cfg_parse("SPIRA_CR_SIZE_UNIT_LINES")?,
         churn_days: cfg_parse("SPIRA_CR_CHURN_DAYS")?,
         rewrite_days: cfg_parse("SPIRA_CR_REWRITE_DAYS")?,
         count_limit: cfg_parse::<u32>("SPIRA_CR_COUNT_LIMIT")? as usize,

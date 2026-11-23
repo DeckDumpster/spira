@@ -291,14 +291,13 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[0], cover.does));
     m.push_str(&format!("{}\n\n{}\n\n", SECTIONS[1], cover.look_first));
     m.push_str(&format!("{}\n\n", SECTIONS[2]));
-    let page = ports.config.page_lines.max(1);
     let mut total = 0;
     for (path, bytes) in files {
         let lines = line_count(bytes);
         total += lines;
-        m.push_str(&format!("- `{path}`: {lines} lines (about {} pages)\n", lines.div_ceil(page)));
+        m.push_str(&format!("- `{path}`: {lines} lines\n"));
     }
-    m.push_str(&format!("- Total: {total} lines (about {} pages)\n", total.div_ceil(page)));
+    m.push_str(&format!("- Total: {total} lines\n"));
     let mut dependents = pick::dependent_files(ix, u);
     dependents.sort();
     dependents.dedup();

@@ -57,7 +57,7 @@ fn seal_stages_the_source_commit_bytes_after_the_landing_ref_has_moved() {
         tree: Box::new(GitTree::new(p.to_str().unwrap(), "main").unwrap()),
         beads: Box::new(cr::ports::FixtureBeads::default()),
         registry: Box::new(cr::ports::FixtureRegistry::default()),
-        config: Config { page_lines: 60, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50, status_limit: 10 },
+        config: Config { size_unit_lines: 60, exclude: vec![], churn_days: 60, rewrite_days: 90, count_limit: 50, status_limit: 10 },
         env_seed: None,
     };
     let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
