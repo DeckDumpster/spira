@@ -1216,11 +1216,50 @@ fn bind_deadline(received: Instant, limit: Duration) -> state_store::phases::Dea
 /// `f`'s answer, or `None` once `deadline` passes; the abandoned work finishes unobserved.
 fn within<T: Send + 'static>(deadline: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _busy = Busy::enter();
+    RUNNERS.run(Box::new(move || {
         let _ = tx.send(f());
-    });
+    }));
     rx.recv_timeout(deadline).ok()
+}
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+/// Process-wide threads that run request work: a job takes an idle runner, and a runner starts
+/// only when none is idle, so one still finishing abandoned work is never waited for.
+struct Runners {
+    queue: std::sync::mpsc::Sender<Job>,
+    inbox: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<Job>>>,
+    idle: Arc<AtomicUsize>,
+}
+
+static RUNNERS: std::sync::LazyLock<Runners> = std::sync::LazyLock::new(|| {
+    let (queue, inbox) = std::sync::mpsc::channel();
+    Runners { queue, inbox: Arc::new(std::sync::Mutex::new(inbox)), idle: Arc::new(AtomicUsize::new(0)) }
+});
+
+impl Runners {
+    fn run(&self, job: Job) {
+        if self.idle.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok() {
+            let _ = self.queue.send(job);
+            return;
+        }
+        let (inbox, idle) = (self.inbox.clone(), self.idle.clone());
+        let started = std::thread::Builder::new().name("lc-run".into()).spawn(move || {
+            let mut next = job;
+            loop {
+                {
+                    let _busy = Busy::enter();
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(next));
+                }
+                idle.fetch_add(1, Ordering::SeqCst);
+                match inbox.lock().unwrap().recv() {
+                    Ok(job) => next = job,
+                    Err(_) => return,
+                }
+            }
+        });
+        started.expect("spawn lc-run thread");
+    }
 }
 
 /// Beside the socket, so the one configured socket path locates it: `<uid> <persona>` lines.

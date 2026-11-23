@@ -114,3 +114,66 @@ fn a_reused_worker_registers_each_connection_as_its_own_flight() {
     assert_eq!(seen[1].1, 1, "the first connection left the drain's list");
     assert!(CURRENT.with(|c| c.borrow().is_none()));
 }
+
+fn send_head(path: &std::path::Path, argv: &[&str], request_id: Option<&str>) -> String {
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let head = spira_store::lc_call::request_head(&argv, None, &Default::default(), None, request_id).unwrap();
+    ask(path, &head)
+}
+
+#[test_id(t90ix0r)]
+#[test]
+fn request_work_reuses_runner_threads_beside_parked_watches() {
+    let dir = testkit::TempDir::new("lc-workers-runners");
+    let path = dir.join("sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let stopping = AtomicBool::new(false);
+    let idle = Arc::new(AtomicUsize::new(0));
+    let ran = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let (parked_tx, parked_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+    let work: super::Work = {
+        let ran = ran.clone();
+        Arc::new(move |req| {
+            ran.lock().unwrap().insert(std::thread::current().id());
+            if req.argv.iter().any(|a| a == "park") {
+                parked_tx.send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv();
+            }
+            crate::callers::Answer { code: 0, stdout: "ok".into(), ..Default::default() }
+        })
+    };
+    let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines: super::Deadlines { default: Duration::from_secs(60) } });
+    std::thread::scope(|scope| {
+        let (stopping, path) = (&stopping, &path);
+        let waiting = idle.clone();
+        let client = scope.spawn(move || {
+            let parked: Vec<_> = (0..2).map(|_| scope.spawn(move || send_head(path, &["list", "park"], None))).collect();
+            for _ in 0..2 {
+                parked_rx.recv().unwrap();
+            }
+            for i in 0..50 {
+                let reply = if i % 2 == 0 { send_head(path, &["list"], None) } else { send_head(path, &["content", "note", "sp-a", "x"], Some(&format!("req-{i}"))) };
+                assert!(reply.contains(r#""exit_code":0"#), "request {i}: {reply}");
+                while waiting.load(Ordering::SeqCst) == 0 {
+                    std::thread::yield_now();
+                }
+            }
+            for _ in 0..2 {
+                release_tx.send(()).unwrap();
+            }
+            for p in parked {
+                p.join().unwrap();
+            }
+            stopping.store(true, Ordering::SeqCst);
+        });
+        let door = &door;
+        accept_counting_idle(&listener, path.to_str().unwrap(), scope, stopping, move |stream| {
+            super::serve_one(stream, None, Instant::now(), door)
+        }, idle.clone());
+        client.join().unwrap();
+    });
+    let distinct = ran.lock().unwrap().len();
+    assert!(distinct <= 3, "{distinct} distinct threads ran the work: 2 parked and 1 reused for the sequential requests");
+}
