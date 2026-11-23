@@ -102,7 +102,7 @@ duplication is exactly what let a timer added after a hand list was written esca
 - Reads: `bd -C $SPIRA_DB list --label czar-trigger --all --json --limit 0 --brief`.
 - Writes: one `incident.sh` bead per `UNCLAIMED`/`NOT_CLEARED` finding, ref
   `incident:czar-unclaimed-<id>` / `incident:czar-not-cleared-<id>`.
-- Env seams: `SPIRA_CZAR_OUTCOME_MINS` (30), `SPIRA_CZAR_UNCLAIMED_MINS` (10),
+- Env seams: `SPIRA_CZAR_OUTCOME_MINS` (30), `SPIRA_CZAR_UNCLAIMED_MINS` (10), `SPIRA_CZAR_OUTCOME_LOOKBACK_HOURS` (24),
   `SPIRA_CZAR_LABEL` (czar-trigger), `SPIRA_INCIDENT_SH`, `SPIRA_DB`.
 
 ### `--pr-stall-check`
