@@ -202,8 +202,8 @@ pub fn dir_at(configured: Option<String>, run: &Path) -> PathBuf {
         .map_or_else(|| run.join("lc-ship"), PathBuf::from)
 }
 
-/// The names in `dir`, sorted; a missing directory is empty. Half-written `.tmp` files are not
-/// objects.
+/// The names in `dir`, sorted; a missing directory is empty. Half-written `.tmp` files and an
+/// upload's `.part` and `.complete` files are not objects.
 pub fn names(dir: &Path) -> Result<Vec<String>, String> {
     let rd = match fs::read_dir(dir) {
         Ok(rd) => rd,
@@ -217,7 +217,7 @@ pub fn names(dir: &Path) -> Result<Vec<String>, String> {
             .file_name()
             .to_string_lossy()
             .into_owned();
-        if !name.ends_with(".tmp") {
+        if ![".tmp", ".part", ".complete"].iter().any(|x| name.ends_with(x)) {
             out.push(name);
         }
     }
@@ -502,25 +502,33 @@ pub struct Drained {
 /// refusal so a retry is the same object; each object moves to `sent/` and a run records
 /// `shipped`. It opens no store, so any process may run it on a shipper's directory.
 pub fn drain(dir: &Path, put: &dyn Put) -> Result<Drained, String> {
-    let queue = |kind: &str| dir.join("queue").join(kind);
-    let sent_dir = |kind: &str| dir.join("sent").join(kind);
+    let mut out = drain_kind(dir, REVLOG, put)?;
+    if out.failed.is_none() {
+        let snaps = drain_kind(dir, SNAPSHOT, put)?;
+        out.uploaded.extend(snaps.uploaded);
+        out.failed = snaps.failed;
+    }
+    Ok(out)
+}
+
+/// [`drain`] for the one `kind` (`REVLOG` or `SNAPSHOT`) alone.
+pub fn drain_kind(dir: &Path, kind: &str, put: &dyn Put) -> Result<Drained, String> {
+    let queue = dir.join("queue").join(kind);
+    let sent = dir.join("sent").join(kind);
     let mut out = Drained::default();
-    for kind in [REVLOG, SNAPSHOT] {
-        for n in names(&queue(kind))? {
-            let (file, object) = (queue(kind).join(&n), format!("{kind}/{n}"));
-            if let Err(e) = put.put(&file, &object) {
-                out.failed = Some(e);
-                return Ok(out);
-            }
-            let sent = sent_dir(kind);
-            fs::create_dir_all(&sent).map_err(io(&sent))?;
-            fs::rename(&file, sent.join(&n)).map_err(io(&sent))?;
-            sync_dir(&sent)?;
-            if let Some((_, to)) = revlog::parse_run_name(&n).filter(|_| kind == REVLOG) {
-                write_durably(&dir.join("shipped"), to.to_string().as_bytes())?;
-            }
-            out.uploaded.push(object);
+    for n in names(&queue)? {
+        let (file, object) = (queue.join(&n), format!("{kind}/{n}"));
+        if let Err(e) = put.put(&file, &object) {
+            out.failed = Some(e);
+            return Ok(out);
         }
+        fs::create_dir_all(&sent).map_err(io(&sent))?;
+        fs::rename(&file, sent.join(&n)).map_err(io(&sent))?;
+        sync_dir(&sent)?;
+        if let Some((_, to)) = revlog::parse_run_name(&n).filter(|_| kind == REVLOG) {
+            write_durably(&dir.join("shipped"), to.to_string().as_bytes())?;
+        }
+        out.uploaded.push(object);
     }
     Ok(out)
 }
@@ -550,6 +558,17 @@ pub fn alarm(was_red: bool, oldest_ms: Option<u64>, max_ms: u64, snapshot_ms: Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tpr073k)]
+    #[test]
+    fn names_leave_out_half_written_and_in_progress_upload_files() {
+        let tmp = testkit::TempDir::new("ship-names");
+        let dir = tmp.path();
+        for n in ["7", "7.tmp", "7.part", "7.complete"] {
+            std::fs::write(dir.join(n), "x").unwrap();
+        }
+        assert_eq!(names(dir).unwrap(), vec!["7".to_string()]);
+    }
 
     #[test_id(tycnva0)]
     #[test]

@@ -3,12 +3,15 @@
 //! Family C, ported. lc-serve stages the control store's revlog runs and snapshots under
 //! `SPIRA_LC_SHIP_DIR/queue/`; this task uploads them, so lc-serve starts no `curl`.
 //!
-//! - **Tick:** every `SPIRA_LC_SHIP_SECS`. Single-flight: a tick with a drain in flight re-arms.
-//! - **Observe:** `lc.ship.observe` counts what `queue/` holds. Nothing is asked of a store with
-//!   no `SPIRA_LC_BACKUP_URL` or an empty queue.
-//! - **Act:** `lc.ship.drain` runs `ship::drain` on the directory: oldest first, stopping at the
-//!   first refusal so a retry is the same object. A refusal is the task's error; the object
-//!   stays queued and the next tick sends it again.
+//! - **Tick:** every `SPIRA_LC_SHIP_SECS`. Single-flight per kind: a kind with a drain in flight
+//!   is left alone, so at most one pass over `queue/revlog` and one over `queue/snapshot` runs at a
+//!   time, and a long snapshot upload does not hold back the runs.
+//! - **Observe:** `lc.ship.observe` counts what each kind of `queue/` holds. Nothing is asked of a
+//!   store with no `SPIRA_LC_BACKUP_URL` or an empty queue.
+//! - **Act:** `lc.ship.drain` runs `ship::drain_kind` on the runs, `lc.ship.drain_snapshot` on the
+//!   snapshots: oldest first, stopping at the first refusal so a retry is the same object. Any
+//!   outcome returns its kind to idle, and a request past its deadline counts as idle, so a lost
+//!   outcome cannot wedge the task.
 //! - **Credentials:** the backup key in this process's environment, which the unit loads from the
 //!   backup's environment file; `check-config` refuses an `s3://` destination without it.
 
@@ -32,7 +35,8 @@ pub const STATE: EventKindTag = "lc.ship.state";
 
 pub const OBSERVE: &str = "lc.ship.observe";
 pub const DRAIN: &str = "lc.ship.drain";
-pub const EFFECTS: &[&str] = &[OBSERVE, DRAIN];
+pub const DRAIN_SNAPSHOT: &str = "lc.ship.drain_snapshot";
+pub const EFFECTS: &[&str] = &[OBSERVE, DRAIN, DRAIN_SNAPSHOT];
 
 pub const CADENCE_KEY: &str = "SPIRA_LC_SHIP_SECS";
 pub const URL_KEY: &str = "SPIRA_LC_BACKUP_URL";
@@ -44,41 +48,61 @@ const PUT_DEADLINE: Duration = Duration::from_secs(300);
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 
+/// What one kind's queue holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Snapshot {
-    pub dir: String,
+pub struct Queue {
     pub queued: u64,
     pub oldest: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Phase {
-    #[default]
-    Idle,
-    Draining,
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Snapshot {
+    pub dir: String,
+    pub revlog: Queue,
+    pub snapshot: Queue,
 }
 
+/// Per kind, when its drain was asked for; `None` while idle.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
-    pub phase: Phase,
+    pub revlog: Option<u64>,
+    pub snapshot: Option<u64>,
 }
+
+const DRAIN_DEADLINE_MS: u64 = 3_600_000;
 
 pub struct LcShip {
     pub cadence: Cadence,
     pub cfg: Cfg,
 }
 
+fn in_flight(asked: Option<u64>, now_ms: u64) -> Option<u64> {
+    asked.filter(|at| now_ms.checked_sub(*at).is_some_and(|age| age < DRAIN_DEADLINE_MS))
+}
+
+fn ask(kind: &str, effect: &str, dir: &str, q: &Queue, asked: Option<u64>, now_ms: u64) -> (Option<u64>, Option<Act>) {
+    if let Some(at) = in_flight(asked, now_ms) {
+        return (Some(at), None);
+    }
+    if q.queued == 0 {
+        return (None, None);
+    }
+    (Some(now_ms), Some(Act { name: effect.into(), key: format!("lc.ship/{kind}/{}/{now_ms}", q.oldest), input: dir.into(), deadline_ms: DRAIN_DEADLINE_MS, probe: true }))
+}
+
 pub fn decide(_cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) -> Decision<Carry> {
     match input {
         Input::Fire => Ok((carry.clone(), vec![])),
-        Input::Observed(_) if carry.phase == Phase::Draining => Ok((Carry::default(), vec![])),
-        Input::Observed(s) if s.queued == 0 => Ok((carry.clone(), vec![])),
-        Input::Observed(s) => Ok((Carry { phase: Phase::Draining }, vec![Act { name: DRAIN.into(), key: format!("lc.ship/{}/{now_ms}", s.oldest), input: s.dir.clone(), deadline_ms: 3_600_000, probe: true }])),
-        Input::Outcome { effect, ok: true, .. } if effect == DRAIN => Ok((Carry::default(), vec![])),
-        Input::Outcome { effect, ok: false, body } if effect == DRAIN => Err(format!("{NAME}: the upload was refused and stays queued: {body}")),
+        Input::Observed(s) => {
+            let (revlog, runs) = ask(REVLOG, DRAIN, &s.dir, &s.revlog, carry.revlog, now_ms);
+            let (snapshot, snaps) = ask(SNAPSHOT, DRAIN_SNAPSHOT, &s.dir, &s.snapshot, carry.snapshot, now_ms);
+            Ok((Carry { revlog, snapshot }, runs.into_iter().chain(snaps).collect()))
+        }
+        Input::Outcome { effect, .. } if effect == DRAIN => Ok((Carry { revlog: None, ..carry.clone() }, vec![])),
+        Input::Outcome { effect, .. } if effect == DRAIN_SNAPSHOT => Ok((Carry { snapshot: None, ..carry.clone() }, vec![])),
         Input::Outcome { effect, .. } => Err(format!("{NAME}: an outcome of {effect} is not expected")),
         Input::Ran(r) => Err(format!("{NAME}: no unit is expected, got {:?}", r.handle)),
     }
@@ -89,24 +113,32 @@ pub fn observe(run: &Path, url: &str, dir: &str) -> Result<String, String> {
     let dir = ship::dir_at(Some(dir.to_string()), run);
     let mut snap = Snapshot { dir: dir.display().to_string(), ..Snapshot::default() };
     if !url.is_empty() {
-        for kind in [REVLOG, SNAPSHOT] {
+        for (kind, q) in [(REVLOG, &mut snap.revlog), (SNAPSHOT, &mut snap.snapshot)] {
             let names = ship::names(&dir.join("queue").join(kind))?;
-            snap.oldest = if snap.oldest.is_empty() { names.first().cloned().unwrap_or_default() } else { snap.oldest };
-            snap.queued += names.len() as u64;
+            *q = Queue { queued: names.len() as u64, oldest: names.first().cloned().unwrap_or_default() };
         }
     }
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
-/// The runner of [`DRAIN`]: uploads what `dir` queues through `proc`, which starts the `curl`.
+/// The runner of [`DRAIN`]: uploads the runs `dir` queues through `proc`, which starts the `curl`.
 pub fn drain(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+    drain_of(REVLOG, proc, url, dir, lookup, part_bytes)
+}
+
+/// The runner of [`DRAIN_SNAPSHOT`]: the same for the snapshots.
+pub fn drain_snapshot(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+    drain_of(SNAPSHOT, proc, url, dir, lookup, part_bytes)
+}
+
+fn drain_of(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
     let dest = Dest::parse(url)?;
     let creds = match dest {
         Dest::S3 { .. } => Some(S3Creds::from_vars(lookup)?.with_part_bytes(part_bytes)?),
         Dest::File(_) => None,
     };
     let put = Uploader { dest, creds, proc, deadline: PUT_DEADLINE };
-    let sent = ship::drain(Path::new(dir), &put)?;
+    let sent = ship::drain_kind(Path::new(dir), kind, &put)?;
     match sent.failed {
         Some(e) => Err(format!("{} object(s) uploaded, then: {e}", sent.uploaded.len())),
         None => Ok(format!("{} object(s) uploaded", sent.uploaded.len())),
