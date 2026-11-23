@@ -789,7 +789,9 @@ fn phase_owner(
     members: &[Member],
     changed: &BTreeMap<Id, Vec<String>>,
 ) -> Vec<(Id, String)> {
-    let evidence = fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default();
+    let evidence = batcher::unitattr::failure_evidence(
+        &fs::read_to_string(results.join(format!("{stage}.out"))).unwrap_or_default(),
+    );
     let red = Red {
         suite: stage.to_string(),
         evidence,
@@ -2348,6 +2350,44 @@ mod tests {
             ),
             ("integration-tests", vec!["sp-a"])
         );
+    }
+
+    #[test_id(tbgutqz)]
+    #[test]
+    fn a_passing_binary_in_the_log_tail_of_a_red_integration_phase_names_no_member() {
+        let d = testkit::TempDir::new("vm-integration-tail");
+        let mk = |id: &str| Member {
+            id: id.to_string(),
+            tip: String::new(),
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: BTreeMap::new(),
+            blocked_by: Vec::new(),
+            provisional: false,
+        };
+        let ms = vec![mk("sp-a"), mk("sp-b")];
+        fs::write(
+            d.path().join("integration.json"),
+            "{\"stage\":\"integration-tests\",\"verdict\":\"red\"}",
+        )
+        .unwrap();
+        fs::write(
+            d.path().join("integration-tests.out"),
+            "INTEGRATION-TESTS-CAUSE: exit status 100\nFAIL spira-lc::serve_memory tests::tu38fgg\nthread 'main' panicked at spira-lc/tests/serve_memory.rs:5:1:\n--- last output of the log ---\n     Running tests/conditions_on_store.rs (target/unittest/deps/conditions_on_store-1)\ntest a ... ok\n",
+        )
+        .unwrap();
+        let named = |touched: &str| {
+            let changed = BTreeMap::from([
+                ("sp-a".to_string(), vec![touched.to_string()]),
+                ("sp-b".to_string(), vec!["docs/x.md".to_string()]),
+            ]);
+            filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap().named.len()
+        };
+        assert_eq!(named("watchtower/tests/conditions_on_store.rs"), 0);
+        assert_eq!(named("spira-lc/src/lib.rs"), 1);
     }
 
     #[test_id(tbmqskg)]

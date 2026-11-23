@@ -1293,11 +1293,46 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             Control::Green => kind = "flipped",
             Control::Red => probes.smallest_red = None,
         }
+        let mut base_ran_green = false;
+        let unreached = red_again
+            && vias.is_empty()
+            && !packages.is_empty()
+            && graph.as_ref().is_some_and(|g| packages.iter().all(|p| g.dirs.contains_key(p)));
+        if unreached {
+            match runner.filter_green_in(&f.name, &scope, &[]) {
+                Some(false) if unitattr::scope_is_exact(&scope) => {
+                    let base_kept = runner.probe_kept();
+                    let said = if base_kept.is_empty() { "base red".to_string() } else { format!("base red; output kept at {base_kept}") };
+                    let mut page = vec![f.name.clone()];
+                    page.extend(f.failed.iter().take(MAX_NOTED_TESTS).cloned());
+                    page.push(format!("run alone: {said}"));
+                    ops.incident("base", &page);
+                    let mut paths: Vec<String> = packages
+                        .iter()
+                        .filter_map(|p| graph.as_ref().and_then(|g| g.dirs.get(p)).cloned())
+                        .collect();
+                    paths.sort();
+                    paths.dedup();
+                    return Ok(FilterEject::Base(base_why(
+                        ops,
+                        &paths,
+                        &format!("{} red{tests} (run alone: {said})", f.name),
+                    )));
+                }
+                Some(true) => base_ran_green = true,
+                Some(false) => {}
+                None if members.len() == 1 => {
+                    return Ok(FilterEject::Unnamed(format!("{tests} (the base run gave no verdict)")));
+                }
+                None => {}
+            }
+        }
         if let (true, [only]) = (red_again, members) {
+            let base_note = if base_ran_green { "; the same tests ran green on the base alone" } else { "" };
             let actions = vec![Action::Eject {
                 id: only.id.clone(),
                 line: format!(
-                    "{} red{tests} in a round whose only member is {}, red again on a rerun of the unchanged tree",
+                    "{} red{tests} in a round whose only member is {}, red again on a rerun of the unchanged tree{base_note}",
                     f.name, only.id
                 ),
             }];
@@ -6317,6 +6352,51 @@ pub(crate) mod tests {
         assert_eq!(base, "b4se");
         assert!(why.contains(FAILING[0]), "{why}");
         assert!(why.contains("last change touching it: c0de fixes"), "{why}");
+    }
+
+    fn unreached_unit_red(base_red: bool) -> Fake {
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.filter = Some(Box::new(move |tree| {
+            (base_red || !tree.is_empty()).then(|| FilterRed {
+                name: "unit-tests".into(),
+                failed: vec!["FAIL gate gate::tests::a_test".to_string()],
+                ..Default::default()
+            })
+        }));
+        f
+    }
+
+    fn unreached_round(f: &mut Fake, members: Vec<Member>) -> (RoundEnd, Ops) {
+        let mut ops = Ops { graph: Some(loom_graph()), ..Ops::default() };
+        let end = attribute_round(f, &mut ops, &corpus(3), members, Budget { slots: 6, maxpar: 2 }).unwrap();
+        (end, ops)
+    }
+
+    #[test_id(tuy3ejw)]
+    #[test]
+    fn a_red_no_member_reaches_that_the_base_reproduces_ejects_nobody_for_one_or_two_members() {
+        for members in [vec![member("m1")], vec![member("m1"), member("m2")]] {
+            let mut f = unreached_unit_red(true);
+            let (end, ops) = unreached_round(&mut f, members);
+            assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+            assert!(matches!(end, RoundEnd::BaseRed { .. }), "{end:?}");
+            assert!(f.scoped.iter().any(|s| s == &["gate=gate::tests::a_test"]), "{:?}", f.scoped);
+        }
+    }
+
+    #[test_id(tk00lep)]
+    #[test]
+    fn a_red_no_member_reaches_that_the_base_runs_green_ejects_the_only_member_naming_the_base_run() {
+        let mut f = unreached_unit_red(false);
+        let (end, ops) = unreached_round(&mut f, vec![member("m1")]);
+        assert!(matches!(end, RoundEnd::Emptied(_)), "{end:?}");
+        assert_eq!(ops.ejected, vec![("m1".to_string(), vec!["unit-tests".to_string()])]);
+        assert!(
+            ops.eject_evidence.iter().any(|(id, l)| id == "m1" && l.contains("ran green on the base")),
+            "{:?}",
+            ops.eject_evidence
+        );
     }
 
     #[test_id(tgzkg3a)]
