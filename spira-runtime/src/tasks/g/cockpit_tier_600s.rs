@@ -79,7 +79,7 @@ pub const PROBES: &[(&str, u64)] = &[
 ];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_600S_SECS";
-pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_LOCAL_UNITS"];
+pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_LOCAL_UNITS", "SPIRA_RUN", "SPIRA_TOKEN_PROJECTS", "SPIRA_TOKEN_WINDOW_H"];
 
 pub const OBSERVE_DEADLINE_MS: u64 = 600_000;
 const CYCLE: Cycle = Cycle { stream: STREAM, tick: TICK, observe: OBSERVE, deadline_ms: OBSERVE_DEADLINE_MS };

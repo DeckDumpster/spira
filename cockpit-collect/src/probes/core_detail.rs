@@ -312,28 +312,8 @@ fn throughput_section(out: &mut Kv, cfg: &Cfg) {
     }
 }
 
-const TOKEN_KEYS: &[&str] = &[
-    "SP_TOK_WINDOW_H", "SP_TOK_DWARF_WIN", "SP_TOK_ARC_WIN", "SP_TOK_SESS_WIN", "SP_TOK_WIN",
-    "SP_TOK_DWARF_TURNS", "SP_TOK_ARC_TURNS", "SP_TOK_SESS_TURNS", "SP_TOK_DWARF_CTX",
-    "SP_TOK_ARC_CTX", "SP_TOK_SESS_CTX", "SP_TOK_DWARF_OUT", "SP_TOK_ARC_OUT", "SP_TOK_SESS_OUT",
-    "SP_TOK_DWARF_RECENT", "SP_TOK_ARC_RECENT", "SP_TOK_SESS_RECENT",
-];
-
 fn tokens_section(out: &mut Kv) {
-    match io::run_tool("tokens.sh", &["env"], None) {
-        Some(env) => {
-            for line in env.lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    push(out, k, v.to_string());
-                }
-            }
-        }
-        None => {
-            for k in TOKEN_KEYS {
-                push(out, k, "?");
-            }
-        }
-    }
+    super::tokens::section(out, super::tokens::Source::from_config(), crate::timeutil::now_secs());
 }
 
 #[cfg(test)]
@@ -375,5 +355,28 @@ mod tests {
             }
         }
         assert_eq!(defect, 2);
+    }
+
+    fn world_cfg(dir: &testkit::TempDir) -> (testkit::EnvGuard, Cfg) {
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let world = spira_config::process::fixture_world_env(dir.path(), &run, &["spira"]);
+        let mut edits: Vec<(&str, Option<&str>)> = world.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        edits.push(("SPIRA_BDJSON_FIXTURE", None));
+        (testkit::env(&edits), Cfg::default())
+    }
+
+    #[test_id(t517sx6)]
+    #[test]
+    fn the_fast_core_pass_answers_waiting_alone_and_the_slow_pass_carries_the_token_keys() {
+        let dir = testkit::TempDir::new("cockpit-core-split");
+        let (_env, cfg) = world_cfg(&dir);
+        let core = crate::probes::run("core", &cfg).unwrap();
+        assert_eq!(core.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["SP_WAITING"]);
+        let detail = crate::probes::run("core_detail", &cfg).unwrap();
+        for k in crate::probes::tokens::KEYS {
+            assert!(detail.iter().any(|(n, _)| n == k), "{k} is the slow pass's");
+        }
+        assert!(!detail.iter().any(|(n, _)| n == "SP_WAITING" || n.ends_with("_RECENT") && n.starts_with("SP_TOK")));
     }
 }

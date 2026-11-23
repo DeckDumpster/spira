@@ -32,10 +32,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WINDOW_H="$SPIRA_TOKEN_WINDOW_H"
 PROJECTS="$SPIRA_TOKEN_PROJECTS"
 
-python3 - "$SPIRA_RUN" "$PROJECTS" "$WINDOW_H" "${1:-env}" <<'PY'
+python3 - "$SPIRA_RUN" "$PROJECTS" "$WINDOW_H" <<'PY'
 import json, sys, glob, os, collections, datetime as dt
 
-run, projects, window_h, mode = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
+run, projects, window_h = sys.argv[1], sys.argv[2], float(sys.argv[3])
 now = dt.datetime.now(dt.timezone.utc)
 cut = now - dt.timedelta(hours=window_h)
 KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
@@ -46,22 +46,11 @@ wt_prefix = wt_root.replace("/", "-").replace(".", "-") + "-"
 arc_cwd = os.path.normpath(os.path.join(run, "archivist", "cwd"))
 arc_prefix = arc_cwd.replace("/", "-").replace(".", "-")
 
-def scan(paths, want_assistant_only, seen, window_only=False):
+def scan(paths, want_assistant_only, seen):
     """-> (all_time, in_window) counters. Dedupes on message id via the caller's seen set.
-
-    window_only skips files untouched since the cutoff. A file whose last write predates the
-    window cannot hold a turn inside it, and the corpus is 23 billion tokens of history that
-    would otherwise be re-read on every collector pass — instrumentation that costs more than
-    the thing it measures is its own bug. all_time is then partial and callers must not use it.
     """
     tot, win = collections.Counter(), collections.Counter()
     for f in paths:
-        if window_only:
-            try:
-                if dt.datetime.fromtimestamp(os.path.getmtime(f), dt.timezone.utc) < cut:
-                    continue
-            except OSError:
-                continue
         try: fh = open(f, errors="ignore")
         except OSError: continue
         with fh:
@@ -92,52 +81,24 @@ ARC_SESS   = [f for f in ALL_SESS if os.path.basename(os.path.dirname(f)) == arc
 SESS_FILES = [f for f in ALL_SESS
               if not os.path.basename(os.path.dirname(f)).startswith(wt_prefix)
               and os.path.basename(os.path.dirname(f)) != arc_prefix]
-# env mode is the collector's path and runs constantly, so it reads only what the window can
-# touch. report mode is a human asking once, and reads everything.
-WIN_ONLY = (mode == "env")
 seen = set()
-dwarf_tot, dwarf_win = scan(DWARF_FILES, True, seen, WIN_ONLY)
-wt_tot, wt_win = scan(WT_SESS, False, seen, WIN_ONLY)
+dwarf_tot, dwarf_win = scan(DWARF_FILES, True, seen)
+wt_tot, wt_win = scan(WT_SESS, False, seen)
 dwarf_tot += wt_tot
 dwarf_win += wt_win
-arc_tot, arc_win = scan(ARC_SESS, False, seen, WIN_ONLY)
-sess_tot, sess_win = scan(SESS_FILES, False, seen, WIN_ONLY)
+arc_tot, arc_win = scan(ARC_SESS, False, seen)
+sess_tot, sess_win = scan(SESS_FILES, False, seen)
 
 def ctx(c): return c["cache_read_input_tokens"] // c["turns"] if c["turns"] else 0
 # What a rate limit actually meters is everything the request carried, cache reads included.
 def billed(c): return c["input_tokens"] + c["cache_creation_input_tokens"] + c["cache_read_input_tokens"] + c["output_tokens"]
 
-if mode == "env":
-    out = {
-        "SP_TOK_WINDOW_H":   int(window_h),
-        "SP_TOK_DWARF_WIN":   billed(dwarf_win),
-        "SP_TOK_ARC_WIN":    billed(arc_win),
-        "SP_TOK_SESS_WIN":   billed(sess_win),
-        "SP_TOK_WIN":        billed(dwarf_win) + billed(arc_win) + billed(sess_win),
-        "SP_TOK_DWARF_TURNS": dwarf_win["turns"],
-        "SP_TOK_ARC_TURNS":  arc_win["turns"],
-        "SP_TOK_SESS_TURNS": sess_win["turns"],
-        "SP_TOK_DWARF_CTX":   ctx(dwarf_win) or ctx(dwarf_tot),
-        "SP_TOK_ARC_CTX":    ctx(arc_win) or ctx(arc_tot),
-        "SP_TOK_SESS_CTX":   ctx(sess_win) or ctx(sess_tot),
-        "SP_TOK_DWARF_OUT":   dwarf_win["output_tokens"],
-        "SP_TOK_ARC_OUT":    arc_win["output_tokens"],
-        "SP_TOK_SESS_OUT":   sess_win["output_tokens"],
-        # NOT all-time: env mode reads only files touched inside the window, so these are
-        # "billed by files still being written", which is the honest thing the fast path knows.
-        # A pane wanting a true total must call `tokens.sh report` (seconds, not milliseconds).
-        "SP_TOK_DWARF_RECENT": billed(dwarf_tot),
-        "SP_TOK_ARC_RECENT":  billed(arc_tot),
-        "SP_TOK_SESS_RECENT": billed(sess_tot),
-    }
-    for k, v in out.items(): print(f"{k}={v}")
-else:
-    def row(name, c):
-        print(f"  {name:<10}{c['turns']:>7,} turns  {billed(c):>16,} billed  "
-              f"{ctx(c):>9,} ctx/turn  {c['output_tokens']:>10,} out")
-    print(f"=== last {window_h:g}h ==="); row("dwarves", dwarf_win); row("archivist", arc_win); row("session", sess_win)
-    print("=== all time ===");            row("dwarves", dwarf_tot); row("archivist", arc_tot); row("session", sess_tot)
-    t = billed(dwarf_tot) + billed(arc_tot) + billed(sess_tot)
-    if t:
-        print(f"\n  session share of all tokens: {billed(sess_tot)*100//t}%")
+def row(name, c):
+    print(f"  {name:<10}{c['turns']:>7,} turns  {billed(c):>16,} billed  "
+          f"{ctx(c):>9,} ctx/turn  {c['output_tokens']:>10,} out")
+print(f"=== last {window_h:g}h ==="); row("dwarves", dwarf_win); row("archivist", arc_win); row("session", sess_win)
+print("=== all time ===");            row("dwarves", dwarf_tot); row("archivist", arc_tot); row("session", sess_tot)
+t = billed(dwarf_tot) + billed(arc_tot) + billed(sess_tot)
+if t:
+    print(f"\n  session share of all tokens: {billed(sess_tot)*100//t}%")
 PY

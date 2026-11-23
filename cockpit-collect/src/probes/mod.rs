@@ -14,6 +14,7 @@ pub mod queue;
 mod ratelim;
 mod reachable;
 pub mod round;
+mod tokens;
 mod tsd;
 mod unsent;
 
@@ -174,11 +175,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
 pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
     match subcommand {
         "now" => Some(now_keys(cfg)),
-        "core" => {
-            let mut kv = core_detail::core_detail_keys(cfg);
-            kv.extend(core_counts_keys());
-            Some(kv)
-        }
+        "core" => Some(core_counts_keys()),
         "core_detail" => Some(core_detail::core_detail_keys(cfg)),
         "slots" => Some(slots_keys(cfg)),
         "admission" => Some(admission::admission_keys()),
