@@ -334,3 +334,21 @@ spira-lint/loop-blocking-allow, which only shrinks."
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
     vec![Box::new(LoopBlocking)]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hits(src: &str) -> usize {
+        scan("runtime/src/sources.rs", src.as_bytes(), &|_| false).len()
+    }
+
+    #[test_id(t408cla)]
+    #[test]
+    fn a_blocking_call_in_an_on_pool_argument_list_is_exempt_and_outside_it_is_not() {
+        let planted = "async fn a() { let _ = std::fs::read(\"x\"); }";
+        assert_eq!(hits(planted), 1, "the matcher can find an offender");
+        let pooled = "async fn a() { let _ = on_pool(\"w\", Arc::new(|| std::fs::read(\"x\"))).await; }";
+        assert_eq!(hits(pooled), 0);
+    }
+}

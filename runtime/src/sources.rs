@@ -50,7 +50,9 @@ pub fn on_thread(name: &str, f: impl FnOnce() + Send + 'static) -> Running {
         });
         match started {
             Ok(_) => {
-                let _ = ended.await;
+                if ended.await.is_err() {
+                    let _ = on_pool("source", Arc::new(move || eprintln!("runtime: {thread}: ended without finishing"))).await;
+                }
             }
             Err(e) => {
                 let _ = on_pool("source", Arc::new(move || eprintln!("runtime: {thread}: thread did not start: {e}"))).await;
@@ -101,9 +103,9 @@ impl Sources {
         self.list.is_empty()
     }
 
-    /// One task per source on the current runtime, each submitting on `tx`.
-    pub fn start(self, tx: mpsc::Sender<Submit>) -> Result<Vec<tokio::task::JoinHandle<()>>> {
-        Ok(self.list.into_iter().map(|s| tokio::spawn(s.run(tx.clone()))).collect())
+    /// One task per source on the current runtime, each submitting on `tx`. Panics outside a runtime.
+    pub fn start(self, tx: mpsc::Sender<Submit>) -> Vec<tokio::task::JoinHandle<()>> {
+        self.list.into_iter().map(|s| tokio::spawn(s.run(tx.clone()))).collect()
     }
 
     /// Every source, for a virtual-time driver; refuses the set if any reads the real world.
@@ -375,5 +377,31 @@ impl Scripted for ScriptedStoreChanges {
         let n = self.script.iter().take_while(|(at, _, _)| *at <= now_ms).count();
         let due: Vec<_> = self.script.drain(..n).collect();
         due.iter().filter_map(|(_, c, swallowed)| self.deliver(c, *swallowed)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(t376ms9)]
+    #[tokio::test]
+    async fn on_thread_runs_its_body_on_a_thread_named_for_the_source_and_ends_with_it() {
+        let (name_tx, name_rx) = std::sync::mpsc::channel();
+        on_thread("probe", move || name_tx.send(std::thread::current().name().map(str::to_string)).unwrap()).await;
+        assert_eq!(name_rx.recv().unwrap().as_deref(), Some("source-probe"));
+    }
+
+    #[test_id(tv6hrjv)]
+    #[tokio::test]
+    async fn on_pool_returns_what_its_work_returned() {
+        let got = on_pool("probe", Arc::new(|| 7)).await.unwrap();
+        assert_eq!(got, 7);
+    }
+
+    #[test_id(tokhvvz)]
+    #[tokio::test]
+    async fn on_thread_ends_when_its_body_panics() {
+        on_thread("probe", || panic!("planted")).await;
     }
 }

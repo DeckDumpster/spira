@@ -167,7 +167,7 @@ fn a_source_that_reads_the_world_is_refused_under_virtual_time_and_names_are_uni
 async fn a_scripted_source_on_its_own_thread_sends_when_its_clock_arrives() {
     let clock = VirtualClock::new(0);
     let (tx, mut rx) = mpsc::channel(4);
-    let handles = scripted(&clock, vec![(5, sub("a", "ping", "")), (9, sub("b", "ping", ""))]).start(tx).unwrap();
+    let handles = scripted(&clock, vec![(5, sub("a", "ping", "")), (9, sub("b", "ping", ""))]).start(tx);
     tokio::time::sleep(Duration::from_millis(60)).await; // clock-safe: proves nothing is sent before the clock arrives
     assert!(rx.try_recv().is_err());
     clock.advance_to(5);

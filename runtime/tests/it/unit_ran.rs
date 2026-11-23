@@ -101,7 +101,7 @@ async fn a_polled_source_on_its_own_thread_submits_each_end_once() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let mut sources = Sources::default();
     sources.register(Box::new(UnitRanSource::polled("unit-ran", scripted, c, std::time::Duration::from_millis(5)))).unwrap();
-    let handles = sources.start(tx).unwrap();
+    let handles = sources.start(tx);
     clock.advance_to(10);
     let s = rx.recv().await.expect("the end arrives");
     assert_eq!((s.id.as_str(), s.stream.as_str()), ("unit.ran/spira-run-alpha-k.service/10", UNITS_STREAM));

@@ -129,7 +129,7 @@ async fn the_mail_source_waits_on_the_runtime_and_owns_no_thread() {
     let (tx, mut rx) = mpsc::channel(4);
     let mut sources = Sources::default();
     sources.register(Box::new(MailArrived { mailboxes: vec![("ops".into(), dir.path().join("ops"))] })).unwrap();
-    let handles = sources.start(tx).unwrap();
+    let handles = sources.start(tx);
     assert_eq!(rx.recv().await.unwrap().id, "mail.arrived/ops/1", "the catch-up says the watch is in place");
     deliver(&new, "after");
     let got = rx.recv().await.unwrap();
@@ -151,7 +151,7 @@ async fn a_full_channel_holds_the_mail_source_and_nothing_else_on_the_runtime() 
     let probe = tx.clone();
     let mut sources = Sources::default();
     sources.register(Box::new(MailArrived { mailboxes: vec![("ops".into(), dir.path().join("ops"))] })).unwrap();
-    let handles = sources.start(tx).unwrap();
+    let handles = sources.start(tx);
     let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let ticker = {
         let ticks = ticks.clone();
@@ -171,6 +171,7 @@ async fn a_full_channel_holds_the_mail_source_and_nothing_else_on_the_runtime() 
     while ticks.load(std::sync::atomic::Ordering::SeqCst) < before + 20_000 {
         tokio::task::yield_now().await;
     }
+    assert_eq!(probe.capacity(), 0, "the second arrival is still held by the source, not in the channel");
     let (first, second) = (rx.recv().await.unwrap(), rx.recv().await.unwrap());
     assert_eq!((first.id.as_str(), second.id.as_str()), ("mail.arrived/ops/1", "mail.arrived/ops/2"), "both deliveries arrive once the channel is read");
     ticker.abort();
