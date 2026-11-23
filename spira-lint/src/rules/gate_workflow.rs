@@ -142,7 +142,7 @@ pub fn spill_teardown_missing(text: &str) -> Vec<&'static str> {
         _ => p.contains(&format!("{inp}: ${{{{ steps.vm.outputs.{inp} }}}}"))
             && t.lines().any(|l| l.trim().starts_with(&format!("{inp}:")) && l.contains(&format!("needs.provision.outputs.{inp}"))),
     };
-    ["backend", "instance-id", "aws-role-to-assume"].into_iter().filter(|i| !wired(i)).collect()
+    ["backend", "instance-id", "run-record", "aws-role-to-assume"].into_iter().filter(|i| !wired(i)).collect()
 }
 
 /// A job that runs on the provisioned runner must not bypass a failed provision: its `if:`
@@ -479,7 +479,12 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             o.push((file, "provision must output vm-token and teardown must receive needs.provision.outputs.vm-token".to_string()));
         }
         for inp in spill_teardown_missing(text) {
-            o.push((file, format!("provision spills, so teardown must pass {inp} (the EC2 instance is otherwise never read or terminated)")));
+            let why = if inp == "run-record" {
+                "the instance-end line otherwise lacks when the runner registered and whether it was online"
+            } else {
+                "the EC2 instance is otherwise never read or terminated"
+            };
+            o.push((file, format!("provision spills, so teardown must pass {inp} ({why})")));
         }
         let pb = block(text, "provision");
         if pb.is_empty() {
@@ -659,6 +664,15 @@ mod tests {
         assert_eq!(judge(&shipped()), Vec::<(&str, String)>::new());
     }
 
+    #[test_id(t9dd567)]
+    #[test]
+    fn a_gate_teardown_without_provisions_run_record_is_caught() {
+        let got = planted(gate, "          run-record:         ${{ needs.provision.outputs.run-record }}\n", "");
+        assert!(got.iter().any(|m| m.contains("teardown must pass run-record")), "{got:?}");
+        let got = planted(gate, "      run-record: ${{ steps.vm.outputs.run-record }}\n", "");
+        assert!(got.iter().any(|m| m.contains("teardown must pass run-record")), "{got:?}");
+    }
+
     /// sp-3e2wt: the cut accepted only queue heads and refused every publish-PR head.
     #[test_id(tkhiwgo)]
     #[test]
@@ -772,7 +786,7 @@ mod tests {
             let text = field(&mut shipped()).clone().unwrap();
             assert!(block(&text, "provision").contains("spill:"), "{file}: positive control");
             assert!(spill_teardown_missing(&text).is_empty(), "{file}");
-            for inp in ["backend", "instance-id", "aws-role-to-assume"] {
+            for inp in ["backend", "instance-id", "run-record", "aws-role-to-assume"] {
                 let t = text.find("  teardown:").unwrap();
                 let (head, tail) = text.split_at(t);
                 let tail: String = tail.lines().filter(|l| !l.trim().starts_with(&format!("{inp}:"))).map(|l| format!("{l}\n")).collect();
@@ -783,6 +797,8 @@ mod tests {
             }
             let no_output = text.replacen("      backend: ${{ steps.vm.outputs.backend }}\n", "", 1);
             assert_eq!(spill_teardown_missing(&no_output), vec!["backend"], "{file}");
+            let no_record = text.replacen("      run-record: ${{ steps.vm.outputs.run-record }}\n", "", 1);
+            assert_eq!(spill_teardown_missing(&no_record), vec!["run-record"], "{file}");
         }
         assert!(spill_teardown_missing("  provision:\n    steps:\n      spill: off\n  teardown:\n").is_empty());
     }

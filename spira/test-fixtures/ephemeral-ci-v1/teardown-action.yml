@@ -89,6 +89,10 @@ inputs:
     description: The EC2 instance id from provision; empty on Proxmox.
     required: false
     default: ''
+  run-record:
+    description: The record provision output; teardown reads when the runner registered and was last online from it.
+    required: false
+    default: ''
   aws-role-to-assume:
     description: Role the teardown assumes to read and terminate the EC2 instance.
     required: false

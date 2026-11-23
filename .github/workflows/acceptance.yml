@@ -138,6 +138,7 @@ jobs:
       vm-token: ${{ steps.vm.outputs.vm-token }}
       backend: ${{ steps.vm.outputs.backend }}
       instance-id: ${{ steps.vm.outputs.instance-id }}
+      run-record: ${{ steps.vm.outputs.run-record }}
       label: ${{ steps.vm.outputs.label }}
     # provision.sh's guest-agent wait defaults to 120s, which sits inside the
     # normal boot range on a busy hypervisor (gate.yml's provision carries the
@@ -424,5 +425,6 @@ jobs:
           vm-token:           ${{ needs.provision.outputs.vm-token }}
           backend:            ${{ needs.provision.outputs.backend }}
           instance-id:        ${{ needs.provision.outputs.instance-id }}
+          run-record:         ${{ needs.provision.outputs.run-record }}
           aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
           consumer-result:    ${{ needs.acceptance.result }}

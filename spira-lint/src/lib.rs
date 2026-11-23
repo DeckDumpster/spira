@@ -35,7 +35,11 @@ pub struct Entry {
 
 impl Entry {
     pub fn new(path: impl Into<String>, tracked: bool) -> Entry {
-        Entry { path: path.into(), tracked, content: OnceLock::new() }
+        Entry {
+            path: path.into(),
+            tracked,
+            content: OnceLock::new(),
+        }
     }
 }
 
@@ -113,7 +117,13 @@ impl Tree {
         entries.extend(untracked.into_iter().map(|p| Entry::new(p, false)));
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         entries.dedup_by(|a, b| a.path == b.path);
-        Tree { root: root.to_path_buf(), entries, base: None, deny_list: None, reader: None }
+        Tree {
+            root: root.to_path_buf(),
+            entries,
+            base: None,
+            deny_list: None,
+            reader: None,
+        }
     }
 
     /// The same tree, judged against `base`.
@@ -155,9 +165,17 @@ impl Tree {
         if out.status.success() {
             Ok(out.stdout)
         } else if out.status.code() == Some(124) {
-            Err(format!("git {}: timed out after {}s", args.join(" "), GIT_HANG_GUARD_SECS))
+            Err(format!(
+                "git {}: timed out after {}s",
+                args.join(" "),
+                GIT_HANG_GUARD_SECS
+            ))
         } else {
-            Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+            Err(format!(
+                "git {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         }
     }
 
@@ -172,10 +190,18 @@ impl Tree {
             ));
         };
         let tip = self
-            .git(&["rev-parse", "--verify", "--quiet", &format!("{base}^{{commit}}")])
+            .git(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{base}^{{commit}}"),
+            ])
             .map(|o| String::from_utf8_lossy(&o).trim().to_string())
             .map_err(|_| {
-                LintError::Refused(format!("the base {base} does not resolve to a commit in {}", self.root.display()))
+                LintError::Refused(format!(
+                    "the base {base} does not resolve to a commit in {}",
+                    self.root.display()
+                ))
             })?;
         self.git(&["merge-base", &tip, "HEAD"])
             .map(|o| String::from_utf8_lossy(&o).trim().to_string())
@@ -186,7 +212,9 @@ impl Tree {
 
     /// `rel` as it stood at `rev`, or `None` when `rev` has no such file.
     pub fn show(&self, rev: &str, rel: &str) -> Option<String> {
-        self.git(&["show", &format!("{rev}:{rel}")]).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+        self.git(&["show", &format!("{rev}:{rel}")])
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
     }
 
     /// The file's bytes, read once and cached; `None` when it is not a regular file (a
@@ -206,19 +234,31 @@ impl Tree {
 
     /// The walk's entry for `rel`, if the walk has one.
     pub fn entry(&self, rel: &str) -> Option<&Entry> {
-        self.entries.binary_search_by(|e| e.path.as_str().cmp(rel)).ok().map(|i| &self.entries[i])
+        self.entries
+            .binary_search_by(|e| e.path.as_str().cmp(rel))
+            .ok()
+            .map(|i| &self.entries[i])
     }
 
     /// The text of a file in the walk (lossy UTF-8), or `None` when the walk has no such
     /// regular file.
     pub fn text_of(&self, rel: &str) -> Option<String> {
         let e = self.entry(rel)?;
-        self.content(e).map(|b| String::from_utf8_lossy(b).into_owned())
+        self.content(e)
+            .map(|b| String::from_utf8_lossy(b).into_owned())
     }
 
     /// The tree's config delta: the base file and every fragment the tree lists, merged.
     pub fn delta_text(&self) -> Result<Option<String>, String> {
-        let mut parts: Vec<(String, String)> = self.entries.iter().filter(|e| e.path == "spira/config-delta.toml" || (e.path.starts_with("spira/config-delta.d/") && e.path.ends_with(".toml"))).filter_map(|e| Some((e.path.clone(), self.text_of(&e.path)?))).collect();
+        let mut parts: Vec<(String, String)> = self
+            .entries
+            .iter()
+            .filter(|e| {
+                e.path == "spira/config-delta.toml"
+                    || (e.path.starts_with("spira/config-delta.d/") && e.path.ends_with(".toml"))
+            })
+            .filter_map(|e| Some((e.path.clone(), self.text_of(&e.path)?)))
+            .collect();
         parts.sort();
         spira_config::delta::merge_delta_texts(&parts)
     }
@@ -226,13 +266,31 @@ impl Tree {
     /// A repo-relative file's text, for allow files. Missing reads as empty — the bash
     /// fences' `2>/dev/null`.
     pub fn read_text(&self, rel: &str) -> String {
-        fs::read(self.root.join(rel)).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+        fs::read(self.root.join(rel))
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default()
     }
 }
 
 /// Rules that already judge the branch against the base themselves; `--diff` leaves their
 /// findings whole.
-pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "config-delta-folded", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "registry-readers", "no-new-shell-suite"];
+pub const BASE_RELATIVE: &[&str] = &[
+    "plan-matrix",
+    "lockfile-lint",
+    "config-delta",
+    "config-delta-folded",
+    "tier-budget-allowlist",
+    "tier-budget-area-allowlist",
+    "tier-budget-areas",
+    "workflow-config",
+    "otel-binaries",
+    "journal-reads",
+    "release-tool-exec",
+    "bare-unit-name",
+    "test-real-clock",
+    "registry-readers",
+    "no-new-shell-suite",
+];
 
 /// What a branch changed relative to `git merge-base <base> HEAD`: per touched file, the
 /// new-side line ranges it adds or changes (`None` for a whole file: untracked, or binary).
@@ -244,9 +302,18 @@ impl DiffScope {
     pub fn from_tree(tree: &Tree) -> Result<DiffScope, LintError> {
         let base = tree.base_commit()?;
         let out = tree
-            .git(&["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", &base])
+            .git(&[
+                "diff",
+                "-U0",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-renames",
+                &base,
+            ])
             .map_err(|e| LintError::Refused(format!("--diff: {e}")))?;
-        let mut scope = DiffScope { files: Default::default() };
+        let mut scope = DiffScope {
+            files: Default::default(),
+        };
         scope.parse(&String::from_utf8_lossy(&out));
         for e in tree.entries.iter().filter(|e| !e.tracked) {
             scope.files.insert(e.path.clone(), None);
@@ -268,10 +335,15 @@ impl DiffScope {
                     }
                 }
                 if let Some(c) = &cur {
-                    self.files.entry(c.clone()).or_insert_with(|| Some(Vec::new()));
+                    self.files
+                        .entry(c.clone())
+                        .or_insert_with(|| Some(Vec::new()));
                 }
             } else if l.starts_with("Binary files ") {
-                if let Some(p) = l.strip_suffix(" differ").and_then(|l| l.rsplit(" and b/").next()) {
+                if let Some(p) = l
+                    .strip_suffix(" differ")
+                    .and_then(|l| l.rsplit(" and b/").next())
+                {
                     self.files.insert(p.to_string(), None);
                 }
             } else if let (Some(h), Some(c)) = (l.strip_prefix("@@ "), cur.as_ref()) {
@@ -304,7 +376,11 @@ impl DiffScope {
             .split(|c: char| c.is_whitespace() || "\"'()[]<>,;=`{}|".contains(c))
             .map(|t| t.trim_end_matches(['.', ':']))
             .map(|t| match t.rsplit_once(':') {
-                Some((head, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+                Some((head, tail))
+                    if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) =>
+                {
+                    head
+                }
                 _ => t,
             })
             .any(|t| self.files.contains_key(t))
@@ -327,7 +403,13 @@ impl fmt::Display for Finding {
 }
 
 /// The one text form of a finding, `<rule>: <path>[:line]: <message>`.
-pub fn render_finding(f: &mut fmt::Formatter<'_>, rule: &str, path: &str, line: Option<usize>, message: &str) -> fmt::Result {
+pub fn render_finding(
+    f: &mut fmt::Formatter<'_>,
+    rule: &str,
+    path: &str,
+    line: Option<usize>,
+    message: &str,
+) -> fmt::Result {
     match line {
         Some(n) => write!(f, "{rule}: {path}:{n}: {message}"),
         None => write!(f, "{rule}: {path}: {message}"),
@@ -343,7 +425,11 @@ pub enum LintError {
     /// Nothing in scope: indistinguishable from a matcher that never fires.
     EmptyScope,
     /// An allow-file line that cannot mean anything.
-    BadAllow { file: String, line: usize, reason: String },
+    BadAllow {
+        file: String,
+        line: usize,
+        reason: String,
+    },
     /// The rule cannot check: what it needs is missing (a base, an input). Named, never a pass.
     Refused(String),
 }
@@ -445,8 +531,13 @@ pub fn allow_dir(tree: &Tree, dir: &str) -> Vec<(String, String)> {
         .iter()
         .filter_map(|e| {
             let key = e.path.strip_prefix(&pre)?;
-            let text = tree.content(e).map(|b| String::from_utf8_lossy(b).into_owned())?;
-            Some((key.to_string(), text.lines().next().unwrap_or("").trim().to_string()))
+            let text = tree
+                .content(e)
+                .map(|b| String::from_utf8_lossy(b).into_owned())?;
+            Some((
+                key.to_string(),
+                text.lines().next().unwrap_or("").trim().to_string(),
+            ))
         })
         .collect()
 }
@@ -455,14 +546,23 @@ pub fn allow_dir(tree: &Tree, dir: &str) -> Vec<(String, String)> {
 pub fn allow_dir_at(tree: &Tree, dir: &str) -> Option<std::collections::BTreeSet<String>> {
     let base = tree.base_commit().ok()?;
     let pre = format!("{dir}/");
-    let out = tree.git(&["ls-tree", "-r", "--name-only", &base, "--", &pre]).ok()?;
-    let keys: std::collections::BTreeSet<String> =
-        String::from_utf8_lossy(&out).lines().filter_map(|l| l.strip_prefix(&pre).map(str::to_string)).collect();
+    let out = tree
+        .git(&["ls-tree", "-r", "--name-only", &base, "--", &pre])
+        .ok()?;
+    let keys: std::collections::BTreeSet<String> = String::from_utf8_lossy(&out)
+        .lines()
+        .filter_map(|l| l.strip_prefix(&pre).map(str::to_string))
+        .collect();
     if !keys.is_empty() {
         return Some(keys);
     }
     let legacy = dir.strip_suffix(".d")?;
-    Some(allow_lines(&tree.show(&base, legacy)?).iter().filter_map(|l| l.split_whitespace().next().map(str::to_string)).collect())
+    Some(
+        allow_lines(&tree.show(&base, legacy)?)
+            .iter()
+            .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+            .collect(),
+    )
 }
 
 /// Non-blank, non-`#` lines, verbatim.
@@ -493,7 +593,9 @@ pub fn pathspec_match(pat: &str, path: &str) -> bool {
 /// The basename of `path` when it sits directly in `dir` (no deeper `/`) — a shell's
 /// `"$dir"/*` glob.
 pub fn direct_child<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
-    path.strip_prefix(dir)?.strip_prefix('/').filter(|rest| !rest.is_empty() && !rest.contains('/'))
+    path.strip_prefix(dir)?
+        .strip_prefix('/')
+        .filter(|rest| !rest.is_empty() && !rest.contains('/'))
 }
 
 /// `spira/test-*.sh`, directly in spira/: what the suite runner would run as a suite.
@@ -503,7 +605,10 @@ pub(crate) fn is_suite(path: &str) -> bool {
 
 /// A line with its leading whitespace stripped (`sed 's/^[[:space:]]*//'`), for messages.
 pub fn trim_lead(line: &[u8]) -> String {
-    let start = line.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(line.len());
+    let start = line
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(line.len());
     String::from_utf8_lossy(&line[start..]).into_owned()
 }
 
@@ -518,7 +623,10 @@ pub fn lines(content: &[u8]) -> Vec<&[u8]> {
 
 /// Every rule, in rule-file name order: each `rules/*.rs` exports `rules()` and build.rs collects them.
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
-    all_rules_with_source().into_iter().map(|(_, r)| r).collect()
+    all_rules_with_source()
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect()
 }
 
 /// Every rule with the repo-relative path of the module that defines it, a fact of the build.
@@ -548,7 +656,13 @@ pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
             v.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
             v
         });
-        RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked(), report: r.report() }
+        RuleResult {
+            rule: r.name(),
+            hint: r.hint(),
+            outcome,
+            checked: r.checked(),
+            report: r.report(),
+        }
     };
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -580,24 +694,44 @@ pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
             }
         }
     });
-    slots.into_iter().map(|r| r.expect("every rule index is claimed by exactly one worker")).collect()
+    slots
+        .into_iter()
+        .map(|r| r.expect("every rule index is claimed by exactly one worker"))
+        .collect()
 }
 
 fn counted(list: &[(&str, usize)]) -> String {
-    list.iter().map(|(n, c)| format!("{n} ({c})")).collect::<Vec<_>>().join(", ")
+    list.iter()
+        .map(|(n, c)| format!("{n} ({c})"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The one stderr line that ends a red run: which rules refused, which errored, and which
 /// only printed report-mode lines, so a report's hits are never read as the cause.
-pub fn red_summary(refused: &[(&str, usize)], errored: &[&str], reported: &[(&str, usize)]) -> String {
+pub fn red_summary(
+    refused: &[(&str, usize)],
+    errored: &[&str],
+    reported: &[(&str, usize)],
+) -> String {
     let mut s = String::from("spira-lint: RED —");
     let mut clauses = Vec::new();
     if !refused.is_empty() {
         clauses.push(format!("refused by {}", counted(refused)));
     }
-    clauses.push(format!("errored: {}", if errored.is_empty() { "none".into() } else { errored.join(", ") }));
+    clauses.push(format!(
+        "errored: {}",
+        if errored.is_empty() {
+            "none".into()
+        } else {
+            errored.join(", ")
+        }
+    ));
     if !reported.is_empty() {
-        clauses.push(format!("reported only, not refusing: {}", counted(reported)));
+        clauses.push(format!(
+            "reported only, not refusing: {}",
+            counted(reported)
+        ));
     }
     s.push(' ');
     s.push_str(&clauses.join("; "));
@@ -622,10 +756,7 @@ pub fn red_summary_of(results: &[RuleResult], scope: Option<&DiffScope>) -> Opti
         }
         match &r.outcome {
             Ok(v) => {
-                let n = v
-                    .iter()
-                    .filter(|f| kept_by(scope, r.rule, f))
-                    .count();
+                let n = v.iter().filter(|f| kept_by(scope, r.rule, f)).count();
                 if n > 0 {
                     refused.push((r.rule, n));
                 }
@@ -643,7 +774,6 @@ pub const MAX_WORKERS: usize = 8;
 pub(crate) mod testutil {
     use std::fs;
     use std::path::Path;
-
 
     /// A scratch directory removed on drop (testkit's, with this crate's fixture helpers).
     pub struct TempDir(pub testkit::TempDir);
@@ -664,7 +794,6 @@ pub(crate) mod testutil {
             fs::remove_file(self.0.join(rel)).unwrap();
         }
     }
-
 }
 
 #[cfg(test)]
@@ -677,43 +806,72 @@ mod tests {
     fn diff_scope_diffs_against_the_fork_not_the_base_tip() {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let log = seen.clone();
-        let t = Tree::from_paths(Path::new("nowhere"), Vec::<String>::new(), Vec::<String>::new())
-            .with_base(Some("main".into()))
-            .with_git(Box::new(move |a| {
-                log.lock().unwrap().push(a.join(" "));
-                match a[0] {
-                    "rev-parse" => Ok(b"B\n".to_vec()),
-                    "merge-base" => Ok(b"F\n".to_vec()),
-                    _ => Ok(Vec::new()),
-                }
-            }));
+        let t = Tree::from_paths(
+            Path::new("nowhere"),
+            Vec::<String>::new(),
+            Vec::<String>::new(),
+        )
+        .with_base(Some("main".into()))
+        .with_git(Box::new(move |a| {
+            log.lock().unwrap().push(a.join(" "));
+            match a[0] {
+                "rev-parse" => Ok(b"B\n".to_vec()),
+                "merge-base" => Ok(b"F\n".to_vec()),
+                _ => Ok(Vec::new()),
+            }
+        }));
         DiffScope::from_tree(&t).unwrap();
         let seen = seen.lock().unwrap();
-        assert!(seen.iter().any(|c| c.starts_with("diff") && c.ends_with(" F")), "{seen:?}");
+        assert!(
+            seen.iter()
+                .any(|c| c.starts_with("diff") && c.ends_with(" F")),
+            "{seen:?}"
+        );
     }
 
     #[test_id(tzydbae)]
     #[test]
     fn base_commit_with_no_merge_base_is_refused() {
-        let t = Tree::from_paths(Path::new("nowhere"), Vec::<String>::new(), Vec::<String>::new())
-            .with_base(Some("main".into()))
-            .with_git(Box::new(|a| match a[0] {
-                "rev-parse" => Ok(b"B\n".to_vec()),
-                _ => Err("no merge base".into()),
-            }));
+        let t = Tree::from_paths(
+            Path::new("nowhere"),
+            Vec::<String>::new(),
+            Vec::<String>::new(),
+        )
+        .with_base(Some("main".into()))
+        .with_git(Box::new(|a| match a[0] {
+            "rev-parse" => Ok(b"B\n".to_vec()),
+            _ => Err("no merge base".into()),
+        }));
         match t.base_commit() {
-            Err(LintError::Refused(m)) => assert!(m.contains("main shares no history with HEAD"), "{m}"),
+            Err(LintError::Refused(m)) => {
+                assert!(m.contains("main shares no history with HEAD"), "{m}")
+            }
             other => panic!("{other:?}"),
         }
     }
     #[test_id(tcrhqf9)]
     #[test]
     fn diff_scope_keeps_only_changed_lines_and_touched_files() {
-        let mut d = DiffScope { files: Default::default() };
+        let mut d = DiffScope {
+            files: Default::default(),
+        };
         d.parse("diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -9 +11 @@\n-c\n+d\n@@ -20,2 +21,0 @@\n-e\n-f\ndiff --git a/y.rs b/y.rs\n--- a/y.rs\n+++ b/y.rs\n@@ -1 +1 @@\n-1\n+2\n");
-        let f = |path: &str, line| Finding { rule: "r", path: path.into(), line, message: String::new() };
-        assert!(d.keeps(&f("x.rs", Some(4))) && d.keeps(&f("x.rs", Some(5))) && d.keeps(&f("x.rs", Some(11))));
-        assert!(!d.keeps(&f("x.rs", Some(3))) && !d.keeps(&f("x.rs", Some(6))) && !d.keeps(&f("x.rs", Some(21))));
+        let f = |path: &str, line| Finding {
+            rule: "r",
+            path: path.into(),
+            line,
+            message: String::new(),
+        };
+        assert!(
+            d.keeps(&f("x.rs", Some(4)))
+                && d.keeps(&f("x.rs", Some(5)))
+                && d.keeps(&f("x.rs", Some(11)))
+        );
+        assert!(
+            !d.keeps(&f("x.rs", Some(3)))
+                && !d.keeps(&f("x.rs", Some(6)))
+                && !d.keeps(&f("x.rs", Some(21)))
+        );
         assert!(d.keeps(&f("x.rs", None)) && d.keeps(&f("y.rs", Some(1))));
         assert!(!d.keeps(&f("z.rs", None)) && !d.keeps(&f("z.rs", Some(1))));
     }
@@ -721,15 +879,28 @@ mod tests {
     #[test_id(tmkyy4x)]
     #[test]
     fn diff_scope_keeps_a_finding_whose_message_names_a_touched_path() {
-        let mut d = DiffScope { files: Default::default() };
+        let mut d = DiffScope {
+            files: Default::default(),
+        };
         d.parse("diff --git a/spira/lib-test-install.sh b/spira/lib-test-install.sh\n--- a/spira/lib-test-install.sh\n+++ b/spira/lib-test-install.sh\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/spira/gone.sh b/spira/gone.sh\n--- a/spira/gone.sh\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n");
         let allow = "spira-lint/config-key-registered-allow";
-        let f = |msg: &str| Finding { rule: "config-key-registered", path: allow.into(), line: Some(892), message: msg.into() };
+        let f = |msg: &str| Finding {
+            rule: "config-key-registered",
+            path: allow.into(),
+            line: Some(892),
+            message: msg.into(),
+        };
         assert!(d.keeps(&f("lists SPIRA_TOML for spira/lib-test-install.sh, which no longer names it unregistered — remove the line (the list only shrinks)")));
         assert!(d.keeps(&f("stale: (spira/lib-test-install.sh:12).")));
-        assert!(!d.keeps(&f("lists SPIRA_TOML for spira/other.sh, which no longer names it")));
-        assert!(!d.keeps(&f("lists SPIRA_TOML for lib-test-install.sh, which no longer names it")));
-        assert!(d.keeps(&f("lists SPIRA_TOML for spira/gone.sh, which no longer names it")));
+        assert!(!d.keeps(&f(
+            "lists SPIRA_TOML for spira/other.sh, which no longer names it"
+        )));
+        assert!(!d.keeps(&f(
+            "lists SPIRA_TOML for lib-test-install.sh, which no longer names it"
+        )));
+        assert!(d.keeps(&f(
+            "lists SPIRA_TOML for spira/gone.sh, which no longer names it"
+        )));
     }
 
     #[test_id(tfdpzbv)]
@@ -755,7 +926,11 @@ mod tests {
     #[test_id(tqtqaiw)]
     #[test]
     fn red_summary_names_refused_and_reported_separately() {
-        let l = red_summary(&[("inventory", 53), ("literal-lint", 8)], &[], &[("ffx-vocabulary", 479)]);
+        let l = red_summary(
+            &[("inventory", 53), ("literal-lint", 8)],
+            &[],
+            &[("ffx-vocabulary", 479)],
+        );
         assert_eq!(
             l,
             "spira-lint: RED — refused by inventory (53), literal-lint (8); errored: none; reported only, not refusing: ffx-vocabulary (479)"
@@ -766,7 +941,10 @@ mod tests {
     #[test]
     fn red_summary_refused_only_has_no_reported_clause() {
         let l = red_summary(&[("inventory", 1)], &[], &[]);
-        assert_eq!(l, "spira-lint: RED — refused by inventory (1); errored: none");
+        assert_eq!(
+            l,
+            "spira-lint: RED — refused by inventory (1); errored: none"
+        );
     }
 
     #[test_id(t8xahvt)]
@@ -786,7 +964,12 @@ mod tests {
         }
         fn check(&self, _: &Tree) -> Result<Vec<Finding>, LintError> {
             Ok(if self.1 {
-                vec![Finding { rule: self.0, path: "a".into(), line: Some(1), message: "m".into() }]
+                vec![Finding {
+                    rule: self.0,
+                    path: "a".into(),
+                    line: Some(1),
+                    message: "m".into(),
+                }]
             } else {
                 Vec::new()
             })
@@ -800,11 +983,18 @@ mod tests {
     #[test]
     fn a_run_over_an_enforcing_and_a_report_rule_names_each_in_its_own_clause() {
         let t = Tree::from_paths(Path::new("nowhere"), ["a"], Vec::<String>::new());
-        let rules: Vec<Box<dyn Rule>> =
-            vec![Box::new(Stub("enforcer", true, None)), Box::new(Stub("reporter", false, Some("reporter: a:1\nreporter: a:2\n")))];
+        let rules: Vec<Box<dyn Rule>> = vec![
+            Box::new(Stub("enforcer", true, None)),
+            Box::new(Stub(
+                "reporter",
+                false,
+                Some("reporter: a:1\nreporter: a:2\n"),
+            )),
+        ];
         let l = red_summary_of(&run(&t, &rules), None).unwrap();
         assert_eq!(l, "spira-lint: RED — refused by enforcer (1); errored: none; reported only, not refusing: reporter (2)");
-        let rules: Vec<Box<dyn Rule>> = vec![Box::new(Stub("reporter", false, Some("reporter: a:1\n")))];
+        let rules: Vec<Box<dyn Rule>> =
+            vec![Box::new(Stub("reporter", false, Some("reporter: a:1\n")))];
         assert_eq!(red_summary_of(&run(&t, &rules), None), None);
     }
 }

@@ -35,7 +35,10 @@ impl<'a> Classified<'a> {
 
     /// 1-based line of byte offset `at`.
     pub fn line_of(&self, at: usize) -> usize {
-        1 + self.src[..at.min(self.src.len())].iter().filter(|&&b| b == b'\n').count()
+        1 + self.src[..at.min(self.src.len())]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
     }
 }
 
@@ -165,7 +168,12 @@ mod tests {
     #[test]
     fn comments_and_strings_are_not_code() {
         let c = code("let a = \"x::y\"; // z::w\n/* q::r /* nested */ s::t */ u::v");
-        assert!(!c.contains("x::y") && !c.contains("z::w") && !c.contains("q::r") && !c.contains("s::t"));
+        assert!(
+            !c.contains("x::y")
+                && !c.contains("z::w")
+                && !c.contains("q::r")
+                && !c.contains("s::t")
+        );
         assert!(c.contains("u::v") && c.contains("let a ="));
         assert_eq!(c.matches('\n').count(), 1);
     }
@@ -173,7 +181,8 @@ mod tests {
     #[test_id(tk2jbu6)]
     #[test]
     fn raw_strings_chars_and_lifetimes() {
-        let c = code("r#\"a \" b::c\"# fn f<'a>(x: &'a str) -> char { '\\'' } br\"d::e\" b'x' g::h");
+        let c =
+            code("r#\"a \" b::c\"# fn f<'a>(x: &'a str) -> char { '\\'' } br\"d::e\" b'x' g::h");
         assert!(!c.contains("b::c") && !c.contains("d::e"));
         assert!(c.contains("fn f<'a>(x: &'a str)"), "{c}");
         assert!(c.contains("g::h"));

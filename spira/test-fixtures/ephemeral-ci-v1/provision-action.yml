@@ -131,6 +131,9 @@ outputs:
   instance-id:
     description: The EC2 instance id, empty on Proxmox.
     value: ${{ steps.provision.outputs.instance-id }}
+  run-record:
+    description: The provision record, for teardown to read when the runner went away.
+    value: ${{ steps.provision.outputs.run-record }}
   vm-token:
     description: >-
       Ownership token stamped into the VM description at clone time. Pass this
