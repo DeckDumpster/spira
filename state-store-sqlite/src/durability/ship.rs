@@ -1,6 +1,7 @@
-//! The shipper: on each tick it stages the revisions after the last staged one as one run, takes
-//! the hourly snapshot in one pass on its own read connection, and uploads whatever is
-//! queued, oldest first, stopping at the first refusal so a retry is the same object.
+//! The shipper: on each tick it stages the revisions after the last staged one as one run and
+//! uploads whatever is queued, oldest first, stopping at the first refusal so a retry is the
+//! same object. The scheduled snapshot is a [`Snapshotter`], stepped on its own thread so a copy
+//! of any length holds up no tick.
 //!
 //! `dir` holds the whole state, so a restart resumes where the last process stopped:
 //!
@@ -19,7 +20,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use runtime::ports::Clock;
 use sha2::{Digest, Sha256};
@@ -32,6 +33,7 @@ use crate::SqliteBackend;
 /// Local snapshots kept in `sent/`; the runs older than the oldest of them are pruned.
 pub const KEEP_SNAPSHOTS: usize = 2;
 
+#[derive(Clone)]
 pub struct ShipConfig {
     pub dir: PathBuf,
     /// The most txns one run carries.
@@ -43,7 +45,7 @@ pub struct ShipConfig {
 pub struct Tick {
     /// The run staged this tick.
     pub staged: Option<(u64, u64)>,
-    /// The snapshot that finished this tick, by revision.
+    /// The snapshot this tick's staging forced, by revision; the scheduled one is a [`Snapshotter`]'s.
     pub snapshot: Option<u64>,
     pub uploaded: Vec<String>,
     /// The refusal that stopped this tick's uploads; the object stays queued.
@@ -59,10 +61,102 @@ pub struct Shipper {
     cfg: ShipConfig,
     put: Option<Arc<dyn Put>>,
     clock: Arc<dyn Clock>,
+    core: Arc<SnapCore>,
     /// The oldest revision not yet off-box, and when a tick first saw it so.
     oldest: Option<(u64, u64)>,
     /// The snapshot `stage` took because the outbox no longer reached back, reported by the tick.
     forced: Option<u64>,
+}
+
+type CopyHook = Arc<dyn Fn() + Send + Sync>;
+
+/// The snapshot machinery both the shipper's forced snapshot and the [`Snapshotter`] use; `lock`
+/// serialises `snapshot.partial`, `last-snapshot` and `last-snapshot-rev`.
+struct SnapCore {
+    backend: SqliteBackend,
+    dir: PathBuf,
+    clock: Arc<dyn Clock>,
+    lock: Mutex<()>,
+    hook: Mutex<Option<CopyHook>>,
+}
+
+fn held<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+impl SnapCore {
+    fn queue(&self, kind: &str) -> PathBuf {
+        self.dir.join("queue").join(kind)
+    }
+
+    /// A snapshot now, out of cadence, waiting for a scheduled one in its copy.
+    fn take_forced(&self, now: u64) -> Result<(u64, bool), String> {
+        let _held = held(&self.lock);
+        self.take(now)
+    }
+
+    /// The caller holds `lock`. Returns the revision taken; one already taken at that revision
+    /// is dropped, because its name is taken and the writer never overwrites.
+    fn take(&self, now: u64) -> Result<(u64, bool), String> {
+        let partial = self.dir.join("snapshot.partial");
+        let hook = held(&self.hook).clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+        let rev = self
+            .backend
+            .snapshot_to(&partial)
+            .map_err(|e| format!("snapshot: {e}"))?;
+        let last = self.dir.join("last-snapshot");
+        let last_rev = self.dir.join("last-snapshot-rev");
+        if read_u64(&last_rev)? == Some(rev) {
+            fs::remove_file(&partial).map_err(io(&partial))?;
+            write_durably(&last, now.to_string().as_bytes())?;
+            return Ok((rev, false));
+        }
+        let name = revlog::snapshot_name(rev);
+        let to = self.queue(SNAPSHOT).join(&name);
+        fs::create_dir_all(self.queue(SNAPSHOT)).map_err(io(&to))?;
+        fs::File::open(&partial)
+            .and_then(|f| f.sync_all())
+            .map_err(io(&partial))?;
+        write_durably(&sum_path(&self.dir, &name), sha256_file(&partial)?.as_bytes())?;
+        fs::rename(&partial, &to).map_err(io(&to))?;
+        sync_dir(&self.queue(SNAPSHOT))?;
+        write_durably(&last_rev, rev.to_string().as_bytes())?;
+        write_durably(&last, now.to_string().as_bytes())?;
+        Ok((rev, true))
+    }
+}
+
+/// The scheduled snapshot, run beside the [`Shipper`]'s tick so a long copy holds up no run.
+#[derive(Clone)]
+pub struct Snapshotter {
+    core: Arc<SnapCore>,
+    every_ms: u64,
+}
+
+impl Snapshotter {
+    /// Takes the snapshot when one is due and no other is being copied; the revision it holds.
+    /// A step that finds a copy in progress does nothing until its next turn.
+    pub fn step(&self) -> Result<Option<u64>, String> {
+        let Ok(_held) = self.core.lock.try_lock() else {
+            return Ok(None);
+        };
+        let now = self.core.clock.now_ms();
+        let last = read_u64(&self.core.dir.join("last-snapshot"))?;
+        if !last.is_none_or(|l| now.saturating_sub(l) >= self.every_ms) {
+            return Ok(None);
+        }
+        let (rev, taken) = self.core.take(now)?;
+        Ok(taken.then_some(rev))
+    }
+
+    /// Runs `f` at the start of every snapshot copy, forced or scheduled, while the copy's lock
+    /// is held.
+    pub fn on_copy(&self, f: impl Fn() + Send + Sync + 'static) {
+        *held(&self.core.hook) = Some(Arc::new(f));
+    }
 }
 
 fn io(p: &Path) -> impl Fn(std::io::Error) -> String + '_ {
@@ -196,7 +290,15 @@ impl Shipper {
         if partial.exists() {
             fs::remove_file(&partial).map_err(io(&partial))?;
         }
+        let core = Arc::new(SnapCore {
+            backend: backend.clone(),
+            dir: cfg.dir.clone(),
+            clock: clock.clone(),
+            lock: Mutex::new(()),
+            hook: Mutex::new(None),
+        });
         let mut s = Shipper {
+            core,
             backend,
             cfg,
             put,
@@ -237,6 +339,14 @@ impl Shipper {
 
     pub fn dir(&self) -> &Path {
         &self.cfg.dir
+    }
+
+    /// The scheduled snapshot for this shipper's directory, serialised with the forced one.
+    pub fn snapshotter(&self) -> Snapshotter {
+        Snapshotter {
+            core: self.core.clone(),
+            every_ms: self.cfg.snapshot_every_ms,
+        }
     }
 
     fn mark(&self, name: &str) -> Result<u64, String> {
@@ -287,10 +397,9 @@ impl Shipper {
     }
 
     pub fn tick(&mut self) -> Result<Tick, String> {
-        let now = self.clock.now_ms();
         let mut t = Tick {
             staged: self.stage()?,
-            snapshot: self.snapshot_step(now)?.or(self.forced.take()),
+            snapshot: self.forced.take(),
             ..Tick::default()
         };
         self.upload(&mut t)?;
@@ -312,7 +421,7 @@ impl Shipper {
         let entries = match self.backend.outbox_log(from, self.cfg.max_mains) {
             Ok(entries) => entries,
             Err(state_store::Error::TooOld { .. }) => {
-                let (rev, taken) = self.take_snapshot(self.clock.now_ms())?;
+                let (rev, taken) = self.core.take_forced(self.clock.now_ms())?;
                 self.forced = taken.then_some(rev);
                 write_durably(&self.cfg.dir.join("staged"), rev.to_string().as_bytes())?;
                 return Ok(None);
@@ -343,53 +452,6 @@ impl Shipper {
         write_durably(&self.queue(REVLOG).join(&name), &revlog::encode(&run))?;
         write_durably(&self.cfg.dir.join("staged"), run.to.to_string().as_bytes())?;
         Ok(Some((run.from, run.to)))
-    }
-
-    fn snapshot_due(&self, now: u64) -> Result<bool, String> {
-        let last = read_u64(&self.cfg.dir.join("last-snapshot"))?;
-        Ok(last.is_none_or(|l| now.saturating_sub(l) >= self.cfg.snapshot_every_ms))
-    }
-
-    /// The hourly snapshot, taken whole when due. A snapshot at the revision of the last one is
-    /// dropped: its name is taken, and the writer never overwrites.
-    fn snapshot_step(&mut self, now: u64) -> Result<Option<u64>, String> {
-        if !self.snapshot_due(now)? {
-            return Ok(None);
-        }
-        let (rev, taken) = self.take_snapshot(now)?;
-        Ok(taken.then_some(rev))
-    }
-
-    /// A snapshot now, out of cadence: the revision it holds, which a run staged after it
-    /// continues from. One already taken at that revision is not taken twice.
-    fn take_snapshot(&mut self, now: u64) -> Result<(u64, bool), String> {
-        let partial = self.cfg.dir.join("snapshot.partial");
-        let rev = self
-            .backend
-            .snapshot_to(&partial)
-            .map_err(|e| format!("snapshot: {e}"))?;
-        let last = self.cfg.dir.join("last-snapshot");
-        let last_rev = self.cfg.dir.join("last-snapshot-rev");
-        if read_u64(&last_rev)? == Some(rev) {
-            fs::remove_file(&partial).map_err(io(&partial))?;
-            write_durably(&last, now.to_string().as_bytes())?;
-            return Ok((rev, false));
-        }
-        let name = revlog::snapshot_name(rev);
-        let to = self.queue(SNAPSHOT).join(&name);
-        fs::create_dir_all(self.queue(SNAPSHOT)).map_err(io(&to))?;
-        fs::File::open(&partial)
-            .and_then(|f| f.sync_all())
-            .map_err(io(&partial))?;
-        write_durably(
-            &sum_path(&self.cfg.dir, &name),
-            sha256_file(&partial)?.as_bytes(),
-        )?;
-        fs::rename(&partial, &to).map_err(io(&to))?;
-        sync_dir(&self.queue(SNAPSHOT))?;
-        write_durably(&last_rev, rev.to_string().as_bytes())?;
-        write_durably(&last, now.to_string().as_bytes())?;
-        Ok((rev, true))
     }
 
     fn upload(&self, t: &mut Tick) -> Result<(), String> {

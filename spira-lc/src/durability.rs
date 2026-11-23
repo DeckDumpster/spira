@@ -1,4 +1,4 @@
-//! The control store's off-box copy as spira-lc runs it: lc-serve's shipper thread, and the
+//! The control store's off-box copy as spira-lc runs it: lc-serve's shipper thread and its snapshot thread, and the
 //! operator's `admin-restore` and `admin-drill`, which read local files only; and lc-backup's
 //! put-only upload of a dolt store, `admin-dolt-ship`, with `admin-dolt-assemble` for its restore.
 
@@ -13,7 +13,7 @@ use state_store_sqlite::durability::dolt;
 use state_store_sqlite::durability::drill::{self, Exclusions};
 use state_store_sqlite::durability::put::{Dest, PutNew, S3Creds, Uploader, MAX_PUT_BYTES};
 use state_store_sqlite::durability::restore;
-use state_store_sqlite::durability::ship::{self, ShipConfig, Shipper};
+use state_store_sqlite::durability::ship::{self, ShipConfig, Shipper, Snapshotter};
 use state_store_sqlite::SqliteBackend;
 
 use crate::{CANNOT_TELL, REFUSED};
@@ -25,6 +25,7 @@ const MAX_MAINS: usize = 10_000;
 
 pub struct Shipping {
     pub shipper: Shipper,
+    pub snapshotter: Snapshotter,
     pub every: Duration,
     pub max_age_ms: u64,
     pub alarm_log: PathBuf,
@@ -63,8 +64,10 @@ fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_sec
     }
     Dest::parse(url)?;
     let cfg = ShipConfig { dir, max_mains: MAX_MAINS, snapshot_every_ms: snapshot_secs.saturating_mul(1_000) };
+    let shipper = Shipper::open_staging(backend, cfg, Arc::new(WallClock))?;
     Ok(Shipping {
-        shipper: Shipper::open_staging(backend, cfg, Arc::new(WallClock))?,
+        snapshotter: shipper.snapshotter(),
+        shipper,
         every: Duration::from_secs(every),
         max_age_ms: max_age_secs.saturating_mul(1_000),
         alarm_log: run.join(ALARM_LOG),
@@ -273,6 +276,7 @@ mod tests {
         let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE });
         let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX };
         let mut sh = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
+        sh.snapshotter().step().unwrap();
         sh.tick().unwrap();
         for i in 0..6 {
             let t = Txn::new().put(&format!("lifecycle/sp-{i}"), Object::new(json!(i)));
@@ -291,6 +295,7 @@ mod tests {
         let c = suite::open(b.clone(), &clock);
         let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
         let mut sh = Shipper::open_staging(b, cfg, Arc::new(clock.clone())).unwrap();
+        sh.snapshotter().step().unwrap();
         sh.tick().unwrap();
         let t = Txn::new().put("lifecycle/sp-1", Object::new(json!(1)));
         assert!(c.txn(&t, &Request::new("1", "t", "t.write")).unwrap().succeeded);
@@ -446,8 +451,10 @@ mod tests {
         std::fs::write(&blocked, "").unwrap();
         let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(blocked), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE });
         let cfg = ShipConfig { dir: dir.path().join("lc-ship"), max_mains: 100, snapshot_every_ms: u64::MAX };
+        let shipper = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
         let mut s = Shipping {
-            shipper: Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap(),
+            snapshotter: shipper.snapshotter(),
+            shipper,
             every: Duration::from_secs(1),
             max_age_ms: 10_000,
             alarm_log: dir.path().join(ALARM_LOG),
