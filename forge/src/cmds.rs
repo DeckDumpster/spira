@@ -32,40 +32,46 @@ fn parse(bytes: &[u8]) -> Option<Value> {
 
 // ── pr-create ────────────────────────────────────────────────────────────────────────────
 
+/// This installation's open PRs as (number, head branch); the gh exit code when the listing
+/// cannot be read.
+fn list_mine(gh: &dyn Gh, repo: &Path) -> Result<Vec<(i64, String)>, i32> {
+    let listed = gh.call(Some(repo), &["pr", "list", "--state", "open", "--author", "@me", "--json", "number,headRefName"]);
+    let Some(Value::Array(open)) = listed.ok().then(|| parse(&listed.stdout)).flatten() else {
+        return Err(listed.code);
+    };
+    Ok(open
+        .iter()
+        .map(|p| (p.get("number").and_then(Value::as_i64).unwrap_or_default(), jstr(p, "headRefName").unwrap_or_default()))
+        .collect())
+}
+
+/// `<number> <headRefName>` per open PR from this installation's identity; exit 1 and nothing
+/// when the listing cannot be read, so a caller never takes unreadable for none.
+pub fn pr_list_mine(gh: &dyn Gh, repo: &Path) -> Out {
+    match list_mine(gh, repo) {
+        Ok(open) => ok(open.into_iter().map(|(n, h)| format!("{n} {h}")).collect()),
+        Err(_) => fail(vec![]),
+    }
+}
+
 /// One open PR per repo from this installation's identity, whoever opens it. Unreadable
 /// listing refuses too: a control that cannot check must not wave the PR through.
 pub fn pr_preflight(gh: &dyn Gh, repo: &Path, head: &str, second_pr_why: &str) -> Out {
-    let listed = gh.call(
-        Some(repo),
-        &[
-            "pr",
-            "list",
-            "--state",
-            "open",
-            "--author",
-            "@me",
-            "--json",
-            "number,headRefName",
-        ],
-    );
-    let Some(Value::Array(open)) = listed.ok().then(|| parse(&listed.stdout)).flatten() else {
-        if listed.code == 127 {
+    let open = match list_mine(gh, repo) {
+        Ok(open) => open,
+        Err(127) => {
             warn!("forge pr-create: gh is not on PATH (or SPIRA_GH does not resolve) — cannot check this installation's open PRs on {}, refusing to open {head}", repo.display());
-        } else {
-            warn!("forge pr-create: cannot list this installation's open PRs on {} (gh exited {}) — refusing to open {head}", repo.display(), listed.code);
+            return fail(vec![String::new()]);
         }
-        return fail(vec![String::new()]);
+        Err(code) => {
+            warn!("forge pr-create: cannot list this installation's open PRs on {} (gh exited {code}) — refusing to open {head}", repo.display());
+            return fail(vec![String::new()]);
+        }
     };
     let open: Vec<String> = open
         .iter()
-        .filter(|p| jstr(p, "headRefName").as_deref() != Some(head))
-        .map(|p| {
-            format!(
-                "#{} ({})",
-                p.get("number").map(|n| n.to_string()).unwrap_or_default(),
-                jstr(p, "headRefName").unwrap_or_default()
-            )
-        })
+        .filter(|(_, h)| h != head)
+        .map(|(n, h)| format!("#{n} ({h})"))
         .collect();
     if !open.is_empty() {
         let why = second_pr_why.trim();

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use runtime::taskrig::{assert_deterministic, effects_runnable, TaskRig};
 use runtime::event::EventKind;
-use spira_runtime::tasks::a::landing::{PrRead, PrStatus};
+use spira_runtime::tasks::a::landing::{PrRead, PrStatus, Waits};
 use spira_runtime::tasks::a::{batcher_forge, batcher_local};
 use spira_runtime::tasks::d::acceptance as acc;
 use spira_runtime::tasks::e::watch_transitions::*;
@@ -1795,7 +1795,7 @@ fn a_wait_explained_again_after_a_gap_is_counted_afresh_and_a_departed_bead_is_f
 
 fn pr_bead(id: &str, repo: &str, since: u64, read: Option<(PrStatus, u64)>) -> Bead {
     let read = read.map(|(status, read_since)| PrRead { number: 232, status, since: read_since });
-    Bead { pr: Some(PrWait { read }), ..bead(id, repo, "SUBMITTED", since) }
+    Bead { pr: Some(PrWait { read, ..PrWait::default() }), ..bead(id, repo, "SUBMITTED", since) }
 }
 
 fn pr_snap(beads: Vec<Bead>, landing_quiet_s: Option<u64>) -> Snapshot {
@@ -1892,9 +1892,58 @@ fn mark_prs_marks_submitted_beads_of_pr_repos_and_fill_prs_gives_them_the_landin
     let mut s = pr_snap(vec![bead("sp-a", "prrepo", "SUBMITTED", T0), bead("sp-b", "gaterepo", "SUBMITTED", T0), bead("sp-c", "prrepo", "WORKING", T0)], None);
     mark_prs(&mut s, &|repo| repo == "prrepo");
     let read = PrRead { number: 7, status: PrStatus::Green, since: 5 };
-    fill_prs(&mut s, &BTreeMap::from([("sp-a".to_string(), read), ("sp-b".to_string(), read), ("sp-c".to_string(), read)]));
-    let marks: Vec<Option<PrWait>> = s.beads.iter().map(|b| b.pr).collect();
-    assert_eq!(marks, vec![Some(PrWait { read: Some(read) }), None, None]);
+    fill_prs(&mut s, &BTreeMap::from([("sp-a".to_string(), read), ("sp-b".to_string(), read), ("sp-c".to_string(), read)]), &BTreeMap::new());
+    let marks: Vec<Option<PrWait>> = s.beads.iter().map(|b| b.pr.clone()).collect();
+    assert_eq!(marks, vec![Some(PrWait { read: Some(read), behind: None }), None, None]);
+}
+
+#[test_id(tjntm4w)]
+#[test]
+fn mark_prs_marks_a_certified_bead_of_a_pr_repo_too() {
+    let mut s = pr_snap(vec![bead("sp-a", "prrepo", "CERTIFIED", T0), bead("sp-b", "gaterepo", "CERTIFIED", T0)], None);
+    mark_prs(&mut s, &|repo| repo == "prrepo");
+    assert_eq!(s.beads.iter().map(|b| b.pr.is_some()).collect::<Vec<_>>(), [true, false]);
+}
+
+fn behind_bead(id: &str, state: &str, since: u64) -> Bead {
+    Bead { pr: Some(PrWait { read: None, behind: Some(Waits { number: 232, br: "spira/sp-head".into() }) }), ..bead(id, "spira", state, since) }
+}
+
+fn behind_snap(waiting: Bead, head: Option<Bead>, quiet: Option<u64>) -> Snapshot {
+    pr_snap(std::iter::once(waiting).chain(head).collect(), quiet)
+}
+
+#[test_id(t64dtwa)]
+#[test]
+fn an_item_behind_a_live_open_pull_request_pages_nothing_however_long_it_waits_while_landing_observes() {
+    let head = || Some(bead("sp-head", "spira", "SUBMITTED", T0 - 3 * HOUR));
+    for state in ["SUBMITTED", "CERTIFIED"] {
+        let s = behind_snap(behind_bead("sp-w", state, T0 - 2 * HOUR), head(), Some(90));
+        assert_eq!(pr_stalls(&s, T0).len(), 0, "{state}");
+    }
+}
+
+#[test_id(t0hhjqb)]
+#[test]
+fn an_item_behind_a_pull_request_pages_at_the_bound_naming_it_when_its_head_is_gone_or_landing_is_silent() {
+    let head = || Some(bead("sp-head", "spira", "SUBMITTED", T0 - 3 * HOUR));
+    let gone = behind_snap(behind_bead("sp-w", "CERTIFIED", T0 - 900), None, Some(90));
+    let silent = behind_snap(behind_bead("sp-w", "CERTIFIED", T0 - 900), head(), Some(601));
+    let early = behind_snap(behind_bead("sp-w", "CERTIFIED", T0 - 899), None, Some(90));
+    for s in [&gone, &silent] {
+        let found = pr_stalls(s, T0);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].evidence.contains("sp-w") && found[0].evidence.contains("waits behind PR #232"), "{}", found[0].evidence);
+    }
+    assert_eq!(pr_stalls(&early, T0).len(), 0);
+}
+
+#[test_id(tp2fdfz)]
+#[test]
+fn the_table_line_says_which_pull_request_an_item_waits_behind() {
+    let s = behind_snap(behind_bead("sp-w", "CERTIFIED", T0 - 600), Some(bead("sp-head", "spira", "SUBMITTED", T0 - HOUR)), Some(90));
+    assert!(table_line(&s, T0, &config()).contains("waits behind PR #232: sp-w"), "{}", table_line(&s, T0, &config()));
+    assert!(!table_line(&pr_snap(vec![], Some(90)), T0, &config()).contains("waits behind"));
 }
 
 const RELEASE_SHA: &str = "f72cbc540a1111111111111111111111111111aa";
