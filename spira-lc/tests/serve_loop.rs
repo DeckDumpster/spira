@@ -180,3 +180,15 @@ fn serve_bench_reports_both_servers_answers_per_second_and_p99_as_json() {
         assert!(report[label]["per_sec"].as_f64().unwrap() > 0.0 && report[label]["p99_ms"].as_f64().unwrap() > 0.0, "{label}: {report}");
     }
 }
+
+#[test_id(tpu3tyn)]
+#[test]
+fn on_sigterm_the_server_ends_and_takes_the_loop_socket_away() {
+    let mut server = start_server();
+    assert!(server.loop_socket.exists());
+    // SAFETY: a signal to the child this test started.
+    assert_eq!(unsafe { libc::kill(server.pid as i32, libc::SIGTERM) }, 0);
+    let status = server.child.wait().expect("the server ends");
+    assert!(status.success(), "{status}");
+    assert!(!server.loop_socket.exists(), "the loop socket was left behind");
+}

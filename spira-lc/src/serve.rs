@@ -503,6 +503,7 @@ pub fn run(args: &[String]) -> i32 {
         Some(Ok(t)) => Some(t),
         Some(Err(e)) => {
             eprintln!("spira-lc serve: {e}");
+            let _ = std::fs::remove_file(&socket_path);
             return 2;
         }
     };
@@ -1066,7 +1067,7 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
     peer_of(stream).pid
 }
 
-fn peer_of(stream: &UnixStream) -> Peer {
+pub(crate) fn peer_of(stream: &impl std::os::fd::AsRawFd) -> Peer {
     let cred = peer_cred(stream);
     Peer { pid: cred.as_ref().map(|c| c.pid), uid: cred.map(|c| c.uid) }
 }
@@ -1513,7 +1514,7 @@ extern "C" {
     fn getsockopt(fd: i32, level: i32, name: i32, val: *mut Ucred, len: *mut u32) -> i32;
 }
 
-fn peer_cred(stream: &UnixStream) -> Option<Ucred> {
+fn peer_cred(stream: &impl std::os::fd::AsRawFd) -> Option<Ucred> {
     use std::os::fd::AsRawFd;
     const SOL_SOCKET: i32 = 1;
     const SO_PEERCRED: i32 = 17;

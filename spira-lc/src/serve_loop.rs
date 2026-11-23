@@ -22,7 +22,6 @@ const WHAT: &str = "lc-loop";
 pub(crate) const REFUSED_VERB: &str = "cannot tell: the loop serves show and list --live";
 const TICK: Duration = Duration::from_millis(50);
 const CHUNK: usize = 8 << 10;
-const MAX_LINE: usize = 1 << 20;
 
 /// What the loop answers: `show`, and `list` with `--live`.
 pub(crate) fn serves(argv: &[String]) -> bool {
@@ -113,7 +112,6 @@ pub(crate) fn parse(buf: &[u8], eof: bool) -> Parsed {
     let end = match buf.iter().position(|b| *b == b'\n') {
         Some(n) => n + 1,
         None if eof => buf.len(),
-        None if buf.len() > MAX_LINE => return Parsed::Bad((buf.len(), "bad request: the first line is over the 1048576-byte bound".to_string())),
         None => return Parsed::Need,
     };
     if end == 0 {
@@ -149,8 +147,7 @@ fn answering(ans: &Answer, read_ended: bool, post: Post) -> Phase {
 
 impl Conn {
     fn new(stream: UnixStream) -> Conn {
-        let cred = stream.peer_cred().ok();
-        let peer = Peer { pid: cred.as_ref().and_then(|c| c.pid()), uid: cred.map(|c| c.uid()) };
+        let peer = crate::serve::peer_of(&stream);
         let now = Instant::now();
         Conn { stream, accepted: now, started: SystemTime::now(), peer, read_at: now, phase: Phase::Reading(Vec::new()) }
     }

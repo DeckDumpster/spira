@@ -228,3 +228,27 @@ fn loop_socket_is_split_from_the_arguments_and_must_name_a_path() {
     assert!(split_loop_socket(&words(&["--loop-socket"])).is_err());
     assert!(split_loop_socket(&words(&["--loop-socket", "a", "--loop-socket", "b"])).is_err());
 }
+
+#[test_id(ta2fg2i)]
+#[test]
+fn a_refused_span_job_is_counted_in_spilled_total() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let gate = Gate::closed();
+    let (started, began) = std::sync::mpsc::channel::<()>();
+    let (held, started) = (gate.clone(), Mutex::new(started));
+    let work = work_that(move |_| {
+        let _ = started.lock().unwrap().send(());
+        held.wait();
+    });
+    let server = running(work, 1, 1, Duration::from_secs(30), DRAIN_BOUND).releasing(&gate);
+    let _running = send(&server.path, r#"["show","sp-1"]"#);
+    began.recv().expect("the first job runs");
+    let _queued = send(&server.path, r#"["show","sp-2"]"#);
+    let before = runtime::offload::spilled_total("lc-loop");
+    assert_eq!(one_answer(send(&server.path, "not json")).0, 2, "a malformed line is answered without the pool");
+    let until = Instant::now() + Duration::from_secs(10);
+    while runtime::offload::spilled_total("lc-loop") == before {
+        assert!(Instant::now() < until, "the span job the full queue refused was not counted");
+        std::thread::yield_now();
+    }
+}
