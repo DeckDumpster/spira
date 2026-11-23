@@ -42,6 +42,23 @@ Four sections, in this order, as Markdown:
 
 Scope lives inside Build and Acceptance, in positive terms: what is in, said plainly.
 
+## An item that changes what a person sees
+
+A page change is a small item, and its acceptance is sized to match.
+
+- The test sits at the lowest level that can see the behaviour. What the server renders (markup, text, a class, an
+  attribute) is asserted on the response of the real handler. Logic in a script is asserted where the repository
+  already tests scripts.
+- The repository has one browser test: the user's main path, start to finish. A change to that path adds a step and
+  an assertion to that test, using its fixture and its one browser. Name the test by path. An item never adds a
+  browser test, a second browser engine or a new fixture server of its own.
+- The item asks the builder for no screenshot. Captures for a human eye are the batch's job, taken once from the
+  finished change. Acceptance names behaviour a test asserts.
+- State what one gate run costs in the repository today (read its last gate log) when the item adds a test, and what
+  the item adds to it. An item that adds more than a few seconds says why.
+
+## What makes an item good
+
 A good item can be built without a question, and two builders would build the same thing.
 Every name in it exists in the code today or is marked new. It is one deliverable that lands
 on its own: if the intent holds two, write two items and say why. It is as short as
