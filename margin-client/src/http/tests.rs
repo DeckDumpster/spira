@@ -279,3 +279,38 @@ fn the_change_feed_is_asked_with_after_and_wait_and_its_last_seq_is_the_point_to
     let req = seen.join().unwrap();
     assert!(req.starts_with("GET /api/changes?after=3&wait=0 "), "{req}");
 }
+
+fn changes_request() -> ChangesRequest {
+    ChangesRequest { base: "http://reader:1".into(), url: "http://reader:1/api/changes?after=3&wait=7".into(), token: TOKEN.into(), timeout: Duration::from_secs(12) }
+}
+
+#[test_id(tbuspkv)]
+#[test]
+fn a_changes_request_carries_the_after_the_clamped_wait_and_a_deadline_of_call_plus_hold() {
+    let dir = TempDir::new("margin-changes-request");
+    let token = dir.path().join("token");
+    std::fs::write(&token, format!("{TOKEN}\n")).unwrap();
+    let reader = HttpMargin { base: "http://reader:1".into(), token_file: token.to_str().unwrap().into(), timeout: Duration::from_secs(5) };
+    let req = reader.changes_request(3, 7).unwrap();
+    assert_eq!((req.url.as_str(), req.token.as_str(), req.timeout), ("http://reader:1/api/changes?after=3&wait=7", TOKEN, Duration::from_secs(12)));
+    assert!(reader.changes_request(3, 999).unwrap().url.ends_with("wait=30"), "the hold is capped");
+}
+
+#[test_id(t37e038)]
+#[test]
+fn a_changes_reply_is_the_feed_on_success_and_the_refusal_in_words_on_a_bad_status_or_body() {
+    let req = changes_request();
+    let ok = req.reply(200, r#"{"last_seq":9,"changes":[{"seq":8}]}"#).unwrap();
+    assert_eq!((ok.through, ok.changes.len()), (9, 1));
+    let refused = req.reply(503, " busy ").unwrap_err();
+    assert_eq!(refused, "the reader at http://reader:1 refused GET /api/changes: HTTP 503: busy");
+    assert!(req.reply(200, "<html>").unwrap_err().contains("not the expected JSON"));
+}
+
+#[test_id(tc33gjv)]
+#[test]
+fn a_changes_request_that_got_no_answer_is_said_with_the_token_redacted() {
+    let said = changes_request().silent(&format!("connect: bad header Bearer {TOKEN}"));
+    assert!(said.starts_with("the reader at http://reader:1 did not answer GET /api/changes: "), "{said}");
+    assert!(said.contains("<token>") && !said.contains(TOKEN), "{said}");
+}

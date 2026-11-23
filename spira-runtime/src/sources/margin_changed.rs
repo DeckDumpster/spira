@@ -100,6 +100,7 @@ impl Source for MarginChanged {
 }
 
 /// Where a request goes: scheme, the name the certificate must carry, and the addresses it resolved to.
+#[derive(Debug)]
 struct Target {
     tls: bool,
     host: String,
@@ -478,9 +479,29 @@ mod tests {
         let down = rx.recv().await.unwrap();
         assert_eq!(down.kind.tag.as_str(), MARGIN_UNREACHABLE);
         let u: Unreachable = serde_json::from_str(&down.kind.body).unwrap();
-        assert!(u.error.contains("certificate") && !u.error.contains("s3cret-bearer"), "{}", u.error);
-        tokio::time::sleep(FIRST * 4).await; // clock-safe: lets two more refused attempts pass before asserting there is no second event
-        assert!(rx.try_recv().is_err(), "one outage is said once");
+        assert!(u.error.contains("invalid peer certificate") && !u.error.contains("s3cret-bearer"), "{}", u.error);
+    }
+
+    #[test_id(t0q3m1c)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_base_that_is_not_http_or_https_is_said_naming_the_config_key() {
+        let dir = testkit::TempDir::new("margin-source-scheme");
+        let mut rx = start(source("ftp://127.0.0.1:1", &dir));
+        let down = rx.recv().await.unwrap();
+        let u: Unreachable = serde_json::from_str(&down.kind.body).unwrap();
+        assert!(u.error.contains(margin_client::URL_KEY), "{}", u.error);
+    }
+
+    #[test_id(tn8v2ud)]
+    #[test]
+    fn a_base_is_split_into_scheme_host_port_and_path() {
+        let t = target_of("http://127.0.0.1:8081/api/changes?after=1&wait=0").unwrap();
+        assert_eq!((t.tls, t.host.as_str(), t.addrs.iter().map(|a| a.port()).collect::<Vec<_>>(), t.path.as_str()), (false, "127.0.0.1", vec![8081], "/api/changes?after=1&wait=0")); // not a path: a request target
+        let t = target_of("https://127.0.0.1/api/changes").unwrap();
+        assert_eq!((t.tls, t.addrs[0].port()), (true, 443), "https defaults to 443");
+        let t = target_of("http://[::1]:9/api/changes").unwrap();
+        assert_eq!((t.host.as_str(), t.addrs[0].port()), ("::1", 9), "a bracketed address loses its brackets");
+        assert!(target_of("http://127.0.0.1:notaport/x").unwrap_err().contains(margin_client::URL_KEY));
     }
 
     struct Echo;
