@@ -127,6 +127,24 @@ pub fn vm_token_wired(text: &str) -> bool {
             .is_some_and(|i| text[i + "vm-token:".len()..].contains("needs.provision.outputs.vm-token"))
 }
 
+/// The teardown inputs a spilling workflow must pass so the EC2 instance is read and
+/// terminated; empty when provision does not spill (or the spill is `off`).
+pub fn spill_teardown_missing(text: &str) -> Vec<&'static str> {
+    let spills = block(text, "provision").lines().any(|l| {
+        l.trim().strip_prefix("spill:").is_some_and(|v| !v.trim().is_empty() && v.trim() != "off")
+    });
+    if !spills {
+        return Vec::new();
+    }
+    let (p, t) = (block(text, "provision"), block(text, "teardown"));
+    let wired = |inp: &str| match inp {
+        "aws-role-to-assume" => t.lines().any(|l| l.trim().starts_with("aws-role-to-assume:") && l.contains("secrets.")),
+        _ => p.contains(&format!("{inp}: ${{{{ steps.vm.outputs.{inp} }}}}"))
+            && t.lines().any(|l| l.trim().starts_with(&format!("{inp}:")) && l.contains(&format!("needs.provision.outputs.{inp}"))),
+    };
+    ["backend", "instance-id", "aws-role-to-assume"].into_iter().filter(|i| !wired(i)).collect()
+}
+
 /// A job that runs on the provisioned runner must not bypass a failed provision: its `if:`
 /// either is absent, checks `needs.provision.result == 'success'`, or uses neither
 /// `always()` nor `cancelled()`.
@@ -460,6 +478,9 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
         if !vm_token_wired(text) {
             o.push((file, "provision must output vm-token and teardown must receive needs.provision.outputs.vm-token".to_string()));
         }
+        for inp in spill_teardown_missing(text) {
+            o.push((file, format!("provision spills, so teardown must pass {inp} (the EC2 instance is otherwise never read or terminated)")));
+        }
         let pb = block(text, "provision");
         if pb.is_empty() {
             o.push((file, "the provision job was located (positive control): not found".to_string()));
@@ -741,6 +762,29 @@ mod tests {
         w.gate = Some(join(&g.lines().filter(|l| !l.contains("vm-token")).collect::<Vec<_>>()));
         let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
         assert!(got.iter().any(|m| m.contains("teardown must receive needs.provision.outputs.vm-token")), "{got:?}");
+    }
+
+    #[test_id(t8qc2rf)]
+    #[test]
+    fn a_spilling_teardown_without_the_ec2_inputs_is_caught() {
+        type Field = fn(&mut Workflows) -> &mut Option<String>;
+        for (field, file) in [(gate as Field, GATE), (acc as Field, ACCEPTANCE)] {
+            let text = field(&mut shipped()).clone().unwrap();
+            assert!(block(&text, "provision").contains("spill:"), "{file}: positive control");
+            assert!(spill_teardown_missing(&text).is_empty(), "{file}");
+            for inp in ["backend", "instance-id", "aws-role-to-assume"] {
+                let t = text.find("  teardown:").unwrap();
+                let (head, tail) = text.split_at(t);
+                let tail: String = tail.lines().filter(|l| !l.trim().starts_with(&format!("{inp}:"))).map(|l| format!("{l}\n")).collect();
+                let mut w = shipped();
+                *field(&mut w) = Some(format!("{head}{tail}"));
+                let got: Vec<String> = judge(&w).into_iter().map(|(_, m)| m).collect();
+                assert!(got.iter().any(|m| m.contains(&format!("teardown must pass {inp}"))), "{file} {inp}: {got:?}");
+            }
+            let no_output = text.replacen("      backend: ${{ steps.vm.outputs.backend }}\n", "", 1);
+            assert_eq!(spill_teardown_missing(&no_output), vec!["backend"], "{file}");
+        }
+        assert!(spill_teardown_missing("  provision:\n    steps:\n      spill: off\n  teardown:\n").is_empty());
     }
 
     #[test_id(tc3m9l6)]

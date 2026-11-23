@@ -327,6 +327,8 @@ jobs:
       # provision.sh itself (DeckDumpster/ephemeral-ci, not vendored here) and
       # cannot be closed from this workflow -- tracked as sp-rtgbv.
       vm-token: ${{ steps.vm.outputs.vm-token }}
+      backend: ${{ steps.vm.outputs.backend }}
+      instance-id: ${{ steps.vm.outputs.instance-id }}
     # provision.sh's guest-agent wait defaults to 120s. Three consecutive boots of
     # the same template on a busy host measured ~117s, >120s (fault), then ~20s --
     # the default sits inside the normal range, so any busy moment is a fault and
@@ -810,6 +812,9 @@ jobs:
     needs: [select, provision, suites]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: DeckDumpster/ephemeral-ci/teardown@v2
         # Skipped when provision never ran: no VM was created and no runner was
@@ -830,6 +835,10 @@ jobs:
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
           vm-token:           ${{ needs.provision.outputs.vm-token }}
+          backend:            ${{ needs.provision.outputs.backend }}
+          instance-id:        ${{ needs.provision.outputs.instance-id }}
+          aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
+          consumer-result:    ${{ needs.suites.result }}
 
   # ---------------------------------------------------------------------------
   # Cut the release unit. A release is asked for, not merged into existence: only
