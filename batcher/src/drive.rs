@@ -2478,7 +2478,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
             }
             let touched: Vec<String> = eject
                 .iter()
-                .filter(|s| !ops.touching(s, &[only.id.clone()]).is_empty())
+                .filter(|s| !ops.touching(s, std::slice::from_ref(&only.id)).is_empty())
                 .cloned()
                 .collect();
             if !touched.is_empty() {
