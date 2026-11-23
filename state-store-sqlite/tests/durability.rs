@@ -435,6 +435,141 @@ fn the_drill_gives_its_verdict_when_one_read_of_the_keyspace_would_pass_max_read
     assert_eq!(rep.mismatches, [Mismatch::Value { key: key.into() }], "{}", drill::render(&rep));
 }
 
+/// A clock that moves `0` ms per reading: a host so slow that every read looks long.
+struct Stalled(u64, std::sync::atomic::AtomicU64);
+
+impl runtime::ports::Clock for Stalled {
+    fn now_ms(&self) -> u64 {
+        self.1.fetch_add(self.0, std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+fn stalled_offline(by: u64) -> impl Fn() -> Options {
+    let clock: Arc<dyn runtime::ports::Clock> = Arc::new(Stalled(by, Default::default()));
+    move || Options { clock: clock.clone(), ..Options::offline() }
+}
+
+#[test_id(tf0s9xp)]
+#[test]
+fn the_offline_read_limit_leaves_the_live_one_alone() {
+    assert_eq!(Options::default().max_read_ms, 100);
+    assert_eq!(Options::offline().max_read_ms, state_store_sqlite::OFFLINE_MAX_READ_MS);
+    const { assert!(state_store_sqlite::OFFLINE_MAX_READ_MS < i32::MAX as u64) };
+}
+
+#[test_id(tk7p3dq)]
+#[test]
+fn a_drill_on_a_host_that_stalls_every_reading_still_gives_its_verdict() {
+    let dir = TempDir::new("drill-stalled");
+    let clock = VirtualClock::new(1_000);
+    let (_c, s) = shipped_store(dir.path(), &clock);
+    let (_, plain) = drill::drill(s.dir(), &dir.path().join("plain"), Exclusions::CONTRACT).unwrap();
+    let (_, rep) = drill::drill_with(
+        s.dir(),
+        &dir.path().join("stalled"),
+        Exclusions::CONTRACT,
+        &stalled_offline(150),
+    )
+    .unwrap();
+    assert!(rep.passed(), "{}", drill::render(&rep));
+    assert_eq!(rep.compared, plain.compared);
+
+    let (rev, snap) = drill::newest_snapshot(s.dir()).unwrap();
+    let mut bytes = std::fs::read(&snap).unwrap();
+    let at = bytes.len() / 2;
+    bytes[at] ^= 1;
+    std::fs::write(&snap, bytes).unwrap();
+    let err = drill::drill_with(
+        s.dir(),
+        &dir.path().join("stalled2"),
+        Exclusions::CONTRACT,
+        &stalled_offline(150),
+    )
+    .unwrap_err();
+    assert!(
+        err.starts_with(&format!("checksum: snapshot {} changed", revlog::snapshot_name(rev))),
+        "{err}"
+    );
+}
+
+#[test_id(tm3cq8n)]
+#[test]
+fn a_stalled_drill_still_reports_a_tampered_copy_and_a_missing_run() {
+    let dir = TempDir::new("drill-stalled-bad");
+    let clock = VirtualClock::new(1_000);
+    let (c, s) = shipped_store(dir.path(), &clock);
+    let key = "intents/claim/sp-1";
+    let flipped = flipped(c.backend(), key);
+    let hook = stalled_offline(150);
+    let (_, rep) = drill::drill_with(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT, &hook).unwrap();
+    assert!(rep.passed());
+    let (_, base, runs) = restored_copy(dir.path(), &s);
+    let out = dir.path().join("scratch").join("control.db");
+    tamper(&out, key, &flipped);
+    let rep = drill::fold_compare(&verify(&base), &runs, &verify(&out), Exclusions::CONTRACT).unwrap();
+    assert_eq!(rep.mismatches, [Mismatch::Value { key: key.into() }]);
+
+    let mut names: Vec<_> = std::fs::read_dir(s.sent(REVLOG)).unwrap().map(|e| e.unwrap().file_name()).collect();
+    names.sort();
+    std::fs::remove_file(s.sent(REVLOG).join(&names[0])).unwrap();
+    let err = drill::drill_with(s.dir(), &dir.path().join("gap"), Exclusions::CONTRACT, &hook).unwrap_err();
+    assert!(err.starts_with("restore: gap: revisions "), "{err}");
+    assert!(err.contains("; steps: checksum "), "{err}");
+}
+
+#[test_id(tr5v2hw)]
+#[test]
+fn a_point_read_that_cannot_finish_fails_the_drill_naming_the_fold_and_the_read() {
+    let dir = TempDir::new("drill-point-read");
+    let clock = VirtualClock::new(1_000);
+    let (_c, s) = shipped_store(dir.path(), &clock);
+    let slow = VirtualClock::new(0);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hook = {
+        let (slow, calls) = (slow.clone(), calls.clone());
+        move || {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let probe_clock = slow.clone();
+            Options {
+                clock: Arc::new(slow.clone()),
+                read_probe: (n == 3).then(|| -> Arc<dyn Fn() + Send + Sync> {
+                    Arc::new(move || probe_clock.advance(state_store_sqlite::OFFLINE_MAX_READ_MS + 1))
+                }),
+                ..Options::offline()
+            }
+        }
+    };
+    let err = drill::drill_with(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT, &hook).unwrap_err();
+    assert!(err.starts_with("fold: read of events/"), "{err}");
+    assert!(err.contains("steps: checksum ") && err.contains(", fold "), "{err}");
+}
+
+#[test_id(tz8n1ub)]
+#[test]
+fn a_scan_page_that_cannot_finish_at_one_key_names_the_page() {
+    let dir = TempDir::new("drill-page");
+    let clock = VirtualClock::new(1_000);
+    let (_c, s) = shipped_store(dir.path(), &clock);
+    let slow = VirtualClock::new(0);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hook = {
+        let (slow, calls) = (slow.clone(), calls.clone());
+        move || {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let probe_clock = slow.clone();
+            Options {
+                clock: Arc::new(slow.clone()),
+                read_probe: (n == 2).then(|| -> Arc<dyn Fn() + Send + Sync> {
+                    Arc::new(move || probe_clock.advance(state_store_sqlite::OFFLINE_MAX_READ_MS + 1))
+                }),
+                ..Options::offline()
+            }
+        }
+    };
+    let err = drill::drill_with(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT, &hook).unwrap_err();
+    assert!(err.starts_with("snapshot scan: page of 1 after"), "{err}");
+}
+
 #[test_id(tptyh1v)]
 #[test]
 fn a_live_key_no_audited_write_produced_fails_the_drill_under_any_other_prefix() {
@@ -628,7 +763,7 @@ fn a_snapshot_that_changed_after_it_was_staged_is_refused_by_the_drill() {
     let err = drill::drill(s.dir(), &dir.path().join("scratch"), Exclusions::CONTRACT).unwrap_err();
     assert!(
         err.starts_with(&format!(
-            "snapshot {} changed since it was staged",
+            "checksum: snapshot {} changed since it was staged",
             revlog::snapshot_name(rev)
         )),
         "{err}"

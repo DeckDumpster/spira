@@ -373,6 +373,25 @@ mod tests {
         assert_eq!(rc, CANNOT_TELL, "{out}");
     }
 
+    #[test_id(tq1w6ze)]
+    #[test]
+    fn admin_drill_whose_restore_fails_names_the_step_and_the_seconds_each_took() {
+        let dir = TempDir::new("lc-admin-drill-step");
+        let clock = VirtualClock::new(1_000);
+        let _sh = shipped(dir.path(), &clock);
+        let revlog = dir.path().join("lc-ship").join("sent").join(REVLOG);
+        let mut runs: Vec<_> = std::fs::read_dir(&revlog).unwrap().map(|e| e.unwrap().path()).collect();
+        runs.sort();
+        std::fs::remove_file(&runs[0]).unwrap();
+        let scratch = dir.path().join("scratch").display().to_string();
+        let run = dir.path().to_path_buf();
+        let (rc, out) = admin_drill(&s(&["--scratch", &scratch]), || Ok(run));
+        assert_eq!(rc, CANNOT_TELL, "{out}");
+        assert!(out.starts_with("admin-drill: cannot tell: restore: "), "{out}");
+        assert!(out.contains("; steps: checksum "), "{out}");
+        assert!(!out.contains("drill ok:"), "{out}");
+    }
+
     #[test_id(t6ifb45)]
     #[test]
     fn admin_archive_put_lands_the_file_byte_identical_and_refuses_a_second_put_of_the_key() {

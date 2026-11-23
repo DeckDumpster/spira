@@ -452,6 +452,23 @@ impl Default for Options {
     }
 }
 
+/// The read limit for a copy no other process reads: ten minutes, below `i32::MAX` because the
+/// readers' SQLite `busy_timeout` takes it too.
+pub const OFFLINE_MAX_READ_MS: u64 = 600_000;
+
+impl Options {
+    /// For a private copy no other process reads, so a slow host costs time and not the verdict.
+    pub fn offline() -> Self {
+        Options {
+            jump_on_open: false,
+            outbox: false,
+            day_receipts: false,
+            max_read_ms: OFFLINE_MAX_READ_MS,
+            ..Options::default()
+        }
+    }
+}
+
 /// One `latest` row as stored, every non-generated column.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredRow {

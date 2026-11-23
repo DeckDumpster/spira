@@ -103,6 +103,16 @@ fn jump(b: &SqliteBackend, a: u64, z: u64) -> Result<(), String> {
 /// `spira-lc admin-restore --snapshot <file> --revlog <dir> --out <path>`. Every run is read and
 /// checked before anything is written; `out` must not exist, and is left whole or absent.
 pub fn restore(snapshot: &Path, revlog_dir: &Path, out: &Path) -> Result<Restored, String> {
+    restore_with(snapshot, revlog_dir, out, &Options::offline)
+}
+
+/// [`restore`] with the options the copy is opened under.
+pub fn restore_with(
+    snapshot: &Path,
+    revlog_dir: &Path,
+    out: &Path,
+    options: &dyn Fn() -> Options,
+) -> Result<Restored, String> {
     if out.exists() {
         return Err(format!(
             "{} exists; a restore never overwrites",
@@ -111,7 +121,7 @@ pub fn restore(snapshot: &Path, revlog_dir: &Path, out: &Path) -> Result<Restore
     }
     fs::copy(snapshot, out).map_err(|e| format!("{}: {e}", snapshot.display()))?;
     let res = (|| {
-        let b = SqliteBackend::open(out, Options { jump_on_open: false, outbox: false, day_receipts: false, ..Options::default() }).map_err(|e| e.to_string())?;
+        let b = SqliteBackend::open(out, options()).map_err(|e| e.to_string())?;
         let snapshot_rev = b.head().map_err(|e| e.to_string())?;
         let mut runs = Vec::new();
         for p in plan(revlog_dir, snapshot_rev)? {
