@@ -1422,7 +1422,7 @@ mod tests {
         }
     }
 
-    const REACH_EDGES: &[(&str, &str, &str)] = &[("dep", "sp-a", "blocks"), ("child", "dep", "parent-child"), ("grand", "child", "parent-child"), ("great", "grand", "parent-child"), ("other", "elsewhere", "blocks")];
+    const REACH_EDGES: &[(&str, &str, &str)] = &[("dep", "sp-a", "blocks"), ("child", "dep", "parent-child"), ("grand", "child", "parent-child"), ("great", "grand", "parent-child"), ("other", "elsewhere", "blocks"), ("blocker", "child", "blocks")];
 
     #[test_id(ty6cgtx)]
     #[test]
