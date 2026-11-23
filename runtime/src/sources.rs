@@ -1,27 +1,71 @@
 //! Sources: what submits events to the host from outside it (a file watch, a bus listener, a
-//! mail listener). Each runs on its own thread, so a blocking read never touches the loop, and
-//! submits through the host's bounded channel, so a full channel slows the source, not the
-//! loop. Under virtual time a source runs only if it is scripted: the driver asks it when it
+//! mail listener). Each is a future on the scheduler's runtime (a source that can only block
+//! brings its own thread, [`on_thread`]), and submits through the host's bounded channel, so a
+//! full channel slows the source, not the loop. Under virtual time a source runs only if it is scripted: the driver asks it when it
 //! next has something and takes what is due, so one seed gives one order.
 
 use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::changes::ScriptedChanges;
 use crate::event::StoreChanged;
 use crate::host::Submit;
+use crate::offload::{self, OffloadError};
 use crate::ports::Clock;
 use crate::units::{RanOutput, ScriptedUnits, UnitCompletions, UnitRan, UNIT_RAN};
 use crate::{Result, RuntimeError};
 
+/// What a source is while it runs: a future on the scheduler's runtime.
+pub type Running = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// How long a refused pool submission waits before it is offered again.
+const SPILL_RETRY: Duration = Duration::from_millis(50);
+
+/// `f` on the offload pool, offered again after each refusal; a source never blocks the loop and
+/// never drops work because the queue was full.
+pub async fn on_pool<T: Send + 'static>(what: &'static str, f: Arc<dyn Fn() -> T + Send + Sync>) -> std::result::Result<T, OffloadError> {
+    loop {
+        let job = f.clone();
+        match offload::offload(what, None, move || job()) {
+            Ok(done) => return done.await,
+            Err(_) => tokio::time::sleep(SPILL_RETRY).await, // clock-safe: paces a retry of the pool on the source's own task
+        }
+    }
+}
+
+/// `f` on a thread named `source-<name>`, ended when `f` returns; for a source whose body can only
+/// block. A thread that cannot start is said once and the source ends.
+pub fn on_thread(name: &str, f: impl FnOnce() + Send + 'static) -> Running {
+    let thread = format!("source-{name}");
+    Box::pin(async move {
+        let (done, ended) = oneshot::channel::<()>();
+        let started = std::thread::Builder::new().name(thread.clone()).spawn(move || {
+            f();
+            let _ = done.send(());
+        });
+        match started {
+            Ok(_) => {
+                if ended.await.is_err() {
+                    let _ = on_pool("source", Arc::new(move || eprintln!("runtime: {thread}: ended without finishing"))).await;
+                }
+            }
+            Err(e) => {
+                let _ = on_pool("source", Arc::new(move || eprintln!("runtime: {thread}: thread did not start: {e}"))).await;
+            }
+        }
+    })
+}
+
 pub trait Source: Send {
     fn name(&self) -> &str;
 
-    /// Submits until the source ends or `tx` closes. Runs on a thread of its own.
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>);
+    /// Submits until the source ends or `tx` closes.
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running;
 
     /// The virtual-time face of this source; `None` for one that reads the real world.
     fn scripted(&mut self) -> Option<&mut dyn Scripted> {
@@ -59,15 +103,9 @@ impl Sources {
         self.list.is_empty()
     }
 
-    /// One named thread per source, each submitting on `tx`.
-    pub fn start(self, tx: mpsc::Sender<Submit>) -> Result<Vec<std::thread::JoinHandle<()>>> {
-        self.list
-            .into_iter()
-            .map(|s| {
-                let tx = tx.clone();
-                std::thread::Builder::new().name(format!("source-{}", s.name())).spawn(move || s.run(tx)).map_err(|e| RuntimeError::new(format!("source thread: {e}")))
-            })
-            .collect()
+    /// One task per source on the current runtime, each submitting on `tx`. Panics outside a runtime.
+    pub fn start(self, tx: mpsc::Sender<Submit>) -> Vec<tokio::task::JoinHandle<()>> {
+        self.list.into_iter().map(|s| tokio::spawn(s.run(tx.clone()))).collect()
     }
 
     /// Every source, for a virtual-time driver; refuses the set if any reads the real world.
@@ -86,7 +124,7 @@ pub fn next_at(sources: &mut [Box<dyn Source>]) -> Option<u64> {
 }
 
 /// Submissions at fixed times on its clock. Under a virtual driver they are taken when due;
-/// on a thread they are sent when the clock reaches them.
+/// on the runtime they are sent when the clock reaches them.
 pub struct ScriptedSource {
     name: String,
     clock: Arc<dyn Clock>,
@@ -110,19 +148,21 @@ impl Source for ScriptedSource {
         &self.name
     }
 
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
-        for (at, s) in self.script {
-            loop {
-                let now = self.clock.now_ms();
-                if now >= at {
-                    break;
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
+        Box::pin(async move {
+            for (at, s) in self.script {
+                loop {
+                    let now = self.clock.now_ms();
+                    if now >= at {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis((at - now).min(WAIT_STEP_MS))).await; // clock-safe: waits on the source's own task, rechecking its Clock port
                 }
-                std::thread::sleep(Duration::from_millis((at - now).min(WAIT_STEP_MS))); // clock-safe: waits on the source's own thread, rechecking its Clock port
+                if tx.send(s).await.is_err() {
+                    return;
+                }
             }
-            if tx.blocking_send(s).is_err() {
-                return;
-            }
-        }
+        })
     }
 
     fn scripted(&mut self) -> Option<&mut dyn Scripted> {
@@ -151,7 +191,7 @@ pub const UNITS_STREAM: &str = "units";
 pub type StreamOf = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 enum Face {
-    /// A backend that reads the world: drained every `every` on the source's thread.
+    /// A backend that reads the world: drained every `every` on a thread of the source's own.
     Polled { every: Duration },
     /// The simulator's units: drained when the virtual clock reaches the next end.
     Scripted(Arc<ScriptedUnits>),
@@ -193,6 +233,22 @@ impl UnitRanSource {
         task.and_then(|t| self.stream_of.as_ref().and_then(|f| f(&t))).unwrap_or_else(|| UNITS_STREAM.to_string())
     }
 
+    /// Drains every `every` until `tx` closes; blocks, so it runs on a thread of its own.
+    pub fn drain_until_closed(&self, tx: mpsc::Sender<Submit>) {
+        let every = match self.face {
+            Face::Polled { every } => every,
+            Face::Scripted(_) => Duration::from_millis(WAIT_STEP_MS),
+        };
+        while !tx.is_closed() {
+            for s in self.drain() {
+                if tx.blocking_send(s).is_err() {
+                    return;
+                }
+            }
+            std::thread::sleep(every); // clock-safe: paces the drain on the source's own thread; the backend stamps each run
+        }
+    }
+
     fn submit_of(&self, r: &UnitRan, out: &RanOutput, now_ms: u64) -> Submit {
         Submit::new(&format!("{UNIT_RAN}/{}/{now_ms}", r.handle.name), &self.stream_for(r), r.event_kind_with(out))
     }
@@ -210,18 +266,22 @@ impl Source for UnitRanSource {
         &self.name
     }
 
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
-        let every = match self.face {
-            Face::Polled { every } => every,
-            Face::Scripted(_) => Duration::from_millis(WAIT_STEP_MS),
-        };
-        while !tx.is_closed() {
-            for s in self.drain() {
-                if tx.blocking_send(s).is_err() {
-                    return;
-                }
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
+        match self.face {
+            Face::Polled { .. } => {
+                let name = self.name.clone();
+                on_thread(&name, move || self.drain_until_closed(tx))
             }
-            std::thread::sleep(every); // clock-safe: paces the drain on the source's own thread; the backend stamps each run
+            Face::Scripted(_) => Box::pin(async move {
+                while !tx.is_closed() {
+                    for s in self.drain() {
+                        if tx.send(s).await.is_err() {
+                            return;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(WAIT_STEP_MS)).await; // clock-safe: paces the drain on the source's own task; the backend stamps each run
+                }
+            }),
         }
     }
 
@@ -284,21 +344,23 @@ impl Source for ScriptedStoreChanges {
         Self::NAME
     }
 
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
-        for (at, c, swallowed) in &self.script {
-            loop {
-                let now = self.clock.now_ms();
-                if now >= *at {
-                    break;
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
+        Box::pin(async move {
+            for (at, c, swallowed) in &self.script {
+                loop {
+                    let now = self.clock.now_ms();
+                    if now >= *at {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis((*at - now).min(WAIT_STEP_MS))).await; // clock-safe: waits on the source's own task, rechecking its Clock port
                 }
-                std::thread::sleep(Duration::from_millis((*at - now).min(WAIT_STEP_MS))); // clock-safe: waits on the source's own thread, rechecking its Clock port
-            }
-            if let Some(s) = self.deliver(c, *swallowed) {
-                if tx.blocking_send(s).is_err() {
-                    return;
+                if let Some(s) = self.deliver(c, *swallowed) {
+                    if tx.send(s).await.is_err() {
+                        return;
+                    }
                 }
             }
-        }
+        })
     }
 
     fn scripted(&mut self) -> Option<&mut dyn Scripted> {
@@ -315,5 +377,31 @@ impl Scripted for ScriptedStoreChanges {
         let n = self.script.iter().take_while(|(at, _, _)| *at <= now_ms).count();
         let due: Vec<_> = self.script.drain(..n).collect();
         due.iter().filter_map(|(_, c, swallowed)| self.deliver(c, *swallowed)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(t376ms9)]
+    #[tokio::test]
+    async fn on_thread_runs_its_body_on_a_thread_named_for_the_source_and_ends_with_it() {
+        let (name_tx, name_rx) = std::sync::mpsc::channel();
+        on_thread("probe", move || name_tx.send(std::thread::current().name().map(str::to_string)).unwrap()).await;
+        assert_eq!(name_rx.recv().unwrap().as_deref(), Some("source-probe"));
+    }
+
+    #[test_id(tv6hrjv)]
+    #[tokio::test]
+    async fn on_pool_returns_what_its_work_returned() {
+        let got = on_pool("probe", Arc::new(|| 7)).await.unwrap();
+        assert_eq!(got, 7);
+    }
+
+    #[test_id(tokhvvz)]
+    #[tokio::test]
+    async fn on_thread_ends_when_its_body_panics() {
+        on_thread("probe", || panic!("planted")).await;
     }
 }

@@ -50,7 +50,7 @@
 //! invocation id).
 
 use runtime::host::Submit;
-use runtime::sources::Source;
+use runtime::sources::{on_thread, Running, Source};
 pub use runtime::sources::UNITS_STREAM;
 pub use runtime::units::{UnitRan, UNIT_RAN};
 use tokio::sync::mpsc;
@@ -71,7 +71,7 @@ impl Source for UnitRanDbus {
         NAME
     }
 
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
-        super::sources::units::run_dbus(tx)
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
+        on_thread(NAME, move || super::sources::units::run_dbus(tx))
     }
 }

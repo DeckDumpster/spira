@@ -145,7 +145,9 @@ impl Source for Bus {
     fn name(&self) -> &str {
         "bus"
     }
-    fn run(self: Box<Self>, _: mpsc::Sender<Submit>) {}
+    fn run(self: Box<Self>, _: mpsc::Sender<Submit>) -> runtime::sources::Running {
+        Box::pin(async {})
+    }
 }
 
 #[test_id(tgahczo)]
@@ -161,19 +163,21 @@ fn a_source_that_reads_the_world_is_refused_under_virtual_time_and_names_are_uni
 }
 
 #[test_id(tj00xsx)]
-#[test]
-fn a_scripted_source_on_its_own_thread_sends_when_its_clock_arrives() {
+#[tokio::test]
+async fn a_scripted_source_on_its_own_thread_sends_when_its_clock_arrives() {
     let clock = VirtualClock::new(0);
     let (tx, mut rx) = mpsc::channel(4);
-    let handles = scripted(&clock, vec![(5, sub("a", "ping", "")), (9, sub("b", "ping", ""))]).start(tx).unwrap();
-    std::thread::sleep(Duration::from_millis(60)); // clock-safe: proves nothing is sent before the clock arrives
+    let handles = scripted(&clock, vec![(5, sub("a", "ping", "")), (9, sub("b", "ping", ""))]).start(tx);
+    tokio::time::sleep(Duration::from_millis(60)).await; // clock-safe: proves nothing is sent before the clock arrives
     assert!(rx.try_recv().is_err());
     clock.advance_to(5);
-    assert_eq!(rx.blocking_recv().unwrap().id, "a");
+    assert_eq!(rx.recv().await.unwrap().id, "a");
     clock.advance_to(9);
-    assert_eq!(rx.blocking_recv().unwrap().id, "b");
-    handles.into_iter().for_each(|h| h.join().unwrap());
-    assert!(rx.blocking_recv().is_none(), "the source ends and drops its sender");
+    assert_eq!(rx.recv().await.unwrap().id, "b");
+    for h in handles {
+        h.await.unwrap();
+    }
+    assert!(rx.recv().await.is_none(), "the source ends and drops its sender");
 }
 
 #[test_id(tolj6fj)]

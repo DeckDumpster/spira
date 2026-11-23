@@ -1,7 +1,7 @@
 //! `loop-blocking` — nothing that blocks runs on the runtime's event loop or in its handlers
 //! (law-an-event-loop-never-blocks). Contract and known limits: DESIGN.md.
 //!
-//! A match is exempt inside the arguments of an `offload(…)` call, or on a line marked
+//! A match is exempt inside the arguments of an `offload(…)` or `on_pool(…)` call, or on a line marked
 //! `// loop-safe: <why>` (or under an unbroken comment block that carries it). The marker is
 //! read from comment bytes only. A handler module takes neither exit.
 //!
@@ -96,10 +96,10 @@ fn async_ranges(code: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Byte ranges of the argument list of every `offload(…)` call.
+/// Byte ranges of the argument list of every `offload(…)` or `on_pool(…)` call.
 fn offload_ranges(code: &[u8]) -> Vec<(usize, usize)> {
     static R: OnceLock<Regex> = OnceLock::new();
-    re(&R, r"\boffload\s*\(").find_iter(code).map(|m| (m.end() - 1, close_of(code, m.end() - 1))).collect()
+    re(&R, r"\b(?:offload|on_pool)\s*\(").find_iter(code).map(|m| (m.end() - 1, close_of(code, m.end() - 1))).collect()
 }
 
 fn within(ranges: &[(usize, usize)], at: usize) -> bool {
@@ -333,4 +333,22 @@ spira-lint/loop-blocking-allow, which only shrinks."
 
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
     vec![Box::new(LoopBlocking)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hits(src: &str) -> usize {
+        scan("runtime/src/sources.rs", src.as_bytes(), &|_| false).len()
+    }
+
+    #[test_id(t408cla)]
+    #[test]
+    fn a_blocking_call_in_an_on_pool_argument_list_is_exempt_and_outside_it_is_not() {
+        let planted = "async fn a() { let _ = std::fs::read(\"x\"); }";
+        assert_eq!(hits(planted), 1, "the matcher can find an offender");
+        let pooled = "async fn a() { let _ = on_pool(\"w\", Arc::new(|| std::fs::read(\"x\"))).await; }";
+        assert_eq!(hits(pooled), 0);
+    }
 }

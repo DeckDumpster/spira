@@ -49,7 +49,7 @@ use std::time::Duration;
 
 use runtime::event::{EventKind, EventKindTag};
 use runtime::host::Submit;
-use runtime::sources::Source;
+use runtime::sources::{on_thread, Running, Source};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -162,7 +162,8 @@ impl Source for Submission {
     /// and the mail environment it delivers into read anew on every reload; the certificate, key
     /// and password files themselves are read per connection. Dormant while unconfigured, reading
     /// its config again every [`DORMANT_RECHECK`].
-    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) {
+    fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
+        on_thread(NAME, move || {
         let fresh = || spira_submission::Config::from_spira_fresh().unwrap_or_else(|e| {
             eprintln!("spira-runtime: source {NAME}: {e}");
             None
@@ -174,6 +175,7 @@ impl Source for Submission {
             super::sources::smtp::run_until(cfg, delivery, &tx, &|| stop() || (!usable && since.elapsed() >= DORMANT_RECHECK))
         };
         serve_reloading(fresh, serve, &|| tx.is_closed())
+        })
     }
 }
 

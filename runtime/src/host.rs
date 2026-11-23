@@ -451,7 +451,7 @@ pub enum Driver {
     Virtual { clock: VirtualClock, until_ms: u64 },
 }
 
-/// Runs `engine` on `driver`. Under `Wall`, `sources` are started on their own threads and
+/// Runs `engine` on `driver`. Under `Wall`, `sources` are started as tasks on this runtime and
 /// submit beside `submissions`; it returns once both are closed and nothing is in flight.
 /// Under `Virtual` it returns at `until_ms`, having taken whatever `submissions` held at each
 /// step: virtual time does not wait for the wall.
@@ -462,7 +462,7 @@ pub async fn drive(driver: Driver, engine: Engine, runner: Arc<dyn EffectRunner>
                 return serve_with(engine, clock, runner, caps, submissions, opts).await;
             }
             let (tx, rx) = mpsc::channel(SOURCE_QUEUE);
-            let _threads = sources.start(tx.clone())?;
+            let _sources = sources.start(tx.clone());
             tokio::spawn(async move {
                 while let Some(s) = submissions.recv().await {
                     if tx.send(s).await.is_err() {
