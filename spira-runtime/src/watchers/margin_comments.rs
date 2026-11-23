@@ -1,6 +1,5 @@
-//! Carries the operator's comments in the Margin reader to the Concierge's mailbox, and his Publish
-//! to `cr unseal`. It runs on the `margin.changed` source's events; its only timer is the sweep that
-//! asks again for an act that failed. `decide` does no IO.
+//! The operator's comments in the Margin reader become mail to the Concierge, his Publish a `cr unseal`.
+//! Driven by `margin.changed`; the boot timer only sweeps failed acts for another try.
 
 use std::collections::BTreeMap;
 

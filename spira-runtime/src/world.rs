@@ -444,13 +444,14 @@ impl World {
         Ok(format!("comment {} {}", d.comment, if delivered { "delivered" } else { "already delivered" }))
     }
 
-    /// Runs `cr unseal` for the review holding the published collection; a collection no review holds is no business of `cr`'s.
+    /// Runs `cr unseal` for the open review holding the published collection; `cr` refuses any other state, so a replay skips it.
     pub fn margin_publish(&self, input: &str) -> Result<String, String> {
         use crate::watchers::margin_comments::{Publish, PUBLISH_CALL_SECS};
         let p: Publish = serde_json::from_str(input).map_err(|e| format!("margin.publish: bad input: {e}"))?;
         let review = cr::record::all(&self.run_dir)?.into_iter().find(|r| r.collection.as_deref() == Some(p.collection.as_str()));
         let note = match review {
             None => "not a code review".to_string(),
+            Some(r) if r.state != cr::record::State::Open => format!("review {:03} is {}; nothing to unseal", r.number, r.state.as_str()),
             Some(r) => {
                 let cr = spira_config::release_env::tool("cr")?;
                 let out = spira_config::bounded::bounded_for(cr, &PUBLISH_CALL_SECS.to_string()).args(["unseal", "--review", &format!("{:03}", r.number)]).output().map_err(|e| format!("cr: {e}"))?;
@@ -2192,6 +2193,16 @@ mod margin_deliver_tests {
     }
 
     #[test_id(tkozu7k)]
+    #[test]
+    fn a_publish_replayed_for_a_review_that_is_no_longer_open_runs_no_cr() {
+        let f = fixture(true);
+        record::set_state(f.dir.path(), 1, State::Closed, 5).unwrap();
+        let input = serde_json::to_string(&crate::watchers::margin_comments::Publish { collection: "col1".into(), seq: 2, batch: vec![2], through: 2 }).unwrap();
+        let w = World { run_dir: f.dir.path().into(), ..World::default() };
+        assert_eq!(w.margin_publish(&input).unwrap(), "review 001 is closed; nothing to unseal");
+    }
+
+    #[test_id(t9q2xyo)]
     #[test]
     fn a_published_collection_no_review_holds_is_not_a_code_review() {
         let t = testkit::TempDir::new("margin-publish");

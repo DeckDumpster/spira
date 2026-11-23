@@ -1,9 +1,5 @@
-//! The `margin.changed` source: a long-poll held open on the Margin reader's change feed, on a
-//! thread of its own. Each answer with changes becomes one memory-only event; a quiet answer
-//! asks again at once. A reader that does not answer is retried on a backoff and said once per
-//! run of failures. Nothing here is timed by a clock the loop reads.
-//!
-//! The feed is the reader's `GET /api/changes?after=&wait=`: its rows go to the task as they come.
+//! The `margin.changed` source: a long-poll held open on the reader's `GET /api/changes?after=&wait=`,
+//! each answer with changes one memory-only event, a failing reader retried on a capped backoff.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
