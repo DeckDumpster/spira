@@ -51,7 +51,7 @@ pub fn call_wait(argv: &[String]) -> Duration {
     match argv.first().map(String::as_str) {
         Some("watch") => {
             let hold = argv.iter().position(|a| a == "--wait-ms").and_then(|i| argv.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
-            Duration::from_millis(hold.unwrap_or(WATCH_HOLD_DEFAULT_MS)) + WATCH_ANSWER
+            Duration::from_millis(hold.unwrap_or(WATCH_HOLD_MS)) + WATCH_ANSWER
         }
         Some(v) if SWEEPS.contains(&v) => SWEEP_DEADLINE,
         _ => DEADLINE,
@@ -66,8 +66,8 @@ fn client_wait(argv: &[String], deadline: Duration) -> Duration {
 
 /// What a watch's client waits beyond the hold for the reply to arrive.
 const WATCH_ANSWER: Duration = Duration::from_secs(1);
-/// The hold the service gives a watch that names none: its longest.
-const WATCH_HOLD_DEFAULT_MS: u64 = 30_000;
+/// The one hold every watcher sends, and what a watch naming none waits: the service's longest.
+pub const WATCH_HOLD_MS: u64 = 30_000;
 
 /// Why a call has no answer to act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
