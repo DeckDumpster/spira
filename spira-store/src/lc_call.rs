@@ -174,13 +174,22 @@ impl Transport for Socket {
 /// Connects to the store's socket. A refused or absent socket is the store not running and
 /// nothing was sent; any other failure is final.
 pub fn connect(path: &Path) -> Result<UnixStream, Fail> {
-    let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", path.display()));
-    let stream = UnixStream::connect(path).map_err(|e| match e.kind() {
-        ErrorKind::ConnectionRefused | ErrorKind::NotFound => Fail::NotRunning(format!("store not running: nothing was sent to {} ({e})", path.display())),
-        _ => down(&e),
-    })?;
-    stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| down(&e))?;
+    let stream = UnixStream::connect(path).map_err(|e| connect_failure(path, &e))?;
+    stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| unanswering(path, &e))?;
     Ok(stream)
+}
+
+fn unanswering(path: &Path, e: &dyn std::fmt::Display) -> Fail {
+    Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", path.display()))
+}
+
+/// What a failed connect to the store's socket means: a refused or absent socket is the store not
+/// running and nothing was sent; any other failure is final.
+pub fn connect_failure(path: &Path, e: &std::io::Error) -> Fail {
+    match e.kind() {
+        ErrorKind::ConnectionRefused | ErrorKind::NotFound => Fail::NotRunning(format!("store not running: nothing was sent to {} ({e})", path.display())),
+        _ => unanswering(path, e),
+    }
 }
 
 /// A recorded `unpublished` measurement read this many seconds ago is answered, and read, as stale.

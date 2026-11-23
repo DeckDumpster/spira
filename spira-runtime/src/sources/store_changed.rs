@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use runtime::host::Submit;
 use runtime::sources::{on_pool, Running, Source};
 use runtime::StoreChanged as Body;
-use spira_store::lc_call::{as_task, call_wait, encode_request, LcError, ReplyHead};
+use spira_store::lc_call::{as_task, call_wait, connect_failure, encode_request, Fail, LcError, ReplyHead};
 use store_view::{Polled, Projection, RETRY};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -45,34 +45,34 @@ struct Step {
     argv: Option<Vec<String>>,
 }
 
-async fn step(views: &Arc<Projection>, prev: Prev) -> Option<Step> {
+async fn step(views: &Arc<Projection>, prev: Prev) -> Result<Step, String> {
     let (views, prev) = (views.clone(), Arc::new(Mutex::new(Some(prev))));
     let done = on_pool(NAME, Arc::new(move || {
-        let prev = prev.lock().unwrap_or_else(|e| e.into_inner()).take()?;
+        let prev = prev.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a step runs once");
         as_task(TASK, || {
             let polled = match prev {
                 Prev::First => None,
                 Prev::Answer(from) => Some(views.apply_watch(from)),
             };
-            Some(Step { polled, argv: views.watch_argv() })
+            Step { polled, argv: views.watch_argv() }
         })
     }))
     .await;
-    match done {
-        Ok(step) => step,
-        Err(e) => {
-            let _ = on_pool(NAME, Arc::new(move || eprintln!("spira-runtime: source {NAME}: {e}"))).await;
-            None
-        }
+    done.map_err(|e| e.to_string())
+}
+
+fn into_error(f: Fail) -> LcError {
+    match f {
+        Fail::NotRunning(m) => LcError::NotRunning(m),
+        f => LcError::Fault(f.into_text()),
     }
 }
 
 async fn exchange(socket: &Path, argv: &[String]) -> Result<String, LcError> {
     let wait = call_wait(argv);
-    let fault = |f: spira_store::lc_call::Fail| LcError::Fault(f.into_text());
     let call = async {
-        let stream = UnixStream::connect(socket).await.map_err(|e| LcError::NotRunning(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", socket.display())))?; // loop-safe: tokio's non-blocking socket
-        let request = encode_request(argv, None, Some(TASK), None).map_err(fault)?;
+        let stream = UnixStream::connect(socket).await.map_err(|e| into_error(connect_failure(socket, &e)))?; // loop-safe: tokio's non-blocking socket
+        let request = encode_request(argv, None, Some(TASK), None).map_err(into_error)?;
         let (read, mut write) = stream.into_split();
         let lost = |why: &str| LcError::Fault(format!("cannot tell: the lifecycle service took the request but its reply was lost ({why})"));
         write.write_all(&request).await.map_err(|_| lost("write"))?;
@@ -81,10 +81,10 @@ async fn exchange(socket: &Path, argv: &[String]) -> Result<String, LcError> {
         if !matches!(reader.read_line(&mut head).await, Ok(n) if n > 0) {
             return Err(lost("no reply"));
         }
-        let head = ReplyHead::parse(&head).map_err(fault)?;
+        let head = ReplyHead::parse(&head).map_err(into_error)?;
         let mut body = vec![0u8; head.body_len()];
         reader.read_exact(&mut body).await.map_err(|_| lost("truncated reply"))?;
-        head.reply(body).map_err(fault)?.into_answer()
+        head.reply(body).map_err(into_error)?.into_answer()
     };
     match tokio::time::timeout(wait, call).await {
         Ok(answer) => answer,
@@ -112,7 +112,14 @@ async fn watch(views: Arc<Projection>, table: Arc<ChangeTable>, socket: PathBuf,
     let _watching = views.hold_watching();
     let mut prev = Prev::First;
     loop {
-        let Some(Step { polled, argv }) = step(&views, prev).await else { return };
+        let Step { polled, argv } = match step(&views, prev).await {
+            Ok(step) => step,
+            Err(why) => {
+                prev = Prev::Answer(Some(Err(LcError::Fault(format!("the store views' step failed: {why}")))));
+                let _ = on_pool(NAME, Arc::new(move || eprintln!("spira-runtime: source {NAME}: {why}"))).await;
+                continue;
+            }
+        };
         match polled {
             Some(Ok(polled)) => {
                 if !observe(&polled, &table, &tx).await {
@@ -334,18 +341,84 @@ mod tests {
     #[tokio::test]
     async fn a_cut_reply_sets_lost_and_holds_the_revision() {
         let lists = AtomicUsize::new(0);
-        let server = serve("lost", move |_, argv| load_script(&lists, argv).unwrap_or(Served::CloseMidReply));
+        let mut server = serve("lost", move |nth, argv| load_script(&lists, argv).unwrap_or(if nth == 0 { Served::CloseMidReply } else { Served::Hold }));
         let now = Arc::new(Mutex::new(Instant::now()));
         let clock = now.clone();
         let views = Arc::new(Projection::new(LcClient::socket(&server.path), Duration::from_secs(1), Arc::new(move || *clock.lock().unwrap())));
         load(&views).await;
         let before = views.watch_argv().unwrap();
-        let answer = exchange(&server.path, &before).await;
-        assert!(matches!(&answer, Err(LcError::Fault(m)) if m.contains("truncated reply")), "{answer:?}");
-        assert!(views.apply_watch(Some(answer)).is_err());
-        assert_eq!(views.watch_argv(), Some(before), "the next watch is from the revision held");
+        let (tx, _rx) = mpsc::channel(1);
+        let source = Box::new(StoreChanged { views: views.clone(), table: Arc::new(ChangeTable::default()), socket: server.path.clone() });
+        tokio::spawn(source.run(tx));
+        assert_eq!(server.reached_hold.recv().await.unwrap(), before, "the watch after the cut one is from the revision held");
         *now.lock().unwrap() += Duration::from_secs(120);
         let read = views.ready_counts();
         assert!(matches!(&read, Err(LcError::Refused(m)) if m.contains("the watch is lost") && m.contains("truncated reply")), "{read:?}");
+    }
+
+    #[test_id(txk5y52)]
+    #[tokio::test]
+    async fn a_full_channel_holds_the_next_watch_back_until_the_event_is_taken() {
+        let lists = AtomicUsize::new(0);
+        let mut server = serve("full", move |nth, argv| {
+            load_script(&lists, argv).unwrap_or_else(|| match nth {
+                0 | 1 => Served::Out(json!({ "events": [{ "key": "lifecycle/sp-a", "rev": 9 + nth, "value": {} }], "through": 9 + nth }).to_string()),
+                _ => Served::Hold,
+            })
+        });
+        let views = views_on(&server.path);
+        load(&views).await;
+        let table = Arc::new(ChangeTable::default());
+        let (tx, mut rx) = mpsc::channel(1);
+        let source = Box::new(StoreChanged { views, table: table.clone(), socket: server.path.clone() });
+        tokio::spawn(source.run(tx));
+        while table.rev() != Some(10) {
+            tokio::task::yield_now().await;
+        }
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(server.watches.load(Ordering::SeqCst), 2, "the third watch waits on the send that the full channel holds");
+        rx.recv().await.unwrap();
+        rx.recv().await.unwrap();
+        server.reached_hold.recv().await.unwrap();
+        assert_eq!(server.watches.load(Ordering::SeqCst), 3);
+    }
+
+    #[test_id(tkaad2r)]
+    #[tokio::test]
+    async fn the_source_ends_while_a_watch_is_unanswered_once_the_host_channel_closes() {
+        let lists = AtomicUsize::new(0);
+        let mut server = serve("cancel", move |_, argv| load_script(&lists, argv).unwrap_or(Served::Hold));
+        let views = views_on(&server.path);
+        load(&views).await;
+        let (tx, rx) = mpsc::channel(1);
+        let source = Box::new(StoreChanged { views, table: Arc::new(ChangeTable::default()), socket: server.path.clone() });
+        let running = tokio::spawn(source.run(tx));
+        server.reached_hold.recv().await.unwrap();
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(10), running).await.expect("the source ends with its channel").unwrap();
+    }
+
+    #[test_id(ta1cc8w)]
+    #[tokio::test]
+    async fn a_store_that_is_not_running_marks_the_watch_lost_and_moves_nothing() {
+        let lists = AtomicUsize::new(0);
+        let server = serve("absent", move |_, argv| load_script(&lists, argv).unwrap_or(Served::Hold));
+        let now = Arc::new(Mutex::new(Instant::now()));
+        let clock = now.clone();
+        let views = Arc::new(Projection::new(LcClient::socket(&server.path), Duration::from_secs(1), Arc::new(move || *clock.lock().unwrap())));
+        load(&views).await;
+        let before = views.watch_argv().unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        let source = Box::new(StoreChanged { views: views.clone(), table: Arc::new(ChangeTable::default()), socket: server._dir.path().join("absent.sock") });
+        let running = tokio::spawn(source.run(tx));
+        *now.lock().unwrap() += Duration::from_secs(120);
+        while !matches!(views.ready_counts(), Err(LcError::Refused(m)) if m.contains("the watch is lost: store not running")) {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(views.watch_argv(), Some(before));
+        assert!(rx.try_recv().is_err());
+        running.abort();
     }
 }
