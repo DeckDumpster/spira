@@ -63,6 +63,19 @@ pub const SCHEDULER_RESUMED: EventKindTag = "scheduler.resumed";
 pub const STORE_CHANGED: EventKindTag = "store.changed";
 pub const STORE_STREAM: &str = "store.changed";
 
+/// Where a run that found work on the sweep alone is reported, memory-only.
+pub const WAKE_AUDIT_STREAM: &str = "watch.wake-audit";
+pub const WAKE_SWEEP_FOUND: EventKindTag = "wake.sweep_found";
+
+/// The body of a [`WAKE_SWEEP_FOUND`] event, as JSON.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SweepFound {
+    pub task: String,
+    pub count: u64,
+    pub rev: u64,
+    pub reads: Vec<String>,
+}
+
 /// The body of a [`STORE_CHANGED`] event, as JSON.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreChanged {
