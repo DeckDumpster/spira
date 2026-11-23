@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=margin
+DOC=The base URL of the Margin reader on the tailnet. cr seal, unseal, close, thread, reply and findings --post call it; an empty value is refused.
+SCHEMA=REQUIRED: The Margin reader's base URL. Nothing defaults it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

@@ -41,7 +41,7 @@ fn rig() -> Rig {
         .unwrap()
         .double(OBSERVE, move |_| {
             let rs = seen.lock().unwrap().clone();
-            Ok(serde_json::to_string(&Snapshot { due_at: due_at(&rs, 0), reviews: rs }).unwrap())
+            Ok(serde_json::to_string(&Snapshot::new(rs.clone(), due_at(&rs, 0))).unwrap())
         })
         .double(OPEN, move |_| {
             let mut rs = opened.lock().unwrap();
@@ -120,7 +120,7 @@ fn a_failed_open_is_said_with_cr_stderr_and_tried_again_at_the_next_tick() {
         .unwrap()
         .double(OBSERVE, move |_| {
             let rs = seen.lock().unwrap().clone();
-            Ok(serde_json::to_string(&Snapshot { due_at: due_at(&rs, 0), reviews: rs }).unwrap())
+            Ok(serde_json::to_string(&Snapshot::new(rs.clone(), due_at(&rs, 0))).unwrap())
         })
         .double(OPEN, |_| Err("cr exited 1: only 0 of 1 units are drawable".into()))
         .double(INBOX_APPEND, |l| Ok(l.into()));

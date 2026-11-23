@@ -115,7 +115,6 @@ mod watcher_inbox_keeper;
 mod watcher_overrides;
 mod watcher_writer_grants;
 mod watcher_cr_cadence;
-mod watcher_cr_comments;
 mod watcher_pr_notify;
 mod watcher_publish_backlog;
 mod watcher_readiness_dependents;

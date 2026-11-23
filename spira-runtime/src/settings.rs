@@ -8,7 +8,6 @@ use spira_config::process::cfg;
 use crate::watchers::inbox_keeper::InboxKeeper;
 use crate::forge::Forge;
 use crate::watchers::cr_cadence::CrCadence;
-use crate::watchers::cr_comments::CrComments;
 use crate::watchers::pr_notify::PrNotify;
 use crate::watchers::asks::Asks;
 use crate::watchers::design_asks::DesignAsks;
@@ -41,7 +40,6 @@ pub struct Settings {
     pub round_duty: RoundDuty,
     pub inbox_keeper: InboxKeeper,
     pub pr_notify: PrNotify,
-    pub cr_comments: CrComments,
     pub cr_cadence: CrCadence,
     pub forge: Forge,
     pub asks: Asks,
@@ -232,7 +230,6 @@ impl Settings {
             backoff_secs: secs("SPIRA_CONCIERGE_INBOX_BACKOFF")?,
         };
         let pr_notify = PrNotify { interval_ms: secs("SPIRA_RUNTIME_PR_NOTIFY_SECS")? * 1000, deploy_giveup_secs: secs("SPIRA_PR_DEPLOY_GIVEUP")? };
-        let cr_comments = CrComments { hot_ms: secs("SPIRA_RUNTIME_CR_COMMENTS_HOT_SECS")? * 1000, cold_ms: secs("SPIRA_RUNTIME_CR_COMMENTS_COLD_SECS")? * 1000, window_secs: secs("SPIRA_RUNTIME_CR_COMMENTS_WINDOW_SECS")? };
         let cr_cadence = CrCadence { interval_ms: secs("SPIRA_RUNTIME_CR_CADENCE_SECS")? * 1000, stale_days: secs("SPIRA_CR_STALE_DAYS")? };
         let forge = Forge { api: get("SPIRA_GH_API")?, token: get("SPIRA_BROKER_GH_TOKEN")?, gh_config_dir: get("SPIRA_BROKER_GH_CONFIG_DIR")?, gh: get("SPIRA_GH")?, metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()) };
         let asks = Asks { interval_ms: secs("SPIRA_RUNTIME_ASKS_SECS")? * 1000 };
@@ -322,7 +319,6 @@ impl Settings {
             round_duty,
             inbox_keeper,
             pr_notify,
-            cr_comments,
             cr_cadence,
             forge,
             asks,
@@ -367,7 +363,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.writer_grants, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_comments, self.cr_cadence, self.claim_count, self.sweep_secs);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}\n{:?}\n{:?}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.writer_grants, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.overrides, self.readiness_dependents, self.view, self.reconciler, self.reconciler_flow, self.world, self.task_modes, self.control_socket.display(), self.pool_caps, self.cr_cadence, self.claim_count, self.sweep_secs);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
