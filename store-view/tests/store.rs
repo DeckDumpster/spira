@@ -73,7 +73,7 @@ impl Transport for Double {
                 }
                 None => Err("the script has no watch answer left".into()),
             },
-            "content" | "show-batch" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
+            "content" | "show-batch" | "condition" => ok(format!("answer {}", s.seen.iter().filter(|a| a[0] == argv[0]).count())),
             other => Err(format!("unscripted {other}")),
         }
     }
@@ -392,7 +392,7 @@ fn the_watch_names_only_the_prefixes_the_view_applies() {
         w.p.poll().unwrap();
         let watch = w.script.lock().unwrap().seen.iter().find(|a| a[0] == "watch").cloned().unwrap();
         let prefixes: Vec<&str> = watch[1..].iter().take_while(|a| !a.starts_with("--")).map(String::as_str).collect();
-        assert_eq!(prefixes, ["batches/", "lifecycle/", "readiness/", "planning/", "history/"], "{watch:?}");
+        assert_eq!(prefixes, ["batches/", "lifecycle/", "readiness/", "planning/", "history/", "conditions/"], "{watch:?}");
     });
 }
 
@@ -541,6 +541,69 @@ fn a_held_answer_lasts_until_a_change_that_could_alter_it_and_a_bead_history_alt
             deliver(&w, &["batches/spira/b-1"], 11);
             assert_ne!(shown(), b, "a change to a round ends the round's answer");
             assert_eq!(content(), c);
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    });
+}
+
+#[test_id(tt9niio)]
+#[test]
+fn a_held_condition_list_lasts_until_a_condition_under_conditions_changes_or_the_views_reload() {
+    within(|| {
+        let w = world(Script { list_rev: 4, quiet: true, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| w.p.run(&stop, &mut |_| {}));
+            // clock-safe: a cap on the wait for the watch to start
+            while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let conds = || w.p.answer(&["condition", "list", "--owner", "heimdall"]).unwrap().value.out;
+            let first = conds();
+            assert_eq!((conds(), conds()), (first.clone(), first.clone()));
+            assert_eq!(asked(&w, "condition"), 1, "three reads ask the store once");
+
+            deliver(&w, &["lifecycle/sp-x"], 8);
+            assert_eq!(conds(), first, "a lifecycle change leaves it held");
+
+            deliver(&w, &["conditions/heimdall/disk"], 9);
+            assert_ne!(conds(), first, "a condition set ends it");
+            assert_eq!(asked(&w, "condition"), 2);
+
+            let held = conds();
+            w.watch(json!({ "too_old": { "compacted": 20 }, "items": [], "list_rev": 21 }));
+            w.script.lock().unwrap().list_rev = 21;
+            let before = asked(&w, "watch");
+            while asked(&w, "watch") < before + 2 {
+                // clock-safe: a poll interval; the wait ends on the watch's next call
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert_ne!(conds(), held, "a reload ends it");
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    });
+}
+
+#[test_id(tghodwp)]
+#[test]
+fn a_stale_view_refuses_a_condition_list() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_millis(1500));
+        w.p.poll().unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|sc| {
+            sc.spawn(|| w.p.run(&stop, &mut |_| {}));
+            // clock-safe: a cap on the wait for the watch to start
+            while !w.p.watching() {
+                // clock-safe: a poll interval under that cap
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            w.advance(Duration::from_secs(60));
+            let refusal = w.p.answer(&["condition", "list"]).err();
+            assert!(matches!(&refusal, Some(LcError::Refused(m)) if m.starts_with("stale past")), "{refusal:?}");
+            assert_eq!(asked(&w, "condition"), 0, "the store is not asked instead");
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
         });
     });
@@ -786,13 +849,13 @@ fn added_prefixes_join_the_watch_and_without_them_the_five_are_asked_as_before()
         plain.p.poll().unwrap();
         plain.watch(json!({ "progress_rev": 5 }));
         plain.p.poll().unwrap();
-        assert_eq!(watch_argv(&plain)[..7], ["watch", "batches/", "lifecycle/", "readiness/", "planning/", "history/", "--from-rev"].map(String::from));
+        assert_eq!(watch_argv(&plain)[..8], ["watch", "batches/", "lifecycle/", "readiness/", "planning/", "history/", "conditions/", "--from-rev"].map(String::from));
         let mut w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
         w.p = Projection::new(LcClient::over(Arc::new(Double(Arc::clone(&w.script))), true), Duration::from_secs(10), Arc::new(Instant::now)).with_prefixes(&["work-requests/"]);
         w.p.poll().unwrap();
         w.watch(json!({ "progress_rev": 5 }));
         w.p.poll().unwrap();
-        assert_eq!(watch_argv(&w)[..8], ["watch", "batches/", "lifecycle/", "readiness/", "planning/", "history/", "work-requests/", "--from-rev"].map(String::from));
+        assert_eq!(watch_argv(&w)[..9], ["watch", "batches/", "lifecycle/", "readiness/", "planning/", "history/", "conditions/", "work-requests/", "--from-rev"].map(String::from));
     });
 }
 

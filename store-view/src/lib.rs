@@ -172,13 +172,18 @@ struct State {
 /// and a change to a round or its history.
 const CONTENT: u8 = 1;
 const ROUNDS: u8 = 2;
-const ALL: u8 = CONTENT | ROUNDS;
+/// A watcher's condition set or cleared.
+const CONDITIONS: u8 = 4;
+const ALL: u8 = CONTENT | ROUNDS | CONDITIONS;
+/// The watch prefix of the conditions each watcher keeps (`spira_lc::keys::conditions`).
+pub const CONDITIONS_PREFIX: &str = "conditions/";
 
 /// The reads [`Projection::answer`] holds, with the changes that end each; `None` for any other.
 fn classes_of(argv: &[&str]) -> Option<u8> {
     match argv {
         ["content", "list" | "show", ..] | ["plan", "items" | "edges" | "children" | "watermark", ..] => Some(CONTENT),
         ["show-batch", _] => Some(ROUNDS),
+        ["condition", "list", ..] => Some(CONDITIONS),
         ["list", rest @ ..] if rest.contains(&"--batches") => Some(ROUNDS | CONTENT),
         _ => None,
     }
@@ -189,16 +194,16 @@ fn classes_of(argv: &[&str]) -> Option<u8> {
 #[derive(Default)]
 struct Memo {
     held: HashMap<String, (u8, Reply, Instant)>,
-    generation: [u64; 2],
+    generation: [u64; 3],
 }
 
 impl Memo {
     fn seen(&self, classes: u8) -> u64 {
-        (0..2).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
+        (0..3).filter(|i| classes & (1 << i) != 0).map(|i| self.generation[i]).sum()
     }
 
     fn end(&mut self, classes: u8) {
-        for i in (0..2).filter(|i| classes & (1 << i) != 0) {
+        for i in (0..3).filter(|i| classes & (1 << i) != 0) {
             self.generation[i] += 1;
         }
         self.held.retain(|_, (held, ..)| *held & classes == 0);
@@ -241,7 +246,7 @@ pub struct Projection {
     watching: AtomicBool,
     /// Why the last poll failed; cleared by one that applied.
     lost: Mutex<Option<String>>,
-    /// Prefixes watched beside the five this view applies; their events are only reported.
+    /// Prefixes watched beside the fixed ones this view applies; their events are only reported.
     extra: Vec<String>,
 }
 
@@ -404,6 +409,8 @@ fn ended_by(s: &State, events: &[Value]) -> u8 {
         ended
             | if key.starts_with(PLANNING) {
                 CONTENT
+            } else if key.starts_with(CONDITIONS_PREFIX) {
+                CONDITIONS
             } else if key.starts_with(BATCHES) || key.strip_prefix(HISTORY).is_some_and(|h| rounds.iter().any(|r| h.strip_prefix(r.as_str()).is_some_and(|rest| rest.starts_with('/')))) {
                 ROUNDS
             } else {
@@ -461,7 +468,7 @@ impl Projection {
     /// Also watches `prefixes`: events under them are reported by [`poll`](Self::poll) and not applied.
     pub fn with_prefixes(mut self, prefixes: &[&str]) -> Self {
         for p in prefixes {
-            if ![BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY].contains(p) && !self.extra.iter().any(|e| e == p) {
+            if ![BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY, CONDITIONS_PREFIX].contains(p) && !self.extra.iter().any(|e| e == p) {
                 self.extra.push(p.to_string());
             }
         }
@@ -572,9 +579,9 @@ impl Projection {
         polled
     }
 
-    /// The prefixes the watch names: the fixed five, then those added by [`Self::with_prefixes`].
+    /// The prefixes the watch names: the fixed six, then those added by [`Self::with_prefixes`].
     pub fn watch_prefixes(&self) -> Vec<&str> {
-        let mut all = vec![BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY];
+        let mut all = vec![BATCHES, LIFECYCLE, READINESS, PLANNING, HISTORY, CONDITIONS_PREFIX];
         all.extend(self.extra.iter().map(String::as_str));
         all
     }
