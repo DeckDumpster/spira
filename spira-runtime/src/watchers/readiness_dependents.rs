@@ -59,6 +59,13 @@ pub fn decide(carry: &Carry, body: &str) -> Carry {
     }
 }
 
+impl ReadinessDependents {
+    /// A failed pass is asked for again after the interval; the row's only wake is a change.
+    fn retry(&self, ev: &Event) -> Command {
+        Command::Due { at: ev.at + self.interval_ms }
+    }
+}
+
 impl Handler for ReadinessDependents {
     fn interests(&self) -> &[EventKindTag] {
         &[TICK, EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
@@ -78,7 +85,7 @@ impl Handler for ReadinessDependents {
         }
         if answers_observe(view, ev, LOOK) {
             if ev.kind.tag != EFFECT_SUCCEEDED {
-                return vec![];
+                return vec![self.retry(ev)];
             }
             let Ok(seen) = serde_json::from_str::<Pass>(&ev.kind.body) else { return vec![] };
             if !seen.keys.is_empty() {
@@ -97,7 +104,7 @@ impl Handler for ReadinessDependents {
         }
         ctx.event().set("readiness-dependents.failed", u64::from(ev.kind.tag != EFFECT_SUCCEEDED));
         if ev.kind.tag != EFFECT_SUCCEEDED {
-            return vec![];
+            return vec![self.retry(ev)];
         }
         let next = decide(&carry, &ev.kind.body);
         ctx.event().set("readiness-dependents.changed", serde_json::from_str::<Pass>(&ev.kind.body).map_or(0, |p| p.changed));

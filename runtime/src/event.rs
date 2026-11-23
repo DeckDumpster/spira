@@ -87,6 +87,9 @@ pub struct SweepFound {
     pub reads: Vec<String>,
     /// The source lost a change: the table passed every revision the engine heard.
     pub lost: bool,
+    /// Distinct key prefixes heard since the row's previous tick.
+    #[serde(default)]
+    pub changed: Vec<String>,
 }
 
 /// The body of a [`STORE_CHANGED`] event, as JSON.
