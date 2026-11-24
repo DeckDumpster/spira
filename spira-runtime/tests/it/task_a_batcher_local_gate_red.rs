@@ -250,3 +250,24 @@ fn a_refused_gate_red_eject_abandons_and_clears_the_request() {
     assert!(names(&acts).contains(&ABANDON), "{acts:?}");
     assert!(next.repos.get("spira").is_none_or(|rc| rc.eject_gate_red.is_none()));
 }
+
+
+#[test_id(ttwj8ty)]
+#[test]
+fn a_held_gate_red_eject_answer_clears_the_request_and_holds_the_eject() {
+    let (carry, leg) = eject_in_flight();
+    let (held, _) = on_outcome(&carry, EJECT_GATE_RED, false, &held_body("sp-a"), &leg, NOW);
+    let rc = &held.repos["spira"];
+    assert!(rc.eject_gate_red.is_none() && rc.eject_held.is_some(), "{rc:?}");
+}
+
+
+#[test_id(temv9xa)]
+#[test]
+fn a_resent_gate_red_eject_is_not_sent_a_third_time_once_it_is_in_flight() {
+    let (carry, _) = eject_in_flight();
+    let (after, acts) = decide(&carry, &red_round_snapshot(vec![]));
+    assert_eq!(names(&acts), [EJECT_GATE_RED]);
+    let (_, acts) = decide(&after, &red_round_snapshot(vec![EJECT_GATE_RED.into()]));
+    assert!(acts.is_empty(), "{acts:?}");
+}
