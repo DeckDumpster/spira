@@ -43,6 +43,20 @@ impl Handler for Napper {
     }
 }
 
+/// Answers a failed or timed-out effect with no commands, as a task that has nothing to do about it.
+struct Shrugger;
+impl Handler for Shrugger {
+    fn interests(&self) -> &[EventKindTag] {
+        &["build", EFFECT_FAILED, EFFECT_TIMED_OUT, EFFECT_SUCCEEDED]
+    }
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.kind.tag == "build" {
+            return vec![Command::Effect(EffectSpec { name: ev.kind.body.clone(), input: String::new(), deadline_ms: 10_000, key: ev.kind.body.clone() })];
+        }
+        vec![]
+    }
+}
+
 fn engine(j: Arc<MemJournal>, clock: &VirtualClock) -> Engine {
     let regs = vec![Registration::new("ticker", Ticker), Registration::new("builder", Builder).with_mode(Mode::Act)];
     Engine::open(j, Arc::new(clock.clone()), regs, 1).unwrap().with_classifier(Arc::new(|s: &EffectSpec| if s.name == "suite" { "container".into() } else { "host".into() }))
@@ -136,4 +150,33 @@ fn a_fire_whose_handler_does_nothing_leaves_last_outcome_quiet_not_null() {
     let s = e.status();
     let t = s.tasks.iter().find(|t| t.name == "napper").unwrap();
     assert_eq!((t.last_fired_at.is_some(), t.last_outcome), (true, Some(LastOutcome::Quiet)));
+}
+
+fn last_outcome_after(outcome: Outcome) -> Option<LastOutcome> {
+    let (j, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let mut e = Engine::open(j, Arc::new(clock.clone()), vec![Registration::new("shrugger", Shrugger).with_mode(Mode::Act)], 1).unwrap();
+    e.submit("b1", "b", EventKind::new("build", "mail")).unwrap();
+    e.run_until_idle().unwrap();
+    let key = e.pending_effects()[0].key.clone();
+    e.complete(&key, outcome).unwrap();
+    e.run_until_idle().unwrap();
+    e.status().tasks.iter().find(|t| t.name == "shrugger").unwrap().last_outcome
+}
+
+#[test_id(t9cn1hy)]
+#[test]
+fn a_failed_effect_the_handler_answers_with_nothing_stays_failed() {
+    assert_eq!(last_outcome_after(Outcome::Failed("no".into())), Some(LastOutcome::Failed));
+}
+
+#[test_id(tjfg99f)]
+#[test]
+fn a_succeeded_effect_the_handler_answers_with_nothing_ends_quiet() {
+    assert_eq!(last_outcome_after(Outcome::Succeeded("ok".into())), Some(LastOutcome::Quiet));
+}
+
+#[test_id(tz09fb3)]
+#[test]
+fn a_timed_out_effect_the_handler_answers_with_nothing_stays_timed_out() {
+    assert_eq!(last_outcome_after(Outcome::TimedOut), Some(LastOutcome::TimedOut));
 }

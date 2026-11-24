@@ -1,8 +1,7 @@
 TYPE=string
 GROUP=loop
-DOC=HOW LONG WITHOUT A LANDING PASS COMPLETING before czar-pass --pass fires loop-stalled.
+DOC=HOW LONG THE LANDING TASK MAY GO WITHOUT FIRING before czar fires loop-stalled; a quiet fire counts.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar-pass --pass fires loop-stalled.
-    # Above the 2700s local-gate timeout so an ordinary batch gate does not trigger it.
+    # HOW LONG THE LANDING TASK MAY GO WITHOUT FIRING before czar fires loop-stalled; a quiet fire counts.
     : "${SPIRA_LOOP_STALL_SECS:=3000}"
 SPIRA_CONF_DEFAULT_EOF
