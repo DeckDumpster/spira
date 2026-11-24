@@ -5867,6 +5867,8 @@ mod tests {
         let a = RunArgs { tree_dir: fx.d.path().join("newer-image"), base: Some("main".into()), pin_host: true, ..round_args(&fx) };
         assert_eq!(go_with_host(&fx, &FakeRemote::green(), &plan, &a), 2);
         assert_eq!(fx.fp.count("clone"), 0);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join(crate::progress::FILE)).unwrap()).unwrap();
+        assert!(v["placement"]["refusal"].as_str().unwrap().contains("localhost/spira-testenv:tagB"), "{v}");
     }
 
     #[test_id(tbj84wa)]

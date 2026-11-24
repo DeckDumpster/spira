@@ -1,4 +1,4 @@
-//! Command dispatch and the real wiring: config from the environment and spira.toml, the
+//! Command dispatch and the real wiring: config from the environment and the operator config file, the
 //! Proxmox provider, mail alarms, ssh/rsync, git.
 
 use std::fs::OpenOptions;
@@ -696,7 +696,7 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
     if cfg.cache_home.is_none() {
         eprintln!(
             "round-vm template: SPIRA_ROUND_VM_CACHE_HOME not set (and no round_vm_cache_home \
-             in spira.toml) — refusing to build a template whose own CARGO_HOME a round later \
+             in the operator config file) — refusing to build a template whose own CARGO_HOME a round later \
              has to guess (law-a-binary-resolves-the-config-it-reads). Set it once; every round \
              cloned from this template will then agree with it."
         );
@@ -851,18 +851,6 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test_id(tnwchdx)]
-    #[test]
-    fn no_pressure_sampler_verb_is_served() {
-        assert!(!USAGE.contains("psi-sample"));
-        assert_eq!(main_with(vec!["psi-sample".into()]), 1);
-    }
-}
-
 /// `round-vm image-check --tree DIR --rev SHA`: `present` or `absent <tag>` on stdout, exit 0;
 /// exit 2 when the tag cannot be computed.
 fn image_check_verb(args: &[String]) -> i32 {
@@ -884,5 +872,17 @@ fn image_check_verb(args: &[String]) -> i32 {
             eprintln!("round-vm image-check: {e}");
             2
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(tnwchdx)]
+    #[test]
+    fn no_pressure_sampler_verb_is_served() {
+        assert!(!USAGE.contains("psi-sample"));
+        assert_eq!(main_with(vec!["psi-sample".into()]), 1);
     }
 }
