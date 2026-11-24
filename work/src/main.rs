@@ -1206,4 +1206,33 @@ mod tests {
         let at = |needle: &str| log.iter().position(|r| r.contains(needle)).unwrap();
         assert!(at("ami-push") < at("show wr-1") && at("show wr-1") < at("ami-dispatch"), "{log:?}");
     }
+
+    #[test_id(t5zb3za)]
+    #[test]
+    fn texts_reads_the_merge_base_side_and_the_tip_side_from_a_real_repo() {
+        use work::image::Ports;
+        let tmp = testkit::TempDir::new("image-ports-texts");
+        let d = tmp.path();
+        let git = |args: &[&str]| {
+            let st = std::process::Command::new("git").arg("-C").arg(d).args(["-c", "user.email=t@t", "-c", "user.name=t"]).args(args).status().unwrap();
+            assert!(st.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main", "."]);
+        std::fs::write(d.join("f"), "old\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "base"]);
+        git(&["checkout", "-qb", "side"]);
+        std::fs::write(d.join("f"), "new\n").unwrap();
+        git(&["commit", "-qam", "side"]);
+        git(&["checkout", "-q", "main"]);
+        std::fs::write(d.join("g"), "moved\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "main moves"]);
+        let tip = std::process::Command::new("git").arg("-C").arg(d).args(["rev-parse", "side"]).output().unwrap();
+        let mut p = ports(recorded(0, ""));
+        p.root = d.to_path_buf();
+        p.tip = String::from_utf8_lossy(&tip.stdout).trim().to_string();
+        assert_eq!(p.texts("main", "f"), (Some("old\n".to_string()), Some("new\n".to_string())));
+        assert_eq!(p.texts("main", "g"), (None, None));
+    }
 }
