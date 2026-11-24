@@ -7,6 +7,7 @@ const MAX_DATA_LINE: usize = 256 * 1024;
 const MAX_RCPT: usize = 20;
 const MAX_AUTH_FAILURES: u32 = 3;
 
+#[derive(Clone, Debug)]
 pub struct Policy {
     pub host: String,
     pub user: String,
@@ -58,42 +59,432 @@ pub fn attempt(sink: &dyn Sink, peer: &str, user: &str, from: &str, outcome: &st
     }
 }
 
-struct Conn<S> {
-    s: S,
-    buf: Vec<u8>,
+/// An [`Envelope`] a session owns, handed out with an accepted message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnedEnvelope {
+    pub peer: String,
+    pub user: String,
+    pub from: String,
+    pub to: Vec<String>,
+    pub message_id: String,
+    pub in_reply_to: String,
+}
+
+impl OwnedEnvelope {
+    pub fn as_envelope(&self) -> Envelope<'_> {
+        Envelope { peer: &self.peer, user: &self.user, from: &self.from, to: &self.to, message_id: &self.message_id, in_reply_to: &self.in_reply_to }
+    }
+}
+
+/// What a [`Session`] asks its driver to do. `Verify` and `Accept` park the session until the
+/// driver answers with [`Session::verified`] or [`Session::accepted`]; bytes fed meanwhile wait.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// Bytes for the client, CRLF included.
+    Send(String),
+    /// Check this password against the credential file; `user` is judged by the session.
+    Verify { password: String },
+    /// A finished DATA phase: deliver it, answer `250` on `Ok` and `451` on `Err`.
+    Accept { envelope: OwnedEnvelope, message: Vec<u8> },
+    /// One outcome for the audit line; a refusal also reaches [`Sink::refused`] (see [`attempt`]).
+    Attempt { user: String, from: String, outcome: String },
+    /// End the connection.
+    Close,
 }
 
 enum Line {
     Text(Vec<u8>),
     TooLong,
-    Closed,
 }
 
-impl<S: Read + Write> Conn<S> {
-    fn read_line(&mut self, max: usize) -> Line {
+enum Mode {
+    Command,
+    AuthPlain,
+    AuthLoginUser,
+    AuthLoginPass { user_b64: String },
+    Verifying { tried: String, user_ok: bool },
+    Data { out: Vec<u8>, too_big: bool, sender: String, to: Vec<String> },
+    Accepting { sender: String, to: Vec<String>, message_id: String, in_reply_to: String },
+}
+
+/// The SMTP protocol of one submission connection with no IO: bytes in, [`Step`]s out. The
+/// steps are the same however the bytes are cut.
+pub struct Session {
+    p: Policy,
+    buf: Vec<u8>,
+    skipping: bool,
+    mode: Mode,
+    authed: bool,
+    who: String,
+    failures: u32,
+    from: Option<String>,
+    rcpts: Vec<String>,
+    closed: bool,
+    out: Vec<Step>,
+}
+
+impl Session {
+    pub fn new(p: Policy) -> Session {
+        Session { p, buf: Vec::new(), skipping: false, mode: Mode::Command, authed: false, who: String::new(), failures: 0, from: None, rcpts: Vec::new(), closed: false, out: Vec::new() }
+    }
+
+    /// The banner.
+    pub fn start(&mut self) -> Vec<Step> {
+        self.reply(&format!("220 {} spira-submission ESMTP", self.p.host));
+        self.take()
+    }
+
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<Step> {
+        if !self.closed {
+            self.buf.extend_from_slice(bytes);
+            self.pump();
+        }
+        self.take()
+    }
+
+    /// The driver's answer to [`Step::Verify`].
+    pub fn verified(&mut self, ok: bool) -> Vec<Step> {
+        if let Mode::Verifying { tried, user_ok } = std::mem::replace(&mut self.mode, Mode::Command) {
+            self.auth_done(ok && user_ok, tried);
+            self.pump();
+        }
+        self.take()
+    }
+
+    /// The driver's answer to [`Step::Accept`].
+    pub fn accepted(&mut self, outcome: Result<(), String>) -> Vec<Step> {
+        if let Mode::Accepting { sender, to, message_id, in_reply_to } = std::mem::replace(&mut self.mode, Mode::Command) {
+            let state = match &outcome {
+                Ok(()) => "accepted".to_string(),
+                Err(e) => format!("refused: delivery failed: {}", clean(e)),
+            };
+            let user = self.who.clone();
+            self.attempt(&user, &sender, &format!("data: {state} to={} message-id={message_id:?} in-reply-to={in_reply_to:?}", clean(&to.join(","))));
+            match outcome {
+                Ok(()) => self.reply("250 2.0.0 queued"),
+                Err(_) => self.reply("451 4.3.0 local delivery failed, try again"),
+            }
+            self.pump();
+        }
+        self.take()
+    }
+
+    fn take(&mut self) -> Vec<Step> {
+        std::mem::take(&mut self.out)
+    }
+
+    fn reply(&mut self, text: &str) {
+        self.out.push(Step::Send(format!("{text}\r\n")));
+    }
+
+    fn attempt(&mut self, user: &str, from: &str, outcome: &str) {
+        self.out.push(Step::Attempt { user: user.into(), from: from.into(), outcome: outcome.into() });
+    }
+
+    fn close(&mut self) {
+        self.closed = true;
+        self.out.push(Step::Close);
+    }
+
+    fn waiting(&self) -> bool {
+        matches!(self.mode, Mode::Verifying { .. } | Mode::Accepting { .. })
+    }
+
+    fn next_line(&mut self) -> Option<Line> {
+        let max = if matches!(self.mode, Mode::Data { .. }) { MAX_DATA_LINE } else { MAX_COMMAND_LINE };
         loop {
-            if let Some(i) = self.buf.iter().position(|&b| b == b'\n') {
-                let mut line: Vec<u8> = self.buf.drain(..=i).collect();
-                line.pop();
-                if line.last() == Some(&b'\r') {
-                    line.pop();
+            let nl = self.buf.iter().position(|&b| b == b'\n');
+            if self.skipping {
+                match nl {
+                    Some(i) => {
+                        self.buf.drain(..=i);
+                        self.skipping = false;
+                        continue;
+                    }
+                    None => {
+                        self.buf.clear();
+                        return None;
+                    }
                 }
-                return Line::Text(line);
             }
-            if self.buf.len() > max {
-                self.buf.clear();
-                return Line::TooLong;
-            }
-            let mut chunk = [0u8; 4096];
-            match self.s.read(&mut chunk) {
-                Ok(0) | Err(_) => return Line::Closed,
-                Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
+            return match nl {
+                Some(i) if i > max => {
+                    self.buf.drain(..=i);
+                    Some(Line::TooLong)
+                }
+                Some(i) => {
+                    let mut line: Vec<u8> = self.buf.drain(..=i).collect();
+                    line.pop();
+                    if line.last() == Some(&b'\r') {
+                        line.pop();
+                    }
+                    Some(Line::Text(line))
+                }
+                None if self.buf.len() > max => {
+                    self.buf.clear();
+                    self.skipping = true;
+                    Some(Line::TooLong)
+                }
+                None => None,
+            };
+        }
+    }
+
+    fn pump(&mut self) {
+        while !self.closed && !self.waiting() {
+            let Some(line) = self.next_line() else { return };
+            match line {
+                Line::Text(l) => self.line(String::from_utf8_lossy(&l).into_owned(), l),
+                Line::TooLong => match &mut self.mode {
+                    Mode::Data { too_big, .. } => *too_big = true,
+                    Mode::Command => {
+                        self.reply("500 5.5.2 line too long");
+                        self.close();
+                    }
+                    _ => self.close(),
+                },
             }
         }
     }
 
-    fn reply(&mut self, text: &str) -> bool {
-        self.s.write_all(format!("{text}\r\n").as_bytes()).and_then(|_| self.s.flush()).is_ok()
+    fn line(&mut self, text: String, raw: Vec<u8>) {
+        match std::mem::replace(&mut self.mode, Mode::Command) {
+            Mode::Command => self.command(&text),
+            Mode::AuthPlain => self.auth_plain(&text),
+            Mode::AuthLoginUser => self.auth_login_user(text),
+            Mode::AuthLoginPass { user_b64 } => self.auth_login_pass(&user_b64, &text),
+            Mode::Data { out, too_big, sender, to } => self.data_line(raw, out, too_big, sender, to),
+            m @ (Mode::Verifying { .. } | Mode::Accepting { .. }) => self.mode = m,
+        }
+    }
+
+    fn command(&mut self, line: &str) {
+        let (verb, rest) = match line.split_once(' ') {
+            Some((v, r)) => (v.to_ascii_uppercase(), r),
+            None => (line.to_ascii_uppercase(), ""),
+        };
+        match verb.as_str() {
+            "EHLO" | "HELO" => {
+                self.from = None;
+                self.rcpts.clear();
+                if verb == "HELO" {
+                    self.reply(&format!("250 {}", self.p.host));
+                } else {
+                    self.reply(&format!("250-{}\r\n250-AUTH PLAIN LOGIN\r\n250-SIZE {}\r\n250 8BITMIME", self.p.host, self.p.max_message_bytes));
+                }
+            }
+            "NOOP" => self.reply("250 2.0.0 ok"),
+            "RSET" => {
+                self.from = None;
+                self.rcpts.clear();
+                self.reply("250 2.0.0 ok");
+            }
+            "QUIT" => {
+                self.reply("221 2.0.0 bye");
+                self.close();
+            }
+            "STARTTLS" => self.reply("502 5.5.1 already encrypted"),
+            "AUTH" => {
+                if self.authed {
+                    self.reply("503 5.5.1 already authenticated");
+                } else {
+                    self.begin_auth(rest);
+                }
+            }
+            "MAIL" => {
+                if !self.authed {
+                    self.reply("530 5.7.0 authentication required");
+                } else if self.from.is_some() {
+                    self.reply("503 5.5.1 sender already given");
+                } else {
+                    match rest.get(..5).filter(|k| k.eq_ignore_ascii_case("FROM:")).and_then(|_| path_arg(&rest[5..])) {
+                        None => self.reply("501 5.5.4 syntax: MAIL FROM:<address>"),
+                        Some(a) if a.eq_ignore_ascii_case(&self.p.from) => {
+                            self.from = Some(a);
+                            self.reply("250 2.1.0 ok");
+                        }
+                        Some(a) => {
+                            let user = self.who.clone();
+                            self.attempt(&user, &clean(&a), "mail: refused: sender is not the operator address");
+                            self.reply("550 5.7.1 sender is not the operator address");
+                        }
+                    }
+                }
+            }
+            "RCPT" => {
+                if !self.authed {
+                    self.reply("530 5.7.0 authentication required");
+                } else if self.from.is_none() {
+                    self.reply("503 5.5.1 MAIL first");
+                } else {
+                    match rest.get(..3).filter(|k| k.eq_ignore_ascii_case("TO:")).and_then(|_| path_arg(&rest[3..])) {
+                        None => self.reply("501 5.5.4 syntax: RCPT TO:<address>"),
+                        Some(a) if !recipient_allowed(&a, &self.p.rcpt_domain) => {
+                            let (user, from) = (self.who.clone(), self.from.clone().unwrap_or_default());
+                            self.attempt(&user, &from, &format!("rcpt: refused: relay denied to {:?}", clean(&a)));
+                            self.reply("550 5.7.1 relay denied: only Spira mailbox addresses are accepted");
+                        }
+                        Some(_) if self.rcpts.len() >= MAX_RCPT => self.reply("452 4.5.3 too many recipients"),
+                        Some(a) => {
+                            self.rcpts.push(a);
+                            self.reply("250 2.1.5 ok");
+                        }
+                    }
+                }
+            }
+            "DATA" => {
+                if !self.authed {
+                    self.reply("530 5.7.0 authentication required");
+                } else if self.rcpts.is_empty() {
+                    self.reply("503 5.5.1 RCPT first");
+                } else {
+                    self.reply("354 end data with <CR><LF>.<CR><LF>");
+                    self.mode = Mode::Data { out: Vec::new(), too_big: false, sender: self.from.take().unwrap_or_default(), to: std::mem::take(&mut self.rcpts) };
+                }
+            }
+            "" => self.reply("500 5.5.2 empty command"),
+            _ => self.reply("502 5.5.1 command not implemented"),
+        }
+    }
+
+    fn begin_auth(&mut self, rest: &str) {
+        let mut words = rest.split_whitespace();
+        let mech = words.next().unwrap_or("").to_ascii_uppercase();
+        let initial = words.next();
+        match mech.as_str() {
+            "PLAIN" => match initial {
+                Some(i) if i != "=" => self.auth_plain(i),
+                _ => {
+                    self.reply("334 ");
+                    self.mode = Mode::AuthPlain;
+                }
+            },
+            "LOGIN" => match initial {
+                Some(i) => self.auth_login_user(i.to_string()),
+                None => {
+                    self.reply(&format!("334 {}", b64_encode("Username:")));
+                    self.mode = Mode::AuthLoginUser;
+                }
+            },
+            _ => {
+                self.attempt("", "", "auth: refused: mechanism not supported");
+                self.reply("504 5.5.4 mechanism not supported");
+            }
+        }
+    }
+
+    fn auth_plain(&mut self, blob: &str) {
+        let Some(raw) = b64_decode(blob) else { return self.auth_done(false, String::new()) };
+        let parts: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
+        if parts.len() != 3 {
+            return self.auth_done(false, String::new());
+        }
+        let authz = String::from_utf8_lossy(parts[0]).into_owned();
+        let user = String::from_utf8_lossy(parts[1]).into_owned();
+        if !authz.is_empty() && authz != user {
+            return self.auth_done(false, user);
+        }
+        let password = String::from_utf8_lossy(parts[2]).into_owned();
+        self.verify(user, password);
+    }
+
+    fn auth_login_user(&mut self, user_b64: String) {
+        self.reply(&format!("334 {}", b64_encode("Password:")));
+        self.mode = Mode::AuthLoginPass { user_b64 };
+    }
+
+    fn auth_login_pass(&mut self, user_b64: &str, pass_b64: &str) {
+        let (Some(u), Some(pw)) = (b64_decode(user_b64), b64_decode(pass_b64)) else { return self.auth_done(false, String::new()) };
+        self.verify(String::from_utf8_lossy(&u).into_owned(), String::from_utf8_lossy(&pw).into_owned());
+    }
+
+    fn verify(&mut self, tried: String, password: String) {
+        let user_ok = tried == self.p.user;
+        self.mode = Mode::Verifying { tried, user_ok };
+        self.out.push(Step::Verify { password });
+    }
+
+    fn auth_done(&mut self, ok: bool, tried: String) {
+        if ok {
+            self.authed = true;
+            self.who = tried;
+            let user = self.who.clone();
+            self.attempt(&user, "", "auth: accepted");
+            self.reply("235 2.7.0 authenticated");
+            return;
+        }
+        self.attempt(&clean(&tried), "", "auth: refused: authentication failed");
+        self.failures += 1;
+        if self.failures >= MAX_AUTH_FAILURES {
+            self.reply("421 4.7.0 too many authentication failures");
+            self.close();
+        } else {
+            self.reply("535 5.7.8 authentication failed");
+        }
+    }
+
+    fn data_line(&mut self, l: Vec<u8>, mut out: Vec<u8>, mut too_big: bool, sender: String, to: Vec<String>) {
+        if l != b"." {
+            let l = if l.first() == Some(&b'.') { &l[1..] } else { &l[..] };
+            if out.len() + l.len() + 1 > self.p.max_message_bytes {
+                too_big = true;
+            }
+            if !too_big {
+                out.extend_from_slice(l);
+                out.push(b'\n');
+            }
+            self.mode = Mode::Data { out, too_big, sender, to };
+            return;
+        }
+        let sender = clean(&sender);
+        if too_big {
+            let user = self.who.clone();
+            self.attempt(&user, &sender, "data: refused: message too large");
+            self.reply("552 5.3.4 message too large");
+            return;
+        }
+        let text = String::from_utf8_lossy(&out).into_owned();
+        let (message_id, in_reply_to) = (header(&text, "message-id"), header(&text, "in-reply-to"));
+        let envelope = OwnedEnvelope { peer: self.p.peer.clone(), user: self.who.clone(), from: sender.clone(), to: to.clone(), message_id: message_id.clone(), in_reply_to: in_reply_to.clone() };
+        self.mode = Mode::Accepting { sender, to, message_id, in_reply_to };
+        self.out.push(Step::Accept { envelope, message: out });
+    }
+}
+
+/// `password` against the credential file `p` names. A file that cannot be used is a refusal.
+pub fn verify_credential(p: &Policy, password: &str) -> bool {
+    match Credential::load(&p.password_file, &p.user) {
+        Ok(c) => c.verify(password),
+        Err(e) => {
+            eprintln!("spira-submission: password file unusable: {e}");
+            false
+        }
+    }
+}
+
+/// [`Session`] driven over a blocking stream.
+pub fn serve_session<S: Read + Write>(mut stream: S, p: &Policy, sink: &dyn Sink) {
+    let mut session = Session::new(p.clone());
+    let mut steps: std::collections::VecDeque<Step> = session.start().into();
+    loop {
+        while let Some(step) = steps.pop_front() {
+            match step {
+                Step::Send(text) => {
+                    if stream.write_all(text.as_bytes()).and_then(|_| stream.flush()).is_err() {
+                        return;
+                    }
+                }
+                Step::Attempt { user, from, outcome } => attempt(sink, &p.peer, &user, &from, &outcome),
+                Step::Verify { password } => steps.extend(session.verified(verify_credential(p, &password))),
+                Step::Accept { envelope, message } => steps.extend(session.accepted(sink.accept(&envelope.as_envelope(), &message))),
+                Step::Close => return,
+            }
+        }
+        let mut chunk = [0u8; 4096];
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => steps.extend(session.feed(&chunk[..n])),
+        }
     }
 }
 
@@ -184,260 +575,6 @@ fn recipient_allowed(addr: &str, domain: &str) -> bool {
     }
 }
 
-#[derive(PartialEq)]
-enum Auth {
-    No,
-    Yes,
-}
-
-pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
-    let mut c = Conn { s: stream, buf: Vec::new() };
-    if !c.reply(&format!("220 {} spira-submission ESMTP", p.host)) {
-        return;
-    }
-    let mut auth = Auth::No;
-    let mut who = String::new();
-    let mut failures = 0u32;
-    let mut from: Option<String> = None;
-    let mut rcpts: Vec<String> = Vec::new();
-    loop {
-        let line = match c.read_line(MAX_COMMAND_LINE) {
-            Line::Text(l) => String::from_utf8_lossy(&l).into_owned(),
-            Line::TooLong => {
-                c.reply("500 5.5.2 line too long");
-                return;
-            }
-            Line::Closed => return,
-        };
-        let (verb, rest) = match line.split_once(' ') {
-            Some((v, r)) => (v.to_ascii_uppercase(), r),
-            None => (line.to_ascii_uppercase(), ""),
-        };
-        let ok = match verb.as_str() {
-            "EHLO" | "HELO" => {
-                from = None;
-                rcpts.clear();
-                if verb == "HELO" {
-                    c.reply(&format!("250 {}", p.host))
-                } else {
-                    c.reply(&format!("250-{}\r\n250-AUTH PLAIN LOGIN\r\n250-SIZE {}\r\n250 8BITMIME", p.host, p.max_message_bytes))
-                }
-            }
-            "NOOP" => c.reply("250 2.0.0 ok"),
-            "RSET" => {
-                from = None;
-                rcpts.clear();
-                c.reply("250 2.0.0 ok")
-            }
-            "QUIT" => {
-                c.reply("221 2.0.0 bye");
-                return;
-            }
-            "STARTTLS" => c.reply("502 5.5.1 already encrypted"),
-            "AUTH" => {
-                if auth == Auth::Yes {
-                    c.reply("503 5.5.1 already authenticated")
-                } else {
-                    let mut tried = String::new();
-                    match do_auth(&mut c, p, rest, &mut tried) {
-                        Some(Some(true)) => {
-                            auth = Auth::Yes;
-                            who = tried;
-                            attempt(sink, &p.peer, &who, "", "auth: accepted");
-                            c.reply("235 2.7.0 authenticated")
-                        }
-                        Some(None) => {
-                            attempt(sink, &p.peer, "", "", "auth: refused: mechanism not supported");
-                            c.reply("504 5.5.4 mechanism not supported")
-                        }
-                        Some(Some(false)) => {
-                            attempt(sink, &p.peer, &clean(&tried), "", "auth: refused: authentication failed");
-                            failures += 1;
-                            if failures >= MAX_AUTH_FAILURES {
-                                c.reply("421 4.7.0 too many authentication failures");
-                                return;
-                            }
-                            c.reply("535 5.7.8 authentication failed")
-                        }
-                        None => return,
-                    }
-                }
-            }
-            "MAIL" => {
-                if auth != Auth::Yes {
-                    c.reply("530 5.7.0 authentication required")
-                } else if from.is_some() {
-                    c.reply("503 5.5.1 sender already given")
-                } else {
-                    match rest.get(..5).filter(|k| k.eq_ignore_ascii_case("FROM:")).and_then(|_| path_arg(&rest[5..])) {
-                        None => c.reply("501 5.5.4 syntax: MAIL FROM:<address>"),
-                        Some(a) if a.eq_ignore_ascii_case(&p.from) => {
-                            from = Some(a);
-                            c.reply("250 2.1.0 ok")
-                        }
-                        Some(a) => {
-                            attempt(sink, &p.peer, &who, &clean(&a), "mail: refused: sender is not the operator address");
-                            c.reply("550 5.7.1 sender is not the operator address")
-                        }
-                    }
-                }
-            }
-            "RCPT" => {
-                if auth != Auth::Yes {
-                    c.reply("530 5.7.0 authentication required")
-                } else if from.is_none() {
-                    c.reply("503 5.5.1 MAIL first")
-                } else {
-                    match rest.get(..3).filter(|k| k.eq_ignore_ascii_case("TO:")).and_then(|_| path_arg(&rest[3..])) {
-                        None => c.reply("501 5.5.4 syntax: RCPT TO:<address>"),
-                        Some(a) if !recipient_allowed(&a, &p.rcpt_domain) => {
-                            attempt(sink, &p.peer, &who, from.as_deref().unwrap_or(""), &format!("rcpt: refused: relay denied to {:?}", clean(&a)));
-                            c.reply("550 5.7.1 relay denied: only Spira mailbox addresses are accepted")
-                        }
-                        Some(_) if rcpts.len() >= MAX_RCPT => c.reply("452 4.5.3 too many recipients"),
-                        Some(a) => {
-                            rcpts.push(a);
-                            c.reply("250 2.1.5 ok")
-                        }
-                    }
-                }
-            }
-            "DATA" => {
-                if auth != Auth::Yes {
-                    c.reply("530 5.7.0 authentication required")
-                } else if rcpts.is_empty() {
-                    c.reply("503 5.5.1 RCPT first")
-                } else if !c.reply("354 end data with <CR><LF>.<CR><LF>") {
-                    return;
-                } else {
-                    let sender = from.take().unwrap_or_default();
-                    let to = std::mem::take(&mut rcpts);
-                    match read_data(&mut c, p.max_message_bytes) {
-                        Err(DataErr::Closed) => return,
-                        Err(DataErr::TooBig) => {
-                            attempt(sink, &p.peer, &who, &clean(&sender), "data: refused: message too large");
-                            c.reply("552 5.3.4 message too large")
-                        }
-                        Ok(raw) => {
-                            let text = String::from_utf8_lossy(&raw).into_owned();
-                            let (mid, irt) = (header(&text, "message-id"), header(&text, "in-reply-to"));
-                            let sender_clean = clean(&sender);
-                            let envelope = Envelope { peer: &p.peer, user: &who, from: &sender_clean, to: &to, message_id: &mid, in_reply_to: &irt };
-                            let outcome = sink.accept(&envelope, &raw);
-                            let state = match &outcome {
-                                Ok(()) => "accepted".to_string(),
-                                Err(e) => format!("refused: delivery failed: {}", clean(e)),
-                            };
-                            attempt(sink, &p.peer, &who, &clean(&sender), &format!("data: {state} to={} message-id={mid:?} in-reply-to={irt:?}", clean(&to.join(","))));
-                            match outcome {
-                                Ok(()) => c.reply("250 2.0.0 queued"),
-                                Err(_) => c.reply("451 4.3.0 local delivery failed, try again"),
-                            }
-                        }
-                    }
-                }
-            }
-            "" => c.reply("500 5.5.2 empty command"),
-            _ => c.reply("502 5.5.1 command not implemented"),
-        };
-        if !ok {
-            return;
-        }
-    }
-}
-
-/// Outer `None`: the connection ended mid-exchange. Inner `None`: unknown mechanism.
-fn do_auth<S: Read + Write>(c: &mut Conn<S>, p: &Policy, rest: &str, tried: &mut String) -> Option<Option<bool>> {
-    let mut words = rest.split_whitespace();
-    let mech = words.next().unwrap_or("").to_ascii_uppercase();
-    let initial = words.next();
-    let prompt = |c: &mut Conn<S>, text: &str| -> Option<String> {
-        if !c.reply(&format!("334 {text}")) {
-            return None;
-        }
-        match c.read_line(MAX_COMMAND_LINE) {
-            Line::Text(l) => Some(String::from_utf8_lossy(&l).into_owned()),
-            _ => None,
-        }
-    };
-    let (user, pass) = match mech.as_str() {
-        "PLAIN" => {
-            let blob = match initial {
-                Some(i) if i != "=" => i.to_string(),
-                _ => prompt(c, "")?,
-            };
-            let Some(raw) = b64_decode(&blob) else { return Some(Some(false)) };
-            let parts: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
-            if parts.len() != 3 {
-                return Some(Some(false));
-            }
-            let authz = String::from_utf8_lossy(parts[0]).into_owned();
-            let user = String::from_utf8_lossy(parts[1]).into_owned();
-            *tried = user.clone();
-            if !authz.is_empty() && authz != user {
-                return Some(Some(false));
-            }
-            (user, String::from_utf8_lossy(parts[2]).into_owned())
-        }
-        "LOGIN" => {
-            let u = match initial {
-                Some(i) => i.to_string(),
-                None => prompt(c, &b64_encode("Username:"))?,
-            };
-            let pw = prompt(c, &b64_encode("Password:"))?;
-            let (Some(u), Some(pw)) = (b64_decode(&u), b64_decode(&pw)) else { return Some(Some(false)) };
-            *tried = String::from_utf8_lossy(&u).into_owned();
-            (tried.clone(), String::from_utf8_lossy(&pw).into_owned())
-        }
-        _ => {
-            return Some(None);
-        }
-    };
-    let cred = match Credential::load(&p.password_file, &p.user) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("spira-submission: password file unusable: {e}");
-            return Some(Some(false));
-        }
-    };
-    let user_ok = user == p.user;
-    Some(Some(cred.verify(&pass) && user_ok))
-}
-
-enum DataErr {
-    Closed,
-    TooBig,
-}
-
-fn read_data<S: Read + Write>(c: &mut Conn<S>, max: usize) -> Result<Vec<u8>, DataErr> {
-    let mut out = Vec::new();
-    let mut too_big = false;
-    loop {
-        match c.read_line(MAX_DATA_LINE) {
-            Line::Closed => return Err(DataErr::Closed),
-            Line::TooLong => too_big = true,
-            Line::Text(l) => {
-                if l == b"." {
-                    break;
-                }
-                let l = if l.first() == Some(&b'.') { &l[1..] } else { &l[..] };
-                if out.len() + l.len() + 1 > max {
-                    too_big = true;
-                }
-                if !too_big {
-                    out.extend_from_slice(l);
-                    out.push(b'\n');
-                }
-            }
-        }
-    }
-    if too_big {
-        Err(DataErr::TooBig)
-    } else {
-        Ok(out)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,5 +616,95 @@ mod tests {
         let env = Envelope { peer: "p", user: "u", from: "f", to: &to, message_id: "<m>", in_reply_to: "" };
         assert_eq!(s.accept(&env, b"hello"), Ok(()));
         assert_eq!(*s.delivered.borrow(), [b"hello".to_vec()]);
+    }
+
+    fn policy() -> Policy {
+        Policy { host: "h".into(), user: "ryan".into(), from: "me@x.org".into(), rcpt_domain: "spira".into(), password_file: "unused".into(), max_message_bytes: 16, peer: "p:1".into() }
+    }
+
+    fn b64(s: &str) -> String {
+        b64_encode(s)
+    }
+
+    /// Every step the session takes over `script`, fed in `cut`-byte pieces (the whole script when 0).
+    /// A `Verify` is answered by the password `hunter2`; an `Accept` is answered `Ok`.
+    fn transcript(script: &[u8], cut: usize) -> Vec<Step> {
+        let mut s = Session::new(policy());
+        let mut all = s.start();
+        let mut todo: std::collections::VecDeque<Step> = Default::default();
+        let pieces: Vec<&[u8]> = if cut == 0 { vec![script] } else { script.chunks(cut).collect() };
+        for piece in pieces {
+            todo.extend(s.feed(piece));
+            while let Some(step) = todo.pop_front() {
+                let next = match &step {
+                    Step::Verify { password } => s.verified(password == "hunter2"),
+                    Step::Accept { .. } => s.accepted(Ok(())),
+                    _ => Vec::new(),
+                };
+                for n in next.into_iter().rev() {
+                    todo.push_front(n);
+                }
+                all.push(step);
+            }
+        }
+        all
+    }
+
+    fn same_however_cut(script: &[u8]) -> Vec<Step> {
+        let whole = transcript(script, 0);
+        for cut in [1, 2, 3, 7] {
+            assert_eq!(transcript(script, cut), whole, "cut every {cut} bytes");
+        }
+        whole
+    }
+
+    fn sent(steps: &[Step]) -> String {
+        steps.iter().filter_map(|s| if let Step::Send(t) = s { Some(t.as_str()) } else { None }).collect()
+    }
+
+    #[test_id(t1w6qd7)]
+    #[test]
+    fn a_failed_authentication_reads_the_same_fed_whole_or_a_byte_at_a_time() {
+        let script = format!("EHLO c\r\nAUTH PLAIN {}\r\nAUTH LOGIN\r\n{}\r\n{}\r\nAUTH PLAIN {}\r\n", b64("\0ryan\0wrong"), b64("ryan"), b64("nope"), b64("\0ryan\0worse"));
+        let steps = same_however_cut(script.as_bytes());
+        let text = sent(&steps);
+        assert_eq!(text.matches("535 5.7.8").count(), 2, "{text}");
+        assert!(text.contains("421 4.7.0 too many authentication failures"), "{text}");
+        assert_eq!(steps.last(), Some(&Step::Close));
+    }
+
+    #[test_id(tlqz8r3)]
+    #[test]
+    fn a_relay_refusal_reads_the_same_fed_whole_or_a_byte_at_a_time() {
+        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<a@elsewhere>\r\nRCPT TO:<c@spira>\r\nQUIT\r\n", b64("\0ryan\0hunter2"));
+        let steps = same_however_cut(script.as_bytes());
+        assert!(steps.iter().any(|s| matches!(s, Step::Attempt { outcome, .. } if outcome.starts_with("rcpt: refused: relay denied"))), "{steps:?}");
+        let text = sent(&steps);
+        assert!(text.contains("550 5.7.1 relay denied") && text.contains("250 2.1.5 ok") && text.ends_with("221 2.0.0 bye\r\n"), "{text}");
+    }
+
+    #[test_id(tm8c1d5)]
+    #[test]
+    fn an_oversize_message_reads_the_same_fed_whole_or_a_byte_at_a_time() {
+        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\n{}\r\n.\r\nNOOP\r\n", b64("\0ryan\0hunter2"), "0123456789abcdef\r\nmore\r\n");
+        let steps = same_however_cut(script.as_bytes());
+        assert!(steps.iter().all(|s| !matches!(s, Step::Accept { .. })), "{steps:?}");
+        let text = sent(&steps);
+        assert!(text.contains("552 5.3.4 message too large\r\n250 2.0.0 ok"), "{text}");
+    }
+
+    #[test_id(tn3e7v9)]
+    #[test]
+    fn an_accepted_message_is_handed_out_with_an_owned_envelope_and_answered_when_the_driver_says() {
+        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\nMessage-ID: <m>\r\n..x\r\n.\r\n", b64("\0ryan\0hunter2"));
+        let mut s = Session::new(Policy { max_message_bytes: 1024, ..policy() });
+        s.start();
+        let steps = s.feed(script.as_bytes());
+        let Some(Step::Verify { .. }) = steps.last() else { panic!("{steps:?}") };
+        let steps = s.verified(true);
+        let Some(Step::Accept { envelope, message }) = steps.last() else { panic!("{steps:?}") };
+        assert_eq!((envelope.user.as_str(), envelope.from.as_str(), envelope.message_id.as_str(), envelope.to.as_slice()), ("ryan", "me@x.org", "<m>", ["c@spira".to_string()].as_slice()));
+        assert_eq!(message, b"Message-ID: <m>\n.x\n");
+        assert_eq!(sent(&s.accepted(Err("disk full".into()))), "451 4.3.0 local delivery failed, try again\r\n");
     }
 }
