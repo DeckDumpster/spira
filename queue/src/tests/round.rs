@@ -11168,3 +11168,16 @@ fn a_rerun_that_is_red_makes_the_round_red() {
     assert_eq!(only_calls(&t).len(), 1);
     assert!(t.out().contains("red=test-x.sh"), "{}", t.out());
 }
+
+#[test_id(t0j15od)]
+#[test]
+fn an_integration_rerun_that_is_red_replaces_the_earlier_record_and_makes_the_round_red() {
+    let (t, batch) = integration_flip_world(ID_ROW);
+    vm_answers(&t, 1, &[], &[]);
+    let again = INTEG_RED.replace("t0abcde", "t0zzzzz");
+    *t.scripts.only_files.borrow_mut() = vec![("integration.json".into(), again.clone())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert_eq!(only_calls(&t).len(), 1);
+    assert_eq!(fs::read_to_string(marker(&t, &batch, "results").join("integration.json")).unwrap(), again);
+    assert!(t.out().contains("red=unit-tests"), "{}", t.out());
+}
