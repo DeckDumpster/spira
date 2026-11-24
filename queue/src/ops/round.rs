@@ -4995,23 +4995,34 @@ fn eject(
         ));
         return FAIL;
     }
-    let mut dependants: Vec<String> = vec![id.to_string()];
-    while let Some(m) = members.iter().find(|m| {
-        !dependants.contains(&m.id) && w.lc.bead_row(&m.id).is_some_and(|r| r.blocked_by.iter().any(|b| dependants.contains(b)))
-    }) {
-        dependants.push(m.id.clone());
+    let prerequisite_of = |m: &Member, taken: &[(String, String)]| -> Option<String> {
+        let row = w.lc.bead_row(&m.id);
+        if let Some(b) = row.as_ref().and_then(|r| r.blocked_by.iter().find(|b| taken.iter().any(|(t, _)| t == *b))) {
+            return Some(format!("blocked on {b}"));
+        }
+        taken.iter().find_map(|(x, xtip)| {
+            let shares = w
+                .git
+                .merge_base(&path, xtip, &m.tip)
+                .is_some_and(|mb| !w.git.is_ancestor(&path, &mb, &base_sha));
+            let directed = w.git.is_ancestor(&path, xtip, &m.tip) || row.as_ref().is_some_and(|r| r.stack.contains_key(x));
+            (shares && directed).then(|| format!("stacked on {x}"))
+        })
+    };
+    let mut taken: Vec<(String, String)> = vec![(id.to_string(), ejected_tip.clone())];
+    let mut dependant_reasons: Vec<(String, String)> = Vec::new();
+    while let Some((m, why)) = members
+        .iter()
+        .filter(|m| !taken.iter().any(|(t, _)| *t == m.id))
+        .find_map(|m| prerequisite_of(m, &taken).map(|why| (m, why)))
+    {
+        taken.push((m.id.clone(), m.tip.clone()));
+        dependant_reasons.push((m.id.clone(), why));
     }
-    dependants.remove(0);
+    let dependant_reason = |bead: &str| dependant_reasons.iter().find(|(d, _)| d == bead).map(|(_, r)| r.clone());
     let stacked: Vec<Member> = members
         .iter()
-        .filter(|m| {
-            m.id != id
-                && (withs.contains(&m.id.as_str())
-                    || dependants.contains(&m.id)
-                    || w.git
-                        .merge_base(&path, &ejected_tip, &m.tip)
-                        .is_some_and(|mb| !w.git.is_ancestor(&path, &mb, &base_sha)))
-        })
+        .filter(|m| m.id != id && (withs.contains(&m.id.as_str()) || dependant_reason(&m.id).is_some()))
         .cloned()
         .collect();
     let survivors: Vec<Member> = members
@@ -5069,10 +5080,8 @@ fn eject(
         std::iter::once((id, reason.clone(), cause)).chain(stacked.iter().map(|m| {
             let why = if withs.contains(&m.id.as_str()) {
                 format!("red only in combination with {id}; integrated with it")
-            } else if dependants.contains(&m.id) {
-                format!("blocked on {id}")
             } else {
-                format!("stacked on {id}")
+                dependant_reason(&m.id).unwrap_or_default()
             };
             (m.id.as_str(), why, cause)
         }))
@@ -5117,7 +5126,7 @@ fn eject(
         if bead != id {
             w.out(format!(
                 "queue.sh {label}: ejected {bead} from round {batch} ({})",
-                if dependants.contains(&bead.to_string()) { format!("blocked on {id}") } else { format!("stacked on {id}") }
+                dependant_reason(bead).unwrap_or_default()
             ));
         }
     }
