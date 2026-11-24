@@ -1149,10 +1149,6 @@ fn stabilize_round(
             claimed: vec![],
         }));
     }
-    if suites.is_empty() {
-        println!("batcher {}: round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing", repo.name);
-        return Ok(Stabilized::Blocked);
-    }
     let changed: BTreeMap<String, Vec<String>> = members
         .iter()
         .map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip)))

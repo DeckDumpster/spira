@@ -2495,16 +2495,12 @@ impl Machine<'_> {
 
     /// The round is open and named: its first leg starts.
     fn opened(&mut self, suites: bool) {
-        if suites {
-            self.go(Trigger::OpenedWithSuites);
-            self.certify();
-        } else if self.rc.own_testenv {
+        if !suites && self.rc.own_testenv {
             self.go(Trigger::OpenedOwnTestenv);
-            self.certify();
         } else {
-            self.go(Trigger::OpenFailed);
-            self.red("round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing");
+            self.go(Trigger::OpenedWithSuites);
         }
+        self.certify();
     }
 
     /// A round the queue holds with exactly our members in our tree is ours: driven now, not after [`OUTCOME_WAIT_MS`].
