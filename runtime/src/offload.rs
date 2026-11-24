@@ -281,6 +281,63 @@ impl Busy {
     }
 }
 
+/// The step the engine's turn is in, and the longest step the turn has finished. Entering and
+/// leaving take a lock held only to copy a few fields, so a slow store call cannot hold it.
+#[derive(Default)]
+pub struct Steps(Mutex<StepState>);
+
+#[derive(Default)]
+struct StepState {
+    current: Option<(&'static str, String, Instant)>,
+    longest: Option<(&'static str, Duration)>,
+}
+
+/// The step in progress, as the host reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepNow {
+    pub name: &'static str,
+    pub of: String,
+    pub ran: Duration,
+}
+
+impl Steps {
+    fn state(&self) -> std::sync::MutexGuard<'_, StepState> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()) // loop-safe: held only to copy a few fields, never across a call
+    }
+
+    pub(crate) fn enter(self: &Arc<Self>, name: &'static str, of: &str) -> StepGuard {
+        self.state().current = Some((name, of.to_string(), Instant::now()));
+        StepGuard(self.clone())
+    }
+
+    /// Forgets the longest step: the next turn's record starts from nothing.
+    pub fn begin_turn(&self) {
+        self.state().longest = None;
+    }
+
+    pub fn now(&self) -> Option<StepNow> {
+        self.state().current.as_ref().map(|(name, of, at)| StepNow { name, of: of.clone(), ran: at.elapsed() })
+    }
+
+    pub fn longest(&self) -> Option<(&'static str, Duration)> {
+        self.state().longest
+    }
+}
+
+pub(crate) struct StepGuard(Arc<Steps>);
+
+impl Drop for StepGuard {
+    fn drop(&mut self) {
+        let mut s = self.0.state();
+        if let Some((name, _, at)) = s.current.take() {
+            let ran = at.elapsed();
+            if s.longest.is_none_or(|(_, l)| ran > l) {
+                s.longest = Some((name, ran));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

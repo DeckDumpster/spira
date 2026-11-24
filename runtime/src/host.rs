@@ -104,6 +104,8 @@ pub struct ServeOpts {
     /// Called at the start of every turn, after the turn's submissions and outcomes are applied
     /// and before any handler runs: the one point where the engine is between ticks.
     pub before_turn: Option<TurnHook>,
+    /// How long a turn may run before it leaves an overrun record; [`TURN_BUDGET`] when `None`.
+    pub turn_budget: Option<Duration>,
 }
 
 /// See [`ServeOpts::before_turn`].
@@ -164,6 +166,7 @@ fn apply(t: &mut Turn) -> Result<()> {
 
 fn run_turn(mut t: Turn) -> TurnOut {
     let mut more = false;
+    t.engine.steps().begin_turn();
     let result = apply(&mut t).and_then(|()| {
         if let Some(before) = &t.before {
             before(&mut t.engine);
@@ -214,6 +217,8 @@ pub async fn serve_with(
     let turns = Pool::new(1, 1);
     let engine = classified(engine, &runner);
     let busy = engine.busy();
+    let steps = engine.steps();
+    let budget = opts.turn_budget.unwrap_or(TURN_BUDGET);
     let max_sleep = opts.max_sleep_ms.map(Duration::from_millis);
     let pools = ClassPools::new(caps.into());
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Done>();
@@ -282,7 +287,7 @@ pub async fn serve_with(
         }
         if let Some(r) = &running {
             if !r.overrun {
-                wait = wait.min((r.began + TURN_BUDGET).saturating_duration_since(now));
+                wait = wait.min((r.began + budget).saturating_duration_since(now));
             }
         } else if dirty || !subs.is_empty() || wakes(&done) {
             wait = wait.min(retry_at.saturating_duration_since(now));
@@ -307,6 +312,10 @@ pub async fn serve_with(
                     f.insert("unit".into(), "loop.turn".into());
                     f.insert("outcome".into(), (if out.result.is_ok() { "ok" } else { "error" }).into());
                     f.insert("turn.elapsed_ms".into(), (r.began.elapsed().as_millis() as u64).into());
+                    if let Some((name, ran)) = steps.longest() {
+                        f.insert("turn.longest_step".into(), name.into());
+                        f.insert("turn.longest_step_ms".into(), (ran.as_millis() as u64).into());
+                    }
                     emit(f);
                 }
                 let retry = match out.result {
@@ -354,13 +363,20 @@ pub async fn serve_with(
             }
             _ = tokio::time::sleep(wait) => {
                 if let Some(r) = running.as_mut() {
-                    if !r.overrun && r.began.elapsed() >= TURN_BUDGET {
+                    if !r.overrun && r.began.elapsed() >= budget {
                         r.overrun = true;
                         let mut f = Fields::new();
                         f.insert("unit".into(), "loop.turn".into());
                         f.insert("outcome".into(), "overrun".into());
                         f.insert("turn.elapsed_ms".into(), (r.began.elapsed().as_millis() as u64).into());
                         f.insert("handler.in_flight".into(), (busy.held_for() > Duration::ZERO).into());
+                        if let Some(step) = steps.now() {
+                            f.insert("turn.step".into(), step.name.into());
+                            if !step.of.is_empty() {
+                                f.insert("turn.step_of".into(), step.of.as_str().into());
+                            }
+                            f.insert("turn.step_ms".into(), (step.ran.as_millis() as u64).into());
+                        }
                         emit(f);
                     }
                 }

@@ -1742,7 +1742,8 @@ impl SqliteBackend {
         let _reading = phases::begin(Phase::Read);
         let forced_since = phases::forced_stamp();
         reader.deadline.store(deadline, Ordering::SeqCst);
-        let ended = || Error::Backend(format!("{READ_ENDED} ({max_read_ms} ms)"));
+        let gate_ms = began.saturating_sub(gate_began);
+        let ended = || Error::Backend(format!("{READ_ENDED} ({max_read_ms} ms; {gate_ms} ms at the gate)"));
         let check = || {
             if inner.clock.now_ms() > deadline {
                 Err(ended())
@@ -2736,6 +2737,7 @@ mod tests {
         assert!(matches!(&out, Err(Error::Backend(m)) if m.starts_with(READ_ENDED)), "{out:?}");
         let waited = rec.snapshot().phases.iter().find(|p| p.0 == "gate_wait").map(|p| p.1);
         assert_eq!(waited, Some(60_000));
+        assert!(matches!(&out, Err(Error::Backend(m)) if m == &format!("{READ_ENDED} (100 ms; 60 ms at the gate)")), "{out:?}");
     }
 
     #[test_id(titumle)]
