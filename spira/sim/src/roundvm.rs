@@ -279,14 +279,14 @@ fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>
     suites.extend(reds.iter().cloned());
     suites.sort();
     suites.dedup();
-    if suites.is_empty() {
-        return Err(format!("{} holds no test-*.sh suites — a green run with no results", r.tree.join("spira").display()));
-    }
     let bin = release_bin(world, env)?;
     if install_bins(&bin, &r.tree)? == 0 {
         return Err(format!("{} holds no executables to install as the round's build", bin.display()));
     }
     std::fs::create_dir_all(&r.results).map_err(|e| e.to_string())?;
+    if suites.is_empty() {
+        write_result(&r.results, "unit-tests", &format!("ok {now} 0 - - - 0"))?;
+    }
     for s in &suites {
         let line = if reds.contains(s) {
             format!("red {now} 0 fp serial {PRODUCER} 1")
@@ -317,5 +317,22 @@ mod tests {
         assert!(parse_args(&args).is_ok(), "{:?}", parse_args(&args).err());
         let eq: Vec<String> = ["run", "t", "--results-dir=r", "--deny-list=r/deny-list"].map(String::from).to_vec();
         assert!(parse_args(&eq).is_ok());
+    }
+
+    #[test_id(t7wsm11)]
+    #[test]
+    fn a_green_run_over_a_tree_with_no_suite_leaves_the_unit_tier_result() {
+        let t = testkit::TempDir::new("sim-roundvm-nosuite");
+        let world = t.path().join("world");
+        let (tree, bin, results) = (t.path().join("tree"), world.join("release/bin"), t.path().join("results"));
+        std::fs::create_dir_all(tree.join("spira")).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(world.join(crate::world::MARKER), "").unwrap();
+        testkit::write_exe(bin.join("queue"), "#!/bin/sh\n");
+        write_verdict(&world, &Verdict::Green).unwrap();
+        let args: Vec<String> = ["run".into(), tree.display().to_string(), "--results-dir".into(), results.display().to_string()].into();
+        let (rc, said) = run(&world, &args, &|_| None, 7);
+        assert_eq!((rc, said.as_str()), (0, ""));
+        assert_eq!(std::fs::read_to_string(results.join("unit-tests.result")).unwrap(), "ok 7 0 - - - 0\n");
     }
 }
