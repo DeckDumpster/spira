@@ -3660,7 +3660,7 @@ mod tests {
             })
             .filter(|n| n.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
             .collect();
-        assert!(marked.contains(&"image") && marked.contains(&"bare-suites"), "{marked:?}");
+        assert!(marked.contains(&"image") && marked.contains(&"suites"), "{marked:?}");
         for m in &marked {
             assert!(spira_config::round_step::is_step(m), "{m} is marked by the script but is not a round step");
         }
