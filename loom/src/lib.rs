@@ -1062,6 +1062,21 @@ mod in_process_tests {
         }
     }
 
+    #[test_id(tbzcv4x)]
+    #[tokio::test]
+    async fn refreshing_the_units_snapshot_five_times_starts_the_installer_once() {
+        let d = testkit::TempDir::new("loom-units-once");
+        let starts = d.join("starts");
+        testkit::write_exe(d.join("units-install"), &format!("#!/bin/sh\necho start >> '{}'\necho a.service\n", starts.display()));
+        std::fs::create_dir(d.join("desired")).unwrap();
+        let cfg = Config { cache: Duration::ZERO, systemctl: d.join("no-systemctl").display().to_string(), desired_dir: d.join("desired").display().to_string(), units_install: d.join("units-install").display().to_string(), ..test_config() };
+        let loom = Arc::new(Loom::with_limits(cfg, Arc::new(|_| Ok(Default::default()))));
+        for _ in 0..5 {
+            loom.units_snapshot().await;
+        }
+        assert_eq!(std::fs::read_to_string(starts).unwrap().lines().count(), 1);
+    }
+
     fn serve_claim_snapshot(run: &std::path::Path, ids: &[&str], at: i64) {
         use cockpit_ops::lcview::{apply_claim_views, ClaimView, Row, Snapshot};
         let mut s = Snapshot { now: at, ..Default::default() };

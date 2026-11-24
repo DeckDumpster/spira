@@ -1135,4 +1135,20 @@ mod tests {
         assert_eq!(declared_units(&src, "").await.unwrap(), BTreeSet::from(["new.service".to_string()]));
         assert_eq!(f.starts(), 1);
     }
+
+    #[test_id(tz26stj)]
+    #[tokio::test]
+    async fn a_held_set_and_a_fresh_installer_answer_render_the_same_rows_and_a_later_composite_wins_through_take() {
+        let f = InstallerFixture::new("echo a.service");
+        let h = History::default();
+        let fresh = take(&f.sources(), NOW, &h).await;
+        let held = take(&f.sources(), NOW, &h).await;
+        assert_eq!(f.starts(), 1);
+        assert_eq!(format!("{:?}", fresh.errors), format!("{:?}", held.errors));
+        assert_eq!(fresh.rows.len(), held.rows.len());
+        f.publish_composite("b.service");
+        let later = take(&f.sources(), NOW, &h).await;
+        assert!(later.errors.iter().all(|e| !e.contains("declared units")), "{:?}", later.errors);
+        assert_eq!(f.starts(), 1);
+    }
 }
