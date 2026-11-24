@@ -65,10 +65,14 @@ impl Config {
     pub fn pinned() -> Result<Config, String> {
         let max_age_s: u64 = cfg_parse("SPIRA_LC_SHIP_MAX_AGE_SECS")?;
         let ship_s: u64 = cfg_parse("SPIRA_LC_SHIP_SECS")?;
-        let stage_s = ship::stage_every_ms(ship_s, max_age_s) / 1_000;
-        let cycle_s = PUT_DEADLINE.as_secs().saturating_add(stage_s).saturating_add(ship_s.saturating_mul(2)).saturating_add(CADENCE_MS / 1_000);
-        Ok(Config { max_age_s, snapshot_s: cfg_parse("SPIRA_LC_SHIP_SNAPSHOT_SECS")?, cycle_s })
+        Ok(Config { max_age_s, snapshot_s: cfg_parse("SPIRA_LC_SHIP_SNAPSHOT_SECS")?, cycle_s: cycle_s(max_age_s, ship_s) })
     }
+}
+
+/// The shipper's worst healthy cycle, in seconds, for the configured freshness bound and ship tick.
+pub fn cycle_s(max_age_s: u64, ship_s: u64) -> u64 {
+    let stage_s = ship::stage_every_ms(ship_s, max_age_s) / 1_000;
+    PUT_DEADLINE.as_secs().saturating_add(stage_s).saturating_add(ship_s.saturating_mul(2)).saturating_add(CADENCE_MS / 1_000)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

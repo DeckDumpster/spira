@@ -383,3 +383,26 @@ fn a_standing_red_survives_an_err_and_blindness_says_cannot_tell_once_across_a_r
     run_for(&mut r, 600);
     assert_eq!(lines(&r).len(), 4);
 }
+
+#[test_id(tntjdq8)]
+#[test]
+fn the_cycle_is_an_upload_deadline_plus_the_staging_period_plus_two_ship_ticks_plus_a_tick() {
+    assert_eq!(cycle_s(60, 2), 334);
+    assert_eq!(cycle_s(100, 4), 300 + 25 + 8 + 15);
+    assert_eq!(cycle_s(8, 5), 300 + 5 + 10 + 15);
+}
+
+#[test_id(tw2w1y7)]
+#[test]
+fn a_snapshot_refusal_beside_a_stalled_revlog_pages_only_past_the_cycle() {
+    let dir = TempDir::new("off-box-snapshot-stall");
+    std::fs::write(dir.path().join("shipped"), "100\n").unwrap();
+    std::fs::write(dir.path().join("last-drain.json"), r#"{"at_ms":1,"kind":"snapshot","uploaded":0,"error":"403"}"#).unwrap();
+    let observed = observe_dir("s3://b/p/", dir.path(), || Ok(120)).unwrap();
+    let world: World = Arc::new(Mutex::new(Ok(observed)));
+    let mut r = rig(&world);
+    run_for(&mut r, CYCLE_S - 15);
+    assert!(lines(&r).is_empty(), "{:?}", lines(&r));
+    run_for(&mut r, 45);
+    assert_eq!(lines(&r).len(), 1, "{:?}", lines(&r));
+}
