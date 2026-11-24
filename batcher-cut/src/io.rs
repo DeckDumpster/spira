@@ -116,6 +116,9 @@ pub struct Env {
     pub land_unpause: Option<PathBuf>,
     /// `SPIRA_RESULTS_KEEP_DAYS` / `SPIRA_RESULTS_PRUNE_MAX`: how a write of results prunes its folder.
     pub results_retention: spira_config::results_retention::Retention,
+    /// The running release's `commit` and `repo` (its MANIFEST); an unreadable release is an `Err`, never a default.
+    pub commit: Result<String, String>,
+    pub repo: Result<String, String>,
 }
 
 fn now() -> u64 {
@@ -435,6 +438,7 @@ pub enum Cause {
     RoundFull { cap: usize },
     OutsideFeature { root: String },
     GateUnjudged { paths: Vec<String> },
+    NotInForce { dep: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -458,6 +462,7 @@ impl LeftOut {
             Cause::RoundFull { .. } => "round-full".into(),
             Cause::OutsideFeature { .. } => "outside-feature".into(),
             Cause::GateUnjudged { .. } => "gate-unjudged".into(),
+            Cause::NotInForce { .. } => "blocked-not-in-force".into(),
         }
     }
 
@@ -512,6 +517,10 @@ impl LeftOut {
                     format!("a PASS from its gate at {tip} (state CERTIFIED) readmits it; a no-verdict or red keeps it out"),
                 )
             }
+            Cause::NotInForce { dep } => (
+                format!("it depends on {dep}, a change to the round machinery that the running release does not yet carry"),
+                format!("a release carrying {dep} becoming active readmits it"),
+            ),
         };
         format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")
     }
@@ -1002,9 +1011,139 @@ pub fn certified_pool_left_out(env: &Env, repo: &Repo) -> Result<(Vec<Member>, V
         .into_iter()
         .collect();
     barred.extend(barred_ids(env, &stacked_on)?);
+    let (out, waiting) = left_out_not_in_force(env, repo, out, &content_blockers);
+    barred.extend(waiting.iter().map(|l| l.id.clone()));
+    left.extend(waiting);
     let (kept, stacked) = drop_stacked_on_barred(out, barred);
     left.extend(stacked);
     Ok((kept, left))
+}
+
+/// Leaves out each member whose content blocker changes a path the landing ref's gate owns
+/// while the running release does not yet carry that change: a blocker in this pool, or one
+/// LANDED outside the release. Nothing is checked unless the landing ref's definition has `own`
+/// lines and the release is this repo's; what cannot be read leaves the dependent out.
+fn left_out_not_in_force(
+    env: &Env,
+    repo: &Repo,
+    members: Vec<Member>,
+    content_blockers: &BTreeMap<String, Vec<String>>,
+) -> (Vec<Member>, Vec<LeftOut>) {
+    let pooled: BTreeMap<String, String> = members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    let deps: Vec<String> = members
+        .iter()
+        .flat_map(|m| content_blockers.get(&m.id).into_iter().flatten())
+        .filter(|d| !pooled.contains_key(d.as_str()))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let landed: BTreeMap<String, String> = lc_rows_of(env, &deps)
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.get("state").and_then(|s| s.as_str()) == Some("LANDED"))
+        .filter_map(|r| Some((r.get("bead_id")?.as_str()?.to_string(), r.get("reason")?.as_str()?.to_string())))
+        .collect();
+    let mut verdict: BTreeMap<String, Result<bool, String>> = BTreeMap::new();
+    let mut setup: Option<Result<NotInForceSetup, String>> = None;
+    let mut check = |dep: &str| -> Option<Result<bool, String>> {
+        let (tip, in_pool) = match (pooled.get(dep), landed.get(dep)) {
+            (Some(t), _) => (t.clone(), true),
+            (None, Some(t)) => (t.clone(), false),
+            _ => return None,
+        };
+        if let Some(v) = verdict.get(dep) {
+            return Some(v.clone());
+        }
+        let setup = setup.get_or_insert_with(|| not_in_force_setup(env, repo));
+        let v = match setup {
+            Err(e) => Err(e.clone()),
+            Ok((None, ..)) => Ok(false),
+            Ok((Some(def), base_sha, commit)) => {
+                let paths = if in_pool {
+                    changed_paths_checked(repo, base_sha, &tip)
+                } else {
+                    landed_paths(repo, base_sha, commit, &tip).map(Option::unwrap_or_default)
+                };
+                paths.map(|p| p.iter().any(|p| def.owns(p)))
+            }
+        };
+        verdict.insert(dep.to_string(), v.clone());
+        Some(v)
+    };
+    let mut kept = Vec::new();
+    let mut left = Vec::new();
+    for m in members {
+        let held = content_blockers
+            .get(&m.id)
+            .into_iter()
+            .flatten()
+            .find(|d| !matches!(check(d), None | Some(Ok(false))))
+            .cloned();
+        match held {
+            Some(dep) => left.push(LeftOut { id: m.id, tip: m.tip, cause: Cause::NotInForce { dep } }),
+            None => kept.push(m),
+        }
+    }
+    (kept, left)
+}
+
+type NotInForceSetup = (Option<gate::def::Def>, String, String);
+
+/// The landing ref's gate definition when it declares `own` lines and the release is this repo's
+/// (`None` otherwise), with the landing sha and the release commit.
+fn not_in_force_setup(env: &Env, repo: &Repo) -> Result<NotInForceSetup, String> {
+    let commit = env.commit.clone()?;
+    let release_repo = env.repo.clone()?;
+    let base_sha = resolve_base_sha(repo)?;
+    let Some(text) = gate_def_at(repo, &base_sha)? else { return Ok((None, base_sha, commit)) };
+    let def = gate::def::parse(&text).map_err(|e| format!("{} on the landing ref does not read: {e}", gate::def::PATH))?;
+    let ours = release_repo == repo.name && !def.own.is_empty();
+    Ok((ours.then_some(def), base_sha, commit))
+}
+
+fn is_ancestor(repo: &Repo, a: &str, b: &str) -> Result<bool, String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["merge-base", "--is-ancestor", a, b])
+        .output()
+        .map_err(|e| format!("git merge-base: {e}"))?;
+    match out.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(format!("git merge-base --is-ancestor {a} {b}: {}", String::from_utf8_lossy(&out.stderr).trim())),
+    }
+}
+
+/// The paths a LANDED member's change touched that the release `commit` lacks: `None` when `sha`
+/// is off the landing ref or already in `commit`; else its landing merge's diff against its first
+/// parent, or `commit...sha` when no merge took it in.
+fn landed_paths(repo: &Repo, base_sha: &str, commit: &str, sha: &str) -> Result<Option<Vec<String>>, String> {
+    if !is_ancestor(repo, sha, base_sha)? || is_ancestor(repo, sha, commit)? {
+        return Ok(None);
+    }
+    let merges = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["rev-list", "--merges", "--parents", "--reverse", "--ancestry-path", &format!("{sha}..{base_sha}")]),
+        "git rev-list landing merges",
+    )?;
+    let merge = merges.lines().find_map(|l| {
+        let mut f = l.split_whitespace();
+        let m = f.next()?;
+        f.skip(1).any(|p| p == sha).then(|| m.to_string())
+    });
+    let paths = match merge {
+        Some(m) => run(
+            Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", "--no-renames", &format!("{m}^1"), &m]),
+            "git diff landing merge",
+        )?
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect(),
+        None => changed_paths_checked(repo, commit, sha)?,
+    };
+    Ok(Some(paths))
 }
 
 /// The ids a content row's `dependencies` block it on. The lifecycle mirror of an edge is
@@ -6451,6 +6590,8 @@ pub fn lifecycle_tests_env(dir: &Path) -> Env {
         pause_lift_after: 900,
         land_unpause: None,
         results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
+        commit: Err("no release".into()),
+        repo: Err("no release".into()),
     }
 }
 

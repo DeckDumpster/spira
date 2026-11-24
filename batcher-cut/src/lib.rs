@@ -84,6 +84,13 @@ fn default_round_vm() -> Result<PathBuf, String> {
 /// `SPIRA_BATCHER_LAND_UNPAUSE` (a pause-file path; unset = off) are NOT registered keys (`ls
 /// spira/conf.d/` does not name them) — they stay bare `env::var` reads with their existing
 /// defaults.
+fn manifest_field(field: &str) -> Result<String, String> {
+    let root = spira_config::release_env::release_root_for_process()?;
+    spira_config::resolve::read_manifest_field(&root, field)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{}/MANIFEST has no `{field}`", root.display()))
+}
+
 pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> Result<Env, String> {
     let var = |k: &str| std::env::var(k).ok();
     Ok(Env {
@@ -133,6 +140,8 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         orphan_redrive_after: cfg_parse::<u64>("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS")?,
         pause_lift_after: cfg_parse::<u64>("SPIRA_BATCHER_PAUSE_LIFT_SECS")?,
         results_retention: spira_config::results_retention::Retention::from_config()?,
+        commit: manifest_field("commit"),
+        repo: manifest_field("repo"),
         land_unpause: var("SPIRA_BATCHER_LAND_UNPAUSE")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from),

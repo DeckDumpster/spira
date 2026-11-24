@@ -704,7 +704,7 @@ fn run_git_stdout(args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn read_manifest_field(repo: &Path, field: &str) -> Option<String> {
+pub fn read_manifest_field(repo: &Path, field: &str) -> Option<String> {
     let text = std::fs::read_to_string(repo.join("MANIFEST")).ok()?;
     for line in text.lines() {
         let mut parts = line.split_whitespace();

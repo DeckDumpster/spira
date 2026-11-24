@@ -200,6 +200,20 @@ note is left, so a failed note is retried. A record whose bead is no longer left
 A full round (`cap_round`) and the feature-first deferral (`select_round`) are not noted: both clear on
 their own. Tests: `io::pool_parity_tests`.
 
+### A blocker that changes the round machinery (`NotInForce`, `blocked-not-in-force`)
+
+A stack rides one round, except a member whose content blocker changes a path the landing ref's
+`gate.steps` declares `own`: such a member stays out of every round until the running release
+carries that blocker, because the release's own `round-vm` and `queue` would judge a tree that
+needs the blocker's version. The blocker counts when it is in this pool with an owned path in
+`changed_paths_checked`, or is LANDED (the row's `reason` is its tip) at a sha on the landing ref
+that is not an ancestor of the release `commit`, whose landing merge (`merge^1..merge`; with no
+such merge, `commit...sha`) changed an owned path. The member is left out and barred, so what
+stacks on it goes too; its exit is a release carrying the blocker becoming active. It applies only
+when the definition at the landing ref has `own` lines and the release's `repo` (MANIFEST, read
+into `Env.commit`/`Env.repo`) is this repository. An unreadable release, definition or git leaves
+the dependent out. Tests: `spira-runtime/tests/batcher_cut_blockers.rs`.
+
 ## Staged rounds
 
 A queue.local cut stages the next round while the open one's suites run. Once the VM
