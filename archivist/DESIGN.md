@@ -73,17 +73,18 @@ lib.sh's own copies are untouched and still serve every other caller (`dwarf.sh`
 `incident.sh`, and — for `slug` — `concierge.sh`'s comment pointing at this crate instead
 of reproducing the rule a second time).
 
-`ctx-meter.sh env <transcript>`, `archive.sh lineage <session> --json` and
-`mail send operator …` stay external tools, invoked by bare name exactly as the bash
-did (`mail.sh` itself was rewritten and retired by sp-ooh1k); none of the three are in
-this rewrite's scope. The agent itself (`${SPIRA_AGENT:-
+`archive.sh lineage <session> --json` and `mail send operator …` stay external tools,
+invoked by bare name exactly as the bash did (`mail.sh` itself was rewritten and retired by
+sp-ooh1k); neither is in this rewrite's scope. `ctx-meter env <transcript>` is the
+`ctx-meter` library called in process (`Seam::ctx_meter_env`), so a sweep starts no process
+to measure a session; its thresholds are `SPIRA_CTX_WARN`, `_HIGH` and `_LIMIT`. The agent itself (`${SPIRA_AGENT:-
 claude}`) is run through `timeout`, unchanged — `timeout`'s own exit code 124 is still
 what says "killed by the clock."
 
 ## Schema
 
 The per-session state file (`$SPIRA_RUN/archivist/<session>.state`, `src/state.rs`) is a
-contract with two readers — `ctx-meter.sh`'s status line and `cockpit/health.sh`'s
+contract with two readers — `ctx-meter`'s status line and `cockpit/health.sh`'s
 dashboard — unchanged: `state=sweeping|archiving|safe|failed|capacity|timeout`,
 `at_turn=<n>`, `items_filed=<n>`. `at_turn` is load-bearing: both readers demote a stale
 verdict to "safe as of N turns ago" on this number, and it is written as the work happens,

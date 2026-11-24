@@ -224,22 +224,12 @@ bead = "sp-ugnv1x"
 [[use_case]]
 id = "UC-cockpit-observability-36"
 tier = "T1"
-statement = "`ctx-meter.sh` session pointer: the operator's status-line tick owns the pointer; an idle second session cannot steal it until the holder is stale; a stale, deleted or corrupt pointer means 'no session'"
-
-[use_case.uncovered]
-reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
-date = "2026-11-12"
-bead = "sp-ugnv1x"
+statement = "`ctx-meter` session pointer: the operator's status-line tick owns the pointer; an idle second session cannot steal it until the holder is stale; a stale, deleted or corrupt pointer means 'no session'"
 
 [[use_case]]
 id = "UC-cockpit-observability-37"
 tier = "T1"
-statement = "`ctx-meter.sh` limits: burn rate is measured over the span not pairwise; a projection appears only if the window fills before it resets; flat/single-sample/short/1-point histories project nothing; a reset is a boundary; an absent or malformed window renders nothing (never 0%); the sample file is pruned to 6h and deduplicated; env mode prints `-`/`?`; the line is ≤110 columns"
-
-[use_case.uncovered]
-reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
-date = "2026-11-12"
-bead = "sp-ugnv1x"
+statement = "`ctx-meter` limits: burn rate is measured over the span not pairwise; a projection appears only if the window fills before it resets; flat/single-sample/short/1-point histories project nothing; a reset is a boundary; an absent or malformed window renders nothing (never 0%); the sample file is pruned to 6h and deduplicated; env mode prints `-`/`?`; the line is ≤110 columns"
 
 [[use_case]]
 id = "UC-cockpit-observability-38"

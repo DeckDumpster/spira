@@ -36,7 +36,7 @@ fn real_seam() -> (RealSeam, PathBuf) {
     let exe = std::env::current_exe().unwrap_or_else(|_| "archivist".into());
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe).unwrap_or_else(|| die("cannot find lib.sh (set SPIRA_HOME)"));
     let lib_sh = home.join("lib.sh");
-    (RealSeam { lib_sh }, home)
+    (RealSeam { lib_sh, meter: resolve_cfg().meter() }, home)
 }
 
 fn main() {

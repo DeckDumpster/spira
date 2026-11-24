@@ -9,6 +9,7 @@ members = [
     "loom",
     "cockpit/panel",
     "cockpit-collect",
+    "ctx-meter",
     "cockpit/ops",
     "broker",
     "czar-pass",

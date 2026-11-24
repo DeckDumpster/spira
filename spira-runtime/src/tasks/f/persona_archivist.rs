@@ -61,7 +61,7 @@
 //! # Replaces
 //!
 //! `spira-archivist-prod.service` and `.timer` and their manifest rows; children `bash lib.sh`,
-//! `ctx-meter.sh`, `archive.sh lineage`, `mail`, `timeout git` ×4 and `timeout claude`; only `git`
+//! `ctx-meter`, `archive.sh lineage`, `mail`, `timeout git` ×4 and `timeout claude`; only `git`
 //! and `claude` (inside the unit) remain. Pinned config: [`KEYS`].
 //!
 //! # Reverse
@@ -108,6 +108,9 @@ pub const KEYS: &[&str] = &[
     "SPIRA_TZ",
     "SPIRA_ARCHIVIST_EVERY",
     "SPIRA_ARCHIVIST_IDLE",
+    "SPIRA_CTX_WARN",
+    "SPIRA_CTX_HIGH",
+    "SPIRA_CTX_LIMIT",
     "SPIRA_ARCHIVIST_MODEL",
     "SPIRA_ARCHIVIST_TIMEOUT",
     "SPIRA_ARCHIVIST_PER_PASS",
@@ -508,7 +511,8 @@ fn setup(cfg: &BTreeMap<String, String>) -> Result<(archivist::config::Env, Path
     let env = archivist::config::from_lookup(&|k| cfg.get(k).cloned().ok_or_else(|| format!("{k} is not pinned")))?;
     let arc = Path::new(&env.run).join("archivist");
     let home = spira_config::resolve::locate_home_for_process()?;
-    Ok((env, arc, archivist::seam::RealSeam { lib_sh: home.join("lib.sh") }))
+    let seam = archivist::seam::RealSeam { lib_sh: home.join("lib.sh"), meter: env.meter() };
+    Ok((env, arc, seam))
 }
 
 fn now_secs() -> i64 {

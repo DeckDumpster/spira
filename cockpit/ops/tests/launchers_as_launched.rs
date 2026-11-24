@@ -162,22 +162,6 @@ fn the_registered_session_start_command_prints_the_watcher_summary_as_the_client
     assert!(!text(&broken).contains("probe"), "the summary survived without SPIRA_TOML: {}", text(&broken));
 }
 
-// covers: UC-operator-launchers-06, UC-operator-channel-47
-#[test_id(tf1gnae)]
-#[test]
-fn the_registered_status_line_command_prints_the_meter_as_the_client_runs_it() {
-    let rig = Rig::new();
-    let command = rig.paths().meter_command();
-    let meter_in = r#"{"context_window": {"current_usage": {}, "total_input_tokens": 12345}}"#;
-    let out = rig.as_client(&command, meter_in);
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
-    assert!(!out.stdout.is_empty() && !text(&out).contains("SPIRA_TOML"), "{}", text(&out));
-
-    let broken = rig.as_client(&unconfigured(&command), meter_in);
-    assert_ne!(broken.status.code(), Some(0), "the meter ran without SPIRA_TOML: {}", text(&broken));
-}
-
-
 fn link_built(rig: &Rig, name: &str) {
     std::os::unix::fs::symlink(testkit::bin_exe(name), rig.release.join("bin").join(name)).unwrap();
 }

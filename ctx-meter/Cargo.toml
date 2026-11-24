@@ -1,0 +1,40 @@
+[package]
+name = "ctx-meter"
+version = "1.0.0"
+edition = "2021"
+autotests = false
+description = "ctx-meter — the status line and the cockpit's context meter in one process that starts no other. Replaces spira/ctx-meter.sh."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ctx-meter"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "as_client"
+path = "tests/as_client.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "no_spawn"
+path = "tests/no_spawn.rs"
+required-features = ["integration"]
+
+[features]
+integration = ["release/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
+
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+sha2 = "0.10"
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+
+[dev-dependencies]
+release = { path = "../release" }
+spira-test-id = { path = "../spira-test-id" }
+system-paths = { path = "../system-paths" }
+testkit = { path = "../testkit" }

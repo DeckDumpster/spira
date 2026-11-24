@@ -1,7 +1,7 @@
 //! The impure boundary: the capacity pause (shared, cross-process state this crate must
 //! not re-derive — `dwarf` reads and writes the same pause file, `dwarf::capacity` is now
-//! both crates' shared implementation, wave 4.26), the three external tools archivist.sh
-//! always shelled out to (`ctx-meter.sh`, `archive.sh`, `mail`), and the agent process
+//! both crates' shared implementation, wave 4.26), the two external tools archivist.sh
+//! shells out to (`archive.sh`, `mail`), the `ctx-meter` library it calls in process, and the agent process
 //! itself. Production shells out for real (except capacity, in-process now); every test
 //! in this crate runs against a recording `FakeSeam`.
 
@@ -42,7 +42,7 @@ pub trait Seam {
     /// anything. Kept on the `Seam` trait as a still-correct general capability; unused by
     /// this crate's own binary today.
     fn probe(&self) -> HashMap<String, String>;
-    /// `ctx-meter.sh env <transcript>`, parsed into its `KEY=value` lines.
+    /// `ctx-meter env <transcript>`'s `KEY=value` lines, computed in process.
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String>;
     /// `archive.sh lineage <session> --json`, raw JSON-lines rows.
     fn archive_lineage(&self, session: &str) -> String;
@@ -65,6 +65,7 @@ pub const DIGEST_FROM: &str = "Archivist <archivist@spira>";
 
 pub struct RealSeam {
     pub lib_sh: PathBuf,
+    pub meter: ctx_meter::Config,
 }
 
 impl RealSeam {
@@ -186,16 +187,7 @@ impl Seam for RealSeam {
     }
 
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String> {
-        let o = spira_config::bounded::bounded("ctx-meter.sh").arg("env").arg(transcript).stdin(Stdio::null()).output();
-        let mut m = HashMap::new();
-        if let Ok(o) = o {
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    m.insert(k.to_string(), v.to_string());
-                }
-            }
-        }
-        m
+        ctx_meter::env(&self.meter, dwarf::util::now_epoch(), Some(transcript)).iter().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     fn archive_lineage(&self, session: &str) -> String {
@@ -285,6 +277,28 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
         .into_iter()
         .find(|c| c.join("lib.sh").is_file())
         .map(|c| c.canonicalize().unwrap_or(c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(tj1n8o9)]
+    #[test]
+    fn the_real_seam_measures_a_transcript_in_process_with_the_runs_thresholds() {
+        let dir = testkit::TempDir::new("archivist-seam");
+        let row = |n: usize| format!("{{\"message\":{{\"id\":\"m{n}\",\"usage\":{{\"input_tokens\":1000,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":{}}}}}}}\n", 250_000 + n * 1000);
+        let tp = dir.join("s1.jsonl");
+        std::fs::write(&tp, (0..3).map(row).collect::<String>()).unwrap();
+        let meter = ctx_meter::Config { warn: 300_000, high: 900_000, limit: 2_000_000, projects: dir.join("projects"), run: dir.join("run"), idle: 7, hhmm: ctx_meter::fmt::local_hhmm };
+        let seam = RealSeam { lib_sh: dir.join("lib.sh"), meter };
+        let env = seam.ctx_meter_env(&tp);
+        assert_eq!(env.get("SP_CTX_NOW").map(String::as_str), Some("253000"));
+        assert_eq!(env.get("SP_CTX_TURNS").map(String::as_str), Some("3"));
+        assert_eq!(env.get("SP_CTX_NEXT").map(String::as_str), Some("warn"), "the run's own warn line, not the shipped default");
+        assert_eq!(env.get("SP_CTX_HEADROOM").map(String::as_str), Some("47000"));
+        assert!(seam.ctx_meter_env(&dir.join("absent.jsonl")).get("SP_CTX_NOW").is_some_and(|v| v == "-"));
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! The per-session state file — a contract with two readers (`ctx-meter.sh`'s status
+//! The per-session state file — a contract with two readers (`ctx-meter`'s status
 //! line and `cockpit/health.sh`'s dashboard), both rendering
 //! `$SPIRA_RUN/archivist/<session>.state` as flat `key=value` lines:
 //!

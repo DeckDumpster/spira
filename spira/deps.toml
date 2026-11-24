@@ -312,6 +312,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v bd-meter)\""
 
 [[dep]]
+name = "ctx-meter"
+tier = "release"
+purpose = "Spira's ctx-meter binary, from the release's bin/ — the status line and the cockpit's context meter (replaces spira/ctx-meter.sh)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v ctx-meter)\""
+
+[[dep]]
 name = "bdq"
 tier = "release"
 purpose = "Spira's bdq binary, from the release's bin/ — the bead-store seam every lib.sh caller shims onto by bare name (replaces spira/lib.sh's bdq function, sp-w3h16)"

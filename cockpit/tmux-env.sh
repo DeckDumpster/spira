@@ -20,7 +20,7 @@
 # broke at once, and neither error named the cause:
 #
 #   ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker
-#   CTX    no session at the keyboard          (ctx-meter.sh finds no transcript to read)
+#   CTX    no session at the keyboard          (ctx-meter finds no transcript to read)
 #
 # It also carried a STALE CLAUDE_CODE_SESSION_ID and a CLAUDE_CODE_EXECPATH pinned to a
 # client version that had since been replaced, so the operator's session reported the dwarf's

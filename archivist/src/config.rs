@@ -15,12 +15,22 @@ pub struct Env {
     pub tz: String,
     pub every: u64,
     pub idle: i64,
+    pub ctx_warn: i64,
+    pub ctx_high: i64,
+    pub ctx_limit: i64,
     pub model: String,
     pub timeout: u64,
     pub per_pass: u32,
     pub timeout_retries: u32,
     pub fail_retries: u32,
     pub fail_backoff: u64,
+}
+
+impl Env {
+    /// The meter's configuration, from the thresholds and directories this run resolved.
+    pub fn meter(&self) -> ctx_meter::Config {
+        ctx_meter::Config { warn: self.ctx_warn, high: self.ctx_high, limit: self.ctx_limit, projects: self.token_projects.clone().into(), run: self.run.clone().into(), idle: self.idle, hhmm: ctx_meter::fmt::local_hhmm }
+    }
 }
 
 /// The binary's config struct constructor — called once, at the top of `main`'s dispatch.
@@ -45,6 +55,9 @@ pub fn from_lookup(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Env, 
         tz: get("SPIRA_TZ")?,
         every: num("SPIRA_ARCHIVIST_EVERY")?,
         idle: num("SPIRA_ARCHIVIST_IDLE")? as i64,
+        ctx_warn: num("SPIRA_CTX_WARN")? as i64,
+        ctx_high: num("SPIRA_CTX_HIGH")? as i64,
+        ctx_limit: num("SPIRA_CTX_LIMIT")? as i64,
         model: get("SPIRA_ARCHIVIST_MODEL")?,
         timeout: num("SPIRA_ARCHIVIST_TIMEOUT")?,
         per_pass: num("SPIRA_ARCHIVIST_PER_PASS")? as u32,

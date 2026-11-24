@@ -21,6 +21,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "archivist"
 version = "1.0.0"
 dependencies = [
+ "ctx-meter",
  "dwarf",
  "libc",
  "mail",
@@ -346,6 +347,21 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "ctx-meter"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "release",
+ "serde_json",
+ "sha2",
+ "spira-config",
+ "spira-otel",
+ "spira-test-id",
+ "system-paths",
+ "testkit",
 ]
 
 [[package]]
