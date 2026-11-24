@@ -530,7 +530,7 @@ impl Run<'_> {
                         }
                     }
                 }
-                self.note("Submitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged.");
+                self.note(&format!("{} and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged.", bead::HARNESS_SUBMIT_NOTE));
                 self.log(&format!("{f}: {id} submitted — no attempt charged"));
                 self.release();
                 // The dwarf exits with its own rc (0: the bead was handed on, so the unit never
@@ -640,7 +640,7 @@ impl Run<'_> {
                     if let Some(held) = held.filter(|h| h.code != 0) {
                         self.log(&format!("{f}: {id} manual hold refused (rc={}): {}", held.code, held.stdout.trim()));
                     }
-                    self.note(&format!("No progress ({o}): {reason}\n\nAfter {streak} consecutive no-progress exits at {tip}, routed to the Concierge as a blocking question: the bead is not claimable again until it is answered. No attempt charged."));
+                    self.note(&format!("{}{o}): {reason}\n\nAfter {streak} consecutive no-progress exits at {tip}, routed to the Concierge as a blocking question: the bead is not claimable again until it is answered. No attempt charged.", bead::HARNESS_NO_PROGRESS_NOTE));
                     self.log(&format!("{f}: {id} no-progress streak {streak}/{cap} at {tip} — routed to the Concierge, no attempt charged"));
                 } else {
                     let backoff_min = decide::no_progress_backoff_minutes(streak);
@@ -652,7 +652,7 @@ impl Run<'_> {
                     if let Some(held) = held.filter(|h| h.code != 0) {
                         self.log(&format!("{f}: {id} snooze hold refused (rc={}): {}", held.code, held.stdout.trim()));
                     }
-                    self.note(&format!("No progress ({o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged."));
+                    self.note(&format!("{}{o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged.", bead::HARNESS_NO_PROGRESS_NOTE));
                     self.log(&format!("{f}: {id} no-progress streak {streak} at {tip} — held {backoff_min}m until {until}, no attempt charged"));
                 }
             }
