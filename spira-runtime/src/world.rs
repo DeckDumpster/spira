@@ -1232,17 +1232,16 @@ impl World {
                 .map_err(|why| format!("{}: no landing ref resolves: {why}", row.name))?;
             let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
             let log_args = ["log", land.as_str(), &since, "--format=%ct %s"];
-            let read = || -> Result<(u64, Vec<(u64, String)>), String> {
+            let read = || -> Result<Vec<(u64, String)>, String> {
                 let log = git_ok_with(git, Path::new(&row.path), &log_args)
                     .or_else(|e| if self.has_time_to_reread() { git_ok_with(git, Path::new(&row.path), &log_args) } else { Err(e) })
                     .map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
-                Ok((from, String::from_utf8_lossy(&log).lines().filter_map(|l| l.split_once(' ')).filter_map(|(at, subject)| Some((at.parse::<u64>().ok()?, subject.to_string()))).collect()))
+                Ok(String::from_utf8_lossy(&log).lines().filter_map(|l| l.split_once(' ')).filter_map(|(at, subject)| Some((at.parse::<u64>().ok()?, subject.to_string()))).collect())
             };
-            let (read_from, rows) = match spira_config::git_refs::sha_of(Path::new(&row.path), &land) {
+            let rows = match spira_config::git_refs::sha_of(Path::new(&row.path), &land) {
                 Some(tip) => spira_config::git_refs::held(Path::new(&row.path), &format!("landed {land}"), &tip, read)?,
                 None => read()?,
             };
-            let rows = if read_from > from { read()?.1 } else { rows };
             let mut landed: BTreeMap<String, u64> = BTreeMap::new();
             for (at, subject) in rows.iter().filter(|(at, _)| *at >= from) {
                 let at = *at;

@@ -128,6 +128,9 @@ pub fn sha_of(repo: &Path, name: &str) -> Option<String> {
 pub fn remotes(repo: &Path) -> Option<Vec<String>> {
     let (_, common) = git_dirs(repo)?;
     let text = fs::read_to_string(common.join("config")).ok()?;
+    if text.to_ascii_lowercase().contains("worktreeconfig") {
+        return None;
+    }
     let mut names = vec![];
     for line in text.lines().map(str::trim).filter(|l| l.starts_with('[')) {
         let lower = line.to_ascii_lowercase();
@@ -322,6 +325,8 @@ mod tests {
         assert_eq!(remotes(d.path()), Some(vec!["origin".to_string(), "up stream".to_string()]));
         fs::write(git.join("config"), "[remote \"origin\"]\n[include]\n\tpath = more\n").unwrap();
         assert_eq!(remotes(d.path()), None);
+        fs::write(git.join("config"), "[extensions]\n\tworktreeConfig = true\n[remote \"origin\"]\n").unwrap();
+        assert_eq!(remotes(d.path()), None, "a per-worktree config holds remotes this does not read");
     }
 
     #[test_id(t6qv35m)]
