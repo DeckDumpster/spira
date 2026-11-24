@@ -2448,6 +2448,9 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                         ids.join(", ")
                     )));
                 }
+                if !prior_suites.iter().any(|s| corpus.contains(s)) {
+                    return Ok(RoundEnd::Land { members, attribution_secs: None });
+                }
             }
             FilterEject::BaseLines(why) => return Ok(RoundEnd::Blocked(why)),
             FilterEject::Survivors(members) => {
@@ -8146,7 +8149,7 @@ pub(crate) mod tests {
 
     #[test_id(tgbqnot)]
     #[test]
-    fn a_flip_in_the_corpus_pass_red_is_disabled_and_the_round_runs_its_own_pass_without_it() {
+    fn a_flip_in_the_corpus_pass_red_is_disabled_and_the_round_lands_without_a_corpus_run() {
         let mut f = Fake::new(|_, _| false);
         f.prior = Some(flip_red(&[FLIP_UNIT]));
         f.bisects = true;
@@ -8157,12 +8160,7 @@ pub(crate) mod tests {
             ops.disabled,
             vec![vec!["test:t0facta".to_string()]]
         );
-        assert_eq!(
-            f.main_kind.len(),
-            1,
-            "one certifying pass: {:?}",
-            f.main_kind
-        );
+        assert!(f.main_kind.is_empty(), "no corpus run: {:?}", f.main_kind);
         assert_eq!(land_ids(end), vec!["m1", "m2", "m3"]);
     }
 

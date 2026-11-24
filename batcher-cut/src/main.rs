@@ -2579,6 +2579,13 @@ fn attribute_in(
         install_fault_outcome(&repo, &mut ops, &members, &fault);
     }
     runner.close();
+    let end = match (&end, o.batch.as_deref()) {
+        (Ok(drive::RoundEnd::Land { .. }), Some(b)) => match io::keep_attribution_deny_list(&env_.run, b, &runner.results) {
+            Ok(()) => end,
+            Err(e) => Ok(drive::RoundEnd::Blocked(format!("the attribution's deny list could not be kept for the round: {e}"))),
+        },
+        _ => end,
+    };
     if let (Some(b), false) = (
         o.batch.as_deref(),
         matches!(end, Ok(drive::RoundEnd::Land { .. })),
@@ -3553,6 +3560,19 @@ mod cut_tests {
         let err = io::disable_flips_with(&mut |_| Ok("sp-n".into()), &mut io::through_registry(d.join("refuse").to_str().unwrap(), &env), &results, "b", &ids).unwrap_err();
         assert!(err.contains("locked") && err.contains("sp-n"), "{err}");
         assert_eq!(std::fs::read_to_string(results.join("deny-list")).unwrap(), before);
+    }
+
+    #[test_id(trfipfu)]
+    #[test]
+    fn a_flip_row_reaches_the_deny_list_the_rounds_next_certify_reads_and_a_missing_list_is_an_error() {
+        let d = testkit::TempDir::new("batcher-cut-flip-kept");
+        let (env, results, bin, _) = flip_fixture(&d);
+        io::disable_flips_with(&mut |_| Ok("sp-new1".into()), &mut io::through_registry(bin.to_str().unwrap(), &env), &results, "b", &["test:t0aaaaa".to_string()]).unwrap();
+        let run = d.join("run");
+        io::keep_attribution_deny_list(&run, "r-1", &results).unwrap();
+        let kept = std::fs::read_to_string(io::round_results_dir(&run, "r-1").join("deny-list")).unwrap();
+        assert!(kept.contains("rows=2") && kept.contains("disabled\ttest:t0aaaaa\tsp-new1\t5000\n"), "{kept}");
+        assert!(io::keep_attribution_deny_list(&run, "r-1", &d.join("nowhere")).is_err());
     }
 
     fn kept_row() -> io::KeptRow {

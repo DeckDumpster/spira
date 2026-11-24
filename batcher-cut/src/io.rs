@@ -2720,6 +2720,17 @@ pub fn keep_attribution_results(run: &Path, batch: &str, from: &Path, after_pass
     }
 }
 
+/// Puts the deny list an attribution ended with, flip rows included, in the round's kept results,
+/// where the round's next certify reads it.
+pub fn keep_attribution_deny_list(run: &Path, batch: &str, evidence: &Path) -> Result<(), String> {
+    let file = crate::vm::DenySnapshot::FILE;
+    let text = fs::read_to_string(evidence.join(file)).map_err(|e| format!("{}: {e}", evidence.join(file).display()))?;
+    let kept = round_results_dir(run, batch);
+    fs::create_dir_all(&kept).map_err(|e| format!("{}: {e}", kept.display()))?;
+    let (tmp, to) = (kept.join(format!("{file}.tmp")), kept.join(file));
+    fs::write(&tmp, text).and_then(|()| fs::rename(&tmp, &to)).map_err(|e| format!("{}: {e}", to.display()))
+}
+
 pub fn round_results_dir(run: &Path, batch: &str) -> PathBuf {
     run.join("rounds").join(format!("{batch}.results"))
 }

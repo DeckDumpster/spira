@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command> --ci-image <image> [--ci-workdir <dir>]] [--deny-list <file>] [--candidate-recipe <sha>] [--place host]\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  --place host: run on this host only, never spill; wait for the host slot within the run's wall, then refuse naming the slot holder\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command> --ci-image <image> [--ci-workdir <dir>]] [--deny-list <file>] [--only <step>] [--candidate-recipe <sha>] [--place host]\n  --only <step>: set the VM up, then run that one step whole (a suite file, or `integration-tests`) under the deny list; no lint, fences or other tests\n  --candidate-recipe <sha>: the recipe of a round image still baking; an EC2 placement with no image carrying it exits 78 before any launch, a host or local placement ignores it\n  --place host: run on this host only, never spill; wait for the host slot within the run's wall, then refuse naming the slot holder\n  exit 78: placed on EC2 and the candidate image is pending; run again once it exists";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -57,6 +57,8 @@ pub struct RunArgs {
     pub deny_list: Option<String>,
     /// `--place host`: never spill to EC2; wait for the host slot.
     pub pin_host: bool,
+    /// `--only <step>`: after set-up, run this one step whole and nothing else.
+    pub only: Option<String>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -90,6 +92,13 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
                 spira_config::unit_tier::DenyList::parse(&text).map_err(|e| format!("round-vm run: --deny-list {f}: {e}"))?;
                 r.deny_list = Some(text);
             }
+            "--only" => {
+                let v = val()?;
+                if v.trim().is_empty() || v.contains(char::is_whitespace) {
+                    return Err(format!("round-vm run: --only takes one step name, not {v:?}"));
+                }
+                r.only = Some(v);
+            }
             "--ci-entry" => r.ci_entry = Some(val()?).filter(|v| !v.trim().is_empty()),
             "--ci-image" => r.ci_image = Some(val()?).filter(|v| !v.trim().is_empty()),
             "--ci-workdir" => r.ci_workdir = Some(val()?).filter(|v| !v.trim().is_empty()),
@@ -109,6 +118,9 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
     }
     if r.ci_entry.is_some() && r.ci_image.is_none() {
         return Err("round-vm run: --ci-entry needs --ci-image: a round runs the repository's CI entry point in its declared image".into());
+    }
+    if r.only.is_some() && (r.ci_entry.is_some() || r.attr_spool.is_some() || r.suites.is_some()) {
+        return Err("round-vm run: --only runs one step of the harness round; it takes no --ci-entry, --attr-spool or --suites".into());
     }
     if r.no_corpus && r.attr_spool.is_none() {
         return Err("round-vm run: --no-corpus is valid only with --attr-spool".into());
@@ -196,6 +208,8 @@ pub struct BatchJob {
     pub fences: String,
     /// `test-registry deny-list` text; empty composes no filter anywhere.
     pub deny_list: String,
+    /// The one step the VM runs after set-up; empty runs the whole round.
+    pub only: String,
     /// Set by the host when the VM showed no sign of the round: `run_batch` stops the batch's ssh.
     pub cancel: std::sync::atomic::AtomicBool,
 }
@@ -336,7 +350,7 @@ pub const REMOTE_SCRIPT: &str = concat!(r#"set -Eeuo pipefail
 unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" round_ref="${12}" round_sha="${13}"
 testenv_limits="${15:-}" resume_url="${16:-}" fences="${17:-}" want_tag="${18:-}"
-deny_list="${19:-}" deny_filter_line="${20:-}" integ_skips="${21:-}"
+deny_list="${19:-}" deny_filter_line="${20:-}" integ_skips="${21:-}" only="${24:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
 : > ~/round-runner.out
 exec > >(tee -a ~/round-script.log)
@@ -1052,6 +1066,35 @@ fi
 # unit.json records it and no suite is run. THEN THE INTEGRATION TESTS (every crate's tests/) run beside the suites, and a red there makes the round red: integration.json.
 # No suite has run when either record is written, so both go at the top of the results, where
 # the host pulls them by name (TEST_PHASE_FILES).
+if [ -n "$only" ]; then
+    phase "only-$only"
+    rdir="$HOME/round-work/.runtime/spira/batch-results"
+    mkdir -p "$rdir"
+    only_t0=$(date +%s)
+    case "$only" in
+    integration-tests)
+        integ_hung="$HOME/round-integration-hung"
+        : > "$integ_hung"
+        rc=0
+        unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#"$integ_skips > ~/round-integration-tests.log 2>&1 || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            phase_failed integration-tests "$rc"
+            test_phase_red integration-tests ~/round-integration-tests.log "$rc" "$(( $(date +%s) - only_t0 ))" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
+        fi
+        ;;
+    *)
+        : > ~/round-runner.out
+        testenv --artifacts "$HOME/round-work/target/release" --mode parallel --suites "$only" round 2>&1 | tee -a ~/round-runner.out >&2
+        rc=${PIPESTATUS[0]}
+        [ "$rc" -eq 0 ] || phase_failed "$only" "$rc"
+        ;;
+    esac
+    echo "round-vm: ONLY $only: rc=$rc, $(( $(date +%s) - only_t0 ))s" >&2
+    kill "$sampler_pid" 2>/dev/null
+    mkdir -p ~/round-bins
+    find target/release -maxdepth 1 -type f -executable -exec cp -t ~/round-bins {} + 2>/dev/null
+    exit "$rc"
+fi
 phase unit-tests
 rdir="$HOME/round-work/.runtime/spira/batch-results"
 write_unit_timings() {
@@ -1345,6 +1388,7 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(deny.integration_skips());
     args.push(job.ci_image.clone().unwrap_or_default());
     args.push(job.ci_workdir.clone().unwrap_or_default());
+    args.push(job.only.clone());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
@@ -2623,7 +2667,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
 
 /// The round is judged against a landing ref, so it runs the lint and the tree's fences.
 fn lints(args: &RunArgs) -> bool {
-    args.base.is_some() && args.ci_entry.is_none()
+    args.base.is_some() && args.ci_entry.is_none() && args.only.is_none()
 }
 
 /// The suite slots for a spilled VM: one per vCPU of its type, unless the operator or the caller
@@ -2893,6 +2937,7 @@ fn on_vm_run(
         resume_url: resume_url_for(&vm.handle, args.ci_entry.is_none(), cfg.resume_url.as_deref(), env.host_plan.map(|p| p.home.as_path())),
         fences: args.fences.clone().unwrap_or_default(),
         deny_list: args.deny_list.clone().unwrap_or_default(),
+        only: args.only.clone().unwrap_or_default(),
         cancel: Default::default(),
     };
     if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
@@ -4679,7 +4724,7 @@ mod tests {
             ci_entry: Some("deploy/ci.sh all".into()),
             ci_image: Some("registry.example/rust:1".into()),
             ci_workdir: Some("work".into()),
-            fences: String::new(), deny_list: String::new(),
+            fences: String::new(), deny_list: String::new(), only: String::new(),
             cancel: Default::default(),
         }
     }
@@ -4688,7 +4733,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work'", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -4732,10 +4777,27 @@ mod tests {
         let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
         let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
         let cmd = remote_command(&job);
-        let tail = format!("'{}' '{}' '{}' 'registry.example/rust:1' 'work'", text, deny.config_filter_line(), deny.integration_skips());
+        let tail = format!("'{}' '{}' '{}' 'registry.example/rust:1' 'work' ''", text, deny.config_filter_line(), deny.integration_skips());
         assert!(cmd.ends_with(&tail), "{cmd}");
         job.deny_list = String::new();
-        assert!(remote_command(&job).ends_with(" '' '' '' 'registry.example/rust:1' 'work'"));
+        assert!(remote_command(&job).ends_with(" '' '' '' 'registry.example/rust:1' 'work' ''"));
+    }
+
+    #[test_id(thuax12)]
+    #[test]
+    fn only_names_one_step_the_vm_runs_after_set_up_and_the_round_lints_nothing_around_it() {
+        let a = parse_run_args(&args(&["t", "--base", "main", "--only", "test-x.sh"])).unwrap();
+        assert_eq!(a.only.as_deref(), Some("test-x.sh"));
+        assert!(!lints(&a) && lints(&RunArgs { only: None, ..a.clone() }));
+        for bad in [&["t", "--only", "a b"][..], &["t", "--only", ""], &["t", "--only", "x", "--suites", "y"], &["t", "--only"]] {
+            assert!(parse_run_args(&args(bad)).unwrap_err().contains("--only"), "{bad:?}");
+        }
+        let job = BatchJob { only: "integration-tests".into(), ..sample_job() };
+        assert!(remote_command(&job).ends_with(" 'work' 'integration-tests'"));
+        let only = REMOTE_SCRIPT.find("if [ -n \"$only\" ]; then").unwrap();
+        let exit = only + REMOTE_SCRIPT[only..].find("exit \"$rc\"\nfi\n").unwrap();
+        assert!(REMOTE_SCRIPT[exit..].starts_with("exit \"$rc\"\nfi\nphase unit-tests\n"), "the only step ends the script before the unit tier");
+        assert!(REMOTE_SCRIPT[only..exit].contains("--suites \"$only\" round") && !REMOTE_SCRIPT[only..exit].contains("spira-lint"));
     }
 
     #[test_id(t30t2bt)]
@@ -4926,9 +4988,9 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, image_tag: None,
-            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), cancel: Default::default(),
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), only: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("creds"));
