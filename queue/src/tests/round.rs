@@ -11339,6 +11339,12 @@ fn forced_reopen(t: &T, bead: &str) -> String {
         .unwrap_or_else(|| panic!("no reopen of {bead}: {:?}", t.lib.calls.borrow()))
 }
 
+fn assert_forced_comment(t: &T, forced: &str) {
+    let calls = t.lib.calls.borrow();
+    let c = calls.iter().find(|c| c.starts_with("comment sp-b") && c.contains("will force")).unwrap_or_else(|| panic!("no force comment: {calls:?}"));
+    assert!(c.trim_end().ends_with(&format!("suites regardless of SPIRA_CERTIFY_SUITES: {forced}")), "{c}");
+}
+
 #[test_id(tfyxs0f)]
 #[test]
 fn a_round_eject_forces_a_listed_fence_and_drops_an_unlisted_one_and_release_verify() {
@@ -11350,6 +11356,7 @@ fn a_round_eject_forces_a_listed_fence_and_drops_an_unlisted_one_and_release_ver
     seed_suite(&t, "test-b.sh");
     assert_eq!(t.run(&args), 0, "{}", t.err());
     assert_eq!(forced_reopen(&t, "sp-b"), "fence-listed,test-b.sh");
+    assert_forced_comment(&t, "fence-listed,test-b.sh");
 }
 
 #[test_id(tatd4l1)]
@@ -11364,4 +11371,5 @@ fn a_withdrawal_forces_a_listed_fence_and_drops_an_unlisted_one_and_release_veri
         t.err()
     );
     assert_eq!(forced_reopen(&t, "sp-b"), "fence-listed,test-b.sh");
+    assert_forced_comment(&t, "fence-listed,test-b.sh");
 }
