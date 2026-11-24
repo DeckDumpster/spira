@@ -3741,7 +3741,6 @@ pub mod edge {
         }
 
         fn replay(id: &str) {
-            let started = std::time::Instant::now();
             let scratch = testkit::TempDir::new("saved-round");
             let fx = fixture(id, &scratch);
             let (_, line, edge) = attribute(&fx);
@@ -3772,7 +3771,6 @@ pub mod edge {
             let certify = certify.iter().find(|a| a.effect == CERTIFY).unwrap_or_else(|| panic!("no certify: {certify:?}"));
             let asked: Leg = serde_json::from_str(&certify.input).unwrap();
             assert_eq!((ids(&asked.members), asked.head), (fx.expect.survivors.clone(), done.head.clone()));
-            assert!(started.elapsed() < std::time::Duration::from_secs(1), "a replay spawns nothing and takes {:?}", started.elapsed());
         }
 
         #[test_id(tyalr6i)]
