@@ -18,11 +18,5 @@ spira-store = { path = "../spira-store" }
 name = "tsd-lifecycle-export"
 path = "src/main.rs"
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }

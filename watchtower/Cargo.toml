@@ -53,9 +53,3 @@ path = "src/main.rs"
 spira-test-id = { path = "../spira-test-id" }
 spira-claim = { path = "../spira-claim" }
 testkit = { path = "../testkit" }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true

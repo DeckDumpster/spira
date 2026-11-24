@@ -25,11 +25,5 @@ schemars = "0.8"
 name = "test-plan"
 path = "src/main.rs"
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }

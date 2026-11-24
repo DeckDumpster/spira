@@ -12,12 +12,6 @@ spira-otel = { path = "../spira-otel" }
 forge = { path = "../forge" }
 serde_json = "1"
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
