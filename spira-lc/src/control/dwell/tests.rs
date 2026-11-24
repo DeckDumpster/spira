@@ -375,17 +375,31 @@ fn a_warm_dwell_reads_the_same_keys_however_many_beads_are_ask_held_and_however_
 
 #[test_id(t9vv4rf)]
 #[test]
-fn an_ask_held_record_with_no_ask_since_cannot_tell_and_names_the_migration() {
+fn an_ask_held_record_with_no_ask_since_cannot_tell_while_a_dated_ask_answers() {
     use state_store::{Backend, Object, Rev, Write};
     let b = MemBackend::new();
     let rec = serde_json::json!({ "bead_id": "sp-old", "state": "Rework", "holds": ["Ask"], "version": 1, "since": 5, "repo": "harness", "updated_at": 5 });
+    let dated = serde_json::json!({ "bead_id": "sp-new", "state": "Rework", "holds": ["Ask"], "version": 1, "since": 5, "ask_since": 40, "repo": "harness", "updated_at": 5 });
     let main = b.head().unwrap() + 1;
-    b.commit(main - 1, &[Write::Put { key: keys::lifecycle("sp-old"), value: Object::new(rec).encode(), create_rev: Rev::new(main, 0), prev: None }]).unwrap();
+    b.commit(
+        main - 1,
+        &[
+            Write::Put { key: keys::lifecycle("sp-old"), value: Object::new(rec).encode(), create_rev: Rev::new(main, 0), prev: None },
+            Write::Put { key: keys::lifecycle("sp-new"), value: Object::new(dated).encode(), create_rev: Rev::new(main, 1), prev: None },
+        ],
+    )
+    .unwrap();
     let clock = VirtualClock::new(0);
     let s = Store::new(Contract::open(b, Ports::virtual_clock(&clock), Config { min_lock_ttl_ms: FLOOR_MS }).unwrap(), FLOOR_MS);
     let (code, out) = verbs::run(&s, &["dwell".into(), "--now".into(), "100".into()]);
-    assert_eq!(code, 2, "{out}");
-    assert!(out.contains("cannot tell") && out.contains("sp-old") && out.contains("ask_since") && out.contains("migration"), "{out}");
+    assert_eq!(code, 0, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let row = |id: &str| v["beads"].as_array().unwrap().iter().find(|b| b["id"] == id).unwrap().clone();
+    let old = row("sp-old");
+    assert!(old["cannot_tell"].as_str().unwrap().contains("cannot tell: sp-old"), "{out}");
+    assert!(old.get("ask_since").is_none(), "{out}");
+    assert_eq!(row("sp-new")["ask_since"], 40, "{out}");
+    assert!(row("sp-new").get("cannot_tell").is_none(), "{out}");
 }
 
 /// Run by hand, release as lc-serve runs:

@@ -45,7 +45,7 @@ fn config() -> Config {
 }
 
 fn bead(id: &str, repo: &str, state: &str, since: u64) -> Bead {
-    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, held: false, tip: None, landed: false, gate: None, waits_on: None, wait_from: None, pr: None }
+    Bead { id: id.into(), repo: repo.into(), state: state.into(), since, ask_held: false, ask_since: None, cannot_tell: None, held: false, tip: None, landed: false, gate: None, waits_on: None, wait_from: None, pr: None }
 }
 
 fn last(repo: &str, kinds: &[(&str, u64)]) -> BTreeMap<String, BTreeMap<String, u64>> {
@@ -2051,4 +2051,36 @@ fn a_request_inside_the_bound_with_its_outcome_past_it_waits_and_both_past_it_pa
     let r = start(timing_out_rig(restart_config(&past)));
     assert_eq!(blind_pages(&r).len(), 1, "{:?}", lines(&r));
     assert!(restart_waits(&r).is_empty(), "{:?}", lines(&r));
+}
+
+const UNDATED: &str = "cannot tell: sp-old is held by an ask but has no ask_since";
+
+fn dwell_with_an_undated_ask(now: u64, dated: bool) -> Snapshot {
+    let old = if dated { serde_json::json!({ "id": "sp-old", "repo": "spira", "state": "REWORK", "since": now - 3 * HOUR, "ask_held": true, "ask_since": now - 10 * MIN, "held": true }) } else { serde_json::json!({ "id": "sp-old", "repo": "spira", "state": "REWORK", "since": now - 3 * HOUR, "ask_held": true, "held": true, "cannot_tell": UNDATED }) };
+    let beads = serde_json::json!([old, { "id": "sp-d1", "repo": "other", "state": "IN_DELIVERY", "since": now - 2 * HOUR }]);
+    let mut s = healthy(now);
+    let mut from_dwell = snapshot_of(&serde_json::json!({ "beads": beads, "horizon": now - 6 * HOUR, "last": { "spira": { "Claim": now - 10 * MIN, "Submit": now - 5 * MIN, "Deliver": now - 15 * MIN, "Delivered": now - 20 * MIN }, "other": { "Claim": now - 10 * MIN, "Submit": now - 5 * MIN, "Deliver": now - 3 * HOUR, "Delivered": now - 3 * HOUR } } }), Some(now - 10 * MIN), BTreeMap::new()).unwrap();
+    from_dwell.owners.insert(ASK_EDGE.into(), Owner { beat: Some(now - 5), failed: None });
+    s.beads = from_dwell.beads;
+    s.last = from_dwell.last;
+    s.owners = from_dwell.owners;
+    s
+}
+
+#[test_id(tpaw667)]
+#[test]
+fn an_ask_the_store_cannot_date_pages_blind_once_per_episode_and_a_beating_owner_does_not_silence_it() {
+    let (mut r, w) = rig_at(|now| dwell_with_an_undated_ask(now, false));
+    r.advance(3 * 300_000).unwrap();
+    let pages = |r: &TaskRig| lines(r).into_iter().filter(|l| l.contains("P0 BLIND") && l.contains(UNDATED)).count();
+    assert_eq!(pages(&r), 1, "{:?}", lines(&r));
+    assert!(log_lines(&r).iter().all(|l| l.contains("BLIND ASK: cannot tell: sp-old")), "the table line names it: {:?}", log_lines(&r));
+    assert!(stalls(&r).iter().any(|l| l.contains("IN_DELIVERY→LANDED (other)")), "other stalls still page: {:?}", stalls(&r));
+    assert!(!stalls(&r).iter().any(|l| l.contains("ASK→ANSWERED")), "{:?}", stalls(&r));
+    *w.lock().unwrap() = dwell_with_an_undated_ask(T0, true);
+    r.advance(300_000).unwrap();
+    assert_eq!(pages(&r), 1, "dated again: no new page");
+    *w.lock().unwrap() = dwell_with_an_undated_ask(T0, false);
+    r.advance(300_000).unwrap();
+    assert_eq!(pages(&r), 2, "undatable again after recovery: one more page");
 }

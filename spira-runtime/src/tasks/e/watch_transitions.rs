@@ -226,6 +226,9 @@ pub struct Bead {
     pub ask_held: bool,
     #[serde(default)]
     pub ask_since: Option<u64>,
+    /// Why the store cannot date this bead's ask; such a bead is in no ASK age and no stall.
+    #[serde(default)]
+    pub cannot_tell: Option<String>,
     /// Any hold on the record: a held bead is not waiting for a cut.
     #[serde(default)]
     pub held: bool,
@@ -419,6 +422,8 @@ pub struct Carry {
     pub resumed_at: u64,
     /// The rows over their bound on the last readable pass: a row wakes the inbox only when it enters this set.
     pub over: BTreeSet<String>,
+    /// The beads whose undatable ask was already paged BLIND and have not been dated since.
+    pub undated: BTreeSet<String>,
 }
 
 /// One state's waiting work: count and ages, seconds.
@@ -448,7 +453,7 @@ fn row_of(mut ages: Vec<u64>) -> Row {
 fn ages(snap: &Snapshot, scope: &str, name: &str, now: u64) -> Vec<u64> {
     let in_scope = |b: &&Bead| scope == ALL || b.repo == scope;
     if name == "ASK" {
-        return snap.beads.iter().filter(in_scope).filter(|b| b.ask_held).map(|b| now.saturating_sub(b.ask_since.unwrap_or(b.since))).collect();
+        return snap.beads.iter().filter(in_scope).filter(|b| b.ask_held).filter_map(|b| b.ask_since).map(|t| now.saturating_sub(t)).collect();
     }
     let waiting = |b: &&Bead| b.state == name && (!matches!(name, "SUBMITTED" | "CERTIFIED") || b.awaits_cut());
     snap.beads.iter().filter(in_scope).filter(waiting).map(|b| now.saturating_sub(b.since)).collect()
@@ -501,6 +506,11 @@ pub fn row_text(name: &str, r: &Row) -> String {
     format!("{name} {} oldest {} p50 {} p90 {}", r.count, dur(r.oldest), dur(r.p50), dur(r.p90))
 }
 
+/// What each bead the store cannot date an ask for says, in id order.
+pub fn undated(snap: &Snapshot) -> BTreeMap<&str, &str> {
+    snap.beads.iter().filter_map(|b| Some((b.id.as_str(), b.cannot_tell.as_deref()?))).collect()
+}
+
 /// The period's one table line.
 pub fn table_line(snap: &Snapshot, now: u64, cfg: &Config) -> String {
     let t = table(snap, ALL, now);
@@ -513,7 +523,7 @@ pub fn table_line(snap: &Snapshot, now: u64, cfg: &Config) -> String {
         }
         repos.push(format!("{repo}: {}", parts.join(" ")));
     }
-    format!("WAIT {} || since last — {}{}", states.join(" | "), if repos.is_empty() { "no repo has work or events".into() } else { repos.join("; ") }, dependency_clause(snap, ALL).into_iter().chain(pr_wait_clause(snap)).map(|c| format!(" | {c}")).collect::<String>())
+    format!("WAIT {} || since last — {}{}", states.join(" | "), if repos.is_empty() { "no repo has work or events".into() } else { repos.join("; ") }, dependency_clause(snap, ALL).into_iter().chain(pr_wait_clause(snap)).chain(undated(snap).values().map(|t| format!("BLIND ASK: {t}"))).map(|c| format!(" | {c}")).collect::<String>())
 }
 
 /// `waits behind PR #N: sp-a sp-b` per open pull request some bead of the landing task waits behind.
@@ -679,7 +689,7 @@ pub fn stalls(snap: &Snapshot, now: u64, cfg: &Config) -> Vec<Stall> {
                     let ask = t["ASK"];
                     (ask.count > 0 && ask.oldest >= bound).then(|| {
                         let over = ages(snap, &scope, "ASK", now).into_iter().filter(|a| *a >= bound).count();
-                        let ids: Vec<&str> = snap.beads.iter().filter(|b| b.ask_held && (scope == ALL || b.repo == scope) && now.saturating_sub(b.ask_since.unwrap_or(b.since)) >= bound).map(|b| b.id.as_str()).collect();
+                        let ids: Vec<&str> = snap.beads.iter().filter(|b| b.ask_held && (scope == ALL || b.repo == scope) && b.ask_since.is_some_and(|t| now.saturating_sub(t) >= bound)).map(|b| b.id.as_str()).collect();
                         format!("{}; {over} held past {} unanswered: {}", row_text("ASK", &ask), dur(bound), ids.join(" "))
                     })
                 }
@@ -1094,6 +1104,13 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         next.unexplained.insert(b.id.clone(), entry);
     }
     let snap = &amended;
+    let blind_asks = undated(snap);
+    for (id, text) in &blind_asks {
+        if !carry.undated.contains(*id) {
+            acts.push(say(now_ms, &format!("P0 BLIND: {text}")));
+        }
+    }
+    next.undated = blind_asks.keys().map(|id| id.to_string()).collect();
     let table = table_line(snap, now, cfg);
     acts.push(log_line(now_ms, &table));
     let rows = over_rows(snap, now, cfg);
@@ -1141,7 +1158,7 @@ impl WatchTransitions {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Map { name: "unexplained", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over")];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Field("stalled"), runtime::rows::Part::Map { name: "in_delivery", drop: &[] }, runtime::rows::Part::Map { name: "delivered", drop: &[] }, runtime::rows::Part::Map { name: "unexplained", drop: &[] }, runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Field("over"), runtime::rows::Part::Field("undated")];
 
 impl Handler for WatchTransitions {
     fn interests(&self) -> &[EventKindTag] {
