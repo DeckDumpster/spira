@@ -1764,6 +1764,16 @@ fn an_activation_leaves_a_watcher_to_restart_itself_when_its_installed_unit_alre
     assert!(out.restarted.is_empty() && out.stale.iter().chain(&out.when_idle).any(|s| s.starts_with("lc-serve.service")), "{out:?}");
 }
 
+#[test_id(t8g5kjr)]
+#[test]
+fn an_activation_restarts_a_watcher_whose_installed_idle_restart_reason_differs_from_the_shipped_one() {
+    let old = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass\n");
+    let new = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass once its rows are stored\n");
+    let (out, restarts) = lc_serve_running_old_binary_under(&old, &new);
+    assert_eq!(restarts, vec!["lc-serve.service".to_string()]);
+    assert!(out.restarted.contains(&"lc-serve.service".to_string()) && out.when_idle.is_empty(), "{out:?}");
+}
+
 /// `current` on the previous release `P`, whose installed `lc-serve` unit names it; release `A`
 /// ships `spira-lc` with `new_bytes`, `P` with the bytes `spira-lc v1`.
 fn world_switching_lc_serve_from_the_previous_release(new_bytes: &str) -> World {

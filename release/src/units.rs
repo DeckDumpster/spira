@@ -323,18 +323,19 @@ pub fn start_when_changed(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// How a service restarts itself at its next idle point (`X-Spira-RestartWhenIdle=<how>`): a
-/// restart now would cut in-flight work, and the process exits when it holds none and its
-/// release is no longer current, so `Restart=` brings it up on the new one. Activation
-/// reports it and does not restart it.
+/// How a service restarts itself (`X-Spira-RestartWhenIdle=<how>`): a restart now would cut
+/// what it holds, and the process exits once the reason names is met and its release is no
+/// longer current, so `Restart=` brings it up on the new one. Activation reports it and
+/// does not restart it.
 pub fn restart_when_idle(text: &str) -> Option<String> {
     reason_of(text, "X-Spira-RestartWhenIdle")
 }
 
-/// The reason a running watcher restarts itself when idle: only a watcher whose installed
-/// unit already carried the key runs code able to do so.
+/// The reason a running watcher restarts itself: only a watcher whose installed unit carried
+/// the same reason runs code that implements it. A changed reason means the running code
+/// implements an older one, so activation restarts it.
 pub fn restarts_itself_when_idle(installed: &str, shipped: &str) -> Option<String> {
-    restart_when_idle(shipped).filter(|_| restart_when_idle(installed).is_some())
+    restart_when_idle(shipped).filter(|r| restart_when_idle(installed).as_ref() == Some(r))
 }
 
 fn reason_of(text: &str, key: &str) -> Option<String> {
