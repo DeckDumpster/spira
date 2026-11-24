@@ -450,8 +450,8 @@ mod tests {
     #[test]
     fn a_clean_tree_reports_checked() {
         let t = TempDir::new("sc-checked");
-        t.write("spira/test-clean.sh", "#!/usr/bin/env bash\necho ok\n");
-        let tree = Tree::from_paths(t.path(), ["spira/test-clean.sh"], std::iter::empty::<&str>());
+        t.write("spira/watchers", "# header comment, not data\n");
+        let tree = Tree::from_paths(t.path(), ["spira/watchers"], std::iter::empty::<&str>());
         let r = ScriptCallers::default();
         assert_eq!(r.check(&tree), Ok(vec![]));
         assert_eq!(r.checked(), Some((1, "callers".to_string())));
@@ -461,13 +461,13 @@ mod tests {
     #[test]
     fn a_listed_file_is_silenced_and_a_stale_entry_is_refused() {
         let t = TempDir::new("sc-allow");
-        t.write("spira/test-planted.sh", "#!/usr/bin/env bash\nSH=\"$(dirname \"$0\")\"\nbash \"$SH/gone.sh\"\n");
-        t.write(ALLOW_FILE, "spira/test-planted.sh\n");
-        assert!(run(&t, &["spira/test-planted.sh"]).unwrap().is_empty());
-        t.write("spira/test-planted.sh", "#!/usr/bin/env bash\necho fixed\n");
+        t.write("spira/watchers", "planted|daemon|planted-watch.sh watch|planted-watch.sh health\n");
+        t.write(ALLOW_FILE, "spira/watchers\n");
+        assert!(run(&t, &["spira/watchers"]).unwrap().is_empty());
+        t.write("spira/watchers", "# fixed\n");
         assert_eq!(
-            run(&t, &["spira/test-planted.sh"]).unwrap(),
-            vec!["script-callers: spira-lint/script-callers-allow: lists spira/test-planted.sh, which no longer needs an exception — remove the line (the list only shrinks)"]
+            run(&t, &["spira/watchers"]).unwrap(),
+            vec!["script-callers: spira-lint/script-callers-allow: lists spira/watchers, which no longer needs an exception — remove the line (the list only shrinks)"]
         );
     }
 }

@@ -207,26 +207,6 @@ finding against the file.
 
 **Hint.** Register the key in `spira/conf.d` and read it through `cfg`; never add an allow line for new code.
 
-## Rule `dead-test-export`
-
-**Intent.** A test that assigns a `SPIRA_*` variable nothing reads runs on the default while
-reading as if it had set the value. spira-config never consults the environment, so exporting a
-config key only works for a shell script that reads `$KEY` itself.
-
-**Scope.** Assignments in `spira/test-*.sh` and `spira/testlib*`: a command's leading `NAME=value`
-words and the arguments of `export`/`declare`. A `tl_config NAME=…` argument is not an assignment.
-
-**Readers.** `$NAME` / `${NAME…}` on a non-comment line of any file under `spira/`, `systemd/`,
-`hooks/` (not `.md`/`.toml`, not `*.generated.*`, not `spira/conf.d/`, whose `:=` defaults are
-universal); a one-argument `*env*("NAME")` call in non-test Rust; and, for a name that is not a
-registered key, any string literal of it in non-test Rust. A read on the line that assigns the
-same name (`export X="${X:-0}"`) is not a reader.
-
-**Allow file.** `spira-lint/dead-test-export-allow`: `<NAME> <path>`, shrink-only; a line whose
-file no longer assigns an unread name is a finding.
-
-**Hint.** Set a config key with `tl_config`; read an environment-only variable in the code under test.
-
 ## Rule `config-literal-fallback`
 
 New (sp-ivfu3); no bash fence precedes it.
@@ -410,23 +390,6 @@ process stays a suite and is named below.
 Every rule here reports a missing target file as a finding and an empty scope as a refusal,
 never as clean (law-absence-needs-a-positive-control).
 
-## Rule `testlib-migrated`
-
-Ported from `spira/test-testlib-migrated.sh`.
-
-**Intent.** Suites share testlib.sh's assertion primitives. A suite with its own `ok()` or
-`want()` counts passes its own way and drifts from the runner's summary.
-
-**Scope.** `spira/test-*.sh` directly in `spira/`.
-
-**Violation.** A line starting `ok()`, `bad()`, `fail()`, `is()`, `want()`, `nowant()`,
-`notwant()`, `wantrc()` or `pass()`; or, in a file that never sources `testlib.sh`, a bare
-`pass=N`/`fail=N` counter: one finding per file.
-
-**Allow list.** `spira-lint/testlib-migrated-allow`, exact paths, shrink-only. An entry
-naming a suite that no longer redefines a primitive is itself a finding, so the list stays
-exact (the suite's "every declared exception still needs one").
-
 ## Rule `script-exec`
 
 Ported from `spira/test-script-exec.sh`.
@@ -479,28 +442,6 @@ inside an open quote on its line (an odd count of `"` or `'` before it). In Rust
 (standard utilities and shell functions, unchanged from the script).
 
 **Refusal.** A missing, unparseable or empty `spira/deps.toml` is `LintError::BadAllow`.
-
-## Rule `covers-entries`
-
-Ported from `spira/test-covers-entries.sh`.
-
-**Intent.** A `# covers:` glob that matches nothing selects its suite for nothing. The suite
-can never be chosen for the change it was written to guard.
-
-**Scope.** `spira/test-*.sh` directly in `spira/`.
-
-**The declaration.** Parsed exactly as `suite_covers_of` in `spira/suite-covers.sh` does: the
-first `# covers:` line, folded with continuation lines (a comment indented by two or more
-blanks that is not a `# word:` directive). `UC-<area>-NN` and `G-NN` tokens are catalogue ids,
-not paths, and are skipped.
-
-**Violation.** A path token that resolves to nothing. Resolution is the shell's: `*` and `?`
-do not cross `/` or match a leading `.`, and `[…]` is a bracket expression. A token resolves
-when it names a file in the walk or a directory holding one. The suite used `[ -e ]`, which
-also saw ignored files. A token naming only an ignored file now fails, and that is the
-intent: a build output is not something a suite covers.
-
-A suite with no declaration is skipped. If no suite declares anything, that is a refusal.
 
 ## Rule `acceptance-run` — retired (sp-ak7qm)
 
@@ -763,54 +704,6 @@ rule is `BASE_RELATIVE`, so `--diff` leaves its findings whole.
 
 **Refuses** (exit 3): no base; a base that does not resolve; a failing `ls-tree`.
 **Positive control:** `fence: no-new-shell-suite checked <n> shell tests (<m> at the base)`.
-
-## Rule `plan-lint`
-
-Ported from `spira/plan-lint.sh`'s default (`--lint`) mode (sp-pppt0). The script itself is
-not deleted: its `--orphans` mode is `plan-matrix` above (ported earlier, under sp-ufbkh) and
-`--check`/`--gaps` stay bash-callable utilities used by hand and by
-`test-plan-matrix-merge.sh` (`--gaps` is a report and was never a failure, so it has no gate
-role to port).
-
-**Why a rule.** `plan-lint.sh`'s default mode — every suite declares `# tier:`/`# covers:`,
-and every UC id on `# covers:` exists in the typed catalogue — was never wired into any gate
-string at all, so a violation reached the tree unchecked. This is the first gate coverage
-for it, and it found about 130 pre-existing suites with no `# tier:` and a handful of stale
-UC ids the moment it ran over the real corpus.
-
-**Checks**, over `spira/test-*.sh`: missing `# tier:` (`plan_matrix::tier_of`, empty or
-absent); missing `# covers:` (`covers_entries::covers_of`, empty or absent); a `UC-*` token
-on `# covers:` absent from every `docs/test-plan/*.toml` (loaded fresh via
-`test_plan::load_catalogues`; a malformed catalogue is reported as a finding, not a
-refusal — the same handling `plan-matrix` gives it). No catalogue directory still checks the
-headers; it just cannot check UC ids.
-
-**Allow list.** `spira-lint/plan-lint-allow`: exact suite paths, shrink-only, generated at
-authorship from every suite the real tree already violated (the `fence-scripts`/
-`testlib-migrated` pattern) — so the rule can gate every *new* suite from day one without
-failing every branch on debt it did not add. A listed suite's findings (all of them, not
-per-violation) are suppressed; a listed suite with no findings left is itself a finding
-("no longer needs an exception").
-
-**Refuses** (exit 3): no suites matched `spira/test-*.sh`. **Positive control:**
-`fence: plan-lint checked <n> suites`.
-
-## Rule `testdb-mode-lint`
-
-Ported from `spira/testdb-mode-lint.sh` (sp-pppt0), which is deleted.
-
-**Intent.** Embedded Dolt resets in ~5s; server mode pays a real server round trip,
-median 110s. A suite that pins `SPIRA_TESTDB_MODE=server` without saying why is
-indistinguishable, at a glance, from one that needs the real engine.
-
-**Scope.** `spira/test-*.sh`, directly in `spira/`.
-
-**Violation.** A live (non-comment) line containing `SPIRA_TESTDB_MODE=server`
-(`export`-prefixed or inline), when the file carries no `# testdb-mode: server — <reason>`
-header (non-empty reason after the em dash) anywhere in it. One finding per request line.
-
-**Refuses** (exit 3): no suites in scope. **Positive control:** `fence: testdb-mode-lint
-checked <n> suites`.
 
 ## Rule `bd-stdin-lint`
 
@@ -1097,31 +990,6 @@ base, no ledger here. That pass also passed an unresolvable base having compared
 **Positive control:** `fence: <rule> checked 1 ledger (<n> entries, <m> at the base)` — one
 ledger, whatever its size, because a ledger shrunk to nothing is the goal, not a silence.
 
-## Rule `tier-budget-areas`
-
-Ported from `tier-budget.sh check-areas` (sp-ufbkh).
-
-**Intent.** At most one T3 suite per use-case area. A suite's areas are the `<area>` of each
-`UC-<area>-NN` token on its `# covers:` line; a suite naming its area twice counts once. An
-area with more than one T3 suite fails unless `spira/tier-budget-area-allowlist` records at
-least that many. One finding per area, path `area <name>`, naming the suites.
-
-**Scope.** `spira/test-*.sh` directly in `spira/`; an empty scope refuses (the bash returned 0
-on no T3 suites, and on no suites at all). **Positive control:** `fence: tier-budget-areas
-checked <n> suites`.
-
----
-
-# Rules ported from the fences wave-brief (sp-ekkak): inventory, literal, scratch, wiki-add,
-# tmux-scope, gh-intake
-
-These six ran as standalone bash scripts in the gate string (each with its own `[ -r … ]`
-missing-script check and its own `fence: <name> checked …` line). As rules they run inside the
-one `spira-lint` invocation the gate already makes; the aggregate `fence: spira-lint checked …`
-line covers them, the way it already covers config-fence, binary-path-fence, payload-argv-lint
-and fence-scripts. None needed its own entry in `gate/src/fence.rs`'s `LINT_RULE_FENCES` for
-the same reason those four don't.
-
 ## Rule `inventory`
 
 Ported from `spira/inventory.sh` (deleted).
@@ -1292,26 +1160,6 @@ are banned too: the retired labels were written both ways); or a body of `bump_r
 `bump_poison_cleared` in `spira/lib.sh` containing `label add` or `bump_counter`. A missing
 `spira/lib.sh` is a refusal; a missing `bump_*` function is a finding, since an absent body
 would otherwise read as clean.
-
-## Rule `tmux-scope-fence`
-
-Ported from `spira/tmux-scope-fence.sh` (deleted).
-
-**Intent.** A suite that calls a tmux session-affecting command, or runs `concierge.sh
-start/wake/here/stop`, with no socket of its own drives whatever server the caller's
-environment already points at — the operator's own, on the host, twice (sp-pfca0: the cockpit
-went down both times).
-
-**Scope.** `spira/test-*.sh`, directly in `spira/` (tracked and untracked-not-ignored — the
-bash original globbed the filesystem directly, `"$ROOT"/spira/test-*.sh`, rather than reading
-git). Exempt: this rule's own source (`spira-lint/src/rules/tmux_scope_fence.rs`).
-
-**Violation.** A non-comment line invoking one of the 22 tmux session commands
-(`new-session`, `kill-server`, …, `source-file`) with no `-L <socket>` on that same line and no
-file-wide `TMUX_TMPDIR` (checked as a plain substring anywhere in the file — the shipped
-pattern is one `export TMUX_TMPDIR=…` clearing every bare call after it). Separately, when the
-file carries neither `CONCIERGE_SOCKET` nor `CONCIERGE_SESSION` anywhere, a non-comment line
-invoking `concierge.sh start/wake/here/stop` (with or without a quote before the subcommand).
 
 ## Rule `gh-intake-lint` — RETIRED (sp-8fsql)
 
@@ -1536,13 +1384,6 @@ Only then the `clock-safe:` marker.
 **Known limits.** The bound-clock check is name-based within one fn: a clock value passed through
 a helper before the assert is missed, an initializer that holds a `;` (a closure body) is cut at it, and a generic such as `Vec<u8>` in the assert's arguments
 reads as a comparison.
-
-## Rule `py-fstring-compat`
-
-Python in a suite must parse on the round VM's older python3. **Flags**, per line, inside an
-f-string's braces: a backslash, and a quote of the string's own kind (both 3.12-only, PEP 701).
-**Scope.** `spira/test-*.sh` and `spira/*.py`. No allow list: the tree is clean, so a new hit is
-always new. A line-local scan; a triple-quoted f-string spanning lines is judged per line.
 
 ## Rule `fresh-host-entry`
 

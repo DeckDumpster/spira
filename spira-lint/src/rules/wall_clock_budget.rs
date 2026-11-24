@@ -124,7 +124,6 @@ mod tests {
         WallClockBudget.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
 
-    const SH_MSG: &str = "shell test compares a measured duration against a constant";
     const RS_MSG: &str = "test asserts a measured duration against a constant";
 
     #[test_id(tzyr3ra)]
@@ -133,26 +132,11 @@ mod tests {
         let t = TempDir::new("wcb-fail");
         t.write(ALLOW_FILE, "# shrink-only\n");
         t.write(
-            "spira/test-lc-list-timing.sh",
-            "#!/bin/bash\nms=$(( (t1 - t0) / 1000000 ))\nif [ \"$ms\" -lt 500 ]; then ok \"list took ${ms} ms (< 500)\"; fi\n",
-        );
-        t.write(
-            "spira/test-read.sh",
-            "#!/bin/bash\n# elapsed -lt 5 in a comment is fine\nelapsed=$(( SECONDS - t0 ))\n(( elapsed < 3 )) || bad slow\n",
-        );
-        t.write(
             "a/src/lib.rs",
             "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        let t0 = std::time::Instant::now();\n        assert!(t0.elapsed() < std::time::Duration::from_millis(50));\n    }\n}\n",
         );
-        let got = run(&t, &["spira/test-lc-list-timing.sh", "spira/test-read.sh", "a/src/lib.rs"]).unwrap();
-        assert_eq!(
-            got,
-            vec![
-                format!("wall-clock-budget: a/src/lib.rs:7: {RS_MSG}"),
-                format!("wall-clock-budget: spira/test-lc-list-timing.sh:3: {SH_MSG}"),
-                format!("wall-clock-budget: spira/test-read.sh:4: {SH_MSG}"),
-            ]
-        );
+        let got = run(&t, &["a/src/lib.rs"]).unwrap();
+        assert_eq!(got, vec![format!("wall-clock-budget: a/src/lib.rs:7: {RS_MSG}")]);
     }
 
     #[test_id(t1gy5yt)]
@@ -161,17 +145,12 @@ mod tests {
         let t = TempDir::new("wcb-pass");
         t.write(ALLOW_FILE, "");
         t.write(
-            "spira/test-rows.sh",
-            "#!/bin/bash\nis \"rows examined\" 3 \"$rows\"\n[ \"$calls\" -le 2 ] && ok \"at most 2 calls\"\n[ \"$elapsed\" -ge 2 ] && ok \"backoff waited\"\n",
-        );
-        t.write(
             "a/src/lib.rs",
             "pub fn g(t0: std::time::Instant) -> bool { t0.elapsed() < std::time::Duration::from_secs(1) }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { assert_eq!(rows_examined, 3); assert!(calls < 4); }\n}\n",
         );
         t.write("a/perf-checks/p.rs", "fn t() { assert!(t0.elapsed() < D); }\n");
-        t.write("spira/perf-checks/test-p.sh", "[ \"$ms\" -lt 5 ]\n");
         assert_eq!(
-            run(&t, &["spira/test-rows.sh", "a/src/lib.rs", "a/perf-checks/p.rs", "spira/perf-checks/test-p.sh"]).unwrap(),
+            run(&t, &["a/src/lib.rs", "a/perf-checks/p.rs"]).unwrap(),
             Vec::<String>::new()
         );
     }
@@ -180,12 +159,12 @@ mod tests {
     #[test]
     fn a_listed_exception_passes_and_a_stale_one_is_refused() {
         let t = TempDir::new("wcb-allow");
-        t.write("spira/test-old.sh", "[ \"$elapsed\" -le 2 ]\n");
-        t.write("spira/test-fixed.sh", "true\n");
-        t.write(ALLOW_FILE, "# header\nspira/test-old.sh\nspira/test-fixed.sh\n");
+        t.write("a/src/old.rs", "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { assert!(t0.elapsed() < std::time::Duration::from_millis(50)); }\n}\n");
+        t.write("a/src/fixed.rs", "pub fn f() {}\n");
+        t.write(ALLOW_FILE, "# header\na/src/old.rs\na/src/fixed.rs\n");
         assert_eq!(
-            run(&t, &["spira/test-old.sh", "spira/test-fixed.sh"]).unwrap(),
-            vec!["wall-clock-budget: spira-lint/wall-clock-budget-allow:3: lists spira/test-fixed.sh, which no longer needs an exception — remove the line (the list only shrinks)"]
+            run(&t, &["a/src/old.rs", "a/src/fixed.rs"]).unwrap(),
+            vec!["wall-clock-budget: spira-lint/wall-clock-budget-allow:3: lists a/src/fixed.rs, which no longer needs an exception — remove the line (the list only shrinks)"]
         );
     }
 

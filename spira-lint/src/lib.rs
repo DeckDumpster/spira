@@ -279,9 +279,6 @@ pub const BASE_RELATIVE: &[&str] = &[
     "lockfile-lint",
     "config-delta",
     "config-delta-folded",
-    "tier-budget-allowlist",
-    "tier-budget-area-allowlist",
-    "tier-budget-areas",
     "workflow-config",
     "otel-binaries",
     "journal-reads",
@@ -910,7 +907,7 @@ mod tests {
         assert!(pathspec_match("spira/*.sh", "spira/hooks/a.sh"));
         assert!(pathspec_match("*.rs", "broker/src/main.rs"));
         assert!(!pathspec_match("spira/*.sh", "spiral/a.sh"));
-        assert!(!pathspec_match("spira/gate-suites", "spira/gate-suites2"));
+        assert!(!pathspec_match("spira/lib.sh", "spira/lib.sh2"));
     }
 
     #[test_id(tl32hs3)]
