@@ -22,7 +22,7 @@ use crate::cli::{Round, Text};
 use crate::ident::bounded_text;
 use crate::lock::Guard;
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
-use crate::ports::{ref_branch, AmiBuild, AmiLookup, RunOut};
+use crate::ports::{ref_branch, AmiBuild, AmiLookup, ImageCheck, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
 use spira_config::scoped_stop;
 use spira_config::sendback::failure_excerpt;
@@ -1787,6 +1787,55 @@ fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<S
         .collect()
 }
 
+/// The testenv tag inputs `tip` changes against `base`.
+fn tag_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<String> {
+    let from = w.git.merge_base(repo, base, tip).unwrap_or_else(|| base.to_string());
+    w.git
+        .numstat(repo, &from, tip)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(p, ..)| p)
+        .filter(|p| spira_config::recipe::touches_tag_input(std::slice::from_ref(p)))
+        .collect()
+}
+
+fn tag_inputs_touched_recipe(w: &World, repo: &Path, base: &str, tip: &str) -> bool {
+    !recipe_inputs_touched(w, repo, base, tip).is_empty()
+}
+
+/// A member whose tip changes the testenv image tag and whose image neither this host's store
+/// nor a round AMI holds: no pass could run it, and no pass builds one. Its skip names the tag
+/// and the command that builds it by hand.
+fn image_absent(w: &World, repo: &Path, wt: &Path, base: &str, m: &Member) -> Option<Skip> {
+    if tag_inputs_touched(w, repo, base, &m.tip).is_empty() {
+        return None;
+    }
+    let tag = match w.scripts.image_check(repo, &m.tip) {
+        ImageCheck::Present => return None,
+        ImageCheck::Absent(tag) => tag,
+        ImageCheck::Unreadable(e) => {
+            w.err(format!("queue.sh round open: cannot check {}'s testenv image ({e}) — admitted; the pass refuses an absent image", m.id));
+            return None;
+        }
+    };
+    // A tip that changes the recipe has no checkout here to hash, so its image cannot be looked up.
+    let held_by_ami = !tag_inputs_touched_recipe(w, repo, base, &m.tip)
+        && w.scripts
+            .recipe_sha(Some(wt))
+            .is_some_and(|sha| matches!(w.scripts.ami_for(&sha), AmiLookup::Found(_)));
+    if held_by_ami {
+        return None;
+    }
+    Some(skip(
+        &m.id,
+        "image-absent",
+        format!(
+            "{}: {} needs testenv image localhost/spira-testenv:{tag}, which neither this host nor a round AMI holds, and no round builds one — not admitted; build it with `testenv container image --tree <checkout of {}>`",
+            m.id, m.tip, m.tip
+        ),
+    ))
+}
+
 /// One named member `round open` did not admit: its id, the kind of refusal (a word a caller
 /// acts on, law-a-matcher-reads-code-not-prose) and the operator's line.
 pub struct Skip {
@@ -2147,6 +2196,11 @@ fn open_timed(
                     m.id, m.tip
                 ),
             ));
+            steps.lap(&format!("merge.{}", m.id));
+            continue;
+        }
+        if let Some(sk) = image_absent(w, &path, &wt, &landed_sha, &m) {
+            skips.push(sk);
             steps.lap(&format!("merge.{}", m.id));
             continue;
         }

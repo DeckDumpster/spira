@@ -407,6 +407,8 @@ pub trait Scripts {
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String>;
     /// `round-vm ami-for <recipe-sha>`: the newest round image built from that recipe.
     fn ami_for(&self, sha: &str) -> AmiLookup;
+    /// `round-vm image-check --tree <tree> --rev <rev>`: whether this host's store holds the image `rev` needs.
+    fn image_check(&self, tree: &Path, rev: &str) -> ImageCheck;
     /// `round-vm run <tree> --ci-entry <command> --ci-image <image> --ci-workdir <dir> --results-dir <results> --round-batch <batch> --round-repo <repo>` under `timeout`: a repository
     /// that is not the harness judged by its own full CI entry point on a round VM. Exit 0 GREEN, 1 RED
     /// (`ci.result` in `results`), anything else a fault. `handle` receives the pid exactly as `round_vm`'s does.
@@ -532,6 +534,14 @@ impl AmiBuild {
 pub enum AmiLookup {
     Found(String),
     Missing,
+    Unreadable(String),
+}
+
+/// What `round-vm image-check` says about the testenv image a tip needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageCheck {
+    Present,
+    Absent(String),
     Unreadable(String),
 }
 

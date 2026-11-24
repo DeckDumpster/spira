@@ -9644,6 +9644,77 @@ fn a_refused_open_prints_one_typed_record_per_member_it_did_not_admit() {
     );
 }
 
+fn image_world(files: &[(&str, &str)]) -> T {
+    let t = round_world();
+    t.git.ancestor("b0", "ta");
+    for (tip, file) in files {
+        touches(&t, tip, file);
+    }
+    *t.scripts.recipe_tree.borrow_mut() = Some("tree-recipe".into());
+    t.scripts
+        .image_check
+        .borrow_mut()
+        .insert("ta".into(), ImageCheck::Absent("tagz".into()));
+    t
+}
+
+#[test_id(t9n3pix)]
+#[test]
+fn open_skips_by_name_a_member_whose_image_nothing_holds_and_cuts_the_rest() {
+    let t = image_world(&[("ta", "spira/deps.toml")]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    let o = t.out();
+    let line = o.lines().find(|l| l.starts_with("refused=sp-a kind=image-absent")).unwrap_or_else(|| panic!("{o}"));
+    assert!(line.contains("localhost/spira-testenv:tagz") && line.contains("testenv container image --tree"), "{line}");
+    assert!(!o.lines().any(|l| l.starts_with("refused=sp-b")), "the others are cut: {o}");
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == "ami-for tree-recipe"), "the AMI was asked after the host");
+}
+
+#[test_id(txa4b5l)]
+#[test]
+fn open_admits_a_mover_whose_image_a_round_ami_holds() {
+    let t = image_world(&[("ta", "spira/deps.toml")]);
+    *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Found("ami-1".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(!t.out().contains("image-absent"));
+}
+
+#[test_id(tphsups)]
+#[test]
+fn open_admits_a_mover_whose_image_the_host_holds_without_asking_for_an_ami() {
+    let t = image_world(&[("ta", "spira/deps.toml")]);
+    t.scripts.image_check.borrow_mut().insert("ta".into(), ImageCheck::Present);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("ami-for")));
+}
+
+#[test_id(t7z9r6d)]
+#[test]
+fn open_skips_a_recipe_changing_mover_without_hashing_a_tree_that_lacks_its_change() {
+    let t = image_world(&[("ta", "spira/testenv/Containerfile")]);
+    *t.scripts.ami_for.borrow_mut() = vec![AmiLookup::Found("ami-old".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    assert!(t.out().contains("refused=sp-a kind=image-absent"), "{}", t.out());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("ami-for")));
+}
+
+#[test_id(tnhn7bh)]
+#[test]
+fn open_admits_a_mover_whose_image_check_cannot_be_read_and_says_so() {
+    let t = image_world(&[("ta", "spira/deps.toml")]);
+    t.scripts.image_check.borrow_mut().insert("ta".into(), ImageCheck::Unreadable("no testenv".into()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(t.err().contains("cannot check sp-a's testenv image (no testenv)"), "{}", t.err());
+}
+
+#[test_id(tkyspre)]
+#[test]
+fn open_checks_no_image_for_a_member_touching_no_tag_input() {
+    let t = image_world(&[("ta", "src/other.rs")]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("image-check")), "no check ran");
+}
+
 #[test_id(tjlo9p0)]
 #[test]
 fn open_skips_a_text_only_member_and_says_it_lands_by_lint() {
