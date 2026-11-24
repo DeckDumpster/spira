@@ -817,6 +817,28 @@ fn finished_at(bead: &Value, row: Option<&super::lc::Row>) -> Option<i64> {
 mod tests {
     use super::*;
 
+    #[test_id(thkftnm)]
+    #[test]
+    fn a_checkout_has_a_spira_branch_when_one_is_local_or_remote_tracking_and_unreadable_reads_as_yes() {
+        let d = testkit::TempDir::new("unsent-spira-branch");
+        let git = d.join(".git");
+        std::fs::create_dir_all(git.join("refs/heads")).unwrap();
+        std::fs::create_dir_all(git.join("refs/remotes/origin")).unwrap();
+        std::fs::write(git.join("config"), "[remote \"origin\"]\n\turl = u\n").unwrap();
+        let sha = format!("{}\n", "a".repeat(40));
+        std::fs::write(git.join("refs/heads/main"), &sha).unwrap();
+        assert!(!has_spira_branch(d.path()), "no spira/* ref anywhere");
+        std::fs::create_dir_all(git.join("refs/remotes/origin/spira")).unwrap();
+        std::fs::write(git.join("refs/remotes/origin/spira/sp-x"), &sha).unwrap();
+        assert!(has_spira_branch(d.path()), "a remote-tracking spira/* branch");
+        std::fs::remove_dir_all(git.join("refs/remotes/origin/spira")).unwrap();
+        std::fs::create_dir_all(git.join("refs/heads/spira")).unwrap();
+        std::fs::write(git.join("refs/heads/spira/sp-y"), &sha).unwrap();
+        assert!(has_spira_branch(d.path()), "a local spira/* branch");
+        assert!(has_spira_branch(&d.join("absent")), "a checkout this cannot read is asked of git");
+    }
+
+
     fn row(state: &str) -> super::super::lc::Row {
         super::super::lc::Row { bead_id: "sp-a".into(), state: state.into(), ..Default::default() }
     }
