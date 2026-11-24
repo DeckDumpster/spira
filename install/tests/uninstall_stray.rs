@@ -21,6 +21,7 @@ fn the_stray_sweep_reports_a_planted_unit_it_does_not_own_and_leaves_it_in_place
     let units = d.join(".config/systemd/user");
     std::fs::create_dir_all(&units).unwrap();
     std::fs::write(units.join("spira-legacy-stray.service"), "[Unit]\nDescription=stray\n").unwrap();
+    std::fs::write(units.join("dolt-beads.service"), "[Unit]\nDescription=owned\n").unwrap();
     testkit::write_exe(d.join("systemctl"), "#!/bin/bash\nexit 0\n");
     testkit::write_exe(d.join("loginctl"), "#!/bin/bash\nexit 0\n");
     let toml = spira_config::process::fixture_toml(d, &[]);
@@ -43,5 +44,6 @@ fn the_stray_sweep_reports_a_planted_unit_it_does_not_own_and_leaves_it_in_place
     assert_eq!(o.status.code(), Some(0), "{out}");
     assert!(out.contains("STRAY"), "{out}");
     assert!(out.contains("spira-legacy-stray.service"), "{out}");
+    assert!(!out.contains("STRAY  dolt-beads.service"), "an owned unit is not a stray: {out}");
     assert!(units.join("spira-legacy-stray.service").exists(), "a stray is reported, never deleted");
 }
