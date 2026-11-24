@@ -3809,7 +3809,8 @@ pub mod edge {
             let scratch = testkit::TempDir::new("saved-round");
             let fx = fixture("spira-20261124T101422Z-no-mending", &scratch);
             let (_, line, edge) = attribute(&fx);
-            assert_eq!(edge.done.borrow().ejected, ["sp-zz4u61"], "{line}");
+            assert_eq!(edge.done.borrow().ejected, fx.expect.ejected, "{line}");
+            assert!(!edge.done.borrow().ejected.contains(&"sp-k3il1u.1".to_string()), "the member the record no longer holds is not charged: {line}");
         }
 
         #[test_id(tyalr6i)]
