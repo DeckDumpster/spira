@@ -1201,6 +1201,7 @@ impl Engine {
     fn fire_wakes(&mut self, now: u64) -> usize {
         let mut fired = 0;
         let names: Vec<String> = self.ticking.keys().cloned().collect();
+        let mut woken = BTreeSet::new();
         if self.sweep.is_some() {
             for name in &names {
                 let t = &self.ticking[name];
@@ -1208,6 +1209,7 @@ impl Engine {
                 if t.stream.is_some() && (signal.is_some() || due.is_some()) {
                     let (wake, at) = if let Some(a) = signal { (Wake::Signal, a) } else { (Wake::Timer, due.unwrap_or(now)) };
                     self.wake_tick(name, wake, at);
+                    woken.insert(name.clone());
                     fired += 1;
                 }
             }
@@ -1220,7 +1222,7 @@ impl Engine {
             let t = &self.ticking[&name];
             let moved = rev.is_some() && rev != t.last_rev;
             let carried = self.pending.values().any(|p| p.task == name);
-            if !t.wake.polls && t.stream.is_some() && t.signal_at.is_none() && t.due_at.is_none() && moved && !carried && now >= t.last_tick_at.saturating_add(t.wake.min_gap_ms) {
+            if !woken.contains(&name) && !t.wake.polls && t.stream.is_some() && t.signal_at.is_none() && t.due_at.is_none() && moved && !carried && now >= t.last_tick_at.saturating_add(t.wake.min_gap_ms) {
                 self.wake_tick(&name, Wake::Sweep, now);
                 fired += 1;
             }
@@ -2305,6 +2307,22 @@ mod tests {
         clock.advance(60_000);
         e.run_until_idle().unwrap();
         assert!(runs(&e, "a") >= 2, "the row ran");
+        assert_eq!(found(&e, &sink), (0, 0));
+    }
+
+    #[test_id(tdue0wk)]
+    #[test]
+    fn a_due_time_and_the_sweep_falling_due_together_run_the_row_once_as_woken() {
+        let (clock, changes) = quiet();
+        let (mut e, sink) = booted(vec![woken("a", &["a/"], false, 0, &[60_000], true)], &clock, &changes, None);
+        changes.set(7);
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
+        assert_eq!((wake_runs(&e, "a", "timer"), wake_runs(&e, "a", "sweep")), (1, 1), "one run as woken; the sweep's is the boot tick");
+        changed_at(&mut e, "c1", 8, &["a/x"], false);
+        e.run_until_idle().unwrap();
+        clock.advance(60_000);
+        e.run_until_idle().unwrap();
         assert_eq!(found(&e, &sink), (0, 0));
     }
 
