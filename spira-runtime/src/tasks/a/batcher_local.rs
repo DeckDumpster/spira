@@ -3695,7 +3695,7 @@ pub mod edge {
         const LEG: &str = "spira.a2";
 
         fn fixture(id: &str, scratch: &testkit::TempDir) -> Fixture {
-            Fixture::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rounds").join(id), scratch.path()).unwrap()
+            Fixture::load(&testkit::manifest_dir().join("fixtures/rounds").join(id), scratch.path()).unwrap()
         }
 
         /// The attribution leg the queue would start on the saved round, as its argv and its outcome line.

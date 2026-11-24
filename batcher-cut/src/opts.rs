@@ -67,11 +67,11 @@ pub fn parse(argv: &[String]) -> Result<Opts, String> {
 }
 
 impl Opts {
-    /// What no flag named, from the process's own environment: SPIRA_HOME is a per-copy fact
-    /// (which checkout this runs from), SPIRA_RUN and SPIRA_DB are registered keys read through `cfg`.
-    pub fn with_ambient(mut self) -> Result<Opts, String> {
+    /// What no flag named: `home` is the checkout this process runs from (a per-copy fact the
+    /// caller reads), SPIRA_RUN and SPIRA_DB are registered keys read through `cfg`.
+    pub fn with_ambient(mut self, home: Option<PathBuf>) -> Result<Opts, String> {
         if self.home.is_none() {
-            self.home = std::env::var_os("SPIRA_HOME").map(PathBuf::from);
+            self.home = home;
         }
         for (slot, key) in [(&mut self.run, "SPIRA_RUN"), (&mut self.db, "SPIRA_DB")] {
             if slot.is_none() {
@@ -96,10 +96,10 @@ mod tests {
     #[test_id(ta1cm33)]
     #[test]
     fn an_attribute_argv_reads_back_as_the_flags_it_was_built_from() {
-        let o = parse(&argv(&["attribute", "spira", "--members", "sp-a:t1", "--wt", "w", "--base", "b1", "--batch", "r9", "--confirmed", "--after-pass", "/p"])).unwrap();
+        let o = parse(&argv(&["attribute", "spira", "--members", "sp-a:t1", "--wt", "w", "--base", "b1", "--batch", "r9", "--confirmed", "--after-pass", "p"])).unwrap();
         assert_eq!((o.cmd.as_str(), o.repo.as_str(), o.members.as_deref(), o.batch.as_deref()), ("attribute", "spira", Some("sp-a:t1"), Some("r9")));
         assert!(o.confirmed);
-        assert_eq!(o.after_pass, Some(PathBuf::from("/p")));
+        assert_eq!(o.after_pass, Some(PathBuf::from("p")));
     }
 
     #[test_id(t4ymrb1)]

@@ -2743,7 +2743,7 @@ fn dispatch() -> ExitCode {
         println!("{}", batcher_cut::replay::USAGE);
         return ExitCode::SUCCESS;
     }
-    let o = match parse(&env::args().collect::<Vec<_>>()).and_then(Opts::with_ambient) {
+    let o = match parse(&env::args().collect::<Vec<_>>()).and_then(|o| o.with_ambient(env::var_os("SPIRA_HOME").map(PathBuf::from))) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("batcher: {e}");
