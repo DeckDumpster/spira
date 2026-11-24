@@ -88,6 +88,16 @@ mod tests {
         }
     }
 
+    #[test_id(t3339z5)]
+    #[test]
+    fn the_shipped_containerfile_is_normalised_not_returned_whole() {
+        let real = include_str!("../../spira/testenv/Containerfile");
+        let out = image_text(CONTAINERFILE, real);
+        assert!(out.len() < real.len(), "a heredoc or directive made it opaque");
+        assert!(out.lines().all(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#')));
+        assert_eq!(image_text(CONTAINERFILE, &out), out);
+    }
+
     #[test_id(t9ajee6)]
     #[test]
     fn every_other_recipe_input_is_returned_unchanged() {
