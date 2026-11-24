@@ -534,10 +534,10 @@ had no installer at all and was wired by hand into the identical broken shape.
 **The fix.** The registered command is always addressed through `<releases>/current` — never a
 sha directory — and is SELF-CONTAINED: `env SPIRA_RELEASE=<releases>/current
 PATH=<release_path_with_tail> <releases>/current/spira/hooks/session.sh` (and the same for
-`ctx-meter.sh`, as `statusLine`). It carries its own environment regardless of what invoked it,
+`bin/ctx-meter`, as `statusLine`). It carries its own environment regardless of what invoked it,
 so it no longer matters which release's `install-session-hook.sh` — now `release
 session-hook` — happened to run it. "Ours" is recognised by a command SUFFIX
-(`spira/hooks/session.sh` / `spira/ctx-meter.sh`), not by exact match, so `install` converges
+(`spira/hooks/session.sh` / `bin/ctx-meter`, and the retired `spira/ctx-meter.sh`, which `install` converges and `status` calls STALE), not by exact match, so `install` converges
 any number of earlier forms — sha-pinned, bare "current", wrapped or not — to exactly one
 entry, on both `hooks.SessionStart` and `statusLine` (a test plants three sha-pinned entries
 plus a bare "current" one and asserts `install` leaves exactly one:
@@ -582,7 +582,7 @@ release that exists.
 
 **Requirement 3's own test.** `release/tests/session_hook_minimal_env.rs` builds a real release
 fixture (a freshly-built `spira-config` binary, the checkout's own real `spira/`), runs
-`session.sh` and `ctx-meter.sh` through the REGISTERED COMMAND `session_hook::install` writes,
+`session.sh` and the `ctx-meter` binary (`ctx-meter/tests/as_client.rs`) through the REGISTERED COMMAND `session_hook::install` writes,
 under `env -i HOME PATH=/usr/bin:/bin` — the client's own minimal environment, never the
 launcher's — and asserts `rc=0` and non-empty output. A second test runs the OLD, unwrapped
 bare-path form under the same minimal env and asserts it FAILS, so the first test's pass is
@@ -679,8 +679,8 @@ directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no 
 `stage`'s pure content (the rune, the repo-map line) and its build-time refusals directly;
 `intake` against a fake `Templates` (no real `find`) and the same fake `Systemctl`.
 `session_hook`'s JSON transformation is pure and needs no fake at all; one further test
-(`release/tests/session_hook_minimal_env.rs`) runs the real `session.sh`/`ctx-meter.sh`
-through a really-built `spira-config` (sp-7jr34's own requirement 3). Nothing in a test
+(`release/tests/session_hook_minimal_env.rs`) runs the real `session.sh`
+and, in `ctx-meter/tests/as_client.rs`, the built `ctx-meter` through the registered command (sp-7jr34's own requirement 3). Nothing in a test
 touches the host's systemd, a real tarball, or a real `bd`/`git`.
 
 ## Callers

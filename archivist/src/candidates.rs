@@ -1,6 +1,6 @@
 //! Which live sessions the sweep would archive, and in what order. Pure: no clock, no
 //! file, no subprocess — `sweep` (in `run.rs`) measures every live transcript through
-//! `ctx-meter.sh` and the covered cursor, then hands the numbers here.
+//! `ctx-meter` and the covered cursor, then hands the numbers here.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {

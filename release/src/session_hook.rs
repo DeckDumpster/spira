@@ -40,15 +40,24 @@ pub const RETIRE_EVENTS: &[&str] = &["PostCompact"];
 pub const HOOK_TIMEOUT_SECS: u64 = 10;
 
 /// The status line's own refresh: re-run often enough that a session that was just cleared
-/// does not keep showing the discarded one's context (ctx-meter.sh's own design intent).
+/// does not keep showing the discarded one's context (the meter's own design intent).
 pub const METER_REFRESH_SECS: u64 = 5;
 
 /// The suffix that identifies the session hook in a command string, whatever release or form
 /// it names — a sha-pinned path, the bare "current" path, or one wrapped in `env ... PATH=`.
 pub const HOOK_SUFFIX: &str = "spira/hooks/session.sh";
 
-/// The suffix that identifies the context meter, the same way.
-pub const METER_SUFFIX: &str = "spira/ctx-meter.sh";
+/// The suffix of the context meter binary the status line runs.
+pub const METER_SUFFIX: &str = "bin/ctx-meter";
+
+/// The suffix of the retired shell meter: still recognised, so `install` converges it and
+/// `uninstall` removes it.
+pub const RETIRED_METER_SUFFIX: &str = "spira/ctx-meter.sh";
+
+/// True when `command` names the context meter in either form.
+pub fn is_meter(command: &str) -> bool {
+    is_ours(command, METER_SUFFIX) || is_ours(command, RETIRED_METER_SUFFIX)
+}
 
 /// True when `command` names ours, by suffix, whatever release or wrapping it carries
 /// (requirement 2: converge every earlier Spira entry, however it was written).
@@ -89,7 +98,7 @@ pub fn resolve(current: &Path, tail: &str, toml: &str, settings: PathBuf) -> Res
     }
     let release = current.display().to_string();
     let path = spira_config::release_path_with_tail(&release, tail)?;
-    Ok(Paths { settings, release, path, toml: toml.to_string(), hook: current.join("spira/hooks/session.sh"), meter: current.join("spira/ctx-meter.sh") })
+    Ok(Paths { settings, release, path, toml: toml.to_string(), hook: current.join("spira/hooks/session.sh"), meter: current.join("bin/ctx-meter") })
 }
 
 /// Read the settings document: `{}` if the file does not exist, an error naming the file if
@@ -265,7 +274,7 @@ pub fn uninstall(doc: &mut Value) -> Vec<String> {
         }
     }
     prune_empty_hooks(doc);
-    if doc.get("statusLine").and_then(Value::as_object).and_then(|o| o.get("command")).and_then(Value::as_str).map(|c| is_ours(c, METER_SUFFIX)).unwrap_or(false) {
+    if doc.get("statusLine").and_then(Value::as_object).and_then(|o| o.get("command")).and_then(Value::as_str).is_some_and(is_meter) {
         doc.as_object_mut().unwrap().remove("statusLine");
         changed.push("statusLine".into());
     }
@@ -351,6 +360,9 @@ pub fn status(doc: &Value, p: &Paths) -> (Vec<String>, bool) {
             let cmd = sl.get("command").and_then(Value::as_str).unwrap_or("");
             if is_ours(cmd, METER_SUFFIX) {
                 lines.push(format!("  ok      statusLine     {}", p.meter_command()));
+            } else if is_ours(cmd, RETIRED_METER_SUFFIX) {
+                lines.push(format!("  STALE   statusLine     the retired shell meter is still registered here; run install: {cmd}"));
+                ok = false;
             } else {
                 lines.push(format!("  other   statusLine     {cmd}"));
             }
@@ -368,7 +380,7 @@ mod tests {
     use super::*;
 
     fn p(current: &str) -> Paths {
-        Paths { settings: PathBuf::from("x/settings.json"), release: current.into(), path: "bin:usr/bin".into(), toml: "c/one-source.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/spira/ctx-meter.sh")) }
+        Paths { settings: PathBuf::from("x/settings.json"), release: current.into(), path: "bin:usr/bin".into(), toml: "c/one-source.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/bin/ctx-meter")) }
     }
 
     #[test_id(tgg2hv0)]
@@ -390,6 +402,7 @@ mod tests {
         assert!(is_ours("env SPIRA_RELEASE=/r/spira-releases/current PATH=/x /r/spira-releases/current/spira/hooks/session.sh", HOOK_SUFFIX));
         assert!(!is_ours("some/other/hook.sh", HOOK_SUFFIX));
         assert!(!is_ours("r/spira-releases/current/spira/ctx-meter.sh", HOOK_SUFFIX));
+        assert!(!is_ours("r/spira-releases/current/bin/ctx-meter", HOOK_SUFFIX));
     }
 
     #[test_id(tcv5x0f)]
@@ -467,7 +480,7 @@ mod tests {
         let mut doc = json!({
             "otherSetting": "keep-me",
             "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "r/spira-releases/current/spira/hooks/session.sh", "timeout": 10}]}]},
-            "statusLine": {"command": "r/spira-releases/current/spira/ctx-meter.sh", "refreshInterval": 5},
+            "statusLine": {"command": "r/spira-releases/current/bin/ctx-meter", "refreshInterval": 5},
         });
         let changed = uninstall(&mut doc);
         assert!(!changed.is_empty());
@@ -572,6 +585,63 @@ mod tests {
         prune_empty_hooks(doc);
         let want_meter = status_line_value(&p.meter_command());
         doc.as_object_mut().unwrap().insert("statusLine".into(), want_meter);
+    }
+
+    const OLD_METER: &str = "env SPIRA_RELEASE=r/spira-releases/current PATH=bin r/spira-releases/aaa/spira/ctx-meter.sh";
+
+    fn executable_release(dir: &testkit::TempDir) -> Paths {
+        std::fs::create_dir_all(dir.join("current/spira/hooks")).unwrap();
+        std::fs::create_dir_all(dir.join("current/bin")).unwrap();
+        testkit::write_exe(dir.join("current/spira/hooks/session.sh"), "#!/bin/sh\n");
+        testkit::write_exe(dir.join("current/bin/ctx-meter"), "#!/bin/sh\n");
+        resolve(&dir.join("current"), "usr/bin", "c/one-source.toml", dir.join("settings.json")).unwrap()
+    }
+
+    #[test_id(tlmq5r1)]
+    #[test]
+    fn the_meter_is_the_binary_in_the_releases_bin() {
+        let dir = testkit::TempDir::new("session-hook-meter");
+        let paths = executable_release(&dir);
+        assert_eq!(paths.meter, dir.join("current/bin/ctx-meter"));
+        assert!(paths.meter_command().ends_with(&format!(" {}/current/bin/ctx-meter", dir.display())), "{}", paths.meter_command());
+    }
+
+    #[test_id(t9d3k7w)]
+    #[test]
+    fn install_converges_a_retired_shell_meter_registration_to_one_binary() {
+        let dir = testkit::TempDir::new("session-hook-converge");
+        let paths = executable_release(&dir);
+        let mut doc = json!({"statusLine": {"type": "command", "command": OLD_METER, "refreshInterval": 5}});
+        let changed = install(&mut doc, &paths).unwrap();
+        assert!(changed.contains(&"statusLine".to_string()));
+        assert_eq!(doc["statusLine"]["command"], Value::String(paths.meter_command()));
+        assert!(!doc["statusLine"]["command"].as_str().unwrap().contains("ctx-meter.sh"));
+        assert!(install(&mut doc, &paths).unwrap().iter().all(|c| c != "statusLine"), "a second install changes nothing");
+    }
+
+    #[test_id(tr8w2ne)]
+    #[test]
+    fn status_recognises_both_meters_and_calls_the_retired_one_stale() {
+        let paths = p("r/spira-releases/current");
+        let mut doc = json!({"statusLine": {"command": paths.meter_command(), "refreshInterval": 5}});
+        let (lines, ok) = status(&doc, &paths);
+        assert!(lines.iter().any(|l| l.starts_with("  ok      statusLine")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("statusLine") && !l.starts_with("  ok")), "{lines:?}");
+        assert!(!ok, "the session hook is not registered in this document");
+        doc["statusLine"]["command"] = json!(OLD_METER);
+        let (lines, _) = status(&doc, &paths);
+        assert!(lines.iter().any(|l| l.starts_with("  STALE   statusLine")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.starts_with("  other   statusLine")), "{lines:?}");
+    }
+
+    #[test_id(tq4b6hz)]
+    #[test]
+    fn uninstall_removes_either_meter_registration() {
+        for command in [OLD_METER, "env SPIRA_RELEASE=r PATH=bin r/spira-releases/current/bin/ctx-meter"] {
+            let mut doc = json!({"statusLine": {"command": command, "refreshInterval": 5}});
+            assert_eq!(uninstall(&mut doc), vec!["statusLine".to_string()], "{command}");
+            assert!(doc.get("statusLine").is_none());
+        }
     }
 
     #[test_id(txvufzp)]

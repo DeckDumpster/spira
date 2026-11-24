@@ -1,7 +1,7 @@
 //! The impure boundary: the capacity pause (shared, cross-process state this crate must
 //! not re-derive — `dwarf` reads and writes the same pause file, `dwarf::capacity` is now
-//! both crates' shared implementation, wave 4.26), the three external tools archivist.sh
-//! always shelled out to (`ctx-meter.sh`, `archive.sh`, `mail`), and the agent process
+//! both crates' shared implementation, wave 4.26), the two external tools archivist.sh
+//! shells out to (`archive.sh`, `mail`), the `ctx-meter` library it calls in process, and the agent process
 //! itself. Production shells out for real (except capacity, in-process now); every test
 //! in this crate runs against a recording `FakeSeam`.
 
@@ -42,7 +42,7 @@ pub trait Seam {
     /// anything. Kept on the `Seam` trait as a still-correct general capability; unused by
     /// this crate's own binary today.
     fn probe(&self) -> HashMap<String, String>;
-    /// `ctx-meter.sh env <transcript>`, parsed into its `KEY=value` lines.
+    /// `ctx-meter env <transcript>`'s `KEY=value` lines, computed in process.
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String>;
     /// `archive.sh lineage <session> --json`, raw JSON-lines rows.
     fn archive_lineage(&self, session: &str) -> String;
@@ -186,16 +186,14 @@ impl Seam for RealSeam {
     }
 
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String> {
-        let o = spira_config::bounded::bounded("ctx-meter.sh").arg("env").arg(transcript).stdin(Stdio::null()).output();
-        let mut m = HashMap::new();
-        if let Ok(o) = o {
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    m.insert(k.to_string(), v.to_string());
-                }
+        let cfg = match ctx_meter::Config::resolve() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("archivist: {e}");
+                return HashMap::new();
             }
-        }
-        m
+        };
+        ctx_meter::env(&cfg, dwarf::util::now_epoch(), Some(transcript)).iter().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     fn archive_lineage(&self, session: &str) -> String {
