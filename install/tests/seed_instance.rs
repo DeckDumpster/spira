@@ -11,6 +11,7 @@ fn instance_in(toml: &Path) -> String {
     String::from_utf8_lossy(&o.stdout).trim().to_string()
 }
 
+// The no-write cases (prod install, no split checkout) are the unit tests of `seed_prod_instance_if_split` in src/seed_instance.rs.
 // covers: UC-instance-lifecycle-29
 #[test_id(tfcu7w7)]
 #[test]

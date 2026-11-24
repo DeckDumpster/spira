@@ -45,6 +45,7 @@ doctor.sh)
     if [ "${DOCTOR_EXIT:-0}" != 0 ] || { [ -n "${DOCTOR_FAIL_ON_CALL:-}" ] && [ "$c" -ge "$DOCTOR_FAIL_ON_CALL" ]; }; then
         printf '  FAIL  %s\n' "${DOCTOR_FAIL_MSG:-injected failure}"; exit 1
     fi ;;
+skew.sh) [ -z "${SKEW_OUT:-}" ] || { printf '%s\n' "$SKEW_OUT"; exit "${SKEW_EXIT:-1}"; } ;;
 spira-lc) [ -z "${MIGRATE_FAIL:-}" ] || { echo "database is at v61, binary knows up to v53"; exit 1; } ;;
 systemctl)
     case "$*" in
@@ -275,6 +276,21 @@ fn deploy_rolls_a_failed_health_check_back_restoring_the_config_and_never_re_ena
         with_unit(spec(&[NEW_TAG]).prior()).env("CTRL_SUSPENDED", "spira-ops"),
     ]);
     let [rolled, first, control, suspended] = &r[..] else { unreachable!() };
+    let newer = "spira-9.9.9";
+    let not_latest = format!("NOT-LATEST x is not the latest published release {newer}");
+    let sk = together(vec![
+        spec(&[NEW_TAG]).prior().env("SKEW_OUT", "MANIFEST-MISMATCH sidecar differs"),
+        spec(&[NEW_TAG]).prior().env("SKEW_OUT", &not_latest),
+        spec(&["latest"]).prior().env("SKEW_OUT", &not_latest),
+        spec(&[NEW_TAG]).prior().env("SKEW_OUT", &format!("{not_latest}\nMANIFEST-MISMATCH sidecar differs")),
+    ]);
+    let [skew_rolled, named_older, latest_refused, mixed] = &sk[..] else { unreachable!() };
+    assert_ne!(skew_rolled.code, 0, "{}", skew_rolled.out);
+    assert!(skew_rolled.out.contains("ROLLBACK") && skew_rolled.out.contains("deploy: skew: MANIFEST-MISMATCH"), "{}", skew_rolled.out);
+    assert_eq!(skew_rolled.current().as_deref(), Some(PRIOR));
+    assert_eq!(named_older.code, 0, "a NOT-LATEST-only finding about a newer release is accepted for a named tag: {}", named_older.out);
+    assert_ne!(latest_refused.code, 0, "{}", latest_refused.out);
+    assert_ne!(mixed.code, 0, "a NOT-LATEST finding beside another one still rolls back: {}", mixed.out);
     let enable = "systemctl --user enable --now spira-ops-prod.timer";
 
     assert_ne!(rolled.code, 0, "{}", rolled.out);

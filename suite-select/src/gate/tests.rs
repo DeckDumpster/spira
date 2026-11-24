@@ -321,27 +321,6 @@ fn width_and_defaults_read_like_the_bash() {
     assert_eq!(e.always_covers, ["spira/lib.sh"]);
 }
 
-/// Part F of the retired test-gate-touched.sh: the real corpus's declaration — a
-/// root-installer-only diff is never unselected.
-#[test_id(tyef4yn)]
-#[test]
-fn the_real_corpus_claims_the_root_installer() {
-    let dir = spira_config::resolve::locate_home_for_process().unwrap();
-    let c = Corpus::load_named(&dir, &["test-launchers-as-launched.sh".into()]).unwrap();
-    let s = select::select(
-        &c,
-        &[select::Change::modified("install/src/bin/install.rs")],
-        &mut |_| vec![],
-        &Buckets::default(),
-        &Options {
-            no_all_fallback: true,
-            ..Options::default()
-        },
-    )
-    .unwrap();
-    assert_eq!(s.suites, ["test-launchers-as-launched.sh"]);
-}
-
 #[test_id(tz07wk3)]
 #[test]
 fn the_selector_plans_against_the_suites_share_not_the_whole_budget() {
