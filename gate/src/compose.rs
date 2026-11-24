@@ -634,7 +634,7 @@ pub fn run_all(cmd: &str) -> String {
 
 /// (crate, package) pairs: the crate's tests run the package's binary prebuilt in the target
 /// directory (batcher-cut's fence probe test runs the built gate), so selecting the crate builds it too.
-const NEEDS_BUILT: [(&str, &str); 4] = [("batcher-cut", "gate"), ("spira-lc", "testenv"), ("spira-runtime", "work"), ("spira-runtime", "spira-lc")];
+const NEEDS_BUILT: [(&str, &str); 5] = [("batcher-cut", "gate"), ("spira-lc", "testenv"), ("spira-runtime", "work"), ("spira-runtime", "spira-lc"), ("install", "spira-config")];
 
 /// The words of the unit build line, shared by the gate's build phase and testenv's unit tier so
 /// both produce the same artefacts for the same crates: the default profile, no config override, no `-j`.
@@ -1571,6 +1571,15 @@ mod tests {
         assert!(words.contains("-p work") && words.contains("-p spira-lc"), "{words}");
         let words = unit_build_words(&["spira-runtime".into(), "work".into(), "spira-lc".into()]).join(" ");
         assert_eq!((words.matches("-p work").count(), words.matches("-p spira-lc").count()), (1, 1), "{words}");
+    }
+
+    #[test_id(tfoj16v)]
+    #[test]
+    fn selecting_install_builds_the_spira_config_its_script_tests_run() {
+        let words = unit_build_words(&["install".into()]).join(" ");
+        assert!(words.contains("-p spira-config"), "{words}");
+        let both = unit_build_words(&["install".into(), "spira-config".into()]).join(" ");
+        assert_eq!(both.matches("-p spira-config").count(), 1, "{both}");
     }
 
     #[test_id(t6c2b5e)]
