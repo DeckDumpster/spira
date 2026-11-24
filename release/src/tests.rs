@@ -2208,6 +2208,12 @@ fn verify_names_a_runtime_program_missing_from_the_release_path_as_a_deps_proble
     let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
     let p = verify::verify(&w.cfg, A, &o).unwrap();
     assert!(p.iter().any(|p| p.starts_with("deps: spira-no-such-runtime-program:")), "{p:?}");
+    stub(&rel.join("bin/spira-no-such-runtime-program"), "#!/bin/sh\n");
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(!p.iter().any(|p| p.starts_with("deps:")), "a program on the release's own bin resolves: {p:?}");
     let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![] };
     let p = verify::verify(&w.cfg, A, &o).unwrap();
     assert!(!p.iter().any(|p| p.starts_with("deps:")), "--no-pre-activate skips the check: {p:?}");

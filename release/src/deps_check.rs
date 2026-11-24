@@ -50,5 +50,9 @@ fn numbers(v: &str) -> Vec<u64> {
 }
 
 fn at_least(got: &str, min: &str) -> bool {
-    numbers(got) >= numbers(min)
+    let (mut got, mut min) = (numbers(got), numbers(min));
+    let n = got.len().max(min.len());
+    got.resize(n, 0);
+    min.resize(n, 0);
+    got >= min
 }

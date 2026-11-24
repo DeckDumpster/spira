@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# pre-activate.sh <release-dir> — five checks a release must pass before
+# pre-activate.sh <release-dir> — six checks a release must pass before
 # releases/current moves onto it. `release verify` runs this against the
 # release it checks (a landing, skew refresh in release mode and rollback-local
 # all verify before `release activate`), before the symlink flips. Exit 0 only if every check passes; on any failure, print each failed
