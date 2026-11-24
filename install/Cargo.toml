@@ -35,6 +35,11 @@ name = "units_lint"
 path = "tests/units_lint.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "metrics_stack"
+path = "tests/metrics_stack.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["lifecycle/integration", "release/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "system-paths/integration", "spira-otel/integration", "testkit/integration", "watchdog/integration", "spira-test-id/integration"]
 [dependencies]

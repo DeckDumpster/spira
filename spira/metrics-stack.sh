@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# metrics-stack.sh <vm|logs|collector|grafana> — run one container of the metrics stack in the
+# metrics-stack.sh <vm|logs|collector|grafana> [store-flag...] — run one container of the metrics stack in the
 # foreground, so the systemd unit that execs it owns (and fences) the process.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
 
 part="${1:-}"
-case "$part" in vm|logs|collector|grafana) ;; *) printf 'usage: metrics-stack.sh vm|logs|collector|grafana\n' >&2; exit 2 ;; esac
+case "$part" in vm|logs|collector|grafana) shift ;; *) printf 'usage: metrics-stack.sh vm|logs|collector|grafana [store-flag...]\n' >&2; exit 2 ;; esac
 
 if [ -z "${SPIRA_METRICS_DATA:-}" ]; then
     printf 'metrics-stack: SPIRA_METRICS_DATA is empty — %s stays idle\n' "$part" >&2
@@ -34,7 +34,7 @@ vm)
     # batch-job: the container is the unit's long-running service process
     exec podman "${common[@]}" --name victoria-metrics \
         -p 127.0.0.1:8428:8428 -v "$data/vm:/storage" "$VM_IMAGE" \
-        -storageDataPath=/storage -retentionPeriod="$RETENTION" -httpListenAddr=:8428
+        -storageDataPath=/storage -retentionPeriod="$RETENTION" -httpListenAddr=:8428 "$@"
     ;;
 logs)
     keep="${SPIRA_OTEL_KEEP_DAYS:?metrics-stack: SPIRA_OTEL_KEEP_DAYS unset}"
@@ -42,7 +42,7 @@ logs)
     # batch-job: the container is the unit's long-running service process
     exec podman "${common[@]}" --name victoria-logs \
         -p 127.0.0.1:9428:9428 -v "$data/logs:/storage" "$VL_IMAGE" \
-        -storageDataPath=/storage -retentionPeriod="${keep}d" -httpListenAddr=:9428
+        -storageDataPath=/storage -retentionPeriod="${keep}d" -httpListenAddr=:9428 "$@"
     ;;
 collector)
     otel="${SPIRA_RUN:?metrics-stack: SPIRA_RUN unset}/otel"
