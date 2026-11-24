@@ -21,11 +21,6 @@ path = "tests/e2e_goodput_20d.rs"
 required-features = ["integration"]
 
 [[test]]
-name = "hold_scripts"
-path = "tests/hold_scripts.rs"
-required-features = ["integration"]
-
-[[test]]
 name = "lc_backup_drill"
 path = "tests/lc_backup_drill.rs"
 required-features = ["integration"]

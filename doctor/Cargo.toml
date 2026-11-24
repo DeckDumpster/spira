@@ -16,11 +16,6 @@ test = false
 
 [features]
 integration = ["spira-config/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration"]
-[[test]]
-name = "fresh_clone"
-path = "tests/fresh_clone.rs"
-required-features = ["integration"]
-
 [package.metadata.spira]
 test-bins = ["spira-config"]
 

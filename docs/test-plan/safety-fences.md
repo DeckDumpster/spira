@@ -95,7 +95,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 32 | `dwarf/tests/fences.rs` (`confine.sh` path prefixes) and `landing_pass::tests::confinement_is_asked_before_the_gate` | T2 | DONE (sp-dede1o) |
 | 32 (partition rows) | none: the spike suite is retired | — | GAP: filed as sp-dede1o.1 |
 | 33 | none: the spike suite is retired | — | GAP: see UC-safety-fences-33 in the toml |
-| 34 | doctor/tests/fresh_clone.rs | T0 | PORTED: the syntax sweep covers the runes and `confine.sh` |
+| 34 | spira-config/tests/fresh_clone.rs | T0 | PORTED: the syntax sweep covers the runes and `confine.sh` |
 
 ---
 
@@ -132,7 +132,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 
 **D8 — syntax sweep.**
 - **Evidence:** the retired test-freshclone ran `bash -n` over all shipped scripts, and test-spike runs `bash -n` over runes and `confine.sh` again (a subset).
-- **Keep:** `doctor/tests/fresh_clone.rs`, whose sweep includes `runes/*.rune`.
+- **Keep:** `spira-config/tests/fresh_clone.rs`, whose sweep includes `runes/*.rune`.
 
 ---
 
@@ -283,7 +283,7 @@ as their brief:**
   composed pre-commit hook, and drive the canonical `hooks/pre-commit` directly.
 - **sp-rv8jt** — D4/D7/D8 lint consolidation (UC 22's wiring-grep half, UC 28, UC 33,
   UC 34): a `gate-fences.sh` module exposing `gate_fence_list`, widening
-  `doctor/tests/fresh_clone.rs`'s syntax sweep to absorb test-spike's `bash -n` rows, extracting the
+  `spira-config/tests/fresh_clone.rs`'s syntax sweep to absorb test-spike's `bash -n` rows, extracting the
   runes-integrity lints into a standalone T0 stage, and merging
   test-suite-state-fence's structural rows into test-suite-state.
 - **sp-av1xy** — Persona scoping and spike confinement (UC 24, 26, 27, 29–32; gaps 10,
