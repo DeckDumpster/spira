@@ -137,7 +137,7 @@ pub fn wait<M: Menders>(m: &mut M, deadline_s: i64) -> Result<Vec<Failure>, Stri
 pub fn returns_by_pass(rows: Vec<Row>) -> Vec<(u32, Failure)> {
     let mut newest: BTreeMap<String, Row> = BTreeMap::new();
     for r in rows.into_iter().filter(|r| !live(r)) {
-        if newest.get(&r.suite).map_or(true, |kept| r.pass >= kept.pass) {
+        if newest.get(&r.suite).is_none_or(|kept| r.pass >= kept.pass) {
             newest.insert(r.suite.clone(), r);
         }
     }
