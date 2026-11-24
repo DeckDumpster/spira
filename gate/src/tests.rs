@@ -4059,7 +4059,7 @@ fn fenced() -> Fake {
     }
     f.prints("spira/inventory.sh", &["inventory"]);
     f.prints("spira/build-fence.sh", &["build-fence"]);
-    f.prints("$SPIRA_LINT_BIN", &["spira-lint", "plan-matrix", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "test-id-row-orphan"]);
+    f.prints("$SPIRA_LINT_BIN", &["spira-lint", "plan-matrix", "lockfile-lint", "test-id-row-orphan"]);
     f
 }
 
@@ -4232,9 +4232,6 @@ fn every_fence_with_its_line_passes_and_the_counts_are_reported() {
         "spira-lint=1 files",
         "plan-matrix=1 files",
         "build-fence=1 files",
-        "tier-budget-allowlist=1 files",
-        "tier-budget-area-allowlist=1 files",
-        "tier-budget-areas=1 files",
         "lockfile-lint=1 files",
     ] {
         assert!(e.contains(n), "{n} missing from: {e}");
@@ -4293,7 +4290,7 @@ fn tree_owned(base: Option<&str>, merged: Option<&str>) -> Fake {
     f.prints("spira/a-fence.sh", &["a-fence"]);
     f.prints("spira/b-fence.sh", &["b-fence"]);
     f.prints("spira/c-fence.sh", &["c-fence"]);
-    f.prints("$SPIRA_LINT_BIN", &["spira-lint", "plan-matrix", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "test-id-row-orphan"]);
+    f.prints("$SPIRA_LINT_BIN", &["spira-lint", "plan-matrix", "lockfile-lint", "test-id-row-orphan"]);
     f.ctx.borrow_mut().as_mut().unwrap().gate_cmd = "bash spira/config-only.sh".into();
     if let Some(b) = base {
         f.blobs.borrow_mut().insert(format!("{BASE}:gate.steps"), b.as_bytes().to_vec());
