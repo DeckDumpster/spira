@@ -1368,6 +1368,24 @@ pub mod fake {
     use std::sync::Mutex;
     use std::time::Duration;
 
+    /// The ids `open_asks_json` holds.
+    pub const OPEN_ASK_IDS: [&str; 3] = ["sp-ask-a", "sp-ask-b", "sp-ask-c"];
+
+    /// `list-asks` over three open asks.
+    pub fn open_asks_json() -> String {
+        serde_json::json!([
+            {"ask_id": "sp-ask-a", "opened_at": 300, "title": "which disk", "class": "design", "work_bead": ""},
+            {"ask_id": "sp-ask-b", "opened_at": 200, "title": "", "class": "policy", "work_bead": "sp-w"},
+            {"ask_id": "sp-ask-c", "opened_at": 100}
+        ])
+        .to_string()
+    }
+
+    /// An open decision bead the ask record does not hold: bd status alone counts it, the record does not.
+    pub fn decision_without_record() -> Value {
+        serde_json::json!({"id": "sp-no-record", "status": "open", "labels": ["fixture-ask-label"]})
+    }
+
     pub struct Content {
         pub rows: Vec<Value>,
         /// What `list --live` answers: lifecycle rows.

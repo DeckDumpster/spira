@@ -214,6 +214,14 @@ pub struct AskRow {
     pub work_bead: String,
 }
 
+/// The open asks as `AskRow`s; a list that cannot be parsed is an error, never no asks.
+pub fn ask_rows(list_asks_out: &str) -> Result<Vec<AskRow>, String> {
+    Ok(spira_store::asks::parse(list_asks_out)?
+        .into_iter()
+        .map(|a| AskRow { id: a.ask_id, opened_at: a.opened_at, title: a.title, class: a.class, work_bead: a.work_bead })
+        .collect())
+}
+
 /// Fills each untitled ask from its decision bead's `plan items` row.
 pub fn fill_ask_titles(asks: &mut [AskRow], content: &[serde_json::Value]) {
     for a in asks.iter_mut().filter(|a| a.title.is_empty()) {
@@ -2643,6 +2651,15 @@ mod tests {
         s.eject_why.insert("sp-b".into(), "r-auto-9: test-x #3 red".into());
         assert_eq!(rework_why(&s, "sp-a"), "Sift sent this back: fence red", "an overlap notice is not the why");
         assert_eq!(rework_why(&s, "sp-b"), "r-auto-9: test-x #3 red", "a round's eject reason wins");
+    }
+
+    #[test_id(te7x9vj)]
+    #[test]
+    fn the_ask_rows_are_the_shared_fixtures_three_and_a_non_array_is_an_error() {
+        let ids: Vec<_> = ask_rows(&spira_store::lc_call::fake::open_asks_json()).unwrap().into_iter().map(|a| a.id).collect();
+        assert_eq!(ids, spira_store::lc_call::fake::OPEN_ASK_IDS);
+        assert!(ask_rows("{}").is_err());
+        assert!(ask_rows("[]").unwrap().is_empty());
     }
 
     #[test_id(tga435i)]

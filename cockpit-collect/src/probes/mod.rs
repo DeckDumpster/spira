@@ -21,7 +21,7 @@ mod unsent;
 use crate::io;
 use crate::quoting::{sanitize, sanitize_title};
 use serde_json::Value;
-use spira_config::nonwork::{self, Kind, Which};
+use spira_config::nonwork::{self, Kind};
 use spira_config::scheduler_link::Limit;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -680,17 +680,13 @@ fn py_truthy(v: Option<&Value>) -> bool {
 
 pub fn core_counts_keys() -> Kv {
     let mut out = Kv::new();
-    let ask_label = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
-    // Asks are not work beads: bd status is their only state (spira_config::nonwork).
-    let [_, open] = nonwork::status_args(Kind::Ask, Which::Open);
-    let open: Vec<&str> = open.split(',').collect();
-    push(&mut out, "SP_WAITING", waiting_count(io::json_rows(io::live_beads(&ask_label)), &open));
+    push(&mut out, "SP_WAITING", waiting_count(lc::verb_read(&["list-asks"])));
     out
 }
 
-/// Asks still open among `rows`; no readable rows is `?`, never 0.
-fn waiting_count(rows: Option<Vec<Value>>, open: &[&str]) -> String {
-    rows.map_or("?".into(), |r| r.iter().filter(|b| b.get("status").and_then(Value::as_str).is_some_and(|s| open.contains(&s))).count().to_string())
+/// The open asks the store's ask record holds; an unreadable record is `?`, never 0.
+fn waiting_count(read: Result<String, lc::Gone>) -> String {
+    read.ok().and_then(|t| spira_store::asks::parse(&t).ok()).map_or("?".into(), |a| a.len().to_string())
 }
 
 #[cfg(test)]
@@ -903,16 +899,21 @@ mod waiting_tests {
     use super::*;
 
     // covers: UC-cockpit-observability-08
-    #[test_id(tcfizpc)]
+    #[test_id(t3dqpda)]
     #[test]
-    fn waiting_is_unknown_when_bd_refused_and_zero_when_the_store_is_empty() {
-        let refusal = "schema version mismatch: database is at v61, binary knows up to v53";
-        assert_eq!(waiting_count(io::json_rows(Some(refusal.into())), &["open"]), "?");
-        assert_eq!(waiting_count(io::json_rows(Some(String::new())), &["open"]), "?");
-        assert_eq!(waiting_count(io::json_rows(None), &["open"]), "?");
-        assert_eq!(waiting_count(io::json_rows(Some("[]".into())), &["open"]), "0");
-        let rows = r#"[{"id":"a","status":"open"},{"id":"b","status":"closed"}]"#;
-        assert_eq!(waiting_count(io::json_rows(Some(rows.into())), &["open"]), "1");
+    fn waiting_is_the_ask_record_not_the_decision_beads_and_unknown_when_unreadable() {
+        use spira_store::lc_call::fake;
+        let read = |out: &str, code: i32| {
+            let (c, _) = crate::store::scripted::client(&[("list-asks", code, out)]);
+            crate::store::answer_kind(&c, &["list-asks"])
+        };
+        let three = fake::open_asks_json();
+        assert_eq!(waiting_count(read(&three, 0)), fake::OPEN_ASK_IDS.len().to_string());
+        let beads = serde_json::json!([fake::decision_without_record()]).to_string();
+        assert_eq!(waiting_count(read(&beads, 0)), "?", "a bead list is not an ask list");
+        assert_eq!(waiting_count(read("{}", 0)), "?");
+        assert_eq!(waiting_count(read("", 1)), "?");
+        assert_eq!(waiting_count(read("[]", 0)), "0");
     }
 }
 
