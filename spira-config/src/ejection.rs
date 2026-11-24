@@ -469,9 +469,9 @@ mod tests {
     fn a_nextest_fail_after_cargo_warnings_is_named_first_with_its_panic_and_no_warning() {
         let warnings: String = (0..30).map(|i| format!("warning: profile package spec `p{i}` did not match any packages\n")).collect();
         let out = format!("{warnings}{}        PASS [   0.1s] (1/2) bin/x a::ok\n{SUMMARY}        FAIL [   0.300s] (3533/6077) bin/x t::boom\nerror: test run failed\n", nextest_fail("t::boom", "    thread 't::boom' panicked at src/x.rs:12:9:\n    left != right\n    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"));
-        let d = digest("t1", &[], &out);
+        let d = digest_steps("t1", &[], &[], &[("phase:test".to_string(), out)]);
         let l: Vec<&str> = d.lines().collect();
-        let at = l.iter().position(|l| *l == "STEP phase:test" || *l == "STEP gate").unwrap();
+        let at = l.iter().position(|l| *l == "STEP phase:test").unwrap();
         assert_eq!(l[at + 1], "FAIL t::boom at src/x.rs:12", "{d}");
         assert!(l[at + 2].contains("panicked at") || l[at + 2].contains("left != right"), "{d}");
         assert!(!d.contains("warning:"), "{d}");
@@ -520,6 +520,15 @@ mod tests {
     fn other_units_keep_the_head_of_unrecognised_output() {
         let d = digest_steps("t", &[], &[], &[("spira-lint".to_string(), "first\nwarning: w\n  indented\nlast\n".to_string())]);
         assert!(d.contains("  first") && d.contains("  last") && !d.contains("indented") && !d.contains("no recognisable"), "{d}");
+    }
+
+    #[test_id(tbof8ul)]
+    #[test]
+    fn a_signalled_or_leaking_nextest_test_is_a_red_block_of_its_own() {
+        let out = "        SIGSEGV [   0.3s] (1/3) bin/x t::sig\n    segfault here\n        LEAK-FAIL [   0.3s] (2/3) bin/x t::leak\n    leaked\n        PASS [   0.1s] (3/3) bin/x t::ok\n";
+        let f = failures(out);
+        assert_eq!(f.iter().map(|f| f.test.as_str()).collect::<Vec<_>>(), ["t::sig", "t::leak"]);
+        assert_eq!((f[0].tail.as_slice(), f[1].tail.as_slice()), (&["segfault here".to_string()][..], &["leaked".to_string()][..]));
     }
 
     #[test_id(t2rnhms)]
