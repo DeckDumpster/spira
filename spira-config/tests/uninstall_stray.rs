@@ -15,7 +15,7 @@ fn the_stray_sweep_reports_a_planted_unit_it_does_not_own_and_leaves_it_in_place
     let spira = testkit::manifest_dir().parent().unwrap().join("spira");
     let release = d.join("release");
     std::fs::create_dir_all(release.join("bin")).unwrap();
-    for bin in ["spira-config", "units-install"] {
+    for bin in ["spira-config"] {
         std::os::unix::fs::symlink(testkit::bin_exe(bin), release.join("bin").join(bin)).unwrap();
     }
     let units = d.join(".config/systemd/user");

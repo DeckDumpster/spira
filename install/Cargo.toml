@@ -31,32 +31,9 @@ path = "src/bin/render_unit.rs"
 test = false
 
 [[test]]
-name = "seed_instance"
-path = "tests/seed_instance.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "cadence_tool"
-path = "tests/cadence_tool.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "uninstall_stray"
-path = "tests/uninstall_stray.rs"
-required-features = ["integration"]
-
-[[test]]
-name = "deploy_script"
-path = "tests/deploy_script.rs"
-required-features = ["integration"]
-
-[[test]]
 name = "units_lint"
 path = "tests/units_lint.rs"
 required-features = ["integration"]
-
-[package.metadata.spira]
-test-bins = ["spira-config"]
 
 [features]
 integration = ["lifecycle/integration", "release/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "system-paths/integration", "spira-otel/integration", "testkit/integration", "watchdog/integration", "spira-test-id/integration"]
