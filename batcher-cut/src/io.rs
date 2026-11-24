@@ -439,6 +439,7 @@ pub enum Cause {
     OutsideFeature { root: String },
     GateUnjudged { paths: Vec<String> },
     NotInForce { dep: String },
+    InForceUnread { dep: String, error: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -463,6 +464,7 @@ impl LeftOut {
             Cause::OutsideFeature { .. } => "outside-feature".into(),
             Cause::GateUnjudged { .. } => "gate-unjudged".into(),
             Cause::NotInForce { .. } => "blocked-not-in-force".into(),
+            Cause::InForceUnread { .. } => "in-force-unread".into(),
         }
     }
 
@@ -520,6 +522,10 @@ impl LeftOut {
             Cause::NotInForce { dep } => (
                 format!("it depends on {dep}, a change to the round machinery that the running release does not yet carry"),
                 format!("a release carrying {dep} becoming active readmits it"),
+            ),
+            Cause::InForceUnread { dep, error } => (
+                format!("it depends on {dep}, and whether the running release carries {dep} could not be read: {error}"),
+                format!("a later cut that can read whether the release carries {dep} readmits it"),
             ),
         };
         format!("batcher {repo}: {id} left out of the cut: {why} — {exit}")
@@ -1039,18 +1045,29 @@ fn left_out_not_in_force(
         .into_iter()
         .collect();
     let rows = lc_rows_of(env, &deps);
-    let landed: BTreeMap<String, String> = rows
+    let landed: BTreeMap<String, Result<String, String>> = rows
         .iter()
         .flatten()
         .filter(|r| r.get("state").and_then(|s| s.as_str()) == Some("LANDED"))
-        .filter_map(|r| Some((r.get("bead_id")?.as_str()?.to_string(), r.get("reason")?.as_str()?.to_string())))
+        .filter(|r| r.get("repo").and_then(|s| s.as_str()).is_none_or(|n| n == repo.name))
+        .filter_map(|r| {
+            let id = r.get("bead_id")?.as_str()?.to_string();
+            let tip = r.get("tip").and_then(|t| t.as_str()).unwrap_or("");
+            let sha = if lifecycle::bead::is_full_sha(tip) {
+                Ok(tip.to_string())
+            } else {
+                Err(format!("its LANDED row for {id} carries no full-sha tip (`{tip}`)"))
+            };
+            Some((id, sha))
+        })
         .collect();
     let mut verdict: BTreeMap<String, Result<bool, String>> = BTreeMap::new();
     let mut setup: Option<Result<NotInForceSetup, String>> = None;
     let mut check = |dep: &str| -> Option<Result<bool, String>> {
         let (tip, in_pool) = match (pooled.get(dep), landed.get(dep)) {
             (Some(t), _) => (t.clone(), true),
-            (None, Some(t)) => (t.clone(), false),
+            (None, Some(Ok(t))) => (t.clone(), false),
+            (None, Some(Err(e))) => return Some(Err(e.clone())),
             (None, None) => return rows.as_ref().err().map(|e| Err(format!("its blocker's state could not be read: {e}"))),
         };
         if let Some(v) = verdict.get(dep) {
@@ -1075,14 +1092,13 @@ fn left_out_not_in_force(
     let mut kept = Vec::new();
     let mut left = Vec::new();
     for m in members {
-        let held = content_blockers
-            .get(&m.id)
-            .into_iter()
-            .flatten()
-            .find(|d| !matches!(check(d), None | Some(Ok(false))))
-            .cloned();
+        let held = content_blockers.get(&m.id).into_iter().flatten().find_map(|d| match check(d) {
+            Some(Ok(true)) => Some(Cause::NotInForce { dep: d.clone() }),
+            Some(Err(error)) => Some(Cause::InForceUnread { dep: d.clone(), error }),
+            None | Some(Ok(false)) => None,
+        });
         match held {
-            Some(dep) => left.push(LeftOut { id: m.id, tip: m.tip, cause: Cause::NotInForce { dep } }),
+            Some(cause) => left.push(LeftOut { id: m.id, tip: m.tip, cause }),
             None => kept.push(m),
         }
     }
