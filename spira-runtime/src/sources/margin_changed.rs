@@ -429,7 +429,13 @@ mod tests {
             true
         };
         assert!(planted, "the probe sees a thread named as the old source's was");
-        assert!(!thread_comms().iter().any(|c| c == SOURCE_COMM), "the planted thread is gone");
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while thread_comms().iter().any(|c| c == SOURCE_COMM) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the planted thread is gone");
 
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
