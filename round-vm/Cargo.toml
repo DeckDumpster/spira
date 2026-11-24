@@ -70,9 +70,3 @@ runtime = { path = "../runtime" }
 gate = { path = "../gate" }
 batcher = { path = "../batcher" }
 batcher-cut = { path = "../batcher-cut" }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true

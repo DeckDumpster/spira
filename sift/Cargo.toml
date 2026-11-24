@@ -25,9 +25,3 @@ spira-otel = { path = "../spira-otel" }
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
 forge = { path = "../forge" }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true

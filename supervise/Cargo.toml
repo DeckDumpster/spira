@@ -11,12 +11,6 @@ libc = "0.2"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }

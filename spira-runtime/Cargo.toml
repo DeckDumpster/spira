@@ -205,12 +205,6 @@ release = { path = "../release" }
 lifecycle = { path = "../lifecycle" }
 state-store = { path = "../state-store" }
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [[test]]
 name = "sift_reads"
 path = "tests/sift_reads.rs"
