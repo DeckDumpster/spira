@@ -189,3 +189,18 @@ mod bounded_tests {
         assert_eq!(e, "killed by signal: cut short");
     }
 }
+
+#[cfg(test)]
+mod overrides_tests {
+    use super::overrides_apply;
+
+    #[test_id(tuwwq3n)]
+    #[test]
+    fn an_unreadable_overrides_directory_fails_the_pass_and_a_missing_one_declares_none() {
+        let d = testkit::TempDir::new("overrides-apply");
+        std::fs::write(d.join("plain"), "").unwrap();
+        let e = overrides_apply(&d.join("plain")).unwrap_err();
+        assert!(e.contains("overrides: cannot read"), "{e}");
+        assert_eq!(overrides_apply(&d.join("absent")), Ok(String::new()));
+    }
+}

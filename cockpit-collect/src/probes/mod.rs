@@ -1776,6 +1776,36 @@ mod tests {
         assert_eq!(asked.get(), 6);
     }
 
+    fn git_in(dir: &Path, date: &str, args: &[&str]) {
+        // batch-job: a fixture repository's own commit, bounded by the test
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    #[test_id(tscf113)]
+    #[test]
+    fn the_commit_time_follows_head_and_the_base_through_the_real_ref_files() {
+        let d = testkit::TempDir::new("commit-ahead");
+        let git = |date: &str, args: &[&str]| git_in(d.path(), date, args);
+        git("@1000 +0000", &["init", "-q", "-b", "main"]);
+        git("@1000 +0000", &["commit", "-q", "--allow-empty", "-m", "c1"]);
+        git("@1000 +0000", &["branch", "base"]);
+        git("@2000 +0000", &["commit", "-q", "--allow-empty", "-m", "c2"]);
+        assert_eq!(commit_ahead_ts(d.path(), "base"), Some(2000));
+        git("@3000 +0000", &["commit", "-q", "--allow-empty", "-m", "c3"]);
+        assert_eq!(commit_ahead_ts(d.path(), "base"), Some(3000), "HEAD moved");
+        git("@3000 +0000", &["branch", "-f", "base", "HEAD"]);
+        assert_eq!(commit_ahead_ts(d.path(), "base"), None, "the base moved to HEAD, nothing is ahead");
+    }
+
     #[test_id(tb4inqo)]
     #[test]
     fn firing_alerts_come_from_the_stores_heimdall_conditions() {
