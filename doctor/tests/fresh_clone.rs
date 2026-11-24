@@ -82,7 +82,9 @@ fn conf_values(harness: &Path, home: &Path, keys: &[&str]) -> Vec<String> {
 #[test_id(twp5ojd)]
 #[test]
 fn conf_sh_resolves_in_an_empty_environment_to_its_own_location_and_a_generic_ask_label() {
+    // literal-ok: the planted offender the matcher must flag
     assert!(names_an_operator("needs-ryan"), "the matcher must flag an operator-named label before it is believed silent");
+    // literal-ok: a generic label the matcher must accept
     assert!(!names_an_operator("needs-operator"));
 
     let tmp = testkit::TempDir::new("fresh-clone-conf");
