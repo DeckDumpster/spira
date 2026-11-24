@@ -3642,6 +3642,28 @@ fn after_batch(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test_id(t5xocpq)]
+    #[test]
+    fn every_phase_the_script_marks_is_a_round_step_and_every_listed_phase_is_marked() {
+        let marked: Vec<&str> = REMOTE_SCRIPT
+            .lines()
+            .filter_map(|l| {
+                let l = l.trim();
+                l.strip_prefix("phase_failed ").or_else(|| l.strip_prefix("phase "))
+            })
+            .filter_map(|r| r.split_whitespace().next())
+            .filter(|n| n.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+            .collect();
+        assert!(marked.contains(&"image") && marked.contains(&"bare-suites"), "{marked:?}");
+        for m in &marked {
+            assert!(spira_config::round_step::is_step(m), "{m} is marked by the script but is not a round step");
+        }
+        for p in spira_config::round_step::PHASES.iter().filter(|p| **p != "start") {
+            assert!(marked.contains(p), "{p} is listed but the script never marks it");
+        }
+    }
 
     #[test_id(td3syxh)]
     #[test]

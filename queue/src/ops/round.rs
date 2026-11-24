@@ -152,14 +152,9 @@ pub(super) fn phase_reds(results: &std::path::Path) -> Vec<PhaseRed> {
         .collect()
 }
 
-/// Steps a round runs over its whole tree that are not testenv suites; only a green round proves them.
-pub const ROUND_STEPS: [&str; 5] = [BUILD_RED, LINT_RED, UNIT_RED, CONFIG_DELTA_RED, RELEASE_VERIFY_RED];
-/// The round steps `testenv --suites <step>` cannot run for a tip.
-pub const ROUND_ONLY_STEPS: [&str; 4] = [BUILD_RED, LINT_RED, CONFIG_DELTA_RED, RELEASE_VERIFY_RED];
-
 /// A round step, or a base fence the round runs before its suites (`fence-<name>`).
 pub fn is_round_step(name: &str) -> bool {
-    ROUND_STEPS.contains(&name) || name.starts_with(FENCE_RED_PREFIX)
+    spira_config::round_step::is_step(name)
 }
 
 /// Whether a verb meets the round lease guard: on the caller's word, with the token it was
@@ -4777,7 +4772,7 @@ fn finish_green(
     }
     if let Ok(kv) = load(w, label, c, batch) {
         for m in kv.members() {
-            for step in ROUND_STEPS {
+            for step in spira_config::round_step::names() {
                 let _ = spira_config::proof::record_run(
                     &c.s.run,
                     &m.id,
@@ -4864,7 +4859,7 @@ fn known_forced_suites(w: &World, label: &str, wt: &Path, suites: &str) -> Resul
     if unknown.is_empty() {
         return Ok(());
     }
-    w.err(format!("queue.sh {label}: --suites names {} which testenv does not know — nothing changed; known suites: {}; round steps: {}", unknown.join(","), known.join(" "), ROUND_STEPS.join(" ")));
+    w.err(format!("queue.sh {label}: --suites names {} which testenv does not know — nothing changed; known suites: {}; round steps: {}", unknown.join(","), known.join(" "), spira_config::round_step::names().join(" ")));
     Err(FAIL)
 }
 

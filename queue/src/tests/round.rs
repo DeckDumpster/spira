@@ -484,7 +484,7 @@ fn an_eject_for_the_config_delta_check_is_taken_as_a_round_step() {
     );
     assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
     assert!(crate::ops::round::is_round_step("config-delta"));
-    assert!(crate::ops::round::ROUND_ONLY_STEPS.contains(&"config-delta"));
+    assert!(spira_config::round_step::proven_by_round("config-delta"));
 }
 
 #[test_id(tmajot0)]
@@ -500,7 +500,19 @@ fn an_eject_red_on_the_release_verify_step_is_accepted_as_a_round_step() {
         t.err()
     );
     assert!(t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
-    assert!(crate::ops::round::ROUND_ONLY_STEPS.contains(&"release-verify"));
+    assert!(spira_config::round_step::proven_by_round("release-verify"));
+}
+
+#[test_id(t71ykqw)]
+#[test]
+fn an_eject_red_on_any_listed_round_step_is_accepted() {
+    for name in spira_config::round_step::names() {
+        let t = round_world();
+        assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+        let batch = batch_of(&t);
+        assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "a round step went red", "--red", "--suites", name]), 0, "{name}: {}", t.err());
+        assert!(t.lc.has("eject-member"), "{name}: {:?}", t.lc.calls.borrow());
+    }
 }
 
 #[test_id(tsggjaw)]
@@ -524,10 +536,9 @@ fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_on
         1
     );
     let e = t.err();
-    assert!(
-        e.contains("round steps: workspace-build spira-lint unit-tests config-delta"),
-        "{e}"
-    );
+    let steps = e.split("round steps: ").nth(1).unwrap_or("");
+    let at: Vec<_> = ["workspace-build", "spira-lint", "unit-tests", "config-delta"].iter().map(|n| steps.find(n)).collect();
+    assert!(at.iter().all(Option::is_some) && at.windows(2).all(|p| p[0] < p[1]), "{e}");
     assert!(
         e.contains("round-vm") && e.contains("does not know") && e.contains("test-b.sh"),
         "{e}"
@@ -6982,7 +6993,7 @@ fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
 #[test_id(t8e83k1)]
 #[test]
 fn a_bead_ejected_on_a_round_only_step_resubmits_with_a_note_not_a_refusal() {
-    for step in ["spira-lint", "workspace-build", "fence-forge-batch-readers"] {
+    for step in ["spira-lint", "workspace-build", "fence-forge-batch-readers", "bare-suites", "image"] {
         let t = rework_world(&["manual"]);
         spira_config::proof::record_failing(&proof_run(&t), "sp-a", &[step.to_string()]).unwrap();
         let tip_arg = format!("--tip={T_FIX}");

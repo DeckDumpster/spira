@@ -292,7 +292,7 @@ fn checks_proven(
     let mut failed = Vec::new();
     let mut unverified = Vec::new();
     for check in proof::unproven(run, id, tip) {
-        if super::round::ROUND_ONLY_STEPS.contains(&check.as_str()) || check.starts_with("fence-") {
+        if (spira_config::round_step::is_step(&check) && check != "unit-tests") || check.starts_with("fence-") {
             notes.push(format!(
                 "queue.sh {verb}: {check} passes only in the round that carries {tip}"
             ));
