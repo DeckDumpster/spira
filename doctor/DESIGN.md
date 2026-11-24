@@ -141,7 +141,7 @@ in its `# covers:` line (audited against every `docs/test-plan/*.toml`), so reti
 orphans no use case under `plan-matrix`'s rule.
 
 `test-deploy.sh`, `test-deploy-preflight-new-unit.sh`, `test-dwarf-runes-overlay.sh`,
-the dwarf-launch-grammar suite, `test-freshclone.sh`,
+the dwarf-launch-grammar suite,
 `test-unit-name.sh`, `test-watchtower-failed-units.sh`,
 `test-bd-lock-retry.sh`, `bd-pin.sh`, `test-overrides.sh` are **kept**, repointed: each
 exercises `doctor` as a fixture dependency for a different subject (deploy's own flow, the

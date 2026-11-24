@@ -3,7 +3,7 @@
 Part of [[test-plan-2026-09-23]], section 5. Area id `safety-fences`; use-case ids are `UC-safety-fences-NN`.
 
 Primary files (21): test-dwarf-dirty-commit, test-dwarf-fence-bd-create, test-dwarf-fence, test-dwarf-worktree-guard, test-bd-close-unacked-guard, test-bd-delivers-label-guard, test-bd-remember-guard, test-bd-update-inflight-guard, test-branch-guard, test-focus-close-guard, test-host-reason, test-inventory, test-mail-fence, test-null-close-reason, test-ops-allowlist, test-orphan-test, test-ref-guard, test-scratch-fence, test-set-state-writers, test-spike, test-testenv-batch-fence.
-Secondary (5): test-czar-shadow, test-freshclone, test-schema-migration-guard, test-suite-state-fence, test-suite-state.
+Secondary (4): test-czar-shadow, test-schema-migration-guard, test-suite-state-fence, test-suite-state.
 Sources: map/*.jsonl records for these 27 files, reduce/r0–r3 (agent-guardrails, agent-safety-fences, fences-and-guards), signals.tsv (main-push run 35947142904), and read-only reads of `spira/dwarf.sh`, `spira/hooks/*`, `spira/worktree-hooks.sh`, `spira/gate-spira.sh`, `brain/.claude/settings.json`.
 
 Dimension codes used below: **C** correctness, **FC** fail-closed, **O** observability (refusal names cause, remedy, override), **I** idempotency, **CFG** config-compat, **K** contract, **TI** test-integrity.
@@ -95,7 +95,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 32 | `dwarf/tests/fences.rs` (`confine.sh` path prefixes) and `landing_pass::tests::confinement_is_asked_before_the_gate` | T2 | DONE (sp-dede1o) |
 | 32 (partition rows) | none: the spike suite is retired | — | GAP: filed as sp-dede1o.1 |
 | 33 | none: the spike suite is retired | — | GAP: see UC-safety-fences-33 in the toml |
-| 34 | test-freshclone::all (secondary) | T0, 3 s | KEEP: the syntax sweep covers the runes and `confine.sh` |
+| 34 | doctor/tests/fresh_clone.rs | T0 | PORTED: the syntax sweep covers the runes and `confine.sh` |
 
 ---
 
@@ -132,7 +132,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 
 **D8 — syntax sweep.**
 - **Evidence:** test-freshclone runs `bash -n` over all shipped scripts, and test-spike runs `bash -n` over runes and `confine.sh` again (a subset).
-- **Keep:** test-freshclone, with its sweep widened to include `runes/*.rune`.
+- **Keep:** `doctor/tests/fresh_clone.rs`, whose sweep includes `runes/*.rune` (test-freshclone is retired).
 
 ---
 
@@ -193,7 +193,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | test-spike | | **24** |
 | **Total** | | **174 suite-seconds** (≈1.8 % of the ~9,600 s main push) |
 
-Secondary files add 13 s (czar-shadow 1, freshclone 3, schema-migration-guard 3, suite-state-fence 4, suite-state 2). They are not counted above.
+Secondary files add 13 s (czar-shadow 1, schema-migration-guard 3, suite-state-fence 4, suite-state 2). They are not counted above.
 
 **Projected after the verdicts** (primary scope):
 
@@ -283,7 +283,7 @@ as their brief:**
   composed pre-commit hook, and drive the canonical `hooks/pre-commit` directly.
 - **sp-rv8jt** — D4/D7/D8 lint consolidation (UC 22's wiring-grep half, UC 28, UC 33,
   UC 34): a `gate-fences.sh` module exposing `gate_fence_list`, widening
-  test-freshclone's syntax sweep to absorb test-spike's `bash -n` rows, extracting the
+  `doctor/tests/fresh_clone.rs`'s syntax sweep to absorb test-spike's `bash -n` rows, extracting the
   runes-integrity lints into a standalone T0 stage, and merging
   test-suite-state-fence's structural rows into test-suite-state.
 - **sp-av1xy** — Persona scoping and spike confinement (UC 24, 26, 27, 29–32; gaps 10,

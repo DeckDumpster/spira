@@ -252,7 +252,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | rune-project-instructions | no | - | 5 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | rune | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | first-run | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
-| freshclone | no | - | 7 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | gate-admission-suites-only | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-base-evidence | partly | new:red-gate-holds | 5 | red base names its own red suites |
 | gate-base-selection | no | - | 3 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
@@ -287,7 +286,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | groomer | no | - | 5 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | held | no | - | 15 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | hold-liveness | no | - | 2 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| hold | no | - | 12 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | holds | no | - | 11 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | host-reason | no | - | 14 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | id-prefix | no | - | 4 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |

@@ -51,7 +51,6 @@ spira/test-deploy.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
 spira/test-gate-discover-branch.sh
-spira/test-hold.sh
 spira/test-install-conf-seed.sh
 spira/test-landing-pass.sh
 spira/test-landing-pr.sh
