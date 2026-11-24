@@ -8,11 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use runtime::host::{serve_with, EffectRunner, ServeOpts, Submit};
-use runtime::journal::Journal;
+use runtime::journal::{Boot, Journal, Poison, Turn};
 use runtime::offload::Pool;
 use runtime::pools::{EffectClass, PoolCaps};
-use runtime::ports::WallClock;
-use runtime::{Command, Ctx, EffectSpec, Engine, Event, EventKind, EventKindTag, Handler, MemJournal, MemSink, Projection, Value, Registration, EFFECT_FAILED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
+use runtime::ports::{VirtualClock, WallClock};
+use runtime::{Command, Ctx, EffectSpec, Engine, Event, EventKind, EventKindTag, Handler, MemJournal, MemSink, Projection, Value, Registration, StreamKey, Executor, EFFECT_FAILED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
 use tokio::sync::mpsc;
 
 /// `go <name>:<deadline_ms>` on stream `s-<name>` asks for effect `<name>`; `fan <n>:<name>`
@@ -20,12 +20,15 @@ use tokio::sync::mpsc;
 struct Asks;
 impl Handler for Asks {
     fn interests(&self) -> &[EventKindTag] {
-        &["go", "fan", EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
+        &["go", "fan", "note", EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT]
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "go" {
             let (name, ms) = ev.kind.body.split_once(':').unwrap();
             return vec![Command::Effect(EffectSpec { name: name.into(), input: name.into(), deadline_ms: ms.parse().unwrap(), key: name.into() })];
+        }
+        if ev.kind.tag == "note" {
+            return vec![Command::Emit(EventKind::new("noted", &ev.kind.body))];
         }
         if ev.kind.tag == "fan" {
             let (n, name) = ev.kind.body.split_once(':').unwrap();
@@ -210,4 +213,148 @@ async fn one_task_fanning_out_leaves_room_in_its_class_for_the_others() {
     assert_eq!(runner.wide_peak.load(SeqCst), runtime::host::task_fan_out(4), "one task holds at most half of host cap 4 at once");
     assert!(got.contains(&format!("{EFFECT_SUCCEEDED}:other")), "another task's host effect must run while one task fans out six: {got:?}");
     assert_eq!(outcomes(&*j).iter().filter(|o| *o == &format!("{EFFECT_SUCCEEDED}:wide")).count(), 6, "every fanned-out effect still runs");
+}
+
+/// A journal whose every commit costs engine time, as a slow store does. A commit made while
+/// `hold` is set also waits until the `answers` effect's runner has returned, then costs a minute.
+struct SlowJournal {
+    inner: Arc<dyn Journal>,
+    clock: VirtualClock,
+    per_commit_ms: u64,
+    commits: std::sync::atomic::AtomicUsize,
+    hold: std::sync::atomic::AtomicBool,
+    began: std::sync::atomic::AtomicBool,
+    answered: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Journal for SlowJournal {
+    fn record(&self, ev: &Event) {
+        self.inner.record(ev)
+    }
+    fn boot(&self) -> runtime::Result<Boot> {
+        self.inner.boot()
+    }
+    fn commit(&self, turn: &Turn) -> runtime::Result<()> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.commits.fetch_add(1, SeqCst);
+        if self.hold.swap(false, SeqCst) {
+            self.began.store(true, SeqCst);
+            while !self.answered.load(SeqCst) {
+                std::thread::yield_now();
+            }
+            std::thread::sleep(Duration::from_millis(100)); // clock-safe: lets the answer reach the host's channel; the 60 s commit is virtual
+            self.clock.advance(60_000);
+        }
+        self.clock.advance(self.per_commit_ms);
+        self.inner.commit(turn)
+    }
+    fn poison(&self, p: &Poison) -> runtime::Result<()> {
+        self.inner.poison(p)
+    }
+    fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
+        self.inner.poisoned(stream)
+    }
+    fn history(&self) -> Vec<Event> {
+        self.inner.history()
+    }
+}
+
+fn slow(per_commit_ms: u64) -> (Arc<SlowJournal>, VirtualClock) {
+    let clock = VirtualClock::new(1_000);
+    let j = Arc::new(SlowJournal {
+        inner: MemJournal::new(),
+        clock: clock.clone(),
+        per_commit_ms,
+        commits: Default::default(),
+        hold: Default::default(),
+        began: Default::default(),
+        answered: Default::default(),
+    });
+    (j, clock)
+}
+
+fn slow_engine(j: &Arc<SlowJournal>, clock: &VirtualClock) -> Engine {
+    let dynj: Arc<dyn Journal> = j.clone();
+    Engine::open(dynj, Arc::new(clock.clone()), vec![Registration::new("asks", Asks)], 1).unwrap()
+}
+
+/// Answers `answers` only after the slow commit has begun, and records how many commits had been made when each effect started.
+struct Timed {
+    j: Arc<SlowJournal>,
+    start_commits: Mutex<BTreeMap<String, usize>>,
+}
+
+impl EffectRunner for Timed {
+    fn class(&self, _: &EffectSpec) -> EffectClass {
+        EffectClass::Host
+    }
+    fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.start_commits.lock().unwrap().insert(spec.name.clone(), self.j.commits.load(SeqCst));
+        match spec.name.as_str() {
+            "answers" => {
+                while !self.j.began.load(SeqCst) {
+                    std::thread::yield_now();
+                }
+                self.j.answered.store(true, SeqCst);
+            }
+            "never" => std::thread::sleep(Duration::from_secs(3)), // clock-safe: outlasts the 200 ms wall deadline
+            _ => {}
+        }
+        Ok(spec.name.clone())
+    }
+}
+
+#[test_id(tt6gg73)]
+#[tokio::test]
+async fn an_effect_that_answered_during_a_long_commit_is_not_timed_out() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (j, clock) = slow(0);
+    let runner = Arc::new(Timed { j: j.clone(), start_commits: Default::default() });
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    let serving = tokio::spawn(serve_with(slow_engine(&j, &clock), Arc::new(clock.clone()), runner.clone(), host_cap_one(), rx, opts(4)));
+    tx.send(Submit::new("g-answers", "s-answers", EventKind::new("go", "answers:5000"))).await.unwrap();
+    until("the answering effect to start", || runner.start_commits.lock().unwrap().contains_key("answers")).await;
+    j.hold.store(true, SeqCst);
+    tx.send(Submit::new("g-note", "s-note", EventKind::new("note", "slow"))).await.unwrap();
+    until("the effect's outcome to be journaled", || outcomes(&*j.inner).iter().any(|o| o.ends_with(":answers"))).await;
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
+    assert_eq!(outcomes(&*j.inner), vec![format!("{EFFECT_SUCCEEDED}:answers")]);
+}
+
+#[test_id(tb01d7q)]
+#[tokio::test]
+async fn a_backlog_of_events_does_not_hold_back_an_effect_the_first_asked_for() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (j, clock) = slow(1_000);
+    let runner = Arc::new(Timed { j: j.clone(), start_commits: Default::default() });
+    let mut e = slow_engine(&j, &clock);
+    e.submit("e-00", "s-first", EventKind::new("go", "first:30000")).unwrap();
+    for i in 1..20 {
+        e.submit(&format!("e-{i:02}"), "s-rest", EventKind::new("note", &i.to_string())).unwrap();
+    }
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    let serving = tokio::spawn(serve_with(e, Arc::new(clock.clone()), runner.clone(), host_cap_one(), rx, opts(4)));
+    until("the first event's effect to start", || runner.start_commits.lock().unwrap().contains_key("first")).await;
+    let at_start = runner.start_commits.lock().unwrap()["first"];
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
+    let notes: Vec<String> = runtime::conformance::trace(&*j.inner).into_iter().filter(|t| t.2 == "note").map(|t| t.3).collect();
+    assert_eq!(notes, (1..20).map(|i| i.to_string()).collect::<Vec<_>>(), "event order is unchanged");
+    assert!(at_start < 20, "the effect must start before the last of the 20 events commits; {at_start} commits had been made");
+    assert!(j.commits.load(SeqCst) >= 20, "each event still commits once");
+}
+
+#[test_id(tdht952)]
+#[tokio::test]
+async fn an_effect_that_never_answers_still_times_out() {
+    let (j, clock) = slow(0);
+    let runner = Arc::new(Timed { j: j.clone(), start_commits: Default::default() });
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    let serving = tokio::spawn(serve_with(slow_engine(&j, &clock), Arc::new(clock.clone()), runner.clone(), host_cap_one(), rx, opts(4)));
+    tx.send(Submit::new("g-never", "s-never", EventKind::new("go", "never:200"))).await.unwrap();
+    until("the effect to time out", || outcomes(&*j.inner).contains(&format!("{EFFECT_TIMED_OUT}:never"))).await;
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
 }

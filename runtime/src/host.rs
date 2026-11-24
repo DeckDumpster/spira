@@ -17,6 +17,8 @@ use crate::sources::{self, Source, Sources};
 use crate::wide::{Fields, WideSink};
 use crate::{Result, RuntimeError};
 
+/// How much engine time one turn spends on events before handing back.
+pub const TURN_SLICE: Duration = Duration::from_secs(1);
 /// A turn held longer than this leaves an overrun record.
 pub const TURN_BUDGET: Duration = Duration::from_secs(5);
 const BACKOFF_FIRST: Duration = Duration::from_millis(50);
@@ -129,6 +131,7 @@ struct TurnOut {
     done: Vec<Done>,
     launch: Vec<PendingEffect>,
     next_timer_at: Option<u64>,
+    more: bool,
 }
 
 /// Applies the turn's submissions and outcomes in order. On an error what it had not applied stays
@@ -160,11 +163,13 @@ fn apply(t: &mut Turn) -> Result<()> {
 }
 
 fn run_turn(mut t: Turn) -> TurnOut {
+    let mut more = false;
     let result = apply(&mut t).and_then(|()| {
         if let Some(before) = &t.before {
             before(&mut t.engine);
         }
-        t.engine.run_until_idle() // loop-safe: runs on the offload pool
+        more = t.engine.run_slice(TURN_SLICE.as_millis() as u64)?; // loop-safe: runs on the offload pool
+        Ok(())
     });
     let launch: Vec<PendingEffect> = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
     // The host now owns each of these until it starts: its deadline waits for the runner.
@@ -172,7 +177,7 @@ fn run_turn(mut t: Turn) -> TurnOut {
         t.engine.note_queued(&p.key);
     }
     let next_timer_at = t.engine.next_timer_at();
-    TurnOut { engine: t.engine, result, subs: t.subs, done: t.done, launch, next_timer_at }
+    TurnOut { engine: t.engine, result, subs: t.subs, done: t.done, launch, next_timer_at, more }
 }
 
 /// Runs until `submissions` closes and no effect is in flight.
@@ -246,6 +251,10 @@ pub async fn serve_with(
         }
         let wakes = |done: &[Done]| done.iter().any(|d| !matches!(d, Done::Deferred(..) | Done::Started(_)));
         if let Some(e) = engine.take_if(|_| running.is_none() && (dirty || !subs.is_empty() || wakes(&done)) && Instant::now() >= retry_at) {
+            while let Ok(d) = done_rx.try_recv() {
+                absorb(&d, &mut in_flight, &mut backoff, &mut retry_at, &spilled);
+                done.push(d);
+            }
             let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.keys().cloned().collect(), before: opts.before_turn.clone() };
             let slot = Arc::new(Mutex::new(Some(turn)));
             let s = slot.clone();
@@ -284,17 +293,7 @@ pub async fn serve_with(
                 None => open = false,
             },
             Some(d) = done_rx.recv() => {
-                match &d {
-                    Done::Started(_) => backoff = BACKOFF_FIRST,
-                    Done::Deferred(..) => {}
-                    Done::Outcome(key, _) => {
-                        in_flight.remove(key);
-                    }
-                    Done::Spilled(key, sp) => {
-                        in_flight.remove(key);
-                        spilled(sp, &mut backoff, &mut retry_at);
-                    }
-                }
+                absorb(&d, &mut in_flight, &mut backoff, &mut retry_at, &spilled);
                 if !matches!(d, Done::Started(_)) {
                     dirty = true;
                 }
@@ -349,6 +348,7 @@ pub async fn serve_with(
                         }
                     }
                 }
+                dirty |= out.more;
                 next_timer = out.next_timer_at;
                 engine = Some(out.engine);
             }
@@ -365,6 +365,20 @@ pub async fn serve_with(
                     }
                 }
             }
+        }
+    }
+}
+
+fn absorb(d: &Done, in_flight: &mut BTreeMap<String, String>, backoff: &mut Duration, retry_at: &mut Instant, spilled: &impl Fn(&Spill, &mut Duration, &mut Instant)) {
+    match d {
+        Done::Started(_) => *backoff = BACKOFF_FIRST,
+        Done::Deferred(..) => {}
+        Done::Outcome(key, _) => {
+            in_flight.remove(key);
+        }
+        Done::Spilled(key, sp) => {
+            in_flight.remove(key);
+            spilled(sp, backoff, retry_at);
         }
     }
 }
