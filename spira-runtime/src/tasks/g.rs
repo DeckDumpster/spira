@@ -359,7 +359,7 @@ pub mod cockpit {
         if e.world.run_dir.as_os_str().is_empty() {
             return Err("no run dir configured".into());
         }
-        cockpit_collect::tiers::publish(&e.world.run_dir, tier_of(&s.name), &s.input)
+        cockpit_collect::tiers::publish(&e.world.run_dir, &e.world.ctx_status_dir, tier_of(&s.name), &s.input)
     }
 
     /// The slots sample runner: one `slots` tsd row under the run dir.

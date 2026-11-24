@@ -52,14 +52,15 @@ async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
         Ok(match k {
             "SPIRA_MAIL_READERS" => "concierge=inbox-append.sh".into(),
             "SPIRA_MAIL" => mail.display().to_string(),
+            "SPIRA_CTX_WARN" | "SPIRA_CTX_HIGH" | "SPIRA_CTX_LIMIT" | "SPIRA_ARCHIVIST_IDLE" => "1".into(),
             _ => String::new(),
         })
     };
     let views = Arc::new(store_view::Projection::new(spira_store::lc_call::LcClient::socket("no-such-socket"), Duration::from_secs(1), Arc::new(std::time::Instant::now)));
     let store = Some((views, Arc::new(spira_runtime::store::ChangeTable::default()), "no-such-socket".into()));
     let units = Arc::new(ScriptedUnits::new(Arc::new(VirtualClock::new(0))));
-    let sources = real(&cfg, units, Arc::new(WallClock), store).unwrap();
-    assert_eq!(sources.names().len(), 5, "all five sources: {:?}", sources.names());
+    let sources = real(&cfg, units, Arc::new(WallClock), store, Default::default()).unwrap();
+    assert_eq!(sources.names().len(), 6, "all six sources: {:?}", sources.names());
     let (tx, _rx) = mpsc::channel::<Submit>(8);
     let _running = sources.start(tx);
     let warm = runtime::sources::on_pool("warm", Arc::new(|| 1)).await.unwrap();

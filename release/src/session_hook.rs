@@ -79,6 +79,10 @@ pub struct Paths {
     pub toml: String,
     pub hook: PathBuf,
     pub meter: PathBuf,
+    /// The meter's record directory in the user runtime directory, handed to the refresh as `--run`.
+    pub meter_run: PathBuf,
+    /// The metrics endpoint handed to the refresh as `--metrics`; empty for none.
+    pub metrics: String,
 }
 
 impl Paths {
@@ -86,19 +90,22 @@ impl Paths {
         format!("env SPIRA_RELEASE={} SPIRA_TOML={} PATH={} {}", self.release, self.toml, self.path, self.hook.display())
     }
     pub fn meter_command(&self) -> String {
-        format!("env SPIRA_RELEASE={} SPIRA_TOML={} PATH={} {}", self.release, self.toml, self.path, self.meter.display())
+        format!("env SPIRA_RELEASE={} PATH={} {} line --run {} --metrics '{}'", self.release, self.path, self.meter.display(), self.meter_run.display(), self.metrics)
     }
 }
 
 /// Resolve [`Paths`] against release root `current` (typically `<releases>/current` — never a
 /// sha directory, requirement 1) and PATH tail `tail`.
-pub fn resolve(current: &Path, tail: &str, toml: &str, settings: PathBuf) -> Result<Paths, String> {
+pub fn resolve(current: &Path, tail: &str, toml: &str, settings: PathBuf, runtime_dir: &Path, metrics: &str) -> Result<Paths, String> {
     if toml.is_empty() {
         return Err("session-hook: SPIRA_TOML is not set — the hook and meter commands must name the one source of config".into());
     }
+    if runtime_dir.as_os_str().is_empty() {
+        return Err("session-hook: XDG_RUNTIME_DIR is not set — the status line's records live in the user runtime directory".into());
+    }
     let release = current.display().to_string();
     let path = spira_config::release_path_with_tail(&release, tail)?;
-    Ok(Paths { settings, release, path, toml: toml.to_string(), hook: current.join("spira/hooks/session.sh"), meter: current.join("bin/ctx-meter") })
+    Ok(Paths { settings, release, path, toml: toml.to_string(), hook: current.join("spira/hooks/session.sh"), meter: current.join("bin/ctx-meter"), meter_run: spira_config::ctx_meter_dir(runtime_dir), metrics: metrics.to_string() })
 }
 
 /// Read the settings document: `{}` if the file does not exist, an error naming the file if
@@ -358,8 +365,11 @@ pub fn status(doc: &Value, p: &Paths) -> (Vec<String>, bool) {
     match doc.get("statusLine") {
         Some(sl) => {
             let cmd = sl.get("command").and_then(Value::as_str).unwrap_or("");
-            if is_ours(cmd, METER_SUFFIX) {
+            if cmd == p.meter_command() {
                 lines.push(format!("  ok      statusLine     {}", p.meter_command()));
+            } else if is_ours(cmd, METER_SUFFIX) {
+                lines.push(format!("  STALE   statusLine     an older meter registration is still here; run install: {cmd}"));
+                ok = false;
             } else if is_ours(cmd, RETIRED_METER_SUFFIX) {
                 lines.push(format!("  STALE   statusLine     the retired shell meter is still registered here; run install: {cmd}"));
                 ok = false;
@@ -380,7 +390,7 @@ mod tests {
     use super::*;
 
     fn p(current: &str) -> Paths {
-        Paths { settings: PathBuf::from("x/settings.json"), release: current.into(), path: "bin:usr/bin".into(), toml: "c/one-source.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/bin/ctx-meter")) }
+        Paths { settings: PathBuf::from("x/settings.json"), release: current.into(), path: "bin:usr/bin".into(), toml: "c/one-source.toml".into(), hook: PathBuf::from(format!("{current}/spira/hooks/session.sh")), meter: PathBuf::from(format!("{current}/bin/ctx-meter")), meter_run: PathBuf::from("rt/spira-ctx-meter"), metrics: "http://m:1".into() }
     }
 
     #[test_id(tgg2hv0)]
@@ -594,7 +604,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("current/bin")).unwrap();
         testkit::write_exe(dir.join("current/spira/hooks/session.sh"), "#!/bin/sh\n");
         testkit::write_exe(dir.join("current/bin/ctx-meter"), "#!/bin/sh\n");
-        resolve(&dir.join("current"), "usr/bin", "c/one-source.toml", dir.join("settings.json")).unwrap()
+        resolve(&dir.join("current"), "usr/bin", "c/one-source.toml", dir.join("settings.json"), &dir.join("rt"), "http://m:1").unwrap()
     }
 
     #[test_id(tlmq5r1)]
@@ -603,7 +613,29 @@ mod tests {
         let dir = testkit::TempDir::new("session-hook-meter");
         let paths = executable_release(&dir);
         assert_eq!(paths.meter, dir.join("current/bin/ctx-meter"));
-        assert!(paths.meter_command().ends_with(&format!(" {}/current/bin/ctx-meter", dir.display())), "{}", paths.meter_command());
+        assert!(paths.meter_command().contains(&format!(" {}/current/bin/ctx-meter line ", dir.display())), "{}", paths.meter_command());
+    }
+
+    #[test_id(tfta8zt)]
+    #[test]
+    fn the_registered_command_hands_the_refresh_the_runtime_directory_and_the_endpoint() {
+        let dir = testkit::TempDir::new("session-hook-flags");
+        let paths = executable_release(&dir);
+        let want = format!(" line --run {}/rt/spira-ctx-meter --metrics 'http://m:1'", dir.display());
+        assert!(paths.meter_command().ends_with(&want), "{}", paths.meter_command());
+        assert!(resolve(&dir.join("current"), "usr/bin", "c/one-source.toml", dir.join("s.json"), Path::new(""), "").is_err(), "no runtime directory is a refusal");
+    }
+
+    #[test_id(tc2ng4g)]
+    #[test]
+    fn install_converges_the_bare_binary_registration_to_the_one_that_names_its_directory() {
+        let dir = testkit::TempDir::new("session-hook-bare");
+        let paths = executable_release(&dir);
+        let bare = format!("env SPIRA_RELEASE={} SPIRA_TOML=c/one-source.toml PATH=bin {}/current/bin/ctx-meter", dir.display(), dir.display());
+        let mut doc = json!({"statusLine": {"type": "command", "command": bare, "refreshInterval": 5}});
+        assert!(install(&mut doc, &paths).unwrap().contains(&"statusLine".to_string()));
+        assert_eq!(doc["statusLine"]["command"], Value::String(paths.meter_command()));
+        assert!(doc["statusLine"]["command"].as_str().unwrap().contains(" line --run "));
     }
 
     #[test_id(t9d3k7w)]
@@ -649,7 +681,7 @@ mod tests {
     fn install_refuses_when_the_hook_is_missing() {
         let tmp = testkit::TempDir::new("session-hook-missing");
         let mut doc = json!({});
-        let paths = Paths { settings: tmp.path().join("settings.json"), release: "r/spira-releases/current".into(), path: "bin".into(), toml: "c/one-source.toml".into(), hook: tmp.path().join("no-such-hook.sh"), meter: tmp.path().join("no-such-meter.sh") };
+        let paths = Paths { settings: tmp.path().join("settings.json"), release: "r/spira-releases/current".into(), path: "bin".into(), toml: "c/one-source.toml".into(), hook: tmp.path().join("no-such-hook.sh"), meter: tmp.path().join("no-such-meter.sh"), meter_run: PathBuf::from("rt/spira-ctx-meter"), metrics: String::new() };
         let e = install(&mut doc, &paths).unwrap_err();
         assert!(e.contains("not executable"), "{e}");
         assert_eq!(doc, json!({}), "a refusal must change nothing");

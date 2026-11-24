@@ -176,6 +176,7 @@ impl Settings {
         let path = |k: &str| env(k).map(PathBuf::from);
         self.runtime_dir = path("XDG_RUNTIME_DIR").unwrap_or_default();
         self.world.hunk_dir = path("XDG_RUNTIME_DIR").map(|d| d.join("hunk-mcp")).unwrap_or_default();
+        self.world.ctx_status_dir = path("XDG_RUNTIME_DIR").map(|d| spira_config::ctx_meter_dir(&d)).unwrap_or_default();
         self.world.cockpit_state = path("COCKPIT_STATE").or_else(|| path("HOME").map(|h| h.join(".local/state/cockpit"))).unwrap_or_default();
         if let Some(secs) = env("COCKPIT_FORGET_SECS") {
             self.view.forget_secs = num("COCKPIT_FORGET_SECS", &secs)?;
@@ -446,6 +447,16 @@ mod tests {
         let b = Settings::from_lookup(&distinct).unwrap().bead_sweep;
         assert_eq!((b.interval_ms, b.hold_min, b.rework_min, b.cert_min, b.wait_min, b.batch_min, b.stop_review_secs), (11_000, 12, 13, 14, 15, 16, 17));
         assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("q", "spira"));
+    }
+
+    #[test_id(tkkvwdi)]
+    #[test]
+    fn the_status_line_records_live_in_the_directory_the_inflight_marker_does() {
+        let s = Settings::from_lookup(&lookup("7")).unwrap();
+        let env = |k: &str| (k == "XDG_RUNTIME_DIR").then(|| "run/u9".to_string());
+        let s = s.with_environment(&env).unwrap();
+        assert_eq!(s.world.ctx_status_dir, spira_config::ctx_meter_dir(std::path::Path::new("run/u9")));
+        assert_eq!(s.world.ctx_status_dir.parent(), s.marker_path().unwrap().parent());
     }
 
     #[test_id(tfwb7jc)]

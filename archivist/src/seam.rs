@@ -290,7 +290,7 @@ mod tests {
         let row = |n: usize| format!("{{\"message\":{{\"id\":\"m{n}\",\"usage\":{{\"input_tokens\":1000,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":{}}}}}}}\n", 250_000 + n * 1000);
         let tp = dir.join("s1.jsonl");
         std::fs::write(&tp, (0..3).map(row).collect::<String>()).unwrap();
-        let meter = ctx_meter::Config { warn: 300_000, high: 900_000, limit: 2_000_000, projects: dir.join("projects"), run: dir.join("run"), idle: 7, hhmm: ctx_meter::fmt::local_hhmm };
+        let meter = ctx_meter::Config { warn: 300_000, high: 900_000, limit: 2_000_000, projects: dir.join("projects"), run: dir.join("run"), status: Default::default(), idle: 7, hhmm: ctx_meter::fmt::local_hhmm };
         let seam = RealSeam { lib_sh: dir.join("lib.sh"), meter };
         let env = seam.ctx_meter_env(&tp);
         assert_eq!(env.get("SP_CTX_NOW").map(String::as_str), Some("253000"));

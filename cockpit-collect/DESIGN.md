@@ -77,6 +77,13 @@ The supervisor (`collect`, `merge`, `--supervised-run`, the `run/cockpit.d/` fra
 `INVOCATION_ID` write fence) and the cockpit service unit are deleted. The scheduler's three
 cockpit tier tasks call [`tiers`] in-process and are the only writer of `run/cockpit.env`.
 
+### `tiers::publish` and the status line
+
+After merging the tiers into `cockpit.env`, `publish` sets the in-flight segment of every
+status line file under the status root it is handed (`ctx_meter::status::set_inflight`, under the
+status writers' lock): a file already showing the segment is touched, which keeps it younger
+than the refresh's 60 s limit; any other is replaced by rename.
+
 ### `main.rs` — CLI dispatch, same subcommand names
 
 | subcommand | replaces | notes |

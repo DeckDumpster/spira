@@ -544,7 +544,9 @@ had no installer at all and was wired by hand into the identical broken shape.
 **The fix.** The registered command is always addressed through `<releases>/current` — never a
 sha directory — and is SELF-CONTAINED: `env SPIRA_RELEASE=<releases>/current
 PATH=<release_path_with_tail> <releases>/current/spira/hooks/session.sh` (and the same for
-`bin/ctx-meter`, as `statusLine`). It carries its own environment regardless of what invoked it,
+`bin/ctx-meter line --run <runtime dir>/spira-ctx-meter --metrics '<endpoint>'`, as `statusLine`; the
+meter reads no configuration, so its command names no `SPIRA_TOML`, and `status` calls an older
+`bin/ctx-meter` registration STALE). It carries its own environment regardless of what invoked it,
 so it no longer matters which release's `install-session-hook.sh` — now `release
 session-hook` — happened to run it. "Ours" is recognised by a command SUFFIX
 (`spira/hooks/session.sh` / `bin/ctx-meter`, and the retired `spira/ctx-meter.sh`, which `install` converges and `status` calls STALE), not by exact match, so `install` converges

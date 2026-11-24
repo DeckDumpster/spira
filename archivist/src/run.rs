@@ -545,9 +545,16 @@ pub fn sweep(seam: &dyn Seam, cfg: &Env, arc: &Path) -> Vec<String> {
         }
     }
 
-    let _ = std::fs::remove_file(arc.join("sweep.state"));
+    mark_ran(arc);
     forget_stale_sessions(cfg, arc, &mut lines);
     lines
+}
+
+/// `sweep.state` says this pass ran. A removal raises no event the status line's writer can
+/// see, a write does.
+pub fn mark_ran(arc: &Path) {
+    let _ = std::fs::create_dir_all(arc);
+    let _ = std::fs::write(arc.join("sweep.state"), "sweep_state=ran\n");
 }
 
 /// `sweep.state`: this pass was skipped for the account's capacity.
@@ -784,7 +791,8 @@ mod tests {
 
         *seam.paused.borrow_mut() = None;
         sweep(&seam, &cfg(), &dir);
-        assert!(!dir.join("sweep.state").exists(), "the next normal pass clears the skipped state");
+        let text = std::fs::read_to_string(dir.join("sweep.state")).unwrap();
+        assert!(text.contains("sweep_state=ran") && !text.contains("skipped"), "the next normal pass replaces the skipped state: {text}");
     }
 
     fn claim_ask_for(dir: &Path, sid: &str, key: &str, question: &str, open: &str, transcript: Option<&Path>) -> AskClaim {

@@ -1,5 +1,4 @@
-//! Which transcript is whose, and what it says: the operator pointer, and turns and growth read
-//! forward from a cursor.
+//! Which transcript is whose, and what it says: turns and growth read forward from a cursor.
 
 use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
@@ -22,32 +21,6 @@ fn digest16(bytes: &[u8]) -> String {
 
 fn mtime(p: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(p).ok()?.modified().ok()
-}
-
-/// The operator pointer: `(transcript, written-at)` when it parses.
-pub fn read_pointer(run: &Path) -> Option<(String, i64)> {
-    let kv = read_kv(&run.join("ctx-operator.ptr"), false).ok()?;
-    let ts = kv.get("ts").map(String::as_str).unwrap_or("0").trim().parse().ok()?;
-    Some((kv.get("tp").cloned().unwrap_or_default(), ts))
-}
-
-/// True when the pointer's holder spoke more recently than `tp` and is not itself stale: an idle
-/// second session's timer tick must not take the pointer from the operator between turns.
-fn held_by_another(run: &Path, tp: &str, now: i64, idle: i64) -> bool {
-    let Some((otp, ots)) = read_pointer(run) else { return false };
-    if otp.is_empty() || otp == tp || !Path::new(&otp).exists() || now - ots > idle {
-        return false;
-    }
-    match (mtime(Path::new(&otp)), mtime(Path::new(tp))) {
-        (Some(o), Some(t)) => o > t,
-        _ => false,
-    }
-}
-
-pub fn write_pointer(run: &Path, tp: &str, sid: &str, now: i64, idle: i64) {
-    if !held_by_another(run, tp, now, idle) {
-        write_by_rename(&run.join("ctx-operator.ptr"), &format!("tp={tp}\nts={now}\nsid={sid}\n"));
-    }
 }
 
 /// The hook's own session, in order: the sibling of its transcript_path named by session_id, the

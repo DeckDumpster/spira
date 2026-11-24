@@ -60,7 +60,7 @@ impl Rig {
     }
 
     fn paths(&self) -> Paths {
-        resolve(&self.release, &sys_path(), &self.toml.display().to_string(), self.dir.join("settings.json")).unwrap()
+        resolve(&self.release, &sys_path(), &self.toml.display().to_string(), self.dir.join("settings.json"), &self.dir.join("rt"), "").unwrap()
     }
 
     /// `sh -c <command>` under the environment the client gives it: a home, a bare `PATH`,

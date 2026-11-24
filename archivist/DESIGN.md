@@ -84,11 +84,13 @@ what says "killed by the clock."
 ## Schema
 
 The per-session state file (`$SPIRA_RUN/archivist/<session>.state`, `src/state.rs`) is a
-contract with two readers — `ctx-meter`'s status line and `cockpit/health.sh`'s
+contract with two readers — `ctx-meter`'s status writer (`ctx.status`, in `spira-runtime`) and `cockpit/health.sh`'s
 dashboard — unchanged: `state=sweeping|archiving|safe|failed|capacity|timeout`,
 `at_turn=<n>`, `items_filed=<n>`. `at_turn` is load-bearing: both readers demote a stale
 verdict to "safe as of N turns ago" on this number, and it is written as the work happens,
-not only at the end.
+not only at the end. `sweep.state` is written, never removed: `sweep_state=skipped` for a pass
+skipped for capacity, `sweep_state=ran` after a pass that ran, because the status line's writer
+learns of a file by a write event and a removal raises none.
 
 Two more of this crate's own private files, read and written by nothing else:
 `<session>.covered` (`turn=<n>`, the high-water mark `set_covered` only advances on

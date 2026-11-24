@@ -28,6 +28,7 @@ integration = ["release/integration", "spira-config/integration", "spira-otel/in
 
 [dependencies]
 libc = "0.2"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }
