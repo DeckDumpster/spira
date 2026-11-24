@@ -85,11 +85,13 @@ test-forge-check-status.sh	T1	8.0
 test-forge-orphan-runs.sh	T1	2.0
 test-forge-run-metadata.sh	T1	2.0
 test-forge-runs-active.sh	T1	3.0
+test-freshclone.sh	T1	11.5
 test-gate-diag.sh	T1	1.5
 test-gate-discover-branch.sh	T1	2.0
 test-gate-fixture-diag.sh	T1	4.0
 test-gate-host-cores.sh	T1	7.0
 test-gate-missing-cmd.sh	T0	2.0
+test-hold.sh	T1	12.0
 test-incident-recur-bounded.sh	T1	98.0
 test-install-bootstrap-release.sh	T1	7.5
 test-install-conf-seed.sh	T1	61.0
