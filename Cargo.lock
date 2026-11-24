@@ -2428,6 +2428,7 @@ dependencies = [
  "sentinel",
  "serde",
  "serde_json",
+ "sha2",
  "sift",
  "sim",
  "skew",

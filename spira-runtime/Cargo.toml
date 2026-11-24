@@ -114,6 +114,7 @@ testkit = { path = "../testkit", optional = true }
 system-paths = { path = "../system-paths" }
 inbox-rules = { path = "../inbox-rules" }
 base64 = "0.22"
+sha2 = { version = "0.10", features = ["compress"] }
 install = { path = "../install" }
 libc = "0.2"
 mail = { path = "../mail" }

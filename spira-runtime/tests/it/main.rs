@@ -69,6 +69,7 @@ mod task_c_roundvm_ami_prune;
 mod task_c_lc_ship;
 mod task_c_roundvm_drain;
 mod task_c_sweep_archive;
+mod task_c_sweep_archive_growth;
 mod task_c_sweep_escape_census;
 mod task_c_sweep_export_beads;
 mod task_c_sweep_reclaim;

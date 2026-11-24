@@ -225,25 +225,23 @@ def decompress_stream(body):
 
 # ---- the index ----------------------------------------------------------------------------
 def load_index(required=True):
+    """The index as a reader sees it: the last row per source wins, bridge id inherited,
+    sorted by (first_ts, source). An append-only file holds several rows for a growing source."""
     if not os.path.exists(INDEX):
         if required:
             die("no index at %s — run `archive.sh sweep` first" % INDEX, 2)
         return []
-    rows = []
+    by_source = {}
     with open(INDEX, errors="replace") as fh:
         for ln in fh:
             ln = ln.strip()
             if not ln: continue
-            try: rows.append(json.loads(ln))
+            try: r = json.loads(ln)
             except ValueError: continue
-    return rows
+            if isinstance(r, dict) and "source" in r: by_source[r["source"]] = r
+    return settle(list(by_source.values()))
 
-def write_index(rows):
-    """Sorted by first_ts and rewritten whole; replaced only when the bytes differ -> True.
-
-    NOT REWRITTEN ON EVERY PASS. A sweep that finds nothing changed must touch nothing at
-    all, or "has anything happened since?" is unanswerable from the archive itself and every
-    watcher over it reads a fresh mtime as news."""
+def settle(rows):
     # THE BRIDGE ID IS INHERITED, and recomputed over the whole index every time rather than
     # patched. A subagent transcript records its parent session and no bridge id of its own,
     # so without this join it is invisible to the lineage query that is the point of the
@@ -254,6 +252,12 @@ def write_index(rows):
         if not r.get("bridge_session_id"):
             r["bridge_session_id"] = bridge.get(r["session_id"], "")
     rows.sort(key=lambda r: (r["first_ts"], r["source"]))
+    return rows
+
+def write_index(rows):
+    """One line per source, sorted by first_ts, rewritten whole; replaced only when the bytes
+    differ -> True. Only compaction rewrites; a pass appends (append_index)."""
+    rows = settle(rows)
     body = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
     old = None
     if os.path.exists(INDEX):
@@ -263,6 +267,26 @@ def write_index(rows):
     tmp = INDEX + ".part"
     with open(tmp, "w") as fh: fh.write(body)
     os.replace(tmp, INDEX)
+    return True
+
+def append_index(stored, by_rel):
+    """Append the rows a pass stored, ending a torn last line first -> True when the index
+    changed. Rewritten through write_index only when its lines exceed twice its distinct
+    sources. A pass that stored nothing leaves the index untouched.
+
+    NOT REWRITTEN ON EVERY PASS. A sweep that finds nothing changed must touch nothing at
+    all, or "has anything happened since?" is unanswerable from the archive itself and every
+    watcher over it reads a fresh mtime as news."""
+    if not stored: return False
+    old = b""
+    if os.path.exists(INDEX):
+        with open(INDEX, "rb") as fh: old = fh.read()
+    lines = len([l for l in old.splitlines() if l.strip()]) + len(stored)
+    with open(INDEX, "ab") as fh:
+        if old and not old.endswith(b"\n"): fh.write(b"\n")
+        for r in stored: fh.write((json.dumps(r, sort_keys=True) + "\n").encode())
+    if lines > 2 * len(by_rel):
+        write_index(list(by_rel.values()))
     return True
 
 def sources():
@@ -341,6 +365,7 @@ if MODE in ("sweep", "hook"):
     rows = load_index(required=False)
     by_rel = {r["source"]: r for r in rows}
     stored = kept = skipped = 0
+    new_rows = []
     for src in todo:
         try: st = os.stat(src)
         except OSError:
@@ -368,11 +393,12 @@ if MODE in ("sweep", "hook"):
             try: os.unlink(snap)
             except OSError: pass
         by_rel[rel] = row
+        new_rows.append(row)
         stored += 1
     # ROWS WHOSE SOURCE IS GONE ARE KEPT. The client deleting a transcript is the loss this
     # exists to survive; an index that forgot it would make the archive agree with whatever
     # remains rather than with what was said.
-    changed = write_index(list(by_rel.values()))
+    changed = append_index(new_rows, by_rel)
     if int(WAITED) > 0:
         sys.stderr.write("archive: waited %ss for the sweep lock\n" % WAITED)
     print("archive: %d stored, %d unchanged%s, %d row(s) in the index, %s"
