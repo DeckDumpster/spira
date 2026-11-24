@@ -4538,7 +4538,7 @@ fn certify_pass(
         }
         if let Some(red) = [PREFLIGHT_RED, IMAGE_RED].into_iter().find(|n| reds.iter().any(|r| r == n)) {
             drop(_g);
-            eject_recipe_changers(w, by, label, c, path, batch, &judged, red);
+            eject_recipe_changers(w, by, (label, red), c, path, batch, &judged);
         }
         return FAIL;
     }
@@ -4593,12 +4593,11 @@ pub const EJECT_REFUSED: &str = "eject-refused=";
 fn eject_recipe_changers(
     w: &World,
     by: &str,
-    label: &str,
+    (label, red): (&str, &str),
     c: &Ctx,
     path: &Path,
     batch: &str,
     kv: &Kv,
-    red: &str,
 ) {
     let base = kv.get("base").unwrap_or("");
     let changers: Vec<(String, Vec<String>)> = kv
