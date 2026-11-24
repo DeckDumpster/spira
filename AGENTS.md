@@ -37,30 +37,11 @@ them back at the installed copy would make the gate test the code already in for
 
 ## Tests
 
-`spira/test-*.sh`, discovered by glob and never from a list — add one and something runs it.
-Run the suites that cover what you changed while you work, and the whole gate once before you
-push.
+The tree carries no shell suite: tests are Rust (`cargo test`, `tests/` under `--features
+integration`, and `sim/` for behaviour over time). `no-new-shell-suite` refuses a new
+`spira/test-*.sh`, and an empty suite corpus selects nothing rather than refusing.
 
-**Two places a suite can run, and adding one puts it in the second.** `spira/gate-suites`
-names the few the landing gate runs on every branch, each with the reason it earns the wait;
-that is the only hand-written list of suites here and adding to it is a deliberate act. The
-glob's complement — everything `spira/test-*.sh` finds that the list does not name — is run by
-`spira/suites.sh` on a schedule, inside the Ops session, which files a bead per red and blocks
-nothing. So a new suite is executed by existing, a deleted one stops being run with no edit,
-and the two sets cannot be edited into overlapping. Before this the gate's list was
-unreadable from outside the gate: five of nine suites ran nowhere at all, three of them landed
-the same night with their beads closed citing them as verification.
-
-**Every suite declares what it covers**, on a `# covers:` line just above its `set -uo
-pipefail`, as space-separated path globs. Err wide: a suite run needlessly costs seconds. A
-`# covers:` glob outranks a file's extension, so a suite may claim prose and should where
-prose is executable in effect — the personas are `.md` files. Nothing selects on those
-declarations yet; they are what a later selector will read, and a selector is only sound once
-a full run exists behind it. A suite that declares nothing is reported by `suites.sh` as an
-omission and is still run — skipping it would rebuild the defect that program ends.
-`suites.sh list` prints every suite, where it runs, and what it claims.
-
-Three properties the existing suites have and a new one should too:
+Three properties a test here should have:
 
 - **A check that finds nothing must first prove it could have found something.** Plant an
   offender and require the matcher to say so, then believe it when it is silent.

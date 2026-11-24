@@ -30,12 +30,8 @@ bin SPIRA_SELECT_BIN suite-select
 # not run such a branch's suites at all (the first one to need this was sp-isom7 itself).
 bin SPIRA_TESTENV_BIN testenv
 
-# inventory, literal-lint, scratch-fence, tmux-scope-fence and wiki-add-fence
-# (sp-ekkak), and testdb-mode-lint, bd-stdin-lint and incident-cause-lint, moved to
-# spira-lint rules of the same name; the bash scripts are deleted and their checks now run
-# as part of the "$SPIRA_LINT_BIN" step below. gh-intake-lint (also sp-ekkak) was one of
-# these but is itself now retired (sp-8fsql): its subject, spira/gh-intake.sh, is deleted,
-# and the property it scanned for is structural in the gh-intake crate that replaced it.
+# The lint fences (inventory, literal-lint, scratch-fence, wiki-add-fence, bd-stdin-lint,
+# incident-cause-lint, ...) are spira-lint rules and run as part of the "$SPIRA_LINT_BIN" step.
 step bash spira/lint-staged.sh "$SPIRA_LINT_BIN" --deny-list "$SPIRA_TEST_DENY_LIST"
 # The lifecycle barrier (sp-ts2qr; brain design bead-lifecycle-state-machine §3.6(3), §3.8(2)):
 # the tree's own lifecycle-guard, over the whole gate tree, refuses any path that reaches the

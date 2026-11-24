@@ -256,6 +256,14 @@ pub fn select(
             })
             .collect()
     };
+    if corpus.suites.is_empty() {
+        return Ok(Selection {
+            suites: vec![],
+            mode: Mode::Diff,
+            unplaced: vec![],
+            log: vec!["select: no test-*.sh suites in the corpus — selecting nothing".into()],
+        });
+    }
     // 1. Inert files select nothing and never fall back.
     let live: Vec<&Change> = changes
         .iter()

@@ -282,10 +282,8 @@ fn what_it_cannot_read_is_a_refusal_never_an_empty_selection() {
     assert!(refused(run(&genv(&d.0, &[("SPIRA_GATE_FILES", &fls)]), &g, "main", "br")));
     // The file list cannot be read.
     assert!(refused(run(&genv(&d.0, &[("SPIRA_GATE_FILES", "nonexistent/flist")]), &diff_git(), "main", "br")));
-    // No suite directory; an empty one.
+    // No suite directory.
     assert!(refused(run(&genv(Path::new("nonexistent/spira"), &[]), &diff_git(), "main", "br")));
-    let empty = dir("empty", &[]);
-    assert!(refused(run(&genv(&empty.0, &[]), &diff_git(), "main", "br")));
     // A tier nobody can place.
     let bad = dir("badtier", &[("test-a.sh", "# tier: T7\n# covers: spira/changed.sh\n")]);
     assert!(refused(run(&genv(&bad.0, &[]), &diff_git(), "main", "br")));
@@ -294,6 +292,14 @@ fn what_it_cannot_read_is_a_refusal_never_an_empty_selection() {
     assert!(GateEnv::from_env(&e).is_err());
     let e = env_from_pairs(&[("SPIRA_TIER_BUDGET_T3_MS", "x")]);
     assert!(GateEnv::from_env(&e).is_err());
+}
+
+#[test_id(ts5r1uf)]
+#[test]
+fn an_empty_suite_directory_gates_to_an_empty_selection() {
+    let empty = dir("empty-gate", &[]);
+    let out = run(&genv(&empty.0, &[]), &diff_git(), "main", "br").unwrap();
+    assert!(out.suites.is_empty());
 }
 
 #[test_id(tp3pf82)]

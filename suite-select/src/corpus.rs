@@ -1,7 +1,8 @@
 //! The suite corpus: every `test-*.sh` in a suite directory, with its parsed header.
 //!
-//! Fails closed: a missing directory, an empty corpus, a suite that cannot be read, or a
-//! declared `# tier:` that is not `T0`..`T4` is a [`Refusal`] — never a smaller corpus.
+//! Fails closed: an unreadable directory, a suite that cannot be read, or a declared
+//! `# tier:` that is not `T0`..`T4` is a [`Refusal`] — never a smaller corpus. A directory
+//! with no suite is an empty corpus, which selects nothing.
 
 use crate::header::{self, Tier};
 use crate::{refuse, Refusal};
@@ -96,8 +97,8 @@ impl Corpus {
             .map(|i| &self.suites[i])
     }
 
-    /// Every `test-*.sh` in `dir`. Refuses a missing directory, an empty corpus, and any
-    /// suite it cannot read or place.
+    /// Every `test-*.sh` in `dir`. Refuses an unreadable directory and any suite it
+    /// cannot read or place.
     pub fn load(dir: &Path) -> Result<Corpus, Refusal> {
         let rd = std::fs::read_dir(dir).map_err(|e| {
             Refusal(format!("cannot read the suite directory {}: {e}", dir.display()))
@@ -115,14 +116,8 @@ impl Corpus {
         Self::load_named(dir, &names)
     }
 
-    /// The suites `names` in `dir`, each of which must be readable. Refuses an empty list.
+    /// The suites `names` in `dir`, each of which must be readable.
     pub fn load_named(dir: &Path, names: &[String]) -> Result<Corpus, Refusal> {
-        if names.is_empty() {
-            return refuse(format!(
-                "no test-*.sh suites in {} — refusing to select from an empty corpus",
-                dir.display()
-            ));
-        }
         let mut suites = Vec::with_capacity(names.len());
         for n in names {
             let p: PathBuf = dir.join(n);
@@ -151,6 +146,25 @@ mod tests {
         assert_eq!(Suite::parse("test-a.sh", "# tier:\n").unwrap().tier, None);
     }
 
+    #[test_id(t5zicgm)]
+    #[test]
+    fn an_empty_suite_directory_is_an_empty_corpus() {
+        let t = testkit::TempDir::new("suite-select-empty-corpus");
+        let d = t.path().join("spira");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("helper.sh"), "").unwrap();
+        assert!(Corpus::load(&d).unwrap().suites.is_empty());
+        let s = crate::select::select(
+            &Corpus::load(&d).unwrap(),
+            &[crate::select::Change::modified("spira/lib.sh")],
+            &mut |_| vec![],
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert!(s.suites.is_empty());
+    }
+
     #[test_id(t7kna69)]
     #[test]
     fn loading_refuses_what_it_cannot_read() {
@@ -158,7 +172,6 @@ mod tests {
         let d = t.path().join("spira");
         assert!(Corpus::load(&d).is_err(), "missing dir");
         std::fs::create_dir_all(&d).unwrap();
-        assert!(Corpus::load(&d).is_err(), "empty corpus");
         std::fs::write(d.join("test-b.sh"), "# covers: x\n").unwrap();
         std::fs::write(d.join("test-a.sh"), "# tier: T1\n").unwrap();
         std::fs::write(d.join("helper.sh"), "").unwrap();

@@ -45,9 +45,6 @@ pub const LINT: &str = "spira-lint";
 pub const LINT_RULE_FENCES: &[&str] = &[
     "plan-matrix",
     "lockfile-lint",
-    "tier-budget-allowlist",
-    "tier-budget-area-allowlist",
-    "tier-budget-areas",
     "test-id-row-orphan",
 ];
 
@@ -200,9 +197,6 @@ mod tests {
             "spira-lint",
             "plan-matrix",
             "lockfile-lint",
-            "tier-budget-allowlist",
-            "tier-budget-area-allowlist",
-            "tier-budget-areas",
             "test-id-row-orphan",
             "build-fence",
         ];
@@ -237,9 +231,6 @@ mod tests {
                 "spira-lint",
                 "plan-matrix",
                 "lockfile-lint",
-                "tier-budget-allowlist",
-                "tier-budget-area-allowlist",
-                "tier-budget-areas",
                 "test-id-row-orphan",
                 "testdb-mode-lint",
                 "bd-stdin-lint",

@@ -154,12 +154,16 @@ pub trait Host: Sync {
     fn fences(&self, tree: &Path) -> Result<String, String>;
 }
 
+/// The `--suites` value that selects nothing: the round's script runs no suite batch and passes that phase.
+pub const NO_SUITES: &str = "-";
+
 /// The explicit longest-first suite list for a full-corpus round, naming on stderr every suite
 /// with no recorded time.
 fn lpt_suites(host: &dyn Host, tree: &Path) -> Result<String, String> {
     let all = host.suites_in(tree)?;
     if all.is_empty() {
-        return Err(format!("no spira/test-*.sh suites in {}", tree.display()));
+        eprintln!("round-vm run: no spira/test-*.sh suites in {} — the round runs no suite batch", tree.display());
+        return Ok(NO_SUITES.to_string());
     }
     let (list, unknown) = crate::lpt::order(&all, &host.suite_medians()?);
     if !unknown.is_empty() {
@@ -1201,7 +1205,10 @@ t_suites=$(date +%s)
 echo "round-vm: SUITES-CLOCK: start (cap ${cap}s from the first suite)" >&2
 over_cap=""
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
-if [ -n "$suites" ]; then
+if [ "$suites" = "-" ]; then
+    echo "round-vm: SUITES: none selected — no suite batch" >&2
+    true &
+elif [ -n "$suites" ]; then
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
 else
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
@@ -2517,7 +2524,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         }
     }
     let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
-    let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
+    let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty() && *x != NO_SUITES).count());
     let budgets = crate::progress::Budgets { vm: cfg.vm_budget_secs, build: cfg.build_budget_secs };
     let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets).on_red(args.on_red.clone().filter(|_| args.ci_entry.is_none())));
     if let Some(batch) = args.round_batch.as_deref() {
@@ -3791,6 +3798,63 @@ mod tests {
         let a = REMOTE_SCRIPT.find(&format!("{name}() {{")).unwrap_or_else(|| panic!("{name} is in the script"));
         let end = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
         REMOTE_SCRIPT[a..end].to_string()
+    }
+
+    #[test_id(t8y213e)]
+    #[test]
+    fn an_empty_suite_selection_runs_no_batch_and_reaches_the_integration_tests() {
+        let from = REMOTE_SCRIPT.find("\nphase suites\n").unwrap();
+        let to = from + REMOTE_SCRIPT[from..].find("\nphase integration-tests\n").unwrap() + "\nphase integration-tests".len();
+        let d = TempDir::new();
+        let script = format!(
+            "set -uo pipefail\nphase() {{ echo \"PHASE $1\"; }}\nphase_failed() {{ echo \"FAILED $1\"; }}\ntestenv() {{ echo TESTENV-CALLED; return 1; }}\n{}\n{}\ncap=60 suites='{NO_SUITES}'\n{}\necho \"rc=$rc\"",
+            script_fn("suites_cap_guard"),
+            script_fn("suites_mark_stream"),
+            &REMOTE_SCRIPT[from..to]
+        );
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(!text.contains("TESTENV-CALLED") && !text.contains("FAILED"), "{text}");
+        assert!(text.contains("PHASE integration-tests") && text.contains("rc=0"), "{text}");
+    }
+
+    struct NoSuites;
+    impl Host for NoSuites {
+        fn is_checkout(&self, _: &Path) -> bool {
+            true
+        }
+        fn head(&self, _: &Path) -> Result<(String, String), String> {
+            unreachable!()
+        }
+        fn prepare_mirror(&self, _: &Path, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+        fn drop_round_ref(&self, _: &str) {}
+        fn image_tag(&self, _: &Path, _: &str) -> Result<String, String> {
+            unreachable!()
+        }
+        fn image_present(&self, _: &str) -> bool {
+            unreachable!()
+        }
+        fn mirror_ref(&self, _: &Path, _: &str, _: &str) -> Result<String, String> {
+            unreachable!()
+        }
+        fn suites_in(&self, _: &Path) -> Result<Vec<String>, String> {
+            Ok(vec![])
+        }
+        fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String> {
+            unreachable!()
+        }
+        fn fences(&self, _: &Path) -> Result<String, String> {
+            unreachable!()
+        }
+    }
+
+    #[test_id(tex5mju)]
+    #[test]
+    fn a_tree_with_no_suites_orders_to_the_empty_selection() {
+        assert_eq!(lpt_suites(&NoSuites, Path::new("t")).unwrap(), NO_SUITES);
     }
 
     #[test_id(tycxyez)]
