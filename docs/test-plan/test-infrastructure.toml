@@ -11,6 +11,11 @@ id = "UC-test-infrastructure-02"
 tier = "T0"
 statement = "Every path token in a suite's `# covers:` declaration, continuation lines included, resolves to something in the tree. Use-case and gap ids are not paths."
 
+[use_case.uncovered]
+reason = "no shell suite remains to declare `# covers:`; the covers-entries rule was deleted with the last suite"
+date = "2026-11-23"
+bead = "sp-v0i903"
+
 [[use_case]]
 id = "UC-test-infrastructure-03"
 tier = "T1"
