@@ -21,9 +21,10 @@ required-features = ["integration"]
 [[test]]
 name = "no_spawn"
 path = "tests/no_spawn.rs"
+required-features = ["integration"]
 
 [features]
-integration = ["release/integration", "spira-config/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
+integration = ["release/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
 
 [dependencies]
 libc = "0.2"

@@ -101,8 +101,8 @@ fn a_hook_that_names_no_session_and_finds_no_transcript_prints_ctx_question_mark
 #[test]
 fn a_null_current_usage_is_the_fresh_signal_even_with_a_total() {
     let rig = Rig::new();
-    let hook = format!(r#"{{"session_id":"s1","context_window":{{"current_usage":null,"total_input_tokens":5000}}}}"#);
-    assert_eq!(rig.line(&hook), format!("\x1b[2m· ctx fresh\x1b[0m{INFLIGHT_BAD}"));
+    let hook = r#"{"session_id":"s1","context_window":{"current_usage":null,"total_input_tokens":5000}}"#;
+    assert_eq!(rig.line(hook), format!("\x1b[2m· ctx fresh\x1b[0m{INFLIGHT_BAD}"));
 }
 
 #[test_id(tceni82)]
@@ -372,7 +372,7 @@ fn a_named_transcript_wins_over_the_pointer() {
 #[test]
 fn a_named_transcript_that_is_missing_or_has_no_turns_prints_dashes() {
     let rig = Rig::new();
-    assert!(rig.env(Some("/nonexistent/s.jsonl")).contains("SP_CTX_NOW=-\n"));
+    assert!(rig.env(Some(&rig.dir.join("none.jsonl").display().to_string())).contains("SP_CTX_NOW=-\n"));
     rig.put(TP, "{\"x\":1}\n");
     let e = rig.env(Some(&rig.tp()));
     assert!(e.contains("SP_CTX_NOW=-\n") && e.contains("SP_CTX_SCAN_BYTES=8\n"), "{e}");

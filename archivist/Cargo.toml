@@ -6,7 +6,7 @@ autotests = false
 description = "archivist — rescue a full session's unfinished business before it is cleared: the sweep and its per-session archive run, the drift-ordered candidate budget, the transcript digest, and the daily digest mail. Replaces spira/archivist.sh."
 
 [features]
-integration = ["dwarf/integration", "mail/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
+integration = ["ctx-meter/integration", "dwarf/integration", "mail/integration", "spira-config/integration", "spira-otel/integration", "testkit/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 dwarf = { path = "../dwarf" }

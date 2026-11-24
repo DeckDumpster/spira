@@ -5,10 +5,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 fn now() -> i64 {
-    std::env::var("SPIRA_NOW")
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
+    spira_config::vtime::now_epoch() as i64
 }
 
 fn run(args: &[String]) -> Result<(), (u8, String)> {
