@@ -23,11 +23,7 @@ impl Store {
                 children.entry(p.to_string()).or_default().push(i);
             }
         }
-        Store {
-            beads,
-            by_id,
-            children,
-        }
+        Store { beads, by_id, children }
     }
     pub fn get(&self, id: &str) -> Option<&Bead> {
         self.by_id.get(id).map(|&i| &self.beads[i])
@@ -153,12 +149,7 @@ impl<'a> Partition<'a> {
     /// progressing(id): something is carrying this bead toward closed, or it is waiting on
     /// something that is — or on the operator, or behind an epic by design. Absent from the
     /// store reads false: unknown is never read as closed.
-    fn progressing(
-        &self,
-        id: &str,
-        memo: &mut HashMap<String, bool>,
-        visiting: &mut HashSet<String>,
-    ) -> bool {
+    fn progressing(&self, id: &str, memo: &mut HashMap<String, bool>, visiting: &mut HashSet<String>) -> bool {
         if let Some(&v) = memo.get(id) {
             return v;
         }
@@ -190,12 +181,8 @@ impl<'a> Partition<'a> {
 
     pub fn classify(&self) -> Vec<Row> {
         let mut rows = Vec::new();
-        let members: Vec<&Bead> = self
-            .store
-            .beads
-            .iter()
-            .filter(|b| !b.is_closed() && self.member(b))
-            .collect();
+        let members: Vec<&Bead> =
+            self.store.beads.iter().filter(|b| !b.is_closed() && self.member(b)).collect();
         self.deferred(&members, &mut rows);
         self.starved(&mut rows);
         let mut memo = HashMap::new();
@@ -214,9 +201,7 @@ impl<'a> Partition<'a> {
         let mut ids: Vec<&String> = self.ungated.iter().collect();
         ids.sort();
         for id in ids {
-            let Some(b) = self.store.get(id).filter(|b| self.member(b)) else {
-                continue;
-            };
+            let Some(b) = self.store.get(id).filter(|b| self.member(b)) else { continue };
             rows.push(Row::new(
                 "submitted-ungated",
                 id,
@@ -234,18 +219,15 @@ impl<'a> Partition<'a> {
             if b.status != Status::Deferred || self.held_ask.contains(&b.id) {
                 continue;
             }
-            let live_blocker = b
-                .blocks_targets()
-                .any(|t| self.store.get(t).is_some_and(|x| !x.is_closed()));
+            let live_blocker =
+                b.blocks_targets().any(|t| self.store.get(t).is_some_and(|x| !x.is_closed()));
             if live_blocker {
                 continue;
             }
             // A future defer_until auto-wakes the bead: a timed hold, not a forgotten one.
-            if let Some(until) = b
-                .defer_until
-                .as_deref()
-                .filter(|u| crate::timefmt::parse_rfc3339(u).is_some_and(|t| t > self.facts.now))
-            {
+            if let Some(until) = b.defer_until.as_deref().filter(|u| {
+                crate::timefmt::parse_rfc3339(u).is_some_and(|t| t > self.facts.now)
+            }) {
                 rows.push(Row::new(
                     "held",
                     &b.id,
@@ -274,12 +256,7 @@ impl<'a> Partition<'a> {
         }
         let mut sorted: Vec<&String> = self.ready.iter().collect();
         sorted.sort();
-        let head = sorted
-            .iter()
-            .take(6)
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let head = sorted.iter().take(6).map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
         let n = self.ready.len();
         let row = if let Some(state) = f.world {
             Row::new(
@@ -373,10 +350,7 @@ impl<'a> Partition<'a> {
                 "empty",
                 &e.id,
                 Disposition::Escalate,
-                format!(
-                    "open epic with no children: {}",
-                    e.title.as_deref().unwrap_or("")
-                ),
+                format!("open epic with no children: {}", e.title.as_deref().unwrap_or("")),
                 "decompose it, or close it".into(),
             ));
             return;
@@ -420,10 +394,7 @@ impl<'a> Partition<'a> {
                     "{} open child(ren), all {}: {}",
                     mine.len(),
                     what,
-                    who.iter()
-                        .map(|c| c.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
+                    who.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(" ")
                 ),
                 "none — already queued".into(),
             ));
@@ -454,23 +425,12 @@ impl<'a> Partition<'a> {
                 }
             }
         }
-        let ids = rest
-            .iter()
-            .map(|c| c.id.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let ids = rest.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(" ");
         let pairs = |v: &[(String, String)]| {
-            v.iter()
-                .map(|(a, b)| format!("{a}->{b}"))
-                .collect::<Vec<_>>()
+            v.iter().map(|(a, b)| format!("{a}->{b}")).collect::<Vec<_>>()
         };
 
-        if internal.is_empty()
-            && foreign.is_empty()
-            && unknown.is_empty()
-            && sequenced.is_empty()
-            && foreign_moving == 0
-        {
+        if internal.is_empty() && foreign.is_empty() && unknown.is_empty() && sequenced.is_empty() && foreign_moving == 0 {
             // R6: every blocker closed, nothing claimable — is_blocked is a cached column and
             // goes stale after an import or a pull.
             rows.push(Row::new(
@@ -523,12 +483,7 @@ impl<'a> Partition<'a> {
                     format!(
                         "{} open child(ren) blocked by work that is itself not moving: {}",
                         rest.len(),
-                        blockers
-                            .iter()
-                            .take(5)
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(" ")
+                        blockers.iter().take(5).cloned().collect::<Vec<_>>().join(" ")
                     ),
                     "unblock the head of the chain, or re-sequence the plan".into(),
                 ));
@@ -556,12 +511,7 @@ impl<'a> Partition<'a> {
     fn stack_deadlocks(&self, members: &[&Bead], rows: &mut Vec<Row>) {
         for p in members.iter().filter(|b| self.delegated(b)) {
             for c in self.store.children(&p.id) {
-                if c.is_closed()
-                    || !self
-                        .stacked_on
-                        .get(&c.id)
-                        .is_some_and(|s| s.contains(&p.id))
-                {
+                if c.is_closed() || !self.stacked_on.get(&c.id).is_some_and(|s| s.contains(&p.id)) {
                     continue;
                 }
                 rows.push(Row::new(
@@ -581,11 +531,7 @@ impl<'a> Partition<'a> {
         let idx: HashMap<&str, usize> = ids.iter().enumerate().map(|(i, s)| (*s, i)).collect();
         let graph: Vec<Vec<usize>> = members
             .iter()
-            .map(|b| {
-                b.blocks_targets()
-                    .filter_map(|t| idx.get(t).copied())
-                    .collect()
-            })
+            .map(|b| b.blocks_targets().filter_map(|t| idx.get(t).copied()).collect())
             .collect();
         for comp in tarjan(&graph) {
             if comp.len() < 2 {
@@ -597,10 +543,7 @@ impl<'a> Partition<'a> {
                 "cycle",
                 names[0],
                 Disposition::Escalate,
-                format!(
-                    "dependency cycle, permanently unclaimable: {}",
-                    names.join(" -> ")
-                ),
+                format!("dependency cycle, permanently unclaimable: {}", names.join(" -> ")),
                 "bd dep remove one edge of the ring".into(),
             ));
         }
@@ -671,13 +614,7 @@ mod tests {
     const PLAN: &[&str] = &["spira", "plan"];
     const ASK: &str = "operator-ask";
 
-    fn bead(
-        id: &str,
-        status: &str,
-        labels: &[&str],
-        parent: Option<&str>,
-        blocks: &[&str],
-    ) -> serde_json::Value {
+    fn bead(id: &str, status: &str, labels: &[&str], parent: Option<&str>, blocks: &[&str]) -> serde_json::Value {
         let mut deps: Vec<serde_json::Value> = blocks
             .iter()
             .map(|t| json!({"issue_id": id, "depends_on_id": t, "type": "blocks"}))
@@ -708,44 +645,18 @@ mod tests {
     fn run_working(s: &Store, ready: &[&str], working: &[&str], facts: &Facts) -> Vec<Row> {
         run_stacked(s, ready, working, &HashMap::new(), facts)
     }
-    fn run_stacked(
-        s: &Store,
-        ready: &[&str],
-        working: &[&str],
-        stacked_on: &HashMap<String, Vec<String>>,
-        facts: &Facts,
-    ) -> Vec<Row> {
+    fn run_stacked(s: &Store, ready: &[&str], working: &[&str], stacked_on: &HashMap<String, Vec<String>>, facts: &Facts) -> Vec<Row> {
         run_all(s, ready, working, &[], stacked_on, facts)
     }
-    fn run_all(
-        s: &Store,
-        ready: &[&str],
-        working: &[&str],
-        ungated: &[&str],
-        stacked_on: &HashMap<String, Vec<String>>,
-        facts: &Facts,
-    ) -> Vec<Row> {
-        let vocab = Vocab {
-            ask: ASK.into(),
-            ..Vocab::default()
-        };
+    fn run_all(s: &Store, ready: &[&str], working: &[&str], ungated: &[&str], stacked_on: &HashMap<String, Vec<String>>, facts: &Facts) -> Vec<Row> {
+        let vocab = Vocab { ask: ASK.into(), ..Vocab::default() };
         let p = Partition {
             store: s,
             labels: PLAN.iter().map(|s| s.to_string()).collect(),
             ready: ready.iter().map(|s| s.to_string()).collect(),
             working: working.iter().map(|s| s.to_string()).collect(),
-            held_ask: s
-                .beads
-                .iter()
-                .filter(|b| b.has(ASK))
-                .map(|b| b.id.clone())
-                .collect(),
-            held_poison: s
-                .beads
-                .iter()
-                .filter(|b| b.has("spira-poison"))
-                .map(|b| b.id.clone())
-                .collect(),
+            held_ask: s.beads.iter().filter(|b| b.has(ASK)).map(|b| b.id.clone()).collect(),
+            held_poison: s.beads.iter().filter(|b| b.has("spira-poison")).map(|b| b.id.clone()).collect(),
             ungated: ungated.iter().map(|s| s.to_string()).collect(),
             stacked_on: stacked_on.clone(),
             vocab: &vocab,
@@ -755,16 +666,11 @@ mod tests {
     }
     fn run(s: &Store, ready: &[&str]) -> Vec<Row> {
         // A live dwarf, so starved never fires unless a test asks for it.
-        let f = Facts {
-            live: 1,
-            ..Facts::default()
-        };
+        let f = Facts { live: 1, ..Facts::default() };
         run_with(s, ready, &f)
     }
     fn kinds(rows: &[Row]) -> Vec<(String, String)> {
-        rows.iter()
-            .map(|r| (r.kind.clone(), r.id.clone()))
-            .collect()
+        rows.iter().map(|r| (r.kind.clone(), r.id.clone())).collect()
     }
 
     // ---- the bead's own four, plus empty ----
@@ -779,30 +685,18 @@ mod tests {
             bead("c", "open", PLAN, Some("E"), &["x"]),
             bead("x", "closed", &["spira"], None, &[]),
         ]);
-        assert!(
-            run(&s, &["c"]).is_empty(),
-            "claimable child, closed blocker: nothing"
-        );
+        assert!(run(&s, &["c"]).is_empty(), "claimable child, closed blocker: nothing");
         // Not claimable (is_blocked stale): the mechanical fix, never blocked-external.
-        assert_eq!(
-            kinds(&run(&s, &[])),
-            vec![("stale-blocked".into(), "E".into())]
-        );
+        assert_eq!(kinds(&run(&s, &[])), vec![("stale-blocked".into(), "E".into())]);
     }
 
     #[test_id(tyoc8fq)]
     #[test]
     fn sp_yf8lf0_a_blocker_absent_from_the_store_is_unknown_never_closed() {
-        let s = store(vec![
-            epic("E", PLAN),
-            bead("c", "open", PLAN, Some("E"), &["gone"]),
-        ]);
+        let s = store(vec![epic("E", PLAN), bead("c", "open", PLAN, Some("E"), &["gone"])]);
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("blocked-external".into(), "E".into())]);
-        assert!(
-            rows[0].detail.contains("not in the store: gone"),
-            "{rows:?}"
-        );
+        assert!(rows[0].detail.contains("not in the store: gone"), "{rows:?}");
     }
 
     #[test_id(tuoxqy0)]
@@ -810,13 +704,7 @@ mod tests {
     fn submitted_dependent_is_not_reported() {
         let s = store(vec![
             epic("E", PLAN),
-            bead(
-                "c",
-                "open",
-                &plan_with(&["spira-submitted"]),
-                Some("E"),
-                &["x"],
-            ),
+            bead("c", "open", &plan_with(&["spira-submitted"]), Some("E"), &["x"]),
             bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
         assert!(run(&s, &[]).is_empty());
@@ -830,20 +718,8 @@ mod tests {
             bead("c", "open", PLAN, Some("E"), &["x"]),
             bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
-        assert!(run_working(
-            &s,
-            &[],
-            &["c"],
-            &Facts {
-                live: 1,
-                ..Facts::default()
-            }
-        )
-        .is_empty());
-        assert!(
-            !run(&s, &[]).is_empty(),
-            "bd status in_progress alone no longer means moving"
-        );
+        assert!(run_working(&s, &[], &["c"], &Facts { live: 1, ..Facts::default() }).is_empty());
+        assert!(!run(&s, &[]).is_empty(), "bd status in_progress alone no longer means moving");
     }
 
     #[test_id(to72zms)]
@@ -857,10 +733,7 @@ mod tests {
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("blocked-external".into(), "E".into())]);
         assert_eq!(rows[0].disp, Disposition::Escalate);
-        assert_eq!(
-            rows[0].detail,
-            "blocked by bead(s) outside the partition: c->x"
-        );
+        assert_eq!(rows[0].detail, "blocked by bead(s) outside the partition: c->x");
     }
 
     #[test_id(tyih2th)]
@@ -876,10 +749,7 @@ mod tests {
     #[test_id(tkshoqv)]
     #[test]
     fn all_closed_epic_is_complete_not_empty() {
-        let s = store(vec![
-            epic("E", PLAN),
-            bead("c", "closed", PLAN, Some("E"), &[]),
-        ]);
+        let s = store(vec![epic("E", PLAN), bead("c", "closed", PLAN, Some("E"), &[])]);
         assert!(run(&s, &[]).is_empty());
     }
 
@@ -894,20 +764,8 @@ mod tests {
         let s = store(vec![
             epic("sp-yyltf", PLAN),
             bead("sp-f3af9", "open", &sub, Some("sp-yyltf"), &["sp-lno75"]),
-            bead(
-                "sp-f0qhr",
-                "open",
-                &sub,
-                Some("sp-yyltf"),
-                &["sp-xethq", "sp-a0zvh", "sp-i2m7y"],
-            ),
-            bead(
-                "sp-s9675",
-                "open",
-                PLAN,
-                Some("sp-yyltf"),
-                &["sp-lno75", "sp-f3af9", "sp-f0qhr"],
-            ),
+            bead("sp-f0qhr", "open", &sub, Some("sp-yyltf"), &["sp-xethq", "sp-a0zvh", "sp-i2m7y"]),
+            bead("sp-s9675", "open", PLAN, Some("sp-yyltf"), &["sp-lno75", "sp-f3af9", "sp-f0qhr"]),
             bead("sp-falao", "open", PLAN, Some("sp-yyltf"), &["sp-f0qhr"]),
             bead("sp-lno75", "closed", &sub, Some("sp-yyltf"), &["sp-a0zvh"]),
             bead("sp-a0zvh", "closed", &sub, Some("sp-yyltf"), &[]),
@@ -924,23 +782,14 @@ mod tests {
         // so the verdict is never blocked-external.
         let s = store(vec![
             epic("sp-yyltf", PLAN),
-            bead(
-                "sp-f0qhr",
-                "open",
-                PLAN,
-                Some("sp-yyltf"),
-                &["sp-xethq", "sp-i2m7y"],
-            ),
+            bead("sp-f0qhr", "open", PLAN, Some("sp-yyltf"), &["sp-xethq", "sp-i2m7y"]),
             bead("sp-s9675", "open", PLAN, Some("sp-yyltf"), &["sp-1z10t"]),
             bead("sp-xethq", "closed", PLAN, None, &[]),
             bead("sp-i2m7y", "closed", PLAN, None, &[]),
             bead("sp-1z10t", "closed", PLAN, None, &[]),
         ]);
         let rows = run(&s, &[]);
-        assert!(
-            rows.iter().all(|r| r.kind != "blocked-external"),
-            "{rows:?}"
-        );
+        assert!(rows.iter().all(|r| r.kind != "blocked-external"), "{rows:?}");
     }
 
     #[test_id(tiasafd)]
@@ -949,32 +798,11 @@ mod tests {
         // sp-bpe4n: "sp-o3o6z->sp-7tw9h sp-o4wu7->sp-7tw9h"; sp-7tw9h landed, sp-o3o6z worked.
         let s = store(vec![
             epic("sp-msk4h", PLAN),
-            bead(
-                "sp-7tw9h",
-                "closed",
-                &plan_with(&["spira-submitted"]),
-                Some("sp-msk4h"),
-                &[],
-            ),
+            bead("sp-7tw9h", "closed", &plan_with(&["spira-submitted"]), Some("sp-msk4h"), &[]),
             bead("sp-o3o6z", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h"]),
-            bead(
-                "sp-o4wu7",
-                "open",
-                PLAN,
-                Some("sp-msk4h"),
-                &["sp-7tw9h", "sp-o3o6z"],
-            ),
+            bead("sp-o4wu7", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h", "sp-o3o6z"]),
         ]);
-        assert!(run_working(
-            &s,
-            &[],
-            &["sp-o3o6z"],
-            &Facts {
-                live: 1,
-                ..Facts::default()
-            }
-        )
-        .is_empty());
+        assert!(run_working(&s, &[], &["sp-o3o6z"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
     #[test_id(tkdslfz)]
@@ -984,21 +812,9 @@ mod tests {
         // sp-7tw9h was submitted and in round 119.
         let s = store(vec![
             epic("sp-msk4h", PLAN),
-            bead(
-                "sp-7tw9h",
-                "open",
-                &plan_with(&["spira-submitted"]),
-                Some("sp-msk4h"),
-                &[],
-            ),
+            bead("sp-7tw9h", "open", &plan_with(&["spira-submitted"]), Some("sp-msk4h"), &[]),
             bead("sp-o3o6z", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h"]),
-            bead(
-                "sp-o4wu7",
-                "open",
-                PLAN,
-                Some("sp-msk4h"),
-                &["sp-7tw9h", "sp-o3o6z"],
-            ),
+            bead("sp-o4wu7", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h", "sp-o3o6z"]),
         ]);
         assert!(run(&s, &[]).is_empty());
     }
@@ -1029,13 +845,7 @@ mod tests {
             bead("sp-f0qhr", "open", PLAN, Some("sp-yyltf"), &["sp-a0zvh"]),
             bead("sp-f3af9", "open", PLAN, Some("sp-yyltf"), &["sp-a0zvh"]),
             bead("sp-falao", "open", PLAN, Some("sp-yyltf"), &["sp-f0qhr"]),
-            bead(
-                "sp-s9675",
-                "open",
-                PLAN,
-                Some("sp-yyltf"),
-                &["sp-1z10t", "sp-falao"],
-            ),
+            bead("sp-s9675", "open", PLAN, Some("sp-yyltf"), &["sp-1z10t", "sp-falao"]),
         ]);
         assert!(run(&s, &[]).is_empty());
     }
@@ -1049,36 +859,14 @@ mod tests {
         let s = store(vec![
             epic("sp-zs04v", PLAN),
             epic("sp-pswer", &["repo:spira", "spira"]),
-            bead(
-                "sp-zs04v.4",
-                "closed",
-                &plan_with(&["spira-submitted"]),
-                Some("sp-zs04v"),
-                &[],
-            ),
-            bead(
-                "sp-zs04v.5",
-                "open",
-                PLAN,
-                Some("sp-zs04v"),
-                &["sp-pswer", "sp-zs04v.4"],
-            ),
-            bead(
-                "sp-zs04v.6",
-                "open",
-                PLAN,
-                Some("sp-zs04v"),
-                &["sp-zs04v.4", "sp-pswer"],
-            ),
+            bead("sp-zs04v.4", "closed", &plan_with(&["spira-submitted"]), Some("sp-zs04v"), &[]),
+            bead("sp-zs04v.5", "open", PLAN, Some("sp-zs04v"), &["sp-pswer", "sp-zs04v.4"]),
+            bead("sp-zs04v.6", "open", PLAN, Some("sp-zs04v"), &["sp-zs04v.4", "sp-pswer"]),
         ]);
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("sequenced".into(), "sp-zs04v".into())]);
         assert_eq!(rows[0].disp, Disposition::Info);
-        assert!(
-            rows[0].detail.contains("ordered behind epic(s) sp-pswer"),
-            "{}",
-            rows[0].detail
-        );
+        assert!(rows[0].detail.contains("ordered behind epic(s) sp-pswer"), "{}", rows[0].detail);
     }
 
     // ---- what must still be reported ----
@@ -1091,16 +879,7 @@ mod tests {
             bead("c", "open", PLAN, Some("E"), &["x"]),
             bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
-        assert!(run_working(
-            &s,
-            &[],
-            &["x"],
-            &Facts {
-                live: 1,
-                ..Facts::default()
-            }
-        )
-        .is_empty());
+        assert!(run_working(&s, &[], &["x"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
     #[test_id(tfvb1dk)]
@@ -1114,10 +893,7 @@ mod tests {
         ]);
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("stuck".into(), "E".into())]);
-        assert_eq!(
-            rows[0].detail,
-            "1 open child(ren) blocked by work that is itself not moving: h"
-        );
+        assert_eq!(rows[0].detail, "1 open child(ren) blocked by work that is itself not moving: h");
         // The same chain with a claimable head is not stuck.
         assert!(run(&s, &["h"]).is_empty());
     }
@@ -1158,15 +934,9 @@ mod tests {
             bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
         assert!(run(&s, &[]).is_empty());
-        let s = store(vec![
-            bead("d", "deferred", PLAN, None, &["x"]),
-            bead("x", "closed", &[], None, &[]),
-        ]);
+        let s = store(vec![bead("d", "deferred", PLAN, None, &["x"]), bead("x", "closed", &[], None, &[])]);
         let rows = run(&s, &[]);
-        assert_eq!(
-            kinds(&rows),
-            vec![("deferred-unescalated".into(), "d".into())]
-        );
+        assert_eq!(kinds(&rows), vec![("deferred-unescalated".into(), "d".into())]);
         assert_eq!(rows[0].detail, "deferred with no ask held: title of d");
     }
 
@@ -1174,11 +944,7 @@ mod tests {
     #[test]
     fn timed_hold_is_held_not_stranded() {
         let now = crate::timefmt::parse_rfc3339("2026-10-02T09:00:00Z").unwrap();
-        let f = Facts {
-            live: 1,
-            now,
-            ..Facts::default()
-        };
+        let f = Facts { live: 1, now, ..Facts::default() };
         let held = |until: Option<&str>| {
             let mut v = bead("d", "deferred", PLAN, None, &[]);
             if let Some(u) = until {
@@ -1189,22 +955,9 @@ mod tests {
         let rows = held(Some("2026-10-02T09:48:33Z"));
         assert_eq!(kinds(&rows), vec![("held".into(), "d".into())]);
         assert_eq!(rows[0].disp, Disposition::Info);
-        assert!(
-            rows[0]
-                .detail
-                .starts_with("held-until 2026-10-02T09:48:33Z"),
-            "{}",
-            rows[0].detail
-        );
-        for stranded in [
-            held(None),
-            held(Some("2026-10-02T08:00:00Z")),
-            held(Some("garbage")),
-        ] {
-            assert_eq!(
-                kinds(&stranded),
-                vec![("deferred-unescalated".into(), "d".into())]
-            );
+        assert!(rows[0].detail.starts_with("held-until 2026-10-02T09:48:33Z"), "{}", rows[0].detail);
+        for stranded in [held(None), held(Some("2026-10-02T08:00:00Z")), held(Some("garbage"))] {
+            assert_eq!(kinds(&stranded), vec![("deferred-unescalated".into(), "d".into())]);
         }
     }
 
@@ -1218,10 +971,7 @@ mod tests {
         assert_eq!(rows[0].detail, "1 bead(s) ready and no live dwarf: r");
         f.world = Some("draining");
         let r = run_with(&s, &["r"], &f);
-        assert_eq!(
-            (r[0].kind.as_str(), r[0].disp),
-            ("world-drained", Disposition::Info)
-        );
+        assert_eq!((r[0].kind.as_str(), r[0].disp), ("world-drained", Disposition::Info));
         f.world = Some("halted");
         assert_eq!(run_with(&s, &["r"], &f)[0].kind, "world-drained");
         f.world = None;
@@ -1238,10 +988,7 @@ mod tests {
         assert_eq!(run_with(&s, &["r"], &f)[0].kind, "throttled");
         f.throttle = Throttle::Unreadable("x".into());
         let r = run_with(&s, &["r"], &f);
-        assert_eq!(
-            (r[0].kind.as_str(), r[0].disp),
-            ("throttle-unreadable", Disposition::Escalate)
-        );
+        assert_eq!((r[0].kind.as_str(), r[0].disp), ("throttle-unreadable", Disposition::Escalate));
         f.throttle = Throttle::Open;
         f.max_dwarves = 2;
         f.total_live = 2;
@@ -1257,28 +1004,13 @@ mod tests {
     #[test]
     fn starved_appends_the_schedulers_last_pass_or_says_it_is_unknown() {
         let s = store(vec![bead("r", "open", PLAN, None, &[])]);
-        let detail = |reason| {
-            run_with(
-                &s,
-                &["r"],
-                &Facts {
-                    scheduler_reason: Some(reason),
-                    ..Facts::default()
-                },
-            )[0]
-            .detail
-            .clone()
-        };
+        let detail = |reason| run_with(&s, &["r"], &Facts { scheduler_reason: Some(reason), ..Facts::default() })[0].detail.clone();
         assert_eq!(
             detail(Ok("skuld: yielding — urgent bead(s) unclaimed: sp-x".into())),
             "1 bead(s) ready and no live dwarf: r; scheduler's last pass: skuld: yielding — urgent bead(s) unclaimed: sp-x"
         );
-        assert_eq!(
-            detail(Err("socket gone".into())),
-            "1 bead(s) ready and no live dwarf: r; scheduler's last pass: unknown (socket gone)"
-        );
-        assert!(detail(Ok("no refusal recorded for skuld".into()))
-            .ends_with("; scheduler's last pass: no refusal recorded for skuld"));
+        assert_eq!(detail(Err("socket gone".into())), "1 bead(s) ready and no live dwarf: r; scheduler's last pass: unknown (socket gone)");
+        assert!(detail(Ok("no refusal recorded for skuld".into())).ends_with("; scheduler's last pass: no refusal recorded for skuld"));
     }
 
     #[test_id(tf0wu5w)]
@@ -1292,10 +1024,7 @@ mod tests {
         ]);
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("cycle".into(), "a".into())]);
-        assert_eq!(
-            rows[0].detail,
-            "dependency cycle, permanently unclaimable: a -> b -> c"
-        );
+        assert_eq!(rows[0].detail, "dependency cycle, permanently unclaimable: a -> b -> c");
     }
 
     #[test_id(ts8aifu)]

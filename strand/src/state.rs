@@ -66,11 +66,10 @@ pub fn apply(st: &State, rows: &[PartRow], now: i64) -> (Vec<AgedRow>, State) {
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let k = key(&r.part, &r.row.kind, &r.row.id);
-        let e = st.get(&k).copied().unwrap_or(StateEntry {
-            first: now,
-            acted: 0,
-            escalated: 0,
-        });
+        let e = st
+            .get(&k)
+            .copied()
+            .unwrap_or(StateEntry { first: now, acted: 0, escalated: 0 });
         keep.insert(k, e);
         out.push(AgedRow {
             part: r.part.clone(),
@@ -90,11 +89,9 @@ pub enum Mark {
 }
 
 pub fn mark(st: &mut State, part: &str, kind: &str, id: &str, what: Mark, now: i64) {
-    let e = st.entry(key(part, kind, id)).or_insert(StateEntry {
-        first: now,
-        acted: 0,
-        escalated: 0,
-    });
+    let e = st
+        .entry(key(part, kind, id))
+        .or_insert(StateEntry { first: now, acted: 0, escalated: 0 });
     match what {
         Mark::Acted => e.acted = now,
         Mark::Escalated => e.escalated = now,
@@ -104,10 +101,7 @@ pub fn mark(st: &mut State, part: &str, kind: &str, id: &str, what: Mark, now: i
 /// Atomic replace through a unique temp file in the same directory — a fixed temp name
 /// shared by concurrent writers could promote the other writer's half-written file.
 pub fn save(path: &Path, st: &State) -> std::io::Result<()> {
-    let dir = path
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let body = serde_json::to_string(st).map_err(std::io::Error::other)?;
     let mut n = 0u32;
     let tmp: PathBuf = loop {
@@ -133,11 +127,7 @@ pub fn save(path: &Path, st: &State) -> std::io::Result<()> {
 /// took on fd 9, so the two can never both run `check` against one state file during
 /// cutover. Released when the returned file is dropped.
 pub fn try_lock(path: &Path) -> std::io::Result<Option<File>> {
-    let f = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)?;
+    let f = OpenOptions::new().write(true).create(true).truncate(false).open(path)?;
     // SAFETY: flock on an fd we own.
     let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if rc == 0 {
@@ -158,44 +148,21 @@ mod tests {
     use crate::model::{Disposition, Row};
 
     fn pr(part: &str, kind: &str, id: &str) -> PartRow {
-        PartRow {
-            part: part.into(),
-            row: Row::new(kind, id, Disposition::Escalate, "d".into(), "a".into()),
-        }
+        PartRow { part: part.into(), row: Row::new(kind, id, Disposition::Escalate, "d".into(), "a".into()) }
     }
 
     #[test_id(tnngtnk)]
     #[test]
     fn ages_prunes_and_keys_by_partition() {
         let mut st = State::new();
-        st.insert(
-            key("spira,plan", "starved", "-"),
-            StateEntry {
-                first: 100,
-                acted: 0,
-                escalated: 150,
-            },
-        );
-        st.insert(
-            key("spira,plan", "stuck", "E"),
-            StateEntry {
-                first: 10,
-                acted: 0,
-                escalated: 0,
-            },
-        );
-        let rows = vec![
-            pr("spira,plan", "starved", "-"),
-            pr("spira,incident", "starved", "-"),
-        ];
+        st.insert(key("spira,plan", "starved", "-"), StateEntry { first: 100, acted: 0, escalated: 150 });
+        st.insert(key("spira,plan", "stuck", "E"), StateEntry { first: 10, acted: 0, escalated: 0 });
+        let rows = vec![pr("spira,plan", "starved", "-"), pr("spira,incident", "starved", "-")];
         let (aged, keep) = apply(&st, &rows, 1000);
         assert_eq!((aged[0].age, aged[0].escalated), (900, 150));
         // Another partition's identical row is its own episode.
         assert_eq!((aged[1].age, aged[1].escalated), (0, 0));
-        assert!(
-            !keep.contains_key(&key("spira,plan", "stuck", "E")),
-            "cleared strand pruned"
-        );
+        assert!(!keep.contains_key(&key("spira,plan", "stuck", "E")), "cleared strand pruned");
         assert_eq!(keep.len(), 2);
     }
 
@@ -208,14 +175,7 @@ mod tests {
         mark(&mut st, "p", "ghost", "g", Mark::Acted, 42);
         save(&p, &st).unwrap();
         let back = load(&p);
-        assert_eq!(
-            back.get("p:ghost:g").unwrap(),
-            &StateEntry {
-                first: 42,
-                acted: 42,
-                escalated: 0
-            }
-        );
+        assert_eq!(back.get("p:ghost:g").unwrap(), &StateEntry { first: 42, acted: 42, escalated: 0 });
         // The on-disk shape the cockpit and heimdall read.
         let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(v["p:ghost:g"]["acted"], 42);

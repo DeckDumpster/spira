@@ -36,12 +36,7 @@ impl Persona {
     }
 }
 
-pub fn rows(
-    claimable: &HashSet<String>,
-    store: &Store,
-    personas: &[Persona],
-    shared_exclude: &[String],
-) -> Vec<Row> {
+pub fn rows(claimable: &HashSet<String>, store: &Store, personas: &[Persona], shared_exclude: &[String]) -> Vec<Row> {
     let mut ids: Vec<&String> = claimable.iter().collect();
     ids.sort();
     let mut out = Vec::new();
@@ -53,9 +48,7 @@ pub fn rows(
         if shared_exclude.iter().any(|x| b.has(x)) {
             continue;
         }
-        if b.blocks_targets()
-            .any(|t| store.get(t).is_some_and(|x| !x.is_closed()))
-        {
+        if b.blocks_targets().any(|t| store.get(t).is_some_and(|x| !x.is_closed())) {
             continue;
         }
         let matching: Vec<&Persona> = personas.iter().filter(|p| p.matches(&b.labels)).collect();
@@ -65,14 +58,9 @@ pub fn rows(
         let detail = if matching.is_empty() {
             "READY but no persona in the runes matches its labels".to_string()
         } else {
-            let why: Vec<String> = matching
-                .iter()
-                .map(|p| format!("{} ({})", p.name, p.absent_because().unwrap_or_default()))
-                .collect();
-            format!(
-                "READY but no rostered persona can claim it; would match: {}",
-                why.join(", ")
-            )
+            let why: Vec<String> =
+                matching.iter().map(|p| format!("{} ({})", p.name, p.absent_because().unwrap_or_default())).collect();
+            format!("READY but no rostered persona can claim it; would match: {}", why.join(", "))
         };
         out.push(Row::new(
             "unrostered",
@@ -87,21 +75,10 @@ pub fn rows(
 
 pub fn personas(cfg: &Config) -> Result<Vec<Persona>, String> {
     use spira_config::runes::{rune_get, rune_names, spira_runes};
-    let home = cfg
-        .home
-        .as_ref()
-        .ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
-    let roster: HashSet<String> = spira_runes(home, cfg.runes_override.as_deref())
-        .split_whitespace()
-        .map(str::to_string)
-        .collect();
-    let split = |s: String| -> Vec<String> {
-        s.split(',')
-            .map(str::trim)
-            .filter(|x| !x.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
+    let home = cfg.home.as_ref().ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
+    let roster: HashSet<String> =
+        spira_runes(home, cfg.runes_override.as_deref()).split_whitespace().map(str::to_string).collect();
+    let split = |s: String| -> Vec<String> { s.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect() };
     Ok(rune_names(home)
         .into_iter()
         .map(|n| Persona {
@@ -123,13 +100,7 @@ mod tests {
         Store::new(parse_beads(json).unwrap())
     }
     fn persona(name: &str, label: &str, rostered: bool) -> Persona {
-        Persona {
-            name: name.into(),
-            labels: vec![label.into()],
-            exclude: vec![],
-            rostered,
-            call: "auto".into(),
-        }
+        Persona { name: name.into(), labels: vec![label.into()], exclude: vec![], rostered, call: "auto".into() }
     }
     fn one(id: &str) -> HashSet<String> {
         [id.to_string()].into()
@@ -139,17 +110,10 @@ mod tests {
     #[test]
     fn a_ready_bead_for_an_unrostered_persona_is_reported_naming_it() {
         let s = store(r#"[{"id":"sp-a","status":"open","labels":["warden-sweep"]}]"#);
-        let ps = [
-            persona("builder", "plan", true),
-            persona("warden", "warden-sweep", false),
-        ];
+        let ps = [persona("builder", "plan", true), persona("warden", "warden-sweep", false)];
         let r = rows(&one("sp-a"), &s, &ps, &[]);
         assert_eq!(r.len(), 1);
-        assert!(
-            r[0].detail.contains("warden (not in spira.runes)"),
-            "{}",
-            r[0].detail
-        );
+        assert!(r[0].detail.contains("warden (not in spira.runes)"), "{}", r[0].detail);
     }
 
     #[test_id(tkemaup)]
@@ -179,9 +143,7 @@ mod tests {
         );
         let both: HashSet<String> = ["sp-a".to_string(), "sp-b".to_string()].into();
         let r = rows(&both, &s, &[persona("builder", "plan", true)], &[]);
-        assert!(r
-            .iter()
-            .any(|x| x.id == "sp-a" && x.detail.contains("no persona in the runes")));
+        assert!(r.iter().any(|x| x.id == "sp-a" && x.detail.contains("no persona in the runes")));
         assert_eq!(r.len(), 1, "sp-b waits on open sp-a");
     }
 }

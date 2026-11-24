@@ -35,10 +35,7 @@ pub fn parse_rfc3339(s: &str) -> Option<i64> {
     let num = |a: usize, b: usize| s.get(a..b)?.parse::<i64>().ok();
     let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
     let (h, mi, se) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
-    if s.as_bytes()[4] != b'-'
-        || s.as_bytes()[7] != b'-'
-        || !matches!(s.as_bytes()[10], b'T' | b't' | b' ')
-    {
+    if s.as_bytes()[4] != b'-' || s.as_bytes()[7] != b'-' || !matches!(s.as_bytes()[10], b'T' | b't' | b' ') {
         return None;
     }
     let mut rest = &s[19..];
@@ -63,12 +60,7 @@ pub fn parse_rfc3339(s: &str) -> Option<i64> {
 pub fn utc_stamp(t: i64) -> String {
     let (y, m, d) = civil_from_days(t.div_euclid(86400));
     let s = t.rem_euclid(86400);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        s / 3600,
-        s % 3600 / 60,
-        s % 60
-    )
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", s / 3600, s % 3600 / 60, s % 60)
 }
 
 /// `HH:MMZ`.

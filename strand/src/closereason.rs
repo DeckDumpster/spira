@@ -33,17 +33,10 @@ fn red_flags() -> &'static [Regex] {
 
 fn mask_mentions(line: &str) -> String {
     static R: OnceLock<Vec<Regex>> = OnceLock::new();
-    let spans = R.get_or_init(|| {
-        [r#""[^"]*""#, r"'[^']*'", r"`[^`]*`", r"\([^)]*\)"]
-            .iter()
-            .map(|p| Regex::new(p).unwrap())
-            .collect()
-    });
+    let spans = R.get_or_init(|| [r#""[^"]*""#, r"'[^']*'", r"`[^`]*`", r"\([^)]*\)"].iter().map(|p| Regex::new(p).unwrap()).collect());
     let mut masked = line.to_string();
     for re in spans {
-        masked = re
-            .replace_all(&masked, |m: &regex::Captures| " ".repeat(m[0].len()))
-            .into_owned();
+        masked = re.replace_all(&masked, |m: &regex::Captures| " ".repeat(m[0].len())).into_owned();
     }
     masked
 }
@@ -75,9 +68,7 @@ pub fn check_close_reason(reason: &str) -> Option<String> {
 
 /// The first red-flag match in the raw reason: no masking, no mention-file skip.
 pub fn detect_close_reason(reason: &str) -> Option<String> {
-    red_flags()
-        .iter()
-        .find_map(|re| re.find(reason).map(|m| m.as_str().to_string()))
+    red_flags().iter().find_map(|re| re.find(reason).map(|m| m.as_str().to_string()))
 }
 
 /// The first follow-on phrase when the reason cites no tracking reference — a bead id

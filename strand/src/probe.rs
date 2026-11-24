@@ -2,11 +2,11 @@
 //! systemctl, and the harness's own run files. Every payload a subprocess needs travels on
 //! its stdin (law-payloads-go-on-stdin); argv carries only verbs, flags, ids and labels.
 
+use std::process::Command;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::process::Stdio;
 
 use crate::classify::Throttle;
@@ -25,11 +25,7 @@ pub fn run(program: &str, args: &[&str], stdin: Option<&[u8]>, env: &[(&str, &st
     // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(program);
     cmd.args(args)
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (k, v) in env {
@@ -38,13 +34,7 @@ pub fn run(program: &str, args: &[&str], stdin: Option<&[u8]>, env: &[(&str, &st
     let child = cmd.spawn();
     let mut child = match child {
         Ok(c) => c,
-        Err(e) => {
-            return Out {
-                ok: false,
-                stdout: String::new(),
-                stderr: format!("{program}: {e}"),
-            }
-        }
+        Err(e) => return Out { ok: false, stdout: String::new(), stderr: format!("{program}: {e}") },
     };
     if let (Some(data), Some(mut pipe)) = (stdin, child.stdin.take()) {
         // A writer thread, so a child that fills its stdout pipe before draining stdin
@@ -60,11 +50,7 @@ pub fn run(program: &str, args: &[&str], stdin: Option<&[u8]>, env: &[(&str, &st
             stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
         },
-        Err(e) => Out {
-            ok: false,
-            stdout: String::new(),
-            stderr: format!("{program}: {e}"),
-        },
+        Err(e) => Out { ok: false, stdout: String::new(), stderr: format!("{program}: {e}") },
     }
 }
 
@@ -73,12 +59,7 @@ pub fn run(program: &str, args: &[&str], stdin: Option<&[u8]>, env: &[(&str, &st
 /// lookup, never an inference from its absence). A refused or failed read is `Err`.
 pub fn load_store(lc: &LcClient) -> Result<Vec<Bead>, String> {
     let read = |args: &[&str]| -> Result<Vec<Bead>, String> {
-        let argv: Vec<&str> = ["content", "list"]
-            .iter()
-            .chain(args)
-            .copied()
-            .chain(["--brief", "--json"])
-            .collect();
+        let argv: Vec<&str> = ["content", "list"].iter().chain(args).copied().chain(["--brief", "--json"]).collect();
         let raw = lc.answer(&argv).map_err(|e| format!("content list: {e}"))?;
         parse_beads(&raw).map_err(|e| format!("content list: {e}"))
     };
@@ -97,11 +78,7 @@ pub fn load_store(lc: &LcClient) -> Result<Vec<Bead>, String> {
     }
     // An open epic with no open child may have only closed ones; without them it reads as empty.
     let parents: HashSet<&str> = beads.iter().filter_map(|b| b.parent.as_deref()).collect();
-    let childless: Vec<String> = beads
-        .iter()
-        .filter(|b| b.is_epic() && !b.is_closed() && !parents.contains(b.id.as_str()))
-        .map(|b| b.id.clone())
-        .collect();
+    let childless: Vec<String> = beads.iter().filter(|b| b.is_epic() && !b.is_closed() && !parents.contains(b.id.as_str())).map(|b| b.id.clone()).collect();
     for epic in childless {
         beads.extend(read(&["--all", "--limit", "0", "--parent", &epic])?);
     }
@@ -116,24 +93,9 @@ const NAMED_CHUNK: usize = 500;
 /// assignee no claim writes (sp-7g5q6). A refusal is `Err`, never empty.
 pub fn ready(cfg: &Config, labels: &str, exclude: &[String]) -> Result<HashSet<String>, String> {
     let excl = exclude.join(",");
-    let o = run(
-        "timeout",
-        &[
-            "60",
-            cfg.claim_bin.as_str(),
-            "ready-count",
-            labels,
-            &excl,
-            "--json",
-        ],
-        None,
-        &[],
-    );
+    let o = run("timeout", &["60", cfg.claim_bin.as_str(), "ready-count", labels, &excl, "--json"], None, &[]);
     if !o.ok {
-        return Err(format!(
-            "spira-claim ready-count {labels}: {}",
-            o.stderr.trim()
-        ));
+        return Err(format!("spira-claim ready-count {labels}: {}", o.stderr.trim()));
     }
     ready_ids(&o.stdout).map_err(|e| format!("spira-claim ready-count {labels}: {e}"))
 }
@@ -151,16 +113,12 @@ pub fn show(lc: &LcClient, id: &str) -> Option<Bead> {
 /// Sends `recompute-blocked` to the content door; `Err` names why it did not apply.
 pub fn recompute_blocked(lc: &Result<LcClient, String>) -> Result<(), String> {
     let lc = lc.as_ref().map_err(Clone::clone)?;
-    lc.answer(&["content", "recompute-blocked"])
-        .map(drop)
-        .map_err(|e| format!("content recompute-blocked: {e}"))
+    lc.answer(&["content", "recompute-blocked"]).map(drop).map_err(|e| format!("content recompute-blocked: {e}"))
 }
 
 /// An id or actor fit to appear inside a SQL literal: bead-id characters only.
 pub fn sql_safe(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
 }
 
 // ------------------------------------------------------------------------------------------
@@ -183,17 +141,8 @@ pub fn parse_roster(text: &str) -> Vec<PartitionSpec> {
                 return None;
             }
             let exclude = f.next().unwrap_or("").trim().to_string();
-            let runes = f
-                .next()
-                .unwrap_or("")
-                .split_whitespace()
-                .map(str::to_string)
-                .collect();
-            Some(PartitionSpec {
-                labels,
-                exclude,
-                runes,
-            })
+            let runes = f.next().unwrap_or("").split_whitespace().map(str::to_string).collect();
+            Some(PartitionSpec { labels, exclude, runes })
         })
         .collect()
 }
@@ -202,39 +151,22 @@ pub fn parse_roster(text: &str) -> Vec<PartitionSpec> {
 /// partition (SPIRA_LABELS). Err when the runes directory is missing — never an empty roster.
 pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, String> {
     use spira_config::runes::{rune_partitions, runes_dir, runes_for_labels, spira_runes};
-    let home = cfg
-        .home
-        .as_ref()
-        .ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
+    let home = cfg.home.as_ref().ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
     let dir = runes_dir(home);
     if !dir.is_dir() {
-        return Err(format!(
-            "{} is missing — cannot read the persona roster",
-            dir.display()
-        ));
+        return Err(format!("{} is missing — cannot read the persona roster", dir.display()));
     }
     let over = cfg.runes_override.as_deref();
     let spec = |labels: String, exclude: String| {
         let mut runes = runes_for_labels(home, &labels);
         if runes.is_empty() {
-            runes = spira_runes(home, over)
-                .split_whitespace()
-                .map(str::to_string)
-                .collect();
+            runes = spira_runes(home, over).split_whitespace().map(str::to_string).collect();
         }
-        PartitionSpec {
-            labels,
-            exclude,
-            runes,
-        }
+        PartitionSpec { labels, exclude, runes }
     };
     Ok(match want.filter(|w| !w.is_empty()) {
         Some(w) => vec![spec(w.to_string(), String::new())],
-        None => rune_partitions(home, over)
-            .into_iter()
-            .filter(|(l, _)| !l.is_empty())
-            .map(|(l, x)| spec(l, x))
-            .collect(),
+        None => rune_partitions(home, over).into_iter().filter(|(l, _)| !l.is_empty()).map(|(l, x)| spec(l, x)).collect(),
     })
 }
 
@@ -260,17 +192,13 @@ pub fn dwarf_alive(pf: &Path) -> bool {
 }
 
 fn pidfiles(run: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
-    let Ok(rd) = fs::read_dir(run) else {
-        return Vec::new();
-    };
+    let Ok(rd) = fs::read_dir(run) else { return Vec::new() };
     rd.filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-                n.starts_with(prefix)
-                    && n.ends_with(suffix)
-                    && n.len() > prefix.len() + suffix.len()
-            })
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(prefix) && n.ends_with(suffix) && n.len() > prefix.len() + suffix.len())
         })
         .collect()
 }
@@ -291,38 +219,22 @@ pub fn live_units(cfg: &Config) -> Result<Vec<String>, String> {
 
 /// How many of `live_units` were directed onto a named bead.
 pub fn dwarves_live_directed(cfg: &Config) -> Result<u32, String> {
-    Ok(all_live_units(cfg)?
-        .iter()
-        .filter(|u| runtime::units::is_directed(u))
-        .count() as u32)
+    Ok(all_live_units(cfg)?.iter().filter(|u| runtime::units::is_directed(u)).count() as u32)
 }
 
 fn all_live_units(cfg: &Config) -> Result<Vec<String>, String> {
-    let units =
-        runtime::units::host((cfg.systemctl != "systemctl").then_some(cfg.systemctl.as_str()));
+    let units = runtime::units::host((cfg.systemctl != "systemctl").then_some(cfg.systemctl.as_str()));
     let mut live = std::collections::BTreeSet::new();
     for glob in runtime::units::dwarf_globs() {
-        let listed = units.list(&glob).map_err(|e| {
-            format!(
-                "listing the dwarf units failed, so the live dwarves are unknown: {}",
-                e.0
-            )
-        })?;
-        live.extend(
-            listed
-                .into_iter()
-                .filter(|u| runtime::units::is_live_dwarf(&u.name, u.state))
-                .map(|u| u.name),
-        );
+        let listed = units.list(&glob).map_err(|e| format!("listing the dwarf units failed, so the live dwarves are unknown: {}", e.0))?;
+        live.extend(listed.into_iter().filter(|u| runtime::units::is_live_dwarf(&u.name, u.state)).map(|u| u.name));
     }
     Ok(live.into_iter().collect())
 }
 
 fn unit_count(cfg: &Config, keep: &dyn Fn(&str) -> bool, exclude: Option<&str>) -> u32 {
     let live = live_units(cfg).unwrap_or_default();
-    live.iter()
-        .filter(|u| keep(u) && Some(u.as_str()) != exclude)
-        .count() as u32
+    live.iter().filter(|u| keep(u) && Some(u.as_str()) != exclude).count() as u32
 }
 
 /// Live dwarves of one persona: the unit list under systemd-run (the pidfile lags the unit),
@@ -341,19 +253,10 @@ pub fn dwarf_count(cfg: &Config, rune: &str, exclude: Option<&str>) -> u32 {
 /// scheduler names its units by the rune id, `spira-dwarf-*` units by `RUNE_NAME`.
 fn dwarf_count_named(cfg: &Config, rune: &str, rune_name: &str, exclude: Option<&str>) -> u32 {
     if cfg.call == "systemd-run" {
-        return unit_count(
-            cfg,
-            &|u| runtime::units::is_dwarf_of(u, rune, rune_name),
-            exclude,
-        );
+        return unit_count(cfg, &|u| runtime::units::is_dwarf_of(u, rune, rune_name), exclude);
     }
-    let Some(run_dir) = cfg.run.as_ref() else {
-        return 0;
-    };
-    pidfiles(run_dir, &format!("dwarf-{rune_name}-"), ".pid")
-        .iter()
-        .filter(|p| dwarf_alive(p))
-        .count() as u32
+    let Some(run_dir) = cfg.run.as_ref() else { return 0 };
+    pidfiles(run_dir, &format!("dwarf-{rune_name}-"), ".pid").iter().filter(|p| dwarf_alive(p)).count() as u32
 }
 
 /// How many dwarves exist right now, across every persona.
@@ -361,13 +264,8 @@ pub fn dwarves_live_total(cfg: &Config) -> u32 {
     if cfg.call == "systemd-run" {
         return unit_count(cfg, &|_| true, None);
     }
-    let Some(run_dir) = cfg.run.as_ref() else {
-        return 0;
-    };
-    pidfiles(run_dir, "dwarf-", ".pid")
-        .iter()
-        .filter(|p| dwarf_alive(p))
-        .count() as u32
+    let Some(run_dir) = cfg.run.as_ref() else { return 0 };
+    pidfiles(run_dir, "dwarf-", ".pid").iter().filter(|p| dwarf_alive(p)).count() as u32
 }
 
 const UNBOUNDED: i64 = 999_999;
@@ -381,9 +279,7 @@ const UNBOUNDED: i64 = 999_999;
 /// override can no longer reach it (the EXEC-BOUNDARY TRAP) — so this Rust copy exists for
 /// any FUTURE in-process Rust caller, and lib.sh's bash body is deliberately left alone.
 pub fn rune_free(cfg: &Config, rune: &str, pool: Option<i64>, exclude: Option<&str>) -> i64 {
-    let Some(home) = cfg.home.as_ref() else {
-        return 0;
-    };
+    let Some(home) = cfg.home.as_ref() else { return 0 };
     let single_flight = spira_config::runes::rune_get(home, rune, "RUNE_SINGLE_FLIGHT", "0") == "1";
     let mut max: i64 = if single_flight { 1 } else { UNBOUNDED };
     let elastic = spira_config::runes::rune_get(home, rune, "RUNE_ELASTIC", "0") == "1";
@@ -394,11 +290,7 @@ pub fn rune_free(cfg: &Config, rune: &str, pool: Option<i64>, exclude: Option<&s
         max = 1;
     }
     let have: i64 = dwarf_count(cfg, rune, exclude).into();
-    let mut free = if is_remainder {
-        max
-    } else {
-        (max - have).max(0)
-    };
+    let mut free = if is_remainder { max } else { (max - have).max(0) };
     if let Some(p) = pool {
         if p < free {
             free = p;
@@ -415,13 +307,7 @@ pub fn rune_free(cfg: &Config, rune: &str, pool: Option<i64>, exclude: Option<&s
 pub fn capacity(cfg: &Config, now: i64) -> Option<String> {
     let path = cfg.capacity_pause_path()?;
     let text = fs::read_to_string(path).ok()?;
-    let at: i64 = text
-        .lines()
-        .next()?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()?;
+    let at: i64 = text.lines().next()?.split_whitespace().next()?.parse().ok()?;
     (at > now).then(|| {
         format!(
             "the account is out for another {}s (until {})",
@@ -440,30 +326,18 @@ pub fn throttle(cfg: &Config) -> Throttle {
     }
     let line = fs::read(&stamp)
         .ok()
-        .map(|b| {
-            String::from_utf8_lossy(&b)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .to_string()
-        })
+        .map(|b| String::from_utf8_lossy(&b).lines().next().unwrap_or("").to_string())
         .filter(|l| !l.is_empty());
     match line {
         Some(l) => {
             let depth = l
                 .match_indices("depth=")
                 .find_map(|(i, _)| {
-                    let digits: String = l[i + 6..]
-                        .chars()
-                        .take_while(char::is_ascii_digit)
-                        .collect();
+                    let digits: String = l[i + 6..].chars().take_while(char::is_ascii_digit).collect();
                     (!digits.is_empty()).then_some(digits)
                 })
                 .unwrap_or_else(|| "?".into());
-            Throttle::Shut(format!(
-                "depth {} >= release-at {}",
-                depth, cfg.throttle_release_at
-            ))
+            Throttle::Shut(format!("depth {} >= release-at {}", depth, cfg.throttle_release_at))
         }
         None => Throttle::Unreadable(format!("{} exists but could not be read", stamp.display())),
     }
@@ -472,24 +346,14 @@ pub fn throttle(cfg: &Config) -> Throttle {
 /// The scheduler's last-pass refusals, by rune.
 pub fn scheduler_uncalled() -> Result<std::collections::BTreeMap<String, String>, String> {
     let sock = spira_config::process::cfg("SPIRA_RUNTIME_SOCKET")?;
-    let body = spira_config::scheduler_link::call(
-        std::path::Path::new(sock.trim()),
-        &["scheduler", "uncalled"],
-    )?;
-    serde_json::from_str(&body)
-        .map_err(|e| format!("the scheduler's uncalled answer does not decode: {e}"))
+    let body = spira_config::scheduler_link::call(std::path::Path::new(sock.trim()), &["scheduler", "uncalled"])?;
+    serde_json::from_str(&body).map_err(|e| format!("the scheduler's uncalled answer does not decode: {e}"))
 }
 
 /// `rune: reason` for each of `runes` the scheduler refused, joined by `; `; the scheduler's error when it did not answer.
-pub fn scheduler_reason(
-    uncalled: &Result<std::collections::BTreeMap<String, String>, String>,
-    runes: &[String],
-) -> Result<String, String> {
+pub fn scheduler_reason(uncalled: &Result<std::collections::BTreeMap<String, String>, String>, runes: &[String]) -> Result<String, String> {
     let map = uncalled.as_ref().map_err(|e| e.clone())?;
-    let said: Vec<String> = runes
-        .iter()
-        .filter_map(|r| map.get(r).map(|why| format!("{r}: {why}")))
-        .collect();
+    let said: Vec<String> = runes.iter().filter_map(|r| map.get(r).map(|why| format!("{r}: {why}"))).collect();
     if said.is_empty() {
         return Ok(format!("no refusal recorded for {}", runes.join(", ")));
     }
@@ -526,10 +390,7 @@ pub fn pass_truncated(log_text: &str, runes: &[String]) -> bool {
 
 /// Seconds since the scheduler's last pass, from the runtime's tick stamp; -1 when it never ran.
 pub fn last_pass_age(cfg: &Config) -> i64 {
-    cfg.run
-        .as_deref()
-        .and_then(|r| spira_config::ticked::quiet_secs(r, "sentinel-pass"))
-        .map_or(-1, |s| s as i64)
+    cfg.run.as_deref().and_then(|r| spira_config::ticked::quiet_secs(r, "sentinel-pass")).map_or(-1, |s| s as i64)
 }
 
 #[cfg(test)]
@@ -537,51 +398,27 @@ mod tests {
     #[test_id(tpjoi0i)]
     #[test]
     fn scheduler_reason_names_the_partitions_runes_the_scheduler_refused() {
-        let map: Result<std::collections::BTreeMap<String, String>, String> = Ok([
-            ("skuld".to_string(), "at concurrency cap".to_string()),
-            ("other".to_string(), "x".to_string()),
-        ]
-        .into());
+        let map: Result<std::collections::BTreeMap<String, String>, String> = Ok([("skuld".to_string(), "at concurrency cap".to_string()), ("other".to_string(), "x".to_string())].into());
         let runes = vec!["skuld".to_string(), "mender".to_string()];
-        assert_eq!(
-            scheduler_reason(&map, &runes),
-            Ok("skuld: at concurrency cap".into())
-        );
-        assert_eq!(
-            scheduler_reason(&map, &["mender".to_string()]),
-            Ok("no refusal recorded for mender".into())
-        );
-        assert_eq!(
-            scheduler_reason(&Err("down".into()), &runes),
-            Err("down".into())
-        );
+        assert_eq!(scheduler_reason(&map, &runes), Ok("skuld: at concurrency cap".into()));
+        assert_eq!(scheduler_reason(&map, &["mender".to_string()]), Ok("no refusal recorded for mender".into()));
+        assert_eq!(scheduler_reason(&Err("down".into()), &runes), Err("down".into()));
     }
 
     use super::*;
 
     fn now_secs() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
     }
 
     // ---- load_store: two door reads, never the whole history (sp-yf8lf0) -----------------
 
     fn row(id: &str, status: &str, parent: Option<&str>, blocked_by: &[&str]) -> serde_json::Value {
-        let deps: Vec<_> = blocked_by
-            .iter()
-            .map(|b| serde_json::json!({"issue_id": id, "depends_on_id": b, "type": "blocks"}))
-            .collect();
+        let deps: Vec<_> = blocked_by.iter().map(|b| serde_json::json!({"issue_id": id, "depends_on_id": b, "type": "blocks"})).collect();
         serde_json::json!({"id": id, "title": id, "status": status, "parent": parent, "dependencies": deps})
     }
 
-    fn door(
-        rows: Vec<serde_json::Value>,
-    ) -> (
-        std::sync::Arc<spira_store::lc_call::fake::Content>,
-        LcClient,
-    ) {
+    fn door(rows: Vec<serde_json::Value>) -> (std::sync::Arc<spira_store::lc_call::fake::Content>, LcClient) {
         let fake = std::sync::Arc::new(spira_store::lc_call::fake::Content::new(rows));
         let lc = LcClient::over(fake.clone(), true);
         (fake, lc)
@@ -602,15 +439,9 @@ mod tests {
         assert_eq!(ids, ["sp-a", "sp-c", "sp-e", "sp-k"]);
         let seen = fake.requests();
         assert_eq!(seen.len(), 2, "{seen:?}");
-        let at = seen[1]
-            .iter()
-            .position(|x| x == "--id")
-            .expect("the second read is by id");
+        let at = seen[1].iter().position(|x| x == "--id").expect("the second read is by id");
         assert_eq!(seen[1][at + 1], "sp-c,sp-e");
-        assert!(
-            seen[1..].iter().all(|r| r.iter().any(|x| x == "--id")),
-            "{seen:?}"
-        );
+        assert!(seen[1..].iter().all(|r| r.iter().any(|x| x == "--id")), "{seen:?}");
     }
 
     #[test_id(tmaz543)]
@@ -618,22 +449,11 @@ mod tests {
     fn sp_yf8lf0_an_open_epic_with_only_closed_children_keeps_them() {
         let mut epic = row("sp-e", "open", None, &[]);
         epic["issue_type"] = "epic".into();
-        let (fake, lc) = door(vec![
-            epic,
-            row("sp-k", "closed", Some("sp-e"), &[]),
-            row("sp-z", "closed", None, &[]),
-        ]);
+        let (fake, lc) = door(vec![epic, row("sp-k", "closed", Some("sp-e"), &[]), row("sp-z", "closed", None, &[])]);
         let mut ids: Vec<String> = load_store(&lc).unwrap().into_iter().map(|b| b.id).collect();
         ids.sort();
         assert_eq!(ids, ["sp-e", "sp-k"]);
-        assert!(
-            fake.requests()
-                .iter()
-                .skip(1)
-                .all(|r| r.iter().any(|x| x == "--parent")),
-            "{:?}",
-            fake.requests()
-        );
+        assert!(fake.requests().iter().skip(1).all(|r| r.iter().any(|x| x == "--parent")), "{:?}", fake.requests());
     }
 
     #[test_id(trzlos2)]
@@ -641,18 +461,8 @@ mod tests {
     fn sp_yf8lf0_a_refused_read_is_an_error_not_an_empty_store() {
         struct Refusing;
         impl spira_store::lc_call::Transport for Refusing {
-            fn exchange(
-                &self,
-                _: &[String],
-                _: Option<&str>,
-                _: std::time::Duration,
-            ) -> Result<spira_store::lc_call::Reply, String> {
-                Ok(spira_store::lc_call::Reply {
-                    code: spira_store::lc_call::REFUSED,
-                    out: String::new(),
-                    err: "no\n".into(),
-                    read_ended: false,
-                })
+            fn exchange(&self, _: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+                Ok(spira_store::lc_call::Reply { code: spira_store::lc_call::REFUSED, out: String::new(), err: "no\n".into(), read_ended: false })
             }
         }
         let lc = LcClient::over(std::sync::Arc::new(Refusing), true);
@@ -670,36 +480,17 @@ mod tests {
     #[test_id(tk1wwi6)]
     #[test]
     fn sp_yf8lf0_many_named_blockers_are_read_in_chunks_of_500_each_once() {
-        let mut rows: Vec<_> = (0..1100)
-            .map(|i| row(&format!("sp-b{i}"), "closed", None, &[]))
-            .collect();
-        rows.push(row(
-            "sp-a",
-            "open",
-            None,
-            &(0..1100)
-                .map(|i| format!("sp-b{i}"))
-                .collect::<Vec<_>>()
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-        ));
+        let mut rows: Vec<_> = (0..1100).map(|i| row(&format!("sp-b{i}"), "closed", None, &[])).collect();
+        rows.push(row("sp-a", "open", None, &(0..1100).map(|i| format!("sp-b{i}")).collect::<Vec<_>>().iter().map(String::as_str).collect::<Vec<_>>()));
         rows.push(row("sp-d", "open", None, &["sp-b0"]));
         let (fake, lc) = door(rows);
         let store = load_store(&lc).unwrap();
         assert_eq!(store.len(), 1102);
         let seen = fake.requests();
         assert_eq!(seen.len(), 4, "one open read and three by-id chunks");
-        let ids: Vec<&str> = seen[1..]
-            .iter()
-            .flat_map(|r| r[r.iter().position(|x| x == "--id").unwrap() + 1].split(','))
-            .collect();
+        let ids: Vec<&str> = seen[1..].iter().flat_map(|r| r[r.iter().position(|x| x == "--id").unwrap() + 1].split(',')).collect();
         assert_eq!(ids.len(), 1100);
-        assert_eq!(
-            ids.iter().collect::<HashSet<_>>().len(),
-            1100,
-            "no id is asked twice"
-        );
+        assert_eq!(ids.iter().collect::<HashSet<_>>().len(), 1100, "no id is asked twice");
     }
 
     #[test_id(tmziypd)]
@@ -707,27 +498,14 @@ mod tests {
     fn sp_yf8lf0_show_reads_one_bead_through_the_door_and_is_none_when_refused() {
         struct Show(i32);
         impl spira_store::lc_call::Transport for Show {
-            fn exchange(
-                &self,
-                argv: &[String],
-                _: Option<&str>,
-                _: std::time::Duration,
-            ) -> Result<spira_store::lc_call::Reply, String> {
+            fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
                 assert_eq!(argv, ["content", "show", "sp-x", "--json"]);
-                Ok(spira_store::lc_call::Reply {
-                    code: self.0,
-                    out: r#"[{"id":"sp-x","title":"t","status":"open"}]"#.into(),
-                    err: String::new(),
-                    read_ended: false,
-                })
+                Ok(spira_store::lc_call::Reply { code: self.0, out: r#"[{"id":"sp-x","title":"t","status":"open"}]"#.into(), err: String::new(), read_ended: false })
             }
         }
         let ok = LcClient::over(std::sync::Arc::new(Show(0)), true);
         assert_eq!(show(&ok, "sp-x").unwrap().id, "sp-x");
-        let refused = LcClient::over(
-            std::sync::Arc::new(Show(spira_store::lc_call::REFUSED)),
-            true,
-        );
+        let refused = LcClient::over(std::sync::Arc::new(Show(spira_store::lc_call::REFUSED)), true);
         assert!(show(&refused, "sp-x").is_none());
     }
 
@@ -742,25 +520,11 @@ mod tests {
         assert!(!holder_alive(&run, "sp-h2"), "nothing holds sp-h2");
         // Liveness is the lease: a live pid with no lease is not a dwarf, and a lease in the
         // past is not one either.
-        std::fs::write(
-            run.join("dwarf-builder-sp-a1.pid"),
-            std::process::id().to_string(),
-        )
-        .unwrap();
-        assert!(
-            !holder_alive(&run, "sp-a1"),
-            "a pid alone does not hold a claim"
-        );
+        std::fs::write(run.join("dwarf-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
+        assert!(!holder_alive(&run, "sp-a1"), "a pid alone does not hold a claim");
         std::fs::write(run.join("dwarf-builder-sp-a1.lease"), "1").unwrap();
-        assert!(
-            !holder_alive(&run, "sp-a1"),
-            "an expired lease does not hold a claim"
-        );
-        std::fs::write(
-            run.join("dwarf-builder-sp-a1.lease"),
-            (now_secs() + 60).to_string(),
-        )
-        .unwrap();
+        assert!(!holder_alive(&run, "sp-a1"), "an expired lease does not hold a claim");
+        std::fs::write(run.join("dwarf-builder-sp-a1.lease"), (now_secs() + 60).to_string()).unwrap();
         assert!(holder_alive(&run, "sp-a1"), "a running lease does");
         std::fs::write(run.join("dwarf-builder-sp-a1.pid"), "999999999").unwrap();
         assert!(holder_alive(&run, "sp-a1"), "the pid is never probed");
@@ -774,17 +538,9 @@ mod tests {
         let t = testkit::TempDir::new("strand-dwarf-count-fallback");
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
-        let cfg = Config {
-            call: "mock".into(),
-            run: Some(run.clone()),
-            ..Config::test_fixture()
-        };
+        let cfg = Config { call: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         assert_eq!(dwarf_count(&cfg, "builder", None), 0, "no pidfiles at all");
-        assert_eq!(
-            dwarf_count(&cfg, "builder", Some("anything")),
-            0,
-            "exclude is a no-op off the systemd-run branch"
-        );
+        assert_eq!(dwarf_count(&cfg, "builder", Some("anything")), 0, "exclude is a no-op off the systemd-run branch");
     }
 
     /// A `systemctl` that answers `show <glob>...` as systemd does: one block per unit
@@ -808,41 +564,16 @@ mod tests {
         let b1 = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
         let units = [
             (b1, "active"),
-            (
-                "spira-run-sentinel_2dcall-builder_2d1794012840137_2d0.service",
-                "activating",
-            ),
-            (
-                "spira-run-sentinel_2dcall-ops_2d1794012840137_2d2.service",
-                "active",
-            ),
-            (
-                "spira-run-sentinel_2dcall-builder_2d1794000000000_2d0.service",
-                "failed",
-            ),
+            ("spira-run-sentinel_2dcall-builder_2d1794012840137_2d0.service", "activating"),
+            ("spira-run-sentinel_2dcall-ops_2d1794012840137_2d2.service", "active"),
+            ("spira-run-sentinel_2dcall-builder_2d1794000000000_2d0.service", "failed"),
             ("spira-run-sentinel_2dpass-landing.service", "active"),
         ];
-        let cfg = Config {
-            call: "systemd-run".into(),
-            systemctl: fake_systemctl(&t, &units),
-            ..Config::test_fixture()
-        };
-        assert_eq!(
-            dwarf_count(&cfg, "builder", None),
-            2,
-            "two live builder dwarves, one failed"
-        );
-        assert_eq!(
-            dwarf_count(&cfg, "builder", Some(b1)),
-            1,
-            "the caller's own unit is excluded"
-        );
+        let cfg = Config { call: "systemd-run".into(), systemctl: fake_systemctl(&t, &units), ..Config::test_fixture() };
+        assert_eq!(dwarf_count(&cfg, "builder", None), 2, "two live builder dwarves, one failed");
+        assert_eq!(dwarf_count(&cfg, "builder", Some(b1)), 1, "the caller's own unit is excluded");
         assert_eq!(dwarf_count(&cfg, "ops", None), 1);
-        assert_eq!(
-            dwarves_live_total(&cfg),
-            3,
-            "every live dwarf; the landing pass is not one"
-        );
+        assert_eq!(dwarves_live_total(&cfg), 3, "every live dwarf; the landing pass is not one");
     }
 
     #[test_id(tc3dpmu)]
@@ -850,11 +581,7 @@ mod tests {
     fn the_report_names_the_scheduler_started_dwarf_even_when_the_call_mode_is_not_systemd_run() {
         let t = testkit::TempDir::new("strand-evtrs9-live");
         let u = "spira-run-sentinel_2dcall-builder_2d1_2d0.service";
-        let cfg = Config {
-            call: "runtime".into(),
-            systemctl: fake_systemctl(&t, &[(u, "active")]),
-            ..Config::test_fixture()
-        };
+        let cfg = Config { call: "runtime".into(), systemctl: fake_systemctl(&t, &[(u, "active")]), ..Config::test_fixture() };
         assert_eq!(live_units(&cfg).unwrap(), vec![u.to_string()]);
     }
 
@@ -864,14 +591,8 @@ mod tests {
         let t = testkit::TempDir::new("strand-sp-ljgmia");
         let d = "spira-dwarf-builder-directed-1794009721.service";
         let p = "spira-dwarf-builder-1794009700.service";
-        let cfg = Config {
-            systemctl: fake_systemctl(&t, &[(p, "active"), (d, "active")]),
-            ..Config::test_fixture()
-        };
-        assert_eq!(
-            live_units(&cfg).unwrap(),
-            vec![p.to_string(), d.to_string()]
-        );
+        let cfg = Config { systemctl: fake_systemctl(&t, &[(p, "active"), (d, "active")]), ..Config::test_fixture() };
+        assert_eq!(live_units(&cfg).unwrap(), vec![p.to_string(), d.to_string()]);
         assert_eq!(dwarves_live_directed(&cfg).unwrap(), 1);
     }
 
@@ -880,29 +601,17 @@ mod tests {
     fn an_unanswering_systemctl_is_an_error_not_zero_live_dwarves() {
         let t = testkit::TempDir::new("strand-evtrs9-unreadable");
         let sc = t.join("systemctl");
-        testkit::write_exe(
-            &sc,
-            "#!/bin/sh\necho 'Failed to connect to bus' >&2\nexit 1\n",
-        );
-        let cfg = Config {
-            systemctl: sc.to_string_lossy().into_owned(),
-            ..Config::test_fixture()
-        };
+        testkit::write_exe(&sc, "#!/bin/sh\necho 'Failed to connect to bus' >&2\nexit 1\n");
+        let cfg = Config { systemctl: sc.to_string_lossy().into_owned(), ..Config::test_fixture() };
         let e = live_units(&cfg).unwrap_err();
-        assert!(
-            e.contains("live dwarves are unknown") && e.contains("exited 1"),
-            "{e}"
-        );
+        assert!(e.contains("live dwarves are unknown") && e.contains("exited 1"), "{e}");
     }
 
     #[test_id(t1ed66x)]
     #[test]
     fn the_last_pass_is_the_sentinel_pass_tick_and_never_ticked_is_negative() {
         let run = testkit::TempDir::new("strand-evtrs9-pass");
-        let cfg = Config {
-            run: Some(run.to_path_buf()),
-            ..Config::test_fixture()
-        };
+        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
         assert_eq!(last_pass_age(&cfg), -1);
         spira_config::ticked::stamp(&run, "sentinel-pass");
         assert!((0..5).contains(&last_pass_age(&cfg)));
@@ -912,15 +621,8 @@ mod tests {
     #[test]
     fn a_directed_dwarf_counts_in_its_runes_count_and_the_total() {
         let t = testkit::TempDir::new("strand-directed");
-        let units = [
-            ("spira-dwarf-builder-1794009721.service", "active"),
-            ("spira-dwarf-builder-directed-1794009722.service", "active"),
-        ];
-        let cfg = Config {
-            call: "systemd-run".into(),
-            systemctl: fake_systemctl(&t, &units),
-            ..Config::test_fixture()
-        };
+        let units = [("spira-dwarf-builder-1794009721.service", "active"), ("spira-dwarf-builder-directed-1794009722.service", "active")];
+        let cfg = Config { call: "systemd-run".into(), systemctl: fake_systemctl(&t, &units), ..Config::test_fixture() };
         assert_eq!(dwarf_count(&cfg, "builder", None), 2);
         assert_eq!(dwarves_live_total(&cfg), 2);
     }
@@ -929,10 +631,7 @@ mod tests {
     #[test]
     fn rune_free_matches_the_bash_originals_arithmetic() {
         let t = testkit::TempDir::new("strand-rune-free");
-        let _env = testkit::env(&[
-            ("SPIRA_TOML", None),
-            ("SPIRA_RUNES_DIR", Some(t.join("runes").to_str().unwrap())),
-        ]);
+        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", Some(t.join("runes").to_str().unwrap()))]);
         std::fs::create_dir_all(t.join("runes")).unwrap();
         std::fs::write(t.join("runes/stretchy.rune"), "RUNE_ELASTIC=1\n").unwrap();
         std::fs::write(t.join("runes/anchor.rune"), "\n").unwrap();
@@ -940,12 +639,7 @@ mod tests {
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
         // pid fallback, no real dwarves: have=0 throughout
-        let cfg = Config {
-            home: Some(t.to_path_buf()),
-            call: "mock".into(),
-            run: Some(run.clone()),
-            ..Config::test_fixture()
-        };
+        let cfg = Config { home: Some(t.to_path_buf()), call: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         // elastic: pool remainder whole, never subtracting running twice (have is ignored
         // here since the stub always reports 0 — the G18 regression this guards against is
         // "have" double-counted against a pool that already nets it out).
@@ -991,23 +685,14 @@ mod tests {
     fn throttle_states_from_the_stamp() {
         let dir = testkit::TempDir::new("strand-throttle");
         let stamp = dir.join("queue-throttled");
-        let cfg = Config {
-            throttle_stamp: Some(stamp.clone()),
-            ..Config::test_fixture()
-        };
+        let cfg = Config { throttle_stamp: Some(stamp.clone()), ..Config::test_fixture() };
         assert_eq!(throttle_line(&throttle(&cfg)), "open\t");
         fs::write(&stamp, "2026-09-29T00:00:00Z depth=14 x\n").unwrap();
-        assert_eq!(
-            throttle_line(&throttle(&cfg)),
-            "shut\tdepth 14 >= release-at 8"
-        );
+        assert_eq!(throttle_line(&throttle(&cfg)), "shut\tdepth 14 >= release-at 8");
         fs::write(&stamp, "").unwrap();
         assert!(throttle_line(&throttle(&cfg)).starts_with("unreadable\t"));
         fs::write(&stamp, "no depth here\n").unwrap();
-        assert_eq!(
-            throttle_line(&throttle(&cfg)),
-            "shut\tdepth ? >= release-at 8"
-        );
+        assert_eq!(throttle_line(&throttle(&cfg)), "shut\tdepth ? >= release-at 8");
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1017,46 +702,20 @@ mod tests {
         let home = testkit::TempDir::new("strand-roster");
         std::fs::write(home.join("lib.sh"), "exit 1\n").unwrap();
         std::fs::create_dir(home.join("runes")).unwrap();
-        std::fs::write(
-            home.join("runes/builder.rune"),
-            "RUNE_LABELS=spira,plan\nRUNE_EXCLUDE_LABELS=poison\n",
-        )
-        .unwrap();
+        std::fs::write(home.join("runes/builder.rune"), "RUNE_LABELS=spira,plan\nRUNE_EXCLUDE_LABELS=poison\n").unwrap();
         std::fs::write(home.join("runes/ops.rune"), "RUNE_LABELS=spira,incident\n").unwrap();
-        let cfg = Config {
-            home: Some(home.path().to_path_buf()),
-            runes_override: None,
-            ..Config::test_fixture()
-        };
+        let cfg = Config { home: Some(home.path().to_path_buf()), runes_override: None, ..Config::test_fixture() };
         let all = roster(&cfg, None).unwrap();
         assert_eq!(
             all,
             vec![
-                PartitionSpec {
-                    labels: "spira,plan".into(),
-                    exclude: "poison".into(),
-                    runes: vec!["builder".into()]
-                },
-                PartitionSpec {
-                    labels: "spira,incident".into(),
-                    exclude: String::new(),
-                    runes: vec!["ops".into()]
-                },
+                PartitionSpec { labels: "spira,plan".into(), exclude: "poison".into(), runes: vec!["builder".into()] },
+                PartitionSpec { labels: "spira,incident".into(), exclude: String::new(), runes: vec!["ops".into()] },
             ]
         );
         let one = roster(&cfg, Some("nobody")).unwrap();
-        assert_eq!(
-            one[0].runes,
-            vec!["builder", "ops"],
-            "a partition no persona names falls back to the whole roster"
-        );
-        let gone = Config {
-            home: Some(home.join("nowhere")),
-            ..cfg
-        };
-        assert!(
-            roster(&gone, None).is_err(),
-            "a missing runes directory is never an empty roster"
-        );
+        assert_eq!(one[0].runes, vec!["builder", "ops"], "a partition no persona names falls back to the whole roster");
+        let gone = Config { home: Some(home.join("nowhere")), ..cfg };
+        assert!(roster(&gone, None).is_err(), "a missing runes directory is never an empty roster");
     }
 }

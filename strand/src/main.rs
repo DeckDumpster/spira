@@ -29,8 +29,7 @@ use strand::{check, config, detectors, probe};
 
 use std::io::Read;
 
-const HELP: &str =
-    "strand report [--json]   the human view; changes nothing   (what `gt convoy stranded` was)
+const HELP: &str = "strand report [--json]   the human view; changes nothing   (what `gt convoy stranded` was)
 strand check             the timer path: act where the fix is mechanical, escalate once
                          where it is not
 strand check --dry-run   classify and print, change nothing
@@ -58,13 +57,7 @@ struct Args {
 /// As strand.sh: a first argument that is not a subcommand means `report`, and is then
 /// read as a flag.
 fn parse(argv: &[String]) -> Result<Args, String> {
-    let mut a = Args {
-        mode: Mode::Report,
-        json: false,
-        dry: false,
-        from: None,
-        help: false,
-    };
+    let mut a = Args { mode: Mode::Report, json: false, dry: false, from: None, help: false };
     let mut rest = argv;
     match argv.first().map(String::as_str) {
         Some("report") => rest = &argv[1..],
@@ -85,18 +78,10 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--dry-run" => a.dry = true,
             "--from" => {
                 i += 1;
-                a.from = Some(
-                    rest.get(i)
-                        .cloned()
-                        .ok_or("--from needs a file, or - for stdin")?,
-                );
+                a.from = Some(rest.get(i).cloned().ok_or("--from needs a file, or - for stdin")?);
             }
             "-h" | "--help" => a.help = true,
-            other => {
-                return Err(format!(
-                    "unknown argument '{other}' — try: report [--json] | check [--dry-run]"
-                ))
-            }
+            other => return Err(format!("unknown argument '{other}' — try: report [--json] | check [--dry-run]")),
         }
         i += 1;
     }
@@ -247,10 +232,7 @@ fn cmd_close_reason(args: Vec<String>) -> i32 {
             0
         }
         ["--unfiled", prefix, reason] => {
-            println!(
-                "{}",
-                check_unfiled_follow(reason, prefix).unwrap_or_default()
-            );
+            println!("{}", check_unfiled_follow(reason, prefix).unwrap_or_default());
             0
         }
         [] => match check_close_reason("") {
@@ -315,16 +297,14 @@ fn main() {
             }
             check::from_tsv(&cfg, &text)
         }
-        None => {
-            match check::classify_live(&cfg, &|labels, excl| probe::ready(&cfg, labels, excl)) {
-                Ok(c) => c,
-                Err(e) => {
-                    // R7: an unreadable input is not an empty graph — say so, write nothing.
-                    check::warn(&format!("strand: cannot classify: {e}"));
-                    std::process::exit(2);
-                }
+        None => match check::classify_live(&cfg, &|labels, excl| probe::ready(&cfg, labels, excl)) {
+            Ok(c) => c,
+            Err(e) => {
+                // R7: an unreadable input is not an empty graph — say so, write nothing.
+                check::warn(&format!("strand: cannot classify: {e}"));
+                std::process::exit(2);
             }
-        }
+        },
     };
     let rc = match args.mode {
         Mode::Report => {
@@ -352,19 +332,13 @@ mod tests {
         let a = p(&["--json"]).unwrap();
         assert!(a.json && a.mode == Mode::Report, "a bare flag means report");
         let a = p(&["check", "--dry-run", "--from", "-"]).unwrap();
-        assert_eq!(
-            (a.mode, a.dry, a.from.as_deref()),
-            (Mode::Check, true, Some("-"))
-        );
+        assert_eq!((a.mode, a.dry, a.from.as_deref()), (Mode::Check, true, Some("-")));
         assert_eq!(p(&["throttle-state"]).unwrap().mode, Mode::ThrottleState);
         assert!(p(&["check", "--from"]).is_err());
         assert_eq!(
             p(&["check", "--bogus"]).unwrap_err(),
             "unknown argument '--bogus' — try: report [--json] | check [--dry-run]"
         );
-        assert!(
-            p(&["bogus"]).is_err(),
-            "an unknown first word is an unknown flag of report"
-        );
+        assert!(p(&["bogus"]).is_err(), "an unknown first word is an unknown flag of report");
     }
 }
