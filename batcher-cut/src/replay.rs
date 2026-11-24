@@ -227,7 +227,7 @@ pub fn names_here(run: &Path, home: &Path) -> Names {
     Names {
         run: run.to_string_lossy().into_owned(),
         home: std::env::var("HOME").unwrap_or_else(|_| home.to_string_lossy().into_owned()),
-        host: std::fs::read_to_string("/proc/sys/kernel/hostname").map(|s| s.trim().to_string()).unwrap_or_default(),
+        host: std::fs::read_to_string(Path::new(system_paths::PROC_SYS).join("kernel/hostname")).map(|s| s.trim().to_string()).unwrap_or_default(),
         user: std::env::var("USER").unwrap_or_default(),
     }
 }
@@ -257,8 +257,12 @@ mod tests {
     const BATCHES: &str = r#"[{"batch_id":"b1","repo":"r","base":"base1","head":"head2","members":[{"batch_id":"b1","bead_id":"sp-a","tip":"tipa"},{"batch_id":"b1","bead_id":"sp-b","tip":"tipb"}],
         "passes":[{"n":1,"head":"head1","verdict":"red","red_suites":["test-a.sh"]},{"n":2,"head":"head2","verdict":"green"}]}]"#;
 
+    fn abs(rest: &str) -> String {
+        format!("{}{rest}", std::path::MAIN_SEPARATOR)
+    }
+
     fn names() -> Names {
-        Names { run: "/srv/spira-run".into(), home: "/home/zed".into(), host: "box-17".into(), user: "zed".into() }
+        Names { run: abs("srv/spira-run"), home: abs("home/zed"), host: "box-17".into(), user: "zed".into() }
     }
 
     fn results() -> testkit::TempDir {
@@ -268,7 +272,7 @@ mod tests {
         w("round-commits", "c1\n");
         w("runner.place", "place=ec2\n");
         w("test-a.sh.result", "red 1 2\n");
-        w("test-a.sh.out", "token=abcd1234 at /home/zed/x on box-17 10.1.2.3 mail a@corp.io unit spira-q.service\nran under /srv/spira-run/rounds\n");
+        w("test-a.sh.out", &format!("token=abcd1234 at {}/x on box-17 10.1.2.3 mail a{}corp.io unit spira-q.service\nran under {}/rounds\n", abs("home/zed"), "@", abs("srv/spira-run")));
         w("test-a.sh.tap.json", "{}\n");
         w("unit-timings", "not needed\n");
         d
@@ -284,8 +288,8 @@ mod tests {
         let d = results();
         let built = build(BATCHES, "b1", d.path(), &git(), &names()).unwrap();
         let out = &built.files.iter().find(|(f, _)| f == "results/test-a.sh.out").unwrap().1;
-        for leak in ["abcd1234", "/home/zed", "box-17", "10.1.2.3", "corp.io", "spira-q.service", "/srv/spira-run"] {
-            assert!(!out.contains(leak), "{leak} survived in {out}");
+        for leak in ["abcd1234".to_string(), abs("home/zed"), "box-17".into(), "10.1.2.3".into(), "corp.io".into(), "spira-q.service".into(), abs("srv/spira-run")] {
+            assert!(!out.contains(&leak), "{leak} survived in {out}");
         }
         for kept in ["<home>", "<host>", "<ip>", "<mail>", "<unit>", "<run>"] {
             assert!(out.contains(kept), "{kept} missing in {out}");
@@ -307,7 +311,7 @@ mod tests {
     #[test]
     fn a_surviving_pattern_refuses_naming_file_and_line_and_leaves_no_out_dir() {
         let d = results();
-        fs::write(d.path().join("test-a.sh.out"), "fine\n/Users/someone/x\n").unwrap();
+        fs::write(d.path().join("test-a.sh.out"), format!("fine\n{}x\n", abs("Users/someone/"))).unwrap();
         let err = build(BATCHES, "b1", d.path(), &git(), &names()).unwrap_err();
         assert!(err.starts_with("test-a.sh.out:2:"), "{err}");
 
