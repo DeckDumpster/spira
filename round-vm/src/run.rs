@@ -1084,7 +1084,7 @@ if [ -n "$only" ]; then
         ;;
     *)
         : > ~/round-runner.out
-        testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$only" round 2>&1 | tee -a ~/round-runner.out >&2
+        testenv --artifacts "$HOME/round-work/target/release" --mode parallel --suites "$only" round 2>&1 | tee -a ~/round-runner.out >&2
         rc=${PIPESTATUS[0]}
         [ "$rc" -eq 0 ] || phase_failed "$only" "$rc"
         ;;
@@ -1092,7 +1092,7 @@ if [ -n "$only" ]; then
     echo "round-vm: ONLY $only: rc=$rc, $(( $(date +%s) - only_t0 ))s" >&2
     kill "$sampler_pid" 2>/dev/null
     mkdir -p ~/round-bins
-    find target/release -maxdepth 1 -type f -executable -exec cp {} ~/round-bins/ \; 2>/dev/null
+    find target/release -maxdepth 1 -type f -executable -exec cp -t ~/round-bins {} + 2>/dev/null
     exit "$rc"
 fi
 phase unit-tests
@@ -4859,7 +4859,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work'", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -5116,7 +5116,7 @@ mod tests {
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, image_tag: None,
             ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), only: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("creds"));
