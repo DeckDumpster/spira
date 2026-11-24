@@ -172,3 +172,30 @@ fn a_superseded_steps_fault_delivered_before_the_next_observation_does_not_aband
     assert_eq!(effects(&acts), [LC_CERTIFY, LAND], "the next pass decides the round: {acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Landing);
 }
+
+fn record_after_eject(by: &str) -> impl Fn(&str, &str) -> Option<Round> + '_ {
+    move |_, _| Some(Round { id: "r9".into(), members: vec!["sp-a".into()], tips: vec!["t1".into()], head: "B".into(), ejected: vec!["sp-b".into()], ejected_by: vec![by.into()], ..Round::default() })
+}
+
+fn lands_sp_a_at_b() -> RanOutput {
+    let land = Attribution::Land { members: vec![("sp-a".into(), "t1".into())], attribution_secs: None, mended: false, head: "B".into() };
+    RanOutput::captured(land.line().as_bytes(), b"")
+}
+
+#[test_id(tjqx6oh)]
+#[test]
+fn an_attribution_that_ejected_a_member_itself_has_its_land_applied_though_the_head_moved() {
+    let ok = UnitRan { exit: Exit::Code(0), ..ran() };
+    let (next, _) = on_ran_seeing(&carried("A", "A"), &ok, &lands_sp_a_at_b(), NOW, &record_after_eject(batcher_cut::io::BATCHER_ACTOR)).expect("the batcher's own eject moved the head");
+    let rc = &next.repos["spira"];
+    assert_eq!(rc.members, [("sp-a".to_string(), "t1".to_string())]);
+    assert_eq!((rc.head.as_str(), rc.leg_head.as_str(), rc.certify_head.as_str()), ("B", "B", "B"));
+    assert_ne!(rc.state, State::Attributing);
+}
+
+#[test_id(t2fv2q6)]
+#[test]
+fn an_attribution_whose_head_moved_by_another_actors_eject_is_discarded() {
+    let ok = UnitRan { exit: Exit::Code(0), ..ran() };
+    assert!(on_ran_seeing(&carried("A", "A"), &ok, &lands_sp_a_at_b(), NOW, &record_after_eject("concierge")).is_none());
+}

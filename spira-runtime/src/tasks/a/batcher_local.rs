@@ -261,6 +261,20 @@ impl Member {
     }
 }
 
+/// What a carried member list lost to the record: at least one member, every one by the batcher's own eject.
+fn lost_only_to_batcher(carried: &[(String, String)], open: &Round) -> bool {
+    let mut lost = carried.iter().map(|(m, _)| m).filter(|m| !open.members.contains(m)).peekable();
+    lost.peek().is_some()
+        && lost.all(|m| open.ejected.iter().zip(open.ejected_by.iter()).rfind(|(e, _)| *e == m).is_some_and(|(_, by)| by == batcher_cut::io::BATCHER_ACTOR))
+}
+
+impl From<String> for Round {
+    /// A round known by its head alone: it records no ejection.
+    fn from(head: String) -> Round {
+        Round { head, ..Round::default() }
+    }
+}
+
 /// The round projection's open round.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Round {
@@ -1765,9 +1779,7 @@ impl Machine<'_> {
 
     /// True when a carried member is gone from the record and the batcher's own eject is the last word on every one that is.
     fn ejected_only_by_batcher(&self, open: &Round) -> bool {
-        let mut lost = self.rc.members.iter().map(|(m, _)| m).filter(|m| !open.members.contains(m)).peekable();
-        lost.peek().is_some()
-            && lost.all(|m| open.ejected.iter().zip(open.ejected_by.iter()).rfind(|(e, _)| *e == m).is_some_and(|(_, by)| by == batcher_cut::io::BATCHER_ACTOR))
+        lost_only_to_batcher(&self.rc.members, open)
     }
 
     /// Another actor (not the batcher's own attribution) ejected a member the attribution leg carries: the leg is stopped and the
@@ -2744,26 +2756,35 @@ pub fn on_ran(carry: &Carry, ran: &UnitRan, now_ms: u64) -> Option<(Carry, Vec<A
 /// [`on_ran`] with what the leg wrote (its `unit.ran`'s captured stdout tail): the attribution
 /// and certify legs are judged by their own lines.
 pub fn on_ran_with(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64) -> Option<(Carry, Vec<Act>)> {
-    on_ran_seeing(carry, ran, out, now_ms, &|_, _| None)
+    on_ran_seeing(carry, ran, out, now_ms, &|_, _| None::<Round>)
 }
 
-/// [`on_ran_with`] that first reads the round's head as of now (`head_of(repo, batch)`): a step
-/// started for another head is replaced whatever the carried head last said.
-pub fn on_ran_seeing(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64, head_of: &dyn Fn(&str, &str) -> Option<String>) -> Option<(Carry, Vec<Act>)> {
+/// [`on_ran_with`] that first reads the round's record as of now (`round_of(repo, batch)`): a step
+/// started for another head is replaced whatever the carried head last said, unless the batcher's
+/// own eject moved the head, in which case the attribution's outcome is applied at the new head.
+pub fn on_ran_seeing<R: Into<Round>>(carry: &Carry, ran: &UnitRan, out: &RanOutput, now_ms: u64, round_of: &dyn Fn(&str, &str) -> Option<R>) -> Option<(Carry, Vec<Act>)> {
     let key = ran.key_for(NAME)?;
     let (repo, rc, at) = carry.repos.iter().find_map(|(repo, rc)| {
         let at = rc.rounds().iter().position(|r| r.leg.as_deref() == Some(key.as_str()) && matches!(r.state, State::Corpus | State::Attributing | State::Certifying))?;
         Some((repo, rc, at))
     })?;
     let held = &rc.rounds()[at];
-    let current = held.batch.as_deref().and_then(|b| head_of(repo, b)).filter(|h| !h.is_empty()).unwrap_or_else(|| held.head.clone());
+    let seen: Option<Round> = held.batch.as_deref().and_then(|b| round_of(repo, b)).map(Into::into).filter(|r| !r.head.is_empty());
+    let current = seen.as_ref().map_or_else(|| held.head.clone(), |r| r.head.clone());
     let rebuilt = !held.certify_head.is_empty() && held.leg_head == held.certify_head && current == held.head;
-    if !current.is_empty() && !held.leg_head.is_empty() && current != held.leg_head && !rebuilt {
+    let moved = !current.is_empty() && !held.leg_head.is_empty() && current != held.leg_head && !rebuilt;
+    let own_eject = moved && held.state == State::Attributing && seen.as_ref().is_some_and(|open| lost_only_to_batcher(&held.members, open));
+    if moved && !own_eject {
         eprintln!("{NAME} {repo}: step {key} was started for head {} and the round is at {current}: its result is discarded", held.leg_head);
         return None;
     }
     let mut next = carry.clone();
     let mut m = Machine { repo, rc: rc.holding(&rc.rounds()[at]), acts: vec![], now_ms, below: at > 0 };
+    if own_eject {
+        m.rc.head = current.clone();
+        m.rc.leg_head = current.clone();
+        m.rc.certify_head = current;
+    }
     let said = [out.stdout_tail.as_deref(), out.stderr_tail.as_deref()].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
     m.leg_ended_with(ran.exit, &said);
     let acts = std::mem::take(&mut m.acts);
@@ -2925,18 +2946,19 @@ impl Handler for BatcherLocal {
             Err(_) => (Carry { repos: carry.repos.clone() }, vec![]),
         };
         let out = RanOutput::from_event_kind(&ev.kind).unwrap_or_default();
-        let ran = |carry: &Carry, r: &UnitRan| on_ran_seeing(carry, r, &out, ev.at, &round_head_now);
+        let ran = |carry: &Carry, r: &UnitRan| on_ran_seeing(carry, r, &out, ev.at, &round_now);
         let legs = |carry: &Carry| carry.repos.values().flat_map(|rc| rc.rounds()).filter(|r| matches!(r.state, State::Corpus | State::Attributing | State::Certifying)).filter_map(|r| r.leg).collect();
         handle_p2(&P2 { shape: &SHAPE, cadence: &self.cadence, acts: ACTS, emits: EMITS, effects: EFFECTS, wakes: WAKES }, view, ev, On { observed, outcome, ran, legs })
     }
 }
 
-/// The head the store's projection holds for `batch` right now; `None` when this process keeps
+/// The round the store's projection holds for `batch` right now; `None` when this process keeps
 /// no projection or the round is not open.
-fn round_head_now(repo: &str, batch: &str) -> Option<String> {
+fn round_now(repo: &str, batch: &str) -> Option<Round> {
     let views = store_view::shared()?;
     let view = views.round_view(repo).ok()?;
-    view.value.rounds.iter().find(|r| r.record.id == batch).and_then(|r| r.record.get("head")).map(str::to_string)
+    let open = batcher_cut::io::open_round_of(view.value.rounds.iter().find(|r| r.record.id == batch)?, 0);
+    Some(Round { id: open.id, members: open.members, tips: open.tips, head: open.head, ejected: open.ejected, ejected_by: open.ejected_by, ..Round::default() })
 }
 
 /// Each repo of `snap` given the effects of this task the stream has asked for and not had answered.
@@ -3767,6 +3789,27 @@ pub mod edge {
             let certify = certify.iter().find(|a| a.effect == CERTIFY).unwrap_or_else(|| panic!("no certify: {certify:?}"));
             let asked: Leg = serde_json::from_str(&certify.input).unwrap();
             assert_eq!((ids(&asked.members), asked.head), (fx.expect.survivors.clone(), done.head.clone()));
+        }
+
+        #[test_id(teo297c)]
+        #[test]
+        fn a_leg_started_with_four_members_of_a_record_of_three_ejects_only_the_one_a_mender_returned() {
+            let scratch = testkit::TempDir::new("saved-round");
+            let fx = fixture("spira-20261124T101422Z", &scratch);
+            assert_eq!(fx.members().len(), 4);
+            let (_, line, edge) = attribute(&fx);
+            let Some(Attribution::Land { members, .. }) = Attribution::parse(&line) else { panic!("not a land: {line}") };
+            assert_eq!(edge.done.borrow().ejected, ["sp-zz4u61"], "{line}");
+            assert_eq!(ids(&members), ["sp-8amflc", "sp-3t2mtn"], "{line}");
+        }
+
+        #[test_id(tb9ljet)]
+        #[test]
+        fn the_same_round_with_no_mending_rows_probes_only_the_members_the_record_holds() {
+            let scratch = testkit::TempDir::new("saved-round");
+            let fx = fixture("spira-20261124T101422Z-no-mending", &scratch);
+            let (_, line, edge) = attribute(&fx);
+            assert_eq!(edge.done.borrow().ejected, ["sp-zz4u61"], "{line}");
         }
 
         #[test_id(tyalr6i)]

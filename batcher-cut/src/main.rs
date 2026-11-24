@@ -300,7 +300,6 @@ struct LiveOps<'a> {
     prior: batcher::mender::Prior,
     send_back: Option<String>,
     mend_pass: std::cell::Cell<u32>,
-    attributed_pass: Option<u32>,
     lifted: io::LiftedRows,
     returns_read: std::cell::RefCell<Option<(std::time::Instant, Vec<batcher::mender::Failure>)>>,
 }
@@ -316,11 +315,10 @@ fn batch_pass(env: &io::Env, batch: &str) -> Result<u32, String> {
         .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))
 }
 
-fn returns_of(
-    pass: u32,
-    rows: impl FnOnce(u32) -> Result<Vec<endpass::Row>, String>,
-) -> Result<Vec<batcher::mender::Failure>, String> {
-    Ok(endpass::returns(rows(pass)?))
+/// The returns a `mending list` answer holds across every pass of the batch, and the newest pass one was returned on.
+fn returned_from_listing(json: &str) -> Result<(Option<u32>, Vec<batcher::mender::Failure>), String> {
+    let returned = endpass::returns_by_pass(endpass::parse_rows(json)?);
+    Ok((returned.iter().map(|(p, _)| *p).max(), returned.into_iter().map(|(_, f)| f).collect()))
 }
 
 impl LiveOps<'_> {
@@ -337,12 +335,7 @@ impl LiveOps<'_> {
         members: &[Member],
     ) -> Result<Option<drive::Mended>, String> {
         use batcher::mender::{self, Outcome};
-        let shown = io::lcq_held(self.env, &["show-batch", batch])?;
-        let pass = serde_json::from_str::<serde_json::Value>(&shown)
-            .ok()
-            .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
-            .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))?
-            as u32;
+        let pass = batch_pass(self.env, batch)?;
         self.mend_pass.set(pass);
         let deadline = std::env::var("SPIRA_BATCHER_MEND_DEADLINE_SECS")
             .ok()
@@ -389,9 +382,11 @@ impl LiveOps<'_> {
 
 impl LiveOps<'_> {
     fn read_returns(&self, batch: &str) -> Result<Vec<batcher::mender::Failure>, String> {
-        let pass = batch_pass(self.env, batch)?;
-        self.mend_pass.set(pass);
-        returns_of(pass, |pass| endpass::Menders::rows(&mut endpass::LcMenders { env: self.env, batch, pass }))
+        let (pass, returned) = returned_from_listing(&io::lcq(self.env, &["mending", "list", "--batch", batch])?)?;
+        if let Some(pass) = pass {
+            self.mend_pass.set(pass);
+        }
+        Ok(returned)
     }
 
     fn eject_with(
@@ -804,10 +799,9 @@ impl drive::RoundOps for LiveOps<'_> {
     }
 
     fn returned_for_attribution(&self) -> Vec<batcher::mender::Failure> {
-        let (Some(batch), Some(pass)) = (self.batch, self.attributed_pass) else { return vec![] };
-        self.mend_pass.set(pass);
-        returns_of(pass, |pass| endpass::Menders::rows(&mut endpass::LcMenders { env: self.env, batch, pass })).unwrap_or_else(|e| {
-            eprintln!("batcher {}: reading the mending rows of pass {pass}: {e}", self.repo.name);
+        let Some(batch) = self.batch else { return vec![] };
+        self.read_returns(batch).unwrap_or_else(|e| {
+            eprintln!("batcher {}: reading the mending rows of {batch}: {e}", self.repo.name);
             vec![]
         })
     }
@@ -1117,7 +1111,6 @@ fn stabilize_round(
         prior: batcher::mender::Prior::default(),
         send_back: None,
         mend_pass: Default::default(),
-        attributed_pass: None,
         lifted: io::LiftedRows::new(lifted),
         returns_read: Default::default(),
     };
@@ -2408,6 +2401,14 @@ impl<'a> judge::Edge for LiveEdge<'a> {
     type Runner = vm::VmRunner<'a>;
     type Ops = LiveOps<'a>;
 
+    fn current(&self, batch: &str) -> Result<Vec<String>, String> {
+        io::open_rounds(self.env_, self.repo)?
+            .into_iter()
+            .find(|r| r.id == batch)
+            .map(|r| r.members)
+            .ok_or_else(|| format!("{batch} is not an open round"))
+    }
+
     fn changed(&self, members: &[Member]) -> BTreeMap<String, Vec<String>> {
         members.iter().map(|m| (m.id.clone(), io::changed_paths(self.repo, &self.start_sha, &m.tip))).collect()
     }
@@ -2428,9 +2429,6 @@ impl<'a> judge::Edge for LiveEdge<'a> {
             .after_pass(o.after_pass.clone())
             .with_deny_list(deny)?
             .confirmed(o.confirmed);
-        let attributed_pass = o.batch.as_deref().zip(o.after_pass.as_deref()).and_then(|(b, _)| {
-            batch_pass(env_, b).map_err(|e| eprintln!("batcher {}: the attributed pass is unknown, so a mender's return goes untried: {e}", repo.name)).ok()
-        });
         if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
             io::round_corpus_ended_red(env_, repo, b);
             if pass.is_dir() {
@@ -2455,7 +2453,6 @@ impl<'a> judge::Edge for LiveEdge<'a> {
             prior: batcher::mender::Prior::default(),
             send_back: None,
             mend_pass: Default::default(),
-            attributed_pass,
             lifted: io::LiftedRows::default(),
             returns_read: Default::default(),
         };
@@ -2780,23 +2777,14 @@ mod tests {
         assert_eq!(failed_attribution(false, "x".into()), Attribution::Blocked("x".into()));
     }
 
-    #[test_id(t2jxdat)]
+    #[test_id(tbm4avy)]
     #[test]
-    fn a_returned_row_of_the_attributed_pass_is_read_by_its_pass_number_not_the_current_one() {
-        let row = |state: &str| endpass::Row {
-            suite: "test-spike.sh".into(),
-            state: state.into(),
-            deadline: None,
-            diagnosis: "loses the note".into(),
-            returned: vec!["m3".into()],
-            ask_open: false,
-        };
-        let by_pass = |pass: u32| Ok(if pass == 1 { vec![row("RETURNED")] } else { vec![] });
-        let current = 2;
-        assert!(returns_of(current, by_pass).unwrap().is_empty());
-        let got = returns_of(1, by_pass).unwrap();
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].members, ["m3"]);
+    fn a_return_on_the_previous_pass_is_read_while_the_current_pass_holds_only_a_waiting_row() {
+        let listing = r#"[
+            {"pass":1,"suite":"test-spike.sh","state":"RETURNED","deadline":5,"returned":["m3"],"diagnosis":"loses the note"},
+            {"pass":2,"suite":"test-spike.sh","state":"WAITING","deadline":null,"returned":[],"diagnosis":null}]"#;
+        let (pass, got) = returned_from_listing(listing).unwrap();
+        assert_eq!((pass, got.len(), got[0].members.clone()), (Some(1), 1, vec!["m3".to_string()]));
     }
 
     fn pause_opts(run: &Path, by: Option<&str>) -> Opts {

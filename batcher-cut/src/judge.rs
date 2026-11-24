@@ -26,6 +26,8 @@ pub trait Edge {
     fn settle(&mut self, runner: &mut Self::Runner, ops: &mut Self::Ops, end: Result<drive::RoundEnd, String>, members: &[Member], suites: &[String]) -> Result<drive::RoundEnd, String>;
     /// A mender held the round's reds.
     fn mended(&self, ops: &Self::Ops) -> bool;
+    /// The ids the round's record holds now, for the batch the attribution was started on.
+    fn current(&self, batch: &str) -> Result<Vec<String>, String>;
     /// The round tree's head after the drive.
     fn head(&self) -> String;
 }
@@ -63,6 +65,16 @@ pub fn attribute<E: Edge>(o: &Opts, edge: &mut E, members: Vec<Member>, listed: 
         Ok(all) => named_suites(order::longest_first(&all, history).list, o.suites.as_deref()),
         Err(why) => return Ok(Attribution::Fault(format!("the round tree's suites could not be listed: {why}")).line()),
     };
+    let members = match o.batch.as_deref() {
+        None => members,
+        Some(batch) => match edge.current(batch) {
+            Ok(current) => members.into_iter().filter(|m| current.contains(&m.id)).collect(),
+            Err(why) => return Ok(Attribution::Fault(format!("the round's record could not be read: {why}")).line()),
+        },
+    };
+    if members.is_empty() {
+        return Ok(Attribution::Emptied("no member the attribution was started with is still in the round".into()).line());
+    }
     let red_phases = o.after_pass.as_deref().map(io::red_test_phases).unwrap_or_default();
     let red_filters = o.after_pass.as_deref().map(vm::red_filters).unwrap_or_default();
     if let Some(why) = blocks_attribution(&suites, &red_phases, &red_filters, o.after_pass.as_deref()) {

@@ -118,6 +118,10 @@ impl Edge for ReplayEdge<'_> {
         members.iter().map(|m| (m.id.clone(), saved.get(m.id.as_str()).map(|c| (*c).clone()).unwrap_or_default())).collect()
     }
 
+    fn current(&self, _: &str) -> Result<Vec<String>, String> {
+        Ok(self.fixture.round.current.clone().unwrap_or_else(|| self.fixture.round.members.iter().map(|m| m.id.clone()).collect()))
+    }
+
     fn current_deny(&self) -> Result<vm::DenySnapshot, String> {
         Err("replay: a round with no followed pass has no deny list to read".into())
     }
@@ -125,7 +129,7 @@ impl Edge for ReplayEdge<'_> {
     fn open(&mut self, _suites: &[String], changed: BTreeMap<String, Vec<String>>, _deny: &vm::DenySnapshot, own_commits: vm::RoundCommits) -> Result<(ReplayRunner, ReplayOps), String> {
         let runner = ReplayRunner { prior: self.fixture.results(), members: vec![], changed: changed.clone(), own_commits: own_commits.borrow().clone(), round_paths: self.fixture.round.round_commit_paths.clone(), probes: self.fixture.probes.clone(), confirmed: self.confirmed, jobs: vec![] };
         let returned = match &self.fixture.mending {
-            Some(rows) => crate::endpass::returns(crate::endpass::parse_rows(rows, 1)?),
+            Some(rows) => crate::endpass::returns(crate::endpass::parse_rows(rows)?),
             None => vec![],
         };
         let ops = ReplayOps { changed, done: self.done.clone(), rebuilds: 0, returned };

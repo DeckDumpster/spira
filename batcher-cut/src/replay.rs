@@ -30,6 +30,9 @@ pub struct RoundFixture {
     pub cut_head: String,
     pub head: String,
     pub members: Vec<Member>,
+    /// The members the round's record held when it was saved, when that differs from `members`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<Vec<String>>,
     pub red_suites: Vec<String>,
     pub place: Option<String>,
     pub round_commit_paths: Vec<String>,
@@ -181,6 +184,7 @@ pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &
         cut_head,
         head: head.clone(),
         members,
+        current: None,
         red_suites,
         place,
         round_commit_paths: git.commit_paths(&commits),
