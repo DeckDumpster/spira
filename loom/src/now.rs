@@ -165,7 +165,7 @@ pub fn render_round(snap: &Snapshot, b: &BatchRow) -> String {
     let opened = if b.opened_at > 0 { b.opened_at } else { b.last_at };
     body.push_str(&format!("<p class=dim>opened {} ago · last change {} ago</p>", dur(now - opened), dur(now - b.last_at)));
     if let Some(p) = &b.progress {
-        body.push_str(&format!("<p>{} · {}/{} suites{}</p>", esc(&p.phase), p.done, p.total, if p.red.is_empty() { String::new() } else { format!(" · <span class=red>red: {}</span>", esc(&p.red.join(", "))) }));
+        body.push_str(&format!("<p>{} · {}/{} {}{}</p>", esc(&p.phase), p.done, p.total, if p.tests { "tests" } else { "suites" }, if p.red.is_empty() { String::new() } else { format!(" · <span class=red>red: {}</span>", esc(&p.red.join(", "))) }));
     }
     if !b.run_url.is_empty() {
         body.push_str(&format!("<p>failing check: <a href=\"{0}\" style=\"text-decoration:underline\">{0}</a></p>", esc(&b.run_url)));
