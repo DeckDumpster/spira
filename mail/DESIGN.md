@@ -178,8 +178,7 @@ surface gets an accounting, and none of it turned out to be dead).
   suite's `covers:` line updated accordingly. `test-mail-tidy.sh`, `test-mail-bead-render.sh`,
   `test-mail-health.sh`,
   `test-mail-mailbox-arg.sh`, `test-mail-real-senders.sh`,
-  `test-mail-dwarf-hook.sh`, `test-brief-mail-options.sh`, `test-mail-tidy-units.sh` and
-  `test-cockpit-layout-mail.sh` are repointed, not retired — every one of them exercises real
+  `test-mail-dwarf-hook.sh`, `test-brief-mail-options.sh`, `test-mail-tidy-units.sh` are repointed, not retired — every one of them exercises real
   subprocess/filesystem behaviour (Maildir side effects, systemd unit rendering, a live
   `bd` fixture) that a unit test does not reach, and none of their use cases has a crate-test
   substitute the coverage map can currently recognise (`sp-pype5` is not landed).

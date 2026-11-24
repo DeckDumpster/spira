@@ -195,14 +195,12 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | cockpit-health-restart | no | - | 5 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-health-term-size | no | - | ? | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-hotfix | no | - | ? | cockpit/pane rendering and its probes: no loop actor changes state |
-| cockpit-layout-mail | no | - | 8 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-layout | no | - | 6 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-probe-fault | no | - | 12 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-queue-section | no | - | 23 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-queue-wait | no | - | 3 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-reachable | no | - | 7 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-ready | no | - | 8 | cockpit/pane rendering and its probes: no loop actor changes state |
-| cockpit-rebuild | no | - | 21 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-remote | no | - | 2 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-repo-labels | no | - | 12 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-runtime-path | no | - | 5 | cockpit/pane rendering and its probes: no loop actor changes state |
@@ -225,7 +223,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | conf-registry-merge | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | conf-registry-parity | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | conf-toml | no | - | 35 | static, configuration or single-tool contract: no hand-off between loop actors |
-| conf-watch | no | - | 7 | static, configuration or single-tool contract: no hand-off between loop actors |
 | conf-writeback | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | conf | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
 | config-compat-master-base | partly | new:second-repo | 18 | a master-based repo through the whole loop; needs a second repo in the world |
@@ -335,8 +332,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | landing | replaceable | conflicting-siblings + new:red-gate-holds | 137 | work goes back on the board only when it disagrees with the base |
 | landstate-checks-deleted | no | - | ? | single-tool or static contract: no hand-off between loop actors |
 | lanes | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
-| launchers-as-launched | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
-| launchers-bare-env | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | law-synth | no | - | 8 | static, configuration or single-tool contract: no hand-off between loop actors |
 | lc-hold | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lc-list-timing | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |

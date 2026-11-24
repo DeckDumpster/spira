@@ -152,7 +152,7 @@
 > killed pass open long enough to land the signal. T3 non-hermetic 11 s → T2 hermetic 6 s.
 > Row 02: already correct — the tiered-collector duplicate it names left with cluster 7, and
 > `SP_COLLECTOR_REV` is `collect.sh`'s own key, not cockpit.sh's, so it stays tested where it
-> is stamped. Cluster 9: already merged into `test-conf-watch.sh` by sp-s088v.8, before this
+> is stamped. Cluster 9: already merged into the retired conf-watch suite by sp-s088v.8, before this
 > branch forked — no `test-cockpit-conf-change.sh`/`test-loom-conf-change.sh` remain.
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `cockpit-observability`; use-case ids are `UC-cockpit-observability-NN`.
@@ -222,7 +222,7 @@ The cockpit gives the operator a view of Spira that is **read-only and honest**.
 | UC-cockpit-observability-01 | `cockpit-collect once` prints the full pass to stdout and never writes `cockpit.env`; the scheduler's cockpit tier tasks are its only writer and refuse to publish when `SPIRA_RUNTIME_COCKPIT_TIER_WRITE` is off. | FC, CON, CTR | T1 cert |
 | UC-cockpit-observability-02 | `SP_AT` is stamped before any section data. `SP_WINDOW_HOURS`, `SP_PASS_SECS` and `SP_COLLECTOR_REV` are always emitted. | CTR, OBS | T1 cert |
 | UC-cockpit-observability-06 | A collector pass killed by TERM, INT or HUP removes its `.cockpit.*` temp, re-raises (exits 128+signo), and never disturbs the published `cockpit.env`. Orphan temps are swept at startup by the tier writer. | REC, CON | T2 bCI, hermetic probe seam |
-| UC-cockpit-observability-07 | `loom.sh` exits 0 with `config changed` when the `SPIRA_CONF` mtime changes, and otherwise keeps running. | REC, CFG | T1 cert, injected tick |
+| UC-cockpit-observability-07 | Loom's config watch exits the process with `config changed (old → new)` when a pinned value changes, and keeps running when the file is merely touched or edited elsewhere. | REC, CFG | T1 cert, injected tick |
 | UC-cockpit-observability-08 | Every bd-backed count is `?` when `bd` exits non-zero, exits 0 with empty output, prints a schema-mismatch refusal on exit 0, or the persona set does not resolve. An empty readable store yields a numeric `0`. Covers `SP_READY`, `SP_NEXT_N`, `SP_WAITING`, `SP_INFLOW_N`, `SP_CLOSED`, `SP_LANDED` and `SP_UNLANDED_N`. | FC | T1 cert (stub bd) + one T2 real-bd row per query (bCI) |
 | UC-cockpit-observability-09 | Reachability: open work reachable from ready seeds through `blocks` edges counts as `SP_REACHABLE`. Beads behind a needs-ryan ask or a `spira-poison` stopper count as `SP_STRANDED`. Asks and insights are excluded, `relates-to` does not block, and the scope label is required. | COR, FC | T1 cert |
 | UC-cockpit-observability-10 | Landing classification: a closed bead is LANDED only when a commit **subject** on `origin/<base>` names it. A body mention does not count. This holds for main- and master-based repos. A closed bead with a branch and no landstate is an anomaly; one with neither is not. `SP_CLOSED` covers the last 24 h. | COR, CFG | T2 bCI (real git, stub bd) |
@@ -271,11 +271,11 @@ The cockpit gives the operator a view of Spira that is **read-only and honest**.
 | ID | Requirement | Dims | Tier / where |
 |---|---|---|---|
 | UC-cockpit-observability-41 | Pane identity comes from the process a pane actually runs, not from argv text that merely mentions `health.sh`. `ensure` untags an impostor, logs it, and never kills the session pane. | COR, REC | T1 predicate cert + T2 one tmux case (bCI) |
-| UC-cockpit-observability-42 | `up` builds session, mail (below, left) and a full-height health pane. `ensure` respawns a closed mail pane. With no mail client, or one that is not installed, there is no mail pane. | REC, CFG | T2 bCI (shared tmux server) |
+| UC-cockpit-observability-42 | `up` builds session, mail (below, left) and a full-height health pane. `ensure` respawns a closed mail pane. With no mail client, or one that is not installed, there is no mail pane. | REC, CFG | T1 (scripted tmux, order of commands asserted) |
 | UC-cockpit-observability-43 | `ensure` detaches ghost clients idle longer than `COCKPIT_CLIENT_IDLE_SECS`, keeps the live client's height, and logs the tty. It does not move the operator's active pane when there is nothing to repair. | REC, COR | T1 selector cert + T2 one PTY case |
 | UC-cockpit-observability-44 | The health pane command carries `SPIRA_CONF`. Mouse mode is on by default, can be switched off with off/no/0, and never fails the caller. | CFG | T1 cert (command builder, shimmed tmux) |
 | UC-cockpit-observability-45 | A copy of the `layout` binary refuses `ensure` and names the installed path. | REC, CON | T1 cert (pinned socket) |
-| UC-cockpit-observability-46 | `rebuild.sh`:<br>• from a dead server, creates brain, hunk, chat and cockpit, with the dashboards in `brain:0` and the cockpit windows **linked**;<br>• verifies itself and fails naming the session pane when the brief is missing;<br>• is idempotent against a healthy server (same pid);<br>• reports an over-long socket as unusable. | REC, IDM | T3 mCI (the one end-to-end tmux case) |
+| UC-cockpit-observability-46 | `rebuild`:<br>• from a dead server, creates the sessions, then runs `layout up` in `brain:0`, then the cockpit-remote build and sync, so the cockpit windows are **linked**;<br>• verifies itself and fails naming the session pane when the brief is missing;<br>• against a healthy server creates and kills nothing;<br>• reports an over-long socket as unusable. | REC, IDM | T1 (scripted tmux, order of commands asserted) |
 | UC-cockpit-observability-47 | `tmux-env.sh` scrubs the Claude session identity from the server's global env. Panes opened afterwards do not inherit it, and a second run is idempotent. | CON, IDM | T2 bCI |
 | UC-cockpit-observability-48 | `cockpit-remote`:<br>• the dialer refuses an empty `COCKPIT_HOST`;<br>• a watcher that loses the lock exits non-zero promptly, naming the holder;<br>• `start` delegates to systemd when the unit is enabled (lock holder = MainPID) and forks with setsid otherwise;<br>• the orphan-lock probe names the holder's pid and path. | CON, REC, FC | T2 bCI (real flock, stub systemd) |
 | UC-cockpit-observability-50 | `ready.sh` loom grace pass: a loom that refuses the first probe and opens its port later is retried until it answers (pass, not FAIL). A loom that never answers is FAIL, bounded by `SPIRA_LOOM_READY_GRACE` rather than the default. | OBS, CTR | T1 cert (real probe loop, localhost port) |
@@ -323,12 +323,12 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 38 | (test-statusline.sh retired with its subject) | - | DELETED |
 | 39 | the retired tokens suite (8); test-model-switch-report.sh (6); test-released-defects.sh (5) | T1/T1/T3: 16 + 1 + 8 | KEEP tokens and report. Investigate the 16 s for 4 runs of tokens.sh (header says under 1 s; possibly scanning a real transcript dir, a hermeticity leak). released-defects: **DEMOTE-TO-T2**, with a bd graph JSON fixture and real git. |
 | 40 | test-resolve-output.sh (7) | T1, 1 | KEEP. Fix: a missing subject exits 0 ("SKIP"); make it 77 or a failure. |
-| 41 | test-cockpit-layout-identity.sh (5); test-cockpit-rebuild.sh::health tag/one session pane | T2 tmux, 3 | KEEP one tmux case in the shared-server suite. **DEMOTE the predicate to T1** over argv strings. |
-| 42 | test-cockpit-layout-mail.sh (5 groups); test-cockpit-rebuild.sh::mail build | T2 tmux: 5 + part of 18 | **MERGE** layout-mail INTO a shared-tmux-server suite with rebuild. Drop rebuild's mail build case, which duplicates it. |
+| 41 | test-cockpit-layout-identity.sh (5); the retired rebuild suite::health tag/one session pane | T2 tmux, 3 | KEEP one tmux case in the shared-server suite. **DEMOTE the predicate to T1** over argv strings. |
+| 42 | the retired layout-mail suite (5 groups); the retired rebuild suite::mail build | T2 tmux: 5 + part of 18 | **MERGE** layout-mail INTO a shared-tmux-server suite with rebuild. Drop rebuild's mail build case, which duplicates it. |
 | 43 | test-cockpit-layout.sh (ghost detach); test-cockpit-layout-ensure-focus.sh (1 assertion, **vacuous**: `#{pane_active}` of the window's active pane is always 1) | T3 PTY 8; T2 4 | KEEP ghost detach (one PTY case). Unit-test the idle selector over `list-clients` output. **Rewrite ensure-focus** to compare the active `#{pane_id}`; as written it cannot fail. |
 | 44 | test-cockpit-layout-conf.sh (4 groups); test-cockpit-mouse.sh (6, all source grep) | T2 tmux 4; T0 7 | **DEMOTE-TO-T1**: factor `build_health_cmd`, and call `apply_mouse_mode` with a PATH-shimmed tmux recording argv. test-cockpit-mouse.sh: **SOURCE-GREP to a behaviour test** (the `off\|no\|0)` regex matches any case arm). |
 | 45 | test-layout-guard.sh (5); test-cockpit-collector-watchdog.sh (4) | T2 6; T1 4 | KEEP both. Fix guard: its installed-copy `ensure` talks to the **ambient tmux server** with no pinned socket, so pin `-L`. Fix watchdog: source the function instead of extracting it with awk, and a missing function gives SKIP with exit 0. |
-| 46 | test-cockpit-rebuild.sh (8 groups) | T3 tmux, 18 | KEEP as the single tmux end-to-end. Fix the case that accepts `absent` as a pass for the long socket. Move remote.sh's source grep of rebuild.sh `COCKPIT_SESSIONS` here as a behaviour case. |
+| 46 | the retired rebuild suite (8 groups) | T3 tmux, 18 | KEEP as the single tmux end-to-end. Fix the case that accepts `absent` as a pass for the long socket. Move remote.sh's source grep of rebuild.sh `COCKPIT_SESSIONS` here as a behaviour case. |
 | 47 | the retired tmux-env suite (8) | T2 tmux, 12 | KEEP. Run it on the shared server and shorten the 10×0.3 s poll. |
 | 48 | the retired cockpit-remote suite (10); test-cockpit-watcher-owner.sh (8) | T2: 1 + 3 | KEEP both. Remote: assert the dialer's rc, which is computed and never checked. The exec-bit and inventory greps move to T0. |
 
@@ -365,7 +365,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
     - **Keep:** one sweep over views × modes × content.
 12. **Drain banner duplicated across areas.** test-drain-banner.sh (2 s) and test-world-drain.sh (58 s, instance-lifecycle area) cover it case for case.
     - **Keep:** test-drain-banner.sh. The saving is booked in the instance-lifecycle area.
-13. **Pane-tagging and mail-pane checks across three tmux servers.** test-cockpit-rebuild.sh, test-cockpit-layout-identity.sh and test-cockpit-layout-mail.sh each start a server.
+13. **Pane-tagging and mail-pane checks across three tmux servers.** the retired rebuild and layout-mail suites and test-cockpit-layout-identity.sh each started a server.
     - **Keep:** one shared-server fixture suite, with rebuild as the only end-to-end run.
 
 ## 5. Unit-extractable logic
@@ -469,7 +469,7 @@ sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-ref
 
 - 480 − (17 + 29 + 43 + 24 + 17 + 28 + 11 + 16 + 10 + 8 + 9 + 24 + 36 + 20) = 480 − 292 = **188 s**, a 61% cut.
 - About 150 s of the 188 moves to T1 (certification-eligible, under 1 s per case).
-- About 38 s stays T2/T3: test-cockpit-rebuild.sh, the ghost PTY case, tmux-env, the cockpit-bd-contract suite, and the real-bd loom row. These run in batch/main CI.
+- About 38 s stays T2/T3: the retired rebuild suite, the ghost PTY case, tmux-env, the cockpit-bd-contract suite, and the real-bd loom row. These run in batch/main CI.
 - **Cross-area bonus:** retiring test-world-drain.sh (58 s) in favour of test-drain-banner.sh.
 
 **Tier placement:**
@@ -477,7 +477,7 @@ sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-ref
 - **T0 (cert):** the probe-registry lint, the timeout(1)-wraps-function lint, the event taxonomy, the no-SKIP-exit-0 lint, the `env -i`/pinned-socket fence, and the Loom page-shape greps.
 - **T1 (cert):** everything else marked T1 above, including the cargo job.
 - **T2 (batch CI):** tmp, landing, unsent, fuse/gate /proc, released-defects, the tmux shared-server suite, watcher-owner, and the bd-contract suite.
-- **T3 (main CI):** test-cockpit-rebuild.sh as the one tmux end-to-end.
+- **T3 (main CI):** the retired rebuild suite as the one tmux end-to-end.
 - **T4:** none. `ready.sh` already runs inside acceptance-run.
 
 ---

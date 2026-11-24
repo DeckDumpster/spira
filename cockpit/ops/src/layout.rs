@@ -113,6 +113,12 @@ fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
 
+/// The mail client's command if its program is installed: a pane whose program is missing
+/// dies at once, and `ensure` would respawn it every minute.
+fn installed_mail_cmd(cmd: Option<String>) -> Option<String> {
+    cmd.filter(|c| on_path(c.split_whitespace().next().unwrap_or("")))
+}
+
 /// Is `exe`'s basename (after stripping any leading path) found on `PATH`?
 fn on_path(exe: &str) -> bool {
     if exe.is_empty() {
@@ -177,10 +183,7 @@ impl Conf {
         // operator's deliberate "no mail pane" (COCKPIT_MAIL set empty) the moment conf.sh
         // agreed with bash and left it that way.
         let mail_cmd = cfg("COCKPIT_MAIL").ok().filter(|s| !s.is_empty());
-        let mail_cmd = mail_cmd.filter(|cmd| {
-            let exe = cmd.split_whitespace().next().unwrap_or("");
-            on_path(exe)
-        });
+        let mail_cmd = installed_mail_cmd(mail_cmd);
 
         let heal_cooldown_secs = env_nonempty("COCKPIT_HEAL_COOLDOWN")
             .and_then(|s| s.parse().ok())
@@ -1223,6 +1226,7 @@ pub fn local_time(t: i64) -> Option<LocalTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tmux::fake::FakeTmux;
 
     #[test_id(taxmfqr)]
     #[test]
@@ -1350,33 +1354,6 @@ mod tests {
         assert!(p.contains("PATH='rel/bin:rel/spira:/usr/local/bin:/usr/bin:/bin'"));
     }
 
-    /// A fixture tmux: logs every invocation, answers the snapshot read with `fixture`.
-    struct FakeTmux {
-        bin: PathBuf,
-        log: PathBuf,
-    }
-
-    impl FakeTmux {
-        fn new(dir: &std::path::Path, fixture: &str) -> FakeTmux {
-            let log = dir.join("calls.log");
-            let fix = dir.join("fixture.txt");
-            fs::write(&fix, fixture).unwrap();
-            let bin = dir.join("tmux");
-            testkit::write_exe(
-                &bin,
-                &format!(
-                    "#!/bin/sh\necho \"$*\" >> {log}\ncase \"$1 $2\" in\n\"list-panes -a\") cat {fix};;\nesac\nexit 0\n",
-                    log = log.display(),
-                    fix = fix.display()
-                ),
-            );
-            FakeTmux { bin, log }
-        }
-        fn calls(&self) -> Vec<String> {
-            fs::read_to_string(&self.log).unwrap_or_default().lines().map(str::to_string).collect()
-        }
-    }
-
     fn snapshot_row(window: &str, target: &str, tag: &str, pane: &str, pid: u32, active: &str, height: u32) -> String {
         let hook = "resize-pane -t \"%2\" -x \"33%\"";
         format!("{window}|{target}|{tag}||{pane}|{pid}|0|{active}|{height}|24|1|on|latest|{hook}|{hook}|{hook}")
@@ -1385,18 +1362,31 @@ mod tests {
     /// Runs `ensure` once over `rows` with a fake tmux, a live health pane and a live
     /// session pane, and returns what tmux was asked.
     fn ensure_calls(name: &str, rows: impl Fn(u32, u32) -> Vec<String>, idle_secs: i64) -> Vec<String> {
+        ensure_over(name, rows, idle_secs, None, |f| f)
+    }
+
+    /// `ensure_calls` with the mail client set to `mail`, and `script` adding what the fake
+    /// tmux answers beyond the snapshot.
+    fn ensure_over(
+        name: &str,
+        rows: impl Fn(u32, u32) -> Vec<String>,
+        idle_secs: i64,
+        mail: Option<&str>,
+        script: impl FnOnce(FakeTmux) -> FakeTmux,
+    ) -> Vec<String> {
         let dir = testkit::TempDir::new(name);
-        let script = dir.join("health.sh");
-        fs::write(&script, "sleep 30\n").unwrap();
-        let mut health = std::process::Command::new("sh").arg(&script).spawn().unwrap();
+        let script_path = dir.join("health.sh");
+        fs::write(&script_path, "sleep 30\n").unwrap();
+        let mut health = std::process::Command::new("sh").arg(&script_path).spawn().unwrap();
         let mut sess = std::process::Command::new("sleep").arg("30").spawn().unwrap();
         let fixture = rows(sess.id(), health.id()).join("\n") + "\n";
-        let fake = FakeTmux::new(&dir, &fixture);
+        let fake = script(FakeTmux::new(&dir).answer("list-panes -a", &fixture));
         let mut conf = conf_with("", "");
         conf.run = dir.path().to_path_buf();
         conf.clipboard_on = true;
         conf.idle_secs = idle_secs;
-        let layout = Layout { tmux: Tmux::with_bin(fake.bin.to_str().unwrap()), conf };
+        conf.mail_cmd = mail.map(str::to_string);
+        let layout = Layout { tmux: fake.tmux(), conf };
         let me = std::env::current_exe().unwrap();
         let out = layout.ensure(&me, &me);
         for c in [&mut health, &mut sess] {
@@ -1452,6 +1442,93 @@ mod tests {
         assert_eq!(calls.len(), 3, "{calls:?}");
         assert_eq!(calls[1], "set-option -g mouse on");
         assert!(calls[2].starts_with("bind-key -T root MouseDrag1Pane"), "{calls:?}");
+    }
+
+    /// The tmux calls that shape panes, each cut before its `-c <cwd>` command tail.
+    fn pane_writes(calls: &[String]) -> Vec<String> {
+        calls
+            .iter()
+            .filter(|c| c.starts_with("split-window") || c.starts_with("set-option -p -t"))
+            .map(|c| c.split(" -c ").next().unwrap().to_string())
+            .collect()
+    }
+
+    const SESSION_AND_HEALTH: &str = "%1\nhealth %2\n";
+
+    // covers: UC-cockpit-observability-42
+    #[test_id(toyprx8)]
+    #[test]
+    fn mail_sits_below_the_session_pane_and_health_keeps_the_full_height() {
+        let dir = testkit::TempDir::new("layout-mail-up");
+        let fake = FakeTmux::new(&dir)
+            .answer("#{@cockpit} #{pane_id}", "%1\n")
+            .answer("-d -h -f", "%2\n")
+            .answer("-d -v -l", "%3\n");
+        let mut conf = conf_with("", "");
+        conf.run = dir.path().to_path_buf();
+        conf.cwd = "work".into();
+        conf.mail_cmd = Some("fakemail".into());
+        Layout { tmux: fake.tmux(), conf }.up("cockpit:0").unwrap();
+        assert_eq!(
+            pane_writes(&fake.calls()),
+            [
+                "split-window -P -F #{pane_id} -d -h -f -l 33% -t %1",
+                "set-option -p -t %2 @cockpit health",
+                "split-window -P -F #{pane_id} -d -v -l 28% -t %1",
+                "set-option -p -t %3 @cockpit mail",
+            ],
+            "health is cut full-height first, then mail under the session pane alone"
+        );
+
+        let bare = testkit::TempDir::new("layout-no-mail-up");
+        let fake = FakeTmux::new(&bare).answer("#{@cockpit} #{pane_id}", "%1\n").answer("-d -h -f", "%2\n");
+        let mut conf = conf_with("", "");
+        conf.run = bare.path().to_path_buf();
+        Layout { tmux: fake.tmux(), conf }.up("cockpit:0").unwrap();
+        let writes = pane_writes(&fake.calls());
+        assert_eq!(writes.len(), 2, "no mail client, no mail pane: {writes:?}");
+        assert!(writes.iter().all(|w| !w.contains(" -v ") && !w.contains("mail")), "{writes:?}");
+
+        let installed = dir.join("fakemail");
+        fs::write(&installed, "").unwrap();
+        let installed = installed.to_str().unwrap().to_string();
+        assert_eq!(installed_mail_cmd(Some(installed.clone())), Some(installed));
+        assert_eq!(installed_mail_cmd(Some(dir.join("absent").to_str().unwrap().to_string())), None);
+        assert_eq!(installed_mail_cmd(Some(String::new())), None);
+        assert_eq!(installed_mail_cmd(None), None);
+
+        let resolved = |mail: &str| {
+            let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_RUN", &dir.join("run").display().to_string()), ("COCKPIT_MAIL", mail)]);
+            let _env = testkit::env(&[
+                ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+                ("SPIRA_RELEASE", Some("rel")),
+                ("COCKPIT_MAIL", None),
+                ("SPIRA_RUN", None),
+            ]);
+            spira_config::process::with_fresh(|| Conf::from_env().unwrap().mail_cmd).unwrap()
+        };
+        let present = dir.join("present-mail");
+        fs::write(&present, "").unwrap();
+        assert_eq!(resolved(present.to_str().unwrap()), Some(present.display().to_string()));
+        assert_eq!(resolved(dir.join("absent-mail").to_str().unwrap()), None, "an uninstalled client gets no pane");
+        assert_eq!(resolved(""), None);
+    }
+
+    // covers: UC-cockpit-observability-42
+    #[test_id(t2o6m6t)]
+    #[test]
+    fn ensure_cuts_a_closed_mail_pane_back_in_under_the_session_pane() {
+        let rows = |s, h| healthy_fixture(s, h);
+        let script = |f: FakeTmux| f.answer("#{@cockpit} #{pane_id}", SESSION_AND_HEALTH).answer("-d -v -l", "%3\n");
+        let calls = ensure_over("layout-ensure-mail", rows, 0, Some("fakemail"), script);
+        assert_eq!(
+            pane_writes(&calls),
+            ["split-window -P -F #{pane_id} -d -v -l 28% -t %1", "set-option -p -t %3 @cockpit mail"],
+            "{calls:?}"
+        );
+
+        let calls = ensure_over("layout-ensure-no-mail", rows, 0, None, script);
+        assert!(pane_writes(&calls).is_empty(), "{calls:?}");
     }
 
     fn healthy_rows() -> Vec<PaneRow> {

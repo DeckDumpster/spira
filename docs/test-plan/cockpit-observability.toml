@@ -19,7 +19,7 @@ statement = "a collector pass killed by TERM/INT/HUP removes its `.cockpit.*` te
 [[use_case]]
 id = "UC-cockpit-observability-07"
 tier = "T1"
-statement = "`loom.sh` exits 0 with 'config changed' when `SPIRA_CONF` mtime changes, and otherwise keeps running"
+statement = "Loom's config watch exits the process with `config changed (old → new)` when a pinned value changes, and keeps running when the file is merely touched or edited elsewhere."
 
 [[use_case]]
 id = "UC-cockpit-observability-08"
@@ -283,7 +283,7 @@ bead = "sp-unusla"
 
 [[use_case]]
 id = "UC-cockpit-observability-42"
-tier = "T2"
+tier = "T1"
 statement = "`up` builds session, mail (below, left) and a full-height health pane; `ensure` respawns a closed mail pane; with no mail client, or one not installed, there is no mail pane"
 
 [[use_case]]
@@ -318,8 +318,8 @@ bead = "sp-unusla"
 
 [[use_case]]
 id = "UC-cockpit-observability-46"
-tier = "T3"
-statement = "`rebuild.sh`, from a dead server, creates brain/hunk/chat/cockpit with dashboards in `brain:0` and cockpit windows linked; it verifies itself and fails naming the session pane when the brief is missing, is idempotent against a healthy server, and reports an over-long socket as unusable"
+tier = "T1"
+statement = "`rebuild`, from a dead server, creates the sessions, then `layout up` in `brain:0`, then the cockpit-remote build and sync (the cockpit windows are links); it verifies itself and fails naming the session pane when the brief is missing, creates and kills nothing against a healthy server, and reports an over-long socket as unusable"
 
 [[use_case]]
 id = "UC-cockpit-observability-47"
@@ -354,5 +354,5 @@ bead = "sp-94lbj.2"
 [[use_case]]
 id = "UC-cockpit-observability-51"
 tier = "T2"
-statement = "The ops pane's start command, run as the cockpit starts it, renders once with real values — no '?' placeholders and no STOPPED banner."
+statement = "The ops pane's start command, run on a terminal under the tmux server's environment, resolves its config from the release and draws the lifecycle view; without `SPIRA_TOML` it says so rather than drawing."
 launcher = { site = "cockpit/ops/src/layout.rs", needle = "lc-view tui" }

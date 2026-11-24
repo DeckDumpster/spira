@@ -46,6 +46,7 @@ pub struct Rebuild {
     /// Whether a mail pane should exist, from `COCKPIT_MAIL` — resolved once here rather
     /// than re-read where `verify` checks for the pane.
     pub mail_wanted: bool,
+    pub watchd_bin: String,
 }
 
 /// Does the pane's process tree carry `--append-system-prompt`, or is it a client of the
@@ -396,7 +397,7 @@ impl Rebuild {
 
         out.push("\n== watchers".to_string());
         // FORK-EDGE: needs a watchd library (`commands::cmd_status` is in its binary, no [lib]).
-        if let Ok(o) = spira_config::bounded::bounded("watchd").arg("status").output() {
+        if let Ok(o) = spira_config::bounded::bounded(&self.watchd_bin).arg("status").output() {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
                 out.push(format!("  {line}"));
             }
@@ -513,6 +514,7 @@ pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
         concierge,
         force,
         mail_wanted,
+        watchd_bin: std::env::var("WATCHD_BIN").unwrap_or_else(|_| "watchd".to_string()),
     }
 }
 
@@ -523,6 +525,8 @@ pub fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tmux::fake::FakeTmux;
+    use std::os::unix::process::CommandExt;
 
     #[test_id(txcw7n2)]
     #[test]
@@ -552,5 +556,138 @@ mod tests {
             }
         }
         assert!(found);
+    }
+
+    struct World {
+        _dir: testkit::TempDir,
+        fake: FakeTmux,
+        rebuild: Rebuild,
+        _session: testkit::ChildGuard,
+    }
+
+    /// A cockpit as the fake tmux describes it: a session pane running `sleep` (carrying the
+    /// composed-brief flag in its argv when `briefed`), a health pane, the linked windows,
+    /// and a mail pane when `mail`. `server_dead` makes the first three `has-session` calls
+    /// fail, the sessions `rebuild` is to create.
+    fn world(name: &str, briefed: bool, mail: bool, mail_wanted: bool, server_dead: bool) -> World {
+        let dir = testkit::TempDir::new(name);
+        let mut sleeper = std::process::Command::new("sleep");
+        if briefed {
+            sleeper.arg0("--append-system-prompt");
+        }
+        let session = testkit::ChildGuard::spawn(sleeper.arg("30"));
+        let tags = if mail { "\nhealth\nmail\n" } else { "\nhealth\n" };
+        let mut fake = FakeTmux::new(&dir);
+        if server_dead {
+            fake = fake.fail("list-sessions", "no server running on /sock", 1).fail_first("has-session", 3, 1);
+        }
+        let fake = fake
+            .answer("-F #{@cockpit} #{pane_id}", "%1\nhealth %2\n")
+            .answer("-F #{pane_id} #{@cockpit}", "%1\n%2 health\n")
+            .answer("-F #{pane_id} #{pane_pid}", &format!("%1 {}\n%2 1\n", session.id()))
+            .answer("-F #{@cockpit}", tags)
+            .answer("list-windows -t =brain", "@1\n")
+            .answer("list-windows -t =hunk", "@2\n")
+            .answer("list-windows -t =cockpit", "@1\n@2\n")
+            .answer("capture-pane", "an ops pane\n");
+        let layout = dir.join("layout");
+        let view = dir.join("cockpit-remote");
+        for (bin, tag) in [(&layout, "layout"), (&view, "view")] {
+            testkit::write_exe(bin, &format!("#!/bin/sh\necho \"{tag} $*\" >> {}\n", fake.log_path().display()));
+        }
+        let rebuild = Rebuild {
+            tmux: fake.tmux(),
+            view,
+            layout_bin: layout.to_str().unwrap().into(),
+            cwd: "work".into(),
+            sessions: ["brain", "hunk", "chat"].map(String::from).to_vec(),
+            concierge: dir.join("no-concierge.sh"),
+            force: false,
+            mail_wanted,
+            watchd_bin: dir.join("no-watchd").to_str().unwrap().into(),
+        };
+        World { _dir: dir, fake, rebuild, _session: session }
+    }
+
+    fn verified(w: &World) -> (u32, String) {
+        match w.rebuild.run(false) {
+            RunOutcome::Ok { verify_fail, output } => (verify_fail, output.join("\n")),
+            _ => panic!("rebuild did not reach its verify block"),
+        }
+    }
+
+    // covers: UC-cockpit-observability-46
+    #[test_id(t6meucy)]
+    #[test]
+    fn rebuild_makes_the_sessions_then_the_dashboards_then_the_links_and_verifies_itself() {
+        let w = world("rebuild-from-nothing", true, false, false, true);
+        let (fail, out) = verified(&w);
+        let steps: Vec<String> = w
+            .fake
+            .calls()
+            .into_iter()
+            .filter(|c| c.starts_with("new-session") || c.starts_with("layout") || c.starts_with("view"))
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                "new-session -d -s brain -c work",
+                "new-session -d -s hunk -c work",
+                "new-session -d -s chat -c work",
+                "layout up --window brain:0",
+                "view build",
+                "view sync",
+            ],
+            "the dashboards go in brain:0 before the linking step"
+        );
+        assert_eq!(fail, 0, "{out}");
+        for line in [
+            "ok    session cockpit exists",
+            "ok    cockpit links brain:0",
+            "ok    cockpit links hunk:0",
+            "ok    health pane renders content",
+            "ok    session pane carries composed brief",
+        ] {
+            assert!(out.contains(line), "missing {line:?} in {out}");
+        }
+    }
+
+    // covers: UC-cockpit-observability-46
+    #[test_id(t4qx56n)]
+    #[test]
+    fn rebuild_names_the_session_pane_when_its_brief_is_missing() {
+        let w = world("rebuild-no-brief", false, false, false, true);
+        let (fail, out) = verified(&w);
+        assert_eq!(fail, 1, "{out}");
+        assert!(out.contains("FAIL  session pane carries composed brief"), "{out}");
+    }
+
+    // covers: UC-cockpit-observability-46
+    #[test_id(t9zzsuv)]
+    #[test]
+    fn rebuild_leaves_a_healthy_server_alone_and_wants_the_mail_pane_only_when_configured() {
+        let w = world("rebuild-healthy", true, true, true, false);
+        let (fail, out) = verified(&w);
+        assert!(out.contains("answering — leaving it alone"), "{out}");
+        assert!(out.contains("ok    brain:0 has a mail pane"), "{out}");
+        assert_eq!(fail, 0, "{out}");
+        let calls = w.fake.calls();
+        assert!(!calls.iter().any(|c| c.starts_with("new-session") || c.contains("kill")), "{calls:?}");
+
+        let (fail, out) = verified(&world("rebuild-no-mail", true, false, true, false));
+        assert!(out.contains("FAIL  brain:0 has a mail pane"), "{out}");
+        assert_eq!(fail, 1);
+    }
+
+    // covers: UC-cockpit-observability-46
+    #[test_id(trmv8rx)]
+    #[test]
+    fn rebuild_calls_an_overlong_socket_unusable_and_refuses_rather_than_hunting_a_holder() {
+        let dir = testkit::TempDir::new("rebuild-unusable");
+        let fake = FakeTmux::new(&dir).fail("list-sessions", "open terminal failed: File name too long", 1);
+        assert_eq!(server_state(&fake.tmux()), ServerState::Unusable);
+        let probe = probe_report(&fake.tmux(), &["brain".to_string()]);
+        assert!(probe[0].ends_with("unusable") && probe[1].contains("108-byte"), "{probe:?}");
+        assert_eq!(clear_wedged_server(&fake.tmux(), false, &mut |_| {}), ClearOutcome::Unusable);
     }
 }
