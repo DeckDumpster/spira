@@ -2829,7 +2829,7 @@ fn over_cap_detail(results: &Path) -> Option<String> {
 fn over_cap_why(detail: &str, cap: u64) -> String {
     let line = detail.trim();
     if line.is_empty() {
-        format!("the suites and bare lane exceeded the {cap}s cap")
+        format!("the suites exceeded the {cap}s cap")
     } else {
         format!("INCOMPLETE, cut off by {line}")
     }
@@ -6046,5 +6046,16 @@ fn close_abandoned(
     match void_stacked(w, by, label, c, path, batch) {
         Ok(()) => OK,
         Err(rc) => rc,
+    }
+}
+
+#[cfg(test)]
+mod over_cap_text {
+    use super::over_cap_why;
+
+    #[test_id(t7lbxyg)]
+    #[test]
+    fn an_over_cap_with_no_detail_speaks_of_the_suites_alone() {
+        assert_eq!(over_cap_why("", 900), "the suites exceeded the 900s cap");
     }
 }
