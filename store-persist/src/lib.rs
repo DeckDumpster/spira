@@ -241,8 +241,20 @@ pub fn lock(l: &Layout) -> Result<Lock, String> {
     Ok(Lock(f))
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FLUSHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The one place a pass forces the disk; tests count its calls.
+fn flush(f: &fs::File) -> std::io::Result<()> {
+    #[cfg(test)]
+    FLUSHES.with(|c| c.set(c.get() + 1));
+    f.sync_all()
+}
+
 pub fn fsync_dir(dir: &Path) -> Result<(), String> {
-    fs::File::open(dir).and_then(|f| f.sync_all()).map_err(|e| format!("cannot fsync {}: {e}", dir.display()))
+    fs::File::open(dir).and_then(|f| flush(&f)).map_err(|e| format!("cannot fsync {}: {e}", dir.display()))
 }
 
 /// Writes `bytes` to `dst` durably: temp file, fsync, rename, fsync the directory. A `dst`
@@ -251,14 +263,23 @@ pub fn put_durable(dst: &Path, bytes: &[u8]) -> Result<bool, String> {
     if fs::read(dst).ok().as_deref() == Some(bytes) {
         return Ok(false);
     }
+    put_file(dst, bytes, true)?;
+    Ok(true)
+}
+
+/// Temp file and rename; with `durable` false nothing is forced, and a crash may leave the
+/// older `dst`.
+fn put_file(dst: &Path, bytes: &[u8], durable: bool) -> Result<(), String> {
     let dir = dst.parent().ok_or_else(|| format!("{} has no parent", dst.display()))?;
     fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let tmp = dir.join(format!(".{}.tmp", dst.file_name().and_then(|n| n.to_str()).unwrap_or("f")));
     let mut f = fs::File::create(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-    f.write_all(bytes).and_then(|_| f.sync_all()).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    f.write_all(bytes).and_then(|_| if durable { flush(&f) } else { Ok(()) }).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
     fs::rename(&tmp, dst).map_err(|e| format!("cannot rename onto {}: {e}", dst.display()))?;
-    fsync_dir(dir)?;
-    Ok(true)
+    if durable {
+        fsync_dir(dir)?;
+    }
+    Ok(())
 }
 
 fn read(p: &Path) -> Result<Vec<u8>, String> {
@@ -340,23 +361,24 @@ fn pass_from(l: &Layout, source: &Path, mode: Mode, server_yaml: bool, dolt: &dy
     let covered = if incremental { read_state(l).ok().map(|s| s.start_ms.saturating_sub(MTIME_MARGIN_MS)) } else { None };
     let start_ms = clock.now_ms();
     fs::create_dir_all(l.dbs_dir()).map_err(|e| format!("cannot create {}: {e}", l.dbs_dir().display()))?;
+    let mut changed = mode == Mode::Offline;
     for db in &live {
         let untouched = covered.is_some_and(|c| held.contains(db) && newest_mtime_ms(&source.join(db).join(".dolt")) < c);
         if !untouched {
             dolt.sync(&conn, source, db, &l.db(db))?;
+            changed = true;
         }
         for f in DB_META {
             let p = source.join(db).join(".dolt").join(f);
             if p.is_file() {
-                put_durable(&l.meta_db(db).join(f), &read(&p)?)?;
+                changed |= put_durable(&l.meta_db(db).join(f), &read(&p)?)?;
             }
         }
     }
-    fsync_dir(&l.dbs_dir())?;
     if server_yaml {
         let y = source.join(SERVER_YAML);
         if y.is_file() {
-            put_durable(&l.meta_root().join(SERVER_YAML), &read(&y)?)?;
+            changed |= put_durable(&l.meta_root().join(SERVER_YAML), &read(&y)?)?;
         }
     }
     let cfg_dir = source.join(".doltcfg");
@@ -365,12 +387,17 @@ fn pass_from(l: &Layout, source: &Path, mode: Mode, server_yaml: bool, dolt: &dy
             let p = e.map_err(|e| e.to_string())?.path();
             if p.is_file() {
                 let name = p.file_name().unwrap_or_default();
-                put_durable(&l.meta_root().join("doltcfg").join(name), &read(&p)?)?;
+                changed |= put_durable(&l.meta_root().join("doltcfg").join(name), &read(&p)?)?;
             }
         }
     }
     let st = State { start_ms, finish_ms: clock.now_ms(), dbs: live.into_iter().collect() };
-    put_durable(&l.state(), st.render().as_bytes())?;
+    if changed {
+        fsync_dir(&l.dbs_dir())?;
+        put_durable(&l.state(), st.render().as_bytes())?;
+    } else {
+        put_file(&l.state(), st.render().as_bytes(), false)?;
+    }
     Ok(st)
 }
 

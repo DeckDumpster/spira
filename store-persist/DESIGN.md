@@ -22,6 +22,9 @@ host crash loses the writes since then: at most one interval plus the duration o
 flight. `age` turns that bound into an alarm; it is not a guarantee a saturated disk can be
 made to keep.
 
+A pass that copies nothing leaves its record to the filesystem — no flush — so a crash may leave an
+older record; the next pass then syncs more, never less. Stop and seed passes always flush.
+
 ## 2. The mechanism, and what it is not
 
 **Chosen: `CALL dolt_backup('sync-url', 'file://<copy>/db/<db>')`, one per database per pass.**

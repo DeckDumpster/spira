@@ -801,3 +801,74 @@ fn prune_tmp_reads_the_real_filesystem_and_cuts_the_largest_at_a_zero_threshold(
     assert!(log[0].contains("big") && log[1].contains("small"), "{log:?}");
     assert!(prune_tmp(&w.cfg.data, &w.cfg.proc_dir, 101, 3600, NOW_MS).is_empty());
 }
+
+fn flushes_in(f: impl FnOnce()) -> u64 {
+    let before = FLUSHES.with(|c| c.get());
+    f();
+    FLUSHES.with(|c| c.get()) - before
+}
+
+fn online_flushes(w: &World, at: u64) -> u64 {
+    flushes_in(|| {
+        online_syncs(w, at);
+    })
+}
+
+#[test_id(tywrxjm)]
+#[test]
+fn an_idle_online_pass_forces_no_flush_and_still_records_its_start() {
+    let (w, now) = online_world();
+    assert_eq!(online_flushes(&w, now + 120_000), 0);
+    assert_eq!(read_state(&layout(&w)).unwrap().start_ms, now + 120_000);
+}
+
+#[test_id(t0fq2sp)]
+#[test]
+fn an_online_pass_after_a_payload_write_forces_the_flushes() {
+    let (w, now) = online_world();
+    let p = w.cfg.data.join("spira/.dolt/noms/payload");
+    put(&p, "v9");
+    let later = std::time::UNIX_EPOCH + std::time::Duration::from_millis(now + 300_000);
+    fs::File::options().write(true).open(&p).unwrap().set_modified(later).unwrap();
+    assert!(online_flushes(&w, now + 400_000) >= 3);
+}
+
+#[test_id(t6adwyh)]
+#[test]
+fn an_online_pass_after_only_a_metadata_change_forces_the_flushes() {
+    let (w, now) = online_world();
+    put(&w.cfg.data.join("spira/.dolt/repo_state.json"), "{\"changed\":true}");
+    assert!(online_flushes(&w, now + 120_000) >= 3);
+}
+
+#[test_id(t0wffer)]
+#[test]
+fn an_idle_offline_pass_still_forces_flushes() {
+    let (w, now) = online_world();
+    w.dolt.live.borrow_mut().clear();
+    w.clock.0.set(now + 120_000);
+    let n = flushes_in(|| {
+        pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).unwrap();
+    });
+    assert!(n >= 2, "{n}");
+}
+
+#[test_id(tes0nfx)]
+#[test]
+fn seed_still_forces_flushes() {
+    let w = world();
+    let n = flushes_in(|| {
+        seed(&w.cfg, &w.old, &w.dolt, &w.clock).unwrap();
+    });
+    assert!(n >= 3, "{n}");
+}
+
+#[test_id(tnoeyc5)]
+#[test]
+fn a_truncated_record_makes_the_next_online_pass_sync_every_database_and_rewrite_it() {
+    let (w, now) = online_world();
+    fs::write(layout(&w).state(), "start_ms=").unwrap();
+    let synced = online_syncs(&w, now + 120_000);
+    assert_eq!(synced, ["spira", "spira_aux"]);
+    assert_eq!(read_state(&layout(&w)).unwrap().start_ms, now + 120_000);
+}
