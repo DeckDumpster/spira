@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 pub struct Cfg {
     pub spira_run: PathBuf,
+    /// Where the scheduler keeps the cockpit document; none without a runtime directory.
+    pub cockpit_view_dir: Option<PathBuf>,
     /// The REAL `spira/` install directory (where `lib.sh` and `cockpit/moot-sweep.sh`'s
     /// sibling actually live), found via `main::lib_sh_dir` — never `$SPIRA_HOME`, which a
     /// caller may point elsewhere for data purposes while still expecting lib.sh's actual
@@ -104,6 +106,7 @@ impl Cfg {
     pub fn fixture(d: &std::path::Path, incident_sh: String) -> Cfg {
         Cfg {
             spira_run: d.to_path_buf(),
+            cockpit_view_dir: Some(d.join("view")),
             lib_sh_dir: String::new(),
             db: "db".into(),
             home_repo: "spira".into(),

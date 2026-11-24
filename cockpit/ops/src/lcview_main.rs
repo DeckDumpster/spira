@@ -1,829 +1,125 @@
-//! `lc-view tui|once|fit|loop [secs]` — the lifecycle-lens ops pane (sp-lpw5ol; interactive since sp-5j35g5). Gathers from the built
-//! tools only: `spira-lc list --live` (state, title, priority), the landing ref's
-//! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
+//! `lc-view tui|once|fit|loop [secs]` — the lifecycle-lens ops pane. It draws the one document the
+//! scheduler writes under the user runtime directory (`cockpit_ops::lcview::document_path`, under `spira_config::cockpit_view_dir`) and
+//! gathers nothing itself.
 
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
-use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{first_frame, published_snapshot, num, text, apply_claim_views, carry_forward, live_row, repo_column, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
-use spira_store::lc_call::LcError;
-use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
-use std::process::Command;
+use cockpit_ops::lcpane::{self, Clock, Terminal};
+use cockpit_ops::lctui::layout;
+use cockpit_ops::lcview::render;
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use crossterm::{cursor, execute, terminal};
+use std::io::Write;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-/// The store's served reads, in process: no `spira-lc` per call.
-fn lc(args: &[&str]) -> Result<String, LcError> {
-    if let Some(held) = store_view::held_read(args) {
-        return held;
-    }
-    cockpit_ops::lcio::answer(&cockpit_ops::lcio::client().map_err(LcError::Fault)?, args)
-}
-
-/// Files a failed store read where `carry_forward` can cover it; a store that is not running is
-/// marked on the snapshot, decided by the error's kind and never its text.
-fn store_failed(s: &mut Snapshot, e: LcError) {
-    s.not_running |= matches!(e, LcError::NotRunning(_));
-    s.store_errors.push(e.to_string());
-}
-
-/// A non-Spira child (git) or a sibling the library cannot yet answer, under a 5 s cap.
-fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("timeout")
-        .arg("5")
-        .arg(cmd)
-        .args(args)
-        .output()
-        .map_err(|e| format!("{cmd}: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("{cmd} {}: exit {} {}", args.join(" "), out.status.code().unwrap_or(-1), err.lines().last().unwrap_or("")));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-/// Whether the world is halted, from the halt stamp `world status` reads (spira_world), in
-/// process: a running world reads as "plane work: RUNNING", the form the view understands.
-fn world_plane() -> Result<String, String> {
-    let stamp = spira_world::halt_stamp()?;
-    let text = stamp.is_file().then(|| std::fs::read_to_string(&stamp).unwrap_or_default());
-    Ok(cockpit_ops::lcview::world_line(text.as_deref()))
-}
-
-fn read_tail(path: &std::path::Path) -> Option<Tail> {
-    let mut f = std::fs::File::open(path).ok()?;
-    let meta = f.metadata().ok()?;
-    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
-    let start = meta.len().saturating_sub(TAIL_BYTES);
-    f.seek(SeekFrom::Start(start)).ok()?;
-    let mut buf = Vec::new();
-    f.take(TAIL_BYTES).read_to_end(&mut buf).ok()?;
-    Some(Tail { lines: tail_lines(&buf, start > 0, 2), mtime })
-}
-
-fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, LcError> {
-    let name = format!("spira-lc {}", args.join(" "));
-    lc(args)
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| LcError::Fault(format!("{name}: {e}"))))
-        .map(|v| v.as_array().cloned().unwrap_or_default())
-}
-
-/// The `items` of a `spira-lc plan items` answer.
-fn plan_items(args: &[&str]) -> Result<Vec<serde_json::Value>, LcError> {
-    let name = format!("spira-lc {}", args.join(" "));
-    let v: serde_json::Value = lc(args).and_then(|t| serde_json::from_str(&t).map_err(|e| LcError::Fault(format!("{name}: {e}"))))?;
-    v["items"].as_array().cloned().ok_or_else(|| LcError::Fault(format!("{name}: no items in the answer")))
-}
-
-fn gather_state_machine(s: &mut Snapshot) {
-    match lc_json(&["ops-graph"]) {
-        Ok(rows) => s.graph = rows.iter().map(|g| GraphEdge { from: text(&g["from"]), event: text(&g["event"]), to: text(&g["to"]) }).collect(),
-        Err(e) => store_failed(s, e),
-    }
-    match lc_json(&["ops-view", "ops_edges"]) {
-        Ok(rows) => {
-            s.edges = rows
-                .iter()
-                .map(|e| EdgeRow {
-                    kind: text(&e["kind"]),
-                    from_state: text(&e["from_state"]),
-                    to_state: e["to_state"].as_str().map(String::from),
-                    event: e["event"].as_str().map(String::from),
-                    refusal: e["refusal"].as_str().map(String::from),
-                    n_1h: num(&e["n_1h"]).unwrap_or(0),
-                })
-                .collect()
-        }
-        Err(e) => store_failed(s, e),
-    }
-    match lc_json(&["ops-view", "ops_dwell"]) {
-        Ok(rows) => {
-            s.dwell = rows
-                .iter()
-                .map(|d| DwellRow { bead_id: text(&d["bead_id"]), state: text(&d["state"]), entered_at: num(&d["entered_at"]).unwrap_or(0), p95_s: num(&d["p95_s"]) })
-                .collect()
-        }
-        Err(e) => store_failed(s, e),
-    }
-    match lc_json(&["list", "--batches"]) {
-        Ok(rows) => {
-            let mut by_time: Vec<(i64, String, String)> = Vec::new();
-            for b in &rows {
-                let at = num(&b["last_at"]).or_else(|| num(&b["opened_at"])).unwrap_or(0);
-                for e in b["ejected"].as_array().cloned().unwrap_or_default() {
-                    if let (Some(id), Some(why)) = (e["bead_id"].as_str(), e["reason"].as_str()) {
-                        by_time.push((at, id.to_string(), why.to_string()));
-                    }
-                }
-            }
-            by_time.sort();
-            for (_, id, why) in by_time {
-                s.eject_why.insert(id, why);
-            }
-            s.batches = rows
-                .iter()
-                .map(|b| BatchRow {
-                    id: text(&b["batch_id"]),
-                    state: text(&b["state"]),
-                    last_at: num(&b["last_at"]).or_else(|| num(&b["opened_at"])).unwrap_or(0),
-                    members: b["members"].as_array().map(|arr| arr.iter().map(|x| text(&x["bead_id"])).collect()).unwrap_or_default(),
-                    opened_at: num(&b["opened_at"]).unwrap_or(0),
-                    parent: text(&b["parent"]),
-                    repo: text(&b["repo"]),
-                    pr: num(&b["pr"]).unwrap_or(0),
-                    phase: text(&b["phase"]),
-                    progress: PassProgress::from_json(&b["progress"]),
-                    run_url: b["progress"]["run_url"].as_str().unwrap_or("").to_string(),
-                    log: b["progress"]["log"].as_str().unwrap_or("").to_string(),
-                    eject_at: Vec::new(),
-                    ejected: b["ejected"]
-                        .as_array()
-                        .map(|arr| arr.iter().map(|x| x["bead_id"].as_str().map(String::from).unwrap_or_else(|| text(x))).collect())
-                        .unwrap_or_default(),
-                })
-                .collect()
-        }
-        Err(e) => store_failed(s, e),
-    }
-    // Eject times for the newest round only: that is the one the pane names.
-    if let Some(b) = s.batches.iter_mut().max_by_key(|b| b.opened_at.max(b.last_at)).filter(|b| !b.ejected.is_empty()) {
-        match lc_json(&["history", &b.id, "--machine", "batch"]) {
-            Ok(evs) => {
-                b.eject_at = evs
-                    .iter()
-                    .filter(|e| e["evidence"].as_str().is_some_and(|x| x.starts_with("{\"Eject\"")))
-                    .filter_map(|e| num(&e["at"]))
-                    .collect()
-            }
-            Err(e) => store_failed(s, e),
-        }
-    }
-}
-
-fn gather_vm_runs(s: &mut Snapshot) {
-    // FORK-EDGE: needs a round-vm library (lease status); round-vm is a sibling binary.
-    let status = run("round-vm", &["status", "--json"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("round-vm status --json: {e}")));
-    let v = match status {
-        Ok(v) => v,
-        Err(e) => return s.errors.push(e),
-    };
-    let strs = |x: &serde_json::Value| x.as_array().map(|a| a.iter().map(text).collect()).unwrap_or_default();
-    for l in v["leases"].as_array().cloned().unwrap_or_default() {
-        s.vm_runs.push(VmRun { vm: text(&l["vm"]), age_secs: num(&l["age_secs"]).unwrap_or(0), owner: text(&l["owner"]), cmd: strs(&l["cmd"]), idle: false, run: text(&l["run"]), held: l["held"].as_bool().unwrap_or(false), held_age_secs: num(&l["held_age_secs"]).unwrap_or(0) });
-    }
-    if let Some(r) = v["ready"].as_object().filter(|r| !r.is_empty()) {
-        let handle = r.get("vm").map(text).unwrap_or_default();
-        let since = v["vms"].as_array().and_then(|a| a.iter().find(|x| text(&x["vm"]) == handle)).and_then(|x| num(&x["age_secs"])).unwrap_or(0);
-        s.vm_runs.push(VmRun { vm: handle, age_secs: since, owner: String::new(), cmd: Vec::new(), idle: true, ..Default::default() });
-    }
-}
-
-/// `spira-config repo root|base <name>`, read from the registry in process.
-fn repo_root_and_base(name: &str) -> Result<(String, String), String> {
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
-    let reg = spira_config::repos::Registry::from_env_checkout(env, &home);
-    let root = reg.root(name).ok_or_else(|| format!("spira-config repo root {name}: exit 1 "))?;
-    let base = reg.base(name).ok_or_else(|| format!("spira-config repo base {name}: exit 1 "))?;
-    Ok((root, base))
-}
-
-fn base_commits() -> Result<(String, HashMap<String, String>), String> {
-    let (root, base) = repo_root_and_base("spira")?;
-    let base = base.trim().to_string();
-    on_base_cached(root.trim(), &base).map(|m| (base, m))
-}
-
-/// Commits of the base are re-read only when the base ref moves: the log is keyed by the ref's sha.
-fn on_base_cached(root: &str, base: &str) -> Result<HashMap<String, String>, String> {
-    use std::sync::Mutex;
-    static CACHE: Mutex<Option<(String, HashMap<String, String>)>> = Mutex::new(None);
-    let refname = format!("refs/heads/{base}");
-    let sha = run("git", &["-C", root, "rev-parse", &refname])?.trim().to_string();
-    if let Some((at, m)) = CACHE.lock().ok().and_then(|c| c.clone()) {
-        if at == sha {
-            return Ok(m);
-        }
-    }
-    let log = run("git", &["-C", root, "log", "--format=%H %s", "-n", "4000", &sha])?;
-    let mut m = HashMap::new();
-    for l in log.lines() {
-        if let Some((h, subj)) = l.split_once(' ') {
-            for id in own_ids(subj) {
-                m.entry(id).or_insert_with(|| h.to_string());
-            }
-        }
-    }
-    if let Ok(mut c) = CACHE.lock() {
-        *c = Some((sha, m.clone()));
-    }
-    Ok(m)
-}
-
-/// The live dwarves: every `spira-dwarf-*` unit's main pid and start (one systemctl call), and its
-/// phase read from its process tree (status only, never its work).
-fn live_dwarves() -> Option<Vec<LiveDwarf>> {
-    let args = dwarf_list_args();
-    // FORK-EDGE: needs Units::list(prefix) with MainPID and ActiveEnterTimestamp — the port
-    // reads one named unit, and the dwarves are found by their unit-name prefix.
-    let units = dwarf_units_in(&run("systemctl", &args.iter().map(String::as_str).collect::<Vec<_>>()).ok()?);
-    if units.is_empty() {
-        return Some(Vec::new());
-    }
-    let mut args: Vec<&str> = vec!["--user", "show", "--timestamp=unix", "-p", "Id,MainPID,ActiveEnterTimestamp"];
-    args.extend(units.iter().map(String::as_str));
-    // FORK-EDGE: needs Units::list(prefix) (as above).
-    let shown = run("systemctl", &args).ok()?;
-    let mut out = Vec::new();
-    for block in shown.split("\n\n") {
-        let get = |k: &str| block.lines().find_map(|l| l.strip_prefix(&format!("{k}=")).map(str::to_string)).unwrap_or_default();
-        let pid: i64 = get("MainPID").parse().unwrap_or(0);
-        if pid <= 0 {
-            continue;
-        }
-        let started = get("ActiveEnterTimestamp").trim_start_matches('@').parse().unwrap_or(0);
-        out.push(LiveDwarf { unit: get("Id"), pid, started, phase: String::new() });
-    }
-    Some(out)
-}
-
-/// The `systemctl` argv that lists the dwarf units, by either name
-/// (`runtime::units::dwarf_globs`, sp-li4zys).
-fn dwarf_list_args() -> Vec<String> {
-    let mut a: Vec<String> = ["--user", "list-units"].iter().map(|s| s.to_string()).collect();
-    a.extend(runtime::units::dwarf_globs());
-    a.extend(["--no-legend".to_string(), "--plain".to_string()]);
-    a
-}
-
-/// The live dwarf units in `list-units` output (`runtime::units::live_dwarf_in_list_line`).
-fn dwarf_units_in(list: &str) -> Vec<String> {
-    let mut units: Vec<String> = list.lines().filter_map(runtime::units::live_dwarf_in_list_line).map(String::from).collect();
-    units.dedup();
-    units
-}
-
-fn gather_menders(s: &mut Snapshot) {
-    match lc_json(&["mending", "list", "--live"]) {
-        Ok(rows) => {
-            s.menders = rows
-                .iter()
-                .map(|m| MenderRow { batch_id: text(&m["batch_id"]), pass: num(&m["pass"]).unwrap_or(0), suite: text(&m["suite"]), state: text(&m["state"]), deadline: num(&m["deadline"]) })
-                .collect()
-        }
-        Err(e) => store_failed(s, e),
-    }
-}
-
-fn gather_gate_runs(s: &mut Snapshot) {
-    let read = spira_config::process::cfg("SPIRA_RUN").and_then(|run| {
-        let src = tsd::query::Source { reader: None, root: std::path::Path::new(&run) };
-        let from = (s.now.max(0) as u64).saturating_sub(7 * 86_400);
-        match src.rows("gate-run", from) {
-            Ok(rows) => Ok(rows),
-            Err(f) if f.code == tsd::query::ERR_NO_FAMILY => Ok(Vec::new()),
-            Err(f) => Err(f.message),
-        }
-    });
-    match read {
-        Ok(rows) => s.gate_runs = cockpit_ops::lcview::latest_gate_runs(&rows),
-        Err(e) => s.errors.push(e),
-    }
-}
-
-fn gather_closed(s: &mut Snapshot) {
-    let read = spira_config::process::cfg("SPIRA_VICTORIALOGS_URL")
-        .and_then(|url| spira_otel::vlogs::Logs::new(&url).map_err(|e| e.to_string()))
-        .and_then(|logs| Ok((cockpit_ops::lcview::closed_24h(&logs)?, cockpit_ops::lcview::applied_edges_1h(&logs)?)));
-    match read {
-        Ok((c, applied)) => {
-            s.closed = Some(c);
-            s.edges.retain(|e| e.kind != "applied");
-            s.edges.extend(applied);
-        }
-        Err(e) => s.errors.push(e),
-    }
-}
-
-fn gather() -> Snapshot {
-    let started = std::time::Instant::now();
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let mut s = Snapshot { now, ..Default::default() };
-    s.release = spira_config::release_env::release_root_for_process()
-        .ok()
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "?".into());
-
-    let world = std::thread::spawn(world_plane);
-    let git = std::thread::spawn(base_commits);
-    let live = std::thread::spawn(live_dwarves);
-    let sm = std::thread::spawn(|| {
-        let mut t = Snapshot::default();
-        gather_state_machine(&mut t);
-        gather_closed(&mut t);
-        gather_vm_runs(&mut t);
-        t
-    });
-    // A dwarf's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
-    let mut phases: HashMap<i64, String> = HashMap::new();
-    match lc_json(&["list", "--live"]) {
-        Ok(rows) => {
-            let mut read = true;
-            for r in rows {
-                let (row, meta) = match live_row(&r) {
-                    Ok(x) => x,
-                    Err(e) => {
-                        s.errors.push(format!("spira-lc list --live: {e}"));
-                        read = false;
-                        break;
-                    }
-                };
-                if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["dwarf_phase"].as_str()) {
-                    phases.insert(pid, ph.to_string());
-                }
-                s.meta.insert(row.id.clone(), meta);
-                s.rows.push(row);
-            }
-            if read {
-                apply_claim_views(&mut s);
-            }
-        }
-        Err(e) => store_failed(&mut s, e),
-    }
-    // `list --live` carries no terminal rows, so LANDED 24h is gathered from its own windowed view.
-    // The same call carries the epic rollup (`--epics`), so EPICS costs the pane no store call; a
-    // server without it answers with the bare array, and EPICS is then simply absent.
-    match lc(&["ops-view", "ops_recent", "--epics"])
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| LcError::Fault(format!("spira-lc ops-view ops_recent: {e}"))))
-        .map(|v| match v {
-            serde_json::Value::Array(rows) => rows,
-            mut o => {
-                s.epics = serde_json::from_value(o["epics"].take()).unwrap_or_default();
-                o["rows"].as_array().cloned().unwrap_or_default()
-            }
-        }) {
-        Ok(rows) => {
-            for r in rows {
-                let repo = match repo_column(&r) {
-                    Ok(repo) => repo,
-                    Err(e) => {
-                        s.errors.push(format!("spira-lc ops-view ops_recent: {e}"));
-                        break;
-                    }
-                };
-                let id = text(&r["bead_id"]);
-                let updated_at = num(&r["updated_at"]).unwrap_or(0);
-                s.meta.entry(id.clone()).or_insert_with(|| Meta { title: text(&r["title"]), priority: num(&r["priority"]), ..Default::default() });
-                s.rows.push(Row { id, state: "LANDED".into(), updated_at, since: num(&r["since"]).unwrap_or(updated_at), repo, ..Default::default() });
-            }
-        }
-        Err(e) => store_failed(&mut s, e),
-    }
-    match lc(&["list-asks"]).and_then(|t| cockpit_ops::lcview::ask_rows(&t).map_err(LcError::Fault)) {
-        Ok(asks) => {
-            let label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
-            if !label.is_empty() {
-                for a in &asks {
-                    s.meta.entry(a.id.clone()).or_default().labels.push(label.clone());
-                }
-            }
-            s.asks = asks;
-        }
-        Err(e) => {
-            s.asks_error = Some(e.to_string());
-            store_failed(&mut s, e);
-        }
-    }
-    if s.asks.iter().any(|a| a.title.is_empty()) {
-        let ids = s.asks.iter().filter(|a| a.title.is_empty()).map(|a| a.id.as_str()).collect::<Vec<_>>().join(",");
-        match plan_items(&["plan", "items", "--ids", &ids]) {
-            Ok(rows) => cockpit_ops::lcview::fill_ask_titles(&mut s.asks, &rows),
-            Err(e) => store_failed(&mut s, e),
-        }
-    }
-    match git.join().unwrap_or_else(|_| Err("git: panicked".into())) {
-        Ok((base, m)) => {
-            s.base = base;
-            s.on_base = m;
-        }
-        Err(e) => s.errors.push(e),
-    }
-    s.world = world.join().unwrap_or_else(|_| Err("world status: panicked".into())).unwrap_or_else(|e| {
-        s.errors.push(e);
-        "?".into()
-    });
-    s.live = live.join().unwrap_or(None).map(|mut l| {
-        for a in l.iter_mut() {
-            a.phase = phases.get(&a.pid).cloned().unwrap_or_else(|| "working".into());
-        }
-        l
-    });
-    let live_pids: Vec<i64> = s.live.as_ref().map(|l| l.iter().map(|a| a.pid).collect()).unwrap_or_default();
-    if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
-        for r in s.rows.iter().filter(|r| (r.state == "WORKING" && r.holder.is_some()) || r.holder.as_deref().and_then(holder_pid).is_some_and(|p| live_pids.contains(&p))) {
-            if let Some(t) = read_tail(&std::path::Path::new(run.trim()).join(format!("{}.log", r.id))) {
-                s.tails.insert(r.id.clone(), t);
-            }
-        }
-        s.inflight = std::fs::read_to_string(std::path::Path::new(run.trim()).join("cockpit.env")).map(|t| cockpit_ops::lcview::Inflight::from_cockpit_env(&t)).unwrap_or_default();
-    }
-    let sm = sm.join().unwrap_or_default();
-    s.graph = sm.graph;
-    s.edges = sm.edges;
-    s.dwell = sm.dwell;
-    s.batches = sm.batches;
-    s.vm_runs = sm.vm_runs;
-    s.closed = sm.closed;
-    s.eject_why = sm.eject_why;
-    s.errors.extend(sm.errors);
-    // The pass's live counts are not on the batch row yet, and the pane reads a pass only
-    // through spira-lc (cockpit-no-round-files), so the bar stays empty until they are.
-    s.progress = None;
-    s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
-    s.forge_base = spira_config::process::cfg("SPIRA_FORGE_REPO").ok().and_then(|r| r.trim().split_once('/').map(|(o, _)| format!("https://github.com/{o}"))).unwrap_or_default();
-    s.loom_base = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map(|a| format!("http://{}", a.replacen("0.0.0.0", "localhost", 1)));
-    gather_menders(&mut s);
-    gather_gate_runs(&mut s);
-    let file_ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_DWARVES").ok().map(|v| v.trim().to_string());
-    let limit = spira_config::scheduler_link::Limit::read("SPIRA_MAX_LIVE_DWARVES", file_ceiling.as_deref());
-    s.ceiling = limit.shown().and_then(|v| v.parse().ok()).unwrap_or(0);
-    if let Some(p) = limit.pending() {
-        s.ceiling_pending = p.config.clone();
-        s.ceiling_waits = p.waits.clone();
-    }
-    s.failed = s.errors.iter().chain(s.store_errors.iter()).cloned().collect();
-    s.gather_ms = started.elapsed().as_millis() as u64;
-    s
-}
-
-/// Write the snapshot loom serves (`/lifecycle`), atomically, so the phone page shows exactly
-/// what this pane just drew. A failure is printed in the frame's place, never swallowed.
-fn publish(s: &Snapshot) {
-    let Ok(run) = spira_config::process::cfg("SPIRA_RUN") else {
-        eprintln!("lc-view: SPIRA_RUN does not resolve — the phone page will go stale");
-        return;
-    };
-    let dir = std::path::Path::new(run.trim()).join("lcview");
-    let tmp = dir.join(".snapshot.json.tmp");
-    let res = std::fs::create_dir_all(&dir)
-        .and_then(|_| std::fs::write(&tmp, serde_json::to_vec(s).unwrap_or_default()))
-        .and_then(|_| std::fs::rename(&tmp, dir.join("snapshot.json")));
-    if let Err(e) = res {
-        eprintln!("lc-view: cannot publish the snapshot under {}: {e}", dir.display());
-    }
-}
 
 fn width() -> usize {
     std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).unwrap_or(120)
-}
-
-fn ui_path() -> Option<std::path::PathBuf> {
-    let run = spira_config::process::cfg("SPIRA_RUN").ok()?;
-    Some(std::path::Path::new(run.trim()).join("lcview").join("ui.json"))
-}
-
-fn load_ui() -> Ui {
-    ui_path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-}
-
-fn save_ui(ui: &Ui) {
-    let Some(p) = ui_path() else { return };
-    let tmp = p.with_extension("json.tmp");
-    let _ = std::fs::create_dir_all(p.parent().unwrap_or(std::path::Path::new(".")))
-        .and_then(|_| std::fs::write(&tmp, serde_json::to_vec(ui).unwrap_or_default()))
-        .and_then(|_| std::fs::rename(&tmp, &p));
 }
 
 fn unix_now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-/// The snapshot the previous pane published, to draw before this pane's first gather returns.
-fn seed() -> Option<Snapshot> {
-    let run = spira_config::process::cfg("SPIRA_RUN").ok()?;
-    published_snapshot(std::path::Path::new(run.trim()))
+fn view_dir() -> Result<PathBuf, String> {
+    std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()).map(|d| spira_config::cockpit_view_dir(std::path::Path::new(&d))).ok_or_else(|| "lc-view: XDG_RUNTIME_DIR is unset — there is no runtime directory to read the document from".to_string())
 }
 
-/// The interactive pane: draws exactly the terminal's size, redraws at once on a key, a click or a
-/// resize, and gathers fresh data every `secs` on a worker thread so input never waits on a slow
-/// store. q leaves.
-fn interactive(secs: u64) -> std::io::Result<()> {
-    use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
-    use crossterm::{cursor, execute, terminal};
-    use std::io::Write;
-    use std::sync::mpsc;
+fn ui_path() -> Result<PathBuf, String> {
+    let run = spira_config::process::cfg("SPIRA_RUN").map_err(|e| format!("lc-view: {e}"))?;
+    Ok(std::path::Path::new(run.trim()).join("lcview").join("ui.json"))
+}
 
-    let (tx, rx) = mpsc::channel::<Snapshot>();
-    let mut last = seed();
-    let first = first_frame(last.as_ref(), unix_now()).map(|s| view(&s));
-    std::thread::spawn(move || loop {
-        let mut snap = gather();
-        if let Some(l) = last.as_ref() {
-            carry_forward(&mut snap, l);
-        }
-        last = Some(snap.clone());
-        publish(&snap);
-        if tx.send(snap).is_err() {
-            return;
-        }
-        std::thread::sleep(Duration::from_secs(secs));
-    });
+struct Clock0;
 
+impl Clock for Clock0 {
+    fn now(&self) -> i64 {
+        unix_now()
+    }
+}
+
+struct Screen(std::io::Stdout);
+
+impl Terminal for Screen {
+    fn size(&mut self) -> (usize, usize) {
+        terminal::size().map(|(w, h)| (w as usize, h as usize)).unwrap_or((width(), 40))
+    }
+
+    fn poll(&mut self, wait: Duration) -> std::io::Result<Option<Event>> {
+        if event::poll(wait)? {
+            return event::read().map(Some);
+        }
+        Ok(None)
+    }
+
+    fn draw(&mut self, lines: &[String]) -> std::io::Result<()> {
+        let mut buf = String::from("\x1b[H");
+        for (i, l) in lines.iter().enumerate() {
+            buf.push_str(l);
+            buf.push_str("\x1b[K");
+            if i + 1 < lines.len() {
+                buf.push_str("\r\n");
+            }
+        }
+        buf.push_str("\x1b[J");
+        write!(self.0, "{buf}")?;
+        self.0.flush()
+    }
+}
+
+fn interactive(dir: &std::path::Path, ui: PathBuf, secs: u64) -> std::io::Result<()> {
     let mut out = std::io::stdout();
     terminal::enable_raw_mode()?;
     execute!(out, terminal::EnterAlternateScreen, EnableMouseCapture, cursor::Hide, terminal::DisableLineWrap)?;
-    let restore = |out: &mut std::io::Stdout| {
-        let _ = execute!(out, terminal::EnableLineWrap, cursor::Show, DisableMouseCapture, terminal::LeaveAlternateScreen);
-        let _ = terminal::disable_raw_mode();
-    };
-
-    let mut ui = load_ui();
-    let mut v: Option<View> = first;
-    let mut frame = Frame::default();
-    let mut said_waiting = false;
-    let res = (|| -> std::io::Result<()> {
-        loop {
-            let mut dirty = !std::mem::replace(&mut said_waiting, true);
-            while let Ok(snap) = rx.try_recv() {
-                let nv = view(&snap);
-                // Forget choices for beads that have left the tree, once a whole gather says so.
-                if nv.errors.is_empty() && !frame.all_keys.is_empty() {
-                    let fresh = layout(&nv, &ui, 200, 1000).all_keys;
-                    let before = ui.modes.len();
-                    ui.modes.retain(|k, _| !k.contains("sp-") || fresh.contains(k));
-                    if ui.modes.len() != before {
-                        save_ui(&ui);
-                    }
-                }
-                v = Some(nv);
-                dirty = true;
-            }
-            if event::poll(Duration::from_millis(if v.is_some() { 250 } else { 50 }))? {
-                dirty = true;
-                let pos = frame.order.iter().position(|k| *k == ui.selected).unwrap_or(0);
-                let sel = frame.order.get(pos).cloned().unwrap_or_default();
-                let (has_kids, showing) = frame.nodes.get(&sel).copied().unwrap_or((false, false));
-                let select = |ui: &mut Ui, k: Option<&String>| {
-                    if let Some(k) = k {
-                        ui.selected = k.clone();
-                        ui.scroll = 0;
-                    }
-                };
-                match event::read()? {
-                    Event::Key(k) if k.kind != KeyEventKind::Release => match k.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('j') | KeyCode::Down => select(&mut ui, frame.order.get(pos + 1)),
-                        KeyCode::Char('k') | KeyCode::Up => select(&mut ui, pos.checked_sub(1).and_then(|p| frame.order.get(p))),
-                        KeyCode::Tab => {
-                            // Next top-level section.
-                            let next = frame.order.iter().skip(pos + 1).find(|k| !k.contains('/'));
-                            select(&mut ui, next.or_else(|| frame.order.first()))
-                        }
-                        KeyCode::BackTab => {
-                            let prev = frame.order.iter().take(pos).rev().find(|k| !k.contains('/'));
-                            select(&mut ui, prev)
-                        }
-                        KeyCode::Char('l') | KeyCode::Right if has_kids => {
-                            if showing {
-                                select(&mut ui, frame.order.get(pos + 1));
-                            } else {
-                                ui.set(&sel, Mode::Open);
-                                save_ui(&ui);
-                            }
-                        }
-                        KeyCode::Char('h') | KeyCode::Left => {
-                            if has_kids && showing {
-                                ui.set(&sel, Mode::Collapsed);
-                                save_ui(&ui);
-                            } else {
-                                let up = parent_key(&sel).map(String::from);
-                                select(&mut ui, up.as_ref());
-                            }
-                        }
-                        KeyCode::Enter | KeyCode::Char(' ') if has_kids => {
-                            ui.cycle(&sel);
-                            save_ui(&ui);
-                        }
-                        KeyCode::Char('a') => {
-                            ui.reset(&sel);
-                            save_ui(&ui);
-                        }
-                        KeyCode::Char('A') => {
-                            ui.modes.clear();
-                            ui.scroll = 0;
-                            save_ui(&ui);
-                        }
-                        KeyCode::PageDown => ui.scroll += 10,
-                        KeyCode::PageUp => ui.scroll = ui.scroll.saturating_sub(10),
-                        _ => dirty = false,
-                    },
-                    Event::Mouse(m) => match m.kind {
-                        MouseEventKind::Down(MouseButton::Left) => {
-                            if let Some((_, key)) = frame.rows.iter().find(|(r, _)| *r == m.row as usize) {
-                                ui.selected = key.clone();
-                                if frame.nodes.get(key).is_some_and(|n| n.0) {
-                                    ui.cycle(key);
-                                }
-                                save_ui(&ui);
-                            } else {
-                                dirty = false;
-                            }
-                        }
-                        MouseEventKind::ScrollDown => ui.scroll += 3,
-                        MouseEventKind::ScrollUp => ui.scroll = ui.scroll.saturating_sub(3),
-                        _ => dirty = false,
-                    },
-                    Event::Resize(..) => {}
-                    _ => dirty = false,
-                }
-            }
-            if !dirty {
-                continue;
-            }
-            let (w, h) = terminal::size().map(|(w, h)| (w as usize, h as usize)).unwrap_or((width(), 40));
-            let Some(view) = v.as_ref() else {
-                execute!(out, cursor::MoveTo(0, 0), terminal::Clear(terminal::ClearType::All))?;
-                write!(out, "lc-view: gathering…")?;
-                out.flush()?;
-                continue;
-            };
-            frame = layout(view, &ui, w, h);
-            let mut buf = String::from("\x1b[H");
-            for (i, l) in frame.lines.iter().enumerate() {
-                buf.push_str(l);
-                buf.push_str("\x1b[K");
-                if i + 1 < frame.lines.len() {
-                    buf.push_str("\r\n");
-                }
-            }
-            buf.push_str("\x1b[J");
-            write!(out, "{buf}")?;
-            out.flush()?;
-        }
-    })();
-    restore(&mut out);
+    let res = lcpane::run(&mut Screen(std::io::stdout()), &Clock0, dir, Some(ui), secs);
+    let _ = execute!(out, terminal::EnableLineWrap, cursor::Show, DisableMouseCapture, terminal::LeaveAlternateScreen);
+    let _ = terminal::disable_raw_mode();
     res
-}
-
-/// The lifecycle and round reads of a refreshing pane, kept current by the store's watch: each
-/// refresh then reads only what changed. Without one (no config, no store) reads go to the store.
-fn keep_views() {
-    let Ok(client) = cockpit_ops::lcio::client() else { return };
-    let Ok(views) = store_view::Projection::configured(client) else { return };
-    let views = store_view::install(std::sync::Arc::new(views));
-    if let Err(e) = views.load() {
-        eprintln!("lc-view: store views not loaded at start: {e}");
-    }
-    std::thread::spawn(move || views.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if matches!(args.get(1).map(String::as_str), Some("tui" | "loop")) {
-        keep_views();
+    let usage = |other: &str| {
+        eprintln!("usage: lc-view tui [secs] | once | fit | loop [secs] (unknown: {other})");
+        std::process::exit(2);
+    };
+    let mode = args.get(1).map(String::as_str);
+    if !matches!(mode, Some("tui" | "loop" | "once" | "fit") | None) {
+        usage(mode.unwrap_or(""));
     }
-    match args.get(1).map(String::as_str) {
+    let dir = view_dir().unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    let secs = |default: u64| args.get(2).and_then(|a| a.parse().ok()).unwrap_or(default);
+    let drawn = || lcpane::read_view(&dir, unix_now());
+    let ui = || ui_path().map_err(|e| e.to_string());
+    match mode {
         Some("tui") => {
-            let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(15);
-            if let Err(e) = interactive(secs) {
-                eprintln!("lc-view tui: {e}");
+            if let Err(e) = ui().and_then(|ui| interactive(&dir, ui, secs(15)).map_err(|e| format!("lc-view tui: {e}"))) {
+                eprintln!("{e}");
                 std::process::exit(1);
             }
         }
-        Some("loop") => {
-            let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(10);
-            let mut last = seed();
-            if let Some(first) = first_frame(last.as_ref(), unix_now()) {
-                println!("\x1b[H\x1b[2J{}", render(&view(&first), width()).join("\n"));
-            }
-            loop {
-                let mut snap = gather();
-                if let Some(l) = last.as_ref() {
-                    carry_forward(&mut snap, l);
-                }
-                last = Some(snap.clone());
-                publish(&snap);
-                let frame = render(&view(&snap), width());
-                println!("\x1b[H\x1b[2J{}", frame.join("\n"));
-                std::thread::sleep(Duration::from_secs(secs));
-            }
-        }
-        Some("once") | None => println!("{}", render(&view(&gather()), width()).join("\n")),
+        Some("loop") => loop {
+            let frame = drawn().map(|v| render(&v, width())).unwrap_or_else(|e| vec![e]);
+            println!("\x1b[H\x1b[2J{}", frame.join("\n"));
+            std::thread::sleep(Duration::from_secs(secs(10)));
+        },
         Some("fit") => {
-            // One frame of the TUI layout at COLUMNS x LINES, for a non-interactive look.
             let h = std::env::var("LINES").ok().and_then(|c| c.parse().ok()).unwrap_or(50);
-            let mut snap = gather();
-            if let Some(l) = seed() {
-                carry_forward(&mut snap, &l);
+            match (ui(), drawn()) {
+                (Ok(ui), Ok(v)) => println!("{}", layout(&v, &lcpane::load_ui(Some(&ui)), width(), h).lines.join("\n")),
+                (Err(e), _) | (_, Err(e)) => println!("{e}"),
             }
-            println!("{}", layout(&view(&snap), &load_ui(), width(), h).lines.join("\n"));
         }
-        Some(other) => {
-            eprintln!("usage: lc-view tui [secs] | once | fit | loop [secs] (unknown: {other})");
-            std::process::exit(2);
-        }
+        _ => println!("{}", drawn().map(|v| render(&v, width())).unwrap_or_else(|e| vec![e]).join("\n")),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use spira_store::lc_call::{LcClient, Reply, Transport};
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    struct Counting(Mutex<Vec<String>>);
-
-    impl Transport for Counting {
-        fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-            self.0.lock().unwrap().push(argv.join(" "));
-            let out = match argv[0].as_str() {
-                "rc" => r#"{"ok":{"items":[],"list_rev":5}}"#.to_string(),
-                "watch" => {
-                    // clock-safe: the double's long-poll, ending after a pause
-                    std::thread::sleep(Duration::from_millis(5));
-                    r#"{"progress_rev":5}"#.to_string()
-                }
-                _ => "[]".to_string(),
-            };
-            Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
-        }
-    }
-
-    #[test_id(tpnit22)]
-    #[test]
-    fn a_second_refresh_with_no_store_change_sends_no_live_or_round_list() {
-        let store = Arc::new(Counting(Mutex::new(Vec::new())));
-        let views = store_view::install(Arc::new(store_view::Projection::new(LcClient::over(store.clone(), true), Duration::from_secs(30), Arc::new(std::time::Instant::now))));
-        views.load().unwrap();
-        let watcher = views.clone();
-        std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
-        // clock-safe: a cap on the wait for the watch thread to start
-        for _ in 0..6000 {
-            if views.watching() {
-                break;
-            }
-            // clock-safe: a poll interval under that cap
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        let loaded = store.0.lock().unwrap().len();
-        for _ in 0..2 {
-            assert_eq!(store_view::held_read(&["list", "--live"]).unwrap().unwrap(), "[]");
-            assert_eq!(store_view::held_read(&["list", "--batches"]).unwrap().unwrap(), "[]");
-        }
-        let sent = store.0.lock().unwrap().clone();
-        assert!(!sent[loaded..].iter().any(|a| a.starts_with("list --live")), "{sent:?}");
-        assert_eq!(sent.iter().filter(|a| a.starts_with("list --batches")).count(), 1, "the rounds are asked once and held: {sent:?}");
-        assert!(sent.iter().any(|a| a.starts_with("watch ") && a.contains("--wait-ms 30000")), "{sent:?}");
-    }
-
-    #[test_id(tn3v7hx)]
-    #[test]
-    fn ages_advance_between_renders_while_the_watch_is_held() {
-        struct Blocked(Mutex<Vec<String>>, std::sync::mpsc::Sender<()>, Mutex<std::sync::mpsc::Receiver<()>>);
-        impl Transport for Blocked {
-            fn exchange(&self, argv: &[String], _: Option<&str>, _: Duration) -> Result<Reply, String> {
-                self.0.lock().unwrap().push(argv.join(" "));
-                let out = match argv[0].as_str() {
-                    "rc" => r#"{"ok":{"items":[],"list_rev":5}}"#.to_string(),
-                    "watch" => {
-                        let _ = self.1.send(());
-                        let _ = self.2.lock().unwrap().recv();
-                        r#"{"progress_rev":5}"#.to_string()
-                    }
-                    _ => "[]".to_string(),
-                };
-                Ok(Reply { code: 0, out, err: String::new(), read_ended: false })
-            }
-        }
-        let (held_tx, held_rx) = std::sync::mpsc::channel();
-        let (_release_tx, release_rx) = std::sync::mpsc::channel();
-        let store = Arc::new(Blocked(Mutex::new(Vec::new()), held_tx, Mutex::new(release_rx)));
-        let views = store_view::Projection::new(LcClient::over(store.clone(), true), Duration::from_secs(30), Arc::new(std::time::Instant::now));
-        views.load().unwrap();
-        let views = Arc::new(views);
-        let watcher = views.clone();
-        std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
-        held_rx.recv().unwrap();
-        let held = views.rows(&store_view::RowQuery { live: true, ..Default::default() }).unwrap().unwrap().value;
-        assert!(held.is_empty());
-        let published = super::super::Snapshot { now: 1_000, good_at: 1_000, ..Default::default() };
-        let at = |now| super::super::render(&super::super::view(&super::super::first_frame(Some(&published), now).unwrap()), 120).join("\n");
-        assert_ne!(at(1_000 + 400), at(1_000 + 460), "the age moves with the clock, not with a store event");
-        assert_eq!(store.0.lock().unwrap().iter().filter(|a| a.starts_with("watch ")).count(), 1);
-    }
-
-    #[test_id(ta6v4al)]
-    #[test]
-    fn a_store_read_that_found_no_store_running_marks_the_snapshot_and_a_fault_does_not() {
-        let mut s = super::super::Snapshot::default();
-        super::super::store_failed(&mut s, super::super::LcError::Fault("spira-lc list --live: exit 2 x".into()));
-        assert!(!s.not_running && s.store_errors.len() == 1);
-        super::super::store_failed(&mut s, super::super::LcError::NotRunning("store not running: nothing was sent".into()));
-        assert!(s.not_running && s.store_errors.len() == 2 && s.errors.is_empty());
-    }
-
     fn removed_calls(src: &str) -> Vec<&'static str> {
         let code: String = src.split("#[cfg(test)]").next().unwrap_or("").lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
         let mut found = Vec::new();
@@ -839,27 +135,26 @@ mod tests {
         if code.contains("spira-claim") {
             found.push("spira-claim");
         }
+        for gathering in ["Command::new", "thread::spawn", "store_view::"] {
+            if code.contains(gathering) {
+                found.push(gathering);
+            }
+        }
         found
-    }
-
-    /// What systemd answers `list-units <globs>`: the units matching any `prefix*suffix` glob.
-    fn listed(args: &[String], units: &[(&str, &str)]) -> String {
-        let globs: Vec<&String> = args.iter().filter(|a| a.contains('*')).collect();
-        let hit = |n: &str| globs.iter().any(|g| g.split_once('*').is_some_and(|(p, s)| n.starts_with(p) && n.ends_with(s)));
-        units.iter().filter(|(n, _)| hit(n)).map(|(n, st)| format!("{n} loaded {st} running dwarf\n")).collect()
-    }
-
-    #[test_id(tqg0x7l)]
-    #[test]
-    fn sp_li4zys_the_live_dwarves_the_scheduler_started_are_listed() {
-        let own = "spira-run-sentinel_2dcall-builder_2d1794009721297_2d1.service";
-        let units = [(own, "active"), ("spira-run-sentinel_2dcall-builder_2d1794000000000_2d0.service", "failed"), ("spira-run-sentinel_2dpass-landing.service", "active")];
-        assert_eq!(super::super::dwarf_units_in(&listed(&super::super::dwarf_list_args(), &units)), vec![own.to_string()], "the live scheduler-named dwarf only");
     }
 
     #[test_id(tq16fci)]
     #[test]
     fn the_render_issues_none_of_the_removed_calls() {
         assert!(removed_calls(include_str!("lcview_main.rs")).is_empty());
+    }
+
+    #[test_id(txi08zu)]
+    #[test]
+    fn the_scan_sees_a_planted_spawn_a_planted_thread_and_a_planted_store_read() {
+        for planted in ["fn f() { Command::new(\"git\"); }", "fn f() { std::thread::spawn(|| ()); }", "fn f() { store_view::held_read(&[]); }"] {
+            assert_eq!(removed_calls(planted).len(), 1, "{planted}");
+        }
+        assert!(removed_calls("fn f() {}\n#[cfg(test)]\nmod t { fn g() { Command::new(\"x\"); } }").is_empty());
     }
 }

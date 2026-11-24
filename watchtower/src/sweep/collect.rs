@@ -212,8 +212,8 @@ fn read_drain(run: &std::path::Path, now: i64) -> Drain {
 }
 
 /// The claimable count the claim view gives, or `?` when it is missing or stale.
-fn claim_ready(run: &std::path::Path, now: i64) -> String {
-    let claim = cockpit_ops::lcview::read_fresh_claim(run, now);
+fn claim_ready(view_dir: Option<&std::path::Path>, now: i64) -> String {
+    let claim = view_dir.and_then(|d| cockpit_ops::lcview::read_fresh_claim(d, now));
     claim.map(|c| cockpit_ops::lcview::claim_keys(&c)).and_then(|k| k.into_iter().find(|(k, _)| k == "SP_READY")).map_or_else(|| "?".to_string(), |(_, v)| v)
 }
 
@@ -255,7 +255,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
             }
         }
     }
-    env.set("SP_READY", claim_ready(run, now));
+    env.set("SP_READY", claim_ready(cfg.cockpit_view_dir.as_deref(), now));
     let snap_age_disp_raw = snap_age.map(|s| s.to_string()).unwrap_or_else(|| "?".into());
     let snap_age_disp = match snap_age {
         Some(s) if s >= cfg.snap_stale_s => format!("FAULT ({s}s, stale above {}s)", cfg.snap_stale_s),
@@ -635,11 +635,13 @@ mod tests {
         let row = |id: &str| cockpit_ops::lcview::Row { id: id.into(), state: "READY".into(), claim: Some(cockpit_ops::lcview::ClaimView { verdict: cockpit_ops::lcview::Kind::Claimable, blocker: None, runes: vec!["builder".into()] }), ..Default::default() };
         let mut snap = cockpit_ops::lcview::Snapshot { now: 5_000, rows: vec![row("sp-a"), row("sp-b"), row("sp-c")], ..Default::default() };
         cockpit_ops::lcview::apply_claim_views(&mut snap);
-        std::fs::create_dir_all(d.path().join("lcview")).unwrap();
-        std::fs::write(d.path().join("lcview/snapshot.json"), serde_json::to_string(&snap).unwrap()).unwrap();
-        assert_eq!(claim_ready(d.path(), 5_001), "3");
-        assert_eq!(claim_ready(d.path(), 5_000 + cockpit_ops::lcview::CLAIM_STALE_S + 1), "?");
-        assert_eq!(claim_ready(&d.path().join("none"), 5_001), "?");
+        let path = cockpit_ops::lcview::document_path(d.path());
+        std::fs::write(&path, serde_json::to_string(&snap).unwrap()).unwrap();
+        std::fs::File::open(&path).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(5_000)).unwrap();
+        assert_eq!(claim_ready(Some(d.path()), 5_001), "3");
+        assert_eq!(claim_ready(Some(d.path()), 5_000 + cockpit_ops::lcview::CLAIM_STALE_S + 1), "?");
+        assert_eq!(claim_ready(Some(&d.path().join("none")), 5_001), "?");
+        assert_eq!(claim_ready(None, 5_001), "?", "no runtime directory is unknown, not a count");
     }
 
     fn probe(ready: &[(&str, u32)]) -> Option<seams::PipelineProbe> {

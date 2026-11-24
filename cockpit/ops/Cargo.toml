@@ -49,6 +49,11 @@ path = "tests/ensure_real_tmux.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "pane_idle"
+path = "tests/pane_idle.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "launchers_as_launched"
 path = "tests/launchers_as_launched.rs"
 required-features = ["integration"]

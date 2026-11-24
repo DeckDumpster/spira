@@ -105,6 +105,7 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
     );
     Ok(sweep::Cfg {
         spira_run: PathBuf::from(reg("SPIRA_RUN")?),
+        cockpit_view_dir: getenv("XDG_RUNTIME_DIR").map(|d| spira_config::cockpit_view_dir(std::path::Path::new(&d))),
         lib_sh_dir: lib_sh_dir(),
         db: reg("SPIRA_DB")?,
         home_repo: reg("SPIRA_HOME_REPO")?,

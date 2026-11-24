@@ -130,7 +130,7 @@ fn the_scan_catches_a_planted_site_and_passes_a_marked_one() {
 
 /// The marked fork edges left in `src` (sp-ipwlic): a flip onto the store's door removes a mark
 /// and lowers this; a new edge raises it only on purpose.
-const MARKED_EDGES: usize = 12;
+const MARKED_EDGES: usize = 9;
 
 fn marks(dir: &std::path::Path) -> usize {
     let mut n = 0;

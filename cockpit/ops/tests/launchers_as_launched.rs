@@ -249,7 +249,11 @@ fn the_ops_pane_start_command_resolves_its_config_and_draws_the_lifecycle_view()
         clipboard_on: true,
         spira_repo: String::new(),
         spira_conf: None,
+        runtime_dir: Some(rig.dir.join("xdg").display().to_string()),
     };
+    let document = cockpit_ops::lcview::document_path(&spira_config::cockpit_view_dir(&rig.dir.join("xdg")));
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(&document, serde_json::to_vec(&cockpit_ops::lcview::Snapshot { now: 1, ..Default::default() }).unwrap()).unwrap();
     let command = conf.health_cmd();
     let server_env = [("HOME", &*rig.dir as &Path), ("SPIRA_TOML", rig.toml.as_path())];
     let drawn = on_a_pty(&command, &server_env, &["refresh", "SPIRA_TOML is not set"]);

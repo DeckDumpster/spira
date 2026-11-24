@@ -85,6 +85,7 @@ pub const PROBES: &[(&str, u64)] = &[
     ("cockpit.queue", 90_000),
     ("cockpit.mail", 90_000),
     ("cockpit.goodput", 30_000),
+    ("cockpit.view_slow", 90_000),
 ];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_60S_SECS";

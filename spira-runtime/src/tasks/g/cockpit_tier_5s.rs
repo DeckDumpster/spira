@@ -66,7 +66,7 @@ pub const PUBLISH: &str = "cockpit-tier-5s.publish";
 pub const EFFECTS: &[&str] = &[OBSERVE, PUBLISH];
 
 /// The sub-probes [`OBSERVE`] runs, each with its own timeout.
-pub const PROBES: &[(&str, u64)] = &[("cockpit.now", 30_000), ("cockpit.round", 60_000), ("cockpit.inflight", 60_000)];
+pub const PROBES: &[(&str, u64)] = &[("cockpit.now", 30_000), ("cockpit.round", 60_000), ("cockpit.inflight", 60_000), ("cockpit.view", 60_000)];
 
 pub const CADENCE_KEY: &str = "SPIRA_RUNTIME_COCKPIT_TIER_5S_SECS";
 pub const KEYS: &[&str] = &[CADENCE_KEY, WRITE_KEY, "SPIRA_SNAP_STALE_S", "SPIRA_PANE_READ_TTL", "SPIRA_LC_TIMEOUT", "SPIRA_TRACE_MARK"];

@@ -12,7 +12,9 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod lcgather;
 pub mod lcio;
+pub mod lcpane;
 pub mod lcview;
 pub mod lctui;
 pub mod conf;

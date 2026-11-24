@@ -335,10 +335,11 @@ pub mod cockpit {
 
     /// The observe runner: the tier's probes in-process through `cockpit_collect::tiers`, each
     /// under its own timeout, as a [`Snapshot`].
-    pub fn run_observe(_: &crate::Effects, _: &str, s: &EffectSpec) -> Result<String, String> {
+    pub fn run_observe(e: &crate::Effects, _: &str, s: &EffectSpec) -> Result<String, String> {
         let input: ObserveInput = serde_json::from_str(&s.input).map_err(|e| format!("{}: input: {e}", s.name))?;
         let probes: Vec<(String, std::time::Duration)> = input.probes.iter().map(|p| (registry_name(&p.name).to_string(), std::time::Duration::from_millis(p.timeout_ms))).collect();
-        let got = cockpit_collect::tiers::observe(&probes);
+        view::set_context(e);
+        let got = cockpit_collect::tiers::observe_with(&probes, view::probe);
         let fragments = input
             .probes
             .iter()
@@ -359,7 +360,107 @@ pub mod cockpit {
         if e.world.run_dir.as_os_str().is_empty() {
             return Err("no run dir configured".into());
         }
-        cockpit_collect::tiers::publish(&e.world.run_dir, &e.world.ctx_status_dir, tier_of(&s.name), &s.input)
+        let published = cockpit_collect::tiers::publish(&e.world.run_dir, &e.world.ctx_status_dir, tier_of(&s.name), &s.input)?;
+        if tier_of(&s.name) == super::cockpit_tier_5s::NAME {
+            view::publish(&e.world.cockpit_view_dir)?;
+        }
+        Ok(published)
+    }
+
+    /// The cockpit ops document: the two groups of reads the scheduler keeps in process, written
+    /// to the memory-backed runtime directory only when what they show changes.
+    pub mod view {
+        use std::path::{Path, PathBuf};
+        use std::sync::{Arc, Mutex, MutexGuard};
+
+        use cockpit_ops::lcgather::{self, Held};
+        use spira_store::lc_call::{LcClient, LcError};
+
+        pub const FAST: &str = "view";
+        pub const SLOW: &str = "view_slow";
+
+        struct Context {
+            run_dir: PathBuf,
+            lc: Option<LcClient>,
+            units: Option<Arc<dyn runtime::units::Units>>,
+            pool: Option<Arc<round_vm::pool::Pool>>,
+        }
+
+        static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
+        static FAST_HELD: Mutex<Option<Held>> = Mutex::new(None);
+        static SLOW_HELD: Mutex<Option<Held>> = Mutex::new(None);
+
+        fn held(m: &'static Mutex<Option<Held>>) -> MutexGuard<'static, Option<Held>> {
+            m.lock().unwrap_or_else(|p| p.into_inner())
+        }
+
+        /// What the next probe reads through. A different run directory starts the groups afresh.
+        pub fn set_context(e: &crate::Effects) {
+            let mut ctx = CONTEXT.lock().unwrap_or_else(|p| p.into_inner());
+            if ctx.as_ref().is_some_and(|c| c.run_dir != e.world.run_dir) {
+                *held(&FAST_HELD) = None;
+                *held(&SLOW_HELD) = None;
+            }
+            *ctx = Some(Context {
+                run_dir: e.world.run_dir.clone(),
+                lc: (!e.world.lc_socket.as_os_str().is_empty()).then(|| LcClient::socket(e.world.lc_socket.clone())),
+                units: e.units.clone(),
+                pool: e.vm_pool.clone(),
+            });
+        }
+
+        fn now() -> i64 {
+            cockpit_collect::io::now()
+        }
+
+        /// The probe function of the two view groups; any other name is the probe library's.
+        pub fn probe(name: &str) -> Option<cockpit_collect::probes::Kv> {
+            let (slot, fast) = match name {
+                FAST => (&FAST_HELD, true),
+                SLOW => (&SLOW_HELD, false),
+                _ => return cockpit_collect::probes::run(name, &cockpit_collect::probes::Cfg::load().ok()?),
+            };
+            let (run_dir, lc, units, pool) = {
+                let ctx = CONTEXT.lock().unwrap_or_else(|p| p.into_inner());
+                let c = ctx.as_ref()?;
+                (c.run_dir.clone(), c.lc.clone(), c.units.clone(), c.pool.clone())
+            };
+            let read = |args: &[&str]| -> Result<String, LcError> {
+                match store_view::held_read(args) {
+                    Some(held) => held,
+                    None => cockpit_ops::lcio::answer(lc.as_ref().ok_or_else(|| LcError::Fault("no store socket is configured".into()))?, args),
+                }
+            };
+            let status = || pool.as_ref().ok_or_else(|| "round-vm status: no pool configured".to_string())?.status_json();
+            let env = lcgather::Env { run_dir: &run_dir, lc: &read, units: units.as_deref(), vm_status: Some(&status) };
+            let mut h = held(slot);
+            let h = h.get_or_insert_with(Held::default);
+            if fast {
+                lcgather::gather_fast(&env, now(), h);
+            } else {
+                lcgather::gather_slow(&env, now(), h);
+            }
+            Some(Vec::new())
+        }
+
+        /// Writes the document when it shows something other than what the file does, else touches
+        /// it so its age is the age of the last pass. Nothing is written until both groups have read.
+        pub fn publish(dir: &Path) -> Result<(), String> {
+            if dir.as_os_str().is_empty() {
+                return Err("XDG_RUNTIME_DIR is unset: the cockpit document has no runtime directory to be written to".into());
+            }
+            let (fast, slow) = (held(&FAST_HELD), held(&SLOW_HELD));
+            let (Some(fast), Some(slow)) = (fast.as_ref(), slow.as_ref()) else { return Ok(()) };
+            let Some(doc) = Held::document(fast, slow) else { return Ok(()) };
+            let path = cockpit_ops::lcview::document_path(dir);
+            let old = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<cockpit_ops::lcview::Snapshot>(&b).ok());
+            if old.as_ref().is_some_and(|o| lcgather::same_but_clock(o, &doc)) {
+                ctx_meter::status::touch(&path);
+            } else {
+                ctx_meter::status::put(&path, &serde_json::to_string(&doc).map_err(|e| e.to_string())?);
+            }
+            Ok(())
+        }
     }
 
     /// The slots sample runner: one `slots` tsd row under the run dir.
@@ -368,7 +469,7 @@ pub mod cockpit {
             return Err("no run dir configured".into());
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        let claim = cockpit_ops::lcview::read_fresh_claim(&e.world.run_dir, now);
+        let claim = cockpit_ops::lcview::read_fresh_claim(&e.world.cockpit_view_dir, now);
         cockpit_collect::tiers::slots_sample(&e.world.run_dir, &with_ready(&s.input, claim.as_ref()))
     }
 

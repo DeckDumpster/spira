@@ -1082,7 +1082,7 @@ impl Pool {
         let leases: Vec<_> = s
             .leases
             .iter()
-            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "cmd": l.owner.map(|o| owner_cmd(o.pid)), "since": l.since, "age_secs": age(l.since), "run": l.run, "held": l.held, "held_age_secs": l.held.then(|| age(if l.kept_at > 0 { l.kept_at } else { l.since })), "why": l.held.then_some("held for results")}))
+            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "cmd": l.owner.map(|o| owner_cmd(o.pid)), "since": l.since, "age_secs": age(l.since), "run": l.run, "held": l.held, "held_since": l.held.then(|| if l.kept_at > 0 { l.kept_at } else { l.since }), "held_age_secs": l.held.then(|| age(if l.kept_at > 0 { l.kept_at } else { l.since })), "why": l.held.then_some("held for results")}))
             .collect();
         let doomed: Vec<_> = s
             .doomed

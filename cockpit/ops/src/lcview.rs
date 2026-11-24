@@ -135,12 +135,31 @@ pub fn claim_keys(snap: &Snapshot) -> Vec<(String, String)> {
     out
 }
 
-/// The claim view the lc-view pane last wrote under `run`, when it is no older than
-/// `CLAIM_STALE_S` at `now`; anything else reads as unknown.
-pub fn read_fresh_claim(run: &std::path::Path, now: i64) -> Option<Snapshot> {
-    let text = std::fs::read_to_string(run.join("lcview").join("snapshot.json")).ok()?;
-    let snap: Snapshot = serde_json::from_str(&text).ok()?;
-    (now - snap.now <= CLAIM_STALE_S).then_some(snap)
+/// The document the scheduler keeps in `view_dir` (`spira_config::cockpit_view_dir`).
+pub fn document_path(view_dir: &std::path::Path) -> std::path::PathBuf {
+    view_dir.join("snapshot.json")
+}
+
+/// The document's seconds since its last write or quiet touch at `now`; `None` when it cannot be stat'd.
+pub fn document_age(path: &std::path::Path, now: i64) -> Option<i64> {
+    let m = std::fs::metadata(path).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(now - m.as_secs() as i64)
+}
+
+/// The document in `view_dir` and its age at `now`: the age of its last write or touch, which
+/// a publish with nothing changed keeps current.
+pub fn read_document(view_dir: &std::path::Path, now: i64) -> Result<(Snapshot, i64), String> {
+    let path = document_path(view_dir);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let snap = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok((snap, document_age(&path, now).unwrap_or(i64::MAX)))
+}
+
+/// The claim view the scheduler last published in `view_dir`, when the document is no older
+/// than `CLAIM_STALE_S` at `now`; anything else reads as unknown.
+pub fn read_fresh_claim(view_dir: &std::path::Path, now: i64) -> Option<Snapshot> {
+    let (snap, age) = read_document(view_dir, now).ok()?;
+    (age <= CLAIM_STALE_S).then_some(snap)
 }
 
 /// `content` (a `cockpit.env` body) with its claimable keys replaced by the claim view's;
@@ -595,13 +614,12 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
     }
 }
 
-/// The snapshot a previous pane published under `run`, when it parses.
-pub fn published_snapshot(run: &std::path::Path) -> Option<Snapshot> {
-    serde_json::from_slice(&std::fs::read(run.join("lcview").join("snapshot.json")).ok()?).ok()
+/// The document in `view_dir`, when it parses.
+pub fn published_snapshot(view_dir: &std::path::Path) -> Option<Snapshot> {
+    serde_json::from_slice(&std::fs::read(document_path(view_dir)).ok()?).ok()
 }
 
-/// What the first frame draws before any gather has returned: the published snapshot, aged to
-/// `now`. `None` when nothing was published.
+/// What a repaint draws: the document, aged to `now`. `None` when nothing was published.
 pub fn first_frame(published: Option<&Snapshot>, now: i64) -> Option<Snapshot> {
     let last = published?;
     let mut s = last.clone();
@@ -613,9 +631,23 @@ pub fn first_frame(published: Option<&Snapshot>, now: i64) -> Option<Snapshot> {
     s.errors.clear();
     s.failed.clear();
     if now - s.good_at > STALE_WARN_S {
-        s.errors.push(format!("showing the last good read from {} ago", age(now - s.good_at)));
+        s.errors.push(last_good_notice(now - s.good_at));
     }
     Some(s)
+}
+
+fn last_good_notice(secs: i64) -> String {
+    format!("showing the last good read from {} ago", age(secs))
+}
+
+/// The document as a repaint at `now` draws it: its clock is `now`, and one untouched for more than
+/// `STALE_WARN_S` (`untouched_s`) carries the notice that says so.
+pub fn aged(mut doc: Snapshot, untouched_s: i64, now: i64) -> Snapshot {
+    doc.now = now;
+    if untouched_s > STALE_WARN_S {
+        doc.errors.push(last_good_notice(untouched_s));
+    }
+    doc
 }
 
 /// The line under the banner that says the data drawn is not this pass's: no store is
@@ -792,7 +824,8 @@ pub struct RoundView {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VmRun {
     pub vm: String,
-    pub age_secs: i64,
+    /// When the VM took its state, epoch seconds; the age is read at render.
+    pub since: i64,
     pub owner: String,
     #[serde(default)]
     pub cmd: Vec<String>,
@@ -803,7 +836,7 @@ pub struct VmRun {
     #[serde(default)]
     pub held: bool,
     #[serde(default)]
-    pub held_age_secs: i64,
+    pub held_since: i64,
 }
 
 /// A VM row of ROUNDS: who holds it and for what, or `idle (warm)`.
@@ -829,11 +862,11 @@ impl VmRunView {
     }
 }
 
-fn vm_run_view(r: &VmRun) -> VmRunView {
+fn vm_run_view(now: i64, r: &VmRun) -> VmRunView {
     if r.held {
-        return VmRunView { vm: r.vm.clone(), kind: "held".into(), id: r.run.clone(), phase: "held".into(), age: age(r.held_age_secs) };
+        return VmRunView { vm: r.vm.clone(), kind: "held".into(), id: r.run.clone(), phase: "held".into(), age: age(now - r.held_since) };
     }
-    let age = age(r.age_secs);
+    let age = age(now - r.since);
     if r.idle {
         return VmRunView { vm: r.vm.clone(), kind: "pool".into(), id: String::new(), phase: "idle (warm)".into(), age };
     }
@@ -1653,7 +1686,7 @@ pub fn view(s: &Snapshot) -> View {
         .vm_runs
         .iter()
         .filter(|r| r.idle || !s.batches.iter().any(|b| OPEN_BATCH.contains(&b.state.as_str()) && r.cmd.iter().any(|a| a.contains(&b.id))))
-        .map(vm_run_view)
+        .map(|r| vm_run_view(s.now, r))
         .collect();
     // round-vm's writer names the round by its head sha and the pass by a sha: one VM round
     // runs at a time, so a sha-named pass is the open round's current pass.
@@ -2424,13 +2457,13 @@ mod tests {
         let run = testkit::TempDir::new("lcview-seed");
         let mut published = snap(vec![row("sp-pub", "WORKING", 99_000)]);
         published.now = 99_990;
-        std::fs::create_dir_all(run.join("lcview")).unwrap();
-        std::fs::write(run.join("lcview/snapshot.json"), serde_json::to_vec(&published).unwrap()).unwrap();
+        std::fs::create_dir_all(document_path(&run).parent().unwrap()).unwrap();
+        std::fs::write(document_path(&run), serde_json::to_vec(&published).unwrap()).unwrap();
         let seeded = published_snapshot(&run).expect("the published file parses");
         let first = first_frame(Some(&seeded), 100_000).expect("a published snapshot is a first frame");
         assert!(framed(&first).contains("sp-pub"), "{}", framed(&first));
         assert!(first_frame(published_snapshot(&run.join("nowhere")).as_ref(), 100_000).is_none(), "nothing published, nothing to draw");
-        std::fs::write(run.join("lcview/snapshot.json"), "{ torn").unwrap();
+        std::fs::write(document_path(&run), "{ torn").unwrap();
         assert!(published_snapshot(&run).is_none());
     }
 
@@ -2593,9 +2626,12 @@ mod tests {
     #[test]
     fn a_claim_view_older_than_the_staleness_bound_reads_as_unknown() {
         let d = testkit::TempDir::new("claim-fresh");
-        std::fs::create_dir_all(d.path().join("lcview")).unwrap();
-        std::fs::write(d.path().join("lcview/snapshot.json"), serde_json::to_string(&claim_fixture(1_000)).unwrap()).unwrap();
-        assert!(read_fresh_claim(d.path(), 1_000 + CLAIM_STALE_S).is_some());
+        let path = document_path(d.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string(&claim_fixture(5)).unwrap()).unwrap();
+        let touched = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        std::fs::File::open(&path).unwrap().set_modified(touched).unwrap();
+        assert!(read_fresh_claim(d.path(), 1_000 + CLAIM_STALE_S).is_some(), "the document's own clock does not age it; its last touch does");
         assert!(read_fresh_claim(d.path(), 1_000 + CLAIM_STALE_S + 1).is_none());
         assert!(read_fresh_claim(&d.path().join("absent"), 1_000).is_none());
     }
@@ -3034,10 +3070,10 @@ mod tests {
     fn rounds_show_every_vm_run_and_the_idle_vm_and_an_open_pr_is_not_stale() {
         let mut s = rounds_snap();
         s.vm_runs = vec![
-            VmRun { vm: "109".into(), age_secs: 700, owner: "5@1".into(), cmd: vec!["round-vm".into(), "run".into(), "r/run/round/tree".into(), "--maxpar".into(), "16".into()], idle: false, ..Default::default() },
-            VmRun { vm: "111".into(), age_secs: 90, owner: "6@1".into(), cmd: vec!["round-vm".into(), "run".into(), "r/run/r-auto-143".into()], idle: false, ..Default::default() },
-            VmRun { vm: "112".into(), age_secs: 4000, owner: String::new(), cmd: vec![], idle: true, ..Default::default() },
-            VmRun { vm: "113".into(), age_secs: 33000, owner: String::new(), cmd: vec![], idle: false, run: "r-auto-141".into(), held: true, held_age_secs: 720 },
+            VmRun { vm: "109".into(), since: s.now - 700, owner: "5@1".into(), cmd: vec!["round-vm".into(), "run".into(), "r/run/round/tree".into(), "--maxpar".into(), "16".into()], idle: false, ..Default::default() },
+            VmRun { vm: "111".into(), since: s.now - 90, owner: "6@1".into(), cmd: vec!["round-vm".into(), "run".into(), "r/run/r-auto-143".into()], idle: false, ..Default::default() },
+            VmRun { vm: "112".into(), since: s.now - 4000, owner: String::new(), cmd: vec![], idle: true, ..Default::default() },
+            VmRun { vm: "113".into(), since: s.now - 33000, owner: String::new(), cmd: vec![], idle: false, run: "r-auto-141".into(), held: true, held_since: s.now - 720 },
         ];
         let v = view(&s);
         let lines: Vec<String> = v.vm_runs.iter().map(|r| r.line()).collect();
