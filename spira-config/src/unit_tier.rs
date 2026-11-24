@@ -236,6 +236,29 @@ fn per_test(line: &str) -> Option<(String, f64)> {
     (!name.is_empty()).then(|| (name.to_string(), secs))
 }
 
+/// The test name of a nextest red status line: `FAIL|TIMEOUT|SIG*|LEAK-FAIL|EXEC-FAIL [ <secs>]
+/// (<k>/<n>) <binary> <name>`.
+pub fn nextest_red(l: &str) -> Option<&str> {
+    let (status, rest) = l.split_once(' ')?;
+    if !matches!(status, "FAIL" | "TIMEOUT" | "LEAK-FAIL" | "EXEC-FAIL") && !status.starts_with("SIG") {
+        return None;
+    }
+    let after = rest.trim_start().strip_prefix('[')?.split_once(']')?.1.trim_start();
+    let after = match after.strip_prefix('(') {
+        Some(counter) => counter.split_once(')')?.1,
+        None => after,
+    };
+    let mut words = after.split_whitespace();
+    let (_binary, name) = (words.next()?, words.next()?);
+    words.next().is_none().then_some(name)
+}
+
+/// Whether `l` is one of nextest's per-test status lines, of any status.
+pub fn nextest_status(l: &str) -> bool {
+    let Some((status, rest)) = l.trim_start().split_once(' ') else { return false };
+    !status.is_empty() && status.chars().all(|c| c.is_ascii_uppercase() || c == '-') && rest.trim_start().starts_with('[') && rest.contains(']')
+}
+
 /// The one reader of nextest's output for timings: lines up to the first `Summary [` count, so
 /// the reds the end of the log repeats are not counted twice.
 pub fn timings(log: &str) -> UnitTimings {
