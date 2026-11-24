@@ -1297,12 +1297,14 @@ pub fn executable_from_cargo_json(stdout: &str, name: &str) -> Option<PathBuf> {
 
 /// `git archive` of the files the image tag hashes, at `rev` of the repository at `repo`, into `into`.
 fn extract_closure(repo: &str, rev: &str, into: &Path) -> Result<(), String> {
+    // batch-job: archives three files of a local repository, bounded by git itself
     let mut archive = std::process::Command::new("git")
         .args(["-C", repo, "archive", "--format=tar", rev, "spira/testenv/Containerfile", "spira/deps.toml", "rust-toolchain.toml"])
         .stdout(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("git archive: {e}"))?;
     let out = archive.stdout.take().ok_or("git archive: no stdout")?;
+    // batch-job: unpacks that archive
     let st = std::process::Command::new("tar")
         .arg("-x")
         .arg("-C")

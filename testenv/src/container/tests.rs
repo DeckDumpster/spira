@@ -1771,9 +1771,9 @@ fn the_landing_image_is_the_tag_of_the_landing_refs_own_closure_and_an_unreadabl
 fn cargos_json_names_the_executable_wherever_the_target_directory_is() {
     let out = concat!(
         "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"serde\"},\"executable\":null}\n",
-        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"spira-config\"},\"executable\":\"/var/cache/t/release/spira-config\"}\n",
+        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"spira-config\"},\"executable\":\"t/dir/release/spira-config\"}\n",
         "{\"reason\":\"build-finished\",\"success\":true}\n"
     );
-    assert_eq!(executable_from_cargo_json(out, "spira-config"), Some(PathBuf::from("/var/cache/t/release/spira-config")));
+    assert_eq!(executable_from_cargo_json(out, "spira-config"), Some(PathBuf::from("t/dir/release/spira-config")));
     assert_eq!(executable_from_cargo_json(out, "other"), None);
 }
