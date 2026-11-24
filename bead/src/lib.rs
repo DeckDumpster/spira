@@ -806,13 +806,15 @@ pub enum Readback {
 /// non-event bead titled `title` created at or after `since` (a UTC `YYYY-MM-DDTHH:MM:SS`
 /// prefix), so an older bead of the same title is never taken for this one. A listing that
 /// failed or is not JSON is `Unreadable`, never `Absent`: only a readable listing without the
-/// bead proves nothing was written.
-pub fn readback(list_code: i32, listing: &str, title: &str, since: &str) -> Readback {
+/// bead proves nothing was written. A row whose id is `except` (the request a draft came from)
+/// is not a hit, so a draft is not answered with the request that shares its title.
+pub fn readback(list_code: i32, listing: &str, title: &str, since: &str, except: Option<&str>) -> Readback {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(listing) else { return Readback::Unreadable };
     let Some(rows) = v.as_array().filter(|_| list_code == 0) else { return Readback::Unreadable };
     let mut hits = rows.iter().filter(|d| {
         let at = d.get("created_at").and_then(|t| t.as_str()).unwrap_or("");
         d.get("title").and_then(|t| t.as_str()) == Some(title)
+            && except.is_none_or(|e| d.get("id").and_then(|i| i.as_str()) != Some(e))
             && d.get("issue_type").and_then(|t| t.as_str()) != Some("event")
             && at.ends_with('Z')
             && at.get(..19).is_some_and(|p| p >= since)
@@ -1680,15 +1682,20 @@ mod tests {
         let row = |id: &str, title: &str, at: &str| format!(r#"{{"id":"{id}","title":"{title}","created_at":"{at}"}}"#);
         let new = row("sp-a", "t", "2026-11-13T10:00:05.1Z");
         let old = row("sp-old", "t", "2026-11-01T10:00:05Z");
-        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-b", "u", "2026-11-13T10:00:06Z")), "t", since), Readback::Found("sp-a".into()));
-        assert_eq!(readback(0, &format!("[{old},{new}]"), "t", since), Readback::Found("sp-a".into()), "an older bead of the same title is not this create");
-        assert_eq!(readback(0, &format!("[{old}]"), "t", since), Readback::Absent);
-        assert_eq!(readback(0, &format!("[{new}]"), "gone", since), Readback::Absent);
-        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-c", "t", "2026-11-13T10:00:09Z")), "t", since), Readback::Ambiguous);
-        assert_eq!(readback(0, &format!("[{}]", row("sp-z", "t", "2026-11-13T10:00:09+02:00")), "t", since), Readback::Absent, "a zone it cannot compare is not proof");
-        assert_eq!(readback(2, "", "t", since), Readback::Unreadable);
-        assert_eq!(readback(2, "[]", "t", since), Readback::Unreadable);
-        assert_eq!(readback(0, "{}", "t", since), Readback::Unreadable);
+        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-b", "u", "2026-11-13T10:00:06Z")), "t", since, None), Readback::Found("sp-a".into()));
+        assert_eq!(readback(0, &format!("[{old},{new}]"), "t", since, None), Readback::Found("sp-a".into()), "an older bead of the same title is not this create");
+        assert_eq!(readback(0, &format!("[{old}]"), "t", since, None), Readback::Absent);
+        assert_eq!(readback(0, &format!("[{new}]"), "gone", since, None), Readback::Absent);
+        assert_eq!(readback(0, &format!("[{new},{}]", row("sp-c", "t", "2026-11-13T10:00:09Z")), "t", since, None), Readback::Ambiguous);
+        assert_eq!(readback(0, &format!("[{}]", row("sp-z", "t", "2026-11-13T10:00:09+02:00")), "t", since, None), Readback::Absent, "a zone it cannot compare is not proof");
+        assert_eq!(readback(2, "", "t", since, None), Readback::Unreadable);
+        assert_eq!(readback(2, "[]", "t", since, None), Readback::Unreadable);
+        assert_eq!(readback(0, "{}", "t", since, None), Readback::Unreadable);
+        let (req, item, other) = (row("sp-req", "t", "2026-11-13T10:00:05Z"), row("sp-item", "t", "2026-11-13T10:00:06Z"), row("sp-o", "t", "2026-11-13T10:00:07Z"));
+        assert_eq!(readback(0, &format!("[{req}]"), "t", since, Some("sp-req")), Readback::Absent);
+        assert_eq!(readback(0, &format!("[{req},{item}]"), "t", since, Some("sp-req")), Readback::Found("sp-item".into()));
+        assert_eq!(readback(0, &format!("[{req},{item},{other}]"), "t", since, Some("sp-req")), Readback::Ambiguous);
+        assert_eq!(readback(2, "[]", "t", since, Some("sp-req")), Readback::Unreadable);
     }
 
     #[test_id(tbefgmn)]
