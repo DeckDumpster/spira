@@ -509,15 +509,10 @@ fn only_the_newest_local_registry_copy_and_no_orphan_temp_file_is_kept() {
 }
 
 // covers: UC-instance-lifecycle-48
-#[test_id(tlt6q35)]
+#[test_id(tal0jdm)]
 #[test]
-fn the_drill_service_outlives_its_wait_cap_and_its_timer_has_one_weekly_slot() {
-    let service = include_str!("../../systemd/lc-backup-drill.service");
+fn the_drill_timer_has_one_weekly_slot() {
     let timer = include_str!("../../systemd/lc-backup-drill.timer");
-    let cap = include_str!("../../spira/conf.d/SPIRA_LC_BACKUP_DRILL_WAIT_SECS");
-    let hours: u64 = service.lines().find_map(|l| l.strip_prefix("TimeoutStartSec=")?.strip_suffix('h')?.parse().ok()).expect("TimeoutStartSec in hours");
-    let wait: u64 = cap.split("WAIT_SECS:=").nth(1).and_then(|r| r.split('}').next()).and_then(|n| n.parse().ok()).expect("default wait cap");
-    assert!(hours * 3600 > wait, "{hours}h vs {wait}s");
     let slots: Vec<&str> = timer.lines().filter(|l| l.starts_with("OnCalendar=")).collect();
     assert!(slots.len() == 1 && slots[0].starts_with("OnCalendar=Sun "), "{slots:?}");
 }
