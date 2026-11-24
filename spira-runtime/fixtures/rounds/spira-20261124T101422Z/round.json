@@ -1,0 +1,111 @@
+{
+ "batch": "spira-20261124T101422Z",
+ "base": "05d4a4f789f22b113bafa90909820b5606fea934",
+ "cut_head": "b93c945720c7ea16c9b00d12d5deda7d76a75303",
+ "head": "eeb398b33eaf8611182ff4d491e6006c2eb1738b",
+ "members": [
+  {
+   "id": "sp-k3il1u.1",
+   "tip": "0000000000000000000000000000000000000001",
+   "changed": [
+    "spira/test-pilgrim-world.sh"
+   ]
+  },
+  {
+   "id": "sp-zz4u61",
+   "tip": "0000000000000000000000000000000000000002",
+   "changed": [
+    "spira/test-pilgrim-world.sh"
+   ]
+  },
+  {
+   "id": "sp-8amflc",
+   "tip": "0000000000000000000000000000000000000003",
+   "changed": [
+    "spira/test-pilgrim-world.sh"
+   ]
+  },
+  {
+   "id": "sp-3t2mtn",
+   "tip": "0000000000000000000000000000000000000004",
+   "changed": [
+    "README.md"
+   ]
+  }
+ ],
+ "red_suites": [
+  "test-pilgrim-world.sh"
+ ],
+ "place": "host",
+ "round_commit_paths": [
+  "spira/config-delta.d/sp-4s4os6.toml",
+  "spira/config-delta.d/sp-759u1t.toml",
+  "spira/config-delta.d/sp-7wxk1e.toml",
+  "spira/config-delta.d/sp-as5bq6.toml",
+  "spira/config-delta.d/sp-b0w0ox.toml",
+  "spira/config-delta.d/sp-csmvyi.toml",
+  "spira/config-delta.d/sp-m01810.toml",
+  "spira/config-delta.d/sp-v3uiam.toml",
+  "spira/config-delta.toml"
+ ],
+ "tree_suites": [
+  "test-branch-guard.sh",
+  "test-build-tarball-model-bin.sh",
+  "test-built-elsewhere-reads-run-tree.sh",
+  "test-cadence-tool.sh",
+  "test-capacity.sh",
+  "test-cockpit-layout-mail.sh",
+  "test-cockpit-rebuild.sh",
+  "test-concierge-turn-failed.sh",
+  "test-concierge-waiter-stop.sh",
+  "test-concierge.sh",
+  "test-conf-watch.sh",
+  "test-deploy.sh",
+  "test-dwarf-direct.sh",
+  "test-dwarf-dirty-commit.sh",
+  "test-exclude.sh",
+  "test-freshclone.sh",
+  "test-gate-locks.sh",
+  "test-gate-sweep.sh",
+  "test-gh-run-gate.sh",
+  "test-grafana-dashboards.sh",
+  "test-guards.sh",
+  "test-hold.sh",
+  "test-install-conf-seed.sh",
+  "test-install-rehearsal-stray.sh",
+  "test-launchers-as-launched.sh",
+  "test-launchers-bare-env.sh",
+  "test-law-synth.sh",
+  "test-lc-backup-drill-deferral.sh",
+  "test-lc-backup-registry.sh",
+  "test-lint-runes.sh",
+  "test-mail-dwarf-hook.sh",
+  "test-mail-health.sh",
+  "test-mail-real-senders.sh",
+  "test-no-bd-callers.sh",
+  "test-ops-closing.sh",
+  "test-pilgrim-followup-store.sh",
+  "test-pilgrim-world.sh",
+  "test-pr-notify.sh",
+  "test-ready-work.sh",
+  "test-ref-guard.sh",
+  "test-repo-contract-scaffold.sh",
+  "test-round-image-preflight-root.sh",
+  "test-sim-bead-contract.sh",
+  "test-sim-rc-cutover-actor.sh",
+  "test-sim-rc-cutover-mode.sh",
+  "test-sim-rc-forge-open-crash.sh",
+  "test-sim-scenario-lib.sh",
+  "test-spike.sh",
+  "test-store-persist-history.sh",
+  "test-tarball-bins.sh",
+  "test-testlib.sh",
+  "test-work-checks-flake-shell.sh",
+  "test-yield.sh"
+ ],
+ "current": [
+  "sp-zz4u61",
+  "sp-8amflc",
+  "sp-3t2mtn"
+ ]
+}

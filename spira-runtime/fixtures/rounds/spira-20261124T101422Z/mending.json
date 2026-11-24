@@ -1,0 +1,22 @@
+[
+ {
+  "pass": 1,
+  "suite": "test-pilgrim-world.sh",
+  "state": "RETURNED",
+  "deadline": 1795316829,
+  "returned": [
+   "sp-zz4u61"
+  ],
+  "ask_open": false,
+  "diagnosis": "Return sp-zz4u61. Defect: the suite seeds a world the member's change no longer provisions."
+ },
+ {
+  "pass": 2,
+  "suite": "test-pilgrim-world.sh",
+  "state": "WAITING",
+  "deadline": null,
+  "returned": [],
+  "ask_open": false,
+  "diagnosis": null
+ }
+]

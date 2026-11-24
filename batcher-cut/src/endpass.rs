@@ -11,6 +11,7 @@ pub const POLL_SECS: i64 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
+    pub pass: u32,
     pub suite: String,
     pub state: String,
     pub deadline: Option<i64>,
@@ -30,13 +31,14 @@ pub trait Menders {
     fn sweep(&mut self, deadline_s: i64) -> Result<(), String>;
 }
 
-pub fn parse_rows(json: &str, batch_pass: u32) -> Result<Vec<Row>, String> {
+/// Every row of the listing, each carrying the pass it belongs to.
+pub fn parse_rows(json: &str) -> Result<Vec<Row>, String> {
     let v: Vec<Value> =
         serde_json::from_str(json).map_err(|e| format!("mending list: unparsed reply: {e}"))?;
     Ok(v.iter()
-        .filter(|r| r.get("pass").and_then(Value::as_u64) == Some(batch_pass as u64))
         .filter_map(|r| {
             Some(Row {
+                pass: u32::try_from(r.get("pass")?.as_u64()?).ok()?,
                 suite: r.get("suite")?.as_str()?.to_string(),
                 state: r.get("state")?.as_str()?.to_string(),
                 deadline: r.get("deadline").and_then(Value::as_i64),
@@ -129,17 +131,28 @@ pub fn wait<M: Menders>(m: &mut M, deadline_s: i64) -> Result<Vec<Failure>, Stri
         .collect())
 }
 
-/// The settled RETURNED rows that name at least one member.
-pub fn returns(rows: Vec<Row>) -> Vec<Failure> {
-    rows.into_iter()
+/// The RETURNED rows that name at least one member and decide their suite, each with the pass it
+/// was returned on: per suite the newest settled row, whatever its pass, decides; a row still
+/// WAITING or MENDING hides none.
+pub fn returns_by_pass(rows: Vec<Row>) -> Vec<(u32, Failure)> {
+    let mut newest: BTreeMap<String, Row> = BTreeMap::new();
+    for r in rows.into_iter().filter(|r| !live(r)) {
+        if newest.get(&r.suite).is_none_or(|kept| r.pass >= kept.pass) {
+            newest.insert(r.suite.clone(), r);
+        }
+    }
+    newest
+        .into_values()
         .filter(|r| r.state == "RETURNED" && !r.returned.is_empty())
-        .map(|r| Failure {
-            suite: r.suite,
-            outcome: Outcome::Returned,
-            diagnosis: r.diagnosis,
-            members: r.returned,
+        .map(|r| {
+            let failure = Failure { suite: r.suite, outcome: Outcome::Returned, diagnosis: r.diagnosis, members: r.returned };
+            (r.pass, failure)
         })
         .collect()
+}
+
+pub fn returns(rows: Vec<Row>) -> Vec<Failure> {
+    returns_by_pass(rows).into_iter().map(|(_, f)| f).collect()
 }
 
 /// Fills a failure's members from the attribution's owners only when its row named none.
@@ -153,6 +166,11 @@ pub fn with_owners(failures: Vec<Failure>, owners: &BTreeMap<String, Vec<String>
             f
         })
         .collect()
+}
+
+/// The batch's mending rows of every pass.
+pub fn all_rows(env: &crate::io::Env, batch: &str) -> Result<Vec<Row>, String> {
+    parse_rows(&crate::io::lcq(env, &["mending", "list", "--batch", batch])?)
 }
 
 pub struct LcMenders<'a> {
@@ -171,10 +189,8 @@ impl Menders for LcMenders<'_> {
         std::thread::sleep(std::time::Duration::from_secs(secs.max(0) as u64));
     }
     fn rows(&mut self) -> Result<Vec<Row>, String> {
-        parse_rows(
-            &crate::io::lcq(self.env, &["mending", "list", "--batch", self.batch])?,
-            self.pass,
-        )
+        let pass = self.pass;
+        Ok(all_rows(self.env, self.batch)?.into_iter().filter(|r| r.pass == pass).collect())
     }
     fn sweep(&mut self, deadline_s: i64) -> Result<(), String> {
         crate::io::lcq(
@@ -205,6 +221,7 @@ mod tests {
     }
     fn row(suite: &str, state: &str, deadline: Option<i64>) -> Row {
         Row {
+            pass: 1,
             suite: suite.into(),
             state: state.into(),
             deadline,
@@ -358,29 +375,56 @@ mod tests {
         assert_eq!(out[0].outcome, Outcome::Mended);
     }
 
-    #[test_id(tbuoqwt)]
+    #[test_id(t2bg5u0)]
     #[test]
-    fn the_listing_is_filtered_to_the_pass() {
+    fn the_listing_keeps_every_pass_and_names_each_rows_pass() {
         let json = r#"[{"pass":1,"suite":"a","state":"MENDED","deadline":5,"diagnosis":null},{"pass":2,"suite":"b","state":"MENDING","deadline":9,"diagnosis":"x"}]"#;
+        let rows = parse_rows(json).unwrap();
+        assert_eq!(rows.iter().map(|r| (r.pass, r.suite.as_str())).collect::<Vec<_>>(), [(1, "a"), (2, "b")]);
         assert_eq!(
-            parse_rows(json, 2).unwrap(),
-            [Row {
+            rows[1],
+            Row {
+                pass: 2,
                 suite: "b".into(),
                 state: "MENDING".into(),
                 deadline: Some(9),
                 diagnosis: "x".into(),
                 returned: vec![],
                 ask_open: false
-            }]
+            }
         );
-        assert!(parse_rows("nope", 1).is_err());
+        assert!(parse_rows("nope").is_err());
+    }
+
+    fn returned_on(pass: u32, suite: &str, member: &str) -> Row {
+        Row { pass, returned: vec![member.into()], ..row(suite, "RETURNED", None) }
+    }
+
+    #[test_id(tzcza6g)]
+    #[test]
+    fn a_return_on_an_earlier_pass_still_returns_when_the_later_pass_has_only_a_waiting_row() {
+        let waiting = Row { pass: 2, ..row("s", "WAITING", None) };
+        let got = returns(vec![returned_on(1, "s", "sp-a"), waiting, Row { pass: 2, ..row("s", "MENDING", Some(9)) }]);
+        assert_eq!(got.iter().map(|f| (f.suite.as_str(), f.members.clone())).collect::<Vec<_>>(), [("s", vec!["sp-a".to_string()])]);
+    }
+
+    #[test_id(t783hd3)]
+    #[test]
+    fn the_newest_settled_row_of_a_suite_decides_whatever_the_listing_order() {
+        let mended = Row { pass: 2, ..row("s", "MENDED", Some(9)) };
+        assert!(returns(vec![mended.clone(), returned_on(1, "s", "sp-a")]).is_empty());
+        assert!(returns(vec![returned_on(1, "s", "sp-a"), mended]).is_empty());
+        let later = returned_on(3, "s", "sp-b");
+        let got = returns(vec![later, returned_on(1, "s", "sp-a")]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].members, ["sp-b"]);
     }
 
     #[test_id(toyrasd)]
     #[test]
     fn a_returned_row_names_its_members_and_the_owners_fill_only_a_row_that_named_none() {
         let json = r#"[{"pass":2,"suite":"s","state":"RETURNED","deadline":9,"diagnosis":"x","returned":["sp-b"]}]"#;
-        let rows = parse_rows(json, 2).unwrap();
+        let rows = parse_rows(json).unwrap();
         let mut f = fake(vec![(0, rows)]);
         let out = wait(&mut f, 300).unwrap();
         assert_eq!(out[0].members, ["sp-b"]);

@@ -3944,7 +3944,7 @@ pub fn open_rounds(env: &Env, repo: &Repo) -> Result<Vec<OpenRound>, String> {
 }
 
 /// A round of the store's view as `queue round status` lists it.
-fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
+pub fn open_round_of(r: &store_view::Round, now: u64) -> OpenRound {
     let get = |k: &str| r.record.get(k).unwrap_or_default();
     let (members, tips) = split_members(get("members"));
     OpenRound {

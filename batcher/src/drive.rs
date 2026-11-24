@@ -2406,10 +2406,10 @@ pub fn is_filter_suite(name: &str) -> bool {
     matches!(name, "unit-tests" | "integration-tests" | "spira-lint") || name.starts_with("fence-")
 }
 
-/// Tries a mender's return of the attributed pass with one probe: the red suite run without the
-/// member it named. Green ejects the member on that evidence; anything else leaves the search.
-fn probe_returned<R: RoundRunner, O: RoundOps>(
-    runner: &mut R,
+/// A mender's return naming members of the round owns its red suite: they leave with the
+/// diagnosis, their dependents with them, and nobody else leaves for that red. A return of a
+/// suite that is not red in the attributed pass, or naming a stranger, is not acted on.
+fn eject_returned_owners<O: RoundOps>(
     ops: &mut O,
     members: &[Member],
     red_suites: &[String],
@@ -2417,8 +2417,7 @@ fn probe_returned<R: RoundRunner, O: RoundOps>(
 ) -> Result<Option<RoundEnd>, String> {
     let in_round = |id: &Id| members.iter().any(|m| &m.id == id);
     for f in ops.returned_for_attribution() {
-        let filter = is_filter_suite(&f.suite);
-        let red = if filter {
+        let red = if is_filter_suite(&f.suite) {
             red_filter.is_some_and(|r| r.name == f.suite)
         } else {
             red_suites.contains(&f.suite)
@@ -2438,33 +2437,7 @@ fn probe_returned<R: RoundRunner, O: RoundOps>(
             .cloned()
             .collect();
         let named = f.members.join(",");
-        let verdict = if filter {
-            let scope = red_filter
-                .map(|r| unitattr::rerun_scope(&r.failed, ops.package_graph().as_ref()))
-                .unwrap_or_default();
-            runner.filter_green_in(&f.suite, &scope, &survivors)
-        } else {
-            runner.suite_green(&f.suite, &survivors)
-        };
-        if verdict != Some(true) {
-            let said = match verdict {
-                Some(_) => "still red",
-                None => "could not tell",
-            };
-            println!(
-                "batcher: the mender returned {named} for {} — {} without them {said} (probe {}); searching the round",
-                f.suite,
-                f.suite,
-                runner.probe_label()
-            );
-            continue;
-        }
-        let evidence = format!(
-            "{} — {} green without {named} (probe {})",
-            f.diagnosis,
-            f.suite,
-            runner.probe_label()
-        );
+        let evidence = format!("{} — returned by the mender of {}", f.diagnosis, f.suite);
         println!("batcher: the mender returned {named} for {}: {evidence}", f.suite);
         for m in members.iter().filter(|m| out.contains_key(&m.id)) {
             if f.members.contains(&m.id) {
@@ -2532,7 +2505,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
     }
     let prior_suites = runner.prior_red_suites();
     let prior = runner.prior_red();
-    if let Some(end) = probe_returned(runner, ops, &members, &prior_suites, prior.as_ref())? {
+    if let Some(end) = eject_returned_owners(ops, &members, &prior_suites, prior.as_ref())? {
         return Ok(end);
     }
     if let Some(f) = prior {
@@ -5458,46 +5431,42 @@ pub(crate) mod tests {
         (f, ops, round)
     }
 
-    #[test_id(t5rpykh)]
+    #[test_id(ta0y00f)]
     #[test]
-    fn a_returned_member_is_ejected_on_one_green_probe_without_it() {
+    fn a_returned_member_is_ejected_with_the_diagnosis_and_no_probe_runs() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
         let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
-        assert_eq!(f.alone.len(), 1, "{:?}", f.alone);
-        assert_eq!(f.alone[0].0, "test-spike.sh");
-        assert_eq!(f.alone[0].1, ["m1", "m2", "m4", "m5", "m6"]);
-        assert!(f.probes.is_empty(), "no bisection probe: {:?}", f.probes);
+        assert!(f.alone.is_empty() && f.probes.is_empty(), "{:?} {:?}", f.alone, f.probes);
         assert_eq!(ops.returned.len(), 1);
         assert_eq!(ops.returned[0].0, "m3");
         assert!(ops.returned[0].1.contains("bad at x.rs:9"), "{:?}", ops.returned);
-        assert!(ops.returned[0].1.contains("green without m3"), "{:?}", ops.returned);
+        let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(gone, ["m3"]);
         match end {
             RoundEnd::Land { members, .. } => assert_eq!(members.len(), 5),
             other => panic!("expected Land, got {other:?}"),
         }
     }
 
-    #[test_id(taga44x)]
+    #[test_id(tt5vvta)]
     #[test]
-    fn a_returned_member_whose_probe_stays_red_costs_one_probe_before_the_search() {
+    fn a_returned_member_is_ejected_though_the_suite_would_stay_red_without_it_and_nobody_else_leaves() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
         f.red = Box::new(|s, tree| s == "test-spike.sh" && (tree.contains("m3") || tree.contains("m5")));
         let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
-        assert_eq!(f.alone[0].1, ["m1", "m2", "m4", "m5", "m6"]);
-        assert!(ops.returned.is_empty(), "{:?}", ops.returned);
+        assert!(f.alone.is_empty(), "{:?}", f.alone);
         let gone: Vec<&str> = ops.ejected.iter().map(|(id, _)| id.as_str()).collect();
-        assert!(gone.contains(&"m3") && gone.contains(&"m5"), "{gone:?}");
-        assert!(matches!(end, RoundEnd::Land { .. }), "{end:?}");
+        assert_eq!(gone, ["m3"]);
+        assert!(matches!(end, RoundEnd::Land { members, .. } if members.len() == 5));
     }
 
-    #[test_id(ttdgqwk)]
+    #[test_id(tf6w9lv)]
     #[test]
-    fn a_returned_member_whose_probe_cannot_tell_leaves_the_search_to_run() {
+    fn a_returned_member_is_ejected_when_no_run_could_tell_whether_the_suite_is_green_without_it() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
         f.runs_alone = false;
         let _ = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6());
-        assert_eq!(f.alone[0].1, ["m1", "m2", "m4", "m5", "m6"]);
-        assert!(ops.returned.is_empty(), "{:?}", ops.returned);
+        assert_eq!(ops.returned.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["m3"]);
     }
 
     #[test_id(tl3r3ep)]
@@ -5510,9 +5479,9 @@ pub(crate) mod tests {
         assert!(f.alone.iter().all(|(_, t)| t.len() != 6 - 1 || t.contains(&"m3".to_string())), "{:?}", f.alone);
     }
 
-    #[test_id(tjjuc1a)]
+    #[test_id(t22v71w)]
     #[test]
-    fn a_returned_member_of_a_filter_is_probed_through_the_filter() {
+    fn a_returned_member_of_a_red_filter_is_ejected_without_a_probe() {
         let (mut f, mut ops, round) = six_members_with_a_return_of_m3();
         ops.attributed_returns = vec![returned_failure("spira-lint", "m3")];
         f.prior = Some(FilterRed {
@@ -5520,17 +5489,9 @@ pub(crate) mod tests {
             named: vec![],
             failed: vec![],
             harness: vec![], ..Default::default() });
-        f.filter = Some(Box::new(|tree| {
-            tree.contains("m3").then(|| FilterRed {
-                name: "spira-lint".into(),
-                named: vec![],
-                failed: vec![],
-                harness: vec![], ..Default::default() })
-        }));
         let end = attribute_round(&mut f, &mut ops, &["test-spike.sh".to_string()], round, budget6()).unwrap();
-        assert_eq!(f.probes[0], ["m1", "m2", "m4", "m5", "m6"]);
+        assert!(f.probes.is_empty(), "{:?}", f.probes);
         assert_eq!(ops.returned[0].0, "m3");
-        assert!(ops.returned[0].1.contains("(probe b9)"), "{:?}", ops.returned);
         assert!(matches!(end, RoundEnd::Land { members, .. } if members.len() == 5));
     }
 

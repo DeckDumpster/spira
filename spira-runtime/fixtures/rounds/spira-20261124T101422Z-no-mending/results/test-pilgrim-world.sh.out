@@ -1,0 +1,2 @@
+TAP version 14
+Bail out! pilgrim world up: sim: seeding the pilgrim world: no content writer is provisioned: set spira.beads_sql_writer_password_file (refusing `bd create`, which this process no longer forks) [sim=-rwxrwxr-x root cache=drwxr-xr-x spirauser drwx------ spirauser ]

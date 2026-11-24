@@ -1,0 +1,7 @@
+[
+  {"call": "job", "name": "test-pilgrim-world.sh", "members": [], "green": false},
+  {"call": "job", "name": "test-pilgrim-world.sh", "members": ["sp-3t2mtn", "sp-8amflc", "sp-zz4u61"], "green": true},
+  {"call": "job", "name": "test-pilgrim-world.sh", "members": ["sp-zz4u61"], "green": true},
+  {"call": "job", "name": "test-pilgrim-world.sh", "members": ["sp-8amflc"], "green": false},
+  {"call": "job", "name": "test-pilgrim-world.sh", "members": ["sp-3t2mtn"], "green": false}
+]
