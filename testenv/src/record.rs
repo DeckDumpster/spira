@@ -415,7 +415,7 @@ pub fn fingerprint(rc: i32, output: &str) -> String {
 }
 
 /// The fingerprint for a suite that exited 77 (DESIGN.md §3.7): `skip:<requirement>`, where
-/// `<requirement>` is testlib.sh's `skip <reason>` text (tap.rs's skip-all form), normalized
+/// `<requirement>` is a suite's `skip <reason>` text (tap.rs's skip-all form), normalized
 /// and space-joined with `_` — the `.result` line is `<status> <epoch> <secs> <fingerprint>
 /// <mode> <producer> <rc>` (§3.1), seven fields split on whitespace, and a reason is free
 /// text that would otherwise shift every field after it. A suite that exits 77 without the

@@ -8,7 +8,7 @@
 | `spira-config`, `lifecycle`, `spira-lc`, `beads-store` | config, the lifecycle machines and their service, the bead-store seam |
 | `sentinel`, `dwarf`, `landing-pass`, `queue`, `batcher-cut`, `gate*`, `testenv`, `release`, `install` | the loop: dispatch, dwarf runner, landing, rounds, gate, test runner, releases, installer |
 | `loom`, `cockpit/`, `cockpit-collect`, `watchd`, `mail`, `doctor`, `census`, `strand` | read surfaces and operator tools |
-| `spira/` | shell not yet ported, `conf.sh` / `lib.sh`, the registry (`conf.d/`, `conf.toml.d/`), personas (`runes/`), hooks (`hooks/`), `deps.toml`, `watchers`, and every suite (`test-*.sh`) |
+| `spira/` | shell not yet ported, `conf.sh` / `lib.sh`, the registry (`conf.d/`, `conf.toml.d/`), personas (`runes/`), hooks (`hooks/`), `deps.toml`, and `watchers`; the tree carries no shell suite |
 | `systemd/` | unit templates (`@PLACEHOLDER@` substitution; `.service` + `.timer` pairs) |
 | `docs/test-plan/*.toml` | the use-case catalogue suites declare coverage against |
 | `gate.steps` | this repository's certification gate |
@@ -26,7 +26,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 
 | path | what it is |
 |---|---|
-| `spira/` | the harness proper — dwarf runner, sentinel and its checks, gate, hel, strand, the runes and its rune format, lib.sh, and the test suites that hold them |
+| `spira/` | the harness proper — dwarf runner, sentinel and its checks, gate, hel, strand, the runes and its rune format, and lib.sh |
 | `spira/boundary` | this manifest — it describes the harness, so it travels with it |
 | `spira/boundary.sh` | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2 |
 | `spira/conf.sh` | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error |
@@ -117,12 +117,14 @@ pinned by `rust-toolchain.toml`.
 
 ## Tests
 
-Tests run through `testenv`, which stages the tree and runs suites in a podman container.
-Never run a `spira/test-*.sh` suite directly on the host.
+The tree carries no shell suite: tests are Rust (`cargo test`, `tests/` under `--features
+integration`, and `sim/` for behaviour over time). `no-new-shell-suite` refuses a new
+`spira/test-*.sh`, and an empty suite corpus selects nothing rather than refusing.
+`testenv` stages the tree and runs a corpus in a podman container; never run a suite directly
+on the host.
 
 ```sh
 testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--report [N]] <branch> [<repo-name>]
-testenv --suites test-concierge.sh,test-concierge-waiter-stop.sh <branch>
 testenv status [--json] <results-dir>
 ```
 
@@ -219,7 +221,7 @@ shrink-only allow ledgers live beside them. By theme:
   sorted; tmux calls are scoped (`tmux-scope-fence`); the Concierge is signalled by inbox,
   never keystrokes (`concierge-send-keys-fence`).
 - *Test hygiene:* tier budgets, `wall-clock-budget`, `tmp-leak`, `env-set-var-leak`,
-  `chmod-exec-leak`, `testlib-migrated`, `testdb-mode-lint`, `plan-lint`, `plan-matrix`,
+  `chmod-exec-leak`, `testdb-mode-lint`, `plan-lint`, `plan-matrix`,
   `covers-entries`.
 
 **`lifecycle-guard [--json] [--gate] [--rules <file>] <path>...`** refuses any path that

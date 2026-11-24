@@ -61,8 +61,8 @@ suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet)
 
 ### `header` — the bash callers' door onto the parser
 
-`plan-lint.sh`, `suite-coverage-json.sh`, `escape-classify.sh`, `testenv-guard.sh` and
-`testlib.sh` (`spira/suite-covers.sh`'s five real callers) shell out to this instead of
+`plan-lint.sh`, `suite-coverage-json.sh`, `escape-classify.sh`, and `testenv-guard.sh`
+(`spira/suite-covers.sh`'s four real callers) shell out to this instead of
 sourcing bash accessors — one process per query, by bare name on the launcher's PATH, the
 same convention `lib.sh`'s `spira-config` shims already carry. Each query prints its
 value(s) on stdout and exits 0, EXCEPT `testenv-unmet`, which is a predicate: exit 0 means

@@ -41,7 +41,7 @@ pub enum Provision {
     Stage,
     /// Stage and configure, so every suite's `SPIRA_TOML` exists; nothing installed. A batch
     /// none of whose suites declares `# requires: testenv` needs no more (sp-vkmgmx): only
-    /// those suites use the instance's systemd user units, and testlib.sh bails any of them
+    /// those suites use the instance's systemd user units, and the guard bails any of them
     /// run outside testenv.
     Configure,
     /// Stage, configure, suspend [`SUSPENDED_UNITS`] and install the instance's units.

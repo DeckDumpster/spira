@@ -4,4 +4,4 @@
 config registry), `lib.sh` (shared library whose bead-store functions are one-line shims onto
 `bdq`), the hooks in `spira/hooks/` (`dwarf-fence.sh`, `pre-commit`, `reference-transaction`,
 `session.sh`, concierge hooks), `czar-fence.sh`, `hold.sh` / `held.sh` / `holds.sh`,
-`ready.sh`, `host-check.sh`, `testdb.sh`, `schema.sh`, and every `test-*.sh` suite.
+`ready.sh`, `host-check.sh`, `testdb.sh`, and `schema.sh`. The tree carries no shell suite.

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Sourced, never executed.
 # testenv-guard.sh — tiny prelude for suites that declare `# requires: testenv` but do
-# not source testlib.sh. Refuses before any of the suite's own code runs, when
-# SPIRA_IN_TESTENV is not 1. testlib.sh carries the same check (`suite-select header
-# testenv-unmet`, suite-select/src/header.rs's `testenv_unmet`) for suites that source it
-# instead — this file exists so the ones that don't still get it.
+# need a guard. Refuses before any of the suite's own code runs, when
+# SPIRA_IN_TESTENV is not 1 (`suite-select header testenv-unmet`,
+# suite-select/src/header.rs's `testenv_unmet`).
 #
 #   HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 #   . "$HERE/testenv-guard.sh"

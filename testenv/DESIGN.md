@@ -321,10 +321,10 @@ fields ignore them.
 from TAP lines `1..N`, `ok N - d`, `not ok N - d`, `# SKIP`/`# TODO` directives and
 `Bail out! reason`. Informational: the verdict is the suite's exit status, not its TAP.
 
-`cases` has one entry per case: `ms` from the `#ms=<n>` line testlib.sh prints after it, `at`
+`cases` has one entry per case: `ms` from the `#ms=<n>` line a suite prints after it, `at`
 from a failing case's `# at <file>:<line>` line, `deadline` (`{"secs":n,"load":str|null}`, absent otherwise) from the `# deadline secs=<n>
 <load>` line printed when the case was killed for running past the deadline; `load` is the rest of
-that line verbatim. testlib.sh judges each case: one that runs past
+that line verbatim. A suite's own harness judges each case: one that runs past
 `spira.test_case_deadline` is printed as the next `not ok` and the suite is killed; the first
 `not ok` ends the suite with a `Bail out!`. The suite's RED line and the `VERDICT RED` line name
 that first failing case (`first red: case <n> <name> at <file>:<line>`, `first=<suite>: ...`).
@@ -350,14 +350,12 @@ verbatim.
 - **`out_text` opens with the literal line `TAP version 14`:** one row per `ok`/`not ok`
   case (`status` `pass`/`fail`), with a `not ok`'s first following `# ` comment as `detail`;
   a whole-suite `1..0 # SKIP <reason>` or `Bail out! <reason>` becomes one more row,
-  `case="(suite)"`, `status` `skip`/`bail`. A suite not yet migrated to testlib.sh emits no
-  TAP and never takes this branch (its `.out` does not open with the header line).
+  `case="(suite)"`, `status` `skip`/`bail`. A suite that prints no TAP and never takes this branch (its `.out` does not open with the header line).
 - **Otherwise (`out_text` is `None`, unreadable, or does not open with the header):** one
   `case="(suite)"` row built from `fallback` (the caller's own status vocabulary, not
   reinterpreted here) — `ok`→pass, `skip`→skip, `unreached`→unreached, everything else
   (`timeout`, `red`, `quarantined-red`, anything unrecognised)→fail, `detail="not migrated
-  to testlib.sh"`. Every suite gets a row on day one; migrating to testlib.sh only adds
-  per-case rows where there was one row before.
+  to testlib.sh"`. Every suite gets a row; one that prints TAP adds per-case rows.
 
 **Escaping asymmetry, kept from the bash exactly.** `suite` and `tier` (and the whole
 fallback row) escape backslash, quote, newline and tab. `case` and `detail`, read from a TAP
@@ -382,7 +380,7 @@ blocking.
 ### 3.7 The skip contract — `spira/skip-allowlist.tsv` (sp-gjx1b)
 
 **A SKIP is not automatically green.** Before this, `Status::Skip` (a suite that exits 77,
-the automake-skip convention testlib.sh's `skip <reason>` uses) and `Status::SkipReq` (a
+the automake-skip convention a suite's `skip <reason>` uses) and `Status::SkipReq` (a
 suite pre-empted because a `# requires:` token was not on PATH in the container) were both
 `blocking() == false` unconditionally — the exit-status table (§2.2) simply listed them next
 to `ok`. sp-cln99 broke the server-mode testdb template lookup on 2026-09-29 and 13 suites
@@ -396,7 +394,7 @@ third state: every SKIP is either declared-and-green or undeclared-and-red.
 
 **The requirement is the record's fingerprint, unchanged.** `ResultRecord.fingerprint`
 already named the reason for SKIP-REQ (`requires:<tok,...>`, §3.1); this bead gives SKIP the
-same treatment: `skip:<reason>`, where `<reason>` is testlib.sh's `skip <reason>` text (TAP's
+same treatment: `skip:<reason>`, where `<reason>` is a suite's `skip <reason>` text (TAP's
 skip-all form `1..0 # SKIP <reason>`, read by `tap::skip_all_reason`), normalized exactly
 like a red's fingerprint (§3.2 — paths, timestamps, numbers) and then space-joined with `_`.
 The join is not cosmetic: the `.result` line is seven fields split on whitespace, and a
@@ -596,7 +594,7 @@ follows the same rule against a different release:
 
 `SPIRA_ARTIFACTS`, `SPIRA_ARTIFACTS_ROOT`, `SPIRA_TEST_PLAN_BIN` and `TESTDB_TESTENV` are
 gone: nothing in the tree reads them, and a suite finds `testenv`, `test-plan` and every
-other tool by name. `testlib.sh` does not touch PATH. Host-side helpers (`gate-timing.sh`,
+other tool by name. Host-side helpers (`gate-timing.sh`,
 `gate-diag.sh`, `incident.sh`, `mail`) run on testenv's own PATH — the running release's,
 set by whoever launched testenv. testenv still strips an inherited `SPIRA_ARTIFACTS` from
 cargo and `testenv.sh`, as hygiene against a stale shell.
@@ -748,7 +746,7 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
 | `batcher-cut/src/io.rs:605-620` (`bins_present`) | looks in `${SPIRA_BATCH_BINS_TARGET_DIR:-$run/cargo-target-bins}/<tree>/release` | look in the round worktree's `target/release`, same rule as queue.sh's `_land_local_bins_dir` below |
 | `spira-config/examples/spira.toml:23`, repo-map gate strings (`spira/repo-map.example:141,149`, prod `repo.<name>.gate`) | `bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH"` | `"$(spira_bin testenv)" "$SPIRA_GATE_BRANCH"` (golden/fixture copies under `spira-config/tests/` follow the example) |
 | `spira/conf.sh:459-467` (`spira_bin`) | `dir="${SPIRA_ARTIFACTS:-$SPIRA_REPO/bin}"` | honour SPIRA_ARTIFACTS only when `[ "${SPIRA_ARTIFACTS_ROOT:-}" = "$SPIRA_REPO" ]` or ROOT unset (§5) |
-| `spira/testenv-guard.sh:17`, `spira/testlib.sh:307` | "run via spira/testenv-batch.sh" | "run via testenv" |
+| `spira/testenv-guard.sh:17` | "run via spira/testenv-batch.sh" | "run via testenv" |
 | `spira/runes/*.rune` `RUNE_TOOLS` (`Bash(*testenv-batch.sh*)`) and the statute `law-tests-run-only-through-testenv-batch` | names the script | name the binary (`Bash(*testenv *)`) |
 | **delete** `spira/testenv-batch.sh`, `spira/cargo-target-bins-prune.sh`, `spira/test-testenv-batch-with-bins.sh`, `spira/test-cargo-target-bins-prune.sh` (if present) | — | replaced by this crate |
 | `spira/binary-path-fence-allow:11,63` | allows `spira/testenv-batch.sh`, `spira/test-testenv-batch.sh` | remove once deleted |
