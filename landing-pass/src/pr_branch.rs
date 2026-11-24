@@ -416,6 +416,7 @@ mod tests {
                     notes: Vec::new(),
                     express: false,
                     holds: Vec::new(),
+                    reason: None,
                 })
                 .collect())
         }

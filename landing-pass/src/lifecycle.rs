@@ -22,6 +22,8 @@ pub trait Lc {
     }
     /// `spira-lc resubmit-submitted <id> <tip>`: make a SUBMITTED row hold the branch tip the gate judged.
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String>;
+    /// `spira-lc unhold <id> <kind> landing-pass`: lift one hold.
+    fn unhold(&self, id: &str, kind: &str) -> Result<String, String>;
     /// `spira-lc list --state SUBMITTED,CERTIFIED`: each waiting row's `(repo, id, tip)`, every repo's in one read; a row with no tip is omitted. The pass's only `list`: its answer is also the proof the store is reachable.
     fn waiting(&self) -> Result<Vec<Waiting>, String>;
 }
@@ -88,6 +90,16 @@ impl Lc for RealLc {
                 Some(Waiting { repo: r["repo"].as_str().unwrap_or_default().to_string(), id: r["bead_id"].as_str()?.to_string(), tip: tip.to_string() })
             })
             .collect())
+    }
+
+    fn unhold(&self, id: &str, kind: &str) -> Result<String, String> {
+        let c = client(self.client.as_ref(), self.bin.as_deref())?;
+        let (rc, so, se) = run(&c, &["unhold", id, kind, "landing-pass"]);
+        let out = so.trim().to_string();
+        if rc != 0 {
+            return Err(format!("spira-lc unhold exited {rc}: {out} {}", se.lines().next().unwrap_or("")));
+        }
+        Ok(out)
     }
 
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {

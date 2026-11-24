@@ -203,6 +203,9 @@ pub struct BeadRow {
     /// The lifecycle row's holds; any kind but manual stops its gate.
     #[serde(default)]
     pub holds: Vec<String>,
+    /// The lifecycle row's reason: a timed `wait` hold's `snooze-until:<epoch>` lives here.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 fn no_state() -> String {
@@ -276,7 +279,7 @@ impl BeadRow {
             .map(String::from);
         let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let notes = normalize_notes(v.get("notes"));
-        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes, express: false, holds: Vec::new() })
+        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes, express: false, holds: Vec::new(), reason: None })
     }
 
     /// The builder has handed this bead on (its lifecycle row is SUBMITTED onward).

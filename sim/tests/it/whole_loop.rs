@@ -82,6 +82,7 @@ struct Lc {
     landed: Vec<String>,
     dwarves: BTreeMap<String, u64>,
     items: BTreeMap<String, String>,
+    released: std::collections::BTreeSet<String>,
     pages: Vec<String>,
 }
 
@@ -126,6 +127,15 @@ impl Lc {
     fn in_state(&self, s: BeadState) -> Vec<&LifecycleRow> {
         self.rows.values().filter(|r| r.state == s).collect()
     }
+
+    /// READY and not snoozed at `now_ms`: what a dwarf may claim.
+    fn claimable(&self, now_ms: u64) -> Vec<&LifecycleRow> {
+        let now = (now_ms / 1000) as i64;
+        self.in_state(BeadState::Ready)
+            .into_iter()
+            .filter(|r| !(r.holds.contains(&lifecycle::bead::HoldKind::Wait) && r.reason.as_deref().is_some_and(|x| spira_store::lc_state::snooze_until(x).is_some() && !spira_store::lc_state::wait_expired(x, now))))
+            .collect()
+    }
 }
 
 /// What a scenario scripts: the beads it files (at what time), whether the rune may
@@ -135,6 +145,8 @@ struct Script {
     file: Vec<(u64, &'static str)>,
     single_flight: bool,
     guilty: Option<&'static str>,
+    /// The first claim of each bead ends without progress: released, then held on a wait of this many ms.
+    no_progress_snooze_ms: Option<u64>,
 }
 
 /// Where the scheduler dies: after `after` of the named double's store writes have reached the store.
@@ -223,7 +235,7 @@ fn sentinel_observe(w: &World) -> Result<String, String> {
     let now = w.now();
     let lc = w.lc();
     let live: Vec<String> = lc.dwarves.iter().filter(|(_, end)| **end > now).map(|(u, _)| u.clone()).collect();
-    let ready = lc.in_state(BeadState::Ready).len() as u32;
+    let ready = lc.claimable(now).len() as u32;
     let snap = sc::Snapshot {
         live_by_rune: [(RUNE.to_string(), live.len() as u32)].into(),
         ready_by_rune: [(RUNE.to_string(), Some(ready))].into(),
@@ -247,9 +259,17 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     let now = w.now();
     let unit = units::unit_name(sc::NAME, &start.key).map_err(|e| e.0)?;
     let mut lc = w.lc();
-    let bead = lc.in_state(BeadState::Ready).first().map(|r| r.bead_id.clone()).ok_or("the dwarf found nothing ready")?;
+    let bead = lc.claimable(now).first().map(|r| r.bead_id.clone()).ok_or("the dwarf found nothing ready")?;
     w.write("sentinel_unit_start", &mut lc, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None })?;
-    lc.due.push((now + DWARF_MS - 1, Due::Event { bead: bead.clone(), actor: unit.clone(), kind: BeadEventKind::Submit { tip: tip_of(&bead) } }));
+    match w.script.no_progress_snooze_ms.filter(|_| lc.released.insert(bead.clone())) {
+        Some(snooze) => {
+            let at = now + MIN;
+            let hold = BeadEventKind::Hold { kind: lifecycle::bead::HoldKind::Wait, cause: lifecycle::reason::HoldCause::UnlandedBlocker, detail: Some(spira_store::lc_state::snooze_reason(((at + snooze) / 1000) as i64)) };
+            lc.due.push((at, Due::Event { bead: bead.clone(), actor: unit.clone(), kind: BeadEventKind::Release }));
+            lc.due.push((at, Due::Event { bead: bead.clone(), actor: unit.clone(), kind: hold }));
+        }
+        None => lc.due.push((now + DWARF_MS - 1, Due::Event { bead: bead.clone(), actor: unit.clone(), kind: BeadEventKind::Submit { tip: tip_of(&bead) } })),
+    }
     lc.dwarves.insert(unit, now + DWARF_MS);
     drop(lc);
     w.units.script(sc::NAME, DWARF_MS, Exit::Code(0));
@@ -262,7 +282,7 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
 // --- sift ---------------------------------------------------------------------------------------
 
 fn pool_row(r: &LifecycleRow) -> sift::PoolRow {
-    sift::PoolRow { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), holds: vec![], ejected_red_tip: r.ejected_red_tip.clone(), sifted_tip: r.sifted_tip.clone() }
+    sift::PoolRow { id: r.bead_id.clone(), state: r.state.as_str().into(), version: r.version, tip: r.tip.clone().unwrap_or_default(), holds: r.holds.iter().map(|h| h.as_str().to_string()).collect(), ejected_red_tip: r.ejected_red_tip.clone(), sifted_tip: r.sifted_tip.clone() }
 }
 
 fn sift_observe(w: &World) -> Result<String, String> {
@@ -679,7 +699,7 @@ fn dump(r: &Run) -> String {
 #[test_id(tdls98x)]
 #[test]
 fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_tasks() {
-    let script = Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None };
+    let script = Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None, no_progress_snooze_ms: None };
     let a = run(11, script.clone());
     let b = run(11, script);
     println!("green scenario: wall {:?} and {:?} for {} virtual minutes", a.wall, b.wall, UNTIL_MS / MIN);
@@ -703,13 +723,28 @@ fn one_bead_is_filed_claimed_submitted_cut_certified_and_landed_on_the_service_t
     assert_eq!(a.asked, b.asked, "one seed, the same effects in the same order");
 }
 
+/// A dwarf that made no progress releases the bead and holds it on a timed wait. Its next claim
+/// is after the wait ran out, with no sweep between: the claim ends the hold, so the submit that
+/// follows is screened by the next sift and lands.
+#[test_id(tdn4w1x)]
+#[test]
+fn a_bead_released_on_a_timed_wait_is_reclaimed_after_expiry_and_lands() {
+    let script = Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None, no_progress_snooze_ms: Some(3 * MIN) };
+    let r = run(14, script);
+    show("no-progress", &r);
+    assert_eq!(lifecycle_of(&r, "sp-w3a"), ["READY", "WORKING", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"], "{}", dump(&r));
+    let claims: Vec<u64> = r.history.iter().filter(|(_, id, _, to)| id == "sp-w3a" && to == "WORKING").map(|(at, ..)| *at).collect();
+    assert!(claims[1] >= claims[0] + MIN + 3 * MIN, "the second claim waited out the snooze: {claims:?}");
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+}
+
 /// Two members in one round, one of them red. Both are sifted in one pass, so the one cut takes
 /// both: the corpus goes red, the attribution leg ejects the guilty member (GateRed: REWORK) and
 /// names the survivor, which is certified and landed.
 #[test_id(tg6jir3)]
 #[test]
 fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
-    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: Some("sp-w3b") };
+    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: Some("sp-w3b"), no_progress_snooze_ms: None };
     let a = run(12, script.clone());
     let b = run(12, script);
     println!("red scenario: wall {:?} and {:?} for {} virtual minutes", a.wall, b.wall, UNTIL_MS / MIN);
@@ -734,7 +769,7 @@ fn a_red_round_attributes_ejects_the_guilty_member_and_lands_the_rest() {
 #[test_id(tnw9o1v)]
 #[test]
 fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
-    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: None };
+    let script = Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: None, no_progress_snooze_ms: None };
     let a = run(12, script);
     show("one-pass", &a);
     let opens = a.asked.iter().filter(|n| *n == bl::ROUND_OPEN).count();
@@ -746,8 +781,8 @@ fn two_members_sifted_in_one_pass_are_cut_into_one_round() {
 
 // --- a crash between a store write and its journaled outcome --------------------------------------
 
-const GREEN2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: None };
-const RED2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: Some("sp-w3b") };
+const GREEN2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: None, no_progress_snooze_ms: None };
+const RED2: fn() -> Script = || Script { file: vec![(30_000, "sp-w3a"), (30_000, "sp-w3b")], single_flight: false, guilty: Some("sp-w3b"), no_progress_snooze_ms: None };
 const BEADS: [&str; 2] = ["sp-w3a", "sp-w3b"];
 /// The store writes one landing of `BEADS` makes: deliver and delivered per member, then the round's close.
 const LAND_WRITES: u32 = 2 * BEADS.len() as u32 + 1;
@@ -978,7 +1013,7 @@ fn releases_of(j: &dyn Journal, held: &[String]) -> Vec<usize> {
 #[test_id(t6456v9)]
 #[test]
 fn a_halt_holds_across_a_joint_crash_and_the_resume_releases_each_held_effect_once() {
-    let rig = Rig::new(13, Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None }, None);
+    let rig = Rig::new(13, Script { file: vec![(30_000, "sp-w3a")], single_flight: true, guilty: None, no_progress_snooze_ms: None }, None);
     let journal = rig.journal();
     let finish = || rig.finish(std::time::Instant::now(), None);
     let mut driver = rig.boot(journal.clone());

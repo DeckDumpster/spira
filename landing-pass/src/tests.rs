@@ -455,6 +455,8 @@ struct FakeLc {
     held_tip: RefCell<Option<String>>,
     resubmits: RefCell<Vec<String>>,
     holds: RefCell<Vec<String>>,
+    unholds: RefCell<Vec<String>>,
+    refuse_unhold: Cell<bool>,
     waiting: RefCell<Vec<(String, String)>>,
 }
 impl crate::lifecycle::Lc for FakeLc {
@@ -476,6 +478,13 @@ impl crate::lifecycle::Lc for FakeLc {
     fn certify_red(&self, id: &str, tip: &str, reason: &str, step: &str, message: &str) -> Result<String, String> {
         self.reds.borrow_mut().push(format!("{id} {tip} {reason} step={step} message={message}"));
         self.certify(id, tip, "red", reason)
+    }
+    fn unhold(&self, id: &str, kind: &str) -> Result<String, String> {
+        if self.refuse_unhold.get() {
+            return Err("spira-lc unhold exited 3: refused".into());
+        }
+        self.unholds.borrow_mut().push(format!("{id} {kind}"));
+        Ok("applied".into())
     }
     fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
         self.resubmits.borrow_mut().push(format!("{id} {tip}"));
@@ -573,6 +582,7 @@ impl H {
             notes: Vec::new(),
             express: labels.contains(&"express"),
             holds: Vec::new(),
+            reason: None,
         };
         self.beads.rows.borrow_mut().insert(id.into(), b.clone());
         b
@@ -2332,6 +2342,59 @@ fn a_submitted_bead_held_manual_and_wait_is_not_gated() {
     assert!(h.lc.certified.borrow().is_empty());
     assert!(h.logged("not gated until the hold lifts"));
     assert!(!h.logged("gated; the hold keeps it out of the cut"));
+}
+
+fn waiting_until(h: &H, holds: &[&str], reason: &str) {
+    held_submitted(h, holds);
+    let mut row = h.beads.rows.borrow().get("sp-a").unwrap().clone();
+    row.reason = Some(reason.into());
+    h.beads.rows.borrow_mut().insert("sp-a".into(), row);
+}
+
+#[test_id(tq0gl7w)]
+#[test]
+fn an_expired_wait_is_lifted_and_the_bead_gated_in_the_same_pass() {
+    let h = H::new(LandMode::QueueLocal);
+    waiting_until(&h, &["wait"], "snooze-until:900");
+    h.run();
+    assert_eq!(*h.lc.unholds.borrow(), vec!["sp-a wait"]);
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+    assert!(!h.logged("not gated until the hold lifts"));
+}
+
+#[test_id(t5xb2mk)]
+#[test]
+fn an_expired_wait_beside_another_blocking_hold_is_lifted_and_the_bead_stays_held() {
+    let h = H::new(LandMode::QueueLocal);
+    waiting_until(&h, &["wait", "ask"], "snooze-until:900");
+    h.run();
+    assert_eq!(*h.lc.unholds.borrow(), vec!["sp-a wait"]);
+    assert!(h.lc.certified.borrow().is_empty());
+    assert!(h.logged("not gated until the hold lifts"));
+}
+
+#[test_id(tr9d4vc)]
+#[test]
+fn an_unexpired_or_untimed_wait_is_neither_lifted_nor_gated() {
+    for reason in ["snooze-until:2000", "sp-blocker"] {
+        let h = H::new(LandMode::QueueLocal);
+        waiting_until(&h, &["wait"], reason);
+        h.run();
+        assert!(h.lc.unholds.borrow().is_empty(), "{reason}");
+        assert!(h.lc.certified.borrow().is_empty(), "{reason}");
+        assert!(h.logged("not gated until the hold lifts"), "{reason}");
+    }
+}
+
+#[test_id(tm3h8ze)]
+#[test]
+fn a_refused_lift_of_an_expired_wait_is_logged_and_the_bead_stays_held() {
+    let h = H::new(LandMode::QueueLocal);
+    h.lc.refuse_unhold.set(true);
+    waiting_until(&h, &["wait"], "snooze-until:900");
+    h.run();
+    assert!(h.lc.certified.borrow().is_empty());
+    assert!(h.logged("could not lift its expired wait hold"));
 }
 
 /// sp-mve9i: a bead still with its builder (READY, WORKING, REWORK) is never certified,

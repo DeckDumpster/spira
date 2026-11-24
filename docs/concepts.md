@@ -41,8 +41,8 @@ normally sends the event.
 
 | From | Event | To | Normally sent by |
 |---|---|---|---|
-| `READY` | `Claim` | `WORKING` (records holder, persona, lease, stack) | `dwarf` |
-| `REWORK` | `Claim` | `WORKING`; refused if the proposed stack equals the stack the red work was built on | `dwarf` |
+| `READY` | `Claim` | `WORKING` (records holder, persona, lease, stack; lifts a `wait` hold) | `dwarf` |
+| `REWORK` | `Claim` | `WORKING` (lifts a `wait` hold); refused if the proposed stack equals the stack the red work was built on | `dwarf` |
 | `WORKING` | `Submit {tip}` | `SUBMITTED` | `work submit` (tip read from branch `spira/<id>`) |
 | `WORKING`, `READY` | `Done` | `DONE` | `work done`; filing and grooming paths |
 | `WORKING` | `Release` / `HolderDead` | `READY`, or `REWORK` if the claim was taken from `REWORK` | `sentinel` (lease expired), `dwarf` teardown |

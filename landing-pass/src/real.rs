@@ -639,6 +639,7 @@ impl RealBeads {
             r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
             r.express = lc.get(&r.id).is_some_and(|x| x.express);
             r.holds = lc.get(&r.id).map(|x| x.holds.clone()).unwrap_or_default();
+            r.reason = lc.get(&r.id).and_then(|x| x.reason.clone());
         }
         Ok(())
     }

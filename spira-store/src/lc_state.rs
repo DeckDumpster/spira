@@ -46,6 +46,11 @@ pub fn snooze_until(reason: &str) -> Option<i64> {
     rest.split_whitespace().next()?.parse().ok()
 }
 
+/// A timed wait whose time has passed at `now`: nothing keeps the bead from moving on.
+pub fn wait_expired(reason: &str, now: i64) -> bool {
+    snooze_until(reason).is_some_and(|t| t <= now)
+}
+
 /// Whether a wait hold's reason names a timed directive anywhere, so a malformed one can be refused.
 pub fn names_directive(reason: &str) -> bool {
     reason.contains(SNOOZE_PREFIX) || reason.contains(CHECKPOINT_PREFIX)
@@ -507,6 +512,15 @@ pub fn holds_answer_from(code: i32, stdout: &str, why: &str) -> Lookup<(BeadStat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(t3b1btr)]
+    #[test]
+    fn a_timed_wait_is_expired_from_its_instant_and_an_untimed_one_never_is() {
+        assert!(!wait_expired(&snooze_reason(100), 99));
+        assert!(wait_expired(&snooze_reason(100), 100));
+        assert!(wait_expired(&checkpoint_reason(100), 101));
+        assert!(!wait_expired("sp-abc12", i64::MAX));
+    }
 
     #[test_id(tikte2f)]
     #[test]

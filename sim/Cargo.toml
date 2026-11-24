@@ -47,4 +47,5 @@ reconciler-engine = { path = "../reconciler-engine" }
 spira-test-id = { path = "../spira-test-id" }
 spira-runtime = { path = "../spira-runtime" }
 lifecycle = { path = "../lifecycle" }
+spira-store = { path = "../spira-store" }
 testkit = { path = "../testkit" }
