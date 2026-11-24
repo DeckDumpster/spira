@@ -927,7 +927,6 @@ crate::tasks::b::hosted!(SweepArchive);
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Mutex;
 
     use runtime::ports::{Proc, ProcOutput, ProcSpec};
     use serde_json::{Map, Value};
@@ -935,16 +934,15 @@ mod tests {
     use super::archive::{index, load_index, store, write_index, Paths, Sha};
     use super::Store;
 
-    /// A compressor that returns its input and counts it; `zstd` can be made absent.
+    /// A compressor that returns its input, from stdin or the path argument, and counts it; `zstd` can be made absent.
     struct Fake {
         input: AtomicU64,
         no_zstd: bool,
-        seen: Mutex<Vec<String>>,
     }
 
     impl Fake {
         fn new(no_zstd: bool) -> Fake {
-            Fake { input: AtomicU64::new(0), no_zstd, seen: Mutex::new(vec![]) }
+            Fake { input: AtomicU64::new(0), no_zstd }
         }
         fn input(&self) -> u64 {
             self.input.load(Ordering::SeqCst)
@@ -956,9 +954,12 @@ mod tests {
             if self.no_zstd && spec.prog == "zstd" {
                 return Err("spawn zstd: not found".into());
             }
-            self.seen.lock().unwrap().push(spec.prog.clone());
-            self.input.fetch_add(spec.stdin.len() as u64, Ordering::SeqCst);
-            Ok(ProcOutput { code: Some(0), stdout: spec.stdin.clone(), stderr: vec![] })
+            let data = match spec.args.last().map(std::path::Path::new).filter(|p| p.is_file()) {
+                Some(path) => std::fs::read(path).unwrap(),
+                None => spec.stdin.clone(),
+            };
+            self.input.fetch_add(data.len() as u64, Ordering::SeqCst);
+            Ok(ProcOutput { code: Some(0), stdout: data, stderr: vec![] })
         }
     }
 
