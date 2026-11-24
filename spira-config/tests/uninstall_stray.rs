@@ -15,9 +15,7 @@ fn the_stray_sweep_reports_a_planted_unit_it_does_not_own_and_leaves_it_in_place
     let spira = testkit::manifest_dir().parent().unwrap().join("spira");
     let release = d.join("release");
     std::fs::create_dir_all(release.join("bin")).unwrap();
-    for bin in ["spira-config"] {
-        std::os::unix::fs::symlink(testkit::bin_exe(bin), release.join("bin").join(bin)).unwrap();
-    }
+    std::os::unix::fs::symlink(testkit::bin_exe("spira-config"), release.join("bin/spira-config")).unwrap();
     let units = d.join(".config/systemd/user");
     std::fs::create_dir_all(&units).unwrap();
     std::fs::write(units.join("spira-legacy-stray.service"), "[Unit]\nDescription=stray\n").unwrap();

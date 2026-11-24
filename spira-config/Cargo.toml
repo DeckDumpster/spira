@@ -87,7 +87,7 @@ path = "tests/uninstall_stray.rs"
 required-features = ["integration"]
 
 [features]
-integration = ["lifecycle/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
+integration = ["install/integration", "lifecycle/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }
