@@ -599,7 +599,7 @@ mod tests {
             tmux: fake.tmux(),
             view,
             layout_bin: layout.to_str().unwrap().into(),
-            cwd: "/work".into(),
+            cwd: "work".into(),
             sessions: ["brain", "hunk", "chat"].map(String::from).to_vec(),
             concierge: dir.join("no-concierge.sh"),
             force: false,
@@ -631,9 +631,9 @@ mod tests {
         assert_eq!(
             steps,
             [
-                "new-session -d -s brain -c /work",
-                "new-session -d -s hunk -c /work",
-                "new-session -d -s chat -c /work",
+                "new-session -d -s brain -c work",
+                "new-session -d -s hunk -c work",
+                "new-session -d -s chat -c work",
                 "layout up --window brain:0",
                 "view build",
                 "view sync",

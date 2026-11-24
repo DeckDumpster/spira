@@ -2181,7 +2181,7 @@ mod dependency_fetch_tests {
 
         let aerc_runs_it = |wrapper: &Path| {
             let mut c = std::process::Command::new(wrapper);
-            c.env_clear().env("HOME", td.path()).env("PATH", "/usr/bin:/bin").args(["-f", "concierge@spira", "operator@spira"]);
+            c.env_clear().env("HOME", td.path()).env("PATH", format!("{}:{}", system_paths::USR_BIN, system_paths::BIN)).args(["-f", "concierge@spira", "operator@spira"]);
             c.output().unwrap()
         };
         let out = aerc_runs_it(&wrapper);

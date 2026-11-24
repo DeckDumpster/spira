@@ -15,7 +15,9 @@ use testkit::TempDir;
 
 const SPIRA_CONFIG: &str = "#!/bin/bash\ncase \"$1\" in resolve) cat \"$STUB_RESOLVED\" ;; env-bootstrap|check-bd) ;; *) exit 1 ;; esac\n";
 const WATCHD: &str = "#!/bin/sh\n[ -n \"$SPIRA_TOML\" ] || { echo 'watchd: SPIRA_TOML is not set' >&2; exit 2; }\nprintf 'NAME UNIT HEALTH UNREAD\\nprobe daemon ok 0\\n'\n";
-const SYS_PATH: &str = "/usr/bin:/bin";
+fn sys_path() -> String {
+    format!("{}:{}", system_paths::USR_BIN, system_paths::BIN)
+}
 
 fn repo() -> PathBuf {
     testkit::manifest_dir().join("../..").canonicalize().unwrap()
@@ -30,7 +32,7 @@ struct Rig {
 impl Rig {
     fn new() -> Rig {
         let dir = TempDir::new("launchers");
-        let release = dir.join("releases/current");
+        let release = dir.join("rel");
         std::fs::create_dir_all(release.join("bin")).unwrap();
         std::os::unix::fs::symlink(repo().join("spira"), release.join("spira")).unwrap();
         let (run, mail) = (dir.join("run"), dir.join("mail"));
@@ -58,7 +60,7 @@ impl Rig {
     }
 
     fn paths(&self) -> Paths {
-        resolve(&self.release, SYS_PATH, &self.toml.display().to_string(), self.dir.join("settings.json")).unwrap()
+        resolve(&self.release, &sys_path(), &self.toml.display().to_string(), self.dir.join("settings.json")).unwrap()
     }
 
     /// `sh -c <command>` under the environment the client gives it: a home, a bare `PATH`,
@@ -67,7 +69,7 @@ impl Rig {
         let mut c = Command::new("bash");
         c.env_clear()
             .env("HOME", &*self.dir)
-            .env("PATH", SYS_PATH)
+            .env("PATH", sys_path())
             .env("STUB_RESOLVED", self.dir.join("resolved.sh"))
             .args(["-c", command])
             .stdin(Stdio::piped())
@@ -85,7 +87,7 @@ impl Rig {
         let mut c = Command::new(repo().join(script));
         c.env_clear()
             .env("HOME", &*self.dir)
-            .env("PATH", format!("{}:{SYS_PATH}", self.release.join("bin").display()))
+            .env("PATH", format!("{}:{}", self.release.join("bin").display(), sys_path()))
             .env("TMUX_TMPDIR", &*self.dir)
             .env("STUB_RESOLVED", self.dir.join("resolved.sh"))
             .arg("status")
@@ -172,7 +174,7 @@ fn the_ops_pane_renders_once_from_a_login_environment_and_names_the_missing_conf
     link_built(&rig, "health");
     let health = |profile: bool| {
         let mut c = Command::new(rig.release.join("bin/health"));
-        c.env_clear().env("HOME", &*rig.dir).env("PATH", SYS_PATH).env("SPIRA_RELEASE", &rig.release).arg("once").stdin(Stdio::null());
+        c.env_clear().env("HOME", &*rig.dir).env("PATH", sys_path()).env("SPIRA_RELEASE", &rig.release).arg("once").stdin(Stdio::null());
         if profile {
             c.env("SPIRA_TOML", &rig.toml);
         }

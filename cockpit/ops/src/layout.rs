@@ -1466,7 +1466,7 @@ mod tests {
             .answer("-d -v -l", "%3\n");
         let mut conf = conf_with("", "");
         conf.run = dir.path().to_path_buf();
-        conf.cwd = "/work".into();
+        conf.cwd = "work".into();
         conf.mail_cmd = Some("fakemail".into());
         Layout { tmux: fake.tmux(), conf }.up("cockpit:0").unwrap();
         assert_eq!(
