@@ -10,9 +10,16 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Output, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+static STARTED: AtomicU64 = AtomicU64::new(0);
+
+/// Children this process has started through [`Bounded`].
+pub fn started() -> u64 {
+    STARTED.load(Ordering::Relaxed)
+}
 
 pub const CALL_TIMEOUT_SECS: &str = "5";
 
@@ -213,6 +220,7 @@ impl Bounded {
             self.cmd.stderr(s);
         }
         self.cmd.process_group(0);
+        STARTED.fetch_add(1, Ordering::Relaxed);
         let mut child = self.cmd.spawn()?;
         let expired = Arc::new(AtomicBool::new(false));
         if let Some(limit) = deadline {

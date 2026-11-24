@@ -115,6 +115,20 @@ pub fn spira_tips(repo: &Path) -> Option<BTreeMap<String, String>> {
     Some(branch_tips(repo, "refs/heads/spira/")?.into_iter().filter_map(|(name, sha)| Some((name.strip_prefix("spira/")?.to_string(), sha))).collect())
 }
 
+/// The commit `HEAD` names in the checkout at `repo`, symbolic or detached; `None` when the files do not say.
+pub fn head_sha(repo: &Path) -> Option<String> {
+    let (gitdir, common) = git_dirs(repo)?;
+    let head = fs::read_to_string(gitdir.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref:") {
+        Some(target) => match read_ref(&common, target.trim()) {
+            Ref::Sha(sha) => Some(sha),
+            _ => None,
+        },
+        None => is_sha(head).then(|| head.to_string()),
+    }
+}
+
 /// The commit a ref names when the ref files say so outright; `None` when git must be asked.
 pub fn sha_of(repo: &Path, name: &str) -> Option<String> {
     match read_ref_in(repo, name) {
@@ -346,5 +360,32 @@ mod tests {
         assert_eq!(held(d.path(), "q", "k9", || Err::<u32, _>("boom".to_string())), Err("boom".to_string()));
         assert_eq!(held(d.path(), "q", "k9", || read(5)), Ok(5), "a failure is not held");
         assert_eq!(held(d.path(), "other", "k9", || read(6)), Ok(6), "each question has its own entry");
+    }
+
+    #[test_id(tge54wr)]
+    #[test]
+    fn head_sha_reads_a_branch_a_packed_ref_a_detached_head_and_a_linked_worktree() {
+        let d = testkit::TempDir::new("head-sha");
+        let git = d.join("main/.git");
+        fs::create_dir_all(git.join("refs/heads")).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/work\n").unwrap();
+        fs::write(git.join("refs/heads/work"), format!("{}\n", sha('1'))).unwrap();
+        assert_eq!(head_sha(&d.join("main")), Some(sha('1')), "a branch");
+        fs::remove_file(git.join("refs/heads/work")).unwrap();
+        fs::write(git.join("packed-refs"), format!("# pack-refs\n{} refs/heads/work\n", sha('2'))).unwrap();
+        assert_eq!(head_sha(&d.join("main")), Some(sha('2')), "a packed branch");
+        fs::write(git.join("HEAD"), format!("{}\n", sha('3'))).unwrap();
+        assert_eq!(head_sha(&d.join("main")), Some(sha('3')), "a detached head");
+
+        let wt_git = git.join("worktrees/w");
+        fs::create_dir_all(&wt_git).unwrap();
+        fs::write(wt_git.join("commondir"), "../..\n").unwrap();
+        fs::write(wt_git.join("HEAD"), "ref: refs/heads/work\n").unwrap();
+        fs::create_dir_all(d.join("wt")).unwrap();
+        fs::write(d.join("wt/.git"), format!("gitdir: {}\n", wt_git.display())).unwrap();
+        assert_eq!(head_sha(&d.join("wt")), Some(sha('2')), "a linked worktree reads its own HEAD against the common refs");
+        assert_eq!(head_sha(&d.join("absent")), None);
+        fs::write(git.join("HEAD"), "ref: refs/heads/missing\n").unwrap();
+        assert_eq!(head_sha(&d.join("main")), None, "an unborn branch is not a sha");
     }
 }

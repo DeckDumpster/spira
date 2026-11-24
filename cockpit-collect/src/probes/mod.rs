@@ -289,8 +289,7 @@ fn now_keys_with(cfg: &Cfg, run: &Path, list: &dyn Fn(&Path) -> DwarfFiles) -> K
             let wt = run.join("worktree").join(bead);
             let commit_ahead_ts = spira_config::repos::landref(&io::repo_registry(), &repo_name)
                 .filter(|b| !b.is_empty())
-                .and_then(|base| io::git(&wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]))
-                .and_then(|t| t.trim().parse::<i64>().ok());
+                .and_then(|base| commit_ahead_ts(&wt, &base));
             let fuse = dwarf::trace::dwarf_fuse_minutes(bead, &wt, &run, commit_ahead_ts, io::now());
             push(&mut out, &format!("SP_DWARF{i}_FUSE"), fuse);
             push(&mut out, &format!("SP_DWARF{i}_WALL"), (secs / 60).to_string());
@@ -395,9 +394,32 @@ fn sanitize_line(l: &str) -> &str {
 }
 
 fn fmt_hm(epoch: i64) -> String {
-    io::run_tool("date", &["-d", &format!("@{epoch}"), "+%H:%M"], None)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
+    dwarf::util::local_hm(epoch).unwrap_or_default()
+}
+
+type AheadMemo = (String, String, Option<i64>);
+
+/// The newest commit time past `base` in the checkout at `wt`, asked of git only when `HEAD` or the
+/// base moved since the last answer, or either cannot be read from the ref files.
+fn commit_ahead_ts(wt: &Path, base: &str) -> Option<i64> {
+    static MEMO: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, AheadMemo>>> = std::sync::Mutex::new(None);
+    let keys = spira_config::git_refs::head_sha(wt).zip(spira_config::git_refs::sha_of(wt, base));
+    if let Some((head, base_sha)) = &keys {
+        let memo = MEMO.lock().unwrap();
+        if let Some((h, b, ts)) = memo.as_ref().and_then(|m| m.get(wt)) {
+            if h == head && b == base_sha {
+                return *ts;
+            }
+        }
+    }
+    let ts = io::git(wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]).and_then(|t| t.trim().parse::<i64>().ok());
+    let mut memo = MEMO.lock().unwrap();
+    let memo = memo.get_or_insert_with(Default::default);
+    match keys {
+        Some((head, base_sha)) => memo.insert(wt.to_path_buf(), (head, base_sha, ts)),
+        None => memo.remove(wt),
+    };
+    ts
 }
 
 /// (count, comma-joined keys) of the heimdall conditions the store holds as firing; `?` when it did not answer.

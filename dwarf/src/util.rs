@@ -139,6 +139,15 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// `date -d @<epoch> +'%H:%M:%S %Z'` in the host's local zone.
 pub fn local_hms_zone(epoch: i64) -> Option<String> {
+    local_strftime(epoch, b"%H:%M:%S %Z\0")
+}
+
+/// `date -d @<epoch> +%H:%M` in the host's local zone.
+pub fn local_hm(epoch: i64) -> Option<String> {
+    local_strftime(epoch, b"%H:%M\0")
+}
+
+fn local_strftime(epoch: i64, fmt: &[u8]) -> Option<String> {
     let t: libc::time_t = epoch as libc::time_t;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     // SAFETY: localtime_r writes into `tm`, which we own; strftime writes at most buf.len().
@@ -147,7 +156,6 @@ pub fn local_hms_zone(epoch: i64) -> Option<String> {
         return None;
     }
     let mut buf = [0u8; 64];
-    let fmt = b"%H:%M:%S %Z\0";
     let n = unsafe { libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), fmt.as_ptr() as *const libc::c_char, &tm) };
     (n > 0).then(|| String::from_utf8_lossy(&buf[..n]).into_owned())
 }
