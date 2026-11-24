@@ -223,8 +223,9 @@ COPY --from=nix-tools /out/bin/ /usr/local/bin/
 
 # ── claude stub — satisfies 'command -v claude' checks ────────────────────
 # concierge.sh calls spira_require claude before any subcommand dispatch,
-# including the 'brief' subcommand. A missing claude is a hard refusal — not a
-# degraded run. The stub satisfies the check;
+# including the 'brief' subcommand that test-concierge.sh drives. A missing
+# claude is a hard refusal — not a degraded run — so the test fails even for
+# the sections that never invoke a real session. The stub satisfies the check;
 # any actual session invocation exits 127 so the failure is visible, not silent.
 RUN printf '#!/bin/sh\n# testenv stub: satisfies command -v claude and spira_require claude.\n# Not a real Claude installation. Exits non-zero when invoked as a session.\nprintf "claude: testenv container stub; not a real installation\\n" >&2\nexit 127\n' \
     > /usr/local/bin/claude && chmod 0755 /usr/local/bin/claude
