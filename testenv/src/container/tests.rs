@@ -287,6 +287,37 @@ fn tag_of(f: &Fake, c: &Conf) -> Option<String> {
     Driver { host: f, conf: c }.image_tag()
 }
 
+fn tag_with_containerfile(text: &str) -> Option<String> {
+    let f = Fake::new();
+    harness(&f, "h");
+    f.file("h/spira/testenv/Containerfile", text);
+    tag_of(&f, &conf("h"))
+}
+
+#[test_id(tq74yo7)]
+#[test]
+fn a_comment_only_containerfile_edit_keeps_the_tag() {
+    let a = tag_with_containerfile("FROM a\nRUN x \\\n  && y\n");
+    let b = tag_with_containerfile("# why\nFROM a\n\nRUN x \\\n  # inner\n  && y\n");
+    assert!(a.is_some());
+    assert_eq!(a, b);
+}
+
+#[test_id(tzizghn)]
+#[test]
+fn a_run_heredoc_or_directive_edit_moves_the_tag() {
+    let tags = [
+        ("FROM a\nRUN x\n", "FROM a\nRUN z\n"),
+        ("RUN cat <<E\n# a\nE\n", "RUN cat <<E\n# b\nE\n"),
+        ("# escape=\\\nFROM a\n", "# escape=`\nFROM a\n"),
+        ("# syntax=a\nFROM a\n", "# syntax=b\nFROM a\n"),
+        ("FROM a\n# check=skip=A\n", "FROM a\n# CHECK=skip=B\n"),
+    ];
+    for (x, y) in tags {
+        assert_ne!(tag_with_containerfile(x), tag_with_containerfile(y), "{x}");
+    }
+}
+
 // ---- tag: the build closure (was test-testenv-image-tag.sh) ------------------------------
 
 #[test_id(tu39drr)]
