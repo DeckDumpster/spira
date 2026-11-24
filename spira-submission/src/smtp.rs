@@ -629,7 +629,7 @@ mod tests {
     }
 
     fn policy() -> Policy {
-        Policy { host: "h".into(), user: "ryan".into(), from: "me@x.org".into(), rcpt_domain: "spira".into(), password_file: "unused".into(), max_message_bytes: 16, peer: "p:1".into() }
+        Policy { host: "h".into(), user: "ryan".into(), from: "me@example.org".into(), rcpt_domain: "spira".into(), password_file: "unused".into(), max_message_bytes: 16, peer: "p:1".into() }
     }
 
     fn b64(s: &str) -> String {
@@ -686,7 +686,7 @@ mod tests {
     #[test_id(tguj2g3)]
     #[test]
     fn a_relay_refusal_reads_the_same_fed_whole_or_a_byte_at_a_time() {
-        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<a@elsewhere>\r\nRCPT TO:<c@spira>\r\nQUIT\r\n", b64("\0ryan\0hunter2"));
+        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@example.org>\r\nRCPT TO:<a@elsewhere>\r\nRCPT TO:<c@spira>\r\nQUIT\r\n", b64("\0ryan\0hunter2"));
         let steps = same_however_cut(script.as_bytes());
         assert!(steps.iter().any(|s| matches!(s, Step::Attempt { outcome, .. } if outcome.starts_with("rcpt: refused: relay denied"))), "{steps:?}");
         let text = sent(&steps);
@@ -696,7 +696,7 @@ mod tests {
     #[test_id(tut2gok)]
     #[test]
     fn an_oversize_message_reads_the_same_fed_whole_or_a_byte_at_a_time() {
-        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\n{}\r\n.\r\nNOOP\r\n", b64("\0ryan\0hunter2"), "0123456789abcdef\r\nmore\r\n");
+        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@example.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\n{}\r\n.\r\nNOOP\r\n", b64("\0ryan\0hunter2"), "0123456789abcdef\r\nmore\r\n");
         let steps = same_however_cut(script.as_bytes());
         assert!(steps.iter().all(|s| !matches!(s, Step::Accept { .. })), "{steps:?}");
         let text = sent(&steps);
@@ -706,14 +706,14 @@ mod tests {
     #[test_id(tjx9o23)]
     #[test]
     fn an_accepted_message_is_handed_out_with_an_owned_envelope_and_answered_when_the_driver_says() {
-        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\nMessage-ID: <m>\r\n..x\r\n.\r\n", b64("\0ryan\0hunter2"));
+        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@example.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\nMessage-ID: <m>\r\n..x\r\n.\r\n", b64("\0ryan\0hunter2"));
         let mut s = Session::new(Policy { max_message_bytes: 1024, ..policy() });
         s.start();
         let steps = s.feed(script.as_bytes());
         let Some(Step::Verify { .. }) = steps.last() else { panic!("{steps:?}") };
         let steps = s.verified(true);
         let Some(Step::Accept { envelope, message }) = steps.last() else { panic!("{steps:?}") };
-        assert_eq!((envelope.user.as_str(), envelope.from.as_str(), envelope.message_id.as_str(), envelope.to.as_slice()), ("ryan", "me@x.org", "<m>", ["c@spira".to_string()].as_slice()));
+        assert_eq!((envelope.user.as_str(), envelope.from.as_str(), envelope.message_id.as_str(), envelope.to.as_slice()), ("ryan", "me@example.org", "<m>", ["c@spira".to_string()].as_slice()));
         assert_eq!(message, b"Message-ID: <m>\n.x\n");
         assert_eq!(sent(&s.accepted(Err("disk full".into()))), "451 4.3.0 local delivery failed, try again\r\n");
     }

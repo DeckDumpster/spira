@@ -183,7 +183,7 @@ impl Source for Submission {
                         if usable {
                             std::future::pending::<()>().await
                         } else {
-                            tokio::time::sleep(DORMANT_RECHECK).await // clock-safe: a dormant source's own task, refused under virtual time
+                            tokio::time::sleep(DORMANT_RECHECK).await // waits-on: the config a provision run may write from outside the scheduler; cap DORMANT_RECHECK
                         }
                     };
                     let stop = async {
