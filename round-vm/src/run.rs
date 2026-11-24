@@ -3642,18 +3642,22 @@ fn after_batch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test_id(t5xocpq)]
     #[test]
     fn every_phase_the_script_marks_is_a_round_step_and_every_listed_phase_is_marked() {
         let marked: Vec<&str> = REMOTE_SCRIPT
             .lines()
-            .filter_map(|l| {
-                let l = l.trim();
-                l.strip_prefix("phase_failed ").or_else(|| l.strip_prefix("phase "))
+            .flat_map(|l| {
+                let words: Vec<&str> = l.split_whitespace().collect();
+                let at_start = words.first() == Some(&"phase");
+                words
+                    .windows(2)
+                    .enumerate()
+                    .filter(move |(i, w)| w[0] == "phase_failed" || (*i == 0 && at_start))
+                    .map(|(_, w)| w[1])
+                    .collect::<Vec<_>>()
             })
-            .filter_map(|r| r.split_whitespace().next())
             .filter(|n| n.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
             .collect();
         assert!(marked.contains(&"image") && marked.contains(&"bare-suites"), "{marked:?}");

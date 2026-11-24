@@ -57,11 +57,6 @@ const FENCE_RED_PREFIX: &str = "fence-";
 pub(super) const PREFLIGHT_RED: &str = "fence-round-image-preflight";
 pub(super) const IMAGE_RED: &str = "fence-round-image";
 pub(super) const UNIT_RED: &str = "unit-tests";
-/// The merged tree's config delta does not parse or apply: the attribution's own check
-/// (`batcher::drive::CONFIG_DELTA`), which it ejects the culprit for.
-pub(super) const CONFIG_DELTA_RED: &str = "config-delta";
-pub(super) const RELEASE_VERIFY_RED: &str = "release-verify";
-
 /// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
 /// (tests inside src/) before any suite, the integration phase (tests/) beside them.
 /// Either is red on the `unit-tests` step, the testenv suite that runs both for a tip.

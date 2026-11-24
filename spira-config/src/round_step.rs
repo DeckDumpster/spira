@@ -1,7 +1,7 @@
 //! The one list of steps a round can report, whether as a phase marker or as a red.
 
 /// Every name the round script marks with `phase` or `phase_failed`, and its initial `start`.
-pub const PHASES: [&str; 15] = [
+pub const PHASES: [&str; 16] = [
     "start",
     "preflight",
     "checkout",
@@ -17,6 +17,7 @@ pub const PHASES: [&str; 15] = [
     "suites",
     "bare-suites",
     "integration-tests",
+    "post",
 ];
 
 /// The reds a round attributes to a member; an older installed runner can still report any of them.
