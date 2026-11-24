@@ -48,6 +48,8 @@ enum Op {
     LabelAdd(String),
     LabelRemove(String),
     Note(String),
+    /// A note holding drafts: `merged` replaces the notes if they are still `read`, else `text` is appended.
+    DraftNote { read: String, merged: String, text: String },
     Comment(String),
     Metadata(String, String),
     Priority(u8),
@@ -83,7 +85,7 @@ impl Op {
 
     /// Whether bd rewrites the issue row (`updated_at`, `row_lock`) for it.
     fn touches_row(&self) -> bool {
-        matches!(self, Op::Note(_) | Op::Metadata(..) | Op::Priority(_))
+        matches!(self, Op::Note(_) | Op::DraftNote { .. } | Op::Metadata(..) | Op::Priority(_))
     }
 }
 
@@ -221,6 +223,12 @@ impl Mutation {
                     s.push(format!("SET @event{n} = UUID()"));
                     s.push(filed(&before));
                     s.push(format!("UPDATE {db}.issues SET notes = CASE WHEN notes IS NULL OR notes = '' THEN {t} ELSE CONCAT(notes, CHAR(10), {t}) END WHERE id = '{id}'", t = lit(t)));
+                    s.push(settled("notes"));
+                }
+                Op::DraftNote { read, merged, text } => {
+                    s.push(format!("SET @event{n} = UUID()"));
+                    s.push(filed(&before));
+                    s.push(format!("UPDATE {db}.issues SET notes = CASE WHEN COALESCE(notes, '') = {} THEN {} WHEN notes IS NULL OR notes = '' THEN {t} ELSE CONCAT(notes, CHAR(10), {t}) END WHERE id = '{id}'", lit(read), lit(merged), t = lit(text)));
                     s.push(settled("notes"));
                 }
                 Op::Comment(t) => {
@@ -833,7 +841,7 @@ fn serve(w: &Writer, m: &Mutation) -> Result<Option<String>, String> {
     let db = &w.db;
     let mut named = vec![m.bead()];
     named.extend(m.others());
-    let found = rows(w, &format!("SELECT id, status, issue_type, status = 'closed' AS closed, status = 'in_progress' AS claimed, COALESCE(assignee, '') AS assignee, description, is_blocked, ephemeral FROM {db}.issues WHERE id IN ({})", in_list(&named)))?;
+    let found = rows(w, &format!("SELECT id, status, issue_type, status = 'closed' AS closed, status = 'in_progress' AS claimed, COALESCE(assignee, '') AS assignee, description, COALESCE(notes, '') AS notes, is_blocked, ephemeral FROM {db}.issues WHERE id IN ({})", in_list(&named)))?;
     let row_of = |id: &str| found.iter().find(|r| cell(r, "id") == id);
     let Some(me) = row_of(m.bead()) else {
         return Err(format!("no issue found matching {:?}", m.bead()));
@@ -881,6 +889,13 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
             Op::Assignee(v) if *v == holder => continue,
             Op::Assignee(_) if !m.forced && !holder.is_empty() && cell(me, "claimed") == "1" => return Ok(None),
             Op::Description(v) if *v == cell(me, "description") => continue,
+            Op::Note(t) => {
+                let read = cell(me, "notes");
+                if let Some(merged) = bead::with_drafts(&read, t) {
+                    kept.push(Op::DraftNote { read, merged, text: t.clone() });
+                    continue;
+                }
+            }
             Op::Close { force: false, .. } if cell(me, "closed") != "1" => {
                 let children = count(w, &format!("SELECT COUNT(DISTINCT d.issue_id) AS n FROM {db}.dependencies d JOIN {db}.issues c ON c.id = d.issue_id WHERE d.depends_on_issue_id = '{id}' AND d.type = 'parent-child' AND c.status <> 'closed'"))?;
                 if children > 0 || cell(me, "is_blocked") == "1" {

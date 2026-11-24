@@ -78,7 +78,7 @@ Each item is one note on your bead, headed with its title:
 Several items are several notes. If something an item depends on cannot be settled from the
 code and the law, end that note with one line `Open: <the question>; default: <what you
 would take>`. `Open:` is the last line of its note; a correction is the whole draft sent again
-as a new note, never a paragraph after the `Open:` line.
+as a new note that replaces the draft of the same heading, never a paragraph after the `Open:` line.
 
 An item that depends on another carries one line, `Depends: <bead id or "draft N">, …` (or
 `Depends: none`). The line carries only bead ids, `draft N` or `none`, separated by commas;

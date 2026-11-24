@@ -1011,6 +1011,22 @@ fn work_done_on_a_review_replaces_the_followups_body_and_notes_its_open_line_in_
     assert_eq!(description_of(&lc, &r.dependent).trim_end(), format!("Drafted by Skuld: {}\n\nthe drafted body", r.request));
     assert_eq!(lc.shows(&r.dependent).matches(OPEN_LINE).count(), 1);
     assert!(state_of(&lc, &r.request).contains("DONE"), "{}", state_of(&lc, &r.request));
+
+    let head = format!("### Draft: {DEP_TITLE}");
+    let notes_of = |id: &str| {
+        let shown: serde_json::Value = serde_json::from_str(&lc.shows(id)).unwrap();
+        let one = shown.as_array().map_or(&shown, |a| &a[0]);
+        one["notes"].as_str().unwrap_or_default().to_string()
+    };
+    let note = |id: &str, text: &str| lc.children_of("content", &["content", "note", id, "--stdin"], Some(text));
+    note(&r.request, &format!("{head}\n\nsecond text\n"));
+    let held = notes_of(&r.request);
+    assert_eq!(held.matches(&head).count(), 1, "{held}");
+    assert!(held.contains("second text") && !held.contains("the drafted body"), "{held}");
+    note(&r.request, "### Draft: another title\n\nother text\n");
+    let held = notes_of(&r.request);
+    assert_eq!(held.matches("### Draft:").count(), 2, "{held}");
+    assert!(held.contains("second text") && held.contains("other text"), "{held}");
 }
 
 #[test_id(tap1p35)]
