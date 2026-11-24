@@ -22,7 +22,7 @@
 //! | Field | Today (raw) | From (after the move) |
 //! |---|---|---|
 //! | `landing_lines` since the cursor: `no suites identified; leaving batch open`, `ejected 0, requeued N`, `queue_sort_rows: ranking failed` | tail of `run/landing.log` after the `czar-pass.swept` marker (`cp:586-589`, `645-668`) | `queue.step` events (`verdict.deadlock`, `verdict.requeued_all`, `queue.sort_failed`) (proposed names) |
-//! | `last_landing_pass_at` | last `landing: pass complete` line (`cp:840-850`) | the `landing` task's last `landing.pass_completed`, from S13 `scheduler status` |
+//! | `landing_task` | last `landing: pass complete` line (`cp:840-850`) | the `landing` row of `scheduler status`: halted, last fire, last outcome, next due |
 //! | `open_batch[repo]` (pr, branch, members) | `queue batch show --repo` fork, under `SPIRA_LC_TIMEOUT` (`cp:469-489`, `193`) | the S7b round/batch projection |
 //! | `certified[repo]` | `spira-lc list --state CERTIFIED` fork (`cp:1240-1257`), then filtered by `git for-each-ref refs/heads/spira/*` (`cp:1217-1237`) | LcClient `list --state CERTIFIED`, with each row's repo from the store, not from the branch list (the store has the repo column; unverified) |
 //! | `ci[repo]` (queued-since, run-id, run-conclusion, run-completed-at) | `forge batch-ci-status <repo> <branch>` (`cp:974`) and `forge run-id` (`cp:707`) | still `forge` (the edge; class `forge`), read inside the probe, only for a `queue` (forge) repo whose batch record has a `pr` and a branch |
@@ -145,6 +145,7 @@ pub const EMITS: &[EventKindTag] = &[CALL_REQUESTED];
 pub const EFFECTS: &[&str] = &[OBSERVE, FILE_INCIDENT, FILE_BASE_RED, RERUN_WORKFLOW, RESTART_LANDING, STATUS, INBOX_APPEND];
 pub const KEYS: &[&str] = &[
     "SPIRA_LOOP_STALL_SECS",
+    "SPIRA_RUNTIME_SOCKET",
     "SPIRA_CI_QUEUED_MAX_SECS",
     "SPIRA_CI_RED_MAX_SECS",
     "SPIRA_BASE_CI_UNREADABLE_GRACE_SECS",
@@ -238,20 +239,63 @@ pub struct SpentBudget {
     pub top_spender: Option<(String, u64)>,
 }
 
-/// How far into which landing log file the czar has decided, and the last pass it saw there.
+/// How far into which landing log file the czar has decided.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mark {
     pub dev: u64,
     pub ino: u64,
     pub offset: u64,
-    pub last_pass: Read<Option<u64>>,
+}
+
+/// The `landing` row of `scheduler status`, times in the scheduler's milliseconds.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LandingTask {
+    pub halted: bool,
+    pub last_fired_at_ms: Option<u64>,
+    pub next_due_at_ms: Option<u64>,
+    pub last_outcome: Option<String>,
+}
+
+/// The `landing` row out of a `scheduler status` document; no row is unobservable.
+pub fn landing_task(doc: &str) -> Read<LandingTask> {
+    let status = match spira_world::scheduler::parse_status(doc) {
+        Ok(s) => s,
+        Err(why) => return Read::Unobservable(why),
+    };
+    match status.tasks.iter().find(|t| t.name == "landing") {
+        Some(t) => Read::Observed(LandingTask { halted: status.halted, last_fired_at_ms: t.last_fired_at, next_due_at_ms: t.next_due_at, last_outcome: t.last_outcome.clone() }),
+        None => Read::Unobservable("scheduler status carries no `landing` task".into()),
+    }
+}
+
+/// Whether the `landing` task fires: a halted scheduler is deliberate, a failed last fire or a fire
+/// older than `stall_secs` is a gap. Firing quiet is healthy however long nothing lands.
+pub fn loop_stalled(now_ms: u64, task: &Read<LandingTask>, stall_secs: u64) -> RawStatus {
+    let t = match task {
+        Read::Observed(t) => t,
+        Read::Unobservable(why) => return unobservable(why.clone()),
+    };
+    if t.halted {
+        return RawStatus::Deliberate { reason: "the scheduler is halted".into() };
+    }
+    let desired = format!("the landing task fires within {stall_secs}s");
+    if matches!(t.last_outcome.as_deref(), Some("failed" | "timed_out")) {
+        return RawStatus::Gap { desired, observed: format!("the landing task's last fire {}", t.last_outcome.as_deref().unwrap_or_default()), since_hint: t.last_fired_at_ms.map(|ms| ms / 1000) };
+    }
+    let (since, what) = match (t.last_fired_at_ms, t.next_due_at_ms) {
+        (Some(at), _) => (at, "last fired"),
+        (None, Some(due)) => (due, "never fired, due"),
+        (None, None) => return RawStatus::Satisfied,
+    };
+    let age = now_ms.saturating_sub(since) / 1000;
+    if age > stall_secs { RawStatus::Gap { desired, observed: format!("the landing task {what} {age}s ago"), since_hint: Some(since / 1000) } } else { RawStatus::Satisfied }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     /// Landing outcomes since the carried cursor.
     pub landing_events: Read<Vec<LandingEvent>>,
-    pub last_landing_pass_at_ms: Read<Option<u64>>,
+    pub landing_task: Read<LandingTask>,
     /// The landing-log mark this snapshot was read to; `decide` carries it forward.
     #[serde(default)]
     pub mark: Mark,
@@ -543,14 +587,11 @@ pub fn decide(policy: &Policy, carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Ac
     line_class(&mut p, "attribution-failed", REQUEUED_ALL_EVENT, czar_pass::attribution_failed, czar_pass::attribution_filing(), "Attribution found no branch to isolate the offender.\nThe entire batch was requeued with the failing member still in it; this loops.\n");
     line_class(&mut p, "sort-failed", SORT_FAILED_EVENT, czar_pass::sort_failed, czar_pass::sort_filing(), "The queue sorter failed and fell back to unranked order.\nPriority ordering is suspended until the sorter recovers.\n");
     {
-        let raw = match &snap.last_landing_pass_at_ms {
-            Read::Observed(at) => czar_pass::loop_stalled(now, at.map(|ms| ms / 1000), policy.loop_stall_secs),
-            Read::Unobservable(why) => unobservable(why.clone()),
-        };
+        let raw = loop_stalled(snap.now_ms, &snap.landing_task, policy.loop_stall_secs);
         let stall = policy.loop_stall_secs;
         p.run("loop-stalled", "loop-stalled", raw, 0, |v| {
             let age = v.since.map_or(0, |s| now.saturating_sub(s));
-            Remedy::File(czar_pass::Filing::queue("loop-stalled", "loop-stalled", &format!("QUEUE: landing loop stalled — no pass for {age}s"), &format!("No landing pass completed in the last {age}s (threshold: {stall}s).\n"), ""))
+            Remedy::File(czar_pass::Filing::queue("loop-stalled", "loop-stalled", &format!("QUEUE: landing loop stalled — landing task not firing for {age}s"), &format!("The landing task has not fired cleanly in the last {age}s (threshold: {stall}s), or its last fire failed.\n"), ""))
         });
     }
     for (repo, batch) in &snap.open_batch {
@@ -742,18 +783,17 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
-/// The landing log's outcomes and last completed pass from the bytes past `mark`, and the mark
-/// they were read to. A file unchanged since the mark is stat'ed and not opened. When the marked
+/// The landing log's outcomes from the bytes past `mark`, and the mark they were read to. A file unchanged since the mark is stat'ed and not opened. When the marked
 /// file has been rotated, it is read from the mark to its end, then each newer file from 0.
 fn landing_log(
     run: &std::path::Path,
     mark: &Mark,
-) -> (Read<Vec<LandingEvent>>, Read<Option<u64>>, Mark) {
+) -> (Read<Vec<LandingEvent>>, Mark) {
     use std::os::unix::fs::MetadataExt;
     let live = run.join("landing.log");
     let unreadable = |path: &std::path::Path, e: std::io::Error| {
         let why = format!("{}: {e}", path.display());
-        (Read::Unobservable(why.clone()), Read::Unobservable(why), mark.clone())
+        (Read::Unobservable(why), mark.clone())
     };
     let live_meta = match std::fs::metadata(&live) {
         Ok(m) => Some(m),
@@ -762,7 +802,7 @@ fn landing_log(
     };
     if let Some(m) = &live_meta {
         if m.dev() == mark.dev && m.ino() == mark.ino && m.len() == mark.offset {
-            return (Read::Observed(vec![]), mark.last_pass.clone(), mark.clone());
+            return (Read::Observed(vec![]), mark.clone());
         }
     }
     let mut chain: Vec<(std::path::PathBuf, std::fs::Metadata)> =
@@ -774,50 +814,35 @@ fn landing_log(
     let marked = chain
         .iter()
         .position(|(_, m)| m.dev() == mark.dev && m.ino() == mark.ino && m.len() >= mark.offset);
-    let (from, mut start, mut last) = match marked {
-        Some(i) => (i, mark.offset, mark.last_pass.clone()),
-        None => (chain.len().saturating_sub(1), 0, Read::Observed(None)),
+    let (from, mut start) = match marked {
+        Some(i) => (i, mark.offset),
+        None => (chain.len().saturating_sub(1), 0),
     };
     if chain.is_empty() {
-        return (
-            Read::Observed(vec![]),
-            Read::Observed(None),
-            Mark::default(),
-        );
+        return (Read::Observed(vec![]), Mark::default());
     }
     if marked.is_none() && chain.last().is_some_and(|(p, _)| *p != live) {
-        return (
-            Read::Observed(vec![]),
-            Read::Observed(None),
-            Mark::default(),
-        );
+        return (Read::Observed(vec![]), Mark::default());
     }
     let (mut events, mut next) = (vec![], mark.clone());
     for (path, meta) in &chain[from..] {
-        let (found, offset, seen) = match scan_landing_log(path, start, last) {
+        let (found, offset) = match scan_landing_log(path, start) {
             Ok(r) => r,
             Err(e) => return unreadable(path, e),
         };
         events.extend(found);
-        last = seen;
         next = Mark {
             dev: meta.dev(),
             ino: meta.ino(),
             offset,
-            last_pass: last.clone(),
         };
         start = 0;
     }
-    (Read::Observed(events), last, next)
+    (Read::Observed(events), next)
 }
 
-/// The outcomes in `path` from byte `start` to its last whole line, the offset read to, and the
-/// last completed pass seen.
-fn scan_landing_log(
-    path: &std::path::Path,
-    start: u64,
-    mut last: Read<Option<u64>>,
-) -> std::io::Result<(Vec<LandingEvent>, u64, Read<Option<u64>>)> {
+/// The outcomes in `path` from byte `start` to its last whole line, and the offset read to.
+fn scan_landing_log(path: &std::path::Path, start: u64) -> std::io::Result<(Vec<LandingEvent>, u64)> {
     use std::io::{BufRead, Seek, SeekFrom};
     let mut f = std::fs::File::open(path)?;
     f.seek(SeekFrom::Start(start))?;
@@ -837,12 +862,6 @@ fn scan_landing_log(
         offset += n as u64;
         let line = String::from_utf8_lossy(&buf);
         let l = line.trim_end_matches(['\n', '\r']);
-        if l.contains(czar_pass::PASS_COMPLETE_LINE) {
-            last = match at(l) {
-                Some(ms) => Read::Observed(Some(ms)),
-                None => Read::Unobservable(format!("landing.log timestamp unparseable: {:?}", l.get(..20))),
-            };
-        }
         let kind = if l.contains(czar_pass::DEADLOCK_LINE) {
             DEADLOCK_EVENT
         } else if czar_pass::requeued_all(l) {
@@ -856,7 +875,7 @@ fn scan_landing_log(
             events.push(LandingEvent { kind: kind.into(), repo: String::new(), at_ms });
         }
     }
-    Ok((events, offset, last))
+    Ok((events, offset))
 }
 
 fn forge_status(forge: &str, repo_path: &str, branch: &str) -> Result<String, String> {
@@ -915,13 +934,20 @@ pub fn forge_reads(rows: &[RepoRow], batches: &BTreeMap<String, Read<Option<Batc
 pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     let req: ObserveIn = serde_json::from_str(input).unwrap_or_default();
     let run = e.world.run_dir.clone();
-    let (landing_events, last_landing_pass_at_ms, mark) = landing_log(&run, &req.carry.mark);
+    let (landing_events, mark) = landing_log(&run, &req.carry.mark);
     let cursor = req.carry.cursor_ms.unwrap_or(0);
     let landing_events = match landing_events {
         Read::Observed(e) => Read::Observed(e.into_iter().filter(|e| e.at_ms > cursor).collect()),
         other => other,
     };
-    let mut snap = Snapshot { landing_events, last_landing_pass_at_ms, mark, now_ms: now_ms(), ..Snapshot::default() };
+    let mut snap = Snapshot { landing_events, mark, now_ms: now_ms(), ..Snapshot::default() };
+    snap.landing_task = match req.pinned.get("SPIRA_RUNTIME_SOCKET").filter(|p| !p.is_empty()) {
+        Some(sock) => match runtime::socket::lc_call(std::path::Path::new(sock), &["scheduler", "status"]) {
+            Ok(doc) => landing_task(&doc),
+            Err(why) => Read::Unobservable(format!("scheduler status: {why}")),
+        },
+        None => Read::Unobservable("SPIRA_RUNTIME_SOCKET is not pinned".into()),
+    };
     let stamp = run.join("reconciler-pass.stamp");
     snap.reconciler_last_pass_ms = match std::fs::read_to_string(&stamp) {
         Ok(t) => match t.trim().parse::<u64>() {

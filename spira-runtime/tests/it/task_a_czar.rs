@@ -33,7 +33,7 @@ fn policy(stage: Stage) -> Policy {
 fn idle() -> Snapshot {
     Snapshot {
         landing_events: Read::Observed(vec![]),
-        last_landing_pass_at_ms: Read::Observed(Some(NOW - 60_000)),
+        landing_task: Read::Observed(LandingTask { last_fired_at_ms: Some(NOW - 60_000), last_outcome: Some("quiet".into()), ..LandingTask::default() }),
         open_batch: [("spira".to_string(), Read::Observed(None))].into(),
         certified: [("spira".to_string(), Read::Observed(vec![]))].into(),
         open_rounds: [("spira".to_string(), Read::Observed(0))].into(),
@@ -204,7 +204,6 @@ fn an_unchanged_log_is_not_read_again_even_when_a_line_changed_in_place() {
     std::os::unix::fs::FileExt::write_all_at(&f, newer.as_bytes(), 0).unwrap();
     let (_, second) = pass(dir.path(), &carry);
     assert!(events(&second).is_empty(), "{second:?}");
-    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
 }
 
 #[test_id(t261hfa)]
@@ -248,76 +247,31 @@ fn a_truncated_or_replaced_log_is_read_again_from_the_start() {
     assert!(seen[0].at_ms > events(&truncated)[0].at_ms);
 }
 
-#[test_id(tkvrt22)]
-#[test]
-fn with_no_mark_the_first_pass_finds_the_last_pass_anywhere_in_the_file() {
-    let dir = testkit::TempDir::new("czar-log-first");
-    let mut text = format!("{LOG_PASS}\n");
-    for _ in 0..50 {
-        text.push_str("noise\n");
-    }
-    std::fs::write(dir.path().join("landing.log"), text).unwrap();
-    let (carry, first) = pass(dir.path(), &Carry::default());
-    assert!(matches!(first.last_landing_pass_at_ms, Read::Observed(Some(_))), "{first:?}");
-    let (_, second) = pass(dir.path(), &carry);
-    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms, "a pass with no new bytes keeps the carried reading");
-}
-
-#[test_id(t5d9sle)]
-#[test]
-fn a_carried_last_pass_that_ages_past_the_stall_still_pages() {
-    let dir = testkit::TempDir::new("czar-log-stall");
-    std::fs::write(dir.path().join("landing.log"), format!("{LOG_PASS}\n")).unwrap();
-    let (carry, first) = pass(dir.path(), &Carry::default());
-    let (_, second) = pass(dir.path(), &carry);
-    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
-    assert!(matches!(second.last_landing_pass_at_ms, Read::Observed(Some(_))));
-    let late = Snapshot { now_ms: NOW + 100_000_000_000, ..second };
-    let (_, acts) = decide(&policy(Stage::Act), &Carry::default(), &late);
-    assert!(acts.iter().any(|a| a.effect == FILE_INCIDENT && a.key.contains("loop-stalled")), "{acts:?}");
-}
-
 #[test_id(tnidode)]
 #[test]
-fn a_missing_log_is_no_events_no_last_pass_and_an_empty_mark() {
+fn a_missing_log_is_no_events_and_an_empty_mark() {
     let dir = testkit::TempDir::new("czar-log-missing");
-    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9, last_pass: Read::Observed(Some(5)) }, ..Carry::default() };
+    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9 }, ..Carry::default() };
     let (carry, snap) = pass(dir.path(), &had);
     assert!(events(&snap).is_empty());
-    assert_eq!(snap.last_landing_pass_at_ms, Read::Observed(None));
     assert_eq!(carry.mark, Mark::default());
 }
 
 #[test_id(txh570l)]
 #[test]
-fn an_unreadable_log_leaves_the_mark_and_reads_both_unobservable() {
+fn an_unreadable_log_leaves_the_mark_and_reads_unobservable() {
     let dir = testkit::TempDir::new("czar-log-unreadable");
     std::fs::create_dir(dir.path().join("landing.log")).unwrap();
-    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9, last_pass: Read::Observed(Some(5)) }, ..Carry::default() };
+    let had = Carry { mark: Mark { dev: 1, ino: 2, offset: 9 }, ..Carry::default() };
     let (carry, snap) = pass(dir.path(), &had);
     assert!(matches!(snap.landing_events, Read::Unobservable(_)), "{snap:?}");
-    assert!(matches!(snap.last_landing_pass_at_ms, Read::Unobservable(_)), "{snap:?}");
     assert_eq!(carry.mark, had.mark);
-}
-
-#[test_id(tl01wid)]
-#[test]
-fn a_carried_unobservable_last_pass_survives_new_bytes_with_no_pass_line() {
-    use std::io::Write;
-    let dir = testkit::TempDir::new("czar-log-carried-unobservable");
-    let log = dir.path().join("landing.log");
-    std::fs::write(&log, "short landing: pass complete\n").unwrap();
-    let (carry, first) = pass(dir.path(), &Carry::default());
-    assert!(matches!(first.last_landing_pass_at_ms, Read::Unobservable(_)), "{first:?}");
-    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(b"noise\n").unwrap();
-    let (_, second) = pass(dir.path(), &carry);
-    assert_eq!(second.last_landing_pass_at_ms, first.last_landing_pass_at_ms);
 }
 
 #[test_id(tl8zvx8)]
 #[test]
 fn the_mark_is_kept_as_a_row_and_joins_back() {
-    let mark = Mark { dev: 3, ino: 4, offset: 5, last_pass: Read::Observed(Some(6)) };
+    let mark = Mark { dev: 3, ino: 4, offset: 5 };
     let body = serde_json::to_string(&Carry { mark: mark.clone(), ..Carry::default() }).unwrap();
     let rows = runtime::rows::split(&body, ROW_PARTS);
     assert!(rows.contains_key("mark"), "{rows:?}");
@@ -388,4 +342,148 @@ fn a_mark_in_a_file_rotated_twice_is_followed_through_every_newer_file() {
     std::fs::write(&log, format!("{}\n", stamped(300, LOG_SORT))).unwrap();
     let (_, second) = pass(dir.path(), &carry);
     assert_eq!(events(&second).len(), 3, "{second:?}");
+}
+
+mod landing_task {
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use runtime::engine::{Engine, Executor, Outcome};
+    use runtime::event::*;
+    use runtime::journal::MemJournal;
+    use runtime::ports::{Clock, VirtualClock};
+    use spira_runtime::tasks::a::landing::{self, Landing};
+
+    use super::*;
+
+    const HOUR_MS: u64 = 3_600_000;
+
+    /// The real `Landing`, which a switch can stop hearing its events: a scheduler that no longer fires it.
+    struct Switchable(Landing, Arc<AtomicBool>);
+    impl Handler for Switchable {
+        fn interests(&self) -> &[EventKindTag] {
+            if self.1.load(Ordering::SeqCst) { self.0.interests() } else { &[] }
+        }
+        fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+            self.0.handle(ctx, view, ev)
+        }
+    }
+
+    struct World {
+        engine: Engine,
+        clock: VirtualClock,
+        firing: Arc<AtomicBool>,
+        landing_answers: Result<String, String>,
+        inferences: usize,
+    }
+
+    impl World {
+        fn new() -> World {
+            let clock = VirtualClock::new(0);
+            let firing = Arc::new(AtomicBool::new(true));
+            let regs = vec![
+                Registration::new(landing::NAME, Switchable(Landing::new(BTreeMap::new()), firing.clone())).with_mode(Mode::Act),
+                Czar::new(policy(Stage::Act)).registration().with_mode(Mode::Act),
+            ];
+            let mut engine = Engine::open(MemJournal::new(), Arc::new(clock.clone()), regs, 1).unwrap();
+            let (_, stream, kind) = Landing::boot();
+            engine.start(stream, kind);
+            let (_, stream, kind) = Czar::boot();
+            engine.start(stream, kind);
+            World { engine, clock, firing, landing_answers: Ok(serde_json::to_string(&spira_runtime::tasks::a::landing::Snapshot::default()).unwrap()), inferences: 0 }
+        }
+
+        fn czar_reads(&self) -> String {
+            let doc = spira_runtime::status::document(&self.engine.status()).to_string();
+            serde_json::to_string(&Snapshot { landing_task: landing_task(&doc), now_ms: self.clock.now_ms(), ..idle() }).unwrap()
+        }
+
+        fn answer_everything_pending(&mut self) {
+            loop {
+                self.engine.run_until_idle().unwrap();
+                let pending = self.engine.pending_effects();
+                if pending.is_empty() {
+                    return;
+                }
+                for p in pending {
+                    let outcome = match p.spec.name.as_str() {
+                        landing::OBSERVE => match &self.landing_answers {
+                            Ok(body) => Outcome::Succeeded(body.clone()),
+                            Err(why) => Outcome::Failed(why.clone()),
+                        },
+                        OBSERVE => Outcome::Succeeded(self.czar_reads()),
+                        FILE_INCIDENT => {
+                            self.inferences += p.spec.key.contains("loop-stalled") as usize;
+                            Outcome::Succeeded("{}".into())
+                        }
+                        _ => Outcome::Succeeded("{}".into()),
+                    };
+                    self.engine.complete(&p.key, outcome).unwrap();
+                }
+            }
+        }
+
+        fn run_for(&mut self, ms: u64) {
+            let target = self.clock.now_ms() + ms;
+            self.answer_everything_pending();
+            while let Some(at) = self.engine.next_timer_at().filter(|&t| t <= target) {
+                self.clock.advance_to(at);
+                self.answer_everything_pending();
+            }
+            self.clock.advance_to(target);
+            self.answer_everything_pending();
+        }
+    }
+
+    #[test_id(tmf9mek)]
+    #[test]
+    fn an_idle_hour_of_quiet_landing_fires_is_not_a_stall() {
+        let mut w = World::new();
+        w.run_for(2 * HOUR_MS);
+        assert_eq!(w.inferences, 0);
+        let doc = spira_runtime::status::document(&w.engine.status()).to_string();
+        assert!(matches!(landing_task(&doc), Read::Observed(LandingTask { last_outcome: Some(ref o), .. }) if o == "quiet"), "{doc}");
+    }
+
+    #[test_id(tp67fsx)]
+    #[test]
+    fn a_landing_task_that_stops_firing_past_the_bound_files_one_inference() {
+        let mut w = World::new();
+        w.run_for(HOUR_MS / 2);
+        w.firing.store(false, Ordering::SeqCst);
+        w.run_for(2 * HOUR_MS);
+        assert_eq!(w.inferences, 1);
+    }
+
+    #[test_id(th3ru0v)]
+    #[test]
+    fn a_landing_task_whose_observe_fails_files_one_inference() {
+        let mut w = World::new();
+        w.landing_answers = Err("store unreachable".into());
+        w.run_for(2 * HOUR_MS);
+        assert_eq!(w.inferences, 1);
+    }
+
+    #[test_id(tslclhb)]
+    #[test]
+    fn a_halted_scheduler_whose_landing_is_unanswered_files_nothing() {
+        let mut w = World::new();
+        w.run_for(HOUR_MS / 2);
+        w.engine.submit("h1", HALT_STREAM, EventKind::new(SCHEDULER_HALTED, "")).unwrap();
+        w.firing.store(false, Ordering::SeqCst);
+        w.run_for(2 * HOUR_MS);
+        assert_eq!(w.inferences, 0);
+    }
+
+    #[test_id(tyyjbe9)]
+    #[test]
+    fn a_halted_scheduler_is_deliberate_where_the_same_stale_row_unhalted_is_a_gap() {
+        let stale = |halted| Snapshot { landing_task: Read::Observed(LandingTask { halted, last_fired_at_ms: Some(NOW - 2_000_000), ..LandingTask::default() }), ..idle() };
+        let files = |snap: &Snapshot| decide(&policy(Stage::Act), &Carry::default(), snap).1.iter().any(|a| a.effect == FILE_INCIDENT && a.key.contains("loop-stalled"));
+        assert!(files(&stale(false)), "the control must fire");
+        assert!(!files(&stale(true)));
+        let no_row = Snapshot { landing_task: Read::Unobservable("no landing row".into()), ..idle() };
+        assert!(!files(&no_row), "an unreadable row is not a stall");
+    }
 }

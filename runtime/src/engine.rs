@@ -1387,8 +1387,11 @@ impl Engine {
             let elapsed = began.elapsed();
             let set = ctx.into_event();
             if stalls == 0 && set.is_empty() && matches!(&called, Ok(c) if c.is_empty()) {
+                let kept = matches!(ev.kind.tag.as_str(), EFFECT_FAILED | EFFECT_TIMED_OUT);
                 if let Some(t) = self.tracks.get_mut(name) {
-                    t.outcome = Some(LastOutcome::Quiet);
+                    if !kept {
+                        t.outcome = Some(LastOutcome::Quiet);
+                    }
                     t.commands = Some(FireCommands { returned: 0, admitted: 0 });
                 }
                 continue;
