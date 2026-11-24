@@ -393,8 +393,8 @@ pub fn one_shot_words(profile: &str) -> String {
 }
 
 /// The cargo settings a builder session compiles under: its jobs and test threads, from the
-/// harness's own sizes ([`crate::admission`]) rather than any host cargo config. Incremental is
-/// the manifest's, and whole-workspace passes opt out per call ([`one_shot`]).
+/// harness's own sizes ([`crate::admission`]) rather than any host cargo config. The manifest keeps
+/// dev incremental off, and every gate and check build also opts out per call ([`one_shot`]).
 pub fn session_env() -> [(String, String); 2] {
     [
         ("CARGO_BUILD_JOBS".into(), crate::admission::RUN_CARGO_JOBS.to_string()),

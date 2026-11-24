@@ -406,13 +406,19 @@ mod tests {
     #[test_id(tt2xoz8)]
     #[test]
     fn the_check_scripts_opt_out_of_incremental_on_their_cargo_line() {
+        fn opts_out(src: &str) -> bool {
+            let words = spira_config::build::one_shot_words("dev");
+            src.lines()
+                .find(|l| ["\"$CARGO_BIN\" check ", "cargo build "].iter().any(|w| l.trim_start().starts_with(w)))
+                .is_some_and(|l| l.contains(&words))
+        }
         let words = spira_config::build::one_shot_words("dev");
         for (name, src) in [
             ("build-fence.sh", include_str!("../../spira/build-fence.sh")),
             ("lint-staged.sh", include_str!("../../spira/lint-staged.sh")),
         ] {
-            let line = src.lines().find(|l| ["\"$CARGO_BIN\" check ", "cargo build "].iter().any(|w| l.trim_start().starts_with(w))).unwrap_or_else(|| panic!("{name}: no cargo line"));
-            assert!(line.contains(&words), "{name}: {line}");
+            assert!(opts_out(src), "{name}: its cargo line lacks {words}");
+            assert!(!opts_out(&src.replace(&words, "")), "{name}: the matcher passed a line without the override");
         }
     }
 
