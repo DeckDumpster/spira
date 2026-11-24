@@ -15,20 +15,21 @@ fn root() -> PathBuf {
 /// The shipped example config; the name is built so this file does not itself name the config file.
 const EXAMPLE_NAME: &str = concat!("spira", ".", "toml");
 
-fn shipped_scripts(root: &Path) -> Vec<PathBuf> {
-    let with_ext = |dir: PathBuf, ext: &str| -> Vec<PathBuf> {
-        let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|e| e == ext))
-            .collect();
-        found.sort();
-        found
-    };
-    let mut all = with_ext(root.to_path_buf(), "sh");
-    all.extend(with_ext(root.join("spira"), "sh"));
-    all.extend(with_ext(root.join("spira/runes"), "rune"));
-    all
+fn shipped_scripts(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if path.is_dir() {
+            if !name.starts_with('.') && name != "target" {
+                found.extend(shipped_scripts(&path));
+            }
+        } else if path.extension().is_some_and(|e| e == "sh" || e == "rune") {
+            found.push(path);
+        }
+    }
+    found.sort();
+    found
 }
 
 /// The scripts one `bash` process finds unparseable, by `bash -n`.
@@ -45,14 +46,15 @@ fn unparseable(files: &[PathBuf]) -> Vec<String> {
 // covers: UC-safety-fences-34
 #[test_id(tllh9ps)]
 #[test]
-fn every_shipped_shell_script_and_rune_parses() {
+fn every_tracked_shell_script_and_rune_parses() {
     let tmp = testkit::TempDir::new("fresh-clone-syntax");
     let planted = tmp.path().join("broken.sh");
     std::fs::write(&planted, "#!/usr/bin/env bash\nif then\nfi\n").unwrap();
     assert_eq!(unparseable(std::slice::from_ref(&planted)), [planted.display().to_string()], "the sweep must flag a planted syntax error before it is believed clean");
 
     let files = shipped_scripts(&root());
-    assert!(files.len() > 100, "the sweep found only {} scripts", files.len());
+    assert!(files.len() > 200, "the sweep found only {} scripts", files.len());
+    assert!(files.iter().any(|f| f.starts_with(root().join("spira/hooks"))), "the sweep skipped nested directories");
     assert!(files.iter().any(|f| f.extension().is_some_and(|e| e == "rune")), "the sweep skipped the runes");
     assert_eq!(unparseable(&files), Vec::<String>::new());
 }

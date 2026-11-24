@@ -131,8 +131,8 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 - **Keep:** one behaviour row that reads `gate_fence_list` (from `gate-fences.sh`) and asserts it equals the expected set, plus the UC-22 commit-through-hook row.
 
 **D8 — syntax sweep.**
-- **Evidence:** test-freshclone runs `bash -n` over all shipped scripts, and test-spike runs `bash -n` over runes and `confine.sh` again (a subset).
-- **Keep:** `doctor/tests/fresh_clone.rs`, whose sweep includes `runes/*.rune` (test-freshclone is retired).
+- **Evidence:** the retired test-freshclone ran `bash -n` over all shipped scripts, and test-spike runs `bash -n` over runes and `confine.sh` again (a subset).
+- **Keep:** `doctor/tests/fresh_clone.rs`, whose sweep includes `runes/*.rune`.
 
 ---
 

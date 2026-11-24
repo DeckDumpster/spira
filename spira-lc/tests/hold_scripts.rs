@@ -16,6 +16,14 @@ struct Fixture {
     tmp: testkit::TempDir,
 }
 
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if let Ok(hb) = std::fs::read_to_string(self.run_dir().join("hold-sp-h1.hb")) {
+            let _ = Command::new("kill").arg(hb.trim()).status();
+        }
+    }
+}
+
 impl Fixture {
     fn new() -> Fixture {
         let tmp = testkit::TempDir::new("hold-scripts");
