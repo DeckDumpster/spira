@@ -577,7 +577,7 @@ fn the_line_with_a_projection_on_screen_stays_within_110_columns() {
 #[test_id(tkbiq43)]
 #[test]
 fn percent_g_drops_trailing_zeros_and_keeps_six_significant_digits() {
-    for (x, want) in [(0.0, "0"), (42.0, "42"), (42.5, "42.5"), (0.5, "0.5"), (100.0, "100"), (33.333333, "33.3333"), (0.00001, "1e-05"), (1234567.0, "1.23457e+06")] {
+    for (x, want) in [(0.0, "0"), (42.0, "42"), (42.5, "42.5"), (0.5, "0.5"), (100.0, "100"), (33.333333, "33.3333"), (0.00001, "1e-05"), (1234567.0, "1.23457e+06"), (999999.4, "999999"), (999999.5, "1e+06")] {
         assert_eq!(fmt::g(x), want);
     }
 }

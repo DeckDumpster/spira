@@ -511,7 +511,8 @@ fn setup(cfg: &BTreeMap<String, String>) -> Result<(archivist::config::Env, Path
     let env = archivist::config::from_lookup(&|k| cfg.get(k).cloned().ok_or_else(|| format!("{k} is not pinned")))?;
     let arc = Path::new(&env.run).join("archivist");
     let home = spira_config::resolve::locate_home_for_process()?;
-    Ok((env, arc, archivist::seam::RealSeam { lib_sh: home.join("lib.sh") }))
+    let seam = archivist::seam::RealSeam { lib_sh: home.join("lib.sh"), meter: env.meter() };
+    Ok((env, arc, seam))
 }
 
 fn now_secs() -> i64 {

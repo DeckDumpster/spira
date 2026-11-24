@@ -26,7 +26,12 @@ a block is never printed on a refusal: a gauge that cannot read says so on stder
 non-zero rather than printing a plausible number.
 
 `SPIRA_NOW` (epoch seconds) replaces the clock for a caller that exports it on purpose; it is
-not a config key. The core takes `now`, the directories and the thresholds as arguments.
+not a config key. The core takes `now`, the directories and the thresholds as arguments, so
+`env`'s `SP_CTX_AGE` for a named transcript with no pointer is `now` minus its mtime (the shell
+script read the wall clock there; the two differ only under `SPIRA_NOW`).
+
+The start count is a measured fact, not an assertion of the tests: `strace -f -e trace=execve`
+of one refresh shows one `execve`. What the tests hold is the source: `tests/no_spawn.rs`.
 
 ## Configuration
 

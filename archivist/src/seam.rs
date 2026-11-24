@@ -65,6 +65,7 @@ pub const DIGEST_FROM: &str = "Archivist <archivist@spira>";
 
 pub struct RealSeam {
     pub lib_sh: PathBuf,
+    pub meter: ctx_meter::Config,
 }
 
 impl RealSeam {
@@ -186,14 +187,7 @@ impl Seam for RealSeam {
     }
 
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String> {
-        let cfg = match ctx_meter::Config::resolve() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("archivist: {e}");
-                return HashMap::new();
-            }
-        };
-        ctx_meter::env(&cfg, dwarf::util::now_epoch(), Some(transcript)).iter().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        ctx_meter::env(&self.meter, dwarf::util::now_epoch(), Some(transcript)).iter().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     fn archive_lineage(&self, session: &str) -> String {
@@ -283,6 +277,28 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
         .into_iter()
         .find(|c| c.join("lib.sh").is_file())
         .map(|c| c.canonicalize().unwrap_or(c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(tj1n8o9)]
+    #[test]
+    fn the_real_seam_measures_a_transcript_in_process_with_the_runs_thresholds() {
+        let dir = testkit::TempDir::new("archivist-seam");
+        let row = |n: usize| format!("{{\"message\":{{\"id\":\"m{n}\",\"usage\":{{\"input_tokens\":1000,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":{}}}}}}}\n", 250_000 + n * 1000);
+        let tp = dir.join("s1.jsonl");
+        std::fs::write(&tp, (0..3).map(row).collect::<String>()).unwrap();
+        let meter = ctx_meter::Config { warn: 300_000, high: 900_000, limit: 2_000_000, projects: dir.join("projects"), run: dir.join("run"), idle: 7, hhmm: ctx_meter::fmt::local_hhmm };
+        let seam = RealSeam { lib_sh: dir.join("lib.sh"), meter };
+        let env = seam.ctx_meter_env(&tp);
+        assert_eq!(env.get("SP_CTX_NOW").map(String::as_str), Some("253000"));
+        assert_eq!(env.get("SP_CTX_TURNS").map(String::as_str), Some("3"));
+        assert_eq!(env.get("SP_CTX_NEXT").map(String::as_str), Some("warn"), "the run's own warn line, not the shipped default");
+        assert_eq!(env.get("SP_CTX_HEADROOM").map(String::as_str), Some("47000"));
+        assert!(seam.ctx_meter_env(&dir.join("absent.jsonl")).get("SP_CTX_NOW").is_some_and(|v| v == "-"));
+    }
 }
 
 #[cfg(test)]

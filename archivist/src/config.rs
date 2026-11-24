@@ -26,6 +26,13 @@ pub struct Env {
     pub fail_backoff: u64,
 }
 
+impl Env {
+    /// The meter's configuration, from the thresholds and directories this run resolved.
+    pub fn meter(&self) -> ctx_meter::Config {
+        ctx_meter::Config { warn: self.ctx_warn, high: self.ctx_high, limit: self.ctx_limit, projects: self.token_projects.clone().into(), run: self.run.clone().into(), idle: self.idle, hhmm: ctx_meter::fmt::local_hhmm }
+    }
+}
+
 /// The binary's config struct constructor — called once, at the top of `main`'s dispatch.
 /// `SPIRA_WIKI` is the one key whose own declared default is the empty string: empty IS
 /// the configured meaning "no wiki configured", not a fallback this crate invents, so it
