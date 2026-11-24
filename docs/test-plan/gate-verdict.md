@@ -103,7 +103,7 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 
 | Use case | Existing tests (file::case) | Level now, cost | Verdict |
 |---|---|---|---|
-| 01 VERDICT line shape | implicit everywhere; explicit full line only in `test-yield.sh::verdict line names the suite` | T2-T3, spread across | DEMOTE-TO-T1: one table test over `verdict()`; drop the full-line assertion from test-yield (it duplicates UC-12). |
+| 01 VERDICT line shape | implicit everywhere; the full line is asserted in the gate crate's tests | T1 | DONE: the old `test-yield.sh` full-line assertion is gone (sp-ejlxjx). |
 | 02 no-evidence downgrade | **none** | — | GAP (§6) |
 | 03 repo-map unreadable/unknown | **none** at gate level | — | GAP |
 | 04 no-diff / no-base | `test-gate-preflight.sh::unresolvable branch`, `::unresolvable base`, `::valid branch passes` | T2, 3 s | KEEP, as the host file for the merged preflight suite |
@@ -115,7 +115,7 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 | — (landstate sidecar) | `test-reopen-queue-eject.sh` (was `::.ejected sidecar survives`, `::no sidecar → empty`) | T2 | DONE (sp-ffy9w): replaced with a real writer(`verdict.sh:_attr_eject`)→reader(`gate.sh` subprocess, via `gate-fixture.sh`) test proving the sidecar survives a RED overwrite. Stays in gate-verdict, not landing-merge-queue as first proposed here: `gate.sh`, this area's own subject script, is the reader, and landing-merge-queue has no test-plan file yet. The `land_mark EJECTED`/`RED overwrites EJECTED` rows (land_mark's own storage shape, no gate-verdict subject script involved) were dropped rather than stranded here; a follow-up bead covers them once landing-merge-queue exists. |
 | 10 env contract | `test-gate-base-evidence.sh::the env contract reaches both trials, unchanged in shape`; `test-gate-base-selection.sh::branch trial selects from branch`, `::base trial also selects from branch`, `::second trial ran at the base` | T2, 3 s | DONE (sp-ztxbr): env-logging command added to the base-evidence wiring run, asserting `SPIRA_GATE_BRANCH/_BASE/_SELECT_HEAD/_FILES/_HOST_CORES/_EJECTED_SUITES/_SUITES` on both trials. `test-gate-host-cores.sh` deleted, its one row folded in here. |
 | 11 host_cores / governor | the retired gate-unit suite::host_cores() (UC-11, T1) | T1 | DONE. `test-gate-host-cores.sh`'s stub-nproc/getconf controls were the duplicate of this and are deleted. `test-governor-host-cores.sh` was itself deleted with the governor (sp-8mzsh) — this row's own file list above is stale on that point, outside this bead's scope to sweep. |
-| 12 attribution | `test-gate-base-evidence.sh` (all 6 cases); `test-gate-base-selection.sh::red on both charged to base`; `test-yield.sh::the gate refuses it as BASE_FAIL`, `::verdict line names the suite`, `::a red naming no suite` | T2, 4 s (+2 s, + part of 34 s) | DEMOTE-TO-T1 for the 6 classification rows and the unnamed-suite row. KEEP one T2 wiring run (red on both → BASE_FAIL with base output + env log + early diagnostic). DELETE the test-yield BASE_FAIL line assertions (redundant). |
+| 12 attribution | `test-gate-base-evidence.sh` (all 6 cases); `test-gate-base-selection.sh::red on both charged to base` | T2, 4 s | DEMOTE-TO-T1 for the 6 classification rows and the unnamed-suite row. KEEP one T2 wiring run (red on both → BASE_FAIL with base output + env log + early diagnostic). The `test-yield.sh` BASE_FAIL assertions are deleted (sp-ejlxjx). |
 | 13 timeout / harness-fault | `test-gate-verdict.sh::deadline is NO_VERDICT`, `::timeout not cached`, `::a branch trial reporting a harness fault exits NO_VERDICT`, `::and is not cached` | T2, part of 7 s | DONE (sp-ztxbr): harness-fault row added, on `gate-fixture.sh` now (item 2 migration). |
 | 14 full output | `test-gate-fixture-diag.sh::positive control`, `::gate exits 1 / builder diagnostic survives`, `::diagnostic absent from a passing gate` | T2, 3 s | STILL OPEN. `test-gate-base-evidence.sh` now has an env-contract wiring run (UC-10) but not yet the full-output assertion; the fixture-diag merge itself is unstarted — follow-up. |
 | 15 verdict cache | `test-gate-verdict.sh` (15 cases) | T2, 7 s | KEEP the T2 reuse loop (first run, cached, base landing, changed tree, red not cached). DEMOTE-TO-T1 the key and TTL rows (changed command, restored command, changed harness, expired, longer TTL, no `at=`). Add the `SPIRA_GATE_SUITES`-in-key and non-numeric-TTL rows. |
@@ -134,8 +134,8 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 
 ## 4. Duplicate clusters
 
-1. **"Red on both trials is BASE_FAIL base-red with suite="**. Asserted by `test-gate-base-evidence.sh::base-red verdict`, `test-gate-base-selection.sh::red on both charged to base`, `test-yield.sh::the gate refuses it as BASE_FAIL` + `::verdict line names the suite` + `::a red naming no suite` (and consumed again by `test-landing-base-fail.sh`, 34 s, in another area). Five full gate runs over their own git fixtures prove one classification rule.
-   **Keep:** `test-gate-base-evidence.sh`, with the rule as T1 rows plus one T2 wiring run. test-yield keeps only "BASE_FAIL is *recorded* as GATE_FAULT", which is its own concern.
+1. **"Red on both trials is BASE_FAIL base-red with suite="**. Asserted by `test-gate-base-evidence.sh::base-red verdict` and `test-gate-base-selection.sh::red on both charged to base` (and consumed again in another area). The yield suite's copies are deleted (sp-ejlxjx).
+   **Keep:** `test-gate-base-evidence.sh`, with the rule as T1 rows plus one T2 wiring run. "BASE_FAIL is *recorded* as GATE_FAULT" is covered by `gate/tests/spira_scripts.rs` (yield).
 
 2. **"A passing gate run on a fresh fixture" as a positive control**. The same control (`rc 0`, `VERDICT=PASS`) appears in `test-gate-preflight.sh::valid branch passes`, `test-gate-host-cores.sh::gate passes`, `test-gate-fixture-diag.sh::diagnostic absent from a passing gate` and `test-gate-verdict.sh::positive control first run`. Each builds a bare remote plus a clone and runs gate.sh once to prove it can pass.
    **Keep:** one shared fixture builder, `spira/testlib/gate-fixture.sh` (built by sp-ajxg3, adopted so far only by `test-gate-preflight.sh`) plus the controls in `test-gate-verdict.sh`. The remaining ~11 files still building their own remote-plus-clone are follow-up work.
@@ -164,7 +164,7 @@ The single blocking seam is that **`gate.sh` is not sourceable**: all of its log
 
 | Logic | Where | Tested today only via | Seam for T1 |
 |---|---|---|---|
-| Base attribution (branch-red / base-red / base-timeout / base-untestable / branch-only suites) | gate.sh L701–760, inline after the base trial | 6+ full gate runs with two git trials each (`test-gate-base-evidence`, `test-yield`) | Extract `attribute <branch_rc> <branch_out_file> <base_ran> <base_rc> <base_out_file>` → `status reason suite`. `red_suites()` and `timed_out_suites()` are already functions of text. |
+| Base attribution (branch-red / base-red / base-timeout / base-untestable / branch-only suites) | gate.sh L701–760, inline after the base trial | 6+ full gate runs with two git trials each (`test-gate-base-evidence`) | Extract `attribute <branch_rc> <branch_out_file> <base_ran> <base_rc> <base_out_file>` → `status reason suite`. `red_suites()` and `timed_out_suites()` are already functions of text. |
 | `verdict()` shape + no-evidence downgrade | gate.sh L45–87 | never isolated | Source with `gate_meter`/`yield_note` undefined (they are guarded by `command -v`) and `HELD_LOCK=0`, then call it in a subshell and capture stderr and the exit code. |
 | Cache key | gate.sh `gate_key()` L365–377 (hashes `$0`, `$EXCLUDE`, `$SKEW`, tree, files, cmd, `SPIRA_GATE_SUITES`) | ~10 gate runs in `test-gate-verdict.sh` | Pass tree-hash, files-hash, cmd and harness paths as arguments instead of reading `$0` and git, then assert key inequality per changed input. |
 | Cache freshness | gate.sh L397–410 inline (`sed`+`eval` of `when/by/at`, TTL digits check) | backdated `at=` + full gate runs | Extract `cache_fresh <entry> <ttl> <now>`, and test rows for no `at=`, non-numeric TTL, expired, fresh, and `eval` of a hostile `when=` value (see §6). |
@@ -219,11 +219,8 @@ Projected after the verdicts. Estimates assume one shared git fixture per file, 
 | `test-gate-preflight.sh` (merged) | preflight 3 + missing-cmd 6 = 9 | 4 | one fixture, 4 runs |
 | `test-gate-verdict.sh` (T2 reuse loop only) | 7 | 4 | ~17 runs → ~8 |
 | `test-gate-tree.sh` (marker-based, GATE_SECS=1, one timeout run) | 30 | 9 (measured, sp-fm2wn) | 4×3 s sleeps → 4×1 s; the two lock-timeout runs merged into one |
-| `test-gate-locks.sh` (adds the STALE row) | 5 | 12 (measured, sp-fm2wn) | one more scenario (dead PID + dead PGID) added over the unchanged four |
-| `test-gate-sweep.sh` | 6 | 6 | unchanged |
 | `test-gate-touched.sh` (T1 table + 1 diff row, absorbs eject selection) | touched 1 + reopen-queue-eject 2 = 3 | 1 | |
 | `test-soak.sh` | 15 | 0 per push (15 nightly) | moved off lane |
-| `test-yield.sh` → T2 wiring (2 gate runs) + T1 report file | 34 | 7 (6 + 1) | ~5 gate runs → 2; watchtower rows move to test-watchtower (~+2 s there) |
 
 ```
 3 + 2 + 4 + 4 + 9 + 12 + 6 + 1 + 0 + 7 = 48 s per push   (vs 125 s; −77 s, −62 %; gate-tree/

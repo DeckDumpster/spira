@@ -127,7 +127,7 @@ fn gate_locks_reads_a_dead_pid_whose_group_lives_as_held_and_a_dead_group_as_sta
     assert!(r.contains("HELD") && !r.contains("STALE") && r.contains("inherited fd"), "a dead pid whose group lives is held: {r}");
     assert!(row(&out, "stale").contains("STALE"), "{out}");
     assert!(out.contains("1 stale lock(s)"), "{out}");
-    assert!(!out.contains("harness.absent"), "a lock that does not exist is not listed: {out}");
+    assert_eq!(out.lines().filter(|l| l.starts_with("harness.")).count(), 4, "exactly the four locks that exist are listed: {out}");
 }
 
 fn age(path: &Path, secs: u64) {
@@ -256,18 +256,11 @@ impl Yield {
 }
 
 // covers: UC-gate-verdict-22
-// covers: UC-gate-verdict-23
-#[test_id(tu369oz)]
+#[test_id(ty4a5py)]
 #[test]
-fn yield_reports_an_absent_record_as_unknown_and_classifies_what_the_gate_and_a_person_say() {
+fn yield_records_one_red_per_tree_infers_a_defect_from_a_later_pass_and_files_a_base_fault_as_a_gate_fault() {
     let root = TempDir::new("yield");
     let y = Yield::new(&root, "main");
-
-    let r = y.report(&[]);
-    assert_eq!((r["YIELD_REDS"].as_str(), r["YIELD_FAULT"].as_str(), r["YIELD_UNKNOWN"].as_str()), ("?", "?", "?"), "{r:?}");
-    assert_eq!((r["YIELD_RECORDER"].as_str(), r["YIELD_SOLO_MED"].as_str(), r["YIELD_CONC_MAX"].as_str()), ("?", "?", "?"));
-    assert_eq!(r["YIELD_WINDOW"], WINDOW.to_string(), "the configured window is the one reported");
-
     y.run(&["record", "repo", "spira/sp-guilty", "1", "branch-red", "tree1", "test-guilty.sh"]);
     y.run(&["record", "repo", "spira/sp-guilty", "1", "branch-red", "tree1", "test-guilty.sh"]);
     let rec = std::fs::read_to_string(std::fs::read_dir(&y.dir).unwrap().next().unwrap().unwrap().path()).unwrap();
@@ -284,10 +277,24 @@ fn yield_reports_an_absent_record_as_unknown_and_classifies_what_the_gate_and_a_
     y.run(&["record", "repo", "spira/sp-base", "76", "base-red", "-", "test-boxreader.sh"]);
     let r = y.report(&[]);
     assert_eq!((r["YIELD_FAULT"].as_str(), r["YIELD_TOP_FAULT"].as_str()), ("1", "test-boxreader.sh x1"), "BASE_FAIL lands as a gate fault: {r:?}");
+}
 
+// covers: UC-gate-verdict-23
+#[test_id(tiz0rt8)]
+#[test]
+fn yield_reports_an_absent_record_as_unknown_and_classifies_what_the_gate_and_a_person_say() {
+    let root = TempDir::new("yield");
+    let y = Yield::new(&root, "main");
+    let r = y.report(&[]);
+    assert_eq!((r["YIELD_REDS"].as_str(), r["YIELD_FAULT"].as_str(), r["YIELD_UNKNOWN"].as_str()), ("?", "?", "?"), "{r:?}");
+    assert_eq!((r["YIELD_RECORDER"].as_str(), r["YIELD_SOLO_MED"].as_str(), r["YIELD_CONC_MAX"].as_str()), ("?", "?", "?"));
+    assert_eq!(r["YIELD_WINDOW"], WINDOW.to_string(), "the configured window is the one reported");
+
+    y.run(&["record", "repo", "spira/sp-guilty", "1", "branch-red", "tree1", "test-guilty.sh"]);
+    y.run(&["pass", "repo", "spira/sp-guilty", "tree2"]);
     assert_eq!(y.run(&["classify", "spira/sp-guilty", "GATE_FAULT", "the suite read the box"]).0, 0);
     let r = y.report(&[]);
-    assert_eq!((r["YIELD_DEFECT"].as_str(), r["YIELD_FAULT"].as_str(), r["YIELD_DEFECT_INFERRED"].as_str()), ("0", "2", "0"), "a stated verdict replaces the inferred one: {r:?}");
+    assert_eq!((r["YIELD_DEFECT"].as_str(), r["YIELD_FAULT"].as_str(), r["YIELD_DEFECT_INFERRED"].as_str()), ("0", "1", "0"), "a stated verdict replaces the inferred one: {r:?}");
     assert!(y.run(&["list"]).1.contains("the suite read the box"));
     assert_eq!(y.run(&["classify", "spira/sp-nosuch", "DEFECT"]).0, 1, "an unknown branch is refused");
     assert_eq!(y.run(&["classify", "spira/sp-guilty", "NOT_A_VERDICT"]).0, 1, "an invalid verdict is refused");
@@ -298,9 +305,9 @@ fn yield_reports_an_absent_record_as_unknown_and_classifies_what_the_gate_and_a_
         format!("at={ancient}\nlast={ancient}\nseen=1\nrepo=repo\nbranch=spira/sp-ancient\nbead=sp-ancient\ntree=-\noutcome=FAIL\nreason=branch-red\nsuite=-\nverdict=UNKNOWN\nby=\nwhy=\n"),
     )
     .unwrap();
-    assert_eq!(y.report(&[])["YIELD_REDS"], "2", "a red older than the window is not counted");
+    assert_eq!(y.report(&[])["YIELD_REDS"], "1", "a red older than the window is not counted");
     let wide = (WINDOW * 4).to_string();
-    assert_eq!(y.report(&["--window", &wide])["YIELD_REDS"], "3", "a wide enough window finds it");
+    assert_eq!(y.report(&["--window", &wide])["YIELD_REDS"], "2", "a wide enough window finds it");
 
     y.meter(&[(300, "spira/sp-x", 0, 100, "0", "pass"), (310, "spira/sp-y", 0, 40, "0", "pass"), (40, "spira/sp-z", 0, 60, "0", "pass"), (30, "spira/sp-c", 0, 0, "0", "cached")]);
     let r = y.report(&[]);
