@@ -1728,9 +1728,9 @@ fn sp_pi2ojm_an_opened_round_in_another_tree_is_not_ours_to_adopt() {
     assert_eq!(carry.repos["spira"].state, State::Opened);
 }
 
-#[test_id(t1f2ni1)]
+#[test_id(tmll06v)]
 #[test]
-fn sp_pi2ojm_an_adopted_round_without_suites_certifies_in_its_own_testenv_or_is_blocked() {
+fn sp_pi2ojm_an_adopted_round_without_suites_certifies_with_or_without_its_own_testenv() {
     let mut own = opened_unadvanced();
     let rc = own.repos.get_mut("spira").unwrap();
     (rc.suites, rc.own_testenv) = (Some(false), true);
@@ -1738,8 +1738,8 @@ fn sp_pi2ojm_an_adopted_round_without_suites_certifies_in_its_own_testenv_or_is_
     assert_eq!((carry.repos["spira"].state, acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>()), (State::Certifying, vec![CERTIFY]));
     let mut bare = opened_unadvanced();
     bare.repos.get_mut("spira").unwrap().suites = Some(false);
-    let (_, acts) = decide(&bare, &queue_holds("r9", &["sp-a", "sp-b"]));
-    assert!(acts.iter().all(|a| a.effect != CORPUS && a.effect != CERTIFY), "{acts:?}");
+    let (carry, acts) = decide(&bare, &queue_holds("r9", &["sp-a", "sp-b"]));
+    assert_eq!((carry.repos["spira"].state, acts.iter().map(|a| a.effect.as_str()).collect::<Vec<_>>()), (State::Certifying, vec![CERTIFY]));
 }
 
 const LEFTOVER: &str = "git worktree add exited 128: fatal: '/run/worktree/.batcher-spira' already exists";
