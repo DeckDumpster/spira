@@ -522,7 +522,7 @@ fn filed_and_said() -> TaskRig {
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&filed_and_said(), NAME);
-    assert_eq!(rows, ["blind", "diluted", "halted", "held", "orphan_paged", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
+    assert_eq!(rows, ["blind", "blind_since_ms", "diluted", "halted", "held", "orphan_paged", "resumed_at", "stalled/alpha", "starved", "undated", "unlanded"]);
 }
 
 #[test_id(t94hd7b)]
@@ -606,26 +606,53 @@ fn blind_after_activation(host: Arc<Mutex<Host>>) -> TaskRig {
 
 #[test_id(tymwgua)]
 #[test]
-fn the_first_unreadable_landings_tick_just_after_an_activation_pages_blind() {
+fn the_first_unreadable_landings_tick_just_after_an_activation_pages_nothing() {
     let host = Arc::new(Mutex::new(Host { snap: Snapshot { why: REFUSAL.into(), ..Default::default() }, ..landed(24) }));
     let r = blind_after_activation(host);
-    let pages = named(&r, INBOX_APPEND);
-    assert_eq!(pages.len(), 1, "{pages:?}");
-    assert!(pages[0].contains("P0 BLIND") && !pages[0].contains("activation"), "{pages:?}");
+    assert!(named(&r, INBOX_APPEND).is_empty(), "{:?}", named(&r, INBOX_APPEND));
+}
+
+fn blind_pages(r: &TaskRig) -> usize {
+    named(r, INBOX_APPEND).iter().filter(|t| t.contains("P0 BLIND")).count()
+}
+
+fn clears(r: &TaskRig) -> usize {
+    named(r, INBOX_APPEND).iter().filter(|t| t.contains("CLEAR: the landings are read again")).count()
 }
 
 #[test_id(t657hor)]
 #[test]
-fn a_second_unreadable_landings_tick_pages_nothing_more_and_a_readable_one_rearms_the_page() {
+fn a_refused_read_followed_by_a_good_one_inside_the_stall_bound_says_nothing() {
     let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
     let mut r = blind_after_activation(host.clone());
     r.advance(60_000).unwrap();
-    assert_eq!(named(&r, INBOX_APPEND).len(), 1, "{:?}", named(&r, INBOX_APPEND));
     host.lock().unwrap().snap.readable = true;
     r.advance(60_000).unwrap();
-    host.lock().unwrap().snap.readable = false;
     r.advance(60_000).unwrap();
-    assert_eq!(named(&r, INBOX_APPEND).len(), 2, "{:?}", named(&r, INBOX_APPEND));
+    assert!(named(&r, INBOX_APPEND).is_empty(), "{:?}", named(&r, INBOX_APPEND));
+}
+
+#[test_id(tznn0yq)]
+#[test]
+fn landings_unreadable_past_the_stall_bound_page_blind_once_and_a_good_read_says_clear_once() {
+    let host = Arc::new(Mutex::new(Host { snap: Snapshot::default(), ..landed(24) }));
+    let mut r = blind_after_activation(host.clone());
+    for _ in 0..9 {
+        r.advance(60_000).unwrap();
+    }
+    assert_eq!(blind_pages(&r), 0, "silent through 600 s: {:?}", named(&r, INBOX_APPEND));
+    r.advance(60_000).unwrap();
+    r.advance(60_000).unwrap();
+    assert_eq!(blind_pages(&r), 1, "{:?}", named(&r, INBOX_APPEND));
+    for _ in 0..3 {
+        r.advance(60_000).unwrap();
+    }
+    assert_eq!(blind_pages(&r), 1, "no repeat: {:?}", named(&r, INBOX_APPEND));
+    host.lock().unwrap().snap.readable = true;
+    r.advance(60_000).unwrap();
+    r.advance(60_000).unwrap();
+    assert_eq!(clears(&r), 1, "{:?}", named(&r, INBOX_APPEND));
+    assert_eq!(blind_pages(&r), 1);
 }
 
 const REFUSAL: &str = "store unavailable: store not running: nothing was sent; waited 50 s for run/lc.sock";
@@ -634,7 +661,8 @@ const REFUSAL: &str = "store unavailable: store not running: nothing was sent; w
 #[test]
 fn a_blind_page_carries_the_stores_reason_and_says_nothing_of_restarts_or_activations() {
     let snap = Snapshot { why: REFUSAL.into(), activated_at: Some(1_794_686_201), ..Default::default() };
-    let v = decide(&Carry::default(), &snap, 1_794_686_801_000, &config());
+    let carry = Carry { blind_since_ms: Some(1_794_686_100_000), ..Default::default() };
+    let v = decide(&carry, &snap, 1_794_686_801_000, &config());
     let lines: Vec<String> = v.acts.iter().filter(|a| a.name == INBOX_APPEND).map(|a| a.input.clone()).collect();
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].contains(&format!("({REFUSAL})")) && lines[0].contains("P0 BLIND"), "{}", lines[0]);
@@ -901,8 +929,9 @@ fn an_unreadable_store_under_orphaned_maintenance_pages_once_naming_thaw_store()
 
 #[test_id(tviqb2b)]
 #[test]
-fn an_unreadable_store_outside_any_activation_window_pages_blind() {
-    let v = decide(&Carry::default(), &unreadable_during(None), 1_000_030_000, &config());
+fn an_unreadable_store_outside_any_activation_window_pages_blind_past_the_stall_bound() {
+    let carry = Carry { blind_since_ms: Some(1_000_000_000 - 601_000), ..Default::default() };
+    let v = decide(&carry, &unreadable_during(None), 1_000_000_000, &config());
     assert!(v.acts.iter().any(|a| a.input.contains("P0 BLIND")));
     assert!(v.carry.blind);
 }
