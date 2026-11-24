@@ -1,0 +1,135 @@
+INTEGRATION-TESTS-CAUSE: exit status 101 after 314s; last binary=scratch_gate-df1540ac52aa4acc; failures=2
+FAIL test:lc_backup_drill a_phase_clock_counts_the_seconds_the_phase_took
+test a_phase_clock_counts_the_seconds_the_phase_took ... FAILED
+test only_a_drill_of_the_newest_backup_records_drill_ok ... ok
+
+failures:
+
+---- a_phase_clock_counts_the_seconds_the_phase_took stdout ----
+
+thread 'a_phase_clock_counts_the_seconds_the_phase_took' (187) panicked at spira-lc/tests/lc_backup_drill.rs:213:5:
+assertion `left == right` failed: lc-backup: drill ok — alpha: 1 table(s) identical at hhhh (quiet wait 0s, lock wait 0s, assemble 1s, restore 1s, head check 0s, live counts 1s, restored counts 1s)
+
+  left: 1
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    a_phase_clock_counts_the_seconds_the_phase_took
+
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.90s
+
+error: test failed, to rerun pass `-p spira-lc --test lc_backup_drill`
+     Running tests/serve_memory.rs (target/unittest/deps/serve_memory-218774ee4ebf88d4)
+
+running 2 tests
+test the_ready_line_is_written_once_the_accept_thread_runs ... ok
+test a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_where_it_was ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.70s
+
+--
+error: 1 target failed:
+    `-p spira-lc --test lc_backup_drill`
+--- last output of the log ---
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running tests/validate.rs (target/unittest/deps/validate-3f05a5f77480c100)
+
+running 1 test
+test unknown_field_is_refused_with_its_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lint_registry.rs (target/unittest/deps/lint_registry-7e8012b4e81f9c2b)
+
+running 1 test
+test lint_does_not_refuse_a_key_the_live_config_declares_and_an_older_registry_lacks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/target_reap_cli.rs (target/unittest/deps/target_reap_cli-d88bfd81318ed7b8)
+
+running 8 tests
+test a_dry_run_names_the_bound_and_removes_nothing ... ok
+test a_bound_over_a_few_still_takes_the_oldest_one ... ok
+test a_tenth_of_twenty_idle_targets_removes_exactly_the_two_oldest ... ok
+test a_box_with_no_gate_scratch_reaps_none_and_says_so ... ok
+test every_flag_parses_and_an_unknown_one_is_usage ... ok
+test the_default_worktrees_directory_is_the_configured_subdir_of_the_run_directory ... ok
+test the_fraction_argument_is_refused_outside_zero_to_one_and_scratch_needs_it ... ok
+test bounded_scratch_reap_takes_the_oldest_tenth_of_stale_gate_trees ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/test_sandbox.rs (target/unittest/deps/test_sandbox-13ba57e89e96e466)
+
+running 10 tests
+test a_test_finds_no_installation_under_its_home ... ok
+test a_held_run_keeps_the_identity_an_enclosing_sandbox_handed_in_when_run_is_unwritable ... ok
+test a_binary_run_binds_the_declared_cargo_homes_config_back_read_only_and_never_the_credentials ... ok
+test around_finds_the_command_the_gate_path_names_and_binds_its_toolchain_under_a_hidden_home ... ok
+test around_binds_the_cargo_config_back_read_only_and_never_the_credentials ... ok
+test around_binds_each_target_link_destination_writable_and_keeps_the_environment ... ok
+test the_held_decision_comes_before_any_work_a_held_call_does_not_need ... ok
+test cargo_runs_every_test_binary_through_the_sandbox_runner ... ok
+test print_args_for_a_binary_is_what_the_landing_ref_printed ... ok
+test around_without_the_command_on_path_is_no_verdict_and_names_the_path ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/victoria.rs (target/unittest/deps/victoria-02ad81b6d034bbb5)
+
+running 1 test
+test rows_pushed_to_a_real_store_read_back_as_the_same_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/accounting.rs (target/unittest/deps/accounting-51e4ea1983272b0c)
+
+running 5 tests
+test a_record_carries_the_fields_its_consumers_read ... ok
+test the_journal_follower_unit_is_not_shipped ... ok
+test io_controller_presence_is_read_from_the_controllers_file ... ok
+test io_accounting_dropin_is_written_once ... ok
+test the_listener_unit_turns_accounting_on ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/no_fork_edges.rs (target/unittest/deps/no_fork_edges-153aa959beea4470)
+
+running 2 tests
+test the_scan_catches_a_planted_site_and_passes_a_marked_one ... ok
+test no_unmarked_fork_edge_remains ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/no_fork_edges.rs (target/unittest/deps/no_fork_edges-7f06d791348ac725)
+
+running 2 tests
+test the_scan_catches_a_planted_site_and_passes_a_marked_one ... ok
+test no_unmarked_fork_edge_remains_in_src ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/stand_down.rs (target/unittest/deps/stand_down-17fd492dcfadaac1)
+
+running 3 tests
+test every_periodic_check_stands_down_while_the_world_is_halted ... ok
+test every_check_stands_down_when_the_detectors_lane_is_stopped_on_every_repo ... ok
+test a_check_does_not_stand_down_while_one_repo_still_takes_the_detectors_lane ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.70s
+
+     Running tests/scratch_gate.rs (target/unittest/deps/scratch_gate-df1540ac52aa4acc)
+
+running 3 tests
+test an_unresolvable_landing_ref_refuses ... ok
+test a_branch_that_deletes_session_scratch_is_not_refused ... ok
+test a_branch_that_force_adds_session_scratch_is_refused_naming_the_path ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+error: 1 target failed:
+    `-p spira-lc --test lc_backup_drill`

@@ -1,0 +1,4 @@
+# test-registry deny-list at=1795315791 rows=3
+disabled	suite:test-conf-watch.sh	sp-x22nuk	1795911707
+disabled	suite:test-launchers-as-launched.sh	sp-i3xtfq	1795905271
+disabled	suite:test-sim-rc-forge-open-crash.sh	sp-wt3op0	1795907871

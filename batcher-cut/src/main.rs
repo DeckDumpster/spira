@@ -34,6 +34,10 @@
 #[macro_use]
 extern crate spira_test_id;
 use batcher::drive;
+use batcher_cut::judge::{self, failed_attribution};
+#[cfg(test)]
+use batcher_cut::judge::{blocks_attribution, named_suites};
+use batcher_cut::opts::{parse, Opts};
 use batcher_cut::{endpass, io, order, pace, redtip, screen, vm};
 mod telemetry;
 
@@ -51,30 +55,6 @@ use batcher::core::{
 use io::{Env, Land, Repo};
 use spira_config::process::{cfg, cfg_parse};
 
-struct Opts {
-    cmd: String,
-    repo: String,
-    run: Option<PathBuf>,
-    db: Option<PathBuf>,
-    home: Option<PathBuf>,
-    round_vm: Option<PathBuf>,
-    suites: Option<String>,
-    members: Option<String>,
-    evidence: Option<String>,
-    reds: Option<PathBuf>,
-    after_pass: Option<PathBuf>,
-    confirmed: bool,
-    record: Option<PathBuf>,
-    wt: Option<PathBuf>,
-    base: Option<String>,
-    batch: Option<String>,
-    by: Option<String>,
-    reason: Option<String>,
-    all: bool,
-    held_since: Option<u64>,
-    out: Option<PathBuf>,
-}
-
 fn usage() -> ExitCode {
     eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher rounds|rounds-local|rounds-forge [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
@@ -91,78 +71,6 @@ fn usage() -> ExitCode {
     ExitCode::from(2)
 }
 
-fn parse() -> Result<Opts, String> {
-    let mut a = env::args().skip(1);
-    let cmd = a.next().ok_or("missing command")?;
-    let mut a = a.peekable();
-    let repo = if a.peek().is_some_and(|f| f.starts_with("--")) { String::new() } else { a.next().unwrap_or_default() };
-    // SPIRA_HOME is a per-copy fact (which checkout this process runs from), not something
-    // spira.toml declares — it stays a bare env read. SPIRA_RUN/SPIRA_DB ARE registered keys
-    // (spira/conf.d), so once no `--run`/`--db` flag names them explicitly below, they are
-    // read through the one door (`cfg`), not this process's own environment.
-    let mut o = Opts {
-        cmd,
-        repo,
-        run: None,
-        db: None,
-        home: env::var_os("SPIRA_HOME").map(PathBuf::from),
-        round_vm: None,
-        suites: None,
-        members: None,
-        evidence: None,
-        reds: None,
-        after_pass: None,
-        confirmed: false,
-        record: None,
-        wt: None,
-        base: None,
-        batch: None,
-        by: None,
-        reason: None,
-        all: false,
-        held_since: None,
-        out: None,
-    };
-    while let Some(f) = a.next() {
-        let mut val = || a.next().ok_or(format!("{f} needs a value"));
-        match f.as_str() {
-            "--run" => o.run = Some(val()?.into()),
-            "--db" => o.db = Some(val()?.into()),
-            "--home" => o.home = Some(val()?.into()),
-            "--round-vm" => o.round_vm = Some(val()?.into()),
-            "--suites" => o.suites = Some(val()?),
-            "--members" => o.members = Some(val()?),
-            "--evidence" => o.evidence = Some(val()?),
-            "--reds" => o.reds = Some(val()?.into()),
-            "--after-pass" => o.after_pass = Some(val()?.into()),
-            "--confirmed" => o.confirmed = true,
-            "--record" => o.record = Some(val()?.into()),
-            "--wt" => o.wt = Some(val()?.into()),
-            "--base" => o.base = Some(val()?),
-            "--batch" => o.batch = Some(val()?),
-            "--repo" => o.repo = val()?,
-            "--by" => o.by = Some(val()?),
-            "--reason" => o.reason = Some(val()?),
-            "--all" => o.all = true,
-            "--out" => o.out = Some(val()?.into()),
-            "--held-since" => o.held_since = Some(val()?.parse().map_err(|_| "--held-since takes epoch seconds".to_string())?),
-            other => return Err(format!("unknown flag {other}")),
-        }
-    }
-    if o.run.is_none() {
-        let v = cfg("SPIRA_RUN")?;
-        if !v.trim().is_empty() {
-            o.run = Some(PathBuf::from(v));
-        }
-    }
-    if o.db.is_none() {
-        let v = cfg("SPIRA_DB")?;
-        if !v.trim().is_empty() {
-            o.db = Some(PathBuf::from(v));
-        }
-    }
-    Ok(o)
-}
 
 /// The registry's row for `name`, as the rounds loop and the scheduler's tasks both read it.
 fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
@@ -2440,13 +2348,6 @@ fn attribute(o: &Opts) -> Result<(), String> {
     failed
 }
 
-/// What a failed attribution prints: a round abandoned under it was never judged, so its
-/// failure is no red.
-fn failed_attribution(ended: bool, why: String) -> batcher_cut::attribute::Attribution {
-    use batcher_cut::attribute::Attribution;
-    if ended { Attribution::Abandoned } else { Attribution::Blocked(why) }
-}
-
 fn attribute_run(o: &Opts) -> Result<(), String> {
     use batcher_cut::attribute::parse_members;
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
@@ -2474,7 +2375,6 @@ fn attribute_in(
     start_sha: String,
     given: Vec<(String, String)>,
 ) -> Result<String, String> {
-    use batcher_cut::attribute::Attribution;
     // The pool's own rows carry each member's stack and blockers (the attribution shape); a
     // member the pool no longer holds is attributed as an unstacked one at the given tip.
     let pool = io::certified_pool(&env_, &repo).unwrap_or_default();
@@ -2494,149 +2394,119 @@ fn attribute_in(
                     certified_at: 0,
                     stack: BTreeMap::new(),
                     blocked_by: vec![],
-                provisional: false,
+                    provisional: false,
                 })
             }
         })
         .collect();
     let round = now().to_string();
     let round_branch = format!("spira/batcher-attr/{}-{round}", repo.name);
-    let history =
-        std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
-    let listed = io::set_branch(&repo, &round_branch, &io::head_of(&wt)?)
-        .and_then(|()| io::all_suites(&repo, &round_branch));
-    let suites = match listed {
-        Ok(all) => named_suites(order::longest_first(&all, &history).list, o.suites.as_deref()),
-        Err(why) => {
-            return Ok(Attribution::Fault(format!("the round tree's suites could not be listed: {why}")).line())
-        }
-    };
-    let red_phases = o.after_pass.as_deref().map(io::red_test_phases).unwrap_or_default();
-    let red_filters = o.after_pass.as_deref().map(vm::red_filters).unwrap_or_default();
-    if let Some(why) = blocks_attribution(&suites, &red_phases, &red_filters, o.after_pass.as_deref()) {
-        return Ok(Attribution::Blocked(why).line());
-    }
-    let changed: BTreeMap<String, Vec<String>> = members
-        .iter()
-        .map(|m| (m.id.clone(), io::changed_paths(&repo, &start_sha, &m.tip)))
-        .collect();
-    let deny = match o.after_pass.as_deref() {
-        Some(pass) => vm::DenySnapshot::from_pass(pass).ok_or_else(|| format!("{} holds no deny list of the round's pass; refusing to attribute with another", pass.display()))?,
-        None => resolve_deny(&env_, now()).map_err(|e| e.msg)?,
-    };
-    if let Some(pass) = o.after_pass.as_deref().filter(|p| !p.join(vm::ROUND_COMMITS_FILE).is_file()) {
-        eprintln!("batcher {}: {} holds no {}; the round's own commits are unknown to this attribution", repo.name, pass.display(), vm::ROUND_COMMITS_FILE);
-    }
-    let own_commits = o.after_pass.as_deref().map(vm::round_commits_of_pass).unwrap_or_default();
-    let mut runner = vm::VmRunner::new(&env_, &repo, &wt, &start_sha, &round, changed.clone())?
-        .with_round_commits(own_commits.clone())
-        .in_batch(o.batch.as_deref())
-        .attribution()
-        .after_pass(o.after_pass.clone())
-        .with_deny_list(&deny)?
-        .confirmed(o.confirmed);
-    let attributed_pass = o.batch.as_deref().zip(o.after_pass.as_deref()).and_then(|(b, _)| {
-        batch_pass(&env_, b).map_err(|e| eprintln!("batcher {}: the attributed pass is unknown, so a mender's return goes untried: {e}", repo.name)).ok()
-    });
-    if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
-        io::round_corpus_ended_red(&env_, &repo, b);
-        if pass.is_dir() {
-            io::keep_attributed_pass(&env_.run, b, pass, io::rounds_prune(&env_, &repo, b).as_ref());
-        }
-    }
-    let mut ops = LiveOps {
-        env: &env_,
-        repo: &repo,
-        wt: &wt,
-        start_sha: start_sha.clone(),
-        round_branch,
-        evidence: runner.results.display().to_string(),
-        pass: o.after_pass.clone(),
-        round,
-        changed,
-        own_commits,
-        tips: members
-            .iter()
-            .map(|m| (m.id.clone(), m.tip.clone()))
-            .collect(),
-        first_red: None,
-        key: batcher::core::round_key(&given),
-        batch: o.batch.as_deref(),
-        prior: batcher::mender::Prior::default(),
-        send_back: None,
-        mend_pass: Default::default(),
-        attributed_pass,
-        lifted: io::LiftedRows::default(),
-        returns_read: Default::default(),
-    };
+    let history = std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
+    let listed = io::set_branch(&repo, &round_branch, &io::head_of(&wt)?).and_then(|()| io::all_suites(&repo, &round_branch));
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
-    let end = drive::attribute_round(&mut runner, &mut ops, &suites, members.clone(), budget);
-    if end.is_err() && runner.host_disk() {
-        println!("batcher {}: install fault → {}", repo.name, spira_config::host_disk::CAUSE);
-        drive::RoundOps::incident(&mut ops, spira_config::host_disk::CAUSE, &["install".to_string()]);
-    } else if end.is_err() && runner.install_failed() {
-        let fault = attribute_install(&mut runner, &members, &suites);
-        install_fault_outcome(&repo, &mut ops, &members, &fault);
-    }
-    runner.close();
-    let end = match (&end, o.batch.as_deref()) {
-        (Ok(drive::RoundEnd::Land { .. }), Some(b)) => match io::keep_attribution_deny_list(&env_.run, b, &runner.results) {
-            Ok(()) => end,
-            Err(e) => Ok(drive::RoundEnd::Blocked(format!("the attribution's deny list could not be kept for the round: {e}"))),
-        },
-        _ => end,
-    };
-    if let (Some(b), false) = (
-        o.batch.as_deref(),
-        matches!(end, Ok(drive::RoundEnd::Land { .. })),
-    ) {
-        io::keep_attribution_results(&env_.run, b, &runner.results, o.after_pass.is_some(), io::rounds_prune(&env_, &repo, b).as_ref());
-    }
-    let mended = ops.prior != batcher::mender::Prior::default();
-    let outcome = match end {
-        Ok(drive::RoundEnd::Land {
-            members,
-            attribution_secs,
-        }) => Attribution::Land {
-            members: members.into_iter().map(|m| (m.id, m.tip)).collect(),
-            attribution_secs,
-            mended,
-            head: io::head_of(&wt).unwrap_or_default(),
-        },
-        Ok(drive::RoundEnd::Blocked(why)) => Attribution::Blocked(why),
-        Ok(drive::RoundEnd::BaseRed { base, why }) => Attribution::Blocked(format!("base red at {base}: {why}")),
-        Ok(drive::RoundEnd::Emptied(why)) => Attribution::Emptied(why),
-        Ok(drive::RoundEnd::Faulted(why) | drive::RoundEnd::Stalled(why)) => Attribution::Faulted(why),
-        Ok(drive::RoundEnd::RunnerDifference { tests, red_on, green_on }) => {
-            Attribution::RunnerDifference { tests, red_on, green_on }
-        }
-        Ok(drive::RoundEnd::Abandoned) => Attribution::Abandoned,
-        Ok(drive::RoundEnd::Unconverged { red, probes, suspects }) => Attribution::Unconverged(format!(
-            "{red} red reproduces but {probes} probes named no member; suspects: {}",
-            if suspects.is_empty() { "none".to_string() } else { suspects.join(",") }
-        )),
-        Err(e) if batcher_cut::attribute::is_round_vm_fault(&e) => {
-            Attribution::Fault(format!("the attribution did not finish: {e}"))
-        }
-        Err(e) => Attribution::Blocked(format!("the attribution did not finish: {e}")),
-    };
-    Ok(outcome.line())
+    let mut edge = LiveEdge { o, env_: &env_, repo: &repo, wt: &wt, start_sha, round_branch, round, given };
+    judge::attribute(o, &mut edge, members, listed, &history, budget)
 }
 
-/// Why attribution cannot start: no shell suite to attribute and no red test tier in the pass either.
-fn blocks_attribution(suites: &[String], red_phases: &[String], red_filters: &[String], pass: Option<&Path>) -> Option<String> {
-    if !suites.is_empty() || !red_phases.is_empty() || !red_filters.is_empty() {
-        return None;
-    }
-    let at = pass.map(|p| format!(" in {}", p.display())).unwrap_or_default();
-    Some(format!("the pass names no red the round can attribute: no shell suite, no red unit-tests or integration-tests and no red lint or fence{at}"))
+struct LiveEdge<'a> {
+    o: &'a Opts,
+    env_: &'a Env,
+    repo: &'a Repo,
+    wt: &'a Path,
+    start_sha: String,
+    round_branch: String,
+    round: String,
+    given: Vec<(String, String)>,
 }
 
-/// `all` narrowed to the CSV `named` when one is given; a name the tree does not hold is dropped.
-fn named_suites(all: Vec<String>, named: Option<&str>) -> Vec<String> {
-    let Some(named) = named else { return all };
-    let want: Vec<&str> = named.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    all.into_iter().filter(|s| want.contains(&s.as_str())).collect()
+impl<'a> judge::Edge for LiveEdge<'a> {
+    type Runner = vm::VmRunner<'a>;
+    type Ops = LiveOps<'a>;
+
+    fn changed(&self, members: &[Member]) -> BTreeMap<String, Vec<String>> {
+        members.iter().map(|m| (m.id.clone(), io::changed_paths(self.repo, &self.start_sha, &m.tip))).collect()
+    }
+
+    fn current_deny(&self) -> Result<vm::DenySnapshot, String> {
+        resolve_deny(self.env_, now()).map_err(|e| e.msg)
+    }
+
+    fn open(&mut self, _suites: &[String], changed: BTreeMap<String, Vec<String>>, deny: &vm::DenySnapshot, own_commits: vm::RoundCommits) -> Result<(Self::Runner, Self::Ops), String> {
+        let (o, env_, repo) = (self.o, self.env_, self.repo);
+        if let Some(pass) = o.after_pass.as_deref().filter(|p| !p.join(vm::ROUND_COMMITS_FILE).is_file()) {
+            eprintln!("batcher {}: {} holds no {}; the round's own commits are unknown to this attribution", repo.name, pass.display(), vm::ROUND_COMMITS_FILE);
+        }
+        let runner = vm::VmRunner::new(env_, repo, self.wt, &self.start_sha, &self.round, changed.clone())?
+            .with_round_commits(own_commits.clone())
+            .in_batch(o.batch.as_deref())
+            .attribution()
+            .after_pass(o.after_pass.clone())
+            .with_deny_list(deny)?
+            .confirmed(o.confirmed);
+        let attributed_pass = o.batch.as_deref().zip(o.after_pass.as_deref()).and_then(|(b, _)| {
+            batch_pass(env_, b).map_err(|e| eprintln!("batcher {}: the attributed pass is unknown, so a mender's return goes untried: {e}", repo.name)).ok()
+        });
+        if let (Some(b), Some(pass)) = (o.batch.as_deref(), o.after_pass.as_deref()) {
+            io::round_corpus_ended_red(env_, repo, b);
+            if pass.is_dir() {
+                io::keep_attributed_pass(&env_.run, b, pass, io::rounds_prune(env_, repo, b).as_ref());
+            }
+        }
+        let ops = LiveOps {
+            env: env_,
+            repo,
+            wt: self.wt,
+            start_sha: self.start_sha.clone(),
+            round_branch: self.round_branch.clone(),
+            evidence: runner.results.display().to_string(),
+            pass: o.after_pass.clone(),
+            round: self.round.clone(),
+            changed,
+            own_commits,
+            tips: self.given.iter().cloned().collect(),
+            first_red: None,
+            key: batcher::core::round_key(&self.given),
+            batch: o.batch.as_deref(),
+            prior: batcher::mender::Prior::default(),
+            send_back: None,
+            mend_pass: Default::default(),
+            attributed_pass,
+            lifted: io::LiftedRows::default(),
+            returns_read: Default::default(),
+        };
+        Ok((runner, ops))
+    }
+
+    fn settle(&mut self, runner: &mut Self::Runner, ops: &mut Self::Ops, end: Result<drive::RoundEnd, String>, members: &[Member], suites: &[String]) -> Result<drive::RoundEnd, String> {
+        let (o, env_, repo) = (self.o, self.env_, self.repo);
+        if end.is_err() && runner.host_disk() {
+            println!("batcher {}: install fault → {}", repo.name, spira_config::host_disk::CAUSE);
+            drive::RoundOps::incident(ops, spira_config::host_disk::CAUSE, &["install".to_string()]);
+        } else if end.is_err() && runner.install_failed() {
+            let fault = attribute_install(runner, members, suites);
+            install_fault_outcome(repo, ops, members, &fault);
+        }
+        runner.close();
+        let end = match (&end, o.batch.as_deref()) {
+            (Ok(drive::RoundEnd::Land { .. }), Some(b)) => match io::keep_attribution_deny_list(&env_.run, b, &runner.results) {
+                Ok(()) => end,
+                Err(e) => Ok(drive::RoundEnd::Blocked(format!("the attribution's deny list could not be kept for the round: {e}"))),
+            },
+            _ => end,
+        };
+        if let (Some(b), false) = (o.batch.as_deref(), matches!(end, Ok(drive::RoundEnd::Land { .. }))) {
+            io::keep_attribution_results(&env_.run, b, &runner.results, o.after_pass.is_some(), io::rounds_prune(env_, repo, b).as_ref());
+        }
+        end
+    }
+
+    fn mended(&self, ops: &Self::Ops) -> bool {
+        ops.prior != batcher::mender::Prior::default()
+    }
+
+    fn head(&self) -> String {
+        io::head_of(self.wt).unwrap_or_default()
+    }
 }
 
 fn changed_paths(repo: &Repo, tip: &str) -> Result<Vec<String>, String> {
@@ -2873,7 +2743,7 @@ fn dispatch() -> ExitCode {
         println!("{}", batcher_cut::replay::USAGE);
         return ExitCode::SUCCESS;
     }
-    let o = match parse() {
+    let o = match parse(&env::args().collect::<Vec<_>>()).and_then(Opts::with_ambient) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("batcher: {e}");

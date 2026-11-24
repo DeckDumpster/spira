@@ -1,0 +1,1 @@
+{"stage":"integration-tests","verdict":"red","ran_before_suites":false,"cause":"exit status 101","secs":164,"last_binary":"scratch_gate-df1540ac52aa4acc","failed":["with_a_provisioned_writer_every_note_and_label_verb_writes_in_sql_and_starts_no_process","without_a_writer_credential_the_same_verbs_still_write_through_bd"]}

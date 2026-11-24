@@ -12,10 +12,13 @@ pub mod claim;
 #[allow(dead_code)]
 pub mod endpass;
 pub mod io;
+pub mod judge;
+pub mod opts;
 pub mod order;
 pub mod pace;
 pub mod redtip;
 pub mod replay;
+pub mod replay_run;
 pub mod screen;
 pub mod vm;
 

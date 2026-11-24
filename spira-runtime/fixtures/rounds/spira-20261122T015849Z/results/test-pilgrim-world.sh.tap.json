@@ -1,0 +1,1 @@
+{"plan":null,"passed":0,"failed":0,"skipped":0,"todo":0,"bail_out":"pilgrim world up: sim: seeding the pilgrim world: no content writer is provisioned: set spira.beads_sql_writer_password_file (refusing `bd create`, which this process no longer forks) [sim=-rwxrwxr-x root cache=drwxr-xr-x spirauser drwx------ spirauser ]","not_ok":[],"cases":[]}

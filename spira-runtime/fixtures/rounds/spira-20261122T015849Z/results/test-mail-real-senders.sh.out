@@ -1,0 +1,59 @@
+TAP version 14
+
+watchd: notify's escalate/ask (question)
+ok 1 - watchd notify delivers exactly one message
+#ms=17119
+
+skew: escalate (question)
+ok 2 - skew escalate delivers exactly one message
+#ms=915
+
+land escalation: the serve task's ask (question)
+ok 3 - land escalation delivers exactly one message
+#ms=172
+ok 4 - land escalation names the stale age
+#ms=40
+ok 5 - land escalation carries a Default
+#ms=0
+ok 6 - land escalation quotes the landing log
+#ms=0
+
+incident.sh: FENRIR escalation (question)
+# filing 1: exit 0
+#   out: {"id":"sp-stub1"}
+#   err: 2026-11-22T02:11:04Z incident: spira: repo:real-sender-fixture is not in the repo map
+#   err: 2026-11-22T02:11:04Z incident: warning: SPIRA_INCIDENT_REPO=real-sender-fixture has no entry in the repository map; using fixture
+#   err: 2026-11-22T02:11:04Z incident: filed sp-stub1 for incident:real-sender-fenrir-test
+#   err: 2026-11-22T02:11:04Z incident: delivers: sp-stub1: delivers:action written (default — close reason is the evidence)
+# filing 2: exit 0
+#   out: {"id":"sp-stub1"}
+#   err: 2026-11-22T02:11:05Z incident: incident:real-sender-fenrir-test recurred (1) — sp-stub1
+#   err: 2026-11-22T02:11:05Z incident: incident:real-sender-fenrir-test: recurrence count unknown — events query failed; Fenrir is blind this cycle
+# filing 3: exit 0
+#   out: {"id":"sp-stub1"}
+#   err: incident: the operator question was not sent: ask not sent — bead create failed (bd exit 2): /tmp/tl-run.Glq4wN/tmp.X5ldUfS4oH/fenrir-lc/spira-lc: writing stdin: Broken pipe (os error 32); read back from the store: nothing was recorded
+#   err: 2026-11-22T02:11:08Z incident: incident:real-sender-fenrir-test recurred (2) — sp-stub1
+#   err: 2026-11-22T02:11:08Z incident: incident:real-sender-fenrir-test is a FENRIR at 2 recurrences — escalated once
+# incident log:
+# facts.tsv:
+#   sp-stub1	recurred	incident	unrecorded	2026-11-22T02:11:05Z
+#   sp-stub1	recurred	incident	unrecorded	2026-11-22T02:11:07Z
+ok 7 - FENRIR filing 1 creates the bead
+#ms=4850
+ok 8 - FENRIR filing 2 recurs on the same bead
+#ms=8
+ok 9 - FENRIR filing 3 recurs on the same bead
+#ms=11
+ok 10 - FENRIR filing 3 crosses FENRIR_AT and escalates
+#ms=12
+ok 11 - FENRIR recurrences recorded as facts
+#ms=13
+not ok 12 - incident.sh FENRIR escalation delivers exactly one message
+# wanted [4] got [3]
+# at /workspace/spira/test-mail-real-senders.sh:217
+#ms=0
+Bail out! case 12 failed: incident.sh FENRIR escalation delivers exactly one message
+1..12
+
+11 passed, 1 failed, 0 skipped
+ASSERTIONS 12

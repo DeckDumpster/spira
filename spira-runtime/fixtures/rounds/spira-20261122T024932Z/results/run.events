@@ -1,0 +1,63 @@
+1795316422 suite test-sim-rc-forge-open-crash.sh disabled
+1795316422 suite test-launchers-as-launched.sh disabled
+1795316422 suite test-conf-watch.sh disabled
+1795316422 phase resolve
+1795316423 phase build
+1795316426 phase up
+1795316436 phase install
+1795316436 phase requirements
+1795316436 phase testdb
+1795316452 suite test-concierge-turn-failed.sh ok
+1795316452 suite test-dwarf-dirty-commit.sh ok
+1795316453 suite test-gate-locks.sh ok
+1795316453 suite test-lc-backup-registry.sh ok
+1795316455 suite test-pilgrim-world.sh red
+1795316456 suite test-build-tarball-model-bin.sh ok
+1795316456 suite test-freshclone.sh ok
+1795316457 suite test-tarball-bins.sh ok
+1795316457 suite test-concierge-waiter-stop.sh ok
+1795316458 suite test-lc-backup-drill-deferral.sh ok
+1795316459 suite test-exclude.sh ok
+1795316459 suite test-grafana-dashboards.sh ok
+1795316461 suite test-dwarf-direct.sh ok
+1795316461 suite test-no-bd-callers.sh ok
+1795316461 suite test-mail-dwarf-hook.sh ok
+1795316461 suite test-launchers-bare-env.sh ok
+1795316462 suite test-round-image-preflight-root.sh ok
+1795316462 suite test-install-conf-seed.sh ok
+1795316463 suite test-capacity.sh ok
+1795316463 suite test-install-rehearsal-stray.sh skip
+1795316463 suite test-lint-runes.sh ok
+1795316463 suite test-mail-health.sh ok
+1795316463 suite test-cockpit-layout-mail.sh ok
+1795316463 suite test-sim-rc-cutover-actor.sh ok
+1795316464 suite test-cadence-tool.sh skip
+1795316464 suite test-ready-work.sh ok
+1795316464 suite test-repo-contract-scaffold.sh skip
+1795316464 suite test-ops-closing.sh ok
+1795316464 suite test-sim-scenario-lib.sh ok
+1795316465 suite test-work-checks-flake-shell.sh skip
+1795316465 suite test-cockpit-rebuild.sh ok
+1795316466 suite test-gate-sweep.sh ok
+1795316470 suite test-sim-bead-contract.sh red
+1795316475 suite test-branch-guard.sh ok
+1795316477 suite test-ref-guard.sh ok
+1795316477 suite test-hold.sh ok
+1795316479 suite test-testlib.sh ok
+1795316484 suite test-gh-run-gate.sh ok
+1795316484 suite test-mail-real-senders.sh ok
+1795316493 suite test-law-synth.sh ok
+1795316500 suite test-pr-notify.sh ok
+1795316505 suite test-yield.sh ok
+1795316517 suite test-sim-rc-cutover-mode.sh ok
+1795316523 suite test-spike.sh ok
+1795316525 suite test-deploy.sh ok
+1795316528 suite test-concierge.sh ok
+1795316536 suite test-guards.sh ok
+1795316548 suite test-built-elsewhere-reads-run-tree.sh ok
+1795316607 suite test-store-persist-history.sh ok
+1795316873 suite test-pilgrim-followup-store.sh ok
+1795316874 phase suites
+1795316874 phase post
+1795316874 phase teardown
+1795316875 verdict RED -

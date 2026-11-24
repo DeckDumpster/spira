@@ -1,0 +1,193 @@
+{
+  "batch": "spira-20261121T062659Z",
+  "base": "84f778b5f35a17eb8151775deda78efc3e7b49ac",
+  "cut_head": "3bbc86e6277bdf70c72e344f7e94e5aa756aa760",
+  "head": "3bbc86e6277bdf70c72e344f7e94e5aa756aa760",
+  "members": [
+    {
+      "id": "sp-7wxk1e",
+      "tip": "1c314675391254132d390e0ecf7cf65db487818a",
+      "changed": [
+        "cr/src/cli.rs",
+        "cr/src/findings.rs",
+        "cr/src/ledger.rs",
+        "cr/src/main.rs",
+        "cr/src/pick.rs",
+        "cr/src/ports.rs",
+        "cr/src/review.rs",
+        "cr/src/rustsrc.rs",
+        "cr/src/tests.rs",
+        "cr/src/tests/findings.rs",
+        "cr/src/tests/review.rs",
+        "cr/src/tests/thread.rs",
+        "cr/src/thread.rs",
+        "cr/src/units.rs",
+        "cr/tests/git_tree.rs",
+        "cr/tests/review_flow.rs",
+        "spira/conf.d/SPIRA_CR_OVERSIZE_PAGES",
+        "spira/config-delta.d/sp-7wxk1e.toml"
+      ]
+    },
+    {
+      "id": "sp-e0kl94.1.1",
+      "tip": "cb1f4de3a4cdf4432a2b3075bc596812591faf8e",
+      "changed": [
+        "spira-runtime/src/tasks/d/acceptance.rs",
+        "spira-runtime/tests/it/main.rs",
+        "spira-runtime/tests/it/pinned_settings_env.rs"
+      ]
+    },
+    {
+      "id": "sp-g2w266",
+      "tip": "e960f69567e46913830be05662f73d7db31183e6",
+      "changed": [
+        "batcher-cut/src/io.rs",
+        "batcher-cut/src/vm.rs",
+        "queue/src/ops/round.rs",
+        "queue/src/tests/round.rs"
+      ]
+    },
+    {
+      "id": "sp-m7braw",
+      "tip": "243722ad6bd8c3979d019447472cfdfa8b3b2c80",
+      "changed": [
+        "cr/src/cli.rs",
+        "cr/src/findings.rs",
+        "cr/src/tests/findings.rs"
+      ]
+    },
+    {
+      "id": "sp-nqfq0u",
+      "tip": "8828425e8d16268ad9026bfa7eeb7ab7dce36889",
+      "changed": [
+        "batcher-cut/src/vm.rs",
+        "batcher/src/drive.rs",
+        "round-vm/src/spool.rs"
+      ]
+    },
+    {
+      "id": "sp-oxpnqd",
+      "tip": "1d0af25e1d8d691daf5658f9b54f4db575d65c3a",
+      "changed": [
+        "docs/runbooks/store-relayout.md",
+        "spira-lc/src/relayout.rs",
+        "state-store-sqlite/src/compact.rs",
+        "state-store-sqlite/src/lib.rs",
+        "state-store-sqlite/src/relayout.rs",
+        "state-store-sqlite/tests/conformance_sqlite.rs"
+      ]
+    },
+    {
+      "id": "sp-r56i1o",
+      "tip": "0e70a5b51bb2fa8d3b4c44116898f08ffbcb942e",
+      "changed": [
+        "runtime/src/engine.rs",
+        "runtime/src/event.rs",
+        "runtime/src/journal.rs",
+        "runtime/src/socket.rs",
+        "runtime/tests/it/keyed_state_clear.rs",
+        "runtime/tests/it/main.rs",
+        "spira-lc/src/admin_drop.rs",
+        "spira-lc/src/control/journal.rs",
+        "spira-lc/src/journal.rs",
+        "spira-runtime/tests/it/state_rows.rs"
+      ]
+    },
+    {
+      "id": "sp-rntiti",
+      "tip": "da0b0cd046ed09c8b1d5d53525996f53d843abf8",
+      "changed": [
+        "spira-lc/Cargo.toml",
+        "spira-lc/src/bd.rs",
+        "spira-lc/src/composed.rs",
+        "spira-lc/tests/content_writes.rs"
+      ]
+    },
+    {
+      "id": "sp-v3uiam",
+      "tip": "172fafb6cb242d3776be815631ca06716f90847a",
+      "changed": [
+        "spira-lc/src/control/served.rs",
+        "spira/conf.d/SPIRA_LC_WAL_LINE_BYTES",
+        "spira/conf.key-history",
+        "spira/config-delta.d/sp-v3uiam.toml",
+        "spira/testlib/complete.toml",
+        "state-store-sqlite/src/bench.rs",
+        "state-store-sqlite/src/lib.rs",
+        "state-store-sqlite/tests/conformance_sqlite.rs",
+        "state-store/src/phases.rs"
+      ]
+    },
+    {
+      "id": "sp-volfgz",
+      "tip": "1ae64741d39c74232f7dcf4fe89e585cbaaaab43",
+      "changed": [
+        "cr/src/cli.rs",
+        "cr/src/review.rs",
+        "cr/src/rustsrc.rs",
+        "cr/src/tests/review.rs",
+        "cr/tests/review_flow.rs"
+      ]
+    }
+  ],
+  "red_suites": [
+    "unit-tests"
+  ],
+  "place": null,
+  "round_commit_paths": [],
+  "tree_suites": [
+    "test-branch-guard.sh",
+    "test-build-tarball-model-bin.sh",
+    "test-built-elsewhere-reads-run-tree.sh",
+    "test-cadence-tool.sh",
+    "test-capacity.sh",
+    "test-cockpit-layout-mail.sh",
+    "test-cockpit-rebuild.sh",
+    "test-concierge-turn-failed.sh",
+    "test-concierge-waiter-stop.sh",
+    "test-concierge.sh",
+    "test-conf-watch.sh",
+    "test-deploy.sh",
+    "test-dwarf-direct.sh",
+    "test-dwarf-dirty-commit.sh",
+    "test-exclude.sh",
+    "test-freshclone.sh",
+    "test-gate-locks.sh",
+    "test-gate-sweep.sh",
+    "test-gh-run-gate.sh",
+    "test-grafana-dashboards.sh",
+    "test-guards.sh",
+    "test-hold.sh",
+    "test-install-conf-seed.sh",
+    "test-install-rehearsal-stray.sh",
+    "test-launchers-as-launched.sh",
+    "test-launchers-bare-env.sh",
+    "test-law-synth.sh",
+    "test-lc-backup-drill-deferral.sh",
+    "test-lc-backup-registry.sh",
+    "test-lint-runes.sh",
+    "test-mail-dwarf-hook.sh",
+    "test-mail-health.sh",
+    "test-mail-real-senders.sh",
+    "test-no-bd-callers.sh",
+    "test-ops-closing.sh",
+    "test-pilgrim-followup-store.sh",
+    "test-pilgrim-world.sh",
+    "test-pr-notify.sh",
+    "test-ready-work.sh",
+    "test-ref-guard.sh",
+    "test-repo-contract-scaffold.sh",
+    "test-round-image-preflight-root.sh",
+    "test-sim-bead-contract.sh",
+    "test-sim-rc-cutover-actor.sh",
+    "test-sim-rc-cutover-mode.sh",
+    "test-sim-rc-forge-open-crash.sh",
+    "test-sim-scenario-lib.sh",
+    "test-spike.sh",
+    "test-store-persist-history.sh",
+    "test-tarball-bins.sh",
+    "test-testlib.sh",
+    "test-work-checks-flake-shell.sh",
+    "test-yield.sh"
+  ]
+}
