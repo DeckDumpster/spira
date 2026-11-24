@@ -1763,6 +1763,7 @@ fn a_clean_or_absent_host_cargo_config_is_ok() {
     assert_eq!(levels(&check_host_cargo_config(&f)), vec![Level::Ok]);
 }
 
+#[test_id(t9e7anw)]
 #[test]
 fn doctor_run_reports_host_cargo_drift_found_under_a_run_ancestor() {
     let f = Fake::default();
