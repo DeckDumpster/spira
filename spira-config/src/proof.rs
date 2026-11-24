@@ -139,7 +139,7 @@ pub fn unproven(run: &Path, bead: &str, tip: &str) -> Vec<String> {
 
 /// Checks that are not suites of the landing ref's corpus: the round's own steps and fences.
 fn is_step(check: &str) -> bool {
-    check.starts_with("fence-") || matches!(check, "spira-lint" | "workspace-build" | "unit-tests" | "config-delta" | "testenv")
+    crate::round_step::is_step(check) || check == "testenv"
 }
 
 fn git_out(root: &str, args: &[&str]) -> Result<String, String> {
@@ -312,7 +312,7 @@ mod tests {
         let d = run();
         let root = repo_without(d.path());
         let r = d.path().join("run");
-        record_failing(&r, "sp-a", &["test-gone.sh".into(), "test-kept.sh".into(), "unit-tests".into(), "fence-x".into()]).unwrap();
+        record_failing(&r, "sp-a", &["test-gone.sh".into(), "test-kept.sh".into(), "unit-tests".into(), "fence-x".into(), "bare-suites".into(), "release-verify".into()]).unwrap();
         fs::create_dir_all(r.join("ejected")).unwrap();
         fs::write(r.join("ejected/sp-a"), "test-gone.sh,test-kept.sh").unwrap();
         let facts = std::cell::RefCell::new(Vec::new());
@@ -322,7 +322,7 @@ mod tests {
         };
         let gone = drop_deleted_suites(&r, "sp-a", &root, "main", &record).unwrap();
         assert_eq!(gone, ["test-gone.sh"]);
-        assert_eq!(failing(&r, "sp-a"), ["test-kept.sh", "unit-tests", "fence-x"]);
+        assert_eq!(failing(&r, "sp-a"), ["test-kept.sh", "unit-tests", "fence-x", "bare-suites", "release-verify"]);
         assert_eq!(fs::read_to_string(r.join("ejected/sp-a")).unwrap(), "test-kept.sh");
         let commit = git_out(&root, &["rev-parse", "main"]).unwrap();
         assert_eq!(*facts.borrow(), [format!("suite test-gone.sh deleted on main at {}; requirement dropped", commit.trim())]);

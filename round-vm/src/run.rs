@@ -3643,6 +3643,32 @@ fn after_batch(
 #[cfg(test)]
 mod tests {
 
+    #[test_id(t5xocpq)]
+    #[test]
+    fn every_phase_the_script_marks_is_a_round_step_and_every_listed_phase_is_marked() {
+        let marked: Vec<&str> = REMOTE_SCRIPT
+            .lines()
+            .flat_map(|l| {
+                let words: Vec<&str> = l.split_whitespace().collect();
+                let at_start = words.first() == Some(&"phase");
+                words
+                    .windows(2)
+                    .enumerate()
+                    .filter(move |(i, w)| w[0] == "phase_failed" || (*i == 0 && at_start))
+                    .map(|(_, w)| w[1])
+                    .collect::<Vec<_>>()
+            })
+            .filter(|n| n.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+            .collect();
+        assert!(marked.contains(&"image") && marked.contains(&"suites"), "{marked:?}");
+        for m in &marked {
+            assert!(spira_config::round_step::is_step(m), "{m} is marked by the script but is not a round step");
+        }
+        for p in spira_config::round_step::PHASES.iter().filter(|p| **p != "start") {
+            assert!(marked.contains(p), "{p} is listed but the script never marks it");
+        }
+    }
+
     #[test_id(td3syxh)]
     #[test]
     fn a_progress_refusal_carries_the_reason_spira_lc_wrote_to_stdout() {

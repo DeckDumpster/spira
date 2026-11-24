@@ -353,7 +353,7 @@ fn cmd_submit(bead_id: &str, args: &[String]) -> (i32, String) {
         }
     }
     if let (0, Some(run)) = (done.0, &run) {
-        if !spira_config::proof::failing(run, bead_id).iter().any(|c| ROUND_PROVEN.contains(&c.as_str())) {
+        if !spira_config::proof::failing(run, bead_id).iter().any(|c| left_to_round(c)) {
             spira_config::proof::clear_failing(run, bead_id);
         }
     }
@@ -363,7 +363,9 @@ fn cmd_submit(bead_id: &str, args: &[String]) -> (i32, String) {
 /// Full-workspace checks the landing round runs on every member anyway. An in-band run outlasts
 /// any RPC deadline and builds inside the broker's process tree, so submit leaves these to the
 /// round: a red there ejects the bead again with the failing line.
-const ROUND_PROVEN: &[&str] = &["unit-tests"];
+fn left_to_round(check: &str) -> bool {
+    check == "unit-tests" || spira_config::round_step::proven_by_round(check)
+}
 
 /// The runner that owns a named check: the round's lint and build steps are the repository's
 /// compile-and-lint tier, a `fence-<name>` is one fence of the tip's `gate.steps`, anything else
@@ -406,7 +408,7 @@ fn proof_refusal(run: &std::path::Path, bead_id: &str, tip: &str, owed: &[String
                 all.push(o.clone());
             }
         }
-        all.retain(|c| !ROUND_PROVEN.contains(&c.as_str()) && !proof::proven(run, bead_id, tip, c));
+        all.retain(|c| !left_to_round(c) && !proof::proven(run, bead_id, tip, c));
         all
     };
     let missing = unproven();
@@ -3229,6 +3231,10 @@ mod tests {
         spira_config::proof::record_failing(&run, "sp-a", &["unit-tests".into()]).unwrap();
         let never = |_: &str, _: u64| -> (i32, String) { panic!("unit-tests is the round's to run") };
         assert!(proof_refusal(&run, "sp-a", TIP, &["unit-tests".to_string()], 60, &never).is_none());
+        for step in ["bare-suites", "image", "config-delta", "release-verify"] {
+            spira_config::proof::record_failing(&run, "sp-a", &[step.into()]).unwrap();
+            assert!(proof_refusal(&run, "sp-a", TIP, &[step.to_string()], 60, &never).is_none(), "{step}");
+        }
         let red = |_: &str, _: u64| (1, "test-x: 1 failed\n".to_string());
         spira_config::proof::record_failing(&run, "sp-a", &["unit-tests".into(), "test-x.sh".into()]).unwrap();
         let (_, msg) = proof_refusal(&run, "sp-a", TIP, &[], 60, &red).expect("a cheap check still proves in band");
