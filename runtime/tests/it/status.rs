@@ -47,7 +47,7 @@ impl Handler for Napper {
 struct Shrugger;
 impl Handler for Shrugger {
     fn interests(&self) -> &[EventKindTag] {
-        &["build", EFFECT_FAILED, EFFECT_SUCCEEDED]
+        &["build", EFFECT_FAILED, EFFECT_TIMED_OUT, EFFECT_SUCCEEDED]
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == "build" {
@@ -173,4 +173,10 @@ fn a_failed_effect_the_handler_answers_with_nothing_stays_failed() {
 #[test]
 fn a_succeeded_effect_the_handler_answers_with_nothing_ends_quiet() {
     assert_eq!(last_outcome_after(Outcome::Succeeded("ok".into())), Some(LastOutcome::Quiet));
+}
+
+#[test_id(tz09fb3)]
+#[test]
+fn a_timed_out_effect_the_handler_answers_with_nothing_stays_timed_out() {
+    assert_eq!(last_outcome_after(Outcome::TimedOut), Some(LastOutcome::TimedOut));
 }

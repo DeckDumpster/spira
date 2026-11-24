@@ -487,3 +487,11 @@ mod landing_task {
         assert!(!files(&no_row), "an unreadable row is not a stall");
     }
 }
+
+#[test_id(t96itjb)]
+#[test]
+fn an_observe_with_no_pinned_scheduler_socket_cannot_see_the_landing_task() {
+    let dir = testkit::TempDir::new("czar-no-socket");
+    let (_, snap) = pass(dir.path(), &Carry::default());
+    assert!(matches!(snap.landing_task, Read::Unobservable(_)), "{snap:?}");
+}
