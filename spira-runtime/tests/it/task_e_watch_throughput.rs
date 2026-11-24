@@ -935,3 +935,29 @@ fn an_unreadable_store_outside_any_activation_window_pages_blind_past_the_stall_
     assert!(v.acts.iter().any(|a| a.input.contains("P0 BLIND")));
     assert!(v.carry.blind);
 }
+
+fn unreadable_tick(carry: &Carry, at_s: u64) -> spira_runtime::tasks::e::watch_throughput::Verdict {
+    decide(carry, &unreadable_during(None), at_s * 1000, &config())
+}
+
+#[test_id(t0q57mz)]
+#[test]
+fn blindness_pages_strictly_past_the_stall_bound_and_names_the_seconds() {
+    let first = unreadable_tick(&Carry::default(), 1_000);
+    assert!(first.acts.is_empty());
+    let at_bound = unreadable_tick(&first.carry, 1_600);
+    assert!(at_bound.acts.is_empty() && !at_bound.carry.blind, "{:?}", at_bound.acts);
+    let past = unreadable_tick(&at_bound.carry, 1_660);
+    assert!(past.acts.iter().any(|a| a.input.contains("P0 BLIND") && a.input.contains("for 660s")), "{:?}", past.acts);
+}
+
+#[test_id(toex7q2)]
+#[test]
+fn a_halt_restarts_the_blindness_clock_and_maintenance_does_not() {
+    let first = unreadable_tick(&Carry::default(), 1_000);
+    let halted = decide(&first.carry, &Snapshot { halt: Some(spira_runtime::watchers::halt::Halt::default()), ..Default::default() }, 1_500_000, &config());
+    assert_eq!(halted.carry.blind_since_ms, None);
+    let waiting = Snapshot { maintenance: Some(maintained(std::process::id())), ..unreadable_during(None) };
+    let kept = decide(&first.carry, &waiting, 1_300_000, &config());
+    assert_eq!(kept.carry.blind_since_ms, first.carry.blind_since_ms);
+}
