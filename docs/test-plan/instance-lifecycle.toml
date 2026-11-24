@@ -119,7 +119,7 @@ statement = "`deploy.sh` drains first (a refusal blocks the deploy, `--force` sl
 [[use_case]]
 id = "UC-instance-lifecycle-14"
 tier = "T2"
-statement = "a post-activation health failure rolls back to the prior release and restores spira.conf; on a first deploy it removes `current` and re-renders on the checkout, and never re-enables ctrl-suspended units"
+statement = "a post-activation health failure rolls back to the prior release and restores the config; on a first deploy it removes `current` and re-renders on the checkout, and never re-enables ctrl-suspended units"
 
 [[use_case]]
 id = "UC-instance-lifecycle-15"
@@ -224,7 +224,7 @@ bead = "sp-9wa2vm"
 [[use_case]]
 id = "UC-instance-lifecycle-29"
 tier = "T1"
-statement = "a non-prod install seeds `SPIRA_INSTANCE=<inst>` into `dirname(SPIRA_PROD)/spira.conf` once, preserving existing lines; a prod install does not write the file"
+statement = "a non-prod install seeds `spira.instance = <inst>` into the typed config at `dirname(SPIRA_PROD)` once, preserving its other keys and converting a legacy `spira.conf` without appending to it; a prod install writes nothing"
 
 [[use_case]]
 id = "UC-instance-lifecycle-30"
@@ -293,8 +293,8 @@ bead = "sp-sr11sm"
 
 [[use_case]]
 id = "UC-instance-lifecycle-40"
-tier = "T4"
-statement = "a fresh-box install→ready→uninstall round trip on real systemd leaves the unit directory byte-identical to before"
+tier = "T2"
+statement = "`uninstall.sh`'s stray sweep reports a spira unit it does not own, by name, and leaves it in place; the install→ready→uninstall round trip on real systemd is acceptance's"
 
 [[use_case]]
 id = "UC-instance-lifecycle-41"

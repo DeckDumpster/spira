@@ -36,7 +36,6 @@ SPIRA_AWS_MFA_SERIAL spira/aws-mfa.sh
 SPIRA_AWS_REGION spira/aws-mfa.sh
 SPIRA_AWS_ROLE_ARN spira/aws-mfa.sh
 SPIRA_AWS_SESSION_PROFILE spira/aws-mfa.sh
-SPIRA_BARE_LOCAL_CAP spira/bare-local.sh
 SPIRA_BATCHER_BIN spira-config/src/convert.rs
 SPIRA_BATCHER_LAND_LOCK_ATTEMPTS batcher-cut/src/lib.rs
 SPIRA_BATCHER_LAND_LOCK_ATTEMPTS spira-runtime/src/tasks/a/batcher_local.rs

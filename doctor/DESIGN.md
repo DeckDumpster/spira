@@ -90,7 +90,7 @@ comment, carried forward verbatim from sp-r15cf). Outside that flag, both checks
 | `install.sh` phase 0 | `SPIRA_DOCTOR_INSTALLING=1 doctor.sh 2>&1` → `doctor` | exit code; prints the combined output indented |
 | `deploy.sh` health check | `_activated_release_cmd env SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1` (release-pinned; see §2) | exit code; greps `^\s*FAIL` lines for its own report |
 
-Both are exercised end to end by `test-deploy.sh` and `test-deploy-preflight-new-unit.sh`
+Both are exercised end to end by `spira-config/tests/deploy_script.rs` and `test-deploy-preflight-new-unit.sh`
 (kept, repointed — §6), which is the parity evidence for these two paths specifically, as
 the bead's brief requires.
 
@@ -140,8 +140,8 @@ folded into the validate verdict) and only when non-empty.
 in its `# covers:` line (audited against every `docs/test-plan/*.toml`), so retiring them
 orphans no use case under `plan-matrix`'s rule.
 
-`test-deploy.sh`, `test-deploy-preflight-new-unit.sh`, `test-dwarf-runes-overlay.sh`,
-the dwarf-launch-grammar suite,
+`spira-config/tests/deploy_script.rs`, `test-deploy-preflight-new-unit.sh`, `test-dwarf-runes-overlay.sh`,
+the dwarf-launch-grammar suite, `test-freshclone.sh`,
 `test-unit-name.sh`, `test-watchtower-failed-units.sh`,
 `test-bd-lock-retry.sh`, `bd-pin.sh`, `test-overrides.sh` are **kept**, repointed: each
 exercises `doctor` as a fixture dependency for a different subject (deploy's own flow, the
@@ -174,5 +174,5 @@ covered here, and not fixable from this side without a live systemd user manager
 Dolt server, or a real `gh`/`bd` binary: the literal subprocess argv construction in
 `real.rs` (`systemctl --user list-units ...`, `bd -C <db> list --json`, the TCP connect).
 That remains the round's integration coverage through the kept, repointed suites (§6),
-especially `test-deploy.sh` and `test-deploy-preflight-new-unit.sh` for the two mandatory
+especially `spira-config/tests/deploy_script.rs` and `test-deploy-preflight-new-unit.sh` for the two mandatory
 caller paths.

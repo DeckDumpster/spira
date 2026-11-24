@@ -76,8 +76,28 @@ name = "validate"
 path = "tests/validate.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "cadence_tool"
+path = "tests/cadence_tool.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "deploy_script"
+path = "tests/deploy_script.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "seed_instance"
+path = "tests/seed_instance.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "uninstall_stray"
+path = "tests/uninstall_stray.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["lifecycle/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
+integration = ["install/integration", "lifecycle/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }
@@ -115,4 +135,5 @@ path = "src/tsd_prune_main.rs"
 test = false
 
 [dev-dependencies]
+install = { path = "../install" }
 spira-test-id = { path = "../spira-test-id" }

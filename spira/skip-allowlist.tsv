@@ -16,5 +16,3 @@
 # This file only shrinks: remove a line when the suite stops needing it, never add one to
 # paper over a red.
 test-attribute.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
-test-cadence-tool.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
-test-install-rehearsal-stray.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides

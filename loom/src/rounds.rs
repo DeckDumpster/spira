@@ -33,7 +33,6 @@ pub struct PassLog {
     pub skipped: Option<i64>,
     pub unit: String,
     pub unit_failed: Vec<String>,
-    pub bare: String,
     pub instance_type: String,
     pub setup_s: Option<i64>,
     pub suites_s: Option<i64>,
@@ -102,8 +101,6 @@ pub fn parse_pass_log(text: &str) -> PassLog {
         } else if let Some(rest) = line.strip_prefix("round-vm: UNIT-TESTS: ") {
             p.unit = rest.trim().to_string();
             in_unit_fail = rest.starts_with("FAIL");
-        } else if let Some(rest) = line.strip_prefix("round-vm: BARE-SUITES: ") {
-            p.bare = rest.trim().to_string();
         } else if let Some(rest) = line.strip_prefix("round-vm: EC2 instance type ") {
             p.instance_type = rest.split_whitespace().next().unwrap_or("").to_string();
         } else if let Some(rest) = line.strip_prefix("round-vm: setup ") {
@@ -326,10 +323,10 @@ fn suite_table(log: &PassLog) -> String {
 }
 
 fn unit_summary(log: &PassLog) -> String {
-    if log.unit.is_empty() && log.bare.is_empty() {
+    if log.unit.is_empty() {
         return String::new();
     }
-    let mut s = format!("<p>unit tests: {} · bare-host suites: {}</p>", esc(&log.unit), esc(&log.bare));
+    let mut s = format!("<p>unit tests: {}</p>", esc(&log.unit));
     if !log.unit_failed.is_empty() {
         s.push_str("<ul class=red>");
         for f in &log.unit_failed {
@@ -457,7 +454,7 @@ pub fn detail_json(d: &Detail) -> Value {
     let log_json = |l: &PassLog| {
         json!({
             "verdict": l.verdict, "ran": l.ran, "red": l.red, "skipped": l.skipped, "unit": l.unit, "unit_failed": l.unit_failed,
-            "bare": l.bare, "instance_type": l.instance_type, "setup_s": l.setup_s, "suites_s": l.suites_s, "disk_peak_b": l.disk_peak_b,
+            "instance_type": l.instance_type, "setup_s": l.setup_s, "suites_s": l.suites_s, "disk_peak_b": l.disk_peak_b,
             "suites": l.suites.iter().map(|s| json!({"suite": s.name, "verdict": s.verdict, "duration_s": s.duration_s, "first_fail": s.first_fail})).collect::<Vec<_>>(),
         })
     };
@@ -497,7 +494,6 @@ mod tests {
 |-------|----------|---------|-----------------|\n\
 | test-acceptance-ci-scratch-queue.sh | 0s (rc=1) | red | not ok 10 - publish-settle has nothing | to publish |\n\
 VERDICT RED ran=470 red=1 skipped=9\n\
-round-vm: BARE-SUITES: PASS\n\
 round-vm: UNIT-TESTS: PASS (211 test binaries)\n\
 round-vm: setup 42s, suites 158s\n";
 

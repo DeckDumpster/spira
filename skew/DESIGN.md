@@ -205,5 +205,5 @@ credential, or a real release tarball: `check`'s `gh release list` path against 
 forge, `refresh`'s release-mode `release build/verify/activate` against a real release
 directory, and `check_local`'s `release verify` against a real MANIFEST. Those remain the
 round's integration coverage through the
-suites that exercise `deploy.sh`/`release`/`queue` end to end (`test-deploy.sh`,
+suites that exercise `deploy.sh`/`release`/`queue` end to end (`spira-config/tests/deploy_script.rs`,
 `test-land-local-release.sh`, the retired landing-rebase suite).
