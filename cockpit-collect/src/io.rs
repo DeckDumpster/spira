@@ -471,6 +471,13 @@ pub fn slots_row(run: &Path, fields: &[(&str, String)], ts: &str, host: &str) ->
 }
 
 /// `git -C <repo> <args>`, stdout on success, `None` on any non-zero exit or spawn failure.
+/// [`git`] for a question the refs and objects alone answer: held under the checkout's refs digest, so
+/// it is asked again only after a ref moved. A failed answer is held too, as a repo that does not answer.
+pub fn git_held(repo: &Path, args: &[&str]) -> Option<String> {
+    let Some(digest) = spira_config::git_refs::refs_digest(repo) else { return git(repo, args) };
+    spira_config::git_refs::held(repo, &format!("git {}", args.join("\u{1f}")), &digest.to_string(), || Ok(git(repo, args))).unwrap_or(None)
+}
+
 pub fn git(repo: &Path, args: &[&str]) -> Option<String> {
     let out = spira_config::bounded::bounded("git")
         .arg("-C")

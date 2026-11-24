@@ -84,6 +84,16 @@ fn git(path: &str, args: &[&str]) -> Result<String, String> {
     run(c)
 }
 
+/// `git show <ref>:<file>` at a site, held under the ref's sha so a site whose ref has not moved starts no git.
+fn show(site: &Site, file: &str) -> Result<String, String> {
+    let spec = format!("{}:{file}", site.git_ref);
+    let read = || git(&site.path, &["show", &spec]);
+    match spira_config::git_refs::sha_of(Path::new(&site.path), &site.git_ref) {
+        Some(tip) => spira_config::git_refs::held(Path::new(&site.path), &format!("show {spec}"), &tip, read),
+        None => read(),
+    }
+}
+
 impl Real {
     pub fn new(registry: String, crate_name: String, state: PathBuf, persona: String, lc: spira_store::lc_call::LcClient) -> Real {
         let bumps = std::fs::read_to_string(&state)
@@ -122,14 +132,14 @@ impl World for Real {
     }
 
     fn site_requirement(&self, site: &Site) -> Result<String, String> {
-        let manifest = git(&site.path, &["show", &format!("{}:{}", site.git_ref, site.file)])?;
+        let manifest = show(site, &site.file)?;
         crate::parse_requirement(&manifest, &self.crate_name)
             .ok_or_else(|| format!("no `{}` requirement in {}:{}", self.crate_name, site.git_ref, site.file))
     }
 
     fn site_locked(&self, site: &Site) -> Result<String, String> {
         let lock = Path::new(&site.file).with_file_name("Cargo.lock");
-        let lock = git(&site.path, &["show", &format!("{}:{}", site.git_ref, lock.display())])?;
+        let lock = show(site, &lock.display().to_string())?;
         crate::parse_locked(&lock, &self.crate_name)
             .ok_or_else(|| format!("no `{}` in the lockfile beside {}:{}", self.crate_name, site.git_ref, site.file))
     }

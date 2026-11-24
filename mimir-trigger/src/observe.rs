@@ -91,20 +91,30 @@ pub fn landings_everywhere(reg: &Registry, map_text: &str, since_ts: i64) -> u64
     n
 }
 
-/// `git -C <repo> log --format=%s --after=@<since> <base_ref>`.
+/// The subjects of `base_ref`'s commits dated `since_ts` or later, as `git log --format=%s --after=@<since>`
+/// prints them. The rows read are held under the ref's sha, so a landing ref that has not moved costs no git.
 // FORK-EDGE: git stays a child (the contract keeps `git log` out of process: there is no git
 // library in the tree, and a read of the commit graph is not a Spira binary).
 pub fn git_log_subjects(repo: &Path, since_ts: i64, base_ref: &str) -> String {
-    spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["log", "--format=%s", &format!("--after=@{since_ts}"), base_ref])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
+    let read = |from: i64| -> Result<(i64, Vec<(i64, String)>), String> {
+        let out = spira_config::bounded::bounded("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["log", "--format=%ct %s", &format!("--after=@{from}"), base_ref])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        Ok((from, text.lines().filter_map(|l| l.split_once(' ')).filter_map(|(at, subject)| Some((at.parse().ok()?, subject.to_string()))).collect()))
+    };
+    let (from, rows) = match spira_config::git_refs::sha_of(repo, base_ref) {
+        Some(tip) => spira_config::git_refs::held(repo, &format!("landing subjects {base_ref}"), &tip, || read(since_ts)),
+        None => read(since_ts),
+    }
+    .unwrap_or_default();
+    let rows = if from > since_ts { read(since_ts).map(|(_, r)| r).unwrap_or_default() } else { rows };
+    rows.iter().filter(|(at, _)| *at >= since_ts).map(|(_, subject)| format!("{subject}\n")).collect()
 }
 
 /// `detect_invalid_closed`'s raw lines, in-process through `strand`.

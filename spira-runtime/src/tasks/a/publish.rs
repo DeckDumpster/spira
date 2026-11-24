@@ -880,17 +880,24 @@ pub mod edge {
         for name in local {
             let dir = root(&reg, &name)?;
             let landref = spira_config::repos::landref(&reg, &name).unwrap_or_default();
-            let head_sha = git(&dir, &["rev-parse", &landref], Duration::from_secs(10))?;
+            let head_sha = match spira_config::git_refs::sha_of(std::path::Path::new(&dir), &landref) {
+                Some(sha) => sha,
+                None => git(&dir, &["rev-parse", &landref], Duration::from_secs(10))?,
+            };
             let target = spira_config::repos::publish_forge(&reg, &name, &BTreeMap::new());
             let publish_mode = match spira_config::repos::publish_mode(&reg, &name) {
                 spira_config::PublishMode::Push => "push",
                 _ => "pr",
             };
+            let at_forge = target.as_ref().is_some_and(|(remote, branch)| crate::unpublished::published(std::path::Path::new(&dir), &landref, remote, branch));
             let forge_sha = target.as_ref().and_then(|(remote, branch)| {
+                if at_forge {
+                    return Some(head_sha.clone());
+                }
                 git(&dir, &["fetch", "--quiet", remote, branch], Duration::from_secs(30)).ok()?;
                 git(&dir, &["rev-parse", &format!("{remote}/{branch}")], Duration::from_secs(10)).ok()
             });
-            let diverged = forge_sha.as_ref().map(|f| git(&dir, &["merge-base", "--is-ancestor", f, &head_sha], Duration::from_secs(10)).is_err());
+            let diverged = forge_sha.as_ref().map(|f| !at_forge && git(&dir, &["merge-base", "--is-ancestor", f, &head_sha], Duration::from_secs(10)).is_err());
             let kv = queue_kv(e, &name, "publish");
             let publish_rec = kv.as_ref().and_then(publish_rec);
             let mut pr_word = String::new();

@@ -61,9 +61,9 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         let round_members = if in_delivery.is_empty() { Some(HashSet::new()) } else { round_status_members(&rname) };
         let forge_batch = forge.get(&rname);
 
-        match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
+        match io::git_held(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
             Some(brs) => {
-                let on_base = |b: &str| base.as_deref().is_some_and(|base| io::git(rp_path, &["merge-base", "--is-ancestor", b, base]).is_some());
+                let on_base = |b: &str| base.as_deref().is_some_and(|base| io::git_held(rp_path, &["merge-base", "--is-ancestor", b, base]).is_some());
                 let ctx = Ctx { now, batch_wait, grace, land: &land, in_delivery: &in_delivery, round_members: &round_members, forge_batch };
                 t.tally(&brs, &ctx, &|id| bead_status(id, lc_index.as_ref()), &on_base);
             }
@@ -72,7 +72,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
 
         // The batch PR branches only: every other change is a bead on spira/<id>.
         for ns in ["refs/heads/spira/queue/"] {
-            if let Some(refs) = io::git(rp_path, &["for-each-ref", "--format=%(refname:short)", ns]) {
+            if let Some(refs) = io::git_held(rp_path, &["for-each-ref", "--format=%(refname:short)", ns]) {
                 for pb in refs.lines() {
                     if pb.is_empty() {
                         continue;
@@ -354,7 +354,7 @@ fn branch_ids(reg: &spira_config::repos::Registry) -> Vec<String> {
     let mut ids = Vec::new();
     for rname in reg.all() {
         let Some(rp) = reg.root(&rname) else { continue };
-        let Some(brs) = io::git(Path::new(&rp), &["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/*"]) else { continue };
+        let Some(brs) = io::git_held(Path::new(&rp), &["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/*"]) else { continue };
         ids.extend(brs.lines().filter(|b| !b.starts_with("spira/queue/")).map(|b| b.trim_start_matches("spira/").to_string()));
     }
     ids
@@ -551,16 +551,16 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
             Some(l) => format!("{base} {l}"),
             None => base.clone(),
         };
-        if let Some(remote) = spira_config::repos::ref_remote(&base, Some(&rp)) {
+        if let Some(remote) = spira_config::repos::ref_remote(&base, Some(&rp)).filter(|_| has_spira_branch(rp_path)) {
             let _ = io::git(rp_path, &["fetch", "-q", &remote]);
         }
         let mut log_args = vec!["log", "--format=%s", "-n", "2000"];
         let ref_list: Vec<&str> = refs.split_whitespace().collect();
         log_args.extend(ref_list.iter().copied());
-        if let Some(log) = io::git(rp_path, &log_args) {
+        if let Some(log) = io::git_held(rp_path, &log_args) {
             subjects.push(log);
         }
-        if let Some(brs) = io::git(rp_path, &["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/", "refs/remotes/*/spira/"]) {
+        if let Some(brs) = io::git_held(rp_path, &["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/", "refs/remotes/*/spira/"]) {
             branches.push(brs);
         }
     }
@@ -654,7 +654,7 @@ fn classify_landing<'a>(
 /// `git cherry` prints `+` for each commit not on the land ref; none means the branch never
 /// made a commit of its own. A failed cherry is not evidence of anything.
 fn branch_has_no_own_commit(repo: &Path, land_ref: &str, branch: &str) -> bool {
-    io::git(repo, &["cherry", land_ref, branch]).map(|o| !o.lines().any(|l| l.starts_with('+'))).unwrap_or(false)
+    io::git_held(repo, &["cherry", land_ref, branch]).map(|o| !o.lines().any(|l| l.starts_with('+'))).unwrap_or(false)
 }
 
 /// Whether the gate-worker holds a job for this bead's branch, in the inbox or claimed by any slot.
@@ -692,7 +692,7 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
         let acc_repo = prod.trim_end_matches("/spira").to_string(); // not a path: suffix of a repo path
         let acc_repo_path = Path::new(&acc_repo);
         if acc_repo_path.join(".git").exists() {
-            let noted = io::git(acc_repo_path, &["notes", "--ref=acceptance", "list"])
+            let noted = io::git_held(acc_repo_path, &["notes", "--ref=acceptance", "list"])
                 .map(|s| s.lines().filter_map(|l| l.split_whitespace().nth(1).map(String::from)).collect::<Vec<_>>())
                 .unwrap_or_default();
             let mut acc_obj: Option<String> = None;
@@ -701,7 +701,7 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
                 tags.reverse();
                 'outer: for t in &tags {
                     for rev in [t.clone(), format!("{t}^{{commit}}")] {
-                        if let Some(c) = io::git(acc_repo_path, &["rev-parse", "-q", "--verify", &rev]) {
+                        if let Some(c) = io::git_held(acc_repo_path, &["rev-parse", "-q", "--verify", &rev]) {
                             let c = c.trim().to_string();
                             if !c.is_empty() && noted.contains(&c) {
                                 acc_obj = Some(c);
@@ -715,10 +715,10 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
                 }
             }
             if let Some(obj) = acc_obj {
-                tag = io::git(acc_repo_path, &["tag", "--points-at", &obj])
+                tag = io::git_held(acc_repo_path, &["tag", "--points-at", &obj])
                     .and_then(|s| s.lines().find(|l| spira_config::release_tag::is_release_tag(l)).map(String::from))
                     .unwrap_or_else(|| "-".to_string());
-                let note = io::git(acc_repo_path, &["notes", "--ref=acceptance", "show", &obj]).unwrap_or_default();
+                let note = io::git_held(acc_repo_path, &["notes", "--ref=acceptance", "show", &obj]).unwrap_or_default();
                 verdict = if note.starts_with("PASS") {
                     "PASS".to_string()
                 } else if note.starts_with("FAIL") {
@@ -728,13 +728,13 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
                 } else {
                     note.lines().next().unwrap_or("").chars().take(8).collect()
                 };
-                at = io::git(acc_repo_path, &["log", "-1", "--format=%ct", &obj]).map(|s| s.trim().to_string()).unwrap_or_else(|| "?".to_string());
+                at = io::git_held(acc_repo_path, &["log", "-1", "--format=%ct", &obj]).map(|s| s.trim().to_string()).unwrap_or_else(|| "?".to_string());
                 if tag != "-" {
                     let tags2 = release_tags(acc_repo_path);
                     let idx = tags2.iter().position(|t| t == &tag);
                     since = idx.map(|i| (tags2.len() - i - 1).to_string()).unwrap_or_else(|| "?".to_string());
                 }
-            } else if io::git(acc_repo_path, &["rev-parse", "--git-dir"]).is_some() {
+            } else if io::git_held(acc_repo_path, &["rev-parse", "--git-dir"]).is_some() {
                 verdict = "NEVER".to_string();
                 since = release_tags(acc_repo_path).len().to_string();
             }
@@ -746,8 +746,17 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
     push(out, "SP_ACCEPT_SINCE", since);
 }
 
+/// Whether the checkout has a `spira/*` branch, local or remote-tracking; unknown reads as yes.
+fn has_spira_branch(repo: &Path) -> bool {
+    use spira_config::git_refs::{has_branch_under, remotes};
+    if has_branch_under(repo, "refs/heads/", "spira/") != Some(false) {
+        return true;
+    }
+    remotes(repo).is_none_or(|names| names.iter().any(|r| has_branch_under(repo, &format!("refs/remotes/{r}/"), "spira/") != Some(false)))
+}
+
 fn release_tags(repo: &Path) -> Vec<String> {
-    let listed = io::git(repo, &["tag", "-l", "spira-*"]).unwrap_or_default();
+    let listed = io::git_held(repo, &["tag", "-l", "spira-*"]).unwrap_or_default();
     spira_config::release_tag::sort_release_tags(listed.lines().map(String::from))
 }
 

@@ -129,18 +129,7 @@ impl World for Real {
     }
 
     fn git_log_subjects(&self, repo_path: &Path, since_ts: i64, base_ref: &str) -> String {
-        spira_config::bounded::bounded("git")
-            .arg("-C")
-            .arg(repo_path)
-            .arg("log")
-            .arg("--format=%s")
-            .arg(format!("--after=@{since_ts}"))
-            .arg(base_ref)
-            .stderr(Stdio::null())
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
+        crate::observe::git_log_subjects(repo_path, since_ts, base_ref)
     }
 
     fn detect_invalid_closed(&self) -> String {
