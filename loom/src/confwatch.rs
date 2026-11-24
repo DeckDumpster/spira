@@ -78,6 +78,7 @@ mod tests {
         assert_eq!(restart_reason("A=1\n", &Ok("A=1\n".into())), None);
     }
 
+    // covers: UC-cockpit-observability-07
     #[test_id(twg6xzg)]
     #[tokio::test]
     async fn touching_the_file_without_a_pinned_change_stays_and_a_pinned_change_restarts() {
