@@ -24,11 +24,14 @@
 #                                     set or drop a label through the contract; refuses the
 #                                     partition labels (and rune:*) that `file --for` derives
 #   bead.sh dep add <id> <depends-on-id> [--type <type>]
-#                                     wrap `bd dep add`, refusing a blocks edge onto an
-#                                     incident-labelled bead (use `bd dep relate` for those)
+#                                     add the edge through the content door, refusing a blocks edge
+#                                     onto an epic or an incident-labelled bead, and each edge the
+#                                     store cannot hold with the reason. Onto <id>'s own parent a
+#                                     blocks edge is the `split-child` label: <id> waits for the
+#                                     parent to land and the parent link stays
 #   bead.sh dep remove <id> <depends-on-id>
-#                                     drop an existing edge; refuses unknown ids and a missing edge,
-#                                     prints the removed edge
+#                                     drop an existing edge (onto the own parent: the label);
+#                                     refuses unknown ids and a missing edge, prints the removed edge
 #
 # WHY THIS EXISTS AND NOT bd create DIRECTLY
 # ------------------------------------------

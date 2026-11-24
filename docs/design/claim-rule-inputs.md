@@ -107,7 +107,7 @@ edge set exists only in the content store's `dependencies` table. Item 2 must wr
 
 Beyond `repo:`; the claim rule does not read persona.
 
-- `split-child` (`spira_config::nonwork::SPLIT_LABEL`) — read by `spira-claim/src/rank.rs` `parent_exempt`: a split child is not held back by its parent. Relabelling it triggers `spira-lc/src/bd.rs` `mark_rejudge`.
+- `split-child` (`spira_config::nonwork::SPLIT_LABEL`) — read by `spira-claim/src/rank.rs` `parent_exempt`: a child without it is not held back by a READY, tipless parent, a split child is. `dep add <child> <its parent>` writes it (`spira-lc/src/content.rs` `own_parent_wait`), and `dep remove` takes it off. Relabelling it triggers `spira-lc/src/bd.rs` `mark_rejudge`.
 - The incident, pilgrim and Skuld labels (config `incident_label`, `pilgrim_label`, `skuld_label`) — read by `spira-claim/src/rank.rs` `stack_cap` and `spira-lc/src/control/claimable.rs` `judge`: a candidate carrying any of them never stacks (depth cap 0).
 - The scope label and the no-loop label (config `scope_label`, `no_loop_label`) — read by `spira-claim/src/ready.rs` `in_scope` through `labels_match`: the candidate must carry every scope label and no no-loop label. Both are comma-separated lists.
 - The rune predicate labels (`RUNE_LABELS` / `RUNE_EXCLUDE_LABELS` of each rune) and the queue-wait label — read by `spira-claim/src/ready.rs` `in_any_partition`. **Rune attribution only**; they never change a verdict.

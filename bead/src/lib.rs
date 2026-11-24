@@ -560,6 +560,7 @@ pub struct ShowRow {
     pub issue_type: String,
     pub description: String,
     pub notes: String,
+    pub parent: Option<String>,
 }
 
 /// An open idea in `bd list --json`.
@@ -627,6 +628,10 @@ pub fn parse_show_row(json: &str) -> Option<ShowRow> {
         issue_type,
         description,
         notes,
+        parent: obj
+            .get("parent")
+            .and_then(|p| p.as_str())
+            .map(str::to_string),
     })
 }
 
@@ -1671,7 +1676,7 @@ mod tests {
     #[test_id(t23ego9)]
     #[test]
     fn a_stack_base_must_be_live_same_repo_work() {
-        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into(), description: String::new(), notes: String::new() };
+        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into(), description: String::new(), notes: String::new(), parent: None };
         assert_eq!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), false, "r"), None);
         assert!(stack_after_refusal("sp-a", None, false, "r").is_some());
         assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), false, "r").is_some());
@@ -1704,6 +1709,7 @@ mod tests {
                 issue_type: ty.into(),
                 description: desc.into(),
                 notes: String::new(),
+                parent: None,
             };
             self.beads.push((id.into(), row));
             self.lc.push((id.into(), "READY".into()));

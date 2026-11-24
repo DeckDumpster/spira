@@ -199,10 +199,15 @@ fn child_open(v: &View, b: &Bead) -> bool {
 }
 
 /// `open_children.rs` `open_parents`: every bead with at least one open child, by the row's
-/// `parent` field or a `parent-child` dependency.
+/// `parent` field or a `parent-child` dependency. A child waiting on its parent (the split
+/// label) does not count: the parent would otherwise never be claimed.
 pub fn open_parents<'a>(v: &View<'a>) -> HashSet<&'a str> {
     let mut out = HashSet::new();
-    for b in v.beads.iter().filter(|b| child_open(v, b)) {
+    for b in v
+        .beads
+        .iter()
+        .filter(|b| child_open(v, b) && !b.labels.iter().any(|l| l == nonwork::SPLIT_LABEL))
+    {
         if let Some(p) = b.parent.as_deref().filter(|p| !p.is_empty() && *p != b.id) {
             out.insert(p);
         }
@@ -325,6 +330,27 @@ mod tests {
         let beads = parse_beads(r#"[{"id":"t","status":"open","labels":["rt"],"dependencies":[{"depends_on_id":"old","type":"blocks"},{"depends_on_id":"new","type":"blocks"}]},{"id":"u","status":"open","dependencies":[{"depends_on_id":"other","type":"blocks"}]}]"#).unwrap();
         let has = |id: &str| id == "new";
         assert_eq!(unread_blockers(&beads, "rt", &has), vec!["old".to_string()]);
+    }
+
+    #[test_id(t4jcwbk)]
+    #[test]
+    fn a_split_child_does_not_make_its_parent_an_open_parent() {
+        let rows = vec![row("p", "READY"), row("c", "READY"), row("d", "READY")];
+        let only = parse_beads(r#"[{"id":"p","status":"open"},{"id":"c","status":"open","parent":"p","labels":["split-child"]}]"#).unwrap();
+        assert_eq!(
+            open_children(&View::new(&only, &rows), &["p".into()], "oc"),
+            vec![]
+        );
+        let labeled = parse_beads(r#"[{"id":"p","status":"open","labels":["oc"]},{"id":"c","status":"open","parent":"p","labels":["split-child"]}]"#).unwrap();
+        assert_eq!(
+            open_children(&View::new(&labeled, &rows), &[], "oc"),
+            vec![Change::Remove("p".into())]
+        );
+        let mixed = parse_beads(r#"[{"id":"p","status":"open"},{"id":"c","status":"open","parent":"p","labels":["split-child"]},{"id":"d","status":"open","parent":"p"}]"#).unwrap();
+        assert_eq!(
+            open_children(&View::new(&mixed, &rows), &["p".into()], "oc"),
+            vec![Change::Add("p".into())]
+        );
     }
 
     #[test_id(tauc5kd)]

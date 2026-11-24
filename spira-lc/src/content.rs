@@ -200,6 +200,7 @@ pub fn guard(args: &mut Vec<String>, body: &mut Option<String>, g: &Guards, m: &
     let vars = |k: &str| g.caller.get(k).cloned();
     let ctx = bead::guard::Ctx { who: "spira-lc content", vars: &vars, rows: &row, now: g.now, ask_label: g.ask_label, registry: g.registry };
     blocks_edge(args, g)?;
+    own_parent_wait(args, g);
     repo_cwd(args, g)?;
     let mut log = match bead::guard::write(args, body.as_deref(), &ctx) {
         Ok(bead::guard::Admit { claim: bead::guard::Claim::Free, log }) => {
@@ -274,6 +275,27 @@ fn blocks_edge(args: &[String], g: &Guards) -> Result<(), Answer> {
         return Err(refuse(bead::incident_blocks_refusal(id, dep, &incident)));
     }
     Ok(())
+}
+
+/// A `blocks` edge onto the item's own parent is stored as the `split-child` label, which the
+/// claim rule reads and which leaves the parent link in place; `dep remove` of it takes the label off.
+fn own_parent_wait(args: &mut Vec<String>, g: &Guards) {
+    let label = spira_config::nonwork::SPLIT_LABEL;
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (add, id, dep) = match a.as_slice() {
+        ["dep", "add", id, dep] if bead::is_blocks_type(None) => (true, *id, *dep),
+        ["dep", "add", id, dep, "--type", t] if bead::is_blocks_type(Some(t)) => (true, *id, *dep),
+        ["dep", "remove", id, dep] => (false, *id, *dep),
+        _ => return,
+    };
+    let Some(child) = (g.target_of)(id) else {
+        return;
+    };
+    if child.parent.as_deref() != Some(dep) || (!add && !child.labels.iter().any(|l| l == label)) {
+        return;
+    }
+    let verb = if add { "add" } else { "remove" };
+    *args = ["label", verb, id, label].map(String::from).to_vec();
 }
 
 /// Whether the filing contract has anything to say about `args`: a create, a partition-label
@@ -1106,6 +1128,121 @@ mod tests {
         let mut no_after = |_: &[String], _: &str| String::new();
         let mut body = || Ok::<String, String>(String::new());
         run(&v(args), &mut body, &mut gd, &mut no_after, &|_| Ok(String::new()), &ran)
+    }
+
+    fn parent_wait_guard(
+        args: &[&str],
+        child_labels: &[&str],
+        parent: serde_json::Value,
+    ) -> (Answer, Vec<Vec<String>>) {
+        let env = caller(&[]);
+        let ask = || Ok::<_, String>(ASK.to_string());
+        let child = serde_json::json!({"id": "sp-c", "issue_type": "task", "labels": child_labels, "parent": "sp-p"});
+        let shown = |id: &str| {
+            bead::parse_show_row(
+                &if id == "sp-c" {
+                    child.clone()
+                } else {
+                    parent.clone()
+                }
+                .to_string(),
+            )
+        };
+        let g = Guards {
+            caller: &env,
+            ask_label: &ask,
+            registry: &registry,
+            policy: &no_policy,
+            repo_of: &|_| None,
+            target_of: &shown,
+            incident_label: &incident,
+            now: NOW,
+            forced: Default::default(),
+            cwd: Default::default(),
+        };
+        let mut gd = |a: &mut Vec<String>, b: &mut Option<String>| guard(a, b, &g, &mut Rows(None));
+        let ran_args = std::cell::RefCell::new(Vec::new());
+        let ran = |a: &[String], _: Option<&str>| -> Result<String, String> {
+            ran_args.borrow_mut().push(a.to_vec());
+            Ok(String::new())
+        };
+        let mut no_after = |_: &[String], _: &str| String::new();
+        let mut body = || Ok::<String, String>(String::new());
+        let ans = run(
+            &v(args),
+            &mut body,
+            &mut gd,
+            &mut no_after,
+            &|_| Ok(String::new()),
+            &ran,
+        );
+        (ans, ran_args.into_inner())
+    }
+
+    #[test_id(tpg3b7w)]
+    #[test]
+    fn a_blocks_edge_onto_the_items_own_parent_is_written_as_the_split_label_and_removed_with_it() {
+        let label = spira_config::nonwork::SPLIT_LABEL;
+        let task = serde_json::json!({"id": "sp-p", "issue_type": "task", "labels": []});
+        for args in [
+            &["dep", "add", "sp-c", "sp-p"][..],
+            &["dep", "add", "sp-c", "sp-p", "--type", "blocks"],
+        ] {
+            let (ans, ran) = parent_wait_guard(args, &[], task.clone());
+            assert_eq!(
+                (ans.code, ran),
+                (0, vec![v(&["label", "add", "sp-c", label])]),
+                "{args:?}"
+            );
+        }
+        let (ans, ran) =
+            parent_wait_guard(&["dep", "remove", "sp-c", "sp-p"], &[label], task.clone());
+        assert_eq!(
+            (ans.code, ran),
+            (0, vec![v(&["label", "remove", "sp-c", label])])
+        );
+    }
+
+    #[test_id(t1o7j7d)]
+    #[test]
+    fn an_edge_that_is_not_a_wait_on_the_own_parent_passes_through_unrewritten() {
+        let task = serde_json::json!({"id": "sp-p", "issue_type": "task", "labels": []});
+        for (args, labels) in [
+            (&["dep", "add", "sp-c", "sp-other"][..], &[][..]),
+            (&["dep", "add", "sp-c", "sp-p", "--type", "relates-to"], &[]),
+            (&["dep", "remove", "sp-c", "sp-p"], &[]),
+        ] {
+            let (_, ran) = parent_wait_guard(args, labels, task.clone());
+            assert_eq!(ran, vec![v(args)], "{args:?}");
+        }
+    }
+
+    #[test_id(t4txzum)]
+    #[test]
+    fn an_epic_or_incident_parent_is_refused_before_the_rewrite() {
+        let epic = serde_json::json!({"id": "sp-p", "issue_type": "epic", "labels": []});
+        let alarm = serde_json::json!({"id": "sp-p", "issue_type": "task", "labels": [INCIDENT]});
+        let (ans, ran) = parent_wait_guard(&["dep", "add", "sp-c", "sp-p"], &[], epic);
+        assert_eq!(
+            (ans.code, ans.stderr, ran.len()),
+            (
+                1,
+                format!("{}\n", bead::epic_blocks_refusal("sp-c", "sp-p")),
+                0
+            )
+        );
+        let (ans, ran) = parent_wait_guard(&["dep", "add", "sp-c", "sp-p"], &[], alarm);
+        assert_eq!(
+            (ans.code, ans.stderr, ran.len()),
+            (
+                1,
+                format!(
+                    "{}\n",
+                    bead::incident_blocks_refusal("sp-c", "sp-p", INCIDENT)
+                ),
+                0
+            )
+        );
     }
 
     #[test_id(t112293)]
