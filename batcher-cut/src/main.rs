@@ -2854,14 +2854,15 @@ fn save_round(o: &Opts) -> Result<(), String> {
     let repo = find_repo(&env_, &o.repo)?;
     let batches = io::lcq_held(&env_, &["list", "--batches", "--batch", batch])?;
     let results = io::round_results_dir(&run, batch);
-    let built = batcher_cut::replay::build(&batches, batch, &results, &batcher_cut::replay::RepoGit(&repo), &batcher_cut::replay::names_here(&run, &home))?;
+    let deny = std::fs::read_to_string(home.join("spira/inventory-deny")).map(|t| spira_lint::rules::inventory::deny_fragments(&t)).unwrap_or_default();
+    let built = batcher_cut::replay::build(&batches, batch, &results, &batcher_cut::replay::RepoGit(&repo), &batcher_cut::replay::names_here(&run), &deny).map_err(|e| batcher_cut::replay::refuse(out, e))?;
     batcher_cut::replay::write(&built, out)?;
     println!("batcher: round {batch} saved to {} ({} files)", out.display(), built.files.len());
     Ok(())
 }
 
 fn dispatch() -> ExitCode {
-    if std::env::args().nth(1).as_deref() == Some("save-round") && std::env::args().any(|a| a == "-h" || a == "--help") {
+    if std::env::args().nth(1).as_deref() == Some("save-round") && std::env::args().nth(2).is_some_and(|a| a == "-h" || a == "--help") {
         println!("{}", batcher_cut::replay::USAGE);
         return ExitCode::SUCCESS;
     }

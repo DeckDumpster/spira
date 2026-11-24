@@ -111,7 +111,10 @@ fn place_of(text: &str) -> Option<String> {
 }
 
 /// `batches`: the answer to `spira-lc list --batches --batch <batch>`.
-pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &Names) -> Result<Built, String> {
+pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &Names, deny: &[String]) -> Result<Built, String> {
+    if names.host.is_empty() || names.user.is_empty() {
+        return Err("this host's name or user cannot be determined, so it cannot be scrubbed".into());
+    }
     if !results.is_dir() {
         return Err(format!("{}: no results folder for round {batch}", results.display()));
     }
@@ -133,9 +136,9 @@ pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &
         let changed = git.changed_paths(&base, &tip)?;
         members.push(Member { id, tip, changed });
     }
-    let deny = results.join("deny-list");
-    if !deny.is_file() {
-        return Err(format!("{}: the round kept no deny list", deny.display()));
+    let deny_file = results.join("deny-list");
+    if !deny_file.is_file() {
+        return Err(format!("{}: the round kept no deny list", deny_file.display()));
     }
     let commits: Vec<String> = fs::read_to_string(results.join(ROUND_COMMITS_FILE))
         .unwrap_or_default()
@@ -158,13 +161,18 @@ pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &
         names_to_copy.insert(format!("{red}.out"));
         names_to_copy.insert(format!("{red}.tap.json"));
     }
-    let surviving = spira_lint::rules::inventory::pattern_re(&[])?;
+    let surviving = spira_lint::rules::inventory::pattern_re(deny)?;
     let mut files = vec![];
     for f in names_to_copy {
-        let Ok(text) = fs::read_to_string(results.join(&f)) else { continue };
+        let Ok(text) = fs::read_to_string(results.join(&f)) else {
+            if f.ends_with(".out") && red_suites.iter().any(|r| f == format!("{r}.out")) {
+                return Err(format!("{f}: the round kept no output for a red suite"));
+            }
+            continue;
+        };
         files.push((format!("results/{f}"), scrub_text(&f, &text, names, &surviving)?));
     }
-    let round = RoundFixture {
+    let mut round = RoundFixture {
         batch: batch.to_string(),
         base,
         cut_head,
@@ -176,7 +184,9 @@ pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &
         tree_suites: git.suites(&head)?,
     };
     let json = serde_json::to_string_pretty(&round).map_err(|e| e.to_string())?;
-    files.push(("round.json".into(), scrub_text("round.json", &json, names, &surviving)?));
+    let json = scrub_text("round.json", &json, names, &surviving)?;
+    round = serde_json::from_str(&json).map_err(|e| format!("round.json after scrubbing: {e}"))?;
+    files.push(("round.json".into(), json));
     Ok(Built { round, files })
 }
 
@@ -197,6 +207,12 @@ pub fn write(built: &Built, dir: &Path) -> Result<(), String> {
         let _ = fs::remove_dir_all(dir);
         format!("{}: {e}", dir.display())
     })
+}
+
+/// A refused save leaves no `dir`: an empty one the caller made is removed with it.
+pub fn refuse(dir: &Path, err: String) -> String {
+    let _ = fs::remove_dir(dir);
+    err
 }
 
 pub struct RepoGit<'a>(pub &'a crate::io::Repo);
@@ -223,12 +239,14 @@ impl Git for RepoGit<'_> {
 
 pub const USAGE: &str = "batcher save-round --repo R --batch ID --out DIR [--run DIR] [--db DIR] [--home DIR]\n  writes the kept round as a replay fixture (DIR/round.json, DIR/results/) with credentials, this host's name, user, addresses and paths replaced by placeholders\n  exit: 0 written; 1 refused (no results folder, batch not listed, unreadable base or tip, no deny list, DIR not empty, a pattern the inventory fence refuses survives: file:line named, DIR removed); 2 usage";
 
-pub fn names_here(run: &Path, home: &Path) -> Names {
+pub fn names_here(run: &Path) -> Names {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let user = Path::new(&home).file_name().map(|u| u.to_string_lossy().into_owned()).unwrap_or_default();
     Names {
         run: run.to_string_lossy().into_owned(),
-        home: std::env::var("HOME").unwrap_or_else(|_| home.to_string_lossy().into_owned()),
+        home,
+        user,
         host: std::fs::read_to_string(Path::new(system_paths::PROC_SYS).join("kernel/hostname")).map(|s| s.trim().to_string()).unwrap_or_default(),
-        user: std::env::var("USER").unwrap_or_default(),
     }
 }
 
@@ -278,6 +296,15 @@ mod tests {
         d
     }
 
+    fn out_dir_after_refusal() -> PathBuf {
+        let t = testkit::TempDir::new("replay-out");
+        let dir = t.path().join("fixture");
+        fs::create_dir(&dir).unwrap();
+        let err = refuse(&dir, "boom".into());
+        assert_eq!(err, "boom");
+        dir
+    }
+
     fn git() -> FakeGit {
         FakeGit { unreadable: vec![] }
     }
@@ -286,7 +313,7 @@ mod tests {
     #[test]
     fn a_folder_holding_a_token_home_path_address_and_host_name_yields_none_of_them_and_only_the_listed_files() {
         let d = results();
-        let built = build(BATCHES, "b1", d.path(), &git(), &names()).unwrap();
+        let built = build(BATCHES, "b1", d.path(), &git(), &names(), &[]).unwrap();
         let out = &built.files.iter().find(|(f, _)| f == "results/test-a.sh.out").unwrap().1;
         for leak in ["abcd1234".to_string(), abs("home/zed"), "box-17".into(), "10.1.2.3".into(), "corp.io".into(), "spira-q.service".into(), abs("srv/spira-run")] {
             assert!(!out.contains(&leak), "{leak} survived in {out}");
@@ -312,11 +339,14 @@ mod tests {
     fn a_surviving_pattern_refuses_naming_file_and_line_and_leaves_no_out_dir() {
         let d = results();
         fs::write(d.path().join("test-a.sh.out"), format!("fine\n{}x\n", abs("Users/someone/"))).unwrap();
-        let err = build(BATCHES, "b1", d.path(), &git(), &names()).unwrap_err();
+        let err = build(BATCHES, "b1", d.path(), &git(), &names(), &[]).unwrap_err();
         assert!(err.starts_with("test-a.sh.out:2:"), "{err}");
 
+        let gone = out_dir_after_refusal();
+        assert!(!gone.exists());
+
         let ok = results();
-        let built = build(BATCHES, "b1", ok.path(), &git(), &names()).unwrap();
+        let built = build(BATCHES, "b1", ok.path(), &git(), &names(), &[]).unwrap();
         let out = testkit::TempDir::new("replay");
         let dir = out.path().join("fixture");
         write(&built, &dir).unwrap();
@@ -331,19 +361,19 @@ mod tests {
     fn a_missing_deny_list_folder_batch_base_or_tip_refuses() {
         let d = results();
         fs::remove_file(d.path().join("deny-list")).unwrap();
-        assert!(build(BATCHES, "b1", d.path(), &git(), &names()).unwrap_err().contains("deny list"));
-        assert!(build(BATCHES, "b1", &d.path().join("nope"), &git(), &names()).unwrap_err().contains("no results folder"));
+        assert!(build(BATCHES, "b1", d.path(), &git(), &names(), &[]).unwrap_err().contains("deny list"));
+        assert!(build(BATCHES, "b1", &d.path().join("nope"), &git(), &names(), &[]).unwrap_err().contains("no results folder"));
         let d = results();
-        assert!(build(BATCHES, "other", d.path(), &git(), &names()).unwrap_err().contains("no such batch"));
-        assert!(build(BATCHES, "b1", d.path(), &FakeGit { unreadable: vec!["base1"] }, &names()).unwrap_err().contains("base"));
-        assert!(build(BATCHES, "b1", d.path(), &FakeGit { unreadable: vec!["tipb"] }, &names()).unwrap_err().contains("tipb"));
+        assert!(build(BATCHES, "other", d.path(), &git(), &names(), &[]).unwrap_err().contains("no such batch"));
+        assert!(build(BATCHES, "b1", d.path(), &FakeGit { unreadable: vec!["base1"] }, &names(), &[]).unwrap_err().contains("base"));
+        assert!(build(BATCHES, "b1", d.path(), &FakeGit { unreadable: vec!["tipb"] }, &names(), &[]).unwrap_err().contains("tipb"));
     }
 
     #[test_id(tzvt4gn)]
     #[test]
     fn round_json_round_trips() {
         let d = results();
-        let built = build(BATCHES, "b1", d.path(), &git(), &names()).unwrap();
+        let built = build(BATCHES, "b1", d.path(), &git(), &names(), &[]).unwrap();
         let json = &built.files.iter().find(|(f, _)| f == "round.json").unwrap().1;
         let back: RoundFixture = serde_json::from_str(json).unwrap();
         assert_eq!(back, built.round);
