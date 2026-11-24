@@ -255,7 +255,7 @@ fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), 
 
     let (current, tail) = release_root_for_session_hook(&a.flags, env)?;
     let toml = spira_config::process::spec().map_err(fail_err)?;
-    let runtime_dir = PathBuf::from(env.get("XDG_RUNTIME_DIR").unwrap_or_default());
+    let runtime_dir = PathBuf::from(env.get("XDG_RUNTIME_DIR").map(String::as_str).unwrap_or_default());
     let metrics = spira_config::process::metrics_endpoint().unwrap_or_default();
     let paths = session_hook::resolve(&current, &tail, &toml, settings, &runtime_dir, &metrics).map_err(fail_err)?;
     match sub.as_str() {
