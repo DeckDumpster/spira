@@ -40,17 +40,6 @@ fn route_of(declared: Result<String, String>) -> Result<Route, String> {
     }
 }
 
-/// The answer when the service does not take the call: names the service and the socket, and
-/// says that nothing fell back.
-fn down(socket_path: &str, e: &std::io::Error) -> (i32, String) {
-    (
-        2,
-        format!(
-            "cannot tell: the lifecycle service (lc-serve) is not answering on {socket_path}: {e} — nothing was read or written; spira-lc does not fall back to a direct database connection (check: systemctl --user status lc-serve.service)"
-        ),
-    )
-}
-
 /// `None`: run this verb in-process (it is never forwarded, or direct mode is declared).
 /// Otherwise the service's answer, or exit 2 naming the service when it does not answer.
 pub fn try_socket(args: &[String]) -> Option<(i32, String)> {

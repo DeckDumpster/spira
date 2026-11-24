@@ -1,7 +1,7 @@
 //! `call_request` binds a `work` request to the persona of the uid its stream's peer reports.
 
 use super::*;
-use ports::{Listener, Net, Peer, SeededRng, SimNet, VirtualClock};
+use ports::{Net, Peer, SeededRng, SimNet, VirtualClock};
 use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 
