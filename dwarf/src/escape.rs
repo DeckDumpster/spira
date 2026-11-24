@@ -354,10 +354,10 @@ mod tests {
         testkit::write_exe(dir.join("dwarf"), "#!/bin/sh\n");
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
-        let rc = call(&dir, &FakeSeam { ready: "4".into(), ready_rc: 0 }, &exec, &sink, &["--property=IOWeight=10".to_string()]);
+        let rc = call(&dir, &FakeSeam { ready: "4".into(), ready_rc: 0 }, &exec, &sink, &["--property=TimeoutStartSec=3600".to_string()]);
         assert_eq!(rc, 0);
         let (_, argv) = exec.0.lock().unwrap().clone().expect("a call was made");
-        assert!(argv.contains(&"--property=IOWeight=10".to_string()), "{argv:?}");
+        assert!(argv.contains(&"--property=TimeoutStartSec=3600".to_string()), "{argv:?}");
     }
 
     #[test_id(tm5qcfh)]
@@ -380,7 +380,7 @@ mod tests {
         let _g = testkit::env(&[(spira_config::RELEASE_ENV, Some(rel.to_str().unwrap())), ("HOME", Some("h")), (spira_config::process::TOML_ENV, Some("x"))]);
         let a = call_argv(&dir, "stretchy", None);
         let a = a.expect("argv");
-        assert!(a.iter().any(|f| f == "--property=IOWeight=10"), "{a:?}");
+        assert!(a.iter().any(|f| f == "--property=TimeoutStartSec=3600"), "{a:?}");
         assert!(a.iter().any(|f| f.starts_with("--setenv=SPIRA_RELEASE=")), "{a:?}");
     }
 

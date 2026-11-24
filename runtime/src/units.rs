@@ -159,10 +159,10 @@ impl UnitProps {
 }
 
 /// The properties every dwarf call starts under: the rune's `RUNE_TIMEOUT_SECONDS` as
-/// `TimeoutStartSec`, the idle IO class, IO weight 10, no `ExecStopPost`.
+/// `TimeoutStartSec`, no IO class or weight (a builder competes for the disk as its gate does), no `ExecStopPost`.
 pub fn dwarf_props(timeout_secs: &str) -> std::result::Result<UnitProps, String> {
     let secs: u64 = timeout_secs.trim().parse().map_err(|_| format!("RUNE_TIMEOUT_SECONDS must be whole seconds, got {timeout_secs:?}"))?;
-    Ok(UnitProps { start_timeout_ms: Some(secs * 1000), io_class: Some("idle".into()), io_weight: Some(10), ..UnitProps::default() })
+    Ok(UnitProps { start_timeout_ms: Some(secs * 1000), ..UnitProps::default() })
 }
 
 /// The `unit.start` input: the unit and the properties it starts under.
@@ -2333,7 +2333,7 @@ mod tests {
     #[test]
     fn dwarf_props_carry_the_calls_properties_and_refuse_a_timeout_that_is_not_seconds() {
         let p = dwarf_props("3600").unwrap();
-        assert_eq!((p.start_timeout_ms, p.io_class.as_deref(), p.io_weight), (Some(3_600_000), Some("idle"), Some(10)));
+        assert_eq!(p, UnitProps { start_timeout_ms: Some(3_600_000), ..UnitProps::default() });
         assert!(dwarf_props("soon").is_err());
     }
 

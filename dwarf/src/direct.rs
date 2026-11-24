@@ -277,7 +277,7 @@ mod tests {
         let env: Vec<(String, String)> = [("SPIRA_RELEASE", "r"), ("PATH", "r/bin"), ("HOME", "h"), ("SPIRA_TOML", "c.toml")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let props = runtime::units::UnitProps { output_append: Some(PathBuf::from("o/sp-x.log")), ..runtime::units::dwarf_props("3600").unwrap() };
         let flags = call_flags(&env, &props).unwrap();
-        for want in ["--setenv=SPIRA_RELEASE=r", "--setenv=PATH=r/bin", "--setenv=HOME=h", "--setenv=SPIRA_TOML=c.toml", "--property=TimeoutStartSec=3600", "--property=IOSchedulingClass=idle", "--property=IOWeight=10", "--property=StandardOutput=append:o/sp-x.log", "--property=StandardError=append:o/sp-x.log"] {
+        for want in ["--setenv=SPIRA_RELEASE=r", "--setenv=PATH=r/bin", "--setenv=HOME=h", "--setenv=SPIRA_TOML=c.toml", "--property=TimeoutStartSec=3600", "--property=StandardOutput=append:o/sp-x.log", "--property=StandardError=append:o/sp-x.log"] {
             assert!(flags.iter().any(|f| f == want), "{want}: {flags:?}");
         }
         let argv = build_argv(&req(), None, Path::new("h"), "rel/bin/dwarf", &flags, 1000);

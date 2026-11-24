@@ -29,7 +29,7 @@ duration_max = 3000
 # below is the one that must decline.
 [[actor]]
 name = "call"
-command = '[ "$(cat "$SIM_WORLD/cutover.phase" 2>/dev/null || echo wait)" != wait ] || "$SPIRA_CALL" --property=TimeoutStartSec=3600 --property=IOSchedulingClass=idle --property=IOWeight=10 --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin" --setenv=HOME="$HOME" --setenv=SPIRA_TOML="$SPIRA_TOML" "$SPIRA_RELEASE/bin/dwarf" --home "$SPIRA_HOME" builder'
+command = '[ "$(cat "$SIM_WORLD/cutover.phase" 2>/dev/null || echo wait)" != wait ] || "$SPIRA_CALL" --property=TimeoutStartSec=3600 --setenv=SPIRA_RELEASE="$SPIRA_RELEASE" --setenv=PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:/usr/local/bin:/usr/bin:/bin" --setenv=HOME="$HOME" --setenv=SPIRA_TOML="$SPIRA_TOML" "$SPIRA_RELEASE/bin/dwarf" --home "$SPIRA_HOME" builder'
 first = 10000
 every = 60000
 duration_min = 1000
