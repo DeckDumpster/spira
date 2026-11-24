@@ -136,7 +136,7 @@ fn gamma_repo(dir: &Path) -> (String, std::collections::BTreeMap<String, String>
     commit("l-ff");
     let fast_forwarded = git(dir, &["rev-parse", "HEAD"]);
     let mut tips = std::collections::BTreeMap::new();
-    for (id, path) in [("b-own", Some("owned/b")), ("b-free", Some("free/b")), ("a-own", None), ("a-free", None), ("a-lo", None), ("a-li", None), ("a-ff", None)] {
+    for (id, path) in [("b-own", Some("owned/b")), ("b-free", Some("free/b")), ("a-own", None), ("a-free", None), ("a-lo", None), ("a-li", None), ("a-ff", None), ("a-bt", None), ("a-t0", None), ("a-dn", None)] {
         git(dir, &["checkout", "-q", "-b", &format!("spira/{id}"), "main"]);
         if let Some(path) = path {
             touch(path);
@@ -169,15 +169,18 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     let other = Value::Object(other.as_object().unwrap().iter().map(|(k, v)| (k.clone(), if k == "repo" { json!("beta") } else { v.clone() })).collect());
     let gamma = dir.path().join("gamma");
     let (gamma_commit, gamma_tips, landed) = gamma_repo(&gamma);
-    let mut gamma_rows: Vec<Value> = ["b-own", "a-own", "b-free", "a-free", "a-lo", "a-li", "a-ff"]
+    let mut gamma_rows: Vec<Value> = ["b-own", "a-own", "b-free", "a-free", "a-lo", "a-li", "a-ff", "a-bt", "a-t0", "a-dn"]
         .iter()
         .map(|id| with_repo(row(id, "CERTIFIED", &gamma_tips[*id], "{}"), "gamma"))
         .collect();
     for (id, sha) in [("l-out", &landed.0), ("l-in", &landed.1), ("l-ff", &landed.2)] {
-        let mut r = with_repo(row(id, "LANDED", "t0", "{}"), "gamma");
-        r["reason"] = json!(sha);
+        let mut r = with_repo(row(id, "LANDED", sha, "{}"), "gamma");
+        r["reason"] = json!(format!("merge-tree:{sha}"));
         gamma_rows.push(r);
     }
+    gamma_rows.push(with_repo(row("l-beta", "LANDED", &"b".repeat(40), "{}"), "beta"));
+    gamma_rows.push(with_repo(row("l-t0", "LANDED", "t0", "{}"), "gamma"));
+    gamma_rows.push(with_repo(row("d-done", "DONE", "t0", "{}"), "gamma"));
     let gamma_items = vec![
         item("b-own", "task", "open", None),
         item("b-free", "task", "open", None),
@@ -186,6 +189,9 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
         item("a-lo", "task", "open", Some("l-out")),
         item("a-li", "task", "open", Some("l-in")),
         item("a-ff", "task", "open", Some("l-ff")),
+        item("a-bt", "task", "open", Some("l-beta")),
+        item("a-t0", "task", "open", Some("l-t0")),
+        item("a-dn", "task", "open", Some("d-done")),
     ];
     let mut store = Store {
         rows: vec![
@@ -246,18 +252,23 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     pooled.sort();
     assert_eq!(
         pooled,
-        ["a-free", "a-li", "b-free", "b-own"],
+        ["a-bt", "a-dn", "a-free", "a-li", "b-free", "b-own"],
         "a blocker touching no owned path rides with its dependant, a change the release carries is in force; the rest wait: {left:?}"
     );
     for (id, dep) in [("a-own", "b-own"), ("a-lo", "l-out"), ("a-ff", "l-ff")] {
         assert!(left.iter().any(|l| l.id == id && l.cause == io::Cause::NotInForce { dep: dep.into() }), "{id}: {left:?}");
     }
     assert_eq!(left.iter().find(|l| l.id == "a-own").unwrap().tag(), "blocked-not-in-force");
+    let unread = left.iter().find(|l| l.id == "a-t0").expect("a tip that is no sha is unread");
+    assert!(matches!(&unread.cause, io::Cause::InForceUnread { dep, .. } if dep == "l-t0"), "{unread:?}");
+    assert_eq!(unread.tag(), "in-force-unread");
+    assert!(unread.line("gamma").contains("no full-sha tip"), "{}", unread.line("gamma"));
 
     env.repo = Ok("elsewhere".into());
     let (pool, _) = io::certified_pool_left_out(&env, &repo).expect("the pool reads");
     assert!(pool.iter().any(|m| m.id == "a-own"), "a release of another repo says nothing about this one's own files");
     env.repo = Err("unreadable".into());
     let (_, left) = io::certified_pool_left_out(&env, &repo).expect("the pool reads");
-    assert!(left.iter().any(|l| l.id == "a-own"), "an unreadable release leaves the dependent out");
+    let own = left.iter().find(|l| l.id == "a-own").expect("an unreadable release leaves the dependent out");
+    assert!(matches!(&own.cause, io::Cause::InForceUnread { dep, error } if dep == "b-own" && error.contains("unreadable")), "{own:?}");
 }
