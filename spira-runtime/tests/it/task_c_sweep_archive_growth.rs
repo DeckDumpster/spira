@@ -22,7 +22,7 @@ fn cli(dir: &Path, args: &[&str]) -> (bool, Vec<u8>) {
         .arg(script)
         .args(args)
         .env_clear()
-        .env("PATH", "/usr/bin:/bin")
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("BASH_ENV", &shim)
         .env("SPIRA_CONF_LOADED", "1")
         .env("SPIRA_ARCHIVE", dir.join("archive"))

@@ -430,7 +430,7 @@ pub mod archive {
     const SHA256_IV: [u32; 8] = [0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a, 0x510e_527f, 0x9b05_688c, 0x1f83_d9ab, 0x5be0_cd19];
 
     fn compress_blocks(state: &mut [u32; 8], bytes: &[u8]) {
-        let blocks: Vec<GenericArray<u8, U64>> = bytes.chunks_exact(64).map(|b| *GenericArray::from_slice(b)).collect();
+        let blocks: Vec<GenericArray<u8, U64>> = bytes.as_chunks::<64>().0.iter().map(|b| GenericArray::from(*b)).collect();
         sha2::compress256(state, &blocks);
     }
 
@@ -441,6 +441,12 @@ pub mod archive {
         state: [u32; 8],
         tail: Vec<u8>,
         len: u64,
+    }
+
+    impl Default for Sha {
+        fn default() -> Sha {
+            Sha::new()
+        }
     }
 
     impl Sha {
