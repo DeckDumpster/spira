@@ -448,6 +448,68 @@ pub fn draft_body(notes: &str, title: &str) -> Option<Draft> {
     (!body.is_empty()).then_some(Draft { body, open })
 }
 
+/// One piece of a request's notes: a draft under its heading (`title` set), or other text.
+struct Piece {
+    title: Option<String>,
+    text: String,
+}
+
+/// `notes` cut into drafts and the text between them. A draft ends after its `Open:` line, or
+/// before the next draft heading or harness note.
+fn pieces(notes: &str) -> Vec<Piece> {
+    let mut out: Vec<Piece> = Vec::new();
+    let mut drafting = false;
+    for line in notes.replace("\r\n", "\n").split_inclusive('\n') {
+        let bare = line.trim_end();
+        let heading = bare.strip_prefix(DRAFT_HEADING);
+        if heading.is_some() || is_harness_note(bare) || out.is_empty() || !drafting && out.last().is_some_and(|p| p.title.is_some()) {
+            out.push(Piece { title: heading.map(|t| t.trim().to_string()), text: String::new() });
+            drafting = heading.is_some();
+        }
+        let last = out.last_mut().expect("a piece was just pushed");
+        last.text.push_str(line);
+        if drafting && bare.starts_with("Open:") {
+            drafting = false;
+        }
+    }
+    out
+}
+
+/// `notes` with each `### Draft:` of `text` put in place of the same-titled draft (later
+/// duplicates dropped) or appended, and the rest of `text` appended; `None` when `text` has no
+/// draft heading, so a plain note stays an append.
+pub fn with_drafts(notes: &str, text: &str) -> Option<String> {
+    let incoming = pieces(text);
+    if !incoming.iter().any(|p| p.title.is_some()) {
+        return None;
+    }
+    let mut kept = pieces(notes);
+    let mut tail: Vec<Piece> = Vec::new();
+    for piece in incoming {
+        match &piece.title {
+            Some(title) => {
+                match kept.iter_mut().chain(tail.iter_mut()).find(|p| p.title.as_ref() == Some(title)) {
+                    Some(held) => held.text = piece.text,
+                    None => tail.push(piece),
+                }
+            }
+            None => tail.push(piece),
+        }
+    }
+    let mut seen: Vec<String> = Vec::new();
+    kept.retain(|p| match &p.title {
+        Some(t) if seen.contains(t) => false,
+        Some(t) => {
+            seen.push(t.clone());
+            true
+        }
+        None => true,
+    });
+    let mut parts: Vec<&str> = kept.iter().chain(&tail).map(|p| p.text.trim_end_matches('\n')).collect();
+    parts.retain(|p| !p.is_empty());
+    Some(parts.join("\n"))
+}
+
 /// The body of the Skuld request filed for a follow-up a dwarf filed: it asks for one draft headed
 /// with the follow-up's title verbatim, and carries the filer's text.
 pub fn review_request_body(followup: &str, title: &str, filer: &str, bound: &str, filer_text: &str) -> String {
@@ -1025,7 +1087,38 @@ pub fn lint(src: &dyn LintSource, cfg: &LintCfg) -> (i32, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{depends_prose, depends_refusal, draft_body, draft_depends_refusals, review_request_body, Draft};
+    use super::{depends_prose, depends_refusal, draft_body, draft_depends_refusals, review_request_body, with_drafts, Draft};
+
+    
+    #[test_id(tmuoozk)]
+    #[test]
+    fn a_second_write_of_one_title_replaces_the_first_in_place() {
+        let first = "### Draft: A\n\nold a\n\nOpen: x\n### Draft: B\n\nb text\nOpen: y";
+        let merged = with_drafts(first, "### Draft: A\n\nnew a\n\nOpen: z").unwrap();
+        assert_eq!(merged, "### Draft: A\n\nnew a\n\nOpen: z\n### Draft: B\n\nb text\nOpen: y");
+        assert!(!merged.contains("old a"));
+    }
+
+    
+    #[test_id(tfxsh4v)]
+    #[test]
+    fn two_titles_are_both_held_and_trailing_text_and_duplicates_are_handled() {
+        let merged = with_drafts("### Draft: A\n\na1", "### Draft: B\n\nb1").unwrap();
+        assert_eq!(merged, "### Draft: A\n\na1\n### Draft: B\n\nb1");
+        let dup = "### Draft: A\n\na1\nOpen: o\nkept note\n### Draft: A\n\na2";
+        let merged = with_drafts(dup, "### Draft: A\n\na3\nOpen: p").unwrap();
+        assert_eq!(merged, "### Draft: A\n\na3\nOpen: p\nkept note");
+    }
+
+    
+    #[test_id(t6isv9q)]
+    #[test]
+    fn a_draft_ends_before_a_harness_note_and_a_plain_note_is_not_merged() {
+        let notes = "### Draft: A\n\na1\nSubmitted: work committed on branch x";
+        let merged = with_drafts(notes, "### Draft: A\n\na2").unwrap();
+        assert_eq!(merged, "### Draft: A\n\na2\nSubmitted: work committed on branch x");
+        assert_eq!(with_drafts(notes, "just a note\n## Draft: not a heading"), None);
+    }
 
     #[test_id(t7mmyaf)]
     #[test]
