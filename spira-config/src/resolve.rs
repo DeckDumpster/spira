@@ -942,10 +942,6 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
 
     // 17-19. Rebase / certify literals.
     set!(
-        "SPIRA_CERTIFY_SUITES",
-        resolve_colon("SPIRA_CERTIFY_SUITES", env, &toml_map, ok_str!("on")).map_err(ResolveError::Registry)?
-    );
-    set!(
         "SPIRA_REBASE_DECOMPOSE_FILES",
         resolve_colon("SPIRA_REBASE_DECOMPOSE_FILES", env, &toml_map, ok_str!("4"))
             .map_err(ResolveError::Registry)?
