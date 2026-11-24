@@ -103,11 +103,14 @@ Passes only if all hold, and reports every failure, not just the first:
   filled) exists, and the program each one runs is executable;
 * `bin/spira-lc`'s symbol table (`.symtab`) carries a symbol under `spira_lc::` (v0-demangled; `main` itself is inlined, its closures remain) and `sqlite3_step`, so a
   release built with function names stripped is refused;
+* every runtime-tier program in `spira/deps.toml` resolves to an executable on the release's
+  own PATH, and meets `version_min` from its store directory name when one is set
+  (`deps_check`; files only, nothing is started; skipped with `--no-pre-activate`);
 * the release's own `spira/pre-activate.sh <release>` passes (skip with
   `--no-pre-activate`; a release that has none is a failure).
 
-**pre-activate's environment (sp-vrn3v).** `pre-activate.sh`'s `deps` check resolves every
-release-tier binary with `command -v`, so it runs with `SPIRA_RELEASE` and `PATH` set from
+**pre-activate's environment (sp-vrn3v).** The dependency check and `pre-activate.sh` resolve
+binaries against a PATH built from the release, so both run with `SPIRA_RELEASE` and `PATH` set from
 the release **under verification** — `<rel>/bin:<rel>/spira:<system dirs><tail>`
 (`release_path_with_tail`, the box's own tool tail from `Config::path_tail`) — never
 inherited from the caller. Before this, the child ran with whatever `PATH` the caller's

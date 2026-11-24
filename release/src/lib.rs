@@ -13,6 +13,7 @@ pub mod build;
 pub mod compat;
 pub mod config;
 pub mod config_delta;
+pub mod deps_check;
 pub mod fsutil;
 pub mod git;
 pub mod install;

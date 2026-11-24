@@ -9,9 +9,8 @@
 //!
 //! `deps.toml` itself (`spira/deps.toml`) is untouched by this bead: same fields, same file,
 //! same authority (doctor's own checks, `testenv/doctor-check.sh`).
-//! Only `version_min`/`version_probe` are left unread here — nothing in the five functions
-//! this module replaces ever read them either; the shipped-manifest test below parses
-//! `version_probe` itself.
+//! `version_min` is read for `release verify`; `version_probe` is read only by the
+//! shipped-manifest test below.
 
 use serde::Deserialize;
 use std::path::Path;
@@ -33,6 +32,8 @@ struct RawDep {
     absent: Option<String>,
     #[serde(default)]
     provider: Option<String>,
+    #[serde(default)]
+    version_min: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,6 +72,7 @@ pub struct Dep {
     pub purpose: String,
     pub absent: String,
     pub provider: String,
+    pub version_min: String,
 }
 
 /// Every `[[dep]]` in `deps.toml`, in file order — `toml`'s array-of-tables parse keeps the
@@ -97,6 +99,7 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
                 purpose: d.purpose.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_PURPOSE.to_string()),
                 absent: d.absent.unwrap_or_default(),
                 provider: d.provider.unwrap_or_default(),
+                version_min: d.version_min.map(|v| v.trim().to_string()).unwrap_or_default(),
             })
             .collect(),
         compat: raw.compat.into_iter().map(|c| Compat { name: c.name, alias: c.alias }).collect(),
@@ -146,18 +149,17 @@ fn is_executable_file(p: &Path) -> bool {
 /// `command -v <name>` over `path` (a colon-separated PATH string) — the same search
 /// [`crate::env_bootstrap::resolve_bd`] makes for `bd`, generalised to any name. An empty
 /// segment means the current directory, exactly as the shell resolves one.
-fn which(path: &str, name: &str) -> bool {
-    path.split(':').any(|dir| {
-        let dir = if dir.is_empty() { "." } else { dir };
-        is_executable_file(&Path::new(dir).join(name))
-    })
+pub fn which(path: &str, name: &str) -> Option<std::path::PathBuf> {
+    path.split(':')
+        .map(|dir| Path::new(if dir.is_empty() { "." } else { dir }).join(name))
+        .find(|p| is_executable_file(p))
 }
 
 /// `spira_require <bin> [<bin>...]` -> `Ok(())`, or `Err` holding the exact diagnostic text
 /// `conf.sh`'s own version printed to stderr: one line per missing program naming its
 /// purpose, then the PATH that was searched, then where to fix it.
 pub fn require(deps: &[Dep], bins: &[&str], path: &str, conf_file: &str) -> Result<(), String> {
-    let missing: Vec<&str> = bins.iter().copied().filter(|b| !which(path, b)).collect();
+    let missing: Vec<&str> = bins.iter().copied().filter(|b| which(path, b).is_none()).collect();
     if missing.is_empty() {
         return Ok(());
     }

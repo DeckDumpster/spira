@@ -2209,3 +2209,100 @@ fn the_shipped_store_server_unit_is_notify_with_a_finite_start_bound() {
     let bound = t.lines().find_map(|l| l.strip_prefix("TimeoutStartSec=")).expect("TimeoutStartSec");
     assert!(bound.parse::<u64>().is_ok_and(|n| n > 0), "{bound}");
 }
+
+// ---------------------------------------------------------------- verify: runtime dependencies from files
+
+fn dep_row(name: &str, version_min: &str) -> String {
+    format!("[[dep]]\nname = \"{name}\"\ntier = \"runtime\"\nversion_min = \"{version_min}\"\nversion_probe = \"{name} --version\"\n")
+}
+
+fn deps_problems(rel: &Path, path: &str) -> Vec<String> {
+    crate::deps_check::problems(rel, path)
+}
+
+fn stub(path: &Path, body: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    testkit::write_exe(path, body);
+}
+
+#[test_id(tbmnuzu)]
+#[test]
+fn verify_names_a_runtime_program_missing_from_the_release_path_as_a_deps_problem() {
+    let w = World::with_git(FakeGit::default());
+    let rel = w.cfg.releases.join(A);
+    file(&rel.join("spira/deps.toml"), &dep_row("spira-no-such-runtime-program", ""));
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(p.iter().any(|p| p.starts_with("deps: spira-no-such-runtime-program:")), "{p:?}");
+    stub(&rel.join("bin/spira-no-such-runtime-program"), "#!/bin/sh\n");
+    let m = Manifest { commit: A.into(), built: None, repo: None, entries: Manifest::scan(&rel).unwrap() };
+    fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+    let o = verify::VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(!p.iter().any(|p| p.starts_with("deps:")), "a program on the release's own bin resolves: {p:?}");
+    let o = verify::VerifyOpts { pre_activate: false, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, A, &o).unwrap();
+    assert!(!p.iter().any(|p| p.starts_with("deps:")), "--no-pre-activate skips the check: {p:?}");
+}
+
+#[test_id(tqeytds)]
+#[test]
+fn the_shipped_pre_activate_script_starts_no_version_probe() {
+    let script = spira_config::resolve::checkout_root_for_process().unwrap().join("spira/pre-activate.sh");
+    let text = fs::read_to_string(&script).unwrap();
+    assert!(text.contains("check_store"), "positive control: this is the script that runs");
+    assert!(!text.contains("version_probe"), "{}", script.display());
+}
+
+#[test_id(tbhmdm1)]
+#[test]
+fn deps_problems_never_start_the_program_they_resolve() {
+    let d = TempDir::new("deps-stub");
+    let marker = d.path().join("ran");
+    let bin = d.path().join("bin");
+    stub(&bin.join("slowtool"), &format!("#!/bin/sh\nsleep 30\ntouch {}\n", marker.display()));
+    let rel = d.path().join("rel");
+    file(&rel.join("spira/deps.toml"), &dep_row("slowtool", ""));
+    assert_eq!(deps_problems(&rel, &bin.display().to_string()), Vec::<String>::new());
+    assert!(!marker.exists());
+}
+
+#[test_id(th3nb25)]
+#[test]
+fn deps_problems_judge_version_min_by_the_store_directory_name() {
+    let d = TempDir::new("deps-store");
+    let store = d.path().join("store/abc123-slowtool-1.4.2");
+    stub(&store.join("bin/slowtool"), "#!/bin/sh\n");
+    let bin = d.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(store.join("bin/slowtool"), bin.join("slowtool")).unwrap();
+    let path = bin.display().to_string();
+    let rel = d.path().join("rel");
+    file(&rel.join("spira/deps.toml"), &dep_row("slowtool", "1.4"));
+    assert_eq!(deps_problems(&rel, &path), Vec::<String>::new());
+    file(&rel.join("spira/deps.toml"), &dep_row("slowtool", "1.10"));
+    let p = deps_problems(&rel, &path);
+    assert!(p.len() == 1 && p[0].starts_with("deps: slowtool:") && p[0].contains("1.4.2") && p[0].contains("spira.path"), "{p:?}");
+    let plain = d.path().join("plain");
+    stub(&plain.join("slowtool"), "#!/bin/sh\n");
+    let p = deps_problems(&rel, &plain.display().to_string());
+    assert!(p.len() == 1 && p[0].contains(&plain.join("slowtool").display().to_string()), "no recorded version names the path: {p:?}");
+}
+
+#[test_id(t74h76i)]
+#[test]
+fn deps_problems_refuse_a_dangling_link_and_an_unparseable_manifest() {
+    let d = TempDir::new("deps-bad");
+    let bin = d.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(d.path().join("gone"), bin.join("slowtool")).unwrap();
+    let rel = d.path().join("rel");
+    file(&rel.join("spira/deps.toml"), &dep_row("slowtool", ""));
+    let p = deps_problems(&rel, &bin.display().to_string());
+    assert!(p.len() == 1 && p[0].starts_with("deps: slowtool:"), "{p:?}");
+    file(&rel.join("spira/deps.toml"), "[[dep\n");
+    assert_eq!(deps_problems(&rel, &bin.display().to_string()).len(), 1);
+    assert_eq!(deps_problems(&d.path().join("none"), "").len(), 1, "unreadable is a problem");
+}

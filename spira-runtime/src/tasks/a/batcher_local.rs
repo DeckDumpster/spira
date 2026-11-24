@@ -1156,7 +1156,7 @@ pub fn land_output_file(batch: &str, run: u32) -> String {
 /// What the page for a refused landing says: the refusing line, the kept file, the next verbs.
 pub fn land_refused_detail(batch: &str, out: &str, kept: &str) -> String {
     let said = out.trim().lines().last().unwrap_or("no output");
-    format!("round {batch} is green and left open with its members; the landing was refused: {said}; output kept at {kept}; eject the member it names with `queue round eject {batch} <member>`, then `queue round certify {batch}` and `queue round land {batch}`")
+    format!("round {batch} is green and left open with its members; the landing was refused: {said}; output kept at {kept}; run `queue round land {batch}` again, unchanged; only if the refusing line names a member's change, eject it with `queue round eject {batch} <member>`, then `queue round certify {batch}` and `queue round land {batch}`")
 }
 
 /// Why a certify leg that judged nothing leaves its round open: its last line and the kept file.
@@ -2563,7 +2563,7 @@ impl Machine<'_> {
         self.certify();
     }
 
-    /// `round land` refused a green round: the refusal names a member, not the round, so the round
+    /// `round land` refused a green round: the refusal may name a member's change or the host, so the round
     /// stays open with all of them, the output is kept, and a person is paged with the refusing line.
     fn land_refused(&mut self, body: &str) {
         let batch = self.rc.batch.clone().unwrap_or_default();
