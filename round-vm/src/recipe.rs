@@ -25,6 +25,20 @@ const INPUTS: [(&str, &str); 6] = [
     ("Containerfile", include_str!("../../spira/testenv/Containerfile")),
 ];
 
+/// The files that define the testenv image tag function, as this binary embeds them, by
+/// their path in a source tree.
+pub const TAG_FUNCTION: [(&str, &str); 2] = [
+    ("testenv/src/container.rs", include_str!("../../testenv/src/container.rs")),
+    ("spira-config/src/recipe.rs", include_str!("../../spira-config/src/recipe.rs")),
+];
+
+/// The first tag-function file whose copy at the commit (`at_commit` answers by tree path)
+/// differs from the embedded one: the `testenv` this host runs would name that tree's image
+/// by a different function than the tree itself does.
+pub fn changed_tag_function<'a>(embedded: &[(&'a str, &str)], at_commit: &dyn Fn(&str) -> Option<String>) -> Option<&'a str> {
+    embedded.iter().find(|(path, text)| at_commit(path).as_deref() != Some(*text)).map(|(path, _)| *path)
+}
+
 /// Where each input sits in a source tree, in `INPUTS` order.
 const TREE_PATHS: [&str; 6] = [
     "round-vm/src/template.sh",
@@ -95,6 +109,17 @@ pub fn sha_of_tree(root: &std::path::Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tpob13y)]
+    #[test]
+    fn a_changed_tag_function_file_is_named_and_an_unchanged_or_unreadable_one_is_told_apart() {
+        let emb = [("a.rs", "one"), ("b.rs", "two")];
+        let same = |p: &str| Some(if p == "a.rs" { "one" } else { "two" }.to_string());
+        assert_eq!(crate::recipe::changed_tag_function(&emb, &same), None);
+        let b_changed = |p: &str| Some(if p == "a.rs" { "one" } else { "TWO" }.to_string());
+        assert_eq!(crate::recipe::changed_tag_function(&emb, &b_changed), Some("b.rs"));
+        assert_eq!(crate::recipe::changed_tag_function(&emb, &|_| None), Some("a.rs"));
+    }
+
     #[test_id(tqmrp6w)]
     #[test]
     fn the_hash_is_a_stable_sha256_hex_digest() {

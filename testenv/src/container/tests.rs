@@ -44,6 +44,8 @@ struct Fake {
     copies: RefCell<Vec<(PathBuf, PathBuf)>>,
     contexts: RefCell<Vec<PathBuf>>,
     removed_trees: RefCell<Vec<PathBuf>>,
+    /// What `landing_closure` answers; `None` (the default) is "no registered repository".
+    landing: RefCell<Option<Result<PathBuf, String>>>,
     /// The files present at the moment `build` was called.
     files_at_build: RefCell<Vec<PathBuf>>,
 }
@@ -177,6 +179,9 @@ impl Host for Fake {
     fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf> {
         self.build_spira_config_calls.borrow_mut().push(repo_root.to_path_buf());
         self.build_spira_config_result.borrow().clone()
+    }
+    fn landing_closure(&self) -> Option<Result<PathBuf, String>> {
+        self.landing.borrow().clone()
     }
     fn make_context(&self, src: &Path) -> Result<PathBuf, String> {
         self.contexts.borrow_mut().push(src.to_path_buf());
@@ -1618,7 +1623,7 @@ fn an_absent_image_in_a_bounded_trial_names_itself_and_the_build_command() {
     assert_eq!(Driver { host: &f, conf: &c }.acquire_image(false), None);
     let e = f.errs();
     assert!(e.contains("IMAGE-ABSENT localhost/spira-testenv:"), "{e}");
-    assert!(e.contains("`testenv container image --tree <checkout>`"), "{e}");
+    assert!(e.contains(&format!("`{HAND_BUILD}`")), "{e}");
 }
 
 // ---- the image comes from the tree under test, not the installed release (sp-etl70a) ----
@@ -1688,4 +1693,87 @@ fn image_builds_the_trees_own_tag_and_a_malformed_tree_flag_is_usage() {
     assert_eq!(f.out.borrow().last().cloned(), Some(format!("localhost/spira-testenv:{want}")));
     assert_eq!(d.dispatch(&args(&["tag", "--tree"])), 1);
     assert_eq!(d.dispatch(&args(&["tag", "--tree", ""])), 1);
+}
+
+// ---- a prune keeps the image the landing ref asks for (sp-klmt10) --------------------
+
+fn images_json(rows: &[(&str, &str, i64)]) -> String {
+    let v: Vec<String> = rows
+        .iter()
+        .map(|(id, tag, created)| format!("{{\"Id\":\"{id}\",\"Names\":[\"localhost/spira-testenv:{tag}\"],\"Size\":1,\"Created\":{created}}}"))
+        .collect();
+    format!("[{}]", v.join(","))
+}
+
+fn store_with(f: &Fake, rows: &[(&str, &str, i64)]) {
+    f.when(&["ps"], 0, "[]");
+    f.when(&["images", "--format", "json", "--filter", "reference=localhost/spira-testenv"], 0, &images_json(rows));
+    f.when(&["images", "--format", "json", "--filter", "dangling=true"], 0, "[]");
+}
+
+fn removed(f: &Fake) -> Vec<String> {
+    f.calls_with("rmi").iter().map(|c| c[1].clone()).collect()
+}
+
+#[test_id(t8gxk2z)]
+#[test]
+fn a_prune_keeps_the_landing_refs_image_though_it_is_older_than_the_predecessor() {
+    let f = Fake::new();
+    store_with(&f, &[("new", "n", 400), ("pred", "p", 300), ("mainimg", "m", 100), ("fourth", "f", 200)]);
+    let c = conf("h");
+    let landing = Landing::Image("localhost/spira-testenv:m".into());
+    Driver { host: &f, conf: &c }.with_store(|st| st.prune_images("localhost/spira-testenv:n", &landing, None));
+    assert_eq!(removed(&f), ["fourth"]);
+}
+
+#[test_id(tpujyi1)]
+#[test]
+fn a_prune_removes_no_tagged_image_when_the_landing_image_is_absent_or_unknown() {
+    for landing in [Landing::Image("localhost/spira-testenv:gone".into()), Landing::Unknown] {
+        let f = Fake::new();
+        store_with(&f, &[("new", "n", 400), ("pred", "p", 300), ("old", "o", 100), ("older", "q", 50)]);
+        let c = conf("h");
+        Driver { host: &f, conf: &c }.with_store(|st| st.prune_images("localhost/spira-testenv:n", &landing, None));
+        assert!(removed(&f).is_empty(), "{landing:?}: {:?}", removed(&f));
+    }
+}
+
+#[test_id(t1a6npz)]
+#[test]
+fn a_prune_with_no_registered_repository_keeps_only_current_and_predecessor() {
+    let f = Fake::new();
+    store_with(&f, &[("new", "n", 400), ("pred", "p", 300), ("old", "o", 100)]);
+    let c = conf("h");
+    Driver { host: &f, conf: &c }.with_store(|st| st.prune_images("localhost/spira-testenv:n", &Landing::Unregistered, None));
+    assert_eq!(removed(&f), ["old"]);
+}
+
+#[test_id(tecudcq)]
+#[test]
+fn the_landing_image_is_the_tag_of_the_landing_refs_own_closure_and_an_unreadable_one_is_unknown() {
+    let f = Fake::new();
+    harness(&f, "land");
+    let c = conf("h");
+    *f.landing.borrow_mut() = Some(Ok(PathBuf::from("land")));
+    let tag = Driver { host: &f, conf: &Conf { harness: Some("land".into()), ..c.clone() } }.image_tag().unwrap();
+    assert_eq!(Driver { host: &f, conf: &c }.landing(), Landing::Image(format!("localhost/spira-testenv:{tag}")));
+    assert_eq!(*f.removed_trees.borrow(), vec![PathBuf::from("land")], "the scratch closure is removed");
+    *f.landing.borrow_mut() = Some(Ok(PathBuf::from("empty")));
+    assert_eq!(Driver { host: &f, conf: &c }.landing(), Landing::Unknown);
+    *f.landing.borrow_mut() = Some(Err("no ref".into()));
+    assert_eq!(Driver { host: &f, conf: &c }.landing(), Landing::Unknown);
+    *f.landing.borrow_mut() = None;
+    assert_eq!(Driver { host: &f, conf: &c }.landing(), Landing::Unregistered);
+}
+
+#[test_id(tgedrbw)]
+#[test]
+fn cargos_json_names_the_executable_wherever_the_target_directory_is() {
+    let out = concat!(
+        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"serde\"},\"executable\":null}\n",
+        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"spira-config\"},\"executable\":\"t/dir/release/spira-config\"}\n",
+        "{\"reason\":\"build-finished\",\"success\":true}\n"
+    );
+    assert_eq!(executable_from_cargo_json(out, "spira-config"), Some(PathBuf::from("t/dir/release/spira-config")));
+    assert_eq!(executable_from_cargo_json(out, "other"), None);
 }

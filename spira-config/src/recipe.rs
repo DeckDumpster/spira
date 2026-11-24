@@ -20,6 +20,9 @@ pub const TAG_INPUTS: [&str; 5] = [
     "spira-config/src/recipe.rs",
 ];
 
+/// The command, run inside a checkout, that builds the image a round will ask for of it.
+pub const HAND_BUILD: &str = "cargo run -q --locked --release -p testenv -- container image --tree .";
+
 pub fn touches_tag_input<S: AsRef<str>>(changed: &[S]) -> bool {
     changed.iter().any(|p| TAG_INPUTS.contains(&p.as_ref()))
 }

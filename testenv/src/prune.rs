@@ -19,6 +19,16 @@ use std::time::UNIX_EPOCH;
 /// The repository every testenv image is tagged under.
 pub const IMAGE_REPO: &str = "localhost/spira-testenv";
 
+/// The image the home repository's landing ref asks for, which a prune must not remove.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Landing {
+    /// No registered repository: the keep-two rule alone.
+    Unregistered,
+    /// A registered repository whose tag could not be computed: no tagged image is removed.
+    Unknown,
+    Image(String),
+}
+
 pub struct Store<'a> {
     /// `podman <args>`: rc and stdout.
     pub podman: &'a dyn Fn(&[String]) -> (i32, String),
@@ -146,8 +156,9 @@ impl Store<'_> {
     /// every testenv image except `current` and the newest other one, then the dangling
     /// images created at or after `since` (a build's own start, in epoch seconds, so a
     /// build removes its own leftovers and never another build's in flight; None = every
-    /// dangling image), skipping anything a container uses. Returns the bytes removed.
-    pub fn prune_images(&self, current: &str, since: Option<i64>) -> u64 {
+    /// dangling image), skipping anything a container uses. The `landing` image is kept
+    /// besides those two. Returns the bytes removed.
+    pub fn prune_images(&self, current: &str, landing: &Landing, since: Option<i64>) -> u64 {
         let Some(used) = self.images_in_use() else {
             (self.log)("testenv: prune: podman cannot list containers — removing no image");
             return 0;
@@ -172,9 +183,38 @@ impl Store<'_> {
         let cur_id = tagged.remove(cur).id;
         tagged.retain(|i| i.id != cur_id);
         tagged.sort_by_key(|i| std::cmp::Reverse(i.created));
+        let landing_id = match landing {
+            Landing::Unregistered => None,
+            Landing::Unknown => {
+                (self.log)("testenv: prune: the landing ref's image tag cannot be computed — removing no tagged image");
+                tagged.clear();
+                None
+            }
+            Landing::Image(r) => match tagged.iter().find(|i| names(i).iter().any(|n| n == r)) {
+                Some(i) => Some(i.id.clone()),
+                None if r == current => None,
+                None => {
+                    (self.log)(&format!(
+                        "testenv: prune: the landing ref's image {r} is not in the store — removing no tagged image"
+                    ));
+                    tagged.clear();
+                    None
+                }
+            },
+        };
         let mut freed = 0;
-        for (n, img) in tagged.iter().enumerate() {
+        let mut older = 0;
+        for img in tagged.iter() {
             let label = names(img).join(",");
+            if landing_id.as_deref() == Some(img.id.as_str()) {
+                (self.log)(&format!(
+                    "testenv: prune: kept {label} ({}) — the image the landing ref asks for",
+                    short(&img.id)
+                ));
+                continue;
+            }
+            let n = older;
+            older += 1;
             if n == 0 {
                 (self.log)(&format!(
                     "testenv: prune: kept {label} ({}) — the predecessor of {current}",

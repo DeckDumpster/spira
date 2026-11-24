@@ -9711,7 +9711,7 @@ fn open_skips_by_name_a_member_whose_image_nothing_holds_and_cuts_the_rest() {
     assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
     let o = t.out();
     let line = o.lines().find(|l| l.starts_with("refused=sp-a kind=image-absent")).unwrap_or_else(|| panic!("{o}"));
-    assert!(line.contains("localhost/spira-testenv:tagz") && line.contains("testenv container image --tree"), "{line}");
+    assert!(line.contains("localhost/spira-testenv:tagz") && line.contains(spira_config::recipe::HAND_BUILD), "{line}");
     assert!(!o.lines().any(|l| l.starts_with("refused=sp-b")), "the others are cut: {o}");
     assert!(t.scripts.calls.borrow().iter().any(|c| c == "ami-for tree-recipe"), "the AMI was asked after the host");
 }

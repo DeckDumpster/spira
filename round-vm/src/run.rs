@@ -1683,6 +1683,16 @@ impl Host for GitHost {
     }
 
     fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String> {
+        let show = |p: &str| {
+            let o = command("git").args(["-C", &tree.to_string_lossy(), "show", &format!("{commit}:{p}")]).output().ok().filter(|o| o.status.success())?;
+            String::from_utf8(o.stdout).ok()
+        };
+        if let Some(path) = crate::recipe::changed_tag_function(&crate::recipe::TAG_FUNCTION, &show) {
+            return Err(format!(
+                "cannot tell: {commit} differs from this host's testenv in {path}, which names the image; build it from a checkout of {commit} with `{}`",
+                spira_config::recipe::HAND_BUILD
+            ));
+        }
         let scratch = self.state_dir.join(format!(".tag.{}", std::process::id()));
         let _ = fs::remove_dir_all(&scratch);
         fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;

@@ -1837,8 +1837,8 @@ fn image_absent(w: &World, repo: &Path, wt: &Path, base: &str, m: &Member) -> Op
         &m.id,
         "image-absent",
         format!(
-            "{}: {} needs testenv image localhost/spira-testenv:{tag}, which neither this host nor a round AMI holds, and no round builds one — not admitted; build it with `testenv container image --tree <checkout of {}>`",
-            m.id, m.tip, m.tip
+            "{}: {} needs testenv image localhost/spira-testenv:{tag}, which neither this host nor a round AMI holds, and no round builds one — not admitted; build it from a checkout of {} with `{}`",
+            m.id, m.tip, m.tip, spira_config::recipe::HAND_BUILD
         ),
     ))
 }
