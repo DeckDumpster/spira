@@ -57,7 +57,7 @@
 //! | Observing | head == forge / unpublished / stopped | Idle | — |
 //! | Observing | diverged or cannot check | Refused | `publish.notify` (`ops/helpers.rs:346`) |
 //! | Observing | red marker on same head, fix-forward live | Idle | — (wait, `:166-174`) |
-//! | Observing | act ∉ {Wait,Parked,Alarm}, `publish_mode≠push`, round holds hypervisor, ticks < max | Deferred | carry `deferred_ticks+1` (at most once per half cadence; a push repo is never deferred) |
+//! | Observing | `Settle::Rerun` / `Supersede` / `StartCi`, `publish_mode≠push`, round holds hypervisor, ticks < max | Deferred | carry `deferred_ticks+1` (at most once per half cadence; a push repo is never deferred; `Open` and `Retire` run at once) |
 //! | Observing | `Settle::Wait` / `Parked` | Open / Alarmed | — |
 //! | Observing | `Settle::Wait`, CI green | Merging | `publish.settle` (sp-hw3qio) |
 //! | Observing | `Settle::Rerun` | Rerun | `publish.rerun` (`:666`); `landing.log` gets `PUBLISH_RERUN` (run, cause, market) when started, `PUBLISH_RERUN_REFUSED` (run, why) when not; a refusal is `effect.failed` and leaves `rerun` unset |
@@ -69,6 +69,7 @@
 //! | Opening | `pr_create` succeeded | Open | `publish.record` (`:305`) |
 //! | Opening | any `effect.failed` | Refused | — (next tick re-observes) |
 //! | Deferred | tick | Observing | — |
+//! | Opening / Superseding / Open | none of the state's own acts (`push_branch`, `push_forge`, `pr_create` / `pr_close` / `start_ci`) in flight | Observing | — (its outcome was lost; decided in the same pass, so a PR already created is adopted and a lost push is pushed again) |
 //! | Open | `queue.step` settles green/red | Idle | — (owned by [[queue-step]]) |
 //! | Adopting | `publish.record` succeeded | Merging | `publish.settle` (sp-hw3qio) |
 //! | Adopting | `publish.record` failed / timed out, or tick | Refused / Observing | — (sp-hw3qio) |
@@ -129,7 +130,7 @@ use queue::ops::publish as core;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
-use super::batcher_local::{handle_p2, interests, table_step, On, P2};
+use super::batcher_local::{flying_by_repo, handle_p2, interests, table_step, On, P2};
 use super::kit::{self, Act, Cadence, Shape};
 use super::queue_step::admits;
 
@@ -259,6 +260,10 @@ pub struct Repo {
     /// The probe's clock, so `decide` stays pure.
     #[serde(default)]
     pub observed_at: u64,
+    /// The effects of this task asked for this repo and not yet answered, as the scheduler holds
+    /// them; `None` when the handler could not say.
+    #[serde(default)]
+    pub in_flight: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,6 +315,8 @@ pub enum Trigger {
     QueueStepSettled,
     /// `Settle::Wait` on a PR whose CI is green: this task merges it (sp-hw3qio).
     SettleGreen,
+    /// The effect the state waits on is no longer in flight: its outcome was lost.
+    ActGone,
 }
 
 pub static TABLE: &[(State, Trigger, State)] = &[
@@ -354,6 +361,9 @@ pub static TABLE: &[(State, Trigger, State)] = &[
     (State::Merging, Trigger::EffectSucceeded, State::Idle),
     (State::Merging, Trigger::EffectFailed, State::Refused),
     (State::Merging, Trigger::Tick, State::Observing),
+    (State::Opening, Trigger::ActGone, State::Observing),
+    (State::Superseding, Trigger::ActGone, State::Observing),
+    (State::Open, Trigger::ActGone, State::Observing),
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -505,12 +515,26 @@ impl Machine<'_> {
         self.acts.push(Pub { pr, key: format!("{}/{pr}/no-run-paged", self.repo), record: [("no_run_paged".to_string(), "1".to_string())].into(), ..Pub::on(self.repo) }.act(RECORD));
     }
 
+    /// The state waits on an act's outcome and the scheduler holds none of its acts in flight:
+    /// the request died with a restart, and no outcome will come.
+    fn act_gone(&self, r: &Repo) -> bool {
+        let own: &[&str] = match self.rc.state {
+            State::Opening => &[PUSH_BRANCH, PUSH_FORGE, PR_CREATE],
+            State::Superseding => &[PR_CLOSE],
+            State::Open => &[START_CI],
+            _ => return false,
+        };
+        r.in_flight.as_ref().is_some_and(|f| !f.iter().any(|e| own.contains(&e.as_str())))
+    }
+
     fn observe(&mut self, policy: &Policy, r: &Repo) {
-        // Adopting and Merging too: both acts are idempotent, and one whose outcome was lost
-        // (a restart, a deadline) must not hold the repo forever (sp-hw3qio).
-        if !matches!(self.rc.state, State::Idle | State::Deferred | State::Refused | State::Rerun | State::Alarmed | State::Adopting | State::Merging) {
+        if self.act_gone(r) {
+            self.go(Trigger::ActGone);
+        } else if !matches!(self.rc.state, State::Idle | State::Deferred | State::Refused | State::Rerun | State::Alarmed | State::Adopting | State::Merging) {
             return;
         }
+        // Adopting and Merging too: both acts are idempotent, and one whose outcome was lost
+        // (a restart, a deadline) must not hold the repo forever (sp-hw3qio).
         self.go(Trigger::Tick);
         let rec = r.publish_rec.as_ref();
         // `:39-50`, `:54`: a repo that does not publish, or whose publish lane is stopped.
@@ -538,8 +562,8 @@ impl Machine<'_> {
             return;
         }
         let act = settle_with(policy, rec, r.observed_at, rec.map(|_| &r.pr));
-        // `:506-527`: an act that writes is deferred while a round holds the hypervisor.
-        if !matches!(act, Settle::Wait | Settle::Parked | Settle::Alarm) && r.round_holds_hypervisor && r.publish_mode != "push" && self.rc.deferred_ticks < policy.defer_max {
+        // `:506-527`: a rerun, a supersede or a CI start waits behind a round on the hypervisor.
+        if matches!(act, Settle::Rerun | Settle::Supersede | Settle::StartCi) && r.round_holds_hypervisor && r.publish_mode != "push" && self.rc.deferred_ticks < policy.defer_max {
             self.go(Trigger::RoundHoldsHypervisor);
             // A wake observes every repo; only a deferral a cadence apart spends the budget.
             let first = self.rc.deferred_ticks == 0;
@@ -785,7 +809,15 @@ impl Handler for Publish {
     }
 
     fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let observed = |carry: &Carry, body: &str| serde_json::from_str::<Snapshot>(body).ok().map(|snap| decide_with(&self.policy, carry, &snap));
+        let observed = |carry: &Carry, body: &str| {
+            serde_json::from_str::<Snapshot>(body).ok().map(|mut snap| {
+                let mut flying = flying_by_repo(view, &ev.stream, |input| serde_json::from_str::<Pub>(input).ok().map(|p| p.repo).filter(|r| !r.is_empty()));
+                for (name, repo) in &mut snap.repos {
+                    repo.in_flight = Some(flying.remove(name).unwrap_or_default());
+                }
+                decide_with(&self.policy, carry, &snap)
+            })
+        };
         let outcome = |carry: &Carry, effect: &str, ok: bool, body: &str, input: &str| match serde_json::from_str::<Pub>(input) {
             Ok(p) => on_outcome(carry, effect, ok, body, &p),
             Err(_) => (carry.clone(), vec![]),
@@ -886,7 +918,7 @@ pub mod edge {
                 super::super::queue_step::edge::lc(e).answer(&["show", &bead]).ok().is_some_and(|o| super::fix_forward_live(&o))
             });
             let stopped = spira_config::scoped_stop::stop_for(&e.world.run_dir, &name, "publish").is_some();
-            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, pr_word, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds, observed_at: spira_config::vtime::now_epoch() });
+            snap.repos.insert(name.clone(), Repo { mode: "queue.local".into(), publish_mode: publish_mode.into(), unpublished: target.is_none(), stopped, publish_rec, pr, pr_word, open_publish_prs, forge_sha, head_sha, diverged, red_marker, fix_forward_live, round_holds_hypervisor: holds, observed_at: spira_config::vtime::now_epoch(), in_flight: None });
         }
         json(&snap)
     }

@@ -39,6 +39,11 @@ fn idle() -> Snapshot {
     with(repo(Pr::Open { ci: "pending".into(), behind: false, tries: 0 }))
 }
 
+/// The publish PR is red and behind: supersede it.
+fn behind() -> Repo {
+    repo(Pr::Open { ci: "red".into(), behind: true, tries: 0 })
+}
+
 /// The publish PR is gone: retire it and open the next.
 fn busy() -> Snapshot {
     with(repo(Pr::Gone))
@@ -291,7 +296,7 @@ fn t5_untested_reruns_then_alarms() {
 #[test_id(tjw6j9b)]
 #[test]
 fn t5_a_round_on_the_hypervisor_defers() {
-    let held = with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() });
+    let held = with(Repo { round_holds_hypervisor: true, ..behind() });
     let (carry, acts) = decide(&Carry::default(), &held);
     assert!(acts.is_empty(), "{acts:?}");
     assert_eq!((carry.repos["spira"].state, carry.repos["spira"].deferred_ticks), (State::Deferred, 1));
@@ -401,7 +406,7 @@ fn at_work() -> TaskRig {
 #[test_id(t8tv5os)]
 #[test]
 fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
-    let mut held = rig(1, with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() }));
+    let mut held = rig(1, with(Repo { round_holds_hypervisor: true, ..behind() }));
     held.advance(CADENCE_MS).unwrap();
     let rows = kit::assert_kept_as_rows(&held, NAME);
     assert!(rows.iter().any(|k| k.starts_with("repos/")), "{rows:?}");
@@ -448,7 +453,7 @@ fn push_repo() -> Repo {
 }
 
 fn pr_repo() -> Repo {
-    Repo { round_holds_hypervisor: true, ..repo(Pr::Gone) }
+    Repo { round_holds_hypervisor: true, ..behind() }
 }
 
 #[test_id(t6ire33)]
@@ -516,4 +521,122 @@ fn a_refused_rerun_writes_its_line_and_leaves_the_record_unmarked() {
     let (out, log, flag) = rerun_world(3, "no input changed\nmore");
     assert!(out.is_err() && flag.is_none(), "{out:?} {flag:?}");
     assert!(log.contains("QUEUE PUBLISH_RERUN_REFUSED ") && log.contains("run=9 why=code=3 no input changed") && !log.contains("more"), "{log}");
+}
+
+type World = std::sync::Arc<std::sync::Mutex<Snapshot>>;
+
+fn lost_world(world: Snapshot) -> World {
+    std::sync::Arc::new(std::sync::Mutex::new(Snapshot { repos: world.repos.into_iter().map(|(n, r)| (n, Repo { round_holds_hypervisor: false, ..r })).collect(), ..world }))
+}
+
+fn lost_rig(world: &World, reg: fn() -> runtime::event::Registration, hang: &str) -> runtime::taskrig::TaskRig {
+    let w = world.clone();
+    let mut r = runtime::taskrig::TaskRig::new(1, reg()).unwrap().hanging(hang).double(OBSERVE, move |_| Ok(serde_json::to_string(&*w.lock().unwrap()).unwrap()));
+    for e in EFFECTS.iter().filter(|e| **e != OBSERVE) {
+        r = r.double(e, |_| Ok("{}".into()));
+    }
+    r
+}
+
+fn tick(r: &mut runtime::taskrig::TaskRig) {
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    kit::assert_unpoisoned(r, STREAM);
+}
+
+fn asked(r: &runtime::taskrig::TaskRig, name: &str) -> usize {
+    r.requested().iter().filter(|q| q.name == name).count()
+}
+
+fn landing(round: bool) -> Repo {
+    Repo { publish_rec: None, open_publish_prs: vec![], round_holds_hypervisor: round, ..repo(Pr::Gone) }
+}
+
+/// A push lost at a restart is pushed again on the next pass, and the publish then settles.
+#[test_id(tbq2f5x)]
+#[test]
+fn a_push_lost_at_a_restart_is_pushed_again_and_the_green_pr_then_settles() {
+    let world = lost_world(with(landing(true)));
+    let mut r = lost_rig(&world, registration, PUSH_BRANCH);
+    tick(&mut r);
+    assert_eq!(asked(&r, PUSH_BRANCH), 1, "a landing opens past a round: {:?}", r.requested());
+    wake(&mut r);
+    assert_eq!(asked(&r, PUSH_BRANCH), 1, "a push in flight is waited for");
+    r.reopen(registration()).unwrap();
+    tick(&mut r);
+    assert_eq!((asked(&r, PUSH_BRANCH), asked(&r, PR_CREATE)), (2, 1), "{:?}", r.requested());
+    *world.lock().unwrap() = with(repo(Pr::Open { ci: "green".into(), behind: false, tries: 0 }));
+    wake(&mut r);
+    assert_eq!(asked(&r, SETTLE), 1, "{:?}", r.requested());
+}
+
+/// A PR created before its answer was lost is adopted, not created twice.
+#[test_id(tm9c1ue)]
+#[test]
+fn a_pr_created_before_its_answer_was_lost_is_adopted_not_created_again() {
+    let world = lost_world(with(landing(false)));
+    let mut r = lost_rig(&world, registration, PR_CREATE);
+    tick(&mut r);
+    assert_eq!(asked(&r, PR_CREATE), 1, "{:?}", r.requested());
+    r.reopen(registration()).unwrap();
+    world.lock().unwrap().repos.get_mut("spira").unwrap().open_publish_prs = vec![40];
+    tick(&mut r);
+    let records: Vec<_> = r.requested().iter().filter(|q| q.name == RECORD).collect();
+    assert!(records.len() == 1 && records[0].input.contains("adopt"), "{:?}", r.requested());
+    assert_eq!(asked(&r, PR_CREATE), 1, "no second create");
+}
+
+/// A close lost at a restart, its PR since gone, goes on to push the next publish.
+#[test_id(tr4k7zd)]
+#[test]
+fn a_close_lost_at_a_restart_goes_on_to_push_once_the_pr_is_gone() {
+    let world = lost_world(with(repo(Pr::Open { ci: "red".into(), behind: true, tries: 0 })));
+    let mut r = lost_rig(&world, registration, PR_CLOSE);
+    tick(&mut r);
+    assert_eq!(asked(&r, PR_CLOSE), 1, "{:?}", r.requested());
+    r.reopen(registration()).unwrap();
+    world.lock().unwrap().repos.get_mut("spira").unwrap().pr = Pr::Gone;
+    tick(&mut r);
+    assert_eq!(asked(&r, PUSH_BRANCH), 1, "{:?}", r.requested());
+}
+
+fn ci_bound() -> runtime::event::Registration {
+    Publish::new([("SPIRA_PUBLISH_NO_RUN_SECS".to_string(), "600".to_string())].into()).registration()
+}
+
+/// CI started and answered, the PR since green: the next pass settles it instead of waiting in Open.
+#[test_id(tw8n3ph)]
+#[test]
+fn a_started_ci_that_goes_green_is_settled_on_the_next_pass() {
+    let world = lost_world(no_run_repo(false, 0));
+    let mut r = lost_rig(&world, ci_bound, "none");
+    tick(&mut r);
+    assert_eq!(asked(&r, START_CI), 1, "{:?}", r.requested());
+    assert_eq!(carried(&r).repos["spira"].state, State::Open);
+    let green = Repo { pr: Pr::Open { ci: "green".into(), behind: false, tries: 0 }, ..no_run_repo(false, 5_000).repos["spira"].clone() };
+    world.lock().unwrap().repos.insert("spira".into(), green);
+    tick(&mut r);
+    assert_eq!(asked(&r, SETTLE), 1, "{:?}", r.requested());
+}
+
+/// An Opening carry with nothing in flight and the forge already at head is Idle in one pass.
+#[test_id(tz1v6ya)]
+#[test]
+fn an_opening_carry_with_nothing_in_flight_and_the_forge_at_head_is_idle_in_one_pass() {
+    let world = lost_world(with(landing(false)));
+    let mut r = lost_rig(&world, registration, PUSH_BRANCH);
+    tick(&mut r);
+    assert_eq!(carried(&r).repos["spira"].state, State::Opening);
+    r.reopen(registration()).unwrap();
+    world.lock().unwrap().repos.get_mut("spira").unwrap().forge_sha = Some("h1".into());
+    tick(&mut r);
+    assert!(carried(&r).repos.get("spira").is_none_or(|rc| rc.state == State::Idle), "{:?}", carried(&r));
+}
+
+/// A landing opens at once with a round open; only a rerun, a supersede or a CI start waits.
+#[test_id(tk5s0gc)]
+#[test]
+fn a_landing_with_a_round_open_opens_at_once() {
+    let (carry, acts) = decide(&Carry::default(), &with(landing(true)));
+    assert_eq!(effects(&acts), [PUSH_BRANCH], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opening);
 }
