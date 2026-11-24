@@ -243,6 +243,7 @@ struct AttributionTrace {
     target: String,
     probes: u32,
     suspects: Vec<String>,
+    suspects_before_last: Vec<String>,
     last: Option<ProbeFacts>,
 }
 
@@ -255,10 +256,22 @@ impl AttributionTrace {
 
     fn record(&mut self, facts: ProbeFacts) {
         self.probes += 1;
+        self.suspects_before_last = self.suspects.clone();
         if facts.verdict == "red" && (self.suspects.is_empty() || facts.members.len() < self.suspects.len()) {
             self.suspects = facts.members.clone();
         }
         self.last = Some(facts);
+    }
+
+    /// Turns the last probe into a cannot-tell: it still counts once, and its members are no suspects.
+    fn untell(&mut self, why: &str) -> Option<ProbeFacts> {
+        let last = self.last.as_mut()?;
+        if last.verdict == "red" {
+            self.suspects = std::mem::take(&mut self.suspects_before_last);
+        }
+        last.verdict = "cannot-tell";
+        last.why = why.to_string();
+        Some(last.clone())
     }
 
     /// `progress` with the `attribution` key set to this trace; every other key is kept.
@@ -1025,6 +1038,14 @@ impl<'a> VmRunner<'a> {
         self.publish_attribution();
     }
 
+    fn untell_last_probe(&mut self, why: &str) {
+        let Some(facts) = self.trace.untell(why) else { return };
+        println!("{}", facts.line());
+        let on = if facts.members.is_empty() { "base".to_string() } else { facts.members.join(",") };
+        self.probe_faults.push(format!("{} {} [{on}]: {}", facts.job, facts.build, facts.why));
+        self.publish_attribution();
+    }
+
     fn publish_attribution(&self) {
         let Some(batch) = self.batch.as_deref() else { return };
         if let Err(e) = io::batch_progress_merge(self.env, batch, |p| self.trace.merged_into(p, self.members.len() + 2)) {
@@ -1701,6 +1722,14 @@ impl RoundRunner for VmRunner<'_> {
 
     fn probe_faults(&mut self) -> Vec<String> {
         std::mem::take(&mut self.probe_faults)
+    }
+
+    fn probe_failed(&mut self) -> Vec<String> {
+        gate::parse::failed_tests(&self.probe_said)
+    }
+
+    fn probe_untold(&mut self, why: &str) {
+        self.untell_last_probe(why);
     }
 
     fn stop_main(&mut self) -> Result<(), String> {
@@ -3025,6 +3054,27 @@ mod abandon_tests {
         let got = RoundRunner::probe_faults(&mut r);
         assert_eq!(got, vec!["b1 unit [base]: round-vm --no-corpus not started: x".to_string()]);
         assert!(RoundRunner::probe_faults(&mut r).is_empty());
+    }
+
+    #[test_id(ttsmlku)]
+    #[test]
+    fn an_untold_integration_probe_publishes_cannot_tell_and_keeps_its_output() {
+        let d = testkit::TempDir::new("vm-probe-untold");
+        let env = lifecycle_tests_env(d.path());
+        let repo = repo(d.path());
+        let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
+        let members = [Member { id: "m1".into(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new(), provisional: false }];
+        let res = r.spool.join("res/b1");
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join("integration-tests.out"), "FAIL [ 1.0s] (1/1) bin other_test\n").unwrap();
+        r.keep_probe_output("b1", "integration");
+        r.report_probe("b1", "integration", "p=t", &members, Some(false), String::new());
+        assert_eq!(RoundRunner::probe_failed(&mut r), vec!["other_test".to_string()]);
+        RoundRunner::probe_untold(&mut r, "red on other_test");
+        let last = r.trace.last.clone().unwrap();
+        assert_eq!((last.verdict, last.kept.is_empty(), r.trace.probes), ("cannot-tell", false, 1));
+        assert!(r.trace.suspects.is_empty() && RoundRunner::probe_kept(&r).contains("b1"));
+        assert_eq!(RoundRunner::probe_faults(&mut r), vec!["b1 integration [m1]: red on other_test".to_string()]);
     }
 
     #[test_id(tshtsrj)]

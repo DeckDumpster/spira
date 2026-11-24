@@ -169,6 +169,13 @@ pub trait RoundRunner {
     fn probe_faults(&mut self) -> Vec<String> {
         Vec::new()
     }
+    /// The tests the last probe failed; empty when the runner cannot say.
+    fn probe_failed(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+    /// The last probe failed none of the tests the round failed, so it said nothing: the runner
+    /// records `why` as its fault and stops counting the probe as red.
+    fn probe_untold(&mut self, _why: &str) {}
     /// Like `filter_green`, judging only `scope` (`unitattr::rerun_scope`): the tests that failed.
     fn filter_green_in(
         &mut self,
@@ -899,10 +906,10 @@ impl Probes {
     fn control(
         &mut self,
         members: &[Member],
-        probe: &mut dyn FnMut(&[Member]) -> Option<bool>,
+        probe: &mut dyn FnMut(&[Member], usize) -> Option<bool>,
     ) -> Control {
-        for _ in 0..2 {
-            match self.run(members, || probe(members)) {
+        for attempt in 0..2 {
+            match self.run(members, || probe(members, attempt)) {
                 Some(true) => return Control::Green,
                 Some(false) => return Control::Red,
                 None => {}
@@ -941,6 +948,30 @@ fn with_dependents(members: &[Member], out: &mut BTreeMap<Id, Vec<String>>) {
     }
 }
 
+/// A red probe that failed tests, none of them a test the round failed, said nothing about the
+/// round's red; with either list empty the verdict stands.
+fn told(runner: &mut impl RoundRunner, f: &FilterRed, verdict: Option<bool>) -> Option<bool> {
+    if verdict != Some(false) {
+        return verdict;
+    }
+    let round: Vec<&str> = f.failed.iter().filter_map(|l| unitattr::failing_words(l)).map(|[_, _, t]| t).collect();
+    let probe = runner.probe_failed();
+    if round.is_empty() || probe.is_empty() || probe.iter().any(|t| round.contains(&t.as_str())) {
+        return verdict;
+    }
+    runner.probe_untold(&format!("red on {}, none of the tests the round failed ({})", probe.join(", "), round.join(", ")));
+    None
+}
+
+fn filter_green_told<R: RoundRunner>(runner: &mut R, f: &FilterRed, scope: &[String], members: &[Member], on_host: bool) -> Option<bool> {
+    let v = if on_host {
+        runner.filter_green_on_host(&f.name, scope, members)
+    } else {
+        runner.filter_green_in(&f.name, scope, members)
+    };
+    told(runner, f, v)
+}
+
 /// Finds the members a filter red belongs to by running `scope` on member subsets: bisection,
 /// the lone member, then each member alone.
 fn probe_filter_owners<R: RoundRunner>(
@@ -958,7 +989,7 @@ fn probe_filter_owners<R: RoundRunner>(
         let mut ran = false;
         let v = probes.run(m, || {
             ran = true;
-            runner.filter_green_in(&f.name, scope, m)
+            filter_green_told(runner, f, scope, m, false)
         });
         if ran && m.is_empty() {
             base_kept = runner.probe_kept();
@@ -1093,7 +1124,7 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
             .cloned()
             .collect()
     };
-    if runner.filter_green_in(&f.name, scope, &without(&recurring)) != Some(true) {
+    if filter_green_told(runner, f, scope, &without(&recurring), false) != Some(true) {
         return vec![];
     }
     let mut convicted = recurring.clone();
@@ -1102,8 +1133,7 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
         let alone: Vec<Member> = recurring
             .iter()
             .filter(|m| {
-                let green =
-                    runner.filter_green_in(&f.name, scope, &without(std::slice::from_ref(m)));
+                let green = filter_green_told(runner, f, scope, &without(std::slice::from_ref(m)), false);
                 if green == Some(false) {
                     said.push((vec![], runner.probe_output()));
                 }
@@ -1147,7 +1177,7 @@ fn probe_suspects<R: RoundRunner>(
     match suspects {
         [] => vec![],
         [only] => {
-            if probes.run(suspects, || runner.filter_green_in(&f.name, scope, suspects))
+            if probes.run(suspects, || filter_green_told(runner, f, scope, suspects, false))
                 != Some(false)
             {
                 return vec![];
@@ -1238,13 +1268,16 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             (Some(red_on), Some(green_on)) if red_on != green_on && members.len() > 1 => Some((red_on, green_on)),
             _ => None,
         };
-        let reproduced = |scope: &[String], runner: &mut R, probes: &mut Probes| {
-            probes.control(members, &mut |m| match &moved {
-                Some(_) => runner.filter_green_on_host(&f.name, scope, m),
-                None => runner.filter_green_in(&f.name, scope, m),
+        let reproduced = |runner: &mut R, probes: &mut Probes| {
+            probes.control(members, &mut |m, attempt| {
+                let ran = if attempt == 0 { &packages } else { &scope };
+                match &moved {
+                    Some(_) => filter_green_told(runner, f, ran, m, true),
+                    None => filter_green_told(runner, f, ran, m, false),
+                }
             })
         };
-        let control = reproduced(&packages, runner, &mut probes);
+        let control = reproduced(runner, &mut probes);
         let red_again = matches!(control, Control::Red);
         if let (Control::Green, Some((red_on, green_on))) = (&control, &moved) {
             return Ok(FilterEject::RunnerDifference {
@@ -1299,7 +1332,7 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             && !packages.is_empty()
             && graph.as_ref().is_some_and(|g| packages.iter().all(|p| g.dirs.contains_key(p)));
         if unreached {
-            match runner.filter_green_in(&f.name, &scope, &[]) {
+            match filter_green_told(runner, f, &scope, &[], false) {
                 Some(false) if unitattr::scope_is_exact(&scope) => {
                     let base_kept = runner.probe_kept();
                     let said = if base_kept.is_empty() { "base red".to_string() } else { format!("base red; output kept at {base_kept}") };
@@ -1958,7 +1991,7 @@ fn fault_reasons(faults: Vec<String>) -> String {
 /// `red_alone` for a suite, after a positive control on the full membership and under the probe ceiling.
 fn suite_alone<R: RoundRunner>(runner: &mut R, suite: &str, members: &[Member]) -> (Alone, Probes) {
     let mut probes = Probes::new(members.len());
-    match probes.control(members, &mut |m| runner.suite_green(suite, m)) {
+    match probes.control(members, &mut |m, _| runner.suite_green(suite, m)) {
         Control::Green => return (Alone::Flipped(NOT_IN_PROBE.into()), probes),
         Control::Fault => return (Alone::Cleared(format!("control probe gave no verdict{}", fault_reasons(runner.probe_faults()))), probes),
         Control::Red => {}
@@ -3141,6 +3174,11 @@ pub(crate) mod tests {
         /// A scoped probe is red unless every token is `package=test`, and then red exactly when
         /// the tree holds m3.
         pub m3_alone_fails_named_tests: bool,
+        /// A red filter probe fails this test, not the round's: on every scope, or only a wide one.
+        pub fails_other: Option<String>,
+        pub fails_other_wide_only: bool,
+        pub last_failed: Vec<String>,
+        pub untold: Vec<String>,
         /// A filter probe of exactly this member alone has no verdict.
         pub unknown_alone: Option<String>,
         /// A runner that cannot build a tree with members taken out: every such job fails to launch.
@@ -3216,6 +3254,10 @@ pub(crate) mod tests {
                 narrow_clears: false,
                 rerun_green: false,
                 m3_alone_fails_named_tests: false,
+                fails_other: None,
+                fails_other_wide_only: false,
+                last_failed: vec![],
+                untold: vec![],
                 unknown_alone: None,
                 refuses_removals: false,
                 added_by: BTreeMap::new(),
@@ -3249,6 +3291,34 @@ pub(crate) mod tests {
                 .iter()
                 .filter(|(j, fin, _)| *fin > self.t && !self.done_jobs.contains(&j.id))
                 .count()
+        }
+    }
+
+    impl Fake {
+        fn filter_green_in_say(&mut self, name: &str, packages: &[String], members: &[Member]) -> Option<bool> {
+            self.scoped.push(packages.to_vec());
+            if self.on_host {
+                self.host_asked.push(members.iter().map(|m| m.id.clone()).collect());
+            }
+            if self.rerun_green && members.len() == self.members.len() {
+                self.probes
+                    .push(members.iter().map(|m| m.id.clone()).collect());
+                return Some(true);
+            }
+            if let [only] = members {
+                if self.unknown_alone.as_deref() == Some(only.id.as_str()) {
+                    return None;
+                }
+            }
+            if self.m3_alone_fails_named_tests {
+                let named = packages.iter().all(|p| p.contains('='));
+                return Some(named && !members.iter().any(|m| m.id == "m3"));
+            }
+            if self.narrow_clears && packages.iter().any(|p| p.contains('=')) {
+                self.probes.push(vec![]);
+                return Some(true);
+            }
+            self.filter_green(name, members)
         }
     }
 
@@ -3398,35 +3468,26 @@ pub(crate) mod tests {
         fn probe_faults(&mut self) -> Vec<String> {
             std::mem::take(&mut self.faults)
         }
+        fn probe_failed(&mut self) -> Vec<String> {
+            self.last_failed.clone()
+        }
+        fn probe_untold(&mut self, why: &str) {
+            self.untold.push(why.to_string());
+            self.faults.push(why.to_string());
+        }
         fn filter_green_in(
             &mut self,
             name: &str,
             packages: &[String],
             members: &[Member],
         ) -> Option<bool> {
-            self.scoped.push(packages.to_vec());
-            if self.on_host {
-                self.host_asked.push(members.iter().map(|m| m.id.clone()).collect());
-            }
-            if self.rerun_green && members.len() == self.members.len() {
-                self.probes
-                    .push(members.iter().map(|m| m.id.clone()).collect());
-                return Some(true);
-            }
-            if let [only] = members {
-                if self.unknown_alone.as_deref() == Some(only.id.as_str()) {
-                    return None;
-                }
-            }
-            if self.m3_alone_fails_named_tests {
-                let named = packages.iter().all(|p| p.contains('='));
-                return Some(named && !members.iter().any(|m| m.id == "m3"));
-            }
-            if self.narrow_clears && packages.iter().any(|p| p.contains('=')) {
-                self.probes.push(vec![]);
-                return Some(true);
-            }
-            self.filter_green(name, members)
+            let v = self.filter_green_in_say(name, packages, members);
+            let wide = !packages.iter().any(|p| p.contains('='));
+            self.last_failed = match &self.fails_other {
+                Some(t) if v == Some(false) && (wide || !self.fails_other_wide_only) => vec![t.clone()],
+                _ => vec![],
+            };
+            v
         }
         fn runner_survives(&mut self, members: &[Member]) -> Option<bool> {
             self.probes
@@ -8571,6 +8632,67 @@ pub(crate) mod tests {
             f.main_kind
         );
         assert_eq!(land_ids(end), vec!["m1"]);
+    }
+
+    fn other_test_round(other: &str, wide_only: bool) -> (Fake, Ops) {
+        let red = FilterRed {
+            name: "integration-tests".into(),
+            failed: vec!["FAIL dir:testenv lint_x".into()],
+            ..Default::default()
+        };
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.runs_alone = true;
+        f.fails_other = Some(other.into());
+        f.fails_other_wide_only = wide_only;
+        f.filter = Some(Box::new(move |tree| tree.contains("m2").then(|| red.clone())));
+        let ops = Ops {
+            graph: Some(PackageGraph {
+                dirs: [("testenv".to_string(), "testenv".to_string())].into(),
+                deps: Default::default(),
+                ..Default::default()
+            }),
+            ..Ops::default()
+        };
+        (f, ops)
+    }
+
+    fn run_other_test_round(f: &mut Fake, ops: &mut Ops) -> RoundEnd {
+        attribute_round(f, ops, &corpus(4), vec![member("m1"), member("m2")], Budget { slots: 6, maxpar: 2 }).unwrap()
+    }
+
+    #[test_id(tnjpaq2)]
+    #[test]
+    fn probes_always_red_on_another_test_leave_the_round_unjudged_and_name_that_test() {
+        let (mut f, mut ops) = other_test_round("other_broker_test", false);
+        f.filtered = None;
+        f.prior = None;
+        let end = run_other_test_round(&mut f, &mut ops);
+        match end {
+            RoundEnd::Faulted(why) => assert!(why.contains("other_broker_test"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(f.scoped.len(), 2, "{:?}", f.scoped);
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+        assert!(ops.incidents.iter().all(|(k, _)| k != "base"), "{:?}", ops.incidents);
+    }
+
+    #[test_id(ttirfyx)]
+    #[test]
+    fn a_wide_probe_red_on_another_test_is_retried_on_the_exact_scope_and_ejects_the_owner() {
+        let (mut f, mut ops) = other_test_round("other_broker_test", true);
+        run_other_test_round(&mut f, &mut ops);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["integration-tests".to_string()])]);
+        assert!(!f.untold.is_empty());
+    }
+
+    #[test_id(t4jv1ok)]
+    #[test]
+    fn a_probe_red_on_the_round_failed_test_keeps_its_verdict() {
+        let (mut f, mut ops) = other_test_round("lint_x", false);
+        run_other_test_round(&mut f, &mut ops);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["integration-tests".to_string()])]);
+        assert!(f.untold.is_empty(), "{:?}", f.untold);
     }
 
     #[test_id(tydztu8)]
