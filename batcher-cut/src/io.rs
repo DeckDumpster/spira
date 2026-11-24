@@ -1103,7 +1103,7 @@ fn not_in_force_setup(env: &Env, repo: &Repo) -> Result<NotInForceSetup, String>
 }
 
 fn is_ancestor(repo: &Repo, a: &str, b: &str) -> Result<bool, String> {
-    let out = Command::new("git")
+    let out = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(&repo.path)
         .args(["merge-base", "--is-ancestor", a, b])
