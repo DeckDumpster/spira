@@ -629,7 +629,11 @@ fn an_opening_carry_with_nothing_in_flight_and_the_forge_at_head_is_idle_in_one_
     r.reopen(registration()).unwrap();
     world.lock().unwrap().repos.get_mut("spira").unwrap().forge_sha = Some("h1".into());
     tick(&mut r);
+    assert_eq!(carried(&r).repos.get("spira").map(|rc| rc.state), None, "Idle is no row: {:?}", carried(&r));
+    let asked_before = r.requested().len();
+    tick(&mut r);
     assert!(carried(&r).repos.get("spira").is_none_or(|rc| rc.state == State::Idle), "{:?}", carried(&r));
+    assert_eq!(asked(&r, PUSH_BRANCH), 1, "nothing is pushed again: {:?}", &r.requested()[asked_before..]);
 }
 
 /// A landing opens at once with a round open; only a rerun, a supersede or a CI start waits.
@@ -638,5 +642,26 @@ fn an_opening_carry_with_nothing_in_flight_and_the_forge_at_head_is_idle_in_one_
 fn a_landing_with_a_round_open_opens_at_once() {
     let (carry, acts) = decide(&Carry::default(), &with(landing(true)));
     assert_eq!(effects(&acts), [PUSH_BRANCH], "{acts:?}");
+    assert_eq!(carry.repos["spira"].state, State::Opening);
+}
+
+/// A wake, the production trigger, recovers a lost push as a tick does.
+#[test_id(tp3d8jm)]
+#[test]
+fn a_wake_after_a_restart_pushes_a_lost_push_again() {
+    let world = lost_world(with(landing(false)));
+    let mut r = lost_rig(&world, registration, PUSH_BRANCH);
+    tick(&mut r);
+    r.reopen(registration()).unwrap();
+    wake(&mut r);
+    assert_eq!(asked(&r, PUSH_BRANCH), 2, "{:?}", r.requested());
+}
+
+/// A PR that is gone is retired and the next opened at once, with a round open.
+#[test_id(tn6w0cq)]
+#[test]
+fn a_gone_pr_with_a_round_open_is_retired_and_pushed_at_once() {
+    let (carry, acts) = decide(&Carry::default(), &with(Repo { round_holds_hypervisor: true, ..busy().repos["spira"].clone() }));
+    assert_eq!(effects(&acts), [RETIRE, PUSH_BRANCH], "{acts:?}");
     assert_eq!(carry.repos["spira"].state, State::Opening);
 }

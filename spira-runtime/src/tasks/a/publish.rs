@@ -528,13 +528,13 @@ impl Machine<'_> {
     }
 
     fn observe(&mut self, policy: &Policy, r: &Repo) {
+        // Adopting and Merging too: both acts are idempotent, and one whose outcome was lost
+        // (a restart, a deadline) must not hold the repo forever (sp-hw3qio).
         if self.act_gone(r) {
             self.go(Trigger::ActGone);
         } else if !matches!(self.rc.state, State::Idle | State::Deferred | State::Refused | State::Rerun | State::Alarmed | State::Adopting | State::Merging) {
             return;
         }
-        // Adopting and Merging too: both acts are idempotent, and one whose outcome was lost
-        // (a restart, a deadline) must not hold the repo forever (sp-hw3qio).
         self.go(Trigger::Tick);
         let rec = r.publish_rec.as_ref();
         // `:39-50`, `:54`: a repo that does not publish, or whose publish lane is stopped.
