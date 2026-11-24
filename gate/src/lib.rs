@@ -13,6 +13,7 @@ pub mod def;
 pub mod engine;
 pub mod fence;
 pub mod fixture;
+pub mod forced;
 pub mod fencecache;
 pub mod fences;
 pub mod redcache;

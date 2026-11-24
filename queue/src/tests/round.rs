@@ -3055,6 +3055,12 @@ fn an_image_red_ejects_the_member_that_moved_the_tag_and_nobody_when_none_did() 
     let (t, _) = image_red_round(&["tb"]);
     assert!(t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
     assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    let calls = t.lib.calls.borrow().clone();
+    assert!(calls.iter().any(|c| c.trim_end() == "bead_reopen sp-b eject-red"), "{calls:?}");
+    assert!(
+        calls.iter().filter(|c| c.starts_with("comment sp-b")).all(|c| !c.contains("will force")),
+        "{calls:?}"
+    );
     let (t, _) = image_red_round(&[]);
     assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
 }
@@ -11320,4 +11326,50 @@ fn a_comment_only_containerfile_edit_is_no_recipe_input_touched_and_a_run_edit_i
         assert_eq!(touched("tb"), vec![CF.to_string()]);
         assert_eq!(touched("tc"), vec!["flake.nix".to_string()]);
     });
+}
+
+const FORCED_FENCES: &str = "step scripts/listed.sh\n";
+
+fn forced_reopen(t: &T, bead: &str) -> String {
+    t.lib
+        .calls
+        .borrow()
+        .iter()
+        .find_map(|c| c.strip_prefix(&format!("bead_reopen {bead} eject-red")).map(|r| r.trim().to_string()))
+        .unwrap_or_else(|| panic!("no reopen of {bead}: {:?}", t.lib.calls.borrow()))
+}
+
+fn assert_forced_comment(t: &T, forced: &str) {
+    let calls = t.lib.calls.borrow();
+    let c = calls.iter().find(|c| c.starts_with("comment sp-b") && c.contains("will force")).unwrap_or_else(|| panic!("no force comment: {calls:?}"));
+    assert!(c.trim_end().ends_with(&format!("suites regardless of SPIRA_CERTIFY_SUITES: {forced}")), "{c}");
+}
+
+#[test_id(tfyxs0f)]
+#[test]
+fn a_round_eject_forces_a_listed_fence_and_drops_an_unlisted_one_and_release_verify() {
+    let t = round_world();
+    t.git.files.borrow_mut().insert("tb:gate.steps".into(), FORCED_FENCES.into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let args = ["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "fence-listed,fence-unlisted,release-verify,test-b.sh"];
+    seed_suite(&t, "test-b.sh");
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert_eq!(forced_reopen(&t, "sp-b"), "fence-listed,test-b.sh");
+    assert_forced_comment(&t, "fence-listed,test-b.sh");
+}
+
+#[test_id(tatd4l1)]
+#[test]
+fn a_withdrawal_forces_a_listed_fence_and_drops_an_unlisted_one_and_release_verify() {
+    let t = round_world();
+    t.git.files.borrow_mut().insert("tb:gate.steps".into(), FORCED_FENCES.into());
+    assert_eq!(
+        t.run(&["eject", "sp-b", "--red", "--reason", "red", "--suites", "fence-listed,fence-unlisted,release-verify,test-b.sh"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(forced_reopen(&t, "sp-b"), "fence-listed,test-b.sh");
+    assert_forced_comment(&t, "fence-listed,test-b.sh");
 }

@@ -36,9 +36,32 @@ pub fn names() -> Vec<&'static str> {
     out
 }
 
+/// What a runner can run at a tip in place of a round step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Counterpart {
+    Lint,
+    UnitTests,
+}
+
+const COUNTERPARTS: [(&str, Counterpart); 3] = [
+    ("workspace-build", Counterpart::Lint),
+    ("spira-lint", Counterpart::Lint),
+    ("unit-tests", Counterpart::UnitTests),
+];
+
+/// The runner check standing in for a listed step, if any; a fence is not in the table.
+pub fn counterpart(name: &str) -> Option<Counterpart> {
+    COUNTERPARTS.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
+}
+
+/// The fence a `fence-<name>` step names.
+pub fn fence_of(name: &str) -> Option<&str> {
+    name.strip_prefix(FENCE_PREFIX).filter(|f| !f.is_empty())
+}
+
 /// A step no host runner can run for a tip: only a round proves it.
 pub fn proven_by_round(name: &str) -> bool {
-    is_step(name) && !matches!(name, "unit-tests" | "spira-lint" | "workspace-build") && !name.starts_with(FENCE_PREFIX)
+    is_step(name) && fence_of(name).is_none() && counterpart(name).is_none()
 }
 
 #[cfg(test)]
