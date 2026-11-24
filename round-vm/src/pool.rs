@@ -1082,7 +1082,7 @@ impl Pool {
         let leases: Vec<_> = s
             .leases
             .iter()
-            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "cmd": l.owner.map(|o| owner_cmd(o.pid)), "since": l.since, "age_secs": age(l.since), "run": l.run, "held": l.held, "held_since": l.held.then(|| if l.kept_at > 0 { l.kept_at } else { l.since }), "held_age_secs": l.held.then(|| age(if l.kept_at > 0 { l.kept_at } else { l.since })), "why": l.held.then_some("held for results")}))
+            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "cmd": l.owner.map(|o| owner_cmd(o.pid)), "since": l.since, "age_secs": age(l.since), "run": l.run, "held": l.held, "held_since": l.held.then_some(if l.kept_at > 0 { l.kept_at } else { l.since }), "held_age_secs": l.held.then(|| age(if l.kept_at > 0 { l.kept_at } else { l.since })), "why": l.held.then_some("held for results")}))
             .collect();
         let doomed: Vec<_> = s
             .doomed
@@ -2216,6 +2216,21 @@ mod tests {
             j["events"].as_array().unwrap().last().unwrap()["to"],
             "destroyed"
         );
+    }
+
+    #[test_id(tob0t6n)]
+    #[test]
+    fn status_json_names_when_a_lease_began_and_when_it_was_held_and_not_how_old_they_are_alone() {
+        let d = TempDir::new();
+        let pl = pool(&d, 1);
+        let lease = |vm: &str, since: u64, held: bool, kept_at: u64| {
+            serde_json::from_value::<crate::schema::Lease>(serde_json::json!({"vm": {"handle": vm, "addr": "10.0.0.9"}, "owner": null, "since": since, "held": held, "kept_at": kept_at, "run": "r-1"})).unwrap()
+        };
+        pl.with_state(|s| s.leases = vec![lease("109", 100, false, 0), lease("113", 200, true, 250), lease("114", 300, true, 0)]).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&pl.status_json().unwrap()).unwrap();
+        let held_since: Vec<&serde_json::Value> = j["leases"].as_array().unwrap().iter().map(|l| &l["held_since"]).collect();
+        assert_eq!(held_since, [&serde_json::Value::Null, &serde_json::json!(250), &serde_json::json!(300)], "a held lease is held since its keeping, else since it began");
+        assert_eq!(j["leases"][0]["since"], 100);
     }
 
     #[test_id(tab4bva)]

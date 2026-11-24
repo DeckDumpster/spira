@@ -8,7 +8,7 @@
 //!
 //! One `Snapshot` (what was gathered) → one `View` (everything derived: counts, groups,
 //! orderings) → two renderers: the terminal pane (`render`) and the phone page (`render_html`,
-//! served by loom from the snapshot file the pane writes). Both draw the same `View`, so the
+//! served by loom from the document the scheduler writes). Both draw the same `View`, so the
 //! pane and the page cannot disagree about a number. Everything below the gather is pure.
 
 use serde::{Deserialize, Serialize};

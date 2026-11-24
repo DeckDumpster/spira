@@ -117,6 +117,20 @@ One function, not five copies: `$COCKPIT_DB`, falling back to `$SPIRA_DB`, verif
 deleted: `cockpit/moot-sweep.sh` and `cockpit/verify-asks.sh` still source it and are outside
 this bead's scope (bash-only callers keep the bash function until they, too, move).
 
+### 2.7 `lc-view tui|once|fit|loop [secs]`
+
+- Renders one document, `snapshot.json` under `spira_config::cockpit_view_dir($XDG_RUNTIME_DIR)`,
+  which the scheduler writes (`cockpit.view`/`cockpit.view_slow`, `cockpit_ops::lcgather`) when what
+  it shows changes and otherwise touches. The panel gathers nothing: `lcpane::run` is a loop over an
+  injected terminal and clock that reads the document on each repaint (every `secs`, a key, a resize,
+  or a replaced file), sets its `now`, and draws it. Ages are read at render, so a VM, a bead or the
+  read itself ages with the clock alone.
+- An untouched document (mtime older than `STALE_WARN_S`) shows the last-good notice; a missing one
+  shows a line naming its path. `XDG_RUNTIME_DIR` unset refuses by name. `ui.json` (folds, selection)
+  is written only on a key or click.
+- Loom's `/lifecycle`, `health`'s claim keys, watchtower and the slots sample read the same document;
+  its age is its mtime.
+
 ## 3. Schema
 
 `health` reads `$SPIRA_RUN/cockpit.env`: lines of `KEY='value'`, single-quoted with bash's own

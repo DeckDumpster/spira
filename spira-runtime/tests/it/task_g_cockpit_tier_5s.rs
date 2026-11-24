@@ -55,7 +55,7 @@ fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_three_probes() 
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
-    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.now", "cockpit.round", "cockpit.inflight"]);
+    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.now", "cockpit.round", "cockpit.inflight", "cockpit.view"]);
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
@@ -174,4 +174,143 @@ fn a_boot_does_not_republish_a_snapshot_whose_digest_it_published() {
 #[test]
 fn a_boot_does_not_refresh_a_snapshot_no_newer_than_the_last_read() {
     boot_matches(|| rig(1, |_| with_clock(snap(true, ""))));
+}
+
+mod document {
+    use std::collections::BTreeMap;
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::net::UnixListener;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use cockpit_ops::lcview::{document_path, Snapshot};
+    use runtime::event::EffectSpec;
+    use spira_runtime::tasks::g::cockpit::{self, Carry, FragmentState, WRITE_KEY};
+    use spira_runtime::tasks::g::cockpit_tier_5s::{decide, PUBLISH};
+    use spira_runtime::world::World;
+    use spira_runtime::Effects;
+
+    type Answers = Arc<Mutex<BTreeMap<String, String>>>;
+
+    /// The scheduler holds one document in process, so the tests of it take turns.
+    static TURN: Mutex<()> = Mutex::new(());
+
+    struct Rig {
+        _dir: testkit::TempDir,
+        run: PathBuf,
+        view: PathBuf,
+        pool: PathBuf,
+        answers: Answers,
+        fx: Effects,
+    }
+
+    fn live(rows: &[(&str, &str)]) -> String {
+        serde_json::Value::Array(rows.iter().map(|(id, title)| serde_json::json!({"bead_id": id, "state": "WORKING", "repo": "spira", "title": title, "priority": 1, "updated_at": 100, "since": 100, "holder": "1@1"})).collect()).to_string()
+    }
+
+    fn rig(name: &str) -> Rig {
+        let dir = testkit::TempDir::new(name);
+        let (run, view, state) = (dir.join("run"), dir.join("runtime/spira-cockpit"), dir.join("vm"));
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        let socket = dir.join("lc.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let answers: Answers = Arc::new(Mutex::new(BTreeMap::new()));
+        let served = answers.clone();
+        std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| Ok(served.lock().unwrap().get(&argv.join(" ")).cloned().unwrap_or_else(|| "[]".into()))));
+        let pool = state.join("pool.json");
+        std::fs::write(&pool, serde_json::json!({"leases": [{"vm": {"handle": "109", "addr": "10.0.0.9"}, "owner": null, "since": 100, "run": "r-1"}]}).to_string()).unwrap();
+        let units = Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::VirtualClock::new(0))));
+        let vm_pool = round_vm::pool::Pool { state_dir: state, retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::from_millis(10), acquire_deadline: Duration::ZERO };
+        let world = World { run_dir: run.clone(), lc_socket: socket, cockpit_view_dir: view.clone(), ..World::default() };
+        let fx = Effects { world, units: Some(units), vm_pool: Some(Arc::new(vm_pool)), ..Effects::default() };
+        answers.lock().unwrap().insert("list --live".into(), live(&[("sp-a", "first")]));
+        Rig { _dir: dir, run, view, pool, answers, fx }
+    }
+
+    fn observe(fx: &Effects, supervised: bool, probe: &str) -> cockpit::Snapshot {
+        let cfg: BTreeMap<String, String> = [(WRITE_KEY.to_string(), if supervised { "1" } else { "0" }.to_string())].into();
+        let spec = EffectSpec::probe("observe", cockpit::probe_input(&[(probe, 60_000)], &cfg), 60_000);
+        serde_json::from_str(&cockpit::run_observe(fx, "", &spec).unwrap()).unwrap()
+    }
+
+    /// One pass of both tiers and the 5 s tier's publish, as the scheduler runs them.
+    fn pass(fx: &Effects) {
+        let fast = observe(fx, true, "cockpit.view");
+        assert_eq!(fast.fragments["cockpit.view"].status, FragmentState::Ok);
+        assert!(fast.fragments["cockpit.view"].kv.is_empty(), "the view is not journaled: it answers no keys");
+        observe(fx, true, "cockpit.view_slow");
+        let (_, acts) = decide(&Carry::default(), &fast).unwrap();
+        assert!(acts.iter().all(|a| a.name == PUBLISH));
+        let publish = EffectSpec::keyed(PUBLISH, "k", "", 1_000);
+        cockpit::run_publish(fx, "", &publish).unwrap();
+    }
+
+    fn read(view: &Path) -> Snapshot {
+        serde_json::from_slice(&std::fs::read(document_path(view)).unwrap()).unwrap()
+    }
+
+    fn stat(view: &Path) -> (u64, std::time::SystemTime) {
+        let m = std::fs::metadata(document_path(view)).unwrap();
+        (m.ino(), m.modified().unwrap())
+    }
+
+    fn age_the_file(view: &Path) -> std::time::SystemTime {
+        let old = UNIX_EPOCH + Duration::from_secs(1_000);
+        std::fs::File::open(document_path(view)).unwrap().set_modified(old).unwrap();
+        old
+    }
+
+    #[test_id(tvccpgh)]
+    #[test]
+    fn the_document_is_replaced_only_by_a_change_and_touched_by_a_quiet_pass() {
+        let _turn = TURN.lock().unwrap_or_else(|p| p.into_inner());
+        let r = rig("cockpit-document");
+        assert!(!document_path(&r.view).exists());
+        observe(&r.fx, true, "cockpit.view");
+        cockpit::view::publish(&r.view).unwrap();
+        assert!(!document_path(&r.view).exists(), "nothing is written until both groups have been read once");
+
+        pass(&r.fx);
+        let first = read(&r.view);
+        assert_eq!(first.rows.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["sp-a"]);
+        assert_eq!((first.vm_runs.len(), first.vm_runs[0].since), (1, 100), "a VM is stored by its start, not by its age");
+
+        let old = age_the_file(&r.view);
+        let (inode, _) = stat(&r.view);
+        let mut tampered = first.clone();
+        (tampered.now, tampered.good_at, tampered.gather_ms) = (1, 1, 99_999);
+        std::fs::write(document_path(&r.view), serde_json::to_vec(&tampered).unwrap()).unwrap();
+        age_the_file(&r.view);
+        pass(&r.fx);
+        let (inode_after, mtime_after) = stat(&r.view);
+        assert_eq!(inode_after, inode, "a pass that shows what the file shows does not replace it");
+        assert!(mtime_after > old, "it touches it, so the file's age is the pass's");
+        assert_eq!(read(&r.view).now, 1, "and the clock fields alone are not written");
+
+        r.answers.lock().unwrap().insert("list --live".into(), live(&[("sp-a", "first"), ("sp-b", "second")]));
+        pass(&r.fx);
+        assert_ne!(stat(&r.view).0, inode, "a new row replaces the document");
+        assert_eq!(read(&r.view).rows.len(), 2);
+
+        std::fs::write(&r.pool, "{ torn").unwrap();
+        pass(&r.fx);
+        let kept = read(&r.view);
+        assert_eq!((kept.vm_runs.len(), kept.vm_runs[0].since), (1, 100), "a source that fails keeps its last read");
+        assert!(kept.errors.iter().any(|e| e.contains("pool.json")), "and names the error: {:?}", kept.errors);
+        assert_eq!(kept.rows.len(), 2);
+        std::fs::remove_dir_all(&r.run).unwrap();
+    }
+
+    #[test_id(tfga3he)]
+    #[test]
+    fn an_unsupervised_instance_gathers_and_writes_nothing() {
+        let _turn = TURN.lock().unwrap_or_else(|p| p.into_inner());
+        let r = rig("cockpit-document-unsupervised");
+        let snap = observe(&r.fx, false, "cockpit.view");
+        assert!(decide(&Carry::default(), &snap).unwrap_err().contains("may_write"));
+        assert!(!document_path(&r.view).exists());
+        assert!(!r.view.exists(), "not even its directory");
+    }
 }

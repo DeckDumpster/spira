@@ -338,7 +338,8 @@ pub mod cockpit {
     pub fn run_observe(e: &crate::Effects, _: &str, s: &EffectSpec) -> Result<String, String> {
         let input: ObserveInput = serde_json::from_str(&s.input).map_err(|e| format!("{}: input: {e}", s.name))?;
         let probes: Vec<(String, std::time::Duration)> = input.probes.iter().map(|p| (registry_name(&p.name).to_string(), std::time::Duration::from_millis(p.timeout_ms))).collect();
-        view::set_context(e);
+        let supervised = input.config.get(WRITE_KEY).is_some_and(|v| matches!(v.as_str(), "1" | "true"));
+        view::set_context(e, supervised);
         let got = cockpit_collect::tiers::observe_with(&probes, view::probe);
         let fragments = input
             .probes
@@ -346,7 +347,7 @@ pub mod cockpit {
             .zip(got)
             .map(|(p, f)| (p.name.clone(), Fragment { status: FragmentState::of_word(f.status).unwrap_or(FragmentState::Error), at: f.at.max(0) as u64, killed: f.killed, kv: f.kv.into_iter().collect() }))
             .collect();
-        let snap = Snapshot { supervised: input.config.get(WRITE_KEY).is_some_and(|v| matches!(v.as_str(), "1" | "true")), fragments };
+        let snap = Snapshot { supervised, fragments };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
@@ -379,7 +380,14 @@ pub mod cockpit {
         pub const FAST: &str = "view";
         pub const SLOW: &str = "view_slow";
 
+        /// Whether `name` (a registry name) is one of the view's groups, which [`probe`] answers
+        /// and the probe library does not dispatch.
+        pub fn is_view_probe(name: &str) -> bool {
+            name == FAST || name == SLOW
+        }
+
         struct Context {
+            supervised: bool,
             run_dir: PathBuf,
             lc: Option<LcClient>,
             units: Option<Arc<dyn runtime::units::Units>>,
@@ -395,13 +403,14 @@ pub mod cockpit {
         }
 
         /// What the next probe reads through. A different run directory starts the groups afresh.
-        pub fn set_context(e: &crate::Effects) {
+        pub fn set_context(e: &crate::Effects, supervised: bool) {
             let mut ctx = CONTEXT.lock().unwrap_or_else(|p| p.into_inner());
             if ctx.as_ref().is_some_and(|c| c.run_dir != e.world.run_dir) {
                 *held(&FAST_HELD) = None;
                 *held(&SLOW_HELD) = None;
             }
             *ctx = Some(Context {
+                supervised,
                 run_dir: e.world.run_dir.clone(),
                 lc: (!e.world.lc_socket.as_os_str().is_empty()).then(|| LcClient::socket(e.world.lc_socket.clone())),
                 units: e.units.clone(),
@@ -423,6 +432,9 @@ pub mod cockpit {
             let (run_dir, lc, units, pool) = {
                 let ctx = CONTEXT.lock().unwrap_or_else(|p| p.into_inner());
                 let c = ctx.as_ref()?;
+                if !c.supervised {
+                    return Some(Vec::new());
+                }
                 (c.run_dir.clone(), c.lc.clone(), c.units.clone(), c.pool.clone())
             };
             let read = |args: &[&str]| -> Result<String, LcError> {

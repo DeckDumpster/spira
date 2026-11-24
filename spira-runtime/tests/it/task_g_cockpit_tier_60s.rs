@@ -71,7 +71,7 @@ fn dispatched_probes() -> Vec<&'static str> {
 #[test_id(t118la9)]
 #[test]
 fn every_registry_probe_runs_in_exactly_one_tier() {
-    use spira_runtime::tasks::g::cockpit::registry_name;
+    use spira_runtime::tasks::g::cockpit::{self, registry_name};
     use spira_runtime::tasks::g::{cockpit_tier_5s as t5, cockpit_tier_600s as t600};
     let registry = dispatched_probes();
     assert_eq!(registry.len(), 24, "the dispatch lists {registry:?}");
@@ -82,7 +82,7 @@ fn every_registry_probe_runs_in_exactly_one_tier() {
     }
     for (tier, probes, deadline) in tiers {
         for (probe, timeout) in probes {
-            assert!(registry.contains(&registry_name(probe)), "{tier} runs {probe}, which probes::run does not dispatch");
+            assert!(registry.contains(&registry_name(probe)) || cockpit::view::is_view_probe(registry_name(probe)), "{tier} runs {probe}, which probes::run does not dispatch");
             assert!(*timeout <= deadline, "{tier} gives {probe} {timeout} ms, past the tier deadline {deadline}");
         }
     }
@@ -90,11 +90,11 @@ fn every_registry_probe_runs_in_exactly_one_tier() {
 
 #[test_id(t6nzhdo)]
 #[test]
-fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_twelve_probes() {
+fn t1_the_task_is_registered_boots_and_arms_its_cadence_with_its_registry_probes_and_the_slow_view() {
     let row = tasks::all().find(|t| t.name == NAME).unwrap_or_else(|| panic!("{NAME} is not in tasks::all(): its row waits in tasks::g::PENDING"));
     assert_eq!(row.stream(), STREAM);
     assert!(row.keys.iter().flat_map(|k| k.iter()).any(|k| *k == CADENCE_KEY), "the cadence is pinned config");
-    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.slots", "cockpit.reachable", "cockpit.tsd", "cockpit.admission", "cockpit.well", "cockpit.repo_labels", "cockpit.strands", "cockpit.ratelim", "cockpit.core", "cockpit.queue", "cockpit.mail", "cockpit.goodput"]);
+    assert_eq!(PROBES.iter().map(|p| p.0).collect::<Vec<_>>(), ["cockpit.slots", "cockpit.reachable", "cockpit.tsd", "cockpit.admission", "cockpit.well", "cockpit.repo_labels", "cockpit.strands", "cockpit.ratelim", "cockpit.core", "cockpit.queue", "cockpit.mail", "cockpit.goodput", "cockpit.view_slow"]);
     let mut r = TaskRig::new(1, handler().registration()).unwrap();
     let (_, stream, kind) = (row.boot)();
     r.tick(stream, kind).unwrap();
