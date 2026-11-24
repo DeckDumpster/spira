@@ -963,13 +963,12 @@ fn told(runner: &mut impl RoundRunner, f: &FilterRed, verdict: Option<bool>) -> 
     None
 }
 
-fn filter_green_told(runner: &mut impl RoundRunner, f: &FilterRed, scope: &[String], members: &[Member]) -> Option<bool> {
-    let v = runner.filter_green_in(&f.name, scope, members);
-    told(runner, f, v)
-}
-
-fn filter_green_told_on_host(runner: &mut impl RoundRunner, f: &FilterRed, scope: &[String], members: &[Member]) -> Option<bool> {
-    let v = runner.filter_green_on_host(&f.name, scope, members);
+fn filter_green_told<R: RoundRunner>(runner: &mut R, f: &FilterRed, scope: &[String], members: &[Member], on_host: bool) -> Option<bool> {
+    let v = if on_host {
+        runner.filter_green_on_host(&f.name, scope, members)
+    } else {
+        runner.filter_green_in(&f.name, scope, members)
+    };
     told(runner, f, v)
 }
 
@@ -990,7 +989,7 @@ fn probe_filter_owners<R: RoundRunner>(
         let mut ran = false;
         let v = probes.run(m, || {
             ran = true;
-            filter_green_told(runner, f, scope, m)
+            filter_green_told(runner, f, scope, m, false)
         });
         if ran && m.is_empty() {
             base_kept = runner.probe_kept();
@@ -1125,7 +1124,7 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
             .cloned()
             .collect()
     };
-    if filter_green_told(runner, f, scope, &without(&recurring)) != Some(true) {
+    if filter_green_told(runner, f, scope, &without(&recurring), false) != Some(true) {
         return vec![];
     }
     let mut convicted = recurring.clone();
@@ -1134,7 +1133,7 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
         let alone: Vec<Member> = recurring
             .iter()
             .filter(|m| {
-                let green = filter_green_told(runner, f, scope, &without(std::slice::from_ref(m)));
+                let green = filter_green_told(runner, f, scope, &without(std::slice::from_ref(m)), false);
                 if green == Some(false) {
                     said.push((vec![], runner.probe_output()));
                 }
@@ -1178,7 +1177,7 @@ fn probe_suspects<R: RoundRunner>(
     match suspects {
         [] => vec![],
         [only] => {
-            if probes.run(suspects, || filter_green_told(runner, f, scope, suspects))
+            if probes.run(suspects, || filter_green_told(runner, f, scope, suspects, false))
                 != Some(false)
             {
                 return vec![];
@@ -1273,8 +1272,8 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             probes.control(members, &mut |m, attempt| {
                 let ran = if attempt == 0 { &packages } else { &scope };
                 match &moved {
-                    Some(_) => filter_green_told_on_host(runner, f, ran, m),
-                    None => filter_green_told(runner, f, ran, m),
+                    Some(_) => filter_green_told(runner, f, ran, m, true),
+                    None => filter_green_told(runner, f, ran, m, false),
                 }
             })
         };
@@ -1333,7 +1332,7 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             && !packages.is_empty()
             && graph.as_ref().is_some_and(|g| packages.iter().all(|p| g.dirs.contains_key(p)));
         if unreached {
-            match filter_green_told(runner, f, &scope, &[]) {
+            match filter_green_told(runner, f, &scope, &[], false) {
                 Some(false) if unitattr::scope_is_exact(&scope) => {
                     let base_kept = runner.probe_kept();
                     let said = if base_kept.is_empty() { "base red".to_string() } else { format!("base red; output kept at {base_kept}") };

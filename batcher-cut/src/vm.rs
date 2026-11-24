@@ -3090,14 +3090,16 @@ mod abandon_tests {
         let repo = repo(d.path());
         let mut r = VmRunner::new(&env, &repo, d.path(), "base", "r1", BTreeMap::new()).unwrap();
         let members = [Member { id: "m1".into(), tip: String::new(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new(), provisional: false }];
-        r.probe_said = "FAIL [ 1.0s] (1/1) bin other_test\n".into();
-        r.probe_kept = "kept/b1".into();
+        let res = r.spool.join("res/b1");
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join("integration-tests.out"), "FAIL [ 1.0s] (1/1) bin other_test\n").unwrap();
+        r.keep_probe_output("b1", "integration");
         r.report_probe("b1", "integration", "p=t", &members, Some(false), String::new());
         assert_eq!(RoundRunner::probe_failed(&mut r), vec!["other_test".to_string()]);
         RoundRunner::probe_untold(&mut r, "red on other_test");
         let last = r.trace.last.clone().unwrap();
-        assert_eq!((last.verdict, last.kept.as_str(), r.trace.probes), ("cannot-tell", "kept/b1", 1));
-        assert!(r.trace.suspects.is_empty());
+        assert_eq!((last.verdict, last.kept.is_empty(), r.trace.probes), ("cannot-tell", false, 1));
+        assert!(r.trace.suspects.is_empty() && RoundRunner::probe_kept(&r).contains("b1"));
         assert_eq!(RoundRunner::probe_faults(&mut r), vec!["b1 integration [m1]: red on other_test".to_string()]);
     }
 
