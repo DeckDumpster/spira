@@ -74,9 +74,16 @@ async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
     // The live source reads the process's own config, so the sessions are driven through `smtp::run`, the loop the source runs.
     let b = setup("sources-on-the-loop-sessions");
     let addr = b.cfg.socket();
-    let (stx, _srx) = mpsc::channel::<Submit>(8);
+    let (stx, mut srx) = mpsc::channel::<Submit>(8);
+    let answering = tokio::spawn(async move {
+        while let Some(s) = srx.recv().await {
+            if let Some(reply) = s.reply {
+                let _ = reply.send(Ok(()));
+            }
+        }
+    });
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = tokio::spawn(smtp::run(Some(b.cfg.clone()), None, stx, async { let _ = stop_rx.await; }));
+    let server = tokio::spawn(smtp::run(Some(b.cfg.clone()), Some(b.delivery.clone()), stx, async { let _ = stop_rx.await; }));
 
     let mut clients = Vec::new();
     for _ in 0..20 {
@@ -94,10 +101,18 @@ async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
     assert_eq!(during.len(), before, "twenty open sessions add no thread: {during:?}");
 
     let mut done = Vec::new();
-    for mut c in open {
+    for (n, mut c) in open.into_iter().enumerate() {
         done.push(tokio::spawn(async move {
             c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await;
             assert!(c.line().await.starts_with("235"));
+            if n % 4 == 0 {
+                for (cmd, want) in [("MAIL FROM:<me@example.org>", "250"), ("RCPT TO:<concierge@spira>", "250"), ("DATA", "354")] {
+                    c.say(cmd).await;
+                    assert!(c.line().await.starts_with(want), "{cmd}");
+                }
+                c.say(&format!("Message-ID: <load{n}@x>\r\n\r\nhello\r\n.")).await;
+                assert!(c.line().await.starts_with("250 2.0.0 queued"), "delivered and journaled");
+            }
             c.say("QUIT").await;
             assert!(c.line().await.starts_with("221"));
         }));
@@ -108,4 +123,5 @@ async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
     assert_eq!(comms().len(), before, "after the sessions: no thread either");
     stop_tx.send(()).unwrap();
     server.await.unwrap();
+    answering.await.unwrap();
 }

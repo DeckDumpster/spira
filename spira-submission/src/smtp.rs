@@ -739,4 +739,49 @@ mod tests {
         assert!(steps.iter().all(|s| !matches!(s, Step::Accept { .. })), "{steps:?}");
         assert!(sent(&steps).ends_with("552 5.3.4 message too large\r\n250 2.0.0 ok\r\n"), "{}", sent(&steps));
     }
+
+    struct Duplex {
+        input: std::io::Cursor<Vec<u8>>,
+        output: Vec<u8>,
+    }
+
+    impl Read for Duplex {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.input.read(buf)
+        }
+    }
+
+    impl Write for Duplex {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.output.write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test_id(tftjks1)]
+    #[test]
+    fn serve_session_drives_the_session_over_a_blocking_stream_and_reaches_the_sink() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = testkit::TempDir::new("serve-session");
+        let pw = dir.path().join("pw");
+        std::fs::write(&pw, "hunter2\n").unwrap();
+        std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let p = Policy { password_file: pw, max_message_bytes: 1024, ..policy() };
+        let script = format!(
+            "AUTH PLAIN {}\r\nMAIL FROM:<me@example.org>\r\nRCPT TO:<elsewhere@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\nMessage-ID: <m>\r\n\r\nhi\r\n.\r\nAUTH PLAIN {}\r\nQUIT\r\n",
+            b64("\0ryan\0hunter2"),
+            b64("\0ryan\0nope")
+        );
+        let mut stream = Duplex { input: std::io::Cursor::new(script.into_bytes()), output: Vec::new() };
+        let sink = Recording::default();
+        serve_session(&mut stream, &p, &sink);
+        let out = String::from_utf8(stream.output).unwrap();
+        let codes: Vec<&str> = out.lines().map(|l| &l[..3]).collect();
+        assert_eq!(codes, ["220", "235", "250", "550", "250", "354", "250", "503", "221"], "{out}");
+        assert_eq!(*sink.delivered.borrow(), [b"Message-ID: <m>\n\nhi\n".to_vec()]);
+        assert_eq!(*sink.refused.borrow(), ["p:1|ryan|me@example.org|relay denied to \"elsewhere@x.org\""]);
+    }
 }
