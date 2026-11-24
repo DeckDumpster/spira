@@ -324,9 +324,8 @@ from TAP lines `1..N`, `ok N - d`, `not ok N - d`, `# SKIP`/`# TODO` directives 
 `cases` has one entry per case: `ms` from the `#ms=<n>` line a suite prints after it, `at`
 from a failing case's `# at <file>:<line>` line, `deadline` (`{"secs":n,"load":str|null}`, absent otherwise) from the `# deadline secs=<n>
 <load>` line printed when the case was killed for running past the deadline; `load` is the rest of
-that line verbatim. A suite's own harness judges each case: one that runs past
-`spira.test_case_deadline` is printed as the next `not ok` and the suite is killed; the first
-`not ok` ends the suite with a `Bail out!`. The suite's RED line and the `VERDICT RED` line name
+that line verbatim. A TAP-printing suite reports a case that ran past
+`spira.test_case_deadline` as the next `not ok`, and a first `not ok` as a `Bail out!`. The suite's RED line and the `VERDICT RED` line name
 that first failing case (`first red: case <n> <name> at <file>:<line>`, `first=<suite>: ...`).
 
 ### 3.5a `jsonl_rows` — a suite's `results.jsonl` rows (sp-9gd4e)
@@ -350,7 +349,7 @@ verbatim.
 - **`out_text` opens with the literal line `TAP version 14`:** one row per `ok`/`not ok`
   case (`status` `pass`/`fail`), with a `not ok`'s first following `# ` comment as `detail`;
   a whole-suite `1..0 # SKIP <reason>` or `Bail out! <reason>` becomes one more row,
-  `case="(suite)"`, `status` `skip`/`bail`. A suite that prints no TAP and never takes this branch (its `.out` does not open with the header line).
+  `case="(suite)"`, `status` `skip`/`bail`. A suite whose `.out` does not open with the header line takes the fallback branch below.
 - **Otherwise (`out_text` is `None`, unreadable, or does not open with the header):** one
   `case="(suite)"` row built from `fallback` (the caller's own status vocabulary, not
   reinterpreted here) — `ok`→pass, `skip`→skip, `unreached`→unreached, everything else

@@ -1054,8 +1054,7 @@ never reaches the cache — nothing to look up or cache for a suite that does no
 
 **Measured 2026-09-30**, 10 real `gate.sh` runs each (the real binary, real git, real file
 locks, real admission, with a fake
-`testenv` standing in for the suite container's cost, as `test-gate-base-evidence.sh` already
-fabricates suite-status text rather than running a real corpus), same branch-red fixture,
+`testenv` standing in for the suite container's cost), same branch-red fixture,
 same base tree, before (`local/main`, 3f2babc39) and after this change: median wall 5.69 s →
 4.81 s, median gate.log `ran=` 3 s → 2 s. The fixture's stand-in "suite corpus" costs a fixed
 1.00 s (standing in for production's 275-337 s); before, every run's `base-gate` phase paid
