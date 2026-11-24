@@ -15,7 +15,6 @@
 //! answered here too, their bd half included; a verb neither serves is refused, never handed on.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
@@ -550,8 +549,7 @@ pub fn run(args: &[String]) -> i32 {
 /// Binds the loop socket and starts the `lc-loop` thread, returning once it runs; the thread
 /// ends, with the connections it cut at the drain bound, after SIGTERM.
 fn start_loop(path: &str) -> Result<std::thread::JoinHandle<usize>, String> {
-    let listener = bind_socket(path).map_err(|e| format!("cannot bind {path}: {e}"))?;
-    listener.set_nonblocking(true).map_err(|e| format!("cannot bind {path}: {e}"))?;
+    let listener = crate::net::RealNet.listen(path).map_err(|e| format!("cannot bind {path}: {e}"))?;
     let door = Door {
         ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(),
         work: live_work(),
@@ -567,7 +565,7 @@ fn start_loop(path: &str) -> Result<std::thread::JoinHandle<usize>, String> {
         .spawn(move || {
             let _ = running.send(());
             let gone = path.clone();
-            run_loop(listener, shared, &STOPPING, DRAIN_BOUND, move || {
+            run_loop_on(listener, shared, &STOPPING, DRAIN_BOUND, move || {
                 if let Err(e) = std::fs::remove_file(&gone) {
                     eprintln!("spira-lc serve: cannot remove {gone}: {e}");
                 }
@@ -580,10 +578,15 @@ fn start_loop(path: &str) -> Result<std::thread::JoinHandle<usize>, String> {
 }
 
 /// The loop server on this thread, current-thread tokio, until `stopping` and its drain.
+#[cfg(test)]
 pub(crate) fn run_loop(listener: UnixListener, shared: Arc<crate::serve_loop::Shared>, stopping: &AtomicBool, drain_bound: Duration, on_stop: impl FnOnce()) -> usize {
+    let listener = Box::new(crate::net::RealListener::adopt(listener).expect("the loop listener is made non-blocking"));
+    run_loop_on(listener, shared, stopping, drain_bound, on_stop)
+}
+
+fn run_loop_on(listener: Box<dyn ports::Listener>, shared: Arc<crate::serve_loop::Shared>, stopping: &AtomicBool, drain_bound: Duration, on_stop: impl FnOnce()) -> usize {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a current-thread runtime builds");
     runtime.block_on(async {
-        let listener = tokio::net::UnixListener::from_std(listener).expect("the loop listener registers");
         crate::serve_loop::serve(listener, shared, stopping, drain_bound, on_stop).await
     })
 }
@@ -962,21 +965,6 @@ fn alarm_tick() {
     crate::disk::log_line(&path, text);
 }
 
-fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
-    if std::path::Path::new(socket_path).exists() {
-        let _ = crate::disk::fs().remove(std::path::Path::new(socket_path));
-    }
-    let listener = UnixListener::bind(socket_path)?;
-    // Group-readable/writable only: the operator's group (spira) can reach the socket, the
-    // credential this process holds is never written to it, only used to answer requests.
-    if let Ok(meta) = std::fs::metadata(socket_path) {
-        let mut perms = meta.permissions();
-        perms.set_mode(0o660);
-        let _ = std::fs::set_permissions(socket_path, perms);
-    }
-    Ok(listener)
-}
-
 fn handle(stream: UnixStream, accepted: Instant) {
     let door = Door { ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(), work: live_work(), deadlines: DEADLINES.get().expect("the deadlines are set before the socket is bound").clone() };
     serve_one(stream, SPANS.get(), accepted, &door);
@@ -1052,12 +1040,10 @@ pub(crate) fn record_unread(spans: Option<&spira_otel::Sink>, size: usize, msg: 
     record_span(spans, &call);
 }
 
-/// The socket peer's process and user.
-#[derive(Clone, Copy)]
-pub(crate) struct Peer {
-    pub(crate) pid: Option<i32>,
-    pub(crate) uid: Option<u32>,
-}
+pub(crate) use crate::net::peer_of;
+pub(crate) use ports::Peer;
+use crate::net::bind_socket;
+use ports::Net;
 
 #[cfg(test)]
 pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
@@ -1067,11 +1053,6 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
 #[cfg(test)]
 fn peer_pid(stream: &UnixStream) -> Option<i32> {
     peer_of(stream).pid
-}
-
-pub(crate) fn peer_of(stream: &impl std::os::fd::AsRawFd) -> Peer {
-    let cred = peer_cred(stream);
-    Peer { pid: cred.as_ref().map(|c| c.pid), uid: cred.map(|c| c.uid) }
 }
 
 /// Where a request's deadline is kept: by `within`, on a runner thread of its own, or by the
@@ -1503,25 +1484,6 @@ impl Runners {
 /// Beside the socket, so the one configured socket path locates it: `<uid> <persona>` lines.
 fn personas_path() -> String {
     format!("{}.personas", spira_config::process::cfg("SPIRA_LC_SOCKET").unwrap_or_default())
-}
-
-#[repr(C)]
-struct Ucred {
-    pid: i32,
-    uid: u32,
-    gid: u32,
-}
-
-extern "C" {
-    fn getsockopt(fd: i32, level: i32, name: i32, val: *mut Ucred, len: *mut u32) -> i32;
-}
-
-fn peer_cred(stream: &impl std::os::fd::AsRawFd) -> Option<Ucred> {
-    const SOL_SOCKET: i32 = 1;
-    const SO_PEERCRED: i32 = 17;
-    let mut cred = Ucred { pid: 0, uid: 0, gid: 0 };
-    let mut len = std::mem::size_of::<Ucred>() as u32;
-    (unsafe { getsockopt(stream.as_raw_fd(), SOL_SOCKET, SO_PEERCRED, &mut cred, &mut len) } == 0).then_some(cred)
 }
 
 /// A header line, then the stdout bytes; a non-empty stderr follows them, its length in the

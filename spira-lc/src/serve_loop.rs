@@ -3,7 +3,6 @@
 //! the personas file, the span) runs on the loop's own `Pool` and is awaited, never run here.
 
 use std::future::Future;
-use std::io::ErrorKind;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -11,7 +10,7 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant, SystemTime};
 
 use runtime::offload::{Offloaded, Pool};
-use tokio::net::{UnixListener, UnixStream};
+use ports::{Listener, Stream};
 use tokio::sync::Notify;
 use tokio::time::Sleep;
 
@@ -91,7 +90,7 @@ enum Step {
 }
 
 struct Conn {
-    stream: UnixStream,
+    stream: Box<dyn Stream>,
     accepted: Instant,
     started: SystemTime,
     peer: Peer,
@@ -146,8 +145,8 @@ fn answering(ans: &Answer, read_ended: bool, post: Post) -> Phase {
 }
 
 impl Conn {
-    fn new(stream: UnixStream) -> Conn {
-        let peer = crate::serve::peer_of(&stream);
+    fn new(stream: Box<dyn Stream>) -> Conn {
+        let peer = stream.peer();
         let now = Instant::now();
         Conn { stream, accepted: now, started: SystemTime::now(), peer, read_at: now, phase: Phase::Reading(Vec::new()) }
     }
@@ -179,20 +178,15 @@ impl Conn {
 
     fn read(&mut self, mut buf: Vec<u8>, cx: &mut Context<'_>, sh: &Shared) -> Step {
         loop {
-            match self.stream.poll_read_ready(cx) {
+            let mut chunk = [0u8; CHUNK];
+            let eof = match self.stream.poll_read(cx, &mut chunk) {
                 Poll::Pending => return Step::Wait(Phase::Reading(buf)),
                 Poll::Ready(Err(_)) => return Step::Done,
-                Poll::Ready(Ok(())) => {}
-            }
-            let mut chunk = [0u8; CHUNK];
-            let eof = match self.stream.try_read(&mut chunk) {
-                Ok(0) => true,
-                Ok(n) => {
+                Poll::Ready(Ok(0)) => true,
+                Poll::Ready(Ok(n)) => {
                     buf.extend_from_slice(&chunk[..n]);
                     false
                 }
-                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => continue,
-                Err(_) => return Step::Done,
             };
             match parse(&buf, eof) {
                 Parsed::Need => {}
@@ -266,15 +260,10 @@ impl Conn {
 
     fn answer(&mut self, out: Vec<u8>, mut sent: usize, post: Post, cx: &mut Context<'_>, sh: &Shared) -> Step {
         while sent < out.len() {
-            match self.stream.poll_write_ready(cx) {
+            match self.stream.poll_write(cx, &out[sent..]) {
                 Poll::Pending => return Step::Wait(Phase::Answering { out, sent, post }),
-                Poll::Ready(Err(_)) => return Step::Done,
-                Poll::Ready(Ok(())) => {}
-            }
-            match self.stream.try_write(&out[sent..]) {
-                Ok(n) => sent += n,
-                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {}
-                Err(_) => return Step::Done,
+                Poll::Ready(Ok(0)) | Poll::Ready(Err(_)) => return Step::Done,
+                Poll::Ready(Ok(n)) => sent += n,
             }
         }
         let answered = self.read_at.elapsed();
@@ -299,12 +288,12 @@ impl Conn {
     }
 
     /// The answer the drain gives a connection it cannot wait for.
-    fn refuse_for_restart(&self) -> bool {
+    fn refuse_for_restart(&mut self) -> bool {
         if matches!(self.phase, Phase::Answering { .. } | Phase::Closed) {
             return false;
         }
         let out = crate::serve::encode_response(2, &crate::serve::stopped_for_restart(), "", false);
-        let _ = self.stream.try_write(&out);
+        let _ = self.stream.poll_write(&mut Context::from_waker(std::task::Waker::noop()), &out);
         true
     }
 }
@@ -312,7 +301,7 @@ impl Conn {
 /// Serves `listener` until `stopping`, then answers what is in flight for up to `drain_bound`
 /// and returns how many connections the bound cut. `on_stop` runs once, when the stop is seen,
 /// before anything else: it takes the socket path away so a new connect is refused.
-pub(crate) async fn serve(listener: UnixListener, sh: Arc<Shared>, stopping: &AtomicBool, drain_bound: Duration, on_stop: impl FnOnce()) -> usize {
+pub(crate) async fn serve(listener: Box<dyn Listener>, sh: Arc<Shared>, stopping: &AtomicBool, drain_bound: Duration, on_stop: impl FnOnce()) -> usize {
     let mut listener = Some(listener);
     let mut conns: Vec<Conn> = Vec::new();
     let mut on_stop = Some(on_stop);
@@ -332,8 +321,8 @@ pub(crate) async fn serve(listener: UnixListener, sh: Arc<Shared>, stopping: &At
                 f();
             }
         }
-        if let Some(l) = &listener {
-            while let Poll::Ready(Ok((stream, _))) = l.poll_accept(cx) {
+        if let Some(l) = &mut listener {
+            while let Poll::Ready(Ok(stream)) = l.poll_accept(cx) {
                 conns.push(Conn::new(stream));
             }
         }
@@ -343,9 +332,12 @@ pub(crate) async fn serve(listener: UnixListener, sh: Arc<Shared>, stopping: &At
         conns.retain_mut(|c| !c.drive(cx, &sh));
         match stopped_at {
             Some(_) if listener.is_none() && conns.is_empty() => Poll::Ready(0),
-            Some(at) if at.elapsed() >= drain_bound => Poll::Ready(conns.iter().filter(|c| c.refuse_for_restart()).count()),
+            Some(at) if at.elapsed() >= drain_bound => Poll::Ready(conns.iter_mut().filter_map(|c| c.refuse_for_restart().then_some(())).count()),
             _ => Poll::Pending,
         }
     })
     .await
 }
+
+#[cfg(test)]
+mod sim_tests;
