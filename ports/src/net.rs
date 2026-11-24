@@ -546,4 +546,25 @@ mod tests {
         drop(nobody);
         assert!(n.listen("p").is_err());
     }
+
+    #[test_id(t55p1nl)]
+    #[test]
+    fn a_dial_with_a_chunk_size_sends_and_receives_that_many_bytes_at_a_time() {
+        for chunk in [Some(2), None] {
+            let n = net(4);
+            let mut l = n.listen("p").unwrap();
+            let mut dialled = SimDial { net: n.clone(), path: "p".into(), peer: ME, chunk }.dial().unwrap();
+            assert_eq!(dialled.peer(), Peer { pid: None, uid: None });
+            assert!(matches!(dialled.poll_write(&mut cx(), b"hello"), Poll::Ready(Ok(k)) if k == chunk.unwrap_or(5)));
+            let _ = dialled.poll_shutdown(&mut cx());
+            while n.step() {}
+            let mut s = accept(&mut l);
+            assert_eq!(s.peer(), ME);
+            let want: &[u8] = if chunk.is_some() { b"he" } else { b"hello" };
+            assert_eq!(drain(s.as_mut()), want);
+            if let Some(c) = chunk {
+                assert!(matches!(s.poll_write(&mut cx(), b"abcdef"), Poll::Ready(Ok(k)) if k == c));
+            }
+        }
+    }
 }
