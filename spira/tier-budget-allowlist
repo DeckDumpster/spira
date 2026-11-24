@@ -46,7 +46,6 @@ test-batch-idle-cut.sh	T1	18.0
 test-batch-nocut-reason.sh	T1	8.0
 test-batch-repeat-refused-delivers.sh	T1	18.5
 test-builder-qa-proposed.sh	T1	4.0
-test-cadence-tool.sh	T1	2.0
 test-cadence.sh	T1	1.5
 test-capacity-probe.sh	T1	3.5
 test-census-reopen.sh	T1	78.5
@@ -80,7 +79,6 @@ test-cockpit-unit-notify.sh	T1	2.0
 test-concierge.sh	T1	28.0
 test-content-landed-no-reopen.sh	T1	29.5
 test-dependents.sh	T1	18.0
-test-deploy.sh	T1	17.5
 test-forge-batch-ci-status.sh	T1	2.0
 test-forge-check-status.sh	T1	8.0
 test-forge-orphan-runs.sh	T1	2.0
@@ -97,7 +95,6 @@ test-gh-run-gate.sh	T1	9.0
 test-hold.sh	T1	12.0
 test-incident-recur-bounded.sh	T1	98.0
 test-install-bootstrap-release.sh	T1	7.5
-test-install-conf-seed.sh	T1	61.0
 test-install-conflicts.sh	T1	9.0
 test-install-loom-broker.sh	T1	2.5
 test-install-prod-checkout.sh	T1	9.5

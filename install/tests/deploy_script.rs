@@ -12,7 +12,7 @@ const NEW: &str = "spira-20260917T053803Z";
 const NEW_TAG: &str = "spira-release-spira-20260917T053803Z";
 const PRIOR: &str = "spira-20260901T000000Z";
 const DRAFT_TAG: &str = "spira-release-spira-20260918T000000Z";
-const OLD_PROD: &str = "/old/checkout/spira";
+const OLD_PROD: &str = "old-checkout/spira";
 const STUB_NAMES: &[&str] = &["gh", "world.sh", "release", "install.sh", "layout.sh", "doctor.sh", "skew.sh", "slay.sh", "spira-lc", "systemctl", "ctrl"];
 
 const STUBS: &str = r#"#!/bin/bash
@@ -153,7 +153,7 @@ fn run(s: Spec) -> Run {
         ("HOME", path(d)),
         ("SPIRA_RELEASE", path(&release)),
         ("SPIRA_HOME", path(script.parent().unwrap())),
-        ("SPIRA_CONF", "/nonexistent".into()),
+        ("SPIRA_CONF", path(&d.join("no-conf"))),
         ("SPIRA_TOML", path(&toml)),
         ("SPIRA_REPO", path(&repo)),
         ("SPIRA_DOCTOR", "1".into()),
@@ -259,7 +259,7 @@ fn deploy_drains_first_a_refusal_blocks_force_slays_and_the_prod_path_is_written
     assert!(healthy.log.contains(&format!("toml-at-activate prod = \"{prod}\"")), "SPIRA_PROD is in the config when activation restarts services: {}", healthy.log);
     let release = format!("{}/current", healthy.releases.display());
     assert!(healthy.log.contains(&format!("install SPIRA_PROD={prod} SPIRA_HOME={prod} SPIRA_REPO={release}")), "{}", healthy.log);
-    assert!(!healthy.log.contains(OLD_PROD.trim_end_matches("/spira")), "the old checkout is gone from every call: {}", healthy.log);
+    assert!(!healthy.log.contains("old-checkout"), "the old checkout is gone from every call: {}", healthy.log);
 }
 
 // covers: UC-instance-lifecycle-14

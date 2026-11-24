@@ -35,7 +35,7 @@ migration bead per family from this table.
 | D | dwarf teardown and close fences | full-dwarf fixture | 8 | 518 |
 | E | dwarf claim, resume, worktree and wiki hygiene | testdb + fixture repo | 11 | 561 |
 | F | persona brief, prompt layers, model | rune + runes render | 7 | 391 |
-| G | install, uninstall, deploy, units, timers | mock systemctl, bare-host | 10 | 519 |
+| G | install, uninstall, deploy, units, timers | mock systemctl | 10 | 519 |
 | H | watchers and ops detection | testdb | 11 | 622 |
 | I | lifecycle store (Dolt) | throwaway `dolt sql-server` | 4 | 167 |
 | J | gate internals | gate.sh fixture | 5 | 186 |
@@ -112,8 +112,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-deploy.sh | 33 | deploy: fetch, drain, activate, re-render, health check, rollback, dry-run, draft refusal | keep | Real deploy path; wall is 1,792 lines, shard by property. |
-| test-cadence-tool.sh | 84 | cadence.sh changes a timer's cadence and refuses to disarm one | keep | Real systemd; wall is two fixed sleeps (8 s unit, 2 s) repeated per row. |
 | test-canary.sh | 74 | `release stage` and `release canary` build an isolated environment and run the pipeline end to end | keep | The canary is the thing it tests. |
 | test-testenv-curl-bounds.sh | 47 | every curl in the image build has connect and total timeouts and a retry | unit | A grep over the Containerfile that should cost nothing; 47 s means it builds something. |
 | test-session-hook.sh | 33 | the session hook's output prepended to a fresh context window | unit | Text output. |

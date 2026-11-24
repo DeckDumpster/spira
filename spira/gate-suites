@@ -66,5 +66,5 @@ spira/test-gate-fences.sh
 
 # RETIRED, NOT RUN: test-concierge-acceptance (cgroup survival under a real systemd oneshot,
 # the cockpit layout pane). It skipped on every lane, and no lane has a systemd --user session
-# and a populated statute book together, so a `# bare-host:` marker would have bought nothing.
+# and a populated statute book together.
 # The gap is recorded on UC-operator-channel-40 in docs/test-plan/operator-channel.md.

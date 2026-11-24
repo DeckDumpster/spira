@@ -141,8 +141,7 @@ feature, or declared at a path that is not on disk; a new `tests/` file needs it
   `# covers:` line (space-separated path globs and use-case ids from `docs/test-plan/*.toml`)
   just above `set -uo pipefail`. A glob that matches nothing is refused (`covers-entries`); a
   use case no suite covers is reported by `plan-matrix`. A suite that cannot run in a container
-  carries `# host-reason: <why>` (`bash spira/host-check.sh` enforces container-or-reason);
-  `# bare-host: <why>` marks the few that need the runner itself.
+  carries `# host-reason: <why>` (`bash spira/host-check.sh` enforces container-or-reason).
 - **Selection.** `suite-select gate <base> <head>` maps a diff to suites through their
   `# covers:` lines; a changed source file that no suite claims is an error.
   `suite-select header covers|tier|uc|requires|exclusive|selects-on|testenv-unmet <file>` reads

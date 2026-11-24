@@ -170,7 +170,7 @@ pub struct BatchJob {
     pub resume_url: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
     pub setup_alarm_secs: u64,
-    /// The cap clock: first suite to the bare lane's end. Past it the VM kills the lane and exits 124.
+    /// The cap clock: first suite to the corpus's end. Past it the VM kills the corpus and exits 124.
     pub cap_secs: u64,
     /// `key = value` lines for the VM's `round-config.toml`: the operator's testenv limits.
     pub testenv_limits: String,
@@ -1102,9 +1102,9 @@ tail -n +1 -f --pid="$integ_pid" ~/round-integration-tests.log | unit_stream "$i
 integ_stream_pid=$!
 unit_hang_watch ~/round-integration-tests.log "$integ_hung" "$integ_pid" &
 integ_hang_pid=$!
-# THE CAP CLOCK runs from testenv's first suite to the bare lane's end: container setup, post-processing,
+# THE CAP CLOCK runs from testenv's first suite to the corpus's end: container setup, post-processing,
 # the unit tier before it and the pulls are outside it, each under its own guard. testenv's "running N
-# suite(s)" line is the start mark; one guard times the corpus and the bare lane from it.
+# suite(s)" line is the start mark.
 suites_cap_guard() {
     local mark="$1" cap="$2" fired="$3" pid alive; shift 3
     until [ -e "$mark" ]; do
@@ -1139,25 +1139,6 @@ phase suites
 t_suites=$(date +%s)
 echo "round-vm: SUITES-CLOCK: start (cap ${cap}s from the first suite)" >&2
 over_cap=""
-# THE BARE LANE runs beside the corpus: the bare-host suites SKIP inside the corpus container (it
-# has no podman), so the VM itself runs them, with the shared script the publish gate runs.
-# Their results replace the corpus's skips once the corpus has written its own; a red makes the
-# round red.
-bare_out="$HOME/round-bare-results"
-rm -rf "$bare_out"; mkdir -p "$bare_out"
-if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suites all); fi
-testenv_pidfile="$HOME/round-testenv-pid"
-rm -f "$testenv_pidfile"
-# The lane boots podman containers of its own: it starts only once the batch has finished its own setup.
-bare_after_setup() {
-    until [ -e "$suites_mark" ]; do
-        [ -s "$testenv_pidfile" ] && ! kill -0 "$(cat "$testenv_pidfile")" 2>/dev/null && break
-        sleep 1
-    done
-    bash spira/bare-suites.sh "$@"
-}
-bare_after_setup "${bare_sel[@]}" --results "$bare_out" >&2 &
-bare_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
@@ -1165,38 +1146,23 @@ else
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
 fi
 testenv_pid=$!
-echo "$testenv_pid" > "$testenv_pidfile"
-suites_cap_guard "$suites_mark" "$cap" "$cap_fired" "$testenv_pid" "$bare_pid" &
+suites_cap_guard "$suites_mark" "$cap" "$cap_fired" "$testenv_pid" &
 guard_pid=$!
 wait "$testenv_pid"
 rc=$?
 [ "$rc" -eq 0 ] || phase_failed suites "$rc"
-wait "$bare_pid"
-bare_rc=$?
-[ "$bare_rc" -eq 0 ] || phase_failed bare-suites "$bare_rc"
 phase integration-tests
 pkill -P "$guard_pid" 2>/dev/null; kill "$guard_pid" 2>/dev/null; wait "$guard_pid" 2>/dev/null
 [ -e "$cap_fired" ] && over_cap=1
 case "$rc" in 124|137) over_cap=1 ;; esac
-case "$bare_rc" in 124|137) over_cap=1 ;; esac
-bare_rdir="$HOME/round-work/.runtime/spira/batch-results"
-ff="$(find "$bare_rdir" -name fixture-fault.out 2>/dev/null | head -1)"
-if [ -n "$ff" ] && [ "$ff" != "$bare_rdir/fixture-fault.out" ]; then cp -f "$ff" "$bare_rdir/fixture-fault.out"; fi
-bare_leaf="$(find "$bare_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
-bare_leaf="${bare_leaf:-$bare_rdir}"
-mkdir -p "$bare_leaf"
-cp -rf "$bare_out"/. "$bare_leaf"/
+batch_results="$HOME/round-work/.runtime/spira/batch-results"
+ff="$(find "$batch_results" -name fixture-fault.out 2>/dev/null | head -1)"
+if [ -n "$ff" ] && [ "$ff" != "$batch_results/fixture-fault.out" ]; then cp -f "$ff" "$batch_results/fixture-fault.out"; fi
 if [ -e "$suites_mark" ]; then suites_clock=$(( $(date +%s) - $(stat -c %Y "$suites_mark") )); else suites_clock=$(( $(date +%s) - t_suites )); fi
 echo "round-vm: SUITES-CLOCK: ${suites_clock}s of the ${cap}s cap" >&2
-if [ "$bare_rc" -ne 0 ]; then
-    echo "round-vm: BARE-SUITES: FAIL (rc=$bare_rc)" >&2
-    [ "$rc" -eq 0 ] && rc=1
-elif [ -z "$over_cap" ]; then
-    echo "round-vm: BARE-SUITES: PASS" >&2
-fi
 if [ -n "$over_cap" ]; then
-    echo "round-vm: OVER-CAP: guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites and bare lane ran past the cap" >&2
-    echo "over-cap guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites and bare lane ran past the cap" > "$bare_rdir/round-fault-kind"
+    echo "round-vm: OVER-CAP: guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites ran past the cap" >&2
+    echo "over-cap guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites ran past the cap" > "$batch_results/round-fault-kind"
 fi
 if kill -0 "$integ_pid" 2>/dev/null; then echo "round-vm: INTEGRATION-TESTS: waiting (suites done, integration tests still running)" >&2; fi
 test_phase_bound "$integ_pid" "$post_guard" ~/round-integration-tests.log "$integ_hung" INTEGRATION-TESTS integration-post
@@ -3661,24 +3627,6 @@ mod tests {
         assert!(after.contains("BWRAP-PROBE-FAILED") && after.contains("$bwrap_probe") && after.contains("exit 3"), "a refused probe fails the round naming bwrap's words: {after}");
     }
 
-    #[test_id(tqkexm3)]
-    #[test]
-    fn the_round_runs_the_bare_host_suites_on_the_vm_after_the_corpus() {
-        let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
-        let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
-        let integ_wait = REMOTE_SCRIPT.find("wait \"$integ_pid\"").unwrap();
-        assert!(bare < corpus && corpus < integ_wait, "the bare lane starts before the corpus and is waited on after it");
-        let lane = &REMOTE_SCRIPT[bare..integ_wait];
-        assert!(REMOTE_SCRIPT[bare..corpus].contains("&\nbare_pid=$!"), "the bare lane runs in the background beside the corpus");
-        let gate = REMOTE_SCRIPT.find("bare_after_setup()").unwrap();
-        let call = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").unwrap();
-        assert!(gate < call && REMOTE_SCRIPT[gate..call].contains("until [ -e \"$suites_mark\" ]"), "the bare lane's container boots wait for the batch's setup to finish");
-        assert!(lane.contains("wait \"$bare_pid\""));
-        assert!(lane.contains("--results \"$bare_out\"") || REMOTE_SCRIPT[bare..corpus].contains("--results \"$bare_out\""), "its results are copied beside the corpus's once the corpus has written its own");
-        assert!(lane.contains("[ \"$rc\" -eq 0 ] && rc=1"), "a red bare suite makes the round red");
-        assert!(REMOTE_SCRIPT.contains("--selected \"$suites\"") && REMOTE_SCRIPT.contains("--suites all"));
-    }
-
     #[test_id(tu9kyt2)]
     #[test]
     fn the_remote_script_reports_bytes_used_per_directory_at_start_build_and_suites() {
@@ -4455,13 +4403,12 @@ mod tests {
 
     #[test_id(tn1me3y)]
     #[test]
-    fn the_unit_tier_is_waited_for_before_the_bare_lane_or_any_suite_starts() {
+    fn the_unit_tier_is_waited_for_before_any_suite_starts() {
         let launch = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").expect("the unit tier's launch");
         let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").expect("the unit wait");
         let early = REMOTE_SCRIPT.find("UNIT-TESTS RED before the suites: no suite was run").expect("the early exit");
-        let bare = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").expect("the bare lane's start");
         let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").expect("the corpus's start");
-        assert!(launch < waited && waited < early && early < bare && early < corpus, "the unit verdict is settled before any suite runs");
+        assert!(launch < waited && waited < early && early < corpus, "the unit verdict is settled before any suite runs");
         assert_eq!(REMOTE_SCRIPT.matches("wait \"$unit_pid\"").count(), 1, "one unit wait, before the suites; none after them");
         assert!(!REMOTE_SCRIPT.contains("beside the suites, on the binaries"), "the unit phase no longer runs beside the suites");
         let integ = REMOTE_SCRIPT.find("( integ_cargo; r=$?;").expect("the integration phase's launch");
@@ -5305,20 +5252,19 @@ mod tests {
 
     #[test_id(toqzrqf)]
     #[test]
-    fn the_cap_clock_covers_the_suites_and_the_bare_lane_only() {
+    fn the_cap_clock_covers_the_suites_only() {
         let start = REMOTE_SCRIPT.find("t_suites=$(date +%s)").expect("the clock starts");
         let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").expect("the corpus runs");
-        let bare = REMOTE_SCRIPT.find("bash spira/bare-suites.sh").unwrap();
-        let guard = REMOTE_SCRIPT.find("suites_cap_guard \"$suites_mark\"").expect("one guard times both");
+        let guard = REMOTE_SCRIPT.find("suites_cap_guard \"$suites_mark\"").expect("the guard times the corpus");
         let stop = REMOTE_SCRIPT.find("if [ -e \"$suites_mark\" ]; then suites_clock=").expect("the clock stops");
         let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
         let bins = REMOTE_SCRIPT.find("round-bins/ \\;").unwrap();
-        assert!(unit_wait < start && start < bare && bare < corpus && corpus < guard && guard < stop && stop < bins, "the unit tier is settled before the clock starts");
-        assert!(REMOTE_SCRIPT[guard..stop].contains("\"$testenv_pid\" \"$bare_pid\""), "the lane runs under the same cap, beside the corpus");
+        assert!(unit_wait < start && start < corpus && corpus < guard && guard < stop && stop < bins, "the unit tier is settled before the clock starts");
+        assert!(REMOTE_SCRIPT[guard..stop].contains("\"$testenv_pid\" &"), "the corpus runs under the cap");
         assert!(!REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$cap\""), "no timer counts from before the first suite");
-        assert!(REMOTE_SCRIPT.contains("round-vm: BARE-SUITES: PASS"));
+        assert!(!REMOTE_SCRIPT.contains("bare_pid") && !REMOTE_SCRIPT.contains("bare-suites"), "no bare lane runs beside the corpus");
         assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP: guard=suites-cap elapsed=") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
-        assert!(REMOTE_SCRIPT.contains("> \"$bare_rdir/round-fault-kind\"") && REMOTE_SCRIPT.contains("echo \"over-cap guard=suites-cap"), "the script records the typed kind beside its stderr line");
+        assert!(REMOTE_SCRIPT.contains("> \"$batch_results/round-fault-kind\"") && REMOTE_SCRIPT.contains("echo \"over-cap guard=suites-cap"), "the script records the typed kind beside its stderr line");
         assert_eq!(crate::vm_fault::FAULT_KIND_FILE, "round-fault-kind");
         assert!(REMOTE_SCRIPT[..unit_wait].contains("test_phase_bound \"$unit_pid\" \"$cap\""), "the unit phase's wait has its own guard, outside the cap clock");
         assert!(REMOTE_SCRIPT[stop..bins].contains("test_phase_bound \"$integ_pid\" \"$post_guard\""), "the integration phase's wait after the suites has its own guard");
