@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 #
-# pre-activate.sh <release-dir> — six checks a release must pass before
+# pre-activate.sh <release-dir> — five checks a release must pass before
 # releases/current moves onto it. `release verify` runs this against the
 # release it checks (a landing, skew refresh in release mode and rollback-local
 # all verify before `release activate`), before the symlink flips. Exit 0 only if every check passes; on any failure, print each failed
 # check to stderr and exit 1 — the caller leaves current where it was.
 #
 # Checks:
-#   deps       every runtime-tier program in the release's deps.toml is on
-#              PATH at its version_min
 #   config     spira.toml, if one is in force on this host, validates against
 #              THIS release's spira-config schema — not the host's
 #   registry   every key a binary in the release reads (`check-config`) is registered in the
 #              release's own spira/conf.d, so a binary is never promoted ahead of its keys
-#   store      the bead store is reachable and its schema matches the bd on
-#              PATH (deps' version_min already pins which bd that is)
+#   store      the bead store is reachable and its schema matches the bd on PATH
 #   units      every systemd unit renders with no unresolved placeholder
 #   self-test  the release's own spira/self-test.sh
 #   ami        a round AMI exists for the release's recipe-sha; only warns
+#
+# Runtime dependencies are not checked here: `release verify` settles them from files alone.
 set -uo pipefail
 
 REL="${1:?usage: pre-activate.sh <release-dir>}"
@@ -26,83 +25,6 @@ REL="${1:?usage: pre-activate.sh <release-dir>}"
 FAIL=0
 fail() { printf 'pre-activate: FAIL %s: %s\n' "$1" "$2" >&2; FAIL=1; }
 ok()   { printf 'pre-activate: ok   %s\n' "$1"; }
-
-# --- deps: every runtime-tier program in deps.toml, present at version_min ---
-check_deps() {
-    local toml="$REL/spira/deps.toml"
-    if [ ! -f "$toml" ]; then
-        fail deps "$toml not found"
-        return
-    fi
-    if ! command -v python3 >/dev/null 2>&1; then
-        fail deps "python3 not on PATH — cannot read deps.toml"
-        return
-    fi
-    local out rc
-    out="$(python3 - "$toml" <<'PY'
-import os, re, subprocess, sys, tempfile, tomllib
-
-def ge(a, b):
-    def parts(v):
-        return [int(x) for x in re.findall(r"\d+", v)]
-    return parts(a) >= parts(b)
-
-with open(sys.argv[1], "rb") as f:
-    doc = tomllib.load(f)
-
-# A probe must not inherit the caller's cwd: dolt scans it for databases and races scratch files.
-probe_cwd = tempfile.mkdtemp(prefix="pre-activate-probe.")
-
-bad = []
-for dep in doc.get("dep", []):
-    if dep.get("tier") != "runtime":
-        continue
-    name = dep["name"]
-    probe = dep.get("version_probe") or ""
-    vmin = (dep.get("version_min") or "").strip()
-    if not probe:
-        bad.append(f"{name}: no version_probe in deps.toml")
-        continue
-    def run_probe():
-        try:
-            return subprocess.run(["bash", "-c", probe], capture_output=True, text=True, timeout=10, cwd=probe_cwd), None
-        except Exception as e:
-            return None, e
-
-    def detail(p, e):
-        if e is not None:
-            return f"probe error: {e}"
-        text = " ".join(((p.stderr or "") + " " + (p.stdout or "")).split())[:400]
-        return f"not usable (probe exit {p.returncode})" + (f": {text}" if text else "")
-
-    p, err = run_probe()
-    if err is not None or p.returncode != 0:
-        print(f"pre-activate: {name}: first probe failed, retrying once: {detail(p, err)}", file=sys.stderr)
-        p, err = run_probe()
-    if err is not None or p.returncode != 0:
-        bad.append(f"{name}: {detail(p, err)}")
-        continue
-    if vmin:
-        m = re.search(r"\d+(?:\.\d+)*", p.stdout)
-        got = m.group(0) if m else ""
-        if not got or not ge(got, vmin):
-            bad.append(f"{name}: version {got or 'unknown'} is below required {vmin}")
-
-os.rmdir(probe_cwd)
-for b in bad:
-    print(b)
-sys.exit(1 if bad else 0)
-PY
-)"
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        while IFS= read -r line; do
-            [ -n "$line" ] && fail deps "$line"
-        done <<< "$out"
-    else
-        ok deps
-    fi
-}
 
 toml_in_force() {
     local c
@@ -247,7 +169,6 @@ check_ami() {
     esac
 }
 
-check_deps
 check_config
 check_registry
 check_store

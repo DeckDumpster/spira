@@ -2432,3 +2432,15 @@ fn a_landed_round_wakes_publish_and_a_base_moved_or_refused_land_does_not() {
     assert!(wakes(&on_outcome(&landing(), LAND, true, &moved, &land, NOW).1).is_empty());
     assert!(wakes(&on_outcome(&landing(), LAND, false, "refused", &land, NOW).1).is_empty());
 }
+
+#[test_id(tlk77d5)]
+#[test]
+fn a_refused_landing_page_lands_again_before_a_conditional_eject() {
+    let refusal = "queue.sh land-local: release c1ad5ddc failed to build or verify\nrelease: pre-activate: FAIL deps: bd: probe error: timed out after 10 seconds; refused";
+    let land = Leg { batch: "r9".into(), ..Leg::on("spira") };
+    let (_, acts) = on_outcome(&landing(), LAND, false, refusal, &land, NOW);
+    let page = &acts.iter().find(|a| a.effect == INBOX_APPEND).unwrap_or_else(|| panic!("no page: {acts:?}")).input;
+    let at = |s: &str| page.find(s).unwrap_or_else(|| panic!("{s:?} missing: {page}"));
+    assert!(at("queue round land r9") < at("only if the refusing line names a member's change"), "{page}");
+    assert!(at("only if the refusing line names a member's change") < at("queue round eject r9 <member>"), "{page}");
+}

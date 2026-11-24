@@ -59,6 +59,10 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
     }
     problems.extend(crate::symbols::problems(&rel));
     if o.pre_activate {
+        match pre_activate_env(cfg, &rel) {
+            Ok(envs) => problems.extend(crate::deps_check::problems(&rel, &envs[2].1)),
+            Err(e) => problems.push(format!("deps: cannot build the release's own PATH: {e}")),
+        }
         let pa = rel.join("spira/pre-activate.sh");
         if !fsutil::is_executable(&pa) {
             problems.push(format!("{} is missing; refusing an unverifiable release", pa.display()));
