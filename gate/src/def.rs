@@ -187,7 +187,7 @@ impl Def {
             return None;
         }
         let pkgs = self.bins.iter().fold(String::new(), |acc, b| acc + " -p " + &b.package);
-        let mut c = format!("cargo build -j {jobs}{pkgs}");
+        let mut c = format!("cargo build -j {jobs} {}{pkgs}", spira_config::build::one_shot_words("dev"));
         for b in &self.bins {
             c.push_str(&format!(
                 // path-ok: the gate builds this binary into the gate tree and names where it lands.
@@ -392,7 +392,7 @@ mod tests {
     fn tools_command_builds_each_bin_and_proves_it() {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nstep a\n").unwrap();
         let c = d.tools_command(4).unwrap();
-        assert!(c.starts_with("cargo build -j 4 -p spira-lint && "), "{c}");
+        assert!(c.starts_with("cargo build -j 4 --config profile.dev.incremental=false -p spira-lint && "), "{c}");
         // path-ok: asserting the tools phase's own proof of the binary it built.
         assert!(c.contains("[ -x target/debug/spira-lint ]"), "{c}");
         assert_eq!(parse("step a\n").unwrap().tools_command(4), None);
@@ -401,6 +401,25 @@ mod tests {
             // path-ok: the gate tree's build output, asserted.
             std::path::PathBuf::from("t/target/debug/spira-lint")
         );
+    }
+
+    #[test_id(tt2xoz8)]
+    #[test]
+    fn the_check_scripts_opt_out_of_incremental_on_their_cargo_line() {
+        fn opts_out(src: &str) -> bool {
+            let words = spira_config::build::one_shot_words("dev");
+            src.lines()
+                .find(|l| ["\"$CARGO_BIN\" check ", "cargo build "].iter().any(|w| l.trim_start().starts_with(w)))
+                .is_some_and(|l| l.contains(&words))
+        }
+        let words = spira_config::build::one_shot_words("dev");
+        for (name, src) in [
+            ("build-fence.sh", include_str!("../../spira/build-fence.sh")),
+            ("lint-staged.sh", include_str!("../../spira/lint-staged.sh")),
+        ] {
+            assert!(opts_out(src), "{name}: its cargo line lacks {words}");
+            assert!(!opts_out(&src.replace(&words, "")), "{name}: the matcher passed a line without the override");
+        }
     }
 
     #[test_id(trz6ip5)]

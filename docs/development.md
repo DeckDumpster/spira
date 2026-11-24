@@ -109,7 +109,7 @@ make dist      # build + spira/build-tarball.sh build --workspace .
 ```
 
 Profiles (`Cargo.toml`): `release` (opt-level 2, no LTO, stripped; what a release ships),
-`dwarf` (inherits `dev`, incremental; what dwarf worktrees and the gate build, with the fence
+`dwarf` (inherits `dev`, incremental; retired, the gate builds under `dev`; what dwarf worktrees and the gate build, with the fence
 tools such as `spira-lint` and `lifecycle-guard` optimised within it), and `unittest`
 (workspace members unoptimised, dependencies as release builds them; the round's unit-test
 build). `testenv --profile <p>` selects one; `--with-bins` means `release`. The toolchain is

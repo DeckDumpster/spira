@@ -5018,10 +5018,10 @@ fn a_gate_whose_built_binaries_vanished_is_no_verdict_never_branch_red() {
 
 #[test_id(tpafwxk)]
 #[test]
-fn the_tools_build_names_no_incremental_override() {
+fn the_tools_build_opts_out_of_incremental_like_the_unit_phases() {
     let d = crate::def::parse("bin SPIRA_LINT_BIN spira-lint\nstep \"$SPIRA_LINT_BIN\"\n").unwrap();
     let c = d.tools_command(4).unwrap();
-    assert!(!c.contains("incremental") && !c.contains("--profile"), "{c}");
+    assert!(c.contains(&format!(" {} ", spira_config::build::one_shot_words("dev"))) && !c.contains("--profile") && !c.contains("CARGO_INCREMENTAL"), "{c}");
 }
 
 /// A tree-built testenv is told its harness is the gate tree: its own executable now
