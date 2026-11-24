@@ -158,6 +158,10 @@ impl Opts {
     pub fn toml(&self) -> PathBuf {
         spira_config::toml_path_at(&self.xdg_config.join("spira"))
     }
+    /// The user manager's unit directory, where `install` renders units and `cadence.sh` writes drop-ins.
+    pub fn unit_dir(&self) -> PathBuf {
+        self.xdg_config.join("systemd/user")
+    }
     /// The operator's answers phase A hands the installer (`Run::answers_text`).
     pub fn answers(&self) -> PathBuf {
         self.tmp.join("answers")
@@ -485,6 +489,64 @@ pub fn land_modes_missing(modes: &[String]) -> Vec<&'static str> {
 /// Units installed only while `SPIRA_REPO` is a git checkout. A deploy re-renders under the
 /// release directory, which is not one, so an upgrade and a rollback never keep these.
 const GIT_CHECKOUT_UNITS: [&str; 1] = ["spira-round-template-"];
+
+/// Whether systemd holds a next elapse for a timer, from its two `NextElapseUSec*` properties
+/// (the meaning of `is_armed` in `spira/cadence.sh`): a calendar timer reports the realtime
+/// one, a monotonic timer the other, and a disarmed one has neither.
+pub fn timer_armed(realtime: &str, monotonic: &str) -> bool {
+    let (rt, mono) = (realtime.trim(), monotonic.trim());
+    !matches!(rt, "" | "n/a") || !matches!(mono, "" | "n/a" | "infinity" | "0")
+}
+
+/// One entry of a directory tree: a regular file's bytes, or a symlink's target (never followed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeEntry {
+    File(Vec<u8>),
+    Link(PathBuf),
+}
+
+pub type UnitTree = std::collections::BTreeMap<PathBuf, TreeEntry>;
+
+/// Every file and symlink under `dir`, by path relative to it. Directories are not entries;
+/// a missing `dir` is an empty tree; an entry that cannot be read is an error.
+pub fn unit_tree(dir: &Path) -> Result<UnitTree, String> {
+    match fs::symlink_metadata(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(UnitTree::new()),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+        Ok(_) => {}
+    }
+    let mut out = UnitTree::new();
+    for (rel, node) in crate::fsutil::walk(dir)? {
+        match node {
+            crate::fsutil::Node::Dir => {}
+            crate::fsutil::Node::Link(t) => {
+                out.insert(rel.into(), TreeEntry::Link(t.into()));
+            }
+            crate::fsutil::Node::File => {
+                let p = dir.join(&rel);
+                out.insert(rel.into(), TreeEntry::File(fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// How `after` differs from `before`, one `+ path` (added), `- path` (removed) or `~ path`
+/// (changed) per line, in path order.
+pub fn unit_tree_diff(before: &UnitTree, after: &UnitTree) -> Vec<String> {
+    let mut paths: Vec<&PathBuf> = before.keys().chain(after.keys()).collect();
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .filter_map(|p| match (before.get(p), after.get(p)) {
+            (None, Some(_)) => Some(format!("+ {}", p.display())),
+            (Some(_), None) => Some(format!("- {}", p.display())),
+            (Some(a), Some(b)) if a != b => Some(format!("~ {}", p.display())),
+            _ => None,
+        })
+        .collect()
+}
 
 /// One row of `systemctl list-unit-files --output=json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
