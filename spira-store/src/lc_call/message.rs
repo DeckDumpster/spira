@@ -279,7 +279,8 @@ mod tests {
     fn a_reply_cut_short_fails_in_the_class_and_text_exchange_once_gives() {
         let dropped = |why: &str| Err(Fail::Dropped(lost_text(why)));
         let final_ = |why: &str| Err(Fail::Final(lost_text(why)));
-        let cases: [(&str, &[u8], End, Result<Reply, Fail>); 6] = [
+        type Case<'a> = (&'a str, &'a [u8], End, Result<Reply, Fail>);
+        let cases: [Case; 6] = [
             ("reset before the head", b"", End::Reset, dropped("no reply")),
             ("close before the head", b"", End::Close, dropped("no reply")),
             ("reset mid-head", b"{\"exit_code\":0,", End::Reset, dropped("no reply")),
