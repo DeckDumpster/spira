@@ -494,3 +494,9 @@ fn the_retired_wrapper_names_the_inner_compiler_with_every_argument() {
         assert_eq!((prog, argv), ("rustc".into(), os(&["--crate-name", "x"])), "no inner: the compiler it was handed");
     }
 }
+
+#[test_id(tfn71w9)]
+#[test]
+fn the_test_threads_literal_is_the_test_threads_constant() {
+    assert_eq!(crate::run_test_threads_literal!(), RUN_TEST_THREADS.to_string());
+}

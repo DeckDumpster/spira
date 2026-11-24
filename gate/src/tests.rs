@@ -239,6 +239,8 @@ fn ctx() -> Ctx {
     }
 }
 
+const JOBS: u64 = 8;
+
 impl Fake {
     fn new() -> Fake {
         let readable: HashSet<PathBuf> = [
@@ -5051,8 +5053,8 @@ fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
     let last = cmds.last().unwrap();
-    assert_eq!(last, &crate::engine::release_bins_command());
-    assert!(last.starts_with("cargo build --release --workspace --locked --config profile.release.incremental=false"), "{last}");
+    assert_eq!(last, &crate::engine::release_bins_command(JOBS));
+    assert!(last.starts_with("cargo build -j 8 --release --workspace --locked --config profile.release.incremental=false"), "{last}");
     assert!(last.contains("find target/release -mindepth 1 -delete"), "a failed build leaves nothing to land: {last}");
     let env = f.ran.borrow().last().unwrap().clone();
     assert!(env.contains(&("RUSTC_WRAPPER".to_string(), "box/.cargo/bin/sccache".to_string())), "{env:?}");
@@ -5080,7 +5082,7 @@ fn a_cached_pass_with_release_bins_still_builds_the_judged_tree() {
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("VERDICT=PASS reason=cached"), "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
-    assert_eq!(cmds.last(), Some(&crate::engine::release_bins_command()), "{cmds:?}");
+    assert_eq!(cmds.last(), Some(&crate::engine::release_bins_command(JOBS)), "{cmds:?}");
     assert!(cmds.iter().all(|c| c.contains("--release")), "a cached verdict runs no trial: {cmds:?}");
     assert!(f.checkouts.borrow().iter().any(|_| true), "the judged tree is checked out");
     assert!(f.stderr().contains(&format!("--worktree {GATE_TREE}")), "{}", f.stderr());
@@ -5136,7 +5138,7 @@ fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
         );
     }
     // POSITIVE CONTROL: the release-bins command is the one that used to lack it.
-    assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command());
+    assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command(JOBS));
 }
 
 /// A `spira-admit` on the PATH is not a compiler wrapper: every cargo the gate runs compiles

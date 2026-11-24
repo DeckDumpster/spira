@@ -543,9 +543,8 @@ fn host_cargo_config_files(w: &dyn World) -> Vec<PathBuf> {
         .collect()
 }
 
-/// A host cargo config that sets what the harness declares for a builder session (jobs, test
-/// threads, profiles, a retired wrapper) overrides it and, for `incremental`, defeats the
-/// manifest. Reports; never edits the file.
+/// A host cargo config that sets what the harness states on every cargo call (jobs, test
+/// threads, a retired wrapper) is a setting that never takes effect. Reports; never edits the file.
 pub fn check_host_cargo_config(w: &dyn World) -> Vec<Line> {
     let mut lines = Vec::new();
     for f in host_cargo_config_files(w) {
@@ -554,7 +553,7 @@ pub fn check_host_cargo_config(w: &dyn World) -> Vec<Line> {
         if !keys.is_empty() {
             lines.push(warn(
                 format!("{} sets {}", f.display(), keys.join(", ")),
-                "the harness declares these for a builder session (spira_config::build::session_env, the root Cargo.toml); delete them from this file",
+                "the harness states these on every cargo call (spira_config::build::session_env); delete them from this file",
             ));
         }
     }

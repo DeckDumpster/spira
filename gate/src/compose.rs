@@ -741,15 +741,16 @@ pub fn unit_packages(crates: &[String]) -> String {
 /// The environment of the unit test phase: the gate's own, minus the release's directories on
 /// PATH and the release locator. A test that shells out to a bare tool name must not find the
 /// running release's binary and, through it, the live stores. `SPIRA_RUN` stays: the build
-/// wrapper's admission lease needs it.
-pub fn test_phase_env(env: &[(String, String)]) -> Vec<(String, String)> {
+/// wrapper's admission lease needs it. Jobs and test threads are stated, so a host cargo
+/// config's cannot decide them.
+pub fn test_phase_env(env: &[(String, String)], jobs: u64) -> Vec<(String, String)> {
     let release = env
         .iter()
         .find(|(k, _)| k == spira_config::RELEASE_ENV)
         .map(|(_, v)| v.trim_end_matches('/').to_string())
         .filter(|r| !r.is_empty());
     env.iter()
-        .filter(|(k, _)| k != spira_config::RELEASE_ENV)
+        .filter(|(k, _)| k != spira_config::RELEASE_ENV && k != TEST_THREADS_ENV && k != JOBS_ENV)
         .map(|(k, v)| {
             let v = match (&release, k.as_str()) {
                 (Some(r), "PATH") => v
@@ -761,8 +762,15 @@ pub fn test_phase_env(env: &[(String, String)]) -> Vec<(String, String)> {
             };
             (k.clone(), v)
         })
+        .chain([
+            (TEST_THREADS_ENV.to_string(), spira_config::admission::RUN_TEST_THREADS.to_string()),
+            (JOBS_ENV.to_string(), jobs.to_string()),
+        ])
         .collect()
 }
+
+const TEST_THREADS_ENV: &str = "RUST_TEST_THREADS";
+const JOBS_ENV: &str = "CARGO_BUILD_JOBS";
 
 // ------------------------------------------------------------------------------ re-entry
 
@@ -1347,16 +1355,28 @@ mod tests {
             e("SPIRA_RUN", "run"),
             e("HOME", "h"),
         ];
-        let got = test_phase_env(&env);
+        let (threads, jobs) = (e("RUST_TEST_THREADS", "4"), e("CARGO_BUILD_JOBS", "12"));
+        let got = test_phase_env(&env, 12);
         assert_eq!(
             got,
             vec![
                 e("PATH", "usr/bin:bin:h/.cargo/bin:r/release-x/bin"),
                 e("SPIRA_RUN", "run"),
                 e("HOME", "h"),
+                threads.clone(),
+                jobs.clone(),
             ]
         );
-        assert_eq!(test_phase_env(&[e("PATH", "a:b")]), vec![e("PATH", "a:b")]);
+        assert_eq!(test_phase_env(&[e("PATH", "a:b")], 12), vec![e("PATH", "a:b"), threads, jobs]);
+    }
+
+    #[test_id(tsg0yc1)]
+    #[test]
+    fn test_phase_env_states_jobs_and_threads_over_whatever_the_environment_carried() {
+        let e = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let got = test_phase_env(&[e("RUST_TEST_THREADS", "99"), e("CARGO_BUILD_JOBS", "99"), e("HOME", "h")], 7);
+        assert_eq!(got.iter().filter(|(k, _)| k == "RUST_TEST_THREADS").collect::<Vec<_>>(), [&e("RUST_TEST_THREADS", "4")]);
+        assert_eq!(got.iter().filter(|(k, _)| k == "CARGO_BUILD_JOBS").collect::<Vec<_>>(), [&e("CARGO_BUILD_JOBS", "7")]);
     }
 
     #[test_id(tqqjtxd)]
