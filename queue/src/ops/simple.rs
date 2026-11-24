@@ -72,12 +72,11 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
         }
     }
 
-    let suites = c.s.certify_suites.clone();
     let Some(lock_wait) = gate_lock_wait(w, "submit", &c) else {
         return FAIL;
     };
     let start = w.clock.now();
-    let (rc, out) = w.scripts.gate(branch, &name, &id, &suites, &lock_wait);
+    let (rc, out) = w.scripts.gate(branch, &name, &id, &lock_wait);
     if rc != 0 {
         w.err(format!(
             "queue.sh submit: {branch} failed the gate ({})",

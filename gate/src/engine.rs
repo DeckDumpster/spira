@@ -131,9 +131,6 @@ struct State {
     /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
     /// the `gate` phase's wall.
     queue_secs: u64,
-    /// The covered phase's seconds (its build and its suites) and the suites it deferred to
-    /// the round; None when no covered phase ran.
-    covered: Option<(u64, Vec<String>)>,
     /// `release` or `tree`: where the branch trial's tools came from; empty when it needs none.
     tools_from: String,
     build_dir: String,
@@ -489,20 +486,10 @@ impl<'w, W: World> Trial<'w, W> {
         let may_reenter = !ejected.trim().is_empty()
             || files.lines().any(|p| p.trim().strip_prefix("spira/").is_some_and(compose::is_suite_name));
         let reentry_reads = if may_reenter { vec![compose::reentry_command(&[])] } else { Vec::new() };
-        // A bead's certification never runs suites-blind: with suites off it still runs the
-        // budgeted suites covering what the bead touched, whatever the composition. Under
-        // fences mode that is a phase of its own (`covered`), for a tree definition only.
-        let suites_mode = ctx.var("SPIRA_GATE_SUITES").to_string();
-        let certifying = suites_mode == "off" && !self.s.bead.is_empty();
-        let covered = certifying && (!fences_only || tree_def.is_some());
-        if certifying && !covered {
-            w.eprint("gate: gate_mode=fences on a repository with no gate.steps runs its fences only — a bead's covering suites are left to the round.");
-        }
-        let covered_step = tree_def.as_ref().filter(|_| fences_only && covered).and_then(def::Def::suites_step);
         let (cmd, tree_def) = match (fences_only, tree_def) {
             (false, d) => (cmd, d),
             (true, Some(d)) => {
-                let also: Vec<String> = reentry_reads.iter().cloned().chain(covered_step.clone()).collect();
+                let also: Vec<String> = reentry_reads.clone();
                 let f = d.fences_only(&also);
                 (f.command(), Some(f))
             }
@@ -529,7 +516,6 @@ impl<'w, W: World> Trial<'w, W> {
         };
 
         // THE VERDICT CACHE.
-        let key_suites = if covered { "off+covered" } else { &suites_mode };
         let verdict_dir = self.s.verdict_dir.clone();
         if let Some(h) = w.harness_hash() {
             self.s.harness_h = h.clone();
@@ -539,7 +525,6 @@ impl<'w, W: World> Trial<'w, W> {
                 files: &files,
                 cmd: &key_cmd,
                 harness_h: &h,
-                suites: key_suites,
                 bead: if self.s.bead.is_empty() {
                     "none"
                 } else {
@@ -585,8 +570,7 @@ impl<'w, W: World> Trial<'w, W> {
         let lock_wait: u64 = key::digits(ctx.var("SPIRA_GATE_LOCK_WAIT"))
             .unwrap_or_else(|| key::digits(&timeout).unwrap_or(2700) * 4);
 
-        // HOST-WIDE ADMISSION (fences-only certification takes no slot — unless the round
-        // named suites against this bead: the re-entry phase runs them, sp-p3srm).
+        // HOST-WIDE ADMISSION: every gate takes a slot.
         //
         // sp-q20wb: a gate that blocks here used to print nothing at all — not even the
         // composition line, so a genuine queue looked exactly like a hang — and gate.log's
@@ -594,53 +578,50 @@ impl<'w, W: World> Trial<'w, W> {
         // are fixed below: a first message on blocking (and one on being admitted, if the
         // wait was not instant), and the wait accumulated into `self.s.waited` so the
         // tree-lock section's own wait adds to it instead of overwriting it.
-        let needs_slot = suites_mode != "off" || covered || !ejected.trim().is_empty() || cached.is_some();
-        if needs_slot {
-            let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
-            w.mkdir_p(&dir);
-            let t0 = w.now();
-            let mut said: Option<u64> = None;
-            'wait: loop {
-                // Re-read on every pass (sp-q20wb): a raised SPIRA_CERTIFY_PAR in the config
-                // document must reach a gate already waiting, which the frozen `Ctx` —
-                // captured once when lib.sh sourced conf.sh at this process's start — cannot.
-                // `admission_wait_line` below takes this same `par`, never re-deriving its
-                // own: one source for the pool's size, not two.
-                let par = self.admission_par(&ctx);
-                for slot in 1..=par {
-                    if w.admission_try(&dir, slot, &br) {
-                        if said.is_some() {
-                            w.eprint(&format!("gate: admitted to a gate slot after {}s", w.now().saturating_sub(t0)));
-                        }
-                        break 'wait;
+        let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
+        w.mkdir_p(&dir);
+        let t0 = w.now();
+        let mut said: Option<u64> = None;
+        'wait: loop {
+            // Re-read on every pass (sp-q20wb): a raised SPIRA_CERTIFY_PAR in the config
+            // document must reach a gate already waiting, which the frozen `Ctx` —
+            // captured once when lib.sh sourced conf.sh at this process's start — cannot.
+            // `admission_wait_line` below takes this same `par`, never re-deriving its
+            // own: one source for the pool's size, not two.
+            let par = self.admission_par(&ctx);
+            for slot in 1..=par {
+                if w.admission_try(&dir, slot, &br) {
+                    if said.is_some() {
+                        w.eprint(&format!("gate: admitted to a gate slot after {}s", w.now().saturating_sub(t0)));
                     }
+                    break 'wait;
                 }
-                // Visible, never silent (sp-f4ig1): who holds the pool, first and every 60s.
-                if said.is_none_or(|t| w.now().saturating_sub(t) >= 60) {
-                    w.eprint(&format!("gate: {}", w.admission_wait_line(&self.s.run, par)));
-                    said = Some(w.now());
-                }
-                if w.signalled() {
-                    self.s.waited = w.now() - t0;
-                    return v(
-                        NOVERDICT,
-                        "died",
-                        "gate: signalled while waiting for admission",
-                    );
-                }
-                if w.now().saturating_sub(t0) >= lock_wait {
-                    self.s.waited = w.now() - t0;
-                    return v(NOVERDICT, "admission-timeout", format!(
-                        "gate: all {par} host-wide gate admission slots busy for {lock_wait}s — no verdict on {br}\ngate: this is host-wide gate concurrency (SPIRA_CERTIFY_PAR={par}), not a fault in the branch."));
-                }
-                w.sleep_ms(1000);
             }
-            // sp-q20wb: gate.log's `waited=` covers admission too now, not only the tree
-            // lock that follows it — the tree-lock section below adds its own wait to this
-            // instead of overwriting it.
-            self.s.waited = w.now() - t0;
+            // Visible, never silent (sp-f4ig1): who holds the pool, first and every 60s.
+            if said.is_none_or(|t| w.now().saturating_sub(t) >= 60) {
+                w.eprint(&format!("gate: {}", w.admission_wait_line(&self.s.run, par)));
+                said = Some(w.now());
+            }
+            if w.signalled() {
+                self.s.waited = w.now() - t0;
+                return v(
+                    NOVERDICT,
+                    "died",
+                    "gate: signalled while waiting for admission",
+                );
+            }
+            if w.now().saturating_sub(t0) >= lock_wait {
+                self.s.waited = w.now() - t0;
+                return v(NOVERDICT, "admission-timeout", format!(
+                    "gate: all {par} host-wide gate admission slots busy for {lock_wait}s — no verdict on {br}\ngate: this is host-wide gate concurrency (SPIRA_CERTIFY_PAR={par}), not a fault in the branch."));
+            }
+            w.sleep_ms(1000);
         }
-        let admitted = if needs_slot { format!("gate slot after {}s", self.s.waited) } else { "fences only: no slot needed".to_string() };
+        // sp-q20wb: gate.log's `waited=` covers admission too now, not only the tree
+        // lock that follows it — the tree-lock section below adds its own wait to this
+        // instead of overwriting it.
+        self.s.waited = w.now() - t0;
+        let admitted = format!("gate slot after {}s", self.s.waited);
         mv!(self, GateState::Admitted, &admitted);
 
         // THE TREE, locked for the whole trial.
@@ -782,20 +763,12 @@ impl<'w, W: World> Trial<'w, W> {
                 absent.join(" ")));
         }
         re.gone = deleted;
-        let allowlist = std::fs::read_to_string(tree.join("spira/skip-allowlist.tsv")).unwrap_or_default();
-        let (kept, declared_skips) = compose::drop_declared_skips(&re.required, &allowlist);
-        if !declared_skips.is_empty() {
-            w.eprint(&format!(
-                "gate: re-entry: not required here (declared skip in spira/skip-allowlist.tsv, cannot run under testenv; the full-suite round proves them): {}",
-                declared_skips.join(" ")
-            ));
-        }
         let timing = w
             .read(&Path::new(&self.s.run).join("tsd/suite-timing.jsonl"))
             .map(|t| suite_select::timing::p90s(&t, 20).by_suite)
             .unwrap_or_default();
         let (kept, over) = compose::defer_over_budget(
-            &kept,
+            &re.required,
             &timing,
             budget,
         );
@@ -825,7 +798,7 @@ impl<'w, W: World> Trial<'w, W> {
         }
         let jobs = compose::jobs(key::digits(&ctx.host_cores).unwrap_or(1));
 
-        let env = |branch: &str, repeat: &str, c: &Composition| -> Vec<(String, String)> {
+        let env = |branch: &str, repeat: &str| -> Vec<(String, String)> {
             let e = |k: &str, v: &str| (k.to_string(), v.to_string());
             vec![
                 // Set outright from SPIRA_RELEASE (sp-31gtu): the release's bin/ and spira/, the
@@ -865,25 +838,6 @@ impl<'w, W: World> Trial<'w, W> {
                 ),
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
-                // Suites off for a unit or fences composition: the gate string runs its
-                // fences (a unit composition without the build fence, sp-aprxm) and the
-                // selector (`suite-select gate`) picks only what covers the diff when the
-                // caller is a bead's certification (SPIRA_GATE_COVERED), else nothing. The
-                // always-covers carve-out is cleared with it; its default, spira/lib.sh, is a
-                // script, and a script composes as suites, so no carve-out can apply here.
-                e(
-                    "SPIRA_GATE_SUITES",
-                    if c.suites_off() { "off" } else { &suites_mode },
-                ),
-                e("SPIRA_GATE_COVERED", if covered { "1" } else { "" }),
-                e(
-                    "SPIRA_CERTIFY_ALWAYS_COVERS",
-                    if c.suites_off() {
-                        ""
-                    } else {
-                        ctx.var("SPIRA_CERTIFY_ALWAYS_COVERS")
-                    },
-                ),
                 e("SPIRA_BATCH_MAXPAR", ctx.var("SPIRA_BATCH_MAXPAR")),
                 e("SPIRA_VERDICT_REPEAT_CONSIDERED", repeat),
                 e("SPIRA_GATE_BUDGET", ctx.var("SPIRA_GATE_BUDGET")),
@@ -975,7 +929,6 @@ impl<'w, W: World> Trial<'w, W> {
                     tools.as_ref(),
                     jobs,
                     &re.required,
-                    covered_step.as_deref(),
                     "",
                     fkey.as_ref(),
                     &mut mark,
@@ -985,7 +938,7 @@ impl<'w, W: World> Trial<'w, W> {
                     build_phase,
                 )
             };
-            let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp);
+            let first_env = env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"));
             let first = run(first_env.clone());
             let first_tiers = take_tiers(w, tiers_file.as_deref());
             if cache_in_force(&first_env) && first.0 != 0 && parse::cache_transport_failure(&first.1) {
@@ -1020,10 +973,6 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's moves: {e} — refusing to judge what it cannot record"));
         }
         self.s.queue_secs = parse::queue_secs(&out);
-        if self.s.phases.iter().any(|(n, _)| n == "covered") {
-            let secs = self.s.phases.iter().filter(|(n, _)| n == "covered" || n == "covered-build").map(|p| p.1).sum();
-            self.s.covered = Some((secs, parse::covered_deferred(&out)));
-        }
         if stall::is_stall(rc, &out) {
             return stall_verdict(&self.s.phases, &out);
         }
@@ -1221,7 +1170,7 @@ impl<'w, W: World> Trial<'w, W> {
                         w,
                         &tree,
                         &base_comp,
-                        &env(&base_rev, "base trial — confirming whether base is independently red", &base_comp),
+                        &env(&base_rev, "base trial — confirming whether base is independently red"),
                         &timeout,
                         &limits,
                         &mut self.s.test_secs,
@@ -1229,7 +1178,6 @@ impl<'w, W: World> Trial<'w, W> {
                         None,
                         jobs,
                         &[],
-                        None,
                         "base-",
                         None,
                         &mut |_, _| {},
@@ -1281,7 +1229,6 @@ impl<'w, W: World> Trial<'w, W> {
                     env(
                         &base_rev,
                         "base trial — confirming whether base is independently red",
-                        &base_comp,
                     ),
                     bdef.as_ref(),
                     base_tools.as_ref(),
@@ -1293,7 +1240,6 @@ impl<'w, W: World> Trial<'w, W> {
                 base_tools.as_ref(),
                 jobs,
                 &base_required,
-                None,
                 "base-",
                 base_fkey.as_ref(),
                 &mut |_, _| {},
@@ -1373,7 +1319,6 @@ impl<'w, W: World> Trial<'w, W> {
                                 env(
                                     &base_rev,
                                     "testenv image tag (sp-kqger base-suite cache)",
-                                    &Composition::Fences,
                                 ),
                                 base_bdef,
                                 base_tools_ref,
@@ -1417,9 +1362,6 @@ impl<'w, W: World> Trial<'w, W> {
                         env(
                             &base_rev,
                             "base trial — the branch's red suites the base trial did not run",
-                            &Composition::Suites {
-                                why: "base-rerun".into(),
-                            },
                         ),
                         base_bdef,
                         base_tools_ref,
@@ -1526,9 +1468,6 @@ impl<'w, W: World> Trial<'w, W> {
                         env(
                             &base_rev,
                             "base trial — a base red must reproduce before it holds a branch",
-                            &Composition::Suites {
-                                why: "base-rerun".into(),
-                            },
                         ),
                         base_bdef,
                         base_tools_ref,
@@ -2121,7 +2060,7 @@ impl<'w, W: World> Trial<'w, W> {
                     ran,
                     vd.status,
                     vd.reason,
-                    meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs, self.s.covered.as_ref().map(|(t, d)| (*t, d.len()))),
+                    meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
                     self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.suffix()),
                     self.unit_suffix(),
                     self.deny_suffix(),
@@ -2154,10 +2093,7 @@ impl<'w, W: World> Trial<'w, W> {
                 compose: self.s.compose.clone(),
                 branch_type: self.s.branch_type.clone(),
                 queue_secs: self.s.queue_secs,
-                covered_secs: self.s.covered.as_ref().map_or(0, |c| c.0),
-                covered_deferred: self.s.covered.as_ref().map_or(0, |c| c.1.len() as u64),
-                covered_deferred_suites: self.s.covered.as_ref().map_or(String::new(), |c| c.1.join(",")),
-                phases: meter_suffix(&self.s.compose, &self.s.phases, 0, None)
+                phases: meter_suffix(&self.s.compose, &self.s.phases, 0)
                     .split_once(" phases=")
                     .map(|(_, p)| p.to_string())
                     .unwrap_or_default(),
@@ -2256,10 +2192,9 @@ fn summary_mismatch(listed: usize, runner_ran: Option<usize>) -> Option<String> 
 }
 
 /// The gate.log fields after the reason: ` compose=<label> phases=<name>:<secs>,… queue=<secs>
-/// covered=<secs> covered_deferred=<n>` (queue only when the trial waited for a slot, covered
-/// only when a covered phase ran), empty until a composition was chosen. Readers split the note on spaces and take its first word
+/// ` (queue only when the trial waited for a slot), empty until a composition was chosen. Readers split the note on spaces and take its first word
 /// as the reason (yield.sh), so trailing fields are compatible.
-pub fn meter_suffix(compose: &str, phases: &[(String, u64)], queue_secs: u64, covered: Option<(u64, usize)>) -> String {
+pub fn meter_suffix(compose: &str, phases: &[(String, u64)], queue_secs: u64) -> String {
     if compose.is_empty() {
         return String::new();
     }
@@ -2274,8 +2209,7 @@ pub fn meter_suffix(compose: &str, phases: &[(String, u64)], queue_secs: u64, co
     } else {
         String::new()
     };
-    let covered = covered.map_or(String::new(), |(secs, deferred)| format!(" covered={secs} covered_deferred={deferred}"));
-    format!(" compose={compose} phases={ph}{queue}{covered}")
+    format!(" compose={compose} phases={ph}{queue}")
 }
 
 /// ` tools=release` or ` tools=tree:<secs>` (the tools phase's wall), empty when the trial needed none.
@@ -2341,12 +2275,12 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 /// Whether a phase's wall counts against SPIRA_GATE_DEADLINE (`base-` prefix ignored).
 /// Compilation is never charged: a build is ended for stalling, not for taking long.
 pub fn charged(name: &str) -> bool {
-    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build" | "reentry-build" | "covered-build" | "publish")
+    !matches!(name.strip_prefix("base-").unwrap_or(name), "tools" | "fences" | "build" | "reentry-build" | "publish")
 }
 
-/// A re-entry or covered phase is watched for stall and charged the suites' seconds testenv reports, not its wall.
+/// A re-entry phase is watched for stall and charged the suites' seconds testenv reports, not its wall.
 fn reports_its_own_time(name: &str) -> bool {
-    matches!(name.strip_prefix("base-").unwrap_or(name), "reentry" | "covered")
+    matches!(name.strip_prefix("base-").unwrap_or(name), "reentry")
 }
 
 pub fn last_phase_charged(phases: &[(String, u64)]) -> bool {
@@ -2657,7 +2591,6 @@ pub fn run_composed<W: World>(
     tools: Option<&Tools>,
     jobs: u64,
     reentry: &[String],
-    covered: Option<&str>,
     prefix: &str,
     fences: Option<&crate::fencecache::Key>,
     mark: &mut dyn FnMut(GateState, &str),
@@ -2791,11 +2724,6 @@ pub fn run_composed<W: World>(
         Composition::Unit { crates, targets, .. } => compose::unit_commands(crates, *targets, jobs, &limits.deny).into(),
         _ => Vec::new(),
     };
-    // THE COVERED PHASE: the suites covering what the bead touched, a fences composition's own
-    // phase so the fences keep their cache and the gate can say what the suites added.
-    if let Some(c) = covered {
-        steps.push(("covered", c.to_string()));
-    }
     // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show
     // passing (all of them after a unit or fences gate or suites-off; only those the gate
     // string's budget deferred or skipped after a suites gate).

@@ -39,9 +39,6 @@ pub struct Settings {
     pub preflight_wall_secs: u64,
     /// The verdict pass's thresholds, as conf.sh resolved them (DESIGN-verdict.md §3).
     pub verdict: VerdictSettings,
-    /// `SPIRA_CERTIFY_SUITES` (declared value; law-one-source-of-config): the suites
-    /// `submit` gates on.
-    pub certify_suites: String,
     /// `SPIRA_GIT_NAME` / `SPIRA_GIT_EMAIL` (declared values): the identity a batch merge
     /// commits as.
     pub git_name: String,
@@ -320,8 +317,8 @@ pub trait Scripts {
     /// a non-empty `tests` adds `--tests <names>`, so only those tests run;
     /// `deny_list` is the snapshot file testenv reads as `SPIRA_TEST_DENY_LIST`.
     fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool, tests: &[String], deny_list: &Path) -> (i32, String);
-    /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
-    fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> (i32, String);
+    /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD: (rc, output).
+    fn gate(&self, branch: &str, repo: &str, bead: &str, lock_wait: &str) -> (i32, String);
     /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,
     /// stdout and stderr combined (the verdict reads `id=` off it).
     fn judgement_ci(

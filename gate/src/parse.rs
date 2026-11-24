@@ -205,25 +205,6 @@ pub fn testenv_suites_secs(out: &str) -> Option<u64> {
     list.split(',').find_map(|p| p.strip_prefix("suites:")?.parse().ok())
 }
 
-/// The suites a covered phase deferred to the round, sorted, each once: those the selector's
-/// budget cut dropped (`suite-select budget: dropped <name> (…over budget)`) and those the
-/// runner's deadline deferred (`<name> DEFERRED deadline…`). A set, not a line count.
-pub fn covered_deferred(out: &str) -> Vec<String> {
-    let mut names: Vec<String> = out
-        .lines()
-        .filter_map(|l| {
-            if let Some((_, rest)) = l.split_once("suite-select budget: dropped ") {
-                return rest.split_whitespace().next().map(str::to_string);
-            }
-            let mut w = l.split_whitespace();
-            let name = w.next()?;
-            (w.next() == Some("DEFERRED")).then(|| name.to_string())
-        })
-        .collect();
-    names.sort();
-    names.dedup();
-    names
-}
 
 /// The test runner's `VERDICT FAULT … reason=<word>` (its last line), when the suites step
 /// ended in a harness fault. testenv prints exactly one VERDICT line per run.
@@ -272,8 +253,7 @@ pub fn step_units(out: &str) -> Vec<(String, bool)> {
 }
 
 /// Every independent unit that is red in `out`: red suites, red fence steps (the suites step
-/// only when it named no suite), and unit phases that failed (the covered phase only when it
-/// named no suite: its reds are the suites).
+/// only when it named no suite), and unit phases that failed.
 pub fn red_units(out: &str, tiers: &[Tier]) -> Vec<String> {
     let mut units = red_suites(out, tiers);
     let named = !units.is_empty();
@@ -287,7 +267,7 @@ pub fn red_units(out: &str, tiers: &[Tier]) -> Vec<String> {
             continue;
         };
         let u = format!("phase:{name}");
-        if !units.contains(&u) && !(named && name == "covered") {
+        if !units.contains(&u) {
             units.push(u);
         }
     }
@@ -441,21 +421,6 @@ mod tests {
     fn cargo_reruns_returns_each_distinct_argument_once() {
         let o = "error: test failed, to rerun pass `-p a --lib`\nnoise\nerror: test failed, to rerun pass `-p b --test t`\nerror: test failed, to rerun pass `-p a --lib`\n";
         assert_eq!(super::cargo_reruns(o), ["-p a --lib", "-p b --test t"]);
-    }
-
-    #[test_id(t2i7apo)]
-    #[test]
-    fn covered_deferred_is_the_sorted_set_of_suites_not_the_lines() {
-        let out = "suite-select budget: dropped test-x.sh (tier=T1 predicted=92.000s from p90 — over budget)\n  test-y.sh        DEFERRED deadline after 61s\nsuite-select budget: dropped test-x.sh (tier=T1 predicted=1s from cap — over budget)\n  test-y.sh        DEFERRED deadline\n  test-a.sh   ok      3s\nsuite-select budget: selected 1, dropped 1, predicted 3s (budget 70s, width 4)";
-        assert_eq!(super::covered_deferred(out), ["test-x.sh", "test-y.sh"]);
-        assert!(super::covered_deferred("  test-a.sh   ok      3s").is_empty());
-    }
-
-    #[test_id(ti6jc8a)]
-    #[test]
-    fn the_covered_phase_is_a_red_unit_only_when_it_named_no_suite() {
-        assert_eq!(super::red_units("  test-b.sh   RED     rc=1 after 4s\ngate: phase 'covered' failed (exit 1): x", &[]), ["test-b.sh"]);
-        assert_eq!(super::red_units("gate: phase 'covered' failed (exit 1): x", &[]), ["phase:covered"]);
     }
 
     const NONE: &[String] = &[];

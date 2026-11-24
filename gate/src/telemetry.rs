@@ -80,11 +80,6 @@ pub struct GateRun {
     pub ran_secs: u64,
     /// Seconds of `ran_secs` spent waiting for a testenv slot.
     pub queue_secs: u64,
-    /// The covered phase's seconds (build and suites), how many suites it deferred to the round
-    /// and which (comma list); zero and empty when no covered phase ran.
-    pub covered_secs: u64,
-    pub covered_deferred: u64,
-    pub covered_deferred_suites: String,
     /// `unit` / `suites`; empty when the trial ended before the mode was read.
     pub gate_mode: String,
     /// The composition label gate.log carries; empty before one was chosen.
@@ -149,9 +144,6 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("red_line".into(), s(&r.red_line)),
         ("deny_list".into(), s(&r.deny_list)),
         ("slowest_step".into(), s(&r.slowest_step)),
-        ("covered_secs".into(), Value::from(r.covered_secs)),
-        ("covered_deferred".into(), Value::from(r.covered_deferred)),
-        ("covered_deferred_suites".into(), s(&r.covered_deferred_suites)),
     ];
     tsd::build_row(ts, host, FAMILY, &fields)
 }
@@ -280,7 +272,6 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
     let secs = |name, v: u64| Point::Seconds { name, value: v as f64 };
     let parts: Vec<(&str, u64)> = r.phases.split(',').filter_map(|p| p.split_once(':')).filter_map(|(n, v)| Some((n, v.parse().ok()?))).collect();
     let recompiled = crate::parse::recompiled_secs(parts.iter().copied());
-    let covered_ran = r.phases.split(',').any(|p| p.starts_with("covered:"));
     sink.push(
         &[
             secs("spira_gate_run_seconds", r.ran_secs),
@@ -289,8 +280,6 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
             Point::Count { name: "spira_gate_runs", value: 1 },
         ]
         .into_iter()
-        .chain(covered_ran.then(|| secs("spira_gate_covered_seconds", r.covered_secs)))
-        .chain(covered_ran.then_some(Point::Count { name: "spira_gate_covered_deferred", value: r.covered_deferred }))
         .collect::<Vec<_>>(),
         &[("repo", &r.repo), ("status", &r.status), ("gate_mode", mode), ("branch_type", bt)],
     );
@@ -491,38 +480,5 @@ mod tests {
         let line = render("t", "h", &GateRun::default()).unwrap();
         let v: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["branch_type"], "unknown");
-    }
-
-    #[test_id(tt12f9a)]
-    #[test]
-    fn a_covered_phase_pushes_its_seconds_and_deferrals_under_the_existing_labels() {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = l.local_addr().unwrap().to_string();
-        let h = std::thread::spawn(move || {
-            use std::io::{Read, Write};
-            let (mut c, _) = l.accept().unwrap();
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                let n = c.read(&mut chunk).unwrap();
-                buf.extend_from_slice(&chunk[..n]);
-                let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
-                let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
-                let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
-                if buf.len() >= i + 4 + len {
-                    break;
-                }
-            }
-            c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
-            String::from_utf8_lossy(&buf).into_owned()
-        });
-        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "spira-gate", std::time::Duration::from_secs(2));
-        let r = GateRun { repo: "r".into(), status: "PASS".into(), gate_mode: "fences".into(), phases: "fences:7,covered:0".into(), covered_secs: 0, covered_deferred: 2, covered_deferred_suites: "a,b".into(), ..Default::default() };
-        push_metrics(&sink, &r);
-        let body = h.join().unwrap();
-        for name in ["spira_gate_covered_seconds", "spira_gate_covered_deferred"] {
-            assert!(body.contains(name), "{name} missing from the push");
-        }
-        assert!(!body.contains("test-") && !body.contains("a,b"), "no suite name rides as a label");
     }
 }

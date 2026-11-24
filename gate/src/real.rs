@@ -64,8 +64,8 @@ fn close_inherited_fds(cmd: &mut Command) {
 ///
 /// UNTIL WAVE 4.8 ("retire conf re-import seams in Rust") this list also carried every
 /// `conf.d`-registry-backed name (SPIRA_REPO_MAP, SPIRA_RUN, SPIRA_VERDICT_TTL,
-/// SPIRA_GATE_TIMEOUT, SPIRA_GATE_LOCK_WAIT, SPIRA_CERTIFY_PAR, SPIRA_GATE_SUITES,
-/// SPIRA_GATE_BUDGET, SPIRA_CERTIFY_ALWAYS_COVERS, SPIRA_BATCH_MAXPAR, SPIRA_PATH — kept as
+/// SPIRA_GATE_TIMEOUT, SPIRA_GATE_LOCK_WAIT, SPIRA_CERTIFY_PAR,
+/// SPIRA_GATE_BUDGET, SPIRA_BATCH_MAXPAR, SPIRA_PATH — kept as
 /// [`RETIRED_VARS`] for a parity diff): `Real::context` read each one back out of the bash
 /// process that had just sourced `lib.sh`/conf.sh, a second, bash-shaped derivation of
 /// values `spira_config::resolve()` already computes in-process. `. "$HERE/lib.sh"` still
@@ -108,7 +108,6 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_GATE_TIMEOUT",
     "SPIRA_GATE_LOCK_WAIT",
     "SPIRA_CERTIFY_PAR",
-    "SPIRA_GATE_SUITES",
     "SPIRA_GATE_BUDGET",
     "SPIRA_GATE_DEADLINE",
     "SPIRA_GATE_UNIT_MAX_CRATES",
@@ -116,7 +115,6 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_GATE_BUILDER_DIR_WAIT_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_SECS",
     "SPIRA_UNIT_TEST_DEADLINE_PERIODS",
-    "SPIRA_CERTIFY_ALWAYS_COVERS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_PATH",
     // sp-xtdqi: the shared compilation cache's own address — a config-file-only setting
@@ -1290,6 +1288,14 @@ fn end_group(pgid: i32) {
 #[cfg(test)]
 mod tests {
     use crate::ports::World;
+
+    #[test]
+    fn every_retired_var_the_gate_resolves_is_a_registered_key() {
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let missing: Vec<&str> =
+            super::RETIRED_VARS.iter().copied().filter(|k| !spira_config::registry::declares_key(&home, k)).collect();
+        assert!(missing.is_empty(), "RETIRED_VARS names keys the registry no longer declares: {missing:?}");
+    }
 
     struct Pool {
         t: testkit::TempDir,
