@@ -372,7 +372,9 @@ pub async fn serve_with(
                         f.insert("handler.in_flight".into(), (busy.held_for() > Duration::ZERO).into());
                         if let Some(step) = steps.now() {
                             f.insert("turn.step".into(), step.name.into());
-                            f.insert("turn.step_of".into(), step.of.as_str().into());
+                            if !step.of.is_empty() {
+                                f.insert("turn.step_of".into(), step.of.as_str().into());
+                            }
                             f.insert("turn.step_ms".into(), (step.ran.as_millis() as u64).into());
                         }
                         emit(f);
