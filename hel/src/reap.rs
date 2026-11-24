@@ -670,6 +670,7 @@ mod tests {
 
     // ---- hold_alive / holder_alive -----------------------------------------------------
 
+    // covers: UC-ops-detection-remediation-34
     #[test_id(t3i6wcd)]
     #[test]
     fn hold_alive_sees_a_live_pid_and_rejects_dead_or_missing() {
@@ -685,6 +686,7 @@ mod tests {
         assert!(!hold_alive(&t.join("missing.pid")));
     }
 
+    // covers: UC-ops-detection-remediation-34
     #[test_id(tls83gw)]
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
@@ -916,6 +918,7 @@ mod tests {
 
     // ---- holder_witnesses ------------------------------------------------------------------
 
+    // covers: UC-ops-detection-remediation-34
     #[test_id(tysx8zm)]
     #[test]
     fn holder_witnesses_reads_the_lifecycle_claim_and_reflects_the_outage() {

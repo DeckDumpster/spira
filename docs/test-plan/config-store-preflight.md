@@ -12,12 +12,12 @@ Every harness process resolves each setting with the precedence environment > sp
 
 | Group | UCs | Tier | Suites |
 |---|---|---|---|
-| A. Configuration resolution | 01–08 | T1 (14 is T0) | test-conf, test-configure, test-cockpit-runtime-path, test-freshclone, test-bin-manifest, test-watchd-unit-name |
+| A. Configuration resolution | 01–08 | T1 (14 is T0) | test-conf, test-configure, test-cockpit-runtime-path, spira-config/tests/fresh_clone.rs (06), test-bin-manifest, test-watchd-unit-name |
 | B. Store binding and schema guard | 09–11 | T1 | test-bd-resolve, test-bd-lock-retry, test-bd-schema-stamp |
 | C. Repo-map, labels, partitions, containment | 12–18 | T0–T1 | test-repo-map, test-runes-repo-labels, test-builder-qa-proposed, test-czar-partition, test-containment, test-id-prefix |
 | D. Schema declaration and application | 19–22 | T1–T3 | test-schema, test-schema-apply |
 | E. Store provisioning and push | 23–26 | T1–T2 | test-install-dolt-port-wait |
-| F. Health (formerly preflight) | 27–34 | T0–T2 | test-freshclone (33); the rest are the Rust doctor crate |
+| F. Health (formerly preflight) | 27–34 | T0–T2 | spira-config/tests/fresh_clone.rs (33); the rest are the Rust doctor crate |
 
 ## Verdicts applied and not applied
 
