@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use regex::bytes::Regex;
 
 use crate::lex::{rust, shell};
-use crate::{allow_lines, pathspec_match, scope, Entry, Finding, LintError, Rule, Tree};
+use crate::{allow_dir, pathspec_match, scope, Entry, Finding, LintError, Rule, Tree};
 
 pub struct ConfigFence;
 
@@ -17,12 +17,14 @@ const SCOPE: &[&str] = &["spira/*.sh", "spira/gate-suites", "spira/runes/*.rune"
 const OWN_SOURCE: &str = "spira-lint/src/rules/config_fence.rs";
 const CONFIG_VARS: &[&str] = &["SPIRA_TOML", "SPIRA_REPO_MAP"];
 
-/// `spira/config-fence-allow`: exact repo-relative paths.
+const ALLOW_DIR: &str = "spira-lint/config-fence-allow.d";
+
+/// `spira-lint/config-fence-allow.d/<path>`: one file per allowed repo-relative path.
 pub struct ConfigAllow(BTreeSet<String>);
 
 impl ConfigAllow {
-    pub fn parse(text: &str) -> ConfigAllow {
-        ConfigAllow(allow_lines(text).into_iter().collect())
+    pub fn read(tree: &Tree) -> ConfigAllow {
+        ConfigAllow(allow_dir(tree, ALLOW_DIR).into_iter().map(|(path, _)| path).collect())
     }
     pub fn covers(&self, path: &str) -> bool {
         self.0.contains(path)
@@ -173,7 +175,7 @@ impl Rule for ConfigFence {
     }
 
     fn allow_file(&self) -> Option<&'static str> {
-        Some("spira/config-fence-allow")
+        Some(ALLOW_DIR)
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
@@ -182,7 +184,7 @@ impl Rule for ConfigFence {
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         let files = scope(tree, self)?;
-        let allow = ConfigAllow::parse(&tree.read_text(self.allow_file().unwrap()));
+        let allow = ConfigAllow::read(tree);
         let mut out = Vec::new();
         for e in files {
             if e.path == OWN_SOURCE || allow.covers(&e.path) {
@@ -200,7 +202,7 @@ impl Rule for ConfigFence {
     fn hint(&self) -> &'static str {
         "Only spira-config (the crate and its CLI) may name, parse or write spira.toml or repo-map; \
 call it instead of opening the file yourself. A file caught mid-cutover belongs in \
-spira/config-fence-allow — shrink-only: nothing is added for a newly written file."
+spira-lint/config-fence-allow.d — shrink-only: nothing is added for a newly written file."
     }
 }
 
@@ -226,7 +228,6 @@ mod tests {
     #[test]
     fn name_is_refused_then_clean_when_withdrawn() {
         let t = TempDir::new("cf-name");
-        t.write("spira/config-fence-allow", "");
         t.write("spira/planted.sh", "#!/bin/sh\n# see spira.toml for the defaults\n");
         t.write("spira/other.sh", "#!/bin/sh\necho ok\n");
         let got = run(&t, &["spira/planted.sh", "spira/other.sh"], &[]).unwrap();
@@ -251,15 +252,25 @@ mod tests {
         assert_eq!(k.render(), "write");
     }
 
-    #[test_id(tw1r2et)]
+    #[test_id(tl04caz)]
     #[test]
     fn allow_listed_file_is_skipped() {
         let t = TempDir::new("cf-allow");
         t.write("spira/legacy.sh", "#!/bin/sh\n# spira.toml\n");
-        t.write("spira/config-fence-allow", "");
         assert_eq!(run(&t, &["spira/legacy.sh"], &[]).unwrap().len(), 1);
-        t.write("spira/config-fence-allow", "# comment\n\nspira/legacy.sh\n");
-        assert!(run(&t, &["spira/legacy.sh"], &[]).unwrap().is_empty());
+        let entry = format!("{ALLOW_DIR}/spira/legacy.sh");
+        t.write(&entry, "sp-a8gna\n");
+        assert!(run(&t, &["spira/legacy.sh", &entry], &[]).unwrap().is_empty());
+    }
+
+    #[test_id(t6fj1wn)]
+    #[test]
+    fn an_entry_for_an_absent_path_yields_no_finding() {
+        let t = TempDir::new("cf-absent");
+        t.write("spira/ok.sh", "echo\n");
+        let entry = format!("{ALLOW_DIR}/spira/gone.sh");
+        t.write(&entry, "sp-a8gna\n");
+        assert!(run(&t, &["spira/ok.sh", &entry], &[]).unwrap().is_empty());
     }
 
     #[test_id(tvv0kin)]

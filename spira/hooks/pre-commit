@@ -59,7 +59,7 @@ exclude.sh staged || exit 1
 # hand mend, a --no-verify commit on a shared branch — no longer refuses every later commit;
 # the gate judges the whole tree. The whole index is still checked out rather than only the
 # staged paths because the rules read context beyond the file they judge: their allow lists
-# (spira-lint/*-allow, spira/config-fence-allow), and an empty scope is a refusal. Same
+# (spira-lint/*-allow, spira-lint/config-fence-allow.d), and an empty scope is a refusal. Same
 # rules, same binary, the committed diff's scope.
 _lint_root="$(mktemp -d "${TMPDIR:-/tmp}/spira-precommit.XXXXXX")" || exit 1
 trap 'rm -rf "$_lint_root"' EXIT

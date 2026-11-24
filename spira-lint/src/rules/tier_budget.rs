@@ -244,6 +244,18 @@ mod tests {
         assert_eq!(m, ["new entry test-y.sh — the allowlist may only shrink"]);
     }
 
+    #[test_id(ts96gk8)]
+    #[test]
+    fn an_emptied_ledger_still_refuses_an_added_row() {
+        let t = TempDir::new("tb-empty");
+        t.write(SUITE_LEDGER, "# header only\n");
+        let tree = forked_tree(&t);
+        assert!(Ledger::suites().check(&tree).unwrap().is_empty());
+        t.write(SUITE_LEDGER, "# header only\ntest-z.sh\t1\n");
+        let m: Vec<String> = Ledger::suites().check(&tree).unwrap().into_iter().map(|f| f.message).collect();
+        assert_eq!(m, ["new entry test-z.sh — the allowlist may only shrink"]);
+    }
+
     #[test_id(tji6ffk)]
     #[test]
     fn a_value_raised_over_the_fork_is_still_raised() {

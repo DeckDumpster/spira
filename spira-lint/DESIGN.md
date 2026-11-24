@@ -119,10 +119,10 @@ write either. A second reader or writer is a second schema that drifts.
 **Exempt.** `spira-config/` by directory. This rule's own source
 (`spira-lint/src/rules/config_fence.rs`) names what it hunts.
 
-**Allow list.** `spira/config-fence-allow`: exact repo-relative paths.
+**Allow list.** `spira-lint/config-fence-allow.d/<path>`: one file per exact repo-relative path, holding the introducing bead id; an entry for an absent path is ignored.
 
 ```rust
-pub struct ConfigAllow(BTreeSet<String>);   // entry == Finding.path
+pub struct ConfigAllow(BTreeSet<String>);   // entry path == Finding.path
 ```
 
 **Where the bash heuristic was wrong, and what changed.**

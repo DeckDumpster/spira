@@ -11,7 +11,7 @@ const NAME: &str = "no-new-shell-suite";
 fn is_shell_test(path: &str) -> bool {
     let mut parts: Vec<&str> = path.split('/').collect();
     let Some(base) = parts.pop() else { return false };
-    if parts.contains(&"fixtures") {
+    if parts.contains(&"fixtures") || parts.first() == Some(&"spira-lint") {
         return false;
     }
     let script = [".sh", ".bash", ".bats"].iter().any(|x| base.ends_with(x));
@@ -173,7 +173,7 @@ mod tests {
         let base = "cockpit/test-x.sh\ninstall/tests/x.sh\nspira/testlib/new.sh\n";
         let tr = tree(
             &t,
-            &["cockpit/test-x.sh", "install/tests/x.sh", "spira/testlib/new.sh", "lifecycle-guard/tests/fixtures/x/y.sh", "spira/lib-x.sh", "spira/test-x.rs"],
+            &["cockpit/test-x.sh", "install/tests/x.sh", "spira/testlib/new.sh", "lifecycle-guard/tests/fixtures/x/y.sh", "spira-lint/config-fence-allow.d/spira/test-x.sh", "spira/lib-x.sh", "spira/test-x.rs"],
             &[],
             base,
             false,
