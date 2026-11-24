@@ -224,7 +224,7 @@ bead = "sp-ugnv1x"
 [[use_case]]
 id = "UC-cockpit-observability-36"
 tier = "T1"
-statement = "`ctx-meter` session pointer: the operator's status-line tick owns the pointer; an idle second session cannot steal it until the holder is stale; a stale, deleted or corrupt pointer means 'no session'"
+statement = "`ctx-meter` session records: the status-line refresh writes a session record that `env` picks by newest transcript among records touched within the idle limit; a stale, deleted or corrupt record means 'no session'"
 
 [[use_case]]
 id = "UC-cockpit-observability-37"
