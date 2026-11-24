@@ -1450,9 +1450,9 @@ mod tests {
     #[test_id(t2bgej5)]
     #[test]
     fn the_one_read_is_cut_at_its_marks_into_panes_clients_and_environment() {
-        let text = format!("row-a\nrow-b\n{CLIENTS_MARK}\n/dev/pts/0 100\n{ENV_MARK}\nCLAUDECODE=1\n-X\n");
+        let text = format!("row-a\nrow-b\n{CLIENTS_MARK}\npts0 100\n{ENV_MARK}\nCLAUDECODE=1\n-X\n");
         let r = split_server_read(&text);
-        assert_eq!((r.panes.as_str(), r.clients.as_str(), r.env.as_deref()), ("row-a\nrow-b\n", "/dev/pts/0 100\n", Some("CLAUDECODE=1\n-X\n")));
+        assert_eq!((r.panes.as_str(), r.clients.as_str(), r.env.as_deref()), ("row-a\nrow-b\n", "pts0 100\n", Some("CLAUDECODE=1\n-X\n")));
         let r = split_server_read(&format!("row-a\n{ENV_MARK}\nA=b\n"));
         assert_eq!((r.panes.as_str(), r.clients.as_str(), r.env.as_deref()), ("row-a\n", "", Some("A=b\n")), "no idle limit, no client section");
         assert_eq!(split_server_read("row-a\n").env, None);

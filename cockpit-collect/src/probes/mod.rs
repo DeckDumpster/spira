@@ -1753,7 +1753,7 @@ mod tests {
     #[test_id(t88yth0)]
     #[test]
     fn the_commit_time_is_asked_of_git_again_only_when_head_or_the_base_moved_or_cannot_be_read() {
-        let wt = Path::new("/memo-fixture/worktree");
+        let wt = Path::new("memo-fixture/worktree");
         let asked = std::cell::Cell::new(0);
         let ask = |ts: i64| {
             let asked = &asked;
@@ -1820,8 +1820,6 @@ mod tests {
         std::fs::write(&p, r#"{"at":1000,"name":"n"}"#).unwrap();
         assert!(dwarf_static_load(&p, 1000).is_none(), "a row missing fields is not served");
     }
-
-    use super::*;
 
     #[test_id(tt1wfi2)]
     #[test]
