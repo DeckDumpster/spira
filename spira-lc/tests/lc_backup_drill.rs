@@ -491,10 +491,35 @@ fn a_failing_database_still_lets_the_registry_ship_and_only_the_newest_local_cop
     let (code, out) = registry_run(&b, &[("DB_RC", "1")]);
     assert_eq!(code, Some(1), "{out}");
     assert!(b.read("run/lc-backup.test-registry.ok").contains("test-registry-"), "{out}");
-    let body = format!("{NO_REFUSALS}_lcb_run_db() {{ :; }}\ntouch \"$SPIRA_LC_BACKUP_SYNC_DIR/test-registry/orphan.sqlite.tmp\"\nsleep 1\ncmd_run");
-    let (code, out) = b.run(&body, &[]);
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(tj6se9s)]
+#[test]
+fn only_the_newest_local_registry_copy_and_no_orphan_temp_file_is_kept() {
+    let b = Box::new();
+    let dir = b.p("sync/test-registry");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("orphan.sqlite.tmp"), "").unwrap();
+    std::fs::write(dir.join("19700101T000000000Z.sqlite"), "").unwrap();
+    let (code, out) = registry_run(&b, &[]);
     assert_eq!(code, Some(0), "{out}");
-    assert_eq!(std::fs::read_dir(b.p("sync/test-registry")).unwrap().count(), 1);
+    let kept: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(kept, ["20231114T221320000Z.sqlite"]);
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(tlt6q35)]
+#[test]
+fn the_drill_service_outlives_its_wait_cap_and_its_timer_has_one_weekly_slot() {
+    let service = include_str!("../../systemd/lc-backup-drill.service");
+    let timer = include_str!("../../systemd/lc-backup-drill.timer");
+    let cap = include_str!("../../spira/conf.d/SPIRA_LC_BACKUP_DRILL_WAIT_SECS");
+    let hours: u64 = service.lines().find_map(|l| l.strip_prefix("TimeoutStartSec=")?.strip_suffix('h')?.parse().ok()).expect("TimeoutStartSec in hours");
+    let wait: u64 = cap.split("WAIT_SECS:=").nth(1).and_then(|r| r.split('}').next()).and_then(|n| n.parse().ok()).expect("default wait cap");
+    assert!(hours * 3600 > wait, "{hours}h vs {wait}s");
+    let slots: Vec<&str> = timer.lines().filter(|l| l.starts_with("OnCalendar=")).collect();
+    assert!(slots.len() == 1 && slots[0].starts_with("OnCalendar=Sun "), "{slots:?}");
 }
 
 // covers: UC-instance-lifecycle-49
