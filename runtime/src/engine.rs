@@ -291,26 +291,26 @@ pub struct StepNow {
 }
 
 impl Steps {
-    fn lock(&self) -> std::sync::MutexGuard<'_, StepState> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    fn state(&self) -> std::sync::MutexGuard<'_, StepState> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()) // loop-safe: held only to copy a few fields, never across a call
     }
 
     fn enter(self: &Arc<Self>, name: &'static str, of: &str) -> StepGuard {
-        self.lock().current = Some((name, of.to_string(), Instant::now()));
+        self.state().current = Some((name, of.to_string(), Instant::now()));
         StepGuard(self.clone())
     }
 
     /// Forgets the longest step: the next turn's record starts from nothing.
     pub fn begin_turn(&self) {
-        self.lock().longest = None;
+        self.state().longest = None;
     }
 
     pub fn now(&self) -> Option<StepNow> {
-        self.lock().current.as_ref().map(|(name, of, at)| StepNow { name, of: of.clone(), ran: at.elapsed() })
+        self.state().current.as_ref().map(|(name, of, at)| StepNow { name, of: of.clone(), ran: at.elapsed() })
     }
 
     pub fn longest(&self) -> Option<(&'static str, Duration)> {
-        self.lock().longest
+        self.state().longest
     }
 }
 
@@ -318,7 +318,7 @@ struct StepGuard(Arc<Steps>);
 
 impl Drop for StepGuard {
     fn drop(&mut self) {
-        let mut s = self.0.lock();
+        let mut s = self.0.state();
         if let Some((name, _, at)) = s.current.take() {
             let ran = at.elapsed();
             if s.longest.is_none_or(|(_, l)| ran > l) {
