@@ -421,7 +421,7 @@ asset, sp-5olmi), stages it into the local release source, and runs `install-tar
 requires every native binary, runs `install.sh --skip-build`, and requires `ready.sh` to
 exit 0. It files a probe bead, requires the builder predicate to be able to claim it, and
 follows it through called, committed, closed-or-submitted and landed by ancestry on
-`origin/<land ref>`. Finally it uninstalls and requires no `spira-*` unit to remain. **B**
+`origin/<land ref>`. Before uninstalling it proves, on the box's real `systemctl --user`, that `cadence.sh set` never leaves a started fixture timer without a next elapse (a naive drop-in is the positive control, and a never-elapsing set must be refused and its drop-in restored). Finally it uninstalls and requires no `spira-*` unit to remain and the user unit directory to be byte-identical to its state before the install (an install that changed nothing is the positive control). **B**
 installs `<prev-tag>`, snapshots the unit set, runs `deploy.sh --allow-draft <tag>`, and
 starts every oneshot. It requires the `.tags/<current>` sidecar to name `<tag>` and
 `SPIRA_PROD` to point into the releases directory. **C** runs `deploy.sh <prev-tag>`, starts

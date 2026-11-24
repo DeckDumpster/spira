@@ -239,7 +239,7 @@ statement = "unit-file invariants: every timer template is in UNITS (or OPTIONAL
 [[use_case]]
 id = "UC-instance-lifecycle-32"
 tier = "T1"
-statement = "`cadence.sh` changes a timer's cadence via a revertible drop-in and never leaves it without a next elapse; it refuses unknown units and verify refuses an empty sweep"
+statement = "`cadence.sh` changes a timer's cadence via a revertible drop-in and never leaves it without a next elapse; it refuses unknown units and verify refuses an empty sweep; acceptance phase A proves the never-disarms property on a real `systemctl --user`"
 
 [[use_case]]
 id = "UC-instance-lifecycle-33"
@@ -294,7 +294,7 @@ bead = "sp-sr11sm"
 [[use_case]]
 id = "UC-instance-lifecycle-40"
 tier = "T2"
-statement = "`uninstall.sh`'s stray sweep reports a spira unit it does not own, by name, and leaves it in place; the install→ready→uninstall round trip on real systemd is acceptance's"
+statement = "`uninstall.sh`'s stray sweep reports a spira unit it does not own, by name, and leaves it in place; the install→ready→uninstall round trip on real systemd is acceptance's, and leaves the user unit directory byte-identical"
 
 [[use_case]]
 id = "UC-instance-lifecycle-41"

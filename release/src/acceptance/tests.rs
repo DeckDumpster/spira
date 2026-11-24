@@ -217,6 +217,22 @@ struct Fake {
     no_sentinel_unit: bool,
     /// Each `world scheduler-status --json` read advances every task's last fired time.
     fired: Cell<u64>,
+    /// The user unit directory the fake systemd keeps its timer fixture in.
+    unit_dir: PathBuf,
+    /// The fixture timer is started (`systemctl start`, not yet stopped).
+    timer_started: Cell<bool>,
+    /// The naive cadence drop-in leaves the timer armed (the positive control cannot see it).
+    naive_arms: bool,
+    /// A timer whose cadence drop-in asks for exactly this interval has no next elapse.
+    disarmed_by: Option<&'static str>,
+    /// `cadence.sh` exits this without doing anything.
+    cadence_rc: Option<i32>,
+    /// A never-elapsing `cadence.sh set` exits 0 instead of refusing.
+    never_set_exits_0: bool,
+    /// A refused `cadence.sh set` leaves its own drop-in behind instead of restoring.
+    refusal_keeps_dropin: bool,
+    /// `systemctl show` of a next-elapse property fails.
+    show_fails: bool,
 }
 
 impl Fake {
@@ -246,7 +262,44 @@ impl Fake {
             tag_commit: "",
             no_sentinel_unit: false,
             fired: Cell::new(0),
+            unit_dir: PathBuf::new(),
+            timer_started: Cell::new(false),
+            naive_arms: false,
+            disarmed_by: None,
+            cadence_rc: None,
+            never_set_exits_0: false,
+            refusal_keeps_dropin: false,
+            show_fails: false,
         }
+    }
+
+    fn timer_armed_now(&self) -> bool {
+        let d = self.unit_dir.join("acceptance-cadence.timer.d");
+        let naive = d.join("naive.conf").exists() && !self.naive_arms;
+        let asked = fs::read_to_string(d.join("cadence.conf")).unwrap_or_default();
+        let by_set = self.disarmed_by.is_some_and(|iv| asked.contains(&format!("# Requested cadence: {iv}\n")));
+        self.timer_started.get() && !naive && !by_set
+    }
+
+    fn cadence_sh(&self, c: &Cmd, args: &[&str]) -> Out {
+        if let Some(rc) = self.cadence_rc {
+            return Out { rc, text: String::new(), out: String::new() };
+        }
+        let ["set", _, iv] = args else { return Out { rc: 2, text: "cadence: usage\n".into(), out: String::new() } };
+        let dir = Path::new(c.env_of("SPIRA_SYSTEMD_USER_DIR").expect("cadence.sh names SPIRA_SYSTEMD_USER_DIR")).join("acceptance-cadence.timer.d");
+        let conf = dir.join("cadence.conf");
+        let text = format!("# Requested cadence: {iv}\n[Timer]\n");
+        if iv.starts_with("2020") && !self.never_set_exits_0 {
+            if self.refusal_keeps_dropin {
+                fs::write(&conf, text).unwrap();
+            }
+            return Out { rc: 1, text: "cadence: REFUSED — it would never fire again.\n".into(), out: String::new() };
+        }
+        if !iv.starts_with("2020") {
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(&conf, text).unwrap();
+        }
+        Out { rc: 0, text: "cadence: set\n".into(), out: String::new() }
     }
 
     /// Unpack a fake release named after the tarball and point `current` at it.
@@ -275,6 +328,20 @@ impl Fake {
         let prog = c.prog.rsplit('/').next().unwrap_or("");
         match (prog, a.as_slice()) {
             ("systemctl", ["--user", "is-system-running"]) => ok("running\n"),
+            ("systemctl", ["--user", "start", "acceptance-cadence.timer"]) => {
+                self.timer_started.set(true);
+                ok("")
+            }
+            ("systemctl", ["--user", "stop", "acceptance-cadence.timer"]) => {
+                self.timer_started.set(false);
+                ok("")
+            }
+            ("systemctl", ["--user", "is-active", "acceptance-cadence.timer"]) if self.timer_started.get() => ok("active\n"),
+            ("systemctl", ["--user", "is-active", "acceptance-cadence.timer"]) => Out { rc: 3, text: "inactive\n".into(), out: "inactive\n".into() },
+            ("systemctl", ["--user", "show", "acceptance-cadence.timer", "-p", _, "--value"]) if self.show_fails => Out { rc: 1, text: "Failed to connect to bus\n".into(), out: String::new() },
+            ("systemctl", ["--user", "show", "acceptance-cadence.timer", "-p", "NextElapseUSecRealtime", "--value"]) => ok(if self.timer_armed_now() { "Mon 2030-01-01 00:00:00 UTC\n" } else { "\n" }),
+            ("systemctl", ["--user", "show", "acceptance-cadence.timer", "-p", "NextElapseUSecMonotonic", "--value"]) => ok(if self.timer_armed_now() { "0\n" } else { "infinity\n" }),
+            ("cadence.sh", args) => self.cadence_sh(c, args),
             ("systemctl", ["--user", "list-unit-files", "spira-sentinel*.service", ..]) => ok(if self.no_sentinel_unit { "[]" } else { r#"[{"unit_file":"spira-sentinel-t.service","state":"static"}]"# }),
             ("systemctl", ["--user", "list-unit-files", "spira-runtime*-watch*.service", ..]) => ok("[]"),
             ("systemctl", ["--user", "list-unit-files", "spira-runtime*.service", ..]) => ok(r#"[{"unit_file":"spira-runtime-t.service","state":"enabled"}]"#),
@@ -459,7 +526,9 @@ impl Box_ {
         }
     }
     fn fake(&self) -> Fake {
-        Fake::new(self.root.join("tmp/releases"))
+        let mut f = Fake::new(self.root.join("tmp/releases"));
+        f.unit_dir = self.root.join("config/systemd/user");
+        f
     }
     fn checks(&self) -> Vec<serde_json::Value> {
         fs::read_to_string(self.root.join("forensics/checks.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect()
@@ -636,4 +705,234 @@ fn no_matching_unit_files_is_an_empty_list_not_an_error() {
     f.no_unit_files = true;
     let r = Run::new(&f, b.opts(&[]));
     assert_eq!(r.unit_files("spira-*"), Ok(vec![]));
+}
+
+// ---- cadence never disarms, and the unit directory round trip ---------------------------
+
+#[test_id(tdwm6nd)]
+#[test]
+fn timer_armed_reads_either_next_elapse_property() {
+    // covers: UC-instance-lifecycle-32
+    for (rt, mono, want, why) in [
+        ("Mon 2030-01-01 00:00:00 UTC", "0", true, "calendar timer"),
+        ("", "3w 6d 17h", true, "monotonic timer"),
+        ("", "infinity", false, "disarmed"),
+        ("", "", false, "nothing reported"),
+        ("n/a", "n/a", false, "n/a on both"),
+        ("", "0", false, "monotonic zero"),
+        ("n/a", "infinity\n", false, "trailing newline from --value"),
+    ] {
+        assert_eq!(timer_armed(rt, mono), want, "{why}");
+    }
+}
+
+fn run_cadence(b: &Box_, f: &Fake) -> Vec<String> {
+    fs::create_dir_all(b.root.join("forensics")).unwrap();
+    let mut r = Run::new(f, b.opts(&[]));
+    r.cadence_never_disarms();
+    b.fails()
+}
+
+fn fixture_files(b: &Box_) -> Vec<String> {
+    unit_tree(&b.root.join("config/systemd/user")).unwrap().keys().map(|p| p.display().to_string()).filter(|p| p.starts_with("acceptance-cadence")).collect()
+}
+
+#[test_id(t6dm97n)]
+#[test]
+fn a_healthy_box_passes_every_cadence_check_and_leaves_no_fixture() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let f = b.fake();
+    assert_eq!(run_cadence(&b, &f), Vec::<String>::new());
+    assert!(fixture_files(&b).is_empty(), "{:?}", fixture_files(&b));
+    let log = lines(&f);
+    assert!(log.iter().any(|l| l.ends_with("cadence.sh set acceptance-cadence.timer 7h")), "{log:?}");
+    assert!(!f.timer_started.get());
+}
+
+fn cadence_fails_with(b: &Box_, f: &Fake, check: &str) {
+    let fails = run_cadence(b, f);
+    assert!(fails.iter().any(|x| x.starts_with(&format!("phase A: cadence: {check}"))), "wanted a failure of [{check}], got {fails:?}");
+    assert!(fixture_files(b).is_empty(), "fixture left behind: {:?}", fixture_files(b));
+    assert!(!f.timer_started.get(), "the fixture timer was left running");
+}
+
+#[test_id(tdebv1s)]
+#[test]
+fn a_naive_drop_in_that_does_not_disarm_fails_the_positive_control() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.naive_arms = true;
+    cadence_fails_with(&b, &f, "positive control: a naive drop-in disarms the timer");
+}
+
+#[test_id(tnrh4st)]
+#[test]
+fn a_set_6h_that_leaves_the_timer_disarmed_fails_even_at_exit_0() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.disarmed_by = Some("6h");
+    cadence_fails_with(&b, &f, "acceptance-cadence.timer is active and armed after set 6h");
+}
+
+#[test_id(tmm00un)]
+#[test]
+fn a_set_7h_that_leaves_the_timer_disarmed_fails_even_at_exit_0() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.disarmed_by = Some("7h");
+    cadence_fails_with(&b, &f, "acceptance-cadence.timer is active and armed after set 7h");
+}
+
+#[test_id(t7k9pw0)]
+#[test]
+fn a_never_elapsing_set_that_exits_0_fails() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.never_set_exits_0 = true;
+    cadence_fails_with(&b, &f, "a never-elapsing set exits non-zero and says REFUSED");
+}
+
+#[test_id(t3d42yi)]
+#[test]
+fn a_refusal_that_does_not_restore_the_7h_drop_in_fails() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.refusal_keeps_dropin = true;
+    cadence_fails_with(&b, &f, "the refused set restores the 7h drop-in");
+}
+
+#[test_id(txoygdl)]
+#[test]
+fn a_cadence_sh_that_cannot_exec_fails_the_set_checks() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.cadence_rc = Some(127);
+    cadence_fails_with(&b, &f, "cadence.sh set 6h exits 0");
+}
+
+#[test_id(to8rh3x)]
+#[test]
+fn a_failing_systemctl_show_is_a_failed_check_not_an_unarmed_timer() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.show_fails = true;
+    let fails = run_cadence(&b, &f);
+    assert!(fails.iter().any(|x| x.starts_with("phase A: cadence: fixture timer is active and armed: systemctl show acceptance-cadence.timer -p NextElapseUSecRealtime exited 1")), "{fails:?}");
+    assert!(fixture_files(&b).is_empty());
+}
+
+fn tree_in(name: &str, files: &[(&str, &str)]) -> TempDir {
+    let d = TempDir::new(name);
+    for (p, text) in files {
+        let at = d.join(p);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        fs::write(at, text).unwrap();
+    }
+    d
+}
+
+#[test_id(tcxhvic)]
+#[test]
+fn a_unit_tree_diff_lists_added_removed_and_changed_paths() {
+    // covers: UC-instance-lifecycle-40
+    let a = tree_in("tree-a", &[("keep.timer", "k"), ("gone.service", "g"), ("edit.service", "1"), ("x.timer.d/cadence.conf", "old")]);
+    let b = tree_in("tree-b", &[("keep.timer", "k"), ("new.service", "n"), ("edit.service", "2"), ("x.timer.d/cadence.conf", "new")]);
+    let d = unit_tree_diff(&unit_tree(a.path()).unwrap(), &unit_tree(b.path()).unwrap());
+    assert_eq!(d, vec!["~ edit.service", "- gone.service", "+ new.service", "~ x.timer.d/cadence.conf"]);
+    assert!(unit_tree_diff(&unit_tree(a.path()).unwrap(), &unit_tree(a.path()).unwrap()).is_empty(), "an identical tree");
+}
+
+#[test_id(t0xee1x)]
+#[test]
+fn a_changed_symlink_target_is_a_difference_and_links_are_not_followed() {
+    // covers: UC-instance-lifecycle-40
+    let a = tree_in("link-a", &[("t.service", "x")]);
+    let b = tree_in("link-b", &[("t.service", "x")]);
+    fs::create_dir_all(a.join("w.wants")).unwrap();
+    fs::create_dir_all(b.join("w.wants")).unwrap();
+    std::os::unix::fs::symlink("../t.service", a.join("w.wants/t.service")).unwrap();
+    std::os::unix::fs::symlink("../elsewhere.service", b.join("w.wants/t.service")).unwrap();
+    std::os::unix::fs::symlink("nowhere", b.join("dangling")).unwrap();
+    let (ta, tb) = (unit_tree(a.path()).unwrap(), unit_tree(b.path()).unwrap());
+    assert_eq!(ta[Path::new("w.wants/t.service")], TreeEntry::Link("../t.service".into()));
+    assert_eq!(unit_tree_diff(&ta, &tb), vec!["+ dangling", "~ w.wants/t.service"]);
+}
+
+#[test_id(txh6gzr)]
+#[test]
+fn a_missing_unit_directory_is_an_empty_tree_and_an_unreadable_entry_is_an_error() {
+    // covers: UC-instance-lifecycle-40
+    let d = TempDir::new("tree-missing");
+    assert_eq!(unit_tree(&d.join("absent")), Ok(Default::default()));
+    let secret = d.join("locked.service");
+    fs::write(&secret, "x").unwrap();
+    fs::set_permissions(&secret, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
+    if fs::read(&secret).is_ok() {
+        return; // root reads mode 000; the error path cannot be reached from here
+    }
+    let e = unit_tree(d.path()).unwrap_err();
+    assert!(e.contains("locked.service"), "{e}");
+}
+
+fn round_trip(before: &[(&str, &str)], installed: &[(&str, &str)], after: &[(&str, &str)]) -> Vec<String> {
+    let b = Box_::new();
+    fs::create_dir_all(b.root.join("forensics")).unwrap();
+    let f = b.fake();
+    let mut r = Run::new(&f, b.opts(&[]));
+    let snap = |n: &str, files: &[(&str, &str)]| unit_tree(tree_in(n, files).path());
+    r.unit_dir_round_trip(&snap("rt-before", before), &snap("rt-installed", installed), &snap("rt-after", after));
+    b.fails()
+}
+
+#[test_id(tjavyki)]
+#[test]
+fn identical_before_and_after_trees_pass_the_round_trip() {
+    // covers: UC-instance-lifecycle-40
+    let base = [("concierge.timer", "c")];
+    let installed = [("concierge.timer", "c"), ("spira-a.service", "s")];
+    assert_eq!(round_trip(&base, &installed, &base), Vec::<String>::new());
+}
+
+#[test_id(t9uzezo)]
+#[test]
+fn a_leftover_drop_in_fails_the_round_trip_naming_its_path() {
+    // covers: UC-instance-lifecycle-40
+    let base = [("concierge.timer", "c")];
+    let installed = [("concierge.timer", "c"), ("spira-a.service", "s")];
+    let after = [("concierge.timer", "c"), ("spira-a.timer.d/cadence.conf", "x")];
+    let fails = round_trip(&base, &installed, &after);
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert!(fails[0].starts_with("phase A: user unit directory byte-identical after uninstall:") && fails[0].contains("+ spira-a.timer.d/cadence.conf"), "{fails:?}");
+}
+
+#[test_id(tly505i)]
+#[test]
+fn an_install_that_changes_nothing_fails_the_positive_control() {
+    // covers: UC-instance-lifecycle-40
+    let base = [("concierge.timer", "c")];
+    let fails = round_trip(&base, &base, &base);
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert!(fails[0].starts_with("phase A: positive control: install changes the user unit directory:"), "{fails:?}");
+}
+
+#[test_id(tf14501)]
+#[test]
+fn a_snapshot_error_fails_the_check_that_needs_it() {
+    // covers: UC-instance-lifecycle-40
+    let b = Box_::new();
+    fs::create_dir_all(b.root.join("forensics")).unwrap();
+    let f = b.fake();
+    let mut r = Run::new(&f, b.opts(&[]));
+    let before = unit_tree(tree_in("rt-err-a", &[("a.service", "x")]).path());
+    let installed = unit_tree(tree_in("rt-err-b", &[("a.service", "x"), ("b.service", "y")]).path());
+    r.unit_dir_round_trip(&before, &installed, &Err("unit dir: permission denied".into()));
+    assert_eq!(b.fails(), vec!["phase A: user unit directory byte-identical after uninstall: unit dir: permission denied".to_string()]);
 }

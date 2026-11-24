@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 /// How long a kick waits for its task to fire before the stage that follows judges anyway.
 const KICK_SECS: u64 = 120;
 
+const CADENCE_TIMER: &str = "acceptance-cadence.timer";
+const CADENCE_SERVICE: &str = "acceptance-cadence.service";
+
+pub(super) type UnitSnap = Result<UnitTree, String>;
+
 /// One place builds each kind of call, so no call site can be written without its
 /// environment (the invariants the `acceptance-run` lint rule used to grep for).
 impl Run<'_> {
@@ -220,6 +225,152 @@ impl Run<'_> {
             return Err(format!("systemctl list-unit-files {glob} exited {}", o.rc));
         }
         unit_files_of(&o.out)
+    }
+
+    /// `(active, armed)` for `timer`, from `is-active` and the two next-elapse properties. A
+    /// `show` that fails is an error, never "not armed".
+    fn timer_state(&self, timer: &str) -> Result<(bool, bool), String> {
+        let active = self.systemctl(&["is-active", timer]).out.trim() == "active";
+        let read = |prop: &str| {
+            let o = self.systemctl(&["show", timer, "-p", prop, "--value"]);
+            if o.rc == 0 {
+                Ok(o.out)
+            } else {
+                Err(format!("systemctl show {timer} -p {prop} exited {}", o.rc))
+            }
+        };
+        let realtime = read("NextElapseUSecRealtime")?;
+        let monotonic = read("NextElapseUSecMonotonic")?;
+        Ok((active, timer_armed(&realtime, &monotonic)))
+    }
+
+    /// Check `timer` is active with `armed` as wanted.
+    fn expect_timer(&mut self, name: &str, timer: &str, armed: bool) {
+        match self.timer_state(timer) {
+            Err(e) => self.bad(name, &e),
+            Ok((active, now)) => self.check(name, active && now == armed, || {
+                format!(
+                    "{timer} is {} and {}; wanted active and {}",
+                    if active { "active" } else { "not active" },
+                    if now { "armed" } else { "NOT armed" },
+                    if armed { "armed" } else { "NOT armed" }
+                )
+            }),
+        }
+    }
+
+    fn cadence_set(&self, timer: &str, interval: &str) -> Out {
+        self.h.run(&self.tool("cadence.sh").args(["set", timer, interval]).env("SPIRA_SYSTEMD_USER_DIR", Self::s(&self.o.unit_dir())))
+    }
+
+    /// `cadence.sh set` never leaves a started timer without a next elapse, against the box's
+    /// real `systemctl --user`: a stub cannot show what systemd reports as a next elapse.
+    pub(super) fn cadence_never_disarms(&mut self) {
+        println!("\nphase A — cadence.sh never disarms a started timer");
+        self.cadence_steps();
+        let dir = self.o.unit_dir();
+        self.systemctl(&["stop", CADENCE_TIMER]);
+        let ignore_missing = |r: std::io::Result<()>, what: &Path| match r {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("{}: {e}", what.display())),
+            _ => Ok(()),
+        };
+        let gone = [CADENCE_SERVICE, CADENCE_TIMER]
+            .iter()
+            .try_for_each(|f| ignore_missing(fs::remove_file(dir.join(f)), &dir.join(f)))
+            .and_then(|()| {
+                let d = dir.join(format!("{CADENCE_TIMER}.d"));
+                ignore_missing(fs::remove_dir_all(&d), &d)
+            });
+        self.systemctl(&["daemon-reload"]);
+        match gone {
+            Ok(()) => self.ok("phase A: cadence: fixture timer removed"),
+            Err(e) => self.bad("phase A: cadence: fixture timer removed", &e),
+        }
+    }
+
+    fn cadence_steps(&mut self) {
+        let dir = self.o.unit_dir();
+        let dropins = dir.join(format!("{CADENCE_TIMER}.d"));
+        let t = CADENCE_TIMER;
+        let written = fs::create_dir_all(&dir)
+            .and_then(|()| fs::write(dir.join(CADENCE_SERVICE), "[Service]\nType=oneshot\nExecStart=/bin/true\n"))
+            .and_then(|()| fs::write(dir.join(t), format!("[Timer]\nOnBootSec=9999d\nOnUnitActiveSec=1h\nUnit={CADENCE_SERVICE}\n")));
+        if let Err(e) = written {
+            self.bad("phase A: cadence: fixture timer written", &format!("{}: {e}", dir.display()));
+            return;
+        }
+        let rc = self.systemctl(&["daemon-reload"]).rc;
+        self.is0("phase A: cadence: daemon-reload exits 0", rc);
+        let rc = self.systemctl(&["start", t]).rc;
+        if rc != 0 {
+            self.bad("phase A: cadence: fixture timer starts", &format!("systemctl start {t} exited {rc}"));
+            return;
+        }
+        self.expect_timer("phase A: cadence: fixture timer is active and armed", t, true);
+
+        let naive = dropins.join("naive.conf");
+        let written = fs::create_dir_all(&dropins).and_then(|()| fs::write(&naive, "[Timer]\nOnUnitActiveSec=\nOnBootSec=\nOnUnitActiveSec=6h\n"));
+        if let Err(e) = written {
+            self.bad("phase A: cadence: naive drop-in written", &format!("{}: {e}", naive.display()));
+            return;
+        }
+        self.systemctl(&["daemon-reload"]);
+        self.systemctl(&["restart", t]);
+        self.expect_timer("phase A: cadence: positive control: a naive drop-in disarms the timer", t, false);
+        if let Err(e) = fs::remove_file(&naive) {
+            self.bad("phase A: cadence: naive drop-in removed", &format!("{}: {e}", naive.display()));
+            return;
+        }
+        self.systemctl(&["daemon-reload"]);
+        self.systemctl(&["restart", t]);
+        self.expect_timer("phase A: cadence: removing the naive drop-in arms the timer again", t, true);
+
+        for iv in ["6h", "7h"] {
+            let o = self.cadence_set(t, iv);
+            self.check(&format!("phase A: cadence: cadence.sh set {iv} exits 0"), o.rc == 0, || format!("exit {}: {}", o.rc, tail(&o.text, 5)));
+            self.expect_timer(&format!("phase A: cadence: {t} is active and armed after set {iv}"), t, true);
+        }
+
+        let conf = dropins.join("cadence.conf");
+        let before = match fs::read_to_string(&conf) {
+            Ok(b) => b,
+            Err(e) => {
+                self.bad("phase A: cadence: the 7h drop-in is readable", &format!("{}: {e}", conf.display()));
+                return;
+            }
+        };
+        let o = self.cadence_set(t, "2020-01-01 00:00:00");
+        self.check("phase A: cadence: a never-elapsing set exits non-zero and says REFUSED", o.rc != 0 && o.text.contains("REFUSED"), || {
+            format!("exit {}: {}", o.rc, tail(&o.text, 5))
+        });
+        self.expect_timer(&format!("phase A: cadence: {t} is active and armed after the refused set"), t, true);
+        let after = fs::read_to_string(&conf).map_err(|e| format!("{}: {e}", conf.display()));
+        self.check("phase A: cadence: the refused set restores the 7h drop-in", after.as_deref().map(str::trim_end) == Ok(before.trim_end()), || match &after {
+            Ok(a) => format!("{} was\n{before}\nand is now\n{a}", conf.display()),
+            Err(e) => e.clone(),
+        });
+    }
+
+    /// The two unit-directory checks of phase A's install → uninstall round trip.
+    pub(super) fn unit_dir_round_trip(&mut self, before: &UnitSnap, installed: &UnitSnap, after: &UnitSnap) {
+        let dir = self.o.unit_dir();
+        let name = "phase A: positive control: install changes the user unit directory";
+        match (before, installed) {
+            (Ok(b), Ok(i)) => self.check(name, b != i, || format!("install left {} unchanged, so the comparison below could not see a leftover", dir.display())),
+            (Err(e), _) | (_, Err(e)) => self.bad(name, e),
+        }
+        let name = "phase A: user unit directory byte-identical after uninstall";
+        match (before, after) {
+            (Ok(b), Ok(a)) => {
+                let d = unit_tree_diff(b, a);
+                self.check(name, d.is_empty(), || {
+                    let more = d.len().saturating_sub(20);
+                    let tail = if more > 0 { format!("; and {more} more") } else { String::new() };
+                    format!("{}: {}{tail}", dir.display(), d.iter().take(20).cloned().collect::<Vec<_>>().join("; "))
+                })
+            }
+            (Err(e), _) | (_, Err(e)) => self.bad(name, e),
+        }
     }
 
     /// The user manager's loaded units matching `glob`, in `state` when given.
@@ -723,6 +874,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         r.stage_release_source(tb, &tag);
         sha = crate::fsutil::sha256_file(tb).ok();
     }
+    let unit_dir_before = unit_tree(&r.o.unit_dir());
     let rc = match &tarball {
         Some(tb) => r.install_tarball(tb),
         // No tarball is not an install that succeeded (the script's rc stayed 0 here).
@@ -739,6 +891,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     }
     let install_rc = if releases.join("current").is_dir() { r.install_sh() } else { 1 };
     r.is0("phase A: install.sh exits 0", install_rc);
+    let unit_dir_installed = unit_tree(&r.o.unit_dir());
 
     // The builder's label keys, read whenever the release conf exists — not only after a
     // clean install: a failed install must not also mislabel the probe (sp-bn9go). The scope
@@ -814,6 +967,10 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     let exec = super::exec_failures(&r.o.spira_run);
     r.check("phase A: no run/ log records an exec failure (os error 2, exit 127)", exec.is_empty(), || exec.iter().take(20).cloned().collect::<Vec<_>>().join("\n"));
 
+    if releases.join("current").is_dir() {
+        r.cadence_never_disarms();
+    }
+
     println!("\nphase A — uninstall and clean state");
     let rc = h.run(&r.uninstall()).rc;
     r.is0("phase A: uninstall.sh --yes exits 0", rc);
@@ -821,6 +978,8 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         Ok(left) => r.check("phase A: no spira-* units remain after uninstall", left.is_empty(), || left.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join("\n")),
         Err(e) => r.bad("phase A: no spira-* units remain after uninstall", &e),
     }
+    let unit_dir_after = unit_tree(&r.o.unit_dir());
+    r.unit_dir_round_trip(&unit_dir_before, &unit_dir_installed, &unit_dir_after);
 
     // ---- phase B / C ----------------------------------------------------------------------
     r.phase("phase-B");
