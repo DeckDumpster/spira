@@ -5946,6 +5946,30 @@ fn a_fences_mode_column_repository_stays_fences_only_and_says_so() {
     assert!(f.stderr().contains("runs its fences only"), "{}", f.stderr());
 }
 
+// covers: UC-gate-verdict-22
+#[test_id(tulg020)]
+#[test]
+fn every_verdict_is_recorded_with_its_branch_suite_and_tree_and_a_failing_recorder_changes_nothing() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh ok\ntest-b.sh RED".into()));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(f.yields.borrow()[0], [RUN, "record", "spira", BR, "1", "branch-red", "tree-of-spira/sp-a", "test-b.sh", ""], "a red names branch, reason, tree and suite");
+
+    let f = tree_owned(Some("garbage\n"), Some("garbage\n"));
+    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(f.yields.borrow()[0][1..6], ["record", "spira", BR, "76", "base-gate-definition"], "a base fault is recorded as 76, which yield.sh files as a gate fault");
+
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.yields.borrow()[0][1..4], ["pass", "spira", BR]);
+
+    let t = testkit::TempDir::new("gate-yield-port");
+    let (recorder, seen) = (t.path().join("yield.sh"), t.path().join("seen"));
+    std::fs::write(&recorder, format!("printf '%s %s' \"$SPIRA_RUN\" \"$*\" > {}\nexit 9\n", seen.display())).unwrap();
+    crate::ports::World::yield_sh(&crate::real::Real::new(t.path().into()), &recorder, "run-dir", &["record", "spira", BR]);
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), format!("run-dir record spira {BR}"), "the recorder ran with the gate's run directory, and its failure came back as nothing");
+}
+
 #[test_id(tjlwivt)]
 #[test]
 fn a_harness_fault_record_carries_the_runners_words() {
