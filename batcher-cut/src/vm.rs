@@ -679,14 +679,14 @@ fn round_commit_culprit(line: &str, own_commits: &[String]) -> bool {
     }
 }
 
-/// The `spira-lint` and `fence-*` stems whose `.result` is red in `results`.
+/// The `spira-lint`, `bare-suites` and `fence-*` stems whose `.result` is red in `results`.
 pub fn red_filters(results: &Path) -> Vec<String> {
     let mut reds: Vec<String> = vec![];
     for e in fs::read_dir(results).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if let Some(stem) = name
             .strip_suffix(".result")
-            .filter(|s| *s == LINT || s.starts_with(FENCE_PREFIX))
+            .filter(|s| *s == LINT || *s == BARE_SUITES || s.starts_with(FENCE_PREFIX))
         {
             if io::result_status(results, stem) == Some(false) {
                 reds.push(stem.to_string());
@@ -718,6 +718,17 @@ fn filter_red_in(
     let mut unnamed: Vec<String> = vec![];
     for stage in &phases {
         for (id, line) in phase_owner(results, stage, members, changed) {
+            if !named.iter().any(|(n, _)| *n == id) {
+                named.push((id, line));
+            }
+        }
+    }
+    if reds.iter().any(|r| r == BARE_SUITES) {
+        let owners = phase_owner(results, BARE_SUITES, members, changed);
+        if owners.is_empty() {
+            unnamed.push(bare_suites_line(results));
+        }
+        for (id, line) in owners {
             if !named.iter().any(|(n, _)| *n == id) {
                 named.push((id, line));
             }
@@ -766,6 +777,7 @@ fn filter_red_in(
     Some(FilterRed { name, named, failed, harness, assertion_lines, unnamed })
 }
 
+const BARE_SUITES: &str = "bare-suites";
 const UNIT_TESTS: &str = "unit-tests";
 const INTEGRATION_TESTS: &str = "integration-tests";
 const INTEGRATION_BUILD: &str = "integration";
@@ -779,6 +791,18 @@ fn phase_red(results: &Path, json: &str) -> bool {
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .is_some_and(|v| v["verdict"] == "red")
+}
+
+/// The line of the bare lane's output that says why it is red: the first of its failure
+/// excerpt, the same one the round's red row names.
+fn bare_suites_line(results: &Path) -> String {
+    let text = fs::read_to_string(results.join(format!("{BARE_SUITES}.out"))).unwrap_or_default();
+    spira_config::sendback::failure_excerpt(&text)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && *l != spira_config::sendback::NO_FAILURE_FOUND)
+        .unwrap_or("the bare lane is red and left no output")
+        .to_string()
 }
 
 /// The one member whose changed paths the failed phase's output names; nobody when none or
@@ -2167,6 +2191,34 @@ mod tests {
         fs::write(d.path().join("fence-x.result"), "red 1 1 - - - 1\n").unwrap();
         fs::write(d.path().join("fence-x.out"), "member=the base itself (z) r: spira/lib-test-install.sh:1: x\n").unwrap();
         assert!(filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap().named.is_empty());
+    }
+
+    #[test_id(thynga8)]
+    #[test]
+    fn a_red_bare_lane_is_a_filter_red_owned_by_the_member_changing_the_script_its_output_names() {
+        let d = testkit::TempDir::new("vm-bare-red");
+        let ms = [member("sp-owner1"), member("sp-other1")];
+        let changed = changed_of(&[("sp-owner1", &["spira/bare-suites.sh"]), ("sp-other1", &["x/y.rs"])]);
+        fs::write(d.path().join("bare-suites.result"), "red 1 1 - - - 127\n").unwrap();
+        fs::write(d.path().join("bare-suites.out"), "bash: spira/bare-suites.sh: No such file or directory\n").unwrap();
+        assert_eq!(red_filters(d.path()), vec!["bare-suites".to_string()]);
+        let red = filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap();
+        assert_eq!(red.name, "bare-suites");
+        assert_eq!(red.named.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["sp-owner1"]);
+        assert!(red.unnamed.is_empty(), "{red:?}");
+    }
+
+    #[test_id(t7encqq)]
+    #[test]
+    fn a_red_bare_lane_no_member_touches_leaves_nobody_named_and_its_first_failing_line_unnamed() {
+        let d = testkit::TempDir::new("vm-bare-red-nobody");
+        let ms = [member("sp-other1")];
+        let changed = changed_of(&[("sp-other1", &["x/y.rs"])]);
+        fs::write(d.path().join("bare-suites.result"), "red 1 1 - - - 127\n").unwrap();
+        fs::write(d.path().join("bare-suites.out"), "warming up\nFAIL test-x.sh\n").unwrap();
+        let red = filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap();
+        assert!(red.named.is_empty(), "{red:?}");
+        assert_eq!(red.unnamed, ["FAIL test-x.sh"]);
     }
 
     #[test_id(tex7451)]

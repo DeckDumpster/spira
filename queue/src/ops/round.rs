@@ -2839,9 +2839,18 @@ fn first_build_error(err: &str) -> Option<String> {
     })
 }
 
-/// `<phase>: <first failing line>` for the first red in pass order after the workspace build
-/// (which prints its own): lint and fences, then the test phases, then suites.
-fn first_red_reason(results: &Path, reds: &[String], phases: &[PhaseRed]) -> Option<String> {
+/// The phase the round's `round-phase` marker names, with the marker's line.
+fn round_phase_line(results: &Path) -> Option<(String, String)> {
+    let text = fs::read_to_string(results.join("round-phase")).ok()?;
+    let line = text.lines().next()?.trim().to_string();
+    let phase = line.split_whitespace().find_map(|w| w.strip_prefix("phase="))?;
+    Some((phase.to_string(), line))
+}
+
+/// The first red in pass order after the workspace build (which prints its own): lint and
+/// fences, then the test phases, then suites. `(phase, "<step>: <first failing line>")`, the
+/// phase being the failing test phase's own stage when the step is `unit-tests`.
+fn first_red(results: &Path, reds: &[String], phases: &[PhaseRed]) -> Option<(String, String)> {
     if reds.iter().any(|r| r == BUILD_RED) {
         return None;
     }
@@ -2857,20 +2866,26 @@ fn first_red_reason(results: &Path, reds: &[String], phases: &[PhaseRed]) -> Opt
         let stage = phase_names.iter().find(|s| test_phase_step(s) == first.as_str())?;
         suite_output(results, stage, 0)
     });
-    let phrase = phases
-        .iter()
-        .filter(|p| test_phase_step(&p.stage) == first.as_str())
-        .find_map(|p| p.long_running.first());
+    let of_step = || phases.iter().filter(|p| test_phase_step(&p.stage) == first.as_str());
+    let phrase = of_step().find_map(|p| p.long_running.first());
     let line = match out {
         _ if phrase.is_some() => phrase?.clone(),
         Some(o) if early(first) => o.lines().find(|l| !l.trim().is_empty())?.to_string(),
-        Some(o) => failure_excerpt(&o).lines().find(|l| !l.trim().is_empty())?.to_string(),
-        None => phases
-            .iter()
-            .find(|p| test_phase_step(&p.stage) == first.as_str())
-            .map_or_else(|| "red".to_string(), |p| p.cause.clone()),
+        Some(o) => failure_excerpt(&o).lines().find(|l| !l.trim().is_empty() && *l != spira_config::sendback::NO_FAILURE_FOUND)?.to_string(),
+        None => of_step().next().map_or_else(
+            || round_phase_line(results).map_or_else(|| "red".to_string(), |(_, l)| l),
+            |p| p.cause.clone(),
+        ),
     };
-    Some(format!("{first}: {}", bounded_text(&line)))
+    let phase = of_step()
+        .find(|p| !p.long_running.is_empty())
+        .or_else(|| of_step().next())
+        .map_or_else(|| first.to_string(), |p| p.stage.clone());
+    Some((phase, format!("{first}: {}", bounded_text(&line))))
+}
+
+fn first_red_reason(results: &Path, reds: &[String], phases: &[PhaseRed]) -> Option<String> {
+    first_red(results, reds, phases).map(|(_, reason)| reason)
 }
 
 /// `error[E0425]: message at file:line` as `error[E0425] at file:line`.
@@ -4353,7 +4368,12 @@ fn certify_pass(
                 .map(|(n, _)| n.clone()),
         );
         if out.rc == 1 && reds.is_empty() {
-            reds.push(UNIT_RED.into());
+            reds.push(
+                round_phase_line(&results)
+                    .map(|(phase, _)| phase)
+                    .filter(|p| p != BUILD_RED && p != LINT_RED && !p.starts_with(FENCE_RED_PREFIX))
+                    .unwrap_or_else(|| UNIT_RED.to_string()),
+            );
             let failed = fs::read_to_string(results.join("unit-tests.out")).unwrap_or_default();
             let names: Vec<&str> = failed
                 .lines()
@@ -4441,13 +4461,11 @@ fn certify_pass(
         if let Some(ch) = &runner.changed {
             fields.push(("runner_changed", ch.clone()));
         }
-        if let Some(p) = phase_reds(&rounds_dir(c).join(format!("{batch}.results")))
-            .iter()
-            .filter(|p| test_phase_step(&p.stage) == UNIT_RED)
-            .find_map(|p| p.long_running.first())
-        {
-            fields.push(("reason", one_line(p)));
-        }
+        let results = rounds_dir(c).join(format!("{batch}.results"));
+        let (phase, reason) = first_red(&results, &reds, &phase_reds(&results))
+            .unwrap_or_else(|| (reds[0].clone(), format!("{}: red", reds[0])));
+        fields.push(("phase", phase));
+        fields.push(("reason", one_line(&reason)));
         round_event(&c.s.run, "red", &c.r.name, batch, by, w.clock.now(), &fields);
         let verdict = format!(
             "queue.sh {label}: round {batch} is RED at {head}: {}{}",
