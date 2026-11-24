@@ -177,7 +177,7 @@ Left, each because it needs more than the mail table, the only gap its row names
 
 | suite | what else it needs |
 |---|---|
-| test-mail, test-mail-mailbox-arg, test-mail-tidy, test-mail-health, test-accept-default-folded, test-mail-real-senders | `mail`'s own CLI contract (flags, lint, tidy ages, folded headers); a sim scenario would only wrap the verb. Candidates for the mail crate's unit tests, not the sim |
+| test-mail, test-mail-mailbox-arg, test-mail-tidy, test-accept-default-folded | `mail`'s own CLI contract (flags, lint, tidy ages, folded headers); a sim scenario would only wrap the verb. Candidates for the mail crate's unit tests, not the sim |
 | test-asks, test-mail-bead-render | the bead store's rows and message bodies (an `ask` bead table), not just the mail table |
 | test-work-container | `work`/`sendmail` replies and decision-bead closing: the mail table needs a body column and an operator actor that answers |
 | test-pilgrimage | a pilgrimage and an incident actor in the world |
@@ -244,7 +244,7 @@ Left, and why:
 |---|---|
 | test-rune-project-instructions | half is static (each rune file declares its value) and half is the archivist's `--add-dir`, neither a session the dwarf runs |
 | test-dwarf-lifecycle-cutover | the lifecycle functions called by name (`lc_claim_bead`, `lc_release_bead`) and the stacked-dependents ready set need their own rows and a state the world does not seed |
-| test-dwarf-worktree-collision, test-dwarf-resume*, test-concierge | they hold a worktree or a prior session's state across two dwarves, or script the resume brief from a transcript; the world has no second concurrent dwarf or seeded resume record |
+| test-dwarf-worktree-collision, test-dwarf-resume* | they hold a worktree or a prior session's state across two dwarves, or script the resume brief from a transcript; the world has no second concurrent dwarf or seeded resume record |
 | test-dwarf-base-ref-qualify | `lib.sh` and hook functions called directly in a scratch repository, not a session |
 | test-timeout, test-thrash-teardown, test-dwarf-elastic-concurrency | their remaining case is a real signal to a live process group or the dwarf's concurrency count, which needs live dwarf units (G2) |
 | test-sentinel-pass, test-dispatch-open-children, test-strand-*, test-czar-partition, test-warden, test-lanes | a full sentinel pass, the strand and czar binaries, or lane concurrency, which `--call-only` does not run |

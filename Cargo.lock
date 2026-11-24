@@ -23,6 +23,7 @@ version = "1.0.0"
 dependencies = [
  "dwarf",
  "libc",
+ "mail",
  "serde",
  "serde_json",
  "spira-config",

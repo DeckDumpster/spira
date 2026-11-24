@@ -142,9 +142,8 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   against hand-built fixtures plus the real `bd` schema fields verified in this session
   (`created_at`, `closed_at`, `external_ref`, `labels`) against a live throwaway `bd init`
   store.
-- Black-box parity: the real-bd suites `test-incident-systemd.sh`,
-  `test-incident-delivers-reopen-mismatch.sh` and
-  `test-mail-real-senders.sh`'s incident section all invoke `incident.sh` by name (or via
+- Black-box parity: the real-bd suites `test-incident-systemd.sh` and
+  `test-incident-delivers-reopen-mismatch.sh` both invoke `incident.sh` by name (or via
   `SPIRA_INCIDENT_SH`) unchanged — they now exercise the shim → the compiled binary, and are
   this bead's end-to-end parity evidence once run through `testenv` (never on the host).
 

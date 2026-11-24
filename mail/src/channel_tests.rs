@@ -375,3 +375,23 @@ fn done_on_an_unknown_id_fails_and_flags_nothing() {
     assert_eq!(names(&e, "concierge", "new"), before);
     assert!(names(&e, "concierge", "cur").is_empty());
 }
+
+// covers: UC-operator-channel-11
+#[test_id(t3s5l0l)]
+#[test]
+fn a_send_to_a_dwarf_with_a_live_mailbox_lands_in_its_new() {
+    let (_t, e) = fixture("mail-uc11-live");
+    maildir::mail_ensure(&e.mail_root.join("dwarf-alive")).unwrap();
+    send(&e, &args("dwarf:alive", FROM, "Hello")).unwrap();
+    assert_eq!(names(&e, "dwarf-alive", "new").len(), 1);
+}
+
+// covers: UC-operator-channel-11
+#[test_id(trvj70f)]
+#[test]
+fn a_send_to_a_dwarf_with_no_mailbox_is_refused_naming_dwarf_and_creates_nothing() {
+    let (_t, e) = fixture("mail-uc11-dead");
+    let err = send(&e, &args("dwarf:dead", FROM, "Hello")).unwrap_err();
+    assert!(err.contains("dwarf:dead") && err.contains("no live mailbox"), "{err}");
+    assert!(!e.mail_root.join("dwarf-dead").exists());
+}

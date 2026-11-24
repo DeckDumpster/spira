@@ -160,4 +160,20 @@ mod tests {
         let text = std::fs::read_to_string(files[0].path()).unwrap();
         assert!(text.contains("From: Watchd <watchd@spira>") && text.contains("Subject: watcher down") && text.contains("the body"), "{text}");
     }
+
+    // covers: UC-operator-channel-05
+    #[test_id(ti3xwzy)]
+    #[test]
+    fn notifys_two_escalations_clear_the_mail_lint_unmodified() {
+        use crate::notify::{BACKLOG_DEFAULT, BACKLOG_SUBJECT, BACKLOG_WHY, HEALTH_DEFAULT, HEALTH_SUBJECT, HEALTH_WHY};
+        let tmp = testkit::TempDir::new("watchd-lint");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let strict = Env { kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"), lint_considered: None, ..env(&root) };
+        for (subject, default, why) in [(BACKLOG_SUBJECT, BACKLOG_DEFAULT, BACKLOG_WHY), (HEALTH_SUBJECT, HEALTH_DEFAULT, HEALTH_WHY)] {
+            let body = crate::ops::ask_note_body(subject, default, why, "[2000-01-01T00:00:00Z] FAIL planted");
+            alert_operator(&NoStore::default(), &strict, subject, &body).unwrap_or_else(|e| panic!("{subject}: {e}"));
+        }
+        assert_eq!(std::fs::read_dir(root.join("mail/operator/new")).unwrap().count(), 2);
+    }
 }

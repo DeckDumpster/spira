@@ -7,6 +7,7 @@
 extern crate spira_test_id;
 pub mod audit;
 pub mod code;
+pub mod hook;
 pub mod memories;
 pub mod vocab;
 

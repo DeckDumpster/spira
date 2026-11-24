@@ -31,6 +31,10 @@ pub fn parse_match_output(out: &str) -> Vec<SopMatch> {
         .collect()
 }
 
+pub(crate) fn ask_note_body(subject: &str, default: &str, why: &str, evidence: &str) -> String {
+    format!("## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n")
+}
+
 pub trait Ops {
     /// The manager's `ActiveState` word for each unit, in the same order; `"?"` when the
     /// answer could not be had at all (no systemd, box has no user manager).
@@ -206,8 +210,7 @@ impl Ops for Real {
     }
 
     fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String> {
-        let body = format!("## Note\n{subject}\n\nAction: {default}\n\n{why}\n\n{evidence}\n");
-        crate::send::alert_operator_configured(subject, &body)
+        crate::send::alert_operator_configured(subject, &ask_note_body(subject, default, why, evidence))
     }
 
     // FORK-EDGE: mail-health.sh is 122 lines of shell (over the ~100-line port bound).

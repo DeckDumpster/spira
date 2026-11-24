@@ -47,7 +47,6 @@ spira/pr-notify.sh
 spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
-spira/test-concierge.sh
 spira/test-deploy.sh
 spira/test-doctor-config-files.sh
 spira/test-doctor-gate-compile-check.sh
@@ -58,7 +57,6 @@ spira/test-landing-pass.sh
 spira/test-landing-pr.sh
 spira/testlib/gate-fixture.sh
 spira/testlib.sh
-spira/test-pr-notify.sh
 spira/tsd-ingest.sh
 
 # NAMED EXCEPTION CLASS (not cutover debt): a test whose job is to police the spira-config

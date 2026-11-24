@@ -2,7 +2,7 @@
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `landing-merge-queue`; use-case ids are `UC-landing-merge-queue-NN`.
 
-**Area id:** `landing-merge-queue`. **Primary files:** 51 suites (plus the three Rust crates that have no tests). **Secondary:** test-czar-shadow, test-pr-notify, test-timer-templates, test-verdict-timer.
+**Area id:** `landing-merge-queue`. **Primary files:** 51 suites (plus the three Rust crates that have no tests). **Secondary:** test-czar-shadow, the retired pr-notify suite, test-timer-templates, test-verdict-timer.
 **Current cost:** 1,506 suite-seconds on main push 35947142904. **Projected:** about 765 s (section 7).
 **Sources:** mapper records in `map/*.jsonl`, reducer proposals r0 (landing-pipeline, merge-queue, ci-wait-gates, forge-integration), r1 (merge-queue-certification), r2 (red-attribution), r3 (merge-queue-assembly, merge-queue-verdict, forge-adapter), `signals.tsv`, and read-only greps of `spira/{landing,batch,verdict,queue,forge}.sh` and `lib.sh`.
 
