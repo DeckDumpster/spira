@@ -16,11 +16,12 @@ be generating that much IO."* So:
 1. **One shared compilation cache for the box**: every Spira build path compiles through
    `sccache` with its local disk cache. A dependency crate is compiled at most once per
    (Cargo.lock, profile) and read from the cache after that.
-2. **Whole-workspace builds are not incremental; a builder's own crate turns are.** The root
-   manifest's `[profile.dev] incremental = true` serves an edit-and-retest loop. Incremental
-   caches are write-heavy (~270–350 MB per tree, GBs per build folder over a workspace) and
+2. **No build is incremental until a control run proves it pays.** The root manifest's
+   `[profile.dev] incremental = false` is explicit (cargo's dev default is true), so a builder's
+   own crate turn is not incremental either; a flip to true needs a control run of gates first.
+   Incremental caches are write-heavy (~270–350 MB per tree, GBs per build folder over a workspace) and
    useless to a one-shot build, so the gate's unit compose, testenv's unit tier and every cargo
-   call of `work checks` pass `one_shot("dev")`. Incremental is declared in the manifest, never
+   call of `work checks`, the gate's tools phase, `spira/build-fence.sh` and `spira/lint-staged.sh` pass `one_shot("dev")`. Incremental is declared in the manifest, never
    by `CARGO_INCREMENTAL` or `CARGO_PROFILE_DEV_INCREMENTAL` (both change the cache key, so the
    dependencies miss), and never in a host cargo config (`build.incremental=false` there defeats
    the manifest and made a one-line edit cost minutes): `doctor` reports any `[build]`,

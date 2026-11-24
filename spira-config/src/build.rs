@@ -542,9 +542,9 @@ codegen-units = 4
 
     #[test_id(trfsicp)]
     #[test]
-    fn the_root_manifest_compiles_dev_incrementally() {
+    fn the_root_manifest_keeps_dev_incremental_off() {
         let m: toml::Table = include_str!("../../Cargo.toml").parse().unwrap();
-        assert_eq!(m["profile"]["dev"]["incremental"].as_bool(), Some(true));
+        assert_eq!(m["profile"]["dev"]["incremental"].as_bool(), Some(false));
     }
 
     #[test_id(to4tvfa)]

@@ -144,7 +144,7 @@ printf 'build-fence: cargo check %s\n' "${scope[*]}" >&2
 stream="$CARGO_TARGET_DIR/build-fence.$$.json"
 errs="$CARGO_TARGET_DIR/build-fence.$$.err"
 trap 'rm -f "$stream" "$errs"' EXIT
-"$CARGO_BIN" check -j "$(nproc)" "${scope[@]}" --locked --message-format=json >"$stream" 2>"$errs"; rc=$?
+"$CARGO_BIN" check -j "$(nproc)" "${scope[@]}" --locked --config profile.dev.incremental=false --message-format=json >"$stream" 2>"$errs"; rc=$?
 if [ "$rc" -ne 0 ]; then
     printf 'build-fence: cargo check FAILED (rc=%s) — RED certification, not a suite failure\n' "$rc" >&2
     jq -r 'select(.reason=="compiler-message") | .message.rendered // empty' "$stream" >&2 2>/dev/null
