@@ -612,6 +612,24 @@ pub(crate) mod fake {
             self.rule(contains, "", stderr, code)
         }
 
+        /// The first `times` calls containing `contains` exit `code`; later ones fall through
+        /// to the rules below.
+        pub fn fail_first(mut self, contains: &str, times: u32, code: i32) -> FakeTmux {
+            let counter = self.dir.join(format!("count-{}", self.rules.len()));
+            self.rules.push(format!(
+                "*{}*) n=$(cat {c} 2>/dev/null || echo 0); if [ \"$n\" -lt {times} ]; then echo $((n + 1)) > {c}; exit {code}; fi;;\n",
+                quoted(contains),
+                c = counter.display(),
+            ));
+            self.write();
+            self
+        }
+
+        /// Where every call, and anything else a test's stubs append to it, is logged.
+        pub fn log_path(&self) -> &Path {
+            &self.log
+        }
+
         fn write(&self) {
             testkit::write_exe(
                 &self.bin,
