@@ -21,7 +21,7 @@ use crate::{Result, RuntimeError};
 pub const TURN_BUDGET: Duration = Duration::from_secs(5);
 const BACKOFF_FIRST: Duration = Duration::from_millis(50);
 const BACKOFF_MAX: Duration = Duration::from_secs(2);
-const JOURNAL_BACKOFF_MAX: Duration = Duration::from_secs(10);
+const JOURNAL_BACKOFF_MAX: Duration = Duration::from_millis(500);
 
 static JOURNAL_RETRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 

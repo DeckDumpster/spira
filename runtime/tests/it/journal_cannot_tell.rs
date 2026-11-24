@@ -58,6 +58,38 @@ async fn a_journal_read_that_cannot_tell_is_retried_not_returned_as_an_exit() {
     assert_eq!(retries.len(), 1, "each retry is counted: {retries:?}");
 }
 
+#[test_id(trf6vck)]
+#[tokio::test]
+async fn a_journal_that_cannot_tell_eight_times_is_asked_again_within_half_a_second_each_time() {
+    let mem: Arc<dyn Journal> = MemJournal::new();
+    let faulty = FaultyJournal::new(mem.clone());
+    let engine = Engine::open(faulty.clone(), Arc::new(WallClock), vec![Registration::new("echo", Echo)], 1).unwrap();
+    let sink = MemSink::new();
+    let opts = ServeOpts { sink: Some(sink.clone()), ..ServeOpts::default() };
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    let serving = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(NoEffects), PoolCaps::default(), rx, opts));
+    faulty.cannot_tell_times("commit", 8);
+    tx.send(Submit::new("p1", "s", EventKind::new("ping", ""))).await.unwrap();
+    for _ in 0..3000 {
+        if pongs(&*mem) == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await; // clock-safe: a 30 s hang cap on a wait for the journaled outcome
+    }
+    assert_eq!(pongs(&*mem), 1, "the event committed once");
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().expect("a clean stop");
+    let waits: Vec<u64> = sink
+        .records()
+        .into_iter()
+        .filter(|r| r.get("unit").is_some_and(|u| *u == "journal.retry".into()))
+        .map(|r| match r["journal.retry_in_ms"] { runtime::Value::Int(n) => n as u64, ref v => panic!("{v:?}") })
+        .collect();
+    assert_eq!(waits.len(), 8, "{waits:?}");
+    assert_eq!(waits[0], 50);
+    assert!(waits.iter().all(|w| *w <= 500), "{waits:?}");
+}
+
 #[test_id(t3wtsso)]
 #[test]
 fn a_dropped_spira_lc_reply_is_a_cannot_tell_and_a_missing_socket_is_too() {

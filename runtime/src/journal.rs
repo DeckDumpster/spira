@@ -216,7 +216,7 @@ impl Journal for MemJournal {
 /// A journal that refuses one named operation once, to stand in for a crash at that point.
 pub struct FaultyJournal {
     inner: Arc<dyn Journal>,
-    fail: Mutex<Option<(&'static str, Class)>>,
+    fail: Mutex<Option<(&'static str, Class, u32)>>,
     gone: Mutex<bool>,
 }
 
@@ -227,17 +227,22 @@ impl FaultyJournal {
 
     /// The next call of `op` fails, once; `append` is a crash: that event is dropped and every later call fails.
     pub fn fail_next(&self, op: &'static str) {
-        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Fault));
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Fault, 1));
     }
 
     /// The next call of `op` is refused, once: the journal looked and said no.
     pub fn refuse_next(&self, op: &'static str) {
-        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Refused));
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::Refused, 1));
     }
 
     /// The next call of `op` cannot tell, once: the journal's reply was slow or lost.
     pub fn cannot_tell_next(&self, op: &'static str) {
-        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::CannotTell));
+        self.cannot_tell_times(op, 1);
+    }
+
+    /// The next `n` calls of `op` cannot tell, one after another.
+    pub fn cannot_tell_times(&self, op: &'static str, n: u32) {
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, Class::CannotTell, n));
     }
 
     fn gate(&self, op: &'static str) -> Result<()> {
@@ -245,8 +250,8 @@ impl FaultyJournal {
             return Err(RuntimeError::new("injected fault in append"));
         }
         let mut f = self.fail.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((want, class)) = f.filter(|(want, _)| *want == op) {
-            *f = None;
+        if let Some((want, class, left)) = f.filter(|(want, _, _)| *want == op) {
+            *f = (left > 1).then_some((want, class, left - 1));
             let m = format!("injected fault in {want}");
             return Err(match class {
                 Class::Refused => RuntimeError::refused(format!("journal: {m}")),
@@ -262,7 +267,7 @@ impl Journal for FaultyJournal {
     fn record(&self, ev: &Event) {
         let mut gone = self.gone.lock().unwrap_or_else(|e| e.into_inner());
         let mut f = self.fail.lock().unwrap_or_else(|e| e.into_inner());
-        if f.is_some_and(|(want, _)| want == "append") {
+        if f.is_some_and(|(want, _, _)| want == "append") {
             *f = None;
             *gone = true;
         }
