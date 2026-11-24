@@ -38,7 +38,7 @@ fn a_second_ensure_over_a_real_tmux_makes_one_read_and_no_writes() {
         bottom_pct: 28,
         mail_cmd: None,
         heal_cooldown_secs: 60,
-        idle_secs: 0,
+        idle_secs: 600,
         mouse_on: true,
         clipboard_on: true,
         spira_repo: String::new(),

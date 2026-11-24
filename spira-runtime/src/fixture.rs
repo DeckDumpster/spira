@@ -15,7 +15,9 @@ pub fn fixture_config_door() {
     static DOOR: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
     DOOR.get_or_init(|| {
         let dir = testkit::TempDir::new("runtime-settings-door");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_SOCKET", "d/sock")]);
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).expect("the fixture run directory");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_LC_SOCKET", "d/sock"), ("SPIRA_RUN", &run.to_string_lossy())]);
         let home = spira_config::resolve::locate_home_for_process().unwrap();
         // The door resolves once per process and keeps what it read, so the environment
         // needs to name the fixture only while it does.

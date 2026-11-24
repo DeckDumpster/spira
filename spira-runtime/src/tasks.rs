@@ -108,7 +108,7 @@ pub static CORE: &[Task] = &[
     Task { name: claim_count::NAME, reads: Reads::Only(&["lifecycle/", "readiness/"]), plane: runtime::Plane::Work, signal: &[], boot: claim_count::ClaimCount::boot, cadence_ms: |s| s.claim_count.interval_ms, effects: &[claim_count::OBSERVE, INBOX_APPEND], runners: &[(claim_count::OBSERVE, |e, _, _| e.world.claim_count_snapshot())], keys: &[&["SPIRA_RUNTIME_CLAIM_COUNT_SECS", "SPIRA_CLAIM_PAGE_EVERY"]], build: |s| s.claim_count.clone().registration() },
     Task { name: bead_sweep::NAME, reads: Reads::Polled(&["lifecycle/", "readiness/", "planning/"]), plane: runtime::Plane::Work, signal: &[], boot: bead_sweep::BeadSweep::boot, cadence_ms: |s| s.bead_sweep.interval_ms, effects: &[bead_sweep::OBSERVE, bead_sweep::REPAIR, INBOX_APPEND], runners: &[(bead_sweep::OBSERVE, |e, _, _| e.world.sweep_snapshot()), (bead_sweep::REPAIR, |e, _, s| e.world.sweep_repair(&s.input))], keys: &[&["SPIRA_RUNTIME_BEAD_SWEEP_SECS", "SPIRA_BEAD_SWEEP_HOLD_MIN", "SPIRA_BEAD_SWEEP_REWORK_MIN", "SPIRA_BEAD_SWEEP_CERT_MIN", "SPIRA_BEAD_SWEEP_WAIT_MIN", "SPIRA_BEAD_SWEEP_BATCH_MIN", "SPIRA_SCOPED_STOP_REVIEW_SECS"]], build: |s| s.bead_sweep.clone().registration() },
     Task { name: publish_backlog::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: publish_backlog::PublishBacklog::boot, cadence_ms: |s| s.publish_backlog.interval_ms, effects: &[publish_backlog::OBSERVE, INBOX_APPEND], runners: &[(publish_backlog::OBSERVE, |e, _, _| e.world.publish_backlog_snapshot())], keys: &[&["SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS", "SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS", "SPIRA_LOCAL_BACKLOG_COUNT", "SPIRA_LOCAL_BACKLOG_AGE"]], build: |s| s.publish_backlog.clone().registration() },
-    Task { name: overrides::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: overrides::Overrides::boot, cadence_ms: |s| s.overrides.interval_ms, effects: &[overrides::APPLY, INBOX_APPEND], runners: &[(overrides::APPLY, |e, _, _| e.world.overrides_apply())], keys: &[&["SPIRA_RUNTIME_OVERRIDES_SECS"]], build: |s| s.overrides.clone().registration() },
+    Task { name: overrides::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: overrides::Overrides::boot, cadence_ms: |s| s.overrides.interval_ms, effects: &[overrides::APPLY, INBOX_APPEND], runners: &[(overrides::APPLY, |e, _, _| e.world.overrides_apply())], keys: &[&["SPIRA_RUNTIME_OVERRIDES_SECS", "SPIRA_OVERRIDES"]], build: |s| s.overrides.clone().registration() },
     Task { name: readiness_dependents::NAME, reads: Reads::Only(&["lifecycle/"]), plane: runtime::Plane::Work, signal: &[], boot: readiness_dependents::ReadinessDependents::boot, cadence_ms: |s| s.readiness_dependents.interval_ms, effects: &[readiness_dependents::LOOK, readiness_dependents::RUN], runners: &[(readiness_dependents::LOOK, |e, _, s| e.world.readiness_look(&s.input)), (readiness_dependents::RUN, |e, _, s| e.world.readiness_dependents(&s.input))], keys: &[&["SPIRA_RUNTIME_READINESS_DEPENDENTS_SECS"]], build: |s| s.readiness_dependents.clone().registration() },
     Task { name: view::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: view::View::boot, cadence_ms: |s| s.view.interval_ms, effects: &[view::OBSERVE, view::FLIP, view::FORGET], runners: &[(view::OBSERVE, |e, _, s| e.world.view_snapshot(&s.input)), (view::FLIP, |e, _, s| e.world.view_flip(&s.input)), (view::FORGET, |e, _, s| e.world.view_forget(&s.input))], keys: &[&["SPIRA_RUNTIME_VIEW_SECS", "SPIRA_VIEW"]], build: |s| s.view.clone().registration() },
     Task { name: reconciler::NAME, reads: Reads::Polled(&["lifecycle/", "readiness/", "batches/", "planning/", "gates/"]), plane: runtime::Plane::Work, signal: &[], boot: reconciler::Reconciler::boot, cadence_ms: |s| s.reconciler.interval_ms, effects: &[reconciler::OBSERVE, reconciler::RECORD, reconciler::REMEDY, reconciler::MAIL], runners: &[(reconciler::OBSERVE, |e, _, s| e.reconcile_observe(&s.input)), (reconciler::RECORD, |e, _, s| e.reconcile_record(&s.input)), (reconciler::REMEDY, |e, k, s| e.reconcile_remedy(k, &s.input)), (reconciler::MAIL, |e, k, s| e.reconcile_mail(k, &s.input))], keys: &[&["SPIRA_RUNTIME_RECONCILER_SECS", "SPIRA_RUNES", "SPIRA_STRANDED_RUNNER_MIN_AGE", "SPIRA_LC_PASSWORD_FILE"], ::reconciler::Config::KEYS], build: |s| s.reconciler.clone().registration() },
@@ -504,6 +504,28 @@ mod tests {
         let stop = runtime::EffectSpec::keyed(units::UNIT_STOP, units::UNIT_STOP, serde_json::to_string(&handle).unwrap(), 1);
         assert_eq!(fx.run("k", &stop), Ok(String::new()));
         assert!(scripted.calls().iter().any(|c| c.starts_with("start ")) && scripted.calls().iter().any(|c| c.starts_with("stop ")), "{:?}", scripted.calls());
+    }
+
+    #[test_id(t026ac4)]
+    #[test]
+    fn the_overrides_task_runs_nothing_until_an_override_is_declared() {
+        let dir = testkit::TempDir::new("overrides-declared");
+        let task = all().find(|t| t.name == overrides::NAME).unwrap();
+        let runner = task.runners.iter().find(|(n, _)| *n == overrides::APPLY).unwrap().1;
+        let started_by_boot_and_a_tick = || {
+            let fx = std::sync::Arc::new(crate::Effects { world: crate::world::World { overrides_dir: dir.path().to_path_buf(), ..Default::default() }, ..Default::default() });
+            let apply = move |input: &str| runner(&fx, "k", &runtime::EffectSpec::keyed(overrides::APPLY, overrides::APPLY, input, 1));
+            let mut rig = runtime::taskrig::TaskRig::new(1, (task.build)(&crate::fixture::fixture())).unwrap().double(overrides::APPLY, apply);
+            let before = spira_config::bounded::started();
+            let (_, stream, kind) = (task.boot)();
+            rig.tick(stream, kind).unwrap();
+            rig.advance(5_000).unwrap();
+            assert!(rig.requested().iter().filter(|r| r.name == overrides::APPLY).count() >= 2, "boot and a tick each ask for a pass");
+            spira_config::bounded::started() - before
+        };
+        assert_eq!(started_by_boot_and_a_tick(), 0, "no override declared, no overrides.sh");
+        std::fs::write(dir.join("hold.override"), "").unwrap();
+        assert!(started_by_boot_and_a_tick() >= 1, "a declared override is applied");
     }
 
     #[test_id(t9qkqh0)]

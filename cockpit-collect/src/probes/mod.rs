@@ -289,8 +289,7 @@ fn now_keys_with(cfg: &Cfg, run: &Path, list: &dyn Fn(&Path) -> DwarfFiles) -> K
             let wt = run.join("worktree").join(bead);
             let commit_ahead_ts = spira_config::repos::landref(&io::repo_registry(), &repo_name)
                 .filter(|b| !b.is_empty())
-                .and_then(|base| io::git(&wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]))
-                .and_then(|t| t.trim().parse::<i64>().ok());
+                .and_then(|base| commit_ahead_ts(&wt, &base));
             let fuse = dwarf::trace::dwarf_fuse_minutes(bead, &wt, &run, commit_ahead_ts, io::now());
             push(&mut out, &format!("SP_DWARF{i}_FUSE"), fuse);
             push(&mut out, &format!("SP_DWARF{i}_WALL"), (secs / 60).to_string());
@@ -395,9 +394,36 @@ fn sanitize_line(l: &str) -> &str {
 }
 
 fn fmt_hm(epoch: i64) -> String {
-    io::run_tool("date", &["-d", &format!("@{epoch}"), "+%H:%M"], None)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
+    dwarf::util::local_hm(epoch).unwrap_or_default()
+}
+
+type AheadMemo = (String, String, Option<i64>);
+
+/// The newest commit time past `base` in the checkout at `wt`, asked of git only when `HEAD` or the
+/// base moved since the last answer, or either cannot be read from the ref files.
+fn commit_ahead_ts(wt: &Path, base: &str) -> Option<i64> {
+    let keys = spira_config::git_refs::head_sha(wt).zip(spira_config::git_refs::sha_of(wt, base));
+    commit_ahead_memo(wt, keys, || io::git(wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]).and_then(|t| t.trim().parse::<i64>().ok()))
+}
+
+fn commit_ahead_memo(wt: &Path, keys: Option<(String, String)>, ask: impl FnOnce() -> Option<i64>) -> Option<i64> {
+    static MEMO: std::sync::Mutex<Option<HashMap<PathBuf, AheadMemo>>> = std::sync::Mutex::new(None);
+    if let Some((head, base_sha)) = &keys {
+        let memo = MEMO.lock().unwrap();
+        if let Some((h, b, ts)) = memo.as_ref().and_then(|m| m.get(wt)) {
+            if h == head && b == base_sha {
+                return *ts;
+            }
+        }
+    }
+    let ts = ask();
+    let mut memo = MEMO.lock().unwrap();
+    let memo = memo.get_or_insert_with(Default::default);
+    match keys {
+        Some((head, base_sha)) => memo.insert(wt.to_path_buf(), (head, base_sha, ts)),
+        None => memo.remove(wt),
+    };
+    ts
 }
 
 /// (count, comma-joined keys) of the heimdall conditions the store holds as firing; `?` when it did not answer.
@@ -1722,6 +1748,64 @@ pub fn czar_progress(bead: &Value, lc: Option<&HashMap<String, lc::Row>>) -> Cza
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test_id(t88yth0)]
+    #[test]
+    fn the_commit_time_is_asked_of_git_again_only_when_head_or_the_base_moved_or_cannot_be_read() {
+        let wt = Path::new("memo-fixture/worktree");
+        let asked = std::cell::Cell::new(0);
+        let ask = |ts: i64| {
+            let asked = &asked;
+            move || {
+                asked.set(asked.get() + 1);
+                Some(ts)
+            }
+        };
+        let keys = |h: &str, b: &str| Some((h.repeat(40), b.repeat(40)));
+        assert_eq!(commit_ahead_memo(wt, keys("1", "a"), ask(10)), Some(10));
+        assert_eq!(commit_ahead_memo(wt, keys("1", "a"), ask(99)), Some(10), "nothing moved");
+        assert_eq!(asked.get(), 1);
+        assert_eq!(commit_ahead_memo(wt, keys("2", "a"), ask(20)), Some(20), "HEAD moved");
+        assert_eq!(commit_ahead_memo(wt, keys("2", "b"), ask(30)), Some(30), "the base moved");
+        assert_eq!(commit_ahead_memo(wt, keys("2", "b"), ask(99)), Some(30));
+        assert_eq!(asked.get(), 3);
+        assert_eq!(commit_ahead_memo(wt, None, ask(40)), Some(40), "unreadable refs ask git");
+        assert_eq!(commit_ahead_memo(wt, None, ask(50)), Some(50), "and are never kept");
+        assert_eq!(commit_ahead_memo(wt, keys("2", "b"), ask(60)), Some(60), "a kept answer does not outlive an unreadable round");
+        assert_eq!(asked.get(), 6);
+    }
+
+    fn git_in(dir: &Path, date: &str, args: &[&str]) {
+        // batch-job: a fixture repository's own commit, bounded by the test
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    #[test_id(tscf113)]
+    #[test]
+    fn the_commit_time_follows_head_and_the_base_through_the_real_ref_files() {
+        let d = testkit::TempDir::new("commit-ahead");
+        let git = |date: &str, args: &[&str]| git_in(d.path(), date, args);
+        git("@1000 +0000", &["init", "-q", "-b", "main"]);
+        git("@1000 +0000", &["commit", "-q", "--allow-empty", "-m", "c1"]);
+        git("@1000 +0000", &["branch", "base"]);
+        git("@2000 +0000", &["commit", "-q", "--allow-empty", "-m", "c2"]);
+        assert_eq!(commit_ahead_ts(d.path(), "base"), Some(2000));
+        git("@3000 +0000", &["commit", "-q", "--allow-empty", "-m", "c3"]);
+        assert_eq!(commit_ahead_ts(d.path(), "base"), Some(3000), "HEAD moved");
+        git("@3000 +0000", &["branch", "-f", "base", "HEAD"]);
+        assert_eq!(commit_ahead_ts(d.path(), "base"), None, "the base moved to HEAD, nothing is ahead");
+    }
+
     #[test_id(tb4inqo)]
     #[test]
     fn firing_alerts_come_from_the_stores_heimdall_conditions() {
@@ -1766,8 +1850,6 @@ mod tests {
         std::fs::write(&p, r#"{"at":1000,"name":"n"}"#).unwrap();
         assert!(dwarf_static_load(&p, 1000).is_none(), "a row missing fields is not served");
     }
-
-    use super::*;
 
     #[test_id(tt1wfi2)]
     #[test]

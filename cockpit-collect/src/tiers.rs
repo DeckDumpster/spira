@@ -140,8 +140,7 @@ pub fn publish(run_dir: &Path, tier: &str, kv_text: &str) -> Result<String, Stri
         out.push_str(&format!("{k}={}\n", quoting::self_quote(&v)));
     }
     out.push_str(&format!("SP_WRITER={}\n", quoting::self_quote(&format!("{}:spira-runtime", std::process::id()))));
-    // FORK-EDGE: git rev-parse of the home checkout, as the supervisor's merge read it.
-    let rev = io::try_home_dir().ok().and_then(|h| io::git(&h, &["rev-parse", "--short", "HEAD"])).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "unknown".into());
+    let rev = io::try_home_dir().ok().and_then(|h| spira_config::git_refs::head_sha(&h)).map(|s| s[..10].to_string()).unwrap_or_else(|| "unknown".into());
     out.push_str(&format!("SP_COLLECTOR_REV={}\n", quoting::self_quote(&rev)));
     let snap = run_dir.join("cockpit.env");
     write_atomic(&snap, &out)?;

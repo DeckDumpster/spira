@@ -95,15 +95,7 @@ fn working_rows() -> Option<Vec<(String, String)>> {
 fn renderer_rev() -> String {
     let Some(release) = env_nonempty("SPIRA_RELEASE") else { return String::new() };
     let dir = Path::new(&release).join("cockpit");
-    spira_config::bounded::bounded("git")
-        .args(["-C"])
-        .arg(&dir)
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+    spira_config::git_refs::head_sha(&dir).map(|s| s[..10].to_string()).unwrap_or_default()
 }
 
 /// The alternate `$SPIRA_RUN` derivation that actually holds a `cockpit.env`, when the

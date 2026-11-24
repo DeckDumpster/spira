@@ -137,3 +137,11 @@
         let (pid, gone) = setsid_grandchild(false);
         assert!(!gone, "grandchild {pid} died without kill_tree: the opt-in is not pinned");
     }
+
+#[test_id(tfr35id)]
+#[test]
+fn started_counts_each_child_this_process_starts() {
+    let before = started();
+    bounded("true").status().unwrap();
+    assert!(started() > before);
+}

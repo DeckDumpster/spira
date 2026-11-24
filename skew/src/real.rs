@@ -8,6 +8,18 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// Whether an override pass has anything to run: the configured directory declares one. An
+/// unresolvable key or unreadable directory is printed and runs nothing.
+fn overrides_declared(dir: Result<String, String>) -> bool {
+    match dir.and_then(|d| spira_config::overrides::declared(Path::new(&d))) {
+        Ok(declared) => declared,
+        Err(e) => {
+            eprintln!("skew: {e}");
+            false
+        }
+    }
+}
+
 /// Whether this process's configuration resolves — the in-process form of skew.sh's own
 /// `trap '[ "$_skew_init_done" = 0 ] && exit 3' EXIT` around its `. lib.sh`: a config that
 /// cannot resolve is "could not check", never an empty verdict. Called once, before any
@@ -323,6 +335,9 @@ impl World for Real {
         // by inheriting stdout/stderr (Command's own default) instead of silencing them.
         // Caught live by testenv's test-overrides.sh (sp-yyk47).
         // FORK-EDGE: overrides.sh (223 lines of shell, over the port-in-place bound)
+        if !overrides_declared(spira_config::process::cfg("SPIRA_OVERRIDES")) {
+            return;
+        }
         let _ = spira_config::bounded::bounded("overrides.sh").arg("apply").arg(repo).stdin(Stdio::null()).status();
     }
     fn install_diff(&self, installer: &Path) -> (i32, String) {
@@ -628,5 +643,23 @@ mod swap_tests {
         let mut old = String::new();
         std::io::Read::read_to_string(&mut &held, &mut old).unwrap();
         assert_eq!(old, "old");
+    }
+}
+
+#[cfg(test)]
+mod overrides_tests {
+    use super::overrides_declared;
+
+    #[test_id(tyj71nl)]
+    #[test]
+    fn an_override_pass_runs_only_when_one_is_declared() {
+        let d = testkit::TempDir::new("skew-overrides");
+        let dir = || Ok(d.path().display().to_string());
+        assert!(!overrides_declared(dir()), "none declared");
+        std::fs::write(d.join("hold.override"), "").unwrap();
+        assert!(overrides_declared(dir()), "one declared");
+        std::fs::write(d.join("plain"), "").unwrap();
+        assert!(!overrides_declared(Ok(d.join("plain").display().to_string())), "an unreadable directory runs nothing");
+        assert!(!overrides_declared(Err("no key".into())));
     }
 }

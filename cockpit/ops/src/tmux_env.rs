@@ -21,25 +21,27 @@ pub const VARS: &[&str] = &[
     "AI_AGENT",
 ];
 
-/// Removes [`VARS`] from a live server's global environment and pins `spira_toml` there when
-/// the server lacks it; the lines the script printed. A server that is not running has nothing
-/// to scrub, and that is not an error. Silent when there was nothing to do.
+/// [`scrub_from`] over one `show-environment -g` read. A server that is not running answers
+/// non-zero and has nothing to scrub, and that is not an error.
 pub fn scrub(tmux: &Tmux, spira_toml: Option<&str>) -> Vec<String> {
-    let mut said = Vec::new();
-    if !tmux.ok(&["has-session"]) {
-        return said;
+    match tmux.stdout(&["show-environment", "-g"]) {
+        Some(env) => scrub_from(tmux, &env, spira_toml),
+        None => Vec::new(),
     }
+}
+
+/// Removes from the server's global environment each of [`VARS`] that `env` (its
+/// `show-environment -g` answer) holds, and pins `spira_toml` there when `env` lacks it; the
+/// lines the script printed. Writes only what `env` shows needs it, and never says a value.
+pub fn scrub_from(tmux: &Tmux, env: &str, spira_toml: Option<&str>) -> Vec<String> {
+    let mut said = Vec::new();
+    let held = |name: &str| env.lines().any(|l| l.strip_prefix(name).is_some_and(|rest| rest.starts_with('=')));
     if let Some(toml) = spira_toml.filter(|t| !t.is_empty() && std::path::Path::new(t).is_file()) {
-        if !tmux.ok(&["show-environment", "-g", "SPIRA_TOML"]) && tmux.ok(&["set-environment", "-g", "SPIRA_TOML", toml]) {
+        if !held("SPIRA_TOML") && tmux.ok(&["set-environment", "-g", "SPIRA_TOML", toml]) {
             said.push("cockpit: pinned SPIRA_TOML in the tmux server environment".to_string());
         }
     }
-    let mut n = 0;
-    for v in VARS {
-        if tmux.ok(&["show-environment", "-g", v]) && tmux.ok(&["set-environment", "-gu", v]) {
-            n += 1;
-        }
-    }
+    let n = VARS.iter().filter(|v| held(v) && tmux.ok(&["set-environment", "-gu", v])).count();
     if n > 0 {
         said.push(format!("cockpit: scrubbed {n} inherited Claude session variable(s) from the tmux server"));
     }
@@ -55,15 +57,16 @@ pub fn scrub_here(tmux: &Tmux) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// A tmux that logs every call and has `CLAUDECODE` and `CLAUDE_PID` set, no SPIRA_TOML,
-    /// and a server only when `up`.
+    /// A tmux that logs every call, answers `show-environment -g` with `CLAUDECODE` and
+    /// `CLAUDE_PID` set (and an unset marker for `AI_AGENT`) and no SPIRA_TOML, and has a
+    /// server only when `up`.
     fn fake(dir: &std::path::Path, up: bool) -> Tmux {
         let bin = dir.join("tmux");
         let log = dir.join("calls");
         let script = format!(
-            "#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$1 $3\" in\n  'has-session '*) {} ;;\n  'show-environment CLAUDECODE'|'show-environment CLAUDE_PID') exit 0 ;;\n  'show-environment '*) exit 1 ;;\n  *) exit 0 ;;\nesac\n",
+            "#!/bin/sh\necho \"$*\" >> '{}'\nif [ {} = down ]; then exit 1; fi\ncase \"$*\" in\n  'show-environment -g') printf 'CLAUDECODE=secret-a\\nCLAUDE_PID=secret-b\\n-AI_AGENT\\nPATH=/bin\\n' ;;\nesac\nexit 0\n",
             log.display(),
-            if up { "exit 0" } else { "exit 1" }
+            if up { "up" } else { "down" }
         );
         testkit::write_exe(&bin, &script);
         Tmux::with_bin(bin.to_string_lossy().into_owned())
@@ -83,11 +86,30 @@ mod tests {
                 "cockpit: scrubbed 2 inherited Claude session variable(s) from the tmux server".to_string(),
             ]
         );
-        let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
-        assert!(calls.contains(&format!("set-environment -g SPIRA_TOML {}", spec.display())), "{calls}");
-        assert!(calls.contains("set-environment -gu CLAUDECODE"), "{calls}");
-        assert!(calls.contains("set-environment -gu CLAUDE_PID"), "{calls}");
-        assert!(!calls.contains("set-environment -gu AI_AGENT"), "{calls}");
+        let calls: Vec<String> = std::fs::read_to_string(dir.join("calls")).unwrap().lines().map(str::to_string).collect();
+        assert_eq!(
+            calls,
+            [
+                "show-environment -g".to_string(),
+                format!("set-environment -g SPIRA_TOML {}", spec.display()),
+                "set-environment -gu CLAUDE_PID".to_string(),
+                "set-environment -gu CLAUDECODE".to_string(),
+            ],
+            "one read, then a write for each name present and no other"
+        );
+        assert!(said.iter().all(|l| !l.contains("secret")), "a value is never said");
+    }
+
+    #[test_id(ts55a0g)]
+    #[test]
+    fn a_server_that_already_holds_the_pin_and_no_identity_gets_no_write() {
+        let dir = testkit::TempDir::new("tmux-env-clean");
+        let spec = dir.join("config-spec");
+        std::fs::write(&spec, "").unwrap();
+        let tmux = fake(&dir, true);
+        let env = format!("SPIRA_TOML={}\n-CLAUDECODE\nPATH=/bin\n", spec.display());
+        assert!(scrub_from(&tmux, &env, Some(spec.to_str().unwrap())).is_empty());
+        assert!(!dir.join("calls").exists(), "nothing needed writing, so tmux was not run");
     }
 
     #[test_id(tbdmxdl)]
@@ -95,6 +117,6 @@ mod tests {
     fn no_server_is_nothing_to_scrub() {
         let dir = testkit::TempDir::new("tmux-env-down");
         assert!(scrub(&fake(&dir, false), None).is_empty());
-        assert_eq!(std::fs::read_to_string(dir.join("calls")).unwrap().trim(), "has-session");
+        assert_eq!(std::fs::read_to_string(dir.join("calls")).unwrap().trim(), "show-environment -g");
     }
 }

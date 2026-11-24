@@ -460,6 +460,31 @@ pub mod cockpit {
             assert_eq!(merged(&Snapshot { supervised: true, fragments: [("cockpit.x".to_string(), frag(FragmentState::Error, 0, &[("SP_X", "0")]))].into() }).last(), Some(&("SP_X".to_string(), "?".to_string())));
         }
 
+        #[test_id(tm3q3f1)]
+        #[test]
+        fn an_idle_five_second_tier_starts_no_child_process() {
+            use crate::tasks::g::cockpit_tier_5s;
+            let dir = testkit::TempDir::new("idle-tier");
+            let run = testkit::TempDir::new("idle-tier-run");
+            let _env = testkit::env(&spira_config::process::fixture_world_env(dir.path(), run.path(), &["spira"]).iter().map(|(k, v)| (*k, v.as_deref())).collect::<Vec<_>>());
+            let fx = std::sync::Arc::new(crate::Effects { world: crate::world::World { run_dir: run.path().to_path_buf(), ..Default::default() }, ..Default::default() });
+            let task = crate::tasks::all().find(|t| t.name == cockpit_tier_5s::NAME).unwrap();
+            let runner = |name: &'static str| task.runners.iter().find(|(n, _)| *n == name).unwrap().1;
+            let double = |name: &'static str| {
+                let (fx, run) = (fx.clone(), runner(name));
+                move |input: &str| run(&fx, "k", &EffectSpec::keyed(name, name, input, 1))
+            };
+            let mut rig = runtime::taskrig::TaskRig::new(1, (task.build)(&crate::fixture::fixture())).unwrap().double(cockpit_tier_5s::OBSERVE, double(cockpit_tier_5s::OBSERVE)).double(cockpit_tier_5s::PUBLISH, double(cockpit_tier_5s::PUBLISH));
+            let (_, stream, kind) = (task.boot)();
+            let before = spira_config::bounded::started();
+            rig.tick(stream, kind).unwrap();
+            let count = |rig: &runtime::taskrig::TaskRig, name: &str| rig.requested().iter().filter(|r| r.name == name).count();
+            assert!(count(&rig, cockpit_tier_5s::PUBLISH) > 0, "the first pass publishes");
+            rig.advance(60_000).unwrap();
+            assert_eq!(count(&rig, cockpit_tier_5s::OBSERVE), 13, "twelve idle ticks follow the first pass");
+            assert_eq!(spira_config::bounded::started(), before, "an idle tick starts no child");
+        }
+
         #[test_id(txfnl3s)]
         #[test]
         fn the_observe_input_names_every_probe_and_the_writer_key() {

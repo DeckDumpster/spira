@@ -53,11 +53,11 @@ fn main() -> ExitCode {
     };
     let tmux = Tmux::new();
 
-    if matches!(action.as_str(), "up" | "ensure") {
+    if action == "up" {
         cockpit_ops::tmux_env::scrub_here(&tmux);
     }
 
-    let window = window.unwrap_or_else(|| default_window(&tmux));
+    let window = if matches!(action.as_str(), "up" | "down" | "status") { window.unwrap_or_else(|| default_window(&tmux)) } else { String::new() };
     let layout = Layout { tmux, conf };
 
     match action.as_str() {

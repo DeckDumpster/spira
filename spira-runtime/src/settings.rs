@@ -284,6 +284,7 @@ impl Settings {
             mail: PathBuf::from(get("SPIRA_MAIL")?),
             ask_label: get("SPIRA_ASK_LABEL")?,
             wiki: PathBuf::from(get("SPIRA_WIKI")?),
+            overrides_dir: PathBuf::from(get("SPIRA_OVERRIDES")?),
             run_dir: run_dir.clone(),
             cr_tz: get("SPIRA_CR_TZ")?,
             cr_open_hour: get("SPIRA_CR_OPEN_HOUR")?,

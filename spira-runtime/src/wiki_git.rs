@@ -61,8 +61,11 @@ pub fn gh_auth_token(gh: &str, config_dir: &str, deadline: Duration) -> Result<(
 }
 
 /// One `overrides.sh apply` pass under `timeout`; a failed override fails the pass, and its
-/// stdout and stderr together say which.
-pub fn overrides_apply() -> Result<String, String> {
+/// stdout and stderr together say which. With none declared in `dir` nothing runs.
+pub fn overrides_apply(dir: &Path) -> Result<String, String> {
+    if !spira_config::overrides::declared(dir)? {
+        return Ok(String::new());
+    }
     // FORK-EDGE: overrides.sh is 223 lines of shell (over the ~100-line port bound).
     let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
     let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
@@ -184,5 +187,20 @@ mod bounded_tests {
         let d = testkit::TempDir::new("git-ok-signal");
         let e = super::super::ok_or_cause(script(d.path(), "echo cut short >&2; kill -9 $$"), Duration::from_secs(5)).unwrap_err();
         assert_eq!(e, "killed by signal: cut short");
+    }
+}
+
+#[cfg(test)]
+mod overrides_tests {
+    use super::overrides_apply;
+
+    #[test_id(tuwwq3n)]
+    #[test]
+    fn an_unreadable_overrides_directory_fails_the_pass_and_a_missing_one_declares_none() {
+        let d = testkit::TempDir::new("overrides-apply");
+        std::fs::write(d.join("plain"), "").unwrap();
+        let e = overrides_apply(&d.join("plain")).unwrap_err();
+        assert!(e.contains("overrides: cannot read"), "{e}");
+        assert_eq!(overrides_apply(&d.join("absent")), Ok(String::new()));
     }
 }
