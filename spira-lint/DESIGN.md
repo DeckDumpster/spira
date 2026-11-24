@@ -946,7 +946,8 @@ per key, path `spira/config-delta.toml`.
 union merge kept both versions of it. A branch declares its change in
 `spira/config-delta.d/<bead>.toml`; the round folds fragments in. A diff from the merge-base
 that changes the folded file is a finding unless it also deletes fragments and the head's file
-equals the base's file unioned with those fragments (the round's fold). One finding, path
+equals the base's file unioned with those fragments (the round's fold; a fragment's value for a
+key the base sets replaces the base's, so a fold writing any other value is a finding). One finding, path
 `spira/config-delta.toml`.
 
 **Refuses:** no base.

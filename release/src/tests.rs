@@ -1006,8 +1006,11 @@ fn a_release_whose_two_changes_each_retire_a_key_in_their_own_fragment_loads_bot
     assert_eq!(d.removed, ["spira.x", "spira.y"]);
     assert_eq!(d.removed_tasks, ["t.a", "t.b"]);
     file(&tree.join("spira/config-delta.d/sp-c.toml"), "[spira]\nk = 2\n");
+    let d = config_delta::load(&tree).unwrap().expect("the tree ships a delta");
+    assert_eq!(d.added["spira.k"].as_integer(), Some(2), "a fragment's value replaces the base's");
+    file(&tree.join("spira/config-delta.d/sp-d.toml"), "[spira]\nk = 3\n");
     let e = config_delta::load(&tree).unwrap_err();
-    assert!(e.contains("config-delta.toml") && e.contains("sp-c.toml"), "{e}");
+    assert!(e.contains("sp-c.toml") && e.contains("sp-d.toml"), "{e}");
 }
 
 const TC: &str = "1.99.0 abc";
@@ -1937,6 +1940,31 @@ fn the_trees_delta_loads_and_replaces_the_backup_age_and_database_defaults() {
     let delta = crate::config_delta::Delta::parse(&text).unwrap();
     assert_eq!(delta.replaced.get("spira.lc_backup_max_age").and_then(|v| v.as_integer()), Some(50_400));
     assert_eq!(delta.replaced.get("spira.lc_backup_db").and_then(|v| v.as_str()), Some("spira"));
+}
+
+#[test_id(tqqpp8f)]
+#[test]
+fn the_trees_delta_gives_the_runtime_overrides_backstop_the_registry_default() {
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    let text = spira_config::delta::delta_text(&root.join("spira")).unwrap().expect("the tree ships a delta");
+    let delta = crate::config_delta::Delta::parse(&text).unwrap();
+    let reg = spira_config::registry::Registry::load(&root.join("spira")).unwrap();
+    let default = reg.by_field("runtime_overrides_secs").unwrap().default_expr().unwrap().trim().parse::<i64>().unwrap();
+    assert_eq!(delta.added["spira.runtime_overrides_secs"].as_integer(), Some(default));
+}
+
+#[test_id(t9c70ma)]
+#[test]
+fn activation_writes_the_runtime_overrides_backstop_only_where_the_config_lacks_it() {
+    let root = spira_config::resolve::checkout_root_for_process().unwrap();
+    let text = spira_config::delta::delta_text(&root.join("spira")).unwrap().unwrap();
+    let delta = crate::config_delta::Delta::parse(&text).unwrap();
+    let run = |live: &str| {
+        let live: toml::Table = live.parse().unwrap();
+        config_delta::apply(std::slice::from_ref(&live), &delta, &[], true).unwrap().1[0]["spira"]["runtime_overrides_secs"].as_integer()
+    };
+    assert_eq!(run("[spira]\nruntime_overrides_secs = 60\n"), Some(60));
+    assert_eq!(run("[spira]\n"), Some(3600));
 }
 
 #[test_id(t26g6e6)]

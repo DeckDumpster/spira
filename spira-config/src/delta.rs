@@ -1,6 +1,10 @@
 //! A release's config delta is `config-delta.toml` plus one fragment per change under
 //! `config-delta.d/`; the delta is their union. Every reader goes through [`delta_text`] or
 //! [`merge_delta_texts`], so no two branches share a line to edit.
+//!
+//! A fragment's value for a key the base file already sets replaces the base's, and the fragment
+//! then owns the key: two fragments that differ, a table against a non-table, and any conflict
+//! under `renamed` stay errors. Folding writes the replacement over the base line.
 
 use std::path::{Path, PathBuf};
 use toml::map::Map;
@@ -41,8 +45,9 @@ pub fn delta_text(spira_dir: &Path) -> Result<Option<String>, String> {
 }
 
 /// The union of `(name, text)` delta files. A lone file is returned as written; `removed` and
-/// `removed_tasks` are unioned, tables merged, and one key set to two values is an error
-/// naming both files.
+/// `removed_tasks` are unioned and tables merged. The base file (named `DELTA_FILE`, wherever
+/// listed) is merged first and a fragment's value replaces the base's; one key set to two values
+/// by anything else is an error naming both files.
 pub fn merge_delta_texts(parts: &[(String, String)]) -> Result<Option<String>, String> {
     match parts {
         [] => return Ok(None),
@@ -51,7 +56,8 @@ pub fn merge_delta_texts(parts: &[(String, String)]) -> Result<Option<String>, S
     }
     let mut merged = Map::new();
     let mut owner: Map<String, Value> = Map::new();
-    for (name, text) in parts {
+    let (base, frags): (Vec<_>, Vec<_>) = parts.iter().partition(|(n, _)| is_base(n));
+    for (name, text) in base.into_iter().chain(frags) {
         let Value::Table(t) = text.parse::<Value>().map_err(|e| format!("{name}: {e}"))? else {
             return Err(format!("{name}: not a TOML table"));
         };
@@ -59,6 +65,11 @@ pub fn merge_delta_texts(parts: &[(String, String)]) -> Result<Option<String>, S
     }
     drop_retired_values(&mut merged);
     toml::to_string_pretty(&Value::Table(merged)).map(Some).map_err(|e| e.to_string())
+}
+
+fn is_base(name: &str) -> bool {
+    let p = Path::new(name);
+    p.file_name().is_some_and(|f| f == DELTA_FILE) && p.parent().and_then(Path::file_name).is_none_or(|d| d != DELTA_DIR)
 }
 
 fn drop_retired_values(merged: &mut Map<String, Value>) {
@@ -105,13 +116,19 @@ fn merge_table(into: &mut Map<String, Value>, owner: &mut Map<String, Value>, fr
                 let Some(Value::Table(o)) = owner.get_mut(&k) else { return Err(format!("{path}: ownership lost")) };
                 merge_table(have, o, more, &path, name)?;
             }
-            (Some(have), v) if *have == v => {}
-            (Some(_), _) => {
+            (Some(have), v) => {
                 let first = match owner.get(&k) {
                     Some(Value::String(f)) => f.clone(),
                     _ => "an earlier file".into(),
                 };
-                return Err(format!("{path} is set to different values by {first} and {name}"));
+                let scalar = !matches!(have, Value::Table(_)) && !matches!(v, Value::Table(_));
+                if scalar && !path.starts_with("renamed.") && is_base(&first) {
+                    *have = v;
+                    owner.insert(k, Value::String(name.to_string()));
+                } else if *have == v {
+                } else {
+                    return Err(format!("{path} is set to different values by {first} and {name}"));
+                }
             }
         }
     }
@@ -196,11 +213,26 @@ fn fold_table(into: &mut toml_edit::Table, from: &toml_edit::Table, top: bool) {
                     }
                 }
             }
-            other => {
-                if !into.contains_key(k) {
+            other => match (into.get_mut(k), other) {
+                (None, _) => {
                     into.insert(k, other.clone());
                 }
-            }
+                (Some(have), toml_edit::Item::Value(new)) => {
+                    if let toml_edit::Item::Value(old) = have {
+                        let bare = |v: &toml_edit::Value| {
+                            let mut v = v.clone();
+                            *v.decor_mut() = toml_edit::Decor::default();
+                            v.to_string()
+                        };
+                        if bare(old) != bare(new) {
+                            let mut new = new.clone();
+                            *new.decor_mut() = old.decor().clone();
+                            *have = toml_edit::Item::Value(new);
+                        }
+                    }
+                }
+                (Some(_), _) => {}
+            },
         }
     }
 }
@@ -305,5 +337,53 @@ mod tests {
         assert!(text.contains("# head") && text.contains("# ffx-ok"), "{text}");
         let after: Value = delta_text(s).unwrap().unwrap().parse().unwrap();
         assert_eq!(after, before);
+    }
+
+    #[test_id(t9wgqsy)]
+    #[test]
+    fn a_fragment_value_replaces_the_bases_whatever_the_base_name_or_position() {
+        for base in ["config-delta.toml", "spira/config-delta.toml"] {
+            let b = part(base, "[spira]\nk = 1\n");
+            let f = part("config-delta.d/a.toml", "[spira]\nk = 2\n");
+            for parts in [[b.clone(), f.clone()], [f, b]] {
+                let v: Value = merge_delta_texts(&parts).unwrap().unwrap().parse().unwrap();
+                assert_eq!(v["spira"]["k"].as_integer(), Some(2));
+            }
+        }
+    }
+
+    #[test_id(tlx40kd)]
+    #[test]
+    fn two_fragments_that_disagree_over_a_base_value_are_refused_in_either_order() {
+        let b = part("config-delta.toml", "[spira]\nk = 1\n");
+        let (a, c) = (part("config-delta.d/a.toml", "[spira]\nk = 1\n"), part("config-delta.d/b.toml", "[spira]\nk = 2\n"));
+        for frags in [[a.clone(), c.clone()], [c, a]] {
+            let e = merge_delta_texts(&[b.clone(), frags[0].clone(), frags[1].clone()]).unwrap_err();
+            assert!(e.contains("config-delta.d/a.toml") && e.contains("config-delta.d/b.toml") && !e.contains(" config-delta.toml"), "{e}");
+        }
+    }
+
+    #[test_id(tdsq7hp)]
+    #[test]
+    fn folding_a_superseding_fragment_rewrites_the_base_line_keeping_its_comment() {
+        let d = testkit::TempDir::new("delta-fold-supersede");
+        let s = d.path();
+        std::fs::create_dir_all(s.join(DELTA_DIR)).unwrap();
+        std::fs::write(s.join(DELTA_FILE), "# head\n[spira]\n# about k\nk = 1 # note\nz = 9\n").unwrap();
+        std::fs::write(s.join(DELTA_DIR).join("a.toml"), "[spira]\nk = 2\n").unwrap();
+        let before = delta_text(s).unwrap();
+        fold_fragments(s).unwrap();
+        let text = std::fs::read_to_string(s.join(DELTA_FILE)).unwrap();
+        assert_eq!(text, "# head\n[spira]\n# about k\nk = 2 # note\nz = 9\n");
+        assert!(fragment_paths(s).unwrap().is_empty());
+        assert_eq!(delta_text(s).unwrap().map(|t| t.parse::<Value>().unwrap()), before.map(|t| t.parse::<Value>().unwrap()));
+    }
+
+    #[test_id(tv54gxs)]
+    #[test]
+    fn a_fragment_may_not_remap_a_renamed_key_or_set_a_table_over_a_scalar() {
+        let b = part("config-delta.toml", "[renamed]\n\"spira.a\" = \"spira.b\"\n[spira]\nk = 1\n");
+        assert!(merge_delta_texts(&[b.clone(), part("config-delta.d/a.toml", "[renamed]\n\"spira.a\" = \"spira.z\"\n")]).is_err());
+        assert!(merge_delta_texts(&[b, part("config-delta.d/a.toml", "[spira.k]\nx = 1\n")]).is_err());
     }
 }
