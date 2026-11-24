@@ -2,3 +2,4 @@ This round predates the lint's typed findings file. `results/spira-lint.findings
 written from the `member=<id> <rule>: <path>:<line>: <message>` lines of `results/spira-lint.out`,
 which names the member each finding falls on; its `rule_source` is a placeholder no member
 changed, so the findings attribute by path as they did then. Read the `.out` for the original text.
+The findings file is kept as `spira-lint.findings.jsonl.txt`, because no `.jsonl` is tracked here; a replay stages it as `.jsonl`.

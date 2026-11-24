@@ -3694,8 +3694,8 @@ pub mod edge {
         const NOW: u64 = 1_793_000_000_000;
         const LEG: &str = "spira.a2";
 
-        fn fixture(id: &str) -> Fixture {
-            Fixture::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rounds").join(id)).unwrap()
+        fn fixture(id: &str, scratch: &testkit::TempDir) -> Fixture {
+            Fixture::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/rounds").join(id), scratch.path()).unwrap()
         }
 
         /// The attribution leg the queue would start on the saved round, as its argv and its outcome line.
@@ -3741,7 +3741,8 @@ pub mod edge {
         }
 
         fn replay(id: &str) {
-            let fx = fixture(id);
+            let scratch = testkit::TempDir::new("saved-round");
+            let fx = fixture(id, &scratch);
             let (_, line, edge) = attribute(&fx);
             let done = edge.done.borrow();
             assert_eq!(done.ejected, fx.expect.ejected, "{line}");

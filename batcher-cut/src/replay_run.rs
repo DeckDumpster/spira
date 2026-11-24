@@ -38,6 +38,7 @@ struct Probe {
 #[derive(Debug)]
 pub struct Fixture {
     pub dir: PathBuf,
+    results: PathBuf,
     pub round: RoundFixture,
     pub expect: Expect,
     probes: Vec<Probe>,
@@ -45,7 +46,9 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    pub fn load(dir: &Path) -> Result<Fixture, String> {
+    /// The fixture at `dir`, its results copied under `scratch` (a `.jsonl.txt` file there is
+    /// the `.jsonl` the round wrote: the repository tracks no `.jsonl`).
+    pub fn load(dir: &Path, scratch: &Path) -> Result<Fixture, String> {
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).map_err(|e| format!("{}: {e}", dir.join(f).display()));
         let json = |f: &str| -> Result<serde_json::Value, String> { serde_json::from_str(&read(f)?).map_err(|e| format!("{f}: {e}")) };
         let round = serde_json::from_str(&read("round.json")?).map_err(|e| format!("round.json: {e}"))?;
@@ -55,18 +58,31 @@ impl Fixture {
             false => vec![],
         };
         let mending = read("mending.json").ok();
-        Ok(Fixture { dir: dir.to_path_buf(), round, expect, probes, mending })
+        let results = scratch.join("results");
+        stage_results(&dir.join("results"), &results)?;
+        Ok(Fixture { dir: dir.to_path_buf(), results, round, expect, probes, mending })
     }
 
     /// The followed pass's results folder.
     pub fn results(&self) -> PathBuf {
-        self.dir.join("results")
+        self.results.clone()
     }
 
     /// `id:tip` of every member, as `--members` takes them.
     pub fn members(&self) -> Vec<(String, String)> {
         self.round.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect()
     }
+}
+
+fn stage_results(from: &Path, to: &Path) -> Result<(), String> {
+    let fail = |e: std::io::Error| format!("{}: {e}", from.display());
+    std::fs::create_dir_all(to).map_err(fail)?;
+    for e in std::fs::read_dir(from).map_err(fail)?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let name = name.strip_suffix(".jsonl.txt").map_or(name.clone(), |stem| format!("{stem}.jsonl"));
+        std::fs::copy(e.path(), to.join(name)).map_err(fail)?;
+    }
+    Ok(())
 }
 
 /// What the replay did, for the caller to read after the judgement.
