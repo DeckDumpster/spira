@@ -31,7 +31,7 @@
 //!
 //! A landing is a commit naming a bead on a repo's landing ref (resolved as `spira_landref` does,
 //! never the lane name): the ref is the authority on what landed. A count that cannot be read
-//! pages BLIND on the first unreadable tick, and files nothing; inside an activation's store-restart window (`SPIRA_ACTIVATION_STORE_BOUND`) the tick writes a non-paging `WAIT BLIND` instead. A git ref read is
+//! files nothing, and pages BLIND once it has stayed unreadable past `SPIRA_THROUGHPUT_STALL_SECS`, then says CLEAR at the next good read; inside an activation's store-restart window (`SPIRA_ACTIVATION_STORE_BOUND`) the tick writes a non-paging `WAIT BLIND` instead. A git ref read is
 //! retried once in the same pass; store reads are not.
 
 use runtime::event::*;
@@ -195,7 +195,10 @@ impl Filing {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Carry {
+    /// BLIND was paged and no good read has said CLEAR since.
     pub blind: bool,
+    /// When the landings first went unreadable; none while they read.
+    pub blind_since_ms: Option<u64>,
     /// The maintenance (by its start) whose orphaning was already paged.
     pub orphan_paged: Option<u64>,
     /// Repo → the last landing of the stall episode already filed.
@@ -254,6 +257,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
     let mut acts = vec![];
     if let Some(h) = &snap.halt {
         next.halted = h.held_text(now_ms / 1000);
+        next.blind_since_ms = None;
         next.resumed_at = now_ms / 1000;
         return Verdict { carry: next, acts };
     }
@@ -272,14 +276,20 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> Verd
             acts.push(say(now_ms, &crate::watchers::restart_wait(a, cfg.activation_bound_s, &snap.why)));
             return Verdict { carry: next, acts };
         }
-        if !carry.blind {
+        let since = *next.blind_since_ms.get_or_insert(now_ms);
+        let blind_ms = now_ms.saturating_sub(since);
+        if !carry.blind && blind_ms > cfg.stall_s.saturating_mul(1000) {
             let refusal = if snap.why.is_empty() { String::new() } else { format!(" ({})", snap.why) };
-            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal}, so landing stalls are not being checked")));
+            acts.push(say(now_ms, &format!("P0 BLIND: the landings cannot be read{refusal} for {}s, so landing stalls are not being checked", blind_ms / 1000)));
+            next.blind = true;
         }
-        next.blind = true;
         return Verdict { carry: next, acts };
     }
+    if carry.blind {
+        acts.push(say(now_ms, "CLEAR: the landings are read again"));
+    }
     next.blind = false;
+    next.blind_since_ms = None;
 
     next.waiting_on.clear();
     next.stalled.retain(|repo, _| snap.landings.iter().any(|l| l.repo == *repo && is_stalled(l, now_ms, cfg)));
@@ -367,7 +377,7 @@ impl WatchThroughput {
     }
 }
 
-const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
+const ROW_PARTS: &[runtime::rows::Part] = &[runtime::rows::Part::Field("blind"), runtime::rows::Part::Field("blind_since_ms"), runtime::rows::Part::Field("orphan_paged"), runtime::rows::Part::Map { name: "stalled", drop: &[] }, runtime::rows::Part::Field("starved"), runtime::rows::Part::Field("diluted"), runtime::rows::Part::Field("unlanded"), runtime::rows::Part::Field("held"), runtime::rows::Part::Field("undated"), runtime::rows::Part::Field("halted"), runtime::rows::Part::Field("resumed_at"), runtime::rows::Part::Map { name: "waiting_on", drop: &[] }];
 
 impl Handler for WatchThroughput {
     fn interests(&self) -> &[EventKindTag] {
