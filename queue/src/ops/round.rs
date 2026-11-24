@@ -1780,18 +1780,20 @@ pub(super) fn forget_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<
 }
 
 /// The round-recipe inputs (`spira_config::recipe::PATHS`) `tip` changes against `base`.
-fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<String> {
+pub(crate) fn recipe_inputs_touched(w: &World, repo: &Path, base: &str, tip: &str) -> Vec<String> {
     let from = w
         .git
         .merge_base(repo, base, tip)
         .unwrap_or_else(|| base.to_string());
-    w.git
+    let touched: Vec<String> = w
+        .git
         .numstat(repo, &from, tip)
         .unwrap_or_default()
         .into_iter()
         .map(|(p, ..)| p)
         .filter(|p| spira_config::recipe::touches(std::slice::from_ref(p)))
-        .collect()
+        .collect();
+    spira_config::recipe::drop_same_image(touched, |p| (w.git.file_at(repo, &from, p), w.git.file_at(repo, tip, p)))
 }
 
 /// The testenv tag inputs `tip` changes against `base`.

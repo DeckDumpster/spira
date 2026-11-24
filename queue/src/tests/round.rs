@@ -11181,3 +11181,23 @@ fn an_integration_rerun_that_is_red_replaces_the_earlier_record_and_makes_the_ro
     assert_eq!(fs::read_to_string(marker(&t, &batch, "results").join("integration.json")).unwrap(), again);
     assert!(t.out().contains("red=unit-tests"), "{}", t.out());
 }
+
+#[test_id(t45gmo8)]
+#[test]
+fn a_comment_only_containerfile_edit_is_no_recipe_input_touched_and_a_run_edit_is() {
+    const CF: &str = "spira/testenv/Containerfile";
+    let t = round_world();
+    t.git.stat("b0", "ta", &[(CF, 1, 1)]);
+    t.git.stat("b0", "tb", &[(CF, 1, 1)]);
+    t.git.stat("b0", "tc", &[(CF, 1, 1), ("flake.nix", 1, 1)]);
+    for (tip, head) in [("ta", "# new\nFROM x\n"), ("tb", "FROM x\nRUN y\n"), ("tc", "# new\nFROM x\n")] {
+        t.git.files.borrow_mut().insert(format!("b0:{CF}"), "# old\nFROM x\n".into());
+        t.git.files.borrow_mut().insert(format!("{tip}:{CF}"), head.into());
+    }
+    t.with_world(|w| {
+        let touched = |tip: &str| crate::ops::round::recipe_inputs_touched(w, std::path::Path::new("r"), "b0", tip);
+        assert!(touched("ta").is_empty());
+        assert_eq!(touched("tb"), vec![CF.to_string()]);
+        assert_eq!(touched("tc"), vec!["flake.nix".to_string()]);
+    });
+}

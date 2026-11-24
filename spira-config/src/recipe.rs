@@ -59,6 +59,27 @@ pub fn image_text(path: &str, text: &str) -> String {
     out
 }
 
+/// True only for the Containerfile with both texts present and equal once comments and blanks go.
+pub fn same_image(path: &str, base: Option<&str>, head: Option<&str>) -> bool {
+    path == CONTAINERFILE && matches!((base, head), (Some(b), Some(h)) if image_text(path, b) == image_text(path, h))
+}
+
+/// `changed` without the paths whose edit leaves the image alone; `texts` reads a path's
+/// (base, head) texts, `None` for one it cannot read.
+pub fn drop_same_image<S: AsRef<str>>(changed: Vec<S>, texts: impl Fn(&str) -> (Option<String>, Option<String>)) -> Vec<S> {
+    changed
+        .into_iter()
+        .filter(|p| {
+            let p = p.as_ref();
+            if p != CONTAINERFILE {
+                return true;
+            }
+            let (b, h) = texts(p);
+            !same_image(p, b.as_deref(), h.as_deref())
+        })
+        .collect()
+}
+
 fn is_directive(comment: &str) -> bool {
     let c = comment.trim_start().to_ascii_lowercase();
     ["escape", "syntax", "check"].iter().any(|k| {
@@ -69,6 +90,28 @@ fn is_directive(comment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(t1eirb3)]
+    #[test]
+    fn same_image_is_true_only_for_a_containerfile_comment_edit_with_both_texts_present() {
+        let edited = CF.replace("# top", "# reworded");
+        assert!(same_image(CONTAINERFILE, Some(CF), Some(&edited)));
+        assert!(!same_image(CONTAINERFILE, Some(CF), Some(&CF.replace("RUN x", "RUN z"))));
+        assert!(!same_image(CONTAINERFILE, Some(CF), None));
+        assert!(!same_image(CONTAINERFILE, None, Some(CF)));
+        assert!(!same_image("flake.nix", Some(CF), Some(&edited)));
+    }
+
+    #[test_id(t15h8bb)]
+    #[test]
+    fn drop_same_image_keeps_every_path_but_a_comment_only_containerfile() {
+        let edited = CF.replace("# top", "# reworded");
+        let both = |_: &str| (Some(CF.to_string()), Some(edited.clone()));
+        let kept = drop_same_image(vec![CONTAINERFILE, "flake.nix"], both);
+        assert_eq!(kept, vec!["flake.nix"]);
+        let unreadable = |_: &str| (Some(CF.to_string()), None);
+        assert_eq!(drop_same_image(vec![CONTAINERFILE], unreadable), vec![CONTAINERFILE]);
+    }
 
     const CF: &str = "# top\nFROM a\n\n  # note\nRUN x \\\n  # inner\n  && y\n";
 

@@ -70,6 +70,9 @@ pub trait Ports {
     /// The repository's registered landing ref (`spira_landref`).
     fn landing_ref(&self) -> Option<String>;
     fn changed_paths(&self, base: &str) -> Option<Vec<String>>;
+    /// `path` at the merge base of `base` and the tip, and at the tip; `None` for a side that cannot be read.
+    fn texts(&self, base: &str, path: &str) -> (Option<String>, Option<String>);
+    fn say(&self, line: &str);
     fn push(&self, branch: &str) -> Result<(), String>;
     fn delete(&self, branch: &str);
     fn dispatch(&self, branch: &str) -> Result<(), String>;
@@ -95,12 +98,13 @@ pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) ->
     }
     let base = p.landing_ref().ok_or("cannot resolve the repository's landing ref (spira_landref); give its registry row a base column")?;
     let changed = p.changed_paths(&base).ok_or("cannot read the branch's diff against the landing ref")?;
+    let changed = spira_config::recipe::drop_same_image(changed, |path| p.texts(&base, path));
     if !touches_recipe(&changed) {
         return Ok(Verdict::Skipped);
     }
     let branch = candidate_branch(bead, tip, nonce);
     let began = p.now();
-    let (mut pushed, mut dispatched, mut idle) = (false, false, 0u32);
+    let (mut pushed, mut dispatched, mut idle, mut announced) = (false, false, 0u32, false);
     let out = loop {
         match p.result(&branch) {
             Err(e) => break Err(format!("the forge cannot be read for the round image build: {e}")),
@@ -114,13 +118,20 @@ pub fn gate(p: &dyn Ports, bead: &str, tip: &str, nonce: u64, wait_secs: u64) ->
                 }
                 break Err(msg);
             }
-            Ok(Build::Running(_)) => idle = 0,
+            Ok(Build::Running(run)) => {
+                idle = 0;
+                if !announced {
+                    announced = true;
+                    p.say(&format!("work submit: the round image build is running as run {run}"));
+                }
+            }
             Ok(Build::NotStarted) if !dispatched => {
                 let started = p.push(&branch).map(|()| pushed = true).and_then(|()| p.dispatch(&branch));
                 if let Err(e) = started {
                     break Err(format!("cannot start the round image build on {branch}: {e}"));
                 }
                 dispatched = true;
+                p.say(&format!("work submit: {branch}: an image build of up to {} min has started", wait_secs / 60));
             }
             Ok(Build::NotStarted) => {
                 idle += 1;
@@ -170,6 +181,8 @@ mod tests {
         results: RefCell<Vec<Option<Build>>>,
         clock: Cell<u64>,
         calls: RefCell<Vec<String>>,
+        events: RefCell<Vec<String>>,
+        texts: Option<(Option<String>, Option<String>)>,
     }
 
     fn fake(changed: &[&str], results: Vec<Option<Build>>) -> Fake {
@@ -182,6 +195,8 @@ mod tests {
             results: RefCell::new(results),
             clock: Cell::new(0),
             calls: RefCell::new(vec![]),
+            events: RefCell::new(vec![]),
+            texts: None,
         }
     }
 
@@ -195,6 +210,12 @@ mod tests {
         fn changed_paths(&self, base: &str) -> Option<Vec<String>> {
             self.asked.borrow_mut().push(base.to_string());
             self.by_base.iter().find(|(b, _)| b == base).map(|(_, c)| c.clone()).or_else(|| self.changed.clone())
+        }
+        fn texts(&self, _: &str, _: &str) -> (Option<String>, Option<String>) {
+            self.texts.clone().unwrap_or((None, None))
+        }
+        fn say(&self, line: &str) {
+            self.events.borrow_mut().push(format!("say {line}"));
         }
         fn push(&self, b: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("push {b}"));
@@ -219,6 +240,7 @@ mod tests {
             self.clock.get()
         }
         fn sleep(&self, s: u64) {
+            self.events.borrow_mut().push("sleep".into());
             self.clock.set(self.clock.get() + s);
         }
     }
@@ -282,6 +304,46 @@ mod tests {
         assert_eq!(
             f.calls.borrow().join(";"),
             "push spira-round-candidate/sp-x-0123456789ab-7;dispatch spira-round-candidate/sp-x-0123456789ab-7;delete spira-round-candidate/sp-x-0123456789ab-7"
+        );
+    }
+
+    const CF: &str = "spira/testenv/Containerfile";
+
+    #[test_id(tkgn9ez)]
+    #[test]
+    fn a_comment_only_containerfile_edit_is_skipped_with_no_forge_call() {
+        let mut f = fake(&[CF], vec![None]);
+        f.texts = Some((Some("# a\nFROM x\n".into()), Some("# b\nFROM x\n".into())));
+        assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Skipped));
+        assert!(f.calls.borrow().is_empty() && f.events.borrow().is_empty());
+    }
+
+    #[test_id(tk5u3yi)]
+    #[test]
+    fn a_run_line_edit_dispatches_and_unreadable_text_counts_as_changed() {
+        for texts in [(Some("FROM x\nRUN a\n".to_string()), Some("FROM x\nRUN b\n".to_string())), (Some("FROM x\n".to_string()), None), (None, None)] {
+            let mut f = fake(&[CF], vec![Some(Build::NotStarted), Some(Build::Success("3".into()))]);
+            f.texts = Some(texts);
+            assert_eq!(gate(&f, "sp-x", "abc", 1, 5400), Ok(Verdict::Built("3".into())));
+            assert!(f.calls.borrow().iter().any(|c| c.starts_with("dispatch ")));
+        }
+    }
+
+    #[test_id(tfbfxn3)]
+    #[test]
+    fn the_start_and_the_run_are_said_once_each_before_the_next_sleep() {
+        let f = fake(&[CF], vec![Some(Build::NotStarted), Some(Build::Running("7".into())), Some(Build::Running("7".into())), Some(Build::Success("7".into()))]);
+        gate(&f, "sp-x", "abc", 1, 5400).unwrap();
+        let ev = f.events.borrow().clone();
+        assert_eq!(
+            ev,
+            vec![
+                "say work submit: spira-round-candidate/sp-x-abc-1: an image build of up to 90 min has started".to_string(),
+                "sleep".into(),
+                "say work submit: the round image build is running as run 7".into(),
+                "sleep".into(),
+                "sleep".into(),
+            ]
         );
     }
 

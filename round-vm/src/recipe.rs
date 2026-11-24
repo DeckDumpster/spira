@@ -86,7 +86,8 @@ pub fn preflight_plan(touched: &[&str], ami_setup_diff: &str, head_ami_setup: &s
 
 fn digest<'a>(inputs: impl Iterator<Item = (&'a str, &'a str)>) -> String {
     let mut h = Sha256::new();
-    for (name, text) in inputs {
+    for ((name, text), path) in inputs.zip(TREE_PATHS) {
+        let text = &spira_config::recipe::image_text(path, text);
         h.update(format!("{name}\0{}\0", text.len()));
         h.update(text.as_bytes());
     }
@@ -127,6 +128,40 @@ mod tests {
         assert_eq!(s.len(), 64);
         assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
         assert_eq!(s, super::super::sha());
+    }
+
+    fn tree_with(name: &str, containerfile: &str) -> testkit::TempDir {
+        let root = testkit::TempDir::new(name);
+        for (path, (_, text)) in super::TREE_PATHS.iter().zip(super::INPUTS.iter()) {
+            let full = root.join(path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            let body = if *path == spira_config::recipe::CONTAINERFILE { containerfile } else { text };
+            std::fs::write(full, body).unwrap();
+        }
+        root
+    }
+
+    #[test_id(tqfo2d8)]
+    #[test]
+    fn a_containerfile_comment_keeps_the_hash_and_a_run_line_moves_it() {
+        let cf = "# top\nFROM a\nRUN x\n";
+        let a = super::super::sha_of_tree(&tree_with("recipe-cf-a", cf)).unwrap();
+        let b = super::super::sha_of_tree(&tree_with("recipe-cf-b", &cf.replace("# top", "# other"))).unwrap();
+        let c = super::super::sha_of_tree(&tree_with("recipe-cf-c", &cf.replace("RUN x", "RUN y"))).unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test_id(t29xeez)]
+    #[test]
+    fn a_comment_in_any_other_input_still_moves_the_hash() {
+        let cf = "FROM a\n";
+        let a = tree_with("recipe-oth-a", cf);
+        let b = tree_with("recipe-oth-b", cf);
+        let f = b.join("round-vm/ami-setup.sh");
+        let t = std::fs::read_to_string(&f).unwrap();
+        std::fs::write(&f, format!("{t}\n# a comment\n")).unwrap();
+        assert_ne!(super::super::sha_of_tree(&a).unwrap(), super::super::sha_of_tree(&b).unwrap());
     }
 
     #[test_id(tz86os2)]
