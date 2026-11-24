@@ -96,8 +96,7 @@
 //! `spira-run-sentinel_2dcall-<rune>_2d<at>_2d<n>` (`runtime::units::unit_name`), carried in
 //! `in_flight` until its `unit.ran` (matched by `UnitRan::key_for`) or until the observe no
 //! longer lists it live. The dwarf starts under the properties `call_argv` gave it
-//! (`units::dwarf_props`: `TimeoutStartSec` from `RUNE_TIMEOUT_SECONDS`, the idle IO class, IO weight
-//! 10) as `UnitProps` on the start; its `ExecStopPost` refill (the `--call-only` re-exec) is
+//! (`units::dwarf_props`: `TimeoutStartSec` from `RUNE_TIMEOUT_SECONDS`, no IO class or weight) as `UnitProps` on the start; its `ExecStopPost` refill (the `--call-only` re-exec) is
 //! retired: the refill is the dwarf's own `unit.ran` on this stream, and the minute calendar. `SPIRA_CALL`, `SPIRA_SYSTEMCTL`
 //! and `SPIRA_SENTINEL_PASS_BUDGET_SECS` are retired (the port replaces the first two, decide
 //! is O(runes)); the throttle stamp and the capacity pause are the paths under `SPIRA_RUN`
