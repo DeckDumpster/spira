@@ -18,7 +18,6 @@ use crate::runtime::{cancelled, ContainerRuntime, RC_DEADLINE};
 use crate::schedule::{self, Job, MaxparInputs};
 use crate::selection;
 use crate::settings::Settings;
-use crate::skipgate::{self, SkipGate};
 use crate::suite::{SuiteHeaders, SuiteState};
 use crate::timing::{self, RoundPhaseRow, SuiteTimingRow};
 use crate::util::{self, git, iso_utc};
@@ -48,9 +47,7 @@ pub struct Finish {
     /// `--deadline` runs that reached the suite phase: (deferred count, deadline secs).
     /// Renders ` deferred=<d> (deadline <S>s)` on GREEN and RED; None renders nothing (D7).
     pub deferred: Option<(u32, u32)>,
-    /// Suites still `skip`/`skip-req` after the skip contract (DESIGN.md §3.7) — declared,
-    /// so still green. Renders ` skipped=<n>` on GREEN and RED when > 0; an undeclared skip
-    /// is not counted here at all, because it was already reclassified red.
+    /// Renders ` skipped=<n>` on GREEN and RED when > 0.
     pub skipped: usize,
     /// Which container session a setup fault came from (`main` or `sim`).
     pub session: Option<&'static str>,
@@ -1520,21 +1517,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         })
         .collect();
 
-    // ---- skip contract: the allow list, from the revision under test (DESIGN.md §3.7) -----
-    let skip_gate = match SkipGate::load(
-        &git(
-            &repo.path,
-            &["show", &format!("{br}:{}", s.skip_allowlist_file)],
-        )
-        .unwrap_or_default(),
-    ) {
-        Ok(g) => g,
-        Err(e) => {
-            stderr(&format!("batch: {e}"));
-            return Finish::fault(2, "skip-allowlist-invalid", 0);
-        }
-    };
-
     // ---- key, results dir ----------------------------------------------------------
     let image_tag = {
         let o = deps.rt.testenv(&["tag".into(), "--tree".into(), wt.path.display().to_string()], setup_cutoff.get());
@@ -1747,8 +1729,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             (deps.env)("GITHUB_RUN_ATTEMPT").as_deref(),
         );
         let first_attempt = (deps.env)("GITHUB_RUN_ATTEMPT").as_deref() == Some("1");
-        let always = (deps.env)("SPIRA_CERTIFY_ALWAYS_COVERS").filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "spira/lib.sh".into());
-        let digests = suite_input_digests(&repo.path, &wt.path, &suite_dir, &tree, &always);
+        let digests = suite_input_digests(&repo.path, &wt.path, &suite_dir, &tree);
         deps.log(&format!("resume: {} suite(s) keyed by their input closure as well as the tree", digests.len()));
         crate::resume::Store::new(backend, &key_inputs, &label, !first_attempt).with_inputs(digests)
     });
@@ -2173,35 +2154,26 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 producer: Some(producer),
                 rc: None,
             };
-            let rec = skipgate::apply(&skip_gate, n, quarantined.contains(n), rec);
+            let rec = rec.skip_as_red(quarantined.contains(n));
             batch::write_preempted(&results, n, &rec);
             (deps.out)(&suite_line(n, &rec));
             preempted.insert(n.clone(), rec);
         }
     }
     if runnable.is_empty() {
-        // Fail closed even here: pre-emption is not automatically green — an undeclared
-        // SKIP-REQ (skipgate::apply, above) is a red like any other (DESIGN.md §3.7).
+        // Pre-emption is not automatically green: an unmet requirement is red like any other.
         let reds: Vec<String> = active
             .iter()
             .filter(|n| preempted.get(*n).is_some_and(|r| r.status.blocking()))
             .cloned()
             .collect();
-        let skipped_count = active
-            .iter()
-            .filter(|n| {
-                preempted
-                    .get(*n)
-                    .is_some_and(|r| matches!(r.status, Status::Skip | Status::SkipReq))
-            })
-            .count();
         guard.settle();
         if let Some(g) = sim_guard.take() {
             g.settle();
         }
         if reds.is_empty() {
             deps.log("all suites pre-empted by unmet requirements — nothing to run");
-            return Finish::empty(skipped_count);
+            return Finish::empty(preempted.len());
         }
         deps.log(&format!(
             "{} suite(s) red (undeclared skip/skip-req) — no suite was runnable",
@@ -2236,7 +2208,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             cached: None,
             selected_none: false,
             deferred: None,
-            skipped: skipped_count,
+            skipped: 0,
             session: None,
             first_red: first_red_case(&results, &reds),
             timing: None,
@@ -2419,7 +2391,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         liveness_every: Duration::from_secs(5),
         // D9: what is left of the trial's budget, not S from here.
         deadline: deadline_at.get().map(|d| d.saturating_duration_since(Instant::now())),
-        skip_gate,
         embedded_only: active
             .iter()
             .filter(|n| headers[*n].testdb_embedded)
@@ -2768,28 +2739,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             deferred.join(" ")
         ));
     }
-    // Whatever is still `skip`/`skip-req` here was declared (DESIGN.md §3.7): an undeclared
-    // one was already reclassified red above and so is not in this list.
-    let skipped: Vec<String> = selected
-        .iter()
-        .filter(|n| {
-            records
-                .get(*n)
-                .is_some_and(|r| matches!(r.status, Status::Skip | Status::SkipReq))
-        })
-        .cloned()
-        .collect();
-    if !skipped.is_empty() {
-        deps.log(&format!(
-            "{} suite(s) skipped (declared, spira/skip-allowlist.tsv): {}",
-            skipped.len(),
-            skipped.join(" ")
-        ));
-    }
-    if ran == 0 && reds.is_empty() && !skipped.is_empty() {
-        deps.log(&format!("all {} selected suite(s) skipped — nothing was tested", skipped.len()));
-        return Finish::empty(skipped.len());
-    }
     let run_env = [("SPIRA_RUN", s.run.display().to_string())];
     let results_s = results.display().to_string();
     if !reds.is_empty() {
@@ -2821,7 +2770,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             cached: None,
             selected_none: false,
             deferred: deferred_count,
-            skipped: skipped.len(),
+            skipped: 0,
             session: None,
             first_red: first_red_case(&results, &reds),
             timing: None,
@@ -2859,7 +2808,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
     Finish {
         deferred: deferred_count,
-        skipped: skipped.len(),
+        skipped: 0,
         ..Finish::green(ran)
     }
 }
@@ -2867,16 +2816,15 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
 /// A green, undeferred run whose selection is every suite in the tree is the full-suite round
 /// that publish looks for (law-nothing-runs-on-ci-until-it-passes-locally).
 /// Each suite's input-closure digest for `tree` (over-broad-scopes #1, sp-ipwlic): the paths
-/// the test plan maps to it, its own files, the always-covered harness files, the scripts it
+/// the test plan maps to it, its own files, the scripts it
 /// runs and the crates its binaries are built from, by blob id (suite_select::closure). A
 /// suite whose closure cannot be computed is left out, so it resumes by its own tree alone and
 /// is otherwise run, never skipped; a tree or corpus that cannot be read keys nothing.
-fn suite_input_digests(repo: &Path, wt: &Path, suite_dir: &Path, tree: &str, always: &str) -> std::collections::HashMap<String, String> {
+fn suite_input_digests(repo: &Path, wt: &Path, suite_dir: &Path, tree: &str) -> std::collections::HashMap<String, String> {
     let Ok(corpus) = suite_select::corpus::Corpus::load(suite_dir) else { return Default::default() };
     let Ok(reach) = suite_select::reach::Reach::load(wt) else { return Default::default() };
     let files = git(repo, &["ls-tree", "-r", "--full-tree", tree]).ok().map(|t| suite_select::closure::parse_ls_tree(&t));
-    let always: Vec<String> = always.split_whitespace().map(str::to_string).collect();
-    suite_select::closure::suite_inputs(&corpus, reach.as_ref(), files.as_ref(), &always)
+    suite_select::closure::suite_inputs(&corpus, reach.as_ref(), files.as_ref(), &[])
         .into_iter()
         .filter_map(|(s, text)| Some((s, verdict::sha256_hex(text?.as_bytes()))))
         .collect()
@@ -2885,7 +2833,7 @@ fn suite_input_digests(repo: &Path, wt: &Path, suite_dir: &Path, tree: &str, alw
 pub(crate) fn record_full_suite_pass(run: &Path, commit: &str, selected: &[String], suite_dir: &Path, log: &dyn Fn(&str)) {
     let mut got: Vec<&str> = selected.iter().map(String::as_str).collect();
     got.sort_unstable();
-    let all = crate::suites::model::population(suite_dir);
+    let all = crate::selection::population(suite_dir);
     if got != all.iter().map(String::as_str).collect::<Vec<_>>() {
         return;
     }

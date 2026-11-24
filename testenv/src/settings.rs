@@ -78,9 +78,6 @@ pub struct Settings {
     pub tiers: String,
     pub mail_cmd: Option<PathBuf>,
     pub incident_cmd: Option<PathBuf>,
-    /// DESIGN.md §3.7: the checked-in skip-declaration allow list, read from the revision
-    /// under test.
-    pub skip_allowlist_file: String,
     pub select_head: Option<String>,
     pub round_batch_id: Option<String>,
     pub round_members: u64,
@@ -237,9 +234,6 @@ impl Settings {
                 .unwrap_or_else(|| "T2,T3".into()),
             mail_cmd: path("SPIRA_BATCH_MAIL_CMD"),
             incident_cmd: path("SPIRA_BATCH_INCIDENT_CMD"),
-            skip_allowlist_file: src
-                .get("SPIRA_SKIP_ALLOWLIST_FILE")
-                .unwrap_or_else(|| "spira/skip-allowlist.tsv".into()),
             select_head: src.get("SPIRA_GATE_SELECT_HEAD"),
             round_batch_id: src.get("SPIRA_ROUND_BATCH_ID"),
             round_members: src.num("SPIRA_ROUND_MEMBERS").unwrap_or(0),

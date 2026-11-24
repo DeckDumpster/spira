@@ -77,7 +77,7 @@ fn main() -> ExitCode {
     testenv::util::drop_activation_env();
     let first = std::env::args().nth(1).unwrap_or_default();
     let op = match first.as_str() {
-        o @ ("suites" | "lint" | "owed" | "shots" | "ui" | "preflight" | "status" | "testdb" | "wait" | "container" | "warm" | "test-bins") => o,
+        o @ ("lint" | "owed" | "shots" | "ui" | "preflight" | "status" | "testdb" | "wait" | "container" | "warm" | "test-bins") => o,
         _ => "run",
     };
     let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "testenv", op);
@@ -88,12 +88,6 @@ fn main() -> ExitCode {
 
 fn real_main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // `testenv suites …` — the suite population tooling (DESIGN-suites.md). A branch literally
-    // named `suites` is `testenv -- suites`.
-    if args.first().map(String::as_str) == Some("suites") {
-        let rc = testenv::suites::main(&args[1..]);
-        return ExitCode::from(rc.clamp(0, 255) as u8);
-    }
     // `testenv test-bins <package>…` — the workspace crates whose binaries those packages' tests launch, one per line.
     if args.first().map(String::as_str) == Some("test-bins") {
         let tree = std::env::current_dir().unwrap_or_default();

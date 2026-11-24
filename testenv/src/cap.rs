@@ -22,7 +22,7 @@ pub const GRACE: u64 = 60;
 const UNWIND: Duration = Duration::from_secs(30);
 
 pub const SUBCOMMANDS: &[&str] = &[
-    "suites", "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm", "test-bins",
+    "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm", "test-bins",
 ];
 
 static TRIPPED: AtomicBool = AtomicBool::new(false);
@@ -659,8 +659,14 @@ mod tests {
     #[test_id(t0lklm8)]
     #[test]
     fn a_dash_dash_branch_named_like_a_subcommand_is_still_a_run() {
-        assert!(is_run(&["testenv".into(), "--".into(), "suites".into()]));
-        assert!(!is_run(&["testenv".into(), "suites".into()]));
+        assert!(is_run(&["testenv".into(), "--".into(), "lint".into()]));
+        assert!(!is_run(&["testenv".into(), "lint".into()]));
+    }
+
+    #[test_id(tmpkug3)]
+    #[test]
+    fn suites_is_no_longer_a_subcommand_so_it_is_a_branch_name() {
+        assert!(is_run(&["testenv".into(), "suites".into()]));
     }
 
     #[test_id(tmx0m0i)]

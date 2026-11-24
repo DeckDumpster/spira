@@ -158,6 +158,18 @@ pub struct ResultRecord {
 }
 
 impl ResultRecord {
+    /// A skip is never green: SKIP and SKIP-REQ become a blocking red (quarantined when the
+    /// suite is), keeping the fingerprint so the line names the requirement.
+    pub fn skip_as_red(self, quarantined: bool) -> Self {
+        match self.status {
+            Status::Skip | Status::SkipReq => ResultRecord {
+                status: if quarantined { Status::QuarantinedRed } else { Status::Red },
+                ..self
+            },
+            _ => self,
+        }
+    }
+
     pub fn unreached(epoch: u64) -> Self {
         ResultRecord {
             status: Status::Unreached,
@@ -292,9 +304,6 @@ pub fn suite_line(suite: &str, rec: &ResultRecord) -> String {
         Status::Disabled => "DISABLED".to_string(),
         Status::SkipReq => format!("SKIP-REQ {}", rec.fingerprint),
         Status::Timeout => format!("TIMEOUT after {}s", rec.secs),
-        // An undeclared SKIP/SKIP-REQ reclassified by the skip contract (DESIGN.md §3.7):
-        // still a plain `red` on disk (gate-diag.sh, round.sh need no new keyword), but the
-        // line names the requirement instead of a meaningless rc/secs pair.
         Status::Red if rec.fingerprint.starts_with("skip:") || rec.fingerprint.starts_with("requires:") => {
             format!("RED     undeclared skip — {}", rec.fingerprint)
         }
@@ -672,6 +681,45 @@ mod tests {
             suite_line("test-w.sh", &ordinary),
             format!("  {:<32} RED     rc=1 after 3s", "test-w.sh")
         );
+    }
+
+    fn skip_record(status: Status, fingerprint: &str) -> ResultRecord {
+        ResultRecord {
+            status,
+            epoch: 0,
+            secs: 1,
+            fingerprint: fingerprint.into(),
+            mode: Some(Mode::Parallel),
+            producer: Some(Producer::Diff),
+            rc: None,
+        }
+    }
+
+    #[test_id(t6nouk8)]
+    #[test]
+    fn a_skip_or_an_unmet_requirement_is_red_and_keeps_its_fingerprint() {
+        for (status, fp) in [(Status::Skip, "skip:no widget"), (Status::SkipReq, "requires:claude")] {
+            let red = skip_record(status, fp).skip_as_red(false);
+            assert_eq!(red.status, Status::Red);
+            assert_eq!(red.fingerprint, fp);
+            assert!(red.status.blocking());
+            assert!(suite_line("t.sh", &red).contains(&format!("undeclared skip — {fp}")));
+        }
+    }
+
+    #[test_id(t5fo5b2)]
+    #[test]
+    fn a_quarantined_skip_is_quarantined_red_not_blocking() {
+        let q = skip_record(Status::Skip, "skip:flaky").skip_as_red(true);
+        assert_eq!(q.status, Status::QuarantinedRed);
+        assert!(!q.status.blocking());
+    }
+
+    #[test_id(tbzo3xz)]
+    #[test]
+    fn a_record_that_is_not_a_skip_passes_through_skip_as_red() {
+        let ok = skip_record(Status::Ok, "-");
+        assert_eq!(ok.clone().skip_as_red(false), ok);
     }
 
     #[test_id(tbbv0go)]

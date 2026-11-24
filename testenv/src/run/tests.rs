@@ -229,7 +229,6 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         tiers: get("SPIRA_BATCH_TIERS").unwrap_or_else(|| "T2,T3".into()),
         mail_cmd: get("SPIRA_BATCH_MAIL_CMD").map(PathBuf::from),
         incident_cmd: get("SPIRA_BATCH_INCIDENT_CMD").map(PathBuf::from),
-        skip_allowlist_file: get("SPIRA_SKIP_ALLOWLIST_FILE").unwrap_or_else(|| "spira/skip-allowlist.tsv".into()),
         select_head: get("SPIRA_GATE_SELECT_HEAD"),
         round_batch_id: get("SPIRA_ROUND_BATCH_ID"),
         round_members: num!("SPIRA_ROUND_MEMBERS").unwrap_or(0),
@@ -714,6 +713,77 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         let after = work_done();
         let got = lines.lock().unwrap().clone();
         (got, after - before)
+    }
+
+    fn first_run_lines(suite_src: &str, rc: i32, output: &str, tree_files: &[(&str, &str)]) -> Vec<String> {
+        let root = testkit::TempDir::new("testenv-skip-red");
+        let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
+        for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(repo.join("spira/test-a.sh"), suite_src).unwrap();
+        for (name, text) in tree_files {
+            fs::write(repo.join(name), text).unwrap();
+        }
+        fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+        git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo x > x && git add . && git commit -qm topic && git checkout -q main");
+        let env: HashMap<String, String> = [
+            ("SPIRA_RUN", root.join("run").display().to_string()),
+            ("SPIRA_BATCH_LIVENESS_SLEEP", "0".into()),
+            ("SPIRA_BATCH_PSI_THRESHOLD", "0".into()),
+            ("SPIRA_BATCH_MAXPAR", "2".into()),
+            ("SPIRA_TESTENV_WARM_SLOTS", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
+            ("SPIRA_TESTENV_MAX_RUNS", "99".into()),
+            ("SPIRA_TEST_PAR", "1".into()),
+            ("HOME", root.display().to_string()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let exe = root.join("runner-exe");
+        fs::write(&exe, b"runner").unwrap();
+        let lines = std::sync::Mutex::new(vec![]);
+        let envf = |k: &str| env.get(k).cloned();
+        let out = |l: &str| lines.lock().unwrap().push(l.to_string());
+        let rt = FakeRuntime::new();
+        rt.suite("test-a.sh", rc, output);
+        let full: Vec<String> = ["--suites", "test-a.sh", "topic"].iter().map(|s| s.to_string()).chain([repo.display().to_string()]).collect();
+        let deps = Deps {
+            rt: &rt,
+            builder: &NoBuild,
+            harness: Harness { root: harness.clone() },
+            env: &envf,
+            config: None,
+            repo_root: &|_| None,
+            settings: test_settings(&env),
+            stdin: &String::new,
+            out: &out,
+            owner_dir: owner.clone(),
+            cwd: root.to_path_buf(),
+            runner_identity: b"runner-v1".to_vec(),
+            warm_refill: &|_, _, _| {},
+            spawn_sweep: &|_| {},
+            runner_exe: exe.clone(),
+            load1: &|| Some(0.0),
+            sleep: &|_| {},
+        };
+        execute(parse(&full).unwrap(), &deps);
+        let got = lines.lock().unwrap().clone();
+        got
+    }
+
+    #[test_id(tur16lg)]
+    #[test]
+    fn a_suite_exiting_77_is_red_naming_its_requirement_whatever_the_tree_carries() {
+        let allowlist = [("spira/skip-allowlist.tsv", "test-a.sh\tskip:nothing_to_test\tdeclared\n")];
+        let lines = first_run_lines("#!/usr/bin/env bash\nexit 77\n", 77, "1..0 # SKIP nothing to test\n", &allowlist);
+        assert!(
+            lines.iter().any(|l| l.contains("test-a.sh") && l.contains("RED") && l.contains("undeclared skip — skip:nothing_to_test")),
+            "{lines:#?}"
+        );
+        assert!(lines.iter().any(|l| l.starts_with("VERDICT RED")), "{lines:#?}");
     }
 
     #[test_id(t1srnmv)]
