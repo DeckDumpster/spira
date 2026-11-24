@@ -16,7 +16,7 @@ use runtime::host::Submit;
 use runtime::sources::{on_pool, Running, Source};
 use tokio::sync::mpsc;
 
-use super::watch::{self, Changed, Changes, Watch};
+use super::watch::{self, Changes, Watch};
 use crate::tasks::g::cockpit::WRITE_KEY;
 
 pub const NAME: &str = "ctx.status";
@@ -127,6 +127,7 @@ async fn serve(cfg: Arc<ctx_meter::Config>, mut watch: Box<dyn Watch>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::watch::Changed;
     use std::path::Path;
     use ctx_meter::status::{put_record, read_status, Record};
     use std::os::unix::fs::MetadataExt;
