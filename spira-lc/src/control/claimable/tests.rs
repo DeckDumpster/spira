@@ -515,7 +515,7 @@ mod shipped_runes {
             cand("poisoned", &[&scope, &spike], Some(HoldKind::Poison)),
         ];
 
-        let parts = runes::partitions(&ws, None, "queue-wait", "").unwrap();
+        let parts = runes::partitions(&ws, None, &FIXED.config().unwrap().queue_wait, "").unwrap();
         assert!(parts.iter().any(|p| p.name == "spike"), "the spike rune is discovered without being listed");
 
         let s = super::pinned::store();
