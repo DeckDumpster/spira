@@ -688,6 +688,7 @@ SPIRA_SYSTEMCTL watchtower/src/main.rs
 SPIRA_SYSTEMCTL watchtower/src/process.rs
 SPIRA_SYSTEMCTL_RELOAD release/src/main.rs
 SPIRA_SYSTEMD_RUN watchd/src/ops.rs
+SPIRA_SYSTEMD_USER_DIR release/src/acceptance/phases.rs
 SPIRA_SYSTEMD_USER_DIR spira/cadence.sh
 SPIRA_TC_LAND_REF sentinel/src/tower.rs
 SPIRA_TC_LAND_REF watchtower/src/main.rs

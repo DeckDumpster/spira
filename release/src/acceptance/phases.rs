@@ -230,7 +230,7 @@ impl Run<'_> {
     /// `(active, armed)` for `timer`, from `is-active` and the two next-elapse properties. A
     /// `show` that fails is an error, never "not armed".
     fn timer_state(&self, timer: &str) -> Result<(bool, bool), String> {
-        let active = self.systemctl(&["is-active", timer]).out.trim() == "active";
+        let active = self.systemctl(&["is-active", timer]).rc == 0;
         let read = |prop: &str| {
             let o = self.systemctl(&["show", timer, "-p", prop, "--value"]);
             if o.rc == 0 {
