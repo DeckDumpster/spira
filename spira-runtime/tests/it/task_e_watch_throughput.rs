@@ -961,3 +961,32 @@ fn a_halt_restarts_the_blindness_clock_and_maintenance_does_not() {
     let kept = decide(&first.carry, &waiting, 1_300_000, &config());
     assert_eq!(kept.carry.blind_since_ms, first.carry.blind_since_ms);
 }
+
+#[test_id(tlzbrx7)]
+#[test]
+fn a_landing_that_ages_past_a_day_with_the_tip_unmoved_leaves_the_count_without_a_second_read() {
+    let now = 1_700_000_000u64;
+    let dir = testkit::TempDir::new("throughput-held");
+    let repo = dir.join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    testkit::git(&repo, &["init", "-q", "-b", "other"]);
+    commit_at(&repo, "sp-aaaaaa landed", now - 23 * 3600);
+    testkit::git(&repo, &["branch", "local/main"]);
+    let reads = dir.join("reads");
+    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH");
+    let git = dir.join("counting-git");
+    testkit::write_exe(&git, &format!("#!/bin/sh\ncase \" $* \" in *\" log \"*) echo log >> {}; esac\nexec {} \"$@\"\n", reads.display(), real.display()));
+    let map = dir.join("repos");
+    std::fs::write(&map, format!("spira|{}|queue.local|local/main||\n", repo.display())).unwrap();
+    let w = spira_runtime::world::World { repo_map: map, home_repo: "spira".into(), git_bin: Some(git), ..Default::default() };
+    let count = |at: u64| w.landed_on_refs(at, "sp").unwrap()[0].hourly.iter().sum::<u64>();
+    let logs = || std::fs::read_to_string(&reads).unwrap_or_default().lines().count();
+    assert_eq!(count(now), 1);
+    assert_eq!(logs(), 1);
+    assert_eq!(count(now + 3_600), 0, "the landing aged out of the 24 h window");
+    assert_eq!(logs(), 1, "the unmoved tip is not read again");
+    commit_at(&repo, "sp-bbbbbb landed", now + 3_000);
+    testkit::git(&repo, &["branch", "-f", "local/main"]);
+    assert_eq!(count(now + 3_600), 1, "a moved tip is read");
+    assert_eq!(logs(), 2);
+}
