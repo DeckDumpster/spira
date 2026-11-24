@@ -864,6 +864,41 @@ struct Probes {
     ceiling: usize,
     exhausted: bool,
     smallest_red: Option<Vec<Id>>,
+    seen: BTreeMap<(Vec<String>, Vec<Id>), Probed>,
+}
+
+/// What a probing pass is followed by, which decides what it need not run itself.
+#[derive(Clone, Copy, PartialEq)]
+enum Follow {
+    Nothing,
+    /// The same members run again at the package scope.
+    Wider,
+    /// A pass over all the members follows, so no member is run alone here.
+    Anything,
+}
+
+/// One probe's verdict with the output kept for it: the red's output, or where a base run's was kept.
+#[derive(Clone)]
+struct Probed {
+    verdict: Option<bool>,
+    output: String,
+    kept: String,
+}
+
+impl Probed {
+    fn none() -> Self {
+        Probed { verdict: None, output: String::new(), kept: String::new() }
+    }
+}
+
+/// Runs the filter on `members` and collects what a red or a base run says.
+fn probed<R: RoundRunner>(runner: &mut R, f: &FilterRed, scope: &[String], members: &[Member], on_host: bool) -> Probed {
+    let verdict = filter_green_told(runner, f, scope, members, on_host);
+    Probed {
+        verdict,
+        output: if verdict == Some(false) { runner.probe_output() } else { String::new() },
+        kept: if members.is_empty() { runner.probe_kept() } else { String::new() },
+    }
 }
 
 enum Control {
@@ -879,17 +914,29 @@ impl Probes {
             ceiling: members + 2,
             exhausted: false,
             smallest_red: None,
+            seen: BTreeMap::new(),
         }
     }
 
     /// Runs `probe` on `members` unless the ceiling is reached, which answers `None` without running.
-    fn run(&mut self, members: &[Member], probe: impl FnOnce() -> Option<bool>) -> Option<bool> {
+    /// A verdict already had for the same scope and members is answered again, uncharged.
+    fn run(&mut self, scope: &[String], members: &[Member], probe: impl FnOnce() -> Probed) -> Probed {
+        let mut ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+        ids.sort();
+        let key = (scope.to_vec(), ids);
+        if let Some(had) = self.seen.get(&key) {
+            return had.clone();
+        }
         if self.used >= self.ceiling {
             self.exhausted = true;
-            return None;
+            return Probed::none();
         }
         self.used += 1;
-        let v = probe();
+        let got = probe();
+        let v = got.verdict;
+        if v.is_some() {
+            self.seen.insert(key, got.clone());
+        }
         if v == Some(false)
             && self
                 .smallest_red
@@ -898,18 +945,42 @@ impl Probes {
         {
             self.smallest_red = Some(members.iter().map(|m| m.id.clone()).collect());
         }
-        v
+        got
+    }
+
+    fn verdict(&self, scope: &[String], members: &[Member]) -> Option<bool> {
+        let mut ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+        ids.sort();
+        self.seen.get(&(scope.to_vec(), ids)).and_then(|p| p.verdict)
+    }
+
+    /// How many leading `members` a run at `scope` already found green.
+    fn green_prefix(&self, scope: &[String], members: &[Member]) -> usize {
+        let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+        (1..members.len())
+            .rev()
+            .find(|&k| {
+                let mut head = ids[..k].to_vec();
+                head.sort();
+                self.seen
+                    .get(&(scope.to_vec(), head))
+                    .is_some_and(|p| p.verdict == Some(true))
+            })
+            .unwrap_or(0)
     }
 
     /// The full-membership probe that must reproduce the red before anything is searched; a
     /// probe with no verdict is retried once.
     fn control(
         &mut self,
+        scopes: &[Vec<String>],
         members: &[Member],
-        probe: &mut dyn FnMut(&[Member], usize) -> Option<bool>,
+        probe: &mut dyn FnMut(&[Member], usize) -> Probed,
     ) -> Control {
         for attempt in 0..2 {
-            match self.run(members, || probe(members, attempt)) {
+            let scope = scopes.get(attempt).or(scopes.last()).map_or(&[][..], |s| s.as_slice());
+            let got = self.run(scope, members, || probe(members, attempt));
+            match got.verdict {
                 Some(true) => return Control::Green,
                 Some(false) => return Control::Red,
                 None => {}
@@ -981,31 +1052,36 @@ fn probe_filter_owners<R: RoundRunner>(
     scope: &[String],
     members: &[Member],
     probes: &mut Probes,
+    follow: Follow,
 ) -> (Vec<Action>, &'static str, String) {
     let red = format!("{} red{tests}", f.name);
+    let known_green = probes.green_prefix(scope, members);
+    let full_known_green = probes.verdict(scope, members) == Some(true);
     let mut said: Vec<(Vec<Id>, String)> = vec![];
     let mut base_kept = String::new();
     let mut green_in = |runner: &mut R, m: &[Member]| {
-        let mut ran = false;
-        let v = probes.run(m, || {
-            ran = true;
-            filter_green_told(runner, f, scope, m, false)
-        });
-        if ran && m.is_empty() {
-            base_kept = runner.probe_kept();
+        let got = probes.run(scope, m, || probed(runner, f, scope, m, false));
+        if m.is_empty() && got.verdict.is_some() {
+            base_kept = got.kept;
         }
-        if v == Some(false) {
-            said.push((
-                m.iter().map(|x| x.id.clone()).collect(),
-                runner.probe_output(),
-            ));
+        if got.verdict == Some(false) {
+            said.push((m.iter().map(|x| x.id.clone()).collect(), got.output));
         }
-        v
+        got.verdict
     };
+    if follow != Follow::Nothing && known_green == 0 && members.len() > 1 && green_in(runner, members) == Some(true) {
+        return (vec![], "unattributed", String::new());
+    }
     let mut actions =
-        bisect_members(&red, &mut |m| green_in(runner, m), members).unwrap_or_default();
+        bisect_members(&red, &mut |m| green_in(runner, m), members, known_green).unwrap_or_default();
     if actions.is_empty() {
         actions = sole_member_culprit(&red, members);
+    }
+    if actions.is_empty() && follow == Follow::Anything && members.len() > 1 {
+        return (actions, "unattributed", String::new());
+    }
+    if actions.is_empty() && follow == Follow::Wider && members.len() > 1 && full_known_green && green_in(runner, &[]) != Some(false) {
+        return (actions, "unattributed", String::new());
     }
     if actions.is_empty() && members.len() > 1 {
         match red_alone(&red, &mut |m| green_in(runner, m), members) {
@@ -1097,6 +1173,7 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
     tests: &str,
     scope: &[String],
     members: &[Member],
+    probes: &mut Probes,
 ) -> Vec<Action> {
     let Some(prior) = ops.prior_unnamed_red() else {
         return vec![];
@@ -1124,7 +1201,8 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
             .cloned()
             .collect()
     };
-    if filter_green_told(runner, f, scope, &without(&recurring), false) != Some(true) {
+    let rest = without(&recurring);
+    if probes.run(scope, &rest, || probed(runner, f, scope, &rest, false)).verdict != Some(true) {
         return vec![];
     }
     let mut convicted = recurring.clone();
@@ -1133,11 +1211,12 @@ fn convict_recurring<R: RoundRunner, O: RoundOps>(
         let alone: Vec<Member> = recurring
             .iter()
             .filter(|m| {
-                let green = filter_green_told(runner, f, scope, &without(std::slice::from_ref(m)), false);
-                if green == Some(false) {
-                    said.push((vec![], runner.probe_output()));
+                let rest = without(std::slice::from_ref(m));
+                let got = probes.run(scope, &rest, || probed(runner, f, scope, &rest, false));
+                if got.verdict == Some(false) {
+                    said.push((vec![], got.output));
                 }
-                green == Some(true)
+                got.verdict == Some(true)
             })
             .cloned()
             .collect();
@@ -1173,23 +1252,23 @@ fn probe_suspects<R: RoundRunner>(
     scope: &[String],
     suspects: &[Member],
     probes: &mut Probes,
+    follow: Follow,
 ) -> Vec<Action> {
     match suspects {
         [] => vec![],
         [only] => {
-            if probes.run(suspects, || filter_green_told(runner, f, scope, suspects, false))
-                != Some(false)
-            {
+            let got = probes.run(scope, suspects, || probed(runner, f, scope, suspects, false));
+            if got.verdict != Some(false) {
                 return vec![];
             }
-            let said = vec![(vec![only.id.clone()], runner.probe_output())];
+            let said = vec![(vec![only.id.clone()], got.output)];
             let line = format!(
                 "{} red{tests} with only {} merged (bisected by running member subsets)",
                 f.name, only.id
             );
             with_probe_output(vec![Action::Eject { id: only.id.clone(), line }], &said)
         }
-        _ => probe_filter_owners(runner, f, tests, scope, suspects, probes).0,
+        _ => probe_filter_owners(runner, f, tests, scope, suspects, probes, follow).0,
     }
 }
 
@@ -1268,13 +1347,17 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
             (Some(red_on), Some(green_on)) if red_on != green_on && members.len() > 1 => Some((red_on, green_on)),
             _ => None,
         };
+        let host_key = |s: &[String]| {
+            let mut key = s.to_vec();
+            if moved.is_some() {
+                key.push("@host".into());
+            }
+            key
+        };
         let reproduced = |runner: &mut R, probes: &mut Probes| {
-            probes.control(members, &mut |m, attempt| {
+            probes.control(&[host_key(&packages), host_key(&scope)], members, &mut |m, attempt| {
                 let ran = if attempt == 0 { &packages } else { &scope };
-                match &moved {
-                    Some(_) => filter_green_told(runner, f, ran, m, true),
-                    None => filter_green_told(runner, f, ran, m, false),
-                }
+                probed(runner, f, ran, m, moved.is_some())
             })
         };
         let control = reproduced(runner, &mut probes);
@@ -1328,13 +1411,15 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
         }
         let mut base_ran_green = false;
         let unreached = red_again
+            && (members.len() == 1 || scope == packages)
             && vias.is_empty()
             && !packages.is_empty()
             && graph.as_ref().is_some_and(|g| packages.iter().all(|p| g.dirs.contains_key(p)));
         if unreached {
-            match filter_green_told(runner, f, &scope, &[], false) {
+            let base = probes.run(&scope, &[], || probed(runner, f, &scope, &[], false));
+            match base.verdict {
                 Some(false) if unitattr::scope_is_exact(&scope) => {
-                    let base_kept = runner.probe_kept();
+                    let base_kept = base.kept;
                     let said = if base_kept.is_empty() { "base red".to_string() } else { format!("base red; output kept at {base_kept}") };
                     let mut page = vec![f.name.clone()];
                     page.extend(f.failed.iter().take(MAX_NOTED_TESTS).cloned());
@@ -1387,10 +1472,9 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 .filter(|m| vias.contains_key(&m.id))
                 .cloned()
                 .collect();
-            let mut mapped = Probes::new(suspects.len());
-            let mut found = probe_suspects(runner, f, &tests, &scope, &suspects, &mut mapped);
+            let mut found = probe_suspects(runner, f, &tests, &scope, &suspects, &mut probes, if scope != packages { Follow::Wider } else { Follow::Anything });
             if found.is_empty() && scope != packages {
-                found = probe_suspects(runner, f, &tests, &packages, &suspects, &mut mapped);
+                found = probe_suspects(runner, f, &tests, &packages, &suspects, &mut probes, Follow::Anything);
             }
             actions = found
                 .into_iter()
@@ -1412,20 +1496,14 @@ fn eject_filter_owners<R: RoundRunner, O: RoundOps>(
                 .collect();
         }
         if actions.is_empty() && kind != "flipped" {
-            actions = convict_recurring(runner, ops, f, &tests, &scope, members);
+            actions = convict_recurring(runner, ops, f, &tests, &scope, members, &mut probes);
         }
         if actions.is_empty() && kind != "flipped" {
-            let narrow = probe_filter_owners(runner, f, &tests, &scope, members, &mut probes);
+            let narrow = probe_filter_owners(runner, f, &tests, &scope, members, &mut probes, if scope != packages { Follow::Wider } else { Follow::Nothing });
             (actions, kind, cleared) = narrow;
-            let narrow_reproduced = probes.smallest_red.is_some();
-            if actions.is_empty()
-                && kind == "unattributed"
-                && scope != packages
-                && !(probes.exhausted && narrow_reproduced)
-            {
-                probes = Probes::new(members.len());
+            if actions.is_empty() && kind == "unattributed" && scope != packages {
                 (actions, kind, cleared) =
-                    probe_filter_owners(runner, f, &tests, &packages, members, &mut probes);
+                    probe_filter_owners(runner, f, &tests, &packages, members, &mut probes, Follow::Nothing);
             }
         }
         if actions.is_empty() && probes.exhausted {
@@ -1783,8 +1861,9 @@ enum FilterEject {
 fn first_failing_prefix(
     green: &mut dyn FnMut(&[Member]) -> Option<bool>,
     members: &[Member],
+    known_green: usize,
 ) -> Option<usize> {
-    let (mut lo, mut hi) = (0, members.len());
+    let (mut lo, mut hi) = (known_green, members.len());
     while hi - lo > 1 {
         let mid = (lo + hi) / 2;
         if green(&members[..mid])? {
@@ -1803,8 +1882,9 @@ fn bisect_members(
     red: &str,
     green: &mut dyn FnMut(&[Member]) -> Option<bool>,
     members: &[Member],
+    known_green: usize,
 ) -> Option<Vec<Action>> {
-    let k = first_failing_prefix(green, members)?;
+    let k = first_failing_prefix(green, members, known_green)?;
     if k == 1 && members.len() > 1 && !green(&[])? {
         return None;
     }
@@ -1887,6 +1967,7 @@ fn eject_build_culprits<R: RoundRunner, O: RoundOps>(
             "the workspace fails to build",
             &mut |m| runner.builds(m),
             members,
+            0,
         )
         .unwrap_or_default();
     }
@@ -1991,14 +2072,14 @@ fn fault_reasons(faults: Vec<String>) -> String {
 /// `red_alone` for a suite, after a positive control on the full membership and under the probe ceiling.
 fn suite_alone<R: RoundRunner>(runner: &mut R, suite: &str, members: &[Member]) -> (Alone, Probes) {
     let mut probes = Probes::new(members.len());
-    match probes.control(members, &mut |m, _| runner.suite_green(suite, m)) {
+    match probes.control(&[vec![]], members, &mut |m, _| Probed { verdict: runner.suite_green(suite, m), ..Probed::none() }) {
         Control::Green => return (Alone::Flipped(NOT_IN_PROBE.into()), probes),
         Control::Fault => return (Alone::Cleared(format!("control probe gave no verdict{}", fault_reasons(runner.probe_faults()))), probes),
         Control::Red => {}
     }
     let found = red_alone(
         &format!("{suite} red"),
-        &mut |m| probes.run(m, || runner.suite_green(suite, m)),
+        &mut |m| probes.run(&[], m, || Probed { verdict: runner.suite_green(suite, m), ..Probed::none() }).verdict,
         members,
     );
     let found = match found {
@@ -2092,7 +2173,7 @@ fn eject_runner_abort<R: RoundRunner, O: RoundOps>(
             let red = format!("testenv was killed by a signal ({tail})");
             let mut found = sole_member_culprit(&red, members);
             if found.is_empty() {
-                found = bisect_members(&red, &mut |m| runner.runner_survives(m), members).unwrap_or_default();
+                found = bisect_members(&red, &mut |m| runner.runner_survives(m), members, 0).unwrap_or_default();
             }
             found.into_iter().find(|a| matches!(a, Action::Eject { .. }))
         }
@@ -2620,6 +2701,7 @@ fn attribute_members<R: RoundRunner, O: RoundOps>(
                 "the merged config delta does not apply",
                 &mut |m| runner.config_applies(m),
                 &members,
+                0,
             )
             .unwrap_or_default();
             if let Some(next) = apply_build_actions(ops, &members, &actions, CONFIG_DELTA, &[])? {
@@ -9087,6 +9169,134 @@ pub(crate) mod tests {
         assert_eq!(ops.incidents[0].0, "unattributed");
     }
 
+
+    fn wide_only_red() -> FilterRed {
+        FilterRed {
+            name: "integration-tests".into(),
+            failed: vec!["FAIL dir:testenv lint_x".into()],
+            ..Default::default()
+        }
+    }
+
+    fn testenv_graph() -> Ops {
+        Ops {
+            graph: Some(PackageGraph {
+                dirs: [("testenv".to_string(), "testenv".to_string())].into(),
+                deps: Default::default(),
+                ..Default::default()
+            }),
+            diffs: vec![diff_of("m1", "testenv/a.rs"), diff_of("m2", "testenv/b.rs")],
+            ..Ops::default()
+        }
+    }
+
+    #[test_id(tqar5d6)]
+    #[test]
+    fn a_red_the_named_tests_clear_and_no_probe_isolates_stops_at_one_budget_of_members_plus_two() {
+        let red = wide_only_red();
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.narrow_clears = true;
+        f.filter = Some(Box::new(move |tree| (tree.len() >= 3).then(|| red.clone())));
+        let mut ops = testenv_graph();
+        ops.diffs = vec![];
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), six(), budget6()).unwrap();
+        assert!(matches!(end, RoundEnd::Unconverged { .. }), "{end:?}");
+        assert!(f.scoped.len() <= 8, "{} probes: {:?}", f.scoped.len(), f.scoped);
+        assert!(ops.ejected.is_empty());
+        assert!(ops.unnamed.is_some(), "the red is kept for the next round");
+    }
+
+    #[test_id(tbankfp)]
+    #[test]
+    fn two_mapped_members_cleared_on_the_exact_tests_are_probed_on_the_package_within_four_runs() {
+        let red = wide_only_red();
+        let mut f = Fake::new(|_, _| false);
+        f.bisects = true;
+        f.narrow_clears = true;
+        f.filter = Some(Box::new(move |tree| tree.contains("m2").then(|| red.clone())));
+        let mut ops = testenv_graph();
+        let end = attribute_round(
+            &mut f,
+            &mut ops,
+            &corpus(4),
+            vec![member("m1"), member("m2")],
+            budget6(),
+        )
+        .unwrap();
+        assert!(f.scoped.len() <= 4, "{} probes: {:?}", f.scoped.len(), f.scoped);
+        assert_eq!(
+            ops.ejected,
+            vec![("m2".to_string(), vec!["integration-tests".to_string()])]
+        );
+        assert_eq!(land_ids(end), vec!["m1"]);
+    }
+
+    fn probed_as(verdict: bool, output: &str) -> Probed {
+        Probed { verdict: Some(verdict), output: output.into(), kept: String::new() }
+    }
+
+    #[test_id(t5rf2r6)]
+    #[test]
+    fn a_repeated_scope_and_member_set_is_answered_from_the_record_and_not_charged() {
+        let mut probes = Probes::new(3);
+        let scope = vec!["a".to_string()];
+        let mut ran = 0;
+        for order in [["m2", "m1"], ["m1", "m2"]] {
+            let members: Vec<Member> = order.map(member).to_vec();
+            let got = probes.run(&scope, &members, || {
+                ran += 1;
+                probed_as(false, "said")
+            });
+            assert_eq!(got.output, "said");
+        }
+        assert_eq!((ran, probes.used), (1, 1));
+        probes.run(&["b".to_string()], &[member("m1"), member("m2")], || {
+            ran += 1;
+            probed_as(true, "")
+        });
+        assert_eq!((ran, probes.used), (2, 2), "another scope is another probe");
+    }
+
+    #[test_id(tu6bp2y)]
+    #[test]
+    fn a_probe_with_no_verdict_is_asked_again_and_charged_again() {
+        let mut probes = Probes::new(3);
+        let mut ran = 0;
+        for _ in 0..2 {
+            probes.run(&[], &[member("m1")], || {
+                ran += 1;
+                Probed::none()
+            });
+        }
+        assert_eq!((ran, probes.used), (2, 2));
+    }
+
+    #[test_id(tu9saku)]
+    #[test]
+    fn the_control_keeps_the_output_a_later_ask_for_the_same_set_returns() {
+        let mut probes = Probes::new(3);
+        let members = [member("m1"), member("m2")];
+        assert!(matches!(
+            probes.control(&[vec![]], &members, &mut |_, _| probed_as(false, "the red's output")),
+            Control::Red
+        ));
+        let again = probes.run(&[], &members, || unreachable!("answered from the record"));
+        assert_eq!(again.output, "the red's output");
+    }
+
+    #[test_id(t8xnxyq)]
+    #[test]
+    fn the_known_green_prefix_is_the_longest_head_already_run_green() {
+        let mut probes = Probes::new(6);
+        let members = ["m1", "m2", "m3", "m4"].map(member).to_vec();
+        probes.run(&[], &members[..1], || probed_as(true, ""));
+        probes.run(&[], &members[..2], || probed_as(true, ""));
+        probes.run(&[], &members[..3], || probed_as(false, ""));
+        probes.run(&["w".to_string()], &members[..3], || probed_as(true, ""));
+        assert_eq!(probes.green_prefix(&[], &members), 2);
+        assert_eq!(probes.green_prefix(&["w".to_string()], &members), 3);
+    }
 
     #[test_id(tvpofbe)]
     #[test]
