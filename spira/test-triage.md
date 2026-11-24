@@ -127,7 +127,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-census.sh | 31 | census against a real bd fixture for three ops-detection use cases | keep | Declared the one server-mode census suite. |
 | test-census-events.sh | 78 | census reads requeue/reclaim/recur events written by `bump_*` | unit | Event classification; dominated by seeding a store. |
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |
-| test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
 | the holds suite | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
 
 ### I — lifecycle store (Dolt)

@@ -74,7 +74,9 @@ impl Rig {
 /// said so through a fifo: the lock is taken before the test looks.
 fn hold(dir: &Path, lock: &Path) -> ChildGuard {
     let fifo = dir.join(format!("{}.up", lock.file_name().unwrap().to_string_lossy()));
-    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    // SAFETY: a plain mkfifo(3) on a path this test just built.
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0, "mkfifo {}", fifo.display());
     let g = ChildGuard::spawn(Command::new("flock").arg("-x").arg(lock).args(["sh", "-c", "echo held > \"$1\"; exec sleep 3600", "sh"]).arg(&fifo));
     let mut line = String::new();
     BufReader::new(std::fs::File::open(&fifo).unwrap()).read_line(&mut line).unwrap();
@@ -128,9 +130,12 @@ fn gate_locks_reads_a_dead_pid_whose_group_lives_as_held_and_a_dead_group_as_sta
     assert!(!out.contains("harness.absent"), "a lock that does not exist is not listed: {out}");
 }
 
-fn age(path: &Path, spec: &str) {
-    assert!(Command::new("touch").args(["-d", spec]).arg(path).status().unwrap().success());
+fn age(path: &Path, secs: u64) {
+    let then = std::time::SystemTime::now() - std::time::Duration::from_secs(secs);
+    std::fs::File::open(path).unwrap().set_modified(then).unwrap();
 }
+
+const TWO_HOURS: u64 = 7200;
 
 // covers: UC-gate-verdict-20
 #[test_id(tnubg8o)]
@@ -146,7 +151,7 @@ fn gate_sweep_removes_old_gate_trees_and_orphaned_batch_homes_but_keeps_a_held_o
         let p = wt.join(name);
         git(&repo, &["worktree", "add", "-q", "--detach", p.to_str().unwrap(), "HEAD"]);
         if old {
-            age(&p, "2 hours ago");
+            age(&p, TWO_HOURS);
         }
         p
     };
@@ -162,7 +167,7 @@ fn gate_sweep_removes_old_gate_trees_and_orphaned_batch_homes_but_keeps_a_held_o
         let p = homes.join(name);
         std::fs::create_dir(&p).unwrap();
         if old {
-            age(&p, "2 hours ago");
+            age(&p, TWO_HOURS);
         }
         p
     };

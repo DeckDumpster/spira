@@ -639,7 +639,6 @@ SPIRA_SELECT_INERT suite-select/src/select.rs
 SPIRA_SELECT_PLUMBING suite-select/src/select.rs
 SPIRA_SELECT_SOURCE suite-select/src/select.rs
 SPIRA_SENTINEL_PASS_TARGET_SECS spira-runtime/src/tasks/a/sentinel_pass.rs
-SPIRA_SIM_CACHE spira/sim-scenario-lib.sh
 SPIRA_SIM_CACHE spira/sim/src/world.rs
 SPIRA_SIM_DUCKDB spira/sim/src/trace.rs
 SPIRA_SIM_RELEASE spira/sim/src/roundvm.rs

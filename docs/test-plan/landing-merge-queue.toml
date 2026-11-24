@@ -388,8 +388,8 @@ statement = "`gate-check` discovers `--branch` once per distinct unbound-gate br
 
 [[use_case]]
 id = "UC-landing-merge-queue-53"
-tier = "T2"
-statement = "bd's own gh:run gates behave as the harness expects: a gated bead leaves `ready`, and resolution is scoped to `metadata.repo`."
+tier = "T1"
+statement = "`gate-check` asks for each unbound gate's branch in every pr repo that has a checkout, by repo name, and in no other. A gated bead's readiness is the lifecycle's, not bd's."
 
 [[use_case]]
 id = "UC-landing-merge-queue-54"
@@ -419,5 +419,5 @@ bead = "sp-y3jpuc"
 
 [[use_case]]
 id = "UC-landing-merge-queue-58"
-tier = "T3"
+tier = "T1"
 statement = "A `queue batch open` that dies between the forge's PR create and the move of its record out of `forge.phase=opening` leaves one batch PR and a record the forge batcher's sweep adopts. A second PR is never opened and nothing is merged."

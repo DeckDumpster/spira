@@ -1046,7 +1046,7 @@ pub fn release_repo(release: &Path, dst: &Path) -> Result<(), String> {
 /// harness scripts, and the fence scripts and allow list the commit hook's fence-scripts rule reads),
 /// not crate sources, docs, test suites or the config registry. A new
 /// worktree inherits the patterns, so every checkout the landing code makes is a fraction of the tree.
-const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/pilgrim-fixture/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira/test-*-lint.sh\n/spira/test-*-fence.sh\n/spira/test-yield.sh\n/spira-lint/fence-scripts-allow\n"; // not a path: gitignore patterns
+const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/pilgrim-fixture/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira/test-*-lint.sh\n/spira/test-*-fence.sh\n/spira-lint/fence-scripts-allow\n"; // not a path: gitignore patterns
 
 /// A copy of a seed repo, its pack files linked rather than copied: a pack is never written to
 /// again, where refs, the index and the reflogs are, and those are copied.
