@@ -46,6 +46,11 @@ path = "tests/uninstall_stray.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "deploy_script"
+path = "tests/deploy_script.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "units_lint"
 path = "tests/units_lint.rs"
 required-features = ["integration"]
