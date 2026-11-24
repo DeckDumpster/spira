@@ -281,7 +281,7 @@ impl Fake {
         let naive = d.join("naive.conf").exists() && !self.naive_arms;
         let asked = fs::read_to_string(d.join("cadence.conf")).unwrap_or_default();
         let by_set = self.disarmed_by.is_some_and(|iv| asked.contains(&format!("# Requested cadence: {iv}\n")));
-        self.timer_started.get() && !naive && !by_set
+        (self.timer_started.get() || self.start_is_a_noop) && !naive && !by_set
     }
 
     fn cadence_sh(&self, c: &Cmd, args: &[&str]) -> Out {
