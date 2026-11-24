@@ -771,7 +771,7 @@ mod tests {
         std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
         let p = Policy { password_file: pw, max_message_bytes: 1024, ..policy() };
         let script = format!(
-            "AUTH PLAIN {}\r\nMAIL FROM:<me@example.org>\r\nRCPT TO:<elsewhere@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\nMessage-ID: <m>\r\n\r\nhi\r\n.\r\nAUTH PLAIN {}\r\nQUIT\r\n",
+            "AUTH PLAIN {}\r\nMAIL FROM:<me@example.org>\r\nRCPT TO:<elsewhere@example.net>\r\nRCPT TO:<c@spira>\r\nDATA\r\nMessage-ID: <m>\r\n\r\nhi\r\n.\r\nAUTH PLAIN {}\r\nQUIT\r\n",
             b64("\0ryan\0hunter2"),
             b64("\0ryan\0nope")
         );
@@ -782,6 +782,6 @@ mod tests {
         let codes: Vec<&str> = out.lines().map(|l| &l[..3]).collect();
         assert_eq!(codes, ["220", "235", "250", "550", "250", "354", "250", "503", "221"], "{out}");
         assert_eq!(*sink.delivered.borrow(), [b"Message-ID: <m>\n\nhi\n".to_vec()]);
-        assert_eq!(*sink.refused.borrow(), ["p:1|ryan|me@example.org|relay denied to \"elsewhere@x.org\""]);
+        assert_eq!(*sink.refused.borrow(), ["p:1|ryan|me@example.org|relay denied to \"elsewhere@example.net\""]);
     }
 }
