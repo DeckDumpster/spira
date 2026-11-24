@@ -187,12 +187,12 @@ fn parent_labels(id: &str) -> Vec<String> {
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
 #[allow(clippy::too_many_arguments)]
-fn door_create(out: &mut dyn std::io::Write, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+fn door_create(out: &mut dyn std::io::Write, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>, drafted_by: Option<&str>) -> i32 {
     if incident.is_none() && blockers.is_empty() && lookup_title.is_none() && !express {
         return put(&args.iter().map(String::as_str).collect::<Vec<_>>(), body);
     }
     let mut id_text = None;
-    let rc = door_create_writes(&mut id_text, args, body, incident, blockers, title, lookup_title, express, submitted_tip, repo);
+    let rc = door_create_writes(&mut id_text, args, body, incident, blockers, title, lookup_title, express, submitted_tip, repo, drafted_by);
     if let Some(text) = id_text {
         let _ = write!(out, "{text}");
         let _ = out.flush();
@@ -202,7 +202,7 @@ fn door_create(out: &mut dyn std::io::Write, args: &[String], body: Option<&str>
 
 /// Every write of the filing; the id text goes to `id_text` for the caller to print once they are all sent.
 #[allow(clippy::too_many_arguments)]
-fn door_create_writes(id_text: &mut Option<String>, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+fn door_create_writes(id_text: &mut Option<String>, args: &[String], body: Option<&str>, incident: Option<(&str, &[String])>, blockers: &[String], title: Option<&str>, lookup_title: Option<&str>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>, drafted_by: Option<&str>) -> i32 {
     let argv_owned = args.to_vec();
     let argv: Vec<&str> = argv_owned.iter().map(String::as_str).collect();
     let window = match spira_config::process::cfg_parse::<u64>(FILE_WINDOW_KEY) {
@@ -222,7 +222,7 @@ fn door_create_writes(id_text: &mut Option<String>, args: &[String], body: Optio
     };
     let mut read = || {
         let (list_code, listing) = door(&s(&["list", "--limit", "0", "--json"]));
-        bead::readback(list_code, &listing, lookup_title.unwrap_or_default(), &since[..19])
+        bead::readback(list_code, &listing, lookup_title.unwrap_or_default(), &since[..19], drafted_by)
     };
     let mut wait = || {
         if created_at.get().elapsed() >= spira_store::lc_call::DEADLINE {
@@ -701,12 +701,14 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 
     let parent_cmdline = std::fs::read(format!("{}/{}/cmdline", system_paths::PROC, std::os::unix::process::parent_id())).unwrap_or_default();
+    let mut request_id: Option<String> = None;
     if bead::skuld_fence_binds(is_concierge(), for_rune.as_deref().is_some_and(|r| requires_skuld(home, r)), &parent_cmdline) {
         let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
         let id = match skuld_gate("file", &title, &body, drafted_by.as_deref()) {
             Ok(id) => id,
             Err(rc) => return rc,
         };
+        request_id = Some(id.clone());
         if let Some(why) = bead::depends_refusal(&body, &depends_on) {
             eprintln!("bead: refusing: {why}");
             return 2;
@@ -963,7 +965,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &bead::filing::blockers(stack_after.as_deref(), &depends_on), Some(&title_for_row), Some(&title_for_row), express, tip.as_deref(), Some(repo.as_str()), request_id.as_deref());
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
@@ -1024,7 +1026,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &[], None, Some(&title_for_lookup), express, None, None);
+        let rc = door_create(&mut std::io::stdout(), &bd_args, create_body.as_deref(), incident_parent, &[], None, Some(&title_for_lookup), express, None, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }
@@ -2256,7 +2258,7 @@ mod tests {
 
         let d = install(vec![("content create", 0, "sp-new\n")]);
         let args = argv(&["create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]);
-        assert_eq!(door_create(&mut std::io::sink(), &args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r"), None), 0);
         let w = writes(&d);
         assert_eq!(w[0], (argv(&["content", "create", "T", "-l", "repo:r", "--silent", "--body-file", "-"]), Some("the body".into())));
         assert_eq!(w[1].0[..2], argv(&["create-bead", "sp-new"])[..], "the lifecycle row is the store's own verb on the same client");
@@ -2318,7 +2320,7 @@ mod tests {
         let _env = configured(dir.path());
         let d = install(vec![("content create", 0, "sp-new\n")]);
         let args = argv(&["create", "T", "--silent"]);
-        assert_eq!(door_create(&mut std::io::sink(), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r"), None), 0);
         let sent = writes(&d);
         assert_eq!(sent[0].0, argv(&["content", "create", "T", "--silent"]));
         assert!(sent.iter().any(|(a, _)| *a == argv(&["content", "dep", "add", "sp-new", "sp-a", "--type", "blocks"])), "{sent:?}");
@@ -2332,7 +2334,7 @@ mod tests {
         let d = install(vec![("content create", 0, "sp-new\n")]);
         *d.first.lock().unwrap() = vec![("content create", 2, "cannot tell: deadline")];
         let args = argv(&["create", "T", "--silent", "--body-file", "-"]);
-        assert_eq!(door_create(&mut std::io::sink(), &args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, Some("the body"), None, &[], Some("T"), Some("T"), false, None, Some("r"), None), 0);
         let w = writes(&d);
         let creates: Vec<_> = w.iter().filter(|(a, _)| a[1] == "create").collect();
         assert_eq!(creates.len(), 2, "{w:?}");
@@ -2346,7 +2348,7 @@ mod tests {
         let d = install(answers);
         *d.first.lock().unwrap() = first;
         let args = argv(&["create", "T", "--silent"]);
-        let rc = door_create(&mut LogOut(d.log.clone()), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r"));
+        let rc = door_create(&mut LogOut(d.log.clone()), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r"), None);
         let log = d.log.lock().unwrap().clone();
         (rc, d, log)
     }
@@ -2380,6 +2382,35 @@ mod tests {
         assert_eq!(outs.concat(), "sp-new\n", "{log:?}");
     }
 
+    const REQUEST_AND_ITEM: &str = r#"[{"id":"sp-req","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"},{"id":"sp-item","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
+    const LISTED_REQUEST: &str = r#"[{"id":"sp-req","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
+
+    #[test_id(txp1tk8)]
+    #[test]
+    fn a_draft_is_created_though_the_only_row_of_its_title_is_its_request() {
+        let dir = testkit::TempDir::new("bead-door-draft");
+        let _env = configured(dir.path());
+        let d = install(vec![("content list", 0, LISTED_REQUEST), ("content create", 0, "sp-item\n")]);
+        let args = argv(&["create", "T", "--silent"]);
+        let mut out = Vec::new();
+        assert_eq!(door_create(&mut out, &args, None, None, &[], Some("T"), Some("T"), false, None, Some("r"), Some("sp-req")), 0);
+        assert_eq!(sent(&d).iter().filter(|a| a[1] == "create").count(), 1);
+        assert_eq!(String::from_utf8(out).unwrap().trim(), "sp-item");
+    }
+
+    #[test_id(tb2xc2e)]
+    #[test]
+    fn a_retry_of_a_draft_already_filed_is_answered_with_the_item_not_the_request() {
+        let dir = testkit::TempDir::new("bead-door-draft-retry");
+        let _env = configured(dir.path());
+        let d = install(vec![("content list", 0, REQUEST_AND_ITEM), ("content create", 0, "sp-dup\n")]);
+        let args = argv(&["create", "T", "--silent"]);
+        let mut out = Vec::new();
+        assert_eq!(door_create(&mut out, &args, None, None, &[], Some("T"), Some("T"), false, None, Some("r"), Some("sp-req")), 0);
+        assert!(sent(&d).iter().all(|a| a[1] != "create"));
+        assert_eq!(String::from_utf8(out).unwrap().trim(), "sp-item");
+    }
+
     const LISTED_NOW: &str = r#"[{"id":"sp-held","title":"T","issue_type":"task","created_at":"2999-01-01T00:00:00Z"}]"#;
 
     #[test_id(tn7w361)]
@@ -2389,7 +2420,7 @@ mod tests {
         let _env = configured(dir.path());
         let d = install(vec![("content list", 0, LISTED_NOW), ("content create", 0, "sp-dup\n")]);
         let args = argv(&["create", "T", "--silent"]);
-        assert_eq!(door_create(&mut std::io::sink(), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r")), 0);
+        assert_eq!(door_create(&mut std::io::sink(), &args, None, None, &["sp-a".to_string()], Some("T"), Some("T"), false, None, Some("r"), None), 0);
         let w = sent(&d);
         assert!(w.iter().all(|a| a[1] != "create"), "{w:?}");
         assert_eq!(w, [argv(&["create-bead", "sp-held", "--repo", "r"]), argv(&["content", "dep", "add", "sp-held", "sp-a", "--type", "blocks"])]);
