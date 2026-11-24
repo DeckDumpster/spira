@@ -19,7 +19,6 @@ pub struct KeyInputs<'a> {
     pub files: &'a str,
     pub cmd: &'a str,
     pub harness_h: &'a str,
-    pub suites: &'a str,
     pub bead: &'a str,
     pub ejected: &'a str,
     pub deny: &'a str,
@@ -32,8 +31,8 @@ pub fn gate_key(k: &KeyInputs) -> String {
     let deny_h = sha256_hex(k.deny.as_bytes());
     sha256_hex(
         format!(
-            "{} {} {} {} {} suites={} bead={} ejected={} deny={}\n",
-            k.repo, k.tree, files_h, cmd_h, k.harness_h, k.suites, k.bead, k.ejected, deny_h
+            "{} {} {} {} {} bead={} ejected={} deny={}\n",
+            k.repo, k.tree, files_h, cmd_h, k.harness_h, k.bead, k.ejected, deny_h
         )
         .as_bytes(),
     )
@@ -104,7 +103,6 @@ mod tests {
             files: "a\nb",
             cmd: "bash x",
             harness_h: "h",
-            suites: "on",
             bead: "sp-a",
             ejected: "",
             deny: "",
@@ -114,11 +112,11 @@ mod tests {
     #[test_id(txdh0xj)]
     #[test]
     fn the_key_matches_the_bash_formula() {
-        // printf '%s\n' "spira t1 $(printf a\\nb|sha256sum) $(printf 'bash x'|sha256sum) h suites=on bead=sp-a ejected=" | sha256sum
+        // printf '%s\n' "spira t1 $(printf a\\nb|sha256sum) $(printf 'bash x'|sha256sum) h bead=sp-a ejected=" | sha256sum
         let files_h = sha256_hex(b"a\nb");
         let cmd_h = sha256_hex(b"bash x");
         let want = sha256_hex(
-            format!("spira t1 {files_h} {cmd_h} h suites=on bead=sp-a ejected= deny={}\n", sha256_hex(b"")).as_bytes(),
+            format!("spira t1 {files_h} {cmd_h} h bead=sp-a ejected= deny={}\n", sha256_hex(b"")).as_bytes(),
         );
         assert_eq!(gate_key(&base()), want);
         assert_eq!(
@@ -150,10 +148,6 @@ mod tests {
             },
             KeyInputs {
                 harness_h: "h2",
-                ..base()
-            },
-            KeyInputs {
-                suites: "off",
                 ..base()
             },
             KeyInputs {

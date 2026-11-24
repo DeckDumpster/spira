@@ -3,10 +3,9 @@
 
 use crate::budget::{self, TierCaps};
 use crate::corpus::{self, Corpus};
-use crate::glob::case_match;
 use crate::io::{self, Git};
 use crate::names::{is_suite_name, split_list};
-use crate::select::{self, Buckets, Change, Fail, Options};
+use crate::select::{self, Buckets, Fail, Options};
 use crate::reach::Reach;
 use crate::timing;
 use crate::{refuse, Refusal};
@@ -19,11 +18,6 @@ pub struct GateEnv {
     pub files: Option<PathBuf>,
     pub tiers: Option<Vec<String>>,
     pub all: bool,
-    pub suites_off: bool,
-    /// `SPIRA_GATE_COVERED=1`: a bead's certification — suites off still selects, budgeted, what
-    /// covers the diff, instead of only the always-covers carve-out.
-    pub covered: bool,
-    pub always_covers: Vec<String>,
     pub ejected: String,
     pub budget_secs: f64,
     /// testenv's setup share of the budget, percent, clamped 10..=90 exactly as testenv
@@ -71,12 +65,6 @@ impl GateEnv {
             files: get("SPIRA_GATE_FILES").filter(|v| !v.is_empty()).map(PathBuf::from),
             tiers: select::parse_tiers(&or("SPIRA_GATE_TIERS", "T0,T1")),
             all: get("SPIRA_GATE_ALL").as_deref() == Some("1"),
-            suites_off: get("SPIRA_GATE_SUITES").as_deref() == Some("off"),
-            covered: get("SPIRA_GATE_COVERED").as_deref() == Some("1"),
-            always_covers: or("SPIRA_CERTIFY_ALWAYS_COVERS", "spira/lib.sh")
-                .split_whitespace()
-                .map(str::to_string)
-                .collect(),
             ejected: get("SPIRA_GATE_EJECTED_SUITES").unwrap_or_default(),
             budget_secs,
             setup_share,
@@ -98,61 +86,6 @@ pub struct GateOut {
     pub log: Vec<String>,
 }
 
-fn changes(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<Vec<Change>, Refusal> {
-    match &env.files {
-        Some(f) => io::file_changes(f),
-        None => io::diff_changes(g, &env.repo, base, head),
-    }
-}
-
-/// `SPIRA_GATE_SUITES=off`: only the suites whose `# covers:` (file part) names a changed
-/// file that matches `SPIRA_CERTIFY_ALWAYS_COVERS`.
-fn carve_out(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut, Fail> {
-    let crit: Vec<Change> = changes(env, g, base, head)?
-        .into_iter()
-        .filter(|c| env.always_covers.iter().any(|pat| case_match(pat, &c.path)))
-        .collect();
-    if crit.is_empty() {
-        return Ok(GateOut {
-            suites: vec![],
-            log: vec!["suite-select gate: SPIRA_GATE_SUITES=off — no suites here; the batch CI run is the suite gate".into()],
-        });
-    }
-    let corpus = Corpus::load(&env.suite_dir)?;
-    // A change inside some of lib.sh's functions selects only the suites that reach them
-    // (over-broad-scopes #6); a file list has no diff to place, so it narrows nothing.
-    let fns: Vec<Vec<String>> = crit
-        .iter()
-        .map(|c| match (&env.files, g.diff_u0(&env.repo, base, head, &c.path), g.show(&env.repo, head, &c.path)) {
-            (None, Some(d), Some(t)) => select::changed_scope(&d, &t),
-            _ => vec![],
-        })
-        .collect();
-    let mut suites: Vec<String> = corpus
-        .suites
-        .iter()
-        .filter(|s| {
-            s.covers.iter().flatten().any(|tok| {
-                let (f, func) = tok.split_once('#').map_or((tok.as_str(), None), |(f, n)| (f, Some(n)));
-                !f.is_empty()
-                    && crit.iter().zip(&fns).any(|(c, fns)| {
-                        case_match(f, &c.path) && (func.is_some() || select::whole_file_claim_reached(&corpus, s, c, fns))
-                    })
-            })
-        })
-        .map(|s| s.name.clone())
-        .collect();
-    suites.sort();
-    let names: Vec<&str> = crit.iter().map(|c| c.path.as_str()).collect();
-    Ok(GateOut {
-        suites,
-        log: vec![format!(
-            "suite-select gate: SPIRA_GATE_SUITES=off but the diff touches {} — running its covering suite(s) anyway",
-            names.join(" ")
-        )],
-    })
-}
-
 /// With `SPIRA_GATE_FILES`: the suites the base has that the suite directory also has, so a
 /// suite the branch adds cannot select itself through its own covers. A base with no suites
 /// at all falls back to the directory; a base that cannot be read is a refusal.
@@ -171,7 +104,7 @@ fn base_corpus(env: &GateEnv, g: &dyn Git, base: &str) -> Result<Corpus, Refusal
     }
 }
 
-/// THE GATE'S SELECTION: carve-out, or corpus/selection, then the budget cut, then the
+/// THE GATE'S SELECTION: corpus/selection, then the budget cut, then the
 /// ejected suites.
 pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut, Fail> {
     let mut log: Vec<String> = Vec::new();
@@ -180,12 +113,10 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
         let n = c.names();
         log.push(format!("suite-select gate: SPIRA_GATE_ALL=1 — the whole corpus ({} suites)", n.len()));
         (c, n)
-    } else if env.suites_off && !env.covered {
-        return carve_out(env, g, base, head);
     } else {
         let opts = Options {
             no_all_fallback: true,
-            no_nocov: env.suites_off,
+            no_nocov: false,
             tiers: env.tiers.clone(),
             covers_outrank_tiers: false,
             reach: Reach::load(&env.repo)?,
@@ -235,9 +166,8 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
         let cut = budget::fill(&budget::rank(&cands, &p90, &reds, &env.caps), suite_budget, env.width);
         log.extend(cut.log);
         // law-a-local-green-names-what-it-missed: a suite over budget is refused, never cut
-        // silently. A bead's certification (`covered`) defers it to the round instead, and each
-        // drop is already named in the log above.
-        if !cut.dropped.is_empty() && !env.covered {
+        // silently.
+        if !cut.dropped.is_empty() {
             return Err(Fail::Refused(Refusal(format!(
                 "suite-select gate: {} suite(s) covering this change do not fit the {suite_budget:.0}s suite budget and are not cut silently: {} — narrow the change, or run them where the budget allows",
                 cut.dropped.len(),

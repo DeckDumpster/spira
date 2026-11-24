@@ -169,11 +169,6 @@ impl Def {
         Def { bins, steps, own: self.own.clone() }
     }
 
-    /// The step that selects and runs the suites covering a diff.
-    pub fn suites_step(&self) -> Option<String> {
-        self.steps.iter().find(|s| crate::compose::is_suites_step(s)).cloned()
-    }
-
     /// Every package this definition builds.
     pub fn packages(&self) -> Vec<String> {
         self.bins.iter().map(|b| b.package.clone()).collect()

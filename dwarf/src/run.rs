@@ -1332,7 +1332,6 @@ impl<'a> Run<'a> {
             ("WIKI_DIR", self.conf.s("SPIRA_WIKI")),
             // Tools by bare name (sp-gypjk): the dwarf's environment carries the
             // launcher's PATH, whose first entries are the release's bin/ and spira/.
-            ("SUITES", format!("{} suites", brief::TESTENV)),
             ("TESTENV", brief::TESTENV.into()),
             ("FOLLOWUP", brief::followup_brief(&bead)),
             ("NO_BD", brief::no_bd_brief()),

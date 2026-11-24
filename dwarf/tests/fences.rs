@@ -339,7 +339,7 @@ fn a_dwarf_may_read_and_run_from_prod_and_name_its_paths_in_prose() {
         allowed(format!(
             "{prod}/mail send operator --from Ops --subject q --kind question --default x"
         )),
-        allowed(format!("{prod}/../bin/testenv suites status")),
+        allowed(format!("{prod}/../bin/testenv status")),
         allowed(format!("{prod}/../bin/groomer deadlocked")),
         allowed(heredoc(format!(
             "bash \"{prod}/census\" and /verdict.sh are mentioned"

@@ -38,7 +38,7 @@ fn write(root: &Path, rel: &str, text: &str) -> Result<(), String> {
 }
 
 fn fragment_path(bead: &str) -> Result<String, String> {
-    if bead.is_empty() || !bead.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if bead.is_empty() || bead.starts_with('.') || !bead.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
         return Err(format!("{bead:?} is not a bead id"));
     }
     Ok(format!("spira/config-delta.d/{bead}.toml"))

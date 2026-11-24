@@ -142,16 +142,13 @@ feature, or declared at a path that is not on disk; a new `tests/` file needs it
 - **Suites** are `spira/test-*.sh`, found by glob. Each carries `# tier: T0..T4` and a
   `# covers:` line (space-separated path globs and use-case ids from `docs/test-plan/*.toml`)
   just above `set -uo pipefail`. A glob that matches nothing is refused (`covers-entries`); a
-  use case no suite covers is reported by `plan-matrix`. A suite that cannot run in a container
-  carries `# host-reason: <why>` (`bash spira/host-check.sh` enforces container-or-reason).
+  use case no suite covers is reported by `plan-matrix`.
 - **Selection.** `suite-select gate <base> <head>` maps a diff to suites through their
   `# covers:` lines; a changed source file that no suite claims is an error.
   `suite-select header covers|tier|uc|requires|exclusive|selects-on|testenv-unmet <file>` reads
   one suite's headers. The landing gate runs that selection under a budget, from `gate.steps`.
-- **Two places a suite runs.** `spira/gate-suites` is the only hand-written list: a short,
-  reasoned set. Everything the glob finds that it does not name is run on a schedule by
-  `testenv suites` and files a bead per red without blocking a landing. `testenv suites
-  list|names|corpus|status` reads this; a test's lifecycle state lives only in
+- **A skip is red.** A suite that exits 77, or declares a `# requires:` the container cannot
+  meet, is red (`undeclared skip — <requirement>`); a test's lifecycle state lives only in
   the test registry.
 - **Use-case catalogue.** `test-plan validate --catalogue-dir docs/test-plan [--suites FILE|-]`,
   `test-plan matrix …`, `test-plan render`, `test-plan schema catalogue|matrix`.

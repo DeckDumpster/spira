@@ -88,7 +88,7 @@ seam calls (`<ts> spira: land-close …`) pass through to stdout as before.
 **Environment switches read** (unchanged meaning): `SPIRA_QUEUE_LOCK_HELD=1` (land-local,
 publish, rollback-local skip their own flock — the caller holds it), `SPIRA_QUEUE_ACTOR`,
 `BEADS_ACTOR`, `SPIRA_DWARF`, `USER` (actor), `SPIRA_QUEUE_OWNER_OVERRIDE=1`,
-`SPIRA_RUNE`/`SPIRA_CZAR_CLASS` (czar fence), `SPIRA_CERTIFY_SUITES` (submit),
+`SPIRA_RUNE`/`SPIRA_CZAR_CLASS` (czar fence),
 `SPIRA_QUEUE_BATCH_WAIT` (flush forces 0 for the batcher), `SPIRA_PREFLIGHT_WALL_SECS`,
 `SPIRA_QUEUE_TRANSITION_POLLSEC`/`_MAXSEC`, `SPIRA_PUBLISH_REMOTE[_<NAME>]`,
 `SPIRA_PUBLISH_BRANCH_<NAME>`, `SPIRA_LAND_UNGATED` and `SPIRA_VERDICTS` (land-local, §8 D12),
@@ -102,7 +102,7 @@ nothing changed), then effects in order.
 
 | cmd | mode | lock | effects |
 |---|---|---|---|
-| `submit <br> [repo]` | any | none | queue modes require `spira/*`; branch must exist. Gate: `gate.sh <br> <repo>` with `SPIRA_GATE_BEAD=<id>` `SPIRA_GATE_SUITES=${SPIRA_CERTIFY_SUITES:-on}`. Red: gate output to stderr, `QUEUE CAUGHT` line, exit gate rc. Green: `QUEUE GATE_COST` line, then queue/queue.local: `land_mark <id> CERTIFIED <tip>` (spira-lc certify; the queue keeps no `$SPIRA_QUEUE_DIR/<id>` record of its own since sp-lck63); push: fetch, `rebase_branch`, push `<br>:<base-branch>`, `land_mark LANDED`, `bead_close_on_land`; pr/hold: `land_mark CERTIFIED`. |
+| `submit <br> [repo]` | any | none | queue modes require `spira/*`; branch must exist. Gate: `gate.sh <br> <repo>` with `SPIRA_GATE_BEAD=<id>`. Red: gate output to stderr, `QUEUE CAUGHT` line, exit gate rc. Green: `QUEUE GATE_COST` line, then queue/queue.local: `land_mark <id> CERTIFIED <tip>` (spira-lc certify; the queue keeps no `$SPIRA_QUEUE_DIR/<id>` record of its own since sp-lck63); push: fetch, `rebase_branch`, push `<br>:<base-branch>`, `land_mark LANDED`, `bead_close_on_land`; pr/hold: `land_mark CERTIFIED`. |
 | `protect [repo]` | queue | none | `forge branch-protect <path> <base-branch>`; receipt `$SPIRA_RUN/queue-protected-<repo>` = `<base-branch>\n`; five fixed stdout lines. |
 | `stats` | — | none | reads `$SPIRA_RUN/landing.log`; five fixed lines (§3.5). |
 | `flush [repo]` | queue | none | `batcher cut <repo>` (by name, on the launcher's PATH — sp-gypjk) with `SPIRA_QUEUE_BATCH_WAIT=0`. `SPIRA_BATCHER_ENABLE=0`: no cut, rc 0 (the operator cuts rounds; replaces `batcher_bin = "/bin/true"`). Ran `batch.sh <repo>`'s pre-cut sweep first, until sp-uwhx0 (batch.sh retirement, below). |

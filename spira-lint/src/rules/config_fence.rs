@@ -12,7 +12,7 @@ use crate::{allow_dir, pathspec_match, scope, Entry, Finding, LintError, Rule, T
 pub struct ConfigFence;
 
 const NAME: &str = "config-fence";
-const SCOPE: &[&str] = &["spira/*.sh", "spira/gate-suites", "spira/runes/*.rune", "spira/runes/*.md", "*.rs"];
+const SCOPE: &[&str] = &["spira/*.sh", "spira/runes/*.rune", "spira/runes/*.md", "*.rs"];
 /// This rule's own source names the very strings it hunts.
 const OWN_SOURCE: &str = "spira-lint/src/rules/config_fence.rs";
 const CONFIG_VARS: &[&str] = &["SPIRA_TOML", "SPIRA_REPO_MAP"];

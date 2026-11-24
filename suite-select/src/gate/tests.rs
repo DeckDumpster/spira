@@ -137,20 +137,6 @@ fn gate_all_is_the_whole_corpus() {
     assert_eq!(o.suites.len(), 5);
     let ctrl = run(&genv(&d.0, &[("SPIRA_GATE_ALL", "0")]), &diff_git(), "main", "br").unwrap();
     assert!(!ctrl.suites.contains(&"test-b.sh".to_string()));
-    // ALL overrides SUITES=off.
-    let o = run(&genv(&d.0, &[("SPIRA_GATE_ALL", "1"), ("SPIRA_GATE_SUITES", "off")]), &diff_git(), "main", "br").unwrap();
-    assert_eq!(o.suites.len(), 5);
-}
-
-fn crit_fixture(tag: &str) -> Dir {
-    dir(
-        tag,
-        &[
-            ("test-crit.sh", "# covers: spira/lib.sh#landed\n"),
-            ("test-other.sh", "# covers: spira/other.sh\n"),
-            ("test-nocov.sh", "set -u\n"),
-        ],
-    )
 }
 
 fn git_changing(path: &str) -> FakeGit {
@@ -158,42 +144,6 @@ fn git_changing(path: &str) -> FakeGit {
         name_status: Some(format!("M\t{path}\n")),
         ..FakeGit::default()
     }
-}
-
-#[test_id(txibp40)]
-#[test]
-fn suites_off_runs_only_what_covers_the_critical_file() {
-    let d = crit_fixture("off");
-    let off = [("SPIRA_GATE_SUITES", "off"), ("SPIRA_GATE_EJECTED_SUITES", "test-other.sh")];
-    let o = run(&genv(&d.0, &off), &git_changing("spira/lib.sh"), "main", "br").unwrap();
-    assert_eq!(o.suites, ["test-crit.sh"], "targeted: no always-run, no ejected");
-    let o = run(&genv(&d.0, &off), &git_changing("spira/other.sh"), "main", "br").unwrap();
-    assert!(o.suites.is_empty(), "{:?}", o);
-    assert!(o.log[0].contains("SPIRA_GATE_SUITES=off"));
-    // Positive control: on, the always-run suite is back.
-    let o = run(&genv(&d.0, &[]), &git_changing("spira/lib.sh"), "main", "br").unwrap();
-    assert!(o.suites.contains(&"test-nocov.sh".to_string()));
-    // Configurable.
-    let o = run(
-        &genv(&d.0, &[("SPIRA_GATE_SUITES", "off"), ("SPIRA_CERTIFY_ALWAYS_COVERS", "spira/nonexistent.sh")]),
-        &git_changing("spira/lib.sh"),
-        "main",
-        "br",
-    )
-    .unwrap();
-    assert!(o.suites.is_empty());
-}
-
-#[test_id(tb8qaht)]
-#[test]
-fn covered_certification_with_suites_off_selects_what_covers_any_changed_file() {
-    let d = crit_fixture("covered");
-    let off = [("SPIRA_GATE_SUITES", "off")];
-    let o = run(&genv(&d.0, &off), &git_changing("spira/other.sh"), "main", "br").unwrap();
-    assert!(o.suites.is_empty(), "positive control: uncovered, suites off selects nothing: {o:?}");
-    let covered = [("SPIRA_GATE_SUITES", "off"), ("SPIRA_GATE_COVERED", "1")];
-    let o = run(&genv(&d.0, &covered), &git_changing("spira/other.sh"), "main", "br").unwrap();
-    assert_eq!(o.suites, ["test-other.sh"], "{o:?}");
 }
 
 #[test_id(tee9ycx)]
@@ -246,23 +196,6 @@ fn law_a_budget_is_a_cutoff_and_law_a_local_green_names_what_it_missed_the_gate_
     // A pinned tier cap is what an unmeasured suite costs; still a refusal, never a cut.
     let e = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_TIER_BUDGET_T1_MS", "1500")]), &g, "main", "br").unwrap_err();
     assert!(matches!(e, Fail::Refused(_)), "{e:?}");
-}
-
-#[test_id(t5x1m0v)]
-#[test]
-fn a_covered_certification_defers_what_does_not_fit_and_names_it_instead_of_refusing() {
-    let mut suites: Vec<(String, String)> = Vec::new();
-    for i in 1..=5 {
-        let mut toks = vec!["spira/lib.sh".to_string()];
-        toks.extend((2..=i).map(|j| format!("spira/filler-{j}.sh")));
-        suites.push((format!("test-s{i}.sh"), format!("# covers: {}\n", toks.join(" "))));
-    }
-    let refs: Vec<(&str, &str)> = suites.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-    let d = dir("budget-defer", &refs);
-    let g = git_changing("spira/lib.sh");
-    let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_GATE_SUITES", "off"), ("SPIRA_GATE_COVERED", "1")]), &g, "main", "br").unwrap();
-    assert!(o.suites.len() < 5 && !o.suites.is_empty(), "{:?}", o.suites);
-    assert!(o.log.iter().any(|l| l.contains("dropped test-s5.sh")), "{:?}", o.log);
 }
 
 // ------------------------------------------------------------------ failing closed
@@ -324,7 +257,6 @@ fn width_and_defaults_read_like_the_bash() {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get() as u64);
     assert_eq!((e.width, e.budget_secs, e.tiers.clone()), (cores, 300.0, Some(vec!["T0".into(), "T1".into()])));
     assert_eq!(e.suite_dir, PathBuf::from("spira"));
-    assert_eq!(e.always_covers, ["spira/lib.sh"]);
 }
 
 #[test_id(tz07wk3)]

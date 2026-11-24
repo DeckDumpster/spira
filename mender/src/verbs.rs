@@ -439,7 +439,7 @@ mod tests {
         w.git_out.insert("diff --numstat --no-renames main aaa".into(), "1\t0\tmender/src/x.rs\n".into());
         w.git_out.insert("diff --numstat --no-renames main bbb".into(), "1\t0\tdocs/a.md\n".into());
         w.git_out.insert("cat-file -e a2:mender/Cargo.toml".into(), String::new());
-        w.git_out.insert("show main:spira/mend-fences".into(), "# fences\nspira/gate-suites\n".into());
+        w.git_out.insert("show main:spira/mend-fences".into(), "# fences\nspira/fence-list\n".into());
         w
     }
 
@@ -453,7 +453,7 @@ mod tests {
         let mend = calls.iter().find(|c| c.starts_with("lc mending mend ")).expect("mending mend was called");
         assert!(mend.starts_with("lc mending mend r-9 --pass 3 --suite test-x.sh --members sp-a:aaa:a2 --facts "), "{mend}");
         assert!(mend.contains(r#""required_checks":["crate:mender"]"#) && mend.contains(r#""checked":["crate:mender"]"#), "{mend}");
-        assert!(mend.contains(r#"--fences ["spira/gate-suites"] --actor mender"#), "{mend}");
+        assert!(mend.contains(r#"--fences ["spira/fence-list"] --actor mender"#), "{mend}");
     }
 
     #[test_id(t4e74m5)]

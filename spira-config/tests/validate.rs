@@ -76,11 +76,11 @@ mod spira_section {
     #[test_id(to2mj9y)]
     #[test]
     fn an_unknown_enum_value_is_dropped_with_a_warning_and_a_mistyped_one_errors() {
-        let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncertify_suites = \"maybe\"\n").unwrap();
-        assert!(w.iter().any(|m| m.starts_with("spira.certify_suites") && m.contains("maybe")), "{w:?}");
-        assert_eq!(doc.unknown_values["spira.certify_suites"], "maybe");
-        let err = validate("[spira]\nid_prefix = \"sp\"\ncertify_suites = 3\n").unwrap_err();
-        assert!(err.starts_with("spira.certify_suites"), "{err}");
+        let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = \"maybe\"\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.czar_stage_deadlock") && m.contains("maybe")), "{w:?}");
+        assert_eq!(doc.unknown_values["spira.czar_stage_deadlock"], "maybe");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = 3\n").unwrap_err();
+        assert!(err.starts_with("spira.czar_stage_deadlock"), "{err}");
     }
 
     #[test_id(tk21j1l)]

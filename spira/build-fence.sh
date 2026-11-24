@@ -4,7 +4,7 @@
 #   build-fence.sh
 #
 # WHY THIS EXISTS (sp-9uro3). sp-upkae certified green under fences-only certification
-# (SPIRA_GATE_SUITES=off) and then broke the whole batch's build job: its new dependency
+# and then broke the whole batch's build job: its new dependency
 # resolved a crate the pinned toolchain could not parse, and since there is one workspace
 # Cargo.lock, every crate's build failed with it. Fences-only certification runs no suite at
 # all, so nothing on that path ever invoked cargo, and the queue had to bisect the batch to

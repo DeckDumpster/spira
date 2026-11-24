@@ -5102,7 +5102,7 @@ fn eject(
         let mut comment = format!("Ejected from round {batch} in {}.\n\n{why_text}", c.r.name);
         comment.push_str("\n\nFix the failing issue and re-certify before rejoining the queue.");
         if !forced.is_empty() {
-            comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {forced}"));
+            comment.push_str(&format!("\n\nRecertification will force these suites whatever the configured suites: {forced}"));
         }
         w.lib.comment(bead, &comment);
         round_event(

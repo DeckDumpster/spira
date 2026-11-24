@@ -139,7 +139,6 @@ pub fn sweep_cfg() -> Result<sweep::Cfg, String> {
         throttle_stamp: getenv("SPIRA_THROTTLE_STAMP").map(PathBuf::from),
         queue_throttle_override: reg("SPIRA_QUEUE_THROTTLE_OVERRIDE")?,
         incident_sh: resolved_incident_sh(),
-        suites_sh: getenv("SPIRA_SUITES_SH"),
         cockpit_db: spira_config::process::cfg("COCKPIT_DB").ok().filter(|d| !d.is_empty()),
         moot_timeout_s: getenv_i64("SPIRA_MOOT_TIMEOUT", 30).max(1) as u64,
         resolve_bin: match getenv("SPIRA_RESOLVE_SH") {

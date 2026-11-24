@@ -119,7 +119,7 @@ bead = "sp-k8z731"
 [[use_case]]
 id = "UC-gate-verdict-15"
 tier = "T1"
-statement = "Verdict cache. The key is repo + tree + changed files + command + harness bytes (gate.sh, exclude.sh, skew.sh) + `SPIRA_GATE_SUITES`. Only PASS is cached. Reuse is metered `rc=0 cached`. A landing on the base does not invalidate an un-rebased branch. A restored command finds its old entry. A verdict older than `SPIRA_VERDICT_TTL` is refused, as is an entry without `at=` or a non-numeric TTL. (sp-0v8)"
+statement = "Verdict cache. The key is repo + tree + changed files + command + harness bytes (gate.sh, exclude.sh, skew.sh). Only PASS is cached. Reuse is metered `rc=0 cached`. A landing on the base does not invalidate an un-rebased branch. A restored command finds its old entry. A verdict older than `SPIRA_VERDICT_TTL` is refused, as is an entry without `at=` or a non-numeric TTL. (sp-0v8)"
 
 [use_case.uncovered]
 reason = "suites test-gate-verdict.sh and test-gate-base-evidence.sh retired (sp-k8z731, test-triage family J); behaviour now verified by gate::tests::a_pass_is_cached_under_the_merged_tree, a_fresh_cached_pass_skips_admission_and_the_trial, a_stale_cached_pass_runs_again, only_a_pass_is_cached, and gate::key::tests::every_input_moves_the_key, the_same_entry_is_reused_under_a_longer_ttl, an_old_or_unreadable_entry_is_stale"

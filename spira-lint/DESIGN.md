@@ -104,7 +104,7 @@ by hand. `spira-config`, the crate and its CLI, is the only thing that may find,
 write either. A second reader or writer is a second schema that drifts.
 
 **Scope.** Tracked and untracked-not-ignored files matching the git pathspecs
-`spira/*.sh`, `spira/gate-suites`, `spira/runes/*.rune`, `spira/runes/*.md` or `*.rs`
+`spira/*.sh`, `spira/runes/*.rune`, `spira/runes/*.md` or `*.rs`
 (`*` crosses `/`, as git's default pathspec does), minus anything under `spira-config/`.
 
 **Violations**, reported as one finding per file whose message lists the kinds
@@ -138,7 +138,7 @@ pub struct ConfigAllow(BTreeSet<String>);   // entry path == Finding.path
 - `write` in shell was a line regex. It caught `> "$SPIRA_TOML_TMP"` (a different variable,
   since `SPIRA_(TOML|REPO_MAP)` was a prefix) and missed `mv "$tmp" "$SPIRA_TOML"` and
   `tee "$SPIRA_TOML"`. It now matches the construct and the exact variable. The write
-  checks also no longer run on prose (`.md`, `.rune`) or on `gate-suites`, which contain
+  checks also no longer run on prose (`.md`, `.rune`), which contain
   no shell. A persona that tells an agent to write the config names it, and `name` catches
   that.
 

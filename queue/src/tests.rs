@@ -602,10 +602,10 @@ impl Scripts for FScripts {
             (0, format!("{check}: all passed"))
         }
     }
-    fn gate(&self, br: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> (i32, String) {
+    fn gate(&self, br: &str, repo: &str, bead: &str, lock_wait: &str) -> (i32, String) {
         self.calls
             .borrow_mut()
-            .push(format!("gate {br} {repo} bead={bead} suites={suites} lock_wait={lock_wait}"));
+            .push(format!("gate {br} {repo} bead={bead} lock_wait={lock_wait}"));
         if let Some(dir) = self.lock_probe.borrow().as_ref() {
             let free = matches!(
                 crate::lock::try_lock(dir, "spira"),
@@ -1963,7 +1963,6 @@ impl T {
             transition_maxsec: 30,
             preflight_wall_secs: 240,
             verdict: VerdictSettings::default(),
-            certify_suites: "on".into(), // literal-ok: fixture vocabulary
             git_name: "spira".into(),
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
@@ -5157,13 +5156,12 @@ fn submit_hands_the_gate_twice_the_gate_timeout_which_an_explicit_wait_may_only_
     for (explicit, want) in [("0", "5400"), ("9000", "9000")] {
         let mut t = T::new(LandMode::Queue);
         t.git.set("refs/heads/spira/sp-a", "t1");
-        t.lib.s.certify_suites = "off".into();
         t.lib.s.gate_timeout = Some(2700);
         t.lib.s.gate_lock_wait = Some(explicit.into());
         assert_eq!(t.run(&["submit", "spira/sp-a"]), 0);
         assert_eq!(
             t.scripts.calls.borrow()[1],
-            format!("gate spira/sp-a spira bead=sp-a suites=off lock_wait={want}")
+            format!("gate spira/sp-a spira bead=sp-a lock_wait={want}")
         );
     }
 }
@@ -5183,14 +5181,13 @@ fn submit_refuses_naming_the_key_when_the_gate_timeout_does_not_resolve() {
 #[test_id(t104fmu)]
 #[test]
 fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its_own() {
-    let mut t = T::new(LandMode::Queue);
+    let t = T::new(LandMode::Queue);
     t.git.set("refs/heads/spira/sp-a", "t1");
-    t.lib.s.certify_suites = "off".into();
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0);
     assert_eq!(t.scripts.calls.borrow()[0], "lint t1 verify=false");
     assert_eq!(
         t.scripts.calls.borrow()[1],
-        "gate spira/sp-a spira bead=sp-a suites=off lock_wait=5400"
+        "gate spira/sp-a spira bead=sp-a lock_wait=5400"
     );
     assert!(t.lc.has("certify sp-a t1"));
     assert!(

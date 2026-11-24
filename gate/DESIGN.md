@@ -84,7 +84,7 @@ when no bead is named; the latest run replaces the last).
 | caller | how | reads |
 |---|---|---|
 | `landing-pass` (`real.rs gate_command`) | `gate.sh <br> <repo>`, `SPIRA_GATE_LOCK_WAIT`, `SPIRA_GATE_BEAD` | exit status, the `VERDICT=` line |
-| `queue submit` (`queue/src/real.rs`) | `bash gate.sh <br> <repo>`, `SPIRA_GATE_BEAD`, `SPIRA_GATE_SUITES` | exit status, output |
+| `queue submit` (`queue/src/real.rs`) | `bash gate.sh <br> <repo>`, `SPIRA_GATE_BEAD` | exit status, output |
 | `rebase-stale` | through `queue submit` | green or not |
 | `batch.sh _pf_gate` | `bash gate.sh`, `SPIRA_GATE_BEAD=batch-*` | exit status |
 | `gate-run.sh` (the dwarf's self-certification; `dwarf` reads `gate-run.sh --status`) | `bash gate.sh <br> <repo>` | exit status, output file |
@@ -110,11 +110,10 @@ reached the bash.
 | `SPIRA_GATE_BUDGET` | the selector's prediction of suite time (testenv `--deadline`); with the fixed phases it fits the deadline | 140 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
-| `SPIRA_GATE_SUITES` | `off` skips admission unless the round named suites against the bead; in the key; passed through | `on` |
 | `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
-| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `HOME` | passed through to the gate command | as bash |
+| `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `HOME` | passed through to the gate command | as bash |
 | `SPIRA_RELEASE` | the gate command's PATH, built from it (below) | the launcher |
 
 ### The gate command's environment (unchanged list, `env -i`)
@@ -130,7 +129,7 @@ anything runs, and `SPIRA_RELEASE` is passed through. `HOME`, `TERM=dumb`, `SPIR
 `SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
 `SPIRA_GATE_STEPS` (an empty file per trial; the gate command appends `<step name>\t<unix epoch secs>` as each step starts, and the engine reads the longest step into gate.log's `slowest_step=<name>:<secs>` and the TSD row — the last step lasts until the gate phase ends; a command that writes nothing gives no field; a verdict other than PASS also keeps the phase's whole output as `tsd/gate-out-<ts>.log`, named by `out=<path>`, newest 50 kept),
 `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
-`SPIRA_GATE_SUITES` (default on), `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`,
+`SPIRA_BATCH_MAXPAR`,
 `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_RUN`,
 `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), and each `bin <VAR>` of
 the tree's gate.steps (`SPIRA_LINT_BIN`, `SPIRA_SELECT_BIN`: the tree under test's builds, the
@@ -215,7 +214,7 @@ merge-failed messages, which are new.
 | `$SPIRA_GATE_LOG` | `<UTC %Y-%m-%dT%H:%M:%SZ> <repo> <branch> waited=<n>s ran=<n>s rc=<status>[ <reason>][ compose=<label> phases=<phase>:<secs>,…][ waited_ms=<n>]\n`, appended | every verdict once the repository resolved; the composition fields once one was chosen |
 | `$SPIRA_VERDICTS/<key>` | `when=<UTC>\nat=<epoch>\nby=<caller>\nrepo=<name>\nbranch=<br>\nsuites=<csv or ->\ncompose=<label>\n`, written to `.<key>.<pid>` and renamed | PASS from a trial only |
 | `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`; `syntax-only` only where no tier is declared) once the merged tree `T` is known |
-| `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` and no suites were named against the bead |
+| `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | every trial |
 | `$SPIRA_RUN/gate-admission/slot.<n>.holder` | `pid=<p> start=<starttime> who=<branch> since=<epoch> waited=0 last=<epoch>\n` (advisory; the flock is the lock; sp-f4ig1) | written when the slot is taken; read by `spira-admit status` and the waiting line |
 | `$SPIRA_RUN/worktree/.gate.<repo-basename>.<tree-key>` | the gate worktree (detached) | removed on every non-PASS verdict; kept on PASS for cargo's fingerprints |
 | `<tree>.lock`, `<tree>.lock.holder` | lock; `<pid> <pgid>\n` | holder removed at exit |
@@ -332,7 +331,7 @@ DESIGN.md §11, D9). Two consequences here:
 * **A red before the suites step is judged on the base's fences only.** When the branch trial
   failed and its output shows the suites step never started (no runner `VERDICT` line, no
   suite line — a fence or the selector failed first), the base trial runs as composition
-  `fences` (suites off). Its suites cannot answer whose fault a fence red is, and they were
+  `fences`. Its suites cannot answer whose fault a fence red is, and they were
   most of every such base trial's wall: in the rewrite waves a 12 s fence red was followed by
   a 164–501 s base trial. Attribution is unchanged: base fences pass → `branch-red`, suite `-`.
 
@@ -388,9 +387,7 @@ tools + fences (with the build fence) + the re-entry suites when the bead has an
   the rest of the `&&` chain, `spira/build-fence.sh` (`cargo check --workspace --locked` of the
   merged tree) included. A repository on a column string loses its suites elements the same
   way (`compose::without_suites`) when the string is a plain `&&` chain of steps;
-* no unit build or test phase, and no suites in the fences string: a bead's certification runs
-  its covering suites as a phase of their own, `covered` ("A bead's certification still runs
-  its covered suites"); a gate with no bead stays fences-only;
+* no unit build or test phase, and no suites in the fences string;
 * **the re-entry suites still run** ("The re-entry check", sp-p3srm): the suites the round
   named when it returned the bead, plus the suites the branch itself changed, by name, after
   the fences. They exist only for a bead re-entering after a round red and are targeted;
@@ -435,40 +432,11 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `CARGO_BUILD_JOBS=J cargo test --no-run --timings --features integration -p …` (build, `compose::unit_build_words`, the line testenv's unit tier also runs), then the test phase, two commands from `spira_config::unit_tier` that differ from the round's only in `-p …` for `--workspace`: `cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p … --lib --bins` (one process per test, each under `SPIRA_UNIT_TEST_DEADLINE_SECS` × `SPIRA_UNIT_TEST_DEADLINE_PERIODS`), and `cargo test --no-fail-fast --features integration -p … --test '*'`; a tier no selected crate has a target for is left out, and a host without `cargo-nextest` is no verdict (75); all in the `dev` profile |
-| `unit`, nothing buildable | `fences` | the gate string with **suites off** |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string's fences **without the build fence** (below), then on the host: `CARGO_BUILD_JOBS=J cargo test --no-run --timings --features integration -p …` (build, `compose::unit_build_words`, the line testenv's unit tier also runs), then the test phase, two commands from `spira_config::unit_tier` that differ from the round's only in `-p …` for `--workspace`: `cargo nextest run --config-file target/gate-unit-nextest.toml --no-fail-fast --features integration -p … --lib --bins` (one process per test, each under `SPIRA_UNIT_TEST_DEADLINE_SECS` × `SPIRA_UNIT_TEST_DEADLINE_PERIODS`), and `cargo test --no-fail-fast --features integration -p … --test '*'`; a tier no selected crate has a target for is left out, and a host without `cargo-nextest` is no verdict (75); all in the `dev` profile |
+| `unit`, nothing buildable | `fences` | the gate string's fences |
 | `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
-| `fences`, a bead's certification (tree definition) | `fences` | the same, then the `covered` phase: the suites covering the diff, under `--deadline $SPIRA_GATE_BUDGET`, before any re-entry phase |
 | `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
 | `fences`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the gate string, whole |
-
-"Suites off" is the gate command's environment: `SPIRA_GATE_SUITES=off` and
-`SPIRA_CERTIFY_ALWAYS_COVERS=` (empty). `gate-touched.sh` then runs its fences (tier budgets,
-plan matrix, lockfile lint) and selects nothing: its always-covers default, `spira/lib.sh`, is
-a script, and a script never composes as unit or fences.
-
-### A bead's certification still runs its covered suites (sp-9jo06)
-
-A unit or fences composition (and any composition under `SPIRA_GATE_SUITES=off`) runs the
-gate string's fences, which include `spira-lint` and `boundary.sh check` over the merged
-tree. When the gate has a bead (`SPIRA_GATE_BEAD`) and suites are off, it also sets
-`SPIRA_GATE_COVERED=1`: `suite-select gate` then selects the budgeted suites whose `# covers:`
-match the bead's diff (not the always-run suites), instead of only the always-covers carve-out.
-A gate with no bead (the batcher's fences cut) stays fences-only. The trial takes an admission
-slot, and the verdict key carries `off+covered`, so a fences-only PASS is never reused for it.
-The added wall is the selected suites' own, bounded by `SPIRA_GATE_BUDGET`.
-
-**Under `gate_mode = fences` it is a phase of its own (`covered`).** The fences string is
-unchanged (no suites step), so its cache still serves; the suites step runs after it as
-`covered`, charged the suites' seconds testenv reports (`covered-build` is the setup), ahead of
-the re-entry phase, whose `unproven` check sees what `covered` already showed `ok`. The tools
-phase builds the selector and the runner for it. A suite red there is attributed through the
-same base re-run as any suites red. `suite-select gate` ranks recent reds first and drops any
-suite that does not fit its lane of the budget; a certification defers it to the round
-instead of refusing. gate.log carries ` covered=<secs> covered_deferred=<n>`, the `gate-run`
-row `covered_secs`, `covered_deferred` and `covered_deferred_suites`, and the metrics store
-`spira_gate_covered_seconds` and `spira_gate_covered_deferred`. A repository on a column string
-stays fences-only and says so on stderr.
 
 ### A unit gate builds once (sp-aprxm)
 
@@ -544,17 +512,12 @@ and its absence is not a red. With none left the base runs its fences only.
 
 Design item 6. **Intent:** a bead the round returned must pass the suites the round named
 against it, in its next gate, before it re-certifies — whatever `gate_mode`, the touched set
-or `SPIRA_GATE_SUITES` selects. A Rust-only branch keeps its cheap unit gate *and* passes
+selects. A Rust-only branch keeps its cheap unit gate *and* passes
 those suites; nothing else about its composition changes.
 
-**Why it was not already true.** The key carried the ejected suites (sp-px6ng, sp-hkfdp) and
-`gate-touched.sh` unions them into its selection — but only when suites are on. Production
-certifies with `certify_suites = "off"`, and `gate-touched.sh` exits before the union, so the
-named suites never ran at certification (the queue's "recertification will force these suites
-regardless of SPIRA_CERTIFY_SUITES" was not kept). Under sp-2ghui's unit mode the ejected
-suites forced the whole `suites` sequence, which with suites off is fences only. And with
-suites on, the gate string's `--deadline` budget can defer a named suite while testenv still
-exits 0.
+**Why a phase.** The gate string's `--deadline` budget can defer a named suite while testenv
+still exits 0, and a unit composition runs only fences, so the named suites need a phase of
+their own.
 
 ### Contract
 
@@ -572,7 +535,7 @@ exits 0.
   as the gate string maps them, **no `--deadline`** (the round named them; the phase is bounded
   by what is left of `SPIRA_GATE_TIMEOUT`), through the stall-watched `run_build` port, charged to
   `SPIRA_GATE_DEADLINE` only for the `suites:<s>` testenv reports (recorded `reentry-build` / `reentry`; a run with no `phases:` line is charged its whole wall). Once suites start, only the stall watch and `SPIRA_GATE_TIMEOUT` can end the phase; the deadline is applied when it exits, environment and
-  tree. After a unit or fences composition, or suites off, that is all of *required*; after a
+  tree. After a unit or fences composition, that is all of *required*; after a
   suites gate that already ran them, nothing (no second container); after one whose budget
   deferred some, just those.
 * **The proof** (`compose::unproven`): the branch trial's output must show every required
@@ -584,8 +547,7 @@ exits 0.
   count like a run's: a cached `ok` proves, a cached `SKIPPED` proves nothing.
 * **The base trial** runs the same re-entry phase on the landing ref, so a named suite that is
   red on the base too is `base-red`, not the branch's, as for any other red.
-* **Admission**: a gate with named suites takes a slot even when `SPIRA_GATE_SUITES=off`,
-  because it will run suites.
+* **Admission**: every gate takes a slot.
 * **Records**: the composition label gains `+reentry` whenever *required* is non-empty
   (`compose=unit+reentry`, `compose=suites(mode)+reentry`) in gate.log and the verdict file;
   the phase is `reentry:<secs>` / `base-reentry:<secs>`; stderr before the trial says
@@ -595,9 +557,8 @@ exits 0.
 
 ### Decisions
 
-* **A phase, not a force.** sp-2ghui forced `suites(ejected)`, the whole gate string with
-  suites on — a container and a budgeted corpus for a Rust-only branch, and (with suites off)
-  no named suite at all. The re-entry phase runs exactly the named set, after whatever the
+* **A phase, not a force.** sp-2ghui forced `suites(ejected)`, the whole gate string —
+  a container and a budgeted corpus for a Rust-only branch. The re-entry phase runs exactly the named set, after whatever the
   composition is.
 * **Proved from the runner's lines, not assumed from its exit status.** testenv exits 0 for a
   deferred, skipped or unreached suite; absence is never green.
@@ -857,7 +818,7 @@ lib.sh seam is one `bash -c '. lib.sh; …'` at start (NUL-separated `key=value`
 * **Callers keep calling `gate.sh`.** One shim is one place to change, and the process scans
   and the lock-holder files keep their meaning.
 * **Composition wraps the gate string; it does not parse it** (sp-2ghui). The string is
-  configuration and stays the one list of fences; unit mode runs it with suites off and adds
+  configuration and stays the one list of fences; unit mode runs its fences and adds
   the host phases after it. Splitting the string would make a second copy of the fence list.
   **One exception, by exact text** (sp-aprxm): a unit composition removes the build fence's
   step, because its own build phase is the compile check. Rejected: a warm per-gate target
@@ -1032,7 +993,7 @@ whatever suites it happened to select against the pinned base. That selection co
 trial's main phase is `Composition::Fences` now, unconditionally, whenever `comp` is
 `Suites { .. }` — cheap (fences + the build fence, ~12-60 s; DESIGN.md "The trial's budget"
 measured the same cost for the pre-existing pre-suites-red case, which this collapses into).
-`SPIRA_GATE_SUITES=off` reaches the base's own command either way; a tree-defined gate
+A tree-defined gate
 string's literal text is unaffected (`compose::gate_string` only rewrites a `Unit`
 composition).
 

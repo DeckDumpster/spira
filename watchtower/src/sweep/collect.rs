@@ -57,7 +57,6 @@ pub struct SweepData {
     pub lapsed: lapsed::Lapsed,
     pub lapsed_now: String,
 
-    pub suites_block: String,
     pub guard_block: String,
 
     pub snap_age_disp: String,
@@ -126,7 +125,6 @@ impl SweepData {
                 section: "  none since last sweep".to_string(),
             },
             lapsed_now: "20260930T000000Z".to_string(),
-            suites_block: "  (no suites)".to_string(),
             guard_block: "  (clean)".to_string(),
             snap_age_disp: "5s".to_string(),
             snap_age_disp_raw: "5".to_string(),
@@ -373,7 +371,6 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     };
 
     // MENU / GUARD -----------------------------------------------------------------------------
-    let suites_block = suites_block(cfg);
     let guard_block = guard_block(cfg);
 
     // RELEASE STATUS (for the hotfix escalation, computed here so escalate.rs need not
@@ -415,7 +412,6 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         czar_block,
         lapsed,
         lapsed_now,
-        suites_block,
         guard_block,
         snap_age_disp,
         snap_age_disp_raw,
@@ -474,22 +470,6 @@ pub(super) fn czar_block(env: &Env) -> String {
     s += &czar_row(env, "sort-failed", "SORT");
     s.push_str(czar_row(env, "loop-stalled", "STALL").trim_end());
     s
-}
-
-fn suites_block(cfg: &Cfg) -> String {
-    let out = if let Some(sh) = &cfg.suites_sh {
-        // FORK-EDGE: SPIRA_SUITES_SH test seam; production runs testenv
-        crate::deadline::output("suites status", Command::new("bash").arg(sh).arg("status"))
-    } else {
-        match spira_config::release_env::tool("testenv") {
-            Ok(testenv) => crate::deadline::output("suites status", Command::new(testenv).args(["suites", "status"])),
-            Err(e) => return format!("  (unreadable — {e})"),
-        }
-    };
-    match out {
-        Ok(o) if !o.stdout.is_empty() => String::from_utf8_lossy(&o.stdout).into_owned(),
-        _ => "  (unreadable — testenv suites status produced nothing)".to_string(),
-    }
 }
 
 fn guard_block(cfg: &Cfg) -> String {
@@ -826,19 +806,5 @@ mod tests {
         assert_eq!(none(scripted_by(&[("audits", 0, "not json")]).1), ("?".to_string(), None), "a malformed answer");
         assert_eq!(none(scripted_by(&[("audits", 2, "cannot tell")]).1), ("?".to_string(), None), "an unreachable store");
         assert_eq!(landing_field(&scripted_by(&[("audits", 0, r#"{"newest_at":10000,"lc_key":"sp-now"}"#)]).1, 10_000).0, "0", "0 only for a true zero");
-    }
-
-    // covers: UC-ops-detection-remediation-27
-    #[test_id(tn08wxp)]
-    #[test]
-    fn the_sweep_names_the_suites_and_asks_only_for_their_status() {
-        let d = testkit::TempDir::new("wt-collect-suites");
-        let sh = d.join("suites.sh");
-        let args = d.join("args");
-        std::fs::write(&sh, format!("echo \"$*\" >> {}\necho '  suites in the tree   9'\n", args.display())).unwrap();
-        let mut cfg = Cfg::fixture(d.path(), "inc".into());
-        cfg.suites_sh = Some(sh.to_str().unwrap().into());
-        assert!(suites_block(&cfg).contains("suites in the tree"));
-        assert_eq!(std::fs::read_to_string(&args).unwrap().trim(), "status", "the sweep reads the figures; it runs no suite");
     }
 }

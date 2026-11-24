@@ -422,7 +422,7 @@ fn a_ci_entry_red_forces_the_declared_default_tier_not_the_result_name() {
     let calls = t.lib.calls.borrow().clone();
     let comment = calls.iter().find(|l| l.starts_with("comment sp-b")).cloned().unwrap_or_default();
     assert!(calls.iter().filter(|c| c.starts_with("bead_reopen")).all(|c| !c.contains("testenv")), "{calls:?}");
-    assert!(comment.trim_end().ends_with("SPIRA_CERTIFY_SUITES: gate"), "{comment}");
+    assert!(comment.trim_end().ends_with("whatever the configured suites: gate"), "{comment}");
     assert!(!comment.contains("testenv"), "{comment}");
 }
 
@@ -4522,7 +4522,6 @@ fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
     assert!(
         t.scripts.calls.borrow().iter().any(|c| c.contains("gate")
             && c.contains("spira/round-staged/spira-staged")
-            && c.contains("off")
             && c.ends_with("lock_wait=5400")),
         "the fences run on the staged head: {:?}",
         t.scripts.calls.borrow()
@@ -11342,7 +11341,7 @@ fn forced_reopen(t: &T, bead: &str) -> String {
 fn assert_forced_comment(t: &T, forced: &str) {
     let calls = t.lib.calls.borrow();
     let c = calls.iter().find(|c| c.starts_with("comment sp-b") && c.contains("will force")).unwrap_or_else(|| panic!("no force comment: {calls:?}"));
-    assert!(c.trim_end().ends_with(&format!("suites regardless of SPIRA_CERTIFY_SUITES: {forced}")), "{c}");
+    assert!(c.trim_end().ends_with(&format!("suites whatever the configured suites: {forced}")), "{c}");
 }
 
 #[test_id(tfyxs0f)]

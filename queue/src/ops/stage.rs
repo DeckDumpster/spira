@@ -267,7 +267,7 @@ pub fn stage(
         w.git.branch_delete_sanctioned(&path, &branch);
         return FAIL;
     };
-    let (rc, out) = w.scripts.gate(&branch, &repo_name, "", "off", &lock_wait);
+    let (rc, out) = w.scripts.gate(&branch, &repo_name, "", &lock_wait);
     let _g = match lock(w, label, &c) {
         Ok(g) => g,
         Err(rc) => {

@@ -1,6 +1,5 @@
 //! Root disk and memory. A full root disk kills every process on the box, not only
-//! Spira's; `SPIRA_MEMINFO_PATH` is a seam for tests the same way `SPIRA_INCIDENT_SH` and
-//! `SPIRA_SUITES_SH` are. The disk reads `statvfs(3)` in-process (was `df`).
+//! Spira's; `SPIRA_MEMINFO_PATH` is a seam for tests the same way `SPIRA_INCIDENT_SH` is. The disk reads `statvfs(3)` in-process (was `df`).
 
 use std::path::Path;
 

@@ -25,6 +25,20 @@ fn collect<'a>(
     Ok(out)
 }
 
+/// Every `test-*.sh` regular file in `dir`, basenames, sorted. The glob is the definition.
+pub fn population(dir: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
+        .collect();
+    v.sort();
+    v
+}
+
 /// `--suites a.sh,b.sh`: comma list, whitespace trimmed, duplicates dropped, order kept.
 pub fn from_list(list: &str, exists: &dyn Fn(&str) -> bool) -> Result<Vec<String>, UnknownSuite> {
     collect(list.split(','), exists)
@@ -83,5 +97,18 @@ mod tests {
         assert!(plausible_name("test-a.sh"));
         assert!(!plausible_name("../etc/passwd"));
         assert!(!plausible_name(".."));
+    }
+
+    #[test_id(txz4gav)]
+    #[test]
+    fn population_is_the_glob() {
+        let d = testkit::TempDir::new("suites-pop");
+        std::fs::create_dir_all(d.join("test-dir.sh")).unwrap();
+        for f in ["test-b.sh", "test-a.sh", "lib.sh", "test-a.sh.bak", "test-.sh"] {
+            std::fs::write(d.join(f), "").unwrap();
+        }
+        assert_eq!(population(&d), vec!["test-.sh", "test-a.sh", "test-b.sh"]);
+        assert!(population(&d.join("missing")).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -48,7 +48,6 @@ pub struct Cfg {
     pub incident_sh: String,
     /// The store's client: bd's rows through its content door.
     pub lc: spira_store::lc_call::LcClient,
-    pub suites_sh: Option<String>,
     /// `COCKPIT_DB`; `None` when it does not resolve (the moot-sweep then checks nothing).
     pub cockpit_db: Option<String>,
     /// `SPIRA_MOOT_TIMEOUT`.
@@ -140,7 +139,6 @@ impl Cfg {
             queue_throttle_override: String::new(),
             incident_sh,
             lc: spira_store::lc_call::LcClient::socket("does/not/exist/lc.sock"),
-            suites_sh: None,
             cockpit_db: None,
             moot_timeout_s: 30,
             resolve_bin: "resolve".into(),

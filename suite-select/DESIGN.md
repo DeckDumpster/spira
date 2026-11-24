@@ -126,23 +126,16 @@ that no suite's `# covers:` claims.
 
 Environment (the gate command's own, `gate/DESIGN.md`): `SPIRA_GATE_REPO` (default `.`),
 `SPIRA_GATE_FILES`, `SPIRA_GATE_TIERS` (default `T0,T1`), `SPIRA_GATE_ALL`,
-`SPIRA_GATE_SUITES`, `SPIRA_GATE_COVERED`, `SPIRA_CERTIFY_ALWAYS_COVERS` (default `spira/lib.sh`),
 `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_TESTENV_SETUP_SHARE` (default 50), `SPIRA_BATCH_MAXPAR`, else
 the cgroup-aware core count (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUITE_DIR`
 (default `spira`, relative to the working directory — the gate tree, or the CI checkout).
 
-1. `SPIRA_GATE_SUITES=off`: only the suites whose `# covers:` glob (file part) matches a
-   changed file that matches `SPIRA_CERTIFY_ALWAYS_COVERS`; nothing else, no budget, no
-   ejected suites; empty when the diff touches no such file. With `SPIRA_GATE_COVERED=1` (the
-   gate sets it for a bead's certification) it is instead the ordinary selection, tiers and
-   budget cut included, minus the always-run suites: what covers what the bead touched, however
-   the branch composes, so a covered-suite red is caught at certification and not in the round.
-2. `SPIRA_GATE_ALL=1`: every suite in the corpus.
-3. Otherwise the selection above with `--no-all-fallback` and the tiers. With
+1. `SPIRA_GATE_ALL=1`: every suite in the corpus.
+2. Otherwise the selection above with `--no-all-fallback` and the tiers. With
    `SPIRA_GATE_FILES` the corpus is the suites the **base** tree has (`git ls-tree`) that the
    suite directory also has, so a suite the branch adds cannot select itself through its own
    covers; without it, the diff is `<base>...<head>`.
-4. **Budget cut** (`budget`): rank the selection — tier bucket (T0/T1/untiered before T2+),
+3. **Budget cut** (`budget`): rank the selection — tier bucket (T0/T1/untiered before T2+),
    then recent reds (the count of the suite's last 20 timing rows whose `rc` is neither 0 nor
    77, most first: the suite likeliest to catch runs first), then specificity (fewer
    `# covers:` tokens first; an always-run suite last), then tagged (`UC-` token) before
@@ -150,8 +143,7 @@ the cgroup-aware core count (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUI
    the least-loaded of `width` lanes and keeping it while that lane's predicted wall stays
    within the **suites' budget**: a suite whose own predicted cost exceeds it is always
    dropped, never started and killed. Predicted cost: the P90 of the suite's last 20 timing
-   rows, else its tier's cap. Each drop is named on stderr. A drop refuses (exit 75) unless
-   `SPIRA_GATE_COVERED=1`: a bead's certification defers the suite to the round, named.
+   rows, else its tier's cap. Each drop is named on stderr. A drop refuses (exit 75).
    **The suites' budget (sp-govet).** `testenv --deadline` bounds the whole trial, setup
    included (testenv DESIGN.md D9), so the suites get the budget minus setup. When
    `SPIRA_GATE_BUDGET` is set (the landing gate always sets it and hands the same value to
@@ -161,7 +153,7 @@ the cgroup-aware core count (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUI
    (CI's call, whose testenv runs with no deadline) nothing is reserved. A share that is not
    a whole number refuses. The decision is one stderr line:
    `suite-select gate: the suites get <n>s of the <b>s budget (<why>)`.
-5. **Ejected suites** (`SPIRA_GATE_EJECTED_SUITES`) that exist in the suite directory are
+4. **Ejected suites** (`SPIRA_GATE_EJECTED_SUITES`) that exist in the suite directory are
    added after the cut, never ranked or dropped (law-a-retry-must-change-an-input).
 
 ### Callers

@@ -53,10 +53,7 @@ gate-diag [--home <spira-dir>] <results-root>   # what gate-diag.sh execs
   below, not redesigned.
 
 **Formerly a non-goal, now done (sp-9gd4e):** porting `tap-jsonl.sh`'s `tap_jsonl_rows` was
-out of this bead's original remit because it was shared with `spira/suites.sh` — forking it
-here would have split the one TAP parser the bash's own header insisted on ("ONE PARSER, ONE
-PLACE"). `suites.sh` no longer exists (replaced by `testenv suites`, DESIGN-suites.md), so
-this binary's `tap_jsonl_rows` shell-out was its only caller left. sp-9gd4e ported it to
+out of this bead's original remit. It is ported to
 `testenv::tap::jsonl_rows` (testenv/DESIGN.md §3.5a) — "one parser, one place" now means one
 Rust function two crates call, not one sourced bash file. This binary calls it directly (a
 `testenv` path dependency); `ports.rs::World` lost the `tap_jsonl_rows` method, since a pure
@@ -77,7 +74,7 @@ summary); `real.rs` implements it. `main.rs` is the glue — it also calls
 ### Suite result collection (unchanged scan and status vocabulary)
 
 A suite is **red** for this binary's purposes when its `.result` file's first field is `red`
-or `timeout` — the same vocabulary `testenv`'s `record.rs`/`skipgate.rs` already commit to
+or `timeout` — the same vocabulary `testenv`'s `record.rs` already commit to
 disk, and the comment there notes explicitly that `gate-diag.sh` (now this crate) is one of
 the readers that vocabulary is frozen for.
 

@@ -67,7 +67,7 @@ fn t2_no_run_and_runs_under_cap_journal_nothing() {
     let mut r = rig(1, world(vec![]), killed);
     assert_silent_tick(&mut r, STREAM);
     acc::assert_healthy(&r, STREAM);
-    let mut r = rig(1, world(vec![run(10, 100, SUITE), run(11, 100, GATE), run(12, 9999, &["r/bin/testenv", "suites", "status"])]), killed);
+    let mut r = rig(1, world(vec![run(10, 100, SUITE), run(11, 100, GATE), run(12, 9999, &["r/bin/testenv", "status"])]), killed);
     assert_silent_tick(&mut r, STREAM);
     acc::assert_healthy(&r, STREAM);
 }

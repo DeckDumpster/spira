@@ -636,7 +636,7 @@ anyone who sees a member red only on the VM and needs to know whether the build 
 3. The tree's own `testenv --mode parallel --artifacts <tree>/target/release --suites L
    --deadline 600 spira/<bead> <repo>`. `L` is `--suites`, topped up so it holds a sim-lane suite
    (its install runs in a second container, which a run without one never exercises) and a suite
-   not on `spira/skip-allowlist.tsv` (those skip in the container); each addition is printed.
+   outside the sim lane; each addition is printed.
    With no `--suites`, `L` is the suites the bead's newest round last recorded red (`PassRed`
    `red_suites`, read with `spira-lc list --batches`; one the tree lacks is said and skipped),
    topped up the same way; if none are recorded or the read fails (said), just those two. A tree with no `spira/test-*.sh` is left to testenv.

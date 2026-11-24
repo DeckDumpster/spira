@@ -562,13 +562,12 @@ fn git_remotes(repo: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn gate_command(branch: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> Command {
+fn gate_command(branch: &str, repo: &str, bead: &str, lock_wait: &str) -> Command {
     // FORK-EDGE: machine leg gate.sh
     let mut c = Command::new("gate.sh");
     c.arg(branch)
         .arg(repo)
         .env("SPIRA_GATE_BEAD", bead)
-        .env("SPIRA_GATE_SUITES", suites)
         .env("SPIRA_GATE_LOCK_WAIT", lock_wait);
     c
 }
@@ -585,7 +584,6 @@ fn unregistered_is_none<T>(r: Result<T, String>) -> Result<Option<T>, String> {
 
 /// Every key `context` must resolve; `queue check-config` refuses a registry that lacks one.
 pub const CONFIG_KEYS: &[&str] = &[
-    "SPIRA_CERTIFY_SUITES",
     "SPIRA_GIT_NAME",
     "SPIRA_GIT_EMAIL",
     "SPIRA_MAIL_SESSION_MAILBOX",
@@ -691,7 +689,6 @@ impl Lib for RealLib {
         // law-one-source-of-config: these five are not part of the lib.sh seam's kv
         // answer above (seam R1 predates spira-config) — read straight from $SPIRA_TOML
         // through the one door, never from the process environment.
-        let certify_suites = spira_config::process::cfg("SPIRA_CERTIFY_SUITES")?;
         let git_name = spira_config::process::cfg("SPIRA_GIT_NAME")?;
         let git_email = spira_config::process::cfg("SPIRA_GIT_EMAIL")?;
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
@@ -743,7 +740,6 @@ impl Lib for RealLib {
                 red_tracker_label: g("red_tracker_label"),
                 mender_label: g("mender_label"),
             },
-            certify_suites,
             git_name,
             git_email,
             mailbox,
@@ -1093,8 +1089,8 @@ impl Scripts for RealScripts {
             Err(e) => (2, e),
         }
     }
-    fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str, lock_wait: &str) -> (i32, String) {
-        run_combined(&mut gate_command(branch, repo, bead, suites, lock_wait))
+    fn gate(&self, branch: &str, repo: &str, bead: &str, lock_wait: &str) -> (i32, String) {
+        run_combined(&mut gate_command(branch, repo, bead, lock_wait))
     }
     fn judgement_ci(
         &self,
@@ -2867,7 +2863,7 @@ mod tests {
     #[test_id(tq0vdkg)]
     #[test]
     fn gate_command_hands_gate_sh_the_lock_wait() {
-        let c = super::gate_command("spira/sp-a", "r", "sp-a", "off", "5400");
+        let c = super::gate_command("spira/sp-a", "r", "sp-a", "5400");
         let env = |k: &str| {
             c.get_envs()
                 .find(|(n, _)| *n == k)

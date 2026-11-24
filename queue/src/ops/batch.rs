@@ -218,7 +218,7 @@ pub fn eject(
         comment
             .push_str("\n\nWithdrawn from the queue. Recertify the branch before it can rejoin.");
         if !suites.is_empty() {
-            comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
+            comment.push_str(&format!("\n\nRecertification will force these suites whatever the configured suites: {suites}"));
         }
         w.lib.comment(id, &comment);
         if !returned {

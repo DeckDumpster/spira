@@ -53,8 +53,7 @@ pub fn build_args() -> Vec<String> {
 }
 
 /// The suites a repro runs. The sim lane's suites install in a second container, so a run with
-/// none of them misses that install; a run of only allowlisted suites proves nothing, since those
-/// skip in the container. A tree with no suite scripts (its tiers are declared elsewhere) is
+/// none of them misses that install. A tree with no suite scripts (its tiers are declared elsewhere) is
 /// left to testenv. With no `given`, the suites the round recorded red (`red`) are the list. Returns
 /// the list to pass, `None` leaving testenv to select, and what was added.
 pub fn suites_for(tree: &Path, given: Option<&str>, red: &[String]) -> (Option<String>, Vec<String>) {
@@ -69,12 +68,6 @@ pub fn suites_for(tree: &Path, given: Option<&str>, red: &[String]) -> (Option<S
     if found.is_empty() {
         return (given.map(String::from), Vec::new());
     }
-    let allow: Vec<String> = fs::read_to_string(tree.join("spira/skip-allowlist.tsv"))
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .filter_map(|l| l.split('\t').next().map(String::from))
-        .collect();
     let sim = |n: &str| is_sim_lane(&tree.join("spira").join(n));
     let mut list: Vec<String> = given.map(|g| g.split(',').filter(|x| !x.is_empty()).map(String::from).collect()).unwrap_or_default();
     let mut added = Vec::new();
@@ -94,9 +87,9 @@ pub fn suites_for(tree: &Path, given: Option<&str>, red: &[String]) -> (Option<S
             list.push(n.clone());
         }
     }
-    if !list.iter().any(|n| !allow.contains(n) && !sim(n)) {
-        if let Some(n) = found.iter().find(|n| !allow.contains(n) && !sim(n)) {
-            added.push(format!("added {n}: a suite not on the skip allowlist runs in the container"));
+    if !list.iter().any(|n| !sim(n)) {
+        if let Some(n) = found.iter().find(|n| !sim(n)) {
+            added.push(format!("added {n}: a suite outside the sim lane runs in the first container"));
             list.push(n.clone());
         }
     }
@@ -502,13 +495,13 @@ mod tests {
     #[test_id(thsrxur)]
     #[test]
     fn with_no_list_given_the_rounds_red_suites_are_the_list_and_a_given_list_wins() {
-        let t = tree(&[("spira/test-a.sh", ""), ("spira/test-b.sh", "# lane: sim\nset -u\n"), ("spira/test-c.sh", ""), ("spira/test-d.sh", ""), ("spira/skip-allowlist.tsv", "test-a.sh\tr\tw\n")]);
+        let t = tree(&[("spira/test-a.sh", ""), ("spira/test-b.sh", "# lane: sim\nset -u\n"), ("spira/test-c.sh", ""), ("spira/test-d.sh", "")]);
         let red = ["test-a.sh".to_string(), "test-gone.sh".to_string()];
         let (list, notes) = suites_for(t.path(), None, &red);
-        assert_eq!(list.as_deref(), Some("test-a.sh,test-b.sh,test-c.sh"));
+        assert_eq!(list.as_deref(), Some("test-a.sh,test-b.sh"));
         assert!(notes.iter().any(|n| n.starts_with("skipped test-gone.sh")) && notes.iter().any(|n| n.starts_with("defaulted to the round's red suites: test-a.sh")), "{notes:?}");
         assert_eq!(suites_for(t.path(), Some("test-d.sh"), &red).0.as_deref(), Some("test-d.sh,test-b.sh"));
-        assert_eq!(suites_for(t.path(), None, &["test-gone.sh".to_string()]).0.as_deref(), Some("test-b.sh,test-c.sh"));
+        assert_eq!(suites_for(t.path(), None, &["test-gone.sh".to_string()]).0.as_deref(), Some("test-b.sh,test-a.sh"));
     }
 
     const BATCHES: &str = r#"[{"batch_id":"new","members":[{"bead_id":"sp-x"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-old.sh"]},{"n":2,"verdict":"red","red_suites":["test-a.sh","test-b.sh"]},{"n":3,"verdict":"green"}]},{"batch_id":"older","members":[{"bead_id":"sp-x"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-stale.sh"]}]},{"batch_id":"other","members":[{"bead_id":"sp-y"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-y.sh"]}]}]"#;

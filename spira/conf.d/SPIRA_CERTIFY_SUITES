@@ -1,6 +1,0 @@
-TYPE=onoff
-GROUP=certify
-DOC=Whether the landing gate certifies suites; on unless declared off.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_CERTIFY_SUITES:=on}"
-SPIRA_CONF_DEFAULT_EOF

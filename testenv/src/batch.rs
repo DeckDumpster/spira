@@ -9,7 +9,6 @@ use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
 use crate::schedule::{Admission, Job};
-use crate::skipgate::{self, SkipGate};
 use crate::tap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -41,9 +40,6 @@ pub struct BatchCfg {
     pub liveness_every: Duration,
     /// `--deadline`: measured from the start of [`run`]. None = no deadline (D7).
     pub deadline: Option<Duration>,
-    /// The skip contract (DESIGN.md §3.7): an undeclared SKIP is reclassified red here, at
-    /// the point the record is built, so the printed line and the written `.result` agree.
-    pub skip_gate: SkipGate,
     /// `# testdb-mode: embedded` suites (suite.rs): exempted from the batch-wide server
     /// fixture (DESIGN-testdb.md §2.4) by stripping `SPIRA_TESTDB_MODE=server` from just
     /// their own environment (sp-gjx1b).
@@ -257,12 +253,7 @@ impl Shared<'_> {
             self.cfg.producer,
             now_epoch(),
         );
-        let rec = skipgate::apply(
-            &self.cfg.skip_gate,
-            suite,
-            self.cfg.quarantined.contains(suite),
-            rec,
-        );
+        let rec = rec.skip_as_red(self.cfg.quarantined.contains(suite));
         write_suite(&self.cfg.results, suite, &rec, output);
         if rec.status == Status::Ok {
             if let Some(store) = &self.cfg.resume {
@@ -651,7 +642,6 @@ mod tests {
             psi_pause: Duration::from_millis(1),
             liveness_every: Duration::ZERO,
             deadline: None,
-            skip_gate: SkipGate::load("").unwrap(),
             embedded_only: BTreeSet::new(),
             resume: None,
         }
@@ -708,13 +698,7 @@ mod tests {
         rt.suite("test-d.sh", 124, "slow\n");
         let dir = tmpdir("par");
         let s = session(&rt);
-        let mut c = cfg(Mode::Parallel, &dir, 2);
-        // declared, so this test still exercises a genuine (green) Skip outcome — the skip
-        // contract itself (undeclared -> red) is covered by skipgate.rs and run/tests.rs.
-        c.skip_gate = SkipGate::load(
-            "test-c.sh\tskip:not_applicable_here\tfixture: declared for this test\n",
-        )
-        .unwrap();
+        let c = cfg(Mode::Parallel, &dir, 2);
         let out = with_hooks(|h, seen| {
             let o = run(
                 &s,
@@ -747,9 +731,9 @@ mod tests {
         assert!(!out.harness_fault());
         assert_eq!(out.records["test-a.sh"].status, Status::Ok);
         assert_eq!(out.records["test-b.sh"].status, Status::Red);
-        assert_eq!(out.records["test-c.sh"].status, Status::Skip);
+        assert_eq!(out.records["test-c.sh"].status, Status::Red);
         assert_eq!(out.records["test-d.sh"].status, Status::Timeout);
-        assert_eq!(out.blocking_reds(), vec!["test-b.sh", "test-d.sh"]);
+        assert_eq!(out.blocking_reds(), vec!["test-b.sh", "test-c.sh", "test-d.sh"]);
         let res = fs::read_to_string(dir.join("test-b.sh.result")).unwrap();
         assert!(res.starts_with("red "));
         assert!(res.trim_end().ends_with(" parallel explicit 1"));
