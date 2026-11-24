@@ -15,6 +15,7 @@ pub mod io;
 pub mod order;
 pub mod pace;
 pub mod redtip;
+pub mod replay;
 pub mod screen;
 pub mod vm;
 

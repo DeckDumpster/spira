@@ -128,6 +128,7 @@ dependencies = [
  "gate",
  "libc",
  "lifecycle",
+ "regex",
  "runtime",
  "serde",
  "serde_json",

@@ -72,6 +72,7 @@ struct Opts {
     reason: Option<String>,
     all: bool,
     held_since: Option<u64>,
+    out: Option<PathBuf>,
 }
 
 fn usage() -> ExitCode {
@@ -85,6 +86,7 @@ fn usage() -> ExitCode {
     eprintln!("       batcher pause-set --repo R --by concierge|operator --reason TEXT [--run DIR]");
     eprintln!("       batcher pause-show (--repo R [--held-since EPOCH] | --all) [--run DIR]");
     eprintln!("       batcher pause-lift --repo R --by concierge|operator --reason TEXT [--run DIR]");
+    eprintln!("       batcher save-round --repo R --batch ID --out DIR [--run DIR] [--db DIR] [--home DIR]   (see: batcher save-round -h)");
     eprintln!("exit codes: 0 done (a lift with no pause says so and exits 0); 1 refused or failed; 2 usage");
     ExitCode::from(2)
 }
@@ -119,6 +121,7 @@ fn parse() -> Result<Opts, String> {
         reason: None,
         all: false,
         held_since: None,
+        out: None,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -141,6 +144,7 @@ fn parse() -> Result<Opts, String> {
             "--by" => o.by = Some(val()?),
             "--reason" => o.reason = Some(val()?),
             "--all" => o.all = true,
+            "--out" => o.out = Some(val()?.into()),
             "--held-since" => o.held_since = Some(val()?.parse().map_err(|_| "--held-since takes epoch seconds".to_string())?),
             other => return Err(format!("unknown flag {other}")),
         }
@@ -2287,7 +2291,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
                 by: None,
                 reason: None,
                 all: false,
-                held_since: None,
+                held_since: None, out: None,
             };
             if paced && reg.land(name) == "queue.local" {
                 paced_cut(&env_, name, &one).map_err(|e| e.msg)
@@ -2355,7 +2359,7 @@ fn sifts(o: &Opts) -> Result<(), String> {
             by: None,
             reason: None,
             all: false,
-            held_since: None,
+            held_since: None, out: None,
         };
         if let Err(e) = sift_one(&one) {
             eprintln!("batcher sifts: {name}: {e}");
@@ -2838,7 +2842,30 @@ fn pause_show(o: &Opts, out: &mut dyn std::io::Write) -> Result<(), String> {
     Ok(())
 }
 
+fn save_round(o: &Opts) -> Result<(), String> {
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let batch = o.batch.as_deref().ok_or("--batch is required")?;
+    let out = o.out.as_deref().ok_or("--out is required")?;
+    if o.repo.is_empty() {
+        return Err("--repo is required".into());
+    }
+    let env_ = env_for(o, home.clone(), run.clone())?;
+    let repo = find_repo(&env_, &o.repo)?;
+    let batches = io::lcq_held(&env_, &["list", "--batches", "--batch", batch])?;
+    let results = io::round_results_dir(&run, batch);
+    let deny = std::fs::read_to_string(home.join("spira/inventory-deny")).map(|t| spira_lint::rules::inventory::deny_fragments(&t)).unwrap_or_default();
+    let built = batcher_cut::replay::build(&batches, batch, &results, &batcher_cut::replay::RepoGit(&repo), &batcher_cut::replay::names_here(&run), &deny).map_err(|e| batcher_cut::replay::refuse(out, e))?;
+    batcher_cut::replay::write(&built, out)?;
+    println!("batcher: round {batch} saved to {} ({} files)", out.display(), built.files.len());
+    Ok(())
+}
+
 fn dispatch() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("save-round") && std::env::args().nth(2).is_some_and(|a| a == "-h" || a == "--help") {
+        println!("{}", batcher_cut::replay::USAGE);
+        return ExitCode::SUCCESS;
+    }
     let o = match parse() {
         Ok(o) => o,
         Err(e) => {
@@ -2867,6 +2894,7 @@ fn dispatch() -> ExitCode {
         "pause-set" => pause_set(&o, &mut std::io::stdout()),
         "pause-show" => pause_show(&o, &mut std::io::stdout()),
         "pause-lift" => pause_lift(&o, &mut std::io::stdout()),
+        "save-round" => save_round(&o),
         _ => return usage(),
     };
     match r {
@@ -2930,7 +2958,7 @@ mod tests {
             by: by.map(String::from),
             reason: Some("eject done".into()),
             all: false,
-            held_since: None,
+            held_since: None, out: None,
         }
     }
 
@@ -3734,7 +3762,7 @@ mod cut_tests {
             by: None,
             reason: None,
             all: false,
-            held_since: None,
+            held_since: None, out: None,
             confirmed: false,
         };
         let given: Vec<(String, String)> = members.iter().zip(&tips).map(|((id, _), tip)| (id.to_string(), tip.clone())).collect();
