@@ -14,7 +14,7 @@ use std::process::{Command, Output, Stdio};
 use testkit::TempDir;
 
 const SPIRA_CONFIG: &str = "#!/bin/bash\ncase \"$1\" in resolve) cat \"$STUB_RESOLVED\" ;; env-bootstrap|check-bd) ;; *) exit 1 ;; esac\n";
-const WATCHD: &str = "#!/bin/sh\n[ -n \"$SPIRA_TOML\" ] || { echo 'watchd: SPIRA_TOML is not set' >&2; exit 2; }\nprintf 'NAME UNIT HEALTH UNREAD\\nprobe daemon ok 0\\n'\n";
+const WATCHD: &str = "#!/bin/sh\n[ -n \"$SPIRA_TOML\" ] || { echo 'watchd: manifest unreadable: SPIRA_TOML is not set' >&2; exit 2; }\nprintf 'NAME UNIT HEALTH UNREAD\\nprobe daemon ok 0\\n'\n";
 fn sys_path() -> String {
     format!("{}:{}", system_paths::USR_BIN, system_paths::BIN)
 }
