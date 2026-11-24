@@ -1084,6 +1084,13 @@ testenv container publish             # push it to SPIRA_TESTENV_REGISTRY; the r
 testenv container prune   [--current REF]  # the cleanup below, by hand
 ```
 
+To build by hand the image a round will ask for, run inside the checkout:
+`cargo run -q --locked --release -p testenv -- container image --tree .` — the checkout's own
+tag function names it. A prune keeps the image the home repository's landing ref asks for,
+besides the current image and its predecessor; when that image cannot be computed or is not
+in the store, no tagged image is removed. `round-vm image-check` answers "cannot tell" for a
+tip that changes the tag function (`testenv/src/container.rs`, `spira-config/src/recipe.rs`).
+
 Defaults, flags, stdout/stderr and exit statuses are the script's (`N` = `spira-testenv`,
 `exec` runs as root and adds `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `CARGO_HOME`,
 `CARGO_TARGET_DIR` for `spirauser`; `exec` replaces this process with `podman exec`, so its

@@ -2,6 +2,8 @@
 //! driver (DESIGN.md §12, sp-s0e1k; replaces spira/testenv.sh). Everything that touches the
 //! host goes through [`Host`], so the orchestration is unit-tested against a fake.
 
+use crate::prune::Landing;
+use spira_config::recipe::HAND_BUILD;
 use crate::settings::Source;
 use regex::Regex;
 use spira_config::process::{cfg, cfg_parse};
@@ -85,6 +87,9 @@ pub trait Host {
     /// or `None` on any failure. The fallback `stage_spira_config` takes when no sibling of
     /// this process's own binary exists.
     fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf>;
+    /// The image closure of the home repository's landing ref, extracted under a scratch
+    /// directory the caller removes. None: no registered repository.
+    fn landing_closure(&self) -> Option<Result<PathBuf, String>>;
     fn temp_log(&self) -> PathBuf;
     /// Copies the tree at `src` into a fresh, writable temp directory and returns it. The
     /// copy is writable whatever `src`'s modes are: a release tree is read-only.
@@ -174,6 +179,8 @@ impl Conf {
         self.harness.as_ref().map(|h| h.join("spira"))
     }
 }
+
+
 
 /// `up`'s exit when it gave up waiting for a container slot: not a failure to boot.
 pub const RC_QUEUE: i32 = 71;
@@ -338,6 +345,24 @@ impl Driver<'_> {
         (!self.conf.registry.is_empty()).then(|| format!("{reg}/spira-testenv:{tag}"))
     }
 
+    /// The image the home repository's landing ref asks for, hashed by this binary's own tag
+    /// function; a registered repository whose closure cannot be hashed is `Unknown`.
+    fn landing(&self) -> Landing {
+        match self.host.landing_closure() {
+            None => Landing::Unregistered,
+            Some(Err(e)) => {
+                self.err(&format!("testenv: the landing ref's image closure cannot be read ({e})"));
+                Landing::Unknown
+            }
+            Some(Ok(dir)) => {
+                let conf = Conf { harness: Some(dir.clone()), ..self.conf.clone() };
+                let tag = Driver { host: self.host, conf: &conf }.image_tag();
+                self.host.remove_tree(&dir);
+                tag.map_or(Landing::Unknown, |t| Landing::Image(self.image_ref(&t)))
+            }
+        }
+    }
+
     fn with_store<T>(&self, f: impl FnOnce(&crate::prune::Store) -> T) -> T {
         let podman = |a: &[String]| self.host.podman(a, Io::Quiet);
         let log = |l: &str| self.err(l);
@@ -378,7 +403,8 @@ impl Driver<'_> {
             self.err(&format!("testenv: trying {remote}"));
             if self.pq(&["pull", "-q", &remote]) && self.pq(&["tag", &remote, &img]) {
                 self.err(&format!("testenv: pulled {remote}"));
-                self.with_store(|st| st.prune_images(&img, Some(i64::MAX)));
+                let landing = self.landing();
+                self.with_store(|st| st.prune_images(&img, &landing, Some(i64::MAX)));
                 return Some(img);
             }
             if build {
@@ -389,7 +415,7 @@ impl Driver<'_> {
         }
         if !build {
             self.err(&format!(
-                "testenv: IMAGE-ABSENT {img} — a bounded trial does not build it; build it once with `testenv container image --tree <checkout>` (about twenty minutes cold)"
+                "testenv: IMAGE-ABSENT {img} — a bounded trial does not build it; build it once, inside the checkout, with `{HAND_BUILD}` (about twenty minutes cold)"
             ));
             return None;
         }
@@ -397,7 +423,8 @@ impl Driver<'_> {
         if !self.build_image(&img) {
             return None;
         }
-        self.with_store(|st| st.prune_images(&img, Some(started)));
+        let landing = self.landing();
+        self.with_store(|st| st.prune_images(&img, &landing, Some(started)));
         Some(img)
     }
 
@@ -593,8 +620,9 @@ impl Driver<'_> {
                 return 1;
             }
         };
+        let landing = self.landing();
         self.with_store(|st| {
-            st.prune_images(&current, None);
+            st.prune_images(&current, &landing, None);
             st.sweep_target_volumes(self.conf.target_cap);
         });
         0
@@ -1255,6 +1283,39 @@ impl Driver<'_> {
     }
 }
 
+/// The `executable` cargo reports for the binary target `name`, from
+/// `--message-format=json-render-diagnostics` output: wherever the target directory is.
+pub fn executable_from_cargo_json(stdout: &str, name: &str) -> Option<PathBuf> {
+    stdout.lines().rev().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        if v["reason"] != "compiler-artifact" || v["target"]["name"] != name {
+            return None;
+        }
+        v["executable"].as_str().map(PathBuf::from)
+    })
+}
+
+/// `git archive` of the files the image tag hashes, at `rev` of the repository at `repo`, into `into`.
+fn extract_closure(repo: &str, rev: &str, into: &Path) -> Result<(), String> {
+    let mut archive = std::process::Command::new("git")
+        .args(["-C", repo, "archive", "--format=tar", rev, "spira/testenv/Containerfile", "spira/deps.toml", "rust-toolchain.toml"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("git archive: {e}"))?;
+    let out = archive.stdout.take().ok_or("git archive: no stdout")?;
+    let st = std::process::Command::new("tar")
+        .arg("-x")
+        .arg("-C")
+        .arg(into)
+        .stdin(out)
+        .status()
+        .map_err(|e| format!("tar: {e}"))?;
+    if !archive.wait().map_err(|e| e.to_string())?.success() || !st.success() {
+        return Err(format!("cannot read the image closure of {rev} in {repo}"));
+    }
+    Ok(())
+}
+
 /// The real host.
 pub struct RealHost;
 
@@ -1407,19 +1468,36 @@ impl Host for RealHost {
     }
     fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf> {
         // batch-job: cargo runs for as long as its work does
-        let ok = std::process::Command::new("cargo")
-            .args(["build", "--release", "-p", "spira-config"])
+        let out = std::process::Command::new("cargo")
+            .args(["build", "--release", "-p", "spira-config", "--message-format=json-render-diagnostics"])
             .envs(spira_config::build::cargo_home_env_from_process())
             .current_dir(repo_root)
             .stdin(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !ok {
+            .stderr(std::process::Stdio::inherit())
+            .output()
+            .ok()?;
+        if !out.status.success() {
             return None;
         }
-        let bin = repo_root.join("target/release/spira-config");
+        let bin = executable_from_cargo_json(&String::from_utf8_lossy(&out.stdout), "spira-config")?;
         bin.is_file().then_some(bin)
+    }
+    fn landing_closure(&self) -> Option<Result<PathBuf, String>> {
+        let env = |k: &str| std::env::var(k).ok();
+        let home = crate::run::Harness::locate(&env).map(|h| h.root).unwrap_or_default();
+        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+        let root = reg.root("")?;
+        Some((|| {
+            let landref = spira_config::repos::landref_explained(&reg, "")?;
+            let scratch = std::env::temp_dir().join(format!("testenv-landing.{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&scratch);
+            std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+            let r = extract_closure(&root, &landref, &scratch);
+            if r.is_err() {
+                let _ = std::fs::remove_dir_all(&scratch);
+            }
+            r.map(|()| scratch)
+        })())
     }
     fn make_context(&self, src: &Path) -> Result<PathBuf, String> {
         let dest = std::env::temp_dir().join(format!(
