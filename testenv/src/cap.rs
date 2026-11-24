@@ -22,7 +22,7 @@ pub const GRACE: u64 = 60;
 const UNWIND: Duration = Duration::from_secs(30);
 
 pub const SUBCOMMANDS: &[&str] = &[
-    "suites", "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm",
+    "suites", "lint", "preflight", "status", "testdb", "wait", "container", "plan", "warm", "test-bins",
 ];
 
 static TRIPPED: AtomicBool = AtomicBool::new(false);

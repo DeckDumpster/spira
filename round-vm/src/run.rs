@@ -6489,7 +6489,7 @@ mod tests {
     #[test_id(tpzavdl)]
     #[test]
     fn every_attribution_run_of_testenv_carries_a_repeat_reason() {
-        let runs: Vec<&str> = crate::spool::REMOTE_ATTR_SCRIPT.lines().filter(|l| l.contains("\"$tenv\"")).collect();
+        let runs: Vec<&str> = crate::spool::REMOTE_ATTR_SCRIPT.lines().filter(|l| l.contains("\"$tenv\" --mode")).collect();
         assert_eq!(runs.len(), 3);
         for l in runs {
             assert!(l.contains("--repeat-reason \"$reason\""), "{l}");

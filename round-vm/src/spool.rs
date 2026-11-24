@@ -162,6 +162,13 @@ integration)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     scope_of integration
+    if [ "$scope" != "--workspace" ]; then
+        bins=$("$tenv" test-bins ${scope//-p /}) || { cd "$HOME" && rm -rf "$d"; exit 4; }
+        if [ -n "$bins" ]; then
+            bin_scope=""; for b in $bins; do bin_scope="$bin_scope -p $b"; done
+            CARGO_TARGET_DIR="$HOME/attr-target" unit_env build --profile unittest --config profile.unittest.incremental=false $bin_scope >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
+        fi
+    fi
     CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_integration!("unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/integration-tests.out" >&2
     rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
@@ -563,7 +570,11 @@ mod tests {
         let stub = |name: &str, body: &str| testkit::write_exe(bin.join(name), &format!("#!/bin/bash\n{body}\n"));
         stub("git", "for a; do last=$a; done; mkdir -p \"$last\"");
         let said = if cargo_rc == 0 { "" } else { "echo 'test x ... FAILED'; " };
-        stub("cargo", &format!("echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; {said}exit {cargo_rc}"));
+        if !home.join("round-work/target/release/testenv").exists() {
+            fs::create_dir_all(home.join("round-work/target/release")).unwrap();
+            testkit::write_exe(home.join("round-work/target/release/testenv"), "#!/bin/bash\necho \"$*\" >> \"$HOME/testenv.calls\"; [ ! -e \"$HOME/listing-fails\" ] || exit 1; for a in \"$@\"; do sed -n \"s/^$a //p\" \"$HOME/test-bins\" 2>/dev/null; done; exit 0\n");
+        }
+        stub("cargo", &format!("echo \"$*\" >> \"$HOME/cargo.calls\"; case \"$*\" in \"build --profile unittest\"*) env > \"$HOME/build.env\"; [ ! -e \"$HOME/build-fails\" ]; exit $?;; esac; echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; {said}exit {cargo_rc}"));
         let status = std::process::Command::new(system_paths::BIN_BASH)
             .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", suites, build, ""])
             .env_clear()
@@ -681,6 +692,66 @@ mod tests {
         assert!(args.contains("-p spira-runtime -p gate") && args.contains("--test *") && args.contains("--features integration"), "{args}");
         assert_eq!(attr_job_rc("integration", 101, "integration-tests.result"), (5, true));
         assert_eq!(attr_job_rc("integration", 0, "integration-tests.result"), (0, true));
+    }
+
+    #[test_id(t8ijgof)]
+    #[test]
+    fn an_integration_probe_builds_the_test_bins_of_its_packages_in_attr_target_before_it_runs_their_tests() {
+        let d = TempDir::new();
+        fs::create_dir_all(d.path().join("home")).unwrap();
+        fs::write(d.path().join("home/test-bins"), "spira-runtime spira-lc\nother spira-x\n").unwrap();
+        let (rc, made, ran) = attr_job_in(&d, "integration", "spira-runtime", 0, "integration-tests.result");
+        assert_eq!((rc, made), (0, true));
+        let calls = fs::read_to_string(d.path().join("home/cargo.calls")).unwrap();
+        let calls: Vec<&str> = calls.lines().collect();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].starts_with("build --profile unittest --config profile.unittest.incremental=false") && calls[0].contains("-p spira-lc"), "{calls:?}");
+        assert!(calls[1].starts_with("test ") && calls[1].contains("-p spira-runtime"), "{calls:?}");
+        assert_eq!(ran.trim_end(), calls[1]);
+        let asked = fs::read_to_string(d.path().join("home/testenv.calls")).unwrap();
+        assert_eq!(asked.trim(), "test-bins spira-runtime");
+        assert!(!calls[0].contains("spira-x"), "{calls:?}");
+        let env = fs::read_to_string(d.path().join("home/build.env")).unwrap();
+        assert!(env.lines().any(|l| l.starts_with("CARGO_TARGET_DIR=") && l.ends_with("home/attr-target")), "{env}");
+    }
+
+    #[test_id(t1x5qjs)]
+    #[test]
+    fn an_integration_probe_whose_test_bin_build_fails_exits_4_and_leaves_no_result() {
+        let d = TempDir::new();
+        fs::create_dir_all(d.path().join("home")).unwrap();
+        fs::write(d.path().join("home/test-bins"), "spira-runtime spira-lc\nother spira-x\n").unwrap();
+        fs::write(d.path().join("home/build-fails"), "").unwrap();
+        let (rc, made, _) = attr_job_in(&d, "integration", "spira-runtime", 0, "integration-tests.result");
+        assert_eq!((rc, made), (4, false));
+        assert_eq!(fs::read_to_string(d.path().join("home/cargo.calls")).unwrap().lines().count(), 1, "the tests are not run");
+    }
+
+    #[test_id(tbhhfwl)]
+    #[test]
+    fn an_integration_probe_whose_test_bin_listing_fails_exits_4_and_runs_no_cargo() {
+        let d = TempDir::new();
+        fs::create_dir_all(d.path().join("home")).unwrap();
+        fs::write(d.path().join("home/listing-fails"), "").unwrap();
+        let (rc, made, _) = attr_job_in(&d, "integration", "spira-runtime", 0, "integration-tests.result");
+        assert_eq!((rc, made), (4, false));
+        assert!(!d.path().join("home/cargo.calls").exists());
+    }
+
+    #[test_id(tfl5nis)]
+    #[test]
+    fn an_integration_probe_without_test_bins_or_over_the_workspace_makes_one_cargo_call() {
+        for suites in ["spira-runtime", "integration"] {
+            let d = TempDir::new();
+            let (rc, made, _) = attr_job_in(&d, "integration", suites, 0, "integration-tests.result");
+            assert_eq!((rc, made), (0, true), "{suites}");
+            assert_eq!(fs::read_to_string(d.path().join("home/cargo.calls")).unwrap().lines().count(), 1, "{suites}");
+        }
+        let d = TempDir::new();
+        fs::create_dir_all(d.path().join("home")).unwrap();
+        fs::write(d.path().join("home/test-bins"), "spira-runtime spira-lc\nother spira-x\n").unwrap();
+        attr_job_in(&d, "integration", "integration", 0, "integration-tests.result");
+        assert_eq!(fs::read_to_string(d.path().join("home/cargo.calls")).unwrap().lines().count(), 1, "workspace scope builds nothing extra");
     }
 
     #[test_id(t9m95tn)]

@@ -180,6 +180,11 @@ pub fn test_bins(metadata_json: &str, crates: &[String]) -> Result<Vec<String>, 
     Ok(out.into_iter().collect())
 }
 
+/// The test-bins of `packages` in `tree`; a name that is not a workspace crate adds nothing.
+pub fn tree_test_bins(tree: &Path, packages: &[String]) -> Result<Vec<String>, String> {
+    test_bins(&workspace_metadata(tree)?, packages)
+}
+
 fn output(cmd: &mut Command) -> Result<Vec<u8>, String> {
     // batch-job: part of a testenv trial, bounded by the trial deadline
     let o = cmd.stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
@@ -412,6 +417,15 @@ mod tests {
     use super::*;
 
     const RED: &str = "running 2 tests\ntest a::ok ... ok\ntest a::bad ... FAILED\n\nfailures:\n\n---- a::bad stdout ----\nthread 'a::bad' panicked at src/a.rs:9:5:\nassertion `left == right` failed\n  left: 1\n right: 2\n\nfailures:\n    a::bad\n\nVERDICT RED ran=1 red=unit-tests.sh\n";
+
+    #[test_id(t2zkf9t)]
+    #[test]
+    fn the_repositorys_tree_declares_spira_lc_as_a_test_bin_of_spira_runtime() {
+        let manifest = testkit::manifest_dir();
+        let tree = manifest.parent().unwrap();
+        assert!(tree_test_bins(tree, &["spira-runtime".into(), "no-such-crate".into()]).unwrap().contains(&"spira-lc".to_string()));
+        assert!(tree_test_bins(tree, &["no-such-crate".into()]).unwrap().is_empty());
+    }
 
     #[test_id(to4ooud)]
     #[test]
