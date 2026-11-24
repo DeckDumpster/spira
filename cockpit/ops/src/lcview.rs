@@ -853,6 +853,8 @@ pub struct RepoRound {
     pub done: u32,
     pub total: u32,
     pub red: usize,
+    /// `done`/`total`/`red` count tests (unit tests, integration binaries, suites), not suites alone.
+    pub tests: bool,
     pub age: String,
     /// An OPEN row with no live run and no PR for over an hour: drawn as STALE, not as a round.
     pub stale: bool,
@@ -895,9 +897,20 @@ impl RepoRound {
     }
 }
 
+/// A 20-cell bar `▕██░░▏` of `done` in `total`.
+pub fn bar20(done: u32, total: u32) -> String {
+    let total = total.max(1);
+    let fill = (20 * done.min(total) / total) as usize;
+    format!("▕{}{}▏", "█".repeat(fill), "░".repeat(20 - fill))
+}
+
 impl RepoRound {
     pub fn line(&self) -> String {
-        let pass = if self.total > 0 { format!("{}/{} · {} red", self.done, self.total, self.red) } else { "—".to_string() };
+        let pass = match (self.total > 0, self.tests) {
+            (true, true) => format!("{} {}/{} tests · {} red", bar20(self.done, self.total), self.done, self.total, self.red),
+            (true, false) => format!("{}/{} · {} red", self.done, self.total, self.red),
+            _ => "—".to_string(),
+        };
         if self.stale {
             return format!("{} · {} · STALE · OPEN {} with no live run and no PR", self.repo, self.batch, self.age);
         }
@@ -918,6 +931,9 @@ pub struct PassProgress {
     pub total: u32,
     #[serde(default)]
     pub red: Vec<String>,
+    /// `done`/`total`/`red` came from the pass's `tests` count, not its suites alone.
+    #[serde(default)]
+    pub tests: bool,
     pub build_started: i64,
     pub suites_started: i64,
     pub cap: i64,
@@ -931,14 +947,18 @@ impl PassProgress {
     /// other, and the pass row vanished whenever round-vm had written last (2026-10-09).
     pub fn from_json(v: &serde_json::Value) -> Option<PassProgress> {
         let n = |k: &str| v[k].as_i64();
+        let counted = |k: &str| v["tests"][k].as_i64();
+        let tests = counted("done").zip(counted("total"));
+        let names = |a: &serde_json::Value| a.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
         Some(PassProgress {
             round: v["round"].as_str()?.to_string(),
             pass: v["pass"].as_u64().map(|p| p as u32).unwrap_or(0),
             phase: v["phase"].as_str()?.to_string(),
             verdict: v["verdict"].as_str().unwrap_or("").to_string(),
-            done: n("done").unwrap_or(0) as u32,
-            total: n("total").unwrap_or(0) as u32,
-            red: v["red"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
+            done: tests.map_or_else(|| n("done").unwrap_or(0), |t| t.0) as u32,
+            total: tests.map_or_else(|| n("total").unwrap_or(0), |t| t.1) as u32,
+            red: names(if tests.is_some() { &v["tests"]["red"] } else { &v["red"] }),
+            tests: tests.is_some(),
             build_started: n("build_started").unwrap_or(0),
             suites_started: n("suites_started").unwrap_or(0),
             cap: n("cap").unwrap_or(900),
@@ -953,6 +973,7 @@ impl PassProgress {
         match self.phase.as_str() {
             "fences" | "build" => now - self.updated_at <= 900,
             "suites" => now - self.updated_at <= 90,
+            "unit-tests" => now - self.updated_at <= 900,
             _ => false,
         }
     }
@@ -1357,10 +1378,11 @@ fn repo_rounds(s: &Snapshot, round_view: &dyn Fn(&BatchRow) -> RoundView) -> Vec
             repo: b.repo.clone(),
             batch: b.id.clone(),
             kind: if b.pr > 0 { format!("forge batch PR #{}", b.pr) } else { "VM round".into() },
-            phase: if !b.phase.is_empty() { b.phase.clone() } else { p.map(|p| p.phase.clone()).unwrap_or_else(|| b.state.clone()) },
+            phase: if let Some(p) = p.filter(|p| p.tests && p.running(s.now)) { p.phase.clone() } else if !b.phase.is_empty() { b.phase.clone() } else { p.map(|p| p.phase.clone()).unwrap_or_else(|| b.state.clone()) },
             done: p.map_or(0, |p| p.done),
             total: p.map_or(0, |p| p.total),
             red: p.map_or(0, |p| p.red.len()),
+            tests: p.is_some_and(|p| p.tests),
             age: age(s.now - if b.opened_at > 0 { b.opened_at } else { b.last_at }),
             stale: is_stale,
             pr_url: if b.pr > 0 && !s.forge_base.is_empty() && !b.repo.is_empty() { format!("{}/{}/pull/{}", s.forge_base, b.repo, b.pr) } else { String::new() },
@@ -2266,6 +2288,22 @@ mod tests {
         assert_eq!((p.done, p.total, p.pass, p.verdict.as_str()), (299, 451, 0, ""));
         let old = serde_json::json!({"round":"r-auto-102","pass":4,"phase":"done","verdict":"green","done":451,"total":451,"red":[],"build_started":1,"suites_started":2,"cap":900,"updated_at":3});
         assert_eq!(PassProgress::from_json(&old).unwrap().pass, 4);
+    }
+
+    #[test_id(tq3m8vz)]
+    #[test]
+    fn a_tests_count_replaces_the_suite_counts_and_the_row_draws_it_as_tests() {
+        let body = serde_json::json!({"round":"r-1","pass":1,"phase":"unit-tests","done":null,"total":null,"red":[],"tests":{"done":3120,"total":11240,"red":["t::bad"]},"build_started":1,"suites_started":null,"cap":900,"updated_at":3});
+        let p = PassProgress::from_json(&body).unwrap();
+        assert_eq!((p.tests, p.done, p.total, p.red.clone()), (true, 3120, 11240, vec!["t::bad".to_string()]));
+        assert!(p.running(100), "unit-tests is a running phase");
+        let row = RepoRound { repo: "spira".into(), batch: "b".into(), kind: "VM round".into(), phase: "unit-tests".into(), done: 3120, total: 11240, red: 0, tests: true, age: "10m".into(), ..Default::default() };
+        assert_eq!(row.line(), "spira · b · VM round · unit-tests · ▕█████░░░░░░░░░░░░░░░▏ 3120/11240 tests · 0 red · 10m");
+        let old = RepoRound { tests: false, phase: "suites".into(), done: 10, total: 53, ..row };
+        assert_eq!(old.line(), "spira · b · VM round · suites · 10/53 · 0 red · 10m");
+        let bare = serde_json::json!({"round":"r-1","pass":1,"phase":"suites","done":4,"total":9,"red":[],"tests":null,"updated_at":3});
+        let p = PassProgress::from_json(&bare).unwrap();
+        assert_eq!((p.tests, p.done, p.total), (false, 4, 9), "a null tests count leaves the suite counts");
     }
 
     #[test_id(ta5qwnl)]

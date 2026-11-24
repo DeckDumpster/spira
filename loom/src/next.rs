@@ -289,13 +289,15 @@ fn round_line(r: &RepoRound, prog: Option<&lcview::PassProgress>, now: i64, only
     }
     let mine = prog.filter(|p| p.running(now) && progress_names(p, r, only_vm));
     let state = match mine {
-        Some(p) if p.phase == "suites" => {
+        Some(p) if p.phase == "suites" || p.tests => {
             let el = now - p.suites_started;
             let class = if el > p.cap { "red" } else if el > 720 { "amber" } else { "dim" };
-            format!("{} <span class=\"small {class}\">{} of {}m</span>{}", progress_bar(p.done as u64, p.total as u64, !p.red.is_empty()), dur(el.max(0)), p.cap / 60, if p.red.is_empty() { String::new() } else { format!(" <span class=\"small red\">{} red</span>", p.red.len()) })
+            let counted = if p.tests { format!(" <span class=\"small\">{}/{} tests</span>", p.done, p.total) } else { String::new() };
+            let clock = if p.suites_started > 0 { format!(" <span class=\"small {class}\">{} of {}m</span>", dur(el.max(0)), p.cap / 60) } else { String::new() };
+            format!("{}{counted}{clock}{}", progress_bar(p.done as u64, p.total as u64, !p.red.is_empty()), if p.red.is_empty() { String::new() } else { format!(" <span class=\"small red\">{} red</span>", p.red.len()) })
         }
         Some(p) => format!("<span class=small>{} {}</span>", esc(&p.phase), dur((now - p.build_started).max(0))),
-        None if r.total > 0 => format!("{}{}", progress_bar(r.done as u64, r.total as u64, r.red > 0), if r.red > 0 { format!(" <span class=\"small red\">{} red</span>", r.red) } else { String::new() }),
+        None if r.total > 0 => format!("{}{}{}", progress_bar(r.done as u64, r.total as u64, r.red > 0), if r.tests { format!(" <span class=\"small\">{}/{} tests</span>", r.done, r.total) } else { String::new() }, if r.red > 0 { format!(" <span class=\"small red\">{} red</span>", r.red) } else { String::new() }),
         None => format!("<span class=small>{}</span>", esc(&r.phase)),
     };
     let summary = format!("<span class=s>{}</span><span class=id>{}</span>{state}<span class=s>{}</span>", esc(&r.repo), esc(r.batch.rsplit('/').next().unwrap_or(&r.batch)), esc(&r.age));
@@ -478,4 +480,29 @@ pub fn page(p: &Page) -> String {
 
 pub fn fragment(p: &Page) -> String {
     serde_json::json!({ "head": header(p), "main": main_html(p) }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row() -> RepoRound {
+        RepoRound { repo: "r".into(), batch: "r-1".into(), kind: "VM round".into(), phase: "unit-tests".into(), age: "3m".into(), ..Default::default() }
+    }
+
+    fn pass(tests: bool, suites_started: i64) -> lcview::PassProgress {
+        lcview::PassProgress { round: "r-1".into(), pass: 1, phase: "unit-tests".into(), done: 3120, total: 11240, tests, build_started: 100, suites_started, cap: 900, updated_at: 990, ..Default::default() }
+    }
+
+    #[test_id(tp8v6cy)]
+    #[test]
+    fn a_tests_pass_row_shows_tests_finished_of_expected_and_no_cap_clock_before_the_suites() {
+        let line = round_line(&row(), Some(&pass(true, 0)), 1000, true);
+        assert!(line.contains("3120/11240 tests"), "{line}");
+        assert!(!line.contains("of 15m"), "{line}");
+        let line = round_line(&row(), Some(&pass(true, 700)), 1000, true);
+        assert!(line.contains("3120/11240 tests") && line.contains("of 15m"), "{line}");
+        let line = round_line(&row(), Some(&pass(false, 0)), 1000, true);
+        assert!(!line.contains("3120/11240"), "without tests the row is as before: {line}");
+    }
 }
