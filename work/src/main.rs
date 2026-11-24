@@ -611,6 +611,14 @@ impl work::image::Ports for ImagePorts {
         let out = self.git(&["diff", "--name-only", "--no-renames", &format!("{base}...{}", self.tip)]).ok()?;
         Some(out.lines().map(String::from).collect())
     }
+    fn texts(&self, base: &str, path: &str) -> (Option<String>, Option<String>) {
+        let show = |rev: &str| self.git(&["show", &format!("{rev}:{path}")]).ok();
+        let from = self.git(&["merge-base", base, &self.tip]).ok().map(|s| s.trim().to_string());
+        (from.and_then(|f| show(&f)), show(&self.tip))
+    }
+    fn say(&self, line: &str) {
+        println!("{line}");
+    }
     fn push(&self, branch: &str) -> Result<(), String> {
         self.forge(&["ami-push", branch, &self.tip]).map(drop)
     }

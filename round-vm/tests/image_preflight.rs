@@ -88,3 +88,27 @@ fn the_verb_reads_a_real_diff_into_a_plan() {
     assert_eq!(rc, Some(2));
     assert!(err.contains("cannot diff no-such-ref...HEAD"), "{err}");
 }
+
+#[test_id(txlo4w0)]
+#[test]
+fn a_comment_only_containerfile_edit_plans_a_skip_and_a_run_edit_plans_the_full_setup() {
+    let tmp = testkit::TempDir::new("preflight-plan-containerfile");
+    let d = tmp.path();
+    let cf = d.join("spira/testenv/Containerfile");
+    std::fs::create_dir_all(cf.parent().unwrap()).unwrap();
+    git(d, &["init", "-q", "-b", "main", "."]);
+    std::fs::write(&cf, "# top\nFROM a\nRUN x\n").unwrap();
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-qm", "base"]);
+    std::fs::write(&cf, "# reworded\nFROM a\nRUN x\n").unwrap();
+    git(d, &["commit", "-qam", "comment"]);
+    std::fs::write(&cf, "# reworded\nFROM a\nRUN y\n").unwrap();
+    git(d, &["commit", "-qam", "run"]);
+    let plan = |base: &str, head: &str| {
+        let o = std::process::Command::new(testkit::bin_exe("round-vm")).args(["preflight-plan", "--tree"]).arg(d).args(["--base", base, "--head", head]).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let out = plan("HEAD~2", "HEAD~1");
+    assert!(out.contains("plan=skip\n") && out.contains("touched=\n"), "{out}");
+    assert!(plan("HEAD~2", "HEAD").contains("plan=full\n"));
+}

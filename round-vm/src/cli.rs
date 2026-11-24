@@ -422,7 +422,14 @@ fn preflight_plan_verb(args: &[String]) -> i32 {
         return 2;
     };
     let diff: String = diff.lines().filter(|l| !l.starts_with("--- ") && !l.starts_with("+++ ")).map(|l| format!("{l}\n")).collect();
-    let touched: Vec<&str> = names.lines().collect();
+    // batch-job: one merge-base lookup in the gate's own tree
+    let from = std::process::Command::new("git").args(["-C", tree, "merge-base", base, head]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let show = |rev: &str, path: &str| -> Option<String> {
+        // batch-job: reads one recipe input at a rev of the gate's own tree
+        let out = std::process::Command::new("git").args(["-C", tree, "show", &format!("{rev}:{path}")]).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let touched = spira_config::recipe::drop_same_image(names.lines().collect::<Vec<&str>>(), |p| (from.as_deref().and_then(|f| show(f, p)), show(head, p)));
     let head_setup = std::fs::read_to_string(std::path::Path::new(tree).join("round-vm/ami-setup.sh")).unwrap_or_default();
     let hit: Vec<&str> = touched.iter().copied().filter(|p| tree_paths().contains(p)).collect();
     let (plan, apt_line) = match preflight_plan(&touched, &diff, &head_setup) {
