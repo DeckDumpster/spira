@@ -8807,7 +8807,7 @@ fn a_green_pass_whose_deny_listed_suites_report_a_non_blocking_word_lands_green(
             t.err()
         );
         let batch = batch_of(&t);
-        green_by_round_vm_next_pass(&t, &[("test-a.sh", "ok"), ("test-conf-watch.sh", word)]);
+        green_by_round_vm_next_pass(&t, &[("test-a.sh", "ok"), ("test-b.sh", word)]);
         assert_eq!(
             t.run(&["round", "certify", &batch]),
             0,

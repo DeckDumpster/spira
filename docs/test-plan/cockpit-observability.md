@@ -152,7 +152,7 @@
 > killed pass open long enough to land the signal. T3 non-hermetic 11 s → T2 hermetic 6 s.
 > Row 02: already correct — the tiered-collector duplicate it names left with cluster 7, and
 > `SP_COLLECTOR_REV` is `collect.sh`'s own key, not cockpit.sh's, so it stays tested where it
-> is stamped. Cluster 9: already merged into `test-conf-watch.sh` by sp-s088v.8, before this
+> is stamped. Cluster 9: already merged into the retired conf-watch suite by sp-s088v.8, before this
 > branch forked — no `test-cockpit-conf-change.sh`/`test-loom-conf-change.sh` remain.
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `cockpit-observability`; use-case ids are `UC-cockpit-observability-NN`.
@@ -323,12 +323,12 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 38 | (test-statusline.sh retired with its subject) | - | DELETED |
 | 39 | the retired tokens suite (8); test-model-switch-report.sh (6); test-released-defects.sh (5) | T1/T1/T3: 16 + 1 + 8 | KEEP tokens and report. Investigate the 16 s for 4 runs of tokens.sh (header says under 1 s; possibly scanning a real transcript dir, a hermeticity leak). released-defects: **DEMOTE-TO-T2**, with a bd graph JSON fixture and real git. |
 | 40 | test-resolve-output.sh (7) | T1, 1 | KEEP. Fix: a missing subject exits 0 ("SKIP"); make it 77 or a failure. |
-| 41 | test-cockpit-layout-identity.sh (5); test-cockpit-rebuild.sh::health tag/one session pane | T2 tmux, 3 | KEEP one tmux case in the shared-server suite. **DEMOTE the predicate to T1** over argv strings. |
-| 42 | test-cockpit-layout-mail.sh (5 groups); test-cockpit-rebuild.sh::mail build | T2 tmux: 5 + part of 18 | **MERGE** layout-mail INTO a shared-tmux-server suite with rebuild. Drop rebuild's mail build case, which duplicates it. |
+| 41 | test-cockpit-layout-identity.sh (5); the retired rebuild suite::health tag/one session pane | T2 tmux, 3 | KEEP one tmux case in the shared-server suite. **DEMOTE the predicate to T1** over argv strings. |
+| 42 | the retired layout-mail suite (5 groups); the retired rebuild suite::mail build | T2 tmux: 5 + part of 18 | **MERGE** layout-mail INTO a shared-tmux-server suite with rebuild. Drop rebuild's mail build case, which duplicates it. |
 | 43 | test-cockpit-layout.sh (ghost detach); test-cockpit-layout-ensure-focus.sh (1 assertion, **vacuous**: `#{pane_active}` of the window's active pane is always 1) | T3 PTY 8; T2 4 | KEEP ghost detach (one PTY case). Unit-test the idle selector over `list-clients` output. **Rewrite ensure-focus** to compare the active `#{pane_id}`; as written it cannot fail. |
 | 44 | test-cockpit-layout-conf.sh (4 groups); test-cockpit-mouse.sh (6, all source grep) | T2 tmux 4; T0 7 | **DEMOTE-TO-T1**: factor `build_health_cmd`, and call `apply_mouse_mode` with a PATH-shimmed tmux recording argv. test-cockpit-mouse.sh: **SOURCE-GREP to a behaviour test** (the `off\|no\|0)` regex matches any case arm). |
 | 45 | test-layout-guard.sh (5); test-cockpit-collector-watchdog.sh (4) | T2 6; T1 4 | KEEP both. Fix guard: its installed-copy `ensure` talks to the **ambient tmux server** with no pinned socket, so pin `-L`. Fix watchdog: source the function instead of extracting it with awk, and a missing function gives SKIP with exit 0. |
-| 46 | test-cockpit-rebuild.sh (8 groups) | T3 tmux, 18 | KEEP as the single tmux end-to-end. Fix the case that accepts `absent` as a pass for the long socket. Move remote.sh's source grep of rebuild.sh `COCKPIT_SESSIONS` here as a behaviour case. |
+| 46 | the retired rebuild suite (8 groups) | T3 tmux, 18 | KEEP as the single tmux end-to-end. Fix the case that accepts `absent` as a pass for the long socket. Move remote.sh's source grep of rebuild.sh `COCKPIT_SESSIONS` here as a behaviour case. |
 | 47 | the retired tmux-env suite (8) | T2 tmux, 12 | KEEP. Run it on the shared server and shorten the 10×0.3 s poll. |
 | 48 | the retired cockpit-remote suite (10); test-cockpit-watcher-owner.sh (8) | T2: 1 + 3 | KEEP both. Remote: assert the dialer's rc, which is computed and never checked. The exec-bit and inventory greps move to T0. |
 
@@ -365,7 +365,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
     - **Keep:** one sweep over views × modes × content.
 12. **Drain banner duplicated across areas.** test-drain-banner.sh (2 s) and test-world-drain.sh (58 s, instance-lifecycle area) cover it case for case.
     - **Keep:** test-drain-banner.sh. The saving is booked in the instance-lifecycle area.
-13. **Pane-tagging and mail-pane checks across three tmux servers.** test-cockpit-rebuild.sh, test-cockpit-layout-identity.sh and test-cockpit-layout-mail.sh each start a server.
+13. **Pane-tagging and mail-pane checks across three tmux servers.** the retired rebuild and layout-mail suites and test-cockpit-layout-identity.sh each started a server.
     - **Keep:** one shared-server fixture suite, with rebuild as the only end-to-end run.
 
 ## 5. Unit-extractable logic
@@ -469,7 +469,7 @@ sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-ref
 
 - 480 − (17 + 29 + 43 + 24 + 17 + 28 + 11 + 16 + 10 + 8 + 9 + 24 + 36 + 20) = 480 − 292 = **188 s**, a 61% cut.
 - About 150 s of the 188 moves to T1 (certification-eligible, under 1 s per case).
-- About 38 s stays T2/T3: test-cockpit-rebuild.sh, the ghost PTY case, tmux-env, the cockpit-bd-contract suite, and the real-bd loom row. These run in batch/main CI.
+- About 38 s stays T2/T3: the retired rebuild suite, the ghost PTY case, tmux-env, the cockpit-bd-contract suite, and the real-bd loom row. These run in batch/main CI.
 - **Cross-area bonus:** retiring test-world-drain.sh (58 s) in favour of test-drain-banner.sh.
 
 **Tier placement:**
@@ -477,7 +477,7 @@ sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-ref
 - **T0 (cert):** the probe-registry lint, the timeout(1)-wraps-function lint, the event taxonomy, the no-SKIP-exit-0 lint, the `env -i`/pinned-socket fence, and the Loom page-shape greps.
 - **T1 (cert):** everything else marked T1 above, including the cargo job.
 - **T2 (batch CI):** tmp, landing, unsent, fuse/gate /proc, released-defects, the tmux shared-server suite, watcher-owner, and the bd-contract suite.
-- **T3 (main CI):** test-cockpit-rebuild.sh as the one tmux end-to-end.
+- **T3 (main CI):** the retired rebuild suite as the one tmux end-to-end.
 - **T4:** none. `ready.sh` already runs inside acceptance-run.
 
 ---

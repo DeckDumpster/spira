@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn a_registry_of_only_a_suite_row_checks_one_registry_with_no_findings() {
         let t = TempDir::new("tidorphan-suite");
-        t.write("deny", "disabled\tsuite:test-conf-watch.sh\tsp-x22nuk\t-\n");
+        t.write("deny", "disabled\tsuite:test-example.sh\tsp-x22nuk\t-\n");
         let r = rule("");
         assert!(r.check(&tree(&t, "fn a() {}\n", None)).unwrap().is_empty());
         let (n, unit) = r.checked().unwrap();
