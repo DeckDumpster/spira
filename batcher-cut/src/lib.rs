@@ -75,6 +75,13 @@ fn default_round_vm() -> Result<PathBuf, String> {
     spira_config::release_env::tool("round-vm").map(PathBuf::from)
 }
 
+fn manifest_field(field: &str) -> Result<String, String> {
+    let root = spira_config::release_env::release_root_for_process()?;
+    spira_config::resolve::read_manifest_field(&root, field)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{}/MANIFEST has no `{field}`", root.display()))
+}
+
 /// Every field sourced from a registered `spira/conf.d` key is read exactly once here, through
 /// `spira_config::process::cfg`/`cfg_parse` — THE ONE DOOR (per Ryan 2026-10-05: one source of
 /// config) — and handed down as a plain field from here on; nothing downstream re-reads the
@@ -84,13 +91,6 @@ fn default_round_vm() -> Result<PathBuf, String> {
 /// `SPIRA_BATCHER_LAND_UNPAUSE` (a pause-file path; unset = off) are NOT registered keys (`ls
 /// spira/conf.d/` does not name them) — they stay bare `env::var` reads with their existing
 /// defaults.
-fn manifest_field(field: &str) -> Result<String, String> {
-    let root = spira_config::release_env::release_root_for_process()?;
-    spira_config::resolve::read_manifest_field(&root, field)
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| format!("{}/MANIFEST has no `{field}`", root.display()))
-}
-
 pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> Result<Env, String> {
     let var = |k: &str| std::env::var(k).ok();
     Ok(Env {

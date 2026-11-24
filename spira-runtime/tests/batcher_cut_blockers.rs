@@ -108,7 +108,7 @@ fn with_repo(mut r: Value, repo: &str) -> Value {
 
 /// A repo whose `gate.steps` owns `owned/`: landed changes to it (one inside the release at
 /// `commit`, one after it) and pool branches that do and do not touch it.
-fn gamma_repo(dir: &Path) -> (String, std::collections::BTreeMap<String, String>, (String, String)) {
+fn gamma_repo(dir: &Path) -> (String, std::collections::BTreeMap<String, String>, (String, String, String)) {
     std::fs::create_dir(dir).unwrap();
     let commit = |msg: &str| git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", msg]);
     let touch = |path: &str| {
@@ -132,8 +132,11 @@ fn gamma_repo(dir: &Path) -> (String, std::collections::BTreeMap<String, String>
     let inside = land("l-in", "owned/in");
     let release = git(dir, &["rev-parse", "HEAD"]);
     let outside = land("l-out", "owned/out");
+    touch("owned/ff");
+    commit("l-ff");
+    let fast_forwarded = git(dir, &["rev-parse", "HEAD"]);
     let mut tips = std::collections::BTreeMap::new();
-    for (id, path) in [("b-own", Some("owned/b")), ("b-free", Some("free/b")), ("a-own", None), ("a-free", None), ("a-lo", None), ("a-li", None)] {
+    for (id, path) in [("b-own", Some("owned/b")), ("b-free", Some("free/b")), ("a-own", None), ("a-free", None), ("a-lo", None), ("a-li", None), ("a-ff", None)] {
         git(dir, &["checkout", "-q", "-b", &format!("spira/{id}"), "main"]);
         if let Some(path) = path {
             touch(path);
@@ -142,7 +145,7 @@ fn gamma_repo(dir: &Path) -> (String, std::collections::BTreeMap<String, String>
         tips.insert(id.to_string(), git(dir, &["rev-parse", "HEAD"]));
     }
     git(dir, &["checkout", "-q", "main"]);
-    (release, tips, (outside, inside))
+    (release, tips, (outside, inside, fast_forwarded))
 }
 
 fn item(id: &str, issue_type: &str, status: &str, blocker: Option<&str>) -> Value {
@@ -166,11 +169,11 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     let other = Value::Object(other.as_object().unwrap().iter().map(|(k, v)| (k.clone(), if k == "repo" { json!("beta") } else { v.clone() })).collect());
     let gamma = dir.path().join("gamma");
     let (gamma_commit, gamma_tips, landed) = gamma_repo(&gamma);
-    let mut gamma_rows: Vec<Value> = ["b-own", "a-own", "b-free", "a-free", "a-lo", "a-li"]
+    let mut gamma_rows: Vec<Value> = ["b-own", "a-own", "b-free", "a-free", "a-lo", "a-li", "a-ff"]
         .iter()
         .map(|id| with_repo(row(id, "CERTIFIED", &gamma_tips[*id], "{}"), "gamma"))
         .collect();
-    for (id, sha) in [("l-out", &landed.0), ("l-in", &landed.1)] {
+    for (id, sha) in [("l-out", &landed.0), ("l-in", &landed.1), ("l-ff", &landed.2)] {
         let mut r = with_repo(row(id, "LANDED", "t0", "{}"), "gamma");
         r["reason"] = json!(sha);
         gamma_rows.push(r);
@@ -182,6 +185,7 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
         item("a-free", "task", "open", Some("b-free")),
         item("a-lo", "task", "open", Some("l-out")),
         item("a-li", "task", "open", Some("l-in")),
+        item("a-ff", "task", "open", Some("l-ff")),
     ];
     let mut store = Store {
         rows: vec![
@@ -245,7 +249,7 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
         ["a-free", "a-li", "b-free", "b-own"],
         "a blocker touching no owned path rides with its dependant, a change the release carries is in force; the rest wait: {left:?}"
     );
-    for (id, dep) in [("a-own", "b-own"), ("a-lo", "l-out")] {
+    for (id, dep) in [("a-own", "b-own"), ("a-lo", "l-out"), ("a-ff", "l-ff")] {
         assert!(left.iter().any(|l| l.id == id && l.cause == io::Cause::NotInForce { dep: dep.into() }), "{id}: {left:?}");
     }
     assert_eq!(left.iter().find(|l| l.id == "a-own").unwrap().tag(), "blocked-not-in-force");

@@ -1038,9 +1038,10 @@ fn left_out_not_in_force(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
-    let landed: BTreeMap<String, String> = lc_rows_of(env, &deps)
-        .unwrap_or_default()
+    let rows = lc_rows_of(env, &deps);
+    let landed: BTreeMap<String, String> = rows
         .iter()
+        .flatten()
         .filter(|r| r.get("state").and_then(|s| s.as_str()) == Some("LANDED"))
         .filter_map(|r| Some((r.get("bead_id")?.as_str()?.to_string(), r.get("reason")?.as_str()?.to_string())))
         .collect();
@@ -1050,7 +1051,7 @@ fn left_out_not_in_force(
         let (tip, in_pool) = match (pooled.get(dep), landed.get(dep)) {
             (Some(t), _) => (t.clone(), true),
             (None, Some(t)) => (t.clone(), false),
-            _ => return None,
+            (None, None) => return rows.as_ref().err().map(|e| Err(format!("its blocker's state could not be read: {e}"))),
         };
         if let Some(v) = verdict.get(dep) {
             return Some(v.clone());
