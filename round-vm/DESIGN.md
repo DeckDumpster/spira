@@ -223,11 +223,11 @@ nothing. Otherwise it builds a template as above, then — in this order — wri
 ready VM and any provision in flight were cloned from the old template; leased VMs finish).
 `round-vm run` reads `template.json` before acquiring a VM and exits 3 `TEMPLATE-STALE` when
 the recorded image is not the tree's; a record for a template `pve.env` no longer names is
-ignored. A tree whose image the template does not hold is not refused: `run` declares the
-build (the recorded template names another tag, or with no record the `--base` ref's tag
-differs from the head's), passes it to the VM as the tenth script argument, and the VM runs
-`testenv container image` inside setup (`IMAGE-BUILD`, counted in `setup Ns`, not the suites).
-An undeclared absent image is still refused by the VM-side `IMAGE-ABSENT` check. Every run reports
+ignored. A tree whose image the template does not hold is never built for: `run` offers the host only
+when the operator's own store holds the tag (a pin refuses, naming it), otherwise the pass goes
+to the pool as an image-missing placement (a round AMI). The VM's `IMAGE-ABSENT` check refuses
+any image its store lacks. `round-vm image-check --tree DIR --rev SHA` prints `present` or
+`absent <tag>` for the host's store. Every run reports
 `setup Ns, suites Ns` and `SETUP-SLOW` past `SPIRA_ROUND_VM_SETUP_ALARM_SECS` (default 180: a
 healthy warm round measured 108 s of setup, a cold image build 1314 s).
 
