@@ -19,10 +19,6 @@ fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pat).expect("static regex"))
 }
 
-fn is_suite(path: &str) -> bool {
-    path.strip_prefix("spira/").is_some_and(|b| b.starts_with("test-") && b.ends_with(".sh") && !b.contains('/'))
-}
-
 fn is_perf_path(path: &str) -> bool {
     path.split('/').any(|c| c == "perf-checks")
 }
@@ -37,18 +33,12 @@ impl Rule for WallClockBudget {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        (is_suite(&e.path) || (e.path.ends_with(".rs") && !e.path.starts_with("target/"))) && !is_perf_path(&e.path)
+        (e.path.ends_with(".rs") && !e.path.starts_with("target/")) && !is_perf_path(&e.path)
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
-        static TIME: OnceLock<Regex> = OnceLock::new();
-        static BOUND: OnceLock<Regex> = OnceLock::new();
-        static TOOK: OnceLock<Regex> = OnceLock::new();
         static RS: OnceLock<Regex> = OnceLock::new();
         let files = crate::scope(tree, self)?;
-        let time = re(&TIME, r"(?i)elapsed|took|duration|latency|\bSECONDS\b|date \+%s|_ms\b|\bms\b|_secs?\b|\bsecs\b");
-        let bound = re(&BOUND, r"-(?:lt|le)\s+\$?\{?[0-9]+|\(\([^)]*<=?\s*[0-9]+");
-        let took = re(&TOOK, r"(?i)took[^\n]*\bms\b[^\n]*\(\s*(?:<|<=|≤|under|within)");
         let rs = re(&RS, r"(?:elapsed\w*|took\w*|latency\w*|\w+_ms|\w+_secs?|as_(?:millis|micros|secs|secs_f64|secs_f32))\b[^;{]*?<=?\s*(?:[0-9]|(?:[a-z_]+::)*Duration::|[A-Z][A-Z0-9_]{2,}\b)");
 
         let allow: Vec<(usize, String)> = tree
@@ -69,16 +59,7 @@ impl Rule for WallClockBudget {
         let mut hits: Vec<(String, usize, &'static str)> = Vec::new();
         for e in &files {
             let Some(src) = tree.content(e) else { continue };
-            if is_suite(&e.path) {
-                for (i, raw) in crate::lines(src).iter().enumerate() {
-                    if raw.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'#') {
-                        continue;
-                    }
-                    if took.is_match(raw) || (time.is_match(raw) && bound.is_match(raw)) {
-                        hits.push((e.path.clone(), i + 1, "shell test compares a measured duration against a constant"));
-                    }
-                }
-            } else if let Some((_, s)) = shapes.iter().find(|(x, _)| x.path == e.path) {
+            if let Some((_, s)) = shapes.iter().find(|(x, _)| x.path == e.path) {
                 let cl = rust::classify(src);
                 let code = cl.code_only();
                 let file_is_test = whole.contains(&e.path);

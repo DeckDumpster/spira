@@ -320,7 +320,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     let sel = step(g, "Select suites", false);
     j.located(GATE, "the Select suites step", &sel);
     j.want(GATE, "select matches queue and publish PRs", "spira/(queue|publish)/", &sel);
-    j.want(GATE, "queue and publish selection enumerates the corpus", "ls spira/test-*.sh", &sel);
+    j.want(GATE, "queue and publish selection enumerates the corpus", "find spira -maxdepth 1 -name 'test-*.sh'", &sel);
     j.want(GATE, "PR selection uses the selector's gate pipeline", "suite-select gate", &sel);
     j.want(GATE, "select has a dedicated push branch", "\"push\"", &sel);
     let push_branch = between(&sel, |l| l.contains("= \"push\""), |l| l == "          else");
@@ -362,7 +362,8 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
         ("cut accepts queue and publish PR heads (sp-3e2wt)", "spira/queue/*|spira/publish/*)"),
         ("cut refuses any other head", "is not the head of a queue batch PR"),
         ("cut counts only a successful gate check", "select(.name == \"gate\" and .conclusion == \"success\")"),
-        ("cut compares the result count against the corpus", "_want=\"$(ls spira/test-*.sh | wc -l)\""),
+        ("cut compares the result count against the corpus", "_want=\"$(find spira -maxdepth 1 -name 'test-*.sh' | wc -l)\""),
+        ("a tree with no suite asserts only the green gate check", "the green gate check is the whole assertion"),
         ("a run short of the corpus refuses", "-ge \"${_want:-1}\""),
     ] {
         j.want(GATE, d, n, &assert);

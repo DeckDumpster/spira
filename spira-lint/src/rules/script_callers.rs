@@ -8,16 +8,14 @@
 //! had read a Rust source for the name of a script.
 
 use crate::SyncCell as Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
 use crate::lex::rust::{self, Class};
-use crate::lex::shell::{self, Command, Word};
-use crate::rules::payload_argv;
 use crate::rust_test::{shape, whole_test_files, Shape};
-use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
+use crate::{Entry, Finding, LintError, Rule, Tree};
 
 pub struct ScriptCallers {
     checked: Cell<Option<usize>>,
@@ -36,24 +34,8 @@ const NAME: &str = "script-callers";
 /// finding, so the list stays exact.
 const ALLOW_FILE: &str = "spira-lint/script-callers-allow";
 
-/// Interpreter/loader words after which the NEXT word is the thing actually run.
-const INTERP: &[&str] = &["bash", "sh", "python3", "python", "source", "."];
-/// Commands (by basename) whose last-ish argument is a file they write — the "the suite
-/// made this script itself" exemption.
-const CREATORS: &[&str] = &["cp", "install", "ln", "tee", "write_exe"];
-/// Pure pass-through placeholders `env -i … "${@}" "$REAL" args` leaves in front of the
-/// real command; skipped before reading argv[0].
-const PASSTHROUGH: &[&str] = &["$@", "${@}", "$*", "${*}"];
-
 fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pat).expect("static regex"))
-}
-
-/// `$SH/x.sh`, `${HERE}/sub/x.py`, `$SPIRA_HOME/x.sh` — anywhere in a word's raw text.
-/// Capture 1 is the suffix after the variable and its slash.
-fn sh_path_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    re(&RE, r"\$\{?(?:SH|HERE|SPIRA_HOME)\}?/([A-Za-z0-9_./-]+\.(?:sh|py))")
 }
 
 /// `@SOME_VAR@/x.sh` — the unit-template and watchers-manifest placeholder form.
@@ -115,144 +97,11 @@ fn normalize_path(path: &str) -> String {
     stack.join("/")
 }
 
-/// The basename (no directory) of a word's unquoted text.
-fn basename_of(w: &Word) -> String {
-    let u = w.unquoted();
-    u.rsplit('/').next().unwrap_or(&u).to_string()
-}
-
-/// `spira/test-*.sh` directly in `spira/`.
-fn is_suite(path: &str) -> bool {
-    direct_child(path, "spira").is_some_and(|b| b.starts_with("test-") && b.ends_with(".sh"))
-}
-
 fn is_unit(path: &str) -> bool {
     path.starts_with("systemd/") && (path.ends_with(".service") || path.ends_with(".timer"))
 }
 
 const WATCHERS: &str = "spira/watchers";
-
-// ───────────────────────────── suites: shell callers ─────────────────────────────
-
-/// `NAME=value` assignments in `cmds` whose value is a bare (no `/`) literal `*.sh`/`*.py`
-/// name — the suite's own `X=foo.sh` idiom, read so a later bare `"$X"` resolves to `foo.sh`.
-fn script_assignments(cmds: &[Command]) -> BTreeMap<String, String> {
-    static BARE: OnceLock<Regex> = OnceLock::new();
-    let bare = re(&BARE, r"^[A-Za-z0-9_.-]+\.(?:sh|py)$");
-    let mut m = BTreeMap::new();
-    for cmd in cmds {
-        let (env, _) = cmd.split_env();
-        for w in env {
-            let Some(name) = w.assignment_name() else { continue };
-            if !w.vars.is_empty() {
-                continue; // the value itself expands something — not a literal
-            }
-            let Some(eq) = w.raw.find('=') else { continue };
-            let value = w.raw[eq + 1..].trim_matches(['"', '\'']);
-            if bare.is_match(value) {
-                m.insert(name.to_string(), value.to_string());
-            }
-        }
-    }
-    m
-}
-
-/// Resolve one word to the script path it names, if it names one at all: a direct
-/// `$SH/$HERE/$SPIRA_HOME` path, or a bare variable this file assigned a bare script name.
-fn resolve_word(w: &Word, assigns: &BTreeMap<String, String>) -> Option<String> {
-    if let Some(c) = sh_path_re().captures(&w.raw) {
-        return Some(normalize_path(&format!("spira/{}", &c[1])));
-    }
-    if w.vars.len() == 1 {
-        let name = &w.vars[0];
-        let u = w.unquoted();
-        if u == format!("${name}") || u == format!("${{{name}}}") {
-            if let Some(script) = assigns.get(name) {
-                return Some(normalize_path(&format!("spira/{script}")));
-            }
-        }
-    }
-    None
-}
-
-/// The resolved basename a word names, by the same rules as [`resolve_word`] but falling
-/// back to the word's own literal basename — for recognising the suite's own creation of
-/// the very file it goes on to invoke.
-fn named_basename(w: &Word, assigns: &BTreeMap<String, String>) -> String {
-    if let Some(p) = resolve_word(w, assigns) {
-        return p.rsplit('/').next().unwrap_or(&p).to_string();
-    }
-    basename_of(w)
-}
-
-/// The word(s) one command actually invokes: argv[0] after unwrapping `env`/`command`/
-/// `exec`/`nohup` and any leading pass-through placeholder, plus argv[1] when argv[0] is an
-/// interpreter/loader (`bash`, `source`, `.`, …) — the word interpreted, not the word run.
-fn command_targets(cmd: &Command) -> Vec<&Word> {
-    let (_, argv) = payload_argv::resolve(cmd);
-    let mut argv: &[&Word] = &argv;
-    while argv.first().is_some_and(|w| PASSTHROUGH.contains(&w.unquoted().as_str())) {
-        argv = &argv[1..];
-    }
-    let Some(head) = argv.first() else { return Vec::new() };
-    let mut out = vec![*head];
-    if INTERP.contains(&basename_of(head).as_str()) {
-        if let Some(next) = argv.get(1) {
-            out.push(*next);
-        }
-    }
-    out
-}
-
-/// Does this file create `basename` itself before (or after — order is not load-bearing;
-/// a suite that writes it unconditionally earlier still counts) invoking it? `cat …>`,
-/// `printf …>`, any redirect, `cp`/`install`/`ln`/`tee`'s destination, or a call to a
-/// `write_exe` helper — the shapes the deliver-brief names.
-fn creates(cmds: &[Command], basename: &str, assigns: &BTreeMap<String, String>) -> bool {
-    let names_it = |w: &Word| named_basename(w, assigns) == basename;
-    for cmd in cmds {
-        for r in &cmd.redirects {
-            if matches!(r.op.as_str(), ">" | ">>" | ">|" | "<>" | "&>" | "&>>")
-                && r.target.as_ref().is_some_and(names_it) {
-                    return true;
-                }
-        }
-        let (_, argv) = cmd.split_env();
-        let Some(head) = argv.first() else { continue };
-        if CREATORS.contains(&basename_of(head).as_str()) && argv[1..].iter().any(&names_it) {
-            return true;
-        }
-    }
-    false
-}
-
-fn check_suite(tree: &Tree, e: &Entry, content: &[u8]) -> Vec<Finding> {
-    let cmds = shell::parse(content);
-    let assigns = script_assignments(&cmds);
-    let mut out = Vec::new();
-    let mut reported: BTreeSet<(usize, String)> = BTreeSet::new();
-    for cmd in &cmds {
-        for w in command_targets(cmd) {
-            let Some(path) = resolve_word(w, &assigns) else { continue };
-            if tree.entry(&path).is_some() {
-                continue;
-            }
-            let basename = path.rsplit('/').next().unwrap_or(&path);
-            if creates(&cmds, basename, &assigns) {
-                continue;
-            }
-            if reported.insert((w.line, path.clone())) {
-                out.push(Finding {
-                    rule: NAME,
-                    path: e.path.clone(),
-                    line: Some(w.line),
-                    message: format!("invokes {path}, which is not in the tree and is not written by this suite"),
-                });
-            }
-        }
-    }
-    out
-}
 
 // ───────────────────────────── Rust string literals ─────────────────────────────
 
@@ -391,8 +240,7 @@ impl Rule for ScriptCallers {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        is_suite(&e.path)
-            || (e.path.ends_with(".rs") && !e.path.starts_with("target/"))
+        (e.path.ends_with(".rs") && !e.path.starts_with("target/"))
             || is_unit(&e.path)
             || e.path == WATCHERS
     }
@@ -403,12 +251,6 @@ impl Rule for ScriptCallers {
         let allow: Vec<String> = crate::allow_lines(&tree.read_text(ALLOW_FILE));
         let mut raw = Vec::new();
         let mut checked = 0usize;
-
-        for e in files.iter().filter(|e| is_suite(&e.path)) {
-            let Some(c) = tree.content(e) else { continue };
-            checked += 1;
-            raw.extend(check_suite(tree, e, c));
-        }
 
         let rust_files: Vec<&Entry> = files.iter().copied().filter(|e| e.path.ends_with(".rs")).collect();
         let shapes: Vec<(&Entry, Shape)> =
@@ -455,11 +297,7 @@ impl Rule for ScriptCallers {
     fn hint(&self) -> &'static str {
         "A rewrite that deletes or renames a script leaves its callers pointed at nothing — \
 law-a-rename-repoints-no-reader. Repoint every caller this names (grep the old name for \
-any this fence missed) in the SAME branch that deletes or renames the script: a bare shell \
-word ($SH/$HERE/$SPIRA_HOME + path, or a bare variable assigned a bare *.sh/*.py name), a \
-Rust string literal, a systemd unit's @PLACEHOLDER@ target, or a spira/watchers row. A \
-suite that creates the file itself first (cat/printf/tee/cp/install/ln/write_exe writing \
-that exact basename) is exempt. Pre-existing debt goes in spira-lint/script-callers-allow \
+any this fence missed) in the SAME branch that deletes or renames the script: a Rust string literal, a systemd unit's @PLACEHOLDER@ target, or a spira/watchers row. Pre-existing debt goes in spira-lint/script-callers-allow \
 (shrink-only, by file) with the fix named in a comment, not silently — never add an entry \
 for a file this change itself breaks."
     }
@@ -481,80 +319,6 @@ mod tests {
         let tree = Tree::from_paths(t.path(), tracked.iter().copied(), std::iter::empty::<&str>());
         ScriptCallers::default().check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
     }
-
-    // ── suites: the positive control (sp-missing-scan.py's verdict.sh case) ──
-
-    #[test_id(tgq8mdc)]
-    #[test]
-    fn a_suite_calling_a_deleted_script_via_sh_is_caught_then_clears() {
-        let t = TempDir::new("sc-sh");
-        t.write("spira/test-planted.sh", "#!/usr/bin/env bash\nSH=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nbash \"$SH/verdict.sh\" --quiet\n");
-        let got = run(&t, &["spira/test-planted.sh"]).unwrap();
-        assert_eq!(got, vec!["script-callers: spira/test-planted.sh:3: invokes spira/verdict.sh, which is not in the tree and is not written by this suite"]);
-        t.write("spira/verdict.sh", "true\n");
-        assert!(run(&t, &["spira/test-planted.sh", "spira/verdict.sh"]).unwrap().is_empty());
-    }
-
-    #[test_id(tiu44s8)]
-    #[test]
-    fn a_bare_name_variable_assigned_a_deleted_script_is_caught() {
-        // sp-yv4b3's shape, read by a suite: WORLD=world.sh then "$WORLD" start, wrapped in
-        // env -i and a pass-through "${@}", the way test-mail-deliver.sh's real bug reads.
-        let t = TempDir::new("sc-bare");
-        t.write(
-            "spira/test-bare.sh",
-            "#!/usr/bin/env bash\nWORLD=world.sh\nenv -i HOME=/h PATH=\"$PATH\" \"${@}\" \"$WORLD\" start\n",
-        );
-        let got = run(&t, &["spira/test-bare.sh"]).unwrap();
-        assert_eq!(got, vec!["script-callers: spira/test-bare.sh:3: invokes spira/world.sh, which is not in the tree and is not written by this suite"]);
-    }
-
-    #[test_id(tee4fs0)]
-    #[test]
-    fn a_suite_that_writes_the_script_itself_is_exempt() {
-        // a real suite's shape: SH repointed at a sandbox, the suite
-        // prints the fake dwarf.sh into it itself, then runs it.
-        let t = TempDir::new("sc-creates");
-        t.write(
-            "spira/test-sandboxed.sh",
-            "#!/usr/bin/env bash\nSH=\"$TMP/spira\"\nprintf '#!/bin/sh\\nsleep 1\\n' > \"$SH/dwarf.sh\"\nbash \"$SH/dwarf.sh\" &\n",
-        );
-        assert!(run(&t, &["spira/test-sandboxed.sh"]).unwrap().is_empty());
-    }
-
-    #[test_id(tacztg3)]
-    #[test]
-    fn source_and_dot_are_interpreters_too() {
-        let t = TempDir::new("sc-source");
-        t.write("spira/test-src.sh", "#!/usr/bin/env bash\nHERE=\"$(dirname \"$0\")\"\n. \"$HERE/gone.sh\"\n");
-        let got = run(&t, &["spira/test-src.sh"]).unwrap();
-        assert_eq!(got, vec!["script-callers: spira/test-src.sh:3: invokes spira/gone.sh, which is not in the tree and is not written by this suite"]);
-    }
-
-    #[test_id(thxgppe)]
-    #[test]
-    fn an_existing_target_is_clean() {
-        let t = TempDir::new("sc-ok");
-        t.write("spira/test-ok.sh", "#!/usr/bin/env bash\nSPIRA_HOME=/x\nbash \"$SPIRA_HOME/lib.sh\"\n");
-        t.write("spira/lib.sh", "true\n");
-        assert!(run(&t, &["spira/test-ok.sh", "spira/lib.sh"]).unwrap().is_empty());
-    }
-
-    #[test_id(tk66atc)]
-    #[test]
-    fn here_dot_dot_names_a_repo_root_sibling_not_a_literal_dot_dot_path() {
-        // `$HERE/../install.sh` from a suite in spira/ names the repo-root install.sh —
-        // collapsing ".." is what tells those two apart (test-install-*.sh's real shape).
-        let t = TempDir::new("sc-dotdot");
-        t.write("spira/test-install-x.sh", "#!/usr/bin/env bash\nHERE=\"$(dirname \"$0\")\"\n. \"$HERE/../install.sh\"\n");
-        t.write("install.sh", "true\n");
-        assert!(run(&t, &["spira/test-install-x.sh", "install.sh"]).unwrap().is_empty());
-        t.write("spira/test-install-y.sh", "#!/usr/bin/env bash\nHERE=\"$(dirname \"$0\")\"\n. \"$HERE/../systemd/unit-ensure.sh\"\n");
-        let got = run(&t, &["spira/test-install-x.sh", "install.sh", "spira/test-install-y.sh"]).unwrap();
-        assert_eq!(got, vec!["script-callers: spira/test-install-y.sh:3: invokes systemd/unit-ensure.sh, which is not in the tree and is not written by this suite"]);
-    }
-
-    // ── Rust string literals ──
 
     #[test_id(tw9h380)]
     #[test]

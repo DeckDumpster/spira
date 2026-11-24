@@ -566,9 +566,8 @@ jobs:
         # standalone bash scripts to spira-lint rules of the same name (sp-ekkak):
         # inventory, literal-lint, scratch-fence, then (sp-hyc3a, carrying out
         # sp-nhid0's decision to retire the dead gate-spira.sh that used to run
-        # them) bd-stdin-lint, incident-cause-lint, tmux-scope-fence
-        # and wiki-add-fence, plus testdb-mode-lint (already had a live caller, no
-        # re-homing needed, added here for CI parity). gh-intake-lint is retired
+        # them) bd-stdin-lint, incident-cause-lint
+        # and wiki-add-fence. gh-intake-lint is retired
         # (sp-8fsql): its subject, spira/gh-intake.sh, is deleted, and the property
         # it scanned for is now structural in the gh-intake crate (DESIGN.md §2).
         # orphan-test.sh is not yet a
@@ -587,10 +586,8 @@ jobs:
           spira-lint --only inventory
           spira-lint --only literal-lint
           spira-lint --only scratch-fence
-          spira-lint --only testdb-mode-lint
           spira-lint --only bd-stdin-lint
           spira-lint --only incident-cause-lint
-          spira-lint --only tmux-scope-fence
           spira-lint --only wiki-add-fence
           spira-lint --only workflow-config
           bash spira/orphan-test.sh || [ $? -eq 77 ]
@@ -894,6 +891,10 @@ jobs:
             printf 'cut: SHA %s has no green gate check\n' "${{ inputs.sha || github.sha }}" >&2
             exit 1
           }
+          [ -n "$(find spira -maxdepth 1 -name 'test-*.sh' -print -quit)" ] || {
+            printf 'cut: the tree carries no suite; the green gate check is the whole assertion\n'
+            exit 0
+          }
           # WALK THE RUNS, DO NOT TAKE THE NEWEST (sp-5h238). A merged queue PR fires a
           # pull_request 'closed' Gate run that skips every job and concludes success; it is the
           # newest run for this SHA, and reading it refused every cut (run 36306259348). The run
@@ -924,7 +925,7 @@ jobs:
           rm -rf /tmp/batch-assert
           unzip -q /tmp/batch-assert.zip -d /tmp/batch-assert
           _count="$(find /tmp/batch-assert -name '*.result' | wc -l)"
-          _want="$(ls spira/test-*.sh | wc -l)"
+          _want="$(find spira -maxdepth 1 -name 'test-*.sh' | wc -l)"
           [ "${_count:-0}" -ge "${_want:-1}" ] || {
             printf 'cut: run %s has %s .result files, the full corpus is %s — not a full-suite run\n' \
               "$_run_id" "${_count:-0}" "${_want:-1}" >&2

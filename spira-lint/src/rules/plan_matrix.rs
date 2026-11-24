@@ -16,7 +16,7 @@ use test_plan::{
     unknown_uc_violations, SuiteCoverage,
 };
 
-use crate::rules::covers_entries::covers_of;
+use suite_select::header::covers_of;
 use crate::{is_suite, Entry, Finding, LintError, Rule, Tree};
 
 const NAME: &str = "plan-matrix";
@@ -24,8 +24,8 @@ const CATALOGUE_DIR: &str = "docs/test-plan";
 
 #[derive(Default)]
 pub struct PlanMatrix {
-    /// (use cases, suites here, suites at the base) after a clean check.
-    checked: Cell<Option<(usize, usize, usize)>>,
+    /// (use cases, shell suites at the base) after a clean check.
+    checked: Cell<Option<(usize, usize)>>,
 }
 
 /// `suite_tier_of`: the first `# tier:` value before `set -` — the selector crate's parser
@@ -162,30 +162,18 @@ impl Rule for PlanMatrix {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        is_suite(&e.path)
+        e.path.ends_with(".rs")
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         self.checked.set(None);
         let base_rev = tree.base_commit()?;
-        let base = tree.base.as_deref().unwrap_or_default();
         let mut prev = suites_at(tree, &base_rev).map_err(LintError::Refused)?;
-        if prev.is_empty() {
-            return Err(LintError::Refused(format!(
-                "the base {base} has no spira/test-*.sh — nothing to judge a deletion against"
-            )));
-        }
-        let mut cur = Vec::new();
-        for e in crate::scope(tree, self)? {
-            if let Some(c) = tree.content(e) {
-                cur.push(coverage(&e.path, &String::from_utf8_lossy(c)));
-            }
-        }
-        let suites_here = cur.len();
         let suites_base = prev.len();
+        let mut cur = Vec::new();
         prev.extend(rust_covers_at(tree, &base_rev).map_err(LintError::Refused)?);
         let mut rust_here = Vec::new();
-        for e in tree.entries.iter().filter(|e| e.path.ends_with(".rs")) {
+        for e in crate::scope(tree, self)? {
             let Some(c) = tree.content(e) else { continue };
             if let Some(sc) = rust_coverage(&e.path, &String::from_utf8_lossy(c)) {
                 rust_here.push(sc);
@@ -257,18 +245,13 @@ impl Rule for PlanMatrix {
         }
         if out.is_empty() {
             self.checked
-                .set(Some((use_cases, suites_here, suites_base)));
+                .set(Some((use_cases, suites_base)));
         }
         Ok(out)
     }
 
     fn checked(&self) -> Option<(usize, String)> {
-        self.checked.get().map(|(n, here, base)| {
-            (
-                n,
-                format!("use-cases ({here} suites here, {base} at the base)"),
-            )
-        })
+        self.checked.get().map(|(n, base)| (n, format!("use-cases ({base} shell suites at the base)")))
     }
 
     fn hint(&self) -> &'static str {
