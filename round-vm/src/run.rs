@@ -3722,13 +3722,13 @@ mod tests {
             .env_clear()
             .env("HOME", &home)
             .env("CARGO_HOME", d.path().join("ch"))
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .current_dir(d.path())
             .output()
             .unwrap();
         let got = String::from_utf8_lossy(&out.stdout);
-        let nproc = String::from_utf8(std::process::Command::new("nproc").output().unwrap().stdout).unwrap();
-        assert_eq!(got.trim(), format!("{},{}", spira_config::admission::RUN_TEST_THREADS, nproc.trim()), "{}", String::from_utf8_lossy(&out.stderr));
+        let cores = std::thread::available_parallelism().unwrap().get();
+        assert_eq!(got.trim(), format!("{},{cores}", spira_config::admission::RUN_TEST_THREADS), "{}", String::from_utf8_lossy(&out.stderr));
     }
 
     #[test_id(tsg0ya2)]
