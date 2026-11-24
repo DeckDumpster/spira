@@ -677,6 +677,9 @@ pub struct RepoCarry {
     /// An eject the queue held because a pass of the round was running; issued again once none is.
     #[serde(default)]
     pub eject_held: Option<EjectHold>,
+    /// The gate-red eject asked for and not yet answered; nothing else drives the round meanwhile.
+    #[serde(default)]
+    pub eject_gate_red: Option<Leg>,
     /// Certify passes of this round whose VM answered ssh and never started the round.
     #[serde(default)]
     pub no_output_vms: u32,
@@ -1594,6 +1597,12 @@ impl Machine<'_> {
             self.release_eject(policy, repo);
             return;
         }
+        if let Some(leg) = self.rc.eject_gate_red.clone() {
+            if self.unsent(repo, EJECT_GATE_RED) {
+                self.acts.push(leg.act(EJECT_GATE_RED));
+            }
+            return;
+        }
         let passing = matches!(self.rc.state, State::Corpus | State::Attributing | State::Certifying) && !self.rc.certify_held;
         self.record_gate_reds(repo);
         if passing && self.pass_ended_without_verdict(repo) {
@@ -1641,7 +1650,9 @@ impl Machine<'_> {
         let marks: Vec<String> = red.iter().map(|(.., mark)| mark.clone()).collect();
         let why = red.iter().map(|(id, tip, mark)| format!("{id}: its own gate went red at {tip} ({mark})")).collect::<Vec<_>>().join("; ");
         let key = format!("{}:{batch}:eject-gate-red:{}:{}", self.repo, ids.join(","), self.rc.head);
-        self.acts.push(Leg { bead: ids.join(","), why, reds: marks, key, ..self.leg() }.act(EJECT_GATE_RED));
+        let leg = Leg { bead: ids.join(","), why, reds: marks, key, ..self.leg() };
+        self.acts.push(leg.act(EJECT_GATE_RED));
+        self.rc.eject_gate_red = Some(leg);
         self.rc.leg = None;
         self.rc.gate_red.clear();
         true
@@ -2419,6 +2430,7 @@ impl Machine<'_> {
                 self.red_naming(&format!("eject of {} refused: {}{evidence}", leg.bead, body.trim()), leg.reds.clone());
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if ok => {
+                self.rc.eject_gate_red = None;
                 self.rc.members.retain(|(id, _)| !leg.bead.split(',').any(|b| b == id));
                 if self.rc.members.is_empty() {
                     self.go(Trigger::RerunBlocked);
@@ -2430,6 +2442,7 @@ impl Machine<'_> {
                 self.certify();
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) if !ok && self.rc.eject_held.as_ref().is_none_or(|h| !h.issued) && batcher_cut::io::HeldEject::parse(body).is_some() => {
+                self.rc.eject_gate_red = None;
                 let held = batcher_cut::io::HeldEject::parse(body).unwrap_or_default();
                 let gone: Vec<&str> = leg.bead.split(',').take_while(|b| *b != held.id).collect();
                 self.rc.members.retain(|(id, _)| !gone.contains(&id.as_str()));
@@ -2437,6 +2450,7 @@ impl Machine<'_> {
                 self.hold_eject(held);
             }
             (State::Corpus | State::Attributing | State::Certifying, EJECT_GATE_RED) => {
+                self.rc.eject_gate_red = None;
                 let why = format!("{} went red on its own gate ({}) and its eject was refused ({})", leg.bead, leg.reds.join(" "), body.trim());
                 self.go(Trigger::LegLost);
                 self.abandon_naming(&why, vec![]);

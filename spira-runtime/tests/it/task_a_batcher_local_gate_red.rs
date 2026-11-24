@@ -194,3 +194,59 @@ fn a_gate_red_eject_held_after_an_earlier_member_left_drops_only_that_member() {
     assert!(rc.members.iter().all(|(id, _)| id != "sp-a"), "{rc:?}");
     assert_eq!(rc.eject_held.as_ref().map(|h| h.eject.id.as_str()), Some("sp-b"));
 }
+
+/// The round as the queue shows it a minute after a red pass: red, driven by nobody, the eject not yet answered.
+fn red_round_snapshot(in_flight: Vec<String>) -> Snapshot {
+    let mut snap = snapshot_marked(vec![], RED);
+    let repo = snap.repos.get_mut("spira").unwrap();
+    let round = repo.open_round.as_mut().unwrap();
+    round.red = true;
+    round.driven = false;
+    round.phase = "red".into();
+    repo.live_legs = Some(vec![]);
+    repo.in_flight = Some(in_flight);
+    snap.now_ms = NOW + 60_000;
+    snap
+}
+
+fn eject_in_flight() -> (Carry, Leg) {
+    let (carry, acts) = ended(&recorded(State::Certifying, "t1", RED), 1, "verdict=red\n");
+    (carry, legs_of(&acts, EJECT_GATE_RED).remove(0))
+}
+
+#[test_id(t1w6ljq)]
+#[test]
+fn an_eject_in_flight_is_not_overtaken_by_an_attribution_or_an_abandon_of_the_red_round() {
+    let (carry, _) = eject_in_flight();
+    let (next, acts) = decide(&carry, &red_round_snapshot(vec![EJECT_GATE_RED.into()]));
+    assert!(acts.is_empty(), "{acts:?}");
+    assert!(next.repos["spira"].eject_gate_red.is_some());
+}
+
+#[test_id(t2k9xfa)]
+#[test]
+fn an_eject_that_succeeds_after_a_long_wait_certifies_the_survivors() {
+    let (carry, leg) = eject_in_flight();
+    let (waited, _) = decide(&carry, &red_round_snapshot(vec![EJECT_GATE_RED.into()]));
+    let (next, acts) = on_outcome(&waited, EJECT_GATE_RED, true, "{}", &leg, NOW + 90_000);
+    assert_eq!(names(&acts), [CERTIFY], "{acts:?}");
+    assert!(next.repos["spira"].eject_gate_red.is_none());
+}
+
+#[test_id(t3m4rzc)]
+#[test]
+fn an_eject_missing_from_in_flight_after_a_restart_is_sent_again_once() {
+    let (carry, leg) = eject_in_flight();
+    let (_, acts) = decide(&carry, &red_round_snapshot(vec![]));
+    assert_eq!(names(&acts), [EJECT_GATE_RED], "{acts:?}");
+    assert_eq!(legs_of(&acts, EJECT_GATE_RED)[0], leg);
+}
+
+#[test_id(t4q8pne)]
+#[test]
+fn a_refused_gate_red_eject_abandons_and_clears_the_request() {
+    let (carry, leg) = eject_in_flight();
+    let (next, acts) = on_outcome(&carry, EJECT_GATE_RED, false, "refused", &leg, NOW + 90_000);
+    assert!(names(&acts).contains(&ABANDON), "{acts:?}");
+    assert!(next.repos.get("spira").is_none_or(|rc| rc.eject_gate_red.is_none()));
+}
