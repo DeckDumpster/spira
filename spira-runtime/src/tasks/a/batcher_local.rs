@@ -2963,19 +2963,26 @@ fn round_now(repo: &str, batch: &str) -> Option<Round> {
 
 /// Each repo of `snap` given the effects of this task the stream has asked for and not had answered.
 fn in_flight(view: &Projection, stream: &runtime::event::StreamKey, snap: &mut Snapshot) {
+    let mut flying = flying_by_repo(view, stream, |input| serde_json::from_str::<Leg>(input).ok().map(|leg| leg.repo));
+    for (name, repo) in &mut snap.repos {
+        repo.in_flight = Some(flying.remove(name).unwrap_or_default());
+    }
+}
+
+/// The names of the effects the stream has requested and not had answered, by the repo `repo_of`
+/// reads from each one's input.
+pub(super) fn flying_by_repo(view: &Projection, stream: &runtime::event::StreamKey, repo_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, Vec<String>> {
     let events = view.events(stream);
     let answered: std::collections::BTreeSet<&runtime::event::EventId> = events.iter().filter(|e| [EFFECT_SUCCEEDED, EFFECT_FAILED, EFFECT_TIMED_OUT].contains(&e.kind.tag.as_str())).filter_map(|e| e.cause.as_ref()).collect();
     let mut flying: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for req in events.iter().filter(|e| e.kind.tag == EFFECT_REQUESTED && !answered.contains(&e.id)) {
         let Ok(body) = serde_json::from_str::<serde_json::Value>(&req.kind.body) else { continue };
         let (Some(name), Some(input)) = (body["spec"]["name"].as_str(), body["spec"]["input"].as_str()) else { continue };
-        if let Ok(leg) = serde_json::from_str::<Leg>(input) {
-            flying.entry(leg.repo).or_default().push(name.to_string());
+        if let Some(repo) = repo_of(input) {
+            flying.entry(repo).or_default().push(name.to_string());
         }
     }
-    for (name, repo) in &mut snap.repos {
-        repo.in_flight = Some(flying.remove(name).unwrap_or_default());
-    }
+    flying
 }
 
 /// The runners: each effect's real work, in this process. The seam is `batcher_cut::io`, the
