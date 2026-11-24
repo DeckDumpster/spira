@@ -838,6 +838,14 @@ fn serve(w: &Writer, m: &Mutation) -> Result<Option<String>, String> {
     let Some(me) = row_of(m.bead()) else {
         return Err(format!("no issue found matching {:?}", m.bead()));
     };
+    if let Some(Op::DepAdd { on, .. }) = m.ops.first() {
+        if row_of(on).is_none() {
+            return Err(format!(
+                "{on} is not a known item, so {} cannot depend on it: check the id",
+                m.bead()
+            ));
+        }
+    }
     if m.others().iter().any(|o| row_of(o).is_none()) {
         return Ok(None);
     }
@@ -880,11 +888,28 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
                 }
             }
             Op::DepAdd { on, kind } => {
-                if on == m.bead() || edge(m.bead(), on)?.is_some_and(|t| t != *kind) || (BLOCKING.contains(&kind.as_str()) && cycle(w, m.bead(), on)?) {
-                    return Ok(None);
+                let me_id = m.bead();
+                if on == me_id {
+                    return Err(format!("{me_id} cannot depend on itself: a self edge is no dependency; name another item"));
                 }
-                if kind == "blocks" && (hierarchy(w, m.bead(), on)? || hierarchy(w, on, m.bead())? || is_descendant(m.bead(), on) || is_descendant(on, m.bead())) {
-                    return Ok(None);
+                if let Some(t) = edge(me_id, on)?.filter(|t| t != kind) {
+                    let way = if t == "parent-child" && kind == "blocks" {
+                        format!("{on} is {me_id}'s parent; to make {me_id} wait for it add the label {}", spira_config::nonwork::SPLIT_LABEL)
+                    } else {
+                        format!("`dep remove {me_id} {on}` first, then add the {kind} edge")
+                    };
+                    return Err(format!("{me_id} already has a {t} edge onto {on}, and a pair holds one edge: {way}"));
+                }
+                if kind == "blocks" {
+                    if hierarchy(w, me_id, on)? || is_descendant(me_id, on) {
+                        return Err(format!("{on} is an ancestor of {me_id} but not its direct parent: depend on the direct parent, or on an item outside {on}'s tree"));
+                    }
+                    if hierarchy(w, on, me_id)? || is_descendant(on, me_id) {
+                        return Err(format!("{on} is a descendant of {me_id}: a parent waits on its children through them, not by an edge; depend on an item outside {me_id}'s tree"));
+                    }
+                }
+                if BLOCKING.contains(&kind.as_str()) && cycle(w, me_id, on)? {
+                    return Err(format!("{me_id} -> {on} would close a dependency cycle ({on} already depends on {me_id}, directly or through its own edges): remove the edge that closes it, or depend on another item"));
                 }
             }
             Op::DepRelate { other } => {

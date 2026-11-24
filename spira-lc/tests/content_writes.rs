@@ -1053,3 +1053,127 @@ fn a_repeat_after_a_partial_application_closes_the_request_and_leaves_one_open_n
     assert_eq!(lc.shows(&r.dependent).matches(OPEN_LINE).count(), 1);
     assert!(state_of(&lc, &r.request).contains("DONE"));
 }
+
+fn verdict_of(lc: &Lc, id: &str) -> (String, Option<String>) {
+    let (rc, out) = lc.run(&["claimable"], None);
+    assert_eq!(rc, 0, "{out}");
+    let all: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or_else(|_| panic!("claimable: {out}"));
+    let row = all["beads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["bead_id"] == id)
+        .unwrap_or_else(|| panic!("{id} not judged: {out}"));
+    (
+        row["verdict"].as_str().unwrap().to_string(),
+        row["blocker"].as_str().map(str::to_string),
+    )
+}
+
+fn filed(lc: &Lc, parent: Option<&str>) -> String {
+    let mut args = vec![
+        "content",
+        "create",
+        "a work item",
+        "--type",
+        "task",
+        "--labels",
+        "repo:spira,spira",
+        "--silent",
+    ];
+    args.extend(parent.into_iter().flat_map(|p| ["--parent", p]));
+    first_line(&lc.run(&args, None).1)
+}
+
+#[test_id(toqvt2k)]
+#[test]
+fn a_child_waits_for_its_own_parent_through_dep_add_and_stops_waiting_through_dep_remove() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "ownparent");
+    let parent = filed(&lc, None);
+    let child = filed(&lc, Some(&parent));
+    let other = filed(&lc, None);
+    assert_eq!(verdict_of(&lc, &child).0, "claimable");
+    let (rc, out) = lc.run(
+        &["content", "dep", "add", &child, &parent, "--type", "blocks"],
+        None,
+    );
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(
+        verdict_of(&lc, &child),
+        ("blocked".to_string(), Some(parent.clone()))
+    );
+    assert_eq!(verdict_of(&lc, &parent).0, "claimable");
+    let (rc, out) = lc.run(&["content", "dep", "remove", &child, &parent], None);
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(verdict_of(&lc, &child).0, "claimable");
+    let shown: serde_json::Value = serde_json::from_str(&lc.shows(&child)).unwrap();
+    let shown = shown.as_array().map_or(&shown, |a| &a[0]);
+    assert_eq!(shown["parent"], parent.as_str());
+    assert_eq!(
+        lc.run(&["content", "dep", "add", &child, &other], None).0,
+        0
+    );
+    assert_eq!(
+        verdict_of(&lc, &child),
+        ("blocked".to_string(), Some(other.clone()))
+    );
+    assert_eq!(
+        lc.run(&["content", "dep", "remove", &child, &other], None)
+            .0,
+        0
+    );
+    assert_eq!(verdict_of(&lc, &child).0, "claimable");
+}
+
+#[test_id(tsproa1)]
+#[test]
+fn a_dep_add_bd_would_refuse_says_which_condition_and_leaves_the_edges_unchanged() {
+    let Some(store) = Store::up() else { return };
+    let lc = writer_lc(&store, "refusals");
+    let grand = filed(&lc, None);
+    let parent = filed(&lc, Some(&grand));
+    let child = filed(&lc, Some(&parent));
+    let (a, b, x, y) = (
+        filed(&lc, None),
+        filed(&lc, None),
+        filed(&lc, None),
+        filed(&lc, None),
+    );
+    let ghost = format!("{grand}-nosuch");
+    assert_eq!(
+        lc.run(
+            &["content", "dep", "add", &a, &b, "--type", "relates-to"],
+            None
+        )
+        .0,
+        0
+    );
+    assert_eq!(lc.run(&["content", "dep", "add", &x, &y], None).0, 0);
+    let edges = || {
+        [&grand, &parent, &child, &a, &b, &x, &y]
+            .map(|i| lc.shows(i).split_whitespace().collect::<String>())
+    };
+    let before = edges();
+    let cases: [(&[&str], &str); 7] = [
+        (&["dep", "add", &child, &parent, "--type", "relates-to"], "`dep remove"),
+        (&["dep", "add", &a, &a], "itself"),
+        (&["dep", "add", &parent, &child], "descendant"),
+        (&["dep", "add", &child, &grand], "not its direct parent"),
+        (&["dep", "add", &a, &ghost], "not a known item"),
+        (&["dep", "add", &a, &b], "already has a relates-to edge"),
+        (&["dep", "add", &y, &x], "dependency cycle"),
+    ];
+    for (words, said) in cases {
+        let mut args = vec!["content"];
+        args.extend(words);
+        let (rc, out) = lc.run(&args, None);
+        assert_eq!(rc, 1, "{words:?}: {out}");
+        assert!(out.contains(said), "{words:?}: {out}");
+        for id in &words[2..4] {
+            assert!(out.contains(id), "{words:?} names {id}: {out}");
+        }
+    }
+    assert_eq!(edges(), before);
+}

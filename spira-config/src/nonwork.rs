@@ -34,11 +34,12 @@ pub enum Kind {
     Hold,
 }
 
-/// bd issue types that never carry a lifecycle row: containers, asks, events and the like.
-/// Carried by a child that `work split` carved out of its parent: it builds on the parent's
-/// branch, so the claim path treats the parent as its blocker. A `file-followup` child has none.
+/// Carried by a child that waits for its parent to land: `work split` writes it, and so does
+/// `dep add <child> <its parent>`. The claim path treats the parent as its blocker; a child
+/// without it is not held back by a READY, tipless parent.
 pub const SPLIT_LABEL: &str = "split-child";
 
+/// bd issue types that never carry a lifecycle row: containers, asks, events and the like.
 pub const NO_ROW_TYPES: &[&str] = &["epic", "decision", "event", "molecule", "gate", "proposal"];
 
 pub fn is_work_type(issue_type: Option<&str>) -> bool {
