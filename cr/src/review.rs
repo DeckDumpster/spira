@@ -14,7 +14,7 @@ use crate::units;
 use serde::{Deserialize, Serialize};
 use margin_client::{Anchor, Doc, Source};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -319,14 +319,23 @@ fn cover_note(r: &Review, tree: &dyn SourceTree, ix: &Index, files: &[(String, V
     m.push_str(&history::incident_lines(&paths, tree, ports.beads.as_ref()));
     m.push_str(&format!("\n{}\n\n", SECTIONS[6]));
     let tests = tests_by_call_path(ix, u, &dependents);
-    if tests.is_empty() {
-        m.push_str("None found by call path.\n");
+    let (inside, outside): (Vec<_>, Vec<_>) = tests.iter().partition(|(path, _, _)| paths.contains(path));
+    if outside.is_empty() {
+        m.push_str("No test outside this review found by call path.\n");
     }
     let mut test_fns: BTreeSet<String> = BTreeSet::new();
-    for (path, test, used) in &tests {
+    for (path, test, used) in &outside {
         m.push_str(&format!("- `{path}::{test}` calls `{used}`\n"));
-        test_fns.insert(test.clone());
     }
+    let mut per_file: BTreeMap<&str, usize> = BTreeMap::new();
+    for (path, _, _) in &inside {
+        *per_file.entry(path).or_default() += 1;
+    }
+    if !per_file.is_empty() {
+        let parts: Vec<String> = per_file.iter().map(|(p, n)| format!("{n} test{} in `{p}`", if *n == 1 { "" } else { "s" })).collect();
+        m.push_str(&format!("- {}, in this review\n", parts.join(", ")));
+    }
+    test_fns.extend(tests.iter().map(|(_, test, _)| test.clone()));
     let removed = tree.removed_tests(&test_search_files(ix, u, &[]));
     test_fns.extend(removed.iter().map(|r| r.name.clone()));
     m.push('\n');
