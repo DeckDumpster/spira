@@ -77,7 +77,7 @@ fn main() -> ExitCode {
     testenv::util::drop_activation_env();
     let first = std::env::args().nth(1).unwrap_or_default();
     let op = match first.as_str() {
-        o @ ("suites" | "lint" | "owed" | "shots" | "ui" | "preflight" | "status" | "testdb" | "wait" | "container" | "warm") => o,
+        o @ ("suites" | "lint" | "owed" | "shots" | "ui" | "preflight" | "status" | "testdb" | "wait" | "container" | "warm" | "test-bins") => o,
         _ => "run",
     };
     let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "testenv", op);
@@ -93,6 +93,20 @@ fn real_main() -> ExitCode {
     if args.first().map(String::as_str) == Some("suites") {
         let rc = testenv::suites::main(&args[1..]);
         return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
+    // `testenv test-bins <package>…` — the workspace crates whose binaries those packages' tests launch, one per line.
+    if args.first().map(String::as_str) == Some("test-bins") {
+        let tree = std::env::current_dir().unwrap_or_default();
+        return match testenv::unit::tree_test_bins(&tree, &args[1..]) {
+            Ok(bins) => {
+                bins.iter().for_each(|b| println!("{b}"));
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("test-bins: {e}");
+                ExitCode::from(2)
+            }
+        };
     }
     // `testenv lint [--verify] <tip> [<repo>]` — the fast compile-and-lint check a tip passes
     // before it may be submitted.
