@@ -319,7 +319,11 @@ impl Driver<'_> {
             ));
             return None;
         };
-        let mut closure = sha256sum_line(&cf_bytes);
+        let cf_text = spira_config::recipe::image_text(
+            spira_config::recipe::CONTAINERFILE,
+            &String::from_utf8_lossy(&cf_bytes),
+        );
+        let mut closure = sha256sum_line(cf_text.as_bytes());
         let pin = &self.conf.bd_pin;
         if self.host.is_file(pin) {
             closure.extend(self.host.read(pin).unwrap_or_default());
