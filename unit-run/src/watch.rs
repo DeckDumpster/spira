@@ -454,7 +454,7 @@ mod adoption_tests {
     const P: &str = "/org/freedesktop/systemd1/unit/job_2dx_2eservice";
 
     fn pad(b: &mut Vec<u8>, n: usize) {
-        while b.len() % n != 0 {
+        while !b.len().is_multiple_of(n) {
             b.push(0);
         }
     }
