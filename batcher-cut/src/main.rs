@@ -3059,6 +3059,16 @@ mod tests {
         assert!(why.contains("no red lint or fence"), "{why}");
     }
 
+    #[test_id(tjoskbv)]
+    #[test]
+    fn a_red_round_image_result_does_not_block_attribution() {
+        let dir = testkit::TempDir::new("batcher-cut-red-image");
+        std::fs::write(dir.path().join("fence-round-image.result"), "red 1 0 - - - 1\n").unwrap();
+        let red = vm::red_filters(dir.path());
+        assert_eq!(red, ["fence-round-image"]);
+        assert_eq!(blocks_attribution(&[], &[], &red, Some(dir.path())), None);
+    }
+
     #[test_id(tt91g2o)]
     #[test]
     fn named_suites_narrow_the_corpus_and_drop_names_the_tree_lacks() {

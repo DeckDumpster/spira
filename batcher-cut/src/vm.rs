@@ -748,6 +748,20 @@ fn filter_red_in(
         harness.extend(blame.harness);
         unnamed.extend(blame.unnamed);
     }
+    if reds.iter().any(|r| r == ROUND_IMAGE) {
+        for m in members {
+            let moved: Vec<&str> = changed
+                .get(&m.id)
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .filter(|p| spira_config::recipe::TAG_INPUTS.contains(p))
+                .collect();
+            if !moved.is_empty() && !named.iter().any(|(n, _)| *n == m.id) {
+                named.push((m.id.clone(), format!("member={} changes the image tag inputs: {}", m.id, moved.join(", "))));
+            }
+        }
+    }
     for red in reds.iter().filter(|r| *r != LINT) {
         let text = fs::read_to_string(results.join(format!("{red}.out"))).unwrap_or_default();
         for line in text.lines() {
@@ -833,6 +847,7 @@ const STOP_SECS: u64 = 300;
 
 const LINT: &str = "spira-lint";
 const FENCE_PREFIX: &str = "fence-";
+const ROUND_IMAGE: &str = "fence-round-image";
 /// How a low-pass filter's red is rerun on a member subset.
 #[derive(Debug, PartialEq, Eq)]
 enum Probe<'a> {
@@ -2100,6 +2115,22 @@ mod tests {
         rows.iter()
             .map(|(id, ps)| (id.to_string(), ps.iter().map(|p| p.to_string()).collect()))
             .collect()
+    }
+
+    #[test_id(tpg9nk9)]
+    #[test]
+    fn a_red_round_image_names_the_members_that_change_the_tag_inputs_and_nobody_else() {
+        let d = testkit::TempDir::new("vm-image-red");
+        fs::write(d.path().join("fence-round-image.result"), "red 1 0 - - - 1\n").unwrap();
+        let ms: Vec<Member> = ["sp-a", "sp-b"].iter().map(|id| member(id)).collect();
+        let changed = changed_of(&[("sp-a", &["spira/deps.toml", "x.rs"]), ("sp-b", &["x.rs"])]);
+        let red = filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap();
+        assert_eq!(red.name, "fence-round-image");
+        assert_eq!(red.named.len(), 1);
+        assert_eq!(red.named[0].0, "sp-a");
+        assert!(red.named[0].1.contains("spira/deps.toml"), "{:?}", red.named);
+        let none = changed_of(&[("sp-a", &["x.rs"]), ("sp-b", &["y.rs"])]);
+        assert!(filter_red_in(d.path(), &ms, &none, &[], &[]).unwrap().named.is_empty());
     }
 
     #[test_id(tma4xaj)]

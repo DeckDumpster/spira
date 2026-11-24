@@ -54,6 +54,7 @@ pub(super) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
 /// The fence that runs the round image's setup on the merged tree before any suite.
 pub(super) const PREFLIGHT_RED: &str = "fence-round-image-preflight";
+pub(super) const IMAGE_RED: &str = "fence-round-image";
 pub(super) const UNIT_RED: &str = "unit-tests";
 /// The merged tree's config delta does not parse or apply: the attribution's own check
 /// (`batcher::drive::CONFIG_DELTA`), which it ejects the culprit for.
@@ -4535,9 +4536,9 @@ fn certify_pass(
                 .join(format!("{REPO_TESTENV_RED}.out"));
             w.out(format!("red-output={}", output.display()));
         }
-        if reds.iter().any(|r| r == PREFLIGHT_RED) {
+        if let Some(red) = [PREFLIGHT_RED, IMAGE_RED].into_iter().find(|n| reds.iter().any(|r| r == n)) {
             drop(_g);
-            eject_recipe_changers(w, by, label, c, path, batch, &judged);
+            eject_recipe_changers(w, by, label, c, path, batch, &judged, red);
         }
         return FAIL;
     }
@@ -4597,25 +4598,30 @@ fn eject_recipe_changers(
     path: &Path,
     batch: &str,
     kv: &Kv,
+    red: &str,
 ) {
     let base = kv.get("base").unwrap_or("");
     let changers: Vec<(String, Vec<String>)> = kv
         .members()
         .into_iter()
         .map(|m| {
-            let touched = recipe_inputs_touched(w, path, base, &m.tip);
+            let touched = if red == IMAGE_RED {
+                tag_inputs_touched(w, path, base, &m.tip)
+            } else {
+                recipe_inputs_touched(w, path, base, &m.tip)
+            };
             (m.id, touched)
         })
         .filter(|(_, touched)| !touched.is_empty())
         .collect();
     if changers.is_empty() {
-        w.out(format!("queue.sh {label}: {PREFLIGHT_RED} is red and no member of {batch} changes a round-recipe input — the red is the harness's; nobody is ejected"));
+        w.out(format!("queue.sh {label}: {red} is red and no member of {batch} changes a round-recipe input — the red is the harness's; nobody is ejected"));
         return;
     }
     let results = rounds_dir(c).join(format!("{batch}.results"));
-    let Some(output) = suite_output(&results, PREFLIGHT_RED, 0).filter(|o| !o.trim().is_empty())
+    let Some(output) = suite_output(&results, red, 0).filter(|o| !o.trim().is_empty())
     else {
-        w.err(format!("queue.sh {label}: {PREFLIGHT_RED} is red but left no output in {} — nothing names the evidence, so nobody is ejected; attribute it by hand", results.display()));
+        w.err(format!("queue.sh {label}: {red} is red but left no output in {} — nothing names the evidence, so nobody is ejected; attribute it by hand", results.display()));
         return;
     };
     let evidence = tail(&output, 40);
@@ -4631,7 +4637,7 @@ fn eject_recipe_changers(
             }
         }
         let reason = format!(
-            "{PREFLIGHT_RED} went red in round {batch}, and {id} changes the round recipe ({}).\n\n{evidence}",
+            "{red} went red in round {batch}, and {id} changes the round recipe ({}).\n\n{evidence}",
             touched.join(", ")
         );
         let rc = eject(
@@ -4641,7 +4647,7 @@ fn eject_recipe_changers(
             &id,
             Some(&c.r.name),
             &Text::Arg(reason),
-            PREFLIGHT_RED,
+            red,
             true,
             false,
             true,
@@ -4653,9 +4659,9 @@ fn eject_recipe_changers(
             ejected.push(id);
         } else {
             w.err(format!(
-                "queue.sh {label}: could not eject {id} for the red {PREFLIGHT_RED} (rc={rc})"
+                "queue.sh {label}: could not eject {id} for the red {red} (rc={rc})"
             ));
-            w.out(format!("{EJECT_REFUSED}{id}: eject for the red {PREFLIGHT_RED} refused (rc={rc})"));
+            w.out(format!("{EJECT_REFUSED}{id}: eject for the red {red} refused (rc={rc})"));
             break;
         }
     }

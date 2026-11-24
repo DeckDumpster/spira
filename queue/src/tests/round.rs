@@ -3011,6 +3011,34 @@ fn a_suites_boundary_after_the_pass_is_judged_is_ignored_and_exits_ok() {
     assert_eq!(round_phase(&t), "ATTRIBUTING");
 }
 
+#[test_id(t0o7rdl)]
+#[test]
+fn an_incomplete_verdict_after_the_pass_is_judged_is_ignored_and_exits_ok() {
+    let (t, batch) = judged_red_world();
+    assert_eq!(
+        t.run(&["round", "pass-verdict", &batch, "--verdict", "incomplete", "--reason", "no outcome"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.out().contains("ignored: pass 1 already has its verdict"),
+        "{}",
+        t.out()
+    );
+    assert_eq!(round_phase(&t), "ATTRIBUTING");
+}
+
+#[test_id(tkfff57)]
+#[test]
+fn an_image_red_ejects_the_member_that_moved_the_tag_and_nobody_when_none_did() {
+    let (t, _) = image_red_round(&["tb"]);
+    assert!(t.lib.has("bead_reopen sp-b eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_reopen sp-a"), "{:?}", t.lib.calls.borrow());
+    let (t, _) = image_red_round(&[]);
+    assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
+}
+
 #[test_id(t99dlt2)]
 #[test]
 fn a_failed_suite_after_the_pass_is_judged_is_ignored_files_no_mender_and_exits_ok() {
@@ -8021,6 +8049,24 @@ fn preflight_red_round(recipe: &[&str]) -> (T, String) {
         "{}",
         t.out()
     );
+    (t, batch)
+}
+
+const IMAGE_OUT: &str = "round-vm: IMAGE-ABSENT: localhost/spira-testenv:abc is not on this VM\n";
+
+/// A two-member round whose pass ends red on the image phase, `movers` naming the members whose
+/// diff touches an image tag input.
+fn image_red_round(movers: &[&str]) -> (T, String) {
+    let t = round_world();
+    for tip in movers {
+        t.git.stat("b0", tip, &[("spira/deps.toml", 1, 1)]);
+    }
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("fence-round-image".into(), "red".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![("fence-round-image.out".into(), IMAGE_OUT.into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     (t, batch)
 }
 
