@@ -11373,3 +11373,53 @@ fn a_withdrawal_forces_a_listed_fence_and_drops_an_unlisted_one_and_release_veri
     assert_eq!(forced_reopen(&t, "sp-b"), "fence-listed,test-b.sh");
     assert_forced_comment(&t, "fence-listed,test-b.sh");
 }
+
+const INTEGRATION_RED_FILE: &str = "{\"stage\":\"integration-tests\",\"verdict\":\"red\",\"ran_before_suites\":false,\"cause\":\"exit status 101\",\"secs\":4,\"last_binary\":\"b\",\"failed\":[\"x::y\"]}\n";
+
+#[test_id(tpq6w3a)]
+#[test]
+fn certify_on_a_tree_with_no_suite_certifies_on_the_unit_tier_result_alone() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm_results.borrow_mut() = vec![("unit-tests".into(), "ok 1 0 - - - 0".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(certified_tree_exists(&t));
+}
+
+
+#[test_id(t9dtrl7)]
+#[test]
+fn certify_on_a_tree_with_no_suite_judges_an_integration_red_red_naming_integration_tests() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm_results.borrow_mut() = vec![("unit-tests".into(), "ok 1 0 - - - 0".into())];
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_files.borrow_mut() = vec![("integration.json".to_string(), INTEGRATION_RED_FILE.to_string())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
+    assert!(t.out().contains("unit-tests-cause=integration-tests: exit status 101"), "{}", t.out());
+    assert!(!certified_tree_exists(&t));
+}
+
+#[test_id(t9f2m8d)]
+#[test]
+fn stage_test_on_a_tree_with_no_suite_passes_on_the_unit_tier_result_alone() {
+    let (t, _n, _s) = staged_behind_green();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("unit-tests".into(), "ok 1 0 - - - 0".into())];
+    assert_eq!(t.run(&["round", "stage-test"]), 0, "{}", t.err());
+    assert_eq!(kv_of(&t, "round-staged")["phase"], "green");
+}
+
+
+#[test_id(tdmcqex)]
+#[test]
+fn stage_test_on_a_tree_with_no_suite_judges_an_integration_red_red_naming_integration_tests() {
+    let (t, _n, _s) = staged_behind_green();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("unit-tests".into(), "ok 1 0 - - - 0".into())];
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_files.borrow_mut() = vec![("integration.json".to_string(), INTEGRATION_RED_FILE.to_string())];
+    assert_eq!(t.run(&["round", "stage-test"]), 1, "{}{}", t.out(), t.err());
+    assert_eq!(kv_of(&t, "round-staged")["phase"], "red");
+    assert!(t.out().contains("unit-tests-cause=integration-tests: exit status 101"), "{}", t.out());
+}

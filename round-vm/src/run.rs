@@ -1207,6 +1207,9 @@ over_cap=""
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ "$suites" = "-" ]; then
     echo "round-vm: SUITES: none selected — no suite batch" >&2
+    mkdir -p "$rdir"
+    printf 'tree=%s\n' "$(git -C "$HOME/round-work" rev-parse 'HEAD^{tree}')" > "$rdir/batch.meta"
+    printf 'ok 1 0 - - - 0\n' > "$rdir/unit-tests.result"
     true &
 elif [ -n "$suites" ]; then
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
@@ -3832,8 +3835,14 @@ mod tests {
         let from = REMOTE_SCRIPT.find("\nphase suites\n").unwrap();
         let to = from + REMOTE_SCRIPT[from..].find("\nphase integration-tests\n").unwrap() + "\nphase integration-tests".len();
         let d = TempDir::new();
+        let work = d.path().join("round-work");
+        fs::create_dir_all(&work).unwrap();
+        for argv in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]] {
+            assert!(std::process::Command::new("git").arg("-C").arg(&work).args(argv).output().unwrap().status.success());
+        }
+        let tree = String::from_utf8(std::process::Command::new("git").arg("-C").arg(&work).args(["rev-parse", "HEAD^{tree}"]).output().unwrap().stdout).unwrap();
         let script = format!(
-            "set -uo pipefail\nphase() {{ echo \"PHASE $1\"; }}\nphase_failed() {{ echo \"FAILED $1\"; }}\ntestenv() {{ echo TESTENV-CALLED; return 1; }}\n{}\n{}\ncap=60 suites='{NO_SUITES}'\n{}\necho \"rc=$rc\"",
+            "set -uo pipefail\nphase() {{ echo \"PHASE $1\"; }}\nphase_failed() {{ echo \"FAILED $1\"; }}\ntestenv() {{ echo TESTENV-CALLED; return 1; }}\n{}\n{}\ncap=60 suites='{NO_SUITES}' rdir=\"$HOME/round-work/.runtime/spira/batch-results\"\n{}\necho \"rc=$rc\"",
             script_fn("suites_cap_guard"),
             script_fn("suites_mark_stream"),
             &REMOTE_SCRIPT[from..to]
@@ -3843,6 +3852,22 @@ mod tests {
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert!(!text.contains("TESTENV-CALLED") && !text.contains("FAILED"), "{text}");
         assert!(text.contains("PHASE integration-tests") && text.contains("rc=0"), "{text}");
+        let res = work.join(".runtime/spira/batch-results");
+        assert_eq!(fs::read_to_string(res.join("batch.meta")).unwrap().trim(), format!("tree={}", tree.trim()));
+        assert!(fs::read_to_string(res.join("unit-tests.result")).unwrap().starts_with("ok "));
+    }
+
+    #[test_id(tn2kq7c)]
+    #[test]
+    fn a_green_batch_holding_only_the_unit_tier_result_exits_0_and_a_batch_with_none_exits_2() {
+        let fx = fixture();
+        let a = RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), base: Some("main".into()), ..Default::default() };
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, vec![("KEY/batch.meta", "key=KEY\ntree=treesha\n"), ("KEY/unit-tests.result", "ok 1 0 - - - 0\n")]);
+        assert_eq!(go(&fx, &remote, &a), 0);
+        let mut none = FakeRemote::green();
+        none.files.insert(REMOTE_RESULTS, vec![("runner.meta", "build_wall_s=1\n")]);
+        assert_eq!(go(&fx, &none, &a), 2);
     }
 
     struct NoSuites;
