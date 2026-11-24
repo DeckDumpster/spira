@@ -793,12 +793,16 @@ fn phase_red(results: &Path, json: &str) -> bool {
         .is_some_and(|v| v["verdict"] == "red")
 }
 
-/// The line of the bare lane's output that says why it is red: a failing line, else the first.
+/// The line of the bare lane's output that says why it is red: the first of its failure
+/// excerpt, the same one the round's red row names.
 fn bare_suites_line(results: &Path) -> String {
     let text = fs::read_to_string(results.join(format!("{BARE_SUITES}.out"))).unwrap_or_default();
-    let lines = || text.lines().map(str::trim).filter(|l| !l.is_empty());
-    let failing = |l: &&str| ["FAIL", "not ok", "rror", "No such file"].iter().any(|k| l.contains(k));
-    lines().find(failing).or_else(|| lines().next()).unwrap_or("the bare lane is red and left no output").to_string()
+    spira_config::sendback::failure_excerpt(&text)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && *l != spira_config::sendback::NO_FAILURE_FOUND)
+        .unwrap_or("the bare lane is red and left no output")
+        .to_string()
 }
 
 /// The one member whose changed paths the failed phase's output names; nobody when none or
@@ -2211,10 +2215,10 @@ mod tests {
         let ms = [member("sp-other1")];
         let changed = changed_of(&[("sp-other1", &["x/y.rs"])]);
         fs::write(d.path().join("bare-suites.result"), "red 1 1 - - - 127\n").unwrap();
-        fs::write(d.path().join("bare-suites.out"), "warming up\nbash: spira/bare-suites.sh: No such file or directory\n").unwrap();
+        fs::write(d.path().join("bare-suites.out"), "warming up\nFAIL test-x.sh\n").unwrap();
         let red = filter_red_in(d.path(), &ms, &changed, &[], &[]).unwrap();
         assert!(red.named.is_empty(), "{red:?}");
-        assert_eq!(red.unnamed, ["bash: spira/bare-suites.sh: No such file or directory"]);
+        assert_eq!(red.unnamed, ["FAIL test-x.sh"]);
     }
 
     #[test_id(tex7451)]

@@ -4368,7 +4368,12 @@ fn certify_pass(
                 .map(|(n, _)| n.clone()),
         );
         if out.rc == 1 && reds.is_empty() {
-            reds.push(round_phase_line(&results).map_or_else(|| UNIT_RED.to_string(), |(phase, _)| phase));
+            reds.push(
+                round_phase_line(&results)
+                    .map(|(phase, _)| phase)
+                    .filter(|p| p != BUILD_RED && p != LINT_RED && !p.starts_with(FENCE_RED_PREFIX))
+                    .unwrap_or_else(|| UNIT_RED.to_string()),
+            );
             let failed = fs::read_to_string(results.join("unit-tests.out")).unwrap_or_default();
             let names: Vec<&str> = failed
                 .lines()

@@ -3854,6 +3854,37 @@ mod tests {
         assert_eq!(bare_lane_results(1, Some("red 1 2 - - - 1\n")), (None, None), "the lane's own red stands");
     }
 
+    fn bare_lane_fragment_results(stub_rc: i32) -> (Option<String>, Option<String>, i32) {
+        let d = TempDir::new();
+        std::fs::create_dir_all(d.path().join("work/spira")).unwrap();
+        std::fs::write(d.path().join("work/spira/bare-suites.sh"), format!("echo lane says hi\nexit {stub_rc}\n")).unwrap();
+        let from = REMOTE_SCRIPT.find("bare_out=\"$HOME/round-bare-results\"").unwrap();
+        let launch_end = from + REMOTE_SCRIPT[from..].find("bare_pid=$!").unwrap() + "bare_pid=$!".len();
+        let wait = REMOTE_SCRIPT.find("wait \"$bare_pid\"").unwrap();
+        let call = wait + REMOTE_SCRIPT[wait..].find("bare_red_result \"$bare_rc\"").unwrap();
+        let call_end = call + REMOTE_SCRIPT[call..].find('\n').unwrap();
+        let script = format!(
+            "set -Eeuo pipefail\nset +e\nphase_failed() {{ :; }}\nsuites=\"\"\nsuites_mark=\"$HOME/mark\"\n: > \"$suites_mark\"\ncd \"$HOME/work\"\n{}\nwait \"$bare_pid\"\nbare_rc=$?\n{}\necho \"rc=$bare_rc\"",
+            &REMOTE_SCRIPT[from..launch_end],
+            &REMOTE_SCRIPT[call..call_end]
+        );
+        let o = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        let rc: i32 = String::from_utf8_lossy(&o.stdout).lines().find_map(|l| l.strip_prefix("rc=")?.parse().ok()).unwrap_or_else(|| panic!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)));
+        let read = |f: &str| std::fs::read_to_string(d.path().join("round-bare-results").join(f)).ok();
+        (read("bare-suites.result"), read("bare-suites.out"), rc)
+    }
+
+    #[test_id(tzqjxx7)]
+    #[test]
+    fn the_bare_lane_wiring_carries_the_lanes_exit_code_and_leaves_a_red_result_unless_the_cap_killed_it() {
+        let (result, out, rc) = bare_lane_fragment_results(127);
+        assert_eq!(rc, 127, "the lane's own exit code survives its output pipe");
+        assert!(result.expect("a result").starts_with("red "));
+        assert!(out.unwrap().contains("lane says hi"));
+        assert_eq!(bare_lane_fragment_results(137), (None, None, 137), "a cap kill stays over-cap");
+        assert_eq!(bare_lane_fragment_results(0), (None, None, 0));
+    }
+
     fn red_phase_out(log: &str, hung: &str) -> String {
         red_phase_files(log, hung).0
     }

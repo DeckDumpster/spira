@@ -8854,6 +8854,26 @@ pub(crate) mod tests {
         assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
     }
 
+    #[test_id(twleaf6)]
+    #[test]
+    fn a_bare_lane_red_no_member_owns_blocks_the_round_naming_the_phase_and_its_line() {
+        let mut f = Fake::new(|_, _| false);
+        f.filter = Some(Box::new(|_| {
+            Some(FilterRed {
+                name: "bare-suites".into(),
+                unnamed: vec!["bash: spira/bare-suites.sh: No such file or directory".into()],
+                ..Default::default()
+            })
+        }));
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(3), vec![member("m1")], Budget { slots: 6, maxpar: 2 }).unwrap();
+        match end {
+            RoundEnd::Blocked(why) => assert_eq!(why, "bare-suites red on a line no member owns: bash: spira/bare-suites.sh: No such file or directory"),
+            other => panic!("{other:?}"),
+        }
+        assert!(ops.ejected.is_empty(), "{:?}", ops.ejected);
+    }
+
     #[test_id(t0sgopf)]
     #[test]
     fn a_lint_line_no_member_owns_blocks_the_round_after_the_named_member_is_ejected() {
