@@ -323,6 +323,11 @@ impl World for Real {
         // by inheriting stdout/stderr (Command's own default) instead of silencing them.
         // Caught live by testenv's test-overrides.sh (sp-yyk47).
         // FORK-EDGE: overrides.sh (223 lines of shell, over the port-in-place bound)
+        match spira_config::process::cfg("SPIRA_OVERRIDES").and_then(|d| spira_config::overrides::declared(Path::new(&d))) {
+            Ok(false) => return,
+            Ok(true) => {}
+            Err(e) => return eprintln!("skew: {e}"),
+        }
         let _ = spira_config::bounded::bounded("overrides.sh").arg("apply").arg(repo).stdin(Stdio::null()).status();
     }
     fn install_diff(&self, installer: &Path) -> (i32, String) {

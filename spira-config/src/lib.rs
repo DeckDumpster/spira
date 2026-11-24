@@ -57,6 +57,7 @@ pub mod gate_source;
 pub mod git_refs;
 pub mod locate;
 pub mod nonwork;
+pub mod overrides;
 pub mod process;
 pub mod red_at;
 pub mod red_tip_record;

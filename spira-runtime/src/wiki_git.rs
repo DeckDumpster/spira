@@ -61,8 +61,11 @@ pub fn gh_auth_token(gh: &str, config_dir: &str, deadline: Duration) -> Result<(
 }
 
 /// One `overrides.sh apply` pass under `timeout`; a failed override fails the pass, and its
-/// stdout and stderr together say which.
-pub fn overrides_apply() -> Result<String, String> {
+/// stdout and stderr together say which. With none declared in `dir` nothing runs.
+pub fn overrides_apply(dir: &Path) -> Result<String, String> {
+    if !spira_config::overrides::declared(dir)? {
+        return Ok(String::new());
+    }
     // FORK-EDGE: overrides.sh is 223 lines of shell (over the ~100-line port bound).
     let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
     let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));

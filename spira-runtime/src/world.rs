@@ -58,6 +58,8 @@ pub struct World {
     pub ask_label: String,
     pub wiki: PathBuf,
     pub hunk_dir: PathBuf,
+    /// `SPIRA_OVERRIDES`: where operator override specs are declared.
+    pub overrides_dir: PathBuf,
     pub cockpit_state: PathBuf,
     pub cockpit_session: String,
     pub tmux: PathBuf,
@@ -689,7 +691,7 @@ impl World {
 
     /// One `overrides.sh apply` pass; a failed override fails the pass, and its stdout and stderr say which.
     pub fn overrides_apply(&self) -> Result<String, String> {
-        overrides_apply()
+        overrides_apply(&self.overrides_dir)
     }
 
     /// lc-serve's kept verdict on the content writer's grants, as the `writer-grants` verb answers it.
