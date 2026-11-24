@@ -36,7 +36,7 @@ impl Budgets {
 type Counts = (usize, usize, Vec<String>);
 
 /// A progress file's line, `k M [red names...]`. The VM rewrites it in place, so a read that
-/// is empty, lacks its newline or counts past its total is torn and is not a reading.
+/// is empty or lacks its newline is torn and is not a reading; a count past its total is clamped.
 fn counts_of(results_dir: &Path, file: &str) -> Option<Counts> {
     let t = fs::read_to_string(results_dir.join(file)).ok()?;
     if !t.ends_with('\n') {
@@ -44,7 +44,7 @@ fn counts_of(results_dir: &Path, file: &str) -> Option<Counts> {
     }
     let mut w = t.split_whitespace();
     let (k, m): (usize, usize) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?);
-    (k <= m).then(|| (k, m, w.map(str::to_string).collect()))
+    Some((k.min(m), m, w.map(str::to_string).collect()))
 }
 
 pub fn now_secs() -> u64 {
@@ -699,7 +699,7 @@ mod tests {
         fs::write(res.join(INTEGRATION_FILE), "1 6\n").unwrap();
         p.update(&res);
         assert_eq!(read(&run)["tests"]["done"], 31);
-        for torn in ["", "31 1", "7 1\n"] {
+        for torn in ["", "31 1"] {
             fs::write(res.join(UNIT_FILE), torn).unwrap();
             p.update(&res);
             assert_eq!(read(&run)["tests"]["done"], 31, "{torn:?}");

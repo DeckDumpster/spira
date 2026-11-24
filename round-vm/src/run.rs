@@ -1073,6 +1073,7 @@ integ_progress="$rdir/integration-progress"
 mkdir -p "$rdir"
 unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)
 integ_total=$(( unit_total - unit_lib_total ))
+rm -f "$unit_progress"
 echo "0 $integ_total" > "$integ_progress"
 : > ~/round-unit-tests.log
 unit_hung="$HOME/round-unit-hung"
@@ -3182,8 +3183,12 @@ struct PullTally {
 }
 
 impl PullTally {
+    fn line(&self) -> String {
+        format!("round-vm: PROGRESS-PULL pulls={} bytes={} secs={}", self.pulls, self.bytes, self.elapsed.as_secs())
+    }
+
     fn say(&self) {
-        eprintln!("round-vm: PROGRESS-PULL pulls={} bytes={} secs={}", self.pulls, self.bytes, self.elapsed.as_secs());
+        eprintln!("{}", self.line());
     }
 }
 
@@ -3833,6 +3838,23 @@ mod tests {
         (std::fs::read_to_string(d.path().join("prog")).unwrap_or_default(), String::from_utf8_lossy(&out.stderr).to_string())
     }
 
+    fn nextest_log(n: u32) -> String {
+        let mut log = format!("    Starting {n} tests across 1 binary\n");
+        for i in 1..=n {
+            log.push_str(&format!("        PASS [   0.001s] ({i}/{n}) fx t::n{i}\n"));
+        }
+        log
+    }
+
+    #[test_id(t9c4yef)]
+    #[test]
+    fn on_the_real_clock_a_burst_of_results_is_a_few_writes_and_the_file_ends_on_the_last_count() {
+        let (prog, err) = stream_with_clock(&nextest_log(5000), 0);
+        assert_eq!(prog.trim(), "5000 5000");
+        let writes: u64 = err.lines().find(|l| l.contains("PROGRESS-COST")).and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("writes="))).unwrap().parse().unwrap();
+        assert!((2..100).contains(&writes), "{err}");
+    }
+
     #[test_id(tn7d3qk)]
     #[test]
     fn nextests_starting_line_seeds_the_unit_count_before_any_test_finishes() {
@@ -3843,15 +3865,12 @@ mod tests {
     #[test_id(tgx5r2m)]
     #[test]
     fn the_progress_file_is_written_once_per_clock_tick_and_at_the_end_and_the_cost_is_said() {
-        let mut log = String::from("    Starting 1000 tests across 1 binary\n");
-        for i in 1..=1000 {
-            log.push_str(&format!("        PASS [   0.001s] ({i}/1000) fx t::n{i}\n"));
-        }
+        let log = nextest_log(950);
         let (prog, err) = stream_with_clock(&log, 100);
-        assert_eq!(prog.trim(), "1000 1000", "the last count is the file's");
+        assert_eq!(prog.trim(), "950 950", "the last count is the file's, though it lands mid-tick");
         let cost = err.lines().find(|l| l.starts_with("round-vm: PROGRESS-COST unit ")).unwrap_or_else(|| panic!("{err}"));
         let field = |k: &str| cost.split_whitespace().find_map(|w| w.strip_prefix(k)).unwrap().parse::<u64>().unwrap();
-        assert_eq!(field("lines="), 1001);
+        assert_eq!(field("lines="), 951);
         assert_eq!(field("writes="), 10 + 1, "one per clock tick (ten, the seed in the first) and the final: {cost}");
         field("user_ms=");
         field("sys_ms=");
@@ -3870,6 +3889,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(results.join("unit-progress")).unwrap(), "3 9\n");
         assert_eq!(std::fs::read_to_string(results.join("integration-progress")).unwrap(), "0 4\n");
         assert_eq!((tally.pulls, tally.bytes), (1, 8));
+        assert_eq!(tally.line(), "round-vm: PROGRESS-PULL pulls=1 bytes=8 secs=0");
         let pulled = d.path().join("pulled");
         std::fs::create_dir_all(&pulled).unwrap();
         std::fs::write(pulled.join("unit-progress"), "1 2\n").unwrap();

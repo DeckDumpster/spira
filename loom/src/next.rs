@@ -505,4 +505,13 @@ mod tests {
         let line = round_line(&row(), Some(&pass(false, 0)), 1000, true);
         assert!(!line.contains("3120/11240"), "without tests the row is as before: {line}");
     }
+
+    #[test_id(tw2n7hs)]
+    #[test]
+    fn a_tests_row_with_no_live_pass_file_still_says_tests() {
+        let r = RepoRound { done: 30, total: 90, tests: true, ..row() };
+        assert!(round_line(&r, None, 1000, true).contains("30/90 tests"));
+        let r = RepoRound { tests: false, ..r };
+        assert!(!round_line(&r, None, 1000, true).contains("30/90 tests"));
+    }
 }
