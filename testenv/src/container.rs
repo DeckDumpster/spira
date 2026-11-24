@@ -319,7 +319,11 @@ impl Driver<'_> {
             ));
             return None;
         };
-        let mut closure = sha256sum_line(&cf_bytes);
+        let cf_text = match std::str::from_utf8(&cf_bytes) {
+            Ok(t) => spira_config::recipe::image_text(spira_config::recipe::CONTAINERFILE, t).into_bytes(),
+            Err(_) => cf_bytes.clone(),
+        };
+        let mut closure = sha256sum_line(&cf_text);
         let pin = &self.conf.bd_pin;
         if self.host.is_file(pin) {
             closure.extend(self.host.read(pin).unwrap_or_default());

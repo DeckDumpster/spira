@@ -7,7 +7,7 @@
 # fails this build until the image carries it — the mechanism is self-maintaining in the
 # right direction.
 #
-# SIZING. Only what the tests need to run against. The caller's checkout is
+# SIZING. Only what the tests need to run against, nothing more. The caller's checkout is
 # bind-mounted by testenv.sh at /workspace; this image provides only the runtime.
 #
 # BUILD CONTEXT. The build context is spira/ (the harness root), set by
