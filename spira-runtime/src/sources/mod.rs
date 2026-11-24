@@ -51,7 +51,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_CTX_LIMIT",
     "SPIRA_TOKEN_PROJECTS",
     "SPIRA_ARCHIVIST_IDLE",
-    "SPIRA_RUNTIME_COCKPIT_TIER_WRITE",
+    crate::tasks::g::cockpit::WRITE_KEY,
 ];
 
 /// The real sources, from pinned config read once here: the registered mailboxes

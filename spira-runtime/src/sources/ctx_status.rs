@@ -16,12 +16,10 @@ use runtime::host::Submit;
 use runtime::sources::{on_pool, Running, Source};
 use tokio::sync::mpsc;
 
-use super::watch::{self, Changes};
+use super::watch::{self, Changed, Changes, Watch};
 use crate::tasks::g::cockpit::WRITE_KEY;
 
 pub const NAME: &str = "ctx.status";
-
-pub const KEYS: &[&str] = &["SPIRA_CTX_WARN", "SPIRA_CTX_HIGH", "SPIRA_CTX_LIMIT", "SPIRA_TOKEN_PROJECTS", "SPIRA_RUN", "SPIRA_ARCHIVIST_IDLE", WRITE_KEY];
 
 pub struct CtxStatus {
     cfg: ctx_meter::Config,
@@ -39,7 +37,7 @@ impl CtxStatus {
 }
 
 fn now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    spira_config::vtime::now_epoch() as i64
 }
 
 fn archivist_dir(cfg: &ctx_meter::Config) -> PathBuf {
@@ -93,31 +91,36 @@ impl Source for CtxStatus {
                 return;
             }
             let cfg = Arc::new(self.cfg);
-            let dirs: Vec<PathBuf> = vec![status::sessions_dir(&cfg.status), status::status_dir(&cfg.status), archivist_dir(&cfg)];
-            let made = dirs.clone();
-            let _ = on_pool(NAME, Arc::new(move || made.iter().for_each(|d| drop(std::fs::create_dir_all(d))))).await;
-            let mut watch = match watch::platform() {
-                Ok(w) => w,
-                Err(e) => return say(e).await,
-            };
-            for dir in [&dirs[0], &dirs[2]] {
-                if let Err(e) = watch.add(dir) {
-                    return say(e).await;
-                }
-            }
-            let boot = cfg.clone();
-            let _ = on_pool(NAME, Arc::new(move || start(&boot, now()))).await;
-            loop {
-                let changes = match watch.changed().await {
-                    Ok(c) => c,
-                    Err(e) => return say(e).await,
-                };
-                let (cfg, changes) = (cfg.clone(), Arc::new(changes));
-                if on_pool(NAME, Arc::new(move || apply(&cfg, now(), &changes))).await.is_err() {
-                    return;
-                }
+            match watch::platform() {
+                Ok(w) => serve(cfg, w).await,
+                Err(e) => say(e).await,
             }
         })
+    }
+}
+
+/// Creates the directories, watches the records and the archivist's state, recomputes every
+/// session once, then applies each change heard until the watch fails or the pool refuses.
+async fn serve(cfg: Arc<ctx_meter::Config>, mut watch: Box<dyn Watch>) {
+    let dirs = [status::sessions_dir(&cfg.status), status::status_dir(&cfg.status), archivist_dir(&cfg)];
+    let made = dirs.clone();
+    let _ = on_pool(NAME, Arc::new(move || made.iter().for_each(|d| drop(std::fs::create_dir_all(d))))).await;
+    for dir in [&dirs[0], &dirs[2]] {
+        if let Err(e) = watch.add(dir) {
+            return say(e).await;
+        }
+    }
+    let boot = cfg.clone();
+    let _ = on_pool(NAME, Arc::new(move || start(&boot, now()))).await;
+    loop {
+        let changes = match watch.changed().await {
+            Ok(c) => c,
+            Err(e) => return say(e).await,
+        };
+        let (cfg, changes) = (cfg.clone(), Arc::new(changes));
+        if on_pool(NAME, Arc::new(move || apply(&cfg, now(), &changes))).await.is_err() {
+            return;
+        }
     }
 }
 
@@ -241,5 +244,29 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(Box::new(source).run(tx));
         assert!(!Path::new("rt").exists(), "a dormant source writes nothing");
+    }
+
+    struct Scripted(Vec<Changes>);
+
+    impl Watch for Scripted {
+        fn add(&mut self, _: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn changed(&mut self) -> Changed<'_> {
+            let next = if self.0.is_empty() { Err("script ended".to_string()) } else { Ok(self.0.remove(0)) };
+            Box::pin(async move { next })
+        }
+    }
+
+    #[test_id(tbk5w1d)]
+    #[tokio::test]
+    async fn the_loop_writes_every_session_at_start_and_applies_each_change_it_hears() {
+        let rig = Rig::new();
+        let cfg = Arc::new(rig.cfg());
+        let arc = archivist_dir(&cfg);
+        std::fs::write(arc.join("s1.state"), "state=sweeping\n").unwrap();
+        serve(cfg.clone(), Box::new(Scripted(vec![vec![(arc, vec!["s1.state".to_string()])]]))).await;
+        let written = read_status(&status::status_dir(&cfg.status).join("s1.json")).unwrap();
+        assert!(written.archivist.contains("sweeping"), "{written:?}");
     }
 }

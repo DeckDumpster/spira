@@ -449,6 +449,16 @@ mod tests {
         assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("q", "spira"));
     }
 
+    #[test_id(tkkvwdi)]
+    #[test]
+    fn the_status_line_records_live_in_the_directory_the_inflight_marker_does() {
+        let s = Settings::from_lookup(&lookup("7")).unwrap();
+        let env = |k: &str| (k == "XDG_RUNTIME_DIR").then(|| "run/u9".to_string());
+        let s = s.with_environment(&env).unwrap();
+        assert_eq!(s.world.ctx_status_dir, spira_config::ctx_meter_dir(std::path::Path::new("run/u9")));
+        assert_eq!(s.world.ctx_status_dir.parent(), s.marker_path().unwrap().parent());
+    }
+
     #[test_id(tfwb7jc)]
     #[test]
     fn the_view_follower_finds_hunk_and_the_cockpit_state_where_the_environment_puts_them() {
