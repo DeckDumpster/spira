@@ -618,11 +618,12 @@ impl<'a> Pass<'a> {
             Ok(tip) => tip,
             Err(f) => return f,
         };
-        if blocks_gate(&bead.holds) {
-            self.log(&format!("CHECK6 {id}: {br} is held ({}) — not gated until the hold lifts", bead.holds.join(", ")));
+        let holds = self.holds_after_expired_wait(id, bead);
+        if blocks_gate(&holds) {
+            self.log(&format!("CHECK6 {id}: {br} is held ({}) — not gated until the hold lifts", holds.join(", ")));
             return Flow::Next;
         }
-        if !bead.holds.is_empty() {
+        if !holds.is_empty() {
             self.log(&format!("CHECK6 {id}: {br} is held (manual) — gated; the hold keeps it out of the cut"));
         }
         if self.beads.in_round(id) {
@@ -639,6 +640,21 @@ impl<'a> Pass<'a> {
         }
         let g = self.run_gate(&w.repo.name, br, id);
         self.certify_judge(w, br, id, bead, &tip, g, &Cell::new(false))
+    }
+
+    /// The row's holds once an expired timed wait is lifted; a refused lift is logged and the hold stays.
+    fn holds_after_expired_wait(&self, id: &str, bead: &BeadRow) -> Vec<String> {
+        let expired = bead.reason.as_deref().is_some_and(|r| spira_store::lc_state::wait_expired(r, self.clock.now() as i64));
+        if !expired || !bead.holds.iter().any(|h| h == "wait") {
+            return bead.holds.clone();
+        }
+        match self.lc.unhold(id, "wait") {
+            Ok(_) => bead.holds.iter().filter(|h| *h != "wait").cloned().collect(),
+            Err(e) => {
+                self.log(&format!("CHECK6 {id}: could not lift its expired wait hold ({e}) — stays held"));
+                bead.holds.clone()
+            }
+        }
     }
 
     /// A member cut into a round before its gate ran: queue the gate beside the round. A red

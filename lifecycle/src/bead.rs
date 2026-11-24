@@ -945,6 +945,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 let mut new = row.clone();
                 new.state = BeadState::Working;
                 new.claimed_from = Some(BeadState::Ready);
+                new.holds.remove(&HoldKind::Wait);
                 new.holder = Some(holder.clone());
                 new.persona = persona.clone();
                 new.lease_until = Some(*lease_until);
@@ -1307,6 +1308,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
                 let mut new = row.clone();
                 new.state = BeadState::Working;
                 new.claimed_from = Some(BeadState::Rework);
+                new.holds.remove(&HoldKind::Wait);
                 new.holder = Some(holder.clone());
                 new.persona = persona.clone();
                 new.lease_until = Some(*lease_until);
@@ -2896,6 +2898,23 @@ mod tests {
         assert!(exit.contains("bead.sh dep add"), "{exit}");
         assert!(manual(Some("waiting on sp-abc12 and the vendor")).applied);
         assert!(manual(Some("repeat offender, parked by the Concierge")).applied);
+    }
+
+    #[test_id(t6lklky)]
+    #[test]
+    fn a_claim_ends_a_wait_hold_and_a_later_hold_stays() {
+        let claim = || BeadEventKind::Claim { holder: "dwarf".into(), lease_until: 9, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None };
+        for state in [BeadState::Ready, BeadState::Rework] {
+            let mut r = row(state);
+            r.holds.insert(HoldKind::Wait);
+            r.holds.insert(HoldKind::Ask);
+            let out = apply(&r, &ev(state, 0, claim()));
+            assert!(out.applied, "{state:?}: {:?}", out.refusal);
+            assert!(!out.row.holds.contains(&HoldKind::Wait), "{state:?} claim keeps the wait");
+            assert!(out.row.holds.contains(&HoldKind::Ask), "{state:?} claim drops only the wait");
+            let held = apply(&out.row, &ev(BeadState::Working, out.row.version, BeadEventKind::Hold { kind: HoldKind::Wait, cause: HoldCause::UnlandedBlocker, detail: Some("snooze-until:99".into()) }));
+            assert!(held.applied && held.row.holds.contains(&HoldKind::Wait), "{state:?}: a hold after the claim stays");
+        }
     }
 
     #[test_id(t0afy00)]

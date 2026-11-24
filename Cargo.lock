@@ -2174,6 +2174,7 @@ dependencies = [
  "spira-lc",
  "spira-otel",
  "spira-runtime",
+ "spira-store",
  "spira-test-id",
  "state-store",
  "testkit",

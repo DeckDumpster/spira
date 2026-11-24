@@ -639,6 +639,7 @@ impl RealBeads {
             r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
             r.express = lc.get(&r.id).is_some_and(|x| x.express);
             r.holds = lc.get(&r.id).map(|x| x.holds.clone()).unwrap_or_default();
+            r.reason = lc.get(&r.id).and_then(|x| x.reason.clone());
         }
         Ok(())
     }
@@ -1552,6 +1553,15 @@ mod store_tests {
         let e = lc.resubmit_submitted("sp-a", "t").unwrap_err();
         assert!(e.contains("exited 2: cannot tell"), "{e}");
         assert_eq!(s.seen.lock().unwrap()[0], "list --state SUBMITTED,CERTIFIED");
+    }
+
+    #[test_id(t3x0t45)]
+    #[test]
+    fn lifting_a_wait_is_the_stores_unhold_under_the_pass_as_actor() {
+        let (s, c) = store(|a| if a[0] == "unhold" { (0, "applied\n".into()) } else { (2, "cannot tell".into()) });
+        let lc = RealLc { bin: None, client: Some(c) };
+        assert_eq!(lc.unhold("sp-a", "wait").as_deref(), Ok("applied"));
+        assert_eq!(s.seen.lock().unwrap()[0], "unhold sp-a wait landing-pass");
     }
 }
 

@@ -86,11 +86,15 @@ fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row], pr_mod
     let Some(queued) = gate_queued(run_dir) else { return Default::default() };
     rows.iter()
         .filter(|r| r.state == "SUBMITTED" && !queued.contains(&r.bead_id))
-        .filter(|r| r.holds.is_empty())
+        .filter(|r| r.holds.is_empty() || expired_wait_alone(r, now))
         .filter(|r| !pr_mode.contains(&r.bead_id))
         .filter(|r| !backing_off(run_dir, &r.bead_id, now))
         .map(|r| r.bead_id.clone())
         .collect()
+}
+
+fn expired_wait_alone(r: &spira_store::lc_state::Row, now: i64) -> bool {
+    r.holds.iter().all(|h| h == "wait") && r.reason.as_deref().is_some_and(|reason| spira_store::lc_state::wait_expired(reason, now))
 }
 
 pub const TASK_SILENT_S: u64 = 120;
@@ -909,6 +913,21 @@ mod ungated_submitted_tests {
         let unheld = [row("sp-a"), row("sp-b")];
         assert_eq!(ungated_submitted(&run, &unheld, &Default::default(), 1000).len(), 2, "the matcher must be able to find an ungated bead");
         assert_eq!(ungated_submitted(&run, &rows, &Default::default(), 1000), ["sp-a".to_string()].into_iter().collect());
+    }
+
+    #[test_id(tqgwrbp)]
+    #[test]
+    fn a_submitted_bead_whose_timed_wait_expired_is_ungated_and_any_other_hold_is_not() {
+        let run = testkit::TempDir::new("strand-expired-wait");
+        fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
+        let row = |id: &str, holds: &[&str], reason: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), holds: holds.iter().map(|h| h.to_string()).collect(), reason: Some(reason.into()), ..Default::default() };
+        let rows = [
+            row("sp-expired", &["wait"], "snooze-until:900"),
+            row("sp-live", &["wait"], "snooze-until:1100"),
+            row("sp-untimed", &["wait"], "sp-blocker"),
+            row("sp-ask", &["wait", "ask"], "snooze-until:900"),
+        ];
+        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), 1000), ["sp-expired".to_string()].into_iter().collect());
     }
 
     #[test_id(th6awlv)]
