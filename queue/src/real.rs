@@ -1618,7 +1618,7 @@ fn run_round_vm(
     host_only: bool,
     only: Option<&str>,
 ) -> RunOut {
-    // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
+    // batch-job: round-vm enforces the cap itself, on the suites alone; this is its hang guard
     // FORK-EDGE: machine leg round-vm (certify)
     let mut cmd = Command::new("timeout");
     if let Some(ami) = ami {
