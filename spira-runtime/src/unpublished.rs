@@ -69,8 +69,8 @@ pub fn measure(name: &str, now: u64) -> Result<Measurement, String> {
 pub(crate) fn measure_repo(repo: &Path, base: &str, remote: &str, branch: &str, now: u64) -> Result<Measured, String> {
     let tracking = format!("refs/remotes/{remote}/{branch}");
     let forge_tip = rev(repo, &tracking).map_err(|e| format!("{e}: the forge has not been fetched"))?;
-    let age = last_fetch_age(repo, now).or_else(|| tip_age(repo, &tracking, now)).ok_or("the forge tip's age is unknown: no fetch left a FETCH_HEAD or a reflog")?;
     let landing_tip = rev(repo, base)?;
+    let age = last_fetch_age(repo, now).or_else(|| (forge_tip == landing_tip).then(|| ref_file_age(repo, &tracking, now)).flatten()).or_else(|| tip_age(repo, &tracking, now)).ok_or("the forge tip's age is unknown: no fetch left a FETCH_HEAD or a reflog")?;
     let (count, oldest_arrival) = if forge_tip == landing_tip { (0, None) } else { range_facts(repo, base, &forge_tip, &landing_tip)? };
     Ok(Measured { landing_tip, forge_tip, count, oldest_arrival, read_at: now.saturating_sub(age) })
 }
@@ -80,6 +80,13 @@ fn last_fetch_age(repo: &Path, now: u64) -> Option<u64> {
     let (gitdir, _) = spira_config::git_refs::git_dirs(repo)?;
     let modified = std::fs::metadata(gitdir.join("FETCH_HEAD")).ok()?.modified().ok()?;
     let at = modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    Some(now.saturating_sub(at))
+}
+
+/// Seconds since the remote-tracking ref's own file was written, for a checkout whose fetches left no FETCH_HEAD.
+fn ref_file_age(repo: &Path, tracking: &str, now: u64) -> Option<u64> {
+    let (_, common) = spira_config::git_refs::git_dirs(repo)?;
+    let at = std::fs::metadata(common.join(tracking)).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
     Some(now.saturating_sub(at))
 }
 
@@ -226,6 +233,21 @@ mod tests {
         std::fs::remove_dir_all(clone.join(".git/logs/refs/remotes")).unwrap();
         let why = measure_repo(&clone, "main", "origin", "main", now).unwrap_err();
         assert!(why.contains("age is unknown"), "{why} ({tip})");
+    }
+
+    #[test_id(tw6h49m)]
+    #[test]
+    fn a_landing_ref_at_the_forge_tip_with_no_fetch_head_is_aged_by_the_tracking_ref_file() {
+        let scratch = testkit::TempDir::new("runtime-unpublished-equal");
+        let clone = clone_ahead(scratch.path(), 0);
+        std::fs::remove_file(clone.join(".git/FETCH_HEAD")).unwrap();
+        std::fs::remove_dir_all(clone.join(".git/logs/refs/remotes")).unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(clone.join(".git/refs/remotes/origin/main")).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(300)).unwrap();
+        let now = epoch();
+        let m = measure_repo(&clone, "main", "origin", "main", now).unwrap();
+        assert_eq!((m.count, m.oldest_arrival), (0, None));
+        assert!((298..=302).contains(&(now - m.read_at)), "{}", now - m.read_at);
     }
 
     #[test_id(t3qng4m)]

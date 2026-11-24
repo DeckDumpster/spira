@@ -260,6 +260,9 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
         _ => {}
     });
     let all = logged(&f);
+    for read in [" show local/main:Cargo.toml", "log --format=%ct %s --after=@"] {
+        assert!(all[..at_warm].iter().any(|l| l.contains(read)), "warm-up never ran {read:?}, so the idle hour proves nothing about it");
+    }
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git: {}\n{}", argv_counts(&all[at_warm..at_idle]), all[at_warm..at_idle].join("\n"));
     assert_ne!(unsent_kv(&f), unsent_before, "a new spira/* branch changes the unsent section");
     assert!(!unsent_before.is_empty());
