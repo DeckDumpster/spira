@@ -308,15 +308,15 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// alike so a probe cannot lack a tool the phase it re-runs has.
 macro_rules! unit_env_fn {
     () => {
-        r#"unit_env() {
-    env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        concat!(r#"unit_env() {
+    env -i RUST_TEST_THREADS="#, spira_config::run_test_threads_literal!(), r#" CARGO_BUILD_JOBS="$(nproc)" HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="${RUSTC_WRAPPER:-}" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
         SCCACHE_WEBDAV_ENDPOINT="${SCCACHE_WEBDAV_ENDPOINT:-}" SCCACHE_WEBDAV_KEY_PREFIX="${SCCACHE_WEBDAV_KEY_PREFIX:-}" \
         ${CARGO_TARGET_DIR:+CARGO_TARGET_DIR="$CARGO_TARGET_DIR"} \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
         cargo "$@"
 }
-"#
+"#)
     };
 }
 pub(crate) use unit_env_fn;
@@ -621,7 +621,7 @@ t0=$(date +%s)
 if art_fetch "$art_id" ~/round-work/target/release; then
     echo "round-vm: used the stored build of this tree; cargo did not run" >&2
 else
-    if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
+    if ! cargo build -j "$(nproc)" -q --profile release --workspace --config profile.release.incremental=false; then
         echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
         tail -40 "$SCCACHE_ERROR_LOG" >&2 2>/dev/null || true
         exit 4
@@ -3708,6 +3708,45 @@ mod tests {
         REMOTE_SCRIPT[a..end].to_string()
     }
 
+    #[test_id(tsg0ya1)]
+    #[test]
+    fn unit_env_states_jobs_and_test_threads_whatever_a_host_cargo_config_says() {
+        let d = TempDir::new();
+        let (home, bin) = (d.path().join("home"), d.path().join("home/spira-env/bin"));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(d.path().join(".cargo")).unwrap();
+        std::fs::write(d.path().join(".cargo/config.toml"), "[build]\njobs = 99\n[env]\nRUST_TEST_THREADS = \"99\"\n").unwrap();
+        testkit::write_exe(bin.join("cargo"), "#!/bin/sh\nprintf '%s,%s\\n' \"${RUST_TEST_THREADS:-}\" \"${CARGO_BUILD_JOBS:-}\"\n");
+        let out = std::process::Command::new(system_paths::BIN_BASH)
+            .args(["-c", &format!("{UNIT_ENV_FN}\nunit_env test")])
+            .env_clear()
+            .env("HOME", &home)
+            .env("CARGO_HOME", d.path().join("ch"))
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(d.path())
+            .output()
+            .unwrap();
+        let got = String::from_utf8_lossy(&out.stdout);
+        let nproc = String::from_utf8(std::process::Command::new("nproc").output().unwrap().stdout).unwrap();
+        assert_eq!(got.trim(), format!("{},{}", spira_config::admission::RUN_TEST_THREADS, nproc.trim()), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test_id(tsg0ya2)]
+    #[test]
+    fn every_cargo_call_in_the_round_scripts_states_its_jobs() {
+        for (name, script) in [("round", REMOTE_SCRIPT), ("attr", crate::spool::REMOTE_ATTR_SCRIPT)] {
+            let calls: Vec<&str> = script
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .filter(|l| l.contains("cargo build") || l.contains("cargo test") || l.contains("cargo nextest") || l.contains("cargo check"))
+                .collect();
+            assert!(!calls.is_empty(), "{name}");
+            for l in calls {
+                assert!(l.contains(" -j "), "{name}: a cargo call without jobs: {l}");
+            }
+        }
+    }
+
     fn red_phase_out(log: &str, hung: &str) -> String {
         red_phase_files(log, hung).0
     }
@@ -4022,7 +4061,7 @@ mod tests {
     #[test]
     fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
         assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
-        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
+        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -j \"$(nproc)\" -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
     }
 
     #[test_id(tnbgq6o)]
@@ -4033,7 +4072,7 @@ mod tests {
         // the moment the batch goes parallel — warming once, here, means none of them do.
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
         let warm = REMOTE_SCRIPT.find("bash spira/conf-gen.sh").unwrap();
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < warm && warm < build && build < batch, "conf-gen.sh must be warmed after the clone but before either the workspace build or the suite batch");
         assert!(REMOTE_SCRIPT.contains("bash spira/conf-gen.sh >&2 || true"), "non-fatal: conf.sh's own per-suite self-heal is still the fallback if this one warm attempt fails");
@@ -4117,7 +4156,7 @@ mod tests {
     #[test_id(tqj0cgk)]
     #[test]
     fn the_vm_is_a_launcher_release_path_set_outright_before_any_harness_script() {
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let stage = REMOTE_SCRIPT.find("release build").unwrap();
         let path = REMOTE_SCRIPT.find("export PATH=\"$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:").unwrap();
         let first_script = REMOTE_SCRIPT.find("testenv container tag").unwrap();
@@ -4228,7 +4267,7 @@ mod tests {
     fn the_round_runs_with_spira_env_from_its_own_tree_first_in_path() {
         let build = REMOTE_SCRIPT.find("flake_ref=\"path:$env_flake#spira-env\"").expect("spira-env is built from the round's own flake files");
         let path = REMOTE_SCRIPT.find("export PATH=\"$HOME/spira-env/bin:").expect("spira-env/bin first");
-        let first_build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let first_build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         assert!(build < path && path < first_build);
         assert!(REMOTE_SCRIPT.contains("round-vm: spira-env $env_path"), "the log prints the store path and versions");
         assert!(REMOTE_SCRIPT.contains("PATH=\"$HOME/spira-env/bin:$CARGO_HOME/bin:"), "unit tests see it too");
@@ -4244,7 +4283,7 @@ mod tests {
         let cache_home = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
         let wrapper = REMOTE_SCRIPT.find("export RUSTC_WRAPPER=\"$CARGO_HOME/bin/sccache\"").expect("RUSTC_WRAPPER set outright, by absolute path");
         let endpoint = REMOTE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the webdav endpoint reuses the VM's own host_addr, the same address the mirror already uses");
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         assert!(cache_home < build && wrapper < build && endpoint < build, "the cache must be wired up before the first build, not just before testenv's");
         // The VM's PATH must still find cargo/rustc (the pre-existing $HOME/.cargo/bin,
         // rustup's own shims) AND the new CARGO_HOME/bin (where sccache now installs) —
@@ -4275,7 +4314,7 @@ mod tests {
     #[test]
     fn an_ec2_round_reads_its_cache_home_from_the_image_before_building() {
         let at = REMOTE_SCRIPT.find(&format!("{}/spira-round-ami.env", system_paths::ETC)).expect("the script reads the image's own record");
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let guard = REMOTE_SCRIPT.find("sccache is missing on this VM").expect("a missing sccache is named before the build");
         assert!(at < guard && guard < build);
     }
@@ -4284,7 +4323,7 @@ mod tests {
     #[test]
     fn the_build_is_skipped_on_a_hit_and_a_miss_stores_what_it_builds() {
         let fetch = REMOTE_SCRIPT.find("if art_fetch \"$art_id\"").expect("fetched before building");
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let store = REMOTE_SCRIPT.find("art_store \"$art_id\"").expect("a build is stored");
         assert!(fetch < build && build < store);
         assert!(REMOTE_SCRIPT[fetch..build].contains("\nelse\n"), "cargo runs only in the miss branch");
@@ -4327,7 +4366,7 @@ mod tests {
     #[test_id(tb17apa)]
     #[test]
     fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let no_run = REMOTE_SCRIPT.find("unit_cargo > ~/round-unit-build.log").unwrap();
         let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         let run = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log").unwrap();

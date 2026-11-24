@@ -402,9 +402,10 @@ pub fn session_env() -> [(String, String); 2] {
     ]
 }
 
-/// The keys of a cargo config file's `[build]`, `[profile]` and `[env]` that the harness
-/// declares itself (`SCCACHE_*` and a wrapper other than the retired `spira-admit` serve
-/// interactive shells and are left alone), each as a dotted path; a parse failure is one entry.
+/// The keys of a cargo config file that the harness states on every cargo call it makes: the
+/// jobs, the test threads and the retired `spira-admit` wrapper. Incremental, profiles and
+/// `env.TMPDIR` are the manifest's or the host's, and `SCCACHE_*` serves interactive shells;
+/// all are left alone. Each key is a dotted path; a parse failure is one entry.
 /// Pure: the caller reads the file and reports.
 pub fn host_drift(text: &str) -> Vec<String> {
     let doc: toml::Table = match text.parse() {
@@ -412,31 +413,18 @@ pub fn host_drift(text: &str) -> Vec<String> {
         Err(e) => return vec![format!("unparsable ({})", e.message())],
     };
     let mut out = Vec::new();
-    if let Some(toml::Value::Table(b)) = doc.get("build") {
-        flatten("build", b, &mut out);
+    if doc.get("build").and_then(|b| b.get("jobs")).is_some() {
+        out.push("build.jobs".to_string());
     }
-    if let Some(toml::Value::Table(p)) = doc.get("profile") {
-        flatten("profile", p, &mut out);
+    if doc.get("env").and_then(|e| e.get("RUST_TEST_THREADS")).is_some() {
+        out.push("env.RUST_TEST_THREADS".to_string());
     }
-    if let Some(toml::Value::Table(e)) = doc.get("env") {
-        out.extend(e.keys().filter(|k| !k.starts_with("SCCACHE_")).map(|k| format!("env.{k}")));
-    }
-    out.retain(|k| k != "build.rustc-wrapper");
     if let Some(toml::Value::String(w)) = doc.get("build").and_then(|b| b.get("rustc-wrapper")) {
         if Path::new(w).file_name().is_some_and(|n| n == crate::admission::BIN) {
             out.insert(0, "build.rustc-wrapper".into());
         }
     }
     out
-}
-
-fn flatten(prefix: &str, t: &toml::Table, out: &mut Vec<String>) {
-    for (k, v) in t {
-        match v {
-            toml::Value::Table(inner) => flatten(&format!("{prefix}.{k}"), inner, out),
-            _ => out.push(format!("{prefix}.{k}")),
-        }
-    }
 }
 
 pub const TF_PLUGIN_CACHE_ENV: &str = "TF_PLUGIN_CACHE_DIR";
@@ -516,8 +504,15 @@ codegen-units = 4
         got.sort();
         assert_eq!(
             got,
-            ["build.incremental", "build.jobs", "build.rustc-wrapper", "env.RUST_TEST_THREADS", "env.TMPDIR", "profile.dev.codegen-units", "profile.test.codegen-units"]
+            ["build.jobs", "build.rustc-wrapper", "env.RUST_TEST_THREADS"]
         );
+    }
+
+    #[test_id(tsg0yb1)]
+    #[test]
+    fn host_drift_leaves_what_the_harness_does_not_state_on_every_call_unreported() {
+        let text = "[build]\nincremental = false\n[env]\nTMPDIR = \"/srv/tmp\"\n[profile.dev]\ncodegen-units = 4\n[profile.test]\ncodegen-units = 4\n";
+        assert!(host_drift(text).is_empty(), "{:?}", host_drift(text));
     }
 
     #[test_id(twmux3s)]

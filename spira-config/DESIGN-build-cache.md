@@ -44,7 +44,7 @@ wrapper(path, setting)  -> Ok(Wrapper::Sccache(<abs path>)) | Ok(Wrapper::Off) |
 Wrapper::env()          -> [("RUSTC_WRAPPER", <abs>|""), ("SCCACHE_IGNORE_SERVER_IO_ERROR","1")]
 one_shot(profile)       -> ["--config", "profile.<profile>.incremental=false"]
 session_env()           -> [("CARGO_BUILD_JOBS", "6"), ("RUST_TEST_THREADS", "4")]  (a building rune's session)
-host_drift(config_text) -> the keys a host cargo config sets that the harness declares
+host_drift(config_text) -> build.jobs, env.RUST_TEST_THREADS and a retired wrapper: what the harness states on every cargo call
 ```
 
 * `path` is the PATH the build will run under (the gate's is built outright from

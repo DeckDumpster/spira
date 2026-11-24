@@ -40,6 +40,13 @@ pub const COLD_PAR: u64 = 1;
 pub const RUN_CARGO_JOBS: u64 = 6;
 /// Test threads one testenv run, and a builder session's cargo test, uses.
 pub const RUN_TEST_THREADS: u64 = 4;
+/// [`RUN_TEST_THREADS`] as a literal, for a `concat!` that builds a script.
+#[macro_export]
+macro_rules! run_test_threads_literal {
+    () => {
+        "4"
+    };
+}
 /// Longest one session keeps the cold slot: the build phase is over by then, whatever the
 /// session still does.
 pub const COLD_HOLD_SECS: u64 = 1200;

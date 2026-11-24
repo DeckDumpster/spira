@@ -153,6 +153,8 @@ struct State {
     path: String,
     /// The compiler wrapper's environment for every build the trial runs (sp-z61hj).
     build_env: Vec<(String, String)>,
+    /// Cargo's jobs for every call the trial makes ([`compose::jobs`] of the host's cores).
+    jobs: u64,
     /// Why the build cache cannot be used; refused only by a trial that builds (sp-z61hj).
     cache_refusal: Option<String>,
     /// What `--release-bins` builds with: HOME, SPIRA_RELEASE and the trial's timeout.
@@ -725,6 +727,7 @@ impl<'w, W: World> Trial<'w, W> {
         }
         mv!(self, GateState::Rebased, &format!("{br} merged onto {base}; the merge is checked out in the gate tree"));
 
+        self.s.jobs = compose::jobs(key::digits(&ctx.host_cores).unwrap_or(1));
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
             match self.prepare_build_tree(&ctx, &tree, false) {
@@ -1983,7 +1986,7 @@ impl<'w, W: World> Trial<'w, W> {
             env.push(e("TMPDIR", &t.to_string_lossy()));
         }
         env.extend(self.s.build_env.iter().cloned());
-        let cmd = release_bins_command();
+        let cmd = release_bins_command(self.s.jobs.max(1));
         let t0 = w.now();
         let (rc, out) = w.run_gate(&tree, &env, &self.s.timeout, &cmd);
         self.s.phases.push(("release-bins".into(), w.now().saturating_sub(t0)));
@@ -2571,9 +2574,9 @@ fn tools_proved<W: World>(w: &W, dir: &Path, id: &str, pkgs: &[String]) -> Resul
 
 /// The `--release-bins` command (sp-z61hj): the release profile of the whole workspace,
 /// one-shot, locked; on failure `target/release` is emptied so nothing stale can be landed.
-pub fn release_bins_command() -> String {
+pub fn release_bins_command(jobs: u64) -> String {
     format!(
-        "cargo build --release --workspace --locked {} || {{ _r=$?; find target/release -mindepth 1 -delete 2>/dev/null; exit $_r; }}",
+        "cargo build -j {jobs} --release --workspace --locked {} || {{ _r=$?; find target/release -mindepth 1 -delete 2>/dev/null; exit $_r; }}",
         spira_config::build::one_shot_words("release")
     )
 }
@@ -2829,7 +2832,7 @@ pub fn run_composed<W: World>(
         }
         let hermetic;
         let step_env = if name == "test" {
-            hermetic = compose::test_phase_env(env);
+            hermetic = compose::test_phase_env(env, jobs);
             &hermetic[..]
         } else {
             env
