@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "ti
 serde_json = "1"
 
 [dev-dependencies]
+toml = "0.8"
 spira-test-id = { path = "../spira-test-id" }
 system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }

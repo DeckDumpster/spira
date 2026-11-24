@@ -149,6 +149,7 @@ pub struct Loom {
     /// concurrent viewers share one.
     units_cell: Mutex<Option<Arc<units::Snapshot>>>,
     units_refreshing: AtomicBool,
+    units_installed: Arc<std::sync::Mutex<Option<std::collections::BTreeSet<String>>>>,
     units_history: tokio::sync::Mutex<units::History>,
     units_syncing: AtomicBool,
     forge_ci: forge_rounds::Cache,
@@ -170,6 +171,7 @@ impl Loom {
             ops_cell: Mutex::new(None),
             units_cell: Mutex::new(None),
             units_refreshing: AtomicBool::new(false),
+            units_installed: Default::default(),
             units_history: Default::default(),
             units_syncing: AtomicBool::new(false),
             forge_ci: forge_rounds::Cache::default(),
@@ -195,6 +197,7 @@ impl Loom {
             budget: self.cfg.budget,
             desired_dir: self.cfg.desired_dir.clone(),
             units_install: self.cfg.units_install.clone(),
+            installed: self.units_installed.clone(),
         };
         self.sync_units_history().await;
         let snap = Arc::new(units::take(&src, now_s(), &*self.units_history.lock().await).await);
@@ -1057,6 +1060,21 @@ mod in_process_tests {
             transitions: Err("not pinned in this test".into()),
             deadman_secs: 300,
         }
+    }
+
+    #[test_id(tbzcv4x)]
+    #[tokio::test]
+    async fn refreshing_the_units_snapshot_five_times_starts_the_installer_once() {
+        let d = testkit::TempDir::new("loom-units-once");
+        let starts = d.join("starts");
+        testkit::write_exe(d.join("units-install"), &format!("#!/bin/sh\necho start >> '{}'\necho a.service\n", starts.display()));
+        std::fs::create_dir(d.join("desired")).unwrap();
+        let cfg = Config { cache: Duration::ZERO, systemctl: d.join("no-systemctl").display().to_string(), desired_dir: d.join("desired").display().to_string(), units_install: d.join("units-install").display().to_string(), ..test_config() };
+        let loom = Arc::new(Loom::with_limits(cfg, Arc::new(|_| Ok(Default::default()))));
+        for _ in 0..5 {
+            loom.units_snapshot().await;
+        }
+        assert_eq!(std::fs::read_to_string(starts).unwrap().lines().count(), 1);
     }
 
     fn serve_claim_snapshot(run: &std::path::Path, ids: &[&str], at: i64) {
