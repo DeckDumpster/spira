@@ -496,6 +496,20 @@ mod tests {
         }
     }
 
+    #[test_id(tuov8uc)]
+    #[test]
+    fn the_checked_in_definition_owns_itself_its_crate_and_every_fence_script_it_runs() {
+        let d = checked_in();
+        assert!(d.own.iter().any(|o| o == PATH) && d.own.iter().any(|o| o == "gate/"), "{:?}", d.own);
+        for p in crate::parse::bash_paths(&d.command()) {
+            assert!(d.own.contains(&p), "gate.steps runs {p} but does not `own` it");
+        }
+        for o in &d.own {
+            let at = root().join(o);
+            assert!(if o.ends_with('/') { at.is_dir() } else { at.is_file() }, "own {o} names nothing the tree carries");
+        }
+    }
+
     /// The compile check stays reachable (doctor's sp-1hmrm check, now on the tree): a
     /// suites composition runs the build fence; a unit composition drops it for its own
     /// build phase (sp-aprxm).

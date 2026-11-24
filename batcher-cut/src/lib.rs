@@ -75,6 +75,13 @@ fn default_round_vm() -> Result<PathBuf, String> {
     spira_config::release_env::tool("round-vm").map(PathBuf::from)
 }
 
+fn manifest_field(field: &str) -> Result<String, String> {
+    let root = spira_config::release_env::release_root_for_process()?;
+    spira_config::resolve::read_manifest_field(&root, field)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{}/MANIFEST has no `{field}`", root.display()))
+}
+
 /// Every field sourced from a registered `spira/conf.d` key is read exactly once here, through
 /// `spira_config::process::cfg`/`cfg_parse` — THE ONE DOOR (per Ryan 2026-10-05: one source of
 /// config) — and handed down as a plain field from here on; nothing downstream re-reads the
@@ -133,6 +140,8 @@ pub fn env_from_cfg(home: PathBuf, run: PathBuf, round_vm: Option<PathBuf>) -> R
         orphan_redrive_after: cfg_parse::<u64>("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS")?,
         pause_lift_after: cfg_parse::<u64>("SPIRA_BATCHER_PAUSE_LIFT_SECS")?,
         results_retention: spira_config::results_retention::Retention::from_config()?,
+        commit: manifest_field("commit"),
+        repo: manifest_field("repo"),
         land_unpause: var("SPIRA_BATCHER_LAND_UNPAUSE")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from),

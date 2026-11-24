@@ -1,5 +1,6 @@
 //! A CERTIFIED item whose blocker is finished by the claim rule is cut into a round: a DONE item
 //! and a closed rowless decision release it, a CERTIFIED item outside the pool still holds it.
+//! A member blocked by a change to the gate's own files waits until the running release carries it.
 //! One test: the projection is installed once per process.
 
 #[macro_use]
@@ -95,7 +96,56 @@ fn env(dir: &Path) -> Env {
         pause_lift_after: 1,
         land_unpause: None,
         results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
+        commit: Err("no release".into()),
+        repo: Err("no release".into()),
     }
+}
+
+fn with_repo(mut r: Value, repo: &str) -> Value {
+    r["repo"] = json!(repo);
+    r
+}
+
+/// A repo whose `gate.steps` owns `owned/`: landed changes to it (one inside the release at
+/// `commit`, one after it) and pool branches that do and do not touch it.
+fn gamma_repo(dir: &Path) -> (String, std::collections::BTreeMap<String, String>, (String, String, String)) {
+    std::fs::create_dir(dir).unwrap();
+    let commit = |msg: &str| git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", msg]);
+    let touch = |path: &str| {
+        std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(path), path).unwrap();
+        git(dir, &["add", path]);
+    };
+    git(dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("gate.steps"), "step true\nown owned/\n").unwrap();
+    git(dir, &["add", "gate.steps"]);
+    commit("base");
+    let land = |name: &str, path: &str| {
+        git(dir, &["checkout", "-q", "-b", name, "main"]);
+        touch(path);
+        commit(name);
+        let tip = git(dir, &["rev-parse", "HEAD"]);
+        git(dir, &["checkout", "-q", "main"]);
+        git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-ff", "-m", name, name]);
+        tip
+    };
+    let inside = land("l-in", "owned/in");
+    let release = git(dir, &["rev-parse", "HEAD"]);
+    let outside = land("l-out", "owned/out");
+    touch("owned/ff");
+    commit("l-ff");
+    let fast_forwarded = git(dir, &["rev-parse", "HEAD"]);
+    let mut tips = std::collections::BTreeMap::new();
+    for (id, path) in [("b-own", Some("owned/b")), ("b-free", Some("free/b")), ("a-own", None), ("a-free", None), ("a-lo", None), ("a-li", None), ("a-ff", None)] {
+        git(dir, &["checkout", "-q", "-b", &format!("spira/{id}"), "main"]);
+        if let Some(path) = path {
+            touch(path);
+            commit(id);
+        }
+        tips.insert(id.to_string(), git(dir, &["rev-parse", "HEAD"]));
+    }
+    git(dir, &["checkout", "-q", "main"]);
+    (release, tips, (outside, inside, fast_forwarded))
 }
 
 fn item(id: &str, issue_type: &str, status: &str, blocker: Option<&str>) -> Value {
@@ -117,7 +167,27 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     }
     let other = row("sp-other", "CERTIFIED", "t9", "{}");
     let other = Value::Object(other.as_object().unwrap().iter().map(|(k, v)| (k.clone(), if k == "repo" { json!("beta") } else { v.clone() })).collect());
-    let store = Store {
+    let gamma = dir.path().join("gamma");
+    let (gamma_commit, gamma_tips, landed) = gamma_repo(&gamma);
+    let mut gamma_rows: Vec<Value> = ["b-own", "a-own", "b-free", "a-free", "a-lo", "a-li", "a-ff"]
+        .iter()
+        .map(|id| with_repo(row(id, "CERTIFIED", &gamma_tips[*id], "{}"), "gamma"))
+        .collect();
+    for (id, sha) in [("l-out", &landed.0), ("l-in", &landed.1), ("l-ff", &landed.2)] {
+        let mut r = with_repo(row(id, "LANDED", "t0", "{}"), "gamma");
+        r["reason"] = json!(sha);
+        gamma_rows.push(r);
+    }
+    let gamma_items = vec![
+        item("b-own", "task", "open", None),
+        item("b-free", "task", "open", None),
+        item("a-own", "task", "open", Some("b-own")),
+        item("a-free", "task", "open", Some("b-free")),
+        item("a-lo", "task", "open", Some("l-out")),
+        item("a-li", "task", "open", Some("l-in")),
+        item("a-ff", "task", "open", Some("l-ff")),
+    ];
+    let mut store = Store {
         rows: vec![
             row("sp-on-sp-done", "CERTIFIED", &tip, "{\"sp-done\":\"t0\",\"sp-dec\":\"t0\"}"),
             row("sp-on-sp-weird", "CERTIFIED", &tip, "{}"),
@@ -135,6 +205,8 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
             item("sp-dec", "decision", "closed", None),
         ],
     };
+    store.rows.extend(gamma_rows);
+    store.items.extend(gamma_items);
     let frozen = Arc::new(Mutex::new(std::time::Instant::now()));
     let views = Projection::new(LcClient::over(Arc::new(store), true), Duration::from_secs(30), Arc::new(move || *frozen.lock().unwrap()));
     let _watch = spira_runtime::store::run(views).expect("the first install stands");
@@ -164,4 +236,28 @@ fn a_certified_item_blocked_by_a_finished_item_is_cut_and_one_blocked_by_a_certi
     refused.sort();
     assert_eq!(refused, [("sp-on-sp-live", "sp-other"), ("sp-on-sp-weird", "sp-weird")], "a state the machine does not know stays live");
     assert!(left.iter().any(|l| l.id == "sp-on-sp-live" && l.cause == io::Cause::Blocked { dep: "sp-other".into() }), "{left:?}");
+
+    let mut env = env;
+    env.commit = Ok(gamma_commit);
+    env.repo = Ok("gamma".into());
+    let repo = Repo { name: "gamma".into(), path: gamma, base: "main".into(), forge: "forge".into(), land: Land::Local };
+    let (pool, left) = io::certified_pool_left_out(&env, &repo).expect("the pool reads");
+    let mut pooled: Vec<&str> = pool.iter().map(|m| m.id.as_str()).collect();
+    pooled.sort();
+    assert_eq!(
+        pooled,
+        ["a-free", "a-li", "b-free", "b-own"],
+        "a blocker touching no owned path rides with its dependant, a change the release carries is in force; the rest wait: {left:?}"
+    );
+    for (id, dep) in [("a-own", "b-own"), ("a-lo", "l-out"), ("a-ff", "l-ff")] {
+        assert!(left.iter().any(|l| l.id == id && l.cause == io::Cause::NotInForce { dep: dep.into() }), "{id}: {left:?}");
+    }
+    assert_eq!(left.iter().find(|l| l.id == "a-own").unwrap().tag(), "blocked-not-in-force");
+
+    env.repo = Ok("elsewhere".into());
+    let (pool, _) = io::certified_pool_left_out(&env, &repo).expect("the pool reads");
+    assert!(pool.iter().any(|m| m.id == "a-own"), "a release of another repo says nothing about this one's own files");
+    env.repo = Err("unreadable".into());
+    let (_, left) = io::certified_pool_left_out(&env, &repo).expect("the pool reads");
+    assert!(left.iter().any(|l| l.id == "a-own"), "an unreadable release leaves the dependent out");
 }

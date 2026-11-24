@@ -118,6 +118,8 @@ fn env(dir: &Path) -> Env {
         pause_lift_after: 1,
         land_unpause: None,
         results_retention: spira_config::results_retention::Retention { keep_days: 7, max: 50 },
+        commit: Err("no release".into()),
+        repo: Err("no release".into()),
     }
 }
 
