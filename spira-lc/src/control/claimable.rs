@@ -101,7 +101,7 @@ pub fn judge(
         return j;
     }
     let snoozed = own.holds.contains(&HoldKind::Wait)
-        && own.reason.as_deref().is_some_and(|r| spira_store::lc_state::snooze_until(r).is_some() && !spira_store::lc_state::wait_expired(r, ctx.now));
+        && own.reason.as_deref().is_some_and(|r| spira_store::lc_state::still_snoozed(r, ctx.now));
     if snoozed {
         j.verdict = Verdict::Snoozed;
         return j;

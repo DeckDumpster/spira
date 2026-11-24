@@ -522,6 +522,25 @@ pub fn screened_repos(reg: &Registry) -> Vec<(String, bool)> {
     }).collect()
 }
 
+/// The row as it stands at `now`: a timed `wait` hold that ran out no longer holds it.
+fn without_expired_wait(mut row: Value, now: i64) -> Value {
+    let expired = str_of(&row, "reason").is_some_and(|r| spira_store::lc_state::wait_expired(r, now));
+    let drop_wait = |a: &mut Vec<Value>| a.retain(|h| h.as_str() != Some("wait"));
+    if expired {
+        match row.get_mut("holds") {
+            Some(Value::Array(a)) => drop_wait(a),
+            Some(Value::String(t)) => {
+                if let Ok(mut a) = serde_json::from_str::<Vec<Value>>(t) {
+                    drop_wait(&mut a);
+                    row["holds"] = Value::Array(a);
+                }
+            }
+            _ => {}
+        }
+    }
+    row
+}
+
 /// One repository's facts, read in-process: the store over `lc`, the open round from the
 /// views, and git for the branch tips, the base fetch and each candidate. An empty pool reads
 /// no git past the branch list and fetches nothing.
@@ -531,6 +550,8 @@ pub fn observe_repo(r: &Reads, name: &str, local: bool) -> Result<RepoFacts, Str
         Some(rows) => rows?,
         None => serde_json::from_str(&lcq_with(r.lc, &["list", "--state", "SUBMITTED,CERTIFIED"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?, // BDQ_READ_CONSIDERED="LcClient is the spira-lc door; no bdq"
     };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let rows: Vec<Value> = rows.into_iter().map(|row| without_expired_wait(row, now)).collect();
     let mut f = RepoFacts { rows: rows.iter().filter_map(PoolRow::of).collect(), branch_tips: branch_tips(&repo)?, ..RepoFacts::default() };
     let ids = at_live_tips(&rows, &f.branch_tips);
     if !ids.is_empty() {
@@ -647,6 +668,19 @@ pub fn lc_note(lc: &LcClient, id: &str, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tjo5yst)]
+    #[test]
+    fn an_expired_timed_wait_no_longer_blocks_the_screen_and_a_live_one_does() {
+        let row = |holds: Value, reason: &str| serde_json::json!({"bead_id": "sp-a", "state": "SUBMITTED", "tip": "t1", "holds": holds, "reason": reason});
+        let branches: BTreeMap<String, String> = [("sp-a".to_string(), "t1".to_string())].into();
+        let pool = |r: Value| select_pool(&[without_expired_wait(r, 1000)], &[], &branches, &BTreeSet::from(["sp-a".to_string()]), &BTreeMap::new()).len();
+        assert_eq!(pool(row(serde_json::json!(["wait"]), "snooze-until:900")), 1);
+        assert_eq!(pool(row(serde_json::json!("[\"wait\"]"), "snooze-until:900")), 1);
+        assert_eq!(pool(row(serde_json::json!(["wait"]), "snooze-until:1100")), 0, "an unexpired wait still blocks");
+        assert_eq!(pool(row(serde_json::json!(["wait"]), "sp-blocker")), 0, "an untimed wait still blocks");
+        assert_eq!(pool(row(serde_json::json!(["wait", "ask"]), "snooze-until:900")), 0, "another blocking hold stays");
+    }
 
     #[test_id(tfnlj4y)]
     #[test]

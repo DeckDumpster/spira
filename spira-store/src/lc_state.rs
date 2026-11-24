@@ -51,6 +51,11 @@ pub fn wait_expired(reason: &str, now: i64) -> bool {
     snooze_until(reason).is_some_and(|t| t <= now)
 }
 
+/// A timed wait still running at `now`: the bead is not yet claimable.
+pub fn still_snoozed(reason: &str, now: i64) -> bool {
+    snooze_until(reason).is_some() && !wait_expired(reason, now)
+}
+
 /// Whether a wait hold's reason names a timed directive anywhere, so a malformed one can be refused.
 pub fn names_directive(reason: &str) -> bool {
     reason.contains(SNOOZE_PREFIX) || reason.contains(CHECKPOINT_PREFIX)
@@ -520,6 +525,7 @@ mod tests {
         assert!(wait_expired(&snooze_reason(100), 100));
         assert!(wait_expired(&checkpoint_reason(100), 101));
         assert!(!wait_expired("sp-abc12", i64::MAX));
+        assert!(still_snoozed(&snooze_reason(100), 99) && !still_snoozed(&snooze_reason(100), 100) && !still_snoozed("sp-abc12", 0));
     }
 
     #[test_id(tikte2f)]

@@ -133,7 +133,7 @@ impl Lc {
         let now = (now_ms / 1000) as i64;
         self.in_state(BeadState::Ready)
             .into_iter()
-            .filter(|r| !(r.holds.contains(&lifecycle::bead::HoldKind::Wait) && r.reason.as_deref().is_some_and(|x| spira_store::lc_state::snooze_until(x).is_some() && !spira_store::lc_state::wait_expired(x, now))))
+            .filter(|r| !(r.holds.contains(&lifecycle::bead::HoldKind::Wait) && r.reason.as_deref().is_some_and(|x| spira_store::lc_state::still_snoozed(x, now))))
             .collect()
     }
 }

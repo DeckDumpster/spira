@@ -1554,6 +1554,15 @@ mod store_tests {
         assert!(e.contains("exited 2: cannot tell"), "{e}");
         assert_eq!(s.seen.lock().unwrap()[0], "list --state SUBMITTED,CERTIFIED");
     }
+
+    #[test_id(t3x0t45)]
+    #[test]
+    fn lifting_a_wait_is_the_stores_unhold_under_the_pass_as_actor() {
+        let (s, c) = store(|a| if a[0] == "unhold" { (0, "applied\n".into()) } else { (2, "cannot tell".into()) });
+        let lc = RealLc { bin: None, client: Some(c) };
+        assert_eq!(lc.unhold("sp-a", "wait").as_deref(), Ok("applied"));
+        assert_eq!(s.seen.lock().unwrap()[0], "unhold sp-a wait landing-pass");
+    }
 }
 
 pub(crate) fn incident_tune(f: &IncidentFiling, env: &mut incident::intake::Env) {
