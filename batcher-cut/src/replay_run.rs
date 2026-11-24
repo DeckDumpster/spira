@@ -19,7 +19,7 @@ use crate::vm;
 /// What a replayed round must end as; `expect.json` in the fixture.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Expect {
-    /// The members the attribution ejects, in order.
+    /// The members the attribution ejects, in the order it ejects them.
     pub ejected: Vec<String>,
     /// The members left to certify.
     pub survivors: Vec<String>,
@@ -37,7 +37,6 @@ struct Probe {
 /// A saved round on disk: `round.json`, `results/`, `expect.json` and the probes the real run made.
 #[derive(Debug)]
 pub struct Fixture {
-    pub dir: PathBuf,
     results: PathBuf,
     pub round: RoundFixture,
     pub expect: Expect,
@@ -60,7 +59,7 @@ impl Fixture {
         let mending = read("mending.json").ok();
         let results = scratch.join("results");
         stage_results(&dir.join("results"), &results)?;
-        Ok(Fixture { dir: dir.to_path_buf(), results, round, expect, probes, mending })
+        Ok(Fixture { results, round, expect, probes, mending })
     }
 
     /// The followed pass's results folder.
@@ -105,13 +104,9 @@ impl<'a> ReplayEdge<'a> {
     }
 }
 
-fn bare(id: &str, tip: &str) -> Member {
-    Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![], provisional: false }
-}
-
 /// The members `--members` names, as an attribution of a pool that holds none of them.
 pub fn bare_members(given: &[(String, String)]) -> Vec<Member> {
-    given.iter().map(|(id, tip)| bare(id, tip)).collect()
+    given.iter().map(|(id, tip)| crate::judge::bare_member(id, tip)).collect()
 }
 
 impl Edge for ReplayEdge<'_> {
@@ -303,4 +298,17 @@ impl RoundOps for ReplayOps {
         self.returned.clone()
     }
     fn escape(&mut self, _: &Member, _: &str, _: Option<JobResult>) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(t6uh3v2)]
+    #[test]
+    #[should_panic(expected = "no recorded probe suite_green \"test-x.sh\" on members [sp-a]")]
+    fn a_probe_nobody_recorded_stops_the_replay_naming_it() {
+        let mut runner = ReplayRunner { prior: PathBuf::new(), members: vec![], changed: BTreeMap::new(), own_commits: vec![], round_paths: vec![], probes: vec![], confirmed: false, jobs: vec![] };
+        runner.suite_green("test-x.sh", &bare_members(&[("sp-a".into(), "t".into())]));
+    }
 }

@@ -46,6 +46,11 @@ pub fn blocks_attribution(suites: &[String], red_phases: &[String], red_filters:
     Some(format!("the pass names no red the round can attribute: no shell suite, no red unit-tests or integration-tests and no red lint or fence{at}"))
 }
 
+/// A member the pool holds no row for, attributed as an unstacked one at the given tip.
+pub fn bare_member(id: &str, tip: &str) -> Member {
+    Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: vec![], provisional: false }
+}
+
 /// What a failed attribution prints: a round abandoned under it was never judged, so its
 /// failure is no red.
 pub fn failed_attribution(ended: bool, why: String) -> Attribution {

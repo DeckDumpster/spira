@@ -2384,18 +2384,7 @@ fn attribute_in(
             let known = pool.iter().find(|m| &m.id == id).cloned();
             Member {
                 tip: tip.clone(),
-                ..known.unwrap_or(Member {
-                    id: id.clone(),
-                    tip: tip.clone(),
-                    title: String::new(),
-                    priority: None,
-                    express: false,
-                    base_fix: false,
-                    certified_at: 0,
-                    stack: BTreeMap::new(),
-                    blocked_by: vec![],
-                    provisional: false,
-                })
+                ..known.unwrap_or_else(|| judge::bare_member(id, tip))
             }
         })
         .collect();
