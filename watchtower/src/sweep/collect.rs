@@ -603,6 +603,26 @@ mod tests {
 
     /// A class with no `SP_CZAR_*` keys set renders `?` throughout, a fired class carries who
     /// handled it, and an unrelated class is untouched by another class's keys.
+    // covers: UC-gate-verdict-24
+    #[test_id(ttr6afh)]
+    #[test]
+    fn the_sweep_carries_the_yield_columns_and_a_missing_record_reaches_ops_as_a_question_mark() {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        d.env = Env::new();
+        for (k, v) in [("YIELD_REDS", "4"), ("YIELD_DEFECT", "1"), ("YIELD_FAULT", "2"), ("YIELD_UNKNOWN", "1"), ("YIELD_SOLO_MED", "60"), ("YIELD_CONC_MED", "95")] {
+            d.env.set(k, v);
+        }
+        let fed = crate::sweep::render::render(&d);
+        for want in ["gate reds, last 1d", "the branch really was wrong", "the gate's own fault", "never classified", "another gate overlapping"] {
+            assert!(fed.contains(want), "{want} in:\n{fed}");
+        }
+        assert!(fed.lines().any(|l| l.starts_with("  gate reds, last 1d") && l.trim_end().ends_with('4')), "{fed}");
+        d.env = Env::new();
+        let none = crate::sweep::render::render(&d);
+        assert!(none.lines().any(|l| l.starts_with("  gate reds, last 1d") && l.trim_end().ends_with('?')), "a missing record is ?, never a clean sheet:\n{none}");
+        assert!(!none.contains("?s median"), "an unreadable cost carries no unit:\n{none}");
+    }
+
     #[test_id(tvtw5mi)]
     #[test]
     fn czar_block_renders_unset_classes_as_unknown_throughout() {
