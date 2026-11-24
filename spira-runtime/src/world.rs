@@ -60,6 +60,8 @@ pub struct World {
     pub hunk_dir: PathBuf,
     /// `SPIRA_OVERRIDES`: where operator override specs are declared.
     pub overrides_dir: PathBuf,
+    /// The status line's records in the user runtime directory; empty without one.
+    pub ctx_status_dir: PathBuf,
     pub cockpit_state: PathBuf,
     pub cockpit_session: String,
     pub tmux: PathBuf,

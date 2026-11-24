@@ -176,6 +176,7 @@ impl Settings {
         let path = |k: &str| env(k).map(PathBuf::from);
         self.runtime_dir = path("XDG_RUNTIME_DIR").unwrap_or_default();
         self.world.hunk_dir = path("XDG_RUNTIME_DIR").map(|d| d.join("hunk-mcp")).unwrap_or_default();
+        self.world.ctx_status_dir = path("XDG_RUNTIME_DIR").map(|d| spira_config::ctx_meter_dir(&d)).unwrap_or_default();
         self.world.cockpit_state = path("COCKPIT_STATE").or_else(|| path("HOME").map(|h| h.join(".local/state/cockpit"))).unwrap_or_default();
         if let Some(secs) = env("COCKPIT_FORGET_SECS") {
             self.view.forget_secs = num("COCKPIT_FORGET_SECS", &secs)?;

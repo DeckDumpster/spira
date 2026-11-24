@@ -240,6 +240,7 @@ name = "cockpit-collect"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "ctx-meter",
  "dwarf",
  "install",
  "libc",
@@ -2402,6 +2403,7 @@ dependencies = [
  "cockpit-collect",
  "cockpit-ops",
  "cr",
+ "ctx-meter",
  "czar-pass",
  "design-review",
  "dwarf",

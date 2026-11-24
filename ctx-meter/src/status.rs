@@ -176,9 +176,9 @@ pub fn set_inflight(status_root: &Path, seg: &str) -> (usize, usize) {
     (rewrote, touched)
 }
 
-/// Removes records not touched for `idle` seconds, and the status of any session without a record.
+/// Removes records not touched for `idle` seconds, and the status of any session without a
+/// record. The caller holds [`lock`].
 pub fn prune(status_root: &Path, now: i64, idle: i64) {
-    let _guard = lock();
     for e in std::fs::read_dir(sessions_dir(status_root)).into_iter().flatten().flatten() {
         if age(&e.path(), now).is_some_and(|a| a > idle as f64) {
             let _ = std::fs::remove_file(e.path());

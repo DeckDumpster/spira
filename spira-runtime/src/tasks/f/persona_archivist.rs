@@ -678,7 +678,7 @@ pub fn run_forget(_: &Effects, _key: &str, s: &EffectSpec) -> Result<String, Str
     let p: Pinned<serde_json::Value> = parse(&s.input)?;
     let (env, arc, _) = setup(&p.cfg)?;
     let mut lines = vec![];
-    let _ = std::fs::remove_file(arc.join("sweep.state"));
+    archivist::run::mark_ran(&arc);
     archivist::run::forget_stale_sessions(&env, &arc, &mut lines);
     Ok(format!("forgot {}", lines.len()))
 }

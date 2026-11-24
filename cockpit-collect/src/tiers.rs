@@ -128,8 +128,9 @@ fn merged_tiers(dir: &Path) -> Vec<(String, String)> {
 
 /// Writes tier `tier`'s merged `Kv` (raw `KEY=value` lines) and merges every tier's into
 /// `run/cockpit.env`, quoted as the supervisor's merge quoted it, plus `SP_WRITER` and
-/// `SP_COLLECTOR_REV`; then appends the history row. Answers the snapshot's path.
-pub fn publish(run_dir: &Path, tier: &str, kv_text: &str) -> Result<String, String> {
+/// `SP_COLLECTOR_REV`; then appends the history row, and sets the in-flight segment of every
+/// status line file under `status_root` (none when empty). Answers the snapshot's path.
+pub fn publish(run_dir: &Path, status_root: &Path, tier: &str, kv_text: &str) -> Result<String, String> {
     if tier.is_empty() || tier.contains('/') {
         return Err(format!("not a tier name: {tier:?}"));
     }
@@ -144,6 +145,10 @@ pub fn publish(run_dir: &Path, tier: &str, kv_text: &str) -> Result<String, Stri
     out.push_str(&format!("SP_COLLECTOR_REV={}\n", quoting::self_quote(&rev)));
     let snap = run_dir.join("cockpit.env");
     write_atomic(&snap, &out)?;
+    if !status_root.as_os_str().is_empty() {
+        let seg = merged_tiers(&dir).into_iter().find(|(k, _)| k == "SP_INFLIGHT_SEG").map(|(_, v)| v).unwrap_or_default();
+        ctx_meter::status::set_inflight(status_root, &seg);
+    }
     append_history(run_dir);
     Ok(snap.display().to_string())
 }
@@ -233,6 +238,8 @@ pub fn append_history(run_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_meter::status::{put_status, read_status, status_dir, Status};
+    use std::os::unix::fs::MetadataExt;
 
     /// Holds the `slow` probe until the test opens it, so an overrun is a fact of the test and
     /// not of the box's load.
@@ -275,11 +282,11 @@ mod tests {
     fn republishing_an_unchanged_tier_writes_no_snapshot_data() {
         let _env = testkit::env_read();
         let run = testkit::TempDir::new("tier-nowrite");
-        publish(run.path(), "5s", "SP_A=1\n").unwrap();
+        publish(run.path(), Path::new(""), "5s", "SP_A=1\n").unwrap();
         let before = io::data_writes();
-        publish(run.path(), "5s", "SP_A=1\n").unwrap();
+        publish(run.path(), Path::new(""), "5s", "SP_A=1\n").unwrap();
         assert_eq!(io::data_writes(), before);
-        publish(run.path(), "5s", "SP_A=2\n").unwrap();
+        publish(run.path(), Path::new(""), "5s", "SP_A=2\n").unwrap();
         assert_eq!(io::data_writes(), before + 2, "tier file and merged snapshot both changed");
     }
 
@@ -351,14 +358,40 @@ mod tests {
     fn publish_merges_every_tier_into_the_snapshot_and_appends_history() {
         let _env = testkit::env_read();
         let dir = testkit::TempDir::new("cc-tiers");
-        publish(dir.path(), "cockpit-tier-60s", "SP_SLOTS_LIVE=2\nSP_AT=9\n").unwrap();
-        let snap = publish(dir.path(), "cockpit-tier-5s", "SP_AT=100\nSP_ROUND=it's\n").unwrap();
+        publish(dir.path(), Path::new(""), "cockpit-tier-60s", "SP_SLOTS_LIVE=2\nSP_AT=9\n").unwrap();
+        let snap = publish(dir.path(), Path::new(""), "cockpit-tier-5s", "SP_AT=100\nSP_ROUND=it's\n").unwrap();
         let text = std::fs::read_to_string(&snap).unwrap();
         assert!(text.contains("SP_AT='100'\n") && !text.contains("SP_AT='9'"), "the first tier by name wins a shared key: {text}");
         assert!(text.contains("SP_SLOTS_LIVE='2'\n") && text.contains("SP_ROUND='it'\\''s'\n") && text.contains("SP_WRITER="), "{text}");
         assert!(text.contains("SP_COLLECTOR_REV="), "the collector revision is always stamped: {text}");
         let hist = std::fs::read_to_string(dir.path().join("cockpit-history.csv")).unwrap();
         assert_eq!(hist.lines().count(), 3, "{hist}");
-        assert!(publish(dir.path(), "../x", "").is_err());
+        assert!(publish(dir.path(), Path::new(""), "../x", "").is_err());
+    }
+
+    fn ino(p: &Path) -> u64 {
+        std::fs::metadata(p).unwrap().ino()
+    }
+
+    #[test_id(tbrg734)]
+    #[test]
+    fn a_changed_inflight_segment_rewrites_each_status_once_and_an_unchanged_one_only_touches() {
+        let dir = testkit::TempDir::new("tiers-status");
+        let status = dir.path().join("rt");
+        std::fs::create_dir_all(status_dir(&status)).unwrap();
+        let file = status_dir(&status).join("s1.json");
+        put_status(&file, &Status { inflight: "idle".into(), ..Default::default() });
+        let first = ino(&file);
+
+        publish(dir.path(), &status, "cockpit-tier-5s", "SP_INFLIGHT_SEG=2 in flight\n").unwrap();
+        let second = ino(&file);
+        assert_ne!(second, first, "a new segment replaces the file");
+        assert_eq!(read_status(&file).unwrap().inflight, "2 in flight");
+
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        std::fs::File::open(&file).unwrap().set_modified(old).unwrap();
+        publish(dir.path(), &status, "cockpit-tier-5s", "SP_INFLIGHT_SEG=2 in flight\nSP_AT=9\n").unwrap();
+        assert_eq!(ino(&file), second, "the same segment keeps the file");
+        assert_ne!(std::fs::metadata(&file).unwrap().modified().unwrap(), old, "and says the writer is alive");
     }
 }

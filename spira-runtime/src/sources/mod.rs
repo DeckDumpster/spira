@@ -10,6 +10,7 @@
 //! | `unit.ran` | the unit manager's completions: systemd over D-Bus, or the host's `ProcessUnits` | [`units`] |
 //! | `submission` | `spira-submission`'s SMTP listener and sessions as tasks on the loop, delivering through the `mail` crate | [`smtp`] |
 //! | `store.changed` | the store's `watch` feed, a socket on the scheduler's loop that keeps the in-process store views current | [`store_changed`] |
+//! | `ctx.status` | inotify on the status line's session records and the archivist's state files; dormant unless this instance writes the cockpit | [`ctx_status`] |
 //! | `margin.changed` | a long-poll held open on the Margin reader's change feed; dormant while `SPIRA_MARGIN_URL` is empty | [`margin_changed`] |
 
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ use runtime::units::UnitCompletions;
 use crate::tasks::g::mail_arrived::MailArrived;
 use crate::tasks::g::submission::Submission;
 
+pub mod ctx_status;
 pub mod mail;
 pub mod margin_changed;
 pub mod smtp;
@@ -44,14 +46,21 @@ pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_MARGIN_URL",
     "SPIRA_MARGIN_TOKEN_FILE",
+    "SPIRA_CTX_WARN",
+    "SPIRA_CTX_HIGH",
+    "SPIRA_CTX_LIMIT",
+    "SPIRA_TOKEN_PROJECTS",
+    "SPIRA_ARCHIVIST_IDLE",
+    "SPIRA_RUNTIME_COCKPIT_TIER_WRITE",
 ];
 
 /// The real sources, from pinned config read once here: the registered mailboxes
 /// (`SPIRA_MAIL_READERS` under `SPIRA_MAIL`), the unit manager's completions (`completions`, the
 /// same instance the host's `unit.*` effects run on), and the submission listener (dormant when
 /// `SPIRA_SUBMISSION_ADDR` or its certificate settings are empty), and, when the store views
-/// were installed at boot, the watch that keeps them current (`store.changed`).
-pub fn real(cfg: &dyn Fn(&str) -> Result<String, String>, completions: Arc<dyn UnitCompletions>, clock: Arc<dyn Clock>, store: Option<crate::StoreViews>) -> Result<Sources, String> {
+/// were installed at boot, the watch that keeps them current (`store.changed`), and the status line's
+/// status files (`ctx.status`, in `ctx_status_dir`).
+pub fn real(cfg: &dyn Fn(&str) -> Result<String, String>, completions: Arc<dyn UnitCompletions>, clock: Arc<dyn Clock>, store: Option<crate::StoreViews>, ctx_status_dir: PathBuf) -> Result<Sources, String> {
     let mut s = Sources::default();
     let mailboxes = mail::mailboxes(&cfg("SPIRA_MAIL_READERS")?, &PathBuf::from(cfg("SPIRA_MAIL")?));
     s.register(Box::new(MailArrived { mailboxes })).map_err(|e| e.to_string())?;
@@ -64,6 +73,7 @@ pub fn real(cfg: &dyn Fn(&str) -> Result<String, String>, completions: Arc<dyn U
     if let Some((views, table, socket)) = store {
         s.register(Box::new(store_changed::StoreChanged { views, table, socket })).map_err(|e| e.to_string())?;
     }
+    s.register(Box::new(ctx_status::CtxStatus::configured(cfg, ctx_status_dir)?)).map_err(|e| e.to_string())?;
     s.register(Box::new(margin_changed::MarginChanged::configured(cfg)?)).map_err(|e| e.to_string())?;
     Ok(s)
 }
@@ -76,30 +86,31 @@ mod tests {
 
     #[test_id(tfqz0sr)]
     #[test]
-    fn the_real_set_names_all_five_with_store_views_and_four_without_and_refuses_virtual_time() {
+    fn the_real_set_names_all_six_with_store_views_and_five_without_and_refuses_virtual_time() {
         let clock = Arc::new(VirtualClock::new(0));
         let cfg = |k: &str| -> Result<String, String> {
             Ok(match k {
                 "SPIRA_MAIL_READERS" => "concierge=inbox-append.sh".into(),
                 "SPIRA_MAIL" => "m".into(),
+                "SPIRA_CTX_WARN" | "SPIRA_CTX_HIGH" | "SPIRA_CTX_LIMIT" | "SPIRA_ARCHIVIST_IDLE" => "1".into(),
                 _ => String::new(),
             })
         };
         let units = || Arc::new(ScriptedUnits::new(clock.clone()));
-        let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), None).unwrap();
-        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "margin.changed"]);
+        let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), None, PathBuf::new()).unwrap();
+        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "ctx.status", "margin.changed"]);
         let views = Arc::new(store_view::Projection::new(spira_store::lc_call::LcClient::socket("no-such-socket"), std::time::Duration::from_secs(1), Arc::new(std::time::Instant::now)));
-        let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), Some((views, Arc::new(crate::store::ChangeTable::default()), "no-such-socket".into()))).unwrap();
-        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"]);
+        let s = real(&cfg, units(), Arc::new(runtime::ports::WallClock), Some((views, Arc::new(crate::store::ChangeTable::default()), "no-such-socket".into())), PathBuf::new()).unwrap();
+        assert_eq!(s.names(), ["mail.arrived", "unit.ran", "submission", "store.changed", "ctx.status", "margin.changed"]);
         let err = s.into_scripted().err().expect("real sources are refused under virtual time");
-        assert!(["mail.arrived", "unit.ran", "submission", "store.changed", "margin.changed"].iter().all(|n| err.0.contains(n)), "{err}");
+        assert!(["mail.arrived", "unit.ran", "submission", "store.changed", "ctx.status", "margin.changed"].iter().all(|n| err.0.contains(n)), "{err}");
     }
 
     #[test_id(t9p33pf)]
     #[test]
     fn an_unresolvable_key_refuses_the_set_naming_it() {
         let cfg = |k: &str| -> Result<String, String> { Err(format!("{k} is not set")) };
-        let err = real(&cfg, Arc::new(ScriptedUnits::new(Arc::new(VirtualClock::new(0)))), Arc::new(runtime::ports::WallClock), None).err().unwrap();
+        let err = real(&cfg, Arc::new(ScriptedUnits::new(Arc::new(VirtualClock::new(0)))), Arc::new(runtime::ports::WallClock), None, PathBuf::new()).err().unwrap();
         assert!(err.contains("SPIRA_MAIL_READERS"), "{err}");
     }
 }
