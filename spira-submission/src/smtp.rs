@@ -51,10 +51,20 @@ pub trait Sink {
     }
 }
 
+/// The audit line for one session outcome.
+pub fn attempt_line(peer: &str, user: &str, from: &str, outcome: &str) -> String {
+    format!("ts={} peer={peer} user={user:?} from={from:?} {outcome}", crate::clock::iso(crate::clock::now()))
+}
+
+/// The reason in an outcome that was a refusal.
+pub fn refusal_reason(outcome: &str) -> Option<&str> {
+    outcome.split_once("refused: ").map(|(_, reason)| reason)
+}
+
 /// The audit line for one session outcome, and, for a refusal, the sink's [`Sink::refused`].
 pub fn attempt(sink: &dyn Sink, peer: &str, user: &str, from: &str, outcome: &str) {
-    sink.log(&format!("ts={} peer={peer} user={user:?} from={from:?} {outcome}", crate::clock::iso(crate::clock::now())));
-    if let Some((_, reason)) = outcome.split_once("refused: ") {
+    sink.log(&attempt_line(peer, user, from, outcome));
+    if let Some(reason) = refusal_reason(outcome) {
         sink.refused(peer, user, from, reason);
     }
 }
@@ -662,7 +672,7 @@ mod tests {
         steps.iter().filter_map(|s| if let Step::Send(t) = s { Some(t.as_str()) } else { None }).collect()
     }
 
-    #[test_id(t1w6qd7)]
+    #[test_id(trmqk2r)]
     #[test]
     fn a_failed_authentication_reads_the_same_fed_whole_or_a_byte_at_a_time() {
         let script = format!("EHLO c\r\nAUTH PLAIN {}\r\nAUTH LOGIN\r\n{}\r\n{}\r\nAUTH PLAIN {}\r\n", b64("\0ryan\0wrong"), b64("ryan"), b64("nope"), b64("\0ryan\0worse"));
@@ -673,7 +683,7 @@ mod tests {
         assert_eq!(steps.last(), Some(&Step::Close));
     }
 
-    #[test_id(tlqz8r3)]
+    #[test_id(tguj2g3)]
     #[test]
     fn a_relay_refusal_reads_the_same_fed_whole_or_a_byte_at_a_time() {
         let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<a@elsewhere>\r\nRCPT TO:<c@spira>\r\nQUIT\r\n", b64("\0ryan\0hunter2"));
@@ -683,7 +693,7 @@ mod tests {
         assert!(text.contains("550 5.7.1 relay denied") && text.contains("250 2.1.5 ok") && text.ends_with("221 2.0.0 bye\r\n"), "{text}");
     }
 
-    #[test_id(tm8c1d5)]
+    #[test_id(tut2gok)]
     #[test]
     fn an_oversize_message_reads_the_same_fed_whole_or_a_byte_at_a_time() {
         let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\n{}\r\n.\r\nNOOP\r\n", b64("\0ryan\0hunter2"), "0123456789abcdef\r\nmore\r\n");
@@ -693,7 +703,7 @@ mod tests {
         assert!(text.contains("552 5.3.4 message too large\r\n250 2.0.0 ok"), "{text}");
     }
 
-    #[test_id(tn3e7v9)]
+    #[test_id(tjx9o23)]
     #[test]
     fn an_accepted_message_is_handed_out_with_an_owned_envelope_and_answered_when_the_driver_says() {
         let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@x.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\nMessage-ID: <m>\r\n..x\r\n.\r\n", b64("\0ryan\0hunter2"));

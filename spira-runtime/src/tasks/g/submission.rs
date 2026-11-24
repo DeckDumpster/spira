@@ -6,8 +6,8 @@
 //!
 //! # Tick
 //!
-//! No timer. The source owns a bound TLS listener for the life of the scheduler, one thread per
-//! connection, 5 s IO timeouts. Dormant, not failing, when unconfigured (an empty
+//! No timer. The source owns a bound TLS listener for the life of the scheduler, one task per
+//! connection on the scheduler's loop, 5 s IO timeouts. Dormant, not failing, when unconfigured (an empty
 //! `SPIRA_SUBMISSION_ADDR` or any empty cert, key, password or from): no listener, no event. Cert
 //! and password are re-read per connection.
 //!
@@ -19,10 +19,10 @@
 //!
 //! # Decide
 //!
-//! `smtp::serve_session` is reused unchanged. A finished DATA phase maps to one event:
+//! The pure `smtp::Session` holds the protocol. A finished DATA phase maps to one event:
 //! delivered → [`ACCEPTED`] ([`Accepted`]); delivery failed (451), or auth, sender, relay or size
-//! refused → [`REFUSED`] ([`Refused`]). Delivery stays a synchronous library call into the `mail`
-//! crate's `sendmail` module on the connection thread (a message id already delivered is not
+//! refused → [`REFUSED`] ([`Refused`]). Delivery is a library call into the `mail`
+//! crate's `sendmail` module on the offload pool (a message id already delivered is not
 //! delivered again), and the accepted event is submitted with `Submit::with_reply`: the client hears
 //! 250 once the event is journaled, 451 when delivery or the journal refused.
 //!
@@ -44,14 +44,14 @@
 //!
 //! Release rollback restores the unit, together with re-enabling it; a listener cannot shadow.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use runtime::event::{EventKind, EventKindTag};
 use runtime::host::Submit;
-use runtime::sources::{on_thread, Running, Source};
+use runtime::sources::{on_pool, Running, Source};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// The source's registered name.
 pub const NAME: &str = "submission";
@@ -116,7 +116,7 @@ impl Refused {
 
 /// Reloads asked of the source, counted. The `submission-provision` task's restart bumps it
 /// ([`reload`]); the running source ends its listener and reads its config anew when it moves.
-static RELOADS: AtomicU64 = AtomicU64::new(0);
+static RELOADS: LazyLock<watch::Sender<u64>> = LazyLock::new(|| watch::channel(0).0);
 
 /// How often a dormant source reads its config anew on its own, so a first configuration
 /// written by `spira-submission provision` from outside the scheduler is picked up too.
@@ -127,22 +127,31 @@ pub fn reload(source: &str) -> Result<String, String> {
     if source != NAME {
         return Err(format!("no source {source:?} reloads here (only {NAME:?}) — refused"));
     }
-    let n = RELOADS.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut n = 0;
+    RELOADS.send_modify(|count| {
+        *count += 1;
+        n = *count;
+    });
     Ok(format!("reloaded source {NAME} (reload {n})"))
 }
 
 /// The reloads asked so far.
 pub fn reloads() -> u64 {
-    RELOADS.load(Ordering::SeqCst)
+    *RELOADS.borrow()
 }
 
 /// Serves until `closed`: each round reads the config anew (`fresh`) and serves it until the
-/// channel closes or a reload is asked (`serve` is handed that stop condition).
-pub fn serve_reloading<C>(mut fresh: impl FnMut() -> C, mut serve: impl FnMut(C, &dyn Fn() -> bool), closed: &dyn Fn() -> bool) {
+/// channel closes or a reload is asked (`serve` is handed the reload watch, which resolves
+/// `changed` for a reload asked since this round began).
+pub async fn serve_reloading<C, F, G>(mut fresh: impl FnMut() -> F, mut serve: impl FnMut(C, watch::Receiver<u64>) -> G, closed: impl Fn() -> bool)
+where
+    F: std::future::Future<Output = C>,
+    G: std::future::Future<Output = ()>,
+{
     while !closed() {
-        let seen = reloads();
-        let cfg = fresh();
-        serve(cfg, &|| closed() || reloads() != seen);
+        let reloads = RELOADS.subscribe();
+        let cfg = fresh().await;
+        serve(cfg, reloads).await;
     }
 }
 
@@ -163,20 +172,45 @@ impl Source for Submission {
     /// and password files themselves are read per connection. Dormant while unconfigured, reading
     /// its config again every [`DORMANT_RECHECK`].
     fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
-        on_thread(NAME, move || {
-        let fresh = || spira_submission::Config::from_spira_fresh().unwrap_or_else(|e| {
-            eprintln!("spira-runtime: source {NAME}: {e}");
-            None
-        });
-        let serve = |cfg: Option<spira_submission::Config>, stop: &dyn Fn() -> bool| {
-            let usable = cfg.as_ref().is_some_and(|c| c.cert.is_file() && c.key.is_file());
-            let delivery = cfg.as_ref().filter(|_| usable).and_then(|_| mail::env::Env::load().inspect_err(|e| eprintln!("spira-runtime: source {NAME}: mail: {e}")).ok()).map(|e| super::sources::smtp::Delivery::of(&e));
-            let since = std::time::Instant::now(); // clock-safe: a real source's own thread; refused under virtual time
-            super::sources::smtp::run_until(cfg, delivery, &tx, &|| stop() || (!usable && since.elapsed() >= DORMANT_RECHECK))
-        };
-        serve_reloading(fresh, serve, &|| tx.is_closed())
+        Box::pin(async move {
+            let fresh = || async {
+                on_pool(NAME, Arc::new(read_config)).await.unwrap_or((None, false, None))
+            };
+            let serve = |(cfg, usable, delivery): Round, mut reload: watch::Receiver<u64>| {
+                let tx = tx.clone();
+                async move {
+                    let recheck = async {
+                        if usable {
+                            std::future::pending::<()>().await
+                        } else {
+                            tokio::time::sleep(DORMANT_RECHECK).await // clock-safe: a dormant source's own task, refused under virtual time
+                        }
+                    };
+                    let stop = async {
+                        tokio::select! {
+                            _ = reload.changed() => {}
+                            _ = recheck => {}
+                        }
+                    };
+                    super::sources::smtp::run(cfg.filter(|_| usable), delivery, tx, stop).await
+                }
+            };
+            serve_reloading(fresh, serve, || tx.is_closed()).await
         })
     }
+}
+
+type Round = (Option<spira_submission::Config>, bool, Option<super::sources::smtp::Delivery>);
+
+/// The config and the mail environment a round serves, read anew: blocking, so on the pool.
+fn read_config() -> Round {
+    let cfg = spira_submission::Config::from_spira_fresh().unwrap_or_else(|e| {
+        eprintln!("spira-runtime: source {NAME}: {e}");
+        None
+    });
+    let usable = cfg.as_ref().is_some_and(|c| c.cert.is_file() && c.key.is_file());
+    let delivery = cfg.as_ref().filter(|_| usable).and_then(|_| mail::env::Env::load().inspect_err(|e| eprintln!("spira-runtime: source {NAME}: mail: {e}")).ok()).map(|e| super::sources::smtp::Delivery::of(&e));
+    (cfg, usable, delivery)
 }
 
 #[cfg(test)]
@@ -205,8 +239,9 @@ mod tests {
     }
 
     #[test_id(tw1b2hy)]
-    #[test]
-    fn a_reload_ends_the_serve_and_the_next_one_reads_the_config_anew() {
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn a_reload_ends_the_serve_and_the_next_one_reads_the_config_anew() {
         let _serial = serial();
         let reads = Cell::new(0);
         let served = RefCell::new(Vec::new());
@@ -214,21 +249,25 @@ mod tests {
         serve_reloading(
             || {
                 reads.set(reads.get() + 1);
-                reads.get()
+                std::future::ready(reads.get())
             },
-            |cfg, stop| {
+            |cfg, mut stop| {
                 served.borrow_mut().push(cfg);
-                assert!(!stop(), "a fresh serve is not stopped");
-                if cfg == 1 {
-                    reload(NAME).unwrap();
-                    assert!(stop(), "a reload stops the serve");
-                } else {
-                    closed.set(true);
-                    assert!(stop(), "a closed channel stops the serve");
+                let (served, closed) = (&served, &closed);
+                async move {
+                    assert!(!stop.has_changed().unwrap(), "a fresh serve is not stopped");
+                    if cfg == 1 {
+                        reload(NAME).unwrap();
+                        stop.changed().await.unwrap();
+                    } else {
+                        closed.set(true);
+                        assert!(!served.borrow().is_empty());
+                    }
                 }
             },
-            &|| closed.get(),
-        );
+            || closed.get(),
+        )
+        .await;
         assert_eq!(*served.borrow(), vec![1, 2], "the second serve has the config read after the reload");
     }
 

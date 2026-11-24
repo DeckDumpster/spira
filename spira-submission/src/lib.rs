@@ -96,7 +96,7 @@ impl Config {
         SocketAddr::new(self.addr, self.port)
     }
 
-    fn policy(&self, peer: String) -> Policy {
+    pub fn policy(&self, peer: String) -> Policy {
         Policy {
             host: self.addr.to_string(),
             user: self.user.clone(),
