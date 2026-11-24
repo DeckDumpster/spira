@@ -338,6 +338,7 @@ SPIRA_HOME spira/hooks/session.sh
 SPIRA_HOME spira/lib.sh
 SPIRA_HOME spira/seed.sh
 SPIRA_HOME spira/sim/src/drive.rs
+SPIRA_HOME spira/testlib.sh
 SPIRA_HOME spira/uninstall.sh
 SPIRA_HOME spira/wiki-hooks-install.sh
 SPIRA_HOME spira/worktree-hooks.sh
@@ -715,6 +716,8 @@ SPIRA_TESTENV_WARM_BOOT_TIMEOUT testenv/src/settings.rs
 SPIRA_TESTENV_WARM_SLOTS gate/src/engine.rs
 SPIRA_TESTENV_WARM_SLOTS gate/src/real.rs
 SPIRA_TESTENV_WARM_SLOTS testenv/src/settings.rs
+SPIRA_TESTLIB_JSONL spira/testlib.sh
+SPIRA_TEST_INSTALL_CACHE spira/lib-test-install.sh
 SPIRA_TEST_PLAN_BIN spira-config/src/convert.rs
 SPIRA_THROTTLE_STAMP sentinel/src/tower.rs
 SPIRA_THROTTLE_STAMP strand/src/config.rs
@@ -763,6 +766,7 @@ SPIRA_TOML spira/pre-activate.sh
 SPIRA_TOML spira/sim/src/drive.rs
 SPIRA_TOML spira/sim/src/world.rs
 SPIRA_TOML spira/testenv/doctor-check.sh
+SPIRA_TOML spira/testlib.sh
 SPIRA_TOML testenv/src/fixture.rs
 SPIRA_TOML_FILE dwarf/src/seam.rs
 SPIRA_TOML_FILE spira-config/src/main.rs
