@@ -547,6 +547,9 @@ struct FScripts {
     round_vm_files: RefCell<Vec<(String, String)>>,
     /// Files only the next `round_vm` call writes, on top of `round_vm_files`.
     round_vm_files_once: RefCell<Vec<(String, String)>>,
+    /// What a `round_vm` call that names an `only` step leaves in its results, instead of `round_vm_results` and `round_vm_files`.
+    only_results: RefCell<Vec<(String, String)>>,
+    only_files: RefCell<Vec<(String, String)>>,
     /// Whether the pass a round's handle names is alive.
     pass_alive: Cell<bool>,
     /// What `rebase-stale <id>` answers, by bead (absent = exit 0, nothing printed).
@@ -708,9 +711,10 @@ impl Scripts for FScripts {
         candidate_recipe: Option<&str>,
         deny_list: Option<&Path>,
         host_only: bool,
+        only: Option<&str>,
     ) -> RunOut {
         self.calls.borrow_mut().push(format!(
-            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}{}{}",
+            "round-vm {} base={base} round={}/{} wall={wall_secs}{}{}{}{}{}",
             tree.display(),
             round.0,
             round.1,
@@ -721,21 +725,30 @@ impl Scripts for FScripts {
             deny_list
                 .map(|d| format!(" deny-list={}", d.display()))
                 .unwrap_or_default(),
-            if host_only { " place=host" } else { "" }
+            if host_only { " place=host" } else { "" },
+            only.map(|o| format!(" only={o}")).unwrap_or_default()
         ));
         fs::write(handle, "777").unwrap();
         if let Some(f) = self.during_vm.borrow().as_ref() {
             f();
         }
         fs::create_dir_all(results).unwrap();
-        for (suite, status) in self.round_vm_results.borrow().iter() {
+        if only.is_some() {
+            for (suite, status) in self.only_results.borrow().iter() {
+                fs::write(results.join(format!("{suite}.result")), format!("{status}\n")).unwrap();
+            }
+            for (name, body) in self.only_files.borrow().iter() {
+                fs::write(results.join(name), body).unwrap();
+            }
+        }
+        for (suite, status) in self.round_vm_results.borrow().iter().filter(|_| only.is_none()) {
             fs::write(
                 results.join(format!("{suite}.result")),
                 format!("{status}\n"),
             )
             .unwrap();
         }
-        for (name, body) in self.round_vm_files.borrow().iter() {
+        for (name, body) in self.round_vm_files.borrow().iter().filter(|_| only.is_none()) {
             fs::write(results.join(name), body).unwrap();
         }
         for (name, body) in self.round_vm_files_once.borrow_mut().drain(..) {

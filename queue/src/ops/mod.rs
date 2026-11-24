@@ -15,6 +15,7 @@ pub mod rebase;
 pub mod reconcile;
 pub mod round;
 mod round_files;
+mod round_rerun;
 pub mod simple;
 pub mod stage;
 pub mod transition;

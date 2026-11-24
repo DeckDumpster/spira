@@ -385,6 +385,7 @@ pub trait Scripts {
     /// `candidate_recipe` is a recipe whose image is still baking: an EC2 placement exits `IMAGE_PENDING` rather than launch another.
     /// `deny_list` is the round's snapshot file, handed to round-vm as `--deny-list`.
     /// `host_only` pins the pass to this host (`--place host`): it never spills to EC2.
+    /// `only` is `--only <step>`: set up, then run that one step whole and nothing else.
     #[allow(clippy::too_many_arguments)]
     fn round_vm(
         &self,
@@ -398,6 +399,7 @@ pub trait Scripts {
         candidate_recipe: Option<&str>,
         deny_list: Option<&Path>,
         host_only: bool,
+        only: Option<&str>,
     ) -> RunOut;
     /// `test-registry deny-list --at <at>`: the registry's deny-list snapshot, the text a round hands to every pass.
     fn deny_list(&self, at: u64) -> Result<String, String>;

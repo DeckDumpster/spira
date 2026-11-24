@@ -11041,3 +11041,130 @@ fn a_landing_with_no_registry_rows_prints_no_clearing_line() {
     assert!(!t.out().contains("registry row"), "{}", t.out());
     assert!(!t.err().contains("registry row"), "{}", t.err());
 }
+
+const FLIP_ROW: &str = "disabled\tsuite:test-x.sh\tsp-flip\t9999999999\n";
+const ID_ROW: &str = "disabled\ttest:t0abcde\tsp-flip\t9999999999\n";
+const DENY_AT_CUT: &str = "# test-registry deny-list at=7 rows=0\n";
+const INTEG_RED: &str = r#"{"stage":"integration-tests","verdict":"red","ran_before_suites":false,"cause":"exit status 1","secs":1,"failed":["FAIL bin mod::t0abcde"]}"#;
+
+fn vm_answers(t: &T, rc: i32, results: &[(&str, &str)], files: &[(&str, &str)]) {
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = results.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect();
+    *t.scripts.round_vm_files.borrow_mut() = files.iter().map(|(n, b)| (n.to_string(), b.to_string())).collect();
+}
+
+fn only_calls(t: &T) -> Vec<String> {
+    t.scripts.calls.borrow().iter().filter(|c| c.starts_with("round-vm ") && c.contains(" only=")).cloned().collect()
+}
+
+fn vm_calls(t: &T) -> usize {
+    t.scripts.calls.borrow().iter().filter(|c| c.starts_with("round-vm ")).count()
+}
+
+/// A round whose first pass was red on `results`/`files`, and whose attribution then kept `added` in the deny list.
+fn flip_world(results: &[(&str, &str)], files: &[(&str, &str)], added: &str) -> (T, String) {
+    let t = round_world();
+    *t.scripts.deny_list.borrow_mut() = Some(Ok(DENY_AT_CUT.into()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    vm_answers(&t, 1, results, files);
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    let kept = marker(&t, &batch, "results").join("deny-list");
+    fs::write(&kept, format!("{DENY_AT_CUT}{added}")).unwrap();
+    (t, batch)
+}
+
+fn suite_flip_world() -> (T, String) {
+    flip_world(&[("test-x.sh", "red"), ("test-y.sh", "ok")], &[], FLIP_ROW)
+}
+
+fn integration_flip_world(added: &str) -> (T, String) {
+    flip_world(&[("test-y.sh", "ok")], &[("integration.json", INTEG_RED), ("integration-tests.out", "boom\n")], added)
+}
+
+#[test_id(tcr3r6k)]
+#[test]
+fn a_pass_red_only_on_a_suite_now_disabled_runs_that_suite_alone_and_lands_on_its_green() {
+    let (t, batch) = suite_flip_world();
+    vm_answers(&t, 0, &[], &[]);
+    *t.scripts.only_results.borrow_mut() = vec![("test-x.sh".into(), "disabled".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert_eq!(only_calls(&t).len(), 1, "{:?}", t.scripts.calls.borrow());
+    assert!(only_calls(&t)[0].ends_with(" only=test-x.sh"), "{:?}", only_calls(&t));
+    assert_eq!(vm_calls(&t), 2, "{:?}", t.scripts.calls.borrow());
+    assert!(t.out().contains(" only=test-x.sh of_pass=1"), "{}", t.out());
+    let log = fs::read_to_string(t.s().run.join("landing.log")).unwrap_or_default();
+    assert!(log.lines().any(|l| l.contains("ROUND-GREEN") && l.contains("only=test-x.sh") && l.contains("of_pass=1")), "{log}");
+    let kept = marker(&t, &batch, "results");
+    assert_eq!(fs::read_to_string(kept.join("test-x.sh.result")).unwrap().trim(), "disabled");
+    assert_eq!(fs::read_to_string(kept.join("test-y.sh.result")).unwrap().trim(), "ok", "the pass's other greens are kept");
+}
+
+#[test_id(t7q2dvm)]
+#[test]
+fn a_pass_red_only_on_an_integration_test_now_disabled_runs_the_integration_step_alone_and_lands() {
+    let (t, batch) = integration_flip_world(ID_ROW);
+    vm_answers(&t, 0, &[], &[]);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert_eq!(only_calls(&t).len(), 1, "{:?}", t.scripts.calls.borrow());
+    assert!(only_calls(&t)[0].ends_with(" only=integration-tests"), "{:?}", only_calls(&t));
+    let kept = marker(&t, &batch, "results");
+    assert!(!kept.join("integration.json").exists(), "the earlier red record is replaced");
+    assert!(kept.join("test-y.sh.result").exists());
+}
+
+#[test_id(tm5wk1x)]
+#[test]
+fn a_pass_whose_tree_changed_since_the_red_is_a_full_pass() {
+    let (t, batch) = suite_flip_world();
+    for head in ["merged-ta", "merged-tb", "merged-tc"] {
+        t.git.trees.borrow_mut().insert(head.into(), "4444444444444444444444444444444444444444".into());
+    }
+    vm_answers(&t, 0, &[("test-x.sh", "disabled"), ("test-y.sh", "ok")], &[]);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(only_calls(&t).is_empty(), "{:?}", t.scripts.calls.borrow());
+    assert_eq!(vm_calls(&t), 2);
+}
+
+#[test_id(txn8h0c)]
+#[test]
+fn a_pass_with_a_second_red_beside_the_flip_is_a_full_pass() {
+    let (t, batch) = flip_world(&[("test-x.sh", "red"), ("test-y.sh", "red")], &[], FLIP_ROW);
+    vm_answers(&t, 0, &[("test-x.sh", "disabled"), ("test-y.sh", "ok")], &[]);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(only_calls(&t).is_empty(), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test_id(tp4ev9s)]
+#[test]
+fn a_pass_whose_failing_test_has_no_disabled_row_is_a_full_pass() {
+    let (t, batch) = integration_flip_world("disabled\ttest:t0other\tsp-flip\t9999999999\n");
+    vm_answers(&t, 0, &[("test-y.sh", "ok")], &[]);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(only_calls(&t).is_empty(), "{:?}", t.scripts.calls.borrow());
+    let (t, batch) = integration_flip_world("");
+    vm_answers(&t, 0, &[("test-y.sh", "ok")], &[]);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(only_calls(&t).is_empty(), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test_id(tu6bz2n)]
+#[test]
+fn a_pass_a_unit_red_ended_before_any_suite_is_a_full_pass() {
+    let unit = INTEG_RED.replace("integration-tests", "unit-tests").replace("\"ran_before_suites\":false", "\"ran_before_suites\":true");
+    let (t, batch) = flip_world(&[], &[("unit.json", &unit)], ID_ROW);
+    vm_answers(&t, 0, &[("test-y.sh", "ok")], &[]);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(only_calls(&t).is_empty(), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test_id(tw8cf3j)]
+#[test]
+fn a_rerun_that_is_red_makes_the_round_red() {
+    let (t, batch) = suite_flip_world();
+    vm_answers(&t, 1, &[], &[]);
+    *t.scripts.only_results.borrow_mut() = vec![("test-x.sh".into(), "red".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert_eq!(only_calls(&t).len(), 1);
+    assert!(t.out().contains("red=test-x.sh"), "{}", t.out());
+}

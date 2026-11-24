@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use super::batch::lc_return;
 use super::land::land_local_deferring;
 use super::round_files;
+use super::round_rerun;
 use super::stage;
 use super::{
     actor, batch_abandoned, converge_orphans, czar_ok, idents, lc_abandon, lc_cas,
@@ -426,6 +427,11 @@ const STALE_TRIES: u32 = 5;
 
 /// The round record's `pass-trees`: `<n>=<tree>` per pass, the tree the pass built from.
 pub(super) const PASS_TREES: &str = "pass-trees";
+
+/// The deny list the round's last pass ran with, kept beside its results, which the next pass wipes.
+fn passed_deny_path(c: &Ctx, batch: &str) -> PathBuf {
+    rounds_dir(c).join(format!("{batch}.passed-deny-list"))
+}
 
 fn record_pass_tree(kv: &mut Kv, tree: &str) {
     let mut entries: Vec<String> = kv.get(PASS_TREES).unwrap_or("").split_whitespace().map(String::from).collect();
@@ -4011,7 +4017,7 @@ fn certify_pass(
         return FAIL;
     }
 
-    let (head, wt, run_id, pass) = {
+    let (head, wt, run_id, pass, rerun) = {
         let _g = match lock(w, label, c) {
             Ok(g) => g,
             // A busy lock keeps its own exit (LOCK_BUSY), so a caller retries on the code.
@@ -4081,6 +4087,7 @@ fn certify_pass(
                 "re-certify of a GREEN round",
                 (ran, 0),
                 &pass_runner_in_round(w, batch, &rounds_dir(c).join(format!("{batch}.results"))),
+                None,
             );
         }
         let held = ejected_still_in_tree(w, path, &wt, &kv);
@@ -4102,8 +4109,22 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &left, true),
             );
         }
+        let head_tree = w.git.rev_parse(&wt, "HEAD^{tree}");
+        let rerun = (attest.is_none() && !gate::own::declares_own_testenv(&wt))
+            .then(|| {
+                round_rerun::step_to_rerun(&round_rerun::Prior {
+                    trees: kv.get(PASS_TREES).unwrap_or(""),
+                    head_tree: head_tree.as_deref(),
+                    red: kv.get("red").unwrap_or(""),
+                    results: &rounds_dir(c).join(format!("{batch}.results")),
+                    passed_deny: &passed_deny_path(c, batch),
+                    wt: &wt,
+                })
+            })
+            .flatten()
+            .map(|step| (step, kv.get(PASS_TREES).unwrap_or("").split_whitespace().count()));
         kv.remove("red");
-        match w.git.rev_parse(&wt, "HEAD^{tree}") {
+        match head_tree {
             Some(tree) => record_pass_tree(&mut kv, &tree),
             None => w.err(format!("queue.sh {label}: WARNING — the tree of this pass of {batch} could not be read; the round record does not name it")),
         }
@@ -4120,7 +4141,7 @@ fn certify_pass(
         }
         mark_running(c, batch);
         let pass = w.lc.batch_pass(batch).map(|(n, _)| n);
-        (head, wt, run_id, pass)
+        (head, wt, run_id, pass, rerun)
     };
 
     let mut reds: Vec<String> = Vec::new();
@@ -4204,7 +4225,13 @@ fn certify_pass(
         prune_round_results(w, c, batch);
         let results = rounds_dir(c).join(format!("{batch}.results"));
         let kept_deny = fs::read_to_string(results.join(DENY_LIST)).ok();
-        let _ = fs::remove_dir_all(&results);
+        let only_dir = rounds_dir(c).join(format!("{batch}.only"));
+        if rerun.is_some() {
+            let _ = fs::remove_dir_all(&only_dir);
+            let _ = fs::create_dir_all(&only_dir);
+        } else {
+            let _ = fs::remove_dir_all(&results);
+        }
         let Some(base) = c.r.landref.clone() else {
             w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} — the round's lint has nothing to judge against", c.r.name));
             return FAIL;
@@ -4219,6 +4246,7 @@ fn certify_pass(
         .and_then(|text| {
             fs::create_dir_all(&results)
                 .map_err(|e| format!("{}: {e}", results.display()))?;
+            write_atomic(&passed_deny_path(c, batch), &text)?;
             write_atomic(&deny_path, &text)
         });
         if let Err(e) = snapshot {
@@ -4237,7 +4265,7 @@ fn certify_pass(
         let run_vm = |ami: Option<&str>, recipe: Option<&str>| {
             w.scripts.round_vm(
                 &wt,
-                &results,
+                if rerun.is_some() { &only_dir } else { &results },
                 &base,
                 (batch, &c.r.name),
                 c.s.round_wall_secs,
@@ -4246,6 +4274,7 @@ fn certify_pass(
                 recipe,
                 Some(&deny_path),
                 host_only,
+                rerun.as_ref().map(|(step, _)| step.as_str()),
             )
         };
         let run_on = |image: &Image| match image {
@@ -4274,6 +4303,10 @@ fn certify_pass(
             && ami.step(w, label, c)
         {
             out = run_vm(None, None);
+        }
+        if let Some((step, _)) = &rerun {
+            round_rerun::replace_step_results(&results, &only_dir, step);
+            let _ = fs::remove_dir_all(&only_dir);
         }
         let template_vm = fs::read_to_string(handle_of(c, batch))
             .map(|h| h.trim().to_string())
@@ -4580,6 +4613,7 @@ fn certify_pass(
         &run_id,
         (ran, wall),
         &runner,
+        rerun.as_ref().map(|(step, of)| (step.as_str(), *of)),
     )
 }
 
@@ -4722,6 +4756,7 @@ fn finish_green(
     run_id: &str,
     (ran, wall): (usize, u64),
     runner: &Runner,
+    rerun: Option<(&str, usize)>,
 ) -> i32 {
     let tree = match write_round_certificate(w, label, c, path, batch, head, who) {
         Ok(t) => t,
@@ -4773,11 +4808,13 @@ fn finish_green(
         ]
         .into_iter()
         .chain(runner.changed.iter().map(|c| ("runner_changed", c.clone())))
+        .chain(rerun.into_iter().flat_map(|(step, of)| [("only", step.to_string()), ("of_pass", of.to_string())]))
         .collect::<Vec<_>>(),
     );
     w.out(format!(
-        "queue.sh {label}: round {batch} is GREEN at {head} (tree {tree}) ran={ran} wall={wall}s{}",
-        runner_words(runner)
+        "queue.sh {label}: round {batch} is GREEN at {head} (tree {tree}) ran={ran} wall={wall}s{}{}",
+        runner_words(runner),
+        rerun.map(|(step, of)| format!(" only={step} of_pass={of}")).unwrap_or_default()
     ));
     OK
 }
