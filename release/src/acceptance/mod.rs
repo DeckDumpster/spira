@@ -510,31 +510,25 @@ pub type UnitTree = std::collections::BTreeMap<PathBuf, TreeEntry>;
 /// Every file and symlink under `dir`, by path relative to it. Directories are not entries;
 /// a missing `dir` is an empty tree; an entry that cannot be read is an error.
 pub fn unit_tree(dir: &Path) -> Result<UnitTree, String> {
-    fn walk(root: &Path, at: &Path, out: &mut UnitTree) -> Result<(), String> {
-        let rd = fs::read_dir(at).map_err(|e| format!("{}: {e}", at.display()))?;
-        for ent in rd {
-            let p = ent.map_err(|e| format!("{}: {e}", at.display()))?.path();
-            let meta = fs::symlink_metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-            let rel = p.strip_prefix(root).unwrap_or(&p).to_path_buf();
-            let ft = meta.file_type();
-            if ft.is_symlink() {
-                out.insert(rel, TreeEntry::Link(fs::read_link(&p).map_err(|e| format!("{}: {e}", p.display()))?));
-            } else if ft.is_dir() {
-                walk(root, &p, out)?;
-            } else if ft.is_file() {
-                out.insert(rel, TreeEntry::File(fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?));
-            } else {
-                return Err(format!("{}: neither a file, a symlink nor a directory", p.display()));
-            }
-        }
-        Ok(())
+    match fs::symlink_metadata(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(UnitTree::new()),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+        Ok(_) => {}
     }
     let mut out = UnitTree::new();
-    match fs::symlink_metadata(dir) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(out),
-        Err(e) => Err(format!("{}: {e}", dir.display())),
-        Ok(_) => walk(dir, dir, &mut out).map(|()| out),
+    for (rel, node) in crate::fsutil::walk(dir)? {
+        match node {
+            crate::fsutil::Node::Dir => {}
+            crate::fsutil::Node::Link(t) => {
+                out.insert(rel.into(), TreeEntry::Link(t.into()));
+            }
+            crate::fsutil::Node::File => {
+                let p = dir.join(&rel);
+                out.insert(rel.into(), TreeEntry::File(fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?));
+            }
+        }
     }
+    Ok(out)
 }
 
 /// How `after` differs from `before`, one `+ path` (added), `- path` (removed) or `~ path`

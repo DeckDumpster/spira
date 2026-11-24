@@ -231,6 +231,8 @@ struct Fake {
     never_set_exits_0: bool,
     /// A refused `cadence.sh set` leaves its own drop-in behind instead of restoring.
     refusal_keeps_dropin: bool,
+    /// `systemctl start` exits 0 but the timer never becomes active.
+    start_is_a_noop: bool,
     /// `systemctl show` of a next-elapse property fails.
     show_fails: bool,
 }
@@ -270,6 +272,7 @@ impl Fake {
             never_set_exits_0: false,
             refusal_keeps_dropin: false,
             show_fails: false,
+            start_is_a_noop: false,
         }
     }
 
@@ -329,7 +332,7 @@ impl Fake {
         match (prog, a.as_slice()) {
             ("systemctl", ["--user", "is-system-running"]) => ok("running\n"),
             ("systemctl", ["--user", "start", "acceptance-cadence.timer"]) => {
-                self.timer_started.set(true);
+                self.timer_started.set(!self.start_is_a_noop);
                 ok("")
             }
             ("systemctl", ["--user", "stop", "acceptance-cadence.timer"]) => {
@@ -935,4 +938,30 @@ fn a_snapshot_error_fails_the_check_that_needs_it() {
     let installed = unit_tree(tree_in("rt-err-b", &[("a.service", "x"), ("b.service", "y")]).path());
     r.unit_dir_round_trip(&before, &installed, &Err("unit dir: permission denied".into()));
     assert_eq!(b.fails(), vec!["phase A: user unit directory byte-identical after uninstall: unit dir: permission denied".to_string()]);
+}
+
+#[test_id(tvyqcwk)]
+#[test]
+fn a_timer_that_never_becomes_active_fails_even_if_systemd_reports_an_elapse() {
+    // covers: UC-instance-lifecycle-32
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.start_is_a_noop = true;
+    let fails = run_cadence(&b, &f);
+    assert!(fails.iter().any(|x| x.starts_with("phase A: cadence: fixture timer is active and armed: acceptance-cadence.timer is not active")), "{fails:?}");
+    assert!(fixture_files(&b).is_empty());
+}
+
+#[test_id(t3p5lax)]
+#[test]
+fn a_round_trip_failure_lists_at_most_twenty_paths_and_counts_the_rest() {
+    // covers: UC-instance-lifecycle-40
+    let base = [("concierge.timer", "c")];
+    let installed = [("concierge.timer", "c"), ("spira-a.service", "s")];
+    let names: Vec<String> = (0..25).map(|i| format!("left-{i:02}.service")).collect();
+    let mut after: Vec<(&str, &str)> = vec![("concierge.timer", "c")];
+    after.extend(names.iter().map(|n| (n.as_str(), "x")));
+    let fails = round_trip(&base, &installed, &after);
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert!(fails[0].contains("+ left-19.service") && !fails[0].contains("left-20.service") && fails[0].ends_with("; and 5 more"), "{fails:?}");
 }
