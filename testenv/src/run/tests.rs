@@ -781,7 +781,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         got
     }
 
-    const ALLOWLIST: [(&str, &str); 1] = [("spira/skip-allowlist.tsv", "test-a.sh\tskip:nothing_to_test\tdeclared\ttest-a.sh\trequires:dolt\tdeclared\n")];
+    const ALLOWLIST: [(&str, &str); 1] = [("spira/skip-allowlist.tsv", "test-a.sh\tskip:nothing_to_test\tdeclared\ntest-a.sh\trequires:dolt\tdeclared\n")];
 
     fn exits_77(rt: &FakeRuntime) {
         rt.suite("test-a.sh", 77, "1..0 # SKIP nothing to test\n");
