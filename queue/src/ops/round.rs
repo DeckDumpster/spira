@@ -5078,7 +5078,10 @@ fn eject(
             (m.id.as_str(), why, cause)
         }))
     {
-        if !w.lib.bead_reopen(bead, own_cause.as_str(), suites) {
+        let tip = members.iter().find(|m| m.id == bead).map(|m| m.tip.as_str()).unwrap_or("");
+        let forced = gate::forced::forced(suites, w.git.file_at(&path, tip, gate::def::PATH).as_deref());
+        let forced = forced.as_str();
+        if !w.lib.bead_reopen(bead, own_cause.as_str(), forced) {
             w.err(format!(
                 "queue.sh {label}: bead_reopen did not complete for {bead} (cause {}); deciding on the lifecycle row",
                 own_cause.as_str()
@@ -5098,8 +5101,8 @@ fn eject(
         }
         let mut comment = format!("Ejected from round {batch} in {}.\n\n{why_text}", c.r.name);
         comment.push_str("\n\nFix the failing issue and re-certify before rejoining the queue.");
-        if !suites.is_empty() {
-            comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
+        if !forced.is_empty() {
+            comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {forced}"));
         }
         w.lib.comment(bead, &comment);
         round_event(

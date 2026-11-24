@@ -197,6 +197,9 @@ pub fn eject(
             w.out(format!("dry-run: would post comment to {id}"));
             return bead_resolves(w, id);
         }
+        let tip = st.as_ref().and_then(|s| s.tip.clone()).unwrap_or_default();
+        let forced = gate::forced::forced(suites, w.git.file_at(&path, &tip, gate::def::PATH).as_deref());
+        let suites = forced.as_str();
         let reopened = w.lib.bead_reopen(id, cause.as_str(), suites);
         if !reopened {
             w.err(format!(
