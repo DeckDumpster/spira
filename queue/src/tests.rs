@@ -536,6 +536,8 @@ struct FScripts {
     recipe_tree: RefCell<Option<String>>,
     /// `round-vm ami-for` answers in order; the last one repeats.
     ami_for: RefCell<Vec<AmiLookup>>,
+    /// `image_check` answers by rev; a rev not listed is present.
+    image_check: RefCell<BTreeMap<String, ImageCheck>>,
     repo_testenv: RefCell<RunOut>,
     /// The status `ci.result` carries when it is not the one the exit code implies.
     repo_ci_status: RefCell<Option<String>>,
@@ -680,6 +682,10 @@ impl Scripts for FScripts {
             Some(_) => self.recipe_tree.borrow().clone(),
             None => self.recipe_release.borrow().clone(),
         }
+    }
+    fn image_check(&self, _: &Path, rev: &str) -> ImageCheck {
+        self.calls.borrow_mut().push(format!("image-check {rev}"));
+        self.image_check.borrow().get(rev).cloned().unwrap_or(ImageCheck::Present)
     }
     fn ami_for(&self, sha: &str) -> AmiLookup {
         self.calls.borrow_mut().push(format!("ami-for {sha}"));

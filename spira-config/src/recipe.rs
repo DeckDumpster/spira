@@ -11,6 +11,19 @@ pub const PATHS: [&str; 6] = [
     "spira/testenv/Containerfile",
 ];
 
+/// The files whose change moves the testenv image tag a tree needs.
+pub const TAG_INPUTS: [&str; 5] = [
+    "spira/testenv/Containerfile",
+    "spira/deps.toml",
+    "rust-toolchain.toml",
+    "testenv/src/container.rs",
+    "spira-config/src/recipe.rs",
+];
+
+pub fn touches_tag_input<S: AsRef<str>>(changed: &[S]) -> bool {
+    changed.iter().any(|p| TAG_INPUTS.contains(&p.as_ref()))
+}
+
 pub fn touches<S: AsRef<str>>(changed: &[S]) -> bool {
     changed.iter().any(|p| PATHS.contains(&p.as_ref()))
 }
@@ -24,6 +37,14 @@ mod tests {
     fn a_recipe_input_is_detected_among_others() {
         assert!(touches(&["README.md", "flake.lock"]));
         assert!(touches(&["round-vm/ami-setup.sh".to_string()]));
+    }
+
+    #[test_id(tri2cac)]
+    #[test]
+    fn a_tag_input_is_detected_among_others() {
+        assert!(touches_tag_input(&["README.md", "spira/deps.toml"]));
+        assert!(!touches_tag_input(&["spira/queue.sh", "flake.lock"]));
+        assert!(!touches_tag_input::<&str>(&[]));
     }
 
     #[test_id(t5ebw64)]

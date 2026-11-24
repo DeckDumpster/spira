@@ -1441,6 +1441,31 @@ impl Scripts for RealScripts {
             Err(e) => AmiLookup::Unreadable(format!("cannot run round-vm: {e}")),
         }
     }
+    fn image_check(&self, tree: &Path, rev: &str) -> ImageCheck {
+        let round_vm = match spira_config::release_env::tool("round-vm") {
+            Ok(r) => r,
+            Err(e) => return ImageCheck::Unreadable(e),
+        };
+        // FORK-EDGE: machine leg round-vm (image-check)
+        match Command::new("timeout")
+            .args(["60", round_vm.as_str(), "image-check", "--tree"])
+            .arg(tree)
+            .args(["--rev", rev])
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.code() == Some(0) => {
+                let out = String::from_utf8_lossy(&o.stdout);
+                match out.trim().split_once(' ') {
+                    None if out.trim() == "present" => ImageCheck::Present,
+                    Some(("absent", tag)) if !tag.trim().is_empty() => ImageCheck::Absent(tag.trim().to_string()),
+                    _ => ImageCheck::Unreadable(format!("unrecognised image-check answer {:?}", out.trim())),
+                }
+            }
+            Ok(o) => ImageCheck::Unreadable(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+            Err(e) => ImageCheck::Unreadable(format!("cannot run round-vm: {e}")),
+        }
+    }
     fn repo_round_vm(
         &self,
         tree: &Path,
