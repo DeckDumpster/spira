@@ -157,7 +157,7 @@ fn the_cover_lists_tests_by_call_path_not_by_name() {
     assert!(body.contains("`demo/src/caller.rs::calls_open` calls `Store::open`"), "{body}");
     let tests_section = body.split("## Tests that exercise it").nth(1).unwrap();
     assert!(!tests_section.contains("::opens`") && !tests_section.contains("::it`"), "{body}");
-    assert!(tests_section.contains("in this review"), "{body}");
+    assert!(tests_section.contains("- 1 test in `demo/src/store/tests.rs`, 1 test in `demo/tests/it.rs`, in this review"), "{body}");
     assert!(!tests_section.contains("names_only.rs"), "{body}");
 }
 
