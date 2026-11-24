@@ -6,7 +6,7 @@
 #[macro_use]
 extern crate spira_test_id;
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{first_frame, published_snapshot, num, text, apply_claim_views, carry_forward, live_row, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{first_frame, published_snapshot, num, text, apply_claim_views, carry_forward, live_row, repo_column, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use spira_store::lc_call::LcError;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -381,16 +381,15 @@ fn gather() -> Snapshot {
         }
         Err(e) => store_failed(&mut s, e),
     }
-    match lc_json(&["list-asks"]) {
+    match lc(&["list-asks"]).and_then(|t| cockpit_ops::lcview::ask_rows(&t).map_err(LcError::Fault)) {
         Ok(asks) => {
             let label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
-            for a in asks {
-                let id = text(&a["ask_id"]);
-                if !label.is_empty() {
-                    s.meta.entry(id.clone()).or_default().labels.push(label.clone());
+            if !label.is_empty() {
+                for a in &asks {
+                    s.meta.entry(a.id.clone()).or_default().labels.push(label.clone());
                 }
-                s.asks.push(AskRow { id, opened_at: num(&a["opened_at"]).unwrap_or(0), title: text(&a["title"]), class: text(&a["class"]), work_bead: text(&a["work_bead"]) });
             }
+            s.asks = asks;
         }
         Err(e) => {
             s.asks_error = Some(e.to_string());
