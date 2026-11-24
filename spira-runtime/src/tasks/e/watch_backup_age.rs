@@ -27,7 +27,7 @@
 //! - Carry `watch.backup_age.state` = `Ok | Red` — today `run/watchd/lc-backup.state` (`:47`, rewritten each tick `:350-351`).
 //! - `Red` and prev ≠ `Red` → "RED: a store has no good backup within <MAX>s (<db: state;…>) — losing its disk now loses its data and history" (`:346`).
 //! - `Ok` and prev = `Red` → "CLEAR: every store has a fresh backup again (<db: state;…>)" (`:348`).
-//! - Fixtures: `lc-backup.sh age --now EPOCH` (`:186-198`) is the seam. Suites cover the run and drill (`spira/test-lc-backup-drill-deferral.sh`, `spira/test-lc-backup-registry.sh`), not the watch tick. New: all ok; one stale; never; unreadable stamp; no destination; crossing and clear.
+//! - Fixtures: `lc-backup.sh age --now EPOCH` (`:186-198`) is the seam. `spira-lc/tests/lc_backup_drill.rs` covers the run, drill deferral and registry copy, not the watch tick. New: all ok; one stale; never; unreadable stamp; no destination; crossing and clear.
 //!
 //! ## Act
 //!

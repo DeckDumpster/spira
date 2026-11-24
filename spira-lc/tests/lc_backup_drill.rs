@@ -248,3 +248,305 @@ fn a_control_drill_without_a_drill_ok_line_fails_rather_than_passing_on_another_
     assert!(r.control.starts_with("lc-backup: drill: control: admin-drill printed no drill ok: line"), "{}", r.control);
     assert!(seconds_of(&r.control, "admin-drill"), "{}", r.control);
 }
+
+const REGISTRY_STUBS: &str = r#"#!/bin/bash
+echo "$(basename "$0") $*" >> "$STUB_LOG"
+case "$(basename "$0")" in
+test-registry)
+    [ -z "${STUB_BACKUP_FAIL:-}" ] || { echo "disk full" >&2; exit 1; }
+    echo data > "$3"; echo "$3 5 2" ;;
+spira-lc)
+    [ -z "${STUB_PUT_FAIL:-}" ] || { echo denied >&2; exit 1; }
+    echo archived ;;
+esac
+"#;
+
+const CLOCK_PRELUDE: &str = r#"
+_LCB_REGISTRY=test-registry
+date() {
+    case "$1" in
+    +%s) cat "$CLOCK" ;;
+    +%s%N) echo "$(cat "$CLOCK")000000000" ;;
+    -u) shift; command date -u -d "@$(cat "$CLOCK")" "$@" ;;
+    *) command date "$@" ;;
+    esac
+}
+sleep() { echo $(( $(cat "$CLOCK") + $1 )) > "$CLOCK"; }
+"#;
+
+const SHELL_FUNCTIONS: &[&str] = &[
+    "_lcb_dbs", "_lcb_stamp", "_lcb_lock", "_lcb_verdict", "_lcb_sync_dir", "_lcb_record_deferral", "_lcb_drill_wait_quiet",
+    "_lcb_drill_db", "_lcb_lap", "_lcb_now_ns", "_lcb_phases_note", "_lcb_import_drill_stamps", "_lcb_run_registry", "_lcb_run_db",
+    "_lcb_measure_db", "_lcb_measure", "_lcb_all_ok", "cmd_run", "cmd_age", "cmd_drill", "cmd_explain_drill", "_lcb_drill_control",
+];
+
+struct Box {
+    tmp: testkit::TempDir,
+}
+
+impl Box {
+    fn new() -> Self {
+        let tmp = testkit::TempDir::new("lc-backup-shell");
+        for sub in ["bin", "run", "sync", "dest"] {
+            std::fs::create_dir_all(tmp.path().join(sub)).unwrap();
+        }
+        for n in ["test-registry", "spira-lc"] {
+            testkit::write_exe(tmp.path().join("bin").join(n), REGISTRY_STUBS);
+        }
+        std::fs::write(tmp.path().join("clock"), "1700000000\n").unwrap();
+        Box { tmp }
+    }
+    fn p(&self, rel: &str) -> std::path::PathBuf {
+        self.tmp.path().join(rel)
+    }
+    fn read(&self, rel: &str) -> String {
+        std::fs::read_to_string(self.p(rel)).unwrap_or_default()
+    }
+    fn run(&self, body: &str, env: &[(&str, &str)]) -> (Option<i32>, String) {
+        let mut script = String::from(CLOCK_PRELUDE);
+        for f in SHELL_FUNCTIONS {
+            script += &function(f);
+            script += "\n";
+        }
+        script += body;
+        let d = self.tmp.path();
+        let mut c = Command::new("bash");
+        c.arg("-c").arg(script).current_dir(d).env_clear()
+            .env("PATH", format!("{}:/usr/local/bin:/usr/bin:/bin", d.join("bin").display()))
+            .env("CLOCK", d.join("clock"))
+            .env("STUB_LOG", d.join("log"))
+            .env("SPIRA_RUN", d.join("run"))
+            .env("SPIRA_LC_BACKUP_DB", "alpha")
+            .env("SPIRA_LC_BACKUP_URL", format!("file://{}", d.join("dest").display()))
+            .env("SPIRA_LC_BACKUP_SYNC_DIR", d.join("sync"))
+            .env("SPIRA_LC_BACKUP_DRILL_DIR", d.join("scratch"))
+            .env("SPIRA_LC_BACKUP_DRILL_WAIT_SECS", "0")
+            .env("SPIRA_LC_BACKUP_DRILL_POLL_SECS", "1")
+            .env("SPIRA_LC_BACKUP_MAX_AGE", "1000")
+            .env("SPIRA_LC_STORE_PATH", "");
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        let out = c.output().unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr))
+    }
+}
+
+const NO_REFUSALS: &str = "_lcb_refuse_unconfigured() { return 0; }\n_lcb_refuse_same_disk() { return 0; }\n";
+
+// covers: UC-instance-lifecycle-48
+#[test_id(tjaa7jo)]
+#[test]
+fn a_drill_whose_store_stays_busy_past_the_cap_exits_red_with_a_deferred_verdict_naming_the_seconds_waited() {
+    let b = Box::new();
+    let (code, out) = b.run("_lcb_drill_busy() { echo busy; }\ncmd_drill", &[("SPIRA_LC_BACKUP_DRILL_WAIT_SECS", "3")]);
+    assert_eq!(code, Some(1), "{out}");
+    let v = b.read("run/lc-backup/alpha/drill.verdict");
+    assert!(v.contains("DEFERRED past 3s") && v.contains("(quiet wait 3s)"), "{v}");
+    assert!(b.p("run/lc-backup/alpha/drill.deferred").exists());
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(tmlyraj)]
+#[test]
+fn a_drill_whose_lock_stays_held_exits_red_with_a_deferred_verdict() {
+    let b = Box::new();
+    let held = b.p("run/lc-backup/alpha/.lock");
+    std::fs::create_dir_all(held.parent().unwrap()).unwrap();
+    let body = "_lcb_drill_busy() { :; }\nexec 8>\"$SPIRA_RUN/lc-backup/alpha/.lock\"; flock -n 8\ncmd_drill";
+    let (code, out) = b.run(body, &[]);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(b.read("run/lc-backup/alpha/drill.verdict").contains("DEFERRED"), "{out}");
+    assert!(b.read("run/lc-backup/alpha/drill.verdict").contains("a run holds the lock"), "{out}");
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(t4x1hwd)]
+#[test]
+fn one_databases_deferral_leaves_another_databases_verdict_alone() {
+    let b = Box::new();
+    let body = "_lcb_drill_busy() { :; }\n_lcb_drill_db_locked() { echo \"ok $1\" > \"$(_lcb_verdict \"$1\")\"; }\n\
+                mkdir -p \"$SPIRA_RUN/lc-backup/beta\"; exec 8>\"$SPIRA_RUN/lc-backup/beta/.lock\"; flock -n 8\ncmd_drill";
+    let (code, out) = b.run(body, &[("SPIRA_LC_BACKUP_DB", "alpha beta")]);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(b.read("run/lc-backup/alpha/drill.verdict").starts_with("ok alpha"), "{out}");
+    assert!(b.read("run/lc-backup/beta/drill.verdict").contains("DEFERRED"), "{out}");
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(tl3iir7)]
+#[test]
+fn explain_drill_reports_the_deferral_to_the_operator() {
+    let b = Box::new();
+    let body = "_lcb_report() { echo \"$1\" > \"$SPIRA_RUN/reported\"; }\n_lcb_drill_busy() { echo busy; }\ncmd_drill >/dev/null 2>&1\nSERVICE_RESULT=exit-code cmd_explain_drill 2>/dev/null";
+    b.run(body, &[]);
+    assert!(b.read("run/reported").contains("DEFERRED"), "{}", b.read("run/reported"));
+}
+
+fn stage_verdict(b: &Box, db: &str, text: &str, mtime: u64) {
+    let v = b.p(&format!("run/lc-backup/{db}/drill.verdict"));
+    std::fs::create_dir_all(v.parent().unwrap()).unwrap();
+    std::fs::write(&v, format!("{text}\n")).unwrap();
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime);
+    std::fs::File::options().write(true).open(&v).unwrap().set_modified(at).unwrap();
+}
+
+fn import(b: &Box) -> String {
+    let (code, out) = b.run(&format!("{NO_REFUSALS}_lcb_run_db() {{ :; }}\n_lcb_run_registry() {{ :; }}\ncmd_run"), &[("SPIRA_LC_STORE_PATH", "store")]);
+    assert_eq!(code, Some(0), "{out}");
+    out
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(tujvon6)]
+#[test]
+fn a_passing_verdict_without_a_stamp_is_imported_at_its_mtime_and_a_failing_or_deferred_one_is_not() {
+    let b = Box::new();
+    stage_verdict(&b, "control", "lc-backup: drill ok — control: fine", 1700000000);
+    stage_verdict(&b, "alpha", "lc-backup: drill ok — alpha: fine", 1700000001);
+    let out = import(&b);
+    assert_eq!(b.read("run/lc-backup/control/drill.ok").trim(), "1700000000");
+    assert_eq!(b.read("run/lc-backup/alpha/drill.ok").trim(), "1700000001");
+    assert!(out.contains("lc-backup: drill: imported control's drill.ok from its passing verdict (1700000000)"), "{out}");
+
+    let b = Box::new();
+    stage_verdict(&b, "control", "lc-backup: drill: control: restore failed", 1700000000);
+    stage_verdict(&b, "alpha", "lc-backup: drill: DEFERRED past 0s, never ran — x", 1700000000);
+    import(&b);
+    assert!(!b.p("run/lc-backup/control/drill.ok").exists() && !b.p("run/lc-backup/alpha/drill.ok").exists());
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(te4988f)]
+#[test]
+fn an_existing_drill_stamp_is_never_rewritten() {
+    let b = Box::new();
+    stage_verdict(&b, "control", "lc-backup: drill ok — control: fine", 1700000000);
+    std::fs::write(b.p("run/lc-backup/control/drill.ok"), "1600000000\n").unwrap();
+    import(&b);
+    assert_eq!(b.read("run/lc-backup/control/drill.ok").trim(), "1600000000");
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(tvdwgmc)]
+#[test]
+fn a_drill_imports_a_passing_verdict_before_a_failing_control_drill_and_keeps_the_stamp() {
+    let b = Box::new();
+    stage_verdict(&b, "control", "lc-backup: drill ok — control: fine", 1700000000);
+    let body = "spira-lc() { echo broken; return 1; }\ncmd_drill --db control";
+    let (code, out) = b.run(body, &[("SPIRA_LC_STORE_PATH", "store")]);
+    assert_eq!(code, Some(1), "{out}");
+    assert_eq!(b.read("run/lc-backup/control/drill.ok").trim(), "1700000000", "{out}");
+}
+
+fn registry_run(b: &Box, env: &[(&str, &str)]) -> (Option<i32>, String) {
+    b.run(&format!("{NO_REFUSALS}_lcb_run_db() {{ return \"${{DB_RC:-0}}\"; }}\ncmd_run"), env)
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(tgp1yqc)]
+#[test]
+fn a_registry_backup_is_uploaded_under_its_stamped_key_and_stamped_only_after_the_upload() {
+    let b = Box::new();
+    let (code, out) = registry_run(&b, &[]);
+    assert_eq!(code, Some(0), "{out}");
+    let log = b.read("log");
+    let steps: Vec<String> = log.lines().map(|l| l.split(' ').take(2).collect::<Vec<_>>().join(" ")).collect();
+    assert_eq!(steps, ["test-registry backup", "spira-lc admin-archive-put"], "{log}");
+    assert!(log.contains(&format!("--out {}", b.p("sync/test-registry/20231114T221320000Z.sqlite").display())), "{log}");
+    assert!(log.contains("--key test-registry-20231114T221320000Z.sqlite"), "{log}");
+    assert_eq!(b.read("run/lc-backup.test-registry.ok"), "1700000000 test-registry-20231114T221320000Z.sqlite -\n");
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(tc5mi1y)]
+#[test]
+fn a_failed_registry_backup_names_its_step_exits_red_uploads_nothing_and_leaves_the_prior_stamp() {
+    let b = Box::new();
+    std::fs::write(b.p("run/lc-backup.test-registry.ok"), "1600000000 old -\n").unwrap();
+    let (code, out) = registry_run(&b, &[("STUB_BACKUP_FAIL", "1")]);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(out.contains("lc-backup: test-registry: backup step failed: disk full"), "{out}");
+    assert!(!b.read("log").contains("admin-archive-put"));
+    assert_eq!(b.read("run/lc-backup.test-registry.ok"), "1600000000 old -\n");
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(ttyde85)]
+#[test]
+fn a_failed_registry_upload_names_its_step_exits_red_and_leaves_the_prior_stamp() {
+    let b = Box::new();
+    std::fs::write(b.p("run/lc-backup.test-registry.ok"), "1600000000 old -\n").unwrap();
+    let (code, out) = registry_run(&b, &[("STUB_PUT_FAIL", "1")]);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(out.contains("lc-backup: test-registry: upload step failed: denied"), "{out}");
+    assert_eq!(b.read("run/lc-backup.test-registry.ok"), "1600000000 old -\n");
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(tf1tbaj)]
+#[test]
+fn a_failing_database_still_lets_the_registry_ship_and_only_the_newest_local_copy_is_kept() {
+    let b = Box::new();
+    let (code, out) = registry_run(&b, &[("DB_RC", "1")]);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(b.read("run/lc-backup.test-registry.ok").contains("test-registry-"), "{out}");
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(tj6se9s)]
+#[test]
+fn only_the_newest_local_registry_copy_and_no_orphan_temp_file_is_kept() {
+    let b = Box::new();
+    let dir = b.p("sync/test-registry");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("orphan.sqlite.tmp"), "").unwrap();
+    std::fs::write(dir.join("19700101T000000000Z.sqlite"), "").unwrap();
+    let (code, out) = registry_run(&b, &[]);
+    assert_eq!(code, Some(0), "{out}");
+    let kept: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(kept, ["20231114T221320000Z.sqlite"]);
+}
+
+// covers: UC-instance-lifecycle-48
+#[test_id(tal0jdm)]
+#[test]
+fn the_drill_timer_has_one_weekly_slot() {
+    let timer = include_str!("../../systemd/lc-backup-drill.timer");
+    let slots: Vec<&str> = timer.lines().filter(|l| l.starts_with("OnCalendar=")).collect();
+    assert!(slots.len() == 1 && slots[0].starts_with("OnCalendar=Sun "), "{slots:?}");
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(tdfcaq3)]
+#[test]
+fn age_prints_never_ok_stale_or_unreadable_for_the_registry_and_goes_red_on_all_but_ok() {
+    let b = Box::new();
+    std::fs::write(b.p("run/lc-backup.alpha.ok"), "1700000000 h -\n").unwrap();
+    let age = |stamp: Option<&str>, args: &str| {
+        if let Some(s) = stamp {
+            std::fs::write(b.p("run/lc-backup.test-registry.ok"), s).unwrap();
+        }
+        b.run(&format!("cmd_age {args}"), &[])
+    };
+    let (code, out) = age(None, "--now 1700000100");
+    assert!(out.contains("test-registry: never") && code != Some(0), "{code:?} {out}");
+    let (code, out) = age(Some("1700000000 k -\n"), "--now 1700000100");
+    assert!(out.contains("alpha: ok 100\ntest-registry: ok 100") && code == Some(0), "{code:?} {out}");
+    let (code, out) = age(Some("1700000000 k -\n"), "--now 1700005000");
+    assert!(out.contains("test-registry: stale 5000") && code != Some(0), "{code:?} {out}");
+    let (code, out) = age(Some("garbage\n"), "--now 1700000100");
+    assert!(out.contains("test-registry: unreadable") && code != Some(0), "{code:?} {out}");
+}
+
+// covers: UC-instance-lifecycle-49
+#[test_id(t0ve2ke)]
+#[test]
+fn a_stale_database_is_listed_before_a_fresh_registry_and_keeps_age_red() {
+    let b = Box::new();
+    std::fs::write(b.p("run/lc-backup.alpha.ok"), "1600000000 h -\n").unwrap();
+    std::fs::write(b.p("run/lc-backup.test-registry.ok"), "1700000000 k -\n").unwrap();
+    let (code, out) = b.run("cmd_age --now 1700000100", &[]);
+    assert_eq!(out, "alpha: stale 100000100\ntest-registry: ok 100\n");
+    assert_eq!(code, Some(1));
+}
