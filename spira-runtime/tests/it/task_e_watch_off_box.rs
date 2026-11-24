@@ -9,13 +9,14 @@ use spira_runtime::tasks::e::watch_off_box::*;
 use testkit::TempDir;
 
 const BOUND_S: u64 = 90;
+const CYCLE_S: u64 = 334;
 const SNAPSHOT_S: u64 = 1_200;
 const KEY_ERROR: &str = "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not in the environment";
 
 type World = Arc<Mutex<Result<Snapshot, String>>>;
 
 fn config() -> Config {
-    Config { max_age_s: BOUND_S, snapshot_s: SNAPSHOT_S }
+    Config { max_age_s: BOUND_S, snapshot_s: SNAPSHOT_S, cycle_s: CYCLE_S }
 }
 
 fn seen(head: u64, shipped: u64, last_error: Option<&str>) -> Snapshot {
@@ -27,8 +28,12 @@ fn registration() -> runtime::event::Registration {
 }
 
 fn rig(world: &World) -> TaskRig {
+    rig_with(world, config())
+}
+
+fn rig_with(world: &World, cfg: Config) -> TaskRig {
     let w = world.clone();
-    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| w.lock().unwrap().clone().map(|s| serde_json::to_string(&s).unwrap())).double("inbox.append", |_| Ok(String::new()));
+    let mut r = TaskRig::new(1, WatchOffBox::new(cfg).registration()).unwrap().double(OBSERVE, move |_| w.lock().unwrap().clone().map(|s| serde_json::to_string(&s).unwrap())).double("inbox.append", |_| Ok(String::new()));
     let (_, stream, kind) = WatchOffBox::boot();
     r.tick(stream, kind).unwrap();
     acc::assert_healthy(&r, STREAM);
@@ -91,10 +96,14 @@ fn a_stalled_uploader_pages_once_with_the_wait_the_revision_and_the_error_and_on
 fn a_stalled_stager_with_the_queue_empty_pages_the_same() {
     let world = stalled_world(None);
     let mut r = rig(&world);
-    run_for(&mut r, BOUND_S + 30);
+    run_for(&mut r, CYCLE_S - 15);
+    assert!(lines(&r).is_empty(), "inside the shipper's worst healthy cycle a wait with no refusal is not news");
+    run_for(&mut r, 60);
     let said = lines(&r);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("RED: ") && said[0].contains("1859605") && said[0].contains("error: none"), "{said:?}");
+    assert!(said[0].contains("RED: ") && said[0].contains("1859605") && said[0].contains("error: none") && said[0].contains(&format!("past {CYCLE_S}s")), "{said:?}");
+    run_for(&mut r, 600);
+    assert_eq!(lines(&r).len(), 1);
 }
 
 #[test_id(tvhoh7u)]
@@ -114,7 +123,7 @@ fn a_copy_that_follows_its_head_inside_the_bound_is_silent_and_so_is_an_idle_sto
 
 #[test_id(tj7vx9p)]
 #[test]
-fn an_observe_failing_past_the_bound_pages_with_the_probes_error_and_once() {
+fn an_observe_failing_past_the_bound_says_cannot_tell_with_the_probes_error_once() {
     let world: World = Arc::new(Mutex::new(Err("lc-serve: connection refused".into())));
     let mut r = rig(&world);
     run_for(&mut r, BOUND_S - 15);
@@ -122,7 +131,7 @@ fn an_observe_failing_past_the_bound_pages_with_the_probes_error_and_once() {
     run_for(&mut r, 60);
     let said = lines(&r);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("RED: ") && said[0].contains("lc-serve: connection refused"), "{said:?}");
+    assert!(said[0].contains("[watch:off-box] CANNOT TELL: ") && said[0].contains("lc-serve: connection refused"), "{said:?}");
     run_for(&mut r, 600);
     assert_eq!(lines(&r).len(), 1);
     *world.lock().unwrap() = Ok(seen(7, 7, None));
@@ -132,7 +141,7 @@ fn an_observe_failing_past_the_bound_pages_with_the_probes_error_and_once() {
 
 #[test_id(t8skra3)]
 #[test]
-fn an_observe_that_times_out_past_the_bound_pages_too() {
+fn an_observe_that_times_out_past_the_bound_says_cannot_tell_too() {
     let world: World = Arc::new(Mutex::new(Ok(seen(1, 1, None))));
     let mut r = TaskRig::new(1, registration()).unwrap().timing_out().double("inbox.append", |_| Ok(String::new()));
     let (_, stream, kind) = WatchOffBox::boot();
@@ -140,7 +149,7 @@ fn an_observe_that_times_out_past_the_bound_pages_too() {
     run_for(&mut r, BOUND_S + 60);
     let said = lines(&r);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("RED: ") && said[0].contains("timed out"), "{said:?}");
+    assert!(said[0].contains("CANNOT TELL: ") && said[0].contains("timed out"), "{said:?}");
     drop(world);
 }
 
@@ -166,7 +175,7 @@ fn a_restart_mid_red_neither_pages_again_nor_loses_the_crossing() {
 fn the_clock_of_a_wait_survives_a_restart() {
     let world = stalled_world(None);
     let mut r = rig(&world);
-    run_for(&mut r, BOUND_S - 30);
+    run_for(&mut r, CYCLE_S - 30);
     assert!(lines(&r).is_empty());
     r.reopen(registration()).unwrap();
     let (_, stream, kind) = WatchOffBox::boot();
@@ -264,7 +273,7 @@ fn the_carry_is_kept_as_rows_and_a_boot_repeats_no_page() {
     let mut r = red();
     run_for(&mut r, BOUND_S + 30);
     let rows = spira_runtime::tasks::a::kit::assert_kept_as_rows(&r, NAME);
-    assert_eq!(rows, ["blind_since_ms", "red", "snapshot_red", "waiting"]);
+    assert_eq!(rows, ["blind_red", "blind_since_ms", "red", "snapshot_red", "waiting"]);
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(red, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
 }
 
@@ -281,4 +290,96 @@ fn removing_the_destination_clears_both_open_pages() {
     let said = lines(&r);
     assert_eq!(said.len(), 4, "{said:?}");
     assert!(said[2..].iter().all(|l| l.contains("CLEAR: ")) && said[2..].iter().any(|l| l.contains("snapshot")), "{said:?}");
+}
+
+const SHAPE_MAX_AGE_S: u64 = 60;
+
+fn shape_config() -> Config {
+    Config { max_age_s: SHAPE_MAX_AGE_S, ..config() }
+}
+
+#[test_id(tn1xsn4)]
+#[test]
+fn the_waits_the_scheduler_stalls_make_page_nothing() {
+    let drained = || Ok(seen(10, 10, None));
+    let stalled = || Ok(seen(11, 10, None));
+    let blind = || Err("lc-serve: connection refused".to_string());
+    let shapes: [Vec<(Result<Snapshot, String>, u64)>; 5] = [
+        vec![(stalled(), 75), (drained(), 30)],
+        vec![(stalled(), 60), (drained(), 30)],
+        vec![(stalled(), 90), (blind(), 15), (drained(), 30)],
+        vec![(stalled(), 60), (drained(), 15), (Ok(seen(12, 10, None)), 60), (drained(), 30)],
+        vec![(blind(), 30), (drained(), 600)],
+    ];
+    for (n, shape) in shapes.into_iter().enumerate() {
+        let world: World = Arc::new(Mutex::new(drained()));
+        let mut r = rig_with(&world, shape_config());
+        for (answer, secs) in shape {
+            *world.lock().unwrap() = answer;
+            run_for(&mut r, secs);
+        }
+        assert!(lines(&r).is_empty(), "shape {n}: {:?}", lines(&r));
+    }
+}
+
+#[test_id(ts7b6xs)]
+#[test]
+fn a_refused_revlog_drain_pages_past_the_bound_and_an_error_free_stall_only_past_the_cycle() {
+    let world = stalled_world(Some(KEY_ERROR));
+    let mut r = rig_with(&world, shape_config());
+    run_for(&mut r, SHAPE_MAX_AGE_S - 15);
+    assert!(lines(&r).is_empty());
+    run_for(&mut r, 30);
+    assert_eq!(lines(&r).len(), 1, "{:?}", lines(&r));
+    assert!(lines(&r)[0].contains(KEY_ERROR), "{:?}", lines(&r));
+    let world = stalled_world(None);
+    let mut r = rig_with(&world, shape_config());
+    run_for(&mut r, CYCLE_S + 30);
+    run_for(&mut r, 600);
+    assert_eq!(lines(&r).len(), 1, "{:?}", lines(&r));
+}
+
+#[test_id(t3x44cj)]
+#[test]
+fn a_snapshot_drains_refusal_is_not_a_run_uploads() {
+    let dir = TempDir::new("off-box-snapshot-refusal");
+    std::fs::write(dir.path().join("shipped"), "100\n").unwrap();
+    std::fs::write(dir.path().join("last-drain.json"), r#"{"at_ms":1,"kind":"snapshot","uploaded":0,"error":"403"}"#).unwrap();
+    match observe_dir("s3://b/p/", dir.path(), || Ok(120)).unwrap() {
+        Snapshot::Seen { last_error, .. } => assert_eq!(last_error, None),
+        other => panic!("{other:?}"),
+    }
+    std::fs::write(dir.path().join("last-drain.json"), r#"{"at_ms":1,"kind":"revlog","uploaded":0,"error":"403"}"#).unwrap();
+    match observe_dir("s3://b/p/", dir.path(), || Ok(120)).unwrap() {
+        Snapshot::Seen { last_error, .. } => assert_eq!(last_error.as_deref(), Some("403")),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test_id(tmbj1jp)]
+#[test]
+fn a_standing_red_survives_an_err_and_blindness_says_cannot_tell_once_across_a_reopen_then_clears() {
+    let world = stalled_world(Some(KEY_ERROR));
+    let mut r = rig(&world);
+    run_for(&mut r, BOUND_S + 30);
+    assert_eq!(lines(&r).len(), 1);
+    *world.lock().unwrap() = Err("lc-serve: connection refused".into());
+    run_for(&mut r, BOUND_S - 15);
+    assert_eq!(lines(&r).len(), 1, "an Err inside the bound neither clears the RED nor adds a line: {:?}", lines(&r));
+    run_for(&mut r, 60);
+    let said = lines(&r);
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(said[1].contains("CANNOT TELL: ") && said[1].contains("stands"), "{said:?}");
+    r.reopen(registration()).unwrap();
+    let (_, stream, kind) = WatchOffBox::boot();
+    r.tick(stream, kind).unwrap();
+    run_for(&mut r, 600);
+    assert_eq!(lines(&r).len(), 2, "blindness is said once, across a reopen: {:?}", lines(&r));
+    *world.lock().unwrap() = Ok(seen(1_859_610, 1_859_610, None));
+    r.advance(CADENCE_MS).unwrap();
+    let said = lines(&r);
+    assert_eq!(said.len(), 4, "{said:?}");
+    assert!(said[2..].iter().all(|l| l.contains("CLEAR: ")), "{said:?}");
+    run_for(&mut r, 600);
+    assert_eq!(lines(&r).len(), 4);
 }

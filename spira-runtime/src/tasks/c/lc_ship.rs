@@ -45,7 +45,7 @@ pub const DIR_KEY: &str = "SPIRA_LC_SHIP_DIR";
 pub const KEYS: &[&str] = &[CADENCE_KEY, URL_KEY, DIR_KEY];
 
 // batch-job: one upload, bounded by the object's size, not a round trip
-const PUT_DEADLINE: Duration = Duration::from_secs(300);
+pub const PUT_DEADLINE: Duration = Duration::from_secs(300);
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: None, jitter_key: None };
 

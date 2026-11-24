@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=lc
-DOC=Seconds control-store revisions lc-serve has committed may wait without being uploaded before the watch.off_box task puts one RED line in the Concierge inbox, and one CLEAR when the off-box copy is current again.
+DOC=Seconds control-store revisions lc-serve has committed may wait without being uploaded, after a refused upload, before the watch.off_box task puts one RED line in the Concierge inbox, and one CLEAR when the off-box copy is current again. A wait with no refusal pages only past the shipper's worst healthy cycle (an upload deadline, a staging period of a quarter of this value, and a few ticks). The same bound is how long the task may be unable to observe before it says CANNOT TELL once. Staging runs every quarter of this value, so raising it slows shipping.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_LC_SHIP_MAX_AGE_SECS:=60}"
 SPIRA_CONF_DEFAULT_EOF
