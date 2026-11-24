@@ -72,6 +72,8 @@ pub struct Waiting {
     pub ask_held: bool,
     pub held: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub cannot_tell: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tip: Option<String>,
 }
 
@@ -278,12 +280,12 @@ impl<B: Backend> Store<B> {
             let row = &r.value.row;
             repos.insert(row.bead_id.clone(), Some(repo_of(&r.value)));
             let ask_held = row.holds.contains(&HoldKind::Ask);
-            let ask_since = match (ask_held, row.ask_since) {
-                (true, None) => return Err(state_store::Error::Backend(format!("dwell: {} is held by an ask but its record has no ask_since; the store has not applied the ask_since migration", row.bead_id))),
-                (true, since) => since,
-                (false, _) => None,
+            let (ask_since, cannot_tell) = match (ask_held, row.ask_since) {
+                (true, None) => (None, Some(format!("cannot tell: {} is held by an ask but has no ask_since", row.bead_id))),
+                (true, since) => (since, None),
+                (false, _) => (None, None),
             };
-            beads.push(Waiting { id: row.bead_id.clone(), repo: repo_of(&r.value), state: row.state.as_str().to_string(), since: row.since.unwrap_or(r.value.updated_at), ask_since, ask_held, held: !row.holds.is_empty(), tip: row.tip.clone() });
+            beads.push(Waiting { id: row.bead_id.clone(), repo: repo_of(&r.value), state: row.state.as_str().to_string(), since: row.since.unwrap_or(r.value.updated_at), ask_since, ask_held, held: !row.holds.is_empty(), cannot_tell, tip: row.tip.clone() });
         }
         let floor = now.saturating_sub(window_s as i64);
         let mut d = Dwell { rev: head, now, window_s, horizon: now, beads, ..Default::default() };

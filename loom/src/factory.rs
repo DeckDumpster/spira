@@ -948,7 +948,12 @@ fn sensors(reads: &Reads, now: i64, open_rounds: Option<BTreeMap<String, u64>>, 
         snap.open_rounds = open_rounds.filter(|_| reads.batches.is_ok());
         let snap = &snap;
         let table = wt::table(snap, wt::ALL, now);
+        let undated = wt::undated(snap).into_values().collect::<Vec<_>>().join("; ");
         for name in wt::ROWS {
+            if name == "ASK" && !undated.is_empty() {
+                out.push(Sensor::new("wt.ASK", "transitions", vec![row_at(name)], "BLIND", "watch.transitions").says("BLIND", format!("BLIND ASK: {undated}")));
+                continue;
+            }
             let reading = wt::row_text(name, &table[name]);
             out.push(Sensor::new(format!("wt.{name}"), "transitions", vec![row_at(name)], "WAIT", "watch.transitions").says(reading.clone(), reading));
         }
@@ -956,7 +961,9 @@ fn sensors(reads: &Reads, now: i64, open_rounds: Option<BTreeMap<String, u64>>, 
         for edge in wt::EDGES {
             let at = edge_at(edge);
             let found: Vec<&wt::Stall> = stalled.iter().filter(|s| s.edge == edge).collect();
-            if found.is_empty() {
+            if edge == wt::ASK_EDGE && !undated.is_empty() {
+                out.push(Sensor::new(format!("wt.{edge}"), "transitions", at.clone(), "BLIND", "watch.transitions").says("BLIND", format!("BLIND {edge}: {undated}")));
+            } else if found.is_empty() {
                 out.push(Sensor::new(format!("wt.{edge}"), "transitions", at.clone(), "WAIT", "watch.transitions").says("WAIT", format!("WAIT {edge}: inside its bound")));
             }
             for s in found {
@@ -1461,6 +1468,21 @@ mod tests {
         assert_eq!(sensor(&f, "wt.WORKING→SUBMITTED")["status"], "WAIT");
         assert_eq!(sensor(&f, "wt.LANDED→ACTIVATED")["at"], json!(["bead.land"]));
         assert_eq!(sensor(&f, "wt.ASK→ANSWERED")["at"], json!(["ask.close"]));
+    }
+
+    #[test_id(t19wjyc)]
+    #[tokio::test]
+    async fn an_ask_the_store_cannot_date_blinds_only_the_ask_row_and_the_ask_edge() {
+        let run = run_with_a_release();
+        let text = "cannot tell: sp-old is held by an ask but has no ask_since";
+        let dwell = json!({"beads": [{"id": "sp-old", "repo": "spira", "state": "REWORK", "since": NOW - 7200, "ask_held": true, "held": true, "cannot_tell": text}], "horizon": NOW - 4200, "last": {"spira": {}}, "landed_after": {}});
+        let mut answers = script(batch_graph(), &quiet(), json!([]));
+        answers.push(ok(&dwell_key(), dwell.to_string()));
+        let f = floor_with(answers, run.path().to_str().unwrap(), &sensing()).await.unwrap();
+        let blind: Vec<&str> = of_kind(&f, "transitions").into_iter().filter(|s| s["status"] == "BLIND").map(|s| s["id"].as_str().unwrap()).collect();
+        assert_eq!(blind, ["wt.ASK", "wt.ASK→ANSWERED"], "{blind:?}");
+        assert!(sensor(&f, "wt.ASK")["reading"].as_str().unwrap().contains(text));
+        assert!(sensor(&f, "wt.ASK→ANSWERED")["reading"].as_str().unwrap().contains(text));
     }
 
     #[test_id(t8azbqm)]
