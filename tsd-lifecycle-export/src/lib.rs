@@ -240,6 +240,37 @@ pub struct LifecycleEventRow {
     pub at: i64,
 }
 
+pub const STAGE_FAMILY: &str = "bead-stage";
+
+/// The line `tsd-write --family bead-stage --ts .. --field ..` builds for this row.
+pub fn stage_line(row: &StageRow, host: &str) -> Result<String, String> {
+    let mut fields = vec![
+        tsd::parse_field(&format!("seq={}", row.seq))?,
+        tsd::parse_field_str(&format!("machine={}", row.machine))?,
+        tsd::parse_field_str(&format!("key={}", row.key))?,
+        tsd::parse_field_str(&format!("event={}", row.event))?,
+        tsd::parse_field_str(&format!("from_state={}", row.from_state))?,
+        tsd::parse_field_str(&format!("to_state={}", row.to_state))?,
+        tsd::parse_field(&format!("applied={}", row.applied))?,
+        tsd::parse_field_str(&format!("actor={}", row.actor))?,
+        tsd::parse_field_str(&format!("source={}", row.source))?,
+    ];
+    if let Some(refusal) = &row.refusal {
+        fields.push(tsd::parse_field_str(&format!("refusal={refusal}"))?);
+    }
+    if let Some(reason) = &row.reason {
+        fields.push(tsd::parse_field_str(&format!("reason={reason}"))?);
+    }
+    tsd::build_row(&row.ts, host, STAGE_FAMILY, &fields)
+}
+
+/// Stores `rows` in the metrics store at `endpoint` in this process, starting no program.
+pub fn push_stage_rows(endpoint: &str, rows: &[StageRow]) -> Result<(), String> {
+    let host = tsd::default_host();
+    let lines: Vec<String> = rows.iter().map(|r| stage_line(r, &host)).collect::<Result<_, _>>()?;
+    tsd::store::push_rows(Some(endpoint), STAGE_FAMILY, &lines)
+}
+
 /// The most audits one `audits` call is asked for.
 pub const LIFECYCLE_BATCH: usize = 100;
 
@@ -374,6 +405,102 @@ mod tests {
         assert_eq!(written.len(), 1);
         assert_eq!((written[0].ts.as_str(), written[0].source.as_str(), written[0].reason.as_deref()), ("1970-01-02T00:00:00Z", "lifecycle", Some("ask")));
         assert_eq!(*wire.0.lock().unwrap(), ["audits --after 3 --limit 100", "audits --after 7 --limit 100"]);
+    }
+
+    fn event(seq: i64) -> LifecycleEventRow {
+        LifecycleEventRow {
+            seq,
+            machine: "bead".into(),
+            lc_key: format!("sp-{seq}"),
+            event: "Claim".into(),
+            from_state: "READY".into(),
+            to_state: "WORKING".into(),
+            applied: true,
+            refusal: None,
+            evidence: serde_json::Value::Null,
+            actor: "d".into(),
+            at: 1_700_000_000 + seq,
+        }
+    }
+
+    fn log_of(n: i64) -> impl FnMut(i64) -> Result<Vec<LifecycleEventRow>, String> {
+        move |after| Ok(((after + 1)..=n.min(after + LIFECYCLE_BATCH as i64)).map(event).collect())
+    }
+
+    #[test_id(tr9b2k1)]
+    #[test]
+    fn a_drain_of_250_events_is_three_pushes_in_this_process() {
+        let store = spira_otel::fixture::FakeStore::start();
+        let started = spira_config::bounded::started();
+        let (mut pushes, mut saved) = (Vec::new(), Vec::new());
+        let cp = drain(
+            LifecycleCheckpoint { last_seq: 0 },
+            log_of(250),
+            |rows| {
+                pushes.push(rows.len());
+                push_stage_rows(store.addr(), rows)
+            },
+            |cp| {
+                saved.push(cp.last_seq);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(pushes, [100, 100, 50]);
+        assert_eq!((cp.last_seq, saved), (250, vec![100, 200, 250]));
+        assert_eq!(spira_config::bounded::started(), started);
+        let rows = tsd::store::Reader::new(Some(store.addr())).unwrap().rows("bead-stage", 0).unwrap();
+        assert_eq!(rows.len(), 250);
+    }
+
+    #[test_id(t3m8qv0)]
+    #[test]
+    fn a_pushed_line_is_the_line_tsd_write_builds_with_and_without_refusal_and_reason() {
+        let base = map_lifecycle_row(&event(7));
+        let both = StageRow { applied: false, refusal: Some("stale".into()), reason: Some("a b".into()), ..base.clone() };
+        for row in [base, both] {
+            let mut fields = vec![tsd::parse_field(&format!("seq={}", row.seq)).unwrap()];
+            for (k, v) in [("machine", &row.machine), ("key", &row.key), ("event", &row.event), ("from_state", &row.from_state), ("to_state", &row.to_state)] {
+                fields.push(tsd::parse_field_str(&format!("{k}={v}")).unwrap());
+            }
+            fields.push(tsd::parse_field(&format!("applied={}", row.applied)).unwrap());
+            for (k, v) in [("actor", &row.actor), ("source", &row.source)] {
+                fields.push(tsd::parse_field_str(&format!("{k}={v}")).unwrap());
+            }
+            for (k, v) in [("refusal", &row.refusal), ("reason", &row.reason)] {
+                if let Some(v) = v {
+                    fields.push(tsd::parse_field_str(&format!("{k}={v}")).unwrap());
+                }
+            }
+            let want = tsd::build_row(&row.ts, "h", "bead-stage", &fields).unwrap();
+            assert_eq!(stage_line(&row, "h").unwrap(), want);
+        }
+    }
+
+    #[test_id(tn4c7wd)]
+    #[test]
+    fn a_refused_push_leaves_the_checkpoint_at_the_previous_batch_and_names_the_stores_error() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        drop(l);
+        let live = spira_otel::fixture::FakeStore::start();
+        let mut saved = Vec::new();
+        let mut n = 0;
+        let err = drain(
+            LifecycleCheckpoint { last_seq: 0 },
+            log_of(250),
+            |rows| {
+                n += 1;
+                push_stage_rows(if n == 1 { live.addr() } else { &addr }, rows)
+            },
+            |cp| {
+                saved.push(cp.last_seq);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(saved, [100]);
+        assert!(err.contains("bead-stage: row not stored"), "{err}");
     }
 
     #[test_id(tvxlv5f)]
