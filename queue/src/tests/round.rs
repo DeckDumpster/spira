@@ -11195,7 +11195,7 @@ fn a_comment_only_containerfile_edit_is_no_recipe_input_touched_and_a_run_edit_i
         t.git.files.borrow_mut().insert(format!("{tip}:{CF}"), head.into());
     }
     t.with_world(|w| {
-        let touched = |tip: &str| crate::ops::round::recipe_inputs_touched(w, std::path::Path::new("/r"), "b0", tip);
+        let touched = |tip: &str| crate::ops::round::recipe_inputs_touched(w, std::path::Path::new("r"), "b0", tip);
         assert!(touched("ta").is_empty());
         assert_eq!(touched("tb"), vec![CF.to_string()]);
         assert_eq!(touched("tc"), vec!["flake.nix".to_string()]);
