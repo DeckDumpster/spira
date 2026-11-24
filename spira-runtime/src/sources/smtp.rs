@@ -1,25 +1,33 @@
 //! The real `submission` source (`tasks::g::submission`): `spira-submission`'s implicit-TLS SMTP
-//! listener inside the scheduler. Each session runs `spira_submission::session` on its own thread
-//! against [`EventSink`]: an accepted message is delivered in-process (`mail::sendmail::deliver`,
-//! no `mail sendmail` child), then submitted as `submission.accepted` with a reply channel, and
-//! the client hears `250` only once the event is journaled, `451` otherwise; every refusal is
-//! submitted as `submission.refused`. Replaces `spira-submission-prod.service`.
+//! listener on the scheduler's loop. The listener and each connection are tasks of one `JoinSet`:
+//! `tokio-rustls` over `TcpStream`, every read, write and handshake step bounded by
+//! `IO_TIMEOUT`, the protocol the pure `spira_submission::smtp::Session`. What blocks (the
+//! certificate, the password file, in-process delivery, log lines) goes to the offload pool. An
+//! accepted message is delivered, then submitted as `submission.accepted` with a reply channel,
+//! and the client hears `250` only once the event is journaled, `451` otherwise; every refusal is
+//! submitted as `submission.refused`. A full channel suspends the session whose submission
+//! waits, never the loop.
 
-use std::net::TcpListener;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use runtime::host::Submit;
-use spira_submission::smtp::{Envelope, Sink};
+use runtime::sources::on_pool;
+use spira_submission::smtp::{Envelope, Session, Step};
+use spira_submission::IO_TIMEOUT;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio::sync::oneshot::error::TryRecvError;
+use tokio::task::JoinSet;
+use tokio::time::timeout;
+use tokio_rustls::TlsAcceptor;
 
 use crate::tasks::g::submission::{submit_id, Accepted, Refused, STREAM};
 
-/// How long the listener sleeps between accept attempts when no client is waiting, and how
-/// often a dormant source looks whether its channel closed.
-const IDLE: Duration = Duration::from_millis(200);
+/// How long a failing accept backs off.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(200);
 
 /// Where an accepted message is delivered: the `mail` crate's own environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,13 +42,24 @@ impl Delivery {
     pub fn of(env: &mail::env::Env) -> Self {
         Delivery { run_dir: env.run_dir.clone(), home: env.home.clone(), mail_root: env.mail_root.clone(), mute: env.mute }
     }
+
+    /// In-process delivery; a message whose id is already in a mailbox is not delivered twice (a
+    /// client retrying after a `451` whose delivery had landed).
+    fn deliver(&self, message: &[u8]) -> Result<(), String> {
+        let raw = String::from_utf8_lossy(message);
+        let mid = mail::message::header_ci_before_blank(&raw, "message-id");
+        if mail::sendmail::find_message_by_id(&self.mail_root, &mid).is_some() {
+            return Ok(());
+        }
+        mail::sendmail::deliver(&self.run_dir, &self.home, &self.mail_root, self.mute, &raw, None).map(|_| ())
+    }
 }
 
 fn wall_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) // clock-safe: stamps a wire event's id on a source thread, not the loop
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) // clock-safe: stamps a wire event's id, not a decision
 }
 
-/// The sink one session answers through.
+/// What the sessions answer through.
 pub struct EventSink {
     pub tx: mpsc::Sender<Submit>,
     pub delivery: Option<Delivery>,
@@ -49,35 +68,19 @@ pub struct EventSink {
 }
 
 impl EventSink {
-    fn journaled(&self, s: Submit, mut rx: tokio::sync::oneshot::Receiver<Result<(), String>>) -> Result<(), String> {
-        self.tx.blocking_send(s).map_err(|_| "the scheduler is not taking submissions".to_string())?;
-        let until = Instant::now() + self.reply_within; // clock-safe: a wire deadline on the session's own thread
-        loop {
-            match rx.try_recv() {
-                Ok(r) => return r,
-                Err(TryRecvError::Closed) => return Err("the scheduler dropped the submission".into()),
-                Err(TryRecvError::Empty) if Instant::now() >= until => return Err("the scheduler did not journal the submission in time".into()),
-                Err(TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(10)), // clock-safe: waits on the session's own thread for the loop's answer
-            }
+    async fn journaled(&self, s: Submit, rx: tokio::sync::oneshot::Receiver<Result<(), String>>) -> Result<(), String> {
+        self.tx.send(s).await.map_err(|_| "the scheduler is not taking submissions".to_string())?;
+        match timeout(self.reply_within, rx).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(_)) => Err("the scheduler dropped the submission".into()),
+            Err(_) => Err("the scheduler did not journal the submission in time".into()),
         }
     }
-}
 
-impl Sink for EventSink {
-    /// In-process delivery; a message whose id is already in a mailbox is not delivered twice (a
-    /// client retrying after a `451` whose delivery had landed).
-    fn deliver(&self, message: &[u8]) -> Result<(), String> {
-        let d = self.delivery.as_ref().ok_or("no mail environment configured")?;
-        let raw = String::from_utf8_lossy(message);
-        let mid = mail::message::header_ci_before_blank(&raw, "message-id");
-        if mail::sendmail::find_message_by_id(&d.mail_root, &mid).is_some() {
-            return Ok(());
-        }
-        mail::sendmail::deliver(&d.run_dir, &d.home, &d.mail_root, d.mute, &raw, None).map(|_| ())
-    }
-
-    fn accept(&self, env: &Envelope, message: &[u8]) -> Result<(), String> {
-        self.deliver(message)?;
+    /// Delivers `message`, then submits its event and waits for it to be journaled.
+    pub async fn accept(&self, env: &Envelope<'_>, message: Vec<u8>) -> Result<(), String> {
+        let delivery = self.delivery.clone().ok_or("no mail environment configured")?;
+        on_pool("submission deliver", Arc::new(move || delivery.deliver(&message))).await.map_err(|e| e.to_string())??;
         let a = Accepted {
             peer: env.peer.into(),
             user: env.user.into(),
@@ -87,63 +90,238 @@ impl Sink for EventSink {
             in_reply_to: Some(env.in_reply_to.to_string()).filter(|s| !s.is_empty()),
         };
         let (s, rx) = Submit::with_reply(&submit_id(Some(env.message_id), env.peer, wall_ms()), STREAM, a.event_kind());
-        self.journaled(s, rx)
+        self.journaled(s, rx).await
     }
 
-    fn refused(&self, peer: &str, user: &str, from: &str, reason: &str) {
+    pub async fn refused(&self, peer: &str, user: &str, from: &str, reason: &str) {
         let r = Refused { peer: peer.into(), user: user.into(), from: from.into(), reason: reason.into() };
-        let _ = self.tx.blocking_send(Submit::new(&submit_id(None, peer, wall_ms()), STREAM, r.event_kind()));
+        let _ = self.tx.send(Submit::new(&submit_id(None, peer, wall_ms()), STREAM, r.event_kind())).await;
+    }
+
+    async fn attempt(&self, peer: &str, user: &str, from: &str, outcome: &str) {
+        let line = spira_submission::smtp::attempt_line(peer, user, from, outcome);
+        let _ = on_pool("submission log", Arc::new(move || eprintln!("spira-submission: {line}"))).await;
+        if let Some(reason) = spira_submission::smtp::refusal_reason(outcome) {
+            self.refused(peer, user, from, reason).await;
+        }
     }
 }
 
-/// Parks until `stop`: the source registered but not configured, or its listener unbound.
-fn dormant(stop: &dyn Fn() -> bool) {
-    while !stop() {
-        std::thread::sleep(IDLE); // clock-safe: a dormant source's own thread, waiting for shutdown
+/// Parks until `stop` or until `tx` closes: the source registered but not configured, or its
+/// listener unbound.
+async fn dormant(tx: &mpsc::Sender<Submit>, stop: impl Future<Output = ()>) {
+    tokio::select! {
+        _ = stop => {}
+        _ = tx.closed() => {}
     }
 }
 
-/// Runs the listener for `cfg` until `tx` closes; `None` (the box is not configured, as
-/// `spira_submission::Config::from_spira` says) is dormant, never a failure. A listener that
-/// cannot bind is said once and the source parks dormant.
-pub fn run(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>) {
-    run_until(cfg, delivery, &tx, &|| tx.is_closed())
+async fn say(what: String) {
+    let _ = on_pool("source", Arc::new(move || eprintln!("spira-runtime: source submission: {what}"))).await;
 }
 
-/// [`run`] until `stop` says so: the channel closed, or the source asked to reload. The
-/// listener is dropped on return, so the next round can bind the same address.
-pub fn run_until(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: &mpsc::Sender<Submit>, stop: &dyn Fn() -> bool) {
-    let Some(cfg) = cfg.filter(|c| c.cert.is_file() && c.key.is_file()) else { return dormant(stop) };
-    if stop() {
-        return;
-    }
-    let listener = match TcpListener::bind(cfg.socket()).and_then(|l| l.set_nonblocking(true).map(|_| l)) {
+/// Serves `cfg` until `tx` closes or `stop` resolves (a reload); `None` (the box is not
+/// configured, as `spira_submission::Config::from_spira` says) or a certificate or key that is
+/// not a file is dormant, never a failure. A
+/// listener that cannot bind is said once and the source parks dormant. The listener is dropped
+/// on return, so the next round can bind the same address; on `stop` the open sessions go on to
+/// their end, on a closed channel they are cut.
+pub async fn run(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>) {
+    run_within(cfg, delivery, tx, stop, IO_TIMEOUT).await
+}
+
+/// [`run`] with `io` bounding every read, write and handshake step and the wait for a journaled reply.
+pub async fn run_within(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>, io: Duration) {
+    tokio::pin!(stop);
+    let cfg = match cfg {
+        Some(c) => on_pool("submission config", Arc::new(move || Some(c.clone()).filter(|c| c.cert.is_file() && c.key.is_file()))).await.unwrap_or(None),
+        None => None,
+    };
+    let Some(cfg) = cfg else { return dormant(&tx, stop).await };
+    let listener = match TcpListener::bind(cfg.socket()).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("spira-runtime: source submission: bind {}: {e}", cfg.socket());
-            return dormant(stop);
+            say(format!("bind {}: {e}", cfg.socket())).await;
+            return dormant(&tx, stop).await;
         }
     };
     let cfg = Arc::new(cfg);
-    while !stop() {
-        match listener.accept() {
-            Ok((tcp, _)) => {
-                let _ = tcp.set_nonblocking(false);
-                let (cfg, sink) = (cfg.clone(), EventSink { tx: tx.clone(), delivery: delivery.clone(), reply_within: spira_submission::IO_TIMEOUT });
-                std::thread::spawn(move || spira_submission::session(tcp, &cfg, &sink));
+    let sink = Arc::new(EventSink { tx: tx.clone(), delivery, reply_within: io });
+    let mut sessions = JoinSet::new();
+    loop {
+        tokio::select! {
+            _ = &mut stop => {
+                drop(listener);
+                tokio::spawn(async move { while sessions.join_next().await.is_some() {} });
+                return;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(IDLE), // clock-safe: the listener's own thread between accepts
-            Err(e) => {
-                eprintln!("spira-runtime: source submission: accept: {e}");
-                std::thread::sleep(IDLE); // clock-safe: backs off a failing accept on the listener's own thread
+            _ = tx.closed() => return,
+            accepted = listener.accept() => match accepted {
+                Ok((tcp, _)) => {
+                    sessions.spawn(connection(tcp, cfg.clone(), sink.clone(), io));
+                }
+                Err(e) => {
+                    say(format!("accept: {e}")).await;
+                    tokio::time::sleep(ACCEPT_BACKOFF).await; // clock-safe: backs off a failing accept on the source's own task
+                }
+            },
+            Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
+        }
+    }
+}
+
+/// One connection, start to finish: the TLS handshake with the certificate read now, then the
+/// SMTP session against `sink`.
+async fn connection(tcp: TcpStream, cfg: Arc<spira_submission::Config>, sink: Arc<EventSink>, io: Duration) {
+    let peer = tcp.peer_addr().map_or("unknown".to_string(), |a| a.to_string());
+    let (c, k) = (cfg.cert.clone(), cfg.key.clone());
+    let tls_cfg = match on_pool("submission tls", Arc::new(move || spira_submission::server_config(&c, &k))).await.map_err(|e| e.to_string()).and_then(|r| r) {
+        Ok(c) => c,
+        Err(e) => return sink.attempt(&peer, "", "", &format!("tls: refused: {e}")).await,
+    };
+    let mut tls = match timeout(io, TlsAcceptor::from(tls_cfg).accept(tcp)).await {
+        Ok(Ok(t)) => t,
+        Ok(Err(e)) => return sink.attempt(&peer, "", "", &format!("tls: refused: handshake failed: {e}")).await,
+        Err(_) => return sink.attempt(&peer, "", "", "tls: refused: handshake failed: timed out").await,
+    };
+    let policy = cfg.policy(peer.clone());
+    let mut session = Session::new(policy.clone());
+    let mut steps: std::collections::VecDeque<Step> = session.start().into();
+    'conn: loop {
+        while let Some(step) = steps.pop_front() {
+            match step {
+                Step::Send(text) => {
+                    let wrote = timeout(io, async { tls.write_all(text.as_bytes()).await?; tls.flush().await }).await;
+                    if !matches!(wrote, Ok(Ok(()))) {
+                        break 'conn;
+                    }
+                }
+                Step::Attempt { user, from, outcome } => sink.attempt(&peer, &user, &from, &outcome).await,
+                Step::Verify { password } => {
+                    let p = policy.clone();
+                    let ok = on_pool("submission credential", Arc::new({
+                        let password = password.clone();
+                        move || spira_submission::smtp::verify_credential(&p, &password)
+                    }))
+                    .await
+                    .unwrap_or(false);
+                    steps.extend(session.verified(ok));
+                }
+                Step::Accept { envelope, message } => steps.extend(session.accepted(sink.accept(&envelope.as_envelope(), message).await)),
+                Step::Close => break 'conn,
             }
         }
+        let mut chunk = [0u8; 4096];
+        match timeout(io, tls.read(&mut chunk)).await {
+            Ok(Ok(n)) if n > 0 => steps.extend(session.feed(&chunk[..n])),
+            _ => break,
+        }
+    }
+    let _ = timeout(io, tls.shutdown()).await;
+}
+
+/// A TLS client and a configured box for tests of the listener, shared with `tests/`.
+#[cfg(any(test, feature = "integration"))]
+pub mod test_client {
+    use super::*;
+
+    pub struct Client {
+        pub tls: tokio_rustls::client::TlsStream<TcpStream>,
+        buf: Vec<u8>,
+    }
+
+    impl Client {
+        pub async fn connect(addr: std::net::SocketAddr) -> Client {
+            let tcp = loop {
+                match TcpStream::connect(addr).await {
+                    Ok(t) => break t,
+                    Err(_) => tokio::task::yield_now().await,
+                }
+            };
+            let name = tokio_rustls::rustls::pki_types::ServerName::IpAddress(addr.ip().into());
+            let tls = tokio_rustls::TlsConnector::from(spira_submission::probe_config()).connect(name, tcp).await.unwrap();
+            Client { tls, buf: Vec::new() }
+        }
+
+        pub async fn line(&mut self) -> String {
+            timeout(Duration::from_secs(30), async {
+                loop {
+                    if let Some(i) = self.buf.iter().position(|&b| b == b'\n') {
+                        let l: Vec<u8> = self.buf.drain(..=i).collect();
+                        return String::from_utf8_lossy(&l).trim_end().to_string();
+                    }
+                    let mut chunk = [0u8; 1024];
+                    let n = self.tls.read(&mut chunk).await.unwrap();
+                    assert!(n > 0, "the server closed the connection");
+                    self.buf.extend_from_slice(&chunk[..n]);
+                }
+            })
+            .await
+            .expect("the server answered")
+        }
+
+        /// Waits for the server to end the connection.
+        pub async fn until_closed(&mut self) {
+            timeout(Duration::from_secs(30), async {
+                let mut chunk = [0u8; 1024];
+                while matches!(self.tls.read(&mut chunk).await, Ok(n) if n > 0) {}
+            })
+            .await
+            .expect("the server closed the connection");
+        }
+
+        pub async fn say(&mut self, text: &str) {
+            self.tls.write_all(format!("{text}\r\n").as_bytes()).await.unwrap();
+        }
+    }
+
+    pub struct Box_ {
+        pub dir: testkit::TempDir,
+        pub cfg: spira_submission::Config,
+        pub delivery: Delivery,
+    }
+
+    pub fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    }
+
+    pub fn fixture(name: &str) -> PathBuf {
+        testkit::manifest_dir().join("../spira-submission/tests/fixtures").join(name)
+    }
+
+    pub fn setup(name: &str) -> Box_ {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = testkit::TempDir::new(name);
+        let pw = dir.path().join("pw");
+        std::fs::write(&pw, "hunter2\n").unwrap();
+        std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let cfg = spira_submission::Config {
+            addr: "127.0.0.1".parse().unwrap(),
+            port: free_port(),
+            cert: fixture("test-cert.pem"),
+            key: fixture("test-key.pem"),
+            password_file: pw,
+            user: "ryan".into(),
+            from: "me@example.org".into(),
+            rcpt_domain: "spira".into(),
+            sendmail: vec![],
+        };
+        let delivery = Delivery { run_dir: run.clone(), home: run, mail_root: dir.path().join("mail"), mute: true };
+        Box_ { dir, cfg, delivery }
+    }
+
+    pub fn plain(user: &str, pass: &str) -> String {
+        spira_submission::smtp::b64_encode(&format!("\0{user}\0{pass}"))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::test_client::{plain, setup, Client};
     use super::*;
+    use crate::tasks::g::submission::Accepted;
 
     fn sink(tx: mpsc::Sender<Submit>, mail_root: &std::path::Path, run: &std::path::Path) -> EventSink {
         EventSink { tx, delivery: Some(Delivery { run_dir: run.into(), home: run.into(), mail_root: mail_root.into(), mute: true }), reply_within: Duration::from_secs(3600) }
@@ -154,8 +332,8 @@ mod tests {
     }
 
     #[test_id(t0ndsz1)]
-    #[test]
-    fn an_accepted_message_is_delivered_then_answered_once_the_event_is_journaled() {
+    #[tokio::test]
+    async fn an_accepted_message_is_delivered_then_answered_once_the_event_is_journaled() {
         let dir = testkit::TempDir::new("submission-sink");
         let (mail_root, run) = (dir.path().join("mail"), dir.path().join("run"));
         std::fs::create_dir_all(&run).unwrap();
@@ -168,7 +346,7 @@ mod tests {
         });
         let to = vec!["concierge@spira".to_string()];
         let s = sink(tx, &mail_root, &run);
-        assert_eq!(s.accept(&envelope(&to), b"Message-ID: <m1@x>\nFrom: me@example.org\n\nhello\n"), Ok(()));
+        assert_eq!(s.accept(&envelope(&to), b"Message-ID: <m1@x>\nFrom: me@example.org\n\nhello\n".to_vec()).await, Ok(()));
         let (id, body) = loop_side.join().unwrap();
         assert_eq!(id, "submission/<m1@x>");
         assert_eq!((body.to, body.in_reply_to), (to, None));
@@ -176,8 +354,8 @@ mod tests {
     }
 
     #[test_id(tyai4mj)]
-    #[test]
-    fn a_submission_the_loop_refuses_is_a_451_and_a_dropped_one_too() {
+    #[tokio::test]
+    async fn a_submission_the_loop_refuses_is_a_451_and_a_dropped_one_too() {
         let dir = testkit::TempDir::new("submission-refuse");
         let (mail_root, run) = (dir.path().join("mail"), dir.path().join("run"));
         std::fs::create_dir_all(&run).unwrap();
@@ -189,29 +367,216 @@ mod tests {
         });
         let to = vec!["concierge@spira".to_string()];
         let s = sink(tx, &mail_root, &run);
-        assert_eq!(s.accept(&envelope(&to), b"Message-ID: <m1@x>\n\nhello\n"), Err("refused: stream quarantined".into()));
-        let again = s.accept(&envelope(&to), b"Message-ID: <m1@x>\n\nhello\n");
+        let msg = || b"Message-ID: <m1@x>\n\nhello\n".to_vec();
+        assert_eq!(s.accept(&envelope(&to), msg()).await, Err("refused: stream quarantined".into()));
+        let again = s.accept(&envelope(&to), msg()).await;
         assert!(again.is_err(), "{again:?}");
         loop_side.join().unwrap();
         assert!(mail::sendmail::find_message_by_id(&mail_root, "<m1@x>").is_some(), "the retry did not deliver a second copy, and the first is kept");
     }
 
     #[test_id(tnjzxn2)]
-    #[test]
-    fn a_refusal_is_submitted_with_its_reason() {
+    #[tokio::test]
+    async fn a_refusal_is_submitted_with_its_reason() {
         let (tx, mut rx) = mpsc::channel::<Submit>(4);
-        EventSink { tx, delivery: None, reply_within: Duration::ZERO }.refused("10.0.0.3:6666", "", "x@y", "relay denied");
-        let s = rx.blocking_recv().unwrap();
+        EventSink { tx, delivery: None, reply_within: Duration::ZERO }.refused("10.0.0.3:6666", "", "x@y", "relay denied").await;
+        let s = rx.recv().await.unwrap();
         let r: Refused = serde_json::from_str(&s.kind.body).unwrap();
         assert_eq!((s.stream.as_str(), r.reason.as_str(), r.peer.as_str()), (STREAM, "relay denied", "10.0.0.3:6666"));
         assert!(s.id.starts_with("submission/10.0.0.3:6666+"), "{}", s.id);
     }
 
     #[test_id(ti36rq1)]
-    #[test]
-    fn an_unconfigured_listener_is_dormant_until_its_channel_closes() {
+    #[tokio::test]
+    async fn an_unconfigured_listener_is_dormant_until_its_channel_closes() {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        run(None, None, tx);
+        run(None, None, tx, std::future::pending()).await;
+    }
+
+    #[test_id(t3vz3ke)]
+    #[tokio::test]
+    async fn an_unanswered_submission_is_a_451_after_the_wait_and_the_loop_is_not_held() {
+        let dir = testkit::TempDir::new("submission-timeout");
+        let (mail_root, run) = (dir.path().join("mail"), dir.path().join("run"));
+        std::fs::create_dir_all(&run).unwrap();
+        let (tx, mut rx) = mpsc::channel::<Submit>(4);
+        let mut s = sink(tx, &mail_root, &run);
+        s.reply_within = Duration::from_millis(20);
+        let to = vec!["concierge@spira".to_string()];
+        let other = tokio::spawn(async { 1 + 1 });
+        let got = s.accept(&envelope(&to), b"Message-ID: <m9@x>\n\nhi\n".to_vec()).await;
+        assert_eq!(got, Err("the scheduler did not journal the submission in time".into()));
+        assert_eq!(other.await.unwrap(), 2, "another task ran meanwhile");
+        assert!(rx.try_recv().is_ok(), "the event was submitted");
+    }
+
+    async fn submit_message(c: &mut Client, id: &str) {
+        c.line().await;
+        c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await;
+        assert!(c.line().await.starts_with("235"));
+        c.say("MAIL FROM:<me@example.org>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("RCPT TO:<concierge@spira>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("DATA").await;
+        assert!(c.line().await.starts_with("354"));
+        c.say(&format!("Message-ID: {id}\r\nFrom: me@example.org\r\n\r\nhello\r\n.")).await;
+    }
+
+    #[test_id(tghal24)]
+    #[tokio::test]
+    async fn a_tls_session_hears_250_only_after_the_reply_and_451_on_refusal_while_the_loop_runs() {
+        let b = setup("submission-tls");
+        let (tx, mut rx) = mpsc::channel::<Submit>(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }));
+        let mut c = Client::connect(addr).await;
+        submit_message(&mut c, "<a1@x>").await;
+        let held = rx.recv().await.unwrap();
+        assert_eq!(held.id, "submission/<a1@x>");
+        let silent = timeout(Duration::from_millis(100), c.line()).await;
+        assert!(silent.is_err(), "no answer before the reply: {silent:?}");
+        assert_eq!(tokio::spawn(async { 1 + 1 }).await.unwrap(), 2, "another task runs while the client waits");
+        held.reply.unwrap().send(Ok(())).unwrap();
+        assert!(c.line().await.starts_with("250 2.0.0 queued"));
+
+        c.say("MAIL FROM:<me@example.org>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("RCPT TO:<concierge@spira>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("DATA").await;
+        assert!(c.line().await.starts_with("354"));
+        c.say("Message-ID: <a2@x>\r\n\r\nagain\r\n.").await;
+        rx.recv().await.unwrap().reply.unwrap().send(Err("refused: stream quarantined".into())).unwrap();
+        assert!(c.line().await.starts_with("451 4.3.0"));
+        c.say("QUIT").await;
+        assert!(c.line().await.starts_with("221"));
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+        drop(b.dir);
+    }
+
+    #[test_id(tseja1q)]
+    #[tokio::test]
+    async fn a_reload_rebinds_the_same_address_and_lets_an_open_session_finish() {
+        let b = setup("submission-reload");
+        let (tx, _rx) = mpsc::channel::<Submit>(4);
+        let addr = b.cfg.socket();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let first = tokio::spawn(run(Some(b.cfg.clone()), Some(b.delivery.clone()), tx.clone(), async { let _ = stop_rx.await; }));
+        let mut open = Client::connect(addr).await;
+        assert!(open.line().await.starts_with("220"));
+        stop_tx.send(()).unwrap();
+        first.await.unwrap();
+        let (stop2_tx, stop2_rx) = tokio::sync::oneshot::channel::<()>();
+        let second = tokio::spawn(run(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop2_rx.await; }));
+        let mut fresh = Client::connect(addr).await;
+        assert!(fresh.line().await.starts_with("220"), "the same address is bound again");
+        open.say("NOOP").await;
+        assert!(open.line().await.starts_with("250"), "the session open at the reload finished its exchange");
+        stop2_tx.send(()).unwrap();
+        second.await.unwrap();
+    }
+
+    fn filler() -> Submit {
+        Submit::new("filler", STREAM, Refused { peer: "p".into(), user: String::new(), from: String::new(), reason: "filler".into() }.event_kind())
+    }
+
+    #[test_id(tun2gp7)]
+    #[tokio::test]
+    async fn a_full_channel_holds_the_session_until_the_loop_drains_it() {
+        let b = setup("submission-full");
+        let (tx, mut rx) = mpsc::channel::<Submit>(1);
+        tx.send(filler()).await.unwrap();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }));
+        let mut c = Client::connect(addr).await;
+        submit_message(&mut c, "<f1@x>").await;
+        let held = timeout(Duration::from_millis(100), c.line()).await;
+        assert!(held.is_err(), "the client waits while the channel is full: {held:?}");
+        assert_eq!(rx.recv().await.unwrap().id, "filler");
+        let s = rx.recv().await.unwrap();
+        assert_eq!(s.id, "submission/<f1@x>", "the held session's event follows once the channel drains");
+        s.reply.unwrap().send(Ok(())).unwrap();
+        assert!(c.line().await.starts_with("250 2.0.0 queued"));
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(td5d03s)]
+    #[tokio::test]
+    async fn an_unanswered_submission_is_a_451_over_tls_once_the_wait_is_up() {
+        let b = setup("submission-451");
+        let (tx, mut rx) = mpsc::channel::<Submit>(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let mut c = Client::connect(addr).await;
+        submit_message(&mut c, "<t1@x>").await;
+        let held = rx.recv().await.unwrap();
+        assert!(c.line().await.starts_with("451 4.3.0"), "no reply in time is a 451");
+        drop(held);
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(tazx83c)]
+    #[tokio::test]
+    async fn a_client_that_stalls_in_the_handshake_is_cut_and_refused_in_the_audit() {
+        let b = setup("submission-stall-tls");
+        let (tx, mut rx) = mpsc::channel::<Submit>(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let mut raw = loop {
+            match TcpStream::connect(addr).await {
+                Ok(t) => break t,
+                Err(_) => tokio::task::yield_now().await,
+            }
+        };
+        let mut chunk = [0u8; 16];
+        let ended = timeout(Duration::from_secs(30), raw.read(&mut chunk)).await.expect("the server cut the stalled handshake");
+        assert!(matches!(ended, Ok(0) | Err(_)), "{ended:?}");
+        let r: Refused = serde_json::from_str(&rx.recv().await.unwrap().kind.body).unwrap();
+        assert!(r.reason.starts_with("handshake failed"), "{}", r.reason);
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(tpzgwk0)]
+    #[tokio::test]
+    async fn a_client_that_stalls_mid_data_is_cut() {
+        let b = setup("submission-stall-data");
+        let (tx, _rx) = mpsc::channel::<Submit>(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let mut c = Client::connect(addr).await;
+        assert!(c.line().await.starts_with("220"));
+        c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await;
+        assert!(c.line().await.starts_with("235"));
+        c.say("MAIL FROM:<me@example.org>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("RCPT TO:<concierge@spira>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("DATA").await;
+        assert!(c.line().await.starts_with("354"));
+        c.until_closed().await;
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(t0wbkeq)]
+    #[tokio::test]
+    async fn a_certificate_that_is_not_a_file_leaves_the_listener_dormant() {
+        let mut b = setup("submission-nocert");
+        b.cfg.cert = b.dir.path().join("absent.pem");
+        let (tx, rx) = mpsc::channel::<Submit>(1);
+        drop(rx);
+        run(Some(b.cfg.clone()), None, tx, std::future::pending()).await;
+        assert!(std::net::TcpListener::bind(b.cfg.socket()).is_ok(), "nothing was bound");
     }
 }
