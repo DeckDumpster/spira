@@ -390,6 +390,27 @@ pub fn parse_snapshot(text: &str) -> Vec<PaneRow> {
         .collect()
 }
 
+const CLIENTS_MARK: &str = "spira-section:clients";
+const ENV_MARK: &str = "spira-section:environment";
+
+/// What one `ensure` read of the server answered, cut at the section marks.
+#[derive(Default)]
+struct ServerRead {
+    panes: String,
+    clients: String,
+    /// The global environment; `None` when the read did not reach it.
+    env: Option<String>,
+}
+
+fn split_server_read(text: &str) -> ServerRead {
+    let (before_env, env) = match text.split_once(&format!("{ENV_MARK}\n")) {
+        Some((b, e)) => (b, Some(e.to_string())),
+        None => (text, None),
+    };
+    let (panes, clients) = before_env.split_once(&format!("{CLIENTS_MARK}\n")).unwrap_or((before_env, ""));
+    ServerRead { panes: panes.to_string(), clients: clients.to_string(), env }
+}
+
 /// `cockpit_window_targets` over a snapshot.
 pub fn snapshot_window_targets(rows: &[PaneRow]) -> Vec<String> {
     let panes: String = rows.iter().map(|r| format!("{}|{}|{}\n", r.window_id, r.target, r.tag)).collect();
@@ -864,20 +885,22 @@ impl Layout {
         }
     }
 
-    fn detach_idle_clients(&self) {
-        if self.conf.idle_secs <= 0 {
-            return;
-        }
-        let Some(out) = self
-            .tmux
-            .run(&["list-clients", "-F", "#{client_tty} #{client_activity}"])
-        else {
-            return;
-        };
-        for (tty, age) in stale_clients(&out, now_epoch(), self.conf.idle_secs) {
+    fn detach_idle_clients(&self, clients: &str) {
+        for (tty, age) in stale_clients(clients, now_epoch(), self.conf.idle_secs) {
             self.heal_log(&format!("detach: client {tty} idle {age}s — detaching"));
             self.tmux.run_ok(&["detach-client", "-t", &tty]);
         }
+    }
+
+    /// The panes, the clients (only while an idle limit is set) and the global environment, in
+    /// the one tmux invocation `ensure` makes; `None` when it failed, as with no server.
+    fn read_server(&self) -> Option<ServerRead> {
+        let mut args = vec!["list-panes", "-a", "-F", SNAPSHOT_FORMAT];
+        if self.conf.idle_secs > 0 {
+            args.extend([";", "display-message", "-p", CLIENTS_MARK, ";", "list-clients", "-F", "#{client_tty} #{client_activity}"]);
+        }
+        args.extend([";", "display-message", "-p", ENV_MARK, ";", "show-environment", "-g"]);
+        self.tmux.run(&args).map(|text| split_server_read(&text))
     }
 
     fn heal_ready(&self) -> bool {
@@ -909,14 +932,18 @@ impl Layout {
             ));
         }
 
-        let snapshot = self.tmux.run(&["list-panes", "-a", "-F", SNAPSHOT_FORMAT]);
-        if snapshot.is_none() && !self.tmux.installed() {
+        let read = self.read_server();
+        if read.is_none() && !self.tmux.installed() {
             self.heal_log("headless install: no tmux, nothing to heal");
             return Ok(String::new());
         }
-        let rows = parse_snapshot(&snapshot.unwrap_or_default());
+        let read = read.unwrap_or_default();
+        let rows = parse_snapshot(&read.panes);
 
-        self.detach_idle_clients();
+        if let Some(env) = &read.env {
+            crate::tmux_env::scrub_from(&self.tmux, env, std::env::var(spira_config::process::TOML_ENV).ok().as_deref());
+        }
+        self.detach_idle_clients(&read.clients);
         let windows = snapshot_window_targets(&rows);
         let writes = option_writes(&rows, self.conf.mouse_on, self.conf.clipboard_on)
             .into_iter()
@@ -1414,10 +1441,35 @@ mod tests {
 
     #[test_id(tf2k9xc)]
     #[test]
-    fn ensure_with_an_idle_limit_adds_only_the_client_read() {
+    fn ensure_with_an_idle_limit_reads_the_clients_in_the_same_tmux_call() {
         let calls = ensure_calls("layout-ensure-idle", healthy_fixture, 600);
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(calls[0].starts_with("list-panes -a") && calls[0].contains("list-clients"), "{calls:?}");
+    }
+
+    #[test_id(t2bgej5)]
+    #[test]
+    fn the_one_read_is_cut_at_its_marks_into_panes_clients_and_environment() {
+        let text = format!("row-a\nrow-b\n{CLIENTS_MARK}\n/dev/pts/0 100\n{ENV_MARK}\nCLAUDECODE=1\n-X\n");
+        let r = split_server_read(&text);
+        assert_eq!((r.panes.as_str(), r.clients.as_str(), r.env.as_deref()), ("row-a\nrow-b\n", "/dev/pts/0 100\n", Some("CLAUDECODE=1\n-X\n")));
+        let r = split_server_read(&format!("row-a\n{ENV_MARK}\nA=b\n"));
+        assert_eq!((r.panes.as_str(), r.clients.as_str(), r.env.as_deref()), ("row-a\n", "", Some("A=b\n")), "no idle limit, no client section");
+        assert_eq!(split_server_read("row-a\n").env, None);
+    }
+
+    #[test_id(txrbz49)]
+    #[test]
+    fn ensure_scrubs_a_session_identity_the_one_read_showed_and_writes_nothing_else() {
+        let calls = ensure_over(
+            "layout-ensure-scrub",
+            |s, h| healthy_fixture(s, h).into_iter().chain([ENV_MARK.to_string(), "CLAUDECODE=1".into(), "PATH=/bin".into()]).collect(),
+            0,
+            None,
+            |f| f,
+        );
         assert_eq!(calls.len(), 2, "{calls:?}");
-        assert!(calls[0].starts_with("list-panes -a") && calls[1].starts_with("list-clients"), "{calls:?}");
+        assert_eq!(calls[1], "set-environment -gu CLAUDECODE");
     }
 
     #[test_id(tg8m1wz)]

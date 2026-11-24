@@ -253,6 +253,14 @@ pub fn pid_alive(pid: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tg3x7tn)]
+    #[test]
+    fn local_hm_is_the_hour_and_minute_of_the_epoch_in_the_local_zone() {
+        let hm = super::local_hm(1_700_000_000).unwrap();
+        let hms = super::local_hms_zone(1_700_000_000).unwrap();
+        assert!(hms.starts_with(&hm) && hm.len() == 5 && hm.as_bytes()[2] == b':', "{hm} of {hms}");
+    }
+
     use super::*;
 
     #[test_id(t8d12ei)]
