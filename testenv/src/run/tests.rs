@@ -715,7 +715,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         (got, after - before)
     }
 
-    fn first_run_lines(suite_src: &str, rc: i32, output: &str, tree_files: &[(&str, &str)]) -> Vec<String> {
+    fn first_run_lines(suite_src: &str, tree_files: &[(&str, &str)], deny: Option<&str>, on_runtime: &dyn Fn(&FakeRuntime)) -> Vec<String> {
         let root = testkit::TempDir::new("testenv-skip-red");
         let (repo, harness, owner) = (root.join("repo"), root.join("harness"), root.join("owner"));
         for d in [&repo.join("spira"), &harness.join("spira"), &owner] {
@@ -727,6 +727,12 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         }
         fs::write(repo.join(".gitignore"), "target/\n").unwrap();
         git(&repo, "git init -q -b main && git add . && git commit -qm base && git checkout -qb topic && echo x > x && git add . && git commit -qm topic && git checkout -q main");
+        let deny_file = root.join("deny-list");
+        let mut extra = vec![];
+        if let Some(text) = deny {
+            fs::write(&deny_file, text).unwrap();
+            extra.push(("SPIRA_TEST_DENY_LIST", deny_file.display().to_string()));
+        }
         let env: HashMap<String, String> = [
             ("SPIRA_RUN", root.join("run").display().to_string()),
             ("SPIRA_BATCH_LIVENESS_SLEEP", "0".into()),
@@ -740,6 +746,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
             ("HOME", root.display().to_string()),
         ]
         .into_iter()
+        .chain(extra)
         .map(|(k, v)| (k.to_string(), v))
         .collect();
         let exe = root.join("runner-exe");
@@ -748,7 +755,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         let envf = |k: &str| env.get(k).cloned();
         let out = |l: &str| lines.lock().unwrap().push(l.to_string());
         let rt = FakeRuntime::new();
-        rt.suite("test-a.sh", rc, output);
+        on_runtime(&rt);
         let full: Vec<String> = ["--suites", "test-a.sh", "topic"].iter().map(|s| s.to_string()).chain([repo.display().to_string()]).collect();
         let deps = Deps {
             rt: &rt,
@@ -774,16 +781,46 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         got
     }
 
+    const ALLOWLIST: [(&str, &str); 1] = [("spira/skip-allowlist.tsv", "test-a.sh\tskip:nothing_to_test\tdeclared\ttest-a.sh\trequires:dolt\tdeclared\n")];
+
+    fn exits_77(rt: &FakeRuntime) {
+        rt.suite("test-a.sh", 77, "1..0 # SKIP nothing to test\n");
+    }
+
     #[test_id(tur16lg)]
     #[test]
     fn a_suite_exiting_77_is_red_naming_its_requirement_whatever_the_tree_carries() {
-        let allowlist = [("spira/skip-allowlist.tsv", "test-a.sh\tskip:nothing_to_test\tdeclared\n")];
-        let lines = first_run_lines("#!/usr/bin/env bash\nexit 77\n", 77, "1..0 # SKIP nothing to test\n", &allowlist);
+        let lines = first_run_lines("#!/usr/bin/env bash\nexit 77\n", &ALLOWLIST, None, &exits_77);
         assert!(
             lines.iter().any(|l| l.contains("test-a.sh") && l.contains("RED") && l.contains("undeclared skip — skip:nothing_to_test")),
             "{lines:#?}"
         );
         assert!(lines.iter().any(|l| l.starts_with("VERDICT RED")), "{lines:#?}");
+    }
+
+    #[test_id(tewuznu)]
+    #[test]
+    fn a_suite_with_an_unmet_requirement_is_red_naming_it_whatever_the_tree_carries() {
+        let unmet = |rt: &FakeRuntime| {
+            rt.on(|r| r.argv.last().map(String::as_str) == Some("dolt"), |_| crate::runtime::ExecOutcome { rc: 1, output: String::new() });
+        };
+        let lines = first_run_lines("#!/usr/bin/env bash\n# requires: dolt\nexit 0\n", &ALLOWLIST, None, &unmet);
+        assert!(
+            lines.iter().any(|l| l.contains("test-a.sh") && l.contains("RED") && l.contains("undeclared skip — requires:dolt")),
+            "{lines:#?}"
+        );
+        assert!(lines.iter().any(|l| l.starts_with("VERDICT RED")), "{lines:#?}");
+    }
+
+    #[test_id(tow8d2y)]
+    #[test]
+    fn a_quarantined_suite_exiting_77_is_quarantined_red_not_a_skip() {
+        let deny = "quarantined\tsuite:test-a.sh\tsp-1\t-\n";
+        let lines = first_run_lines("#!/usr/bin/env bash\nexit 77\n", &ALLOWLIST, Some(deny), &exits_77);
+        assert!(
+            lines.iter().any(|l| l.contains("test-a.sh") && l.contains("QUARANTINED-RED") && l.contains("undeclared skip — skip:nothing_to_test")),
+            "{lines:#?}"
+        );
     }
 
     #[test_id(t1srnmv)]

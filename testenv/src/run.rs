@@ -2173,7 +2173,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         }
         if reds.is_empty() {
             deps.log("all suites pre-empted by unmet requirements — nothing to run");
-            return Finish::empty(preempted.len());
+            return Finish::empty(0);
         }
         deps.log(&format!(
             "{} suite(s) red (undeclared skip/skip-req) — no suite was runnable",

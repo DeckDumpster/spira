@@ -579,7 +579,13 @@ mod tests {
     #[test_id(tjlkart)]
     #[test]
     fn an_incident_defaults_behind_a_reported_bug_and_a_configured_priority_wins() {
-        assert_eq!(priority_of(None), "3");
+        let home = testkit::manifest_dir().join("../spira");
+        let reg = spira_config::registry::Registry::load(&home).unwrap();
+        let default_of = |k: &str| -> String { reg.get(k).and_then(|k| k.default_expr()).unwrap().to_string() };
+        let incident: u32 = default_of("SPIRA_INCIDENT_PRIORITY").parse().unwrap();
+        let reported: u32 = default_of("SPIRA_GH_INTAKE_PRIORITY").parse().unwrap();
+        assert!(incident > reported, "incident priority {incident} must sit behind a reported bug's {reported}");
+        assert_eq!(priority_of(None), incident.to_string());
         assert_eq!(priority_of(Some("1".into())), "1");
     }
 
