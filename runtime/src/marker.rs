@@ -1,7 +1,7 @@
 //! The in-flight marker: the handler call in progress, written before the call and cleared
 //! after it. A marker found at start is a call that never returned.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,11 @@ impl Marker for MemMarker {
     fn take(&self) -> Result<Option<Mark>> {
         Ok(self.0.lock().unwrap_or_else(|e| e.into_inner()).take())
     }
+}
+
+/// The marker's one name, in the user runtime directory (tmpfs): a call costs the turn no disk I/O.
+pub fn path_in(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join("spira-runtime-inflight.json")
 }
 
 /// One file, replaced atomically; it outlives the process, which is the point.

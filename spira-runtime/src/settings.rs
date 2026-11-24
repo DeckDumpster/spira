@@ -34,6 +34,7 @@ pub struct Settings {
     pub sweep_secs: u64,
     pub metrics_endpoint: Option<String>,
     pub run_dir: PathBuf,
+    pub runtime_dir: PathBuf,
     pub lc_socket: PathBuf,
     /// Where every event is shipped; required, so a runtime that could not ship refuses to start.
     pub victorialogs_url: String,
@@ -173,6 +174,7 @@ impl Settings {
     /// which only the service's environment says.
     pub fn with_environment(mut self, env: &dyn Fn(&str) -> Option<String>) -> Result<Settings, String> {
         let path = |k: &str| env(k).map(PathBuf::from);
+        self.runtime_dir = path("XDG_RUNTIME_DIR").unwrap_or_default();
         self.world.hunk_dir = path("XDG_RUNTIME_DIR").map(|d| d.join("hunk-mcp")).unwrap_or_default();
         self.world.cockpit_state = path("COCKPIT_STATE").or_else(|| path("HOME").map(|h| h.join(".local/state/cockpit"))).unwrap_or_default();
         if let Some(secs) = env("COCKPIT_FORGET_SECS") {
@@ -331,6 +333,7 @@ impl Settings {
             sweep_secs: secs("SPIRA_RUNTIME_SWEEP_SECS")?,
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             run_dir,
+            runtime_dir: PathBuf::new(),
             lc_socket: PathBuf::from(socket),
             victorialogs_url,
         };
@@ -343,8 +346,11 @@ impl Settings {
         (self.heartbeat_secs * 1000 / 2).clamp(500, 10_000)
     }
 
-    pub fn marker_path(&self) -> PathBuf {
-        self.run_dir.join("runtime-inflight.json")
+    pub fn marker_path(&self) -> Result<PathBuf, String> {
+        if self.runtime_dir.as_os_str().is_empty() {
+            return Err("XDG_RUNTIME_DIR is unset — the in-flight marker has no tmpfs to live on; refusing".into());
+        }
+        Ok(runtime::marker::path_in(&self.runtime_dir))
     }
 
     pub fn otel_dir(&self) -> PathBuf {
@@ -452,7 +458,23 @@ mod tests {
         let home = s.clone().with_environment(&env(&[("HOME", "h")])).unwrap();
         assert_eq!(home.world.cockpit_state, PathBuf::from("h/.local/state/cockpit"));
         assert!(home.world.hunk_dir.as_os_str().is_empty(), "no runtime dir is no daemon, not a guessed one");
+        assert_eq!(full.marker_path().unwrap(), PathBuf::from("run/u1/spira-runtime-inflight.json"));
+        assert!(home.marker_path().unwrap_err().contains("XDG_RUNTIME_DIR"), "no runtime dir refuses; the run disk is not a fallback");
         assert!(s.with_environment(&env(&[("COCKPIT_FORGET_SECS", "0")])).unwrap_err().contains("positive"));
+    }
+
+    #[test_id(tk2il2i)]
+    #[test]
+    fn the_scheduler_writes_the_marker_where_the_watchdog_reads_it() {
+        let xdg = "run/u1";
+        let s = Settings::from_lookup(&lookup("7")).unwrap().with_environment(&|k| (k == "XDG_RUNTIME_DIR").then(|| xdg.to_string())).unwrap();
+        let get = |k: &str| match k {
+            "SPIRA_WATCHDOG_BOUND_SECS" => Ok("90".to_string()),
+            "SPIRA_RUN" => Ok("not-the-runtime-dir".to_string()),
+            k => Ok(k.to_string()),
+        };
+        let watched = watchdog::Config::from_lookup(get, Some(xdg.into())).unwrap().marker;
+        assert_eq!(s.marker_path().unwrap(), watched);
     }
 
     #[test_id(thnyk79)]
