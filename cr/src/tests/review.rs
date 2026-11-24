@@ -146,21 +146,24 @@ fn seal_refuses_a_cover_missing_does_or_look_first_before_any_forge_call() {
 #[test]
 fn the_cover_lists_tests_by_call_path_not_by_name() {
     let mut w = world();
-    let tree = fixture().with_file("demo/tests/names_only.rs", "use demo::store;\n\n#[test]\nfn unrelated() {\n    assert_eq!(1, 1);\n}\n");
+    let tree = fixture()
+        .with_file("demo/src/caller.rs", "use crate::store::Store;\n\n#[test]\nfn calls_open() {\n    Store::open();\n}\n")
+        .with_file("demo/tests/names_only.rs", "use demo::store;\n\n#[test]\nfn unrelated() {\n    assert_eq!(1, 1);\n}\n");
     w.ports.tree = Box::new(tree);
     assert_eq!(w.cr(&["open", "--aim", "demo/src/store.rs", "--seed", "1"]).code, 0);
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
     let body = w.cover();
-    assert!(body.contains("`demo/src/store/tests.rs::opens` calls `Store::open`"), "{body}");
-    assert!(body.contains("`demo/tests/it.rs::it` calls `Store::open`"), "{body}");
+    assert!(body.contains("`demo/src/caller.rs::calls_open` calls `Store::open`"), "{body}");
     let tests_section = body.split("## Tests that exercise it").nth(1).unwrap();
+    assert!(!tests_section.contains("::opens`") && !tests_section.contains("::it`"), "{body}");
+    assert!(tests_section.contains("in this review"), "{body}");
     assert!(!tests_section.contains("names_only.rs"), "{body}");
 }
 
 #[test_id(tg2okig)]
 #[test]
-fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
+fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_counted() {
     let mut w = world();
     let src = "//! Util.\n\npub fn twice(n: u32) -> u32 {\n    n * 2\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn doubles() {\n        assert_eq!(twice(2), 4);\n    }\n}\n";
     w.ports.tree = Box::new(fixture().with_file("other/src/util.rs", src));
@@ -168,7 +171,8 @@ fn a_test_inside_a_cfg_test_module_that_calls_a_pub_function_is_listed() {
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
     let body = w.cover();
-    assert!(body.contains("`other/src/util.rs::doubles` calls `twice`"), "{body}");
+    assert!(body.contains("No test outside this review found by call path."), "{body}");
+    assert!(body.contains("- 1 test in `other/src/util.rs`, in this review"), "{body}");
 }
 
 #[test_id(ta11sgp)]
@@ -179,7 +183,7 @@ fn a_unit_with_no_calling_test_says_none_found_by_call_path() {
     let c = w.comments(1);
     assert_eq!(w.seal_with("001", &c).code, 0);
     let body = w.cover();
-    assert!(body.contains("None found by call path."), "{body}");
+    assert!(body.contains("No test outside this review found by call path."), "{body}");
 }
 
 #[test_id(tbkrts0)]
