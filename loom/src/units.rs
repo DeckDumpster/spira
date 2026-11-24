@@ -24,6 +24,7 @@ pub struct Sources {
     pub budget: Duration,
     pub desired_dir: String,
     pub units_install: String,
+    pub installed: std::sync::Arc<std::sync::Mutex<Option<BTreeSet<String>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -791,11 +792,15 @@ async fn declared_units(src: &Sources, path: &str) -> Result<BTreeSet<String>, S
     if !from_composite.is_empty() {
         return Ok(from_composite);
     }
+    if let Some(held) = src.installed.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Ok(held);
+    }
     let text = run_cmd(&src.units_install, &strs(&["--list-enable"]), path, src.budget).await?;
     let names: BTreeSet<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect();
     if names.is_empty() {
         return Err("no units declared".into());
     }
+    *src.installed.lock().unwrap_or_else(|e| e.into_inner()) = Some(names.clone());
     Ok(names)
 }
 
@@ -1037,5 +1042,97 @@ mod tests {
         assert_eq!(m.get("a.timer"), Some(&1_800_000_060));
         assert!(!m.contains_key("b.timer") && !m.contains_key("c.timer"));
         assert!(parse_timer_nexts("not json").is_err());
+    }
+
+    struct InstallerFixture {
+        dir: testkit::TempDir,
+        installed: std::sync::Arc<std::sync::Mutex<Option<BTreeSet<String>>>>,
+    }
+
+    impl InstallerFixture {
+        fn new(body: &str) -> Self {
+            let dir = testkit::TempDir::new("loom-installer");
+            testkit::write_exe(dir.path().join("units-install"), &format!("#!/bin/sh\necho start >> '{d}/starts'\n{}\n", body.replace("{DIR}", &dir.path().display().to_string()).replace("{B}", system_paths::BIN), d = dir.path().display()));
+            std::fs::create_dir(dir.path().join("desired")).unwrap();
+            InstallerFixture { dir, installed: Default::default() }
+        }
+
+        fn sources(&self) -> Sources {
+            Sources {
+                run: String::new(),
+                systemctl: self.dir.path().join("no-systemctl").display().to_string(),
+                metrics_endpoint: None,
+                path: String::new(),
+                budget: Duration::from_secs(5),
+                desired_dir: self.dir.path().join("desired").display().to_string(),
+                units_install: self.dir.path().join("units-install").display().to_string(),
+                installed: self.installed.clone(),
+            }
+        }
+
+        fn starts(&self) -> usize {
+            std::fs::read_to_string(self.dir.path().join("starts")).map_or(0, |t| t.lines().count())
+        }
+
+        fn publish_composite(&self, unit: &str) {
+            use spira_desired_state::{producer::{Fragment, Provenance}, resource::{Metadata, RawResource, API_VERSION}};
+            let mut u = toml::map::Map::new();
+            u.insert("name".into(), toml::Value::String(unit.into()));
+            u.insert("enabled".into(), toml::Value::Boolean(true));
+            u.insert("active".into(), toml::Value::Boolean(true));
+            let mut spec = toml::map::Map::new();
+            spec.insert("units".into(), toml::Value::Array(vec![toml::Value::Table(u)]));
+            let fragment = Fragment {
+                producer: Provenance { producer: "t".into(), version: "1".into(), time: "2026-09-25T00:00:00Z".into() },
+                resources: vec![RawResource { api_version: API_VERSION.into(), kind: "Units".into(), metadata: Metadata { name: "units".into() }, spec: toml::Value::Table(spec) }],
+            };
+            let composite = spira_desired_state::compose::compose(&[fragment]).unwrap();
+            spira_desired_state::store::FsStore::new(self.dir.path().join("desired")).write_version(&composite, &[], "2026-09-25T00:00:00Z").unwrap();
+        }
+    }
+
+    #[test_id(t33u22g)]
+    #[tokio::test]
+    async fn five_takes_start_the_installer_once() {
+        let f = InstallerFixture::new("echo a.service\necho b.service");
+        let h = History::default();
+        for _ in 0..5 {
+            take(&f.sources(), NOW, &h).await;
+        }
+        assert_eq!(f.starts(), 1);
+    }
+
+    #[test_id(tzcgrri)]
+    #[tokio::test]
+    async fn a_failed_installer_is_run_again_and_its_answer_held_after() {
+        let f = InstallerFixture::new("if [ \"$({B}/wc -l < '{DIR}/starts')\" -lt 2 ]; then exit 3; fi\necho a.service");
+        let h = History::default();
+        for _ in 0..4 {
+            take(&f.sources(), NOW, &h).await;
+        }
+        assert_eq!(f.starts(), 2);
+        assert_eq!(f.installed.lock().unwrap().clone(), Some(BTreeSet::from(["a.service".to_string()])));
+    }
+
+    #[test_id(t4n4wyq)]
+    #[tokio::test]
+    async fn an_empty_installer_answer_is_not_held() {
+        let f = InstallerFixture::new("true");
+        let h = History::default();
+        for _ in 0..3 {
+            take(&f.sources(), NOW, &h).await;
+        }
+        assert_eq!(f.starts(), 3);
+    }
+
+    #[test_id(t2txn1d)]
+    #[tokio::test]
+    async fn a_composite_appearing_later_wins_over_the_held_set() {
+        let f = InstallerFixture::new("echo old.service");
+        let src = f.sources();
+        assert_eq!(declared_units(&src, "").await.unwrap(), BTreeSet::from(["old.service".to_string()]));
+        f.publish_composite("new.service");
+        assert_eq!(declared_units(&src, "").await.unwrap(), BTreeSet::from(["new.service".to_string()]));
+        assert_eq!(f.starts(), 1);
     }
 }

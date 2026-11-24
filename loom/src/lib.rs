@@ -149,6 +149,7 @@ pub struct Loom {
     /// concurrent viewers share one.
     units_cell: Mutex<Option<Arc<units::Snapshot>>>,
     units_refreshing: AtomicBool,
+    units_installed: Arc<std::sync::Mutex<Option<std::collections::BTreeSet<String>>>>,
     units_history: tokio::sync::Mutex<units::History>,
     units_syncing: AtomicBool,
     forge_ci: forge_rounds::Cache,
@@ -170,6 +171,7 @@ impl Loom {
             ops_cell: Mutex::new(None),
             units_cell: Mutex::new(None),
             units_refreshing: AtomicBool::new(false),
+            units_installed: Default::default(),
             units_history: Default::default(),
             units_syncing: AtomicBool::new(false),
             forge_ci: forge_rounds::Cache::default(),
@@ -195,6 +197,7 @@ impl Loom {
             budget: self.cfg.budget,
             desired_dir: self.cfg.desired_dir.clone(),
             units_install: self.cfg.units_install.clone(),
+            installed: self.units_installed.clone(),
         };
         self.sync_units_history().await;
         let snap = Arc::new(units::take(&src, now_s(), &*self.units_history.lock().await).await);
