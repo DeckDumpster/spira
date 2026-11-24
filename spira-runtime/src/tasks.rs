@@ -751,18 +751,18 @@ mod tests {
         }
     }
 
-    fn readiness_rig() -> (runtime::Engine, runtime::ports::VirtualClock) {
+    fn readiness_rig() -> (runtime::Engine, runtime::ports::VirtualClock, std::sync::Arc<runtime::changes::ScriptedChanges>) {
         use runtime::Executor;
         let s = crate::settings::fixture();
         let regs: Vec<Registration> = crate::registrations(&s).into_iter().filter(|r| r.name == readiness_dependents::NAME).collect();
         let clock = runtime::ports::VirtualClock::new(0);
         let changes = std::sync::Arc::new(runtime::changes::ScriptedChanges::default());
         changes.set(1);
-        let mut e = runtime::Engine::open(runtime::MemJournal::new(), std::sync::Arc::new(clock.clone()), regs, 1).unwrap().with_sweep(60_000, changes);
+        let mut e = runtime::Engine::open(runtime::MemJournal::new(), std::sync::Arc::new(clock.clone()), regs, 1).unwrap().with_sweep(60_000, changes.clone());
         let (_, stream, kind) = readiness_dependents::ReadinessDependents::boot();
         e.start(stream, kind);
         e.run_until_idle().unwrap();
-        (e, clock)
+        (e, clock, changes)
     }
 
     fn asked(e: &runtime::Engine, name: &str) -> usize {
@@ -782,7 +782,7 @@ mod tests {
     fn a_failed_readiness_run_is_looked_for_again_after_its_interval_and_before_any_sweep() {
         use runtime::Executor;
         for out in [runtime::Outcome::Failed("store down".into()), runtime::Outcome::TimedOut] {
-            let (mut e, clock) = readiness_rig();
+            let (mut e, clock, _) = readiness_rig();
             answer(&mut e, readiness_dependents::LOOK, runtime::Outcome::Succeeded(r#"{"through":42,"keys":["sp-a"]}"#.into()));
             answer(&mut e, readiness_dependents::RUN, out.clone());
             assert_eq!(asked(&e, readiness_dependents::LOOK), 0);
@@ -799,7 +799,7 @@ mod tests {
     fn a_failed_readiness_look_is_looked_for_again_after_its_interval_and_before_any_sweep() {
         use runtime::Executor;
         for out in [runtime::Outcome::Failed("store down".into()), runtime::Outcome::TimedOut] {
-            let (mut e, clock) = readiness_rig();
+            let (mut e, clock, _) = readiness_rig();
             answer(&mut e, readiness_dependents::LOOK, out.clone());
             clock.advance(crate::settings::fixture().readiness_dependents.interval_ms);
             e.run_until_idle().unwrap();
@@ -812,7 +812,7 @@ mod tests {
     fn a_lifecycle_change_wakes_readiness_dependents_with_no_sweep_tick() {
         use runtime::event::{StoreChanged, STORE_STREAM};
         use runtime::Executor;
-        let (mut e, clock) = readiness_rig();
+        let (mut e, clock, _) = readiness_rig();
         answer(&mut e, readiness_dependents::LOOK, runtime::Outcome::Succeeded(r#"{"through":41,"keys":[]}"#.into()));
         assert_eq!(asked(&e, readiness_dependents::LOOK), 0);
         clock.advance(10_000);
@@ -820,5 +820,39 @@ mod tests {
         e.submit("c1", STORE_STREAM, c.kind()).unwrap();
         e.run_until_idle().unwrap();
         assert_eq!(asked(&e, readiness_dependents::LOOK), 1);
+    }
+
+    #[test_id(tw5s0nc)]
+    #[test]
+    fn a_lifecycle_change_and_the_sweep_falling_due_together_look_once() {
+        use runtime::event::{StoreChanged, STORE_STREAM};
+        use runtime::Executor;
+        let (mut e, clock, changes) = readiness_rig();
+        answer(&mut e, readiness_dependents::LOOK, runtime::Outcome::Succeeded(r#"{"through":1,"keys":[]}"#.into()));
+        clock.advance(56_000);
+        changes.set(2);
+        let c = StoreChanged { rev: 2, keys: vec!["lifecycle/sp-a".into()], reload: false };
+        e.submit("c1", STORE_STREAM, c.kind()).unwrap();
+        e.run_until_idle().unwrap();
+        answer(&mut e, readiness_dependents::LOOK, runtime::Outcome::Succeeded(r#"{"through":2,"keys":["sp-a"]}"#.into()));
+        answer(&mut e, readiness_dependents::RUN, runtime::Outcome::Succeeded(String::new()));
+        clock.advance(1_000);
+        changes.set(3);
+        let c = StoreChanged { rev: 3, keys: vec!["lifecycle/sp-a".into()], reload: false };
+        e.submit("c2", STORE_STREAM, c.kind()).unwrap();
+        e.run_until_idle().unwrap();
+        clock.advance(4_000);
+        e.run_until_idle().unwrap();
+        assert_eq!(asked(&e, readiness_dependents::LOOK), 1, "the wake and the sweep are one run");
+        answer(&mut e, readiness_dependents::LOOK, runtime::Outcome::Succeeded(r#"{"through":3,"keys":[]}"#.into()));
+        for rev in [4, 5] {
+            changes.set(rev);
+            let c = StoreChanged { rev, keys: vec!["readiness/sp-a".into()], reload: false };
+            e.submit(&format!("r{rev}"), STORE_STREAM, c.kind()).unwrap();
+            e.run_until_idle().unwrap();
+        }
+        let t = &e.status().tasks[0];
+        assert_eq!(t.sweep_found, 0);
+        assert_eq!((t.runs_by_wake.get("signal").copied(), t.runs_by_wake.get("sweep").copied()), (Some(2), Some(1)));
     }
 }
