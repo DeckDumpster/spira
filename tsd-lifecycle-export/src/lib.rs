@@ -500,7 +500,7 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(saved, [100]);
-        assert!(err.contains("bead-stage: row not stored"), "{err}");
+        assert!(err.starts_with("bead-stage: row not stored: ") && err.len() > "bead-stage: row not stored: ".len(), "{err}");
     }
 
     #[test_id(tvxlv5f)]
