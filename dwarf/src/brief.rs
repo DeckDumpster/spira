@@ -1052,6 +1052,22 @@ mod tests {
         }
     }
 
+    #[test_id(t0d8wj3)]
+    #[test]
+    fn the_ops_brief_renders_with_every_placeholder_filled_and_offers_no_suites_tool() {
+        let mut single = tool_tokens();
+        single.extend([
+            ("BEAD_ID", "sp-a".to_string()),
+            ("BRANCH", "spira/sp-a".to_string()),
+            ("REPO", "w/sp-a".to_string()),
+            ("NO_BD", no_bd_brief()),
+        ]);
+        let t = Tokens { single, bead: "the bead".into(), park: "park".into(), deadline: "deadline".into(), ..Default::default() };
+        let p = render_prompt(include_str!("../../spira/runes/ops.md"), &t, None);
+        assert!(!p.contains("{{"), "{p}");
+        assert!(!p.contains("testenv suites"), "{p}");
+    }
+
     #[test_id(t0hmxw8)]
     #[test]
     fn a_call_on_an_old_incident_gets_a_positive_wall_from_its_own_start() {

@@ -169,13 +169,6 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
   parked on CI {sp_awaiting_n}, oldest {sp_awaiting_age}, stuck {sp_awaiting_stuck}
   duplicate incident refs             {sp_dup_refs}      (surplus beads: {sp_dup_beads})
 
-### The menu — run these scans, then look for what they do not cover
-
-A sweep is not only a set of numbers to read. These are the scans that are worth sampling
-before anything else, because each answers a question the numbers above cannot.
-
-{suites_block}
-
 ### The shared checkout — are base branches clean?
 
   A dwarf commit on a base branch bypasses the gate and every landing instrument. A checkout
@@ -210,8 +203,6 @@ absence alone. File through `work`, in this order, for each finding:
 3. File at most three beads per sweep. Name any further findings in your final line as
    "held back: ...".
 4. Never use `bd`, `bdq` or `BEADS_DIR`. If `work` refuses, put the refusal in your final line.
-
-Run the scans named in the menu above if you have wall time remaining.
 "#,
         sp_mid = '\u{b7}',
         now = now_iso(),
@@ -290,7 +281,6 @@ Run the scans named in the menu above if you have wall time remaining.
         sp_awaiting_stuck = d.env.g("SP_AWAITING_STUCK"),
         sp_dup_refs = d.env.g("SP_DUP_REFS"),
         sp_dup_beads = d.env.g("SP_DUP_BEADS"),
-        suites_block = d.suites_block.trim_end(),
         guard_block = d.guard_block.trim_end(),
         snap_age_disp = d.snap_age_disp,
         sentinel_armed = match d.env.g("SP_SENTINEL_TIMER") { "1" => "armed", "0" => "not armed", _ => "?" },
@@ -445,7 +435,7 @@ mod tests {
         assert!(out.contains("### The czar"));
         assert!(out.contains("### Lapsed dwarves"));
         assert!(out.contains("### The graph"));
-        assert!(out.contains("### The menu"));
+        assert!(!out.contains("The menu") && !out.contains("testenv suites"));
         assert!(out.contains("### The shared checkout"));
         assert!(out.contains("### Can this snapshot be believed?"));
         assert!(out.contains("## Your task"));

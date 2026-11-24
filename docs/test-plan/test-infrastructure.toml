@@ -192,16 +192,6 @@ date = "2026-09-30"
 bead = "sp-s0e1k"
 
 [[use_case]]
-id = "UC-test-infrastructure-24"
-tier = "T1"
-statement = "Discovery is the `test-*.sh` glob. Gated suites are not re-run and the pass says so. Suites without covers are named as omissions and still run. Every real suite is claimed by the gate or the timed run. The real `gate-suites` names only suites that exist, and an unreadable gate list refuses with rc 1, runs nothing and shows status `?`."
-
-[use_case.uncovered]
-reason = "discovery and the gate-list refusal are testenv's suites module (cargo tests); the gate-list path comes only from the operator's spira.toml, so a bash fixture cannot pin it hermetically"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
 id = "UC-test-infrastructure-25"
 tier = "T1"
 statement = "Classification of one suite outcome from (rc, output, watchdog-killed, shared-fixture, trailer, budget): ok, red, skip, timeout (even when TERM is trapped), setup-fault (ASSERTIONS 0 and rc≠0), red when the trailer is missing, fixture-fault (75 with shared fixture, else red), red-unconfirmed (no budget to confirm). Signal exits map to 124."
@@ -267,19 +257,9 @@ tier = "T1"
 statement = "The suite-state file parser, `state_of`, write, clear and lint behave as specified: replace never duplicates, `active` stores nothing, and bad lines are ignored. The fence refuses a quarantine that has no bead, no reason, a missing suite or a **CLOSED** bead, and passes an empty file."
 
 [use_case.uncovered]
-reason = "retired (sp-8sj5m1): the suite-state file, its parser, its fence and the `testenv suites` state verbs are gone; a test's lifecycle state lives only in the test registry"
+reason = "retired (sp-8sj5m1): the suite-state file, its parser, its fence and its state verbs are gone; a test's lifecycle state lives only in the test registry"
 date = "2026-11-16"
 bead = "sp-8sj5m1"
-
-[[use_case]]
-id = "UC-test-infrastructure-33"
-tier = "T0"
-statement = "The suites systemd unit runs `suites.sh run` periodically. It injects `SPIRA_SUITES_MAXSEC = TimeoutStartSec`, and the conf default budget is under it. It treats exit 2 as success. It is installed only under `SPIRA_SELF_TEST`."
-
-[use_case.uncovered]
-reason = "systemd/spira-suites.{service,timer} and the SPIRA_SELF_TEST gate that installed them were deleted outright with the background suites sweep — there is no unit left to check"
-date = "2026-09-26"
-bead = "sp-b99nj"
 
 [[use_case]]
 id = "UC-test-infrastructure-34"
@@ -349,7 +329,7 @@ statement = "Every non-test, non-sourced operator script is executable."
 [[use_case]]
 id = "UC-test-infrastructure-42"
 tier = "T1"
-statement = "Certification budget. `gate-spira.sh` timed itself and filed one harness bead (\"something must leave gate-suites\") over `SPIRA_GATE_BUDGET`, or on an unmeasurable cost, without failing the branch. `suite-select` (which replaced `gate-touched.sh`/`gate-budget-select.sh`) still trims selection to the budget (`suite-select/src/budget.rs`) but does not file that bead. **Untested today (see Gaps).**"
+statement = "Certification budget. `gate-spira.sh` timed itself and filed one harness bead (\"something must leave the gate\") over `SPIRA_GATE_BUDGET`, or on an unmeasurable cost, without failing the branch. `suite-select` (which replaced `gate-touched.sh`/`gate-budget-select.sh`) still trims selection to the budget (`suite-select/src/budget.rs`) but does not file that bead. **Untested today (see Gaps).**"
 
 [use_case.uncovered]
 reason = "the bead-filing half lived only in gate-spira.sh's own run loop, deleted as dead code (sp-nhid0's decision, carried out by sp-hyc3a); the budget trimming it once measured moved with gate-touched.sh/gate-budget-select.sh's own retirement into suite-select"

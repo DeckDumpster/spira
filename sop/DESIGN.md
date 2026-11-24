@@ -139,7 +139,7 @@ covers that the cargo suite cannot. The cockpit's ledger-reading SOP metrics are
 
 ## 6. Callers repointed
 
-- `spira/gate-suites`, `spira/runes/concierge.md`, `spira/runes/ops.md`,
+- `spira/runes/concierge.md`, `spira/runes/ops.md`,
   `spira/runes/ops.rune`, `README.md`: every `sop.sh <subcommand>` instruction is now
   `sop <subcommand>` — bare name, same as `forge`/`czar-pass`/`gh-intake` before it.
 - `dwarf/src/verdict.rs`, `dwarf/src/run.rs`, `dwarf/src/brief.rs`: the string literal `"sop.sh"`

@@ -102,22 +102,12 @@ date = "2026-11-12"
 bead = "sp-ugnv1x"
 
 [[use_case]]
-id = "UC-safety-fences-27"
-tier = "T1"
-statement = "`host-check.sh` refuses a host suite with neither a non-empty `# host-reason` nor testenv use in code; its counts render a number or `?`, never 0 on an empty tree"
-
-[use_case.uncovered]
-reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
-date = "2026-11-12"
-bead = "sp-ugnv1x"
-
-[[use_case]]
 id = "UC-safety-fences-28"
 tier = "T1"
 statement = "`suite-state-fence.sh` refuses a quarantine entry with no bead, a CLOSED bead, a nonexistent suite or no reason; an empty file reports clean"
 
 [use_case.uncovered]
-reason = "retired (sp-8sj5m1): the suite-state file, its fence and the `testenv suites` state verbs are gone; a test's lifecycle state lives only in the test registry"
+reason = "retired (sp-8sj5m1): the suite-state file, its fence and its state verbs are gone; a test's lifecycle state lives only in the test registry"
 date = "2026-11-16"
 bead = "sp-8sj5m1"
 

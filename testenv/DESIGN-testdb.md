@@ -36,8 +36,8 @@ the design shared one server among fixtures that never need to see each other.
 
 ## 2. Contract
 
-`testenv testdb <cmd>` — dispatched when the first argument is exactly `testdb` (as
-`testenv suites`). Every command prints `KEY=value` lines on stdout (only on success) and
+`testenv testdb <cmd>` — dispatched when the first argument is exactly `testdb` (like
+`testenv lint`). Every command prints `KEY=value` lines on stdout (only on success) and
 diagnostics on stderr; exit 0 success, 1 failure, 2 usage.
 
 | command | does |

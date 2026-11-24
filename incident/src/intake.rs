@@ -75,6 +75,11 @@ pub fn env_or(name: &str, default: &str) -> String {
     env(name).unwrap_or_else(|| default.to_string())
 }
 
+/// An incident files below a user-reported bug (priority 3 against the user's 1) unless configured.
+pub fn priority_of(configured: Option<String>) -> String {
+    configured.unwrap_or_else(|| "3".to_string())
+}
+
 /// The kernel's host name, as `hostname` printed it; `?` when there is none.
 pub fn hostname() -> String {
     extern "C" {
@@ -147,11 +152,7 @@ impl Env {
             labels: decide::incident_labels(env("SPIRA_INCIDENT_LABELS").as_deref(), env("SPIRA_SCOPE_LABEL").as_deref(), &incident_label),
             repo: env("SPIRA_INCIDENT_REPO"),
             kind: env_or("SPIRA_INCIDENT_TYPE", "bug"),
-            // conf.sh:1717 `: "${SPIRA_INCIDENT_PRIORITY:=3}"` — the bash never carried its
-            // own default; it relied on conf.sh setting one before incident.sh's `bdq
-            // create --priority "$SPIRA_INCIDENT_PRIORITY"` ran. Verified against a real
-            // `bd create` in this session: an unset/empty --priority silently became 3.
-            priority: env_or("SPIRA_INCIDENT_PRIORITY", "3"),
+            priority: priority_of(env("SPIRA_INCIDENT_PRIORITY")),
             actor: env("SPIRA_INCIDENT_ACTOR").or_else(|| env("BEADS_ACTOR")),
             delivers_pref: env("SPIRA_INCIDENT_DELIVERS"),
             sop_ledger: env_or("SPIRA_SOP_LEDGER", &format!("{spira_run}/sop/applied.jsonl")),
@@ -568,11 +569,19 @@ pub fn spool_stamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{drain_report, drain_spool, filed_answer, own_alarm, with_incident_lock, Env};
+    use super::{drain_report, drain_spool, filed_answer, own_alarm, priority_of, with_incident_lock, Env};
     use crate::fake::{FakeBd, FakeMailer, FixedClock};
     use crate::spool::{format_entry, SpoolEntry};
     use std::cell::RefCell;
     use std::sync::{mpsc, Arc, Mutex};
+
+    // covers: UC-ops-detection-remediation-36
+    #[test_id(tjlkart)]
+    #[test]
+    fn an_incident_defaults_behind_a_reported_bug_and_a_configured_priority_wins() {
+        assert_eq!(priority_of(None), "3");
+        assert_eq!(priority_of(Some("1".into())), "1");
+    }
 
     fn env_in(dir: &std::path::Path) -> Env {
         Env {

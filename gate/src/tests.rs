@@ -2991,6 +2991,7 @@ fn unit_mode_nothing_buildable_runs_the_fences_only() {
     );
 }
 
+#[test_id(togs57y)]
 #[test]
 fn no_step_of_a_gate_receives_the_retired_suite_selection_variables() {
     for f in [Fake::new(), returned(Fake::new(), "test-b.sh"), unit_fake(&["gate/src/x.rs"]), fences_fake(&["docs/x.md"])] {
@@ -5777,6 +5778,7 @@ fn fences_mode_a_branch_touching_one_suite_runs_that_suite_through_the_trees_run
     assert!(cmds[2].contains("release config-stage ."), "the runner reads the tree's config delta: {}", cmds[2]);
 }
 
+#[test_id(t01wy26)]
 #[test]
 fn a_fences_mode_gate_waits_for_an_admission_slot_like_any_other() {
     let f = Fake::new();

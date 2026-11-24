@@ -11341,7 +11341,7 @@ fn forced_reopen(t: &T, bead: &str) -> String {
 fn assert_forced_comment(t: &T, forced: &str) {
     let calls = t.lib.calls.borrow();
     let c = calls.iter().find(|c| c.starts_with("comment sp-b") && c.contains("will force")).unwrap_or_else(|| panic!("no force comment: {calls:?}"));
-    assert!(c.trim_end().ends_with(&format!("suites regardless of SPIRA_CERTIFY_SUITES: {forced}")), "{c}");
+    assert!(c.trim_end().ends_with(&format!("suites whatever the configured suites: {forced}")), "{c}");
 }
 
 #[test_id(tfyxs0f)]

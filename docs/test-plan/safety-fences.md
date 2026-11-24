@@ -17,7 +17,7 @@ A fence is a Rung-4 mechanism: a program that refuses an honest mistake at the m
 
 1. **PreToolUse hooks on agent sessions.** They read Claude Code's hook JSON on stdin and refuse specific shell or tool actions: queue and landing operations, writes into production, mail and landstate, test-data bead creation, closing without an ACK or a cited bead, statute writes, spec edits on in-flight beads, `bd update --status closed`, direct suite execution and `DELETE FROM schema_migrations`. They let through non-dwarf sessions (or, for the inflight guard, dwarf sessions), non-Bash tools, quoted prose and heredoc bodies, sanctioned wrapper scripts, and any command carrying the named override.
 2. **Git hooks.** `pre-commit` (made up of `exclude.sh`, `scratch-fence.sh` and `branch-guard.sh staged`), the per-worktree `pre-commit-guard.sh` dirty-path guard, and the `reference-transaction` guard on `refs/heads/spira/*`. Together they keep a dwarf's commits inside its own worktree and branch, and keep its deletes away from other dwarves' branches.
-3. **Shipped-tree and gate-time lints.** `inventory.sh`, `scratch-fence.sh`, `orphan-test.sh`, `host-check.sh`, `suite-state-fence.sh`, the set-state writer lint, the runes placeholder/command/reopen lints and the syntax sweep. They refuse a tree that should not ship, and they exit 3 or `?` rather than report "clean" on an empty input.
+3. **Shipped-tree and gate-time lints.** `inventory.sh`, `scratch-fence.sh`, `orphan-test.sh`, `suite-state-fence.sh`, the set-state writer lint, the runes placeholder/command/reopen lints and the syntax sweep. They refuse a tree that should not ship, and they exit 3 or `?` rather than report "clean" on an empty input.
 4. **Persona scoping.** `RUNE_TOOLS` allowlists, the czar stage fence, spike `confine.sh`. Each limits what a persona or bead can do, even when the agent asks for more.
 
 Every refusal must name the rule, the correct path and the override. Every fence must be armed where the offender actually runs (`law-guard-binds-the-caller`, `law-guard-proved-where-the-offender-runs`).
@@ -44,7 +44,6 @@ Every refusal must name the rule, the correct path and the override. Every fence
 | UC-safety-fences-24 | `scratch-fence.sh` refuses tracked root `sp-*` / `*.fixed` files, ignores subdirectories, exits 3 on an empty index, and honours `SCRATCH_FENCE_OK`. | C, FC | T1 (file-list seam) | cert |
 | UC-safety-fences-25 | `inventory.sh` refuses absolute home-directory and workspace-container paths, `(per Name, date)` marks and real emails in tracked and untracked files. It exempts its own pattern files and example domains, exits 3 on an empty index, and supports `--scan` / `--patterns`. | C, FC | T1 (`--scan` table) + T2 (tree walk) | cert |
 | UC-safety-fences-26 | `orphan-test.sh` refuses a diff that removes a token an unmodified suite still asserts on. It passes when the suite changes in the same diff, on an `orphan-test-ok` annotation, and on a token present on both `-` and `+` lines. It exits 77 without `SPIRA_GATE_BASE`. | C, FC | T2 | batch |
-| UC-safety-fences-27 | `host-check.sh` refuses a host suite that has neither a non-empty `# host-reason` nor testenv use in code. Its counts render a number or `?`, never 0 on an empty tree. | C, FC, O | T1 (fixture dir) | cert |
 | UC-safety-fences-28 | RETIRED (sp-8sj5m1): the suite-state file and its fence are gone. Was: `suite-state-fence.sh` refuses a quarantine entry with no bead, a CLOSED bead, a nonexistent suite or no reason. An empty file reports clean. | C, FC | T1 (stub bd status) | cert |
 | UC-safety-fences-29 | No harness script writes a dimension label (repo/severity/branch/rune/lane/gate) with `bd label add` or embeds one in `SPIRA_INCIDENT_LABELS`; `bd set-state` is the only writer. | K | T0 lint (+ bd set-state semantics in the bd-contract T2) | cert / batch |
 | UC-safety-fences-30 | Persona tool allowlists: no restricted persona (Ops, czar) gets bare `Bash`. Each allows its diagnostics and denies mutations (rm, `systemctl start/stop/restart`, `git branch -D`, destructive bd). | C, CFG, TI | T0/T1 | cert |
@@ -87,7 +86,6 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 24 | test-scratch-fence::empty index … sp-* in subdirectory | T2, 3 s | KEEP. Replace the gate-spira grep row with the UC-22 / gate-fence-list behaviour row |
 | 25 | test-inventory::empty index … --patterns | T2, 3 s | KEEP. DELETE "every shipped file passes inventory" (re-runs the gate's own fence). SOURCE-GREP "gate-spira.sh names inventory.sh" → covered by the gate-fence-list row |
 | 26 | test-orphan-test::all | T2, 12 s | KEEP. DELETE "broken matcher does not refuse" and "real fence still refuses after restoration" (they swap in a stub script, a tautological control) |
-| 27 | test-host-reason::all except suites.sh status; test-host-reason::suites.sh status rows | T2, 14 s | KEEP host-check rows (demote the git fixture to a plain dir if host-check reads files, not the index). MOVE the two `suites.sh status` rows (the real shipped-tree sweep, most of the 14 s) to test-infrastructure, and make them unconditional |
 | 28 | test-suite-state-fence::all (secondary); test-suite-state::lint rejections | T2 4 s; T1 2 s | MERGE the structural rows of test-suite-state-fence INTO test-suite-state (already there). Keep one CLOSED-bead row with stub bd (DEMOTE-TO-T1). Add a pass/fail summary line |
 | 29 | test-set-state-writers::scanner controls + 2 static rows; ::set-state semantics rows | T2 (testdb), 8 s | Split: lint rows → T0 (keep as a lint); bd set-state rows → MERGE-INTO the retired bd-contract suite |
 | 30 | dwarf::persona_tools_tests | T1 | Rust (sp-706kgd): ops and czar runes through spira-config's rune parser. TI: `ops_allows` reimplements the CLI matcher (see Gaps) |
@@ -211,7 +209,7 @@ The saving is 174 − 77 = **97 s (−56 %)**. Of that, 93 − 28 = 65 s comes f
 With a stage-2 `guardlib.py` in-process decision table, test-guards.sh drops from 20 s to about 2 s and the area total to about **59 s**. About 4 s of `suites.sh status` time moves to test-infrastructure rather than disappearing.
 
 **Tier placement after the change:**
-- **T0 / T1 → certification:** test-guards.sh, host-check, suite-state, ops/czar allowlists, runes lint, syntax lint. About 30 s, and every commit gets the full guard table.
+- **T0 / T1 → certification:** test-guards.sh, suite-state, ops/czar allowlists, runes lint, syntax lint. About 30 s, and every commit gets the full guard table.
 - **T2 → batch CI:** branch-guard, ref-guard, dirty-commit, scratch, inventory tree-walk, orphan-test, confine, bd-contract. About 35 s.
 - **T3 → main CI only:** spike landing rows, about 10 s.
 
@@ -287,7 +285,7 @@ as their brief:**
   runes-integrity lints into a standalone T0 stage, and merging
   test-suite-state-fence's structural rows into test-suite-state.
 - **sp-av1xy** — Persona scoping and spike confinement (UC 24, 26, 27, 29–32; gaps 10,
-  11): host-check.sh's `suites.sh status` sweep move, the allowlist-matcher TI gap, and
+  11): the allowlist-matcher TI gap, and
   the spike/dispatch UC-32 partition-row move. (test-dwarf-dirty-commit's CI-dead fix,
   gap 10, moved into sp-pohf2 alongside UC-17/UC-21 since it's the same worktree-hook
   seam.)
@@ -314,7 +312,7 @@ verdict on UC-32's partition rows — see below.
 
 **Landed in this slice (UC 27, 29, 30, 31 of this bead's scope):**
 - **UC-27 / gap 12 (the `suites.sh status` half).** the retired host-reason suite keeps only
-  host-check.sh's own fence rows. The two `suites.sh status` sweep-line assertions moved
+  its own fence rows. The two sweep-line assertions moved
   to `test-suites-classify.sh` (test-infrastructure area, which already sources
   `suites.sh`'s functions directly) and now run unconditionally via `cmd_status()` — the
   prior form sat inside `if [[ "$status_out" =~ ... ]]`, which is precisely a silent skip

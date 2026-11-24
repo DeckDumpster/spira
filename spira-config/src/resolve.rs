@@ -940,7 +940,7 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
         resolve_colon("SPIRA_SCCACHE_DAV_ADDR", env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?
     );
 
-    // 17-19. Rebase / certify literals.
+    // 17-19. Rebase literals.
     set!(
         "SPIRA_REBASE_DECOMPOSE_FILES",
         resolve_colon("SPIRA_REBASE_DECOMPOSE_FILES", env, &toml_map, ok_str!("4"))

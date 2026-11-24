@@ -2,7 +2,6 @@
 ask_label = "fixture-ask-label"
 batch_maxpar = 8
 certify_par = 4
-certify_suites = "off"
 ci_label = "fixture-ci-label"
 cockpit_bottom_pct = 40
 cockpit_right_pct = 45

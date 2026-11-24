@@ -205,7 +205,7 @@ statement = "The archivist sweep archives sessions with drift at or above `EVERY
 [[use_case]]
 id = "UC-ops-detection-remediation-36"
 tier = "T0"
-statement = "Detector and trigger conf keys are allowlisted with documented defaults; priority bands put incidents and suite-reds below user-reported bugs; the `SENT` wire token agrees between `hel.sh`, `sentinel.sh` and `cockpit-metrics.py`."
+statement = "Detector and trigger conf keys are allowlisted with documented defaults; priority bands put incidents below user-reported bugs; the `SENT` wire token agrees between `hel.sh`, `sentinel.sh` and `cockpit-metrics.py`."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-37"

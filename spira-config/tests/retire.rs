@@ -193,9 +193,18 @@ fn two_branches_each_adding_a_task_in_the_same_gap_merge_clean_and_both_files_ke
 #[test]
 fn a_bead_that_is_not_an_id_is_refused_and_writes_nothing() {
     let t = tree();
-    for bead in ["../x", ""] {
+    for bead in ["../x", "", ".."] {
         assert!(!retire(t.path(), &["spira.old_knob", "--bead", bead]).status.success(), "{bead:?}");
     }
     assert!(t.path().join("spira/conf.d/SPIRA_OLD_KNOB").exists());
     assert!(!t.path().join("spira/config-delta.d").exists());
+}
+
+#[test_id(t8khefn)]
+#[test]
+fn a_child_bead_id_names_its_fragment() {
+    let t = tree();
+    let o = retire(t.path(), &["spira.old_knob", "--bead", "sp-x.1"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(t.path().join("spira/config-delta.d/sp-x.1.toml").exists());
 }

@@ -599,7 +599,7 @@ mod tests {
     }
 
     fn fences() -> Vec<String> {
-        vec!["gate/".into(), "spira/gate-suites".into(), "spira/inventory*".into()]
+        vec!["gate/".into(), "spira/fence-list".into(), "spira/inventory*".into()]
     }
 
     #[test_id(tmu4hpn)]
@@ -615,8 +615,8 @@ mod tests {
     #[test_id(t1jxsga)]
     #[test]
     fn a_trailing_star_fences_a_prefix_and_a_bare_entry_only_itself() {
-        assert!(is_fence("spira/inventory-deny", &fences()) && is_fence("spira/gate-suites", &fences()));
-        assert!(!is_fence("spira/gate-suites-extra", &fences()) && !is_fence("gates/x", &fences()));
+        assert!(is_fence("spira/inventory-deny", &fences()) && is_fence("spira/fence-list", &fences()));
+        assert!(!is_fence("spira/fence-list-extra", &fences()) && !is_fence("gates/x", &fences()));
     }
 
     #[test_id(txngubs)]

@@ -62,16 +62,6 @@ date = "2026-10-08"
 bead = "sp-94lbj.2"
 
 [[use_case]]
-id = "UC-landing-merge-queue-08"
-tier = "T1"
-statement = "With `SPIRA_GATE_SUITES=off`, certification is fences-only and uses a distinct gate cache key. Push mode never gets the switch."
-
-[use_case.uncovered]
-reason = "the distinct fences-only gate cache key is gate/landing-pass Rust; the admission bypass was asserted in bash by test-gate-admission-suites-only.sh, deleted by sp-51q2ks (2026-10-31 test review)"
-date = "2026-10-08"
-bead = "sp-94lbj.2"
-
-[[use_case]]
 id = "UC-landing-merge-queue-09"
 tier = "T1"
 statement = "The gate lock wait defaults to 2 × `SPIRA_GATE_TIMEOUT`. An operator value is honoured. When the pass budget is shorter, the wait is capped and logged as rc=75 contention."
@@ -219,7 +209,7 @@ statement = "`landing.sh halt` stops a running pass: it kills the pass, writes a
 [[use_case]]
 id = "UC-landing-merge-queue-27"
 tier = "T1"
-statement = "`submit` accepts only `spira/<id>` branches. It runs the gate against the named repo (or the home repo) and certifies the branch on spira-lc, keeping no queue record of its own. A refusal writes no state. A gate fail writes no landstate. `testenv suites` quarantine/disable/activate each submit a change bead's `spira/<bead>` branch."
+statement = "`submit` accepts only `spira/<id>` branches. It runs the gate against the named repo (or the home repo) and certifies the branch on spira-lc, keeping no queue record of its own. A refusal writes no state. A gate fail writes no landstate."
 
 [[use_case]]
 id = "UC-landing-merge-queue-28"
@@ -415,7 +405,6 @@ statement = "When a bead with a GitHub ref lands, its issue is commented (short 
 reason = "its shell suite pinned calls or wording and was deleted; the Rust test that restores it is the named refactor bead"
 date = "2026-11-12"
 bead = "sp-y3jpuc"
-
 
 [[use_case]]
 id = "UC-landing-merge-queue-58"

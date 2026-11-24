@@ -242,8 +242,6 @@ SPIRA_GATE_BRANCH gate/src/engine.rs
 SPIRA_GATE_BRANCH spira/round-image-preflight.sh
 SPIRA_GATE_CALLER gate/src/engine.rs
 SPIRA_GATE_CALLER gate/src/real.rs
-SPIRA_GATE_COVERED gate/src/engine.rs
-SPIRA_GATE_COVERED suite-select/src/gate.rs
 SPIRA_GATE_CPU_QUOTA gate/src/cgroup.rs
 SPIRA_GATE_EJECTED_SUITES gate/src/engine.rs
 SPIRA_GATE_EJECTED_SUITES suite-select/src/gate.rs
@@ -644,7 +642,6 @@ SPIRA_SIM_RELEASE spira/sim/src/world.rs
 SPIRA_SIM_SCENARIO spira/sim/src/agent.rs
 SPIRA_SIM_STATE spira/sim/src/agent.rs
 SPIRA_SKEW_SH spira/deploy.sh
-SPIRA_SKIP_ALLOWLIST_FILE testenv/src/settings.rs
 SPIRA_SKIP_RECLAIM spira-runtime/src/tasks/a/sentinel_pass.rs
 SPIRA_SLAY_SH spira/deploy.sh
 SPIRA_SLOW_QUERY_LOG sentinel/src/tower.rs
@@ -663,7 +660,6 @@ SPIRA_STATUS_FILE spira/lib.sh
 SPIRA_STATUS_MAP spira/lib.sh
 SPIRA_STATUS_SEAM spira/lib.sh
 SPIRA_STRAND_GRACE strand/src/config.rs
-SPIRA_SUITES_SH watchtower/src/process.rs
 SPIRA_SUPERVISE_BIN spira-config/src/convert.rs
 SPIRA_SYSTEMCTL doctor/src/real.rs
 SPIRA_SYSTEMCTL heimdall/src/main.rs

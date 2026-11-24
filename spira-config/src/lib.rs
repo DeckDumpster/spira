@@ -461,7 +461,7 @@ pub enum PublishMode {
 }
 
 /// on/off, spelled as an enum rather than a bool so a TOML reader sees the word `spira.conf`
-/// already used (`SPIRA_CERTIFY_SUITES = off`) instead of learning a second spelling for it.
+/// already used instead of learning a second spelling for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OnOff {

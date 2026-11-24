@@ -88,9 +88,9 @@ verdict-cached.
 
 | rc | meaning | whose fault |
 |---|---|---|
-| 0 | every selected suite passed, was **declared** skipped or skip-req (§3.7), was disabled; or nothing was selected; or a cached green for this key | — |
-| 1 | suites ran and at least one non-quarantined suite was `red` or `timeout` — including an **undeclared** SKIP/SKIP-REQ, reclassified red by §3.7 | the branch |
-| 2 | usage error; unknown suite; `--artifacts` directory invalid or incomplete; base ref unresolvable; worktree unobtainable; container did not come up / probe failed / died mid-batch / exec storm / `--user` account vanished; concurrent run holds the same key; a repeat of a cached red refused; `spira/skip-allowlist.tsv` declares a requirement testenv itself must provide (§3.7, reason=`skip-allowlist-invalid`) | the harness (or the caller) |
+| 0 | every selected suite passed or was disabled; or nothing was selected; or a cached green for this key | — |
+| 1 | suites ran and at least one non-quarantined suite was `red` or `timeout` — including a SKIP/SKIP-REQ, which is red (§3.7) | the branch |
+| 2 | usage error; unknown suite; `--artifacts` directory invalid or incomplete; base ref unresolvable; worktree unobtainable; container did not come up / probe failed / died mid-batch / exec storm / `--user` account vanished; concurrent run holds the same key; a repeat of a cached red refused | the harness (or the caller) |
 | 3 | configure / unit suspend / install inside the container failed; cargo not on PATH | the harness |
 | 4 | the candidate's workspace failed to build | the branch |
 
@@ -108,7 +108,7 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
   `QUARANTINED-RED  TIMEOUT after <n>s`, `UNREACHED`, and (only under `--deadline`)
   `DEFERRED deadline after <n>s` (killed at the deadline) / `DEFERRED deadline` (never started). round.sh counts
   `^\s+test-\S+\.sh\s+(ok|RED|SKIPPED)`.
-  An **undeclared** SKIP or SKIP-REQ (§3.7) prints `RED     undeclared skip — <requirement>`
+  A SKIP or SKIP-REQ (§3.7) prints `RED     undeclared skip — <requirement>`
   or `QUARANTINED-RED  undeclared skip — <requirement>` — the first word stays the plain
   status every existing reader already keys on (this regex, `gate::parse::red_suites`,
   `batcher-cut::result_status`'s field 1); only the text after it differs from a real
@@ -117,15 +117,11 @@ stderr; `attribute.sh` treats `>= 2` as a run fault; `gate-retry.sh` retries onl
   not match the per-suite regex above.
 * On rc 1, `gate-diag.sh <results>` runs and prints its `| suite | red |` table, which
   round.sh greps (`^\| test-.*\| red`).
-* **Last line, always** (new): `VERDICT GREEN ran=<n> [cached=<when>] [selected=0] [skipped=<s>]`,
-  `VERDICT RED ran=<n> red=<k> [skipped=<s>]`, or `VERDICT FAULT rc=<rc> ran=<n> reason=<word>`. `ran`
+* **Last line, always** (new): `VERDICT GREEN ran=<n> [cached=<when>] [selected=0]`,
+  `VERDICT RED ran=<n> red=<k>`, or `VERDICT FAULT rc=<rc> ran=<n> reason=<word>`. `ran`
   counts suites that executed (ok, skip, red, timeout, quarantined-red). Under `--deadline`
   the GREEN and RED lines gain ` deferred=<d> (deadline <S>s)` — `VERDICT GREEN ran=7
-  deferred=5 (deadline 300s)` — and a deferred suite is never counted in `ran` (D7). `skipped=<s>`
-  (new, §3.7) appears only when `s > 0`: the count of suites still `skip`/`skip-req` after the
-  skip contract — i.e. **declared** ones only, since an undeclared one was already
-  reclassified red and is not counted here. A log line names them:
-  `N suite(s) skipped (declared, spira/skip-allowlist.tsv): <names>`. round.sh prints its
+  deferred=5 (deadline 300s)` — and a deferred suite is never counted in `ran` (D7). round.sh prints its
   own VERDICT line to a different file, so the two never collide; once round.sh switches it
   can use this line instead of recomputing one.
 * Cargo's own output and helper-script noise go to stderr.
@@ -180,7 +176,6 @@ parses spira.toml or the repo-map itself (law-config-through-the-cli-only).
 | `SPIRA_BATCH_SKIP_INSTALL` | — | — |
 | `SPIRA_BATCH_TIERS` | `T2,T3` | — |
 | `SPIRA_BATCH_MAIL_CMD` / `SPIRA_BATCH_INCIDENT_CMD` | `mail` / `incident.sh` on PATH (sp-gypjk) | — |
-| `SPIRA_SKIP_ALLOWLIST_FILE` (new, §3.7) | `spira/skip-allowlist.tsv` | — |
 | `SPIRA_GATE_SELECT_HEAD` | `<branch>` | — |
 | `SPIRA_ROUND_BATCH_ID`, `SPIRA_ROUND_MEMBERS` | — | — |
 | `GITHUB_RUN_ID` / `SPIRA_BATCH_RUN_ID` | `local-<epoch>` | — |
@@ -196,7 +191,7 @@ testenv owns orchestration; these stay separate components with their own contra
 
 | collaborator | used for |
 |---|---|
-| `git` | rev-parse tree/commit, worktree list/add/checkout, status, `show <rev>:spira/skip-allowlist.tsv` (§3.7), landref rungs |
+| `git` | rev-parse tree/commit, worktree list/add/checkout, status, landref rungs |
 | `cargo` | `cargo build --profile <p> --workspace` in the worktree — **not** run at all under `--artifacts` |
 | `suite-select` (crate, linked) | diff-derived selection (the ONE selector, sp-wx2tw) |
 | this executable's `container` subcommand (§12; was `spira/testenv.sh`), run as a child against the harness copy `Harness::locate` found — a gate-built testenv therefore drives the tree under test's own image closure, sp-isom7 | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
@@ -376,76 +371,18 @@ Read from the **tree under test**. Headers before the first `set -` line:
 deny list the run is handed (`SPIRA_TEST_DENY_LIST`); a suite with no row is active and
 blocking.
 
-### 3.7 The skip contract — `spira/skip-allowlist.tsv` (sp-gjx1b)
+### 3.7 A skip is red
 
-**A SKIP is not automatically green.** Before this, `Status::Skip` (a suite that exits 77,
-the automake-skip convention a suite's `skip <reason>` uses) and `Status::SkipReq` (a
-suite pre-empted because a `# requires:` token was not on PATH in the container) were both
-`blocking() == false` unconditionally — the exit-status table (§2.2) simply listed them next
-to `ok`. sp-cln99 broke the server-mode testdb template lookup on 2026-09-29 and 13 suites
-SKIPped with no red anywhere, because that is exactly the shape a SKIP with no further check
-produces: absence read as a positive result (law-absence-needs-a-positive-control).
-
-**The rule now:** a SKIP or SKIP-REQ is green only when it is **declared** — its exact
-requirement, for that exact suite, is a line in `spira/skip-allowlist.tsv` on the tree under
-test. Undeclared is red. There is no
-third state: every SKIP is either declared-and-green or undeclared-and-red.
-
-**The requirement is the record's fingerprint, unchanged.** `ResultRecord.fingerprint`
-already named the reason for SKIP-REQ (`requires:<tok,...>`, §3.1); this bead gives SKIP the
-same treatment: `skip:<reason>`, where `<reason>` is a suite's `skip <reason>` text (TAP's
-skip-all form `1..0 # SKIP <reason>`, read by `tap::skip_all_reason`), normalized exactly
-like a red's fingerprint (§3.2 — paths, timestamps, numbers) and then space-joined with `_`.
-The join is not cosmetic: the `.result` line is seven fields split on whitespace, and a
-reason is free text that would otherwise shift every field after it. A suite that exits 77
-without the `1..0 # SKIP` convention gets the fixed key `skip:(no_reason_given)` — silence is
-never a way to skip undetected. The allow list's `requirement` column is this exact string,
-so a `.result` fingerprint and an allow-list line always read the same.
-
-**Reclassification reuses `Status::Red` (or `QuarantinedRed` on a quarantined suite) as-is —
-never a new status word.** `gate::parse::red_suites`/`ran_suites` (token-scan the line after
-`<suite>.sh`), `batcher-cut::result_status` (field 1 of the `.result` line) and round.sh's own
-regex all already treat `red` as blocking; teaching three readers across two languages a new
-word was rejected in favor of keeping the *fingerprint* — which already carried the reason —
-and only changing which *status* it is filed under. The one visible difference is cosmetic:
-`suite_line` (§2.3) prints `RED     undeclared skip — <requirement>` instead of `RED
-rc=<rc> after <n>s`, so a human reading the log sees the reason at once; the leading `RED`
-token is untouched, which is all any of the three readers key on.
-
-**Two ways to be declared wrong, both refused, not silently ignored:**
-- **Undeclared** (no matching line) → red, as above.
-- **Reserved** — the requirement names a category testenv itself must provide: a fixture, a
-  binary in the artifact set, a template, a testdb (matched case-insensitively as a substring
-  of the requirement: `fixture`, `template`, `testdb`, `binary`). `SkipGate::load` refuses the
-  **whole allow-list file** outright (`VERDICT FAULT rc=2 reason=skip-allowlist-invalid`) if
-  any line declares one — declaring it would hide testenv's own defect (sp-cln99's exact
-  shape) behind "genuinely external" cover, so the file that would do that never loads at all,
-  rather than merely having that one line ignored.
-- Everything else is a **curation choice**, not a keyword match: `cargo`/`dolt`/`git`/
-  `spira-config` absence is deliberately left undeclared even though the words don't match
-  the reserved list, because the same container already needs `cargo` for the build step that
-  ran moments earlier — its absence at suite time is an environment defect, not host hardware.
-  What *is* declared today: T4 host-acceptance suites needing a real `systemd --user` session
-  or `tmux`, and nested `podman` — genuinely outside the container testenv provides.
-
-**Pre-emption is not automatically green either.** When every selected suite is pre-empted
-(no requirement was met for any of them — the historical "nothing to run" shortcut), the run
-now checks whether any of those pre-emptions is itself an undeclared SKIP-REQ before
-returning green: if so, the run is red (`VERDICT RED ran=0 red=<k>`), because "nothing ran"
-and "nothing failed" are not the same claim.
-
-**Observability:** the `VERDICT` line (§2.3) gains `skipped=<n>` (only when `n > 0`) counting
-suites still `skip`/`skip-req` — declared ones only, since an undeclared one is already
-red and not counted here — and a log line names them:
-`N suite(s) skipped (declared, spira/skip-allowlist.tsv): <names>`.
-
-**Allow-list format**: `<suite>\t<requirement>\t<why>`, tab-separated; `#` comments and blank
-lines dropped. It **only shrinks**: an entry is removed when the suite stops needing it, never
-added to paper over a red. `src/skipgate.rs` owns parsing, the reserved check and
-reclassification; unit tests there and in `record.rs`/`run/tests.rs` cover both directions
-(declared stays green, undeclared goes red) and the fixture required by this bead's
-acceptance: a suite green on one tree that SKIPs — undeclared — on the next yields a red
-verdict, not a green one (`run::tests::a_suite_that_turns_from_green_to_an_undeclared_skip_is_no_longer_green`).
+A suite that exits 77 (`Status::Skip`) or is pre-empted because a `# requires:` token is not
+on PATH in the container (`Status::SkipReq`) is never green: the record is filed as `Red`
+(`QuarantinedRed` on a quarantined suite) at the point it is built, so the printed line and
+the `.result` agree. The requirement stays in the fingerprint — `skip:<reason>` (the TAP
+skip-all text read by `tap::skip_all_reason`, normalized like a red's fingerprint and joined
+with `_`; `skip:(no_reason_given)` when there is none) or `requires:<tok,...>` — and
+`suite_line` prints `RED     undeclared skip — <requirement>`. No new status word: every
+reader already treats `red` as blocking. When every selected suite is pre-empted, the run is
+red (`VERDICT RED ran=0 red=<k>`), not green. `ResultRecord::skip_as_red` owns the
+reclassification.
 
 ## 4. Pipeline
 
@@ -771,18 +708,6 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
   **suite phase 61 s** (the cut: deadline + the kill); results, teardown and gate-timing 16 s.
   Under a 300 s deadline the suite phase is now bounded; the ~300 s of setup around it is not,
   and on that day it was the larger half. **Closed by D9/D10 (sp-govet, §11).**
-
-## 10. `testenv suites` — the suite population tooling (replaces spira/suites.sh)
-
-`spira/suites.sh` (population, gate/timed partition, the watchtower's `status` block, flake
-reports) is folded into this
-crate as the `testenv suites <cmd>` subcommand family (module `suites`), not a crate of its
-own: it reads the same suite headers and the same result
-record this runner already parses and writes, and a second crate would carry a second
-parser of each — the drift suite-covers.sh was written to end. Its contract, schema,
-seams, decisions and cutover are in [DESIGN-suites.md](DESIGN-suites.md). The runner's own
-argument grammar is unchanged: `suites` as the first argument selects the family, and a
-branch literally named `suites` is `testenv -- suites`.
 
 ## 11. The gate trial under one budget (sp-govet)
 

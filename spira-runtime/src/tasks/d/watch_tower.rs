@@ -27,7 +27,7 @@
 //! | disk / mem / tmp | `df /`, `df /tmp`, `/proc/meminfo` (`collect.rs:313-314,413`) | statvfs + procfs |
 //! | throttle stamp | `run/queue-throttled` (`collect.rs:318`) | file read |
 //! | lapsed dwarves | `run/lapsed/` against `run/lapsed.swept` (`collect.rs:342`) | file read |
-//! | suites menu, branch guard | `testenv suites status` / `bash suites.sh status`; `bash branch-guard.sh check` (`collect.rs:349-350,452-480`) | `(unverified)` library calls |
+//! | branch guard | `bash branch-guard.sh check` (`collect.rs`) | `(unverified)` library calls |
 //! | release status (hotfix) | `release status` (`collect.rs:354-357`) | `release` library |
 //!
 //! Side effect hidden in observe: `cpu_throttle::gather` rewrites `run/cpu-throttle.state` (`cpu_throttle.rs:135`). The task moves that sample into carry, so the probe is read-only.
@@ -176,7 +176,6 @@ pub struct Snapshot {
     pub throttled: bool,
     pub lapsed: Vec<String>,
     pub snap_age_s: Option<u64>,
-    pub suites_menu: Option<String>,
     pub branch_guard: Option<String>,
     pub hotfix: Option<String>,
     /// Failed units whose incident is already filed: unit → bead.
