@@ -83,7 +83,7 @@ impl Rig {
 
     /// A launcher at the repository root, run from the operator's login environment: `SPIRA_TOML`
     /// and `SPIRA_RELEASE` when `profile`, nothing when not.
-    fn launcher(&self, script: &str, profile: bool) -> Output {
+    fn launcher(&self, script: &str, profile: Profile) -> Output {
         let mut c = Command::new(repo().join(script));
         c.env_clear()
             .env("HOME", &*self.dir)
@@ -92,11 +92,21 @@ impl Rig {
             .env("STUB_RESOLVED", self.dir.join("resolved.sh"))
             .arg("status")
             .stdin(Stdio::null());
-        if profile {
-            c.env("SPIRA_TOML", &self.toml).env("SPIRA_RELEASE", &self.release);
+        if profile != Profile::Nothing {
+            c.env("SPIRA_RELEASE", &self.release);
+        }
+        if profile == Profile::Full {
+            c.env("SPIRA_TOML", &self.toml);
         }
         c.output().unwrap()
     }
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum Profile {
+    Full,
+    WithoutToml,
+    Nothing,
 }
 
 fn text(o: &Output) -> String {
@@ -110,11 +120,17 @@ fn unconfigured(command: &str) -> String {
 
 fn assert_launcher_reports_a_state_and_refuses_bare(script: &str) {
     let rig = Rig::new();
-    let run = rig.launcher(script, true);
+    link_built(&rig, "rebuild");
+    let run = rig.launcher(script, Profile::Full);
     assert!(!text(&run).contains("SPIRA_TOML"), "{script} named a missing config: {}", text(&run));
     assert!(matches!(run.status.code(), Some(0 | 1)), "{script} status: {}", text(&run));
-    let bare = rig.launcher(script, false);
-    assert_ne!(bare.status.code(), Some(0), "{script} ran with nothing set: {}", text(&bare));
+    for profile in [Profile::WithoutToml, Profile::Nothing] {
+        let bare = rig.launcher(script, profile);
+        assert_ne!(bare.status.code(), Some(0), "{script} ran without its config: {}", text(&bare));
+        if profile == Profile::WithoutToml {
+            assert!(text(&bare).contains("SPIRA_TOML"), "{script} refused without saying why: {}", text(&bare));
+        }
+    }
 }
 
 // covers: UC-operator-launchers-02
