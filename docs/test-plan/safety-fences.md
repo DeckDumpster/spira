@@ -93,7 +93,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 30 | dwarf::persona_tools_tests | T1 | Rust (sp-706kgd): ops and czar runes through spira-config's rune parser. TI: `ops_allows` reimplements the CLI matcher (see Gaps) |
 | 31 | test-czar-shadow::all (secondary) | T1, 1 s | KEEP; fix the positive-control bug (below). Move the 11 conf/rune/brief grep rows to T0 lint |
 | 32 | `dwarf/tests/fences.rs` (`confine.sh` path prefixes) and `landing_pass::tests::confinement_is_asked_before_the_gate` | T2 | DONE (sp-dede1o) |
-| 32 (partition rows) | none: the spike suite is retired | — | GAP: filed as sp-dede1o.1 |
+| 32 (partition rows) | spira-lc::`the_shipped_spike_partition_takes_its_own_bead_and_no_other_kind` | T1 | DONE (sp-dede1o.1) |
 | 33 | none: the spike suite is retired | — | GAP: see UC-safety-fences-33 in the toml |
 | 34 | test-freshclone::all (secondary) | T0, 3 s | KEEP: the syntax sweep covers the runes and `confine.sh` |
 
@@ -356,7 +356,8 @@ verdict on UC-32's partition rows — see below.
   into even if the older verdict still applied. Read narrowly: this is the dispatch area
   overriding its own earlier proposal after the fact, not this bead declining the work.
   `confine.sh` (T2) and the two landing rows (T3, main only) were already correctly
-  placed and needed nothing.
+  placed and needed nothing. The partition rows are now held by spira-lc's
+  `the_shipped_spike_partition_takes_its_own_bead_and_no_other_kind` (T1, sp-dede1o.1).
 - **Gap 10** (test-dwarf-dirty-commit CI-dead fix) was never this bead's — the filing
   above already moved it to sp-pohf2 before this bead ran.
 

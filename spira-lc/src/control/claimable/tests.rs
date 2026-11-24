@@ -339,7 +339,7 @@ mod pinned {
         }
     }
 
-    fn store() -> Store<MemBackend> {
+    pub(super) fn store() -> Store<MemBackend> {
         let clock = runtime::ports::VirtualClock::new(1_000_000);
         let c = Contract::open(MemBackend::new(), Ports::virtual_clock(&clock), StoreConfig { min_lock_ttl_ms: 1_000 }).unwrap();
         Store::new(c, 1_000)
@@ -439,4 +439,101 @@ fn a_blocker_delivered_from_certified_still_carries_a_stack() {
     let dependent = blocked_on("B", BeadState::Ready, "A");
     let j = verdict(&dependent, &[&delivered("A", None)], &ctx());
     assert_eq!((j.verdict, j.depth), (Verdict::Claimable, 1));
+}
+
+mod shipped_runes {
+    use state_store::MemBackend;
+
+    use super::*;
+
+    struct Discovered<'a>(&'a Path);
+
+    impl Inputs for Discovered<'_> {
+        fn config(&self) -> Result<Config, String> {
+            FIXED.config()
+        }
+        fn statuses(&self, ids: &[String]) -> Result<BTreeMap<String, (String, String)>, String> {
+            FIXED.statuses(ids)
+        }
+        fn items(&self, ids: &[String]) -> Result<Vec<serde_json::Value>, String> {
+            FIXED.items(ids)
+        }
+        fn run_dir(&self) -> Result<PathBuf, String> {
+            FIXED.run_dir()
+        }
+        fn partitions(&self, config: &Config) -> Result<Vec<Partition>, String> {
+            runes::partitions(self.0, None, &config.queue_wait, "")
+        }
+        fn partitions_stamp(&self) -> Result<PartitionsStamp, String> {
+            Ok(runes::partitions_stamp(self.0, None))
+        }
+    }
+
+    fn label_names(text: &str) -> BTreeSet<String> {
+        text.lines()
+            .map(str::trim_start)
+            .filter(|l| l.starts_with("RUNE_LABELS=") || l.starts_with("RUNE_EXCLUDE_LABELS="))
+            .flat_map(|l| l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map(str::to_string).collect::<Vec<_>>())
+            .filter(|w| w.starts_with("SPIRA_") && w.ends_with("_LABEL"))
+            .collect()
+    }
+
+    // covers: UC-dispatch-09
+    #[test_id(tbmx1k4)]
+    #[test]
+    fn the_shipped_spike_partition_takes_its_own_bead_and_no_other_kind() {
+        let ws = testkit::TempDir::new("spira-lc-shipped-spike-partition");
+        let dir = runes::runes_dir(&ws);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut names = BTreeSet::new();
+        for entry in std::fs::read_dir(testkit::manifest_dir().join("../spira/runes")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rune") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                names.extend(label_names(&text));
+                std::fs::write(dir.join(path.file_name().unwrap()), text).unwrap();
+            }
+        }
+        let pin = |n: &str| if n == "SPIRA_SPIKE_LABEL" { "research".to_string() } else { format!("pinned-{n}") };
+        let pins: Vec<(&str, Option<String>)> = names.iter().map(|n| (n.as_str(), Some(pin(n)))).collect();
+        let pairs: Vec<(&str, Option<&str>)> = pins.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let _env = testkit::env(&pairs);
+        let label = |n: &str| pin(n);
+        let (scope, spike, plan) = (label("SPIRA_SCOPE_LABEL"), label("SPIRA_SPIKE_LABEL"), label("SPIRA_PLAN_LABEL"));
+
+        let cand = |id: &str, labels: &[&str], hold: Option<HoldKind>| {
+            let mut r = rec(id, BeadState::Ready);
+            r.claim.as_mut().unwrap().labels = labels.iter().map(|l| l.to_string()).collect();
+            r.row.holds.extend(hold);
+            r
+        };
+        let cands = vec![
+            cand("spike", &[&scope, &spike], None),
+            cand("plan", &[&scope, &plan], None),
+            cand("partial", &[&spike], None),
+            cand("asked", &[&scope, &spike], Some(HoldKind::Ask)),
+            cand("poisoned", &[&scope, &spike], Some(HoldKind::Poison)),
+        ];
+
+        let parts = runes::partitions(&ws, None, "queue-wait", "").unwrap();
+        assert!(parts.iter().any(|p| p.name == "spike"), "the spike rune is discovered without being listed");
+
+        let s = super::pinned::store();
+        let (_, views) = view::<MemBackend>(&s, 1, cands, &Discovered(&ws), 1_000).unwrap();
+        let seen: Vec<(&str, Verdict, Vec<String>)> = ["spike", "plan", "partial", "asked", "poisoned"]
+            .into_iter()
+            .map(|id| (id, views[id].verdict, views[id].runes.clone()))
+            .collect();
+        let want = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            seen,
+            vec![
+                ("spike", Verdict::Claimable, want(&["spike"])),
+                ("plan", Verdict::Claimable, want(&["builder"])),
+                ("partial", Verdict::Claimable, want(&[])),
+                ("asked", Verdict::Held, want(&[])),
+                ("poisoned", Verdict::Held, want(&[])),
+            ]
+        );
+    }
 }
