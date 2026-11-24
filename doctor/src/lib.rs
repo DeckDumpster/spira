@@ -81,6 +81,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "time series query layer", lines: check_duckdb(w) },
         Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
+        Section { title: "host cargo config", lines: check_host_cargo_config(w) },
         Section { title: "dwarf build directories", lines: check_dwarf_build(w) },
         Section { title: "disk placement", lines: check_disk_placement(w) },
         Section { title: "root-disk writers", lines: check_root_writers(w) },
@@ -517,6 +518,50 @@ pub fn check_duckdb(w: &dyn World) -> Vec<Line> {
             "tsd-query.sh refuses every query and every reconciler-flow invariant logs\n        unobservable until this is installed. See deps.toml's duckdb entry.",
         )]
     }
+}
+
+// ============================================================================ host cargo config
+
+/// The cargo config files that apply to a builder's cargo: the cargo home's, then each
+/// ancestor's `.cargo` of the run's worktree directory. Read-only.
+fn host_cargo_config_files(w: &dyn World) -> Vec<PathBuf> {
+    let home = w.env("CARGO_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| w.env("HOME").filter(|v| !v.is_empty()).map(|h| Path::new(&h).join(".cargo")));
+    let mut dirs: Vec<PathBuf> = home.into_iter().collect();
+    if let Some(run) = w.env("SPIRA_RUN").filter(|v| !v.is_empty()) {
+        for a in Path::new(&run).join("worktree").ancestors() {
+            dirs.push(a.join(".cargo"));
+        }
+    }
+    let mut seen = Vec::new();
+    dirs.into_iter()
+        .filter(|d| {
+            let fresh = !seen.contains(d);
+            seen.push(d.clone());
+            fresh
+        })
+        .flat_map(|d| [d.join("config.toml"), d.join("config")])
+        .collect()
+}
+
+/// A host cargo config that sets what the harness declares for a builder session (jobs, test
+/// threads, profiles, a retired wrapper) overrides it and, for `incremental`, defeats the
+/// manifest. Reports; never edits the file.
+pub fn check_host_cargo_config(w: &dyn World) -> Vec<Line> {
+    let mut lines = Vec::new();
+    for f in host_cargo_config_files(w) {
+        let Some(text) = w.read_file(&f) else { continue };
+        let keys = spira_config::build::host_drift(&text);
+        if !keys.is_empty() {
+            lines.push(warn(
+                format!("{} sets {}", f.display(), keys.join(", ")),
+                "the harness declares these for a builder session (spira_config::build::session_env, the root Cargo.toml); delete them from this file",
+            ));
+        }
+    }
+    if lines.is_empty() {
+        lines.push(ok("no host cargo config sets what a builder session declares"));
+    }
+    lines
 }
 
 // ============================================================================ compilation cache

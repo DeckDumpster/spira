@@ -27,6 +27,7 @@ pub struct Fake {
     pub gate_defs: RefCell<BTreeMap<String, Result<String, String>>>,
     pub dirs: RefCell<Vec<PathBuf>>,
     pub files: RefCell<Vec<PathBuf>>,
+    pub contents: RefCell<BTreeMap<PathBuf, String>>,
     pub bd_list: RefCell<Result<String, String>>,
     pub dolt_metrics_off: RefCell<bool>,
     pub dolt_events: RefCell<usize>,
@@ -86,6 +87,7 @@ impl Default for Fake {
             gate_defs: RefCell::new(BTreeMap::new()),
             dirs: RefCell::new(Vec::new()),
             files: RefCell::new(Vec::new()),
+            contents: RefCell::new(BTreeMap::new()),
             bd_list: RefCell::new(Err("no fixture".into())),
             dolt_metrics_off: RefCell::new(true),
             dolt_events: RefCell::new(0),
@@ -179,6 +181,9 @@ impl World for Fake {
     }
     fn file_exists(&self, p: &Path) -> bool {
         self.files.borrow().contains(&p.to_path_buf())
+    }
+    fn read_file(&self, p: &Path) -> Option<String> {
+        self.contents.borrow().get(p).cloned()
     }
     fn bd_list(&self, _timeout_secs: u64) -> Result<String, String> {
         self.bd_list.borrow().clone()
@@ -1732,4 +1737,39 @@ fn doctor_without_spira_toml_refuses_naming_it() {
     assert!(e.contains("SPIRA_TOML is not set"), "{e}");
     assert!(require_spec(Some("")).unwrap_err().contains("SPIRA_TOML"));
     assert_eq!(require_spec(Some("c/one-source.toml")).unwrap(), "c/one-source.toml");
+}
+
+#[test_id(t3qhj7t)]
+#[test]
+fn a_host_cargo_config_that_sets_what_the_harness_declares_warns_naming_file_and_key() {
+    let f = Fake::default();
+    f.set("CARGO_HOME", "ch");
+    f.set("SPIRA_RUN", "srun");
+    f.contents.borrow_mut().insert(PathBuf::from("ch/config.toml"), "[build]\njobs = 6\n".into());
+    f.contents.borrow_mut().insert(PathBuf::from("srun/.cargo/config"), "[env]\nRUST_TEST_THREADS = \"4\"\n".into());
+    let out = check_host_cargo_config(&f);
+    assert_eq!(levels(&out), vec![Level::Warn, Level::Warn]);
+    assert!(out[0].msg.contains("ch/config.toml") && out[0].msg.contains("build.jobs"), "{}", out[0].msg);
+    assert!(out[1].msg.contains("srun/.cargo/config") && out[1].msg.contains("env.RUST_TEST_THREADS"), "{}", out[1].msg);
+}
+
+#[test_id(ti3t10p)]
+#[test]
+fn a_clean_or_absent_host_cargo_config_is_ok() {
+    let f = Fake::default();
+    f.set("CARGO_HOME", "ch");
+    assert_eq!(levels(&check_host_cargo_config(&f)), vec![Level::Ok]);
+    f.contents.borrow_mut().insert(PathBuf::from("ch/config.toml"), "[build]\nrustc-wrapper = \"sccache\"\n[env]\nSCCACHE_DIR = \"x\"\n".into());
+    assert_eq!(levels(&check_host_cargo_config(&f)), vec![Level::Ok]);
+}
+
+#[test_id(t9e7anw)]
+#[test]
+fn doctor_run_reports_host_cargo_drift_found_under_a_run_ancestor() {
+    let f = Fake::default();
+    f.set("SPIRA_RUN", "srun");
+    f.contents.borrow_mut().insert(PathBuf::from("srun/.cargo/config.toml"), "[build]\nincremental = false\n".into());
+    run(&f);
+    let out = f.stdout.borrow().join("\n");
+    assert!(out.contains("host cargo config") && out.contains("srun/.cargo/config.toml sets build.incremental"), "{out}");
 }

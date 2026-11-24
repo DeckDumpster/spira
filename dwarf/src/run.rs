@@ -1504,6 +1504,9 @@ impl<'a> Run<'a> {
         // anywhere else. A rune that does not compile leases nothing and builds nowhere warm.
         if self.rune.builds {
             self.lease_build_dir(work)?;
+            for (k, v) in spira_config::build::session_env() {
+                env.set(&k, &v);
+            }
         } else {
             self.log(&format!("{}: this rune does not build — no build directory", self.f()));
         }

@@ -38,6 +38,8 @@ pub const COLD_PAR: u64 = 1;
 /// Cargo jobs one testenv run uses (`spira/unit-tests.sh` defaults `-j` to this): the divisor
 /// that turns the host's cores into how many runs fit at once.
 pub const RUN_CARGO_JOBS: u64 = 6;
+/// Test threads one testenv run, and a builder session's cargo test, uses.
+pub const RUN_TEST_THREADS: u64 = 4;
 /// Longest one session keeps the cold slot: the build phase is over by then, whatever the
 /// session still does.
 pub const COLD_HOLD_SECS: u64 = 1200;

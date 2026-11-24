@@ -16,8 +16,16 @@ be generating that much IO."* So:
 1. **One shared compilation cache for the box**: every Spira build path compiles through
    `sccache` with its local disk cache. A dependency crate is compiled at most once per
    (Cargo.lock, profile) and read from the cache after that.
-2. **Non-interactive builds are not incremental.** Incremental caches are write-heavy
-   (~270–350 MB per tree) and useless to a one-shot build.
+2. **Whole-workspace builds are not incremental; a builder's own crate turns are.** The root
+   manifest's `[profile.dev] incremental = true` serves an edit-and-retest loop. Incremental
+   caches are write-heavy (~270–350 MB per tree, GBs per build folder over a workspace) and
+   useless to a one-shot build, so the gate's unit compose, testenv's unit tier and every cargo
+   call of `work checks` pass `one_shot("dev")`. Incremental is declared in the manifest, never
+   by `CARGO_INCREMENTAL` or `CARGO_PROFILE_DEV_INCREMENTAL` (both change the cache key, so the
+   dependencies miss), and never in a host cargo config (`build.incremental=false` there defeats
+   the manifest and made a one-line edit cost minutes): `doctor` reports any `[build]`,
+   `[profile]` or `[env]` key a host config sets, except `SCCACHE_*` and a wrapper other than
+   the retired `spira-admit`.
 3. **Ephemeral trees build on tmpfs.** A gate tree's `target/` lives on a RAM-backed tmpfs
    (testenv's slots already do, sp-t26yx); a trial that cannot get the room refuses
    (NO_VERDICT), never falls back to the disk.
@@ -35,6 +43,8 @@ be generating that much IO."* So:
 wrapper(path, setting)  -> Ok(Wrapper::Sccache(<abs path>)) | Ok(Wrapper::Off) | Err(refusal)
 Wrapper::env()          -> [("RUSTC_WRAPPER", <abs>|""), ("SCCACHE_IGNORE_SERVER_IO_ERROR","1")]
 one_shot(profile)       -> ["--config", "profile.<profile>.incremental=false"]
+session_env()           -> [("CARGO_BUILD_JOBS", "6"), ("RUST_TEST_THREADS", "4")]  (a building rune's session)
+host_drift(config_text) -> the keys a host cargo config sets that the harness declares
 ```
 
 * `path` is the PATH the build will run under (the gate's is built outright from

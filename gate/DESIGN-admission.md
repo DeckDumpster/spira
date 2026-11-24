@@ -185,6 +185,13 @@ phase's pool size**, and nothing else. A job never runs narrower: no CPU quota, 
 `jobs` cap, no `--test-threads` cap, no smaller `batch_maxpar`, no nice or ionice.
 law-reduce-the-count-never-throttle-the-job.
 
+**What a builder session declares.** `admission::RUN_CARGO_JOBS` and `RUN_TEST_THREADS` are the
+width one run is *sized* at: the first is the divisor that turns the host's cores into how many
+runs fit, so a session's `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`
+(`spira_config::build::session_env`, set by dwarf for a rune that builds) state that sizing; they
+are not a cap added to a job. A host cargo config carries none of it; `doctor` warns when one does.
+Builds outside a session (gate, `queue`, `release`) set no jobs and use the host's cores.
+
 ## 6. Decisions
 
 * **D1: per-phase pools, not one pool** (operator amendment, 2026-09-30). The bead was first
