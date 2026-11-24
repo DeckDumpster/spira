@@ -1473,6 +1473,21 @@ impl Engine {
     /// Dispatch every queued event, committing the store once after each: the number dispatched.
     /// A turn that could not commit is sent again before the next event is taken.
     pub fn pump(&mut self) -> Result<usize> {
+        self.pump_until(None)
+    }
+
+    /// One tick, then events until the queue is empty or the engine clock passes `budget_ms` from
+    /// now, checked after each committed event. True when events are still queued.
+    pub fn run_slice(&mut self, budget_ms: u64) -> Result<bool> {
+        self.rss.reset();
+        let end = self.clock.now_ms().saturating_add(budget_ms);
+        let run = self.tick().and_then(|_| self.pump_until(Some(end)));
+        self.publish();
+        run?;
+        Ok(!self.queue.is_empty())
+    }
+
+    fn pump_until(&mut self, end: Option<u64>) -> Result<usize> {
         self.commit_turn()?;
         self.answer_committed(Ok(()));
         let mut n = 0;
@@ -1500,6 +1515,9 @@ impl Engine {
                     other?;
                     self.answer_committed(Ok(()));
                 }
+            }
+            if end.is_some_and(|e| self.clock.now_ms() >= e) {
+                break;
             }
         }
         Ok(n)
