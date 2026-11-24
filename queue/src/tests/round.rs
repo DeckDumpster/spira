@@ -11028,6 +11028,27 @@ fn a_deferred_landing_that_activates_is_a_landing_log_record_and_no_mail() {
     assert!(!lines[0].contains("release=none") && !lines[0].contains("not activated"), "{}", lines[0]);
 }
 
+#[test_id(t8aguwf)]
+#[test]
+fn a_green_round_proves_every_listed_round_step_for_each_member() {
+    let mut t = round_world();
+    t.lib.s.home_repo = "spira".into();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == "sp-a") {
+        r.tip = Some(T_FIX.into());
+    }
+    t.git.ancestor(T_FIX, "merged-tb");
+    t.git.ancestor(T_FIX, "merged-tc");
+    let members = format!("sp-a:{T_FIX},sp-b");
+    assert_eq!(t.run(&["round", "open", "--members", &members]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    for step in spira_config::round_step::names() {
+        assert!(spira_config::proof::proven(&proof_run(&t), "sp-a", T_FIX, step), "{step} not proven for sp-a");
+    }
+}
+
 #[test_id(t8qp4wn)]
 #[test]
 fn a_green_round_clears_its_members_registry_rows_before_the_release_activates() {
