@@ -3603,7 +3603,11 @@ mod cut_tests {
         let calls = d.join("round-vm-calls");
         testkit::write_exe(&env.round_vm, &format!("#!/bin/sh\necho \"$@\" >> {}\nexit 2\n", calls.display()));
         let queue_calls = d.join("queue-calls");
-        testkit::write_exe(&env.queue_bin, &format!("#!/bin/sh\necho \"CALL $*\" >> {}\ncat >> {0}\nexit 0\n", queue_calls.display()));
+        let status: String = batch.map_or(String::new(), |b| {
+            let ms: Vec<String> = members.iter().zip(&tips).map(|((id, _), tip)| format!("{id}:{tip}")).collect();
+            format!("rounds=1\\nround=open\\nbatch_id={b}\\nhead=h\\nmembers={}\\nworktree=w\\n", ms.join(" "))
+        });
+        testkit::write_exe(&env.queue_bin, &format!("#!/bin/sh\ncase \"$*\" in *status*) printf '{status}'; exit 0;; esac\necho \"CALL $*\" >> {}\ncat >> {0}\nexit 0\n", queue_calls.display()));
         env.maxpar = 1;
         let repo = io::Repo { name: "fx".into(), path: repo_dir, base: "main".into(), forge: PathBuf::new(), land: Land::Local };
         let o = Opts {
