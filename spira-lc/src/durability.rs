@@ -51,11 +51,6 @@ pub fn configured(backend: SqliteBackend, run: &Path) -> Option<Result<Shipping,
     })())
 }
 
-/// A run is staged at most once per quarter of the freshness bound, never more often than a tick.
-fn stage_every_ms(every_secs: u64, max_age_secs: u64) -> u64 {
-    every_secs.max(max_age_secs / 4).saturating_mul(1_000)
-}
-
 /// The shipper for a destination: it stages in `dir` and uploads nothing, because lc-serve
 /// starts no process; `ship::drain`, run by the scheduler's `lc.ship` task, uploads.
 fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_secs, max_age_secs): (u64, u64, u64)) -> Result<Shipping, String> {
@@ -67,7 +62,7 @@ fn staging(backend: SqliteBackend, dir: PathBuf, url: &str, (every, snapshot_sec
         dir,
         max_mains: MAX_MAINS,
         snapshot_every_ms: snapshot_secs.saturating_mul(1_000),
-        stage_every_ms: stage_every_ms(every, max_age_secs),
+        stage_every_ms: ship::stage_every_ms(every, max_age_secs),
     };
     let shipper = Shipper::open_staging(backend, cfg, Arc::new(WallClock))?;
     Ok(Shipping {
@@ -298,13 +293,6 @@ mod tests {
         assert!(drained.failed.is_none() && drained.uploaded.len() == 2, "{drained:?}");
         assert!(off.join("revlog").is_dir());
         assert_eq!(sh.tick().unwrap().shipped_through, 1, "the staging shipper reads what the drain recorded");
-    }
-
-    #[test_id(t0osgsx)]
-    #[test]
-    fn staging_waits_a_quarter_of_the_freshness_bound_and_never_less_than_a_tick() {
-        assert_eq!(stage_every_ms(2, 60), 15_000);
-        assert_eq!(stage_every_ms(5, 8), 5_000);
     }
 
     #[test_id(tbd0vxr)]

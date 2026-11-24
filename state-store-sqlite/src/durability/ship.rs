@@ -199,6 +199,11 @@ fn read_u64(fs: &dyn Fs, path: &Path) -> Result<Option<u64>, String> {
     }
 }
 
+/// A run is staged at most once per quarter of the freshness bound, never more often than a tick.
+pub fn stage_every_ms(every_secs: u64, max_age_secs: u64) -> u64 {
+    every_secs.max(max_age_secs / 4).saturating_mul(1_000)
+}
+
 /// `configured`, or `run/lc-ship` while it is unset or empty.
 pub fn dir_at(configured: Option<String>, run: &Path) -> PathBuf {
     configured
@@ -584,6 +589,13 @@ pub fn drain_kind(fs: &dyn Fs, dir: &Path, kind: &str, put: &dyn Put) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(t0osgsx)]
+    #[test]
+    fn staging_waits_a_quarter_of_the_freshness_bound_and_never_less_than_a_tick() {
+        assert_eq!(stage_every_ms(2, 60), 15_000);
+        assert_eq!(stage_every_ms(5, 8), 5_000);
+    }
 
     #[test_id(tj3vflm)]
     #[test]
