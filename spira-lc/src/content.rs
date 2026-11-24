@@ -283,7 +283,7 @@ fn own_parent_wait(args: &mut Vec<String>, g: &Guards) {
     let label = spira_config::nonwork::SPLIT_LABEL;
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     let (add, id, dep) = match a.as_slice() {
-        ["dep", "add", id, dep] if bead::is_blocks_type(None) => (true, *id, *dep),
+        ["dep", "add", id, dep] => (true, *id, *dep),
         ["dep", "add", id, dep, "--type", t] if bead::is_blocks_type(Some(t)) => (true, *id, *dep),
         ["dep", "remove", id, dep] => (false, *id, *dep),
         _ => return,

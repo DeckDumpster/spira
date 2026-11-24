@@ -1156,7 +1156,8 @@ fn a_dep_add_bd_would_refuse_says_which_condition_and_leaves_the_edges_unchanged
             .map(|i| lc.shows(i).split_whitespace().collect::<String>())
     };
     let before = edges();
-    let cases: [(&[&str], &str); 6] = [
+    let cases: [(&[&str], &str); 7] = [
+        (&["dep", "add", &child, &parent, "--type", "relates-to"], "`dep remove"),
         (&["dep", "add", &a, &a], "itself"),
         (&["dep", "add", &parent, &child], "descendant"),
         (&["dep", "add", &child, &grand], "not its direct parent"),

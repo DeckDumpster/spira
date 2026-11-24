@@ -893,7 +893,7 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
                     return Err(format!("{me_id} cannot depend on itself: a self edge is no dependency; name another item"));
                 }
                 if let Some(t) = edge(me_id, on)?.filter(|t| t != kind) {
-                    let way = if t == "parent-child" {
+                    let way = if t == "parent-child" && kind == "blocks" {
                         format!("{on} is {me_id}'s parent; to make {me_id} wait for it add the label {}", spira_config::nonwork::SPLIT_LABEL)
                     } else {
                         format!("`dep remove {me_id} {on}` first, then add the {kind} edge")
@@ -901,7 +901,7 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
                     return Err(format!("{me_id} already has a {t} edge onto {on}, and a pair holds one edge: {way}"));
                 }
                 if kind == "blocks" {
-                    if hierarchy(w, me_id, on)? || is_ancestor_id(on, me_id) {
+                    if hierarchy(w, me_id, on)? || is_descendant(me_id, on) {
                         return Err(format!("{on} is an ancestor of {me_id} but not its direct parent: depend on the direct parent, or on an item outside {on}'s tree"));
                     }
                     if hierarchy(w, on, me_id)? || is_descendant(on, me_id) {
@@ -930,10 +930,6 @@ fn preflight(w: &Writer, m: &Mutation, me: &serde_json::Value) -> Result<Option<
         kept.push(op.clone());
     }
     Ok(Some(Mutation { ops: kept, ..m.clone() }))
-}
-
-fn is_ancestor_id(ancestor: &str, node: &str) -> bool {
-    is_descendant(node, ancestor)
 }
 
 fn is_descendant(child: &str, parent: &str) -> bool {
