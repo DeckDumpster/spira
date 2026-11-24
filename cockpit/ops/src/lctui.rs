@@ -551,13 +551,15 @@ fn pass_line(p: &crate::lcview::PassProgress, now: i64) -> String {
         "fences" => format!("{head} · fences on the merged head {D}{}m, outside the cap{R}", (now - p.build_started) / 60),
         "build" => format!("{head} · building {D}{}m, outside the cap{R}", (now - p.build_started) / 60),
         _ => {
-            let total = p.total.max(1);
-            let w = 20usize;
-            let fill = (w as u32 * p.done.min(total) / total) as usize;
             let el = now - p.suites_started;
             let tc = if el > p.cap { RED } else if el > 720 { YEL } else { "" };
             let red = if p.red.is_empty() { "0 red".to_string() } else { format!("{RED}{} red{R}", p.red.len()) };
-            format!("{head} · suites ▕{}{}▏ {}/{} · {red} · {tc}{}m{:02}s of {}m{R}", "█".repeat(fill), "░".repeat(w - fill), p.done, p.total, el / 60, el % 60, p.cap / 60)
+            let bar = crate::lcview::bar20(p.done, p.total);
+            if p.tests {
+                let clock = if p.suites_started > 0 { format!(" · {tc}{}m{:02}s of {}m{R}", el / 60, el % 60, p.cap / 60) } else { String::new() };
+                return format!("{head} · {} {bar} {}/{} tests · {red}{clock}", p.phase, p.done, p.total);
+            }
+            format!("{head} · suites {bar} {}/{} · {red} · {tc}{}m{:02}s of {}m{R}", p.done, p.total, el / 60, el % 60, p.cap / 60)
         }
     }
 }
@@ -567,13 +569,15 @@ fn pass_line(p: &crate::lcview::PassProgress, now: i64) -> String {
 fn pass_node(p: &crate::lcview::PassProgress, now: i64) -> Node {
     let running = p.running(now);
     let bar = || {
-        let total = p.total.max(1);
-        let w = 20usize;
-        let fill = (w as u32 * p.done.min(total) / total) as usize;
         let el = if running { now - p.suites_started } else { p.updated_at - p.suites_started };
         let tc = if el > p.cap { RED } else if el > 720 { YEL } else { "" };
         let red = if p.red.is_empty() { "0 red".to_string() } else { format!("{RED}{} red{R}", p.red.len()) };
-        format!("▕{}{}▏ {}/{} · {red} · {tc}{}m{:02}s of {}m{R}", "█".repeat(fill), "░".repeat(w - fill), p.done, p.total, el / 60, el % 60, p.cap / 60)
+        let bar = crate::lcview::bar20(p.done, p.total);
+        if p.tests {
+            let clock = if p.suites_started > 0 { format!(" · {tc}{}m{:02}s of {}m{R}", el / 60, el % 60, p.cap / 60) } else { String::new() };
+            return format!("{bar} {}/{} tests · {red}{clock}", p.done, p.total);
+        }
+        format!("{bar} {}/{} · {red} · {tc}{}m{:02}s of {}m{R}", p.done, p.total, el / 60, el % 60, p.cap / 60)
     };
     let head = match (running, p.phase.as_str()) {
         (true, "fences") => format!("{B}pass {}{R} {CYN}fences{R} {D}on the merged head, {}m — outside the cap{R}", p.pass, (now - p.build_started) / 60),
@@ -1578,6 +1582,21 @@ mod tests {
         let t = text(&layout(&v, &Ui::default(), 100, 200));
         assert!(has(&t, "pass 2") && has(&t, "226/452") && !has(&t, "test-x.sh"), "a finished pass folds its reds and keeps its bar: {t:#?}");
         assert!(!t[1].contains("⟳"), "no pinned line once the pass is over");
+    }
+
+    #[test_id(tr5k0pd)]
+    #[test]
+    fn a_tests_pass_draws_its_tests_and_keeps_the_cap_clock_until_suites_start() {
+        use crate::lcview::PassProgress;
+        let mut v = busy_view();
+        v.now = 10_000;
+        v.progress = Some(PassProgress { round: "r-auto-96".into(), pass: 2, phase: "unit-tests".into(), done: 3120, total: 11240, tests: true, build_started: 9_000, suites_started: 0, cap: 900, updated_at: 9_995, ..Default::default() });
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        let row = t.iter().find(|l| l.contains("pass 2")).expect("the pass row").clone();
+        assert!(row.contains("▕█████░░░░░░░░░░░░░░░▏ 3120/11240 tests · 0 red") && !row.contains("of 15m"), "{row}");
+        v.progress.as_mut().unwrap().suites_started = 9_700;
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        assert!(t.iter().any(|l| l.contains("3120/11240 tests") && l.contains("5m00s of 15m")), "{t:#?}");
     }
 
     #[test_id(t2iyuo7)]

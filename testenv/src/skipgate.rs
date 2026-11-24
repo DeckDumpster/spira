@@ -234,7 +234,7 @@ mod tests {
     fn apply_reclassifies_an_undeclared_skip_req_to_red() {
         let gate = SkipGate::load("").unwrap();
         let rec = skip_req_rec("requires:claude");
-        let out = apply(&gate, "test-concierge.sh", false, rec);
+        let out = apply(&gate, "test-example.sh", false, rec);
         assert_eq!(out.status, Status::Red);
         assert_eq!(out.fingerprint, "requires:claude");
     }

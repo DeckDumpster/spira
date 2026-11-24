@@ -16,12 +16,6 @@ integration = ["mail/integration", "spira-config/integration", "spira-store/inte
 crossterm = "0.28"
 serde_json = "1"
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [dependencies.spira-config]
 path = "../../spira-config"
 

@@ -86,7 +86,6 @@ fn argv(words: &[&str]) -> Vec<String> {
 /// Everything the server writes to `request` before it closes the connection.
 fn raw(socket: &std::path::Path, request: &[u8]) -> Vec<u8> {
     let mut stream = UnixStream::connect(socket).expect("the socket accepts");
-    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
     stream.write_all(request).unwrap();
     let mut got = Vec::new();
     stream.read_to_end(&mut got).expect("the server answers");
@@ -141,8 +140,7 @@ fn fifty_concurrent_loop_clients_leave_the_thread_names_as_they_were_at_ready() 
             scope.spawn(move || {
                 for n in 0..5 {
                     let words: Vec<String> = if (c + n) % 2 == 0 { argv(&["show", "sp-loopa1"]) } else { argv(&["list", "--live"]) };
-                    let stream = spira_store::lc_call::connect(socket).unwrap_or_else(|_| panic!("connect {c}/{n}"));
-                    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+                    let stream = spira_store::lc_call::connect_within(socket, Duration::from_secs(30)).unwrap_or_else(|_| panic!("connect {c}/{n}"));
                     spira_store::lc_call::exchange_once(stream, &words, None).unwrap_or_else(|_| panic!("no answer to {words:?}"));
                 }
             });

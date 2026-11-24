@@ -32,9 +32,3 @@ spira-test-id = { path = "../spira-test-id" }
 system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }
 mail = { path = "../mail" }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true

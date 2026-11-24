@@ -1753,6 +1753,15 @@ fn a_host_cargo_config_that_sets_what_the_harness_declares_warns_naming_file_and
     assert!(out[1].msg.contains("srun/.cargo/config") && out[1].msg.contains("env.RUST_TEST_THREADS"), "{}", out[1].msg);
 }
 
+#[test_id(tsg0yd1)]
+#[test]
+fn a_host_cargo_config_setting_only_incremental_profiles_or_tmpdir_is_ok() {
+    let f = Fake::default();
+    f.set("CARGO_HOME", "ch");
+    f.contents.borrow_mut().insert(PathBuf::from("ch/config.toml"), "[build]\nincremental = false\n[env]\nTMPDIR = \"/t\"\n[profile.dev]\ncodegen-units = 4\n".into());
+    assert_eq!(levels(&check_host_cargo_config(&f)), vec![Level::Ok]);
+}
+
 #[test_id(ti3t10p)]
 #[test]
 fn a_clean_or_absent_host_cargo_config_is_ok() {
@@ -1768,8 +1777,8 @@ fn a_clean_or_absent_host_cargo_config_is_ok() {
 fn doctor_run_reports_host_cargo_drift_found_under_a_run_ancestor() {
     let f = Fake::default();
     f.set("SPIRA_RUN", "srun");
-    f.contents.borrow_mut().insert(PathBuf::from("srun/.cargo/config.toml"), "[build]\nincremental = false\n".into());
+    f.contents.borrow_mut().insert(PathBuf::from("srun/.cargo/config.toml"), "[build]\njobs = 6\n".into());
     run(&f);
     let out = f.stdout.borrow().join("\n");
-    assert!(out.contains("host cargo config") && out.contains("srun/.cargo/config.toml sets build.incremental"), "{out}");
+    assert!(out.contains("host cargo config") && out.contains("srun/.cargo/config.toml sets build.jobs"), "{out}");
 }

@@ -52,7 +52,7 @@ fn run_main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     // --seed-prod-instance <conf> <toml> <instance> <home> — the underlying function alone,
-    // for install/tests/seed_instance.rs (docs/test-plan/instance-lifecycle.md UC-29); the real
+    // for spira-config/tests/seed_instance.rs (docs/test-plan/instance-lifecycle.md UC-29); the real
     // call site is seed_prod_instance_if_split, wired into the ordinary run below.
     if args.first().map(String::as_str) == Some("--seed-prod-instance") {
         let (Some(conf), Some(toml), Some(instance), Some(home)) = (args.get(1), args.get(2), args.get(3), args.get(4)) else {

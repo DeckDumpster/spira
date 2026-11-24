@@ -1,6 +1,6 @@
 //! The scheduler's real sources (design S9): what submits events to the host from outside it.
-//! Each runs as a future under `runtime::sources::Sources::start`, and each is refused under
-//! virtual time, where a `ScriptedSource` stands in. The event shapes and contracts live beside
+//! Each runs as a future under `runtime::sources::Sources::start`, none owns a thread, and each
+//! is refused under virtual time, where a `ScriptedSource` stands in. The event shapes and contracts live beside
 //! the cockpit tiers in family G (`tasks::g`, which re-exports this module); the real reads
 //! live here.
 //!
@@ -8,7 +8,7 @@
 //! |---|---|---|
 //! | `mail.arrived` | inotify on Linux, a directory listing elsewhere ([`watch`]) | [`mail`] |
 //! | `unit.ran` | the unit manager's completions: systemd over D-Bus, or the host's `ProcessUnits` | [`units`] |
-//! | `submission` | `spira-submission`'s SMTP session, delivering through the `mail` crate | [`smtp`] |
+//! | `submission` | `spira-submission`'s SMTP listener and sessions as tasks on the loop, delivering through the `mail` crate | [`smtp`] |
 //! | `store.changed` | the store's `watch` feed, a socket on the scheduler's loop that keeps the in-process store views current | [`store_changed`] |
 //! | `margin.changed` | a long-poll held open on the Margin reader's change feed; dormant while `SPIRA_MARGIN_URL` is empty | [`margin_changed`] |
 

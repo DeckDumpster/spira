@@ -41,9 +41,3 @@ system-paths = { path = "../system-paths" }
 testkit = { path = "../testkit" }
 spira-claim = { path = "../spira-claim" }
 lifecycle = { path = "../lifecycle" }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true

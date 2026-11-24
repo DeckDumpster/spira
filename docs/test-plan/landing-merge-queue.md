@@ -2,7 +2,7 @@
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `landing-merge-queue`; use-case ids are `UC-landing-merge-queue-NN`.
 
-**Area id:** `landing-merge-queue`. **Primary files:** 51 suites (plus the three Rust crates that have no tests). **Secondary:** test-czar-shadow, test-pr-notify, test-timer-templates, test-verdict-timer.
+**Area id:** `landing-merge-queue`. **Primary files:** 51 suites (plus the three Rust crates that have no tests). **Secondary:** test-czar-shadow, the retired pr-notify suite, test-timer-templates, test-verdict-timer.
 **Current cost:** 1,506 suite-seconds on main push 35947142904. **Projected:** about 765 s (section 7).
 **Sources:** mapper records in `map/*.jsonl`, reducer proposals r0 (landing-pipeline, merge-queue, ci-wait-gates, forge-integration), r1 (merge-queue-certification), r2 (red-attribution), r3 (merge-queue-assembly, merge-queue-verdict, forge-adapter), `signals.tsv`, and read-only greps of `spira/{landing,batch,verdict,queue,forge}.sh` and `lib.sh`.
 
@@ -101,7 +101,7 @@ Each use case is declared once, as the schema in docs/test-plan/README.md requir
 ### F. CI-wait gates and forge adapters
 
 * `UC-landing-merge-queue-52` [T1] — `gate-check` discovers `--branch` once per distinct unbound-gate branch and never calls a bare discover or discovers for push repos. It then runs `gate check`. It reports a gate with no await_id as stuck. It parses ESCALATE lines for any `SPIRA_ID_PREFIX`. Its stderr is silent on a clean pass. *(tier: T1 over a stub bd; dim: corr, ctr, obs; where: cert)*
-* `UC-landing-merge-queue-53` [T2] — bd's own gh:run gates behave as the harness expects: a gated bead leaves `ready`, and resolution is scoped to `metadata.repo`. *(tier: T2 contract; dim: ctr; where: on bd pin change)*
+* `UC-landing-merge-queue-53` [T1] — `gate-check` asks for each unbound gate's branch in every pr repo that has a checkout, by repo name, and in no other; a gated bead's readiness is the lifecycle's. *(tier: T1; dim: ctr)*
 * `UC-landing-merge-queue-54` [T1] — `forge.sh` maps gh JSON to the line protocol for every verb Spira consumes: check-status (`pending`/`green`/`red`/`harness_fault`/`provision_fault`, `red-suite:`, `head-sha:`), runs-active (`?` never 0), run-metadata (max activity), workflow-rerun (never `--failed`, cancels in-progress), and also pr-mergeability, pr-list-queue, batch-ci-status, queued-since, run-id and pr-number. *(tier: T1, a recorded-fixture contract; dim: ctr, fc; where: cert)*
 * `UC-landing-merge-queue-55` [T1] — The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other rune, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly. *(tier: T1 via cargo `#[test]`, plus T2 for one bash smoke; dim: fc, ctr; where: cert)*
 * `UC-landing-merge-queue-57` [T2] — When a bead with a GitHub ref lands, its issue is commented (short SHA + link) and closed once, with a marker. An unlanded bead's issue is never closed. Backfill decides landed-ness by ancestry of `spira: land <id>`. The unlanded scan asks once, logs refusals, and marks issues already closed on the forge. *(dim: idem, fc, obs; where: batch)*
@@ -166,7 +166,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 | 50 | test-verdict-timer::(all); test-timer-templates::(verdict rows) | static / 2, 10 | KEEP only the ExecStart chain and the limits in verdict-timer; DELETE its UNITS/_ENABLE_TMPL/periodic rows (subsumed) |
 | 51 | test-ci-park::classifier table ×16 | integration / 24 | split: the table → T1 file (<1 s); the brief and ops-pane sections go to dwarf-execution and cockpit |
 | 52 | test-gate-discover-branch::(all); test-gh-run-gate::part 3; test-gate-check-stuck::(all); test-gate-check-stderr::(all) | unit / 1; integration / 7, 6, 3 | SUPERSEDED sp-ubw2o: gate-check.sh's discover-branch logic moved to the Rust `gate-check` crate (`engine::discover_branches`, `cargo test -p gate-check`), which never constructs a bare `discover` call at all — the bug this row's two suites pinned is now structurally impossible, not just tested-around. Both **discover-branch and gh-run-gate part 3 were deleted** rather than kept/merged. stuck and stderr (real-bd wiring, untouched by the rewrite) are unaffected; their KEEP/MERGE recommendation still stands. |
-| 53 | test-gh-run-gate::parts 1–2, 4 | integration / (7) | KEEP as a bd contract test, run on bd pin change; part 4 → T0 |
+| 53 | `gate-check` `a_gates_branch_is_discovered_in_each_pr_repo_that_has_a_checkout_and_in_no_other` | unit / 1 | DONE (sp-ejlxjx); `test-gh-run-gate.sh` deleted |
 | 54 | test-forge-check-status; test-forge-run-metadata; test-forge-runs-active | component / 5, 5, 4 | MERGE into one `test-forge-contract.sh` over recorded JSON (no git init; add env -i to runs-active); extend it to the untested verbs (gap G1) |
 | 55 | test-broker::(all); broker crate has no tests | component / 12 | DEMOTE-TO-T1 via cargo `#[test]` (policy table, intent serde, argv); keep one bash smoke; DELETE the "FAILS OPEN" tautology; SOURCE-GREP the conf/build greps → T0 allowlist lint |
 | 57 | test-gh-issue-closeout::(all 12) | integration (server Dolt) / 33 | KEEP; switch to embedded testdb; stop copying all of spira/*.sh; fix case 4 (it passes on both branches) |

@@ -162,3 +162,27 @@
         let order = topo_order(&reg).unwrap();
         assert_eq!(order, vec!["SPIRA_A".to_string()]);
     }
+
+    #[test_id(ts465i4)]
+    #[test]
+    fn an_index_copied_with_its_tree_is_stale_until_removed() {
+        let src = testkit::TempDir::new("registry-index-src");
+        std::fs::create_dir_all(src.join("conf.d")).unwrap();
+        std::fs::create_dir_all(src.join("conf.toml.d")).unwrap();
+        std::fs::write(src.join("conf.d/SPIRA_A"), "TYPE=string\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_A:=a}\"\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        write_index(src.path()).unwrap();
+        let want = Registry::load(src.path()).unwrap();
+
+        let copy = testkit::TempDir::new("registry-index-copy");
+        for rel in ["conf.d", "conf.toml.d"] {
+            std::fs::create_dir_all(copy.join(rel)).unwrap();
+        }
+        for rel in ["conf.d/SPIRA_A", INDEX_FILE] {
+            std::fs::copy(src.join(rel), copy.join(rel)).unwrap();
+            let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+            std::fs::File::options().write(true).open(copy.join(rel)).unwrap().set_modified(later).unwrap();
+        }
+        assert!(Registry::load(copy.path()).unwrap_err().contains("stale"));
+        std::fs::remove_file(copy.join(INDEX_FILE)).unwrap();
+        assert_eq!(Registry::load(copy.path()).unwrap(), want);
+    }

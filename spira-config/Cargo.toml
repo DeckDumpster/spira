@@ -124,12 +124,6 @@ name = "tsd-prune"
 path = "src/tsd_prune_main.rs"
 test = false
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [dev-dependencies]
 install = { path = "../install" }
 spira-test-id = { path = "../spira-test-id" }

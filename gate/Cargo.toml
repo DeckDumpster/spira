@@ -26,12 +26,6 @@ suite-select = { path = "../suite-select" }
 incident = { path = "../incident" }
 system-paths = { path = "../system-paths" }
 
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
-
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
@@ -39,4 +33,9 @@ testkit = { path = "../testkit" }
 [[test]]
 name = "warm_build"
 path = "tests/warm_build.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "spira_scripts"
+path = "tests/spira_scripts.rs"
 required-features = ["integration"]

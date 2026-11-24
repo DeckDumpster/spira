@@ -23,6 +23,7 @@ version = "1.0.0"
 dependencies = [
  "dwarf",
  "libc",
+ "mail",
  "serde",
  "serde_json",
  "spira-config",
@@ -2484,6 +2485,7 @@ name = "spira-store"
 version = "1.0.0"
 dependencies = [
  "lifecycle",
+ "ports",
  "serde",
  "serde_json",
  "spira-config",

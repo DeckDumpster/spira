@@ -351,3 +351,13 @@ reason = "its shell suite pinned calls or wording and was deleted; the Rust test
 date = "2026-11-12"
 bead = "sp-ugnv1x"
 
+
+[[use_case]]
+id = "UC-instance-lifecycle-48"
+tier = "T2"
+statement = "`lc-backup.sh drill` that stays deferred past its wait cap (store busy or lock held) exits 1 and records a DEFERRED verdict naming the seconds waited, without disturbing another database's verdict; a passing verdict with no `drill.ok` is imported at its mtime, a failing or deferred one is not, and an existing stamp is never rewritten"
+
+[[use_case]]
+id = "UC-instance-lifecycle-49"
+tier = "T2"
+statement = "`lc-backup.sh run` copies the test registry through `test-registry backup`, uploads it, and stamps it only when the upload arrives (a failed backup or upload names its step, exits 1 and leaves the prior stamp); `age` prints never, ok, stale or unreadable beside the databases"

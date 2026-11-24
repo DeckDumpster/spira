@@ -47,7 +47,7 @@ migration bead per family from this table.
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | **Done (sp-ypunvh):** one `test-sim-<scenario>.sh` per scenario file over `sim-scenario-lib.sh`; the two controls and the every-scenario-has-a-suite check are the sim-controls suite. |
+| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | **Done (sp-ypunvh):** the per-scenario shards and their library are gone; the sim world's scenarios are loaded and driven from `spira/sim/tests/it/`. |
 | the sim-happy-path suite | 64 | the happy-path world runs submit → land end to end under the real units' wiring | keep | **Done (sp-ypunvh):** it is the happy-path scenario's suite (run, probe, replay, unreachable-goal control); the shard loop does not run it a second time. |
 
 ### B — landing hand-offs
@@ -106,7 +106,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-dwarf-runes-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::runes_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
 | test-dwarf-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the rune knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `dwarf::tests::a_replace_rune_…`, `an_append_rune_…` and `brief::tests::the_shipped_groomer_splits_…`. |
 | test-persona-model.sh | 42 | one resolver for a persona's launch model | deleted. Resolver was `conf::tests::persona_model_reads_…`; added `dwarf::tests::the_launch_model_is_the_toml_persona_model_…` and `conf::tests::no_launcher_scrapes_a_model_…` (the source greps). |
-| test-concierge.sh | 32 | Concierge brief composition, resume/headless handling, historic ways in broke | kept. `concierge.sh` is the shell program under test (statute-book brief, tmux, `/proc` holder scan, wake delivery); there is no Rust owner to move it to, and a unit test of a shell function is the same shell test. |
 
 ### G — install, deploy, units
 
@@ -125,7 +124,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-census.sh | 31 | census against a real bd fixture for three ops-detection use cases | keep | Declared the one server-mode census suite. |
 | test-census-events.sh | 78 | census reads requeue/reclaim/recur events written by `bump_*` | unit | Event classification; dominated by seeding a store. |
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |
-| test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
 | the holds suite | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
 
 ### I — lifecycle store (Dolt)

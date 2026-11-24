@@ -239,6 +239,8 @@ fn ctx() -> Ctx {
     }
 }
 
+const JOBS: u64 = 8;
+
 impl Fake {
     fn new() -> Fake {
         let readable: HashSet<PathBuf> = [
@@ -3627,16 +3629,26 @@ fn a_red_unit_test_without_a_rerun_line_reproduces_with_the_phases_crates() {
 
 const FLIP_OUT: &str = "---- t::flip stdout ----\n...\ntest t::flip ... FAILED\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped";
 
+const FLIP_OUT_NEXTEST: &str = "        FAIL [   0.010s] (1/1) bin/t t::flip\n  stderr ───\n\n    thread 't::flip' panicked at x.rs:1:1:\n    no\n\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped\n        FAIL [   0.010s] (1/1) bin/t t::flip";
+
 fn flip_fake(prior: Result<Vec<(String, String)>, String>) -> Fake {
+    flip_fake_with(FLIP_OUT, prior)
+}
+
+fn flip_fake_with(out: &str, prior: Result<Vec<(String, String)>, String>) -> Fake {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.put_var("SPIRA_GATE_BEAD", "sp-a");
-    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, FLIP_OUT.into()));
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, out.into()));
     *f.prior_failures.borrow_mut() = prior;
     f
 }
 
 fn other_red(bead: &str, tip: &str, file: &str) -> (String, String) {
     (bead.into(), spira_config::ejection::digest(tip, &[file.into()], FLIP_OUT))
+}
+
+fn other_nextest_red(bead: &str, tip: &str, file: &str) -> (String, String) {
+    (bead.into(), spira_config::ejection::digest(tip, &[file.into()], FLIP_OUT_NEXTEST))
 }
 
 fn certified(f: &Fake, outcome: &str) -> usize {
@@ -3659,6 +3671,31 @@ fn a_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged
     assert_eq!((certified(&f, "pass"), certified(&f, "red")), (1, 0));
     assert!(f.failures.borrow().is_empty());
     assert!(f.stderr().contains("not judged — t::flip"), "{}", f.stderr());
+}
+
+#[test_id(tza9mex)]
+#[test]
+fn a_nextest_unit_red_that_two_other_beads_showed_on_disjoint_diffs_certifies_not_judged() {
+    let f = flip_fake_with(FLIP_OUT_NEXTEST, Ok(vec![other_nextest_red("sp-x", "t1", "a.rs"), other_nextest_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), PASS);
+    assert_eq!((certified(&f, "pass"), certified(&f, "red")), (1, 0));
+    assert!(f.stderr().contains("not judged — t::flip"), "{}", f.stderr());
+}
+
+#[test_id(tlaw34x)]
+#[test]
+fn a_nextest_unit_red_whose_diff_shares_a_path_with_the_other_beads_is_the_branchs() {
+    let f = flip_fake_with(FLIP_OUT_NEXTEST, Ok(vec![other_nextest_red("sp-x", "t1", "src/a.rs"), other_nextest_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), FAIL);
+}
+
+#[test_id(tuicbyc)]
+#[test]
+fn one_unshared_nextest_red_beside_a_shared_libtest_red_stays_the_branchs() {
+    let both = format!("{FLIP_OUT}\n        FAIL [   0.010s] (1/2) bin/t t::mine\n  stderr ───\n    boom\n");
+    let f = flip_fake_with(&both, Ok(vec![other_red("sp-x", "t1", "a.rs"), other_red("sp-y", "t2", "b.rs")]));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!((certified(&f, "pass"), certified(&f, "red")), (0, 1));
 }
 
 #[test_id(t81bhuq)]
@@ -5016,8 +5053,8 @@ fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
     let last = cmds.last().unwrap();
-    assert_eq!(last, &crate::engine::release_bins_command());
-    assert!(last.starts_with("cargo build --release --workspace --locked --config profile.release.incremental=false"), "{last}");
+    assert_eq!(last, &crate::engine::release_bins_command(JOBS));
+    assert!(last.starts_with("cargo build -j 8 --release --workspace --locked --config profile.release.incremental=false"), "{last}");
     assert!(last.contains("find target/release -mindepth 1 -delete"), "a failed build leaves nothing to land: {last}");
     let env = f.ran.borrow().last().unwrap().clone();
     assert!(env.contains(&("RUSTC_WRAPPER".to_string(), "box/.cargo/bin/sccache".to_string())), "{env:?}");
@@ -5045,7 +5082,7 @@ fn a_cached_pass_with_release_bins_still_builds_the_judged_tree() {
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("VERDICT=PASS reason=cached"), "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
-    assert_eq!(cmds.last(), Some(&crate::engine::release_bins_command()), "{cmds:?}");
+    assert_eq!(cmds.last(), Some(&crate::engine::release_bins_command(JOBS)), "{cmds:?}");
     assert!(cmds.iter().all(|c| c.contains("--release")), "a cached verdict runs no trial: {cmds:?}");
     assert!(f.checkouts.borrow().iter().any(|_| true), "the judged tree is checked out");
     assert!(f.stderr().contains(&format!("--worktree {GATE_TREE}")), "{}", f.stderr());
@@ -5101,7 +5138,7 @@ fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
         );
     }
     // POSITIVE CONTROL: the release-bins command is the one that used to lack it.
-    assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command());
+    assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command(JOBS));
 }
 
 /// A `spira-admit` on the PATH is not a compiler wrapper: every cargo the gate runs compiles
@@ -5944,6 +5981,30 @@ fn a_fences_mode_column_repository_stays_fences_only_and_says_so() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.env_of(0, "SPIRA_GATE_COVERED"), "");
     assert!(f.stderr().contains("runs its fences only"), "{}", f.stderr());
+}
+
+// covers: UC-gate-verdict-22
+#[test_id(tulg020)]
+#[test]
+fn every_verdict_is_recorded_with_its_branch_suite_and_tree_and_a_failing_recorder_changes_nothing() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh ok\ntest-b.sh RED".into()));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(f.yields.borrow()[0], [RUN, "record", "spira", BR, "1", "branch-red", "tree-of-spira/sp-a", "test-b.sh", ""], "a red names branch, reason, tree and suite");
+
+    let f = tree_owned(Some("garbage\n"), Some("garbage\n"));
+    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(f.yields.borrow()[0][1..6], ["record", "spira", BR, "76", "base-gate-definition"], "a base fault is recorded as 76, which yield.sh files as a gate fault");
+
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.yields.borrow()[0][1..4], ["pass", "spira", BR]);
+
+    let t = testkit::TempDir::new("gate-yield-port");
+    let (recorder, seen) = (t.path().join("yield.sh"), t.path().join("seen"));
+    std::fs::write(&recorder, format!("printf '%s %s' \"$SPIRA_RUN\" \"$*\" > {}\nexit 9\n", seen.display())).unwrap();
+    crate::ports::World::yield_sh(&crate::real::Real::new(t.path().into()), &recorder, "run-dir", &["record", "spira", BR]);
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), format!("run-dir record spira {BR}"), "the recorder ran with the gate's run directory, and its failure came back as nothing");
 }
 
 #[test_id(tjlwivt)]

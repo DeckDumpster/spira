@@ -93,7 +93,7 @@ Costs are ci_secs from main-push run 35947142904. "T?" gives the current level a
 | 30 | dwarf::persona_tools_tests | T1 | Rust (sp-706kgd): ops and czar runes through spira-config's rune parser. TI: `ops_allows` reimplements the CLI matcher (see Gaps) |
 | 31 | test-czar-shadow::all (secondary) | T1, 1 s | KEEP; fix the positive-control bug (below). Move the 11 conf/rune/brief grep rows to T0 lint |
 | 32 | `dwarf/tests/fences.rs` (`confine.sh` path prefixes) and `landing_pass::tests::confinement_is_asked_before_the_gate` | T2 | DONE (sp-dede1o) |
-| 32 (partition rows) | none: the spike suite is retired | — | GAP: filed as sp-dede1o.1 |
+| 32 (partition rows) | spira-lc::`the_shipped_spike_partition_takes_its_own_bead_and_no_other_kind` | T1 | DONE (sp-dede1o.1) |
 | 33 | none: the spike suite is retired | — | GAP: see UC-safety-fences-33 in the toml |
 | 34 | test-freshclone::all (secondary) | T0, 3 s | KEEP: the syntax sweep covers the runes and `confine.sh` |
 
@@ -347,15 +347,9 @@ verdict on UC-32's partition rows — see below.
 - **UC-24/UC-25.** Already KEEP; nothing in this bead's own filing asked for more here.
 - **UC-26.** Not in this bead's description bullets (the title's "26" does not appear in
   the body text); the retired orphan-test suite is untouched.
-- **UC-32.** The 9 partition rows in `test-spike.sh` were **not** moved to
-  `test-rune-predicates.sh` as this bead's filing proposed. `docs/test-plan/dispatch.md`
-  (the dispatch area's own test plan, row 09 of its coverage map) already reached and
-  landed a different, later verdict on the same rows: "the spike partition rows stay T2
-  and are owned by safety-fences." `test-rune-predicates.sh` no longer exists — sp-9ce60
-  merged its runtime rows into `test-rune.sh` — so there is no file to move these rows
-  into even if the older verdict still applied. Read narrowly: this is the dispatch area
-  overriding its own earlier proposal after the fact, not this bead declining the work.
-  `confine.sh` (T2) and the two landing rows (T3, main only) were already correctly
+- **UC-32.** The spike partition rows (7 exist, not 9) are held at T1 by spira-lc's
+  `the_shipped_spike_partition_takes_its_own_bead_and_no_other_kind` (sp-dede1o.1), through
+  the claim view, where ask and poison keep a bead out as holds. `confine.sh` (T2) and the two landing rows (T3, main only) were already correctly
   placed and needed nothing.
 - **Gap 10** (test-dwarf-dirty-commit CI-dead fix) was never this bead's — the filing
   above already moved it to sp-pohf2 before this bead ran.

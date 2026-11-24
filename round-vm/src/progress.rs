@@ -13,6 +13,7 @@ use crate::spool::write_atomic;
 
 pub const FILE: &str = "round-progress.json";
 pub const UNIT_FILE: &str = "unit-progress";
+pub const INTEGRATION_FILE: &str = "integration-progress";
 pub const UNIT_BUILD_FILE: &str = "unit-build";
 
 /// Seconds a phase may go without a change of phase or detail before it reports itself stalled.
@@ -32,12 +33,18 @@ impl Budgets {
     }
 }
 
-/// The VM's `unit-progress` line, `k M [red binaries...]`.
-fn unit_of(results_dir: &Path) -> Option<(usize, usize, Vec<String>)> {
-    let t = fs::read_to_string(results_dir.join(UNIT_FILE)).ok()?;
+type Counts = (usize, usize, Vec<String>);
+
+/// A progress file's line, `k M [red names...]`. The VM rewrites it in place, so a read that
+/// is empty or lacks its newline is torn and is not a reading; a count past its total is clamped.
+fn counts_of(results_dir: &Path, file: &str) -> Option<Counts> {
+    let t = fs::read_to_string(results_dir.join(file)).ok()?;
+    if !t.ends_with('\n') {
+        return None;
+    }
     let mut w = t.split_whitespace();
-    let (k, m) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?);
-    Some((k, m, w.map(str::to_string).collect()))
+    let (k, m): (usize, usize) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?);
+    Some((k.min(m), m, w.map(str::to_string).collect()))
 }
 
 pub fn now_secs() -> u64 {
@@ -95,6 +102,8 @@ pub struct Progress {
     build_started: u64,
     suites_started: Option<u64>,
     suites_reported: bool,
+    unit_seen: Option<Counts>,
+    integ_seen: Option<Counts>,
     unpublished: Option<String>,
     place: Option<&'static str>,
     placement: Option<Value>,
@@ -157,6 +166,9 @@ impl Progress {
         clock: Box<dyn Fn() -> u64 + Send>,
     ) -> Progress {
         let t0 = clock();
+        for leftover in [UNIT_FILE, INTEGRATION_FILE] {
+            let _ = fs::remove_file(results_dir.join(leftover));
+        }
         let marks = Marks::default();
         marks.with(|m| m.started = t0);
         let mut p = Progress {
@@ -170,6 +182,8 @@ impl Progress {
             build_started: t0,
             suites_started: None,
             suites_reported: false,
+            unit_seen: None,
+            integ_seen: None,
             unpublished: None,
             place: None,
             placement: None,
@@ -269,18 +283,20 @@ impl Progress {
         let now = (self.clock)();
         let fresh: Vec<(String, String)> = result_names(results_dir).into_iter().filter(|(n, _)| !self.baseline.contains(n)).collect();
         let started = !fresh.is_empty() || crate::run::build_wall(results_dir).is_some();
-        let unit = unit_of(results_dir);
+        self.unit_seen = counts_of(results_dir, UNIT_FILE).or(self.unit_seen.take());
+        self.integ_seen = counts_of(results_dir, INTEGRATION_FILE).or(self.integ_seen.take());
+        let unit = self.unit_seen.clone();
         let phase = match self.base {
             "build" if started => "suites",
+            "build" if unit.is_some() => "unit-tests",
             "build" if fs::read_to_string(results_dir.join(UNIT_BUILD_FILE)).map(|t| t.trim() == "building").unwrap_or(false) => "unit-build",
             b => b,
         };
-        let phase = match &unit {
+        let phase = match &self.integ_seen {
             Some((k, m, _)) if phase == "suites" && k < m && total_done(&fresh, self.total) => "unit-tests",
             _ => phase,
         };
-        let past_build = started && matches!(phase, "salvage" | "done");
-        if (matches!(phase, "suites" | "unit-tests") || past_build) && self.suites_started.is_none() {
+        if started && matches!(phase, "suites" | "unit-tests" | "salvage" | "done") && self.suites_started.is_none() {
             self.suites_started = Some(now);
         }
         self.marks.with(|m| {
@@ -312,6 +328,13 @@ impl Progress {
         let failed: Vec<&str> = fresh.iter().filter(|(_, v)| matches!(v.as_str(), "red" | "timeout" | "fault")).map(|(n, _)| n.as_str()).collect();
         self.notify(&failed);
         let counting = self.suites_started.is_some();
+        let tests = match (&self.unit_seen, &self.integ_seen) {
+            (Some((uk, um, ur)), Some((ik, im, ir))) => {
+                let reds: Vec<&str> = ur.iter().chain(ir).map(String::as_str).chain(red.iter().copied()).collect();
+                Some(json!({"done": uk + ik + fresh.len(), "total": um + im + self.total, "red": reds}))
+            }
+            _ => None,
+        };
         let mut body = json!({
             "round": self.round,
             "pass": self.pass,
@@ -323,6 +346,7 @@ impl Progress {
             "done": counting.then_some(fresh.len()),
             "total": counting.then_some(self.total),
             "red": red,
+            "tests": tests,
             "unit": unit.map(|(k, m, r)| json!({"done": k, "total": m, "red": r})),
             "build_started": self.build_started,
             "suites_started": self.suites_started,
@@ -456,15 +480,17 @@ mod tests {
         let v = read(&run);
         assert_eq!((v["done"].as_u64(), v["red"].clone()), (Some(2), json!(["test-b.sh"])), "the earlier pass's red is not this pass's");
 
-        fs::write(res.join(UNIT_FILE), "1 4 alpha\n").unwrap();
         fs::write(res.join("test-c.sh.result"), "ok 1 3 - p e 0\n").unwrap();
         let mut p3 = Progress::start(&run, &res, "r1", "p1", 3, 777, BUDGETS);
+        fs::write(res.join(UNIT_FILE), "1 4 alpha\n").unwrap();
+        fs::write(res.join(INTEGRATION_FILE), "1 4 beta\n").unwrap();
         p3.enter(&res, "build", None);
         p3.baseline.clear();
         p3.update(&res);
         let v = read(&run);
         assert_eq!(v["phase"], "unit-tests", "suites all in, unit binaries still running");
         assert_eq!((v["unit"]["done"].as_u64(), v["unit"]["total"].as_u64(), v["unit"]["red"].clone()), (Some(1), Some(4), json!(["alpha"])));
+        assert_eq!((v["tests"]["done"].as_u64(), v["tests"]["total"].as_u64(), v["tests"]["red"].clone()), (Some(6), Some(11), json!(["alpha", "beta", "test-b.sh", "test-old.sh"])), "unit tests, integration binaries and suites in one count");
 
         p.finish(&res, 1);
         let v = read(&run);
@@ -553,7 +579,7 @@ mod tests {
         at(&t, 1300);
         p.update(&res);
         assert_eq!((read(&run)["phase"].as_str(), read(&run)["phase_started"].as_u64()), (Some("suites"), Some(1300)));
-        fs::write(res.join(UNIT_FILE), "1 4\n").unwrap();
+        fs::write(res.join(INTEGRATION_FILE), "1 4\n").unwrap();
         fs::write(res.join("test-a.sh.result"), "ok 1 3 - p e 0\n").unwrap();
         fs::write(res.join("test-b.sh.result"), "ok 1 3 - p e 0\n").unwrap();
         at(&t, 1400);
@@ -635,5 +661,48 @@ mod tests {
         assert_eq!(read(&run)["done"], 1);
         let starts: Vec<u64> = read(&run)["phases"].as_array().unwrap().iter().map(|e| e["started"].as_u64().unwrap()).collect();
         assert_eq!(starts, [1000, 1100, 1200, 1300]);
+    }
+
+    #[test_id(tb4u2hc)]
+    #[test]
+    fn the_unit_tier_is_unit_tests_with_no_suite_count_and_the_tests_count_waits_for_both_files() {
+        let d = TempDir::new();
+        let (run, res) = (d.path().join("run"), d.path().join("res"));
+        fs::create_dir_all(&res).unwrap();
+        let (mut p, t) = clocked(&run, &res);
+        p.enter(&res, "build", None);
+        fs::write(res.join(UNIT_FILE), "30 100\n").unwrap();
+        at(&t, 5000);
+        p.update(&res);
+        let v = read(&run);
+        assert_eq!(v["phase"], "unit-tests");
+        assert!(v["suites_started"].is_null() && v["done"].is_null() && v["tests"].is_null(), "{v}");
+        assert!(v["detail"].is_null(), "a running unit tier is not a stalled build: {v}");
+        fs::write(res.join(INTEGRATION_FILE), "0 6\n").unwrap();
+        p.update(&res);
+        let v = read(&run);
+        assert_eq!((v["tests"]["done"].as_u64(), v["tests"]["total"].as_u64()), (Some(30), Some(108)), "{v}");
+        assert!(v["suites_started"].is_null());
+    }
+
+    #[test_id(t6w1ns8)]
+    #[test]
+    fn a_torn_progress_file_keeps_the_last_reading_and_earlier_passes_files_are_ignored() {
+        let d = TempDir::new();
+        let (run, res) = (d.path().join("run"), d.path().join("res"));
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join(UNIT_FILE), "99 99\n").unwrap();
+        fs::write(res.join(INTEGRATION_FILE), "9 9\n").unwrap();
+        let (mut p, _t) = clocked(&run, &res);
+        assert!(read(&run)["tests"].is_null(), "leftovers are deleted at start");
+        fs::write(res.join(UNIT_FILE), "30 100\n").unwrap();
+        fs::write(res.join(INTEGRATION_FILE), "1 6\n").unwrap();
+        p.update(&res);
+        assert_eq!(read(&run)["tests"]["done"], 31);
+        for torn in ["", "31 1"] {
+            fs::write(res.join(UNIT_FILE), torn).unwrap();
+            p.update(&res);
+            assert_eq!(read(&run)["tests"]["done"], 31, "{torn:?}");
+        }
     }
 }

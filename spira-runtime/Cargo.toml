@@ -23,6 +23,11 @@ path = "tests/it/main.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "sources_on_the_loop"
+path = "tests/sources_on_the_loop.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "task_d_broker_exec"
 path = "tests/task_d_broker_exec.rs"
 required-features = ["integration"]
@@ -199,12 +204,6 @@ testkit = { path = "../testkit" }
 release = { path = "../release" }
 lifecycle = { path = "../lifecycle" }
 state-store = { path = "../state-store" }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
 
 [[test]]
 name = "sift_reads"

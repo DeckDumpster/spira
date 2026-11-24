@@ -167,7 +167,7 @@ suites are retired, their coverage moved here:
 
 `UC-operator-channel-25` is carried by this crate's `escalate` unit tests (the question's
 sections, a refusing mailer reported, a read-only check mailing nobody); that the real mail
-library accepts skew's question is `test-mail-real-senders.sh`'s. `UC-instance-lifecycle-34` is
+library accepts skew's question is `real::send_tests`'. `UC-instance-lifecycle-34` is
 carried by a Rust test in `install::cells`.
 
 Both `gate` (`which("skew.sh")` → `which("skew")`, `skew_foreign`'s subprocess no longer
@@ -205,5 +205,5 @@ credential, or a real release tarball: `check`'s `gh release list` path against 
 forge, `refresh`'s release-mode `release build/verify/activate` against a real release
 directory, and `check_local`'s `release verify` against a real MANIFEST. Those remain the
 round's integration coverage through the
-suites that exercise `deploy.sh`/`release`/`queue` end to end (`install/tests/deploy_script.rs`,
+suites that exercise `deploy.sh`/`release`/`queue` end to end (`spira-config/tests/deploy_script.rs`,
 `test-land-local-release.sh`, the retired landing-rebase suite).

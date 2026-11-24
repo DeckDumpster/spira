@@ -10,6 +10,16 @@ name = "no_fork_edges"
 path = "tests/no_fork_edges.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "concierge_hooks"
+path = "tests/concierge_hooks.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "concierge_launcher"
+path = "tests/concierge_launcher.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["system-paths/integration", "inbox-rules/integration", "mail/integration", "runtime/integration", "sop/integration", "spira-config/integration", "spira-store/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "spira-test-id/integration"]
 [dependencies]
@@ -24,12 +34,6 @@ spira-config = { path = "../spira-config" }
 spira-store = { path = "../spira-store" }
 spira-world = { path = "../spira-world" }
 tsd = { path = "../tsd" }
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-strip = true
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }

@@ -1,7 +1,7 @@
 //! Sources: what submits events to the host from outside it (a file watch, a bus listener, a
-//! mail listener). Each is a future on the scheduler's runtime (a source that can only block
-//! brings its own thread, [`on_thread`]), and submits through the host's bounded channel, so a
-//! full channel slows the source, not the loop. Under virtual time a source runs only if it is scripted: the driver asks it when it
+//! mail listener). Each is a future on the scheduler's runtime and owns no thread: what waits is
+//! an fd or a timer on the loop, what blocks goes through [`on_pool`]. It submits through the
+//! host's bounded channel, so a full channel slows the source, not the loop. Under virtual time a source runs only if it is scripted: the driver asks it when it
 //! next has something and takes what is due, so one seed gives one order.
 
 use std::collections::BTreeSet;
@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use crate::changes::ScriptedChanges;
 use crate::event::StoreChanged;
@@ -38,29 +38,6 @@ pub async fn on_pool<T: Send + 'static>(what: &'static str, f: Arc<dyn Fn() -> T
             Err(_) => tokio::time::sleep(SPILL_RETRY).await, // clock-safe: paces a retry of the pool on the source's own task
         }
     }
-}
-
-/// `f` on a thread named `source-<name>`, ended when `f` returns; for a source whose body can only
-/// block. A thread that cannot start is said once and the source ends.
-pub fn on_thread(name: &str, f: impl FnOnce() + Send + 'static) -> Running {
-    let thread = format!("source-{name}");
-    Box::pin(async move {
-        let (done, ended) = oneshot::channel::<()>();
-        let started = std::thread::Builder::new().name(thread.clone()).spawn(move || {
-            f();
-            let _ = done.send(());
-        });
-        match started {
-            Ok(_) => {
-                if ended.await.is_err() {
-                    let _ = on_pool("source", Arc::new(move || eprintln!("runtime: {thread}: ended without finishing"))).await;
-                }
-            }
-            Err(e) => {
-                let _ = on_pool("source", Arc::new(move || eprintln!("runtime: {thread}: thread did not start: {e}"))).await;
-            }
-        }
-    })
 }
 
 pub trait Source: Send {
@@ -419,24 +396,10 @@ impl Scripted for ScriptedStoreChanges {
 mod tests {
     use super::*;
 
-    #[test_id(t376ms9)]
-    #[tokio::test]
-    async fn on_thread_runs_its_body_on_a_thread_named_for_the_source_and_ends_with_it() {
-        let (name_tx, name_rx) = std::sync::mpsc::channel();
-        on_thread("probe", move || name_tx.send(std::thread::current().name().map(str::to_string)).unwrap()).await;
-        assert_eq!(name_rx.recv().unwrap().as_deref(), Some("source-probe"));
-    }
-
     #[test_id(tv6hrjv)]
     #[tokio::test]
     async fn on_pool_returns_what_its_work_returned() {
         let got = on_pool("probe", Arc::new(|| 7)).await.unwrap();
         assert_eq!(got, 7);
-    }
-
-    #[test_id(tokhvvz)]
-    #[tokio::test]
-    async fn on_thread_ends_when_its_body_panics() {
-        on_thread("probe", || panic!("planted")).await;
     }
 }

@@ -390,6 +390,7 @@ mod tests {
         (n.into(), s.into(), c.into())
     }
 
+    // covers: UC-operator-channel-38
     #[test_id(tunrqkp)]
     #[test]
     fn checks_classify_as_red_green_or_pending() {
@@ -400,6 +401,7 @@ mod tests {
         assert_eq!(classify(&[check("a", "COMPLETED", "NEUTRAL")]).0, "pending");
     }
 
+    // covers: UC-operator-channel-38
     #[test_id(t73ul8g)]
     #[test]
     fn a_pr_is_reported_on_change_only() {
@@ -411,6 +413,7 @@ mod tests {
         assert_eq!(decide(&cfg(), &c, &one(open(vec![pr(7, "green", "")])), 1270).1.lines, ["GREEN #7 t7 [r]: lands automatically"]);
     }
 
+    // covers: UC-operator-channel-38
     #[test_id(tr89u3c)]
     #[test]
     fn a_pr_first_seen_resolved_gets_opened_and_its_verdict() {
@@ -418,6 +421,7 @@ mod tests {
         assert_eq!(say.lines, ["OPENED #1 t1 [r]", "FAIL RED #1 t1 [r]: x"]);
     }
 
+    // covers: UC-operator-channel-38
     #[test_id(tk9oix7)]
     #[test]
     fn a_forge_that_did_not_answer_changes_nothing() {
@@ -472,6 +476,7 @@ mod tests {
         assert!(decide(&cfg(), &c, &one(open(vec![])), 1191).0.repos["r"].deploys.is_empty());
     }
 
+    // covers: UC-operator-channel-38
     #[test_id(tuoz8m2)]
     #[test]
     fn a_branch_without_a_pr_is_announced_once_while_it_stays() {

@@ -171,6 +171,7 @@ pub(crate) struct Door {
     pub(crate) ledger: Ledger,
     pub(crate) work: Work,
     pub(crate) deadlines: Deadlines,
+    pub(crate) personas: std::path::PathBuf,
 }
 
 fn live_work() -> Work {
@@ -554,6 +555,7 @@ fn start_loop(path: &str) -> Result<std::thread::JoinHandle<usize>, String> {
         ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(),
         work: live_work(),
         deadlines: DEADLINES.get().expect("the deadlines are set before the socket is bound").clone(),
+        personas: personas_path().into(),
     };
     let pool = runtime::offload::Pool::new(crate::control::served::READERS, runtime::offload::QUEUE_DEPTH);
     let shared = Arc::new(crate::serve_loop::Shared::new(Arc::new(door), pool, SPANS.get()));
@@ -966,7 +968,7 @@ fn alarm_tick() {
 }
 
 fn handle(stream: UnixStream, accepted: Instant) {
-    let door = Door { ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(), work: live_work(), deadlines: DEADLINES.get().expect("the deadlines are set before the socket is bound").clone() };
+    let door = Door { ledger: LEDGER.get().expect("the ledger is set before the socket is bound").clone(), work: live_work(), deadlines: DEADLINES.get().expect("the deadlines are set before the socket is bound").clone(), personas: personas_path().into() };
     serve_one(stream, SPANS.get(), accepted, &door);
 }
 
@@ -1111,7 +1113,7 @@ impl Called {
 pub(crate) fn call_request(req: Request, peer: Peer, door: &Door, received: Instant, accepted: Instant, cut: Cut) -> Called {
     let caller = peer.pid.map(crate::slow::caller_of_pid).unwrap_or_else(|| "-".to_string());
     let verb = req.argv.first().cloned().unwrap_or_default();
-    let map = crate::disk::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
+    let map = crate::disk::read_to_string(&door.personas).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
     let argv_seen = req.argv.clone();
     let task = req.task.clone();
     let recorder = Arc::new(state_store::phases::Recorder::default());

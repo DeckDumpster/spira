@@ -158,13 +158,13 @@ fn a_burst_of_reads_over_fifty_connections_leaves_the_servers_anonymous_memory_w
                     } else {
                         vec!["list".into(), "--live".into()]
                     };
-                    let stream = spira_store::lc_call::connect(socket)
+                    let stream = std::os::unix::net::UnixStream::connect(socket)
                         .unwrap_or_else(|_| panic!("connect {c}/{n}"));
                     stream
                         .set_read_timeout(Some(Duration::from_secs(30)))
                         .unwrap();
                     let mut closed = stream.try_clone().unwrap();
-                    let reply = spira_store::lc_call::exchange_once(stream, &argv, None)
+                    let reply = spira_store::lc_call::exchange_once(Box::new(spira_store::lc_call::UnixPort::from(stream)), &argv, None)
                         .unwrap_or_else(|_| panic!("no answer to {argv:?}"));
                     if reply.code != 0 && reply.text() == spira_store::lc_call::DEADLINE_ANSWER {
                         deadline_answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -232,8 +232,7 @@ fn otel_dir(server: &Server) -> std::path::PathBuf {
 }
 
 fn ask(server: &Server) {
-    let stream = spira_store::lc_call::connect(&server.socket).expect("connect");
-    stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    let stream = spira_store::lc_call::connect_within(&server.socket, Duration::from_secs(30)).expect("connect");
     spira_store::lc_call::exchange_once(stream, &["list".to_string(), "--live".to_string()], None).expect("an answer");
 }
 

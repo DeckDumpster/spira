@@ -308,15 +308,15 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// alike so a probe cannot lack a tool the phase it re-runs has.
 macro_rules! unit_env_fn {
     () => {
-        r#"unit_env() {
-    env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        concat!(r#"unit_env() {
+    env -i RUST_TEST_THREADS="#, spira_config::run_test_threads_literal!(), r#" CARGO_BUILD_JOBS="$(nproc)" HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="${RUSTC_WRAPPER:-}" SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-4226}" \
         SCCACHE_WEBDAV_ENDPOINT="${SCCACHE_WEBDAV_ENDPOINT:-}" SCCACHE_WEBDAV_KEY_PREFIX="${SCCACHE_WEBDAV_KEY_PREFIX:-}" \
         ${CARGO_TARGET_DIR:+CARGO_TARGET_DIR="$CARGO_TARGET_DIR"} \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
         cargo "$@"
 }
-"#
+"#)
     };
 }
 pub(crate) use unit_env_fn;
@@ -621,7 +621,7 @@ t0=$(date +%s)
 if art_fetch "$art_id" ~/round-work/target/release; then
     echo "round-vm: used the stored build of this tree; cargo did not run" >&2
 else
-    if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
+    if ! cargo build -j "$(nproc)" -q --profile release --workspace --config profile.release.incremental=false; then
         echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
         tail -40 "$SCCACHE_ERROR_LOG" >&2 2>/dev/null || true
         exit 4
@@ -692,19 +692,37 @@ prune_superseded_unit
 # One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
 # lines on stdin: UNIT-TEST <binary> ok|FAILED (k/M). The totals are the --no-run listing's.
 # A nextest log (the unit tier) streams instead each red test by name, with nextest's own k/total.
+# $2 is rewritten at most once per clock second (a clock of $4 lines per second when given) and at the end.
 unit_stream() {
-    awk -v total="$1" -v prog="$2" '
+    local hz; hz="$(getconf CLK_TCK 2>/dev/null)" || hz=100
+    awk -v total="$1" -v prog="$2" -v name="${3:-unit}" -v tick_lines="${4:-0}" -v hz="$hz" '
+        function clock() { if (tick_lines > 0) return int((NR - 1) / tick_lines); srand(); return srand() }
+        function publish(force,   t) {
+            if (!dirty) return
+            t = clock()
+            if (!force && t == wrote_at) return
+            printf "%d %d%s\n", k, total, reds > prog; close(prog)
+            wrote_at = t; dirty = 0; writes++
+        }
+        BEGIN { wrote_at = -1 }
         /^ *Summary \[/ { nx_done = 1 }
         nx_done { next }
+        { lines++ }
+        /^ *Starting [0-9]+ tests? / { total = $2 + 0; dirty = 1; publish(1); next }
         match($0, /^ *[A-Z][A-Z-]+ +\[[ >]*[0-9.]+s\] +\( *[0-9]+\/[0-9]+\) +[^ ]+ +/) {
             n = substr($0, RLENGTH + 1); st = $1; split(substr($0, 1, RLENGTH), c, /[()\/]/); k = c[2] + 0; total = c[3] + 0
             if (st != "PASS" && st != "LEAK" && st != "FLAKY" && st != "SKIP") { reds = reds " " n; printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", n, st, k, total > "/dev/stderr"; fflush("/dev/stderr") }
-            printf "%d %d%s\n", k, total, reds > prog; close(prog); next }
-        /^ *Running / { name = $0; if (match(name, /\(.*\)/)) { name = substr(name, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", name); sub(/-[0-9a-f]+$/, "", name) } else { sub(/^ *Running /, "", name) } next }
-        /^ *Doc-tests / { name = "doc-tests " $2; next }
-        /^test result: / { k++; st = ($3 == "ok.") ? "ok" : "FAILED"; if (st == "FAILED") reds = reds " " name
-            printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", name, st, k, total > "/dev/stderr"; fflush("/dev/stderr")
-            printf "%d %d%s\n", k, total, reds > prog; close(prog) }'
+            dirty = 1; publish(0); next }
+        /^ *Running / { bin = $0; if (match(bin, /\(.*\)/)) { bin = substr(bin, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", bin); sub(/-[0-9a-f]+$/, "", bin) } else { sub(/^ *Running /, "", bin) } cur = bin; next }
+        /^ *Doc-tests / { cur = "doc-tests " $2; next }
+        /^test result: / { k++; st = ($3 == "ok.") ? "ok" : "FAILED"; if (st == "FAILED") reds = reds " " cur
+            printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", cur, st, k, total > "/dev/stderr"; fflush("/dev/stderr")
+            dirty = 1; publish(0) }
+        END {
+            publish(1)
+            getline stat < "/proc/self/stat"; sub(/^.*\) /, "", stat); split(stat, f, " ")
+            printf "round-vm: PROGRESS-COST %s lines=%d writes=%d user_ms=%d sys_ms=%d\n", name, lines, writes, f[12] * 1000 / hz, f[13] * 1000 / hz > "/dev/stderr"
+        }'
 }
 # A test libtest has flagged as running over its slow threshold is a hung test: the watcher
 # kills that test binary, so cargo fails the crate by name and the run moves on to the next.
@@ -1051,8 +1069,12 @@ unit_registry_skips() {
               else printf "round-vm: UNIT-TESTS: registry row test:%s matched no test in the run\n", row[i] > "/dev/stderr" }' "$1" "$2"
 }
 unit_progress="$rdir/unit-progress"
+integ_progress="$rdir/integration-progress"
 mkdir -p "$rdir"
 unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)
+integ_total=$(( unit_total - unit_lib_total ))
+rm -f "$unit_progress"
+echo "0 $integ_total" > "$integ_progress"
 : > ~/round-unit-tests.log
 unit_hung="$HOME/round-unit-hung"
 : > "$unit_hung"
@@ -1061,7 +1083,7 @@ unit_deadline_secs="$(target/release/spira-config get spira.unit_test_deadline_s
 write_unit_nextest_config "$unit_deadline_secs" "$unit_deadline_periods" "$HOME/round-nextest.toml" "$deny_filter_line"
 unit_nextest > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
-tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" &
+tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" unit &
 stream_pid=$!
 test_phase_bound "$unit_pid" "$cap" ~/round-unit-tests.log "$unit_hung" UNIT-TESTS unit-cap
 wait "$unit_pid"; unit_rc=$?
@@ -1088,7 +1110,6 @@ integ_cargo() {
     unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#"$integ_skips || rc=$?
     return "$rc"
 }
-integ_total=$(( unit_total - unit_lib_total ))
 : > ~/round-integration-tests.log
 integ_hung="$HOME/round-integration-hung"
 : > "$integ_hung"
@@ -1098,7 +1119,7 @@ rm -f "$integ_end"
 # The job stamps its own end: it is collected only after the suites, so the wait says nothing of its length.
 ( integ_cargo; r=$?; date +%s > "$integ_end"; exit "$r" ) > ~/round-integration-tests.log 2>&1 &
 integ_pid=$!
-tail -n +1 -f --pid="$integ_pid" ~/round-integration-tests.log | unit_stream "$integ_total" "$unit_progress" &
+tail -n +1 -f --pid="$integ_pid" ~/round-integration-tests.log | unit_stream "$integ_total" "$integ_progress" integration &
 integ_stream_pid=$!
 unit_hang_watch ~/round-integration-tests.log "$integ_hung" "$integ_pid" &
 integ_hang_pid=$!
@@ -2246,12 +2267,15 @@ pub const UNIT_TIMINGS: &str = "unit-timings";
 /// carries them over by name, as it does [`FENCE_TIMES`].
 pub const TEST_PHASE_FILES: [&str; 4] = ["unit.json", "unit-tests.out", "integration.json", "integration-tests.out"];
 
+/// The two counts the VM script rewrites while tests run: nextest's unit tests, and the integration binaries.
+pub const PROGRESS_FILES: [&str; 2] = [crate::progress::UNIT_FILE, crate::progress::INTEGRATION_FILE];
+
 /// What the VM script leaves at the top of the results on every exit: its phase marker and its log.
 pub const SCRIPT_FILES: [&str; 3] = [crate::vm_fault::PHASE_FILE, crate::vm_fault::SCRIPT_LOG_FILE, crate::vm_fault::FAULT_KIND_FILE];
 
 /// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
 pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
-    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS].into_iter().chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
+    for top in [FIXTURE_FAULT_FILE, FENCE_TIMES, UNIT_TIMINGS].into_iter().chain(PROGRESS_FILES).chain(TEST_PHASE_FILES).chain(SCRIPT_FILES) {
         if pulled.join(top).is_file() {
             let _ = fs::create_dir_all(results_dir);
             let _ = fs::copy(pulled.join(top), results_dir.join(top));
@@ -2867,19 +2891,21 @@ fn on_vm_run(
     let mut refused: Option<String> = None;
     let Some(spool_dir) = args.attr_spool.clone() else {
         let mut watch = NoOutputWatch::new(cfg.no_output);
+        let mut tally = PullTally::default();
         let streamed = std::thread::scope(|sc| {
             let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
             let mut last: Option<Instant> = None;
             while !batch.is_finished() {
                 if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
                     watch.check(env.remote, &vm.addr, &job);
-                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, &mut tally);
                     progress.update(&results_dir);
                     record_boundary(env, args, &mut progress, &mut refused);
                     last = Some(Instant::now());
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
+            tally.say();
             let _ = fs::remove_dir_all(&stream_scratch);
             batch.join().unwrap_or_else(|_| Err("the batch thread panicked".into()))
         });
@@ -2948,10 +2974,11 @@ fn on_vm_run(
         let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
         let mut watch = NoOutputWatch::new(cfg.no_output);
         let mut last: Option<Instant> = None;
+        let mut tally = PullTally::default();
         while !batch.is_finished() {
             if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
                 watch.check(env.remote, &vm.addr, &job);
-                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, &mut tally);
                 progress.update(&results_dir);
                 record_boundary(env, args, &mut progress, &mut refused);
                 last = Some(Instant::now());
@@ -2959,6 +2986,7 @@ fn on_vm_run(
             server.serve(sc, false);
             std::thread::sleep(Duration::from_millis(50));
         }
+        tally.say();
         let _ = fs::remove_dir_all(&stream_scratch);
         let judged = match batch.join() {
             _ if watch.fired => Err(no_output_pass(env, args, vm, &watch, &mut progress, &results_dir)),
@@ -3094,12 +3122,49 @@ fn lose_vm(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progres
 
 /// One streaming pass: every verdict the VM has so far lands in `results_dir`, so a run cut
 /// before its final pull keeps them.
-fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path) {
+fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path, tally: &mut PullTally) {
+    let t0 = Instant::now();
     if remote.pull(addr, REMOTE_RESULTS, scratch).is_ok() {
+        tally.pulls += 1;
+        tally.bytes += dir_bytes(scratch);
         if let Err(e) = stream_into(scratch, results_dir) {
             eprintln!("round-vm run: streaming results: {e}");
         }
+        for f in PROGRESS_FILES {
+            if scratch.join(f).is_file() {
+                let _ = fs::create_dir_all(results_dir);
+                let _ = fs::copy(scratch.join(f), results_dir.join(f));
+            }
+        }
     }
+    tally.elapsed += t0.elapsed();
+}
+
+/// What the streaming pulls of one pass cost, said once when the stream ends.
+#[derive(Default)]
+struct PullTally {
+    pulls: u64,
+    bytes: u64,
+    elapsed: Duration,
+}
+
+impl PullTally {
+    fn line(&self) -> String {
+        format!("round-vm: PROGRESS-PULL pulls={} bytes={} secs={}", self.pulls, self.bytes, self.elapsed.as_secs())
+    }
+
+    fn say(&self) {
+        eprintln!("{}", self.line());
+    }
+}
+
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(rd) = fs::read_dir(dir) else { return 0 };
+    rd.flatten().map(|e| match e.metadata() {
+        Ok(m) if m.is_dir() => dir_bytes(&e.path()),
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    }).sum()
 }
 
 /// `run`'s exit code for a non-zero remote exit (DESIGN.md §2.2): testenv's own contract
@@ -3656,6 +3721,45 @@ mod tests {
         REMOTE_SCRIPT[a..end].to_string()
     }
 
+    #[test_id(tsg0ya1)]
+    #[test]
+    fn unit_env_states_jobs_and_test_threads_whatever_a_host_cargo_config_says() {
+        let d = TempDir::new();
+        let (home, bin) = (d.path().join("home"), d.path().join("home/spira-env/bin"));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(d.path().join(".cargo")).unwrap();
+        std::fs::write(d.path().join(".cargo/config.toml"), "[build]\njobs = 99\n[env]\nRUST_TEST_THREADS = \"99\"\n").unwrap();
+        testkit::write_exe(bin.join("cargo"), "#!/bin/sh\nprintf '%s,%s\\n' \"${RUST_TEST_THREADS:-}\" \"${CARGO_BUILD_JOBS:-}\"\n");
+        let out = std::process::Command::new(system_paths::BIN_BASH)
+            .args(["-c", &format!("{UNIT_ENV_FN}\nunit_env test")])
+            .env_clear()
+            .env("HOME", &home)
+            .env("CARGO_HOME", d.path().join("ch"))
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .current_dir(d.path())
+            .output()
+            .unwrap();
+        let got = String::from_utf8_lossy(&out.stdout);
+        let cores = std::thread::available_parallelism().unwrap().get();
+        assert_eq!(got.trim(), format!("{},{cores}", spira_config::admission::RUN_TEST_THREADS), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test_id(tsg0ya2)]
+    #[test]
+    fn every_cargo_call_in_the_round_scripts_states_its_jobs() {
+        for (name, script) in [("round", REMOTE_SCRIPT), ("attr", crate::spool::REMOTE_ATTR_SCRIPT)] {
+            let calls: Vec<&str> = script
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .filter(|l| l.contains("cargo build") || l.contains("cargo test") || l.contains("cargo nextest") || l.contains("cargo check"))
+                .collect();
+            assert!(!calls.is_empty(), "{name}");
+            for l in calls {
+                assert!(l.contains(" -j "), "{name}: a cargo call without jobs: {l}");
+            }
+        }
+    }
+
     fn red_phase_out(log: &str, hung: &str) -> String {
         red_phase_files(log, hung).0
     }
@@ -3708,8 +3812,78 @@ mod tests {
         let script = format!("{}\nunit_stream 9 ~/prog < nextest.log", script_fn("unit_stream"));
         let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).output().unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(err.lines().collect::<Vec<_>>(), ["round-vm: UNIT-TEST t::sleeper TIMEOUT (2/3)", "round-vm: UNIT-TEST t::bad FAIL (3/3)"], "{err}");
+        let said: Vec<&str> = err.lines().filter(|l| !l.contains("PROGRESS-COST")).collect();
+        assert_eq!(said, ["round-vm: UNIT-TEST t::sleeper TIMEOUT (2/3)", "round-vm: UNIT-TEST t::bad FAIL (3/3)"], "{err}");
         assert_eq!(std::fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 t::sleeper t::bad");
+    }
+
+    fn stream_with_clock(log: &str, tick_lines: u32) -> (String, String) {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("nextest.log"), log).unwrap();
+        let script = format!("{}\nunit_stream 9 ~/prog unit {tick_lines} < nextest.log", script_fn("unit_stream"));
+        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).output().unwrap();
+        (std::fs::read_to_string(d.path().join("prog")).unwrap_or_default(), String::from_utf8_lossy(&out.stderr).to_string())
+    }
+
+    fn nextest_log(n: u32) -> String {
+        let mut log = format!("    Starting {n} tests across 1 binary\n");
+        for i in 1..=n {
+            log.push_str(&format!("        PASS [   0.001s] ({i}/{n}) fx t::n{i}\n"));
+        }
+        log
+    }
+
+    #[test_id(t9c4yef)]
+    #[test]
+    fn on_the_real_clock_a_burst_of_results_is_a_few_writes_and_the_file_ends_on_the_last_count() {
+        let (prog, err) = stream_with_clock(&nextest_log(5000), 0);
+        assert_eq!(prog.trim(), "5000 5000");
+        let writes: u64 = err.lines().find(|l| l.contains("PROGRESS-COST")).and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("writes="))).unwrap().parse().unwrap();
+        assert!((2..100).contains(&writes), "{err}");
+    }
+
+    #[test_id(tn7d3qk)]
+    #[test]
+    fn nextests_starting_line_seeds_the_unit_count_before_any_test_finishes() {
+        let (prog, _) = stream_with_clock("    Starting 11240 tests across 80 binaries\n", 0);
+        assert_eq!(prog.trim(), "0 11240");
+    }
+
+    #[test_id(tgx5r2m)]
+    #[test]
+    fn the_progress_file_is_written_once_per_clock_tick_and_at_the_end_and_the_cost_is_said() {
+        let log = nextest_log(950);
+        let (prog, err) = stream_with_clock(&log, 100);
+        assert_eq!(prog.trim(), "950 950", "the last count is the file's, though it lands mid-tick");
+        let cost = err.lines().find(|l| l.starts_with("round-vm: PROGRESS-COST unit ")).unwrap_or_else(|| panic!("{err}"));
+        let field = |k: &str| cost.split_whitespace().find_map(|w| w.strip_prefix(k)).unwrap().parse::<u64>().unwrap();
+        assert_eq!(field("lines="), 951);
+        assert_eq!(field("writes="), 10 + 1, "one per clock tick (ten, the seed in the first) and the final: {cost}");
+        field("user_ms=");
+        field("sys_ms=");
+    }
+
+    #[test_id(tjh8c1v)]
+    #[test]
+    fn a_pull_without_a_results_leaf_still_carries_both_progress_files() {
+        let d = TempDir::new();
+        let scratch = d.path().join("scratch");
+        let results = d.path().join("results");
+        let mut remote = FakeRemote::green();
+        remote.files.insert(REMOTE_RESULTS, vec![("unit-progress", "3 9\n"), ("integration-progress", "0 4\n")]);
+        let mut tally = PullTally::default();
+        stream_pull(&remote, "addr", &scratch, &results, &mut tally);
+        assert_eq!(std::fs::read_to_string(results.join("unit-progress")).unwrap(), "3 9\n");
+        assert_eq!(std::fs::read_to_string(results.join("integration-progress")).unwrap(), "0 4\n");
+        assert_eq!((tally.pulls, tally.bytes), (1, 8));
+        assert_eq!(tally.line(), "round-vm: PROGRESS-PULL pulls=1 bytes=8 secs=0");
+        let pulled = d.path().join("pulled");
+        std::fs::create_dir_all(&pulled).unwrap();
+        std::fs::write(pulled.join("unit-progress"), "1 2\n").unwrap();
+        std::fs::write(pulled.join("integration-progress"), "0 1\n").unwrap();
+        let kept = d.path().join("kept");
+        keep_top_files(&pulled, &kept);
+        assert!(kept.join("unit-progress").is_file() && kept.join("integration-progress").is_file());
     }
 
     #[test_id(t2uzsml)]
@@ -3970,7 +4144,7 @@ mod tests {
     #[test]
     fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
         assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
-        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
+        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -j \"$(nproc)\" -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
     }
 
     #[test_id(tnbgq6o)]
@@ -3981,7 +4155,7 @@ mod tests {
         // the moment the batch goes parallel — warming once, here, means none of them do.
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
         let warm = REMOTE_SCRIPT.find("bash spira/conf-gen.sh").unwrap();
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < warm && warm < build && build < batch, "conf-gen.sh must be warmed after the clone but before either the workspace build or the suite batch");
         assert!(REMOTE_SCRIPT.contains("bash spira/conf-gen.sh >&2 || true"), "non-fatal: conf.sh's own per-suite self-heal is still the fallback if this one warm attempt fails");
@@ -4065,7 +4239,7 @@ mod tests {
     #[test_id(tqj0cgk)]
     #[test]
     fn the_vm_is_a_launcher_release_path_set_outright_before_any_harness_script() {
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let stage = REMOTE_SCRIPT.find("release build").unwrap();
         let path = REMOTE_SCRIPT.find("export PATH=\"$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:").unwrap();
         let first_script = REMOTE_SCRIPT.find("testenv container tag").unwrap();
@@ -4176,7 +4350,7 @@ mod tests {
     fn the_round_runs_with_spira_env_from_its_own_tree_first_in_path() {
         let build = REMOTE_SCRIPT.find("flake_ref=\"path:$env_flake#spira-env\"").expect("spira-env is built from the round's own flake files");
         let path = REMOTE_SCRIPT.find("export PATH=\"$HOME/spira-env/bin:").expect("spira-env/bin first");
-        let first_build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let first_build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         assert!(build < path && path < first_build);
         assert!(REMOTE_SCRIPT.contains("round-vm: spira-env $env_path"), "the log prints the store path and versions");
         assert!(REMOTE_SCRIPT.contains("PATH=\"$HOME/spira-env/bin:$CARGO_HOME/bin:"), "unit tests see it too");
@@ -4192,7 +4366,7 @@ mod tests {
         let cache_home = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
         let wrapper = REMOTE_SCRIPT.find("export RUSTC_WRAPPER=\"$CARGO_HOME/bin/sccache\"").expect("RUSTC_WRAPPER set outright, by absolute path");
         let endpoint = REMOTE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the webdav endpoint reuses the VM's own host_addr, the same address the mirror already uses");
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         assert!(cache_home < build && wrapper < build && endpoint < build, "the cache must be wired up before the first build, not just before testenv's");
         // The VM's PATH must still find cargo/rustc (the pre-existing $HOME/.cargo/bin,
         // rustup's own shims) AND the new CARGO_HOME/bin (where sccache now installs) —
@@ -4223,7 +4397,7 @@ mod tests {
     #[test]
     fn an_ec2_round_reads_its_cache_home_from_the_image_before_building() {
         let at = REMOTE_SCRIPT.find(&format!("{}/spira-round-ami.env", system_paths::ETC)).expect("the script reads the image's own record");
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let guard = REMOTE_SCRIPT.find("sccache is missing on this VM").expect("a missing sccache is named before the build");
         assert!(at < guard && guard < build);
     }
@@ -4232,7 +4406,7 @@ mod tests {
     #[test]
     fn the_build_is_skipped_on_a_hit_and_a_miss_stores_what_it_builds() {
         let fetch = REMOTE_SCRIPT.find("if art_fetch \"$art_id\"").expect("fetched before building");
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let store = REMOTE_SCRIPT.find("art_store \"$art_id\"").expect("a build is stored");
         assert!(fetch < build && build < store);
         assert!(REMOTE_SCRIPT[fetch..build].contains("\nelse\n"), "cargo runs only in the miss branch");
@@ -4275,7 +4449,7 @@ mod tests {
     #[test_id(tb17apa)]
     #[test]
     fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
-        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -j \"$(nproc)\" -q --profile release --workspace").unwrap();
         let no_run = REMOTE_SCRIPT.find("unit_cargo > ~/round-unit-build.log").unwrap();
         let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         let run = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log").unwrap();

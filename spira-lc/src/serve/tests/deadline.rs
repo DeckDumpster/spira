@@ -61,7 +61,7 @@ fn watch_door(held: Duration) -> Arc<super::Door> {
         crate::callers::Answer { code: 0, stdout: "idle".into(), stderr: String::new(), cert_log: None, owed: Default::default() }
     });
     let deadlines = super::Deadlines { default: Duration::from_millis(1000) };
-    Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines })
+    Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, personas: Default::default(), deadlines })
 }
 
 #[test_id(tlv64af)]

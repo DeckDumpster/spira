@@ -1707,6 +1707,24 @@ mod pr_snapshot_tests {
         assert_eq!(snapshot(&out).repos[0].1.strays, Some(vec![]));
     }
 
+    // covers: UC-operator-channel-38
+    #[test_id(t9ikldf)]
+    #[test]
+    fn a_push_or_hold_repo_is_never_searched_for_strays_when_a_tracked_pr_leaves() {
+        for land in ["push", "hold", "queue"] {
+            let closed = r#"{"number":12,"state":"closed","merged":false,"head":{"sha":"abc","ref":"b"}}"#;
+            let (api, seen) = stub(vec![answer("200 OK", "", closed), answer("200 OK", "", closed), answer("200 OK", "", "[]")]);
+            let addr = api.trim_start_matches("http://").to_string();
+            let out = pr_snapshot_from(&RecordedPrs::new(), &[target("r", land)], &forge_at(api), &tracking(12)).unwrap();
+            // The stub waits for a third request: a branch listing would be it, so a probe stands in
+            // for it and is told apart by carrying no path.
+            drop(std::net::TcpStream::connect(addr));
+            let seen = seen.join().unwrap();
+            assert!(seen.iter().all(|r| !r.contains("/branches")), "{land}: {seen:?}");
+            assert_eq!(snapshot(&out).repos[0].1.strays, None, "{land}");
+        }
+    }
+
     #[test_id(tpv3fnx)]
     #[test]
     fn a_repo_whose_records_cannot_be_read_is_unobserved_and_makes_no_call() {

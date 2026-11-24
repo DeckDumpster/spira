@@ -10,6 +10,7 @@ mod gc;
 mod holds;
 mod lifecycle_rows;
 mod loop_server;
+mod personas;
 mod request_id;
 mod served;
 mod spans;
@@ -30,7 +31,7 @@ fn ask(sink: Option<&spira_otel::Sink>, request: &str) -> (String, i32) {
     use std::io::{Read, Write};
     let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
     (&client).write_all(request.as_bytes()).unwrap();
-    let door = super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work: super::live_work(), deadlines: test_deadlines() };
+    let door = super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work: super::live_work(), personas: Default::default(), deadlines: test_deadlines() };
     super::serve_one(server, sink, std::time::Instant::now(), &door);
     let mut got = String::new();
     (&client).read_to_string(&mut got).unwrap();
@@ -179,7 +180,7 @@ fn rig(held: bool, deadlines: super::Deadlines) -> Rig {
         let (mut m, mut b) = (&*world, &*world);
         super::answer(req, &mut m, &mut b, &*n, &|| Err("no run dir here".to_string()))
     });
-    let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines });
+    let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, personas: Default::default(), deadlines });
     Rig { world, notes, door }
 }
 

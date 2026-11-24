@@ -7,7 +7,6 @@
 extern crate spira_test_id;
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rule::{
     code,
     audit::{audit, finding_title}, find_duplicate, is_in_force, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
-    CommitOutcome, EnactError, ToolDecl, USAGE,
+    hook::synth, CommitOutcome, EnactError, ToolDecl, USAGE,
 };
 
 fn main() {
@@ -186,26 +185,12 @@ fn resolve_hook(home: &str) -> Result<String, String> {
         .ok()
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| Path::new(home).join(SYNTH_HOOK_NAME).to_string_lossy().into_owned());
-    if !Path::new(&hook).is_absolute() {
-        return Err(format!("hook '{hook}' is not an absolute path"));
-    }
-    let executable = std::fs::metadata(&hook)
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false);
-    if !executable {
-        return Err(format!("hook '{hook}' is not executable"));
-    }
-    Ok(hook)
+    rule::hook::check(&hook)
 }
 
 fn refuse_hook(e: &str) -> i32 {
     eprintln!("rule: {e} — wiki page NOT regenerated; nothing written, the statute book is unchanged.");
     1
-}
-
-fn synth(hook: &str) -> bool {
-    // batch-job: this runs whatever its caller names, as long as that takes
-    Command::new(hook).status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Puts the book back as it was before a write whose page could not be regenerated:

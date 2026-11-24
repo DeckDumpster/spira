@@ -992,6 +992,71 @@ mod tests {
         assert_eq!(mailer.sent.borrow().len(), 1, "a bead already labelled fenrir is never paged twice");
     }
 
+    struct NoStore;
+
+    impl mail::bead::Bd for NoStore {
+        fn run(&self, _args: &[String], _stdin: Option<&str>) -> mail::bead::BdOut {
+            mail::bead::BdOut::ok("")
+        }
+        fn close(&self, _id: &str, _reason: &str) -> Result<(), spira_store::lc_call::LcError> {
+            Ok(())
+        }
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    // covers: UC-operator-channel-05
+    #[test_id(te9uh2x)]
+    #[test]
+    fn the_fenrir_escalation_clears_the_mail_lint_unmodified() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer::default();
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut c = cfg(&known);
+        bd.rows.borrow_mut().push(BeadRow { id: "sp-existing".into(), status: BeadStatus::Open, external_ref: Some("incident:y".into()), labels: vec![], closed_at: None });
+        c.fenrir_at = 1;
+        file_one(&bd, &mailer, &clock, &c, "incident:y", "y failed", b"payload", "spira,incident", &mut vec![]);
+        let (subject, default, body) = (mailer.sent.borrow()[0].clone(), mailer.defaults.borrow()[0].clone(), mailer.bodies.borrow()[0].clone());
+
+        let tmp = testkit::TempDir::new("incident-fenrir");
+        let root = tmp.path().to_path_buf();
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let env = mail::env::Env {
+            mail_root: root.join("mail"),
+            kinds_dir: testkit::manifest_dir().join("../spira/mail/kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: String::new(),
+            db: String::new(),
+            bd_conn_retries: 1,
+            operator_actor: "operator".into(),
+            run_dir: root.join("run"),
+            home: root.clone(),
+            mail_from: None,
+            lint_considered: None,
+            repeat_considered: None,
+            operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+            condition: None,
+        };
+        let (args, full_body) = crate::real::question(&subject, &default, &body);
+        mail::cmds::send(&NoStore, &env, &args, full_body).unwrap();
+        let files: Vec<_> = std::fs::read_dir(root.join("mail/operator/new")).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+        let text = std::fs::read_to_string(files[0].path()).unwrap();
+        assert!(text.contains("## Default") && text.contains("recurred"), "{text}");
+    }
+
     // covers: UC-ops-detection-remediation-05
     #[test_id(to78odn)]
     #[test]
