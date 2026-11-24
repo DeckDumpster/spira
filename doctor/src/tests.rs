@@ -1744,13 +1744,13 @@ fn doctor_without_spira_toml_refuses_naming_it() {
 fn a_host_cargo_config_that_sets_what_the_harness_declares_warns_naming_file_and_key() {
     let f = Fake::default();
     f.set("CARGO_HOME", "ch");
-    f.set("SPIRA_RUN", "/srv/run");
+    f.set("SPIRA_RUN", "srun");
     f.contents.borrow_mut().insert(PathBuf::from("ch/config.toml"), "[build]\njobs = 6\n".into());
-    f.contents.borrow_mut().insert(PathBuf::from("/srv/.cargo/config"), "[env]\nRUST_TEST_THREADS = \"4\"\n".into());
+    f.contents.borrow_mut().insert(PathBuf::from("srun/.cargo/config"), "[env]\nRUST_TEST_THREADS = \"4\"\n".into());
     let out = check_host_cargo_config(&f);
     assert_eq!(levels(&out), vec![Level::Warn, Level::Warn]);
     assert!(out[0].msg.contains("ch/config.toml") && out[0].msg.contains("build.jobs"), "{}", out[0].msg);
-    assert!(out[1].msg.contains("/srv/.cargo/config") && out[1].msg.contains("env.RUST_TEST_THREADS"), "{}", out[1].msg);
+    assert!(out[1].msg.contains("srun/.cargo/config") && out[1].msg.contains("env.RUST_TEST_THREADS"), "{}", out[1].msg);
 }
 
 #[test_id(ti3t10p)]

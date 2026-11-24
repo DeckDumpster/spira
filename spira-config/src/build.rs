@@ -496,7 +496,7 @@ mod tests {
 
     const HOST_CONFIG: &str = r#"
 [build]
-rustc-wrapper = "/home/u/.cargo/bin/spira-admit"
+rustc-wrapper = "cargo/bin/spira-admit"
 jobs = 6
 incremental = false
 [env]
