@@ -305,6 +305,8 @@ fn a_run_heredoc_or_directive_edit_moves_the_tag() {
         ("FROM a\nRUN x\n", "FROM a\nRUN z\n"),
         ("RUN cat <<E\n# a\nE\n", "RUN cat <<E\n# b\nE\n"),
         ("# escape=\\\nFROM a\n", "# escape=`\nFROM a\n"),
+        ("# syntax=a\nFROM a\n", "# syntax=b\nFROM a\n"),
+        ("FROM a\n# check=skip=A\n", "FROM a\n# CHECK=skip=B\n"),
     ];
     for (x, y) in tags {
         assert_ne!(tag_with_containerfile(x), tag_with_containerfile(y), "{x}");
