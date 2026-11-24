@@ -10668,8 +10668,67 @@ fn a_round_red_by_a_long_running_test_logs_the_test_how_long_it_ran_and_how_it_e
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
     let log = t.landing_log();
     let red = log.lines().find(|l| l.starts_with("QUEUE ROUND-RED ")).unwrap_or_else(|| panic!("{log}"));
-    assert!(red.ends_with("reason=later_poll ran over 60 s, then passed"), "{red}");
+    assert!(red.ends_with("reason=unit-tests: later_poll ran over 60 s, then passed"), "{red}");
     assert!(t.out().contains("unit-tests: later_poll ran over 60 s, then passed"), "{}", t.out());
+}
+
+#[test_id(tqklkco)]
+#[test]
+fn an_integration_red_names_its_phase_and_first_failing_line_in_the_round_red_row() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![
+        ("integration-tests.out".into(), "running 2 tests\nFAIL replays_in_order\n".into()),
+        (
+            "integration.json".into(),
+            r#"{"stage":"integration-tests","verdict":"red","ran_before_suites":false,"failed":["replays_in_order"],"cause":"x","secs":3}"#.into(),
+        ),
+    ];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
+    let log = t.landing_log();
+    let red = log.lines().find(|l| l.starts_with("QUEUE ROUND-RED ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(red.contains(" red=unit-tests "), "{red}");
+    assert!(red.contains(" phase=integration-tests "), "{red}");
+    assert!(red.ends_with("reason=unit-tests: FAIL replays_in_order"), "{red}");
+}
+
+#[test_id(ta8jsza)]
+#[test]
+fn a_bare_lane_red_names_bare_suites_and_the_bash_line() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("bare-suites".into(), "red".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![(
+        "bare-suites.out".into(),
+        "bash: spira/bare-suites.sh: No such file or directory\n".into(),
+    )];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
+    let log = t.landing_log();
+    let red = log.lines().find(|l| l.starts_with("QUEUE ROUND-RED ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(red.contains(" red=bare-suites "), "{red}");
+    assert!(red.contains(" phase=bare-suites "), "{red}");
+    assert!(red.ends_with("reason=bare-suites: bash: spira/bare-suites.sh: No such file or directory"), "{red}");
+}
+
+#[test_id(t901s3f)]
+#[test]
+fn a_phase_that_failed_with_no_suite_red_is_the_red_the_round_names() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    *t.scripts.round_vm_files.borrow_mut() = vec![("round-phase".into(), "phase=bare-suites rc=127\n".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}{}", t.out(), t.err());
+    let log = t.landing_log();
+    let red = log.lines().find(|l| l.starts_with("QUEUE ROUND-RED ")).unwrap_or_else(|| panic!("{log}"));
+    assert!(red.contains(" red=bare-suites "), "{red}");
+    assert!(red.ends_with("reason=bare-suites: phase=bare-suites rc=127"), "{red}");
 }
 
 #[test_id(tnzdc2b)]

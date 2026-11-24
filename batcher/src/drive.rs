@@ -1171,7 +1171,7 @@ fn tag_first_line(line: &str, note: &str) -> String {
 }
 
 fn base_lines_why(f: &FilterRed) -> Option<String> {
-    if f.name != "spira-lint" {
+    if f.name != "spira-lint" && f.name != "bare-suites" {
         return None;
     }
     let first = f.unnamed.first()?;
@@ -1179,7 +1179,7 @@ fn base_lines_why(f: &FilterRed) -> Option<String> {
         0 => String::new(),
         n => format!(" (and {n} more)"),
     };
-    Some(format!("spira-lint red on a line no member owns: {first}{more}"))
+    Some(format!("{} red on a line no member owns: {first}{more}", f.name))
 }
 
 /// A filter's red names its owners: they leave with the red as their evidence and the survivors

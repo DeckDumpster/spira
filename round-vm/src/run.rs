@@ -1170,6 +1170,13 @@ if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suit
 testenv_pidfile="$HOME/round-testenv-pid"
 rm -f "$testenv_pidfile"
 # The lane boots podman containers of its own: it starts only once the batch has finished its own setup.
+bare_red_result() {
+    local rc="$1" log="$2" dir="$3" secs="$4"
+    case "$rc" in 0|124|137) return 0 ;; esac
+    ! grep -qs '^red ' "$dir"/*.result || return 0
+    printf 'red %s %s - - - %s\n' "$(date +%s)" "$secs" "$rc" > "$dir/bare-suites.result"
+    cp -f "$log" "$dir/bare-suites.out" 2>/dev/null || : > "$dir/bare-suites.out"
+}
 bare_after_setup() {
     until [ -e "$suites_mark" ]; do
         [ -s "$testenv_pidfile" ] && ! kill -0 "$(cat "$testenv_pidfile")" 2>/dev/null && break
@@ -1177,7 +1184,9 @@ bare_after_setup() {
     done
     bash spira/bare-suites.sh "$@"
 }
-bare_after_setup "${bare_sel[@]}" --results "$bare_out" >&2 &
+bare_log="$HOME/bare-suites.out"
+bare_started=$(date +%s)
+( bare_after_setup "${bare_sel[@]}" --results "$bare_out" 2>&1 | tee "$bare_log" >&2 ) &
 bare_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
@@ -1195,6 +1204,7 @@ rc=$?
 wait "$bare_pid"
 bare_rc=$?
 [ "$bare_rc" -eq 0 ] || phase_failed bare-suites "$bare_rc"
+bare_red_result "$bare_rc" "$bare_log" "$bare_out" $(( $(date +%s) - bare_started ))
 phase integration-tests
 pkill -P "$guard_pid" 2>/dev/null; kill "$guard_pid" 2>/dev/null; wait "$guard_pid" 2>/dev/null
 [ -e "$cap_fired" ] && over_cap=1
@@ -3810,6 +3820,38 @@ mod tests {
                 assert!(l.contains(" -j "), "{name}: a cargo call without jobs: {l}");
             }
         }
+    }
+
+    fn bare_lane_results(rc: i32, own_result: Option<&str>) -> (Option<String>, Option<String>) {
+        let d = TempDir::new();
+        std::fs::write(d.path().join("log"), "bash: spira/bare-suites.sh: No such file or directory\n").unwrap();
+        std::fs::create_dir(d.path().join("out")).unwrap();
+        if let Some(r) = own_result {
+            std::fs::write(d.path().join("out/test-x.sh.result"), r).unwrap();
+        }
+        let script = format!("set -Eeuo pipefail\n{}\ncd \"$HOME\"\nbare_red_result {rc} log out 9", script_fn("bare_red_result"));
+        let o = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", std::env::var("PATH").unwrap()).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let read = |f: &str| std::fs::read_to_string(d.path().join("out").join(f)).ok();
+        (read("bare-suites.result"), read("bare-suites.out"))
+    }
+
+    #[test_id(ttnjf4a)]
+    #[test]
+    fn a_bare_lane_that_exits_non_zero_with_no_red_of_its_own_leaves_a_red_result_and_its_output() {
+        let (result, out) = bare_lane_results(127, None);
+        let fields: Vec<String> = result.expect("a result").split_whitespace().map(String::from).collect();
+        assert_eq!((fields[0].as_str(), fields[2].as_str(), &fields[3..]), ("red", "9", &["-".to_string(), "-".to_string(), "-".to_string(), "127".to_string()][..]));
+        assert_eq!(out.unwrap(), "bash: spira/bare-suites.sh: No such file or directory\n");
+    }
+
+    #[test_id(t5utdjw)]
+    #[test]
+    fn a_bare_lane_cap_kill_a_pass_or_a_red_of_its_own_leaves_no_result_of_the_roundvms_own() {
+        assert_eq!(bare_lane_results(137, None), (None, None), "a cap kill stays over-cap");
+        assert_eq!(bare_lane_results(124, None), (None, None));
+        assert_eq!(bare_lane_results(0, None), (None, None));
+        assert_eq!(bare_lane_results(1, Some("red 1 2 - - - 1\n")), (None, None), "the lane's own red stands");
     }
 
     fn red_phase_out(log: &str, hung: &str) -> String {
