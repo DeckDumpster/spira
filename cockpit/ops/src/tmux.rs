@@ -561,3 +561,74 @@ Num       RefCount Protocol Flags    Type St Inode Path
         assert!(!needs_full_height_rebuild(40, 40));
     }
 }
+
+/// A scripted `tmux` for tests: every invocation is appended to a log, and the first rule
+/// whose literal is contained in the argument line answers it. A call no rule matches
+/// succeeds with no output.
+#[cfg(test)]
+pub(crate) mod fake {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    pub struct FakeTmux {
+        dir: PathBuf,
+        pub bin: PathBuf,
+        log: PathBuf,
+        rules: Vec<String>,
+    }
+
+    fn quoted(s: &str) -> String {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+
+    impl FakeTmux {
+        pub fn new(dir: &Path) -> FakeTmux {
+            let f = FakeTmux { dir: dir.to_path_buf(), bin: dir.join("tmux"), log: dir.join("calls.log"), rules: Vec::new() };
+            f.write();
+            f
+        }
+
+        fn rule(mut self, contains: &str, stdout: &str, stderr: &str, code: i32) -> FakeTmux {
+            let n = self.rules.len();
+            let out = self.dir.join(format!("rule-{n}.out"));
+            fs::write(&out, stdout).unwrap();
+            self.rules.push(format!(
+                "*{}*) cat {}; printf %s {} >&2; exit {code};;\n",
+                quoted(contains),
+                out.display(),
+                quoted(stderr)
+            ));
+            self.write();
+            self
+        }
+
+        /// Calls containing `contains` print `stdout` and succeed.
+        pub fn answer(self, contains: &str, stdout: &str) -> FakeTmux {
+            self.rule(contains, stdout, "", 0)
+        }
+
+        /// Calls containing `contains` print `stderr` and exit `code`.
+        pub fn fail(self, contains: &str, stderr: &str, code: i32) -> FakeTmux {
+            self.rule(contains, "", stderr, code)
+        }
+
+        fn write(&self) {
+            testkit::write_exe(
+                &self.bin,
+                &format!(
+                    "#!/bin/sh\necho \"$*\" >> {}\ncase \"$*\" in\n{}esac\nexit 0\n",
+                    self.log.display(),
+                    self.rules.concat()
+                ),
+            );
+        }
+
+        pub fn calls(&self) -> Vec<String> {
+            fs::read_to_string(&self.log).unwrap_or_default().lines().map(str::to_string).collect()
+        }
+
+        pub fn tmux(&self) -> super::Tmux {
+            super::Tmux::with_bin(self.bin.to_str().unwrap())
+        }
+    }
+}
