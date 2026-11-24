@@ -44,6 +44,8 @@ struct Fake {
     copies: RefCell<Vec<(PathBuf, PathBuf)>>,
     contexts: RefCell<Vec<PathBuf>>,
     removed_trees: RefCell<Vec<PathBuf>>,
+    /// The files present at the moment `build` was called.
+    files_at_build: RefCell<Vec<PathBuf>>,
 }
 
 struct FakeBuild<'a>(&'a Fake);
@@ -138,6 +140,7 @@ impl Host for Fake {
         let mut a = vec!["build".to_string()];
         a.extend(args.iter().skip(1).cloned());
         self.calls.borrow_mut().push(a);
+        *self.files_at_build.borrow_mut() = self.files.borrow().keys().cloned().collect();
         self.files.borrow_mut().insert(
             log.to_path_buf(),
             self.build_log.borrow().clone().into_bytes(),
@@ -692,6 +695,20 @@ fn a_slow_build_beats_every_interval_naming_its_multistage_step() {
         !f.is_file(Path::new("t/build.log")),
         "the build log is removed"
     );
+}
+
+#[test_id(twj3rkn)]
+#[test]
+fn the_release_registry_index_is_gone_from_the_context_when_the_build_starts() {
+    let f = Fake::new();
+    harness(&f, "h");
+    f.when(&["image", "exists"], 1, "");
+    f.file("t/ctx/conf.d.index", "stale");
+    f.file("h/conf.d.index", "the harness's own");
+    let c = conf("h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
+    assert!(!f.files_at_build.borrow().contains(&PathBuf::from("t/ctx/conf.d.index")));
+    assert!(f.files.borrow().contains_key(&PathBuf::from("h/conf.d.index")));
 }
 
 #[test_id(t5h2yut)]

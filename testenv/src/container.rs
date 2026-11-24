@@ -532,6 +532,9 @@ impl Driver<'_> {
             self.host.remove_tree(&context);
             return false;
         };
+        // The index's stamp hashes mtimes, which the context copy changes: left in, conf.sh
+        // refuses it as stale. The directories it was derived from are in the context.
+        self.host.remove(&context.join(spira_config::registry::INDEX_FILE));
         let log = self.host.temp_log();
         let start = self.host.now();
         let args = vec![
