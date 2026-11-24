@@ -142,6 +142,9 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
 fn refresh_forge_tip(reg: &spira_config::repos::Registry, r: &MapRow) {
     use crate::tasks::a::queue_step::edge::git;
     if let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) {
+        if spira_config::repos::landref(reg, &r.name).is_some_and(|base| crate::unpublished::published(Path::new(&r.path), &base, &remote, &branch)) {
+            return;
+        }
         let _ = git(Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
     }
 }
@@ -715,12 +718,22 @@ impl World {
         let wiki = self.wiki.display().to_string();
         let mut snap = brain_dirty::Snapshot { wiki, ..Default::default() };
         if !self.wiki.as_os_str().is_empty() {
-            let (code, _) = git(&self.wiki, &["rev-parse", "--git-dir"])?;
-            if code == Some(0) {
-                let (code, raw) = git(&self.wiki, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
-                if code != Some(0) {
-                    return Err(format!("git status exited {code:?}"));
-                }
+            let is_repo = match spira_config::git_refs::git_dirs(&self.wiki).filter(|(gitdir, _)| gitdir.join("HEAD").is_file()) {
+                Some(_) => true,
+                None => git(&self.wiki, &["rev-parse", "--git-dir"])?.0 == Some(0),
+            };
+            if is_repo {
+                let read = || -> Result<Vec<u8>, String> {
+                    let (code, raw) = git(&self.wiki, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
+                    if code != Some(0) {
+                        return Err(format!("git status exited {code:?}"));
+                    }
+                    Ok(raw)
+                };
+                let raw = match spira_config::git_refs::worktree_digest(&self.wiki) {
+                    Some(digest) => spira_config::git_refs::held(&self.wiki, "status", &digest.to_string(), read)?,
+                    None => read()?,
+                };
                 for path in brain_dirty::porcelain_paths(&raw) {
                     let mtime = fs::metadata(self.wiki.join(std::ffi::OsStr::from_bytes(&path))).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
                     if let Some(d) = mtime {

@@ -470,21 +470,28 @@ pub fn slots_row(run: &Path, fields: &[(&str, String)], ts: &str, host: &str) ->
     tsd::append_line(&tsd::family_path(run, "slots"), &line)
 }
 
+/// [`git`] for a question the refs and objects alone answer: held under the checkout's refs digest, so
+/// it is asked again only after a ref moved. An exit git itself answered is held; a spawn failure or a
+/// deadline is not, and is asked again next pass.
+pub fn git_held(repo: &Path, args: &[&str]) -> Option<String> {
+    let Some(digest) = spira_config::git_refs::refs_digest(repo) else { return git(repo, args) };
+    spira_config::git_refs::held(repo, &format!("git {}", args.join("\u{1f}")), &digest.to_string(), || git_answer(repo, args)).unwrap_or(None)
+}
+
+/// `Ok` is what git answered (`None` for a non-zero exit); `Err` is a run that gave no answer: no
+/// spawn, a deadline, a signal.
+fn git_answer(repo: &Path, args: &[&str]) -> Result<Option<String>, String> {
+    let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| e.to_string())?;
+    match out.status.code() {
+        Some(0) => Ok(Some(String::from_utf8_lossy(&out.stdout).into_owned())),
+        None | Some(124) => Err("git gave no answer".into()),
+        Some(_) => Ok(None),
+    }
+}
+
 /// `git -C <repo> <args>`, stdout on success, `None` on any non-zero exit or spawn failure.
 pub fn git(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if out.status.success() {
-        Some(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        None
-    }
+    git_answer(repo, args).ok().flatten()
 }
 
 /// `systemctl --user is-active <unit>` -> `Some(true/false)`, or `None` when the unit is

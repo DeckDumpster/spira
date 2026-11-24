@@ -323,6 +323,12 @@ impl Repo for RealRepo {
 
     fn forge_slug(&self, name: &str) -> Option<String> {
         let root = self.root_with_git(name)?;
+        if let Some(names) = spira_config::git_refs::remotes(std::path::Path::new(&root)) {
+            let remote = if names.iter().any(|r| r == "origin") { "origin" } else { names.first()? };
+            if let Some(url) = spira_config::git_refs::remote_url(std::path::Path::new(&root), remote) {
+                return crate::model::github_slug(&url);
+            }
+        }
         let remotes = Command::new("timeout").args(["5", "git", "-C", &root, "remote"]).stdin(Stdio::null()).output().ok()?;
         let remotes = String::from_utf8_lossy(&remotes.stdout).to_string();
         let remote = if remotes.lines().any(|r| r == "origin") { "origin" } else { remotes.lines().next()? };

@@ -90,21 +90,32 @@ fn read_ref_at(common: &Path, name: &str, depth: usize) -> Ref {
 /// prefix or the layout is not one this reads, or any ref under it is not a plain sha: git
 /// answers then, so a symbolic ref or a half-written file is never guessed at.
 pub fn branch_tips(repo: &Path, prefix: &str) -> Option<Vec<(String, String)>> {
-    let under = prefix.strip_prefix("refs/heads/")?;
+    tips_under(repo, "refs/heads/", prefix)
+}
+
+/// Whether any branch is named under `<namespace><under>` (`refs/remotes/origin/` and `spira/`);
+/// `None` as [`branch_tips`].
+pub fn has_branch_under(repo: &Path, namespace: &str, under: &str) -> Option<bool> {
+    Some(!tips_under(repo, namespace, &format!("{namespace}{under}"))?.is_empty())
+}
+
+fn tips_under(repo: &Path, namespace: &str, prefix: &str) -> Option<Vec<(String, String)>> {
+    let under = prefix.strip_prefix(namespace)?;
     let (_, common) = git_dirs(repo)?;
     if !common.join("refs").is_dir() {
         return None;
     }
+    let ns_dir = namespace.trim_end_matches('/');
     let mut out: BTreeMap<String, String> = BTreeMap::new();
     if let Ok(packed) = fs::read_to_string(common.join("packed-refs")) {
         for l in packed.lines().filter(|l| !l.starts_with(['#', '^'])) {
-            if let Some((sha, name)) = l.split_once(' ').and_then(|(sha, r)| Some((sha, r.strip_prefix("refs/heads/")?))).filter(|(_, n)| n.starts_with(under)) {
+            if let Some((sha, name)) = l.split_once(' ').and_then(|(sha, r)| Some((sha, r.strip_prefix(namespace)?))).filter(|(_, n)| n.starts_with(under)) {
                 is_sha(sha).then(|| out.insert(name.to_string(), sha.to_string()))?;
             }
         }
     }
     let (dir, rest) = under.rsplit_once('/').map_or(("", under), |(d, r)| (d, r));
-    let dir_path = if dir.is_empty() { common.join("refs/heads") } else { common.join("refs/heads").join(dir) };
+    let dir_path = if dir.is_empty() { common.join(ns_dir) } else { common.join(ns_dir).join(dir) };
     let stem = if dir.is_empty() { String::new() } else { format!("{dir}/") };
     walk(&dir_path, &stem, &format!("{stem}{rest}"), &mut out)?;
     Some(out.into_iter().collect())
@@ -163,6 +174,115 @@ pub fn remotes(repo: &Path) -> Option<Vec<String>> {
     names.sort();
     names.dedup();
     Some(names)
+}
+
+/// The remote's `url` from the common dir's `config`; `None` when the file cannot be read, the
+/// remote has no `url` there, or `include`, `insteadOf` or a per-worktree config could change what git answers.
+pub fn remote_url(repo: &Path, remote: &str) -> Option<String> {
+    let (_, common) = git_dirs(repo)?;
+    let text = fs::read_to_string(common.join("config")).ok()?;
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("worktreeconfig") || lower.contains("insteadof") || lower.lines().map(str::trim).any(|l| l.starts_with("[include")) {
+        return None;
+    }
+    let header = format!("[remote \"{remote}\"]");
+    let mut inside = false;
+    let mut url = None;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            inside = line.eq_ignore_ascii_case(&header) || line == header;
+            continue;
+        }
+        if inside {
+            if let Some((k, v)) = line.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("url") {
+                    if url.is_some() || v.contains(['\\', '"']) {
+                        return None;
+                    }
+                    url = Some(v.trim().to_string());
+                }
+            }
+        }
+    }
+    url.filter(|u| !u.is_empty())
+}
+
+/// A digest of every ref the checkout has: `packed-refs`, each loose ref's path and content, and
+/// `HEAD`. It moves when any ref does; `None` when any of them cannot be read.
+pub fn refs_digest(repo: &Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let (gitdir, common) = git_dirs(repo)?;
+    if !common.join("refs").is_dir() {
+        return None;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for file in [common.join("packed-refs"), gitdir.join("HEAD")] {
+        match fs::read(&file) {
+            Ok(b) => b.hash(&mut h),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0u8.hash(&mut h),
+            Err(_) => return None,
+        }
+    }
+    fn loose(dir: &Path, h: &mut impl Hasher) -> Option<()> {
+        let mut entries: Vec<_> = fs::read_dir(dir).ok()?.collect::<Result<_, _>>().ok()?;
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            e.file_name().hash(h);
+            if e.path().is_dir() {
+                loose(&e.path(), h)?;
+            } else {
+                match fs::read(e.path()) {
+                    Ok(b) => b.hash(h),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return None,
+                }
+            }
+        }
+        Some(())
+    }
+    loose(&common.join("refs"), &mut h)?;
+    Some(h.finish())
+}
+
+/// A digest of what `git status` reads: every ref, the index's and `info/exclude`'s size and mtime, and the
+/// path, size and mtime of every file outside `.git`. `None` when any of it cannot be read.
+pub fn worktree_digest(repo: &Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    use std::time::UNIX_EPOCH;
+    let (gitdir, common) = git_dirs(repo)?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    refs_digest(repo)?.hash(&mut h);
+    let stamp = |p: &Path, h: &mut std::collections::hash_map::DefaultHasher| -> Option<()> {
+        match fs::symlink_metadata(p) {
+            Ok(m) => (m.len(), m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos()).hash(h),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0u8.hash(h),
+            Err(_) => return None,
+        }
+        Some(())
+    };
+    stamp(&gitdir.join("index"), &mut h)?;
+    stamp(&common.join("info/exclude"), &mut h)?;
+    fn walk(dir: &Path, h: &mut std::collections::hash_map::DefaultHasher, stamp: &dyn Fn(&Path, &mut std::collections::hash_map::DefaultHasher) -> Option<()>) -> Option<()> {
+        let mut entries: Vec<_> = fs::read_dir(dir).ok()?.collect::<Result<_, _>>().ok()?;
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries.iter().filter(|e| e.file_name() != ".git") {
+            e.file_name().hash(h);
+            stamp(&e.path(), h)?;
+            if e.file_type().ok()?.is_dir() {
+                walk(&e.path(), h, stamp)?;
+            }
+        }
+        Some(())
+    }
+    walk(repo, &mut h, &stamp)?;
+    Some(h.finish())
+}
+
+/// The commit both refs name when the ref files say they name the same one: nothing separates
+/// them, so there is nothing to fetch against or measure.
+pub fn same_tip(repo: &Path, a: &str, b: &str) -> Option<String> {
+    let (a, b) = (sha_of(repo, a)?, sha_of(repo, b)?);
+    (a == b).then_some(a)
 }
 
 type Held = (String, Box<dyn std::any::Any + Send>);
@@ -387,5 +507,91 @@ mod tests {
         assert_eq!(head_sha(&d.join("absent")), None);
         fs::write(git.join("HEAD"), "ref: refs/heads/missing\n").unwrap();
         assert_eq!(head_sha(&d.join("main")), None, "an unborn branch is not a sha");
+    }
+
+    #[test_id(tofl2cb)]
+    #[test]
+    fn a_remote_url_is_read_from_its_section_and_a_rewrite_leaves_it_to_git() {
+        let d = testkit::TempDir::new("refs-remote-url");
+        let git = d.join(".git");
+        fs::create_dir_all(&git).unwrap();
+        assert_eq!(remote_url(d.path(), "origin"), None, "no config is git's to answer");
+        fs::write(git.join("config"), "[remote \"up\"]\n\turl = u\n[remote \"origin\"]\n\turl = git@h:o/r.git\n\tfetch = x\n").unwrap();
+        assert_eq!(remote_url(d.path(), "origin"), Some("git@h:o/r.git".into()));
+        assert_eq!(remote_url(d.path(), "none"), None);
+        fs::write(git.join("config"), "[url \"x\"]\n\tinsteadOf = y\n[remote \"origin\"]\n\turl = y\n").unwrap();
+        assert_eq!(remote_url(d.path(), "origin"), None);
+        fs::write(git.join("config"), "[include]\n\tpath = m\n[remote \"origin\"]\n\turl = y\n").unwrap();
+        assert_eq!(remote_url(d.path(), "origin"), None);
+    }
+
+    #[test_id(tb7dsxv)]
+    #[test]
+    fn the_refs_digest_moves_with_a_loose_ref_a_packed_ref_and_head_and_with_nothing_else() {
+        let d = testkit::TempDir::new("refs-digest");
+        let git = d.join(".git");
+        fs::create_dir_all(git.join("refs/heads/spira")).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(git.join("refs/heads/main"), format!("{}\n", sha('1'))).unwrap();
+        let at = || refs_digest(d.path()).unwrap();
+        let base = at();
+        assert_eq!(at(), base, "the same refs digest the same");
+        fs::write(git.join("COMMIT_EDITMSG"), "x").unwrap();
+        assert_eq!(at(), base, "a file outside the refs is not a ref");
+        fs::write(git.join("refs/heads/spira/sp-a"), format!("{}\n", sha('2'))).unwrap();
+        let loose = at();
+        assert_ne!(loose, base, "a new branch");
+        fs::write(git.join("refs/heads/spira/sp-a"), format!("{}\n", sha('3'))).unwrap();
+        assert_ne!(at(), loose, "a moved branch");
+        let moved = at();
+        fs::write(git.join("packed-refs"), format!("{} refs/heads/x\n", sha('4'))).unwrap();
+        assert_ne!(at(), moved, "a packed ref");
+        let packed = at();
+        fs::write(git.join("HEAD"), "ref: refs/heads/other\n").unwrap();
+        assert_ne!(at(), packed, "HEAD");
+        assert_eq!(refs_digest(&d.join("absent")), None);
+    }
+
+    #[test_id(t76b1f4)]
+    #[test]
+    fn two_refs_have_a_same_tip_only_when_both_are_read_and_equal() {
+        let d = testkit::TempDir::new("refs-same-tip");
+        let git = d.join(".git");
+        fs::create_dir_all(git.join("refs/heads/local")).unwrap();
+        fs::create_dir_all(git.join("refs/remotes/origin")).unwrap();
+        fs::write(git.join("refs/heads/local/main"), format!("{}\n", sha('1'))).unwrap();
+        fs::write(git.join("refs/remotes/origin/main"), format!("{}\n", sha('1'))).unwrap();
+        assert_eq!(same_tip(d.path(), "local/main", "refs/remotes/origin/main"), Some(sha('1')));
+        fs::write(git.join("refs/remotes/origin/main"), format!("{}\n", sha('2'))).unwrap();
+        assert_eq!(same_tip(d.path(), "local/main", "refs/remotes/origin/main"), None);
+        assert_eq!(same_tip(d.path(), "local/main", "refs/remotes/origin/gone"), None);
+    }
+
+    #[test_id(tyuatar)]
+    #[test]
+    fn the_worktree_digest_moves_with_a_new_file_an_edit_the_index_and_the_exclude_file() {
+        let d = testkit::TempDir::new("refs-worktree-digest");
+        let git = d.join(".git");
+        fs::create_dir_all(git.join("refs/heads")).unwrap();
+        fs::create_dir_all(git.join("info")).unwrap();
+        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(d.join("a.md"), "one").unwrap();
+        let at = || worktree_digest(d.path()).unwrap();
+        let base = at();
+        assert_eq!(at(), base);
+        fs::write(git.join("COMMIT_EDITMSG"), "x").unwrap();
+        assert_eq!(at(), base, "the git directory's other files are not read");
+        fs::write(d.join("b.md"), "new").unwrap();
+        let added = at();
+        assert_ne!(added, base, "a new untracked file");
+        fs::write(d.join("a.md"), "three").unwrap();
+        let edited = at();
+        assert_ne!(edited, added, "an edited file");
+        fs::write(git.join("index"), "i").unwrap();
+        let indexed = at();
+        assert_ne!(indexed, edited, "the index");
+        fs::write(git.join("info/exclude"), "b.md\n").unwrap();
+        assert_ne!(at(), indexed, "the exclude file");
+        assert_eq!(worktree_digest(&d.join("absent")), None);
     }
 }

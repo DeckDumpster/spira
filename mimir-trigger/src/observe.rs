@@ -91,20 +91,30 @@ pub fn landings_everywhere(reg: &Registry, map_text: &str, since_ts: i64) -> u64
     n
 }
 
-/// `git -C <repo> log --format=%s --after=@<since> <base_ref>`.
+/// The subjects of `base_ref`'s commits dated `since_ts` or later, as `git log --format=%s --after=@<since>`
+/// prints them. The rows read are held under the ref's sha, so a landing ref that has not moved costs no git.
 // FORK-EDGE: git stays a child (the contract keeps `git log` out of process: there is no git
 // library in the tree, and a read of the commit graph is not a Spira binary).
 pub fn git_log_subjects(repo: &Path, since_ts: i64, base_ref: &str) -> String {
-    spira_config::bounded::bounded("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["log", "--format=%s", &format!("--after=@{since_ts}"), base_ref])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
+    let read = |from: i64| -> Result<(i64, Vec<(i64, String)>), String> {
+        let out = spira_config::bounded::bounded("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["log", "--format=%ct %s", &format!("--after=@{from}"), base_ref])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        Ok((from, text.lines().filter_map(|l| l.split_once(' ')).filter_map(|(at, subject)| Some((at.parse().ok()?, subject.to_string()))).collect()))
+    };
+    let (from, rows) = match spira_config::git_refs::sha_of(repo, base_ref) {
+        Some(tip) => spira_config::git_refs::held(repo, &format!("landing subjects {base_ref}"), &tip, || read(since_ts)),
+        None => read(since_ts),
+    }
+    .unwrap_or_default();
+    let rows = if from > since_ts { read(since_ts).map(|(_, r)| r).unwrap_or_default() } else { rows };
+    rows.iter().filter(|(at, _)| *at >= since_ts).map(|(_, subject)| format!("{subject}\n")).collect()
 }
 
 /// `detect_invalid_closed`'s raw lines, in-process through `strand`.
@@ -116,6 +126,30 @@ pub fn invalid_closed_raw() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn git_at(repo: &Path, at: u64, args: &[&str]) {
+        let date = format!("@{at} +0000");
+        let out = std::process::Command::new("git").arg("-C").arg(repo).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).env("GIT_AUTHOR_DATE", &date).env("GIT_COMMITTER_DATE", &date).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test_id(tsdmrul)]
+    #[test]
+    fn landing_subjects_are_held_per_tip_and_cut_by_the_requested_time_in_process() {
+        let d = testkit::TempDir::new("mimir-subjects");
+        git_at(d.path(), 1700000100, &["init", "-q", "-b", "main"]);
+        git_at(d.path(), 1700000100, &["commit", "-q", "--allow-empty", "-m", "old"]);
+        git_at(d.path(), 1700000200, &["commit", "-q", "--allow-empty", "-m", "sp-aaaaaa: mid"]);
+        git_at(d.path(), 1700000300, &["commit", "-q", "--allow-empty", "-m", "sp-bbbbbb: new"]);
+        assert_eq!(git_log_subjects(d.path(), 1700000150, "main"), "sp-bbbbbb: new\nsp-aaaaaa: mid\n");
+        let hidden = d.path().join(".git/hidden");
+        std::fs::rename(d.path().join(".git/objects"), &hidden).unwrap();
+        assert_eq!(git_log_subjects(d.path(), 1700000250, "main"), "sp-bbbbbb: new\n", "the tip has not moved, so no git is asked and the later cutoff filters the held rows");
+        std::fs::rename(&hidden, d.path().join(".git/objects")).unwrap();
+        git_at(d.path(), 1700000400, &["commit", "-q", "--allow-empty", "-m", "sp-cccccc: newer"]);
+        assert_eq!(git_log_subjects(d.path(), 1700000250, "main"), "sp-cccccc: newer\nsp-bbbbbb: new\n", "a moved tip is read again");
+        assert_eq!(git_log_subjects(d.path(), 1700000050, "main").lines().count(), 4, "an earlier cutoff than the held read is read again");
+    }
+
     use spira_store::lc_call::{Reply, Transport};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
