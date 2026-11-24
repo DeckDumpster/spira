@@ -5,8 +5,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -270,6 +270,64 @@ pub trait Executor {
     fn complete(&mut self, key: &str, outcome: Outcome) -> Result<bool>;
 }
 
+
+/// The step the engine's turn is in, and the longest step the turn has finished. Entering and
+/// leaving take a lock held only to copy a few fields, so a slow store call cannot hold it.
+#[derive(Default)]
+pub struct Steps(Mutex<StepState>);
+
+#[derive(Default)]
+struct StepState {
+    current: Option<(&'static str, String, Instant)>,
+    longest: Option<(&'static str, Duration)>,
+}
+
+/// The step in progress, as the host reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepNow {
+    pub name: &'static str,
+    pub of: String,
+    pub ran: Duration,
+}
+
+impl Steps {
+    fn lock(&self) -> std::sync::MutexGuard<'_, StepState> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn enter(self: &Arc<Self>, name: &'static str, of: &str) -> StepGuard {
+        self.lock().current = Some((name, of.to_string(), Instant::now()));
+        StepGuard(self.clone())
+    }
+
+    /// Forgets the longest step: the next turn's record starts from nothing.
+    pub fn begin_turn(&self) {
+        self.lock().longest = None;
+    }
+
+    pub fn now(&self) -> Option<StepNow> {
+        self.lock().current.as_ref().map(|(name, of, at)| StepNow { name, of: of.clone(), ran: at.elapsed() })
+    }
+
+    pub fn longest(&self) -> Option<(&'static str, Duration)> {
+        self.lock().longest
+    }
+}
+
+struct StepGuard(Arc<Steps>);
+
+impl Drop for StepGuard {
+    fn drop(&mut self) {
+        let mut s = self.0.lock();
+        if let Some((name, _, at)) = s.current.take() {
+            let ran = at.elapsed();
+            if s.longest.is_none_or(|(_, l)| ran > l) {
+                s.longest = Some((name, ran));
+            }
+        }
+    }
+}
+
 pub struct Engine {
     journal: Arc<dyn Journal>,
     clock: Arc<dyn Clock>,
@@ -281,6 +339,7 @@ pub struct Engine {
     sink: Arc<dyn WideSink>,
     marker: Arc<dyn Marker>,
     busy: Arc<Busy>,
+    steps: Arc<Steps>,
     stall_limit: u32,
     suspects: BTreeMap<(EventId, String), u32>,
     attempts: BTreeMap<String, u32>,
@@ -451,6 +510,7 @@ impl Engine {
             sink: Arc::new(NullSink),
             marker: Arc::new(NullMarker),
             busy: Arc::new(Busy::default()),
+            steps: Arc::new(Steps::default()),
             stall_limit: 2,
             suspects: BTreeMap::new(),
             attempts: BTreeMap::new(),
@@ -684,6 +744,11 @@ impl Engine {
     /// The probe the host reads to tell a parked handler from a turn waiting on I/O.
     pub fn busy(&self) -> Arc<Busy> {
         self.busy.clone()
+    }
+
+    /// The step the turn is in, for the host to name when a turn overruns.
+    pub fn steps(&self) -> Arc<Steps> {
+        self.steps.clone()
     }
 
     pub fn with_busy(mut self, busy: Arc<Busy>) -> Self {
@@ -1354,7 +1419,9 @@ impl Engine {
                 self.finish(&wide);
                 return Ok(());
             }
+            let step = self.steps.enter("marker.set", name);
             self.marker.set(&Mark { event: ev.id.clone(), handler: name.to_string(), stream: ev.stream.clone(), stalls })?;
+            drop(step);
             let now = self.clock.now_ms();
             self.note_tick(name, ev);
             let (wake, began_run) = self.wake_of(&ev.id);
@@ -1367,9 +1434,13 @@ impl Engine {
             let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, name]), self.seq, Wide::default());
             let began = Instant::now();
             let view = &self.projection;
+            let step = self.steps.enter("handler", name);
             let called = catch_unwind(AssertUnwindSafe(|| handler.handle(&ctx, view, ev)));
+            drop(step);
             self.busy.exit();
+            let step = self.steps.enter("marker.clear", name);
             self.marker.clear()?;
+            drop(step);
             let elapsed = began.elapsed();
             let set = ctx.into_event();
             if stalls == 0 && set.is_empty() && matches!(&called, Ok(c) if c.is_empty()) {
@@ -1437,7 +1508,10 @@ impl Engine {
         if let Some(p) = self.poison_seen.get(stream) {
             return Ok(*p);
         }
-        let p = match self.journal.poisoned(stream)? {
+        let step = self.steps.enter("journal.poisoned", &stream.0);
+        let found = self.journal.poisoned(stream);
+        drop(step);
+        let p = match found? {
             None => {
                 self.quarantined_here.remove(stream);
                 false
@@ -1459,7 +1533,9 @@ impl Engine {
     }
 
     fn quarantine(&mut self, ev: &Event, handler: &str, message: &str) -> Result<()> {
+        let step = self.steps.enter("journal.poison", &ev.stream.0);
         self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
+        drop(step);
         self.poison_seen.insert(ev.stream.clone(), true);
         self.quarantined_here.insert(ev.stream.clone());
         let w = self.unit("quarantine", Some(ev));
@@ -1592,7 +1668,9 @@ impl Engine {
         if self.turn.is_empty() {
             return Ok(());
         }
+        let step = self.steps.enter("journal.commit", "");
         self.journal.commit(&self.turn)?;
+        drop(step);
         let turn = std::mem::take(&mut self.turn);
         self.committed.extend(turn.effects.iter().map(|e| e.request_id.clone()));
         for key in turn.cleared {

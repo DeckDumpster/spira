@@ -125,7 +125,7 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), Stampe
     let control = spira_runtime::status::Control::new(board.clone(), spira_runtime::control_submit(tx), clock.clone()).with_repin(repin.clone());
     spira_runtime::spawn_control(&settings.control_socket, control)?;
     notifier.ready();
-    let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None, before_turn: Some(Arc::new(move |engine| repin.apply(engine))) };
+    let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None, before_turn: Some(Arc::new(move |engine| repin.apply(engine))), turn_budget: None };
     let units = backend.units();
     serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), units: Some(units), board: Some(board), ..Effects::default() }), settings.pool_caps, rx, opts).await.map_err(|e| Stamped::from(e.to_string()))
 }

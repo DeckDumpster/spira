@@ -24,7 +24,7 @@ pub fn is_routine(fields: &Fields) -> bool {
         _ => "",
     };
     match text("unit") {
-        "dispatch" | "loop.turn" => text("outcome") == "ok",
+        "dispatch" => text("outcome") == "ok",
         "effect" => text("effect.outcome") == "succeeded",
         "effect.deferred" => true,
         _ => false,
@@ -103,7 +103,6 @@ mod tests {
     fn successful_turns_are_routine_and_failures_and_anomalies_are_not() {
         for routine in [
             rec(&[("unit", "dispatch"), ("outcome", "ok")]),
-            rec(&[("unit", "loop.turn"), ("outcome", "ok")]),
             rec(&[("unit", "effect"), ("effect.outcome", "succeeded")]),
             rec(&[("unit", "effect.deferred")]),
         ] {
@@ -112,6 +111,7 @@ mod tests {
         for kept in [
             rec(&[("unit", "dispatch"), ("outcome", "error")]),
             rec(&[("unit", "dispatch"), ("outcome", "panic")]),
+            rec(&[("unit", "loop.turn"), ("outcome", "ok")]),
             rec(&[("unit", "loop.turn"), ("outcome", "overrun")]),
             rec(&[("unit", "effect"), ("effect.outcome", "failed")]),
             rec(&[("unit", "effect"), ("effect.outcome", "timed_out")]),
