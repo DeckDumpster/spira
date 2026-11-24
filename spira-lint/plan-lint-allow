@@ -1,3 +1,0 @@
-# plan-lint-allow — suites that predate the plan-lint gate fence (sp-pppt0), each missing
-# # tier:, # covers:, or naming a stale UC id. Shrink-only: fix a suite and delete its line.
-# literal-ok: a file path, not the world-stop literal itself

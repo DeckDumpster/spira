@@ -134,7 +134,8 @@ jobs:
   # A selector that cannot select fails the job (exit 75/1), never an empty list.
   # For everything else: the whole corpus.
   #
-  # An empty output means no suites were selected — provision is skipped.
+  # An empty output means no suites were selected (or the tree has none) — provision is skipped
+  # and the gate passes that phase.
   # The suite list is comma-separated so it fits in a single output value.
   # ---------------------------------------------------------------------------
   select:
@@ -187,8 +188,8 @@ jobs:
             # A publish PR is the last gate before main: it runs every suite
             # (law-publish-ci-runs-the-full-suite). testenv drops disabled suites and
             # excuses in-date quarantines from the deny list it is handed, longest-first.
-            _s="$(ls spira/test-*.sh | xargs -n1 basename \
-                  | tr '\n' ',' | sed 's/,$//')"
+            _s="$(find spira -maxdepth 1 -name 'test-*.sh' -printf '%f\n' \
+                  | sort | tr '\n' ',' | sed 's/,$//')"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             _base="${{ github.event.pull_request.base.sha }}"
             # CI judges its own build: the selector built from this commit, by explicit path
@@ -201,8 +202,8 @@ jobs:
             # cut's own "Assert gate check" step reads that run, not this one.
             _s=""
           else
-            _s="$(ls spira/test-*.sh | xargs -n1 basename \
-                  | tr '\n' ',' | sed 's/,$//')"
+            _s="$(find spira -maxdepth 1 -name 'test-*.sh' -printf '%f\n' \
+                  | sort | tr '\n' ',' | sed 's/,$//')"
           fi
           printf 'suites=%s\n' "$_s" >> "$GITHUB_OUTPUT"
           _n="$(printf '%s' "$_s" | tr ',' '\n' | grep -c . 2>/dev/null || echo 0)"
