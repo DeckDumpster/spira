@@ -355,6 +355,7 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "release",
+ "serde",
  "serde_json",
  "sha2",
  "spira-config",

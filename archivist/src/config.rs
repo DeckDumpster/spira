@@ -29,7 +29,7 @@ pub struct Env {
 impl Env {
     /// The meter's configuration, from the thresholds and directories this run resolved.
     pub fn meter(&self) -> ctx_meter::Config {
-        ctx_meter::Config { warn: self.ctx_warn, high: self.ctx_high, limit: self.ctx_limit, projects: self.token_projects.clone().into(), run: self.run.clone().into(), idle: self.idle, hhmm: ctx_meter::fmt::local_hhmm }
+        ctx_meter::Config { warn: self.ctx_warn, high: self.ctx_high, limit: self.ctx_limit, projects: self.token_projects.clone().into(), run: self.run.clone().into(), status: Default::default(), idle: self.idle, hhmm: ctx_meter::fmt::local_hhmm }
     }
 }
 

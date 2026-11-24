@@ -40,7 +40,7 @@ impl Rig {
     }
 
     fn paths(&self) -> Paths {
-        resolve(&self.release, &sys_path(), &self.toml.display().to_string(), self.dir.join("settings.json")).unwrap()
+        resolve(&self.release, &sys_path(), &self.toml.display().to_string(), self.dir.join("settings.json"), &self.dir.join("rt"), "").unwrap()
     }
 
     /// `bash -c <command>` under the environment the client gives it: a home, a bare `PATH`,
@@ -66,9 +66,11 @@ fn text(o: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
 }
 
-/// The registered command with its `SPIRA_TOML` assignment removed.
-fn unconfigured(command: &str) -> String {
-    command.split(' ').filter(|w| !w.starts_with("SPIRA_TOML=")).collect::<Vec<_>>().join(" ")
+/// The registered command with its `--run <dir>` removed.
+fn without_run(command: &str) -> String {
+    let words: Vec<&str> = command.split(' ').collect();
+    let at = words.iter().position(|w| *w == "--run").unwrap();
+    words.iter().enumerate().filter(|(i, _)| *i != at && *i != at + 1).map(|(_, w)| *w).collect::<Vec<_>>().join(" ")
 }
 
 const METER_IN: &str = r#"{"context_window": {"current_usage": {}, "total_input_tokens": 12345}}"#;
@@ -83,9 +85,10 @@ fn the_registered_status_line_command_prints_the_meter_as_the_client_runs_it() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
     assert!(text(&out).contains("ctx 12k"), "{}", text(&out));
 
-    let broken = rig.as_client(&unconfigured(&command), METER_IN);
-    assert_ne!(broken.status.code(), Some(0), "the meter ran without SPIRA_TOML: {}", text(&broken));
-    assert!(text(&broken).contains("SPIRA_TOML"), "it refused without saying why: {}", text(&broken));
+    let broken = rig.as_client(&without_run(&command), METER_IN);
+    assert_eq!(broken.status.code(), Some(2), "the meter ran without --run: {}", text(&broken));
+    assert!(text(&broken).contains("usage"), "it refused without saying why: {}", text(&broken));
+    assert!(broken.stdout.is_empty(), "{}", text(&broken));
 }
 
 #[test_id(tx7kd2m)]

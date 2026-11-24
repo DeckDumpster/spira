@@ -20,6 +20,12 @@ pub const RUNTIME_DIR: &str = ".runtime";
 /// The name prefix of a session's scratch directory under [`RUNTIME_DIR`]; the pid follows.
 pub const SESSION_TMP_PREFIX: &str = "session-tmp-";
 
+/// Where the status line's session records and status files live under the user runtime
+/// directory (memory-backed): every writer and the refresh are handed this one path.
+pub fn ctx_meter_dir(runtime_dir: &std::path::Path) -> std::path::PathBuf {
+    runtime_dir.join("spira-ctx-meter")
+}
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

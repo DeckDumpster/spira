@@ -3,7 +3,7 @@
 
 use super::*;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use testkit::TempDir;
 
 const NOW: i64 = 1_800_000_000;
@@ -19,7 +19,7 @@ impl Rig {
         Rig { dir: TempDir::new("ctx-meter") }
     }
     fn cfg(&self) -> Config {
-        Config { warn: 200_000, high: 400_000, limit: 1_000_000, projects: self.dir.join("projects"), run: self.dir.join("run"), idle: 1800, hhmm: |t| format!("{:02}:{:02}", t % 86400 / 3600, t % 3600 / 60) }
+        Config { warn: 200_000, high: 400_000, limit: 1_000_000, projects: self.dir.join("projects"), run: self.dir.join("run"), status: self.dir.join("run"), idle: 1800, hhmm: |t| format!("{:02}:{:02}", t % 86400 / 3600, t % 3600 / 60) }
     }
     fn put(&self, rel: &str, text: &str) -> &Rig {
         let p = self.dir.join(rel);
@@ -43,8 +43,35 @@ impl Rig {
         let cw = context.map(|c| format!(r#","context_window":{{"current_usage":{{}},"total_input_tokens":{c}}}"#)).unwrap_or_default();
         format!(r#"{{"session_id":"s1","transcript_path":"{}"{cw}{rate_limits}}}"#, self.tp())
     }
+    fn run_dir(&self) -> PathBuf {
+        self.dir.join("run")
+    }
+    fn at_now(&self, p: &Path) {
+        fs::File::open(p).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(NOW as u64)).unwrap();
+    }
+    /// What the scheduler does between two refreshes: every record's status recomputed, both
+    /// stamped as touched at `NOW`.
+    fn sync(&self) {
+        let cfg = self.cfg();
+        for sid in status::sessions(&cfg.status) {
+            self.at_now(&status::sessions_dir(&cfg.status).join(format!("{sid}.json")));
+            status::refresh_session(&cfg, NOW, &sid);
+            self.at_now(&status::status_dir(&cfg.status).join(format!("{sid}.json")));
+        }
+    }
+    /// The refresh that writes the record, the scheduler's recompute, then the refresh that prints.
     fn line(&self, stdin: &str) -> String {
-        line(&self.cfg(), NOW, stdin, &self.dir)
+        let mut hook: serde_json::Value = serde_json::from_str(stdin).unwrap_or_default();
+        if let Some(o) = hook.as_object_mut() {
+            o.remove("rate_limits");
+        }
+        line(&self.run_dir(), NOW, &hook.to_string(), &self.dir);
+        self.sync();
+        let out = line(&self.run_dir(), NOW, stdin, &self.dir);
+        for sid in status::sessions(&self.run_dir()) {
+            self.at_now(&status::sessions_dir(&self.run_dir()).join(format!("{sid}.json")));
+        }
+        out
     }
     fn env(&self, pick: Option<&str>) -> String {
         env(&self.cfg(), NOW, pick.map(Path::new)).join("\n")
@@ -298,72 +325,116 @@ fn a_missing_stale_or_empty_in_flight_snapshot_is_a_red_question_never_idle() {
     assert_eq!(inflight(Some(("OTHER=1\n", NOW))), INFLIGHT_BAD);
 }
 
-// ---- the operator pointer ----------------------------------------------------------------
+// ---- the three files the refresh reads --------------------------------------------------
 
-fn pointer_to(rig: &Rig, rel: &str, ts: i64) {
-    rig.put("run/ctx-operator.ptr", &format!("tp={}\nts={ts}\nsid=o\n", rig.dir.join(rel).display()));
+#[test_id(t6osas2)]
+#[test]
+fn a_missing_stale_or_nameless_status_prints_the_clients_figures_and_a_red_inflight() {
+    let rig = Rig::new();
+    rig.put(TP, &transcript(&climbing()));
+    let plain = format!("ctx 12k{INFLIGHT_BAD}");
+    let run = rig.run_dir();
+    let hook = rig.hook(Some(12_345), "");
+    assert_eq!(line(&run, NOW, &hook, &rig.dir), plain, "no status yet");
+    rig.sync();
+    assert!(line(&run, NOW, &hook, &rig.dir).contains("/25t"), "a fresh status is used");
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW - 61) as u64);
+    fs::File::open(rig.dir.join("run/status/s1.json")).unwrap().set_modified(old).unwrap();
+    assert_eq!(line(&run, NOW, &hook, &rig.dir), plain, "a status older than a minute");
+    rig.sync();
+    let nameless = r#"{"context_window":{"current_usage":{},"total_input_tokens":12345}}"#;
+    assert_eq!(line(&run, NOW, nameless, &rig.dir), plain);
+    let unsafe_id = r#"{"session_id":"../x","context_window":{"current_usage":{},"total_input_tokens":12345}}"#;
+    assert_eq!(line(&run, NOW, unsafe_id, &rig.dir), plain);
+    assert!(!rig.dir.join("x.json").exists() && !rig.dir.join("run/sessions/../x.json").exists());
+}
+
+// ---- the session records ------------------------------------------------------------------
+
+fn record_for(rig: &Rig, sid: &str, rel: &str, age: i64) {
+    let rec = status::Record { session: sid.into(), transcript: rig.dir.join(rel).display().to_string(), cwd: String::new(), len: 0 };
+    let path = status::sessions_dir(&rig.run_dir()).join(format!("{sid}.json"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, serde_json::to_string(&rec).unwrap()).unwrap();
+    fs::File::open(&path).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW - age) as u64)).unwrap();
+}
+
+fn ino(rig: &Rig, rel: &str) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(rig.dir.join(rel)).unwrap().ino()
 }
 
 // covers: UC-cockpit-observability-36
 #[test_id(t95ksbv)]
 #[test]
-fn a_status_line_tick_writes_the_pointer_env_reads() {
+fn a_status_line_refresh_writes_the_record_env_reads() {
     let rig = Rig::new();
     rig.put(TP, &transcript(&climbing()));
     lined(&rig, None);
-    assert_eq!(rig.read("run/ctx-operator.ptr"), format!("tp={}\nts={NOW}\nsid=s1\n", rig.tp()));
+    let rec: status::Record = serde_json::from_str(&rig.read("run/sessions/s1.json")).unwrap();
+    assert_eq!(rec, status::Record { session: "s1".into(), transcript: rig.tp(), cwd: rig.dir.display().to_string(), len: fs::metadata(rig.dir.join(TP)).unwrap().len() });
     assert!(rig.env(None).starts_with("SP_CTX_NOW=220000\nSP_CTX_TURNS=25\nSP_CTX_GROWTH=5000\nSP_CTX_NEXT=high\nSP_CTX_HEADROOM=180000\nSP_CTX_TURNS_LEFT=36\nSP_CTX_AGE=0\n"));
+}
+
+#[test_id(ty5c5jy)]
+#[test]
+fn an_unchanged_record_and_status_keep_their_inode_and_are_touched() {
+    let rig = Rig::new();
+    rig.put(TP, &transcript(&climbing()));
+    lined(&rig, None);
+    let (rec, st) = (ino(&rig, "run/sessions/s1.json"), ino(&rig, "run/status/s1.json"));
+    let stale = std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW - 500) as u64);
+    for f in ["run/sessions/s1.json", "run/status/s1.json"] {
+        fs::File::open(rig.dir.join(f)).unwrap().set_modified(stale).unwrap();
+    }
+    lined(&rig, None);
+    assert_eq!((ino(&rig, "run/sessions/s1.json"), ino(&rig, "run/status/s1.json")), (rec, st));
+    for f in ["run/sessions/s1.json", "run/status/s1.json"] {
+        assert_ne!(fs::metadata(rig.dir.join(f)).unwrap().modified().unwrap(), stale, "{f} was touched");
+    }
+    rig.append(TP, &row(99, 1000));
+    lined(&rig, None);
+    assert_ne!(ino(&rig, "run/sessions/s1.json"), rec, "a longer transcript is a changed record");
+    assert_ne!(ino(&rig, "run/status/s1.json"), st, "a changed status is replaced");
 }
 
 // covers: UC-cockpit-observability-36
 #[test_id(tan74yf)]
 #[test]
-fn an_idle_second_session_cannot_take_the_pointer_from_a_holder_that_spoke_more_recently() {
+fn env_picks_the_live_record_with_the_newest_transcript() {
     let rig = Rig::new();
     rig.put(TP, &transcript(&[10, 20])).put("projects/p/other.jsonl", &transcript(&[1])).touch(TP, NOW - 500).touch("projects/p/other.jsonl", NOW - 5);
-    pointer_to(&rig, "projects/p/other.jsonl", NOW - 10);
-    let before = rig.read("run/ctx-operator.ptr");
-    lined(&rig, None);
-    assert_eq!(rig.read("run/ctx-operator.ptr"), before);
-}
-
-// covers: UC-cockpit-observability-36
-#[test_id(tlud0r4)]
-#[test]
-fn a_stale_holder_never_keeps_the_pointer_and_an_older_holder_yields_it() {
-    for (holder_at, holder_mtime) in [(NOW - 5000, NOW - 5), (NOW - 10, NOW - 500)] {
-        let rig = Rig::new();
-        rig.put(TP, &transcript(&[10, 20])).put("projects/p/other.jsonl", &transcript(&[1])).touch(TP, NOW - 5).touch("projects/p/other.jsonl", holder_mtime);
-        pointer_to(&rig, "projects/p/other.jsonl", holder_at);
-        lined(&rig, None);
-        assert_eq!(rig.read("run/ctx-operator.ptr"), format!("tp={}\nts={NOW}\nsid=s1\n", rig.tp()), "holder at {holder_at}");
-    }
+    record_for(&rig, "s1", TP, 10);
+    record_for(&rig, "o", "projects/p/other.jsonl", 20);
+    assert!(rig.env(None).contains("SP_CTX_NOW=1\n") && rig.env(None).contains("SP_CTX_AGE=20\n"), "{}", rig.env(None));
+    record_for(&rig, "o", "projects/p/other.jsonl", 5000);
+    assert!(rig.env(None).contains("SP_CTX_NOW=20\n"), "a record past the idle limit is not chosen: {}", rig.env(None));
 }
 
 // covers: UC-cockpit-observability-36
 #[test_id(tzqa9tw)]
 #[test]
-fn a_stale_deleted_or_corrupt_pointer_means_no_session() {
+fn a_stale_deleted_or_corrupt_record_means_no_session() {
     let none = |age: &str| format!("SP_CTX_NOW=-\nSP_CTX_TURNS=-\nSP_CTX_GROWTH=-\nSP_CTX_NEXT=-\nSP_CTX_HEADROOM=-\nSP_CTX_TURNS_LEFT=-\nSP_CTX_AGE={age}\nSP_CTX_ARCHIVIST=-\nSP_CTX_ARCHIVIST_BEHIND=-\nSP_CTX_ARCHIVIST_FILED=-\nSP_CTX_SCAN_BYTES=0\nSP_LIMIT_5H_PCT=-\nSP_LIMIT_5H_ETA=-\nSP_LIMIT_7D_PCT=-\nSP_LIMIT_7D_ETA=-\nSP_LIMIT_AGE=-");
     let rig = Rig::new();
     assert_eq!(rig.env(None), none("-"));
     rig.put(TP, &transcript(&climbing()));
-    pointer_to(&rig, TP, NOW - 1801);
-    assert_eq!(rig.env(None), none("1801"));
-    pointer_to(&rig, "projects/p/gone.jsonl", NOW - 30);
-    assert_eq!(rig.env(None), none("30"));
-    rig.put("run/ctx-operator.ptr", "tp=x\nts=abc\n");
+    record_for(&rig, "s1", TP, 1801);
     assert_eq!(rig.env(None), none("-"));
-    pointer_to(&rig, TP, NOW - 1800);
-    assert!(rig.env(None).contains("SP_CTX_AGE=1800\n"), "a holder exactly at the idle threshold is still live");
+    record_for(&rig, "s1", "projects/p/gone.jsonl", 30);
+    assert_eq!(rig.env(None), none("-"));
+    rig.put("run/sessions/s1.json", "tp=x");
+    assert_eq!(rig.env(None), none("-"));
+    record_for(&rig, "s1", TP, 1800);
+    assert!(rig.env(None).contains("SP_CTX_AGE=1800\n"), "a record exactly at the idle threshold is still live");
 }
 
 #[test_id(t99fzf0)]
 #[test]
-fn a_named_transcript_wins_over_the_pointer() {
+fn a_named_transcript_wins_over_the_record() {
     let rig = Rig::new();
     rig.put(TP, &transcript(&climbing())).put("projects/p/s2.jsonl", &transcript(&[10, 20]));
-    pointer_to(&rig, TP, NOW - 30);
+    record_for(&rig, "s1", TP, 30);
     let named = rig.env(Some(&rig.dir.join("projects/p/s2.jsonl").display().to_string()));
     assert!(named.starts_with("SP_CTX_NOW=20\nSP_CTX_TURNS=2\nSP_CTX_GROWTH=0\nSP_CTX_NEXT=warn\nSP_CTX_HEADROOM=199980\nSP_CTX_TURNS_LEFT=-\n"), "{named}");
 }
