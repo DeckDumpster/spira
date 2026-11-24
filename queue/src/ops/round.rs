@@ -50,13 +50,13 @@ pub const VM_NO_OUTPUT: i32 = 77;
 /// caller issues the same verb again once no pass is running.
 pub const PASS_RUNNING: i32 = 79;
 
-pub(super) const BUILD_RED: &str = "workspace-build";
-pub(super) const LINT_RED: &str = "spira-lint";
+pub(crate) const BUILD_RED: &str = "workspace-build";
+pub(crate) const LINT_RED: &str = "spira-lint";
 const FENCE_RED_PREFIX: &str = "fence-";
 /// The fence that runs the round image's setup on the merged tree before any suite.
-pub(super) const PREFLIGHT_RED: &str = "fence-round-image-preflight";
-pub(super) const IMAGE_RED: &str = "fence-round-image";
-pub(super) const UNIT_RED: &str = "unit-tests";
+pub(crate) const PREFLIGHT_RED: &str = "fence-round-image-preflight";
+pub(crate) const IMAGE_RED: &str = "fence-round-image";
+pub(crate) const UNIT_RED: &str = "unit-tests";
 /// The round VM's two test phases (sp-cddf76), each leaving its red as a record: the unit phase
 /// (tests inside src/) before any suite, the integration phase (tests/) beside them.
 /// Either is red on the `unit-tests` step, the testenv suite that runs both for a tip.

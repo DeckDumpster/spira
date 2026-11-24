@@ -503,6 +503,15 @@ fn an_eject_red_on_the_release_verify_step_is_accepted_as_a_round_step() {
     assert!(spira_config::round_step::proven_by_round("release-verify"));
 }
 
+#[test_id(t9191gq)]
+#[test]
+fn every_red_name_the_queue_attributes_is_a_listed_round_step() {
+    use crate::ops::round::{BUILD_RED, IMAGE_RED, LINT_RED, PREFLIGHT_RED, UNIT_RED};
+    for n in [BUILD_RED, LINT_RED, UNIT_RED, IMAGE_RED, PREFLIGHT_RED] {
+        assert!(spira_config::round_step::is_step(n), "{n}");
+    }
+}
+
 #[test_id(t71ykqw)]
 #[test]
 fn an_eject_red_on_any_listed_round_step_is_accepted() {
