@@ -517,9 +517,7 @@ impl<'a> Session<'a> {
         if let Some(b) = self.queue_bound {
             args.extend(["--queue-timeout".into(), b.to_string()]);
         }
-        if self.setup_deadline.is_some() {
-            args.push("--no-build".into());
-        }
+        args.push("--no-build".into());
         if let Some(p) = self.pids_limit {
             args.extend(["--pids-limit".into(), p.to_string()]);
         }
@@ -1892,7 +1890,7 @@ mod tests {
         let calls = rt.testenv_calls.lock().unwrap().clone();
         assert_eq!(
             calls[0],
-            vec!["up", "--name", "spira-batch-abc123", "--checkout", &wt.path().display().to_string()]
+            vec!["up", "--name", "spira-batch-abc123", "--checkout", &wt.path().display().to_string(), "--no-build"]
         );
         assert_eq!(calls[1], vec!["probe", "--name", "spira-batch-abc123"]);
         let rt = FakeRuntime::new();

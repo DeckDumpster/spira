@@ -128,6 +128,8 @@ pub trait Host: Sync {
     fn drop_round_ref(&self, round_ref: &str);
     /// The testenv image tag `commit` of `tree` needs, computed without a checkout.
     fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String>;
+    /// Whether this host's own container store (the operator's) holds `localhost/spira-testenv:<tag>`.
+    fn image_present(&self, tag: &str) -> bool;
     /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`; the
     /// tree sha it points at.
     fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<String, String>;
@@ -178,9 +180,6 @@ pub struct BatchJob {
     pub post_guard_secs: u64,
     /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
     pub lint: bool,
-    /// The head's image tag differs from what the template (or the landing ref) holds: the VM
-    /// builds `localhost/spira-testenv:<tag>` as a declared setup step instead of refusing it.
-    pub build_image: bool,
     /// The head's image tag as the host computed it; set, the preflight refuses an absent image
     /// before any build. Empty: the tag is only known once the round's own testenv is built.
     pub image_tag: Option<String>,
@@ -266,10 +265,10 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// The VM side of a round for a registered repository that is not the harness: clone the round's
-/// tree and run the repository's own CI entry point (`${15}`) in its declared image (`${23}`). Its exit status is the one verdict,
+/// tree and run the repository's own CI entry point (`${14}`) in its declared image (`${22}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction.
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" round_ref="${13}" round_sha="${14}" entry="${15}" image="${23}" workdir="${24:-/work}"
+host_addr="$1" port="$2" round_ref="${12}" round_sha="${13}" entry="${14}" image="${22}" workdir="${23:-/work}"
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
 exec 2> >(tee ~/round-setup.log >&2)
@@ -335,9 +334,9 @@ pub(crate) const UNIT_ENV_FN: &str = unit_env_fn!();
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = concat!(r#"set -Eeuo pipefail
 unset SPIRA_HOME
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
-testenv_limits="${16:-}" resume_url="${17:-}" fences="${18:-}" want_tag="${19:-}"
-deny_list="${20:-}" deny_filter_line="${21:-}" integ_skips="${22:-}"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" round_ref="${12}" round_sha="${13}"
+testenv_limits="${15:-}" resume_url="${16:-}" fences="${17:-}" want_tag="${18:-}"
+deny_list="${19:-}" deny_filter_line="${20:-}" integ_skips="${21:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
 : > ~/round-runner.out
 exec > >(tee -a ~/round-script.log)
@@ -387,7 +386,7 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
     exit 127
 fi
-if [ -n "$want_tag" ] && [ -z "$build_image" ] && ! podman image exists "localhost/spira-testenv:$want_tag" 2>/dev/null; then
+if [ -n "$want_tag" ] && ! podman image exists "localhost/spira-testenv:$want_tag" 2>/dev/null; then
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$want_tag is not in this round's container store — refusing before any build (law-unexpected-image-builds-are-killed-then-fixed); put it in the store the round uses (the template for a VM, the operator's own for a host round)" >&2
     exit 3
 fi
@@ -919,14 +918,6 @@ if [ -z "$tag" ]; then
     exit 3
 elif podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
     echo "round-vm: template image: localhost/spira-testenv:$tag present" >&2
-elif [ -n "$build_image" ]; then
-    echo "round-vm: IMAGE-BUILD: localhost/spira-testenv:$tag is not on this VM; the round's head changed the image closure, so it is built here as a declared setup step" >&2
-    t_img=$(date +%s)
-    if ! testenv container image >&2 || ! podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
-        echo "round-vm: IMAGE-BUILD-FAILED: localhost/spira-testenv:$tag could not be built on this VM" >&2
-        exit 3
-    fi
-    echo "round-vm: IMAGE-BUILD: built localhost/spira-testenv:$tag in $(( $(date +%s) - t_img ))s (counted as setup)" >&2
 else
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
     exit 3
@@ -1368,7 +1359,6 @@ pub fn remote_command(job: &BatchJob) -> String {
         job.cap_secs.to_string(),
         job.post_guard_secs.to_string(),
         if job.lint { "1" } else { "" }.to_string(),
-        if job.build_image { "1" } else { "" }.to_string(),
     ];
     args.push(job.round_ref.clone());
     args.push(job.round_sha.clone());
@@ -1710,6 +1700,10 @@ impl Host for GitHost {
         })();
         let _ = fs::remove_dir_all(&scratch);
         r
+    }
+
+    fn image_present(&self, tag: &str) -> bool {
+        command("podman").args(["image", "exists", &format!("localhost/spira-testenv:{tag}")]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
     }
 
     fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String> {
@@ -2453,8 +2447,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             return 2;
         }
     };
-    let image_missing = image_build_declared(env, args, &commit_sha);
-    let build_image = args.ci_entry.is_none() && image_missing;
+    let image_missing = image_missing(env, args, &commit_sha);
     let ordered;
     let args = if args.suites.is_none() && args.ci_entry.is_none() {
         match lpt_suites(env.host, &args.tree_dir) {
@@ -2513,7 +2506,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         f.started = Some(crate::progress::now_secs());
         f.marks = Some(progress.lock().unwrap_or_else(|e| e.into_inner()).marks());
     }
-    let (host_slot, spill_reason, decision) = match place_on_host(env, args) {
+    let (host_slot, spill_reason, decision) = match place_on_host(env, args, &commit_sha) {
         HostPlacement::Host(slot, d) => (Some(slot), None, Some(d)),
         HostPlacement::Spill(why, d) => (None, Some(why), Some(d)),
         HostPlacement::NotOffered => (None, None, None),
@@ -2638,11 +2631,11 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     if let (Some(_slot), Some(plan)) = (&host_slot, env.host_plan) {
         let henv = RunEnv { remote: plan.remote.as_ref(), ..*env };
         crate::host::reclaim(&plan.home);
-        let code = on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
+        let code = on_vm(&henv, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, &round_ref, progress, results_dir, &keep, facts);
         crate::host::reclaim(&plan.home);
         return code;
     }
-    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep, facts);
+    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, &round_ref, progress, results_dir, &keep, facts);
     if keep.load(Ordering::SeqCst) {
         eprintln!("{}", held_vm_line(&vm.handle, &vm.addr));
         if let Err(e) = env.pool.hold(&vm.handle) {
@@ -2674,7 +2667,7 @@ fn spilled_maxpar(requested: Option<u32>, instance_type: Option<&str>, configure
 /// the recorded template names another tag, or (no usable record) the `--base` ref's tag
 /// differs from the head's. Only this declaration lets the VM build an image; any other
 /// absent image is still refused there.
-fn image_build_declared(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
+fn image_missing(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
     let tree = &args.tree_dir;
     let tag = match env.host.image_tag(tree, commit) {
         Ok(t) => t,
@@ -2799,12 +2792,16 @@ enum HostPlacement {
 
 /// Offers a harness round to this host: it runs here only with the host slot free and the host
 /// under both pressure thresholds. A slot that cannot be read is a refusal, never a free slot.
-fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
+fn place_on_host(env: &RunEnv, args: &RunArgs, commit: &str) -> HostPlacement {
     use crate::spill::{decide_host, HostPlace};
+    let absent = host_lacks_image(env, args, commit);
     if args.pin_host {
-        return pin_to_host(env, args);
+        return pin_to_host(env, args, absent);
     }
     let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else { return HostPlacement::NotOffered };
+    if absent.is_some() {
+        return HostPlacement::NotOffered;
+    }
     let slot = match crate::host::HostSlot::try_take(&env.cfg.state_dir) {
         Ok(slot) => slot,
         Err(e) => {
@@ -2822,11 +2819,27 @@ fn place_on_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
     }
 }
 
+/// `present`, or `absent <tag>`: whether the host's store holds the image `commit` of `tree` needs.
+pub fn image_check(host: &dyn Host, tree: &Path, commit: &str) -> Result<String, String> {
+    let tag = host.image_tag(tree, commit)?;
+    Ok(if host.image_present(&tag) { "present".to_string() } else { format!("absent {tag}") })
+}
+
+/// The tag the host's store lacks. A tree whose tag cannot be computed is not judged here: the
+/// round's own preflight refuses it, and no round builds.
+fn host_lacks_image(env: &RunEnv, args: &RunArgs, commit: &str) -> Option<String> {
+    let tag = env.host.image_tag(&args.tree_dir, commit).ok()?;
+    (!env.host.image_present(&tag)).then_some(tag)
+}
+
 const PINNED_WHY: &str = "pinned: --place host";
 
 /// `--place host`: the host slot is waited for within the run's wall, and load never spills the run.
-fn pin_to_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
+fn pin_to_host(env: &RunEnv, args: &RunArgs, absent: Option<String>) -> HostPlacement {
     let refuse = |why: String| HostPlacement::Refused(format!("{why}; the run was pinned by --place host and does not spill"));
+    if let Some(tag) = absent {
+        return refuse(format!("the host's container store does not hold localhost/spira-testenv:{tag}, and a round never builds an image"));
+    }
     let Some(plan) = env.host_plan.filter(|_| args.ci_entry.is_none()) else {
         return refuse("this run cannot be placed on the host (the host is off, or the run is a foreign repository's CI)".into());
     };
@@ -2846,9 +2859,9 @@ fn pin_to_host(env: &RunEnv, args: &RunArgs) -> HostPlacement {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, round_ref: &str, progress: crate::progress::Progress, results_dir: PathBuf, keep: &AtomicBool, facts: &Mutex<Facts>) -> i32 {
+fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, round_ref: &str, progress: crate::progress::Progress, results_dir: PathBuf, keep: &AtomicBool, facts: &Mutex<Facts>) -> i32 {
     let watch = crate::load::Watch::start(&vm.handle);
-    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, round_ref, progress, results_dir, keep, facts);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, round_ref, progress, results_dir, keep, facts);
     watch.finish();
     rc
 }
@@ -2862,7 +2875,6 @@ fn on_vm_run(
     host_addr: &str,
     commit_sha: &str,
     tree_sha: &str,
-    build_image: bool,
     round_ref: &str,
     mut progress: crate::progress::Progress,
     results_dir: PathBuf,
@@ -2899,7 +2911,6 @@ fn on_vm_run(
         testenv_limits: cfg.testenv_limits.clone(),
         post_guard_secs: cfg.post_guard_secs,
         lint: lints(args),
-        build_image,
         image_tag: env.host.image_tag(&args.tree_dir, commit_sha).map_err(|e| eprintln!("round-vm run: no image tag for the preflight ({e}) — the round checks the image only after its builds")).ok(),
         round_ref: round_ref.to_string(),
         round_sha: commit_sha.to_string(),
@@ -4315,7 +4326,7 @@ mod tests {
 
     fn preflight_tag(home: &Path, cache_home: &str, limits: &str, tag: &str) -> (i32, String, String) {
         let mut c = command("bash")
-            .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "", "refs/x", "0000", "", limits, "", "", tag])
+            .args(["-s", "--", "127.0.0.1", "1", "", "1", "", cache_home, "", "0", "0", "", "", "refs/x", "0000", "", limits, "", "", tag])
             .env_clear()
             .env("HOME", home)
             .env("PATH", system_paths::SYSTEM_PATH_MIN)
@@ -4694,7 +4705,6 @@ mod tests {
             testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 600,
             lint: false,
-            build_image: false,
             image_tag: None,
             ssh_log: PathBuf::from("ssh.log"),
             round_ref: "refs/rounds/7-abc".into(),
@@ -4711,7 +4721,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work'", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work'", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -4948,7 +4958,7 @@ mod tests {
         let job = BatchJob {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
-            testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false, image_tag: None,
+            testenv_limits: "x".into(), post_guard_secs: 1, lint: false, image_tag: None,
             ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), cancel: Default::default(),
         };
         assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' ''"));
@@ -5122,6 +5132,9 @@ mod tests {
         fn drop_round_ref(&self, _: &str) {}
         fn image_tag(&self, tree: &Path, rev: &str) -> Result<String, String> {
             if rev == "main" { Ok("tagA".into()) } else if tree.ends_with("tag-unreadable") { Err("no closure".into()) } else if tree.ends_with("newer-image") { Ok("tagB".into()) } else { Ok("tagA".into()) }
+        }
+        fn image_present(&self, tag: &str) -> bool {
+            tag != "tagB"
         }
         fn mirror_ref(&self, _: &Path, branch: &str, _: &str) -> Result<String, String> {
             if branch == "missing" { Err("no such branch".into()) } else { Ok(branch.split('@').next().unwrap_or(branch).to_string()) }
@@ -5455,15 +5468,14 @@ mod tests {
         RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), ..Default::default() }
     }
 
-    #[test_id(tyt8z9o)]
+    #[test_id(tqp0388)]
     #[test]
-    fn the_remote_script_builds_a_declared_image_in_setup_and_still_refuses_an_undeclared_one() {
-        let declared = REMOTE_SCRIPT.find("elif [ -n \"$build_image\" ]").expect("a declared branch");
-        let refuse = REMOTE_SCRIPT.find("refusing to cold-build it").unwrap();
+    fn the_remote_script_never_builds_an_image_and_refuses_an_absent_one() {
+        assert!(!REMOTE_SCRIPT.contains("container image"), "no round builds an image");
+        assert!(!REMOTE_SCRIPT.contains("build_image"));
+        let absent = REMOTE_SCRIPT.find("is not on this VM — refusing to cold-build it").unwrap();
         let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))").unwrap();
-        assert!(declared < refuse && refuse < setup, "the build is before the setup clock stops, the refusal stays the fallback");
-        assert!(REMOTE_SCRIPT[declared..refuse].contains("testenv container image"));
-        assert!(REMOTE_SCRIPT[declared..refuse].contains("exit 3"), "a failed build gives no verdict");
+        assert!(absent < setup && REMOTE_SCRIPT[absent..setup].contains("exit 3"));
     }
 
     #[test_id(telzkwp)]
@@ -5832,6 +5844,37 @@ mod tests {
         assert!(parse_run_args(&args(&["t"])).unwrap().candidate_recipe.is_none());
         assert!(parse_run_args(&args(&["t", "--candidate-recipe", ""])).unwrap_err().contains("--candidate-recipe"));
         assert!(parse_run_args(&args(&["t", "--candidate-recipe="])).unwrap_err().contains("--candidate-recipe"));
+    }
+
+    #[test_id(tljb85q)]
+    #[test]
+    fn an_image_the_host_lacks_sends_the_round_to_the_pool_though_the_host_is_quiet() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let vm_remote = FakeRemote::green();
+        let a = RunArgs { tree_dir: fx.d.path().join("newer-image"), base: Some("main".into()), ..round_args(&fx) };
+        go_with_host(&fx, &vm_remote, &plan, &a);
+        assert_eq!(fx.fp.count("clone"), 1, "a VM was leased");
+        assert_ne!(recorded_where(&fx), "host");
+        assert!(runner_place(&fx)["why"].contains("does not hold the round's image"));
+    }
+
+    #[test_id(t1szouc)]
+    #[test]
+    fn a_pinned_round_whose_image_the_host_lacks_is_refused_naming_the_tag() {
+        let fx = fixture();
+        let plan = host_plan(FakeRemote::green(), CALM);
+        let a = RunArgs { tree_dir: fx.d.path().join("newer-image"), base: Some("main".into()), pin_host: true, ..round_args(&fx) };
+        assert_eq!(go_with_host(&fx, &FakeRemote::green(), &plan, &a), 2);
+        assert_eq!(fx.fp.count("clone"), 0);
+    }
+
+    #[test_id(tbj84wa)]
+    #[test]
+    fn image_check_says_present_or_absent_with_the_tag() {
+        assert_eq!(image_check(&FakeHost, Path::new("t"), "x").unwrap(), "present");
+        assert_eq!(image_check(&FakeHost, Path::new("newer-image"), "x").unwrap(), "absent tagB");
+        assert!(image_check(&FakeHost, Path::new("tag-unreadable"), "x").is_err());
     }
 
     #[test_id(t0tyvzb)]

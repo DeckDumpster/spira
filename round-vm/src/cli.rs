@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]|section";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir> [--no-corpus]] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]|image-check --tree <dir> --rev <sha>|section";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -453,6 +453,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
             };
         }
     }
+    if args.first().map(String::as_str) == Some("image-check") {
+        return image_check_verb(&args[1..]);
+    }
     if args.first().map(String::as_str) == Some("preflight-plan") {
         return preflight_plan_verb(&args[1..]);
     }
@@ -857,5 +860,29 @@ mod tests {
     fn no_pressure_sampler_verb_is_served() {
         assert!(!USAGE.contains("psi-sample"));
         assert_eq!(main_with(vec!["psi-sample".into()]), 1);
+    }
+}
+
+/// `round-vm image-check --tree DIR --rev SHA`: `present` or `absent <tag>` on stdout, exit 0;
+/// exit 2 when the tag cannot be computed.
+fn image_check_verb(args: &[String]) -> i32 {
+    let [t, tree, r, rev] = args else {
+        eprintln!("round-vm image-check: usage: round-vm image-check --tree DIR --rev SHA");
+        return 2;
+    };
+    if t != "--tree" || r != "--rev" {
+        eprintln!("round-vm image-check: usage: round-vm image-check --tree DIR --rev SHA");
+        return 2;
+    }
+    let host = GitHost { state_dir: std::env::temp_dir(), mirror_port: 0, listen: String::new(), also_listen: Vec::new() };
+    match crate::run::image_check(&host, std::path::Path::new(tree), rev) {
+        Ok(line) => {
+            println!("{line}");
+            0
+        }
+        Err(e) => {
+            eprintln!("round-vm image-check: {e}");
+            2
+        }
     }
 }
