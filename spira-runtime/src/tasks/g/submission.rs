@@ -172,32 +172,34 @@ impl Source for Submission {
     /// and password files themselves are read per connection. Dormant while unconfigured, reading
     /// its config again every [`DORMANT_RECHECK`].
     fn run(self: Box<Self>, tx: mpsc::Sender<Submit>) -> Running {
-        Box::pin(async move {
-            let fresh = || async {
-                on_pool(NAME, Arc::new(read_config)).await.unwrap_or((None, false, None))
-            };
-            let serve = |(cfg, usable, delivery): Round, mut reload: watch::Receiver<u64>| {
-                let tx = tx.clone();
-                async move {
-                    let recheck = async {
-                        if usable {
-                            std::future::pending::<()>().await
-                        } else {
-                            tokio::time::sleep(DORMANT_RECHECK).await // waits-on: the config a provision run may write from outside the scheduler; cap DORMANT_RECHECK
-                        }
-                    };
-                    let stop = async {
-                        tokio::select! {
-                            _ = reload.changed() => {}
-                            _ = recheck => {}
-                        }
-                    };
-                    super::sources::smtp::run(cfg.filter(|_| usable), delivery, tx, stop).await
+        Box::pin(serve_source(tx, Arc::new(read_config)))
+    }
+}
+
+/// The source's rounds: `read` is the config and mail environment a round serves, read anew.
+async fn serve_source(tx: mpsc::Sender<Submit>, read: Arc<dyn Fn() -> Round + Send + Sync>) {
+    let fresh = || on_pool(NAME, read.clone());
+    let serve = |round: Result<Round, runtime::offload::OffloadError>, mut reload: watch::Receiver<u64>| {
+        let (cfg, usable, delivery) = round.unwrap_or((None, false, None));
+        let tx = tx.clone();
+        async move {
+            let recheck = async {
+                if usable {
+                    std::future::pending::<()>().await
+                } else {
+                    tokio::time::sleep(DORMANT_RECHECK).await // waits-on: the config a provision run may write from outside the scheduler; cap DORMANT_RECHECK
                 }
             };
-            serve_reloading(fresh, serve, || tx.is_closed()).await
-        })
-    }
+            let stop = async {
+                tokio::select! {
+                    _ = reload.changed() => {}
+                    _ = recheck => {}
+                }
+            };
+            super::sources::smtp::run(cfg, delivery, tx, stop).await
+        }
+    };
+    serve_reloading(fresh, serve, || tx.is_closed()).await
 }
 
 type Round = (Option<spira_submission::Config>, bool, Option<super::sources::smtp::Delivery>);
@@ -269,6 +271,35 @@ mod tests {
         )
         .await;
         assert_eq!(*served.borrow(), vec![1, 2], "the second serve has the config read after the reload");
+    }
+
+    #[test_id(t8duuqi)]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn a_reload_of_the_running_source_reads_the_config_anew_and_binds_the_same_address() {
+        use crate::sources::smtp::test_client::{setup, Client};
+        let _serial = serial();
+        let b = setup("submission-source-reload");
+        let addr = b.cfg.socket();
+        let (tx, rx) = mpsc::channel::<Submit>(4);
+        let (read_tx, mut read_rx) = mpsc::unbounded_channel::<()>();
+        let (cfg, delivery) = (b.cfg.clone(), b.delivery.clone());
+        let read = Arc::new(move || {
+            let _ = read_tx.send(());
+            (Some(cfg.clone()), true, Some(delivery.clone()))
+        });
+        let running = tokio::spawn(serve_source(tx, read));
+        read_rx.recv().await.unwrap();
+        let mut first = Client::connect(addr).await;
+        assert!(first.line().await.starts_with("220"));
+        reload(NAME).unwrap();
+        read_rx.recv().await.unwrap();
+        let mut second = Client::connect(addr).await;
+        assert!(second.line().await.starts_with("220"), "the same address is bound again after the reload");
+        first.say("NOOP").await;
+        assert!(first.line().await.starts_with("250"), "the session open at the reload finished its exchange");
+        drop(rx);
+        running.await.unwrap();
     }
 
     #[test_id(tiv23by)]

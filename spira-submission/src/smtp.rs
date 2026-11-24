@@ -521,7 +521,7 @@ fn b64_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn b64_encode(s: &str) -> String {
+pub fn b64_encode(s: &str) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for ch in s.as_bytes().chunks(3) {
@@ -661,8 +661,12 @@ mod tests {
     }
 
     fn same_however_cut(script: &[u8]) -> Vec<Step> {
+        same_cut_at(script, &[1, 2, 3, 7])
+    }
+
+    fn same_cut_at(script: &[u8], cuts: &[usize]) -> Vec<Step> {
         let whole = transcript(script, 0);
-        for cut in [1, 2, 3, 7] {
+        for &cut in cuts {
             assert_eq!(transcript(script, cut), whole, "cut every {cut} bytes");
         }
         whole
@@ -716,5 +720,23 @@ mod tests {
         assert_eq!((envelope.user.as_str(), envelope.from.as_str(), envelope.message_id.as_str(), envelope.to.as_slice()), ("ryan", "me@example.org", "<m>", ["c@spira".to_string()].as_slice()));
         assert_eq!(message, b"Message-ID: <m>\n.x\n");
         assert_eq!(sent(&s.accepted(Err("disk full".into()))), "451 4.3.0 local delivery failed, try again\r\n");
+    }
+
+    #[test_id(txd3eki)]
+    #[test]
+    fn an_over_long_command_line_is_a_500_and_a_close_however_the_bytes_are_cut() {
+        let script = format!("NOOP\r\n{}\r\nNOOP\r\n", "a".repeat(MAX_COMMAND_LINE + 1));
+        let steps = same_however_cut(script.as_bytes());
+        assert_eq!(sent(&steps), "220 h spira-submission ESMTP\r\n250 2.0.0 ok\r\n500 5.5.2 line too long\r\n");
+        assert_eq!(steps.last(), Some(&Step::Close));
+    }
+
+    #[test_id(taqcbxc)]
+    #[test]
+    fn an_over_long_data_line_refuses_the_message_and_the_session_goes_on_however_the_bytes_are_cut() {
+        let script = format!("AUTH PLAIN {}\r\nMAIL FROM:<me@example.org>\r\nRCPT TO:<c@spira>\r\nDATA\r\n{}\r\nbody\r\n.\r\nNOOP\r\n", b64("\0ryan\0hunter2"), "x".repeat(MAX_DATA_LINE + 1));
+        let steps = same_cut_at(script.as_bytes(), &[4096, 100_000]);
+        assert!(steps.iter().all(|s| !matches!(s, Step::Accept { .. })), "{steps:?}");
+        assert!(sent(&steps).ends_with("552 5.3.4 message too large\r\n250 2.0.0 ok\r\n"), "{}", sent(&steps));
     }
 }

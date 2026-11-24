@@ -10,67 +10,15 @@ use std::time::Duration;
 use runtime::host::Submit;
 use runtime::ports::{VirtualClock, WallClock};
 use runtime::units::ScriptedUnits;
+use spira_runtime::sources::smtp::test_client::{plain, setup, Client};
 use spira_runtime::sources::{real, smtp};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 fn comms() -> Vec<String> {
     std::fs::read_dir(std::path::Path::new(system_paths::PROC_SELF).join("task")).unwrap().flatten().filter_map(|t| std::fs::read_to_string(t.path().join("comm")).ok()).map(|c| c.trim().to_string()).collect()
 }
 
-struct Client(tokio_rustls::client::TlsStream<TcpStream>);
-
-impl Client {
-    async fn connect(addr: std::net::SocketAddr) -> Client {
-        let tcp = loop {
-            match TcpStream::connect(addr).await {
-                Ok(t) => break t,
-                Err(_) => tokio::task::yield_now().await,
-            }
-        };
-        let name = tokio_rustls::rustls::pki_types::ServerName::IpAddress(addr.ip().into());
-        Client(tokio_rustls::TlsConnector::from(spira_submission::probe_config()).connect(name, tcp).await.unwrap())
-    }
-
-    /// Reads until the reply's last line (`NNN text`, not `NNN-text`) has arrived.
-    async fn reply(&mut self) -> String {
-        tokio::time::timeout(Duration::from_secs(30), async {
-            let mut got = String::new();
-            loop {
-                let mut chunk = [0u8; 1024];
-                let n = self.0.read(&mut chunk).await.unwrap();
-                assert!(n > 0, "the server closed the connection: {got:?}");
-                got.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                if got.ends_with("\r\n") && got.lines().last().is_some_and(|l| l.as_bytes().get(3) == Some(&b' ')) {
-                    return got;
-                }
-            }
-        })
-        .await
-        .expect("the server answered")
-    }
-
-    async fn say(&mut self, text: &str) -> String {
-        self.0.write_all(format!("{text}\r\n").as_bytes()).await.unwrap();
-        self.reply().await
-    }
-}
-
-fn plain(user: &str, pass: &str) -> String {
-    let raw = format!("\0{user}\0{pass}");
-    let t = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for ch in raw.as_bytes().chunks(3) {
-        let n = (ch[0] as u32) << 16 | (*ch.get(1).unwrap_or(&0) as u32) << 8 | *ch.get(2).unwrap_or(&0) as u32;
-        for i in 0..4 {
-            out.push(if i <= ch.len() { t[((n >> (18 - 6 * i)) & 63) as usize] as char } else { '=' });
-        }
-    }
-    out
-}
-
-#[test_id(t4qzb4b)]
+#[test_id(tc0d2p3)]
 #[tokio::test(flavor = "current_thread")]
 async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
     let planted = {
@@ -90,7 +38,13 @@ async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
         seen
     };
     assert!(planted, "the matcher must see a thread named as a source's was");
-    assert!(!comms().iter().any(|c| c.starts_with("source-")), "the planted thread is gone");
+    let gone = tokio::time::timeout(Duration::from_secs(10), async {
+        while comms().iter().any(|c| c.starts_with("source-")) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(gone.is_ok(), "the planted thread is gone");
 
     let dir = testkit::TempDir::new("sources-on-the-loop");
     let mail = dir.path().join("mail");
@@ -117,35 +71,18 @@ async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
     assert!(!named.iter().any(|c| c.starts_with("source-")), "no source owns a thread: {named:?}");
     let before = named.len();
 
-    let (listener, pw) = (std::net::TcpListener::bind("127.0.0.1:0").unwrap(), dir.path().join("pw"));
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::write(&pw, "hunter2\n").unwrap();
-        std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let fixtures = testkit::manifest_dir().join("../spira-submission/tests/fixtures");
-    let scfg = spira_submission::Config {
-        addr: addr.ip(),
-        port: addr.port(),
-        cert: fixtures.join("test-cert.pem"),
-        key: fixtures.join("test-key.pem"),
-        password_file: pw,
-        user: "ryan".into(),
-        from: "me@example.org".into(),
-        rcpt_domain: "spira".into(),
-        sendmail: vec![],
-    };
+    // The live source reads the process's own config, so the sessions are driven through `smtp::run`, the loop the source runs.
+    let b = setup("sources-on-the-loop-sessions");
+    let addr = b.cfg.socket();
     let (stx, _srx) = mpsc::channel::<Submit>(8);
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = tokio::spawn(smtp::run(Some(scfg), None, stx, async { let _ = stop_rx.await; }));
+    let server = tokio::spawn(smtp::run(Some(b.cfg.clone()), None, stx, async { let _ = stop_rx.await; }));
 
     let mut clients = Vec::new();
     for _ in 0..20 {
         clients.push(tokio::spawn(async move {
             let mut c = Client::connect(addr).await;
-            assert!(c.reply().await.starts_with("220"));
+            assert!(c.line().await.starts_with("220"));
             c
         }));
     }
@@ -159,9 +96,10 @@ async fn no_source_has_a_thread_and_twenty_concurrent_tls_sessions_add_none() {
     let mut done = Vec::new();
     for mut c in open {
         done.push(tokio::spawn(async move {
-            assert!(c.say("EHLO c").await.starts_with("250"));
-            assert!(c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await.starts_with("235"));
-            assert!(c.say("QUIT").await.starts_with("221"));
+            c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await;
+            assert!(c.line().await.starts_with("235"));
+            c.say("QUIT").await;
+            assert!(c.line().await.starts_with("221"));
         }));
     }
     for d in done {

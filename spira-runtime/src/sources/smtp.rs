@@ -121,12 +121,22 @@ async fn say(what: String) {
 }
 
 /// Serves `cfg` until `tx` closes or `stop` resolves (a reload); `None` (the box is not
-/// configured, as `spira_submission::Config::from_spira` says) is dormant, never a failure. A
+/// configured, as `spira_submission::Config::from_spira` says) or a certificate or key that is
+/// not a file is dormant, never a failure. A
 /// listener that cannot bind is said once and the source parks dormant. The listener is dropped
 /// on return, so the next round can bind the same address; on `stop` the open sessions go on to
 /// their end, on a closed channel they are cut.
 pub async fn run(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>) {
+    run_within(cfg, delivery, tx, stop, IO_TIMEOUT).await
+}
+
+/// [`run`] with `io` bounding every read, write and handshake step and the wait for a journaled reply.
+pub async fn run_within(cfg: Option<spira_submission::Config>, delivery: Option<Delivery>, tx: mpsc::Sender<Submit>, stop: impl Future<Output = ()>, io: Duration) {
     tokio::pin!(stop);
+    let cfg = match cfg {
+        Some(c) => on_pool("submission config", Arc::new(move || Some(c.clone()).filter(|c| c.cert.is_file() && c.key.is_file()))).await.unwrap_or(None),
+        None => None,
+    };
     let Some(cfg) = cfg else { return dormant(&tx, stop).await };
     let listener = match TcpListener::bind(cfg.socket()).await {
         Ok(l) => l,
@@ -136,7 +146,7 @@ pub async fn run(cfg: Option<spira_submission::Config>, delivery: Option<Deliver
         }
     };
     let cfg = Arc::new(cfg);
-    let sink = Arc::new(EventSink { tx: tx.clone(), delivery, reply_within: IO_TIMEOUT });
+    let sink = Arc::new(EventSink { tx: tx.clone(), delivery, reply_within: io });
     let mut sessions = JoinSet::new();
     loop {
         tokio::select! {
@@ -148,7 +158,7 @@ pub async fn run(cfg: Option<spira_submission::Config>, delivery: Option<Deliver
             _ = tx.closed() => return,
             accepted = listener.accept() => match accepted {
                 Ok((tcp, _)) => {
-                    sessions.spawn(connection(tcp, cfg.clone(), sink.clone()));
+                    sessions.spawn(connection(tcp, cfg.clone(), sink.clone(), io));
                 }
                 Err(e) => {
                     say(format!("accept: {e}")).await;
@@ -162,14 +172,14 @@ pub async fn run(cfg: Option<spira_submission::Config>, delivery: Option<Deliver
 
 /// One connection, start to finish: the TLS handshake with the certificate read now, then the
 /// SMTP session against `sink`.
-async fn connection(tcp: TcpStream, cfg: Arc<spira_submission::Config>, sink: Arc<EventSink>) {
+async fn connection(tcp: TcpStream, cfg: Arc<spira_submission::Config>, sink: Arc<EventSink>, io: Duration) {
     let peer = tcp.peer_addr().map_or("unknown".to_string(), |a| a.to_string());
     let (c, k) = (cfg.cert.clone(), cfg.key.clone());
     let tls_cfg = match on_pool("submission tls", Arc::new(move || spira_submission::server_config(&c, &k))).await.map_err(|e| e.to_string()).and_then(|r| r) {
         Ok(c) => c,
         Err(e) => return sink.attempt(&peer, "", "", &format!("tls: refused: {e}")).await,
     };
-    let mut tls = match timeout(IO_TIMEOUT, TlsAcceptor::from(tls_cfg).accept(tcp)).await {
+    let mut tls = match timeout(io, TlsAcceptor::from(tls_cfg).accept(tcp)).await {
         Ok(Ok(t)) => t,
         Ok(Err(e)) => return sink.attempt(&peer, "", "", &format!("tls: refused: handshake failed: {e}")).await,
         Err(_) => return sink.attempt(&peer, "", "", "tls: refused: handshake failed: timed out").await,
@@ -181,7 +191,7 @@ async fn connection(tcp: TcpStream, cfg: Arc<spira_submission::Config>, sink: Ar
         while let Some(step) = steps.pop_front() {
             match step {
                 Step::Send(text) => {
-                    let wrote = timeout(IO_TIMEOUT, async { tls.write_all(text.as_bytes()).await?; tls.flush().await }).await;
+                    let wrote = timeout(io, async { tls.write_all(text.as_bytes()).await?; tls.flush().await }).await;
                     if !matches!(wrote, Ok(Ok(()))) {
                         break 'conn;
                     }
@@ -202,16 +212,114 @@ async fn connection(tcp: TcpStream, cfg: Arc<spira_submission::Config>, sink: Ar
             }
         }
         let mut chunk = [0u8; 4096];
-        match timeout(IO_TIMEOUT, tls.read(&mut chunk)).await {
+        match timeout(io, tls.read(&mut chunk)).await {
             Ok(Ok(n)) if n > 0 => steps.extend(session.feed(&chunk[..n])),
             _ => break,
         }
     }
-    let _ = timeout(IO_TIMEOUT, tls.shutdown()).await;
+    let _ = timeout(io, tls.shutdown()).await;
+}
+
+/// A TLS client and a configured box for tests of the listener, shared with `tests/`.
+#[cfg(any(test, feature = "integration"))]
+pub mod test_client {
+    use super::*;
+
+    pub struct Client {
+        pub tls: tokio_rustls::client::TlsStream<TcpStream>,
+        buf: Vec<u8>,
+    }
+
+    impl Client {
+        pub async fn connect(addr: std::net::SocketAddr) -> Client {
+            let tcp = loop {
+                match TcpStream::connect(addr).await {
+                    Ok(t) => break t,
+                    Err(_) => tokio::task::yield_now().await,
+                }
+            };
+            let name = tokio_rustls::rustls::pki_types::ServerName::IpAddress(addr.ip().into());
+            let tls = tokio_rustls::TlsConnector::from(spira_submission::probe_config()).connect(name, tcp).await.unwrap();
+            Client { tls, buf: Vec::new() }
+        }
+
+        pub async fn line(&mut self) -> String {
+            timeout(Duration::from_secs(30), async {
+                loop {
+                    if let Some(i) = self.buf.iter().position(|&b| b == b'\n') {
+                        let l: Vec<u8> = self.buf.drain(..=i).collect();
+                        return String::from_utf8_lossy(&l).trim_end().to_string();
+                    }
+                    let mut chunk = [0u8; 1024];
+                    let n = self.tls.read(&mut chunk).await.unwrap();
+                    assert!(n > 0, "the server closed the connection");
+                    self.buf.extend_from_slice(&chunk[..n]);
+                }
+            })
+            .await
+            .expect("the server answered")
+        }
+
+        /// Waits for the server to end the connection.
+        pub async fn until_closed(&mut self) {
+            timeout(Duration::from_secs(30), async {
+                let mut chunk = [0u8; 1024];
+                while matches!(self.tls.read(&mut chunk).await, Ok(n) if n > 0) {}
+            })
+            .await
+            .expect("the server closed the connection");
+        }
+
+        pub async fn say(&mut self, text: &str) {
+            self.tls.write_all(format!("{text}\r\n").as_bytes()).await.unwrap();
+        }
+    }
+
+    pub struct Box_ {
+        pub dir: testkit::TempDir,
+        pub cfg: spira_submission::Config,
+        pub delivery: Delivery,
+    }
+
+    pub fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    }
+
+    pub fn fixture(name: &str) -> PathBuf {
+        testkit::manifest_dir().join("../spira-submission/tests/fixtures").join(name)
+    }
+
+    pub fn setup(name: &str) -> Box_ {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = testkit::TempDir::new(name);
+        let pw = dir.path().join("pw");
+        std::fs::write(&pw, "hunter2\n").unwrap();
+        std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let cfg = spira_submission::Config {
+            addr: "127.0.0.1".parse().unwrap(),
+            port: free_port(),
+            cert: fixture("test-cert.pem"),
+            key: fixture("test-key.pem"),
+            password_file: pw,
+            user: "ryan".into(),
+            from: "me@example.org".into(),
+            rcpt_domain: "spira".into(),
+            sendmail: vec![],
+        };
+        let delivery = Delivery { run_dir: run.clone(), home: run, mail_root: dir.path().join("mail"), mute: true };
+        Box_ { dir, cfg, delivery }
+    }
+
+    pub fn plain(user: &str, pass: &str) -> String {
+        spira_submission::smtp::b64_encode(&format!("\0{user}\0{pass}"))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::test_client::{plain, setup, Client};
     use super::*;
     use crate::tasks::g::submission::Accepted;
 
@@ -303,96 +411,6 @@ mod tests {
         assert!(rx.try_recv().is_ok(), "the event was submitted");
     }
 
-    struct Client {
-        tls: tokio_rustls::client::TlsStream<TcpStream>,
-        buf: Vec<u8>,
-    }
-
-    impl Client {
-        async fn connect(addr: std::net::SocketAddr) -> Client {
-            let tcp = loop {
-                match TcpStream::connect(addr).await {
-                    Ok(t) => break t,
-                    Err(_) => tokio::task::yield_now().await,
-                }
-            };
-            let name = tokio_rustls::rustls::pki_types::ServerName::IpAddress(addr.ip().into());
-            let tls = tokio_rustls::TlsConnector::from(spira_submission::probe_config()).connect(name, tcp).await.unwrap();
-            Client { tls, buf: Vec::new() }
-        }
-
-        async fn line(&mut self) -> String {
-            timeout(Duration::from_secs(30), async {
-                loop {
-                    if let Some(i) = self.buf.iter().position(|&b| b == b'\n') {
-                        let l: Vec<u8> = self.buf.drain(..=i).collect();
-                        return String::from_utf8_lossy(&l).trim_end().to_string();
-                    }
-                    let mut chunk = [0u8; 1024];
-                    let n = self.tls.read(&mut chunk).await.unwrap();
-                    assert!(n > 0, "the server closed the connection");
-                    self.buf.extend_from_slice(&chunk[..n]);
-                }
-            })
-            .await
-            .expect("the server answered")
-        }
-
-        async fn say(&mut self, text: &str) {
-            self.tls.write_all(format!("{text}\r\n").as_bytes()).await.unwrap();
-        }
-    }
-
-    struct Box_ {
-        dir: testkit::TempDir,
-        cfg: spira_submission::Config,
-        delivery: Delivery,
-    }
-
-    fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-    }
-
-    fn fixture(name: &str) -> PathBuf {
-        testkit::manifest_dir().join("../spira-submission/tests/fixtures").join(name)
-    }
-
-    fn setup(name: &str) -> Box_ {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = testkit::TempDir::new(name);
-        let pw = dir.path().join("pw");
-        std::fs::write(&pw, "hunter2\n").unwrap();
-        std::fs::set_permissions(&pw, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let run = dir.path().join("run");
-        std::fs::create_dir_all(&run).unwrap();
-        let cfg = spira_submission::Config {
-            addr: "127.0.0.1".parse().unwrap(),
-            port: free_port(),
-            cert: fixture("test-cert.pem"),
-            key: fixture("test-key.pem"),
-            password_file: pw,
-            user: "ryan".into(),
-            from: "me@example.org".into(),
-            rcpt_domain: "spira".into(),
-            sendmail: vec![],
-        };
-        let delivery = Delivery { run_dir: run.clone(), home: run, mail_root: dir.path().join("mail"), mute: true };
-        Box_ { dir, cfg, delivery }
-    }
-
-    fn plain(user: &str, pass: &str) -> String {
-        let raw = format!("\0{user}\0{pass}");
-        let t = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::new();
-        for ch in raw.as_bytes().chunks(3) {
-            let n = (ch[0] as u32) << 16 | (*ch.get(1).unwrap_or(&0) as u32) << 8 | *ch.get(2).unwrap_or(&0) as u32;
-            for i in 0..4 {
-                out.push(if i <= ch.len() { t[((n >> (18 - 6 * i)) & 63) as usize] as char } else { '=' });
-            }
-        }
-        out
-    }
-
     async fn submit_message(c: &mut Client, id: &str) {
         c.line().await;
         c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await;
@@ -460,5 +478,105 @@ mod tests {
         assert!(open.line().await.starts_with("250"), "the session open at the reload finished its exchange");
         stop2_tx.send(()).unwrap();
         second.await.unwrap();
+    }
+
+    fn filler() -> Submit {
+        Submit::new("filler", STREAM, Refused { peer: "p".into(), user: String::new(), from: String::new(), reason: "filler".into() }.event_kind())
+    }
+
+    #[test_id(tun2gp7)]
+    #[tokio::test]
+    async fn a_full_channel_holds_the_session_until_the_loop_drains_it() {
+        let b = setup("submission-full");
+        let (tx, mut rx) = mpsc::channel::<Submit>(1);
+        tx.send(filler()).await.unwrap();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }));
+        let mut c = Client::connect(addr).await;
+        submit_message(&mut c, "<f1@x>").await;
+        let held = timeout(Duration::from_millis(100), c.line()).await;
+        assert!(held.is_err(), "the client waits while the channel is full: {held:?}");
+        assert_eq!(rx.recv().await.unwrap().id, "filler");
+        let s = rx.recv().await.unwrap();
+        assert_eq!(s.id, "submission/<f1@x>", "the held session's event follows once the channel drains");
+        s.reply.unwrap().send(Ok(())).unwrap();
+        assert!(c.line().await.starts_with("250 2.0.0 queued"));
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(td5d03s)]
+    #[tokio::test]
+    async fn an_unanswered_submission_is_a_451_over_tls_once_the_wait_is_up() {
+        let b = setup("submission-451");
+        let (tx, mut rx) = mpsc::channel::<Submit>(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), Some(b.delivery.clone()), tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let mut c = Client::connect(addr).await;
+        submit_message(&mut c, "<t1@x>").await;
+        let held = rx.recv().await.unwrap();
+        assert!(c.line().await.starts_with("451 4.3.0"), "no reply in time is a 451");
+        drop(held);
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(tazx83c)]
+    #[tokio::test]
+    async fn a_client_that_stalls_in_the_handshake_is_cut_and_refused_in_the_audit() {
+        let b = setup("submission-stall-tls");
+        let (tx, mut rx) = mpsc::channel::<Submit>(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let mut raw = loop {
+            match TcpStream::connect(addr).await {
+                Ok(t) => break t,
+                Err(_) => tokio::task::yield_now().await,
+            }
+        };
+        let mut chunk = [0u8; 16];
+        let ended = timeout(Duration::from_secs(30), raw.read(&mut chunk)).await.expect("the server cut the stalled handshake");
+        assert!(matches!(ended, Ok(0) | Err(_)), "{ended:?}");
+        let r: Refused = serde_json::from_str(&rx.recv().await.unwrap().kind.body).unwrap();
+        assert!(r.reason.starts_with("handshake failed"), "{}", r.reason);
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(tpzgwk0)]
+    #[tokio::test]
+    async fn a_client_that_stalls_mid_data_is_cut() {
+        let b = setup("submission-stall-data");
+        let (tx, _rx) = mpsc::channel::<Submit>(4);
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let addr = b.cfg.socket();
+        let server = tokio::spawn(run_within(Some(b.cfg.clone()), None, tx, async { let _ = stop_rx.await; }, Duration::from_millis(100)));
+        let mut c = Client::connect(addr).await;
+        assert!(c.line().await.starts_with("220"));
+        c.say(&format!("AUTH PLAIN {}", plain("ryan", "hunter2"))).await;
+        assert!(c.line().await.starts_with("235"));
+        c.say("MAIL FROM:<me@example.org>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("RCPT TO:<concierge@spira>").await;
+        assert!(c.line().await.starts_with("250"));
+        c.say("DATA").await;
+        assert!(c.line().await.starts_with("354"));
+        c.until_closed().await;
+        let _ = stop_tx.send(());
+        server.await.unwrap();
+    }
+
+    #[test_id(t0wbkeq)]
+    #[tokio::test]
+    async fn a_certificate_that_is_not_a_file_leaves_the_listener_dormant() {
+        let mut b = setup("submission-nocert");
+        b.cfg.cert = b.dir.path().join("absent.pem");
+        let (tx, rx) = mpsc::channel::<Submit>(1);
+        drop(rx);
+        run(Some(b.cfg.clone()), None, tx, std::future::pending()).await;
+        assert!(std::net::TcpListener::bind(b.cfg.socket()).is_ok(), "nothing was bound");
     }
 }
