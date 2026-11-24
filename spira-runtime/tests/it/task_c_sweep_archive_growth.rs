@@ -65,4 +65,29 @@ fn a_transcript_stored_grown_and_stored_again_restores_verifies_and_queries_as_o
     let rows = String::from_utf8(rows).unwrap();
     assert_eq!(rows.lines().count(), 1, "{rows}");
     assert!(rows.contains(&format!("\"bytes\": {}", data.len())));
+
+    let index_bytes = || std::fs::read(p.index()).unwrap();
+    let kept = index_bytes();
+    let (ok, out) = cli(&dir, &["sweep"]);
+    assert!(ok && String::from_utf8_lossy(&out).contains("0 stored") && String::from_utf8_lossy(&out).contains("index untouched"), "{}", String::from_utf8_lossy(&out));
+    assert_eq!(index_bytes(), kept, "a sweep that stored nothing leaves the index untouched");
+
+    data.extend(line(9_002));
+    std::fs::write(p.projects.join(REL), &data).unwrap();
+    let (ok, out) = cli(&dir, &["sweep"]);
+    assert!(ok && String::from_utf8_lossy(&out).contains("1 stored"), "{}", String::from_utf8_lossy(&out));
+    let grown = index_bytes();
+    assert!(grown.starts_with(&kept) && grown.len() > kept.len(), "the sweep appended its row to the index");
+    assert_eq!(String::from_utf8(grown.clone()).unwrap().lines().count(), 2, "the compacted row and the one the sweep appended");
+    let (ok, restored) = cli(&dir, &["restore", REL]);
+    assert!(ok && restored == data);
+    let (ok, verified) = cli(&dir, &["verify"]);
+    assert!(ok, "{}", String::from_utf8_lossy(&verified));
+
+    std::fs::remove_file(p.projects.join(REL)).unwrap();
+    let (ok, out) = cli(&dir, &["sweep"]);
+    assert!(ok && String::from_utf8_lossy(&out).contains("1 row(s) in the index"), "{}", String::from_utf8_lossy(&out));
+    assert_eq!(index_bytes(), grown, "a row whose source is gone is kept");
+    let (ok, rows) = cli(&dir, &["query", "--json"]);
+    assert!(ok && String::from_utf8(rows).unwrap().lines().count() == 1);
 }

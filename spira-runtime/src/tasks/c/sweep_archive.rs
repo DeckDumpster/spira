@@ -38,7 +38,7 @@
 //!
 //! | Effect | Class | Deadline | Idempotency key | Refuses |
 //! |---|---|---|---|---|
-//! | `sweep.archive.store` (one per changed rel, one in flight at a time) | host | 300 s per transcript | `archive/<rel>/<size>/<mtime>` | a source outside `$SPIRA_TOKEN_PROJECTS` (`:350-352`); an unreadable source (skipped, `:345-348`); the lock held > 900 s by the hook (`:75-77`) |
+//! | `sweep.archive.store` (one per changed rel, one in flight at a time) | host | 300 s per transcript | `archive/<rel>/<size>/<mtime>` | a source outside `$SPIRA_TOKEN_PROJECTS`; an unreadable source (skipped); the lock held > 900 s by the hook |
 //! | `sweep.archive.index` | host | 60 s | `archive/index/<sha of row set>` | — ; appends the pending rows; rewrites the index only when its lines exceed twice its distinct sources |
 //!
 //! `store` reads the source once, from its cursor to the size at open, in 8 MiB frames: each frame is
@@ -789,22 +789,21 @@ pub mod archive {
         std::fs::metadata(&src).map_err(|e| fail(format!("cannot read: {e}")))?;
         let _lock = Lock::take(&p.archive, Duration::from_secs(240)).map_err(fail)?;
         let stem = p.archive.join("bodies").join(&job.rel);
-        let made = (|| -> Result<Grown, String> {
+        let made = (|| -> Result<(Grown, i64), String> {
             std::fs::create_dir_all(stem.parent().unwrap_or(&p.archive)).map_err(|e| e.to_string())?;
             let mut f = std::fs::File::open(&src).map_err(|e| e.to_string())?;
             let st = f.metadata().map_err(|e| e.to_string())?;
             let cursor = resumable(p, &job.rel, &mut f, &st, &stem);
             let grown = grow(proc, &mut f, &st, &stem, cursor.as_ref()).inspect_err(|_| undo_growth(&stem, cursor.as_ref()))?;
-            match grown {
-                Some(g) => Ok(g),
-                None => grow(proc, &mut f, &st, &stem, None).inspect_err(|_| undo_growth(&stem, None))?.ok_or_else(|| "a full copy resumed".to_string()),
-            }
+            let grown = match grown {
+                Some(g) => g,
+                None => grow(proc, &mut f, &st, &stem, None).inspect_err(|_| undo_growth(&stem, None))?.ok_or_else(|| "a full copy resumed".to_string())?,
+            };
+            Ok((grown, mtime_of(&st) as i64))
         })();
-        let g = made.map_err(fail)?;
-        let st = std::fs::metadata(&src).map_err(|e| fail(e.to_string()))?;
+        let (g, mtime) = made.map_err(fail)?;
         let Lines { first, last, turns, bridge, sess, parent } = g.lines;
         let sess = if sess.is_empty() { parent } else { sess };
-        let mtime = mtime_of(&st) as i64;
         let text = |v: Option<Vec<u8>>| v.map(|v| String::from_utf8_lossy(&v).into_owned());
         let (f, l) = (text(first).as_deref().and_then(parse_ts), text(last).as_deref().and_then(parse_ts));
         let kind = if f.is_some() && l.is_some() { "transcript" } else { "mtime" };
@@ -1083,6 +1082,77 @@ mod tests {
         assert!(if no_zstd_second { proc2.input() >= data.len() as u64 } else { proc2.input() == data.len() as u64 }, "the whole source was compressed again");
         assert_eq!(body(&p, REL, ext), data);
         assert_eq!(pending(&p, REL)["sha256"], Value::String(hex(&data)));
+    }
+
+    fn cursor_edit(p: &Paths, edit: impl FnOnce(&mut Value)) {
+        let path = p.archive.join("cursors").join(format!("{REL}.json"));
+        let mut v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        edit(&mut v);
+        std::fs::write(path, serde_json::to_vec(&v).unwrap()).unwrap();
+    }
+
+    #[test_id(trzcdci)]
+    #[test]
+    fn a_missing_cursor_is_copied_whole() {
+        assert_full_copy(|p, d| {
+            d.extend(lines(200, 20, 200));
+            put(p, REL, d);
+            std::fs::remove_file(p.archive.join("cursors").join(format!("{REL}.json"))).unwrap();
+        }, false);
+    }
+
+    #[test_id(tg75x8l)]
+    #[test]
+    fn an_unparseable_cursor_is_copied_whole() {
+        assert_full_copy(|p, d| {
+            d.extend(lines(200, 20, 200));
+            put(p, REL, d);
+            std::fs::write(p.archive.join("cursors").join(format!("{REL}.json")), b"{\"offset\": 12").unwrap();
+        }, false);
+    }
+
+    #[test_id(tdyyib2)]
+    #[test]
+    fn a_cursor_for_another_inode_is_copied_whole() {
+        assert_full_copy(|p, d| {
+            d.extend(lines(200, 20, 200));
+            put(p, REL, d);
+            cursor_edit(p, |v| v["src_ino"] = Value::from(v["src_ino"].as_u64().unwrap() + 1));
+        }, false);
+    }
+
+    #[test_id(tdvpeue)]
+    #[test]
+    fn a_cursor_whose_hash_state_disagrees_with_its_offset_is_copied_whole() {
+        assert_full_copy(|p, d| {
+            d.extend(lines(200, 20, 200));
+            put(p, REL, d);
+            cursor_edit(p, |v| v["sha"]["len"] = Value::from(1));
+        }, false);
+    }
+
+    #[test_id(tttaswt)]
+    #[test]
+    fn a_source_over_one_frame_grows_by_only_the_appended_bytes() {
+        let (_d, p) = world();
+        let proc = Fake::new(false);
+        let mut data = lines(0, 9_500, 1_000);
+        assert!(data.len() > 9 << 20);
+        put(&p, REL, &data);
+        run_store(&p, &proc, REL);
+        let first = proc.input();
+        let before = body(&p, REL, ".zst");
+        let tail = lines(9_500, 3, 1_000);
+        data.extend_from_slice(&tail);
+        put(&p, REL, &data);
+        run_store(&p, &proc, REL);
+        assert_eq!(proc.input() - first, tail.len() as u64);
+        let after = body(&p, REL, ".zst");
+        assert_eq!(&after[..before.len()], &before[..]);
+        let (_f, fresh) = world();
+        put(&fresh, REL, &data);
+        run_store(&fresh, &Fake::new(false), REL);
+        assert_eq!(pending(&p, REL), pending(&fresh, REL));
     }
 
     #[test_id(tdq7fme)]
