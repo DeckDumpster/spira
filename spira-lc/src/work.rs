@@ -3064,6 +3064,13 @@ mod tests {
         assert!(!msg.contains("Second"), "{msg}");
     }
 
+    #[test_id(tn2wq8d)]
+    #[test]
+    fn a_resent_skuld_draft_followed_by_a_no_progress_note_closes_at_done() {
+        let notes = "### Draft: T\n\nbody\nOpen: q\nConcierge: a note\n\n### Draft: T\n\nbody\nOpen: q\n\nNo progress (no-commit): nothing moved\n\nHeld for 30m (no-progress streak 2, branch stuck at abc) — not re-claimed until 2026-11-24T10:00:00Z. No attempt charged.\n";
+        assert_eq!(skuld_draft_notes_refusal("sp-r", notes), None);
+    }
+
     #[test_id(td6fwh4)]
     #[test]
     fn a_working_exit_the_rune_does_not_declare_is_refused_by_name() {

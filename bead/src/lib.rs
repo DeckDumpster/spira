@@ -150,31 +150,58 @@ pub fn depends_prose(body: &str) -> Option<String> {
     depends_raw(body)?.split(',').map(str::trim).find(|t| !t.is_empty() && !is_depends_token(t)).map(str::to_string)
 }
 
-/// One line per `### Draft:` note whose `Depends:` line carries a token `depends_prose` rejects.
-pub fn draft_depends_refusals(notes: &str) -> Vec<String> {
+const DRAFT_HEADING: &str = "### Draft:";
+
+/// The last (title, body) of each trimmed draft title in `notes`, in order of those last
+/// occurrences. A heading counts only at the start of a line.
+fn last_drafts(notes: &str) -> Vec<(String, String)> {
     let notes = notes.replace("\r\n", "\n");
-    notes
-        .split("### Draft:")
-        .skip(1)
-        .filter_map(|d| {
-            let (title, body) = d.split_once('\n').unwrap_or((d, ""));
-            depends_prose(body).map(|t| format!("draft \"{}\": `Depends:` carries `{t}`", title.trim()))
-        })
+    let mut drafts: Vec<(String, String)> = Vec::new();
+    for line in notes.split_inclusive('\n') {
+        if let Some(title) = line.strip_prefix(DRAFT_HEADING) {
+            drafts.push((title.trim().to_string(), String::new()));
+        } else if let Some((_, body)) = drafts.last_mut() {
+            body.push_str(line);
+        }
+    }
+    let mut last: Vec<(String, String)> = Vec::new();
+    for (title, body) in drafts.into_iter().rev() {
+        if !last.iter().any(|(t, _)| *t == title) {
+            last.push((title, body));
+        }
+    }
+    last.reverse();
+    last
+}
+
+/// One line per draft title whose last `### Draft:` note has a `Depends:` line carrying a token
+/// `depends_prose` rejects.
+pub fn draft_depends_refusals(notes: &str) -> Vec<String> {
+    last_drafts(notes)
+        .into_iter()
+        .filter_map(|(title, body)| depends_prose(&body).map(|t| format!("draft \"{title}\": `Depends:` carries `{t}`")))
         .collect()
 }
 
-/// One line per `### Draft:` note with a non-blank line after its `Open:` line other than the
-/// harness submit note: `Open:` ends a draft's note, and a correction is the whole draft again.
+/// One line per draft title whose last `### Draft:` note has a non-blank line after its `Open:`
+/// line other than a harness note: `Open:` ends a draft's note, and a correction is the whole
+/// draft again. A no-progress note is two paragraphs, and both are the harness's.
 pub fn draft_trailer_refusals(notes: &str) -> Vec<String> {
-    let notes = notes.replace("\r\n", "\n");
-    notes
-        .split("### Draft:")
-        .skip(1)
-        .filter_map(|d| {
-            let (title, body) = d.split_once('\n').unwrap_or((d, ""));
-            let after_open = body.lines().skip_while(|l| !l.starts_with("Open:")).skip(1);
-            let line = after_open.map(str::trim).find(|l| !l.is_empty() && !l.starts_with(HARNESS_SUBMIT_NOTE))?;
-            Some(format!("draft \"{}\": after its Open: line comes `{line}`; a correction is the whole draft again as a new note, never a paragraph after one", title.trim()))
+    last_drafts(notes)
+        .into_iter()
+        .filter_map(|(title, body)| {
+            let mut second_paragraph_due = false;
+            let line = body.lines().skip_while(|l| !l.starts_with("Open:")).skip(1).map(str::trim).filter(|l| !l.is_empty()).find(|l| {
+                if std::mem::take(&mut second_paragraph_due) {
+                    return false;
+                }
+                if l.starts_with(HARNESS_NO_PROGRESS_NOTE) {
+                    second_paragraph_due = true;
+                    return false;
+                }
+                !is_harness_note(l)
+            })?;
+            Some(format!("draft \"{title}\": after its Open: line comes `{line}`; a correction is the whole draft again as a new note, never a paragraph after one"))
         })
         .collect()
 }
@@ -330,8 +357,14 @@ pub fn has_build_spec(text: &str) -> bool {
     false
 }
 
-// Written by dwarf/src/teardown.rs `NoteKey::Submitted`; bead cannot depend on dwarf.
-const HARNESS_SUBMIT_NOTE: &str = "Submitted: work committed on branch";
+/// The start of the note dwarf/src/teardown.rs writes on a submit; bead cannot depend on dwarf.
+pub const HARNESS_SUBMIT_NOTE: &str = "Submitted: work committed on branch";
+/// The start of the two-paragraph note teardown writes on a no-progress exit.
+pub const HARNESS_NO_PROGRESS_NOTE: &str = "No progress (";
+
+fn is_harness_note(line: &str) -> bool {
+    line.starts_with(HARNESS_SUBMIT_NOTE) || line.starts_with(HARNESS_NO_PROGRESS_NOTE)
+}
 
 /// The refusal for a Concierge builder filing that names no Skuld request.
 pub const SKULD_NEEDS_DRAFT: &str = "a builder bead the Concierge files needs --drafted-by <request-id>: the id of a Skuld request whose note holds this exact text. Get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>, then file the note's text with --drafted-by <that id>";
@@ -351,7 +384,7 @@ pub fn parent_is_rule(cmdline: &[u8]) -> bool {
 }
 
 /// `Ok` when `notes` holds `### Draft: <title>`, a blank line, then `body` trimmed and verbatim
-/// (ending the note, or followed by an `Open:` line, another draft, or the harness submit note),
+/// (ending the note, or followed by an `Open:` line, another draft, or a harness note),
 /// on a request labelled `skuld_label`; else the refusal text.
 pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, labels: &[String], notes: &str) -> Result<(), String> {
     let how = "get a draft or review first: bead.sh file \"<title>\" --for skuld --repo <r> --body-file <the intent, or your draft for review>; then file the text of the note Skuld leaves with --drafted-by <that id>";
@@ -367,7 +400,7 @@ pub fn skuld_drafted(title: &str, body: &str, skuld_label: &str, request: &str, 
     let notes = notes.replace("\r\n", "\n");
     let held = notes.match_indices(&wanted).any(|(at, m)| {
         let rest = notes[at + m.len()..].trim_start();
-        rest.is_empty() || rest.starts_with("Open:") || rest.starts_with("### Draft:") || rest.starts_with(HARNESS_SUBMIT_NOTE)
+        rest.is_empty() || rest.starts_with("Open:") || rest.starts_with("### Draft:") || is_harness_note(rest)
     });
     if held {
         Ok(())
@@ -389,7 +422,7 @@ pub struct Draft {
 }
 
 /// The last `### Draft: <title>` in `notes` (a correction is the whole draft resent): the text after
-/// the heading and a blank line, up to another draft, an `Open:` line, the harness submit note or the end.
+/// the heading and a blank line, up to another draft, an `Open:` line, a harness note or the end.
 pub fn draft_body(notes: &str, title: &str) -> Option<Draft> {
     let heading = format!("### Draft: {}\n\n", title.trim());
     let notes = notes.replace("\r\n", "\n");
@@ -400,7 +433,7 @@ pub fn draft_body(notes: &str, title: &str) -> Option<Draft> {
     let mut offset = 0;
     for line in rest.split_inclusive('\n') {
         let bare = line.trim_end();
-        if bare.starts_with("### Draft:") || bare.starts_with(HARNESS_SUBMIT_NOTE) {
+        if bare.starts_with("### Draft:") || is_harness_note(bare) {
             end = offset;
             break;
         }
@@ -1085,6 +1118,69 @@ mod tests {
         assert!(draft_trailer_refusals("### Draft: T\n\nbody\nmore\n").is_empty());
         assert!(draft_trailer_refusals("### Draft: T\n\nbody\nOpen: q\n").is_empty());
         assert!(draft_trailer_refusals("### Draft: T\n\nbody\nOpen: q\n\nSubmitted: work committed on branch x\n").is_empty());
+    }
+
+    const HELD: &str = "No progress (no-commit): nothing moved\n\nHeld for 30m (no-progress streak 2, branch stuck at abc) — not re-claimed until 2026-11-24T10:00:00Z. No attempt charged.\n";
+    const AFTER: &str = "No progress (no-commit): nothing moved\n\nAfter 3 consecutive no-progress exits at abc, routed to the Concierge as a blocking question: the bead is not claimable again until it is answered. No attempt charged.\n";
+
+    #[test_id(tmq3lh7)]
+    #[test]
+    fn a_clean_resend_supersedes_a_draft_with_prose_after_its_open_line() {
+        let notes = "### Draft: T\n\nbody\nOpen: q\nConcierge: a note\n\n### Draft: T\n\nbody\nOpen: q\n";
+        assert!(draft_trailer_refusals(notes).is_empty(), "{:?}", draft_trailer_refusals(notes));
+        let guard = "### Draft: T\n\nbody\nOpen: q\n\n### Draft: T\n\nbody\nOpen: q\nConcierge: a note\n";
+        assert_eq!(draft_trailer_refusals(guard).len(), 1);
+    }
+
+    #[test_id(t5nd2cx)]
+    #[test]
+    fn a_clean_resend_supersedes_a_draft_with_a_prose_depends_line() {
+        let notes = "### Draft: T\n\nDepends: after the other\nbody\n\n### Draft: T\n\nDepends: none\nbody\n";
+        assert!(draft_depends_refusals(notes).is_empty(), "{:?}", draft_depends_refusals(notes));
+        let guard = "### Draft: T\n\nDepends: none\nbody\n\n### Draft: T\n\nDepends: after the other\nbody\n";
+        assert_eq!(draft_depends_refusals(guard).len(), 1);
+    }
+
+    #[test_id(tw8k4pe)]
+    #[test]
+    fn a_no_progress_note_after_a_last_draft_is_not_a_trailer() {
+        for np in [HELD, AFTER] {
+            let notes = format!("### Draft: T\n\nbody\nOpen: q\n\n{np}");
+            assert!(draft_trailer_refusals(&notes).is_empty(), "{:?}", draft_trailer_refusals(&notes));
+            let more = format!("{notes}\nCorrection: x\n");
+            let found = draft_trailer_refusals(&more);
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert!(found[0].contains("`Correction: x`"), "{found:?}");
+        }
+    }
+
+    #[test_id(tj6c9ra)]
+    #[test]
+    fn a_no_progress_note_ends_a_draft_that_has_no_open_line() {
+        let l = vec!["draft".to_string()];
+        for np in [HELD, AFTER] {
+            let notes = format!("### Draft: T\n\nbody line\nmore\n\n{np}");
+            assert!(skuld_drafted("T", "body line\nmore", "draft", "sp-r", &l, &notes).is_ok());
+            let got = draft_body(&notes, "T").expect("a draft");
+            assert_eq!(got.body, "body line\nmore");
+            assert_eq!(got.open, None);
+        }
+    }
+
+    #[test_id(tz4h1vb)]
+    #[test]
+    fn a_heading_quoted_mid_line_does_not_start_a_draft() {
+        let notes = "### Draft: Real\n\nsee the ### Draft: Fake heading\nOpen: q\nprose\n";
+        let found = draft_trailer_refusals(notes);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("draft \"Real\"") && !found[0].contains("Fake\":"), "{found:?}");
+    }
+
+    #[test_id(tb1y7ms)]
+    #[test]
+    fn drafts_of_two_titles_are_each_judged() {
+        let notes = "### Draft: A\n\nx\nOpen: q\nprose a\n### Draft: B\n\ny\nOpen: q\nprose b\n";
+        assert_eq!(draft_trailer_refusals(notes).len(), 2);
     }
 
     #[test_id(tui95nw)]
