@@ -1643,6 +1643,15 @@ mod tests {
         assert!(a[2].starts_with("DELETE FROM `beads`.labels WHERE issue_id = 'sp-a' AND label = 'branch:spira/sp-a'"));
     }
 
+    
+    #[test_id(tx55xyp)]
+    #[test]
+    fn a_draft_note_merges_only_over_the_notes_it_read_and_appends_otherwise() {
+        let m = Mutation { argv: vec![], body: None, id: "sp-a".into(), ops: vec![Op::DraftNote { read: "r'1".into(), merged: "m".into(), text: "t".into() }], forced: false };
+        let q = m.script_in("`beads`", &Env { leases: false, local_metadata: false }, &[]).join("\n");
+        assert!(q.contains("CASE WHEN COALESCE(notes, '') = 'r\\'1' THEN 'm' WHEN notes IS NULL OR notes = '' THEN 't' ELSE CONCAT(notes, CHAR(10), 't') END"), "{q}");
+    }
+
     #[test_id(toqnqfz)]
     #[test]
     fn a_note_appends_a_comment_inserts_metadata_merges_and_priority_sets() {
