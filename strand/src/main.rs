@@ -297,7 +297,7 @@ fn main() {
             }
             check::from_tsv(&cfg, &text)
         }
-        None => match check::classify_live(&cfg) {
+        None => match check::classify_live(&cfg, &|labels, excl| probe::ready(&cfg, labels, excl)) {
             Ok(c) => c,
             Err(e) => {
                 // R7: an unreadable input is not an empty graph — say so, write nothing.

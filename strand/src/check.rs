@@ -1,6 +1,7 @@
 //! The two entry points that touch the world: gathering a classification from the live
 //! store (or a saved TSV), `report`, and `check` with its mechanical fixes and escalations.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -138,7 +139,7 @@ fn task_silent_past(run_dir: &Path, task: &str, silent_s: u64, waiting: usize, w
 
 /// Classify every partition against the live store. Err means an input could not be read,
 /// and the caller must neither report "nothing stranded" nor rewrite the episode state (R7).
-pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
+pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<HashSet<String>, String>) -> Result<Classified, String> {
     let specs = probe::roster(cfg, cfg.labels.as_deref())?;
     let parts: Vec<(String, Vec<String>, Vec<String>)> = specs
         .into_iter()
@@ -193,7 +194,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     for (labels, excl, runes) in parts {
         watching.push(labels.clone());
         let need: Vec<&str> = labels.split(',').map(str::trim).filter(|x| !x.is_empty()).collect();
-        let ready = probe::ready(cfg, &labels, &excl)?;
+        let ready = ready_of(&labels, &excl)?;
         let facts = Facts {
             now,
             live: runes.iter().map(|f| live.iter().filter(|u| runtime::units::is_dwarf_of(u, f, f)).count() as u32).sum(),
@@ -866,7 +867,7 @@ mod tests {
         let t = testkit::TempDir::new("strand-lane-live");
         let spec = || vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), runes: vec!["builder".into()] }];
         let sc = t.join("systemctl");
-        testkit::write_exe(&sc, "#!/bin/sh\necho 'spira-run-sentinel_2dcall-builder_2d1_2d0.service loaded active running d'\n");
+        testkit::write_exe(&sc, "#!/bin/sh\ncase \"$*\" in *spira-run-sentinel*) printf 'Id=spira-run-sentinel_2dcall-builder_2d1_2d0.service\\nLoadState=loaded\\nActiveState=active\\nSubState=running\\n\\n';; esac\n");
         let cfg = Config { call: "runtime".into(), systemctl: sc.to_string_lossy().into_owned(), ..Config::test_fixture() };
         assert_eq!(lane_live_now(&cfg, Ok(spec())), Some(1));
         testkit::write_exe(&sc, "#!/bin/sh\nexit 1\n");
