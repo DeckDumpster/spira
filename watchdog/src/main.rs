@@ -39,7 +39,7 @@ fn units(_clock: Arc<dyn Clock>) -> Result<Box<dyn Units>, String> {
 
 /// The pass's line and whether the scheduler is down (an open incident).
 fn run_pass() -> Result<(String, bool), String> {
-    let cfg = Config::from_lookup(spira_config::process::cfg)?;
+    let cfg = Config::from_lookup(spira_config::process::cfg, std::env::var("XDG_RUNTIME_DIR").ok())?;
     let inbox = PathBuf::from(spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?);
     let clock: Arc<dyn Clock> = Arc::new(WallClock);
     let units = units(clock.clone())?;

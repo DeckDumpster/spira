@@ -80,6 +80,7 @@ fn run(check_only: bool) -> Result<(), Stamped> {
         println!("ok {}", settings.hash());
         return Ok(());
     }
+    settings.marker_path()?;
     if let Some(credential) = settings.reconciler.values.get("SPIRA_LC_PASSWORD_FILE") {
         // Before any thread exists: the programs the reconciler launches read the store's credential from their environment.
         std::env::set_var("SPIRA_LC_PASSWORD_FILE", credential);
@@ -111,7 +112,7 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), Stampe
     let startup = Arc::new(spira_runtime::Startup::new(deadline));
     let boot = {
         let (settings, clock, sink, board, startup) = (settings.clone(), clock.clone(), sink.clone(), board.clone(), startup.clone());
-        move || spira_runtime::start_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, board, &startup)
+        move || spira_runtime::start_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path().expect("checked before the engine boots"))), sink, board, &startup)
     };
     let mut starting = runtime::offload::offload("startup", None, boot).map_err(|e| e.to_string())?;
     let started = tokio::time::timeout(deadline, &mut starting).await.map_err(|_| Stamped(startup.unfinished()))?.map_err(|e| e.to_string())?;

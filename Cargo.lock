@@ -2451,6 +2451,7 @@ dependencies = [
  "unit-run",
  "ureq",
  "watchd",
+ "watchdog",
  "watchtower",
  "webpki-roots 0.26.11",
 ]

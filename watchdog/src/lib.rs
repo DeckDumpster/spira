@@ -42,8 +42,10 @@ pub struct Config {
 }
 
 impl Config {
-    /// Every key is required; a missing or empty one refuses, named.
-    pub fn from_lookup(get: impl Fn(&str) -> Result<String, String>) -> Result<Config, String> {
+    /// Every key is required; a missing or empty one refuses, named. `runtime_dir` is the user
+    /// runtime directory the marker lives in, which is the environment's and not a config key.
+    pub fn from_lookup(get: impl Fn(&str) -> Result<String, String>, runtime_dir: Option<String>) -> Result<Config, String> {
+        let runtime_dir = runtime_dir.filter(|d| !d.trim().is_empty()).ok_or("XDG_RUNTIME_DIR is unset — the scheduler's in-flight marker lives there; refusing")?;
         let req = |k: &str| get(k).and_then(|v| if v.trim().is_empty() { Err(format!("{k} is empty — refusing")) } else { Ok(v) });
         let bound: u64 = req(KEY_BOUND)?.trim().parse().map_err(|_| format!("{KEY_BOUND} is not a whole number of seconds — refusing"))?;
         if bound == 0 {
@@ -54,7 +56,7 @@ impl Config {
             bound_ms: bound * 1000,
             socket: PathBuf::from(req(KEY_SOCKET)?),
             unit: req(KEY_UNIT)?,
-            marker: run.join("runtime-inflight.json"),
+            marker: runtime::marker::path_in(Path::new(&runtime_dir)),
             incident: run.join("watchdog-incident.json"),
             unit_log: PathBuf::from(req(KEY_UNIT_LOG)?),
         })
@@ -456,7 +458,7 @@ mod tests {
 
     fn cfg(dir: &Path) -> Config {
         let m: HashMap<&str, String> = [(KEY_BOUND, "90".to_string()), (KEY_SOCKET, "nonexistent/control.sock".into()), (KEY_UNIT, UNIT.into()), (KEY_RUN, dir.display().to_string()), (KEY_UNIT_LOG, dir.join("spira-runtime.log").display().to_string())].into();
-        Config::from_lookup(|k| m.get(k).cloned().ok_or_else(|| format!("{k} unset"))).unwrap()
+        Config::from_lookup(|k| m.get(k).cloned().ok_or_else(|| format!("{k} unset")), Some(dir.join("xdg").display().to_string())).unwrap()
     }
 
     fn active(since: u64) -> UnitFacts {
@@ -488,16 +490,31 @@ mod tests {
     fn every_key_is_required_and_the_bound_must_be_positive() {
         let full: HashMap<&str, &str> = [(KEY_BOUND, "90"), (KEY_SOCKET, "s"), (KEY_UNIT, "u"), (KEY_RUN, "r"), (KEY_UNIT_LOG, "r/u.log")].into();
         for missing in KEYS {
-            let err = Config::from_lookup(|k| if k == missing { Err(format!("{k} unset")) } else { Ok(full[k].to_string()) }).unwrap_err();
+            let err = Config::from_lookup(|k| if k == missing { Err(format!("{k} unset")) } else { Ok(full[k].to_string()) }, Some("x".into())).unwrap_err();
             assert!(err.contains(missing), "{err}");
-            let err = Config::from_lookup(|k| Ok(if k == missing { String::new() } else { full[k].to_string() })).unwrap_err();
+            let err = Config::from_lookup(|k| Ok(if k == missing { String::new() } else { full[k].to_string() }), Some("x".into())).unwrap_err();
             assert!(err.contains(missing), "{err}");
         }
         for bad in ["0", "ninety", "-1"] {
-            assert!(Config::from_lookup(|k| Ok(if k == KEY_BOUND { bad.to_string() } else { full[k].to_string() })).is_err(), "{bad}");
+            assert!(Config::from_lookup(|k| Ok(if k == KEY_BOUND { bad.to_string() } else { full[k].to_string() }), Some("x".into())).is_err(), "{bad}");
         }
-        let c = Config::from_lookup(|k| Ok(full[k].to_string())).unwrap();
-        assert_eq!((c.bound_ms, c.marker.clone()), (90_000, PathBuf::from("r/runtime-inflight.json")));
+        let c = Config::from_lookup(|k| Ok(full[k].to_string()), Some("x".into())).unwrap();
+        assert_eq!((c.bound_ms, c.marker.clone()), (90_000, PathBuf::from("x/spira-runtime-inflight.json")));
+        for unset in [None, Some(String::new())] {
+            let err = Config::from_lookup(|k| Ok(full[k].to_string()), unset).unwrap_err();
+            assert!(err.contains("XDG_RUNTIME_DIR"), "{err}");
+        }
+    }
+
+    
+    #[test_id(tcy3jga)]
+    #[test]
+    fn the_watchdog_reads_the_marker_where_the_scheduler_writes_it() {
+        let xdg = "run/user/1000";
+        let full: HashMap<&str, &str> = [(KEY_BOUND, "90"), (KEY_SOCKET, "s"), (KEY_UNIT, "u"), (KEY_RUN, "elsewhere"), (KEY_UNIT_LOG, "l")].into();
+        let watchdog = Config::from_lookup(|k| Ok(full[k].to_string()), Some(xdg.into())).unwrap().marker;
+        let scheduler = runtime::marker::path_in(Path::new(xdg));
+        assert_eq!(watchdog, scheduler);
     }
 
     fn started(o: &Outcome) -> Option<Result<(), String>> {
