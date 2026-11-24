@@ -12,7 +12,7 @@ tier = "T0"
 statement = "Every path token in a suite's `# covers:` declaration, continuation lines included, resolves to something in the tree. Use-case and gap ids are not paths."
 
 [use_case.uncovered]
-reason = "no shell suite remains to declare `# covers:`; the covers-entries rule was deleted with the last suite"
+reason = "the covers-entries rule was deleted with the shell suite corpus"
 date = "2026-11-23"
 bead = "sp-v0i903"
 
