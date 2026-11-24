@@ -1433,6 +1433,9 @@ fn on_main_branch(cfg: &Config) -> Option<bool> {
     if let Some(branch) = cfg.host.as_ref().and_then(|h| h.head_branch(Path::new(&cfg.spira_home))) {
         return Some(branch == "main");
     }
+    if !Path::new(&cfg.spira_home).ancestors().any(|dir| dir.join(".git").exists()) {
+        return None;
+    }
     let out = spira_config::bounded::bounded(&cfg.seams.git)
         .args(["-C", &cfg.spira_home, "rev-parse", "--abbrev-ref", "HEAD"])
         .stderr(Stdio::null())
@@ -3571,6 +3574,20 @@ mod tests {
         for program in ["strand", "spira-claim", "tmux"] {
             assert!(launched(&log, program) > 0, "the unhosted pass must launch {program}: {}", launches(&log));
         }
+    }
+
+    #[test_id(th0vyib)]
+    #[test]
+    fn a_home_outside_any_checkout_launches_no_git_and_one_inside_answers_as_before() {
+        let dir = scratch_dir("main-branch");
+        let (mut cfg, log) = tripwired(&dir, None);
+        cfg.spira_home = dir.join("release").display().to_string();
+        fs::create_dir_all(&cfg.spira_home).unwrap();
+        assert_eq!(on_main_branch(&cfg), None);
+        assert_eq!(launched(&log, "git"), 0, "{}", launches(&log));
+        fs::create_dir_all(dir.join("release/.git")).unwrap();
+        assert_eq!(on_main_branch(&cfg), Some(false), "the tripwire git answers a sha, which is not main");
+        assert_eq!(launched(&log, "git"), 1);
     }
 
     #[test_id(t8qb575)]

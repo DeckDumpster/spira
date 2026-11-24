@@ -29,6 +29,11 @@ name = "it"
 path = "tests/it/main.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "git_idle"
+path = "tests/git_idle.rs"
+required-features = ["integration"]
+
 [features]
 integration = ["lifecycle/integration", "reconciler-engine/integration", "runtime/integration", "spira-config/integration", "spira-desired-state/integration", "spira-lc/integration", "spira-otel/integration", "spira-runtime/integration", "spira-store/integration", "state-store/integration", "testkit/integration", "spira-test-id/integration"]
 [dependencies]

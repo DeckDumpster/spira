@@ -475,6 +475,9 @@ fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
 /// as "no remotes," exactly as bash's own `$(git remote 2>/dev/null)` does (a failed
 /// substitution is just an empty string, and nothing downstream distinguishes the two).
 fn git_remotes(repo: &str) -> Vec<String> {
+    if let Some(names) = crate::git_refs::remotes(Path::new(repo)) {
+        return names;
+    }
     // batch-job: git history or network operation, as long as the repository is large
     match Command::new("git").arg("-C").arg(repo).arg("remote").output() {
         Ok(o) if o.status.success() => {

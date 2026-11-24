@@ -654,16 +654,21 @@ pub fn observe(e: &crate::Effects) -> Result<String, String> {
     let mut repos = vec![];
     for name in reg.names().into_iter().filter(|n| reg.land(n) == "pr") {
         let Some(path) = reg.root(&name).filter(|p| std::path::Path::new(p).join(".git").exists()) else { continue };
+        let refs = match spira_config::git_refs::branch_tips(std::path::Path::new(&path), "refs/heads/spira/") {
+            Some(t) => t,
+            None => {
+                let listed = git(&path, &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/"], 10).unwrap_or_default();
+                listed.lines().filter_map(|l| l.split_once(' ').map(|(b, t)| (b.to_string(), t.to_string()))).collect()
+            }
+        };
+        if refs.is_empty() {
+            continue;
+        }
         let Some(landref) = spira_config::repos::landref(&reg, &path) else { continue };
         let base_fq = spira_config::repos::qualify_base_ref(&landref, &path);
         // `landing.fetch` (`pr.rs:91-93`) runs inside this probe, so an idle tick stays probes only.
         let _ = fetch(&serde_json::to_string(&Leg { path: path.clone(), landref: landref.clone(), ..Leg::default() }).unwrap_or_default());
-        let base_sha = git(&path, &["rev-parse", "--verify", "--quiet", &base_fq], 10).unwrap_or_default();
-        let refs = git(&path, &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/"], 10).unwrap_or_default();
-        let refs: Vec<(String, String)> = refs.lines().filter_map(|l| l.split_once(' ').map(|(b, t)| (b.to_string(), t.to_string()))).collect();
-        if refs.is_empty() {
-            continue;
-        }
+        let base_sha = spira_config::git_refs::sha_of(std::path::Path::new(&path), &base_fq).or_else(|| git(&path, &["rev-parse", "--verify", "--quiet", &base_fq], 10)).unwrap_or_default();
         let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
         let rows = spira_store::lc_state::index(store_view::rows_by_ids(&lc, &ids)?);
         let mut argv = vec!["content".to_string(), "show".to_string()];

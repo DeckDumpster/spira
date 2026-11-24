@@ -123,6 +123,55 @@ pub fn sha_of(repo: &Path, name: &str) -> Option<String> {
     }
 }
 
+/// The `[remote "…"]` names in the common dir's `config`; `None` when the file cannot be read or
+/// pulls in another by `include`, which this does not follow: git answers then.
+pub fn remotes(repo: &Path) -> Option<Vec<String>> {
+    let (_, common) = git_dirs(repo)?;
+    let text = fs::read_to_string(common.join("config")).ok()?;
+    if text.to_ascii_lowercase().contains("worktreeconfig") {
+        return None;
+    }
+    let mut names = vec![];
+    for line in text.lines().map(str::trim).filter(|l| l.starts_with('[')) {
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("[include") || lower.starts_with("[remote.") {
+            return None;
+        }
+        if lower.starts_with("[remote ") {
+            if line.contains('\\') {
+                return None;
+            }
+            let start = line.find('"')? + 1;
+            let end = line.rfind('"').filter(|e| *e >= start)?;
+            names.push(line[start..end].to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+    Some(names)
+}
+
+type Held = (String, Box<dyn std::any::Any + Send>);
+
+fn holds() -> &'static std::sync::Mutex<std::collections::HashMap<(PathBuf, String), Held>> {
+    static HOLDS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(PathBuf, String), Held>>> = std::sync::OnceLock::new();
+    HOLDS.get_or_init(Default::default)
+}
+
+/// The answer to `question` about `repo`, held process-wide under `key`, the shas it depends on:
+/// `read` runs only when `key` differs from the one held, and a failed read is not held. One entry
+/// per (repo, question), so a moved key replaces the entry.
+pub fn held<T: Clone + Send + 'static>(repo: &Path, question: &str, key: &str, read: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let id = (repo.to_path_buf(), question.to_string());
+    let hit = holds().lock().unwrap_or_else(|e| e.into_inner()).get(&id).filter(|(k, _)| k == key).and_then(|(_, v)| v.downcast_ref::<T>().cloned());
+    if let Some(v) = hit {
+        return Ok(v);
+    }
+    let v = read()?;
+    holds().lock().unwrap_or_else(|e| e.into_inner()).insert(id, (key.to_string(), Box::new(v.clone())));
+    Ok(v)
+}
+
 fn walk(dir: &Path, stem: &str, want: &str, out: &mut BTreeMap<String, String>) -> Option<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -261,5 +310,41 @@ mod tests {
         assert_eq!(read_ref(&git, "origin/HEAD"), Ref::Sha(a.clone()));
         assert_eq!(read_ref(&git, "loose"), Ref::Object(a));
         assert_eq!(read_ref(&git, "loop"), Ref::Unknown, "a symbolic cycle is git's to name");
+    }
+
+    #[test_id(tom6h2s)]
+    #[test]
+    fn remotes_are_the_configs_remote_sections_and_an_include_leaves_it_to_git() {
+        let d = testkit::TempDir::new("refs-remotes");
+        let git = d.join(".git");
+        fs::create_dir_all(&git).unwrap();
+        assert_eq!(remotes(d.path()), None, "no config file is git's to answer");
+        fs::write(git.join("config"), "[core]\n\tbare = false\n[branch \"main\"]\n\tremote = origin\n").unwrap();
+        assert_eq!(remotes(d.path()), Some(vec![]));
+        fs::write(git.join("config"), "[remote \"origin\"]\n\turl = x\n[core]\n[remote \"up stream\"]\n\turl = y\n").unwrap();
+        assert_eq!(remotes(d.path()), Some(vec!["origin".to_string(), "up stream".to_string()]));
+        fs::write(git.join("config"), "[remote \"origin\"]\n[include]\n\tpath = more\n").unwrap();
+        assert_eq!(remotes(d.path()), None);
+        fs::write(git.join("config"), "[extensions]\n\tworktreeConfig = true\n[remote \"origin\"]\n").unwrap();
+        assert_eq!(remotes(d.path()), None, "a per-worktree config holds remotes this does not read");
+    }
+
+    #[test_id(t6qv35m)]
+    #[test]
+    fn a_held_answer_re_reads_on_a_moved_key_and_holds_no_failure() {
+        let d = testkit::TempDir::new("refs-held");
+        let reads = std::cell::Cell::new(0);
+        let read = |v: u32| {
+            reads.set(reads.get() + 1);
+            Ok::<u32, String>(v)
+        };
+        assert_eq!(held(d.path(), "q", "k1", || read(1)), Ok(1));
+        assert_eq!(held(d.path(), "q", "k1", || read(2)), Ok(1), "the same key is not read again");
+        assert_eq!(reads.get(), 1);
+        assert_eq!(held(d.path(), "q", "k2", || read(3)), Ok(3), "a moved key reads again");
+        assert_eq!(held(d.path(), "q", "k1", || read(4)), Ok(4), "a moved key replaces the entry");
+        assert_eq!(held(d.path(), "q", "k9", || Err::<u32, _>("boom".to_string())), Err("boom".to_string()));
+        assert_eq!(held(d.path(), "q", "k9", || read(5)), Ok(5), "a failure is not held");
+        assert_eq!(held(d.path(), "other", "k9", || read(6)), Ok(6), "each question has its own entry");
     }
 }

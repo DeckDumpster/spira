@@ -1223,21 +1223,28 @@ impl World {
         if let Some(git) = &self.git_bin {
             reg = reg.with_git(git.clone());
         }
-        let since = format!("--since=@{}", now.saturating_sub(day));
+        let from = now.saturating_sub(day);
+        let since = format!("--since=@{from}");
         let mut out = vec![];
         for row in map_rows(&map) {
             let land = spira_config::repos::landref_explained(&reg, &row.name)
                 .or_else(|e| if self.has_time_to_reread() { spira_config::repos::landref_explained(&reg, &row.name) } else { Err(e) })
                 .map_err(|why| format!("{}: no landing ref resolves: {why}", row.name))?;
-            let log_args = ["log", land.as_str(), &since, "--format=%ct %s"];
             let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
-            let log = git_ok_with(git, Path::new(&row.path), &log_args)
-                .or_else(|e| if self.has_time_to_reread() { git_ok_with(git, Path::new(&row.path), &log_args) } else { Err(e) })
-                .map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
+            let log_args = ["log", land.as_str(), &since, "--format=%ct %s"];
+            let read = || -> Result<Vec<(u64, String)>, String> {
+                let log = git_ok_with(git, Path::new(&row.path), &log_args)
+                    .or_else(|e| if self.has_time_to_reread() { git_ok_with(git, Path::new(&row.path), &log_args) } else { Err(e) })
+                    .map_err(|e| format!("{}: git log {land} in {}: {e}", row.name, row.path))?;
+                Ok(String::from_utf8_lossy(&log).lines().filter_map(|l| l.split_once(' ')).filter_map(|(at, subject)| Some((at.parse::<u64>().ok()?, subject.to_string()))).collect())
+            };
+            let rows = match spira_config::git_refs::sha_of(Path::new(&row.path), &land) {
+                Some(tip) => spira_config::git_refs::held(Path::new(&row.path), &format!("landed {land}"), &tip, read)?,
+                None => read()?,
+            };
             let mut landed: BTreeMap<String, u64> = BTreeMap::new();
-            for line in String::from_utf8_lossy(&log).lines() {
-                let Some((at, subject)) = line.split_once(' ') else { continue };
-                let Ok(at) = at.parse::<u64>() else { continue };
+            for (at, subject) in rows.iter().filter(|(at, _)| *at >= from) {
+                let at = *at;
                 for id in bead_ids(subject, prefix) {
                     let t = landed.entry(id).or_insert(at);
                     *t = (*t).max(at);
