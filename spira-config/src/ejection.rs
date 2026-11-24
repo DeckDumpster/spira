@@ -69,12 +69,47 @@ pub fn failures(output: &str) -> Vec<Failure> {
         }
     }
     close(&mut cur, &mut out);
+    nextest_failures(output, &mut out);
     for name in output.lines().filter_map(|l| l.strip_prefix("test ")?.strip_suffix(" ... FAILED")) {
         if !out.iter().any(|f| f.test == name) {
             out.push(Failure { test: name.to_string(), location: None, tail: Vec::new() });
         }
     }
     out
+}
+
+fn is_rule_line(l: &str) -> bool {
+    let l = l.trim();
+    l.chars().count() >= 3 && l.chars().all(|c| c == '─' || c == '-')
+}
+
+/// Each red nextest status line opens a block ended by the next status line, a rule line or
+/// `Summary [`; a name already listed, as at the end-of-run repeat, adds nothing.
+fn nextest_failures(output: &str, out: &mut Vec<Failure>) {
+    let mut cur: Option<(&str, Vec<&str>)> = None;
+    let mut close = |cur: &mut Option<(&str, Vec<&str>)>| {
+        let Some((test, body)) = cur.take() else { return };
+        if out.iter().any(|f| f.test == test) {
+            return;
+        }
+        let start = body.iter().position(|l| l.contains(" panicked at ")).unwrap_or_else(|| body.len());
+        let kept: Vec<&str> = body.iter().map(|l| l.trim_start()).filter(|l| {
+            !l.is_empty() && !l.starts_with("running ") && !l.starts_with("note: run with `RUST_BACKTRACE") && !l.ends_with(" ───")
+        }).collect();
+        let from_panic: Vec<&str> = if start < body.len() { kept.iter().copied().skip_while(|l| !l.contains(" panicked at ")).take(TAIL_LINES).collect() } else { Vec::new() };
+        let tail = if start < body.len() { from_panic } else { kept[kept.len().saturating_sub(TAIL_LINES)..].to_vec() };
+        let location = body.iter().find_map(|l| location_of(l));
+        out.push(Failure { test: test.to_string(), location, tail: tail.iter().map(|l| clip(l)).collect() });
+    };
+    for line in output.lines() {
+        if crate::unit_tier::nextest_status(line) || is_rule_line(line) || line.trim_start().starts_with("Summary [") {
+            close(&mut cur);
+            cur = crate::unit_tier::nextest_red(line.trim()).map(|n| (n, Vec::new()));
+        } else if let Some((_, body)) = cur.as_mut() {
+            body.push(line);
+        }
+    }
+    close(&mut cur);
 }
 
 fn clip_to(l: &str, max: usize) -> String {
@@ -139,7 +174,7 @@ fn strip_member(l: &str) -> &str {
 
 /// What one red step's text contributes: failing tests, else compiler errors with their
 /// locations, else the text's own finding lines.
-pub fn step_failure(text: &str) -> Vec<String> {
+pub fn step_failure(unit: &str, text: &str) -> Vec<String> {
     let fs = failures(text);
     let mut out = Vec::new();
     if !fs.is_empty() {
@@ -164,6 +199,23 @@ pub fn step_failure(text: &str) -> Vec<String> {
     if !out.is_empty() {
         return out;
     }
+    let lines = without_warnings(&lines);
+    if unit == "gate" || unit.starts_with("phase:") {
+        let body: Vec<&str> = lines.iter().copied().filter(|l| !l.trim().is_empty()).collect();
+        out.push(format!("no recognisable failure in {} lines; the last follow:", body.len()));
+        let mut budget = DIGEST_MAX * 3 / 4;
+        let mut tail: Vec<String> = Vec::new();
+        for l in body.iter().rev() {
+            let l = clip_to(l, STEP_LINE_MAX);
+            if l.len() + 3 > budget {
+                break;
+            }
+            budget -= l.len() + 3;
+            tail.push(l);
+        }
+        out.extend(tail.into_iter().rev());
+        return out;
+    }
     for l in lines {
         let l = strip_member(l);
         if l.trim().is_empty() || is_positive_control(l) {
@@ -177,6 +229,21 @@ pub fn step_failure(text: &str) -> Vec<String> {
     out
 }
 
+/// `lines` without each cargo warning block: a `warning` line and the indented lines after it.
+fn without_warnings<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    let mut kept = Vec::new();
+    let mut in_warning = false;
+    for l in lines {
+        if l.starts_with("warning") {
+            in_warning = true;
+        } else if !(in_warning && l.starts_with(char::is_whitespace)) {
+            in_warning = false;
+            kept.push(*l);
+        }
+    }
+    kept
+}
+
 /// The digest: the tip judged, the files its diff changes, the attribution lines, then for each
 /// red step its failure lines. Over the size limit the first lines are kept and the cut counted.
 pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(String, String)]) -> String {
@@ -184,7 +251,7 @@ pub fn digest_steps(tip: &str, files: &[String], why: &[String], steps: &[(Strin
     lines.extend(why.iter().map(|w| format!("{WHY_PREFIX}{}", clip_to(w, STEP_LINE_MAX))));
     for (unit, text) in steps {
         lines.push(format!("{STEP_PREFIX}{unit}"));
-        for l in step_failure(text) {
+        for l in step_failure(unit, text) {
             lines.push(if l.starts_with(FAIL_PREFIX) { l } else { format!("  {l}") });
         }
     }
@@ -390,6 +457,70 @@ mod tests {
         assert_eq!(failures("test a::b ... FAILED\n")[0].test, "a::b");
         let d = digest("t1", &[], "one\ntwo\nlint broke\n");
         assert!(d.contains("STEP gate") && d.contains("  lint broke") && d.contains("  one"), "{d}");
+    }
+
+    fn nextest_fail(name: &str, body: &str) -> String {
+        format!("        FAIL [   0.300s] (3533/6077) bin/x {name}\n  stderr ───\n\n{body}\n")
+    }
+
+    const SUMMARY: &str = "------------\n     Summary [  81.070s] 6077 tests run: 6075 passed, 2 failed\n";
+
+    #[test_id(t9vnxdg)]
+    #[test]
+    fn a_nextest_fail_after_cargo_warnings_is_named_first_with_its_panic_and_no_warning() {
+        let warnings: String = (0..30).map(|i| format!("warning: profile package spec `p{i}` did not match any packages\n")).collect();
+        let out = format!("{warnings}{}        PASS [   0.1s] (1/2) bin/x a::ok\n{SUMMARY}        FAIL [   0.300s] (3533/6077) bin/x t::boom\nerror: test run failed\n", nextest_fail("t::boom", "    thread 't::boom' panicked at src/x.rs:12:9:\n    left != right\n    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"));
+        let d = digest("t1", &[], &out);
+        let l: Vec<&str> = d.lines().collect();
+        let at = l.iter().position(|l| *l == "STEP phase:test" || *l == "STEP gate").unwrap();
+        assert_eq!(l[at + 1], "FAIL t::boom at src/x.rs:12", "{d}");
+        assert!(l[at + 2].contains("panicked at") || l[at + 2].contains("left != right"), "{d}");
+        assert!(!d.contains("warning:"), "{d}");
+        assert_eq!(d.matches("FAIL t::boom").count(), 1, "{d}");
+    }
+
+    #[test_id(txntiku)]
+    #[test]
+    fn the_phase_test_step_of_a_nextest_red_names_the_failure_under_it() {
+        let out = format!("{}{SUMMARY}gate-step RED :: phase:test\n", nextest_fail("t::boom", "    thread 't::boom' panicked at src/x.rs:12:9:\n    bad"));
+        let d = digest("t1", &[], &out);
+        assert!(d.contains("STEP phase:test\nFAIL t::boom at src/x.rs:12\n      thread 't::boom' panicked at src/x.rs:12:9:\n      bad\n"), "{d}");
+    }
+
+    #[test_id(tblo5ar)]
+    #[test]
+    fn a_nextest_fail_without_a_panic_keeps_its_stderr() {
+        let out = nextest_fail("t::sandbox", "    bwrap: No permissions to create a new namespace\n    (test failed with exit code 1)");
+        let f = failures(&out);
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert_eq!(f[0].location, None);
+        assert_eq!(f[0].tail, ["bwrap: No permissions to create a new namespace", "(test failed with exit code 1)"]);
+    }
+
+    #[test_id(t83kuig)]
+    #[test]
+    fn a_timeout_and_a_libtest_red_in_one_output_are_each_named_once() {
+        let out = format!("{}{}{SUMMARY}        TIMEOUT [  60.0s] (9/9) bin/x t::slow\n        FAIL [   0.3s] (3/9) bin/x t::boom\n{OUT}", nextest_fail("t::boom", "    thread 't::boom' panicked at a.rs:1:1:\n    x"), "        TIMEOUT [  60.0s] (9/9) bin/x t::slow\n  stdout ───\n    slow\n");
+        let names: Vec<String> = failures(&out).into_iter().map(|f| f.test).collect();
+        assert_eq!(names, ["ci_cut::finds_config", "t::boom", "t::slow"], "{names:?}");
+    }
+
+    #[test_id(tpulfnf)]
+    #[test]
+    fn unrecognised_gate_output_says_so_and_keeps_the_last_lines_within_the_digest_limit() {
+        let out: String = (0..300).map(|i| format!("noise line {i} {}\n", "x".repeat(60))).collect();
+        let d = digest("t1", &["a.rs".into()], &out);
+        assert!(d.contains("no recognisable failure in 300 lines; the last follow:"), "{d}");
+        assert!(d.contains("noise line 299 "), "{d}");
+        assert!(!d.contains("noise line 0 "), "{d}");
+        assert!(d.chars().count() <= DIGEST_MAX, "{}", d.chars().count());
+    }
+
+    #[test_id(trk3owz)]
+    #[test]
+    fn other_units_keep_the_head_of_unrecognised_output() {
+        let d = digest_steps("t", &[], &[], &[("spira-lint".to_string(), "first\nwarning: w\n  indented\nlast\n".to_string())]);
+        assert!(d.contains("  first") && d.contains("  last") && !d.contains("indented") && !d.contains("no recognisable"), "{d}");
     }
 
     #[test_id(t2rnhms)]

@@ -61,7 +61,7 @@ pub fn failed_tests(out: &str) -> Vec<String> {
         let l = l.trim();
         let name = match l.strip_prefix("test ") {
             Some(rest) => rest.strip_suffix(" ... FAILED"),
-            None => nextest_red(l),
+            None => spira_config::unit_tier::nextest_red(l),
         };
         let Some(name) = name else { continue };
         if !name.is_empty() && !name.contains(char::is_whitespace) && !seen.iter().any(|x| x == name) {
@@ -69,21 +69,6 @@ pub fn failed_tests(out: &str) -> Vec<String> {
         }
     }
     seen
-}
-
-fn nextest_red(l: &str) -> Option<&str> {
-    let (status, rest) = l.split_once(' ')?;
-    if !matches!(status, "FAIL" | "TIMEOUT" | "LEAK-FAIL" | "EXEC-FAIL") && !status.starts_with("SIG") {
-        return None;
-    }
-    let after = rest.trim_start().strip_prefix('[')?.split_once(']')?.1.trim_start();
-    let after = match after.strip_prefix('(') {
-        Some(counter) => counter.split_once(')')?.1,
-        None => after,
-    };
-    let mut words = after.split_whitespace();
-    let (_binary, name) = (words.next()?, words.next()?);
-    words.next().is_none().then_some(name)
 }
 
 /// The fence named by the first `<fence>: REFUSED` line, e.g. `lifecycle-guard`; failing that,
