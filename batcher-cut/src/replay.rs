@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::vm::{LINT_FINDINGS_FILE, ROUND_COMMITS_FILE};
 
+/// A red test tier keeps its evidence under the stage that ran, which the lifecycle's red name need not be.
+const TIERS: [&str; 2] = ["unit-tests", "integration-tests"];
+
 const FIXED_FILES: &[&str] = &["deny-list", ROUND_COMMITS_FILE, "runner.place", "run.events", "unit.json", "integration.json", "workspace-build.out", LINT_FINDINGS_FILE];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,7 +160,7 @@ pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &
             names_to_copy.insert(f);
         }
     }
-    for red in &red_suites {
+    for red in red_suites.iter().map(String::as_str).chain(TIERS) {
         names_to_copy.insert(format!("{red}.out"));
         names_to_copy.insert(format!("{red}.tap.json"));
     }
@@ -165,7 +168,7 @@ pub fn build(batches: &str, batch: &str, results: &Path, git: &dyn Git, names: &
     let mut files = vec![];
     for f in names_to_copy {
         let Ok(text) = fs::read_to_string(results.join(&f)) else {
-            if f.ends_with(".out") && red_suites.iter().any(|r| f == format!("{r}.out")) {
+            if f.ends_with(".out") && red_suites.iter().any(|r| f == format!("{r}.out") && !TIERS.contains(&r.as_str())) {
                 return Err(format!("{f}: the round kept no output for a red suite"));
             }
             continue;
@@ -367,6 +370,17 @@ mod tests {
         assert!(build(BATCHES, "other", d.path(), &git(), &names(), &[]).unwrap_err().contains("no such batch"));
         assert!(build(BATCHES, "b1", d.path(), &FakeGit { unreadable: vec!["base1"] }, &names(), &[]).unwrap_err().contains("base"));
         assert!(build(BATCHES, "b1", d.path(), &FakeGit { unreadable: vec!["tipb"] }, &names(), &[]).unwrap_err().contains("tipb"));
+    }
+
+    #[test_id(tz1sxgq)]
+    #[test]
+    fn a_red_test_tier_with_no_output_under_its_own_name_keeps_the_stage_output_instead_of_refusing() {
+        let batches = BATCHES.replace(r#""red_suites":["test-a.sh"]"#, r#""red_suites":["unit-tests"]"#);
+        let d = results();
+        fs::write(d.path().join("integration-tests.out"), "FAIL test:x y\n").unwrap();
+        let built = build(&batches, "b1", d.path(), &git(), &names(), &[]).unwrap();
+        assert!(built.files.iter().any(|(f, _)| f == "results/integration-tests.out"));
+        assert!(build(&BATCHES.replace("test-a.sh\"]}", "test-b.sh\"]}"), "b1", d.path(), &git(), &names(), &[]).unwrap_err().contains("test-b.sh.out"));
     }
 
     #[test_id(tzvt4gn)]

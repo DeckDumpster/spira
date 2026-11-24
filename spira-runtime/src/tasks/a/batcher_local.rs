@@ -3684,6 +3684,121 @@ pub mod edge {
     }
 
     #[cfg(test)]
+    mod saved_round_tests {
+        use super::*;
+        use crate::tasks::a::batcher_local::{decide, on_ran_with, Carry, RepoCarry, State, ABANDON, CERTIFY, LEG_START_GRACE_MS};
+        use batcher_cut::attribute::Attribution;
+        use batcher_cut::replay_run::{bare_members, Fixture, ReplayEdge};
+        use runtime::units::{Exit, RanOutput, UnitHandle, UnitRan};
+
+        const NOW: u64 = 1_793_000_000_000;
+        const LEG: &str = "spira.a2";
+
+        fn fixture(id: &str, scratch: &testkit::TempDir) -> Fixture {
+            Fixture::load(&testkit::manifest_dir().join("fixtures/rounds").join(id), scratch.path()).unwrap()
+        }
+
+        /// The attribution leg the queue would start on the saved round, as its argv and its outcome line.
+        fn attribute(fx: &Fixture) -> (Leg, String, ReplayEdge<'_>) {
+            let leg = Leg {
+                repo: "spira".into(),
+                key: LEG.into(),
+                members: fx.members(),
+                batch: fx.round.batch.clone(),
+                base: fx.round.base.clone(),
+                wt: "w".into(),
+                reds: fx.round.red_suites.clone(),
+                after_pass: fx.results().display().to_string(),
+                ..Leg::default()
+            };
+            let argv = attribute_argv("batcher".into(), Path::new("rv"), Path::new("run"), &leg);
+            let o = batcher_cut::opts::parse(&argv).unwrap();
+            let given = batcher_cut::attribute::parse_members(o.members.as_deref().unwrap()).unwrap();
+            let mut edge = ReplayEdge::new(fx, o.confirmed);
+            let budget = batcher::attrib::Budget::with_default(2, None);
+            let line = batcher_cut::judge::attribute(&o, &mut edge, bare_members(&given), Ok(fx.round.tree_suites.clone()), "", budget).unwrap();
+            (leg, line, edge)
+        }
+
+        fn ids(pairs: &[(String, String)]) -> Vec<String> {
+            pairs.iter().map(|(i, _)| i.clone()).collect()
+        }
+
+        /// The queue's record of the round once the batcher's own ejects are in it.
+        fn record(fx: &Fixture, ejected: &[String], head: &str) -> Round {
+            let kept: Vec<(String, String)> = fx.members().into_iter().filter(|(i, _)| !ejected.contains(i)).collect();
+            Round {
+                id: fx.round.batch.clone(),
+                members: ids(&kept),
+                tips: kept.iter().map(|(_, t)| t.clone()).collect(),
+                head: head.into(),
+                worktree: "w".into(),
+                phase: "attributing".into(),
+                ejected: ejected.to_vec(),
+                ejected_by: ejected.iter().map(|_| batcher_cut::io::BATCHER_ACTOR.to_string()).collect(),
+                ..Round::default()
+            }
+        }
+
+        fn replay(id: &str) {
+            let scratch = testkit::TempDir::new("saved-round");
+            let fx = fixture(id, &scratch);
+            let (_, line, edge) = attribute(&fx);
+            let done = edge.done.borrow();
+            assert_eq!(done.ejected, fx.expect.ejected, "{line}");
+            let Some(Attribution::Land { members, head, .. }) = Attribution::parse(&line) else { panic!("not a land: {line}") };
+            assert_eq!(ids(&members), fx.expect.survivors, "{line}");
+            assert_eq!(head, done.head);
+
+            let rc = RepoCarry { state: State::Attributing, round_key: Some("k".into()), batch: Some(fx.round.batch.clone()), members: fx.members(), wt: "w".into(), base: fx.round.base.clone(), leg: Some(LEG.into()), leg_at_ms: NOW, leg_head: fx.round.cut_head.clone(), head: fx.round.cut_head.clone(), run: 1, ..RepoCarry::default() };
+            let carry = Carry { repos: [("spira".to_string(), rc)].into() };
+            let at = |now_ms| Snapshot {
+                repos: [("spira".to_string(), Repo { base_sha: fx.round.base.clone(), open_round: Some(record(&fx, &done.ejected, &done.head)), live_legs: Some(vec![LEG.into()]), ..Repo::default() })].into(),
+                now_ms,
+                ..Snapshot::default()
+            };
+            let (next, acts) = decide(&carry, &at(NOW));
+            let (later, more) = decide(&next, &at(NOW + LEG_START_GRACE_MS + 15_000));
+            for a in acts.iter().chain(more.iter()) {
+                assert!(a.effect != ABANDON && a.effect != runtime::units::UNIT_STOP, "{a:?}");
+            }
+            assert_eq!((later.repos["spira"].state, later.repos["spira"].leg.as_deref()), (State::Attributing, Some(LEG)));
+
+            let ran = UnitRan { handle: UnitHandle::of("batcher.local", LEG).unwrap(), exit: Exit::Code(0), duration_ms: 1 };
+            let out = RanOutput::captured(format!("{line}\n").as_bytes(), b"");
+            let (ended, mut certify) = on_ran_with(&later, &ran, &out, NOW + LEG_START_GRACE_MS + 30_000).unwrap();
+            certify.extend(decide(&ended, &at(NOW + LEG_START_GRACE_MS + 31_000)).1);
+            let certify = certify.iter().find(|a| a.effect == CERTIFY).unwrap_or_else(|| panic!("no certify: {certify:?}"));
+            let asked: Leg = serde_json::from_str(&certify.input).unwrap();
+            assert_eq!((ids(&asked.members), asked.head), (fx.expect.survivors.clone(), done.head.clone()));
+        }
+
+        #[test_id(tyalr6i)]
+        #[test]
+        fn a_saved_round_whose_unit_tests_went_red_on_one_member_ejects_it_and_certifies_the_rest() {
+            replay("spira-20261121T062659Z");
+        }
+
+        #[test_id(tv6lz8m)]
+        #[test]
+        fn a_saved_round_with_one_member_ejected_among_three_keeps_its_leg_and_certifies_two_at_the_rebuilt_head() {
+            replay("spira-20261122T015849Z");
+        }
+
+        #[test_id(t0cdpux)]
+        #[test]
+        fn a_saved_round_whose_shell_reds_were_overwritten_still_ejects_the_one_member_and_certifies_the_rest() {
+            replay("spira-20261122T024932Z");
+        }
+
+        #[test_id(tghak6b)]
+        #[test]
+        fn a_saved_round_whose_lint_named_members_ejects_every_one_it_named() {
+            replay("spira-20261122T065604Z");
+        }
+    }
+
+    #[cfg(test)]
     mod recert_tests {
         use crate::tasks::a::batcher_local::{edge::recert_driven, recert_live};
         use runtime::units::{ScriptedUnits, UnitDetail, UnitFacts, UnitState};

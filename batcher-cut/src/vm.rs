@@ -606,6 +606,38 @@ pub fn own_commit_paths(repo: &Path, own_commits: &[String]) -> Vec<String> {
     paths
 }
 
+/// The suites whose `.result` in the pass `dir` an attribution follows is red.
+pub fn prior_red_suites_in(dir: &Path) -> Vec<String> {
+    let mut reds: Vec<String> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_string_lossy().strip_suffix(".result").map(str::to_string))
+        .filter(|stem| io::result_status(dir, stem) == Some(false))
+        .collect();
+    reds.sort();
+    reds
+}
+
+/// `suite`'s first failing case when it was a deadline red, read from `results` else from the followed pass.
+pub fn deadline_red_in(results: &Path, prior: Option<&Path>, suite: &str) -> Option<DeadlineRed> {
+    let name = format!("{suite}.tap.json");
+    let here = results.join(&name);
+    let path = if here.exists() { here } else { prior?.join(&name) };
+    let summary: testenv::tap::TapSummary = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    let case = summary.cases.into_iter().find(|c| c.status == "not ok")?;
+    let d = case.deadline?;
+    Some(DeadlineRed { case: case.n, secs: d.secs, load: d.load })
+}
+
+pub fn prior_build_output_in(prior: &Path) -> Option<String> {
+    fs::read_to_string(prior.join("workspace-build.out")).ok()
+}
+
+pub fn prior_runner_in(prior: &Path) -> Option<String> {
+    place_in(&fs::read_to_string(prior.join("runner.place")).ok()?)
+}
+
 pub const LINT_FINDINGS_FILE: &str = "spira-lint.findings.jsonl";
 
 /// Where a red lint's findings fall: per member with their lines, the round's own commits, or nobody.
@@ -697,7 +729,7 @@ pub fn red_filters(results: &Path) -> Vec<String> {
 }
 
 /// The low-pass filter that ended the pass red in `results`, with each member its output blames.
-fn filter_red_in(
+pub fn filter_red_in(
     results: &Path,
     members: &[Member],
     changed: &BTreeMap<Id, Vec<String>>,
@@ -1562,30 +1594,15 @@ impl RoundRunner for VmRunner<'_> {
         self.confirmed
     }
     fn prior_red_suites(&mut self) -> Vec<String> {
-        let Some(dir) = self.prior.as_deref() else { return vec![] };
-        let mut reds: Vec<String> = fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| e.file_name().to_string_lossy().strip_suffix(".result").map(str::to_string))
-            .filter(|stem| io::result_status(dir, stem) == Some(false))
-            .collect();
-        reds.sort();
-        reds
+        self.prior.as_deref().map(prior_red_suites_in).unwrap_or_default()
     }
 
     fn deadline_red(&mut self, suite: &str) -> Option<DeadlineRed> {
-        let name = format!("{suite}.tap.json");
-        let here = self.results.join(&name);
-        let path = if here.exists() { here } else { self.prior.as_deref()?.join(&name) };
-        let summary: testenv::tap::TapSummary = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
-        let case = summary.cases.into_iter().find(|c| c.status == "not ok")?;
-        let d = case.deadline?;
-        Some(DeadlineRed { case: case.n, secs: d.secs, load: d.load })
+        deadline_red_in(&self.results, self.prior.as_deref(), suite)
     }
 
     fn prior_build_output(&mut self) -> Option<String> {
-        fs::read_to_string(self.prior.as_deref()?.join("workspace-build.out")).ok()
+        prior_build_output_in(self.prior.as_deref()?)
     }
 
     fn build_output(&mut self) -> String {
@@ -1636,7 +1653,7 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn prior_runner(&mut self) -> Option<String> {
-        place_in(&fs::read_to_string(self.prior.as_deref()?.join("runner.place")).ok()?)
+        prior_runner_in(self.prior.as_deref()?)
     }
 
     fn green_runner(&mut self, tier: &str) -> Option<String> {

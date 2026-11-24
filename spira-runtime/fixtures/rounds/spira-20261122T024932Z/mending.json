@@ -1,0 +1,22 @@
+[
+  {
+    "pass": 1,
+    "suite": "test-pilgrim-world.sh",
+    "state": "RETURNED",
+    "deadline": 1795316829,
+    "returned": [
+      "sp-3n5tbm"
+    ],
+    "ask_open": false,
+    "diagnosis": "Return sp-3n5tbm. Defect: spira-lc/src/bd.rs:115 (sql_only), the bd fork has been removed, so any process with no SQL writer credential now refuses every content write; the sim world provisions none, so seeding the pilgrim world is refused."
+  },
+  {
+    "pass": 1,
+    "suite": "test-sim-bead-contract.sh",
+    "state": "UNSURE",
+    "deadline": 1795316837,
+    "returned": [],
+    "ask_open": false,
+    "diagnosis": "Unsure. The sim run exited non-zero 4s in, before any scenario step ran."
+  }
+]

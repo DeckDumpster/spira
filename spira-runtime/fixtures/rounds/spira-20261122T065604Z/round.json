@@ -1,0 +1,242 @@
+{
+  "batch": "spira-20261122T065604Z",
+  "base": "a6669666585930194f6cfd6158c45c4be8ebdd9e",
+  "cut_head": "daa3859d71d97c752dc70a9970aac47ce6b042b9",
+  "head": "daa3859d71d97c752dc70a9970aac47ce6b042b9",
+  "members": [
+    {
+      "id": "sp-3hcqfv",
+      "tip": "3b8a33e07090503434ae75e4aab649af2c02b601",
+      "changed": [
+        "loom/src/factory.rs",
+        "sim/src/doubles.rs",
+        "spira-runtime/src/classes.rs",
+        "spira-runtime/src/tasks/e.rs",
+        "spira-runtime/src/tasks/e/watch_transitions.rs",
+        "spira-runtime/tests/task_e_watch_transitions.rs",
+        "spira/watchers"
+      ]
+    },
+    {
+      "id": "sp-4vo3ff",
+      "tip": "7c26ddc25f53de736b56220ba96d0896df7dfe21",
+      "changed": [
+        "rule/src/code.rs",
+        "rule/src/main.rs",
+        "rule/tests/code.rs"
+      ]
+    },
+    {
+      "id": "sp-74pce8",
+      "tip": "e95ac7ef3505513b939005fd087bb44f6393959e",
+      "changed": [
+        "spira-runtime/src/fixture.rs",
+        "spira-runtime/src/settings.rs",
+        "spira-runtime/src/tasks.rs",
+        "spira-runtime/src/watchers/publish_backlog.rs",
+        "spira-runtime/tests/it/watcher_publish_backlog.rs",
+        "spira/conf.d/SPIRA_RUNTIME_PUBLISH_BACKLOG_RECHECK_SECS",
+        "spira/conf.key-history",
+        "spira/config-delta.d/sp-74pce8.toml",
+        "spira/testlib/complete.toml"
+      ]
+    },
+    {
+      "id": "sp-7ar542",
+      "tip": "59cf2bd495d1fa9f16f92407f7ae0866b9671902",
+      "changed": [
+        "batcher-cut/src/main.rs",
+        "batcher-cut/src/vm.rs",
+        "batcher/src/drive.rs",
+        "gate/src/engine.rs",
+        "gate/src/ports.rs",
+        "gate/src/real.rs",
+        "gate/src/tests.rs",
+        "queue/src/ops/simple.rs",
+        "queue/src/tests/round.rs",
+        "round-vm/src/run.rs",
+        "round-vm/tests/deny_list_real.rs",
+        "spira-config/src/proof.rs",
+        "spira-config/src/unit_tier.rs",
+        "spira/sim/scenarios/test-registry-flip.toml",
+        "spira/sim/tests/it/loop_registry.rs",
+        "spira/unit-tests.sh",
+        "test-registry/src/cli.rs",
+        "test-registry/src/id.rs",
+        "test-registry/src/store.rs",
+        "testenv/src/run/tests.rs",
+        "testenv/src/unit.rs"
+      ]
+    },
+    {
+      "id": "sp-ideddo",
+      "tip": "fc419c4f9f49f71ed1f89292bccbcfef3cd9b478",
+      "changed": [
+        "Cargo.lock",
+        "batcher-cut/Cargo.toml",
+        "batcher-cut/src/claim.rs",
+        "batcher-cut/src/io.rs",
+        "batcher-cut/src/lib.rs",
+        "batcher-cut/src/main.rs",
+        "batcher-cut/src/vm.rs",
+        "batcher/src/drive.rs",
+        "gate/src/engine.rs",
+        "gate/src/ports.rs",
+        "gate/src/real.rs",
+        "gate/src/tests.rs",
+        "queue/src/ops/simple.rs",
+        "queue/src/tests/round.rs",
+        "round-vm/src/run.rs",
+        "round-vm/tests/deny_list_real.rs",
+        "spira-config/src/proof.rs",
+        "spira-config/src/unit_tier.rs",
+        "spira-lint/src/rust_test.rs",
+        "spira/sim/scenarios/test-registry-flip.toml",
+        "spira/sim/src/loopworld.rs",
+        "spira/sim/src/registryworld.rs",
+        "spira/sim/tests/it/loop_registry.rs",
+        "spira/unit-tests.sh",
+        "test-registry/src/cli.rs",
+        "test-registry/src/id.rs",
+        "test-registry/src/store.rs",
+        "testenv/src/run/tests.rs",
+        "testenv/src/unit.rs"
+      ]
+    },
+    {
+      "id": "sp-kfa97v",
+      "tip": "6494c72bfee68530e7d9fd3d764ddd675c88483c",
+      "changed": [
+        "bead/src/main.rs"
+      ]
+    },
+    {
+      "id": "sp-rg9i3f",
+      "tip": "07ae2b5f8554b26d93ea7edac0fc166028093591",
+      "changed": [
+        "spira-lc/src/serve.rs",
+        "spira-lc/src/serve/tests/spans.rs",
+        "spira-lc/src/slow.rs",
+        "state-store-sqlite/src/lib.rs",
+        "state-store/src/phases.rs",
+        "watchtower/src/slow_query.rs"
+      ]
+    },
+    {
+      "id": "sp-wt3op0",
+      "tip": "806a5b8e2fd688c012a9d4f3fa038ffb971974e9",
+      "changed": [
+        "spira-lc/src/deadline.rs",
+        "spira-lc/src/serve.rs",
+        "spira-lc/src/serve/tests/deadline.rs",
+        "spira/sim/src/drive.rs",
+        "spira/testlib/complete.toml"
+      ]
+    },
+    {
+      "id": "sp-xeul0f",
+      "tip": "a2539eb083ccf581c7845dc69d380dc1d5a484a2",
+      "changed": [
+        "spira-lc/src/content_write.rs",
+        "spira-lc/src/content_write/verbs.rs",
+        "spira-lc/tests/content_writes.rs"
+      ]
+    },
+    {
+      "id": "sp-yj98cf",
+      "tip": "1f6d44c22238c0ded0ba65b5ce01d1b2ecf27c7d",
+      "changed": [
+        "batcher-cut/src/io.rs",
+        "batcher-cut/src/main.rs",
+        "sim/src/doubles.rs",
+        "sim/tests/it/whole_loop.rs",
+        "spira-runtime/src/classes.rs",
+        "spira-runtime/src/tasks/a.rs",
+        "spira-runtime/src/tasks/a/batcher_local.rs",
+        "spira-runtime/tests/it/main.rs",
+        "spira-runtime/tests/it/task_a_batcher_local.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_engine_tick.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_gate_red.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_landing_row.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_leg_lost.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_rebuilt_head.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_registry_reconcile.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_stacked.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_stale_certifying.rs",
+        "spira-runtime/tests/it/task_a_batcher_local_superseded_leg.rs",
+        "spira/sim/src/loopworld.rs"
+      ]
+    },
+    {
+      "id": "sp-zi3xw2",
+      "tip": "79c3b3d03513561f4b4a8a1875396333015c3652",
+      "changed": [
+        "dwarf/src/pilgrim_world.rs",
+        "spira/runes/pilgrim.md",
+        "spira/sim/src/grafana.rs",
+        "spira/sim/src/lib.rs",
+        "spira/sim/src/main.rs"
+      ]
+    }
+  ],
+  "red_suites": [
+    "spira-lint"
+  ],
+  "place": "host",
+  "round_commit_paths": [],
+  "tree_suites": [
+    "test-branch-guard.sh",
+    "test-build-tarball-model-bin.sh",
+    "test-built-elsewhere-reads-run-tree.sh",
+    "test-cadence-tool.sh",
+    "test-capacity.sh",
+    "test-cockpit-layout-mail.sh",
+    "test-cockpit-rebuild.sh",
+    "test-concierge-turn-failed.sh",
+    "test-concierge-waiter-stop.sh",
+    "test-concierge.sh",
+    "test-conf-watch.sh",
+    "test-deploy.sh",
+    "test-dwarf-direct.sh",
+    "test-dwarf-dirty-commit.sh",
+    "test-exclude.sh",
+    "test-freshclone.sh",
+    "test-gate-locks.sh",
+    "test-gate-sweep.sh",
+    "test-gh-run-gate.sh",
+    "test-grafana-dashboards.sh",
+    "test-guards.sh",
+    "test-hold.sh",
+    "test-install-conf-seed.sh",
+    "test-install-rehearsal-stray.sh",
+    "test-launchers-as-launched.sh",
+    "test-launchers-bare-env.sh",
+    "test-law-synth.sh",
+    "test-lc-backup-drill-deferral.sh",
+    "test-lc-backup-registry.sh",
+    "test-lint-runes.sh",
+    "test-mail-dwarf-hook.sh",
+    "test-mail-health.sh",
+    "test-mail-real-senders.sh",
+    "test-no-bd-callers.sh",
+    "test-ops-closing.sh",
+    "test-pilgrim-followup-store.sh",
+    "test-pilgrim-world.sh",
+    "test-pr-notify.sh",
+    "test-ready-work.sh",
+    "test-ref-guard.sh",
+    "test-repo-contract-scaffold.sh",
+    "test-round-image-preflight-root.sh",
+    "test-sim-bead-contract.sh",
+    "test-sim-rc-cutover-actor.sh",
+    "test-sim-rc-cutover-mode.sh",
+    "test-sim-rc-forge-open-crash.sh",
+    "test-sim-scenario-lib.sh",
+    "test-spike.sh",
+    "test-store-persist-history.sh",
+    "test-tarball-bins.sh",
+    "test-testlib.sh",
+    "test-work-checks-flake-shell.sh",
+    "test-yield.sh"
+  ]
+}

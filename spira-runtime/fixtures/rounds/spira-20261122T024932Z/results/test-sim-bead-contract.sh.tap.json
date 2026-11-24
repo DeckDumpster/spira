@@ -1,0 +1,1 @@
+{"plan":1,"passed":0,"failed":1,"skipped":0,"todo":0,"bail_out":"case 1 failed: bead-contract.7 exits 0 in 4s","not_ok":["not ok 1 - bead-contract.7 exits 0 in 4s"],"cases":[{"n":1,"name":"bead-contract.7 exits 0 in 4s","status":"not ok","ms":31602,"at":"/workspace/spira/sim-scenario-lib.sh:78"}]}

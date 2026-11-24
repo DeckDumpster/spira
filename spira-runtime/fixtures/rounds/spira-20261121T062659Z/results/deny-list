@@ -1,0 +1,4 @@
+# test-registry deny-list at=1795242439 rows=3
+disabled	suite:test-mail-real-senders.sh	sp-6lwx7x	1795624624
+disabled	suite:test-testlib.sh	sp-d38q9p	1795721738
+disabled	suite:test-wiki-commit-lock.sh	sp-nq9xkw	1795808449

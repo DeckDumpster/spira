@@ -1,0 +1,18 @@
+TAP version 14
+# seeds: 7
+# seed repo ready in 11s (the worlds copy it)
+# sim seed: 7
+# sim: world kept at /tmp/tl-run.79X1Fs/tmp.13GXx2Dpgt/sim-run-1668-7
+# sim: seed 7 seq 1: seed1 failed (exit 1): a seed that is not filed leaves the scenario meaning nothing
+# bead-contract.7 run: sim seed: 7
+# bead-contract.7 run: sim: world kept at /tmp/tl-run.79X1Fs/tmp.13GXx2Dpgt/sim-run-1668-7
+# bead-contract.7 run: sim: seed 7 seq 1: seed1 failed (exit 1): a seed that is not filed leaves the scenario meaning nothing
+not ok 1 - bead-contract.7 exits 0 in 2s
+# wanted rc=0 got rc=1
+# at /workspace/spira/sim-scenario-lib.sh:78
+#ms=16945
+Bail out! case 1 failed: bead-contract.7 exits 0 in 2s
+1..1
+
+0 passed, 1 failed, 0 skipped
+ASSERTIONS 1

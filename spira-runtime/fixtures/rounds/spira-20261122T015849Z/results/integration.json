@@ -1,0 +1,1 @@
+{"stage":"integration-tests","verdict":"red","ran_before_suites":false,"cause":"exit status 101","secs":314,"last_binary":"scratch_gate-df1540ac52aa4acc","failed":["a_phase_clock_counts_the_seconds_the_phase_took"]}
