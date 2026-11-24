@@ -92,12 +92,11 @@ fn nextest_failures(output: &str, out: &mut Vec<Failure>) {
         if out.iter().any(|f| f.test == test) {
             return;
         }
-        let start = body.iter().position(|l| l.contains(" panicked at ")).unwrap_or_else(|| body.len());
         let kept: Vec<&str> = body.iter().map(|l| l.trim_start()).filter(|l| {
             !l.is_empty() && !l.starts_with("running ") && !l.starts_with("note: run with `RUST_BACKTRACE") && !l.ends_with(" ───")
         }).collect();
-        let from_panic: Vec<&str> = if start < body.len() { kept.iter().copied().skip_while(|l| !l.contains(" panicked at ")).take(TAIL_LINES).collect() } else { Vec::new() };
-        let tail = if start < body.len() { from_panic } else { kept[kept.len().saturating_sub(TAIL_LINES)..].to_vec() };
+        let from = kept.iter().position(|l| l.contains(" panicked at ")).unwrap_or(kept.len().saturating_sub(TAIL_LINES));
+        let tail = &kept[from..(from + TAIL_LINES).min(kept.len())];
         let location = body.iter().find_map(|l| location_of(l));
         out.push(Failure { test: test.to_string(), location, tail: tail.iter().map(|l| clip(l)).collect() });
     };
