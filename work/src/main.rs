@@ -268,10 +268,10 @@ impl From<String> for Unsent {
 
 /// Connects, trying again while no store answers the socket, for at most `wait`.
 fn connect_waiting(socket_path: &str, wait: Duration) -> Result<UnixStream, Unsent> {
-    use spira_store::lc_call::{connect, retrying, Fail};
+    use spira_store::lc_call::{connect_failure, retrying, Fail};
     let path = std::path::Path::new(socket_path);
     let began = std::time::Instant::now();
-    retrying(&[], path, wait, wait, |_| connect(path)).map_err(|f| match f {
+    retrying(&[], path, wait, wait, |_| UnixStream::connect(path).map_err(|e| connect_failure(path, &e))).map_err(|f| match f {
         Fail::NotRunning(_) => Unsent::NotRunning { waited_secs: began.elapsed().as_secs() },
         f => Unsent::Other(f.into_text()),
     })

@@ -4,13 +4,18 @@
 //! survives here only as the declared stand-in route.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
+use std::io::{Read, Write};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
+
+use ports::{Dial, Stream};
+
+mod message;
+pub use message::{Exchange, UnixDial, UnixPort};
 
 pub const LC_TIMEOUT: Duration = Duration::from_secs(15); // batch-job: spira-lc requests queue behind a loaded Dolt in the round VM
 
@@ -147,13 +152,9 @@ pub struct Socket {
 
 impl Socket {
     fn call(&self, argv: &[String], stdin: Option<&str>, deadline: Duration, not_running_wait: Duration) -> Result<Reply, Fail> {
-        let down = |e: &dyn std::fmt::Display| Fail::Final(format!("cannot tell: the lifecycle service is not answering on {}: {e} — nothing was read or written", self.path.display()));
         let wait = client_wait(argv, deadline);
         retrying_resent(argv, &self.path, wait, not_running_wait, |left| {
-            let stream = connect(&self.path)?;
-            let left = left.max(Duration::from_millis(1));
-            stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| down(&e))?;
-            exchange_once(stream, argv, stdin)
+            exchange_once(connect_within(&self.path, left)?, argv, stdin)
         })
     }
 }
@@ -173,10 +174,14 @@ impl Transport for Socket {
 
 /// Connects to the store's socket. A refused or absent socket is the store not running and
 /// nothing was sent; any other failure is final.
-pub fn connect(path: &Path) -> Result<UnixStream, Fail> {
-    let stream = UnixStream::connect(path).map_err(|e| connect_failure(path, &e))?;
-    stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| unanswering(path, &e))?;
-    Ok(stream)
+pub fn connect(path: &Path) -> Result<Box<dyn Stream>, Fail> {
+    connect_within(path, DEADLINE)
+}
+
+/// [`connect`] with each read and write on the stream bounded by `limit`.
+pub fn connect_within(path: &Path, limit: Duration) -> Result<Box<dyn Stream>, Fail> {
+    let dial = UnixDial { path: path.to_path_buf(), limit: limit.max(Duration::from_millis(1)) };
+    dial.dial().map_err(|e| connect_failure(path, &e))
 }
 
 fn unanswering(path: &Path, e: &dyn std::fmt::Display) -> Fail {
@@ -410,18 +415,12 @@ pub fn request_head(argv: &[String], body_len: Option<usize>, caller: &BTreeMap<
 ///
 /// Once a request is on the wire the service may apply it whatever happens to the reply, so a
 /// lost reply is "cannot tell", never a retry.
-pub fn exchange_once(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, Fail> {
+pub fn exchange_once(mut stream: Box<dyn Stream>, argv: &[String], stdin: Option<&str>) -> Result<Reply, Fail> {
     let bytes = encode_request(argv, stdin, current_task().as_deref(), current_request_id().as_deref())?;
-    (&stream).write_all(&bytes).map_err(|_| dropped("write"))?;
-    let mut reader = BufReader::with_capacity(1 << 20, stream);
-    let mut head = String::new();
-    if !matches!(reader.read_line(&mut head), Ok(n) if n > 0) {
-        return Err(dropped("no reply"));
+    match Exchange::new(bytes).poll_exchange(stream.as_mut(), &mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(answer) => answer,
+        Poll::Pending => Err(lost("the stream waited on a blocking call")),
     }
-    let head = ReplyHead::parse(&head)?;
-    let mut body = vec![0u8; head.body_len()];
-    reader.read_exact(&mut body).map_err(|_| lost("truncated reply"))?;
-    head.reply(body)
 }
 
 fn dropped(why: &str) -> Fail {
@@ -470,7 +469,7 @@ impl ReplyHead {
 }
 
 /// [`exchange_once`] with the failure as its text: one attempt, never repeated.
-pub fn exchange(stream: UnixStream, argv: &[String], stdin: Option<&str>) -> Result<Reply, String> {
+pub fn exchange(stream: Box<dyn Stream>, argv: &[String], stdin: Option<&str>) -> Result<Reply, String> {
     exchange_once(stream, argv, stdin).map_err(Fail::into_text)
 }
 
@@ -733,6 +732,8 @@ pub fn run_bounded(mut cmd: Command, limit: Duration) -> (i32, String) {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::net::UnixStream;
     #[test_id(t862q11)]
     #[test]
     fn a_watch_waits_its_hold_and_a_second_and_every_other_verb_keeps_the_deadline() {
@@ -1150,7 +1151,7 @@ mod tests {
                 serde_json::from_str::<serde_json::Value>(line.trim()).unwrap()
             });
             let argv = vec!["content".to_string(), "create".to_string()];
-            let _ = if scoped { as_request("r-1", || exchange_once(client, &argv, None)) } else { exchange_once(client, &argv, None) };
+            let _ = if scoped { as_request("r-1", || exchange_once(Box::new(UnixPort::from(client)), &argv, None)) } else { exchange_once(Box::new(UnixPort::from(client)), &argv, None) };
             serve.join().unwrap()
         };
         assert_eq!(head_sent(true)["request_id"], "r-1");
@@ -1281,8 +1282,8 @@ mod tests {
                 line
             });
             match task {
-                Some(n) => as_task(n, || exchange_once(a, &argv, None)).unwrap(),
-                None => exchange_once(a, &argv, None).unwrap(),
+                Some(n) => as_task(n, || exchange_once(Box::new(UnixPort::from(a)), &argv, None)).unwrap(),
+                None => exchange_once(Box::new(UnixPort::from(a)), &argv, None).unwrap(),
             };
             t.join().unwrap()
         };

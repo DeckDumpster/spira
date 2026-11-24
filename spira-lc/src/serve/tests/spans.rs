@@ -355,7 +355,7 @@ fn door_answering(code: i32, ended: Option<state_store::phases::ReadEnd>) -> Arc
         }
         crate::callers::Answer { code, stdout: "cannot tell: list".into(), ..Default::default() }
     });
-    Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, deadlines: test_deadlines() })
+    Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, personas: Default::default(), deadlines: test_deadlines() })
 }
 
 #[test_id(t8o880r)]
@@ -385,7 +385,7 @@ fn a_request_whose_read_a_forced_wal_restart_cut_pages_the_slow_query_log_with_i
         phases::record_reset_ended(since, phases::ReadEnd::Ended);
         crate::callers::Answer { code: 2, stdout: "cannot tell: list".into(), ..Default::default() }
     });
-    let door = Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, deadlines: test_deadlines() });
+    let door = Arc::new(super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, personas: Default::default(), deadlines: test_deadlines() });
     head_of(&door);
     let got = std::fs::read_to_string(&log).unwrap();
     let f: Vec<&str> = got.lines().find(|l| l.ends_with("WAL-RESET-ENDED")).unwrap_or_else(|| panic!("{got}")).split('\t').collect();

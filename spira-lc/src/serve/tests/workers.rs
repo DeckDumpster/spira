@@ -144,7 +144,7 @@ fn request_work_reuses_runner_threads_beside_parked_watches() {
             crate::callers::Answer { code: 0, stdout: "ok".into(), ..Default::default() }
         })
     };
-    let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, deadlines: super::Deadlines { default: Duration::from_secs(60) } });
+    let door = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work, personas: Default::default(), deadlines: super::Deadlines { default: Duration::from_secs(60) } });
     std::thread::scope(|scope| {
         let (stopping, path) = (&stopping, &path);
         let waiting = idle.clone();

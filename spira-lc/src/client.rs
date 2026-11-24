@@ -90,14 +90,9 @@ pub(crate) fn forward_with(socket_path: &str, args: &[String], stdin: Option<&st
 }
 
 fn forward_within(socket_path: &str, args: &[String], stdin: Option<&str>, limit: Duration, not_running_wait: Duration) -> (i32, String, String) {
-    use spira_store::lc_call::{connect, retrying_resent, Fail};
+    use spira_store::lc_call::{connect_within, retrying_resent};
     let path = std::path::Path::new(socket_path);
-    let answer = retrying_resent(args, path, limit, not_running_wait, |left| {
-        let stream = connect(path)?;
-        let left = left.max(Duration::from_millis(1));
-        stream.set_read_timeout(Some(left)).and_then(|_| stream.set_write_timeout(Some(left))).map_err(|e| Fail::Final(down(socket_path, &e).1))?;
-        spira_store::lc_call::exchange_once(stream, args, stdin)
-    });
+    let answer = retrying_resent(args, path, limit, not_running_wait, |left| spira_store::lc_call::exchange_once(connect_within(path, left)?, args, stdin));
     match answer {
         Ok(r) => (r.code, r.out, r.err),
         Err(f) => (2, f.into_text(), String::new()),
@@ -108,7 +103,7 @@ fn forward_within(socket_path: &str, args: &[String], stdin: Option<&str>, limit
 /// happens to the reply, so a lost reply is "cannot tell" and never a fallback.
 #[cfg(test)]
 pub(crate) fn exchange(stream: std::os::unix::net::UnixStream, args: &[String], stdin: Option<&str>) -> (i32, String, String) {
-    match spira_store::lc_call::exchange(stream, args, stdin) {
+    match spira_store::lc_call::exchange(Box::new(spira_store::lc_call::UnixPort::from(stream)), args, stdin) {
         Ok(r) => (r.code, r.out, r.err),
         Err(msg) => (2, msg, String::new()),
     }

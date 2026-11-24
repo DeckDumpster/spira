@@ -8,7 +8,7 @@ pub mod fs;
 pub mod net;
 
 pub use fs::{Fs, Meta, RealFs, SimFs, SimFaults};
-pub use net::{Listener, Net, Peer, SimClient, SimNet, Stream};
+pub use net::{Dial, Listener, Net, Peer, SimClient, SimDial, SimNet, Stream};
 
 use std::io::Write;
 use std::process::{Command, Stdio};

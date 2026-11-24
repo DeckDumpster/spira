@@ -13,7 +13,7 @@ fn answer_of(argv: &[String]) -> Vec<u8> {
 }
 
 fn door(work: Work) -> Arc<Door> {
-    Arc::new(Door { ledger: Ledger::new(Duration::from_secs(60)), work, deadlines: crate::serve::Deadlines { default: Duration::from_secs(30) } })
+    Arc::new(Door { ledger: Ledger::new(Duration::from_secs(60)), work, personas: Default::default(), deadlines: crate::serve::Deadlines { default: Duration::from_secs(30) } })
 }
 
 fn echo() -> Work {
@@ -143,4 +143,42 @@ fn the_peer_the_port_names_is_the_caller_the_work_sees() {
     let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
     assert!(text(&read[1]).ends_with("caller -"), "no pid, no caller: {}", text(&read[1]));
     assert!(!text(&read[0]).ends_with("caller -"), "a named pid is looked up: {}", text(&read[0]));
+}
+
+async fn exchange_over(dial: &ports::SimDial, argv: &[&str]) -> Result<spira_store::lc_call::Reply, spira_store::lc_call::Fail> {
+    use ports::Dial;
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let mut stream = dial.dial().unwrap();
+    let mut exchange = spira_store::lc_call::Exchange::new(spira_store::lc_call::encode_request(&argv, None, None, None)?);
+    std::future::poll_fn(|cx| exchange.poll_exchange(stream.as_mut(), cx)).await
+}
+
+#[test_id(tvyg9pl)]
+#[test]
+fn the_stores_client_gets_the_whole_reply_from_the_loop_a_byte_at_a_time() {
+    let net = SimNet::new(VirtualClock::new(0), SeededRng::new(3));
+    let listener = net.listen("loop").unwrap();
+    let shared = Arc::new(Shared::new(door(echo()), Pool::new(2, 8), None));
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let local = tokio::task::LocalSet::new();
+    let stopping = Arc::new(AtomicBool::new(false));
+    let dial = ports::SimDial { net: net.clone(), path: "loop".into(), peer: ME, chunk: Some(1) };
+    let replies = local.block_on(&runtime, async {
+        let flag = stopping.clone();
+        let serving = tokio::task::spawn_local(async move { serve(listener, shared, &flag, Duration::from_secs(5), || {}).await });
+        let stepping = tokio::task::spawn_local(async move {
+            loop {
+                net.step();
+                tokio::task::yield_now().await;
+            }
+        });
+        let shown = exchange_over(&dial, &["show", "sp-1"]).await;
+        let listed = exchange_over(&dial, &["list", "--live"]).await;
+        stepping.abort();
+        stopping.store(true, Ordering::SeqCst);
+        serving.await.unwrap();
+        (shown, listed)
+    });
+    let whole = |out: &str| Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new(), read_ended: false });
+    assert_eq!(replies, (whole("ran show sp-1"), whole("ran list --live")));
 }

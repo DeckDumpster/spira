@@ -2482,6 +2482,7 @@ name = "spira-store"
 version = "1.0.0"
 dependencies = [
  "lifecycle",
+ "ports",
  "serde",
  "serde_json",
  "spira-config",

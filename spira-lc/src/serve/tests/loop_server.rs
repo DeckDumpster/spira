@@ -68,7 +68,7 @@ fn running(work: Work, workers: usize, queue: usize, deadline: Duration, drain_b
     let path = dir.join("loop.sock");
     let listener = bind_socket(path.to_str().unwrap()).unwrap();
     listener.set_nonblocking(true).unwrap();
-    let door = Door { ledger: Ledger::new(Duration::from_secs(60)), work, deadlines: Deadlines { default: deadline } };
+    let door = Door { ledger: Ledger::new(Duration::from_secs(60)), work, personas: Default::default(), deadlines: Deadlines { default: deadline } };
     let shared = Arc::new(Shared::new(Arc::new(door), runtime::offload::Pool::new(workers, queue), None));
     let (stopping, stopped) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
     let (flag, gone, socket) = (stopping.clone(), stopped.clone(), path.clone());

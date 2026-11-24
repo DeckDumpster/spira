@@ -32,6 +32,11 @@ pub trait Net: Send + Sync {
     fn listen(&self, path: &str) -> io::Result<Box<dyn Listener>>;
 }
 
+/// The client side of a transport: one new connection to a fixed place per call.
+pub trait Dial: Send + Sync {
+    fn dial(&self) -> io::Result<Box<dyn Stream>>;
+}
+
 #[derive(Default)]
 struct Pipe {
     to_server: VecDeque<u8>,
@@ -110,7 +115,17 @@ impl SimNet {
         let pipe = Arc::new(Mutex::new(Pipe { capacity, ..Pipe::default() }));
         w.pipes.insert(id, pipe.clone());
         w.queues.entry(id).or_default().push_back(Event::Connect { path: path.to_string(), peer });
-        SimClient { net: self.clone(), id, pipe }
+        SimClient { net: self.clone(), id, pipe, chunk: None }
+    }
+
+    /// [`connect`](Self::connect) for a client whose every write and whose pipe's capacity are
+    /// at most `size` bytes, so both directions arrive that many at a time.
+    pub fn connect_chunked(self: &Arc<Self>, path: &str, peer: Peer, size: usize) -> SimClient {
+        let size = size.max(1);
+        let mut client = self.connect(path, peer);
+        lock(&client.pipe).capacity = size;
+        client.chunk = Some(size);
+        client
     }
 
     /// Delivers one queued event, drawn among the streams that have one and in order within its
@@ -291,6 +306,49 @@ pub struct SimClient {
     net: Arc<SimNet>,
     id: usize,
     pipe: Arc<Mutex<Pipe>>,
+    chunk: Option<usize>,
+}
+
+impl Stream for SimClient {
+    fn poll_read(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        SimClient::poll_read(self, cx, buf)
+    }
+
+    /// Queues the bytes, at most one chunk of them when the client has a chunk size.
+    fn poll_write(&mut self, _: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        let n = self.chunk.map_or(buf.len(), |c| c.min(buf.len()));
+        match self.chunk {
+            Some(c) => self.send_in(&buf[..n], c),
+            None => self.send(&buf[..n]),
+        }
+        Poll::Ready(Ok(n))
+    }
+
+    fn poll_shutdown(&mut self, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.close();
+        Poll::Ready(Ok(()))
+    }
+
+    fn peer(&self) -> Peer {
+        Peer { pid: None, uid: None }
+    }
+}
+
+/// Dials `path` on a [`SimNet`] as `peer`, one connection per call.
+pub struct SimDial {
+    pub net: Arc<SimNet>,
+    pub path: String,
+    pub peer: Peer,
+    pub chunk: Option<usize>,
+}
+
+impl Dial for SimDial {
+    fn dial(&self) -> io::Result<Box<dyn Stream>> {
+        Ok(Box::new(match self.chunk {
+            Some(n) => self.net.connect_chunked(&self.path, self.peer, n),
+            None => self.net.connect(&self.path, self.peer),
+        }))
+    }
 }
 
 impl SimClient {

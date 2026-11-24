@@ -24,7 +24,7 @@ fn a_store_txn_retried_under_the_clients_id_after_a_restart_applies_once() {
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let before = history_rows(&r, "sp-a");
     let first = send(&r.door, &argv, Some("req-1"));
-    let restarted = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work: Arc::clone(&r.door.work), deadlines: three_seconds() });
+    let restarted = Arc::new(super::Door { ledger: super::Ledger::new(Duration::from_secs(60)), work: Arc::clone(&r.door.work), personas: Default::default(), deadlines: three_seconds() });
     let again = send(&restarted, &argv, Some("req-1"));
     assert_eq!(first.0, 0);
     assert_eq!(again.0, 0, "{again:?}");
