@@ -2999,6 +2999,7 @@ dependencies = [
  "spira-otel",
  "spira-store",
  "spira-test-id",
+ "tsd",
 ]
 
 [[package]]

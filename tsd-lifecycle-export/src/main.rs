@@ -7,9 +7,8 @@
 //   tsd-lifecycle-export check                           fails when the export trails the log by over 10 minutes
 //
 // Every mode tracks its own progress in $SPIRA_RUN/tsd/.bead-stage-checkpoint-<mode>.json, so
-// re-running any of them exports nothing new. Rows are appended through tsd-write (by name)
-// (tsd-write), the one IO seam every run/tsd/ producer already shells out to — never a
-// second, in-process writer of the same file.
+// re-running any of them exports nothing new. Rows are pushed to the metrics store in
+// batches from this process; no child program is started.
 
 use std::path::{Path, PathBuf};
 
@@ -94,7 +93,7 @@ fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
     }
 
     let rows = fold_legacy(&fresh, mode, cp.next_seq);
-    write_rows(&run, &rows)?;
+    write_rows(&rows)?;
     write_checkpoint(&cp_path, &new_cp)
 }
 
@@ -133,7 +132,7 @@ fn run_lifecycle() -> Result<(), String> {
     let cp_path = checkpoint_path(&run, "lifecycle");
     let cp: LifecycleCheckpoint = read_checkpoint(&cp_path);
     let lc = spira_store::lc_call::LcClient::configured()?;
-    drain(cp, |after| lifecycle_batch(&lc, after), |rows| write_rows(&run, rows), |cp| write_checkpoint(&cp_path, cp)).map(|_| ())
+    drain(cp, |after| lifecycle_batch(&lc, after), write_rows, |cp| write_checkpoint(&cp_path, cp)).map(|_| ())
 }
 
 /// Fails when the newest `bead-stage` row trails the newest lifecycle event by over [`LAG_LIMIT_SECS`].
@@ -148,35 +147,9 @@ fn run_check() -> Result<(), String> {
     lag_verdict(newest_stage, newest_event, LAG_LIMIT_SECS)
 }
 
-// ── the write path: every row through tsd-write, never a second in-process writer ─────────
+// ── the write path: rows go to the metrics store from this process ───────────────────────
 
-fn write_rows(run: &Path, rows: &[StageRow]) -> Result<(), String> {
-    // tsd-write, by name on the launcher's PATH (sp-gypjk); a missing one fails the spawn below.
-    let tsd_bin = "tsd-write";
-    for row in rows {
-        let mut cmd = spira_config::bounded::bounded(tsd_bin);
-        cmd.args(["--family", "bead-stage", "--root"])
-            .arg(run)
-            .args(["--ts", &row.ts])
-            .args(["--field", &format!("seq={}", row.seq)])
-            .args(["--field-str", &format!("machine={}", row.machine)])
-            .args(["--field-str", &format!("key={}", row.key)])
-            .args(["--field-str", &format!("event={}", row.event)])
-            .args(["--field-str", &format!("from_state={}", row.from_state)])
-            .args(["--field-str", &format!("to_state={}", row.to_state)])
-            .args(["--field", &format!("applied={}", row.applied)])
-            .args(["--field-str", &format!("actor={}", row.actor)])
-            .args(["--field-str", &format!("source={}", row.source)]);
-        if let Some(refusal) = &row.refusal {
-            cmd.args(["--field-str", &format!("refusal={refusal}")]);
-        }
-        if let Some(reason) = &row.reason {
-            cmd.args(["--field-str", &format!("reason={reason}")]);
-        }
-        let status = cmd.status().map_err(|e| format!("running {tsd_bin}: {e}"))?;
-        if !status.success() {
-            return Err(format!("{tsd_bin} exited {status} writing seq {} for {}", row.seq, row.key));
-        }
-    }
-    Ok(())
+fn write_rows(rows: &[StageRow]) -> Result<(), String> {
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT")?;
+    tsd_lifecycle_export::push_stage_rows(&endpoint, rows)
 }
