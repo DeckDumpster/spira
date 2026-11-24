@@ -22,6 +22,16 @@ path = "tests/convert.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "fresh_clone"
+path = "tests/fresh_clone.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "hold_scripts"
+path = "tests/hold_scripts.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "locate_parity"
 path = "tests/locate_parity.rs"
 required-features = ["integration"]

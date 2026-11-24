@@ -2,6 +2,7 @@
 name = "doctor"
 version = "1.0.0"
 edition = "2021"
+autotests = false
 description = "doctor — is the running harness healthy, right now. Replaces spira/doctor.sh."
 
 [lib]
@@ -15,6 +16,9 @@ test = false
 
 [features]
 integration = ["spira-config/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration"]
+[package.metadata.spira]
+test-bins = ["spira-config"]
+
 [dependencies]
 spira-config = { path = "../spira-config" }
 system-paths = { path = "../system-paths" }

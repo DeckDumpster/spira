@@ -393,8 +393,8 @@ pub fn one_shot_words(profile: &str) -> String {
 }
 
 /// The cargo settings a builder session compiles under: its jobs and test threads, from the
-/// harness's own sizes ([`crate::admission`]) rather than any host cargo config. Incremental is
-/// the manifest's, and whole-workspace passes opt out per call ([`one_shot`]).
+/// harness's own sizes ([`crate::admission`]) rather than any host cargo config. The manifest keeps
+/// dev incremental off, and every gate and check build also opts out per call ([`one_shot`]).
 pub fn session_env() -> [(String, String); 2] {
     [
         ("CARGO_BUILD_JOBS".into(), crate::admission::RUN_CARGO_JOBS.to_string()),
@@ -542,9 +542,9 @@ codegen-units = 4
 
     #[test_id(trfsicp)]
     #[test]
-    fn the_root_manifest_compiles_dev_incrementally() {
+    fn the_root_manifest_keeps_dev_incremental_off() {
         let m: toml::Table = include_str!("../../Cargo.toml").parse().unwrap();
-        assert_eq!(m["profile"]["dev"]["incremental"].as_bool(), Some(true));
+        assert_eq!(m["profile"]["dev"]["incremental"].as_bool(), Some(false));
     }
 
     #[test_id(to4tvfa)]

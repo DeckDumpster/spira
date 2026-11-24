@@ -7,7 +7,7 @@ set -uo pipefail
 tree="$PWD"
 if [ "${1:-}" = --tree ]; then
     shift
-    cargo build -q -p spira-lint --bin spira-lint || exit 75
+    cargo build -q --config profile.dev.incremental=false -p spira-lint --bin spira-lint || exit 75
     set -- "${CARGO_TARGET_DIR:-$tree/target}/debug/spira-lint" "$@"
 fi
 _t="$(SPIRA_TOML="$tree/spira/testlib/complete.toml" release config-stage "$tree")" || { echo 'lint-staged: cannot stage the tree config delta' >&2; exit 75; }
