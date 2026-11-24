@@ -140,9 +140,11 @@ impl Tracker {
         self.open.len()
     }
 
-    /// Runs seen live and not yet recorded: what a restart now would lose.
-    pub fn in_flight(&self) -> usize {
-        self.open.values().filter(|p| p.live).count()
+    /// A run found already going when the listener started: its later terminal signal records it.
+    pub fn adopt(&mut self, path: &str) {
+        if let Some(p) = self.open.get_mut(path) {
+            p.live = true;
+        }
     }
 
     /// Fold one interface's properties for the unit at `path`. `signal` marks a
@@ -212,10 +214,10 @@ pub fn superseded(started_under: Option<&str>, current: Option<&str>) -> bool {
     }
 }
 
-/// A listener exits to be restarted when nothing it holds would be lost and it is on a
-/// superseded release.
-pub fn restart_now(in_flight: usize, backlog_flushed: bool, started_under: Option<&str>, current: Option<&str>) -> bool {
-    in_flight == 0 && backlog_flushed && superseded(started_under, current)
+/// A listener exits to be restarted when the store holds every row it has and it is on a
+/// superseded release. Runs still going are adopted by the next listener's `catch_up`.
+pub fn restart_now(backlog_flushed: bool, started_under: Option<&str>, current: Option<&str>) -> bool {
+    backlog_flushed && superseded(started_under, current)
 }
 
 #[allow(clippy::type_complexity)]
@@ -256,7 +258,8 @@ pub fn last_ended_us(rows: &[serde_json::Value]) -> Option<u64> {
 }
 
 /// Records for the runs that ended since the tracker's `since_us` while nobody was listening,
-/// read from the manager's loaded units. Call after `arm`, so a run ending during the catch-up is
+/// read from the manager's loaded units; runs still going are marked live, so their end is
+/// recorded when it signals. Call after `arm`, so a run ending during the catch-up is
 /// a signal rather than a gap; the caller's dedupe on invocation id absorbs any overlap.
 pub fn catch_up(conn: &mut Conn, t: &mut Tracker, now_us: impl Fn() -> u64) -> Result<Vec<Record>, String> {
     let listed = conn.call(MANAGER, "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "ListUnits", None)?;
@@ -265,11 +268,16 @@ pub fn catch_up(conn: &mut Conn, t: &mut Tracker, now_us: impl Fn() -> u64) -> R
     for u in units {
         let Val::Struct(f) = u else { continue };
         let (Some(name), Some(path)) = (f.first().and_then(Val::as_str), f.get(6).and_then(Val::as_str)) else { continue };
-        if !is_run(name) || !matches!(f.get(3).and_then(Val::as_str), Some("inactive" | "failed")) {
+        if !is_run(name) {
             continue;
         }
+        let ended = matches!(f.get(3).and_then(Val::as_str), Some("inactive" | "failed"));
         read_back(conn, t, path);
-        out.extend(t.finish(path, now_us()));
+        if ended {
+            out.extend(t.finish(path, now_us()));
+        } else {
+            t.adopt(path);
+        }
     }
     Ok(out)
 }
@@ -413,24 +421,158 @@ mod idle_tests {
         assert!(!superseded(None, Some("bbb")));
     }
 
-    #[test_id(tspeex9)]
+    #[test_id(tlyabkq)]
     #[test]
-    fn a_superseded_listener_restarts_only_with_nothing_in_flight_and_its_rows_stored() {
+    fn a_superseded_listener_restarts_once_its_rows_are_stored_whatever_is_running() {
         let (old, cur) = (Some("r/aaa"), Some("bbb"));
-        assert!(restart_now(0, true, old, cur));
-        assert!(!restart_now(1, true, old, cur), "a run in flight would be lost");
-        assert!(!restart_now(0, false, old, cur), "rows the store has not taken would be lost");
-        assert!(!restart_now(0, true, Some("r/bbb"), cur));
+        assert!(restart_now(true, old, cur));
+        assert!(!restart_now(false, old, cur), "rows the store has not taken would be lost");
+        assert!(!restart_now(true, Some("r/bbb"), cur));
     }
 
-    #[test_id(tn91yg5)]
+    #[test_id(taehauf)]
     #[test]
-    fn only_a_run_seen_live_is_in_flight() {
+    fn a_run_found_going_is_adopted_so_its_end_is_recorded() {
         let mut t = Tracker::new(0);
         let p = "/org/freedesktop/systemd1/unit/job_2dx_2eservice";
         t.apply(p, UNIT_IFACE, &[("Description".into(), Val::Var(Box::new(Val::S("d".into()))))], false);
-        assert_eq!(t.in_flight(), 0, "a unit merely known to the manager holds nothing");
-        t.apply(p, UNIT_IFACE, &[("ActiveState".into(), Val::Var(Box::new(Val::S("activating".into()))))], true);
-        assert_eq!(t.in_flight(), 1);
+        assert!(matches!(t.apply(p, UNIT_IFACE, &[("ActiveState".into(), Val::Var(Box::new(Val::S("inactive".into()))))], true), Next::Nothing), "unseen live, an end is ignored");
+        t.adopt(p);
+        assert!(matches!(t.apply(p, UNIT_IFACE, &[("ActiveState".into(), Val::Var(Box::new(Val::S("inactive".into()))))], true), Next::Close(_)));
+    }
+}
+
+#[cfg(test)]
+mod adoption_tests {
+    use super::*;
+    use crate::dbus::{decode, encode_signal, message_len, METHOD_RETURN};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    const P: &str = "/org/freedesktop/systemd1/unit/job_2dx_2eservice";
+
+    fn pad(b: &mut Vec<u8>, n: usize) {
+        while !b.len().is_multiple_of(n) {
+            b.push(0);
+        }
+    }
+    fn u32_(b: &mut Vec<u8>, v: u32) {
+        pad(b, 4);
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    fn str_(b: &mut Vec<u8>, s: &str) {
+        u32_(b, s.len() as u32);
+        b.extend_from_slice(s.as_bytes());
+        b.push(0);
+    }
+    fn array(b: &mut Vec<u8>, elem_align: usize, fill: impl FnOnce(&mut Vec<u8>)) {
+        pad(b, 4);
+        let at = b.len();
+        u32_(b, 0);
+        pad(b, elem_align);
+        let start = b.len();
+        fill(b);
+        let n = (b.len() - start) as u32;
+        b[at..at + 4].copy_from_slice(&n.to_le_bytes());
+    }
+    fn entry(b: &mut Vec<u8>, key: &str, sig: &str, put: impl FnOnce(&mut Vec<u8>)) {
+        pad(b, 8);
+        str_(b, key);
+        b.push(sig.len() as u8);
+        b.extend_from_slice(sig.as_bytes());
+        b.push(0);
+        match sig {
+            "t" => pad(b, 8),
+            "ay" => pad(b, 1),
+            _ => {}
+        }
+        put(b);
+    }
+    fn reply(serial: u32, reply_serial: u32, sig: &str, body: &[u8]) -> Vec<u8> {
+        let mut f = vec![5, 1, b'u', 0];
+        f.extend_from_slice(&reply_serial.to_le_bytes());
+        pad(&mut f, 8);
+        f.extend_from_slice(&[8, 1, b'g', 0, sig.len() as u8]);
+        f.extend_from_slice(sig.as_bytes());
+        f.push(0);
+        let mut m = vec![b'l', METHOD_RETURN, 0, 1];
+        m.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        m.extend_from_slice(&serial.to_le_bytes());
+        m.extend_from_slice(&(f.len() as u32).to_le_bytes());
+        m.extend_from_slice(&f);
+        pad(&mut m, 8);
+        m.extend_from_slice(body);
+        m
+    }
+    fn list_units() -> Vec<u8> {
+        let mut b = Vec::new();
+        array(&mut b, 8, |b| {
+            pad(b, 8);
+            for s in ["job-x.service", "d", "loaded", "active", "running", ""] {
+                str_(b, s);
+            }
+            str_(b, P);
+            u32_(b, 0);
+            str_(b, "");
+            str_(b, "/");
+        });
+        b
+    }
+    fn unit_props(ended: bool) -> Vec<u8> {
+        let mut b = Vec::new();
+        array(&mut b, 8, |b| {
+            entry(b, "ActiveState", "s", |b| str_(b, if ended { "inactive" } else { "active" }));
+            entry(b, "InvocationID", "ay", |b| array(b, 1, |b| b.extend_from_slice(&[7; 16])));
+            entry(b, "InactiveExitTimestamp", "t", |b| b.extend_from_slice(&1_000_000u64.to_le_bytes()));
+            if ended {
+                entry(b, "InactiveEnterTimestamp", "t", |b| b.extend_from_slice(&4_000_000u64.to_le_bytes()));
+            }
+        });
+        b
+    }
+
+    #[test_id(twu25qy)]
+    #[test]
+    fn a_unit_listed_active_is_recorded_once_when_its_inactive_signal_follows() {
+        let (a, mut b) = UnixStream::pair().unwrap();
+        let mut signals = b.try_clone().unwrap();
+        let ended = Arc::new(AtomicBool::new(false));
+        let seen_ended = ended.clone();
+        let peer = std::thread::spawn(move || loop {
+            let mut head = [0u8; 16];
+            if b.read_exact(&mut head).is_err() {
+                return;
+            }
+            let total = message_len(&head).unwrap().unwrap();
+            let mut rest = vec![0u8; total - 16];
+            b.read_exact(&mut rest).unwrap();
+            let m = decode(&[head.to_vec(), rest].concat()).unwrap();
+            let r = match (m.member.as_deref(), m.body.first().and_then(Val::as_str)) {
+                (Some("ListUnits"), _) => reply(1, m.serial, "a(ssssssouso)", &list_units()),
+                (_, Some(UNIT_IFACE)) => reply(1, m.serial, "a{sv}", &unit_props(seen_ended.load(Ordering::SeqCst))),
+                _ => reply(1, m.serial, "a{sv}", &{
+                    let mut e = Vec::new();
+                    array(&mut e, 8, |_| {});
+                    e
+                }),
+            };
+            b.write_all(&r).unwrap();
+        });
+        let mut conn = Conn::over(a);
+        let mut t = Tracker::new(0);
+        assert!(catch_up(&mut conn, &mut t, || 9).unwrap().is_empty(), "a run still going is not yet a record");
+        ended.store(true, Ordering::SeqCst);
+        let mut body = Vec::new();
+        str_(&mut body, UNIT_IFACE);
+        array(&mut body, 8, |b| entry(b, "ActiveState", "s", |b| str_(b, "inactive")));
+        array(&mut body, 4, |_| {});
+        signals.write_all(&encode_signal(5, P, PROPS_IFACE, "PropertiesChanged", "sa{sv}as", &body)).unwrap();
+        let records = step(&mut conn, &mut t, || 9, Duration::from_secs(5)).unwrap();
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!((records[0].invocation_id.as_str(), records[0].started_us, records[0].ended_us), ("07070707070707070707070707070707", Some(1_000_000), 4_000_000));
+        drop(conn);
+        peer.join().unwrap();
     }
 }

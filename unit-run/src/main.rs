@@ -104,8 +104,8 @@ fn watch_cmd(family: &str) -> Result<(), String> {
             record(r)?;
         }
         let flushed = backlog.borrow_mut().flush(&store, family).is_ok();
-        if watch::restart_now(tracker.in_flight(), flushed, release.as_deref(), current_release(release.as_deref()).as_deref()) {
-            eprintln!("unit-run watch: idle and no longer on the current release; exiting to be restarted on it");
+        if watch::restart_now(flushed, release.as_deref(), current_release(release.as_deref()).as_deref()) {
+            eprintln!("unit-run watch: its rows are stored and it is no longer on the current release; exiting to be restarted on it");
             return Ok(());
         }
     }

@@ -1158,7 +1158,9 @@ fn a_template_that_restarts_when_idle_gives_a_reason_and_a_bare_boolean_gives_no
 #[test_id(tclwmck)]
 #[test]
 fn the_unit_run_watcher_restarts_itself_when_idle() {
-    assert!(units::restart_when_idle(&shipped_unit("spira-unit-run-dbus.service")).is_some());
+    let unit = shipped_unit("spira-unit-run-dbus.service");
+    assert_eq!(units::restart_when_idle(&unit).as_deref(), Some("unit-run watch exits once its rows are stored and its release is not current"));
+    assert!(unit.lines().any(|l| l.trim() == "RestartSec=1"));
     assert_eq!(units::never_restart(&shipped_unit("spira-unit-run-dbus.service")), None);
 }
 
@@ -1762,6 +1764,16 @@ fn an_activation_leaves_a_watcher_to_restart_itself_when_its_installed_unit_alre
     let (out, restarts) = lc_serve_running_old_binary_under(&with_key, &with_key);
     assert!(restarts.is_empty(), "{restarts:?}");
     assert!(out.restarted.is_empty() && out.stale.iter().chain(&out.when_idle).any(|s| s.starts_with("lc-serve.service")), "{out:?}");
+}
+
+#[test_id(t8g5kjr)]
+#[test]
+fn an_activation_restarts_a_watcher_whose_installed_idle_restart_reason_differs_from_the_shipped_one() {
+    let old = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass\n");
+    let new = format!("{LC_UNIT}X-Spira-RestartWhenIdle=ends its own pass once its rows are stored\n");
+    let (out, restarts) = lc_serve_running_old_binary_under(&old, &new);
+    assert_eq!(restarts, vec!["lc-serve.service".to_string()]);
+    assert!(out.restarted.contains(&"lc-serve.service".to_string()) && out.when_idle.is_empty(), "{out:?}");
 }
 
 /// `current` on the previous release `P`, whose installed `lc-serve` unit names it; release `A`
