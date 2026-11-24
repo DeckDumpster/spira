@@ -190,6 +190,13 @@ over `spira/testlib/complete.toml` in the `config-delta` lint and when the relea
 read, so a value of the wrong type is refused there, naming the key. `removed` and `renamed`
 stay lists because a merge cannot delete a key.
 
+A fragment may set a key the base file already sets: its value replaces the base's and the
+fragment owns the key from then on, so a second fragment with a different value is refused,
+as are a table against a non-table and any conflict under `renamed`. The fold writes the
+value over the base line, keeping its position and trailing comment. A `[replaced]` entry is
+for values that must overwrite a live config at every activation; an ordinary key changed this
+way is written only where the config lacks it.
+
 A release that stops registering a scheduler task declares it `removed_tasks = ["name"]`: activation
 drops that entry from the host's `spira.task_modes` before `current` moves. A host entry naming a task
 the release's `SPIRA_TASK_MODES` default lacks and `removed_tasks` does not name refuses the

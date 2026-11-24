@@ -437,6 +437,19 @@ mod tests {
         assert!(ConfigDeltaFolded.check(&tree).unwrap().is_empty());
     }
 
+    #[test_id(td11eis)]
+    #[test]
+    fn a_fold_whose_fragment_supersedes_a_base_value_gets_none_and_any_other_value_one() {
+        const BASE: &str = "[spira]\nk = 1\n";
+        const FRAG: &[(&str, &str)] = &[("spira/config-delta.d/sp-a.toml", "[spira]\nk = 2\n")];
+        let t = TempDir::new("folded-supersede");
+        t.write(DELTA, "[spira]\nk = 2\n");
+        let ok = folded_tree(&t, FOLD_ST, BASE, FRAG, &[("F", FOLD_ST, "[spira]\nk = 2\n", BASE)]);
+        assert!(ConfigDeltaFolded.check(&ok).unwrap().is_empty());
+        let bad = folded_tree(&t, FOLD_ST, BASE, FRAG, &[("F", FOLD_ST, "[spira]\nk = 3\n", BASE)]);
+        assert_eq!(ConfigDeltaFolded.check(&bad).unwrap().len(), 1);
+    }
+
     #[test_id(tcy5csv)]
     #[test]
     fn a_round_fold_of_a_fragment_its_own_member_added_gets_none() {
