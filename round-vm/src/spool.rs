@@ -572,9 +572,9 @@ mod tests {
         let said = if cargo_rc == 0 { "" } else { "echo 'test x ... FAILED'; " };
         if !home.join("round-work/target/release/testenv").exists() {
             fs::create_dir_all(home.join("round-work/target/release")).unwrap();
-            testkit::write_exe(home.join("round-work/target/release/testenv"), "#!/bin/bash\necho \"$*\" >> \"$HOME/testenv.calls\"; cat \"$HOME/test-bins\" 2>/dev/null; exit 0\n");
+            testkit::write_exe(home.join("round-work/target/release/testenv"), "#!/bin/bash\necho \"$*\" >> \"$HOME/testenv.calls\"; [ ! -e \"$HOME/listing-fails\" ] || exit 1; for a in \"$@\"; do sed -n \"s/^$a //p\" \"$HOME/test-bins\" 2>/dev/null; done; exit 0\n");
         }
-        stub("cargo", &format!("echo \"$*\" >> \"$HOME/cargo.calls\"; case \"$*\" in \"build --profile unittest\"*) [ ! -e \"$HOME/build-fails\" ]; exit $?;; esac; echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; {said}exit {cargo_rc}"));
+        stub("cargo", &format!("echo \"$*\" >> \"$HOME/cargo.calls\"; case \"$*\" in \"build --profile unittest\"*) env > \"$HOME/build.env\"; [ ! -e \"$HOME/build-fails\" ]; exit $?;; esac; echo \"$*\" > \"$HOME/cargo.args\"; env > \"$HOME/cargo.env\"; {said}exit {cargo_rc}"));
         let status = std::process::Command::new(system_paths::BIN_BASH)
             .args(["-c", REMOTE_ATTR_SCRIPT, "bash", "h", "9430", "j1", "attr-j1", suites, build, ""])
             .env_clear()
@@ -699,7 +699,7 @@ mod tests {
     fn an_integration_probe_builds_the_test_bins_of_its_packages_in_attr_target_before_it_runs_their_tests() {
         let d = TempDir::new();
         fs::create_dir_all(d.path().join("home")).unwrap();
-        fs::write(d.path().join("home/test-bins"), "spira-lc\n").unwrap();
+        fs::write(d.path().join("home/test-bins"), "spira-runtime spira-lc\nother spira-x\n").unwrap();
         let (rc, made, ran) = attr_job_in(&d, "integration", "spira-runtime", 0, "integration-tests.result");
         assert_eq!((rc, made), (0, true));
         let calls = fs::read_to_string(d.path().join("home/cargo.calls")).unwrap();
@@ -709,8 +709,9 @@ mod tests {
         assert!(calls[1].starts_with("test ") && calls[1].contains("-p spira-runtime"), "{calls:?}");
         assert_eq!(ran.trim_end(), calls[1]);
         let asked = fs::read_to_string(d.path().join("home/testenv.calls")).unwrap();
-        assert_eq!(asked.trim(), "test-bins -p spira-runtime".replace("-p ", ""));
-        let env = fs::read_to_string(d.path().join("home/cargo.env")).unwrap();
+        assert_eq!(asked.trim(), "test-bins spira-runtime");
+        assert!(!calls[0].contains("spira-x"), "{calls:?}");
+        let env = fs::read_to_string(d.path().join("home/build.env")).unwrap();
         assert!(env.lines().any(|l| l.starts_with("CARGO_TARGET_DIR=") && l.ends_with("home/attr-target")), "{env}");
     }
 
@@ -719,7 +720,7 @@ mod tests {
     fn an_integration_probe_whose_test_bin_build_fails_exits_4_and_leaves_no_result() {
         let d = TempDir::new();
         fs::create_dir_all(d.path().join("home")).unwrap();
-        fs::write(d.path().join("home/test-bins"), "spira-lc\n").unwrap();
+        fs::write(d.path().join("home/test-bins"), "spira-runtime spira-lc\nother spira-x\n").unwrap();
         fs::write(d.path().join("home/build-fails"), "").unwrap();
         let (rc, made, _) = attr_job_in(&d, "integration", "spira-runtime", 0, "integration-tests.result");
         assert_eq!((rc, made), (4, false));
@@ -727,6 +728,17 @@ mod tests {
     }
 
     #[test_id(tbhhfwl)]
+    #[test]
+    fn an_integration_probe_whose_test_bin_listing_fails_exits_4_and_runs_no_cargo() {
+        let d = TempDir::new();
+        fs::create_dir_all(d.path().join("home")).unwrap();
+        fs::write(d.path().join("home/listing-fails"), "").unwrap();
+        let (rc, made, _) = attr_job_in(&d, "integration", "spira-runtime", 0, "integration-tests.result");
+        assert_eq!((rc, made), (4, false));
+        assert!(!d.path().join("home/cargo.calls").exists());
+    }
+
+    #[test_id(tfl5nis)]
     #[test]
     fn an_integration_probe_without_test_bins_or_over_the_workspace_makes_one_cargo_call() {
         for suites in ["spira-runtime", "integration"] {
@@ -737,7 +749,7 @@ mod tests {
         }
         let d = TempDir::new();
         fs::create_dir_all(d.path().join("home")).unwrap();
-        fs::write(d.path().join("home/test-bins"), "spira-lc\n").unwrap();
+        fs::write(d.path().join("home/test-bins"), "spira-runtime spira-lc\nother spira-x\n").unwrap();
         attr_job_in(&d, "integration", "integration", 0, "integration-tests.result");
         assert_eq!(fs::read_to_string(d.path().join("home/cargo.calls")).unwrap().lines().count(), 1, "workspace scope builds nothing extra");
     }

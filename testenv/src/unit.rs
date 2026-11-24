@@ -421,7 +421,8 @@ mod tests {
     #[test_id(t2zkf9t)]
     #[test]
     fn the_repositorys_tree_declares_spira_lc_as_a_test_bin_of_spira_runtime() {
-        let tree = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let manifest = testkit::manifest_dir();
+        let tree = manifest.parent().unwrap();
         assert!(tree_test_bins(tree, &["spira-runtime".into(), "no-such-crate".into()]).unwrap().contains(&"spira-lc".to_string()));
         assert!(tree_test_bins(tree, &["no-such-crate".into()]).unwrap().is_empty());
     }
