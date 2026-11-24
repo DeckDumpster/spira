@@ -2164,6 +2164,44 @@ mod dependency_fetch_tests {
         assert!(!w.contains("--check"), "the wrapper must hand --check to mail, not answer it");
     }
 
+    // covers: UC-operator-channel-46
+    #[test_id(t786b4f)]
+    #[test]
+    fn aerc_outgoing_line_runs_the_releases_mail_with_nothing_of_the_developers_shell() {
+        let td = testkit::TempDir::new("aerc-outgoing");
+        let (releases, toml) = (td.path().join("releases"), td.path().join("one-source.toml"));
+        let release = releases.join("rel1");
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        std::os::unix::fs::symlink(&release, releases.join("current")).unwrap();
+        let record = td.path().join("record");
+        let mail = release.join("bin/mail");
+        testkit::write_exe(&mail, &format!("#!/bin/sh\necho \"$* | $SPIRA_RELEASE | $SPIRA_TOML\" > {}\n", record.display()));
+        let wrapper = td.path().join("spira-sendmail");
+        testkit::write_exe(&wrapper, &render_sendmail_wrapper(releases.to_str().unwrap(), toml.to_str().unwrap()));
+
+        let aerc_runs_it = |wrapper: &Path| {
+            let mut c = std::process::Command::new(wrapper);
+            c.env_clear().env("HOME", td.path()).env("PATH", "/usr/bin:/bin").args(["-f", "concierge@spira", "operator@spira"]);
+            c.output().unwrap()
+        };
+        let out = aerc_runs_it(&wrapper);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let seen = std::fs::read_to_string(&record).unwrap();
+        assert_eq!(
+            seen.trim(),
+            format!("sendmail -f concierge@spira operator@spira | {} | {}", release.display(), toml.display())
+        );
+
+        std::fs::remove_file(&mail).unwrap();
+        let broken = aerc_runs_it(&wrapper);
+        assert!(!broken.status.success());
+        assert!(String::from_utf8_lossy(&broken.stderr).contains("is not executable"), "{}", String::from_utf8_lossy(&broken.stderr));
+
+        let shipped = include_str!("../../../aerc/accounts.conf");
+        let repointed = rewrite_aerc_outgoing(shipped, &wrapper.display().to_string()).expect("the shipped account is repointed");
+        assert!(repointed.contains(&format!("outgoing = {}", wrapper.display())), "{repointed}");
+    }
+
     #[test_id(t5un6ri)]
     #[test]
     fn aerc_reports_version_matches_the_real_dash_v_output_shape() {

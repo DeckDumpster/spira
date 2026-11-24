@@ -48,8 +48,13 @@ name = "ensure_real_tmux"
 path = "tests/ensure_real_tmux.rs"
 required-features = ["integration"]
 
+[[test]]
+name = "launchers_as_launched"
+path = "tests/launchers_as_launched.rs"
+required-features = ["integration"]
+
 [features]
-integration = ["bead/integration", "hel/integration", "mail/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "store-view/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
+integration = ["bead/integration", "hel/integration", "mail/integration", "runtime/integration", "spira-claim/integration", "spira-config/integration", "spira-store/integration", "store-view/integration", "spira-otel/integration", "spira-world/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration", "release/integration"]
 
 [dependencies]
 crossterm = "0.28"
@@ -71,6 +76,7 @@ tsd = { path = "../../tsd" }
 system-paths = { path = "../../system-paths" }
 
 [dev-dependencies]
+release = { path = "../../release" }
 spira-test-id = { path = "../../spira-test-id" }
 testkit = { path = "../../testkit" }
 

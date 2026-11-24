@@ -372,6 +372,7 @@ mod tests {
 
     // covers: UC-operator-channel-07
 
+    // covers: UC-operator-channel-46
     #[test_id(teyc660)]
     #[test]
     fn a_reply_to_an_already_seen_original_keeps_it_in_cur_with_s_and_gains_r() {

@@ -9,7 +9,7 @@
 extern crate spira_test_id;
 use release::session_hook::{resolve, Paths};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use testkit::TempDir;
 
@@ -18,7 +18,7 @@ const WATCHD: &str = "#!/bin/sh\n[ -n \"$SPIRA_TOML\" ] || { echo 'watchd: SPIRA
 const SYS_PATH: &str = "/usr/bin:/bin";
 
 fn repo() -> PathBuf {
-    testkit::manifest_dir().join("..").canonicalize().unwrap()
+    testkit::manifest_dir().join("../..").canonicalize().unwrap()
 }
 
 struct Rig {
@@ -159,3 +159,101 @@ fn the_registered_status_line_command_prints_the_meter_as_the_client_runs_it() {
     assert_ne!(broken.status.code(), Some(0), "the meter ran without SPIRA_TOML: {}", text(&broken));
 }
 
+
+fn link_built(rig: &Rig, name: &str) {
+    std::os::unix::fs::symlink(testkit::bin_exe(name), rig.release.join("bin").join(name)).unwrap();
+}
+
+// covers: UC-operator-launchers-04
+#[test_id(tcpd4mi)]
+#[test]
+fn the_ops_pane_renders_once_from_a_login_environment_and_names_the_missing_config_without_it() {
+    let rig = Rig::new();
+    link_built(&rig, "health");
+    let health = |profile: bool| {
+        let mut c = Command::new(rig.release.join("bin/health"));
+        c.env_clear().env("HOME", &*rig.dir).env("PATH", SYS_PATH).env("SPIRA_RELEASE", &rig.release).arg("once").stdin(Stdio::null());
+        if profile {
+            c.env("SPIRA_TOML", &rig.toml);
+        }
+        c.output().unwrap()
+    };
+    let run = health(true);
+    assert_eq!(run.status.code(), Some(0), "{}", text(&run));
+    assert!(text(&run).contains("SPIRA"), "{}", text(&run));
+    assert!(!text(&run).contains("SPIRA_TOML"), "{}", text(&run));
+    assert!(text(&health(false)).contains("SPIRA_TOML is not set"), "the bare environment must be bare");
+}
+
+/// Runs `command` under `sh -c` on a pseudo-terminal that is its controlling one, as a tmux
+/// pane does, and returns what it drew once `until` appears or the cap is reached.
+fn on_a_pty(command: &str, env: &[(&str, &Path)], until: &str) -> String {
+    use std::io::Read;
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::process::CommandExt;
+    let (mut master, mut slave) = (0, 0);
+    let size = libc::winsize { ws_row: 50, ws_col: 160, ws_xpixel: 0, ws_ypixel: 0 };
+    assert_eq!(unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), &size) }, 0);
+    let dup = |fd| Stdio::from(unsafe { OwnedFd::from_raw_fd(libc::dup(fd)) });
+    let mut c = Command::new("sh");
+    c.env_clear().env("TERM", "xterm").args(["-c", command]).stdin(dup(slave)).stdout(dup(slave)).stderr(dup(slave));
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    unsafe {
+        c.pre_exec(|| {
+            libc::setsid();
+            libc::ioctl(0, libc::TIOCSCTTY, 0);
+            Ok(())
+        });
+    }
+    let mut child = testkit::ChildGuard::spawn(&mut c);
+    unsafe { libc::close(slave) };
+    let mut reader = unsafe { std::fs::File::from_raw_fd(master) };
+    let (mut seen, mut buf) = (String::new(), [0u8; 8192]);
+    for _ in 0..100 {
+        let mut p = libc::pollfd { fd: master, events: libc::POLLIN, revents: 0 };
+        if unsafe { libc::poll(&mut p, 1, 100) } > 0 {
+            match reader.read(&mut buf) {
+                Ok(n) if n > 0 => seen.push_str(&String::from_utf8_lossy(&buf[..n])),
+                _ => break,
+            }
+        }
+        if seen.contains(until) {
+            break;
+        }
+    }
+    child.kill();
+    seen
+}
+
+// covers: UC-cockpit-observability-51
+#[test_id(t04pbhv)]
+#[test]
+fn the_ops_pane_start_command_resolves_its_config_and_draws_the_lifecycle_view() {
+    let rig = Rig::new();
+    link_built(&rig, "lc-view");
+    let conf = cockpit_ops::layout::Conf {
+        spira_release: rig.release.display().to_string(),
+        cock: PathBuf::new(),
+        run: PathBuf::new(),
+        cwd: String::new(),
+        right_pct: 33,
+        bottom_pct: 28,
+        mail_cmd: None,
+        heal_cooldown_secs: 60,
+        idle_secs: 0,
+        mouse_on: true,
+        clipboard_on: true,
+        spira_repo: String::new(),
+        spira_conf: None,
+    };
+    let command = conf.health_cmd();
+    let server_env = [("HOME", &*rig.dir as &Path), ("SPIRA_TOML", rig.toml.as_path())];
+    let drawn = on_a_pty(&command, &server_env, "refresh");
+    assert!(drawn.contains("refresh"), "no frame: {drawn}");
+    assert!(!drawn.contains("SPIRA_TOML is not set") && !drawn.contains("cannot resolve"), "{drawn}");
+
+    let without_config = on_a_pty(&command, &server_env[..1], "refresh");
+    assert!(without_config.contains("SPIRA_TOML is not set"), "the pane drew a frame with no config: {without_config}");
+}

@@ -37,8 +37,3 @@ runtime = { path = "../runtime" }
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
-
-[[test]]
-name = "launchers_as_launched"
-path = "tests/launchers_as_launched.rs"
-required-features = ["integration"]
