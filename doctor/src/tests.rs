@@ -1762,3 +1762,13 @@ fn a_clean_or_absent_host_cargo_config_is_ok() {
     f.contents.borrow_mut().insert(PathBuf::from("ch/config.toml"), "[build]\nrustc-wrapper = \"sccache\"\n[env]\nSCCACHE_DIR = \"x\"\n".into());
     assert_eq!(levels(&check_host_cargo_config(&f)), vec![Level::Ok]);
 }
+
+#[test]
+fn doctor_run_reports_host_cargo_drift_found_under_a_run_ancestor() {
+    let f = Fake::default();
+    f.set("SPIRA_RUN", "srun");
+    f.contents.borrow_mut().insert(PathBuf::from("srun/.cargo/config.toml"), "[build]\nincremental = false\n".into());
+    run(&f);
+    let out = f.stdout.borrow().join("\n");
+    assert!(out.contains("host cargo config") && out.contains("srun/.cargo/config.toml sets build.incremental"), "{out}");
+}

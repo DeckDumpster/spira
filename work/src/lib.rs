@@ -858,6 +858,12 @@ mod tests {
         habits::config::load_checks(root).unwrap().into_iter().find(|r| r.name == "clippy").expect("a clippy check row").run
     }
 
+    #[test_id(t4omfit)]
+    #[test]
+    fn the_clippy_check_is_one_shot_through_the_shared_switch() {
+        assert!(repo_clippy_row().contains(&spira_config::build::one_shot_words("dev")));
+    }
+
     #[test_id(ttoa48x)]
     #[test]
     fn the_clippy_check_names_only_a_touched_leaf_and_its_dependents() {

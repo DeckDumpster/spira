@@ -523,7 +523,7 @@ codegen-units = 4
     #[test_id(twmux3s)]
     #[test]
     fn host_drift_leaves_sccache_settings_and_a_live_wrapper_alone() {
-        let text = "[build]\nrustc-wrapper = \"sccache\"\n[env]\nSCCACHE_DIR = \"x\"\nSCCACHE_CACHE_SIZE = \"9G\"\n";
+        let text = "[build]\nrustc-wrapper = \"bin/sccache\"\n[env]\nSCCACHE_DIR = \"x\"\nSCCACHE_CACHE_SIZE = \"9G\"\n";
         assert!(host_drift(text).is_empty());
         assert!(host_drift("").is_empty());
     }
