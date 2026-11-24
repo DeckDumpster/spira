@@ -1383,7 +1383,7 @@ pub mod fake {
 
     /// An open decision bead the ask record does not hold: bd status alone counts it, the record does not.
     pub fn decision_without_record() -> Value {
-        serde_json::json!({"id": "sp-no-record", "status": "open", "labels": ["needs-ryan"]})
+        serde_json::json!({"id": "sp-no-record", "status": "open", "labels": ["fixture-ask-label"]})
     }
 
     pub struct Content {
