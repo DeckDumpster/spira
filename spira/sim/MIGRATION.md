@@ -134,7 +134,7 @@ No bash suite is retired by this step. The sole-G14 suites, and what each still 
 | suite | blocked now by |
 |---|---|
 | test-queue-flush | `queue flush` refuses a `queue.local` repo, the only mode a world has (G7) |
-| test-gate-sweep, test-gate-locks, test-gate-admission-suites-only, test-lifecycle-guard-gate, test-build-fence | the world's gate is the stub runner; `gate.sh`, its worktree locks and `gate.log` rows are never written, so there is nothing to read (G6) |
+| test-gate-admission-suites-only, test-lifecycle-guard-gate, test-build-fence | the world's gate is the stub runner; `gate.sh`, its worktree locks and `gate.log` rows are never written, so there is nothing to read (G6) |
 | test-round-duty, test-publish-backlog | fault cases (failing `queue round status`, unreadable arrival record) and the Concierge mailbox (G8, G3) |
 | test-landing-halt | needs a pass to be signalled mid-run (G8) |
 | test-batcher-cut, test-batcher-cut-land | dozens of ejection and verdict cases per round (G6); the world's happy round covers one |

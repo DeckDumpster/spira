@@ -12,6 +12,7 @@ struct Fake {
     discovered: RefCell<Vec<(String, String)>>,
     resolved: RefCell<Vec<String>>,
     printed: RefCell<String>,
+    repos: Vec<&'static str>,
 }
 
 impl Fake {
@@ -23,20 +24,21 @@ impl Fake {
             discovered: RefCell::new(Vec::new()),
             resolved: RefCell::new(Vec::new()),
             printed: RefCell::new(String::new()),
+            repos: vec!["prrepo", "pushrepo"],
         }
     }
 }
 
 impl World for Fake {
     fn repo_names(&self) -> Vec<String> {
-        vec!["prrepo".into(), "pushrepo".into()]
+        self.repos.iter().map(|r| r.to_string()).collect()
     }
     fn repo_land(&self, name: &str) -> String {
-        if name == "prrepo" { "pr" } else { "push" }.into()
+        if name.starts_with("pr") { "pr" } else { "push" }.into()
     }
     fn repo_root(&self, name: &str) -> Option<PathBuf> {
         let dir = self.root.path().join(name);
-        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::create_dir_all(dir.join(if name == "prunborn" { "src" } else { ".git" })).unwrap();
         Some(dir)
     }
     fn home_repo(&self) -> String {
@@ -131,4 +133,21 @@ fn with_no_unbound_gate_nothing_is_discovered() {
     run(&w, &root.join("nonexistent"));
     assert!(w.discovered.borrow().is_empty());
     assert!(!w.printed.borrow().contains("stuck"));
+}
+
+// covers: UC-landing-merge-queue-53
+#[test_id(ty98wmg)]
+#[test]
+fn a_gates_branch_is_discovered_in_each_pr_repo_that_has_a_checkout_and_in_no_other() {
+    let root = testkit::TempDir::new("gate-check-scoped");
+    let mut w = Fake::new(TWO_GATES_SAME_BRANCH, "");
+    w.repos = vec!["prrepo", "pushrepo", "prsecond", "prunborn"];
+    run(&w, &root.join("nonexistent"));
+
+    let found: Vec<(String, String)> = w.discovered.borrow().clone();
+    assert_eq!(
+        found,
+        [("prrepo".to_string(), "spira/sp-1".to_string()), ("prsecond".to_string(), "spira/sp-1".to_string())],
+        "each pr repo with a checkout is asked once, by name; a push repo and a repo with no checkout are not"
+    );
 }

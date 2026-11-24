@@ -1044,4 +1044,29 @@ mod tests {
         assert!(gate_queued(d.path(), "sp-cl"));
         assert!(!gate_queued(d.path(), "sp-old"));
     }
+
+    fn yield_keys(stub: &str) -> Kv {
+        let dir = testkit::TempDir::new("yield-section");
+        testkit::write_exe(dir.path().join("yield.sh"), stub);
+        let path = format!("{}:{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
+        let _env = testkit::env(&[("PATH", Some(&path))]);
+        let mut out = Kv::new();
+        yield_section(&mut out);
+        out
+    }
+
+    // covers: UC-gate-verdict-24
+    #[test_id(tlqhevu)]
+    #[test]
+    fn every_yield_key_is_written_from_the_report_and_a_report_that_cannot_be_read_is_a_question_mark() {
+        let keys = ["SP_YIELD_REDS", "SP_YIELD_DEFECT", "SP_YIELD_FAULT", "SP_YIELD_UNKNOWN", "SP_YIELD_SOLO_MED", "SP_YIELD_CONC_MED", "SP_YIELD_TOP_FAULT"];
+        let read = yield_keys("#!/bin/sh\nprintf 'YIELD_REDS=4\\nYIELD_DEFECT=1\\nYIELD_FAULT=2\\nYIELD_UNKNOWN=1\\nYIELD_SOLO_MED=60\\nYIELD_CONC_MED=95\\nYIELD_TOP_FAULT=test-b.sh x2\\n'\n");
+        let got: Vec<(&str, &str)> = read.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(got, keys.iter().copied().zip(["4", "1", "2", "1", "60", "95", "test-b.sh x2"]).collect::<Vec<_>>());
+        for broken in ["#!/bin/sh\nexit 3\n", "#!/bin/sh\nprintf 'YIELD_REDS=7\\n'\nexit 3\n"] {
+            let out = yield_keys(broken);
+            assert_eq!(out.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), keys, "every key is still written");
+            assert!(out.iter().all(|(_, v)| v == "?"), "a failed report is ? everywhere, never 0: {out:?}");
+        }
+    }
 }

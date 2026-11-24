@@ -47,7 +47,7 @@ migration bead per family from this table.
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | **Done (sp-ypunvh):** one `test-sim-<scenario>.sh` per scenario file over `sim-scenario-lib.sh`; the two controls and the every-scenario-has-a-suite check are the sim-controls suite. |
+| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | **Done (sp-ypunvh):** the per-scenario shards and their library are gone; the sim world's scenarios are loaded and driven from `spira/sim/tests/it/`. |
 | the sim-happy-path suite | 64 | the happy-path world runs submit → land end to end under the real units' wiring | keep | **Done (sp-ypunvh):** it is the happy-path scenario's suite (run, probe, replay, unreachable-goal control); the shard loop does not run it a second time. |
 
 ### B — landing hand-offs
@@ -127,7 +127,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-census.sh | 31 | census against a real bd fixture for three ops-detection use cases | keep | Declared the one server-mode census suite. |
 | test-census-events.sh | 78 | census reads requeue/reclaim/recur events written by `bump_*` | unit | Event classification; dominated by seeding a store. |
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |
-| test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
 | the holds suite | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
 
 ### I — lifecycle store (Dolt)

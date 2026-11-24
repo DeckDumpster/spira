@@ -92,8 +92,6 @@ test-gate-discover-branch.sh	T1	2.0
 test-gate-fixture-diag.sh	T1	4.0
 test-gate-host-cores.sh	T1	7.0
 test-gate-missing-cmd.sh	T0	2.0
-test-gate-sweep.sh	T1	8.5
-test-gh-run-gate.sh	T1	9.0
 test-hold.sh	T1	12.0
 test-incident-recur-bounded.sh	T1	98.0
 test-install-bootstrap-release.sh	T1	7.5
@@ -144,7 +142,6 @@ test-watchtower-queue.sh	T1	26.0
 test-wiki-add-fence.sh	T1	1.5
 test-world-drain.sh	T1	3.0
 test-world-start-honours-ctrl.sh	T1	5.0
-test-yield.sh	T1	44.5
 # exposure: test-mimir-blind-window.sh sp-vt8lbr
 # exposure: test-mimir-sibling-blind.sh sp-vt8lbr
 # exposure: test-cockpit-well.sh sp-o0kc8l

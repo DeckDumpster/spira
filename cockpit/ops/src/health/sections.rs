@@ -1578,4 +1578,23 @@ mod tests {
         assert!(absent.contains("certify  ?") && absent.contains("red  ?"), "{absent:?}");
         assert!(!absent.contains("certify  0") && !absent.contains("red  0"), "{absent:?}");
     }
+
+    // covers: UC-gate-verdict-24
+    #[test_id(tjsmqt9)]
+    #[test]
+    fn the_gate_rows_show_what_the_collector_wrote_and_every_yield_field_defaults_to_a_question_mark() {
+        let plain = |s: &Snapshot| {
+            let mut gate = standing_lines(s, 100).into_iter().skip_while(|l| !l.contains("GATE")).take(2).collect::<Vec<_>>().join("\n");
+            for esc in ["\x1b[0m", "\x1b[2m", "\x1b[1m", "\x1b[31m", "\x1b[33m", "\x1b[32m"] {
+                gate = gate.replace(esc, "");
+            }
+            gate
+        };
+        let fed = plain(&snap(&[("SP_YIELD_REDS", "4"), ("SP_YIELD_DEFECT", "1"), ("SP_YIELD_FAULT", "2"), ("SP_YIELD_UNKNOWN", "3"), ("SP_YIELD_SOLO_MED", "60"), ("SP_YIELD_CONC_MED", "95")]));
+        assert!(fed.contains("reds 4") && fed.contains("defect 1") && fed.contains("gate fault 2") && fed.contains("unknown 3"), "{fed}");
+        assert!(fed.contains("60s solo") && fed.contains("95s with another gate overlapping"), "{fed}");
+        let none = plain(&snap(&[]));
+        assert!(none.contains("reds ?") && none.contains("defect ?") && none.contains("gate fault ?") && none.contains("unknown ?"), "{none}");
+        assert!(none.contains("? solo") && none.contains("? with another gate") && !none.contains("?s"), "{none}");
+    }
 }

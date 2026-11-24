@@ -178,7 +178,7 @@ bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-gate-verdict-22"
-tier = "T2"
+tier = "T1"
 statement = "Yield recording. Every non-PASS verdict is recorded with branch, bead, suite and tree. Gating the same tree twice records one red. A red tree changed to PASS becomes inferred DEFECT. BASE_FAIL arrives as GATE_FAULT. A failing recorder never changes the verdict or the exit code. (sp-1xb0)"
 
 [[use_case]]
@@ -188,7 +188,7 @@ statement = "Yield reporting. The configured window (`SPIRA_YIELD_WINDOW`) exclu
 
 [[use_case]]
 id = "UC-gate-verdict-24"
-tier = "T0"
+tier = "T1"
 statement = "Yield reaches Ops and the cockpit: `watchtower --show` carries the yield columns, and every `SP_YIELD_*` key is written by the collector, read by the pane and defaults to `?`."
 
 [[use_case]]

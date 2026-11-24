@@ -262,12 +262,10 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | gate-check-stderr | no | - | 3 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-check-stuck | no | - | 6 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-ci-diag | no | - | 3 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| gate-locks | no | - | 3 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-metering | no | - | 4 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-preflight | no | - | 3 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-retry-structural | no | - | 2 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-retry | no | - | 2 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| gate-sweep | no | - | 5 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-tree | partly | long-gate-interleaving | 18 | same-branch gates serialise, different branches run concurrently |
 | gate-unit | no | - | 3 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gate-universal | no | - | 3 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
@@ -276,7 +274,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | gate-wait | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | gh-intake | no | - | 15 | static, configuration or single-tool contract: no hand-off between loop actors |
 | gh-issue-closeout | no | - | 40 | static, configuration or single-tool contract: no hand-off between loop actors |
-| gh-run-gate | no | - | 12 | static, configuration or single-tool contract: no hand-off between loop actors |
 | git-env-isolation | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | git-push-app | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
 | retired-component-absence | no | - | 3 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |

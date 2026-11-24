@@ -28,14 +28,6 @@
 #
 # Blank lines and `#` comments are ignored. One repository-relative path per line.
 
-# THIS GATE'S OWN YIELD METER, and it is the condition on the gate being here at all. A check
-# may sit between work and its landings only while it is catching real defects
-# (law-gate-earns-its-place); yield.sh is the count that makes that sentence actionable, and
-# the specific way it fails is by silently ceasing to be called — which renders as a tidy "no
-# gate faults" and reads as good news. The suite plants a real defect and a red that is a
-# suite reading the box, and requires them in different columns.
-spira/test-yield.sh
-
 # THE GATE'S OWN BUDGET ENFORCEMENT. gate-spira.sh times itself and files a bead when it
 # overruns SPIRA_GATE_BUDGET; this suite proves the timing, the bead filing, and the dedup.
 # In the timed suite run it consistently exceeds the per-suite slice (it invokes gate-spira.sh
