@@ -122,7 +122,7 @@ fn assert_launcher_reports_a_state_and_refuses_bare(script: &str) {
     let rig = Rig::new();
     link_built(&rig, "rebuild");
     let run = rig.launcher(script, Profile::Full);
-    assert!(!text(&run).contains("SPIRA_TOML"), "{script} named a missing config: {}", text(&run));
+    assert!(!text(&run).contains("SPIRA_TOML") && !text(&run).contains("refusing"), "{script} refused with its config set: {}", text(&run));
     assert!(matches!(run.status.code(), Some(0 | 1)), "{script} status: {}", text(&run));
     for profile in [Profile::WithoutToml, Profile::Nothing] {
         let bare = rig.launcher(script, profile);
@@ -205,7 +205,7 @@ fn the_ops_pane_renders_once_from_a_login_environment_and_names_the_missing_conf
 
 /// Runs `command` under `sh -c` on a pseudo-terminal that is its controlling one, as a tmux
 /// pane does, and returns what it drew once `until` appears or the cap is reached.
-fn on_a_pty(command: &str, env: &[(&str, &Path)], until: &str) -> String {
+fn on_a_pty(command: &str, env: &[(&str, &Path)], until: &[&str]) -> String {
     use std::io::Read;
     use std::os::fd::{FromRawFd, OwnedFd};
     use std::os::unix::process::CommandExt;
@@ -237,7 +237,7 @@ fn on_a_pty(command: &str, env: &[(&str, &Path)], until: &str) -> String {
                 _ => break,
             }
         }
-        if seen.contains(until) {
+        if until.iter().any(|u| seen.contains(u)) {
             break;
         }
     }
@@ -268,10 +268,10 @@ fn the_ops_pane_start_command_resolves_its_config_and_draws_the_lifecycle_view()
     };
     let command = conf.health_cmd();
     let server_env = [("HOME", &*rig.dir as &Path), ("SPIRA_TOML", rig.toml.as_path())];
-    let drawn = on_a_pty(&command, &server_env, "refresh");
+    let drawn = on_a_pty(&command, &server_env, &["refresh", "SPIRA_TOML is not set"]);
     assert!(drawn.contains("refresh"), "no frame: {drawn}");
     assert!(!drawn.contains("SPIRA_TOML is not set") && !drawn.contains("cannot resolve"), "{drawn}");
 
-    let without_config = on_a_pty(&command, &server_env[..1], "refresh");
+    let without_config = on_a_pty(&command, &server_env[..1], &["refresh", "SPIRA_TOML is not set"]);
     assert!(without_config.contains("SPIRA_TOML is not set"), "the pane drew a frame with no config: {without_config}");
 }

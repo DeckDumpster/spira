@@ -514,7 +514,7 @@ pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
         concierge,
         force,
         mail_wanted,
-        watchd_bin: "watchd".to_string(),
+        watchd_bin: std::env::var("WATCHD_BIN").unwrap_or_else(|_| "watchd".to_string()),
     }
 }
 

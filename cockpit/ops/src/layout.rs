@@ -1496,6 +1496,22 @@ mod tests {
         assert_eq!(installed_mail_cmd(Some(dir.join("absent").to_str().unwrap().to_string())), None);
         assert_eq!(installed_mail_cmd(Some(String::new())), None);
         assert_eq!(installed_mail_cmd(None), None);
+
+        let resolved = |mail: &str| {
+            let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_RUN", &dir.join("run").display().to_string()), ("COCKPIT_MAIL", mail)]);
+            let _env = testkit::env(&[
+                ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+                ("SPIRA_RELEASE", Some("rel")),
+                ("COCKPIT_MAIL", None),
+                ("SPIRA_RUN", None),
+            ]);
+            spira_config::process::with_fresh(|| Conf::from_env().unwrap().mail_cmd).unwrap()
+        };
+        let present = dir.join("present-mail");
+        fs::write(&present, "").unwrap();
+        assert_eq!(resolved(present.to_str().unwrap()), Some(present.display().to_string()));
+        assert_eq!(resolved(dir.join("absent-mail").to_str().unwrap()), None, "an uninstalled client gets no pane");
+        assert_eq!(resolved(""), None);
     }
 
     // covers: UC-cockpit-observability-42
