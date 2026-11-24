@@ -907,6 +907,14 @@ printf '%s' "$deny_list" > ~/round-deny-list
 export SPIRA_TEST_DENY_LIST="$HOME/round-deny-list"
 printf 'export SPIRA_TEST_DENY_LIST=%q\n' "$SPIRA_TEST_DENY_LIST" >> ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
+image_absent_red() {
+    local res="$HOME/round-work/.runtime/spira/batch-results"
+    echo "$1" >&2
+    mkdir -p "$res"
+    printf '%s\n' "$1" > "$res/fence-round-image.out"
+    echo "red $(date +%s) 0 - - - 1" > "$res/fence-round-image.result"
+    exit 1
+}
 phase image
 tag="$(testenv container tag)" || tag=""
 # A ROUND NEVER COLD-BUILDS ITS IMAGE (law-unexpected-image-builds-are-killed-then-fixed,
@@ -914,13 +922,11 @@ tag="$(testenv container tag)" || tag=""
 # the tree: refuse at once, naming it, rather than compile toolchains for twenty minutes in
 # the critical path. Exit 3 (cannot tell): no verdict was reached.
 if [ -z "$tag" ]; then
-    echo "round-vm: IMAGE-ABSENT: testenv could not compute the image tag for this tree — refusing to run (a round never builds its image)" >&2
-    exit 3
+    image_absent_red "round-vm: IMAGE-ABSENT: testenv could not compute the image tag for this tree — refusing to run (a round never builds its image)"
 elif podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
     echo "round-vm: template image: localhost/spira-testenv:$tag present" >&2
 else
-    echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
-    exit 3
+    image_absent_red "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool"
 fi
 # sp-7dmcls: the test sandbox (tools/test-sandbox/runner) runs bwrap inside this image under
 # rootful podman, as testenv starts it (unmasked /proc, AppArmor-unconfined). Proved here,
@@ -3792,6 +3798,20 @@ mod tests {
         let a = REMOTE_SCRIPT.find(&format!("{name}() {{")).unwrap_or_else(|| panic!("{name} is in the script"));
         let end = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
         REMOTE_SCRIPT[a..end].to_string()
+    }
+
+    #[test_id(tycxyez)]
+    #[test]
+    fn an_image_absent_after_the_image_phase_is_a_red_fence_result_and_exit_1() {
+        let d = TempDir::new();
+        let script = format!("{}\nimage_absent_red \"round-vm: IMAGE-ABSENT: x\"", script_fn("image_absent_red"));
+        let out = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", d.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).output().unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let res = d.path().join("round-work/.runtime/spira/batch-results");
+        assert!(std::fs::read_to_string(res.join("fence-round-image.result")).unwrap().starts_with("red "));
+        assert!(std::fs::read_to_string(res.join("fence-round-image.out")).unwrap().contains("IMAGE-ABSENT: x"));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("IMAGE-ABSENT: x"));
+        assert!(REMOTE_SCRIPT.matches("image_absent_red \"").count() == 2, "both image-phase branches go through it");
     }
 
     #[test_id(tsg0ya1)]

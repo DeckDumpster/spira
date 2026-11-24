@@ -1547,7 +1547,8 @@ impl Lc for FLc {
         {
             let boundary = ["{\"SuitesStarted\"", "{\"Failed\""]
                 .iter()
-                .any(|b| kind.starts_with(b));
+                .any(|b| kind.starts_with(b))
+                || (kind.starts_with("{\"PassIncomplete\"") && state == "ATTRIBUTING");
             let n: u32 = kind
                 .split("\"n\":")
                 .nth(1)

@@ -415,7 +415,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
         },
 
         BatchState::Attributing => match kind {
-            SuitesStarted { n } | Failed { n, .. } if *n <= row.pass => late(row, kind, *n),
+            SuitesStarted { n } | Failed { n, .. } | PassIncomplete { n, .. } if *n <= row.pass => late(row, kind, *n),
             PassStarted { n, head } => started(n, Some(head)),
             Attributed { .. } | Eject { .. } => Outcome::applied(stays()),
             Settle => Outcome::applied(moved(BatchState::Settled, None)),
@@ -1005,6 +1005,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test_id(to3zshe)]
+    #[test]
+    fn a_pass_incomplete_after_the_verdict_is_late_and_changes_nothing() {
+        let r = at_pass(BatchState::Attributing, 1);
+        let kind = BatchEventKind::PassIncomplete { n: 1, reason: "no outcome".into() };
+        let out = apply(&r, &ev(r.state, r.version, kind.clone()));
+        assert!(!out.applied);
+        assert_eq!(out.row, r);
+        assert_eq!(out.refusal, Some(Refusal::LateBoundary { state: where_is(&r), event: format!("{kind:?}"), pass: 1 }));
+        refused(&r, BatchEventKind::PassIncomplete { n: 2, reason: "next".into() });
     }
 
     #[test_id(teo4gw9)]
