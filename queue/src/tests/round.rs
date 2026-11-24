@@ -3591,6 +3591,7 @@ fn ejecting_one_of_two_siblings_on_the_same_parent_leaves_the_other_and_the_pare
     eject_one(&t, "sp-a:ta,sp-b:tb,sp-c:tc", "sp-b");
     assert!(!t.lib.has("bead_reopen sp-a eject "));
     assert!(!t.lib.has("bead_reopen sp-c eject "));
+    assert_eq!(kv_of(&t, "round")["ejected"].trim(), "sp-b");
 }
 
 #[test_id(teuiy84)]
@@ -3619,6 +3620,18 @@ fn eject_takes_a_child_whose_recorded_stack_names_a_retipped_parent() {
     eject_one(&t, "sp-a:ta,sp-b:tb,sp-c:tc", "sp-a");
     assert!(t.lib.has("bead_reopen sp-b eject "));
     assert!(!t.lib.has("bead_reopen sp-c eject "));
+}
+
+#[test_id(tw9rgem)]
+#[test]
+fn blocked_on_takes_precedence_when_a_member_is_also_stacked_on_the_ejected_one() {
+    let t = round_world();
+    block(&t, "sp-b", &["sp-a"]);
+    share(&t, "ta", "tb", "own-commit-of-a");
+    t.git.ancestor("ta", "tb");
+    eject_one(&t, "sp-a:ta,sp-b:tb,sp-c:tc", "sp-a");
+    assert!(t.out().contains("ejected sp-b from round") && t.out().contains("blocked on sp-a"), "{}", t.out());
+    assert!(!t.out().contains("stacked on sp-a"), "{}", t.out());
 }
 
 fn events_of(t: &T, batch: &str) -> Vec<String> {

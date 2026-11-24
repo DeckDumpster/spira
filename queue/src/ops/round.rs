@@ -5126,7 +5126,7 @@ fn eject(
         if bead != id {
             w.out(format!(
                 "queue.sh {label}: ejected {bead} from round {batch} ({})",
-                dependant_reason(bead).unwrap_or_default()
+                dependant_reason(bead).unwrap_or_else(|| format!("stacked on {id}"))
             ));
         }
     }
