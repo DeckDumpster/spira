@@ -36,7 +36,13 @@ use crate::probe;
 fn sanitize_title(s: &str, max: usize) -> String {
     let cleaned: String = s
         .chars()
-        .map(|c| if c == ' ' || c.is_ascii_alphanumeric() || "._/:,()#+-".contains(c) { c } else { ' ' })
+        .map(|c| {
+            if c == ' ' || c.is_ascii_alphanumeric() || "._/:,()#+-".contains(c) {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect();
     cleaned.chars().take(max).collect()
 }
@@ -72,7 +78,12 @@ fn list_beads(lc: &LcClient, args: &[&str]) -> Vec<Bead> {
 fn git_branch_exists(repo: &Path, branch: &str) -> bool {
     spira_config::bounded::bounded("git")
         .current_dir(repo)
-        .args(["show-ref", "--verify", "-q", &format!("refs/heads/{branch}")])
+        .args([
+            "show-ref",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -82,7 +93,13 @@ fn git_branch_exists(repo: &Path, branch: &str) -> bool {
 }
 
 fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
-    let o = spira_config::bounded::bounded("git").current_dir(repo).args(["rev-list", "--count", range]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let o = spira_config::bounded::bounded("git")
+        .current_dir(repo)
+        .args(["rev-list", "--count", range])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
     if !o.status.success() {
         return None;
     }
@@ -107,14 +124,22 @@ pub fn all_partition_members(cfg: &Config, lc_door: &LcClient) -> String {
     let per_spec = specs
         .iter()
         .filter(|spec| !spec.labels.is_empty())
-        .map(|spec| list_beads(lc_door, &["--all", "--label", spec.labels.as_str()]).into_iter().map(|b| b.id).collect())
+        .map(|spec| {
+            list_beads(lc_door, &["--all", "--label", spec.labels.as_str()])
+                .into_iter()
+                .map(|b| b.id)
+                .collect()
+        })
         .collect();
     unfinished_members(per_spec, &lc).join("\n")
 }
 
 /// The ids, first-seen and deduplicated across `per_spec`, whose lifecycle row is still
 /// before its builder's hand-off. A bead with no row can never be worked: not a member.
-pub fn unfinished_members(per_spec: Vec<Vec<String>>, lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> Vec<String> {
+pub fn unfinished_members(
+    per_spec: Vec<Vec<String>>,
+    lc: &std::collections::HashMap<String, spira_store::lc_state::Row>,
+) -> Vec<String> {
     let mut seen = HashSet::new();
     per_spec
         .into_iter()
@@ -147,26 +172,36 @@ pub fn detect_incident_needs_builder(cfg: &Config, door: &LcClient) -> Result<St
     if cfg.incident_label.is_empty() {
         return Err("SPIRA_INCIDENT_LABEL is unset — source conf.sh".into());
     }
-    let lc = spira_store::lc_state::list_live().map(spira_store::lc_state::index).map_err(|e| format!("cannot tell: {e}"))?;
+    let lc = spira_store::lc_state::list_live()
+        .map(spira_store::lc_state::index)
+        .map_err(|e| format!("cannot tell: {e}"))?;
     let reg = registry(cfg);
     let home = reg.home_repo().to_string();
     let mut out = Vec::new();
     let labelled = list_beads(door, &["--all", "--label", cfg.incident_label.as_str()]);
     for b in unfinished_incidents(labelled, &lc) {
-        let Some(br) = label_value(&b.labels, "branch:") else { continue };
+        let Some(br) = label_value(&b.labels, "branch:") else {
+            continue;
+        };
         let br = br.to_string();
         let repo = label_value(&b.labels, "repo:").unwrap_or("").to_string();
         let repo_disp = if repo.is_empty() { home.clone() } else { repo };
-        let Some(root) = reg.root(&repo_disp) else { continue };
+        let Some(root) = reg.root(&repo_disp) else {
+            continue;
+        };
         let repo_path = Path::new(&root);
         if !git_branch_exists(repo_path, &br) {
             continue;
         }
-        let Some((base, _local)) = spira_config::repos::landrefs(&reg, &root) else { continue };
+        let Some((base, _local)) = spira_config::repos::landrefs(&reg, &root) else {
+            continue;
+        };
         if base.is_empty() {
             continue;
         }
-        let Some(ahead) = git_rev_list_count(repo_path, &format!("{base}..{br}")) else { continue };
+        let Some(ahead) = git_rev_list_count(repo_path, &format!("{base}..{br}")) else {
+            continue;
+        };
         if ahead == 0 {
             continue;
         }
@@ -177,8 +212,14 @@ pub fn detect_incident_needs_builder(cfg: &Config, door: &LcClient) -> Result<St
 
 /// The incident beads whose lifecycle row still owes builder work; a bead with no row is not
 /// live work (it can never be claimed; CHECK-ROWLESS reports it).
-pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<String, spira_store::lc_state::Row>) -> Vec<Bead> {
-    beads.into_iter().filter(|b| lc.get(&b.id).is_some_and(|r| !r.past_builder())).collect()
+pub fn unfinished_incidents(
+    beads: Vec<Bead>,
+    lc: &std::collections::HashMap<String, spira_store::lc_state::Row>,
+) -> Vec<Bead> {
+    beads
+        .into_iter()
+        .filter(|b| lc.get(&b.id).is_some_and(|r| !r.past_builder()))
+        .collect()
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -189,15 +230,22 @@ pub fn unfinished_incidents(beads: Vec<Bead>, lc: &std::collections::HashMap<Str
 /// ported here. `detect_unclaimable_ready` stays in lib.sh until that bead lands; this
 /// reaches it exactly as `sentinel`'s own Rust crate still does (`seams::DETECT_UNCLAIMABLE`).
 fn unclaimable_lines(cfg: &Config) -> String {
-    let Some(home) = cfg.home.as_ref() else { return String::new() };
+    let Some(home) = cfg.home.as_ref() else {
+        return String::new();
+    };
     let lib = home.join("lib.sh");
     if !lib.is_file() {
         return String::new();
     }
     let script = r#". "$0" >/dev/null 2>&1 || exit 97; detect_unclaimable_ready"#;
     let lib_s = lib.to_string_lossy().into_owned();
-    let Ok(extra) = spira_config::release_env::child_path_env_for_process() else { return String::new() };
-    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let Ok(extra) = spira_config::release_env::child_path_env_for_process() else {
+        return String::new();
+    };
+    let extra: Vec<(&str, &str)> = extra
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     let o = probe::run("bash", &["-c", script, lib_s.as_str()], None, &extra);
     if !o.ok {
         return String::new();
@@ -212,7 +260,12 @@ fn unclaimable_lines(cfg: &Config) -> String {
 pub fn detect_livelocked(cfg: &Config, door: &LcClient) -> String {
     let reg = registry(cfg);
     let held: HashSet<String> = spira_store::lc_state::list_live()
-        .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
+        .map(|rows| {
+            rows.into_iter()
+                .filter(|r| r.held("ask") || r.held("poison"))
+                .map(|r| r.bead_id)
+                .collect()
+        })
         .unwrap_or_default();
     livelock_rows(
         cfg,
@@ -225,11 +278,21 @@ pub fn detect_livelocked(cfg: &Config, door: &LcClient) -> String {
     )
 }
 
-fn livelock_rows(cfg: &Config, reg: &Registry, held: &HashSet<String>, unclaimable: &str, asks: &[Bead], ci_labelled: &[Bead], all: &[Bead]) -> String {
+fn livelock_rows(
+    cfg: &Config,
+    reg: &Registry,
+    held: &HashSet<String>,
+    unclaimable: &str,
+    asks: &[Bead],
+    ci_labelled: &[Bead],
+    all: &[Bead],
+) -> String {
     let mut out = Vec::new();
 
     for line in unclaimable.lines() {
-        let Some(rest) = line.strip_prefix("UNCLAIMABLE ") else { continue };
+        let Some(rest) = line.strip_prefix("UNCLAIMABLE ") else {
+            continue;
+        };
         let bid = rest.split(' ').next().unwrap_or("");
         let reason = rest.split_once(" — ").map(|(_, r)| r).unwrap_or("");
         out.push(format!("LIVELOCK {bid} unclaimable — {reason}"));
@@ -251,7 +314,9 @@ fn livelock_rows(cfg: &Config, reg: &Registry, held: &HashSet<String>, unclaimab
         if b.is_closed() {
             continue;
         }
-        let repo = label_value(&b.labels, "repo:").unwrap_or(home.as_str()).to_string();
+        let repo = label_value(&b.labels, "repo:")
+            .unwrap_or(home.as_str())
+            .to_string();
         let title = sanitize_title(b.title.as_deref().unwrap_or(""), 60);
         if reg.land(&repo) != "pr" {
             out.push(format!(
@@ -267,11 +332,18 @@ fn livelock_rows(cfg: &Config, reg: &Registry, held: &HashSet<String>, unclaimab
             if held.contains(&b.id) || b.has(&cfg.groom_ask_label) {
                 continue;
             }
-            let repo_labels: Vec<&str> = b.labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();
+            let repo_labels: Vec<&str> = b
+                .labels
+                .iter()
+                .filter_map(|l| l.strip_prefix("repo:"))
+                .collect();
             if repo_labels.is_empty() {
                 continue;
             }
-            let bad: Vec<&str> = repo_labels.into_iter().filter(|r| !valid.contains(*r)).collect();
+            let bad: Vec<&str> = repo_labels
+                .into_iter()
+                .filter(|r| !valid.contains(*r))
+                .collect();
             if bad.is_empty() {
                 continue;
             }
@@ -298,7 +370,11 @@ fn with_close_reason(raw: &str) -> String {
     match serde_json::from_str::<serde_json::Value>(raw.trim()) {
         Ok(serde_json::Value::Array(a)) => serde_json::Value::Array(
             a.into_iter()
-                .filter(|r| r.get("close_reason").and_then(|v| v.as_str()).is_some_and(|v| !v.trim().is_empty()))
+                .filter(|r| {
+                    r.get("close_reason")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|v| !v.trim().is_empty())
+                })
                 .collect(),
         )
         .to_string(),
@@ -307,13 +383,20 @@ fn with_close_reason(raw: &str) -> String {
 }
 
 fn watermark_path(cfg: &Config) -> Option<std::path::PathBuf> {
-    cfg.run.as_ref().filter(|r| !r.as_os_str().is_empty()).map(|r| r.join("strand").join("invalid-closed.watermark"))
+    cfg.run
+        .as_ref()
+        .filter(|r| !r.as_os_str().is_empty())
+        .map(|r| r.join("strand").join("invalid-closed.watermark"))
 }
 
 /// The newest `closed_at` among `rows`, as the store prints it.
 fn newest_close(raw: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
-    v.as_array()?.iter().filter_map(|r| r.get("closed_at")?.as_str()).max().map(str::to_string)
+    v.as_array()?
+        .iter()
+        .filter_map(|r| r.get("closed_at")?.as_str())
+        .max()
+        .map(str::to_string)
 }
 
 /// lib.sh `detect_invalid_closed`: `INVALID-CLOSED`/`UNFILED-FOLLOW`/`ALLOWED-IC` lines for
@@ -322,8 +405,14 @@ fn newest_close(raw: &str) -> Option<String> {
 /// absent watermark reads the whole history. The watermark moves only after a successful read.
 pub fn detect_invalid_closed(cfg: &Config, door: &LcClient) -> String {
     let mark_file = watermark_path(cfg);
-    let mark = mark_file.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    let Some(raw) = read_closed(cfg, door, mark.as_deref()) else { return String::new() };
+    let mark = mark_file
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    let Some(raw) = read_closed(cfg, door, mark.as_deref()) else {
+        return String::new();
+    };
     if let (Some(p), Some(newest)) = (&mark_file, newest_close(&raw)) {
         let _ = std::fs::create_dir_all(p.parent().unwrap_or(p));
         let _ = std::fs::write(p, format!("{newest}\n"));
@@ -362,7 +451,11 @@ fn classify_closed(raw: &str, cfg: &Config) -> String {
 }
 
 fn py_repr(s: &str) -> String {
-    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let q = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
     let mut out = String::from(q);
     for c in s.chars() {
         match c {
@@ -383,8 +476,12 @@ fn py_repr(s: &str) -> String {
 
 fn read_allowlist(cfg: &Config) -> std::collections::HashMap<String, String> {
     let mut allow = std::collections::HashMap::new();
-    let Some(run) = cfg.run.as_ref().filter(|r| !r.as_os_str().is_empty()) else { return allow };
-    let Ok(text) = std::fs::read_to_string(run.join("invalid-closed.allow")) else { return allow };
+    let Some(run) = cfg.run.as_ref().filter(|r| !r.as_os_str().is_empty()) else {
+        return allow;
+    };
+    let Ok(text) = std::fs::read_to_string(run.join("invalid-closed.allow")) else {
+        return allow;
+    };
     let id_re = regex::Regex::new(r"^[a-z0-9]+(?:-[a-z0-9]+)+$").unwrap();
     for line in text.lines() {
         let line = line.trim();
@@ -401,7 +498,9 @@ fn read_allowlist(cfg: &Config) -> std::collections::HashMap<String, String> {
 /// Mimir; the quote-masked fence belongs to dwarf.
 fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
     use crate::closereason::{check_unfiled_follow, detect_close_reason};
-    let Ok(d) = serde_json::from_str::<serde_json::Value>(raw) else { return String::new() };
+    let Ok(d) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return String::new();
+    };
     let rows: Vec<&serde_json::Value> = match &d {
         serde_json::Value::Array(a) => a.iter().collect(),
         other => vec![other],
@@ -409,14 +508,25 @@ fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
     let allow = read_allowlist(cfg);
     let mut out: Vec<String> = Vec::new();
     for i in rows {
-        let Some(bid) = i.get("id").and_then(|v| v.as_str()) else { return String::new() };
+        let Some(bid) = i.get("id").and_then(|v| v.as_str()) else {
+            return String::new();
+        };
         let reason = i.get("close_reason").and_then(|v| v.as_str()).unwrap_or("");
         let title = sanitize_title(i.get("title").and_then(|v| v.as_str()).unwrap_or(""), 60);
-        let reason_short: String = reason.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect();
+        let reason_short: String = reason
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(120)
+            .collect();
         if let Some(why) = allow.get(bid) {
             out.push(format!("ALLOWED-IC {bid} — {why}"));
         } else if let Some(hit) = detect_close_reason(reason) {
-            out.push(format!("INVALID-CLOSED {bid} — close reason contains {}: {reason_short}. title: {title}", py_repr(&hit)));
+            out.push(format!(
+                "INVALID-CLOSED {bid} — close reason contains {}: {reason_short}. title: {title}",
+                py_repr(&hit)
+            ));
         } else if let Some(hit) = check_unfiled_follow(reason, &cfg.id_prefix) {
             out.push(format!("UNFILED-FOLLOW {bid} — follow-on phrase {} without a tracking reference: {reason_short}. title: {title}", py_repr(&hit)));
         }
@@ -443,18 +553,35 @@ mod tests {
         assert_eq!(label_value(&labels, "team:"), None);
     }
 
-
     /// sp-mve9i: a partition's members are the beads whose lifecycle row is unfinished —
     /// READY, WORKING, REWORK — deduplicated in first-seen order; no row, no member.
     #[test_id(t3b7snc)]
     #[test]
     fn partition_members_are_the_unfinished_lifecycle_rows() {
         use spira_store::lc_state::Row;
-        let lc = [("a", "READY"), ("b", "WORKING"), ("c", "SUBMITTED"), ("d", "REWORK"), ("e", "LANDED")]
-            .iter()
-            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
-            .collect();
-        let per = vec![vec!["b".into(), "c".into(), "a".into()], vec!["a".into(), "d".into(), "e".into(), "z".into()]];
+        let lc = [
+            ("a", "READY"),
+            ("b", "WORKING"),
+            ("c", "SUBMITTED"),
+            ("d", "REWORK"),
+            ("e", "LANDED"),
+        ]
+        .iter()
+        .map(|(i, st)| {
+            (
+                i.to_string(),
+                Row {
+                    bead_id: i.to_string(),
+                    state: st.to_string(),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+        let per = vec![
+            vec!["b".into(), "c".into(), "a".into()],
+            vec!["a".into(), "d".into(), "e".into(), "z".into()],
+        ];
         assert_eq!(unfinished_members(per, &lc), vec!["b", "a", "d"]);
     }
 
@@ -470,18 +597,40 @@ mod tests {
         .unwrap();
         let lc = [("a", "WORKING"), ("b", "SUBMITTED"), ("c", "REWORK")]
             .iter()
-            .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
+            .map(|(i, st)| {
+                (
+                    i.to_string(),
+                    Row {
+                        bead_id: i.to_string(),
+                        state: st.to_string(),
+                        ..Default::default()
+                    },
+                )
+            })
             .collect();
-        let ids: Vec<String> = unfinished_incidents(beads, &lc).into_iter().map(|b| b.id).collect();
+        let ids: Vec<String> = unfinished_incidents(beads, &lc)
+            .into_iter()
+            .map(|b| b.id)
+            .collect();
         assert_eq!(ids, vec!["a", "c"]);
     }
 
     struct Closes(std::sync::Mutex<Vec<Vec<String>>>, &'static str, i32);
 
     impl spira_store::lc_call::Transport for Closes {
-        fn exchange(&self, argv: &[String], _: Option<&str>, _: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        fn exchange(
+            &self,
+            argv: &[String],
+            _: Option<&str>,
+            _: std::time::Duration,
+        ) -> Result<spira_store::lc_call::Reply, String> {
             self.0.lock().unwrap().push(argv.to_vec());
-            Ok(spira_store::lc_call::Reply { code: self.2, out: self.1.into(), err: String::new(), read_ended: false })
+            Ok(spira_store::lc_call::Reply {
+                code: self.2,
+                out: self.1.into(),
+                err: String::new(),
+                read_ended: false,
+            })
         }
     }
 
@@ -489,20 +638,46 @@ mod tests {
     #[test]
     fn detect_invalid_closed_reads_only_closes_after_its_watermark() {
         let run = testkit::TempDir::new("strand-ic-watermark");
-        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        let cfg = Config {
+            run: Some(run.to_path_buf()),
+            ..Config::test_fixture()
+        };
         let rows = r#"[{"id":"sp-a","closed_at":"2026-11-01T00:00:00Z","close_reason":"done"},{"id":"sp-b","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"}]"#;
         let first = std::sync::Arc::new(Closes(Default::default(), rows, 0));
         detect_invalid_closed(&cfg, &LcClient::over(first.clone(), true));
         let seen = first.0.lock().unwrap().clone();
-        assert!(!seen[0].iter().any(|a| a == "--closed-after"), "an absent watermark reads from the start: {seen:?}");
+        assert!(
+            !seen[0].iter().any(|a| a == "--closed-after"),
+            "an absent watermark reads from the start: {seen:?}"
+        );
         let file = run.join("strand").join("invalid-closed.watermark");
-        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap().trim(),
+            "2026-11-03T00:00:00Z"
+        );
 
         let second = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
         detect_invalid_closed(&cfg, &LcClient::over(second.clone(), true));
         let seen = second.0.lock().unwrap().clone();
-        assert_eq!(seen[0], ["content", "list", "--all", "--closed-after", "2026-11-03T00:00:00Z", "--limit", "0", "--brief", "--json"]);
-        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z", "an empty read leaves the watermark");
+        assert_eq!(
+            seen[0],
+            [
+                "content",
+                "list",
+                "--all",
+                "--closed-after",
+                "2026-11-03T00:00:00Z",
+                "--limit",
+                "0",
+                "--brief",
+                "--json"
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap().trim(),
+            "2026-11-03T00:00:00Z",
+            "an empty read leaves the watermark"
+        );
     }
 
     #[test_id(ttbw9m6)]
@@ -510,7 +685,11 @@ mod tests {
     fn the_invalid_closed_read_asks_for_no_free_text_and_classifies_as_before() {
         let rows = r#"[{"id":"sp-a","title":"A","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"done"},{"id":"sp-b","title":"B","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"TODO later"},{"id":"sp-c","title":"C","status":"closed","closed_at":"2026-11-03T00:00:00Z","close_reason":"the real fix is pending"}]"#;
         let door = std::sync::Arc::new(Closes(Default::default(), rows, 0));
-        let out = detect_invalid_closed_since(&Config::test_fixture(), &LcClient::over(door.clone(), true), "2026-11-01T00:00:00Z");
+        let out = detect_invalid_closed_since(
+            &Config::test_fixture(),
+            &LcClient::over(door.clone(), true),
+            "2026-11-01T00:00:00Z",
+        );
         assert!(door.0.lock().unwrap()[0].iter().any(|a| a == "--brief"));
         assert_eq!(
             out,
@@ -521,23 +700,42 @@ mod tests {
     #[test_id(twph9vg)]
     #[test]
     fn list_beads_asks_for_no_free_text_and_parses_the_rows_as_before() {
-        let door = std::sync::Arc::new(Closes(Default::default(), r#"[{"id":"sp-a","status":"open"}]"#, 0));
+        let door = std::sync::Arc::new(Closes(
+            Default::default(),
+            r#"[{"id":"sp-a","status":"open"}]"#,
+            0,
+        ));
         let beads = list_beads(&LcClient::over(door.clone(), true), &[]);
-        assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--limit", "0", "--brief", "--json"]);
-        assert_eq!((beads.len(), beads[0].id.as_str(), beads[0].status.as_str()), (1, "sp-a", "open"));
+        assert_eq!(
+            door.0.lock().unwrap()[0],
+            ["content", "list", "--limit", "0", "--brief", "--json"]
+        );
+        assert_eq!(
+            (beads.len(), beads[0].id.as_str(), beads[0].status.as_str()),
+            (1, "sp-a", "open")
+        );
     }
 
     #[test_id(tju6olc)]
     #[test]
     fn a_refused_read_leaves_the_watermark_where_it_was() {
         let run = testkit::TempDir::new("strand-ic-refused");
-        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        let cfg = Config {
+            run: Some(run.to_path_buf()),
+            ..Config::test_fixture()
+        };
         let file = run.join("strand").join("invalid-closed.watermark");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "2026-11-03T00:00:00Z\n").unwrap();
         let refused = std::sync::Arc::new(Closes(Default::default(), "", 3));
-        assert_eq!(detect_invalid_closed(&cfg, &LcClient::over(refused, true)), "");
-        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "2026-11-03T00:00:00Z");
+        assert_eq!(
+            detect_invalid_closed(&cfg, &LcClient::over(refused, true)),
+            ""
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap().trim(),
+            "2026-11-03T00:00:00Z"
+        );
     }
 
     #[test_id(t47n5tg)]
@@ -546,25 +744,46 @@ mod tests {
         let cfg = Config::test_fixture();
         let after = "2026-11-01T00:00:00Z";
         let empty = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
-        assert_eq!(invalid_closed_since(&cfg, &LcClient::over(empty, true), after), Some(String::new()));
+        assert_eq!(
+            invalid_closed_since(&cfg, &LcClient::over(empty, true), after),
+            Some(String::new())
+        );
         let refused = std::sync::Arc::new(Closes(Default::default(), "", 3));
-        assert_eq!(invalid_closed_since(&cfg, &LcClient::over(refused, true), after), None);
+        assert_eq!(
+            invalid_closed_since(&cfg, &LcClient::over(refused, true), after),
+            None
+        );
         let blank = std::sync::Arc::new(Closes(Default::default(), "  \n", 0));
-        assert_eq!(invalid_closed_since(&cfg, &LcClient::over(blank, true), after), None, "a blank answer is no answer");
+        assert_eq!(
+            invalid_closed_since(&cfg, &LcClient::over(blank, true), after),
+            None,
+            "a blank answer is no answer"
+        );
     }
 
     #[test_id(t1ap5ot)]
     #[test]
     fn the_listings_go_to_the_content_door_with_no_bound_but_their_label() {
         let door = std::sync::Arc::new(Closes(Default::default(), "[]", 0));
-        list_beads(&LcClient::over(door.clone(), true), &["--all", "--label", "incident"]);
-        assert_eq!(door.0.lock().unwrap()[0], ["content", "list", "--all", "--label", "incident", "--limit", "0", "--brief", "--json"]);
+        list_beads(
+            &LcClient::over(door.clone(), true),
+            &["--all", "--label", "incident"],
+        );
+        assert_eq!(
+            door.0.lock().unwrap()[0],
+            [
+                "content", "list", "--all", "--label", "incident", "--limit", "0", "--brief",
+                "--json"
+            ]
+        );
     }
 
     #[test_id(twhf0l9)]
     #[test]
     fn invalid_closed_reads_the_rows_that_carry_a_close_reason() {
-        let out = with_close_reason(r#"[{"id":"a","status":"open","close_reason":"done"},{"id":"b","status":"closed","close_reason":""},{"id":"c","status":"closed"}]"#);
+        let out = with_close_reason(
+            r#"[{"id":"a","status":"open","close_reason":"done"},{"id":"b","status":"closed","close_reason":""},{"id":"c","status":"closed"}]"#,
+        );
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v.as_array().unwrap().len(), 1);
         assert_eq!(v[0]["id"], "a");
@@ -598,12 +817,35 @@ mod tests {
         assert_eq!(allowed, "ALLOWED-IC zz-cr-1 — follow-up filed");
     }
 
-    fn livelock_report(map: &str, held: &[&str], unclaimable: &str, asks: &str, ci: &str, all: &str) -> String {
-        let cfg = Config { ci_label: "ci-wait".into(), groom_ask_label: "groomed-ask".into(), ..Config::test_fixture() };
-        let reg = Registry::new(Some(map), &Default::default(), std::path::Path::new("nonexistent"));
+    fn livelock_report(
+        map: &str,
+        held: &[&str],
+        unclaimable: &str,
+        asks: &str,
+        ci: &str,
+        all: &str,
+    ) -> String {
+        let cfg = Config {
+            ci_label: "ci-wait".into(),
+            groom_ask_label: "groomed-ask".into(),
+            ..Config::test_fixture()
+        };
+        let reg = Registry::new(
+            Some(map),
+            &Default::default(),
+            std::path::Path::new("nonexistent"),
+        );
         let held = held.iter().map(|h| h.to_string()).collect();
         let beads = |j: &str| model::parse_beads(j).unwrap();
-        livelock_rows(&cfg, &reg, &held, unclaimable, &beads(asks), &beads(ci), &beads(all))
+        livelock_rows(
+            &cfg,
+            &reg,
+            &held,
+            unclaimable,
+            &beads(asks),
+            &beads(ci),
+            &beads(all),
+        )
     }
 
     const MAP: &str = "pushrepo | /opt/pushrepo | push | origin/main | | \nprerepo | /opt/prerepo | pr | origin/main | | \n";
@@ -619,7 +861,14 @@ mod tests {
     #[test_id(tw2krei)]
     #[test]
     fn an_unclaimable_ready_bead_is_reported_by_id_and_category() {
-        let out = livelock_report(MAP, &[], "UNCLAIMABLE sp-u1 — no persona matches\n", "[]", "[]", "[]");
+        let out = livelock_report(
+            MAP,
+            &[],
+            "UNCLAIMABLE sp-u1 — no persona matches\n",
+            "[]",
+            "[]",
+            "[]",
+        );
         assert_eq!(out, "LIVELOCK sp-u1 unclaimable — no persona matches");
     }
 
@@ -656,7 +905,10 @@ mod tests {
             {"id":"sp-m5","labels":["plan"]}]"#;
         let out = livelock_report(MAP, &["sp-m3"], "", "[]", "[]", all);
         assert_eq!(out.lines().count(), 1, "{out}");
-        assert!(out.contains("LIVELOCK sp-m2 unmapped-repo — repo:bogus"), "{out}");
+        assert!(
+            out.contains("LIVELOCK sp-m2 unmapped-repo — repo:bogus"),
+            "{out}"
+        );
     }
 
     // covers: UC-ops-detection-remediation-29
@@ -664,14 +916,25 @@ mod tests {
     #[test]
     fn with_no_repo_map_no_bead_is_unmapped() {
         let cfg = Config::test_fixture();
-        let reg = Registry::new(None, &Default::default(), std::path::Path::new("nonexistent"));
+        let reg = Registry::new(
+            None,
+            &Default::default(),
+            std::path::Path::new("nonexistent"),
+        );
         let all = model::parse_beads(r#"[{"id":"sp-n1","labels":["repo:bogus"]}]"#).unwrap();
-        assert_eq!(livelock_rows(&cfg, &reg, &HashSet::new(), "", &[], &[], &all), "");
+        assert_eq!(
+            livelock_rows(&cfg, &reg, &HashSet::new(), "", &[], &[], &all),
+            ""
+        );
     }
 
     fn classify(reason: &str) -> String {
-        let raw = serde_json::json!([{"id": "zz-c", "title": "t", "close_reason": reason}]).to_string();
-        let cfg = Config { id_prefix: "zz".into(), ..Config::test_fixture() };
+        let raw =
+            serde_json::json!([{"id": "zz-c", "title": "t", "close_reason": reason}]).to_string();
+        let cfg = Config {
+            id_prefix: "zz".into(),
+            ..Config::test_fixture()
+        };
         classify_invalid_closed(&raw, &cfg)
     }
 
@@ -679,8 +942,17 @@ mod tests {
     #[test_id(tzepolc)]
     #[test]
     fn a_permanent_fix_needed_or_temporary_workaround_close_is_invalid_closed() {
-        for r in ["PERMANENT FIX NEEDED: add real detection", "Applied a temporary workaround, real fix still needed.", "mitigated-only", "TODO wire it"] {
-            assert!(classify(r).starts_with("INVALID-CLOSED zz-c"), "{r}: {}", classify(r));
+        for r in [
+            "PERMANENT FIX NEEDED: add real detection",
+            "Applied a temporary workaround, real fix still needed.",
+            "mitigated-only",
+            "TODO wire it",
+        ] {
+            assert!(
+                classify(r).starts_with("INVALID-CLOSED zz-c"),
+                "{r}: {}",
+                classify(r)
+            );
         }
     }
 
@@ -688,8 +960,16 @@ mod tests {
     #[test_id(t0k9993)]
     #[test]
     fn implied_follow_on_work_with_no_tracking_reference_is_unfiled_follow() {
-        for r in ["Builders should add external_ref to the list output.", "The real fix requires a migration.", "Needs a follow-up."] {
-            assert!(classify(r).starts_with("UNFILED-FOLLOW zz-c"), "{r}: {}", classify(r));
+        for r in [
+            "Builders should add external_ref to the list output.",
+            "The real fix requires a migration.",
+            "Needs a follow-up.",
+        ] {
+            assert!(
+                classify(r).starts_with("UNFILED-FOLLOW zz-c"),
+                "{r}: {}",
+                classify(r)
+            );
         }
     }
 
@@ -707,7 +987,13 @@ mod tests {
     #[test_id(tiw3553)]
     #[test]
     fn a_clean_close_and_the_word_temporary_describing_something_else_are_not_flagged() {
-        for r in ["fixed: zz-c commit abc123 landed on main", "Removed the temporary directory after the run.", "Pulled the change from upstream.", "temporary", ""] {
+        for r in [
+            "fixed: zz-c commit abc123 landed on main",
+            "Removed the temporary directory after the run.",
+            "Pulled the change from upstream.",
+            "temporary",
+            "",
+        ] {
             assert_eq!(classify(r), "", "{r}");
         }
     }

@@ -33,9 +33,16 @@ pub fn from_tsv(cfg: &Config, text: &str) -> Classified {
     let rows = text
         .lines()
         .filter_map(Row::from_tsv)
-        .map(|row| PartRow { part: part.clone(), row })
+        .map(|row| PartRow {
+            part: part.clone(),
+            row,
+        })
         .collect();
-    Classified { rows, watching: vec![part], live: Vec::new() }
+    Classified {
+        rows,
+        watching: vec![part],
+        live: Vec::new(),
+    }
 }
 
 fn world_state(run_dir: &std::path::Path) -> Option<&'static str> {
@@ -60,10 +67,16 @@ fn gate_queued(run_dir: &Path) -> Option<std::collections::HashSet<String>> {
     for d in dirs {
         let Ok(rd) = fs::read_dir(d) else { continue };
         for e in rd.flatten() {
-            let job: Option<serde_json::Value> = fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str(&t).ok());
+            let job: Option<serde_json::Value> = fs::read_to_string(e.path())
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok());
             let job = job.as_ref();
             let done = job.and_then(|j| j.get("job"));
-            if let Some(b) = done.or(job).and_then(|j| j.get("bead")).and_then(|b| b.as_str()) {
+            if let Some(b) = done
+                .or(job)
+                .and_then(|j| j.get("bead"))
+                .and_then(|b| b.as_str())
+            {
                 beads.insert(b.to_string());
             }
         }
@@ -73,18 +86,47 @@ fn gate_queued(run_dir: &Path) -> Option<std::collections::HashSet<String>> {
 
 /// The landing pass is deliberately holding this bead's gate back until a time it wrote down.
 fn backing_off(run_dir: &Path, bead_id: &str, now: i64) -> bool {
-    let Ok(t) = fs::read_to_string(run_dir.join("gate-backoff").join(format!("spira-{bead_id}"))) else { return false };
-    t.lines().nth(1).and_then(|n| n.parse::<i64>().ok()).is_some_and(|until| until > now)
+    let Ok(t) = fs::read_to_string(
+        run_dir
+            .join("gate-backoff")
+            .join(format!("spira-{bead_id}")),
+    ) else {
+        return false;
+    };
+    t.lines()
+        .nth(1)
+        .and_then(|n| n.parse::<i64>().ok())
+        .is_some_and(|until| until > now)
 }
 
 /// Beads of a repo that lands by pull request: nothing gates them, the landing task opens their pull request.
-fn pr_mode_beads(reg: &spira_config::repos::Registry, store: &Store) -> std::collections::HashSet<String> {
-    store.beads.iter().filter(|b| b.labels.iter().find_map(|l| l.strip_prefix("repo:")).is_some_and(|r| reg.land(r) == "pr")).map(|b| b.id.clone()).collect()
+fn pr_mode_beads(
+    reg: &spira_config::repos::Registry,
+    store: &Store,
+) -> std::collections::HashSet<String> {
+    store
+        .beads
+        .iter()
+        .filter(|b| {
+            b.labels
+                .iter()
+                .find_map(|l| l.strip_prefix("repo:"))
+                .is_some_and(|r| reg.land(r) == "pr")
+        })
+        .map(|b| b.id.clone())
+        .collect()
 }
 
 /// SUBMITTED beads nothing will gate: no job queued, no backoff, no hold, and not a pull-request repo's.
-fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row], pr_mode: &std::collections::HashSet<String>, now: i64) -> std::collections::HashSet<String> {
-    let Some(queued) = gate_queued(run_dir) else { return Default::default() };
+fn ungated_submitted(
+    run_dir: &Path,
+    rows: &[spira_store::lc_state::Row],
+    pr_mode: &std::collections::HashSet<String>,
+    now: i64,
+) -> std::collections::HashSet<String> {
+    let Some(queued) = gate_queued(run_dir) else {
+        return Default::default();
+    };
     rows.iter()
         .filter(|r| r.state == "SUBMITTED" && !queued.contains(&r.bead_id))
         .filter(|r| r.holds.is_empty() || expired_wait_alone(r, now))
@@ -95,7 +137,10 @@ fn ungated_submitted(run_dir: &Path, rows: &[spira_store::lc_state::Row], pr_mod
 }
 
 fn expired_wait_alone(r: &spira_store::lc_state::Row, now: i64) -> bool {
-    r.holds.iter().all(|h| h == "wait") && r.reason.as_deref().is_some_and(|reason| spira_store::lc_state::wait_expired(reason, now))
+    r.holds.iter().all(|h| h == "wait")
+        && r.reason
+            .as_deref()
+            .is_some_and(|reason| spira_store::lc_state::wait_expired(reason, now))
 }
 
 pub const TASK_SILENT_S: u64 = 120;
@@ -112,10 +157,22 @@ pub const SCHEDULER_TASK: &str = "watch.transitions";
 pub const SCHEDULER_MISSED_TICKS: u64 = 3;
 
 fn scheduler_silent(run_dir: &Path, period_s: u64) -> Option<PartRow> {
-    task_silent_past(run_dir, SCHEDULER_TASK, period_s * SCHEDULER_MISSED_TICKS, 1, "lifecycle wait(s) unwatched")
+    task_silent_past(
+        run_dir,
+        SCHEDULER_TASK,
+        period_s * SCHEDULER_MISSED_TICKS,
+        1,
+        "lifecycle wait(s) unwatched",
+    )
 }
 
-fn task_silent_past(run_dir: &Path, task: &str, silent_s: u64, waiting: usize, what: &str) -> Option<PartRow> {
+fn task_silent_past(
+    run_dir: &Path,
+    task: &str,
+    silent_s: u64,
+    waiting: usize,
+    what: &str,
+) -> Option<PartRow> {
     if waiting == 0 {
         return None;
     }
@@ -137,9 +194,12 @@ fn task_silent_past(run_dir: &Path, task: &str, silent_s: u64, waiting: usize, w
     })
 }
 
+/// A partition's claimable ids from its labels and excluded labels; `Err` is a refused read.
+pub type ReadyReader<'a> = dyn Fn(&str, &[String]) -> Result<HashSet<String>, String> + 'a;
+
 /// Classify every partition against the live store. Err means an input could not be read,
 /// and the caller must neither report "nothing stranded" nor rewrite the episode state (R7).
-pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<HashSet<String>, String>) -> Result<Classified, String> {
+pub fn classify_live(cfg: &Config, ready_of: &ReadyReader) -> Result<Classified, String> {
     let specs = probe::roster(cfg, cfg.labels.as_deref())?;
     let parts: Vec<(String, Vec<String>, Vec<String>)> = specs
         .into_iter()
@@ -147,23 +207,41 @@ pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<
             let exclude = cfg
                 .exclude_labels
                 .clone()
-                .or_else(|| (!s.exclude.is_empty() && cfg.labels.is_none()).then(|| s.exclude.clone()))
+                .or_else(|| {
+                    (!s.exclude.is_empty() && cfg.labels.is_none()).then(|| s.exclude.clone())
+                })
                 .unwrap_or_else(|| cfg.exclude_default());
-            let mut excl: Vec<String> =
-                exclude.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect();
+            let mut excl: Vec<String> = exclude
+                .split(',')
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(str::to_string)
+                .collect();
             excl.extend(cfg.shared_exclude());
             (s.labels, excl, s.runes)
         })
         .collect();
     if parts.is_empty() {
         warn("WARN no persona in the runes declares a partition — no work is being watched for strands");
-        return Ok(Classified { rows: Vec::new(), watching: Vec::new(), live: Vec::new() });
+        return Ok(Classified {
+            rows: Vec::new(),
+            watching: Vec::new(),
+            live: Vec::new(),
+        });
     }
 
-    let store = Store::new(probe::load_store(&spira_store::lc_call::LcClient::configured()?)?);
+    let store = Store::new(probe::load_store(
+        &spira_store::lc_call::LcClient::configured()?,
+    )?);
     let now = timefmt::now();
-    let log_text = cfg.sentinel_log().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
-    let run_dir = cfg.run.clone().ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
+    let log_text = cfg
+        .sentinel_log()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    let run_dir = cfg
+        .run
+        .clone()
+        .ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
     let live = probe::live_units(cfg)?;
     let total_live = live.len() as u32;
     let capacity = probe::capacity(cfg, now);
@@ -177,13 +255,29 @@ pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<
             Vec::new()
         }
     };
-    let ids = |f: &dyn Fn(&spira_store::lc_state::Row) -> bool| -> std::collections::HashSet<String> {
-        lc_rows.iter().filter(|r| f(r)).map(|r| r.bead_id.clone()).collect()
-    };
+    let ids =
+        |f: &dyn Fn(&spira_store::lc_state::Row) -> bool| -> std::collections::HashSet<String> {
+            lc_rows
+                .iter()
+                .filter(|r| f(r))
+                .map(|r| r.bead_id.clone())
+                .collect()
+        };
     let working = ids(&|r| r.working());
     let held_ask = ids(&|r| r.held("ask"));
     let held_poison = ids(&|r| r.held("poison"));
-    let ungated = ungated_submitted(&run_dir, &lc_rows, &pr_mode_beads(&spira_config::repos::Registry::from_env(std::env::vars().collect(), &cfg.home.clone().unwrap_or_default()), &store), now);
+    let ungated = ungated_submitted(
+        &run_dir,
+        &lc_rows,
+        &pr_mode_beads(
+            &spira_config::repos::Registry::from_env(
+                std::env::vars().collect(),
+                &cfg.home.clone().unwrap_or_default(),
+            ),
+            &store,
+        ),
+        now,
+    );
     let stacked_on: std::collections::HashMap<String, Vec<String>> = lc_rows
         .iter()
         .filter(|r| !r.terminal() && !r.stack.is_empty())
@@ -193,11 +287,22 @@ pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<
     let mut watching = Vec::new();
     for (labels, excl, runes) in parts {
         watching.push(labels.clone());
-        let need: Vec<&str> = labels.split(',').map(str::trim).filter(|x| !x.is_empty()).collect();
+        let need: Vec<&str> = labels
+            .split(',')
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .collect();
         let ready = ready_of(&labels, &excl)?;
         let facts = Facts {
             now,
-            live: runes.iter().map(|f| live.iter().filter(|u| runtime::units::is_dwarf_of(u, f, f)).count() as u32).sum(),
+            live: runes
+                .iter()
+                .map(|f| {
+                    live.iter()
+                        .filter(|u| runtime::units::is_dwarf_of(u, f, f))
+                        .count() as u32
+                })
+                .sum(),
             total_live,
             max_dwarves: cfg.max_live_dwarves,
             capacity_paused: capacity.clone(),
@@ -219,12 +324,31 @@ pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<
             vocab: &cfg.vocab,
             facts: &facts,
         };
-        rows.extend(p.classify().into_iter().map(|row| PartRow { part: labels.clone(), row }));
+        rows.extend(p.classify().into_iter().map(|row| PartRow {
+            part: labels.clone(),
+            row,
+        }));
     }
-    let certified = lc_rows.iter().filter(|r| r.state == "CERTIFIED" && !r.terminal()).count();
-    rows.extend(task_silent(&run_dir, "gate.worker", ungated.len(), "SUBMITTED bead(s) ungated"));
-    rows.extend(task_silent(&run_dir, "batcher.local", certified, "CERTIFIED bead(s) waiting for a round"));
-    rows.extend(scheduler_silent(&run_dir, spira_config::process::cfg_parse("SPIRA_TRANSITIONS_PERIOD")?));
+    let certified = lc_rows
+        .iter()
+        .filter(|r| r.state == "CERTIFIED" && !r.terminal())
+        .count();
+    rows.extend(task_silent(
+        &run_dir,
+        "gate.worker",
+        ungated.len(),
+        "SUBMITTED bead(s) ungated",
+    ));
+    rows.extend(task_silent(
+        &run_dir,
+        "batcher.local",
+        certified,
+        "CERTIFIED bead(s) waiting for a round",
+    ));
+    rows.extend(scheduler_silent(
+        &run_dir,
+        spira_config::process::cfg_parse("SPIRA_TRANSITIONS_PERIOD")?,
+    ));
     if cfg.labels.is_none() {
         let claimable: std::collections::HashSet<String> = lc_rows
             .iter()
@@ -240,7 +364,11 @@ pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<
             Err(e) => warn(&format!("WARN the persona runes could not be read ({e}) — unrostered READY beads are not checked")),
         }
     }
-    Ok(Classified { rows, watching, live })
+    Ok(Classified {
+        rows,
+        watching,
+        live,
+    })
 }
 
 // ------------------------------------------------------------------------------------------
@@ -248,8 +376,15 @@ pub fn classify_live(cfg: &Config, ready_of: &dyn Fn(&str, &[String]) -> Result<
 // ------------------------------------------------------------------------------------------
 
 pub fn render_text(live: &[String], age: i64, rows: &[AgedRow], watching: &[String]) -> String {
-    let pass = if age < 0 { "never".to_string() } else { format!("{age}s ago") };
-    let mut out = format!("scheduler last pass: {pass}\nlive dwarves: {}\n", live.len());
+    let pass = if age < 0 {
+        "never".to_string()
+    } else {
+        format!("{age}s ago")
+    };
+    let mut out = format!(
+        "scheduler last pass: {pass}\nlive dwarves: {}\n",
+        live.len()
+    );
     for u in live {
         out.push_str(&format!("  {u}\n"));
     }
@@ -287,7 +422,12 @@ pub struct Deferred {
 }
 
 pub fn parse_deferred(text: &str) -> Option<Deferred> {
-    let mut d = Deferred { branch: String::new(), repo: String::new(), count: 0, since: 0 };
+    let mut d = Deferred {
+        branch: String::new(),
+        repo: String::new(),
+        count: 0,
+        since: 0,
+    };
     for l in text.lines() {
         match l.split_once('=')? {
             ("branch", v) => d.branch = v.into(),
@@ -302,10 +442,16 @@ pub fn parse_deferred(text: &str) -> Option<Deferred> {
 
 /// Branches the landing pass is deferring, oldest first. A stranded BRANCH has no bead row.
 pub fn deferred_branches(cfg: &Config) -> Vec<Deferred> {
-    let Some(dir) = cfg.run.as_ref().map(|r| r.join("landing.deferred")) else { return Vec::new() };
-    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
-    let mut v: Vec<Deferred> =
-        rd.flatten().filter_map(|e| parse_deferred(&fs::read_to_string(e.path()).ok()?)).collect();
+    let Some(dir) = cfg.run.as_ref().map(|r| r.join("landing.deferred")) else {
+        return Vec::new();
+    };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut v: Vec<Deferred> = rd
+        .flatten()
+        .filter_map(|e| parse_deferred(&fs::read_to_string(e.path()).ok()?))
+        .collect();
     v.sort_by(|a, b| (a.since, &a.branch).cmp(&(b.since, &b.branch)));
     v
 }
@@ -314,7 +460,10 @@ pub fn render_deferred(rows: &[Deferred], now: i64) -> String {
     if rows.is_empty() {
         return String::new();
     }
-    let mut out = format!("\n{} deferred branch(es) — landing has not reached them:\n", rows.len());
+    let mut out = format!(
+        "\n{} deferred branch(es) — landing has not reached them:\n",
+        rows.len()
+    );
     for d in rows {
         out.push_str(&format!(
             "  {:<28} {:<10} {:>3} consecutive passes, {}m since first deferral\n",
@@ -350,14 +499,20 @@ pub fn render_json(live: &[String], age: i64, rows: &[AgedRow]) -> String {
 }
 
 pub fn report(cfg: &Config, c: &Classified, json: bool) {
-    let st = cfg.state_path().map(|p| state::load(&p)).unwrap_or_default();
+    let st = cfg
+        .state_path()
+        .map(|p| state::load(&p))
+        .unwrap_or_default();
     let (aged, _) = state::apply(&st, &c.rows, timefmt::now());
     let age = probe::last_pass_age(cfg);
     if json {
         print!("{}", render_json(&c.live, age, &aged));
     } else {
         print!("{}", render_text(&c.live, age, &aged, &c.watching));
-        print!("{}", render_deferred(&deferred_branches(cfg), timefmt::now()));
+        print!(
+            "{}",
+            render_deferred(&deferred_branches(cfg), timefmt::now())
+        );
     }
 }
 
@@ -389,22 +544,39 @@ pub fn decide(r: &AgedRow, dry: bool, strand_grace: i64) -> Step {
     }
     if r.row.disp == Disposition::Act {
         return Step::Escalate {
-            detail: format!("{} (the mechanical fix ran and did not clear it)", r.row.detail),
+            detail: format!(
+                "{} (the mechanical fix ran and did not clear it)",
+                r.row.detail
+            ),
         };
     }
     if r.age < strand_grace && r.part != crate::unrostered::PART {
         return Step::Skip;
     }
-    Step::Escalate { detail: r.row.detail.clone() }
+    Step::Escalate {
+        detail: r.row.detail.clone(),
+    }
 }
 
 pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
-    check_raising(cfg, &spira_store::lc_call::LcClient::configured(), c, dry, &mut |part, kind, id, detail, action| escalate(cfg, part, kind, id, detail, action))
+    check_raising(
+        cfg,
+        &spira_store::lc_call::LcClient::configured(),
+        c,
+        dry,
+        &mut |part, kind, id, detail, action| escalate(cfg, part, kind, id, detail, action),
+    )
 }
 
 type Raise<'a> = dyn FnMut(&str, &str, &str, &str, &str) + 'a;
 
-fn check_raising(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, String>, c: Classified, dry: bool, raise: &mut Raise) -> i32 {
+fn check_raising(
+    cfg: &Config,
+    door: &Result<spira_store::lc_call::LcClient, String>,
+    c: Classified,
+    dry: bool,
+    raise: &mut Raise,
+) -> i32 {
     let Some(state_path) = cfg.state_path() else {
         warn("FATAL SPIRA_RUN is unknown — cannot keep episode state");
         return 2;
@@ -413,7 +585,9 @@ fn check_raising(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, Str
     let _lock = match state::try_lock(&lock_path) {
         Ok(Some(f)) => f,
         Ok(None) => {
-            log("check: another instance holds the lock — declining to avoid acting on stale state");
+            log(
+                "check: another instance holds the lock — declining to avoid acting on stale state",
+            );
             return 0;
         }
         Err(e) => {
@@ -426,7 +600,10 @@ fn check_raising(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, Str
     let (aged, mut keep) = state::apply(&st, &c.rows, now);
     if !dry {
         if let Err(e) = state::save(&state_path, &keep) {
-            warn(&format!("check: cannot write {}: {e}", state_path.display()));
+            warn(&format!(
+                "check: cannot write {}: {e}",
+                state_path.display()
+            ));
         }
     }
     let mut handled = 0;
@@ -449,7 +626,10 @@ fn check_raising(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, Str
             Step::Act => {
                 if r.row.kind.as_str() == "stale-blocked" {
                     let _ = probe::recompute_blocked(door);
-                    println!("RECOMPUTED is_blocked — {} stuck with every blocker closed", r.row.id);
+                    println!(
+                        "RECOMPUTED is_blocked — {} stuck with every blocker closed",
+                        r.row.id
+                    );
                 }
                 mark(&state_path, &mut keep, &r.part, &r.row, Mark::Acted);
                 handled += 1;
@@ -458,7 +638,10 @@ fn check_raising(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, Str
                 if r.row.kind == "starved" {
                     let live = lane_live_now(cfg, probe::roster(cfg, Some(&r.part)));
                     if !starved_stands(live) {
-                        log(&format!("check: [{}] starved cleared at raise time — no ask written", r.part));
+                        log(&format!(
+                            "check: [{}] starved cleared at raise time — no ask written",
+                            r.part
+                        ));
                         continue;
                     }
                     if live.is_none() {
@@ -483,7 +666,17 @@ fn check_raising(cfg: &Config, door: &Result<spira_store::lc_call::LcClient, Str
 fn lane_live_now(cfg: &Config, specs: Result<Vec<probe::PartitionSpec>, String>) -> Option<u32> {
     let specs = specs.ok()?;
     let live = probe::live_units(cfg).ok()?;
-    Some(specs.iter().flat_map(|s| s.runes.iter()).map(|f| live.iter().filter(|u| runtime::units::is_dwarf_of(u, f, f)).count() as u32).sum())
+    Some(
+        specs
+            .iter()
+            .flat_map(|s| s.runes.iter())
+            .map(|f| {
+                live.iter()
+                    .filter(|u| runtime::units::is_dwarf_of(u, f, f))
+                    .count() as u32
+            })
+            .sum(),
+    )
 }
 
 /// Only a lane read as live withholds the ask; a failed probe must not suppress it silently.
@@ -515,7 +708,9 @@ fn mark(path: &Path, st: &mut state::State, part: &str, row: &Row, what: Mark) {
 /// `$SPIRA_NOW` either. The cooldown *decision* and the cooldown file still use the
 /// (possibly injected) `now` the caller passes, exactly as the bash's own `now` variable did.
 pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: &str) {
-    let Some(run_dir) = cfg.run.as_ref() else { return };
+    let Some(run_dir) = cfg.run.as_ref() else {
+        return;
+    };
     let dir = run_dir.join("events");
     if fs::create_dir_all(&dir).is_err() {
         return;
@@ -523,7 +718,13 @@ pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: 
     let target = if target == "-" { "" } else { target };
     let key: String = format!("{kind}@{}", if target.is_empty() { "plan" } else { target })
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let now = timefmt::now();
     let cooldown = cfg.event_cooldown;
@@ -560,7 +761,10 @@ pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: 
     }
     let mut title = title.to_string();
     if supp > 0 {
-        title.push_str(&format!(" (+{supp} more since {})", timefmt::utc_hhmm(last)));
+        title.push_str(&format!(
+            " (+{supp} more since {})",
+            timefmt::utc_hhmm(last)
+        ));
     }
     let _ = fs::write(&f, format!("{now} 0\n"));
     let mut line = format!(
@@ -575,7 +779,11 @@ pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: 
         line.push_str(detail);
     }
     line.push('\n');
-    if let Ok(mut fh) = fs::OpenOptions::new().create(true).append(true).open(run_dir.join("events.log")) {
+    if let Ok(mut fh) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(run_dir.join("events.log"))
+    {
         let _ = fh.write_all(line.as_bytes());
     }
 }
@@ -614,20 +822,40 @@ pub fn bead_context(bead: Option<&crate::model::Bead>, id: &str, now: i64) -> St
         .and_then(timefmt::parse_rfc3339)
         .map(|t| {
             let h = (now - t) / 3600;
-            if h < 48 { format!("{h}h") } else { format!("{}d", h / 24) }
+            if h < 48 {
+                format!("{h}h")
+            } else {
+                format!("{}d", h / 24)
+            }
         })
         .unwrap_or_else(|| "?".into());
     let mut out = format!(
         "BEAD    {}  [{}, P{}, open {}]\n",
         b.id,
         b.status.as_str(),
-        b.priority.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
+        b.priority
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "?".into()),
         age
     );
-    out.push_str(&format!("TITLE   {}\n", b.title.as_deref().filter(|t| !t.is_empty()).unwrap_or("(none)")));
-    let labs = if b.labels.is_empty() { "(none)".to_string() } else { b.labels.join(", ") };
+    out.push_str(&format!(
+        "TITLE   {}\n",
+        b.title
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .unwrap_or("(none)")
+    ));
+    let labs = if b.labels.is_empty() {
+        "(none)".to_string()
+    } else {
+        b.labels.join(", ")
+    };
     out.push_str(&format!("LABELS  {labs}\n\nWHAT THIS BEAD IS FOR\n"));
-    let desc = b.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
+    let desc = b
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
     out.push_str(desc.unwrap_or("(no description — that is itself the problem)"));
     if let Some(notes) = b.notes.as_ref().filter(|n| !n.0.is_empty()) {
         out.push_str("\n\nMOST RECENT NOTES");
@@ -647,7 +875,18 @@ pub fn escalation_body(title: &str, action: &str, why: &str, ctx: &str) -> Strin
 /// A stranded-work alert is about the very mailboxes a dead reader leaves unread; it is a note
 /// to the operator with the bypass, since an unclassed question is rerouted to the concierge.
 pub fn operator_send_args<'a>(title: &'a str, condition: &'a str) -> Vec<&'a str> {
-    vec!["send", "operator", "--from", "Strand check <strand@spira>", "--subject", title, "--kind", "note", "--condition", condition]
+    vec![
+        "send",
+        "operator",
+        "--from",
+        "Strand check <strand@spira>",
+        "--subject",
+        title,
+        "--kind",
+        "note",
+        "--condition",
+        condition,
+    ]
 }
 
 /// The `X-Spira-Condition` of a stranded-work alarm: the owner `mail tidy` asks, and the episode
@@ -660,14 +899,20 @@ pub fn condition_key(part: &str, kind: &str, id: &str) -> String {
 /// state, 0 while it stands, 1 when that cannot be told.
 pub const CONDITION_ENDED: i32 = 10;
 pub fn condition_exit(cfg: &Config, episode: &str) -> i32 {
-    match cfg.state_path().and_then(|p| state::episode_stands(&p, episode)) {
+    match cfg
+        .state_path()
+        .and_then(|p| state::episode_stands(&p, episode))
+    {
         Some(true) => 0,
         Some(false) => CONDITION_ENDED,
         None => 1,
     }
 }
 
-pub const OPERATOR_CONSIDERED: (&str, &str) = ("SPIRA_MAIL_OPERATOR_CONSIDERED", "strand-check alerts the operator about stranded work whoever reads the concierge");
+pub const OPERATOR_CONSIDERED: (&str, &str) = (
+    "SPIRA_MAIL_OPERATOR_CONSIDERED",
+    "strand-check alerts the operator about stranded work whoever reads the concierge",
+);
 
 fn tail_lines(path: Option<&Path>, n: usize) -> String {
     match path.and_then(|p| fs::read(p).ok()) {
@@ -690,8 +935,16 @@ fn escalate_to_inbox(title: &str, detail: &str, action: &str) {
         warn("check: SPIRA_CONCIERGE_INBOX unreadable — the unrostered row reached no one");
         return;
     };
-    let line = format!("{} {}\n", timefmt::utc_stamp(timefmt::now()), inbox_line(title, detail, action).replace('\n', " "));
-    let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(line.as_bytes()));
+    let line = format!(
+        "{} {}\n",
+        timefmt::utc_stamp(timefmt::now()),
+        inbox_line(title, detail, action).replace('\n', " ")
+    );
+    let wrote = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(line.as_bytes()));
     if let Err(e) = wrote {
         warn(&format!("check: cannot append to {path}: {e}"));
     }
@@ -703,13 +956,19 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
         escalate_to_inbox(&title, detail, action);
         return;
     }
-    let bead = if id.is_empty() || id == "-" { None } else { match spira_store::lc_call::LcClient::configured() {
+    let bead = if id.is_empty() || id == "-" {
+        None
+    } else {
+        match spira_store::lc_call::LcClient::configured() {
             Ok(lc) => probe::show(&lc, id),
             Err(e) => {
-                warn(&format!("WARN the escalation for {id} carries no bead context: {e}"));
+                warn(&format!(
+                    "WARN the escalation for {id} carries no bead context: {e}"
+                ));
                 None
             }
-        } };
+        }
+    };
     let ctx = format!(
         "{}\n\nWHY THIS IS ESCALATED\n{}\n\nSENTINEL STATE\n{}",
         bead_context(bead.as_ref(), id, timefmt::now()),
@@ -741,9 +1000,16 @@ mod tests {
     #[test]
     fn an_unrostered_row_escalates_inside_the_grace_and_a_stuck_row_does_not() {
         let mut r = aged("unrostered", Disposition::Escalate, 0, 0, 0);
-        assert_eq!(decide(&r, false, 900), Step::Skip, "a row of another partition waits out the grace");
+        assert_eq!(
+            decide(&r, false, 900),
+            Step::Skip,
+            "a row of another partition waits out the grace"
+        );
         r.part = crate::unrostered::PART.into();
-        assert_eq!(decide(&r, false, 900), Step::Escalate { detail: "d".into() });
+        assert_eq!(
+            decide(&r, false, 900),
+            Step::Escalate { detail: "d".into() }
+        );
         r.escalated = 5;
         assert_eq!(decide(&r, false, 900), Step::Skip, "once");
     }
@@ -751,8 +1017,15 @@ mod tests {
     #[test_id(t576zgl)]
     #[test]
     fn the_inbox_line_names_the_row_and_its_action() {
-        let l = inbox_line("Spira: sp-x is stranded (unrostered)", "no persona", "roster it");
-        assert!(l.contains("sp-x") && l.contains("no persona") && l.contains("roster it"), "{l}");
+        let l = inbox_line(
+            "Spira: sp-x is stranded (unrostered)",
+            "no persona",
+            "roster it",
+        );
+        assert!(
+            l.contains("sp-x") && l.contains("no persona") && l.contains("roster it"),
+            "{l}"
+        );
     }
 
     fn no_door() -> Result<spira_store::lc_call::LcClient, String> {
@@ -765,18 +1038,58 @@ mod tests {
     fn a_stale_blocked_act_sends_recompute_blocked_to_the_door() {
         use spira_store::lc_call::{fake::Content, LcClient};
         let run = testkit::TempDir::new("strand-check-recompute");
-        let cfg = Config { run: Some(run.to_path_buf()), strand_grace: 0, ..Config::test_fixture() };
-        let rows = vec![PartRow { part: "spira,plan".into(), row: Row::new("stale-blocked", "sp-x", Disposition::Act, "d".into(), "a".into()) }];
+        let cfg = Config {
+            run: Some(run.to_path_buf()),
+            strand_grace: 0,
+            ..Config::test_fixture()
+        };
+        let rows = vec![PartRow {
+            part: "spira,plan".into(),
+            row: Row::new(
+                "stale-blocked",
+                "sp-x",
+                Disposition::Act,
+                "d".into(),
+                "a".into(),
+            ),
+        }];
         let door = std::sync::Arc::new(Content::new(vec![]));
-        let rc = check_raising(&cfg, &Ok(LcClient::over(door.clone(), true)), Classified { rows, watching: Vec::new(), live: Vec::new() }, false, &mut |_, _, _, _, _| {});
+        let rc = check_raising(
+            &cfg,
+            &Ok(LcClient::over(door.clone(), true)),
+            Classified {
+                rows,
+                watching: Vec::new(),
+                live: Vec::new(),
+            },
+            false,
+            &mut |_, _, _, _, _| {},
+        );
         assert_eq!(rc, 0);
-        assert_eq!(door.requests(), vec![vec!["content".to_string(), "recompute-blocked".to_string()]]);
+        assert_eq!(
+            door.requests(),
+            vec![vec!["content".to_string(), "recompute-blocked".to_string()]]
+        );
     }
 
     fn escalating_fixture(run: &Path, disp: Disposition) -> (Config, Classified) {
-        let cfg = Config { run: Some(run.to_path_buf()), strand_grace: 0, ..Config::test_fixture() };
-        let rows = vec![PartRow { part: "spira,plan".into(), row: Row::new("stuck", "sp-x", disp, "d".into(), "a".into()) }];
-        (cfg, Classified { rows, watching: Vec::new(), live: Vec::new() })
+        let cfg = Config {
+            run: Some(run.to_path_buf()),
+            strand_grace: 0,
+            ..Config::test_fixture()
+        };
+        let rows = vec![PartRow {
+            part: "spira,plan".into(),
+            row: Row::new("stuck", "sp-x", disp, "d".into(), "a".into()),
+        }];
+        (
+            cfg,
+            Classified {
+                rows,
+                watching: Vec::new(),
+                live: Vec::new(),
+            },
+        )
     }
 
     // covers: UC-ops-detection-remediation-21
@@ -791,14 +1104,22 @@ mod tests {
             raised += 1;
             // The first runner is inside its critical section, holding the lock, right now.
             let (cfg2, c2) = escalating_fixture(&run, Disposition::Escalate);
-            inner_rc = Some(check_raising(&cfg2, &no_door(), c2, false, &mut |_, _, _, _, _| panic!("a declined runner raised an escalation")));
+            inner_rc = Some(check_raising(
+                &cfg2,
+                &no_door(),
+                c2,
+                false,
+                &mut |_, _, _, _, _| panic!("a declined runner raised an escalation"),
+            ));
         });
         assert_eq!(rc, 0);
         assert_eq!(inner_rc, Some(0), "the second runner declines cleanly");
         assert_eq!(raised, 1);
 
         let (cfg3, c3) = escalating_fixture(&run, Disposition::Escalate);
-        let rc = check_raising(&cfg3, &no_door(), c3, false, &mut |_, _, _, _, _| panic!("the same episode escalated again"));
+        let rc = check_raising(&cfg3, &no_door(), c3, false, &mut |_, _, _, _, _| {
+            panic!("the same episode escalated again")
+        });
         assert_eq!(rc, 0, "a later runner finds the episode already escalated");
     }
 
@@ -808,7 +1129,9 @@ mod tests {
     fn an_info_row_never_raises_an_escalation() {
         let run = testkit::TempDir::new("strand-check-info");
         let (cfg, c) = escalating_fixture(&run, Disposition::Info);
-        let rc = check_raising(&cfg, &no_door(), c, false, &mut |_, _, _, _, _| panic!("an info row reached the escalation path"));
+        let rc = check_raising(&cfg, &no_door(), c, false, &mut |_, _, _, _, _| {
+            panic!("an info row reached the escalation path")
+        });
         assert_eq!(rc, 0);
     }
 
@@ -828,8 +1151,14 @@ mod tests {
         let a = operator_send_args("t", "strand:p:k:i");
         assert_eq!(a[1], "operator");
         assert!(a.windows(2).any(|w| w == ["--kind", "note"]), "{a:?}");
-        assert!(!a.contains(&"--default") && !a.contains(&"question"), "{a:?}");
-        assert!(a.windows(2).any(|w| w == ["--condition", "strand:p:k:i"]), "{a:?}");
+        assert!(
+            !a.contains(&"--default") && !a.contains(&"question"),
+            "{a:?}"
+        );
+        assert!(
+            a.windows(2).any(|w| w == ["--condition", "strand:p:k:i"]),
+            "{a:?}"
+        );
         assert_eq!(OPERATOR_CONSIDERED.0, "SPIRA_MAIL_OPERATOR_CONSIDERED");
         let b = escalation_body("T", "do x", "why", "ctx");
         assert!(b.starts_with("## Note\n") && b.contains("do x"), "{b}");
@@ -837,38 +1166,82 @@ mod tests {
 
     #[test_id(txfb4en)]
     #[test]
-    fn a_stranded_alarms_condition_stands_while_its_episode_is_in_the_state_and_ends_when_it_leaves() {
+    fn a_stranded_alarms_condition_stands_while_its_episode_is_in_the_state_and_ends_when_it_leaves(
+    ) {
         let run = testkit::TempDir::new("strand-condition");
-        let cfg = Config { run: Some(run.to_path_buf()), ..Config::test_fixture() };
+        let cfg = Config {
+            run: Some(run.to_path_buf()),
+            ..Config::test_fixture()
+        };
         let key = state::key("spira,plan", "starved", "-");
-        assert_eq!(condition_key("spira,plan", "starved", "-"), format!("strand:{key}"));
-        assert_eq!(condition_exit(&cfg, &key), CONDITION_ENDED, "no state file holds no episode");
+        assert_eq!(
+            condition_key("spira,plan", "starved", "-"),
+            format!("strand:{key}")
+        );
+        assert_eq!(
+            condition_exit(&cfg, &key),
+            CONDITION_ENDED,
+            "no state file holds no episode"
+        );
         let mut st = state::State::new();
         state::mark(&mut st, "spira,plan", "starved", "-", Mark::Escalated, 5);
         state::save(&cfg.state_path().unwrap(), &st).unwrap();
-        assert_eq!(condition_exit(&cfg, &key), 0, "positive control: the episode stands");
-        assert_eq!(condition_exit(&cfg, "spira,plan:stuck:sp-x"), CONDITION_ENDED);
+        assert_eq!(
+            condition_exit(&cfg, &key),
+            0,
+            "positive control: the episode stands"
+        );
+        assert_eq!(
+            condition_exit(&cfg, "spira,plan:stuck:sp-x"),
+            CONDITION_ENDED
+        );
         fs::write(cfg.state_path().unwrap(), "{not json").unwrap();
-        assert_eq!(condition_exit(&cfg, &key), 1, "a corrupt state is not an ended episode");
+        assert_eq!(
+            condition_exit(&cfg, &key),
+            1,
+            "a corrupt state is not an ended episode"
+        );
     }
 
     #[test_id(t2rlx7r)]
     #[test]
     fn titles() {
-        assert_eq!(title_for("spira,plan", "stuck", "sp-1"), "Spira: sp-1 is stranded (stuck)");
-        assert_eq!(title_for("spira,plan", "starved", "-"), "Spira: the [spira,plan] queue is stranded (starved)");
-        assert_eq!(title_for("-", "starved", "-"), "Spira: the plan is stranded (starved)");
-        assert_eq!(title_for("p", "reclaim-ceiling", "sp-1"), "Spira: sp-1 keeps losing its dwarf — the host, not the bead");
+        assert_eq!(
+            title_for("spira,plan", "stuck", "sp-1"),
+            "Spira: sp-1 is stranded (stuck)"
+        );
+        assert_eq!(
+            title_for("spira,plan", "starved", "-"),
+            "Spira: the [spira,plan] queue is stranded (starved)"
+        );
+        assert_eq!(
+            title_for("-", "starved", "-"),
+            "Spira: the plan is stranded (starved)"
+        );
+        assert_eq!(
+            title_for("p", "reclaim-ceiling", "sp-1"),
+            "Spira: sp-1 keeps losing its dwarf — the host, not the bead"
+        );
     }
 
     #[test_id(t1lxolo)]
     #[test]
     fn the_raise_time_lane_count_reads_units_whatever_the_call_mode_and_none_when_unreadable() {
         let t = testkit::TempDir::new("strand-lane-live");
-        let spec = || vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), runes: vec!["builder".into()] }];
+        let spec = || {
+            vec![probe::PartitionSpec {
+                labels: "spira,plan".into(),
+                exclude: String::new(),
+                runes: vec!["builder".into()],
+            }]
+        };
         let sc = t.join("systemctl");
         testkit::write_exe(&sc, "#!/bin/sh\ncase \"$*\" in *spira-run-sentinel*) printf 'Id=spira-run-sentinel_2dcall-builder_2d1_2d0.service\\nLoadState=loaded\\nActiveState=active\\nSubState=running\\n\\n';; esac\n");
-        let cfg = Config { call: "runtime".into(), systemctl: sc.to_string_lossy().into_owned(), ..Config::test_fixture() };
+        let cfg = Config {
+            call: "runtime".into(),
+            systemctl: sc.to_string_lossy().into_owned(),
+            ..Config::test_fixture()
+        };
         assert_eq!(lane_live_now(&cfg, Ok(spec())), Some(1));
         testkit::write_exe(&sc, "#!/bin/sh\nexit 1\n");
         assert_eq!(lane_live_now(&cfg, Ok(spec())), None);
@@ -878,17 +1251,34 @@ mod tests {
     #[test]
     fn report_shapes() {
         let rows = vec![aged("stuck", Disposition::Escalate, 180, 0, 0)];
-        let t = render_text(&["spira-dwarf-builder-1.service".into()], 42, &rows, &["spira,plan".into()]);
+        let t = render_text(
+            &["spira-dwarf-builder-1.service".into()],
+            42,
+            &rows,
+            &["spira,plan".into()],
+        );
         let lines: Vec<&str> = t.lines().collect();
         assert_eq!(lines[0], "scheduler last pass: 42s ago");
         assert_eq!(lines[1], "live dwarves: 1");
         assert_eq!(lines[2], "  spira-dwarf-builder-1.service");
-        assert_eq!(lines[4], "PARTITION        KIND                 ID               DISPOSITION    AGE  DETAIL");
-        assert_eq!(lines[5], "spira,plan       stuck                sp-x             escalate      3m  d");
+        assert_eq!(
+            lines[4],
+            "PARTITION        KIND                 ID               DISPOSITION    AGE  DETAIL"
+        );
+        assert_eq!(
+            lines[5],
+            "spira,plan       stuck                sp-x             escalate      3m  d"
+        );
         assert_eq!(lines[6], format!("{}→ a", " ".repeat(71)));
-        let empty = render_text(&[], -1, &[], &["spira,plan".into(), "spira,incident".into()]);
+        let empty = render_text(
+            &[],
+            -1,
+            &[],
+            &["spira,plan".into(), "spira,incident".into()],
+        );
         assert!(empty.ends_with("no stranded work in [spira,plan spira,incident]\n"));
-        let j: serde_json::Value = serde_json::from_str(&render_json(&["u.service".into()], 42, &rows)).unwrap();
+        let j: serde_json::Value =
+            serde_json::from_str(&render_json(&["u.service".into()], 42, &rows)).unwrap();
         assert_eq!(j["live_dwarves"][0], "u.service");
         assert_eq!(j["last_pass_seconds"], 42);
         assert_eq!(j["strands"][0]["partition"], "spira,plan");
@@ -908,12 +1298,26 @@ mod ungated_submitted_tests {
     fn a_held_submitted_bead_is_not_ungated() {
         let run = testkit::TempDir::new("strand-ungated");
         fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
-        let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
-        let held = spira_store::lc_state::Row { holds: vec!["wait".into()], ..row("sp-b") };
+        let row = |id: &str| spira_store::lc_state::Row {
+            bead_id: id.into(),
+            state: "SUBMITTED".into(),
+            ..Default::default()
+        };
+        let held = spira_store::lc_state::Row {
+            holds: vec!["wait".into()],
+            ..row("sp-b")
+        };
         let rows = [row("sp-a"), held];
         let unheld = [row("sp-a"), row("sp-b")];
-        assert_eq!(ungated_submitted(&run, &unheld, &Default::default(), 1000).len(), 2, "the matcher must be able to find an ungated bead");
-        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), 1000), ["sp-a".to_string()].into_iter().collect());
+        assert_eq!(
+            ungated_submitted(&run, &unheld, &Default::default(), 1000).len(),
+            2,
+            "the matcher must be able to find an ungated bead"
+        );
+        assert_eq!(
+            ungated_submitted(&run, &rows, &Default::default(), 1000),
+            ["sp-a".to_string()].into_iter().collect()
+        );
     }
 
     #[test_id(tqgwrbp)]
@@ -921,14 +1325,23 @@ mod ungated_submitted_tests {
     fn a_submitted_bead_whose_timed_wait_expired_is_ungated_and_any_other_hold_is_not() {
         let run = testkit::TempDir::new("strand-expired-wait");
         fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
-        let row = |id: &str, holds: &[&str], reason: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), holds: holds.iter().map(|h| h.to_string()).collect(), reason: Some(reason.into()), ..Default::default() };
+        let row = |id: &str, holds: &[&str], reason: &str| spira_store::lc_state::Row {
+            bead_id: id.into(),
+            state: "SUBMITTED".into(),
+            holds: holds.iter().map(|h| h.to_string()).collect(),
+            reason: Some(reason.into()),
+            ..Default::default()
+        };
         let rows = [
             row("sp-expired", &["wait"], "snooze-until:900"),
             row("sp-live", &["wait"], "snooze-until:1100"),
             row("sp-untimed", &["wait"], "sp-blocker"),
             row("sp-ask", &["wait", "ask"], "snooze-until:900"),
         ];
-        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), 1000), ["sp-expired".to_string()].into_iter().collect());
+        assert_eq!(
+            ungated_submitted(&run, &rows, &Default::default(), 1000),
+            ["sp-expired".to_string()].into_iter().collect()
+        );
     }
 
     #[test_id(th6awlv)]
@@ -936,20 +1349,49 @@ mod ungated_submitted_tests {
     fn a_submitted_bead_of_a_pull_request_repo_is_not_ungated() {
         let run = testkit::TempDir::new("strand-pr-mode");
         fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
-        let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
+        let row = |id: &str| spira_store::lc_state::Row {
+            bead_id: id.into(),
+            state: "SUBMITTED".into(),
+            ..Default::default()
+        };
         let rows = [row("sp-a"), row("sp-b")];
-        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), 1000).len(), 2, "the matcher must be able to find an ungated bead");
+        assert_eq!(
+            ungated_submitted(&run, &rows, &Default::default(), 1000).len(),
+            2,
+            "the matcher must be able to find an ungated bead"
+        );
         let pr_mode = ["sp-b".to_string()].into_iter().collect();
-        assert_eq!(ungated_submitted(&run, &rows, &pr_mode, 1000), ["sp-a".to_string()].into_iter().collect());
+        assert_eq!(
+            ungated_submitted(&run, &rows, &pr_mode, 1000),
+            ["sp-a".to_string()].into_iter().collect()
+        );
     }
 
     #[test_id(t8bbxy2)]
     #[test]
     fn pr_mode_beads_are_the_beads_labelled_with_a_repo_that_lands_by_pull_request() {
-        let reg = spira_config::repos::Registry::new(Some("prrepo|/x|pr\ngaterepo|/y|push\n"), &Default::default(), Path::new("nonexistent"));
-        let bead = |id: &str, repo: &str| crate::model::Bead { id: id.into(), labels: vec![format!("repo:{repo}")], ..Default::default() };
-        let store = Store::new(vec![bead("sp-a", "prrepo"), bead("sp-b", "gaterepo"), crate::model::Bead { id: "sp-c".into(), ..Default::default() }]);
-        assert_eq!(pr_mode_beads(&reg, &store), ["sp-a".to_string()].into_iter().collect());
+        let reg = spira_config::repos::Registry::new(
+            Some("prrepo|/x|pr\ngaterepo|/y|push\n"),
+            &Default::default(),
+            Path::new("nonexistent"),
+        );
+        let bead = |id: &str, repo: &str| crate::model::Bead {
+            id: id.into(),
+            labels: vec![format!("repo:{repo}")],
+            ..Default::default()
+        };
+        let store = Store::new(vec![
+            bead("sp-a", "prrepo"),
+            bead("sp-b", "gaterepo"),
+            crate::model::Bead {
+                id: "sp-c".into(),
+                ..Default::default()
+            },
+        ]);
+        assert_eq!(
+            pr_mode_beads(&reg, &store),
+            ["sp-a".to_string()].into_iter().collect()
+        );
     }
 
     #[test_id(tzevssy)]
@@ -958,14 +1400,37 @@ mod ungated_submitted_tests {
         let run = testkit::TempDir::new("strand-backoff");
         fs::create_dir_all(run.join("gate-worker/inbox")).unwrap();
         fs::create_dir_all(run.join("gate-backoff")).unwrap();
-        let row = |id: &str| spira_store::lc_state::Row { bead_id: id.into(), state: "SUBMITTED".into(), ..Default::default() };
+        let row = |id: &str| spira_store::lc_state::Row {
+            bead_id: id.into(),
+            state: "SUBMITTED".into(),
+            ..Default::default()
+        };
         let rows = [row("sp-a"), row("sp-b")];
         let now = 1000;
-        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), now).len(), 2, "the matcher must be able to find an ungated bead");
-        fs::write(run.join("gate-backoff/spira-sp-b"), format!("t1\n{}\n", now + 60)).unwrap();
-        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), now), ["sp-a".to_string()].into_iter().collect());
-        fs::write(run.join("gate-backoff/spira-sp-b"), format!("t1\n{}\n", now - 1)).unwrap();
-        assert_eq!(ungated_submitted(&run, &rows, &Default::default(), now).len(), 2, "an ended backoff is a stranding again");
+        assert_eq!(
+            ungated_submitted(&run, &rows, &Default::default(), now).len(),
+            2,
+            "the matcher must be able to find an ungated bead"
+        );
+        fs::write(
+            run.join("gate-backoff/spira-sp-b"),
+            format!("t1\n{}\n", now + 60),
+        )
+        .unwrap();
+        assert_eq!(
+            ungated_submitted(&run, &rows, &Default::default(), now),
+            ["sp-a".to_string()].into_iter().collect()
+        );
+        fs::write(
+            run.join("gate-backoff/spira-sp-b"),
+            format!("t1\n{}\n", now - 1),
+        )
+        .unwrap();
+        assert_eq!(
+            ungated_submitted(&run, &rows, &Default::default(), now).len(),
+            2,
+            "an ended backoff is a stranding again"
+        );
     }
 
     #[test_id(tx1f0ud)]
@@ -973,14 +1438,32 @@ mod ungated_submitted_tests {
     fn work_waiting_on_a_task_that_has_not_ticked_is_reported_and_a_fresh_tick_is_not() {
         let run = testkit::TempDir::new("strand-task-silent");
         for task in ["gate.worker", "batcher.local"] {
-            assert!(task_silent(&run, task, 0, "waiting").is_none(), "no work waiting, nothing to report");
+            assert!(
+                task_silent(&run, task, 0, "waiting").is_none(),
+                "no work waiting, nothing to report"
+            );
             let silent = task_silent(&run, task, 1, "waiting").expect("never ticked");
-            assert_eq!(silent.row.kind, format!("{}-silent", task.replace('.', "-")));
+            assert_eq!(
+                silent.row.kind,
+                format!("{}-silent", task.replace('.', "-"))
+            );
             spira_config::ticked::stamp(&run, task);
-            assert!(task_silent(&run, task, 1, "waiting").is_none(), "ticked just now");
-            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(TASK_SILENT_S + 60);
-            fs::File::options().write(true).open(spira_config::ticked::path(&run, task)).unwrap().set_modified(old).unwrap();
-            assert!(task_silent(&run, task, 1, "waiting").is_some(), "ticked over two minutes ago");
+            assert!(
+                task_silent(&run, task, 1, "waiting").is_none(),
+                "ticked just now"
+            );
+            let old =
+                std::time::SystemTime::now() - std::time::Duration::from_secs(TASK_SILENT_S + 60);
+            fs::File::options()
+                .write(true)
+                .open(spira_config::ticked::path(&run, task))
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+            assert!(
+                task_silent(&run, task, 1, "waiting").is_some(),
+                "ticked over two minutes ago"
+            );
         }
     }
 
@@ -992,11 +1475,29 @@ mod ungated_submitted_tests {
         assert_eq!(silent.row.kind, "watch-transitions-silent");
         spira_config::ticked::stamp(&run, SCHEDULER_TASK);
         assert!(scheduler_silent(&run, 300).is_none(), "ticked just now");
-        let late = std::time::SystemTime::now() - std::time::Duration::from_secs(300 * SCHEDULER_MISSED_TICKS - 60);
-        fs::File::options().write(true).open(spira_config::ticked::path(&run, SCHEDULER_TASK)).unwrap().set_modified(late).unwrap();
-        assert!(scheduler_silent(&run, 300).is_none(), "two periods late is not yet three missed ticks");
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(300 * SCHEDULER_MISSED_TICKS + 60);
-        fs::File::options().write(true).open(spira_config::ticked::path(&run, SCHEDULER_TASK)).unwrap().set_modified(old).unwrap();
-        assert!(scheduler_silent(&run, 300).is_some(), "three periods without a tick");
+        let late = std::time::SystemTime::now()
+            - std::time::Duration::from_secs(300 * SCHEDULER_MISSED_TICKS - 60);
+        fs::File::options()
+            .write(true)
+            .open(spira_config::ticked::path(&run, SCHEDULER_TASK))
+            .unwrap()
+            .set_modified(late)
+            .unwrap();
+        assert!(
+            scheduler_silent(&run, 300).is_none(),
+            "two periods late is not yet three missed ticks"
+        );
+        let old = std::time::SystemTime::now()
+            - std::time::Duration::from_secs(300 * SCHEDULER_MISSED_TICKS + 60);
+        fs::File::options()
+            .write(true)
+            .open(spira_config::ticked::path(&run, SCHEDULER_TASK))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(
+            scheduler_silent(&run, 300).is_some(),
+            "three periods without a tick"
+        );
     }
 }

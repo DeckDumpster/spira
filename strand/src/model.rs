@@ -66,7 +66,12 @@ impl Status {
 pub struct Dependency {
     #[serde(default, deserialize_with = "null_default")]
     pub depends_on_id: Option<String>,
-    #[serde(default, rename = "type", alias = "dependency_type", deserialize_with = "null_default")]
+    #[serde(
+        default,
+        rename = "type",
+        alias = "dependency_type",
+        deserialize_with = "null_default"
+    )]
     pub dep_type: Option<String>,
     #[serde(default, deserialize_with = "null_default")]
     pub id: Option<String>,
@@ -78,7 +83,10 @@ impl Dependency {
         if self.dep_type.as_deref() != Some("blocks") {
             return None;
         }
-        self.depends_on_id.as_deref().or(self.id.as_deref()).filter(|s| !s.is_empty())
+        self.depends_on_id
+            .as_deref()
+            .or(self.id.as_deref())
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -91,9 +99,11 @@ impl<'de> Deserialize<'de> for Notes {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let v = serde_json::Value::deserialize(d)?;
         let lines = match v {
-            serde_json::Value::String(s) => {
-                s.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect()
-            }
+            serde_json::Value::String(s) => s
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(str::to_string)
+                .collect(),
             serde_json::Value::Array(a) => a
                 .into_iter()
                 .map(|x| match x {
@@ -156,7 +166,9 @@ impl Bead {
         self.issue_type.as_deref() == Some("epic")
     }
     pub fn blocks_targets(&self) -> impl Iterator<Item = &str> {
-        self.dependencies.iter().filter_map(Dependency::blocks_target)
+        self.dependencies
+            .iter()
+            .filter_map(Dependency::blocks_target)
     }
 }
 
@@ -236,7 +248,13 @@ pub struct Row {
 
 impl Row {
     pub fn new(kind: &str, id: &str, disp: Disposition, detail: String, action: String) -> Row {
-        Row { kind: kind.into(), id: id.into(), disp, detail, action }
+        Row {
+            kind: kind.into(),
+            id: id.into(),
+            disp,
+            detail,
+            action,
+        }
     }
     #[cfg_attr(not(test), allow(dead_code))] // the saved-TSV shape `check --from` reads
     pub fn to_tsv(&self) -> String {
@@ -261,7 +279,13 @@ impl Row {
         if kind.is_empty() {
             return None;
         }
-        Some(Row { kind, id, disp, detail, action })
+        Some(Row {
+            kind,
+            id,
+            disp,
+            detail,
+            action,
+        })
     }
 }
 
@@ -352,7 +376,13 @@ mod tests {
     #[test_id(tbhlid4)]
     #[test]
     fn tsv_round_trip() {
-        let r = Row::new("stuck", "sp-1", Disposition::Escalate, "a\tb".into(), "fix".into());
+        let r = Row::new(
+            "stuck",
+            "sp-1",
+            Disposition::Escalate,
+            "a\tb".into(),
+            "fix".into(),
+        );
         let line = r.to_tsv();
         assert_eq!(line, "stuck\tsp-1\tescalate\ta b\tfix");
         assert_eq!(Row::from_tsv(&line).unwrap().detail, "a b");

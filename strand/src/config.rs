@@ -142,28 +142,34 @@ impl Config {
 
         let nonempty = |v: String| if v.is_empty() { None } else { Some(v) };
         let path = |env: &str| src.env(env).filter(|v| !v.is_empty()).map(PathBuf::from);
-        let num_env = |env: &str, def: i64| src.env(env).and_then(|v| v.trim().parse().ok()).unwrap_or(def);
-        let str_env = |env: &str, def: &str| src.env(env).filter(|v| !v.is_empty()).unwrap_or_else(|| def.to_string());
+        let num_env = |env: &str, def: i64| {
+            src.env(env)
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(def)
+        };
+        let str_env = |env: &str, def: &str| {
+            src.env(env)
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| def.to_string())
+        };
 
         let max_dwarves_raw = cfg("SPIRA_MAX_DWARVES")?;
         let max_dwarves = if max_dwarves_raw.trim().is_empty() {
             None
         } else {
-            Some(
-                max_dwarves_raw
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|e| format!("SPIRA_MAX_DWARVES = {max_dwarves_raw:?} in spira.toml does not parse: {e}"))?,
-            )
+            Some(max_dwarves_raw.trim().parse::<u32>().map_err(|e| {
+                format!("SPIRA_MAX_DWARVES = {max_dwarves_raw:?} in spira.toml does not parse: {e}")
+            })?)
         };
         let max_live_raw = cfg("SPIRA_MAX_LIVE_DWARVES")?;
         let max_live_dwarves = if max_live_raw.trim().is_empty() {
             0
         } else {
-            max_live_raw
-                .trim()
-                .parse::<u32>()
-                .map_err(|e| format!("SPIRA_MAX_LIVE_DWARVES = {max_live_raw:?} in spira.toml does not parse: {e}"))?
+            max_live_raw.trim().parse::<u32>().map_err(|e| {
+                format!(
+                    "SPIRA_MAX_LIVE_DWARVES = {max_live_raw:?} in spira.toml does not parse: {e}"
+                )
+            })?
         };
 
         Ok(Config {
@@ -208,11 +214,15 @@ impl Config {
 
     /// Labels every "is this claimable" predicate excludes (lib.sh ready_shared_exclude).
     pub fn shared_exclude(&self) -> Vec<String> {
-        [&self.vocab.queue_wait, &self.vocab.submitted, &self.vocab.open_children]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .cloned()
-            .collect()
+        [
+            &self.vocab.queue_wait,
+            &self.vocab.submitted,
+            &self.vocab.open_children,
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect()
     }
 
     pub fn state_path(&self) -> Option<PathBuf> {
@@ -222,10 +232,14 @@ impl Config {
         self.run.as_ref().map(|r| r.join("sentinel.log"))
     }
     pub fn capacity_pause_path(&self) -> Option<PathBuf> {
-        self.capacity_pause.clone().or_else(|| self.run.as_ref().map(|r| r.join("capacity-pause")))
+        self.capacity_pause
+            .clone()
+            .or_else(|| self.run.as_ref().map(|r| r.join("capacity-pause")))
     }
     pub fn throttle_stamp_path(&self) -> Option<PathBuf> {
-        self.throttle_stamp.clone().or_else(|| self.run.as_ref().map(|r| r.join("queue-throttled")))
+        self.throttle_stamp
+            .clone()
+            .or_else(|| self.run.as_ref().map(|r| r.join("queue-throttled")))
     }
 }
 
@@ -246,7 +260,10 @@ mod tests {
         struct UnitEnv(Vec<(&'static str, &'static str)>);
         impl Source for UnitEnv {
             fn env(&self, k: &str) -> Option<String> {
-                self.0.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+                self.0
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
             }
         }
         let rel = UnitEnv(vec![("SPIRA_RELEASE", "rel/abc")]);
