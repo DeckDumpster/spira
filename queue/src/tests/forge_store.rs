@@ -143,6 +143,7 @@ fn a_batch_open_whose_record_cannot_be_written_pushes_nothing_and_opens_no_pr() 
     );
 }
 
+// covers: UC-landing-merge-queue-58
 #[test_id(tqvgovv)]
 #[test]
 fn a_crash_after_the_pr_and_before_open_leaves_an_opening_record_the_sweep_adopts() {
@@ -194,6 +195,11 @@ fn a_crash_after_the_pr_and_before_open_leaves_an_opening_record_the_sweep_adopt
             .count(),
         0,
         "the sweep never merges: {calls:?}"
+    );
+    assert_eq!(
+        calls.iter().filter(|c| c.starts_with("pr-create")).count(),
+        1,
+        "the crashed open's PR is adopted, never duplicated: {calls:?}"
     );
 }
 
