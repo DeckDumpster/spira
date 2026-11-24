@@ -41,7 +41,7 @@
 | **SOP** | a runbook (`sop-<slug>`) for a recurring incident, read by `ops` |
 | **stack** | the certified tips of a bead's unlanded prerequisites, recorded at claim |
 | **statute** | a standing rule (`law-<slug>`) that must name its enforcing mechanism |
-| **suite** | a `spira/test-*.sh` test script with `# covers:` and `# tier:` headers |
+| **suite** | a script under `spira/` named `test-*.sh` with `# covers:` and `# tier:` headers; the tree carries none, and a new one is refused |
 | **tip** | the exact commit a submission or certification names |
 | **trigger bead** | a bead a timer files to call a persona (groom, warden, sweep) |
 | **work** | the dwarf's only client onto lifecycle state |

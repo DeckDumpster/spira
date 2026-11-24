@@ -1550,8 +1550,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         }
     };
     let mut identity = deps.runner_identity.clone();
-    // suite-covers.sh is retired (wave 4.36, sp-bobsp): testlib.sh, testenv-guard.sh,
-    // plan-lint.sh, suite-coverage-json.sh and escape-classify.sh now read a suite's header
+    // testenv-guard.sh, plan-lint.sh, suite-coverage-json.sh and escape-classify.sh now read a suite's header
     // by shelling out to the `suite-select` binary, which is NOT linked into this runner
     // executable (unlike the in-process `select`/`gate`/`budget` paths, which are — hence
     // `runner_identity` alone already covers those). A change to that binary changes what a

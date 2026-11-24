@@ -26,8 +26,8 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
     return 1 2>/dev/null || exit 1
 }
 # suite-covers.sh is NOT sourced here (wave 4.36, sp-bobsp): nothing in lib.sh calls its
-# accessors, and the five scripts that do (plan-lint.sh, suite-coverage-json.sh,
-# escape-classify.sh, testenv-guard.sh, testlib.sh) now call `suite-select header ...`
+# accessors, and the four scripts that do (plan-lint.sh, suite-coverage-json.sh,
+# escape-classify.sh, testenv-guard.sh) now call `suite-select header ...`
 # instead — the one Rust parser (suite-select/src/header.rs) that spira-lint and
 # batcher-cut already read. The bash file itself is left on disk, unsourced: dozens of
 # install/lib fixtures still `cp`/`ln -s` it alongside lib.sh/conf.sh from before this

@@ -4,8 +4,7 @@
 //!
 //! A suite's inputs are what the test plan says it reads: its own file; every tracked file its
 //! `# covers:` names (a `file#function` token claims the whole file — the hash is of bytes, not
-//! of functions); the harness files every suite is declared to read ([`HARNESS`] and the
-//! always-covers set); the scripts it runs, followed through the scripts they run; and, for
+//! of functions); the always-covers set; the scripts it runs, followed through the scripts they run; and, for
 //! every workspace binary it invokes, the sources of every crate that binary is built from plus
 //! the lockfile, the workspace manifest and the toolchain pin. The key is a digest of those
 //! paths and their blob ids, so two trees that differ only outside the closure share it.
@@ -17,9 +16,6 @@ use crate::corpus::{Corpus, Suite};
 use crate::glob::case_match;
 use crate::reach::Reach;
 use std::collections::{BTreeMap, BTreeSet};
-
-/// Files every suite reads whatever it declares.
-pub const HARNESS: &[&str] = &["spira/testlib.sh"];
 
 /// Workspace-wide build inputs: any binary a suite runs is built from them.
 pub const BUILD_ROOTS: &[&str] = &["Cargo.lock", "Cargo.toml", "rust-toolchain.toml"];
@@ -46,7 +42,6 @@ pub fn closure_paths(
     let covers = suite.covers.as_ref()?;
     let mut pats: Vec<String> = vec![format!("spira/{}", suite.name)];
     pats.extend(covers.iter().map(|t| t.split('#').next().unwrap_or(t).to_string()).filter(|p| !p.is_empty()));
-    pats.extend(HARNESS.iter().map(|s| s.to_string()));
     pats.extend(always.iter().cloned());
     let mut out: BTreeSet<String> = files.keys().filter(|f| pats.iter().any(|p| case_match(p, f))).cloned().collect();
     // The scripts it runs, and the scripts those run.
@@ -151,7 +146,7 @@ mod tests {
         corpus.shell.add("inner.sh", ":\n");
         let base = [
             ("spira/test-a.sh", "1"), ("spira/a.sh", "2"), ("spira/run.sh", "3"), ("spira/inner.sh", "4"),
-            ("spira/testlib.sh", "5"), ("spira/lib.sh", "6"), ("lib/src/lib.rs", "7"), ("bead/src/main.rs", "8"),
+            ("spira/lib.sh", "6"), ("lib/src/lib.rs", "7"), ("bead/src/main.rs", "8"),
             ("other/src/main.rs", "9"), ("Cargo.lock", "10"), ("docs/x.md", "11"), ("spira/unrelated.sh", "12"),
         ];
         let always = vec!["spira/lib.sh".to_string()];
@@ -169,7 +164,7 @@ mod tests {
         }
         for inside in [
             ("spira/a.sh", "x"), ("spira/test-a.sh", "x"), ("spira/run.sh", "x"), ("spira/inner.sh", "x"),
-            ("lib/src/lib.rs", "x"), ("bead/src/main.rs", "x"), ("Cargo.lock", "x"), ("spira/testlib.sh", "x"),
+            ("lib/src/lib.rs", "x"), ("bead/src/main.rs", "x"), ("Cargo.lock", "x"),
             ("spira/lib.sh", "x"),
         ] {
             assert_ne!(key(Some(inside))["test-a.sh"], k0["test-a.sh"], "{inside:?} is inside the closure");

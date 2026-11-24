@@ -23,7 +23,7 @@ pub struct TapSummary {
     pub cases: Vec<TapCase>,
 }
 
-/// One TAP case. `ms` is testlib.sh's `#ms=<n>` line that follows the case; `at` is its
+/// One TAP case. `ms` is the `#ms=<n>` line that follows the case; `at` is its
 /// `# at <file>:<line>` diagnostic. Either is `None` for output that does not carry it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapCase {
@@ -77,7 +77,7 @@ fn directive(desc: &str) -> Option<&'static str> {
     }
 }
 
-/// The reason testlib.sh's `skip <reason>` names, from its TAP skip-all form
+/// The reason a suite's `skip <reason>` names, from its TAP skip-all form
 /// (`1..0 # SKIP <reason>`, DESIGN.md §3.7). `None` when the suite exited 77 without
 /// following the convention — the caller then has no requirement to check.
 pub fn skip_all_reason(output: &str) -> Option<String> {

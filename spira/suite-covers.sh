@@ -2,8 +2,8 @@
 # sources this file any more:
 # the one Rust parser lives in suite-select/src/header.rs, read through the
 # `suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>`
-# CLI. plan-lint.sh, suite-coverage-json.sh, escape-classify.sh, testenv-guard.sh and
-# testlib.sh all call that binary now; lib.sh no longer sources this file either.
+# CLI. plan-lint.sh, suite-coverage-json.sh, escape-classify.sh, and testenv-guard.sh
+# all call that binary now; lib.sh no longer sources this file either.
 #
 # LEFT ON DISK ON PURPOSE. A few dozen install/lib test fixtures still `cp`/`ln -s` this
 # file alongside lib.sh/conf.sh into a scratch directory — a leftover from when lib.sh

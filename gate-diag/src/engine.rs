@@ -17,7 +17,7 @@ pub fn is_fault(status: &str) -> bool {
 }
 
 /// `grep -E '^  FAIL  |^FAIL[: ]|^not ok '` — the tight tier: a line the suite itself marked
-/// as a failure in one of testlib.sh's own shapes.
+/// as a failure in one of the standard report shapes.
 fn tier1_fail_line(line: &str) -> bool {
     line.starts_with("  FAIL  ")
         || line.starts_with("FAIL:")
@@ -25,8 +25,8 @@ fn tier1_fail_line(line: &str) -> bool {
         || line.starts_with("not ok ")
 }
 
-/// `grep -E 'FAIL|not ok'` — the loose fallback tier, for a suite that never adopted
-/// testlib.sh's exact prefixes but still printed the word somewhere.
+/// `grep -E 'FAIL|not ok'` — the loose fallback tier, for a suite that never used
+/// the standard prefixes but still printed the word somewhere.
 fn tier2_fail_line(line: &str) -> bool {
     line.contains("FAIL") || line.contains("not ok")
 }

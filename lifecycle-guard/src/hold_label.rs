@@ -73,7 +73,7 @@ pub fn scan(files: &[PathBuf], root: &Path) -> Vec<Finding> {
     for path in files {
         let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
         let name = rel.rsplit('/').next().unwrap_or(&rel);
-        if is_test_file(&rel) || name.starts_with("test-") || name == "testlib.sh" || rel.starts_with("lifecycle-guard/") || rel.contains("/disabled/") {
+        if is_test_file(&rel) || name.starts_with("test-") || rel.starts_with("lifecycle-guard/") || rel.contains("/disabled/") {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(path) else {
