@@ -89,7 +89,6 @@ pub(crate) fn drive(ids: &[String], clients: usize, over: &(dyn Fn() -> bool + S
 
 fn call_on(socket: &Path, argv: &[String]) -> bool {
     let Ok(stream) = spira_store::lc_call::connect(socket) else { return false };
-    let _ = stream.set_read_timeout(Some(spira_store::lc_call::DEADLINE));
     spira_store::lc_call::exchange_once(stream, argv, None).is_ok_and(|r| r.code == 0)
 }
 

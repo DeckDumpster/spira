@@ -169,8 +169,7 @@ impl Lc {
     /// One send of the request under `id`, as the `work` client sends it.
     fn send(&self, id: &str, args: &[&str], stdin: Option<&str>) -> (i32, String) {
         let argv: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        let stream = spira_store::lc_call::connect(&self.dir.join("s")).expect("the service answers");
-        stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let stream = spira_store::lc_call::connect_within(&self.dir.join("s"), Duration::from_secs(30)).expect("the service answers");
         let reply = spira_store::lc_call::as_request(id, || spira_store::lc_call::exchange_once(stream, &argv, stdin)).unwrap_or_else(|_| panic!("no answer to {args:?}"));
         (reply.code, format!("{}{}", reply.out, reply.err))
     }
