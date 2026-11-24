@@ -1294,7 +1294,7 @@ mod tests {
     fn every_retired_var_the_gate_resolves_is_a_registered_key() {
         let home = testkit::manifest_dir().join("../spira");
         let missing: Vec<&str> =
-            super::RETIRED_VARS.iter().copied().filter(|k| !spira_config::registry::declares_key(&home, k)).collect();
+            crate::real::RETIRED_VARS.iter().copied().filter(|k| !spira_config::registry::declares_key(&home, k)).collect();
         assert!(missing.is_empty(), "RETIRED_VARS names keys the registry no longer declares: {missing:?}");
     }
 
