@@ -24,10 +24,6 @@ fn unit_args(name: &str) -> Vec<String> {
     rest.split_whitespace().map(String::from).collect()
 }
 
-fn podman_run(args: &[String]) -> Vec<String> {
-    podman_run_with(args, Some("60")).expect("podman run")
-}
-
 fn podman_run_with(args: &[String], flush: Option<&str>) -> Option<Vec<String>> {
     let t = testkit::TempDir::new("metrics-stack");
     let d = t.path();
