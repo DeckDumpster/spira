@@ -406,3 +406,92 @@ fn a_snapshot_refusal_beside_a_stalled_revlog_pages_only_past_the_cycle() {
     run_for(&mut r, 45);
     assert_eq!(lines(&r).len(), 1, "{:?}", lines(&r));
 }
+
+const BASE: u64 = 2_346_000;
+
+fn states(r: &TaskRig) -> usize {
+    r.journaled().iter().filter(|e| e.kind.tag == STATE).count()
+}
+
+fn own_writes_head(r: &TaskRig, others: u64) -> u64 {
+    BASE + others + states(r) as u64
+}
+
+/// One tick with the head every carry write has moved; `lag` ships the previous tick's head.
+fn tick_following(r: &mut TaskRig, world: &World, others: u64, prev_head: &mut u64, lag: bool) {
+    let head = own_writes_head(r, others);
+    let shipped = if lag { *prev_head } else { head };
+    *world.lock().unwrap() = Ok(seen(head, shipped, None));
+    *prev_head = head;
+    r.advance(CADENCE_MS).unwrap();
+}
+
+#[test_id(tzr0w3k)]
+#[test]
+fn an_idle_store_gains_no_carry_writes_from_its_own_carry_write_whether_the_shipper_lags_a_tick_or_not() {
+    for lag in [true, false] {
+        let world: World = Arc::new(Mutex::new(Ok(seen(BASE, BASE, None))));
+        let mut r = rig(&world);
+        let mut prev = BASE;
+        for _ in 0..4 {
+            tick_following(&mut r, &world, 1, &mut prev, lag);
+        }
+        let settled = states(&r);
+        for _ in 0..236 {
+            tick_following(&mut r, &world, 1, &mut prev, lag);
+        }
+        assert!(states(&r) == settled && settled <= 3, "lag={lag}: {} state events", states(&r));
+        assert!(lines(&r).is_empty(), "{:?}", lines(&r));
+    }
+}
+
+#[test_id(t4m8cpe)]
+#[test]
+fn another_writers_revision_costs_at_most_two_carry_writes_and_none_once_shipped() {
+    let world: World = Arc::new(Mutex::new(Ok(seen(BASE, BASE, None))));
+    let mut r = rig(&world);
+    let mut prev = BASE;
+    let mut others = 0;
+    for _ in 0..8 {
+        tick_following(&mut r, &world, others, &mut prev, true);
+    }
+    let quiet = states(&r);
+    others += 1;
+    for _ in 0..40 {
+        tick_following(&mut r, &world, others, &mut prev, true);
+    }
+    assert!(states(&r) - quiet <= 2, "{} writes for one revision", states(&r) - quiet);
+    let after = states(&r);
+    for _ in 0..40 {
+        tick_following(&mut r, &world, others, &mut prev, true);
+    }
+    assert_eq!(states(&r), after);
+    assert!(lines(&r).is_empty());
+}
+
+#[test_id(t9h2vqa)]
+#[test]
+fn another_writers_revision_that_is_never_shipped_pages_red_past_the_cycle_despite_the_tasks_own_write() {
+    let world: World = Arc::new(Mutex::new(Ok(seen(BASE, BASE, None))));
+    let mut r = rig(&world);
+    let mut prev = BASE;
+    for _ in 0..8 {
+        tick_following(&mut r, &world, 0, &mut prev, false);
+    }
+    let shipped = own_writes_head(&r, 0);
+    let settled = states(&r);
+    let mut after_cycle = false;
+    for tick in 0..(CYCLE_S / 15 + 3) {
+        let head = shipped + 1 + (states(&r) - settled) as u64;
+        *world.lock().unwrap() = Ok(seen(head, shipped, None));
+        r.advance(CADENCE_MS).unwrap();
+        if (tick + 1) * 15 <= CYCLE_S - 15 {
+            assert!(lines(&r).is_empty(), "no page inside the cycle: {:?}", lines(&r));
+        }
+        after_cycle = !lines(&r).is_empty();
+    }
+    assert!(after_cycle, "the unshipped revision pages");
+    let said = lines(&r);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("RED: "), "{said:?}");
+}

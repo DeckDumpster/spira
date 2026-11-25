@@ -11,10 +11,14 @@
 //!   (a snapshot drain's error is not a run upload's), and the mtime of the oldest staged
 //!   snapshot. A `shipped` that is absent or unparsable is the probe's error, never revision 0.
 //! - **Carry:** `waiting` is `(rev, since)`: the head first seen ahead of `shipped`, and when. It
-//!   clears when `shipped` reaches `rev` and is set again at once while the head is still ahead.
+//!   is caught up once `shipped >= rev` and the head is no further than `rev + 1`: the one revision
+//!   past `rev` is this task's own write of the carry, so a caught-up `waiting` is left as it is,
+//!   neither cleared nor re-armed, and an idle store costs no write. A head past `rev + 1` is
+//!   another writer's unshipped revision and re-arms `waiting` to `(head, now)`. It is `None` only
+//!   fresh or with no destination.
 //!   `blind_since_ms` is when the observe began failing; `red`, `snapshot_red` and `blind_red` are
 //!   the crossings already paged. All are rows, so a restart neither repeats a page nor resets a clock.
-//! - **Decide:** red when `now - since` exceeds `SPIRA_LC_SHIP_MAX_AGE_SECS` and the last revlog
+//! - **Decide:** red when `shipped < rev` and `now - since` exceeds `SPIRA_LC_SHIP_MAX_AGE_SECS` and the last revlog
 //!   drain was refused, or exceeds `cycle_s` with no refusal: the shipper's worst healthy cycle
 //!   (one upload deadline, one staging period, two shipper ticks and one tick of this task). A stall
 //!   that ends inside it is silent. Separately, red when the oldest staged snapshot is older than
@@ -159,11 +163,10 @@ pub fn decide(carry: &Carry, seen: &Result<Snapshot, String>, now_ms: u64, cfg: 
         }
         Ok(Snapshot::Seen { head, shipped, shipped_at_ms, last_error, oldest_snapshot_ms }) => {
             next.blind_since_ms = None;
-            if next.waiting.is_some_and(|(rev, _)| shipped >= &rev) {
-                next.waiting = None;
-            }
-            if next.waiting.is_none() && head > shipped {
-                next.waiting = Some((*head, now_ms));
+            match next.waiting {
+                Some((rev, _)) if shipped >= &rev && *head > rev + 1 => next.waiting = Some((*head, now_ms)),
+                None if head > shipped => next.waiting = Some((*head, now_ms)),
+                _ => {}
             }
             let snapshot_bound = cfg.snapshot_s.saturating_mul(1_000);
             let stale = oldest_snapshot_ms.filter(|at| now_ms.saturating_sub(*at) > snapshot_bound);
@@ -174,7 +177,7 @@ pub fn decide(carry: &Carry, seen: &Result<Snapshot, String>, now_ms: u64, cfg: 
             }
             next.snapshot_red = stale.is_some();
             let limit_s = if last_error.is_some() { cfg.max_age_s } else { cfg.cycle_s };
-            let red = next.waiting.filter(|(_, since)| now_ms.saturating_sub(*since) > limit_s.saturating_mul(1_000)).map(|(_, since)| {
+            let red = next.waiting.filter(|(rev, since)| shipped < rev && now_ms.saturating_sub(*since) > limit_s.saturating_mul(1_000)).map(|(_, since)| {
                 let wait = secs(now_ms.saturating_sub(since));
                 let left = iso8601(secs(*shipped_at_ms));
                 let why = last_error.as_deref().map_or("none".to_string(), short);
