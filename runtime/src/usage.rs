@@ -137,34 +137,7 @@ pub struct Disk {
     pub role: String,
 }
 
-/// `usage_usec` from a `cpu.stat`.
-pub fn cpu_usage_usec(cpu_stat: &str) -> Option<u64> {
-    cpu_stat.lines().find_map(|l| l.strip_prefix("usage_usec ")).and_then(|v| v.trim().parse().ok())
-}
-
-/// Each `io.stat` line as (`MAJ:MIN`, rbytes, wbytes).
-pub fn io_stat(text: &str) -> Vec<(String, u64, u64)> {
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.split_whitespace();
-            let dev = f.next()?;
-            let (mut r, mut w) = (0, 0);
-            for kv in f {
-                match kv.split_once('=') {
-                    Some(("rbytes", v)) => r = v.parse().unwrap_or(0),
-                    Some(("wbytes", v)) => w = v.parse().unwrap_or(0),
-                    _ => {}
-                }
-            }
-            Some((dev.to_string(), r, w))
-        })
-        .collect()
-}
-
-/// A one-number cgroup file (`memory.current`, `memory.peak`).
-pub fn scalar(text: &str) -> Option<u64> {
-    text.trim().parse().ok()
-}
+pub use spira_otel::cgroup::{cpu_usage_usec, io_stat, scalar};
 
 fn read(p: &Path) -> String {
     std::fs::read_to_string(p).unwrap_or_default()
@@ -470,6 +443,115 @@ pub fn sample(roots: &Roots) -> Vec<Sample> {
             let mut s = Sample { kind: Kind::Container, cgroup: cg, rune: "container".into(), name, unit, ..Sample::default() };
             counters(&dir, &named, &mut s);
             out.push(s);
+        }
+    }
+    out
+}
+
+/// The class every unit's counts fold into for the manager cgroup itself.
+pub const TOTAL_CLASS: &str = "_total";
+
+/// One disk's cumulative writes for one cgroup, the disk named by [`disks`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UnitDisk {
+    pub device: String,
+    pub role: String,
+    pub write_bytes: u64,
+    pub write_ios: u64,
+}
+
+/// One unit cgroup's kernel counters, labelled by the class its name folds to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UnitCounters {
+    pub class: String,
+    pub unit: String,
+    /// The cgroup's path under the cgroup2 mount.
+    pub cgroup: String,
+    pub cpu_usec: u64,
+    pub io: Vec<UnitDisk>,
+    pub pids_current: u64,
+    pub pids_peak: u64,
+}
+
+fn stem(name: &str) -> &str {
+    name.strip_suffix(".service").or_else(|| name.strip_suffix(".scope")).unwrap_or(name)
+}
+
+fn is_run_scope(stem: &str) -> bool {
+    let digits = |s: &str, p: char| s.strip_prefix(p).is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()));
+    stem.strip_prefix("run-").and_then(|r| r.split_once('-')).is_some_and(|(p, i)| digits(p, 'p') && digits(i, 'i'))
+}
+
+/// The (class, unit) label pair a unit name folds to, so the label set stays bounded while
+/// transient units come and go.
+pub fn unit_class(name: &str) -> (String, String) {
+    let same = |c: String| (c.clone(), c);
+    if let Some((task, key)) = units::parse_unit_name(name) {
+        return same(match task.as_str() {
+            units::DWARF_TASK => units::dwarf_rune(name).unwrap_or(task),
+            "sentinel-pass" => format!("pass-{key}"),
+            "batcher" => "round".into(),
+            t if t.starts_with("batcher.") => "round".into(),
+            "gate.worker" => "gate-worker".into(),
+            _ => task,
+        });
+    }
+    if let Some(rest) = name.strip_prefix(units::DWARF_PREFIX).filter(|_| name.ends_with(".service")) {
+        if let Some(rune) = rest.split('-').next().filter(|r| !r.is_empty()) {
+            return same(rune.to_string());
+        }
+    }
+    if is_run_scope(stem(name)) {
+        return same("run".into());
+    }
+    if let Some(s) = name.strip_suffix(".scope") {
+        let kept: Vec<&str> = s.split('-').take_while(|p| !p.chars().any(|c| c.is_ascii_digit())).collect();
+        return same(format!("{}.scope", kept.join("-")));
+    }
+    let s = stem(name);
+    (s.strip_suffix("-prod").unwrap_or(s).to_string(), name.to_string())
+}
+
+/// Every unit directory in each slice of the user manager, and the manager itself as
+/// [`TOTAL_CLASS`], with the counters the kernel keeps for each. Reads only the cgroup files.
+pub fn units(roots: &Roots) -> Vec<UnitCounters> {
+    let Some(manager) = manager(roots) else { return vec![] };
+    let mounted = disks(&read(&roots.proc_dir.join("self/mountinfo")), |mm| whole_disk(&roots.sys, mm));
+    let rel = |p: &Path| p.strip_prefix(&roots.cgroup).map_or_else(|_| p.display().to_string(), |r| r.display().to_string());
+    let one = |dir: &Path, class: String, unit: String| {
+        let c = spira_otel::cgroup::read(dir);
+        let mut io: Vec<UnitDisk> = vec![];
+        for d in c.io {
+            let whole = whole_disk(&roots.sys, &d.majmin);
+            let (device, role) = match whole.as_ref().and_then(|(mm, _)| mounted.get(mm)) {
+                Some(m) => (m.device.clone(), m.role.clone()),
+                None => {
+                    let device = whole.map_or(d.majmin.clone(), |(_, n)| n);
+                    (device.clone(), device)
+                }
+            };
+            match io.iter_mut().find(|u| u.device == device) {
+                Some(u) => {
+                    u.write_bytes += d.write_bytes;
+                    u.write_ios += d.write_ios;
+                }
+                None => io.push(UnitDisk { device, role, write_bytes: d.write_bytes, write_ios: d.write_ios }),
+            }
+        }
+        io.sort_by(|a, b| a.device.cmp(&b.device));
+        UnitCounters { class, unit, cgroup: rel(dir), cpu_usec: c.cpu_usec, io, pids_current: c.pids_current, pids_peak: c.pids_peak }
+    };
+    let mut out = vec![one(&manager, TOTAL_CLASS.into(), basename(&manager))];
+    let mut slices: Vec<PathBuf> = std::fs::read_dir(&manager).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && basename(p).ends_with(".slice")).collect()).unwrap_or_default();
+    slices.sort();
+    for slice in slices {
+        let Ok(rd) = std::fs::read_dir(&slice) else { continue };
+        let mut found: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && (basename(p).ends_with(".service") || basename(p).ends_with(".scope"))).collect();
+        found.sort();
+        for dir in found {
+            let name = basename(&dir);
+            let (class, unit) = unit_class(&name);
+            out.push(one(&dir, class, unit));
         }
     }
     out

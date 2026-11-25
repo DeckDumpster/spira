@@ -277,3 +277,58 @@ fn nested_scopes_each_take_their_own_conmons_name_and_hand_scopes_own_theirs() {
     names.sort();
     assert_eq!(names, ["testenv-x-unit", "testenv-y-unit"]);
 }
+
+const GATE_UNIT: &str = "spira-run-gate.worker-0_2fgate_2f1.service";
+const BATCHER_UNIT: &str = "spira-run-batcher.local-spira.49b8ff96a071.certify1.service";
+
+#[test_id(tuoiw28)]
+#[test]
+fn unit_names_fold_to_a_bounded_class() {
+    let class = |n: &str| unit_class(n);
+    let same = |c: &str| (c.to_string(), c.to_string());
+    assert_eq!(class("spira-run-gate.worker-0_2fgate_2f9c1e.service"), same("gate-worker"));
+    assert_eq!(class("spira-run-sentinel_2dcall-builder_2d1795634659026_2d0.service"), same("builder"));
+    assert_eq!(class(BATCHER_UNIT), same("round"));
+    assert_eq!(class("spira-run-sentinel_2dpass-landing.service"), same("pass-landing"));
+    assert_eq!(class("spira-run-sentinel_2dtick-x.service"), same("sentinel-tick"));
+    assert_eq!(class("spira-dwarf-skuld-directed-1762500000.service"), same("skuld"));
+    assert_eq!(class("run-p13533-i29036.service"), same("run"));
+    assert_eq!(class("run-p13533-i29036.scope"), same("run"));
+    assert_eq!(class("tmux-spawn-6f1c2.scope"), same("tmux-spawn.scope"));
+    assert_eq!(class("spira-runtime-prod.service"), ("spira-runtime".to_string(), "spira-runtime-prod.service".to_string()));
+    assert_eq!(class("lc-serve.service"), ("lc-serve".to_string(), "lc-serve.service".to_string()));
+}
+
+#[test_id(tx91pnu)]
+#[test]
+fn every_unit_is_one_row_and_the_manager_is_the_total() {
+    let f = fixture();
+    let manager = f.roots.cgroup.join(MANAGER);
+    let app = manager.join("app.slice");
+    write(&manager.join("cpu.stat"), "usage_usec 99000000\n");
+    write(&manager.join("io.stat"), "8:32 rbytes=1 wbytes=500 rios=1 wios=7\n");
+    write(&manager.join("pids.current"), "40\n");
+    write(&manager.join("pids.peak"), "90\n");
+    write(&app.join(GATE_UNIT).join("cpu.stat"), "usage_usec 3000000\n");
+    write(&app.join(GATE_UNIT).join("io.stat"), "8:33 rbytes=0 wbytes=100 rios=0 wios=2\n8:32 rbytes=0 wbytes=50 rios=0 wios=3\n");
+    write(&app.join(GATE_UNIT).join("pids.current"), "3\n");
+    write(&app.join(GATE_UNIT).join("pids.peak"), "8\n");
+    write(&app.join(BATCHER_UNIT).join("cpu.stat"), "usage_usec 1000000\n");
+    write(&app.join("run-p13533-i29036.service/cpu.stat"), "usage_usec 5\n");
+    let got = units(&f.roots);
+    let by = |unit: &str| got.iter().find(|u| u.unit == unit).unwrap_or_else(|| panic!("{unit} in {got:?}"));
+
+    let total = &got[0];
+    assert_eq!((total.class.as_str(), total.cpu_usec, total.pids_current, total.pids_peak), ("_total", 99_000_000, 40, 90));
+    assert_eq!(total.io, [UnitDisk { device: "sdc".into(), role: "ssd-b".into(), write_bytes: 500, write_ios: 7 }]);
+
+    let gate = by("gate-worker");
+    assert_eq!((gate.class.as_str(), gate.cpu_usec, gate.pids_current, gate.pids_peak), ("gate-worker", 3_000_000, 3, 8));
+    assert_eq!(gate.io, [UnitDisk { device: "sdc".into(), role: "ssd-b".into(), write_bytes: 150, write_ios: 5 }], "a partition and its disk are one disk");
+    assert_eq!(by("round").cpu_usec, 1_000_000);
+    assert_eq!(by("run").class, "run");
+    assert_eq!(by("spira-runtime-prod.service").class, "spira-runtime");
+    let disk = |device: &str, role: &str, write_bytes, write_ios| UnitDisk { device: device.into(), role: role.into(), write_bytes, write_ios };
+    assert_eq!(by("builder").io, [disk("7:0", "7:0", 0, 0), disk("sdb", "ssd-a", 1000, 1), disk("sdc", "ssd-b", 3_000_000_000, 9)]);
+    assert_eq!(got.iter().filter(|u| u.class == "_total").count(), 1);
+}
