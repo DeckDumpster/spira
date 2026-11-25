@@ -1,5 +1,4 @@
-//! The one process the service starts: the Concierge's wake verb, which holds until the input
-//! line is empty and so may run for minutes.
+//! The one process the service starts: the Concierge's wake verb, one try that delivers or refuses at once.
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;
@@ -31,9 +30,9 @@ pub fn release_wake_for_process(line: &str, deadline: Duration) -> Result<String
 
 /// Runs the wake and kills its whole process group once `deadline` passes, so no wake outlives its effect.
 pub fn concierge_wake(concierge: &Path, line: &str, deadline: Duration) -> Result<String, String> {
-    // FORK-EDGE: concierge.sh wake (68-line case over the script's 684-line session preamble) types into
+    // FORK-EDGE: concierge.sh wake types into
     // the pane with tmux send-keys, which nothing built here may do; it stays the operator tool's.
-    let mut child = Command::new(concierge) // batch-job: wake holds until the input line is empty, which can take minutes
+    let mut child = Command::new(concierge) // batch-job: one try: one settle, then deliver or refuse
         .arg("wake")
         .arg(line)
         .stdin(Stdio::null())

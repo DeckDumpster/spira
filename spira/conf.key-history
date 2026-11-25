@@ -79,6 +79,7 @@ concierge_inbox
 concierge_inbox_backoff
 concierge_inbox_dedup
 concierge_inbox_stall
+concierge_wake_tries
 ctrl
 ctx_high
 ctx_limit

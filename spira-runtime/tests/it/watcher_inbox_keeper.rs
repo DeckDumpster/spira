@@ -9,7 +9,7 @@ use spira_runtime::watchers::CONCIERGE_WAKE;
 const START_MS: u64 = 10_000_000;
 
 fn registration() -> runtime::Registration {
-    InboxKeeper { interval_ms: 60_000, stall_secs: 600, backoff_secs: 3600 }.registration()
+    InboxKeeper { interval_ms: 60_000, stall_secs: 600, backoff_secs: 3600, tries: 5 }.registration()
 }
 
 fn waiting() -> Snapshot {
@@ -62,6 +62,63 @@ fn a_boot_does_not_wake_the_pane_again_inside_the_backoff() {
     kit::assert_boot_matches_an_unstopped_run(monitor_gone_and_a_wake_just_sent, registration, STREAM, EventKind::new(TICK, ""));
 }
 
+const REFUSED: &str = "concierge: wake not delivered — the input line of concierge holds text or is moving";
+const OPERATOR_NOTE: &str = "operator.note";
+const HOUR_MS: u64 = 3_600_000;
+
+fn rig_with_wake(world: &Arc<Mutex<Snapshot>>, wake: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static) -> TaskRig {
+    let seen = world.clone();
+    let mut r = TaskRig::new(1, registration()).unwrap().double(OBSERVE, move |_| Ok(serde_json::to_string(&*seen.lock().unwrap()).unwrap())).double(CONCIERGE_WAKE, wake).double(OPERATOR_NOTE, |_| Ok("sent".into()));
+    r.advance(START_MS).unwrap();
+    r.tick(STREAM, EventKind::new(TICK, "")).unwrap();
+    r
+}
+
+fn times(r: &TaskRig, name: &str) -> Vec<u64> {
+    r.requested().iter().filter(|q| q.name == name).map(|q| q.at / 1000).collect()
+}
+
+#[test_id(thvj40u)]
+#[test]
+fn a_refused_wake_is_retried_on_a_doubling_timer_then_stopped_with_one_note_until_the_condition_clears() {
+    let world = Arc::new(Mutex::new(Snapshot { waiter_alive: true, unread: 0, cursor_mtime: 0 }));
+    let mut r = rig_with_wake(&world, |_| Err(REFUSED.into()));
+    *world.lock().unwrap() = waiting();
+    r.advance(24 * HOUR_MS).unwrap();
+    let wakes = times(&r, CONCIERGE_WAKE);
+    assert_eq!(wakes.len(), 5, "{wakes:?}");
+    let gaps: Vec<u64> = wakes.windows(2).map(|w| w[1] - w[0]).collect();
+    assert_eq!(gaps, [60, 120, 240, 480], "each try after the first is due twice as long after the last");
+    let notes: Vec<_> = r.requested().iter().filter(|q| q.name == OPERATOR_NOTE).collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].input.contains(REFUSED) && notes[0].input.contains("concierge.sh attach") && notes[0].input.contains('5'), "{}", notes[0].input);
+
+    *world.lock().unwrap() = Snapshot { waiter_alive: true, ..waiting() };
+    r.advance(60_000).unwrap();
+    *world.lock().unwrap() = waiting();
+    r.advance(24 * HOUR_MS).unwrap();
+    assert_eq!(times(&r, CONCIERGE_WAKE).len(), 10, "wakes resume once the waiter was seen again");
+    let notes: Vec<_> = r.requested().iter().filter(|q| q.name == OPERATOR_NOTE).collect();
+    assert_eq!(notes.len(), 2, "one note per condition");
+    assert_ne!(notes[0].key, notes[1].key);
+}
+
+#[test_id(t1zpy7v)]
+#[test]
+fn a_wake_that_delivers_after_refusals_resets_the_count_and_sends_no_note() {
+    let world = Arc::new(Mutex::new(Snapshot { waiter_alive: true, unread: 0, cursor_mtime: 0 }));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let n = calls.clone();
+    let mut r = rig_with_wake(&world, move |l| if n.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 4 { Err(REFUSED.into()) } else { Ok(l.into()) });
+    *world.lock().unwrap() = waiting();
+    r.advance(24 * HOUR_MS).unwrap();
+    assert!(times(&r, OPERATOR_NOTE).is_empty());
+    let wakes = times(&r, CONCIERGE_WAKE);
+    let gaps: Vec<u64> = wakes.windows(2).map(|w| w[1] - w[0]).collect();
+    assert_eq!(&gaps[..4], &[60, 120, 240, 480][..], "{gaps:?}");
+    assert!(gaps[4..].iter().all(|g| *g == 3600), "a delivered wake returns the cadence to the backoff: {gaps:?}");
+}
+
 mod real_world {
     use super::*;
     use runtime::engine::LastOutcome;
@@ -73,7 +130,7 @@ mod real_world {
     const RETRY_SECS: u64 = 600;
 
     fn registration() -> runtime::Registration {
-        InboxKeeper { interval_ms: 60_000, stall_secs: 600, backoff_secs: RETRY_SECS }.registration()
+        InboxKeeper { interval_ms: 60_000, stall_secs: 600, backoff_secs: RETRY_SECS, tries: 5 }.registration()
     }
 
     fn lock_path(run: &Path) -> std::path::PathBuf {
@@ -180,7 +237,7 @@ mod real_world {
         let mut r = rig(world, |_| Err("pane busy".into()));
         drop(held);
         r.advance((600 + 60) * 1000).unwrap();
-        assert_eq!(wakes(&r).len(), 1);
+        assert!(!wakes(&r).is_empty());
         for _ in 0..3 {
             r.advance(60_000).unwrap();
             assert_eq!(outcome(&r), Some(LastOutcome::Failed));

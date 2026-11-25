@@ -223,6 +223,7 @@ impl Settings {
             interval_ms: secs("SPIRA_RUNTIME_INBOX_KEEPER_SECS")? * 1000,
             stall_secs: secs("SPIRA_CONCIERGE_INBOX_STALL")?,
             backoff_secs: secs("SPIRA_CONCIERGE_INBOX_BACKOFF")?,
+            tries: secs("SPIRA_CONCIERGE_WAKE_TRIES")? as u32,
         };
         let pr_notify = PrNotify { interval_ms: secs("SPIRA_RUNTIME_PR_NOTIFY_SECS")? * 1000, deploy_giveup_secs: secs("SPIRA_PR_DEPLOY_GIVEUP")? };
         let cr_cadence = CrCadence { interval_ms: secs("SPIRA_RUNTIME_CR_CADENCE_SECS")? * 1000, stale_days: secs("SPIRA_CR_STALE_DAYS")? };

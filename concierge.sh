@@ -10,7 +10,7 @@
 #   concierge.sh brief     render the system prompt and print its path; change nothing
 #     overlay without cd:  claude ... --append-system-prompt-file "$(concierge.sh brief)"
 #   concierge.sh status    is it up
-#   concierge.sh wake "<text>"  type a prompt into the session; fails if it is not up
+#   concierge.sh wake "<text>"  one try to type a prompt into the session; exits 75 if the input line is busy
 #   concierge.sh stop      kill it
 #
 # WHY ONE SESSION AND NOT SEVERAL
@@ -612,20 +612,30 @@ wake)
         printf '  tmux -L %s attach -t %s   # see what is left, then: %s start\n' "$SOCKET" "$SESSION" "$0" >&2
         exit 1
     fi
-    # NEVER TYPE INTO A NON-EMPTY INPUT LINE. A wake mid-keystroke lands inside the
-    # operator's own half-written message and their Enter sends both, splitting the
-    # instruction mid-sentence. Hold while the Claude Code input line — the `❯ ` line between
-    # the pane's two rules — holds text, and deliver the moment it is empty. This never drops
-    # a wake: it waits as long as the operator is typing. Serialised by a lock so two
-    # callers (the mail deliverer, the inbox-keeper watcher) never interleave keystrokes.
-    # declare -F lets a caller `export -f` its own _wake_input_busy/_wake_deliver first, to
-    # observe or control the poll and the delivery deterministically instead of a real pane.
-    declare -F _wake_input_busy >/dev/null || _wake_input_busy() {
-        local line
-        line="$($TM capture-pane -p -t "$SESSION" 2>/dev/null | grep -m1 -E '^❯' || true)"
-        [ -n "$line" ] || return 1
-        line="${line#❯}"; line="${line#"${line%%[![:space:]]*}"}"
-        [ -n "$line" ]
+    # NEVER TYPE INTO A NON-EMPTY INPUT LINE: a wake mid-keystroke lands inside the operator's
+    # half-written message. A wake is ONE try — it delivers or refuses at once, and the caller
+    # retries on its own timer. Serialised by a lock so two callers never interleave keystrokes.
+    # declare -F lets a caller `export -f` its own seams to control the look and the delivery.
+    _wake_seamed=0
+    if declare -F _wake_input_busy >/dev/null && declare -F _wake_cursor >/dev/null; then _wake_seamed=1; fi
+    # One tmux call per look: the pane, then its cursor as the last line.
+    _wake_look() {
+        local l
+        _look_busy=0; _look_cursor=""
+        if [ "$_wake_seamed" = 1 ]; then
+            _look_cursor="$(_wake_cursor)"
+            _wake_input_busy && _look_busy=1 || _look_busy=0
+            return 0
+        fi
+        _look_found=0
+        while IFS= read -r l; do
+            _look_cursor="$l"
+            if [[ $_look_found = 0 && $l == ❯* ]]; then
+                _look_found=1
+                l="${l#❯}"; l="${l#"${l%%[![:space:]]*}"}"
+                [ -z "$l" ] || _look_busy=1
+            fi
+        done < <($TM capture-pane -p -t "$SESSION" \; display-message -p -t "$SESSION" '#{cursor_x}.#{cursor_y}' 2>/dev/null)
     }
     declare -F _wake_deliver >/dev/null || _wake_deliver() {
         # -l sends the text literally; Enter is a separate key so a prompt mid-turn is queued, not split.
@@ -634,37 +644,13 @@ wake)
     mkdir -p "$SPIRA_RUN" 2>/dev/null
     exec 8>"$SPIRA_RUN/concierge-wake.lock"
     flock 8
-    # AN INJECTABLE CLOCK: a test that already serialises each poll via the hook above sets
-    # these to 0 rather than also waiting out two real cadences on top of it.
-    _wake_poll_secs="${CONCIERGE_WAKE_POLL_SECS:-2}"
-    _wake_warn_secs="${CONCIERGE_WAKE_WARN_SECS:-60}"
-    _wake_max_secs="${CONCIERGE_WAKE_MAX_SECS:-600}"
-    _wake_t0=$SECONDS; _wake_warned=0
-    # Delivery needs the input line empty AND the pane's own cursor unmoved since the previous
-    # look: a cursor that moved means he is still typing. No fixed settle sleep; the wait is
-    # capped, and a capped wake fails loudly so the caller retries instead of blocking forever.
-    declare -F _wake_cursor >/dev/null || _wake_cursor() {
-        $TM display-message -p -t "$SESSION" '#{cursor_x}.#{cursor_y}' 2>/dev/null || true
-    }
-    _wake_prev="$(_wake_cursor)"
-    while :; do
-        if ! _wake_input_busy; then
-            _wake_now="$(_wake_cursor)"
-            [ "$_wake_now" = "$_wake_prev" ] && break
-            _wake_prev="$_wake_now"
-        else
-            _wake_prev="$(_wake_cursor)"
-        fi
-        if [ $((SECONDS - _wake_t0)) -ge "$_wake_max_secs" ]; then
-            printf 'concierge: wake abandoned after %ss — the input line of %s never went quiet\n' "$_wake_max_secs" "$SESSION" >&2
-            exit 1
-        fi
-        if [ "$_wake_warned" = 0 ] && [ $((SECONDS - _wake_t0)) -ge "$_wake_warn_secs" ]; then
-            printf 'concierge: wake held %ss — the input line of %s still holds text; delivery waits until it is cleared\n' "$_wake_warn_secs" "$SESSION" >&2
-            _wake_warned=1
-        fi
-        sleep "$_wake_poll_secs"
-    done
+    _wake_look; _wake_prev="$_look_cursor"
+    sleep "${CONCIERGE_WAKE_SETTLE_SECS:-1}"
+    _wake_look
+    if [ "$_look_busy" = 1 ] || [ "$_look_cursor" != "$_wake_prev" ]; then
+        printf 'concierge: wake not delivered — the input line of %s holds text or is moving\n' "$SESSION" >&2
+        exit 75
+    fi
     _wake_deliver "$2"
     ;;
 
