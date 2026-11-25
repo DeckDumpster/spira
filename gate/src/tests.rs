@@ -2885,6 +2885,7 @@ fn a_red_test_phase_with_every_declared_binary_present_is_still_branch_red() {
     f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (1, TESTKIT_MISSING.into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    assert_eq!(stored_reds(&f), 1, "the counter must see a red when one is stored");
 }
 
 #[test_id(trpvrqf)]

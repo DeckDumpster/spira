@@ -357,7 +357,16 @@ mod tests {
         assert!(why.contains("testenv") && why.contains("test-bins") && why.contains("Cargo.toml"), "{why}");
     }
 
-    #[test_id(tq15nhq)]
+    #[test_id(t8k5zck)]
+    #[test]
+    #[should_panic(expected = "test-bins")]
+    fn bin_exe_panics_on_an_undeclared_binary() {
+        let t = crate_with("[package]\nname = \"me\"\n", &[]);
+        let _g = env(&[("CARGO_MANIFEST_DIR", Some(t.path().to_str().unwrap()))]);
+        bin_exe("testenv");
+    }
+
+    #[test_id(t9v9osw)]
     #[test]
     fn a_declared_binary_and_the_crates_own_are_accepted() {
         let t = crate_with(
