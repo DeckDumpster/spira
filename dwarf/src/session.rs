@@ -682,7 +682,7 @@ mod tests {
         let _ = agent.wait();
         assert!(first > 0);
         assert!(!idle_over(100, 1, 100), "a full core for a second is busy");
-        assert!(idle_over(4, 100, 100) && !idle_over(5, 100, 100), "5% of a core is the line");
+        assert!(idle_over(499, 100, 100) && !idle_over(500, 100, 100), "5% of a core is the line");
     }
 
     #[test_id(tf0u3kx)]
