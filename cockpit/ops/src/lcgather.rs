@@ -21,14 +21,14 @@ pub struct Env<'a> {
     pub vm_status: Option<&'a dyn Fn() -> Result<String, String>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct GateRead {
     signature: Option<Option<(u64, SystemTime)>>,
     error: Option<String>,
 }
 
 /// The last answer of each group, and what the cheap re-reads are keyed on.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Held {
     fast: Option<Snapshot>,
     slow: Option<Snapshot>,

@@ -445,13 +445,13 @@ pub mod cockpit {
             };
             let status = || pool.as_ref().ok_or_else(|| "round-vm status: no pool configured".to_string())?.status_json();
             let env = lcgather::Env { run_dir: &run_dir, lc: &read, units: units.as_deref(), vm_status: Some(&status) };
-            let mut h = held(slot);
-            let h = h.get_or_insert_with(Held::default);
+            let mut next = held(slot).clone().unwrap_or_default();
             if fast {
-                lcgather::gather_fast(&env, now(), h);
+                lcgather::gather_fast(&env, now(), &mut next);
             } else {
-                lcgather::gather_slow(&env, now(), h);
+                lcgather::gather_slow(&env, now(), &mut next);
             }
+            *held(slot) = Some(next);
             Some(Vec::new())
         }
 
