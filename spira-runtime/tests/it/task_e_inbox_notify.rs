@@ -147,7 +147,11 @@ fn registration() -> runtime::event::Registration {
 
 /// A stale row asked about once and stamped.
 fn asked_once() -> TaskRig {
-    let mut r = rig(1, Arc::new(Mutex::new(stale())));
+    asked_once_in(Arc::new(Mutex::new(stale())), rig)
+}
+
+fn asked_once_in(world: Arc<Mutex<Snapshot>>, build: fn(u64, Arc<Mutex<Snapshot>>) -> TaskRig) -> TaskRig {
+    let mut r = build(1, world);
     r.advance(35 * MIN).unwrap();
     assert_eq!(asks(&r).len(), 1);
     r
@@ -164,4 +168,82 @@ fn the_carry_is_kept_as_rows_and_not_as_one_whole_row() {
 #[test]
 fn a_boot_repeats_no_side_effect_and_misses_none() {
     spira_runtime::tasks::a::kit::assert_boot_matches_an_unstopped_run(asked_once, registration, STREAM, runtime::event::EventKind::new(TICK, ""));
+}
+
+fn matches(r: &TaskRig) -> usize {
+    r.requested().iter().filter(|q| q.name == SOP_MATCH).count()
+}
+
+
+#[test_id(tkdsevn)]
+#[test]
+fn an_incident_already_asked_about_is_not_offered_again_while_nothing_moves() {
+    let mut r = asked_once();
+    let (m, a) = (matches(&r), asks(&r).len());
+    r.advance(60 * MIN).unwrap();
+    assert_eq!((matches(&r), asks(&r).len()), (m, a));
+}
+
+
+#[test_id(t173t2n)]
+#[test]
+fn a_changed_first_line_is_offered_and_asked_again() {
+    let w = Arc::new(Mutex::new(stale()));
+    let mut r = asked_once_in(w.clone(), rig);
+    let m = matches(&r);
+    w.lock().unwrap().rows[0] = row("gate", 41, 40, &["[2026-11-03T00:00:00Z] gate FAIL test-y.sh"]);
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!((matches(&r), asks(&r).len()), (m + 1, 2));
+}
+
+fn refusing_rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
+    let (_, stream, kind) = InboxNotify::boot();
+    let mut r = TaskRig::new(seed, InboxNotify::new(config()).registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
+        .double(ASK, |_| Err("refused".into()))
+        .double(SOP_MATCH, |_| Ok("none".into()))
+        .double(UNIT_START, |_| Ok("{}".into()))
+        .double(SOP_APPLIED, |_| Ok("{}".into()))
+        .double(CONCIERGE_NOTE, |_| Ok("{}".into()))
+        .double(MAIL_HEALTH, |_| Ok("0".into()));
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+
+#[test_id(tz2j62k)]
+#[test]
+fn a_refused_ask_is_offered_and_asked_again_every_pass() {
+    let mut r = refusing_rig(1, Arc::new(Mutex::new(stale())));
+    r.advance(35 * MIN).unwrap();
+    let (m, a) = (matches(&r), asks(&r).len());
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!((matches(&r), asks(&r).len()), (m + 1, a + 1));
+}
+
+fn handling_rig(seed: u64, world: Arc<Mutex<Snapshot>>) -> TaskRig {
+    let (_, stream, kind) = InboxNotify::boot();
+    let mut r = TaskRig::new(seed, InboxNotify::new(config()).registration())
+        .unwrap()
+        .double(OBSERVE, move |_| Ok(serde_json::to_string(&*world.lock().unwrap()).unwrap()))
+        .double(ASK, |_| Ok("msg-1".into()))
+        .double(SOP_MATCH, |_| Ok(r#"[{"handled":true,"note":null}]"#.into()))
+        .double(UNIT_START, |_| Ok("{}".into()))
+        .double(SOP_APPLIED, |_| Ok("{}".into()))
+        .double(CONCIERGE_NOTE, |_| Ok("{}".into()))
+        .double(MAIL_HEALTH, |_| Ok("0".into()));
+    r.tick(stream, kind).unwrap();
+    r
+}
+
+
+#[test_id(tsiaye8)]
+#[test]
+fn a_candidate_a_sop_handled_is_offered_again_next_pass() {
+    let mut r = handling_rig(1, Arc::new(Mutex::new(stale())));
+    r.advance(35 * MIN).unwrap();
+    let m = matches(&r);
+    r.advance(CADENCE_MS).unwrap();
+    assert_eq!(matches(&r), m + 1);
 }
