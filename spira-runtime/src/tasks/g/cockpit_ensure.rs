@@ -163,7 +163,7 @@ impl Handler for CockpitEnsure {
         &[TICK, EFFECT_SUCCEEDED]
     }
 
-    fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+    fn handle(&self, _ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.stream.0 != STREAM {
             return vec![];
         }
@@ -174,7 +174,6 @@ impl Handler for CockpitEnsure {
             return pattern::tick(ev, OBSERVE, String::new(), OBSERVE_DEADLINE_MS, ev.at + CADENCE_MS);
         }
         let Some(obs) = pattern::answer::<Observation>(view, ev, OBSERVE) else { return vec![] };
-        let _ = ctx;
         let carry = carried::<Carry>(view, &ev.stream, STATE);
         let (next, acts) = decide(&carry, &obs, ev.at);
         pattern::commands(STATE, &carry, &next, acts)
@@ -318,6 +317,40 @@ mod tests {
     }
 
     #[test_id(trz0d8o)]
+    #[test]
+    fn observe_reads_the_down_marker_the_release_binaries_and_the_conf_it_is_given() {
+        let dir = testkit::TempDir::new("cockpit-ensure-observe");
+        let (run, release, proc_root) = (dir.join("run"), dir.join("release"), dir.join("proc"));
+        for d in [&run, &release.join("bin"), &proc_root] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let conf = cockpit_ops::layout::Conf {
+            spira_release: release.display().to_string(),
+            cock: dir.join("cockpit"),
+            run: run.clone(),
+            cwd: String::new(),
+            right_pct: 41,
+            bottom_pct: 17,
+            mail_cmd: Some("neomutt".into()),
+            heal_cooldown_secs: 60,
+            idle_secs: 99,
+            mouse_on: false,
+            clipboard_on: false,
+            spira_repo: String::new(),
+            spira_conf: None,
+            runtime_dir: None,
+        };
+        let before = observe_at(&proc_root, &conf).unwrap();
+        assert_eq!((before.down, before.health_mtime_ns, before.layout_mtime_ns), (false, None, None));
+        assert_eq!(before.conf, Conf { right_pct: 41, bottom_pct: 17, mail: Some("neomutt".into()), mouse: false, clipboard: false, idle_secs: 99 });
+        std::fs::write(conf.down_marker(), "").unwrap();
+        std::fs::write(release.join("bin/health"), "").unwrap();
+        let after = observe_at(&proc_root, &conf).unwrap();
+        assert!(after.down && after.health_mtime_ns.is_some() && after.layout_mtime_ns.is_none(), "{after:?}");
+        assert_ne!(before, after);
+    }
+
+    #[test_id(t092cnj)]
     #[test]
     fn the_unit_it_starts_is_one_the_installer_ships() {
         let m = install::manifest::build(&install::manifest::Inputs::default()).unwrap();
