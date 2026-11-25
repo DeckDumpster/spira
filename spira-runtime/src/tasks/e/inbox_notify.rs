@@ -54,7 +54,7 @@
 //! |---|---|---|---|---|
 //! | `inbox.notify.observe` (probe) | host + unit facts | 60 s (`SPIRA_HEALTH_TIMEOUT` 10 s per health command) | none | — |
 //! | `inbox.notify.ask` | store (in-process mail, §2) | 30 s | `inbox.notify:<backlog\|health>:<fingerprint>` | a fingerprint equal to the carried stamp. A refused send leaves the stamp unset, so the next pass asks again (`notify.rs:52-55`) |
-//! | `inbox.notify.sop_match` | store (today `sop match -`, 30 s) | 30 s | `inbox.notify:match:<row key>` | — |
+//! | `inbox.notify.sop_match` | store (today `sop match -`, 30 s) | 30 s | `inbox.notify:match:<row key>` | an offer whose halves all equal their stamps is not made |
 //! | `unit.start` (shared) | unit: the SOP's `RUN:` tool, today `systemd-run … timeout --kill-after=5 <DEADLINE>` (`ops.rs:329-337`) | SOP `DEADLINE:` | `inbox.notify:sop:<slug>:<row key>:<n>` | a third run of the same SOP for one key within `SPIRA_NOTIFY_AGE`, which escalates instead |
 //! | `inbox.notify.sop_applied` | store (`sop` applied, 60 s; `ops.rs:345-356`) | 60 s | `inbox.notify:applied:<slug>:<target>` | — |
 //! | `inbox.notify.concierge_note` | store (mail; `ops.rs:358`) | 30 s | `inbox.notify:note:<slug>:<row key>` | — |
@@ -333,13 +333,22 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
         next.stamp_health = None;
     }
     let mut acts = vec![];
-    if !candidates.is_empty() {
+    let moved = [(AskKind::Backlog, &carry.stamp_backlog), (AskKind::Health, &carry.stamp_health)]
+        .into_iter()
+        .any(|(kind, stamp)| half_fingerprint(candidates.iter(), kind).is_some_and(|f| stamp.as_deref() != Some(f.as_str())));
+    if moved {
         acts.push(EffectSpec::keyed(SOP_MATCH, format!("inbox.notify:match:{now}"), serde_json::to_string(&Offer { candidates }).unwrap_or_default(), ACT_DEADLINE_MS));
     }
     if snap.mail_health.is_none() {
         acts.push(EffectSpec::keyed(MAIL_HEALTH, format!("inbox.notify:mailhealth:{now}"), format!("inbox.notify:mailhealth:{now}"), LONG_DEADLINE_MS));
     }
     (next, acts)
+}
+
+/// The fingerprint of one half: the `key`s of `kind` in order, `None` when there are none.
+fn half_fingerprint<'a>(cands: impl Iterator<Item = &'a Candidate>, kind: AskKind) -> Option<String> {
+    let key: String = cands.filter(|c| c.kind == kind).map(|c| c.key.as_str()).collect();
+    (!key.is_empty()).then(|| watchd::notify::fingerprint(&key))
 }
 
 /// The asks of one offer once `sop_match` answered: each half's unhandled candidates as one
@@ -352,18 +361,17 @@ pub fn asks(carry: &Carry, offer: &Offer, outcome: &str) -> Vec<EffectSpec> {
         (AskKind::Backlog, &carry.stamp_backlog, watchd::notify::BACKLOG_SUBJECT, watchd::notify::BACKLOG_DEFAULT, watchd::notify::BACKLOG_WHY),
         (AskKind::Health, &carry.stamp_health, watchd::notify::HEALTH_SUBJECT, watchd::notify::HEALTH_DEFAULT, watchd::notify::HEALTH_WHY),
     ] {
-        let (mut key, mut report) = (String::new(), String::new());
+        let mut report = String::new();
+        let unhandled = || offer.candidates.iter().zip(&tried).filter(|(_, t)| !t.handled).map(|(c, _)| c);
         for (c, t) in offer.candidates.iter().zip(&tried).filter(|(c, t)| c.kind == kind && !t.handled) {
-            key.push_str(&c.key);
             report.push_str(&c.evidence);
             if let Some(n) = &t.note {
                 report.push_str(&format!("  {n}\n"));
             }
         }
-        if key.is_empty() {
+        let Some(fingerprint) = half_fingerprint(unhandled(), kind) else {
             continue;
-        }
-        let fingerprint = watchd::notify::fingerprint(&key);
+        };
         if stamp.as_deref() == Some(fingerprint.as_str()) {
             continue;
         }
