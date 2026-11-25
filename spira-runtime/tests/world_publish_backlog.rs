@@ -73,7 +73,9 @@ fn the_snapshot_records_the_unpublished_range_it_measured_and_runs_no_verb_that_
     let world = World { lc_socket: sock, repo_map: map, run_dir: run, home_repo: "alpha".into(), git_bin: Some(recording), ..World::default() };
     let snapshot = world.publish_backlog_snapshot().unwrap();
     assert!(snapshot.contains("\"count\":2"), "{snapshot}");
-    assert!(std::fs::read_to_string(&ran).unwrap_or_default().contains("rev-list"), "the snapshot ran the git it was handed");
+    let handed = std::fs::read_to_string(&ran).unwrap_or_default();
+    assert!(handed.contains("rev-list"), "the measurement ran the git it was handed: {handed}");
+    assert!(handed.contains("fetch"), "the forge refresh ran the git it was handed: {handed}");
 
     let asked = asked.lock().unwrap();
     assert_eq!(asked.len(), 1, "one call, the record: {asked:?}");
