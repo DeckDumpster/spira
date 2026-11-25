@@ -12,7 +12,8 @@ Type=simple
 # An unclean stop loses up to 60 s of metrics.
 ExecStart=@SPIRA_PROD@/metrics-stack.sh vm -inmemoryDataFlushInterval=60s
 CPUQuota=100%
-SuccessExitStatus=2
+KillMode=mixed
+TimeoutStopSec=90
 Restart=always
 RestartSec=30
 StandardOutput=append:@SPIRA_RUN@/spira-metrics-vm.log

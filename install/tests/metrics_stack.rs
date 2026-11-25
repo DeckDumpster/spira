@@ -94,3 +94,21 @@ fn the_collector_gets_no_flush_flag() {
     assert!(run.iter().any(|a| a == "otel-collector"), "{run:?}");
     assert!(!has(&run, "-inmemoryDataFlushInterval"), "{run:?}");
 }
+
+#[test_id(t2fjda4)]
+#[test]
+fn each_store_unit_stops_with_one_sigterm_and_hides_no_exit_status() {
+    for n in ["spira-metrics-vm.service", "spira-metrics-logs.service"] {
+        let text = unit(n);
+        let service: Vec<&str> = text
+            .lines()
+            .skip_while(|l| *l != "[Service]")
+            .skip(1)
+            .take_while(|l| !l.starts_with('['))
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect();
+        assert!(service.contains(&"KillMode=mixed"), "{n}: KillMode=mixed missing");
+        assert!(service.contains(&"TimeoutStopSec=90"), "{n}: TimeoutStopSec=90 missing");
+        assert!(!service.iter().any(|l| l.starts_with("SuccessExitStatus")), "{n}");
+    }
+}
