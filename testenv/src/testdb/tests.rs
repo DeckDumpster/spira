@@ -328,17 +328,17 @@ fn real_bd_and_dolt_isolated_fixtures() {
     let a = up(&root, &tpl, &tools, "ra", 0, None).unwrap();
     let b = up(&root, &tpl, &tools, "rb", 0, None).unwrap();
     eprintln!("up: {} ms, {} ms", a.ms, b.ms);
-    let (ok, out) = bd_in(&a.ws, &tools.bd, &["create", "only in A", "-q"]);
+    let (ok, out) = bd_in(&a.ws, tools.bd().unwrap(), &["create", "only in A", "-q"]);
     assert!(ok, "{out}");
-    let (_, la) = bd_in(&a.ws, &tools.bd, &["list"]);
-    let (_, lb) = bd_in(&b.ws, &tools.bd, &["list"]);
+    let (_, la) = bd_in(&a.ws, tools.bd().unwrap(), &["list"]);
+    let (_, lb) = bd_in(&b.ws, tools.bd().unwrap(), &["list"]);
     assert!(la.contains("only in A"), "{la}");
     assert!(!lb.contains("only in A"), "{lb}");
-    let (ok, out) = bd_in(&a.ws, &tools.bd, &["sql", "SELECT COUNT(*) FROM issues"]);
+    let (ok, out) = bd_in(&a.ws, tools.bd().unwrap(), &["sql", "SELECT COUNT(*) FROM issues"]);
     assert!(ok, "bd sql works in server mode: {out}");
     let (_, _, ms) = reset(&a.fixture).unwrap();
     eprintln!("reset: {ms} ms");
-    let (_, la) = bd_in(&a.ws, &tools.bd, &["list"]);
+    let (_, la) = bd_in(&a.ws, tools.bd().unwrap(), &["list"]);
     assert!(!la.contains("only in A"), "reset is fresh: {la}");
     let dn = down(&a.fixture).unwrap();
     eprintln!("down: cpu_ms={:?} life_ms={:?}", dn.cpu_ms, dn.life_ms);
@@ -367,9 +367,9 @@ fn a_template_builds_below_a_foreign_beads_workspace() {
     let root = d.join("x/root");
     let tpl = ensure_template(&root, &tools).unwrap();
     let a = up(&root, &tpl, &tools, "fa", 0, None).unwrap();
-    let (ok, out) = bd_in(&a.ws, &tools.bd, &["create", "below foreign", "-q"]);
+    let (ok, out) = bd_in(&a.ws, tools.bd().unwrap(), &["create", "below foreign", "-q"]);
     assert!(ok, "{out}");
-    let (_, l) = bd_in(&a.ws, &tools.bd, &["list"]);
+    let (_, l) = bd_in(&a.ws, tools.bd().unwrap(), &["list"]);
     assert!(l.contains("below foreign"), "{l}");
     assert_eq!(planted, fs::read(d.join(".beads/metadata.json")).unwrap(), "foreign workspace untouched");
     down(&a.fixture).unwrap();
@@ -579,4 +579,47 @@ fn real_bd_embedded_up_check_reset_and_down() {
     for p in &paths {
         assert!(!p.exists(), "{} should be gone", p.display());
     }
+}
+
+// ---- a template made from a schema file ------------------------------------------------
+
+#[test_id(twdsksg)]
+#[test]
+fn a_schema_template_is_refused_alongside_bd_and_one_of_the_two_is_required() {
+    let both = parse(&s(&["up", "--tag", "t", "--bd", "bd", "--schema", "f.sql", "--dolt", "dolt"])).unwrap_err();
+    assert!(both.contains("exclusive"), "{both}");
+    let both = parse(&s(&["template", "--schema", "f.sql", "--bd", "bd", "--dolt", "dolt"])).unwrap_err();
+    assert!(both.contains("exclusive"), "{both}");
+    assert!(parse(&s(&["up", "--tag", "t", "--dolt", "dolt"])).is_err(), "neither source named");
+    let a = parse(&s(&["up", "--tag", "t", "--schema", "f.sql", "--dolt", "dolt"])).unwrap();
+    assert_eq!((a.schema.as_deref(), a.bd), (Some("f.sql"), None));
+    assert!(parse(&s(&["template", "--schema", "f.sql"])).is_err(), "template needs --dolt");
+}
+
+#[test_id(tbvi30d)]
+#[test]
+fn a_schema_template_key_changes_with_the_file_and_the_dolt_and_not_with_a_bd() {
+    let k = schema_template_key(b"CREATE TABLE a (x int);", "dolt\u{0}/b\u{0}1\u{0}2");
+    assert_eq!(k, schema_template_key(b"CREATE TABLE a (x int);", "dolt\u{0}/b\u{0}1\u{0}2"));
+    assert_ne!(k, schema_template_key(b"CREATE TABLE a (x bigint);", "dolt\u{0}/b\u{0}1\u{0}2"));
+    assert_ne!(k, schema_template_key(b"CREATE TABLE a (x int);", "dolt\u{0}/b\u{0}1\u{0}3"));
+    assert_ne!(k, template_key("CREATE TABLE a (x int);", "dolt\u{0}/b\u{0}1\u{0}2"), "a bd's key is never a schema's");
+}
+
+#[test_id(ttnqz4w)]
+#[test]
+fn the_key_of_a_resolved_schema_follows_the_file_on_disk() {
+    let d = tmpdir("schemakey");
+    let (file, dolt) = (d.join("s.sql"), d.join("dolt"));
+    fs::write(&dolt, "").unwrap();
+    fs::write(&file, "CREATE TABLE a (x int);").unwrap();
+    let key = || {
+        let t = Tools::resolve_schema(file.to_str().unwrap(), dolt.to_str().unwrap()).unwrap();
+        assert!(t.bd().is_err(), "a schema template has no bd");
+        t.key().unwrap()
+    };
+    let before = key();
+    assert_eq!(before, key());
+    fs::write(&file, "CREATE TABLE a (x bigint);").unwrap();
+    assert_ne!(before, key());
 }
