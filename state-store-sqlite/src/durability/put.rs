@@ -426,6 +426,7 @@ impl Put for Uploader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test_id(t1tg0er)]
     #[test]

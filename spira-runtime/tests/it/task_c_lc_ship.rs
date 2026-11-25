@@ -1,4 +1,4 @@
-//! `lc.ship`: the scheduler uploads what lc-serve stages, so lc-serve starts no `curl`.
+//! `lc.ship`: the scheduler uploads what lc-serve stages, in-process, so lc-serve starts no program.
 
 use spira_runtime::tasks::b::kit::{names, testing as t, Input};
 use runtime::taskrig::TaskRig;
@@ -130,35 +130,58 @@ fn the_probe_counts_the_queue_and_sees_nothing_without_a_destination() {
 
 #[test_id(tayo7sv)]
 #[test]
-fn the_drain_uploads_through_the_given_process_port_only() {
-    struct Refusing;
-    impl runtime::ports::Proc for Refusing {
-        fn run(&self, _: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
-            Err("no process".into())
-        }
-    }
+fn the_drain_copies_to_a_directory_destination_and_marks_the_run_sent() {
     let run = TempDir::new("lc-ship-drain");
     let (dir, off) = (run.path().join("ship"), run.path().join("off"));
     std::fs::create_dir_all(dir.join("queue/revlog")).unwrap();
     let name = state_store_sqlite::durability::revlog::run_name(1, 1);
     std::fs::write(dir.join("queue/revlog").join(&name), "x").unwrap();
     let url = format!("file://{}", off.display());
-    let said = task::drain(std::sync::Arc::new(Refusing), &url, &dir.display().to_string(), |_| None, PART_BYTES).unwrap();
+    let said = task::drain(&url, &dir.display().to_string(), |_| None, PART_BYTES).unwrap();
     assert_eq!(said, "1 object(s) uploaded");
     assert!(off.join("revlog").join(&name).exists() && dir.join("sent/revlog").join(&name).exists() && !dir.join("queue/revlog").join(&name).exists());
     assert_eq!(std::fs::read_to_string(dir.join("shipped")).unwrap(), "1");
 }
 
-/// A fake curl that records the URL of every PUT and accepts it. No process is started.
-#[derive(Default)]
-struct RecordingCurl(std::sync::Mutex<Vec<String>>);
-
-impl runtime::ports::Proc for RecordingCurl {
-    fn run(&self, spec: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
-        assert_eq!(spec.prog, "curl");
-        self.0.lock().unwrap().push(spec.args.last().cloned().unwrap_or_default());
-        Ok(runtime::ports::ProcOutput { code: Some(0), stdout: Vec::new(), stderr: Vec::new() })
-    }
+/// A loopback HTTP listener that records the target of every request and accepts it. No
+/// process is started.
+fn accepting_listener() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{BufRead, Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+    let targets: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let log = targets.clone();
+    std::thread::spawn(move || {
+        for conn in l.incoming() {
+            let log = log.clone();
+            std::thread::spawn(move || {
+                let conn = conn.unwrap();
+                let mut r = std::io::BufReader::new(conn.try_clone().unwrap());
+                let mut w = conn;
+                loop {
+                    let mut line = String::new();
+                    if r.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    log.lock().unwrap().push(line.split_whitespace().nth(1).unwrap().to_string());
+                    let mut len = 0;
+                    loop {
+                        let mut h = String::new();
+                        r.read_line(&mut h).unwrap();
+                        let Some((k, v)) = h.trim_end().split_once(':') else { break };
+                        if k.eq_ignore_ascii_case("content-length") {
+                            len = v.trim().parse().unwrap();
+                        }
+                    }
+                    r.read_exact(&mut vec![0u8; len]).unwrap();
+                    if w.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    (endpoint, targets)
 }
 
 /// systemd's `EnvironmentFile=` grammar as far as a credentials file uses it.
@@ -192,19 +215,20 @@ fn the_runtime_units_environment_files_let_the_drain_sign_an_s3_upload() {
         .map(|f| std::path::PathBuf::from(f.trim_start_matches('-').replace("%h", &home.display().to_string())))
         .collect();
     assert!(!files.is_empty(), "spira-runtime.service loads no EnvironmentFile");
-    let env: std::collections::HashMap<String, String> = files.iter().flat_map(|f| read_env_file(f)).collect();
+    let mut env: std::collections::HashMap<String, String> = files.iter().flat_map(|f| read_env_file(f)).collect();
+    let (endpoint, targets) = accepting_listener();
+    env.insert("AWS_ENDPOINT_URL_S3".into(), endpoint);
 
     let (dir, name) = (run.path().join("ship"), state_store_sqlite::durability::revlog::run_name(1, 1));
     std::fs::create_dir_all(dir.join("queue/revlog")).unwrap();
     std::fs::write(dir.join("queue/revlog").join(&name), "x").unwrap();
-    let curl = std::sync::Arc::new(RecordingCurl::default());
-    let said = task::drain(curl.clone(), "s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), PART_BYTES).unwrap();
+    let said = task::drain("s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), PART_BYTES).unwrap();
     assert_eq!(said, "1 object(s) uploaded");
-    let urls = curl.0.lock().unwrap().clone();
-    assert!(urls.iter().any(|u| u.starts_with("http://s3.test/bucket/lc/revlog/")), "{urls:?}");
+    let urls = targets.lock().unwrap().clone();
+    assert!(urls.iter().any(|u| u.starts_with("/bucket/lc/revlog/")), "{urls:?}");
     assert!(dir.join("sent/revlog").join(&name).exists() && !dir.join("queue/revlog").join(&name).exists());
 
-    let refused = task::drain(curl, "s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), 1).unwrap_err();
+    let refused = task::drain("s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), 1).unwrap_err();
     assert!(refused.contains("SPIRA_LC_BACKUP_PART_BYTES"), "{refused}");
 }
 
@@ -269,12 +293,6 @@ fn a_restart_mid_drain_drains_again() {
 #[test_id(tuvfnxm)]
 #[test]
 fn each_kind_drains_alone_and_an_upload_in_progress_is_not_an_object() {
-    struct Refusing;
-    impl runtime::ports::Proc for Refusing {
-        fn run(&self, _: &runtime::ports::ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
-            Err("no process".into())
-        }
-    }
     let run = TempDir::new("lc-ship-kinds");
     let (dir, off) = (run.path().join("ship"), run.path().join("off"));
     for k in ["revlog", "snapshot"] {
@@ -286,10 +304,9 @@ fn each_kind_drains_alone_and_an_upload_in_progress_is_not_an_object() {
     std::fs::write(dir.join("queue/snapshot/7.part"), "x").unwrap();
     std::fs::write(dir.join("queue/snapshot/7.complete"), "x").unwrap();
     let (url, d) = (format!("file://{}", off.display()), dir.display().to_string());
-    let proc = || std::sync::Arc::new(Refusing);
-    assert_eq!(task::drain(proc(), &url, &d, |_| None, PART_BYTES).unwrap(), "1 object(s) uploaded");
+    assert_eq!(task::drain(&url, &d, |_| None, PART_BYTES).unwrap(), "1 object(s) uploaded");
     assert!(dir.join("queue/snapshot/7").exists() && !off.join("snapshot").exists(), "the runs drain leaves the snapshot queued");
-    assert_eq!(task::drain_snapshot(proc(), &url, &d, |_| None, PART_BYTES).unwrap(), "1 object(s) uploaded");
+    assert_eq!(task::drain_snapshot(&url, &d, |_| None, PART_BYTES).unwrap(), "1 object(s) uploaded");
     assert!(!dir.join("queue/snapshot/7").exists() && off.join("snapshot/7").exists());
     assert!(!off.join("snapshot/7.part").exists() && !off.join("snapshot/7.complete").exists() && dir.join("queue/snapshot/7.part").exists());
 }
@@ -307,7 +324,7 @@ fn a_refused_drain_leaves_last_drain_naming_the_refusal_and_a_good_one_clears_th
     let name = state_store_sqlite::durability::revlog::run_name(1, 1);
     std::fs::write(dir.join("queue/revlog").join(&name), "x").unwrap();
     let d = dir.display().to_string();
-    let s3 = |lookup: fn(&str) -> Option<String>| task::drain(std::sync::Arc::new(RecordingCurl::default()), "s3://bucket/lc/", &d, lookup, PART_BYTES);
+    let s3 = |lookup: fn(&str) -> Option<String>| task::drain("s3://bucket/lc/", &d, lookup, PART_BYTES);
 
     let refused = s3(|_| None).unwrap_err();
     let last = last_drain(&dir);
@@ -315,7 +332,7 @@ fn a_refused_drain_leaves_last_drain_naming_the_refusal_and_a_good_one_clears_th
     assert!(refused.contains("AWS_ACCESS_KEY_ID") && last.at_ms > 1_700_000_000_000, "{last:?}");
 
     let url = format!("file://{}", off.display());
-    task::drain(std::sync::Arc::new(RecordingCurl::default()), &url, &d, |_| None, PART_BYTES).unwrap();
+    task::drain(&url, &d, |_| None, PART_BYTES).unwrap();
     assert_eq!(last_drain(&dir), task::LastDrain { at_ms: last_drain(&dir).at_ms, kind: "revlog".into(), uploaded: 1, error: None });
 }
 
@@ -329,7 +346,7 @@ fn an_upload_refused_after_some_objects_went_records_how_many_and_why() {
     let blocked = run.path().join("blocked");
     std::fs::write(&blocked, "").unwrap();
     let url = format!("file://{}", blocked.display());
-    let err = task::drain(std::sync::Arc::new(runtime::ports::SysProc), &url, &dir.display().to_string(), |_| None, PART_BYTES).unwrap_err();
+    let err = task::drain(&url, &dir.display().to_string(), |_| None, PART_BYTES).unwrap_err();
     let last = last_drain(&dir);
     assert_eq!((last.uploaded, last.error.as_deref()), (0, Some(err.as_str())));
 }

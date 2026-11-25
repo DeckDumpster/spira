@@ -220,7 +220,7 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     }
     let mut mains = BTreeSet::new();
     for r in &runs {
-        if r.target.contains("/revlog/") && r.headers.get("x-amz-content-sha256").is_some() {
+        if r.target.contains("/revlog/") && r.headers.contains_key("x-amz-content-sha256") {
             mains.extend(revlog::decode(&r.body).unwrap().entries.iter().map(|e| e.rev.main));
         }
     }
