@@ -1586,6 +1586,22 @@ mod tests {
         assert!(b.join("target/debug/deps/libx.rlib").is_file());
     }
 
+    #[test_id(toit7cm)]
+    #[test]
+    fn a_gate_whose_prepare_shed_the_pool_builds_cold_with_the_pool_shed() {
+        use crate::ports::World;
+        let t = testkit::TempDir::new("gate-world-shed");
+        let (root, trees) = (t.path().join("root"), t.path().join("worktree"));
+        let tree = trees.join(".gate.h.a");
+        std::fs::create_dir_all(&tree).unwrap();
+        let stale = root.join(crate::warm::POOL).join("e1/debug/deps");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("libz.rlib"), vec![1u8; 1 << 20]).unwrap();
+        let lim = crate::target::Limits { cap_mib: 0, shed_free_mib: 0 };
+        let out = super::super::Real::new(t.path().to_path_buf()).target_on_tmpfs(&tree, root.to_str().unwrap(), t.path().to_str().unwrap(), &lim, None, "r").unwrap();
+        assert_eq!(out.build_dir, BuildDir::Cold { builder: BuilderMiss::None, pool: PoolMiss::Shed });
+    }
+
     #[test_id(t9zif9w)]
     #[test]
     fn a_finished_gate_leaves_the_warm_directory_under_the_cap() {

@@ -90,8 +90,9 @@ pub struct GateRun {
     pub compiled: u64,
     pub fresh: u64,
     pub slowest: String,
-    /// `warm from <commit>` or `cold: <why>`; empty when no build directory was prepared.
+    /// `builder`, `warm from <commit>` or `cold`; empty when no build directory was prepared.
     pub build_dir: String,
+    /// `<builder>/<pool>` miss words of a cold gate; empty otherwise.
     pub cold_reason: String,
     /// The unit gate's build and test phase walls, its nextest test count, and the ten slowest
     /// tests as `<binary>/<test>:secs,…`; zero and empty when no test phase ran.
