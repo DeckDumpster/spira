@@ -734,12 +734,11 @@ pub fn evict_templates(cache: &Path, keep: usize) -> Vec<String> {
 const SCHEMA_METADATA: &str = "{\n  \"database\": \"dolt\",\n  \"backend\": \"dolt\",\n  \"dolt_mode\": \"server\",\n  \"dolt_server_host\": \"127.0.0.1\",\n  \"dolt_server_port\": 0,\n  \"dolt_database\": \"sptest\"\n}\n";
 
 fn dolt_sql(dolt: &Path, port: u16, db: Option<&str>, arg: [&str; 2]) -> Result<(), String> {
-    let mut c = Command::new(dolt);
+    let mut c = Command::new(dolt); // batch-job: loading a schema file runs as long as the file takes
     c.args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "-u", "root", "-p", ""]);
     if let Some(db) = db {
         c.args(["--use-db", db]);
     }
-    // batch-job: loading a schema file runs as long as the file takes
     let out = c.arg("sql").args(arg).stdin(Stdio::null()).output().map_err(|e| format!("spawn {}: {e}", dolt.display()))?;
     if out.status.success() {
         return Ok(());

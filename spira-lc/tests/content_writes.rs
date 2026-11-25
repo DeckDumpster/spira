@@ -48,7 +48,7 @@ impl Store {
             eprintln!("SKIP: no dolt on PATH, spira.path or ~/spira-env/bin");
             return None;
         };
-        let schema = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testenv/fixtures/beads-schema.sql");
+        let schema = testkit::manifest_dir().join("../testenv/fixtures/beads-schema.sql");
         let mut up = Command::new(testkit::bin_exe("testenv"));
         up.args(["testdb", "up", "--tag", "content-writes", "--dolt", &dolt]).arg("--schema").arg(&schema);
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
