@@ -344,6 +344,7 @@ struct FakeTools {
     forge_pr_list_open: RefCell<Vec<(u64, String)>>,
     forge_automerge_ok: Cell<bool>,
     forge_calls: RefCell<Vec<String>>,
+    cancels: RefCell<Vec<(String, String)>>,
 }
 
 impl FakeTools {
@@ -396,6 +397,10 @@ impl Tools for FakeTools {
     }
     fn gate_status(&self, _: &str, _: &str) -> Option<String> {
         self.status.borrow().clone()
+    }
+    fn gate_cancel(&self, bead: &str, why: &str) -> (i32, String) {
+        self.cancels.borrow_mut().push((bead.into(), why.into()));
+        (0, String::new())
     }
     fn confine(&self, id: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
         self.confine.borrow().get(id).cloned().unwrap_or((0, String::new()))
@@ -1944,6 +1949,9 @@ impl Tools for Injecting<'_> {
     fn gate_status(&self, a: &str, b: &str) -> Option<String> {
         self.t.gate_status(a, b)
     }
+    fn gate_cancel(&self, a: &str, b: &str) -> (i32, String) {
+        self.t.gate_cancel(a, b)
+    }
     fn confine(&self, a: &str, b: &str, c: &Path, d: &str, e: &str) -> (i32, String) {
         self.t.confine(a, b, c, d, e)
     }
@@ -2830,9 +2838,9 @@ fn a_gate_worker_row_with_pass_certifies_and_one_with_fail_and_a_reason_reworks(
     assert!(h.lib.has("reopen sp-b cert-gate-red"), "{:?}", h.lib.calls.borrow());
 }
 
-#[test_id(tagwuqy)]
+#[test_id(tew9bc1)]
 #[test]
-fn a_provisional_member_cut_into_a_round_before_its_gate_has_its_gate_queued_beside_the_round() {
+fn a_member_a_round_holds_has_no_gate_queued() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
     h.bead("sp-a", "IN_DELIVERY", &[]);
@@ -2840,21 +2848,57 @@ fn a_provisional_member_cut_into_a_round_before_its_gate_has_its_gate_queued_bes
     h.run();
     h.run();
     let q = crate::gateq::GateQueue::new(&h.s.run);
-    assert_eq!(q.queued().len(), 1, "gated once, beside the round: {:?}", h.out.lines());
-    assert!(h.logged("sp-a: spira/sp-a is a provisional member of a round — gate queued at t1"));
+    assert!(q.queued().is_empty(), "no gate beside the round: {:?}", h.out.lines());
+    assert!(h.logged("sp-a: spira/sp-a is held by a round — its gate is withdrawn (nothing queued)"), "{:?}", h.out.lines());
     assert!(!h.lib.has("CERTIFIED") && !h.lib.has("reopen"));
 }
 
-#[test_id(tbc6g36)]
+#[test_id(tc4rc40)]
 #[test]
-fn an_express_provisional_member_is_queued_as_an_express_job() {
+fn a_queued_gate_is_dropped_when_a_round_takes_its_member() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
-    h.bead("sp-a", "IN_DELIVERY", &["express"]);
+    h.run();
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    assert_eq!(q.queued().len(), 1, "an item no round took keeps its gate");
     h.beads.batched.borrow_mut().insert("sp-a".into());
     h.run();
-    let queued = crate::gateq::GateQueue::new(&h.s.run).queued();
-    assert!(queued.len() == 1 && queued[0].express, "{:?}", h.out.lines());
+    assert!(q.queued().is_empty(), "{:?}", h.out.lines());
+    assert!(q.peek_done("spira", "spira/sp-a", "t1").is_none());
+    assert!(h.logged("dropped queued job"), "{:?}", h.out.lines());
+}
+
+#[test_id(twp3jbs)]
+#[test]
+fn a_running_gate_is_cancelled_when_a_round_takes_its_member() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    q.enqueue(&crate::gateq::Job::new("spira", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+    q.claim_job(0, "spira", "spira/sp-a", "t1").unwrap();
+    h.beads.batched.borrow_mut().insert("sp-a".into());
+    h.run();
+    assert_eq!(h.tools.cancels.borrow().len(), 1, "{:?}", h.tools.cancels.borrow());
+    assert_eq!(h.tools.cancels.borrow()[0].0, "sp-a");
+    h.run();
+    assert_eq!(h.tools.cancels.borrow().len(), 2, "asked again each pass while the job is claimed");
+    assert!(q.queued().is_empty());
+}
+
+#[test_id(tfz4jx9)]
+#[test]
+fn a_cancelled_gate_charges_its_round_held_member_nothing() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.bead("sp-a", "IN_DELIVERY", &[]);
+    h.beads.batched.borrow_mut().insert("sp-a".into());
+    file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=cancelled branch=b repo=spira suite=-\n");
+    h.run();
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    assert!(q.peek_done("spira", "spira/sp-a", "t1").is_none(), "the cancelled verdict is taken");
+    assert!(!h.lib.has("reopen") && !h.lib.has("CERTIFIED") && !h.lib.has("noverdict") && !h.lib.has("incident"), "{:?}", h.lib.calls.borrow());
+    assert!(h.lc.certified.borrow().is_empty());
+    assert!(q.queued().is_empty());
 }
 
 #[test_id(tbaqu9n)]
