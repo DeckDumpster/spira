@@ -147,11 +147,11 @@ mod tests {
         let home = spira_config::process::spira_home();
         let release = spira_config::process::fixture_release(&d, true);
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", home.to_str()), ("SPIRA_RELEASE", release.to_str())]);
-        std::fs::write(&log_path, "1\tlist\tc\t1300\tSELECT a\n2\tshow\tc\t1100\tSELECT b\n").unwrap();
+        std::fs::write(&log_path, "1\tlist\tc\t1300\tSELECT a\n2\tshow\td\t1100\tSELECT b\n").unwrap();
         run(&d, &log_path, "db", "spira", &inc, 1000);
         let got = std::fs::read_to_string(&calls).unwrap();
         let first = got.lines().next().unwrap();
-        for want in ["incident:slow-query", "SLOW STORE: list by c 1300ms over 1000ms; 2 call(s) over in window"] {
+        for want in ["incident:slow-query", "SLOW STORE: list by c 1300ms over 1000ms; 2 call(s) over in window", "callers: c\n", "callers: d\n"] {
             assert!(got.contains(want), "{want} missing from {first}");
         }
     }

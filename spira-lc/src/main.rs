@@ -167,12 +167,9 @@ fn main() {
             std::process::exit(code)
         }
         Some("admin-store-gc") => {
-            match slow::answer_limits_from(spira_config::process::cfg) {
-                Ok(limits) => slow::pin_limits(limits),
-                Err(e) => {
-                    eprintln!("spira-lc: admin-store-gc: {e}");
-                    std::process::exit(2)
-                }
+            if let Err(e) = pin_answer_limits(spira_config::process::cfg) {
+                eprintln!("spira-lc: admin-store-gc: {e}");
+                std::process::exit(2)
             }
             let (code, out) = store_gc::admin_store_gc(&args[1..]);
             if code == 0 { println!("{out}") } else { eprintln!("{out}") }
@@ -362,6 +359,10 @@ fn ship_status() -> (i32, String) {
     }
 }
 
+fn pin_answer_limits(read: impl Fn(&str) -> Result<String, String>) -> Result<(), String> {
+    slow::answer_limits_from(read).map(slow::pin_limits)
+}
+
 /// Names this process's store calls in the slow-query log: its verb, and who ran it.
 fn name_cli_call(args: &[String]) {
     slow::set_verb(args.first().map(String::as_str).unwrap_or("-"));
@@ -456,6 +457,20 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tl427wy)]
+    #[test]
+    fn the_collection_pins_its_waiting_verbs_and_refuses_by_key_when_the_config_errs() {
+        let d = testkit::TempDir::new("cli-pin");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        pin_answer_limits(|k| Ok(if k == "SPIRA_LC_ANSWER_MS" { "100".into() } else { "watch,admin-store-gc".into() })).unwrap();
+        name_cli_call(&["admin-store-gc".to_string()]);
+        slow::record(std::time::Duration::from_millis(5000), "CALL DOLT_GC()");
+        assert!(!log.exists());
+        let e = pin_answer_limits(|k| Err(format!("{k} unset"))).unwrap_err();
+        assert!(e.contains("lc_answer_ms"), "{e}");
+    }
+
     #[test_id(tjok43p)]
     #[test]
     fn an_administrator_verb_names_itself_and_its_caller_in_the_slow_log() {
