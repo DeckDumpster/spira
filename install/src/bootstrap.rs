@@ -200,6 +200,35 @@ fn spira_above(exe: &Path) -> Option<PathBuf> {
 /// (`$SPIRA_HOME/watchers`) reaches it for free as long as `SPIRA_HOME` is set — this
 /// fallback stays as a second line of defense for a minimal env that sets neither.
 pub fn watch_names() -> Result<Vec<String>, String> {
+    let release = spira_config::release_env::release_root_for_process().unwrap_or_default();
+    spira_config::git_refs::held(&release, "watch_names", &manifest_key(), read_watch_names)
+}
+
+fn stamp(path: &Path) -> String {
+    match std::fs::metadata(path).and_then(|m| m.modified().map(|t| (t, m.len()))) {
+        Ok((t, len)) => format!("{}:{:?}:{len}", path.display(), t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default()),
+        Err(_) => format!("{}:absent", path.display()),
+    }
+}
+
+/// What the manifest answer depends on: the manifest, each overlay file, and the config file(s).
+fn manifest_key() -> String {
+    let path_of = |k: &str| nonempty_env(k).or_else(|| spira_config::process::cfg(k).ok().filter(|v| !v.is_empty()));
+    let read = nonempty_env("SPIRA_WATCHERS").or_else(|| nonempty_env("SPIRA_HOME").map(|h| format!("{h}/watchers")));
+    let overlay = path_of("SPIRA_WATCHERS_OVERLAY").map(PathBuf::from);
+    let mut paths: Vec<PathBuf> = read.into_iter().chain(path_of("SPIRA_WATCHERS")).map(PathBuf::from).chain(overlay.clone()).collect();
+    if let Some(dir) = overlay {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        files.sort();
+        paths.extend(files);
+    }
+    if let Ok(spec) = spira_config::process::spec() {
+        paths.extend(spec.split(':').map(PathBuf::from));
+    }
+    paths.iter().map(|p| stamp(p)).collect::<Vec<_>>().join("|")
+}
+
+fn read_watch_names() -> Result<Vec<String>, String> {
     let watchers = nonempty_env("SPIRA_WATCHERS").or_else(|| nonempty_env("SPIRA_HOME").map(|h| format!("{h}/watchers")));
     // batch-job: watchd shells into conf.sh, which outlasts a 5s call deadline on a loaded host
     let mut cmd = std::process::Command::new("timeout");
@@ -485,5 +514,65 @@ mod halt_tests {
         assert!(!super::super::halted_at(d.path()));
         std::fs::write(d.path().join("world.cutover-mode"), "{}").unwrap();
         assert!(super::super::halted_at(d.path()), "the stamp is lifted for the window, the world is not running");
+    }
+}
+
+#[cfg(test)]
+mod watch_names_tests {
+    use super::*;
+
+    struct Rig {
+        dir: testkit::TempDir,
+        _env: testkit::EnvGuard,
+    }
+
+    fn rig(tag: &str) -> Rig {
+        let dir = testkit::TempDir::new(tag);
+        std::fs::create_dir_all(dir.join("rel/bin")).unwrap();
+        std::fs::create_dir_all(dir.join("overlay")).unwrap();
+        std::fs::write(dir.join("watchers"), "a\n").unwrap();
+        std::fs::write(dir.join("toml"), "x\n").unwrap();
+        let calls = dir.join("calls");
+        testkit::write_exe(dir.join("rel/bin/watchd"), &format!("#!/bin/sh\necho x >> {c}\nif [ -f {d}/broken ]; then echo 'bad row' >&2; exit 1; fi\necho spira-watch@a.service\n", c = calls.display(), d = dir.display()));
+        let env = testkit::env(&[
+            ("SPIRA_RELEASE", dir.join("rel").to_str()),
+            ("SPIRA_WATCHERS", dir.join("watchers").to_str()),
+            ("SPIRA_WATCHERS_OVERLAY", dir.join("overlay").to_str()),
+            ("SPIRA_TOML", dir.join("toml").to_str()),
+        ]);
+        Rig { dir, _env: env }
+    }
+
+    fn calls(r: &Rig) -> usize {
+        std::fs::read_to_string(r.dir.join("calls")).unwrap_or_default().lines().count()
+    }
+
+    #[test_id(tkzludf)]
+    #[test]
+    fn an_unchanged_manifest_starts_watchd_once_and_a_touched_one_starts_it_again() {
+        let r = rig("wn-held");
+        for _ in 0..3 {
+            assert_eq!(watch_names().unwrap(), vec!["a".to_string()]);
+        }
+        assert_eq!(calls(&r), 1);
+        std::fs::write(r.dir.join("watchers"), "a\nb\n").unwrap();
+        watch_names().unwrap();
+        watch_names().unwrap();
+        assert_eq!(calls(&r), 2);
+        std::fs::write(r.dir.join("overlay/x.watchers"), "c\n").unwrap();
+        watch_names().unwrap();
+        assert_eq!(calls(&r), 3);
+    }
+
+    #[test_id(tfuhjir)]
+    #[test]
+    fn a_malformed_manifest_is_an_error_on_every_pass() {
+        let r = rig("wn-bad");
+        std::fs::write(r.dir.join("broken"), "").unwrap();
+        for n in 1..=3 {
+            let e = watch_names().unwrap_err();
+            assert!(e.contains("malformed") && e.contains("bad row"), "{e}");
+            assert_eq!(calls(&r), n);
+        }
     }
 }

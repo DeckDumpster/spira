@@ -31,7 +31,8 @@ impl SpiraConfig {
 
 impl Config for SpiraConfig {
     fn get(&self, key: &str) -> Result<u64, String> {
-        let v = self.call(&["get", key, &self.file])?;
+        let name = key.to_ascii_uppercase().replace('.', "_");
+        let v = spira_config::process::fresh(std::slice::from_ref(&name))?.remove(&name).ok_or_else(|| format!("{key} is not declared"))?;
         v.parse().map_err(|_| format!("{key} is {v:?}, not a whole number"))
     }
 
@@ -57,6 +58,19 @@ pub fn count_after(out: &str, verb: &str) -> Option<u64> {
 }
 
 impl TargetReap {
+    fn count_in_process(&self, what: Stale) -> Result<String, String> {
+        let mut args: Vec<String> = ["--dry-run", "--fraction", "1"].map(String::from).to_vec();
+        if what == Stale::Scratch {
+            args.push("--scratch".into());
+        }
+        args.extend(["--worktrees".into(), self.worktrees.display().to_string()]);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        match testenv::target_reap::run(&args, &mut out, &mut err) {
+            0 => Ok(String::from_utf8_lossy(&out).into_owned()),
+            code => Err(format!("target-reap exited {code}: {}", String::from_utf8_lossy(&err).trim())),
+        }
+    }
+
     fn call(&self, what: Stale, dry: bool, fraction: f64) -> Result<String, String> {
         let mut cmd = Command::new(&self.bin);
         if dry {
@@ -78,7 +92,7 @@ impl TargetReap {
 
 impl Reaper for TargetReap {
     fn stale(&self, what: Stale) -> Result<u64, String> {
-        let out = self.call(what, true, 1.0)?;
+        let out = self.count_in_process(what)?;
         count_after(&out, "would remove").ok_or_else(|| format!("target-reap said no count: {out:?}"))
     }
 

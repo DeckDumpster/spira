@@ -3230,6 +3230,7 @@ dependencies = [
  "spira-test-id",
  "strand",
  "system-paths",
+ "testenv",
  "testkit",
 ]
 
