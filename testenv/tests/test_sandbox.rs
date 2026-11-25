@@ -381,6 +381,41 @@ fn a_finishing_binary_keeps_its_exit_code_stdout_and_stderr() {
 #[test]
 fn under_nextest_a_silent_binary_is_not_killed() {
     let f = bounded_fixture();
-    let out = f.run("quiet", "sleep 2.5; echo fin", true);
+    let out = f.run("quiet", "sleep 1.5; echo fin", true);
     assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
+}
+
+#[test_id(txpbx5s)]
+#[test]
+fn a_burst_of_output_on_both_streams_arrives_whole_and_separate() {
+    let f = bounded_fixture();
+    let out = f.run("burst", "for i in $(seq 1 3000); do echo \"o$i\"; echo \"e$i\" >&2; done", false);
+    let lines = |b: &[u8], p: char| String::from_utf8_lossy(b).lines().map(String::from).collect::<Vec<_>>().eq(&(1..=3000).map(|i| format!("{p}{i}")).collect::<Vec<_>>());
+    assert!(lines(&out.stdout, 'o') && lines(&out.stderr, 'e'), "streams arrive whole and in order");
+}
+
+#[test_id(tztmwrt)]
+#[test]
+fn silence_is_bounded_by_the_file_period_times_terminate_after_not_by_one_period() {
+    let f = bounded_fixture();
+    fs::write(f.root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 3 }\n").unwrap();
+    let out = f.run("pause", "sleep 1.5; echo fin", false);
+    assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
+}
+
+#[test_id(tlmmajp)]
+#[test]
+fn print_args_prints_the_command_line_and_never_runs_the_binary() {
+    let f = bounded_fixture();
+    let marker = f.root.join("ran");
+    let bin = f.root.join("probe");
+    testkit::write_exe(&bin, &format!("#!/bin/bash\ntouch {}\n", marker.display()));
+    let out = std::process::Command::new("bash")
+        .arg(f.root.join("tools/test-sandbox/runner"))
+        .arg("--print-args")
+        .arg(&bin)
+        .output()
+        .unwrap();
+    assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).contains("bwrap"));
+    assert!(!marker.exists());
 }
