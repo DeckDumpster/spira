@@ -272,35 +272,47 @@ mod document {
         cockpit::view::publish(&r.view).unwrap();
         assert!(!document_path(&r.view).exists(), "nothing is written until both groups have been read once");
 
-        pass(&r.fx);
+        const T: u64 = 1_800_000_000;
+        let at = |secs: u64| spira_config::vtime::with_now_for_test(T + secs, || pass(&r.fx));
+        at(0);
         let first = read(&r.view);
+        assert_eq!(first.now, T as i64);
         assert_eq!(first.rows.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["sp-a"]);
         assert_eq!((first.vm_runs.len(), first.vm_runs[0].since), (1, 100), "a VM is stored by its start, not by its age");
 
         let old = age_the_file(&r.view);
         let (inode, _) = stat(&r.view);
-        let mut tampered = first.clone();
-        (tampered.now, tampered.good_at, tampered.gather_ms) = (1, 1, 99_999);
-        std::fs::write(document_path(&r.view), serde_json::to_vec(&tampered).unwrap()).unwrap();
-        age_the_file(&r.view);
-        pass(&r.fx);
+        at(5);
         let (inode_after, mtime_after) = stat(&r.view);
-        assert_eq!(inode_after, inode, "a pass that shows what the file shows does not replace it");
-        assert!(mtime_after > old, "it touches it, so the file's age is the pass's");
-        assert_eq!(read(&r.view).now, 1, "and the clock fields alone are not written");
+        assert_eq!(inode_after, inode, "a later clock and a VM that has aged since do not replace the document");
+        assert!(mtime_after > old, "the pass touches it, so the file's age is the pass's");
+        assert_eq!(read(&r.view).now, T as i64, "the clock fields alone are not written");
 
         r.answers.lock().unwrap().insert("list --live".into(), live(&[("sp-a", "first"), ("sp-b", "second")]));
-        pass(&r.fx);
+        at(10);
         assert_ne!(stat(&r.view).0, inode, "a new row replaces the document");
-        assert_eq!(read(&r.view).rows.len(), 2);
+        let changed = read(&r.view);
+        assert_eq!((changed.rows.len(), changed.now), (2, T as i64 + 10));
 
         std::fs::write(&r.pool, "{ torn").unwrap();
-        pass(&r.fx);
+        at(15);
         let kept = read(&r.view);
         assert_eq!((kept.vm_runs.len(), kept.vm_runs[0].since), (1, 100), "a source that fails keeps its last read");
         assert!(kept.errors.iter().any(|e| e.contains("pool.json")), "and names the error: {:?}", kept.errors);
         assert_eq!(kept.rows.len(), 2);
         std::fs::remove_dir_all(&r.run).unwrap();
+    }
+
+    #[test_id(t7eqvxp)]
+    #[test]
+    fn a_publish_with_no_runtime_directory_refuses_by_name_before_it_writes_anything() {
+        let _turn = TURN.lock().unwrap_or_else(|p| p.into_inner());
+        let mut r = rig("cockpit-document-no-runtime-dir");
+        r.fx.world.cockpit_view_dir = PathBuf::new();
+        let publish = EffectSpec::keyed(PUBLISH, "k", "SP_X=1\n", 1_000);
+        let refused = cockpit::run_publish(&r.fx, "", &publish).unwrap_err();
+        assert!(refused.contains("XDG_RUNTIME_DIR"), "{refused}");
+        assert!(!r.run.join("cockpit.env").exists(), "the env file waits for the document's directory too");
     }
 
     #[test_id(tfga3he)]

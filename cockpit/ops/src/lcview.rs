@@ -614,28 +614,6 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
     }
 }
 
-/// The document in `view_dir`, when it parses.
-pub fn published_snapshot(view_dir: &std::path::Path) -> Option<Snapshot> {
-    serde_json::from_slice(&std::fs::read(document_path(view_dir)).ok()?).ok()
-}
-
-/// What a repaint draws: the document, aged to `now`. `None` when nothing was published.
-pub fn first_frame(published: Option<&Snapshot>, now: i64) -> Option<Snapshot> {
-    let last = published?;
-    let mut s = last.clone();
-    s.good_at = if last.good_at > 0 { last.good_at } else { last.now };
-    s.now = now;
-    s.not_running = false;
-    s.store_errors.clear();
-    s.asks_error = None;
-    s.errors.clear();
-    s.failed.clear();
-    if now - s.good_at > STALE_WARN_S {
-        s.errors.push(last_good_notice(now - s.good_at));
-    }
-    Some(s)
-}
-
 fn last_good_notice(secs: i64) -> String {
     format!("showing the last good read from {} ago", age(secs))
 }
@@ -2453,27 +2431,27 @@ mod tests {
 
     #[test_id(tnnvh6l)]
     #[test]
-    fn a_pane_started_with_only_a_published_snapshot_draws_its_rows_on_the_first_frame() {
-        let run = testkit::TempDir::new("lcview-seed");
+    fn a_pane_with_only_the_published_document_draws_its_rows_and_a_torn_or_absent_one_is_an_error() {
+        let dir = testkit::TempDir::new("lcview-seed");
         let mut published = snap(vec![row("sp-pub", "WORKING", 99_000)]);
         published.now = 99_990;
-        std::fs::create_dir_all(document_path(&run).parent().unwrap()).unwrap();
-        std::fs::write(document_path(&run), serde_json::to_vec(&published).unwrap()).unwrap();
-        let seeded = published_snapshot(&run).expect("the published file parses");
-        let first = first_frame(Some(&seeded), 100_000).expect("a published snapshot is a first frame");
+        std::fs::write(document_path(&dir), serde_json::to_vec(&published).unwrap()).unwrap();
+        let (doc, untouched) = read_document(&dir, 100_000).expect("the published file parses");
+        let first = aged(doc, untouched.min(5), 100_000);
         assert!(framed(&first).contains("sp-pub"), "{}", framed(&first));
-        assert!(first_frame(published_snapshot(&run.join("nowhere")).as_ref(), 100_000).is_none(), "nothing published, nothing to draw");
-        std::fs::write(document_path(&run), "{ torn").unwrap();
-        assert!(published_snapshot(&run).is_none());
+        assert!(read_document(&dir.join("nowhere"), 100_000).unwrap_err().contains("nowhere/snapshot.json"), "nothing published, nothing to draw");
+        std::fs::write(document_path(&dir), "{ torn").unwrap();
+        assert!(read_document(&dir, 100_000).unwrap_err().contains("snapshot.json"));
     }
 
     #[test_id(tiyidtd)]
     #[test]
-    fn a_first_frame_from_an_old_publication_names_its_age() {
+    fn an_untouched_document_names_its_age_and_a_touched_one_does_not() {
         let mut published = snap(vec![row("sp-pub", "WORKING", 1)]);
         published.now = 1_000;
-        let first = first_frame(Some(&published), 1_000 + 2 * STALE_WARN_S).unwrap();
+        let first = aged(published.clone(), 2 * STALE_WARN_S, 1_000 + 2 * STALE_WARN_S);
         assert!(framed(&first).contains("showing the last good read from 10m ago"), "{}", framed(&first));
+        assert!(!framed(&aged(published, STALE_WARN_S, 1_000 + 2 * STALE_WARN_S)).contains("last good read"));
     }
 
     #[test_id(tf5l3uu)]
@@ -3505,7 +3483,7 @@ BATCH
     fn a_published_failure_total_draws_no_failure_on_the_first_frame() {
         let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[],"store_errors":[],"failures":2849});
         let s: Snapshot = serde_json::from_value(old).unwrap();
-        let f = first_frame(Some(&s), 2).unwrap();
+        let f = aged(s, 0, 2);
         let banner = plain(&render(&view(&f), 120));
         assert!(!banner.contains("2849") && !banner.contains("failing"), "{banner}");
     }

@@ -36,6 +36,8 @@ struct Scripted {
     clock: Arc<AtomicI64>,
     steps: VecDeque<Step>,
     drawn: Vec<(i64, String)>,
+    /// Every thread seen at any poll or draw: a thread alive across either is in it.
+    threads: BTreeSet<String>,
 }
 
 impl Terminal for Scripted {
@@ -45,6 +47,7 @@ impl Terminal for Scripted {
 
     fn poll(&mut self, wait: Duration) -> io::Result<Option<Event>> {
         self.clock.fetch_add(wait.as_secs() as i64, Ordering::SeqCst);
+        self.threads.extend(threads());
         match self.steps.pop_front() {
             None => Ok(Some(Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)))),
             Some(Step::Idle(n)) => {
@@ -62,6 +65,7 @@ impl Terminal for Scripted {
     }
 
     fn draw(&mut self, lines: &[String]) -> io::Result<()> {
+        self.threads.extend(threads());
         self.drawn.push((self.clock.load(Ordering::SeqCst), lines.join("\n")));
         Ok(())
     }
@@ -111,13 +115,14 @@ fn an_idle_pane_starts_no_thread_and_writes_nothing_while_its_ages_follow_the_cl
     let doc = document_path(&view_dir);
     plant(&doc, &document("sp-old", START - 120));
     let clock = Arc::new(AtomicI64::new(START));
-    let script = |steps: Vec<Step>| Scripted { clock: clock.clone(), steps: steps.into(), drawn: vec![] };
+    let script = |steps: Vec<Step>| Scripted { clock: clock.clone(), steps: steps.into(), drawn: vec![], threads: BTreeSet::new() };
     let pane = |term: &mut Scripted| lcpane::run(term, &Time(clock.clone()), &view_dir, Some(run.join("lcview/ui.json")), SECS).unwrap();
 
     let (threads_before, run_before, runtime_before) = (threads(), files(&run), files(&runtime));
     let mut idle = script(vec![Step::Idle(SECS as usize * IDLE_REPAINTS), Step::Key('q')]);
     pane(&mut idle);
     assert_eq!(threads(), threads_before, "the loop started a thread");
+    assert_eq!(idle.threads, threads_before, "a thread ran during a poll or a repaint");
     assert_eq!(files(&run), run_before, "a file in the run directory changed");
     assert_eq!(files(&runtime), runtime_before, "a file in the runtime directory changed in inode, mtime or size");
 
@@ -126,6 +131,17 @@ fn an_idle_pane_starts_no_thread_and_writes_nothing_while_its_ages_follow_the_cl
     let (first, last) = (repaints[0], repaints[repaints.len() - 1]);
     assert!(first.1.contains("2m") && !first.1.contains("12m"), "{}", first.1);
     assert!(last.0 - first.0 >= 600 && last.1.contains("12m"), "an age moves with the clock alone, drawn at {}: {}", last.0, last.1);
+
+    let (parked, release) = std::sync::mpsc::channel::<()>();
+    let planted = Box::new(move || {
+        std::thread::spawn(move || {
+            let _ = release.recv();
+        });
+    }) as Box<dyn FnOnce()>;
+    let mut control = script(vec![Step::Do(planted), Step::Idle(2), Step::Key('q')]);
+    pane(&mut control);
+    assert_ne!(control.threads, threads_before, "the check sees a thread started by the loop's own terminal");
+    drop(parked);
 
     let replaced = {
         let doc = doc.clone();

@@ -147,6 +147,7 @@ mod tests {
     #[test]
     fn the_render_issues_none_of_the_removed_calls() {
         assert!(removed_calls(include_str!("lcview_main.rs")).is_empty());
+        assert!(removed_calls(include_str!("lcpane.rs")).is_empty(), "the loop it runs gathers nothing either");
     }
 
     #[test_id(txi08zu)]

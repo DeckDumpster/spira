@@ -361,8 +361,12 @@ pub mod cockpit {
         if e.world.run_dir.as_os_str().is_empty() {
             return Err("no run dir configured".into());
         }
+        let views = tier_of(&s.name) == super::cockpit_tier_5s::NAME;
+        if views && e.world.cockpit_view_dir.as_os_str().is_empty() {
+            return Err(view::NO_RUNTIME_DIR.into());
+        }
         let published = cockpit_collect::tiers::publish(&e.world.run_dir, &e.world.ctx_status_dir, tier_of(&s.name), &s.input)?;
-        if tier_of(&s.name) == super::cockpit_tier_5s::NAME {
+        if views {
             view::publish(&e.world.cockpit_view_dir)?;
         }
         Ok(published)
@@ -379,6 +383,7 @@ pub mod cockpit {
 
         pub const FAST: &str = "view";
         pub const SLOW: &str = "view_slow";
+        pub const NO_RUNTIME_DIR: &str = "XDG_RUNTIME_DIR is unset: the cockpit document has no runtime directory to be written to";
 
         /// Whether `name` (a registry name) is one of the view's groups, which [`probe`] answers
         /// and the probe library does not dispatch.
@@ -419,7 +424,7 @@ pub mod cockpit {
         }
 
         fn now() -> i64 {
-            cockpit_collect::io::now()
+            spira_config::vtime::now_epoch() as i64
         }
 
         /// The probe function of the two view groups; any other name is the probe library's.
@@ -459,7 +464,7 @@ pub mod cockpit {
         /// it so its age is the age of the last pass. Nothing is written until both groups have read.
         pub fn publish(dir: &Path) -> Result<(), String> {
             if dir.as_os_str().is_empty() {
-                return Err("XDG_RUNTIME_DIR is unset: the cockpit document has no runtime directory to be written to".into());
+                return Err(NO_RUNTIME_DIR.into());
             }
             let (fast, slow) = (held(&FAST_HELD), held(&SLOW_HELD));
             let (Some(fast), Some(slow)) = (fast.as_ref(), slow.as_ref()) else { return Ok(()) };
