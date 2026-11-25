@@ -76,10 +76,14 @@ impl Shipper {
     }
 
     pub fn with_capacity(url: &str, capacity: usize) -> Shipper {
+        Self::with_deadline(url, capacity, DEADLINE)
+    }
+
+    fn with_deadline(url: &str, capacity: usize, deadline: Duration) -> Shipper {
         let (tx, rx) = sync_channel(capacity);
         let counts = ShipCounts::default();
         let (addr, failed) = (host_port(url), counts.failed.clone());
-        let spawned = std::thread::Builder::new().name("vlogs-ship".into()).spawn(move || post_loop(&addr, rx, &failed));
+        let spawned = std::thread::Builder::new().name("vlogs-ship".into()).spawn(move || post_loop(&addr, rx, &failed, deadline));
         drop(spawned);
         Shipper { tx, counts }
     }
@@ -101,7 +105,7 @@ fn host_port(url: &str) -> String {
     url.trim().trim_start_matches("http://").trim_end_matches('/').to_string()
 }
 
-fn post_loop(addr: &str, rx: Receiver<String>, failed: &AtomicU64) {
+fn post_loop(addr: &str, rx: Receiver<String>, failed: &AtomicU64, deadline: Duration) {
     while let Ok(first) = rx.recv() {
         let mut body = first;
         for _ in 1..BATCH {
@@ -113,7 +117,7 @@ fn post_loop(addr: &str, rx: Receiver<String>, failed: &AtomicU64) {
                 Err(_) => break,
             }
         }
-        if post(addr, &body).is_err() {
+        if post(addr, &body, deadline).is_err() {
             failed.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -128,8 +132,8 @@ fn connect(addr: &str, end: Instant) -> std::io::Result<TcpStream> {
     Ok(s)
 }
 
-fn post(addr: &str, body: &str) -> std::io::Result<()> {
-    let mut s = connect(addr, Instant::now() + DEADLINE)?;
+fn post(addr: &str, body: &str, deadline: Duration) -> std::io::Result<()> {
+    let mut s = connect(addr, Instant::now() + deadline)?;
     write!(s, "POST {INSERT_PATH} HTTP/1.0\r\nHost: {addr}\r\nContent-Type: application/stream+json\r\nContent-Length: {}\r\n\r\n{body}", body.len())?;
     let mut head = Vec::new();
     s.read_to_end(&mut head)?;
@@ -443,17 +447,20 @@ mod tests {
     #[test]
     fn a_full_queue_drops_and_counts_without_blocking() {
         let hung = TcpListener::bind("127.0.0.1:0").unwrap();
-        let s = Shipper::with_capacity(&format!("http://{}", hung.local_addr().unwrap()), 2);
+        let s = Shipper::with_deadline(&format!("http://{}", hung.local_addr().unwrap()), 2, Duration::from_secs(3600));
         let (done, finished) = std::sync::mpsc::channel();
         let shipping = s.clone();
         std::thread::spawn(move || {
+            shipping.ship(&json!({"i": "in flight"}));
+            let posting = hung.accept(); // the poster connects only after it has drained the queue into its batch
             for i in 0..50 {
                 shipping.ship(&json!({"i": i}));
             }
-            let _ = done.send(());
+            let _ = done.send(posting);
         });
-        finished.recv_timeout(Duration::from_secs(30)).expect("fifty ships returned while the listener never answered"); // clock-safe: a cap on the wait for the shipping thread's own signal
-        assert!(s.counts().dropped() >= 40, "dropped {}", s.counts().dropped());
+        let posting = finished.recv_timeout(Duration::from_secs(30)).expect("fifty ships returned while the listener never answered"); // clock-safe: a cap on the wait for the shipping thread's own signal
+        assert!(posting.is_ok(), "the poster connected");
+        assert_eq!(s.counts().dropped(), 48, "two of fifty fit the queue while the one post is held");
     }
 
     use std::net::TcpListener;
