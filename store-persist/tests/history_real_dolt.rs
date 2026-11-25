@@ -165,3 +165,88 @@ fn the_store_after_a_squash_fits_the_depth_curve_within_twice() {
     );
     assert!(bounded.noms() < full.noms(), "squashing shrank the store");
 }
+
+struct Counting<'a> {
+    repo: &'a Repo,
+    picks: std::cell::Cell<usize>,
+    rebases: std::cell::Cell<usize>,
+}
+
+impl Sql for Counting<'_> {
+    fn run(&self, script: &str, csv: bool) -> Result<String, String> {
+        self.picks.set(self.picks.get() + script.matches("DOLT_CHERRY_PICK").count());
+        self.rebases.set(self.rebases.get() + script.matches("DOLT_REBASE").count());
+        self.repo.run(script, csv)
+    }
+}
+
+/// `n` single-row commits after the schema commit, with the primary key of `t` dropped and
+/// re-added in commit number `pk_at`; one uncommitted row follows.
+fn pk_fixture(tmp: &Path, name: &str, n: u64, pk_at: u64) -> Repo {
+    let (dir, home) = (tmp.join(name), tmp.join(format!("{name}-home")));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let r = Repo { dir, home };
+    r.tool(&["config", "--global", "--add", "user.name", "t"]);
+    r.tool(&["config", "--global", "--add", "user.email", "t@example.invalid"]);
+    r.tool(&["init", "-b", "main"]);
+    let mut script = String::from("CREATE TABLE t (id INT PRIMARY KEY, body VARCHAR(200));\nCALL DOLT_COMMIT('-Am', 'schema');\n");
+    for i in 0..n {
+        if i == pk_at {
+            script.push_str("ALTER TABLE t DROP PRIMARY KEY;\nALTER TABLE t ADD PRIMARY KEY (id, body);\n");
+        }
+        script.push_str(&format!("INSERT INTO t VALUES ({i}, 'row {i}');\nCALL DOLT_COMMIT('-Am', 'bd: update {i}');\n"));
+    }
+    script.push_str("INSERT INTO t VALUES (9999, 'uncommitted');\n");
+    r.run(&script, false).unwrap();
+    r
+}
+
+fn assert_squashed_intact(r: &Repo, exact: bool) -> usize {
+    let (rows, schema) = (r.rows(), r.run("SHOW CREATE TABLE t;\n", true).unwrap());
+    let c = Counting { repo: r, picks: 0.into(), rebases: 0.into() };
+    let tip = history::squash(&c, KEEP).unwrap();
+    history::graft(&c, &tip).unwrap();
+    let len = history::len(r).unwrap();
+    if exact {
+        assert_eq!(len, history::length_after(KEEP));
+    } else {
+        assert!(len <= history::length_after(KEEP), "log of {len}");
+    }
+    assert_eq!(r.rows(), rows, "rows at HEAD");
+    assert_eq!(r.run("SHOW CREATE TABLE t;\n", true).unwrap(), schema, "schema at HEAD");
+    assert_eq!(r.run("SELECT COUNT(*) AS n FROM t WHERE id = 9999;\n", true).unwrap().trim(), "n\n1", "the uncommitted row survives");
+    assert_eq!(r.run("SELECT name FROM dolt_branches;\n", true).unwrap().trim(), "name\nmain", "no side branch is left");
+    assert_eq!(c.rebases.get(), 0, "no rebase replays history");
+    c.picks.get()
+}
+
+#[test_id(tml9vjj)]
+#[test]
+fn a_primary_key_change_among_the_squashed_commits_does_not_stop_the_squash() {
+    need_dolt!();
+    let tmp = TempDir::new("store-persist-history-pk-old");
+    let r = pk_fixture(tmp.path(), "db", 30, 5);
+    assert_squashed_intact(&r, true);
+}
+
+#[test_id(t2cok1e)]
+#[test]
+fn a_primary_key_change_among_the_kept_commits_does_not_stop_the_squash() {
+    need_dolt!();
+    let tmp = TempDir::new("store-persist-history-pk-kept");
+    let r = pk_fixture(tmp.path(), "db", 30, 28);
+    assert_squashed_intact(&r, false);
+}
+
+#[test_id(tphzlfc)]
+#[test]
+fn the_cherry_picks_and_the_log_length_do_not_grow_with_the_history() {
+    need_dolt!();
+    let tmp = TempDir::new("store-persist-history-bounded");
+    let small = pk_fixture(tmp.path(), "small", 20, 3);
+    let large = pk_fixture(tmp.path(), "large", 80, 3);
+    let (a, b) = (assert_squashed_intact(&small, true), assert_squashed_intact(&large, true));
+    assert_eq!(a, b);
+    assert!((a as u64) < KEEP);
+}
