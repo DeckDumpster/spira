@@ -329,7 +329,6 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("unit.facts", Unit),
     ("unit.start_installed", Unit),
     ("unit.restart", Unit),
-    ("unit.start_installed", Unit),
     ("unit.start", Unit),
     ("unit.stop", Unit),
     ("view.flip", Host),
