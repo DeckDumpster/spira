@@ -1,5 +1,6 @@
 //! The in-process tiers: what the scheduler's cockpit tier tasks call. [`observe`] runs a
-//! tier's probes as library calls, each on its own thread under its own timeout, and answers
+//! tier's probes as library calls, each on its probe's own long-lived thread (one per probe name, started on first use, so the
+//! thread count is bounded by the tier registries' union) under its own timeout, and answers
 //! each probe's fragment by the supervisor's lifecycle (`ok`, `stale` with the last good
 //! values, `error`/`timeout` with none); [`publish`] writes one tier's merged `Kv` and merges
 //! every tier into `run/cockpit.env`, the pane's read contract, then appends the history row.
@@ -33,14 +34,21 @@ pub struct Fragment {
 /// The tier fragments' directory under the run dir: one file per tier task.
 pub const TIER_DIR: &str = "cockpit.tiers";
 
+struct Job {
+    run: fn(&str) -> Option<Kv>,
+    task: Option<String>,
+    reply: mpsc::Sender<Option<(i64, Kv)>>,
+}
+
 struct Memory {
     running: HashSet<String>,
     last_good: HashMap<String, (i64, Kv)>,
+    workers: HashMap<String, mpsc::Sender<Job>>,
 }
 
 fn memory() -> &'static Mutex<Memory> {
     static M: OnceLock<Mutex<Memory>> = OnceLock::new();
-    M.get_or_init(|| Mutex::new(Memory { running: HashSet::new(), last_good: HashMap::new() }))
+    M.get_or_init(|| Mutex::new(Memory { running: HashSet::new(), last_good: HashMap::new(), workers: HashMap::new() }))
 }
 
 fn lock() -> std::sync::MutexGuard<'static, Memory> {
@@ -52,6 +60,40 @@ fn fault(name: &str, fault: &'static str) -> Fragment {
     match lock().last_good.get(name) {
         Some((at, kv)) => Fragment { name: name.into(), status: "stale", at: *at, killed: true, kv: kv.clone() },
         None => Fragment { name: name.into(), status: fault, at: 0, killed: true, kv: Kv::new() },
+    }
+}
+
+/// Hands `job` to `name`'s worker, starting the worker on first use; false when it cannot run.
+fn dispatch(name: &str, job: Job) -> bool {
+    let mut m = lock();
+    if let Some(tx) = m.workers.get(name) {
+        if tx.send(job).is_ok() {
+            return true;
+        }
+        m.workers.remove(name);
+        return false;
+    }
+    let (tx, rx) = mpsc::channel::<Job>();
+    let n = name.to_string();
+    if std::thread::Builder::new().name(format!("cockpit-{n}")).spawn(move || work(&n, rx)).is_err() {
+        return false;
+    }
+    let sent = tx.send(job).is_ok();
+    m.workers.insert(name.to_string(), tx);
+    sent
+}
+
+fn work(n: &str, jobs: mpsc::Receiver<Job>) {
+    while let Ok(Job { run, task, reply }) = jobs.recv() {
+        let at = io::now();
+        let got = std::panic::catch_unwind(|| spira_store::lc_call::as_task_of(task.as_deref(), || run(n))).ok().flatten();
+        let mut m = lock();
+        m.running.remove(n);
+        if let Some(kv) = &got {
+            m.last_good.insert(n.to_string(), (at, kv.clone()));
+        }
+        drop(m);
+        let _ = reply.send(got.map(|kv| (at, kv)));
     }
 }
 
@@ -74,25 +116,12 @@ pub fn observe_with(probes: &[(String, Duration)], run: fn(&str) -> Option<Kv>) 
             continue;
         }
         let (tx, rx) = mpsc::channel();
-        let n = name.clone();
         let task = spira_store::lc_call::current_task();
-        let spawned = std::thread::Builder::new().name(format!("cockpit-{n}")).spawn(move || {
-            let at = io::now();
-            let got = std::panic::catch_unwind(|| spira_store::lc_call::as_task_of(task.as_deref(), || run(&n))).ok().flatten();
-            let mut m = lock();
-            m.running.remove(&n);
-            if let Some(kv) = &got {
-                m.last_good.insert(n.clone(), (at, kv.clone()));
-            }
-            drop(m);
-            let _ = tx.send(got.map(|kv| (at, kv)));
-        });
-        match spawned {
-            Ok(_) => waiting.push((name.clone(), *timeout, Some(rx))),
-            Err(_) => {
-                lock().running.remove(name);
-                waiting.push((name.clone(), *timeout, None));
-            }
+        if dispatch(name, Job { run, task, reply: tx }) {
+            waiting.push((name.clone(), *timeout, Some(rx)));
+        } else {
+            lock().running.remove(name);
+            waiting.push((name.clone(), *timeout, None));
         }
     }
     waiting
@@ -252,6 +281,39 @@ mod tests {
         let (m, cv) = gate();
         *m.lock().unwrap() = true;
         cv.notify_all();
+    }
+
+    #[test_id(tk7z5g7)]
+    #[test]
+    fn a_probe_runs_on_the_same_thread_every_tick() {
+        static IDS: Mutex<Vec<std::thread::ThreadId>> = Mutex::new(Vec::new());
+        fn record(_: &str) -> Option<Kv> {
+            IDS.lock().unwrap().push(std::thread::current().id());
+            Some(vec![("SP_X".into(), "1".into())])
+        }
+        let probes = [("same-thread-probe".to_string(), Duration::from_secs(5))];
+        for _ in 0..3 {
+            assert_eq!(observe_with(&probes, record)[0].status, "ok");
+        }
+        let ids = IDS.lock().unwrap();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.iter().all(|i| *i == ids[0]), "ids differ: {ids:?}");
+    }
+
+    #[test_id(tdu8e9u)]
+    #[test]
+    fn a_dead_worker_answers_timeout_and_the_next_tick_starts_a_fresh_one() {
+        fn ok(_: &str) -> Option<Kv> {
+            Some(vec![("SP_X".into(), "1".into())])
+        }
+        let name = "dead-worker-probe";
+        let (tx, rx) = mpsc::channel::<Job>();
+        drop(rx);
+        lock().workers.insert(name.into(), tx);
+        let probes = [(name.to_string(), Duration::from_secs(5))];
+        assert_eq!(observe_with(&probes, ok)[0].status, "timeout");
+        assert!(!lock().running.contains(name));
+        assert_eq!(observe_with(&probes, ok)[0].status, "ok");
     }
 
     fn quick(name: &str) -> Option<Kv> {
