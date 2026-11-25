@@ -155,8 +155,9 @@ fn refresh_forge_tip(reg: &spira_config::repos::Registry, r: &MapRow) {
 /// Nothing here reads the refresh outcome.
 fn publish_backlog_snapshot_from(rows: &[MapRow], refresh: &(dyn Fn(&MapRow) + Sync), measure: &dyn Fn(&str) -> Result<Option<Read>, String>) -> Result<String, String> {
     let local = |r: &MapRow| !r.path.is_empty() && Path::new(&r.path).join(".git").is_dir() && r.land == "queue.local";
+    let tally = spira_config::bounded::tally();
     std::thread::scope(|s| {
-        let handles: Vec<_> = rows.iter().filter(|r| local(r)).map(|r| s.spawn(move || refresh(r))).collect();
+        let handles: Vec<_> = rows.iter().filter(|r| local(r)).map(|r| s.spawn({ let tally = tally.clone(); move || spira_config::bounded::in_tally(tally, || refresh(r)) })).collect();
         for h in handles {
             let _ = h.join();
         }

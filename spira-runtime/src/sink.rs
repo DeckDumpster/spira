@@ -8,6 +8,10 @@ use spira_otel::metrics::{MetricsSink, Point};
 pub const SPILLED_TOTAL: &str = "spira_runtime_offload_spilled_total";
 /// A gauge of the runs of a task that found work on the sweep alone: each is a missed wake-up.
 pub const SWEEP_FOUND_TOTAL: &str = "spira_runtime_sweep_found_total";
+/// A count of the programs an effect started, by task, effect and program.
+pub const CHILDREN_STARTED: &str = "spira_runtime_children_started";
+const CHILDREN_PREFIX: &str = "effect.children.";
+const EFFECT_UNIT: &str = "effect";
 const SPILL_UNIT: &str = "offload.spill";
 const SWEEP_FOUND_UNIT: &str = "wake.sweep_found";
 
@@ -25,7 +29,7 @@ pub fn is_routine(fields: &Fields) -> bool {
     };
     match text("unit") {
         "dispatch" => text("outcome") == "ok",
-        "effect" => text("effect.outcome") == "succeeded",
+        "effect" => text("effect.outcome") == "succeeded" && !fields.keys().any(|k| k.starts_with(CHILDREN_PREFIX)),
         "effect.deferred" => true,
         _ => false,
     }
@@ -49,6 +53,16 @@ impl OtlpSink {
 
 fn push_metrics(metrics: &MetricsSink, body: &str, attrs: &[(String, Attr)]) {
     let find = |key: &str| attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+    if body == EFFECT_UNIT {
+        if let (Some(Attr::Str(task)), Some(Attr::Str(effect))) = (find("task"), find("effect.kind")) {
+            for (k, v) in attrs {
+                if let (Some(program), Attr::Int(n)) = (k.strip_prefix(CHILDREN_PREFIX), v) {
+                    metrics.push(&[Point::Count { name: CHILDREN_STARTED, value: *n as u64 }], &[("task", task), ("effect", effect), ("program", &program.to_string())]);
+                }
+            }
+        }
+        return;
+    }
     if body == SWEEP_FOUND_UNIT {
         if let (Some(Attr::Str(task)), Some(Attr::Int(total))) = (find("task"), find("wake.sweep_found_total")) {
             metrics.push(&[Point::Gauge { name: SWEEP_FOUND_TOTAL, value: *total as f64 }], &[("task", task)]);
@@ -121,6 +135,24 @@ mod tests {
         ] {
             assert!(!is_routine(&kept), "{kept:?}");
         }
+    }
+
+    #[test_id(t2xhurx)]
+    #[test]
+    fn a_succeeded_effect_that_started_programs_is_kept_and_counts_each_program() {
+        let mut started = rec(&[("unit", "effect"), ("effect.outcome", "succeeded")]);
+        assert!(is_routine(&started), "no children: still routine");
+        started.insert("effect.children.git".into(), Value::Int(2));
+        assert!(!is_routine(&started));
+        let attrs = vec![
+            ("task".to_string(), Attr::Str("hel.reap_terminal".into())),
+            ("effect.kind".to_string(), Attr::Str("reap".into())),
+            ("effect.children.git".to_string(), Attr::Int(2)),
+        ];
+        let (_, got) = spira_otel::metrics::fixture::capture(|m| push_metrics(m, "effect", &attrs));
+        assert_eq!(got.len(), 1, "{got:?}");
+        let g = &got[0];
+        assert_eq!((g.name.as_str(), g.value, g.label("task"), g.label("effect"), g.label("program")), (CHILDREN_STARTED, 2.0, Some("hel.reap_terminal"), Some("reap"), Some("git")));
     }
 
     #[test_id(tl9y8i6)]

@@ -4,6 +4,8 @@
 //! missing program, 126 not executable, 125 unparseable deadline.
 //! A real batch job is marked `// batch-job: <why>` at its call instead (spira-lint call-deadline).
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -11,7 +13,7 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 static STARTED: AtomicU64 = AtomicU64::new(0);
@@ -19,6 +21,47 @@ static STARTED: AtomicU64 = AtomicU64::new(0);
 /// Children this process has started through [`Bounded`].
 pub fn started() -> u64 {
     STARTED.load(Ordering::Relaxed)
+}
+
+/// Programs started per file name, shared by the thread that opened it and any thread it was carried to.
+pub type Tally = Arc<Mutex<BTreeMap<String, u64>>>;
+
+thread_local! {
+    static TALLY: RefCell<Option<Tally>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` and returns the programs [`Bounded`] started on this thread, and on threads carried
+/// with [`in_tally`], while it ran.
+pub fn counting<T>(f: impl FnOnce() -> T) -> (T, BTreeMap<String, u64>) {
+    let mine = Tally::default();
+    let out = in_tally(Some(mine.clone()), f);
+    let counted = std::mem::take(&mut *mine.lock().unwrap_or_else(|e| e.into_inner()));
+    (out, counted)
+}
+
+/// The tally this thread adds to, to hand to a thread it spawns.
+pub fn tally() -> Option<Tally> {
+    TALLY.with(|t| t.borrow().clone())
+}
+
+/// `f` adding to `t` when one is given, else as it stands.
+pub fn in_tally<T>(t: Option<Tally>, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Tally>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TALLY.with(|t| *t.borrow_mut() = self.0.take());
+        }
+    }
+    let Some(t) = t else { return f() };
+    let _restore = Restore(TALLY.with(|c| c.replace(Some(t))));
+    f()
+}
+
+fn count_start(program: &OsStr) {
+    if let Some(t) = tally() {
+        let name = Path::new(program).file_name().unwrap_or(program).to_string_lossy().into_owned();
+        *t.lock().unwrap_or_else(|e| e.into_inner()).entry(name).or_insert(0) += 1;
+    }
 }
 
 pub const CALL_TIMEOUT_SECS: &str = "5";
@@ -221,6 +264,7 @@ impl Bounded {
         }
         self.cmd.process_group(0);
         STARTED.fetch_add(1, Ordering::Relaxed);
+        count_start(self.cmd.get_program());
         let mut child = self.cmd.spawn()?;
         let expired = Arc::new(AtomicBool::new(false));
         if let Some(limit) = deadline {

@@ -286,6 +286,7 @@ pub struct Engine {
     stall_limit: u32,
     suspects: BTreeMap<(EventId, String), u32>,
     attempts: BTreeMap<String, u32>,
+    children: BTreeMap<String, BTreeMap<String, u64>>,
     baseline: Vec<(String, Value)>,
     started: Instant,
     poison_seen: BTreeMap<StreamKey, bool>,
@@ -457,6 +458,7 @@ impl Engine {
             stall_limit: 2,
             suspects: BTreeMap::new(),
             attempts: BTreeMap::new(),
+            children: BTreeMap::new(),
             baseline: vec![],
             started: Instant::now(),
             poison_seen: BTreeMap::new(),
@@ -733,6 +735,13 @@ impl Engine {
     }
 
     /// The executor started the runner for effect `key`; its deadline counts from now.
+    /// The programs the effect `key` started, written on its `effect` record when it completes.
+    pub fn note_children(&mut self, key: &str, children: BTreeMap<String, u64>) {
+        if !children.is_empty() {
+            self.children.insert(key.into(), children);
+        }
+    }
+
     pub fn note_attempt(&mut self, key: &str) {
         *self.attempts.entry(key.into()).or_insert(0) += 1;
         self.queued.remove(key);
@@ -1774,6 +1783,13 @@ impl Executor for Engine {
             w.set("effect.detail", clip(&outcome.detail(), EFFECT_DETAIL_MAX));
         }
         w.set("effect.attempt", self.attempts.remove(key).unwrap_or(1));
+        let children = self.children.remove(key).unwrap_or_default();
+        if !children.is_empty() {
+            w.set("task", p.stream.0.as_str());
+        }
+        for (program, n) in children {
+            w.set(&format!("effect.children.{program}"), n);
+        }
         w.set("duration_ms", ev.at.saturating_sub(p.requested_at));
         self.finish(&w);
         Ok(true)
