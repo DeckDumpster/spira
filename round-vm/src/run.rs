@@ -354,7 +354,7 @@ pub const REMOTE_SCRIPT: &str = concat!(r#"set -Eeuo pipefail
 unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" round_ref="${12}" round_sha="${13}"
 testenv_limits="${15:-}" resume_url="${16:-}" fences="${17:-}" want_tag="${18:-}"
-deny_list="${19:-}" deny_filter_line="${20:-}" integ_skips="${21:-}" only="${24:-}"
+deny_list="${19:-}" deny_filter_line="${20:-}" only="${24:-}"
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
 : > ~/round-runner.out
 exec > >(tee -a ~/round-script.log)
@@ -741,34 +741,6 @@ unit_stream() {
             printf "round-vm: PROGRESS-COST %s lines=%d writes=%d user_ms=%d sys_ms=%d\n", name, lines, writes, f[12] * 1000 / hz, f[13] * 1000 / hz > "/dev/stderr"
         }'
 }
-# A test libtest has flagged as running over its slow threshold is a hung test: the watcher
-# kills that test binary, so cargo fails the crate by name and the run moves on to the next.
-# stdin: a cargo log; prints "<test>\t<binary path>" per flagged test.
-unit_hang_scan() {
-    awk '/^ *Running / { bin = ""; if (match($0, /\(.*\)/)) bin = substr($0, RSTART + 1, RLENGTH - 2); next }
-         /^test .* has been running for over [0-9]+ seconds$/ { print $2 "\t" bin }'
-}
-unit_kill_binary() {
-    local want="${1##*/}" exe p
-    [ -n "$want" ] || return 0
-    for p in /proc/[0-9]*; do
-        exe="$(readlink "$p/exe" 2>/dev/null)" || continue
-        [ "${exe##*/}" = "$want" ] && kill -KILL "${p#/proc/}" 2>/dev/null
-    done
-    return 0
-}
-unit_hang_watch() {
-    local log="$1" report="$2" pid="$3" t b
-    while kill -0 "$pid" 2>/dev/null; do
-        sleep 2
-        while IFS=$'\t' read -r t b; do
-            grep -qxF -- "$t	$b" "$report" 2>/dev/null && continue
-            printf '%s\t%s\n' "$t" "$b" >> "$report"
-            echo "round-vm: UNIT-TESTS: HUNG test=$t binary=${b##*/} past libtest's slow threshold; the binary is killed so the run goes on" >&2
-            unit_kill_binary "$b"
-        done < <(unit_hang_scan < "$log")
-    done
-}
 # The test binary a cargo log last started, by file name; empty before the first.
 last_binary() {
     awk '/^ *Running / { if (match($0, /\(.*\)/)) b = substr($0, RSTART + 1, RLENGTH - 2); else b = $0 } END { sub(/.*\//, "", b); print b }' "$1"
@@ -1080,7 +1052,8 @@ if [ -n "$only" ]; then
         integ_hung="$HOME/round-integration-hung"
         : > "$integ_hung"
         rc=0
-        unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#"$integ_skips > ~/round-integration-tests.log 2>&1 || rc=$?
+        write_round_nextest_config
+        unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" > ~/round-integration-tests.log 2>&1 || rc=$?
         if [ "$rc" -ne 0 ]; then
             phase_failed integration-tests "$rc"
             test_phase_red integration-tests ~/round-integration-tests.log "$rc" "$(( $(date +%s) - only_t0 ))" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
@@ -1104,6 +1077,11 @@ rdir="$HOME/round-work/.runtime/spira/batch-results"
 write_unit_timings() {
     { echo "unit_build_secs $unit_build_secs"; echo "unit_secs $unit_secs"; grep -E '"#, spira_config::unit_tier_timing_lines!(), r#"' ~/round-unit-tests.log; } > "$rdir/unit-timings" || true
 }
+write_round_nextest_config() {
+    local secs periods
+    secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
+    write_unit_nextest_config "$secs" "$periods" "$HOME/round-nextest.toml" "$deny_filter_line"
+}
 # One line per `test:` row of the deny list ($1) saying whether nextest ($2) reported a test ending `::<id>` skipped.
 unit_registry_skips() {
     [ -r "$1" ] && [ -r "$2" ] || return 0
@@ -1123,8 +1101,7 @@ echo "0 $integ_total" > "$integ_progress"
 unit_hung="$HOME/round-unit-hung"
 : > "$unit_hung"
 unit_t0=$(date +%s)
-unit_deadline_secs="$(target/release/spira-config get spira.unit_test_deadline_secs)" && unit_deadline_periods="$(target/release/spira-config get spira.unit_test_deadline_periods)" || { echo "round-vm: cannot read the unit-test deadline from the round's config" >&2; exit 2; }
-write_unit_nextest_config "$unit_deadline_secs" "$unit_deadline_periods" "$HOME/round-nextest.toml" "$deny_filter_line"
+write_round_nextest_config
 unit_nextest > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_lib_total" "$unit_progress" unit &
@@ -1151,7 +1128,7 @@ else
 fi
 integ_cargo() {
     local rc=0
-    unit_env "#, spira_config::unit_tier_integration!("unittest", "--workspace"), r#"$integ_skips || rc=$?
+    unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "--workspace"), r#" || rc=$?
     return "$rc"
 }
 : > ~/round-integration-tests.log
@@ -1165,8 +1142,6 @@ rm -f "$integ_end"
 integ_pid=$!
 tail -n +1 -f --pid="$integ_pid" ~/round-integration-tests.log | unit_stream "$integ_total" "$integ_progress" integration &
 integ_stream_pid=$!
-unit_hang_watch ~/round-integration-tests.log "$integ_hung" "$integ_pid" &
-integ_hang_pid=$!
 # THE CAP CLOCK runs from testenv's first suite to the corpus's end: container setup, post-processing,
 # the unit tier before it and the pulls are outside it, each under its own guard. testenv's "running N
 # suite(s)" line is the start mark.
@@ -1240,15 +1215,15 @@ test_phase_bound "$integ_pid" "$post_guard" ~/round-integration-tests.log "$inte
 wait "$integ_pid"; integ_rc=$?
 integ_secs=$(( $(cat "$integ_end" 2>/dev/null || date +%s) - integ_t0 ))
 wait "$integ_stream_pid"
-kill "$integ_hang_pid" 2>/dev/null; wait "$integ_hang_pid" 2>/dev/null
 [ ! -s "$integ_hung" ] || [ "$integ_rc" -ne 0 ] || integ_rc=1
 echo "round-vm: INTEGRATION-TESTS took ${integ_secs}s (tests/, ${integ_total} test binaries, beside the suites)" >&2
+unit_registry_skips ~/round-deny-list ~/round-integration-tests.log
 if [ "$integ_rc" -eq 0 ]; then
-    echo "round-vm: INTEGRATION-TESTS: PASS ($(grep -c '^test result: ok' ~/round-integration-tests.log) test binaries)" >&2
+    echo "round-vm: INTEGRATION-TESTS: PASS ($(awk '/^ *Summary \[/ { print $4 }' ~/round-integration-tests.log) tests)" >&2
 else
     phase_failed integration-tests "$integ_rc"
     echo "round-vm: INTEGRATION-TESTS: FAIL (integration run rc=$integ_rc):" >&2
-    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-integration-tests.log | head -120 >&2
+    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at|^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[' ~/round-integration-tests.log | head -120 >&2
     test_phase_red integration-tests ~/round-integration-tests.log "$integ_rc" "$integ_secs" "$integ_hung" "$rdir/integration-tests.out" "$rdir/integration.json" false
     [ "$rc" -eq 0 ] && rc=1
 fi
@@ -1395,7 +1370,6 @@ pub fn remote_command(job: &BatchJob) -> String {
     let deny = spira_config::unit_tier::DenyList::parse(&job.deny_list).expect("a deny list is validated when the run is parsed; a bad one must never become an empty one");
     args.push(job.deny_list.clone());
     args.push(deny.config_filter_line());
-    args.push(deny.integration_skips());
     args.push(job.ci_image.clone().unwrap_or_default());
     args.push(job.ci_workdir.clone().unwrap_or_default());
     args.push(job.only.clone());
@@ -4686,7 +4660,7 @@ mod tests {
         let cfg = REMOTE_SCRIPT.find("spira-config get spira.unit_test_deadline_secs").unwrap();
         let run = REMOTE_SCRIPT.find("unit_nextest > ~/round-unit-tests.log 2>&1 &").unwrap();
         assert!(cfg < run && REMOTE_SCRIPT.contains("spira-config get spira.unit_test_deadline_periods"));
-        assert!(REMOTE_SCRIPT.contains("write_unit_nextest_config \"$unit_deadline_secs\" \"$unit_deadline_periods\" \"$HOME/round-nextest.toml\""));
+        assert!(script_fn("write_round_nextest_config").contains("write_unit_nextest_config \"$secs\" \"$periods\" \"$HOME/round-nextest.toml\""));
         let body = script_fn("unit_nextest");
         let words = spira_config::unit_tier::unit_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace", spira_config::unit_tier::LIB_BINS);
         assert!(body.contains(&format!("unit_env {words}")), "the definition's words: {body}");
@@ -4695,9 +4669,8 @@ mod tests {
         assert!(cfg.contains(spira_config::unit_tier_config_printf!()), "{cfg}");
         assert!(!body.contains("nice"), "no niceness: the unit tier's wall is what it is today");
         let integ = script_fn("integ_cargo");
-        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")), "the integration tier keeps cargo test: {integ}");
-        assert!(!REMOTE_SCRIPT.contains("unit_hang_watch ~/round-unit-tests.log"), "nextest terminates the test; no watcher kills the binary");
-        assert!(REMOTE_SCRIPT.contains("unit_hang_watch ~/round-integration-tests.log"));
+        assert!(integ.contains(&spira_config::unit_tier::integration_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace")), "the integration tier runs under the same deadline: {integ}");
+        assert!(!REMOTE_SCRIPT.contains("unit_hang_watch"), "nextest terminates the test; no watcher kills the binary");
     }
 
     fn results_with_unit_timings(age_secs: u64) -> (TempDir, u64) {
@@ -4797,7 +4770,7 @@ mod tests {
     fn the_unit_phase_runs_only_the_tests_inside_src_and_the_integration_phase_the_rest() {
         let f = REMOTE_SCRIPT.find("integ_cargo() {").unwrap();
         let integ = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
-        assert!(integ.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")), "{integ}");
+        assert!(integ.contains(&spira_config::unit_tier::integration_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace")), "{integ}");
         assert!(REMOTE_SCRIPT.contains("unit_lib_total=$(grep -c '^ *Executable unittests ' ~/round-unit-build.log)"));
         for line in ["round-vm: UNIT-TESTS took ${unit_secs}s", "round-vm: INTEGRATION-TESTS took ${integ_secs}s"] {
             assert!(REMOTE_SCRIPT.contains(line), "each phase says how long it took: {line}");
@@ -4858,7 +4831,7 @@ mod tests {
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&sample_job());
-        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' '' 'registry.example/rust:1' 'work' ''", shell_quote(REMOTE_LAUNCHER)));
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' 'opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' '' '' '' '' '' 'registry.example/rust:1' 'work' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -4902,10 +4875,10 @@ mod tests {
         let deny = spira_config::unit_tier::DenyList::parse(text).unwrap();
         let mut job = BatchJob { deny_list: text.into(), ..sample_job() };
         let cmd = remote_command(&job);
-        let tail = format!("'{}' '{}' '{}' 'registry.example/rust:1' 'work' ''", text, deny.config_filter_line(), deny.integration_skips());
+        let tail = format!("'{}' '{}' 'registry.example/rust:1' 'work' ''", text, deny.config_filter_line());
         assert!(cmd.ends_with(&tail), "{cmd}");
         job.deny_list = String::new();
-        assert!(remote_command(&job).ends_with(" '' '' '' 'registry.example/rust:1' 'work' ''"));
+        assert!(remote_command(&job).ends_with(" '' '' 'registry.example/rust:1' 'work' ''"));
     }
 
     #[test_id(thuax12)]
@@ -4933,22 +4906,23 @@ mod tests {
         assert!(export < REMOTE_SCRIPT.find("testenv container tag").unwrap());
         assert!(export < REMOTE_SCRIPT.find("testenv --mode parallel").unwrap());
         assert!(REMOTE_SCRIPT.contains("export SPIRA_TEST_DENY_LIST=%q"), "the attribution reruns source it");
-        assert!(script_fn("integ_cargo").contains("--test '*'$integ_skips"));
+        assert!(!script_fn("integ_cargo").contains("skip"), "the deny list reaches the tier through the nextest config");
         assert!(REMOTE_SCRIPT.contains("\"$HOME/round-nextest.toml\" \"$deny_filter_line\""));
     }
 
     #[test_id(tlprmgr)]
     #[test]
-    fn the_rounds_integration_command_is_the_gates_words_plus_the_skips() {
-        let deny = spira_config::unit_tier::DenyList::parse("disabled\ttest:t0ccccc\t-\t-\n").unwrap();
+    fn the_rounds_integration_command_is_nextest_over_the_rounds_config_and_passes_no_skips() {
         let body = script_fn("integ_cargo");
         let out = std::process::Command::new("bash")
-            .args(["-c", &format!("unit_env() {{ echo \"$*\"; }}\ninteg_skips=\"$1\"\n{body}\ninteg_cargo", ), "bash", &deny.integration_skips()])
+            .args(["-c", &format!("unit_env() {{ echo \"$*\"; }}\n{body}\ninteg_cargo", )])
             .output()
             .unwrap();
         let first = String::from_utf8_lossy(&out.stdout).lines().next().unwrap().to_string();
-        let words = spira_config::unit_tier::integration_words(Some("unittest"), "--workspace").replace("'*'", "*");
-        assert_eq!(first, format!("{words}{}", deny.integration_skips()));
+        let words = spira_config::unit_tier::integration_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace").replace("'*'", "*");
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(first, words.replace("\"$HOME", &home).replace("toml\"", "toml"));
+        assert!(first.starts_with("nextest run --config-file "), "{first}");
     }
 
     #[test_id(tjqo63r)]
@@ -5115,7 +5089,7 @@ mod tests {
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, image_tag: None,
             ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None, ci_image: None, ci_workdir: None, fences: String::new(), deny_list: String::new(), only: String::new(), cancel: Default::default(),
         };
-        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' '' ''"));
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre' '' '' '' '' '' '' ''"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
         push_resume_credentials(&remote, "10.0.0.2", Path::new("creds"));

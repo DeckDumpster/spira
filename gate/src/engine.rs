@@ -2975,7 +2975,9 @@ pub fn run_composed<W: World>(
             if let (Composition::Unit { crates, .. }, "test") = (comp, name) {
                 let mut reruns = parse::cargo_reruns(&o);
                 if reruns.is_empty() {
-                    reruns.push(compose::unit_packages(crates));
+                    let failed = parse::failed_tests(&o);
+                    let packages = compose::unit_packages(crates);
+                    reruns.push(if failed.is_empty() { packages } else { format!("{packages} -- {}", failed.join(" ")) });
                 }
                 for rerun in reruns {
                     out.push_str(&format!(
