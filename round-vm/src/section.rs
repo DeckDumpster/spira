@@ -2,7 +2,9 @@
 //! wasted, and the slots in use. The status core is pure; the store is a port. The section
 //! declares no action.
 
+use crate::config::Config;
 use reconciler_engine::goodput_pass::Lc;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use spira_desired_state::section::{parse_section, Section};
 use spira_desired_state::sections::vm_pool as kind;
@@ -13,8 +15,9 @@ use tsd::query::{text, ts_of};
 pub const HOUR: u64 = 3_600;
 pub const TARGET_LATENCY: &str = "5m";
 pub const MAX_AGE: &str = "30m";
+pub const MAX_AGE_SECS: u64 = 30 * 60;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Reading {
     pub passes: u64,
     pub infra_incomplete_share: f64,
@@ -107,4 +110,87 @@ pub fn run(lc: &dyn Lc, now: u64, rows: &[Value], slots_in_use: Vec<(String, u64
     let body = section_body(&status_of(prev.as_ref(), &reading), now).to_string();
     lc_ok(lc, &format!("publish {name}"), &argv(&["section", "publish-status", "--actor", kind::OWNER, "--expect-rev", &rev, "--json", &body]))?;
     Ok(reading)
+}
+
+/// The store port over the socket client; a transport failure is exit -1.
+pub struct SpiraLc(pub spira_store::lc_call::LcClient);
+
+impl Lc for SpiraLc {
+    fn call(&self, args: &[String]) -> (i32, Value) {
+        match self.0.call(args) {
+            Ok(r) => (r.code, serde_json::from_str(r.out.trim()).unwrap_or_else(|_| json!({ "cannot_tell": r.why() }))),
+            Err(e) => (-1, json!({ "cannot_tell": e.to_string() })),
+        }
+    }
+}
+
+/// The hour's reading from the `cert-pass` rows under the run dir and the pool's leases.
+pub fn read(cfg: &Config, now: u64) -> Result<Reading, String> {
+    let (rows, slots) = inputs(cfg, now)?;
+    Ok(measure(&rows, now, slots))
+}
+
+fn inputs(cfg: &Config, now: u64) -> Result<(Vec<Value>, Vec<(String, u64)>), String> {
+    let rows = pass_rows(tsd::query::Source { reader: None, root: &cfg.run_dir }.rows(tsd::pass::FAMILY, now.saturating_sub(HOUR)))?;
+    let state = crate::pool::read_state(&crate::cli::pool_for(cfg).state_file())?;
+    Ok((rows, slots_by_pool(&state.leases)))
+}
+
+/// Reads the inputs and publishes the section through `lc`: what `round-vm section` does.
+pub fn publish(cfg: &Config, lc: &dyn Lc, now: u64) -> Result<Reading, String> {
+    let (rows, slots) = inputs(cfg, now)?;
+    run(lc, now, &rows, slots)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TempDir;
+    use std::sync::Mutex;
+
+    const NOW: u64 = 1_793_422_800;
+
+    struct FakeLc(Mutex<Vec<Vec<String>>>);
+
+    impl Lc for FakeLc {
+        fn call(&self, args: &[String]) -> (i32, Value) {
+            self.0.lock().unwrap().push(args.to_vec());
+            match args[1].as_str() {
+                "get" => (1, json!({})),
+                _ => (0, json!({ "published": true })),
+            }
+        }
+    }
+
+    fn plant_pass(run: &std::path::Path, lines: &[(u64, &str)]) {
+        let path = tsd::family_path(run, tsd::pass::FAMILY);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let text: String = lines.iter().map(|(at, cause)| format!("{}\n", json!({ "ts": format_rfc3339(*at), "cause": cause }))).collect();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test_id(tgoba7w)]
+    #[test]
+    fn publish_writes_the_body_the_cli_publisher_wrote_from_the_run_dirs_passes() {
+        let dir = TempDir::new();
+        plant_pass(dir.path(), &[(NOW - 600, "green"), (NOW - 300, "infra")]);
+        let cfg = crate::config::fixture(dir.path());
+        let lc = FakeLc(Mutex::new(vec![]));
+        let reading = publish(&cfg, &lc, NOW).unwrap();
+        assert_eq!(reading, Reading { passes: 2, infra_incomplete_share: 0.5, over_cap_share: 0.0, slots_in_use: vec![("proxmox".into(), 0), ("ec2".into(), 0)] });
+        let calls = lc.0.lock().unwrap();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert_eq!(&calls[0][..2], ["section", "get"]);
+        assert_eq!(calls[1][..6], ["section", "publish-status", "--actor", kind::OWNER, "--expect-rev", "0"]);
+        let body: Value = serde_json::from_str(&calls[1][7]).unwrap();
+        assert_eq!(body, section_body(&status_of(None, &reading), NOW));
+        assert_eq!(body["status"][kind::PASSES]["value"], 2.0);
+        assert_eq!(body["status"][kind::INFRA_INCOMPLETE]["value"], 0.5);
+    }
+
+    #[test_id(trhvrm3)]
+    #[test]
+    fn the_max_age_seconds_are_the_max_age_the_section_declares() {
+        assert_eq!(MAX_AGE_SECS, MAX_AGE.strip_suffix('m').unwrap().parse::<u64>().unwrap() * 60);
+    }
 }
