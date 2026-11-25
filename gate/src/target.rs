@@ -63,13 +63,14 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// From the operator's variables (empty or unparsable = the default).
-    pub fn from_vars(cap: &str, shed: &str) -> Limits {
-        let n = |s: &str, d: u64| s.trim().parse::<u64>().unwrap_or(d);
-        Limits {
-            cap_mib: n(cap, 12288),
-            shed_free_mib: n(shed, 6144),
-        }
+    /// From the operator's variables. The cap has no default: an empty or unparsable one is
+    /// refused by name.
+    pub fn from_vars(cap: &str, shed: &str) -> Result<Limits, String> {
+        let cap_mib = cap
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| format!("SPIRA_GATE_TARGET_CAP_MIB is {cap:?}, not a number of MiB"))?;
+        Ok(Limits { cap_mib, shed_free_mib: shed.trim().parse::<u64>().unwrap_or(6144) })
     }
 }
 
@@ -122,7 +123,7 @@ pub struct Prepared {
     pub evicted: Vec<String>,
     /// MiB freed on the disk by replacing a tree's real build directories.
     pub disk_freed_mib: u64,
-    /// `prepare` emptied the warm pool.
+    /// `prepare` removed a pooled entry.
     pub pool_shed: bool,
 }
 
@@ -169,22 +170,13 @@ pub fn prepare(
     //    same tmpfs, like testenv's warm slots, can eat the room this cap never counted).
     let mut sizes: Vec<(PathBuf, String, u64)> = live.into_iter().map(|(p, n)| { let s = size_of(&p); (p, n, s) }).collect();
     let own = size_of(&out.dir);
-    let mut total: u64 = sizes.iter().map(|s| s.2).sum::<u64>() + own + crate::warm::size(root);
+    let mut total: u64 = sizes.iter().map(|s| s.2).sum::<u64>() + own;
     let cap = lim.cap_mib * 1024 * 1024;
-    if total > cap {
-        total = total.saturating_sub(crate::warm::size(root));
-        crate::warm::shed(root);
-        out.pool_shed = true;
-    }
+    let short = || free_mib(root).is_some_and(|f| f < lim.shed_free_mib);
     sizes.sort_by_key(|(p, _, _)| mtime(p));
     for (p, n, s) in sizes {
-        let short_of_floor = free_mib(root).is_some_and(|f| f < lim.shed_free_mib);
-        if total <= cap && !short_of_floor {
+        if total + crate::warm::size(root) <= cap && !short() {
             break;
-        }
-        if short_of_floor {
-            crate::warm::shed(root);
-            out.pool_shed = true;
         }
         if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || held(&n) {
             continue;
@@ -192,6 +184,14 @@ pub fn prepare(
         let _ = fs::remove_dir_all(&p);
         total = total.saturating_sub(s);
         out.evicted.push(n);
+    }
+    // The pool goes last, one claimable entry at a time, oldest first: an idle tree is rebuilt
+    // cold by nobody, a pooled entry is what the next gate adopts.
+    while total + crate::warm::size(root) > cap || short() {
+        if !crate::warm::evict_oldest(root) {
+            break;
+        }
+        out.pool_shed = true;
     }
 
     // 3. Link. A real directory from before is removed (its disk freed); a dangling or
@@ -459,13 +459,77 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.p");
         fs::create_dir_all(&tree).unwrap();
-        write_mib(&root.join(crate::warm::POOL).join("e1/debug/deps/libz.rlib"), 1);
+        write_mib(&root.join(crate::warm::POOL).join("r/e1/debug/deps/libz.rlib"), 1);
         let under = prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
         assert!(!under.pool_shed);
-        assert!(root.join(crate::warm::POOL).join("e1").is_dir());
+        assert!(root.join(crate::warm::POOL).join("r/e1").is_dir());
         let over = prepare(&root, &trees, &tree, &lim(0), &roomy, &|_| false).unwrap();
         assert!(over.pool_shed);
-        assert!(!root.join(crate::warm::POOL).exists());
+        assert!(!root.join(crate::warm::POOL).join("r/e1").exists());
+    }
+
+    fn held_tree(trees: &Path, name: &str) -> fs::File {
+        use std::os::unix::io::AsRawFd;
+        let f = fs::File::create(trees.join(format!("{name}.lock"))).unwrap();
+        assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        f
+    }
+
+    fn aged(p: &Path, secs_ago: u64) {
+        let at = std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
+        fs::File::open(p).unwrap().set_modified(at).unwrap();
+    }
+
+    #[test_id(t0ftqys)]
+    #[test]
+    fn an_idle_tree_is_evicted_before_a_pooled_entry_when_over_the_cap() {
+        let s = Scratch::new("idle-before-pool");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        for t in ["idle", "busy"] {
+            fs::create_dir_all(trees.join(format!(".gate.harness.{t}"))).unwrap();
+            write_mib(&root.join(format!(".gate.harness.{t}/debug/x")), 4);
+        }
+        let _lock = held_tree(&trees, ".gate.harness.busy");
+        write_mib(&root.join(crate::warm::POOL).join("r/e1/debug/deps/libz.rlib"), 4);
+        let tree = trees.join(".gate.harness.new");
+        fs::create_dir_all(&tree).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(10), &roomy, &|_| false).unwrap();
+        assert_eq!(p.evicted, vec![".gate.harness.idle".to_string()]);
+        assert!(!p.pool_shed);
+        assert!(root.join(crate::warm::POOL).join("r/e1/debug/deps/libz.rlib").is_file());
+    }
+
+    #[test_id(tivobcg)]
+    #[test]
+    fn with_only_locked_trees_the_older_pooled_entry_goes_and_the_newer_stays() {
+        let s = Scratch::new("oldest-pool");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        for t in ["a", "b"] {
+            fs::create_dir_all(trees.join(format!(".gate.harness.{t}"))).unwrap();
+            write_mib(&root.join(format!(".gate.harness.{t}/debug/x")), 4);
+        }
+        let _la = held_tree(&trees, ".gate.harness.a");
+        let _lb = held_tree(&trees, ".gate.harness.b");
+        let pool = root.join(crate::warm::POOL);
+        write_mib(&pool.join("r/old/debug/deps/libz.rlib"), 4);
+        write_mib(&pool.join("q/new/debug/deps/libz.rlib"), 4);
+        aged(&pool.join("r/old"), 600);
+        aged(&pool.join("q/new"), 60);
+        let tree = trees.join(".gate.harness.new");
+        fs::create_dir_all(&tree).unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(13), &roomy, &|_| false).unwrap();
+        assert!(p.pool_shed && p.evicted.is_empty());
+        assert!(!pool.join("r/old").exists());
+        assert!(pool.join("q/new").is_dir());
+    }
+
+    #[test_id(tv5iuvj)]
+    #[test]
+    fn an_empty_or_unparsable_cap_is_refused_by_name() {
+        for bad in ["", " ", "x"] {
+            let e = Limits::from_vars(bad, "6144").unwrap_err();
+            assert!(e.contains("SPIRA_GATE_TARGET_CAP_MIB"), "{e}");
+        }
     }
 
     #[test_id(ts24qfb)]
@@ -550,11 +614,8 @@ mod tests {
         assert!(a.to_string_lossy().starts_with(&format!("{}/spira-gate-target-", system_paths::TMP)));
         assert_ne!(a, root("", "srv/b/run", true).unwrap(), "two installs never share a root");
         assert_eq!(root("", "run", false), None);
-        assert_eq!(
-            Limits::from_vars("", "x"),
-            Limits { cap_mib: 12288, shed_free_mib: 6144 }
-        );
-        assert_eq!(Limits::from_vars("1", "500").shed_free_mib, 500);
+        assert_eq!(Limits::from_vars("1", "x"), Ok(Limits { cap_mib: 1, shed_free_mib: 6144 }));
+        assert_eq!(Limits::from_vars("1", "500").unwrap().shed_free_mib, 500);
     }
 
     /// sp-s8v5r, positive control: the byte cap alone (deliberately huge) would evict

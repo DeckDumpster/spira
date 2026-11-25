@@ -93,7 +93,7 @@ Before each trial (under the trial's tree lock):
 
 1. **Orphans**: a directory under `<root>` whose gate tree is gone is removed.
 2. **Cap**: while the directories under `<root>` total more than
-   `$SPIRA_GATE_TARGET_CAP_MIB` (default 12288), the least recently used one whose tree lock
+   `$SPIRA_GATE_TARGET_CAP_MIB` (no default), the least recently used one whose tree lock
    is free (a non-blocking `flock` succeeds) is removed. A locked one is a running trial and
    is never touched.
 3. **No room check**: a trial is never refused for want of free space or memory; a disk that
@@ -181,7 +181,7 @@ No new config keys in `spira.toml`. Environment only:
 |---|---|---|
 | `SPIRA_BUILD_CACHE` | gate, testenv, release, dwarf | unset/`sccache`: required; `off`: explicit opt-out |
 | `SPIRA_GATE_TARGET_ROOT` | gate | tmpfs root for gate-tree targets |
-| `SPIRA_GATE_TARGET_CAP_MIB` | gate | total size cap before LRU eviction (12288) |
+| `SPIRA_GATE_TARGET_CAP_MIB` | gate | total size cap before LRU eviction (required) |
 
 `sccache` is declared in `spira/deps.toml` (tier `operator`: doctor checks it on an operated
 box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache lives in its default

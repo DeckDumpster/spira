@@ -264,8 +264,6 @@ SPIRA_GATE_SELECT_HEAD spira/round-image-preflight.sh
 SPIRA_GATE_SELECT_HEAD testenv/src/settings.rs
 SPIRA_GATE_STEPS gate/src/engine.rs
 SPIRA_GATE_SWEEP_AGE spira/gate-sweep.sh
-SPIRA_GATE_TARGET_CAP_MIB gate/src/engine.rs
-SPIRA_GATE_TARGET_CAP_MIB gate/src/real.rs
 SPIRA_GATE_TARGET_MAX_AGE_MIN testenv/src/target_reap.rs
 SPIRA_GATE_TICK gate-run/src/main.rs
 SPIRA_GATE_TIERS suite-select/src/gate.rs

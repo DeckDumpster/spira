@@ -225,6 +225,7 @@ fn ctx() -> Ctx {
         ("SPIRA_GATE_BUILD_STALL", "300"),
         ("SPIRA_GATE_UNIT_MAX_CRATES", "7"),
         ("SPIRA_GATE_BUILDER_DIR_WAIT_SECS", "120"),
+        ("SPIRA_GATE_TARGET_CAP_MIB", "12288"),
         ("SPIRA_UNIT_TEST_DEADLINE_SECS", "60"),
         ("SPIRA_UNIT_TEST_DEADLINE_PERIODS", "2"),
     ] {
