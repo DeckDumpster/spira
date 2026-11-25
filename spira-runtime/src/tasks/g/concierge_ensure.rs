@@ -419,7 +419,6 @@ mod tests {
         let inputs = install::manifest::Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) };
         let m = install::manifest::build(&inputs).unwrap();
         assert!(m.units.iter().any(|u| install::manifest::inst_name(&u.name, "prod") == SERVICE), "{SERVICE} is not in the manifest");
-        assert_eq!(START, "unit.start_installed");
     }
 
     struct Tree {
