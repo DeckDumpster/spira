@@ -1025,6 +1025,7 @@ fn judge_rows(a: &Args, env: &Env, st: &Store, only: Option<&BTreeSet<String>>, 
             Verdict::Blocked(b) => (Kind::Blocked, Some(b)),
             Verdict::TooDeep { .. } => (Kind::TooDeep, None),
             Verdict::StackUnchanged => (Kind::StackUnchanged, None),
+            Verdict::TakenOver => (Kind::TakenOver, None),
             Verdict::NoOwnRow | Verdict::OwnState(_) => continue,
         };
         entries.push(entry(&r.id, kind, blocker));

@@ -201,6 +201,14 @@ pub fn status_fields(text: &str, prefix: &str) -> Vec<(String, String)> {
 mod tests {
     use super::*;
 
+    #[test_id(trs717u)]
+    #[test]
+    fn lc_rows_carry_the_takeover_owner_the_list_prints() {
+        let s = r#"[{"bead_id":"a","state":"READY","takeover":{"by":"op","owner":"direct@1.2"}},{"bead_id":"b","state":"READY","takeover":null},{"bead_id":"c","state":"READY"}]"#;
+        let r = parse_lc_rows(s).unwrap();
+        assert_eq!(r.iter().map(|r| r.takeover_owner.as_deref()).collect::<Vec<_>>(), [Some("direct@1.2"), None, None]);
+    }
+
     #[test_id(tt5l24u)]
     #[test]
     fn beads_tolerate_nulls_warnings_and_single_objects() {

@@ -243,6 +243,8 @@ pub struct LifecycleRow {
     pub stack_conflict: bool,
     /// A round or a gate found this row's tip red; nothing stacks on it (`spira-lc list`'s `known_red`).
     pub known_red: bool,
+    /// A directed claim has reserved the row (`spira-lc list`'s `takeover`).
+    pub taken_over: bool,
     /// The stack recorded on the row at its last claim, and the reason it last left the
     /// queue — what the machine's REWORK `Claim` compares a proposal against.
     pub stack: Stack,
@@ -331,7 +333,7 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
             Some(Value::String(s)) => matches!(s.trim(), "1" | "true"),
             _ => false,
         };
-        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false, known_red, stack, reason });
+        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false, known_red, taken_over: r.get("takeover").is_some_and(|t| !t.is_null()), stack, reason });
     }
     Ok(out)
 }
@@ -395,6 +397,7 @@ pub enum Verdict {
     TooDeep { depth: u32, max: u32 },
     /// A REWORK row whose gate-red stack the claim would repeat: the machine refuses it.
     StackUnchanged,
+    TakenOver,
 }
 
 /// An incident waits for its fix to land, a pilgrimage walks the deployed feature and a Skuld
@@ -464,6 +467,9 @@ pub fn stack_plan(
     let Some(own) = lc.get(&cand.id) else { return Err(Verdict::NoOwnRow) };
     if let Some(h) = own.holds.iter().find(|h| **h != HoldKind::Wait) {
         return Err(Verdict::Held(*h));
+    }
+    if own.taken_over {
+        return Err(Verdict::TakenOver);
     }
     if let Some(t) = own.snoozed_until {
         return Err(Verdict::Snoozed(t));
@@ -741,7 +747,7 @@ mod tests {
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
         c.status = Some("in_progress".into());
-        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None })]);
+        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { taken_over: false, bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None })]);
         assert!(!epic_started(&[c.clone()], &HashMap::new()), "no row: nothing started, though bd says in_progress");
         assert!(!epic_started(&[c.clone()], &at(BeadState::Ready)));
         assert!(!epic_started(&[c.clone()], &at(BeadState::Rework)));
@@ -764,7 +770,7 @@ mod tests {
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {
-        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None })
+        (id.into(), LifecycleRow { taken_over: false, bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None })
     }
 
     fn blocked_on(id: &str, blocker: &str) -> ReadyRow {
@@ -1021,6 +1027,17 @@ mod tests {
     fn snooze_snapshot(until: i64, hold: &str) -> HashMap<String, LifecycleRow> {
         let reason = spira_store::lc_state::snooze_reason(until);
         parse_lifecycle(&format!(r#"[{{"bead_id":"B","state":"READY","holds":["{hold}"],"reason":"{reason}"}}]"#)).unwrap()
+    }
+
+    #[test_id(to1sd80)]
+    #[test]
+    fn a_row_reserved_for_a_directed_claim_is_not_claimable_by_a_pool() {
+        let bd = HashMap::new();
+        let b = row("B", 1, None, "t");
+        let free = parse_lifecycle(r#"[{"bead_id":"B","state":"READY","holds":[],"takeover":null}]"#).unwrap();
+        assert_eq!(claimable(&b, &free, &bd, 4), Verdict::Claimable { depth: 0 });
+        let reserved = parse_lifecycle(r#"[{"bead_id":"B","state":"READY","holds":[],"takeover":{"by":"op","owner":"direct@1.2"}}]"#).unwrap();
+        assert_eq!(claimable(&b, &reserved, &bd, 4), Verdict::TakenOver);
     }
 
     #[test_id(tgs5zkg)]
