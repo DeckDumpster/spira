@@ -132,7 +132,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Decision) {
     let unit_red = snap.unit_result.as_deref().is_some_and(|r| r != "success");
     let mut started = carry.started.clone().filter(|s| s.obs == *obs);
     let red = started.as_ref().is_some_and(|s| s.start_failed || unit_red);
-    let start = !red && (carry.held.as_ref() != Some(obs) || obs.holder.is_none());
+    let start = !red && (obs.holder.is_none() || carry.held.as_ref().is_none_or(|held| moved(held, obs)));
     let mut alert = None;
     if let Some(s) = started.as_mut().filter(|s| red && !s.alerted) {
         s.alerted = true;
@@ -142,6 +142,12 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Decision) {
         started = Some(Started { obs: obs.clone(), start_failed: false, alerted: false });
     }
     (Carry { held: Some(obs.clone()), started }, Decision { start, alert })
+}
+
+/// Whether `obs` differs from `held` in anything a start could answer: a holder that appears where
+/// there was none is the Concierge a start brought back, not a change.
+fn moved(held: &Observation, obs: &Observation) -> bool {
+    held.record != obs.record || held.settings_mtime_ms != obs.settings_mtime_ms || held.release_target != obs.release_target || (held.holder.is_some() && held.holder != obs.holder)
 }
 
 pub struct ConciergeEnsure {
@@ -337,6 +343,38 @@ mod tests {
     }
 
     #[test_id(tapwyn3)]
+    #[test]
+    fn a_holder_that_appears_after_a_start_starts_nothing() {
+        let gone = Observation { holder: None, ..observed() };
+        let (after_start, d) = decide(&after_a_first_look(), &snap(gone));
+        assert!(d.start);
+        assert!(!decide(&after_start, &snap(observed())).1.start);
+    }
+
+    #[test_id(t1ea80x)]
+    #[test]
+    fn a_start_the_manager_refuses_alerts_once_through_the_task_and_is_not_asked_again() {
+        use runtime::taskrig::TaskRig;
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Snapshot { obs: Observation { holder: None, ..observed() }, unit_result: Some("success".into()) }));
+        let (looked, refusing) = (seen.clone(), true);
+        let config = Config { run: "run".into(), projects: "projects".into(), settings: "settings".into(), releases: "releases".into(), proc: "proc".into() };
+        let mut rig = TaskRig::new(1, ConciergeEnsure::new(config).registration())
+            .unwrap()
+            .double(OBSERVE, move |_| Ok(serde_json::to_string(&*looked.lock().unwrap()).unwrap()))
+            .double(START, move |_| if refusing { Err("refused".into()) } else { Ok(String::new()) })
+            .double(ALERT, |_| Ok(String::new()));
+        let (_, stream, kind) = (ConciergeEnsure::boot)();
+        rig.tick(stream, kind).unwrap();
+        rig.advance(FIRST_TICK_MS + 3 * CADENCE_MS).unwrap();
+        let asked = |name: &str| rig.requested().iter().filter(|r| r.name == name).count();
+        assert_eq!((asked(START), asked(ALERT)), (1, 1), "{:?}", rig.requested());
+        seen.lock().unwrap().obs.settings_mtime_ms = Some(99);
+        rig.advance(CADENCE_MS).unwrap();
+        assert_eq!(rig.requested().iter().filter(|r| r.name == START).count(), 2, "a changed observation is asked again");
+    }
+
+    #[test_id(t43leeu)]
     #[test]
     fn a_first_tick_starts_once() {
         let (next, d) = decide(&Carry::default(), &snap(observed()));
