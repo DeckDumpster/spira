@@ -207,7 +207,7 @@ never a release directory, so they survive an upgrade.
 
 Mail client: create `~/.config/aerc/accounts.conf` from `$SPIRA_RELEASE/aerc/accounts.conf`
 (substituting the Maildir and `~/.local/bin/spira-sendmail` paths), then
-`~/.local/bin/spira-sendmail --check` and `mail-health.sh` (exit 0 or 1). A missing
+`~/.local/bin/spira-sendmail --check` and the mail-health check (exit 0 or 1). A missing
 `spira-sendmail` means `SPIRA_RELEASES`/`SPIRA_TOML` were unexported during 5b: export them and
 re-run `spira-install --skip-build`.
 

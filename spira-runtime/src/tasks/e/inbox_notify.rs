@@ -2,7 +2,7 @@
 //!
 //! This contract replaces the unit `spira-notify-prod`, which runs `watchd notify` (oneshot, `SuccessExitStatus=1`, TimeoutStartSec=120, output appended to `run/watch-notify.log`). Pattern P1. It is part of [[scheduler-consolidation-2026-11-03]].
 //!
-//! Catalogue differs: the catalogue lists the children as "mail-health.sh, mail, systemctl". The code forks more than that:
+//! Catalogue differs: the catalogue lists the children as "mail-health.sh, mail, systemctl" (mail-health has since moved in process). The code forks more than that:
 //!
 //! - `sop match -` and `sop show` (`watchd/src/ops.rs:300-309`)
 //! - `sop` applied (`:345-356`)
@@ -26,7 +26,7 @@
 //! - **Units.** Today: `systemctl --user show -p ActiveState -p NRestarts` for each daemon/extern row (`ops.rs:156-162`, `notify.rs:216-233`). Target: `unit.facts` over D-Bus (S6). Hosted tasks get their health from `scheduler status` (S13), not from units. After W2 no `daemon` rows remain, only `extern` rows (mail-deliver, spira-submission).
 //! - **Health.** Each row's health command, run under `SPIRA_HEALTH_TIMEOUT` (`health.rs:25`). It is probed only for rows whose unit is active (`notify.rs:244-255`).
 //! - **`halted`.** Whether `run/world.halted` exists (`notify.rs:74-76`).
-//! - **`mail_health`.** The exit code of `mail-health.sh`: 0, 1 or 3 (`ops.rs:261-273`). That script is its own check over `SPIRA_MAIL_READERS` and mails the operator itself. It should become its own task `mail.health` (unverified that anyone else wants it); until then it is folded in here as an effect.
+//! - **`mail_health`.** The exit code of `watchd::mail_health`: 0, 1 or 3. That check is its own check over `SPIRA_MAIL_READERS` and mails the operator itself. It should become its own task `mail.health` (unverified that anyone else wants it); until then it is folded in here as an effect.
 //!
 //! ## Decide
 //!
@@ -76,7 +76,7 @@
 //! ## Replaces
 //!
 //! - **Units.** `spira-notify-prod.service` and `spira-notify-prod.timer`. No watchd row.
-//! - **Children.** All those listed at the top. `mail-health.sh` sources `conf.sh` (`spira/mail-health.sh:19`).
+//! - **Children.** All those listed at the top. `mail_health` reads the registered config keys in process.
 //! - **Keys pinned:**
 //!   - `SPIRA_ACTIONABLE`, `SPIRA_HEALTH_TIMEOUT`, `SPIRA_NOTIFY_AGE` (`watchd/src/context.rs:127-129`)
 //!   - `SPIRA_INSTANCE`, `SPIRA_RUN`, `SPIRA_WATCHERS`, `SPIRA_WATCHERS_OVERLAY`
@@ -177,7 +177,7 @@ pub struct Snapshot {
     /// unit → (ActiveState, NRestarts).
     pub units: BTreeMap<String, (String, u64)>,
     pub health: BTreeMap<String, Health>,
-    /// `mail-health.sh`'s exit: 0, 1 or 3.
+    /// `watchd::mail_health`'s exit: 0, 1 or 3.
     pub mail_health: Option<i32>,
 }
 
@@ -499,11 +499,11 @@ pub fn concierge_note(input: &str) -> Result<String, String> {
     Ok(format!("noted {}", n.subject))
 }
 
-/// `mail-health.sh` (watchd's FORK-EDGE): 0 and 1 are answers, 3 is "could not check".
+/// `watchd::mail_health`: 0 and 1 are answers, 3 is "could not check".
 pub fn mail_health() -> Result<String, String> {
     use watchd::ops::Ops;
     match watchd::ops::Real::new(context()?.systemctl, None).mail_health() {
-        3 => Err("watchd: mail-health.sh could not check".into()),
+        3 => Err("watchd: mail-health could not check".into()),
         code => Ok(code.to_string()),
     }
 }

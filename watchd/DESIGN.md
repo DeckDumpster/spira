@@ -32,10 +32,8 @@ canonical reader is now this binary.
   exported* into its own process, via a one-shot subshell ("the seam", `context.rs`) — the same
   pattern `gate` and `queue-watch` already use for `lib.sh`. No config-resolution logic is
   reimplemented here.
-* **`mail`, `mail-health.sh`.** `mail` was rewritten and retired from bash by sp-ooh1k;
-  `mail-health.sh` stays bash (a different rewrite wave). `watchd` execs both exactly as the
-  bash execed `mail.sh`/`mail-health.sh`: `mail send …` for an escalation, `mail-health.sh`
-  as the second half of `notify`.
+* **`mail`, `mail_health`.** `mail` was rewritten and retired from bash by sp-ooh1k; the mail-health
+  check is `watchd::mail_health`, run in process as the second half of `notify`.
 * **`watch-refresh.sh`, `doctor.sh`, `install.sh`, `units.sh`, `cockpit/rebuild.sh`,
   `cockpit/remote/cockpit-remote`.** These call `watchd`; only their call sites move to the
   new bare name in this change, not their own logic.

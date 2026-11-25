@@ -13,6 +13,7 @@ pub mod fs_ops;
 pub mod health;
 pub mod iso8601;
 pub mod lock;
+pub mod mail_health;
 pub mod manifest;
 pub mod next;
 pub mod notify;

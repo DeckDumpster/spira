@@ -42,7 +42,7 @@ fn main() {
         "label" => cmd_label(&home, &rest),
         "drop" => cmd_drop(&rest),
         "contract" => cmd_contract(&home),
-        "ideas" => cmd_ideas(&home, &rest),
+        "ideas" => cmd_ideas(&rest),
         "lint" => cmd_lint(&home, &rest),
         "judge-create" => cmd_judge_create(&home, &rest),
         "event" => cmd_event(&rest),
@@ -1572,7 +1572,7 @@ fn amend_enforce(aid: &str) -> i32 {
 // ideas
 // =========================================================================================
 
-fn cmd_ideas(home: &str, args: &[String]) -> i32 {
+fn cmd_ideas(args: &[String]) -> i32 {
     let json = match args {
         [] => false,
         [a] if a == "--json" => true,
@@ -1581,11 +1581,7 @@ fn cmd_ideas(home: &str, args: &[String]) -> i32 {
             return 2;
         }
     };
-    let label = schema_name(home, "idea");
-    if label.is_empty() {
-        eprintln!("bead: ideas: the schema names no idea label");
-        return 1;
-    }
+    let label = bead::door::IDEA_LABEL;
     let client = match spira_store::lc_call::LcClient::configured() {
         Ok(c) => c,
         Err(e) => {
@@ -1593,7 +1589,7 @@ fn cmd_ideas(home: &str, args: &[String]) -> i32 {
             return DOOR_UNREACHABLE;
         }
     };
-    let rows = match bead::door::ideas(&client, &label) {
+    let rows = match bead::door::ideas(&client, label) {
         Ok(rows) => rows,
         Err(code) => {
             eprintln!("bead: ideas: content list exited {code}");

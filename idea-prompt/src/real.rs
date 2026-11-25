@@ -1,5 +1,5 @@
 //! The production ports: the clock, the store's busy read over [`LcClient`], the idea list
-//! through `bead.sh`, and the operator mail through the `mail` library.
+//! through the store's door, and the operator mail through the `mail` library.
 
 use crate::{Idea, Ports};
 use spira_store::lc_call::LcClient;
@@ -36,8 +36,18 @@ fn send_in_process(args: &mail::cmds::SendArgs, body: String) -> Result<(), Stri
     mail::cmds::send_recorded(&bd, &env, args, body).map(|_| ()).map_err(|e| format!("mail: send: {e}"))
 }
 
-fn env_tool(var: &str, default: &str) -> String {
-    std::env::var(var).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| default.into())
+/// The label parked ideas carry, resolved once per process; an empty label is an error, never
+/// a query about nothing.
+fn idea_label() -> Result<&'static str, String> {
+    static LABEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    named(LABEL.get_or_init(|| bead::door::IDEA_LABEL.to_string()))
+}
+
+fn named(label: &str) -> Result<&str, String> {
+    if label.trim().is_empty() {
+        return Err("the schema names no idea label".into());
+    }
+    Ok(label)
 }
 
 impl Ports for Real {
@@ -70,18 +80,10 @@ impl Ports for Real {
     }
 
     fn ideas(&self) -> Result<Vec<Idea>, String> {
-        // FORK-EDGE: unserved verb content (bead.sh ideas, the operator tool's idea list)
-        let out = spira_config::bounded::bounded(env_tool("IDEA_PROMPT_BEAD", "bead.sh"))
-            .args(["ideas", "--json"])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(format!("bead.sh ideas exited {}", out.status));
-        }
-        let rows: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("bead.sh ideas is not JSON: {e}"))?;
-        let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-        Ok(rows.as_array().ok_or("bead.sh ideas is not an array")?.iter().map(|r| Idea { id: text(r, "id"), title: text(r, "title") }).collect())
+        let lc = self.lc.as_ref().map_err(Clone::clone)?;
+        let label = idea_label()?;
+        let rows = bead::door::ideas(lc, label).map_err(|code| format!("idea list exited {code}"))?;
+        Ok(rows.into_iter().map(|r| Idea { id: r.id, title: r.title }).collect())
     }
 
     fn send(&self, subject: &str, default: &str, body: &str) -> Result<(), String> {
@@ -160,6 +162,23 @@ mod real_tests {
         assert_eq!(*t.1.lock().unwrap(), vec![format!("list --state {BUSY_STATES}")]);
         let (r, _) = real(r#"[{"bead_id":"a","holds":["ask"]}]"#, Arc::default());
         assert_eq!(r.busy(), Ok(false));
+    }
+
+    #[test_id(tx3b9qd)]
+    #[test]
+    fn an_empty_idea_label_is_an_error() {
+        assert!(named("").is_err() && named(" ").is_err());
+        assert_eq!(named("idea"), Ok("idea"));
+    }
+
+    #[test_id(tr7c1ws)]
+    #[test]
+    fn the_idea_list_is_read_over_the_store_client_under_the_idea_label() {
+        let (r, t) = real(r#"[{"id":"sp-a","title":"an idea","status":"open","created_at":"2026-01-01T00:00:00Z"}]"#, Arc::default());
+        assert_eq!(r.ideas(), Ok(vec![Idea { id: "sp-a".into(), title: "an idea".into() }]));
+        let sent = t.1.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1, "one read per call, no schema lookup: {sent:?}");
+        assert!(sent[0].starts_with("content list") && sent[0].contains("--label idea "), "{sent:?}");
     }
 
     #[test_id(tqhe93q)]

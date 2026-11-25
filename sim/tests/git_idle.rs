@@ -196,11 +196,12 @@ fn plan_row(id: &str) -> String {
     format!("{{\"id\":\"{id}\",\"title\":\"t\",\"priority\":2,\"issue_type\":\"task\",\"status\":\"open\",\"labels\":[\"spira\",\"plan\"],\"created_at\":\"2020-01-01T00:00:00Z\",\"updated_at\":\"2020-01-01T00:00:00Z\"}}")
 }
 
-const LOGGED_PROGRAMS: [&str; 2] = ["spira-claim", "systemctl"];
+const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
+const LOGGED_PROGRAMS: [&str; 7] = ["spira-claim", "systemctl", "mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
 
 fn logged_programs(f: &Fixture) -> Vec<String> {
     let all = std::fs::read_to_string(&f.started).unwrap_or_default();
-    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units")).map(str::to_string).collect()
+    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).map(str::to_string).collect()
 }
 
 fn assert_stubs_log(f: &Fixture) {
@@ -314,7 +315,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     }
     let runs = || std::fs::read_to_string(&ran).unwrap_or_default().lines().count();
     let mut applied: std::collections::BTreeMap<&str, usize> = Default::default();
-    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply"];
+    let names = ["watch.throughput.observe", "landing.observe", "inbox.notify.observe", "asks.ideas.observe", "overrides.apply"];
     let sentinel = ["sentinel-pass.observe", "cockpit-tier-60s.observe"];
     let (before_hour, after) = (START + 59 * MINUTE, warm + HOUR);
     let m = |n: u64| after + n * MINUTE;
@@ -375,6 +376,8 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git:\n{}", all[at_warm..at_idle].join("\n"));
     assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
     assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));
+    let ran = |name: &str| f.seen.lock().unwrap().iter().filter(|(n, _)| n == name).count();
+    assert!(ran("inbox.notify.observe") >= 12 && ran("asks.ideas.observe") >= 12, "both tasks ran over the hour: {} {}", ran("inbox.notify.observe"), ran("asks.ideas.observe"));
     assert!(!rows_before_ready.iter().any(|r| r.contains("sp-zzzzzz")), "nothing is ready yet: {rows_before_ready:?}");
     let rows = strand_rows(&f);
     assert!(rows.iter().any(|r| r.contains("sp-zzzzzz")), "a bead made READY shows in the next strand rows: {rows:?}");
