@@ -106,6 +106,8 @@ pub struct LcRow {
     pub version: Option<String>,
     pub reason: Option<String>,
     pub updated_at: Option<i64>,
+    pub stack_tips: std::collections::BTreeMap<String, String>,
+    pub known_red: bool,
 }
 
 fn scalar(v: Option<&Value>) -> Option<String> {
@@ -132,16 +134,25 @@ pub fn parse_holds(v: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
+fn stack_object(v: Option<&Value>) -> serde_json::Map<String, Value> {
+    match v {
+        Some(Value::Object(m)) => m.clone(),
+        Some(Value::String(s)) if !s.trim().is_empty() => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Object(m)) => m,
+            _ => Default::default(),
+        },
+        _ => Default::default(),
+    }
+}
+
 /// The prerequisite ids of a row's `stack` (a JSON object, or a JSON-encoded string of one).
 pub fn parse_stack(v: Option<&Value>) -> Vec<String> {
-    match v {
-        Some(Value::Object(m)) => m.keys().cloned().collect(),
-        Some(Value::String(s)) if !s.trim().is_empty() => match serde_json::from_str::<Value>(s) {
-            Ok(Value::Object(m)) => m.keys().cloned().collect(),
-            _ => Vec::new(),
-        },
-        _ => Vec::new(),
-    }
+    stack_object(v).into_iter().map(|(k, _)| k).collect()
+}
+
+/// The `prereq -> tip` pairs of the same `stack`.
+pub fn parse_stack_tips(v: Option<&Value>) -> std::collections::BTreeMap<String, String> {
+    stack_object(v).into_iter().filter_map(|(k, t)| Some((k, t.as_str()?.to_string()))).collect()
 }
 
 pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
@@ -164,6 +175,8 @@ pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
             version: scalar(r.get("version")),
             reason: scalar(r.get("reason")).filter(|x| !x.is_empty()),
             updated_at: scalar(r.get("updated_at")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
+            stack_tips: parse_stack_tips(r.get("stack")),
+            known_red: matches!(scalar(r.get("known_red")).as_deref(), Some("1" | "true")),
         })
         .filter(|r| !r.bead_id.is_empty())
         .collect())
@@ -217,6 +230,16 @@ mod tests {
         assert_eq!(r[1].version.as_deref(), Some("7"));
         assert_eq!(r[1].holds, vec!["poison"]);
         assert!(parse_lc_rows("cannot tell").is_err());
+    }
+
+    #[test_id(t1bqdcf)]
+    #[test]
+    fn lc_rows_carry_the_stack_tips_and_the_known_red_column() {
+        let s = r#"[{"bead_id":"b","state":"WORKING","stack":"{\"a\":\"t1\"}","known_red":"0"},
+                    {"bead_id":"a","state":"CERTIFIED","stack":{},"known_red":1}]"#;
+        let r = parse_lc_rows(s).unwrap();
+        assert_eq!(r[0].stack_tips.get("a").map(String::as_str), Some("t1"));
+        assert!(!r[0].known_red && r[1].known_red);
     }
 
     #[test_id(tu4ti2h)]
