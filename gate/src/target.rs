@@ -343,6 +343,38 @@ pub fn reap_stale(
     out
 }
 
+/// Remove every `trees_dir/.gate.*.lock` whose tree is gone and that nobody holds, with its
+/// `.lock.holder`. The lock is taken before it is unlinked, so a gate that opened it
+/// meanwhile finds its descriptor stale and locks again by path. Returns how many (with `dry`,
+/// would be).
+pub fn reap_orphan_locks(trees_dir: &Path, dry: bool) -> usize {
+    use std::os::unix::io::AsRawFd;
+    let Ok(rd) = fs::read_dir(trees_dir) else { return 0 };
+    let mut n = 0;
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(tree) = name.strip_suffix(".lock").filter(|t| t.starts_with(".gate.")) else { continue };
+        if fs::symlink_metadata(trees_dir.join(tree)).is_ok() {
+            continue;
+        }
+        let lock = e.path();
+        let Ok(f) = fs::OpenOptions::new().read(true).open(&lock) else { continue };
+        // SAFETY: flock on a descriptor we own; closing it releases the lock.
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            continue;
+        }
+        if fs::symlink_metadata(trees_dir.join(tree)).is_ok() {
+            continue;
+        }
+        if !dry {
+            let _ = fs::remove_file(&lock);
+            let _ = fs::remove_file(trees_dir.join(format!("{name}.holder")));
+        }
+        n += 1;
+    }
+    n
+}
+
 /// Space this user can still write under `p`: statvfs free or quota headroom, whichever is smaller.
 pub fn free_mib(p: &Path) -> Option<u64> {
     spira_config::room::avail_mib(p)
@@ -620,6 +652,48 @@ mod tests {
         for n in ["held", "busy", "fresh"] {
             assert!(root.join(n).join("debug/x").is_file(), "{n} kept");
         }
+    }
+
+    #[test_id(t0mfxr8)]
+    #[test]
+    fn an_orphaned_tree_lock_is_removed_with_its_holder_and_counted() {
+        let s = Scratch::new("orphan");
+        fs::write(s.1.join(".gate.h.x.lock"), "").unwrap();
+        fs::write(s.1.join(".gate.h.x.lock.holder"), "1 1\n").unwrap();
+        assert_eq!(reap_orphan_locks(&s.1, false), 1);
+        assert!(!s.1.join(".gate.h.x.lock").exists() && !s.1.join(".gate.h.x.lock.holder").exists());
+    }
+
+    #[test_id(t18qk87)]
+    #[test]
+    fn an_orphaned_tree_lock_another_descriptor_holds_stays() {
+        use std::os::unix::io::AsRawFd;
+        let s = Scratch::new("orphan-held");
+        let lock = s.1.join(".gate.h.x.lock");
+        fs::write(&lock, "").unwrap();
+        let f = fs::File::open(&lock).unwrap();
+        assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        assert_eq!(reap_orphan_locks(&s.1, false), 0);
+        assert!(lock.exists());
+    }
+
+    #[test_id(tcghp7c)]
+    #[test]
+    fn a_tree_lock_whose_tree_exists_stays() {
+        let s = Scratch::new("orphan-tree");
+        fs::create_dir(s.1.join(".gate.h.x")).unwrap();
+        fs::write(s.1.join(".gate.h.x.lock"), "").unwrap();
+        assert_eq!(reap_orphan_locks(&s.1, false), 0);
+        assert!(s.1.join(".gate.h.x.lock").exists());
+    }
+
+    #[test_id(tatwun6)]
+    #[test]
+    fn a_dry_orphan_lock_pass_removes_nothing_and_still_counts() {
+        let s = Scratch::new("orphan-dry");
+        fs::write(s.1.join(".gate.h.x.lock"), "").unwrap();
+        assert_eq!(reap_orphan_locks(&s.1, true), 1);
+        assert!(s.1.join(".gate.h.x.lock").exists());
     }
 
     #[test_id(tozc9sq)]

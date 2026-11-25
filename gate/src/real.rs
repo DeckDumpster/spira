@@ -159,7 +159,7 @@ fn newest_build_dir(json: &str) -> Option<(String, PathBuf)> {
 pub struct Real {
     pub home: PathBuf,
     admission: RefCell<Vec<File>>,
-    tree_lock: RefCell<Option<File>>,
+    tree_lock: RefCell<Option<(File, PathBuf)>>,
     cancel: RefCell<Option<PathBuf>>,
     /// The pool directory each gate tree builds in, held until the tree is released.
     leases: RefCell<std::collections::HashMap<PathBuf, (spira_config::build_dir::Lease, String)>>,
@@ -938,18 +938,31 @@ impl World for Real {
             .open(lock)
         {
             Ok(f) => {
-                *self.tree_lock.borrow_mut() = Some(f);
+                *self.tree_lock.borrow_mut() = Some((f, lock.to_path_buf()));
                 true
             }
             Err(_) => false,
         }
     }
     fn tree_lock_try(&self) -> bool {
-        self.tree_lock
-            .borrow()
-            .as_ref()
-            .map(Self::flock_nb)
-            .unwrap_or(false)
+        use std::os::unix::fs::MetadataExt;
+        let mut slot = self.tree_lock.borrow_mut();
+        let Some((f, path)) = slot.as_mut() else { return false };
+        if !Self::flock_nb(f) {
+            return false;
+        }
+        let same = match (f.metadata(), fs::metadata(&*path)) {
+            (Ok(held), Ok(at)) => (held.dev(), held.ino()) == (at.dev(), at.ino()),
+            _ => false,
+        };
+        if same {
+            return true;
+        }
+        match OpenOptions::new().create(true).write(true).truncate(true).open(&*path) {
+            Ok(n) => *f = n,
+            Err(_) => return false,
+        }
+        false
     }
     fn write_holder(&self, p: &Path) {
         let pgid = unsafe { libc::getpgid(0) };
@@ -1292,6 +1305,19 @@ fn end_group(pgid: i32) {
 #[cfg(test)]
 mod tests {
     use crate::ports::World;
+
+    #[test_id(tywtqsg)]
+    #[test]
+    fn a_tree_lock_unlinked_under_its_holder_is_not_held_and_the_next_try_locks_the_new_file() {
+        let d = testkit::TempDir::new("gate-real-lock");
+        let lock = d.path().join(".gate.h.x.lock");
+        let w = crate::real::Real::new(d.path().to_path_buf());
+        assert!(w.tree_lock_open(&lock));
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::write(&lock, "").unwrap();
+        assert!(!w.tree_lock_try(), "the descriptor names an inode the path no longer does");
+        assert!(w.tree_lock_try(), "the reopened file is the one at the path");
+    }
 
     #[test_id(t0db818)]
     #[test]

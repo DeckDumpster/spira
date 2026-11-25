@@ -183,7 +183,9 @@ pub trait World {
     fn admission_wait_line(&self, run: &str, par: u64) -> String;
     /// Open `<tree>.lock`; false when it cannot be opened.
     fn tree_lock_open(&self, lock: &Path) -> bool;
-    /// Try the opened tree lock without waiting.
+    /// Try the opened tree lock without waiting. A lock file unlinked or replaced under the
+    /// held descriptor is not the lock: release, reopen by path and answer false so the caller
+    /// tries again, so two gates never hold one tree.
     fn tree_lock_try(&self) -> bool;
     fn write_holder(&self, p: &Path);
     /// `gate_at`: the tree holds `rev` (proved) → Ok; Err(what went wrong) otherwise.

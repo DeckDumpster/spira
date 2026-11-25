@@ -182,7 +182,8 @@ fn reap_scratch(dir: &Path, fraction: f64, dry: bool, busy_fn: &dyn Fn(&Path) ->
         return false;
     }
     if !reap_scratch_report(dir, Some(fraction), dry, gate::target::on_tmpfs(Path::new(system_paths::TMP)), busy_fn, out) {
-        let _ = writeln!(out, "target-reap: {} 0 stale gate target dir(s): this box keeps no gate scratch", if dry { "would remove" } else { "removed" });
+        let locks = gate::target::reap_orphan_locks(dir, dry);
+        let _ = writeln!(out, "target-reap: {} 0 stale gate target dir(s): this box keeps no gate scratch, {locks} orphaned tree lock(s)", if dry { "would remove" } else { "removed" });
     }
     true
 }
@@ -196,9 +197,10 @@ pub fn reap_scratch_report(dir: &Path, fraction: Option<f64>, dry: bool, tmpfs: 
     let held_fn = |name: &str| gate::target::held_by_gate(Path::new(&run), name);
     let Some(root) = gate::target::root(&explicit, &run, tmpfs) else { return false };
     let gone = gate::target::reap_stale(&root, dir, std::time::Duration::from_secs(max_age * 60), fraction, dry, busy_fn, &held_fn);
+    let locks = gate::target::reap_orphan_locks(dir, dry);
     let _ = writeln!(
         out,
-        "target-reap: {} {} stale gate target dir(s) under {}{}",
+        "target-reap: {} {} stale gate target dir(s) under {}{}, {locks} orphaned tree lock(s)",
         if dry { "would remove" } else { "removed" },
         gone.len(),
         root.display(),
