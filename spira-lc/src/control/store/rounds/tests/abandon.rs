@@ -69,7 +69,7 @@ fn pass_event(n: u32, red: bool) -> BatchEventKind {
 
 /// `sp-a` SUBMITTED at T1 in a round whose pass 1 ended as `ended`, abandoned and then certified
 /// by the gate at T1, with `sp-b` waiting on it.
-fn abandoned_at_the_pass(ended: Option<bool>) -> Rig {
+fn abandoned_at_the_pass(ended: Option<bool>, restarted: bool) -> Rig {
     let r = Rig::new();
     r.submitted_with("sp-a", T1, CLAIM);
     r.ok(&["set-claim-inputs", "sp-a"]);
@@ -88,6 +88,10 @@ fn abandoned_at_the_pass(ended: Option<bool>) -> Rig {
         send(BatchState::Open, BatchEventKind::PassStarted { n: 1, head: "h1".into() });
         send(BatchState::CiRunning, pass_event(1, red));
         from = BatchState::Attributing;
+        if restarted {
+            send(BatchState::Attributing, BatchEventKind::PassStarted { n: 2, head: "h2".into() });
+            from = BatchState::CiRunning;
+        }
     }
     let (_, rec) = r.s.batch("b-1").unwrap().unwrap();
     let ev = batch_ev(from, rec.value.row.version, BatchEventKind::Abandon { reason: "names no member that can be ejected".into() });
@@ -112,7 +116,7 @@ fn claim_of_b_on(r: &Rig, tip: &str) -> crate::control::store::Outcome {
 #[test_id(t7qccb0)]
 #[test]
 fn a_blocker_certified_at_the_tip_a_red_pass_abandoned_is_not_stacked_on_and_a_new_certified_tip_is() {
-    let r = abandoned_at_the_pass(Some(true));
+    let r = abandoned_at_the_pass(Some(true), false);
     let b = claim_view_of(&r, "sp-b");
     assert_eq!((b["verdict"].as_str(), b["blocker"].as_str()), (Some("blocked"), Some("sp-a")), "{b}");
     assert!(matches!(claim_of_b_on(&r, T1), crate::control::store::Outcome::BlockerMoved { .. }), "a claim stacked on the red tip conflicts");
@@ -128,8 +132,9 @@ fn a_blocker_certified_at_the_tip_a_red_pass_abandoned_is_not_stacked_on_and_a_n
 #[test_id(tbmffjk)]
 #[test]
 fn a_blocker_certified_after_a_pass_that_gave_no_verdict_is_still_stacked_on() {
-    for ended in [Some(false), None] {
-        let r = abandoned_at_the_pass(ended);
+    for (ended, restarted) in [(Some(false), false), (None, false), (Some(true), true)] {
+        let r = abandoned_at_the_pass(ended, restarted);
+        let ended = (ended, restarted);
         assert_eq!(claim_view_of(&r, "sp-b")["verdict"], "claimable", "{ended:?}");
         assert!(matches!(claim_of_b_on(&r, T1), crate::control::store::Outcome::Applied { .. }), "{ended:?}");
     }

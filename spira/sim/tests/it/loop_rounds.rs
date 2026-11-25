@@ -492,3 +492,12 @@ fn a_dependent_is_not_claimed_on_the_tip_a_red_round_abandoned_and_the_blocker_i
     assert_eq!(r.claims[2].1.get("sp-rr01"), Some(&new_tip), "B stacked on A's new certified tip, not the red one {red_tip}: {claims:?}");
     assert!(r.refused.is_empty(), "{:?}", r.refused);
 }
+
+#[test_id(tqrl3nw)]
+#[test]
+fn without_the_red_mark_a_dependent_is_claimed_stacked_on_the_tip_the_abandoned_round_was_red_at() {
+    let r = red_unattributed_round(41, false);
+    show("red-tip-stacked-on", &r);
+    let red_tip = r.submitted["sp-rr01"][0].clone();
+    assert!(r.claims.iter().any(|(id, s)| id == "sp-rr02" && s.get("sp-rr01") == Some(&red_tip)), "B was claimed on the red tip: {}", r.dump());
+}
