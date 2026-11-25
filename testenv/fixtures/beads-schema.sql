@@ -1,6 +1,5 @@
 -- The beads schema and its seed rows, as a bd init leaves them. Do not edit.
 -- Regenerate: testenv testdb dump-schema --bd bd --dolt dolt --root <scratch dir outside any git checkout> --out testenv/fixtures/beads-schema.sql
-CREATE DATABASE IF NOT EXISTS `dump-3495654`; USE `dump-3495654`; 
 SET FOREIGN_KEY_CHECKS=0;
 SET UNIQUE_CHECKS=0;
 DROP TABLE IF EXISTS `bd_events_journal`;

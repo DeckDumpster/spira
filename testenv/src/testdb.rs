@@ -843,7 +843,7 @@ pub fn dump_schema(root: &Path, tools: &Tools, out: &Path) -> Result<(), String>
             }
         });
     remove_tree(&scratch);
-    let body = r?;
+    let body: String = r?.lines().filter(|l| !l.starts_with("CREATE DATABASE IF NOT EXISTS")).map(|l| format!("{l}\n")).collect();
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     }
