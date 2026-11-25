@@ -697,8 +697,8 @@ impl World {
     }
 
     /// One `overrides.sh apply` pass; a failed override fails the pass, and its stdout and stderr say which.
-    pub fn overrides_apply(&self) -> Result<String, String> {
-        overrides_apply(&self.overrides_dir)
+    pub fn overrides_apply(&self, input: &str, held: &crate::wiki_git::Held) -> Result<String, String> {
+        overrides_apply(&self.overrides_dir, input.trim().parse().ok(), held)
     }
 
     /// lc-serve's kept verdict on the content writer's grants, as the `writer-grants` verb answers it.

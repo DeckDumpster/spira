@@ -57,14 +57,14 @@ impl Handler for Overrides {
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         if ev.kind.tag == runtime::units::UNIT_RAN {
             let landed = runtime::units::UnitRan::from_event_kind(&ev.kind).is_some_and(|r| r.handle.name == LANDING_UNIT);
-            return if landed { vec![Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:land:{}", ev.at), String::new(), DEADLINE_MS))] } else { vec![] };
+            return if landed { vec![Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:land:{}", ev.at), ev.at.to_string(), DEADLINE_MS))] } else { vec![] };
         }
         if ev.stream.0 != STREAM {
             return vec![];
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:apply:{}", ev.at), String::new(), DEADLINE_MS)),
+                Command::Effect(EffectSpec::keyed(APPLY, format!("{NAME}:apply:{}", ev.at), ev.at.to_string(), DEADLINE_MS)),
                 Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }

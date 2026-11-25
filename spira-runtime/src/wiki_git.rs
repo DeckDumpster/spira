@@ -60,16 +60,74 @@ pub fn gh_auth_token(gh: &str, config_dir: &str, deadline: Duration) -> Result<(
     bounded(cmd, deadline).map(|(code, out, _)| (code, out))
 }
 
+/// The last successful `overrides.sh apply` pass: what it depended on, and when (virtual ms).
+pub type Held = std::sync::Mutex<Option<(String, u64)>>;
+
+const HOLD_MS: u64 = 3_600_000;
+
 /// One `overrides.sh apply` pass under `timeout`; a failed override fails the pass, and its
-/// stdout and stderr together say which. With none declared in `dir` nothing runs.
-pub fn overrides_apply(dir: &Path) -> Result<String, String> {
+/// stdout and stderr together say which. With none declared in `dir` nothing runs. While nothing
+/// the pass reads has changed since the last success, and that pass is under an hour old at `now`,
+/// no child starts: `needed()` is arbitrary shell, so only the hour bounds what no key can list.
+pub fn overrides_apply(dir: &Path, now: Option<u64>, held: &Held) -> Result<String, String> {
     if !spira_config::overrides::declared(dir)? {
         return Ok(String::new());
     }
+    let before = overrides_key(dir);
+    let last = held.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let (Some(key), Some(now), Some((kept, at))) = (&before, now, &last) {
+        if kept == key && now >= *at && now - *at < HOLD_MS {
+            return Ok(String::new());
+        }
+    }
     // FORK-EDGE: overrides.sh is 223 lines of shell (over the ~100-line port bound).
-    let out = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"))?;
+    let ran = spira_config::bounded::bounded("overrides.sh").arg("apply").stdin(Stdio::null()).output().map_err(|e| format!("overrides.sh: {e}"));
+    let out = match ran {
+        Ok(out) => out,
+        Err(e) => {
+            *held.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return Err(e);
+        }
+    };
     let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let kept = match (out.status.success(), now, overrides_key(dir)) {
+        (true, Some(now), Some(key)) => Some((key, now)),
+        _ => None,
+    };
+    *held.lock().unwrap_or_else(|e| e.into_inner()) = kept;
     if out.status.success() { Ok(said.trim().to_string()) } else { Err(said.trim().to_string()) }
+}
+
+/// What an apply pass depends on: each declared spec, each config layer, the landing ref's sha
+/// and the resolved release. `None` when any part cannot be read, so the pass runs.
+fn overrides_key(dir: &Path) -> Option<String> {
+    use std::fmt::Write;
+    fn stamp(p: &Path) -> Option<String> {
+        let m = std::fs::metadata(p).ok()?;
+        let ns = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+        Some(format!("{ns}:{}", m.len()))
+    }
+    let mut specs: Vec<_> = std::fs::read_dir(dir).ok()?.collect::<Result<Vec<_>, _>>().ok()?.into_iter().map(|e| e.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| !n.starts_with('.') && n.ends_with(".override"))).collect();
+    specs.sort();
+    let mut key = String::new();
+    for spec in &specs {
+        write!(key, "{}={};", spec.display(), stamp(spec)?).ok()?;
+    }
+    let toml = spira_config::process::spec().ok()?;
+    for layer in toml.split(':').filter(|l| !l.is_empty()) {
+        write!(key, "{layer}={};", stamp(Path::new(layer))?).ok()?;
+    }
+    let repo = std::env::var("SPIRA_REPO").ok().filter(|r| !r.is_empty())?;
+    let landref = if spira_config::git_refs::sha_of(Path::new(&repo), "local/main").is_some() {
+        "local/main".to_string()
+    } else {
+        let home = spira_config::resolve::locate_home_for_process().ok()?;
+        spira_config::repos::landref(&spira_config::repos::Registry::from_env(std::env::vars().collect(), &home), &repo)?
+    };
+    write!(key, "{landref}={};", spira_config::git_refs::sha_of(Path::new(&repo), &landref)?).ok()?;
+    let release = std::env::var("SPIRA_RELEASE").ok().filter(|r| !r.is_empty())?;
+    write!(key, "{}", std::fs::canonicalize(release).ok()?.display()).ok()?;
+    Some(key)
 }
 
 /// One `<exporter> <mode>` run under `timeout` (`lifecycle` brings the `bead-stage` family up to the
@@ -192,7 +250,11 @@ mod bounded_tests {
 
 #[cfg(test)]
 mod overrides_tests {
-    use super::overrides_apply;
+    use super::overrides_apply as apply;
+
+    fn overrides_apply(dir: &std::path::Path) -> Result<String, String> {
+        apply(dir, None, &Default::default())
+    }
 
     #[test_id(tuwwq3n)]
     #[test]
