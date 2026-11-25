@@ -762,12 +762,17 @@ nextest_reds() {
 }
 # One line per failed test of a plain `cargo test` log: `FAIL dir:<directory> <test>` when cargo printed a
 # path that names the test's directory, else (a path relative to its package) `FAIL test:<target> <test>`,
-# the target read off the `(<exe>-<hash>)` of the `Running` line.
+# the target read off the `(<exe>-<hash>)` of the `Running` line. A test libtest reported running over its
+# slow threshold, and that never printed FAILED in its block, is `TIMEOUT <word> <test>`.
 cargo_test_reds() {
-    awk '/^ *Running / { d = ""; t = ""
+    awk 'function flush(  i) { for (i = 1; i <= np; i++) if (!(pend[i] in bad)) print "TIMEOUT " word, pend[i]; np = 0; delete bad }
+         /^ *Running / { flush(); word = ""; d = ""; t = ""
            if (match($0, /\(.*\)/)) { t = substr($0, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", t); n = length(t); if (substr(t, n - 16, 1) == "-" && substr(t, n - 15) ~ /^[0-9a-f]+$/) t = substr(t, 1, n - 17) }
            if (match($0, /[^ ]*\/?tests\//)) { d = substr($0, RSTART, RLENGTH); sub(/\/?tests\/$/, "", d); if (d == "") d = "." } }
-         d != "" && /^test .* \.\.\. FAILED/ { if (d == "." && t != "") print "FAIL test:" t, $2; else print "FAIL dir:" d, $2 }' "$1"
+         d != "" { word = (d == "." && t != "") ? "test:" t : "dir:" d }
+         d != "" && /^test .* \.\.\. FAILED/ { print "FAIL " word, $2; bad[$2] = 1 }
+         d != "" && /^test .* has been running for over [0-9]+ seconds$/ { if (!((word, $2) in seen)) { seen[word, $2] = 1; pend[++np] = $2 } }
+         END { flush() }' "$1"
 }
 # "<test>\t<over secs>\t<passed|failed|unfinished>" per test the watcher flagged (a tabbed line of <hung>; a guard line has no tab).
 long_running() {
@@ -3944,9 +3949,10 @@ mod tests {
         std::fs::write(d.path().join("log"), log).unwrap();
         std::fs::write(d.path().join("hung"), hung).unwrap();
         let script = format!(
-            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
+            "set -uo pipefail\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ncd \"$HOME\"\ntest_phase_red unit-tests log 101 7 hung out.txt unit.json true\ncat out.txt",
             script_fn("last_binary"),
             script_fn("nextest_reds"),
+            script_fn("cargo_test_reds"),
             script_fn("long_running"),
             script_fn("long_running_end"),
             script_fn("test_phase_class"),
@@ -4091,11 +4097,14 @@ mod tests {
     #[test]
     fn a_test_over_libtests_threshold_that_failed_or_never_ended_says_so() {
         let (out, json) = red_phase_files(&long_running_log("test publish_notice::later_poll ... FAILED\n"), LONG_HUNG);
+        assert!(out.lines().any(|l| l == "FAIL test:it publish_notice::later_poll") && !out.lines().any(|l| l.starts_with("TIMEOUT ")), "{out}");
         assert!(out.lines().any(|l| l == "FAIL publish_notice::later_poll ran over 60 s, then failed"), "{out}");
         assert!(json.contains(r#""end":"failed""#) && json.contains(r#""failed":["publish_notice::later_poll"]"#), "{json}");
         let (out, json) = red_phase_files(&long_running_log(""), LONG_HUNG);
         assert_eq!(out.lines().next().unwrap(), "UNIT-TESTS-RED: TIMEOUT test=publish_notice::later_poll ran over 60 s, did not finish", "{out}");
         assert!(json.contains(r#""end":"unfinished""#), "{json}");
+        assert!(out.lines().any(|l| l == "TIMEOUT test:it publish_notice::later_poll"), "{out}");
+        assert_eq!(out.lines().filter(|l| l.split_whitespace().count() == 3 && l.starts_with("TIMEOUT ")).count(), 1, "{out}");
     }
 
     #[test_id(t41q1di)]
