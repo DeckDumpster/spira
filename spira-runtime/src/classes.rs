@@ -354,6 +354,8 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("watch.skew.refresh", Git),
     ("watch.sop_lint.file_incident", Store),
     ("watch.sop_lint.observe", Store),
+    ("watch.store_unit.mail", Store),
+    ("watch.store_unit.observe", Host),
     ("watch.testenv_cap.kill", Host),
     ("watch.testenv_cap.metric", Host),
     ("watch.testenv_cap.observe", Host),

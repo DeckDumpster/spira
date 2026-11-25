@@ -9,7 +9,7 @@ mod fixture;
 
 use fixture::*;
 
-const SUB_HOUR: [&str; 7] = ["publish-backlog.observe", "publish.observe", "cockpit-tier-600s.observe", "trigger.mimir.observe", "intake.gh.observe", "intake.kit_bump.observe", "brain-dirty.observe"];
+const SUB_HOUR: [&str; 8] = ["publish-backlog.observe", "publish.observe", "cockpit-tier-600s.observe", "trigger.mimir.observe", "intake.gh.observe", "intake.kit_bump.observe", "brain-dirty.observe", "watch.store_unit.observe"];
 
 fn unsent_kv(f: &Fixture) -> String {
     let out: serde_json::Value = serde_json::from_str(&last_output(f, "cockpit-tier-600s.observe")).unwrap_or_default();

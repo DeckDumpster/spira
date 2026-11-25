@@ -89,6 +89,7 @@ mod task_e_watch_backup_age;
 mod task_e_watch_off_box;
 mod task_e_watch_ci_spill;
 mod task_e_watch_pass_rate;
+mod task_e_watch_store_unit;
 mod task_e_watch_testenv_cap;
 mod task_e_watch_throughput;
 mod task_f_asks_ideas;
