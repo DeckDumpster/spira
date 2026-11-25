@@ -3,8 +3,8 @@ After=lc-serve.service
 Wants=lc-serve.service
 # The concierge is the phone's only way in; "always available" is the whole property.
 # `concierge.sh start` is idempotent and backgrounds a tmux server, so systemd cannot
-# supervise it as a main process — this is an ensure on a timer, replacing the cron
-# */10 and @reboot pair.
+# supervise it as a main process — this is an ensure the `concierge.ensure` task of
+# spira-runtime starts when the session is gone or has changed.
 Description=Ensure the Remote Control concierge session is up
 Documentation=file://@SPIRA_PROD_ROOT@/concierge.sh
 
