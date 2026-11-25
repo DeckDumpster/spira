@@ -241,8 +241,6 @@ pub fn assemble(manifest: &Path, files: &Path, out: &Path) -> Result<Assembled, 
 mod tests {
     use super::*;
     use crate::durability::put::{Dest, Uploader};
-    use runtime::ports::SysProc;
-    use std::sync::Arc;
     use std::time::Duration;
     use testkit::TempDir;
 
@@ -267,7 +265,6 @@ mod tests {
         Uploader {
             dest: Dest::File(dest.into()),
             creds: None,
-            proc: Arc::new(SysProc),
             deadline: Duration::from_secs(5),
         }
     }

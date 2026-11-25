@@ -28,16 +28,6 @@ pub(crate) fn bounded_for(program: impl AsRef<std::ffi::OsStr>, secs: &str) -> R
     bounded_for_when(crate::plan::serving(), program, secs)
 }
 
-/// The system process port, for an upload that starts `curl`; refused inside lc-serve.
-pub(crate) fn sys() -> Result<std::sync::Arc<dyn runtime::ports::Proc>, String> {
-    sys_when(crate::plan::serving())
-}
-
-fn sys_when(serving: bool) -> Result<std::sync::Arc<dyn runtime::ports::Proc>, String> {
-    refusal(serving, "curl")?;
-    Ok(std::sync::Arc::new(runtime::ports::SysProc))
-}
-
 fn bounded_when(serving: bool, program: impl AsRef<std::ffi::OsStr>) -> Result<Bounded, String> {
     refusal(serving, &program.as_ref().to_string_lossy())?;
     Ok(spira_config::bounded::bounded(program))
@@ -68,13 +58,6 @@ mod tests {
     #[test]
     fn not_serving_builds_the_command() {
         assert_eq!(command_when(false, "git").unwrap().get_program(), "git");
-    }
-
-    #[test_id(tu4702g)]
-    #[test]
-    fn the_process_port_is_refused_while_serving() {
-        assert_eq!(sys_when(true).err().unwrap(), "lc-serve starts no process: curl");
-        assert!(sys_when(false).is_ok());
     }
 
     #[test_id(t6wrxu8)]

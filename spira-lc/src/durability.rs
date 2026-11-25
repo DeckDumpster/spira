@@ -158,7 +158,7 @@ pub fn admin_dolt_ship(args: &[String]) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        let put = Uploader { dest, creds, proc: crate::proc::sys()?, deadline: TABLE_PUT_DEADLINE };
+        let put = Uploader { dest, creds, deadline: TABLE_PUT_DEADLINE };
         dolt::ship(&put, Path::new(sync), Path::new(state), db, stamp, head)
     };
     match run() {
@@ -203,7 +203,7 @@ pub fn admin_archive_put(args: &[String], backup_url: &str) -> (i32, String) {
             Dest::S3 { .. } => Some(S3Creds::from_env()?),
             Dest::File(_) => None,
         };
-        Ok(Uploader { dest, creds, proc: crate::proc::sys()?, deadline: ARCHIVE_PUT_DEADLINE })
+        Ok(Uploader { dest, creds, deadline: ARCHIVE_PUT_DEADLINE })
     }) {
         Ok(u) => u,
         Err(e) => return (CANNOT_TELL, format!("admin-archive-put: {e}")),
@@ -258,7 +258,7 @@ mod tests {
     fn shipped(dir: &Path, clock: &VirtualClock) -> Shipper {
         let b = SqliteBackend::open(&dir.join("live.db"), Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, ..Options::default() }).unwrap();
         let c = suite::open(b.clone(), clock);
-        let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE });
+        let put: Arc<dyn Put> = Arc::new(Uploader { dest: Dest::File(dir.join("off")), creds: None, deadline: PUT_DEADLINE });
         let cfg = ShipConfig { dir: dir.join("lc-ship"), max_mains: 2, snapshot_every_ms: u64::MAX, stage_every_ms: 0 };
         let mut sh = Shipper::open(b, cfg, put, Arc::new(clock.clone())).unwrap();
         sh.snapshotter().step().unwrap();
@@ -289,7 +289,7 @@ mod tests {
         assert!(!ship::names(&runtime::ports::RealFs, &sh.dir().join("queue").join(REVLOG)).unwrap().is_empty(), "the run waits in queue/");
 
         let off = dir.path().join("off");
-        let drained = ship::drain(&runtime::ports::RealFs, sh.dir(), &Uploader { dest: Dest::File(off.clone()), creds: None, proc: Arc::new(runtime::ports::SysProc), deadline: PUT_DEADLINE }).unwrap();
+        let drained = ship::drain(&runtime::ports::RealFs, sh.dir(), &Uploader { dest: Dest::File(off.clone()), creds: None, deadline: PUT_DEADLINE }).unwrap();
         assert!(drained.failed.is_none() && drained.uploaded.len() == 2, "{drained:?}");
         assert!(off.join("revlog").is_dir());
         assert_eq!(sh.tick().unwrap().shipped_through, 1, "the staging shipper reads what the drain recorded");
