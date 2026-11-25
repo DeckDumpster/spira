@@ -174,6 +174,7 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
                 served.lock().unwrap().push(argv.last().cloned().unwrap_or_default());
                 Ok("{\"ok\":{}}".into())
             }
+            Some("section") if argv.get(1).map(String::as_str) == Some("get") && argv.get(2).map(String::as_str) == Some("VmPool/pool") => Err(runtime::RuntimeError::new("no such section")),
             Some("ops-graph" | "ops-view" | "section" | "audits" | "reconcile-content") => Ok("{}".into()),
             Some("git-fact") => Ok("{}".into()),
             Some("intent") => Ok("{\"ok\":{}}".into()),
@@ -411,6 +412,10 @@ pub const WATCHTOWER_PROGRAMS: [&str; 5] = ["systemctl", "spira-config", "target
 pub fn started_by_the_watchtower_checks(f: &Fixture) -> Vec<String> {
     let all = std::fs::read_to_string(&f.started).unwrap_or_default();
     all.lines().filter(|l| WATCHTOWER_PROGRAMS.iter().any(|p| l.starts_with(&format!("{p} "))) && !l.starts_with("spira-config resolve ") && !l.starts_with("spira-config env-bootstrap ") && !(l.starts_with("timeout ") && !l.contains(" watchd"))).map(str::to_string).collect()
+}
+
+pub fn vm_pool_publishes(f: &Fixture) -> usize {
+    f.published.lock().unwrap().iter().filter(|b| b.contains("\"kind\":\"VmPool\"")).count()
 }
 
 pub fn last_host_section(f: &Fixture) -> serde_json::Value {

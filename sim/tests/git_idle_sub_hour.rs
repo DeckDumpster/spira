@@ -9,7 +9,7 @@ mod fixture;
 
 use fixture::*;
 
-const SUB_HOUR: [&str; 8] = ["publish-backlog.observe", "publish.observe", "cockpit-tier-600s.observe", "trigger.mimir.observe", "intake.gh.observe", "intake.kit_bump.observe", "brain-dirty.observe", "watch.store_unit.observe"];
+const SUB_HOUR: [&str; 10] = ["publish-backlog.observe", "publish.observe", "cockpit-tier-600s.observe", "trigger.mimir.observe", "intake.gh.observe", "intake.kit_bump.observe", "brain-dirty.observe", "watch.store_unit.observe", "roundvm.section.observe", "roundvm.section.publish"];
 
 fn unsent_kv(f: &Fixture) -> String {
     let out: serde_json::Value = serde_json::from_str(&last_output(f, "cockpit-tier-600s.observe")).unwrap_or_default();
@@ -25,12 +25,17 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     let (warm, idle) = (START + HOUR, START + 2 * HOUR);
     let marks = [warm, idle, idle + 16 * MINUTE, idle + 32 * MINUTE, idle + 43 * MINUTE, idle + 54 * MINUTE];
     let (mut at_warm, mut at_idle) = (0, 0);
+    let (mut pool_at_warm, mut pool_at_idle) = (0, 0);
     let mut unsent_before = String::new();
     let second = f.dir_path().join("second");
     run_hours(&f, &SUB_HOUR, (&[], 0), &marks, &mut |t| match t {
-        t if t == warm => at_warm = logged(&f).len(),
+        t if t == warm => {
+            at_warm = logged(&f).len();
+            pool_at_warm = vm_pool_publishes(&f);
+        }
         t if t == idle => {
             at_idle = logged(&f).len();
+            pool_at_idle = vm_pool_publishes(&f);
             commit(&f.local, "sp-cccccc landed", LANDED_S + 10);
             git(&f.local, &["branch", "-f", "local/main"], 1);
         }
@@ -61,6 +66,10 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
         assert!(all[..at_warm].iter().any(|l| l.contains(read)), "warm-up never ran {read:?}, so the idle hour proves nothing about it");
     }
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git: {}\n{}", argv_counts(&all[at_warm..at_idle]), all[at_warm..at_idle].join("\n"));
+    assert!(pool_at_warm >= 1, "the warm-up never published VmPool/pool, so the idle hour proves nothing about it");
+    let idle_publishes = vm_pool_publishes(&f) - pool_at_idle;
+    assert!((1..=4).contains(&idle_publishes), "an idle pool publishes VmPool/pool at most once per 15 virtual minutes, got {idle_publishes} in 54");
+    assert_eq!(started(&f, "round-vm"), 0, "the VmPool section is published in process, not by starting round-vm");
     assert_ne!(unsent_kv(&f), unsent_before, "a new spira/* branch changes the unsent section");
     assert!(!unsent_before.is_empty());
     })
