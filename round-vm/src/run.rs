@@ -771,7 +771,7 @@ cargo_test_reds() {
            if (match($0, /[^ ]*\/?tests\//)) { d = substr($0, RSTART, RLENGTH); sub(/\/?tests\/$/, "", d); if (d == "") d = "." } }
          d != "" { word = (d == "." && t != "") ? "test:" t : "dir:" d }
          d != "" && /^test .* \.\.\. FAILED/ { print "FAIL " word, $2; bad[$2] = 1 }
-         d != "" && /^test .* has been running for over [0-9]+ seconds$/ { if (!($2 in seen)) { seen[$2] = 1; pend[++np] = $2 } }
+         d != "" && /^test .* has been running for over [0-9]+ seconds$/ { if (!((word, $2) in seen)) { seen[word, $2] = 1; pend[++np] = $2 } }
          END { flush() }' "$1"
 }
 # "<test>\t<over secs>\t<passed|failed|unfinished>" per test the watcher flagged (a tabbed line of <hung>; a guard line has no tab).
