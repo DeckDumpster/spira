@@ -446,10 +446,10 @@ pub fn run(args: &[String]) -> i32 {
                 }
             }
         });
-        std::thread::spawn(crate::plan::run_mirror);
-        std::thread::spawn(crate::content_write::run_committer);
-        std::thread::spawn(crate::settle::run);
-        std::thread::spawn(move || {
+        crate::slow::spawn_background(crate::slow::threads::PLAN_MIRROR, crate::plan::run_mirror);
+        crate::slow::spawn_background(crate::slow::threads::CONTENT_COMMITTER, crate::content_write::run_committer);
+        crate::slow::spawn_background(crate::slow::threads::SETTLE, crate::settle::run);
+        crate::slow::spawn_background(crate::slow::threads::SWEEP, move || {
             loop {
             std::thread::sleep(SWEEP_EVERY);
             alarm_tick();
@@ -1135,6 +1135,7 @@ pub(crate) fn call_request(req: Request, peer: Peer, door: &Door, received: Inst
                 let _tracking = state_store::phases::track_scoped(worker_rec);
                 let _holder = state_store::phases::holder_scoped(&holder_verb, &who);
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+                crate::slow::set_verb(&holder_verb);
                 crate::slow::set_caller(&who);
                 let _deadline = bind_deadline(received, limit);
                 let _request = crate::control::served::client_request_scoped(request_id);
