@@ -163,18 +163,11 @@ pub fn test_bins(metadata_json: &str, crates: &[String]) -> Result<Vec<String>, 
             continue;
         }
         let name = p["name"].as_str().unwrap_or_default();
-        match &p["metadata"]["spira"]["test-bins"] {
-            serde_json::Value::Null => {}
-            serde_json::Value::Array(a) => {
-                for b in a {
-                    let b = b.as_str().ok_or_else(|| format!("{name}: test-bins must be strings"))?;
-                    if !v["packages"].as_array().into_iter().flatten().any(|q| q["name"] == b) {
-                        return Err(format!("{name}: test-bins names {b}, which is not a workspace crate"));
-                    }
-                    out.insert(b.to_string());
-                }
+        for b in gate::compose::package_test_bins(p)? {
+            if !v["packages"].as_array().into_iter().flatten().any(|q| q["name"] == b.as_str()) {
+                return Err(format!("{name}: test-bins names {b}, which is not a workspace crate"));
             }
-            _ => return Err(format!("{name}: test-bins must be an array")),
+            out.insert(b);
         }
     }
     Ok(out.into_iter().collect())
@@ -427,6 +420,14 @@ mod tests {
         assert!(tree_test_bins(tree, &["no-such-crate".into()]).unwrap().is_empty());
     }
 
+    #[test_id(tinyxmq)]
+    #[test]
+    fn the_repositorys_tree_declares_the_binaries_its_tests_launch() {
+        let tree = testkit::manifest_dir().parent().unwrap().to_path_buf();
+        assert!(tree_test_bins(&tree, &["watchtower".into()]).unwrap().contains(&"testenv".to_string()));
+        assert!(tree_test_bins(&tree, &["batcher-cut".into()]).unwrap().contains(&"gate".to_string()));
+    }
+
     #[test_id(to4ooud)]
     #[test]
     fn a_red_output_names_the_failing_test_and_its_first_three_lines() {
@@ -624,7 +625,7 @@ mod tests {
         put("outer/target/debug/build/gen.rs", "fn only_target_has_this() {}\n");
         put("plain/src/lib.rs", "include!(concat!(env!(\"OUT_DIR\"), \"/rules.rs\"));\n");
         put("plain/src/rules/no_raw_pr.rs", "#[test]\nfn refused() {}\n");
-        let m = |name: &str, dir: &str| gate::compose::Member { name: name.into(), dir: dir.into(), deps: vec![], build_deps: vec![], targets: Default::default() };
+        let m = |name: &str, dir: &str| gate::compose::Member { name: name.into(), dir: dir.into(), deps: vec![], build_deps: vec![], targets: Default::default(), test_bins: vec![], bins: vec![] };
         let members = [m("outer", "outer"), m("inner", "outer/inner"), m("plain", "plain")];
         let crates: Vec<String> = ["outer", "inner", "plain"].map(String::from).to_vec();
         let held = |names: &[&str]| holding(t.path(), &members, &crates, &names.iter().map(|n| n.to_string()).collect::<Vec<_>>());

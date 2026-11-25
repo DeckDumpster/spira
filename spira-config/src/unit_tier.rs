@@ -81,6 +81,11 @@ pub fn build_words(profile: Option<&str>, selection: &str) -> String {
     )
 }
 
+/// The build of the binaries a selected crate's tests launch: `selection` is `-p <crate>` words.
+pub fn bin_build_words(selection: &str) -> String {
+    format!("build {} {selection} --bins", profile_words(None, "--profile"))
+}
+
 /// [`unit_tier_unit!`], its filter `filter` (a crate with no lib target takes `--bins` alone).
 pub fn unit_words(config: &str, profile: Option<&str>, selection: &str, filter: &str) -> String {
     format!(

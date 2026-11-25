@@ -126,6 +126,10 @@ struct State {
     unit_timings: Option<spira_config::unit_tier::UnitTimings>,
     /// The unit test phase failed and its nextest run named no test and printed no summary.
     nextest_unreported: bool,
+    /// Declared test binaries the trial found absent from its target directory.
+    target_vanished: Vec<String>,
+    /// The `bin` target names of the crates the composition's `test_bins` name.
+    test_bin_files: Vec<String>,
     /// `<at>/<digest>` of the deny list the trial ran with; empty before one was resolved.
     deny_label: String,
     /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
@@ -898,7 +902,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
         self.s.deny_label = format!("{at}/{}", &key::sha256_hex(deny_text.as_bytes())[..12]);
         w.eprint(&format!("gate: deny list {} ({} rows)", self.s.deny_label, deny.render().lines().count()));
-        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), deny, deny_text };
+        let limits = Limits { deadline, budget, stall, unit_deadline: (secs, periods), deny, deny_text, test_bin_files: self.s.test_bin_files.clone() };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
         let eff = |spent: u64| {
             let rem = deadline.saturating_sub(spent).max(1);
@@ -935,6 +939,7 @@ impl<'w, W: World> Trial<'w, W> {
                     &mut self.s.build_timing,
                     &mut self.s.unit_timings,
                     &mut self.s.nextest_unreported,
+                    &mut self.s.target_vanished,
                     build_phase,
                 )
             };
@@ -1065,6 +1070,13 @@ impl<'w, W: World> Trial<'w, W> {
                 self.scratch_cause(&out),
                 parse::tail_bytes(&out, 4000)));
         }
+        if !self.s.target_vanished.is_empty() {
+            return v(NOVERDICT, "target-vanished", format!(
+                "gate: {name}'s declared test binaries are absent from {}: {} — the harness's target, not a fault in {br}.\n{}",
+                tree.join("target/debug").display(),
+                self.s.target_vanished.join(", "),
+                parse::tail_bytes(&out, 4000)));
+        }
         if parse::missing_built_binary(&out) || !w.target_intact(&tree) {
             return v(NOVERDICT, "target-vanished", format!(
                 "gate: {name}'s a binary its build produced is missing at test time — the harness's target, not a fault in {br}.\n{}",
@@ -1184,6 +1196,7 @@ impl<'w, W: World> Trial<'w, W> {
                         &mut None,
                         &mut None,
                         &mut false,
+                        &mut Vec::new(),
                         Some(false),
                     );
                     base_tiers = take_tiers(w, tiers_file.as_deref());
@@ -1246,6 +1259,7 @@ impl<'w, W: World> Trial<'w, W> {
                 &mut None,
                 &mut None,
                 &mut false,
+                &mut Vec::new(),
                 None,
             );
             base_tiers = take_tiers(w, tiers_file.as_deref());
@@ -1584,7 +1598,7 @@ impl<'w, W: World> Trial<'w, W> {
     /// (landing ref → the revision under test) and the workspace graph of the gate tree.
     #[allow(clippy::too_many_arguments)]
     fn composition(
-        &self,
+        &mut self,
         mode: GateMode,
         ctx: &Ctx,
         repo: &Path,
@@ -1620,12 +1634,16 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: cargo metadata failed in the gate tree: {e}"
             ));
         }
-        compose::compose(
+        let comp = compose::compose(
             mode,
             &forces,
             &changed,
             members.as_deref().map_err(String::as_str),
-        )
+        );
+        if let (Composition::Unit { test_bins, .. }, Ok(m)) = (&comp, &members) {
+            self.s.test_bin_files = compose::bin_files(test_bins, m);
+        }
+        comp
     }
 
     /// The command PATH (from SPIRA_RELEASE) and the build cache's environment. Err only when SPIRA_RELEASE does not give a PATH; a missing build cache is kept
@@ -2305,6 +2323,8 @@ pub struct Limits {
     pub deny: spira_config::unit_tier::DenyList,
     /// The registry's own text of that list, beads kept: what the lint's row rules read.
     pub deny_text: String,
+    /// The files the unit composition's declared test binaries are in `target/debug`.
+    pub test_bin_files: Vec<String>,
 }
 
 /// The most a charged phase may take, seconds (`base-` prefix ignored); the gate cap is no
@@ -2597,8 +2617,10 @@ pub fn run_composed<W: World>(
     timing: &mut Option<(crate::buildtiming::Build, String)>,
     unit: &mut Option<spira_config::unit_tier::UnitTimings>,
     unreported: &mut bool,
+    vanished: &mut Vec<String>,
     build_phase: Option<bool>,
 ) -> (i32, String, Vec<(String, u64)>) {
+    vanished.clear();
     let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
     let start = w.now();
@@ -2721,7 +2743,7 @@ pub fn run_composed<W: World>(
         }
     };
     let mut steps: Vec<(&str, String)> = match comp {
-        Composition::Unit { crates, targets, .. } => compose::unit_commands(crates, *targets, jobs, &limits.deny).into(),
+        Composition::Unit { crates, targets, test_bins, .. } => compose::unit_commands_with(crates, test_bins, *targets, jobs, &limits.deny).into(),
         _ => Vec::new(),
     };
     // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show
@@ -2749,6 +2771,13 @@ pub fn run_composed<W: World>(
             ));
             phases.push((format!("{prefix}{name}"), 0));
             return (124, out, phases);
+        }
+        let unit_test = name == "test" && prefix.is_empty() && matches!(comp, Composition::Unit { .. });
+        if unit_test {
+            *vanished = w.absent_bins(tree, &limits.test_bin_files);
+            if !vanished.is_empty() {
+                return (NOVERDICT, out, phases);
+            }
         }
         mark(GateState::Trial, name);
         if name == "test" {
@@ -2803,6 +2832,12 @@ pub fn run_composed<W: World>(
             out.push_str(&o);
         }
         if r != 0 {
+            if unit_test {
+                *vanished = w.absent_bins(tree, &limits.test_bin_files);
+                if !vanished.is_empty() {
+                    return (NOVERDICT, out, phases);
+                }
+            }
             out.push_str(&format!("\ngate: phase '{name}' failed (exit {r}): {c}"));
             if let (Composition::Unit { crates, .. }, "test") = (comp, name) {
                 let mut reruns = parse::cargo_reruns(&o);
