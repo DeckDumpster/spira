@@ -645,6 +645,7 @@ wake)
     exec 8>"$SPIRA_RUN/concierge-wake.lock"
     flock 8
     _wake_look; _wake_prev="$_look_cursor"
+    # waits-on: the pane's cursor — one settle between two looks shows whether it moved
     sleep "${CONCIERGE_WAKE_SETTLE_SECS:-1}"
     _wake_look
     if [ "$_look_busy" = 1 ] || [ "$_look_cursor" != "$_wake_prev" ]; then
