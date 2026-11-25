@@ -140,6 +140,7 @@ struct State {
     /// `release` or `tree`: where the branch trial's tools came from; empty when it needs none.
     tools_from: String,
     build_dir: String,
+    cold_reason: String,
     /// The tree certificate (cert.rs) a PASS writes: the merged tree judged, the revision
     /// that carries it, where verdicts live, the harness hash and the suites covered.
     merged_tree: String,
@@ -827,7 +828,10 @@ impl<'w, W: World> Trial<'w, W> {
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
             match self.prepare_build_tree(&ctx, &tree, false) {
-                Ok(field) => self.s.build_dir = field,
+                Ok(bd) => {
+                    self.s.build_dir = bd.field();
+                    self.s.cold_reason = bd.cold_reason();
+                }
                 Err(e) => return e,
             }
             return hit;
@@ -984,7 +988,10 @@ impl<'w, W: World> Trial<'w, W> {
             || self.a.release_bins;
         if builds {
             match self.prepare_build_tree(&ctx, &tree, matches!(comp, Composition::Unit { .. })) {
-                Ok(field) => self.s.build_dir = field,
+                Ok(bd) => {
+                    self.s.build_dir = bd.field();
+                    self.s.cold_reason = bd.cold_reason();
+                }
                 Err(e) => return e,
             }
         }
@@ -2030,7 +2037,7 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     /// The refusals a tree build meets before it starts: no build cache, a target that cannot be prepared.
-    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path, in_builders_dir: bool) -> Result<String, Verdict> {
+    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path, in_builders_dir: bool) -> Result<crate::telemetry::BuildDir, Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
             return Err(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
@@ -2039,9 +2046,9 @@ impl<'w, W: World> Trial<'w, W> {
         let short = |e: String| Err(v(NOVERDICT, "scratch-short", format!("{e}\ngate: the scratch target could not be prepared on the host, not a fault in the branch.")));
         let builder = if in_builders_dir { self.builders_dir(ctx) } else { None };
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, builder.as_ref(), &self.s.repo_name) {
-            Ok(line) => {
-                w.eprint(&line);
-                Ok(crate::telemetry::build_dir_field(&line))
+            Ok(out) => {
+                w.eprint(&out.line);
+                Ok(out.build_dir)
             }
             Err(e) => short(e),
         }
@@ -2245,6 +2252,7 @@ impl<'w, W: World> Trial<'w, W> {
                 fresh: self.s.build_timing.as_ref().map_or(0, |(b, _)| b.fresh),
                 slowest: self.s.build_timing.as_ref().map_or(String::new(), |(b, _)| b.slowest_field()),
                 build_dir: self.s.build_dir.clone(),
+                cold_reason: self.s.cold_reason.clone(),
                 unit_build_secs: self.unit_phase_secs("build"),
                 unit_run_secs: self.unit_phase_secs("test"),
                 unit_tests: self.s.unit_timings.as_ref().map_or(0, |t| t.tests),

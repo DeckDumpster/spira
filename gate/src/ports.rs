@@ -49,6 +49,13 @@ pub enum Merge {
     Failed(String),
 }
 
+/// What `target_on_tmpfs` did: the lines for the trial's stderr, and how the directory was filled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetOutcome {
+    pub line: String,
+    pub build_dir: crate::telemetry::BuildDir,
+}
+
 /// The build directory a bead's builder submitted from, which a unit gate builds in when it can lease it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Builder {
@@ -213,7 +220,7 @@ pub trait World {
     fn target_room(&self, explicit_root: &str, run: &str) -> String;
     /// With a `builder`, the tree's `debug` links into that leased directory (the line says
     /// `warm::BUILDER_IN`); any step that fails leaves the gate's own directory, warm or cold.
-    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&Builder>, repo: &str) -> Result<String, String>;
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, builder: Option<&Builder>, repo: &str) -> Result<TargetOutcome, String>;
     /// The newest `build-dir` fact of `bead` (its last `work submit`): the tip and the directory.
     fn lc_build_dir(&self, _bead: &str) -> Option<(String, PathBuf)> {
         None

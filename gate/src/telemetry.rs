@@ -92,6 +92,7 @@ pub struct GateRun {
     pub slowest: String,
     /// `warm from <commit>` or `cold: <why>`; empty when no build directory was prepared.
     pub build_dir: String,
+    pub cold_reason: String,
     /// The unit gate's build and test phase walls, its nextest test count, and the ten slowest
     /// tests as `<binary>/<test>:secs,…`; zero and empty when no test phase ran.
     pub unit_build_secs: u64,
@@ -138,6 +139,7 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("fresh".into(), Value::from(r.fresh)),
         ("slowest".into(), s(&r.slowest)),
         ("build_dir".into(), s(&r.build_dir)),
+        ("cold_reason".into(), s(&r.cold_reason)),
         ("unit_build_secs".into(), Value::from(r.unit_build_secs)),
         ("unit_run_secs".into(), Value::from(r.unit_run_secs)),
         ("unit_tests".into(), Value::from(r.unit_tests)),
@@ -156,25 +158,69 @@ pub fn build_dir_kind(field: &str) -> &str {
     field.split([' ', ':']).next().unwrap_or("")
 }
 
-/// The row's build-directory field from the lines `target_on_tmpfs` printed: the way the
-/// directory was filled, or why it was not.
-pub fn build_dir_field(line: &str) -> String {
-    use crate::warm::{BUILDER_IN, COLD_OPEN, WARM_FROM};
-    for l in line.lines() {
-        if l.starts_with(BUILDER_IN) {
-            return "builder".into();
-        }
-        if let Some(rest) = l.strip_prefix(WARM_FROM) {
-            return format!("warm from {}", rest.split(' ').next().unwrap_or(""));
-        }
-        if let Some((_, rest)) = l.split_once(COLD_OPEN) {
-            return format!("cold: {}", rest.split_once(')').map_or(rest, |(why, _)| why));
-        }
-        if l.contains("builds in the tree") {
-            return "cold: no tmpfs, built in the tree".into();
+/// Why the builder's directory was not used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuilderMiss {
+    /// No build-dir fact, or no wait configured: the builder's directory was not tried.
+    None,
+    /// Held under the bead's own id.
+    Held,
+    /// Held by any other holder.
+    Taken,
+    Gone,
+    /// Leased, but cleaning or aging failed.
+    Unusable,
+}
+
+/// Why the warm pool gave nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolMiss {
+    /// `prepare` shed the pool this gate.
+    Shed,
+    /// No unclaimed entry for the repository.
+    Empty,
+    /// An adopted entry was discarded.
+    Discarded,
+    /// No target root: the build runs in the tree.
+    NoTmpfs,
+}
+
+/// How the gate's build directory was filled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuildDir {
+    Builder,
+    Warm { from: String },
+    Cold { builder: BuilderMiss, pool: PoolMiss },
+}
+
+impl BuildDir {
+    /// The row's `build_dir` field.
+    pub fn field(&self) -> String {
+        match self {
+            BuildDir::Builder => "builder".into(),
+            BuildDir::Warm { from } => format!("warm from {from}"),
+            BuildDir::Cold { .. } => "cold".into(),
         }
     }
-    "cold: no warm directory to adopt".into()
+
+    /// The row's `cold_reason` field: `<builder>/<pool>`, empty unless the gate built cold.
+    pub fn cold_reason(&self) -> String {
+        let BuildDir::Cold { builder, pool } = self else { return String::new() };
+        let b = match builder {
+            BuilderMiss::None => "none",
+            BuilderMiss::Held => "held",
+            BuilderMiss::Taken => "taken",
+            BuilderMiss::Gone => "gone",
+            BuilderMiss::Unusable => "unusable",
+        };
+        let p = match pool {
+            PoolMiss::Shed => "shed",
+            PoolMiss::Empty => "empty",
+            PoolMiss::Discarded => "discarded",
+            PoolMiss::NoTmpfs => "no-tmpfs",
+        };
+        format!("{b}/{p}")
+    }
 }
 
 /// This machine's id for the envelope (law-producers-stamp-their-own-clock).
@@ -522,15 +568,13 @@ mod tests {
 
     #[test_id(tf24on0)]
     #[test]
-    fn the_build_directory_field_says_how_it_was_filled_or_why_cold() {
-        let b = "gate: build on /t/x";
-        assert_eq!(build_dir_field(&format!("{b}\n{}c0ffee (12 unchanged files aged)", crate::warm::WARM_FROM)), "warm from c0ffee");
-        assert_eq!(build_dir_field(&format!("{b}\ngate: warm build directory from c1 discarded, {}mtimes: denied)", crate::warm::COLD_OPEN)), "cold: mtimes: denied");
-        assert_eq!(build_dir_field("gate: no tmpfs for the build (x) — /t builds in the tree"), "cold: no tmpfs, built in the tree");
-        assert_eq!(build_dir_field(b), "cold: no warm directory to adopt");
-        let leased = format!("{b}\n{}/pool/dir.2 (leased from sp-a's builder at c1)", crate::warm::BUILDER_IN);
-        assert_eq!(build_dir_field(&leased), "builder");
-        assert_eq!(["builder", "warm from c1", "cold: no tmpfs"].map(build_dir_kind), ["builder", "warm", "cold"]);
+    fn the_build_directory_field_says_how_it_was_filled_and_a_cold_one_why() {
+        let cold = BuildDir::Cold { builder: BuilderMiss::Taken, pool: PoolMiss::Shed };
+        assert_eq!((cold.field().as_str(), cold.cold_reason().as_str()), ("cold", "taken/shed"));
+        let warm = BuildDir::Warm { from: "c0ffee".into() };
+        assert_eq!((warm.field().as_str(), warm.cold_reason().as_str()), ("warm from c0ffee", ""));
+        assert_eq!((BuildDir::Builder.field().as_str(), BuildDir::Builder.cold_reason().as_str()), ("builder", ""));
+        assert_eq!(["builder", "warm from c1", "cold"].map(build_dir_kind), ["builder", "warm", "cold"]);
     }
 
     #[test_id(t0bh4o2)]

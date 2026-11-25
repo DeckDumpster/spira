@@ -79,7 +79,8 @@ struct Fake {
     gate_starts: RefCell<Vec<String>>,
     /// The `build-dir` fact the bead's builder left, and why leasing it fails (when it does).
     build_dir_fact: RefCell<Option<(String, PathBuf)>>,
-    builder_unusable: RefCell<Option<String>>,
+    builder_unusable: RefCell<Option<crate::telemetry::BuilderMiss>>,
+    pool_miss: Cell<crate::telemetry::PoolMiss>,
     /// The line a gate's own warm directory adds, when one was adopted.
     warm_line: RefCell<Option<String>>,
     builders: RefCell<Vec<Option<crate::ports::Builder>>>,
@@ -314,6 +315,7 @@ impl Fake {
             gate_starts: RefCell::new(Vec::new()),
             build_dir_fact: RefCell::new(None),
             builder_unusable: RefCell::new(None),
+            pool_miss: Cell::new(crate::telemetry::PoolMiss::Empty),
             warm_line: RefCell::new(None),
             builders: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
@@ -852,7 +854,8 @@ impl World for Fake {
     fn lc_build_dir(&self, _: &str) -> Option<(String, PathBuf)> {
         self.build_dir_fact.borrow().clone()
     }
-    fn target_on_tmpfs(&self, tree: &Path, root: &str, _: &str, _: &crate::target::Limits, builder: Option<&crate::ports::Builder>, repo: &str) -> Result<String, String> {
+    fn target_on_tmpfs(&self, tree: &Path, root: &str, _: &str, _: &crate::target::Limits, builder: Option<&crate::ports::Builder>, repo: &str) -> Result<crate::ports::TargetOutcome, String> {
+        use crate::telemetry::{BuildDir, BuilderMiss};
         self.target_repos.borrow_mut().push(repo.to_string());
         self.builders.borrow_mut().push(builder.cloned());
         self.targets.borrow_mut().push(tree.to_path_buf());
@@ -866,21 +869,28 @@ impl World for Fake {
             None if !root.is_empty() => format!("gate: build on {root}/{}", tree.file_name().unwrap().to_string_lossy()),
             None => format!("gate: build on /tmp/t/{}", tree.file_name().unwrap().to_string_lossy()),
         };
-        let used = match (builder, self.builder_unusable.borrow().as_ref()) {
+        let mut miss = BuilderMiss::None;
+        let used = match (builder, *self.builder_unusable.borrow()) {
             (Some(b), None) => {
                 line.push_str(&format!("\n{}{} (leased from {}'s builder at {})", crate::warm::BUILDER_IN, b.dir.display(), b.bead, b.tip));
                 true
             }
-            (Some(b), Some(why)) => {
-                line.push_str(&format!("\ngate: builder directory {} not used ({why})", b.dir.display()));
+            (Some(b), Some(m)) => {
+                miss = m;
+                line.push_str(&format!("\ngate: builder directory {} not used ({m:?})", b.dir.display()));
                 false
             }
             (None, _) => false,
         };
-        if let (false, Some(w)) = (used, self.warm_line.borrow().as_ref()) {
-            line.push_str(&format!("\n{}{w}", crate::warm::WARM_FROM));
-        }
-        Ok(line)
+        let build_dir = match (used, self.warm_line.borrow().as_ref()) {
+            (true, _) => BuildDir::Builder,
+            (false, Some(w)) => {
+                line.push_str(&format!("\n{}{w}", crate::warm::WARM_FROM));
+                BuildDir::Warm { from: w.split(' ').next().unwrap_or("").into() }
+            }
+            (false, None) => BuildDir::Cold { builder: miss, pool: self.pool_miss.get() },
+        };
+        Ok(crate::ports::TargetOutcome { line, build_dir })
     }
     fn target_room(&self, root: &str, _: &str) -> String {
         format!("gate: target root {root}: 1 MiB writable, gate targets hold 7 MiB there")
@@ -4182,7 +4192,8 @@ fn a_rust_only_unit_pass_records_its_branch_type_mode_and_wall() {
     assert_eq!(v["compose"], "unit");
     assert_eq!(v["branch_type"], "rust-only");
     assert_eq!(v["phases"], "fences:7,build:7,test:7");
-    assert_eq!(v["build_dir"], "cold: no warm directory to adopt");
+    assert_eq!(v["build_dir"], "cold");
+    assert_eq!(v["cold_reason"], "none/empty");
     assert_eq!(v["wall_secs"], v["ran_secs"]);
     assert_eq!(v["repo"], "spira");
     assert_eq!(v["branch"], BR);
@@ -6131,6 +6142,7 @@ fn a_unit_gate_builds_in_the_directory_its_beads_builder_submitted_from() {
     assert!(f.stderr().contains("gate: build in pool/dir.4 (leased from sp-a's builder at abc123)"), "{}", f.stderr());
     assert!(meter(&f).contains(" build_dir=builder "), "{}", meter(&f));
     assert_eq!(tsd_row(&f)["build_dir"], "builder");
+    assert_eq!(tsd_row(&f)["cold_reason"], "");
 }
 
 #[test_id(taqwu5f)]
@@ -6141,24 +6153,36 @@ fn a_unit_gate_whose_bead_has_no_build_dir_fact_takes_the_warm_or_cold_path() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.builders.borrow()[0], None);
     assert!(meter(&f).contains(" build_dir=cold "), "{}", meter(&f));
+    assert_eq!(tsd_row(&f)["cold_reason"], "none/empty");
 
     let w = builder_fake();
     *w.build_dir_fact.borrow_mut() = None;
     *w.warm_line.borrow_mut() = Some("c0ffee (3 unchanged files aged)".into());
     assert_eq!(w.run(), PASS);
     assert!(meter(&w).contains(" build_dir=warm "), "{}", meter(&w));
+    assert_eq!(tsd_row(&w)["cold_reason"], "");
 }
 
 #[test_id(tgaaa1a)]
 #[test]
 fn a_builders_directory_that_cannot_be_leased_cleaned_or_aged_leaves_the_gate_on_its_own_directory() {
-    for (warm, kind) in [(None, "cold"), (Some("c0ffee (3 unchanged files aged)".to_string()), "warm")] {
+    use crate::telemetry::{BuilderMiss, PoolMiss};
+    let cases = [
+        (None, BuilderMiss::Taken, PoolMiss::Empty, "cold", "taken/empty"),
+        (None, BuilderMiss::Held, PoolMiss::Empty, "cold", "held/empty"),
+        (None, BuilderMiss::None, PoolMiss::Empty, "cold", "none/empty"),
+        (None, BuilderMiss::Taken, PoolMiss::Shed, "cold", "taken/shed"),
+        (Some("c0ffee (3 unchanged files aged)".to_string()), BuilderMiss::Taken, PoolMiss::Empty, "warm", ""),
+    ];
+    for (warm, builder, pool, kind, reason) in cases {
         let f = builder_fake();
-        *f.builder_unusable.borrow_mut() = Some("it is gone, held, or not a pool directory".into());
+        *f.builder_unusable.borrow_mut() = Some(builder);
+        f.pool_miss.set(pool);
         *f.warm_line.borrow_mut() = warm;
         assert_eq!(f.run(), PASS, "{}", f.stderr());
         assert!(f.builders.borrow()[0].is_some(), "the gate tried the builder's directory first");
         assert!(meter(&f).contains(&format!(" build_dir={kind} ")), "{}", meter(&f));
+        assert_eq!(tsd_row(&f)["cold_reason"], reason);
         assert!(f.stderr().contains("builder directory pool/dir.4 not used"), "{}", f.stderr());
     }
 }
