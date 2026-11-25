@@ -2483,6 +2483,7 @@ dependencies = [
  "tokio-rustls",
  "toml",
  "tsd",
+ "tsd-lifecycle-export",
  "unit-run",
  "ureq",
  "watchd",

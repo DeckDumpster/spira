@@ -212,6 +212,17 @@ where
     }
 }
 
+pub const LAG_LIMIT_SECS: i64 = 600;
+
+/// Fails when the newest `bead-stage` row trails the newest lifecycle event by over [`LAG_LIMIT_SECS`].
+pub fn check(lc: &spira_store::lc_call::LcClient, metrics: &spira_otel::query::Store) -> Result<(), String> {
+    let Some(newest_event) = newest_event(lc)? else { return Ok(()) };
+    let from = u64::try_from(newest_event - 86_400).unwrap_or(0);
+    let series = metrics.export("spira_tsd_value{tsd_family=\"bead-stage\"}", from).map_err(|e| e.to_string())?;
+    let newest_stage = series.iter().flat_map(|s| s.samples.iter().map(|(ms, _)| ms / 1000)).max();
+    lag_verdict(newest_stage, newest_event, LAG_LIMIT_SECS)
+}
+
 /// The export is behind when the newest `bead-stage` row trails the newest lifecycle event by
 /// more than `limit_secs`; no row at all is behind.
 pub fn lag_verdict(newest_stage: Option<i64>, newest_event: i64, limit_secs: i64) -> Result<(), String> {
@@ -501,6 +512,15 @@ mod tests {
         .unwrap_err();
         assert_eq!(saved, [100]);
         assert!(err.starts_with("bead-stage: row not stored: ") && err.len() > "bead-stage: row not stored: ".len(), "{err}");
+    }
+
+    #[test_id(t7il7s0)]
+    #[test]
+    fn a_log_with_no_events_passes_the_check_without_reading_the_metrics_store() {
+        let (lc, asked) = scripted(&[r#"{"newest_at":null}"#]);
+        let unreachable = spira_otel::query::Store::new(Some("127.0.0.1:1")).unwrap();
+        assert_eq!(check(&lc, &unreachable), Ok(()));
+        assert_eq!(*asked.0.lock().unwrap(), ["audits --newest"]);
     }
 
     #[test_id(tvxlv5f)]
