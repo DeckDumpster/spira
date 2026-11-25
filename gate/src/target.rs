@@ -363,6 +363,9 @@ pub fn reap_orphan_locks(trees_dir: &Path, dry: bool) -> usize {
         if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             continue;
         }
+        if fs::symlink_metadata(trees_dir.join(tree)).is_ok() {
+            continue;
+        }
         if !dry {
             let _ = fs::remove_file(&lock);
             let _ = fs::remove_file(trees_dir.join(format!("{name}.holder")));

@@ -182,7 +182,8 @@ fn reap_scratch(dir: &Path, fraction: f64, dry: bool, busy_fn: &dyn Fn(&Path) ->
         return false;
     }
     if !reap_scratch_report(dir, Some(fraction), dry, gate::target::on_tmpfs(Path::new(system_paths::TMP)), busy_fn, out) {
-        let _ = writeln!(out, "target-reap: {} 0 stale gate target dir(s): this box keeps no gate scratch", if dry { "would remove" } else { "removed" });
+        let locks = gate::target::reap_orphan_locks(dir, dry);
+        let _ = writeln!(out, "target-reap: {} 0 stale gate target dir(s): this box keeps no gate scratch, {locks} orphaned tree lock(s)", if dry { "would remove" } else { "removed" });
     }
     true
 }
