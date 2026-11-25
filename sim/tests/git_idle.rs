@@ -590,12 +590,16 @@ fn the_reaper_observe_asks_git_only_about_a_checkout_the_cheap_rules_leave_undec
         git(&f.local, &["worktree", "add", "-q", "--detach", root.join(n).to_str().unwrap()], 1);
     }
     std::fs::write(root.join("sp-keep01/.spira-keep"), "").unwrap();
-    *f.checkout_rows.lock().unwrap() = vec![("sp-live01".into(), "WORKING".into()), ("sp-term01".into(), "WORKING".into())];
     let (warm, idle, after) = (START + HOUR, START + 2 * HOUR, START + 3 * HOUR);
     let (mut at_warm, mut at_idle) = (0, 0);
     let under = root.display().to_string();
     run_hours(&f, &names, (&[], 0), &[warm, idle, after], &mut |t| match t {
-        t if t == warm => at_warm = logged(&f).len(),
+        t if t == warm => {
+            let refused = logged(&f);
+            assert!(!refused.iter().any(|l| l.contains(&under)), "a pass the empty live list refused asked git: {}", argv_counts(&refused));
+            *f.checkout_rows.lock().unwrap() = vec![("sp-live01".into(), "WORKING".into()), ("sp-term01".into(), "WORKING".into())];
+            at_warm = refused.len();
+        }
         t if t == idle => {
             at_idle = logged(&f).len();
             *f.checkout_rows.lock().unwrap() = vec![("sp-live01".into(), "WORKING".into()), ("sp-term01".into(), "LANDED".into())];

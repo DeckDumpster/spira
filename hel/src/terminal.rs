@@ -144,7 +144,7 @@ pub fn names(w: &dyn World) -> Result<Vec<String>, String> {
 
 /// Every entry under `w.worktrees()`, sorted by name, with what [`decide`] needs; `Err` when
 /// the root cannot be read. `states`: bead id -> lifecycle state. An entry kept on its name, a
-/// holder or a live row is not asked about git: `repo` is None, `unsaved` Unknown and, and `age` is zero.
+/// holder or a live row is not asked about git: `repo` is None, `unsaved` Unknown, `age` zero.
 pub fn scan(w: &dyn World, states: &HashMap<String, String>) -> Result<Vec<EntryScan>, String> {
     let root = w.worktrees();
     Ok(names(w)?

@@ -25,7 +25,7 @@
 //! - `rows`: the entries' rows by id (`spira-lc list --ids`). **An empty live list or a failed
 //!   read refuses the whole pass**: a bead with no row is scratch, so a store that lost its rows must not reap. The snapshot carries `rows_ok:false`,
 //!   and decide acts on nothing.
-//! - `entries`: a read of `run/worktree` (`terminal.rs:123-129`), with these fields. Git, the
+//! - `entries`: a read of `run/worktree` (`terminal.rs`), with these fields. Git, the
 //!   age walk and the `/proc` scan are not asked for an entry the cheap rules keep (a dot-name, a
 //!   holder, a live row), and a refused pass asks none:
 //!   - `repo_of` from git-common-dir (`terminal.rs:72-76`, `hel/src/git.rs:237`);
