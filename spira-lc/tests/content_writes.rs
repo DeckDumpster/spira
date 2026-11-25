@@ -981,7 +981,7 @@ fn review_of(store: &Store, lc: &Lc, draft: &str, claim_dependent: bool) -> Revi
     let request = write(&["content", "create", "review the follow-up", "--silent", "--labels", "draft"], None);
     let dependent = write(&["content", "create", DEP_TITLE, "--silent", "-d", "the follow-up as filed"], None);
     write(&["content", "dep", "add", &dependent, &request, "--type", "blocks"], None);
-    let note = format!("### Draft: {DEP_TITLE}\n\n{draft}\n").replace('\'', "''");
+    let note = format!("### Draft: {DEP_TITLE}\n\n{draft}\n").replace('\\', "\\\\").replace('\'', "''");
     store.sql(&format!("UPDATE issues SET notes = '{}' WHERE id = '{request}'", note.replace('\n', "\\n")));
     for id in [&request, &dependent] {
         let (rc, out) = lc.run(&["create-bead", id, "--ready"], None);
