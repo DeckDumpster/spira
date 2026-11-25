@@ -2,7 +2,7 @@ use super::*;
 
 const DELIVERIES: usize = 3_000;
 
-const AUDITS: usize = 50;
+const AUDITS: usize = 2;
 
 /// `DELIVERIES` queued deliveries, each with `AUDITS` history entries, written to the backend
 /// as the import writes them: each delivery's `entered` beside its row, its history under

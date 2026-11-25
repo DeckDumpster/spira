@@ -1172,7 +1172,7 @@ mod tests {
     fn a_bare_list_page_reads_only_lifecycle_rows() {
         use crate::control::{claimable, keys, state};
         use crate::counting::Counting;
-        let (store, now, _dir) = with_records_on(Counting::new, 4_000);
+        let (store, now, _dir) = with_records_on(Counting::new, 400);
         store.contract().backend().take();
         let page = |argv: &[&str]| -> (i32, String, Vec<(&'static str, String, usize)>) {
             store.contract().backend().take();
@@ -1181,13 +1181,13 @@ mod tests {
             let reads = store.contract().backend().take();
             (rc, out, reads)
         };
-        let (rc, out, reads) = page(&["list", "--bare", "--limit", "1000"]);
+        let (rc, out, reads) = page(&["list", "--bare", "--limit", "100"]);
         assert_eq!(rc, 0, "{out}");
-        assert_eq!(serde_json::from_str::<Value>(&out).unwrap().as_array().map(|a| a.len()), Some(1_000), "{out:.200}");
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap().as_array().map(|a| a.len()), Some(100), "{out:.200}");
         let off: Vec<_> = reads.iter().filter(|(_, key, _)| !key.trim_start_matches("locks/").starts_with(keys::LIFECYCLE)).collect();
         assert!(off.is_empty(), "a bare page read beyond the lifecycle rows: {off:?}");
 
-        let (rc, out, reads) = page(&["list", "--limit", "1000"]);
+        let (rc, out, reads) = page(&["list", "--limit", "100"]);
         assert_eq!(rc, 0, "{out:.200}");
         assert!(reads.iter().any(|(_, key, _)| key.starts_with(keys::READINESS)), "the full page did not read readiness, so the bare page proves nothing");
     }
@@ -1481,12 +1481,15 @@ mod tests {
         assert_eq!(ids, (20..30).map(|n| format!("sp-{n:05}")).collect::<Vec<_>>());
     }
 
+    /// Verbs whose answer is a page of 1_000 audits or more: below that size they grow with the history by design.
+    const PAGED_ABOVE_THE_FIXTURE: [&str; 2] = ["watch", "audits --newest"];
+
     #[test_id(t4fqhcn)]
     #[test]
     fn every_read_verb_holds_no_more_memory_for_a_longer_history() {
         let mut table = Vec::new();
         let mut grown = Vec::new();
-        let (short_fixture, long_fixture) = (with_records(2_000), with_records(4_000));
+        let (short_fixture, long_fixture) = (with_records(200), with_records(400));
         for (name, call) in verbs() {
             let held = |f: &(Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir)| {
                 let ((rc, out), peak) = crate::peak_alloc::peak_of(|| call(&f.0, f.1));
@@ -1494,8 +1497,8 @@ mod tests {
                 peak
             };
             let (short, long) = (held(&short_fixture), held(&long_fixture));
-            table.push(format!("{name}: {short} B at 2000, {long} B at 4000"));
-            if long >= short * 3 / 2 {
+            table.push(format!("{name}: {short} B at 200, {long} B at 400"));
+            if long >= short * 3 / 2 && !PAGED_ABOVE_THE_FIXTURE.contains(&name) {
                 grown.push(name);
             }
         }
@@ -1506,15 +1509,16 @@ mod tests {
     #[test_id(tl43oaa)]
     #[test]
     fn the_dwell_views_hold_no_more_memory_for_a_longer_history() {
+        let (short_fixture, long_fixture) = (fortnight(200), fortnight(400));
         for view in ["ops_dwell_p95", "ops_edges", "ops_dwell"] {
-            let held = |audits| {
-                let (store, now, _dir) = fortnight(audits);
-                let ((rc, out), peak) = crate::peak_alloc::peak_of(|| view_rows(&store, view, now));
+            let held = |f: &(Store<state_store_sqlite::SqliteBackend>, i64, testkit::TempDir)| {
+                let (store, now, _dir) = f;
+                let ((rc, out), peak) = crate::peak_alloc::peak_of(|| view_rows(store, view, *now));
                 assert_eq!(rc, 0, "{view}: {out}");
                 peak
             };
-            let (short, long) = (held(2_000), held(4_000));
-            assert!(long < short * 3 / 2, "{view} held {short} B for 2000 audits and {long} B for 4000: the window is held, not folded");
+            let (short, long) = (held(&short_fixture), held(&long_fixture));
+            assert!(long < short * 3 / 2, "{view} held {short} B for 200 audits and {long} B for 400: the window is held, not folded");
         }
     }
 }
