@@ -395,6 +395,7 @@ mod tests {
             touched: vec!["gate".into()],
             crates: vec!["gate".into()],
             targets: Default::default(),
+            test_bins: vec![],
             dropped: vec![],
         };
         assert_eq!(branch_type(&unit), "rust-only");

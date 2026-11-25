@@ -160,6 +160,8 @@ struct Fake {
     target_clears_tools: Cell<bool>,
     /// Another process removed the tree's build output after it was built.
     target_swept: Cell<bool>,
+    /// What `absent_bins` answers on each call, in order; empty once exhausted.
+    absent_bins: RefCell<std::collections::VecDeque<Vec<String>>>,
     targets: RefCell<Vec<PathBuf>>,
     target_repos: RefCell<Vec<String>>,
     target_roots: RefCell<Vec<String>>,
@@ -345,6 +347,7 @@ impl Fake {
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
             target_swept: Cell::new(false),
+            absent_bins: RefCell::new(Default::default()),
             target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
             target_repos: RefCell::new(Vec::new()),
@@ -856,6 +859,9 @@ impl World for Fake {
     }
     fn target_intact(&self, _: &Path) -> bool {
         !self.target_swept.get()
+    }
+    fn absent_bins(&self, _: &Path, _: &[String]) -> Vec<String> {
+        self.absent_bins.borrow_mut().pop_front().unwrap_or_default()
     }
     fn release_target(&self, tree: &Path, keep_release: bool, hand_on: bool, cap_mib: u64, _: &str) {
         self.hand_on.borrow_mut().push(hand_on);
@@ -2837,6 +2843,49 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "{}",
         written[0].1
     );
+}
+
+const TESTKIT_MISSING: &str = "        FAIL [   0.010s] (1/1) testkit t::a_standing\n  stderr ───\n    a_standing_condition_is_raised_once::tpdcn1g at testkit/src/lib.rs:295 ... binary testenv is not built at /srv/ssd-b/dwarf-build/dir.5/debug/testenv\n\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped\n        FAIL [   0.010s] (1/1) testkit t::a_standing";
+
+fn vanished_fake(answers: &[&[&str]]) -> Fake {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    *f.absent_bins.borrow_mut() = answers.iter().map(|a| a.iter().map(|s| s.to_string()).collect()).collect();
+    f
+}
+
+fn stored_reds(f: &Fake) -> usize {
+    f.written.borrow().iter().filter(|(p, _)| p.to_string_lossy().contains("/red/")).count()
+}
+
+#[test_id(t2zctor)]
+#[test]
+fn a_declared_binary_absent_before_the_test_phase_is_no_verdict_and_no_test_runs() {
+    let f = vanished_fake(&[&["testenv"]]);
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=target-vanished"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("absent from") && f.stderr().contains("testenv"), "{}", f.stderr());
+    assert!(!f.cmds.borrow().iter().any(|c| c.contains("nextest run")), "{:?}", f.cmds.borrow());
+    assert_eq!(stored_reds(&f), 0);
+}
+
+#[test_id(tr4c8y0)]
+#[test]
+fn a_declared_binary_absent_after_a_red_test_phase_is_no_verdict_never_branch_red() {
+    let f = vanished_fake(&[&[], &["testenv"]]);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (1, TESTKIT_MISSING.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=target-vanished"), "{}", f.verdict_line());
+    assert_eq!(stored_reds(&f), 0);
+}
+
+#[test_id(tlocqyi)]
+#[test]
+fn a_red_test_phase_with_every_declared_binary_present_is_still_branch_red() {
+    let f = vanished_fake(&[&[], &[]]);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (1, TESTKIT_MISSING.into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    assert_eq!(stored_reds(&f), 1, "the counter must see a red when one is stored");
 }
 
 #[test_id(trpvrqf)]
@@ -5356,6 +5405,8 @@ fn the_tools_closure_follows_build_dependencies_and_not_dev_ones() {
         deps: build.iter().chain(dev).map(|d| d.to_string()).collect(),
         build_deps: build.iter().map(|d| d.to_string()).collect(),
         targets: Default::default(),
+        test_bins: vec![],
+        bins: vec![],
     };
     let ms = [m("lint", &["config"], &["testkit"]), m("config", &["leaf"], &[]), m("leaf", &[], &[]), m("testkit", &[], &[]), m("gate", &["config"], &[])];
     let c = closure(&ms, &["lint".into()]).unwrap();

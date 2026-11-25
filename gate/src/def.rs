@@ -300,7 +300,7 @@ mod tests {
         let d = checked_in();
         let direct = crate::fence::expected(&d.command());
         assert!(direct.iter().any(|f| f == "spira-lint") && !direct.iter().any(|f| f == "lint-staged"), "{direct:?}");
-        let comp = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: vec![], crates: vec![], targets: Default::default(), dropped: vec![] }, &d.command()).0;
+        let comp = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: vec![], crates: vec![], targets: Default::default(), dropped: vec![], test_bins: vec![] }, &d.command()).0;
         let composed = crate::fence::expected(&comp);
         assert!(composed.iter().any(|f| f == "spira-lint") && !composed.iter().any(|f| f == "lint-staged"), "{composed:?}");
     }
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn every_fence_a_bash_step_is_expected_to_print_is_printed_by_its_script() {
         let d = checked_in();
-        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: vec![], crates: vec![], targets: Default::default(), dropped: vec![] }, &d.command()).0;
+        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: vec![], crates: vec![], targets: Default::default(), dropped: vec![], test_bins: vec![] }, &d.command()).0;
         for s in [d.command(), unit] {
             let paths = crate::parse::bash_paths(&s);
             for name in crate::fence::expected(&s) {
@@ -544,7 +544,7 @@ mod tests {
         let fences = crate::fence::expected(&d.command());
         assert!(fences.iter().any(|f| f == crate::fence::GUARD), "{fences:?}");
         // It is a fence of every composition: the unit composition drops only the build fence.
-        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: Vec::new(), crates: Vec::new(), targets: Default::default(), dropped: Vec::new() }, &d.command()).0;
+        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: Vec::new(), crates: Vec::new(), targets: Default::default(), dropped: Vec::new(), test_bins: Vec::new() }, &d.command()).0;
         assert!(crate::fence::expected(&unit).iter().any(|f| f == crate::fence::GUARD), "{unit}");
     }
 }

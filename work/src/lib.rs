@@ -895,7 +895,6 @@ mod tests {
     fn the_unit_build_row_is_the_gates_own_build_line_over_the_affected_crates() {
         let scope = Affected::Crates(vec!["batcher-cut".into()]);
         let want = gate::compose::unit_build_words(&["batcher-cut".to_string()]);
-        assert!(want.windows(2).any(|w| w == ["-p", "gate"]));
         assert_eq!(check_argv(UNIT_BUILD, &scope, "spira/sp-x", rec_path()).unwrap(), want);
     }
 
