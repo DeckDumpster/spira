@@ -1,1 +1,0 @@
-removed = ["spira.gate_suites", "spira.suites_priority", "spira.suites_stale", "spira.suites_state", "spira.certify_suites", "spira.certify_always_covers"]
