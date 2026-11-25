@@ -48,6 +48,8 @@ fn metrics_with_newest_stage(stage_ts: i64) -> String {
             let mut stream = stream;
             let mut buf = [0u8; 4096];
             let _ = std::io::Read::read(&mut stream, &mut buf);
+            let request = String::from_utf8_lossy(&buf).into_owned();
+            assert!(request.starts_with("GET /api/v1/export?match[]=spira_tsd_value%7Btsd_family%3D%22bead-stage%22%7D&start=1699913600 "), "{request}");
             let body = format!("{{\"metric\":{{\"__name__\":\"spira_tsd_value\"}},\"values\":[1],\"timestamps\":[{}]}}\n", stage_ts * 1000);
             let _ = std::io::Write::write_all(&mut stream, format!("HTTP/1.0 200 OK\r\n\r\n{body}").as_bytes());
         }
@@ -107,5 +109,25 @@ fn a_current_checkpoint_and_a_family_within_the_limit_is_ok_with_no_program() {
 fn a_run_that_exported_the_log_is_still_refused_when_the_family_trails() {
     let (snap, ran) = pass_trailing_by(3, 900);
     assert_eq!(ran, "lifecycle\n");
+    assert!(snap["export"]["Err"].is_string(), "{snap}");
+}
+
+#[test_id(tzr6k4l)]
+#[test]
+fn a_world_with_no_metrics_endpoint_blinds_the_pass_when_an_exporter_is_configured() {
+    let dir = testkit::TempDir::new("world-flow-noendpoint");
+    let sock = dir.path().join("lc.sock");
+    let listener = UnixListener::bind(&sock).unwrap();
+    std::thread::spawn(move || {
+        runtime::socket::answer(&listener, &|argv| match argv.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+            ["event-seq", "--head"] => Ok(r#"{"seq":7}"#.into()),
+            _ => Err(RuntimeError::new("the double has no such verb")),
+        })
+    });
+    let run = dir.path().join("run");
+    std::fs::create_dir_all(run.join("tsd")).unwrap();
+    std::fs::write(run.join("tsd/.bead-stage-checkpoint-lifecycle.json"), r#"{"last_seq":7}"#).unwrap();
+    let w = World { lc_socket: sock, run_dir: run, export_bin: "/nonexistent/never-run".into(), ..World::default() };
+    let snap: serde_json::Value = serde_json::from_str(&w.flow_snapshot(PARAMS).unwrap_or_else(|e| panic!("{e}"))).unwrap();
     assert!(snap["export"]["Err"].is_string(), "{snap}");
 }

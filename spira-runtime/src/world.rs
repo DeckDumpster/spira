@@ -891,8 +891,17 @@ impl World {
         if logged > exported {
             exporter_run(bin, "lifecycle")?;
         }
-        let metrics = spira_otel::query::Store::new(self.metrics_endpoint.as_deref()).map_err(|e| e.to_string())?;
-        tsd_lifecycle_export::check(&spira_store::lc_call::LcClient::socket(&self.lc_socket), &metrics)
+        let mut lc = spira_store::lc_call::LcClient::socket(&self.lc_socket);
+        let mut metrics = spira_otel::query::Store::new(self.metrics_endpoint.as_deref()).map_err(|e| e.to_string())?;
+        if let Some((began, total)) = self.observe_bound {
+            let left = total.saturating_sub(began.elapsed());
+            if left.is_zero() {
+                return Err(format!("store unavailable: tried for {} s, the observe's bound, before the bead-stage check", total.as_secs()));
+            }
+            lc = lc.within(left);
+            metrics = metrics.with_deadline(left);
+        }
+        tsd_lifecycle_export::check(&lc, &metrics)
     }
 
     pub fn flow_snapshot(&self, input: &str) -> Result<String, String> {

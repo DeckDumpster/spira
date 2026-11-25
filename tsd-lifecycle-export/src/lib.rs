@@ -514,6 +514,15 @@ mod tests {
         assert!(err.starts_with("bead-stage: row not stored: ") && err.len() > "bead-stage: row not stored: ".len(), "{err}");
     }
 
+    #[test_id(t7il7s0)]
+    #[test]
+    fn a_log_with_no_events_passes_the_check_without_reading_the_metrics_store() {
+        let (lc, asked) = scripted(&[r#"{"newest_at":null}"#]);
+        let unreachable = spira_otel::query::Store::new(Some("127.0.0.1:1")).unwrap();
+        assert_eq!(check(&lc, &unreachable), Ok(()));
+        assert_eq!(*asked.0.lock().unwrap(), ["audits --newest"]);
+    }
+
     #[test_id(tvxlv5f)]
     #[test]
     fn a_refused_audit_keeps_its_refusal_and_a_store_that_cannot_answer_is_an_error_not_an_empty_log() {
