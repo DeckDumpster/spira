@@ -109,6 +109,6 @@ fn each_store_unit_stops_with_one_sigterm_and_hides_no_exit_status() {
             .collect();
         assert!(service.contains(&"KillMode=mixed"), "{n}: KillMode=mixed missing");
         assert!(service.contains(&"TimeoutStopSec=90"), "{n}: TimeoutStopSec=90 missing");
-        assert!(!text.lines().any(|l| l.starts_with("SuccessExitStatus")), "{n}");
+        assert!(!service.iter().any(|l| l.starts_with("SuccessExitStatus")), "{n}");
     }
 }
