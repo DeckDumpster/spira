@@ -161,7 +161,7 @@ impl Rig {
 }
 
 fn certified_gate(tip: &str) -> Value {
-    serde_json::to_value(gate(BeadState::Certified, Some(tip))).unwrap()
+    serde_json::to_value(gate(BeadState::Certified, Some(tip), false)).unwrap()
 }
 
 #[test_id(tf0pxh8)]
@@ -172,7 +172,7 @@ fn a_blockers_hold_express_or_phase_since_judgement_does_not_conflict_the_claim(
     r.ok(&["create-bead", "sp-w", "--ready"]);
     r.ok(&["create-bead", "sp-a", "--ready"]);
     assert_eq!(r.claim("sp-w").0, 0);
-    let unfinished = serde_json::to_value(gate(BeadState::Working, None)).unwrap();
+    let unfinished = serde_json::to_value(gate(BeadState::Working, None, false)).unwrap();
     r.judged_claimable(
         "sp-a",
         json!({ "sp-b": certified_gate(TIP), "sp-w": unfinished }),
@@ -381,7 +381,7 @@ fn a_coordination_parent_claimed_after_judgement_conflicts_its_childs_claim() {
     let r = Rig::new();
     r.ok(&["create-bead", "sp-p", "--ready"]);
     r.ok(&["create-bead", "sp-c", "--ready"]);
-    let idle = serde_json::to_value(gate(BeadState::Ready, None)).unwrap();
+    let idle = serde_json::to_value(gate(BeadState::Ready, None, false)).unwrap();
     r.judged_claimable("sp-c", json!({ "sp-p": idle }));
     assert_eq!(r.claim("sp-p").0, 0);
     let (code, out) = r.claim("sp-c");
@@ -706,7 +706,7 @@ fn claimable_names_the_gate_of_each_blocker_it_read() {
     let run = testkit::TempDir::new("claimable-gates");
     three_ready(&r);
     let answer = r.claimable(run.path(), &[]);
-    let expected = json!({ "sp-w": gate(BeadState::Working, None) });
+    let expected = json!({ "sp-w": gate(BeadState::Working, None, false) });
     assert_eq!(answer["beads"][1]["gates"], expected);
 }
 

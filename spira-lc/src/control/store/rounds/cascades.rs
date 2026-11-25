@@ -43,6 +43,21 @@ const FINISHED: [BatchState; 3] = [
     BatchState::Abandoned,
 ];
 
+/// Whether the round's last pass was red and no member was ejected for it.
+fn last_pass_red_unattributed(rec: &BatchRecord) -> bool {
+    let events: Vec<serde_json::Value> = rec
+        .batch_events
+        .as_ref()
+        .and_then(|b| b.get("fetched"))
+        .and_then(|f| f.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let (passes, _) = crate::passes::fold(&events);
+    passes
+        .last()
+        .is_some_and(|p| p["verdict"] == "red" && p["ejects"] == 0)
+}
+
 fn pairs(members: &[Member]) -> Vec<(String, String)> {
     members
         .iter()
@@ -82,12 +97,13 @@ impl<B: Backend> Store<B> {
         c: &mut Cascade,
         id: &str,
         kind: DeliveryEventKind,
+        red: bool,
         actor: &str,
         at: i64,
     ) -> Result<()> {
         let bead_kind = match &kind {
             DeliveryEventKind::Returned { reason } => BeadEventKind::Returned { reason: *reason },
-            DeliveryEventKind::Requeued { tip } => BeadEventKind::Requeued { tip: tip.clone() },
+            DeliveryEventKind::Requeued { tip } => BeadEventKind::Requeued { tip: tip.clone(), red },
             other => {
                 return Err(state_store::Error::Backend(format!(
                     "{id}: {other:?} is not an exit a round's cascade takes"
@@ -158,7 +174,7 @@ impl<B: Backend> Store<B> {
             let kind = DeliveryEventKind::Returned {
                 reason: ReturnedReason::BaseWithdrawn,
             };
-            self.exit(c, id, kind, actor, at)?;
+            self.exit(c, id, kind, false, actor, at)?;
             c.name_prerequisite(id, prereq);
         }
         Ok(())
@@ -203,7 +219,7 @@ impl<B: Backend> Store<B> {
             let red = DeliveryEventKind::Returned {
                 reason: ReturnedReason::BatchEjectedRed,
             };
-            self.exit(&mut c, e, red, &ev.actor, at)?;
+            self.exit(&mut c, e, red, false, &ev.actor, at)?;
         }
         self.withdraw(&mut c, &withdrawn, &ev.actor, at)?;
         let carried = |r: &String| eject.contains(r) || withdrawn.iter().any(|(d, _)| d == r);
@@ -212,7 +228,7 @@ impl<B: Backend> Store<B> {
                 continue;
             };
             let kind = DeliveryEventKind::Requeued { tip: m.tip.clone() };
-            self.exit(&mut c, r, kind, &ev.actor, at)?;
+            self.exit(&mut c, r, kind, false, &ev.actor, at)?;
         }
         Ok((Planned::Cascade(c), withdrawn))
     }
@@ -232,9 +248,10 @@ impl<B: Backend> Store<B> {
         if let Err(early) = self.round_step(&mut c, &key, &rec, ev, at, req)? {
             return Ok(early);
         }
+        let red = rec.row.state == BatchState::Attributing && last_pass_red_unattributed(&rec);
         for m in &rec.members {
             let kind = self.release_kind(&m.bead_id, m.tip.clone())?;
-            self.exit(&mut c, &m.bead_id, kind, &ev.actor, at)?;
+            self.exit(&mut c, &m.bead_id, kind, red, &ev.actor, at)?;
             if let BatchEventKind::Abandon { reason } = &ev.kind {
                 c.note_released(&m.bead_id, reason);
             }
@@ -278,6 +295,7 @@ impl<B: Backend> Store<B> {
             &mut c,
             bead,
             DeliveryEventKind::Requeued { tip },
+            false,
             &ev.actor,
             at,
         )?;
@@ -558,7 +576,7 @@ impl<B: Backend> Store<B> {
             let tip = rec.value.row.tip.unwrap_or_default();
             let kind = self.release_kind(&id, tip)?;
             let mut c = Cascade::new();
-            self.exit(&mut c, &id, kind, actor, now)?;
+            self.exit(&mut c, &id, kind, false, actor, now)?;
             let ran = self.run_planned(Planned::Cascade(c), req, &format!("release/{id}"))?;
             match ran {
                 Ran::Done { applied, .. } if !applied.is_empty() && applied.iter().all(|a| *a) => {

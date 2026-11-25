@@ -28,7 +28,7 @@ pub fn payload(live: &[&LifecycleRow], lc: &HashMap<String, LifecycleRow>, bd: &
         .iter()
         .map(|rec| {
             let blockers = bd.get(&rec.bead_id).map(rank::blockers).unwrap_or_default();
-            let gates: BTreeMap<String, Option<edges::Gate>> = blockers.iter().map(|b| (b.clone(), lc.get(b).map(|r| edges::gate(r.state, r.tip.as_deref())))).collect();
+            let gates: BTreeMap<String, Option<edges::Gate>> = blockers.iter().map(|b| (b.clone(), lc.get(b).map(|r| edges::gate(r.state, r.tip.as_deref(), r.known_red)))).collect();
             let (claimable, blocked_by, verdict) = match verdicts.get(rec.bead_id.as_str()) {
                 Some(e) => (claimable(e.verdict), e.blocker.iter().cloned().collect(), serde_json::to_value(e.verdict).unwrap_or(Value::Null)),
                 None => {
@@ -58,7 +58,7 @@ mod occupied_tests {
     use crate::verdicts::{Entry, Kind};
 
     fn row(id: &str, state: BeadState) -> LifecycleRow {
-        LifecycleRow { bead_id: id.into(), state, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, stack: Stack::new(), reason: None }
+        LifecycleRow { bead_id: id.into(), state, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None }
     }
 
     fn entries_of(live: &[&LifecycleRow], entries: &[Entry]) -> serde_json::Value {

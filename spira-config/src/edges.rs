@@ -59,8 +59,9 @@ pub struct Gate {
     pub tip: Option<String>,
 }
 
-pub fn gate_class(state: BeadState, has_tip: bool) -> GateClass {
+pub fn gate_class(state: BeadState, has_tip: bool, red: bool) -> GateClass {
     match state {
+        BeadState::Certified | BeadState::InDelivery if red => GateClass::Unfinished,
         BeadState::Ready if !has_tip => GateClass::Idle,
         BeadState::Certified | BeadState::InDelivery => GateClass::Stackable,
         s if s.is_terminal() => GateClass::Finished,
@@ -70,8 +71,8 @@ pub fn gate_class(state: BeadState, has_tip: bool) -> GateClass {
 
 /// The gate of a record in `state` at `tip`. The tip is kept only while it is stackable: a
 /// dependent stacks on it then, and at no other time does a blocker's tip decide a claim.
-pub fn gate(state: BeadState, tip: Option<&str>) -> Gate {
-    let class = gate_class(state, tip.is_some());
+pub fn gate(state: BeadState, tip: Option<&str>, red: bool) -> Gate {
+    let class = gate_class(state, tip.is_some(), red);
     Gate {
         class,
         tip: (class == GateClass::Stackable)
@@ -164,33 +165,43 @@ mod tests {
         assert!(parent(Some((BeadState::Landed, true)), false));
     }
 
+    #[test_id(tckeb0f)]
+    #[test]
+    fn a_red_certified_or_delivered_blocker_is_unfinished_and_keeps_no_tip() {
+        for st in [BeadState::Certified, BeadState::InDelivery] {
+            assert_eq!(gate(st, Some("t1"), true), Gate { class: GateClass::Unfinished, tip: None }, "{st:?}");
+            assert_eq!(gate(st, Some("t1"), true), gate(BeadState::Rework, Some("t1"), false), "{st:?}");
+        }
+        assert_eq!(gate(BeadState::Landed, Some("t1"), true).class, GateClass::Finished);
+    }
+
     #[test_id(tckeb0e)]
     #[test]
     fn the_gate_moves_with_the_class_and_a_stackable_tip_and_nothing_else() {
         let tip = Some("t1");
-        assert_eq!(gate(BeadState::Ready, tip), gate(BeadState::Working, None));
+        assert_eq!(gate(BeadState::Ready, tip, false), gate(BeadState::Working, None, false));
         assert_eq!(
-            gate(BeadState::Submitted, tip),
-            gate(BeadState::Rework, None)
+            gate(BeadState::Submitted, tip, false),
+            gate(BeadState::Rework, None, false)
         );
-        assert_eq!(gate(BeadState::Open, None).class, GateClass::Unfinished);
-        assert_eq!(gate(BeadState::Ready, None).class, GateClass::Idle);
+        assert_eq!(gate(BeadState::Open, None, false).class, GateClass::Unfinished);
+        assert_eq!(gate(BeadState::Ready, None, false).class, GateClass::Idle);
         assert_ne!(
-            gate(BeadState::Ready, None),
-            gate(BeadState::Working, None),
+            gate(BeadState::Ready, None, false),
+            gate(BeadState::Working, None, false),
             "a coordination parent claimed holds its child"
         );
         assert_eq!(
-            gate(BeadState::Certified, tip),
-            gate(BeadState::InDelivery, tip)
+            gate(BeadState::Certified, tip, false),
+            gate(BeadState::InDelivery, tip, false)
         );
         assert_ne!(
-            gate(BeadState::Certified, tip),
-            gate(BeadState::Certified, Some("t2"))
+            gate(BeadState::Certified, tip, false),
+            gate(BeadState::Certified, Some("t2"), false)
         );
         assert_ne!(
-            gate(BeadState::Certified, tip),
-            gate(BeadState::Rework, tip)
+            gate(BeadState::Certified, tip, false),
+            gate(BeadState::Rework, tip, false)
         );
         for done in [
             BeadState::Landed,
@@ -199,7 +210,7 @@ mod tests {
             BeadState::Dropped,
         ] {
             assert_eq!(
-                gate(done, tip),
+                gate(done, tip, false),
                 Gate {
                     class: GateClass::Finished,
                     tip: None
@@ -207,7 +218,7 @@ mod tests {
             );
         }
         assert_eq!(
-            serde_json::to_value(gate(BeadState::Certified, tip)).unwrap(),
+            serde_json::to_value(gate(BeadState::Certified, tip, false)).unwrap(),
             serde_json::json!({ "class": "stackable", "tip": "t1" })
         );
     }

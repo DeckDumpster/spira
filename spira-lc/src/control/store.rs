@@ -147,7 +147,7 @@ fn claim_edges(judged: Option<&Readiness>, stack: &bead::Stack) -> Vec<(String, 
         .map(|r| r.gates.clone().into_iter().collect())
         .unwrap_or_default();
     for (prereq, tip) in stack {
-        let gate = spira_config::edges::gate(BeadState::Certified, Some(tip));
+        let gate = spira_config::edges::gate(BeadState::Certified, Some(tip), false);
         if !edges
             .iter()
             .any(|(b, g)| b == prereq && g.as_ref() == Some(&gate))

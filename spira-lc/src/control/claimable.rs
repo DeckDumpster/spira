@@ -144,6 +144,7 @@ pub fn judge(
                 let stackable = stack_max > 0
                     && !is_parent
                     && !lifecycle::bead::provisional(b.row.state, b.row.reason.as_deref())
+                    && !lifecycle::bead::known_red(&b.row)
                     && b.repo.as_ref() == Some(own_repo);
                 let conflict = b.row.tip.as_ref().is_some_and(|t| ctx.conflicts.contains(&(bid.clone(), t.clone())));
                 match b.row.state {

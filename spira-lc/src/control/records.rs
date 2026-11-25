@@ -67,7 +67,7 @@ impl LifecycleRecord {
 
     /// The projection a blocker's dependents compare.
     pub fn gate(&self) -> Gate {
-        spira_config::edges::gate(self.row.state, self.row.tip.as_deref())
+        spira_config::edges::gate(self.row.state, self.row.tip.as_deref(), lifecycle::bead::known_red(&self.row))
     }
 
     /// Whether `self` is the record `other` was born as, whenever each was stamped.
