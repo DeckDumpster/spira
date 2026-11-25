@@ -126,6 +126,7 @@ pub struct EntryScan {
     pub is_dir: bool,
     pub is_git: bool,
     /// The repository a linked worktree belongs to.
+    /// Not asked for an entry kept on name, holder or live row.
     pub repo: Option<PathBuf>,
     pub unsaved: Unsaved,
     pub age: Duration,
@@ -142,23 +143,35 @@ pub fn names(w: &dyn World) -> Result<Vec<String>, String> {
 }
 
 /// Every entry under `w.worktrees()`, sorted by name, with what [`decide`] needs; `Err` when
-/// the root cannot be read.
-pub fn entries(w: &dyn World) -> Result<Vec<EntryScan>, String> {
+/// the root cannot be read. `states`: bead id -> lifecycle state. An entry kept on its name, a
+/// holder or a live row is not asked about git: `repo` is None, `unsaved` Unknown and, and `age` is zero.
+pub fn scan(w: &dyn World, states: &HashMap<String, String>) -> Result<Vec<EntryScan>, String> {
     let root = w.worktrees();
-    let names = names(w)?;
-    Ok(names
+    Ok(names(w)?
         .into_iter()
         .map(|name| {
             let path = root.join(&name);
             let is_dir = std::fs::symlink_metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
-            let repo = if is_dir && path.join(".git").exists() { repo_of(&path) } else { None };
             let is_git = path.join(".git").exists();
+            let kept = |held, age| EntryScan { name: name.clone(), path: path.clone(), is_dir, is_git, repo: None, unsaved: Unsaved::Unknown, age, held };
+            if name.starts_with('.') {
+                return kept(None, Duration::ZERO);
+            }
+            let held = held_by(&path);
+            if held.is_some() {
+                return kept(held, Duration::ZERO);
+            }
+            if states.get(&name).is_some_and(|s| !spira_store::lc_state::is_terminal(s)) {
+                return kept(None, Duration::ZERO);
+            }
+            let age = age_of(&path);
+            let repo = if is_dir && is_git { repo_of(&path) } else { None };
             let uns = match &repo {
                 Some(r) => w.base(r).map_or(Unsaved::Unknown, |b| unsaved(&path, &b.landrefs)),
                 None => Unsaved::Unknown,
             };
             let unsaved = if is_git { uns } else { Unsaved::No };
-            EntryScan { age: age_of(&path), held: held_by(&path), name, path, is_dir, is_git, repo, unsaved }
+            EntryScan { name, path, is_dir, is_git, repo, unsaved, age, held }
         })
         .collect())
 }
@@ -167,7 +180,7 @@ pub fn entries(w: &dyn World) -> Result<Vec<EntryScan>, String> {
 /// removal failed.
 pub fn run(w: &dyn World, states: &HashMap<String, String>, max_age: Duration, dry: bool) -> i32 {
     let root = w.worktrees();
-    let scanned = match entries(w) {
+    let scanned = match scan(w, states) {
         Ok(e) => e,
         Err(e) => {
             w.log(&format!("hel: reap-terminal: {e}"));
