@@ -134,30 +134,25 @@ pub fn parse_holds(v: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-/// The prerequisite ids of a row's `stack` (a JSON object, or a JSON-encoded string of one).
-pub fn parse_stack(v: Option<&Value>) -> Vec<String> {
+fn stack_object(v: Option<&Value>) -> serde_json::Map<String, Value> {
     match v {
-        Some(Value::Object(m)) => m.keys().cloned().collect(),
+        Some(Value::Object(m)) => m.clone(),
         Some(Value::String(s)) if !s.trim().is_empty() => match serde_json::from_str::<Value>(s) {
-            Ok(Value::Object(m)) => m.keys().cloned().collect(),
-            _ => Vec::new(),
+            Ok(Value::Object(m)) => m,
+            _ => Default::default(),
         },
-        _ => Vec::new(),
+        _ => Default::default(),
     }
 }
 
-/// The `prereq -> tip` pairs of a row's `stack` (an object, or a JSON-encoded string of one).
+/// The prerequisite ids of a row's `stack` (a JSON object, or a JSON-encoded string of one).
+pub fn parse_stack(v: Option<&Value>) -> Vec<String> {
+    stack_object(v).into_iter().map(|(k, _)| k).collect()
+}
+
+/// The `prereq -> tip` pairs of the same `stack`.
 pub fn parse_stack_tips(v: Option<&Value>) -> std::collections::BTreeMap<String, String> {
-    let owned;
-    let obj = match v {
-        Some(Value::Object(m)) => Some(m),
-        Some(Value::String(s)) if !s.trim().is_empty() => {
-            owned = serde_json::from_str::<Value>(s).ok();
-            owned.as_ref().and_then(Value::as_object)
-        }
-        _ => None,
-    };
-    obj.map(|m| m.iter().filter_map(|(k, t)| t.as_str().map(|t| (k.clone(), t.to_string()))).collect()).unwrap_or_default()
+    stack_object(v).into_iter().filter_map(|(k, t)| Some((k, t.as_str()?.to_string()))).collect()
 }
 
 pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {

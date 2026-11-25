@@ -651,7 +651,7 @@ mod stop_doomed_effect {
         let sock = dir.path().join("lc.sock");
         let listener = UnixListener::bind(&sock).unwrap();
         std::thread::spawn(move || {
-            runtime::socket::answer(&listener, &|_| Ok(shown.lock().unwrap().to_string()))
+            runtime::socket::answer(&listener, &|argv| Ok(shown.lock().unwrap()[argv[1].as_str()].to_string()))
         });
         let run = dir.path().join("run");
         std::fs::create_dir_all(&run).unwrap();
@@ -669,7 +669,10 @@ mod stop_doomed_effect {
     }
 
     fn row(state: &str, tip: &str) -> serde_json::Value {
-        serde_json::json!({ "bead": { "state": state, "stack": { "sp-a": tip } } })
+        serde_json::json!({
+            "sp-b": { "bead": { "state": state, "stack": { "sp-a": tip } } },
+            "sp-a": { "bead": { "state": "CERTIFIED", "tip": "t1", "known_red": 1 } },
+        })
     }
 
     fn stop(e: &spira_runtime::Effects, why: &str) -> Result<String, String> {
@@ -693,7 +696,7 @@ mod stop_doomed_effect {
 
     #[test_id(tsd2uwx)]
     #[test]
-    fn a_stop_is_written_once_and_a_row_that_moved_is_refused() {
+    fn a_stop_is_written_once_and_a_row_or_a_prerequisite_that_moved_is_refused() {
         let shown = Arc::new(Mutex::new(row("WORKING", "t1")));
         let (_dir, e) = fixture(shown.clone());
         let file = dwarf::stop::request_file(&e.world.run_dir, "sp-b");
@@ -716,7 +719,11 @@ mod stop_doomed_effect {
         assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), first);
 
         dwarf::stop::clear(&e.world.run_dir, "sp-b");
-        for moved in [row("READY", "t1"), row("WORKING", "t2")] {
+        let mut recovered = row("WORKING", "t1");
+        recovered["sp-a"]["bead"]["known_red"] = serde_json::json!(0);
+        let mut retipped = row("WORKING", "t1");
+        retipped["sp-a"]["bead"]["tip"] = serde_json::json!("t2");
+        for moved in [row("READY", "t1"), row("WORKING", "t2"), recovered, retipped] {
             *shown.lock().unwrap() = moved;
             assert!(stop(&e, "x").is_err());
             assert!(!dwarf::stop::requested(&e.world.run_dir, "sp-b"));

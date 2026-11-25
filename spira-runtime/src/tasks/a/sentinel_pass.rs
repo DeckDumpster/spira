@@ -1152,8 +1152,8 @@ pub fn stop_holder(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     sentinel::hel_verbs::stop_holder(&w.id, units).map(|()| format!("stopped the holder of {}", w.id))
 }
 
-/// `sentinel-pass.stop_doomed`: the row re-read live; one no longer WORKING on that stack is
-/// refused, a stop already pending is left alone, else the dwarf's heartbeat is asked to stop.
+/// `sentinel-pass.stop_doomed`: both rows re-read live; one no longer WORKING on that stack, or a
+/// prerequisite no longer red at that tip, is refused, a stop already pending is left alone, else the dwarf's heartbeat is asked to stop.
 pub fn stop_doomed(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, STOP_DOOMED)?;
     let lc = client(e, spec.deadline_ms);
@@ -1163,6 +1163,11 @@ pub fn stop_doomed(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let stacked = sentinel::model::parse_stack_tips(bead.get("stack")).get(&w.label).is_some_and(|t| *t == w.cause);
     if state != "WORKING" || !stacked {
         return Err(format!("{} is {state}, no longer working stacked on {} at {}", w.id, w.label, w.cause));
+    }
+    let prereq: serde_json::Value = serde_json::from_str(&answer(&lc, &["show", &w.label])?).map_err(|e| format!("show {}: {e}", w.label))?; // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
+    let red = matches!(prereq["bead"]["known_red"].as_i64(), Some(1)) || prereq["bead"]["known_red"].as_str() == Some("1");
+    if !red || prereq["bead"]["tip"].as_str() != Some(w.cause.as_str()) {
+        return Err(format!("{} is no longer known red at {}", w.label, w.cause));
     }
     let run = &e.world.run_dir;
     if dwarf::stop::requested(run, &w.id) {
