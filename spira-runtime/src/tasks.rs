@@ -211,6 +211,7 @@ pub const SIGNAL_SAFE: &[(&str, &str)] = &[
     (CONCIERGE_WAKE, "runs the Concierge's wake verb, which wakes its reader"),
     (e::watch_backup_age::MAIL, "mails an alert (alert::send)"),
     (e::watch_pass_rate::MAIL, "mails an alert (alert::send)"),
+    (e::watch_store_unit::MAIL, "mails an alert (alert::send)"),
     (f::asks_ideas::ASK, "mails the operator the idea prompt (idea_prompt send)"),
 ];
 

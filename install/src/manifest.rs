@@ -120,8 +120,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     if inputs.dolt_data_set {
         m.units.push(t("dolt-beads.service", true));
         m.units.push(t("dolt-store-gc.service", false));
-        m.units.push(t("spira-dolt-boot-check.service", false));
-        m.units.push(t("spira-dolt-boot-check.timer", true));
         if inputs.dolt_durable_set {
             m.units.push(t("dolt-persist.service", true));
         } else {
@@ -130,8 +128,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     } else {
         m.optional.push("dolt-beads.service".into());
         m.optional.push("dolt-store-gc.service".into());
-        m.optional.push("spira-dolt-boot-check.service".into());
-        m.optional.push("spira-dolt-boot-check.timer".into());
         m.optional.push("dolt-persist.service".into());
         m.notes.push("SPIRA_DOLT_DATA is empty — not installing dolt-beads.service.".into());
         m.notes.push("Start your Dolt server yourself, or set it in spira.conf.".into());
@@ -309,8 +305,8 @@ mod tests {
     /// timer a `spira-runtime serve` task replaces, the two retired timers (watch-refresh,
     /// concierge-guard) and the SMTP listener the `submission` source now owns. Activation runs
     /// the scheduler and not both, so none of them is in the manifest or on disk.
-    const RETIRED_BY_THE_SCHEDULER: [&str; 60] = [
-        "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "cockpit", "concierge-guard", "czar-pass", "escape-census", "event-continuity",
+    const RETIRED_BY_THE_SCHEDULER: [&str; 61] = [
+        "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "cockpit", "concierge-guard", "czar-pass", "dolt-boot-check", "escape-census", "event-continuity",
         "export-beads", "filings-collect", "gate-check", "gate-worker", "gh-intake", "groom", "heimdall", "idea-prompt", "incident-settle", "kit-bump",
         "landing-pass", "lifecycle-section", "mail-deliver", "mail-reconcile", "mail-tidy", "mend-watch", "mimir", "moot-sweep", "nix-gc", "notify", "ops",
         "perf-happy-path", "perf-watch", "publish", "reap-terminal", "reclaim", "reconcile-content", "reconciler-goodput", "refresh", "refusal-watch", "round-vm-ami-prune",
@@ -329,9 +325,20 @@ mod tests {
             assert!(!union.contains(n), "{n} is still in the manifest");
             assert!(!dir.join(n).exists(), "{n} is still a template");
         }
-        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-dolt-boot-check.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
+        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
+    }
+
+    #[test_id(tw8fxtw)]
+    #[test]
+    fn the_store_ships_its_unit_and_no_boot_check_and_the_watch_names_that_unit() {
+        let m = build(&Inputs { dolt_data_set: true, ..inputs() }).unwrap();
+        let shipped: Vec<&str> = m.units.iter().map(|u| u.name.as_str()).filter(|n| n.contains("dolt-boot-check")).collect();
+        assert!(shipped.is_empty(), "{shipped:?}");
+        assert!(m.units.iter().any(|u| u.name == "dolt-beads.service" && u.enable));
+        let key = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("spira/conf.d/SPIRA_DOLT_UNIT")).unwrap();
+        assert!(key.contains(":=dolt-beads.service}"), "the unit the watch reads by default is the one shipped: {key}");
     }
 
     #[test_id(t2tnfw5)]
@@ -533,13 +540,13 @@ mod tests {
     #[test]
     fn union_template_names_carries_a_conditionally_declined_template() {
         let names = union_template_names();
-        for n in ["spira-dolt-boot-check.service", "spira-dolt-boot-check.timer", "sccache-dav.service", "dolt-beads.service", "lc-serve.service"] {
+        for n in ["sccache-dav.service", "dolt-beads.service", "lc-serve.service"] {
             assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
         }
         assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");
 
         let installed = union_installed_names("test");
-        assert!(installed.contains(&"spira-dolt-boot-check-test.service".to_string()));
+        assert!(installed.contains(&"dolt-beads.service".to_string()));
         assert!(installed.contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
     }
 

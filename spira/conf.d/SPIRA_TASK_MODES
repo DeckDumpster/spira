@@ -86,6 +86,7 @@ watch.refusals=act
 watch.runtime=act
 watch.skew=act
 watch.sop_lint=act
+watch.store_unit=act
 watch.testenv_cap=act
 watch.throughput=act
 watch.tower=act

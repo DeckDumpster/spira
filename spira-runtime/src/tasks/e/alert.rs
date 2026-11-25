@@ -14,6 +14,8 @@ pub struct Alert {
     pub subject: String,
     pub kind: String,
     pub body: String,
+    #[serde(default)]
+    pub urgent: bool,
 }
 
 impl Alert {
@@ -23,7 +25,11 @@ impl Alert {
         if let Some(c) = heading.get_mut(0..1) {
             c.make_ascii_uppercase();
         }
-        Alert { mailbox: mailbox.into(), from: from.into(), subject: format!("{prefix}: {line}"), kind: kind.into(), body: format!("## {heading}\n{line}\n") }
+        Alert { mailbox: mailbox.into(), from: from.into(), subject: format!("{prefix}: {line}"), kind: kind.into(), body: format!("## {heading}\n{line}\n"), urgent: false }
+    }
+
+    pub fn urgent(self) -> Alert {
+        Alert { urgent: true, ..self }
     }
 
     pub fn effect(&self, name: &str, key: String, deadline_ms: u64) -> EffectSpec {
@@ -38,7 +44,7 @@ pub fn send(e: &Effects, input: &str) -> Result<String, String> {
         return Err("alert: an empty subject or mailbox is refused".into());
     }
     let env = e.concierge_mail.as_deref().ok_or("no mail environment configured")?;
-    let args = mail::cmds::SendArgs { mailbox: &a.mailbox, from: Some(&a.from), subject: &a.subject, kind: &a.kind, default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+    let args = mail::cmds::SendArgs { mailbox: &a.mailbox, from: Some(&a.from), subject: &a.subject, kind: &a.kind, default: "", class: "", bead: "", urgent: a.urgent, digest: false, dry_run: false, requested_by: "" };
     let bd = mail::bead::BdCli { bdq: String::new(), conn_retries: 1 };
     mail::cmds::send(&bd, env, &args, a.body.clone()).map(|o| o.delivered_path.display().to_string())
 }

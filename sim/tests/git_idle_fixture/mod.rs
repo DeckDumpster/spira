@@ -227,7 +227,9 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     std::fs::create_dir_all(&worktrees).unwrap();
     let stray = (!pinned_run.starts_with(dir.path())).then(|| pinned_run.ancestors().find(|a| a.parent() == dir.path().parent()).unwrap().to_path_buf());
     let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), cr_tz: "UTC".into(), cr_open_hour: "9".into(), ..Default::default() };
-    let effects = Arc::new(spira_runtime::Effects { world, units: Some(Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)))), ..Default::default() });
+    let units = Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)));
+    units.install("dolt-beads.service", runtime::units::UnitFacts { state: runtime::units::UnitState::Active, ..runtime::units::UnitFacts::absent() });
+    let effects = Arc::new(spira_runtime::Effects { world, units: Some(units), ..Default::default() });
     Fixture { _serial: serial, _env: env, _dir: dir, stray, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, registry, images, effects, watchers, worktrees, published, checkout_rows }
 }
 

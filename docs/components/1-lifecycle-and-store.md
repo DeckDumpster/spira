@@ -2,7 +2,7 @@
 
 | Component | Binaries / units | Purpose, reads and writes |
 |---|---|---|
-| **Dolt store** | `dolt-beads.service` (`dolt sql-server`, `Restart=always`, refuses manual stop), `dolt-persist.service` (which also prunes the server's temp spool), `spira-dolt-boot-check.timer` | The bead store, installed when `SPIRA_DOLT_DATA` is set (persistence units also need `SPIRA_DOLT_DURABLE`). The boot check alarms the operator if the store is not active shortly after boot. |
+| **Dolt store** | `dolt-beads.service` (`dolt sql-server`, `Restart=always`, refuses manual stop), `dolt-persist.service` (which also prunes the server's temp spool) | The bead store, installed when `SPIRA_DOLT_DATA` is set (persistence units also need `SPIRA_DOLT_DURABLE`). The `watch.store_unit` task alarms the operator if the unit is not active, two minutes after boot and every 15 minutes. |
 | **store-persist** | `store-persist restore\|pass [--offline]\|run\|seed --from DIR\|age` | Keeps a RAM-resident Dolt data dir durable: one `dolt backup` per database, restored before the server starts, synced continuously, collected hourly and its copy rebuilt daily by `run`. `age` exits 1 past the lag bound. |
 | **beads-store** | `beads-store commit --db P --message M`, `push --db P --remote R` | Commits a beads store's dirty tracked tables through the real `dolt` engine (never `bd`) and verifies the commit cleared the working set. Operator tool; no unit calls it. |
 | **lifecycle** | library; `lifecycle/schema.sql`, `migrations/`, `grants.sql` | The bead, delivery, batch, ask and mending machines and the event-log fold. Defines database `spira_lifecycle`; grants make `spira_lc` its only writer. |
