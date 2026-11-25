@@ -142,10 +142,10 @@ mod tests {
     #[test_id(tb2febk)]
     #[test]
     fn git_status_output_is_clean_drift_or_unreadable() {
-        assert!(matches!(classify(Some(0), "", "/r"), Probe::Clean));
-        assert!(matches!(classify(Some(0), "?? x\n", "/r"), Probe::Drift(s) if s == "DIRTY ?? x (/r)\n"));
+        assert!(matches!(classify(Some(0), "", "repo"), Probe::Clean));
+        assert!(matches!(classify(Some(0), "?? x\n", "repo"), Probe::Drift(s) if s == "DIRTY ?? x (repo)\n"));
         for code in [Some(128), Some(124), None] {
-            assert!(matches!(classify(code, "", "/r"), Probe::Unreadable));
+            assert!(matches!(classify(code, "", "repo"), Probe::Unreadable));
         }
     }
 
