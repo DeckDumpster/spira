@@ -120,22 +120,40 @@ pub fn affected_scope(diff_raw: &[u8], metadata_json: &str) -> Result<Affected, 
     select_crates(diff_raw, metadata_json, true).map(Affected::Crates)
 }
 
+/// The `{unit-build}` row's argv: the gate's own build commands ([`gate::compose::unit_build_argvs`])
+/// over the affected crates, `test_bins` being the test-bins the gate selects for them, run as one
+/// `sh -c` chain so the first failure ends the row under its one budget. `None`: no crate is affected.
+pub fn unit_build_row(affected: &Affected, test_bins: &[String]) -> Option<Vec<String>> {
+    let argvs = match affected {
+        Affected::Workspace(members) if members.is_empty() => {
+            let mut words = gate::compose::unit_build_words(&[]);
+            words.push("--workspace".into());
+            vec![words]
+        }
+        Affected::Workspace(members) => gate::compose::unit_build_argvs(members, test_bins),
+        Affected::Crates(c) if c.is_empty() => return None,
+        Affected::Crates(c) => gate::compose::unit_build_argvs(c, test_bins),
+    };
+    let [one] = &argvs[..] else {
+        let chain: Vec<String> = argvs.iter().map(|a| a.join(" ")).collect();
+        return Some(vec!["sh".into(), "-c".into(), chain.join(" && ")]);
+    };
+    Some(one.clone())
+}
+
+/// The test-bins the gate selects for `affected`.
+pub fn scope_test_bins(affected: &Affected, metadata_json: &str) -> Vec<String> {
+    let (Affected::Workspace(c) | Affected::Crates(c)) = affected;
+    gate::compose::parse_metadata(metadata_json).map(|m| gate::compose::test_bins_of(c, &m)).unwrap_or_default()
+}
+
 /// A row's argv with `{branch}` expanded to `branch`, `{record}` to `record` and `{affected}` to
 /// `--workspace` or `-p <crate>` words. `None`: the row names `{affected}` and the diff affects no
 /// crate, so there is nothing for it to check.
 pub fn check_argv(run: &str, affected: &Affected, branch: &str, record: &std::path::Path) -> Option<Vec<String>> {
     let argv = habits::config::argv(run, &[("branch", branch), ("record", &record.to_string_lossy())]);
     if is_unit_build(run) {
-        return match affected {
-            Affected::Workspace(members) if members.is_empty() => {
-                let mut words = gate::compose::unit_build_words(&[]);
-                words.push("--workspace".into());
-                Some(words)
-            }
-            Affected::Workspace(members) => Some(gate::compose::unit_build_words(members)),
-            Affected::Crates(c) if c.is_empty() => None,
-            Affected::Crates(c) => Some(gate::compose::unit_build_words(c)),
-        };
+        return unit_build_row(affected, &[]);
     }
     if !argv.iter().any(|t| t == AFFECTED) {
         return Some(argv);
@@ -896,6 +914,11 @@ mod tests {
         let scope = Affected::Crates(vec!["batcher-cut".into()]);
         let want = gate::compose::unit_build_words(&["batcher-cut".to_string()]);
         assert_eq!(check_argv(UNIT_BUILD, &scope, "spira/sp-x", rec_path()).unwrap(), want);
+        let bins = vec!["gate".to_string()];
+        let argvs = gate::compose::unit_build_argvs(&["batcher-cut".to_string()], &bins);
+        assert_eq!(argvs.len(), 2);
+        let row = unit_build_row(&scope, &bins).unwrap();
+        assert_eq!(row, v(&["sh", "-c", &argvs.iter().map(|a| a.join(" ")).collect::<Vec<_>>().join(" && ")]));
     }
 
     #[test_id(tn32pix)]

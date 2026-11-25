@@ -2696,6 +2696,25 @@ const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4},{"
     assert!(f.written.borrow().iter().any(|(p, c)| p.to_string_lossy().contains("cargo-timing") && c.contains("UNIT_DATA")));
 }
 
+#[test_id(tm6q0v3)]
+#[test]
+fn a_unit_with_test_bins_sums_the_timings_of_both_build_commands() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    let meta = metadata_json(&[("gate", &[]), ("spira-config", &[]), ("queue", &["spira-config"])])
+        .replace(r#""name":"queue","#, r#""name":"queue","metadata":{"spira":{"test-bins":["gate"]}},"#);
+    f.metadata.borrow_mut().insert(MERGE_SHA.into(), Ok(meta));
+    *f.timing_report.borrow_mut() = Some(
+        r#"<td>Fresh units:</td><td>3</td><td>Dirty units:</td><td>7</td>
+const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4}];"#
+            .into(),
+    );
+    assert_eq!(f.run(), PASS);
+    let cmds = f.cmds.borrow().clone();
+    assert!(cmds.iter().any(|c| c.contains("cargo build") && c.contains("--bins --timings") || c.contains("cargo build --timings")), "{cmds:?}");
+    let m = meter(&f);
+    assert!(m.contains(" compiled=14 fresh=6 "), "{m}");
+}
+
 #[test_id(tnpiai0)]
 #[test]
 fn a_unit_gate_records_the_test_phases_count_seconds_and_slowest_tests_beside_the_build() {

@@ -356,7 +356,7 @@ fn unit_of(mut touched: BTreeSet<String>, readers: BTreeSet<String>, members: &[
     Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), test_bins: test_bins_of(&crates, members), crates, dropped }
 }
 
-fn test_bins_of(crates: &[String], members: &[Member]) -> Vec<String> {
+pub fn test_bins_of(crates: &[String], members: &[Member]) -> Vec<String> {
     let all: BTreeSet<&String> = members.iter().filter(|m| crates.contains(&m.name)).flat_map(|m| &m.test_bins).collect();
     all.into_iter().cloned().collect()
 }
@@ -736,7 +736,7 @@ pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64, deny: &tier
     unit_commands_with(crates, &[], targets, jobs, deny)
 }
 
-/// [`unit_commands`], its build phase first building every `--bins` of `test_bins`.
+/// [`unit_commands`], its build phase first building every `--bins` of `test_bins` ([`unit_build_argvs`]).
 pub fn unit_commands_with(crates: &[String], test_bins: &[String], targets: Targets, jobs: u64, deny: &tier::DenyList) -> [(&'static str, String); 2] {
     let mut test = format!(
         "{AROUND} cargo nextest --version >/dev/null 2>&1 || {{ echo 'gate: the test sandbox could not start cargo nextest — refusing to judge unit tests without it'; exit 75; }}; _g_rc=0",
@@ -747,15 +747,30 @@ pub fn unit_commands_with(crates: &[String], test_bins: &[String], targets: Targ
         ));
     }
     test.push_str("; exit $_g_rc");
-    let bins = if test_bins.is_empty() {
-        String::new()
-    } else {
-        format!("CARGO_BUILD_JOBS={jobs} cargo {} && ", spira_config::unit_tier::bin_build_words(pkgs(test_bins).trim()))
-    };
-    [
-        ("build", format!("{bins}CARGO_BUILD_JOBS={jobs} {}", unit_build_words(crates).join(" "))),
-        ("test", test),
-    ]
+    let build = unit_build_commands(crates, test_bins, jobs).join(" && ");
+    [("build", build), ("test", test)]
+}
+
+/// The build phase's commands, each a shell line, in the order they run: the `--bins` of the
+/// affected crates and of `test_bins` ([`unit_build_argvs`]), then the test harnesses.
+pub fn unit_build_commands(crates: &[String], test_bins: &[String], jobs: u64) -> Vec<String> {
+    unit_build_argvs(crates, test_bins).iter().map(|a| format!("CARGO_BUILD_JOBS={jobs} {}", a.join(" "))).collect()
+}
+
+/// The build phase's argv lists: with `test_bins`, the `--bins` build over `crates` plus those
+/// crates, so one feature unification covers both builds, then [`unit_build_words`]. The gate and
+/// `work`'s `{unit-build}` row both compose it.
+pub fn unit_build_argvs(crates: &[String], test_bins: &[String]) -> Vec<Vec<String>> {
+    let mut argvs = Vec::new();
+    if !test_bins.is_empty() {
+        let sel: Vec<String> = crates.iter().chain(test_bins.iter().filter(|b| !crates.contains(b))).cloned().collect();
+        let mut words: Vec<String> = ["cargo"].into_iter().map(String::from).collect();
+        words.extend(spira_config::unit_tier::bin_build_words(pkgs(&sel).trim()).split_whitespace().map(String::from));
+        words.insert(2, "--timings".into());
+        argvs.push(words);
+    }
+    argvs.push(unit_build_words(crates));
+    argvs
 }
 
 fn rerun_command(rerun: &str) -> String {
@@ -1489,8 +1504,21 @@ mod tests {
         let sel = ["batcher-cut".to_string()];
         let [b, _] = unit_commands_with(&sel, &["gate".to_string()], ALL, 4, &Default::default());
         let (bins, tests) = b.1.split_once(" && ").unwrap();
-        assert_eq!(bins, format!("CARGO_BUILD_JOBS=4 cargo {}", spira_config::unit_tier::bin_build_words("-p gate")));
+        assert_eq!(bins, format!("CARGO_BUILD_JOBS=4 cargo {}", spira_config::unit_tier::bin_build_words("-p batcher-cut -p gate").replacen("build", "build --timings", 1)));
         assert_eq!(tests, format!("CARGO_BUILD_JOBS=4 cargo {}", spira_config::unit_tier::build_words(None, "-p batcher-cut").replacen("--no-run", "--no-run --timings", 1)));
+    }
+
+    #[test_id(tppu5kh)]
+    #[test]
+    fn the_bins_command_names_the_crates_and_the_test_bins_and_no_test_bins_is_one_build() {
+        let crates = ["a".to_string(), "b".to_string()];
+        let argvs = unit_build_argvs(&crates, &["b".to_string(), "c".to_string()]);
+        assert_eq!(argvs.len(), 2);
+        let bins = argvs[0].join(" ");
+        assert!(bins.starts_with("cargo build --timings "), "{bins}");
+        assert!(bins.ends_with("-p a -p b -p c --bins"), "{bins}");
+        assert_eq!(argvs[1], unit_build_words(&crates));
+        assert_eq!(unit_build_argvs(&crates, &[]), vec![unit_build_words(&crates)]);
     }
 
     fn two(v: &[String]) -> [String; 2] {
@@ -1652,8 +1680,8 @@ mod tests {
         assert_eq!(test_bins, &["spira-config", "spira-lc", "testenv"]);
         let [b, t] = unit_commands_with(crates, test_bins, *targets, 4, &Default::default());
         let (bins, tests) = b.1.split_once(" && ").unwrap();
-        assert!(bins.starts_with("CARGO_BUILD_JOBS=4 cargo build --features integration --config profile.dev.incremental=false "), "{}", b.1);
-        for p in ["-p testenv", "-p spira-lc", "-p spira-config"] {
+        assert!(bins.starts_with("CARGO_BUILD_JOBS=4 cargo build --timings --features integration --config profile.dev.incremental=false "), "{}", b.1);
+        for p in ["-p testenv", "-p spira-lc", "-p spira-config", "-p watchtower"] {
             assert_eq!(bins.matches(p).count(), 1, "{}", b.1);
         }
         assert!(bins.ends_with(" --bins"), "{}", b.1);
