@@ -239,6 +239,7 @@ watch.ami_stale=act
 watch.backup_age=act
 watch.ci_spill=act
 watch.dwarf_usage=act
+watch.unit_usage=act
 watch.mend=act
 watch.off_box=act
 watch.pass_rate=act

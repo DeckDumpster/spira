@@ -7,6 +7,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate spira_test_id;
+pub mod cgroup;
 pub mod fixture;
 pub mod logs;
 pub mod metrics;
