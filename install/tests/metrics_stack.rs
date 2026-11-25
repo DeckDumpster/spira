@@ -106,7 +106,7 @@ fn each_store_unit_comment_states_the_loss_as_twice_the_flush_key() {
 #[test_id(tuwvpiv)]
 #[test]
 fn the_collector_gets_no_flush_flag() {
-    let run = podman_run(&["collector".to_string()]);
+    let run = podman_run_with(&["collector".to_string()], None).expect("podman run");
     assert!(run.iter().any(|a| a == "otel-collector"), "{run:?}");
     assert!(!has(&run, "-inmemoryDataFlushInterval"), "{run:?}");
 }
@@ -133,7 +133,7 @@ fn each_store_unit_stops_with_one_sigterm_and_hides_no_exit_status() {
 #[test]
 fn a_store_without_a_positive_numeric_flush_key_exits_2_naming_it_and_runs_no_podman() {
     for part in ["vm", "logs"] {
-        for v in [None, Some("0"), Some("x")] {
+        for v in [None, Some("0"), Some("00"), Some("x")] {
             assert!(podman_run_with(&[part.to_string()], v).is_none(), "{part} {v:?}");
         }
     }

@@ -26,7 +26,7 @@ command -v podman >/dev/null 2>&1 || { printf 'metrics-stack: podman not found o
 data="$SPIRA_METRICS_DATA"
 case "$part" in vm|logs)
     minutes="${SPIRA_METRICS_FLUSH_MINUTES:-}"
-    case "$minutes" in ''|*[!0-9]*|0) printf 'metrics-stack: SPIRA_METRICS_FLUSH_MINUTES=%q is not a positive number of minutes\n' "$minutes" >&2; exit 2 ;; esac ;;
+    case "$minutes" in ''|*[!0-9]*|0*) printf 'metrics-stack: SPIRA_METRICS_FLUSH_MINUTES=%q is not a positive number of minutes\n' "$minutes" >&2; exit 2 ;; esac ;;
 esac
 
 mkdir -p "$data/vm" "$data/logs" "$data/collector/logs" "$data/grafana" || exit 2
