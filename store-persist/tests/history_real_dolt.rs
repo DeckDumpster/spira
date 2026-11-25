@@ -248,5 +248,5 @@ fn the_cherry_picks_and_the_log_length_do_not_grow_with_the_history() {
     let large = pk_fixture(tmp.path(), "large", 80, 3);
     let (a, b) = (assert_squashed_intact(&small, true), assert_squashed_intact(&large, true));
     assert_eq!(a, b);
-    assert!(a as u64 <= KEEP - 1);
+    assert!((a as u64) < KEEP);
 }
