@@ -117,15 +117,12 @@ fn overrides_key(dir: &Path) -> Option<String> {
     for layer in toml.split(':').filter(|l| !l.is_empty()) {
         write!(key, "{layer}={};", stamp(Path::new(layer))?).ok()?;
     }
-    let repo = std::env::var("SPIRA_REPO").ok().filter(|r| !r.is_empty())?;
-    let landref = if spira_config::git_refs::sha_of(Path::new(&repo), "local/main").is_some() {
-        "local/main".to_string()
-    } else {
-        let home = spira_config::resolve::locate_home_for_process().ok()?;
-        spira_config::repos::landref(&spira_config::repos::Registry::from_env(std::env::vars().collect(), &home), &repo)?
-    };
+    let home = spira_config::resolve::locate_home_for_process().ok()?;
+    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+    let repo = reg.root(reg.home_repo())?;
+    let landref = if spira_config::git_refs::sha_of(Path::new(&repo), "local/main").is_some() { "local/main".to_string() } else { spira_config::repos::landref(&reg, &repo)? };
     write!(key, "{landref}={};", spira_config::git_refs::sha_of(Path::new(&repo), &landref)?).ok()?;
-    let release = std::env::var("SPIRA_RELEASE").ok().filter(|r| !r.is_empty())?;
+    let release = spira_config::process::fresh(&["SPIRA_RELEASE".to_string()]).ok()?.remove("SPIRA_RELEASE").filter(|r| !r.is_empty())?;
     write!(key, "{}", std::fs::canonicalize(release).ok()?.display()).ok()?;
     Some(key)
 }
