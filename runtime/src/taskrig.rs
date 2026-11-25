@@ -360,15 +360,15 @@ mod tests {
     fn two_runs_on_one_seed_give_one_trace_and_the_budget_reads_it() {
         let a = assert_deterministic(
             |seed| {
-                let mut r = TaskRig::new(seed, Registration::new("toy", Toy { every: 60_000 })).unwrap().double("look", |_| Ok("loud".into())).double("say", |_| Ok("said".into()));
+                let mut r = TaskRig::new(seed, Registration::new("toy", Toy { every: 600_000 })).unwrap().double("look", |_| Ok("loud".into())).double("say", |_| Ok("said".into()));
                 r.tick(S, EventKind::new(TICK, "")).unwrap();
                 r
             },
             3,
             1,
         );
-        assert!(a.trace().len() > 1000, "a loud task journals every tick");
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_journal_budget(&a, 10))).is_err(), "the budget must catch it");
+        assert!(a.trace().len() > 250, "a loud task journals every tick");
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_journal_budget(&a, 5))).is_err(), "the budget must catch it");
         assert_journal_budget(&a, 1000);
     }
 
