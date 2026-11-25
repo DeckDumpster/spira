@@ -212,6 +212,17 @@ where
     }
 }
 
+pub const LAG_LIMIT_SECS: i64 = 600;
+
+/// Fails when the newest `bead-stage` row trails the newest lifecycle event by over [`LAG_LIMIT_SECS`].
+pub fn check(lc: &spira_store::lc_call::LcClient, metrics: &spira_otel::query::Store) -> Result<(), String> {
+    let Some(newest_event) = newest_event(lc)? else { return Ok(()) };
+    let from = u64::try_from(newest_event - 86_400).unwrap_or(0);
+    let series = metrics.export("spira_tsd_value{tsd_family=\"bead-stage\"}", from).map_err(|e| e.to_string())?;
+    let newest_stage = series.iter().flat_map(|s| s.samples.iter().map(|(ms, _)| ms / 1000)).max();
+    lag_verdict(newest_stage, newest_event, LAG_LIMIT_SECS)
+}
+
 /// The export is behind when the newest `bead-stage` row trails the newest lifecycle event by
 /// more than `limit_secs`; no row at all is behind.
 pub fn lag_verdict(newest_stage: Option<i64>, newest_event: i64, limit_secs: i64) -> Result<(), String> {

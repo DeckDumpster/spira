@@ -878,7 +878,7 @@ impl World {
         work && scoped
     }
 
-    /// Brings `bead-stage` up to the lifecycle log, launching its exporter only when the log is ahead
+    /// Brings `bead-stage` up to the lifecycle log, running its exporter only when the log is ahead
     /// of it, then fails when the family still trails the log: a stalled export blinds the stage invariants.
     fn flow_export(&self) -> Result<(), String> {
         let logged = self.lc_json(&["event-seq", "--head"])?["seq"].as_u64().ok_or("event-seq: no seq")?;
@@ -891,7 +891,8 @@ impl World {
         if logged > exported {
             exporter_run(bin, "lifecycle")?;
         }
-        exporter_run(bin, "check")
+        let metrics = spira_otel::query::Store::new(self.metrics_endpoint.as_deref()).map_err(|e| e.to_string())?;
+        tsd_lifecycle_export::check(&spira_store::lc_call::LcClient::socket(&self.lc_socket), &metrics)
     }
 
     pub fn flow_snapshot(&self, input: &str) -> Result<String, String> {
