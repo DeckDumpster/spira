@@ -12,9 +12,7 @@ use batcher_cut::io::{lifecycle_tests_env, Land, Repo};
 use batcher_cut::vm::VmRunner;
 
 fn gate_bin() -> PathBuf {
-    let gate = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("gate");
-    assert!(gate.is_file(), "the build that runs this test builds gate beside it: {}", gate.display());
-    gate
+    testkit::bin_exe("gate")
 }
 
 fn member(id: &str, tip: &str) -> Member {

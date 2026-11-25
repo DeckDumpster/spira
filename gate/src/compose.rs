@@ -41,6 +41,10 @@ pub struct Member {
     /// The subset of `deps` that goes into its binaries (normal or build, not dev): the
     /// source closure of a gate tool (toolkey.rs).
     pub build_deps: Vec<String>,
+    /// Workspace crates whose binaries its tests launch (`[package.metadata.spira] test-bins`).
+    pub test_bins: Vec<String>,
+    /// Names of its `bin` targets.
+    pub bins: Vec<String>,
 }
 
 /// What one changed path is, for composition.
@@ -80,6 +84,8 @@ pub enum Composition {
         targets: Targets,
         /// Dependents the selection computed and the cap dropped; sorted. The round tests them.
         dropped: Vec<String>,
+        /// The workspace crates `crates` declare in `test-bins`, sorted: built before the tests run.
+        test_bins: Vec<String>,
     },
     /// The gate string with suites off: nothing buildable changed. Under `gate_mode = fences`
     /// every unforced trial composes this, and the string has lost its suites step
@@ -319,6 +325,7 @@ pub fn compose(
         return Composition::Unit {
             touched: vec!["*".into()],
             targets: targets_of(&all, members),
+            test_bins: test_bins_of(&all, members),
             crates: all,
             dropped: Vec::new(),
         };
@@ -346,11 +353,36 @@ fn unit_of(mut touched: BTreeSet<String>, readers: BTreeSet<String>, members: &[
     }
     touched.extend(readers.iter().cloned());
     let dropped = full.into_iter().filter(|c| !crates.contains(c)).collect();
-    Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), crates, dropped }
+    Composition::Unit { touched: touched.into_iter().collect(), targets: targets_of(&crates, members), test_bins: test_bins_of(&crates, members), crates, dropped }
+}
+
+fn test_bins_of(crates: &[String], members: &[Member]) -> Vec<String> {
+    let all: BTreeSet<&String> = members.iter().filter(|m| crates.contains(&m.name)).flat_map(|m| &m.test_bins).collect();
+    all.into_iter().cloned().collect()
+}
+
+/// The `bin` target names of the workspace crates `test_bins`, sorted: the files the gate
+/// expects in the trial's `debug` directory.
+pub fn bin_files(test_bins: &[String], members: &[Member]) -> Vec<String> {
+    let all: BTreeSet<&String> = members.iter().filter(|m| test_bins.contains(&m.name)).flat_map(|m| &m.bins).collect();
+    all.into_iter().cloned().collect()
 }
 
 fn targets_of(crates: &[String], members: &[Member]) -> Targets {
     members.iter().filter(|m| crates.contains(&m.name)).fold(Targets::default(), |acc, m| acc.union(m.targets))
+}
+
+/// A `cargo metadata` package's `[package.metadata.spira] test-bins`: the one reader of the key.
+pub fn package_test_bins(package: &serde_json::Value) -> Result<Vec<String>, String> {
+    let name = package.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+    match package.pointer("/metadata/spira/test-bins") {
+        None | Some(serde_json::Value::Null) => Ok(Vec::new()),
+        Some(serde_json::Value::Array(a)) => a
+            .iter()
+            .map(|b| b.as_str().map(String::from).ok_or_else(|| format!("{name}: test-bins must be strings")))
+            .collect(),
+        Some(_) => Err(format!("{name}: test-bins must be an array")),
+    }
 }
 
 /// `cargo metadata --format-version 1 --no-deps` → the workspace members.
@@ -376,7 +408,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
         .ok_or("cargo metadata: no packages")?;
     // (name, absolute dir)
     #[allow(clippy::type_complexity)]
-    let mut raw: Vec<(String, String, Vec<(String, bool)>, Targets)> = Vec::new();
+    let mut raw: Vec<(String, String, Vec<(String, bool)>, Targets, Vec<String>, Vec<String>)> = Vec::new();
     for p in pkgs {
         let id = p.get("id").and_then(|x| x.as_str()).unwrap_or("");
         if !members.contains(id) {
@@ -418,7 +450,16 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
                 _ => {}
             }
         }
-        raw.push((name, dir, dep_dirs, targets));
+        let bins: Vec<String> = p
+            .get("targets")
+            .and_then(|t| t.as_array())
+            .into_iter()
+            .flatten()
+            .filter(|t| t.get("kind").and_then(|k| k.as_array()).is_some_and(|k| k.iter().any(|k| k.as_str() == Some("bin"))))
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from))
+            .collect();
+        let test_bins = package_test_bins(p)?;
+        raw.push((name, dir, dep_dirs, targets, bins, test_bins));
     }
     let by_dir: HashMap<String, String> =
         raw.iter().map(|(n, d, ..)| (d.clone(), n.clone())).collect();
@@ -429,7 +470,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
     };
     let mut out: Vec<Member> = raw
         .iter()
-        .map(|(n, d, deps, targets)| {
+        .map(|(n, d, deps, targets, bins, test_bins)| {
             let names = |all: bool| -> Vec<String> {
                 let mut v: Vec<String> = deps
                     .iter()
@@ -446,6 +487,8 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
                 deps: names(true),
                 build_deps: names(false),
                 targets: *targets,
+                test_bins: test_bins.clone(),
+                bins: bins.clone(),
             }
         })
         .collect();
@@ -632,10 +675,6 @@ pub fn run_all(cmd: &str) -> String {
     s
 }
 
-/// (crate, package) pairs: the crate's tests run the package's binary prebuilt in the target
-/// directory (batcher-cut's fence probe test runs the built gate), so selecting the crate builds it too.
-const NEEDS_BUILT: [(&str, &str); 4] = [("batcher-cut", "gate"), ("spira-lc", "testenv"), ("spira-runtime", "work"), ("spira-runtime", "spira-lc")];
-
 /// The words of the unit build line, shared by the gate's build phase and testenv's unit tier so
 /// both produce the same artefacts for the same crates: the default profile, no config override, no `-j`.
 ///
@@ -645,18 +684,10 @@ const NEEDS_BUILT: [(&str, &str); 4] = [("batcher-cut", "gate"), ("spira-lc", "t
 /// builds the whole workspace in release before anything lands (operator ruling 2026-11-10:
 /// build targets once).
 ///
-/// Only the named crates build: linking every workspace binary on each gate is what pushed the
-/// build phase to the gate cap, and a test reaches its own package's binaries through
-/// `CARGO_BIN_EXE_*`, which cargo builds with the test. The exception is a binary of another
-/// package that a test runs from beside its own (`NEEDS_BUILT`): it is added to the build.
+/// Only the named crates build; the binaries of other crates their tests launch are built ahead
+/// of it ([`unit_commands_with`]).
 pub fn unit_build_words(crates: &[String]) -> Vec<String> {
-    let mut sel = pkgs(crates);
-    for (_, bin) in NEEDS_BUILT
-        .iter()
-        .filter(|(user, bin)| crates.iter().any(|c| c == user) && !crates.iter().any(|c| c == bin))
-    {
-        sel.push_str(&format!(" -p {bin}"));
-    }
+    let sel = pkgs(crates);
     let mut words = vec!["cargo".to_string()];
     words.extend(spira_config::unit_tier::build_words(None, sel.trim()).split_whitespace().map(String::from));
     words.insert(3, "--timings".into());
@@ -702,6 +733,11 @@ pub const SUBSTEP_MARK: &str = "gate-substep";
 /// ([`unit_test_commands`]): each runs whatever the one before it did, the exit is the first
 /// non-zero status, and a sandbox that cannot start `cargo nextest` is 75, could not judge, never a red branch.
 pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64, deny: &tier::DenyList) -> [(&'static str, String); 2] {
+    unit_commands_with(crates, &[], targets, jobs, deny)
+}
+
+/// [`unit_commands`], its build phase first building every `--bins` of `test_bins`.
+pub fn unit_commands_with(crates: &[String], test_bins: &[String], targets: Targets, jobs: u64, deny: &tier::DenyList) -> [(&'static str, String); 2] {
     let mut test = format!(
         "{AROUND} cargo nextest --version >/dev/null 2>&1 || {{ echo 'gate: the test sandbox could not start cargo nextest — refusing to judge unit tests without it'; exit 75; }}; _g_rc=0",
     );
@@ -711,8 +747,13 @@ pub fn unit_commands(crates: &[String], targets: Targets, jobs: u64, deny: &tier
         ));
     }
     test.push_str("; exit $_g_rc");
+    let bins = if test_bins.is_empty() {
+        String::new()
+    } else {
+        format!("CARGO_BUILD_JOBS={jobs} cargo {} && ", spira_config::unit_tier::bin_build_words(pkgs(test_bins).trim()))
+    };
     [
-        ("build", format!("CARGO_BUILD_JOBS={jobs} {}", unit_build_words(crates).join(" "))),
+        ("build", format!("{bins}CARGO_BUILD_JOBS={jobs} {}", unit_build_words(crates).join(" "))),
         ("test", test),
     ]
 }
@@ -914,6 +955,8 @@ mod tests {
             deps: deps.iter().map(|s| s.to_string()).collect(),
             build_deps: deps.iter().map(|s| s.to_string()).collect(),
             targets: Targets::default(),
+            test_bins: vec![],
+            bins: vec![],
         }
     }
 
@@ -1007,6 +1050,7 @@ mod tests {
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1016,6 +1060,7 @@ mod tests {
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1025,6 +1070,7 @@ mod tests {
                     crates: vec!["gate".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1034,6 +1080,7 @@ mod tests {
                     crates: vec!["panel".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1043,6 +1090,7 @@ mod tests {
                     crates: vec!["panel".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (&["gate/src/engine.rs", "spira/lib.sh"], s("script")),
@@ -1065,6 +1113,7 @@ mod tests {
                     crates: vec!["release".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1074,6 +1123,7 @@ mod tests {
                     crates: vec!["release".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1083,6 +1133,7 @@ mod tests {
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1092,6 +1143,7 @@ mod tests {
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (
@@ -1101,6 +1153,7 @@ mod tests {
                     crates: vec!["gate".into(), "queue".into(), "release".into(), "spira-config".into()],
                     targets: Targets::default(),
                     dropped: vec![],
+                    test_bins: vec![],
                 },
             ),
             (&[], Fences),
@@ -1323,6 +1376,7 @@ mod tests {
             crates: vec![],
             targets: Targets::default(),
             dropped: vec![],
+            test_bins: vec![],
         };
         assert_eq!(u.label(), "unit");
         assert!(u.suites_off());
@@ -1414,7 +1468,7 @@ mod tests {
     fn the_unit_build_and_test_name_only_the_changed_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], ALL, 4, &Default::default());
         assert!(!b.1.contains("--workspace") && !b.1.contains("&&"), "{}", b.1);
-        assert!(b.1.ends_with(" --features integration --config profile.dev.incremental=false -p spira-runtime -p work -p spira-lc"), "{}", b.1);
+        assert!(b.1.ends_with(" --features integration --config profile.dev.incremental=false -p spira-runtime"), "{}", b.1);
         assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
         let [b, _] = unit_commands(&["spira-sim".into()], ALL, 4, &Default::default());
         assert!(b.1.ends_with(" --features integration --config profile.dev.incremental=false -p spira-sim"), "{}", b.1);
@@ -1433,8 +1487,10 @@ mod tests {
         }
         assert_eq!(build, format!("cargo {}", spira_config::unit_tier::build_words(None, "-p gate -p queue").replacen("--no-run", "--no-run --timings", 1)));
         let sel = ["batcher-cut".to_string()];
-        let [b, _] = unit_commands(&sel, ALL, 4, &Default::default());
-        assert_eq!(b.1.strip_prefix("CARGO_BUILD_JOBS=4 ").unwrap(), format!("cargo {}", spira_config::unit_tier::build_words(None, "-p batcher-cut -p gate").replacen("--no-run", "--no-run --timings", 1)), "only the extra built package differs");
+        let [b, _] = unit_commands_with(&sel, &["gate".to_string()], ALL, 4, &Default::default());
+        let (bins, tests) = b.1.split_once(" && ").unwrap();
+        assert_eq!(bins, format!("CARGO_BUILD_JOBS=4 cargo {}", spira_config::unit_tier::bin_build_words("-p gate")));
+        assert_eq!(tests, format!("CARGO_BUILD_JOBS=4 cargo {}", spira_config::unit_tier::build_words(None, "-p batcher-cut").replacen("--no-run", "--no-run --timings", 1)));
     }
 
     fn two(v: &[String]) -> [String; 2] {
@@ -1550,31 +1606,86 @@ mod tests {
         assert!(String::from_utf8_lossy(&out.stdout).contains("the test sandbox could not start cargo nextest"));
     }
 
-    #[test_id(thtbz45)]
-    #[test]
-    fn selecting_batcher_cut_builds_the_gate_its_fence_probe_test_runs() {
-        let [b, t] = unit_commands(&["batcher-cut".into()], ALL, 4, &Default::default());
-        assert!(b.1.ends_with(" -p batcher-cut -p gate"), "{}", b.1);
-        assert!(!t.1.contains("-p gate"), "{}", t.1);
-        let [b, _] = unit_commands(&["batcher-cut".into(), "gate".into()], ALL, 4, &Default::default());
-        assert_eq!(b.1.matches("-p gate").count(), 1, "{}", b.1);
+    /// Workspace metadata for `(name, [bin targets], [test-bins], [path deps])`.
+    #[allow(clippy::type_complexity)]
+    fn meta_with_test_bins(members: &[(&str, &[&str], &[&str], &[&str])]) -> String {
+        let pkgs: Vec<String> = members
+            .iter()
+            .map(|(n, bins, tb, deps)| {
+                let t: Vec<String> = std::iter::once(r#"{"kind":["lib"],"name":"x"}"#.to_string())
+                    .chain(bins.iter().map(|b| format!(r#"{{"kind":["bin"],"name":"{b}"}}"#)))
+                    .collect();
+                let d: Vec<String> = deps.iter().map(|x| format!(r#"{{"name":"{x}","path":"/w/{x}"}}"#)).collect();
+                let tb: Vec<String> = tb.iter().map(|x| format!("\"{x}\"")).collect();
+                let md = if tb.is_empty() { "null".to_string() } else { format!(r#"{{"spira":{{"test-bins":[{}]}}}}"#, tb.join(",")) };
+                format!(r#"{{"id":"{n} (path+file:///w/{n})","name":"{n}","manifest_path":"/w/{n}/Cargo.toml","dependencies":[{}],"targets":[{}],"metadata":{md}}}"#, d.join(","), t.join(","))
+            })
+            .collect();
+        let ids: Vec<String> = members.iter().map(|(n, ..)| format!(r#""{n} (path+file:///w/{n})""#)).collect();
+        format!(r#"{{"workspace_root":"/w","workspace_members":[{}],"packages":[{}]}}"#, ids.join(","), pkgs.join(","))
     }
 
-    #[test_id(t1sdshj)]
-    #[test]
-    fn selecting_spira_lc_builds_the_testenv_its_content_writes_tests_run() {
-        assert!(unit_build_words(&["spira-lc".into()]).join(" ").contains("-p testenv"));
-        let both = unit_build_words(&["spira-lc".into(), "testenv".into()]).join(" ");
-        assert_eq!(both.matches("-p testenv").count(), 1, "{both}");
+    fn declared_ws() -> Vec<Member> {
+        parse_metadata(&meta_with_test_bins(&[
+            ("spira-config", &[], &[], &[]),
+            ("testenv", &["testenv"], &[], &["spira-config"]),
+            ("spira-lc", &["spira-lc"], &[], &[]),
+            ("watchtower", &["watchtower"], &["spira-lc", "spira-config", "testenv"], &["spira-config"]),
+            ("other", &[], &[], &["spira-config"]),
+            ("other2", &[], &[], &["spira-config"]),
+        ]))
+        .unwrap()
     }
 
-    #[test_id(tgvu7e3)]
+    fn touched(paths: &[&str]) -> Vec<Changed> {
+        paths.iter().map(|p| Changed { path: p.to_string(), exec: false }).collect()
+    }
+
+    #[test_id(t7xl0o4)]
     #[test]
-    fn selecting_spira_runtime_builds_the_work_client_and_service_its_broker_exec_test_runs() {
-        let words = unit_build_words(&["spira-runtime".into()]).join(" ");
-        assert!(words.contains("-p work") && words.contains("-p spira-lc"), "{words}");
-        let words = unit_build_words(&["spira-runtime".into(), "work".into(), "spira-lc".into()]).join(" ");
-        assert_eq!((words.matches("-p work").count(), words.matches("-p spira-lc").count()), (1, 1), "{words}");
+    fn a_touched_only_selection_builds_the_binaries_its_crates_declare_and_tests_only_the_selection() {
+        let ws = declared_ws();
+        let forces = Forces { gate_all: false, unit_cap: Some(2) };
+        let got = compose(GateMode::Unit, &forces, &touched(&["watchtower/src/lib.rs", "spira-config/src/lib.rs"]), Ok(&ws));
+        let Composition::Unit { crates, test_bins, targets, .. } = &got else { panic!("not unit: {got:?}") };
+        assert_eq!(crates, &["spira-config", "watchtower"]);
+        assert_eq!(test_bins, &["spira-config", "spira-lc", "testenv"]);
+        let [b, t] = unit_commands_with(crates, test_bins, *targets, 4, &Default::default());
+        let (bins, tests) = b.1.split_once(" && ").unwrap();
+        assert!(bins.starts_with("CARGO_BUILD_JOBS=4 cargo build --features integration --config profile.dev.incremental=false "), "{}", b.1);
+        for p in ["-p testenv", "-p spira-lc", "-p spira-config"] {
+            assert_eq!(bins.matches(p).count(), 1, "{}", b.1);
+        }
+        assert!(bins.ends_with(" --bins"), "{}", b.1);
+        assert!(tests.starts_with("CARGO_BUILD_JOBS=4 cargo test --no-run"), "{}", b.1);
+        assert!(!t.1.contains("testenv") && !tests.contains("testenv"), "{}", b.1);
+    }
+
+    #[test_id(tfpdc4e)]
+    #[test]
+    fn the_binary_files_of_a_declared_crate_are_its_bin_targets() {
+        let ws = declared_ws();
+        assert_eq!(bin_files(&["testenv".into(), "spira-config".into()], &ws), ["testenv"]);
+        assert!(bin_files(&[], &ws).is_empty());
+    }
+
+    #[test_id(ty62qd9)]
+    #[test]
+    fn a_workspace_wide_input_unions_every_crates_declarations() {
+        let ws = declared_ws();
+        let got = compose(GateMode::Unit, &Forces::default(), &touched(&["Cargo.lock"]), Ok(&ws));
+        let Composition::Unit { test_bins, .. } = &got else { panic!("not unit: {got:?}") };
+        assert_eq!(test_bins, &["spira-config", "spira-lc", "testenv"]);
+    }
+
+    #[test_id(trxb2r8)]
+    #[test]
+    fn a_test_bins_that_is_not_an_array_of_strings_is_a_metadata_error() {
+        let ok = meta_with_test_bins(&[("a", &[], &[], &[])]);
+        let bad = |v: &str| ok.replace(r#""metadata":null"#, &format!(r#""metadata":{{"spira":{{"test-bins":{v}}}}}"#));
+        assert!(parse_metadata(&bad("\"a\"")).unwrap_err().contains("array"));
+        assert!(parse_metadata(&bad("[1]")).unwrap_err().contains("strings"));
+        assert!(parse_metadata(&bad("[\"a\"]")).is_ok());
     }
 
     #[test_id(t6c2b5e)]
@@ -1762,6 +1873,7 @@ cargo: test tests::x ... ok";
             crates: vec!["tsd".into()],
             targets: Targets::default(),
             dropped: vec![],
+            test_bins: vec![],
         }
     }
 

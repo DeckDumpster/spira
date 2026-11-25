@@ -44,3 +44,6 @@ required-features = ["integration"]
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
+
+[package.metadata.spira]
+test-bins = ["gate"]

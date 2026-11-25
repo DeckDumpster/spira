@@ -286,8 +286,42 @@ fn bin_beside(test_exe: &Path, name: &str) -> PathBuf {
 /// The built binary `name`, beside the running test executable (`<target>/<profile>/<name>`),
 /// found from `current_exe` at run time. `CARGO_BIN_EXE_*` is deliberately not read: cargo
 /// and nextest differ on it, and there is one way to find the binary.
+///
+/// A binary that is neither the crate's own nor in its `[package.metadata.spira] test-bins` is refused,
+/// because nothing builds it for the test.
 pub fn bin_exe(name: &str) -> PathBuf {
+    let dir = manifest_dir();
+    if let Err(why) = declared_bin(&dir, name) {
+        panic!("{why}");
+    }
     built_beside(&std::env::current_exe().expect("current_exe"), name)
+}
+
+fn declared_bin(manifest_dir: &Path, name: &str) -> Result<(), String> {
+    let manifest = manifest_dir.join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).map_err(|e| format!("binary {name}: cannot read {}: {e}", manifest.display()))?;
+    let doc: toml::Value = text.parse().map_err(|e| format!("binary {name}: {} is not TOML: {e}", manifest.display()))?;
+    let own = doc.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()) == Some(name)
+        || doc.get("bin").and_then(|b| b.as_array()).is_some_and(|b| b.iter().any(|b| b.get("name").and_then(|n| n.as_str()) == Some(name)))
+        || std::fs::read_dir(manifest_dir.join("src/bin")).into_iter().flatten().flatten().any(|e| {
+            let p = e.path();
+            p.file_stem().and_then(|s| s.to_str()) == Some(name) && (p.is_dir() || p.extension().is_some_and(|x| x == "rs"))
+        });
+    let declared = doc
+        .get("package")
+        .and_then(|p| p.get("metadata"))
+        .and_then(|m| m.get("spira"))
+        .and_then(|s| s.get("test-bins"))
+        .and_then(|t| t.as_array())
+        .is_some_and(|t| t.iter().any(|t| t.as_str() == Some(name)));
+    if own || declared {
+        Ok(())
+    } else {
+        Err(format!(
+            "binary {name} is neither built by this crate nor declared: add {name:?} to `test-bins` under `[package.metadata.spira]` in {}",
+            manifest.display()
+        ))
+    }
 }
 
 fn built_beside(test_exe: &Path, name: &str) -> PathBuf {
@@ -303,6 +337,38 @@ fn built_beside(test_exe: &Path, name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn crate_with(manifest: &str, bins: &[&str]) -> TempDir {
+        let t = TempDir::new("testkit-declared-bin");
+        std::fs::write(t.path().join("Cargo.toml"), manifest).unwrap();
+        for b in bins {
+            let p = t.path().join("src/bin").join(b);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "fn main() {}").unwrap();
+        }
+        t
+    }
+
+    #[test_id(te3sqtk)]
+    #[test]
+    fn an_undeclared_binary_is_refused_naming_the_manifest_line_to_add() {
+        let t = crate_with("[package]\nname = \"me\"\n", &[]);
+        let why = declared_bin(t.path(), "testenv").unwrap_err();
+        assert!(why.contains("testenv") && why.contains("test-bins") && why.contains("Cargo.toml"), "{why}");
+    }
+
+    #[test_id(tq15nhq)]
+    #[test]
+    fn a_declared_binary_and_the_crates_own_are_accepted() {
+        let t = crate_with(
+            "[package]\nname = \"me\"\n[package.metadata.spira]\ntest-bins = [\"testenv\"]\n[[bin]]\nname = \"tool\"\npath = \"src/x.rs\"\n",
+            &["extra.rs"],
+        );
+        for ok in ["testenv", "me", "tool", "extra"] {
+            assert!(declared_bin(t.path(), ok).is_ok(), "{ok}");
+        }
+        assert!(declared_bin(t.path(), "other").is_err());
+    }
 
     #[test_id(tc000z5)]
     #[test]
@@ -348,6 +414,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "binary no-such-bin-xyz is not built")]
     fn bin_exe_refuses_a_binary_that_is_not_built() {
+        let t = crate_with("[package]\nname = \"me\"\n[package.metadata.spira]\ntest-bins = [\"no-such-bin-xyz\"]\n", &[]);
+        let _g = env(&[("CARGO_MANIFEST_DIR", Some(t.path().to_str().unwrap()))]);
         bin_exe("no-such-bin-xyz");
     }
 

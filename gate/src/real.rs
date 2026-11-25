@@ -1069,6 +1069,10 @@ impl World for Real {
     fn target_intact(&self, tree: &Path) -> bool {
         crate::target::intact(tree)
     }
+    fn absent_bins(&self, tree: &Path, bins: &[String]) -> Vec<String> {
+        let debug = tree.join("target/debug");
+        bins.iter().filter(|b| !debug.join(b).is_file()).cloned().collect()
+    }
     fn release_target(&self, tree: &Path, keep_release: bool, hand_on: bool, cap_mib: u64, repo: &str) {
         if hand_on {
             if let Some(line) = crate::warm::donate_tree(tree, repo, cap_mib) {
@@ -1389,6 +1393,24 @@ mod tests {
         assert_eq!(super::super::newest_build_dir(json), Some(("bbb".into(), "pool/dir.2".into())));
         assert_eq!(super::super::newest_build_dir("[]"), None);
         assert_eq!(super::super::newest_build_dir(r#"[{"new_value":"no-tab"}]"#), None);
+    }
+
+    #[test_id(teubo2x)]
+    #[test]
+    fn the_port_names_exactly_the_declared_binaries_missing_from_a_symlinked_debug_directory() {
+        use crate::ports::World;
+        let t = testkit::TempDir::new("gate-absent-bins");
+        let tree = t.path().join("tree");
+        let elsewhere = t.path().join("elsewhere");
+        std::fs::create_dir_all(tree.join("target")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("present"), "").unwrap();
+        std::fs::create_dir(elsewhere.join("a-directory")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, tree.join("target/debug")).unwrap();
+        let r = super::super::Real::new(t.path().to_path_buf());
+        let asked: Vec<String> = ["present", "gone", "a-directory"].map(String::from).to_vec();
+        assert_eq!(r.absent_bins(&tree, &asked), ["gone", "a-directory"]);
+        assert!(r.absent_bins(&tree, &[]).is_empty());
     }
 
     #[test_id(trf3nb0)]

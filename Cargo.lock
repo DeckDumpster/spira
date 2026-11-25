@@ -2755,6 +2755,7 @@ dependencies = [
  "libc",
  "spira-test-id",
  "system-paths",
+ "toml",
 ]
 
 [[package]]
