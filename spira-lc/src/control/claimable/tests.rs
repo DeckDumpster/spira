@@ -41,6 +41,15 @@ fn seen(j: &Judgement) -> (Verdict, Option<String>) {
     (j.verdict, j.blocker.clone())
 }
 
+#[test_id(t2hd6ke)]
+#[test]
+fn a_bead_reserved_for_a_directed_claim_is_not_offered_to_a_pool() {
+    let mut r = rec("A", BeadState::Ready);
+    assert_eq!(verdict(&r, &[], &ctx()).verdict, Verdict::Claimable);
+    r.row.takeover = Some(lifecycle::bead::Takeover { by: "op".into(), owner: "direct@1.2".into() });
+    assert_eq!(verdict(&r, &[], &ctx()).verdict, Verdict::TakenOver);
+}
+
 #[test_id(tpsmwlw)]
 #[test]
 fn a_member_of_an_open_integration_is_carried_and_the_integration_is_not() {

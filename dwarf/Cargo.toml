@@ -13,7 +13,7 @@ name = "dwarf"
 path = "src/main.rs"
 
 [features]
-integration = ["bead/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration", "system-paths/integration", "spira-claim/integration", "spira-test-id/integration"]
+integration = ["lifecycle/integration", "bead/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "strand/integration", "testkit/integration", "system-paths/integration", "spira-claim/integration", "spira-test-id/integration"]
 [dependencies]
 bead = { path = "../bead" }
 spira-config = { path = "../spira-config" }
@@ -32,6 +32,7 @@ sha2 = "0.10"
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
 testkit = { path = "../testkit" }
+lifecycle = { path = "../lifecycle" }
 spira-claim = { path = "../spira-claim" }
 
 [[test]]

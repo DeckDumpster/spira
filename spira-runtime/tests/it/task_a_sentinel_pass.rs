@@ -730,3 +730,19 @@ mod stop_doomed_effect {
         }
     }
 }
+
+fn reserved(owner: &str, gone: bool) -> Snapshot {
+    let row = Row { id: "sp-a".into(), state: "READY".into(), version: 5, takeover_owner: Some(owner.into()), ..Row::default() };
+    Snapshot { rows: Some(vec![row]), session_gone: [(owner.to_string(), gone)].into(), ..idle() }
+}
+
+#[test_id(tz4p8vd)]
+#[test]
+fn t5_check2_ends_a_takeover_whose_owner_session_is_gone_with_a_note_and_keeps_a_live_owners() {
+    let (_, acts) = decide(&Carry::default(), &reserved("direct@1.2", true));
+    let end = acts.iter().find(|a| a.effect == LC_EVENT && a.key.starts_with("sp-a")).unwrap_or_else(|| panic!("{acts:?}"));
+    assert!(end.input.contains("TakeoverEnd") && end.input.contains("direct@1.2"), "{end:?}");
+    assert!(acts.iter().any(|a| a.effect == CONTENT_NOTE && a.input.contains("direct@1.2") && a.input.contains("gone")), "{acts:?}");
+    let (_, acts) = decide(&Carry::default(), &reserved("direct@1.2", false));
+    assert!(acts.iter().all(|a| !(a.effect == LC_EVENT && a.key.starts_with("sp-a"))), "a live owner's takeover stays: {acts:?}");
+}

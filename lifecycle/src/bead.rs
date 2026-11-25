@@ -229,6 +229,17 @@ pub struct LifecycleRow {
     /// or a terminal move clears it.
     #[serde(default)]
     pub ask_since: Option<i64>,
+    /// A directed claim is being prepared: undirected claims are refused until it applies,
+    /// its owner ends it, or the row leaves the claimable and working states.
+    #[serde(default)]
+    pub takeover: Option<Takeover>,
+}
+
+/// Who reserved the row (`by`) and the session that must end the reservation (`owner`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Takeover {
+    pub by: String,
+    pub owner: String,
 }
 
 /// The persona a builder claims with.
@@ -287,6 +298,7 @@ impl LifecycleRow {
             session_ends: Vec::new(),
             manual_hold: None,
             ask_since: None,
+            takeover: None,
         }
     }
 }
@@ -398,6 +410,10 @@ pub enum BeadEventKind {
     Absolve { tip: String, break_glass: BreakGlass },
     /// Filing has finished: an OPEN record, born before its planning writes, becomes READY.
     Promote,
+    /// Reserve a READY, REWORK or WORKING row for a directed claim; a newer one replaces.
+    Takeover { by: String, owner: String },
+    /// End the reservation; applies only to the owner that made it.
+    TakeoverEnd { owner: String },
 }
 
 /// The provenance a past-the-gate move carries: why the normal path was bypassed, and the
@@ -590,7 +606,14 @@ pub fn apply(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow> {
         out.row.persona = None;
         out.row.lease_until = None;
     }
+    if out.applied && row.takeover.is_some() && out.row.takeover == row.takeover {
+        let kept = matches!(ev.kind, BeadEventKind::Release | BeadEventKind::HolderDead | BeadEventKind::Takeover { .. });
+        if matches!(ev.kind, BeadEventKind::Claim { .. }) || (entered && !kept) {
+            out.row.takeover = None;
+        }
+    }
     if out.applied && out.row.state.is_terminal() {
+        out.row.takeover = None;
         out.row.holder = None;
         out.row.persona = None;
         out.row.lease_until = None;
@@ -654,6 +677,10 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
         if !is_full_sha(tip) {
             return Outcome::refuse(row.clone(), Refusal::MalformedTip { tip: tip.clone() });
         }
+    }
+
+    if let (BeadEventKind::Claim { directed: None, .. }, Some(t)) = (&ev.kind, &row.takeover) {
+        return Outcome::refuse(row.clone(), Refusal::TakenOver { by: t.by.clone() });
     }
 
     match &ev.kind {
@@ -756,6 +783,30 @@ fn apply_transition(row: &LifecycleRow, ev: &BeadEvent) -> Outcome<LifecycleRow>
             }
             let mut new = row.clone();
             new.state = BeadState::Ready;
+            new.version += 1;
+            Outcome::applied(new)
+        }
+        BeadEventKind::Takeover { by, owner } => {
+            if row.state.is_terminal() {
+                return terminal(row);
+            }
+            if !matches!(row.state, BeadState::Ready | BeadState::Rework | BeadState::Working) {
+                return illegal(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.takeover = Some(Takeover { by: by.clone(), owner: owner.clone() });
+            new.version += 1;
+            Outcome::applied(new)
+        }
+        BeadEventKind::TakeoverEnd { owner } => {
+            if row.state.is_terminal() {
+                return terminal(row);
+            }
+            if row.takeover.as_ref().map(|t| &t.owner) != Some(owner) {
+                return illegal(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.takeover = None;
             new.version += 1;
             Outcome::applied(new)
         }
@@ -1016,7 +1067,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             }
             Release | HolderDead | Submit { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } => illegal(row, kind),
         },
 
         BeadState::Open => illegal(row, kind),
@@ -1092,7 +1143,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -1187,7 +1238,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             }
             Claim { .. } | Release | Done { .. } | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -1245,7 +1296,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => {
                 illegal(row, kind)
             }
         },
@@ -1318,7 +1369,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -1374,7 +1425,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -1387,7 +1438,7 @@ fn primary_transition(row: &LifecycleRow, kind: &BeadEventKind) -> Outcome<Lifec
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Resubmit { .. } => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Promote | Takeover { .. } | TakeoverEnd { .. } | Resubmit { .. } => terminal(row),
         },
     }
 }
@@ -1530,6 +1581,8 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
         BeadEventKind::Absolve { .. } => "Absolve",
         BeadEventKind::Resubmit { .. } => "Resubmit",
         BeadEventKind::Promote => "Promote",
+        BeadEventKind::Takeover { .. } => "Takeover",
+        BeadEventKind::TakeoverEnd { .. } => "TakeoverEnd",
     }
 }
 
@@ -1572,6 +1625,8 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::Absolve { tip: TIP.into(), break_glass: BreakGlass::default() },
         BeadEventKind::Resubmit { tip: TIP.into(), break_glass: BreakGlass { reason: "r".into(), evidence: "e".into(), evidence_tip: TIP.into() } },
         BeadEventKind::Promote,
+        BeadEventKind::Takeover { by: "op".into(), owner: "o".into() },
+        BeadEventKind::TakeoverEnd { owner: "o".into() },
     ]
 }
 
@@ -1687,6 +1742,8 @@ mod tests {
             BeadEventKind::Unhold { kind: HoldKind::Poison, break_glass: BreakGlass::default() },
             BeadEventKind::Renew { lease_until: 2 },
             BeadEventKind::Promote,
+            BeadEventKind::Takeover { by: "op".into(), owner: "o".into() },
+            BeadEventKind::TakeoverEnd { owner: "o".into() },
         ]
     }
 
@@ -3765,5 +3822,72 @@ mod tests {
             r.reason = reason.clone();
             assert_eq!(known_red(&r), red, "{reason:?}");
         }
+    }
+
+    fn takeover_ev(r: &LifecycleRow, by: &str, owner: &str) -> BeadEvent {
+        ev(r.state, r.version, BeadEventKind::Takeover { by: by.into(), owner: owner.into() })
+    }
+
+    fn pool_claim() -> BeadEventKind {
+        BeadEventKind::Claim { holder: "pool".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }
+    }
+
+    fn directed_claim() -> BeadEventKind {
+        let directed = Some(Direction { by: "op".into(), reason: "r".into(), previous_holder: None });
+        BeadEventKind::Claim { holder: "dwarf-d".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed }
+    }
+
+    #[test_id(tr3k9ma)]
+    #[test]
+    fn a_takeover_refuses_undirected_claims_through_a_release_and_a_holder_death_until_the_directed_claim_applies() {
+        for (from, leave) in [(BeadState::Working, BeadEventKind::HolderDead), (BeadState::Working, BeadEventKind::Release), (BeadState::Ready, BeadEventKind::Express), (BeadState::Rework, BeadEventKind::Express)] {
+            let mut r = row(from);
+            r.holder = (from == BeadState::Working).then(|| "dwarf-old".to_string());
+            r.claimed_from = (from == BeadState::Working).then_some(BeadState::Ready);
+            r = apply(&r, &takeover_ev(&r, "op", "direct@1.2")).row;
+            r = apply(&r, &ev(r.state, r.version, leave)).row;
+            assert!(r.takeover.is_some(), "{from:?}: the takeover survives the stop");
+            let refused = apply(&r, &ev(r.state, r.version, pool_claim()));
+            assert_eq!(refused.refusal, Some(Refusal::TakenOver { by: "op".into() }), "{from:?}");
+            let taken = apply(&r, &ev(r.state, r.version, directed_claim()));
+            assert!(taken.applied && taken.row.takeover.is_none() && taken.row.state == BeadState::Working, "{from:?}");
+        }
+    }
+
+    #[test_id(tsq72dn)]
+    #[test]
+    fn a_takeover_is_ended_only_by_its_owner_and_a_newer_one_replaces_it() {
+        let mut r = row(BeadState::Ready);
+        r = apply(&r, &takeover_ev(&r, "op", "o1")).row;
+        let wrong = apply(&r, &ev(r.state, r.version, BeadEventKind::TakeoverEnd { owner: "o2".into() }));
+        assert!(!wrong.applied && wrong.row.takeover.is_some());
+        r = apply(&r, &takeover_ev(&r, "op2", "o2")).row;
+        assert_eq!(r.takeover, Some(Takeover { by: "op2".into(), owner: "o2".into() }));
+        assert!(!apply(&r, &ev(r.state, r.version, BeadEventKind::TakeoverEnd { owner: "o1".into() })).applied);
+        let ended = apply(&r, &ev(r.state, r.version, BeadEventKind::TakeoverEnd { owner: "o2".into() }));
+        assert!(ended.applied && ended.row.takeover.is_none());
+        assert!(apply(&ended.row, &ev(r.state, ended.row.version, pool_claim())).applied);
+    }
+
+    #[test_id(tx1w5ge)]
+    #[test]
+    fn any_other_departure_clears_a_takeover_and_a_row_that_cannot_be_claimed_takes_none() {
+        let tip = "1111111111111111111111111111111111111111";
+        let mut r = row(BeadState::Working);
+        r.holder = Some("dwarf-old".into());
+        r = apply(&r, &takeover_ev(&r, "op", "o")).row;
+        let submitted = apply(&r, &ev(r.state, r.version, BeadEventKind::Submit { tip: tip.into() }));
+        assert!(submitted.applied && submitted.row.takeover.is_none());
+        for state in [BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Landed, BeadState::Done] {
+            assert!(!apply(&row(state), &takeover_ev(&row(state), "op", "o")).applied, "{state:?}");
+        }
+    }
+
+    #[test_id(tkb4h8v)]
+    #[test]
+    fn a_stored_row_without_the_takeover_field_parses() {
+        let mut v = serde_json::to_value(row(BeadState::Ready)).unwrap();
+        v.as_object_mut().unwrap().remove("takeover");
+        assert_eq!(serde_json::from_value::<LifecycleRow>(v).unwrap().takeover, None);
     }
 }

@@ -96,6 +96,8 @@ pub const VERBS: &[&str] = &[
     "disposition",
     "express",
     "unexpress",
+    "takeover",
+    "takeover-end",
 ];
 
 pub fn is_verb(v: &str) -> bool {
@@ -173,6 +175,20 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             }
             let kind = if verb == "express" { BeadEventKind::Express } else { BeadEventKind::Unexpress };
             with_row(m, &a(0), &actor_or(args.get(1), "bead"), |_| Ok(kind.clone()))
+        }
+        "takeover" => {
+            if !need(3) {
+                return usage("takeover <bead-id> <by> <owner>");
+            }
+            let (by, owner) = (a(1), a(2));
+            with_row(m, &a(0), &owner, |_| Ok(BeadEventKind::Takeover { by: by.clone(), owner: owner.clone() }))
+        }
+        "takeover-end" => {
+            if !need(2) {
+                return usage("takeover-end <bead-id> <owner>");
+            }
+            let owner = a(1);
+            with_row(m, &a(0), &owner, |_| Ok(BeadEventKind::TakeoverEnd { owner: owner.clone() }))
         }
         "holder-dead" => {
             if !need(1) {

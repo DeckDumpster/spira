@@ -274,6 +274,9 @@ pub struct Row {
     /// A round or gate found this row's tip red.
     #[serde(default)]
     pub known_red: bool,
+    /// The session that reserved the row for a directed claim.
+    #[serde(default)]
+    pub takeover_owner: Option<String>,
 }
 
 /// The landing leg's last status, as its `unit.ran` body or the `landing` task's carry reports it.
@@ -428,6 +431,7 @@ fn lc_row(r: &Row) -> sentinel::model::LcRow {
         updated_at: r.updated_at_ms.map(|ms| (ms / 1000) as i64),
         stack_tips: r.stack_tips.clone(),
         known_red: r.known_red,
+        takeover_owner: r.takeover_owner.clone(),
     }
 }
 
@@ -529,6 +533,18 @@ fn check2(rows: &[Row], lc: &[sentinel::model::LcRow], snap: &Snapshot, now: i64
         acts.push(act(LC_FACT, format!("{id}:reclaimed:stale-lease:{now}"), Write { id: id.clone(), kind: "reclaimed".into(), cause: "stale-lease".into(), ..Write::default() }));
         let text = if ago > 0 { format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60) } else { "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string() };
         acts.push(act(CONTENT_NOTE, format!("{id}:{}", text.len()), Write { id, text, ..Write::default() }));
+    }
+}
+
+/// A takeover whose owner's session is gone ends, with a note saying so.
+fn check2_takeovers(rows: &[Row], snap: &Snapshot, acts: &mut Vec<Act>) {
+    for row in rows {
+        let Some(owner) = row.takeover_owner.as_ref().filter(|o| snap.session_gone.get(*o).copied().unwrap_or(false)) else { continue };
+        let kind = serde_json::json!({ "TakeoverEnd": { "owner": owner } }).to_string();
+        let id = row.id.clone();
+        acts.push(act(LC_EVENT, format!("{id}:{}:TakeoverEnd", row.version), Write { id: id.clone(), expect: lc_row(row).state, version: row.version, kind, ..Write::default() }));
+        let text = format!("Takeover ended by CHECK 2: its owner {owner} is gone, so the bead is open to undirected claims again.");
+        acts.push(act(CONTENT_NOTE, format!("{id}:takeover-end:{}", row.version), Write { id, text, ..Write::default() }));
     }
 }
 
@@ -669,6 +685,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     if let Some(rows) = &snap.rows {
         if !snap.skip_reclaim {
             check2(rows, &lc, snap, now, &mut acts);
+            check2_takeovers(rows, snap, &mut acts);
             check2_doomed(&lc, &mut acts);
         }
     }
@@ -934,6 +951,9 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
         }
     }
     if let Some(rows) = &rows {
+        for owner in rows.iter().filter_map(|r| r.takeover_owner.as_ref()) {
+            snap.session_gone.insert(owner.clone(), spira_config::session::session_gone(owner, &spira_config::admission::RealProcs));
+        }
         for r in rows.iter().filter(|r| r.state == "WORKING") {
             snap.holder_alive.insert(r.bead_id.clone(), sentinel::hel_verbs::holder_alive(&r.bead_id).unwrap_or(false));
             if let Some(h) = &r.holder {
@@ -975,7 +995,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     }
     snap.rows = rows.map(|v| {
         v.into_iter()
-            .map(|r| Row { version: r.version.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0), lease_until_ms: r.lease_until.map(|s| s.max(0) as u64 * 1000), updated_at_ms: r.updated_at.map(|s| s.max(0) as u64 * 1000), id: r.bead_id, state: r.state, holds: r.holds, holder: r.holder, stack: r.stack, reason: r.reason, tip: r.tip, stack_tips: r.stack_tips, known_red: r.known_red })
+            .map(|r| Row { version: r.version.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0), lease_until_ms: r.lease_until.map(|s| s.max(0) as u64 * 1000), updated_at_ms: r.updated_at.map(|s| s.max(0) as u64 * 1000), id: r.bead_id, state: r.state, holds: r.holds, holder: r.holder, stack: r.stack, reason: r.reason, tip: r.tip, stack_tips: r.stack_tips, known_red: r.known_red, takeover_owner: r.takeover_owner })
             .collect()
     });
     let plan = plan_labels(&snap.labels).join(",");

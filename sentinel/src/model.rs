@@ -108,6 +108,7 @@ pub struct LcRow {
     pub updated_at: Option<i64>,
     pub stack_tips: std::collections::BTreeMap<String, String>,
     pub known_red: bool,
+    pub takeover_owner: Option<String>,
 }
 
 fn scalar(v: Option<&Value>) -> Option<String> {
@@ -177,6 +178,7 @@ pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
             updated_at: scalar(r.get("updated_at")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
             stack_tips: parse_stack_tips(r.get("stack")),
             known_red: matches!(scalar(r.get("known_red")).as_deref(), Some("1" | "true")),
+            takeover_owner: r.get("takeover").and_then(|t| scalar(t.get("owner"))).filter(|o| !o.is_empty()),
         })
         .filter(|r| !r.bead_id.is_empty())
         .collect())
@@ -198,6 +200,14 @@ pub fn status_fields(text: &str, prefix: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(trs717u)]
+    #[test]
+    fn lc_rows_carry_the_takeover_owner_the_list_prints() {
+        let s = r#"[{"bead_id":"a","state":"READY","takeover":{"by":"op","owner":"direct@1.2"}},{"bead_id":"b","state":"READY","takeover":null},{"bead_id":"c","state":"READY"}]"#;
+        let r = parse_lc_rows(s).unwrap();
+        assert_eq!(r.iter().map(|r| r.takeover_owner.as_deref()).collect::<Vec<_>>(), [Some("direct@1.2"), None, None]);
+    }
 
     #[test_id(tt5l24u)]
     #[test]

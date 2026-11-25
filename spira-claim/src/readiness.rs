@@ -58,7 +58,7 @@ mod occupied_tests {
     use crate::verdicts::{Entry, Kind};
 
     fn row(id: &str, state: BeadState) -> LifecycleRow {
-        LifecycleRow { bead_id: id.into(), state, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None }
+        LifecycleRow { taken_over: false, bead_id: id.into(), state, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None }
     }
 
     fn entries_of(live: &[&LifecycleRow], entries: &[Entry]) -> serde_json::Value {
