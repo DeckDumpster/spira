@@ -102,6 +102,9 @@ struct Fake {
     cmds: RefCell<Vec<String>>,
     /// Seconds each run_gate advances the clock by, per command kind.
     phase_secs: Cell<u64>,
+    /// The cgroup readings `cgroup_mark` hands out, in order.
+    marks: RefCell<std::collections::VecDeque<spira_otel::cgroup::Mark>>,
+    ops: RefCell<Vec<spira_otel::ops::Op>>,
     repo_build_secs: Cell<Option<u64>>,
     publish_run: Cell<(i32, u64)>,
     repo_build_result: RefCell<Option<(i32, String)>>,
@@ -328,6 +331,8 @@ impl Fake {
             timing_report: RefCell::new(None),
             cmds: RefCell::new(Vec::new()),
             phase_secs: Cell::new(7),
+            marks: RefCell::new(Default::default()),
+            ops: RefCell::new(Vec::new()),
             repo_build_secs: Cell::new(None),
             publish_run: Cell::new((0, 0)),
             repo_build_result: RefCell::new(None),
@@ -939,6 +944,12 @@ impl World for Fake {
     }
     fn now(&self) -> u64 {
         self.clock.get()
+    }
+    fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
+        self.marks.borrow_mut().pop_front()
+    }
+    fn emit_op(&self, op: &spira_otel::ops::Op) {
+        self.ops.borrow_mut().push(op.clone());
     }
     fn utc(&self) -> String {
         "2026-09-29T00:00:00Z".into()
@@ -3075,6 +3086,43 @@ fn unit_mode_a_bash_touching_branch_runs_todays_gate_unchanged() {
         "{}",
         meter(&f)
     );
+}
+
+fn cgroup_at(cpu_usec: u64, write_bytes: u64) -> spira_otel::cgroup::Mark {
+    spira_otel::cgroup::Mark {
+        counters: spira_otel::cgroup::Counters { cpu_usec, io: vec![spira_otel::cgroup::DiskIo { write_bytes, ..Default::default() }], ..Default::default() },
+    }
+}
+
+fn cost(o: &spira_otel::ops::Op) -> Option<(u64, f64)> {
+    o.cost.as_ref().map(|c| (c.write_bytes, c.cpu_seconds))
+}
+
+#[test_id(tuuze0x)]
+#[test]
+fn a_unit_trial_emits_a_build_op_and_a_tests_op_each_with_its_own_cost() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.unit_runs.borrow_mut().insert(
+        (MERGE_SHA.into(), "test"),
+        (0, "        PASS [   0.250s] ( 1/2) gate a::quick\n        PASS [   1.000s] ( 2/2) gate a::b\n     Summary [   1.250s] 2 tests run: 2 passed, 0 skipped".into()),
+    );
+    *f.marks.borrow_mut() = [cgroup_at(1_000_000, 100), cgroup_at(3_000_000, 1100), cgroup_at(3_500_000, 1400)].into();
+    assert_eq!(f.run(), PASS);
+    let ops = f.ops.borrow();
+    assert_eq!(ops.len(), 2, "{ops:?}");
+    assert!(ops.iter().all(|o| o.operation == "gate" && o.result == "PASS"), "{ops:?}");
+    assert_eq!((ops[0].phase.as_deref(), cost(&ops[0]), ops[0].tests), (Some("build"), Some((1000, 2.0)), None));
+    assert_eq!((ops[1].phase.as_deref(), cost(&ops[1]), ops[1].tests), (Some("tests"), Some((300, 0.5)), Some(2)));
+}
+
+#[test_id(t3opt8j)]
+#[test]
+fn a_fences_only_trial_emits_one_op_with_no_phase() {
+    let f = unit_fake(&["docs/a.md"]);
+    assert_eq!(f.run(), PASS);
+    let ops = f.ops.borrow();
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert_eq!((ops[0].phase.as_deref(), ops[0].cost.is_none(), ops[0].tests), (None, true, None));
 }
 
 #[test_id(t33s9xy)]

@@ -63,9 +63,48 @@ pub fn read(dir: &Path) -> Counters {
     }
 }
 
+/// This process's cgroup counters at one moment; two marks bracket an operation's cost.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    pub counters: Counters,
+}
+
+impl Mark {
+    pub fn own() -> Option<Mark> {
+        let text = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+        let path = text.lines().find_map(|l| l.strip_prefix("0::"))?;
+        let dir = Path::new("/sys/fs/cgroup").join(path.trim().trim_start_matches('/'));
+        dir.is_dir().then(|| Mark { counters: read(&dir) })
+    }
+
+    pub fn cost_since(&self, earlier: &Mark) -> crate::ops::Cost {
+        let written = |m: &Mark| m.counters.io.iter().map(|d| d.write_bytes).sum::<u64>();
+        crate::ops::Cost {
+            write_bytes: written(self).saturating_sub(written(earlier)),
+            cpu_seconds: self.counters.cpu_usec.saturating_sub(earlier.counters.cpu_usec) as f64 / 1e6,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_id(tfxfnjy)]
+    #[test]
+    fn cost_since_is_the_difference_of_two_marks_and_saturates_at_zero() {
+        let at = |cpu_usec, w1, w2| Mark {
+            counters: Counters {
+                cpu_usec,
+                io: vec![DiskIo { write_bytes: w1, ..DiskIo::default() }, DiskIo { write_bytes: w2, ..DiskIo::default() }],
+                ..Counters::default()
+            },
+        };
+        let c = at(3_500_000, 700, 300).cost_since(&at(1_000_000, 100, 200));
+        assert_eq!((c.write_bytes, c.cpu_seconds), (700, 2.5));
+        let c = at(1, 1, 1).cost_since(&at(9, 9, 9));
+        assert_eq!((c.write_bytes, c.cpu_seconds), (0, 0.0));
+    }
 
     #[test_id(tr0o6f1)]
     #[test]

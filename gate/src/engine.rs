@@ -126,6 +126,7 @@ struct State {
     build_timing: Option<(crate::buildtiming::Build, String)>,
     /// The test phase's nextest timings, once a unit test phase ran.
     unit_timings: Option<spira_config::unit_tier::UnitTimings>,
+    op_marks: OpMarks,
     /// The unit test phase failed and its nextest run named no test and printed no summary.
     nextest_unreported: bool,
     /// Declared test binaries the trial found absent from its target directory.
@@ -1023,8 +1024,9 @@ impl<'w, W: World> Trial<'w, W> {
         let mut mark_err: Option<String> = None;
         let tiers_file = self.s.tiers_file.clone();
         let (rc, out, ph, tiers) = {
-            let (run_dir, machine) = (Path::new(&self.s.run), &mut self.s.machine);
+            let (run_dir, machine, op_marks) = (Path::new(&self.s.run), &mut self.s.machine, &mut self.s.op_marks);
             let mut mark = |to: GateState, why: &str| {
+                op_marks.phase_started(w, why);
                 let Some(r) = machine.as_mut() else { return };
                 let moved = r.enter(to, why, w.now()).and_then(|m| if m { w.machine_save(run_dir, r) } else { Ok(()) });
                 if let Err(e) = moved {
@@ -1069,6 +1071,7 @@ impl<'w, W: World> Trial<'w, W> {
                 (first.0, first.1, first.2, first_tiers)
             }
         };
+        self.s.op_marks.end = w.cgroup_mark();
         let phase_end = w.now();
         if let Some(text) = self.s.steps_file.as_ref().and_then(|f| w.read(f)) {
             let (steps, skipped) = parse::step_secs(&text, phase_end);
@@ -2093,6 +2096,34 @@ impl<'w, W: World> Trial<'w, W> {
         }
     }
 
+    fn emit_ops(&self, run: &crate::telemetry::GateRun) {
+        let w = self.w;
+        let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let marks = &self.s.op_marks;
+        let op = |phase: Option<&str>, start: u64, secs: u64, cost, tests| spira_otel::ops::Op {
+            operation: "gate".into(),
+            phase: phase.map(String::from),
+            subject: if run.bead.is_empty() { run.branch.clone() } else { run.bead.clone() },
+            repo: Some(run.repo.clone()).filter(|r| !r.is_empty()),
+            start: at(start),
+            duration: std::time::Duration::from_secs(secs),
+            result: run.status.clone(),
+            cost,
+            tests,
+            place: None,
+        };
+        let between = |a: Option<&spira_otel::cgroup::Mark>, b: Option<&spira_otel::cgroup::Mark>| Some(b?.cost_since(a?));
+        match (&marks.build, &marks.test, &self.s.unit_timings) {
+            (build, Some(test), Some(t)) => {
+                if let Some(b) = build {
+                    w.emit_op(&op(Some("build"), b.0, run.unit_build_secs, between(b.1.as_ref(), test.1.as_ref()), None));
+                }
+                w.emit_op(&op(Some("tests"), test.0, run.unit_run_secs, between(test.1.as_ref(), marks.end.as_ref()), Some(t.tests)));
+            }
+            _ => w.emit_op(&op(None, self.s.start, run.ran_secs, None, None)),
+        }
+    }
+
     /// Wall seconds of a phase of the branch trial, when a unit test phase ran.
     fn unit_phase_secs(&self, name: &str) -> u64 {
         match self.s.unit_timings {
@@ -2260,6 +2291,7 @@ impl<'w, W: World> Trial<'w, W> {
             }
             crate::telemetry::append(w, &self.s.run, &ts, &run);
             w.push_metrics(&run);
+            self.emit_ops(&run);
             if let Some(y) = w.which("yield.sh") {
                 if vd.status == PASS {
                     w.yield_sh(
@@ -2726,6 +2758,27 @@ pub fn with_bins(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Where the unit trial's build and test phases began (clock secs, cgroup reading) and where the test phase ended.
+#[derive(Default)]
+struct OpMarks {
+    build: Option<(u64, Option<spira_otel::cgroup::Mark>)>,
+    test: Option<(u64, Option<spira_otel::cgroup::Mark>)>,
+    end: Option<spira_otel::cgroup::Mark>,
+}
+
+impl OpMarks {
+    fn phase_started<W: World>(&mut self, w: &W, name: &str) {
+        let slot = match name {
+            "build" => &mut self.build,
+            "test" => &mut self.test,
+            _ => return,
+        };
+        if slot.is_none() {
+            *slot = Some((w.now(), w.cgroup_mark()));
+        }
+    }
+}
+
 pub fn run_composed<W: World>(
     w: &W,
     tree: &Path,

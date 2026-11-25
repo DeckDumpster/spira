@@ -144,6 +144,12 @@ pub trait World {
     fn yield_sh(&self, yield_sh: &Path, run: &str, args: &[&str]);
     /// Pushes the finished trial's metrics; a world with no metrics store pushes nothing.
     fn push_metrics(&self, _run: &crate::telemetry::GateRun) {}
+    /// This process's cgroup counters now; `None` where they cannot be read.
+    fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
+        None
+    }
+    /// Sends one finished operation to the log store; a world with none sends nothing.
+    fn emit_op(&self, _op: &spira_otel::ops::Op) {}
     /// `spira-lc certify <bead> <tip> <outcome> <detail> gate` (the machine reads its switch).
     /// Returns spira-lc's stderr when it refused (a tip the row does not hold), else empty.
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str, step: &str, message: &str) -> String;
