@@ -723,10 +723,11 @@ mod tests {
     #[test_id(tyhi8br)]
     #[test]
     fn a_timed_out_probe_is_not_pushed_as_a_duration_or_logged_slow() {
-        let t = [timing(5000, None, Some(5000))];
+        let t = [timing(5000, None, Some(5000)), Timing { name: "fast-probe".into(), ..timing(20, None, None) }];
         let ((), seen) = spira_otel::metrics::fixture::capture(|sink| push_timings(sink, &t));
-        assert!(seen.is_empty(), "{seen:?}");
-        assert!(slow_samples(1, &t, 500, &[]).is_empty());
+        let probes: Vec<_> = seen.iter().map(|s| (s.name.as_str(), s.label("probe"))).collect();
+        assert_eq!(probes, [(PROBE_SECONDS, Some("fast-probe"))], "{seen:?}");
+        assert!(slow_samples(1, &[timing(5000, None, Some(5000))], 500, &[]).is_empty());
     }
 
     #[test_id(tquhkqk)]
