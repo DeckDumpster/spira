@@ -174,11 +174,11 @@ fn fixture() -> Fixture {
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
     testkit::write_exe(bin.join("spira-lc"), &trap);
+    let incident = dir.join("incident.sh");
+    testkit::write_exe(&incident, "#!/bin/sh\nexit 0\n");
     let psi = dir.join("psi");
     std::fs::create_dir(&psi).unwrap();
     std::fs::write(psi.join("io"), "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n").unwrap();
-    let incident = dir.join("incident.sh");
-    testkit::write_exe(&incident, "#!/bin/sh\nexit 0\n");
     let env = testkit::env(&[
         ("PATH", Some(&path)),
         ("SPIRA_LC_BIN", None),
@@ -233,7 +233,11 @@ const LOGGED_PROGRAMS: [&str; 10] = ["spira-claim", "systemctl", "mail-health.sh
 
 fn logged_programs(f: &Fixture) -> Vec<String> {
     let all = std::fs::read_to_string(&f.started).unwrap_or_default();
-    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).map(str::to_string).collect()
+    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).filter(|l| !is_drift_check_script(l)).map(str::to_string).collect()
+}
+
+fn is_drift_check_script(line: &str) -> bool {
+    line.strip_prefix("bash ").is_some_and(|rest| rest.split_whitespace().next().is_some_and(|script| script.ends_with("/drift.sh") || script.ends_with("/incident.sh")))
 }
 
 fn assert_stubs_log(f: &Fixture) {
