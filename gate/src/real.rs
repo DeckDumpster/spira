@@ -156,6 +156,9 @@ fn newest_build_dir(json: &str) -> Option<(String, PathBuf)> {
     (!tip.is_empty() && !dir.is_empty()).then(|| (tip.to_string(), PathBuf::from(dir)))
 }
 
+/// The variable naming the harness install a child tool reads.
+pub const HOME_ENV: &str = "SPIRA_HOME";
+
 pub struct Real {
     pub home: PathBuf,
     admission: RefCell<Vec<File>>,

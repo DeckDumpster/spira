@@ -2,7 +2,9 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+const FILE_DEADLINE: &str = "60";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisabledRow {
@@ -36,13 +38,16 @@ pub fn file_bead(tmp_dir: &Path, repo: &str, persona: &str, tag: &str, title: &s
     let tmp = tmp_dir.join(format!("{tag}-{repo}-{now}.txt"));
     fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     // FORK-EDGE: bead.sh is the operator tool for filing; it stays
-    let out = Command::new("bead.sh")
-        .args(["file", title, "--for", persona, "--repo", repo, "--harness-title", "--body-file"])
-        .arg(&tmp)
-        .arg("--json")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("bead.sh file: {e}"));
+    let out = spira_config::release_env::child_path_env_for_process().and_then(|path| {
+        spira_config::bounded::bounded_for("bead.sh", FILE_DEADLINE)
+            .envs(path)
+            .args(["file", title, "--for", persona, "--repo", repo, "--harness-title", "--body-file"])
+            .arg(&tmp)
+            .arg("--json")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("bead.sh file: {e}"))
+    });
     let _ = fs::remove_file(&tmp);
     let out = out?;
     if !out.status.success() {
@@ -60,9 +65,9 @@ pub fn file_bead(tmp_dir: &Path, repo: &str, persona: &str, tag: &str, title: &s
 pub fn registry_disable(bin: &str, home: &Path, test: &str, bead: &str, reason: &str, actor: &str) -> Result<DisabledRow, String> {
     // batch-job: a registry write, bounded by the registry's own busy timeout
     // FORK-EDGE: machine leg test-registry (disable a flipped test)
-    let out = Command::new(bin)
+    let out = spira_config::bounded::bounded_for(bin, FILE_DEADLINE)
         .args(["disable", "--json", "--test", test, "--bead", bead, "--reason", reason, "--actor", actor])
-        .env("SPIRA_HOME", home)
+        .env(crate::real::HOME_ENV, home)
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("{bin} disable: {e}"))?;
