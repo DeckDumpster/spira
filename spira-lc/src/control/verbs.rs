@@ -126,7 +126,7 @@ fn event(e: &Event) -> Value {
 
 /// `watch <prefix>... --from-rev N [--wait-ms M]`: the events under any named prefix after N,
 /// a progress revision, or, when N was compacted away, `too_old` with no rows and the
-/// `list_rev` to resume from. Several prefixes are one watch, not a watch of `""`.
+/// `list_rev` to resume from, or `future_rev` when N is above the head. Several prefixes are one watch, not a watch of `""`.
 fn watch<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String> {
     let prefixes: Vec<&str> = args
         .iter()
@@ -158,6 +158,7 @@ fn watch<B: Backend>(store: &Store<B>, args: &[String]) -> Result<String, String
             "items": [],
             "list_rev": list_rev,
         }),
+        Feed::Ahead { rev, head } => json!({ "future_rev": { "rev": rev, "head": head } }),
     };
     Ok(out.to_string())
 }

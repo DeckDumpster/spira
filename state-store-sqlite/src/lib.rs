@@ -2524,7 +2524,8 @@ impl Backend for SqliteBackend {
     }
 
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
-        lock(&self.0.history).log(from, max_mains)
+        let head = self.0.head.load(Ordering::SeqCst);
+        lock(&self.0.history).log(from, head, max_mains)
     }
 
     fn compacted(&self) -> Result<u64> {

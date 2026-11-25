@@ -226,7 +226,8 @@ impl Backend for MemBackend {
     }
 
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
-        self.state().history.log(from, max_mains)
+        let s = self.state();
+        s.history.log(from, s.head, max_mains)
     }
 
     fn compacted(&self) -> Result<u64> {

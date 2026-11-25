@@ -2399,3 +2399,69 @@ fn the_wal_stays_under_nine_mib_while_two_readers_never_pause_and_one_is_held_op
     assert!(largest <= 9 * 1_048_576, "the WAL grew to {largest} B, past {} B", 9 * 1_048_576);
     assert!(largest > LINE / 2, "the workload never built a WAL worth bounding: {largest} B");
 }
+
+type Seen = Arc<Mutex<Vec<state_store::Watched>>>;
+
+fn watching_probe(
+    watcher: &Arc<std::sync::OnceLock<Contract<SqliteBackend>>>,
+    from: &Arc<std::sync::atomic::AtomicU64>,
+    seen: &Seen,
+    fail: bool,
+) -> Arc<dyn Fn() -> state_store::Result<()> + Send + Sync> {
+    let (watcher, from, seen) = (watcher.clone(), from.clone(), seen.clone());
+    Arc::new(move || {
+        let Some(w) = watcher.get() else { return Ok(()) };
+        let n = from.load(Ordering::SeqCst);
+        let first = w.watch("w/", n, 0).unwrap();
+        let again = match &first {
+            state_store::Watched::Progress { progress_rev } => w.watch("w/", *progress_rev, 0).unwrap(),
+            other => other.clone(),
+        };
+        seen.lock().unwrap().extend([first, again]);
+        if fail { Err(Error::Backend("injected".into())) } else { Ok(()) }
+    })
+}
+
+#[test_id(tg9n2cv)]
+#[test]
+fn a_watch_inside_a_commit_is_progress_at_the_revision_before_it_and_the_event_arrives_after() {
+    let dir = TempDir::new("sqlite-watch-in-commit");
+    let wall = VirtualClock::new(D0);
+    let watcher = Arc::new(std::sync::OnceLock::new());
+    let from = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let probe = watching_probe(&watcher, &from, &seen, false);
+    let b = SqliteBackend::open(&dir.path().join("s.db"), Options { commit_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    let c = contract(b.clone(), &wall);
+    let prior = put(&c, "w/a", json!(1), "1");
+    watcher.set(contract(b, &wall)).ok().unwrap();
+    from.store(prior, Ordering::SeqCst);
+    let n = put(&c, "w/b", json!(2), "2");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![state_store::Watched::Progress { progress_rev: prior }; 2],
+        "inside commit {n} a watch from {prior} sees nothing and its re-watch is accepted"
+    );
+    let state_store::Watched::Events { events, through } = c.watch("w/", prior, 0).unwrap() else { panic!("no event at {n}") };
+    assert_eq!((events.len(), through), (1, n));
+    assert_eq!(c.watch("w/", n, 0).unwrap(), state_store::Watched::Progress { progress_rev: n });
+}
+
+#[test_id(tk4w8pe)]
+#[test]
+fn a_watch_delivers_nothing_for_a_commit_the_probe_fails() {
+    let dir = TempDir::new("sqlite-watch-failed-commit");
+    let wall = VirtualClock::new(D0);
+    let watcher = Arc::new(std::sync::OnceLock::new());
+    let from = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let probe = watching_probe(&watcher, &from, &seen, true);
+    let b = SqliteBackend::open(&dir.path().join("s.db"), Options { commit_probe: Some(probe), ..day_opts(&wall) }).unwrap();
+    let c = contract(b.clone(), &wall);
+    let head = c.head().unwrap();
+    watcher.set(contract(b, &wall)).ok().unwrap();
+    from.store(head, Ordering::SeqCst);
+    assert!(c.txn(&Txn::new().put("w/a", Object::new(json!(1))), &req("1")).is_err());
+    assert_eq!(*seen.lock().unwrap(), vec![state_store::Watched::Progress { progress_rev: head }; 2]);
+    assert_eq!(c.watch("w/", head, 0).unwrap(), state_store::Watched::Progress { progress_rev: head });
+}

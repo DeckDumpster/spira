@@ -208,8 +208,8 @@ pub trait Backend: Send + Sync {
     /// Applies `batch` as main `expect + 1`, or `Stale` if the head is no longer `expect`. The
     /// contract never puts a key in a batch twice.
     fn commit(&self, expect: u64, batch: &[Write]) -> Result<u64>;
-    /// Whole txns with `main > from`, at most `max_mains` of them, from the in-memory history;
-    /// `TooOld` if `from` is below its floor.
+    /// Whole committed txns with `main > from`, at most `max_mains` of them, from the in-memory
+    /// history; never one above the head; `TooOld` if `from` is below its floor.
     fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>>;
     /// Forgets history at or below `rev`: reads and watches there become `TooOld`.
     fn compact(&self, rev: u64) -> Result<()>;

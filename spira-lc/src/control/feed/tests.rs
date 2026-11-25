@@ -94,6 +94,18 @@ on_each_backend!(
     #[test_id(trirgic)] #[test_id(t2su6l2)] #[test_id(tvg0eee)] backfill_history_audits_names_an_entry_whose_events_key_is_gone_and_leaves_it,
 );
 
+#[test_id(t3xghs3)]
+#[test]
+fn a_mem_watch_above_the_head_answers_future_rev() {
+    on_mem(a_watch_above_the_head_answers_future_rev);
+}
+
+#[test_id(tv4to3h)]
+#[test]
+fn a_sqlite_watch_above_the_head_answers_future_rev() {
+    on_sqlite(a_watch_above_the_head_answers_future_rev);
+}
+
 /// A watch from a revision the history ring has turned past is `too_old`, and resumes from the head.
 fn once_the_ring_has_turned_a_watch_answers_too_old_with_no_rows_listed<B: Backend>(
     s: &Store<B>,
@@ -239,6 +251,16 @@ fn a_watch_resumed_from_a_revision_sees_every_later_change_exactly_once<B: Backe
     assert_eq!(watch(s, keys::LIFECYCLE, head)["progress_rev"], head);
     let (code, out) = verbs::run(s, &["watch".to_string(), keys::LIFECYCLE.to_string()]);
     assert_eq!(code, crate::CANNOT_TELL, "{out}");
+}
+
+fn a_watch_above_the_head_answers_future_rev<B: Backend>(s: &Store<B>) {
+    create(s, "sp-a");
+    let head = s.contract().head().unwrap();
+    let w = watch(s, keys::LIFECYCLE, head + 1);
+    assert_eq!(w["future_rev"], serde_json::json!({ "rev": head + 1, "head": head }), "{w}");
+    assert_eq!(w["items"], serde_json::Value::Null, "{w}");
+    let (code, out) = verbs::run(s, &["watch".into(), keys::LIFECYCLE.into(), "--from-rev".into(), (head + 1).to_string(), "--wait-ms".into(), "0".into()]);
+    assert_eq!(code, 0, "{out}");
 }
 
 fn after_history_is_forgotten_a_watch_answers_too_old_with_no_rows_and_the_revision_to_resume_from<B: Backend>(

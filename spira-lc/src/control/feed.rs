@@ -51,6 +51,11 @@ pub enum Feed {
         compacted: u64,
         list_rev: u64,
     },
+    /// The asked revision is above the head: the watcher holds a revision the store does not, and reloads.
+    Ahead {
+        rev: u64,
+        head: u64,
+    },
 }
 
 const PAGE: usize = 1_000;
@@ -271,6 +276,7 @@ impl<B: Backend> Store<B> {
                     list_rev,
                 })
             }
+            Err(Error::FutureRev { rev, head }) => Ok(Feed::Ahead { rev, head }),
             Err(e) => Err(e),
         }
     }

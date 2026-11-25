@@ -183,14 +183,15 @@ impl History {
         counts
     }
 
-    /// Whole commits with `main > from`, at most `max_mains` of them.
-    pub fn log(&self, from: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
+    /// Whole commits with `from < main <= through`, at most `max_mains` of them.
+    pub fn log(&self, from: u64, through: u64, max_mains: usize) -> Result<Vec<LogEntry>> {
         self.readable(from)?;
         let first = self.commits.partition_point(|c| c.main <= from);
         Ok(self
             .commits
             .iter()
             .skip(first)
+            .take_while(|c| c.main <= through)
             .take(max_mains)
             .flat_map(|c| c.written.iter().map(|w| w.entry.clone()))
             .collect())
@@ -261,8 +262,8 @@ mod tests {
         let floor = h.floor();
         assert!(h.as_of("k/200", floor).is_ok());
         assert_eq!(h.as_of("k/200", floor - 1), Err(Error::TooOld { compacted: floor }));
-        assert_eq!(h.log(floor - 1, 10), Err(Error::TooOld { compacted: floor }));
-        assert_eq!(h.log(floor, 1000).unwrap().first().unwrap().rev.main, floor + 1);
+        assert_eq!(h.log(floor - 1, u64::MAX, 10), Err(Error::TooOld { compacted: floor }));
+        assert_eq!(h.log(floor, u64::MAX, 1000).unwrap().first().unwrap().rev.main, floor + 1);
     }
 
     #[test_id(ty0t3mz)]
@@ -288,7 +289,7 @@ mod tests {
         assert_eq!(h.bytes(), before);
         assert_eq!(h.newest(), 1);
         assert_eq!(h.as_of("a", 1).unwrap(), AsOf::Live);
-        assert_eq!(h.log(0, 10).unwrap().len(), 1);
+        assert_eq!(h.log(0, u64::MAX, 10).unwrap().len(), 1);
         h.pop(7);
         assert_eq!(h.newest(), 1);
     }
@@ -324,8 +325,8 @@ mod tests {
         h.push(2, vec![put("a", 2, "2", Some(ver("1", 1)))]);
         h.forget_through(1);
         assert_eq!(h.floor(), 1);
-        assert_eq!(h.log(1, 10).unwrap().len(), 1);
-        assert_eq!(h.log(0, 10), Err(Error::TooOld { compacted: 1 }));
+        assert_eq!(h.log(1, u64::MAX, 10).unwrap().len(), 1);
+        assert_eq!(h.log(0, u64::MAX, 10), Err(Error::TooOld { compacted: 1 }));
     }
 
     #[test_id(tcapvlu)]
