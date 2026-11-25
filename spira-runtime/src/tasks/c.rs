@@ -17,6 +17,7 @@ pub mod lc_ship;
 pub mod mail_tidy;
 pub mod roundvm_ami_prune;
 pub mod roundvm_drain;
+pub mod roundvm_section;
 pub mod sweep_archive;
 pub mod sweep_escape_census;
 pub mod sweep_export_beads;
@@ -31,6 +32,7 @@ use mail_tidy::MailTidy;
 use roundvm_ami_prune::RoundvmAmiPrune;
 use lc_ship::LcShip;
 use roundvm_drain::RoundvmDrain;
+use roundvm_section::RoundvmSection;
 use sweep_archive::SweepArchive;
 use sweep_escape_census::SweepEscapeCensus;
 use sweep_export_beads::SweepExportBeads;
@@ -104,6 +106,18 @@ pub static TASKS: &[Task] = &[
         runners: &[(roundvm_ami_prune::OBSERVE, |e, _, _| roundvm_ami_prune::observe(&e.world.run_dir)), (roundvm_ami_prune::DEREGISTER, |_, _, s| roundvm_ami_prune::deregister(&s.input)), (roundvm_ami_prune::DELETE_SNAPSHOT, |_, _, s| roundvm_ami_prune::delete_snapshots(&s.input))],
         keys: &[roundvm_ami_prune::KEYS],
         build: build::<RoundvmAmiPrune>,
+    },
+    Task {
+        name: roundvm_section::NAME,
+        reads: Reads::None,
+        plane: runtime::Plane::Work,
+        signal: &[],
+        boot: RoundvmSection::boot,
+        cadence_ms: |_| roundvm_section::BOOT_DELAY_MS,
+        effects: roundvm_section::EFFECTS,
+        runners: &[(roundvm_section::OBSERVE, |_, _, _| roundvm_section::observe(mail_tidy::wall_secs())), (roundvm_section::PUBLISH, |e, _, _| roundvm_section::publish(crate::tasks::b::lc(e), mail_tidy::wall_secs()))],
+        keys: &[roundvm_section::KEYS],
+        build: |_| RoundvmSection::new().registration(),
     },
     Task { name: lc_ship::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: LcShip::boot, cadence_ms: cadence_ms::<LcShip>, effects: lc_ship::EFFECTS, runners: &[(lc_ship::OBSERVE, |e, _, _| lc_ship::observe(&e.world.run_dir, &pinned(lc_ship::URL_KEY)?, &pinned(lc_ship::DIR_KEY)?)), (lc_ship::DRAIN, |_, _, s| lc_ship::drain(&pinned(lc_ship::URL_KEY)?, &s.input, |k| std::env::var(k).ok(), spira_config::process::cfg_parse("SPIRA_LC_BACKUP_PART_BYTES")?)), (lc_ship::DRAIN_SNAPSHOT, |_, _, s| lc_ship::drain_snapshot(&pinned(lc_ship::URL_KEY)?, &s.input, |k| std::env::var(k).ok(), spira_config::process::cfg_parse("SPIRA_LC_BACKUP_PART_BYTES")?))], keys: &[lc_ship::KEYS], build: build::<LcShip> },
     Task { name: roundvm_drain::NAME, reads: Reads::None, plane: runtime::Plane::Work, signal: &[], boot: RoundvmDrain::boot, cadence_ms: cadence_ms::<RoundvmDrain>, effects: roundvm_drain::EFFECTS, runners: &[(roundvm_drain::OBSERVE, |e, _, _| roundvm_drain::observe(&e.world.run_dir, &pinned("SPIRA_ROUND_VM_SPILL")?, &pinned("SPIRA_ROUND_VM_WARM_IDLE_SECS")?)), (roundvm_drain::RELEASE, |_, _, s| roundvm_drain::release(&s.input))], keys: &[roundvm_drain::KEYS], build: build::<RoundvmDrain> },

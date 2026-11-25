@@ -97,6 +97,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("asks.moot", &["asks.moot.observe", "asks.moot.check", "asks.moot.resolve", "asks.moot.withdraw"]),
     ("mail.tidy", &["mail.tidy.observe", "mail.tidy.archive"]),
     ("sweep.tsd", &["sweep.tsd.observe", "sweep.tsd.prune"]),
+    ("roundvm.section", &["roundvm.section.observe", "roundvm.section.publish"]),
     ("roundvm.drain", &["roundvm.drain.observe", "roundvm.drain.release"]),
     ("roundvm.ami_prune", &["roundvm.ami_prune.observe", "roundvm.ami_prune.deregister", "roundvm.ami_prune.delete_snapshot"]),
     ("sweep.archive", &["sweep.archive.observe", "sweep.archive.store", "sweep.archive.index"]),
