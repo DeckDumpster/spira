@@ -77,8 +77,9 @@ fn fixture() -> Fixture {
     testkit::write_exe(bin.join("git"), &format!("#!/bin/sh\necho \"$PWD :: $*\" >> {}\nexec {} \"$@\"\n", log.display(), real.display()));
     let started = dir.join("started.log");
     let release = dir.join("release");
-    let registry = dir.join("registry.sqlite");
+    let registry = process_registry();
     std::fs::write(&registry, "rows 1").unwrap();
+    let _ = std::fs::remove_file(registry.with_extension("sqlite-wal"));
     let graph_root = dir.join("graph");
     let images = graph_root.join("overlay-images/images.json");
     std::fs::create_dir_all(images.parent().unwrap()).unwrap();
@@ -233,6 +234,11 @@ impl Drop for Fixture {
             let _ = std::fs::remove_dir_all(p);
         }
     }
+}
+
+fn process_registry() -> PathBuf {
+    static HOME: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| testkit::TempDir::new("git-idle-registry")).join("registry.sqlite")
 }
 
 fn process_socket() -> PathBuf {
