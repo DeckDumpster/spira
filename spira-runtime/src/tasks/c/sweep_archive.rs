@@ -926,6 +926,7 @@ crate::tasks::b::hosted!(SweepArchive);
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
 
     use runtime::ports::{Proc, ProcOutput, ProcSpec};
     use serde_json::{Map, Value};
@@ -977,6 +978,12 @@ mod tests {
 
     fn put(p: &Paths, rel: &str, bytes: &[u8]) {
         std::fs::write(p.projects.join(rel), bytes).unwrap();
+    }
+
+    fn put_at(p: &Paths, rel: &str, bytes: &[u8], mtime: u64) {
+        put(p, rel, bytes);
+        let t = std::time::UNIX_EPOCH + Duration::from_secs(mtime);
+        std::fs::File::options().write(true).open(p.projects.join(rel)).unwrap().set_modified(t).unwrap();
     }
 
     fn run_store(p: &Paths, proc: &Fake, rel: &str) {
@@ -1046,11 +1053,11 @@ mod tests {
         run_store(&p, &proc, REL);
         data.extend_from_slice(&tail[40..]);
         data.extend(lines(53, 5, 100));
-        put(&p, REL, &data);
+        put_at(&p, REL, &data, 1_795_000_000);
         run_store(&p, &proc, REL);
         let grown = pending(&p, REL);
         let (_f, fresh_p) = world();
-        put(&fresh_p, REL, &data);
+        put_at(&fresh_p, REL, &data, 1_795_000_000);
         run_store(&fresh_p, &Fake::new(false), REL);
         assert_eq!(grown, pending(&fresh_p, REL));
         assert_eq!(grown["sha256"], Value::String(hex(&data)));
@@ -1144,13 +1151,13 @@ mod tests {
         let before = body(&p, REL, ".zst");
         let tail = lines(9_500, 3, 1_000);
         data.extend_from_slice(&tail);
-        put(&p, REL, &data);
+        put_at(&p, REL, &data, 1_795_000_000);
         run_store(&p, &proc, REL);
         assert_eq!(proc.input() - first, tail.len() as u64);
         let after = body(&p, REL, ".zst");
         assert_eq!(&after[..before.len()], &before[..]);
         let (_f, fresh) = world();
-        put(&fresh, REL, &data);
+        put_at(&fresh, REL, &data, 1_795_000_000);
         run_store(&fresh, &Fake::new(false), REL);
         assert_eq!(pending(&p, REL), pending(&fresh, REL));
     }
