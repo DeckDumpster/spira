@@ -168,3 +168,13 @@ fn each_dashboard_panel_runs_its_pinned_expression() {
     assert_eq!(expr("processes by unit class", 0), PANEL_PIDS);
     assert_eq!(expr("collector share", 0), PANEL_COLLECTOR_SHARE);
 }
+
+#[test_id(tm21n60)]
+#[test]
+fn the_thread_cpu_is_the_first_schedstat_field_and_the_live_file_reads_nonzero() {
+    assert_eq!(schedstat_cpu_ns("123456789 5000 42\n"), 123_456_789);
+    assert_eq!(schedstat_cpu_ns(""), 0);
+    let burn: u64 = (0..3_000_000u64).fold(0, |a, b| std::hint::black_box(a.wrapping_add(b)));
+    let live = std::fs::read_to_string(format!("{}/thread-self/schedstat", system_paths::PROC)).unwrap();
+    assert!(burn > 0 && schedstat_cpu_ns(&live) > 0, "{live:?}");
+}

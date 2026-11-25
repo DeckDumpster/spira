@@ -191,20 +191,26 @@ pub fn push(tracker: &mut Tracker, rows: &[UnitCounters], exporter: &dyn Exporte
 
 static TRACKER: Mutex<Option<Tracker>> = Mutex::new(None);
 
-/// On-CPU nanoseconds of the calling thread (`/proc/thread-self/schedstat`, first field).
-fn thread_cpu_ns() -> u64 {
-    std::fs::read_to_string(format!("{}/thread-self/schedstat", system_paths::PROC)).ok().and_then(|t| t.split_whitespace().next().and_then(|n| n.parse().ok())).unwrap_or(0)
+/// The first field of a `schedstat`: nanoseconds the thread has spent on a CPU.
+pub fn schedstat_cpu_ns(text: &str) -> u64 {
+    text.split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0)
 }
 
-/// `watch.unit_usage.sample`: the live host's units, pushed to the configured store.
+fn thread_cpu_ns() -> u64 {
+    schedstat_cpu_ns(&std::fs::read_to_string(format!("{}/thread-self/schedstat", system_paths::PROC)).unwrap_or_default())
+}
+
+/// `watch.unit_usage.sample`: the live host's units, pushed to the configured store. The
+/// thread's cost of this sample, the push included, is added to the totals the next one pushes.
 pub fn run_sample(e: &crate::Effects, _key: &str, _s: &EffectSpec) -> Result<String, String> {
     let sink = MetricsSink::for_component(e.world.metrics_endpoint.as_deref(), "spira-runtime");
     let before = thread_cpu_ns();
     let rows = usage::units(&usage::Roots::live(&e.world.run_dir));
     let mut guard = TRACKER.lock().unwrap_or_else(|p| p.into_inner());
     let tracker = guard.get_or_insert_with(Tracker::default);
+    let pushed = push(tracker, &rows, &sink, SystemTime::now());
     tracker.add_own_cpu_ns(thread_cpu_ns().saturating_sub(before));
-    push(tracker, &rows, &sink, SystemTime::now())
+    pushed
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
