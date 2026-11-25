@@ -40,12 +40,14 @@ macro_rules! unit_tier_unit {
     };
 }
 
-/// The `tests/` targets, under plain `cargo test`.
+/// The `tests/` targets, one process per test under the deadline in `$config`.
 #[macro_export]
 macro_rules! unit_tier_integration {
-    ($profile:literal, $sel:literal) => {
+    ($config:literal, $profile:literal, $sel:literal) => {
         concat!(
-            "test --no-fail-fast --profile ",
+            "nextest run --config-file ",
+            $config,
+            " --no-fail-fast --cargo-profile ",
             $profile,
             " --features integration --config profile.",
             $profile,
@@ -95,10 +97,10 @@ pub fn unit_words(config: &str, profile: Option<&str>, selection: &str, filter: 
 }
 
 /// [`unit_tier_integration!`].
-pub fn integration_words(profile: Option<&str>, selection: &str) -> String {
+pub fn integration_words(config: &str, profile: Option<&str>, selection: &str) -> String {
     format!(
-        "test --no-fail-fast {} {selection} --test '*'",
-        profile_words(profile, "--profile")
+        "nextest run --config-file {config} --no-fail-fast {} {selection} --test '*'",
+        profile_words(profile, "--cargo-profile")
     )
 }
 
@@ -174,15 +176,6 @@ impl DenyList {
     pub fn nextest_filter(&self) -> Option<String> {
         let terms: Vec<String> = self.test_rows().into_iter().map(|(_, id, _)| format!("test(/::{id}$/)")).collect();
         (!terms.is_empty()).then(|| format!("not ({})", terms.join(" | ")))
-    }
-
-    /// ` -- --skip ::<id> …` for the `--test '*'` invocation; empty for no `test:` row.
-    pub fn integration_skips(&self) -> String {
-        let skips: Vec<String> = self.test_rows().into_iter().map(|(_, id, _)| format!("--skip ::{id}")).collect();
-        if skips.is_empty() {
-            return String::new();
-        }
-        format!(" -- {}", skips.join(" "))
     }
 
     /// The config line that applies [`Self::nextest_filter`]; empty for none.
@@ -345,10 +338,9 @@ mod tests {
 
     #[test_id(tv80b70)]
     #[test]
-    fn a_test_id_row_reaches_the_filter_and_the_skip_and_a_unit_row_is_refused() {
+    fn a_test_id_row_reaches_the_filter_and_a_unit_row_is_refused() {
         let d = DenyList::parse(TEST_ROW).unwrap();
         assert_eq!(d.nextest_filter().unwrap(), "not (test(/::t0aaaaa$/))");
-        assert_eq!(d.integration_skips(), " -- --skip ::t0aaaaa");
         let e = DenyList::parse(&format!("{TEST_ROW}disabled\tunit:a b::c\tsp-1\t-\n")).unwrap_err();
         assert!(e.starts_with("deny list line 2:"), "{e}");
     }
@@ -365,9 +357,17 @@ mod tests {
             unit_words("C", Some("u"), "--workspace", LIB_BINS)
         );
         assert_eq!(
-            unit_tier_integration!("u", "--workspace"),
-            integration_words(Some("u"), "--workspace")
+            unit_tier_integration!("C", "u", "--workspace"),
+            integration_words("C", Some("u"), "--workspace")
         );
+    }
+
+    #[test_id(t8ko1oz)]
+    #[test]
+    fn the_integration_tier_runs_under_nextest_with_the_configured_config() {
+        let w = integration_words("C", Some("unittest"), "--workspace");
+        assert!(w.starts_with("nextest run --config-file C "), "{w}");
+        assert!(w.ends_with("--test '*'") && !w.contains("--skip"), "{w}");
     }
 
     #[test_id(ts5rb7x)]
@@ -384,10 +384,9 @@ mod tests {
 
     #[test_id(ty3yp8p)]
     #[test]
-    fn an_empty_deny_list_composes_no_filter_no_skips_and_todays_config() {
+    fn an_empty_deny_list_composes_no_filter_and_todays_config() {
         let d = DenyList::default();
         assert_eq!(d.nextest_filter(), None);
-        assert_eq!(d.integration_skips(), "");
         assert_eq!(nextest_config(7, 3, &d), "[profile.default]\nslow-timeout = { period = \"7s\", terminate-after = 3 }\nstatus-level = \"skip\"\n");
         assert_eq!(DenyList::parse("# test-registry deny-list at=1 rows=0\n").unwrap(), d);
     }
@@ -403,9 +402,8 @@ mod tests {
 
     #[test_id(trfvnun)]
     #[test]
-    fn test_rows_become_skips_and_suite_rows_reach_neither_filter() {
+    fn suite_rows_do_not_reach_the_filter() {
         let d = DenyList::parse("disabled\ttest:t0ccccc\t-\t-\ndisabled\tsuite:test-a.sh\t-\t-\n").unwrap();
-        assert_eq!(d.integration_skips(), " -- --skip ::t0ccccc");
         assert_eq!(d.suites(), [("test-a.sh", "disabled")]);
     }
 
@@ -433,7 +431,7 @@ mod tests {
         for w in [
             build_words(None, "-p a"),
             unit_words("C", None, "-p a", LIB_BINS),
-            integration_words(None, "-p a"),
+            integration_words("C", None, "-p a"),
         ] {
             assert!(!w.contains("--profile") && !w.contains("--cargo-profile"), "{w}");
             assert!(w.contains("--features integration --config profile.dev.incremental=false -p a"), "{w}");
@@ -446,7 +444,7 @@ mod tests {
         for w in [
             build_words(None, "-p a"),
             unit_words("C", None, "-p a", LIB_BINS),
-            integration_words(None, "-p a"),
+            integration_words("C", None, "-p a"),
         ] {
             assert!(!w.contains("-j") && !w.contains("test-threads"), "{w}");
         }

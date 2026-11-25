@@ -403,12 +403,21 @@ impl PveEnv {
     }
 }
 
+/// A config over `run`, for tests of code that takes one.
+#[cfg(test)]
+pub(crate) fn fixture(run: &std::path::Path) -> Config {
+    let mut f = tests::base_fields();
+    f.run = run.display().to_string();
+    f.state_dir = run.join("round-vm").display().to_string();
+    Config::build(f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
 
-    fn base_fields() -> Fields {
+    pub(super) fn base_fields() -> Fields {
         Fields {
             run: "r".into(),
             spira_home: None,

@@ -319,25 +319,10 @@ fn section_pass() -> i32 {
     }
 }
 
-struct SpiraLc(spira_store::lc_call::LcClient);
-
-impl reconciler_engine::goodput_pass::Lc for SpiraLc {
-    fn call(&self, args: &[String]) -> (i32, serde_json::Value) {
-        match self.0.call(args) {
-            Ok(r) => (r.code, serde_json::from_str(r.out.trim()).unwrap_or_else(|_| serde_json::json!({ "cannot_tell": r.why() }))),
-            Err(e) => (-1, serde_json::json!({ "cannot_tell": e.to_string() })),
-        }
-    }
-}
-
 fn publish_section() -> Result<crate::section::Reading, String> {
     let cfg = Config::load()?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
-    let rows = crate::section::pass_rows(tsd::query::Source { reader: None, root: &cfg.run_dir }.rows(tsd::pass::FAMILY, now.saturating_sub(crate::section::HOUR)))?;
-    let pool = pool_for(&cfg);
-    let state = crate::pool::read_state(&pool.state_file())?;
-    let lc = SpiraLc(spira_store::lc_call::LcClient::configured()?);
-    crate::section::run(&lc, now, &rows, crate::section::slots_by_pool(&state.leases))
+    crate::section::publish(&cfg, &crate::section::SpiraLc(spira_store::lc_call::LcClient::configured()?), now)
 }
 
 /// `round-vm ami-prune`: removes superseded, unreferenced round images and their snapshots.

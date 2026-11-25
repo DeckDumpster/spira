@@ -16,6 +16,7 @@ pub use crate::sources;
 use super::{Reads, Task};
 
 pub mod cockpit_ensure;
+pub mod concierge_ensure;
 pub mod cockpit_tier_5s;
 pub mod cockpit_tier_600s;
 pub mod cockpit_tier_60s;
@@ -75,6 +76,7 @@ pub static TASKS: &[Task] = &[
         build: |s| refuse(cockpit_tier_600s::NAME, cockpit_tier_600s::CockpitTier600s::from_settings(s)).registration(),
     },
     mail_wake::ROW,
+    concierge_ensure::ROW,
 ];
 
 /// Every cockpit tier is ported; the sources are not rows.

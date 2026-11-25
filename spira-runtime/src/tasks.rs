@@ -210,6 +210,7 @@ pub const SIGNAL_SAFE: &[(&str, &str)] = &[
     (e::inbox_notify::CONCIERGE_NOTE, "mails the Concierge a note (watchd send)"),
     (pr_notify::OPERATOR_NOTE, "mails the operator a note (mail send)"),
     (CONCIERGE_WAKE, "runs the Concierge's wake verb, which wakes its reader"),
+    (g::concierge_ensure::ALERT, "mails the operator an alert (alert::send)"),
     (e::watch_backup_age::MAIL, "mails an alert (alert::send)"),
     (e::watch_pass_rate::MAIL, "mails an alert (alert::send)"),
     (e::watch_store_unit::MAIL, "mails an alert (alert::send)"),
@@ -583,7 +584,7 @@ mod tests {
             let (_, stream, kind) = (t.boot)();
             rig.tick(stream, kind).unwrap();
             let next = rig.engine().next_timer_at();
-            let first = (t.cadence_ms)(&s);
+            let first = if t.name == g::concierge_ensure::NAME { g::concierge_ensure::FIRST_TICK_MS } else { (t.cadence_ms)(&s) };
             let jitter_ms = t.keys.iter().flat_map(|ks| ks.iter()).filter(|k| k.ends_with("_JITTER_SECS")).filter_map(|k| s.task_config.get(*k)).filter_map(|v| v.trim().parse::<u64>().ok()).max().unwrap_or(0) * 1000;
             let armed = next.unwrap_or_else(|| panic!("{}: the boot tick armed no next tick", t.name));
             assert!((first..first + jitter_ms.max(1)).contains(&armed), "{}: the boot tick must arm the next one in [{first}, {first} + {jitter_ms} ms), got {armed}", t.name);

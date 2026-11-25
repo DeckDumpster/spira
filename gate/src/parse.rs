@@ -503,6 +503,13 @@ mod tests {
         assert_eq!(failed_tests(padded), vec!["t::padded".to_string(), "t::crashed".to_string()]);
     }
 
+    #[test_id(t6b98wu)]
+    #[test]
+    fn failed_tests_reads_a_fail_and_a_timeout_from_a_tests_binary() {
+        let log = "        PASS [   0.1s] ( 1/3) spira::it t::quick\n        FAIL [   0.4s] ( 2/3) spira::it t::bad\n     TIMEOUT [ 120.0s] ( 3/3) spira::it t::hung\n";
+        assert_eq!(failed_tests(log), vec!["t::bad".to_string(), "t::hung".to_string()]);
+    }
+
     #[test_id(tcccka8)]
     #[test]
     fn fence_refusal_names_the_fence() {

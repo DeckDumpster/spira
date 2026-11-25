@@ -448,7 +448,11 @@ pub(crate) fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, Strin
 
 /// Units outside the `spira-*` namespace that an earlier release shipped and none does now; the
 /// ledger may never have listed them, and no name pattern marks them as Spira's.
-const RETIRED_UNITS: [&str; 2] = ["dolt-beads-test.service", "cockpit-ensure.timer"];
+const RETIRED_UNITS: [&str; 3] = [
+    "dolt-beads-test.service",
+    "cockpit-ensure.timer",
+    "concierge.timer",
+];
 
 fn retire_named_units(ctx: &Ctx, now: &std::collections::BTreeSet<String>, r: &mut Report) {
     for u in RETIRED_UNITS {
@@ -729,7 +733,7 @@ mod tests {
         let (unit_dir, tmpl_dir) = (td.join("units"), td.join("templates"));
         fs::create_dir_all(&unit_dir).unwrap();
         fs::create_dir_all(&tmpl_dir).unwrap();
-        let pairs = ["spira-watchdog", "concierge", "lc-backup", "lc-backup-drill"];
+        let pairs = ["spira-watchdog", "lc-backup", "lc-backup-drill"];
         let inputs = Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) };
         let mut manifest = build(&inputs).unwrap();
         manifest.units.retain(|u| pairs.iter().any(|p| u.name == format!("{p}.service") || u.name == format!("{p}.timer")));
@@ -882,6 +886,26 @@ mod tests {
         assert!(run(&ctx).retired.is_empty(), "a second run has nothing left to retire");
     }
 
+    #[test_id(tyj1m9v)]
+    #[test]
+    fn the_concierge_timer_an_earlier_release_installed_is_stopped_and_removed() {
+        let td = tempdir();
+        let (unit_dir, tmpl_dir) = (td.join("units"), td.join("templates"));
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        fs::write(unit_dir.join("concierge.timer"), "x").unwrap();
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(!unit_dir.join("concierge.timer").exists());
+        assert!(r.retired.contains(&"concierge.timer".to_string()), "{:?}", r.retired);
+        assert!(sc.disabled_now.borrow().contains(&"concierge.timer".to_string()));
+    }
+
     #[test_id(tqedo1f)]
     #[test]
     fn a_fresh_install_writes_and_enables_and_a_clean_rerun_changes_nothing() {
@@ -1018,10 +1042,9 @@ mod tests {
     }
 
     /// The `spira-*-<instance>.timer` and `spira-watch-*` units `rendered` holds outside the
-    /// scheduler's keep list (design W2): its watchdog and the VmPool
-    /// section's publisher.
+    /// scheduler's keep list (design W2): its watchdog.
     fn outside_the_keep_list(rendered: &[(String, String, String)]) -> Vec<String> {
-        const KEEP: [&str; 2] = ["spira-watchdog-prod.timer", "spira-vm-pool-section-prod.timer"];
+        const KEEP: [&str; 1] = ["spira-watchdog-prod.timer"];
         rendered.iter().map(|(u, _, _)| u.as_str()).filter(|u| (u.starts_with("spira-") && u.ends_with("-prod.timer")) || u.starts_with("spira-watch-")).filter(|u| !KEEP.contains(u)).map(str::to_string).collect()
     }
 

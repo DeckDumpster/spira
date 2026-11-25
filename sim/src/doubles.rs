@@ -97,6 +97,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("asks.moot", &["asks.moot.observe", "asks.moot.check", "asks.moot.resolve", "asks.moot.withdraw"]),
     ("mail.tidy", &["mail.tidy.observe", "mail.tidy.archive"]),
     ("sweep.tsd", &["sweep.tsd.observe", "sweep.tsd.prune"]),
+    ("roundvm.section", &["roundvm.section.observe", "roundvm.section.publish"]),
     ("roundvm.drain", &["roundvm.drain.observe", "roundvm.drain.release"]),
     ("roundvm.ami_prune", &["roundvm.ami_prune.observe", "roundvm.ami_prune.deregister", "roundvm.ami_prune.delete_snapshot"]),
     ("sweep.archive", &["sweep.archive.observe", "sweep.archive.store", "sweep.archive.index"]),
@@ -116,6 +117,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("incident.probe", &["incident.probe.observe", "incident.probe.send"]),
     ("watch.ci_spill", &["watch.ci_spill.observe", "inbox.append"]),
     ("watch.dwarf_usage", &["watch.dwarf_usage.sample"]),
+    ("watch.unit_usage", &["watch.unit_usage.sample"]),
     ("watch.backup_age", &["watch.backup_age.observe", "watch.backup_age.mail"]),
     ("watch.store_unit", &["watch.store_unit.observe", "watch.store_unit.mail", "inbox.append"]),
     ("watch.pass_rate", &["watch.pass_rate.observe", "watch.pass_rate.mail"]),
@@ -138,6 +140,7 @@ pub const TASK_EFFECTS: &[(&str, &[&str])] = &[
     ("cockpit-tier-60s", &["cockpit-tier-60s.observe", "cockpit-tier-60s.publish", "cockpit-tier-60s.slots_sample"]),
     ("cockpit-tier-600s", &["cockpit-tier-600s.observe", "cockpit-tier-600s.publish"]),
     ("mail.wake", &["mail.wake.observe", "mail.wake.wake"]),
+    ("concierge.ensure", &["concierge.ensure.observe", "unit.start_installed", "concierge.ensure.alert"]),
 ];
 
 /// The effects several tasks share (spira-runtime's `tasks::SHARED`): the inbox line and the

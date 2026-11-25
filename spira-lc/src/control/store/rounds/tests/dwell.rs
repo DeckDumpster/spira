@@ -43,7 +43,8 @@ fn dwell_reads_the_rounds_in_its_window_from_the_opened_at_index() {
 #[test]
 fn dwell_with_a_window_holding_the_cap_of_rounds_errors_naming_it() {
     let r = Rig::new();
-    many_rounds(&r, 0, crate::control::dwell::DWELL_ROUNDS_MAX, &[]);
-    let e = r.s.dwell(AT, 100 * crate::control::dwell::DWELL_ROUNDS_MAX as u64, None).unwrap_err();
+    many_rounds(&r, 0, 8, &[]);
+    let e = r.s.dwell_capped(AT, 100 * 8, None, 8).unwrap_err();
     assert!(e.to_string().contains("DWELL_ROUNDS_MAX"), "{e}");
+    r.s.dwell_capped(AT, 100 * 8, None, 9).expect("one below the cap of rounds reads");
 }

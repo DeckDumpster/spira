@@ -2949,7 +2949,7 @@ fn a_deny_list_reaches_the_nextest_config_the_integration_command_and_the_suites
     let cfg = f.unit_config.borrow().clone();
     assert!(cfg[0].1.contains("default-filter = \"not (test(/::t0aaaaa$/) | test(/::t0bbbbb$/))\"\n"), "{cfg:?}");
     let cmds = f.cmds.borrow().clone();
-    assert!(cmds[2].contains("--test '*' -- --skip ::t0aaaaa --skip ::t0bbbbb"), "{}", cmds[2]);
+    assert!(cmds[2].contains("nextest run --config-file target/gate-unit-nextest.toml") && cmds[2].contains("--test '*'") && !cmds[2].contains("--skip"), "{}", cmds[2]);
     assert!(f.env_of(0, "SPIRA_TEST_DENY_LIST").ends_with("target/gate-deny-list"), "the gate-string step names the list file");
     let written = f.deny_written.borrow();
     assert!(written.iter().any(|(p, c)| p.ends_with("target/gate-deny-list") && c.contains("test:t0aaaaa")), "{written:?}");

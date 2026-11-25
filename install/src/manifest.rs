@@ -81,15 +81,12 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-watch@.service", false));
     m.units.push(t("cockpit-ensure.service", false));
     m.units.push(t("concierge.service", false));
-    m.units.push(t("concierge.timer", true));
     m.units.push(t("lc-backup.service", false));
     m.units.push(t("lc-backup.timer", true));
     m.units.push(t("lc-backup-drill.service", false));
     m.units.push(t("lc-backup-drill.timer", true));
     m.units.push(t("spira-exec-census.service", true));
     m.units.push(t("spira-runtime.service", true));
-    m.units.push(t("spira-vm-pool-section.service", false));
-    m.units.push(t("spira-vm-pool-section.timer", true));
     // The one timer outside the scheduler (S15): it restarts and pages when the scheduler is
     // wedged or absent. Rendered from watchdog::render, not from a template file.
     m.units.push(t("spira-watchdog.service", false));
@@ -304,14 +301,24 @@ mod tests {
     /// timer a `spira-runtime serve` task replaces, the two retired timers (watch-refresh,
     /// concierge-guard) and the SMTP listener the `submission` source now owns. Activation runs
     /// the scheduler and not both, so none of them is in the manifest or on disk.
-    const RETIRED_BY_THE_SCHEDULER: [&str; 61] = [
+    const RETIRED_BY_THE_SCHEDULER: [&str; 62] = [
         "alarms", "archive", "archivist", "call", "cert-sweep-full", "cert-sweep-sample", "cockpit", "concierge-guard", "czar-pass", "dolt-boot-check", "escape-census", "event-continuity",
         "export-beads", "filings-collect", "gate-check", "gate-worker", "gh-intake", "groom", "heimdall", "idea-prompt", "incident-settle", "kit-bump",
         "landing-pass", "lifecycle-section", "mail-deliver", "mail-reconcile", "mail-tidy", "mend-watch", "mimir", "moot-sweep", "nix-gc", "notify", "ops",
         "perf-happy-path", "perf-watch", "publish", "reap-terminal", "reclaim", "reconcile-content", "reconciler-goodput", "refresh", "refusal-watch", "round-vm-ami-prune",
         "round-vm-drain", "rounds-forge", "rounds", "runtime-watch", "sentinel", "sift", "skew", "sop-lint", "statute-audit", "straggler-sweep",
-        "submission-provision", "target-reap", "tsd-prune", "verdict", "verify-asks", "warden", "watchtower", "worktree-reaper",
+        "submission-provision", "target-reap", "tsd-prune", "verdict", "verify-asks", "vm-pool-section", "warden", "watchtower", "worktree-reaper",
     ];
+
+    #[test_id(tf9in1x)]
+    #[test]
+    fn the_concierge_timer_is_retired_and_its_service_is_shipped() {
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
+        let union = union_template_names();
+        assert!(!union.iter().any(|n| n == "concierge.timer"), "concierge.timer is still in the manifest");
+        assert!(!dir.join("concierge.timer").exists(), "concierge.timer is still a template");
+        assert!(union.iter().any(|n| n == "concierge.service") && dir.join("concierge.service").exists(), "positive control: the service the concierge.ensure task starts is shipped");
+    }
 
     #[test_id(t94k0vx)]
     #[test]
@@ -324,7 +331,15 @@ mod tests {
             assert!(!union.contains(n), "{n} is still in the manifest");
             assert!(!dir.join(n).exists(), "{n} is still a template");
         }
-        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.service"] {
+        for keep in [
+            "spira-runtime.service",
+            "spira-watchdog.timer",
+            "spira-unit-run-dbus.service",
+            "spira-loom.service",
+            "spira-exec-census.service",
+            "concierge.service",
+            "cockpit-ensure.service",
+        ] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
     }
@@ -350,18 +365,17 @@ mod tests {
         assert!(!spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/cockpit-ensure.timer").exists());
     }
 
-    #[test_id(t2tnfw5)]
+    #[test_id(tszkqsm)]
     #[test]
-    fn the_vm_pool_section_publisher_is_a_timer_the_manifest_enables() {
+    fn no_vm_pool_section_unit_is_shipped() {
         let m = build(&inputs()).unwrap();
-        assert!(m.units.iter().any(|u| u.name == "spira-vm-pool-section.timer" && u.enable));
-        assert!(m.units.iter().any(|u| u.name == "spira-vm-pool-section.service" && !u.enable), "the timer runs it, never boot");
-        assert!(m.enable("prod").contains(&"spira-vm-pool-section-prod.timer".to_string()));
+        let shipped: Vec<&str> = m.units.iter().map(|u| u.name.as_str()).filter(|n| n.starts_with("spira-vm-pool-section")).collect();
+        assert!(shipped.is_empty(), "{shipped:?}");
+        assert!(m.units.iter().any(|u| u.name == "spira-watchdog.timer"), "positive control: a shipped timer is seen");
         let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
-        let timer = std::fs::read_to_string(dir.join("spira-vm-pool-section.timer")).unwrap();
-        assert!(timer.contains("OnUnitActiveSec=300s") && timer.contains("Plane=observability"), "{timer}");
-        let service = std::fs::read_to_string(dir.join("spira-vm-pool-section.service")).unwrap();
-        assert!(service.contains("bin/round-vm section") && service.contains("Plane=observability"), "{service}");
+        for n in ["spira-vm-pool-section.service", "spira-vm-pool-section.timer"] {
+            assert!(!dir.join(n).exists(), "{n} is still a template");
+        }
     }
 
     #[test_id(tdqd55u)]
