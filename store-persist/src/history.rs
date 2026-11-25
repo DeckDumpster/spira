@@ -168,4 +168,45 @@ mod tests {
         assert!(hash_ok("abc123").is_ok());
         assert!(hash_ok("a'); DROP TABLE t; --").is_err());
     }
+
+    struct Stub {
+        scripts: std::cell::RefCell<Vec<String>>,
+        unpickable: &'static str,
+    }
+
+    impl Sql for Stub {
+        fn run(&self, script: &str, _csv: bool) -> Result<String, String> {
+            self.scripts.borrow_mut().push(script.to_string());
+            if script.contains("active_branch") {
+                Ok("b\nmain\n".into())
+            } else if script.contains("HASHOF") {
+                Ok("tip\nc9\n".into())
+            } else if script.contains("FROM dolt_log") {
+                Ok("commit_hash\nc0\nc1\nc2\nc3\nc4\nc5\nc6\nc7\nc8\nc9\n".into())
+            } else if script.contains(&format!("CHERRY_PICK('--allow-empty', '{}')", self.unpickable)) {
+                Err("cannot merge".into())
+            } else {
+                Ok(String::new())
+            }
+        }
+    }
+
+    #[test_id(tyd8u9x)]
+    #[test]
+    fn a_kept_commit_that_cannot_be_picked_becomes_the_base_and_the_build_restarts_newer() {
+        let stub = Stub { scripts: Default::default(), unpickable: "c8" };
+        assert_eq!(squash(&stub, 4).unwrap(), "c9");
+        let scripts = stub.scripts.borrow();
+        let bases: Vec<_> = scripts.iter().filter(|s| s.contains("DOLT_RESET('--soft'")).collect();
+        assert!(bases[0].contains("DOLT_BRANCH('store_persist_squash', 'c6')"), "keep 4 cuts at c6: {}", bases[0]);
+        assert!(bases[1].contains("DOLT_BRANCH('store_persist_squash', 'c8')"), "the stuck commit is the new boundary: {}", bases[1]);
+        assert_eq!(bases.len(), 2);
+    }
+
+    #[test_id(tew3eyk)]
+    #[test]
+    fn a_log_with_nothing_to_squash_is_refused() {
+        let stub = Stub { scripts: Default::default(), unpickable: "none" };
+        assert!(squash(&stub, 10).is_err());
+    }
 }
