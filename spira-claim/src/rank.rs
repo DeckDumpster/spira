@@ -241,6 +241,8 @@ pub struct LifecycleRow {
     pub snoozed_until: Option<i64>,
     /// A dependent's stacked base failed to merge this row's tip; set by [`mark_stack_conflicts`].
     pub stack_conflict: bool,
+    /// A round or a gate found this row's tip red; nothing stacks on it (`spira-lc list`'s `known_red`).
+    pub known_red: bool,
     /// The stack recorded on the row at its last claim, and the reason it last left the
     /// queue — what the machine's REWORK `Claim` compares a proposal against.
     pub stack: Stack,
@@ -323,7 +325,13 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
             Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
             _ => None,
         };
-        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false, stack, reason });
+        let known_red = match r.get("known_red") {
+            Some(Value::Bool(b)) => *b,
+            Some(Value::Number(n)) => n.as_u64().unwrap_or(0) != 0,
+            Some(Value::String(s)) => matches!(s.trim(), "1" | "true"),
+            _ => false,
+        };
+        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false, known_red, stack, reason });
     }
     Ok(out)
 }
@@ -478,6 +486,7 @@ pub fn stack_plan(
                 let stackable = stack_max_depth > 0
                     && !is_parent
                     && !lifecycle::bead::provisional(row.state, row.reason.as_deref())
+                    && !row.known_red
                     && rec.is_some_and(|r| is_work(r) && r.label_value("repo:") == own_repo && own_repo.is_some());
                 match row.state {
                     BeadState::Landed | BeadState::Done => true,
@@ -732,7 +741,7 @@ mod tests {
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
         c.status = Some("in_progress".into());
-        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, stack: Stack::new(), reason: None })]);
+        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None })]);
         assert!(!epic_started(&[c.clone()], &HashMap::new()), "no row: nothing started, though bd says in_progress");
         assert!(!epic_started(&[c.clone()], &at(BeadState::Ready)));
         assert!(!epic_started(&[c.clone()], &at(BeadState::Rework)));
@@ -755,7 +764,7 @@ mod tests {
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {
-        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false, stack: Stack::new(), reason: None })
+        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false, known_red: false, stack: Stack::new(), reason: None })
     }
 
     fn blocked_on(id: &str, blocker: &str) -> ReadyRow {
@@ -857,6 +866,23 @@ mod tests {
         let (stack, depth) = stack_plan(&blocked_on("B", "A"), &lc, &bd, 4).unwrap();
         assert_eq!(depth, 0);
         assert!(stack.is_empty(), "a landed prerequisite is satisfied, not stacked on");
+    }
+
+    #[test_id(tmupjiq)]
+    #[test]
+    fn a_known_red_blocker_is_neither_stacked_on_nor_claimable_and_the_snapshot_column_says_so() {
+        let snapshot = r#"[{"bead_id":"A","state":"CERTIFIED","tip":"t","known_red":"1"},{"bead_id":"C","state":"CERTIFIED","tip":"t","known_red":0}]"#;
+        let parsed = parse_lifecycle(snapshot).unwrap();
+        assert!(parsed["A"].known_red && !parsed["C"].known_red);
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let mut a = lcrow("A", BeadState::Certified, &[], 0).1;
+        a.known_red = true;
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), ("A".to_string(), a.clone())].into();
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Blocked("A".into()));
+        assert!(stack_plan(&blocked_on("B", "A"), &lc, &bd, 4).is_err());
+        a.known_red = false;
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), ("A".to_string(), a)].into();
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
     }
 
     #[test_id(tx2ffmt)]

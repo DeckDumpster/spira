@@ -197,7 +197,7 @@ mod published {
         let p = published(&seen).expect("no publish-readiness call");
         assert_eq!(p["planning_watermark"], "7");
         let entry = |id: &str| p["entries"].as_array().unwrap().iter().find(|e| e["id"] == id).unwrap_or_else(|| panic!("no entry for {id}: {p}")).clone();
-        let working = serde_json::to_value(spira_config::edges::gate(lifecycle::bead::BeadState::Working, None)).unwrap();
+        let working = serde_json::to_value(spira_config::edges::gate(lifecycle::bead::BeadState::Working, None, false)).unwrap();
         assert_eq!((entry("sp-s")["claimable"].clone(), entry("sp-s")["blocked_by"].clone(), entry("sp-s")["gates"]["sp-w"].clone()), (false.into(), serde_json::json!(["sp-w"]), working.clone()));
         assert_eq!((entry("sp-c")["claimable"].clone(), entry("sp-c")["blocked_by"].clone()), (false.into(), serde_json::json!([])));
         assert_eq!((entry("sp-r")["claimable"].clone(), entry("sp-r")["blocked_by"].clone(), entry("sp-r")["gates"]["sp-w"].clone()), (false.into(), serde_json::json!(["sp-w"]), working));

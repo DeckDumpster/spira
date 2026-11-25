@@ -537,3 +537,32 @@ mod shipped_runes {
         );
     }
 }
+
+#[test_id(t9nicvj)]
+#[test]
+fn a_certified_blocker_at_its_round_red_tip_blocks_and_one_at_a_new_tip_stacks() {
+    let mut a = rec("A", BeadState::Certified);
+    a.row.round_red_tip = a.row.tip.clone();
+    assert_eq!(seen(&verdict(&blocked_on("B", BeadState::Ready, "A"), &[&a], &ctx())), blocked("A"));
+    a.row.tip = Some("moved".into());
+    assert_eq!(verdict(&blocked_on("B", BeadState::Ready, "A"), &[&a], &ctx()).stack.get("A").map(String::as_str), Some("moved"));
+}
+
+#[test_id(tq86vw8)]
+#[test]
+fn an_in_delivery_blocker_with_a_barring_gate_red_reason_blocks_and_a_timeout_or_unmarked_one_stacks() {
+    use lifecycle::bead::GATE_RED_MARK;
+    use lifecycle::reason::GateRedReason;
+    let in_delivery = |reason: Option<String>| {
+        let mut a = rec("A", BeadState::InDelivery);
+        a.row.reason = reason;
+        a
+    };
+    let on = |a: &LifecycleRecord| verdict(&blocked_on("B", BeadState::Ready, "A"), &[a], &ctx());
+    let marked = |r: GateRedReason| Some(format!("{GATE_RED_MARK}{}", r.as_str()));
+    assert_eq!(seen(&on(&in_delivery(marked(GateRedReason::SuitesFailed)))), blocked("A"));
+    for stacks in [marked(GateRedReason::Timeout), None] {
+        let j = on(&in_delivery(stacks.clone()));
+        assert_eq!((j.verdict, j.stack.len()), (Verdict::Claimable, 1), "{stacks:?}");
+    }
+}
