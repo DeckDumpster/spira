@@ -1087,8 +1087,8 @@ unit_registry_skips() {
     [ -r "$1" ] && [ -r "$2" ] || return 0
     awk -F'\t' 'NR == FNR { if ($2 ~ /^test:/) { row[++n] = substr($2, 6); state[n] = $1 } next }
         /^ *SKIP +\[/ { for (i = 1; i <= n; i++) { suffix = "::" row[i]; if (length($NF) > length(suffix) && substr($NF, length($NF) - length(suffix) + 1) == suffix) seen[row[i]] = 1 } }
-        END { for (i = 1; i <= n; i++) if (row[i] in seen) printf "round-vm: UNIT-TESTS: SKIPPED (registry %s) test:%s\n", state[i], row[i] > "/dev/stderr"
-              else printf "round-vm: UNIT-TESTS: registry row test:%s matched no test in the run\n", row[i] > "/dev/stderr" }' "$1" "$2"
+        END { for (i = 1; i <= n; i++) if (row[i] in seen) printf "round-vm: %s: SKIPPED (registry %s) test:%s\n", tier, state[i], row[i] > "/dev/stderr"
+              else printf "round-vm: %s: registry row test:%s matched no test in the run\n", tier, row[i] > "/dev/stderr" }' tier="${3:-UNIT-TESTS}" "$1" "$2"
 }
 unit_progress="$rdir/unit-progress"
 integ_progress="$rdir/integration-progress"
@@ -1217,7 +1217,7 @@ integ_secs=$(( $(cat "$integ_end" 2>/dev/null || date +%s) - integ_t0 ))
 wait "$integ_stream_pid"
 [ ! -s "$integ_hung" ] || [ "$integ_rc" -ne 0 ] || integ_rc=1
 echo "round-vm: INTEGRATION-TESTS took ${integ_secs}s (tests/, ${integ_total} test binaries, beside the suites)" >&2
-unit_registry_skips ~/round-deny-list ~/round-integration-tests.log
+unit_registry_skips ~/round-deny-list ~/round-integration-tests.log INTEGRATION-TESTS
 if [ "$integ_rc" -eq 0 ]; then
     echo "round-vm: INTEGRATION-TESTS: PASS ($(awk '/^ *Summary \[/ { print $4 }' ~/round-integration-tests.log) tests)" >&2
 else
