@@ -69,6 +69,68 @@ held() {
     done < /proc/net/dev
 }
 
+# RUST_TEST_THREADS=1 prints no hung line, so silence is bounded too.
+bounded() {
+    local w1 w2 tmp pid rc=0 limit="" period="" periods="" line name="" why="" now last start tee_out tee_err
+    tmp="$(mktemp -d)" || die "cannot make a scratch directory"
+    mkfifo "$tmp/tick" && exec 9<>"$tmp/tick" || die "cannot make a wait fifo"
+    if [ -r "$workspace/.config/nextest.toml" ]; then
+        while IFS= read -r line; do
+            [[ $line =~ period\ *=\ *\"([0-9]+)s\" ]] && period="${BASH_REMATCH[1]}"
+            [[ $line =~ terminate-after\ *=\ *([0-9]+) ]] && periods="${BASH_REMATCH[1]}"
+        done < "$workspace/.config/nextest.toml"
+        [ -n "$period" ] && [ -n "$periods" ] && limit=$((period * periods * 1000000))
+    fi
+    printf '%s' "${EPOCHREALTIME/./}" > "$tmp/act"
+    local watch='while IFS= read -r l || [ -n "$l" ]; do
+        [[ $l =~ ^test\ (.*)\ has\ been\ running\ for\ over\ [0-9]+\ seconds$ ]] && printf "%s" "${BASH_REMATCH[1]}" > "$2/hung"
+        printf "%s" "${EPOCHREALTIME/./}" > "$2/act"
+    done'
+    mkfifo "$tmp/out" "$tmp/err" "$tmp/w1" "$tmp/w2" || die "cannot make the stream fifos"
+    bash -c "$watch" _ x "$tmp" < "$tmp/w1" &
+    w1=$!
+    bash -c "$watch" _ x "$tmp" < "$tmp/w2" &
+    w2=$!
+    tee "$tmp/w1" < "$tmp/out" &
+    tee_out=$!
+    tee "$tmp/w2" < "$tmp/err" >&2 &
+    tee_err=$!
+    setsid "$@" <&0 > "$tmp/out" 2> "$tmp/err" &
+    pid=$!
+    kill_tree() {
+        local p all=("$pid") i=0
+        while [ $i -lt ${#all[@]} ]; do
+            for p in $(ps -o pid= --ppid "${all[$i]}" 2>/dev/null); do all+=("$p"); done
+            i=$((i + 1))
+        done
+        kill -KILL -- "-$pid" "${all[@]}" 2>/dev/null
+    }
+    trap 'kill_tree; rm -rf "$tmp"; exit 143' TERM INT HUP
+    start=${EPOCHREALTIME/./}
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ -s "$tmp/hung" ]; then why=libtest; name="$(<"$tmp/hung")"; break; fi
+        if [ -n "$limit" ]; then
+            now=${EPOCHREALTIME/./}
+            last="$(<"$tmp/act")"
+            [ "$last" -ge "$start" ] 2>/dev/null || last=$start
+            if [ $((now - last)) -ge "$limit" ]; then why=silent; name=-; break; fi
+        fi
+        read -r -t 0.05 -u 9 _ || true
+    done
+    if [ -n "$why" ]; then
+        kill_tree
+        wait "$pid" 2>/dev/null
+        echo "test-sandbox: HUNG test=$name binary=${bin##*/}" >&2
+        rc=124
+    else
+        wait "$pid"; rc=$?
+    fi
+    wait "$tee_out" "$tee_err" "$w1" "$w2" 2>/dev/null
+    trap - TERM INT HUP
+    rm -rf "$tmp"
+    exit "$rc"
+}
+
 is_held=""
 [ -z "$print" ] && held && is_held=1
 # The command is found on the PATH it was handed, then run by that absolute path: the sandbox's
@@ -80,6 +142,8 @@ if [ -n "$around" ]; then
     set -- "$cmd" "$@"
 fi
 [ -n "$around" ] && [ -n "$is_held" ] && exec "$@"
+supervise=""
+[ -z "$around" ] && [ -z "$print" ] && [ -z "${NEXTEST:-}" ] && supervise=1
 
 
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
@@ -137,6 +201,7 @@ if [ -n "$is_held" ]; then
         mkdir -p "${gitconfig%/*}" && printf "$identity" > "$gitconfig.$$" && mv -f "$gitconfig.$$" "$gitconfig" ||
             die "cannot write $gitconfig in ${gitconfig%/*} as $(id -un)"
     fi
+    [ -n "$supervise" ] && bounded /usr/bin/env -i "${env[@]}" "$@"
     exec /usr/bin/env -i "${env[@]}" "$@"
 fi
 
@@ -244,4 +309,8 @@ if [ -n "$print" ]; then
 fi
 [ -z "$nogit" ] || die "$nogit"
 for kv in "${env[@]}"; do a+=(--setenv "${kv%%=*}" "${kv#*=}"); done
+if [ -n "$supervise" ]; then
+    exec 3< <(printf "$identity")
+    bounded "$bwrap" "${a[@]}" --ro-bind-data 3 "$gitconfig" -- "$@"
+fi
 exec "$bwrap" "${a[@]}" --ro-bind-data 3 "$gitconfig" -- "$@" 3< <(printf "$identity")
