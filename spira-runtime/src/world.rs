@@ -141,13 +141,14 @@ pub fn pr_snapshot_from(records: &RecordedPrs, targets: &[PrTarget], forge: &For
 
 /// Each queue.local checkout's forge tip, fetched in parallel and best-effort: the measurement
 /// that follows reads local refs and answers from the cached tip when this fails.
-fn refresh_forge_tip(reg: &spira_config::repos::Registry, r: &MapRow) {
-    use crate::tasks::a::queue_step::edge::git;
+fn refresh_forge_tip(git: &Path, reg: spira_config::repos::Registry, r: &MapRow) {
+    use crate::tasks::a::queue_step::edge::git_with;
+    let reg = &if git == Path::new("git") { reg } else { reg.with_git(git.to_path_buf()) };
     if let Some((remote, branch)) = spira_config::repos::publish_forge(reg, &r.name, &BTreeMap::new()) {
         if spira_config::repos::landref(reg, &r.name).is_some_and(|base| crate::unpublished::published(Path::new(&r.path), &base, &remote, &branch)) {
             return;
         }
-        let _ = git(Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
+        let _ = git_with(git, Path::new(&r.path), &["fetch", "--quiet", &remote, &branch], REFRESH_FETCH);
     }
 }
 
@@ -1088,15 +1089,16 @@ impl World {
             Ok(t) => map_rows(&t),
             Err(e) => return serde_json::to_string(&publish_backlog::Snapshot { repos: vec![(publish_backlog::REPO_MAP_KEY.into(), Read::Blind(format!("the repo map is unreadable: {e}")))] }).map_err(|e| e.to_string()),
         };
+        let git = self.git_bin.as_deref().unwrap_or(Path::new("git"));
         let reg = crate::tasks::a::queue_step::edge::registry().ok();
-        publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(reg, r)), &|name| self.unpublished(name))
+        publish_backlog_snapshot_from(&rows, &|r| reg.iter().for_each(|reg| refresh_forge_tip(git, reg.clone(), r)), &|name| self.unpublished(git, name))
     }
 
     /// Measures the repo here and records the measurement for lc-serve; a record that cannot be
     /// written is logged and the snapshot still carries what was read. `Ok(None)` is a repo declared to publish nowhere.
-    fn unpublished(&self, name: &str) -> Result<Option<Read>, String> {
+    fn unpublished(&self, git: &Path, name: &str) -> Result<Option<Read>, String> {
         let now = spira_config::vtime::now_epoch() as u64;
-        let measurement = crate::unpublished::measure(name, now)?;
+        let measurement = crate::unpublished::measure(git, name, now)?;
         if let Err(e) = lc_call(&self.lc_socket, &["git-fact", "put", "unpublished", "--json", &measurement.record(name)]) {
             eprintln!("publish-backlog: the measurement of {name} was not recorded: {}", e.0);
         }

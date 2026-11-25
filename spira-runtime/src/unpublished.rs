@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use spira_config::repos::{self, Registry};
 
-use crate::tasks::a::queue_step::edge::git;
+use crate::tasks::a::queue_step::edge::git_with;
 
 /// Whether the landing ref and the forge's remote-tracking ref are one commit already: no fetch can
 /// make them agree, and the first one that moves the forge past it is seen after the landing ref moves.
@@ -47,10 +47,11 @@ impl Measurement {
     }
 }
 
-pub fn measure(name: &str, now: u64) -> Result<Measurement, String> {
+pub fn measure(git: &Path, name: &str, now: u64) -> Result<Measurement, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let home = spira_config::resolve::locate_home_for_process()?;
     let reg = Registry::from_env(env.clone(), &home);
+    let reg = if git == Path::new("git") { reg } else { reg.with_git(git.to_path_buf()) };
     let path = reg.root(name).ok_or("the repo map has no checkout for it")?;
     if reg.land(name) != "queue.local" {
         return Err("not a queue.local repo".into());
@@ -63,15 +64,15 @@ pub fn measure(name: &str, now: u64) -> Result<Measurement, String> {
         return Ok(Measurement::Declared);
     }
     let (remote, branch) = repos::publish_forge(&reg, name, &env).ok_or("it has no resolvable publish target")?;
-    measure_repo(Path::new(&path), &base, &remote, &branch, now).map(Measurement::Measured)
+    measure_repo(git, Path::new(&path), &base, &remote, &branch, now).map(Measurement::Measured)
 }
 
-pub(crate) fn measure_repo(repo: &Path, base: &str, remote: &str, branch: &str, now: u64) -> Result<Measured, String> {
+pub(crate) fn measure_repo(git: &Path, repo: &Path, base: &str, remote: &str, branch: &str, now: u64) -> Result<Measured, String> {
     let tracking = format!("refs/remotes/{remote}/{branch}");
-    let forge_tip = rev(repo, &tracking).map_err(|e| format!("{e}: the forge has not been fetched"))?;
-    let landing_tip = rev(repo, base)?;
-    let age = last_fetch_age(repo, now).or_else(|| (forge_tip == landing_tip).then(|| ref_file_age(repo, &tracking, now)).flatten()).or_else(|| tip_age(repo, &tracking, now)).ok_or("the forge tip's age is unknown: no fetch left a FETCH_HEAD or a reflog")?;
-    let (count, oldest_arrival) = if forge_tip == landing_tip { (0, None) } else { range_facts(repo, base, &forge_tip, &landing_tip)? };
+    let forge_tip = rev(git, repo, &tracking).map_err(|e| format!("{e}: the forge has not been fetched"))?;
+    let landing_tip = rev(git, repo, base)?;
+    let age = last_fetch_age(repo, now).or_else(|| (forge_tip == landing_tip).then(|| ref_file_age(repo, &tracking, now)).flatten()).or_else(|| tip_age(git, repo, &tracking, now)).ok_or("the forge tip's age is unknown: no fetch left a FETCH_HEAD or a reflog")?;
+    let (count, oldest_arrival) = if forge_tip == landing_tip { (0, None) } else { range_facts(git, repo, base, &forge_tip, &landing_tip)? };
     Ok(Measured { landing_tip, forge_tip, count, oldest_arrival, read_at: now.saturating_sub(age) })
 }
 
@@ -91,28 +92,28 @@ fn ref_file_age(repo: &Path, tracking: &str, now: u64) -> Option<u64> {
 }
 
 /// Seconds since the remote-tracking ref last moved, from its reflog.
-fn tip_age(repo: &Path, tracking: &str, now: u64) -> Option<u64> {
-    let last = git(repo, &["log", "-g", "-1", "--date=unix", "--format=%gd", tracking], GIT_DEADLINE).ok()?;
+fn tip_age(git: &Path, repo: &Path, tracking: &str, now: u64) -> Option<u64> {
+    let last = git_with(git, repo, &["log", "-g", "-1", "--date=unix", "--format=%gd", tracking], GIT_DEADLINE).ok()?;
     let at: u64 = last.trim().rsplit_once('{').and_then(|(_, t)| t.strip_suffix('}')).and_then(|t| t.parse().ok())?;
     Some(now.saturating_sub(at))
 }
 
-fn rev(repo: &Path, name: &str) -> Result<String, String> {
+fn rev(git: &Path, repo: &Path, name: &str) -> Result<String, String> {
     if let Some(sha) = spira_config::git_refs::sha_of(repo, name) {
         return Ok(sha);
     }
-    git(repo, &["rev-parse", "-q", "--verify", name], GIT_DEADLINE).ok().filter(|s| !s.is_empty()).ok_or_else(|| format!("cannot resolve {name}"))
+    git_with(git, repo, &["rev-parse", "-q", "--verify", name], GIT_DEADLINE).ok().filter(|s| !s.is_empty()).ok_or_else(|| format!("cannot resolve {name}"))
 }
 
 /// The unpublished count and when the landing ref first moved onto it: one `rev-list` of the range
 /// and one reflog read, bounded by the range and the reflog, never by history.
-fn range_facts(repo: &Path, base: &str, forge_tip: &str, landing_tip: &str) -> Result<(u64, Option<u64>), String> {
-    let range = git(repo, &["rev-list", &format!("{forge_tip}..{landing_tip}")], GIT_DEADLINE).map_err(|e| format!("cannot list the unpublished range: {e}"))?;
+fn range_facts(git: &Path, repo: &Path, base: &str, forge_tip: &str, landing_tip: &str) -> Result<(u64, Option<u64>), String> {
+    let range = git_with(git, repo, &["rev-list", &format!("{forge_tip}..{landing_tip}")], GIT_DEADLINE).map_err(|e| format!("cannot list the unpublished range: {e}"))?;
     let count = range.split_whitespace().count() as u64;
     if count == 0 {
         return Ok((0, None));
     }
-    let reflog = git(repo, &["log", "-g", "--date=unix", "--format=%H %gd", base], GIT_DEADLINE).map_err(|e| format!("the landing ref has no readable reflog: {e}"))?;
+    let reflog = git_with(git, repo, &["log", "-g", "--date=unix", "--format=%H %gd", base], GIT_DEADLINE).map_err(|e| format!("the landing ref has no readable reflog: {e}"))?;
     Ok((count, Some(arrival_in(&range, &reflog)?)))
 }
 
@@ -182,7 +183,7 @@ mod tests {
     fn fifty_unpublished_commits_are_counted_with_their_arrival_and_the_tips_they_were_read_at() {
         let scratch = testkit::TempDir::new("runtime-unpublished-fifty");
         let clone = clone_ahead(scratch.path(), 50);
-        let m = measure_repo(&clone, "main", "origin", "main", epoch()).unwrap();
+        let m = measure_repo(Path::new("git"), &clone, "main", "origin", "main", epoch()).unwrap();
         assert_eq!(m.count, 50);
         assert!(m.oldest_arrival.is_some());
         assert_eq!(m.landing_tip, run(&clone, &["rev-parse", "main"]));
@@ -202,7 +203,7 @@ mod tests {
             run(&clone, &["fetch", "-q", "origin", "main"]);
             run(&clone, &["commit", "-q", "--allow-empty", "-m", "one"]);
             run(&clone, &["commit", "-q", "--allow-empty", "-m", "two"]);
-            measure_repo(&clone, "main", "origin", "main", epoch()).unwrap().count
+            measure_repo(Path::new("git"), &clone, "main", "origin", "main", epoch()).unwrap().count
         };
         assert_eq!((count(2), count(20)), (2, 2));
     }
@@ -215,7 +216,7 @@ mod tests {
         let f = std::fs::OpenOptions::new().write(true).open(clone.join(".git/FETCH_HEAD")).unwrap();
         f.set_modified(std::time::SystemTime::now() - Duration::from_secs(120)).unwrap();
         let now = epoch();
-        let m = measure_repo(&clone, "main", "origin", "main", now).unwrap();
+        let m = measure_repo(Path::new("git"), &clone, "main", "origin", "main", now).unwrap();
         assert!((118..=122).contains(&(now - m.read_at)), "{}", now - m.read_at);
         assert_eq!(m.count, 2);
     }
@@ -227,11 +228,11 @@ mod tests {
         let clone = clone_ahead(scratch.path(), 1);
         std::fs::remove_file(clone.join(".git/FETCH_HEAD")).unwrap();
         let now = epoch() + 100;
-        let m = measure_repo(&clone, "main", "origin", "main", now).unwrap();
+        let m = measure_repo(Path::new("git"), &clone, "main", "origin", "main", now).unwrap();
         assert!(m.read_at < now - 90, "{}", now - m.read_at);
         let tip = run(&clone, &["rev-parse", "refs/remotes/origin/main"]);
         std::fs::remove_dir_all(clone.join(".git/logs/refs/remotes")).unwrap();
-        let why = measure_repo(&clone, "main", "origin", "main", now).unwrap_err();
+        let why = measure_repo(Path::new("git"), &clone, "main", "origin", "main", now).unwrap_err();
         assert!(why.contains("age is unknown"), "{why} ({tip})");
     }
 
@@ -245,7 +246,7 @@ mod tests {
         let f = std::fs::OpenOptions::new().write(true).open(clone.join(".git/refs/remotes/origin/main")).unwrap();
         f.set_modified(std::time::SystemTime::now() - Duration::from_secs(300)).unwrap();
         let now = epoch();
-        let m = measure_repo(&clone, "main", "origin", "main", now).unwrap();
+        let m = measure_repo(Path::new("git"), &clone, "main", "origin", "main", now).unwrap();
         assert_eq!((m.count, m.oldest_arrival), (0, None));
         assert!((298..=302).contains(&(now - m.read_at)), "{}", now - m.read_at);
     }
@@ -256,7 +257,7 @@ mod tests {
         let scratch = testkit::TempDir::new("runtime-unpublished-unfetched");
         let clone = clone_ahead(scratch.path(), 1);
         run(&clone, &["update-ref", "-d", "refs/remotes/origin/main"]);
-        let why = measure_repo(&clone, "main", "origin", "main", epoch()).unwrap_err();
+        let why = measure_repo(Path::new("git"), &clone, "main", "origin", "main", epoch()).unwrap_err();
         assert!(why.contains("has not been fetched"), "{why}");
     }
 
