@@ -287,7 +287,7 @@ fn watch(child: &Child, limit: Duration, expired: Arc<AtomicBool>, tree: bool) -
     Ok(())
 }
 
-fn children(pid: u32) -> Vec<u32> {
+pub fn children(pid: u32) -> Vec<u32> {
     let Ok(rd) = std::fs::read_dir(system_paths::PROC) else { return Vec::new() };
     rd.flatten()
         .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()))

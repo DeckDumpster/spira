@@ -180,6 +180,11 @@ pub trait Beat: Send + Sync {
     fn fuse(&self) -> String;
     /// `trace_last`, first `n` bytes.
     fn trace_last(&self, n: usize) -> String;
+    /// utime+stime, in clock ticks, summed over the descendants of `agent` (not `agent`
+    /// itself); `None` when it has none.
+    fn descendant_ticks(&self, agent: i32) -> Option<u64> {
+        descendant_ticks(agent)
+    }
     /// Renew the claim's lease to `lease_until` (epoch seconds), once per beat while the
     /// session runs: the lifecycle row's `spira-lc renew` (sp-2jf0a). False ends the
     /// heartbeat.
@@ -197,6 +202,49 @@ pub trait Beat: Send + Sync {
 /// capacity slot free within this window.
 const IDENTITY_TTL_FLOOR: i64 = 90;
 
+/// utime+stime of every descendant of `agent`, from `/proc/<pid>/stat`.
+pub fn descendant_ticks(agent: i32) -> Option<u64> {
+    fn walk(pid: u32, out: &mut Vec<u32>) {
+        for c in spira_config::bounded::children(pid) {
+            out.push(c);
+            walk(c, out);
+        }
+    }
+    let mut pids = Vec::new();
+    walk(u32::try_from(agent).ok()?, &mut pids);
+    if pids.is_empty() {
+        return None;
+    }
+    let ticks = |pid: &u32| -> Option<u64> {
+        let stat = std::fs::read_to_string(format!("{}/{pid}/stat", system_paths::PROC)).ok()?;
+        let mut f = stat.rsplit_once(')')?.1.split_whitespace().skip(11);
+        Some(f.next()?.parse::<u64>().ok()? + f.next()?.parse::<u64>().ok()?)
+    };
+    Some(pids.iter().filter_map(ticks).sum())
+}
+
+fn clock_ticks_per_sec() -> u64 {
+    // SAFETY: sysconf reads a constant.
+    u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).unwrap_or(100).max(1)
+}
+
+/// What the previous beat saw, to tell a still session from a quiet one.
+struct Seen {
+    ticks: Option<u64>,
+    at: i64,
+    transcript: i64,
+    since: Option<i64>,
+}
+
+/// Removes the still file on every way out of the heartbeat.
+struct StillFile(PathBuf);
+
+impl Drop for StillFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 pub struct Heartbeat {
     pub bead: String,
     pub rune: String,
@@ -209,6 +257,37 @@ pub struct Heartbeat {
 impl Heartbeat {
     fn lease_file(&self) -> PathBuf {
         self.run.join("dwarf").join(format!("{}.lease", self.bead))
+    }
+
+    fn still_file(&self) -> PathBuf {
+        self.run.join("dwarf").join(format!("{}.still", self.bead))
+    }
+
+    /// The session is still when its descendants exist, its transcript is unwritten since the
+    /// last beat, they used under 5% of a core in that time and it is not in a harness wait.
+    fn watch_still(&self, b: &dyn Beat, stop: &Stop, transcript: i64, now: i64, seen: &mut Seen) {
+        let agent = stop.pgid.load(Ordering::SeqCst);
+        let ticks = if agent > 0 { b.descendant_ticks(agent) } else { None };
+        let idle = match (ticks, seen.ticks) {
+            (Some(t), Some(p)) if t >= p => (t - p) * 20 < (now - seen.at).max(1) as u64 * clock_ticks_per_sec(),
+            _ => false,
+        };
+        let still = idle && transcript == seen.transcript && stop.harness_wait.load(Ordering::SeqCst) == 0;
+        *seen = Seen { ticks, at: now, transcript, since: if still { seen.since.or(Some(now)) } else { None } };
+        let file = self.still_file();
+        match seen.since {
+            Some(since) if since == now => {
+                let doc = serde_json::json!({ "since": since, "transcript": transcript, "last": b.trace_last(200) });
+                if let Some(p) = file.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                let _ = util::write_atomic(&file, doc.to_string().as_bytes());
+            }
+            Some(_) => {}
+            None => {
+                let _ = std::fs::remove_file(&file);
+            }
+        }
     }
 
     fn identity_pidfile(&self) -> PathBuf {
@@ -236,6 +315,8 @@ impl Heartbeat {
         let mut deadline = session_start + self.lease_s;
         self.write_lease(deadline);
         self.renew_identity(session_start);
+        let _still = StillFile(self.still_file());
+        let mut seen = Seen { ticks: None, at: session_start, transcript: prev, since: None };
         loop {
             let t = Instant::now();
             while t.elapsed() < self.every {
@@ -288,6 +369,7 @@ impl Heartbeat {
                 }
                 HbTick::Ok => {}
             }
+            self.watch_still(b, stop, cur, now, &mut seen);
             if !b.renew(now + self.lease_s) {
                 return None;
             }
@@ -326,8 +408,26 @@ mod tests {
         dispositions: Mutex<Vec<(String, String)>>,
         /// The beat (1-based) from which `sent_back` answers `Some(..)` (0: never).
         sent_back_at: usize,
+        /// What each `descendant_ticks` call answers (the last repeats); empty: no descendants.
+        ticks: Mutex<Vec<Option<u64>>>,
+        /// Read the real process table instead of `ticks`.
+        real_ticks: bool,
+        /// The still file's text as each renewal found it.
+        still_seen: Mutex<Vec<Option<String>>>,
+        run: PathBuf,
     }
     impl Beat for FakeBeat {
+        fn descendant_ticks(&self, agent: i32) -> Option<u64> {
+            if self.real_ticks {
+                return descendant_ticks(agent);
+            }
+            let mut t = self.ticks.lock().unwrap();
+            if t.len() > 1 {
+                t.remove(0)
+            } else {
+                t.first().copied().flatten()
+            }
+        }
         fn sent_back(&self) -> Option<String> {
             let n = *self.beats.lock().unwrap() as usize;
             (self.sent_back_at != 0 && n >= self.sent_back_at).then(|| "REWORK suites-failed".to_string())
@@ -353,6 +453,7 @@ mod tests {
         }
         fn renew(&self, lease_until: i64) -> bool {
             *self.beats.lock().unwrap() += 1;
+            self.still_seen.lock().unwrap().push(std::fs::read_to_string(self.run.join("dwarf/sp-a.still")).ok());
             let mut r = self.renewals.lock().unwrap();
             r.push(lease_until);
             self.stop_after == 0 || r.len() < self.stop_after
@@ -531,5 +632,92 @@ mod tests {
         assert_eq!(b.renewals.lock().unwrap().len(), 6);
         assert_eq!(stop.signalled(), None);
         assert_eq!(stop.sent_back_why(), None);
+    }
+
+    fn still_hb(d: &testkit::TempDir) -> Heartbeat {
+        Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 6000, every: Duration::from_millis(1), wall_min: 10_000 }
+    }
+
+    fn idle_then(n: usize) -> Vec<Option<u64>> {
+        vec![Some(7); n]
+    }
+
+    #[test_id(tyxnk9r)]
+    #[test]
+    fn a_sleeping_child_of_the_agent_leaves_a_still_file_that_a_return_removes() {
+        let d = tmp("still-real");
+        let mut agent = std::process::Command::new("sh").args(["-c", "sleep 30; true"]).spawn().unwrap();
+        let stop = Stop::default();
+        stop.pgid.store(agent.id() as i32, Ordering::SeqCst);
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 4, real_ticks: true, run: d.to_path_buf(), ..Default::default() };
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(still_hb(&d).run(&b, &stop, &AtomicBool::new(false)), None);
+        let _ = agent.kill();
+        let _ = agent.wait();
+        let seen = b.still_seen.lock().unwrap().clone();
+        let doc: serde_json::Value = serde_json::from_str(seen.last().unwrap().as_deref().expect("a sleeping child is still")).unwrap();
+        assert_eq!((doc["transcript"].as_i64(), doc["last"].as_str()), (Some(5), Some("{\"type\":\"assistant\"}")));
+        assert!(doc["since"].as_i64().unwrap() > 0);
+        assert!(!d.join("dwarf/sp-a.still").exists(), "the heartbeat's end removes it");
+    }
+
+    #[test_id(tf0u3kx)]
+    #[test]
+    fn a_busy_child_leaves_no_still_file() {
+        let d = tmp("still-busy");
+        let stop = Stop::default();
+        stop.pgid.store(1, Ordering::SeqCst);
+        let busy = (0..8).map(|n| Some(n * 6000)).collect();
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 8, ticks: Mutex::new(busy), run: d.to_path_buf(), ..Default::default() };
+        still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
+        assert!(b.still_seen.lock().unwrap().iter().all(Option::is_none));
+    }
+
+    #[test_id(t8mhq2w)]
+    #[test]
+    fn a_child_with_no_descendants_leaves_no_still_file() {
+        let d = tmp("still-none");
+        let stop = Stop::default();
+        stop.pgid.store(1, Ordering::SeqCst);
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 6, run: d.to_path_buf(), ..Default::default() };
+        still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
+        assert!(b.still_seen.lock().unwrap().iter().all(Option::is_none));
+    }
+
+    #[test_id(tzp4c1e)]
+    #[test]
+    fn a_harness_wait_leaves_no_still_file() {
+        let d = tmp("still-hwait");
+        let stop = Stop::default();
+        stop.pgid.store(1, Ordering::SeqCst);
+        let _wait = stop.harness_waiting(1);
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 6, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
+        still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
+        assert!(b.still_seen.lock().unwrap().iter().all(Option::is_none));
+    }
+
+    #[test_id(t5v7jhb)]
+    #[test]
+    fn a_transcript_write_removes_the_still_file() {
+        let d = tmp("still-write");
+        let stop = Stop::default();
+        stop.pgid.store(1, Ordering::SeqCst);
+        let b = FakeBeat { mtimes: Mutex::new(vec![5, 5, 5, 5, 9]), fuse: "?".into(), stop_after: 6, ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
+        still_hb(&d).run(&b, &stop, &AtomicBool::new(false));
+        let seen: Vec<bool> = b.still_seen.lock().unwrap().iter().map(Option::is_some).collect();
+        assert_eq!(seen, [false, true, true, false, true, true], "cleared by the write at beat 4, a fresh still period from beat 5: {seen:?}");
+    }
+
+    #[test_id(tq2n8ds)]
+    #[test]
+    fn a_lapse_removes_the_still_file() {
+        let d = tmp("still-lapse");
+        let stop = Stop::default();
+        stop.pgid.store(1, Ordering::SeqCst);
+        let hb = Heartbeat { lease_s: 150, ..still_hb(&d) };
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "0".into(), ticks: Mutex::new(idle_then(1)), run: d.to_path_buf(), ..Default::default() };
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), Some(HbTick::Lapse));
+        assert!(b.still_seen.lock().unwrap().iter().any(Option::is_some), "still before the lapse");
+        assert!(!d.join("dwarf/sp-a.still").exists());
     }
 }

@@ -27,6 +27,8 @@ pub struct Readings {
     pub strands: Vec<String>,
     /// Per repo, its newest gate-run rows first.
     pub gate_runs: Vec<(String, Vec<serde_json::Value>)>,
+    /// (bead, last command, transcript's last write) of each live builder whose commands are idle.
+    pub stills: Vec<(String, String, i64)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +39,7 @@ pub struct Thresholds {
     pub restart_window: i64,
     pub red_streak: i64,
     pub noverdict_streak: i64,
+    pub still_secs: i64,
 }
 
 fn age(sec: i64) -> String {
@@ -88,6 +91,15 @@ pub fn classify(r: &Readings, th: &Thresholds) -> Vec<Firing> {
             out.push(crate::streak::firing_noverdict(repo, &s));
         }
     }
+    for (bead, command, written) in &r.stills {
+        if r.now - written > th.still_secs {
+            out.push(Firing {
+                key: format!("builder-still:{bead}"),
+                title: format!("{bead}: a live builder has written nothing for {} and its commands use no CPU", age(r.now - written)),
+                evidence: format!("BEAD      {bead}\nCOMMAND   {command}\nSTILL     {} since the transcript was last written\nTHRESHOLD {}s\n\nThe lease renews while this holds, so only this alert says the session is not moving.", age(r.now - written), th.still_secs),
+            });
+        }
+    }
     out.sort_by(|a, b| a.key.cmp(&b.key));
     out
 }
@@ -134,7 +146,16 @@ mod tests {
         assert!(keys(4).is_empty());
     }
 
-    const TH: Thresholds = Thresholds { pass_stale: 900, mirror_stale: 90_000, restart_threshold: 5, restart_window: 3600, red_streak: 4, noverdict_streak: 4 };
+    #[test_id(tcu8d3n)]
+    #[test]
+    fn an_idle_builder_past_the_threshold_fires_naming_bead_and_command() {
+        let r = Readings { now: 1_000, stills: vec![("sp-a".into(), "cargo test".into(), 800), ("sp-b".into(), "x".into(), 900)], ..Readings::default() };
+        let f = classify(&r, &TH);
+        assert_eq!(f.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(), ["builder-still:sp-a"]);
+        assert!(f[0].evidence.contains("cargo test") && f[0].evidence.contains("sp-a") && f[0].title.contains("3m"), "{f:?}");
+    }
+
+    const TH: Thresholds = Thresholds { pass_stale: 900, mirror_stale: 90_000, restart_threshold: 5, restart_window: 3600, red_streak: 4, noverdict_streak: 4, still_secs: 180 };
 
     #[test_id(tg86ckg)]
     #[test]

@@ -283,6 +283,7 @@ heimdall_mirror_stale = 90000
 heimdall_ghost_stale = 1800
 heimdall_red_streak = 4
 heimdall_noverdict_streak = 4
+heimdall_still_secs = 180
 runtime_reconcile_continuity_secs = 900
 runtime_incident_settle_secs = 300
 incident_log = "/fixture/userhome/spira/run/incident.log"

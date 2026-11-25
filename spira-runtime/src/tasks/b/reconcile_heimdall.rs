@@ -129,6 +129,7 @@ pub const KEYS: &[&str] = &[
     "SPIRA_HEIMDALL_GHOST_STALE",
     "SPIRA_HEIMDALL_RED_STREAK",
     "SPIRA_HEIMDALL_NOVERDICT_STREAK",
+    "SPIRA_HEIMDALL_STILL_SECS",
 ];
 
 pub const SPEC: Spec = Spec { name: NAME, stream: STREAM, tick: TICK, state: STATE, probe: OBSERVE, probe_deadline_ms: 10_000, cadence_key: CADENCE_KEY, calendar: false, effects: EFFECTS, keys: KEYS, probe_input_key: Some(CONTROL_SOCKET_KEY), jitter_key: None };
@@ -162,6 +163,18 @@ pub struct Snapshot {
     pub gate_runs: Vec<(String, Vec<serde_json::Value>)>,
     /// The Gate section could not be read; a raised streak is held, not cleared.
     pub gate_runs_unread: bool,
+    /// Live builders whose transcript is unwritten and whose commands are idle.
+    pub stills: Vec<Still>,
+}
+
+/// One `<run>/dwarf/<bead>.still` file of a builder whose lease is live.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Still {
+    pub bead: String,
+    pub command: String,
+    /// The transcript's last write, epoch seconds.
+    pub transcript: i64,
 }
 
 /// Per key (T3).
@@ -253,7 +266,7 @@ fn readings(cfg: &Cfg, snap: &Snapshot, now: i64) -> heimdall::hosted::Readings 
         let first: i64 = first.trim().parse().unwrap_or(0);
         ghost.filter(|g| first > 0 && now - first > *g).map(|_| id.to_string())
     });
-    heimdall::hosted::Readings { now, sentinel_armed: snap.sentinel.armed, sentinel_last_fired: snap.sentinel.last_fired_ms.map(|ms| (ms / 1000) as i64), restart_alerts: snap.restart_alerts.clone(), mirror_age_secs: snap.mirror_age_secs, world_halted: snap.world_halted, world_draining: snap.world_draining, strands: strands.collect(), gate_runs: snap.gate_runs.clone() }
+    heimdall::hosted::Readings { now, sentinel_armed: snap.sentinel.armed, sentinel_last_fired: snap.sentinel.last_fired_ms.map(|ms| (ms / 1000) as i64), restart_alerts: snap.restart_alerts.clone(), mirror_age_secs: snap.mirror_age_secs, world_halted: snap.world_halted, world_draining: snap.world_draining, strands: strands.collect(), gate_runs: snap.gate_runs.clone(), stills: snap.stills.iter().map(|s| (s.bead.clone(), s.command.clone(), s.transcript)).collect() }
 }
 
 /// What a raise or refresh writes.
@@ -292,7 +305,7 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
         Input::Ran(r) => return Err(format!("{NAME}: no unit is expected, got {r:?}")),
     };
     let (confirm, clear_n, refresh) = (num(cfg, "SPIRA_HEIMDALL_CONFIRM")?, num(cfg, "SPIRA_HEIMDALL_CLEAR")?, num(cfg, "SPIRA_HEIMDALL_REFRESH")?);
-    let th = heimdall::hosted::Thresholds { pass_stale: num(cfg, "SPIRA_HEIMDALL_PASS_STALE")?, mirror_stale: optional(cfg, "SPIRA_HEIMDALL_MIRROR_STALE").unwrap_or(i64::MAX), restart_threshold: optional(cfg, "SPIRA_HEIMDALL_RESTARTS").unwrap_or(i64::MAX), restart_window: optional(cfg, "SPIRA_HEIMDALL_RESTART_WINDOW").unwrap_or(3600), red_streak: optional(cfg, "SPIRA_HEIMDALL_RED_STREAK").unwrap_or(4), noverdict_streak: optional(cfg, "SPIRA_HEIMDALL_NOVERDICT_STREAK").unwrap_or(4) };
+    let th = heimdall::hosted::Thresholds { pass_stale: num(cfg, "SPIRA_HEIMDALL_PASS_STALE")?, mirror_stale: optional(cfg, "SPIRA_HEIMDALL_MIRROR_STALE").unwrap_or(i64::MAX), restart_threshold: optional(cfg, "SPIRA_HEIMDALL_RESTARTS").unwrap_or(i64::MAX), restart_window: optional(cfg, "SPIRA_HEIMDALL_RESTART_WINDOW").unwrap_or(3600), red_streak: optional(cfg, "SPIRA_HEIMDALL_RED_STREAK").unwrap_or(4), noverdict_streak: optional(cfg, "SPIRA_HEIMDALL_NOVERDICT_STREAK").unwrap_or(4), still_secs: optional(cfg, "SPIRA_HEIMDALL_STILL_SECS").unwrap_or(i64::MAX) };
     let now = (now_ms / 1000) as i64;
     let mut firing = heimdall::hosted::classify(&readings(cfg, snap, now), &th);
     if snap.gate_runs_unread {
@@ -363,6 +376,22 @@ pub fn sentinel_status(status: Option<&serde_json::Value>) -> TaskStatus {
     }
 }
 
+/// The still files of builders whose lease is live; a file left by a dead dwarf is not read.
+pub fn stills(run_dir: &std::path::Path) -> Vec<Still> {
+    let Ok(rd) = std::fs::read_dir(run_dir.join("dwarf")) else { return vec![] };
+    let mut out: Vec<Still> = rd
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let bead = path.file_name()?.to_str()?.strip_suffix(".still")?.to_string();
+            let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+            hel::reap::holder_alive(run_dir, &bead).then(|| Still { bead, command: doc["last"].as_str().unwrap_or_default().to_string(), transcript: doc["transcript"].as_i64().unwrap_or(0) })
+        })
+        .collect();
+    out.sort_by(|a, b| a.bead.cmp(&b.bead));
+    out
+}
+
 /// The observe probe: the sentinel and export tasks from `scheduler status` on `control`, the
 /// store's heimdall conditions (and the write probe, which stays part of observe), the run
 /// dir's halt and drain stamps and its strands file. A store that answers removes a fallback
@@ -386,7 +415,7 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, run_dir: &std::path::Path, c
     let strands = std::fs::read_to_string(run_dir.join("strands.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
     let strands = strands.iter().filter_map(|(k, v)| k.strip_prefix("ghost:").map(|id| format!("{id}\t{}", v["first"].as_i64().or_else(|| v["first"].as_str().and_then(|s| s.parse().ok())).unwrap_or(0)))).collect();
     let gate_runs = heimdall::gather::gate_runs(lc);
-    let snap = Snapshot { sentinel, restart_alerts: vec![], db_reachable, alert_rows, mirror_age_secs, world_halted: run_dir.join("world.halted").exists(), world_draining: run_dir.join("world.draining").exists(), strands, gate_runs: gate_runs.clone().unwrap_or_default(), gate_runs_unread: gate_runs.is_none() };
+    let snap = Snapshot { sentinel, restart_alerts: vec![], db_reachable, alert_rows, mirror_age_secs, world_halted: run_dir.join("world.halted").exists(), world_draining: run_dir.join("world.draining").exists(), strands, gate_runs: gate_runs.clone().unwrap_or_default(), gate_runs_unread: gate_runs.is_none(), stills: stills(run_dir) };
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
