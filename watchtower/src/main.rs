@@ -66,14 +66,6 @@ fn spira_run() -> PathBuf {
     PathBuf::from(reg("SPIRA_RUN"))
 }
 
-/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH.
-fn spira_home() -> String {
-    if let Some(h) = getenv("SPIRA_HOME") {
-        return h;
-    }
-    lib_sh_dir()
-}
-
 fn world_halted(run: &std::path::Path) -> bool {
     run.join("world.halted").is_file()
 }
@@ -400,7 +392,7 @@ fn main() {
                 return;
             }
             drift::run(
-                &spira_home(),
+                now(),
                 &drift::checkout_target(getenv("SPIRA_REPO"), getenv("SPIRA_RELEASE")).unwrap_or_default(),
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),

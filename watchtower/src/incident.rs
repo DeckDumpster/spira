@@ -108,6 +108,21 @@ pub fn alarm(incident_sh: &str, f: &Finding) -> bool {
     run_verb(incident_sh, "alarm", f).is_some()
 }
 
+/// `alarm`, started only when the intake would write a note: the intake's own state file says
+/// the reference is due. It writes nothing; the intake keeps the file.
+pub fn alarm_if_due(incident_sh: &str, run_dir: &std::path::Path, now: i64, f: &Finding) -> bool {
+    alarm_if_due_with(run_dir, now, f, |f| alarm(incident_sh, f))
+}
+
+fn alarm_if_due_with(run_dir: &std::path::Path, now: i64, f: &Finding, call: impl FnOnce(&Finding) -> bool) -> bool {
+    let state = std::fs::read_to_string(run_dir.join("incident-alarms.tsv")).unwrap_or_default();
+    let reference = f.reference.clone().unwrap_or_else(|| format!("incident:{}", f.title));
+    if !::incident::alarm::decide(&state, &reference, now).0 {
+        return true;
+    }
+    call(f)
+}
+
 #[derive(Debug, PartialEq)]
 pub enum AlarmOutcome {
     Noted,
@@ -176,6 +191,30 @@ fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn due_call(state: Option<&str>, reference: &str, now: i64) -> bool {
+        let d = testkit::TempDir::new("alarm-if-due");
+        if let Some(s) = state {
+            std::fs::write(d.path().join("incident-alarms.tsv"), s).unwrap();
+        }
+        let f = Finding::new("db", "repo", "t", "b").reference(reference);
+        let called = std::cell::Cell::new(false);
+        alarm_if_due_with(d.path(), now, &f, |_| {
+            called.set(true);
+            true
+        });
+        called.get()
+    }
+
+    #[test_id(tr5423t)]
+    #[test]
+    fn a_reference_noted_within_the_reminder_interval_is_not_handed_to_the_intake() {
+        let r = ::incident::alarm::REMINDER_S;
+        assert!(!due_call(Some("incident:x\t1000\n"), "incident:x", 1000 + r - 1));
+        assert!(due_call(Some("incident:x\t1000\n"), "incident:x", 1000 + r));
+        assert!(due_call(Some("incident:x\t1000\n"), "incident:y", 1001));
+        assert!(due_call(None, "incident:x", 1001));
+    }
 
     /// The scar, reproduced: lib.sh ships non-executable in a release (`-r--r--r--`), and
     /// this must still be found — `which` is used to LOCATE the file, never to run it

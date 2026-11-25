@@ -80,8 +80,7 @@ pub fn run(check: &str) -> Result<String, String> {
             dolt_drop::run(&log, &getenv("SPIRA_DB").unwrap_or_default(), &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".into()), &resolved_incident_sh(), getenv_i64("SPIRA_DOLT_DROP_WINDOW_MINS", 5).max(1) as usize, getenv_i64("SPIRA_DOLT_DROP_PER_MIN", 30).max(1) as usize);
         }
         "drift-check" => {
-            let home = getenv("SPIRA_HOME").unwrap_or_else(lib_sh_dir);
-            drift::run(&home, &drift::checkout_target(getenv("SPIRA_REPO"), getenv("SPIRA_RELEASE")).unwrap_or_default(), &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &run);
+            drift::run(n, &drift::checkout_target(getenv("SPIRA_REPO"), getenv("SPIRA_RELEASE")).unwrap_or_default(), &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &run);
         }
         other => return Err(format!("{other} is not one of CHECK 6's watchtower checks")),
     }

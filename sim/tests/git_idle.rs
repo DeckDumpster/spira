@@ -179,7 +179,10 @@ fn fixture() -> Fixture {
     let psi = dir.join("psi");
     std::fs::create_dir(&psi).unwrap();
     std::fs::write(psi.join("io"), "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n").unwrap();
+    let unit_home = dir.join("home");
+    std::fs::create_dir_all(unit_home.join(".config/systemd/user")).unwrap();
     let env = testkit::env(&[
+        ("HOME", unit_home.to_str()),
         ("PATH", Some(&path)),
         ("SPIRA_LC_BIN", None),
         ("SPIRA_INCIDENT_SH", incident.to_str()),
@@ -233,11 +236,7 @@ const LOGGED_PROGRAMS: [&str; 10] = ["spira-claim", "systemctl", "mail-health.sh
 
 fn logged_programs(f: &Fixture) -> Vec<String> {
     let all = std::fs::read_to_string(&f.started).unwrap_or_default();
-    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).filter(|l| !is_drift_check_script(l)).map(str::to_string).collect()
-}
-
-fn is_drift_check_script(line: &str) -> bool {
-    line.strip_prefix("bash ").is_some_and(|rest| rest.split_whitespace().next().is_some_and(|script| script.ends_with("/drift.sh") || script.ends_with("/incident.sh")))
+    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).map(str::to_string).collect()
 }
 
 fn assert_stubs_log(f: &Fixture) {
@@ -340,7 +339,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_traps_and_double_are_live(&f);
     assert_stubs_log(&f);
     let warm = START + 10 * MINUTE;
-    let (mut at_warm, mut at_idle, mut at_commit, mut at_branch) = (0, 0, 0, 0);
+    let (mut at_warm, mut at_idle, mut at_commit, mut at_branch, mut at_quiet_a, mut at_quiet_b) = (0, 0, 0, 0, 0, 0);
     let (mut programs_at_warm, mut programs_at_idle, mut programs_at_ready, mut idle_passes, mut rows_before_ready) = (0, Vec::new(), Vec::new(), 0, Vec::new());
     let (mut tower_at_warm, mut tower_at_idle, mut tower_at_edit, mut tower_at_boundary, mut level_before) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
     let spec = f.overrides.join("round-vm-spill-ec2-always.override");
@@ -364,8 +363,12 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len());
         }
         t if t == before_hour => drop(applied.insert("idle", runs())),
-        t if t == quiet_a => tower_at_warm = started_by_the_watchtower_checks(&f),
+        t if t == quiet_a => {
+            tower_at_warm = started_by_the_watchtower_checks(&f);
+            at_quiet_a = logged(&f).len();
+        }
         t if t == quiet_b => {
+            at_quiet_b = logged(&f).len();
             tower_at_idle = started_by_the_watchtower_checks(&f);
             level_before = (host_level(&f, "certify_par"), host_level(&f, "stale_targets"));
             std::fs::write(&f.watchers, "a\nb\n").unwrap();
@@ -428,7 +431,11 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert!(c("recovered") > c("failing"), "{applied:?}");
     assert_eq!(c("recovered-quiet"), c("recovered"), "a success is held again: {applied:?}");
     let all = logged(&f);
-    assert_eq!(at_idle, at_warm, "an idle virtual hour logged git:\n{}", all[at_warm..at_idle].join("\n"));
+    let status_of_local = |l: &String| l.ends_with(&format!("-C {} status --porcelain", f.local.display()));
+    let first_read = &all[at_warm..at_idle];
+    assert!(first_read.len() == 1 && status_of_local(&first_read[0]), "an idle virtual hour's only git is the drift check's first status read:\n{}", first_read.join("\n"));
+    assert_eq!(at_quiet_a, at_quiet_b, "a quiet stretch logged git:\n{}", all[at_quiet_a..at_quiet_b].join("\n"));
+    assert!(!f.worktrees.parent().unwrap().join("conditions/drift-unreadable-units.count").exists(), "the units half was blind in the fixture");
     assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
     assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));
     let ran = |name: &str| f.seen.lock().unwrap().iter().filter(|(n, _)| n == name).count();
@@ -450,7 +457,8 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let after_commit: Vec<&String> = all[at_idle..at_commit].iter().filter(|l| !l.ends_with("rev-parse --verify --quiet refs/heads/spira/sp-zzzzzz")).collect();
     let logs = |lines: &[&String], repo: &str| lines.iter().filter(|l| l.contains(&format!("-C {repo} log "))).count();
     assert_eq!(logs(&after_commit, &local), 1, "a moved landing ref is read once: {after_commit:?}");
-    assert_eq!(after_commit.len(), 1, "and nothing else asks git: {after_commit:?}");
+    assert_eq!(after_commit.iter().filter(|l| status_of_local(l)).count(), 1, "the changed checkout is read once: {after_commit:?}");
+    assert_eq!(after_commit.len(), 2, "and nothing else asks git: {after_commit:?}");
     let counted: u64 = f.effects.world.landed_on_refs((warm + HOUR + 3 * MINUTE) / 1000, "sp").unwrap().iter().find(|r| r.repo == "spira").map(|r| r.hourly.iter().sum()).unwrap();
     assert_eq!(counted, 2, "landed_on_refs counts the new landing");
     let after_branch = &all[at_commit..at_branch];

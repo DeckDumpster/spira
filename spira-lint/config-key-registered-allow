@@ -315,7 +315,6 @@ SPIRA_HOME release/src/stage.rs
 SPIRA_HOME release/src/units.rs
 SPIRA_HOME release/src/verify.rs
 SPIRA_HOME round-vm/src/config.rs
-SPIRA_HOME sentinel/src/tower.rs
 SPIRA_HOME spira-config/src/build.rs
 SPIRA_HOME spira-config/src/main.rs
 SPIRA_HOME spira-config/src/process.rs
@@ -343,7 +342,6 @@ SPIRA_HOME strand/src/config.rs
 SPIRA_HOME testenv/src/fixture.rs
 SPIRA_HOME watchd/src/context.rs
 SPIRA_HOME watchd/src/manifest.rs
-SPIRA_HOME watchtower/src/main.rs
 SPIRA_HOME watchtower/src/process.rs
 SPIRA_HOME_DIR spira/law-synth.sh
 SPIRA_HOME_LIB spira-world/src/seam.rs

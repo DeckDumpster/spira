@@ -5,7 +5,6 @@
 
 use crate::incident::{self, Finding};
 use crate::log::log;
-use std::process::Command;
 
 pub enum Probe {
     Clean,
@@ -13,20 +12,36 @@ pub enum Probe {
     Unreadable,
 }
 
-pub fn classify(code: Option<i32>, out: &str) -> Probe {
+pub fn classify(code: Option<i32>, out: &str, repo: &str) -> Probe {
     match code {
-        Some(0) => Probe::Clean,
-        Some(1) => Probe::Drift(out.to_string()),
+        Some(0) if out.trim().is_empty() => Probe::Clean,
+        Some(0) => Probe::Drift(out.lines().map(|l| format!("DIRTY {l} ({repo})\n")).collect()),
         _ => Probe::Unreadable,
     }
 }
 
-fn drift(drift_sh: &str, args: &[&str]) -> Probe {
-    let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return Probe::Unreadable };
-    // batch-job: runs a gate, build or forge script that takes as long as its work
-    // FORK-EDGE: drift.sh is 179 lines of shell — port with the watch-mend/drift task
-    match Command::new("bash").envs(envs).arg(drift_sh).args(args).output() {
-        Ok(o) => classify(o.status.code(), &String::from_utf8_lossy(&o.stdout)),
+fn checkout(repo: &str) -> Probe {
+    let path = std::path::Path::new(repo);
+    if !path.join(".git").exists() {
+        return Probe::Unreadable;
+    }
+    let read = || -> Result<String, String> {
+        let o = spira_config::bounded::bounded("git")
+            .args(["--no-optional-locks", "-C", repo, "status", "--porcelain"])
+            .output()
+            .map_err(|e| format!("git status: {e}"))?;
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        match classify(o.status.code(), &out, repo) {
+            Probe::Unreadable => Err(format!("git status exited {:?}", o.status.code())),
+            _ => Ok(out),
+        }
+    };
+    let held = match spira_config::git_refs::worktree_digest(path) {
+        Some(digest) => spira_config::git_refs::held(path, "drift-status", &digest.to_string(), read),
+        None => read(),
+    };
+    match held {
+        Ok(out) => classify(Some(0), &out, repo),
         Err(_) => Probe::Unreadable,
     }
 }
@@ -63,28 +78,24 @@ fn bump(state: &std::path::Path, unreadable: bool) -> u32 {
     n
 }
 
-pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh: &str, run_dir: &std::path::Path) {
-    let drift_sh = format!("{spira_home}/drift.sh");
+pub fn run(now: i64, repo: &str, db: &str, home_repo: &str, incident_sh: &str, run_dir: &std::path::Path) {
     if !incident::is_usable(incident_sh) {
         log("watchtower: drift-check skipped — incident.sh not readable");
         return;
     }
-    let checkout_runnable = std::path::Path::new(&drift_sh).is_file();
-    let classes: [(&str, &[&str], &str, String); 2] = [
+    let classes: [(&str, &str, String); 2] = [
         (
             "checkout-drift",
-            &["checkout", repo],
             "checkout",
             format!("CHECKOUT DRIFT: {repo} carries untracked or modified files git does not expect"),
         ),
         (
             "unit-drift",
-            &["units"],
             "units",
             "UNIT DRIFT: the installed unit directory carries files this install does not ship".to_string(),
         ),
     ];
-    for (cause, args, what, title) in classes {
+    for (cause, what, title) in classes {
         let state = run_dir.join("conditions").join(format!("drift-unreadable-{what}.count"));
         if what == "checkout" && !repo.is_empty() && is_retired_release(repo) {
             bump(&state, false);
@@ -93,8 +104,8 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
         }
         let probe = match what {
             "units" => probe_of(install::unit_drift::units_drift(&install::unit_drift::default_unit_dir())),
-            _ if repo.is_empty() || !checkout_runnable => Probe::Unreadable,
-            _ => drift(&drift_sh, args),
+            _ if repo.is_empty() => Probe::Unreadable,
+            _ => checkout(repo),
         };
         let n = bump(&state, matches!(probe, Probe::Unreadable));
         match probe {
@@ -103,7 +114,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
                     .reference(format!("incident:{cause}"))
                     .cause(cause);
                 f.fenrir_exempt = false;
-                incident::alarm(incident_sh, &f);
+                incident::alarm_if_due(incident_sh, run_dir, now, &f);
                 log(&format!("watchtower: drift-check filed {cause} escalation"));
             }
             Probe::Unreadable => {
@@ -114,7 +125,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
                     let f = Finding::new(db, home_repo, &title, &body)
                         .reference(format!("incident:drift-unreadable-{what}"))
                         .cause(format!("drift-unreadable-{what}"));
-                    incident::alarm(incident_sh, &f);
+                    incident::alarm_if_due(incident_sh, run_dir, now, &f);
                     log(&format!("watchtower: drift-check filed {what} unreadable escalation"));
                 }
             }
@@ -128,13 +139,21 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
 mod tests {
     use super::*;
 
-    #[test_id(tgwoi1n)]
+    #[test_id(tb2febk)]
     #[test]
-    fn exit_one_is_drift_and_anything_else_unrecognised_is_unreadable() {
-        assert!(matches!(classify(Some(0), ""), Probe::Clean));
-        assert!(matches!(classify(Some(1), "DIRTY x"), Probe::Drift(s) if s == "DIRTY x"));
-        assert!(matches!(classify(Some(3), ""), Probe::Unreadable));
-        assert!(matches!(classify(None, ""), Probe::Unreadable));
+    fn git_status_output_is_clean_drift_or_unreadable() {
+        assert!(matches!(classify(Some(0), "", "repo"), Probe::Clean));
+        assert!(matches!(classify(Some(0), "?? x\n", "repo"), Probe::Drift(s) if s == "DIRTY ?? x (repo)\n"));
+        for code in [Some(128), Some(124), None] {
+            assert!(matches!(classify(code, "", "repo"), Probe::Unreadable));
+        }
+    }
+
+    #[test_id(tbl7ijn)]
+    #[test]
+    fn a_directory_with_no_git_is_unreadable() {
+        let d = testkit::TempDir::new("no-git");
+        assert!(matches!(checkout(&d.path().display().to_string()), Probe::Unreadable));
     }
 
     #[test_id(t40ifkg)]
