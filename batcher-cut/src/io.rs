@@ -4856,26 +4856,7 @@ pub fn file_judgement(
     // THE ID COMES FROM PARSING THE JSON, not scanning human output for an id-shaped token
     // (law-never-derive-an-id-from-output): `bd create` without --silent prints an advisory
     // that echoes the title before the id, and this title itself names suites and a repo.
-    bead_id(&out)
-}
-
-fn bead_id(out: &str) -> Result<String, String> {
-    let start = out
-        .find('{')
-        .ok_or_else(|| format!("bead.sh file: no JSON in output: {out}"))?;
-    let v: serde_json::Value = serde_json::from_str(&out[start..])
-        .map_err(|e| format!("bead.sh file: unparsed output: {e}"))?;
-    let v = match v {
-        serde_json::Value::Array(a) => a
-            .into_iter()
-            .next()
-            .ok_or("bead.sh file: empty JSON array")?,
-        o => o,
-    };
-    v.get("id")
-        .and_then(|i| i.as_str())
-        .map(str::to_string)
-        .ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
+    gate::flip::bead_id(&out)
 }
 
 /// File the follow-up bead for a flipped test that the round disabled and return its id.
@@ -4930,64 +4911,14 @@ pub struct KeptRow {
 }
 
 fn file_batcher_bead(env: &Env, repo: &Repo, tag: &str, title: &str, body: &str) -> Result<String, String> {
-    let tmp_dir = env.run.join("tmp");
-    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
-    let tmp = tmp_dir.join(format!("{tag}-{}-{}.txt", repo.name, now()));
-    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    let out = run(
-        // FORK-EDGE: bead.sh is the operator tool for filing; it stays
-        Command::new("bead.sh")
-            .args(["file", title, "--for", "batcher", "--repo", &repo.name, "--harness-title", "--body-file"])
-            .arg(&tmp)
-            .arg("--json"),
-        "bead.sh file",
-    );
-    let _ = fs::remove_file(&tmp);
-    bead_id(&out?)
+    gate::flip::file_bead(&env.run.join("tmp"), &repo.name, "batcher", tag, title, body)
 }
 
-/// A registry row a flip's disabling wrote.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DisabledRow {
-    pub test: String,
-    pub state: String,
-    pub bead: String,
-    pub until: i64,
-}
+pub use gate::flip::{parse_disabled_row, DisabledRow};
 
 /// `test-registry disable` of `test` for the registry's own hold, as the batcher.
 pub fn registry_disable(bin: &str, env: &Env, test: &str, bead: &str, reason: &str) -> Result<DisabledRow, String> {
-    // batch-job: a registry write, bounded by the registry's own busy timeout
-    // FORK-EDGE: machine leg test-registry (disable a flipped test)
-    let out = Command::new(bin)
-        .args(["disable", "--json", "--test", test, "--bead", bead, "--reason", reason, "--actor", "batcher"])
-        .env("SPIRA_HOME", &env.home)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("{bin} disable: {e}"))?;
-    let said = String::from_utf8_lossy(&out.stdout).into_owned();
-    if !out.status.success() {
-        return Err(format!(
-            "{bin} disable --test {test} exited {}: {}{}",
-            out.status.code().unwrap_or(-1),
-            said.trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    parse_disabled_row(&said).map_err(|e| format!("{bin} disable: {e}"))
-}
-
-/// The row in `test-registry disable --json`'s stdout.
-pub fn parse_disabled_row(said: &str) -> Result<DisabledRow, String> {
-    let v: serde_json::Value = serde_json::from_str(said).map_err(|e| format!("unparsed output: {e}"))?;
-    let row = &v["row"];
-    let text = |k: &str| row[k].as_str().map(str::to_string).ok_or_else(|| format!("no {k} in {said}"));
-    Ok(DisabledRow {
-        test: text("test")?,
-        state: text("state")?,
-        bead: text("bead")?,
-        until: row["until"].as_i64().ok_or_else(|| format!("no until in {said}"))?,
-    })
+    gate::flip::registry_disable(bin, &env.home, test, bead, reason, "batcher")
 }
 
 /// `registry_disable` as the closure `disable_flips_with` takes.
