@@ -254,7 +254,7 @@ pub fn worktree_digest(repo: &Path) -> Option<u64> {
     refs_digest(repo)?.hash(&mut h);
     let stamp = |p: &Path, h: &mut std::collections::hash_map::DefaultHasher| -> Option<()> {
         match fs::symlink_metadata(p) {
-            Ok(m) => (m.len(), m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos()).hash(h),
+            Ok(m) => (m.len(), std::os::unix::fs::PermissionsExt::mode(&m.permissions()), m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos()).hash(h),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0u8.hash(h),
             Err(_) => return None,
         }
@@ -587,9 +587,16 @@ mod tests {
         fs::write(d.join("a.md"), "three").unwrap();
         let edited = at();
         assert_ne!(edited, added, "an edited file");
+        let mode = fs::metadata(d.join("a.md")).unwrap().permissions();
+        let mut exec = mode.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut exec, 0o755);
+        fs::set_permissions(d.join("a.md"), exec).unwrap();
+        let chmodded = at();
+        assert_ne!(chmodded, edited, "a changed executable bit");
+        fs::set_permissions(d.join("a.md"), mode).unwrap();
         fs::write(git.join("index"), "i").unwrap();
         let indexed = at();
-        assert_ne!(indexed, edited, "the index");
+        assert_ne!(indexed, chmodded, "the index");
         fs::write(git.join("info/exclude"), "b.md\n").unwrap();
         assert_ne!(at(), indexed, "the exclude file");
         assert_eq!(worktree_digest(&d.join("absent")), None);

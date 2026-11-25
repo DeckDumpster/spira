@@ -3216,6 +3216,7 @@ version = "1.0.0"
 dependencies = [
  "cockpit-ops",
  "forge",
+ "incident",
  "install",
  "libc",
  "reconciler-engine",
