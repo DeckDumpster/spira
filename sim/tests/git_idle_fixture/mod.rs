@@ -38,7 +38,6 @@ pub struct Fixture {
     pub _serial: std::sync::MutexGuard<'static, ()>,
     pub watchers: PathBuf,
     pub worktrees: PathBuf,
-    pub units: Arc<runtime::units::ScriptedUnits>,
     pub projects: PathBuf,
     pub published: Arc<Mutex<Vec<String>>>,
     pub checkout_rows: Arc<Mutex<Vec<(String, String)>>>,
