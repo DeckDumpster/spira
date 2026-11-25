@@ -345,6 +345,7 @@ struct FakeTools {
     forge_automerge_ok: Cell<bool>,
     forge_calls: RefCell<Vec<String>>,
     cancels: RefCell<Vec<(String, String)>>,
+    cancel_rc: Cell<i32>,
 }
 
 impl FakeTools {
@@ -400,7 +401,7 @@ impl Tools for FakeTools {
     }
     fn gate_cancel(&self, bead: &str, why: &str) -> (i32, String) {
         self.cancels.borrow_mut().push((bead.into(), why.into()));
-        (0, String::new())
+        (self.cancel_rc.get(), if self.cancel_rc.get() == 0 { String::new() } else { "nothing to cancel".into() })
     }
     fn confine(&self, id: &str, _: &str, _: &Path, _: &str, _: &str) -> (i32, String) {
         self.confine.borrow().get(id).cloned().unwrap_or((0, String::new()))
@@ -2886,6 +2887,23 @@ fn a_running_gate_is_cancelled_when_a_round_takes_its_member() {
 }
 
 #[test_id(tfz4jx9)]
+#[test]
+fn a_refused_cancel_is_logged_charges_nothing_and_is_asked_again_next_pass() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    q.enqueue(&crate::gateq::Job::new("spira", "spira/sp-a", "sp-a", "t1", false)).unwrap();
+    q.claim_job(0, "spira", "spira/sp-a", "t1").unwrap();
+    h.beads.batched.borrow_mut().insert("sp-a".into());
+    h.tools.cancel_rc.set(1);
+    h.run();
+    h.run();
+    assert_eq!(h.tools.cancels.borrow().len(), 2);
+    assert!(h.logged("cancel refused (nothing to cancel), asking again next pass"), "{:?}", h.out.lines());
+    assert!(!h.lib.has("reopen") && !h.lib.has("CERTIFIED") && !h.lib.has("noverdict"), "{:?}", h.lib.calls.borrow());
+}
+
+#[test_id(tliadvt)]
 #[test]
 fn a_cancelled_gate_charges_its_round_held_member_nothing() {
     let h = h_worker(LandMode::Queue);
