@@ -71,9 +71,9 @@ pub struct Mark {
 
 impl Mark {
     pub fn own() -> Option<Mark> {
-        let text = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+        let text = std::fs::read_to_string(Path::new(system_paths::PROC_SELF).join("cgroup")).ok()?;
         let path = text.lines().find_map(|l| l.strip_prefix("0::"))?;
-        let dir = Path::new("/sys/fs/cgroup").join(path.trim().trim_start_matches('/'));
+        let dir = Path::new(system_paths::SYS_FS_CGROUP).join(path.trim().trim_start_matches('/'));
         dir.is_dir().then(|| Mark { counters: read(&dir) })
     }
 

@@ -2757,7 +2757,6 @@ pub fn with_bins(
     env
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Where the unit trial's build and test phases began (clock secs, cgroup reading) and where the test phase ended.
 #[derive(Default)]
 struct OpMarks {
@@ -2779,6 +2778,7 @@ impl OpMarks {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_composed<W: World>(
     w: &W,
     tree: &Path,
