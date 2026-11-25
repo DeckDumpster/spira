@@ -9,8 +9,8 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=simple
-# An unclean stop loses up to 60 s of logs.
-ExecStart=@SPIRA_PROD@/metrics-stack.sh logs -inmemoryDataFlushInterval=60s
+# An unclean stop loses up to twice SPIRA_METRICS_FLUSH_MINUTES of logs.
+ExecStart=@SPIRA_PROD@/metrics-stack.sh logs
 CPUQuota=100%
 KillMode=mixed
 TimeoutStopSec=90

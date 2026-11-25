@@ -188,6 +188,7 @@ max_live_aeons
 mender_deadline_secs
 mender_label
 mender_max
+metrics_flush_minutes
 mirror
 no_loop_label
 notify
