@@ -789,6 +789,28 @@ pub fn reproduce_line(env: &[(String, String)], rerun: &str) -> String {
     format!("env -i {vars}{}", rerun_command(rerun))
 }
 
+/// The rerun of a red unit test phase: the nextest reds again under the phase's own config file
+/// (so its per-test limit), and each libtest red's cargo-named target again, `--exact`.
+pub fn unit_rerun_command(crates: &[String], targets: Targets, failed_nextest: &[String], cargo_reruns: &[String], failed_libtest: &[String]) -> String {
+    let sel = pkgs(crates);
+    let sel = sel.trim();
+    let mut parts = Vec::new();
+    if !failed_nextest.is_empty() {
+        let filter = if targets.lib { tier::LIB_BINS } else { "--bins" };
+        let any = failed_nextest.iter().map(|t| format!("test(={t})")).collect::<Vec<_>>().join(" | ");
+        parts.push(format!("{AROUND} cargo {} -E '{any}'", tier::unit_words(NEXTEST_CONFIG, None, sel, filter)));
+    }
+    if !failed_libtest.is_empty() {
+        let names = failed_libtest.iter().map(|t| sh_quote(t)).collect::<Vec<_>>().join(" ");
+        let fallback = [unit_packages(crates)];
+        let targets = if cargo_reruns.is_empty() { &fallback[..] } else { cargo_reruns };
+        for rerun in targets {
+            parts.push(format!("{} -- --exact {names}", rerun_command(rerun)));
+        }
+    }
+    parts.join("; ")
+}
+
 /// The `-p` words of a unit composition's crates.
 pub fn unit_packages(crates: &[String]) -> String {
     pkgs(crates).trim_start().to_string()

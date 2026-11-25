@@ -71,6 +71,36 @@ pub fn failed_tests(out: &str) -> Vec<String> {
     seen
 }
 
+/// The failing tests of `out` that nextest named, in order, unique.
+pub fn failed_nextest(out: &str) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for name in out.lines().filter_map(|l| spira_config::unit_tier::nextest_red(l.trim())) {
+        if !seen.iter().any(|x| x == name) {
+            seen.push(name.to_string());
+        }
+    }
+    seen
+}
+
+/// How `test` failed in `out`: `timeout` for a nextest `TIMEOUT` line, `red` otherwise.
+pub fn red_kind(out: &str, test: &str) -> &'static str {
+    let timed_out = out.lines().any(|l| {
+        let l = l.trim();
+        l.starts_with("TIMEOUT ") && spira_config::unit_tier::nextest_red(l) == Some(test)
+    });
+    if timed_out { "timeout" } else { "red" }
+}
+
+/// Whether `out` shows `test` passing: a nextest `PASS [` line ending in its name, or a libtest
+/// `test <name> ... ok` line.
+pub fn passed_test(out: &str, test: &str) -> bool {
+    out.lines().any(|l| {
+        let l = l.trim();
+        l.strip_prefix("test ").is_some_and(|r| r.strip_suffix(" ... ok") == Some(test))
+            || (l.starts_with("PASS [") && l.split_whitespace().next_back() == Some(test))
+    })
+}
+
 /// The fence named by the first `<fence>: REFUSED` line, e.g. `lifecycle-guard`; failing that,
 /// the first line opening with a hyphenated lowercase rule token and `: `, e.g. a lint's
 /// `process-exit-in-library: ...`.

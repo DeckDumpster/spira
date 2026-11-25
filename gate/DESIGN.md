@@ -201,7 +201,7 @@ branch-red`; BASE_FAIL `base-red`; NO_VERDICT `certifies-nothing | no-repo-map-f
 no-diff | conflict | merge-failed | missing-exclude | missing-skew | skew-init-fault |
 cmd-missing-file | admission-timeout | no-lockfile | lock-timeout | tree-unidentified |
 harness-fault | timeout | base-timeout | base-flake | base-untestable | lib-unavailable | died |
-reentry-unproven | fence-silent`, and
+reentry-unproven | fence-silent | flip-unrecorded`, and
 `no-evidence:<reason>` when a FAIL carried no message (downgraded to NO_VERDICT).
 
 The message before the VERDICT line is the bash's, word for word, except the conflict and
@@ -482,6 +482,40 @@ phase with nothing left is status 124 (NO_VERDICT `timeout`).
 **The base trial** runs the same composition on the landing ref, over the touched crates the
 base has (per its own metadata): a crate the branch adds cannot be tested on a base without it,
 and its absence is not a red. With none left the base runs its fences only.
+
+### The rerun of a red test
+
+A unit trial whose only red is the test phase (`red_units == ["phase:test"]`, failing tests
+named, no red fence) runs those tests once more, on the tree the first run ran on, **before the
+base is checked out**. The rerun is phase `test-rerun`: nextest reds run again through
+`unit_words` over the same `target/gate-unit-nextest.toml` (so the same per-test limit; no limit is
+raised and none added), libtest reds run again as `cargo test <cargo-named target> -- --exact
+<names>`. It is charged to `SPIRA_GATE_DEADLINE`; a rerun cut by the deadline or
+`SPIRA_GATE_TIMEOUT` ends NO_VERDICT through the same paths as any phase, never as a pass. It is
+not a retry: it is the one discriminating run `law-a-flipping-test-is-disabled-by-a-registry-row`
+prescribes, once per gate, and both results are recorded against the tree.
+
+Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok` line for it),
+**red-twice** (named failing again), **unproven** (neither; treated as red).
+
+* A flip with a test id (`ports::flip_test_id`) gets what the round gives one
+  (`flip.rs`, shared with `batcher-cut`): a fix bead filed `--for batcher`, then a seven-day
+  `test-registry` row naming that bead, actor `gate`. If every failing test flipped the verdict is
+  PASS and says `gate: flipped — <test> red, then green on a rerun of the same tree; disabled
+  until <date>, fix bead <id>` per test. A refused filing or row is NO_VERDICT `flip-unrecorded`:
+  a flip is never passed without its record. A flip with no id cannot hold a row and stays the
+  branch's red.
+* Any red-twice or unproven test sends the item back as FAIL `branch-red`, the message adding
+  `gate: red twice on the same tree <T>: <tests>` and/or `gate: not rerun: <tests>`. Rows for
+  flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
+  keeps its behaviour.
+* A fences or suites composition, a red beside a red fence or a failed build, never reruns.
+* `flip.rs` calls `bead.sh` and `test-registry` through the bounded runner (60 s each) for both the gate and the round.
+
+Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun>,…`; the
+`gate-run` row carries the same text as `reruns`; `spira_gate_test_reruns{repo,result}` counts one
+per rerun test (`result` is `flip|red-twice|unproven`; no test or bead label). `unit_run_secs`
+stays the first run's wall; the Grafana panel "Gate test reruns by result (1d)" plots the counter.
 
 ### What it records (for item 7)
 

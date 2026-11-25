@@ -552,6 +552,40 @@
           "refId": "C"
         }
       ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Gate test reruns by result (1d)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "interval": "1d",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (result) (sum_over_time(spira_gate_test_reruns[1d]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

@@ -161,6 +161,14 @@ pub trait World {
     fn file_flip(&self, _repo: &str, _test: &str, _title: &str, _body: &str) -> Result<(), String> {
         Ok(())
     }
+    /// Files the fix bead for a test that flipped in this gate and returns its id.
+    fn file_flip_fix(&self, _repo: &str, _test: &str, _title: &str, _body: &str) -> Result<String, String> {
+        Err("no bead filing in this world".into())
+    }
+    /// Writes the registry row that disables `test` for the registry's hold, naming `bead`.
+    fn registry_disable(&self, _test: &str, _bead: &str, _reason: &str) -> Result<crate::flip::DisabledRow, String> {
+        Err("no test registry in this world".into())
+    }
     /// sha256 of gate.sh, exclude.sh, the resolved `skew` binary and this binary, concatenated.
     fn harness_hash(&self) -> Option<String>;
 

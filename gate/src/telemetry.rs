@@ -105,6 +105,8 @@ pub struct GateRun {
     pub deny_list: String,
     /// `<step>:<secs>`, the longest step a gate command declared in its steps file; empty when none.
     pub slowest_step: String,
+    /// `<test>:<red|timeout>/<green|red|timeout|unrun>,…` of each test the gate ran once more; empty when none.
+    pub reruns: String,
 }
 
 /// Render the row through tsd's own builder. `wall_secs` is waited + ran: the certification
@@ -144,6 +146,7 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("red_line".into(), s(&r.red_line)),
         ("deny_list".into(), s(&r.deny_list)),
         ("slowest_step".into(), s(&r.slowest_step)),
+        ("reruns".into(), s(&r.reruns)),
     ];
     tsd::build_row(ts, host, FAMILY, &fields)
 }
@@ -291,6 +294,14 @@ pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
             );
         }
     }
+    for entry in r.reruns.split(',').filter(|e| !e.is_empty()) {
+        let result = match entry.rsplit_once('/').map(|(_, second)| second) {
+            Some("green") => "flip",
+            Some("unrun") => "unproven",
+            _ => "red-twice",
+        };
+        sink.push(&[Point::Count { name: "spira_gate_test_reruns", value: 1 }], &[("repo", &r.repo), ("result", result)]);
+    }
     if let Some(s) = recompiled {
         sink.push(
             &[Point::Count { name: "spira_gate_unit_test_recompiled_total", value: 1 }, secs("spira_gate_unit_test_recompile_seconds", s)],
@@ -386,6 +397,53 @@ mod tests {
         let body = h.join().unwrap();
         assert!(body.contains("spira_gate_unit_test_part_seconds") && body.contains("part") && body.contains("test-build"), "{body}");
         assert!(body.contains("spira_gate_unit_test_recompiled_total"), "{body}");
+    }
+
+    #[test_id(t1dcp7z)]
+    #[test]
+    fn a_rerun_test_is_pushed_by_result_with_no_test_label() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        l.set_nonblocking(true).unwrap();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = done.clone();
+        let h = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let mut all = String::new();
+            loop {
+                let mut c = match l.accept() {
+                    Ok((c, _)) => c,
+                    Err(_) if stop.load(std::sync::atomic::Ordering::SeqCst) => break,
+                    Err(_) => {
+                        std::thread::yield_now();
+                        continue;
+                    }
+                };
+                c.set_nonblocking(false).unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let n = c.read(&mut chunk).unwrap();
+                    buf.extend_from_slice(&chunk[..n]);
+                    let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
+                    if buf.len() >= i + 4 + len {
+                        break;
+                    }
+                }
+                c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
+                all.push_str(&String::from_utf8_lossy(&buf));
+            }
+            all
+        });
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "spira-gate", std::time::Duration::from_secs(2));
+        let r = GateRun { repo: "r".into(), status: "PASS".into(), reruns: "m::t0aaaaa:red/green".into(), ..Default::default() };
+        push_metrics(&sink, &r);
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
+        let body = h.join().unwrap();
+        assert!(body.contains("spira_gate_test_reruns") && body.contains("result") && body.contains("flip"), "{body}");
+        assert!(!body.contains("t0aaaaa"), "{body}");
     }
 
     #[test_id(tx32x6r)]
