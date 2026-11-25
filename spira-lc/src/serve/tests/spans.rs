@@ -391,3 +391,26 @@ fn a_request_whose_read_a_forced_wal_restart_cut_pages_the_slow_query_log_with_i
     let f: Vec<&str> = got.lines().find(|l| l.ends_with("WAL-RESET-ENDED")).unwrap_or_else(|| panic!("{got}")).split('\t').collect();
     assert_eq!(f[1], "list", "{got}");
 }
+
+#[test_id(tasjkm8)]
+#[test]
+fn a_request_logs_its_own_verb_and_caller_for_a_query_made_before_any_dispatch() {
+    let dir = testkit::TempDir::new("lc-serve-verb-first");
+    let log = dir.join("slow.log");
+    let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+    let work: super::Work = Arc::new(|_| {
+        crate::slow::record(std::time::Duration::from_millis(5000), "SELECT 1");
+        crate::callers::Answer::out(0, String::new())
+    });
+    let door = super::Door { ledger: super::Ledger::new(std::time::Duration::from_secs(60)), work, personas: Default::default(), deadlines: test_deadlines() };
+    let me = std::process::id() as i32;
+    for verb in ["list", "show"] {
+        let req = super::Request { argv: vec![verb.to_string()], stdin: None, caller: Default::default(), task: None, request_id: None };
+        let now = std::time::Instant::now();
+        super::call_request(req, super::Peer { pid: Some(me), uid: None }, &door, now, now, super::Cut::ByCaller);
+    }
+    let got = std::fs::read_to_string(&log).unwrap();
+    let who = crate::slow::caller_of_pid(me);
+    let fields: Vec<(String, String)> = got.lines().map(|l| (l.split('\t').nth(1).unwrap().to_string(), l.split('\t').nth(2).unwrap().to_string())).collect();
+    assert_eq!(fields, [("list".to_string(), who.clone()), ("show".to_string(), who)], "{got}");
+}

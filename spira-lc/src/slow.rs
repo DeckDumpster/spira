@@ -486,6 +486,26 @@ pub fn set_verb(verb: &str) {
     VERB.with(|v| *v.borrow_mut() = verb.to_string());
 }
 
+/// The caller every lc-serve thread's own store calls are logged under.
+pub const SERVER_CALLER: &str = "lc-serve";
+
+/// The verbs lc-serve's own threads log under.
+pub mod threads {
+    pub const PLAN_MIRROR: &str = "plan-mirror";
+    pub const CONTENT_COMMITTER: &str = "content-committer";
+    pub const SETTLE: &str = "settle";
+    pub const SWEEP: &str = "sweep";
+}
+
+/// Runs `body` on a new thread whose store calls are logged under `verb` and caller `lc-serve`.
+pub fn spawn_background(verb: &'static str, body: impl FnOnce() + Send + 'static) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        set_verb(verb);
+        set_caller(SERVER_CALLER);
+        body()
+    })
+}
+
 /// The slow-query threshold from the declared `SPIRA_SLOW_QUERY_MS`; a missing or unparsable key is an `Err`, never a default.
 fn threshold_from(declared: Result<String, String>) -> Result<Duration, String> {
     let v = declared?;
@@ -572,6 +592,9 @@ pub fn line(epoch: i64, verb: &str, caller: &str, took: Duration, sql: &str) -> 
 
 pub fn record(took: Duration, sql: &str) {
     let verb = VERB.with(|v| v.borrow().clone());
+    if limits().is_some_and(|l| l.waits(&verb)) {
+        return;
+    }
     let verb = if verb.is_empty() { "-".to_string() } else { verb };
     let caller = CALLER.with(|c| c.borrow().clone());
     let caller = if caller.is_empty() { "-".to_string() } else { caller };
@@ -852,6 +875,38 @@ mod tests {
         assert_eq!(got.lines().count(), 1);
         let f: Vec<&str> = got.trim_end().split('\t').collect();
         assert_eq!((f[1], f[2], f[3], f[4]), ("list", "spira-lc", "1500", "SELECT * FROM bead WHERE id = ?"));
+    }
+
+    #[test_id(ty2mxt0)]
+    #[test]
+    fn a_waiting_verbs_slow_query_is_not_logged_and_another_verbs_is() {
+        let d = testkit::TempDir::new("slow-wait");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        THRESHOLD_MS.with(|t| t.set(1000));
+        pin_limits(limits(&["admin-store-gc"]));
+        set_caller("cron");
+        set_verb("admin-store-gc");
+        record(Duration::from_millis(3000), "CALL DOLT_GC()");
+        assert!(!log.exists());
+        set_verb("list");
+        record(Duration::from_millis(3000), "SELECT 1");
+        assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
+    }
+
+    #[test_id(tp2900t)]
+    #[test]
+    fn each_background_thread_logs_its_own_verb_and_the_server_as_caller() {
+        let d = testkit::TempDir::new("slow-bg");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        for verb in [threads::PLAN_MIRROR, threads::CONTENT_COMMITTER, threads::SETTLE, threads::SWEEP] {
+            spawn_background(verb, || record(Duration::from_millis(5000), "SELECT 1")).join().unwrap();
+        }
+        let got = std::fs::read_to_string(&log).unwrap();
+        let fields: Vec<(String, String)> = got.lines().map(|l| (l.split('\t').nth(1).unwrap().to_string(), l.split('\t').nth(2).unwrap().to_string())).collect();
+        let want: Vec<(String, String)> = ["plan-mirror", "content-committer", "settle", "sweep"].iter().map(|v| (v.to_string(), "lc-serve".to_string())).collect();
+        assert_eq!(fields, want, "{got}");
     }
 
     #[test_id(t4mslry)]

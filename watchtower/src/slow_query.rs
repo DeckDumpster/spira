@@ -12,7 +12,9 @@ use std::path::Path;
 pub struct Shape {
     pub shape: String,
     pub verbs: Vec<String>,
+    pub callers: Vec<String>,
     pub millis: Vec<u64>,
+    pub slowest: (String, String),
 }
 
 impl Shape {
@@ -33,15 +35,21 @@ pub fn group(text: &str) -> Vec<Shape> {
     let mut by: BTreeMap<String, Shape> = BTreeMap::new();
     for l in text.lines() {
         let f: Vec<&str> = l.splitn(5, '\t').collect();
-        let (verb, ms, shape) = match f[..] {
-            [_, verb, _, ms, shape] if ms.parse::<u64>().is_ok() => (verb, ms, shape),
-            [_, verb, ms, ..] => (verb, ms, l.splitn(4, '\t').nth(3).unwrap_or("")),
+        let (verb, caller, ms, shape) = match f[..] {
+            [_, verb, caller, ms, shape] if ms.parse::<u64>().is_ok() => (verb, caller, ms, shape),
+            [_, verb, ms, ..] => (verb, "-", ms, l.splitn(4, '\t').nth(3).unwrap_or("")),
             _ => continue,
         };
         let Ok(ms) = ms.parse::<u64>() else { continue };
-        let s = by.entry(shape.to_string()).or_insert_with(|| Shape { shape: shape.to_string(), verbs: vec![], millis: vec![] });
+        let s = by.entry(shape.to_string()).or_insert_with(|| Shape { shape: shape.to_string(), verbs: vec![], callers: vec![], millis: vec![], slowest: (String::new(), String::new()) });
         if !s.verbs.iter().any(|v| v == verb) {
             s.verbs.push(verb.to_string());
+        }
+        if !s.callers.iter().any(|c| c == caller) {
+            s.callers.push(caller.to_string());
+        }
+        if s.millis.iter().all(|m| *m < ms) {
+            s.slowest = (verb.to_string(), caller.to_string());
         }
         s.millis.push(ms);
     }
@@ -95,9 +103,9 @@ pub fn run(run_dir: &Path, log_path: &Path, db: &str, home_repo: &str, incident_
         body.push_str("Verdict: query-attributable. No connect or transaction-start was slow in this window; find each verb's query and fix its plan or its index.\n\n");
     }
     for s in &shapes {
-        body.push_str(&format!("shape: {}\nverbs: {}\ncount: {}\np50: {}ms\nmax: {}ms\n\n", s.shape, s.verbs.join(", "), s.count(), s.p50(), s.max()));
+        body.push_str(&format!("shape: {}\nverbs: {}\ncallers: {}\ncount: {}\np50: {}ms\nmax: {}ms\n\n", s.shape, s.verbs.join(", "), s.callers.join(", "), s.count(), s.p50(), s.max()));
     }
-    let title = if wal.is_empty() { format!("SLOW STORE: {} {worst}ms over {threshold_ms}ms; {hits} call(s) over in window", slowest.verbs.join("/")) } else { format!("WAL PRESSURE: {} open; {} shape(s) in window", wal.iter().flat_map(|s| s.verbs.iter().cloned()).collect::<Vec<_>>().join("/"), wal.len()) };
+    let title = if wal.is_empty() { format!("SLOW STORE: {} by {} {worst}ms over {threshold_ms}ms; {hits} call(s) over in window", slowest.slowest.0, slowest.slowest.1) } else { format!("WAL PRESSURE: {} open; {} shape(s) in window", wal.iter().flat_map(|s| s.verbs.iter().cloned()).collect::<Vec<_>>().join("/"), wal.len()) };
     let f = Finding::new(db, home_repo, &title, &body)
         .priority(1)
         .reference("incident:slow-query".to_string())
@@ -139,11 +147,11 @@ mod tests {
         let home = spira_config::process::spira_home();
         let release = spira_config::process::fixture_release(&d, true);
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", home.to_str()), ("SPIRA_RELEASE", release.to_str())]);
-        std::fs::write(&log_path, "1\tlist\tc\t1300\tSELECT a\n2\tshow\tc\t1100\tSELECT b\n").unwrap();
+        std::fs::write(&log_path, "1\tlist\tc\t1300\tSELECT a\n2\tshow\td\t1100\tSELECT b\n").unwrap();
         run(&d, &log_path, "db", "spira", &inc, 1000);
         let got = std::fs::read_to_string(&calls).unwrap();
         let first = got.lines().next().unwrap();
-        for want in ["incident:slow-query", "SLOW STORE: list 1300ms over 1000ms; 2 call(s) over in window"] {
+        for want in ["incident:slow-query", "SLOW STORE: list by c 1300ms over 1000ms; 2 call(s) over in window", "callers: c\n", "callers: d\n"] {
             assert!(got.contains(want), "{want} missing from {first}");
         }
     }
@@ -172,6 +180,14 @@ mod tests {
     fn distinct_shapes_group_separately() {
         let g = group("1\ta\t1100\tX\n2\tb\t1200\tY\n3\ta\t1300\tX\n");
         assert_eq!(g.len(), 2);
+    }
+
+    #[test_id(tlrsqxm)]
+    #[test]
+    fn a_shape_keeps_every_caller_and_the_slowest_calls_verb_and_caller() {
+        let g = group("1\tlist\ta\t1100\tX\n2\tshow\tb\t1900\tX\n3\tlist\ta\t1300\tX\n4\told\t1200\tX\n");
+        assert_eq!(g[0].callers, ["a", "b", "-"]);
+        assert_eq!(g[0].slowest, ("show".to_string(), "b".to_string()));
     }
 
     #[test_id(tsolnez)]

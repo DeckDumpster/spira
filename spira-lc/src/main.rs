@@ -116,6 +116,8 @@ fn main() {
         std::process::exit(serve::run(&args[1..]));
     }
 
+    name_cli_call(&args);
+
     // content-landed never touches the lifecycle machine; close-on-land reaches it only
     // through the caller verb `content-on-base`, which reads the switch itself.
     match args.first().map(String::as_str) {
@@ -165,6 +167,10 @@ fn main() {
             std::process::exit(code)
         }
         Some("admin-store-gc") => {
+            if let Err(e) = pin_answer_limits(spira_config::process::cfg) {
+                eprintln!("spira-lc: admin-store-gc: {e}");
+                std::process::exit(2)
+            }
             let (code, out) = store_gc::admin_store_gc(&args[1..]);
             if code == 0 { println!("{out}") } else { eprintln!("{out}") }
             std::process::exit(code)
@@ -353,6 +359,16 @@ fn ship_status() -> (i32, String) {
     }
 }
 
+fn pin_answer_limits(read: impl Fn(&str) -> Result<String, String>) -> Result<(), String> {
+    slow::answer_limits_from(read).map(slow::pin_limits)
+}
+
+/// Names this process's store calls in the slow-query log: its verb, and who ran it.
+fn name_cli_call(args: &[String]) {
+    slow::set_verb(args.first().map(String::as_str).unwrap_or("-"));
+    slow::set_caller(&slow::caller_of_pid(std::process::id() as i32));
+}
+
 /// Every verb but `serve` (which never reaches here — see `main`, and `serve::run`'s own
 /// direct dispatch to this same function per request).
 pub fn dispatch(args: &[String]) -> (i32, String) {
@@ -441,6 +457,35 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test_id(tl427wy)]
+    #[test]
+    fn the_collection_pins_its_waiting_verbs_and_refuses_by_key_when_the_config_errs() {
+        let d = testkit::TempDir::new("cli-pin");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        pin_answer_limits(|k| Ok(if k == "SPIRA_LC_ANSWER_MS" { "100".into() } else { "watch,admin-store-gc".into() })).unwrap();
+        name_cli_call(&["admin-store-gc".to_string()]);
+        slow::record(std::time::Duration::from_millis(5000), "CALL DOLT_GC()");
+        assert!(!log.exists());
+        let e = pin_answer_limits(|k| Err(format!("{k} unset"))).unwrap_err();
+        assert!(e.contains("lc_answer_ms"), "{e}");
+    }
+
+    #[test_id(tjok43p)]
+    #[test]
+    fn an_administrator_verb_names_itself_and_its_caller_in_the_slow_log() {
+        let d = testkit::TempDir::new("cli-name");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap()))]);
+        name_cli_call(&["admin-store-gc".to_string(), "--db".to_string(), "spira".to_string()]);
+        slow::pin_limits(slow::Limits { answer_ms: 100, waiting: vec![] });
+        slow::record(std::time::Duration::from_millis(5000), "CALL DOLT_GC()");
+        let got = std::fs::read_to_string(&log).unwrap();
+        let f: Vec<&str> = got.trim_end().split('\t').collect();
+        assert_eq!((f[1], f[2].to_string()), ("admin-store-gc", slow::caller_of_pid(std::process::id() as i32)), "{got}");
+        assert_ne!(f[2], "-");
+    }
+
     #[test_id(ts945pl)]
     #[test]
     fn a_served_admin_store_is_not_a_verb_and_runs_nothing() {
