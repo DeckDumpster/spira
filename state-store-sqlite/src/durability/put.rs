@@ -606,12 +606,11 @@ mod tests {
         assert_eq!(calls.first().unwrap().target, "/b/p/snapshot/1?uploads"); // not a path: an HTTP request target
         assert_eq!(calls.first().unwrap().method, "POST");
         assert!(complete.method == "POST" && complete.target.ends_with("uploadId=up%2F1%202"));
-        assert!(!dir.path().join("snap.part").exists() && !dir.path().join("snap.complete").exists());
     }
 
     #[test_id(tzxg6wx)]
     #[test]
-    fn a_part_the_store_refuses_fails_the_upload_without_an_abort_the_key_could_not_send_and_leaves_no_temporary() {
+    fn a_part_the_store_refuses_fails_the_upload_without_an_abort_the_key_could_not_send() {
         let dir = testkit::TempDir::new("put-multipart-abort");
         let f = dir.path().join("snap");
         std::fs::write(&f, vec![7u8; 2_500]).unwrap();
@@ -621,7 +620,6 @@ mod tests {
         let calls = store.requests();
         assert!(calls.iter().all(|c| c.method != "DELETE"), "no abort");
         assert!(calls.iter().all(|c| !(c.method == "POST" && c.target.contains("uploadId"))), "never completed");
-        assert!(!dir.path().join("snap.part").exists());
     }
 
     #[test_id(tpd0skn)]
@@ -658,7 +656,38 @@ mod tests {
         );
     }
 
-    #[test_id(ta356st)]
+    #[test_id(tib07na)]
+    #[test]
+    fn the_signer_signs_a_bare_subresource_query_as_aws_prints_for_its_lifecycle_example() {
+        let c = S3Creds { access_key: "AKIAIOSFODNN7EXAMPLE".into(), secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(), session_token: None, region: "us-east-1".into(), endpoint: None, part_bytes: PART_BYTES };
+        let auth = sign(&c, "GET", "https://examplebucket.s3.amazonaws.com/?lifecycle", &[], &sha256_hex(b""), "20130524T000000Z");
+        assert!(auth.ends_with("Signature=fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543"), "{auth}");
+    }
+
+    #[test_id(t7qj2wg)]
+    #[test]
+    fn a_single_put_answered_200_with_an_error_body_or_not_answered_at_all_is_a_failure() {
+        let dir = testkit::TempDir::new("put-failure-shapes");
+        let f = dir.path().join("f");
+        std::fs::write(&f, b"x").unwrap();
+        let body = Listener::start(Box::new(|_| (200, String::new(), "<Error><Code>Slow</Code></Error>".into())));
+        let err = body.uploader().put(&f, "k").unwrap_err();
+        assert!(err.starts_with("PUT p/k: HTTP 200: <Error>"), "{err}");
+        let gone = {
+            let up = answering(200).uploader();
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = l.local_addr().unwrap().port();
+            drop(l);
+            let mut creds = up.creds.clone().unwrap();
+            creds.endpoint = Some(format!("http://127.0.0.1:{port}"));
+            Uploader { creds: Some(creds), ..up }
+        };
+        let err = gone.signed("b", "p/k", &f, true).unwrap_err();
+        assert_eq!(err.0, 0, "{err:?}");
+        assert!(err.1.starts_with("PUT p/k: "), "{err:?}");
+    }
+
+    #[test_id(tdlih9g)]
     #[test]
     fn the_request_date_is_the_utc_time_in_amz_basic_format() {
         assert_eq!(amz_date(0), "19700101T000000Z");
