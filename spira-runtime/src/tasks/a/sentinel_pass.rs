@@ -60,6 +60,7 @@
 //! | `sentinel-pass.content_label` / `.content_note` / `.content_close` (bd `label add/remove`, `note`, `close`: `holds.rs:137`, `open_children.rs:161-172`, `waiters.rs:153-215`, `lifecycle.rs:355`) | store | 5 s | `(id, label, op)` / `(id, note-hash)` | — |
 //! | `sentinel-pass.recompute_blocked` (`bd recompute-blocked`, `pass.rs:600`) | store | 30 s (unverified) | pass id | not starved |
 //! | `sentinel-pass.stop_holder` (`hel stop-holder`, `lifecycle.rs:364-366`) | unit (`unit.stop`) | 30 s | bead id | holder still alive after stop → no reclaim |
+//! | `sentinel-pass.stop_doomed` (`dwarf::stop::request`) | store | 5 s | `(bead, prereq, tip)` | row no longer WORKING on that stack; stop already pending |
 //! | `sentinel-pass.landing_start` (`unit.start` of `spira-landing` → `landing-pass land`, `RuntimeMaxSec=SPIRA_LAND_MAXSEC`, `dispatch.rs:241-290`) | unit | 10 s | unit name `SPIRA_LAND_UNIT` | already active; skew |
 //! | `sentinel-pass.watchtower` ×12 checks (`dispatch.rs:180-203`) | host → library | 10 s each (unverified) | `(check, pass)` | — (moves with `watch.tower`) |
 //! | `sentinel-pass.strand` (`pass.rs:575`) | store | 30 s (unverified) | pass id | — |
@@ -167,6 +168,7 @@ pub const CONTENT_NOTE: &str = "sentinel-pass.content_note";
 pub const CONTENT_CLOSE: &str = "sentinel-pass.content_close";
 pub const RECOMPUTE_BLOCKED: &str = "sentinel-pass.recompute_blocked";
 pub const STOP_HOLDER: &str = "sentinel-pass.stop_holder";
+pub const STOP_DOOMED: &str = "sentinel-pass.stop_doomed";
 pub const LANDING_START: &str = "sentinel-pass.landing_start";
 pub const WATCHTOWER: &str = "sentinel-pass.watchtower";
 pub const STRAND: &str = "sentinel-pass.strand";
@@ -194,6 +196,7 @@ pub const ACTS: &[(&str, u64)] = &[
     (CONTENT_CLOSE, 5_000),
     (RECOMPUTE_BLOCKED, 30_000),
     (STOP_HOLDER, 30_000),
+    (STOP_DOOMED, 5_000),
     (LANDING_START, 10_000),
     (WATCHTOWER, 10_000),
     (STRAND, 30_000),
@@ -205,7 +208,7 @@ pub const ACTS: &[(&str, u64)] = &[
 ];
 /// Hand-offs decide returns as acts that are emitted, not run: CHECK 7 wants a call.
 pub const EMITS: &[EventKindTag] = &[CALL_WANTED];
-pub const EFFECTS: &[&str] = &[OBSERVE, LC_EVENT, LC_HOLD, LC_UNHOLD, LC_FACT, LC_CLOSE, CONTENT_LABEL, CONTENT_NOTE, CONTENT_CLOSE, RECOMPUTE_BLOCKED, STOP_HOLDER, LANDING_START, WATCHTOWER, STRAND, PILGRIMAGE_CLOSE, ASK, INCIDENT_EVENT, REFLECT, PHASE_METRIC];
+pub const EFFECTS: &[&str] = &[OBSERVE, LC_EVENT, LC_HOLD, LC_UNHOLD, LC_FACT, LC_CLOSE, CONTENT_LABEL, CONTENT_NOTE, CONTENT_CLOSE, RECOMPUTE_BLOCKED, STOP_HOLDER, STOP_DOOMED, LANDING_START, WATCHTOWER, STRAND, PILGRIMAGE_CLOSE, ASK, INCIDENT_EVENT, REFLECT, PHASE_METRIC];
 pub const KEYS: &[&str] = &[
     "SPIRA_RUN",
     "SPIRA_DB",
@@ -265,6 +268,12 @@ pub struct Row {
     pub updated_at_ms: Option<u64>,
     #[serde(default)]
     pub tip: Option<String>,
+    /// Each prerequisite the row is stacked on, with the tip it was stacked at.
+    #[serde(default)]
+    pub stack_tips: std::collections::BTreeMap<String, String>,
+    /// A round or gate found this row's tip red.
+    #[serde(default)]
+    pub known_red: bool,
 }
 
 /// The landing leg's last status, as its `unit.ran` body or the `landing` task's carry reports it.
@@ -417,6 +426,8 @@ fn lc_row(r: &Row) -> sentinel::model::LcRow {
         tip: r.tip.clone(),
         reason: r.reason.clone(),
         updated_at: r.updated_at_ms.map(|ms| (ms / 1000) as i64),
+        stack_tips: r.stack_tips.clone(),
+        known_red: r.known_red,
     }
 }
 
@@ -518,6 +529,14 @@ fn check2(rows: &[Row], lc: &[sentinel::model::LcRow], snap: &Snapshot, now: i64
         acts.push(act(LC_FACT, format!("{id}:reclaimed:stale-lease:{now}"), Write { id: id.clone(), kind: "reclaimed".into(), cause: "stale-lease".into(), ..Write::default() }));
         let text = if ago > 0 { format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60) } else { "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string() };
         acts.push(act(CONTENT_NOTE, format!("{id}:{}", text.len()), Write { id, text, ..Write::default() }));
+    }
+}
+
+/// A builder stacked on a tip a round or gate found red is stopped, its branch kept.
+fn check2_doomed(lc: &[sentinel::model::LcRow], acts: &mut Vec<Act>) {
+    for (id, prereq, tip) in sentinel::pass_checks::doomed(lc) {
+        let text = format!("stopped: stacked on {prereq} at {tip}, which a round or gate found red");
+        acts.push(act(STOP_DOOMED, format!("{id}:{prereq}:{tip}"), Write { id, label: prereq, cause: tip, text, ..Write::default() }));
     }
 }
 
@@ -650,6 +669,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot) -> (Carry, Vec<Act>) {
     if let Some(rows) = &snap.rows {
         if !snap.skip_reclaim {
             check2(rows, &lc, snap, now, &mut acts);
+            check2_doomed(&lc, &mut acts);
         }
     }
     if !snap.strand.is_empty() {
@@ -955,7 +975,7 @@ pub fn observe(e: &Effects, input: &str) -> Result<String, String> {
     }
     snap.rows = rows.map(|v| {
         v.into_iter()
-            .map(|r| Row { version: r.version.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0), lease_until_ms: r.lease_until.map(|s| s.max(0) as u64 * 1000), updated_at_ms: r.updated_at.map(|s| s.max(0) as u64 * 1000), id: r.bead_id, state: r.state, holds: r.holds, holder: r.holder, stack: r.stack, reason: r.reason, tip: r.tip })
+            .map(|r| Row { version: r.version.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0), lease_until_ms: r.lease_until.map(|s| s.max(0) as u64 * 1000), updated_at_ms: r.updated_at.map(|s| s.max(0) as u64 * 1000), id: r.bead_id, state: r.state, holds: r.holds, holder: r.holder, stack: r.stack, reason: r.reason, tip: r.tip, stack_tips: r.stack_tips, known_red: r.known_red })
             .collect()
     });
     let plan = plan_labels(&snap.labels).join(",");
@@ -1130,6 +1150,26 @@ pub fn stop_holder(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, STOP_HOLDER)?;
     let units = e.units.as_deref().ok_or("no unit manager configured")?;
     sentinel::hel_verbs::stop_holder(&w.id, units).map(|()| format!("stopped the holder of {}", w.id))
+}
+
+/// `sentinel-pass.stop_doomed`: the row re-read live; one no longer WORKING on that stack is
+/// refused, a stop already pending is left alone, else the dwarf's heartbeat is asked to stop.
+pub fn stop_doomed(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
+    let w = write_of(&spec.input, STOP_DOOMED)?;
+    let lc = client(e, spec.deadline_ms);
+    let shown: serde_json::Value = serde_json::from_str(&answer(&lc, &["show", &w.id])?).map_err(|e| format!("show {}: {e}", w.id))?;
+    let bead = &shown["bead"];
+    let state = bead["state"].as_str().unwrap_or_default();
+    let stacked = sentinel::model::parse_stack_tips(bead.get("stack")).get(&w.label).is_some_and(|t| *t == w.cause);
+    if state != "WORKING" || !stacked {
+        return Err(format!("{} is {state}, no longer working stacked on {} at {}", w.id, w.label, w.cause));
+    }
+    let run = &e.world.run_dir;
+    if dwarf::stop::requested(run, &w.id) {
+        return Ok(format!("a stop is already pending on {}", w.id));
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    dwarf::stop::request(run, &w.id, &w.text, now)
 }
 
 /// `sentinel-pass.landing_start`: the landing leg as a unit under the naming rule.

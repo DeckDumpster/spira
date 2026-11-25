@@ -51,6 +51,16 @@ impl<'a> View<'a> {
     }
 }
 
+/// A WORKING row stacked on a prerequisite's current tip while that prerequisite is known red:
+/// `(bead, prereq, tip)`. A prerequisite whose tip moved, or that is not red, is not doomed.
+pub fn doomed(rows: &[LcRow]) -> Vec<(String, String, String)> {
+    let red: HashMap<&str, &str> = rows.iter().filter(|r| r.known_red).filter_map(|r| Some((r.bead_id.as_str(), r.tip.as_deref()?))).collect();
+    rows.iter()
+        .filter(|r| r.state == "WORKING")
+        .flat_map(|r| r.stack_tips.iter().filter(|(p, t)| red.get(p.as_str()) == Some(&t.as_str())).map(|(p, t)| (r.bead_id.clone(), p.clone(), t.clone())))
+        .collect()
+}
+
 /// The `blocks` targets of the beads carrying `label` that `has_row` does not know.
 pub fn unread_blockers(beads: &[Bead], label: &str, has_row: &dyn Fn(&str) -> bool) -> Vec<String> {
     let mut ids: Vec<String> = beads

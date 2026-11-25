@@ -558,3 +558,168 @@ mod landing_log_rotation {
         assert_eq!(names(dir.path()), ["landing.log"]);
     }
 }
+
+/// A WORKING builder on `sp-b` stacked at `tip`, over a prerequisite `sp-a` at `a_tip`.
+fn stacked(a_state: &str, a_tip: &str, red: bool, b_state: &str, stacked_at: &str) -> Snapshot {
+    let a = Row {
+        id: "sp-a".into(),
+        state: a_state.into(),
+        version: 2,
+        tip: Some(a_tip.into()),
+        known_red: red,
+        ..Row::default()
+    };
+    let b = Row {
+        id: "sp-b".into(),
+        state: b_state.into(),
+        version: 4,
+        holder: Some("dwarf-2".into()),
+        lease_until_ms: Some(NOW + 600_000),
+        stack: vec!["sp-a".into()],
+        stack_tips: [("sp-a".to_string(), stacked_at.to_string())].into(),
+        ..Row::default()
+    };
+    Snapshot {
+        rows: Some(vec![a, b]),
+        holder_alive: [("sp-b".to_string(), true)].into(),
+        ..idle()
+    }
+}
+
+#[test_id(t8knsfh)]
+#[test]
+fn a_working_dependent_on_a_red_tip_gets_one_stop_doomed() {
+    let (_, acts) = decide(
+        &Carry::default(),
+        &stacked("CERTIFIED", "t1", true, "WORKING", "t1"),
+    );
+    let stops = effects(&acts, STOP_DOOMED);
+    assert_eq!(stops.len(), 1, "{acts:?}");
+    assert_eq!(stops[0].key, "sp-b:sp-a:t1");
+    assert!(
+        stops[0]
+            .input
+            .contains("stopped: stacked on sp-a at t1, which a round or gate found red"),
+        "{}",
+        stops[0].input
+    );
+}
+
+#[test_id(tgtac4f)]
+#[test]
+fn no_stop_doomed_for_a_blocker_not_red_a_moved_tip_or_a_dependent_not_working() {
+    for (snap, why) in [
+        (
+            stacked("CERTIFIED", "t1", false, "WORKING", "t1"),
+            "blocker not red",
+        ),
+        (
+            stacked("CERTIFIED", "t2", true, "WORKING", "t1"),
+            "tip moved",
+        ),
+        (
+            stacked("CERTIFIED", "t1", true, "READY", "t1"),
+            "dependent not working",
+        ),
+    ] {
+        let (_, acts) = decide(&Carry::default(), &snap);
+        assert!(effects(&acts, STOP_DOOMED).is_empty(), "{why}: {acts:?}");
+    }
+}
+
+#[test_id(tc0fofv)]
+#[test]
+fn unreadable_rows_decide_no_stop_doomed() {
+    let (_, acts) = decide(
+        &Carry::default(),
+        &Snapshot {
+            rows: None,
+            ..stacked("CERTIFIED", "t1", true, "WORKING", "t1")
+        },
+    );
+    assert!(effects(&acts, STOP_DOOMED).is_empty(), "{acts:?}");
+}
+
+mod stop_doomed_effect {
+    use super::*;
+    use runtime::event::EffectSpec;
+    use std::os::unix::net::UnixListener;
+    use std::sync::{Arc, Mutex};
+
+    fn fixture(shown: Arc<Mutex<serde_json::Value>>) -> (testkit::TempDir, spira_runtime::Effects) {
+        let dir = testkit::TempDir::new("sentinel-stop-doomed");
+        let sock = dir.path().join("lc.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        std::thread::spawn(move || {
+            runtime::socket::answer(&listener, &|_| Ok(shown.lock().unwrap().to_string()))
+        });
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let far = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3_600;
+        std::fs::write(run.join("dwarf-1-sp-b.pid"), "1\n").unwrap();
+        std::fs::write(run.join("dwarf-1-sp-b.lease"), format!("{far}\n")).unwrap();
+        let mut e = spira_runtime::Effects::default();
+        e.world.run_dir = run;
+        e.world.lc_socket = sock;
+        (dir, e)
+    }
+
+    fn row(state: &str, tip: &str) -> serde_json::Value {
+        serde_json::json!({ "bead": { "state": state, "stack": { "sp-a": tip } } })
+    }
+
+    fn stop(e: &spira_runtime::Effects, why: &str) -> Result<String, String> {
+        let w = Write {
+            id: "sp-b".into(),
+            label: "sp-a".into(),
+            cause: "t1".into(),
+            text: why.into(),
+            ..Write::default()
+        };
+        stop_doomed(
+            e,
+            &EffectSpec::keyed(
+                STOP_DOOMED,
+                "sp-b:sp-a:t1",
+                serde_json::to_string(&w).unwrap(),
+                5_000,
+            ),
+        )
+    }
+
+    #[test_id(tsd2uwx)]
+    #[test]
+    fn a_stop_is_written_once_and_a_row_that_moved_is_refused() {
+        let shown = Arc::new(Mutex::new(row("WORKING", "t1")));
+        let (_dir, e) = fixture(shown.clone());
+        let file = dwarf::stop::request_file(&e.world.run_dir, "sp-b");
+        stop(
+            &e,
+            "stopped: stacked on sp-a at t1, which a round or gate found red",
+        )
+        .unwrap();
+        assert_eq!(
+            dwarf::stop::reason(&e.world.run_dir, "sp-b"),
+            "stopped: stacked on sp-a at t1, which a round or gate found red"
+        );
+        let first = std::fs::metadata(&file).unwrap().modified().unwrap();
+        stop(&e, "a different reason").unwrap();
+        assert_eq!(
+            dwarf::stop::reason(&e.world.run_dir, "sp-b"),
+            "stopped: stacked on sp-a at t1, which a round or gate found red",
+            "a pending request is left alone"
+        );
+        assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), first);
+
+        dwarf::stop::clear(&e.world.run_dir, "sp-b");
+        for moved in [row("READY", "t1"), row("WORKING", "t2")] {
+            *shown.lock().unwrap() = moved;
+            assert!(stop(&e, "x").is_err());
+            assert!(!dwarf::stop::requested(&e.world.run_dir, "sp-b"));
+        }
+    }
+}

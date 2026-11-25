@@ -277,6 +277,7 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("sentinel-pass.recompute_blocked", Store),
     ("sentinel-pass.reflect", Unit),
     ("sentinel-pass.stop_holder", Unit),
+    ("sentinel-pass.stop_doomed", Store),
     ("sentinel-pass.strand", Store),
     ("sentinel-pass.watchtower", Host),
     ("sift.fetch_base", Git),

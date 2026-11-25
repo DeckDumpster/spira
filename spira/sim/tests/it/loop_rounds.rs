@@ -432,6 +432,12 @@ fn a_red_pass_ejects_the_provisional_member_whose_gate_went_red_first_and_the_ot
 /// not be claimed on it: it waits until the tip moves and is certified, and the blocker, sent
 /// back to REWORK, is claimed first.
 fn red_unattributed_round(seed: u64, red: bool) -> Run {
+    red_unattributed_round_on(seed, move |_| red, |d, _| d)
+}
+
+/// The same round, its abandon marking the tip red when `red_at` says so for that abandon
+/// (counted from 1), with `more` doubles laid over.
+fn red_unattributed_round_on(seed: u64, red_at: impl Fn(u32) -> bool + Send + Sync + 'static, more: impl FnOnce(sim::doubles::Doubles, &Arc<World>) -> sim::doubles::Doubles) -> Run {
     let a = Bead { submits: vec![590_000], ..Bead::new("sp-rr01", 30_000) };
     let b = Bead { blocks: vec!["sp-rr01".into()], ..Bead::new("sp-rr02", 30_000) };
     let verdicts = vec![
@@ -441,9 +447,10 @@ fn red_unattributed_round(seed: u64, red: bool) -> Run {
     ];
     let script = Script { beads: vec![a, b], max_concurrent: 1, verdicts, until: 60 * MIN, ..Script::default() };
     let reds = Arc::new(Mutex::new(2));
+    let abandons = Arc::new(Mutex::new(0u32));
     let (r, _) = run_keeping(seed, script, move |d, w| {
         let (wc, wf, wa) = (w.clone(), w.clone(), w.clone());
-        d.double(bl::CERTIFY, move |input| {
+        let d = d.double(bl::CERTIFY, move |input| {
             let l = leg(input)?;
             let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), l.batch, REPO.into()], env: vec![], cwd: None };
             let mut left = reds.lock().unwrap_or_else(|e| e.into_inner());
@@ -462,6 +469,11 @@ fn red_unattributed_round(seed: u64, red: bool) -> Run {
             units::effect(&*wf.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
         })
         .double(bl::ABANDON, move |_| {
+            let red = {
+                let mut n = abandons.lock().unwrap_or_else(|e| e.into_inner());
+                *n += 1;
+                red_at(*n)
+            };
             let now = wa.now();
             let mut lc = wa.lc();
             let members = lc.round.take().map(|(_, m)| m).unwrap_or_default();
@@ -470,7 +482,8 @@ fn red_unattributed_round(seed: u64, red: bool) -> Run {
                 lc.apply(now, &id, bl::NAME, lifecycle::bead::BeadEventKind::Requeued { tip, red })?;
             }
             Ok("{}".into())
-        })
+        });
+        more(d, w)
     });
     r
 }
@@ -500,4 +513,159 @@ fn without_the_red_mark_a_dependent_is_claimed_stacked_on_the_tip_the_abandoned_
     show("red-tip-stacked-on", &r);
     let red_tip = r.submitted["sp-rr01"][0].clone();
     assert!(r.claims.iter().any(|(id, s)| id == "sp-rr02" && s.get("sp-rr01") == Some(&red_tip)), "B was claimed on the red tip: {}", r.dump());
+}
+
+/// The sentinel pass's observe, laid over with the world's rows: every live row as the store lists
+/// it, nothing else for the pass to act on.
+fn pass_observe(w: &World, _: &str) -> Result<String, String> {
+    use spira_runtime::tasks::a::sentinel_pass as sp;
+    let lc = w.lc();
+    let rows = lc
+        .rows
+        .values()
+        .map(|r| sp::Row {
+            id: r.bead_id.clone(),
+            state: r.state.as_str().to_string(),
+            version: r.version,
+            holder: r.holder.clone(),
+            lease_until_ms: r.lease_until.map(|s| s as u64 * 1000),
+            stack: r.stack.keys().cloned().collect(),
+            stack_tips: r.stack.clone(),
+            tip: r.tip.clone(),
+            known_red: lifecycle::bead::known_red(r),
+            ..sp::Row::default()
+        })
+        .collect();
+    let alive = lc
+        .rows
+        .values()
+        .filter(|r| r.holder.is_some())
+        .map(|r| (r.bead_id.clone(), true))
+        .collect();
+    let snap = sp::Snapshot {
+        beads: Some(vec![]),
+        rows: Some(rows),
+        plan_ready: Some(0),
+        holder_alive: alive,
+        landing_active: true,
+        world_running: true,
+        now_ms: w.now(),
+        ..sp::Snapshot::default()
+    };
+    serde_json::to_string(&snap).map_err(|e| e.to_string())
+}
+
+/// `sentinel-pass.stop_doomed` as the dwarf's heartbeat ends the session it is asked to stop:
+/// disposition slain, then release; the dwarf and its pending submits go with it.
+fn pass_stop_doomed(w: &World, input: &str) -> Result<String, String> {
+    use spira_runtime::tasks::a::sentinel_pass as sp;
+    let write: sp::Write = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let now = w.now();
+    let mut lc = w.lc();
+    let holder = lc
+        .rows
+        .get(&write.id)
+        .and_then(|r| r.holder.clone())
+        .ok_or("no holder")?;
+    lc.apply(
+        now,
+        &write.id,
+        &holder,
+        lifecycle::bead::BeadEventKind::Disposition {
+            status: lifecycle::bead::DispositionStatus::Slain,
+            note: write.text.clone(),
+        },
+    )?;
+    lc.apply(
+        now,
+        &write.id,
+        &holder,
+        lifecycle::bead::BeadEventKind::Release,
+    )?;
+    lc.due
+        .retain(|(_, d)| !matches!(d, loopworld::Due::Submit { bead, .. } if *bead == write.id));
+    lc.dwarves.remove(&holder);
+    Ok(format!("stopped {}", write.id))
+}
+
+fn building_on_a_tip_that_goes_red(stop: bool) -> Run {
+    red_unattributed_round_on(
+        41,
+        |n| n >= 2,
+        move |d, w| {
+            let d = loopworld::on(d, w, "sentinel-pass.observe", pass_observe);
+            if stop {
+                loopworld::on(d, w, "sentinel-pass.stop_doomed", pass_stop_doomed)
+            } else {
+                d
+            }
+        },
+    )
+}
+
+#[test_id(tjahi4x)]
+#[test]
+fn a_builder_on_a_tip_the_gate_found_red_is_stopped_ready_within_two_passes_and_the_blocker_is_claimed_first(
+) {
+    let r = building_on_a_tip_that_goes_red(true);
+    show("doomed-stopped", &r);
+    let b_on_a = r
+        .claims
+        .iter()
+        .position(|(id, s)| id == "sp-rr02" && s.contains_key("sp-rr01"))
+        .unwrap_or_else(|| panic!("B was claimed stacked on A: {}", r.dump()));
+    let red_at = r
+        .history
+        .iter()
+        .find(|(_, id, _, to)| id == "sp-rr01" && to == "REWORK")
+        .map(|(at, ..)| *at)
+        .unwrap_or_else(|| panic!("A's tip went red: {}", r.dump()));
+    let stopped = r
+        .history
+        .iter()
+        .find(|(at, id, from, to)| {
+            id == "sp-rr02" && from == "WORKING" && to == "READY" && *at >= red_at
+        })
+        .map(|(at, ..)| *at);
+    let stopped = stopped.unwrap_or_else(|| panic!("B was put back to READY: {}", r.dump()));
+    assert!(
+        stopped - red_at <= 2 * 120_000,
+        "within two passes of the red tip: red at {red_at}, stopped at {stopped}"
+    );
+    let a_again = r
+        .claims
+        .iter()
+        .skip(b_on_a + 1)
+        .position(|(id, _)| id == "sp-rr01")
+        .map(|p| p + b_on_a + 1)
+        .unwrap_or_else(|| panic!("A is claimed again: {}", r.dump()));
+    let b_again = r
+        .claims
+        .iter()
+        .skip(b_on_a + 1)
+        .position(|(id, _)| id == "sp-rr02")
+        .map(|p| p + b_on_a + 1);
+    assert!(
+        b_again.is_none_or(|b| a_again < b),
+        "A is claimed before B: {:?}",
+        r.claims
+    );
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+    assert_no_process(&r);
+}
+
+#[test_id(t2omdc1)]
+#[test]
+fn without_the_stop_the_builder_submits_on_the_tip_the_gate_found_red() {
+    let r = building_on_a_tip_that_goes_red(false);
+    show("doomed-unstopped", &r);
+    let stale = r
+        .history
+        .iter()
+        .any(|(_, id, from, to)| id == "sp-rr02" && from == "WORKING" && to == "SUBMITTED");
+    assert!(
+        stale,
+        "B submits on the red tip when nothing stops it: {}",
+        r.dump()
+    );
 }
