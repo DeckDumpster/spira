@@ -1,7 +1,7 @@
 //! Bounding a database's commit history: the newest commits stay, everything older becomes one base.
 //!
-//! The rewrite runs on a side branch so the served branch's working set is never touched (a
-//! rebase refuses a dirty one, and the store keeps its writes there). Writes that land while the
+//! The rewrite runs on a side branch so the served branch's working set is never touched (the
+//! store keeps its uncommitted writes there). Writes that land while the
 //! side branch is built are cherry-picked onto it, and the served branch is then soft-reset onto
 //! it: the soft reset leaves the working set alone, so a commit that slips in after the last
 //! look is dropped from the log but never from the data.
@@ -67,28 +67,49 @@ pub fn abandon(sql: &dyn Sql) -> Result<(), String> {
     sql.run(&script, false).map(|_| ())
 }
 
-/// Builds the side branch: every commit but the root squashed into one, except the newest
-/// `keep - 1`. Returns the served branch's tip the side branch was cut from.
+/// Builds the side branch: every commit but the root squashed into one base by a soft reset,
+/// then the newest `keep - 1` cherry-picked on it. No squashed commit is replayed, so an old
+/// schema change cannot fail the build. Returns the served branch's tip the log was read at.
 pub fn squash(sql: &dyn Sql, keep: u64) -> Result<String, String> {
     abandon(sql)?;
     let main = served(sql)?;
-    let script = format!(
-        "CALL DOLT_BRANCH('{SIDE}', '{main}');\n\
-         SELECT HASHOF('{SIDE}') AS tip;\n\
-         CALL DOLT_CHECKOUT('{SIDE}');\n\
-         CALL DOLT_REBASE('-i', (SELECT commit_hash FROM dolt_log ORDER BY commit_order ASC LIMIT 1));\n\
-         UPDATE dolt_rebase SET action = 'squash' WHERE rebase_order > 1 AND rebase_order <= (SELECT MAX(rebase_order) FROM dolt_rebase) - {};\n\
-         CALL DOLT_REBASE('--continue');\n",
-        keep.saturating_sub(1)
-    );
-    let out = match sql.run(&script, true) {
-        Ok(o) => o,
-        Err(e) => {
-            let _ = abandon(sql);
-            return Err(e);
+    let out = sql.run(&format!("SELECT HASHOF('{main}') AS tip;\n"), true)?;
+    let tip = csv_rows(&out, "tip").first().cloned().ok_or_else(|| format!("no tip in {out:?}"))?;
+    let log = csv_rows(&sql.run(&format!("SELECT commit_hash FROM dolt_log('{}') ORDER BY commit_order ASC;\n", hash_ok(&tip)?), true)?, "commit_hash");
+    let mut boundary = log.len().saturating_sub(keep.saturating_sub(1) as usize + 1);
+    if log.len() < 3 || boundary == 0 {
+        return Err(format!("a log of {} commits has nothing to squash at keep {keep}", log.len()));
+    }
+    loop {
+        match build_side(sql, &log, boundary) {
+            Ok(None) => return Ok(tip),
+            Ok(Some(stuck)) => boundary = stuck,
+            Err(e) => {
+                let _ = abandon(sql);
+                return Err(e);
+            }
         }
-    };
-    csv_rows(&out, "tip").first().cloned().ok_or_else(|| format!("no tip in {out:?}"))
+    }
+}
+
+/// Cuts the side branch at `log[boundary]`, makes its tree the one base and picks what follows.
+/// A commit that cannot be picked is returned: it becomes the next boundary, strictly newer.
+fn build_side(sql: &dyn Sql, log: &[String], boundary: usize) -> Result<Option<usize>, String> {
+    abandon(sql)?;
+    sql.run(
+        &format!(
+            "CALL DOLT_BRANCH('{SIDE}', '{}');\nCALL DOLT_CHECKOUT('{SIDE}');\nCALL DOLT_RESET('--soft', '{}');\nCALL DOLT_COMMIT('--allow-empty', '-Am', 'history squashed');\n",
+            hash_ok(&log[boundary])?,
+            hash_ok(&log[0])?
+        ),
+        false,
+    )?;
+    for (i, h) in log.iter().enumerate().skip(boundary + 1) {
+        if sql.run(&format!("CALL DOLT_CHECKOUT('{SIDE}');\nCALL DOLT_CHERRY_PICK('--allow-empty', '{}');\n", hash_ok(h)?), false).is_err() {
+            return Ok(Some(i));
+        }
+    }
+    Ok(None)
 }
 
 /// Replays what the served branch gained since `tip` onto the side branch, until it is caught
