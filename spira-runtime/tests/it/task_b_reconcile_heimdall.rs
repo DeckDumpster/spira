@@ -104,3 +104,76 @@ fn the_sentinel_is_found_by_its_real_task_name_in_the_scheduler_status() {
     assert_eq!(task::sentinel_status(Some(&doc)), TaskStatus { armed: false, last_fired_ms: Some(1_000_000), effect_failures: 0 });
     assert_eq!(task::sentinel_status(None), TaskStatus { armed: true, last_fired_ms: None, effect_failures: 0 });
 }
+
+struct Conditions;
+
+impl spira_store::lc_call::Transport for Conditions {
+    fn exchange(&self, argv: &[String], _stdin: Option<&str>, _d: std::time::Duration) -> Result<spira_store::lc_call::Reply, String> {
+        let out = if argv.first().map(String::as_str) == Some("condition") && argv.get(1).map(String::as_str) == Some("list") { "{\"conditions\":[]}" } else { "" };
+        Ok(spira_store::lc_call::Reply { code: 0, out: out.into(), err: String::new(), read_ended: false })
+    }
+}
+
+const STILL_SET: &[(&str, &str)] = &[(task::CADENCE_KEY, "120"), ("SPIRA_HEIMDALL_CONFIRM", "2"), ("SPIRA_HEIMDALL_CLEAR", "1"), ("SPIRA_HEIMDALL_REFRESH", "3600"), ("SPIRA_HEIMDALL_PASS_STALE", "900"), ("SPIRA_HEIMDALL_STILL_SECS", "180")];
+const NOW_MS: u64 = 10_000_000_000;
+
+/// A builder `sp-a` whose lease runs `lease_ahead` seconds past now, with a still file whose
+/// transcript was last written `quiet` seconds ago.
+fn still_builder(run: &std::path::Path, lease_ahead: i64, quiet: i64) {
+    let now = (NOW_MS / 1000) as i64;
+    std::fs::create_dir_all(run.join("dwarf")).unwrap();
+    let pidfile = run.join("dwarf-builder-sp-a.pid");
+    std::fs::write(&pidfile, "1\n").unwrap();
+    std::fs::write(hel::reap::lease_file(&pidfile), (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64 + lease_ahead).to_string()).unwrap();
+    std::fs::write(run.join("dwarf/sp-a.still"), serde_json::json!({ "since": now - quiet, "transcript": now - quiet, "last": "cargo test" }).to_string()).unwrap();
+}
+
+fn observed(run: &std::path::Path) -> Snapshot {
+    let lc = spira_store::lc_call::LcClient::over(std::sync::Arc::new(Conditions), true);
+    let sock = run.join("no-scheduler.sock");
+    serde_json::from_str(&task::observe(&lc, run, sock.to_str().unwrap(), NOW_MS).unwrap()).unwrap()
+}
+
+/// The raises of the second pass that sees `snap`, which `SPIRA_HEIMDALL_CONFIRM` makes the first to confirm.
+fn raises(snap: Snapshot) -> Vec<String> {
+    let h = t::handler::<H>(STILL_SET);
+    let (carry, _) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(snap.clone()), NOW_MS).unwrap();
+    let (_, acts) = task::decide(&h.cfg, &carry, &Input::Observed(snap), NOW_MS + TICK).unwrap();
+    acts.iter().filter(|a| a.name == task::RAISE).map(|a| a.key.clone()).collect()
+}
+
+#[test_id(tm4kq7z)]
+#[test]
+fn a_still_file_older_than_the_threshold_with_a_live_lease_raises_builder_still() {
+    let run = testkit::TempDir::new("heimdall-still-old");
+    still_builder(run.path(), 600, 200);
+    let keys = raises(observed(run.path()));
+    assert_eq!(keys, ["heimdall/builder-still:sp-a/raise/1"]);
+}
+
+#[test_id(tr9c2vj)]
+#[test]
+fn a_fresh_still_file_or_an_expired_lease_does_not_raise() {
+    let run = testkit::TempDir::new("heimdall-still-fresh");
+    still_builder(run.path(), 600, 100);
+    assert!(raises(observed(run.path())).is_empty(), "under the threshold");
+    still_builder(run.path(), -5, 200);
+    assert!(observed(run.path()).stills.is_empty(), "an expired lease's file is not read");
+    assert!(raises(observed(run.path())).is_empty());
+}
+
+#[test_id(tw1p6bg)]
+#[test]
+fn removing_the_still_file_clears_the_alert() {
+    let run = testkit::TempDir::new("heimdall-still-clear");
+    still_builder(run.path(), 600, 200);
+    let h = t::handler::<H>(STILL_SET);
+    let still = observed(run.path());
+    let (carry, _) = task::decide(&h.cfg, &Carry::default(), &Input::Observed(still.clone()), NOW_MS).unwrap();
+    let (carry, _) = task::decide(&h.cfg, &carry, &Input::Observed(still), NOW_MS + TICK).unwrap();
+    assert_eq!(carry.keys["builder-still:sp-a"].phase, Phase::Firing);
+    std::fs::remove_file(run.path().join("dwarf/sp-a.still")).unwrap();
+    let (carry, acts) = task::decide(&h.cfg, &carry, &Input::Observed(observed(run.path())), NOW_MS + 2 * TICK).unwrap();
+    assert_eq!(names(&acts), [task::CLEAR]);
+    assert_eq!(carry.keys["builder-still:sp-a"].phase, Phase::Cleared);
+}
