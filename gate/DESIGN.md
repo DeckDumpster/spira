@@ -106,7 +106,7 @@ reached the bash.
 | `SPIRA_GATE_TIMEOUT` | `timeout` on the gate command | 2700 |
 | `SPIRA_GATE_DEADLINE` | wall clock for the gate's own tests, charged from the first test phase: the base trial's reruns count, the tools, fences and build phases (base trial's too) do not and carry no phase cap. At expiry NO_VERDICT `reason=deadline` naming the running test phase; never a pass | 300 |
 | `SPIRA_GATE_BUILD_STALL` | seconds a tools, fences or build phase may show no progress (a compiler output line, or CPU time in the phase's process group) before it is ended as NO_VERDICT `reason=build-stall` naming the phase and the last compiler line. A phase that keeps progressing is never ended; only `SPIRA_GATE_TIMEOUT` bounds it | 300 |
-| `SPIRA_GATE_BUILDER_DIR_WAIT_SECS` | seconds a unit gate waits for the session that submitted its bead to release that session's build directory, which the gate then builds in; past it the gate builds as it would without one | 120 |
+| `SPIRA_GATE_BUILDER_DIR_WAIT_SECS` | seconds a unit gate waits for the bead's own session to release its build directory, which the gate then builds in (any other holder is not waited for); past it the gate builds as it would without one | 120 |
 | `SPIRA_GATE_BUDGET` | the selector's prediction of suite time (testenv `--deadline`); with the fixed phases it fits the deadline | 140 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
