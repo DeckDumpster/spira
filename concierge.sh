@@ -648,7 +648,7 @@ wake)
     # waits-on: the pane's cursor — one settle between two looks shows whether it moved
     sleep "${CONCIERGE_WAKE_SETTLE_SECS:-1}"
     _wake_look
-    if [ "$_look_busy" = 1 ] || [ "$_look_cursor" != "$_wake_prev" ]; then
+    if [ "$_look_busy" = 1 ] || [ -z "$_look_cursor" ] || [ "$_look_cursor" != "$_wake_prev" ]; then
         printf 'concierge: wake not delivered — the input line of %s holds text or is moving\n' "$SESSION" >&2
         exit 75
     fi

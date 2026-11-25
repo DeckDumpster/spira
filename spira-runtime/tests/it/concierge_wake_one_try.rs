@@ -85,3 +85,13 @@ fn a_cursor_that_moved_between_the_looks_is_refused() {
     assert!(err.contains("wake not delivered"), "{err}");
     assert!(!f.calls().iter().any(|c| c.contains("send-keys")));
 }
+
+#[test_id(t0ei7mg)]
+#[test]
+fn a_look_that_returns_no_cursor_is_refused_not_typed_into() {
+    let f = Fixture::new("x\n❯ \nfoot\n", &[]);
+    std::fs::write(f.dir.join("pane"), "").unwrap();
+    let err = concierge_wake(&f.script(), "line", Duration::from_secs(20)).unwrap_err();
+    assert!(err.contains("wake not delivered"), "{err}");
+    assert!(!f.calls().iter().any(|c| c.contains("send-keys")));
+}
