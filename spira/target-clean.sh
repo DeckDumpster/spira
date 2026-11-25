@@ -4,8 +4,9 @@
 # (spira-config build_dir). The target is ${CARGO_TARGET_DIR:-<root>/target}.
 #
 #   target-clean.sh <root>            clean what differs from the recorded tree, then record <root>
-#   target-clean.sh --release <root>  a lease's release: clean what differs from the record or
-#                                     was modified since it was written, then record <root>
+#   target-clean.sh --release <root>  a lease's release: for what differs from the record or was
+#                                     modified since it was written, keep each unit built after
+#                                     the edit, clean the rest, then record <root>
 #
 # A target is shared by every tree built in it and cargo trusts mtimes across them, so a
 # workspace crate whose bytes differ from the tree it was last built from is cleaned;

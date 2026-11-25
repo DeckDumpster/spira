@@ -332,3 +332,23 @@ fn an_edit_with_a_back_dated_mtime_after_the_stamp_drops_the_unit() {
     assert!(!u.exists(), "ctime newer than the stamp drops the unit");
     assert_eq!(cargo_log(&b), "clean -q -p crate-a");
 }
+
+#[test_id(tm4w9ze)]
+#[test]
+fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
+    let b = setup("bdcli-unit-nostamp");
+    let (mut p, d) = edit_a_in_lease(&b);
+    let bare = unit(&d, "crate-a-0123456789abcdef", None);
+    release(&b, &mut p);
+    assert!(!bare.exists(), "a unit with no timestamp is removed");
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+
+    let mut p2 = sleeper();
+    let (d2, _) = b.lease("hand-2", &p2);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::remove_file(b.tree.join("b/src/lib.rs")).unwrap();
+    let fresh = unit(&d2, "crate-b-0123456789abcdef", Some(std::time::SystemTime::now() + Duration::from_secs(3600)));
+    release(&b, &mut p2);
+    assert!(fresh.exists());
+    assert_eq!(cargo_log(&b), "clean -q -p crate-b", "a deleted file cleans the crate whatever its units");
+}
