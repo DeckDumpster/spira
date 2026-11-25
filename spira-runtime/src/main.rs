@@ -127,5 +127,5 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), Stampe
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None, before_turn: Some(Arc::new(move |engine| repin.apply(engine))), turn_budget: None };
     let units = backend.units();
-    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), units: Some(units), board: Some(board), ..Effects::default() }), settings.pool_caps, rx, opts).await.map_err(|e| Stamped::from(e.to_string()))
+    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)), reconciler: Some(settings.reconciler.clone()), concierge_mail: Some(Arc::new(concierge_mail)), units: Some(units), board: Some(board), vm_pool: round_vm::config::Config::load().ok().map(|c| Arc::new(round_vm::cli::pool_for(&c))), ..Effects::default() }), settings.pool_caps, rx, opts).await.map_err(|e| Stamped::from(e.to_string()))
 }

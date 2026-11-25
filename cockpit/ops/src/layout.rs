@@ -83,6 +83,8 @@ pub struct Conf {
     pub clipboard_on: bool,
     pub spira_repo: String,
     pub spira_conf: Option<String>,
+    /// The user runtime directory the ops pane reads the scheduler's document under.
+    pub runtime_dir: Option<String>,
 }
 
 impl Conf {
@@ -213,6 +215,7 @@ impl Conf {
             clipboard_on,
             spira_repo,
             spira_conf,
+            runtime_dir: env_nonempty("XDG_RUNTIME_DIR"),
         })
     }
 
@@ -223,6 +226,9 @@ impl Conf {
         let mut p = String::new();
         if let Some(c) = &self.spira_conf {
             p.push_str(&format!("SPIRA_CONF='{c}' "));
+        }
+        if let Some(d) = &self.runtime_dir {
+            p.push_str(&format!("XDG_RUNTIME_DIR='{d}' "));
         }
         p.push_str(&format!(
             "SPIRA_RELEASE='{r}' PATH='{r}/bin:{r}/spira:/usr/local/bin:/usr/bin:/bin' ",
@@ -1338,6 +1344,7 @@ mod tests {
             clipboard_on: false,
             spira_repo: repo.into(),
             spira_conf: None,
+            runtime_dir: None,
         }
     }
 
@@ -1374,8 +1381,10 @@ mod tests {
             clipboard_on: true,
             spira_repo: String::new(),
             spira_conf: Some("etc/spira-custom.conf".into()),
+            runtime_dir: Some("run/u7".into()),
         };
         let p = c.rel_prefix();
+        assert!(p.contains("XDG_RUNTIME_DIR='run/u7'"), "the pane reads the document under the runtime directory it is launched with: {p}");
         assert!(p.contains("SPIRA_CONF='etc/spira-custom.conf'"));
         assert!(p.contains("SPIRA_RELEASE='rel'"));
         assert!(p.contains("PATH='rel/bin:rel/spira:/usr/local/bin:/usr/bin:/bin'"));

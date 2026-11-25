@@ -85,7 +85,8 @@ pub fn touch(path: &Path) {
     }
 }
 
-fn put(path: &Path, body: &str) -> Wrote {
+/// Writes `body` by rename unless the file already holds it, which is only touched.
+pub fn put(path: &Path, body: &str) -> Wrote {
     if std::fs::read(path).is_ok_and(|old| old == body.as_bytes()) {
         touch(path);
         return Wrote::Touched;

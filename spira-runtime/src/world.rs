@@ -62,6 +62,8 @@ pub struct World {
     pub overrides_dir: PathBuf,
     /// The status line's records in the user runtime directory; empty without one.
     pub ctx_status_dir: PathBuf,
+    /// Where the cockpit ops document is kept (`spira_config::cockpit_view_dir`); empty without a runtime directory.
+    pub cockpit_view_dir: PathBuf,
     pub cockpit_state: PathBuf,
     pub cockpit_session: String,
     pub tmux: PathBuf,

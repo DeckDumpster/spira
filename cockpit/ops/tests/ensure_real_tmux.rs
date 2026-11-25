@@ -43,6 +43,7 @@ fn a_second_ensure_over_a_real_tmux_makes_one_read_and_no_writes() {
         clipboard_on: true,
         spira_repo: String::new(),
         spira_conf: None,
+        runtime_dir: None,
     };
     let layout = Layout { tmux: Tmux::with_bin(wrapper.to_str().unwrap()), conf };
     let me = std::env::current_exe().unwrap();

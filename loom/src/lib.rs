@@ -48,6 +48,8 @@ pub struct Config {
     /// The runtime directory holding cockpit.env and the world stamps.
     /// From `SPIRA_RUN`. Empty means no ops endpoint data.
     pub run: String,
+    /// The user runtime directory the scheduler keeps the cockpit document under, from `XDG_RUNTIME_DIR`.
+    pub runtime_dir: String,
     /// Spira instance name, used to construct the sentinel timer unit name.
     /// From `SPIRA_INSTANCE`, default "prod".
     pub instance: String,
@@ -85,6 +87,7 @@ impl Config {
             cache: Duration::from_secs(cfg_parse::<u64>("SPIRA_LOOM_CACHE_S").map_err(|e| format!("loom: {e}"))?),
             addr: cfg("SPIRA_LOOM_ADDR").map_err(|e| format!("loom: {e}"))?,
             run: cfg("SPIRA_RUN").map_err(|e| format!("loom: {e}"))?,
+            runtime_dir: env.get("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()).cloned().ok_or("loom: XDG_RUNTIME_DIR is unset; refusing to start without the runtime directory the cockpit document is read from")?,
             instance: spira_config::resolve::resolve_instance(&env, &home).map_err(|e| format!("loom: {e}"))?,
             // SPIRA_SYSTEMCTL is not a registered config key — test-only override, left as env.
             systemctl: std::env::var("SPIRA_SYSTEMCTL")
@@ -307,13 +310,14 @@ async fn ops_route(State(loom): State<Arc<Loom>>) -> Response {
 
 /// The lifecycle-lens ops view (sp-lpw5ol): the snapshot the cockpit's `lc-view` pane wrote on
 /// its last pass, rendered from the same `View` the pane drew — so the phone page and the pane
-/// cannot disagree. Read from `<run>/lcview/snapshot.json`; never runs `bd`.
+/// cannot disagree. Read from the scheduler's document under the runtime directory, drawn at the
+/// time of the read; its age is that of its last write or touch. Never runs `bd`.
 fn lifecycle_snapshot(loom: &Loom) -> Result<(cockpit_ops::lcview::Snapshot, i64), String> {
-    let path = std::path::Path::new(&loom.config().run).join("lcview").join("snapshot.json");
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e} — is the lc-view pane running?", path.display()))?;
-    let snap: cockpit_ops::lcview::Snapshot = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    Ok((snap.clone(), now - snap.now))
+    let dir = spira_config::cockpit_view_dir(std::path::Path::new(&loom.config().runtime_dir));
+    let now = now_s();
+    let (mut snap, age) = cockpit_ops::lcview::read_document(&dir, now).map_err(|e| format!("{e} — is the scheduler running?"))?;
+    snap.now = now;
+    Ok((snap, age))
 }
 
 /// Work in flight, read from the collector's `cockpit.env` through the same `Flight` the pane
@@ -1049,6 +1053,7 @@ mod in_process_tests {
             cache: Duration::from_secs(60),
             addr: String::new(),
             run: "nonexistent-run".into(),
+            runtime_dir: "nonexistent-runtime".into(),
             instance: "test".into(),
             systemctl: "systemctl".into(),
             metrics_endpoint: None,
@@ -1085,31 +1090,37 @@ mod in_process_tests {
             s.rows.push(Row { id: id.to_string(), state: "READY".into(), claim: Some(claim), ..Default::default() });
         }
         apply_claim_views(&mut s);
-        std::fs::create_dir_all(run.join("lcview")).unwrap();
-        std::fs::write(run.join("lcview/snapshot.json"), serde_json::to_string(&s).unwrap()).unwrap();
+        plant_document(run, &serde_json::to_string(&s).unwrap(), at);
+    }
+
+    /// The scheduler's document under the runtime directory `runtime`, last touched at `touched`.
+    fn plant_document(runtime: &std::path::Path, body: &str, touched: i64) {
+        let path = cockpit_ops::lcview::document_path(&spira_config::cockpit_view_dir(runtime));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+        std::fs::File::open(&path).unwrap().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(touched.max(0) as u64)).unwrap();
     }
 
     #[test_id(tvcka0x)]
     #[tokio::test]
     async fn the_overview_chip_names_the_sources_failing_in_the_latest_gather_and_no_total() {
         let d = testkit::TempDir::new("loom-serve-failing");
-        let cfg = Config { run: d.path().to_str().unwrap().into(), ..test_config() };
+        let cfg = Config { run: d.path().to_str().unwrap().into(), runtime_dir: d.path().to_str().unwrap().into(), ..test_config() };
         let loom = Arc::new(Loom::with_limits(cfg, Arc::new(|_| Ok(Default::default()))));
         async fn body(loom: &Arc<Loom>) -> String {
             let r = next_route(State(loom.clone()), "/".parse().unwrap()).await;
             String::from_utf8(axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap()
         }
-        std::fs::create_dir_all(d.join("lcview")).unwrap();
         let old = serde_json::json!({"now": now_s(), "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": [], "failures": 2849});
-        std::fs::write(d.join("lcview/snapshot.json"), old.to_string()).unwrap();
+        plant_document(d.path(), &old.to_string(), now_s());
         let b = body(&loom).await;
         assert!(!b.contains("source failure") && !b.contains("source failing") && !b.contains("2849"));
         let one = serde_json::json!({"now": now_s(), "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": [], "failed": ["victorialogs: refused"]});
-        std::fs::write(d.join("lcview/snapshot.json"), one.to_string()).unwrap();
+        plant_document(d.path(), &one.to_string(), now_s());
         let b = body(&loom).await;
         assert!(b.contains("chip bad") && b.contains("1 source failing: victorialogs: refused"), "{b}");
         let two = serde_json::json!({"now": now_s(), "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": [], "failed": ["a<b", "c&d"]});
-        std::fs::write(d.join("lcview/snapshot.json"), two.to_string()).unwrap();
+        plant_document(d.path(), &two.to_string(), now_s());
         let b = body(&loom).await;
         assert!(b.contains("title=\"a&lt;b\nc&amp;d\"") && b.contains("2 source"), "{b}");
     }
@@ -1118,7 +1129,7 @@ mod in_process_tests {
     #[tokio::test]
     async fn api_ops_claimable_keys_follow_the_claim_view_and_go_unknown_when_it_is_stale() {
         let d = testkit::TempDir::new("loom-serve-ops");
-        let cfg = Config { run: d.path().to_str().unwrap().into(), ..test_config() };
+        let cfg = Config { run: d.path().to_str().unwrap().into(), runtime_dir: d.path().to_str().unwrap().into(), ..test_config() };
         std::fs::write(d.join("cockpit.env"), "SP_NEXT_N='1'\nSP_READY='1'\nSP_NEXT0='P0 a sp-z t'\nSP_NEXT1='P0 a sp-y t'\nSP_NEXT7='P0 a sp-x t'\nSP_NEXTRA='keep'\n").unwrap();
         async fn served(cfg: &Config) -> Value {
             let loom = Loom::with_limits(cfg.clone(), Arc::new(|_| Ok(Default::default())));
@@ -1139,6 +1150,30 @@ mod in_process_tests {
         serve_claim_snapshot(d.path(), &["sp-a"], now_s() - LIFECYCLE_STALE_S - 5);
         let stale = served(&cfg).await;
         assert!(stale.get("SP_NEXT_N").is_none() && stale.get("SP_READY").is_none(), "an old claim view is unknown, not current: {stale}");
+    }
+
+    #[test_id(tct3hp5)]
+    #[tokio::test]
+    async fn the_lifecycle_handler_serves_the_scheduler_document_and_ages_it_by_its_last_touch() {
+        let d = testkit::TempDir::new("loom-lifecycle-doc");
+        let loom = Arc::new(Loom::with_limits(Config { run: d.path().to_str().unwrap().into(), runtime_dir: d.path().to_str().unwrap().into(), ..test_config() }, Arc::new(|_| Ok(Default::default()))));
+        async fn served(loom: &Arc<Loom>) -> (StatusCode, Value) {
+            let r = lifecycle_api_route(State(loom.clone())).await;
+            let status = r.status();
+            (status, serde_json::from_slice(&axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap()).unwrap())
+        }
+        let (status, none) = served(&loom).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(none["error"].as_str().unwrap().contains("spira-cockpit/snapshot.json"), "the absent document is named: {none}");
+
+        let quiet = serde_json::json!({"now": now_s() - 3600, "release": "", "world": "", "base": "", "rows": [], "meta": {}, "on_base": {}, "ceiling": 0, "tails": {}, "errors": [], "store_errors": []});
+        plant_document(d.path(), &quiet.to_string(), now_s() - 5);
+        let (status, fresh) = served(&loom).await;
+        assert_eq!((status, fresh["stale"].clone()), (StatusCode::OK, json!(false)), "an old read, touched five seconds ago, is current: {fresh}");
+
+        plant_document(d.path(), &quiet.to_string(), now_s() - LIFECYCLE_STALE_S - 30);
+        let (_, old) = served(&loom).await;
+        assert_eq!(old["stale"], json!(true), "{old}");
     }
 
     struct Counted(std::sync::atomic::AtomicUsize, Vec<(&'static str, i32, String)>);

@@ -1084,7 +1084,7 @@ mod tests {
     fn the_banner_names_the_sources_failing_now_and_never_a_published_total() {
         let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[],"store_errors":[],"failures":2849});
         let s: crate::lcview::Snapshot = serde_json::from_value(old).unwrap();
-        let f = crate::lcview::first_frame(Some(&s), 2).unwrap();
+        let f = crate::lcview::aged(s, 0, 2);
         let text = strip(&banner(&crate::lcview::view(&f)).join("\n"));
         assert!(!text.contains("2849") && !text.contains("failing"), "{text}");
         let two = crate::lcview::Snapshot { failed: vec!["spira-lc list: exit 124".into(), "victorialogs: refused".into()], ..Default::default() };

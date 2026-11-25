@@ -26,6 +26,12 @@ pub fn ctx_meter_dir(runtime_dir: &std::path::Path) -> std::path::PathBuf {
     runtime_dir.join("spira-ctx-meter")
 }
 
+/// Where the scheduler writes the one document the cockpit ops panel and Loom render, under the
+/// user runtime directory (memory-backed).
+pub fn cockpit_view_dir(runtime_dir: &std::path::Path) -> std::path::PathBuf {
+    runtime_dir.join("spira-cockpit")
+}
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

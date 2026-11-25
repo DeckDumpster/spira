@@ -177,6 +177,7 @@ impl Settings {
         self.runtime_dir = path("XDG_RUNTIME_DIR").unwrap_or_default();
         self.world.hunk_dir = path("XDG_RUNTIME_DIR").map(|d| d.join("hunk-mcp")).unwrap_or_default();
         self.world.ctx_status_dir = path("XDG_RUNTIME_DIR").map(|d| spira_config::ctx_meter_dir(&d)).unwrap_or_default();
+        self.world.cockpit_view_dir = path("XDG_RUNTIME_DIR").map(|d| spira_config::cockpit_view_dir(&d)).unwrap_or_default();
         self.world.cockpit_state = path("COCKPIT_STATE").or_else(|| path("HOME").map(|h| h.join(".local/state/cockpit"))).unwrap_or_default();
         if let Some(secs) = env("COCKPIT_FORGET_SECS") {
             self.view.forget_secs = num("COCKPIT_FORGET_SECS", &secs)?;
@@ -457,6 +458,8 @@ mod tests {
         let s = s.with_environment(&env).unwrap();
         assert_eq!(s.world.ctx_status_dir, spira_config::ctx_meter_dir(std::path::Path::new("run/u9")));
         assert_eq!(s.world.ctx_status_dir.parent(), s.marker_path().unwrap().parent());
+        assert_eq!(s.world.cockpit_view_dir, spira_config::cockpit_view_dir(std::path::Path::new("run/u9")));
+        assert_eq!(s.world.cockpit_view_dir.parent(), s.marker_path().unwrap().parent());
     }
 
     #[test_id(tfwb7jc)]

@@ -249,7 +249,11 @@ fn the_ops_pane_start_command_resolves_its_config_and_draws_the_lifecycle_view()
         clipboard_on: true,
         spira_repo: String::new(),
         spira_conf: None,
+        runtime_dir: Some(rig.dir.join("xdg").display().to_string()),
     };
+    let document = cockpit_ops::lcview::document_path(&spira_config::cockpit_view_dir(&rig.dir.join("xdg")));
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    std::fs::write(&document, serde_json::to_vec(&cockpit_ops::lcview::Snapshot { now: 1, ..Default::default() }).unwrap()).unwrap();
     let command = conf.health_cmd();
     let server_env = [("HOME", &*rig.dir as &Path), ("SPIRA_TOML", rig.toml.as_path())];
     let drawn = on_a_pty(&command, &server_env, &["refresh", "SPIRA_TOML is not set"]);
@@ -258,4 +262,32 @@ fn the_ops_pane_start_command_resolves_its_config_and_draws_the_lifecycle_view()
 
     let without_config = on_a_pty(&command, &server_env[..1], &["refresh", "SPIRA_TOML is not set"]);
     assert!(without_config.contains("SPIRA_TOML is not set"), "the pane drew a frame with no config: {without_config}");
+}
+
+#[test_id(tzf34g4)]
+#[test]
+fn the_ops_pane_prints_the_document_once_and_names_what_is_missing() {
+    let rig = Rig::new();
+    link_built(&rig, "lc-view");
+    let xdg = rig.dir.join("xdg");
+    let once = |runtime: Option<&Path>| {
+        let mut c = Command::new(rig.release.join("bin/lc-view"));
+        c.env_clear().env("HOME", &*rig.dir).env("PATH", sys_path()).arg("once").stdin(Stdio::null());
+        if let Some(d) = runtime {
+            c.env("XDG_RUNTIME_DIR", d);
+        }
+        c.output().unwrap()
+    };
+    let missing = once(Some(&xdg));
+    assert!(text(&missing).contains("spira-cockpit/snapshot.json"), "{}", text(&missing));
+    let document = cockpit_ops::lcview::document_path(&spira_config::cockpit_view_dir(&xdg));
+    std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+    let snap = cockpit_ops::lcview::Snapshot { now: 1, world: "plane work: RUNNING".into(), ..Default::default() };
+    std::fs::write(&document, serde_json::to_vec(&snap).unwrap()).unwrap();
+    let drawn = once(Some(&xdg));
+    assert_eq!(drawn.status.code(), Some(0), "{}", text(&drawn));
+    assert!(text(&drawn).contains("LIFECYCLE") && !text(&drawn).contains("snapshot.json"), "{}", text(&drawn));
+    let bare = once(None);
+    assert_eq!(bare.status.code(), Some(1));
+    assert!(text(&bare).contains("XDG_RUNTIME_DIR"), "no runtime directory refuses by name: {}", text(&bare));
 }
