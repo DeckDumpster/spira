@@ -530,7 +530,8 @@ mod tests {
         std::thread::spawn(move || watcher.run(&std::sync::atomic::AtomicBool::new(false), &mut |_| {}));
         // clock-safe: a cap on the wait for the watch thread to start
         for _ in 0..6000 {
-            if views.watching() {
+            let watched_long = store.0.lock().unwrap().iter().any(|a| a.starts_with("watch ") && a.contains("--wait-ms 30000"));
+            if views.watching() && watched_long {
                 break;
             }
             // clock-safe: a poll interval under that cap
