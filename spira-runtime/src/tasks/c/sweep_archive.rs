@@ -1151,13 +1151,13 @@ mod tests {
         let before = body(&p, REL, ".zst");
         let tail = lines(9_500, 3, 1_000);
         data.extend_from_slice(&tail);
-        put(&p, REL, &data);
+        put_at(&p, REL, &data, 1_795_000_000);
         run_store(&p, &proc, REL);
         assert_eq!(proc.input() - first, tail.len() as u64);
         let after = body(&p, REL, ".zst");
         assert_eq!(&after[..before.len()], &before[..]);
         let (_f, fresh) = world();
-        put(&fresh, REL, &data);
+        put_at(&fresh, REL, &data, 1_795_000_000);
         run_store(&fresh, &Fake::new(false), REL);
         assert_eq!(pending(&p, REL), pending(&fresh, REL));
     }
