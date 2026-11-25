@@ -39,10 +39,8 @@ pub fn run(host: &mut dyn Host, clock: &dyn Clock, started_on: Option<String>) {
             eprintln!("proc-starts: push failed: {e}");
         }
         if let Some(now) = host.release().filter(|now| started_on.as_ref() != Some(now)) {
-            if started_on.is_some() {
-                eprintln!("proc-starts: release is now {now}; exiting for the supervisor to restart");
-                return;
-            }
+            eprintln!("proc-starts: release is now {now}; exiting for the supervisor to restart");
+            return;
         }
     }
 }
@@ -112,6 +110,14 @@ mod tests {
     }
 
     #[test_id(ts9flyd)]
+    #[test]
+    fn a_release_link_unreadable_at_start_still_restarts_once_it_reads() {
+        let mut f = fake(&[None, Some("r2")], false);
+        let clock = f.clock.clone();
+        run(&mut f, &clock, None);
+        assert_eq!(f.drains, 2);
+    }
+
     #[test]
     fn a_failed_push_keeps_the_totals_for_the_next_one() {
         let mut f = fake(&[Some("r1"), Some("r2")], true);
