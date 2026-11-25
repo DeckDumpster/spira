@@ -810,6 +810,14 @@ impl World for Real {
     fn push_metrics(&self, run: &crate::telemetry::GateRun) {
         crate::telemetry::push_metrics(&crate::telemetry::metrics_sink(), run);
     }
+    fn cgroup_mark(&self) -> Option<spira_otel::cgroup::Mark> {
+        spira_otel::cgroup::Mark::own()
+    }
+    fn emit_op(&self, op: &spira_otel::ops::Op) {
+        if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
+            spira_otel::ops::emit(Path::new(&run), "spira-gate", op);
+        }
+    }
     fn yield_sh(&self, y: &Path, run: &str, args: &[&str]) {
         let _ = Command::new("timeout")
             .arg(YIELD_DEADLINE_SECS)

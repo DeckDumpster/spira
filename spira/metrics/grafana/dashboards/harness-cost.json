@@ -19,6 +19,12 @@
         "type": "datasource",
         "query": "prometheus",
         "label": "data source"
+      },
+      {
+        "name": "DS_VL",
+        "type": "datasource",
+        "query": "victoriametrics-logs-datasource",
+        "label": "logs data source"
       }
     ]
   },
@@ -191,6 +197,38 @@
           },
           "expr": "rate(spira_unit_usage_sample_cpu_seconds[1h]) / rate(spira_unit_cpu_seconds{class=\"_total\"}[1h])",
           "legendFormat": "collector share",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "heavy operations",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "${DS_VL}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "${DS_VL}"
+          },
+          "expr": "_msg:\"op.done\" | stats by (operation, phase) count() ops, quantile(0.5, duration_ms) p50_ms, sum(write_bytes) write_bytes, sum(cpu_seconds) cpu_seconds",
+          "queryType": "stats",
           "refId": "A"
         }
       ]
