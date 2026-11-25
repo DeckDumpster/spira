@@ -368,7 +368,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_eq!(c("ref"), c("boundary") + 1, "a moved landing ref is applied once: {applied:?}");
     assert_eq!(c("spec"), c("ref") + 1, "a touched spec is applied once: {applied:?}");
     assert_eq!(c("toml"), c("spec") + 1, "a touched config file is applied once: {applied:?}");
-    assert!(c("failing") >= c("toml") + 2, "a failing pass runs again on the next tick: {applied:?}");
+    assert_eq!(c("failing"), c("toml") + 3, "a failing pass runs again on every tick: {applied:?}");
     assert!(c("recovered") > c("failing"), "{applied:?}");
     assert_eq!(c("recovered-quiet"), c("recovered"), "a success is held again: {applied:?}");
     let all = logged(&f);
