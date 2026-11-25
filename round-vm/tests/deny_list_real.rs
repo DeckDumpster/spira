@@ -292,21 +292,28 @@ fn a_unit_test_disabled_by_id_stays_out_of_the_gate_and_round_runs_after_a_renam
     assert!(names_in_pass_or_fail(&log, "other::dropped::t0aaaaa"), "control: without the row the renamed test runs: {log}");
 }
 
+fn integration_nextest_run(dir: &std::path::Path, cargo_home: &str, list: &str) -> (Option<i32>, String) {
+    let deny = spira_config::unit_tier::DenyList::parse(list).unwrap();
+    std::fs::write(dir.join("nx.toml"), spira_config::unit_tier::nextest_config(10, 1, &deny)).unwrap();
+    let script = "export CARGO_HOME=\"$2\" RUSTC_WRAPPER= SCCACHE_WEBDAV_ENDPOINT= SCCACHE_WEBDAV_KEY_PREFIX=\ncargo nextest run --config-file nx.toml --no-fail-fast --offline --test '*' > test.log 2>&1\nrc=$?\nexit $rc\n";
+    let (code, err) = bash_in_code2(dir, cargo_home, script, "", cargo_home);
+    (code, format!("{err}{}", std::fs::read_to_string(dir.join("test.log")).unwrap_or_default()))
+}
+
 #[test_id(t0i2n3t)]
 #[test]
-fn an_integration_test_disabled_by_id_stays_out_of_the_star_run_after_a_rename() {
+fn an_integration_test_disabled_by_id_is_skipped_by_nextest_after_a_rename() {
     let (_reg, _path, list) = deny_by_id("t0ccccc", "sp-x");
-    let skips = spira_config::unit_tier::DenyList::parse(&list).unwrap().integration_skips();
-    assert_eq!(skips, " -- --skip ::t0ccccc");
     let (tmp, cargo_home) = member_workspace(FLAKY);
-    let (code, log) = integration_run(tmp.path(), &cargo_home, "");
-    assert_ne!(code, Some(0), "control: red with no skip: {log}");
-    let (code, log) = integration_run(tmp.path(), &cargo_home, &skips);
+    let (code, log) = integration_nextest_run(tmp.path(), &cargo_home, "");
+    assert_ne!(code, Some(0), "control: red with no deny row: {log}");
+    assert!(log.contains("FAIL") && log.contains("flaked"), "{log}");
+    let (code, log) = integration_nextest_run(tmp.path(), &cargo_home, &list);
     assert_eq!(code, Some(0), "{log}");
-    assert!(log.contains("steady") && !log.contains("flaked"), "{log}");
+    assert!(log.lines().any(|l| l.trim_start().starts_with("SKIP") && l.ends_with("::t0ccccc")), "nextest reports the denied test skipped: {log}");
 
     std::fs::write(tmp.path().join("member/tests/flaky.rs"), FLAKY_RENAMED).unwrap();
-    let (code, log) = integration_run(tmp.path(), &cargo_home, &skips);
+    let (code, log) = integration_nextest_run(tmp.path(), &cargo_home, &list);
     assert_eq!(code, Some(0), "{log}");
-    assert!(log.contains("steady") && !log.contains("flaked_again"), "{log}");
+    assert!(log.contains("steady") && !log.contains("FAIL"), "{log}");
 }

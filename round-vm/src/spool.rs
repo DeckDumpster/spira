@@ -162,6 +162,7 @@ integration)
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
     cd "$d" || exit 2
     scope_of integration
+    [ -f "$HOME/round-nextest.toml" ] || { echo "round-vm: no round-nextest.toml on this VM: the round's unit tier has not run here" >&2; exit 2; }
     if [ "$scope" != "--workspace" ]; then
         bins=$("$tenv" test-bins ${scope//-p /}) || { cd "$HOME" && rm -rf "$d"; exit 4; }
         if [ -n "$bins" ]; then
@@ -169,10 +170,10 @@ integration)
             CARGO_TARGET_DIR="$HOME/attr-target" unit_env build --profile unittest --config profile.unittest.incremental=false $bin_scope >&2 || { cd "$HOME" && rm -rf "$d"; exit 4; }
         fi
     fi
-    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_integration!("unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/integration-tests.out" >&2
+    CARGO_TARGET_DIR="$HOME/attr-target" unit_env "#, spira_config::unit_tier_integration!("\"$HOME/round-nextest.toml\"", "unittest", "$scope"), r#" $filters 2>&1 | tee "$SPIRA_BATCH_RESULTS/integration-tests.out" >&2
     rc=${PIPESTATUS[0]}
     cd "$HOME" && rm -rf "$d"
-    if [ "$rc" -eq 101 ]; then echo "red 0 0 - - - $rc" > "$SPIRA_BATCH_RESULTS/integration-tests.result"; exit 5; fi
+    if [ "$rc" -eq 100 ] || [ "$rc" -eq 101 ]; then echo "red 0 0 - - - $rc" > "$SPIRA_BATCH_RESULTS/integration-tests.result"; exit 5; fi
     [ "$rc" -eq 0 ] || exit "$rc"
     echo "ok 0 0 - - - 0" > "$SPIRA_BATCH_RESULTS/integration-tests.result"
     exit 0 ;;
@@ -706,7 +707,7 @@ mod tests {
         let calls: Vec<&str> = calls.lines().collect();
         assert_eq!(calls.len(), 2, "{calls:?}");
         assert!(calls[0].starts_with("build --profile unittest --config profile.unittest.incremental=false") && calls[0].contains("-p spira-lc"), "{calls:?}");
-        assert!(calls[1].starts_with("test ") && calls[1].contains("-p spira-runtime"), "{calls:?}");
+        assert!(calls[1].starts_with("nextest run --config-file ") && calls[1].contains("-p spira-runtime"), "{calls:?}");
         assert_eq!(ran.trim_end(), calls[1]);
         let asked = fs::read_to_string(d.path().join("home/testenv.calls")).unwrap();
         assert_eq!(asked.trim(), "test-bins spira-runtime");
@@ -771,8 +772,8 @@ mod tests {
     fn the_integration_probe_runs_the_command_the_round_runs_its_integration_phase_with() {
         let arm = REMOTE_ATTR_SCRIPT.split("\nintegration)").nth(1).and_then(|a| a.split("exit 0 ;;").next()).expect("an integration arm");
         let round_cmd = crate::run::REMOTE_SCRIPT.split("integ_cargo() {").nth(1).and_then(|a| a.split("\n}\n").next()).expect("integ_cargo");
-        assert!(arm.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "$scope")), "{arm}");
-        assert!(round_cmd.contains(&spira_config::unit_tier::integration_words(Some("unittest"), "--workspace")), "{round_cmd}");
+        assert!(arm.contains(&spira_config::unit_tier::integration_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "$scope")), "{arm}");
+        assert!(round_cmd.contains(&spira_config::unit_tier::integration_words("\"$HOME/round-nextest.toml\"", Some("unittest"), "--workspace")), "{round_cmd}");
     }
 
     #[test_id(tv48huu)]
