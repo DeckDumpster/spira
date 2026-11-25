@@ -1157,7 +1157,7 @@ pub fn stop_holder(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
 pub fn stop_doomed(e: &Effects, spec: &EffectSpec) -> Result<String, String> {
     let w = write_of(&spec.input, STOP_DOOMED)?;
     let lc = client(e, spec.deadline_ms);
-    let shown: serde_json::Value = serde_json::from_str(&answer(&lc, &["show", &w.id])?).map_err(|e| format!("show {}: {e}", w.id))?;
+    let shown: serde_json::Value = serde_json::from_str(&answer(&lc, &["show", &w.id])?).map_err(|e| format!("show {}: {e}", w.id))?; // BDQ_READ_CONSIDERED="the spira-lc lifecycle door, not a bd read"
     let bead = &shown["bead"];
     let state = bead["state"].as_str().unwrap_or_default();
     let stacked = sentinel::model::parse_stack_tips(bead.get("stack")).get(&w.label).is_some_and(|t| *t == w.cause);
