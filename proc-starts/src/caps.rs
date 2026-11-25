@@ -108,6 +108,7 @@ mod tests {
         assert_eq!(e.matches("spira-install --proc-starts").count(), 1, "{e}");
     }
 
+    #[test_id(tfeazqr)]
     #[test]
     fn a_third_capability_is_refused_by_name() {
         let e = check(&status(1 << 38 | 1 << 39 | 1 << 21), ROOT).unwrap_err();
