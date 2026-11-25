@@ -25,6 +25,16 @@ path = "tests/goodput_fixture.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "git_idle_sub_hour"
+path = "tests/git_idle_sub_hour.rs"
+required-features = ["integration"]
+
+[[test]]
+name = "git_idle_reaper"
+path = "tests/git_idle_reaper.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "it"
 path = "tests/it/main.rs"
 required-features = ["integration"]
