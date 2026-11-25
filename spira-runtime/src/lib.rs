@@ -232,6 +232,7 @@ pub struct Effects {
     pub units: Option<Arc<dyn runtime::units::Units>>,
     /// The VM pool the cockpit document's VM rows are read from; none reads as an error row.
     pub vm_pool: Option<Arc<round_vm::pool::Pool>>,
+    pub overrides_held: wiki_git::Held,
 }
 
 /// The mail environment operator notes are sent under: no bd (a note needs no tracking bead, and an empty db keeps the mailer from launching one), and the repeat guard overridden because consecutive merges normalise to one subject.
