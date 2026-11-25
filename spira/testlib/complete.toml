@@ -219,6 +219,7 @@ reconciler=act
 round-duty=act
 roundvm.ami_prune=act
 roundvm.drain=act
+roundvm.section=act
 sentinel-call=act
 sentinel-pass=act
 sift=act

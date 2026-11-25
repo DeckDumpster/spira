@@ -253,6 +253,8 @@ pub const CLASSES: &[(&str, EffectClass)] = &[
     ("watch.off_box.observe", Store),
     ("lc.ship.drain", Host),
     ("lc.ship.drain_snapshot", Host),
+    ("roundvm.section.observe", Host),
+    ("roundvm.section.publish", Store),
     ("roundvm.drain.observe", Host),
     ("roundvm.drain.release", Host),
     ("sentinel-call.metric", Host),
