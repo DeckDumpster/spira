@@ -13,9 +13,11 @@
 //! - **Warm start.** A new lease takes the most recently idled directory that holds anything
 //!   (the lock file's mtime is the idle time: a release stamps it), and the shared selective clean
 //!   ([`CLEAN_SCRIPT`]) then cleans only the workspace crates whose bytes differ from the tree that
-//!   directory was last made consistent with. A release cleans every crate changed since that
-//!   record before writing the new one, so the record never names bytes the artifacts were not
-//!   built from. An empty directory is a new one.
+//!   directory was last made consistent with. A release judges every crate changed since that
+//!   record by unit: a `.fingerprint` unit stamped after the newest mtime and ctime of the crate's
+//!   changed files is kept, any other is removed, and a crate left with no kept unit (or with a
+//!   deleted file) is cleaned, before the new record is written, so the record never names bytes
+//!   the artifacts were not built from. An empty directory is a new one.
 //! - **Idle-only eviction.** Over the disk budget (`SPIRA_DWARF_BUILD_BUDGET_GIB`), idle
 //!   directories go least recently used first, until the total is under; live ones are counted
 //!   but never removed.

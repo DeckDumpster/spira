@@ -268,3 +268,87 @@ fn a_file_outside_every_crate_that_a_crate_read_is_cleaned_on_release_when_touch
     release(&b, &mut p2);
     assert_eq!(cargo_log(&b), "clean -q -p crate-a");
 }
+
+fn unit(dir: &Path, name: &str, stamp: Option<std::time::SystemTime>) -> PathBuf {
+    let u = dir.join("debug/.fingerprint").join(name);
+    std::fs::create_dir_all(&u).unwrap();
+    if let Some(t) = stamp {
+        let f = std::fs::File::create(u.join("invoked.timestamp")).unwrap();
+        f.set_modified(t).unwrap();
+    }
+    u
+}
+
+fn edit_a_in_lease(b: &Box_) -> (Child, PathBuf) {
+    let p = sleeper();
+    let (d, _) = b.lease("hand-1", &p);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 3; }\n").unwrap();
+    (p, d)
+}
+
+#[test_id(tkq3m7a)]
+#[test]
+fn a_unit_stamped_after_the_edit_survives_release() {
+    let b = setup("bdcli-unit-kept");
+    let (mut p, d) = edit_a_in_lease(&b);
+    let later = std::time::SystemTime::now() + Duration::from_secs(3600);
+    let u = unit(&d, "crate-a-0123456789abcdef", Some(later));
+    release(&b, &mut p);
+    assert!(u.exists(), "the fresh unit stays");
+    assert!(!b.log.exists(), "nothing is cleaned: {}", cargo_log(&b));
+}
+
+#[test_id(tr5n2xe)]
+#[test]
+fn a_unit_stamped_before_the_edit_loses_its_fingerprint_and_a_newer_sibling_stays() {
+    let b = setup("bdcli-unit-stale");
+    let (mut p, d) = edit_a_in_lease(&b);
+    let now = std::time::SystemTime::now();
+    let stale = unit(&d, "crate-a-0123456789abcdef", Some(now - Duration::from_secs(3600)));
+    let fresh = unit(&d, "crate-a-fedcba9876543210", Some(now + Duration::from_secs(3600)));
+    release(&b, &mut p);
+    assert!(!stale.exists(), "the stale unit is removed");
+    assert!(fresh.exists(), "the newer sibling stays");
+    assert!(!b.log.exists(), "a crate with a kept unit is not cleaned: {}", cargo_log(&b));
+}
+
+#[test_id(tz8v1cd)]
+#[test]
+fn an_edit_with_a_back_dated_mtime_after_the_stamp_drops_the_unit() {
+    let b = setup("bdcli-unit-backdated");
+    let p = sleeper();
+    let (d, _) = b.lease("hand-1", &p);
+    let mut p = p;
+    let _ = std::fs::remove_file(&b.log);
+    let u = unit(&d, "crate-a-0123456789abcdef", Some(std::time::SystemTime::now() + Duration::from_secs(60)));
+    let f = std::fs::File::options().write(true).open(b.tree.join("a/src/lib.rs")).unwrap();
+    std::fs::write(b.tree.join("a/src/lib.rs"), "pub fn f() { let _ = 4; }\n").unwrap();
+    f.set_modified(std::time::SystemTime::now() - Duration::from_secs(7200)).unwrap();
+    // ctime is now; push the stamp behind it
+    std::fs::File::options().write(true).open(u.join("invoked.timestamp")).unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600)).unwrap();
+    release(&b, &mut p);
+    assert!(!u.exists(), "ctime newer than the stamp drops the unit");
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+}
+
+#[test_id(tm4w9ze)]
+#[test]
+fn a_unit_with_no_timestamp_is_removed_and_a_deleted_file_cleans_its_crate() {
+    let b = setup("bdcli-unit-nostamp");
+    let (mut p, d) = edit_a_in_lease(&b);
+    let bare = unit(&d, "crate-a-0123456789abcdef", None);
+    release(&b, &mut p);
+    assert!(!bare.exists(), "a unit with no timestamp is removed");
+    assert_eq!(cargo_log(&b), "clean -q -p crate-a");
+
+    let mut p2 = sleeper();
+    let (d2, _) = b.lease("hand-2", &p2);
+    let _ = std::fs::remove_file(&b.log);
+    std::fs::remove_file(b.tree.join("b/src/lib.rs")).unwrap();
+    let fresh = unit(&d2, "crate-b-0123456789abcdef", Some(std::time::SystemTime::now() + Duration::from_secs(3600)));
+    release(&b, &mut p2);
+    assert!(fresh.exists());
+    assert_eq!(cargo_log(&b), "clean -q -p crate-b", "a deleted file cleans the crate whatever its units");
+}

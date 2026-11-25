@@ -4,8 +4,9 @@
 # (spira-config build_dir). The target is ${CARGO_TARGET_DIR:-<root>/target}.
 #
 #   target-clean.sh <root>            clean what differs from the recorded tree, then record <root>
-#   target-clean.sh --release <root>  a lease's release: clean what differs from the record or
-#                                     was modified since it was written, then record <root>
+#   target-clean.sh --release <root>  a lease's release: for what differs from the record or was
+#                                     modified since it was written, keep each unit built after
+#                                     the edit, clean the rest, then record <root>
 #
 # A target is shared by every tree built in it and cargo trusts mtimes across them, so a
 # workspace crate whose bytes differ from the tree it was last built from is cleaned;
@@ -68,30 +69,62 @@ else
     changed="$(printf '%s\n%s\n' "$changed" "$touched" | sed '/^$/d' | LC_ALL=C sort -u)"
   fi
 fi
+FINGERPRINTS="$TARGET/debug/.fingerprint"
+ns() { local t; t="$(stat -c "$1" -- "$2" 2>/dev/null)" || return 1; printf '%s' "${t/./}"; }
+# The newest mtime or ctime among the files, in ns; fails when one is gone.
+newest_edit() {
+  local f t best=0
+  for f in "$@"; do
+    for t in '%.9Y' '%.9Z'; do
+      v="$(ns "$t" "$f")" || return 1
+      [ "$v" -gt "$best" ] && best="$v"
+    done
+  done
+  printf '%s' "$best"
+}
+# Drop the units of package $1 stamped before the newest edit in $2; succeeds when one is kept.
+keep_built_units() {
+  local pkg="$1" edit="$2" d kept=1 stamp
+  for d in "$FINGERPRINTS/$pkg"-*; do
+    [ -d "$d" ] || continue
+    case "${d##*/$pkg-}" in *[!0-9a-f]*|"") continue ;; esac
+    if stamp="$(ns '%.9Y' "$d/invoked.timestamp")" && [ "$stamp" -gt "$edit" ]; then kept=0; else rm -rf "$d"; fi
+  done
+  return $kept
+}
 if [ -n "$manifest" ] && [ -f "$BUILT" ] && [ -n "${changed:-}" ]; then
-  root_changed=""
-  for r in "${roots[@]}"; do grep -qxF "$r" <<< "$changed" && root_changed="$r"; done
-  if [ -n "$root_changed" ]; then
-    echo "unit-tests: $root_changed changed — cleaning the workspace crates"
+  root_changed=()
+  for r in "${roots[@]}"; do grep -qxF "$r" <<< "$changed" && root_changed+=("$r"); done
+  if [ "${#root_changed[@]}" -gt 0 ] && [ -z "$release" ]; then
+    echo "unit-tests: ${root_changed[*]} changed — cleaning the workspace crates"
     clean_all
   else
     to_clean=()
+    any_kept=""
     for m in "${members[@]}"; do
       name="$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^name[[:space:]]*=/{gsub(/.*=[[:space:]]*"|".*/,""); print; exit}' "$m/Cargo.toml")"
       [ -n "$name" ] || continue
-      hit=""
-      grep -q "^$m/" <<< "$changed" && hit=1
-      if [ -z "$hit" ] && [ -d "$DEPS_DIR" ]; then
+      files=()
+      while IFS= read -r f; do [ -n "$f" ] && files+=("$f"); done < <(grep "^$m/" <<< "$changed")
+      if [ -d "$DEPS_DIR" ]; then
         under="${name//-/_}"
         while IFS= read -r f; do
           case "$f" in "$m"/*) continue ;; esac
           if cat "$DEPS_DIR/$under"-*.d 2>/dev/null | tr ' ' '\n' | grep -qxF "$ROOT/$f:" ||
-             cat "$DEPS_DIR/$under"-*.d 2>/dev/null | tr ' ' '\n' | grep -qxF "$ROOT/$f"; then hit=1; break; fi
+             cat "$DEPS_DIR/$under"-*.d 2>/dev/null | tr ' ' '\n' | grep -qxF "$ROOT/$f"; then files+=("$f"); fi
         done <<< "$changed"
       fi
-      [ -n "$hit" ] && to_clean+=(-p "$name")
+      [ "${#root_changed[@]}" -gt 0 ] && files+=("${root_changed[@]}")
+      [ "${#files[@]}" -gt 0 ] || continue
+      if [ -n "$release" ]; then
+        if edit="$(newest_edit "${files[@]}")" && keep_built_units "$name" "$edit"; then any_kept=1; continue; fi
+      fi
+      to_clean+=(-p "$name")
     done
-    if [ "${#to_clean[@]}" -gt 0 ]; then
+    if [ "${#root_changed[@]}" -gt 0 ] && [ -z "$any_kept" ]; then
+      echo "unit-tests: ${root_changed[*]} changed and no built unit is newer — cleaning the workspace crates"
+      clean_all
+    elif [ "${#to_clean[@]}" -gt 0 ]; then
       echo "unit-tests: cleaning the workspace crates whose bytes changed:${to_clean[*]//-p/}"
       rm -f "$BUILT" || exit 2
       cargo clean -q "${to_clean[@]}" || { echo "unit-tests: cargo clean ${to_clean[*]} failed" >&2; exit 2; }
