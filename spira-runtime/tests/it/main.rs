@@ -14,6 +14,7 @@
 extern crate spira_test_id;
 mod boot_stagger;
 mod check_config;
+mod concierge_wake_one_try;
 mod effects_runnable;
 mod no_fork_edges_ops;
 mod no_spawn;
