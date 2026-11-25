@@ -17,6 +17,7 @@ claim-count=act
 cockpit-tier-5s=act
 cockpit-tier-600s=act
 cockpit-tier-60s=act
+concierge.ensure=act
 cr-cadence=act
 czar=act
 design-asks=act

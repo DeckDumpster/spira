@@ -82,7 +82,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("cockpit-ensure.service", false));
     m.units.push(t("cockpit-ensure.timer", true));
     m.units.push(t("concierge.service", false));
-    m.units.push(t("concierge.timer", true));
     m.units.push(t("lc-backup.service", false));
     m.units.push(t("lc-backup.timer", true));
     m.units.push(t("lc-backup-drill.service", false));
@@ -314,6 +313,16 @@ mod tests {
         "submission-provision", "target-reap", "tsd-prune", "verdict", "verify-asks", "warden", "watchtower", "worktree-reaper",
     ];
 
+    #[test_id(tf9in1x)]
+    #[test]
+    fn the_concierge_timer_is_retired_and_its_service_is_shipped() {
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
+        let union = union_template_names();
+        assert!(!union.iter().any(|n| n == "concierge.timer"), "concierge.timer is still in the manifest");
+        assert!(!dir.join("concierge.timer").exists(), "concierge.timer is still a template");
+        assert!(union.iter().any(|n| n == "concierge.service") && dir.join("concierge.service").exists(), "positive control: the service the concierge.ensure task starts is shipped");
+    }
+
     #[test_id(t94k0vx)]
     #[test]
     fn no_unit_the_scheduler_replaces_is_shipped() {
@@ -325,7 +334,7 @@ mod tests {
             assert!(!union.contains(n), "{n} is still in the manifest");
             assert!(!dir.join(n).exists(), "{n} is still a template");
         }
-        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
+        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.service", "cockpit-ensure.timer"] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
     }

@@ -387,7 +387,7 @@ start)
     # unit's, or a suite's base:override layers), handed on verbatim and never defaulted
     # (law-a-config-value-has-no-fallback).
     # THE SESSION HOOK IS ENSURED ON EVERY start, not only the first — this is also what the
-    # 10-minute re-ensure timer calls, so "start (and restart)" is the same code path. Runs
+    # `concierge.ensure` task starts, so "start (and restart)" is the same code path. Runs
     # before the already-running check below so a concierge already up still gets it repaired.
     # `release session-hook install` is itself idempotent (writes the client's settings file
     # only on change), so this costs nothing in the steady state. FAILS LOUDLY RATHER THAN
