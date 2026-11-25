@@ -14,7 +14,6 @@
 1 cockpit-collect/src/probes/unsent.rs
 2 cockpit-collect/src/store.rs
 1 cockpit/ops/src/lcio.rs
-4 cockpit/ops/src/lcview_main.rs
 5 cockpit/panel/src/model.rs
 3 cockpit/panel/src/store.rs
 5 dwarf/src/bd.rs

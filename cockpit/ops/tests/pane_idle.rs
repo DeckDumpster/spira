@@ -81,7 +81,7 @@ fn plant(path: &Path, doc: &Snapshot) {
 }
 
 fn threads() -> BTreeSet<String> {
-    std::fs::read_dir("/proc/self/task").unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()
+    std::fs::read_dir(Path::new(system_paths::PROC_SELF).join("task")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()
 }
 
 fn files(root: &Path) -> BTreeMap<String, (u64, std::time::SystemTime, u64)> {

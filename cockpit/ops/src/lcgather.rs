@@ -200,7 +200,7 @@ fn gather_gate_runs(env: &Env, s: &mut Snapshot, held: &mut GateRead, last: Opti
 }
 
 fn gather_batches(env: &Env, s: &mut Snapshot, held: &mut Held) {
-    match lc_json(env, &["list", "--batches"]) {
+    match lc_json(env, &["list", "--batches"]) { // BDQ_READ_CONSIDERED="the spira-lc lifecycle door (LcClient), not a bd read"
         Ok(rows) => {
             let mut by_time: Vec<(i64, String, String)> = Vec::new();
             for b in &rows {
@@ -242,7 +242,7 @@ fn gather_batches(env: &Env, s: &mut Snapshot, held: &mut Held) {
         if let Some((_, at)) = held.ejects.as_ref().filter(|(k, _)| *k == key) {
             b.eject_at = at.clone();
         } else {
-            match lc_json(env, &["history", &b.id, "--machine", "batch"]) {
+            match lc_json(env, &["history", &b.id, "--machine", "batch"]) { // BDQ_READ_CONSIDERED="the spira-lc lifecycle door (LcClient), not a bd read"
                 Ok(evs) => {
                     b.eject_at = evs.iter().filter(|e| e["evidence"].as_str().is_some_and(|x| x.starts_with("{\"Eject\""))).filter_map(|e| num(&e["at"])).collect();
                     held.ejects = Some((key, b.eject_at.clone()));
@@ -262,7 +262,7 @@ fn gather_menders(env: &Env, s: &mut Snapshot) {
 
 fn gather_rows(env: &Env, s: &mut Snapshot) -> HashMap<i64, String> {
     let mut phases = HashMap::new();
-    match lc_json(env, &["list", "--live"]) {
+    match lc_json(env, &["list", "--live"]) { // BDQ_READ_CONSIDERED="the spira-lc lifecycle door (LcClient), not a bd read"
         Ok(rows) => {
             let mut read = true;
             for r in rows {
