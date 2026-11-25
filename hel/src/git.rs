@@ -6,13 +6,14 @@
 //! answered.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use spira_config::bounded::{bounded_for, Bounded};
+use std::process::Stdio;
 
 pub struct Git<'a>(pub &'a Path);
 
 impl Git<'_> {
-    fn cmd(&self, args: &[&str]) -> Command {
-        let mut c = Command::new("git");
+    fn cmd(&self, args: &[&str]) -> Bounded {
+        let mut c = bounded_for("git", "0");
         c.arg("-C").arg(self.0).args(args).stdin(Stdio::null()).stderr(Stdio::null());
         c
     }
@@ -328,8 +329,7 @@ impl Git<'_> {
     /// `worktree prune -n -v`'s STDERR (that command reports on stderr, not stdout; reading
     /// it any other way yields nothing and a guard fed an empty list approves everything).
     pub fn worktree_prune_dry(&self) -> String {
-        // batch-job: git history or network operation, as long as the repository is large
-        Command::new("git")
+        bounded_for("git", "0")
             .arg("-C")
             .arg(self.0)
             .args(["worktree", "prune", "-n", "-v"])
@@ -345,8 +345,7 @@ impl Git<'_> {
     }
 
     pub fn worktree_repair(&self, path: &Path) {
-        // batch-job: git history or network operation, as long as the repository is large
-        let _ = Command::new("git")
+        let _ = bounded_for("git", "0")
             .arg("-C")
             .arg(self.0)
             .args(["worktree", "repair"])

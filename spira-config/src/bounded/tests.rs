@@ -145,3 +145,19 @@ fn started_counts_each_child_this_process_starts() {
     bounded("true").status().unwrap();
     assert!(started() > before);
 }
+
+#[test_id(tpopfef)]
+#[test]
+fn counting_names_each_program_started_on_this_thread_and_on_carried_threads() {
+    let (_, outside) = counting(|| ());
+    assert!(outside.is_empty());
+    bounded("true").status().unwrap();
+    let (_, got) = counting(|| {
+        bounded("true").status().unwrap();
+        bounded("true").output().unwrap();
+        let t = tally();
+        std::thread::spawn(move || in_tally(t, || bounded("true").status().unwrap())).join().unwrap();
+        std::thread::spawn(|| bounded("true").status().unwrap()).join().unwrap();
+    });
+    assert_eq!(got, BTreeMap::from([("true".to_string(), 3)]));
+}

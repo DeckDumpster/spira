@@ -114,7 +114,7 @@ pub type TurnHook = Arc<dyn Fn(&mut Engine) + Send + Sync>;
 enum Done {
     Started(String),
     Deferred(String, EffectClass),
-    Outcome(String, Outcome),
+    Outcome(String, Outcome, BTreeMap<String, u64>),
     Spilled(String, Spill),
 }
 
@@ -151,9 +151,10 @@ fn apply(t: &mut Turn) -> Result<()> {
     while let Some(d) = done.next() {
         match d {
             Done::Started(key) => t.engine.note_attempt(&key),
-            Done::Outcome(key, o) => {
+            Done::Outcome(key, o, children) => {
+                t.engine.note_children(&key, children.clone());
                 if let Err(e) = t.engine.complete(&key, o.clone()) { // loop-safe: runs on the offload pool
-                    t.done = std::iter::once(Done::Outcome(key, o)).chain(done).collect();
+                    t.done = std::iter::once(Done::Outcome(key, o, children)).chain(done).collect();
                     return Err(e);
                 }
             }
@@ -389,7 +390,7 @@ fn absorb(d: &Done, in_flight: &mut BTreeMap<String, String>, backoff: &mut Dura
     match d {
         Done::Started(_) => *backoff = BACKOFF_FIRST,
         Done::Deferred(..) => {}
-        Done::Outcome(key, _) => {
+        Done::Outcome(key, ..) => {
             in_flight.remove(key);
         }
         Done::Spilled(key, sp) => {
@@ -435,13 +436,15 @@ fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc
     let (workers, runner, tx) = (workers.clone(), runner.clone(), tx.clone());
     let deadline = Duration::from_millis(p.spec.deadline_ms);
     let permit = Arc::new(Mutex::new(Some(permit)));
+    let started = spira_config::bounded::Tally::default();
     tokio::spawn(async move {
         let outcome = async {
             let (r, k, spec, held, task) = (runner, p.key.clone(), p.spec.clone(), permit.clone(), p.task.clone());
             let (began_tx, began) = oneshot::channel::<()>();
+            let job_tally = started.clone();
             let job = move || {
                 let _ = began_tx.send(());
-                let out = r.run_for_task(&task, &k, &spec);
+                let out = spira_config::bounded::in_tally(Some(job_tally), || r.run_for_task(&task, &k, &spec));
                 drop(held.lock().unwrap_or_else(|e| e.into_inner()).take()); // loop-safe: runs on the offload pool; the lock is held only to take the permit
                 out
             };
@@ -468,7 +471,8 @@ fn launch_effect(workers: &Arc<Pool>, permit: OwnedSemaphorePermit, runner: &Arc
         }
         .await;
         if let Some(outcome) = outcome {
-            let _ = tx.send(Done::Outcome(p.key, outcome));
+            let children = std::mem::take(&mut *started.lock().unwrap_or_else(|e| e.into_inner())); // loop-safe: held only to take the counts
+            let _ = tx.send(Done::Outcome(p.key, outcome, children));
         }
     });
 }

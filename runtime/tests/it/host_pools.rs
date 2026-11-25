@@ -195,3 +195,30 @@ fn a_deferred_effect_is_lost_at_a_restart_and_never_runs_again() {
     let lost = j.history().into_iter().filter(|ev| ev.kind.tag == EFFECT_TIMED_OUT && ev.kind.body == runtime::engine::LOST_AT_RESTART).count();
     assert_eq!(lost, 2, "each unresolved effect is told it was lost, once");
 }
+
+struct StartsTrue;
+impl EffectRunner for StartsTrue {
+    fn run(&self, _: &str, spec: &EffectSpec) -> Result<String, String> {
+        spira_config::bounded::bounded("true").status().map_err(|e| e.to_string())?;
+        Ok(spec.input.clone())
+    }
+}
+
+#[test_id(th9t8gk)]
+#[tokio::test]
+async fn a_succeeded_effect_that_started_a_program_writes_its_count_on_the_effect_record() {
+    let j: Arc<dyn Journal> = MemJournal::new();
+    let sink = MemSink::new();
+    let mut e = engine(j.clone()).with_sink(sink.clone());
+    e.submit("b0", "s0", EventKind::new("build", "b0")).unwrap();
+    let (tx, rx) = mpsc::channel::<Submit>(4);
+    drop(tx);
+    let serving = tokio::spawn(serve_with(e, Arc::new(WallClock), Arc::new(StartsTrue), PoolCaps::default(), rx, opts(&sink)));
+    until(|| count(&*j, "built") == 1).await;
+    tokio::time::timeout(Duration::from_secs(60), serving).await.expect("the host drains").unwrap().unwrap();
+    let effects: Vec<_> = sink.records().into_iter().filter(|f| f.get("unit") == Some(&Value::from("effect"))).collect();
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    assert_eq!(effects[0].get("effect.outcome"), Some(&Value::from("succeeded")));
+    assert_eq!(effects[0].get("effect.children.true"), Some(&Value::Int(1)));
+    assert_eq!(effects[0].get("task"), Some(&Value::from("builds")), "the registered task, not the stream s0");
+}
