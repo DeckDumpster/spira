@@ -15,7 +15,7 @@ use spira_runtime::{registrations, tasks};
 mod common;
 
 const HOUR: u64 = 3_600_000;
-const START: u64 = 1_700_000_000_000;
+const START: u64 = 1_700_001_000_000;
 const LANDED_S: u64 = START / 1000 - 1_000;
 
 struct Fixture {
@@ -400,7 +400,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let (before_hour, after) = (START + 59 * MINUTE, warm + HOUR);
     let m = |n: u64| after + n * MINUTE;
     let (quiet_a, quiet_b) = (after - 7 * MINUTE, after - 4 * MINUTE);
-    let mut marks: Vec<u64> = (0..=60).map(|k| warm + k * MINUTE).chain([before_hour, quiet_a, quiet_b, m(3), m(6), m(8), m(9), m(10), m(12), m(15), m(18), m(21), m(25), m(45)]).collect();
+    let mut marks: Vec<u64> = (0..=60).map(|k| warm + k * MINUTE).chain([before_hour, quiet_a, quiet_b, m(3), m(6), m(8), m(9), m(10), m(12), m(15), m(16), m(18), m(21)]).collect();
     marks.sort();
     marks.dedup();
     run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &marks, &mut |t| {
@@ -449,8 +449,8 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             spira_config::serialize_and_write(&f.toml, &spira_config::set_path(&doc, "spira.certify_par", "7").unwrap()).unwrap();
             stale_target(&f, "sp-aaaaaa");
         }
-        t if t == m(25) => reads_at_expiry = counts(&f),
-        t if t == m(45) => reads_at_midnight = counts(&f),
+        t if t == m(16) => reads_at_expiry = counts(&f),
+        t if t == m(21) => reads_at_midnight = counts(&f),
         t if t == warm + HOUR => {
             applied.insert("boundary", runs());
             tower_at_boundary = started_by_the_watchtower_checks(&f);
