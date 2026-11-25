@@ -69,7 +69,7 @@ pub fn run(check: &str) -> Result<String, String> {
             };
             load_fence::run(Path::new(system_paths::PROC), &cfg);
         }
-        "conditions-check" => conditions_check(n, &run)?,
+        "conditions-check" => return Ok(format!("watchtower: conditions-check ran; {}", conditions_check(n, &run)?)),
         "slow-query-check" => {
             let log = getenv("SPIRA_SLOW_QUERY_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("slow-queries.log"));
             let threshold_ms = reg("SPIRA_SLOW_QUERY_MS")?.trim().parse::<u64>().map_err(|e| format!("SPIRA_SLOW_QUERY_MS: {e}"))?;
@@ -118,7 +118,7 @@ fn lock_holders_check(n: i64, run: &Path) -> Result<String, String> {
     Ok("watchtower: lock-holders-check ran".into())
 }
 
-fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
+fn conditions_check(n: i64, run: &Path) -> Result<String, String> {
     let releases = reg("SPIRA_RELEASES")?;
     let cfg = probes::Cfg {
         units: runtime::units::host(getenv("SPIRA_SYSTEMCTL").as_deref()),
@@ -158,7 +158,7 @@ fn conditions_check(n: i64, run: &Path) -> Result<(), String> {
     let drift = probes::ContentDriftCfg { lc: client()?, slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize, sustain_secs: getenv_i64("SPIRA_CONTENT_DRIFT_SUSTAIN_SECS", 1800), state: run.join("conditions").join("content-drift.state") };
     conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift));
     ctx.end_pass();
-    watchtower::host_real::cfg_of(run, getenv("SPIRA_TMP_PROBE_PATH"), getenv("SPIRA_PSI_DIR")).and_then(|c| watchtower::host_real::pass(n as u64, &c, run)).map(|_| ())
+    watchtower::host_real::cfg_of(run, getenv("SPIRA_TMP_PROBE_PATH"), getenv("SPIRA_PSI_DIR")).and_then(|c| watchtower::host_real::pass(n as u64, &c, run))
 }
 
 #[cfg(test)]

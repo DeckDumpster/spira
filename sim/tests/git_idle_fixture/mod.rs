@@ -14,7 +14,6 @@ pub const LANDED_S: u64 = START / 1000 - 1_000;
 pub struct Fixture {
     pub _dir: testkit::TempDir,
     pub _env: testkit::EnvGuard,
-    pub stray: Option<PathBuf>,
     pub log: PathBuf,
     pub local: PathBuf,
     pub pr: PathBuf,
@@ -142,8 +141,11 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
 
     let map = dir.join("repos");
     std::fs::write(&map, format!("spira|{}|queue.local|local/main||\nprrepo|{}|pr|origin/main||\n", local.display(), pr.display())).unwrap();
-    let run_dir = dir.join("run");
-    std::fs::create_dir(&run_dir).unwrap();
+    let run_dir = process_run();
+    if let Err(e) = std::fs::remove_dir_all(&run_dir) {
+        assert_eq!(e.kind(), std::io::ErrorKind::NotFound, "{e}");
+    }
+    std::fs::create_dir_all(&run_dir).unwrap();
     let sock = process_socket();
     let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
     let requests: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -222,29 +224,29 @@ pub fn fixture(edit_env: EnvEdit) -> Fixture {
     ]);
     let overrides = dir.join("overrides");
     std::fs::create_dir(&overrides).unwrap();
-    let pinned_run = PathBuf::from(spira_config::process::cfg("SPIRA_RUN").unwrap());
-    let worktrees = pinned_run.join("wt");
+    let worktrees = run_dir.join("wt");
     std::fs::create_dir_all(&worktrees).unwrap();
-    let stray = (!pinned_run.starts_with(dir.path())).then(|| pinned_run.ancestors().find(|a| a.parent() == dir.path().parent()).unwrap().to_path_buf());
-    let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), cr_tz: "UTC".into(), cr_open_hour: "9".into(), ..Default::default() };
+    let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir: run_dir.clone(), wiki: wiki.clone(), cr_tz: "UTC".into(), cr_open_hour: "9".into(), ..Default::default() };
     let units = Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)));
     units.install("dolt-beads.service", runtime::units::UnitFacts { state: runtime::units::UnitState::Active, ..runtime::units::UnitFacts::absent() });
     let effects = Arc::new(spira_runtime::Effects { world, units: Some(units), ..Default::default() });
-    Fixture { _serial: serial, _env: env, _dir: dir, stray, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, registry, images, effects, watchers, worktrees, published, checkout_rows }
+    Fixture { _serial: serial, _env: env, _dir: dir, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, registry, images, effects, watchers, worktrees, published, checkout_rows }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.sock);
-        if let Some(p) = &self.stray {
-            let _ = std::fs::remove_dir_all(p);
-        }
     }
 }
 
 pub fn process_registry() -> PathBuf {
     static HOME: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
     HOME.get_or_init(|| testkit::TempDir::new("git-idle-registry")).join("registry.sqlite")
+}
+
+pub fn process_run() -> PathBuf {
+    static HOME: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| testkit::TempDir::new("git-idle-run")).join("run")
 }
 
 pub fn process_socket() -> PathBuf {
@@ -296,7 +298,7 @@ pub fn assert_stubs_log(f: &Fixture) {
 
 pub fn untagged_images(f: &Fixture) -> reconciler::Config {
     let seams = reconciler::Seams::resolving(|n| Ok(n.to_string())).map(|s| reconciler::Seams { podman: f.podman().display().to_string(), ..s }).unwrap();
-    reconciler::Config::from_lookup(&|_| Ok("1".into()), seams, f.dir_path().join("run"), f.dir_path().display().to_string(), 0, String::new()).unwrap()
+    reconciler::Config::from_lookup(&|_| Ok("1".into()), seams, process_run(), f.dir_path().display().to_string(), 0, String::new()).unwrap()
 }
 
 pub fn make_ready(f: &Fixture, id: &str) {
