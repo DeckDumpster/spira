@@ -355,7 +355,8 @@ unset SPIRA_HOME
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" round_ref="${12}" round_sha="${13}"
 testenv_limits="${15:-}" resume_url="${16:-}" fences="${17:-}" want_tag="${18:-}"
 deny_list="${19:-}" deny_filter_line="${20:-}" only="${24:-}"
-rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log
+rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log ~/round-script.log ~/round-work/.runtime/spira/batch-results/round-phases
+mkdir -p ~/round-work/.runtime/spira/batch-results
 : > ~/round-runner.out
 exec > >(tee -a ~/round-script.log)
 script_out_tee=${!:-}
@@ -376,7 +377,19 @@ round_err() {
     round_marker "$err_rc"
 }
 trap 'round_err $? $LINENO "$BASH_COMMAND"' ERR
-phase() { round_phase="$1"; echo "round-vm: PHASE $1" >&2; }
+phase_stamp() {
+    local cg="" line word cpu=- wbytes=- sum=0 seen=""
+    { while read -r line; do case $line in 0::*) cg=/sys/fs/cgroup${line#0::};; esac; done < /proc/self/cgroup; } 2>/dev/null || true
+    if [ -n "$cg" ] && [ -r "$cg/cpu.stat" ]; then
+        { while read -r line word; do [ "$line" != usage_usec ] || cpu=$word; done < "$cg/cpu.stat"; } 2>/dev/null || true
+    fi
+    if [ -n "$cg" ] && [ -r "$cg/io.stat" ]; then
+        { while read -r line; do for word in $line; do case $word in wbytes=*) (( sum += ${word#wbytes=} )) || true; seen=1;; esac; done; done < "$cg/io.stat"; } 2>/dev/null || true
+        [ -z "$seen" ] || wbytes=$sum
+    fi
+    printf '%s %s %s %s\n' "$1" "$EPOCHSECONDS" "$cpu" "$wbytes" >> "$HOME/round-work/.runtime/spira/batch-results/round-phases" 2>/dev/null || true
+}
+phase() { round_phase="$1"; echo "round-vm: PHASE $1" >&2; phase_stamp "$1"; }
 phase_failed() {
     [ -n "$fault_phase" ] || { fault_phase="$1"; fault_rc="$2"; }
     echo "round-vm: PHASE-FAILED phase=$1 rc=$2" >&2
@@ -384,6 +397,7 @@ phase_failed() {
 round_exit() {
     local rc=$? dir="$HOME/round-work/.runtime/spira/batch-results" i
     trap - EXIT
+    phase_stamp end
     exec >&- 2>&-
     for i in {1..20}; do
         { [ -n "$script_out_tee" ] && kill -0 "$script_out_tee" 2>/dev/null; } || { [ -n "$script_err_tee" ] && kill -0 "$script_err_tee" 2>/dev/null; } || break
@@ -2309,7 +2323,82 @@ pub const TEST_PHASE_FILES: [&str; 4] = ["unit.json", "unit-tests.out", "integra
 pub const PROGRESS_FILES: [&str; 2] = [crate::progress::UNIT_FILE, crate::progress::INTEGRATION_FILE];
 
 /// What the VM script leaves at the top of the results on every exit: its phase marker and its log.
-pub const SCRIPT_FILES: [&str; 3] = [crate::vm_fault::PHASE_FILE, crate::vm_fault::SCRIPT_LOG_FILE, crate::vm_fault::FAULT_KIND_FILE];
+pub const SCRIPT_FILES: [&str; 4] = [crate::vm_fault::PHASE_FILE, crate::vm_fault::SCRIPT_LOG_FILE, crate::vm_fault::FAULT_KIND_FILE, PHASE_TIMES];
+
+/// What REMOTE_SCRIPT appends a line to as each phase starts: `<name> <epoch s> <cpu usec> <written bytes>`, `-` for a counter it could not read, closed by an `end` line.
+pub const PHASE_TIMES: &str = "round-phases";
+
+/// What a pass says about itself to the phases it ran.
+pub struct RoundFacts<'a> {
+    pub subject: &'a str,
+    pub repo: Option<&'a str>,
+    pub place: &'a str,
+    pub result: &'a str,
+    pub fault_phase: Option<&'a str>,
+    pub unit_tests: Option<u64>,
+    pub integration_tests: Option<u64>,
+}
+
+/// One op per phase of a `round-phases` text: its duration runs to the next line, its cost is the counters' difference.
+pub fn phase_ops(text: &str, facts: &RoundFacts) -> Vec<spira_otel::ops::Op> {
+    let rows: Vec<(&str, u64, Option<u64>, Option<u64>)> = text
+        .lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            let (name, at) = (w.next()?, w.next()?.parse().ok()?);
+            Some((name, at, w.next()?.parse().ok(), w.next()?.parse().ok()))
+        })
+        .collect();
+    let phases = rows.iter().take_while(|r| r.0 != "end").count();
+    let last = facts.fault_phase.and_then(|f| rows[..phases].iter().rposition(|r| r.0 == f)).unwrap_or(phases.saturating_sub(1));
+    rows.windows(2)
+        .take(phases)
+        .enumerate()
+        .map(|(i, w)| {
+            let ((name, at, cpu, wb), (_, next, ncpu, nwb)) = (w[0], w[1]);
+            let cost = match (cpu, ncpu, wb, nwb) {
+                (Some(c), Some(nc), Some(b), Some(nb)) if nc >= c && nb >= b => Some(spira_otel::ops::Cost { write_bytes: nb - b, cpu_seconds: (nc - c) as f64 / 1e6 }),
+                _ => None,
+            };
+            spira_otel::ops::Op {
+                operation: "round".into(),
+                phase: Some(name.into()),
+                subject: facts.subject.into(),
+                repo: facts.repo.map(str::to_string),
+                start: std::time::UNIX_EPOCH + Duration::from_secs(at),
+                duration: Duration::from_secs(next.saturating_sub(at)),
+                result: if i == last { facts.result } else { "ok" }.into(),
+                cost,
+                tests: match name {
+                    "unit-tests" => facts.unit_tests,
+                    "integration-tests" => facts.integration_tests,
+                    _ => None,
+                },
+                place: Some(facts.place.into()),
+            }
+        })
+        .collect()
+}
+
+/// Sends the pass's phase ops from its kept `round-phases`; a pass whose script never ran leaves none.
+fn emit_phase_ops(run_dir: &Path, results: &Path, args: &RunArgs, handle: Option<&str>, code: i32) {
+    let Ok(text) = fs::read_to_string(results.join(PHASE_TIMES)) else { return };
+    let marker = fs::read_to_string(results.join(crate::vm_fault::PHASE_FILE)).unwrap_or_default();
+    let fault_phase = marker.lines().rev().find_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix("phase=")));
+    let subject = run_label(args);
+    let facts = RoundFacts {
+        subject: &subject,
+        repo: args.round_repo.as_deref(),
+        place: if handle == Some(crate::host::HOST_HANDLE) { "host" } else { "vm" },
+        result: crate::progress::verdict_for(code),
+        fault_phase,
+        unit_tests: crate::progress::tests_in(results, crate::progress::UNIT_FILE),
+        integration_tests: crate::progress::tests_in(results, crate::progress::INTEGRATION_FILE),
+    };
+    for op in phase_ops(&text, &facts) {
+        spira_otel::ops::emit(run_dir, "round-vm", &op);
+    }
+}
 
 /// Carries the files the VM leaves outside testenv's leaf from `pulled` to `results_dir`, by name.
 pub fn keep_top_files(pulled: &Path, results_dir: &Path) {
@@ -2351,6 +2440,10 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     let facts = Mutex::new(Facts::default());
     let code = run_pass(env, args, &facts);
     let facts = facts.into_inner().unwrap_or_else(|e| e.into_inner());
+    if args.ci_entry.is_none() {
+        let results = args.results_dir.clone().unwrap_or_else(|| env.cfg.run_dir.join("batch-results"));
+        emit_phase_ops(&env.cfg.run_dir, &results, args, facts.handle.as_deref(), code);
+    }
     let (Some(batch), Some(started)) = (args.round_batch.as_deref(), facts.started) else { return code };
     let marks = facts.marks.clone().unwrap_or_default();
     let (boot_s, build_s, suites_s) = marks.phases(facts.wait_s, crate::progress::now_secs());
@@ -3505,6 +3598,7 @@ fn after_batch(
         keep_runner_output(remote, cfg, &vm.addr, &scratch("runner"), &results_dir);
     }
     let _ = fs::remove_file(results_dir.join(crate::vm_fault::FAULT_KIND_FILE));
+    let _ = fs::remove_file(results_dir.join(PHASE_TIMES));
     keep_top_files(&pulled, &results_dir);
     keep_launcher_output(remote, cfg, &vm.addr, &scratch("launcher"), &results_dir);
     if pulled_ok {
@@ -5770,6 +5864,84 @@ mod tests {
         assert_eq!(st.code(), Some(2));
         let marker = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phase")).unwrap();
         assert_eq!(marker, "phase=suites rc=2\n");
+    }
+
+    const PLANTED: &str = "preflight 100 1000000 0\nbuild 110 3000000 4096\nunit-tests 130 -  -\npost 160 9000000 8192\nend 170 9500000 9000\n";
+
+    fn facts<'a>(result: &'a str, fault_phase: Option<&'a str>) -> RoundFacts<'a> {
+        RoundFacts { subject: "b-1", repo: Some("r"), place: "host", result, fault_phase, unit_tests: Some(7), integration_tests: Some(9) }
+    }
+
+    #[test_id(t5af7p2)]
+    #[test]
+    fn phase_ops_gives_one_op_per_phase_with_its_duration_and_cost_and_the_last_takes_the_pass_result() {
+        let ops = phase_ops(PLANTED, &facts("green", None));
+        let got: Vec<_> = ops.iter().map(|o| (o.phase.as_deref().unwrap(), o.duration.as_secs(), o.result.as_str())).collect();
+        assert_eq!(got, [("preflight", 10, "ok"), ("build", 20, "ok"), ("unit-tests", 30, "ok"), ("post", 10, "green")]);
+        let c = ops[0].cost.as_ref().unwrap();
+        assert_eq!((c.write_bytes, c.cpu_seconds), (4096, 2.0));
+        assert!(ops.iter().all(|o| o.operation == "round" && o.subject == "b-1" && o.place.as_deref() == Some("host") && o.repo.as_deref() == Some("r")));
+        assert_eq!(ops[2].tests, Some(7));
+        assert_eq!(ops[0].tests, None);
+    }
+
+    #[test_id(tcr6ll8)]
+    #[test]
+    fn a_phase_line_with_dash_counters_gives_an_op_without_cost() {
+        let ops = phase_ops(PLANTED, &facts("green", None));
+        assert!(ops[1].cost.is_none() && ops[2].cost.is_none(), "{ops:?}");
+    }
+
+    #[test_id(tfq2m31)]
+    #[test]
+    fn a_failed_phase_named_by_the_marker_is_the_red_op_and_earlier_ones_are_ok() {
+        let ops = phase_ops(PLANTED, &facts("red", Some("unit-tests")));
+        let got: Vec<_> = ops.iter().map(|o| o.result.as_str()).collect();
+        assert_eq!(got, ["ok", "ok", "red", "ok"]);
+    }
+
+    #[test_id(txcwz5u)]
+    #[test]
+    fn a_text_with_no_phase_lines_gives_no_ops() {
+        assert!(phase_ops("end 5 - -\n", &facts("green", None)).is_empty());
+        assert!(phase_ops("", &facts("green", None)).is_empty());
+    }
+
+    fn script_fn_body(name: &str) -> &'static str {
+        let from = REMOTE_SCRIPT.find(&format!("\n{name}() {{")).unwrap() + 1;
+        let to = from + REMOTE_SCRIPT[from..].find("\n}\n").unwrap();
+        &REMOTE_SCRIPT[from..to]
+    }
+
+    #[test_id(teb40w3)]
+    #[test]
+    fn marking_a_phase_appends_to_round_phases_without_starting_a_process() {
+        let stamp = script_fn_body("phase_stamp");
+        assert!(stamp.contains(">> \"$HOME/round-work/.runtime/spira/batch-results/round-phases\""), "{stamp}");
+        assert!(script_fn_body("phase").contains("phase_stamp \"$1\""));
+        assert!(script_fn_body("round_exit").contains("phase_stamp end"));
+        for body in [stamp, script_fn_body("phase")] {
+            for banned in ["$(", "`", "date ", "cat ", "awk", "sed ", "grep", "mkdir", "cut ", "tr "] {
+                assert!(!body.contains(banned), "{banned} in {body}");
+            }
+        }
+        assert!(SCRIPT_FILES.contains(&PHASE_TIMES));
+    }
+
+    #[test_id(trnmbze)]
+    #[test]
+    fn marking_phases_in_a_real_shell_writes_a_line_per_phase_and_an_end_line() {
+        let home = TempDir::new();
+        fs::write(home.path().join("round-script.log"), "").unwrap();
+        let from = REMOTE_SCRIPT.find("phase_stamp() {").unwrap();
+        let head = &REMOTE_SCRIPT[from..REMOTE_SCRIPT.find("phase_failed() {").unwrap()];
+        let script = format!("set -Eeuo pipefail\nmkdir -p \"$HOME/round-work/.runtime/spira/batch-results\"\nround_phase=start\n{head}phase one\nphase two\nphase_stamp end\n");
+        let st = std::process::Command::new("bash").args(["-c", &script]).env_clear().env("HOME", home.path()).env("PATH", system_paths::SYSTEM_PATH_MIN).stderr(Stdio::null()).status().unwrap();
+        assert!(st.success());
+        let text = fs::read_to_string(home.path().join("round-work/.runtime/spira/batch-results/round-phases")).unwrap();
+        let names: Vec<_> = text.lines().map(|l| l.split(' ').next().unwrap()).collect();
+        assert_eq!(names, ["one", "two", "end"], "{text}");
+        assert!(text.lines().all(|l| l.split(' ').count() == 4), "{text}");
     }
 
     #[test_id(thzgu9u)]
