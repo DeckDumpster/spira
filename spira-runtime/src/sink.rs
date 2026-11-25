@@ -57,7 +57,7 @@ fn push_metrics(metrics: &MetricsSink, body: &str, attrs: &[(String, Attr)]) {
         if let (Some(Attr::Str(task)), Some(Attr::Str(effect))) = (find("task"), find("effect.kind")) {
             for (k, v) in attrs {
                 if let (Some(program), Attr::Int(n)) = (k.strip_prefix(CHILDREN_PREFIX), v) {
-                    metrics.push(&[Point::Count { name: CHILDREN_STARTED, value: *n as u64 }], &[("task", task), ("effect", effect), ("program", &program.to_string())]);
+                    metrics.push(&[Point::Count { name: CHILDREN_STARTED, value: *n as u64 }], &[("task", task), ("effect", effect), ("program", program)]);
                 }
             }
         }
