@@ -1481,7 +1481,7 @@ mod tests {
         assert_eq!(ids, (20..30).map(|n| format!("sp-{n:05}")).collect::<Vec<_>>());
     }
 
-    /// Verbs whose answer is a page of 1_000 audits or more: below that size they grow with the history by design.
+    /// Verbs whose answer is a page of 1_000 audits or more grow with the history below that size; `watch_holds_one_page_of_the_log_however_long_it_is` and `audits_newest_walking_the_whole_window_holds_one_chunk` bound them above it.
     const PAGED_ABOVE_THE_FIXTURE: [&str; 2] = ["watch", "audits --newest"];
 
     #[test_id(t4fqhcn)]

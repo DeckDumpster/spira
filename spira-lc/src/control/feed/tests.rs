@@ -685,6 +685,55 @@ fn audits_newest_reads_only_the_newest_chunk_of_a_long_log() {
     assert_eq!(call(&s, &["audits", "--newest", "--to-state", "LANDED"]), serde_json::json!({ "newest_at": now - 10, "lc_key": "sp-l" }));
 }
 
+/// Extends `sp-a`'s log to `to` revisions; every audit lies inside `--newest`'s default window.
+fn long_log(s: &Store<MemBackend>, from: u32, to: u32, at: i64) {
+    if from == 0 {
+        create(s, "sp-a");
+    }
+    for n in from..to {
+        let r = s.record("sp-a").unwrap().unwrap().value.row;
+        let kind = if r.express { BeadEventKind::Unexpress } else { BeadEventKind::Express };
+        let ev = BeadEvent { expect: BeadState::Ready, version: r.version, kind, actor: "ops".into(), at: Some(at) };
+        let out = s.apply("sp-a", &ev, &req(&format!("t-{n}"))).unwrap();
+        assert!(matches!(out, Outcome::Applied { .. }), "{out:?}");
+    }
+}
+
+#[test_id(tw5v6zr)]
+#[test]
+fn watch_holds_one_page_of_the_log_however_long_it_is() {
+    let s = store(MemBackend::new(), &VirtualClock::new(0));
+    let at = crate::db::now_epoch() - 2_000;
+    let argv = ["watch", keys::LIFECYCLE, "--from-rev", "0", "--wait-ms", "0"];
+    let mut peaks = Vec::new();
+    for (from, to) in [(0, 1_100), (1_100, 2_200)] {
+        long_log(&s, from, to, at);
+        let (answer, peak) = crate::peak_alloc::peak_of(|| call(&s, &argv));
+        let through = answer["through"].as_u64().unwrap();
+        assert!(through < s.contract().head().unwrap(), "{to} revisions: through {through} is not a page");
+        peaks.push(peak);
+    }
+    let (short, long) = (peaks[0], peaks[1]);
+    assert!(long < short * 3 / 2, "watch held {short} B at 1,100 revisions and {long} B at 2,200");
+}
+
+#[test_id(t5h0w6o)]
+#[test]
+fn audits_newest_walking_the_whole_window_holds_one_chunk() {
+    let s = store(MemBackend::new(), &VirtualClock::new(0));
+    let at = crate::db::now_epoch() - 2_000;
+    let argv = ["audits", "--newest", "--to-state", "DROPPED"];
+    let mut peaks = Vec::new();
+    for (from, to) in [(0, 1_100), (1_100, 2_200)] {
+        long_log(&s, from, to, at);
+        let (answer, peak) = crate::peak_alloc::peak_of(|| call(&s, &argv));
+        assert_eq!(answer, serde_json::json!({ "newest_at": null }), "{to} revisions: the walk must run to the end");
+        peaks.push(peak);
+    }
+    let (short, long) = (peaks[0], peaks[1]);
+    assert!(long < short * 3 / 2, "--newest held {short} B at 1,100 revisions and {long} B at 2,200");
+}
+
 fn event_seq_names_only_the_beads_with_an_applied_event_after_the_revision<B: Backend>(
     s: &Store<B>,
 ) {
