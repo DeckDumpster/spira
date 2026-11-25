@@ -1946,12 +1946,17 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
 
 /// The one root step proc-starts needs: its system unit, run as the owner of the harness home,
 /// holding CAP_BPF and CAP_PERFMON and nothing else. Creates no user.
+fn refuse_root_owner(uid: u32, home: &str) -> Result<(), String> {
+    if uid == 0 {
+        return Err(format!("{home} is owned by root; proc-starts must run as the operator's own user, not root"));
+    }
+    Ok(())
+}
+
 fn proc_starts_phase(host: &install::values::HostValues) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     let uid = std::fs::metadata(&host.home).map_err(|e| format!("cannot stat {}: {e}", host.home))?.uid();
-    if uid == 0 {
-        return Err(format!("{} is owned by root; proc-starts must run as the operator's own user, not root", host.home));
-    }
+    refuse_root_owner(uid, &host.home)?;
     let out = spira_config::bounded::bounded("getent").args(["passwd", &uid.to_string()]).output().map_err(|e| format!("cannot run getent: {e}"))?;
     let user = String::from_utf8_lossy(&out.stdout).split(':').next().map(str::trim).filter(|u| !u.is_empty()).map(str::to_string).ok_or_else(|| format!("no user has uid {uid}, the owner of {}", host.home))?;
     let host = install::values::HostValues { unit_user: user, ..host.clone() };
@@ -2502,5 +2507,25 @@ mod nix_gc_tests {
         gc.profile_bin = f.td.path().join("nowhere");
         build_spira_env_with(false, &home, &f.root, &runner(&f, "new", &calls, false), Some(&*f.units as &dyn Units), Some(&gc)).unwrap();
         assert!(f.units.calls().is_empty(), "no binary, no unit");
+    }
+}
+
+#[cfg(test)]
+mod proc_starts_phase_tests {
+    use super::*;
+
+        #[test_id(trkxi50)]
+        #[test]
+    fn a_harness_home_owned_by_root_is_refused_and_one_owned_by_a_user_is_not() {
+        assert!(refuse_root_owner(0, "h").unwrap_err().contains("owned by root"));
+        assert_eq!(refuse_root_owner(1000, "h"), Ok(()));
+    }
+
+    #[test_id(t318uqy)]
+    #[test]
+    fn a_home_that_cannot_be_read_is_refused() {
+        let td = testkit::TempDir::new("proc-starts-phase");
+        let host = install::values::HostValues { home: td.path().join("absent").display().to_string(), ..Default::default() };
+        assert!(proc_starts_phase(&host).unwrap_err().contains("cannot stat"));
     }
 }

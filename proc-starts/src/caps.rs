@@ -102,9 +102,16 @@ mod tests {
 
     #[test_id(t9w1ohb)]
     #[test]
+    fn both_missing_names_both_and_still_one_grant_line() {
+        let e = check(&status(0), ROOT).unwrap_err();
+        assert!(e.contains("CAP_BPF and CAP_PERFMON"), "{e}");
+        assert_eq!(e.matches("spira-install --proc-starts").count(), 1, "{e}");
+    }
+
+    #[test]
     fn a_third_capability_is_refused_by_name() {
         let e = check(&status(1 << 38 | 1 << 39 | 1 << 21), ROOT).unwrap_err();
-        assert!(e.contains("CAP_SYS_ADMIN") && !e.contains("CAP_BPF,"), "{e}");
+        assert!(e.ends_with("holds more than CAP_BPF and CAP_PERFMON: CAP_SYS_ADMIN; refusing to run with them"), "{e}");
     }
 
     #[test_id(ti1x2on)]
