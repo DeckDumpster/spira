@@ -96,7 +96,7 @@ pub fn classify(r: &Readings, th: &Thresholds) -> Vec<Firing> {
             out.push(Firing {
                 key: format!("builder-still:{bead}"),
                 title: format!("{bead}: a live builder has written nothing for {} and its commands use no CPU", age(r.now - written)),
-                evidence: format!("BEAD      {bead}\nCOMMAND   {command}\nSTILL     {} since the transcript was last written\nTHRESHOLD {}s\n\nThe lease renews while this holds, so only this alert says the session is not moving.", age(r.now - written), th.still_secs),
+                evidence: format!("BEAD      {bead}\nLAST ACTION {command}\nSTILL     {} since the transcript was last written\nTHRESHOLD {}s\n\nThe lease renews while this holds, so only this alert says the session is not moving.", age(r.now - written), th.still_secs),
             });
         }
     }
@@ -149,10 +149,10 @@ mod tests {
     #[test_id(tcu8d3n)]
     #[test]
     fn an_idle_builder_past_the_threshold_fires_naming_bead_and_command() {
-        let r = Readings { now: 1_000, stills: vec![("sp-a".into(), "cargo test".into(), 800), ("sp-b".into(), "x".into(), 900)], ..Readings::default() };
+        let r = Readings { now: 1_000, sentinel_armed: true, stills: vec![("sp-a".into(), "cargo test".into(), 800), ("sp-b".into(), "x".into(), 900)], ..Readings::default() };
         let f = classify(&r, &TH);
         assert_eq!(f.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(), ["builder-still:sp-a"]);
-        assert!(f[0].evidence.contains("cargo test") && f[0].evidence.contains("sp-a") && f[0].title.contains("3m"), "{f:?}");
+        assert!(f[0].evidence.contains("LAST ACTION cargo test") && f[0].evidence.contains("sp-a") && f[0].title.contains("3m"), "{f:?}");
     }
 
     const TH: Thresholds = Thresholds { pass_stale: 900, mirror_stale: 90_000, restart_threshold: 5, restart_window: 3600, red_streak: 4, noverdict_streak: 4, still_secs: 180 };

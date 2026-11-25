@@ -228,6 +228,11 @@ fn clock_ticks_per_sec() -> u64 {
     u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).unwrap_or(100).max(1)
 }
 
+/// Under 5% of one core over `secs`.
+fn idle_over(ticks: u64, secs: u64, hz: u64) -> bool {
+    ticks * 20 < secs.max(1) * hz
+}
+
 /// What the previous beat saw, to tell a still session from a quiet one.
 struct Seen {
     ticks: Option<u64>,
@@ -269,7 +274,7 @@ impl Heartbeat {
         let agent = stop.pgid.load(Ordering::SeqCst);
         let ticks = if agent > 0 { b.descendant_ticks(agent) } else { None };
         let idle = match (ticks, seen.ticks) {
-            (Some(t), Some(p)) if t >= p => (t - p) * 20 < (now - seen.at).max(1) as u64 * clock_ticks_per_sec(),
+            (Some(t), Some(p)) if t >= p => idle_over(t - p, (now - seen.at).max(1) as u64, clock_ticks_per_sec()),
             _ => false,
         };
         let still = idle && transcript == seen.transcript && stop.harness_wait.load(Ordering::SeqCst) == 0;
@@ -659,6 +664,25 @@ mod tests {
         assert_eq!((doc["transcript"].as_i64(), doc["last"].as_str()), (Some(5), Some("{\"type\":\"assistant\"}")));
         assert!(doc["since"].as_i64().unwrap() > 0);
         assert!(!d.join("dwarf/sp-a.still").exists(), "the heartbeat's end removes it");
+    }
+
+    #[test_id(tn6w0ea)]
+    #[test]
+    fn a_spinning_child_of_the_agent_is_read_as_cpu_and_counts_as_busy() {
+        let mut agent = std::process::Command::new("sh").args(["-c", "(while :; do :; done) & echo up; wait"]).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(agent.stdout.take().unwrap()), &mut String::new()).unwrap();
+        let pid = agent.id() as i32;
+        let first = loop {
+            match descendant_ticks(pid) {
+                Some(t) if t > 0 => break t,
+                _ => std::thread::yield_now(),
+            }
+        };
+        let _ = agent.kill();
+        let _ = agent.wait();
+        assert!(first > 0);
+        assert!(!idle_over(100, 1, 100), "a full core for a second is busy");
+        assert!(idle_over(4, 100, 100) && !idle_over(5, 100, 100), "5% of a core is the line");
     }
 
     #[test_id(tf0u3kx)]
