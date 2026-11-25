@@ -152,7 +152,8 @@ mod tests {
                 assert_eq!(decide(&carry, &snap, 1), (Carry::Ok, vec![]), "{snap:?}");
             }
         }
-        assert_eq!(runtime::units::state_of_word("reloading"), UnitState::Active, "reloading is up");
+        let reloading = snapshot_of("dolt-beads.service", Ok(UnitFacts { state: runtime::units::state_of_word("reloading"), ..UnitFacts::absent() }));
+        assert_eq!(decide(&Carry::Ok, &reloading, 1), (Carry::Ok, vec![]), "reloading is up");
     }
 
     #[test_id(t0jvyou)]
