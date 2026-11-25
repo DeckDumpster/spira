@@ -223,6 +223,7 @@ fn assert_only_the_double_answered(f: &Fixture) {
 #[test]
 fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_reads() {
     let f = fixture();
+    spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch) = (0, 0, 0, 0);
@@ -252,6 +253,8 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_eq!(counted, 2, "landed_on_refs counts the new landing");
     let after_branch = &all[at_commit..at_branch];
     assert!(after_branch.iter().any(|l| l.contains(&format!("-C {pr} ")) && l.contains(" fetch ")), "a spira/* branch makes landing fetch: {after_branch:?}");
+    })
+    .unwrap();
 }
 
 const SUB_HOUR: [&str; 7] = ["publish-backlog.observe", "publish.observe", "cockpit-tier-600s.observe", "trigger.mimir.observe", "intake.gh.observe", "intake.kit_bump.observe", "brain-dirty.observe"];
@@ -279,6 +282,7 @@ fn argv_counts(lines: &[String]) -> String {
 #[test]
 fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only_what_reads_it() {
     let f = fixture();
+    spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
     let (warm, idle) = (START + HOUR, START + 2 * HOUR);
     let marks = [warm, idle, idle + 16 * MINUTE, idle + 32 * MINUTE, idle + 43 * MINUTE, idle + 54 * MINUTE];
@@ -321,6 +325,8 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git: {}\n{}", argv_counts(&all[at_warm..at_idle]), all[at_warm..at_idle].join("\n"));
     assert_ne!(unsent_kv(&f), unsent_before, "a new spira/* branch changes the unsent section");
     assert!(!unsent_before.is_empty());
+    })
+    .unwrap();
 }
 
 impl Fixture {
