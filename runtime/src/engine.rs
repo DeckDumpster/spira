@@ -734,7 +734,6 @@ impl Engine {
         }
     }
 
-    /// The executor started the runner for effect `key`; its deadline counts from now.
     /// The programs the effect `key` started, written on its `effect` record when it completes.
     pub fn note_children(&mut self, key: &str, children: BTreeMap<String, u64>) {
         if !children.is_empty() {
@@ -742,6 +741,7 @@ impl Engine {
         }
     }
 
+    /// The executor started the runner for effect `key`; its deadline counts from now.
     pub fn note_attempt(&mut self, key: &str) {
         *self.attempts.entry(key.into()).or_insert(0) += 1;
         self.queued.remove(key);
@@ -1785,7 +1785,7 @@ impl Executor for Engine {
         w.set("effect.attempt", self.attempts.remove(key).unwrap_or(1));
         let children = self.children.remove(key).unwrap_or_default();
         if !children.is_empty() {
-            w.set("task", p.stream.0.as_str());
+            w.set("task", p.task.as_str());
         }
         for (program, n) in children {
             w.set(&format!("effect.children.{program}"), n);

@@ -220,5 +220,5 @@ async fn a_succeeded_effect_that_started_a_program_writes_its_count_on_the_effec
     assert_eq!(effects.len(), 1, "{effects:?}");
     assert_eq!(effects[0].get("effect.outcome"), Some(&Value::from("succeeded")));
     assert_eq!(effects[0].get("effect.children.true"), Some(&Value::Int(1)));
-    assert!(effects[0].contains_key("task"));
+    assert_eq!(effects[0].get("task"), Some(&Value::from("builds")), "the registered task, not the stream s0");
 }
