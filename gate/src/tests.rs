@@ -3786,6 +3786,48 @@ fn a_rerun_that_shows_the_test_neither_passing_nor_failing_is_unproven_and_stays
     assert!(f.registry_rows.borrow().is_empty());
 }
 
+#[test_id(tuvnjvo)]
+#[test]
+fn a_flip_with_no_test_id_stays_the_branchs_red_and_writes_no_row() {
+    let f = rerun_fake("        FAIL [   0.010s] (1/1) bin/t t::flip\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped\n", Some("        PASS [   0.010s] (1/1) bin/t t::flip\n"));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.stderr().contains("carries no test id"), "{}", f.stderr());
+    assert!(f.fix_beads.borrow().is_empty() && f.registry_rows.borrow().is_empty());
+}
+
+#[test_id(tpwcbp4)]
+#[test]
+fn a_flip_beside_a_test_red_twice_is_recorded_and_the_item_still_goes_back() {
+    let first = "        FAIL [   0.010s] (1/2) bin/t t::t0aaaaa\n        FAIL [   0.010s] (2/2) bin/t t::t0bbbbb\n     Summary [   0.010s] 2 tests run: 0 passed, 2 failed, 0 skipped\n";
+    let again = "        PASS [   0.010s] (1/2) bin/t t::t0aaaaa\n        FAIL [   0.010s] (2/2) bin/t t::t0bbbbb\n";
+    let f = rerun_fake(first, Some(again));
+    assert_eq!(f.run(), FAIL);
+    assert_eq!(f.registry_rows.borrow().len(), 1);
+    assert_eq!(f.registry_rows.borrow()[0].0, "test:t0aaaaa");
+    assert!(f.stderr().contains("red twice on the same tree"), "{}", f.stderr());
+    assert!(f.stderr().contains("t::t0bbbbb"), "{}", f.stderr());
+    assert_eq!(certified(&f, "pass"), 0);
+}
+
+#[test_id(tkdo1aa)]
+#[test]
+fn a_rerun_cut_by_the_clock_is_no_verdict_never_a_pass() {
+    let f = rerun_fake(RERUN_RED, None);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test-rerun"), (124, String::new()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert_eq!(certified(&f, "pass"), 0);
+    assert!(f.fix_beads.borrow().is_empty() && f.registry_rows.borrow().is_empty());
+}
+
+#[test_id(tle00r1)]
+#[test]
+fn a_suites_composition_never_reruns_a_red_test() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, RERUN_RED.into()));
+    assert_ne!(f.run(), PASS);
+    assert!(rerun_cmds(&f).is_empty());
+}
+
 fn certified(f: &Fake, outcome: &str) -> usize {
     f.lc.borrow().iter().filter(|c| c[2] == outcome).count()
 }

@@ -95,3 +95,34 @@ pub fn parse_disabled_row(said: &str) -> Result<DisabledRow, String> {
         until: row["until"].as_i64().ok_or_else(|| format!("no until in {said}"))?,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_id(t4311jt)]
+    #[test]
+    fn the_row_is_written_by_the_named_actor_for_the_named_bead() {
+        let dir = testkit::TempDir::new("gate-flip-registry");
+        let log = dir.path().join("argv");
+        let tool = dir.path().join("test-registry");
+        testkit::write_exe(
+            &tool,
+            &format!("#!/bin/sh\necho \"$@\" > {}\necho '{{\"row\":{{\"test\":\"test:t0aaaaa\",\"state\":\"disabled\",\"bead\":\"sp-fix\",\"until\":1790000000}}}}'\n", log.display()),
+        );
+        let row = registry_disable(tool.to_str().unwrap(), dir.path(), "test:t0aaaaa", "sp-fix", "flipped", "gate").unwrap();
+        assert_eq!((row.bead.as_str(), row.until), ("sp-fix", 1790000000));
+        let argv = std::fs::read_to_string(&log).unwrap();
+        assert!(argv.contains("--test test:t0aaaaa --bead sp-fix --reason flipped --actor gate"), "{argv}");
+    }
+
+    #[test_id(t9xp7ub)]
+    #[test]
+    fn a_refusing_registry_is_an_error_naming_its_exit() {
+        let dir = testkit::TempDir::new("gate-flip-refused");
+        let tool = dir.path().join("test-registry");
+        testkit::write_exe(&tool, "#!/bin/sh\necho busy\nexit 3\n");
+        let e = registry_disable(tool.to_str().unwrap(), dir.path(), "test:t0aaaaa", "sp-fix", "r", "gate").unwrap_err();
+        assert!(e.contains("exited 3") && e.contains("busy"), "{e}");
+    }
+}

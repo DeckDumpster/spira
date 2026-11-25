@@ -510,6 +510,7 @@ Each failing test is judged on the rerun output: **flip** (a `PASS [` / `... ok`
   flips among them are still written. A red the cross-bead detector (`shared_unit_red`) matches
   keeps its behaviour.
 * A fences or suites composition, a red beside a red fence or a failed build, never reruns.
+* `flip.rs` calls `bead.sh` and `test-registry` through the bounded runner (60 s each) for both the gate and the round.
 
 Records: gate.log ends ` reruns=<test>:<red|timeout>/<green|red|timeout|unrun>,…`; the
 `gate-run` row carries the same text as `reruns`; `spira_gate_test_reruns{repo,result}` counts one
