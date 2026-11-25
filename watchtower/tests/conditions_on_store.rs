@@ -27,23 +27,22 @@ struct Store {
     dir: testkit::TempDir,
     fixture: String,
     db: String,
-    bd: String,
     port: String,
 }
 
 impl Store {
     fn up() -> Option<Store> {
         let dir = testkit::TempDir::new("wtcs");
-        let named = |var: &str, name: &str| std::env::var(var).ok().filter(|b| !b.is_empty()).or_else(|| tool(name));
-        let (Some(bd), Some(dolt)) = (named("SPIRA_BD", "bd"), named("TESTDB_DOLT", "dolt")) else {
-            eprintln!("SKIP: no bd and dolt on PATH, spira.path or ~/spira-env/bin");
+        let Some(dolt) = std::env::var("TESTDB_DOLT").ok().filter(|b| !b.is_empty()).or_else(|| tool("dolt")) else {
+            eprintln!("SKIP: no dolt on PATH, spira.path or ~/spira-env/bin");
             return None;
         };
         let root = std::env::var("TESTDB_ROOT").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| dir.join("db").display().to_string());
-        let out = Command::new(testkit::bin_exe("testenv")).args(["testdb", "up", "--tag", "conditions-on-store", "--bd", &bd, "--dolt", &dolt, "--root", &root]).output().expect("testenv runs");
+        let schema = testkit::manifest_dir().join("../testenv/fixtures/beads-schema.sql");
+        let out = Command::new(testkit::bin_exe("testenv")).args(["testdb", "up", "--tag", "conditions-on-store", "--dolt", &dolt, "--root", &root]).arg("--schema").arg(&schema).output().expect("testenv runs");
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         assert!(out.status.success(), "testdb up: {text}{}", String::from_utf8_lossy(&out.stderr));
-        Some(Store { dir, fixture: report(&text, "TESTDB_FIXTURE"), db: report(&text, "TESTDB_DIR"), bd: report(&text, "TESTDB_BD"), port: report(&text, "TESTDB_SERVER_PORT") })
+        Some(Store { dir, fixture: report(&text, "TESTDB_FIXTURE"), db: report(&text, "TESTDB_DIR"), port: report(&text, "TESTDB_SERVER_PORT") })
     }
 }
 
@@ -71,6 +70,9 @@ impl Lc {
         std::fs::write(&guards, "law-fixture-forbids-the-phrase | refuse | forbidden phrase\n").unwrap();
         let (runes, guards) = (harness.join("runes").display().to_string(), guards.display().to_string());
         let (d, r, ctl, sock) = (dir.display().to_string(), run.display().to_string(), dir.join("control.db").display().to_string(), dir.join("s").display().to_string());
+        let bd = dir.join("recording-bd");
+        testkit::write_exe(&bd, "#!/bin/sh\nexit 1\n");
+        let bd = bd.display().to_string();
         let (reader, writer) = (dir.join("reader.credential").display().to_string(), dir.join("writer.credential").display().to_string());
         let toml = spira_config::process::fixture_toml(
             &dir,
@@ -81,7 +83,7 @@ impl Lc {
                 ("SPIRA_LC_SOCKET", &sock),
                 ("SPIRA_VICTORIALOGS_URL", "http://127.0.0.1:9"),
                 ("SPIRA_DB", &store.db),
-                ("SPIRA_BD", &store.bd),
+                ("SPIRA_BD", &bd),
                 ("SPIRA_BEADS_SQL_HOST", "127.0.0.1"),
                 ("SPIRA_BEADS_SQL_PORT", &store.port),
                 ("SPIRA_BEADS_SQL_USER", "spira_lc_ro"),

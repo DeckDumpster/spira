@@ -26,7 +26,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const PORT_ATTEMPTS: u32 = 5;
 
-const USAGE: &str = "usage: testenv testdb template --bd B --dolt D [--root R] [--cache C]\n       testenv testdb up --tag T --bd B --dolt D [--root R] [--owner PID]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
+const USAGE: &str = "usage: testenv testdb template (--bd B | --schema F) --dolt D [--root R] [--cache C]\n       testenv testdb up --tag T (--bd B | --schema F) --dolt D [--root R] [--owner PID]\n       testenv testdb dump-schema --bd B --dolt D --out F [--root R]\n       testenv testdb reset --fixture F\n       testenv testdb down --fixture F\n       testenv testdb reap --fixture F --owner PID\n       testenv testdb embedded-check --bd B\n       testenv testdb embedded-up --tag T --bd B\n       testenv testdb embedded-borrow --baseline BASE\n       testenv testdb embedded-reset --dir D --baseline BASE\n       testenv testdb embedded-down [--dir D] [--baseline BASE] [--bin BIN]";
 
 // ---- pure pieces ---------------------------------------------------------------------
 
@@ -117,8 +117,25 @@ pub fn template_key(bd_identity: &str, dolt_identity: &str) -> String {
     h.update(BD_INIT_HEAD.join(" ").as_bytes());
     h.update(BD_INIT_TAIL.join(" ").as_bytes());
     h.update(render_config(0, Path::new("")).as_bytes());
-    let d = h.finalize();
-    d.iter().take(8).fold(String::new(), |mut s, b| {
+    short_hex(&h.finalize())
+}
+
+/// The template key of a schema file: what the file says, the dolt that loads it, and the
+/// recipe that shapes the template around it.
+pub fn schema_template_key(schema: &[u8], dolt_identity: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(b"schema\n");
+    h.update(schema);
+    h.update(b"\n");
+    h.update(dolt_identity.as_bytes());
+    h.update(b"\n");
+    h.update(DATABASE.as_bytes());
+    h.update(render_config(0, Path::new("")).as_bytes());
+    short_hex(&h.finalize())
+}
+
+fn short_hex(digest: &[u8]) -> String {
+    digest.iter().take(8).fold(String::new(), |mut s, b| {
         let _ = std::fmt::Write::write_fmt(&mut s, format_args!("{b:02x}"));
         s
     })
@@ -431,8 +448,14 @@ fn server_cpu_ms(pid: u32) -> Option<u64> {
 
 // ---- template ------------------------------------------------------------------------
 
+/// What a template is made from: a real `bd init`, or a schema file dolt loads.
+pub enum Source {
+    Bd(PathBuf),
+    Schema(PathBuf),
+}
+
 pub struct Tools {
-    pub bd: PathBuf,
+    pub source: Source,
     pub dolt: PathBuf,
 }
 
@@ -442,14 +465,38 @@ impl Tools {
         let bd = resolve_exe(bd, &path)
             .map(|p| see_through_meter(p, bd, &path))
             .ok_or_else(|| format!("bd not found: {bd}"))?;
-        let dolt = resolve_exe(dolt, &path).ok_or_else(|| format!("dolt not found: {dolt}"))?;
-        Ok(Tools { bd, dolt })
+        Ok(Tools { source: Source::Bd(bd), dolt: Tools::dolt(dolt, &path)? })
+    }
+
+    pub fn resolve_schema(schema: &str, dolt: &str) -> Result<Tools, String> {
+        let path = std::env::var("PATH").unwrap_or_default();
+        let schema = fs::canonicalize(schema).map_err(|e| format!("schema {schema}: {e}"))?;
+        Ok(Tools { source: Source::Schema(schema), dolt: Tools::dolt(dolt, &path)? })
+    }
+
+    fn dolt(dolt: &str, path: &str) -> Result<PathBuf, String> {
+        resolve_exe(dolt, path).ok_or_else(|| format!("dolt not found: {dolt}"))
+    }
+
+    pub fn bd(&self) -> Result<&Path, String> {
+        match &self.source {
+            Source::Bd(bd) => Ok(bd),
+            Source::Schema(_) => Err("this template is a schema file: no bd".into()),
+        }
     }
 
     pub fn key(&self) -> Result<String, String> {
-        let b = exe_identity(&self.bd).map_err(|e| format!("{}: {e}", self.bd.display()))?;
         let d = exe_identity(&self.dolt).map_err(|e| format!("{}: {e}", self.dolt.display()))?;
-        Ok(template_key(&b, &d))
+        match &self.source {
+            Source::Bd(bd) => {
+                let b = exe_identity(bd).map_err(|e| format!("{}: {e}", bd.display()))?;
+                Ok(template_key(&b, &d))
+            }
+            Source::Schema(file) => {
+                let text = fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+                Ok(schema_template_key(&text, &d))
+            }
+        }
     }
 }
 
@@ -683,7 +730,45 @@ pub fn evict_templates(cache: &Path, keep: usize) -> Vec<String> {
     gone
 }
 
+/// A workspace's `.beads` as far as lc-serve reads it: the database a store names.
+const SCHEMA_METADATA: &str = "{\n  \"database\": \"dolt\",\n  \"backend\": \"dolt\",\n  \"dolt_mode\": \"server\",\n  \"dolt_server_host\": \"127.0.0.1\",\n  \"dolt_server_port\": 0,\n  \"dolt_database\": \"sptest\"\n}\n";
+
+fn dolt_sql(dolt: &Path, port: u16, db: Option<&str>, arg: [&str; 2]) -> Result<(), String> {
+    let mut c = Command::new(dolt); // batch-job: loading a schema file runs as long as the file takes
+    c.args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "-u", "root", "-p", ""]);
+    if let Some(db) = db {
+        c.args(["--use-db", db]);
+    }
+    let out = c.arg("sql").args(arg).stdin(Stdio::null()).output().map_err(|e| format!("spawn {}: {e}", dolt.display()))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!("dolt sql failed (rc={}):\n{}{}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+}
+
+fn build_schema_template(tmp: &Path, dolt: &Path, schema: &Path) -> Result<(), String> {
+    let data = tmp.join("data");
+    let beads = tmp.join("ws/.beads");
+    for d in [&data, &beads] {
+        fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
+    }
+    let log = tmp.join("server.log");
+    let (pid, port) = start_server_any(dolt, &data, None, &log)?;
+    let loaded = dolt_sql(dolt, port, None, ["-q", &format!("CREATE DATABASE {DATABASE}")])
+        .and_then(|()| dolt_sql(dolt, port, Some(DATABASE), ["--file", &schema.display().to_string()]))
+        .and_then(|()| dolt_sql(dolt, port, Some(DATABASE), ["-q", "CALL DOLT_COMMIT('--allow-empty', '-Am', 'schema')"]));
+    stop_server(pid, &data.join("config.yaml"));
+    loaded.map_err(|e| format!("loading {}: {e}", schema.display()))?;
+    fs::write(beads.join("metadata.json"), SCHEMA_METADATA).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(&log);
+    fs::write(tmp.join("READY"), "").map_err(|e| e.to_string())
+}
+
 fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
+    let bd = match &tools.source {
+        Source::Bd(bd) => bd,
+        Source::Schema(file) => return build_schema_template(tmp, &tools.dolt, file),
+    };
     let data = tmp.join("data");
     let ws = tmp.join("ws");
     for d in [&data, &ws] {
@@ -706,7 +791,7 @@ fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
         .arg("TERM=dumb")
         .arg("BD_NON_INTERACTIVE=1")
         .arg(format!("BEADS_DIR={}", ws.join(".beads").display()))
-        .arg(&tools.bd)
+        .arg(bd)
         .args(BD_INIT_HEAD)
         .arg(port.to_string())
         .args(BD_INIT_TAIL)
@@ -714,7 +799,7 @@ fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
         .stdin(Stdio::null())
         .output();
     stop_server(pid, &cfg);
-    let out = out.map_err(|e| format!("spawn {}: {e}", tools.bd.display()))?;
+    let out = out.map_err(|e| format!("spawn {}: {e}", bd.display()))?;
     if !out.status.success() {
         return Err(format!(
             "bd init (server) failed (rc={}):\n{}{}",
@@ -728,6 +813,40 @@ fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
     }
     let _ = fs::remove_file(&log);
     fs::write(tmp.join("READY"), "").map_err(|e| e.to_string())
+}
+
+/// The header of the schema file `dump-schema` writes.
+const SCHEMA_HEADER: &str = "-- The beads schema and its seed rows, as a bd init leaves them. Do not edit.\n-- Regenerate: testenv testdb dump-schema --bd bd --dolt dolt --root <scratch dir outside any git checkout> --out testenv/fixtures/beads-schema.sql\n";
+
+/// Write `out`: a dolt dump of a `bd init` template, under [`SCHEMA_HEADER`].
+pub fn dump_schema(root: &Path, tools: &Tools, out: &Path) -> Result<(), String> {
+    let tpl = ensure_template(root, tools)?;
+    let scratch = root.join(format!("dump-{}", std::process::id()));
+    let work = scratch.join(DATABASE);
+    remove_tree(&scratch);
+    copy_tree(&tpl.join("data").join(DATABASE), &work).map_err(|e| format!("copy template: {e}"))?;
+    let dumped = scratch.join("beads-schema.sql");
+    // batch-job: a dump runs as long as the database takes
+    let r = Command::new(&tools.dolt)
+        .args(["dump", "-r", "sql", "--file-name"])
+        .arg(&dumped)
+        .current_dir(&work)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("spawn {}: {e}", tools.dolt.display()))
+        .and_then(|o| {
+            if o.status.success() {
+                fs::read_to_string(&dumped).map_err(|e| format!("{}: {e}", dumped.display()))
+            } else {
+                Err(format!("dolt dump failed:\n{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+            }
+        });
+    remove_tree(&scratch);
+    let body: String = r?.lines().filter(|l| !l.starts_with("CREATE DATABASE IF NOT EXISTS")).map(|l| format!("{l}\n")).collect();
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    }
+    fs::write(out, format!("{SCHEMA_HEADER}{body}")).map_err(|e| format!("{}: {e}", out.display()))
 }
 
 // ---- fixtures ------------------------------------------------------------------------
@@ -1140,6 +1259,8 @@ pub struct Args {
     pub cmd: String,
     pub tag: Option<String>,
     pub bd: Option<String>,
+    pub schema: Option<String>,
+    pub out: Option<String>,
     pub dolt: Option<String>,
     pub root: Option<String>,
     pub owner: Option<u32>,
@@ -1150,6 +1271,14 @@ pub struct Args {
     pub cache: Option<String>,
 }
 
+fn need_source(a: &Args) -> Result<(), String> {
+    match (&a.bd, &a.schema) {
+        (Some(_), Some(_)) => Err(format!("testdb {}: --schema and --bd are exclusive", a.cmd)),
+        (None, None) => Err(format!("testdb {}: --bd or --schema is required", a.cmd)),
+        _ => Ok(()),
+    }
+}
+
 pub fn parse(args: &[String]) -> Result<Args, String> {
     let mut a = Args::default();
     let mut it = args.iter();
@@ -1158,6 +1287,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         a.cmd.as_str(),
         "template"
             | "up"
+            | "dump-schema"
             | "reset"
             | "down"
             | "reap"
@@ -1178,6 +1308,8 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         match k.as_str() {
             "--tag" => a.tag = Some(v()?),
             "--bd" => a.bd = Some(v()?),
+            "--schema" => a.schema = Some(v()?),
+            "--out" => a.out = Some(v()?),
             "--dolt" => a.dolt = Some(v()?),
             "--root" => a.root = Some(v()?),
             "--fixture" => a.fixture = Some(v()?),
@@ -1202,12 +1334,17 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
     };
     match a.cmd.as_str() {
         "template" => {
+            need_source(&a)?;
+            need(&a.dolt, "--dolt")?;
+        }
+        "dump-schema" => {
             need(&a.bd, "--bd")?;
             need(&a.dolt, "--dolt")?;
+            need(&a.out, "--out")?;
         }
         "up" => {
             need(&a.tag, "--tag")?;
-            need(&a.bd, "--bd")?;
+            need_source(&a)?;
             need(&a.dolt, "--dolt")?;
             if let Some(t) = &a.tag {
                 if t.is_empty()
@@ -1277,11 +1414,19 @@ pub fn main(args: &[String]) -> i32 {
         1
     };
     match a.cmd.as_str() {
+        "dump-schema" => {
+            let (bd, dolt) = (a.bd.as_deref().unwrap_or("bd"), a.dolt.as_deref().unwrap_or("dolt"));
+            match Tools::resolve(bd, dolt).and_then(|t| dump_schema(&root_of(&a), &t, Path::new(a.out.as_deref().unwrap_or("")))) {
+                Ok(()) => 0,
+                Err(e) => fail(e),
+            }
+        }
         "template" | "up" => {
-            let tools = match Tools::resolve(
-                a.bd.as_deref().unwrap_or("bd"),
-                a.dolt.as_deref().unwrap_or("dolt"),
-            ) {
+            let dolt = a.dolt.as_deref().unwrap_or("dolt");
+            let tools = match match a.schema.as_deref() {
+                Some(file) => Tools::resolve_schema(file, dolt),
+                None => Tools::resolve(a.bd.as_deref().unwrap_or("bd"), dolt),
+            } {
                 Ok(t) => t,
                 Err(e) => return fail(e),
             };
@@ -1316,20 +1461,23 @@ pub fn main(args: &[String]) -> i32 {
                 exe.as_deref(),
             ) {
                 Ok(u) => {
-                    let bd_name = a.bd.as_deref().unwrap_or("bd");
-                    let path = std::env::var("PATH").unwrap_or_default();
-                    let bd = locate_exe(bd_name, &path)
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| bd_name.to_string());
-                    emit(&report(&[
+                    let mut pairs = vec![
                         ("TESTDB_NAME", u.name),
                         ("TESTDB_DIR", u.ws.display().to_string()),
                         ("TESTDB_FIXTURE", u.fixture.display().to_string()),
                         ("TESTDB_SERVER_PORT", u.port.to_string()),
                         ("TESTDB_SERVER_PID", u.pid.to_string()),
                         ("TESTDB_UP_MS", u.ms.to_string()),
-                        ("TESTDB_BD", bd),
-                    ]));
+                    ];
+                    if a.schema.is_none() {
+                        let bd_name = a.bd.as_deref().unwrap_or("bd");
+                        let path = std::env::var("PATH").unwrap_or_default();
+                        let bd = locate_exe(bd_name, &path)
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| bd_name.to_string());
+                        pairs.push(("TESTDB_BD", bd));
+                    }
+                    emit(&report(&pairs));
                     0
                 }
                 Err(e) => fail(e),
