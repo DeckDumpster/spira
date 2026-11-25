@@ -23,6 +23,16 @@ pub struct Build {
 }
 
 impl Build {
+    /// Two reports of one build phase as one: counts summed, the slowest units of both.
+    pub fn plus(mut self, o: Build) -> Build {
+        self.compiled += o.compiled;
+        self.fresh += o.fresh;
+        self.slowest.extend(o.slowest);
+        self.slowest.sort_by(|a, b| b.secs.total_cmp(&a.secs));
+        self.slowest.truncate(SLOWEST);
+        self
+    }
+
     /// `package/kind:secs@start,…`, slowest first; one token, so gate.log stays splittable.
     pub fn slowest_field(&self) -> String {
         if self.slowest.is_empty() {

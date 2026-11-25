@@ -2743,13 +2743,17 @@ pub fn run_composed<W: World>(
         }
     };
     let mut steps: Vec<(&str, String)> = match comp {
-        Composition::Unit { crates, targets, test_bins, .. } => compose::unit_commands_with(crates, test_bins, *targets, jobs, &limits.deny).into(),
+        Composition::Unit { crates, targets, test_bins, .. } => {
+            let [_, test] = compose::unit_commands_with(crates, test_bins, *targets, jobs, &limits.deny);
+            compose::unit_build_commands(crates, test_bins, jobs).into_iter().map(|c| ("build", c)).chain([test]).collect()
+        }
         _ => Vec::new(),
     };
     // THE RE-ENTRY PHASE, last: whatever of the named suites the phases before did not show
     // passing (all of them after a unit or fences gate or suites-off; only those the gate
     // string's budget deferred or skipped after a suites gate).
     let mut reentry_done = false;
+    let mut built = false;
     loop {
         let (name, c) = if !steps.is_empty() {
             steps.remove(0)
@@ -2820,10 +2824,12 @@ pub fn run_composed<W: World>(
             *unit = Some(t);
         }
         if timed {
-            *timing = w
-                .read(&report)
-                .and_then(|h| Some((crate::buildtiming::parse(&h)?, h)))
-                .filter(|(_, h)| !h.is_empty());
+            let this = w.read(&report).and_then(|h| Some((crate::buildtiming::parse(&h)?, h))).filter(|(_, h)| !h.is_empty());
+            *timing = match (timing.take().filter(|_| built), this) {
+                (Some((a, h)), Some((b, _))) => Some((a.plus(b), h)),
+                (a, b) => b.or(a),
+            };
+            built = true;
         }
         if !o.is_empty() {
             if !out.is_empty() {
