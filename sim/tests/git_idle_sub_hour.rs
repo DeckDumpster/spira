@@ -16,16 +16,6 @@ fn unsent_kv(f: &Fixture) -> String {
     out["fragments"]["cockpit.unsent"]["kv"].to_string()
 }
 
-fn argv_counts(lines: &[String]) -> String {
-    let mut by: std::collections::BTreeMap<String, usize> = Default::default();
-    for l in lines {
-        let argv = l.split_once(" :: ").map_or(l.as_str(), |(_, a)| a);
-        let verb = argv.split_whitespace().skip_while(|w| w.starts_with('-') || w.starts_with('/') || *w == "-C" || w.contains('=')).take(2).collect::<Vec<_>>().join(" ");
-        *by.entry(verb).or_default() += 1;
-    }
-    by.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", ")
-}
-
 #[test_id(trka3uo)]
 #[test]
 fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only_what_reads_it() {
