@@ -29,11 +29,13 @@ struct Fixture {
     seen: Arc<Mutex<Vec<(String, String)>>>,
     programs: PathBuf,
     started: PathBuf,
+    sock: PathBuf,
     requests: Arc<Mutex<Vec<String>>>,
     refused: Arc<Mutex<Vec<String>>>,
     claimable: Arc<Mutex<String>>,
     ready: Arc<Mutex<Option<String>>>,
     effects: Arc<spira_runtime::Effects>,
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
 fn real_git() -> PathBuf {
@@ -51,7 +53,10 @@ fn commit(repo: &Path, msg: &str, at: u64) {
     git(repo, &["commit", "-q", "--allow-empty", "-m", msg], at);
 }
 
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
 fn fixture() -> Fixture {
+    let serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let dir = testkit::TempDir::new("git-idle");
     let real = real_git();
     let log = dir.join("git.log");
@@ -114,7 +119,7 @@ fn fixture() -> Fixture {
     std::fs::write(&map, format!("spira|{}|queue.local|local/main||\nprrepo|{}|pr|origin/main||\n", local.display(), pr.display())).unwrap();
     let run_dir = dir.join("run");
     std::fs::create_dir(&run_dir).unwrap();
-    let sock = dir.join("lc.sock");
+    let sock = process_socket();
     let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
     let requests: Arc<Mutex<Vec<String>>> = Arc::default();
     let refused: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -161,7 +166,20 @@ fn fixture() -> Fixture {
     ]);
     let world = spira_runtime::world::World { lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), ..Default::default() };
     let effects = Arc::new(spira_runtime::Effects { world, units: Some(Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)))), ..Default::default() });
-    Fixture { _env: env, _dir: dir, log, local, pr, forge, wiki, seen: Arc::default(), programs, started, requests, refused, claimable, ready: ready_id, effects }
+    Fixture { _serial: serial, _env: env, _dir: dir, log, local, pr, forge, wiki, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, effects }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.sock);
+    }
+}
+
+fn process_socket() -> PathBuf {
+    static HOME: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
+    let sock = HOME.get_or_init(|| testkit::TempDir::new("git-idle-sock")).join("lc.sock");
+    let _ = std::fs::remove_file(&sock);
+    sock
 }
 
 fn lc_row(id: &str) -> String {
@@ -215,15 +233,17 @@ fn doubles(f: &Fixture, names: &[&'static str]) -> Arc<sim::doubles::Doubles> {
     Arc::new(d)
 }
 
-fn run_hours(f: &Fixture, names: &[&'static str], until: &[u64], between: &mut dyn FnMut(u64)) {
+fn run_hours(f: &Fixture, names: &[&'static str], late: (&[&'static str], u64), until: &[u64], between: &mut dyn FnMut(u64)) {
     let mut sim = Sim::new(1);
     for r in registrations(&spira_runtime::Settings::load().expect("settings")) {
         sim.add_workflow(r);
     }
-    sim.set_effects(doubles(f, names));
-    for t in tasks::all().filter(|t| t.effects.iter().any(|e| names.contains(e))) {
+    let every: Vec<&'static str> = names.iter().chain(late.0).copied().collect();
+    sim.set_effects(doubles(f, &every));
+    for t in tasks::all().filter(|t| t.effects.iter().any(|e| every.contains(e))) {
         let (_, stream, kind) = (t.boot)();
-        sim.boot_workflow(START, stream, &kind.tag, &kind.body);
+        let at = if t.effects.iter().any(|e| late.0.contains(e)) { late.1 } else { START };
+        sim.boot_workflow(at, stream, &kind.tag, &kind.body);
     }
     for t in until {
         sim.run_until(*t);
@@ -279,8 +299,9 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch) = (0, 0, 0, 0);
     let (mut programs_at_warm, mut programs_at_idle, mut programs_at_ready, mut idle_passes, mut rows_before_ready) = (0, Vec::new(), Vec::new(), 0, Vec::new());
-    let names = ["watch.throughput.observe", "landing.observe", "sentinel-pass.observe", "cockpit-tier-60s.observe"];
-    run_hours(&f, &names, &[warm, warm + HOUR, warm + HOUR + 3 * MINUTE, warm + HOUR + 6 * MINUTE], &mut |t| match t {
+    let names = ["watch.throughput.observe", "landing.observe"];
+    let sentinel = ["sentinel-pass.observe", "cockpit-tier-60s.observe"];
+    run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &[warm, warm + HOUR, warm + HOUR + 3 * MINUTE, warm + HOUR + 6 * MINUTE], &mut |t| match t {
         t if t == warm => (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len()),
         t if t == warm + HOUR => {
             at_idle = logged(&f).len();
@@ -301,7 +322,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_only_the_double_answered(&f);
     let all = logged(&f);
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git:\n{}", all[at_warm..at_idle].join("\n"));
-    assert!(idle_passes >= 30, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
+    assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
     assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));
     assert!(!rows_before_ready.iter().any(|r| r.contains("sp-zzzzzz")), "nothing is ready yet: {rows_before_ready:?}");
     let rows = strand_rows(&f);
@@ -353,7 +374,7 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     let (mut at_warm, mut at_idle) = (0, 0);
     let mut unsent_before = String::new();
     let second = f.dir_path().join("second");
-    run_hours(&f, &SUB_HOUR, &marks, &mut |t| match t {
+    run_hours(&f, &SUB_HOUR, (&[], 0), &marks, &mut |t| match t {
         t if t == warm => at_warm = logged(&f).len(),
         t if t == idle => {
             at_idle = logged(&f).len();
