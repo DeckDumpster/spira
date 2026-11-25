@@ -508,9 +508,9 @@ fn fill(words: &[&str], a: &str, b: &str) -> Vec<String> {
 
 /// Runs every twin: the service writes one pair, the fixture's bd writes the other, and the
 /// two pairs must read back the same. Returns the children each request started.
-fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
+fn twins(store: &Store, lc: &Lc, shard: usize) -> Vec<(&'static str, i64, String)> {
     let mut children = vec![];
-    for t in TWINS {
+    for t in TWINS.iter().skip(shard).step_by(TWIN_SHARDS) {
         let (a, b, a2, b2) = (store.create_bead(), store.create_bead(), store.create_bead(), store.create_bead());
         for (x, y) in [(&a, &b), (&a2, &b2)] {
             for step in t.before {
@@ -539,14 +539,38 @@ fn twins(store: &Store, lc: &Lc) -> Vec<(&'static str, i64, String)> {
     children
 }
 
-#[test_id(tsnw0w7)]
-#[test]
-fn each_remaining_write_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
+const TWIN_SHARDS: usize = 4;
+
+fn every_twin_in_shard_starts_no_process(shard: usize) {
     let Some(store) = Store::up() else { return };
     let lc = writer_lc(&store, "t");
-    for (verb, children, out) in twins(&store, &lc) {
+    for (verb, children, out) in twins(&store, &lc, shard) {
         assert_eq!(children, 0, "{verb} started a process: {out}");
     }
+}
+
+#[test_id(txw6003)]
+#[test]
+fn each_remaining_write_of_the_first_shard_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
+    every_twin_in_shard_starts_no_process(0);
+}
+
+#[test_id(tawhoo8)]
+#[test]
+fn each_remaining_write_of_the_second_shard_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
+    every_twin_in_shard_starts_no_process(1);
+}
+
+#[test_id(tr0yjx7)]
+#[test]
+fn each_remaining_write_of_the_third_shard_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
+    every_twin_in_shard_starts_no_process(2);
+}
+
+#[test_id(t09gzap)]
+#[test]
+fn each_remaining_write_of_the_fourth_shard_makes_the_row_bd_makes_in_sql_and_starts_no_process() {
+    every_twin_in_shard_starts_no_process(3);
 }
 
 /// A create made by the service and by the fixture's bd must read back the same.
