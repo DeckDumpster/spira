@@ -50,6 +50,11 @@ fn the_snapshot_records_the_unpublished_range_it_measured_and_runs_no_verb_that_
     );
     let home = spira_config::resolve::locate_home_for_process().unwrap();
     let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap())), ("SPIRA_HOME", Some(home.to_str().unwrap())), ("SPIRA_RELEASE", None), ("SPIRA_REPO_MAP", None), ("SPIRA_HOME_REPO", None)]);
+    let ran = dir.path().join("git.log");
+    let real = String::from_utf8(std::process::Command::new("sh").args(["-c", "command -v git"]).output().unwrap().stdout).unwrap().trim().to_string();
+    assert!(!real.is_empty(), "a git on the search path");
+    let recording = dir.path().join("recording-git");
+    testkit::write_exe(&recording, &format!("#!/bin/sh\necho \"$*\" >> {}\nexec {} \"$@\"\n", ran.display(), real));
 
     let sock = dir.path().join("lc.sock");
     let listener = UnixListener::bind(&sock).unwrap();
@@ -65,9 +70,12 @@ fn the_snapshot_records_the_unpublished_range_it_measured_and_runs_no_verb_that_
         })
     });
 
-    let world = World { lc_socket: sock, repo_map: map, run_dir: run, home_repo: "alpha".into(), ..World::default() };
+    let world = World { lc_socket: sock, repo_map: map, run_dir: run, home_repo: "alpha".into(), git_bin: Some(recording), ..World::default() };
     let snapshot = world.publish_backlog_snapshot().unwrap();
     assert!(snapshot.contains("\"count\":2"), "{snapshot}");
+    let handed = std::fs::read_to_string(&ran).unwrap_or_default();
+    assert!(handed.contains("rev-list"), "the measurement ran the git it was handed: {handed}");
+    assert!(handed.contains("fetch"), "the forge refresh ran the git it was handed: {handed}");
 
     let asked = asked.lock().unwrap();
     assert_eq!(asked.len(), 1, "one call, the record: {asked:?}");
@@ -106,9 +114,7 @@ fn a_landing_ref_at_the_forge_tip_is_recorded_as_nothing_unpublished_and_no_git_
     let bin = dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     testkit::write_exe(bin.join("git"), &format!("#!/bin/sh\necho \"$*\" >> {}\nexit 1\n", ran.display()));
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let _env = testkit::env(&[
-        ("PATH", Some(path.as_str())),
         ("SPIRA_TOML", Some(toml.to_str().unwrap())),
         ("SPIRA_HOME", Some(home.to_str().unwrap())),
         ("SPIRA_RELEASE", None),
@@ -127,9 +133,10 @@ fn a_landing_ref_at_the_forge_tip_is_recorded_as_nothing_unpublished_and_no_git_
         })
     });
 
-    let world = World { lc_socket: sock, repo_map: map, run_dir: run, home_repo: "alpha".into(), ..World::default() };
+    let world = World { lc_socket: sock, repo_map: map, run_dir: run, home_repo: "alpha".into(), git_bin: Some(bin.join("git")), ..World::default() };
     let snapshot = world.publish_backlog_snapshot().unwrap();
     assert!(snapshot.contains("\"count\":0"), "{snapshot}");
+    assert_eq!(git(&repo, &["rev-parse", "local/main"]), tip, "a fixture git call is not the scheduler's stand-in");
     let git_ran = std::fs::read_to_string(&ran).unwrap_or_default();
     assert_eq!(git_ran, "", "equal tips need no git");
     let asked = asked.lock().unwrap();
