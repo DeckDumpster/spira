@@ -346,7 +346,7 @@ pub fn decide(carry: &Carry, snap: &Snapshot, now_ms: u64, cfg: &Config) -> (Car
 }
 
 /// The fingerprint of one half: the `key`s of `kind` in order, `None` when there are none.
-pub fn half_fingerprint<'a>(cands: impl Iterator<Item = &'a Candidate>, kind: AskKind) -> Option<String> {
+fn half_fingerprint<'a>(cands: impl Iterator<Item = &'a Candidate>, kind: AskKind) -> Option<String> {
     let key: String = cands.filter(|c| c.kind == kind).map(|c| c.key.as_str()).collect();
     (!key.is_empty()).then(|| watchd::notify::fingerprint(&key))
 }
