@@ -68,6 +68,13 @@ struct Fake {
     flips: RefCell<Vec<(String, String)>>,
     flips_body: RefCell<Vec<String>>,
     flip_answer: RefCell<Result<(), String>>,
+    /// (repo, test, title, body) of each fix bead filed for a flip the gate proved.
+    fix_beads: RefCell<Vec<(String, String, String, String)>>,
+    /// (test, bead, reason) of each registry row written for such a flip.
+    registry_rows: RefCell<Vec<(String, String, String)>>,
+    /// Why filing a fix bead, or writing its row, is refused.
+    fix_refused: RefCell<Option<String>>,
+    row_refused: RefCell<Option<String>>,
     prior_since: RefCell<Vec<i64>>,
     gate_starts: RefCell<Vec<String>>,
     /// The `build-dir` fact the bead's builder left, and why leasing it fails (when it does).
@@ -297,6 +304,10 @@ impl Fake {
             kept_logs: RefCell::new(Vec::new()),
             prior_failures: RefCell::new(Ok(Vec::new())),
             flips: RefCell::new(Vec::new()),
+            fix_beads: RefCell::new(Vec::new()),
+            registry_rows: RefCell::new(Vec::new()),
+            fix_refused: RefCell::new(None),
+            row_refused: RefCell::new(None),
             flips_body: RefCell::new(Vec::new()),
             flip_answer: RefCell::new(Ok(())),
             prior_since: RefCell::new(Vec::new()),
@@ -439,6 +450,8 @@ impl Fake {
         if cmd.starts_with("cargo ") || cmd.starts_with("CARGO_BUILD_JOBS=") || cmd.starts_with("tools/test-sandbox/runner --around cargo ") {
             let kind = if cmd.starts_with("cargo build") || cmd.contains("cargo test --no-run") {
                 "build"
+            } else if cmd.contains(" -E 'test(=") || cmd.contains(" -- --exact ") {
+                "test-rerun"
             } else {
                 "test"
             };
@@ -745,6 +758,21 @@ impl World for Fake {
         self.flips_body.borrow_mut().push(title.into());
         self.flips_body.borrow_mut().push(body.into());
         self.flip_answer.borrow().clone()
+    }
+    fn file_flip_fix(&self, repo: &str, test: &str, title: &str, body: &str) -> Result<String, String> {
+        if let Some(e) = self.fix_refused.borrow().clone() {
+            return Err(e);
+        }
+        let mut all = self.fix_beads.borrow_mut();
+        all.push((repo.into(), test.into(), title.into(), body.into()));
+        Ok(format!("sp-fix{}", all.len()))
+    }
+    fn registry_disable(&self, test: &str, bead: &str, reason: &str) -> Result<crate::flip::DisabledRow, String> {
+        if let Some(e) = self.row_refused.borrow().clone() {
+            return Err(e);
+        }
+        self.registry_rows.borrow_mut().push((test.into(), bead.into(), reason.into()));
+        Ok(crate::flip::DisabledRow { test: test.into(), state: "disabled".into(), bead: bead.into(), until: 1_790_000_000 })
     }
     fn lc_failure(&self, bead: &str, tip: &str, files: &[String], output: &str) {
         self.failures.borrow_mut().push((bead.into(), tip.into(), files.to_vec(), output.into()));
@@ -3588,7 +3616,7 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert!(line.ends_with(" cargo test --no-fail-fast --features integration --config profile.dev.incremental=false -p gate --lib"), "{line}");
     assert!(!line.contains("--test-threads"), "{line}");
     assert_eq!(line.matches(" -p ").count(), 1, "{line}");
-    let cmds = f.cmds.borrow().clone();
+    let cmds: Vec<String> = f.cmds.borrow().iter().filter(|c| !c.contains(" -- --exact ")).cloned().collect();
     assert_eq!(
         cmds.len(),
         4,
@@ -3598,8 +3626,9 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
     assert_eq!(f.deny_calls.get(), 1, "the branch trial and the base trial share one snapshot");
     assert_eq!(f.checkouts.borrow()[1], BASE);
     assert!(meter(&f).contains(
-        "compose=unit phases=fences:7,build:7,test:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc build_dir=cold test_clock=7s"
+        "compose=unit phases=fences:7,build:7,test:7,test-rerun:7,base-fences:7 unit_build_secs=7 unit_run_secs=7 unit_tests=1 unit_slowest=- deny_list=1000000/e3b0c44298fc build_dir=cold test_clock=14s"
     ));
+    assert!(meter(&f).trim_end().ends_with(" reruns=tests::x:red/unrun"), "{}", meter(&f));
     assert!(f.stderr().contains("phase 'test' failed (exit 101)"));
     assert!(!f.stderr().contains("the same command passes against"));
     assert!(f.stderr().contains("its tests were not run"));
@@ -3654,6 +3683,107 @@ fn other_red(bead: &str, tip: &str, file: &str) -> (String, String) {
 
 fn other_nextest_red(bead: &str, tip: &str, file: &str) -> (String, String) {
     (bead.into(), spira_config::ejection::digest(tip, &[file.into()], FLIP_OUT_NEXTEST))
+}
+
+const RERUN_RED: &str = "        FAIL [   0.010s] (1/1) bin/t t::t0aaaaa\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped";
+const RERUN_TIMEOUT: &str = "     TIMEOUT [  60.010s] (1/1) bin/t t::t0aaaaa\n     Summary [  60.010s] 1 test run: 0 passed, 1 failed, 0 skipped";
+const RERUN_GREEN: &str = "        PASS [   0.010s] (1/1) bin/t t::t0aaaaa\n     Summary [   0.010s] 1 test run: 1 passed, 0 failed, 0 skipped";
+const RERUN_LIBTEST_RED: &str = "test x::t0aaaaa ... FAILED\nerror: test failed, to rerun pass `-p sim --test git_idle`\n     Summary [   0.010s] 1 test run: 0 passed, 1 failed, 0 skipped";
+
+fn rerun_fake(first: &str, again: Option<&str>) -> Fake {
+    let f = flip_fake_with(first, Ok(vec![]));
+    if let Some(o) = again {
+        f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test-rerun"), (if o.contains("PASS [") { 0 } else { 100 }, o.into()));
+    }
+    f
+}
+
+fn rerun_cmds(f: &Fake) -> Vec<String> {
+    f.cmds.borrow().iter().filter(|c| c.contains(" -E 'test(=") || c.contains(" -- --exact ")).cloned().collect()
+}
+
+#[test_id(tfkt6ej)]
+#[test]
+fn a_test_red_once_and_green_on_a_rerun_of_the_same_tree_is_disabled_and_the_item_passes() {
+    let f = rerun_fake(RERUN_RED, Some(RERUN_GREEN));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.fix_beads.borrow().len(), 1);
+    let rows = f.registry_rows.borrow().clone();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].0.as_str(), rows[0].1.as_str()), ("test:t0aaaaa", "sp-fix1"));
+    assert_eq!((certified(&f, "pass"), certified(&f, "red")), (1, 0));
+    assert!(f.stderr().contains("fix bead sp-fix1"), "{}", f.stderr());
+    assert!(meter(&f).contains(" reruns=t::t0aaaaa:red/green"), "{}", meter(&f));
+    let (title, body) = (f.fix_beads.borrow()[0].2.clone(), f.fix_beads.borrow()[0].3.clone());
+    assert!(title.starts_with("spira: t::t0aaaaa flipped in the gate of sp-a and was disabled"), "{title}");
+    assert!(body.contains("law-a-flipping-test-is-disabled-by-a-registry-row") && body.contains("FAIL [") && body.contains("PASS ["), "{body}");
+}
+
+#[test_id(txoga17)]
+#[test]
+fn a_libtest_integration_red_is_rerun_on_its_own_target_exactly() {
+    let f = rerun_fake(RERUN_LIBTEST_RED, Some("test x::t0aaaaa ... ok\ntest result: ok. 1 passed"));
+    assert_eq!(f.run(), PASS);
+    let cmds = rerun_cmds(&f);
+    assert_eq!(cmds.len(), 1, "{cmds:?}");
+    assert!(cmds[0].contains("-p sim --test git_idle") && cmds[0].contains("--exact"), "{}", cmds[0]);
+    assert_eq!(f.registry_rows.borrow().len(), 1);
+    assert!(meter(&f).contains(" reruns=x::t0aaaaa:red/green"), "{}", meter(&f));
+}
+
+#[test_id(tly7k78)]
+#[test]
+fn a_test_red_on_both_runs_sends_the_item_back_and_writes_nothing() {
+    let f = rerun_fake(RERUN_RED, Some(RERUN_RED));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.stderr().contains("red twice on the same tree"), "{}", f.stderr());
+    assert!(f.fix_beads.borrow().is_empty() && f.registry_rows.borrow().is_empty());
+    assert!(meter(&f).contains(" reruns=t::t0aaaaa:red/red"), "{}", meter(&f));
+}
+
+#[test_id(tc9idj0)]
+#[test]
+fn a_test_that_times_out_twice_is_red_twice_under_the_same_nextest_config() {
+    let f = rerun_fake(RERUN_TIMEOUT, Some(RERUN_TIMEOUT));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.stderr().contains("red twice on the same tree"), "{}", f.stderr());
+    assert!(meter(&f).contains(" reruns=t::t0aaaaa:timeout/timeout"), "{}", meter(&f));
+    let cmds = f.cmds.borrow().clone();
+    let config = format!("--config-file {}", crate::compose::NEXTEST_CONFIG);
+    let with_config: Vec<&String> = cmds.iter().filter(|c| c.contains(&config) && c.contains("nextest run")).collect();
+    assert_eq!(with_config.len(), 2, "{cmds:?}");
+}
+
+#[test_id(t9pu12h)]
+#[test]
+fn a_flip_whose_row_is_refused_is_no_verdict_flip_unrecorded() {
+    let f = rerun_fake(RERUN_RED, Some(RERUN_GREEN));
+    *f.row_refused.borrow_mut() = Some("registry busy".into());
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.stderr().contains("registry busy") && f.stderr().contains("t::t0aaaaa"), "{}", f.stderr());
+    assert!(meter(&f).contains("flip-unrecorded"), "{}", meter(&f));
+    assert_eq!(certified(&f, "pass"), 0);
+}
+
+#[test_id(taz5p3t)]
+#[test]
+fn a_red_beside_a_failed_build_or_a_red_fence_is_not_rerun() {
+    let f = rerun_fake(RERUN_RED, Some(RERUN_GREEN));
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "build"), (101, "error[E0308]: mismatched types".into()));
+    assert_eq!(f.run(), FAIL);
+    assert!(rerun_cmds(&f).is_empty());
+    let g = rerun_fake(&format!("lifecycle-guard: REFUSED\n{RERUN_RED}"), Some(RERUN_GREEN));
+    assert_eq!(g.run(), FAIL);
+    assert!(rerun_cmds(&g).is_empty());
+}
+
+#[test_id(tk4s30s)]
+#[test]
+fn a_rerun_that_shows_the_test_neither_passing_nor_failing_is_unproven_and_stays_red() {
+    let f = rerun_fake(RERUN_RED, None);
+    assert_eq!(f.run(), FAIL);
+    assert!(f.stderr().contains("not rerun: t::t0aaaaa"), "{}", f.stderr());
+    assert!(f.registry_rows.borrow().is_empty());
 }
 
 fn certified(f: &Fake, outcome: &str) -> usize {
@@ -3847,7 +3977,7 @@ fn a_crate_the_base_lacks_is_not_tested_on_the_base() {
         FAIL,
         "the base has nothing to test, so the red is the branch's"
     );
-    let cmds = f.cmds.borrow().clone();
+    let cmds: Vec<String> = f.cmds.borrow().iter().filter(|c| !c.contains(" -E 'test(=")).cloned().collect();
     assert_eq!(cmds.len(), 4, "base runs its fences only: {cmds:?}");
     assert!(meter(&f).contains("base-fences:7 unit_build_secs="));
 }

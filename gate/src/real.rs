@@ -847,6 +847,14 @@ impl World for Real {
             e.actor = Some("gate".into());
         })
     }
+    fn file_flip_fix(&self, repo: &str, _test: &str, title: &str, body: &str) -> Result<String, String> {
+        let run = spira_config::process::cfg("SPIRA_RUN")?;
+        crate::flip::file_bead(&Path::new(&run).join("tmp"), repo, "batcher", "flip", title, body)
+    }
+    fn registry_disable(&self, test: &str, bead: &str, reason: &str) -> Result<crate::flip::DisabledRow, String> {
+        let bin = spira_config::release_env::tool("test-registry")?;
+        crate::flip::registry_disable(&bin, &self.home, test, bead, reason, "gate")
+    }
     fn lc_gate_start(&self, bead: &str) {
         let _ = spira_config::bounded::bounded("spira-lc")
             .args(["fact", "add", bead, "--kind", "gate-start", "--actor", "gate"])

@@ -112,6 +112,8 @@ struct State {
     tiers_file: Option<PathBuf>,
     /// The longest declared step of the branch trial's gate command and its seconds.
     slowest_step: Option<(String, u64)>,
+    /// `<test>:<red|timeout>/<green|red|timeout|unrun>` per test the gate ran once more.
+    reruns: Vec<String>,
     /// The branch trial's whole output, kept as a file when the verdict is not a PASS.
     gate_out: String,
     changed: Vec<String>,
@@ -168,6 +170,115 @@ struct State {
     test_secs: u64,
     /// What the trial judged by: `testenv:<tiers>`, `gate.steps`, `column`, `syntax`; `-` before it resolved.
     ran: String,
+}
+
+/// The one discriminating rerun of a red unit test phase (DESIGN.md "The rerun of a red test"):
+/// the failing tests run once more on the same tree under the same nextest config. A test
+/// green on the rerun is a flip: fix bead filed, registry row written, verdict stands without
+/// it. `Ok` carries the note a FAIL appends; `Err` is a verdict that ends the trial.
+fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Result<String, Verdict> {
+    let Composition::Unit { crates, targets, .. } = at.comp else { return Ok(String::new()) };
+    let failed = parse::failed_tests(at.out);
+    if parse::red_units(at.out, at.tiers) != ["phase:test"] || failed.is_empty() || parse::fence_refusal(at.out).is_some() {
+        return Ok(String::new());
+    }
+    let rerunnable = |t: &&String| t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
+    let nextest: Vec<String> = parse::failed_nextest(at.out).into_iter().filter(|t| rerunnable(&t)).collect();
+    let libtest: Vec<String> = failed.iter().filter(|t| !parse::failed_nextest(at.out).contains(t)).filter(rerunnable).cloned().collect();
+    let rerun_cmd = compose::unit_rerun_command(crates, *targets, &nextest, &parse::cargo_reruns(at.out), &libtest);
+    let mut again = String::new();
+    if !rerun_cmd.is_empty() {
+        if *at.test_secs >= at.deadline {
+            return Err(deadline_verdict(at.deadline, "test-rerun", *at.test_secs, &rerun_cmd, ""));
+        }
+        let t = w.now();
+        let (rc, o) = w.run_gate(at.tree, &at.env, at.timeout, &rerun_cmd);
+        let wall = w.now().saturating_sub(t);
+        *at.test_secs += wall;
+        at.phases.push(("test-rerun".into(), wall));
+        if rc == 124 && at.by_deadline {
+            return Err(deadline_verdict(at.deadline, "test-rerun", *at.test_secs, &rerun_cmd, &o));
+        }
+        if rc == 124 {
+            return Err(v(NOVERDICT, "timeout", format!(
+                "gate: {name}'s rerun of its red tests was killed at {}s — it judged nothing.\ngate: command: {rerun_cmd}\ngate: this is the harness's budget, not a fault in the branch; raise SPIRA_GATE_TIMEOUT.\n{o}", at.timeout)));
+        }
+        if w.signalled() {
+            return Err(v(NOVERDICT, "died", format!("gate: signalled during the rerun of the red tests of {name}")));
+        }
+        again = o;
+    }
+    let (mut flipped, mut twice, mut unproven, mut unrecorded) = (vec![], vec![], vec![], vec![]);
+    for t in &failed {
+        let first = parse::red_kind(at.out, t);
+        let (second, bucket) = if parse::passed_test(&again, t) {
+            ("green", &mut flipped)
+        } else if parse::failed_tests(&again).contains(t) {
+            (parse::red_kind(&again, t), &mut twice)
+        } else {
+            ("unrun", &mut unproven)
+        };
+        at.reruns.push(format!("{t}:{first}/{second}"));
+        bucket.push(t.clone());
+    }
+    let mut notes = String::new();
+    let bead = if at.bead.is_empty() { "an unnamed branch".to_string() } else { at.bead.to_string() };
+    for t in std::mem::take(&mut flipped) {
+        let Some(id) = crate::ports::flip_test_id(&t) else {
+            unrecorded.push(t);
+            continue;
+        };
+        let line = |o: &str| o.lines().map(str::trim).find(|l| l.contains(t.as_str()) && (spira_config::unit_tier::nextest_status(l) || l.starts_with("test "))).unwrap_or("(no status line)").to_string();
+        let title = format!("{}: {t} flipped in the gate of {bead} and was disabled — fix it or replace it with a deterministic test", at.repo);
+        let body = format!(
+            "{t} was red in the gate of {bead} and green on a rerun of the same tree {tree}, so the gate disabled it in the test registry for the registry's hold and let the item's verdict stand without it (law-a-flipping-test-is-disabled-by-a-registry-row).\n\nFirst run: {}\nRerun:     {}\n\nDeliverable: find the nondeterminism, then fix the test or replace it with a deterministic one; it runs again when the row expires.\n",
+            line(at.out), line(&again), tree = at.tree_id);
+        let unrecordable = |what: &str, e: String| v(NOVERDICT, "flip-unrecorded", format!(
+            "gate: {name}'s test {t} flipped (red, then green on a rerun of the same tree {}), but {what}: {e}\ngate: a flip is never passed without its record; no verdict for {bead}.", at.tree_id));
+        let fix = w.file_flip_fix(&at.repo, &t, &title, &body).map_err(|e| unrecordable("its fix bead could not be filed", e))?;
+        let reason = format!("{id} flipped in the gate of {bead} (red, then green on a rerun of the same tree {})", at.tree_id);
+        let row = w.registry_disable(&id, &fix, &reason).map_err(|e| unrecordable(&format!("its registry row could not be written (fix bead {fix})"), e))?;
+        let until = crate::real::utc_of(row.until.max(0) as u64);
+        let line = format!("gate: flipped — {t} red, then green on a rerun of the same tree; disabled until {}, fix bead {fix}", &until[..10]);
+        w.eprint(&line);
+        notes.push_str(&line);
+        notes.push('\n');
+        flipped.push(t);
+    }
+    if twice.is_empty() && unproven.is_empty() && unrecorded.is_empty() {
+        return Err(v(PASS, "pass", format!("gate: {name}'s own gate failed: {cmd}\n{}\n{notes}", at.out)));
+    }
+    let spaced = |l: &[String]| l.join(" ");
+    let mut tail = String::new();
+    tail.push_str(&notes);
+    if !twice.is_empty() {
+        tail.push_str(&format!("gate: red twice on the same tree {}: {}\n", at.tree_id, spaced(&twice)));
+    }
+    if !unproven.is_empty() {
+        tail.push_str(&format!("gate: not rerun: {}\n", spaced(&unproven)));
+    }
+    if !unrecorded.is_empty() {
+        tail.push_str(&format!("gate: flipped but carries no test id, so no registry row can hold it: {}\n", spaced(&unrecorded)));
+    }
+    Ok(format!("\n{}", tail.trim_end()))
+}
+
+/// What the rerun of a red unit test phase reads: the first run and the tree it ran on.
+struct RerunScope<'a> {
+    comp: &'a Composition,
+    out: &'a str,
+    tiers: &'a [Tier],
+    env: Vec<(String, String)>,
+    tree: &'a Path,
+    tree_id: &'a str,
+    timeout: &'a str,
+    deadline: u64,
+    by_deadline: bool,
+    repo: &'a str,
+    bead: &'a str,
+    test_secs: &'a mut u64,
+    phases: &'a mut Vec<(String, u64)>,
+    reruns: &'a mut Vec<String>,
 }
 
 pub struct Trial<'w, W: World> {
@@ -1124,6 +1235,20 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {name}'s own gate reported a harness fault (exit {NOVERDICT}) — container or install failed.\ngate: command: {cmd}\n{out}"));
         }
 
+        // THE RERUN comes before the checkout of the base: it runs on the tree the first run ran on.
+        let rerun_note = {
+            let mut rerun_env = compose::test_phase_env(&with_bins(env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED")), tree_def.as_ref(), tools.as_ref()), jobs);
+            rerun_env.retain(|(k, _)| k != spira_config::unit_tier::DENY_LIST_ENV);
+            rerun_env.push((spira_config::unit_tier::DENY_LIST_ENV.to_string(), tree.join(compose::DENY_LIST).to_string_lossy().into_owned()));
+            let timeout_left = eff(self.s.test_secs);
+            let tree_id = if self.s.branch_tree.is_empty() { want_tree.clone() } else { self.s.branch_tree.clone() };
+            let attempt = RerunScope { comp: &comp, out: &out, tiers: &tiers, env: rerun_env, tree: &tree, tree_id: &tree_id, timeout: &timeout_left, deadline, by_deadline, repo: &self.s.repo_name, bead: &self.s.bead, test_secs: &mut self.s.test_secs, phases: &mut self.s.phases, reruns: &mut self.s.reruns };
+            match rerun_red_tests(w, attempt, &name, &cmd) {
+                Ok(note) => note,
+                Err(verdict) => return verdict,
+            }
+        };
+
         // WHOSE FAULT: the same command on the landing ref itself — the pinned commit the
         // merge was cut from, never the ref re-read by name (sp-hh5h0).
         let mut base_ran = false;
@@ -1540,7 +1665,7 @@ impl<'w, W: World> Trial<'w, W> {
                 } else {
                     format!("gate: the same command passes against {base}, so this is the branch's own.")
                 };
-                v(FAIL, "branch-red", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{closing}"))
+                v(FAIL, "branch-red", format!("gate: {name}'s own gate failed: {cmd}\n{out}\n{closing}{rerun_note}"))
             }
             Attribution::BaseTimeout(s) => {
                 self.s.suite = s;
@@ -1971,7 +2096,7 @@ impl<'w, W: World> Trial<'w, W> {
     /// Wall seconds of a phase of the branch trial, when a unit test phase ran.
     fn unit_phase_secs(&self, name: &str) -> u64 {
         match self.s.unit_timings {
-            Some(_) => self.s.phases.iter().filter(|(n, _)| n == name || (name == "test" && n.starts_with("test-"))).map(|p| p.1).sum(),
+            Some(_) => self.s.phases.iter().filter(|(n, _)| n == name || (name == "test" && n.starts_with("test-") && n != "test-rerun")).map(|p| p.1).sum(),
             None => 0,
         }
     }
@@ -2070,7 +2195,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{}{}{} test_clock={}s{}\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}{}{}{}{}{}{}{} test_clock={}s{}{}\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -2089,6 +2214,7 @@ impl<'w, W: World> Trial<'w, W> {
                     if self.s.build_dir.is_empty() { String::new() } else { format!(" build_dir={}", crate::telemetry::build_dir_kind(&self.s.build_dir)) },
                     self.s.test_secs,
                     kept.as_ref().map_or(String::new(), |p| format!(" out={}", p.display())),
+                    if self.s.reruns.is_empty() { String::new() } else { format!(" reruns={}", self.s.reruns.join(",")) },
                 ),
             );
             let (red_unit, red_line) = if outcome(vd.status) == "FAIL" && vd.reason == "branch-red" {
@@ -2127,6 +2253,7 @@ impl<'w, W: World> Trial<'w, W> {
                 red_line,
                 deny_list: self.s.deny_label.clone(),
                 slowest_step,
+                reruns: self.s.reruns.join(","),
             };
             if let Some((_, html)) = self.s.build_timing.as_ref().filter(|(_, h)| !h.is_empty()) {
                 crate::telemetry::keep_report(w, &self.s.run, &ts, html);
