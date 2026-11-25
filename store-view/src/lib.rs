@@ -596,9 +596,10 @@ impl Projection {
             let s = self.lock();
             s.rev.filter(|_| s.beads.is_some())
         }?;
+        let hold = if self.lock().watched { WATCH_HOLD_MS } else { 0 };
         let mut argv = vec!["watch".to_string()];
         argv.extend(self.watch_prefixes().into_iter().map(String::from));
-        argv.extend(["--from-rev".into(), from.to_string(), "--wait-ms".into(), WATCH_HOLD_MS.to_string(), "--rows".into()]);
+        argv.extend(["--from-rev".into(), from.to_string(), "--wait-ms".into(), hold.to_string(), "--rows".into()]);
         Some(argv)
     }
 
@@ -637,7 +638,7 @@ impl Projection {
             s.watched = true;
             return Ok(Polled::Quiet { rev: p.max(from) });
         }
-        if w.get("too_old").is_some() {
+        if w.get("too_old").is_some() || w.get("future_rev").is_some() {
             return self.load_at(true).map(|rev| Polled::Reloaded { rev });
         }
         let (Some(events), Some(through)) = (w["events"].as_array(), w["through"].as_u64()) else {

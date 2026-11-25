@@ -912,3 +912,35 @@ fn an_unwatched_view_keeps_the_configured_staleness() {
         assert!(matches!(w.p.batch_view("spira"), Err(LcError::Refused(m)) if m.contains("stale past 10000ms")));
     });
 }
+
+#[test_id(tos8vaw)]
+#[test]
+fn a_future_rev_answer_reloads_and_the_views_read() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.script.lock().unwrap().list_rev = 3;
+        w.watch(json!({ "future_rev": { "rev": 5, "head": 3 } }));
+        assert_eq!(w.p.poll().unwrap(), Polled::Reloaded { rev: 3 });
+        assert_eq!(w.p.ready_counts().unwrap().rev, 3);
+    });
+}
+
+#[test_id(tetut9g)]
+#[test]
+fn after_a_failed_watch_the_next_one_sends_wait_ms_0_and_its_quiet_answer_confirms_at_once() {
+    within(|| {
+        let w = world(Script { list_rev: 4, ..Default::default() }, Duration::from_secs(10));
+        w.p.poll().unwrap();
+        w.watch(json!({ "progress_rev": 5 }));
+        w.p.poll().unwrap();
+        w.script.lock().unwrap().watches.push_back((1, String::new()));
+        assert!(w.p.poll().is_err());
+        w.watch(json!({ "progress_rev": 5 }));
+        w.p.poll().unwrap();
+        let waits: Vec<String> = w.script.lock().unwrap().seen.iter().filter(|a| a[0] == "watch").map(|a| a[a.iter().position(|x| x == "--wait-ms").unwrap() + 1].clone()).collect();
+        assert_eq!(waits, ["30000", "30000", "0"]);
+        w.advance(Duration::from_secs(11));
+        assert_eq!(w.p.ready_counts().unwrap().rev, 5, "the quiet answer was confirmed, and the next watch holds");
+    });
+}
