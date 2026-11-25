@@ -292,12 +292,14 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
+    type Change = fn(&mut Observation);
+
     fn holder(pid: u32, start: u64) -> Holder {
-        Holder { pid, start, transcript: PathBuf::from("/p/a.jsonl") }
+        Holder { pid, start, transcript: PathBuf::from("p/a.jsonl") }
     }
 
     fn observed() -> Observation {
-        Observation { record: Some(Record { id: "a".into(), cwd: "/brain".into() }), holder: Some(holder(10, 500)), settings_mtime_ms: Some(7), release_target: Some("r1".into()) }
+        Observation { record: Some(Record { id: "a".into(), cwd: "brain".into() }), holder: Some(holder(10, 500)), settings_mtime_ms: Some(7), release_target: Some("r1".into()) }
     }
 
     fn snap(obs: Observation) -> Snapshot {
@@ -319,11 +321,11 @@ mod tests {
     #[test_id(tz00zpm)]
     #[test]
     fn each_change_to_what_was_held_starts_once() {
-        let cases: Vec<(&str, Box<dyn Fn(&mut Observation)>)> = vec![
-            ("holder pid reused with another start time", Box::new(|o| o.holder = Some(holder(10, 501)))),
-            ("record id changed", Box::new(|o| o.record.as_mut().unwrap().id = "b".into())),
-            ("settings mtime moved", Box::new(|o| o.settings_mtime_ms = Some(8))),
-            ("release target moved", Box::new(|o| o.release_target = Some("r2".into()))),
+        let cases: [(&str, Change); 4] = [
+            ("holder pid reused with another start time", |o| o.holder = Some(holder(10, 501))),
+            ("record id changed", |o| o.record.as_mut().unwrap().id = "b".into()),
+            ("settings mtime moved", |o| o.settings_mtime_ms = Some(8)),
+            ("release target moved", |o| o.release_target = Some("r2".into())),
         ];
         for (why, change) in cases {
             let mut obs = observed();
@@ -416,10 +418,10 @@ mod tests {
     #[test]
     fn a_claude_with_the_transcript_open_is_the_holder_and_a_tail_or_a_claude_without_it_is_not() {
         let t = tree();
-        process(&t, 11, "/usr/bin/tail", 100, Some(&t.transcript));
-        process(&t, 12, "/opt/claude", 200, None);
+        process(&t, 11, "usr/bin/tail", 100, Some(&t.transcript));
+        process(&t, 12, "opt/claude", 200, None);
         assert_eq!(observe_at(&t.look).holder, None, "neither a tail holding the fd nor a claude without it is the holder");
-        process(&t, 13, "/opt/bin/claude", 300, Some(&t.transcript));
+        process(&t, 13, "opt/bin/claude", 300, Some(&t.transcript));
         let h = observe_at(&t.look).holder.expect("a claude with the transcript open");
         assert_eq!((h.pid, h.start), (13, 300));
     }
