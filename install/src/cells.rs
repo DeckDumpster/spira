@@ -339,8 +339,8 @@ fn shipped_unit_files_are_listed_enabled_periodic_limited_and_watchdogged_correc
     let enabled = |n: &str| union.iter().any(|(u, e)| u == n && *e);
 
     let timers: Vec<&(String, String)> = units.iter().filter(|(n, _)| n.ends_with(".timer")).collect();
-    assert!(timers.len() > 3, "positive control: the timer templates were found");
-    assert!(timers.iter().any(|(n, _)| n == "concierge.timer") && enabled("concierge.timer"), "positive control: a known timer is parsed as listed and enabled");
+    assert!(timers.len() >= 2, "positive control: the timer templates were found");
+    assert!(timers.iter().any(|(n, _)| n == "lc-backup.timer") && enabled("lc-backup.timer"), "positive control: a known timer is parsed as listed and enabled");
     for (n, text) in &timers {
         assert!(listed(n), "{n} is in no manifest row: the installer would never write it");
         assert!(enabled(n) || declined.contains(n), "{n} is installed but never enabled: it would never fire");

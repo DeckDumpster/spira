@@ -522,7 +522,7 @@ mod tests {
         let m = build(&inputs()).unwrap();
         let en = m.enable("prod");
         assert!(en.contains(&"spira-watchdog-prod.timer".to_string()));
-        assert!(en.contains(&"concierge.timer".to_string())); // shared unit, no suffix
+        assert!(en.contains(&"lc-backup.timer".to_string())); // shared unit, no suffix
         assert!(en.contains(&"spira-watch-testview-prod.service".to_string()));
         assert!(!en.iter().any(|u| u == "spira-watchdog.timer")); // never the un-suffixed name
     }
