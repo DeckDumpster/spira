@@ -30,10 +30,16 @@ pub fn with_fresh<T>(f: impl FnOnce() -> T) -> Result<T, String> {
 /// This process's resolved config: `$SPIRA_TOML`, read until one resolution succeeds and then
 /// pinned. A refusal is returned, never kept: the next call reads again.
 pub fn config() -> Result<&'static Resolved, String> {
+    config_with(&std::env::vars().collect())
+}
+
+/// [`config`], resolving from `env` as handed in when nothing is pinned yet: a caller that names
+/// its config by value never edits the process environment. A pinned config wins over `env`.
+pub fn config_with(env: &BTreeMap<String, String>) -> Result<&'static Resolved, String> {
     if let Some(kept) = CONFIG.get() {
         return Ok(kept);
     }
-    let resolved = resolve_now()?;
+    let resolved = resolve_with(env)?;
     Ok(CONFIG.get_or_init(|| resolved))
 }
 
@@ -49,10 +55,13 @@ pub fn instance() -> Result<String, String> {
 }
 
 fn resolve_now() -> Result<Resolved, String> {
-    let env: BTreeMap<String, String> = std::env::vars().collect();
-    let home = crate::resolve::locate_home_for_process()?;
-    let repo = crate::resolve::derive_home_repo(&home, &env);
-    crate::resolve::resolve_for_process(&home, &repo, &env)
+    resolve_with(&std::env::vars().collect())
+}
+
+fn resolve_with(env: &BTreeMap<String, String>) -> Result<Resolved, String> {
+    let home = crate::resolve::locate_home(env, &std::env::current_exe().unwrap_or_default())?;
+    let repo = crate::resolve::derive_home_repo(&home, env);
+    crate::resolve::resolve_for_process(&home, &repo, env)
 }
 
 /// What `keys` resolve to now, read from the files again: the one way past the value this process pinned.
