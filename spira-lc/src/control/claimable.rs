@@ -33,6 +33,7 @@ pub enum Verdict {
     StackUnchanged,
     Carried,
     Stopped,
+    TakenOver,
     OutOfScope,
     CannotTell,
 }
@@ -98,6 +99,10 @@ pub fn judge(
     let mut j = Judgement { verdict: Verdict::Claimable, blocker: None, missing: Vec::new(), depth: 0, stack: Stack::new(), gates: BTreeMap::new() };
     if own.holds.iter().any(|h| *h != HoldKind::Wait) {
         j.verdict = Verdict::Held;
+        return j;
+    }
+    if own.takeover.is_some() {
+        j.verdict = Verdict::TakenOver;
         return j;
     }
     let snoozed = own.holds.contains(&HoldKind::Wait)

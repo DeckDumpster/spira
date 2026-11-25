@@ -76,6 +76,9 @@ pub enum Refusal {
     /// A `resubmit` is a break-glass move past the gate: it names who did it, why the normal
     /// path was bypassed, and the checks run on the very tip it admits. `missing` names the field.
     BreakGlassIncomplete { missing: String },
+    /// An undirected `claim` while a directed claim is being prepared; `spira-lc takeover-end`
+    /// lifts it when the directed claim is abandoned.
+    TakenOver { by: String },
     /// A mender's outcome arrived at or after the MENDING row's deadline; the machine's own
     /// `Expire` is the only transition left.
     DeadlinePassed { deadline: i64, at: i64 },

@@ -108,6 +108,7 @@ pub struct LcRow {
     pub updated_at: Option<i64>,
     pub stack_tips: std::collections::BTreeMap<String, String>,
     pub known_red: bool,
+    pub takeover_owner: Option<String>,
 }
 
 fn scalar(v: Option<&Value>) -> Option<String> {
@@ -177,6 +178,7 @@ pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
             updated_at: scalar(r.get("updated_at")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
             stack_tips: parse_stack_tips(r.get("stack")),
             known_red: matches!(scalar(r.get("known_red")).as_deref(), Some("1" | "true")),
+            takeover_owner: r.get("takeover").and_then(|t| scalar(t.get("owner"))).filter(|o| !o.is_empty()),
         })
         .filter(|r| !r.bead_id.is_empty())
         .collect())
