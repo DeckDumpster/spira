@@ -84,12 +84,19 @@ pub fn decide(carry: &Carry, obs: &Observation, now_ms: u64) -> (Carry, Vec<Effe
     (Carry { held: Some(obs.clone()), started_ms: now_ms }, vec![EffectSpec::keyed(UNIT_START_INSTALLED, format!("{NAME}:{now_ms}"), input, START_DEADLINE_MS)])
 }
 
-/// `(pid, comm, ppid, starttime ticks)` from one `stat` text; `comm` may hold spaces and parens.
-fn parse_stat(pid: u32, text: &str) -> Option<(u32, String, u32, u64)> {
+struct Stat {
+    pid: u32,
+    comm: String,
+    ppid: u32,
+    started: u64,
+}
+
+/// One `stat` text; `comm` may hold spaces and parens.
+fn parse_stat(pid: u32, text: &str) -> Option<Stat> {
     let (open, close) = (text.find('(')?, text.rfind(')')?);
     let comm = text.get(open + 1..close)?.to_string();
     let rest: Vec<&str> = text.get(close + 1..)?.split_whitespace().collect();
-    Some((pid, comm, rest.get(1)?.parse().ok()?, rest.get(19)?.parse().ok()?))
+    Some(Stat { pid, comm, ppid: rest.get(1)?.parse().ok()?, started: rest.get(19)?.parse().ok()? })
 }
 
 fn mtime_ns(path: &Path) -> Option<u64> {
@@ -97,23 +104,26 @@ fn mtime_ns(path: &Path) -> Option<u64> {
     u64::try_from(d.as_nanos()).ok()
 }
 
+/// The tmux servers, the direct children of those, and the tmux clients, each by pid.
+pub type Procs = (Vec<Proc>, Vec<Proc>, Vec<Proc>);
+
 /// The tmux processes under `proc_root` by their `comm` and parent, never by argv.
-pub fn scan_proc(proc_root: &Path) -> Result<(Vec<Proc>, Vec<Proc>, Vec<Proc>), String> {
+pub fn scan_proc(proc_root: &Path) -> Result<Procs, String> {
     let entries = std::fs::read_dir(proc_root).map_err(|e| format!("{}: {e}", proc_root.display()))?;
-    let all: Vec<(u32, String, u32, u64)> = entries
+    let all: Vec<Stat> = entries
         .flatten()
         .filter_map(|e| {
             let pid: u32 = e.file_name().to_str()?.parse().ok()?;
             parse_stat(pid, &std::fs::read_to_string(e.path().join("stat")).ok()?)
         })
         .collect();
-    let of = |keep: &dyn Fn(&(u32, String, u32, u64)) -> bool| -> Vec<Proc> {
-        let mut v: Vec<Proc> = all.iter().filter(|p| keep(p)).map(|p| Proc { pid: p.0, started: p.3 }).collect();
+    let of = |keep: &dyn Fn(&Stat) -> bool| -> Vec<Proc> {
+        let mut v: Vec<Proc> = all.iter().filter(|p| keep(p)).map(|p| Proc { pid: p.pid, started: p.started }).collect();
         v.sort_by_key(|p| p.pid);
         v
     };
-    let servers: Vec<u32> = all.iter().filter(|p| p.1 == SERVER).map(|p| p.0).collect();
-    Ok((of(&|p| p.1 == SERVER), of(&|p| servers.contains(&p.2)), of(&|p| p.1 == CLIENT)))
+    let servers: Vec<u32> = all.iter().filter(|p| p.comm == SERVER).map(|p| p.pid).collect();
+    Ok((of(&|p| p.comm == SERVER), of(&|p| servers.contains(&p.ppid)), of(&|p| p.comm == CLIENT)))
 }
 
 pub fn observe_at(proc_root: &Path, conf: &cockpit_ops::layout::Conf) -> Result<Observation, String> {
@@ -219,18 +229,21 @@ mod tests {
     #[test]
     fn each_moved_input_starts_the_unit_once_and_is_then_held() {
         let base = obs();
-        let moved: Vec<(&str, Box<dyn Fn(&mut Observation)>)> = vec![
-            ("a server child gone", Box::new(|o| drop(o.children.pop()))),
-            ("a new child", Box::new(|o| o.children.push(Proc { pid: 13, started: 103 }))),
-            ("a new client", Box::new(|o| o.clients.push(Proc { pid: 21, started: 210 }))),
-            ("the server restarted", Box::new(|o| o.servers[0].started += 1)),
-            ("down marker added", Box::new(|o| o.down = true)),
-            ("health mtime", Box::new(|o| o.health_mtime_ns = Some(7))),
-            ("layout mtime", Box::new(|o| o.layout_mtime_ns = Some(8))),
-            ("layout binary removed", Box::new(|o| o.layout_mtime_ns = None)),
-            ("right pct", Box::new(|o| o.conf.right_pct = 40)),
-            ("mail", Box::new(|o| o.conf.mail = None)),
-            ("mouse", Box::new(|o| o.conf.mouse = false)),
+        type Move = (&'static str, fn(&mut Observation));
+        let moved: [Move; 11] = [
+            ("a server child gone", |o| {
+                o.children.pop();
+            }),
+            ("a new child", |o| o.children.push(Proc { pid: 13, started: 103 })),
+            ("a new client", |o| o.clients.push(Proc { pid: 21, started: 210 })),
+            ("the server restarted", |o| o.servers[0].started += 1),
+            ("down marker added", |o| o.down = true),
+            ("health mtime", |o| o.health_mtime_ns = Some(7)),
+            ("layout mtime", |o| o.layout_mtime_ns = Some(8)),
+            ("layout binary removed", |o| o.layout_mtime_ns = None),
+            ("right pct", |o| o.conf.right_pct = 40),
+            ("mail", |o| o.conf.mail = None),
+            ("mouse", |o| o.conf.mouse = false),
         ];
         for (what, change) in moved {
             let mut o = base.clone();
@@ -270,7 +283,7 @@ mod tests {
     }
 
     fn stat(comm: &str, ppid: u32, started: u64) -> String {
-        let tail = vec!["0"; 2].join(" ");
+        let tail = ["0"; 2].join(" ");
         format!("1 ({comm}) S {ppid} 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 {tail} {started} 0\n")
     }
 
@@ -300,7 +313,8 @@ mod tests {
     #[test_id(t3l9jug)]
     #[test]
     fn a_comm_holding_spaces_and_parens_does_not_shift_the_fields() {
-        assert_eq!(parse_stat(7, &stat("a) (b c", 4, 99)), Some((7, "a) (b c".into(), 4, 99)));
+        let got = parse_stat(7, &stat("a) (b c", 4, 99)).unwrap();
+        assert_eq!((got.pid, got.comm.as_str(), got.ppid, got.started), (7, "a) (b c", 4, 99));
     }
 
     #[test_id(trz0d8o)]
