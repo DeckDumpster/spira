@@ -106,7 +106,8 @@ fn fixture() -> Fixture {
     std::fs::create_dir(&run_dir).unwrap();
     let sock = dir.join("lc.sock");
     let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
-    let (requests, refused): (Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>) = Default::default();
+    let requests: Arc<Mutex<Vec<String>>> = Arc::default();
+    let refused: Arc<Mutex<Vec<String>>> = Arc::default();
     let claimable = Arc::new(Mutex::new(String::from("{\"beads\":[]}")));
     let (asked, turned_away, ready) = (requests.clone(), refused.clone(), claimable.clone());
     std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| {
