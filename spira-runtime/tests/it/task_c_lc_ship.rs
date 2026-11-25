@@ -225,7 +225,7 @@ fn the_runtime_units_environment_files_let_the_drain_sign_an_s3_upload() {
     let said = task::drain("s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), PART_BYTES).unwrap();
     assert_eq!(said, "1 object(s) uploaded");
     let urls = targets.lock().unwrap().clone();
-    assert!(urls.iter().any(|u| u.starts_with("/bucket/lc/revlog/")), "{urls:?}");
+    assert!(urls.iter().any(|u| u.starts_with("/bucket/lc/revlog/")), "{urls:?}"); // not a path: an HTTP request target
     assert!(dir.join("sent/revlog").join(&name).exists() && !dir.join("queue/revlog").join(&name).exists());
 
     let refused = task::drain("s3://bucket/lc/", &dir.display().to_string(), |k| env.get(k).cloned(), 1).unwrap_err();

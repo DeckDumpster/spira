@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(ok.uploader().put_new(&f, "archive/k"), Ok(()));
         let req = ok.requests().remove(0);
         assert_eq!(req.method, "PUT");
-        assert_eq!(req.target, "/b/p/archive/k");
+        assert_eq!(req.target, "/b/p/archive/k"); // not a path: an HTTP request target
         assert_eq!(req.headers["if-none-match"], "*");
         assert!(req.headers["authorization"].contains("if-none-match"), "signed");
         assert_eq!(req.headers["x-amz-server-side-encryption"], "AES256");
@@ -603,7 +603,7 @@ mod tests {
         assert!(xml.contains("<PartNumber>3</PartNumber><ETag>&quot;etag3&quot;</ETag>"), "{xml}");
         assert!(xml.find("PartNumber>1<").unwrap() < xml.find("PartNumber>2<").unwrap());
         assert_eq!(complete.headers["content-type"], "application/xml");
-        assert_eq!(calls.first().unwrap().target, "/b/p/snapshot/1?uploads");
+        assert_eq!(calls.first().unwrap().target, "/b/p/snapshot/1?uploads"); // not a path: an HTTP request target
         assert_eq!(calls.first().unwrap().method, "POST");
         assert!(complete.method == "POST" && complete.target.ends_with("uploadId=up%2F1%202"));
         assert!(!dir.path().join("snap.part").exists() && !dir.path().join("snap.complete").exists());

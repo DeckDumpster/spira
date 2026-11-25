@@ -210,8 +210,8 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     let urls: Vec<&str> = runs.iter().map(|r| r.target.as_str()).collect();
     let retried = urls[2];
     assert_eq!(urls[3], retried, "the retry is the refused object, under its own name");
-    assert!(retried.starts_with("/bucket/spira/lc/revlog/"), "{retried}");
-    assert!(urls.iter().any(|u| u.starts_with("/bucket/spira/lc/snapshot/")), "{urls:?}");
+    assert!(retried.starts_with("/bucket/spira/lc/revlog/"), "{retried}"); // not a path: an HTTP request target
+    assert!(urls.iter().any(|u| u.starts_with("/bucket/spira/lc/snapshot/")), "{urls:?}"); // not a path: an HTTP request target
     for r in &runs {
         assert_signed_like_s3_wants(r);
         assert_eq!(r.headers["x-amz-security-token"], "tok");
