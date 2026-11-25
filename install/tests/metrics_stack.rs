@@ -134,3 +134,23 @@ fn a_store_without_a_positive_numeric_flush_key_exits_2_naming_it_and_runs_no_po
         }
     }
 }
+
+#[test_id(tidl3k9)]
+#[test]
+fn a_bad_flush_key_does_not_stop_an_idle_store_or_the_collector() {
+    assert!(podman_run_with(&["collector".to_string()], Some("x")).is_some());
+    let t = testkit::TempDir::new("metrics-stack-idle");
+    let d = t.path();
+    fs::write(d.join("conf.sh"), "").unwrap();
+    fs::write(d.join("metrics-stack.sh"), fs::read_to_string(root().join("spira/metrics-stack.sh")).unwrap()).unwrap();
+    let out = Command::new("bash")
+        .arg(d.join("metrics-stack.sh"))
+        .arg("vm")
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .env("SPIRA_METRICS_DATA", "")
+        .env("SPIRA_METRICS_IDLE_ONCE", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+}
