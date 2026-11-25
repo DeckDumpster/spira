@@ -584,7 +584,7 @@ fn the_reaper_observe_asks_git_only_about_a_checkout_the_cheap_rules_leave_undec
     let f = fixture();
     spira_config::process::with_fresh(|| {
     let names = ["hel.reap_terminal.observe"];
-    let root = f.worktrees.parent().unwrap().join("worktree");
+    let root = f.effects.world.run_dir.join("worktree");
     std::fs::create_dir_all(&root).unwrap();
     for n in [".testbatch-1", "sp-live01", "sp-keep01", "sp-term01"] {
         git(&f.local, &["worktree", "add", "-q", "--detach", root.join(n).to_str().unwrap()], 1);
