@@ -2017,17 +2017,32 @@ mod bounded_store_tests {
 }
 
 /// The epoch of `hour`:00 in zone `tz`, `days_after` local days after the local day of epoch `at`.
-/// The zone conversion is the `date` program's, as in `idea-prompt`.
+/// The zone conversion is the `date` program's, as in `idea-prompt`. The answer is held for the
+/// local day `at` falls in, bounded by the epochs `date` gave for that day's start and the next's.
 pub fn cr_open_epoch(tz: &str, hour: u32, at: u64, days_after: u32) -> Result<u64, String> {
-    let date = |args: &[&str]| -> Result<String, String> {
+    static HELD: std::sync::OnceLock<HeldEpochs> = std::sync::OnceLock::new();
+    open_epoch_held(HELD.get_or_init(Default::default), tz, hour, at, days_after, &|args| {
         let out = spira_config::bounded::bounded("date").env("TZ", tz).args(args).output().map_err(|e| format!("date: {e}"))?;
         if !out.status.success() {
-            return Err(format!("date for TZ={tz} exited {}", out.status));
+            return Err(format!("date {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    };
+    })
+}
+
+type HeldEpochs = std::sync::Mutex<std::collections::HashMap<(String, u32, u32), (i64, i64, u64)>>;
+
+fn open_epoch_held(held: &HeldEpochs, tz: &str, hour: u32, at: u64, days_after: u32, date: &dyn Fn(&[&str]) -> Result<String, String>) -> Result<u64, String> {
+    let key = (tz.to_string(), hour, days_after);
+    if let Some(&(_, _, epoch)) = held.lock().unwrap_or_else(|e| e.into_inner()).get(&key).filter(|(from, to, _)| (*from..*to).contains(&(at as i64))) {
+        return Ok(epoch);
+    }
+    let epoch_of = |when: String| -> Result<i64, String> { date(&["-d", &when, "+%s"])?.parse().map_err(|_| format!("date gave no epoch for TZ={tz}")) };
     let day = date(&["-d", &format!("@{at}"), "+%F"])?;
-    date(&["-d", &format!("{day} {hour:02}:00 {days_after} day"), "+%s"])?.parse().map_err(|_| format!("date gave no epoch for TZ={tz}"))
+    let (from, to) = (epoch_of(format!("{day} 00:00"))?, epoch_of(format!("{day} 00:00 1 day"))?);
+    let epoch = u64::try_from(epoch_of(format!("{day} {hour:02}:00 {days_after} day"))?).map_err(|_| format!("date gave a negative epoch for TZ={tz}"))?;
+    held.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (from, to, epoch));
+    Ok(epoch)
 }
 
 #[cfg(test)]
@@ -2049,6 +2064,48 @@ mod cr_cadence_tests {
         let n = record::allocate(run).unwrap();
         let r = Review { number: n, kind: Kind::Scheduled, state, source_repo: "s".into(), source_sha: "c".into(), collection: None, url: None, unit, sealed_sha256: None, staged_at: 0, opened_at: None, published_at: None, closed_at };
         record::save(run, &r).unwrap();
+    }
+
+    fn counting_date(asked: &std::cell::Cell<u32>) -> impl Fn(&[&str]) -> Result<String, String> + '_ {
+        move |args| {
+            asked.set(asked.get() + 1);
+            let when = args[1];
+            Ok(match args[2] {
+                "+%F" => if when.trim_start_matches('@').parse::<u64>().unwrap() < 86_400 { "1970-01-01" } else { "1970-01-02" }.to_string(),
+                _ => {
+                    let day = if when.starts_with("1970-01-01") { 0 } else { 86_400 };
+                    let hour: u64 = when.get(11..13).unwrap().parse().unwrap();
+                    let next = if when.ends_with("1 day") { 86_400 } else { 0 };
+                    (day + hour * 3600 + next).to_string()
+                }
+            })
+        }
+    }
+
+    #[test_id(tkr5kyh)]
+    #[test]
+    fn an_open_epoch_is_asked_of_date_once_per_local_day_and_again_after_midnight() {
+        let (held, asked) = (HeldEpochs::default(), std::cell::Cell::new(0));
+        let date = counting_date(&asked);
+        let open = |at: u64| open_epoch_held(&held, "Z", 7, at, 1, &date).unwrap();
+        assert_eq!(open(100), 86_400 + 7 * 3600);
+        let first = asked.get();
+        assert!(first > 0);
+        assert_eq!(open(80_000), 86_400 + 7 * 3600);
+        assert_eq!(asked.get(), first, "the same local day asks date nothing");
+        assert_eq!(open(86_400 + 5), 2 * 86_400 + 7 * 3600);
+        assert_eq!(asked.get(), 2 * first, "a crossed midnight asks again, once");
+    }
+
+    #[test_id(t753hk6)]
+    #[test]
+    fn a_failing_date_is_not_held_and_is_asked_again() {
+        let held = HeldEpochs::default();
+        let asked = std::cell::Cell::new(0);
+        let failing = |_: &[&str]| -> Result<String, String> { asked.set(asked.get() + 1); Err("no date".into()) };
+        assert!(open_epoch_held(&held, "Z", 7, 100, 0, &failing).is_err());
+        assert!(open_epoch_held(&held, "Z", 7, 100, 0, &failing).is_err());
+        assert_eq!(asked.get(), 2);
     }
 
     fn due(w: &World, input: &str) -> u64 {

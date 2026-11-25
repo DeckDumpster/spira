@@ -180,7 +180,7 @@ fn fail(code: i32, json_mode: bool, msg: String) -> Outcome {
     }
 }
 
-pub const REGISTRY_FILE: &str = "test-registry.sqlite";
+pub use spira_config::git_refs::REGISTRY_FILE;
 
 /// `cfg` with an empty registry path read as the registry file in the run directory.
 pub fn with_run_default(cfg: impl Fn(&str) -> Result<String, String>, run_dir: impl Fn() -> Result<String, String>) -> impl Fn(&str) -> Result<String, String> {

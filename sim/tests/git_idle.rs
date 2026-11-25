@@ -15,7 +15,7 @@ use spira_runtime::{registrations, tasks};
 mod common;
 
 const HOUR: u64 = 3_600_000;
-const START: u64 = 1_700_000_000_000;
+const START: u64 = 1_700_001_000_000;
 const LANDED_S: u64 = START / 1000 - 1_000;
 
 struct Fixture {
@@ -36,6 +36,8 @@ struct Fixture {
     requests: Arc<Mutex<Vec<String>>>,
     refused: Arc<Mutex<Vec<String>>>,
     claimable: Arc<Mutex<String>>,
+    registry: PathBuf,
+    images: PathBuf,
     ready: Arc<Mutex<Option<String>>>,
     effects: Arc<spira_runtime::Effects>,
     _serial: std::sync::MutexGuard<'static, ()>,
@@ -47,6 +49,10 @@ struct Fixture {
 fn real_git() -> PathBuf {
     static REAL: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     REAL.get_or_init(|| std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join("git")).find(|g| g.is_file()).expect("a git on PATH")).clone()
+}
+
+fn real_tool(name: &str) -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap()).map(|d| d.join(name)).find(|g| g.is_file()).unwrap_or_else(|| panic!("a {name} on PATH"))
 }
 
 fn git(repo: &Path, args: &[&str], at: u64) {
@@ -71,10 +77,24 @@ fn fixture() -> Fixture {
     testkit::write_exe(bin.join("git"), &format!("#!/bin/sh\necho \"$PWD :: $*\" >> {}\nexec {} \"$@\"\n", log.display(), real.display()));
     let started = dir.join("started.log");
     let release = dir.join("release");
+    let registry = process_registry();
+    std::fs::write(&registry, "rows 1").unwrap();
+    let _ = std::fs::remove_file(registry.with_extension("sqlite-wal"));
+    let graph_root = dir.join("graph");
+    let images = graph_root.join("overlay-images/images.json");
+    std::fs::create_dir_all(images.parent().unwrap()).unwrap();
+    std::fs::write(&images, "[]").unwrap();
+    let rows = r#"{"rows":[{"bead":"sp-aaaaaa","test":"t","state":"disabled","until":4102444800}]}"#;
     for d in [release.join("bin"), release.join("spira"), bin.clone()] {
         std::fs::create_dir_all(&d).unwrap();
         for name in LOGGED_PROGRAMS {
-            testkit::write_exe(d.join(name), &format!("#!/bin/sh\necho \"{name} $*\" >> {}\necho '[]'\n", started.display()));
+            let reply = match name {
+                "test-registry" => format!("echo '{rows}'"),
+                "podman" => format!("case \"$1\" in info) echo {};; *) echo sha;; esac", graph_root.display()),
+                "date" | "timeout" => format!("exec {} \"$@\"", real_tool(name).display()),
+                _ => "echo '[]'".to_string(),
+            };
+            testkit::write_exe(d.join(name), &format!("#!/bin/sh\necho \"{name} $*\" >> {}\n{reply}\n", started.display()));
         }
     }
     for d in [release.join("bin"), bin.clone()] {
@@ -169,7 +189,7 @@ fn fixture() -> Fixture {
     let watchers_s = watchers.display().to_string();
     let (wiki_s, prod_s, registry_s) = (wiki.display().to_string(), acc.join("spira").display().to_string(), format!("file://{}", kit.display()));
     let release_s = release.display().to_string();
-    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_WATCHERS", &watchers_s), ("SPIRA_HOST_WORKTREE_SUBDIR", "wt"), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_OVERRIDES_SECS", "60"), ("SPIRA_RELEASE", &release_s)]);
+    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_WATCHERS", &watchers_s), ("SPIRA_HOST_WORKTREE_SUBDIR", "wt"), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_OVERRIDES_SECS", "60"), ("SPIRA_RELEASE", &release_s), ("SPIRA_TEST_REGISTRY_PATH", registry.to_str().unwrap()), ("SPIRA_CR_TZ", "UTC"), ("SPIRA_CR_OPEN_HOUR", "9")]);
     let programs = dir.join("programs.log");
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
@@ -202,9 +222,9 @@ fn fixture() -> Fixture {
     let worktrees = pinned_run.join("wt");
     std::fs::create_dir_all(&worktrees).unwrap();
     let stray = (!pinned_run.starts_with(dir.path())).then(|| pinned_run.ancestors().find(|a| a.parent() == dir.path().parent()).unwrap().to_path_buf());
-    let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), ..Default::default() };
+    let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), cr_tz: "UTC".into(), cr_open_hour: "9".into(), ..Default::default() };
     let effects = Arc::new(spira_runtime::Effects { world, units: Some(Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)))), ..Default::default() });
-    Fixture { _serial: serial, _env: env, _dir: dir, stray, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, effects, watchers, worktrees, published }
+    Fixture { _serial: serial, _env: env, _dir: dir, stray, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, registry, images, effects, watchers, worktrees, published }
 }
 
 impl Drop for Fixture {
@@ -214,6 +234,11 @@ impl Drop for Fixture {
             let _ = std::fs::remove_dir_all(p);
         }
     }
+}
+
+fn process_registry() -> PathBuf {
+    static HOME: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| testkit::TempDir::new("git-idle-registry")).join("registry.sqlite")
 }
 
 fn process_socket() -> PathBuf {
@@ -232,11 +257,18 @@ fn plan_row(id: &str) -> String {
 }
 
 const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
-const LOGGED_PROGRAMS: [&str; 10] = ["spira-claim", "systemctl", "mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail", "spira-config", "target-reap", "watchd"];
+const DATE_RUNS_PER_OPEN_EPOCH: usize = 4;
+const LOGGED_PROGRAMS: [&str; 20] = ["spira-claim", "systemctl", "mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail", "spira-config", "target-reap", "watchd", "test-registry", "podman", "date", "timeout", "tsd-write", "round-vm", "gate", "queue", "rebase-stale", "testenv"];
 
 fn logged_programs(f: &Fixture) -> Vec<String> {
     let all = std::fs::read_to_string(&f.started).unwrap_or_default();
     all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).map(str::to_string).collect()
+}
+
+// `date -d @N +%H` is the idea prompt's own hour read, not one of the four reads under test.
+fn started(f: &Fixture, program: &str) -> usize {
+    let prefix = format!("{program} ");
+    std::fs::read_to_string(&f.started).unwrap_or_default().lines().filter(|l| !l.ends_with(" +%H")).filter(|l| *l == program || l.starts_with(&prefix)).count()
 }
 
 fn assert_stubs_log(f: &Fixture) {
@@ -244,7 +276,17 @@ fn assert_stubs_log(f: &Fixture) {
     quiet("spira-claim", &["ready-count", "control"]);
     quiet("systemctl", &["--user", "list-units", "control"]);
     assert_eq!(logged_programs(f).len(), 2, "the logging stubs are what PATH resolves, so a started claim or listing is seen");
+    for (name, args) in [("test-registry", ["list", "--json"]), ("podman", ["images", "x"]), ("date", ["-u", "+%s"]), ("timeout", ["5", "date"])] {
+        quiet(name, &args);
+        let key = if name == "timeout" { "timeout 5 date" } else { name };
+        assert_eq!(started(f, key), 1, "the {name} stub is what PATH resolves");
+    }
     std::fs::remove_file(&f.started).unwrap();
+}
+
+fn untagged_images(f: &Fixture) -> reconciler::Config {
+    let seams = reconciler::Seams::resolving(|n| Ok(n.to_string())).map(|s| reconciler::Seams { podman: f.podman().display().to_string(), ..s }).unwrap();
+    reconciler::Config::from_lookup(&|_| Ok("1".into()), seams, f.dir_path().join("run"), f.dir_path().display().to_string(), 0, String::new()).unwrap()
 }
 
 fn make_ready(f: &Fixture, id: &str) {
@@ -291,6 +333,10 @@ fn run_hours(f: &Fixture, names: &[&'static str], late: (&[&'static str], u64), 
         sim.run_until(*t);
         between(*t);
     }
+}
+
+fn rewrite(path: &Path, body: &str) {
+    std::fs::write(path, body).unwrap();
 }
 
 fn logged(f: &Fixture) -> Vec<String> {
@@ -351,16 +397,28 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     }
     let runs = || std::fs::read_to_string(&ran).unwrap_or_default().lines().count();
     let mut applied: std::collections::BTreeMap<&str, usize> = Default::default();
-    let names = ["watch.throughput.observe", "landing.observe", "inbox.notify.observe", "asks.ideas.observe", "overrides.apply"];
-    let sentinel = ["sentinel-pass.observe", "cockpit-tier-60s.observe"];
+    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply", "inbox.notify.observe", "asks.ideas.observe", "batcher.local.observe", "cockpit-tier-60s.observe", "cr-cadence.observe"];
+    let sentinel = ["sentinel-pass.observe"];
+    let reads = ["test-registry", "podman", "date", "timeout 5 date"];
+    let counts = |f: &Fixture| reads.map(|p| started(f, p));
+    let (mut reads_at_warm, mut reads_at_idle, mut reads_at_registry, mut reads_at_images, mut reads_at_expiry, mut reads_at_midnight) = ([0; 4], [0; 4], [0; 4], [0; 4], [0; 4], [0; 4]);
+    let reconciled = untagged_images(&f);
     let (before_hour, after) = (START + 59 * MINUTE, warm + HOUR);
     let m = |n: u64| after + n * MINUTE;
     let (quiet_a, quiet_b) = (after - 7 * MINUTE, after - 4 * MINUTE);
-    let marks = [warm, before_hour, quiet_a, quiet_b, after, m(3), m(6), m(9), m(12), m(15), m(18), m(21)];
-    run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &marks, &mut |t| match t {
+    let mut marks: Vec<u64> = (0..=60).map(|k| warm + k * MINUTE).chain([before_hour, quiet_a, quiet_b, m(3), m(6), m(8), m(9), m(10), m(12), m(15), m(16), m(18), m(21)]).collect();
+    marks.sort();
+    marks.dedup();
+    run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &marks, &mut |t| {
+        let _ = reconciler::observe_untagged_images(&reconciled);
+        for days_after in [0, 1] {
+            spira_runtime::world::cr_open_epoch("UTC", 9, t / 1000, days_after).unwrap();
+        }
+        match t {
         t if t == warm => {
             applied.insert("warm", runs());
             (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len());
+            reads_at_warm = counts(&f);
         }
         t if t == before_hour => drop(applied.insert("idle", runs())),
         t if t == quiet_a => {
@@ -378,11 +436,13 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             touch(&f.toml, 1_000_000_002);
             at_branch = logged(&f).len();
         }
+        t if t == m(8) => rewrite(&f.images, "[1]"),
         t if t == m(9) => {
             applied.insert("toml", runs());
             std::fs::write(&fail, "").unwrap();
             touch(&spec, 1_000_000_003);
         }
+        t if t == m(10) => reads_at_images = counts(&f),
         t if t == m(12) => {
             applied.insert("failing", runs());
             std::fs::remove_file(&fail).unwrap();
@@ -395,16 +455,20 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             spira_config::serialize_and_write(&f.toml, &spira_config::set_path(&doc, "spira.certify_par", "7").unwrap()).unwrap();
             stale_target(&f, "sp-aaaaaa");
         }
+        t if t == m(16) => reads_at_expiry = counts(&f),
+        t if t == m(21) => reads_at_midnight = counts(&f),
         t if t == warm + HOUR => {
             applied.insert("boundary", runs());
             tower_at_boundary = started_by_the_watchtower_checks(&f);
             at_idle = logged(&f).len();
             programs_at_idle = logged_programs(&f);
+            reads_at_idle = counts(&f);
             idle_passes = f.seen.lock().unwrap().iter().filter(|(n, _)| n == "sentinel-pass.observe").count();
             rows_before_ready = strand_rows(&f);
             make_ready(&f, "sp-zzzzzz");
             commit(&f.local, "sp-cccccc landed", LANDED_S + 10);
             git(&f.local, &["branch", "-f", "local/main"], 1);
+            rewrite(&f.registry, "rows 22");
         }
         t if t == m(3) => {
             applied.insert("ref", runs());
@@ -415,9 +479,11 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             let doc = spira_config::load(&f.toml).unwrap();
             spira_config::serialize_and_write(&f.toml, &spira_config::set_path(&doc, "spira.certify_par", "7").unwrap()).unwrap();
             stale_target(&f, "sp-aaaaaa");
+            reads_at_registry = counts(&f);
             git(&f.pr, &["branch", "spira/sp-x"], 1);
         }
         _ => {}
+        }
     });
     assert_only_the_double_answered(&f);
     let c = |k: &str| applied[k];
@@ -440,6 +506,17 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));
     let ran = |name: &str| f.seen.lock().unwrap().iter().filter(|(n, _)| n == name).count();
     assert!(ran("inbox.notify.observe") >= 12 && ran("asks.ideas.observe") >= 12, "both tasks ran over the hour: {} {}", ran("inbox.notify.observe"), ran("asks.ideas.observe"));
+    assert!(reads_at_warm.iter().take(3).all(|n| *n > 0), "warm-up read the registry, podman and date, so the idle hour proves something: {reads_at_warm:?}");
+    assert_eq!(reads_at_idle, reads_at_warm, "an idle hour started test-registry, podman, date or timeout");
+    assert_eq!(reads_at_registry[0], reads_at_idle[0] + 2, "a rewritten registry file is read once by each of its two readers");
+    assert_eq!(reads_at_registry[1..], reads_at_idle[1..], "and by nothing else");
+    assert_eq!(reads_at_midnight[0], reads_at_registry[0], "and not again");
+    assert_eq!(reads_at_images[1], reads_at_registry[1] + 1, "a rewritten images.json is listed once");
+    assert_eq!(reads_at_images[0], reads_at_registry[0], "and does not touch the registry");
+    assert_eq!(reads_at_expiry, reads_at_images, "a quiet stretch after the rewrites starts no read");
+    assert_eq!(reads_at_midnight[2] - reads_at_expiry[2], 2 * DATE_RUNS_PER_OPEN_EPOCH, "a crossed local midnight asks date again, once for each of today's and tomorrow's open");
+    assert_eq!(reads_at_midnight[1], reads_at_expiry[1]);
+    assert_eq!(reads_at_midnight[3], reads_at_expiry[3]);
     assert!(!rows_before_ready.iter().any(|r| r.contains("sp-zzzzzz")), "nothing is ready yet: {rows_before_ready:?}");
     let rows = strand_rows(&f);
     assert!(rows.iter().any(|r| r.contains("sp-zzzzzz")), "a bead made READY shows in the next strand rows: {rows:?}");
@@ -540,6 +617,10 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
 }
 
 impl Fixture {
+    fn podman(&self) -> PathBuf {
+        self.dir_path().join("bin/podman")
+    }
+
     fn dir_path(&self) -> &Path {
         self._dir.path()
     }
@@ -572,4 +653,42 @@ fn stale_target(f: &Fixture, id: &str) {
     for d in [wt.join("target"), wt.clone()] {
         std::fs::File::open(&d).unwrap().set_modified(old).unwrap();
     }
+}
+
+#[test_id(trx3p6f)]
+#[test]
+fn a_podman_that_fails_to_list_images_is_asked_again_on_the_next_pass() {
+    let _env = testkit::env_read();
+    let dir = testkit::TempDir::new("untagged-failing");
+    let root = dir.join("graph");
+    std::fs::create_dir_all(root.join("overlay-images")).unwrap();
+    std::fs::write(root.join("overlay-images/images.json"), "[]").unwrap();
+    let asked = dir.join("asked");
+    let podman = dir.join("podman");
+    testkit::write_exe(&podman, &format!("#!/bin/sh\ncase \"$1\" in info) echo {};; *) echo \"$1\" >> {}; exit 1;; esac\n", root.display(), asked.display()));
+    let seams = reconciler::Seams { podman: podman.display().to_string(), ..reconciler::Seams::bare() };
+    let cfg = reconciler::Config::from_lookup(&|_| Ok("1".into()), seams, dir.join("run"), dir.path().display().to_string(), 0, String::new()).unwrap();
+    for _ in 0..2 {
+        let checks = reconciler::observe_untagged_images(&cfg);
+        assert!(format!("{:?}", checks[0].raw).contains("Unobservable"), "{:?}", checks[0].raw);
+    }
+    assert_eq!(std::fs::read_to_string(&asked).unwrap().lines().count(), 2, "a failed listing is not held");
+}
+
+#[test_id(t2wpptx)]
+#[test]
+fn a_store_with_no_images_file_asks_podman_on_every_pass() {
+    let _env = testkit::env_read();
+    let dir = testkit::TempDir::new("untagged-no-file");
+    let root = dir.join("graph");
+    std::fs::create_dir_all(&root).unwrap();
+    let asked = dir.join("asked");
+    let podman = dir.join("podman");
+    testkit::write_exe(&podman, &format!("#!/bin/sh\ncase \"$1\" in info) echo {};; *) echo \"$1\" >> {}; echo sha;; esac\n", root.display(), asked.display()));
+    let seams = reconciler::Seams { podman: podman.display().to_string(), ..reconciler::Seams::bare() };
+    let cfg = reconciler::Config::from_lookup(&|_| Ok("1".into()), seams, dir.join("run"), dir.path().display().to_string(), 0, String::new()).unwrap();
+    for _ in 0..2 {
+        reconciler::observe_untagged_images(&cfg);
+    }
+    assert_eq!(std::fs::read_to_string(&asked).unwrap().lines().count(), 2, "with no images.json there is nothing to key a held count on");
 }

@@ -153,7 +153,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_QUEUE_NEXT_N", next_total.to_string());
     push(&mut out, "SP_QUEUE_NEXT_MAX", next_max.to_string());
 
-    out.extend(testreg_keys(&|args| io::run_tool("test-registry", args, None), now));
+    out.extend(testreg_keys(&|args| spira_config::git_refs::held_registry("list", || io::run_tool("test-registry", args, None).ok_or_else(|| "test-registry list failed".to_string())).ok(), now));
 
     out
 }
@@ -206,15 +206,14 @@ const TESTREG_ROWS: usize = 10;
 /// a call that fails or prints what is not the registry's list is `SP_TESTREG=unread`.
 pub fn testreg_keys(call: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Kv {
     let mut out = Kv::new();
-    let argv = ["list", "--json", "--at", &now.to_string()];
-    let rows = call(&argv)
+    let rows = call(&["list", "--json"]) // BDQ_READ_CONSIDERED="the test registry binary's own list, no bead store"
         .and_then(|raw| serde_json::from_str::<Value>(io::json_only(&raw)).ok())
         .and_then(|v| v.get("rows").and_then(Value::as_array).cloned());
     let Some(rows) = rows else {
         push(&mut out, "SP_TESTREG", "unread");
         return out;
     };
-    let mut held: Vec<&Value> = rows.iter().filter(|r| r.get("expired").and_then(Value::as_bool) == Some(false)).collect();
+    let mut held: Vec<&Value> = rows.iter().filter(|r| r.get("until").and_then(Value::as_i64).is_some_and(|until| until > now)).collect();
     held.sort_by_key(|r| r.get("until").and_then(Value::as_i64).unwrap_or(i64::MAX));
     push(&mut out, "SP_TESTREG_N", held.len().to_string());
     for (i, r) in held.iter().take(TESTREG_ROWS).enumerate() {
@@ -427,7 +426,7 @@ mod tests {
             {"test":"unit:loom factory::tests::a","state":"disabled","bead":"sp-x1","until":300,"expired":false}]}"#;
         let seen = std::cell::RefCell::new(Vec::new());
         let kv = testreg_keys(&|a| { seen.borrow_mut().push(a.join(" ")); Some(list.to_string()) }, 100);
-        assert_eq!(seen.borrow()[0], "list --json --at 100");
+        assert_eq!(seen.borrow()[0], "list --json");
         let get = |k: &str| funnel_get(&kv, k);
         assert_eq!(get("SP_TESTREG_N"), "2");
         assert_eq!(
@@ -439,6 +438,16 @@ mod tests {
         let none = testreg_keys(&|_| None, 100);
         assert_eq!(none, [("SP_TESTREG".to_string(), "unread".to_string())]);
         assert_eq!(funnel_get(&testreg_keys(&|_| Some("not json".into()), 100), "SP_TESTREG"), "unread");
+    }
+
+    #[test_id(tq62fed)]
+    #[test]
+    fn a_held_registry_list_shows_a_row_expired_once_now_reaches_its_until_with_no_further_call() {
+        let list = r#"{"rows":[{"test":"unit:a","state":"disabled","bead":"sp-a","until":300},{"test":"unit:b","state":"disabled","bead":"sp-b","until":900}]}"#;
+        let calls = std::cell::Cell::new(0);
+        let call = |_: &[&str]| { calls.set(calls.get() + 1); Some(list.to_string()) };
+        let n = |now| funnel_get(&testreg_keys(&call, now), "SP_TESTREG_N");
+        assert_eq!((n(299), n(300), n(900)), ("2".to_string(), "1".to_string(), "0".to_string()));
     }
 
     // covers: UC-cockpit-observability-11
