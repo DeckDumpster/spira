@@ -44,6 +44,7 @@ struct Fixture {
     watchers: PathBuf,
     worktrees: PathBuf,
     published: Arc<Mutex<Vec<String>>>,
+    checkout_rows: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 fn real_git() -> PathBuf {
@@ -157,11 +158,19 @@ fn fixture() -> Fixture {
     let (asked, turned_away, ready, bead) = (requests.clone(), refused.clone(), claimable.clone(), ready_id.clone());
     let published: Arc<Mutex<Vec<String>>> = Arc::default();
     let served = published.clone();
+    let checkout_rows: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let answering_rows = checkout_rows.clone();
     std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| {
         asked.lock().unwrap().push(argv.join(" "));
         match argv.first().map(String::as_str) {
             Some("rc") => Ok("{\"ok\":{\"list_rev\":1,\"items\":[]}}".into()),
-            Some("list") => Ok(bead.lock().unwrap().as_deref().map_or("[]".into(), |id| format!("[{}]", lc_row(id)))),
+            Some("list") => {
+                let ids = argv.iter().position(|a| a == "--ids").and_then(|i| argv.get(i + 1)).map(|v| v.split(',').map(str::to_string).collect::<Vec<_>>());
+                let live = argv.iter().any(|a| a == "--live");
+                let mut rows: Vec<String> = bead.lock().unwrap().as_deref().map(lc_row).into_iter().collect();
+                rows.extend(answering_rows.lock().unwrap().iter().filter(|(id, state)| ids.as_ref().is_none_or(|v| v.contains(id)) && !(live && spira_store::lc_state::is_terminal(state))).map(|(id, state)| lc_row_in(id, state)));
+                Ok(format!("[{}]", rows.join(",")))
+            }
             Some("plan") if argv.get(1).map(String::as_str) == Some("items") => Ok(format!("{{\"items\":[{}]}}", bead.lock().unwrap().as_deref().map_or(String::new(), plan_row))),
             Some("plan") => Ok("{\"watermark\":1,\"items\":[]}".into()),
             Some("content") => Ok("[]".into()),
@@ -224,7 +233,7 @@ fn fixture() -> Fixture {
     let stray = (!pinned_run.starts_with(dir.path())).then(|| pinned_run.ancestors().find(|a| a.parent() == dir.path().parent()).unwrap().to_path_buf());
     let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), cr_tz: "UTC".into(), cr_open_hour: "9".into(), ..Default::default() };
     let effects = Arc::new(spira_runtime::Effects { world, units: Some(Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)))), ..Default::default() });
-    Fixture { _serial: serial, _env: env, _dir: dir, stray, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, registry, images, effects, watchers, worktrees, published }
+    Fixture { _serial: serial, _env: env, _dir: dir, stray, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, registry, images, effects, watchers, worktrees, published, checkout_rows }
 }
 
 impl Drop for Fixture {
@@ -249,7 +258,11 @@ fn process_socket() -> PathBuf {
 }
 
 fn lc_row(id: &str) -> String {
-    format!("{{\"bead_id\":\"{id}\",\"state\":\"READY\",\"holds\":[],\"stack\":{{}},\"version\":\"1\"}}")
+    lc_row_in(id, "READY")
+}
+
+fn lc_row_in(id: &str, state: &str) -> String {
+    format!("{{\"bead_id\":\"{id}\",\"state\":\"{state}\",\"holds\":[],\"stack\":{{}},\"version\":\"1\"}}")
 }
 
 fn plan_row(id: &str) -> String {
@@ -563,6 +576,48 @@ fn argv_counts(lines: &[String]) -> String {
         *by.entry(verb).or_default() += 1;
     }
     by.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", ")
+}
+
+#[test_id(t67ro7u)]
+#[test]
+fn the_reaper_observe_asks_git_only_about_a_checkout_the_cheap_rules_leave_undecided() {
+    let f = fixture();
+    spira_config::process::with_fresh(|| {
+    let names = ["hel.reap_terminal.observe"];
+    let root = f.effects.world.run_dir.join("worktree");
+    std::fs::create_dir_all(&root).unwrap();
+    for n in [".testbatch-1", "sp-live01", "sp-keep01", "sp-term01"] {
+        git(&f.local, &["worktree", "add", "-q", "--detach", root.join(n).to_str().unwrap()], 1);
+    }
+    std::fs::write(root.join("sp-keep01/.spira-keep"), "").unwrap();
+    let (warm, idle, after) = (START + HOUR, START + 2 * HOUR, START + 3 * HOUR);
+    let (mut at_warm, mut at_idle) = (0, 0);
+    let under = root.display().to_string();
+    run_hours(&f, &names, (&[], 0), &[warm, idle, after], &mut |t| match t {
+        t if t == warm => {
+            let refused = logged(&f);
+            assert!(!refused.iter().any(|l| l.contains(&under)), "a pass the empty live list refused asked git: {}", argv_counts(&refused));
+            *f.checkout_rows.lock().unwrap() = vec![("sp-live01".into(), "WORKING".into()), ("sp-term01".into(), "WORKING".into())];
+            at_warm = refused.len();
+        }
+        t if t == idle => {
+            at_idle = logged(&f).len();
+            *f.checkout_rows.lock().unwrap() = vec![("sp-live01".into(), "WORKING".into()), ("sp-term01".into(), "LANDED".into())];
+        }
+        _ => {}
+    });
+    let all = logged(&f);
+    assert!(f.seen.lock().unwrap().iter().filter(|(n, _)| n == names[0]).count() >= 2, "fewer than two passes ran");
+    let idle_hour = &all[at_warm..at_idle];
+    assert!(!idle_hour.iter().any(|l| l.contains(&under)), "git asked about a kept checkout: {}\n{}", argv_counts(idle_hour), idle_hour.join("\n"));
+    let asked: Vec<&String> = all[at_idle..].iter().filter(|l| l.contains(&under)).collect();
+    assert!(!asked.is_empty(), "the terminal checkout was never asked about: {}", argv_counts(&all[at_idle..]));
+    assert!(asked.iter().all(|l| l.contains("sp-term01")), "git asked about more than the terminal checkout: {}\n{}", argv_counts(&all[at_idle..]), asked.iter().map(|l| l.as_str()).collect::<Vec<_>>().join("\n"));
+    for verb in ["rev-parse --git-common-dir", "rev-list -n1 HEAD"] {
+        assert!(asked.iter().any(|l| l.contains(verb)), "no {verb:?} on the terminal checkout: {}", argv_counts(&all[at_idle..]));
+    }
+    })
+    .unwrap();
 }
 
 #[test_id(trka3uo)]

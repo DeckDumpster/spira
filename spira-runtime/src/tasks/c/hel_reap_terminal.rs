@@ -25,7 +25,9 @@
 //! - `rows`: the entries' rows by id (`spira-lc list --ids`). **An empty live list or a failed
 //!   read refuses the whole pass**: a bead with no row is scratch, so a store that lost its rows must not reap. The snapshot carries `rows_ok:false`,
 //!   and decide acts on nothing.
-//! - `entries`: a read of `run/worktree` (`terminal.rs:123-129`), with these fields:
+//! - `entries`: a read of `run/worktree` (`terminal.rs`), with these fields. Git, the
+//!   age walk and the `/proc` scan are not asked for an entry the cheap rules keep (a dot-name, a
+//!   holder, a live row), and a refused pass asks none:
 //!   - `repo_of` from git-common-dir (`terminal.rs:72-76`, `hel/src/git.rs:237`);
 //!   - `unsaved` from `rev-list HEAD --not <landrefs> --branches --glob=refs/archive/*`
 //!     (`terminal.rs:60-69`, landrefs via `spira_config::repos`, `real.rs:182-194`);
@@ -260,18 +262,18 @@ pub fn decide(cfg: &Cfg, carry: &Carry, input: &Input<Snapshot>, now_ms: u64) ->
 }
 
 /// The runner of [`OBSERVE`]: one lifecycle `list` over the socket (an empty or failed list
-/// refuses the pass), `hel::terminal::entries` in-process, and the world's halt stamp.
+/// refuses the pass), `hel::terminal::scan` in-process, and the world's halt stamp.
 pub fn observe(real: &hel::real::Real, lc: &spira_store::lc_call::LcClient) -> Result<String, String> {
     if real.run().join("world.halted").exists() {
         return serde_json::to_string(&Snapshot { halted: true, ..Snapshot::default() }).map_err(|e| e.to_string());
     }
-    let listed = hel::terminal::entries(real)?;
-    let names: Vec<String> = listed.iter().map(|e| e.name.clone()).collect();
+    let names = hel::terminal::names(real)?;
     let alive = spira_store::lc_state::list_live_on(lc).is_ok_and(|r| !r.is_empty());
     let Some(read) = alive.then(|| spira_store::lc_state::list_ids_on(lc, &names).ok()).flatten() else {
         return serde_json::to_string(&Snapshot { rows_ok: false, ..Snapshot::default() }).map_err(|e| e.to_string());
     };
     let rows: BTreeMap<String, String> = read.into_iter().map(|r| (r.bead_id, r.state)).collect();
+    let listed = hel::terminal::scan(real, &rows.iter().map(|(k, v)| (k.clone(), v.clone())).collect())?;
     let entries = listed
         .into_iter()
         .map(|e| Entry {

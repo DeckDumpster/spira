@@ -46,6 +46,7 @@ struct Fake {
     /// Beads whose lifecycle row is terminal.
     lc_terminal: BTreeSet<String>,
     base: Option<Base>,
+    base_asked: std::cell::Cell<u32>,
     wts: PathBuf,
     destroy_fails: bool,
     /// The store's text when it refuses the branch read.
@@ -80,6 +81,7 @@ impl World for Fake {
         self.refuse.clone().map_or(Ok(()), Err)
     }
     fn base(&self, _root: &Path) -> Option<Base> {
+        self.base_asked.set(self.base_asked.get() + 1);
         self.base.clone()
     }
     fn witness(&self, id: &str) -> Option<String> {
@@ -245,6 +247,26 @@ mod terminal_reaper {
     fn a_dot_named_tree_is_never_touched() {
         assert!(matches!(decide(".harness", None, false, Unsaved::No, OLD, MAX, None), Decision::Keep(_)));
         assert!(matches!(decide(".harness", Some("DONE"), false, Unsaved::No, OLD, MAX, None), Decision::Keep(_)));
+    }
+
+    #[test_id(tqlak87)]
+    #[test]
+    fn scan_asks_no_repository_about_a_dot_name_or_a_live_row() {
+        let (t, f) = hold_world();
+        for n in [".testbatch-1", "sp-live"] {
+            std::fs::create_dir_all(f.wts.join(n)).unwrap();
+            std::fs::write(f.wts.join(n).join(".git"), "gitdir: /nowhere").unwrap();
+        }
+        let states = HashMap::from([("sp-live".to_string(), "WORKING".to_string())]);
+        let scanned = crate::terminal::scan(&f, &states).unwrap();
+        assert_eq!(scanned.len(), 2);
+        assert_eq!(f.base_asked.get(), 0, "the world was asked for a base");
+        for e in scanned {
+            let state = states.get(&e.name).map(String::as_str);
+            assert!(matches!(decide(&e.name, state, e.is_git, e.unsaved, e.age, MAX, e.held), Decision::Keep(_)), "{}", e.name);
+            assert!(e.is_git && e.repo.is_none());
+        }
+        drop(t);
     }
 
     fn hold_world() -> (testkit::TempDir, Fake) {
