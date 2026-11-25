@@ -122,6 +122,8 @@ pub struct Prepared {
     pub evicted: Vec<String>,
     /// MiB freed on the disk by replacing a tree's real build directories.
     pub disk_freed_mib: u64,
+    /// `prepare` emptied the warm pool.
+    pub pool_shed: bool,
 }
 
 /// Put `tree`'s build directories on `root` (DESIGN-build-cache.md §2.3): remove orphans (a
@@ -172,6 +174,7 @@ pub fn prepare(
     if total > cap {
         total = total.saturating_sub(crate::warm::size(root));
         crate::warm::shed(root);
+        out.pool_shed = true;
     }
     sizes.sort_by_key(|(p, _, _)| mtime(p));
     for (p, n, s) in sizes {
@@ -181,6 +184,7 @@ pub fn prepare(
         }
         if short_of_floor {
             crate::warm::shed(root);
+            out.pool_shed = true;
         }
         if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || held(&n) {
             continue;
@@ -456,9 +460,11 @@ mod tests {
         let tree = trees.join(".gate.harness.p");
         fs::create_dir_all(&tree).unwrap();
         write_mib(&root.join(crate::warm::POOL).join("e1/debug/deps/libz.rlib"), 1);
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
+        let under = prepare(&root, &trees, &tree, &lim(100), &roomy, &|_| false).unwrap();
+        assert!(!under.pool_shed);
         assert!(root.join(crate::warm::POOL).join("e1").is_dir());
-        prepare(&root, &trees, &tree, &lim(0), &roomy, &|_| false).unwrap();
+        let over = prepare(&root, &trees, &tree, &lim(0), &roomy, &|_| false).unwrap();
+        assert!(over.pool_shed);
         assert!(!root.join(crate::warm::POOL).exists());
     }
 

@@ -181,19 +181,27 @@ pub const WARM_FROM: &str = "gate: build directory warm from ";
 pub const COLD_OPEN: &str = "building cold (";
 pub const BUILDER_IN: &str = "gate: build in ";
 
+/// What [`warm_start`] did with the entry it adopted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Adopted {
+    From(String),
+    Discarded,
+}
+
 /// The gate's side of adoption: fill `dest`, then age `tree`'s files. A failure empties `dest`.
-/// The line for the trial's log.
-pub fn warm_start(root: &Path, repo: &str, dest: &Path, tree: &Path) -> Option<String> {
+/// `None` when nothing was there to adopt; otherwise what happened, with the line for the trial's log.
+pub fn warm_start(root: &Path, repo: &str, dest: &Path, tree: &Path) -> Option<(Adopted, String)> {
     let (commit, built_in) = adopt(root, repo, dest)?;
     match normalize_mtimes(tree, &commit) {
         Ok(n) => {
             let bound = if built_in == tree { 0 } else { purge_path_bound_units(dest, &built_in) };
-            Some(format!("{WARM_FROM}{commit} ({n} unchanged files aged, {bound} units rebuilt for their baked-in path)"))
+            let line = format!("{WARM_FROM}{commit} ({n} unchanged files aged, {bound} units rebuilt for their baked-in path)");
+            Some((Adopted::From(commit), line))
         }
         Err(e) => {
             let _ = fs::remove_dir_all(dest);
             let _ = fs::create_dir_all(dest);
-            Some(format!("gate: warm build directory from {commit} discarded, {COLD_OPEN}{e})"))
+            Some((Adopted::Discarded, format!("gate: warm build directory from {commit} discarded, {COLD_OPEN}{e})")))
         }
     }
 }
@@ -471,7 +479,8 @@ mod tests {
         built(&a);
         donate(&root, "r", &a, "0123456789012345678901234567890123456789", Path::new("t"));
         fs::create_dir_all(&b).unwrap();
-        let line = warm_start(&root, "r", &b, &tree).unwrap();
+        let (adopted, line) = warm_start(&root, "r", &b, &tree).unwrap();
+        assert_eq!(adopted, Adopted::Discarded, "{line}");
         assert!(line.contains("discarded"), "{line}");
         assert!(b.is_dir() && fs::read_dir(&b).unwrap().next().is_none());
     }
