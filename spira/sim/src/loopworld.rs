@@ -77,11 +77,14 @@ pub struct Bead {
     pub file: String,
     #[serde(default = "default_submits")]
     pub submits: Vec<u64>,
+    /// The beads that must finish, or stand certified and not known red, before this one is offered.
+    #[serde(default)]
+    pub blocks: Vec<String>,
 }
 
 impl Bead {
     pub fn new(id: &str, at: u64) -> Bead {
-        Bead { id: id.into(), at, priority: default_priority(), file: String::new(), submits: default_submits() }
+        Bead { id: id.into(), at, priority: default_priority(), file: String::new(), submits: default_submits(), blocks: Vec::new() }
     }
 
     pub fn file(&self) -> &str {
@@ -307,6 +310,8 @@ pub struct Lc {
     /// mark)`: the row stays IN_DELIVERY and carries the mark, it does not leave the round.
     pub gate_red: BTreeMap<String, (String, String)>,
     pub rounds: u32,
+    /// Every claim the loop made: the bead and the tips it stacked on.
+    pub claims: Vec<(String, lifecycle::bead::Stack)>,
     pub dwarves: BTreeMap<String, u64>,
     pub items: BTreeMap<String, String>,
     /// Per bead: the claims it has had (its sessions), so each session's tips are distinct.
@@ -383,6 +388,8 @@ impl Lc {
     fn settle(&mut self, now: u64, script: &Script) {
         let (ready, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.due).into_iter().partition(|(at, _)| *at <= now);
         self.due = later;
+        let mut ready = ready;
+        ready.sort_by_key(|(at, _)| *at);
         for (at, d) in ready {
             match d {
                 Due::File(id) => self.file(at, &id),
@@ -430,11 +437,32 @@ impl Lc {
         self.rows.values().filter(|r| r.holds.is_empty() && matches!(r.state, BeadState::Ready | BeadState::Rework))
     }
 
-    fn claimable(&self, script: &Script) -> Option<String> {
+    /// The stack a claim of `id` would carry, or `None` while a blocker is neither finished nor
+    /// stackable (certified or in a round, and not known red).
+    fn stack_for(&self, script: &Script, id: &str) -> Option<lifecycle::bead::Stack> {
+        let mut stack = lifecycle::bead::Stack::new();
+        for blocker in script.beads.iter().find(|b| b.id == id).map(|b| b.blocks.as_slice()).unwrap_or_default() {
+            let row = self.rows.get(blocker)?;
+            let gate = spira_config::edges::gate(row.state, row.tip.as_deref(), lifecycle::bead::known_red(row));
+            match gate.class {
+                spira_config::edges::GateClass::Finished => {}
+                spira_config::edges::GateClass::Stackable if !lifecycle::bead::provisional(row.state, row.reason.as_deref()) => {
+                    stack.insert(blocker.clone(), gate.tip?);
+                }
+                _ => return None,
+            }
+        }
+        Some(stack)
+    }
+
+    /// The bead a dwarf claims and the stack it builds on: REWORK before READY, then by priority.
+    fn claimable(&self, script: &Script) -> Option<(String, lifecycle::bead::Stack)> {
         let prio = |id: &str| script.beads.iter().find(|b| b.id == id).map_or(u8::MAX, |b| b.priority);
-        let mut open: Vec<&LifecycleRow> = self.open_rows().collect();
-        open.sort_by_key(|r| (prio(&r.bead_id), r.bead_id.clone()));
-        open.first().map(|r| r.bead_id.clone())
+        let mut open: Vec<&LifecycleRow> = self.open_rows().filter(|r| self.stack_for(script, &r.bead_id).is_some()).collect();
+        open.sort_by_key(|r| (r.state != BeadState::Rework, prio(&r.bead_id), r.bead_id.clone()));
+        let id = open.first()?.bead_id.clone();
+        let stack = self.stack_for(script, &id)?;
+        Some((id, stack))
     }
 }
 
@@ -484,7 +512,7 @@ fn sentinel_observe(w: &World) -> Result<String, String> {
     let now = w.now();
     let lc = w.lc();
     let live: Vec<String> = lc.dwarves.iter().filter(|(_, end)| **end > now).map(|(u, _)| u.clone()).collect();
-    let ready = lc.open_rows().count() as u32;
+    let ready = lc.open_rows().filter(|r| lc.stack_for(&w.script, &r.bead_id).is_some()).count() as u32;
     let snap = sc::Snapshot {
         live_by_rune: [(RUNE.to_string(), live.len() as u32)].into(),
         ready_by_rune: [(RUNE.to_string(), Some(if w.script.max_concurrent == 0 { 0 } else { ready }))].into(),
@@ -508,8 +536,10 @@ fn sentinel_unit_start(w: &World, input: &str) -> Result<String, String> {
     let now = w.now();
     let unit = units::unit_name(sc::NAME, &start.key).map_err(|e| e.0)?;
     let mut lc = w.lc();
-    let bead = lc.claimable(&w.script).ok_or("the dwarf found nothing ready")?;
-    lc.apply(now, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 0, persona: None, directed: None })?;
+    let (bead, stack) = lc.claimable(&w.script).ok_or("the dwarf found nothing ready")?;
+    let (stack_depth, stack_max_depth) = if stack.is_empty() { (0, 0) } else { (1, 4) };
+    lc.apply(now, &bead, &unit, BeadEventKind::Claim { holder: unit.clone(), lease_until: ((now + DWARF_MS) / 1000) as i64 + 600, stack: stack.clone(), stack_depth, stack_max_depth, persona: None, directed: None })?;
+    lc.claims.push((bead.clone(), stack));
     *lc.sessions.entry(bead.clone()).or_default() += 1;
     let submits = w.bead(&bead).map_or(vec![DWARF_MS - 1], |b| b.submits.clone());
     for (n, off) in submits.iter().enumerate() {
@@ -1049,6 +1079,7 @@ pub struct Run {
     pub outside: Vec<Outside>,
     pub rows: BTreeMap<String, LifecycleRow>,
     pub submitted: BTreeMap<String, Vec<String>>,
+    pub claims: Vec<(String, lifecycle::bead::Stack)>,
     pub opened: Vec<Vec<(String, String)>>,
     pub lands: Vec<Vec<(String, String)>>,
     pub sifted: Vec<(String, String)>,
@@ -1125,6 +1156,7 @@ pub fn run_with(seed: u64, script: Script, extra: impl FnOnce(Doubles, &Arc<Worl
         outside: lc.outside.clone(),
         rows: lc.rows.clone(),
         submitted: lc.submitted.clone(),
+        claims: lc.claims.clone(),
         opened: lc.opened.clone(),
         lands: lc.lands.clone(),
         sifted: lc.sifted.clone(),

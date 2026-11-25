@@ -426,3 +426,69 @@ fn a_red_pass_ejects_the_provisional_member_whose_gate_went_red_first_and_the_ot
     assert_eq!(r.lands[0], [("sp-gr04".to_string(), tip)], "the other member landed alone from the round cut again: {}", r.dump());
     assert_no_process(&r);
 }
+
+/// A round whose pass is red and which is abandoned without ejecting a member requeues each to
+/// SUBMITTED at the tip the pass was red at; the gate then certifies that tip. A dependent must
+/// not be claimed on it: it waits until the tip moves and is certified, and the blocker, sent
+/// back to REWORK, is claimed first.
+fn red_unattributed_round(seed: u64, red: bool) -> Run {
+    let a = Bead { submits: vec![590_000], ..Bead::new("sp-rr01", 30_000) };
+    let b = Bead { blocks: vec!["sp-rr01".into()], ..Bead::new("sp-rr02", 30_000) };
+    let verdicts = vec![
+        loopworld::VerdictAt { at: 781_000, bead: "sp-rr01".into(), verdict: loopworld::Verdict::Pass },
+        loopworld::VerdictAt { at: 830_000, bead: "sp-rr01".into(), verdict: loopworld::Verdict::Red },
+        loopworld::VerdictAt { at: 1_491_000, bead: "sp-rr01".into(), verdict: loopworld::Verdict::Pass },
+    ];
+    let script = Script { beads: vec![a, b], max_concurrent: 1, verdicts, until: 60 * MIN, ..Script::default() };
+    let reds = Arc::new(Mutex::new(2));
+    let (r, _) = run_keeping(seed, script, move |d, w| {
+        let (wc, wf, wa) = (w.clone(), w.clone(), w.clone());
+        d.double(bl::CERTIFY, move |input| {
+            let l = leg(input)?;
+            let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["queue".into(), "round".into(), "certify".into(), l.batch, REPO.into()], env: vec![], cwd: None };
+            let mut left = reds.lock().unwrap_or_else(|e| e.into_inner());
+            let red = *left > 0;
+            *left -= i32::from(red);
+            wc.units.script(bl::NAME, MIN, Exit::Code(i32::from(red)));
+            wc.units.script_output(bl::NAME, if red { b"red=test-x.sh\n" } else { b"certified\n" }, b"");
+            units::effect(&*wc.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
+        })
+        .double(bl::CORPUS, move |input| {
+            let l = leg(input)?;
+            let spec = UnitSpec { task: bl::NAME.into(), key: l.unit.clone(), argv: vec!["round-vm".into(), "run".into(), l.wt.clone()], env: vec![], cwd: None };
+            wf.units.script(bl::NAME, MIN, Exit::Code(0));
+            let said = if l.why == bl::ATTRIBUTE { "attribution\t{\"end\":\"fault\",\"why\":\"names no member that can be ejected\"}\n" } else { "" };
+            wf.units.script_output(bl::NAME, said.as_bytes(), b"");
+            units::effect(&*wf.units, UNIT_RUN_SCOPE, &serde_json::to_string(&ScopeSpec { unit: spec, cpu_quota_pct: None, memory_max_bytes: None }).map_err(|e| e.to_string())?)
+        })
+        .double(bl::ABANDON, move |_| {
+            let now = wa.now();
+            let mut lc = wa.lc();
+            let members = lc.round.take().map(|(_, m)| m).unwrap_or_default();
+            for (id, tip) in members {
+                lc.apply(now, &id, bl::NAME, lifecycle::bead::BeadEventKind::Deliver)?;
+                lc.apply(now, &id, bl::NAME, lifecycle::bead::BeadEventKind::Requeued { tip, red })?;
+            }
+            Ok("{}".into())
+        })
+    });
+    r
+}
+
+#[test_id(t0ligki)]
+#[test]
+fn a_dependent_is_not_claimed_on_the_tip_a_red_round_abandoned_and_the_blocker_is_reworked_first() {
+    let r = red_unattributed_round(41, true);
+    show("red-tip-not-stacked-on", &r);
+    let red_tip = r.submitted["sp-rr01"][0].clone();
+    let new_tip = r.submitted["sp-rr01"][1].clone();
+    let claims: Vec<(&str, Vec<(&String, &String)>)> = r.claims.iter().map(|(id, s)| (id.as_str(), s.iter().collect())).collect();
+    assert_eq!(
+        claims.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        ["sp-rr01", "sp-rr01", "sp-rr02"],
+        "A, then A again from REWORK, and B only after: {}",
+        r.dump()
+    );
+    assert_eq!(r.claims[2].1.get("sp-rr01"), Some(&new_tip), "B stacked on A's new certified tip, not the red one {red_tip}: {claims:?}");
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+}
