@@ -478,12 +478,19 @@ fn another_writers_revision_that_is_never_shipped_pages_red_past_the_cycle_despi
     for _ in 0..8 {
         tick_following(&mut r, &world, 0, &mut prev, false);
     }
-    let stuck = BASE + 1;
-    for _ in 0..(CYCLE_S / 15 + 3) {
-        let head = stuck + 1 + states(&r) as u64;
-        *world.lock().unwrap() = Ok(seen(head, BASE, None));
+    let shipped = own_writes_head(&r, 0);
+    let settled = states(&r);
+    let mut after_cycle = false;
+    for tick in 0..(CYCLE_S / 15 + 3) {
+        let head = shipped + 1 + (states(&r) - settled) as u64;
+        *world.lock().unwrap() = Ok(seen(head, shipped, None));
         r.advance(CADENCE_MS).unwrap();
+        if (tick + 1) * 15 <= CYCLE_S - 15 {
+            assert!(lines(&r).is_empty(), "no page inside the cycle: {:?}", lines(&r));
+        }
+        after_cycle = !lines(&r).is_empty();
     }
+    assert!(after_cycle, "the unshipped revision pages");
     let said = lines(&r);
     assert_eq!(said.len(), 1, "{said:?}");
     assert!(said[0].contains("RED: "), "{said:?}");
