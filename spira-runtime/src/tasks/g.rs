@@ -15,6 +15,7 @@ pub use super::f::{cadence_ms, pinned, refuse, Transition};
 pub use crate::sources;
 use super::{Reads, Task};
 
+pub mod cockpit_ensure;
 pub mod cockpit_tier_5s;
 pub mod cockpit_tier_600s;
 pub mod cockpit_tier_60s;
@@ -25,6 +26,18 @@ pub mod unit_ran;
 
 /// The ported cockpit tiers. Each tier's runners are the shared ones in [`cockpit`].
 pub static TASKS: &[Task] = &[
+    Task {
+        name: cockpit_ensure::NAME,
+        reads: Reads::None,
+        plane: runtime::Plane::Work,
+        signal: &[],
+        boot: cockpit_ensure::CockpitEnsure::boot,
+        cadence_ms: |_| cockpit_ensure::CADENCE_MS,
+        effects: cockpit_ensure::EFFECTS,
+        runners: &[(cockpit_ensure::OBSERVE, |e, _, _| cockpit_ensure::observe(&e.world.proc_dir))],
+        keys: &[],
+        build: |_| cockpit_ensure::CockpitEnsure.registration(),
+    },
     Task {
         name: cockpit_tier_5s::NAME,
         reads: Reads::None,

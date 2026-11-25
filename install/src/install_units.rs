@@ -448,7 +448,7 @@ pub(crate) fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, Strin
 
 /// Units outside the `spira-*` namespace that an earlier release shipped and none does now; the
 /// ledger may never have listed them, and no name pattern marks them as Spira's.
-const RETIRED_UNITS: [&str; 1] = ["dolt-beads-test.service"];
+const RETIRED_UNITS: [&str; 2] = ["dolt-beads-test.service", "cockpit-ensure.timer"];
 
 fn retire_named_units(ctx: &Ctx, now: &std::collections::BTreeSet<String>, r: &mut Report) {
     for u in RETIRED_UNITS {
@@ -729,7 +729,7 @@ mod tests {
         let (unit_dir, tmpl_dir) = (td.join("units"), td.join("templates"));
         fs::create_dir_all(&unit_dir).unwrap();
         fs::create_dir_all(&tmpl_dir).unwrap();
-        let pairs = ["spira-watchdog", "cockpit-ensure", "concierge", "lc-backup", "lc-backup-drill"];
+        let pairs = ["spira-watchdog", "concierge", "lc-backup", "lc-backup-drill"];
         let inputs = Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) };
         let mut manifest = build(&inputs).unwrap();
         manifest.units.retain(|u| pairs.iter().any(|p| u.name == format!("{p}.service") || u.name == format!("{p}.timer")));

@@ -177,7 +177,7 @@ pub fn clashes(families: &[&[Task]]) -> Vec<String> {
     out
 }
 
-/// Effects more than one task emits: the inbox line, and the unit manager's four verbs
+/// Effects more than one task emits: the inbox line, and the unit manager's verbs
 /// (`runtime::units::EFFECTS`), each run on `Effects::units`.
 pub static SHARED: &[(&str, Runner)] = &[
     (INBOX_APPEND, |e, _, s| e.world.inbox_append(&s.input)),
@@ -185,6 +185,7 @@ pub static SHARED: &[(&str, Runner)] = &[
     (units::UNIT_STOP, |e, _, s| e.unit(s)),
     (units::UNIT_RESTART, |e, _, s| e.unit(s)),
     (units::UNIT_FACTS, |e, _, s| e.unit(s)),
+    (units::UNIT_START_INSTALLED, |e, _, s| e.unit(s)),
 ];
 
 /// Effects that run through a halt whichever task asks for them: the inbox line is how a

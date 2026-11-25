@@ -551,10 +551,10 @@ pub const UNIT_RESET_FAILED: &str = "unit.reset_failed";
 pub const UNIT_RUN_SCOPE: &str = "unit.run_scope";
 /// The effect names a `Units` backend answers, each through [`effect`], that the simulator's
 /// shared doubles register.
-pub const EFFECTS: [&str; 4] = [UNIT_START, UNIT_STOP, UNIT_RESTART, UNIT_FACTS];
+pub const EFFECTS: [&str; 5] = [UNIT_START, UNIT_STOP, UNIT_RESTART, UNIT_FACTS, UNIT_START_INSTALLED];
 /// The rest [`effect`] answers. Not in [`EFFECTS`] until a task needs one: the simulator's
 /// registry names a double for every effect it lists.
-pub const EXTENDED_EFFECTS: [&str; 8] = [UNIT_DETAIL, UNIT_LIST, UNIT_TIMERS, UNIT_START_INSTALLED, UNIT_ENABLE, UNIT_DISABLE, UNIT_RESET_FAILED, UNIT_RUN_SCOPE];
+pub const EXTENDED_EFFECTS: [&str; 7] = [UNIT_DETAIL, UNIT_LIST, UNIT_TIMERS, UNIT_ENABLE, UNIT_DISABLE, UNIT_RESET_FAILED, UNIT_RUN_SCOPE];
 
 /// One unit effect on `units`: `unit.start` takes a [`UnitSpec`] and answers its [`UnitHandle`];
 /// `unit.stop` and `unit.restart` take a handle and answer nothing; `unit.facts` takes a handle

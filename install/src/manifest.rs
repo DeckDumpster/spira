@@ -80,7 +80,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // spira-watch@.service is the template, not an installed unit — never enabled directly.
     m.units.push(t("spira-watch@.service", false));
     m.units.push(t("cockpit-ensure.service", false));
-    m.units.push(t("cockpit-ensure.timer", true));
     m.units.push(t("concierge.service", false));
     m.units.push(t("concierge.timer", true));
     m.units.push(t("lc-backup.service", false));
@@ -325,7 +324,7 @@ mod tests {
             assert!(!union.contains(n), "{n} is still in the manifest");
             assert!(!dir.join(n).exists(), "{n} is still a template");
         }
-        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.timer"] {
+        for keep in ["spira-runtime.service", "spira-watchdog.timer", "spira-unit-run-dbus.service", "spira-loom.service", "spira-exec-census.service", "concierge.timer", "cockpit-ensure.service"] {
             assert!(union.iter().any(|n| n == keep), "positive control: {keep} is still shipped");
         }
     }
@@ -339,6 +338,16 @@ mod tests {
         assert!(m.units.iter().any(|u| u.name == "dolt-beads.service" && u.enable));
         let key = std::fs::read_to_string(spira_config::resolve::checkout_root_for_process().unwrap().join("spira/conf.d/SPIRA_DOLT_UNIT")).unwrap();
         assert!(key.contains(":=dolt-beads.service}"), "the unit the watch reads by default is the one shipped: {key}");
+    }
+
+    #[test_id(t774nl8)]
+    #[test]
+    fn the_cockpit_ensure_timer_is_retired_and_its_service_is_still_shipped() {
+        let m = build(&inputs()).unwrap();
+        let names = m.template_names();
+        assert!(!names.contains(&"cockpit-ensure.timer"), "the scheduler's cockpit.ensure task replaces the timer");
+        assert!(names.contains(&"cockpit-ensure.service"), "the task starts this unit");
+        assert!(!spira_config::resolve::checkout_root_for_process().unwrap().join("systemd/cockpit-ensure.timer").exists());
     }
 
     #[test_id(t2tnfw5)]
@@ -499,7 +508,7 @@ mod tests {
         let m = build(&inputs()).unwrap();
         let en = m.enable("prod");
         assert!(en.contains(&"spira-watchdog-prod.timer".to_string()));
-        assert!(en.contains(&"cockpit-ensure.timer".to_string())); // shared unit, no suffix
+        assert!(en.contains(&"concierge.timer".to_string())); // shared unit, no suffix
         assert!(en.contains(&"spira-watch-testview-prod.service".to_string()));
         assert!(!en.iter().any(|u| u == "spira-watchdog.timer")); // never the un-suffixed name
     }

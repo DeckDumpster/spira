@@ -1,11 +1,9 @@
 [Unit]
 After=lc-serve.service
 Wants=lc-serve.service
-# Self-heal for the cockpit. Was documented as depending on a session-scoped watcher,
-# which is precisely what dies when a session is interrupted — on 2026-09-01 the health
-# pane exited and nothing brought it back, while every liveness check stayed green.
-# A repair loop that only runs while a session is alive cannot repair the case where the
-# session died.
+# Self-heal for the cockpit, started by the scheduler's `cockpit.ensure` task when one of the
+# cockpit's inputs moved. It is not session-scoped: a repair that only runs while a session
+# is alive cannot repair the case where the session died.
 Description=Repair the cockpit tmux layout
 Documentation=file://@SPIRA_PROD_ROOT@/cockpit/ops/DESIGN.md
 
@@ -20,7 +18,7 @@ Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 # The session hook is registered at install/activation (`release session-hook install`), not
-# here: this unit runs every minute and an idle pass starts no process it does not need.
+# here: a pass starts no process it does not need.
 ExecStart=@SPIRA_PROD_ROOT@/bin/layout ensure
 TimeoutStartSec=60
 StandardOutput=append:@SPIRA_RUN@/cockpit-heal.log
