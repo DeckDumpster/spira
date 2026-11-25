@@ -868,6 +868,23 @@ mod tests {
         assert!(stack.is_empty(), "a landed prerequisite is satisfied, not stacked on");
     }
 
+    #[test_id(tmupjiq)]
+    #[test]
+    fn a_known_red_blocker_is_neither_stacked_on_nor_claimable_and_the_snapshot_column_says_so() {
+        let snapshot = r#"[{"bead_id":"A","state":"CERTIFIED","tip":"t","known_red":"1"},{"bead_id":"C","state":"CERTIFIED","tip":"t","known_red":0}]"#;
+        let parsed = parse_lifecycle(snapshot).unwrap();
+        assert!(parsed["A"].known_red && !parsed["C"].known_red);
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let mut a = lcrow("A", BeadState::Certified, &[], 0).1;
+        a.known_red = true;
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), ("A".to_string(), a.clone())].into();
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Blocked("A".into()));
+        assert!(stack_plan(&blocked_on("B", "A"), &lc, &bd, 4).is_err());
+        a.known_red = false;
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), ("A".to_string(), a)].into();
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
+    }
+
     #[test_id(tx2ffmt)]
     #[test]
     fn stack_plan_too_deep_still_reports_the_attempted_stack() {

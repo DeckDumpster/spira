@@ -3735,4 +3735,35 @@ mod tests {
             assert!(!again.applied, "{from:?}: the holder's release finds a terminal row");
         }
     }
+
+    #[test_id(tryv58b)]
+    #[test]
+    fn a_round_red_requeue_marks_its_tip_known_red_and_leaves_it_resubmittable() {
+        let t = "1111111111111111111111111111111111111111";
+        let mut q = row(BeadState::InDelivery);
+        q.tip = Some(t.into());
+        q.gate_key = Some("k".into());
+        let requeue = |red: bool| apply(&q, &ev(BeadState::InDelivery, q.version, BeadEventKind::Requeued { tip: t.into(), red }));
+        assert!(!known_red(&requeue(false).row));
+        let red = requeue(true).row;
+        assert_eq!((red.state, red.round_red_tip.as_deref(), red.ejected_red_tip.as_deref()), (BeadState::Certified, Some(t), None));
+        assert!(known_red(&red));
+        let mut moved = red.clone();
+        moved.tip = Some("2222222222222222222222222222222222222222".into());
+        assert!(!known_red(&moved), "a new tip is not the red one");
+        let mut submitted = red.clone();
+        submitted.state = BeadState::Submitted;
+        assert!(apply(&submitted, &ev(BeadState::Submitted, submitted.version, BeadEventKind::Deliver)).applied, "a round may retry the same tip");
+    }
+
+    #[test_id(t7fw1bi)]
+    #[test]
+    fn a_gate_red_mark_on_a_delivered_row_is_known_red_unless_the_reason_does_not_bar_the_tip() {
+        let mut r = row(BeadState::InDelivery);
+        r.tip = Some("t".into());
+        for (reason, red) in [(Some(format!("{GATE_RED_MARK}{}", GateRedReason::SuitesFailed.as_str())), true), (Some(format!("{GATE_RED_MARK}{}", GateRedReason::Timeout.as_str())), false), (None, false), (Some(FROM_SUBMITTED.to_string()), false)] {
+            r.reason = reason.clone();
+            assert_eq!(known_red(&r), red, "{reason:?}");
+        }
+    }
 }
