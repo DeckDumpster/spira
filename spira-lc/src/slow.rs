@@ -1042,16 +1042,21 @@ mod tests {
         inner: runtime::ports::VirtualClock,
         restart_thread: Mutex<Option<std::thread::ThreadId>>,
         started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        proceed: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     }
 
     impl runtime::ports::Clock for SignalClock {
         fn now_ms(&self) -> u64 {
+            let now = self.inner.now_ms();
             if *self.restart_thread.lock().unwrap() == Some(std::thread::current().id()) {
                 if let Some(tx) = self.started.lock().unwrap().take() {
                     let _ = tx.send(());
+                    if let Some(rx) = self.proceed.lock().unwrap().take() {
+                        let _ = rx.recv();
+                    }
                 }
             }
-            self.inner.now_ms()
+            now
         }
     }
 
@@ -1068,7 +1073,8 @@ mod tests {
         let (held_tx, held_rx) = channel::<()>();
         let (release_tx, release_rx) = channel::<()>();
         let (started_tx, started_rx) = channel::<()>();
-        let clock = Arc::new(SignalClock { inner: runtime::ports::VirtualClock::new(0), restart_thread: Mutex::new(None), started: Mutex::new(Some(started_tx)) });
+        let (proceed_tx, proceed_rx) = channel::<()>();
+        let clock = Arc::new(SignalClock { inner: runtime::ports::VirtualClock::new(0), restart_thread: Mutex::new(None), started: Mutex::new(Some(started_tx)), proceed: Mutex::new(Some(proceed_rx)) });
         let (armed, slow) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
         let probe = {
             let (armed, slow, clock) = (armed.clone(), slow.clone(), clock.clone());
@@ -1113,8 +1119,10 @@ mod tests {
         };
         let (held_rec, held_read) = read(b.clone());
         while held_rec.snapshot().open != Some("gate_wait") {
+            assert!(!held_read.is_finished(), "the held read passed the gate before the forced restart held it");
             std::thread::yield_now();
         }
+        proceed_tx.send(()).unwrap();
         clock.inner.advance(200);
         let (pass, forced) = restart.join().unwrap().unwrap();
         assert!(pass.busy && forced, "the restart must be a forced one that gave up: {pass:?} {forced}");
