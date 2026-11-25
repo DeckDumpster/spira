@@ -19,8 +19,9 @@ const START: u64 = 1_700_000_000_000;
 const LANDED_S: u64 = START / 1000 - 1_000;
 
 struct Fixture {
-    _env: testkit::EnvGuard,
     _dir: testkit::TempDir,
+    _env: testkit::EnvGuard,
+    stray: Option<PathBuf>,
     log: PathBuf,
     local: PathBuf,
     pr: PathBuf,
@@ -38,6 +39,9 @@ struct Fixture {
     ready: Arc<Mutex<Option<String>>>,
     effects: Arc<spira_runtime::Effects>,
     _serial: std::sync::MutexGuard<'static, ()>,
+    watchers: PathBuf,
+    worktrees: PathBuf,
+    published: Arc<Mutex<Vec<String>>>,
 }
 
 fn real_git() -> PathBuf {
@@ -72,6 +76,9 @@ fn fixture() -> Fixture {
         for name in LOGGED_PROGRAMS {
             testkit::write_exe(d.join(name), &format!("#!/bin/sh\necho \"{name} $*\" >> {}\necho '[]'\n", started.display()));
         }
+    }
+    for d in [release.join("bin"), bin.clone()] {
+        testkit::write_exe(d.join("timeout"), &format!("#!/bin/sh\necho \"timeout $*\" >> {}\nshift\nexec \"$@\"\n", started.display()));
     }
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
@@ -128,6 +135,8 @@ fn fixture() -> Fixture {
     let claimable = Arc::new(Mutex::new(String::from("{\"beads\":[]}")));
     let ready_id: Arc<Mutex<Option<String>>> = Arc::default();
     let (asked, turned_away, ready, bead) = (requests.clone(), refused.clone(), claimable.clone(), ready_id.clone());
+    let published: Arc<Mutex<Vec<String>>> = Arc::default();
+    let served = published.clone();
     std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| {
         asked.lock().unwrap().push(argv.join(" "));
         match argv.first().map(String::as_str) {
@@ -137,8 +146,13 @@ fn fixture() -> Fixture {
             Some("plan") => Ok("{\"watermark\":1,\"items\":[]}".into()),
             Some("content") => Ok("[]".into()),
             Some("list-asks") => Ok("[]".into()),
+            Some("section") if argv.get(1).map(String::as_str) == Some("publish-status") => {
+                served.lock().unwrap().push(argv.last().cloned().unwrap_or_default());
+                Ok("{\"ok\":{}}".into())
+            }
             Some("ops-graph" | "ops-view" | "section" | "audits" | "reconcile-content") => Ok("{}".into()),
             Some("git-fact") => Ok("{}".into()),
+            Some("intent") => Ok("{\"ok\":{}}".into()),
             Some("claimable") => Ok(ready.lock().unwrap().clone()),
             _ => {
                 turned_away.lock().unwrap().push(argv.join(" "));
@@ -150,16 +164,27 @@ fn fixture() -> Fixture {
     let runes_s = home.join("runes").display().to_string();
     let modes = tasks::all().map(|t| format!("{}=act", t.name)).collect::<Vec<_>>().join(" ");
     let run_s = run_dir.display().to_string();
+    let watchers = dir.join("watchers");
+    std::fs::write(&watchers, "a\n").unwrap();
+    let watchers_s = watchers.display().to_string();
     let (wiki_s, prod_s, registry_s) = (wiki.display().to_string(), acc.join("spira").display().to_string(), format!("file://{}", kit.display()));
     let release_s = release.display().to_string();
-    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_OVERRIDES_SECS", "60"), ("SPIRA_RELEASE", &release_s)]);
+    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_WATCHERS", &watchers_s), ("SPIRA_HOST_WORKTREE_SUBDIR", "wt"), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_OVERRIDES_SECS", "60"), ("SPIRA_RELEASE", &release_s)]);
     let programs = dir.join("programs.log");
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
     testkit::write_exe(bin.join("spira-lc"), &trap);
+    let incident = dir.join("incident.sh");
+    testkit::write_exe(&incident, "#!/bin/sh\nexit 0\n");
+    let psi = dir.join("psi");
+    std::fs::create_dir(&psi).unwrap();
+    std::fs::write(psi.join("io"), "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n").unwrap();
     let env = testkit::env(&[
         ("PATH", Some(&path)),
         ("SPIRA_LC_BIN", None),
+        ("SPIRA_INCIDENT_SH", incident.to_str()),
+        ("SPIRA_PSI_DIR", psi.to_str()),
+        ("SPIRA_WATCHERS", watchers.to_str()),
         ("SPIRA_RELEASE", release.to_str()),
         ("SPIRA_UNITS", Some("scripted")),
         ("SPIRA_TOML", toml.to_str()),
@@ -170,14 +195,21 @@ fn fixture() -> Fixture {
     ]);
     let overrides = dir.join("overrides");
     std::fs::create_dir(&overrides).unwrap();
+    let pinned_run = PathBuf::from(spira_config::process::cfg("SPIRA_RUN").unwrap());
+    let worktrees = pinned_run.join("wt");
+    std::fs::create_dir_all(&worktrees).unwrap();
+    let stray = (!pinned_run.starts_with(dir.path())).then(|| pinned_run.ancestors().find(|a| a.parent() == dir.path().parent()).unwrap().to_path_buf());
     let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), ..Default::default() };
     let effects = Arc::new(spira_runtime::Effects { world, units: Some(Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)))), ..Default::default() });
-    Fixture { _serial: serial, _env: env, _dir: dir, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, effects }
+    Fixture { _serial: serial, _env: env, _dir: dir, stray, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, effects, watchers, worktrees, published }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.sock);
+        if let Some(p) = &self.stray {
+            let _ = std::fs::remove_dir_all(p);
+        }
     }
 }
 
@@ -197,11 +229,15 @@ fn plan_row(id: &str) -> String {
 }
 
 const IDLE_TASK_PROGRAMS: [&str; 5] = ["mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
-const LOGGED_PROGRAMS: [&str; 7] = ["spira-claim", "systemctl", "mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail"];
+const LOGGED_PROGRAMS: [&str; 10] = ["spira-claim", "systemctl", "mail-health.sh", "bash", "bead.sh", "schema.sh", "spira-sendmail", "spira-config", "target-reap", "watchd"];
 
 fn logged_programs(f: &Fixture) -> Vec<String> {
     let all = std::fs::read_to_string(&f.started).unwrap_or_default();
-    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).map(str::to_string).collect()
+    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units") || IDLE_TASK_PROGRAMS.iter().any(|p| l.split_whitespace().next() == Some(p))).filter(|l| !is_drift_check_script(l)).map(str::to_string).collect()
+}
+
+fn is_drift_check_script(line: &str) -> bool {
+    line.strip_prefix("bash ").is_some_and(|rest| rest.split_whitespace().next().is_some_and(|script| script.ends_with("/drift.sh") || script.ends_with("/incident.sh")))
 }
 
 fn assert_stubs_log(f: &Fixture) {
@@ -306,6 +342,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch) = (0, 0, 0, 0);
     let (mut programs_at_warm, mut programs_at_idle, mut programs_at_ready, mut idle_passes, mut rows_before_ready) = (0, Vec::new(), Vec::new(), 0, Vec::new());
+    let (mut tower_at_warm, mut tower_at_idle, mut tower_at_edit, mut tower_at_boundary, mut level_before) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
     let spec = f.overrides.join("round-vm-spill-ec2-always.override");
     std::fs::write(&spec, "needed() { return 1; }\n").unwrap();
     let ran = f.dir_path().join("overrides.log");
@@ -319,13 +356,20 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let sentinel = ["sentinel-pass.observe", "cockpit-tier-60s.observe"];
     let (before_hour, after) = (START + 59 * MINUTE, warm + HOUR);
     let m = |n: u64| after + n * MINUTE;
-    let marks = [warm, before_hour, after, m(3), m(6), m(9), m(12), m(15), m(18)];
+    let (quiet_a, quiet_b) = (after - 7 * MINUTE, after - 4 * MINUTE);
+    let marks = [warm, before_hour, quiet_a, quiet_b, after, m(3), m(6), m(9), m(12), m(15), m(18), m(21)];
     run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &marks, &mut |t| match t {
         t if t == warm => {
             applied.insert("warm", runs());
             (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len());
         }
         t if t == before_hour => drop(applied.insert("idle", runs())),
+        t if t == quiet_a => tower_at_warm = started_by_the_watchtower_checks(&f),
+        t if t == quiet_b => {
+            tower_at_idle = started_by_the_watchtower_checks(&f);
+            level_before = (host_level(&f, "certify_par"), host_level(&f, "stale_targets"));
+            std::fs::write(&f.watchers, "a\nb\n").unwrap();
+        }
         t if t == m(6) => {
             applied.insert("spec", runs());
             touch(&f.toml, 1_000_000_002);
@@ -341,9 +385,16 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             std::fs::remove_file(&fail).unwrap();
         }
         t if t == m(15) => drop(applied.insert("recovered", runs())),
-        t if t == m(18) => drop(applied.insert("recovered-quiet", runs())),
+        t if t == m(18) => {
+            applied.insert("recovered-quiet", runs());
+            tower_at_edit = started_by_the_watchtower_checks(&f);
+            let doc = spira_config::load(&f.toml).unwrap();
+            spira_config::serialize_and_write(&f.toml, &spira_config::set_path(&doc, "spira.certify_par", "7").unwrap()).unwrap();
+            stale_target(&f, "sp-aaaaaa");
+        }
         t if t == warm + HOUR => {
             applied.insert("boundary", runs());
+            tower_at_boundary = started_by_the_watchtower_checks(&f);
             at_idle = logged(&f).len();
             programs_at_idle = logged_programs(&f);
             idle_passes = f.seen.lock().unwrap().iter().filter(|(n, _)| n == "sentinel-pass.observe").count();
@@ -357,6 +408,10 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             touch(&spec, 1_000_000_001);
             at_commit = logged(&f).len();
             programs_at_ready = logged_programs(&f);
+            tower_at_edit = started_by_the_watchtower_checks(&f);
+            let doc = spira_config::load(&f.toml).unwrap();
+            spira_config::serialize_and_write(&f.toml, &spira_config::set_path(&doc, "spira.certify_par", "7").unwrap()).unwrap();
+            stale_target(&f, "sp-aaaaaa");
             git(&f.pr, &["branch", "spira/sp-x"], 1);
         }
         _ => {}
@@ -382,6 +437,14 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let rows = strand_rows(&f);
     assert!(rows.iter().any(|r| r.contains("sp-zzzzzz")), "a bead made READY shows in the next strand rows: {rows:?}");
     assert_eq!(programs_at_ready.len(), programs_at_warm, "and reading it started no program: {programs_at_ready:?}");
+    assert!(!tower_at_warm.is_empty(), "warm-up started none of {WATCHTOWER_PROGRAMS:?}, so the idle hour proves nothing");
+    assert_eq!(tower_at_idle, tower_at_warm, "idle sentinel passes started programs:\n{}", tower_at_idle[tower_at_warm.len().min(tower_at_idle.len())..].join("\n"));
+    let after_touch: Vec<&String> = tower_at_boundary[tower_at_idle.len()..].iter().collect();
+    assert_eq!(after_touch.iter().filter(|l| l.starts_with("watchd units")).count(), 1, "a touched manifest runs watchd units once: {after_touch:?}");
+    assert_eq!(after_touch.len(), 1, "and nothing else starts: {after_touch:?}");
+    let after_edit: Vec<String> = started_by_the_watchtower_checks(&f)[tower_at_edit.len()..].to_vec();
+    assert!(after_edit.iter().all(|l| l.starts_with("watchd units")) && after_edit.len() <= 2, "a changed certify_par and a stale target start no read of theirs; the config file is a manifest input, so only watchd may rerun: {after_edit:?}");
+    assert_eq!((host_level(&f, "certify_par"), host_level(&f, "stale_targets")), (7.0, level_before.1 + 1.0), "the next Host section shows both: {}", last_host_section(&f));
     let local = f.local.display().to_string();
     let pr = f.pr.display().to_string();
     let after_commit: Vec<&String> = all[at_idle..at_commit].iter().filter(|l| !l.ends_with("rev-parse --verify --quiet refs/heads/spira/sp-zzzzzz")).collect();
@@ -477,4 +540,28 @@ impl Fixture {
 fn touch(path: &Path, secs_after_epoch: u64) {
     let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
     f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs_after_epoch)).unwrap();
+}
+const WATCHTOWER_PROGRAMS: [&str; 5] = ["systemctl", "spira-config", "target-reap", "timeout", "watchd"];
+
+fn started_by_the_watchtower_checks(f: &Fixture) -> Vec<String> {
+    let all = std::fs::read_to_string(&f.started).unwrap_or_default();
+    all.lines().filter(|l| WATCHTOWER_PROGRAMS.iter().any(|p| l.starts_with(&format!("{p} "))) && !l.starts_with("spira-config resolve ") && !l.starts_with("spira-config env-bootstrap ") && !(l.starts_with("timeout ") && !l.contains(" watchd"))).map(str::to_string).collect()
+}
+
+fn last_host_section(f: &Fixture) -> serde_json::Value {
+    let body = f.published.lock().unwrap().iter().rev().find(|b| b.contains("certify_par")).cloned().unwrap_or_default();
+    serde_json::from_str(&body).unwrap_or_default()
+}
+
+fn host_level(f: &Fixture, field: &str) -> f64 {
+    last_host_section(f)["status"][field]["value"].as_f64().unwrap_or(-1.0)
+}
+
+fn stale_target(f: &Fixture, id: &str) {
+    let wt = f.worktrees.join(id);
+    std::fs::create_dir_all(wt.join("target")).unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(48 * 3600);
+    for d in [wt.join("target"), wt.clone()] {
+        std::fs::File::open(&d).unwrap().set_modified(old).unwrap();
+    }
 }

@@ -24,7 +24,7 @@ required-features = ["integration"]
 test-bins = ["spira-lc", "spira-config", "testenv"]
 
 [features]
-integration = ["install/integration", "system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration"]
+integration = ["install/integration", "system-paths/integration", "spira-claim/integration", "forge/integration", "reconciler-engine/integration", "spira-desired-state/integration", "runtime/integration", "spira-config/integration", "spira-store/integration", "spira-ctrl/integration", "strand/integration", "testkit/integration", "cockpit-ops/integration", "spira-test-id/integration", "testenv/integration"]
 [dependencies]
 system-paths = { path = "../system-paths" }
 install = { path = "../install" }
@@ -40,6 +40,7 @@ spira-desired-state = { path = "../desired-state" }
 reconciler-engine = { path = "../reconciler-engine" }
 forge = { path = "../forge" }
 cockpit-ops = { path = "../cockpit/ops" }
+testenv = { path = "../testenv" }
 
 [lib]
 name = "watchtower"

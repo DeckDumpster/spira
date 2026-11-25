@@ -47,7 +47,7 @@ pub fn run(check: &str) -> Result<String, String> {
         }
         "lock-holders-check" => return lock_holders_check(n, &run),
         "release-skew-check" => {
-            let cfg = release_skew::Cfg { systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".into()), max_secs: getenv_i64("SPIRA_RELEASE_SKEW_MAX_SECS", 3600), dwarf_max_secs: getenv_i64("SPIRA_RELEASE_SKEW_DWARF_MAX_SECS", 14400) };
+            let cfg = release_skew::Cfg { systemctl: getenv("SPIRA_SYSTEMCTL"), max_secs: getenv_i64("SPIRA_RELEASE_SKEW_MAX_SECS", 3600), dwarf_max_secs: getenv_i64("SPIRA_RELEASE_SKEW_DWARF_MAX_SECS", 14400) };
             release_skew::run(n, &run, &reg("SPIRA_DB")?, &reg("SPIRA_HOME_REPO")?, &resolved_incident_sh(), &cfg);
         }
         "deploy-fault-check" => {
