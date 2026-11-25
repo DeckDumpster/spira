@@ -100,6 +100,10 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // never by the per-instance flow this manifest drives.
     m.optional.push("spira-lc.service".into());
 
+    // spira-proc-starts.service: a SYSTEM unit holding CAP_BPF and CAP_PERFMON, installed only by
+    // the root installer's --proc-starts phase; never a per-instance unit.
+    m.optional.push("spira-proc-starts.service".into());
+
     // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket a dwarf's `work`
     // reaches spira-lc through — `spira-lc serve` as the operator on %t/spira-lc/sock, the
     // path spira_config::resolve::lc_socket_default gives every caller in this mode. In
@@ -520,6 +524,18 @@ mod tests {
         let on_disk = ["spira-runtime.service", "spira-forgotten-new.service", "spira-lc.service"];
         let u = m.unlisted(on_disk);
         assert_eq!(u, vec!["spira-forgotten-new.service".to_string()]);
+    }
+
+    #[test_id(tfplhqz)]
+    #[test]
+    fn proc_starts_is_an_optional_system_unit_the_manifest_never_installs() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.optional.contains(&"spira-proc-starts.service".to_string()));
+        assert!(!m.units.iter().any(|u| u.name == "spira-proc-starts.service"));
+        assert!(!union_template_names().contains(&"spira-proc-starts.service".to_string()));
+        let dir = spira_config::resolve::checkout_root_for_process().unwrap().join("systemd");
+        assert!(dir.join("spira-proc-starts.service").is_file());
+        assert!(m.unlisted(["spira-proc-starts.service"]).is_empty());
     }
 
     #[test_id(tx85ytp)]

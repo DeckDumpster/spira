@@ -32,6 +32,7 @@ fn host(instance: &str) -> HostValues {
         repo_map: "".into(),
         lc_password_file: "h/lc.credential".into(),
         watchdog_every_s: "60".into(),
+        unit_user: String::new(),
     }
 }
 
