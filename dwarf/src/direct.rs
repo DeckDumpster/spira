@@ -6,8 +6,9 @@
 //! The unit is named `spira-dwarf-<rune>-directed-<epoch>` so drain, slay and the cockpit see a
 //! dwarf; once live it holds a slot in the fleet ceiling and its rune's count, though starting it checks no cap. The claim is the
 //! ordinary compare-and-set, so a second direct of the same bead loses it: one directed dwarf
-//! per bead. A bead a dwarf holds is taken over: that dwarf is stopped with its work kept, then
-//! the bead is claimed on the same branch.
+//! per bead. A bead a dwarf holds is taken over: the row is reserved first, so no pool claim fits
+//! between the stop and the directed claim, then that dwarf is stopped with its work kept and the
+//! bead is claimed on the same branch.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -170,13 +171,59 @@ fn slay_reason(o: &Out) -> String {
     if said.is_empty() { "slay gave no reason".to_string() } else { said.join("; ") }
 }
 
+/// How many times a lost compare-and-set on the takeover is re-read and retried.
+const TAKEOVER_TRIES: u32 = 5;
+
+/// Reserves the row for this direct before anything reads it, creating the row first when the
+/// item has none. A lost compare-and-set is retried.
+fn reserve(exec: &dyn Exec, sleep: &dyn Fn(Duration), req: &Request, owner: &str) -> Result<(), String> {
+    let mut said = String::new();
+    for _ in 0..TAKEOVER_TRIES {
+        let o = exec.exec("spira-lc", &s(&["takeover", &req.bead, &req.by, owner]), None, None);
+        if o.success() {
+            return Ok(());
+        }
+        said = format!("rc={}: {}", o.code, o.first_err_line());
+        match row_of(exec, &req.bead)? {
+            None => {
+                let o = exec.exec("spira-lc", &s(&["create-bead", &req.bead, "--ready"]), None, None);
+                if !o.success() {
+                    return Err(format!("could not create its lifecycle row (rc={}): {}", o.code, o.first_err_line()));
+                }
+            }
+            Some((state, _)) if !CLAIMABLE.contains(&state.as_str()) && state != HELD => {
+                return Err(format!("it is {state}; only READY, REWORK or a held WORKING bead can be directed onto"));
+            }
+            Some(_) => sleep(TICK),
+        }
+    }
+    Err(format!("could not reserve it after {TAKEOVER_TRIES} tries (last: {said})"))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: &Path, req: &Request, home: &Path, dwarf_path: Option<&str>, call_bin: &str, call_argv: &[String], now: i64) -> i32 {
+    let Some(dwarf_path) = dwarf_path else {
+        sink.err(&util::log_line(now, &format!("FATAL direct {}: dwarf is not on PATH", req.bead)));
+        return 1;
+    };
+    let owner = spira_config::session::own_holder("direct");
+    if let Err(e) = reserve(exec, sleep, req, &owner) {
+        sink.err(&util::log_line(now, &format!("FATAL direct {}: {e} — nothing directed", req.bead)));
+        return 1;
+    }
+    let rc = directed(exec, sink, sleep, run_dir, req, home, dwarf_path, call_bin, call_argv, now);
+    if rc != 0 {
+        exec.exec("spira-lc", &s(&["takeover-end", &req.bead, &owner]), None, None);
+    }
+    rc
+}
+
+#[allow(clippy::too_many_arguments)]
+fn directed(exec: &dyn Exec, sink: &dyn Sink, sleep: &dyn Fn(Duration), run_dir: &Path, req: &Request, home: &Path, dwarf_path: &str, call_bin: &str, call_argv: &[String], now: i64) -> i32 {
     let fatal = |m: String| {
         sink.err(&util::log_line(now, &format!("FATAL direct {}: {m}", req.bead)));
         1
     };
-    let Some(dwarf_path) = dwarf_path else { return fatal("dwarf is not on PATH".into()) };
     let row = match row_of(exec, &req.bead) {
         Ok(r) => r,
         Err(e) => return fatal(format!("{e} — nothing directed")),
@@ -315,6 +362,8 @@ mod tests {
             let slain = self.calls.lock().unwrap().iter().any(|c| c.0 == "slay");
             self.calls.lock().unwrap().push((prog.to_string(), args.to_vec()));
             match prog {
+                "spira-lc" if args[0] == "takeover" && self.show.code == 1 && !self.calls.lock().unwrap().iter().any(|c| c.1[0] == "create-bead") => Out { code: 3, stdout: String::new(), stderr: "no row".into() },
+                "spira-lc" if matches!(args[0].as_str(), "create-bead" | "takeover" | "takeover-end") => Out::ok(""),
                 "spira-lc" if launched && self.after_launch.is_some() => self.after_launch.clone().unwrap(),
                 "spira-lc" if slain && args[0] == "show" => {
                     let mut n = self.teardown_reads.lock().unwrap();
@@ -387,7 +436,7 @@ mod tests {
         assert_eq!(rc, 0);
         assert_eq!(progs(&f), a(&["spira-lc", "slay", "spira-lc", "systemd-run", "spira-lc"]), "the old dwarf stops and its leftover hold is lifted before the new one starts");
         let calls = f.calls.lock().unwrap();
-        let at = |p: &str| calls.iter().find(|c| c.0 == p && c.1[0] != "show").unwrap().1.clone();
+        let at = |p: &str| calls.iter().find(|c| c.0 == p && !matches!(c.1[0].as_str(), "show" | "takeover")).unwrap().1.clone();
         assert_eq!(at("spira-lc"), a(&["unhold", "sp-x", "wait", "dwarf"]));
         assert_eq!(at("slay"), a(&["--bead", "sp-x", "--keep-work", "--why", "directed by concierge: loop fix"]));
         assert!(at("systemd-run").windows(2).any(|w| w == ["--replaced", "dwarf-old"]), "{:?}", at("systemd-run"));
@@ -400,7 +449,7 @@ mod tests {
         let mut f = fake(row("WORKING", Some("dwarf-old")), 1);
         f.slay_out = ("verify: a pid file for sp-x remains\nslay: INCOMPLETE for sp-x — see above\n".into(), String::new());
         let (rc, sink) = go(&f);
-        assert_eq!((rc, progs(&f)), (1, a(&["spira-lc", "slay"])));
+        assert_eq!((rc, progs(&f)), (1, a(&["spira-lc", "slay", "spira-lc"])));
         assert!(sink.all().contains("a pid file for sp-x remains"), "{}", sink.all());
     }
 
@@ -409,7 +458,7 @@ mod tests {
     fn a_dwarf_that_will_not_stop_means_nothing_is_directed() {
         let f = fake(row("WORKING", Some("dwarf-old")), 1);
         let (rc, sink) = go(&f);
-        assert_eq!((rc, progs(&f)), (1, a(&["spira-lc", "slay"])));
+        assert_eq!((rc, progs(&f)), (1, a(&["spira-lc", "slay", "spira-lc"])));
         assert!(sink.all().contains("slay said no"), "{}", sink.all());
     }
 
@@ -514,5 +563,140 @@ mod tests {
         let dir = testkit::TempDir::new("dwarf-direct-refusal-path");
         write_refusal(&dir, "sp-x", "because");
         assert_eq!(std::fs::read_to_string(refusal_path(&dir, "sp-x")).unwrap(), "because\n");
+    }
+
+    use lifecycle::bead::{apply, BeadEvent, BeadEventKind, BeadState, Direction, LifecycleRow};
+
+    /// The real transition table behind `spira-lc`: every verb applies `lifecycle::bead::apply`,
+    /// and a pool claim fires at each read that sees the row claimable.
+    struct Lc {
+        row: Mutex<LifecycleRow>,
+        pool_held_it: Mutex<bool>,
+        cas_losses: Mutex<u32>,
+        slay_rc: i32,
+        launch_rc: i32,
+        calls: Mutex<Vec<String>>,
+    }
+    impl Lc {
+        fn at(state: BeadState) -> Lc {
+            let mut r = LifecycleRow::filed("sp-x");
+            r.state = state;
+            if state == BeadState::Working {
+                r.holder = Some("dwarf-old".into());
+            }
+            Lc { row: Mutex::new(r), pool_held_it: Mutex::new(false), cas_losses: Mutex::new(0), slay_rc: 0, launch_rc: 0, calls: Mutex::default() }
+        }
+        fn step(&self, actor: &str, kind: BeadEventKind) -> bool {
+            let mut row = self.row.lock().unwrap();
+            let out = apply(&row, &BeadEvent { expect: row.state, version: row.version, kind, actor: actor.into(), at: None });
+            if out.applied {
+                *row = out.row;
+            }
+            out.applied
+        }
+        fn claim(holder: &str, directed: Option<Direction>) -> BeadEventKind {
+            BeadEventKind::Claim { holder: holder.into(), lease_until: 9, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None, directed }
+        }
+        fn takeover_left(&self) -> bool {
+            self.row.lock().unwrap().takeover.is_some()
+        }
+    }
+    impl Exec for Lc {
+        fn exec(&self, prog: &str, args: &[String], _: Option<Vec<u8>>, _: Option<&Path>) -> Out {
+            self.calls.lock().unwrap().push(format!("{prog} {}", args.first().map_or("", String::as_str)));
+            let ok = |applied: bool| if applied { Out::ok("") } else { Out { code: 3, stdout: String::new(), stderr: "refused".into() } };
+            match (prog, args.first().map(String::as_str)) {
+                ("spira-lc", Some("show")) => {
+                    let (state, holder, claimable) = {
+                        let r = self.row.lock().unwrap();
+                        (r.state, r.holder.clone(), matches!(r.state, BeadState::Ready | BeadState::Rework))
+                    };
+                    let h = holder.map_or("null".to_string(), |h| format!("\"{h}\""));
+                    let shown = Out::ok(format!(r#"{{"bead":{{"bead_id":"sp-x","state":"{}","holder":{h},"lease_until":null,"holds":"","express":0,"stack":"{{}}"}}}}"#, state.as_str()));
+                    if claimable && self.step("pool", Lc::claim("pool", None)) {
+                        *self.pool_held_it.lock().unwrap() = true;
+                    }
+                    shown
+                }
+                ("spira-lc", Some("create-bead")) => Out::ok(""),
+                ("spira-lc", Some("takeover")) => {
+                    let mut lost = self.cas_losses.lock().unwrap();
+                    if *lost > 0 {
+                        *lost -= 1;
+                        return ok(false);
+                    }
+                    ok(self.step(&args[3], BeadEventKind::Takeover { by: args[2].clone(), owner: args[3].clone() }))
+                }
+                ("spira-lc", Some("takeover-end")) => ok(self.step(&args[2], BeadEventKind::TakeoverEnd { owner: args[2].clone() })),
+                ("spira-lc", _) => Out::ok(""),
+                ("slay", _) => {
+                    if self.slay_rc == 0 {
+                        self.step("slay", BeadEventKind::HolderDead);
+                    }
+                    Out { code: self.slay_rc, stdout: String::new(), stderr: "slay said no".into() }
+                }
+                ("systemd-run", _) => {
+                    if self.launch_rc == 0 {
+                        self.step("dwarf-new", Lc::claim("dwarf-new", Some(Direction { by: "concierge".into(), reason: "r".into(), previous_holder: None })));
+                    }
+                    Out { code: self.launch_rc, stdout: String::new(), stderr: String::new() }
+                }
+                _ => Out::ok(""),
+            }
+        }
+    }
+    fn go_lc(f: &Lc) -> i32 {
+        let sink = MemSink::default();
+        run(f, &sink, &|_| {}, Path::new("nonexistent"), &req(), Path::new("h"), Some("rel/bin/dwarf"), "systemd-run", &[], 1000)
+    }
+
+    #[test_id(tqv0ehx)]
+    #[test]
+    fn a_pool_claim_fired_at_every_read_never_holds_a_bead_that_direct_takes_over() {
+        for from in [BeadState::Working, BeadState::Ready, BeadState::Rework] {
+            let f = Lc::at(from);
+            assert_eq!(go_lc(&f), 0, "{from:?}");
+            let r = f.row.lock().unwrap();
+            assert_eq!((r.holder.as_deref(), r.takeover.is_none(), *f.pool_held_it.lock().unwrap()), (Some("dwarf-new"), true, false), "{from:?}");
+        }
+    }
+
+    #[test_id(t5ndbl2)]
+    #[test]
+    fn a_dwarf_that_will_not_stop_leaves_no_takeover_behind() {
+        let mut f = Lc::at(BeadState::Working);
+        f.slay_rc = 1;
+        assert_eq!(go_lc(&f), 1);
+        assert!(!f.takeover_left());
+    }
+
+    #[test_id(tdzr8uo)]
+    #[test]
+    fn a_unit_that_will_not_start_leaves_no_takeover_behind() {
+        let mut f = Lc::at(BeadState::Ready);
+        f.launch_rc = 1;
+        assert_eq!(go_lc(&f), 1);
+        assert!(!f.takeover_left());
+    }
+
+    #[test_id(tp6wm1c)]
+    #[test]
+    fn a_lost_compare_and_set_on_the_takeover_is_retried_and_a_bounded_run_of_them_gives_up_with_nothing_reserved() {
+        let f = Lc::at(BeadState::Ready);
+        *f.cas_losses.lock().unwrap() = 2;
+        assert_eq!(go_lc(&f), 0);
+        let f = Lc::at(BeadState::Ready);
+        *f.cas_losses.lock().unwrap() = u32::MAX;
+        assert_eq!(go_lc(&f), 1);
+        assert!(!f.takeover_left() && !f.calls.lock().unwrap().iter().any(|c| c.starts_with("systemd-run")));
+    }
+
+    #[test_id(tj3c9ya)]
+    #[test]
+    fn a_bead_with_no_row_gets_one_before_it_is_reserved() {
+        let f = { let mut f = fake(Out { code: 1, stdout: String::new(), stderr: String::new() }, 0); f.after_launch = Some(row("WORKING", Some("dwarf-new"))); f };
+        assert_eq!(go(&f).0, 0);
+        let verbs: Vec<String> = f.calls.lock().unwrap().iter().filter(|c| c.0 == "spira-lc").map(|c| c.1[0].clone()).collect();
+        assert_eq!(&verbs[..4], ["takeover", "show", "create-bead", "takeover"]);
     }
 }

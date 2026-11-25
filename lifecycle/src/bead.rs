@@ -3823,4 +3823,71 @@ mod tests {
             assert_eq!(known_red(&r), red, "{reason:?}");
         }
     }
+
+    fn takeover_ev(r: &LifecycleRow, by: &str, owner: &str) -> BeadEvent {
+        ev(r.state, r.version, BeadEventKind::Takeover { by: by.into(), owner: owner.into() })
+    }
+
+    fn pool_claim() -> BeadEventKind {
+        BeadEventKind::Claim { holder: "pool".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed: None }
+    }
+
+    fn directed_claim() -> BeadEventKind {
+        let directed = Some(Direction { by: "op".into(), reason: "r".into(), previous_holder: None });
+        BeadEventKind::Claim { holder: "dwarf-d".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None, directed }
+    }
+
+    #[test_id(tr3k9ma)]
+    #[test]
+    fn a_takeover_refuses_undirected_claims_through_a_release_and_a_holder_death_until_the_directed_claim_applies() {
+        for (from, leave) in [(BeadState::Working, BeadEventKind::HolderDead), (BeadState::Working, BeadEventKind::Release), (BeadState::Ready, BeadEventKind::Express), (BeadState::Rework, BeadEventKind::Express)] {
+            let mut r = row(from);
+            r.holder = (from == BeadState::Working).then(|| "dwarf-old".to_string());
+            r.claimed_from = (from == BeadState::Working).then_some(BeadState::Ready);
+            r = apply(&r, &takeover_ev(&r, "op", "direct@1.2")).row;
+            r = apply(&r, &ev(r.state, r.version, leave)).row;
+            assert!(r.takeover.is_some(), "{from:?}: the takeover survives the stop");
+            let refused = apply(&r, &ev(r.state, r.version, pool_claim()));
+            assert_eq!(refused.refusal, Some(Refusal::TakenOver { by: "op".into() }), "{from:?}");
+            let taken = apply(&r, &ev(r.state, r.version, directed_claim()));
+            assert!(taken.applied && taken.row.takeover.is_none() && taken.row.state == BeadState::Working, "{from:?}");
+        }
+    }
+
+    #[test_id(tsq72dn)]
+    #[test]
+    fn a_takeover_is_ended_only_by_its_owner_and_a_newer_one_replaces_it() {
+        let mut r = row(BeadState::Ready);
+        r = apply(&r, &takeover_ev(&r, "op", "o1")).row;
+        let wrong = apply(&r, &ev(r.state, r.version, BeadEventKind::TakeoverEnd { owner: "o2".into() }));
+        assert!(!wrong.applied && wrong.row.takeover.is_some());
+        r = apply(&r, &takeover_ev(&r, "op2", "o2")).row;
+        assert_eq!(r.takeover, Some(Takeover { by: "op2".into(), owner: "o2".into() }));
+        assert!(!apply(&r, &ev(r.state, r.version, BeadEventKind::TakeoverEnd { owner: "o1".into() })).applied);
+        let ended = apply(&r, &ev(r.state, r.version, BeadEventKind::TakeoverEnd { owner: "o2".into() }));
+        assert!(ended.applied && ended.row.takeover.is_none());
+        assert!(apply(&ended.row, &ev(r.state, ended.row.version, pool_claim())).applied);
+    }
+
+    #[test_id(tx1w5ge)]
+    #[test]
+    fn any_other_departure_clears_a_takeover_and_a_row_that_cannot_be_claimed_takes_none() {
+        let tip = "1111111111111111111111111111111111111111";
+        let mut r = row(BeadState::Working);
+        r.holder = Some("dwarf-old".into());
+        r = apply(&r, &takeover_ev(&r, "op", "o")).row;
+        let submitted = apply(&r, &ev(r.state, r.version, BeadEventKind::Submit { tip: tip.into() }));
+        assert!(submitted.applied && submitted.row.takeover.is_none());
+        for state in [BeadState::Submitted, BeadState::Certified, BeadState::InDelivery, BeadState::Landed, BeadState::Done] {
+            assert!(!apply(&row(state), &takeover_ev(&row(state), "op", "o")).applied, "{state:?}");
+        }
+    }
+
+    #[test_id(tkb4h8v)]
+    #[test]
+    fn a_stored_row_without_the_takeover_field_parses() {
+        let mut v = serde_json::to_value(row(BeadState::Ready)).unwrap();
+        v.as_object_mut().unwrap().remove("takeover");
+        assert_eq!(serde_json::from_value::<LifecycleRow>(v).unwrap().takeover, None);
+    }
 }

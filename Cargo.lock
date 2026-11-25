@@ -426,6 +426,7 @@ version = "1.0.0"
 dependencies = [
  "bead",
  "libc",
+ "lifecycle",
  "regex",
  "runtime",
  "serde",

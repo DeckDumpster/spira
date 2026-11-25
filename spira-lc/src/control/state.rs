@@ -680,6 +680,17 @@ mod manual_hold_columns {
     use lifecycle::bead::ManualHold;
     use lifecycle::reason::HoldCause;
 
+    #[test_id(tn7y3zq)]
+    #[test]
+    fn list_and_show_print_the_takeover_a_record_carries_and_null_otherwise() {
+        let mut rec = LifecycleRecord::born("sp-a", Some("spira"), None, 100);
+        assert_eq!(listed(&rec, None)["takeover"], Value::Null);
+        rec.row.takeover = Some(lifecycle::bead::Takeover { by: "op".into(), owner: "direct@1.2".into() });
+        let want = serde_json::json!({ "by": "op", "owner": "direct@1.2" });
+        assert_eq!(listed(&rec, None)["takeover"], want);
+        assert_eq!(row(&rec, None, &Value::Null, SHOWN)["takeover"], want);
+    }
+
     #[test_id(trgh5aa)]
     #[test]
     fn list_and_show_print_the_manual_hold_a_record_carries_and_null_otherwise() {

@@ -2209,3 +2209,39 @@ fn the_admin_verbs_that_read_the_table_ask_for_pages_or_the_one_state_they_act_o
     drop_orphans(&[], &mut r, &mut b);
     assert_eq!(first(&r.sent), ["list", "--state", "READY", "--limit", "1000"]);
 }
+
+// ---- takeover --------------------------------------------------------------------------
+
+fn claim_as(f: &mut Fake, id: &str, directed: bool) -> i32 {
+    let (state, version) = (f.beads[id].state.as_str(), f.beads[id].version.to_string());
+    let directed = if directed { json!({"by": "op", "reason": "r", "previous_holder": null}) } else { Value::Null };
+    let kind = json!({"Claim": {"holder": "h", "lease_until": 9, "directed": directed}}).to_string();
+    f.call(&v(&["event", "bead", id, "--expect", state, "--version", &version, "--actor", "h", "--kind", &kind])).0
+}
+
+#[test_id(tmw8c4r)]
+#[test]
+fn a_takeover_holds_off_pool_claims_through_the_stop_until_the_directed_claim_applies() {
+    for (from, stop) in [(BeadState::Working, "holder-dead"), (BeadState::Working, "release"), (BeadState::Ready, "express"), (BeadState::Rework, "express")] {
+        let mut f = Fake::default();
+        let r = f.bead("sp-t", from);
+        r.holder = (from == BeadState::Working).then(|| "dwarf-old".to_string());
+        assert_eq!(go(&mut f, "takeover", &["sp-t", "concierge", "direct@1.2"]).code, APPLIED, "{from:?}");
+        assert_eq!(go(&mut f, stop, &["sp-t", "slay"]).code, APPLIED, "{from:?} {stop}");
+        assert_eq!(claim_as(&mut f, "sp-t", false), REFUSED, "{from:?} {stop}: a pool claim must not fit between the stop and the directed claim");
+        assert_eq!(claim_as(&mut f, "sp-t", true), APPLIED, "{from:?} {stop}");
+        assert!(f.beads["sp-t"].takeover.is_none());
+    }
+}
+
+#[test_id(tg5n2pu)]
+#[test]
+fn only_the_owner_ends_a_takeover_and_ending_it_reopens_the_bead_to_pool_claims() {
+    let mut f = Fake::default();
+    f.bead("sp-t", BeadState::Ready);
+    assert_eq!(go(&mut f, "takeover", &["sp-t", "concierge", "direct@1.2"]).code, APPLIED);
+    assert_ne!(go(&mut f, "takeover-end", &["sp-t", "direct@9.9"]).code, APPLIED);
+    assert_eq!(claim_as(&mut f, "sp-t", false), REFUSED);
+    assert_eq!(go(&mut f, "takeover-end", &["sp-t", "direct@1.2"]).code, APPLIED);
+    assert_eq!(claim_as(&mut f, "sp-t", false), APPLIED);
+}
