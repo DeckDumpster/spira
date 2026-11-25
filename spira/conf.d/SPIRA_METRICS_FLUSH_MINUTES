@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=metrics
+DOC=Minutes between flushes of the metrics and logs stores' in-memory data to disk; an unclean stop loses up to twice this, a clean stop loses nothing.
+SCHEMA=REQUIRED: Minutes between flushes of the metrics and logs stores' in-memory data to disk. Declared in spira.toml as metrics_flush_minutes; nothing defaults it, and the stores refuse to start without it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF
