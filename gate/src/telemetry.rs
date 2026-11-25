@@ -401,7 +401,6 @@ mod tests {
 
     #[test_id(t1dcp7z)]
     #[test]
-    #[test]
     fn a_rerun_test_is_pushed_by_result_with_no_test_label() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = l.local_addr().unwrap().to_string();

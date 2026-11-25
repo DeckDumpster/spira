@@ -235,7 +235,7 @@ fn rerun_red_tests<W: World>(w: &W, at: RerunScope, name: &str, cmd: &str) -> Re
             line(at.out), line(&again), tree = at.tree_id);
         let unrecordable = |what: &str, e: String| v(NOVERDICT, "flip-unrecorded", format!(
             "gate: {name}'s test {t} flipped (red, then green on a rerun of the same tree {}), but {what}: {e}\ngate: a flip is never passed without its record; no verdict for {bead}.", at.tree_id));
-        let fix = w.file_flip_fix(&at.repo, &t, &title, &body).map_err(|e| unrecordable("its fix bead could not be filed", e))?;
+        let fix = w.file_flip_fix(at.repo, &t, &title, &body).map_err(|e| unrecordable("its fix bead could not be filed", e))?;
         let reason = format!("{id} flipped in the gate of {bead} (red, then green on a rerun of the same tree {})", at.tree_id);
         let row = w.registry_disable(&id, &fix, &reason).map_err(|e| unrecordable(&format!("its registry row could not be written (fix bead {fix})"), e))?;
         let until = crate::real::utc_of(row.until.max(0) as u64);
