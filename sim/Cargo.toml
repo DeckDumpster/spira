@@ -47,7 +47,6 @@ spira-desired-state = { path = "../desired-state" }
 spira-lc = { path = "../spira-lc" }
 state-store = { path = "../state-store" }
 reconciler-engine = { path = "../reconciler-engine" }
-reconciler = { path = "../reconciler" }
 
 [dev-dependencies]
 spira-test-id = { path = "../spira-test-id" }
@@ -55,3 +54,4 @@ spira-runtime = { path = "../spira-runtime" }
 lifecycle = { path = "../lifecycle" }
 spira-store = { path = "../spira-store" }
 testkit = { path = "../testkit" }
+reconciler = { path = "../reconciler" }
