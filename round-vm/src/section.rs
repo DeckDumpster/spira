@@ -130,7 +130,9 @@ pub fn read(cfg: &Config, now: u64) -> Result<Reading, String> {
     Ok(measure(&rows, now, slots))
 }
 
-fn inputs(cfg: &Config, now: u64) -> Result<(Vec<Value>, Vec<(String, u64)>), String> {
+type Inputs = (Vec<Value>, Vec<(String, u64)>);
+
+fn inputs(cfg: &Config, now: u64) -> Result<Inputs, String> {
     let rows = pass_rows(tsd::query::Source { reader: None, root: &cfg.run_dir }.rows(tsd::pass::FAMILY, now.saturating_sub(HOUR)))?;
     let state = crate::pool::read_state(&crate::cli::pool_for(cfg).state_file())?;
     Ok((rows, slots_by_pool(&state.leases)))
