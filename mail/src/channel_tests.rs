@@ -115,7 +115,7 @@ fn a_message_read_is_flagged_seen_so_count_and_tidy_agree_it_was_read() {
     assert!(!maildir::is_unread(&read));
     assert_eq!(cmds::count(&e, "operator").unwrap(), 0);
     let bd = FakeBd::new(vec![crate::bead::BdOut::ok("[]"), crate::bead::BdOut::ok(r#"[{"id":"probe"}]"#)]);
-    let report = crate::tidy::tidy(&bd, true, &e.mail_root, "operator", "asks", 86_400, false).unwrap();
+    let report = crate::tidy::tidy(&bd, true, &e.mail_root, &e.run_dir, "operator", "asks", 86_400, false).unwrap();
     assert_eq!((report.archived, report.kept), (1, 0), "a read MERGED note leaves inside the fresh window");
     assert!(e.mail_root.join("archive/cur").join(format!("{id}:2,S")).is_file());
 }

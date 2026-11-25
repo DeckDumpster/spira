@@ -58,7 +58,7 @@ pub trait Ops {
     /// Send an escalation through `mail send operator …`.
     fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String>;
 
-    /// `mail-health.sh`'s own exit code (0 nothing to say, 1 escalated, 3 could not check).
+    /// `watchd::mail_health`'s exit code (0 nothing to say, 1 escalated, 3 could not check).
     fn mail_health(&self) -> i32;
 
     /// Every `spira-watch-*-<instance>.service` unit the manager knows, loaded or only
@@ -213,23 +213,8 @@ impl Ops for Real {
         crate::send::alert_operator_configured(subject, &ask_note_body(subject, default, why, evidence))
     }
 
-    // FORK-EDGE: mail-health.sh is 122 lines of shell (over the ~100-line port bound).
     fn mail_health(&self) -> i32 {
-        // A spawn failure was a silent 3 ("could not check") — name it (sp-xp0u2).
-        let (mail_health, envs) = match spira_config::release_env::tool("mail-health.sh").and_then(|t| Ok((t, spira_config::release_env::child_path_env_for_process()?))) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("watchd: cannot run mail-health.sh: {e}");
-                return 3;
-            }
-        };
-        match spira_config::bounded::bounded(mail_health).envs(envs).stdin(Stdio::null()).status() {
-            Ok(s) => s.code().unwrap_or(3),
-            Err(e) => {
-                eprintln!("watchd: cannot run mail-health.sh: {e}");
-                3
-            }
-        }
+        crate::mail_health::run()
     }
 
     fn list_watch_units(&self, instance: &str) -> Vec<String> {

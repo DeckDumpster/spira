@@ -213,7 +213,7 @@ pub fn cmd_notify(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOu
 
     let mh = ops.mail_health();
     if mh == 3 {
-        return Err("watchd: mail-health.sh could not check".to_string());
+        return Err("watchd: mail-health could not check".to_string());
     }
     if mh == 1 {
         found = true;

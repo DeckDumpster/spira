@@ -6,6 +6,7 @@
 extern crate spira_test_id;
 pub mod real;
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Idea {
     pub id: String,
     pub title: String,

@@ -212,6 +212,7 @@ fn cfg(key: &str) -> Result<String, String> {
 /// whether the store reports it closed. A refusal is the snapshot's error.
 pub fn observe(lc: &spira_store::lc_call::LcClient, mailbox: &str, now: u64) -> Snapshot {
     let read = || -> Result<Snapshot, String> {
+        let run_dir = cfg("SPIRA_RUN")?;
         let (root, label, db, fresh) = (cfg("SPIRA_MAIL")?, cfg("SPIRA_ASK_LABEL")?, cfg("SPIRA_DB")?, cfg(FRESH_KEY)?);
         let fresh_s: u64 = fresh.trim().parse().map_err(|_| format!("{FRESH_KEY} must be a number of seconds, got {fresh:?}"))?;
         if label.trim().is_empty() {
@@ -224,7 +225,7 @@ pub fn observe(lc: &spira_store::lc_call::LcClient, mailbox: &str, now: u64) -> 
             .into_iter()
             .map(|m| {
                 let bead_closed = (!m.bead.is_empty() && m.fresh(now, fresh_s) && !open_asks.contains(&m.bead)).then(|| mail::bead::bead_is_closed(&bd, &m.bead));
-                let condition_raised = (!m.unread && !m.condition.is_empty()).then(|| mail::tidy::condition_raised(&m.condition));
+                let condition_raised = (!m.unread && !m.condition.is_empty()).then(|| mail::tidy::condition_raised(&m.condition, std::path::Path::new(&run_dir)));
                 Msg { path: m.path.display().to_string(), mtime: m.mtime, subject: m.subject, bead: Some(m.bead).filter(|b| !b.is_empty()), unread: m.unread, urgent: m.urgent, digest: m.digest, condition: Some(m.condition).filter(|c| !c.is_empty()), bead_closed, condition_raised }
             })
             .collect();

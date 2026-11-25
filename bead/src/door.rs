@@ -116,6 +116,9 @@ pub fn forks_a_bead_tool(source: &str) -> Vec<String> {
         .collect()
 }
 
+/// The label a parked idea carries; `schema.sh name idea` declares the same name.
+pub const IDEA_LABEL: &str = "idea";
+
 /// The open ideas under `label`, newest first; `Err` carries the failing exit code.
 pub fn ideas(client: &LcClient, label: &str) -> Result<Vec<IdeaRow>, i32> {
     let mut args = vec!["list".to_string()];
@@ -333,6 +336,14 @@ mod tests {
         let client = LcClient::over(Arc::new(Down), true);
         assert!(DoorSource::load(&client, Set::All, |_| Ok(HashMap::new())).is_err());
         assert!(DoorSource::load(&client, Set::Ids(vec!["sp-a".into()]), |_| Ok(HashMap::new())).is_err());
+    }
+
+    #[test_id(tj4n8cz)]
+    #[test]
+    fn the_idea_label_is_the_name_the_schema_declares() {
+        let schema = include_str!("../../spira/schema.sh");
+        let declared = schema.lines().find(|l| l.trim_start().starts_with("idea)") && l.contains("printf")).expect("schema.sh declares an idea name");
+        assert!(declared.contains(&format!("'{IDEA_LABEL}'")), "{declared}");
     }
 
     #[test_id(tmkdto9)]

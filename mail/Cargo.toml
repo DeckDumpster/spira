@@ -15,11 +15,6 @@ name = "dwarf_hook"
 path = "tests/dwarf_hook.rs"
 required-features = ["integration"]
 
-[[test]]
-name = "mail_health"
-path = "tests/mail_health.rs"
-required-features = ["integration"]
-
 [features]
 integration = ["bead/integration", "spira-config/integration", "spira-store/integration", "spira-otel/integration", "testkit/integration", "tsd/integration", "system-paths/integration", "spira-test-id/integration"]
 [dependencies]

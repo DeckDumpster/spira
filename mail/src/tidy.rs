@@ -112,10 +112,10 @@ pub const CONDITION_ENDED: i32 = 10;
 
 /// Whether the alarm condition `key` (`<owner>:<detail>`) is still raised, asked of the owner's
 /// own binary as `<tool> condition <detail>`.
-pub fn condition_raised(key: &str) -> bool {
+pub fn condition_raised(key: &str, run_dir: &Path) -> bool {
     let Some((owner, detail)) = key.split_once(':') else { return true };
     let tool = match owner {
-        "mail-health" => "mail-health.sh",
+        "mail-health" => return mail_health_raised(run_dir, detail),
         "strand" => "strand",
         "watchd" => "watchd",
         _ => return true,
@@ -123,6 +123,15 @@ pub fn condition_raised(key: &str) -> bool {
     let Ok(program) = spira_config::release_env::tool(tool) else { return true };
     let Ok(envs) = spira_config::release_env::child_path_env_for_process() else { return true };
     ask_owner(&program, &envs, detail)
+}
+
+/// A mail-health alarm stands while its state file does; a name that could not be a state file
+/// reads as standing.
+pub fn mail_health_raised(run_dir: &Path, detail: &str) -> bool {
+    if detail.is_empty() || detail.contains('/') || detail.starts_with('.') {
+        return true;
+    }
+    run_dir.join("mail-health").join(detail).exists()
 }
 
 fn ask_owner(program: &str, envs: &[(String, String)], detail: &str) -> bool {
@@ -178,12 +187,13 @@ pub fn tidy(
     bd: &dyn Bd,
     db_configured: bool,
     mail_root: &Path,
+    run_dir: &Path,
     mailbox: &str,
     ask_label: &str,
     fresh_s: u64,
     dry_run: bool,
 ) -> Result<TidyReport, String> {
-    tidy_asking(bd, db_configured, mail_root, mailbox, ask_label, fresh_s, dry_run, &mut condition_raised)
+    tidy_asking(bd, db_configured, mail_root, mailbox, ask_label, fresh_s, dry_run, &mut |key| condition_raised(key, run_dir))
 }
 
 /// [`tidy`] with `raised` answering whether an alarm's condition still stands.
@@ -268,7 +278,7 @@ mod tests {
     fn refuses_without_a_configured_store() {
         let d = testkit::TempDir::new("mail-tidy");
         let bd = FakeBd::new(vec![]);
-        let err = tidy(&bd, false, d.path(), "operator", "asks", 3600, false).unwrap_err();
+        let err = tidy(&bd, false, d.path(), d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("not configured"), "{err}");
     }
 
@@ -277,7 +287,7 @@ mod tests {
     fn refuses_when_the_mailbox_was_never_created() {
         let d = testkit::TempDir::new("mail-tidy");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("mailbox not found"), "{err}");
     }
 
@@ -287,7 +297,7 @@ mod tests {
         let d = testkit::TempDir::new("mail-tidy");
         setup(d.path(), "operator");
         let bd = FakeBd::new(vec![BdOut::fail(1, "boom")]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("refusing"), "{err}");
     }
 
@@ -297,7 +307,7 @@ mod tests {
         let d = testkit::TempDir::new("mail-tidy");
         setup(d.path(), "operator");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(1, "down")]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("positive control"), "{err}");
     }
 
@@ -307,7 +317,7 @@ mod tests {
         let d = testkit::TempDir::new("mail-tidy");
         setup(d.path(), "operator");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(3, "Error 1045: Access denied for user 'spira_lc'")]);
-        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap_err();
+        let err = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap_err();
         assert!(err.contains("bd exit 3"), "{err}");
         assert!(err.contains("Access denied for user 'spira_lc'"), "{err}");
     }
@@ -320,7 +330,7 @@ mod tests {
         seed_message(&d.path().join("operator"), "new", "a", "Open question", Some("sp-open1"), false, 10);
         seed_message(&d.path().join("operator"), "new", "b", "Closed question", Some("sp-closed1"), false, 7200);
         let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-open1"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (1, 1));
         assert!(d.path().join("operator/new/a").exists());
         assert!(!d.path().join("operator/new/b").exists());
@@ -334,7 +344,7 @@ mod tests {
         setup(d.path(), "operator");
         seed_message(&d.path().join("operator"), "new", "fresh", "Fresh note", None, false, 5);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (0, 1));
     }
 
@@ -351,7 +361,7 @@ mod tests {
             BdOut::ok(r#"[{"id":"sp-closed2","status":"closed"}]"#),
             BdOut::ok(r#"[{"id":"sp-closed1","status":"closed"}]"#),
         ]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (2, 1));
         assert!(d.path().join("operator/new/o").exists());
         assert!(d.path().join("archive/cur/c").exists());
@@ -368,7 +378,7 @@ mod tests {
         let path = d.path().join("operator/new/n");
         fs::write(&path, "Subject: Disk is filling\n\nUnrelated to sp-closed1, which closed last week.\n").unwrap();
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#), BdOut::ok(r#"[{"id":"sp-closed1","status":"closed"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (0, 1), "the note is kept");
         assert!(path.exists());
     }
@@ -380,7 +390,7 @@ mod tests {
         setup(d.path(), "operator");
         seed_message(&d.path().join("operator"), "new", "x", "Unknown", Some("sp-gone1"), false, 5);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#), BdOut::fail(1, "no such bead")]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (0, 1));
     }
 
@@ -395,7 +405,7 @@ mod tests {
         seed_message(&d.path().join("operator"), "cur", "in:2,S", "Urgent still fresh", None, true, inside);
         seed_message(&d.path().join("operator"), "cur", "out:2,S", "Urgent expired", None, true, outside);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (1, 1));
         assert!(d.path().join("operator/cur/in:2,S").exists());
         assert!(!d.path().join("operator/cur/out:2,S").exists());
@@ -410,7 +420,7 @@ mod tests {
         seed_message(&d.path().join("operator"), "new", "e2", "Daily report", None, false, 7200);
         seed_message(&d.path().join("operator"), "new", "e3", "Daily report", None, false, 10);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, false).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, false).unwrap();
         assert_eq!((report.archived, report.kept), (2, 1));
         assert!(d.path().join("operator/new/e3").exists());
         assert!(!d.path().join("operator/new/e1").exists());
@@ -424,7 +434,7 @@ mod tests {
         setup(d.path(), "operator");
         seed_message(&d.path().join("operator"), "new", "old", "Dry run test", None, false, 7200);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
-        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, true).unwrap();
+        let report = tidy(&bd, true, d.path(), d.path(), "operator", "asks", 3600, true).unwrap();
         assert_eq!(report.archived, 1);
         assert!(d.path().join("operator/new/old").exists());
         let _ = Duration::from_secs(0);
@@ -447,7 +457,7 @@ mod tests {
         setup(d.path(), "operator");
         seed_with(&d.path().join("operator"), "cur", "m1:2,S", "MERGED #1 [repo]", "X-Spira-Digest: yes\n", 60);
         seed_with(&d.path().join("operator"), "new", "m2", "MERGED #2 [repo]", "X-Spira-Digest: yes\n", 60);
-        let report = tidy(&empty_store(), true, d.path(), "operator", "asks", 86_400, false).unwrap();
+        let report = tidy(&empty_store(), true, d.path(), d.path(), "operator", "asks", 86_400, false).unwrap();
         assert_eq!((report.archived, report.kept), (1, 1));
         assert!(d.path().join("archive/cur/m1:2,S").exists());
         assert!(d.path().join("operator/new/m2").exists());
@@ -502,8 +512,24 @@ mod tests {
     #[test_id(t56mjrh)]
     #[test]
     fn a_condition_whose_owner_cannot_be_asked_reads_as_raised() {
-        assert!(condition_raised("no-colon"));
-        assert!(condition_raised("nobody:x"));
-        assert!(condition_raised("strand:p:k:i"), "no release is named in the test environment");
+        let d = testkit::TempDir::new("raised-no-owner");
+        let run = d.path();
+        assert!(condition_raised("no-colon", run));
+        assert!(condition_raised("nobody:x", run));
+        assert!(condition_raised("strand:p:k:i", run), "no release is named in the test environment");
+    }
+
+    #[test_id(tfq8k2m)]
+    #[test]
+    fn a_mail_health_alarm_stands_exactly_while_its_state_file_does() {
+        let d = testkit::TempDir::new("mail-health-raised");
+        let state = d.path().join("mail-health");
+        std::fs::create_dir_all(&state).unwrap();
+        assert!(!condition_raised("mail-health:concierge", d.path()), "no state file: ended");
+        std::fs::write(state.join("concierge"), "1\n").unwrap();
+        assert!(condition_raised("mail-health:concierge", d.path()), "state file present: standing");
+        for odd in ["", "../x", "a/b", ".hidden"] {
+            assert!(condition_raised(&format!("mail-health:{odd}"), d.path()), "{odd:?} cannot name a state file, so it stands");
+        }
     }
 }
