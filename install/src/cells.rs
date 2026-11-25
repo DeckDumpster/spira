@@ -79,8 +79,8 @@ fn rendering_names_every_unit_for_its_instance_and_leaves_no_placeholder() {
     let enabled = m.enable("beta");
     assert!(enabled.iter().any(|u| u == "spira-watchdog-beta.timer"), "{enabled:?}");
     assert!(!enabled.iter().any(|u| u == "spira-watchdog.timer"), "{enabled:?}");
-    let timer = out.iter().find(|(n, _, _)| n == "spira-vm-pool-section-beta.timer").expect("a periodic timer is rendered");
-    assert!(timer.2.contains("Unit=spira-vm-pool-section-beta.service"), "a timer fires its suffixed service:\n{}", timer.2);
+    let timer = out.iter().find(|(n, _, _)| n == "spira-watchdog-beta.timer").expect("a periodic timer is rendered");
+    assert!(timer.2.contains("Unit=spira-watchdog-beta.service"), "a timer fires its suffixed service:\n{}", timer.2);
 }
 
 // covers: UC-instance-lifecycle-25
@@ -340,7 +340,7 @@ fn shipped_unit_files_are_listed_enabled_periodic_limited_and_watchdogged_correc
 
     let timers: Vec<&(String, String)> = units.iter().filter(|(n, _)| n.ends_with(".timer")).collect();
     assert!(timers.len() > 3, "positive control: the timer templates were found");
-    assert!(timers.iter().any(|(n, _)| n == "spira-vm-pool-section.timer") && enabled("spira-vm-pool-section.timer"), "positive control: a known timer is parsed as listed and enabled");
+    assert!(timers.iter().any(|(n, _)| n == "concierge.timer") && enabled("concierge.timer"), "positive control: a known timer is parsed as listed and enabled");
     for (n, text) in &timers {
         assert!(listed(n), "{n} is in no manifest row: the installer would never write it");
         assert!(enabled(n) || declined.contains(n), "{n} is installed but never enabled: it would never fire");

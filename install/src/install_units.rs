@@ -1018,10 +1018,9 @@ mod tests {
     }
 
     /// The `spira-*-<instance>.timer` and `spira-watch-*` units `rendered` holds outside the
-    /// scheduler's keep list (design W2): its watchdog and the VmPool
-    /// section's publisher.
+    /// scheduler's keep list (design W2): its watchdog.
     fn outside_the_keep_list(rendered: &[(String, String, String)]) -> Vec<String> {
-        const KEEP: [&str; 2] = ["spira-watchdog-prod.timer", "spira-vm-pool-section-prod.timer"];
+        const KEEP: [&str; 1] = ["spira-watchdog-prod.timer"];
         rendered.iter().map(|(u, _, _)| u.as_str()).filter(|u| (u.starts_with("spira-") && u.ends_with("-prod.timer")) || u.starts_with("spira-watch-")).filter(|u| !KEEP.contains(u)).map(str::to_string).collect()
     }
 
