@@ -27,6 +27,10 @@ struct Fixture {
     forge: PathBuf,
     wiki: PathBuf,
     seen: Arc<Mutex<Vec<(String, String)>>>,
+    programs: PathBuf,
+    requests: Arc<Mutex<Vec<String>>>,
+    refused: Arc<Mutex<Vec<String>>>,
+    claimable: Arc<Mutex<String>>,
     effects: Arc<spira_runtime::Effects>,
 }
 
@@ -102,12 +106,21 @@ fn fixture() -> Fixture {
     std::fs::create_dir(&run_dir).unwrap();
     let sock = dir.join("lc.sock");
     let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+    let requests: Arc<Mutex<Vec<String>>> = Arc::default();
+    let refused: Arc<Mutex<Vec<String>>> = Arc::default();
+    let claimable = Arc::new(Mutex::new(String::from("{\"beads\":[]}")));
+    let (asked, turned_away, ready) = (requests.clone(), refused.clone(), claimable.clone());
     std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| {
+        asked.lock().unwrap().push(argv.join(" "));
         match argv.first().map(String::as_str) {
             Some("rc") => Ok("{\"ok\":{\"list_rev\":1,\"items\":[]}}".into()),
             Some("content") | Some("list") => Ok("[]".into()),
             Some("git-fact") => Ok("{}".into()),
-            _ => Err(runtime::RuntimeError::new("the double has no such verb")),
+            Some("claimable") => Ok(ready.lock().unwrap().clone()),
+            _ => {
+                turned_away.lock().unwrap().push(argv.join(" "));
+                Err(runtime::RuntimeError::new("the double has no such verb"))
+            }
         }
     }));
     let home = spira_config::resolve::locate_home_for_process().unwrap();
@@ -115,11 +128,16 @@ fn fixture() -> Fixture {
     let run_s = run_dir.display().to_string();
     let (wiki_s, prod_s, registry_s) = (wiki.display().to_string(), acc.join("spira").display().to_string(), format!("file://{}", kit.display()));
     let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap())]);
-    let lc = dir.join("spira-lc");
-    testkit::write_exe(&lc, "#!/bin/sh\necho '[]'\n");
+    let programs = dir.join("programs.log");
+    let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
+    let release = dir.join("release");
+    std::fs::create_dir_all(release.join("bin")).unwrap();
+    testkit::write_exe(release.join("bin/spira-lc"), &trap);
+    testkit::write_exe(bin.join("spira-lc"), &trap);
     let env = testkit::env(&[
         ("PATH", Some(&path)),
-        ("SPIRA_LC_BIN", lc.to_str()),
+        ("SPIRA_LC_BIN", None),
+        ("SPIRA_RELEASE", release.to_str()),
         ("SPIRA_TOML", toml.to_str()),
         ("SPIRA_HOME", home.to_str()),
         ("SPIRA_REPO_MAP", map.to_str()),
@@ -127,7 +145,7 @@ fn fixture() -> Fixture {
     ]);
     let world = spira_runtime::world::World { lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), ..Default::default() };
     let effects = Arc::new(spira_runtime::Effects { world, ..Default::default() });
-    Fixture { _env: env, _dir: dir, log, local, pr, forge, wiki, seen: Arc::default(), effects }
+    Fixture { _env: env, _dir: dir, log, local, pr, forge, wiki, seen: Arc::default(), programs, requests, refused, claimable, effects }
 }
 
 const COCKPIT_UNSENT: &str = r#"{"probes":[{"name":"cockpit.unsent","timeout_ms":300000}],"config":{}}"#;
@@ -153,7 +171,8 @@ fn run_hours(f: &Fixture, names: &[&'static str], until: &[u64], between: &mut d
         sim.add_workflow(r);
     }
     sim.set_effects(doubles(f, names));
-    for (_, stream, kind) in tasks::boots() {
+    for t in tasks::all().filter(|t| t.effects.iter().any(|e| names.contains(e))) {
+        let (_, stream, kind) = (t.boot)();
         sim.boot_workflow(START, stream, &kind.tag, &kind.body);
     }
     for t in until {
@@ -168,10 +187,44 @@ fn logged(f: &Fixture) -> Vec<String> {
 
 const MINUTE: u64 = 60_000;
 
+fn programs_started(f: &Fixture) -> Vec<String> {
+    std::fs::read_to_string(&f.programs).unwrap_or_default().lines().map(str::to_string).collect()
+}
+
+fn clear_programs(f: &Fixture) {
+    std::fs::write(&f.programs, "").unwrap();
+}
+
+fn assert_traps_and_double_are_live(f: &Fixture) {
+    let named = spira_store::lifecycle_row::lc_bin().expect("lc_bin resolves through the fixture release");
+    let _ = Command::new(&named).output().unwrap();
+    let _ = Command::new("spira-lc").output().unwrap();
+    assert_eq!(programs_started(f).len(), 2, "the trap logs a run of the program lc_bin names and one by bare name: {:?}", programs_started(f));
+    clear_programs(f);
+    let before = f.requests.lock().unwrap().len();
+    let got = spira_store::lc_call::LcClient::configured().unwrap().call(&["claimable"]);
+    assert_eq!(got.expect("the double answers claimable").out, "{\"beads\":[]}");
+    assert_eq!(f.requests.lock().unwrap().len(), before + 1, "the call is one recorded request");
+    assert!(programs_started(f).is_empty(), "the call started a program: {:?}", programs_started(f));
+    let ready = "{\"beads\":[{\"id\":\"sp-zzzzzz\"}]}";
+    *f.claimable.lock().unwrap() = ready.into();
+    let set = spira_store::lc_call::LcClient::configured().unwrap().call(&["claimable"]).expect("claimable").out;
+    *f.claimable.lock().unwrap() = "{\"beads\":[]}".into();
+    assert_eq!(set, ready, "a bead set on the double is what claimable serves");
+}
+
+fn assert_only_the_double_answered(f: &Fixture) {
+    assert!(!f.requests.lock().unwrap().is_empty(), "the double recorded no request, so the run proves nothing about the store reads");
+    assert_eq!(*f.refused.lock().unwrap(), Vec::<String>::new(), "the double refused verbs the loop asked");
+    assert_eq!(programs_started(f), Vec::<String>::new(), "a store read started spira-lc");
+}
+
 #[test_id(tqoiwy1)]
 #[test]
 fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_reads() {
     let f = fixture();
+    spira_config::process::with_fresh(|| {
+    assert_traps_and_double_are_live(&f);
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch) = (0, 0, 0, 0);
     run_hours(&f, &["watch.throughput.observe", "landing.observe"], &[warm, warm + HOUR, warm + HOUR + 3 * MINUTE, warm + HOUR + 6 * MINUTE], &mut |t| match t {
@@ -187,6 +240,7 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
         }
         _ => at_branch = logged(&f).len(),
     });
+    assert_only_the_double_answered(&f);
     let all = logged(&f);
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git:\n{}", all[at_warm..at_idle].join("\n"));
     let local = f.local.display().to_string();
@@ -199,6 +253,8 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_eq!(counted, 2, "landed_on_refs counts the new landing");
     let after_branch = &all[at_commit..at_branch];
     assert!(after_branch.iter().any(|l| l.contains(&format!("-C {pr} ")) && l.contains(" fetch ")), "a spira/* branch makes landing fetch: {after_branch:?}");
+    })
+    .unwrap();
 }
 
 const SUB_HOUR: [&str; 7] = ["publish-backlog.observe", "publish.observe", "cockpit-tier-600s.observe", "trigger.mimir.observe", "intake.gh.observe", "intake.kit_bump.observe", "brain-dirty.observe"];
@@ -226,6 +282,8 @@ fn argv_counts(lines: &[String]) -> String {
 #[test]
 fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only_what_reads_it() {
     let f = fixture();
+    spira_config::process::with_fresh(|| {
+    assert_traps_and_double_are_live(&f);
     let (warm, idle) = (START + HOUR, START + 2 * HOUR);
     let marks = [warm, idle, idle + 16 * MINUTE, idle + 32 * MINUTE, idle + 43 * MINUTE, idle + 54 * MINUTE];
     let (mut at_warm, mut at_idle) = (0, 0);
@@ -259,6 +317,7 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
         }
         _ => {}
     });
+    assert_only_the_double_answered(&f);
     let all = logged(&f);
     for read in [" show local/main:Cargo.toml", "log --format=%ct %s --after=@"] {
         assert!(all[..at_warm].iter().any(|l| l.contains(read)), "warm-up never ran {read:?}, so the idle hour proves nothing about it");
@@ -266,6 +325,8 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git: {}\n{}", argv_counts(&all[at_warm..at_idle]), all[at_warm..at_idle].join("\n"));
     assert_ne!(unsent_kv(&f), unsent_before, "a new spira/* branch changes the unsent section");
     assert!(!unsent_before.is_empty());
+    })
+    .unwrap();
 }
 
 impl Fixture {
