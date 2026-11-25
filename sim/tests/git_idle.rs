@@ -26,6 +26,8 @@ struct Fixture {
     pr: PathBuf,
     forge: PathBuf,
     wiki: PathBuf,
+    overrides: PathBuf,
+    toml: PathBuf,
     seen: Arc<Mutex<Vec<(String, String)>>>,
     programs: PathBuf,
     started: PathBuf,
@@ -149,7 +151,7 @@ fn fixture() -> Fixture {
     let modes = tasks::all().map(|t| format!("{}=act", t.name)).collect::<Vec<_>>().join(" ");
     let run_s = run_dir.display().to_string();
     let (wiki_s, prod_s, registry_s) = (wiki.display().to_string(), acc.join("spira").display().to_string(), format!("file://{}", kit.display()));
-    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap())]);
+    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_RUNTIME_OVERRIDES_SECS", "60")]);
     let programs = dir.join("programs.log");
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
@@ -163,10 +165,13 @@ fn fixture() -> Fixture {
         ("SPIRA_HOME", home.to_str()),
         ("SPIRA_REPO_MAP", map.to_str()),
         ("SPIRA_HOME_REPO", Some("spira")),
+        ("SPIRA_REPO", local.to_str()),
     ]);
-    let world = spira_runtime::world::World { lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), ..Default::default() };
+    let overrides = dir.join("overrides");
+    std::fs::create_dir(&overrides).unwrap();
+    let world = spira_runtime::world::World { overrides_dir: overrides.clone(), lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), ..Default::default() };
     let effects = Arc::new(spira_runtime::Effects { world, units: Some(Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)))), ..Default::default() });
-    Fixture { _serial: serial, _env: env, _dir: dir, log, local, pr, forge, wiki, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, effects }
+    Fixture { _serial: serial, _env: env, _dir: dir, log, local, pr, forge, wiki, overrides, toml, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, effects }
 }
 
 impl Drop for Fixture {
@@ -299,11 +304,44 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch) = (0, 0, 0, 0);
     let (mut programs_at_warm, mut programs_at_idle, mut programs_at_ready, mut idle_passes, mut rows_before_ready) = (0, Vec::new(), Vec::new(), 0, Vec::new());
-    let names = ["watch.throughput.observe", "landing.observe"];
+    let spec = f.overrides.join("round-vm-spill-ec2-always.override");
+    std::fs::write(&spec, "needed() { return 1; }\n").unwrap();
+    let ran = f.dir_path().join("overrides.log");
+    let fail = f.dir_path().join("overrides.fail");
+    for bin in [f.dir_path().join("bin"), f.dir_path().join("release/bin")] {
+        testkit::write_exe(bin.join("overrides.sh"), &format!("#!/bin/sh\necho \"$*\" >> {}\ntouch {}\n[ -e {} ] && {{ echo 'overrides: ghost: failed' >&2; exit 1; }}\nexit 0\n", ran.display(), f.toml.display(), fail.display()));
+    }
+    let runs = || std::fs::read_to_string(&ran).unwrap_or_default().lines().count();
+    let mut applied: std::collections::BTreeMap<&str, usize> = Default::default();
+    let names = ["watch.throughput.observe", "landing.observe", "overrides.apply"];
     let sentinel = ["sentinel-pass.observe", "cockpit-tier-60s.observe"];
-    run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &[warm, warm + HOUR, warm + HOUR + 3 * MINUTE, warm + HOUR + 6 * MINUTE], &mut |t| match t {
-        t if t == warm => (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len()),
+    let (before_hour, after) = (START + 59 * MINUTE, warm + HOUR);
+    let m = |n: u64| after + n * MINUTE;
+    let marks = [warm, before_hour, after, m(3), m(6), m(9), m(12), m(15), m(18)];
+    run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &marks, &mut |t| match t {
+        t if t == warm => {
+            applied.insert("warm", runs());
+            (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len());
+        }
+        t if t == before_hour => drop(applied.insert("idle", runs())),
+        t if t == m(6) => {
+            applied.insert("spec", runs());
+            touch(&f.toml, 1_000_000_002);
+            at_branch = logged(&f).len();
+        }
+        t if t == m(9) => {
+            applied.insert("toml", runs());
+            std::fs::write(&fail, "").unwrap();
+            touch(&spec, 1_000_000_003);
+        }
+        t if t == m(12) => {
+            applied.insert("failing", runs());
+            std::fs::remove_file(&fail).unwrap();
+        }
+        t if t == m(15) => drop(applied.insert("recovered", runs())),
+        t if t == m(18) => drop(applied.insert("recovered-quiet", runs())),
         t if t == warm + HOUR => {
+            applied.insert("boundary", runs());
             at_idle = logged(&f).len();
             programs_at_idle = logged_programs(&f);
             idle_passes = f.seen.lock().unwrap().iter().filter(|(n, _)| n == "sentinel-pass.observe").count();
@@ -312,14 +350,26 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
             commit(&f.local, "sp-cccccc landed", LANDED_S + 10);
             git(&f.local, &["branch", "-f", "local/main"], 1);
         }
-        t if t == warm + HOUR + 3 * MINUTE => {
+        t if t == m(3) => {
+            applied.insert("ref", runs());
+            touch(&spec, 1_000_000_001);
             at_commit = logged(&f).len();
             programs_at_ready = logged_programs(&f);
             git(&f.pr, &["branch", "spira/sp-x"], 1);
         }
-        _ => at_branch = logged(&f).len(),
+        _ => {}
     });
     assert_only_the_double_answered(&f);
+    let c = |k: &str| applied[k];
+    assert!(c("warm") >= 1, "the override was never applied: {applied:?}");
+    assert_eq!(c("idle"), c("warm"), "idle minutes started overrides.sh: {applied:?}");
+    assert_eq!(c("boundary"), c("idle") + 1, "the hour boundary runs it once: {applied:?}");
+    assert_eq!(c("ref"), c("boundary") + 1, "a moved landing ref is applied once: {applied:?}");
+    assert_eq!(c("spec"), c("ref") + 1, "a touched spec is applied once: {applied:?}");
+    assert_eq!(c("toml"), c("spec") + 1, "a touched config file is applied once: {applied:?}");
+    assert!(c("failing") >= c("toml") + 2, "a failing pass runs again on the next tick: {applied:?}");
+    assert!(c("recovered") > c("failing"), "{applied:?}");
+    assert_eq!(c("recovered-quiet"), c("recovered"), "a success is held again: {applied:?}");
     let all = logged(&f);
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git:\n{}", all[at_warm..at_idle].join("\n"));
     assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
@@ -418,4 +468,9 @@ impl Fixture {
     fn dir_path(&self) -> &Path {
         self._dir.path()
     }
+}
+
+fn touch(path: &Path, secs_after_epoch: u64) {
+    let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs_after_epoch)).unwrap();
 }
