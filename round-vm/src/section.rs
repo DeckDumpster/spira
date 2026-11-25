@@ -186,6 +186,11 @@ mod tests {
         assert_eq!(calls[1][..6], ["section", "publish-status", "--actor", kind::OWNER, "--expect-rev", "0"]);
         let body: Value = serde_json::from_str(&calls[1][7]).unwrap();
         assert_eq!(body, section_body(&status_of(None, &reading), NOW));
+        assert_eq!(body["kind"], "VmPool");
+        assert_eq!(body["metadata"]["name"], "pool");
+        assert_eq!(body["metadata"]["max_age"], "30m");
+        assert_eq!(body["metadata"]["target_latency"], "5m");
+        assert_eq!(body["status"][kind::SLOTS_IN_USE], json!([{ "pool": "proxmox", "in_use": 0 }, { "pool": "ec2", "in_use": 0 }]));
         assert_eq!(body["status"][kind::PASSES]["value"], 2.0);
         assert_eq!(body["status"][kind::INFRA_INCOMPLETE]["value"], 0.5);
     }
