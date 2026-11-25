@@ -28,10 +28,14 @@ struct Fixture {
     wiki: PathBuf,
     seen: Arc<Mutex<Vec<(String, String)>>>,
     programs: PathBuf,
+    started: PathBuf,
+    sock: PathBuf,
     requests: Arc<Mutex<Vec<String>>>,
     refused: Arc<Mutex<Vec<String>>>,
     claimable: Arc<Mutex<String>>,
+    ready: Arc<Mutex<Option<String>>>,
     effects: Arc<spira_runtime::Effects>,
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
 fn real_git() -> PathBuf {
@@ -49,13 +53,24 @@ fn commit(repo: &Path, msg: &str, at: u64) {
     git(repo, &["commit", "-q", "--allow-empty", "-m", msg], at);
 }
 
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
 fn fixture() -> Fixture {
+    let serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let dir = testkit::TempDir::new("git-idle");
     let real = real_git();
     let log = dir.join("git.log");
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     testkit::write_exe(bin.join("git"), &format!("#!/bin/sh\necho \"$PWD :: $*\" >> {}\nexec {} \"$@\"\n", log.display(), real.display()));
+    let started = dir.join("started.log");
+    let release = dir.join("release");
+    for d in [release.join("bin"), release.join("spira"), bin.clone()] {
+        std::fs::create_dir_all(&d).unwrap();
+        for name in LOGGED_PROGRAMS {
+            testkit::write_exe(d.join(name), &format!("#!/bin/sh\necho \"{name} $*\" >> {}\necho '[]'\n", started.display()));
+        }
+    }
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
 
     let local = dir.join("local");
@@ -104,17 +119,23 @@ fn fixture() -> Fixture {
     std::fs::write(&map, format!("spira|{}|queue.local|local/main||\nprrepo|{}|pr|origin/main||\n", local.display(), pr.display())).unwrap();
     let run_dir = dir.join("run");
     std::fs::create_dir(&run_dir).unwrap();
-    let sock = dir.join("lc.sock");
+    let sock = process_socket();
     let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
     let requests: Arc<Mutex<Vec<String>>> = Arc::default();
     let refused: Arc<Mutex<Vec<String>>> = Arc::default();
     let claimable = Arc::new(Mutex::new(String::from("{\"beads\":[]}")));
-    let (asked, turned_away, ready) = (requests.clone(), refused.clone(), claimable.clone());
+    let ready_id: Arc<Mutex<Option<String>>> = Arc::default();
+    let (asked, turned_away, ready, bead) = (requests.clone(), refused.clone(), claimable.clone(), ready_id.clone());
     std::thread::spawn(move || runtime::socket::answer(&listener, &|argv| {
         asked.lock().unwrap().push(argv.join(" "));
         match argv.first().map(String::as_str) {
             Some("rc") => Ok("{\"ok\":{\"list_rev\":1,\"items\":[]}}".into()),
-            Some("content") | Some("list") => Ok("[]".into()),
+            Some("list") => Ok(bead.lock().unwrap().as_deref().map_or("[]".into(), |id| format!("[{}]", lc_row(id)))),
+            Some("plan") if argv.get(1).map(String::as_str) == Some("items") => Ok(format!("{{\"items\":[{}]}}", bead.lock().unwrap().as_deref().map_or(String::new(), plan_row))),
+            Some("plan") => Ok("{\"watermark\":1,\"items\":[]}".into()),
+            Some("content") => Ok("[]".into()),
+            Some("list-asks") => Ok("[]".into()),
+            Some("ops-graph" | "ops-view" | "section" | "audits" | "reconcile-content") => Ok("{}".into()),
             Some("git-fact") => Ok("{}".into()),
             Some("claimable") => Ok(ready.lock().unwrap().clone()),
             _ => {
@@ -124,28 +145,75 @@ fn fixture() -> Fixture {
         }
     }));
     let home = spira_config::resolve::locate_home_for_process().unwrap();
+    let runes_s = home.join("runes").display().to_string();
     let modes = tasks::all().map(|t| format!("{}=act", t.name)).collect::<Vec<_>>().join(" ");
     let run_s = run_dir.display().to_string();
     let (wiki_s, prod_s, registry_s) = (wiki.display().to_string(), acc.join("spira").display().to_string(), format!("file://{}", kit.display()));
-    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap())]);
+    let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_RUN", &run_s), ("SPIRA_RUNES_DIR", &runes_s), ("SPIRA_WIKI", &wiki_s), ("SPIRA_PROD", &prod_s), ("SPIRA_KIT_REGISTRY", &registry_s), ("SPIRA_KIT_CRATE", "dumpster-kit"), ("SPIRA_KIT_SITES", "spira:Cargo.toml"), ("SPIRA_ID_PREFIX", "sp"), ("SPIRA_BATCHER_FORGE_ENABLE", "1"), ("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_TASK_MODES", &modes), ("SPIRA_REPO_MAP", map.to_str().unwrap())]);
     let programs = dir.join("programs.log");
     let trap = format!("#!/bin/sh\necho \"spira-lc $*\" >> {}\nexit 1\n", programs.display());
-    let release = dir.join("release");
-    std::fs::create_dir_all(release.join("bin")).unwrap();
     testkit::write_exe(release.join("bin/spira-lc"), &trap);
     testkit::write_exe(bin.join("spira-lc"), &trap);
     let env = testkit::env(&[
         ("PATH", Some(&path)),
         ("SPIRA_LC_BIN", None),
         ("SPIRA_RELEASE", release.to_str()),
+        ("SPIRA_UNITS", Some("scripted")),
         ("SPIRA_TOML", toml.to_str()),
         ("SPIRA_HOME", home.to_str()),
         ("SPIRA_REPO_MAP", map.to_str()),
         ("SPIRA_HOME_REPO", Some("spira")),
     ]);
     let world = spira_runtime::world::World { lc_socket: sock.clone(), repo_map: map, home_repo: "spira".into(), run_dir, wiki: wiki.clone(), ..Default::default() };
-    let effects = Arc::new(spira_runtime::Effects { world, ..Default::default() });
-    Fixture { _env: env, _dir: dir, log, local, pr, forge, wiki, seen: Arc::default(), programs, requests, refused, claimable, effects }
+    let effects = Arc::new(spira_runtime::Effects { world, units: Some(Arc::new(runtime::units::ScriptedUnits::new(Arc::new(runtime::ports::WallClock)))), ..Default::default() });
+    Fixture { _serial: serial, _env: env, _dir: dir, log, local, pr, forge, wiki, seen: Arc::default(), programs, started, sock: sock.clone(), requests, refused, claimable, ready: ready_id, effects }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.sock);
+    }
+}
+
+fn process_socket() -> PathBuf {
+    static HOME: std::sync::OnceLock<testkit::TempDir> = std::sync::OnceLock::new();
+    let sock = HOME.get_or_init(|| testkit::TempDir::new("git-idle-sock")).join("lc.sock");
+    let _ = std::fs::remove_file(&sock);
+    sock
+}
+
+fn lc_row(id: &str) -> String {
+    format!("{{\"bead_id\":\"{id}\",\"state\":\"READY\",\"holds\":[],\"stack\":{{}},\"version\":\"1\"}}")
+}
+
+fn plan_row(id: &str) -> String {
+    format!("{{\"id\":\"{id}\",\"title\":\"t\",\"priority\":2,\"issue_type\":\"task\",\"status\":\"open\",\"labels\":[\"spira\",\"plan\"],\"created_at\":\"2020-01-01T00:00:00Z\",\"updated_at\":\"2020-01-01T00:00:00Z\"}}")
+}
+
+const LOGGED_PROGRAMS: [&str; 2] = ["spira-claim", "systemctl"];
+
+fn logged_programs(f: &Fixture) -> Vec<String> {
+    let all = std::fs::read_to_string(&f.started).unwrap_or_default();
+    all.lines().filter(|l| l.starts_with("spira-claim ") || l.contains(" list-units")).map(str::to_string).collect()
+}
+
+fn assert_stubs_log(f: &Fixture) {
+    let quiet = |p: &str, args: &[&str]| Command::new(p).args(args).stdout(std::process::Stdio::null()).status().unwrap();
+    quiet("spira-claim", &["ready-count", "control"]);
+    quiet("systemctl", &["--user", "list-units", "control"]);
+    assert_eq!(logged_programs(f).len(), 2, "the logging stubs are what PATH resolves, so a started claim or listing is seen");
+    std::fs::remove_file(&f.started).unwrap();
+}
+
+fn make_ready(f: &Fixture, id: &str) {
+    let bead = format!("{{\"bead_id\":\"{id}\",\"verdict\":\"claimable\",\"runes\":[],\"row\":{},\"content\":{}}}", lc_row(id), plan_row(id));
+    *f.claimable.lock().unwrap() = format!("{{\"beads\":[{bead}]}}");
+    *f.ready.lock().unwrap() = Some(id.into());
+}
+
+fn strand_rows(f: &Fixture) -> Vec<String> {
+    let snap: serde_json::Value = serde_json::from_str(&last_output(f, "sentinel-pass.observe")).unwrap_or_default();
+    snap["strand"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(str::to_string)).collect()
 }
 
 const COCKPIT_UNSENT: &str = r#"{"probes":[{"name":"cockpit.unsent","timeout_ms":300000}],"config":{}}"#;
@@ -165,15 +233,17 @@ fn doubles(f: &Fixture, names: &[&'static str]) -> Arc<sim::doubles::Doubles> {
     Arc::new(d)
 }
 
-fn run_hours(f: &Fixture, names: &[&'static str], until: &[u64], between: &mut dyn FnMut(u64)) {
+fn run_hours(f: &Fixture, names: &[&'static str], late: (&[&'static str], u64), until: &[u64], between: &mut dyn FnMut(u64)) {
     let mut sim = Sim::new(1);
     for r in registrations(&spira_runtime::Settings::load().expect("settings")) {
         sim.add_workflow(r);
     }
-    sim.set_effects(doubles(f, names));
-    for t in tasks::all().filter(|t| t.effects.iter().any(|e| names.contains(e))) {
+    let every: Vec<&'static str> = names.iter().chain(late.0).copied().collect();
+    sim.set_effects(doubles(f, &every));
+    for t in tasks::all().filter(|t| t.effects.iter().any(|e| every.contains(e))) {
         let (_, stream, kind) = (t.boot)();
-        sim.boot_workflow(START, stream, &kind.tag, &kind.body);
+        let at = if t.effects.iter().any(|e| late.0.contains(e)) { late.1 } else { START };
+        sim.boot_workflow(at, stream, &kind.tag, &kind.body);
     }
     for t in until {
         sim.run_until(*t);
@@ -225,17 +295,26 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     let f = fixture();
     spira_config::process::with_fresh(|| {
     assert_traps_and_double_are_live(&f);
+    assert_stubs_log(&f);
     let warm = START + 10 * MINUTE;
     let (mut at_warm, mut at_idle, mut at_commit, mut at_branch) = (0, 0, 0, 0);
-    run_hours(&f, &["watch.throughput.observe", "landing.observe"], &[warm, warm + HOUR, warm + HOUR + 3 * MINUTE, warm + HOUR + 6 * MINUTE], &mut |t| match t {
-        t if t == warm => at_warm = logged(&f).len(),
+    let (mut programs_at_warm, mut programs_at_idle, mut programs_at_ready, mut idle_passes, mut rows_before_ready) = (0, Vec::new(), Vec::new(), 0, Vec::new());
+    let names = ["watch.throughput.observe", "landing.observe"];
+    let sentinel = ["sentinel-pass.observe", "cockpit-tier-60s.observe"];
+    run_hours(&f, &names, (&sentinel, warm + HOUR - 10 * MINUTE), &[warm, warm + HOUR, warm + HOUR + 3 * MINUTE, warm + HOUR + 6 * MINUTE], &mut |t| match t {
+        t if t == warm => (at_warm, programs_at_warm) = (logged(&f).len(), logged_programs(&f).len()),
         t if t == warm + HOUR => {
             at_idle = logged(&f).len();
+            programs_at_idle = logged_programs(&f);
+            idle_passes = f.seen.lock().unwrap().iter().filter(|(n, _)| n == "sentinel-pass.observe").count();
+            rows_before_ready = strand_rows(&f);
+            make_ready(&f, "sp-zzzzzz");
             commit(&f.local, "sp-cccccc landed", LANDED_S + 10);
             git(&f.local, &["branch", "-f", "local/main"], 1);
         }
         t if t == warm + HOUR + 3 * MINUTE => {
             at_commit = logged(&f).len();
+            programs_at_ready = logged_programs(&f);
             git(&f.pr, &["branch", "spira/sp-x"], 1);
         }
         _ => at_branch = logged(&f).len(),
@@ -243,9 +322,15 @@ fn an_idle_hour_after_warm_up_logs_zero_git_and_a_moved_ref_wakes_only_its_own_r
     assert_only_the_double_answered(&f);
     let all = logged(&f);
     assert_eq!(at_idle, at_warm, "an idle virtual hour logged git:\n{}", all[at_warm..at_idle].join("\n"));
+    assert!(idle_passes >= 5, "the sentinel pass observed {idle_passes} times by the end of the idle hour");
+    assert_eq!(programs_at_idle.len(), programs_at_warm, "an idle hour started programs:\n{}", programs_at_idle[programs_at_warm..].join("\n"));
+    assert!(!rows_before_ready.iter().any(|r| r.contains("sp-zzzzzz")), "nothing is ready yet: {rows_before_ready:?}");
+    let rows = strand_rows(&f);
+    assert!(rows.iter().any(|r| r.contains("sp-zzzzzz")), "a bead made READY shows in the next strand rows: {rows:?}");
+    assert_eq!(programs_at_ready.len(), programs_at_warm, "and reading it started no program: {programs_at_ready:?}");
     let local = f.local.display().to_string();
     let pr = f.pr.display().to_string();
-    let after_commit: Vec<&String> = all[at_idle..at_commit].iter().collect();
+    let after_commit: Vec<&String> = all[at_idle..at_commit].iter().filter(|l| !l.ends_with("rev-parse --verify --quiet refs/heads/spira/sp-zzzzzz")).collect();
     let logs = |lines: &[&String], repo: &str| lines.iter().filter(|l| l.contains(&format!("-C {repo} log "))).count();
     assert_eq!(logs(&after_commit, &local), 1, "a moved landing ref is read once: {after_commit:?}");
     assert_eq!(after_commit.len(), 1, "and nothing else asks git: {after_commit:?}");
@@ -289,7 +374,7 @@ fn the_sub_hour_observes_run_no_git_over_an_idle_hour_and_a_moved_ref_wakes_only
     let (mut at_warm, mut at_idle) = (0, 0);
     let mut unsent_before = String::new();
     let second = f.dir_path().join("second");
-    run_hours(&f, &SUB_HOUR, &marks, &mut |t| match t {
+    run_hours(&f, &SUB_HOUR, (&[], 0), &marks, &mut |t| match t {
         t if t == warm => at_warm = logged(&f).len(),
         t if t == idle => {
             at_idle = logged(&f).len();

@@ -97,7 +97,12 @@ pub fn ready(cfg: &Config, labels: &str, exclude: &[String]) -> Result<HashSet<S
     if !o.ok {
         return Err(format!("spira-claim ready-count {labels}: {}", o.stderr.trim()));
     }
-    Ok(parse_beads(&o.stdout).map_err(|e| format!("spira-claim ready-count {labels}: {e}"))?.into_iter().map(|b| b.id).collect())
+    ready_ids(&o.stdout).map_err(|e| format!("spira-claim ready-count {labels}: {e}"))
+}
+
+/// The bead ids in `spira-claim ready-count --json` output.
+pub fn ready_ids(json: &str) -> Result<HashSet<String>, String> {
+    Ok(parse_beads(json)?.into_iter().map(|b| b.id).collect())
 }
 
 pub fn show(lc: &LcClient, id: &str) -> Option<Bead> {
@@ -218,16 +223,13 @@ pub fn dwarves_live_directed(cfg: &Config) -> Result<u32, String> {
 }
 
 fn all_live_units(cfg: &Config) -> Result<Vec<String>, String> {
-    let globs = runtime::units::dwarf_globs();
-    let mut args = vec!["5", cfg.systemctl.as_str(), "--user", "list-units"];
-    args.extend(globs.iter().map(String::as_str));
-    args.extend(["--no-legend", "--plain", "--no-pager"]);
-    let o = run("timeout", &args, None, &[]);
-    if !o.ok {
-        return Err(format!("`systemctl --user list-units` failed, so the live dwarves are unknown: {}", o.stderr.trim()));
+    let units = runtime::units::host((cfg.systemctl != "systemctl").then_some(cfg.systemctl.as_str()));
+    let mut live = std::collections::BTreeSet::new();
+    for glob in runtime::units::dwarf_globs() {
+        let listed = units.list(&glob).map_err(|e| format!("listing the dwarf units failed, so the live dwarves are unknown: {}", e.0))?;
+        live.extend(listed.into_iter().filter(|u| runtime::units::is_live_dwarf(&u.name, u.state)).map(|u| u.name));
     }
-    let live: std::collections::BTreeSet<&str> = o.stdout.lines().filter_map(runtime::units::live_dwarf_in_list_line).collect();
-    Ok(live.into_iter().map(str::to_string).collect())
+    Ok(live.into_iter().collect())
 }
 
 fn unit_count(cfg: &Config, keep: &dyn Fn(&str) -> bool, exclude: Option<&str>) -> u32 {
@@ -541,14 +543,14 @@ mod tests {
         assert_eq!(dwarf_count(&cfg, "builder", Some("anything")), 0, "exclude is a no-op off the systemd-run branch");
     }
 
-    /// A `systemctl` that answers `list-units <glob>...` as systemd does: the units matching
-    /// any glob, one line each, `name load active sub description`.
+    /// A `systemctl` that answers `show <glob>...` as systemd does: one block per unit
+    /// matching a glob, with its `ActiveState`; `list-unit-files` lists none.
     fn fake_systemctl(dir: &Path, units: &[(&str, &str)]) -> String {
-        let table: String = units.iter().map(|(n, st)| format!("{n} loaded {st} running dwarf\n")).collect();
+        let table: String = units.iter().map(|(n, st)| format!("{n} {st}\n")).collect();
         std::fs::write(dir.join("units"), table).unwrap();
         let script = dir.join("systemctl");
         let body = format!(
-            "#!/bin/sh\nfor g in \"$@\"; do case \"$g\" in -*|list-units) ;; *) while read -r n rest; do case \"$n\" in $g) echo \"$n $rest\";; esac; done < '{}';; esac; done\n",
+            "#!/bin/sh\ncase \"$*\" in *show*) ;; *) exit 0;; esac\nfor g in \"$@\"; do case \"$g\" in -*|show) ;; *) while read -r n st; do case \"$n\" in $g) printf 'Id=%s\\nLoadState=loaded\\nActiveState=%s\\nSubState=running\\n\\n' \"$n\" \"$st\";; esac; done < '{}';; esac; done\n",
             dir.join("units").display()
         );
         testkit::write_exe(&script, &body);
@@ -602,7 +604,7 @@ mod tests {
         testkit::write_exe(&sc, "#!/bin/sh\necho 'Failed to connect to bus' >&2\nexit 1\n");
         let cfg = Config { systemctl: sc.to_string_lossy().into_owned(), ..Config::test_fixture() };
         let e = live_units(&cfg).unwrap_err();
-        assert!(e.contains("live dwarves are unknown") && e.contains("Failed to connect"), "{e}");
+        assert!(e.contains("live dwarves are unknown") && e.contains("exited 1"), "{e}");
     }
 
     #[test_id(t1ed66x)]
