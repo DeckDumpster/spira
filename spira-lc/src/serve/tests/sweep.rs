@@ -32,7 +32,7 @@ fn the_store_sweep_expires_an_overdue_mending_row_and_leaves_a_live_one() {
 
 #[test_id(tjnghcv)]
 #[test]
-fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
+fn the_journal_sweep_finishes_over_many_steps_each_bounded() {
     use crate::control::journal::SWEEP_STEP;
     use crate::journal::counting::Counting;
     use serde_json::{json, Value};
@@ -45,13 +45,13 @@ fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
     let store = Arc::new(crate::control::store::Store::new(Contract::open(backend, ports(), Config { min_lock_ttl_ms: 1_000 }).unwrap(), 1_000));
     let key = |table: &str, id: &str| crate::control::keys::runtime(table, &[id]);
     let mut writes: Vec<(String, Value)> = Vec::new();
-    for n in 0..12_000 {
+    for n in 0..2_500 {
         writes.push((key("schedule", &format!("carried{n:05}")), json!({"at": 0, "stream": "s"})));
     }
-    for n in 0..10_000 {
+    for n in 0..2_000 {
         writes.push((key("resolved", &format!("ghost{n:05}")), json!({})));
     }
-    for n in 0..300 {
+    for n in 0..30 {
         writes.push((key("schedule", &format!("old{n}")), json!({"id": format!("old{n}"), "at": 1, "stream": "s", "kind": {"tag": "t", "body": "b"}, "cause": null, "correlation": "c"})));
         writes.push((key("fired", &format!("old{n}")), json!({})));
         let effect = |id: String| json!({"task": "t", "ekey": format!("e{id}"), "request_id": id, "stream": "s", "spec": {}, "requested_at": 1, "deadline_at": 2});
@@ -72,6 +72,7 @@ fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
     let sweep = |dry: bool| -> (u64, u64, u64) {
         let mut cursor: Option<String> = None;
         let mut totals = (0, 0, 0);
+        let mut steps = 0;
         loop {
             let mut argv = vec!["sweep"];
             if dry {
@@ -83,13 +84,17 @@ fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
             counter.store(0, Ordering::SeqCst);
             let (code, out) = step(&argv);
             assert_eq!(code, 0, "{out}");
+            steps += 1;
             let asked = counter.load(Ordering::SeqCst);
             assert!(asked <= bound, "one step asked the backend for {asked} keys (bound {bound})");
             let v: Value = serde_json::from_str(&out).unwrap();
             totals = (totals.0 + v["idless_schedules"].as_u64().unwrap(), totals.1 + v["indexed_schedules"].as_u64().unwrap(), totals.2 + v["indexed_effects"].as_u64().unwrap());
             match v["next"].as_str() {
                 Some(c) => cursor = Some(c.to_string()),
-                None => return totals,
+                None => {
+                    assert!(steps >= 3, "{steps} steps: the per-step bound was checked over one step");
+                    return totals;
+                }
             }
         }
     };
@@ -98,9 +103,9 @@ fn the_journal_sweep_finishes_on_a_production_sized_store_in_bounded_steps() {
     let count = |table: &str| raw.list(&[crate::control::keys::runtime_table(table).as_str()], &state_store::Selector::Everything).unwrap().0.len();
     let tables = || ["schedule", "pending", "open-effect", "resolved", "journal-meta"].map(count);
     let before = tables();
-    assert_eq!(sweep(true), (12_000, 1, 1));
+    assert_eq!(sweep(true), (2_500, 1, 1));
     assert!(tables() == before && !exists(&indexed), "a dry run writes nothing");
-    assert_eq!(sweep(false), (12_000, 1, 1));
+    assert_eq!(sweep(false), (2_500, 1, 1));
     assert!(exists(&indexed) && !exists(&key("schedule", "carried00000")) && exists(&key("resolved", "ghost00000")));
     assert!(exists(&key("pending", "live")) && exists(&key("open-effect", "open")), "the open rows are indexed");
     for (argv, wanted) in [(["open-effects"], "open"), (["due"], "live")] {

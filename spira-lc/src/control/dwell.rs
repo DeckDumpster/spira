@@ -272,6 +272,10 @@ impl LastIndex {
 impl<B: Backend> Store<B> {
     /// The [`Dwell`] at the head, as of `now`, scanning the audit log back `window_s` seconds.
     pub fn dwell(&self, now: i64, window_s: u64, landed_after: Option<i64>) -> Result<Dwell> {
+        self.dwell_capped(now, window_s, landed_after, DWELL_ROUNDS_MAX)
+    }
+
+    pub(crate) fn dwell_capped(&self, now: i64, window_s: u64, landed_after: Option<i64>, cap: usize) -> Result<Dwell> {
         let head = self.contract().head()?;
         let records = self.records_page(head, Some(&WAITING), None, None, None, |_| true)?;
         let mut repos: BTreeMap<String, Option<String>> = BTreeMap::new();
@@ -292,9 +296,9 @@ impl<B: Backend> Store<B> {
         let mut idx = self.dwell_index.lock().unwrap_or_else(|e| e.into_inner());
         (d.complete, d.horizon) = self.advance(&mut idx, head, now, window_s, &mut repos, &mut d.scanned)?;
         d.last = idx.last_since(floor);
-        let rounds = self.batches_opened_since(floor, DWELL_ROUNDS_MAX)?;
-        if rounds.len() >= DWELL_ROUNDS_MAX {
-            return Err(state_store::Error::Backend(format!("dwell: {DWELL_ROUNDS_MAX} rounds opened inside the window; DWELL_ROUNDS_MAX caps the read, narrow the window")));
+        let rounds = self.batches_opened_since(floor, cap)?;
+        if rounds.len() >= cap {
+            return Err(state_store::Error::Backend(format!("dwell: {cap} rounds opened inside the window; DWELL_ROUNDS_MAX caps the read, narrow the window")));
         }
         for (_, round) in rounds {
             let (cut, repo) = (round.value.opened_at, round.value.row.repo.clone());
