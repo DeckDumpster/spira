@@ -1177,6 +1177,12 @@ impl Tools for RealTools {
         let (rc, so, _) = run_capture(c);
         if rc == 0 { Some(String::from_utf8_lossy(&so).trim_end_matches('\n').to_string()) } else { None }
     }
+    fn gate_cancel(&self, bead: &str, why: &str) -> (i32, String) {
+        let mut c = command("gate");
+        c.args(["cancel", bead, "--why", why]);
+        self.with_env(&mut c);
+        combined(c)
+    }
     fn confine(&self, id: &str, branch: &str, repo: &Path, base: &str, labels: &str) -> (i32, String) {
         let mut c = command("confine.sh");
         c.arg(id).arg(branch).arg(repo).arg(base).arg(labels);

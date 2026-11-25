@@ -218,6 +218,11 @@ impl GateQueue {
         Ok(true)
     }
 
+    /// Drop this tip's job from the inbox; a claimed job is the worker's, cancelled by `gate cancel`.
+    pub fn withdraw(&self, repo: &str, branch: &str, tip: &str) -> bool {
+        fs::remove_file(self.dir(Where::Inbox).join(Job::new(repo, branch, "", tip, false).file())).is_ok()
+    }
+
     /// The verdict for this branch at this tip, left in place for the pass that will judge it.
     pub fn peek_done(&self, repo: &str, branch: &str, tip: &str) -> Option<Done> {
         self.read_done(repo, branch, tip).map(|(_, d)| d)

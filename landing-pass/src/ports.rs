@@ -136,6 +136,8 @@ pub trait Tools {
     fn gate_slots_free(&self, par: usize) -> Option<usize>;
     /// gate-run.sh --status <branch> <repo>: Some(output) when it exits 0.
     fn gate_status(&self, branch: &str, repo: &str) -> Option<String>;
+    /// `gate cancel <bead> --why <why>`: ask the bead's running gate to stop → (status, output).
+    fn gate_cancel(&self, bead: &str, why: &str) -> (i32, String);
     /// confine.sh <id> <branch> <repo-path> <base> <labels> → (status, output).
     fn confine(&self, id: &str, branch: &str, repo: &Path, base: &str, labels: &str) -> (i32, String);
     fn skew_refresh(&self, repo: &Path) -> String;
