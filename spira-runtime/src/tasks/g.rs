@@ -32,7 +32,7 @@ pub static TASKS: &[Task] = &[
         plane: runtime::Plane::Work,
         signal: &[],
         boot: cockpit_ensure::CockpitEnsure::boot,
-        cadence_ms: |_| cockpit_ensure::CADENCE_MS,
+        cadence_ms: |_| cockpit_ensure::BOOT_DELAY_MS,
         effects: cockpit_ensure::EFFECTS,
         runners: &[(cockpit_ensure::OBSERVE, |e, _, _| cockpit_ensure::observe(&e.world.proc_dir))],
         keys: &[],

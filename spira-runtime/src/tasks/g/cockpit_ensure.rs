@@ -270,7 +270,7 @@ mod tests {
     }
 
     fn stat(comm: &str, ppid: u32, started: u64) -> String {
-        let tail = vec!["0"; 17].join(" ");
+        let tail = vec!["0"; 2].join(" ");
         format!("1 ({comm}) S {ppid} 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 {tail} {started} 0\n")
     }
 
