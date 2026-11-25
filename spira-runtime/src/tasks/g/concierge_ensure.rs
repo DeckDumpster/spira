@@ -258,8 +258,7 @@ fn holder_of(look: &Look, id: &str) -> Option<Holder> {
         }
     }
     let transcript = find_file(&look.projects, &name)?;
-    let me = std::process::id();
-    std::fs::read_dir(&look.proc).ok()?.flatten().filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok()).filter(|pid| *pid != me).find_map(|pid| {
+    std::fs::read_dir(&look.proc).ok()?.flatten().filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok()).find_map(|pid| {
         (is_claude(&look.proc, pid) && holds(&look.proc, pid, &transcript)).then(|| start_time(&look.proc, pid)).flatten().map(|start| Holder { pid, start, transcript: transcript.clone() })
     })
 }
@@ -276,7 +275,7 @@ fn is_claude(proc: &Path, pid: u32) -> bool {
 }
 
 fn holds(proc: &Path, pid: u32, transcript: &Path) -> bool {
-    std::fs::read_dir(proc.join(pid.to_string()).join("fd")).is_ok_and(|fds| fds.flatten().any(|fd| std::fs::read_link(fd.path()).is_ok_and(|l| l == transcript)))
+    std::fs::read_dir(proc.join(pid.to_string()).join("fd")).is_ok_and(|fds| fds.flatten().any(|fd| std::fs::read_link(fd.path()).is_ok_and(|l| l == transcript || l.canonicalize().is_ok_and(|l| transcript.canonicalize().is_ok_and(|t| l == t)))))
 }
 
 fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
