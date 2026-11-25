@@ -55,7 +55,7 @@ fn label<'a>(s: &'a Series, k: &str) -> &'a str {
     s.labels.iter().find(|(n, _)| n == k).map_or("", |(_, v)| v.as_str())
 }
 
-fn last<'a>(rec: &'a Recorder, name: &str) -> Series {
+fn last(rec: &Recorder, name: &str) -> Series {
     rec.pushed.borrow().last().unwrap().iter().find(|s| s.name == name && label(s, "class") == "gate-worker").unwrap_or_else(|| panic!("{name}")).clone()
 }
 

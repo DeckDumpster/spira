@@ -474,7 +474,11 @@ pub struct UnitCounters {
 }
 
 fn stem(name: &str) -> &str {
-    name.strip_suffix(".service").or_else(|| name.strip_suffix(".scope")).unwrap_or(name)
+    Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name)
+}
+
+fn is_scope(name: &str) -> bool {
+    Path::new(name).extension().is_some_and(|e| e == "scope")
 }
 
 fn is_run_scope(stem: &str) -> bool {
@@ -504,8 +508,8 @@ pub fn unit_class(name: &str) -> (String, String) {
     if is_run_scope(stem(name)) {
         return same("run".into());
     }
-    if let Some(s) = name.strip_suffix(".scope") {
-        let kept: Vec<&str> = s.split('-').take_while(|p| !p.chars().any(|c| c.is_ascii_digit())).collect();
+    if is_scope(name) {
+        let kept: Vec<&str> = stem(name).split('-').take_while(|p| !p.chars().any(|c| c.is_ascii_digit())).collect();
         return same(format!("{}.scope", kept.join("-")));
     }
     let s = stem(name);
