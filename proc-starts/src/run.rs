@@ -118,6 +118,7 @@ mod tests {
         assert_eq!(f.drains, 2);
     }
 
+    #[test_id(tfgw9z2)]
     #[test]
     fn a_failed_push_keeps_the_totals_for_the_next_one() {
         let mut f = fake(&[Some("r1"), Some("r2")], true);
