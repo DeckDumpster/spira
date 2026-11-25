@@ -646,11 +646,11 @@ mod tests {
     #[test]
     fn a_sleeping_child_of_the_agent_leaves_a_still_file_that_a_return_removes() {
         let d = tmp("still-real");
-        let mut agent = std::process::Command::new("sh").args(["-c", "sleep 30; true"]).spawn().unwrap();
+        let mut agent = std::process::Command::new("sh").args(["-c", "sleep 30 & echo up; wait"]).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(agent.stdout.take().unwrap()), &mut String::new()).unwrap();
         let stop = Stop::default();
         stop.pgid.store(agent.id() as i32, Ordering::SeqCst);
         let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), stop_after: 4, real_ticks: true, run: d.to_path_buf(), ..Default::default() };
-        std::thread::sleep(Duration::from_millis(200));
         assert_eq!(still_hb(&d).run(&b, &stop, &AtomicBool::new(false)), None);
         let _ = agent.kill();
         let _ = agent.wait();
