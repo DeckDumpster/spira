@@ -1572,7 +1572,7 @@ fn put_next(b: &SqliteBackend) {
 fn no_commit_runs_a_wal_checkpoint() {
     let dir = TempDir::new("sqlite-no-commit-checkpoint");
     let path = dir.path().join("s.db");
-    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, ..Options::default() };
+    let opts = Options { max_read_ms: testkit::LOADED_HOST_MAX_READ_MS, checkpoint_every: u64::MAX, wal_line_bytes: u64::MAX, ..Options::default() };
     let b = SqliteBackend::open(&path, opts).unwrap();
     let mut moved = Vec::new();
     for i in 0..state_store_sqlite::JUMP + 10 {
