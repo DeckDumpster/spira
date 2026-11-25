@@ -1,0 +1,27 @@
+[Unit]
+Description=Spira proc-starts — kernel-counted process starts by unit, program and starter, pushed over OTLP
+Documentation=file://@SPIRA_HOME@/metrics-stack.sh
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=simple
+User=@SPIRA_UNIT_USER@
+AmbientCapabilities=CAP_BPF CAP_PERFMON
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON
+NoNewPrivileges=yes
+CPUQuota=5%
+ExecStart=@SPIRA_PROD_ROOT@/bin/proc-starts
+Restart=always
+RestartSec=30
+StandardOutput=append:@SPIRA_RUN@/proc-starts.log
+StandardError=append:@SPIRA_RUN@/proc-starts.log
+
+[X-Spira]
+Plane=observability
+
+[Install]
+WantedBy=multi-user.target

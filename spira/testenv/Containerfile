@@ -83,7 +83,8 @@ FROM docker.io/nixos/nix:2.24.10 AS nix-tools
 ARG NIXPKGS_REV=7fd4004d0511991fff3a0524856a9be09e28c5f0
 RUN nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
         "github:NixOS/nixpkgs/${NIXPKGS_REV}#rust-code-analysis" \
-        "github:NixOS/nixpkgs/${NIXPKGS_REV}#shellcheck" > /tmp/outs && \
+        "github:NixOS/nixpkgs/${NIXPKGS_REV}#shellcheck" \
+        "github:NixOS/nixpkgs/${NIXPKGS_REV}#llvmPackages.clang-unwrapped" > /tmp/outs && \
     mkdir -p /out/nix/store /out/bin && \
     for p in $(nix-store -qR $(cat /tmp/outs)); do cp -a "$p" /out/nix/store/; done && \
     for p in $(cat /tmp/outs); do for b in "$p"/bin/*; do if [ -e "$b" ]; then ln -s "$b" "/out/bin/$(basename "$b")"; fi; done; done

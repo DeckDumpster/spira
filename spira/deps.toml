@@ -155,6 +155,15 @@ version_min = ""
 version_probe = "rust-code-analysis-cli --version"
 
 [[dep]]
+name = "clang"
+tier = "dev"
+provider = "spira-env"
+purpose = "compiles proc-starts' kernel program (`clang -target bpf`) from its build.rs; the unwrapped clang, because the wrapped one adds hardening flags that break that target"
+version_min = ""
+version_probe = "clang --version | sed -n 's/^clang version //p'"
+absent = "proc-starts' build.rs fails naming the package to add (llvmPackages.clang-unwrapped from flake.nix)"
+
+[[dep]]
 name = "shellcheck"
 tier = "optional"
 provider = "spira-env"

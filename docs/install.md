@@ -54,10 +54,10 @@ default; an existing file is validated and never overwritten). With no answers f
 terminal it prompts; with neither it refuses and names the missing inputs.
 
 `spira-install [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build]
-[--no-session-hook] [--system-user] [--populate-lifecycle]` runs, in order: dependencies,
+[--no-session-hook] [--system-user] [--proc-starts] [--populate-lifecycle]` runs, in order: dependencies,
 `doctor` preflight, conflict checks, config, same-user lifecycle credential, build, database,
 units, lifecycle store, desired state, hooks, cockpit, verify (ending with `ready.sh`).
-`--system-user` and `--populate-lifecycle` are standalone single-phase modes. Exit codes: 0
+`--system-user`, `--proc-starts` and `--populate-lifecycle` are standalone single-phase modes. `--proc-starts` (root) installs and starts `spira-proc-starts.service`, which counts every process start in the kernel and runs as the owner of the harness home holding only CAP_BPF and CAP_PERFMON, dropped once its programs are attached; run it once per host. Exit codes: 0
 ready, 1 preflight refused, 2 a phase failed, 3 installed but not ready, 5 a conflict (another
 copy's units, a live dwarf, the gate lock, an instance/run-dir or Dolt-port collision; the
 message names the remedy and the override `SPIRA_INSTALL_CONFLICT_CONSIDERED=1`). It refuses a

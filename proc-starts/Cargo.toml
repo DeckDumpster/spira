@@ -1,0 +1,31 @@
+[package]
+name = "proc-starts"
+version = "1.0.0"
+edition = "2021"
+autotests = false
+description = "proc-starts — a kernel-counted series of process starts by unit class, unit, program and starter, pushed over OTLP."
+
+[lib]
+name = "proc_starts"
+path = "src/lib.rs"
+
+[[bin]]
+name = "proc-starts"
+path = "src/main.rs"
+test = false
+
+[features]
+integration = ["spira-config/integration", "spira-otel/integration", "system-paths/integration", "testkit/integration", "spira-test-id/integration", "ports/integration", "runtime/integration"]
+
+[dependencies]
+system-paths = { path = "../system-paths" }
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+ports = { path = "../ports" }
+runtime = { path = "../runtime" }
+aya = { version = "0.13", default-features = false }
+libc = "0.2"
+
+[dev-dependencies]
+spira-test-id = { path = "../spira-test-id" }
+testkit = { path = "../testkit" }
