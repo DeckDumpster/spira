@@ -196,9 +196,10 @@ pub fn reap_scratch_report(dir: &Path, fraction: Option<f64>, dry: bool, tmpfs: 
     let held_fn = |name: &str| gate::target::held_by_gate(Path::new(&run), name);
     let Some(root) = gate::target::root(&explicit, &run, tmpfs) else { return false };
     let gone = gate::target::reap_stale(&root, dir, std::time::Duration::from_secs(max_age * 60), fraction, dry, busy_fn, &held_fn);
+    let locks = gate::target::reap_orphan_locks(dir, dry);
     let _ = writeln!(
         out,
-        "target-reap: {} {} stale gate target dir(s) under {}{}",
+        "target-reap: {} {} stale gate target dir(s) under {}{}, {locks} orphaned tree lock(s)",
         if dry { "would remove" } else { "removed" },
         gone.len(),
         root.display(),
