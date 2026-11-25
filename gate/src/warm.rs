@@ -52,7 +52,7 @@ fn pooled_oldest_first(root: &Path, skip: Option<&Path>) -> Vec<PathBuf> {
         .unwrap_or_default()
         .into_iter()
         .flat_map(|d| fs::read_dir(d).map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default())
-        .filter(|p| !p.to_string_lossy().contains(".claimed"))
+        .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().contains(".claimed")))
         .map(|p| (fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH), p))
         .collect();
     v.sort();
