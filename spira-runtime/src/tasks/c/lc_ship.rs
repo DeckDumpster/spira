@@ -1,7 +1,7 @@
 //! # lc.ship — contract
 //!
 //! Family C, ported. lc-serve stages the control store's revlog runs and snapshots under
-//! `SPIRA_LC_SHIP_DIR/queue/`; this task uploads them, so lc-serve starts no `curl`.
+//! `SPIRA_LC_SHIP_DIR/queue/`; this task uploads them in-process, so lc-serve starts no program.
 //!
 //! - **Tick:** every `SPIRA_LC_SHIP_SECS`. Single-flight per kind: a kind with a drain in flight
 //!   is left alone, so at most one pass over `queue/revlog` and one over `queue/snapshot` runs at a
@@ -17,11 +17,10 @@
 //!   backup's environment file; `check-config` refuses an `s3://` destination without it.
 
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use runtime::event::EventKindTag;
-use runtime::ports::{Clock as _, Proc};
+use runtime::ports::Clock as _;
 use serde::{Deserialize, Serialize};
 use state_store_sqlite::durability::put::{Dest, S3Creds, Uploader};
 use state_store_sqlite::durability::revlog::{REVLOG, SNAPSHOT};
@@ -134,18 +133,18 @@ pub fn observe(run: &Path, url: &str, dir: &str) -> Result<String, String> {
     serde_json::to_string(&snap).map_err(|e| e.to_string())
 }
 
-/// The runner of [`DRAIN`]: uploads the runs `dir` queues through `proc`, which starts the `curl`.
-pub fn drain(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
-    drain_of(REVLOG, proc, url, dir, lookup, part_bytes)
+/// The runner of [`DRAIN`]: uploads the runs `dir` queues, in-process.
+pub fn drain(url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+    drain_of(REVLOG, url, dir, lookup, part_bytes)
 }
 
 /// The runner of [`DRAIN_SNAPSHOT`]: the same for the snapshots.
-pub fn drain_snapshot(proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
-    drain_of(SNAPSHOT, proc, url, dir, lookup, part_bytes)
+pub fn drain_snapshot(url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+    drain_of(SNAPSHOT, url, dir, lookup, part_bytes)
 }
 
-fn drain_of(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
-    let (uploaded, ran) = match upload(kind, proc, url, dir, lookup, part_bytes) {
+fn drain_of(kind: &str, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<String, String> {
+    let (uploaded, ran) = match upload(kind, url, dir, lookup, part_bytes) {
         Ok(n) => (n, Ok(format!("{n} object(s) uploaded"))),
         Err((n, e)) => (n, Err(e)),
     };
@@ -155,14 +154,14 @@ fn drain_of(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl 
 }
 
 /// The objects uploaded, or the refusal and how many went first.
-fn upload(kind: &str, proc: Arc<dyn Proc>, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<u64, (u64, String)> {
+fn upload(kind: &str, url: &str, dir: &str, lookup: impl Fn(&str) -> Option<String>, part_bytes: u64) -> Result<u64, (u64, String)> {
     let early = |e: String| (0, e);
     let dest = Dest::parse(url).map_err(early)?;
     let creds = match dest {
         Dest::S3 { .. } => Some(S3Creds::from_vars(lookup).and_then(|c| c.with_part_bytes(part_bytes)).map_err(early)?),
         Dest::File(_) => None,
     };
-    let put = Uploader { dest, creds, proc, deadline: PUT_DEADLINE };
+    let put = Uploader { dest, creds, deadline: PUT_DEADLINE };
     let sent = ship::drain_kind(&runtime::ports::RealFs, Path::new(dir), kind, &put).map_err(early)?;
     let n = sent.uploaded.len() as u64;
     match sent.failed {

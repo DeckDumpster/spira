@@ -3,10 +3,8 @@
 //! deletes the bucket (law-off-box-backups-are-private-and-write-only).
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
-use runtime::ports::{Proc, ProcSpec};
 use sha2::{Digest, Sha256};
 
 /// Uploads the file at `file` as `name` (`revlog/<from>-<to>`, `snapshot/<rev>`).
@@ -119,41 +117,87 @@ pub struct Uploader {
     pub dest: Dest,
     /// Needed for an `s3://` destination only.
     pub creds: Option<S3Creds>,
-    pub proc: Arc<dyn Proc>,
     pub deadline: Duration,
 }
 
-/// A curl config line's quoted value: the credentials go to curl on stdin, never on argv.
-fn quoted(v: &str) -> String {
-    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+/// `connect` bound of every request: a batch-job bound.
+const CONNECT_BOUND: Duration = Duration::from_secs(5);
+
+fn encode_path(key: &str) -> String {
+    key.split('/').map(query_value).collect::<Vec<_>>().join("/")
 }
 
 fn object_url(c: &S3Creds, bucket: &str, key: &str) -> String {
+    let key = encode_path(key);
     match &c.endpoint {
         Some(e) => format!("{}/{bucket}/{key}", e.trim_end_matches('/')),
         None => format!("https://{bucket}.s3.{}.amazonaws.com/{key}", c.region),
     }
 }
 
-fn auth_config(c: &S3Creds) -> String {
-    let mut config = format!(
-        "user = {}\n",
-        quoted(&format!("{}:{}", c.access_key, c.secret_key))
-    );
-    if let Some(t) = &c.session_token {
-        config.push_str(&format!(
-            "header = {}\n",
-            quoted(&format!("x-amz-security-token: {t}"))
-        ));
-    }
-    config
-}
-
 fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    hex(&Sha256::digest(bytes))
 }
 
-/// A query value with everything but unreserved characters percent-encoded.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn hmac(key: &[u8], data: &str) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    let mut m = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes a key of any length");
+    m.update(data.as_bytes());
+    m.finalize().into_bytes().to_vec()
+}
+
+/// `YYYYMMDDTHHMMSSZ` for `secs` since the epoch.
+fn amz_date(secs: u64) -> String {
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}{month:02}{day:02}T{:02}{:02}{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+fn now_amz_date() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    amz_date(secs)
+}
+
+/// The `Authorization` header (AWS Signature Version 4, S3) for a request to `url` carrying
+/// `headers`, every one of which is signed along with `host`, `x-amz-content-sha256` and
+/// `x-amz-date`. `url`'s path and query arrive already percent-encoded.
+fn sign(c: &S3Creds, method: &str, url: &str, headers: &[(&str, &str)], payload_sha256: &str, amz_date: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let (host, target) = rest.find('/').map_or((rest, "/"), |i| (&rest[..i], &rest[i..]));
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let mut params: Vec<String> = query.split('&').filter(|p| !p.is_empty()).map(|p| if p.contains('=') { p.to_string() } else { format!("{p}=") }).collect();
+    params.sort();
+    let mut signed: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.trim().to_string())).collect();
+    signed.push(("host".into(), host.into()));
+    signed.push(("x-amz-content-sha256".into(), payload_sha256.into()));
+    signed.push(("x-amz-date".into(), amz_date.into()));
+    signed.sort();
+    let canonical_headers: String = signed.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
+    let names = signed.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
+    let canonical = format!("{method}\n{path}\n{}\n{canonical_headers}\n{names}\n{payload_sha256}", params.join("&"));
+    let day = &amz_date[..8];
+    let scope = format!("{day}/{}/s3/aws4_request", c.region);
+    let to_sign = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}", sha256_hex(canonical.as_bytes()));
+    let k = hmac(format!("AWS4{}", c.secret_key).as_bytes(), day);
+    let k = hmac(&k, &c.region);
+    let k = hmac(&k, "s3");
+    let k = hmac(&k, "aws4_request");
+    let signature = hex(&hmac(&k, &to_sign));
+    format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={names}, Signature={signature}", c.access_key)
+}
+
 fn query_value(v: &str) -> String {
     v.bytes()
         .map(|b| match b {
@@ -169,42 +213,88 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
     Some(&text[from..to])
 }
 
+/// A request body: `len` bytes of `file` from `offset`, whose SHA-256 is `sha256`.
+struct Body<'a> {
+    file: &'a Path,
+    offset: u64,
+    len: u64,
+    sha256: String,
+}
+
+struct Reply {
+    etag: Option<String>,
+    body: String,
+}
+
+fn hash_range(file: &Path, offset: u64, len: u64) -> Result<String, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let io = |e: std::io::Error| format!("{}: {e}", file.display());
+    let mut src = std::fs::File::open(file).map_err(io)?;
+    src.seek(SeekFrom::Start(offset)).map_err(io)?;
+    let mut hash = Sha256::new();
+    let mut left = len;
+    let mut buf = vec![0u8; 1 << 20];
+    while left > 0 {
+        let take = left.min(buf.len() as u64) as usize;
+        src.read_exact(&mut buf[..take]).map_err(io)?;
+        hash.update(&buf[..take]);
+        left -= take as u64;
+    }
+    Ok(hex(&hash.finalize()))
+}
+
 impl Uploader {
-    /// One signed request of a multipart upload. A part (`body` set) answers with its response
-    /// headers on stdout; the other calls answer with their body.
-    fn call(&self, method: &str, url: &str, body: Option<(&Path, &str)>, xml: bool) -> Result<String, String> {
-        let c = self.creds.as_ref().ok_or("an s3:// destination with no credentials")?;
-        let secs = self.deadline.as_secs().max(1).to_string();
-        let sum = match body {
-            Some((_, sum)) => sum.to_string(),
-            None => sha256_hex(b""),
+    /// One signed request. A non-2xx answer, or a 2xx whose body holds an `<Error>`, is a
+    /// failure; the status it carries is S3's, and 0 when no answer came.
+    fn send(&self, method: &str, url: &str, what: &str, extra: &[(&str, &str)], payload: Result<Body, &[u8]>) -> Result<Reply, (u16, String)> {
+        use std::io::{Read, Seek, SeekFrom};
+        let unsent = |e: String| (0, e);
+        let c = self.creds.as_ref().ok_or_else(|| unsent("an s3:// destination with no credentials".into()))?;
+        let (sum, len) = match &payload {
+            Ok(b) => (b.sha256.clone(), b.len),
+            Err(bytes) => (sha256_hex(bytes), bytes.len() as u64),
         };
-        let mut args: Vec<String> = ["-q", "-sS", "--connect-timeout", "5", "--fail-with-body", "--max-time", &secs, "-X", method]
-            .map(String::from)
-            .to_vec();
-        match body {
-            Some((path, _)) if xml => args.extend(["--data-binary".into(), format!("@{}", path.display()), "-H".into(), "Content-Type: application/xml".into()]),
-            Some((path, _)) => args.extend(["-T".into(), path.display().to_string(), "-D".into(), "-".into(), "-o".into(), system_paths::DEV_NULL.into()]),
-            None => args.extend(["--data-binary".into(), String::new()]),
+        let date = now_amz_date();
+        let mut headers: Vec<(&str, &str)> = extra.to_vec();
+        let token = c.session_token.clone();
+        if let Some(t) = &token {
+            headers.push(("x-amz-security-token", t));
         }
-        args.extend(["--aws-sigv4".into(), format!("aws:amz:{}:s3", c.region), "-K".into(), "-".into()]);
-        args.extend(["-H".into(), format!("x-amz-content-sha256: {sum}")]);
-        args.push(url.into());
-        let out = self.proc.run(&ProcSpec { prog: "curl".into(), args, stdin: auth_config(c).into_bytes(), deadline: self.deadline + Duration::from_secs(5) })?;
-        let text = String::from_utf8_lossy(&out.stdout).into_owned();
-        match out.code {
-            Some(0) if !text.contains("<Error>") => Ok(text),
-            code => Err(format!(
-                "{method} {url}: curl exit {}: {}{}",
-                code.map_or("signal".into(), |c| c.to_string()),
-                String::from_utf8_lossy(&out.stderr).trim(),
-                if text.contains("<Error>") { text.as_str() } else { "" }
-            )),
+        let auth = sign(c, method, url, &headers, &sum, &date);
+        let agent = ureq::AgentBuilder::new().timeout_connect(CONNECT_BOUND).timeout(self.deadline).build();
+        let mut req = agent.request(method, url).set("x-amz-content-sha256", &sum).set("x-amz-date", &date).set("Authorization", &auth).set("Content-Length", &len.to_string());
+        for (k, v) in &headers {
+            req = req.set(k, v);
+        }
+        let sent = match payload {
+            Err(bytes) => req.send_bytes(bytes),
+            Ok(b) => {
+                let mut src = std::fs::File::open(b.file).map_err(|e| unsent(format!("{}: {e}", b.file.display())))?;
+                src.seek(SeekFrom::Start(b.offset)).map_err(|e| unsent(format!("{}: {e}", b.file.display())))?;
+                req.send(src.take(b.len))
+            }
+        };
+        match sent {
+            Ok(resp) => {
+                let etag = resp.header("etag").map(|v| v.trim().to_string());
+                let status = resp.status();
+                let body = resp.into_string().unwrap_or_default();
+                if body.contains("<Error>") {
+                    return Err((0, format!("{method} {what}: HTTP {status}: {}", body.trim())));
+                }
+                Ok(Reply { etag, body })
+            }
+            Err(ureq::Error::Status(status, resp)) => {
+                let body = resp.into_string().unwrap_or_default();
+                Err((status, format!("{method} {what}: HTTP {status}: {}", body.trim())))
+            }
+            Err(e) => Err((0, format!("{method} {what}: {e}"))),
         }
     }
 
-    /// Uploads `file` of `len` bytes as an S3 multipart upload of `part_bytes` parts, each cut
-    /// into a temporary beside `file`; a failed upload is aborted so its parts are not kept.
+    /// Uploads `file` of `len` bytes as an S3 multipart upload of `part_bytes` parts, each
+    /// streamed from `file`; a failed upload is left for the bucket's own expiry, since the
+    /// write-only key cannot abort it.
     fn multipart(&self, bucket: &str, key: &str, file: &Path, len: u64, part_bytes: u64) -> Result<(), (u16, String)> {
         let unsent = |e: String| (0, e);
         let c = self.creds.as_ref().ok_or_else(|| unsent("an s3:// destination with no credentials".into()))?;
@@ -213,53 +303,27 @@ impl Uploader {
             return Err(unsent(format!("PUT {key}: {len} bytes needs {count} parts, over S3's limit of {MAX_PARTS}")));
         }
         let base = object_url(c, bucket, key);
-        let started = self.call("POST", &format!("{base}?uploads"), None, false).map_err(unsent)?;
+        let started = self.send("POST", &format!("{base}?uploads"), &format!("{key}?uploads"), &[], Err(b"")).map_err(|(_, e)| unsent(e))?.body;
         let id = between(&started, "<UploadId>", "</UploadId>")
             .ok_or_else(|| unsent(format!("POST {key}?uploads: no UploadId in {started:?}")))?
             .to_string();
         let upload = format!("uploadId={}", query_value(&id));
-        let piece = PathBuf::from(format!("{}.part", file.display()));
-        let done = format!("{}.complete", file.display());
-        let sent = (|| -> Result<(), String> {
-            let mut src = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
-            let mut etags = Vec::new();
-            for n in 1..=count {
-                let want = part_bytes.min(len - (n - 1) * part_bytes);
-                let mut out = std::fs::File::create(&piece).map_err(|e| format!("{}: {e}", piece.display()))?;
-                let mut hash = Sha256::new();
-                let mut left = want;
-                let mut buf = vec![0u8; 1 << 20];
-                while left > 0 {
-                    let take = left.min(buf.len() as u64) as usize;
-                    std::io::Read::read_exact(&mut src, &mut buf[..take]).map_err(|e| format!("{}: {e}", file.display()))?;
-                    hash.update(&buf[..take]);
-                    std::io::Write::write_all(&mut out, &buf[..take]).map_err(|e| format!("{}: {e}", piece.display()))?;
-                    left -= take as u64;
-                }
-                drop(out);
-                let sum: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-                let headers = self.call("PUT", &format!("{base}?partNumber={n}&{upload}"), Some((&piece, &sum)), false)?;
-                let etag = headers
-                    .lines()
-                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("etag")).map(|(_, v)| v.trim().to_string()))
-                    .ok_or_else(|| format!("PUT {key} part {n}: no ETag in {headers:?}"))?;
-                etags.push(etag);
-            }
-            let parts: String = etags
-                .iter()
-                .enumerate()
-                .map(|(i, e)| format!("<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>", i + 1, e.replace('"', "&quot;")))
-                .collect();
-            let xml = format!("<CompleteMultipartUpload>{parts}</CompleteMultipartUpload>");
-            std::fs::write(&done, &xml).map_err(|e| format!("{done}: {e}"))?;
-            self.call("POST", &format!("{base}?{upload}"), Some((Path::new(&done), &sha256_hex(xml.as_bytes()))), true)?;
-            Ok(())
-        })();
-        let _ = std::fs::remove_file(&piece);
-        let _ = std::fs::remove_file(&done);
-        if let Err(e) = sent {
-            return Err((0, e));
+        let mut etags = Vec::new();
+        for n in 1..=count {
+            let offset = (n - 1) * part_bytes;
+            let want = part_bytes.min(len - offset);
+            let sha256 = hash_range(file, offset, want).map_err(unsent)?;
+            let body = Body { file, offset, len: want, sha256 };
+            let reply = self.send("PUT", &format!("{base}?partNumber={n}&{upload}"), &format!("{key} part {n}"), &[], Ok(body)).map_err(|(_, e)| unsent(e))?;
+            etags.push(reply.etag.ok_or_else(|| unsent(format!("PUT {key} part {n}: no ETag in the response")))?);
         }
+        let parts: String = etags
+            .iter()
+            .enumerate()
+            .map(|(i, e)| format!("<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>", i + 1, e.replace('"', "&quot;")))
+            .collect();
+        let xml = format!("<CompleteMultipartUpload>{parts}</CompleteMultipartUpload>");
+        self.send("POST", &format!("{base}?{upload}"), &format!("{key} complete"), &[("content-type", "application/xml")], Err(xml.as_bytes())).map_err(|(_, e)| unsent(e))?;
         Ok(())
     }
 }
@@ -301,7 +365,7 @@ impl Uploader {
     }
 
     /// One signed PUT; with `if_absent`, conditional on no object under `key`, and a failure
-    /// carries the HTTP status curl reports (0 when it reports none) so a refusal can be told
+    /// carries the HTTP status S3 answered (0 when none came) so a refusal can be told
     /// apart.
     fn signed(&self, bucket: &str, key: &str, file: &Path, if_absent: bool) -> Result<(), (u16, String)> {
         let unsent = |e: String| (0, e);
@@ -319,62 +383,13 @@ impl Uploader {
             }
             return self.multipart(bucket, key, file, len, c.part_bytes);
         }
-        let mut body = std::fs::File::open(file).map_err(io)?;
-        let mut hash = Sha256::new();
-        std::io::copy(&mut body, &mut hash).map_err(io)?;
-        let sum: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let sha256 = hash_range(file, 0, len).map_err(unsent)?;
         let url = object_url(c, bucket, key);
-        let config = auth_config(c);
-        let secs = self.deadline.as_secs().max(1).to_string();
-        let mut args: Vec<String> = [
-            "-q",
-            "-sS",
-            "--connect-timeout",
-            "5",
-            "--fail-with-body",
-            "--max-time",
-            &secs,
-            "-X",
-            "PUT",
-            "-T",
-            &file.display().to_string(),
-            "--aws-sigv4",
-            &format!("aws:amz:{}:s3", c.region),
-            "-K",
-            "-",
-            "-H",
-            &format!("x-amz-content-sha256: {sum}"),
-            "-H",
-            "x-amz-server-side-encryption: AES256",
-            "-o",
-            system_paths::DEV_NULL,
-        ]
-        .map(String::from)
-        .to_vec();
+        let mut extra = vec![("x-amz-server-side-encryption", "AES256")];
         if if_absent {
-            args.extend(["-H", "If-None-Match: *", "--write-out", "%{http_code}"].map(String::from));
+            extra.push(("if-none-match", "*"));
         }
-        args.push(url);
-        let out = self
-            .proc
-            .run(&ProcSpec {
-                prog: "curl".into(),
-                args,
-                stdin: config.into_bytes(),
-                deadline: self.deadline + Duration::from_secs(5),
-            })
-            .map_err(unsent)?;
-        match out.code {
-            Some(0) => Ok(()),
-            code => Err((
-                String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0),
-                format!(
-                    "PUT {key}: curl exit {}: {}",
-                    code.map_or("signal".into(), |c| c.to_string()),
-                    String::from_utf8_lossy(&out.stderr).trim()
-                ),
-            )),
-        }
+        self.send("PUT", &url, key, &extra, Ok(Body { file, offset: 0, len, sha256 })).map(|_| ())
     }
 }
 
@@ -436,23 +451,78 @@ mod tests {
         assert!(Dest::parse("s3:///p").is_err());
     }
 
-    /// A fake curl that answers every PUT with `status`, as `--write-out` prints it, and
-    /// records the argv. No process is started.
-    struct Answering(u16, std::sync::Mutex<Vec<Vec<String>>>);
+    #[derive(Clone)]
+    struct Req {
+        method: String,
+        target: String,
+        headers: std::collections::BTreeMap<String, String>,
+        body: Vec<u8>,
+    }
 
-    impl Proc for Answering {
-        fn run(&self, spec: &ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
-            self.1.lock().unwrap().push(spec.args.clone());
-            let code = if self.0 < 400 { 0 } else { 22 };
-            Ok(runtime::ports::ProcOutput { code: Some(code), stdout: self.0.to_string().into_bytes(), stderr: Vec::new() })
+    /// A loopback HTTP listener standing in for S3: records each request and answers it with
+    /// `reply`. No process is started.
+    struct Listener {
+        seen: Arc<std::sync::Mutex<Vec<Req>>>,
+        port: u16,
+    }
+
+    type Reply = Box<dyn Fn(&Req) -> (u16, String, String) + Send + Sync>;
+
+    impl Listener {
+        fn start(reply: Reply) -> Listener {
+            use std::io::{BufRead, Read, Write};
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let seen: Arc<std::sync::Mutex<Vec<Req>>> = Default::default();
+            let (log, port, reply) = (seen.clone(), l.local_addr().unwrap().port(), Arc::new(reply));
+            std::thread::spawn(move || {
+                for conn in l.incoming() {
+                    let (log, reply) = (log.clone(), reply.clone());
+                    std::thread::spawn(move || {
+                        let conn = conn.unwrap();
+                        let mut r = std::io::BufReader::new(conn.try_clone().unwrap());
+                        let mut w = conn;
+                        loop {
+                            let mut line = String::new();
+                            if r.read_line(&mut line).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            let mut parts = line.split_whitespace();
+                            let (method, target) = (parts.next().unwrap().to_string(), parts.next().unwrap().to_string());
+                            let mut headers = std::collections::BTreeMap::new();
+                            loop {
+                                let mut h = String::new();
+                                r.read_line(&mut h).unwrap();
+                                let Some((k, v)) = h.trim_end().split_once(':') else { break };
+                                headers.insert(k.to_ascii_lowercase(), v.trim().to_string());
+                            }
+                            let mut body = vec![0u8; headers.get("content-length").map_or(0, |n| n.parse().unwrap())];
+                            r.read_exact(&mut body).unwrap();
+                            let req = Req { method, target, headers, body };
+                            log.lock().unwrap().push(req.clone());
+                            let (status, extra, text) = reply(&req);
+                            let out = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\n{extra}\r\n{text}", text.len());
+                            if w.write_all(out.as_bytes()).is_err() {
+                                return;
+                            }
+                        }
+                    });
+                }
+            });
+            Listener { seen, port }
+        }
+
+        fn requests(&self) -> Vec<Req> {
+            self.seen.lock().unwrap().clone()
+        }
+
+        fn uploader(&self) -> Uploader {
+            let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some(format!("http://127.0.0.1:{}", self.port)), part_bytes: PART_BYTES };
+            Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), deadline: Duration::from_secs(5) }
         }
     }
 
-    fn s3(status: u16) -> (Uploader, Arc<Answering>) {
-        let curl = Arc::new(Answering(status, Default::default()));
-        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()), part_bytes: PART_BYTES };
-        let up = Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: curl.clone(), deadline: Duration::from_secs(5) };
-        (up, curl)
+    fn answering(status: u16) -> Listener {
+        Listener::start(Box::new(move |_| (status, String::new(), if status < 300 { String::new() } else { "<Error/>".into() })))
     }
 
     #[test_id(tem4z0x)]
@@ -461,22 +531,24 @@ mod tests {
         let dir = testkit::TempDir::new("put-new-s3");
         let f = dir.path().join("f");
         std::fs::write(&f, b"x").unwrap();
-        let (up, curl) = s3(200);
-        assert_eq!(up.put_new(&f, "archive/k"), Ok(()));
-        let args = curl.1.lock().unwrap()[0].clone();
-        assert!(args.windows(2).any(|w| w == ["-H", "If-None-Match: *"]), "{args:?}");
-        assert_eq!(args.last().unwrap(), "http://s3.test/b/p/archive/k");
-        let (up, _) = s3(412);
-        assert_eq!(up.put_new(&f, "archive/k"), Err(PutNew::Exists));
-        let (up, _) = s3(403);
-        assert!(matches!(up.put_new(&f, "archive/k"), Err(PutNew::Failed(m)) if m.contains("PUT p/archive/k")));
+        let ok = answering(200);
+        assert_eq!(ok.uploader().put_new(&f, "archive/k"), Ok(()));
+        let req = ok.requests().remove(0);
+        assert_eq!(req.method, "PUT");
+        assert_eq!(req.target, "/b/p/archive/k");
+        assert_eq!(req.headers["if-none-match"], "*");
+        assert!(req.headers["authorization"].contains("if-none-match"), "signed");
+        assert_eq!(req.headers["x-amz-server-side-encryption"], "AES256");
+        assert_eq!(answering(412).uploader().put_new(&f, "archive/k"), Err(PutNew::Exists));
+        let refused = answering(403).uploader().put_new(&f, "archive/k");
+        assert!(matches!(refused, Err(PutNew::Failed(m)) if m.starts_with("PUT p/archive/k: HTTP 403: <Error/>")));
     }
 
     #[test_id(t2hezsj)]
     #[test]
     fn a_put_new_to_a_directory_never_replaces_what_is_there() {
         let dir = testkit::TempDir::new("put-new-file");
-        let up = Uploader { dest: Dest::File(dir.path().join("off")), creds: None, proc: Arc::new(Answering(200, Default::default())), deadline: Duration::from_secs(5) };
+        let up = Uploader { dest: Dest::File(dir.path().join("off")), creds: None, deadline: Duration::from_secs(5) };
         let (a, b) = (dir.path().join("a"), dir.path().join("b"));
         std::fs::write(&a, b"first").unwrap();
         std::fs::write(&b, b"second").unwrap();
@@ -487,55 +559,26 @@ mod tests {
         assert_eq!(left, ["k"], "no temporary left beside it");
     }
 
-    /// A fake object store behind curl: answers the multipart calls as S3 does and keeps what
-    /// each part held.
-    #[derive(Default)]
-    struct Store {
-        calls: std::sync::Mutex<Vec<String>>,
-        parts: std::sync::Mutex<Vec<Vec<u8>>>,
-        completed: std::sync::Mutex<Option<String>>,
-        fail_part: Option<u64>,
-        fail_create: bool,
-    }
-
-    impl Proc for Store {
-        fn run(&self, spec: &ProcSpec) -> Result<runtime::ports::ProcOutput, String> {
-            let a = &spec.args;
-            let url = a.last().unwrap().clone();
-            let method = a[a.iter().position(|x| x == "-X").unwrap() + 1].clone();
-            self.calls.lock().unwrap().push(format!("{method} {url}"));
-            let ok = |out: String| Ok(runtime::ports::ProcOutput { code: Some(0), stdout: out.into_bytes(), stderr: Vec::new() });
-            if url.ends_with("?uploads") {
-                if self.fail_create {
-                    return Ok(runtime::ports::ProcOutput { code: Some(22), stdout: Vec::new(), stderr: b"503".to_vec() });
+    /// An object store's multipart calls, answered as S3 does.
+    fn multipart_store(fail_part: Option<u64>, fail_create: bool, error_on_complete: bool) -> Listener {
+        Listener::start(Box::new(move |r| {
+            if r.target.ends_with("?uploads") {
+                if fail_create {
+                    return (503, String::new(), "<Error/>".into());
                 }
-                return ok("<InitiateMultipartUploadResult><UploadId>up/1 2</UploadId></InitiateMultipartUploadResult>".into());
+                return (200, String::new(), "<InitiateMultipartUploadResult><UploadId>up/1 2</UploadId></InitiateMultipartUploadResult>".into());
             }
-            if method == "PUT" {
-                let n: u64 = between(&url, "partNumber=", "&").unwrap().parse().unwrap();
-                assert!(url.ends_with("uploadId=up%2F1%202"), "{url}");
-                if self.fail_part == Some(n) {
-                    return Ok(runtime::ports::ProcOutput { code: Some(22), stdout: Vec::new(), stderr: b"503".to_vec() });
+            if r.method == "PUT" {
+                let n: u64 = between(&r.target, "partNumber=", "&").unwrap().parse().unwrap();
+                assert!(r.target.ends_with("uploadId=up%2F1%202"), "{}", r.target);
+                if fail_part == Some(n) {
+                    return (503, String::new(), "<Error/>".into());
                 }
-                let file = &a[a.iter().position(|x| x == "-T").unwrap() + 1];
-                let body = std::fs::read(file).unwrap();
-                let want = a.iter().find_map(|x| x.strip_prefix("x-amz-content-sha256: ")).unwrap();
-                assert_eq!(want, sha256_hex(&body));
-                self.parts.lock().unwrap().push(body);
-                return ok(format!("HTTP/1.1 200 OK\r\nETag: \"etag{n}\"\r\n\r\n"));
+                return (200, format!("ETag: \"etag{n}\"\r\n"), String::new());
             }
-            if method == "POST" {
-                let file = a.iter().find_map(|x| x.strip_prefix("@")).unwrap();
-                *self.completed.lock().unwrap() = Some(std::fs::read_to_string(file).unwrap());
-                return ok("<CompleteMultipartUploadResult/>".into());
-            }
-            ok(String::new())
-        }
-    }
-
-    fn uploader_on(store: &Arc<Store>) -> Uploader {
-        let creds = S3Creds { access_key: "AK".into(), secret_key: "sk".into(), session_token: None, region: "r".into(), endpoint: Some("http://s3.test".into()), part_bytes: PART_BYTES };
-        Uploader { dest: Dest::parse("s3://b/p/").unwrap(), creds: Some(creds), proc: store.clone(), deadline: Duration::from_secs(5) }
+            let text = if error_on_complete { "<Error><Code>InternalError</Code></Error>" } else { "<CompleteMultipartUploadResult/>" };
+            (200, String::new(), text.into())
+        }))
     }
 
     #[test_id(t6z6600)]
@@ -545,18 +588,23 @@ mod tests {
         let f = dir.path().join("snap");
         let bytes: Vec<u8> = (0..2_500u32).map(|i| (i % 251) as u8).collect();
         std::fs::write(&f, &bytes).unwrap();
-        let store = Arc::new(Store::default());
-        let up = uploader_on(&store);
-        up.multipart("b", "p/snapshot/1", &f, bytes.len() as u64, 1_000).unwrap();
-        let parts = store.parts.lock().unwrap();
-        assert_eq!(parts.iter().map(Vec::len).collect::<Vec<_>>(), [1_000, 1_000, 500]);
-        assert_eq!(parts.concat(), bytes);
-        let xml = store.completed.lock().unwrap().clone().unwrap();
+        let store = multipart_store(None, false, false);
+        store.uploader().multipart("b", "p/snapshot/1", &f, bytes.len() as u64, 1_000).unwrap();
+        let calls = store.requests();
+        let parts: Vec<&Req> = calls.iter().filter(|r| r.method == "PUT").collect();
+        assert_eq!(parts.iter().map(|r| r.body.len()).collect::<Vec<_>>(), [1_000, 1_000, 500]);
+        assert_eq!(parts.iter().flat_map(|r| r.body.clone()).collect::<Vec<u8>>(), bytes);
+        for p in &parts {
+            assert_eq!(p.headers["x-amz-content-sha256"], sha256_hex(&p.body));
+        }
+        let complete = calls.last().unwrap();
+        let xml = String::from_utf8(complete.body.clone()).unwrap();
         assert!(xml.contains("<PartNumber>3</PartNumber><ETag>&quot;etag3&quot;</ETag>"), "{xml}");
         assert!(xml.find("PartNumber>1<").unwrap() < xml.find("PartNumber>2<").unwrap());
-        let calls = store.calls.lock().unwrap();
-        assert_eq!(calls.first().unwrap(), "POST http://s3.test/b/p/snapshot/1?uploads");
-        assert!(calls.last().unwrap().starts_with("POST ") && calls.last().unwrap().ends_with("uploadId=up%2F1%202"));
+        assert_eq!(complete.headers["content-type"], "application/xml");
+        assert_eq!(calls.first().unwrap().target, "/b/p/snapshot/1?uploads");
+        assert_eq!(calls.first().unwrap().method, "POST");
+        assert!(complete.method == "POST" && complete.target.ends_with("uploadId=up%2F1%202"));
         assert!(!dir.path().join("snap.part").exists() && !dir.path().join("snap.complete").exists());
     }
 
@@ -566,12 +614,23 @@ mod tests {
         let dir = testkit::TempDir::new("put-multipart-abort");
         let f = dir.path().join("snap");
         std::fs::write(&f, vec![7u8; 2_500]).unwrap();
-        let store = Arc::new(Store { fail_part: Some(2), ..Store::default() });
-        let err = uploader_on(&store).multipart("b", "k", &f, 2_500, 1_000).unwrap_err();
-        assert!(err.1.contains("curl exit 22"), "{err:?}");
-        assert!(store.calls.lock().unwrap().iter().all(|c| !c.starts_with("DELETE ")), "{:?}", store.calls);
-        assert!(store.completed.lock().unwrap().is_none());
+        let store = multipart_store(Some(2), false, false);
+        let err = store.uploader().multipart("b", "k", &f, 2_500, 1_000).unwrap_err();
+        assert!(err.1.contains("HTTP 503"), "{err:?}");
+        let calls = store.requests();
+        assert!(calls.iter().all(|c| c.method != "DELETE"), "no abort");
+        assert!(calls.iter().all(|c| !(c.method == "POST" && c.target.contains("uploadId"))), "never completed");
         assert!(!dir.path().join("snap.part").exists());
+    }
+
+    #[test_id(tpd0skn)]
+    #[test]
+    fn a_complete_that_answers_200_with_an_error_body_is_a_failed_upload() {
+        let dir = testkit::TempDir::new("put-multipart-error-body");
+        let f = dir.path().join("snap");
+        std::fs::write(&f, vec![7u8; 2_000]).unwrap();
+        let err = multipart_store(None, false, true).uploader().multipart("b", "k", &f, 2_000, 1_000).unwrap_err();
+        assert!(err.1.contains("<Error>"), "{err:?}");
     }
 
     #[test_id(t8jjcl2)]
@@ -581,10 +640,29 @@ mod tests {
         let f = dir.path().join("snap");
         let file = std::fs::File::create(&f).unwrap();
         file.set_len(MAX_PUT_BYTES + 1).unwrap();
-        let store = Arc::new(Store { fail_create: true, ..Store::default() });
-        let err = uploader_on(&store).put(&f, "snapshot/1").unwrap_err();
+        let store = multipart_store(None, true, false);
+        let err = store.uploader().put(&f, "snapshot/1").unwrap_err();
         assert!(!err.contains("single-PUT limit"), "{err}");
-        assert!(store.calls.lock().unwrap()[0].ends_with("?uploads"), "{:?}", store.calls);
+        assert!(store.requests()[0].target.ends_with("?uploads"), "{:?}", store.requests().len());
+    }
+
+    #[test_id(t04iyrb)]
+    #[test]
+    fn the_signer_reproduces_the_signature_aws_prints_for_its_get_object_example() {
+        let c = S3Creds { access_key: "AKIAIOSFODNN7EXAMPLE".into(), secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(), session_token: None, region: "us-east-1".into(), endpoint: None, part_bytes: PART_BYTES };
+        let auth = sign(&c, "GET", "https://examplebucket.s3.amazonaws.com/test.txt", &[("Range", "bytes=0-9")], &sha256_hex(b""), "20130524T000000Z");
+        assert_eq!(
+            auth,
+            "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+        );
+    }
+
+    #[test_id(ta356st)]
+    #[test]
+    fn the_request_date_is_the_utc_time_in_amz_basic_format() {
+        assert_eq!(amz_date(0), "19700101T000000Z");
+        assert_eq!(amz_date(1_369_353_600), "20130524T000000Z");
+        assert_eq!(amz_date(1_782_345_678), "20260625T000118Z");
     }
 
     #[test_id(treensq)]
@@ -596,11 +674,5 @@ mod tests {
         for bad in [0, 1024, MAX_PUT_BYTES + 1] {
             assert!(base.clone().with_part_bytes(bad).is_err(), "{bad}");
         }
-    }
-
-    #[test_id(t11x3cr)]
-    #[test]
-    fn a_quoted_config_value_escapes_quotes_and_backslashes() {
-        assert_eq!(quoted(r#"a"b\c"#), r#""a\"b\\c""#);
     }
 }

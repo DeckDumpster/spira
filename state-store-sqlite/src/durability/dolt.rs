@@ -267,7 +267,6 @@ mod tests {
         Uploader {
             dest: Dest::File(dest.into()),
             creds: None,
-            proc: Arc::new(SysProc),
             deadline: Duration::from_secs(5),
         }
     }

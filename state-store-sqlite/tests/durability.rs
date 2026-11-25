@@ -1,5 +1,5 @@
 //! The control store's off-box copy end to end on real files: the shipper's signed PUTs to an S3
-//! endpoint through a recording fake curl (no process is started), the outbox, a
+//! endpoint, a recording HTTP listener on loopback (no process is started), the outbox, a
 //! restore from the uploaded objects and the drill's fold-and-compare.
 
 #[macro_use]
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use runtime::ports::{Proc, ProcOutput, ProcSpec, RealFs, VirtualClock};
+use runtime::ports::{RealFs, VirtualClock};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use state_store::conformance as suite;
@@ -72,32 +72,98 @@ fn file_put(dest: &Path) -> Arc<dyn Put> {
     Arc::new(Uploader {
         dest: Dest::File(dest.to_path_buf()),
         creds: None,
-        proc: Arc::new(Curl::default()),
         deadline: Duration::from_secs(10),
     })
 }
 
-/// One curl run the uploader asked for: its argv, its stdin (the `-K -` config) and the bytes of
-/// the file it was told to upload, read at the call.
-type Run = (Vec<String>, String, Vec<u8>);
-
-/// A fake curl: records every run, exits 22 (an HTTP refusal under `--fail-with-body`) on the
-/// next run while `refuse_next` is set, and 0 otherwise. No process is started.
-#[derive(Clone, Default)]
-struct Curl {
-    runs: Arc<Mutex<Vec<Run>>>,
-    refuse_next: Arc<Mutex<bool>>,
+/// One request the listener received: method, target, lower-cased headers and body.
+#[derive(Clone)]
+struct Seen {
+    method: String,
+    target: String,
+    headers: std::collections::BTreeMap<String, String>,
+    body: Vec<u8>,
 }
 
-impl Proc for Curl {
-    fn run(&self, spec: &ProcSpec) -> Result<ProcOutput, String> {
-        assert_eq!(spec.prog, "curl");
-        let file = spec.args.iter().position(|a| a == "-T").map(|i| spec.args[i + 1].clone()).unwrap();
-        let body = std::fs::read(&file).unwrap();
-        self.runs.lock().unwrap().push((spec.args.clone(), String::from_utf8(spec.stdin.clone()).unwrap(), body));
-        let code = if std::mem::take(&mut *self.refuse_next.lock().unwrap()) { 22 } else { 0 };
-        Ok(ProcOutput { code: Some(code), stdout: Vec::new(), stderr: b"The requested URL returned error: 500".to_vec() })
+/// A recording HTTP listener on loopback standing in for S3: answers each request with the next
+/// status of its script (200 once the script is spent) and records it. No process is started.
+#[derive(Clone, Default)]
+struct S3Listener {
+    seen: Arc<Mutex<Vec<Seen>>>,
+    script: Arc<Mutex<std::collections::VecDeque<u16>>>,
+    port: u16,
+}
+
+impl S3Listener {
+    fn start() -> S3Listener {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let me = S3Listener { port: listener.local_addr().unwrap().port(), ..S3Listener::default() };
+        let shared = me.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let shared = shared.clone();
+                std::thread::spawn(move || shared.serve(conn.unwrap()));
+            }
+        });
+        me
     }
+
+    fn endpoint(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    fn refuse_next(&self, status: u16) {
+        self.script.lock().unwrap().push_back(status);
+    }
+
+    fn serve(&self, conn: std::net::TcpStream) {
+        use std::io::{BufRead, Read, Write};
+        let mut r = std::io::BufReader::new(conn.try_clone().unwrap());
+        let mut w = conn;
+        loop {
+            let mut line = String::new();
+            if r.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            let mut parts = line.split_whitespace();
+            let (method, target) = (parts.next().unwrap().to_string(), parts.next().unwrap().to_string());
+            let mut headers = std::collections::BTreeMap::new();
+            loop {
+                let mut h = String::new();
+                r.read_line(&mut h).unwrap();
+                let Some((k, v)) = h.trim_end().split_once(':') else { break };
+                headers.insert(k.to_ascii_lowercase(), v.trim().to_string());
+            }
+            let mut body = vec![0u8; headers.get("content-length").map_or(0, |n| n.parse().unwrap())];
+            r.read_exact(&mut body).unwrap();
+            self.seen.lock().unwrap().push(Seen { method, target, headers, body });
+            let status = self.script.lock().unwrap().pop_front().unwrap_or(200);
+            let text = if status < 300 { String::new() } else { "<Error><Code>Refused</Code></Error>".to_string() };
+            let reply = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nETag: \"e\"\r\n\r\n{text}", text.len());
+            if w.write_all(reply.as_bytes()).is_err() {
+                return;
+            }
+        }
+    }
+
+    fn requests(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+fn s3_creds(endpoint: String, secret: &str, token: Option<&str>) -> S3Creds {
+    S3Creds { access_key: "AKTEST".into(), secret_key: secret.into(), session_token: token.map(String::from), region: "us-test-1".into(), endpoint: Some(endpoint), part_bytes: 256 << 20 }
+}
+
+fn assert_signed_like_s3_wants(req: &Seen) {
+    let auth = &req.headers["authorization"];
+    assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKTEST/"), "{auth}");
+    let day = &req.headers["x-amz-date"][..8];
+    assert!(auth.contains(&format!("Credential=AKTEST/{day}/us-test-1/s3/aws4_request")), "{auth}");
+    let sum: String = Sha256::digest(&req.body).iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(req.headers["x-amz-content-sha256"], sum);
+    assert_eq!(req.headers["x-amz-server-side-encryption"], "AES256");
+    assert!(auth.contains("x-amz-server-side-encryption"), "signed: {auth}");
 }
 
 #[test_id(t5txm05)]
@@ -107,18 +173,10 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     let dir = TempDir::new("ship-s3");
     let clock = VirtualClock::new(1_000);
     let c = suite::open(open(&dir.path().join("live.db")), &clock);
-    let curl = Curl::default();
+    let s3 = S3Listener::start();
     let uploader = Uploader {
         dest: Dest::parse("s3://bucket/spira/lc/").unwrap(),
-        creds: Some(S3Creds {
-            access_key: "AKTEST".into(),
-            secret_key: "secret\"x".into(),
-            session_token: Some("tok".into()),
-            region: "us-test-1".into(),
-            endpoint: Some("http://endpoint.test".into()),
-            part_bytes: 256 << 20,
-        }),
-        proc: Arc::new(curl.clone()),
+        creds: Some(s3_creds(s3.endpoint(), "secret\"x", Some("tok"))),
         deadline: Duration::from_secs(10),
     };
     let mut s = Shipper::open(
@@ -133,7 +191,7 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     assert_eq!(first.uploaded.len(), 2, "{first:?}");
     put(&c, "b", Object::new(json!(2)), "2");
     put(&c, "a", Object::new(json!(3)), "3");
-    *curl.refuse_next.lock().unwrap() = true;
+    s3.refuse_next(500);
     let refused = tick(&mut s);
     assert!(
         refused
@@ -147,45 +205,23 @@ fn the_shipper_puts_every_revision_to_a_put_only_endpoint_and_retries_a_refusal_
     let held = tick(&mut s);
     assert_eq!(held.uploaded.len(), 1, "{held:?}");
 
-    let runs = curl.runs.lock().unwrap().clone();
-    assert!(
-        runs.iter().all(|(a, ..)| a.windows(2).any(|w| w == ["-X", "PUT"])),
-        "only PUTs: {:?}",
-        runs.iter().map(|r| &r.0).collect::<Vec<_>>()
-    );
-    let urls: Vec<&str> = runs.iter().map(|(a, ..)| a.last().unwrap().as_str()).collect();
+    let runs = s3.requests();
+    assert!(runs.iter().all(|r| r.method == "PUT"), "only PUTs");
+    let urls: Vec<&str> = runs.iter().map(|r| r.target.as_str()).collect();
     let retried = urls[2];
     assert_eq!(urls[3], retried, "the retry is the refused object, under its own name");
-    assert!(retried.starts_with("http://endpoint.test/bucket/spira/lc/revlog/"), "{retried}");
-    assert!(
-        urls.iter()
-            .any(|u| u.starts_with("http://endpoint.test/bucket/spira/lc/snapshot/")),
-        "{urls:?}"
-    );
-    for (args, config, body) in &runs {
-        let sum: String = Sha256::digest(body)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        assert!(args.contains(&format!("x-amz-content-sha256: {sum}")), "{args:?}");
-        assert!(args.windows(2).any(|w| w == ["--aws-sigv4", "aws:amz:us-test-1:s3"]), "{args:?}");
-        assert!(config.contains("AKTEST:secret\\\"x"), "the credentials go on stdin: {config}");
-        assert!(config.contains("x-amz-security-token: tok"), "{config}");
-        assert!(
-            !args.iter().any(|a| a.contains("AKTEST") || a.contains("secret") || a.contains("tok")),
-            "no credential on argv: {args:?}"
-        );
+    assert!(retried.starts_with("/bucket/spira/lc/revlog/"), "{retried}");
+    assert!(urls.iter().any(|u| u.starts_with("/bucket/spira/lc/snapshot/")), "{urls:?}");
+    for r in &runs {
+        assert_signed_like_s3_wants(r);
+        assert_eq!(r.headers["x-amz-security-token"], "tok");
+        assert!(r.headers["authorization"].contains("x-amz-security-token"), "signed");
+        assert!(!r.headers["authorization"].contains("secret"));
     }
     let mut mains = BTreeSet::new();
-    for (args, _, body) in &runs {
-        if args.last().unwrap().contains("/revlog/") {
-            mains.extend(
-                revlog::decode(body)
-                    .unwrap()
-                    .entries
-                    .iter()
-                    .map(|e| e.rev.main),
-            );
+    for r in &runs {
+        if r.target.contains("/revlog/") && r.headers.get("x-amz-content-sha256").is_some() {
+            mains.extend(revlog::decode(&r.body).unwrap().entries.iter().map(|e| e.rev.main));
         }
     }
     let head = c.backend().head().unwrap();
@@ -937,18 +973,10 @@ fn shipped_entries_leave_the_outbox_and_unshipped_ones_stay() {
     let clock = VirtualClock::new(1_000);
     let path = dir.path().join("live.db");
     let c = suite::open(open(&path), &clock);
-    let curl = Curl::default();
+    let s3 = S3Listener::start();
     let put_to: Arc<dyn Put> = Arc::new(Uploader {
         dest: Dest::parse("s3://bucket/spira/lc/").unwrap(),
-        creds: Some(S3Creds {
-            access_key: "AKTEST".into(),
-            secret_key: "secret".into(),
-            session_token: None,
-            region: "us-test-1".into(),
-            endpoint: Some("http://endpoint.test".into()),
-            part_bytes: 256 << 20,
-        }),
-        proc: Arc::new(curl.clone()),
+        creds: Some(s3_creds(s3.endpoint(), "secret", Some("tok"))),
         deadline: Duration::from_secs(10),
     });
     let mut s = Shipper::open(c.backend().clone(), ship_cfg(dir.path(), u64::MAX), put_to, Arc::new(clock.clone())).unwrap();
@@ -961,7 +989,7 @@ fn shipped_entries_leave_the_outbox_and_unshipped_ones_stay() {
     assert!(b.outbox_mains().unwrap().is_empty(), "everything shipped is gone");
     let r3 = put(&c, "a", Object::new(json!(3)), "3");
     let r4 = put(&c, "a", Object::new(json!(4)), "4");
-    *curl.refuse_next.lock().unwrap() = true;
+    s3.refuse_next(500);
     let t = tick(&mut s);
     assert!(t.failed.is_some() && t.shipped_through == r2, "{t:?}");
     assert_eq!(b.outbox_mains().unwrap(), [r3, r4], "the unshipped entries remain");
