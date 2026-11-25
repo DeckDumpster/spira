@@ -300,6 +300,22 @@ mod tests {
         assert!(ids.iter().all(|i| *i == ids[0]), "ids differ: {ids:?}");
     }
 
+    #[test_id(tdu8e9u)]
+    #[test]
+    fn a_dead_worker_answers_timeout_and_the_next_tick_starts_a_fresh_one() {
+        fn ok(_: &str) -> Option<Kv> {
+            Some(vec![("SP_X".into(), "1".into())])
+        }
+        let name = "dead-worker-probe";
+        let (tx, rx) = mpsc::channel::<Job>();
+        drop(rx);
+        lock().workers.insert(name.into(), tx);
+        let probes = [(name.to_string(), Duration::from_secs(5))];
+        assert_eq!(observe_with(&probes, ok)[0].status, "timeout");
+        assert!(!lock().running.contains(name));
+        assert_eq!(observe_with(&probes, ok)[0].status, "ok");
+    }
+
     fn quick(name: &str) -> Option<Kv> {
         match name {
             "fast" => Some(vec![("SP_FAST".into(), "1".into())]),
