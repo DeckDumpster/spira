@@ -63,6 +63,11 @@ path = "tests/task_e_watch_dwarf_usage.rs"
 required-features = ["integration"]
 
 [[test]]
+name = "task_e_watch_unit_usage"
+path = "tests/task_e_watch_unit_usage.rs"
+required-features = ["integration"]
+
+[[test]]
 name = "task_e_watch_transitions"
 path = "tests/task_e_watch_transitions.rs"
 required-features = ["integration"]

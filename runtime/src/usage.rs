@@ -541,7 +541,7 @@ pub fn units(roots: &Roots) -> Vec<UnitCounters> {
         io.sort_by(|a, b| a.device.cmp(&b.device));
         UnitCounters { class, unit, cgroup: rel(dir), cpu_usec: c.cpu_usec, io, pids_current: c.pids_current, pids_peak: c.pids_peak }
     };
-    let mut out = vec![one(&manager, TOTAL_CLASS.into(), basename(&manager))];
+    let mut out = vec![one(&manager, TOTAL_CLASS.into(), TOTAL_CLASS.into())];
     let mut slices: Vec<PathBuf> = std::fs::read_dir(&manager).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && basename(p).ends_with(".slice")).collect()).unwrap_or_default();
     slices.sort();
     for slice in slices {
