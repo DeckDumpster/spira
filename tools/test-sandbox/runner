@@ -69,6 +69,60 @@ held() {
     done < /proc/net/dev
 }
 
+# Runs "$@" as a child of this runner with its streams passed through, and kills its whole
+# process tree (exit 124, HUNG on stderr) on libtest's own hung-test line or on silence for the
+# period x terminate-after .config/nextest.toml declares.
+bounded() {
+    local tmp pid rc=0 limit="" period="" periods="" line name="" why="" now last start
+    tmp="$(mktemp -d)" || die "cannot make a scratch directory"
+    mkfifo "$tmp/tick" && exec 9<>"$tmp/tick" || die "cannot make a wait fifo"
+    if [ -r "$workspace/.config/nextest.toml" ]; then
+        while IFS= read -r line; do
+            [[ $line =~ period\ *=\ *\"([0-9]+)s\" ]] && period="${BASH_REMATCH[1]}"
+            [[ $line =~ terminate-after\ *=\ *([0-9]+) ]] && periods="${BASH_REMATCH[1]}"
+        done < "$workspace/.config/nextest.toml"
+        [ -n "$period" ] && [ -n "$periods" ] && limit=$((period * periods))
+    fi
+    printf '%(%s)T' -1 > "$tmp/act"
+    local watch='while IFS= read -r l || [ -n "$l" ]; do
+        [[ $l =~ ^test\ (.*)\ has\ been\ running\ for\ over\ [0-9]+\ seconds$ ]] && printf "%s" "${BASH_REMATCH[1]}" > "$2/hung"
+        printf "%(%s)T" -1 > "$2/act"
+    done'
+    setsid "$@" <&0 > >(tee >(bash -c "$watch" _ x "$tmp")) 2> >(tee >(bash -c "$watch" _ x "$tmp") >&2) &
+    pid=$!
+    kill_tree() {
+        local p all=("$pid") i=0
+        while [ $i -lt ${#all[@]} ]; do
+            for p in $(ps -o pid= --ppid "${all[$i]}" 2>/dev/null); do all+=("$p"); done
+            i=$((i + 1))
+        done
+        kill -KILL -- "-$pid" "${all[@]}" 2>/dev/null
+    }
+    trap 'kill_tree; rm -rf "$tmp"; exit 143' TERM INT HUP
+    start=$(printf '%(%s)T' -1)
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ -s "$tmp/hung" ]; then why=libtest; name="$(<"$tmp/hung")"; break; fi
+        if [ -n "$limit" ]; then
+            now=$(printf '%(%s)T' -1)
+            last="$(<"$tmp/act")"
+            [ "$last" -ge "$start" ] 2>/dev/null || last=$start
+            if [ $((now - last)) -ge "$limit" ]; then why=silent; name=-; break; fi
+        fi
+        read -r -t 0.05 -u 9 _ || true
+    done
+    if [ -n "$why" ]; then
+        kill_tree
+        wait "$pid" 2>/dev/null
+        echo "test-sandbox: HUNG test=$name binary=${bin##*/}" >&2
+        rc=124
+    else
+        wait "$pid"; rc=$?
+    fi
+    trap - TERM INT HUP
+    rm -rf "$tmp"
+    exit "$rc"
+}
+
 is_held=""
 [ -z "$print" ] && held && is_held=1
 # The command is found on the PATH it was handed, then run by that absolute path: the sandbox's
@@ -80,6 +134,8 @@ if [ -n "$around" ]; then
     set -- "$cmd" "$@"
 fi
 [ -n "$around" ] && [ -n "$is_held" ] && exec "$@"
+supervise=""
+[ -z "$around" ] && [ -z "$print" ] && [ -z "${NEXTEST:-}" ] && supervise=1
 
 
 path="$home/.local/lib/spira-env/bin:${CARGO_HOME:+$CARGO_HOME/bin:}/usr/local/bin:/usr/bin:/bin"
@@ -137,6 +193,7 @@ if [ -n "$is_held" ]; then
         mkdir -p "${gitconfig%/*}" && printf "$identity" > "$gitconfig.$$" && mv -f "$gitconfig.$$" "$gitconfig" ||
             die "cannot write $gitconfig in ${gitconfig%/*} as $(id -un)"
     fi
+    [ -n "$supervise" ] && bounded /usr/bin/env -i "${env[@]}" "$@"
     exec /usr/bin/env -i "${env[@]}" "$@"
 fi
 
@@ -244,4 +301,8 @@ if [ -n "$print" ]; then
 fi
 [ -z "$nogit" ] || die "$nogit"
 for kv in "${env[@]}"; do a+=(--setenv "${kv%%=*}" "${kv#*=}"); done
+if [ -n "$supervise" ]; then
+    exec 3< <(printf "$identity")
+    bounded "$bwrap" "${a[@]}" --ro-bind-data 3 "$gitconfig" -- "$@"
+fi
 exec "$bwrap" "${a[@]}" --ro-bind-data 3 "$gitconfig" -- "$@" 3< <(printf "$identity")

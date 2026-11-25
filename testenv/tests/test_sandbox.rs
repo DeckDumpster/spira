@@ -296,3 +296,91 @@ fn a_held_run_keeps_the_identity_an_enclosing_sandbox_handed_in_when_run_is_unwr
     let seen = format!("GIT_CONFIG_SYSTEM={}", identity.display());
     assert!(String::from_utf8_lossy(&out.stdout).lines().any(|l| l == seen), "{}", String::from_utf8_lossy(&out.stdout));
 }
+
+fn conf_default(key: &str) -> u64 {
+    let text = fs::read_to_string(workspace().join("spira/conf.d.defaults.generated.sh")).unwrap();
+    let marker = format!("${{{key}:=");
+    let at = text.find(&marker).unwrap_or_else(|| panic!("{key} has a default")) + marker.len();
+    text[at..].split('}').next().unwrap().parse().unwrap()
+}
+
+#[test_id(tpzzf50)]
+#[test]
+fn the_nextest_config_is_the_unit_deadline_defaults() {
+    let want = spira_config::unit_tier::nextest_config(
+        conf_default("SPIRA_UNIT_TEST_DEADLINE_SECS"),
+        conf_default("SPIRA_UNIT_TEST_DEADLINE_PERIODS"),
+        &spira_config::unit_tier::DenyList::default(),
+    );
+    assert_eq!(fs::read_to_string(workspace().join(".config/nextest.toml")).unwrap(), want);
+}
+
+struct Fixture {
+    _tmp: testkit::TempDir,
+    root: PathBuf,
+}
+
+fn bounded_fixture() -> Fixture {
+    let tmp = testkit::TempDir::new("bounded-runner");
+    let root = fs::canonicalize(tmp.path()).unwrap();
+    fs::create_dir_all(root.join("tools/test-sandbox")).unwrap();
+    fs::create_dir_all(root.join(".config")).unwrap();
+    testkit::write_exe(root.join("tools/test-sandbox/runner"), &fs::read_to_string(workspace().join("tools/test-sandbox/runner")).unwrap());
+    fs::write(root.join(".config/nextest.toml"), "[profile.default]\nslow-timeout = { period = \"1s\", terminate-after = 1 }\n").unwrap();
+    Fixture { _tmp: tmp, root }
+}
+
+impl Fixture {
+    fn run(&self, name: &str, script: &str, nextest: bool) -> std::process::Output {
+        let bin = self.root.join(name);
+        testkit::write_exe(&bin, &format!("#!/bin/bash\n{script}\n"));
+        let mut cmd = std::process::Command::new("bash");
+        cmd.arg(self.root.join("tools/test-sandbox/runner"));
+        cmd.arg(&bin).env_remove("NEXTEST");
+        if nextest {
+            cmd.env("NEXTEST", "1");
+        }
+        cmd.output().expect("the runner spawns")
+    }
+
+    fn assert_killed(&self, name: &str, script: &str, test: &str) {
+        let out = self.run(name, script, false);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(124), "{err}");
+        assert!(err.contains(&format!("test-sandbox: HUNG test={test} binary={name}")), "{err}");
+        let pid: String = fs::read_to_string(self.root.join("grandchild")).unwrap().trim().to_string();
+        assert!(!Path::new(system_paths::PROC).join(&pid).exists(), "grandchild {pid} outlived the runner");
+    }
+}
+
+const GRANDCHILD: &str = "sleep 6 & echo $! > \"$(dirname \"$0\")/grandchild\"";
+
+#[test_id(tt2sybr)]
+#[test]
+fn a_binary_that_prints_libtests_hung_line_and_sleeps_is_killed_named_and_its_children_die() {
+    let f = bounded_fixture();
+    f.assert_killed("hangs", &format!("{GRANDCHILD}\necho 'test mod::slow has been running for over 60 seconds'\nwait"), "mod::slow");
+}
+
+#[test_id(tfv15vy)]
+#[test]
+fn a_silent_binary_is_killed_after_the_declared_period_and_its_children_die() {
+    let f = bounded_fixture();
+    f.assert_killed("silent", &format!("{GRANDCHILD}\nwait"), "-");
+}
+
+#[test_id(t6gqur3)]
+#[test]
+fn a_finishing_binary_keeps_its_exit_code_stdout_and_stderr() {
+    let f = bounded_fixture();
+    let out = f.run("done", "echo out; echo err >&2; exit 7", false);
+    assert_eq!((out.status.code(), &out.stdout[..], &out.stderr[..]), (Some(7), &b"out\n"[..], &b"err\n"[..]));
+}
+
+#[test_id(tf36ekh)]
+#[test]
+fn under_nextest_a_silent_binary_is_not_killed() {
+    let f = bounded_fixture();
+    let out = f.run("quiet", "sleep 2.5; echo fin", true);
+    assert_eq!((out.status.code(), &out.stdout[..]), (Some(0), &b"fin\n"[..]));
+}
