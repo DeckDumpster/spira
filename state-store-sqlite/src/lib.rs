@@ -174,8 +174,8 @@ fn restart_wal(writer: &Mutex<Writer>, gate: &Mutex<()>, terms: &RestartTerms) -
     let RestartTerms { clock, max_read_ms, line } = *terms;
     let mut forced = false;
     let mut forcing = None;
-    let _gate = lock(gate);
     let started = clock.now_ms();
+    let _gate = lock(gate);
     loop {
         let (pass, page_size) = {
             let w = lock(writer);

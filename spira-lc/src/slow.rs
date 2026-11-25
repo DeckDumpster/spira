@@ -1043,12 +1043,16 @@ mod tests {
         restart_thread: Mutex<Option<std::thread::ThreadId>>,
         started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
         proceed: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        restart_calls: std::sync::atomic::AtomicUsize,
     }
 
     impl runtime::ports::Clock for SignalClock {
         fn now_ms(&self) -> u64 {
             let now = self.inner.now_ms();
-            if *self.restart_thread.lock().unwrap() == Some(std::thread::current().id()) {
+            // the restart's first reading precedes its gate; its second is taken with the gate held
+            if *self.restart_thread.lock().unwrap() == Some(std::thread::current().id())
+                && self.restart_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1
+            {
                 if let Some(tx) = self.started.lock().unwrap().take() {
                     let _ = tx.send(());
                     if let Some(rx) = self.proceed.lock().unwrap().take() {
@@ -1074,7 +1078,7 @@ mod tests {
         let (release_tx, release_rx) = channel::<()>();
         let (started_tx, started_rx) = channel::<()>();
         let (proceed_tx, proceed_rx) = channel::<()>();
-        let clock = Arc::new(SignalClock { inner: runtime::ports::VirtualClock::new(0), restart_thread: Mutex::new(None), started: Mutex::new(Some(started_tx)), proceed: Mutex::new(Some(proceed_rx)) });
+        let clock = Arc::new(SignalClock { inner: runtime::ports::VirtualClock::new(0), restart_thread: Mutex::new(None), started: Mutex::new(Some(started_tx)), proceed: Mutex::new(Some(proceed_rx)), restart_calls: Default::default() });
         let (armed, slow) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
         let probe = {
             let (armed, slow, clock) = (armed.clone(), slow.clone(), clock.clone());
