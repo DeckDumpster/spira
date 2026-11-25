@@ -135,7 +135,6 @@ pub fn iso_utc(epoch: u64) -> String {
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
-use std::process::Command;
 
 extern "C" {
     fn flock(fd: i32, operation: i32) -> i32;
@@ -163,13 +162,8 @@ pub fn default_host() -> String {
 }
 
 pub fn now_iso() -> String {
-    Command::new("timeout").arg("5").arg("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+    let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    iso_utc(epoch)
 }
 
 /// A row is one whole line: a JSON object with no newline inside it. Refused before any byte
@@ -346,5 +340,15 @@ mod tests {
         for bad in ["", "yesterday", "2026-13-01T00:00:00Z", "2026-09-29T19:18:40"] {
             assert_eq!(parse_ts(bad), None, "{bad}");
         }
+    }
+
+    #[test_id(tykiafb)]
+    #[test]
+    fn now_iso_parses_back_to_within_the_calls_own_before_and_after_epochs() {
+        let epoch = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let before = epoch();
+        let parsed = parse_ts(&now_iso()).expect("now_iso parses");
+        let after = epoch();
+        assert!((before..=after).contains(&parsed), "{before} <= {parsed} <= {after}");
     }
 }

@@ -306,6 +306,39 @@ pub fn held<T: Clone + Send + 'static>(repo: &Path, question: &str, key: &str, r
     Ok(v)
 }
 
+pub const REGISTRY_FILE: &str = "test-registry.sqlite";
+
+fn file_stamp(path: &Path, empty_is_absent: bool) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    match fs::metadata(path) {
+        Ok(m) if empty_is_absent && m.len() == 0 => Some("-".into()),
+        Ok(m) => Some(format!("{}.{}:{}", m.mtime(), m.mtime_nsec(), m.len())),
+        Err(e) if empty_is_absent && e.kind() == std::io::ErrorKind::NotFound => Some("-".into()),
+        Err(_) => None,
+    }
+}
+
+fn registry_key(file: &Path) -> Option<String> {
+    let mut wal = file.as_os_str().to_os_string();
+    wal.push("-wal");
+    Some(format!("{}|{}", file_stamp(file, false)?, file_stamp(Path::new(&wal), true)?))
+}
+
+/// The answer to `question` about the test registry's rows, held while the (mtime, length) of its
+/// file and `-wal` are unchanged; an empty or missing `-wal` is one state. A file that cannot be
+/// located or stat'd is asked each time.
+pub fn held_registry<T: Clone + Send + 'static>(question: &str, read: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let file = match crate::process::cfg("SPIRA_TEST_REGISTRY_PATH") {
+        Ok(p) if !p.trim().is_empty() => Some(PathBuf::from(p)),
+        Ok(_) => crate::resolve::run_dir_for_process().ok().map(|d| d.join(REGISTRY_FILE)),
+        Err(_) => None,
+    };
+    match file.as_deref().and_then(|f| registry_key(f).map(|k| (f, k))) {
+        Some((f, key)) => held(f, question, &key, read),
+        None => read(),
+    }
+}
+
 fn walk(dir: &Path, stem: &str, want: &str, out: &mut BTreeMap<String, String>) -> Option<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,

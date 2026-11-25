@@ -1574,29 +1574,39 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
     checks
 }
 
-/// podman's storage root, or empty when podman is absent or did not answer. A long-lived
-/// host remembers only a root podman named: the root is podman's configuration, not its
+/// podman's storage root, or empty when podman is absent or did not answer. A Config
+/// remembers only a root podman named: the root is podman's configuration, not its
 /// state, while one slow or failed `podman info` is not an answer to keep.
 fn podman_graph_root(cfg: &Config) -> String {
-    let held = cfg.host.as_ref().map(|_| "podman-graph-root".to_string());
-    cfg.remembered(held, || Some(run_cmd(&cfg.seams.podman, &["info", "--format", "{{.Store.GraphRoot}}"])).filter(|r| !r.trim().is_empty())).unwrap_or_default()
+    cfg.remembered(Some("podman-graph-root".to_string()), || Some(run_cmd(&cfg.seams.podman, &["info", "--format", "{{.Store.GraphRoot}}"])).filter(|r| !r.trim().is_empty())).unwrap_or_default()
+}
+
+fn images_stamp(graph_root: &str) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut stamps: Vec<String> = std::fs::read_dir(graph_root.trim()).ok()?.filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().ends_with("-images")).filter_map(|e| {
+        let m = std::fs::metadata(e.path().join("images.json")).ok()?;
+        Some(format!("{}:{}.{}:{}", e.file_name().to_string_lossy(), m.mtime(), m.mtime_nsec(), m.len()))
+    }).collect();
+    stamps.sort();
+    (!stamps.is_empty()).then(|| stamps.join(","))
 }
 
 /// The positive control on testenv's own image cleanup: a store holding more dangling
 /// images than the configured bound is a gap, escalated, because the disk under it fills
 /// silently otherwise. No podman storage root (podman absent) is no check, as for the disk.
-fn observe_untagged_images(cfg: &Config) -> Vec<Check> {
+pub fn observe_untagged_images(cfg: &Config) -> Vec<Check> {
     let podman = &cfg.seams.podman;
-    if podman_graph_root(cfg).trim().is_empty() {
+    let root = podman_graph_root(cfg);
+    if root.trim().is_empty() {
         return Vec::new();
     }
-    let out = spira_config::bounded::bounded(podman)
-        .args(["images", "--quiet", "--filter", "dangling=true"])
-        .stderr(Stdio::null())
-        .output();
-    let raw = match out {
-        Ok(o) if o.status.success() => {
-            let n = String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count() as u64;
+    let key = images_stamp(&root).map(|stamp| format!("untagged:{root}:{stamp}"));
+    let counted = cfg.remembered(key, || {
+        let o = spira_config::bounded::bounded(podman).args(["images", "--quiet", "--filter", "dangling=true"]).stderr(Stdio::null()).output().ok().filter(|o| o.status.success())?;
+        Some(String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().to_string())
+    });
+    let raw = match counted.and_then(|n| n.parse::<u64>().ok()) {
+        Some(n) => {
             if n <= cfg.untagged_images_max {
                 RawStatus::Satisfied
             } else {
@@ -1607,7 +1617,7 @@ fn observe_untagged_images(cfg: &Config) -> Vec<Check> {
                 }
             }
         }
-        _ => RawStatus::Unobservable { reason: "podman could not list its dangling images".into() },
+        None => RawStatus::Unobservable { reason: "podman could not list its dangling images".into() },
     };
     vec![Check { key: "images:untagged".into(), raw, remedy: Remedy::Escalate }]
 }

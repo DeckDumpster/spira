@@ -3056,6 +3056,10 @@ pub fn close_superseded_reds(repo: &Repo, head: &str) {
 /// The distinct beads the test registry's rows name.
 pub fn registry_row_beads(env: &Env) -> Result<Vec<String>, String> {
     let bin = env.test_registry_bin.as_ref().ok_or("no test-registry configured")?;
+    spira_config::git_refs::held_registry(&format!("row-beads:{}", bin.display()), || registry_row_beads_read(env, bin))
+}
+
+fn registry_row_beads_read(env: &Env, bin: &Path) -> Result<Vec<String>, String> {
     // FORK-EDGE: machine leg test-registry (list --json: the registry's rows are read only through its binary)
     let out = spira_config::bounded::bounded(bin)
         .args(["list", "--json"])
