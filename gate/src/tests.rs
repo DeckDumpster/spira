@@ -2710,7 +2710,10 @@ const UNIT_DATA = [{"name":"runtime","target":"","start":4.2,"duration":88.4}];"
     );
     assert_eq!(f.run(), PASS);
     let cmds = f.cmds.borrow().clone();
-    assert!(cmds.iter().any(|c| c.contains("cargo build") && c.contains("--bins --timings") || c.contains("cargo build --timings")), "{cmds:?}");
+    let builds: Vec<&String> = cmds.iter().filter(|c| c.contains("--timings")).collect();
+    assert_eq!(builds.len(), 2, "{cmds:?}");
+    assert!(builds[0].contains("cargo build --timings") && builds[0].ends_with("-p queue -p spira-config -p gate --bins"), "{builds:?}");
+    assert!(builds[1].contains("cargo test --no-run --timings"), "{builds:?}");
     let m = meter(&f);
     assert!(m.contains(" compiled=14 fresh=6 "), "{m}");
 }
