@@ -770,8 +770,9 @@ mod tests {
         fill(&d1.join("x"), 8);
         fill(&d2.join("x"), 8);
         two.release();
-        std::thread::sleep(std::time::Duration::from_millis(20));
         one.release_reserved("sp-a");
+        let older = std::fs::OpenOptions::new().write(true).open(lock_path(&bases[0], 2)).unwrap();
+        older.set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1)).unwrap();
         let got = lease(&bases, "c").unwrap();
         assert_eq!(got.dir(), d2);
         assert!(gate_path(&bases[0], 1).exists());
@@ -790,10 +791,12 @@ mod tests {
         let d = testkit::TempDir::new("bdir-not-owner");
         let bases = vec![d.path().join("base")];
         let held = lease(&bases, "sp-b").unwrap();
-        let t = std::time::Instant::now();
-        let r = lease_dir(&bases, held.dir(), "gate", "sp-a", std::time::Duration::from_secs(10)).unwrap();
-        assert_eq!(r.unwrap_err(), Refused::Held { holder: "sp-b".into() });
-        assert!(t.elapsed() < std::time::Duration::from_secs(1));
+        let (b, dir) = (bases.clone(), held.dir().to_path_buf());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(lease_dir(&b, &dir, "gate", "sp-a", std::time::Duration::from_secs(3600)).unwrap().err()));
+        // clock-safe: the cap only bounds a wait for the refusal, which arrives at once
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(30)).expect("a slot another session holds is refused without waiting");
+        assert_eq!(refused, Some(Refused::Held { holder: "sp-b".into() }));
     }
 
     #[test_id(tplace3)]
