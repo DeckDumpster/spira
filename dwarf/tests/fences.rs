@@ -25,7 +25,7 @@ fn spira() -> PathBuf {
 const SPIRA_CONFIG: &str = r#"#!/bin/bash
 case "$1" in
 resolve) cat "$STUB_RESOLVED" ;;
-env-bootstrap|check-bd) ;;
+env-bootstrap) ;;
 repo) case "$2" in
     landref) printf '%s\n' "$STUB_LANDREF" ;;
     ref-remote) r="${3%%/*}"; [ "$r" != "$3" ] && [ "$r" = "$STUB_REMOTE" ] && echo "$r" || exit 1 ;;

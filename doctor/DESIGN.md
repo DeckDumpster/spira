@@ -19,8 +19,7 @@ substrate probe, whose ONE write is a reserved sentinel that matches no real bea
 
 - **`conf.sh` stays the one authority on derived configuration.** `doctor` does not
   re-implement conf.sh's key derivation, defaults, or schema handling. `real.rs` sources
-  `conf.sh` (under `SPIRA_DOCTOR=1`, exactly as doctor.sh did, so a schema mismatch cannot
-  make the check die on the way in) **once at startup** and captures the resulting
+  `conf.sh` **once at startup** and captures the resulting
   environment; every check reads that snapshot rather than re-sourcing conf.sh per call.
 - **`doctor` locates `conf.sh` via an explicit `$SPIRA_HOME` first, release-relatively
   otherwise.** This is the inverse of doctor.sh's own rule (which found conf.sh beside its
@@ -88,7 +87,7 @@ comment, carried forward verbatim from sp-r15cf). Outside that flag, both checks
 | caller | invocation | reads |
 |---|---|---|
 | `install.sh` phase 0 | `SPIRA_DOCTOR_INSTALLING=1 doctor.sh 2>&1` → `doctor` | exit code; prints the combined output indented |
-| `deploy.sh` health check | `_activated_release_cmd env SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1` (release-pinned; see §2) | exit code; greps `^\s*FAIL` lines for its own report |
+| `deploy.sh` health check | `_activated_release_cmd "$_DOCTOR" 2>&1` (release-pinned; see §2) | exit code; greps `^\s*FAIL` lines for its own report |
 
 Both are exercised end to end by `spira-config/tests/deploy_script.rs` and `test-deploy-preflight-new-unit.sh`
 (kept, repointed — §6), which is the parity evidence for these two paths specifically, as
@@ -143,7 +142,7 @@ orphans no use case under `plan-matrix`'s rule.
 `spira-config/tests/deploy_script.rs`, `test-deploy-preflight-new-unit.sh`, `test-dwarf-runes-overlay.sh`,
 the dwarf-launch-grammar suite, `test-freshclone.sh`,
 `test-unit-name.sh`, `test-watchtower-failed-units.sh`,
-`test-bd-lock-retry.sh`, `bd-pin.sh`, `test-overrides.sh` are **kept**, repointed: each
+`test-bd-lock-retry.sh`, `test-overrides.sh` are **kept**, repointed: each
 exercises `doctor` as a fixture dependency for a different subject (deploy's own flow, the
 runes overlay mechanism, rune dispatch, a fresh clone, etc.), not `doctor`'s own decision
 logic, so a fake-backed unit test does not replace what they check.

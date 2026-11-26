@@ -3,8 +3,7 @@
 //! activated, sp-r15cf — see DESIGN.md §2), and only when nothing set it falls back to
 //! `current_exe()`'s release-relative sibling `spira/`, the equivalent of doctor.sh's own
 //! `$(dirname "${BASH_SOURCE[0]}")` for a bare interactive invocation. Everything conf.sh
-//! derives is captured ONCE at startup, under `SPIRA_DOCTOR=1` exactly as doctor.sh itself
-//! sourced it, so every check reads a consistent snapshot rather than re-sourcing per call.
+//! derives is captured ONCE at startup, so every check reads a consistent snapshot rather than re-sourcing per call.
 
 use crate::ports::{Placement, RootScan, RootWriter, StoreMeta, World};
 use std::collections::BTreeMap;
@@ -44,7 +43,7 @@ impl Real {
 
     fn capture_env(home: &Path, child_env: &[(String, String)]) -> BTreeMap<String, String> {
         let conf = home.join("conf.sh");
-        let script = format!("export SPIRA_DOCTOR=1; . \"{}\" >/dev/null 2>&1; env -0", conf.display());
+        let script = format!(". \"{}\" >/dev/null 2>&1; env -0", conf.display());
         let mut cmd = spira_config::bounded::bounded("bash");
         cmd.arg("-c").arg(script).envs(child_env.iter().cloned());
         let out = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output();
@@ -79,7 +78,7 @@ impl Real {
     /// (`counter_events_query`, `spira_unit`) was silently reading `$2` as empty.
     fn seam(&self, body: &str, args: &[&str]) -> String {
         let script = format!(
-            "export SPIRA_DOCTOR=1; . \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; {body}",
+            ". \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; {body}",
             self.home.display(),
             self.home.display()
         );
@@ -103,7 +102,6 @@ const RESOLVED_KEYS: &[&str] = &[
     "COCKPIT_MAIL",
     "COCKPIT_SESSIONS",
     "SPIRA_BD",
-    "SPIRA_BD_TAG",
     "SPIRA_RUNES_OVERLAY",
     "SPIRA_DB",
     "SPIRA_DOLT_DATA",
@@ -320,7 +318,7 @@ impl World for Real {
     }
     fn bump_write_event_try(&self, id: &str, etype: &str, actor: &str) -> bool {
         let script = format!(
-            "export SPIRA_DOCTOR=1; . \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; _bump_write_event_try \"$1\" \"$2\" \"$3\"",
+            ". \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; _bump_write_event_try \"$1\" \"$2\" \"$3\"",
             self.home.display(),
             self.home.display()
         );
@@ -409,11 +407,6 @@ impl World for Real {
         now.duration_since(modified).ok().map(|d| d.as_secs())
     }
 
-    fn bd_version(&self) -> Option<String> {
-        let out = spira_config::bounded::bounded(&self.lc).args(["admin-store", "version"]).envs(self.child_env.iter().cloned()).stdin(Stdio::null()).output().ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        extract_semver(&text)
-    }
     fn arch(&self) -> String {
         // `std::env::consts::ARCH` at compile time (x86_64/aarch64/...) — the same values
         // `uname -m` reports for the two architectures this check cares about, with no
@@ -637,26 +630,6 @@ fn json_number_field(text: &str, key: &str) -> Option<String> {
 fn first_json_id(text: &str) -> Option<String> {
     json_string_field(text, "id")
 }
-fn extract_semver(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    for i in 0..bytes.len() {
-        if bytes[i].is_ascii_digit() {
-            let mut j = i;
-            let mut dots = 0;
-            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
-                if bytes[j] == b'.' {
-                    dots += 1;
-                }
-                j += 1;
-            }
-            if dots == 2 {
-                return Some(text[i..j].to_string());
-            }
-        }
-    }
-    None
-}
-
 impl Real {
     fn podman_graphroot(&self) -> Option<PathBuf> {
         let bin = self.which("podman")?;
@@ -829,21 +802,20 @@ mod door_tests {
     use super::*;
     use crate::ports::World;
 
-    #[test_id(ton0gzy)]
+    #[test_id(tg093k3)]
     #[test]
-    fn the_store_reads_and_the_version_go_through_spira_lc_and_nothing_else() {
+    fn the_store_reads_go_through_spira_lc_and_nothing_else() {
         let tmp = testkit::TempDir::new("doctor-door");
         let log = tmp.path().join("calls");
         let lc = tmp.path().join("lc");
         testkit::write_exe(
             &lc,
-            &format!("#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$1\" in admin-store) echo 'bd version 1.2.3';; *) echo '[{{\"id\":\"sp-9\"}}]';; esac\n", log.display()),
+            &format!("#!/bin/sh\necho \"$*\" >> '{}'\necho '[{{\"id\":\"sp-9\"}}]'\n", log.display()),
         );
         let real = Real { home: tmp.path().to_path_buf(), env: BTreeMap::new(), lc: lc.to_string_lossy().into_owned(), child_env: Vec::new() };
         assert!(real.bd_list(5).is_ok());
         assert_eq!(real.bd_first_id().as_deref(), Some("sp-9"));
-        assert_eq!(real.bd_version().as_deref(), Some("1.2.3"));
         let calls = std::fs::read_to_string(&log).unwrap();
-        assert_eq!(calls.lines().collect::<Vec<_>>(), ["content list --limit 1 --json", "content list --limit 1 --json", "admin-store version"]);
+        assert_eq!(calls.lines().collect::<Vec<_>>(), ["content list --limit 1 --json", "content list --limit 1 --json"]);
     }
 }

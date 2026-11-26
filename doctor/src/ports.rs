@@ -16,7 +16,7 @@ pub struct StoreMeta {
 
 pub trait World {
     /// A value `conf.sh` derived (or a bare process env var it passed through), captured
-    /// once at startup under `SPIRA_DOCTOR=1` exactly as doctor.sh itself sourced conf.sh.
+    /// once at startup.
     fn env(&self, k: &str) -> Option<String>;
 
     /// `command -v <name>` on the launcher's PATH; the resolved path when found.
@@ -106,7 +106,6 @@ pub trait World {
     fn file_age_secs(&self, p: &Path) -> Option<u64>;
 
     // ---- operator channel ----
-    fn bd_version(&self) -> Option<String>;
     fn arch(&self) -> String;
     /// `spira_bin_purpose <name>` (lib.sh seam) — one sentence on what an absent binary costs.
     fn spira_bin_purpose(&self, name: &str) -> String;

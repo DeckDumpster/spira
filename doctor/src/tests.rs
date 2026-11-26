@@ -46,7 +46,6 @@ pub struct Fake {
     pub spira_unit: RefCell<String>,
     pub spira_unit_asked: RefCell<Vec<(String, String)>>,
     pub file_ages: RefCell<BTreeMap<PathBuf, u64>>,
-    pub bd_version: RefCell<Option<String>>,
     pub arch: RefCell<String>,
     pub bin_purpose: RefCell<String>,
     pub stray: RefCell<Vec<String>>,
@@ -105,7 +104,6 @@ impl Default for Fake {
             spira_unit: RefCell::new(String::new()),
             spira_unit_asked: RefCell::new(Vec::new()),
             file_ages: RefCell::new(BTreeMap::new()),
-            bd_version: RefCell::new(None),
             arch: RefCell::new(String::new()),
             bin_purpose: RefCell::new(String::new()),
             stray: RefCell::new(Vec::new()),
@@ -233,9 +231,6 @@ impl World for Fake {
     }
     fn file_age_secs(&self, p: &Path) -> Option<u64> {
         self.file_ages.borrow().get(p).copied()
-    }
-    fn bd_version(&self) -> Option<String> {
-        self.bd_version.borrow().clone()
     }
     fn arch(&self) -> String {
         self.arch.borrow().clone()
@@ -1282,28 +1277,31 @@ fn operator_channel_missing_inotify_warns_when_not_operated() {
     assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("inotifywait")));
 }
 
-#[test_id(t4dnizj)]
+#[test_id(tx14knk)]
 #[test]
-fn operator_channel_no_go_but_bd_current_and_prebuilt_is_ok() {
+fn operator_channel_no_go_with_a_prebuilt_bd_is_ok() {
     let f = Fake::default();
     f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
-    f.set("SPIRA_BD_TAG", "v1.2.3");
-    *f.bd_version.borrow_mut() = Some("1.2.3".into());
     *f.arch.borrow_mut() = "x86_64".into();
     let out = check_operator_channel(&f);
-    assert!(out.iter().all(|l| l.level == Level::Ok));
+    assert!(out.iter().all(|l| l.level == Level::Ok), "{:?}", out.iter().map(|l| &l.msg).collect::<Vec<_>>());
 }
 
-#[test_id(thoomga)]
+#[test_id(ttw7oua)]
 #[test]
-fn operator_channel_no_go_mismatched_bd_no_prebuilt_fails() {
+fn operator_channel_no_go_and_no_prebuilt_fails_only_without_a_bd() {
     let f = Fake::default();
     f.which.borrow_mut().insert("inotifywait".into(), "bin/inotifywait".into());
-    f.set("SPIRA_BD_TAG", "v1.2.3");
-    *f.bd_version.borrow_mut() = Some("1.0.0".into());
     *f.arch.borrow_mut() = "riscv64".into();
     let out = check_operator_channel(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("go is not on PATH")));
+    f.which.borrow_mut().insert("bd".into(), "bin/bd".into());
+    let out = check_operator_channel(&f);
+    assert!(out.iter().all(|l| l.level == Level::Ok));
+    f.set("SPIRA_BD", "elsewhere/bd");
+    assert!(check_operator_channel(&f).iter().any(|l| l.level == Level::Fail), "the configured bd is the one looked for");
+    f.which.borrow_mut().insert("elsewhere/bd".into(), "elsewhere/bd".into());
+    assert!(check_operator_channel(&f).iter().all(|l| l.level == Level::Ok));
 }
 
 #[test_id(tp7f6jl)]

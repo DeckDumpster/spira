@@ -118,20 +118,6 @@ t="$(mktemp -d)"
 [ $? -eq 0 ] && say "embedded init" ok || { say "embedded init" REFUSED; fail=1; }
 rm -rf "$t"
 
-# THE SCHEMA CHECK MUST CATCH *AHEAD* AS WELL AS *BEHIND*, and the obvious check does not.
-# A read against a store the binary is ahead of succeeds silently; only a write refuses. So ask
-# `migrate schema`, which states the relationship, and require the "already at" form. Checking
-# with `list` is what let a v67 binary onto this box against a v61 store on 2026-09-10.
-if [ -n "${SPIRA_DB:-}" ] && [ -d "${SPIRA_DB:-}" ]; then
-    ms="$("$OUT" -C "$SPIRA_DB" migrate schema 2>&1 | head -1)"
-    case "$ms" in
-        *"already at"*) say "store schema" "ok — $ms" ;;
-        *)              say "store schema" "MISMATCH — $ms"; fail=1 ;;
-    esac
-else
-    say "store schema" "SKIPPED — no existing store to check compatibility against"
-fi
-
 [ "$fail" = 0 ] || { echo "build-bd.sh: verification FAILED — installing nothing" >&2; exit 1; }
 [ "$MODE" = install ] || { echo "build-bd.sh: probe only; verified $TAG at $OUT" >&2; exit 0; }
 

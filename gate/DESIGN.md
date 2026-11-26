@@ -1081,12 +1081,11 @@ filter hold to).
   exact tree already pass," not "is the base independently red on this suite").
 * **`harness` and `image` are recorded and checked on every read** (`basecache::fresh`),
   because the base tree not moving does not mean nothing that could change a suite's answer
-  has: a new gate binary, or a rebuilt testenv container from the *same* tree content (an
-  external pin — `testenv`'s own `bd_pin`, DESIGN.md of `testenv` — is not itself in the tree).
+  has: a new gate binary, or a rebuilt testenv container from the *same* tree content.
   An entry recorded under either differing is a miss, never trusted with the right suite name
   attached to the wrong answer.
 * **The testenv image tag** is `testenv container tag` (`testenv/src/container.rs`'s
-  `Driver::image_tag`, a pure hash of `testenv/Containerfile` + `deps.toml` + the `bd_pin`),
+  `Driver::image_tag`, a pure hash of `testenv/Containerfile` + `deps.toml`),
   invoked once per base trial that has at least one non-absent red suite to ask about — never
   on a PASS, never on a red whose suites are all absent — via the same `World::run_gate` port
   already used for the targeted rerun, bare `testenv` on PATH (no tree-built binary; the

@@ -44,7 +44,7 @@ statement = "The landing gate string (`suite-select gate`), the `testenv`, `batc
 [[use_case]]
 id = "UC-test-infrastructure-08"
 tier = "T1"
-statement = "The image tag is a content hash of the build closure (Containerfile, doctor.sh program list, bd pin). It is path-independent and unchanged by unrelated files."
+statement = "The image tag is a content hash of the build closure (Containerfile, doctor.sh program list). It is path-independent and unchanged by unrelated files."
 
 [use_case.uncovered]
 reason = "image tag derivation is testenv's container module (testenv/src/container/tests.rs cargo tests); no bash suite drives it without podman"
