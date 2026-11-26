@@ -20,7 +20,7 @@ use crate::protocol::{Reply, Request};
 use crate::wait;
 
 /// The most a command waits for the broker to acknowledge what it asked of it.
-const ACK_DEADLINE: Duration = Duration::from_secs(5);
+const ACK_DEADLINE: Duration = Duration::from_secs(3);
 /// Between connects while a broker that has just made its socket is not yet listening on it.
 const LISTEN_PAUSE: Duration = Duration::from_millis(5);
 /// Before trying again a broker that is there and did not take the connection.
@@ -301,7 +301,7 @@ impl Server {
         format!("spira-sub-{}", self.name)
     }
 
-    fn open(&self, broker: &str, within: Duration) -> Result<(Client, Connection), Option<ConnectionError>> {
+    fn open(&self, broker: &str, within: Duration) -> Result<(Client, Connection), Option<Box<ConnectionError>>> {
         let mut options = MqttOptions::new(self.client_id(), broker, 0);
         options.set_transport(Transport::Unix);
         // Liveness is the socket: a dead client's closes, and the broker publishes its will.
@@ -315,7 +315,7 @@ impl Server {
         connection.eventloop.set_network_options(network);
         match connection.recv_timeout(within) {
             Ok(Ok(Event::Incoming(Packet::ConnAck(_)))) => Ok((client, connection)),
-            Ok(Err(e)) => Err(Some(e)),
+            Ok(Err(e)) => Err(Some(Box::new(e))),
             Ok(Ok(_)) | Err(_) => Err(None),
         }
     }
@@ -390,7 +390,7 @@ impl Server {
                 }
                 Err(e) => {
                     // A broker that is not there announces itself; one that is there may not.
-                    let absent = e.as_ref().is_some_and(refused);
+                    let absent = e.as_deref().is_some_and(refused);
                     if announced || !absent {
                         say(&self.name, &format!("cannot connect: {}", e.map_or_else(|| "no CONNACK".to_string(), |e| e.to_string())));
                     }

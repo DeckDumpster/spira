@@ -284,7 +284,8 @@ pub fn inst_watch_name(name: &str, instance: &str) -> String {
 }
 
 fn inst_template_name(template: &str, name: &str, instance: &str) -> String {
-    format!("{}-{name}-{instance}.service", template.trim_end_matches("@.service"))
+    let family = if template == SUB_TEMPLATE { "spira-sub" } else { "spira-watch" };
+    format!("{family}-{name}-{instance}.service")
 }
 
 #[cfg(test)]

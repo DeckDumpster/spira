@@ -11,7 +11,7 @@ use crate::protocol::{Reply, Request};
 use crate::wait;
 
 /// The most a command waits for its reply: past the longest the client waits for the broker.
-const REPLY_DEADLINE: Duration = Duration::from_secs(10);
+const REPLY_DEADLINE: Duration = Duration::from_secs(5);
 const LISTEN_PAUSE: Duration = Duration::from_millis(5);
 
 fn open(socket: &Path, request: &Request) -> std::io::Result<(Reply, BufReader<UnixStream>)> {
